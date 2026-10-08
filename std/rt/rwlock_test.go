@@ -249,6 +249,56 @@ func TestMutexWaitingReaderCanceled(t *testing.T) {
 	}
 }
 
+// TestMutexCanceledWaitForgetsSite: Mutex.with and with_read record the
+// holding site in the task before they wait (so the stack walk stays out
+// of the critical section); a wait that is canceled must remove it, or a
+// scope body (which shares the record with its parent task) would leave
+// the parent unable to take the mutex again (XO-F004).
+func TestMutexCanceledWaitForgetsSite(t *testing.T) {
+	for _, read := range []bool{false, true} {
+		root := NewRootTask()
+		s := NewScope(root)
+		body := s.Body()
+		m := Mutex_new[int64](body, 0)
+		release := make(chan struct{})
+		entered := make(chan struct{})
+		Spawn(body, s, func(t *Task) Result[Unit, Never] {
+			Mutex_with(t, m, writeFn(func(*Task, *int64) {
+				close(entered)
+				<-release
+			}))
+			return unit()
+		}, false, true)
+		<-entered
+		ws := NewScope(body)
+		wbody := ws.Body()
+		left := make(chan bool, 1)
+		Spawn(wbody, ws, func(t *Task) Result[Unit, Never] {
+			defer func() {
+				_, still := t.held[m]
+				left <- still
+			}()
+			if read {
+				Mutex_with_read(t, m, readFn(func(*Task, int64) {}))
+			} else {
+				Mutex_with(t, m, writeFn(func(*Task, *int64) {}))
+			}
+			return unit()
+		}, false, true)
+		waitFor(t, "the waiter to queue", func() bool { _, _, _, q := lockState(m); return q == 1 })
+		ws.M_cancel(wbody)
+		ws.Close(nil, true, 0)
+		if <-left {
+			t.Fatalf("read=%v: the canceled wait left its site in the task", read)
+		}
+		close(release)
+		s.Close(nil, true, 0)
+		if p, r, w, q := lockState(m); p != 1 || r != 0 || w != 0 || q != 0 {
+			t.Fatalf("read=%v: lock not free after: permits %d readers %d wwait %d queued %d", read, p, r, w, q)
+		}
+	}
+}
+
 // schedRun runs body under the deterministic scheduler with the given seed
 // and returns its log, or "deadlock" and the report when it gets stuck.
 func schedRun(t *testing.T, seed int64, body func(w *World, s *Scope, add func(string))) (string, string) {

@@ -355,6 +355,48 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 	m.t, m.es = t, a[:i]
 }
 
+// eachRoot is each for a view of a root table (no parent) whose log holds
+// overwritten entries or tombstones, without a hash lookup per entry
+// (each did one per origin entry: most of a scan of a churned map). An
+// entry is current when no later entry in the view links to it with prev
+// (prev links stay inside one table and only point back), so one pass
+// marks the superseded entries, a second places the current live entries
+// by origin, and a third calls f in insertion order. The work arrays are
+// on the stack for logs up to rootStack entries.
+func (m *Map[K, V]) eachRoot(f func(e *mentry[K, V], v V) bool) {
+	const rootStack = 512
+	es := m.es
+	L := len(es)
+	var supBuf [rootStack / 64]uint64
+	var ordBuf [rootStack]int32
+	var sup []uint64
+	var ord []int32
+	if L > rootStack {
+		sup, ord = make([]uint64, (L+63)/64), make([]int32, L)
+	} else {
+		sup, ord = supBuf[:], ordBuf[:L]
+	}
+	for j := range es {
+		if p := es[j].prev; p >= 0 {
+			sup[p>>6] |= 1 << (p & 63)
+		}
+	}
+	for i := range es {
+		if sup[i>>6]&(1<<(i&63)) == 0 && es[i].org >= 0 {
+			ord[es[i].org] = int32(i + 1)
+		}
+	}
+	for _, x := range ord {
+		if x == 0 {
+			continue
+		}
+		cur := &es[x-1]
+		if !f(&es[cur.org], cur.v) {
+			return
+		}
+	}
+}
+
 // each calls f with the origin entry and current value of every live key,
 // in insertion order, until f returns false.
 func (m *Map[K, V]) each(f func(e *mentry[K, V], v V) bool) {
@@ -370,6 +412,10 @@ func (m *Map[K, V]) each(f func(e *mentry[K, V], v V) bool) {
 				return
 			}
 		}
+		return
+	}
+	if t.parent == nil {
+		m.eachRoot(f)
 		return
 	}
 	var levels [maxForkDepth + 1][]mentry[K, V]
@@ -497,6 +543,46 @@ func (m Map[K, V]) M_keys(*Task) List[K] {
 	// the elements stay in the map too (see List)
 	markElems(out)
 	return ListOf(out...)
+}
+
+// Len is the number of keys, for generated code.
+func (m Map[K, V]) Len() int { return m.n }
+
+// Map_values_seq iterates `m.values()` in place: the generated code uses
+// it for a loop over `m.values()` (an inlined any, all, find, fold, map,
+// or filter) instead of building the list (internal/gen/mono.go). Each
+// value is marked as M_values marks the list's elements: it stays in the
+// map too. Only types that hold lists take the marking path: taking the
+// address of the value for MarkP moves it to the heap, an allocation per
+// element.
+func Map_values_seq[K, V any](m Map[K, V]) iter.Seq[V] {
+	if !markable[V]() {
+		return func(yield func(V) bool) {
+			m.each(func(_ *mentry[K, V], v V) bool { return yield(v) })
+		}
+	}
+	return func(yield func(V) bool) {
+		m.each(func(_ *mentry[K, V], v V) bool {
+			MarkP(&v)
+			return yield(v)
+		})
+	}
+}
+
+// Map_keys_seq is Map_values_seq for `m.keys()`.
+func Map_keys_seq[K, V any](m Map[K, V]) iter.Seq[K] {
+	if !markable[K]() {
+		return func(yield func(K) bool) {
+			m.each(func(e *mentry[K, V], _ V) bool { return yield(e.k) })
+		}
+	}
+	return func(yield func(K) bool) {
+		m.each(func(e *mentry[K, V], _ V) bool {
+			k := e.k
+			MarkP(&k)
+			return yield(k)
+		})
+	}
 }
 
 // M_values is `m.values()`.

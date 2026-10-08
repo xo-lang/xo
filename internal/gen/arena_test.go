@@ -129,6 +129,7 @@ fn routes() -> http.Router {
 		{"temporaries of consumers and loops", `
 fn stats(m: Map[Int, Str], s: Set[Int]) -> Int {
   var n = m.values().fold(0, fn(acc, v) { acc + v.len() })
+  n += m.values().sort_by(fn(v) { v }).len()
   n += m.keys().len()
   for (k, _) in m.entries() {
     n += k

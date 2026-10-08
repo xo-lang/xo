@@ -98,6 +98,8 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 			}
 		}()
 	}
+	// XO_LOCKSTATS: mutex wait and hold times per call site (lockstats.go)
+	defer lockStatsWrite()
 	root := NewRootTask()
 	th := root.th
 	mon := &monitor{quiet: 200 * time.Millisecond, root: root.node}

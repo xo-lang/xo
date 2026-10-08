@@ -101,3 +101,38 @@ fn main(os: Os) {
 		t.Fatalf("h was not inlined\n%s", src)
 	}
 }
+
+// TestMonoMapViewInPlace: an inlined higher order call or a for loop over
+// `m.values()` or `m.keys()` walks the map in place; other uses still
+// build the list (golden map_view_loops checks the behavior). A
+// comparison of two to_lower calls lowers to rt.Str_eq_lower.
+func TestMonoMapViewInPlace(t *testing.T) {
+	src := goSource(generateMono(t, `
+fn taken(m: Map[Int, Str], s: Str) -> Bool { m.values().any(fn(v) { v == s }) }
+
+fn total(m: Map[Int, Str]) -> Int {
+  var n = 0
+  for k in m.keys() {
+    n += k
+  }
+  n
+}
+
+fn kept(m: Map[Int, Str]) -> List[Str] { m.values() }
+
+fn differ(a: Str, b: Str) -> Bool { a.to_lower() != b.to_lower() }
+
+fn main(os: Os) {
+  let m: Map[Int, Str] = {1: "a"}
+  os.stdio.println("${taken(m, "a")} ${total(m)} ${kept(m).len()} ${differ("A", "a")}")
+}
+`))
+	for _, w := range []string{"rt.Map_values_seq(", "rt.Map_keys_seq(", "!rt.Str_eq_lower("} {
+		if !strings.Contains(src, w) {
+			t.Errorf("generated code lacks %q\n%s", w, src)
+		}
+	}
+	if n := strings.Count(src, ".M_values(tk)"); n != 1 {
+		t.Errorf("M_values calls = %d, want 1 (kept)\n%s", n, src)
+	}
+}

@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+taken u1: true
+taken u1 except 1: false
+taken u2 (removed): false
+all have ids: true
+all keys small: false
+any key 4: true
+find: four@x.io
+key sum: 19
+emails: U1@X.io,U3@X.io,four@x.io,U5@X.io,six@x.io
+picked: t1+changed, map: t1
+found copy: t4+again+also, map: t4+again
+seen 5 copies 5 len 10
+empty any: false, empty all: true
+--- stderr

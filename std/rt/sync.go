@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // lock is a cancelable lock with explicit waiters (see Chan).
@@ -58,7 +59,7 @@ func barging(tk *Task) bool {
 
 // acquire takes a permit, waiting if none is free. It reports false when
 // the task was canceled while waiting.
-func (l *lock) acquire(tk *Task) bool { return l.acquireMode(tk, false) }
+func (l *lock) acquire(tk *Task) bool { return l.acquireMode(tk, false, nil) }
 
 // free reports whether an acquirer may enter now. woken: a reader that was
 // queued and woken keeps its place ahead of writers that queued later.
@@ -70,8 +71,11 @@ func (l *lock) free(shared, woken bool) bool {
 }
 
 // acquireMode is acquire in exclusive or shared (reader) mode. A reader
-// is recorded in rdrs.
-func (l *lock) acquireMode(tk *Task, shared bool) bool {
+// is recorded in rdrs. site, when set, is where an exclusive holder took
+// the mutex: it becomes owner and site in the same critical section of
+// l.mu that takes the permit (a second one after acquiring made every
+// holder wait for l.mu behind the waiters hammering it, inside its hold).
+func (l *lock) acquireMode(tk *Task, shared bool, site *heldSite) bool {
 	k := waitSemaphore
 	switch {
 	case l.mutex && shared:
@@ -90,6 +94,9 @@ func (l *lock) acquireMode(tk *Task, shared bool) bool {
 				l.rdrs = append(l.rdrs, tk)
 			} else {
 				l.permits--
+				if site != nil {
+					l.owner, l.site = tk, *site
+				}
 			}
 			if pending {
 				l.wwait--
@@ -138,6 +145,8 @@ func (l *lock) acquireMode(tk *Task, shared bool) bool {
 			l.starving = false
 			if shared {
 				l.rdrs = append(l.rdrs, tk)
+			} else if site != nil {
+				l.owner, l.site = tk, *site
 			}
 			if pending {
 				l.wwait--
@@ -244,6 +253,20 @@ type heldSite struct {
 
 func (h heldSite) loc() string { return xoLocationPCs(h.pcs[:h.n]) }
 
+// holdSite records in tk.held that tk is taking mutex m, from the caller
+// of the caller of holdSite (Mutex_with's caller), before it waits: the
+// stack walk and the map insert stay out of the critical section. The
+// caller deletes the entry if the wait is canceled.
+func holdSite(tk *Task, m any) heldSite {
+	var site heldSite
+	site.n = runtime.Callers(3, site.pcs[:])
+	if tk.held == nil {
+		tk.held = map[any]heldSite{}
+	}
+	tk.held[m] = site
+	return site
+}
+
 // Mutex is `Mutex[T]` (core 5.4): a handle; copies share the state.
 type Mutex[T any] struct {
 	l lock
@@ -271,21 +294,29 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 	if prev, ok := tk.held[m]; ok {
 		FaultCode("XO-F004", xoLocation(2), "Mutex.with called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
+	// the bookkeeping happens before the wait, so the critical section
+	// does not pay for the stack walk
+	site := holdSite(tk, m)
+	var t0, t1 time.Time
+	if lockStatsOn {
+		t0 = time.Now()
+	}
 	// a cancellation point only while waiting (core 7.2)
-	if !m.l.acquire(tk) {
+	if !m.l.acquireMode(tk, false, &site) {
+		delete(tk.held, m)
 		tk.Unwind()
 	}
-	if tk.held == nil {
-		tk.held = map[any]heldSite{}
+	if lockStatsOn {
+		t1 = time.Now()
 	}
-	var site heldSite
-	site.n = runtime.Callers(2, site.pcs[:])
-	tk.held[m] = site
-	m.l.mu.Lock()
-	m.l.owner, m.l.site = tk, site
-	m.l.mu.Unlock()
 	defer func() {
 		delete(tk.held, m)
+		if lockStatsOn {
+			t2 := time.Now()
+			m.l.release()
+			lockStatRecord(site.pcs[0], false, t1.Sub(t0), t2.Sub(t1))
+			return
+		}
 		m.l.release()
 	}()
 	v := m.v
@@ -310,17 +341,26 @@ func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result
 	if prev, ok := tk.held[m]; ok {
 		FaultCode("XO-F004", xoLocation(2), "Mutex.with_read called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
-	if !m.l.acquireMode(tk, true) {
+	site := holdSite(tk, m)
+	var t0, t1 time.Time
+	if lockStatsOn {
+		t0 = time.Now()
+	}
+	if !m.l.acquireMode(tk, true, nil) {
+		delete(tk.held, m)
 		tk.Unwind()
 	}
-	if tk.held == nil {
-		tk.held = map[any]heldSite{}
+	if lockStatsOn {
+		t1 = time.Now()
 	}
-	var site heldSite
-	site.n = runtime.Callers(2, site.pcs[:])
-	tk.held[m] = site
 	defer func() {
 		delete(tk.held, m)
+		if lockStatsOn {
+			t2 := time.Now()
+			m.l.releaseRead(tk)
+			lockStatRecord(site.pcs[0], true, t1.Sub(t0), t2.Sub(t1))
+			return
+		}
 		m.l.releaseRead(tk)
 	}()
 	// readers share m.v: the copy f gets must not write m.v's lists in

@@ -172,6 +172,37 @@ func TestMapHeavyRewrite(t *testing.T) {
 	}
 }
 
+// TestMapLargeChurnedLog iterates root table views whose logs hold
+// overwrites and tombstones past the stack buffers of eachRoot (512
+// entries), and a stale snapshot of the same table.
+func TestMapLargeChurnedLog(t *testing.T) {
+	var m Map[int64, int64]
+	ref := mmodel{vals: map[int64]int64{}}
+	for k := range int64(400) {
+		m.M_put(nil, k, k)
+		ref.put(k, k)
+	}
+	snap, snapRef := m, ref.clone()
+	for k := int64(0); k < 300; k++ {
+		m.M_put(nil, (k*7)%400, -k)
+		ref.put((k*7)%400, -k)
+	}
+	for k := int64(0); k < 20; k++ {
+		m.M_remove(nil, k*13)
+		ref.remove(k * 13)
+	}
+	m.M_put(nil, 13, 99) // back after its removal: last in order
+	ref.put(13, 99)
+	if m.t.parent != nil || len(m.es) <= 512 || len(m.es) == m.n {
+		t.Fatalf("setup: parent %v log %d live %d, want a root log over 512 with garbage", m.t.parent != nil, len(m.es), m.n)
+	}
+	checkModel(t, "churned", m, ref, 400)
+	snap.M_put(nil, 1, 5) // the snapshot is stale now: it forks
+	snapRef.put(1, 5)
+	checkModel(t, "snapshot", snap, snapRef, 400)
+	checkModel(t, "churned after fork", m, ref, 400)
+}
+
 // TestMapConcurrentReaders reads snapshots on other goroutines while the
 // owner keeps appending (run under -race by the CI race test).
 func TestMapConcurrentReaders(t *testing.T) {

@@ -119,6 +119,37 @@ func Str_trim_suffix(_ *Task, s, p string) string { return strings.TrimSuffix(s,
 // Str_to_lower is `s.to_lower()`.
 func Str_to_lower(_ *Task, s string) string { return strings.ToLower(s) }
 
+// Str_eq_lower is `a.to_lower() == b.to_lower()` without building the
+// lowered strings (generated for that expression). While both strings
+// are ASCII it compares lowered bytes; at the first non-ASCII byte it
+// falls back to ToLower on both, so the result is always the same.
+// A mismatch in the ASCII prefix is final: ASCII bytes lower to one byte
+// each at the same position whatever follows.
+func Str_eq_lower(a, b string) bool {
+	n := min(len(a), len(b))
+	for i := 0; i < n; i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 0x80 || cb >= 0x80 {
+			return strings.ToLower(a[i:]) == strings.ToLower(b[i:])
+		}
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	if len(a) == len(b) {
+		return true
+	}
+	// one is a prefix of the other: equal only if the rest lowers to
+	// nothing, which no non-empty string does
+	return false
+}
+
 // Str_to_upper is `s.to_upper()`.
 func Str_to_upper(_ *Task, s string) string { return strings.ToUpper(s) }
 

@@ -46,8 +46,14 @@ func cloneUser(u User) User {
 
 // Create stores a new user and assigns its id.
 func (s *Store) Create(name, email string, nickname *string) (User, error) {
+	t0 := statNow()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.Unlock()
+		statRecord(opCreate, t0, t1, t2)
+	}()
 	if _, ok := s.byEmail[email]; ok {
 		return User{}, errDuplicateEmail
 	}
@@ -60,8 +66,14 @@ func (s *Store) Create(name, email string, nickname *string) (User, error) {
 
 // Get returns the user with the given id.
 func (s *Store) Get(id int) (User, error) {
+	t0 := statNow()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.RUnlock()
+		statRecord(opGet, t0, t1, t2)
+	}()
 	u, ok := s.users[id]
 	if !ok {
 		return User{}, errNotFound
@@ -71,8 +83,14 @@ func (s *Store) Get(id int) (User, error) {
 
 // List returns all users ordered by id.
 func (s *Store) List() []User {
+	t0 := statNow()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.RUnlock()
+		statRecord(opList, t0, t1, t2)
+	}()
 	out := make([]User, 0, len(s.users))
 	for _, u := range s.users {
 		out = append(out, cloneUser(u))
@@ -92,8 +110,14 @@ type Patch struct {
 
 // Update applies p to the user with the given id.
 func (s *Store) Update(id int, p Patch) (User, error) {
+	t0 := statNow()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.Unlock()
+		statRecord(opUpdate, t0, t1, t2)
+	}()
 	u, ok := s.users[id]
 	if !ok {
 		return User{}, errNotFound
@@ -121,8 +145,14 @@ func (s *Store) Update(id int, p Patch) (User, error) {
 
 // Delete removes the user with the given id.
 func (s *Store) Delete(id int) error {
+	t0 := statNow()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.Unlock()
+		statRecord(opDelete, t0, t1, t2)
+	}()
 	u, ok := s.users[id]
 	if !ok {
 		return errNotFound

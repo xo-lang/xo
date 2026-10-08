@@ -1053,14 +1053,21 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	if f.arenasOn() {
 		f.noteArenaTemp(x.Iter)
 	}
+	// `for x in m.values()` (or `m.keys()`) walks the map in place
+	// instead of building the list (see hofInline)
+	subj := x.Iter
+	mapE, seq := f.mapView(x.Iter)
+	if mapE != nil {
+		subj = mapE
+	}
 	// the loop reads the subject's elements while the body runs: a borrow
 	// unless the body writes the subject's binding (own.go)
 	var it string
 	restore := f.inUnit(x.Iter)
-	if f.borrowOK(x.Iter, x.Body) {
-		it = f.borrow(x.Iter)
+	if f.borrowOK(subj, x.Body) {
+		it = f.borrow(subj)
 	} else {
-		it = f.val(x.Iter)
+		it = f.val(subj)
 	}
 	restore()
 	itT := f.typeOf(x.Iter)
@@ -1072,10 +1079,16 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	if n != nil && n.Obj.Module.IsPrelude {
 		kind = n.Obj.Name
 	}
+	if mapE != nil {
+		kind = "MapView"
+	}
 	elemT := f.info.PatType(x.Pattern)
 	var header string
 	var elem string
 	switch kind {
+	case "MapView":
+		elem = f.tmp("e")
+		header = fmt.Sprintf("%s := range %s%s(%s)", elem, f.rt(), seq, itv)
 	case "List", "Buf":
 		elem = f.tmp("e")
 		header = fmt.Sprintf("_, %s := range %s.Items()", elem, itv)

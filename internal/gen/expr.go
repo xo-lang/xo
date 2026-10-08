@@ -712,6 +712,21 @@ func (f *fnGen) binary(x *ast.BinaryExpr) string {
 	case token.Coalesce:
 		return f.coalesce(x)
 	}
+	if a, b := f.toLowerRecv(x.X), f.toLowerRecv(x.Y); a != nil && b != nil && (x.Op == token.Eq || x.Op == token.NotEq) {
+		// `a.to_lower() == b.to_lower()`: compared without building the
+		// two lowered strings (rt.Str_eq_lower, same result)
+		codes := f.operands(2, func(i int) string {
+			if i == 0 {
+				return f.val(a)
+			}
+			return f.val(b)
+		})
+		eq := fmt.Sprintf("%sStr_eq_lower(%s, %s)", f.rt(), codes[0], codes[1])
+		if x.Op == token.NotEq {
+			return "!" + eq
+		}
+		return eq
+	}
 	xt, yt := f.nat(x.X), f.nat(x.Y)
 	rt := f.nat(x)
 	op := opText(x.Op)

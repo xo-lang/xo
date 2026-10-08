@@ -1,0 +1,66 @@
+// Inlined any, all, find, fold, map, and filter over `m.values()` and
+// `m.keys()` walk the map in place (no list is built). The results and
+// value semantics must match the list form: lists inside the values are
+// still shared with the map, so writes through a result copy them.
+
+struct User {
+  id: Int
+  email: Str
+  tags: List[Str]
+}
+
+struct State {
+  users: Map[Int, User]
+}
+
+fn (st: State) taken(email: Str, except: Int) -> Bool {
+  st.users.values().any(fn(u) { u.id != except && u.email.to_lower() == email.to_lower() })
+}
+
+fn main(os: Os) {
+  var st = State{users: {}}
+  for i in 1..=5 {
+    st.users.put(i, User{id: i, email: "U${i}@X.io", tags: ["t${i}"]})
+  }
+  // churn: overwritten entries and tombstones in the map's log
+  st.users.remove(2)
+  st.users.put(4, User{id: 4, email: "four@x.io", tags: ["t4", "again"]})
+  st.users.put(6, User{id: 6, email: "six@x.io", tags: []})
+
+  os.stdio.println("taken u1: ${st.taken("u1@x.io", 0)}")
+  os.stdio.println("taken u1 except 1: ${st.taken("u1@x.io", 1)}")
+  os.stdio.println("taken u2 (removed): ${st.taken("u2@x.io", 0)}")
+  os.stdio.println("all have ids: ${st.users.values().all(fn(u) { u.id > 0 })}")
+  os.stdio.println("all keys small: ${st.users.keys().all(fn(k) { k < 6 })}")
+  os.stdio.println("any key 4: ${st.users.keys().any(fn(k) { k == 4 })}")
+  let found = st.users.values().find(fn(u) { u.tags.len() == 2 })
+  os.stdio.println("find: ${found.map(fn(u) { u.email }) ?? "none"}")
+  let sum = st.users.keys().fold(0, fn(acc, k) { acc + k })
+  os.stdio.println("key sum: ${sum}")
+  let emails = st.users.values().map(fn(u) { u.email })
+  os.stdio.println("emails: ${emails.join(",")}")
+
+  // value semantics: a filtered user's tags are shared with the map
+  var picked = st.users.values().filter(fn(u) { u.id % 2 == 1 })
+  picked[0].tags.push("changed")
+  var one = found ?? User{id: 0, email: "", tags: []}
+  one.tags.push("also")
+  os.stdio.println("picked: ${picked[0].tags.join("+")}, map: ${st.users.get_or_fault(1, "seeded").tags.join("+")}")
+  os.stdio.println("found copy: ${one.tags.join("+")}, map: ${st.users.get_or_fault(4, "seeded").tags.join("+")}")
+
+  // a loop body that writes the map iterates the values it started with
+  var seen = 0
+  for u in st.users.values() {
+    st.users.put(u.id + 100, u)
+    seen += 1
+  }
+  var ks = 0
+  for k in st.users.keys() {
+    if k > 100 {
+      ks += 1
+    }
+  }
+  os.stdio.println("seen ${seen} copies ${ks} len ${st.users.len()}")
+  let empty: Map[Int, User] = {}
+  os.stdio.println("empty any: ${empty.values().any(fn(u) { u.id > 0 })}, empty all: ${empty.keys().all(fn(k) { k > 0 })}")
+}

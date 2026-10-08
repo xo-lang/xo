@@ -527,6 +527,38 @@ func (f *fnGen) inlineLit(lit *ast.FnLit, ft *check.Func, args []string, d dest)
 	f.line("}")
 }
 
+// mapView reports a call `m.values()` or `m.keys()` on a Map: the map
+// expression and the runtime function that iterates that view in place.
+func (f *fnGen) mapView(e ast.Expr) (ast.Expr, string) {
+	c, ok := unparen(e).(*ast.CallExpr)
+	if !ok || len(c.Args) != 0 {
+		return nil, ""
+	}
+	ci := f.info.CallOf(c)
+	if ci == nil || ci.Recv == nil {
+		return nil, ""
+	}
+	switch {
+	case isStdMethod(ci.Fn, "prelude", "Map", "values"):
+		return ci.Recv, "Map_values_seq"
+	case isStdMethod(ci.Fn, "prelude", "Map", "keys"):
+		return ci.Recv, "Map_keys_seq"
+	}
+	return nil, ""
+}
+
+// toLowerRecv reports a call `s.to_lower()` on a Str: its receiver.
+func (f *fnGen) toLowerRecv(e ast.Expr) ast.Expr {
+	c, ok := unparen(e).(*ast.CallExpr)
+	if !ok || len(c.Args) != 0 {
+		return nil
+	}
+	if ci := f.info.CallOf(c); ci != nil && ci.Recv != nil && isStdMethod(ci.Fn, "prelude", "Str", "to_lower") {
+		return ci.Recv
+	}
+	return nil
+}
+
 // hofInline lowers `xs.map/filter/fold/any/all/find(<closure literal>)`
 // to a loop with the closure body inlined. ok is false when the call does
 // not qualify.
@@ -567,13 +599,21 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 	et := f.goType(elemT)
 	r := f.rt()
 	var src, init string
+	// `m.values()` or `m.keys()` as the receiver: the loop walks the map
+	// in place instead of building the list (seq names the runtime
+	// iterator, which marks the elements it yields as the list would)
+	recvE := ci.Recv
+	mapE, seq := f.mapView(ci.Recv)
+	if mapE != nil {
+		recvE = mapE
+	}
 	// the receiver is only read by the loop: a borrow (own.go); the
 	// inlined body cannot write it unless it names its binding
 	recv := func() string {
-		if f.borrowOK(ci.Recv, x) {
-			return f.borrow(ci.Recv)
+		if f.borrowOK(recvE, x) {
+			return f.borrow(recvE)
 		}
-		return f.val(ci.Recv)
+		return f.val(recvE)
 	}
 	if fo.Name == "fold" {
 		codes := f.operands(2, func(i int) string {
@@ -589,8 +629,14 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 	sv := f.tmp("src")
 	f.line("%s := %s", sv, src)
 	e := f.tmp("e")
+	header := fmt.Sprintf("_, %s := range %s.Items()", e, sv)
+	length := fmt.Sprintf("len(%s.Items())", sv)
+	if mapE != nil {
+		header = fmt.Sprintf("%s := range %s%s(%s)", e, r, seq, sv)
+		length = fmt.Sprintf("%s.Len()", sv)
+	}
 	loop := func(body func()) {
-		f.line("for _, %s := range %s.Items() {", e, sv)
+		f.line("for %s {", header)
 		f.ind++
 		body()
 		f.ind--
@@ -600,7 +646,7 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 	case "map":
 		ut := f.goType(want.Result)
 		out := f.tmp("out")
-		f.line("%s := make([]%s, 0, len(%s.Items()))", out, ut, sv)
+		f.line("%s := make([]%s, 0, %s)", out, ut, length)
 		loop(func() {
 			v := f.tmp("r")
 			f.line("var %s %s", v, ut)
