@@ -616,6 +616,9 @@ func (s *fstate) instr(v *ssa.Value) {
 			s.set(v, s.def1(false, "mvn $d0, $u0", a))
 		}
 	case ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
+		if s.eqAggregate(v) {
+			return
+		}
 		if v.Args[0].Type.Kind == ssa.KUnit {
 			r := map[ssa.Op]int64{ssa.OpEq: 1, ssa.OpNe: 0, ssa.OpLt: 0, ssa.OpLe: 1, ssa.OpGt: 0, ssa.OpGe: 1}[v.Op]
 			s.set(v, s.imm(r))
