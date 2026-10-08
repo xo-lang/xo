@@ -1,1 +1,0 @@
-main.xo:4:11: the SSA builder does not support `scope` and tasks

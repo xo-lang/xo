@@ -127,6 +127,11 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
+	if *seed != 0 && *backend != "go" {
+		// native builds run tasks on the real scheduler (decision 0068)
+		fmt.Fprintln(stderr, "xo run: --seed needs the Go backend (native builds use the real scheduler)")
+		return 2
+	}
 	rest := fl.Args()
 	dir := "."
 	var progArgs []string

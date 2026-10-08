@@ -1,0 +1,11 @@
+// Mutex.with_read inside Mutex.with_read on the same mutex in one task
+// faults (XO-F004): a nested read could deadlock behind a waiting writer.
+fn main(os: Os) {
+  let m = Mutex[List[Int]].new([1, 2, 3])
+  let n = m.with_read(fn(l) { l.len() })
+  os.stdio.println("len ${n}")
+  os.stdio.println("re-entrant with_read next")
+  m.with_read(fn(l) {
+    m.with_read(fn(l2) { l2.len() })
+  })
+}

@@ -1,0 +1,143 @@
+// channels (core 7.3): buffered and unbuffered, close, `for x in ch`,
+// try_send and try_recv, values that cross threads
+struct Job {
+  id: Int
+  name: Str
+}
+
+fn produce(ch: Chan[Int], n: Int) {
+  for i in 1..=n {
+    ch.send(i)
+  }
+  ch.close()
+}
+
+fn main(os: Os) {
+  // a closed empty channel: the body never runs
+  let empty = Chan[Int].new()
+  empty.close()
+  var runs = 0
+  for _ in empty {
+    runs += 1
+  }
+  os.stdio.println("closed empty ran ${runs}")
+
+  // buffered values are drained after close
+  let buffered = Chan[Int].new(cap: 3)
+  buffered.send(1)
+  buffered.send(2)
+  buffered.send(3)
+  buffered.close()
+  var drained = 0
+  for v in buffered {
+    drained += v
+  }
+  os.stdio.println("drained ${drained} then ${buffered.recv() ?? -1}")
+
+  // producer and consumer on an unbuffered channel
+  let ch = Chan[Int].new()
+  let sum = scope s {
+    s.spawn(fn() { produce(ch, 1000) })
+    var total = 0
+    while {
+      match ch.recv() {
+        Some(v) => total += v
+        None => break
+      }
+    }
+    total
+  }
+  os.stdio.println("sum ${sum} after close ${ch.recv().is_none()}")
+
+  // structs with strings cross; a struct pattern in the loop
+  let jobs = Chan[Job].new(cap: 2)
+  let names = scope s {
+    s.spawn(fn() {
+      for i in 1..=4 {
+        jobs.send(Job{id: i, name: "job${i}"})
+      }
+      jobs.close()
+    })
+    var out = ""
+    for j in jobs {
+      out = out + "${j.id}:${j.name},"
+    }
+    out
+  }
+  os.stdio.println("jobs ${names}")
+
+  // many senders, one receiver; a results channel per worker pool
+  let work = Chan[Int].new(cap: 8)
+  let results = Chan[List[Int]].new(cap: 4)
+  let got = scope s {
+    for w in 0..4 {
+      s.spawn(fn() {
+        var mine: List[Int] = []
+        for v in work {
+          mine.push(v * w)
+        }
+        results.send(mine)
+      })
+    }
+    for i in 0..200 {
+      work.send(i)
+    }
+    work.close()
+    var n = 0
+    for _ in 0..4 {
+      let l = results.recv() ?? []
+      n += l.len()
+    }
+    n
+  }
+  os.stdio.println("pool received ${got}")
+
+  // tuple pattern, continue, and break leave the rest in the channel
+  let pairs = Chan[(Int, Str)].new(cap: 8)
+  for i in 0..6 {
+    pairs.send((i, "p${i}"))
+  }
+  var seen = ""
+  for (i, p) in pairs {
+    if i == 1 {
+      continue
+    }
+    if i == 4 {
+      break
+    }
+    seen = seen + p
+  }
+  os.stdio.println("seen ${seen} left ${pairs.len()}")
+
+  // try_send and try_recv never block
+  let small = Chan[Int].new(cap: 1)
+  os.stdio.println("try_send ${small.try_send(1)} ${small.try_send(2)} len ${small.len()}")
+  os.stdio.println("try_recv ${small.try_recv() ?? 0} ${small.try_recv() ?? 0}")
+
+  // ping pong
+  let ping = Chan[Str].new()
+  let pong = Chan[Str].new()
+  let last = scope s {
+    s.spawn(fn() {
+      for m in ping {
+        pong.send(m + "!")
+      }
+    })
+    var m = "x"
+    for _ in 0..5 {
+      ping.send(m)
+      m = pong.recv() ?? "?"
+    }
+    ping.close()
+    m
+  }
+  os.stdio.println("ping ${last}")
+
+  // a value sent and still used by the sender
+  let shared = ["a", "b"]
+  let back = Chan[List[Str]].new(cap: 1)
+  back.send(shared)
+  var other = back.recv() ?? []
+  other.push("c")
+  os.stdio.println("shared ${shared.len()} other ${other.len()}")
+}

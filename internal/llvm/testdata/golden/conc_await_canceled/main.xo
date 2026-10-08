@@ -1,0 +1,11 @@
+// awaiting a task that was canceled before it finished faults, unless
+// the awaiting task is canceled too
+fn main(os: Os) {
+  let never = Chan[Int].new()
+  scope s {
+    let t = s.spawn(fn() { never.recv() ?? 0 })
+    s.cancel()
+    os.stdio.println("canceled; await next")
+    os.stdio.println("got ${t.await}")
+  }
+}

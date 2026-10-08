@@ -39,8 +39,8 @@ func (g *gen) layoutPath(t *ssa.Type, path map[*ssa.Type]bool) []bool {
 	switch t.Kind {
 	case ssa.KUnit, ssa.KCap:
 		l = []bool{}
-	case ssa.KInt, ssa.KBool, ssa.KList, ssa.KBox:
-		// a List or Box is a pointer: its element may contain the type
+	case ssa.KInt, ssa.KBool, ssa.KList, ssa.KBox, ssa.KHandle:
+		// a List, Box, or handle is a pointer: its element may contain the type
 		// that contains it
 		l = []bool{false}
 	case ssa.KFloat:
@@ -124,7 +124,7 @@ func (g *gen) heapLeaves(t *ssa.Type, base int, out *[]leaf) {
 		return
 	}
 	switch t.Kind {
-	case ssa.KStr, ssa.KList, ssa.KEnum, ssa.KFunc, ssa.KBox:
+	case ssa.KStr, ssa.KList, ssa.KEnum, ssa.KFunc, ssa.KBox, ssa.KHandle:
 		*out = append(*out, leaf{base, t})
 	case ssa.KStruct, ssa.KTuple:
 		n := len(t.Elems)

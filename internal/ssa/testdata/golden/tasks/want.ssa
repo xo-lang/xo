@@ -1,0 +1,291 @@
+type Result[Int, E] = enum { Ok(v: Int) | Err(e: E) }
+type E = enum { Bad }
+type Int? = enum { None | Some(v: Int) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Int] = call list.new
+  v2: Int = funcaddr xo.droplist[List[Int]]
+  v3: List[List[Int]] = call list.new
+  v4: List[List[Int]] = call list.push, v3, v1
+  share v4
+  v6: Mutex[List[Int]] = call rt.mutex_new, v4, v2
+  v7: fn(List[Int]) -> ((), List[Int]) = closure main.fn1
+  v8: Str = const "main.xo:34"
+  v9: List[List[Int]] = call rt.mutex_lock, v6, v8
+  v10: Bool = call rt.unwinding
+  br v10, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  v13: Int = const 0
+  v14: List[Int] = call list.index, v9, v13
+  v15: ((), List[Int]) = callv v7, v14
+  v16: Bool = call rt.unwinding
+  br v16, b4(), b5()
+b3:  ; preds b1, b4, b6
+  v18: () = tuple
+  ret v18
+b4:  ; preds b2
+  v20: () = call rt.mutex_unlock, v6, v9
+  jump b3()
+b5:  ; preds b2
+  v22: () = field 0, v15
+  v23: List[Int] = field 1, v15
+  v24: Int = const 0
+  v25: List[List[Int]] = call list.set, v9, v24, v23
+  share v25
+  v27: () = call rt.mutex_unlock, v6, v25
+  v28: Int = funcaddr xo.droplist[Int]
+  v29: Int = const 1
+  v30: Str = const "main.xo:35"
+  v31: Chan[Int] = call rt.chan_new, v29, v28, v30
+  v32: () = call rt.chan_close, v31
+  v33: Result[Int, E] = call run, v31
+  v34: Bool = call rt.unwinding
+  br v34, b6(), b7()
+b6:  ; preds b5
+  jump b3()
+b7:  ; preds b5
+  v37: Int = tag v33
+  v38: Int = const 0
+  v39: Bool = eq v37, v38
+  br v39, b10(), b9()
+b8:  ; preds b10, b12
+  v41: () = tuple
+  ret v41
+b9:  ; preds b7
+  v43: Int = tag v33
+  v44: Int = const 1
+  v45: Bool = eq v43, v44
+  br v45, b12(), b11()
+b10:  ; preds b7
+  v47: Int = payload 0.0, v33
+  v48: Stdio = cap stdio, v0
+  v49: Str = call str.of_int, v47
+  v50: () = call Stdio.println, v48, v49
+  jump b8()
+b11:  ; preds b9
+  unreachable
+b12:  ; preds b9
+  v53: E = payload 1.0, v33
+  v54: Stdio = cap stdio, v0
+  v55: Str = const "failed"
+  v56: () = call Stdio.println, v54, v55
+  jump b8()
+}
+
+func xo.droplist[List[Int]](v0: List[List[Int]]) -> () {
+b0(v0: List[List[Int]]):
+  v1: () = tuple
+  ret v1
+}
+
+func main.fn1(v0: fn(List[Int]) -> ((), List[Int]), v1: List[Int]) -> ((), List[Int]) captures () {
+b0(v0: fn(List[Int]) -> ((), List[Int]), v1: List[Int]):
+  v2: Int = const 1
+  v3: List[Int] = call list.push, v1, v2
+  v4: () = tuple
+  v5: ((), List[Int]) = tuple v4, v3
+  ret v5
+}
+
+func xo.droplist[Int](v0: List[Int]) -> () {
+b0(v0: List[Int]):
+  v1: () = tuple
+  ret v1
+}
+
+func run(v0: Chan[Int]) -> Result[Int, E] {
+b0(v0: Chan[Int]):
+  v1: Scope = call rt.scope_open
+  v2: fn() -> Result[Int, E] = closure run.fn2
+  v3: List[fn() -> Result[Int, E]] = call list.new
+  v4: List[fn() -> Result[Int, E]] = call list.push, v3, v2
+  share v4
+  v6: Int = funcaddr xo.run[Task[Int, E]]
+  v7: Int = funcaddr xo.droplist[Result[Int, E]]
+  v8: Int = const 0
+  v9: Int = const 0
+  v10: Str = const "main.xo:26"
+  v11: Task[Int, E] = call rt.task_spawn, v1, v4, v6, v7, v8, v9, v10
+  v12: fn() -> Int = closure run.fn3, v0
+  v13: List[fn() -> Int] = call list.new
+  v14: List[fn() -> Int] = call list.push, v13, v12
+  share v14
+  v16: Int = funcaddr xo.run[Task[Int, ()]]
+  v17: Int = funcaddr xo.droplist[Int]
+  v18: Int = const 2
+  v19: Int = const -1
+  v20: Str = const "main.xo:27"
+  v21: Task[Int, ()] = call rt.task_spawn, v1, v14, v16, v17, v18, v19, v20
+  v22: Str = const "main.xo:28"
+  v23: List[Int] = call rt.task_await, v21, v22
+  v24: Bool = call rt.unwinding
+  br v24, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  v27: Int = const 0
+  v28: Int = call list.index, v23, v27
+  v29: Int = const 0
+  v30: Int = call rt.scope_close, v1, v29
+  v31: Int = const 1
+  v32: Bool = eq v30, v31
+  br v32, b4(), b5()
+b3:  ; preds b1
+  v34: Int = const 2
+  v35: Int = call rt.scope_close, v1, v34
+  v36: Int = const 1
+  v37: Bool = eq v35, v36
+  br v37, b7(), b8()
+b4:  ; preds b2
+  jump b6()
+b5:  ; preds b2
+  v40: Result[Int, E] = variant 0, v28
+  ret v40
+b6:  ; preds b4, b7
+  v42: Int = call rt.scope_fail_site, v1
+  v43: Int = const 0
+  v44: Bool = eq v42, v43
+  br v44, b10(), b11()
+b7:  ; preds b3
+  jump b6()
+b8:  ; preds b3
+  jump b9()
+b9:  ; preds b8
+  v48: Int = const 0
+  v49: Result[Int, E] = variant 0, v48
+  ret v49
+b10:  ; preds b6
+  v51: Task[Int, E] = call rt.scope_fail_task, v1
+  v52: List[Result[Int, E]] = call rt.task_result, v51
+  v53: Int = const 0
+  v54: Result[Int, E] = call list.index, v52, v53
+  v55: E = payload 1.0, v54
+  v56: Result[Int, E] = variant 1, v55
+  ret v56
+b11:  ; preds b6
+  unreachable
+}
+
+func run.fn2(v0: fn() -> Result[Int, E]) -> Result[Int, E] captures () {
+b0(v0: fn() -> Result[Int, E]):
+  v1: Int = const 2
+  v2: Result[Int, E] = call fails, v1
+  jump b1()
+b1:  ; preds b0
+  ret v2
+}
+
+func xo.run[Task[Int, E]](v0: List[fn() -> Result[Int, E]], v1: Task[Int, E]) -> () {
+b0(v0: List[fn() -> Result[Int, E]], v1: Task[Int, E]):
+  v2: Int = const 0
+  v3: fn() -> Result[Int, E] = call list.index, v0, v2
+  v4: Result[Int, E] = callv v3
+  v5: Bool = call rt.unwinding
+  br v5, b1(), b2()
+b1:  ; preds b0
+  v7: () = call rt.task_unwound, v1
+  v8: () = tuple
+  ret v8
+b2:  ; preds b0
+  v10: Int = tag v4
+  v11: Int = const 1
+  v12: Bool = eq v10, v11
+  v13: List[Result[Int, E]] = call list.new
+  v14: List[Result[Int, E]] = call list.push, v13, v4
+  share v14
+  v16: () = call rt.task_done, v1, v14, v12
+  v17: () = tuple
+  ret v17
+}
+
+func xo.droplist[Result[Int, E]](v0: List[Result[Int, E]]) -> () {
+b0(v0: List[Result[Int, E]]):
+  v1: () = tuple
+  ret v1
+}
+
+func run.fn3(v0: fn() -> Int) -> Int captures (Chan[Int]) {
+b0(v0: fn() -> Int):
+  v1: Chan[Int] = capture 0, v0
+  v2: Int = call sum, v1
+  v3: Bool = call rt.unwinding
+  br v3, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  ret v2
+b3:  ; preds b1
+  v7: Int = const 0
+  ret v7
+}
+
+func xo.run[Task[Int, ()]](v0: List[fn() -> Int], v1: Task[Int, ()]) -> () {
+b0(v0: List[fn() -> Int], v1: Task[Int, ()]):
+  v2: Int = const 0
+  v3: fn() -> Int = call list.index, v0, v2
+  v4: Int = callv v3
+  v5: Bool = call rt.unwinding
+  br v5, b1(), b2()
+b1:  ; preds b0
+  v7: () = call rt.task_unwound, v1
+  v8: () = tuple
+  ret v8
+b2:  ; preds b0
+  v10: Bool = const false
+  v11: List[Int] = call list.new
+  v12: List[Int] = call list.push, v11, v4
+  share v12
+  v14: () = call rt.task_done, v1, v12, v10
+  v15: () = tuple
+  ret v15
+}
+
+func fails(v0: Int) -> Result[Int, E] {
+b0(v0: Int):
+  v1: Int = const 1
+  v2: Bool = gt v0, v1
+  br v2, b2(), b3()
+b1:  ; preds b3
+  v4: () = tuple
+  v5: Result[Int, E] = variant 0, v0
+  ret v5
+b2:  ; preds b0
+  v7: E = variant 0
+  v8: Result[Int, E] = variant 1, v7
+  ret v8
+b3:  ; preds b0
+  v10: () = tuple
+  jump b1()
+}
+
+func sum(v0: Chan[Int]) -> Int {
+b0(v0: Chan[Int]):
+  v1: Int = const 0
+  jump b1(v1)
+b1(v3: Int):  ; preds b0, b2
+  v4: List[Int] = call rt.chan_recv, v0
+  v5: Bool = call rt.unwinding
+  br v5, b4(), b5()
+b2:  ; preds b5
+  v7: Int = payload 1.0, v14
+  v8: Int = add v3, v7 @ main.xo:19:5
+  v9: () = tuple
+  jump b1(v8)
+b3:  ; preds b5
+  ret v3
+b4:  ; preds b1
+  jump b6()
+b5:  ; preds b1
+  v13: (List[Int], Int?) = call list.pop, v4
+  v14: Int? = field 1, v13
+  v15: Int = tag v14
+  v16: Int = const 1
+  v17: Bool = eq v15, v16
+  br v17, b2(), b3()
+b6:  ; preds b4
+  v19: Int = const 0
+  ret v19
+}

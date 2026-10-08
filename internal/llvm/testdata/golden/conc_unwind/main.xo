@@ -1,0 +1,130 @@
+// cancellation unwinds a task (core 7.2): through calls that hold heap
+// values, out of nested scopes (whose tasks are canceled too), out of
+// Mutex.with (the lock is released and the value is left as it was),
+// and from await; a failed child stops the unwinding of its scope's body
+enum Fail {
+  Boom(code: Int)
+}
+
+struct State {
+  n: Int
+  log: List[Str]
+}
+
+fn level3(ch: Chan[Int], tag: Str) -> Str {
+  let parts = [tag, "3"]
+  let v = ch.recv() ?? -1
+  "${parts.len()}:${v}"
+}
+
+fn level2(ch: Chan[Int], tag: Str) -> Str {
+  let mine = "${tag}-2"
+  let r = level3(ch, mine)
+  r + mine
+}
+
+fn level1(ch: Chan[Int], done: Atomic[Int]) -> Int {
+  let s = level2(ch, "a")
+  done.add(1)
+  s.len()
+}
+
+fn nested(ch: Chan[Int], started: Atomic[Int]) -> Int {
+  scope s {
+    for _ in 0..3 {
+      s.spawn(fn() {
+        started.add(1)
+        ch.recv() ?? 0
+      })
+    }
+    started.add(1)
+    ch.recv() ?? 0
+  }
+}
+
+fn fail_soon() -> Int ! Fail {
+  Err(Fail.Boom(code: 7))
+}
+
+fn guarded(ch: Chan[Int]) -> Int ! Fail {
+  scope s {
+    s.spawn(fn() { fail_soon() })
+    let t = s.spawn(fn() { ch.recv() ?? 0 })
+    t.await
+  }
+}
+
+fn main(os: Os) {
+  let never = Chan[Int].new()
+  let done = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..4 {
+      s.spawn_background(fn() { level1(never, done) })
+    }
+  }
+  os.stdio.println("deep calls unwound, finished ${done.get()}")
+
+  let started = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..2 {
+      s.spawn_background(fn() { nested(never, started) })
+    }
+    // wait until every task of the nested scopes started
+    while started.get() < 8 {
+      let _x = 1
+    }
+  }
+  os.stdio.println("nested scopes unwound, started ${started.get()}")
+
+  let m = Mutex[State].new(State{n: 1, log: ["start"]})
+  let entered = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() {
+      m.with(fn(var st) {
+        st.n = 100
+        st.log.push("changed")
+        entered.add(1)
+        never.recv() ?? 0
+      })
+    })
+    while entered.get() < 1 {
+      let _x = 1
+    }
+  }
+  let (n, l) = m.with(fn(st) { (st.n, st.log.len()) })
+  os.stdio.println("mutex released, value kept: n ${n} log ${l}")
+
+  let reading = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() {
+      m.with_read(fn(st) {
+        reading.add(1)
+        never.recv() ?? st.n
+      })
+    })
+    while reading.get() < 1 {
+      let _x = 1
+    }
+  }
+  m.with(fn(var st) { st.n += 1 })
+  os.stdio.println("read lock released: n ${m.with_read(fn(st) { st.n })}")
+
+  let waiting = Atomic[Int].new(0)
+  scope s {
+    let blocker = s.spawn(fn() { never.recv() ?? 0 })
+    s.spawn_background(fn() {
+      waiting.add(1)
+      blocker.await + 1
+    })
+    while waiting.get() < 1 {
+      let _x = 1
+    }
+    s.cancel()
+  }
+  os.stdio.println("await unwound")
+
+  match guarded(never) {
+    Ok(v) => os.stdio.println("guarded ${v}")
+    Err(Boom(code)) => os.stdio.println("guarded failed ${code}")
+  }
+}

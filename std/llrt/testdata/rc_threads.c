@@ -4,8 +4,8 @@
 // optimized without it. It includes the runtime and plays the part of
 // generated code: the inline count paths of internal/llvm and
 // internal/arm64 are xo_rc_inc and xo_rc_dec here, the share walkers are
-// written by hand, and pthreads stand in for tasks (no Xo construct
-// starts a thread yet).
+// written by hand, and pthreads stand in for tasks (tasks.c tests the
+// task runtime itself).
 //
 // Each test hands shared values to several threads, which retain,
 // release, copy on write, append to, and drop them; at the end every

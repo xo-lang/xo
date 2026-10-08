@@ -46,6 +46,14 @@ type builder struct {
 	queue  []func()         // bodies to build
 	nclos  int
 	thunks map[string]*Func // named functions used as values, by instance key
+
+	// concurrency (build_conc.go): conc builds with unwinding checks;
+	// needConc records that the program uses a concurrency construct
+	conc     bool
+	needConc bool
+	checks   []unwindCheck
+	sites    map[*ast.CallExpr]int           // spawns that can fail a scope
+	boundTo  map[*ast.CallExpr]*check.VarObj // spawn calls bound with let
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -68,7 +76,9 @@ type builder struct {
 // `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
 // `if let x = opt` shorthand, closures and named functions as values
 // (decision 0048), and generics (monomorphized: one Func per list of
-// type arguments), and recursive types (recursive fields are boxed).
+// type arguments), and recursive types (recursive fields are boxed), and
+// structured concurrency (decision 0068, build_conc.go): scopes, tasks,
+// channels, select without `after`, Mutex, and Atomic.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -83,8 +93,25 @@ type Options struct {
 
 // BuildOpts is Build with options.
 func BuildOpts(res *check.Result, opts Options) (*Module, error) {
+	b, err := buildModule(res, opts, false)
+	if !b.needConc {
+		if err != nil {
+			return nil, err
+		}
+		return b.mod, nil
+	}
+	// the program uses tasks: build again with unwinding checks
+	b, err = buildModule(res, opts, true)
+	if err != nil {
+		return nil, err
+	}
+	return b.mod, nil
+}
+
+func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	info := res.Info()
-	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{}}
+	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{},
+		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{}}
 	var mainFo *check.FuncObj
 	for _, m := range res.Modules {
 		if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
@@ -93,7 +120,7 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 		}
 	}
 	if mainFo == nil {
-		return nil, Errors{{Msg: "no `main` function in the root module"}}
+		return b, Errors{{Msg: "no `main` function in the root module"}}
 	}
 	if failErr(mainFo.Err) != nil {
 		b.unsupported(mainFo.Decl, "`main` that returns an error (declare `fn main(os: Os)` and handle errors with match)")
@@ -105,12 +132,15 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 		next()
 	}
 	if len(b.errs) > 0 {
-		return nil, b.errs
+		return b, b.errs
+	}
+	if b.conc {
+		b.pruneUnwind()
 	}
 	for _, f := range b.mod.Funcs {
 		f.cleanup()
 	}
-	return b.mod, nil
+	return b, nil
 }
 
 func (b *builder) pos(n ast.Node) string {
@@ -207,6 +237,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 		name := r.String()
 		switch obj.Kind {
 		case check.KStruct:
+			if x := b.concType(obj, r, at); x != nil {
+				return x
+			}
 			if obj.Module != nil && obj.Module.IsStd {
 				break
 			}
@@ -473,6 +506,11 @@ type fn struct {
 	paramVar   map[*Value]*check.VarObj
 	loops      []*loopCtx
 	varParams  []*check.VarObj // bindings of `var` parameters, returned updated
+	// packVar: the function returns its result and its `var` parameters
+	// as one tuple (a closure given to Mutex.with, build_conc.go)
+	packVar bool
+	scopes  []*scopeCtx // the scopes open around the current code
+	unwindB *Block      // the function's unwind block (lazy)
 
 	// res is the success type, errT the error type of a function that
 	// can fail (nil otherwise); its SSA result is then Result[res, errT].
@@ -497,6 +535,7 @@ func (s *fn) apply(t check.Type) check.Type {
 type loopCtx struct {
 	label     string
 	brk, cont *Block
+	scopes    int // the scopes open around the loop (left by break and continue)
 }
 
 // newFn starts building the body of f.
@@ -533,6 +572,7 @@ func (b *builder) body(fo *check.FuncObj, f *Func, sub *check.Subst) {
 	}
 	v := s.block(fo.Decl.Body)
 	s.ret(v, fo.Decl.Body)
+	s.finishFn()
 }
 
 // ---------------------------------------------------------------------------
@@ -690,7 +730,7 @@ func (s *fn) isDead() bool {
 // success type (converted: Some wrapping, unit) or, in a function that
 // can fail, its Result as is; a success value is then wrapped in `Ok`.
 func (s *fn) ret(v *Value, at ast.Node) {
-	want := s.f.Results[0]
+	want := s.resultT()
 	if s.isDead() {
 		s.add(OpUnreachable, nil, nil)
 		s.dead()
@@ -708,8 +748,21 @@ func (s *fn) ret(v *Value, at ast.Node) {
 	for _, vo := range s.varParams {
 		args = append(args, s.read(vo))
 	}
+	if s.packVar {
+		args = []*Value{s.add(OpTuple, s.f.Results[0], nil, args...)}
+	}
+	s.closeScopes(0)
 	s.add(OpReturn, nil, nil, args...)
 	s.dead()
+}
+
+// resultT is the type the function's body returns (its result; for a
+// packed closure the first element of its tuple).
+func (s *fn) resultT() *Type {
+	if s.packVar {
+		return s.f.Results[0].Elems[0]
+	}
+	return s.f.Results[0]
 }
 
 // ---------------------------------------------------------------------------
@@ -723,7 +776,14 @@ func (s *fn) typeOf(e ast.Expr) *Type {
 	if check.IsNever(t) {
 		return s.b.mod.Builtin(KUnit)
 	}
-	return s.b.typ(s.apply(t), e)
+	t = s.apply(t)
+	if rt, et, ok := resultParts(t); ok && check.IsNever(et) {
+		// `T ! Never` is T: the type a closure body is checked against
+		// when it is passed for `fn() -> T ! E` and E is Never (spawn,
+		// Mutex.with)
+		t = rt
+	}
+	return s.b.typ(t, e)
 }
 
 // checkType is the checker type of e in context.

@@ -1,0 +1,41 @@
+// the lowering of core 7 (decision 0068): a scope with an awaited task,
+// a failing child that is not awaited (the scope returns its error), a
+// channel loop, Mutex.with with a `var` parameter, and the unwinding
+// checks after cancellation points and calls that may unwind
+enum E {
+  Bad
+}
+
+fn fails(n: Int) -> Int ! E {
+  if n > 1 {
+    return Err(E.Bad)
+  }
+  n
+}
+
+fn sum(ch: Chan[Int]) -> Int {
+  var t = 0
+  for v in ch {
+    t += v
+  }
+  t
+}
+
+fn run(ch: Chan[Int]) -> Int ! E {
+  scope s {
+    s.spawn(fn() { fails(2) })
+    let a = s.spawn(fn() { sum(ch) })
+    a.await
+  }
+}
+
+fn main(os: Os) {
+  let m = Mutex[List[Int]].new([])
+  m.with(fn(var l) { l.push(1) })
+  let ch = Chan[Int].new(cap: 1)
+  ch.close()
+  match run(ch) {
+    Ok(v) => os.stdio.println("${v}")
+    Err(_) => os.stdio.println("failed")
+  }
+}

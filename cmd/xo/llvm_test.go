@@ -48,4 +48,9 @@ func TestBuildRunLLVM(t *testing.T) {
 	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:11: the SSA builder does not support Map") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
+	// the deterministic scheduler is the Go backend's (decision 0068)
+	errOut.Reset()
+	if code := run([]string{"run", "--backend=llvm", "--seed=3", src}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "--seed needs the Go backend") {
+		t.Fatalf("seed: exit %d stderr %s", code, errOut.String())
+	}
 }

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+select hello
+first 1 left 0 1
+closed true
+sent
+received 7
+sum 4950
+background select canceled
+--- stderr

@@ -111,6 +111,19 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		g.funcRC(&b, kind, sym)
 	case ssa.KBox:
 		g.boxRC(&b, kind, sym, t)
+	case ssa.KHandle:
+		// a runtime object (decision 0068): shared from its creation, so
+		// marking it does nothing; at zero the runtime frees it
+		switch kind {
+		case "dup":
+			b.WriteString(g.incText("x0", "x1", "w2", sym, true))
+		case "drop":
+			free := g.local(fmt.Sprintf("xo_%s%d_free", kind, id))
+			b.WriteString(g.decText("x0", "x1", "w2", sym, free, ""))
+			fmt.Fprintf(&b, "%s:\n\tb %s\n", free, g.sym("xo_h_free"))
+		default:
+			b.WriteString("\tret\n")
+		}
 	case ssa.KStr, ssa.KList:
 		if kind == "dup" {
 			b.WriteString(g.incText("x0", "x1", "w2", sym, true))
@@ -228,7 +241,7 @@ func (g *gen) leafWords(t *ssa.Type) int {
 // function value leaves are counted inline; lbl prefixes the labels of
 // the inline code.
 func (g *gen) leafCall(b *strings.Builder, kind string, l leaf, base int, lbl string) {
-	if kind == "dup" && (l.t.Kind == ssa.KStr || l.t.Kind == ssa.KList || l.t.Kind == ssa.KBox) {
+	if kind == "dup" && (l.t.Kind == ssa.KStr || l.t.Kind == ssa.KList || l.t.Kind == ssa.KBox || l.t.Kind == ssa.KHandle) {
 		fmt.Fprintf(b, "\tldr x9, [sp, #%d]\n", base+8*l.off)
 		b.WriteString(g.incText("x9", "x10", "w11", lbl, false))
 		return

@@ -7,7 +7,9 @@ Status: Accepted (2026-10-08). Implemented in `std/llrt/xo_rt.c`
 `internal/arm64/isel.go` (`inc`), `internal/arm64/closures.go`
 (`decOrDefer`, `envShare`), `internal/arm64/boxes.go` (`boxShare`),
 `internal/ssa/share.go` (`InsertShareProbes`). Evidence:
-`bench/results/rc-shared-2026-10-08.md`.
+`bench/results/rc-shared-2026-10-08.md`. Update 2026-10-08: tasks lower
+natively (decision 0068) and emit `OpShare` at every crossing listed in
+item 3 (spawned closures, task results, channel sends, Mutex values).
 
 ## Context
 Decision 0046 made native memory reference counted with plain (non

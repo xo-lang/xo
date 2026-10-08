@@ -1,0 +1,176 @@
+use std/task
+
+enum JobErr {
+  Bad(id: Int)
+} derive Display
+
+struct Item {
+  name: Str
+  tags: List[Str]
+}
+
+fn square(n: Int) -> Int { n * n }
+
+fn show(e: JobErr) -> Str {
+  match e {
+    Bad(id) => "Bad(id: ${id})"
+  }
+}
+
+fn job(id: Int) -> Int ! JobErr {
+  if id == 2 {
+    return Err(JobErr.Bad(id: id))
+  }
+  id * 10
+}
+
+// a failing child that is not awaited fails the scope: its error comes
+// out of the scope as if by `?`
+fn run_all(ch: Chan[Int]) -> Int ! JobErr {
+  scope s {
+    s.spawn(fn() { job(2) })
+    // canceled when the child fails: the receive unwinds
+    let v = ch.recv() ?? 0
+    v
+  }
+}
+
+fn tree(depth: Int) -> Int {
+  if depth == 0 {
+    return 1
+  }
+  scope s {
+    let a = s.spawn(fn() { tree(depth - 1) })
+    let b = s.spawn(fn() { tree(depth - 1) })
+    a.await + b.await
+  }
+}
+
+fn first_big(xs: List[Int]) -> Int {
+  for x in xs {
+    let r = scope s {
+      let t = s.spawn(fn() { square(x) })
+      t.await
+    }
+    if r > 50 {
+      return r
+    }
+  }
+  -1
+}
+
+fn main(os: Os) {
+  // fan out and await in order
+  let total = scope s {
+    var hs: List[Task[Int, Never]] = []
+    for i in 0..100 {
+      hs.push(s.spawn(fn() { square(i) }))
+    }
+    var sum = 0
+    for h in hs {
+      sum += h.await
+    }
+    sum
+  }
+  os.stdio.println("total ${total}")
+
+  // values captured by tasks and returned from them cross threads
+  let items = [Item{name: "a", tags: ["x", "y"]}, Item{name: "b", tags: []}]
+  let names = scope s {
+    let t1 = s.spawn(fn() { "${items[0].name}:${items[0].tags.len()}" })
+    let t2 = s.spawn(fn() {
+      var copy = items
+      copy.push(Item{name: "c", tags: ["z"]})
+      copy.len()
+    })
+    "${t1.await} ${t2.await} ${items.len()}"
+  }
+  os.stdio.println("names ${names}")
+
+  // nested scopes in tasks
+  os.stdio.println("tree ${tree(6)}")
+
+  // discarded handles: the scope waits for them
+  let hits = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..50 {
+      s.spawn(fn() { hits.add(1) })
+    }
+  }
+  os.stdio.println("hits ${hits.get()}")
+
+  // background tasks are canceled when the body completes
+  let never = Chan[Int].new()
+  let polls = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() {
+      for v in never {
+        polls.add(v)
+      }
+    })
+    s.spawn_background(fn() {
+      while !task.is_canceled() {
+        polls.add(0)
+      }
+    })
+    polls.add(1)
+  }
+  os.stdio.println("background stopped ${polls.get()}")
+
+  // s.cancel() cancels the tasks, not the body
+  let after = scope s {
+    s.spawn(fn() {
+      for v in never {
+        polls.add(v)
+      }
+    })
+    s.cancel()
+    "body goes on ${task.is_canceled()}"
+  }
+  os.stdio.println(after)
+
+  // a group spawns in the scope that made it
+  let g_total = scope s {
+    let g = s.group()
+    let h = g.spawn(fn() { 41 })
+    g.spawn_background(fn() { polls.add(0) })
+    h.await + 1
+  }
+  os.stdio.println("group ${g_total}")
+
+  // an awaited error is consumed
+  let handled = scope s {
+    let t = s.spawn(fn() { job(2) })
+    match t.await {
+      Ok(v) => v
+      Err(e) => {
+        os.stdio.println("awaited error ${show(e)}")
+        -1
+      }
+    }
+  }
+  os.stdio.println("handled ${handled}")
+
+  // an error that is not awaited fails the scope
+  let ch = Chan[Int].new()
+  match run_all(ch) {
+    Ok(v) => os.stdio.println("run_all ${v}")
+    Err(e) => os.stdio.println("run_all failed: ${show(e)}")
+  }
+
+  // return out of a scope inside a loop
+  os.stdio.println("first_big ${first_big([2, 5, 9, 11])}")
+
+  // break out of a scope
+  var found = 0
+  for i in 0..10 {
+    scope s {
+      let t = s.spawn(fn() { i * 3 })
+      if t.await > 12 {
+        found = i
+        break
+      }
+    }
+  }
+  os.stdio.println("break ${found}")
+}

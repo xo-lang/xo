@@ -1,0 +1,120 @@
+// Mutex[T] (with, with_read) and Atomic (core 5.4, std.md 2.7)
+struct Accounts {
+  a: Int
+  b: Int
+  log: List[Int]
+}
+
+struct Counts {
+  even: Int
+  odd: Int
+  names: List[Str]
+}
+
+enum E {
+  Stop
+  Empty
+}
+
+fn total(m: Mutex[Accounts]) -> Int {
+  m.with_read(fn(s) { s.a + s.b })
+}
+
+fn last(m: Mutex[Accounts]) -> Int ! E {
+  m.with_read(fn(s) -> Int ! E {
+    match s.log.last() {
+      Some(v) => Ok(v)
+      None => Err(E.Empty)
+    }
+  })
+}
+
+fn main(os: Os) {
+  let counter = Mutex[Counts].new(Counts{even: 0, odd: 0, names: []})
+  scope s {
+    for i in 0..20 {
+      s.spawn(fn() {
+        counter.with(fn(var c) {
+          if i % 2 == 0 {
+            c.even += 1
+          } else {
+            c.odd += 1
+          }
+          c.names.push("n${i}")
+        })
+      })
+    }
+  }
+  let snap = counter.with(fn(c) { c })
+  os.stdio.println("even ${snap.even} odd ${snap.odd} names ${snap.names.len()}")
+  let failed = counter.with(fn(var c) -> Int ! E {
+    c.even = 1000
+    Err(E.Stop)
+  })
+  os.stdio.println("failed ${failed.is_err()} kept ${counter.with(fn(c) { c.even })}")
+  let outcome = counter.with(fn(var c) -> Result[Int, E] {
+    c.odd = 99
+    if c.names.len() > 1 {
+      return Ok(c.names.len())
+    }
+    Err(E.Stop)
+  })
+  os.stdio.println("outcome ${outcome.ok() ?? 0} written ${counter.with(fn(c) { c.odd })}")
+
+  let m = Mutex[Accounts].new(Accounts{a: 100, b: 0, log: []})
+  let bad = Atomic[Int].new(0)
+  let reads = Atomic[Int].new(0)
+  scope s {
+    for i in 0..4 {
+      s.spawn(fn() {
+        for j in 0..50 {
+          m.with(fn(var st) {
+            st.a -= 1
+            st.b += 1
+            st.log.push(i * 100 + j)
+          })
+        }
+      })
+    }
+    for _ in 0..8 {
+      s.spawn(fn() {
+        for _ in 0..100 {
+          if total(m) != 100 {
+            bad.add(1)
+          }
+          reads.add(1)
+        }
+      })
+    }
+  }
+  let (a, b, n) = m.with_read(fn(st) { (st.a, st.b, st.log.len()) })
+  os.stdio.println("a ${a} b ${b} log ${n} reads ${reads.get()} bad ${bad.get()}")
+
+  // a reader's copy may change; the protected value does not
+  let grown = m.with_read(fn(st) {
+    var mine = st.log
+    mine.push(-1)
+    mine.len()
+  })
+  os.stdio.println("copy ${grown} kept ${m.with_read(fn(st) { st.log.len() })}")
+
+  let empty = Mutex[Accounts].new(Accounts{a: 0, b: 0, log: []})
+  match last(empty) {
+    Ok(v) => os.stdio.println("last ${v}")
+    Err(_) => os.stdio.println("error Empty")
+  }
+  os.stdio.println("last is set ${last(m).is_ok()}")
+
+  let at = Atomic[Int].new(5)
+  os.stdio.println("atomic ${at.add(3)} ${at.swap(1)} ${at.get()} ${at.compare_and_swap(1, 10)} ${at.compare_and_swap(1, 20)} ${at.get()}")
+  let flag = Atomic[Bool].new(false)
+  flag.set(true)
+  os.stdio.println("flag ${flag.get()} ${flag.compare_and_swap(true, false)} ${flag.get()}")
+  let hi = Atomic[Int].new(0)
+  scope s {
+    for i in 0..100 {
+      s.spawn(fn() { hi.max(i) })
+    }
+  }
+  os.stdio.println("max ${hi.get()}")
+}

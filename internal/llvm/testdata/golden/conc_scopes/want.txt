@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+total 328350
+names a:2 3 2
+tree 64
+hits 50
+background stopped 1
+body goes on false
+group 42
+awaited error Bad(id: 2)
+handled -1
+run_all failed: Bad(id: 2)
+first_big 81
+break 5
+--- stderr

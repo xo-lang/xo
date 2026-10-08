@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+awaited 24995000
+discarded 12497500
+received 8890
+tree 1024
+mutex 5000 50
+--- stderr

@@ -86,6 +86,16 @@ var runtimeModes = map[string][]mode{
 	"list.set":         {mConsume, mNone, mConsume},
 	"list.push":        {mConsume, mConsume},
 	"list.pop":         {mConsume},
+	// the task runtime (decision 0068) takes the lists of one that carry
+	// values into it
+	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mBorrow},
+	"rt.task_done":     {mBorrow, mConsume, mNone},
+	"rt.chan_send":     {mBorrow, mConsume, mBorrow},
+	"rt.chan_try_send": {mBorrow, mConsume},
+	"rt.mutex_new":     {mConsume, mNone},
+	"rt.mutex_unlock":  {mBorrow, mConsume},
+	"rt.mutex_runlock": {mBorrow, mConsume},
+	"rt.select_send":   {mBorrow, mBorrow, mConsume},
 }
 
 // projCalls are the runtime calls whose result is a projection out of
@@ -361,6 +371,10 @@ func (r *rcInfo) inferBorrows() {
 				// callers through a function value pass the closure
 				// borrowed and the arguments owned
 				f.Borrowed[i] = i == 0
+			}
+			if f.Entry {
+				// the runtime hands over every argument
+				f.Borrowed[i] = false
 			}
 		}
 	}

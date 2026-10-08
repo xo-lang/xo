@@ -1,9 +1,0 @@
-fn work(n: Int) -> Int { n * 2 }
-
-fn main(os: Os) {
-  let r = scope s {
-    let a = s.spawn(fn() { work(1) })
-    a.await
-  }
-  os.stdio.println("${r}")
-}

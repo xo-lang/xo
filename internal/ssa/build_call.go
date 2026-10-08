@@ -35,6 +35,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		return s.valueCall(x)
 	}
 	if ci.Fn.Module.IsStd {
+		if v, ok := s.concCall(x, ci); ok {
+			return v
+		}
 		return s.stdCall(x, ci)
 	}
 	return s.declCall(x, ci)
@@ -56,6 +59,7 @@ func (s *fn) valueCall(x *ast.CallExpr) *Value {
 		args = append(args, s.valueAs(a.Value, ft.Elems[i]))
 	}
 	r := s.add(OpCallValue, ft.Ret, nil, args...)
+	s.check("")
 	return s.callResult(r, x)
 }
 
@@ -111,6 +115,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 		}
 		v := c.block(x.Body)
 		c.ret(v, x.Body)
+		c.finishFn()
 	})
 	return s.add(OpClosure, t, name, vals...)
 }
@@ -327,7 +332,7 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 	c := s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, m.Builtin(KInt), nil, v), s.cint(int64(failTag)))
 	yes, no := s.branch(c)
 	s.cur = yes
-	want := s.f.Results[0]
+	want := s.resultT()
 	if isResult {
 		if s.errT == nil {
 			b.unsupported(x, "`?` on a Result in a function that cannot fail")
@@ -464,10 +469,12 @@ func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
 	args = append(args, vals...)
 	if len(callee.Results) == 1 {
 		r := s.call(callee.Name, callee.Results[0], "", args...)
+		s.check(callee.Name)
 		return s.callResult(r, x)
 	}
 	t := b.mod.Tuple(callee.Results...)
 	r := s.call(callee.Name, t, "", args...)
+	s.check(callee.Name)
 	for i, p := range places {
 		p.set(s.add(OpField, t.Elems[i+1], i+1, r))
 	}

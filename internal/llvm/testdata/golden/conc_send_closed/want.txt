@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+got 5
+recv after close -1
+send on closed channel next
+--- stderr
+fault: send on a closed channel at main.xo:13

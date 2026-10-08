@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+deep calls unwound, finished 0
+nested scopes unwound, started 8
+mutex released, value kept: n 1 log 1
+read lock released: n 2
+await unwound
+guarded failed 7
+--- stderr
