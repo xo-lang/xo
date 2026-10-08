@@ -29,22 +29,17 @@ b4:  ; preds b1
   v23: Float = const 1e+09
   v24: Float = mul v4, v23
   v25: Int = ftoi v24 @ main.xo:98:29
-  v26: Str = call str.of_int, v25
-  v27: Str = call str.concat, v22, v26
-  release v26
-  v29: Str = const " "
-  v30: Str = call str.concat, v27, v29
-  release v27
-  v32: Float = const 1e+09
-  v33: Float = mul v19, v32
-  v34: Int = ftoi v33 @ main.xo:98:59
-  v35: Str = call str.of_int, v34
-  v36: Str = call str.concat, v30, v35
-  release v30
-  release v35
-  v39: () = call Stdio.println, v21, v36
-  release v36
-  ret v39
+  retain v22
+  v27: Str = call str.concat_int, v22, v25
+  v28: Str = const " "
+  v29: Str = call str.concat, v27, v28
+  v30: Float = const 1e+09
+  v31: Float = mul v19, v30
+  v32: Int = ftoi v31 @ main.xo:98:59
+  v33: Str = call str.concat_int, v29, v32
+  v34: () = call Stdio.println, v21, v33
+  release v33
+  ret v34
 }
 
 func bodies() -> List[Body] {

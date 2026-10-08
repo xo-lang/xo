@@ -20,10 +20,9 @@ b3:  ; preds b2
 b4:  ; preds b1
   v17: Stdio = cap stdio, v0
   v18: Str = const "sieve "
-  v19: Str = call str.of_int, v6
-  v20: Str = call str.concat, v18, v19
-  v21: () = call Stdio.println, v17, v20
-  ret v21
+  v19: Str = call str.concat_int, v18, v6
+  v20: () = call Stdio.println, v17, v19
+  ret v20
 }
 
 func sieve(v0: Int) -> Int {

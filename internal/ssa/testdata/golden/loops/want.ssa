@@ -21,30 +21,29 @@ b1(v6: Bool):  ; preds b3, b2
   v19: List[Int] = call list.push, v17, v18
   v20: Int = const 50
   v21: Int = call first_over, v19, v20
-  v22: Str = call str.of_int, v21
-  v23: Str = call str.concat, v12, v22
-  v24: Str = const " "
-  v25: Str = call str.concat, v23, v24
-  v26: Str = call str.of_bool, v6
-  v27: Str = call str.concat, v25, v26
-  v28: () = call Stdio.println, v7, v27
-  ret v28
+  v22: Str = call str.concat_int, v12, v21
+  v23: Str = const " "
+  v24: Str = call str.concat, v22, v23
+  v25: Str = call str.of_bool, v6
+  v26: Str = call str.concat, v24, v25
+  v27: () = call Stdio.println, v7, v26
+  ret v27
 b2:  ; preds b0
-  v30: List[Int] = call list.new
-  v31: Int = const 1
-  v32: List[Int] = call list.push, v30, v31
-  v33: Int = const 2
-  v34: List[Int] = call list.push, v32, v33
-  v35: Int = const 30
-  v36: List[Int] = call list.push, v34, v35
-  v37: Int = const 50
-  v38: Int = call first_over, v36, v37
-  v39: Int = const 0
-  v40: Bool = ne v38, v39
-  jump b1(v40)
+  v29: List[Int] = call list.new
+  v30: Int = const 1
+  v31: List[Int] = call list.push, v29, v30
+  v32: Int = const 2
+  v33: List[Int] = call list.push, v31, v32
+  v34: Int = const 30
+  v35: List[Int] = call list.push, v33, v34
+  v36: Int = const 50
+  v37: Int = call first_over, v35, v36
+  v38: Int = const 0
+  v39: Bool = ne v37, v38
+  jump b1(v39)
 b3:  ; preds b0
-  v42: Bool = const false
-  jump b1(v42)
+  v41: Bool = const false
+  jump b1(v41)
 }
 
 func sum_odd(v0: Int) -> Int {

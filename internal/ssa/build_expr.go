@@ -182,10 +182,17 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 		v := s.expr(p.Expr)
 		switch v.Type.Kind {
 		case KStr:
-		case KInt:
-			v = s.call("str.of_int", st, "", v)
-		case KFloat:
-			v = s.call("str.of_float", st, "", v)
+		case KInt, KFloat:
+			if acc != nil {
+				// append the number's text without a temporary string
+				acc = s.call("str.concat_"+strings.ToLower(v.Type.Name), st, "", acc, v)
+				continue
+			}
+			if v.Type.Kind == KInt {
+				v = s.call("str.of_int", st, "", v)
+			} else {
+				v = s.call("str.of_float", st, "", v)
+			}
 		case KBool:
 			v = s.call("str.of_bool", st, "", v)
 		default:

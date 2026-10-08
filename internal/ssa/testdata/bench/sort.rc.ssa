@@ -18,97 +18,96 @@ b2:  ; preds b1
 b3:  ; preds b12
   v15: Int = const 1
   v16: Int = add v6, v15
-  jump b1(v16, v27, v91)
+  jump b1(v16, v26, v90)
 b4:  ; preds b1
   v18: Stdio = cap stdio, v0
   v19: Str = const "sort "
-  v20: Str = call str.of_int, v8
-  v21: Str = call str.concat, v19, v20
-  release v20
-  v23: () = call Stdio.println, v18, v21
+  retain v19
+  v21: Str = call str.concat_int, v19, v8
+  v22: () = call Stdio.println, v18, v21
   release v21
-  ret v23
-b5(v26: Int, v27: Int, v28: List[Rec]):  ; preds b2, b7
-  v29: Bool = lt v26, v13
-  br v29, b6(), b8()
+  ret v22
+b5(v25: Int, v26: Int, v27: List[Rec]):  ; preds b2, b7
+  v28: Bool = lt v25, v13
+  br v28, b6(), b8()
 b6:  ; preds b5
-  v31: Int = const 1103515245
-  v32: Int = mul v27, v31 @ main.xo:48:15
-  v33: Int = const 12345
-  v34: Int = add v32, v33 @ main.xo:48:15
-  v35: Int = const 2147483648
-  v36: Int = rem v34, v35 @ main.xo:48:14
-  v37: Int = const 100000
-  v38: Int = rem v36, v37 @ main.xo:49:24
-  v39: Int = const 97
-  v40: Int = rem v26, v39 @ main.xo:49:60
-  v41: Float = itof v40
-  v42: Float = const 0.5
-  v43: Float = mul v41, v42
-  v44: Rec = struct v38, v26, v43
-  v45: List[Rec] = call list.push, v28, v44
-  v46: () = tuple
+  v30: Int = const 1103515245
+  v31: Int = mul v26, v30 @ main.xo:48:15
+  v32: Int = const 12345
+  v33: Int = add v31, v32 @ main.xo:48:15
+  v34: Int = const 2147483648
+  v35: Int = rem v33, v34 @ main.xo:48:14
+  v36: Int = const 100000
+  v37: Int = rem v35, v36 @ main.xo:49:24
+  v38: Int = const 97
+  v39: Int = rem v25, v38 @ main.xo:49:60
+  v40: Float = itof v39
+  v41: Float = const 0.5
+  v42: Float = mul v40, v41
+  v43: Rec = struct v37, v25, v42
+  v44: List[Rec] = call list.push, v27, v43
+  v45: () = tuple
   jump b7()
 b7:  ; preds b6
-  v48: Int = const 1
-  v49: Int = add v26, v48
-  jump b5(v49, v36, v45)
+  v47: Int = const 1
+  v48: Int = add v25, v47
+  jump b5(v48, v35, v44)
 b8:  ; preds b5
-  v51: Int = const 0
-  v52: Int = call list.len, v28
-  v53: Int = const 1
-  v54: Int = sub v52, v53 @ main.xo:51:22
-  v55: ((), List[Rec]) = call quicksort, v28, v51, v54
-  v56: List[Rec] = field 1, v55
+  v50: Int = const 0
+  v51: Int = call list.len, v27
+  v52: Int = const 1
+  v53: Int = sub v51, v52 @ main.xo:51:22
+  v54: ((), List[Rec]) = call quicksort, v27, v50, v53
+  v55: List[Rec] = field 1, v54
+  v56: Int = const 1
   v57: Int = const 1
-  v58: Int = const 1
-  v59: Int = call list.len, v56
-  jump b9(v58, v57)
-b9(v61: Int, v62: Int):  ; preds b8, b11
-  v63: Bool = lt v61, v59
-  br v63, b10(), b12()
+  v58: Int = call list.len, v55
+  jump b9(v57, v56)
+b9(v60: Int, v61: Int):  ; preds b8, b11
+  v62: Bool = lt v60, v58
+  br v62, b10(), b12()
 b10:  ; preds b9
-  v65: Rec = call list.index, v56, v61 @ main.xo:54:15
-  v66: Int = const 1
-  v67: Int = sub v61, v66 @ main.xo:54:25
-  v68: Rec = call list.index, v56, v67 @ main.xo:54:22
-  v69: Bool = call less, v65, v68
-  br v69, b14(), b15()
+  v64: Rec = call list.index, v55, v60 @ main.xo:54:15
+  v65: Int = const 1
+  v66: Int = sub v60, v65 @ main.xo:54:25
+  v67: Rec = call list.index, v55, v66 @ main.xo:54:22
+  v68: Bool = call less, v64, v67
+  br v68, b14(), b15()
 b11:  ; preds b13
-  v71: Int = const 1
-  v72: Int = add v61, v71
-  jump b9(v72, v94)
+  v70: Int = const 1
+  v71: Int = add v60, v70
+  jump b9(v71, v93)
 b12:  ; preds b9
-  v74: Int = const 0
-  v75: Rec = call list.index, v56, v74 @ main.xo:58:12
-  v76: Int = field 0, v75
-  v77: Int = const 500000
-  v78: Rec = call list.index, v56, v77 @ main.xo:58:24
-  v79: Int = field 1, v78
-  v80: Int = add v76, v79 @ main.xo:58:12
-  v81: Int = const 999999
-  v82: Rec = call list.index, v56, v81 @ main.xo:58:40
-  v83: List[Rec] = field 1, v55
-  release v83
-  v85: Int = field 0, v82
-  v86: Int = add v80, v85 @ main.xo:58:12
-  v87: Int = const 1
-  v88: Int = add v6, v87 @ main.xo:58:63
-  v89: Int = mul v62, v88 @ main.xo:58:57
-  v90: Int = add v86, v89 @ main.xo:58:12
-  v91: Int = add v8, v90 @ main.xo:58:5
-  v92: () = tuple
+  v73: Int = const 0
+  v74: Rec = call list.index, v55, v73 @ main.xo:58:12
+  v75: Int = field 0, v74
+  v76: Int = const 500000
+  v77: Rec = call list.index, v55, v76 @ main.xo:58:24
+  v78: Int = field 1, v77
+  v79: Int = add v75, v78 @ main.xo:58:12
+  v80: Int = const 999999
+  v81: Rec = call list.index, v55, v80 @ main.xo:58:40
+  v82: List[Rec] = field 1, v54
+  release v82
+  v84: Int = field 0, v81
+  v85: Int = add v79, v84 @ main.xo:58:12
+  v86: Int = const 1
+  v87: Int = add v6, v86 @ main.xo:58:63
+  v88: Int = mul v61, v87 @ main.xo:58:57
+  v89: Int = add v85, v88 @ main.xo:58:12
+  v90: Int = add v8, v89 @ main.xo:58:5
+  v91: () = tuple
   jump b3()
-b13(v94: Int):  ; preds b14, b15
-  v95: () = tuple
+b13(v93: Int):  ; preds b14, b15
+  v94: () = tuple
   jump b11()
 b14:  ; preds b10
-  v97: Int = const 0
-  v98: () = tuple
-  jump b13(v97)
+  v96: Int = const 0
+  v97: () = tuple
+  jump b13(v96)
 b15:  ; preds b10
-  v100: () = tuple
-  jump b13(v62)
+  v99: () = tuple
+  jump b13(v61)
 }
 
 func quicksort(v0: List[Rec], v1: Int, v2: Int) -> ((), List[Rec]) {

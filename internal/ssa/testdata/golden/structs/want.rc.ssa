@@ -33,32 +33,20 @@ b0(v0: Os):
   v29: Str = call str.of_int, v28
   v30: Str = const " "
   v31: Str = call str.concat, v29, v30
-  release v29
-  v33: Int = field 1, v16
-  v34: Str = call str.of_int, v33
-  v35: Str = call str.concat, v31, v34
-  release v31
-  release v34
-  v38: Str = const " "
-  v39: Str = call str.concat, v35, v38
-  release v35
-  v41: P = field 0, v22
-  v42: Int = field 0, v41
-  v43: Str = call str.of_int, v42
-  v44: Str = call str.concat, v39, v43
-  release v39
-  release v43
-  v47: Str = const " "
-  v48: Str = call str.concat, v44, v47
-  release v44
-  v50: Int = field 1, v22
-  v51: Str = call str.of_int, v50
-  v52: Str = call str.concat, v48, v51
-  release v48
-  release v51
-  v55: () = call Stdio.println, v23, v52
-  release v52
-  ret v55
+  v32: Int = field 1, v16
+  v33: Str = call str.concat_int, v31, v32
+  v34: Str = const " "
+  v35: Str = call str.concat, v33, v34
+  v36: P = field 0, v22
+  v37: Int = field 0, v36
+  v38: Str = call str.concat_int, v35, v37
+  v39: Str = const " "
+  v40: Str = call str.concat, v38, v39
+  v41: Int = field 1, v22
+  v42: Str = call str.concat_int, v40, v41
+  v43: () = call Stdio.println, v23, v42
+  release v42
+  ret v43
 }
 
 func bump(v0: List[P], v1: Int) -> ((), List[P]) {

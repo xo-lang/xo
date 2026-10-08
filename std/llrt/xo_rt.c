@@ -221,8 +221,25 @@ void xo_eprintln(const char *p, int64_t n) {
 // FloatStr, the shortest 'g' form that reads back the same value, with
 // ".0" added to whole numbers)
 
+// fmt_int writes the decimal text of v (no snprintf: interpolation of
+// Ints is hot).
 static int fmt_int(char *buf, int64_t v) {
-	return snprintf(buf, 32, "%lld", (long long)v);
+	char t[24];
+	int n = 0;
+	uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;
+	do {
+		t[n++] = (char)('0' + u % 10);
+		u /= 10;
+	} while (u);
+	int k = 0;
+	if (v < 0) {
+		buf[k++] = '-';
+	}
+	while (n) {
+		buf[k++] = t[--n];
+	}
+	buf[k] = 0;
+	return k;
 }
 
 // fmt_float writes Go's strconv.FormatFloat(f, 'g', -1, 64) to buf.
@@ -543,18 +560,72 @@ typedef struct {
 	char data[];
 } xo_rstr;
 
+// usable returns the bytes a block requested with n bytes really has
+// (its size class), so strings can grow into the slack.
+static int64_t usable(int64_t n) {
+	if (n > XO_MID_MAX) {
+		return n;
+	}
+	int64_t size;
+	size_class(n, &size);
+	return size;
+}
+
 static xo_rstr *rs_new(int64_t n) {
-	xo_rstr *s = xo_alloc((int64_t)sizeof(xo_rstr) + n);
+	int64_t bytes = usable((int64_t)sizeof(xo_rstr) + n);
+	xo_rstr *s = xo_alloc(bytes);
 	s->rc = 1;
-	s->cap = n;
+	s->cap = bytes - (int64_t)sizeof(xo_rstr);
 	return s;
 }
 
-xo_rstr *xo_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) {
-	xo_rstr *s = rs_new(an + bn);
+// rs_append appends n bytes at p to a (of length an), consuming a: when
+// a is unique (count 1) the bytes go in place, growing a by doubling
+// when it is full (Perceus reuse of a string about to be dropped), so a
+// loop of `s = s + x` is linear. Otherwise a new string is made (with
+// slack to grow into) and a loses the reference the caller gave up.
+static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
+	int64_t need = an + n;
+	if (a->rc == 1) {
+		if (a->cap < need) {
+			int64_t want = a->cap * 2;
+			if (want < need) {
+				want = need;
+			}
+			int64_t hdr = (int64_t)sizeof(xo_rstr);
+			int64_t bytes = usable(hdr + want);
+			a = xo_resize(a, hdr + an, bytes);
+			a->cap = bytes - hdr;
+		}
+		memmove(a->data + an, p, (size_t)n);
+		return a;
+	}
+	xo_rstr *s = rs_new(need < 16 ? 16 : need);
 	memcpy(s->data, a->data, (size_t)an);
-	memcpy(s->data + an, b->data, (size_t)bn);
+	memcpy(s->data + an, p, (size_t)n);
+	a->rc--;
 	return s;
+}
+
+// xo_rs_concat is `a + b` (consumes a, borrows b).
+xo_rstr *xo_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) {
+	return rs_append(a, an, b->data, bn);
+}
+
+// xo_rs_concat_int is `a + "${v}"` without a temporary string.
+xo_rstr *xo_rs_concat_int(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
+	char t[32];
+	int n = fmt_int(t, v);
+	*len = an + n;
+	return rs_append(a, an, t, n);
+}
+
+// xo_rs_concat_float is `a + "${v}"` for a Float.
+xo_rstr *xo_rs_concat_float(xo_rstr *a, int64_t an, double v, int64_t *len) {
+	char t[48];
+	int n = fmt_float(t, v);
+	*len = an + n;
+	return rs_append(a, an, t, n);
 }
 
 xo_rstr *xo_rs_of_int(int64_t v, int64_t *len) {

@@ -1,0 +1,107 @@
+type Str? = enum { None | Some(v: Str) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Int = const 0
+  v2: Int = const 0
+  v3: Int = const 10
+  jump b1(v2, v1)
+b1(v5: Int, v6: Int):  ; preds b0, b3
+  v7: Bool = lt v5, v3
+  br v7, b2(), b4()
+b2:  ; preds b1
+  v9: List[Str] = call list.new
+  v10: Int = const 0
+  v11: Int = const 200000
+  jump b5(v10, v9)
+b3:  ; preds b10
+  v13: Int = const 1
+  v14: Int = add v5, v13
+  jump b1(v14, v56)
+b4:  ; preds b1
+  v16: Stdio = cap stdio, v0
+  v17: Str = const "strings "
+  retain v17
+  v19: Str = call str.concat_int, v17, v6
+  v20: () = call Stdio.println, v16, v19
+  release v19
+  ret v20
+b5(v23: Int, v24: List[Str]):  ; preds b2, b7
+  v25: Bool = lt v23, v11
+  br v25, b6(), b8()
+b6:  ; preds b5
+  v27: Str = const "w"
+  v28: Int = const 1000
+  v29: Int = rem v23, v28 @ main.xo:9:22
+  retain v27
+  v31: Str = call str.concat_int, v27, v29
+  v32: Str = const "-"
+  v33: Str = call str.concat, v31, v32
+  v34: Str = call str.concat_int, v33, v5
+  v35: List[Str] = call list.push, v24, v34
+  v36: () = tuple
+  jump b7()
+b7:  ; preds b6
+  v38: Int = const 1
+  v39: Int = add v23, v38
+  jump b5(v39, v35)
+b8:  ; preds b5
+  v41: Str = const ""
+  v42: Int = const 0
+  retain v41
+  jump b9(v24, v42, v41, v6)
+b9(v45: List[Str], v46: Int, v47: Str, v48: Int):  ; preds b8, b12
+  v49: Int = call list.len, v45
+  v50: Int = const 0
+  v51: Bool = gt v49, v50
+  br v51, b11(), b10()
+b10:  ; preds b9
+  release v45
+  v54: Int = call Str.len, v47
+  release v47
+  v56: Int = add v48, v54 @ main.xo:22:5
+  v57: () = tuple
+  jump b3()
+b11:  ; preds b9
+  v59: (List[Str], Str?) = call list.pop, v45
+  v60: List[Str] = field 0, v59
+  v61: Str? = field 1, v59
+  v62: Int = tag v61
+  v63: Int = const 1
+  v64: Bool = eq v62, v63
+  br v64, b14(), b13()
+b12(v66: Int, v67: Str, v68: Int):  ; preds b15, b13
+  v69: () = tuple
+  jump b9(v60, v66, v67, v68)
+b13:  ; preds b11
+  v71: Str? = field 1, v59
+  release v71
+  v73: () = tuple
+  jump b12(v46, v47, v48)
+b14:  ; preds b11
+  v75: Str = payload 1.0, v61
+  retain v75
+  v77: Str? = field 1, v59
+  release v77
+  v79: Int = const 10
+  v80: Int = rem v46, v79 @ main.xo:15:12
+  v81: Int = const 0
+  v82: Bool = eq v80, v81
+  br v82, b16(), b17()
+b15(v84: Str):  ; preds b16, b17
+  v85: () = tuple
+  v86: Int = const 1
+  v87: Int = add v46, v86 @ main.xo:18:9
+  v88: Int = call Str.len, v75
+  release v75
+  v90: Int = add v48, v88 @ main.xo:19:9
+  v91: () = tuple
+  jump b12(v87, v84, v90)
+b16:  ; preds b14
+  v93: Str = call str.concat, v47, v75
+  v94: () = tuple
+  jump b15(v93)
+b17:  ; preds b14
+  v96: () = tuple
+  jump b15(v47)
+}

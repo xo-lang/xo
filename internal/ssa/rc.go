@@ -78,9 +78,14 @@ type use struct {
 // runtimeModes are the operand modes of the runtime calls whose heap
 // operands are consumed or that matter to RC. Others borrow.
 var runtimeModes = map[string][]mode{
-	"list.set":  {mConsume, mNone, mConsume},
-	"list.push": {mConsume, mConsume},
-	"list.pop":  {mConsume},
+	// str.concat consumes its left operand: the runtime appends in place
+	// when it is unique (s = s + x in a loop is linear)
+	"str.concat":       {mConsume, mBorrow},
+	"str.concat_int":   {mConsume, mNone},
+	"str.concat_float": {mConsume, mNone},
+	"list.set":         {mConsume, mNone, mConsume},
+	"list.push":        {mConsume, mConsume},
+	"list.pop":         {mConsume},
 }
 
 // projCalls are the runtime calls whose result is a projection out of

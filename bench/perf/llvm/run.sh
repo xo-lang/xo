@@ -8,7 +8,9 @@
 # clock time in milliseconds, process start included. A run longer than
 # TIMEOUT seconds (default 60) is stopped and shown as ">TIMEOUT s".
 # Checksums must agree. Needs .tools/bin/xo (or $XO), go, clang, python3.
-# WORKLOADS selects some of: fib sieve nbody sort interp collatz.
+# WORKLOADS selects some of: fib sieve nbody sort interp collatz strings.
+# RSS=1 adds peak resident memory (MB, /usr/bin/time -l) of the Go and
+# LLVM binaries.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -43,7 +45,7 @@ fmt() { # ms -> text
 	if [ "$1" = "-" ]; then echo ">${timeout}000"; else echo "$1"; fi
 }
 printf '| Workload | Go ms | Xo Go backend ms | Xo LLVM ms | LLVM/Go | Go backend/Go | Go backend/LLVM |\n|---|---|---|---|---|---|---|\n'
-for w in ${WORKLOADS:-fib sieve nbody sort interp collatz}; do
+for w in ${WORKLOADS:-fib sieve nbody sort interp collatz strings}; do
 	"$xo" build -o "$out/xo-go-$w" "$here/xo/$w" >/dev/null
 	"$xo" build --backend=llvm -o "$out/xo-ll-$w" "$here/xo/$w" >/dev/null
 	set -- $(best "$out/llperf-go" "$w")

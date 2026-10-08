@@ -37,36 +37,29 @@ b4:  ; preds b6, b5
   v29: Str = call str.of_float, v28
   v30: Str = const " "
   v31: Str = call str.concat, v29, v30
-  release v29
-  v33: Str = call bucket, v12
-  v34: Str = call str.concat, v31, v33
-  release v31
-  release v33
-  v37: Str = const " "
-  v38: Str = call str.concat, v34, v37
-  release v34
-  v40: Shape = variant 2
-  v41: Float = call area, v40
-  v42: Str = call str.of_float, v41
-  v43: Str = call str.concat, v38, v42
-  release v38
-  release v42
-  v46: () = call Stdio.println, v25, v43
-  release v43
-  ret v46
+  v32: Str = call bucket, v12
+  v33: Str = call str.concat, v31, v32
+  release v32
+  v35: Str = const " "
+  v36: Str = call str.concat, v33, v35
+  v37: Shape = variant 2
+  v38: Float = call area, v37
+  v39: Str = call str.concat_float, v36, v38
+  v40: () = call Stdio.println, v25, v39
+  release v39
+  ret v40
 b5:  ; preds b1
-  v49: () = tuple
+  v43: () = tuple
   jump b4()
 b6:  ; preds b1
-  v51: Float = payload 1.0, v15
-  v52: Float = payload 1.1, v15
-  v53: Stdio = cap stdio, v0
-  v54: Str = const "w "
-  v55: Str = call str.of_float, v51
-  v56: Str = call str.concat, v54, v55
-  release v55
-  v58: () = call Stdio.println, v53, v56
-  release v56
+  v45: Float = payload 1.0, v15
+  v46: Float = payload 1.1, v15
+  v47: Stdio = cap stdio, v0
+  v48: Str = const "w "
+  retain v48
+  v50: Str = call str.concat_float, v48, v45
+  v51: () = call Stdio.println, v47, v50
+  release v50
   jump b4()
 }
 

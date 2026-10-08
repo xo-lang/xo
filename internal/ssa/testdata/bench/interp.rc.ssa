@@ -61,12 +61,11 @@ b0(v0: Os):
   v56: Int = const 3000000
   v57: Int = call run, v53, v56
   release v53
-  v59: Str = call str.of_int, v57
-  v60: Str = call str.concat, v55, v59
-  release v59
-  v62: () = call Stdio.println, v54, v60
+  retain v55
+  v60: Str = call str.concat_int, v55, v57
+  v61: () = call Stdio.println, v54, v60
   release v60
-  ret v62
+  ret v61
 }
 
 func run(borrow v0: List[Op], v1: Int) -> Int {

@@ -21,19 +21,14 @@ b3:  ; preds b2
 b4:  ; preds b1
   v19: Stdio = cap stdio, v0
   v20: Str = const "collatz "
-  v21: Str = call str.of_int, v7
-  v22: Str = call str.concat, v20, v21
-  release v21
-  v24: Str = const " "
-  v25: Str = call str.concat, v22, v24
-  release v22
-  v27: Str = call str.of_int, v8
-  v28: Str = call str.concat, v25, v27
+  retain v20
+  v22: Str = call str.concat_int, v20, v7
+  v23: Str = const " "
+  v24: Str = call str.concat, v22, v23
+  v25: Str = call str.concat_int, v24, v8
+  v26: () = call Stdio.println, v19, v25
   release v25
-  release v27
-  v31: () = call Stdio.println, v19, v28
-  release v28
-  ret v31
+  ret v26
 }
 
 func steps(v0: Int) -> Int {

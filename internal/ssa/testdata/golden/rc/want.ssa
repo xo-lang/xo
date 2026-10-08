@@ -18,274 +18,262 @@ b0(v0: Os):
   v12: () = field 0, v10
   v13: Str = const "gamma"
   v14: Int = field 2, v11
-  v15: Str = call str.of_int, v14
-  v16: Str = call str.concat, v13, v15
-  v17: ((), Bag) = call add_item, v11, v16
-  v18: Bag = field 1, v17
-  v19: () = field 0, v17
-  v20: Str = const "renamed"
-  v21: Bag = call rename, v18, v20
-  v22: Stdio = cap stdio, v0
-  v23: Str = field 0, v18
-  v24: Str = const " "
-  v25: Str = call str.concat, v23, v24
-  v26: Int = field 2, v18
-  v27: Str = call str.of_int, v26
-  v28: Str = call str.concat, v25, v27
-  v29: Str = const " "
-  v30: Str = call str.concat, v28, v29
-  v31: Int = field 2, v11
-  v32: Str = call str.of_int, v31
-  v33: Str = call str.concat, v30, v32
-  v34: Str = const " "
-  v35: Str = call str.concat, v33, v34
-  v36: List[Str] = field 1, v11
-  v37: Int = call list.len, v36
-  v38: Str = call str.of_int, v37
-  v39: Str = call str.concat, v35, v38
+  v15: Str = call str.concat_int, v13, v14
+  v16: ((), Bag) = call add_item, v11, v15
+  v17: Bag = field 1, v16
+  v18: () = field 0, v16
+  v19: Str = const "renamed"
+  v20: Bag = call rename, v17, v19
+  v21: Stdio = cap stdio, v0
+  v22: Str = field 0, v17
+  v23: Str = const " "
+  v24: Str = call str.concat, v22, v23
+  v25: Int = field 2, v17
+  v26: Str = call str.concat_int, v24, v25
+  v27: Str = const " "
+  v28: Str = call str.concat, v26, v27
+  v29: Int = field 2, v11
+  v30: Str = call str.concat_int, v28, v29
+  v31: Str = const " "
+  v32: Str = call str.concat, v30, v31
+  v33: List[Str] = field 1, v11
+  v34: Int = call list.len, v33
+  v35: Str = call str.concat_int, v32, v34
+  v36: Str = const " "
+  v37: Str = call str.concat, v35, v36
+  v38: Str = field 0, v20
+  v39: Str = call str.concat, v37, v38
   v40: Str = const " "
   v41: Str = call str.concat, v39, v40
-  v42: Str = field 0, v21
-  v43: Str = call str.concat, v41, v42
-  v44: Str = const " "
-  v45: Str = call str.concat, v43, v44
-  v46: List[Str] = field 1, v21
-  v47: Int = call list.len, v46
-  v48: Str = call str.of_int, v47
-  v49: Str = call str.concat, v45, v48
-  v50: () = call Stdio.println, v22, v49
-  v51: Stdio = cap stdio, v0
-  v52: Str = const "total "
-  v53: List[Str] = field 1, v18
-  v54: Int = call total_len, v53
-  v55: Str = call str.of_int, v54
+  v42: List[Str] = field 1, v20
+  v43: Int = call list.len, v42
+  v44: Str = call str.concat_int, v41, v43
+  v45: () = call Stdio.println, v21, v44
+  v46: Stdio = cap stdio, v0
+  v47: Str = const "total "
+  v48: List[Str] = field 1, v17
+  v49: Int = call total_len, v48
+  v50: Str = call str.concat_int, v47, v49
+  v51: Str = const " first "
+  v52: Str = call str.concat, v50, v51
+  v53: List[Str] = field 1, v17
+  v54: Int = const 4
+  v55: Str = call first_long, v53, v54
   v56: Str = call str.concat, v52, v55
-  v57: Str = const " first "
+  v57: Str = const " "
   v58: Str = call str.concat, v56, v57
-  v59: List[Str] = field 1, v18
-  v60: Int = const 4
+  v59: List[Str] = field 1, v17
+  v60: Int = const 10
   v61: Str = call first_long, v59, v60
   v62: Str = call str.concat, v58, v61
-  v63: Str = const " "
-  v64: Str = call str.concat, v62, v63
-  v65: List[Str] = field 1, v18
-  v66: Int = const 10
-  v67: Str = call first_long, v65, v66
-  v68: Str = call str.concat, v64, v67
-  v69: () = call Stdio.println, v51, v68
-  v70: List[List[Int]] = call list.new
-  v71: Int = const 0
-  v72: Int = const 4
-  jump b1(v71, v70)
-b1(v74: Int, v75: List[List[Int]]):  ; preds b0, b3
-  v76: Bool = lt v74, v72
-  br v76, b2(), b4()
+  v63: () = call Stdio.println, v46, v62
+  v64: List[List[Int]] = call list.new
+  v65: Int = const 0
+  v66: Int = const 4
+  jump b1(v65, v64)
+b1(v68: Int, v69: List[List[Int]]):  ; preds b0, b3
+  v70: Bool = lt v68, v66
+  br v70, b2(), b4()
 b2:  ; preds b1
-  v78: List[Int] = call list.new
-  v79: Int = const 0
-  jump b5(v79, v78)
+  v72: List[Int] = call list.new
+  v73: Int = const 0
+  jump b5(v73, v72)
 b3:  ; preds b8
-  v81: Int = const 1
-  v82: Int = add v74, v81
-  jump b1(v82, v155)
+  v75: Int = const 1
+  v76: Int = add v68, v75
+  jump b1(v76, v145)
 b4:  ; preds b1
-  v84: Int = const 2
-  v85: List[Int] = call list.index, v75, v84 @ main.xo:69:3
-  v86: Int = const 99
-  v87: List[Int] = call list.push, v85, v86
-  v88: List[List[Int]] = call list.set, v75, v84, v87 @ main.xo:69:3
-  v89: () = tuple
-  v90: Int = const 3
-  v91: List[Int] = call list.index, v88, v90 @ main.xo:70:3
-  v92: Int = const 0
-  v93: Int = const 7
-  v94: List[Int] = call list.set, v91, v92, v93 @ main.xo:70:3
-  v95: List[List[Int]] = call list.set, v88, v90, v94 @ main.xo:70:3
-  v96: Stdio = cap stdio, v0
-  v97: Str = const "grid "
+  v78: Int = const 2
+  v79: List[Int] = call list.index, v69, v78 @ main.xo:69:3
+  v80: Int = const 99
+  v81: List[Int] = call list.push, v79, v80
+  v82: List[List[Int]] = call list.set, v69, v78, v81 @ main.xo:69:3
+  v83: () = tuple
+  v84: Int = const 3
+  v85: List[Int] = call list.index, v82, v84 @ main.xo:70:3
+  v86: Int = const 0
+  v87: Int = const 7
+  v88: List[Int] = call list.set, v85, v86, v87 @ main.xo:70:3
+  v89: List[List[Int]] = call list.set, v82, v84, v88 @ main.xo:70:3
+  v90: Stdio = cap stdio, v0
+  v91: Str = const "grid "
+  v92: Int = const 2
+  v93: List[Int] = call list.index, v89, v92 @ main.xo:71:28
+  v94: Int = call list.len, v93
+  v95: Str = call str.concat_int, v91, v94
+  v96: Str = const " "
+  v97: Str = call str.concat, v95, v96
   v98: Int = const 2
-  v99: List[Int] = call list.index, v95, v98 @ main.xo:71:28
+  v99: List[Int] = call list.index, v69, v98 @ main.xo:71:45
   v100: Int = call list.len, v99
-  v101: Str = call str.of_int, v100
-  v102: Str = call str.concat, v97, v101
-  v103: Str = const " "
-  v104: Str = call str.concat, v102, v103
-  v105: Int = const 2
-  v106: List[Int] = call list.index, v75, v105 @ main.xo:71:45
-  v107: Int = call list.len, v106
-  v108: Str = call str.of_int, v107
-  v109: Str = call str.concat, v104, v108
-  v110: Str = const " "
-  v111: Str = call str.concat, v109, v110
-  v112: Int = const 3
-  v113: List[Int] = call list.index, v95, v112 @ main.xo:71:60
-  v114: Int = const 0
-  v115: Int = call list.index, v113, v114 @ main.xo:71:60
-  v116: Str = call str.of_int, v115
-  v117: Str = call str.concat, v111, v116
-  v118: Str = const " "
-  v119: Str = call str.concat, v117, v118
-  v120: Int = const 3
-  v121: List[Int] = call list.index, v75, v120 @ main.xo:71:74
-  v122: Int = const 0
-  v123: Int = call list.index, v121, v122 @ main.xo:71:74
-  v124: Str = call str.of_int, v123
-  v125: Str = call str.concat, v119, v124
-  v126: () = call Stdio.println, v96, v125
-  v127: List[Shape] = call list.new
-  v128: Str = const "dot"
-  v129: Shape = variant 0, v128
-  v130: List[Shape] = call list.push, v127, v129
-  v131: List[Int] = call list.new
-  v132: Int = const 1
-  v133: List[Int] = call list.push, v131, v132
-  v134: Int = const 2
-  v135: List[Int] = call list.push, v133, v134
-  v136: Int = const 3
-  v137: List[Int] = call list.push, v135, v136
-  v138: Shape = variant 1, v137
-  v139: List[Shape] = call list.push, v130, v138
-  v140: Shape = variant 2
-  v141: List[Shape] = call list.push, v139, v140
-  v142: Int = call list.len, v141
-  v143: Int = const 0
-  jump b9(v143)
-b5(v145: Int, v146: List[Int]):  ; preds b2, b7
-  v147: Bool = lt v145, v74
-  br v147, b6(), b8()
+  v101: Str = call str.concat_int, v97, v100
+  v102: Str = const " "
+  v103: Str = call str.concat, v101, v102
+  v104: Int = const 3
+  v105: List[Int] = call list.index, v89, v104 @ main.xo:71:60
+  v106: Int = const 0
+  v107: Int = call list.index, v105, v106 @ main.xo:71:60
+  v108: Str = call str.concat_int, v103, v107
+  v109: Str = const " "
+  v110: Str = call str.concat, v108, v109
+  v111: Int = const 3
+  v112: List[Int] = call list.index, v69, v111 @ main.xo:71:74
+  v113: Int = const 0
+  v114: Int = call list.index, v112, v113 @ main.xo:71:74
+  v115: Str = call str.concat_int, v110, v114
+  v116: () = call Stdio.println, v90, v115
+  v117: List[Shape] = call list.new
+  v118: Str = const "dot"
+  v119: Shape = variant 0, v118
+  v120: List[Shape] = call list.push, v117, v119
+  v121: List[Int] = call list.new
+  v122: Int = const 1
+  v123: List[Int] = call list.push, v121, v122
+  v124: Int = const 2
+  v125: List[Int] = call list.push, v123, v124
+  v126: Int = const 3
+  v127: List[Int] = call list.push, v125, v126
+  v128: Shape = variant 1, v127
+  v129: List[Shape] = call list.push, v120, v128
+  v130: Shape = variant 2
+  v131: List[Shape] = call list.push, v129, v130
+  v132: Int = call list.len, v131
+  v133: Int = const 0
+  jump b9(v133)
+b5(v135: Int, v136: List[Int]):  ; preds b2, b7
+  v137: Bool = lt v135, v68
+  br v137, b6(), b8()
 b6:  ; preds b5
-  v149: List[Int] = call list.push, v146, v145
-  v150: () = tuple
+  v139: List[Int] = call list.push, v136, v135
+  v140: () = tuple
   jump b7()
 b7:  ; preds b6
-  v152: Int = const 1
-  v153: Int = add v145, v152
-  jump b5(v153, v149)
+  v142: Int = const 1
+  v143: Int = add v135, v142
+  jump b5(v143, v139)
 b8:  ; preds b5
-  v155: List[List[Int]] = call list.push, v75, v146
-  v156: () = tuple
+  v145: List[List[Int]] = call list.push, v69, v136
+  v146: () = tuple
   jump b3()
-b9(v158: Int):  ; preds b4, b11
-  v159: Bool = lt v158, v142
-  br v159, b10(), b12()
+b9(v148: Int):  ; preds b4, b11
+  v149: Bool = lt v148, v132
+  br v149, b10(), b12()
 b10:  ; preds b9
-  v161: Shape = call list.index, v141, v158
-  v162: Stdio = cap stdio, v0
-  v163: Str = call label, v161
-  v164: () = call Stdio.println, v162, v163
+  v151: Shape = call list.index, v131, v148
+  v152: Stdio = cap stdio, v0
+  v153: Str = call label, v151
+  v154: () = call Stdio.println, v152, v153
   jump b11()
 b11:  ; preds b10
-  v166: Int = const 1
-  v167: Int = add v158, v166
-  jump b9(v167)
+  v156: Int = const 1
+  v157: Int = add v148, v156
+  jump b9(v157)
 b12:  ; preds b9
-  v169: List[Str] = call list.new
-  v170: Int = const 0
-  v171: Int = const 1000
-  jump b13(v170, v169)
-b13(v173: Int, v174: List[Str]):  ; preds b12, b15
-  v175: Bool = lt v173, v171
-  br v175, b14(), b16()
+  v159: List[Str] = call list.new
+  v160: Int = const 0
+  v161: Int = const 1000
+  jump b13(v160, v159)
+b13(v163: Int, v164: List[Str]):  ; preds b12, b15
+  v165: Bool = lt v163, v161
+  br v165, b14(), b16()
 b14:  ; preds b13
-  v177: Str = const "w"
-  v178: Str = call str.of_int, v173
-  v179: Str = call str.concat, v177, v178
-  v180: List[Str] = call list.push, v174, v179
-  v181: () = tuple
+  v167: Str = const "w"
+  v168: Str = call str.concat_int, v167, v163
+  v169: List[Str] = call list.push, v164, v168
+  v170: () = tuple
   jump b15()
 b15:  ; preds b14
-  v183: Int = const 1
-  v184: Int = add v173, v183
-  jump b13(v184, v180)
+  v172: Int = const 1
+  v173: Int = add v163, v172
+  jump b13(v173, v169)
 b16:  ; preds b13
-  v186: Str = const ""
-  jump b17(v174, v186)
-b17(v188: List[Str], v189: Str):  ; preds b16, b20
-  v190: Int = call list.len, v188
-  v191: Int = const 1
-  v192: Bool = gt v190, v191
-  br v192, b19(), b18()
+  v175: Str = const ""
+  jump b17(v164, v175)
+b17(v177: List[Str], v178: Str):  ; preds b16, b20
+  v179: Int = call list.len, v177
+  v180: Int = const 1
+  v181: Bool = gt v179, v180
+  br v181, b19(), b18()
 b18:  ; preds b17
-  v194: Stdio = cap stdio, v0
-  v195: Str = const "kept "
-  v196: Str = call str.concat, v195, v189
-  v197: Str = const " left "
-  v198: Str = call str.concat, v196, v197
-  v199: Int = call list.len, v188
-  v200: Str = call str.of_int, v199
-  v201: Str = call str.concat, v198, v200
-  v202: () = call Stdio.println, v194, v201
-  v203: Int = const 0
-  v204: Str? = call list.get, v188, v203
-  v205: Int = const 5
-  v206: Str? = call list.get, v188, v205
-  v207: Stdio = cap stdio, v0
-  v208: Int = tag v204
-  v209: Int = const 1
-  v210: Bool = eq v208, v209
-  br v210, b24(), b25()
+  v183: Stdio = cap stdio, v0
+  v184: Str = const "kept "
+  v185: Str = call str.concat, v184, v178
+  v186: Str = const " left "
+  v187: Str = call str.concat, v185, v186
+  v188: Int = call list.len, v177
+  v189: Str = call str.concat_int, v187, v188
+  v190: () = call Stdio.println, v183, v189
+  v191: Int = const 0
+  v192: Str? = call list.get, v177, v191
+  v193: Int = const 5
+  v194: Str? = call list.get, v177, v193
+  v195: Stdio = cap stdio, v0
+  v196: Int = tag v192
+  v197: Int = const 1
+  v198: Bool = eq v196, v197
+  br v198, b24(), b25()
 b19:  ; preds b17
-  v212: (List[Str], Str?) = call list.pop, v188
-  v213: List[Str] = field 0, v212
-  v214: Str? = field 1, v212
-  v215: Int = tag v214
-  v216: Int = const 1
-  v217: Bool = eq v215, v216
-  br v217, b22(), b21()
-b20(v219: Str):  ; preds b22, b21
-  v220: () = tuple
-  jump b17(v213, v219)
+  v200: (List[Str], Str?) = call list.pop, v177
+  v201: List[Str] = field 0, v200
+  v202: Str? = field 1, v200
+  v203: Int = tag v202
+  v204: Int = const 1
+  v205: Bool = eq v203, v204
+  br v205, b22(), b21()
+b20(v207: Str):  ; preds b22, b21
+  v208: () = tuple
+  jump b17(v201, v207)
 b21:  ; preds b19
-  v222: () = tuple
-  jump b20(v189)
+  v210: () = tuple
+  jump b20(v178)
 b22:  ; preds b19
-  v224: Str = payload 1.0, v214
-  v225: () = tuple
-  jump b20(v224)
-b23(v227: Str):  ; preds b24, b25
-  v228: Str = const " "
-  v229: Str = call str.concat, v227, v228
-  v230: Int = tag v206
-  v231: Int = const 1
-  v232: Bool = eq v230, v231
-  br v232, b27(), b28()
+  v212: Str = payload 1.0, v202
+  v213: () = tuple
+  jump b20(v212)
+b23(v215: Str):  ; preds b24, b25
+  v216: Str = const " "
+  v217: Str = call str.concat, v215, v216
+  v218: Int = tag v194
+  v219: Int = const 1
+  v220: Bool = eq v218, v219
+  br v220, b27(), b28()
 b24:  ; preds b18
-  v234: Str = payload 1.0, v204
-  jump b23(v234)
+  v222: Str = payload 1.0, v192
+  jump b23(v222)
 b25:  ; preds b18
-  v236: Str = const "x"
-  jump b23(v236)
-b26(v238: Str):  ; preds b27, b28
-  v239: Str = call str.concat, v229, v238
-  v240: () = call Stdio.println, v207, v239
-  v241: Str = const ""
-  v242: Int = const 0
-  v243: Int = const 20
-  jump b29(v242, v241)
+  v224: Str = const "x"
+  jump b23(v224)
+b26(v226: Str):  ; preds b27, b28
+  v227: Str = call str.concat, v217, v226
+  v228: () = call Stdio.println, v195, v227
+  v229: Str = const ""
+  v230: Int = const 0
+  v231: Int = const 20
+  jump b29(v230, v229)
 b27:  ; preds b23
-  v245: Str = payload 1.0, v206
-  jump b26(v245)
+  v233: Str = payload 1.0, v194
+  jump b26(v233)
 b28:  ; preds b23
-  v247: Str = const "x"
-  jump b26(v247)
-b29(v249: Int, v250: Str):  ; preds b26, b31
-  v251: Bool = lt v249, v243
-  br v251, b30(), b32()
+  v235: Str = const "x"
+  jump b26(v235)
+b29(v237: Int, v238: Str):  ; preds b26, b31
+  v239: Bool = lt v237, v231
+  br v239, b30(), b32()
 b30:  ; preds b29
-  v253: Int = const 10
-  v254: Int = rem v249, v253 @ main.xo:92:20
-  v255: Str = call str.of_int, v254
-  v256: Str = call str.concat, v250, v255
-  v257: () = tuple
+  v241: Int = const 10
+  v242: Int = rem v237, v241 @ main.xo:92:20
+  v243: Str = call str.of_int, v242
+  v244: Str = call str.concat, v238, v243
+  v245: () = tuple
   jump b31()
 b31:  ; preds b30
-  v259: Int = const 1
-  v260: Int = add v249, v259
-  jump b29(v260, v256)
+  v247: Int = const 1
+  v248: Int = add v237, v247
+  jump b29(v248, v244)
 b32:  ; preds b29
-  v262: Stdio = cap stdio, v0
-  v263: () = call Stdio.println, v262, v250
-  ret v263
+  v250: Stdio = cap stdio, v0
+  v251: () = call Stdio.println, v250, v238
+  ret v251
 }
 
 func add_item(v0: Bag, v1: Str) -> ((), Bag) {
@@ -386,12 +374,11 @@ b5:  ; preds b2
   v17: List[Int] = payload 1.0, v0
   v18: Str = const "many "
   v19: Int = call list.len, v17
-  v20: Str = call str.of_int, v19
-  v21: Str = call str.concat, v18, v20
-  jump b1(v21)
+  v20: Str = call str.concat_int, v18, v19
+  jump b1(v20)
 b6:  ; preds b4
   unreachable
 b7:  ; preds b4
-  v24: Str = const "empty"
-  jump b1(v24)
+  v23: Str = const "empty"
+  jump b1(v23)
 }

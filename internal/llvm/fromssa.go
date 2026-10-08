@@ -37,6 +37,8 @@ const ssaRuntimeDecls = `%xo.str = type { ptr, i64 }
 declare ptr @xo_rc_alloc(i64) #2
 declare void @xo_rc_free(ptr) #2
 declare ptr @xo_rs_concat(ptr, i64, ptr, i64) #2
+declare ptr @xo_rs_concat_int(ptr, i64, i64, ptr) #2
+declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2
 declare ptr @xo_rs_of_int(i64, ptr) #2
 declare ptr @xo_rs_of_float(double, ptr) #2
 declare ptr @xo_rl_new(i64, i64) #2
@@ -812,6 +814,9 @@ func (s *sfn) instr(v *ssa.Value) {
 		s.emit("unreachable")
 	case ssa.OpRetain:
 		x := v.Args[0]
+		if x.Op == ssa.OpConst {
+			return // literals are immortal
+		}
 		s.emit("call void %s(%s)", g.rcFn("dup", x.Type), s.typed(x))
 	case ssa.OpRelease:
 		x := v.Args[0]
@@ -1003,6 +1008,18 @@ func (s *sfn) call(v *ssa.Value) {
 		bo, _, bn := s.strParts(a(1))
 		obj := s.def("call ptr @xo_rs_concat(ptr %s, i64 %s, ptr %s, i64 %s)", ao, an, bo, bn)
 		n := s.def("add i64 %s, %s", an, bn)
+		s.mkStr(v, obj, n)
+	case "str.concat_int":
+		ao, _, an := s.strParts(a(0))
+		slot := s.alloca("i64")
+		obj := s.def("call ptr @xo_rs_concat_int(ptr %s, i64 %s, i64 %s, ptr %s)", ao, an, a(1), slot)
+		n := s.def("load i64, ptr %s", slot)
+		s.mkStr(v, obj, n)
+	case "str.concat_float":
+		ao, _, an := s.strParts(a(0))
+		slot := s.alloca("i64")
+		obj := s.def("call ptr @xo_rs_concat_float(ptr %s, i64 %s, double %s, ptr %s)", ao, an, a(1), slot)
+		n := s.def("load i64, ptr %s", slot)
 		s.mkStr(v, obj, n)
 	case "str.eq":
 		_, ad, an := s.strParts(a(0))

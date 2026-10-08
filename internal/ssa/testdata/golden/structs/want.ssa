@@ -33,21 +33,18 @@ b0(v0: Os):
   v29: Str = const " "
   v30: Str = call str.concat, v28, v29
   v31: Int = field 1, v17
-  v32: Str = call str.of_int, v31
-  v33: Str = call str.concat, v30, v32
-  v34: Str = const " "
-  v35: Str = call str.concat, v33, v34
-  v36: P = field 0, v23
-  v37: Int = field 0, v36
-  v38: Str = call str.of_int, v37
-  v39: Str = call str.concat, v35, v38
-  v40: Str = const " "
-  v41: Str = call str.concat, v39, v40
-  v42: Int = field 1, v23
-  v43: Str = call str.of_int, v42
-  v44: Str = call str.concat, v41, v43
-  v45: () = call Stdio.println, v24, v44
-  ret v45
+  v32: Str = call str.concat_int, v30, v31
+  v33: Str = const " "
+  v34: Str = call str.concat, v32, v33
+  v35: P = field 0, v23
+  v36: Int = field 0, v35
+  v37: Str = call str.concat_int, v34, v36
+  v38: Str = const " "
+  v39: Str = call str.concat, v37, v38
+  v40: Int = field 1, v23
+  v41: Str = call str.concat_int, v39, v40
+  v42: () = call Stdio.println, v24, v41
+  ret v42
 }
 
 func bump(v0: List[P], v1: Int) -> ((), List[P]) {

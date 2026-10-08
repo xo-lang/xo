@@ -12,48 +12,42 @@ b1(v6: Bool):  ; preds b3, b2
   v10: Str = call str.of_int, v9
   v11: Str = const " "
   v12: Str = call str.concat, v10, v11
-  release v10
-  v14: List[Int] = call list.new
-  v15: Int = const 1
-  v16: List[Int] = call list.push, v14, v15
-  v17: Int = const 2
-  v18: List[Int] = call list.push, v16, v17
-  v19: Int = const 30
-  v20: List[Int] = call list.push, v18, v19
-  v21: Int = const 50
-  v22: Int = call first_over, v20, v21
-  release v20
-  v24: Str = call str.of_int, v22
-  v25: Str = call str.concat, v12, v24
-  release v12
-  release v24
-  v28: Str = const " "
-  v29: Str = call str.concat, v25, v28
-  release v25
-  v31: Str = call str.of_bool, v6
-  v32: Str = call str.concat, v29, v31
-  release v29
-  release v31
-  v35: () = call Stdio.println, v7, v32
-  release v32
-  ret v35
+  v13: List[Int] = call list.new
+  v14: Int = const 1
+  v15: List[Int] = call list.push, v13, v14
+  v16: Int = const 2
+  v17: List[Int] = call list.push, v15, v16
+  v18: Int = const 30
+  v19: List[Int] = call list.push, v17, v18
+  v20: Int = const 50
+  v21: Int = call first_over, v19, v20
+  release v19
+  v23: Str = call str.concat_int, v12, v21
+  v24: Str = const " "
+  v25: Str = call str.concat, v23, v24
+  v26: Str = call str.of_bool, v6
+  v27: Str = call str.concat, v25, v26
+  release v26
+  v29: () = call Stdio.println, v7, v27
+  release v27
+  ret v29
 b2:  ; preds b0
-  v38: List[Int] = call list.new
-  v39: Int = const 1
-  v40: List[Int] = call list.push, v38, v39
-  v41: Int = const 2
-  v42: List[Int] = call list.push, v40, v41
-  v43: Int = const 30
-  v44: List[Int] = call list.push, v42, v43
-  v45: Int = const 50
-  v46: Int = call first_over, v44, v45
-  release v44
-  v48: Int = const 0
-  v49: Bool = ne v46, v48
-  jump b1(v49)
+  v32: List[Int] = call list.new
+  v33: Int = const 1
+  v34: List[Int] = call list.push, v32, v33
+  v35: Int = const 2
+  v36: List[Int] = call list.push, v34, v35
+  v37: Int = const 30
+  v38: List[Int] = call list.push, v36, v37
+  v39: Int = const 50
+  v40: Int = call first_over, v38, v39
+  release v38
+  v42: Int = const 0
+  v43: Bool = ne v40, v42
+  jump b1(v43)
 b3:  ; preds b0
-  v51: Bool = const false
-  jump b1(v51)
+  v45: Bool = const false
+  jump b1(v45)
 }
 
 func sum_odd(v0: Int) -> Int {
