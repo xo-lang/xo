@@ -1115,5 +1115,5 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 
 Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
 `<user cache>/xo/gocache`), trimmed by least recent use to stay under
-`XO_GOCACHE_MAX` bytes (default 8 GiB). See `gotchas/go-build-cache-growth.md`.
+`XO_GOCACHE_MAX` bytes (default 8 GiB). Entries younger than 2 hours are never trimmed, so concurrent builds keep their files. See `gotchas/go-build-cache-growth.md` and `gotchas/go-cache-trim-races-builds.md`.
 

@@ -17,6 +17,11 @@ import (
 // defaultCacheMax is the cap when XO_GOCACHE_MAX is not set.
 const defaultCacheMax = 8 << 30
 
+// keepRecent protects entries Go may be using: Go refreshes an entry's mtime
+// only when it is more than an hour old, so anything newer than this may be
+// part of a build in flight.
+const keepRecent = 2 * time.Hour
+
 // GoCacheDir is the Go build cache used for Xo builds: $XO_GOCACHE, else
 // <user cache>/xo/gocache.
 func GoCacheDir() string {
@@ -41,8 +46,12 @@ func cacheMax() int64 {
 // trimGoCache removes the least recently used cache files once the cache
 // exceeds its cap, down to three quarters of it. It runs at most every ten
 // minutes (a stamp file records the last run) so builds stay fast. Go
-// refreshes the modification time of entries it uses, so mtime order is
-// usage order; a removed entry is simply rebuilt.
+// refreshes the modification time of an entry it uses only when the entry
+// is over an hour old, so mtime order is usage order at one hour
+// granularity. Entries touched within keepRecent are never removed, and each
+// file is restated just before removal: a concurrent build (another test
+// package, another worktree) may be linking it right now
+// (gotchas/go-cache-trim-races-builds.md). A removed entry is simply rebuilt.
 func trimGoCache() {
 	dir := GoCacheDir()
 	stamp := filepath.Join(dir, "xo-trim-stamp")
@@ -76,11 +85,18 @@ func trimGoCache() {
 	if total <= limit {
 		return
 	}
+	cutoff := time.Now().Add(-keepRecent)
 	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
 	target := limit / 4 * 3
 	for _, f := range files {
 		if total <= target {
 			break
+		}
+		if !f.mod.Before(cutoff) {
+			break // sorted oldest first: everything left is recent
+		}
+		if fi, err := os.Stat(f.path); err != nil || !fi.ModTime().Before(cutoff) {
+			continue
 		}
 		if os.Remove(f.path) == nil {
 			total -= f.size
