@@ -18,18 +18,33 @@ import (
 // acquirer (barging, as Go's sync.Mutex). A waiter that loses lockStarve
 // times in a row sets starving, which switches release back to handoff
 // until a handed off waiter gets the permit. Decision 0047.
+//
+// A Mutex lock also has a shared mode (Mutex.with_read, decision 0063):
+// many readers or one writer. The mutex is held exclusively while permits
+// is 0 and shared while readers > 0, never both. Writers are preferred:
+// while a writer waits (wwait > 0) a new reader queues instead of joining
+// the readers inside, so a stream of readers cannot starve a writer. A
+// release wakes the waiter at the head of the queue, and when that is a
+// reader, every reader queued right behind it too (they do not exclude
+// each other); a woken reader may enter although a writer waits, since it
+// was queued ahead of that writer.
 type lock struct {
 	mu      sync.Mutex
 	permits int
-	q       []*waiter
+	readers int
+	// wwait counts the exclusive acquirers that wait or were woken and
+	// retry; new readers queue while it is positive (writer preference)
+	wwait int
+	q     []*waiter
 	// starving: a waiter lost the race too often; hand off (see above)
 	starving bool
 	// a Mutex: where it was made and who holds it since where, for
-	// deadlock reports and `xo dump`
+	// deadlock reports and `xo dump`; rdrs are the readers inside
 	mutex bool
 	made  [3]uintptr
 	owner *Task
 	site  heldSite
+	rdrs  []*Task
 }
 
 // lockStarve is how many lost races make a waiter ask for handoff.
@@ -43,23 +58,54 @@ func barging(tk *Task) bool {
 
 // acquire takes a permit, waiting if none is free. It reports false when
 // the task was canceled while waiting.
-func (l *lock) acquire(tk *Task) bool {
+func (l *lock) acquire(tk *Task) bool { return l.acquireMode(tk, false) }
+
+// free reports whether an acquirer may enter now. woken: a reader that was
+// queued and woken keeps its place ahead of writers that queued later.
+func (l *lock) free(shared, woken bool) bool {
+	if shared {
+		return l.permits > 0 && (l.wwait == 0 || woken)
+	}
+	return l.permits > 0 && l.readers == 0
+}
+
+// acquireMode is acquire in exclusive or shared (reader) mode. A reader
+// is recorded in rdrs.
+func (l *lock) acquireMode(tk *Task, shared bool) bool {
 	k := waitSemaphore
-	if l.mutex {
+	switch {
+	case l.mutex && shared:
+		k = waitMutexRead
+	case l.mutex:
 		k = waitMutex
 	}
 	lost := 0
+	// pending: this writer is counted in wwait
+	pending := false
 	for {
 		l.mu.Lock()
-		if l.permits > 0 {
-			l.permits--
+		if l.free(shared, lost > 0) {
+			if shared {
+				l.readers++
+				l.rdrs = append(l.rdrs, tk)
+			} else {
+				l.permits--
+			}
+			if pending {
+				l.wwait--
+			}
 			if lost > 0 {
 				l.starving = false
 			}
 			l.mu.Unlock()
 			return true
 		}
+		if !shared && !pending {
+			pending = true
+			l.wwait++
+		}
 		w := newWaiter(tk)
+		w.shared = shared
 		if lost > 0 {
 			// a woken waiter that lost the permit keeps its place
 			l.q = append(l.q, nil)
@@ -80,12 +126,22 @@ func (l *lock) acquire(tk *Task) bool {
 					break
 				}
 			}
-			l.mu.Unlock()
+			if pending {
+				l.wwait--
+			}
+			// a writer that leaves may unblock the readers queued behind it
+			l.wakeLocked()
 			return false
 		}
 		if w.granted {
 			l.mu.Lock()
 			l.starving = false
+			if shared {
+				l.rdrs = append(l.rdrs, tk)
+			}
+			if pending {
+				l.wwait--
+			}
 			l.mu.Unlock()
 			return true
 		}
@@ -93,34 +149,86 @@ func (l *lock) acquire(tk *Task) bool {
 	}
 }
 
-// release hands the permit to the next waiter or frees it and wakes the
-// next waiter (see lock).
+// release ends an exclusive hold: it hands the permit to the next waiter
+// or frees it and wakes the next waiter (see lock).
 func (l *lock) release() {
 	l.mu.Lock()
 	l.owner = nil
-	for len(l.q) > 0 {
-		w := l.q[0]
-		l.q = l.q[1:]
-		if w.claim() {
-			bg := barging(w.tk)
-			if l.starving || !bg {
-				w.granted = true
-			} else {
-				l.permits++
-			}
-			l.mu.Unlock()
-			w.signal()
-			if bg {
-				// the woken goroutine waits in this processor's runnext
-				// slot until this one blocks, which can be a whole request
-				// later; let it run now (knowledgebase/gotchas/lock-convoy-runnext-wake.md)
-				runtime.Gosched()
-			}
-			return
+	l.permits++
+	l.wakeLocked()
+}
+
+// releaseRead ends tk's shared hold; the last reader out wakes the next
+// waiter.
+func (l *lock) releaseRead(tk *Task) {
+	l.mu.Lock()
+	l.readers--
+	for i, x := range l.rdrs {
+		if x == tk {
+			last := len(l.rdrs) - 1
+			l.rdrs[i] = l.rdrs[last]
+			l.rdrs[last] = nil
+			l.rdrs = l.rdrs[:last]
+			break
 		}
 	}
-	l.permits++
+	if l.readers > 0 {
+		l.mu.Unlock()
+		return
+	}
+	l.wakeLocked()
+}
+
+// wakeLocked wakes the waiters that may enter now and unlocks l.mu: the
+// head of the queue, and the readers right behind a reader at the head.
+// Under a test world, the deterministic scheduler, or starvation they get
+// the permit handed over; in a real run they compete for it again.
+func (l *lock) wakeLocked() {
+	var first *waiter
+	var more []*waiter
+	bg := false
+	for len(l.q) > 0 {
+		w := l.q[0]
+		if l.permits == 0 || !w.shared && l.readers > 0 {
+			break
+		}
+		l.q = l.q[1:]
+		if !w.claim() {
+			continue // canceled: it removes nothing, it is out of the queue
+		}
+		b := barging(w.tk)
+		if l.starving || !b {
+			w.granted = true
+			if w.shared {
+				l.readers++
+			} else {
+				l.permits--
+			}
+		}
+		bg = bg || b
+		if first == nil {
+			first = w
+		} else {
+			more = append(more, w)
+		}
+		if !w.shared || len(l.q) == 0 || !l.q[0].shared {
+			break
+		}
+	}
 	l.mu.Unlock()
+	if first == nil {
+		return
+	}
+	first.signal()
+	for _, w := range more {
+		w.signal()
+	}
+	if bg {
+		// the woken goroutine waits in this processor's runnext slot until
+		// this one blocks, which can be a whole request later; let it run
+		// now (knowledgebase/gotchas/lock-convoy-runnext-wake.md)
+		runtime.Gosched()
+	}
 }
 
 // heldSite is where a task acquired a mutex: the caller's program
@@ -189,6 +297,37 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 		m.v = v
 	}
 	return r
+}
+
+// Mutex_with_read is `m.with_read(f)` (std.md 2.7, decision 0063): f
+// gets a read only copy of the value while the mutex is held in shared
+// mode; other readers may hold it at the same time, writers wait (see
+// lock). Waiting is a cancellation point that unwinds. Re-entrant use in
+// one task (with or with_read inside either) faults (XO-F004): a nested
+// read could deadlock behind a waiting writer.
+func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result[R, E]) Result[R, E] {
+	tk.Yield()
+	if prev, ok := tk.held[m]; ok {
+		FaultCode("XO-F004", xoLocation(2), "Mutex.with_read called re-entrantly in one task; the mutex is already held from %s", prev.loc())
+	}
+	if !m.l.acquireMode(tk, true) {
+		tk.Unwind()
+	}
+	if tk.held == nil {
+		tk.held = map[any]heldSite{}
+	}
+	var site heldSite
+	site.n = runtime.Callers(2, site.pcs[:])
+	tk.held[m] = site
+	defer func() {
+		delete(tk.held, m)
+		m.l.releaseRead(tk)
+	}()
+	// readers share m.v: the copy f gets must not write m.v's lists in
+	// place (see List); marking is atomic, so readers may race on it
+	v := m.v
+	MarkP(&v)
+	return f(tk, v)
 }
 
 // Atomic is `Atomic[T]` for Int and Bool (std.md 2.7).

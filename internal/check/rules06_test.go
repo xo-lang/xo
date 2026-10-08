@@ -37,5 +37,23 @@ func TestSplitCriticalSection(t *testing.T) {
 		{name: "one section", src: head + "fn f(m: Mutex[Map[Str, B]]) {\n  m.with(fn(var s) {\n    let b = s.get(\"k\") ?? B{n: 0}\n    s.put(\"k\", b with {n: b.n + 1})\n  })\n}\n"},
 		{name: "read only use afterwards", src: head + "fn f(m: Mutex[Map[Str, B]]) -> Int {\n  let b = m.with(fn(s) { s.get(\"k\") ?? B{n: 0} })\n  b.n\n}\n"},
 		{name: "different mutexes", src: head + "fn f(m: Mutex[Map[Str, B]], o: Mutex[Map[Str, B]]) {\n  let b = m.with(fn(s) { s.get(\"k\") ?? B{n: 0} })\n  o.with(fn(var s) { s.put(\"k\", b) })\n}\n"},
+		{name: "read in with_read then write", src: head + "fn f(m: Mutex[Map[Str, B]]) {\n  let b = m.with_read(fn(s) { s.get(\"k\") ?? B{n: 0} })\n  m.with(fn(var s) { s.put(\"k\", b with {n: b.n + 1}) })\n}\n", want: []string{"XO0804"}},
+		{name: "with_read after with_read acts on nothing", src: head + "fn f(m: Mutex[Map[Str, B]]) -> Int {\n  let b = m.with_read(fn(s) { s.get(\"k\") ?? B{n: 0} })\n  m.with_read(fn(s) { s.len() + b.n })\n}\n"},
+	})
+}
+
+// TestWithRead checks Mutex.with_read (decision 0063): the closure gets a
+// read only value, so mutation is rejected as for any read only binding,
+// and a `var` parameter (a copy whose changes would be lost) is rejected.
+func TestWithRead(t *testing.T) {
+	runCases(t, []ruleCase{
+		{name: "read", src: "fn f(m: Mutex[Map[Str, Int]]) -> Int {\n  m.with_read(fn(s) { s.get(\"k\") ?? 0 })\n}\n"},
+		{name: "read with an error", src: "enum E { Missing }\nfn f(m: Mutex[Map[Str, Int]]) -> Int ! E {\n  m.with_read(fn(s) -> Int ! E { s.get(\"k\").or_err(E.Missing) })\n}\n"},
+		{name: "mutating method", src: "fn f(m: Mutex[Map[Str, Int]]) {\n  m.with_read(fn(s) { s.put(\"k\", 1) })\n}\n", want: []string{"XO0501"}},
+		{name: "assignment", src: "fn f(m: Mutex[Int]) {\n  m.with_read(fn(n) { n = 2 })\n}\n", want: []string{"XO0502"}},
+		{name: "field assignment", src: "struct B { pub n: Int }\nfn f(m: Mutex[B]) {\n  m.with_read(fn(b) { b.n = 2 })\n}\n", want: []string{"XO0502"}},
+		{name: "var parameter", src: "fn f(m: Mutex[Map[Str, Int]]) {\n  m.with_read(fn(var s) { s.put(\"k\", 1) })\n}\n", want: []string{"XO0401"}},
+		{name: "var parameter for a by value function type", src: "fn apply(f: fn(Int) -> Int) -> Int { f(1) }\nfn g() -> Int {\n  apply(fn(var x) { x += 1\n    x })\n}\n", want: []string{"XO0401"}},
+		{name: "var parameter for a var function type", src: "fn apply(f: fn(var Int)) {}\nfn g() {\n  apply(fn(var x) { x += 1 })\n}\n"},
 	})
 }

@@ -1,0 +1,52 @@
+test "readers never see a torn pair" {
+  let m = Mutex[Pair].new(Pair{a: 10, b: 0})
+  let torn = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..3 {
+      s.spawn(fn() {
+        for _ in 0..3 {
+          move(m)
+        }
+      })
+    }
+    for _ in 0..3 {
+      s.spawn(fn() {
+        for _ in 0..3 {
+          if sum(m) != 10 {
+            torn.add(1)
+          }
+        }
+      })
+    }
+  }
+  expect(torn.get()) == 0
+  expect(m.with_read(fn(p) { p.b })) == 9
+}
+
+test "readers hold the mutex together" {
+  let m = Mutex[Pair].new(Pair{a: 1, b: 2})
+  let ch = Chan[Int].new()
+  scope s {
+    s.spawn(fn() { m.with_read(fn(p) { ch.send(p.a) }) })
+    s.spawn(fn() {
+      let got = m.with_read(fn(p) { (ch.recv() ?? 0) + p.b })
+      expect(got) == 3
+    })
+  }
+}
+
+test "a writer waits for the readers" {
+  let m = Mutex[Pair].new(Pair{a: 0, b: 0})
+  let seen = Atomic[Int].new(0)
+  scope s {
+    s.spawn(fn() { move(m) })
+    for _ in 0..2 {
+      s.spawn(fn() {
+        let b = m.with_read(fn(p) { p.b })
+        seen.add(b)
+      })
+    }
+  }
+  expect(m.with_read(fn(p) { (p.a, p.b) })) == (-1, 1)
+  expect(seen.get() >= 0 && seen.get() <= 2) == true
+}

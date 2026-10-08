@@ -33,14 +33,17 @@ func pathText(e ast.Expr) string {
 	return ""
 }
 
-// mutexWith returns the receiver path of a `<mutex>.with(...)` call.
-func (c *checker) mutexWith(e ast.Expr) (string, *ast.CallExpr) {
+// mutexWith returns the receiver path of a `<mutex>.with(...)` call, or
+// with read set, also of a `<mutex>.with_read(...)` call (a value read
+// there is as stale as one read in `with`, but a later `with_read` acts
+// on nothing).
+func (c *checker) mutexWith(e ast.Expr, read bool) (string, *ast.CallExpr) {
 	call, ok := unparen(e).(*ast.CallExpr)
 	if !ok {
 		return "", nil
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "with" {
+	if !ok || sel.Sel.Name != "with" && !(read && sel.Sel.Name == "with_read") {
 		return "", nil
 	}
 	n, ok := resolve(c.exprType[sel.X]).(*Named)
@@ -87,14 +90,14 @@ func (c *checker) splitCriticalSections(body *ast.Block) {
 	inspect(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.LetStmt:
-			if mu, _ := c.mutexWith(x.Value); mu != "" {
+			if mu, _ := c.mutexWith(x.Value, true); mu != "" {
 				bind(x.Pattern, mu)
 			} else if id := refs(x.Value, ""); id != nil {
 				bind(x.Pattern, tainted[c.identObj[id]])
 			}
 		case *ast.VarStmt:
 			if v := c.identObj[x.Name]; v != nil {
-				if mu, _ := c.mutexWith(x.Value); mu != "" {
+				if mu, _ := c.mutexWith(x.Value, true); mu != "" {
 					tainted[v] = mu
 				} else if id := refs(x.Value, ""); id != nil {
 					tainted[v] = tainted[c.identObj[id]]
@@ -111,7 +114,7 @@ func (c *checker) splitCriticalSections(body *ast.Block) {
 				}
 			}
 		case *ast.CallExpr:
-			mu, call := c.mutexWith(x)
+			mu, call := c.mutexWith(x, false)
 			if mu == "" || c.splitWarned[call] {
 				return true
 			}

@@ -93,6 +93,7 @@ XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: mo
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, and the --no-mono and --arenas golden lowerings; use per commit, run the full suite before merging (about 2.5 min)
+go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
@@ -310,7 +311,8 @@ monitor, reports, dump), hooks in `task.go`, `scope.go`, `chan.go`,
   task, a creation sequence number, and (scope bodies) the opening site.
 - Scheduler (`sched`): one thread holds the turn; scheduling points
   (`Task.Yield`) are channel operations (send, recv, try_send, try_recv,
-  close, select), await, Mutex.with, Semaphore.with, Once.get, spawn,
+  close, select), await, Mutex.with, Mutex.with_read, Semaphore.with,
+  Once.get, spawn,
   Atomic operations, sleep, `task.is_canceled()`,
   `task.stop_requested()`, and the effect calls of the fakes (clock.now,
   stdio, MemFs, FakeNet) and of real clock and stdio. At each point a PCG
@@ -474,7 +476,10 @@ Last verified: 2026-10-07
   runs (`gotchas/bench-host-timing-drift.md`). Last verified: 2026-10-08.
 - `bench/perf/http/run.sh` (2026-10-08): HTTP load benchmark of task 01.
   `go/` and `xo/` are copies of `bench/go/plain/01-crud-api` and
-  `bench/xo/v0.4/01-crud-api` that listen on 127.0.0.1 only; `loadgen/`
+  `bench/xo/v0.4/01-crud-api` that listen on 127.0.0.1 only (since
+  2026-10-08 `xo/` reads the store with `Mutex.with_read`, so the
+  `xo-base` configs need an xo binary that has it; for older binaries
+  build a copy of the source with `with` instead); `loadgen/`
   (own module) runs `CONC` keep alive workers (default 32) through a
   create, get, patch, get, delete cycle (and a list every eighth cycle)
   for `WARMUP` + `DURATION` (2s + 10s). Each server starts fresh with

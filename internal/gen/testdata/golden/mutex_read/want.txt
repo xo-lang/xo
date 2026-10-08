@@ -1,0 +1,9 @@
+exit 70
+--- stdout
+a -100 b 200 log 200 reads 800 bad 0
+copy 201 kept 200
+error Empty
+last is set true
+re-entrant with_read next
+--- stderr
+fault: XO-F004: Mutex.with_read called re-entrantly in one task; the mutex is already held from main.xo:69 at main.xo:70

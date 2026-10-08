@@ -333,6 +333,8 @@ fn (c: Chan[T]) len() -> Int
 
 fn (static: Mutex[T]) new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
+/// Shared read only access (decision 0063): many readers or one writer.
+fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
 
 fn (static: Atomic[T]) new(v: T) -> Atomic[T]
 fn (a: Atomic[T]) get() -> T

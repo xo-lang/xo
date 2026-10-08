@@ -1,7 +1,8 @@
 #!/bin/sh
 # Load benchmark of the task 01 users CRUD API (bench/perf/http): the
 # plain Go solution (go/, a copy of bench/go/plain/01-crud-api) against the
-# Xo solution (xo/, a copy of bench/xo/v0.4/01-crud-api), built with
+# Xo solution (xo/, a copy of bench/xo/v0.4/01-crud-api whose Store.get and
+# Store.list use Mutex.with_read since 2026-10-08), built with
 # .tools/bin/xo (or $XO) with and without --arenas. Both copies listen on
 # 127.0.0.1 only. Run from anywhere.
 #

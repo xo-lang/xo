@@ -118,3 +118,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [tsan-deep-recursion.md](tsan-deep-recursion.md): TSan crashes on recursion hundreds of thousands deep, even single threaded; those goldens run threaded without it.
 - [native-rc-fast-path-costs.md](native-rc-fast-path-costs.md): a cold call made xo_free non leaf, SLP merged counters, a `.cold` split, and lost retain/release folding cost strings 12%; measure with process cycles.
 - [runtime-import-is-every-programs-dependency.md](runtime-import-is-every-programs-dependency.md): a third party import in std/rt becomes a requirement of every Xo program (rt is copied whole); vendor portable source into rt instead.
+- [reader-waits-for-reader-deadlock.md](reader-waits-for-reader-deadlock.md): a `with_read` section that waits for another reader to enter deadlocks when a writer queues in between (writer preference); `--explore` finds it and the report names the readers.
+- [var-closure-param-by-value.md](var-closure-param-by-value.md): `fn(var x)` given for a `fn(T)` parameter was accepted and miscompiled (pointer vs value); now XO0401.

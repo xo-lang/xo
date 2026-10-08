@@ -19,6 +19,8 @@ type waiter struct {
 	// lock: the permit was handed over, not just freed (see lock);
 	// written before the signal closes ch
 	granted bool
+	// lock: a reader (Mutex.with_read) rather than an exclusive acquirer
+	shared bool
 }
 
 func newWaiter(tk *Task) *waiter { return &waiter{tk: tk, ch: make(chan struct{})} }

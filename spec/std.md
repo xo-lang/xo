@@ -256,6 +256,7 @@ fn (c: Chan[T]) len() -> Int
 
 Mutex[T].new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
 
 Atomic[T].new(v: T) -> Atomic[T]             // T is Int or Bool
 fn (a: Atomic[T]) get() -> T
@@ -276,6 +277,47 @@ fn (b: StrBuilder) freeze() -> Str           // moves b
 
 Secret[T].new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
+```
+
+`Mutex.with_read` (decision 0063) is shared read only access: many readers
+or one writer. `f` gets the value read only (mutating it is an error, and
+its parameter cannot be declared `var`); nothing is written back. Readers
+run at the same time as each other; `with` waits until no reader is
+inside, and readers wait while a writer is inside.
+
+- Writers are preferred: while a `with` waits, a new `with_read` waits
+  behind it, so a stream of readers cannot starve a writer. So a reader
+  must not wait (on a channel, a task, or another lock) for a reader that
+  has not entered yet: with a writer queued in between that is a deadlock
+  (XO-F001, reported with the readers that hold the mutex).
+- In a real run the order among waiters is not fixed (as for `with`,
+  decision 0047). Under `xo test` and `--seed` it is first come, first
+  served, with the readers at the head of the queue entering together;
+  readers inside together interleave at scheduling points like any tasks,
+  and `--explore` enumerates those interleavings.
+- Waiting is a cancellation point; a canceled waiter leaves the queue
+  (readers queued behind a canceled writer enter at once).
+- Calling `with` or `with_read` on a mutex the task already holds in
+  either mode faults (`XO-F004`).
+- A value read in `with_read` and used in a later `with` on the same mutex
+  gets the split critical section warning `XO0804` (core 5.4).
+
+```
+struct Stats {
+  hits: Int
+  last: Str
+}
+
+fn record(m: Mutex[Stats], path: Str) {
+  m.with(fn(var s) {
+    s.hits += 1
+    s.last = path
+  })
+}
+
+fn report(m: Mutex[Stats]) -> Str {
+  m.with_read(fn(s) { "${s.hits} hits, last ${s.last}" })
+}
 ```
 
 ---

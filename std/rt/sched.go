@@ -42,9 +42,10 @@ const (
 	waitDrain
 	waitAdvance
 	waitAccept
+	waitMutexRead
 )
 
-var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)"}
+var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)", "Mutex.with_read"}
 
 // waitTarget is an object a thread can block on. It describes itself for
 // reports and names the threads that can end the wait, when they are known
@@ -191,7 +192,7 @@ func countedWait(k waitKind, obj any) bool {
 	case waitSelect:
 		s, ok := obj.(*Select)
 		return ok && !s.ext
-	case waitMutex, waitSemaphore, waitAwait, waitScope, waitOnce:
+	case waitMutex, waitMutexRead, waitSemaphore, waitAwait, waitScope, waitOnce:
 		return true
 	}
 	return false
@@ -960,6 +961,13 @@ func (c *Chan[T]) isExt() bool { return c.ext }
 func (l *lock) waitDesc() (string, []*thread) {
 	l.mu.Lock()
 	owner, site := l.owner, l.site
+	rdrs := append([]*Task(nil), l.rdrs...)
+	var writers []*thread
+	for _, w := range l.q {
+		if !w.shared && w.tk != nil && w.tk.th != nil {
+			writers = append(writers, w.tk.th)
+		}
+	}
 	l.mu.Unlock()
 	if !l.mutex {
 		return "on a semaphore", nil
@@ -967,6 +975,31 @@ func (l *lock) waitDesc() (string, []*thread) {
 	s := "on a mutex"
 	if loc := xoLocationPCs(l.made[:]); loc != "" {
 		s += " made at " + loc
+	}
+	if owner == nil && len(rdrs) > 0 {
+		// shared (Mutex.with_read): name the readers inside, in a stable
+		// order for reports
+		sort.Slice(rdrs, func(i, j int) bool { return rdrs[i].th.id < rdrs[j].th.id })
+		var hs []*thread
+		s += ", held for reading by "
+		for i, r := range rdrs {
+			if i > 0 {
+				s += ", "
+			}
+			s += r.th.shortLabel()
+			hs = append(hs, r.th)
+		}
+		if len(writers) > 0 && len(rdrs) > 0 {
+			// new readers queue behind these (writer preference)
+			s += "; writers waiting: "
+			for i, th := range writers {
+				if i > 0 {
+					s += ", "
+				}
+				s += th.shortLabel()
+			}
+		}
+		return s, hs
 	}
 	if owner == nil {
 		return s, nil

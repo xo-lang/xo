@@ -1,0 +1,26 @@
+// Deterministic scheduling (core 7.4) of Mutex.with_read (decision 0063):
+// `xo test --explore=N` (args.txt) runs readers and writers under many
+// seeds; no seed deadlocks or sees a torn value.
+
+struct Pair {
+  a: Int
+  b: Int
+}
+
+// move keeps a + b constant.
+fn move(m: Mutex[Pair]) {
+  m.with(fn(var p) {
+    p.a -= 1
+    p.b += 1
+  })
+}
+
+fn sum(m: Mutex[Pair]) -> Int {
+  m.with_read(fn(p) { p.a + p.b })
+}
+
+fn main(os: Os) {
+  let m = Mutex[Pair].new(Pair{a: 10, b: 0})
+  move(m)
+  os.stdio.println("${sum(m)}")
+}

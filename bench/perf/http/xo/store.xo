@@ -85,12 +85,12 @@ fn (s: Store) create(input: NewUser) -> User ! ApiErr {
 }
 
 fn (s: Store) get(id: Int) -> User ! ApiErr {
-  s.state.with(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))
+  s.state.with_read(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))
 }
 
 /// All users ordered by id.
 fn (s: Store) list() -> List[User] {
-  s.state.with(fn(st) { st.users.values().sort_by(fn(u) { u.id }) })
+  s.state.with_read(fn(st) { st.users.values().sort_by(fn(u) { u.id }) })
 }
 
 /// Applies a partial update. Validation and the uniqueness check happen

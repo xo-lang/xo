@@ -16,6 +16,9 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 
 - Go packages with `use go` (4.4).
 - Two phase shutdown (7.5).
+- `Mutex.with_read`, shared read only access (5.4, std.md 2.7; decision
+  0063). A closure parameter declared `var` where the expected function
+  type takes it by value is error `XO0401` (it changed a copy only).
 
 ## Changes in 0.6
 
@@ -866,6 +869,7 @@ b.push(2)                // error XO0510: use of moved value `b`
 let cache = Mutex[Map[Str, User]].new({})
 cache.with(fn(var m) { m.put(key, user) })
 let n = cache.with(fn(m) { m.len() })               // read only access
+let size = cache.with_read(fn(m) { m.len() })       // shared with other readers
 let hits = Atomic[Int].new(0)
 let now_hits = hits.add(1)                           // returns the new value
 ```
@@ -898,6 +902,11 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
   check and the action in one `with`.
 - `with` cannot be called re entrantly on the same mutex within one task
   (fault `XO-F004` with both acquisition sites).
+- `m.with_read(f)` (std.md 2.7) is shared read only access: `f` gets the
+  value read only, readers run together, and `with` excludes them. Writers
+  are preferred, so a reader must not wait for a reader that has not
+  entered yet. A value read in `with_read` and used in a later `with` gets
+  `XO0804` like one read in `with`.
 
 ### 5.5 Memory management
 
@@ -1080,7 +1089,8 @@ let page = scope s {
 - Cancellation is **sticky**: once a task is cancelled, every cancellation
   point it reaches reports cancellation.
 - Blocking operations are cancellation points: effect calls, channel
-  operations, `await`, `clock.sleep`, `Mutex.with` while waiting.
+  operations, `await`, `clock.sleep`, `Mutex.with` and `Mutex.with_read`
+  while waiting.
 - A blocking operation that already returns a `Result` reports cancellation
   as its `Canceled` error variant (`http.ClientErr.Canceled`,
   `FsErr.Canceled`, ...). Code may map it to its own error, for example
@@ -1119,7 +1129,8 @@ Every `xo test` runs its tasks on a deterministic scheduler, seeded with
 `--seed=N` (default 1): one task runs at a time, and at each scheduling point
 the next task is chosen from the seed, so the same seed always produces the
 same interleaving. Scheduling points are channel operations (including
-`select`, `try_*`, and `close`), `await`, `Mutex.with`, `Semaphore.with`,
+`select`, `try_*`, and `close`), `await`, `Mutex.with`, `Mutex.with_read`,
+`Semaphore.with`,
 `Once.get`, `spawn`, `Atomic` operations, `sleep`, `task.is_canceled()`,
 `task.stop_requested()`, and effect calls. Failing seeds are printed and can
 be pinned with `test "x" seed 8812`.

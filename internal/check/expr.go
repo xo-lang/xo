@@ -1455,7 +1455,14 @@ func (c *checker) fnLit(x *ast.FnLit, hint Type) Type {
 			pt = badType
 		}
 		isVar := p.Var
-		params = append(params, FParam{Var: ft != nil && ft.Params[i].Var || p.Var, T: pt})
+		if p.Var && ft != nil && !ft.Params[i].Var {
+			// the caller passes the value read only (`Mutex.with_read`,
+			// decision 0063); a `var` parameter would change a copy only
+			// (the binding stays mutable so its uses do not cascade)
+			d := c.errorf(diag.TypeMismatch, p.Name.Sp, "parameter `%s` cannot be `var`: the expected function type passes it read only", p.Name.Name)
+			note(d, token.Span{}, "changes to it would never be written back; to change a `Mutex` value use `with`, not `with_read` (core 5.4)")
+		}
+		params = append(params, FParam{Var: ft != nil && ft.Params[i].Var || ft == nil && p.Var, T: pt})
 		c.checkName(p.Name, "parameter")
 		v := &VarObj{Name: p.Name.Name, Type: pt, Mutable: isVar, Kind: VParam, Span: p.Name.Sp, Used: true}
 		vars = append(vars, v)
