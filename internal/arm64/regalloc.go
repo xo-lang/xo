@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"math"
+	"math/bits"
 	"sort"
 )
 
@@ -111,6 +112,14 @@ func (s *fstate) regalloc() {
 					changed = true
 				}
 			}
+		}
+	}
+
+	// a register live into the entry is read before anything writes it
+	// (gotchas/arm64-mir-param-without-moves.md)
+	for w, x := range liveIn[0] {
+		if x != 0 {
+			fail("internal: %s reads virtual register %d before it is written", s.f.Name, w*64+bits.TrailingZeros64(x))
 		}
 	}
 

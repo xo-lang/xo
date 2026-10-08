@@ -10,7 +10,10 @@ import (
 	"github.com/xo-lang/xo/internal/ssa"
 )
 
-// Loop strength reduction and the facts of loop indexes (decision 0054).
+// Loop optimizations (decision 0054): strength reduction and the facts
+// of loop indexes (on the SSA, during selection), rotation at a bounds
+// check (emission), load pairs (a text peephole), and latch layout (on
+// the MIR, before allocation). Value ranges are in ranges.go.
 //
 // A pointer induction variable: in a loop whose header H has an Int
 // parameter i that every back edge passes as i + c (c a constant), an
