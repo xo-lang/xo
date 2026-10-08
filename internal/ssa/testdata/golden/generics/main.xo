@@ -1,0 +1,60 @@
+// Generics monomorphized in the SSA builder: one function per list of
+// type arguments, so each instance gets its own ownership (an instance
+// over Str or List retains and releases, one over Int does not).
+// Generic structs and methods, generic functions calling generic
+// functions, closures inside generic functions, and a generic function
+// as a value.
+struct Stack[T] {
+  items: List[T]
+}
+
+fn (var s: Stack[T]) push(x: T) {
+  s.items.push(x)
+}
+
+fn (var s: Stack[T]) pop() -> T? { s.items.pop() }
+
+fn (s: Stack[T]) size() -> Int { s.items.len() }
+
+fn pair[A, B](a: A, b: B) -> (B, A) { (b, a) }
+
+fn repeat[T](x: T, n: Int) -> List[T] {
+  var out: List[T] = []
+  for _ in 0..n {
+    out.push(x)
+  }
+  out
+}
+
+fn map_all[T, U](xs: List[T], f: fn(T) -> U) -> List[U] {
+  var out: List[U] = []
+  for x in xs {
+    out.push(f(x))
+  }
+  out
+}
+
+fn twice[T](xs: List[T]) -> List[T] {
+  let g = fn(x: T) -> T { x }
+  var out = map_all(xs, g)
+  for x in xs {
+    out.push(x)
+  }
+  out
+}
+
+fn ident[T](x: T) -> T { x }
+
+fn main(os: Os) {
+  var s = Stack[Str]{items: []}
+  s.push("a")
+  s.push("b")
+  let top = s.pop() ?? "-"
+  var n = Stack[Int]{items: []}
+  n.push(1)
+  let p = pair("x", repeat([1, 2], 3))
+  let lens = map_all(["ab", "c", ""], fn(w: Str) -> Int { w.len() })
+  let words = twice(["p", "q"])
+  let f: fn(Str) -> Str = ident
+  os.stdio.println("${top} ${s.size()} ${n.size()} ${p.0.len()} ${p.1} ${lens[0]} ${lens.len()} ${words.len()} ${words[3]} ${f("id")}")
+}

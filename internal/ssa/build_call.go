@@ -99,6 +99,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 	errT := failErr(ct.Err)
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, ct.Result, errT)
+		c.sub = s.sub
 		env := f.Params()[0]
 		for i, vo := range caps {
 			c.writeVar(vo, c.add(OpCapture, capTs[i], i, env))
@@ -119,13 +120,37 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 func (s *fn) funcValue(fo *check.FuncObj, at ast.Node) *Value {
 	b := s.b
 	t := s.natOf(at.(ast.Expr))
-	if t.Kind != KFunc || fo.Recv != nil || len(fo.TParams) > 0 {
+	if t.Kind != KFunc || fo.Recv != nil {
 		b.unsupported(at, "the function `"+fo.DisplayName()+"` as a value")
 		return s.undef(t)
 	}
-	w := b.thunks[fo]
+	var targs []check.Type
+	var sargs []*Type
+	// the type arguments: from the checker (methods), or by matching the
+	// signature against the function type the value has here
+	bound := map[*check.TParam]check.Type{}
+	if ft, ok := check.Resolve(s.natCheck(at.(ast.Expr))).(*check.Func); ok && len(ft.Params) == len(fo.Params) {
+		for i, p := range fo.Params {
+			matchTParams(p.Type, ft.Params[i].T, bound)
+		}
+		matchTParams(fo.Result, ft.Result, bound)
+	}
+	for _, p := range typeParams(fo) {
+		ta := b.info.RefSubst(at.(ast.Expr)).Type(p)
+		if ta == nil {
+			ta = bound[p]
+		}
+		if ta == nil {
+			b.unsupported(at, "the generic function `"+fo.DisplayName()+"` as a value without type arguments")
+			return s.undef(t)
+		}
+		targs = append(targs, s.apply(ta))
+		sargs = append(sargs, b.typ(s.apply(ta), at))
+	}
+	_, key := b.instKey(fo, sargs)
+	w := b.thunks[key]
 	if w == nil {
-		callee := b.declare(fo, at)
+		callee := b.declare(fo, targs, at)
 		if len(callee.VarParams) > 0 {
 			b.unsupported(at, "a function with `var` parameters as a value")
 			return s.undef(t)
@@ -135,9 +160,43 @@ func (s *fn) funcValue(fo *check.FuncObj, at ast.Node) *Value {
 		e := w.Blocks[0]
 		r := e.Add(OpCall, callee.Results[0], callee.Name, w.Params()[1:]...)
 		e.Add(OpReturn, nil, nil, r)
-		b.thunks[fo] = w
+		b.thunks[key] = w
 	}
 	return s.add(OpClosure, t, w.Name)
+}
+
+// matchTParams binds the type parameters in pattern (a signature type)
+// to the corresponding parts of actual.
+func matchTParams(pattern, actual check.Type, bound map[*check.TParam]check.Type) {
+	if pattern == nil || actual == nil {
+		return
+	}
+	actual = check.Deep(actual)
+	switch p := pattern.(type) {
+	case *check.ParamType:
+		if bound[p.P] == nil {
+			bound[p.P] = actual
+		}
+	case *check.Named:
+		if a, ok := check.Resolve(actual).(*check.Named); ok && a.Obj == p.Obj && len(a.Args) == len(p.Args) {
+			for i := range p.Args {
+				matchTParams(p.Args[i], a.Args[i], bound)
+			}
+		}
+	case *check.Tuple:
+		if a, ok := check.Resolve(actual).(*check.Tuple); ok && len(a.Elems) == len(p.Elems) {
+			for i := range p.Elems {
+				matchTParams(p.Elems[i], a.Elems[i], bound)
+			}
+		}
+	case *check.Func:
+		if a, ok := check.Resolve(actual).(*check.Func); ok && len(a.Params) == len(p.Params) {
+			for i := range p.Params {
+				matchTParams(p.Params[i].T, a.Params[i].T, bound)
+			}
+			matchTParams(p.Result, a.Result, bound)
+		}
+	}
 }
 
 // ctorCall constructs a variant from call arguments (positional or
@@ -338,7 +397,16 @@ func argExprs(params []*check.ParamInfo, x *ast.CallExpr) []ast.Expr {
 func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
 	b := s.b
 	fo := ci.Fn
-	callee := b.declare(fo, x)
+	var targs []check.Type
+	for _, p := range typeParams(fo) {
+		t := ci.Subst.Type(p)
+		if t == nil {
+			b.unsupported(x, "a generic call whose type arguments are not inferred")
+			return s.undef(s.natOf(x))
+		}
+		targs = append(targs, s.apply(t))
+	}
+	callee := b.declare(fo, targs, x)
 	ps := callee.Params()
 	var args []*Value
 	var places []place

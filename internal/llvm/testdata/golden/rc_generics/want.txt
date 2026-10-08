@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+b 1 1 3 x 2 3 4 q id
+--- stderr

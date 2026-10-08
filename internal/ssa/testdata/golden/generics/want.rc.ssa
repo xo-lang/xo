@@ -1,0 +1,307 @@
+type Stack[Str] = struct { items: List[Str] }
+type Str? = enum { None | Some(v: Str) }
+type Stack[Int] = struct { items: List[Int] }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Str] = call list.new
+  v2: Stack[Str] = struct v1
+  v3: Str = const "a"
+  retain v3
+  v5: ((), Stack[Str]) = call Stack.push[Str], v2, v3
+  v6: Stack[Str] = field 1, v5
+  v7: Str = const "b"
+  retain v7
+  v9: ((), Stack[Str]) = call Stack.push[Str], v6, v7
+  v10: Stack[Str] = field 1, v9
+  v11: (Str?, Stack[Str]) = call Stack.pop[Str], v10
+  v12: Stack[Str] = field 1, v11
+  v13: Str? = field 0, v11
+  v14: Int = tag v13
+  v15: Int = const 1
+  v16: Bool = eq v14, v15
+  br v16, b2(), b3()
+b1(v18: Str):  ; preds b2, b3
+  v19: List[Int] = call list.new
+  v20: Stack[Int] = struct v19
+  v21: Int = const 1
+  v22: ((), Stack[Int]) = call Stack.push[Int], v20, v21
+  v23: Stack[Int] = field 1, v22
+  v24: Str = const "x"
+  v25: List[Int] = call list.new
+  v26: Int = const 1
+  v27: List[Int] = call list.push, v25, v26
+  v28: Int = const 2
+  v29: List[Int] = call list.push, v27, v28
+  v30: Int = const 3
+  v31: List[List[Int]] = call repeat[List[Int]], v29, v30
+  retain v24
+  v33: (List[List[Int]], Str) = call pair[Str, List[List[Int]]], v24, v31
+  v34: List[Str] = call list.new
+  v35: Str = const "ab"
+  retain v35
+  v37: List[Str] = call list.push, v34, v35
+  v38: Str = const "c"
+  retain v38
+  v40: List[Str] = call list.push, v37, v38
+  v41: Str = const ""
+  retain v41
+  v43: List[Str] = call list.push, v40, v41
+  v44: fn(Str) -> Int = closure main.fn1
+  v45: List[Int] = call map_all[Str, Int], v43, v44
+  release v43
+  release v44
+  v48: List[Str] = call list.new
+  v49: Str = const "p"
+  retain v49
+  v51: List[Str] = call list.push, v48, v49
+  v52: Str = const "q"
+  retain v52
+  v54: List[Str] = call list.push, v51, v52
+  v55: List[Str] = call twice[Str], v54
+  release v54
+  v57: fn(Str) -> Str = closure ident[Str].value
+  v58: Stdio = cap stdio, v0
+  v59: Str = const " "
+  v60: Str = call str.concat, v18, v59
+  v61: Int = call Stack.size[Str], v12
+  v62: Stack[Str] = field 1, v11
+  v63: List[Str] = field 0, v62
+  release v63
+  v65: Str = call str.concat_int, v60, v61
+  v66: Str = const " "
+  v67: Str = call str.concat, v65, v66
+  v68: Int = call Stack.size[Int], v23
+  v69: Stack[Int] = field 1, v22
+  v70: List[Int] = field 0, v69
+  release v70
+  v72: Str = call str.concat_int, v67, v68
+  v73: Str = const " "
+  v74: Str = call str.concat, v72, v73
+  v75: List[List[Int]] = field 0, v33
+  v76: Int = call list.len, v75
+  v77: List[List[Int]] = field 0, v33
+  release v77
+  v79: Str = call str.concat_int, v74, v76
+  v80: Str = const " "
+  v81: Str = call str.concat, v79, v80
+  v82: Str = field 1, v33
+  v83: Str = call str.concat, v81, v82
+  v84: Str = field 1, v33
+  release v84
+  v86: Str = const " "
+  v87: Str = call str.concat, v83, v86
+  v88: Int = const 0
+  v89: Int = call list.index, v45, v88 @ main.xo:59:74
+  v90: Str = call str.concat_int, v87, v89
+  v91: Str = const " "
+  v92: Str = call str.concat, v90, v91
+  v93: Int = call list.len, v45
+  release v45
+  v95: Str = call str.concat_int, v92, v93
+  v96: Str = const " "
+  v97: Str = call str.concat, v95, v96
+  v98: Int = call list.len, v55
+  v99: Str = call str.concat_int, v97, v98
+  v100: Str = const " "
+  v101: Str = call str.concat, v99, v100
+  v102: Int = const 3
+  v103: Str = call list.index, v55, v102 @ main.xo:59:114
+  retain v103
+  release v55
+  v106: Str = call str.concat, v101, v103
+  release v103
+  v108: Str = const " "
+  v109: Str = call str.concat, v106, v108
+  v110: Str = const "id"
+  retain v110
+  v112: Str = callv v57, v110
+  release v57
+  v114: Str = call str.concat, v109, v112
+  release v112
+  v116: () = call Stdio.println, v58, v114
+  release v114
+  ret v116
+b2:  ; preds b0
+  v119: Str = payload 1.0, v13
+  retain v119
+  v121: Str? = field 0, v11
+  release v121
+  jump b1(v119)
+b3:  ; preds b0
+  v124: Str? = field 0, v11
+  release v124
+  v126: Str = const "-"
+  retain v126
+  jump b1(v126)
+}
+
+func Stack.push[Str](v0: Stack[Str], v1: Str) -> ((), Stack[Str]) {
+b0(v0: Stack[Str], v1: Str):
+  v2: List[Str] = field 0, v0
+  v3: List[Str] = reuse v2
+  v4: List[Str] = call list.push, v3, v1
+  v5: Stack[Str] = setfield 0, v0, v4
+  v6: () = tuple
+  ret v6, v5
+}
+
+func Stack.pop[Str](v0: Stack[Str]) -> (Str?, Stack[Str]) {
+b0(v0: Stack[Str]):
+  v1: List[Str] = field 0, v0
+  v2: List[Str] = reuse v1
+  v3: (List[Str], Str?) = call list.pop, v2
+  v4: List[Str] = field 0, v3
+  v5: Stack[Str] = setfield 0, v0, v4
+  v6: Str? = field 1, v3
+  ret v6, v5
+}
+
+func Stack.push[Int](v0: Stack[Int], v1: Int) -> ((), Stack[Int]) {
+b0(v0: Stack[Int], v1: Int):
+  v2: List[Int] = field 0, v0
+  v3: List[Int] = reuse v2
+  v4: List[Int] = call list.push, v3, v1
+  v5: Stack[Int] = setfield 0, v0, v4
+  v6: () = tuple
+  ret v6, v5
+}
+
+func pair[Str, List[List[Int]]](v0: Str, v1: List[List[Int]]) -> (List[List[Int]], Str) {
+b0(v0: Str, v1: List[List[Int]]):
+  v2: (List[List[Int]], Str) = tuple v1, v0
+  ret v2
+}
+
+func repeat[List[Int]](v0: List[Int], v1: Int) -> List[List[Int]] {
+b0(v0: List[Int], v1: Int):
+  v2: List[List[Int]] = call list.new
+  v3: Int = const 0
+  jump b1(v3, v2)
+b1(v5: Int, v6: List[List[Int]]):  ; preds b0, b3
+  v7: Bool = lt v5, v1
+  br v7, b2(), b4()
+b2:  ; preds b1
+  retain v0
+  v10: List[List[Int]] = call list.push, v6, v0
+  v11: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v13: Int = const 1
+  v14: Int = add v5, v13
+  jump b1(v14, v10)
+b4:  ; preds b1
+  release v0
+  ret v6
+}
+
+func map_all[Str, Int](borrow v0: List[Str], borrow v1: fn(Str) -> Int) -> List[Int] {
+b0(v0: List[Str], v1: fn(Str) -> Int):
+  v2: List[Int] = call list.new
+  v3: Int = call list.len, v0
+  v4: Int = const 0
+  jump b1(v4, v2)
+b1(v6: Int, v7: List[Int]):  ; preds b0, b3
+  v8: Bool = lt v6, v3
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: Str = call list.index, v0, v6
+  retain v10
+  v12: Int = callv v1, v10
+  v13: List[Int] = call list.push, v7, v12
+  v14: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v16: Int = const 1
+  v17: Int = add v6, v16
+  jump b1(v17, v13)
+b4:  ; preds b1
+  ret v7
+}
+
+func main.fn1(borrow v0: fn(Str) -> Int, v1: Str) -> Int captures () {
+b0(v0: fn(Str) -> Int, v1: Str):
+  v2: Int = call Str.len, v1
+  release v1
+  ret v2
+}
+
+func twice[Str](borrow v0: List[Str]) -> List[Str] {
+b0(v0: List[Str]):
+  v1: fn(Str) -> Str = closure twice[Str].fn2
+  v2: List[Str] = call map_all[Str, Str], v0, v1
+  release v1
+  v4: Int = call list.len, v0
+  v5: Int = const 0
+  jump b1(v5, v2)
+b1(v7: Int, v8: List[Str]):  ; preds b0, b3
+  v9: Bool = lt v7, v4
+  br v9, b2(), b4()
+b2:  ; preds b1
+  v11: Str = call list.index, v0, v7
+  retain v11
+  v13: List[Str] = reuse v8
+  v14: List[Str] = call list.push, v13, v11
+  v15: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v17: Int = const 1
+  v18: Int = add v7, v17
+  jump b1(v18, v14)
+b4:  ; preds b1
+  ret v8
+}
+
+func ident[Str](v0: Str) -> Str {
+b0(v0: Str):
+  ret v0
+}
+
+func ident[Str].value(borrow v0: fn(Str) -> Str, v1: Str) -> Str captures () {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: Str = call ident[Str], v1
+  ret v2
+}
+
+func Stack.size[Str](borrow v0: Stack[Str]) -> Int {
+b0(v0: Stack[Str]):
+  v1: List[Str] = field 0, v0
+  v2: Int = call list.len, v1
+  ret v2
+}
+
+func Stack.size[Int](borrow v0: Stack[Int]) -> Int {
+b0(v0: Stack[Int]):
+  v1: List[Int] = field 0, v0
+  v2: Int = call list.len, v1
+  ret v2
+}
+
+func twice[Str].fn2(borrow v0: fn(Str) -> Str, v1: Str) -> Str captures () {
+b0(v0: fn(Str) -> Str, v1: Str):
+  ret v1
+}
+
+func map_all[Str, Str](borrow v0: List[Str], borrow v1: fn(Str) -> Str) -> List[Str] {
+b0(v0: List[Str], v1: fn(Str) -> Str):
+  v2: List[Str] = call list.new
+  v3: Int = call list.len, v0
+  v4: Int = const 0
+  jump b1(v4, v2)
+b1(v6: Int, v7: List[Str]):  ; preds b0, b3
+  v8: Bool = lt v6, v3
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: Str = call list.index, v0, v6
+  retain v10
+  v12: Str = callv v1, v10
+  v13: List[Str] = call list.push, v7, v12
+  v14: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v16: Int = const 1
+  v17: Int = add v6, v16
+  jump b1(v17, v13)
+b4:  ; preds b1
+  ret v7
+}

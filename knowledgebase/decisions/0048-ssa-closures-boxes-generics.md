@@ -37,12 +37,30 @@ themselves by value, and generic functions.
   recursively. A chain of closures capturing closures (or of boxes, see
   below) is freed with a worklist instead of the C stack.
 
+### Generics
+- Monomorphized in the SSA builder, before the IR exists: `declare`
+  takes the concrete type arguments of a call (`check.Call.Subst`,
+  resolved through the caller's own substitution) and creates one Func
+  per function and list of type arguments (`largest[Int]`,
+  `Stack.push[Str]`), whose body is built with that substitution
+  applied to every checker type. This is the scheme of internal/gen's
+  monomorphizer and of the AST path of internal/llvm (their code is
+  backend specific, so the builder has its own `declare`). Closures in
+  a generic body inherit the substitution. A generic function used as a
+  value gets its type arguments by matching its signature against the
+  function type the value has.
+- So every instance has concrete types, and the RC pass and its
+  borrow inference run per instance: `repeat[Int]` has no RC traffic,
+  `repeat[Str]` retains each pushed string.
+
 ## Consequences
 - The LLVM goldens with closures take the SSA path and free their
   environments (`rc_closures` builds and frees a chain of 100,000
   closures).
-- `var` parameters of function values, methods as values, and generic
-  functions as values are not supported (the builder reports them).
+- `var` parameters of function values and methods as values are not
+  supported (the builder reports them).
+- The goldens with generic structs, methods, and functions take the SSA
+  path (`misc`, `rc_generics`).
 
 ## Alternatives
 - **Closure conversion to a struct of captures passed by value**: no

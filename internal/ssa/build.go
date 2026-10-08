@@ -42,10 +42,10 @@ type builder struct {
 	main   *check.Module
 	errs   Errors
 	seen   map[string]bool
-	funcs  map[*check.FuncObj]*Func
-	queue  []func() // bodies to build
+	funcs  map[string]*Func // by instance key (instKey)
+	queue  []func()         // bodies to build
 	nclos  int
-	thunks map[*check.FuncObj]*Func // named functions used as values
+	thunks map[string]*Func // named functions used as values, by instance key
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -59,7 +59,7 @@ type builder struct {
 // payloads (Option included), `match` and `if let` with wildcard, binding,
 // literal, range, `|`, tuple, variant, and struct patterns and guards,
 // `if`, `while`, `for` over ranges and lists, `break` and `continue`
-// (labeled too), `return`, non generic functions and methods (`var`
+// (labeled too), `return`, functions and methods (`var`
 // parameters and receivers), recursion, `const`, `??`, `Float(i)`,
 // `Int(f)`, `fault`, and the List methods push, pop, set, get, len,
 // is_empty, failing functions (a Result return, `Ok`, `Err`, `?` on
@@ -67,7 +67,8 @@ type builder struct {
 // `or_fault`), `==` and `!=` on every type (structural), `is`, and local
 // `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
 // `if let x = opt` shorthand, closures and named functions as values
-// (decision 0048). Not yet: generics, recursive types.
+// (decision 0048), and generics (monomorphized: one Func per list of
+// type arguments). Not yet: recursive types.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -83,7 +84,7 @@ type Options struct {
 // BuildOpts is Build with options.
 func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	info := res.Info()
-	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[*check.FuncObj]*Func{}, thunks: map[*check.FuncObj]*Func{}}
+	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{}}
 	var mainFo *check.FuncObj
 	for _, m := range res.Modules {
 		if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
@@ -97,7 +98,7 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	if failErr(mainFo.Err) != nil {
 		b.unsupported(mainFo.Decl, "`main` that returns an error (declare `fn main(os: Os)` and handle errors with match)")
 	}
-	b.declare(mainFo, mainFo.Decl)
+	b.declare(mainFo, nil, mainFo.Decl)
 	for len(b.queue) > 0 {
 		next := b.queue[0]
 		b.queue = b.queue[1:]
@@ -257,19 +258,70 @@ func (b *builder) funcName(fo *check.FuncObj) string {
 	return n
 }
 
-// declare returns the SSA function of fo, creating its signature and
-// queueing its body on first use.
-func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
-	if f := b.funcs[fo]; f != nil {
-		return f
+// typeParams returns the type parameters of fo that take types (not
+// effects): the implicit receiver parameters first, then the declared.
+func typeParams(fo *check.FuncObj) []*check.TParam {
+	var out []*check.TParam
+	for _, p := range fo.TParams {
+		if !p.IsEffect {
+			out = append(out, p)
+		}
 	}
-	if len(fo.TParams) > 0 {
-		b.unsupported(at, "generic functions (`"+fo.DisplayName()+"`)")
+	return out
+}
+
+// instKey names the instance of fo for type arguments targs (SSA
+// types, one per typeParams entry): its Func name, and the key that
+// tells instances of different functions with one name apart.
+func (b *builder) instKey(fo *check.FuncObj, targs []*Type) (name, key string) {
+	name = b.funcName(fo)
+	if len(targs) > 0 {
+		var ns []string
+		for _, t := range targs {
+			ns = append(ns, t.Name)
+		}
+		name += "[" + strings.Join(ns, ", ") + "]"
+	}
+	return name, fmt.Sprintf("%p:%s", fo, name)
+}
+
+// declare returns the SSA function of fo instantiated with targs (the
+// checker types of its type parameters, already concrete; nil for a
+// function that is not generic), creating its signature and queueing
+// its body on first use. Generic functions are monomorphized here, one
+// Func per distinct list of type arguments, as internal/gen's
+// monomorphizer and the AST path of internal/llvm do.
+func (b *builder) declare(fo *check.FuncObj, targs []check.Type, at ast.Node) *Func {
+	tps := typeParams(fo)
+	if len(targs) != len(tps) {
+		b.unsupported(at, "a generic call whose type arguments are not inferred (`"+fo.DisplayName()+"`)")
+		return b.mod.NewFunc(b.funcName(fo)+"?", nil, []*Type{b.mod.Builtin(KUnit)})
+	}
+	var sub *check.Subst
+	var sargs []*Type
+	if len(tps) > 0 {
+		sub = check.NewSubst(tps, targs)
+		for _, t := range targs {
+			sargs = append(sargs, b.typ(t, at))
+		}
+	}
+	apply := func(t check.Type) check.Type {
+		if t == nil {
+			return nil
+		}
+		if sub != nil {
+			t = sub.Apply(t)
+		}
+		return check.Deep(t)
+	}
+	name, key := b.instKey(fo, sargs)
+	if f := b.funcs[key]; f != nil {
+		return f
 	}
 	var params []*Type
 	var varIdx []int
 	if fo.Recv != nil {
-		params = append(params, b.typ(fo.RecvType, at))
+		params = append(params, b.typ(apply(fo.RecvType), at))
 		if fo.RecvVar {
 			varIdx = append(varIdx, 0)
 		}
@@ -278,16 +330,16 @@ func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
 		if p.Var {
 			varIdx = append(varIdx, len(params))
 		}
-		params = append(params, b.typ(p.Type, at))
+		params = append(params, b.typ(apply(p.Type), at))
 	}
-	results := []*Type{b.typ(b.resultOf(fo.Result, failErr(fo.Err)), at)}
+	results := []*Type{b.typ(b.resultOf(apply(fo.Result), failErr(apply(fo.Err))), at)}
 	for _, i := range varIdx {
 		results = append(results, params[i])
 	}
-	f := b.mod.NewFunc(b.funcName(fo), params, results)
+	f := b.mod.NewFunc(name, params, results)
 	f.VarParams = varIdx
-	b.funcs[fo] = f
-	b.queue = append(b.queue, func() { b.body(fo) })
+	b.funcs[key] = f
+	b.queue = append(b.queue, func() { b.body(fo, f, sub) })
 	return f
 }
 
@@ -339,6 +391,20 @@ type fn struct {
 	// can fail (nil otherwise); its SSA result is then Result[res, errT].
 	res  check.Type
 	errT check.Type
+	// sub maps the type parameters of the instance being built (nil
+	// when the function is not generic).
+	sub *check.Subst
+}
+
+// apply resolves a checker type in the instance being built.
+func (s *fn) apply(t check.Type) check.Type {
+	if t == nil {
+		return nil
+	}
+	if s.sub != nil {
+		t = s.sub.Apply(t)
+	}
+	return check.Deep(t)
 }
 
 type loopCtx struct {
@@ -356,10 +422,11 @@ func (b *builder) newFn(f *Func, res, errT check.Type) *fn {
 	return s
 }
 
-func (b *builder) body(fo *check.FuncObj) {
-	f := b.funcs[fo]
-	s := b.newFn(f, fo.Result, failErr(fo.Err))
+func (b *builder) body(fo *check.FuncObj, f *Func, sub *check.Subst) {
+	s := b.newFn(f, nil, nil)
 	s.fo = fo
+	s.sub = sub
+	s.res, s.errT = s.apply(fo.Result), failErr(s.apply(fo.Err))
 	var vars []*check.VarObj
 	if fo.Recv != nil {
 		vars = append(vars, b.info.RecvVar(fo))
@@ -560,7 +627,7 @@ func (s *fn) typeOf(e ast.Expr) *Type {
 	if check.IsNever(t) {
 		return s.b.mod.Builtin(KUnit)
 	}
-	return s.b.typ(t, e)
+	return s.b.typ(s.apply(t), e)
 }
 
 // checkType is the checker type of e in context.
@@ -569,7 +636,7 @@ func (s *fn) checkType(e ast.Expr) check.Type {
 	if t == nil {
 		t = s.b.info.NaturalType(e)
 	}
-	return check.Deep(t)
+	return s.apply(t)
 }
 
 // natCheck is the checker type of e before implicit conversion.
@@ -578,7 +645,7 @@ func (s *fn) natCheck(e ast.Expr) check.Type {
 	if t == nil {
 		t = s.b.info.TypeOf(e)
 	}
-	return check.Deep(t)
+	return s.apply(t)
 }
 
 func (s *fn) natOf(e ast.Expr) *Type {
@@ -586,7 +653,7 @@ func (s *fn) natOf(e ast.Expr) *Type {
 	if t == nil {
 		t = s.b.info.TypeOf(e)
 	}
-	return s.b.typ(t, e)
+	return s.b.typ(s.apply(t), e)
 }
 
 func (s *fn) isNever(e ast.Expr) bool {
