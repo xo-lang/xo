@@ -136,7 +136,14 @@ var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 // check on.
 func buildRun(t *testing.T, dir string) (runResult, error) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64})
+	return buildRunOpts(t, dir, false)
+}
+
+// buildRunOpts is buildRun, with share probes when probes is set
+// (build.Options.ShareProbes).
+func buildRunOpts(t *testing.T, dir string, probes bool) (runResult, error) {
+	t.Helper()
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: probes})
 	if err != nil {
 		return runResult{}, err
 	}
@@ -202,6 +209,45 @@ func TestGoldenRun(t *testing.T) {
 			}
 			if string(want) != got.String() {
 				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
+			}
+		})
+	}
+}
+
+// TestGoldenRunShared builds every golden program of internal/llvm with
+// share probes (every heap value marked shared between threads as it is
+// defined, decision 0058) and requires want.txt and no allocation live
+// at exit; the Linux assembly (exclusive load and store loops instead of
+// LSE atomics) must assemble as ELF.
+func TestGoldenRunShared(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	lin := build.Target{OS: "linux", Arch: "arm64"}
+	for _, dir := range goldenDirs(t) {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			got, err := buildRunOpts(t, dir, true)
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != got.String() {
+				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
+			}
+			if build.Host() != lin {
+				res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: true, Targets: []build.Target{lin}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				assembleELF(t, res.Asm[lin])
 			}
 		})
 	}

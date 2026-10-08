@@ -210,9 +210,21 @@ xo_entry:
 .Lxo_drop1:
 	ldr x1, [x0]
 	cmp x1, #1
-	b.eq .Lxo_drop1_free
+	b.le .Lxo_drop1_slow
 	sub x1, x1, #1
 	str x1, [x0]
+	ret
+.Lxo_drop1_slow:
+	b.eq .Lxo_drop1_free
+	tbz x1, #62, .Lxo_drop1_kept
+	1:
+	ldaxr x1, [x0]
+	add x1, x1, #1
+	stlxr w2, x1, [x0]
+	cbnz w2, 1b
+	cmp x1, #0
+	b.eq .Lxo_drop1_free
+.Lxo_drop1_kept:
 	ret
 .Lxo_drop1_free:
 	b xo_rc_free
@@ -222,19 +234,31 @@ xo_entry:
 .Lxo_drop2:
 	ldr x1, [x0]
 	cmp x1, #1
-	b.eq .Lxo_drop2_free
+	b.le .Lxo_drop2_slow
 	sub x1, x1, #1
 	str x1, [x0]
+	ret
+.Lxo_drop2_slow:
+	b.eq .Lxo_drop2_free
+	tbz x1, #62, .Lxo_drop2_kept
+	1:
+	ldaxr x1, [x0]
+	add x1, x1, #1
+	stlxr w2, x1, [x0]
+	cbnz w2, 1b
+	cmp x1, #0
+	b.eq .Lxo_drop2_free
+.Lxo_drop2_kept:
 	ret
 .Lxo_drop2_free:
 	mov x1, #1
 	mov x2, #0
 	b xo_rl_free
 
-	.data
+	.section .rodata
 	.p2align 3
 .Lxo_str0:
-	.quad 1152921504606846976
+	.quad -9223372036854775808
 	.quad 6
 	.ascii "sieve "
 	.section .rodata.str1.1,"aMS",@progbits,1

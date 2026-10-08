@@ -20,7 +20,77 @@ import (
 // Retaining a Str, List, Box, or function value is inlined at the call
 // site and in the helpers; releasing a Box or function value is inlined
 // too (decrement, and only a count of one calls xo_rc_defer with the
-// drop function). Counts are not atomic.
+// drop function).
+//
+// Counts shared between threads (decision 0058; std/llrt/xo_rt.c,
+// "Reference counts"): a positive count is thread local and updated
+// with plain loads and stores; a negative count -n is shared and
+// updated atomically (LSE `stadd` and `ldaddal` on Darwin, whose arm64
+// machines all have them; exclusive load and store loops on Linux,
+// which also runs on ARMv8.0); the immortal count of literals is
+// negative with bit 62 clear and never written. A retain tests bit 63
+// (one more predicted branch than a plain count), a release compares
+// with one as before (`b.le` instead of `b.eq`). `share` helpers mark a
+// value shared: they negate every thread local count they reach and stop
+// at counts already negative.
+
+// atomicInc returns the code that adds a reference to the shared count
+// at [obj] (a relaxed atomic decrement of the negative count), with
+// scratch registers t (64 bit) and st (32 bit, Linux only).
+func (g *gen) atomicInc(obj, t, st string) string {
+	if g.os == Darwin {
+		return fmt.Sprintf("mov %s, #-1\n\tstadd %s, [%s]", t, t, obj)
+	}
+	return fmt.Sprintf("1:\n\tldxr %s, [%s]\n\tsub %s, %s, #1\n\tstxr %s, %s, [%s]\n\tcbnz %s, 1b", t, obj, t, t, st, t, obj, st)
+}
+
+// atomicDec returns the code that drops a reference from the shared
+// count at [obj] with acquire and release order, and leaves the flags eq
+// when it was the last reference (the count went from -1 to 0).
+func (g *gen) atomicDec(obj, t, st string) string {
+	if g.os == Darwin {
+		return fmt.Sprintf("mov %s, #1\n\tldaddal %s, %s, [%s]\n\tcmn %s, #1", t, t, t, obj, t)
+	}
+	return fmt.Sprintf("1:\n\tldaxr %s, [%s]\n\tadd %s, %s, #1\n\tstlxr %s, %s, [%s]\n\tcbnz %s, 1b\n\tcmp %s, #0", t, obj, t, t, st, t, obj, st, t)
+}
+
+// incText returns the code that retains the object at register obj
+// (t and st are scratch, see atomicInc). The labels start with lbl; the
+// code falls through when done, or returns when ret is set.
+func (g *gen) incText(obj, t, st, lbl string, ret bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\tldr %s, [%s]\n", t, obj)
+	if ret {
+		fmt.Fprintf(&b, "\ttbnz %s, #63, %s_sh\n\tadd %s, %s, #1\n\tstr %s, [%s]\n\tret\n", t, lbl, t, t, t, obj)
+		fmt.Fprintf(&b, "%s_sh:\n\ttbz %s, #62, %s_ret\n\t%s\n%s_ret:\n\tret\n", lbl, t, lbl, g.atomicInc(obj, t, st), lbl)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\ttbz %s, #63, %s_loc\n\ttbz %s, #62, %s_inc\n\t%s\n\tb %s_inc\n", t, lbl, t, lbl, g.atomicInc(obj, t, st), lbl)
+	fmt.Fprintf(&b, "%s_loc:\n\tadd %s, %s, #1\n\tstr %s, [%s]\n%s_inc:\n", lbl, t, t, t, obj, lbl)
+	return b.String()
+}
+
+// decText returns the code that releases the object at register obj
+// (t and st are scratch): it branches to free when that was the last
+// reference, else to done (or returns, when done is empty).
+func (g *gen) decText(obj, t, st, lbl, free, done string) string {
+	var b strings.Builder
+	end := "ret"
+	if done != "" {
+		end = "b " + done
+	}
+	fmt.Fprintf(&b, "\tldr %s, [%s]\n\tcmp %s, #1\n\tb.le %s_slow\n\tsub %s, %s, #1\n\tstr %s, [%s]\n\t%s\n", t, obj, t, lbl, t, t, t, obj, end)
+	fmt.Fprintf(&b, "%s_slow:\n\tb.eq %s\n\ttbz %s, #62, %s_kept\n\t%s\n\tb.eq %s\n%s_kept:\n\t%s\n", lbl, free, t, lbl, g.atomicDec(obj, t, st), free, lbl, end)
+	return b.String()
+}
+
+// markText returns the code that marks the object at register obj
+// shared: it branches to done when the count is not thread local (the
+// object is shared or immortal already), else negates it and falls
+// through (to the code that marks the children).
+func markText(obj, t, done string) string {
+	return fmt.Sprintf("\tldr %s, [%s]\n\tcmp %s, #0\n\tb.le %s\n\tneg %s, %s\n\tstr %s, [%s]\n", t, obj, t, done, t, t, t, obj)
+}
 
 // rcHelper returns the symbol of the dup or drop helper of t.
 func (g *gen) rcHelper(kind string, t *ssa.Type) string {
@@ -43,11 +113,23 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		g.boxRC(&b, kind, sym, t)
 	case ssa.KStr, ssa.KList:
 		if kind == "dup" {
-			b.WriteString("\tldr x1, [x0]\n\tadd x1, x1, #1\n\tstr x1, [x0]\n\tret\n")
+			b.WriteString(g.incText("x0", "x1", "w2", sym, true))
+			break
+		}
+		if kind == "share" {
+			ret := g.local(fmt.Sprintf("xo_%s%d_ret", kind, id))
+			b.WriteString(markText("x0", "x1", ret))
+			if et := t.Elems; t.Kind == ssa.KList && et[0].Heap() {
+				b.WriteString(immText(g.esize(et[0]), "x1"))
+				b.WriteString(g.addr("x2", g.elemHelper("share", et[0])))
+				fmt.Fprintf(&b, "\tb %s\n", g.sym("xo_rl_share"))
+			}
+			fmt.Fprintf(&b, "%s:\n\tret\n", ret)
 			break
 		}
 		free := g.local(fmt.Sprintf("xo_%s%d_free", kind, id))
-		fmt.Fprintf(&b, "\tldr x1, [x0]\n\tcmp x1, #1\n\tb.eq %s\n\tsub x1, x1, #1\n\tstr x1, [x0]\n\tret\n%s:\n", free, free)
+		b.WriteString(g.decText("x0", "x1", "w2", sym, free, ""))
+		fmt.Fprintf(&b, "%s:\n", free)
 		if t.Kind == ssa.KStr {
 			fmt.Fprintf(&b, "\tb %s\n", g.sym("xo_rc_free"))
 			break
@@ -147,22 +229,28 @@ func (g *gen) leafWords(t *ssa.Type) int {
 // the inline code.
 func (g *gen) leafCall(b *strings.Builder, kind string, l leaf, base int, lbl string) {
 	if kind == "dup" && (l.t.Kind == ssa.KStr || l.t.Kind == ssa.KList || l.t.Kind == ssa.KBox) {
-		fmt.Fprintf(b, "\tldr x9, [sp, #%d]\n\tldr x10, [x9]\n\tadd x10, x10, #1\n\tstr x10, [x9]\n", base+8*l.off)
+		fmt.Fprintf(b, "\tldr x9, [sp, #%d]\n", base+8*l.off)
+		b.WriteString(g.incText("x9", "x10", "w11", lbl, false))
 		return
 	}
-	switch l.t.Kind {
-	case ssa.KFunc:
+	switch {
+	case kind == "share":
+		// out of line (helpers of the leaf types)
+	case l.t.Kind == ssa.KFunc:
 		// the environment word; null: no captures
-		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n\tcbz x0, %s_done\n\tldr x9, [x0]\n", base+8*(l.off+1), lbl)
+		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n\tcbz x0, %s_done\n", base+8*(l.off+1), lbl)
 		if kind == "dup" {
-			fmt.Fprintf(b, "\tadd x9, x9, #1\n\tstr x9, [x0]\n%s_done:\n", lbl)
+			b.WriteString(g.incText("x0", "x9", "w10", lbl, false))
+			fmt.Fprintf(b, "%s_done:\n", lbl)
 			return
 		}
-		fmt.Fprintf(b, "\tsubs x9, x9, #1\n\tb.eq %s_free\n\tstr x9, [x0]\n\tb %s_done\n%s_free:\n\tldr x1, [x0, #8]\n\tbl %s\n%s_done:\n",
-			lbl, lbl, lbl, g.sym("xo_rc_defer"), lbl)
+		b.WriteString(g.decText("x0", "x9", "w10", lbl, lbl+"_free", lbl+"_done"))
+		fmt.Fprintf(b, "%s_free:\n\tldr x1, [x0, #8]\n\tbl %s\n%s_done:\n", lbl, g.sym("xo_rc_defer"), lbl)
 		return
-	case ssa.KBox:
-		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n\tldr x9, [x0]\n\tsubs x9, x9, #1\n\tb.eq %s_free\n\tstr x9, [x0]\n\tb %s_done\n%s_free:\n", base+8*l.off, lbl, lbl, lbl)
+	case l.t.Kind == ssa.KBox:
+		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n", base+8*l.off)
+		b.WriteString(g.decText("x0", "x9", "w10", lbl, lbl+"_free", lbl+"_done"))
+		fmt.Fprintf(b, "%s_free:\n", lbl)
 		b.WriteString(g.addr("x1", g.boxDrop(l.t)))
 		fmt.Fprintf(b, "\tbl %s\n%s_done:\n", g.sym("xo_rc_defer"), lbl)
 		return
@@ -213,67 +301,17 @@ func (g *gen) elemHelper(kind string, t *ssa.Type) string {
 }
 
 // cancelRC reports whether retain v can be dropped together with a
-// release later in its block: v retains the one heap field of the variant
-// its block is known to hold, and the release drops that enum value with
-// nothing in between but register aliases (`if let Some(w) = xs.pop()`
-// retains w and releases the Option). The release is marked in s.cancel.
+// release later in its block (ssa.CancelledRelease: `if let Some(w) =
+// xs.pop()` retains w and releases the Option). The release is marked in
+// s.cancel.
 func (s *fstate) cancelRC(v *ssa.Value) bool {
-	x := v.Args[0]
-	if x.Op != ssa.OpPayload || (x.Type.Kind != ssa.KStr && x.Type.Kind != ssa.KList) {
+	r := ssa.CancelledRelease(v)
+	if r == nil {
 		return false
 	}
-	ref := x.Aux.(ssa.PayloadRef)
-	e := x.Args[0]
-	if e.Type.Kind != ssa.KEnum || len(e.Type.Variants[ref.Tag].Fields) != 1 {
-		return false
+	if s.cancel == nil {
+		s.cancel = map[*ssa.Value]bool{}
 	}
-	// the block runs only when e has the variant: its one predecessor
-	// branches on tag(e) == Tag
-	b := v.Block
-	if len(b.Preds) != 1 {
-		return false
-	}
-	br := b.Preds[0].From.Term()
-	if br == nil || br.Op != ssa.OpBranch || br.Succs[0].To == br.Succs[1].To || br.Succs[0].To != b {
-		return false
-	}
-	c := br.Args[0]
-	if c.Op != ssa.OpEq || c.Args[0].Op != ssa.OpTag || !sameRC(c.Args[0].Args[0], e) {
-		return false
-	}
-	if k, ok := constInt(c.Args[1]); !ok || k != int64(ref.Tag) {
-		return false
-	}
-	i := 0
-	for i < len(b.Instrs) && b.Instrs[i] != v {
-		i++
-	}
-	for _, w := range b.Instrs[i+1:] {
-		switch w.Op {
-		case ssa.OpField, ssa.OpTag, ssa.OpPayload, ssa.OpConst, ssa.OpTuple, ssa.OpStruct:
-			continue
-		case ssa.OpRelease:
-			if sameRC(w.Args[0], e) {
-				if s.cancel == nil {
-					s.cancel = map[*ssa.Value]bool{}
-				}
-				s.cancel[w] = true
-				return true
-			}
-		}
-		return false
-	}
-	return false
-}
-
-// sameRC reports whether a and b are the same value read through the
-// same chain of field projections.
-func sameRC(a, b *ssa.Value) bool {
-	for a.Op == ssa.OpField && b.Op == ssa.OpField {
-		if a.Aux.(int) != b.Aux.(int) {
-			return false
-		}
-		a, b = a.Args[0], b.Args[0]
-	}
-	return a == b
+	s.cancel[r] = true
+	return true
 }

@@ -43,6 +43,7 @@ package arm64
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -202,6 +203,8 @@ func (g *gen) section(kind string) string {
 			return "\t.section __TEXT,__text,regular,pure_instructions\n"
 		case "data":
 			return "\t.section __DATA,__data\n"
+		case "const":
+			return "\t.section __TEXT,__const\n"
 		case "cstring":
 			return "\t.section __TEXT,__cstring,cstring_literals\n"
 		}
@@ -211,6 +214,8 @@ func (g *gen) section(kind string) string {
 		return "\t.text\n"
 	case "data":
 		return "\t.data\n"
+	case "const":
+		return "\t.section .rodata\n"
 	}
 	return "\t.section .rodata.str1.1,\"aMS\",@progbits,1\n"
 }
@@ -227,8 +232,11 @@ func (g *gen) funcHeader(b *strings.Builder, s string, global bool) {
 	fmt.Fprintf(b, "%s:\n", s)
 }
 
-// immortal is the count of literals (never reaching zero).
-const immortal = int64(1) << 60
+// immortal is the count of literals, never written: negative (so
+// retains and releases leave the thread local fast path) with bit 62
+// clear (so the shared path tells it from a shared count). Decision
+// 0058; std/llrt/xo_rt.c, "Reference counts".
+const immortal = int64(math.MinInt64)
 
 // strObj returns the label of the immortal object of a string literal.
 func (g *gen) strObj(s string) string {
@@ -254,7 +262,9 @@ func (g *gen) loc(s string) string {
 
 func (g *gen) data(out *strings.Builder) {
 	if len(g.strOrd) > 0 {
-		out.WriteString(g.section("data"))
+		// read only: the immortal counts of literals are never written
+		// (decision 0058), and a write would fault
+		out.WriteString(g.section("const"))
 		for _, s := range g.strOrd {
 			fmt.Fprintf(out, "\t.p2align 3\n%s:\n\t.quad %d\n\t.quad %d\n", g.strs[s], immortal, len(s))
 			if len(s) > 0 {

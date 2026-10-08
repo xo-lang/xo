@@ -392,10 +392,10 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			c := in.cond
 			if t == next {
 				c = map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[c]
-				fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(f))
+				fmt.Fprintf(b, "\t%s %s, #%d, %s\n", c, r, in.bit, s.label(f))
 				return
 			}
-			fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(t))
+			fmt.Fprintf(b, "\t%s %s, #%d, %s\n", c, r, in.bit, s.label(t))
 		} else {
 			if in.text != "" { // empty: the flags of the predecessor's compare (reuseFlags)
 				s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)

@@ -20,13 +20,19 @@ import (
 //   - structs and tuples are LLVM structs, enums {i64 tag, [N x i64]};
 //   - a Box[T] (a field of a recursive type) is a ptr to {i64 rc, T};
 //   - a function value is {ptr code, ptr env}; env is null or points to
-//     {i64 rc, ptr drop, captures...}, where drop releases the captures
-//     and frees env; code takes the function value and the arguments;
+//     {i64 rc, ptr drop, ptr share, captures...}, where drop releases the
+//     captures and frees env and share marks the captures shared; code
+//     takes the function value and the arguments;
 //   - retain and release call generated `xo.dup.T` and `xo.drop.T`
 //     helpers (inlined): a count increment, or a decrement that frees at
-//     zero after releasing the children;
-//   - `reuse` checks the count and copies when it is not 1; list updates
-//     then write in place.
+//     zero after releasing the children; counts shared between threads
+//     are negative and updated atomically, literals have an immortal
+//     count never written (decision 0058, rcInc and rcDec);
+//   - `share` (OpShare) calls `xo.share.T`, which marks every thread
+//     local count the value reaches shared;
+//   - `reuse` checks the count and copies when it is not 1 (xo_rl_copy
+//     updates a shared list held only here in place); list updates then
+//     write in place.
 
 // errSSA is a construct the SSA lowering does not handle.
 type errSSA struct{ msg string }
@@ -46,7 +52,8 @@ declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2
 declare ptr @xo_rs_of_int(i64, ptr) #2
 declare ptr @xo_rs_of_float(double, ptr) #2
 declare ptr @xo_rl_new(i64, i64) #2
-declare ptr @xo_rl_copy(ptr, i64, ptr) #3
+declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3
+declare void @xo_rl_share(ptr, i64, ptr) #2
 declare ptr @xo_rl_grow(ptr, i64) #3
 declare void @xo_rl_free(ptr, i64, ptr) #2
 declare void @xo_print(ptr, i64) #2
@@ -96,7 +103,10 @@ const (
 	tbaaHdr  = ", !tbaa !3"
 	tbaaElem = ", !tbaa !5"
 	tbaaRC   = ", !tbaa !7"
-	immortal = int64(1) << 60
+	// immortal is the count of literals, never written (decision 0058)
+	immortal = int64(math.MinInt64)
+	// sharedBit is set in every shared (negative, not immortal) count
+	sharedBit = int64(1) << 62
 )
 
 // sgen is the state of one program lowered from SSA.
@@ -339,7 +349,7 @@ func (g *sgen) strObj(s string) string {
 	}
 	name := fmt.Sprintf("@.rs.%d", len(g.strs))
 	g.strs[s] = name
-	fmt.Fprintf(&g.globals, "%s = private global { i64, i64, [%d x i8] } { i64 %d, i64 %d, [%d x i8] c\"%s\" }, align 8\n",
+	fmt.Fprintf(&g.globals, "%s = private constant { i64, i64, [%d x i8] } { i64 %d, i64 %d, [%d x i8] c\"%s\" }, align 8\n",
 		name, len(s), immortal, len(s), len(s), irBytes(s))
 	return name
 }
@@ -377,7 +387,9 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 	attr := "#1"
 	switch t.Kind {
 	case ssa.KStr, ssa.KList, ssa.KFunc, ssa.KBox:
-		attr = "#4"
+		if kind != "share" {
+			attr = "#4"
+		}
 	}
 	fmt.Fprintf(&b, "define internal void %s(%s %%x) %s {\n", name, lt, attr)
 	switch t.Kind {
@@ -387,57 +399,62 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 			obj = tmp()
 			fmt.Fprintf(&b, "  %s = extractvalue %%xo.str %%x, 0\n", obj)
 		}
-		c := tmp()
-		fmt.Fprintf(&b, "  %s = load i64, ptr %s%s\n", c, obj, tbaaRC)
-		if kind == "dup" {
-			c1 := tmp()
-			fmt.Fprintf(&b, "  %s = add i64 %s, 1\n  store i64 %s, ptr %s%s\n  ret void\n", c1, c, c1, obj, tbaaRC)
-			break
+		switch kind {
+		case "dup":
+			rcInc(&b, obj, tmp)
+		case "drop":
+			rcDec(&b, obj, tmp)
+			if t.Kind == ssa.KStr {
+				fmt.Fprintf(&b, "free:\n  call void @xo_rc_free(ptr %s)\n  br label %%done\n", obj)
+			} else {
+				et := t.Elems[0]
+				fmt.Fprintf(&b, "free:\n  call void @xo_rl_free(ptr %s, i64 %d, ptr %s)\n  br label %%done\n", obj, g.size(et), g.elemFn("drop", et))
+			}
+		case "share":
+			rcMark(&b, obj, tmp)
+			if t.Kind == ssa.KList && t.Elems[0].Heap() {
+				et := t.Elems[0]
+				fmt.Fprintf(&b, "  call void @xo_rl_share(ptr %s, i64 %d, ptr %s)\n", obj, g.size(et), g.elemFn("share", et))
+			}
+			b.WriteString("  br label %done\n")
 		}
-		one := tmp()
-		fmt.Fprintf(&b, "  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%dec\n", one, c, one)
-		c1 := tmp()
-		fmt.Fprintf(&b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %s%s\n  ret void\n", c1, c, c1, obj, tbaaRC)
-		if t.Kind == ssa.KStr {
-			fmt.Fprintf(&b, "free:\n  call void @xo_rc_free(ptr %s)\n  ret void\n", obj)
-		} else {
-			et := t.Elems[0]
-			fmt.Fprintf(&b, "free:\n  call void @xo_rl_free(ptr %s, i64 %d, ptr %s)\n  ret void\n", obj, g.size(et), g.elemFn("drop", et))
-		}
+		b.WriteString("done:\n  ret void\n")
 	case ssa.KBox:
-		c := tmp()
-		fmt.Fprintf(&b, "  %s = load i64, ptr %%x%s\n", c, tbaaRC)
-		if kind == "dup" {
-			c1 := tmp()
-			fmt.Fprintf(&b, "  %s = add i64 %s, 1\n  store i64 %s, ptr %%x%s\n  ret void\n", c1, c, c1, tbaaRC)
-			break
+		switch kind {
+		case "dup":
+			rcInc(&b, "%x", tmp)
+		case "drop":
+			rcDec(&b, "%x", tmp)
+			// deferred: a long chain of boxes is freed with a worklist
+			fmt.Fprintf(&b, "free:\n  call void @xo_rc_defer(ptr %%x, ptr %s)\n  br label %%done\n", g.boxDropFn(t))
+		case "share":
+			rcMark(&b, "%x", tmp)
+			if t.Elems[0].Heap() {
+				// the contents through the worklist too
+				fmt.Fprintf(&b, "  call void @xo_rc_defer(ptr %%x, ptr %s)\n", g.boxShareFn(t))
+			}
+			b.WriteString("  br label %done\n")
 		}
-		one := tmp()
-		fmt.Fprintf(&b, "  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%dec\n", one, c, one)
-		c1 := tmp()
-		fmt.Fprintf(&b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %%x%s\n  ret void\n", c1, c, c1, tbaaRC)
-		// deferred: a long chain of boxes is freed with a worklist
-		fmt.Fprintf(&b, "free:\n  call void @xo_rc_defer(ptr %%x, ptr %s)\n  ret void\n", g.boxDropFn(t))
+		b.WriteString("done:\n  ret void\n")
 	case ssa.KFunc:
 		// the environment: null for a closure without captures
 		env := tmp()
 		fmt.Fprintf(&b, "  %s = extractvalue { ptr, ptr } %%x, 1\n", env)
 		isNull := tmp()
 		fmt.Fprintf(&b, "  %s = icmp eq ptr %s, null\n  br i1 %s, label %%done, label %%live\nlive:\n", isNull, env, isNull)
-		c := tmp()
-		fmt.Fprintf(&b, "  %s = load i64, ptr %s%s\n", c, env, tbaaRC)
-		if kind == "dup" {
-			c1 := tmp()
-			fmt.Fprintf(&b, "  %s = add i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, env, tbaaRC)
-		} else {
-			one := tmp()
-			fmt.Fprintf(&b, "  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%dec\n", one, c, one)
-			c1 := tmp()
-			fmt.Fprintf(&b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, env, tbaaRC)
+		switch kind {
+		case "dup":
+			rcInc(&b, env, tmp)
+		case "drop":
+			rcDec(&b, env, tmp)
 			dp, dfn := tmp(), tmp()
 			// the drop function frees the environment; deferred so long
 			// chains do not recurse on the C stack
 			fmt.Fprintf(&b, "free:\n  %s = getelementptr i8, ptr %s, i64 8\n  %s = load ptr, ptr %s\n  call void @xo_rc_defer(ptr %s, ptr %s)\n  br label %%done\n", dp, env, dfn, dp, env, dfn)
+		case "share":
+			rcMark(&b, env, tmp)
+			sp, sfn := tmp(), tmp()
+			fmt.Fprintf(&b, "  %s = getelementptr i8, ptr %s, i64 16\n  %s = load ptr, ptr %s\n  call void @xo_rc_defer(ptr %s, ptr %s)\n  br label %%done\n", sp, env, sfn, sp, env, sfn)
 		}
 		b.WriteString("done:\n  ret void\n")
 	case ssa.KStruct, ssa.KTuple:
@@ -500,6 +517,48 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 	return name
 }
 
+// The count tests of decision 0058 (std/llrt/xo_rt.c, "Reference
+// counts"): a positive count is thread local, a negative count -n is
+// shared (atomic), and the immortal count of literals (math.MinInt64)
+// has bit 62 clear where every shared count has it set. The count is
+// read with an unordered atomic load (another thread may update a shared
+// count at the same time); thread local counts are written with plain
+// stores. Each writes the code of one helper from its entry, ending in
+// `br label %done` (and rcDec in branches to %free, which the caller
+// writes).
+
+// rcInc writes the increment of the count at obj.
+func rcInc(b *strings.Builder, obj string, tmp func() string) {
+	c, slow, c1, sb, sh := tmp(), tmp(), tmp(), tmp(), tmp()
+	fmt.Fprintf(b, "  %s = load atomic i64, ptr %s unordered, align 8%s\n", c, obj, tbaaRC)
+	fmt.Fprintf(b, "  %s = icmp slt i64 %s, 1\n  br i1 %s, label %%shared, label %%inc, !prof !0\n", slow, c, slow)
+	fmt.Fprintf(b, "inc:\n  %s = add i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, obj, tbaaRC)
+	fmt.Fprintf(b, "shared:\n  %s = and i64 %s, %d\n  %s = icmp ne i64 %s, 0\n  br i1 %s, label %%atomic, label %%done\n", sb, c, sharedBit, sh, sb, sh)
+	fmt.Fprintf(b, "atomic:\n  atomicrmw add ptr %s, i64 -1 monotonic, align 8\n  br label %%done\n", obj)
+}
+
+// rcDec writes the decrement of the count at obj, branching to %free
+// when it was the last reference.
+func rcDec(b *strings.Builder, obj string, tmp func() string) {
+	c, slow, c1, one, sb, sh, old, last := tmp(), tmp(), tmp(), tmp(), tmp(), tmp(), tmp(), tmp()
+	fmt.Fprintf(b, "  %s = load atomic i64, ptr %s unordered, align 8%s\n", c, obj, tbaaRC)
+	fmt.Fprintf(b, "  %s = icmp slt i64 %s, 2\n  br i1 %s, label %%slow, label %%dec, !prof !0\n", slow, c, slow)
+	fmt.Fprintf(b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, obj, tbaaRC)
+	fmt.Fprintf(b, "slow:\n  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%shared\n", one, c, one)
+	fmt.Fprintf(b, "shared:\n  %s = and i64 %s, %d\n  %s = icmp ne i64 %s, 0\n  br i1 %s, label %%atomic, label %%done\n", sb, c, sharedBit, sh, sb, sh)
+	fmt.Fprintf(b, "atomic:\n  %s = atomicrmw add ptr %s, i64 1 acq_rel, align 8\n  %s = icmp eq i64 %s, -1\n  br i1 %s, label %%free, label %%done\n", old, obj, last, old, last)
+}
+
+// rcMark writes the marking of the count at obj as shared; the code
+// after it (in block %mark) runs when the count was thread local, and
+// must mark the children and end in `br label %done`.
+func rcMark(b *strings.Builder, obj string, tmp func() string) {
+	c, loc, n := tmp(), tmp(), tmp()
+	fmt.Fprintf(b, "  %s = load atomic i64, ptr %s unordered, align 8%s\n", c, obj, tbaaRC)
+	fmt.Fprintf(b, "  %s = icmp sgt i64 %s, 0\n  br i1 %s, label %%mark, label %%done\n", loc, c, loc)
+	fmt.Fprintf(b, "mark:\n  %s = sub i64 0, %s\n  store i64 %s, ptr %s%s\n", n, c, n, obj, tbaaRC)
+}
+
 // elemFn returns the runtime callback that retains or releases a list
 // element through a pointer, or null when elements are not on the heap.
 func (g *sgen) elemFn(kind string, t *ssa.Type) string {
@@ -544,9 +603,9 @@ func (g *sgen) boxDropFn(t *ssa.Type) string {
 }
 
 // envLL is the LLVM type of the environment of Indirect function f:
-// {i64 rc, ptr drop, captures...}.
+// {i64 rc, ptr drop, ptr share, captures...}.
 func (g *sgen) envLL(f *ssa.Func) string {
-	parts := []string{"i64", "ptr"}
+	parts := []string{"i64", "ptr", "ptr"}
 	for _, c := range f.Captures {
 		parts = append(parts, g.ll(c))
 	}
@@ -568,11 +627,59 @@ func (g *sgen) envDropFn(f *ssa.Func) string {
 		if !c.Heap() {
 			continue
 		}
-		fmt.Fprintf(&b, "  %%p%d = getelementptr %s, ptr %%e, i32 0, i32 %d\n", i, el, i+2)
+		fmt.Fprintf(&b, "  %%p%d = getelementptr %s, ptr %%e, i32 0, i32 %d\n", i, el, i+envFields)
 		fmt.Fprintf(&b, "  %%c%d = load %s, ptr %%p%d\n", i, g.ll(c), i)
 		fmt.Fprintf(&b, "  call void %s(%s %%c%d)\n", g.rcFn("drop", c), g.ll(c), i)
 	}
 	b.WriteString("  call void @xo_rc_free(ptr %e)\n  ret void\n}\n\n")
+	g.helpers.WriteString(b.String())
+	return name
+}
+
+// envFields is the number of header fields of an environment (rc,
+// drop, share) before the captures.
+const envFields = 3
+
+// envShareFn returns the function that marks the captures of an
+// environment of f shared (decision 0058; the environment itself was
+// just marked).
+func (g *sgen) envShareFn(f *ssa.Func) string {
+	name := "@" + strconv.Quote("xo.envshare."+f.Name)
+	if g.emitted[name] {
+		return name
+	}
+	g.emitted[name] = true
+	var b strings.Builder
+	el := g.envLL(f)
+	fmt.Fprintf(&b, "define internal void %s(ptr %%e) #1 {\n", name)
+	for i, c := range f.Captures {
+		if !c.Heap() {
+			continue
+		}
+		fmt.Fprintf(&b, "  %%p%d = getelementptr %s, ptr %%e, i32 0, i32 %d\n", i, el, i+envFields)
+		fmt.Fprintf(&b, "  %%c%d = load %s, ptr %%p%d\n", i, g.ll(c), i)
+		fmt.Fprintf(&b, "  call void %s(%s %%c%d)\n", g.rcFn("share", c), g.ll(c), i)
+	}
+	b.WriteString("  ret void\n}\n\n")
+	g.helpers.WriteString(b.String())
+	return name
+}
+
+// boxShareFn returns the function that marks the contents of a box of
+// type t shared (the box itself was just marked).
+func (g *sgen) boxShareFn(t *ssa.Type) string {
+	name := "@" + strconv.Quote("xo.boxshare."+t.Name)
+	if g.emitted[name] {
+		return name
+	}
+	g.emitted[name] = true
+	et := t.Elems[0]
+	var b strings.Builder
+	fmt.Fprintf(&b, "define internal void %s(ptr %%p) #1 {\n", name)
+	fmt.Fprintf(&b, "  %%vp = getelementptr %s, ptr %%p, i32 0, i32 1\n", g.boxLL(t))
+	fmt.Fprintf(&b, "  %%v = load %s, ptr %%vp\n", g.ll(et))
+	fmt.Fprintf(&b, "  call void %s(%s %%v)\n", g.rcFn("share", et), g.ll(et))
+	b.WriteString("  ret void\n}\n\n")
 	g.helpers.WriteString(b.String())
 	return name
 }
@@ -748,6 +855,7 @@ type sfn struct {
 	nlabel  int
 	end     map[*ssa.Block]string
 	text    map[*ssa.Block]*strings.Builder
+	cancel  map[*ssa.Value]bool // releases a retain cancelled (ssa.CancelledRelease)
 }
 
 func (s *sfn) tmp() string {
@@ -1113,16 +1221,19 @@ func (s *sfn) instr(v *ssa.Value) {
 		env := "null"
 		if len(v.Args) > 0 {
 			el := g.envLL(callee)
-			size, _ := g.structLayout(append([]*ssa.Type{g.m.Builtin(ssa.KInt), g.m.Builtin(ssa.KInt)}, callee.Captures...))
+			in := g.m.Builtin(ssa.KInt)
+			size, _ := g.structLayout(append([]*ssa.Type{in, in, in}, callee.Captures...))
 			env = s.def("call ptr @xo_rc_alloc(i64 %d)", size)
 			s.emit("store i64 1, ptr %s%s", env, tbaaRC)
 			dp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", el, env)
 			s.emit("store ptr %s, ptr %s", g.envDropFn(callee), dp)
+			sp := s.def("getelementptr %s, ptr %s, i32 0, i32 2", el, env)
+			s.emit("store ptr %s, ptr %s", g.envShareFn(callee), sp)
 			for i, x := range v.Args {
 				if x.Type.Kind == ssa.KUnit || x.Type.Kind == ssa.KCap {
 					continue
 				}
-				p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", el, env, i+2)
+				p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", el, env, i+envFields)
 				s.emit("store %s, ptr %s", s.typed(x), p)
 			}
 		}
@@ -1149,7 +1260,7 @@ func (s *sfn) instr(v *ssa.Value) {
 			return
 		}
 		env := s.def("extractvalue { ptr, ptr } %s, 1", a(0))
-		p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.envLL(s.f), env, v.Aux.(int)+2)
+		p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.envLL(s.f), env, v.Aux.(int)+envFields)
 		s.set(v, "load %s, ptr %s", g.ll(v.Type), p)
 	case ssa.OpCallValue:
 		code := s.def("extractvalue { ptr, ptr } %s, 0", a(0))
@@ -1175,23 +1286,43 @@ func (s *sfn) instr(v *ssa.Value) {
 		if x.Op == ssa.OpConst {
 			return // literals are immortal
 		}
+		if r := ssa.CancelledRelease(v); r != nil {
+			// a retain and a release of the same reference: neither
+			// (LLVM folded the pair while counts were plain; the shared
+			// paths of decision 0058 keep it from seeing through)
+			if s.cancel == nil {
+				s.cancel = map[*ssa.Value]bool{}
+			}
+			s.cancel[r] = true
+			return
+		}
 		s.emit("call void %s(%s)", g.rcFn("dup", x.Type), s.typed(x))
 	case ssa.OpRelease:
 		x := v.Args[0]
+		if s.cancel[v] {
+			return
+		}
 		s.emit("call void %s(%s)", g.rcFn("drop", x.Type), s.typed(x))
+	case ssa.OpShare:
+		x := v.Args[0]
+		if x.Op == ssa.OpConst {
+			return // literals are immortal
+		}
+		s.emit("call void %s(%s)", g.rcFn("share", x.Type), s.typed(x))
 	case ssa.OpReuse:
 		x := v.Args[0]
 		if x.Type.Kind != ssa.KList {
 			fail("reuse of `%s`", x.Type.Name)
 		}
 		et := x.Type.Elems[0]
-		c := s.def("load i64, ptr %s%s", a(0), tbaaRC)
+		c := s.def("load atomic i64, ptr %s unordered, align 8%s", a(0), tbaaRC)
 		shared := s.def("icmp ne i64 %s, 1", c)
 		from := s.label
 		slow, done := s.newLabel("copy"), s.newLabel("unique")
 		s.emit("br i1 %s, label %%%s, label %%%s, !prof !0", shared, slow, done)
 		s.start(slow)
-		cp := s.def("call ptr @xo_rl_copy(ptr %s, i64 %d, ptr %s)", a(0), g.size(et), g.elemFn("dup", et))
+		// a copy, or the same list when it is shared but only held here
+		cp := s.def("call ptr @xo_rl_copy(ptr %s, i64 %d, ptr %s, ptr %s)", a(0), g.size(et), g.elemFn("dup", et), g.elemFn("drop", et))
 		s.emit("br label %%%s", done)
 		s.start(done)
 		s.set(v, "phi ptr [ %s, %%%s ], [ %s, %%%s ]", a(0), from, cp, slow)

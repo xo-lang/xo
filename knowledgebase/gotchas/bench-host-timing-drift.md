@@ -22,3 +22,11 @@ time; Go's fib went from 228 ms to 608 ms within one run. Check
 `uptime` before and after a measurement and discard runs with a load
 average above a few; `bench/perf/llvm/native.sh` interleaves the three
 binaries so a slow period hits all of them.
+
+Update 2026-10-08 (decision 0058): with load averages of 20 to 60 from
+other agents, wall time medians of the same binary moved by 25%. macOS
+`/usr/bin/time -l` prints the process's own `cycles elapsed` and
+`instructions retired`; the minimum of 11 or more interleaved runs of
+cycles was stable to about 1% at that load, and an unchanged
+instruction count shows a difference is layout, not work
+(`gotchas/native-rc-fast-path-costs.md`).

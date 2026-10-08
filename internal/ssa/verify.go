@@ -417,7 +417,7 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		if nargs(1) != "" || arg(0).Kind != KStr {
 			return "fault takes a Str"
 		}
-	case OpRetain, OpRelease, OpDrop, OpReuse:
+	case OpRetain, OpRelease, OpDrop, OpReuse, OpShare:
 		if nargs(1) != "" || !arg(0).Heap() {
 			return "reference counting of a value that is not on the heap"
 		}

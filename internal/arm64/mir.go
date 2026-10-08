@@ -75,6 +75,8 @@ type inst struct {
 	// iCondBr
 	cond    string
 	targets []*mblock
+	// iCondBr with cond tbz or tbnz: the bit tested
+	bit int
 	// iCall: the call never returns (a fault)
 	noret bool
 	// iCall: through the code word of a closure, in x0 (`blr x0`; sym

@@ -13,7 +13,8 @@ import (
 //
 //	[0]  rc
 //	[8]  drop: the function that releases the captures and frees the cell
-//	[16] the captured values' words, 8 bytes each, in Func.Captures order
+//	[16] share: the function that marks the captures shared (decision 0058)
+//	[24] the captured values' words, 8 bytes each, in Func.Captures order
 //
 // The code is an Indirect function whose parameter 0 is the closure
 // itself, so a call through a value passes the code word in x0, the
@@ -24,7 +25,7 @@ import (
 // xo_rc_defer with its drop function: a chain of closures capturing
 // closures is freed with the runtime's worklist, not the C stack.
 
-const envHdr = 16 // {rc, drop}
+const envHdr = 24 // {rc, drop, share}
 
 // captureWords returns the first word (from the start of the captures)
 // and the word count of capture i of f.
@@ -60,6 +61,7 @@ func (s *fstate) closureOp(v *ssa.Value) {
 	env := s.rt("xo_rc_alloc", []src{isrc(int64(envHdr + 8*n))}, false)[0]
 	s.store("str $u0, [$u1]", s.cimm(1), env)
 	s.store("str $u0, [$u1, #8]", s.symAddr(g.envDrop(callee)), env)
+	s.store("str $u0, [$u1, #16]", s.symAddr(g.envShare(callee)), env)
 	k := 0
 	for _, x := range v.Args {
 		for _, w := range s.storeWords(x) {
@@ -105,13 +107,18 @@ func (s *fstate) callValueOp(v *ssa.Value) {
 // funcRC writes the body of the dup or drop helper of a function value
 // (x0 the code, x1 the environment).
 func (g *gen) funcRC(b *strings.Builder, kind, sym string) {
-	fmt.Fprintf(b, "\tcbz x1, %s_ret\n\tldr x9, [x1]\n", sym)
-	if kind == "dup" {
-		fmt.Fprintf(b, "\tadd x9, x9, #1\n\tstr x9, [x1]\n%s_ret:\n\tret\n", sym)
-		return
+	fmt.Fprintf(b, "\tcbz x1, %s_none\n", sym)
+	switch kind {
+	case "dup":
+		b.WriteString(g.incText("x1", "x9", "w10", sym, true))
+	case "drop":
+		b.WriteString(g.decText("x1", "x9", "w10", sym, sym+"_free", ""))
+		fmt.Fprintf(b, "%s_free:\n\tmov x0, x1\n\tldr x1, [x0, #8]\n\tb %s\n", sym, g.sym("xo_rc_defer"))
+	case "share":
+		b.WriteString(markText("x1", "x9", sym+"_none"))
+		fmt.Fprintf(b, "\tmov x0, x1\n\tldr x1, [x0, #16]\n\tb %s\n", g.sym("xo_rc_defer"))
 	}
-	fmt.Fprintf(b, "\tcmp x9, #1\n\tb.eq %s_free\n\tsub x9, x9, #1\n\tstr x9, [x1]\n%s_ret:\n\tret\n", sym, sym)
-	fmt.Fprintf(b, "%s_free:\n\tmov x0, x1\n\tldr x1, [x0, #8]\n\tb %s\n", sym, g.sym("xo_rc_defer"))
+	fmt.Fprintf(b, "%s_none:\n\tret\n", sym)
 }
 
 // envDrop returns the drop function of the environments of f: it
@@ -135,11 +142,44 @@ func (g *gen) envDrop(f *ssa.Func) string {
 	return sym
 }
 
+// envShare returns the share function of the environments of f: it
+// marks the captures of the environment x0 shared (decision 0058; the
+// environment itself was just marked).
+func (g *gen) envShare(f *ssa.Func) string {
+	key := "envshare " + f.Name
+	if s, ok := g.helped[key]; ok {
+		return s
+	}
+	sym := g.helperLabel("envshare")
+	g.helped[key] = sym
+	var b strings.Builder
+	fmt.Fprintf(&b, "// envshare %s\n\t.p2align 2\n%s:\n", f.Name, sym)
+	var ls []leaf
+	for i, c := range f.Captures {
+		off, _ := g.captureWords(f, i)
+		g.heapLeaves(c, off, &ls)
+	}
+	g.leavesAndThen(&b, "share", ls, envHdr, "")
+	g.helpers.WriteString(b.String())
+	return sym
+}
+
 // dropLeavesAndFree writes the body of a function that releases the
 // leaves ls of the words at [x0, #hdr] and frees the cell x0.
 func (g *gen) dropLeavesAndFree(b *strings.Builder, ls []leaf, hdr int) {
+	g.leavesAndThen(b, "drop", ls, hdr, g.sym("xo_rc_free"))
+}
+
+// leavesAndThen writes the body of a function that runs the kind helper
+// (drop or share) of the leaves ls of the words at [x0, #hdr], then goes
+// to then with the cell x0 (or returns, when then is empty).
+func (g *gen) leavesAndThen(b *strings.Builder, kind string, ls []leaf, hdr int, then string) {
+	tail := "\tret\n\n"
+	if then != "" {
+		tail = fmt.Sprintf("\tb %s\n\n", then)
+	}
 	if len(ls) == 0 {
-		fmt.Fprintf(b, "\tb %s\n\n", g.sym("xo_rc_free"))
+		b.WriteString(tail)
 		return
 	}
 	out := 0
@@ -149,9 +189,9 @@ func (g *gen) dropLeavesAndFree(b *strings.Builder, ls []leaf, hdr int) {
 	frame := out + 32
 	fmt.Fprintf(b, "\tsub sp, sp, #%d\n\tstp x29, x30, [sp, #%d]\n\tadd x29, sp, #%d\n\tstr x19, [sp, #%d]\n\tmov x19, x0\n", frame, out, out, out+16)
 	for _, l := range ls {
-		g.loadCall(b, g.rcHelper("drop", l.t), "x19", hdr+8*l.off, g.leafWords(l.t))
+		g.loadCall(b, g.rcHelper(kind, l.t), "x19", hdr+8*l.off, g.leafWords(l.t))
 	}
-	fmt.Fprintf(b, "\tmov x0, x19\n\tldr x19, [sp, #%d]\n\tldp x29, x30, [sp, #%d]\n\tadd sp, sp, #%d\n\tb %s\n\n", out+16, out, frame, g.sym("xo_rc_free"))
+	fmt.Fprintf(b, "\tmov x0, x19\n\tldr x19, [sp, #%d]\n\tldp x29, x30, [sp, #%d]\n\tadd sp, sp, #%d\n%s", out+16, out, frame, tail)
 }
 
 // loadCall calls sym with the n words at [base, #off] as integer
@@ -212,15 +252,28 @@ func (s *fstate) releaseFunc(ws []vreg) {
 // down by one. It returns the block both paths continue at (created
 // after the decrement, so the hot path falls through).
 func (s *fstate) decOrDefer(p vreg, drop func() src) *mblock {
+	p = s.real(p)
 	c := s.def1(false, "ldr $d0, [$u0]", p)
-	free := s.newBlock(true)
+	slow := s.newBlock(true)
 	dec := s.newBlock(false)
 	cont := s.newBlock(false)
-	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "eq", targets: []*mblock{free, dec}})
+	// a count of at most one: the last reference, shared, or immortal
+	// (decision 0058)
+	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "le", targets: []*mblock{slow, dec}})
 	s.cur = dec
 	c1 := s.def1(false, "sub $d0, $u0, #1", c)
 	s.store("str $u0, [$u1]", c1, p)
 	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	s.cur = slow
+	free := s.newBlock(true)
+	shared := s.newBlock(true)
+	atomic := s.newBlock(true)
+	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "eq", targets: []*mblock{free, shared}})
+	s.cur = shared
+	s.add(&inst{kind: iCondBr, cond: "tbz", bit: 62, uses: []vreg{c}, targets: []*mblock{cont, atomic}})
+	s.cur = atomic
+	// x16 may hold a reloaded p: x17 and w15 are free scratch
+	s.add(&inst{kind: iCondBr, text: s.g.atomicDec("$u0", "x17", "w15"), uses: []vreg{p}, cond: "eq", targets: []*mblock{free, cont}})
 	s.cur = free
 	s.rt("xo_rc_defer", []src{rsrc(p), drop()})
 	s.add(&inst{kind: iJump, targets: []*mblock{cont}})

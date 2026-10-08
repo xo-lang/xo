@@ -766,6 +766,12 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.release(x.Type, s.words(x))
 	case ssa.OpReuse:
 		s.reuse(v)
+	case ssa.OpShare:
+		x := v.Args[0]
+		if x.Op == ssa.OpConst {
+			return // literals are immortal
+		}
+		s.call(s.g.rcHelper("share", x.Type), regs(s.toInt(s.words(x), s.g.layout(x.Type))...), nil)
 	case ssa.OpJump:
 		s.endMemo[v.Block] = s.m()
 		dsts, srcs := s.edgeMoves(v.Succs[0])
@@ -1067,10 +1073,32 @@ func (s *fstate) toInt(ws []vreg, layout []bool) []vreg {
 // ---------------------------------------------------------------------------
 // Reference counting
 
+// inc retains the counted cell p inline: a thread local count (bit 63
+// clear) goes up by one; a shared count (bits 63 and 62 set) is updated
+// atomically in a cold block; the immortal count is left alone
+// (decision 0058).
 func (s *fstate) inc(p vreg) {
+	p = s.real(p)
 	c := s.def1(false, "ldr $d0, [$u0]", p)
+	before := s.m()
+	shared := s.newBlock(true)
+	fast := s.newBlock(false)
+	cont := s.newBlock(false)
+	s.add(&inst{kind: iCondBr, cond: "tbnz", bit: 63, uses: []vreg{c}, targets: []*mblock{shared, fast}})
+	s.cur = fast
 	c1 := s.def1(false, "add $d0, $u0, #1", c)
 	s.store("str $u0, [$u1]", c1, p)
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	s.cur = shared
+	atomic := s.newBlock(true)
+	s.add(&inst{kind: iCondBr, cond: "tbz", bit: 62, uses: []vreg{c}, targets: []*mblock{cont, atomic}})
+	s.cur = atomic
+	// x16 may hold a reloaded p: x17 and w15 are free scratch
+	s.add(&inst{kind: iPlain, text: s.g.atomicInc("$u0", "x17", "w15"), uses: []vreg{p}})
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	s.cur = cont
+	s.inherit(before)
+	s.clobber()
 }
 
 func (s *fstate) retain(t *ssa.Type, ws []vreg) {
@@ -1123,7 +1151,8 @@ func (s *fstate) reuse(v *ssa.Value) {
 	s.pmove([]vreg{r}, regs(l))
 	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
 	s.cur = slow
-	cp := s.rt("xo_rl_copy", []src{rsrc(l), isrc(s.g.esize(et)), s.elemFn("dup", et)}, false)
+	// a copy, or the same list when it is shared but only held here
+	cp := s.rt("xo_rl_copy", []src{rsrc(l), isrc(s.g.esize(et)), s.elemFn("dup", et), s.elemFn("drop", et)}, false)
 	s.pmove([]vreg{r}, regs(cp[0]))
 	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
 	s.cur = cont
