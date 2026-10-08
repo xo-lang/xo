@@ -149,12 +149,37 @@ func (s *fstate) emit() {
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
 	s.prologue(b, fr)
-	for bi, mb := range s.order {
+	// blocks reached once branches skip the blocks that only jump
+	live := map[*mblock]bool{}
+	var walk func(mb *mblock)
+	walk = func(mb *mblock) {
+		if live[mb] {
+			return
+		}
+		live[mb] = true
+		for _, t := range mb.succs {
+			walk(s.fwd(t, fr))
+			if ti := s.fwd(t, fr).insts; len(ti) == 1 && ti[0].kind == iCondBr {
+				for _, t2 := range ti[0].targets {
+					walk(s.fwd(t2, fr))
+				}
+			}
+		}
+	}
+	walk(s.order[0])
+	var emitted []*mblock
+	for _, mb := range s.order {
+		if live[mb] {
+			emitted = append(emitted, mb)
+		}
+	}
+	for bi, mb := range emitted {
 		var next *mblock
-		if bi+1 < len(s.order) {
-			next = s.order[bi+1]
+		if bi+1 < len(emitted) {
+			next = emitted[bi+1]
 		}
 		fmt.Fprintf(b, "%s:\n", s.label(mb))
+		s.cur = mb
 		for _, in := range mb.insts {
 			s.emitInst(b, in, fr, next)
 		}
@@ -313,11 +338,21 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		s.parallel(b, ms, fr)
 		s.epilogue(b, fr)
 	case iJump:
-		if in.targets[0] != next {
-			fmt.Fprintf(b, "\tb %s\n", s.label(in.targets[0]))
+		t := s.fwd(in.targets[0], fr)
+		if t == next {
+			return
+		}
+		if ti := t.insts; len(ti) == 1 && ti[0].kind == iCondBr && t != s.cur {
+			// a loop header that only tests: test here (one taken branch
+			// per iteration instead of two)
+			s.emitInst(b, ti[0], fr, next)
+			return
+		}
+		if t != next {
+			fmt.Fprintf(b, "\tb %s\n", s.label(t))
 		}
 	case iCondBr:
-		t, f := in.targets[0], in.targets[1]
+		t, f := s.fwd(in.targets[0], fr), s.fwd(in.targets[1], fr)
 		if t == f {
 			if t != next {
 				fmt.Fprintf(b, "\tb %s\n", s.label(t))
@@ -649,4 +684,29 @@ func (s *fstate) recoverOperand(b *strings.Builder, in *inst, ms []move, fr *fra
 		}
 		ms[k].src = msrc{kind: mLoc, l: mloc{reg: scratch2}}
 	}
+}
+
+// fwd follows blocks that do nothing but jump (their parallel moves are
+// all between the same locations after allocation).
+func (s *fstate) fwd(b *mblock, fr *frameInfo) *mblock {
+	for i := 0; i < 8; i++ {
+		t := b.term()
+		if t == nil || t.kind != iJump || t.targets[0] == b {
+			return b
+		}
+		for _, in := range b.insts[:len(b.insts)-1] {
+			if in.kind != iPmove {
+				return b
+			}
+			for k, d := range in.defs {
+				dl, ok := s.vloc(d, fr)
+				src := s.msrcOf(in.srcs[k], fr)
+				if ok && !(src.kind == mLoc && sameLoc(dl, src.l)) {
+					return b
+				}
+			}
+		}
+		b = t.targets[0]
+	}
+	return b
 }

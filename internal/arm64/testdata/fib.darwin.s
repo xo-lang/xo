@@ -34,9 +34,7 @@ _xo_f_fib:
 Lf2_b0:
 	mov x19, x0
 	cmp x19, #2
-	b.ge Lf2_b2
-Lf2_b1:
-	b Lf2_b3
+	b.lt Lf2_b3
 Lf2_b2:
 	subs x0, x19, #1
 	b.vs Lf2_fault1

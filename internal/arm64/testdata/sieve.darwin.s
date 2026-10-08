@@ -20,7 +20,8 @@ Lf1_b2:
 	b.vs Lf1_fault1
 Lf1_b3:
 	add x19, x19, #1
-	b Lf1_b1
+	cmp x19, #5
+	b.lt Lf1_b2
 Lf1_b4:
 	adrp x0, Lxo_str0@PAGE
 	add x0, x0, Lxo_str0@PAGEOFF
@@ -63,41 +64,40 @@ Lf2_b0:
 	adds x23, x22, #1
 	b.vs Lf2_fault1
 	mov x20, #0
+	ldr x19, [x0, #8]
 Lf2_b1:
 	cmp x20, x23
 	b.ge Lf2_b7
 Lf2_b2:
 	mov x21, #1
-	ldr x19, [x0, #8]
 	ldr x9, [x0, #16]
 	cmp x19, x9
 	b.eq Lf2_b3
-Lf2_b4:
 Lf2_b5:
 	add x9, x0, x19
 	strb w21, [x9, #24]
-	add x9, x19, #1
-	str x9, [x0, #8]
+	add x19, x19, #1
+	str x19, [x0, #8]
 Lf2_b6:
 	add x20, x20, #1
-	b Lf2_b1
+	cmp x20, x23
+	b.lt Lf2_b2
 Lf2_b7:
 	adds x12, x22, #1
 	b.vs Lf2_fault2
 	mov x11, #2
-	mov x19, #0
+	mov x20, #0
 Lf2_b8:
 	cmp x11, x12
 	b.ge Lf2_b17
 Lf2_b9:
-	ldr x9, [x0, #8]
-	cmp x11, x9
+	cmp x11, x19
 	b.hs Lf2_fault3
 	add x9, x0, x11
 	ldrb w9, [x9, #24]
-	cbz x9, Lf2_b14
+	cbz x9, Lf2_b16
 Lf2_b10:
-	adds x19, x19, #1
+	adds x20, x20, #1
 	b.vs Lf2_fault4
 	mul x10, x11, x11
 	smulh x9, x11, x11
@@ -105,25 +105,23 @@ Lf2_b10:
 	b.ne Lf2_fault5
 Lf2_b11:
 	cmp x10, x22
-	b.gt Lf2_b13
+	b.gt Lf2_b16
 Lf2_b12:
-	ldr x9, [x0, #8]
-	cmp x10, x9
+	cmp x10, x19
 	b.hs Lf2_fault6
 	add x9, x0, x10
 	strb wzr, [x9, #24]
 	adds x10, x10, x11
 	b.vs Lf2_fault7
-	b Lf2_b11
-Lf2_b13:
-	b Lf2_b16
-Lf2_b14:
+	cmp x10, x22
+	b.le Lf2_b12
 Lf2_b16:
 	add x11, x11, #1
-	b Lf2_b8
+	cmp x11, x12
+	b.lt Lf2_b9
 Lf2_b17:
 	bl Lxo_drop2
-	mov x0, x19
+	mov x0, x20
 	ldp x19, x20, [sp, #16]
 	ldp x21, x22, [sp, #32]
 	ldr x23, [sp, #48]
@@ -151,14 +149,14 @@ Lf2_fault2:
 	brk #1
 Lf2_fault3:
 	mov x0, x11
-	mov x1, x9
+	mov x1, x19
 	adrp x2, Lxo_loc3@PAGE
 	add x2, x2, Lxo_loc3@PAGEOFF
 	bl _xo_fault_index
 	brk #1
 Lf2_fault4:
 	mov x17, #1
-	sub x15, x19, x17
+	sub x15, x20, x17
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
@@ -176,7 +174,7 @@ Lf2_fault5:
 	brk #1
 Lf2_fault6:
 	mov x0, x10
-	mov x1, x9
+	mov x1, x19
 	adrp x2, Lxo_loc6@PAGE
 	add x2, x2, Lxo_loc6@PAGEOFF
 	bl _xo_fault_index

@@ -21,8 +21,14 @@ type fstate struct {
 	vals   map[*ssa.Value][]vreg
 	bmap   map[*ssa.Block]*mblock
 	nuses  map[*ssa.Value]int
-	lazy   map[*ssa.Value]bool // compares lowered into the branch that uses them
-	out    bool                // the function uses the $OUT slot
+	users  map[*ssa.Value]*ssa.Value // the last user of each value
+	// lenParam maps the register of a List block parameter to the
+	// register of its length, a parameter too
+	lenParam map[vreg]vreg
+	// endMemo is the memo at the end of each lowered SSA block
+	endMemo map[*ssa.Block]*memo
+	lazy    map[*ssa.Value]bool // compares lowered into the branch that uses them
+	out     bool                // the function uses the $OUT slot
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -38,7 +44,7 @@ type fstate struct {
 
 func (g *gen) function(f *ssa.Func) {
 	s := &fstate{g: g, f: f, fp: []bool{false}, vals: map[*ssa.Value][]vreg{}, bmap: map[*ssa.Block]*mblock{},
-		nuses: map[*ssa.Value]int{}, lazy: map[*ssa.Value]bool{}}
+		nuses: map[*ssa.Value]int{}, users: map[*ssa.Value]*ssa.Value{}, lenParam: map[vreg]vreg{}, endMemo: map[*ssa.Block]*memo{}, lazy: map[*ssa.Value]bool{}}
 	s.isel()
 	s.dce()
 	s.thread()
@@ -343,6 +349,7 @@ func (s *fstate) isel() {
 		for _, v := range b.Instrs {
 			for _, a := range v.Args {
 				s.nuses[a]++
+				s.users[a] = v
 			}
 			for _, e := range v.Succs {
 				for _, a := range e.Args {
@@ -357,6 +364,10 @@ func (s *fstate) isel() {
 		if b != f.Blocks[0] {
 			for _, p := range b.Params {
 				s.vals[p] = s.newVregs(s.g.layout(p.Type))
+				if p.Type.Kind == ssa.KList {
+					// the list's length travels with it (see opt.go)
+					s.lenParam[s.vals[p][0]] = s.newVreg(false)
+				}
 			}
 		}
 	}
@@ -366,6 +377,18 @@ func (s *fstate) isel() {
 		s.nblock++
 		s.hot = append(s.hot, mb)
 		s.cur = mb
+		if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
+			// the only predecessor dominates b: what it computed holds
+			s.inherit(s.endMemo[b.Preds[0].From])
+		}
+		for _, p := range b.Params {
+			if p.Type.Kind != ssa.KList || i == 0 {
+				continue
+			}
+			if c, ok := s.lenParam[s.vals[p][0]]; ok {
+				s.m().lens[s.vals[p][0]] = c
+			}
+		}
 		if i == 0 {
 			var defs []vreg
 			for _, p := range b.Params {
@@ -411,6 +434,12 @@ func (s *fstate) edgeMoves(e *ssa.Edge) ([]vreg, []src) {
 			dsts = append(dsts, pw[k])
 			srcs = append(srcs, rsrc(aw[k]))
 		}
+		if c, ok := s.lenParam[pw[0]]; ok && p.Type.Kind == ssa.KList {
+			if n := s.listLen(aw[0]); n != c {
+				dsts = append(dsts, c)
+				srcs = append(srcs, rsrc(n))
+			}
+		}
 	}
 	return dsts, srcs
 }
@@ -455,6 +484,12 @@ func isCompare(op ssa.Op) bool {
 // condition under which it holds.
 func (s *fstate) compare(v *ssa.Value) (text string, uses []vreg, cond string) {
 	a, b := v.Args[0], v.Args[1]
+	for _, x := range []*ssa.Value{a, b} {
+		if s.remTest(x) {
+			k, _ := pow2(x.Args[1])
+			return fmt.Sprintf("tst $u0, #%d", int64(1)<<k-1), []vreg{s.word(x.Args[0])}, intCond[v.Op]
+		}
+	}
 	switch a.Type.Kind {
 	case ssa.KInt, ssa.KBool:
 		cm := intCond
@@ -600,10 +635,12 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpReuse:
 		s.reuse(v)
 	case ssa.OpJump:
+		s.endMemo[v.Block] = s.m()
 		dsts, srcs := s.edgeMoves(v.Succs[0])
 		s.pmove(dsts, srcs)
 		s.add(&inst{kind: iJump, targets: []*mblock{s.bmap[v.Succs[0].To]}})
 	case ssa.OpBranch:
+		s.endMemo[v.Block] = s.m()
 		c := v.Args[0]
 		var in *inst
 		if s.lazy[c] {
@@ -685,8 +722,63 @@ func mustConst(v *ssa.Value) int64 {
 	return n
 }
 
+// pow2 reports k when v is the Int constant 2^k, k >= 1.
+func pow2(v *ssa.Value) (int, bool) {
+	n, ok := constInt(v)
+	if !ok || n < 2 || n&(n-1) != 0 {
+		return 0, false
+	}
+	k := 0
+	for int64(1)<<k != n {
+		k++
+	}
+	return k, true
+}
+
+// remTest reports whether v is `x % 2^k` used only by `== 0` or `!= 0`
+// (lowered as a bit test of x).
+func (s *fstate) remTest(v *ssa.Value) bool {
+	if v.Op != ssa.OpRem || v.Type.Kind != ssa.KInt || s.nuses[v] != 1 {
+		return false
+	}
+	if _, ok := pow2(v.Args[1]); !ok {
+		return false
+	}
+	u := s.users[v]
+	if u == nil || (u.Op != ssa.OpEq && u.Op != ssa.OpNe) {
+		return false
+	}
+	o := u.Args[0]
+	if o == v {
+		o = u.Args[1]
+	}
+	n, ok := constInt(o)
+	return ok && n == 0
+}
+
 func (s *fstate) divRem(v *ssa.Value) {
 	g := s.g
+	if k, ok := pow2(v.Args[1]); ok && v.Type.Kind == ssa.KInt {
+		if s.remTest(v) {
+			return // lowered by the comparison
+		}
+		// round toward zero: add 2^k - 1 to negative dividends
+		a := s.word(v.Args[0])
+		var t vreg
+		if k == 1 {
+			t = s.def1(false, "add $d0, $u0, $u0, lsr #63", a)
+		} else {
+			sg := s.def1(false, "asr $d0, $u0, #63", a)
+			t = s.def1(false, fmt.Sprintf("add $d0, $u0, $u1, lsr #%d", 64-k), a, sg)
+		}
+		if v.Op == ssa.OpDiv {
+			s.set(v, s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), t))
+			return
+		}
+		m := s.def1(false, fmt.Sprintf("and $d0, $u0, #%d", -(int64(1)<<k)), t)
+		s.set(v, s.def1(false, "sub $d0, $u0, $u1", a, m))
+		return
+	}
 	if v.Type.Kind == ssa.KFloat {
 		a, b := s.word(v.Args[0]), s.word(v.Args[1])
 		if v.Op == ssa.OpDiv {
@@ -838,6 +930,7 @@ func (s *fstate) reuse(v *ssa.Value) {
 	l := s.word(x)
 	r := s.newVreg(false)
 	c := s.def1(false, "ldr $d0, [$u0]", l)
+	before := s.m()
 	slow := s.newBlock(true)
 	fast := s.newBlock(false)
 	cont := s.newBlock(false)
@@ -850,6 +943,8 @@ func (s *fstate) reuse(v *ssa.Value) {
 	s.pmove([]vreg{r}, regs(cp[0]))
 	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
 	s.cur = cont
+	s.inherit(before)
+	s.clobber()
 	s.set(v, r)
 }
 
@@ -985,6 +1080,7 @@ func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, som
 	g := s.g
 	si, ni := ot.VariantIndex("Some"), ot.VariantIndex("None")
 	ws := s.newVregs(make([]bool, g.nwords(ot)))
+	before := s.m()
 	yes, no, join := s.newBlock(false), s.newBlock(false), s.newBlock(false)
 	s.add(&inst{kind: iCondBr, text: text, uses: uses, cond: cond, targets: []*mblock{yes, no}})
 	s.cur = yes
@@ -1007,6 +1103,8 @@ func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, som
 	s.pmoveSrcs(ws, srcs)
 	s.add(&inst{kind: iJump, targets: []*mblock{join}})
 	s.cur = join
+	s.inherit(before)
+	s.clobber()
 	return ws
 }
 
@@ -1077,6 +1175,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		n := s.listLen(l)
 		c := s.def1(false, "ldr $d0, [$u0, #16]", l)
 		lm := s.newVreg(false)
+		before := s.m()
 		grow, fast, room := s.newBlock(true), s.newBlock(false), s.newBlock(false)
 		s.add(&inst{kind: iCondBr, text: "cmp $u0, $u1", uses: []vreg{n, c}, cond: "eq", targets: []*mblock{grow, fast}})
 		s.cur = fast
@@ -1087,11 +1186,14 @@ func (s *fstate) callOp(v *ssa.Value) {
 		s.pmove([]vreg{lm}, regs(l2[0]))
 		s.add(&inst{kind: iJump, targets: []*mblock{room}})
 		s.cur = room
+		s.inherit(before)
+		s.clobber()
 		if g.esize(et) > 0 {
 			s.storeElem(s.elemBase(lm, n, g.esize(et)), et, x)
 		}
 		n1 := s.def1(false, "add $d0, $u0, #1", n)
 		s.store("str $u0, [$u1, #8]", n1, lm)
+		s.m().lens[lm] = n1
 		s.set(v, lm)
 	case "list.pop":
 		l := s.word(v.Args[0])
@@ -1103,6 +1205,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 			s.store("str $u0, [$u1, #8]", n1, l)
 			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true)
 		})
+		s.forgetLen(l)
 		s.set(v, append([]vreg{l}, o...)...)
 	case "str.concat":
 		x, y := a(0), a(1)

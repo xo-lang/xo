@@ -98,63 +98,113 @@ func (s *fstate) thread() {
 	s.hot, s.cold = keep(s.hot), keep(s.cold)
 }
 
-// dce deletes plain instructions without a fault whose definitions are
-// all unused, to a fixpoint.
+// dce deletes instructions without side effects whose definitions
+// nothing live uses (a register is live when an instruction with side
+// effects, a terminator, a call, or a live instruction uses it), and the
+// parts of parallel moves into dead registers.
 func (s *fstate) dce() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
-	for {
-		used := make([]int, len(s.fp))
+	removable := func(in *inst) bool {
+		return (in.kind == iPlain && in.fault == nil && len(in.defs) > 0) || in.kind == iPmove
+	}
+	live := make([]bool, len(s.fp))
+	for changed := true; changed; {
+		changed = false
 		for _, b := range blocks {
 			for _, in := range b.insts {
-				for _, u := range in.uses {
-					used[u]++
-				}
-			}
-		}
-		changed := false
-		for _, b := range blocks {
-			out := b.insts[:0]
-			for _, in := range b.insts {
-				dead := in.kind == iPlain && in.fault == nil && len(in.defs) > 0
-				for _, d := range in.defs {
-					if used[d] > 0 {
-						dead = false
-					}
-				}
 				if in.kind == iPmove {
-					// drop moves into unused registers
-					k := 0
-					for i, d := range in.defs {
-						if used[d] > 0 {
-							in.defs[k] = d
-							in.srcs[k] = in.srcs[i]
-							k++
+					for k, d := range in.defs {
+						if a := in.srcs[k]; live[d] && a.kind == sReg && !live[a.v] {
+							live[a.v] = true
+							changed = true
 						}
 					}
-					if k < len(in.defs) {
-						changed = true
-						in.defs, in.srcs = in.defs[:k], in.srcs[:k]
-						in.uses = in.uses[:0]
-						for _, a := range in.srcs {
-							if a.kind == sReg && a.v != 0 {
-								in.uses = append(in.uses, a.v)
-							}
-						}
-					}
-					if k == 0 {
-						continue
-					}
-				}
-				if dead {
-					changed = true
 					continue
 				}
-				out = append(out, in)
+				keep := !removable(in)
+				for _, d := range in.defs {
+					keep = keep || live[d]
+				}
+				if !keep {
+					continue
+				}
+				for _, u := range in.uses {
+					if !live[u] {
+						live[u] = true
+						changed = true
+					}
+				}
 			}
-			b.insts = out
 		}
-		if !changed {
-			return
+	}
+	for _, b := range blocks {
+		out := b.insts[:0]
+		for _, in := range b.insts {
+			if in.kind == iPmove {
+				k := 0
+				for i, d := range in.defs {
+					if live[d] {
+						in.defs[k] = d
+						in.srcs[k] = in.srcs[i]
+						k++
+					}
+				}
+				in.defs, in.srcs = in.defs[:k], in.srcs[:k]
+				in.uses = in.uses[:0]
+				for _, a := range in.srcs {
+					if a.kind == sReg && a.v != 0 {
+						in.uses = append(in.uses, a.v)
+					}
+				}
+				if k == 0 {
+					continue
+				}
+			} else if removable(in) {
+				dead := true
+				for _, d := range in.defs {
+					dead = dead && !live[d]
+				}
+				if dead {
+					continue
+				}
+			}
+			out = append(out, in)
+		}
+		b.insts = out
+	}
+}
+
+// inherit starts the memo of the current block from the memo of a block
+// that dominates it.
+func (s *fstate) inherit(from *memo) {
+	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch}
+	for k, v := range from.consts {
+		m.consts[k] = v
+	}
+	for k, v := range from.lens {
+		m.lens[k] = v
+	}
+	for k, v := range from.checked {
+		m.checked[k] = v
+	}
+	for k, v := range from.bases {
+		m.bases[k] = v
+	}
+	for k, v := range from.loaded {
+		m.loaded[k] = v
+	}
+	s.mm = m
+}
+
+// forgetLen drops what is known about the length of list l (a pop
+// changed it).
+func (s *fstate) forgetLen(l vreg) {
+	m := s.m()
+	delete(m.lens, l)
+	for k := range m.checked {
+		if k[0] == l {
+			delete(m.checked, k)
 		}
 	}
 }

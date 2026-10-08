@@ -203,6 +203,58 @@ func TestGoldenRun(t *testing.T) {
 	}
 }
 
+// TestRun builds the programs of testdata/run with the Go backend and
+// the arm64 backend and requires the same exit status, stdout, and
+// fault messages (and no allocation live at exit on arm64).
+func TestRun(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "run", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no programs: %v", err)
+	}
+	for _, dir := range dirs {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			got, err := buildRun(t, dir)
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			want := goRun(t, dir)
+			if want.String() != got.String() {
+				t.Errorf("arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", want, got)
+			}
+		})
+	}
+}
+
+// goRun builds dir with the Go backend and runs it.
+func goRun(t *testing.T, dir string) runResult {
+	t.Helper()
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendGo})
+	if err != nil || res.Failed {
+		t.Fatalf("go build: %v", err)
+	}
+	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}
+}
+
 // benchWant is the output of the benchmark programs (the same with the
 // Go, LLVM, and arm64 backends).
 var benchWant = map[string]string{
