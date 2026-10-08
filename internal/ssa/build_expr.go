@@ -139,6 +139,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.unit()
 	case *ast.ScopeExpr:
 		return s.scopeExpr(x)
+	case *ast.SelectExpr:
+		return s.selectExpr(x)
 	}
 	b.unsupported(e, unsupportedExpr(e))
 	return s.undef(s.natOf(e))
@@ -206,7 +208,14 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	}
 	v := s.expr(x.X)
 	if v.Type.Kind == KCap {
-		return s.add(OpCap, s.natOf(x), x.Sel.Name, v)
+		t := s.natOf(x)
+		if t.Kind == KHandle {
+			// os.tasks (core 7.1): the native backends have no program
+			// wide group yet
+			b.unsupported(x, "`"+x.Sel.Name+"` of a capability")
+			return s.undef(t)
+		}
+		return s.add(OpCap, t, x.Sel.Name, v)
 	}
 	if i, ft := s.fieldIndex(v.Type, x.Sel.Name); i >= 0 {
 		return s.unbox(s.add(OpField, ft, i, v))

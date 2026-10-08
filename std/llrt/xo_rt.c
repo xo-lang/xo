@@ -1032,7 +1032,22 @@ typedef struct {
 	pthread_mutex_t mu;
 	pthread_cond_t cv;
 	int signaled;
+	int counted; // its context counts as blocked (dl.blocked)
 } xo_park;
+
+// Deadlock detection (core 11.4, fault XO-F001): live counts the
+// contexts that run Xo code (each program root, and each task a worker
+// took from a queue; a task run by a waiting context stands in for it),
+// blocked those waiting in park_wait. A context counts as running again
+// as soon as a waker signals it. With no task queued, every live context
+// blocked means none can ever be woken: the native backends have no
+// timers, I/O, or signals that could.
+static struct {
+	pthread_mutex_t mu;
+	int64_t live, blocked;
+} dl = {PTHREAD_MUTEX_INITIALIZER, 0, 0};
+
+static void dl_check_locked(void);
 
 static void park_init(xo_park *p) {
 	pthread_mutex_init(&p->mu, NULL);
@@ -1054,6 +1069,12 @@ static void park_reset(xo_park *p) {
 static void park_signal(xo_park *p) {
 	pthread_mutex_lock(&p->mu);
 	p->signaled = 1;
+	if (p->counted) {
+		p->counted = 0;
+		pthread_mutex_lock(&dl.mu);
+		dl.blocked--;
+		pthread_mutex_unlock(&dl.mu);
+	}
 	pthread_cond_signal(&p->cv);
 	pthread_mutex_unlock(&p->mu);
 }
@@ -1164,6 +1185,9 @@ static xo_ctx *ctx(void) {
 	c->node = root;
 	park_init(&c->park);
 	cur = c;
+	pthread_mutex_lock(&dl.mu);
+	dl.live++;
+	pthread_mutex_unlock(&dl.mu);
 	return c;
 }
 
@@ -1383,9 +1407,26 @@ static struct xo_task *pool_pop(xo_worker *w) {
 		}
 	}
 	if (t) {
+		// live before it leaves the queue, so it is never missing from both
+		pthread_mutex_lock(&dl.mu);
+		dl.live++;
 		__atomic_fetch_sub(&pool.nqueued, 1, __ATOMIC_SEQ_CST);
+		pthread_mutex_unlock(&dl.mu);
 	}
 	return t;
+}
+
+XO_NORETURN static void deadlock(void) {
+	xo_flush();
+	static const char m[] = "fault: XO-F001: deadlock: every task is blocked\n";
+	write_all(2, m, sizeof m - 1);
+	exit(70);
+}
+
+static void dl_check_locked(void) {
+	if (dl.live > 0 && dl.blocked == dl.live && LOAD(pool.nqueued) == 0) {
+		deadlock();
+	}
 }
 
 // block_begin and block_end bracket a wait of a worker's task: while it
@@ -1421,8 +1462,22 @@ static void park_wait(xo_ctx *c, int cancelable) {
 	}
 	block_begin();
 	pthread_mutex_lock(&c->park.mu);
-	while (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
-		pthread_cond_wait(&c->park.cv, &c->park.mu);
+	if (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
+		c->park.counted = 1;
+		pthread_mutex_lock(&dl.mu);
+		dl.blocked++;
+		dl_check_locked();
+		pthread_mutex_unlock(&dl.mu);
+		while (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
+			pthread_cond_wait(&c->park.cv, &c->park.mu);
+		}
+		if (c->park.counted) {
+			// woken by cancellation
+			c->park.counted = 0;
+			pthread_mutex_lock(&dl.mu);
+			dl.blocked--;
+			pthread_mutex_unlock(&dl.mu);
+		}
 	}
 	c->park.signaled = 0;
 	pthread_mutex_unlock(&c->park.mu);
@@ -1643,6 +1698,10 @@ static void *worker_main(void *arg) {
 		if (t) {
 			run_task(t);
 			dequeued(t);
+			pthread_mutex_lock(&dl.mu);
+			dl.live--;
+			dl_check_locked();
+			pthread_mutex_unlock(&dl.mu);
 			continue;
 		}
 		pthread_mutex_lock(&pool.mu);
@@ -1847,6 +1906,8 @@ typedef struct xo_cent {
 	int64_t *fired; // claimed by the first waker (atomic)
 	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
 	int shut;       // the channel closed while a send waited
+	// a select's arm: the waker stores idx in *chosen
+	int64_t idx, *chosen;
 	struct xo_cent *prev, *next;
 } xo_cent;
 
@@ -1939,7 +2000,14 @@ xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) {
 	return c;
 }
 
-static void hand(xo_cent *e) { park_signal(e->park); }
+// hand wakes the waiter of e, which a waker claimed and gave its value
+// (c->mu held).
+static void hand(xo_cent *e) {
+	if (e->chosen) {
+		__atomic_store_n(e->chosen, e->idx, __ATOMIC_RELEASE);
+	}
+	park_signal(e->park);
+}
 
 // try_send_locked sends l without blocking (c->mu held, c open).
 static int try_send_locked(xo_chan *c, xo_rlist *l) {
@@ -2124,6 +2192,185 @@ int64_t xo_chan_len(xo_chan *c) {
 	int64_t n = c->len;
 	pthread_mutex_unlock(&c->mu);
 	return n;
+}
+
+// select (core 7.3): arms are added in source order, then
+// xo_select_wait performs the first arm that can proceed, or waits for
+// one (a cancellation point that unwinds). While it decides, and while
+// it takes its arms off the queues, it holds the locks of all its
+// channels (taken in address order), so no waker sees a half registered
+// select.
+
+typedef struct {
+	xo_chan *ch; // a reference
+	int send;
+	xo_rlist *item; // a send's value until sent; what a receive got
+	xo_cent e;
+} xo_sarm;
+
+typedef struct {
+	xo_hdr h;
+	xo_sarm *arms;
+	int n, cap;
+	int64_t fired, chosen;
+} xo_select;
+
+static void select_free(void *p) {
+	xo_select *s = p;
+	for (int i = 0; i < s->n; i++) {
+		list_release(s->arms[i].item, s->arms[i].ch->drop);
+		h_release(s->arms[i].ch);
+	}
+	free(s->arms);
+	xo_free(s);
+}
+
+xo_select *xo_select_new(void) {
+	xo_select *s = xo_alloc(sizeof(xo_select));
+	memset(s, 0, sizeof *s);
+	h_init(s, select_free);
+	return s;
+}
+
+static void select_arm(xo_select *s, xo_chan *c, int send, xo_rlist *l) {
+	if (s->n == s->cap) {
+		s->cap = s->cap ? s->cap * 2 : 4;
+		s->arms = realloc(s->arms, (size_t)s->cap * sizeof(xo_sarm));
+		if (!s->arms) {
+			xo_oom();
+		}
+	}
+	h_retain(c);
+	s->arms[s->n++] = (xo_sarm){.ch = c, .send = send, .item = l};
+}
+
+// xo_select_recv adds an arm `v = ch.recv()`.
+void xo_select_recv(xo_select *s, xo_chan *c) { select_arm(s, c, 0, NULL); }
+
+// xo_select_send adds an arm `ch.send(x)`, x in a list of one (consumed).
+void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { select_arm(s, c, 1, l); }
+
+static int chan_addr_cmp(const void *a, const void *b) {
+	uintptr_t x = (uintptr_t)*(xo_chan *const *)a, y = (uintptr_t)*(xo_chan *const *)b;
+	return x < y ? -1 : x > y;
+}
+
+// xo_select_wait returns the index of the arm that proceeded (-1 while
+// unwinding); a send arm on a closed channel faults.
+int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
+	xo_ctx *x = ctx();
+	if (canceled(x)) {
+		return -1;
+	}
+	xo_chan **cs = malloc((size_t)(s->n ? s->n : 1) * sizeof(xo_chan *));
+	if (!cs) {
+		xo_oom();
+	}
+	int nc = 0;
+	for (int i = 0; i < s->n; i++) {
+		cs[nc++] = s->arms[i].ch;
+	}
+	qsort(cs, (size_t)nc, sizeof(xo_chan *), chan_addr_cmp);
+	int u = 0;
+	for (int i = 0; i < nc; i++) {
+		if (u == 0 || cs[u - 1] != cs[i]) {
+			cs[u++] = cs[i];
+		}
+	}
+	nc = u;
+	s->fired = 0;
+	s->chosen = -1;
+	park_reset(&x->park);
+	for (int i = 0; i < nc; i++) {
+		pthread_mutex_lock(&cs[i]->mu);
+	}
+	int done = -1, shut = 0;
+	for (int i = 0; i < s->n && done < 0; i++) {
+		xo_sarm *a = &s->arms[i];
+		xo_chan *c = a->ch;
+		if (a->send) {
+			if (c->closed) {
+				shut = 1;
+				done = i;
+			} else if (try_send_locked(c, a->item)) {
+				a->item = NULL;
+				done = i;
+			}
+		} else {
+			xo_rlist *out;
+			if (try_recv_locked(c, &out)) {
+				a->item = out;
+				done = i;
+			}
+		}
+	}
+	int queued = done < 0;
+	if (queued) {
+		for (int i = 0; i < s->n; i++) {
+			xo_sarm *a = &s->arms[i];
+			a->e = (xo_cent){.park = &x->park, .fired = &s->fired, .item = a->item, .idx = i, .chosen = &s->chosen};
+			cq_push(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
+		}
+	}
+	for (int i = nc - 1; i >= 0; i--) {
+		pthread_mutex_unlock(&cs[i]->mu);
+	}
+	int unwound = 0;
+	if (queued) {
+		for (;;) {
+			park_wait(x, 1);
+			if (__atomic_load_n(&s->fired, __ATOMIC_ACQUIRE)) {
+				break;
+			}
+			if (node_canceled(x->node)) {
+				if (claim(&s->fired)) {
+					unwound = 1;
+				}
+				break;
+			}
+		}
+		// take the arms off every queue; the waker's writes are visible
+		// under the channel locks
+		for (int i = 0; i < nc; i++) {
+			pthread_mutex_lock(&cs[i]->mu);
+		}
+		for (int i = 0; i < s->n; i++) {
+			xo_sarm *a = &s->arms[i];
+			cq_del(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
+		}
+		if (!unwound) {
+			done = (int)__atomic_load_n(&s->chosen, __ATOMIC_ACQUIRE);
+			xo_sarm *a = &s->arms[done];
+			if (a->send) {
+				shut = a->e.shut;
+				if (!shut) {
+					a->item = NULL; // the receiver has it
+				}
+			} else {
+				a->item = a->e.item;
+			}
+		}
+		for (int i = nc - 1; i >= 0; i--) {
+			pthread_mutex_unlock(&cs[i]->mu);
+		}
+	}
+	free(cs);
+	if (unwound) {
+		x->unwinding = 1;
+		return -1;
+	}
+	if (shut) {
+		fault_at("send on a closed channel", loc, n);
+	}
+	return done;
+}
+
+// xo_select_take returns what receive arm i got: the value in a list of
+// one, or the empty list when its channel was closed and drained.
+xo_rlist *xo_select_take(xo_select *s, int64_t i) {
+	xo_rlist *l = s->arms[i].item;
+	s->arms[i].item = NULL;
+	return l ? l : &empty_list;
 }
 
 // ---------------------------------------------------------------------------

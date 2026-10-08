@@ -95,6 +95,7 @@ var runtimeModes = map[string][]mode{
 	"rt.mutex_new":     {mConsume, mNone},
 	"rt.mutex_unlock":  {mBorrow, mConsume},
 	"rt.mutex_runlock": {mBorrow, mConsume},
+	"rt.select_send":   {mBorrow, mBorrow, mConsume},
 }
 
 // projCalls are the runtime calls whose result is a projection out of

@@ -2,22 +2,28 @@ package llvm_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/llvm"
 )
 
 // Thread safety of the runtime and of shared reference counts (decision
-// 0058). No Xo construct starts a thread on the native backends yet, so
-// threads come from C: std/llrt/testdata/rc_threads.c hands shared
-// values to pthreads, and -DXO_RT_TEST_THREADS runs whole programs on
-// several threads at once. Both run under ThreadSanitizer when clang
-// supports it on the host.
+// 0058) and of the task runtime (decision 0068). Threads come from Xo
+// programs that use tasks (TestGoldenTasks) and from C:
+// std/llrt/testdata/rc_threads.c hands shared values to pthreads,
+// std/llrt/testdata/tasks.c drives the task runtime directly, and
+// -DXO_RT_TEST_THREADS runs whole programs on several threads at once.
+// All run under ThreadSanitizer when clang supports it on the host.
 
 var rtDir = filepath.Join("..", "..", "std", "llrt")
 
@@ -173,5 +179,143 @@ func TestGoldenThreads(t *testing.T) {
 	}
 	if ran == 0 {
 		t.Fatal("no golden program exits normally")
+	}
+}
+
+// usesTasks reports whether the golden program in dir uses scopes,
+// channels, mutexes, or atomics.
+func usesTasks(t *testing.T, dir string) bool {
+	src, err := os.ReadFile(filepath.Join(dir, "main.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"scope ", "Chan[", "Mutex[", "Atomic["} {
+		if bytes.Contains(src, []byte(w)) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestGoldenTasks builds the golden programs that use tasks with
+// ThreadSanitizer (no share probes: only the crossings the lowering
+// marks) and runs each with one worker thread, with two, and with one
+// per CPU: the output must be want.txt every time, with no sanitizer
+// report and no allocation live at exit.
+func TestGoldenTasks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds golden programs with ThreadSanitizer")
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	rt := filepath.Join(rtDir, "xo_rt.c")
+	ran := 0
+	for _, dir := range dirs {
+		if !usesTasks(t, dir) {
+			continue
+		}
+		dir := dir
+		ran++
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, ok, err := build.Check([]string{dir}, false)
+			if err != nil || !ok {
+				t.Fatalf("check: %v", err)
+			}
+			abs, _ := filepath.Abs(dir)
+			prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ll := filepath.Join(t.TempDir(), "prog.ll")
+			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll, rt})
+			for _, threads := range []string{"1", "2", ""} {
+				cmd := exec.Command(bin)
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=1", "XO_LEAKCHECK=1", "XO_THREADS="+threads)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &stdout, &stderr
+				err := cmd.Run()
+				code := 0
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					code = ee.ExitCode()
+				} else if err != nil {
+					t.Fatalf("run: %v", err)
+				}
+				if strings.Contains(stderr.String(), "ThreadSanitizer") {
+					text := stderr.String()
+					if len(text) > 4000 {
+						text = text[:4000]
+					}
+					t.Fatalf("XO_THREADS=%q: %s", threads, text)
+				}
+				var keep []string
+				for _, l := range strings.Split(stderr.String(), "\n") {
+					if !strings.HasPrefix(l, "xo leakcheck:") {
+						keep = append(keep, l)
+					}
+				}
+				got := runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(strings.Join(keep, "\n"))}
+				if got.String() != string(want) {
+					t.Errorf("XO_THREADS=%q: output differs from want.txt\n--- want\n%s\n--- got\n%s", threads, want, got)
+				}
+				if code == 0 {
+					if m := leakRE.FindStringSubmatch(stderr.String()); m == nil || m[1] != "0" {
+						t.Errorf("XO_THREADS=%q: leak check: %q", threads, m)
+					}
+				}
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("no golden program uses tasks")
+	}
+}
+
+// TestDeadlock builds internal/gen's deadlock_real (read only) with the
+// native backends: when every task is blocked the runtime faults with
+// XO-F001 (exit 70) instead of hanging. The native report has the first
+// line of the Go backend's, without the location and the list of
+// blocked tasks.
+func TestDeadlock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	dir := filepath.Join("..", "gen", "testdata", "golden", "deadlock_real")
+	backends := []string{build.BackendLLVM}
+	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+		backends = append(backends, build.BackendArm64)
+	}
+	for _, bk := range backends {
+		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: bk})
+		if err != nil || res.Failed {
+			t.Fatalf("%s: build: %v", bk, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		cmd := exec.CommandContext(ctx, res.Binaries[build.Host()])
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err = cmd.Run()
+		cancel()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 70 {
+			t.Fatalf("%s: want exit status 70, got %v\n%s", bk, err, stderr.String())
+		}
+		if stdout.String() != "start\n" || !strings.HasPrefix(stderr.String(), "fault: XO-F001: deadlock: every task is blocked\n") {
+			t.Errorf("%s: stdout %q stderr %q", bk, stdout.String(), stderr.String())
+		}
 	}
 }

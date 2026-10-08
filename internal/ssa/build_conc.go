@@ -666,6 +666,9 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	switch key {
 	case "task.is_canceled":
 		return s.rt("is_canceled", boolT), true
+	case "task.with_timeout", "task.map_concurrent_until", "task.stop_requested", "task.stopping":
+		b.unsupported(x, "`task."+fo.Name+"` (the native backends have no clock or signals)")
+		return s.undef(nt), true
 	case "Scope.spawn", "Scope.spawn_background", "Group.spawn", "Group.spawn_background":
 		h := s.expr(ci.Recv)
 		bg := strings.HasSuffix(key, "background")
@@ -687,9 +690,14 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		drop := s.add(OpFuncAddr, intT, b.dropList(et))
 		return s.rt("mutex_new", nt, s.one(v), drop), true
 	}
+	if ci.Recv == nil {
+		b.unsupported(x, "the std function `"+fo.Module.Name+"."+fo.DisplayName()+"`")
+		return s.undef(nt), true
+	}
 	h := s.expr(ci.Recv)
 	if h.Type.Kind != KHandle {
-		return nil, false
+		b.unsupported(x, "the method `"+fo.DisplayName()+"` here")
+		return s.undef(nt), true
 	}
 	var et *Type
 	if len(h.Type.Elems) > 0 {
@@ -945,4 +953,93 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 		c.finishFn()
 	})
 	return s.add(OpClosure, t, name, vals...)
+}
+
+// selectExpr lowers `select { arms }` (core 7.3): the arms are handed to
+// the runtime in source order, which performs the first that can
+// proceed (or waits for one: a cancellation point); the arm's body runs
+// with a receive's value bound. `after` arms need the clock, which the
+// native backends do not have.
+func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
+	b := s.b
+	m := b.mod
+	b.needConc = true
+	t := s.typeOf(x)
+	if !b.conc {
+		return s.undef(t)
+	}
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	sel := s.rt("select_new", m.Handle("Select"))
+	recvs := make([]*Type, len(x.Arms)) // the Option a receive arm binds
+	for i, a := range x.Arms {
+		if a.After != nil {
+			b.unsupported(a, "`after` in `select` (the native backends have no clock)")
+			continue
+		}
+		call, ok := a.Op.(*ast.CallExpr)
+		var se *ast.SelectorExpr
+		if ok {
+			se, _ = call.Fun.(*ast.SelectorExpr)
+		}
+		if se == nil {
+			b.unsupported(a, "this `select` arm")
+			continue
+		}
+		h := s.expr(se.X)
+		if h.Type.Kind != KHandle || len(h.Type.Elems) != 1 {
+			b.unsupported(a, "this `select` arm")
+			continue
+		}
+		switch se.Sel.Name {
+		case "recv":
+			s.rt("select_recv", nil, sel, h)
+			recvs[i] = b.typ(b.preludeType("Option", s.elemCheck(se.X)), a)
+		case "send":
+			s.rt("select_send", nil, sel, h, s.one(s.valueAs(call.Args[0].Value, h.Type.Elems[0])))
+		default:
+			b.unsupported(a, "this `select` arm")
+		}
+	}
+	idx := s.rt("select_wait", intT, sel, s.loc(x))
+	s.check("")
+	hasVal := t.Kind != KUnit && !s.isNever(x)
+	join := s.newBlock()
+	var res *Value
+	if hasVal {
+		res = join.AddParam(t)
+	}
+	for i, a := range x.Arms {
+		c := s.add(OpEq, boolT, nil, idx, s.cint(int64(i)))
+		yes, no := s.branch(c)
+		s.cur = yes
+		if ot := recvs[i]; ot != nil {
+			et := ot.Variants[ot.VariantIndex("Some")].Fields[0].Type
+			o := s.popOne(s.rt("select_take", m.List(et), sel, s.cint(int64(i))), ot)
+			if a.Bind != nil {
+				if vo := b.info.VarOf(a.Bind); vo != nil {
+					s.writeVar(vo, o)
+				}
+			}
+		}
+		var av *Value
+		if es, ok := a.Body.(*ast.ExprStmt); ok {
+			av = s.expr(es.X)
+		} else {
+			s.stmt(a.Body)
+			av = s.unit()
+		}
+		if hasVal {
+			s.jump(join, s.coerce(av, t, a))
+		} else {
+			s.jump(join)
+		}
+		s.cur = no
+	}
+	s.add(OpUnreachable, nil, nil)
+	s.seal(join)
+	s.cur = join
+	if res != nil {
+		return res
+	}
+	return s.unit()
 }
