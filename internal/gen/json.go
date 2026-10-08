@@ -49,7 +49,7 @@ func (pg *pkgGen) genJSONStruct(t *check.TypeObj) {
 		for _, f := range t.Fields {
 			if pg.g.isPatch(f.Type) {
 				pg.p("\tif !v.%s.PatchAbsent() {", goField(f.Name))
-				pg.p("\t\tw.Field(%q)\n\t\t%sJsonEnc(tk, w, v.%s)\n\t}", f.Name, rt, goField(f.Name))
+				pg.p("\t\tw.Field(%q)\n\t\t%s\n\t}", f.Name, pg.jsonEncValue(t, f, "v."+goField(f.Name)))
 				continue
 			}
 			pg.p("\tw.Field(%q)", f.Name)
@@ -105,20 +105,55 @@ func (pg *pkgGen) jsonDefault(t *check.TypeObj, f *check.FieldObj) string {
 func jsonKeyText(name string) string { return `"` + name + `"` }
 
 // jsonEncValue is the statement that writes the value of field f, held
-// in expr: a typed writer for Str, Int, and Bool, rt.JsonEnc otherwise
-// (which no longer boxes the value, see std/rt/json.go).
+// in expr (see jsonEncOf); a boxed field goes through rt.JsonEnc.
 func (pg *pkgGen) jsonEncValue(t *check.TypeObj, f *check.FieldObj, expr string) string {
-	if !pg.g.isBoxedField(t, f) {
-		switch pg.goType(f.Type) {
-		case "string":
-			return fmt.Sprintf("w.Str(%s)", expr)
-		case "int64":
-			return fmt.Sprintf("w.Int(%s)", expr)
-		case "bool":
-			return fmt.Sprintf("w.Bool(%s)", expr)
-		}
+	if pg.g.isBoxedField(t, f) {
+		return fmt.Sprintf("%sJsonEnc(tk, w, %s)", pg.rt(), expr)
+	}
+	return pg.jsonEncOf(f.Type, expr)
+}
+
+// jsonEncOf is the statement that writes expr, of type ft: a typed writer
+// for Str, Int, and Bool; a direct call of the value's own XoJsonEnc when
+// its type has one (a user type with `derive Json`, Option, List, Set,
+// Map, Patch); rt.JsonEnc otherwise. The direct call matters: rt.JsonEnc
+// of a value that is not a Str, Int, or Bool copies it to the heap to
+// call its encoder through an interface, an allocation per field and per
+// list element (std/rt/json.go).
+func (pg *pkgGen) jsonEncOf(ft check.Type, expr string) string {
+	switch pg.goType(ft) {
+	case "string":
+		return fmt.Sprintf("w.Str(%s)", expr)
+	case "int64":
+		return fmt.Sprintf("w.Int(%s)", expr)
+	case "bool":
+		return fmt.Sprintf("w.Bool(%s)", expr)
+	}
+	if pg.g.hasJSONEncMethod(pg.monoType(ft)) {
+		return fmt.Sprintf("%s.XoJsonEnc(tk, w)", expr)
 	}
 	return fmt.Sprintf("%sJsonEnc(tk, w, %s)", pg.rt(), expr)
+}
+
+// hasJSONEncMethod reports whether the Go type of t has a value receiver
+// XoJsonEnc method: a user type with `derive Json`, or a prelude Option,
+// List, Set, or Map, or a json.Patch (std/rt/json.go).
+func (g *gen) hasJSONEncMethod(t check.Type) bool {
+	n := g.named(t)
+	if n == nil || n.Obj.Module == nil {
+		return false
+	}
+	if n.Obj.Module.IsPrelude {
+		switch n.Obj.Name {
+		case "Option", "List", "Set", "Map":
+			return true
+		}
+		return false
+	}
+	if g.isPatch(t) {
+		return true
+	}
+	return !n.Obj.Module.IsStd && n.Obj.Derives["Json"]
 }
 
 // genJSONRead emits XoJsonRead: the keys of the text in order, each known
@@ -202,11 +237,11 @@ func (pg *pkgGen) genJSONEnum(t *check.TypeObj) {
 		pg.p("\t\ta := v.P.(%s%s)", localVariantType(v), tparamUse(t.TParams))
 		pg.p("\t\tw.ObjStart()\n\t\tw.Field(%q)", v.Name)
 		if len(v.Fields) == 1 && (v.Fields[0].From || v.Fields[0].Name == "") {
-			pg.p("\t\t%sJsonEnc(tk, w, a.%s)", rt, vfieldName(v.Fields[0], 0))
+			pg.p("\t\t%s", pg.jsonEncOf(v.Fields[0].Type, "a."+vfieldName(v.Fields[0], 0)))
 		} else {
 			pg.p("\t\tw.ObjStart()")
 			for i, f := range v.Fields {
-				pg.p("\t\tw.Field(%q)\n\t\t%sJsonEnc(tk, w, a.%s)", f.Name, rt, vfieldName(f, i))
+				pg.p("\t\tw.Field(%q)\n\t\t%s", f.Name, pg.jsonEncOf(f.Type, "a."+vfieldName(f, i)))
 			}
 			pg.p("\t\tw.ObjEnd()")
 		}

@@ -6,9 +6,9 @@ func (v User) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
 	w.Raw(",\"admin\":")
 	w.Bool(v.F_admin)
 	w.Raw(",\"nickname\":")
-	rt.JsonEnc(tk, w, v.F_nickname)
+	v.F_nickname.XoJsonEnc(tk, w)
 	w.Raw(",\"tags\":")
-	rt.JsonEnc(tk, w, v.F_tags)
+	v.F_tags.XoJsonEnc(tk, w)
 	w.Raw(",\"score\":")
 	rt.JsonEnc(tk, w, v.F_score)
 	w.Raw("}")
@@ -87,7 +87,7 @@ func (v Edit) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
 	w.ObjStart()
 	if !v.F_name.PatchAbsent() {
 		w.Field("name")
-		rt.JsonEnc(tk, w, v.F_name)
+		v.F_name.XoJsonEnc(tk, w)
 	}
 	w.Field("id")
 	w.Int(v.F_id)

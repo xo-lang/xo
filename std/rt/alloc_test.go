@@ -156,6 +156,58 @@ func TestHeldSet(t *testing.T) {
 	nilSet.del(ms[1])
 }
 
+// allocRec stands for a record with `derive Json`, encoded the way
+// internal/gen emits it (direct calls for Option fields).
+type allocRec struct {
+	id   int64
+	name string
+	nick Option[string]
+}
+
+func (v allocRec) XoJsonEnc(tk *Task, w *JsonW) {
+	w.Raw(`{"id":`)
+	w.Int(v.id)
+	w.Raw(`,"name":`)
+	w.Str(v.name)
+	w.Raw(`,"nick":`)
+	v.nick.XoJsonEnc(tk, w)
+	w.Raw("}")
+}
+
+// json.encode copies the text out of a pooled buffer once; list elements
+// and Str, Int, and Bool values are encoded without copies to the heap.
+func TestAllocsJsonEncode(t *testing.T) {
+	recs := make([]allocRec, 64)
+	for i := range recs {
+		recs[i] = allocRec{id: int64(i), name: "user", nick: Some("n")}
+	}
+	l := ListOf(recs...)
+	Json_encode(nil, l) // fill the pool
+	for _, c := range []struct {
+		name string
+		max  float64
+		f    func() Bytes
+	}{
+		{"Str", 1, func() Bytes { return Json_encode(nil, "x") }},
+		{"Int", 1, func() Bytes { return Json_encode(nil, int64(7)) }},
+		{"record", 2, func() Bytes { return Json_encode(nil, recs[0]) }},
+		{"List of 64 records", 2, func() Bytes { return Json_encode(nil, l) }},
+	} {
+		n := testing.AllocsPerRun(50, func() { c.f() })
+		if n > c.max && !raceOn {
+			t.Errorf("json.encode(%s): %v allocations, want at most %v", c.name, n, c.max)
+		}
+	}
+	got := string(Json_encode(nil, ListOf(recs[:2]...)))
+	want := `[{"id":0,"name":"user","nick":"n"},{"id":1,"name":"user","nick":"n"}]`
+	if got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+	if got := string(Json_encode(nil, ListOf(Some(true), None[bool]()))); got != "[true,null]" {
+		t.Errorf("got %s", got)
+	}
+}
+
 // Ranging over m.All() allocates nothing.
 func TestAllocsMapAll(t *testing.T) {
 	var m Map[string, string]

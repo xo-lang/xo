@@ -9,8 +9,10 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // std/json (std.md 5). Values of builtin types are encoded by JsonEnc and
@@ -149,23 +151,50 @@ func (e Json_DecodeErr) M_display(*Task) string {
 }
 
 // JsonEnc writes v.
+//
+// Str, Int, and Bool are written without an allocation: the type switch
+// is on a nil *T and the value is read through unsafe.Pointer(&v), so v
+// does not escape. (A switch on any(&v) moved v to the heap on every
+// call, whatever its type.) Any other value is copied to the heap once to
+// reach its encoder through an interface; internal/gen calls XoJsonEnc
+// directly where the type is known, and List encodes its elements in
+// place (JsonEncP), so this copy is made only for a top level value or a
+// type parameter.
 func JsonEnc[T any](tk *Task, w *JsonW, v T) {
-	// a pointer in the interface does not box v (no allocation)
-	switch p := any(&v).(type) {
+	switch any((*T)(nil)).(type) {
 	case *string:
-		w.str(*p)
+		w.str(*(*string)(unsafe.Pointer(&v)))
 		return
 	case *int64:
-		w.Int(*p)
+		w.Int(*(*int64)(unsafe.Pointer(&v)))
 		return
 	case *bool:
-		w.Bool(*p)
-		return
-	case jsonEncoder:
-		p.XoJsonEnc(tk, w)
+		w.Bool(*(*bool)(unsafe.Pointer(&v)))
 		return
 	}
-	jsonEncAny(tk, w, any(v))
+	p := new(T)
+	*p = v
+	JsonEncP(tk, w, p)
+}
+
+// JsonEncP writes *p. p is not kept; a p into memory that is on the heap
+// already (a list's array) costs no allocation.
+func JsonEncP[T any](tk *Task, w *JsonW, p *T) {
+	switch x := any(p).(type) {
+	case *string:
+		w.str(*x)
+		return
+	case *int64:
+		w.Int(*x)
+		return
+	case *bool:
+		w.Bool(*x)
+		return
+	case jsonEncoder:
+		x.XoJsonEnc(tk, w)
+		return
+	}
+	jsonEncAny(tk, w, any(*p))
 }
 
 func jsonEncAny(tk *Task, w *JsonW, v any) {
@@ -436,11 +465,30 @@ func jsonValue(dec *json.Decoder) (any, error) {
 	return tok, nil
 }
 
-// Json_encode is `json.encode(v)`.
+// Json_encode is `json.encode(v)`. The text is built in a pooled buffer
+// and copied out once, at its final size: growing a fresh buffer cost
+// several allocations per value (about ten for a list of 64 records).
 func Json_encode[T any](tk *Task, v T) Bytes {
-	var w JsonW
-	JsonEnc(tk, &w, v)
-	return Bytes(w.b)
+	w := getJsonW()
+	JsonEnc(tk, w, v)
+	out := Bytes(w.b)
+	putJsonW(w)
+	return out
+}
+
+var jsonWPool = sync.Pool{New: func() any { return new(JsonW) }}
+
+// jsonWKeep is the largest buffer returned to the pool.
+const jsonWKeep = 64 << 10
+
+func getJsonW() *JsonW { return jsonWPool.Get().(*JsonW) }
+
+func putJsonW(w *JsonW) {
+	if cap(w.b) > jsonWKeep {
+		return
+	}
+	w.b, w.count = w.b[:0], w.count[:0]
+	jsonWPool.Put(w)
 }
 
 // Json_encode_str is `json.encode_str(v)`.
@@ -474,9 +522,9 @@ func Json_decode_str[T any](tk *Task, s string) Result[T, Json_DecodeErr] {
 // XoJsonEnc encodes a list as an array.
 func (l List[T]) XoJsonEnc(tk *Task, w *JsonW) {
 	w.ArrStart()
-	for _, x := range l.s {
+	for i := range l.s {
 		w.Elem()
-		JsonEnc(tk, w, x)
+		JsonEncP(tk, w, &l.s[i])
 	}
 	w.ArrEnd()
 }
