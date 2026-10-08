@@ -15,3 +15,10 @@ Fix: compare before and after in the same session and close in time, run
 the two binaries interleaved (`for k in 1 2 3 4 5 6; do a w; b w; done`),
 and treat differences under about 3 percent as noise. Report the Go time of
 the same run next to every Xo time, as `run.sh` does.
+
+Update 2026-10-08 (arm64 backend): other agents building and testing on
+the same host raised the load average to 40 to 85 for minutes at a
+time; Go's fib went from 228 ms to 608 ms within one run. Check
+`uptime` before and after a measurement and discard runs with a load
+average above a few; `bench/perf/llvm/native.sh` interleaves the three
+binaries so a slow period hits all of them.

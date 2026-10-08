@@ -19,6 +19,11 @@ Last verified: 2026-10-08
   with this linker; the build falls back to the Xcode SDK
   (`gotchas/macos-clt-sdk-link-failure.md`). The LLVM tests skip when no
   clang is found (`$XO_CLANG`, then PATH).
+- cc (2026-10-08): `/usr/bin/cc` is the same Apple clang 21.0.0. The
+  native arm64 backend (`xo build --backend=arm64`, see "arm64 backend
+  (native)") uses it to assemble the generated `.s` and compile and link
+  `xo_rt.c` (`$XO_CC`, then `cc`, then `clang` on PATH), with the same SDK
+  fallback as the LLVM backend. Last verified: 2026-10-08.
 
 ## Go module
 
@@ -43,8 +48,8 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [--backend=go|llvm] [dir...]
-go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--arenas] [--backend=go|llvm] [dir] [-- args...]
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [--backend=go|llvm|arm64] [dir...]
+go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--arenas] [--backend=go|llvm|arm64] [dir] [-- args...]
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
 go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
@@ -65,6 +70,8 @@ go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of t
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 XO_LLVM_AST=1 go run ./cmd/xo build --backend=llvm .  # force the LLVM backend's AST path (never frees), for comparisons
+go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
+go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -74,6 +81,7 @@ bench/perf/run.sh                                       # Xo vs Go collection, L
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
 bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
+bench/perf/llvm/native.sh                               # same workloads: Go vs Xo --backend=llvm vs Xo --backend=arm64, time and peak RSS (arm64 host)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -483,6 +491,14 @@ Last verified: 2026-10-07
   Needs python3 for timing. `XO`, `PERF_OUT`, `WORKLOADS` as in
   `bench/perf/run.sh`. Results: `bench/results/llvm-prototype-2026-10-08.md`,
   `bench/results/llvm-rc-2026-10-08.md` (reference counting).
+- `bench/perf/llvm/native.sh` (2026-10-08): the native arm64 backend
+  against the LLVM backend and hand written Go on the same workloads.
+  Binaries run interleaved (Go, LLVM, arm64) `REPS` times (5) under
+  `/usr/bin/time -l`; the table has best wall time, the two ratios, and
+  peak RSS of all three. Checksums must agree. `XO`, `PERF_OUT`,
+  `WORKLOADS` as above. Check the load average first
+  (`gotchas/bench-host-timing-drift.md`). Results:
+  `bench/results/arm64-native-2026-10-08.md`.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -511,7 +527,9 @@ internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")
 internal/build/         check, generate, write the build directory, `go build` per target;
                         llvm.go: the LLVM backend build (IR + std/llrt runtime -> clang)
+                        arm64.go: the native backend build (assembly + std/llrt runtime -> cc)
 internal/llvm/          P3 prototype: LLVM IR for a core subset (see "LLVM backend (P3 prototype)")
+internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
@@ -605,6 +623,12 @@ are implemented. Last verified: 2026-10-07.
 With `--backend=llvm` (2026-10-08): checker -> LLVM IR (internal/llvm) ->
 `<build dir>/llvm/prog.ll` plus `xo_rt.c` -> `clang -O2 -flto` -> one host
 binary. The build directory keeps `prog.ll` for inspection.
+
+With `--backend=arm64` (2026-10-08): checker -> SSA (internal/ssa,
+`InsertRC`, verified) -> assembly (internal/arm64) ->
+`<build dir>/arm64/prog-<os>.s` plus `xo_rt.c` -> `cc -O2` -> one binary
+for darwin/arm64 or linux/arm64 when that is the host; another arm64
+target is written as assembly only (`build.Result.Asm`).
 
 ## Code generation
 
@@ -873,6 +897,44 @@ reference counting).
   (`XO_LEAKCHECK=1`). TestLeakCheck does the same for the bench programs. TestUnsupported checks the
   error for constructs outside the subset (`testdata/unsupported/`).
   `cmd/xo/llvm_test.go` drives the CLI.
+
+## arm64 backend (native)
+
+Last verified: 2026-10-08. Decision 0049; results
+`bench/results/arm64-native-2026-10-08.md`.
+
+- `xo build --backend=arm64` and `xo run --backend=arm64`; programs only,
+  no `--race`, `--arenas`, `--holes`; targets darwin/arm64 and
+  linux/arm64. `build.Arm64Asm(res, root, goos)` returns the assembly
+  (it retries without inlining if the inlined module does not verify,
+  `arm64.InlineError`). Programs outside the SSA subset are an error, no
+  fallback.
+- Pipeline per function (`internal/arm64`): `isel.go` (SSA to MIR over
+  virtual registers with assembly templates; values flattened into words,
+  `layout.go`), `opt.go` (memos inherited from dominators, list length
+  registers, dead code, constant tag and inlined predicate threading,
+  branch bounds), `regalloc.go` (liveness, live ranges with holes, move
+  coalescing, greedy first fit by spill weight, spill slots),
+  `emit.go` (frames, parallel moves, fault stubs with operand recovery),
+  `rc.go` (dup and drop helpers in assembly), `inline.go` (small leaf
+  functions, SSA to SSA, before lowering).
+- ABI: AAPCS64 (x0 to x7, d0 to d7, 8 byte stack slots for more Xo to Xo
+  arguments; at most 8 result words per class). Scratch x15 to x17 and
+  d29 to d31; x18 never used. Frame record kept in non leaf functions,
+  callee saved pairs stored high register first
+  (`gotchas/arm64-stp-pair-order.md`). Darwin: `_` prefix, Mach-O
+  sections, `@PAGE`/`@PAGEOFF`; Linux: ELF, `:lo12:`, `.note.GNU-stack`.
+- Layout differs from the LLVM backend's: an enum payload has one 8 byte
+  word per field word (a Bool field takes a word); list elements are
+  8 bytes per word except `List[Bool]` (1 byte). The runtime sees only
+  element sizes and callbacks.
+- Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
+  it builds and runs the SSA path goldens of internal/llvm against their
+  want.txt, the bench programs, and `testdata/run/*` against the Go
+  backend, all with the leak check). To try a code change by hand, edit
+  `<build dir>/arm64/prog-darwin.s` and link it with
+  `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the
+  default SDK does not link).
 
 ## Go interop (prototype)
 

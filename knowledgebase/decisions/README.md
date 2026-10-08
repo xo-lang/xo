@@ -52,3 +52,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0045-shared-ssa-ir.md](0045-shared-ssa-ir.md): `internal/ssa`, the typed SSA IR (block parameters, value semantics, RC hooks) native backends lower from.
 - [0046-reference-counting-ownership.md](0046-reference-counting-ownership.md): native memory is reference counted with Perceus style ownership per heap leaf on the SSA IR, borrow inference, in place reuse when unique, verified per path.
 - [0047-mutex-barging-in-real-runs.md](0047-mutex-barging-in-real-runs.md): the runtime lock barges in real runs, stays FIFO under test and the deterministic scheduler.
+- [0049-native-arm64-backend.md](0049-native-arm64-backend.md): `internal/arm64` lowers the SSA IR after reference counting straight to AArch64 assembly (word layout, range set allocation with coalescing, AAPCS64, fault stubs), linked with cc; darwin and linux arm64.

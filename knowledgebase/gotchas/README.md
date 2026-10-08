@@ -95,3 +95,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-heap-visited-set.md](ssa-heap-visited-set.md): `Type.Heap`'s recursion guard was a visited set, so two `Int` fields made a struct "heap"; use a path set.
 - [rc-verifier-loop-param-leak.md](rc-verifier-loop-param-leak.md): an RC verifier that sets block parameter counts on entry hides a leak of the previous iteration's value; check they are zero first.
 - [snprintf-int-formatting-cost.md](snprintf-int-formatting-cost.md): `snprintf("%lld")` dominated Int interpolation in the LLVM runtime (4x slower workload); use a digit loop.
+- [arm64-stp-pair-order.md](arm64-stp-pair-order.md): on Apple M4, `stp x19, x20` for callee saved registers made recursive fib 1.4x slower than `stp x20, x19`; store pairs high register first.
+- [arm64-loop-carried-store-forwarding.md](arm64-loop-carried-store-forwarding.md): a list length stored and reloaded every push iteration bound the native sieve on store to load forwarding; keep loop carried values in registers.
+- [arm64-zero-word-values.md](arm64-zero-word-values.md): `()` and capabilities have no words in the native backend; check the type before reading word 0.
+- [arm64-cheap-constants-across-blocks.md](arm64-cheap-constants-across-blocks.md): sharing one instruction constants across blocks blocks coalescing and costs a register and a copy; make them again per block.
