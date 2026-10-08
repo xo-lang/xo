@@ -1,0 +1,95 @@
+// Reference counting (decision 0046): strings, lists of strings, lists
+// of lists, structs and enums holding heap values, `var` parameters,
+// `with`, early returns, and pops that move elements out. Every heap
+// value must be freed by exit (the leak check counts allocations).
+struct Bag {
+  name: Str
+  items: List[Str]
+  count: Int
+}
+
+enum Shape {
+  Named(label: Str)
+  Many(parts: List[Int])
+  Empty
+}
+
+fn total_len(xs: List[Str]) -> Int {
+  var n = 0
+  for s in xs {
+    n += s.len()
+  }
+  n
+}
+
+fn add_item(var b: Bag, s: Str) {
+  b.items.push(s)
+  b.count += 1
+}
+
+fn label(s: Shape) -> Str {
+  match s {
+    Named(l) => l
+    Many(ps) => "many ${ps.len()}"
+    Empty => "empty"
+  }
+}
+
+fn first_long(xs: List[Str], n: Int) -> Str {
+  for s in xs {
+    if s.len() > n {
+      return s
+    }
+  }
+  "none"
+}
+
+fn rename(b: Bag, name: Str) -> Bag {
+  b with {name: name}
+}
+
+fn main(os: Os) {
+  var b = Bag{name: "bag", items: [], count: 0}
+  add_item(b, "alpha")
+  add_item(b, "beta")
+  let snapshot = b
+  add_item(b, "gamma${b.count}")
+  let r = rename(b, "renamed")
+  os.stdio.println("${b.name} ${b.count} ${snapshot.count} ${snapshot.items.len()} ${r.name} ${r.items.len()}")
+  os.stdio.println("total ${total_len(b.items)} first ${first_long(b.items, 4)} ${first_long(b.items, 10)}")
+  var grid: List[List[Int]] = []
+  for i in 0..4 {
+    var row: List[Int] = []
+    for j in 0..i {
+      row.push(j)
+    }
+    grid.push(row)
+  }
+  let g2 = grid
+  grid[2].push(99)
+  grid[3][0] = 7
+  os.stdio.println("grid ${grid[2].len()} ${g2[2].len()} ${grid[3][0]} ${g2[3][0]}")
+  let shapes = [Shape.Named(label: "dot"), Shape.Many(parts: [1, 2, 3]), Shape.Empty]
+  for s in shapes {
+    os.stdio.println(label(s))
+  }
+  var words: List[Str] = []
+  for i in 0..1000 {
+    words.push("w${i}")
+  }
+  var keep = ""
+  while words.len() > 1 {
+    if let Some(w) = words.pop() {
+      keep = w
+    }
+  }
+  os.stdio.println("kept ${keep} left ${words.len()}")
+  let opt = words.get(0)
+  let none = words.get(5)
+  os.stdio.println("${opt ?? "x"} ${none ?? "x"}")
+  var acc = ""
+  for i in 0..20 {
+    acc = acc + "${i % 10}"
+  }
+  os.stdio.println(acc)
+}

@@ -1,0 +1,173 @@
+type Int? = enum { None | Some(v: Int) }
+type Shape = enum { Circle(r: Float) | Rect(w: Float, h: Float) | Empty }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Int] = call list.new
+  v2: Int = const 5
+  v3: List[Int] = call list.push, v1, v2
+  v4: (List[Int], Int?) = call list.pop, v3
+  v5: List[Int] = field 0, v4
+  release v5
+  v7: Int? = field 1, v4
+  v8: Int = tag v7
+  v9: Int = const 1
+  v10: Bool = eq v8, v9
+  br v10, b2(), b3()
+b1(v12: Int):  ; preds b2, b3
+  v13: Float = const 2.0
+  v14: Float = const 3.0
+  v15: Shape = variant 1, v13, v14
+  v16: Int = tag v15
+  v17: Int = const 1
+  v18: Bool = eq v16, v17
+  br v18, b6(), b5()
+b2:  ; preds b0
+  v20: Int = payload 1.0, v7
+  jump b1(v20)
+b3:  ; preds b0
+  v22: Int = const 0
+  jump b1(v22)
+b4:  ; preds b6, b5
+  v24: () = tuple
+  v25: Stdio = cap stdio, v0
+  v26: Float = const 1.0
+  v27: Shape = variant 0, v26
+  v28: Float = call area, v27
+  v29: Str = call str.of_float, v28
+  v30: Str = const " "
+  v31: Str = call str.concat, v29, v30
+  release v29
+  v33: Str = call bucket, v12
+  v34: Str = call str.concat, v31, v33
+  release v31
+  release v33
+  v37: Str = const " "
+  v38: Str = call str.concat, v34, v37
+  release v34
+  v40: Shape = variant 2
+  v41: Float = call area, v40
+  v42: Str = call str.of_float, v41
+  v43: Str = call str.concat, v38, v42
+  release v38
+  release v42
+  v46: () = call Stdio.println, v25, v43
+  release v43
+  ret v46
+b5:  ; preds b1
+  v49: () = tuple
+  jump b4()
+b6:  ; preds b1
+  v51: Float = payload 1.0, v15
+  v52: Float = payload 1.1, v15
+  v53: Stdio = cap stdio, v0
+  v54: Str = const "w "
+  v55: Str = call str.of_float, v51
+  v56: Str = call str.concat, v54, v55
+  release v55
+  v58: () = call Stdio.println, v53, v56
+  release v56
+  jump b4()
+}
+
+func area(v0: Shape) -> Float {
+b0(v0: Shape):
+  v1: Int = tag v0
+  v2: Int = const 0
+  v3: Bool = eq v1, v2
+  br v3, b3(), b2()
+b1(v5: Float):  ; preds b3, b6, b8, b10
+  ret v5
+b2:  ; preds b0
+  v7: Int = tag v0
+  v8: Int = const 1
+  v9: Bool = eq v7, v8
+  br v9, b5(), b4()
+b3:  ; preds b0
+  v11: Float = payload 0.0, v0
+  v12: Float = const 3.0
+  v13: Float = mul v12, v11
+  v14: Float = mul v13, v11
+  jump b1(v14)
+b4:  ; preds b2, b5
+  v16: Int = tag v0
+  v17: Int = const 1
+  v18: Bool = eq v16, v17
+  br v18, b8(), b7()
+b5:  ; preds b2
+  v20: Float = payload 1.0, v0
+  v21: Float = payload 1.1, v0
+  v22: Bool = eq v20, v21
+  br v22, b6(), b4()
+b6:  ; preds b5
+  v24: Float = mul v20, v20
+  jump b1(v24)
+b7:  ; preds b4
+  v26: Int = tag v0
+  v27: Int = const 2
+  v28: Bool = eq v26, v27
+  br v28, b10(), b9()
+b8:  ; preds b4
+  v30: Float = payload 1.0, v0
+  v31: Float = payload 1.1, v0
+  v32: Float = mul v30, v31
+  jump b1(v32)
+b9:  ; preds b7
+  unreachable
+b10:  ; preds b7
+  v35: Float = const 0.0
+  jump b1(v35)
+}
+
+func bucket(v0: Int) -> Str {
+b0(v0: Int):
+  v1: Int = const 0
+  v2: Bool = eq v0, v1
+  br v2, b3(), b2()
+b1(v4: Str):  ; preds b3, b5, b14, b12
+  ret v4
+b2:  ; preds b0
+  v6: Int = const 1
+  v7: Bool = eq v0, v6
+  br v7, b7(), b6()
+b3:  ; preds b0
+  v9: Str = const "zero"
+  retain v9
+  jump b1(v9)
+b4:  ; preds b10
+  v12: Int = const 4
+  v13: Bool = ge v0, v12
+  br v13, b13(), b12()
+b5:  ; preds b7, b9, b11
+  v15: Str = const "small"
+  retain v15
+  jump b1(v15)
+b6:  ; preds b2
+  v18: Int = const 2
+  v19: Bool = eq v0, v18
+  br v19, b9(), b8()
+b7:  ; preds b2
+  jump b5()
+b8:  ; preds b6
+  v22: Int = const 3
+  v23: Bool = eq v0, v22
+  br v23, b11(), b10()
+b9:  ; preds b6
+  jump b5()
+b10:  ; preds b8
+  jump b4()
+b11:  ; preds b8
+  jump b5()
+b12:  ; preds b4, b13
+  v28: Str = const "large"
+  retain v28
+  jump b1(v28)
+b13:  ; preds b4
+  v31: Int = const 9
+  v32: Bool = le v0, v31
+  br v32, b14(), b12()
+b14:  ; preds b13
+  v34: Str = const "medium"
+  retain v34
+  jump b1(v34)
+}

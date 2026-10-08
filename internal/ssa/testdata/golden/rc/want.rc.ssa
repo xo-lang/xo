@@ -1,0 +1,511 @@
+type Bag = struct { name: Str, items: List[Str], count: Int }
+type Shape = enum { Named(label: Str) | Many(parts: List[Int]) | Empty }
+type Str? = enum { None | Some(v: Str) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Str = const "bag"
+  v2: List[Str] = call list.new
+  v3: Int = const 0
+  retain v1
+  v5: Bag = struct v1, v2, v3
+  v6: Str = const "alpha"
+  retain v6
+  v8: ((), Bag) = call add_item, v5, v6
+  v9: Bag = field 1, v8
+  v10: Str = const "beta"
+  retain v10
+  v12: ((), Bag) = call add_item, v9, v10
+  v13: Bag = field 1, v12
+  v14: Str = const "gamma"
+  v15: Int = field 2, v13
+  v16: Str = call str.of_int, v15
+  v17: Str = call str.concat, v14, v16
+  release v16
+  v19: Bag = field 1, v12
+  v20: List[Str] = field 1, v19
+  retain v20
+  v22: ((), Bag) = call add_item, v13, v17
+  v23: Bag = field 1, v22
+  v24: Str = const "renamed"
+  v25: Bag = field 1, v22
+  v26: Str = field 0, v25
+  retain v26
+  v28: Bag = field 1, v22
+  v29: List[Str] = field 1, v28
+  retain v29
+  retain v24
+  v32: Bag = call rename, v23, v24
+  v33: Stdio = cap stdio, v0
+  v34: Str = field 0, v23
+  v35: Str = const " "
+  v36: Str = call str.concat, v34, v35
+  v37: Bag = field 1, v22
+  v38: Str = field 0, v37
+  release v38
+  v40: Int = field 2, v23
+  v41: Str = call str.of_int, v40
+  v42: Str = call str.concat, v36, v41
+  release v36
+  release v41
+  v45: Str = const " "
+  v46: Str = call str.concat, v42, v45
+  release v42
+  v48: Int = field 2, v13
+  v49: Str = call str.of_int, v48
+  v50: Str = call str.concat, v46, v49
+  release v46
+  release v49
+  v53: Str = const " "
+  v54: Str = call str.concat, v50, v53
+  release v50
+  v56: List[Str] = field 1, v13
+  v57: Int = call list.len, v56
+  v58: Bag = field 1, v12
+  v59: List[Str] = field 1, v58
+  release v59
+  v61: Str = call str.of_int, v57
+  v62: Str = call str.concat, v54, v61
+  release v54
+  release v61
+  v65: Str = const " "
+  v66: Str = call str.concat, v62, v65
+  release v62
+  v68: Str = field 0, v32
+  v69: Str = call str.concat, v66, v68
+  release v66
+  v71: Str = field 0, v32
+  release v71
+  v73: Str = const " "
+  v74: Str = call str.concat, v69, v73
+  release v69
+  v76: List[Str] = field 1, v32
+  v77: Int = call list.len, v76
+  v78: List[Str] = field 1, v32
+  release v78
+  v80: Str = call str.of_int, v77
+  v81: Str = call str.concat, v74, v80
+  release v74
+  release v80
+  v84: () = call Stdio.println, v33, v81
+  release v81
+  v86: Stdio = cap stdio, v0
+  v87: Str = const "total "
+  v88: List[Str] = field 1, v23
+  v89: Int = call total_len, v88
+  v90: Str = call str.of_int, v89
+  v91: Str = call str.concat, v87, v90
+  release v90
+  v93: Str = const " first "
+  v94: Str = call str.concat, v91, v93
+  release v91
+  v96: List[Str] = field 1, v23
+  v97: Int = const 4
+  v98: Str = call first_long, v96, v97
+  v99: Str = call str.concat, v94, v98
+  release v94
+  release v98
+  v102: Str = const " "
+  v103: Str = call str.concat, v99, v102
+  release v99
+  v105: List[Str] = field 1, v23
+  v106: Int = const 10
+  v107: Str = call first_long, v105, v106
+  v108: Bag = field 1, v22
+  v109: List[Str] = field 1, v108
+  release v109
+  v111: Str = call str.concat, v103, v107
+  release v103
+  release v107
+  v114: () = call Stdio.println, v86, v111
+  release v111
+  v116: List[List[Int]] = call list.new
+  v117: Int = const 0
+  v118: Int = const 4
+  jump b1(v117, v116)
+b1(v120: Int, v121: List[List[Int]]):  ; preds b0, b3
+  v122: Bool = lt v120, v118
+  br v122, b2(), b4()
+b2:  ; preds b1
+  v124: List[Int] = call list.new
+  v125: Int = const 0
+  jump b5(v125, v124)
+b3:  ; preds b8
+  v127: Int = const 1
+  v128: Int = add v120, v127
+  jump b1(v128, v226)
+b4:  ; preds b1
+  v130: Int = const 2
+  v131: List[Int] = call list.index, v121, v130 @ main.xo:69:3
+  retain v131
+  v133: Int = const 99
+  v134: List[Int] = reuse v131
+  v135: List[Int] = call list.push, v134, v133
+  retain v121
+  v137: List[List[Int]] = reuse v121
+  v138: List[List[Int]] = call list.set, v137, v130, v135 @ main.xo:69:3
+  v139: () = tuple
+  v140: Int = const 3
+  v141: List[Int] = call list.index, v138, v140 @ main.xo:70:3
+  retain v141
+  v143: Int = const 0
+  v144: Int = const 7
+  v145: List[Int] = reuse v141
+  v146: List[Int] = call list.set, v145, v143, v144 @ main.xo:70:3
+  v147: List[List[Int]] = call list.set, v138, v140, v146 @ main.xo:70:3
+  v148: Stdio = cap stdio, v0
+  v149: Str = const "grid "
+  v150: Int = const 2
+  v151: List[Int] = call list.index, v147, v150 @ main.xo:71:28
+  v152: Int = call list.len, v151
+  v153: Str = call str.of_int, v152
+  v154: Str = call str.concat, v149, v153
+  release v153
+  v156: Str = const " "
+  v157: Str = call str.concat, v154, v156
+  release v154
+  v159: Int = const 2
+  v160: List[Int] = call list.index, v121, v159 @ main.xo:71:45
+  v161: Int = call list.len, v160
+  v162: Str = call str.of_int, v161
+  v163: Str = call str.concat, v157, v162
+  release v157
+  release v162
+  v166: Str = const " "
+  v167: Str = call str.concat, v163, v166
+  release v163
+  v169: Int = const 3
+  v170: List[Int] = call list.index, v147, v169 @ main.xo:71:60
+  retain v170
+  release v147
+  v173: Int = const 0
+  v174: Int = call list.index, v170, v173 @ main.xo:71:60
+  release v170
+  v176: Str = call str.of_int, v174
+  v177: Str = call str.concat, v167, v176
+  release v167
+  release v176
+  v180: Str = const " "
+  v181: Str = call str.concat, v177, v180
+  release v177
+  v183: Int = const 3
+  v184: List[Int] = call list.index, v121, v183 @ main.xo:71:74
+  retain v184
+  release v121
+  v187: Int = const 0
+  v188: Int = call list.index, v184, v187 @ main.xo:71:74
+  release v184
+  v190: Str = call str.of_int, v188
+  v191: Str = call str.concat, v181, v190
+  release v181
+  release v190
+  v194: () = call Stdio.println, v148, v191
+  release v191
+  v196: List[Shape] = call list.new
+  v197: Str = const "dot"
+  retain v197
+  v199: Shape = variant 0, v197
+  v200: List[Shape] = call list.push, v196, v199
+  v201: List[Int] = call list.new
+  v202: Int = const 1
+  v203: List[Int] = call list.push, v201, v202
+  v204: Int = const 2
+  v205: List[Int] = call list.push, v203, v204
+  v206: Int = const 3
+  v207: List[Int] = call list.push, v205, v206
+  v208: Shape = variant 1, v207
+  v209: List[Shape] = call list.push, v200, v208
+  v210: Shape = variant 2
+  v211: List[Shape] = call list.push, v209, v210
+  v212: Int = call list.len, v211
+  v213: Int = const 0
+  jump b9(v213)
+b5(v215: Int, v216: List[Int]):  ; preds b2, b7
+  v217: Bool = lt v215, v120
+  br v217, b6(), b8()
+b6:  ; preds b5
+  v219: List[Int] = call list.push, v216, v215
+  v220: () = tuple
+  jump b7()
+b7:  ; preds b6
+  v222: Int = const 1
+  v223: Int = add v215, v222
+  jump b5(v223, v219)
+b8:  ; preds b5
+  v225: List[List[Int]] = reuse v121
+  v226: List[List[Int]] = call list.push, v225, v216
+  v227: () = tuple
+  jump b3()
+b9(v229: Int):  ; preds b4, b11
+  v230: Bool = lt v229, v212
+  br v230, b10(), b12()
+b10:  ; preds b9
+  v232: Shape = call list.index, v211, v229
+  v233: Stdio = cap stdio, v0
+  v234: Str = call label, v232
+  v235: () = call Stdio.println, v233, v234
+  release v234
+  jump b11()
+b11:  ; preds b10
+  v238: Int = const 1
+  v239: Int = add v229, v238
+  jump b9(v239)
+b12:  ; preds b9
+  release v211
+  v242: List[Str] = call list.new
+  v243: Int = const 0
+  v244: Int = const 1000
+  jump b13(v243, v242)
+b13(v246: Int, v247: List[Str]):  ; preds b12, b15
+  v248: Bool = lt v246, v244
+  br v248, b14(), b16()
+b14:  ; preds b13
+  v250: Str = const "w"
+  v251: Str = call str.of_int, v246
+  v252: Str = call str.concat, v250, v251
+  release v251
+  v254: List[Str] = call list.push, v247, v252
+  v255: () = tuple
+  jump b15()
+b15:  ; preds b14
+  v257: Int = const 1
+  v258: Int = add v246, v257
+  jump b13(v258, v254)
+b16:  ; preds b13
+  v260: Str = const ""
+  retain v260
+  jump b17(v247, v260)
+b17(v263: List[Str], v264: Str):  ; preds b16, b20
+  v265: Int = call list.len, v263
+  v266: Int = const 1
+  v267: Bool = gt v265, v266
+  br v267, b19(), b18()
+b18:  ; preds b17
+  v269: Stdio = cap stdio, v0
+  v270: Str = const "kept "
+  v271: Str = call str.concat, v270, v264
+  release v264
+  v273: Str = const " left "
+  v274: Str = call str.concat, v271, v273
+  release v271
+  v276: Int = call list.len, v263
+  v277: Str = call str.of_int, v276
+  v278: Str = call str.concat, v274, v277
+  release v274
+  release v277
+  v281: () = call Stdio.println, v269, v278
+  release v278
+  v283: Int = const 0
+  v284: Str? = call list.get, v263, v283
+  retain v284
+  v286: Int = const 5
+  v287: Str? = call list.get, v263, v286
+  retain v287
+  release v263
+  v290: Stdio = cap stdio, v0
+  v291: Int = tag v284
+  v292: Int = const 1
+  v293: Bool = eq v291, v292
+  br v293, b24(), b25()
+b19:  ; preds b17
+  v295: (List[Str], Str?) = call list.pop, v263
+  v296: List[Str] = field 0, v295
+  v297: Str? = field 1, v295
+  v298: Int = tag v297
+  v299: Int = const 1
+  v300: Bool = eq v298, v299
+  br v300, b22(), b21()
+b20(v302: Str):  ; preds b22, b21
+  v303: () = tuple
+  jump b17(v296, v302)
+b21:  ; preds b19
+  v305: Str? = field 1, v295
+  release v305
+  v307: () = tuple
+  jump b20(v264)
+b22:  ; preds b19
+  release v264
+  v310: Str = payload 1.0, v297
+  retain v310
+  v312: Str? = field 1, v295
+  release v312
+  v314: () = tuple
+  jump b20(v310)
+b23(v316: Str):  ; preds b24, b25
+  v317: Str = const " "
+  v318: Str = call str.concat, v316, v317
+  release v316
+  v320: Int = tag v287
+  v321: Int = const 1
+  v322: Bool = eq v320, v321
+  br v322, b27(), b28()
+b24:  ; preds b18
+  v324: Str = payload 1.0, v284
+  retain v324
+  release v284
+  jump b23(v324)
+b25:  ; preds b18
+  release v284
+  v329: Str = const "x"
+  retain v329
+  jump b23(v329)
+b26(v332: Str):  ; preds b27, b28
+  v333: Str = call str.concat, v318, v332
+  release v318
+  release v332
+  v336: () = call Stdio.println, v290, v333
+  release v333
+  v338: Str = const ""
+  v339: Int = const 0
+  v340: Int = const 20
+  retain v338
+  jump b29(v339, v338)
+b27:  ; preds b23
+  v343: Str = payload 1.0, v287
+  retain v343
+  release v287
+  jump b26(v343)
+b28:  ; preds b23
+  release v287
+  v348: Str = const "x"
+  retain v348
+  jump b26(v348)
+b29(v351: Int, v352: Str):  ; preds b26, b31
+  v353: Bool = lt v351, v340
+  br v353, b30(), b32()
+b30:  ; preds b29
+  v355: Int = const 10
+  v356: Int = rem v351, v355 @ main.xo:92:20
+  v357: Str = call str.of_int, v356
+  v358: Str = call str.concat, v352, v357
+  release v352
+  release v357
+  v361: () = tuple
+  jump b31()
+b31:  ; preds b30
+  v363: Int = const 1
+  v364: Int = add v351, v363
+  jump b29(v364, v358)
+b32:  ; preds b29
+  v366: Stdio = cap stdio, v0
+  v367: () = call Stdio.println, v366, v352
+  release v352
+  ret v367
+}
+
+func add_item(v0: Bag, v1: Str) -> ((), Bag) {
+b0(v0: Bag, v1: Str):
+  v2: List[Str] = field 1, v0
+  v3: List[Str] = reuse v2
+  v4: List[Str] = call list.push, v3, v1
+  v5: Bag = setfield 1, v0, v4
+  v6: () = tuple
+  v7: Int = field 2, v5
+  v8: Int = const 1
+  v9: Int = add v7, v8 @ main.xo:27:3
+  v10: Bag = setfield 2, v5, v9
+  v11: () = tuple
+  ret v11, v10
+}
+
+func rename(v0: Bag, v1: Str) -> Bag {
+b0(v0: Bag, v1: Str):
+  v2: Str = field 0, v0
+  release v2
+  v4: Bag = setfield 0, v0, v1
+  ret v4
+}
+
+func total_len(borrow v0: List[Str]) -> Int {
+b0(v0: List[Str]):
+  v1: Int = const 0
+  v2: Int = call list.len, v0
+  v3: Int = const 0
+  jump b1(v3, v1)
+b1(v5: Int, v6: Int):  ; preds b0, b3
+  v7: Bool = lt v5, v2
+  br v7, b2(), b4()
+b2:  ; preds b1
+  v9: Str = call list.index, v0, v5
+  v10: Int = call Str.len, v9
+  v11: Int = add v6, v10 @ main.xo:20:5
+  v12: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v14: Int = const 1
+  v15: Int = add v5, v14
+  jump b1(v15, v11)
+b4:  ; preds b1
+  ret v6
+}
+
+func first_long(borrow v0: List[Str], v1: Int) -> Str {
+b0(v0: List[Str], v1: Int):
+  v2: Int = call list.len, v0
+  v3: Int = const 0
+  jump b1(v3)
+b1(v5: Int):  ; preds b0, b3
+  v6: Bool = lt v5, v2
+  br v6, b2(), b4()
+b2:  ; preds b1
+  v8: Str = call list.index, v0, v5
+  retain v8
+  v10: Int = call Str.len, v8
+  v11: Bool = gt v10, v1
+  br v11, b6(), b7()
+b3:  ; preds b5
+  v13: Int = const 1
+  v14: Int = add v5, v13
+  jump b1(v14)
+b4:  ; preds b1
+  v16: Str = const "none"
+  retain v16
+  ret v16
+b5:  ; preds b7
+  v19: () = tuple
+  jump b3()
+b6:  ; preds b2
+  ret v8
+b7:  ; preds b2
+  release v8
+  v23: () = tuple
+  jump b5()
+}
+
+func label(borrow v0: Shape) -> Str {
+b0(v0: Shape):
+  v1: Int = tag v0
+  v2: Int = const 0
+  v3: Bool = eq v1, v2
+  br v3, b3(), b2()
+b1(v5: Str):  ; preds b3, b5, b7
+  ret v5
+b2:  ; preds b0
+  v7: Int = tag v0
+  v8: Int = const 1
+  v9: Bool = eq v7, v8
+  br v9, b5(), b4()
+b3:  ; preds b0
+  v11: Str = payload 0.0, v0
+  retain v11
+  jump b1(v11)
+b4:  ; preds b2
+  v14: Int = tag v0
+  v15: Int = const 2
+  v16: Bool = eq v14, v15
+  br v16, b7(), b6()
+b5:  ; preds b2
+  v18: List[Int] = payload 1.0, v0
+  v19: Str = const "many "
+  v20: Int = call list.len, v18
+  v21: Str = call str.of_int, v20
+  v22: Str = call str.concat, v19, v21
+  release v21
+  jump b1(v22)
+b6:  ; preds b4
+  unreachable
+b7:  ; preds b4
+  v26: Str = const "empty"
+  retain v26
+  jump b1(v26)
+}

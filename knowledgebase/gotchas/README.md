@@ -89,3 +89,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
 - [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): with no request locals, auth middleware passes the user in a header; always overwrite it or clients can spoof it.
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
+- [ssa-braun-incomplete-phi.md](ssa-braun-incomplete-phi.md): sealing a block must use the recorded incomplete parameter, not `defs[var][block]`, which a later write replaces.
+- [ssa-heap-visited-set.md](ssa-heap-visited-set.md): `Type.Heap`'s recursion guard was a visited set, so two `Int` fields made a struct "heap"; use a path set.

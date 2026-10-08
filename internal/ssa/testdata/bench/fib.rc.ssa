@@ -1,0 +1,33 @@
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Stdio = cap stdio, v0
+  v2: Str = const "fib "
+  v3: Int = const 40
+  v4: Int = call fib, v3
+  v5: Str = call str.of_int, v4
+  v6: Str = call str.concat, v2, v5
+  release v5
+  v8: () = call Stdio.println, v1, v6
+  release v6
+  ret v8
+}
+
+func fib(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 2
+  v2: Bool = lt v0, v1
+  br v2, b2(), b3()
+b1(v4: Int):  ; preds b2, b3
+  ret v4
+b2:  ; preds b0
+  jump b1(v0)
+b3:  ; preds b0
+  v7: Int = const 1
+  v8: Int = sub v0, v7 @ main.xo:3:29
+  v9: Int = call fib, v8
+  v10: Int = const 2
+  v11: Int = sub v0, v10 @ main.xo:3:42
+  v12: Int = call fib, v11
+  v13: Int = add v9, v12 @ main.xo:3:25
+  jump b1(v13)
+}

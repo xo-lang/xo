@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+bag 3 2 2 renamed 3
+total 15 first alpha none
+grid 3 2 7 0
+dot
+many 3
+empty
+kept w1 left 1
+w0 x
+01234567890123456789
+--- stderr

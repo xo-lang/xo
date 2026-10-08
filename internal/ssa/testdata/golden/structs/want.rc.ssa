@@ -1,0 +1,75 @@
+type P = struct { x: Int, y: Int }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[P] = call list.new
+  v2: Int = const 1
+  v3: Int = const 7
+  v4: P = struct v2, v3
+  v5: List[P] = call list.push, v1, v4
+  v6: Int = const 2
+  v7: Int = const 3
+  v8: P = struct v6, v7
+  v9: List[P] = call list.push, v5, v8
+  v10: Int = const 1
+  v11: ((), List[P]) = call bump, v9, v10
+  v12: List[P] = field 1, v11
+  v13: Int = const 0
+  v14: P = call list.index, v12, v13 @ main.xo:15:11
+  v15: Int = const 9
+  v16: P = setfield 1, v14, v15
+  v17: Int = const 4
+  v18: (P, Int) = tuple v16, v17
+  v19: Int = const 5
+  v20: P = field 0, v18
+  v21: P = setfield 0, v20, v19
+  v22: (P, Int) = setfield 0, v18, v21
+  v23: Stdio = cap stdio, v0
+  v24: Int = const 1
+  v25: P = call list.index, v12, v24 @ main.xo:18:23
+  v26: List[P] = field 1, v11
+  release v26
+  v28: Int = field 0, v25
+  v29: Str = call str.of_int, v28
+  v30: Str = const " "
+  v31: Str = call str.concat, v29, v30
+  release v29
+  v33: Int = field 1, v16
+  v34: Str = call str.of_int, v33
+  v35: Str = call str.concat, v31, v34
+  release v31
+  release v34
+  v38: Str = const " "
+  v39: Str = call str.concat, v35, v38
+  release v35
+  v41: P = field 0, v22
+  v42: Int = field 0, v41
+  v43: Str = call str.of_int, v42
+  v44: Str = call str.concat, v39, v43
+  release v39
+  release v43
+  v47: Str = const " "
+  v48: Str = call str.concat, v44, v47
+  release v44
+  v50: Int = field 1, v22
+  v51: Str = call str.of_int, v50
+  v52: Str = call str.concat, v48, v51
+  release v48
+  release v51
+  v55: () = call Stdio.println, v23, v52
+  release v52
+  ret v55
+}
+
+func bump(v0: List[P], v1: Int) -> ((), List[P]) {
+b0(v0: List[P], v1: Int):
+  v2: List[P] = reuse v0
+  v3: P = call list.index, v2, v1 @ main.xo:9:3
+  v4: Int = field 0, v3
+  v5: Int = const 1
+  v6: Int = add v4, v5 @ main.xo:9:3
+  v7: P = setfield 0, v3, v6
+  v8: List[P] = call list.set, v2, v1, v7 @ main.xo:9:3
+  v9: () = tuple
+  ret v9, v8
+}

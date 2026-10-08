@@ -1,0 +1,415 @@
+type Body = struct { x: Float, y: Float, z: Float, vx: Float, vy: Float, vz: Float, mass: Float }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Body] = call bodies
+  v2: ((), List[Body]) = call offset, v1
+  v3: List[Body] = field 1, v2
+  v4: Float = call energy, v3
+  v5: Int = const 0
+  v6: Int = const 5000000
+  jump b1(v5, v3)
+b1(v8: Int, v9: List[Body]):  ; preds b0, b3
+  v10: Bool = lt v8, v6
+  br v10, b2(), b4()
+b2:  ; preds b1
+  v12: Float = const 0.01
+  v13: ((), List[Body]) = call advance, v9, v12
+  v14: List[Body] = field 1, v13
+  jump b3()
+b3:  ; preds b2
+  v16: Int = const 1
+  v17: Int = add v8, v16
+  jump b1(v17, v14)
+b4:  ; preds b1
+  v19: Float = call energy, v9
+  release v9
+  v21: Stdio = cap stdio, v0
+  v22: Str = const "nbody "
+  v23: Float = const 1e+09
+  v24: Float = mul v4, v23
+  v25: Int = ftoi v24 @ main.xo:98:29
+  v26: Str = call str.of_int, v25
+  v27: Str = call str.concat, v22, v26
+  release v26
+  v29: Str = const " "
+  v30: Str = call str.concat, v27, v29
+  release v27
+  v32: Float = const 1e+09
+  v33: Float = mul v19, v32
+  v34: Int = ftoi v33 @ main.xo:98:59
+  v35: Str = call str.of_int, v34
+  v36: Str = call str.concat, v30, v35
+  release v30
+  release v35
+  v39: () = call Stdio.println, v21, v36
+  release v36
+  ret v39
+}
+
+func bodies() -> List[Body] {
+b0:
+  v0: Float = call solar_mass
+  v1: List[Body] = call list.new
+  v2: Float = const 0.0
+  v3: Float = const 0.0
+  v4: Float = const 0.0
+  v5: Float = const 0.0
+  v6: Float = const 0.0
+  v7: Float = const 0.0
+  v8: Body = struct v2, v3, v4, v5, v6, v7, v0
+  v9: List[Body] = call list.push, v1, v8
+  v10: Float = const 4.841431442464721
+  v11: Float = const 1.1603200440274284
+  v12: Float = neg v11
+  v13: Float = const 0.10362204447112311
+  v14: Float = neg v13
+  v15: Float = const 0.001660076642744037
+  v16: Float = const 365.24
+  v17: Float = mul v15, v16
+  v18: Float = const 0.007699011184197404
+  v19: Float = const 365.24
+  v20: Float = mul v18, v19
+  v21: Float = const 6.90460016972063e-05
+  v22: Float = neg v21
+  v23: Float = const 365.24
+  v24: Float = mul v22, v23
+  v25: Float = const 0.0009547919384243266
+  v26: Float = mul v25, v0
+  v27: Body = struct v10, v12, v14, v17, v20, v24, v26
+  v28: List[Body] = call list.push, v9, v27
+  v29: Float = const 8.34336671824458
+  v30: Float = const 4.124798564124305
+  v31: Float = const 0.4035234171143214
+  v32: Float = neg v31
+  v33: Float = const 0.002767425107268624
+  v34: Float = neg v33
+  v35: Float = const 365.24
+  v36: Float = mul v34, v35
+  v37: Float = const 0.004998528012349172
+  v38: Float = const 365.24
+  v39: Float = mul v37, v38
+  v40: Float = const 2.3041729757376393e-05
+  v41: Float = const 365.24
+  v42: Float = mul v40, v41
+  v43: Float = const 0.0002858859806661308
+  v44: Float = mul v43, v0
+  v45: Body = struct v29, v30, v32, v36, v39, v42, v44
+  v46: List[Body] = call list.push, v28, v45
+  v47: Float = const 12.894369562139131
+  v48: Float = const 15.111151401698631
+  v49: Float = neg v48
+  v50: Float = const 0.22330757889265573
+  v51: Float = neg v50
+  v52: Float = const 0.002964601375647616
+  v53: Float = const 365.24
+  v54: Float = mul v52, v53
+  v55: Float = const 0.0023784717395948095
+  v56: Float = const 365.24
+  v57: Float = mul v55, v56
+  v58: Float = const 2.9658956854023756e-05
+  v59: Float = neg v58
+  v60: Float = const 365.24
+  v61: Float = mul v59, v60
+  v62: Float = const 4.366244043351563e-05
+  v63: Float = mul v62, v0
+  v64: Body = struct v47, v49, v51, v54, v57, v61, v63
+  v65: List[Body] = call list.push, v46, v64
+  v66: Float = const 15.379697114850917
+  v67: Float = const 25.919314609987964
+  v68: Float = neg v67
+  v69: Float = const 0.17925877295037118
+  v70: Float = const 0.0026806777249038932
+  v71: Float = const 365.24
+  v72: Float = mul v70, v71
+  v73: Float = const 0.001628241700382423
+  v74: Float = const 365.24
+  v75: Float = mul v73, v74
+  v76: Float = const 9.515922545197159e-05
+  v77: Float = neg v76
+  v78: Float = const 365.24
+  v79: Float = mul v77, v78
+  v80: Float = const 5.1513890204661145e-05
+  v81: Float = mul v80, v0
+  v82: Body = struct v66, v68, v69, v72, v75, v79, v81
+  v83: List[Body] = call list.push, v65, v82
+  ret v83
+}
+
+func offset(v0: List[Body]) -> ((), List[Body]) {
+b0(v0: List[Body]):
+  v1: List[Body] = reuse v0
+  v2: Float = const 0.0
+  v3: Float = const 0.0
+  v4: Float = const 0.0
+  v5: Int = call list.len, v1
+  v6: Int = const 0
+  jump b1(v6, v2, v3, v4)
+b1(v8: Int, v9: Float, v10: Float, v11: Float):  ; preds b0, b3
+  v12: Bool = lt v8, v5
+  br v12, b2(), b4()
+b2:  ; preds b1
+  v14: Body = call list.index, v1, v8
+  v15: Float = field 3, v14
+  v16: Float = field 6, v14
+  v17: Float = mul v15, v16
+  v18: Float = add v9, v17
+  v19: Float = field 4, v14
+  v20: Float = field 6, v14
+  v21: Float = mul v19, v20
+  v22: Float = add v10, v21
+  v23: Float = field 5, v14
+  v24: Float = field 6, v14
+  v25: Float = mul v23, v24
+  v26: Float = add v11, v25
+  v27: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v29: Int = const 1
+  v30: Int = add v8, v29
+  jump b1(v30, v18, v22, v26)
+b4:  ; preds b1
+  v32: Float = call solar_mass
+  v33: Int = const 0
+  v34: Float = const 0.0
+  v35: Float = div v9, v32
+  v36: Float = sub v34, v35
+  v37: Body = call list.index, v1, v33 @ main.xo:39:3
+  v38: Body = setfield 3, v37, v36
+  v39: List[Body] = call list.set, v1, v33, v38 @ main.xo:39:3
+  v40: Int = const 0
+  v41: Float = const 0.0
+  v42: Float = div v10, v32
+  v43: Float = sub v41, v42
+  v44: Body = call list.index, v39, v40 @ main.xo:40:3
+  v45: Body = setfield 4, v44, v43
+  v46: List[Body] = call list.set, v39, v40, v45 @ main.xo:40:3
+  v47: Int = const 0
+  v48: Float = const 0.0
+  v49: Float = div v11, v32
+  v50: Float = sub v48, v49
+  v51: Body = call list.index, v46, v47 @ main.xo:41:3
+  v52: Body = setfield 5, v51, v50
+  v53: List[Body] = call list.set, v46, v47, v52 @ main.xo:41:3
+  v54: () = tuple
+  ret v54, v53
+}
+
+func energy(borrow v0: List[Body]) -> Float {
+b0(v0: List[Body]):
+  v1: Float = const 0.0
+  v2: Int = call list.len, v0
+  v3: Int = const 0
+  jump b1(v3, v1)
+b1(v5: Int, v6: Float):  ; preds b0, b3
+  v7: Bool = lt v5, v2
+  br v7, b2(), b4()
+b2:  ; preds b1
+  v9: Body = call list.index, v0, v5 @ main.xo:48:13
+  v10: Float = const 0.5
+  v11: Float = field 6, v9
+  v12: Float = mul v10, v11
+  v13: Float = field 3, v9
+  v14: Float = field 3, v9
+  v15: Float = mul v13, v14
+  v16: Float = field 4, v9
+  v17: Float = field 4, v9
+  v18: Float = mul v16, v17
+  v19: Float = add v15, v18
+  v20: Float = field 5, v9
+  v21: Float = field 5, v9
+  v22: Float = mul v20, v21
+  v23: Float = add v19, v22
+  v24: Float = mul v12, v23
+  v25: Float = add v6, v24
+  v26: Int = const 1
+  v27: Int = add v5, v26 @ main.xo:50:14
+  jump b5(v27, v25)
+b3:  ; preds b8
+  v29: Int = const 1
+  v30: Int = add v5, v29
+  jump b1(v30, v34)
+b4:  ; preds b1
+  ret v6
+b5(v33: Int, v34: Float):  ; preds b2, b7
+  v35: Bool = lt v33, v2
+  br v35, b6(), b8()
+b6:  ; preds b5
+  v37: Body = call list.index, v0, v33 @ main.xo:51:15
+  v38: Float = field 0, v9
+  v39: Float = field 0, v37
+  v40: Float = sub v38, v39
+  v41: Float = field 1, v9
+  v42: Float = field 1, v37
+  v43: Float = sub v41, v42
+  v44: Float = field 2, v9
+  v45: Float = field 2, v37
+  v46: Float = sub v44, v45
+  v47: Float = field 6, v9
+  v48: Float = field 6, v37
+  v49: Float = mul v47, v48
+  v50: Float = mul v40, v40
+  v51: Float = mul v43, v43
+  v52: Float = add v50, v51
+  v53: Float = mul v46, v46
+  v54: Float = add v52, v53
+  v55: Float = call Float.sqrt, v54
+  v56: Float = div v49, v55
+  v57: Float = sub v34, v56
+  v58: () = tuple
+  jump b7()
+b7:  ; preds b6
+  v60: Int = const 1
+  v61: Int = add v33, v60
+  jump b5(v61, v57)
+b8:  ; preds b5
+  v63: () = tuple
+  jump b3()
+}
+
+func advance(v0: List[Body], v1: Float) -> ((), List[Body]) {
+b0(v0: List[Body], v1: Float):
+  v2: List[Body] = reuse v0
+  v3: Int = call list.len, v2
+  v4: Int = const 0
+  jump b1(v4, v2)
+b1(v6: Int, v7: List[Body]):  ; preds b0, b3
+  v8: Bool = lt v6, v3
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: Int = const 1
+  v11: Int = add v6, v10 @ main.xo:64:14
+  jump b5(v11, v7)
+b3:  ; preds b8
+  v13: Int = const 1
+  v14: Int = add v6, v13
+  jump b1(v14, v19)
+b4:  ; preds b1
+  v16: Int = const 0
+  jump b9(v16, v7)
+b5(v18: Int, v19: List[Body]):  ; preds b2, b7
+  v20: Bool = lt v18, v3
+  br v20, b6(), b8()
+b6:  ; preds b5
+  v22: Body = call list.index, v19, v6 @ main.xo:65:16
+  v23: Float = field 0, v22
+  v24: Body = call list.index, v19, v18 @ main.xo:65:26
+  v25: Float = field 0, v24
+  v26: Float = sub v23, v25
+  v27: Body = call list.index, v19, v6 @ main.xo:66:16
+  v28: Float = field 1, v27
+  v29: Body = call list.index, v19, v18 @ main.xo:66:26
+  v30: Float = field 1, v29
+  v31: Float = sub v28, v30
+  v32: Body = call list.index, v19, v6 @ main.xo:67:16
+  v33: Float = field 2, v32
+  v34: Body = call list.index, v19, v18 @ main.xo:67:26
+  v35: Float = field 2, v34
+  v36: Float = sub v33, v35
+  v37: Float = mul v26, v26
+  v38: Float = mul v31, v31
+  v39: Float = add v37, v38
+  v40: Float = mul v36, v36
+  v41: Float = add v39, v40
+  v42: Float = call Float.sqrt, v41
+  v43: Float = mul v41, v42
+  v44: Float = div v1, v43
+  v45: Body = call list.index, v19, v6 @ main.xo:70:16
+  v46: Float = field 6, v45
+  v47: Float = mul v46, v44
+  v48: Body = call list.index, v19, v18 @ main.xo:71:16
+  v49: Float = field 6, v48
+  v50: Float = mul v49, v44
+  v51: Body = call list.index, v19, v6 @ main.xo:72:7
+  v52: Float = field 3, v51
+  v53: Float = mul v26, v50
+  v54: Float = sub v52, v53
+  v55: Body = setfield 3, v51, v54
+  v56: List[Body] = call list.set, v19, v6, v55 @ main.xo:72:7
+  v57: Body = call list.index, v56, v6 @ main.xo:73:7
+  v58: Float = field 4, v57
+  v59: Float = mul v31, v50
+  v60: Float = sub v58, v59
+  v61: Body = setfield 4, v57, v60
+  v62: List[Body] = call list.set, v56, v6, v61 @ main.xo:73:7
+  v63: Body = call list.index, v62, v6 @ main.xo:74:7
+  v64: Float = field 5, v63
+  v65: Float = mul v36, v50
+  v66: Float = sub v64, v65
+  v67: Body = setfield 5, v63, v66
+  v68: List[Body] = call list.set, v62, v6, v67 @ main.xo:74:7
+  v69: Body = call list.index, v68, v18 @ main.xo:75:7
+  v70: Float = field 3, v69
+  v71: Float = mul v26, v47
+  v72: Float = add v70, v71
+  v73: Body = setfield 3, v69, v72
+  v74: List[Body] = call list.set, v68, v18, v73 @ main.xo:75:7
+  v75: Body = call list.index, v74, v18 @ main.xo:76:7
+  v76: Float = field 4, v75
+  v77: Float = mul v31, v47
+  v78: Float = add v76, v77
+  v79: Body = setfield 4, v75, v78
+  v80: List[Body] = call list.set, v74, v18, v79 @ main.xo:76:7
+  v81: Body = call list.index, v80, v18 @ main.xo:77:7
+  v82: Float = field 5, v81
+  v83: Float = mul v36, v47
+  v84: Float = add v82, v83
+  v85: Body = setfield 5, v81, v84
+  v86: List[Body] = call list.set, v80, v18, v85 @ main.xo:77:7
+  v87: () = tuple
+  jump b7()
+b7:  ; preds b6
+  v89: Int = const 1
+  v90: Int = add v18, v89
+  jump b5(v90, v86)
+b8:  ; preds b5
+  v92: () = tuple
+  jump b3()
+b9(v94: Int, v95: List[Body]):  ; preds b4, b11
+  v96: Bool = lt v94, v3
+  br v96, b10(), b12()
+b10:  ; preds b9
+  v98: Body = call list.index, v95, v94 @ main.xo:81:14
+  v99: Float = field 3, v98
+  v100: Body = call list.index, v95, v94 @ main.xo:82:14
+  v101: Float = field 4, v100
+  v102: Body = call list.index, v95, v94 @ main.xo:83:14
+  v103: Float = field 5, v102
+  v104: Body = call list.index, v95, v94 @ main.xo:84:5
+  v105: Float = field 0, v104
+  v106: Float = mul v1, v99
+  v107: Float = add v105, v106
+  v108: Body = setfield 0, v104, v107
+  v109: List[Body] = call list.set, v95, v94, v108 @ main.xo:84:5
+  v110: Body = call list.index, v109, v94 @ main.xo:85:5
+  v111: Float = field 1, v110
+  v112: Float = mul v1, v101
+  v113: Float = add v111, v112
+  v114: Body = setfield 1, v110, v113
+  v115: List[Body] = call list.set, v109, v94, v114 @ main.xo:85:5
+  v116: Body = call list.index, v115, v94 @ main.xo:86:5
+  v117: Float = field 2, v116
+  v118: Float = mul v1, v103
+  v119: Float = add v117, v118
+  v120: Body = setfield 2, v116, v119
+  v121: List[Body] = call list.set, v115, v94, v120 @ main.xo:86:5
+  v122: () = tuple
+  jump b11()
+b11:  ; preds b10
+  v124: Int = const 1
+  v125: Int = add v94, v124
+  jump b9(v125, v121)
+b12:  ; preds b9
+  v127: () = tuple
+  ret v127, v95
+}
+
+func solar_mass() -> Float {
+b0:
+  v0: Float = const 4.0
+  v1: Float = const 3.141592653589793
+  v2: Float = mul v0, v1
+  v3: Float = const 3.141592653589793
+  v4: Float = mul v2, v3
+  ret v4
+}

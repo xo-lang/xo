@@ -253,7 +253,7 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 				l := p.get()
 				i := s.valueAs(x.Args[0].Value, intT)
 				v := s.valueAs(x.Args[1].Value, et)
-				p.set(s.call("list.set", lt, b.pos(x), l, i, v))
+				p.set(s.call("list.set", lt, b.posLine(x), l, i, v))
 				return s.unit()
 			case "pop":
 				l := p.get()
@@ -296,7 +296,7 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		}
 		pos := ""
 		if fo.Recv.Name == "Int" && fo.Name == "abs" {
-			pos = b.pos(x)
+			pos = b.posLine(x)
 		}
 		switch fo.Recv.Name + "." + fo.Name {
 		case "Int.abs", "Int.min", "Int.max", "Float.min", "Float.max", "Float.sqrt", "Float.floor",
