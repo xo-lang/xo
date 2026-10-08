@@ -1,0 +1,20 @@
+// Deadlock detection (core 11.4, fault XO-F001) in test worlds: when every
+// task is blocked and no timer is pending, the test fails with the wait
+// cycle, or with every blocked task, and where each one waits.
+
+// transfer locks from, then to, with a pause in between so both tasks
+// hold their first mutex before they ask for the second.
+fn transfer(clock: Clock, from: Mutex[Int], to: Mutex[Int], n: Int) uses clock {
+  from.with(fn(var a) {
+    clock.sleep(1ms)
+    to.with(fn(var b) { b += n })
+    a -= n
+  })
+}
+
+fn main(os: Os) {
+  let a = Mutex[Int].new(10)
+  let b = Mutex[Int].new(10)
+  transfer(os.clock, a, b, 5)
+  os.stdio.println("${a.with(fn(v) { v })} ${b.with(fn(v) { v })}")
+}

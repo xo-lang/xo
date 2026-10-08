@@ -1,0 +1,25 @@
+// Three tasks print and hand values through a channel. Run with XO_SEED
+// (`xo run --seed=N`): the same seed prints the same interleaving every
+// time (core 7.4); TestRunSeedReproduces checks that.
+fn main(os: Os) {
+  let ch = Chan[Str].new(cap: 4)
+  let total = Atomic[Int].new(0)
+  scope s {
+    for name in ["a", "b", "c"] {
+      s.spawn(fn() {
+        for i in 0..4 {
+          os.stdio.println("${name}${i}")
+          total.add(i)
+          ch.send("${name}${i}")
+        }
+      })
+    }
+    s.spawn(fn() {
+      for _ in 0..12 {
+        let v = ch.recv() ?? "closed"
+        os.stdio.println("got ${v}")
+      }
+    })
+  }
+  os.stdio.println("total ${total.get()}")
+}

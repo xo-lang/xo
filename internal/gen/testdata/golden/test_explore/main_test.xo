@@ -1,0 +1,37 @@
+test "lost update" {
+  let balance = Mutex[Int].new(0)
+  scope s {
+    s.spawn(fn() { deposit(balance, 10) })
+    s.spawn(fn() { deposit(balance, 20) })
+  }
+  expect(balance.with(fn(v) { v })) == 30
+}
+
+test "no race in one critical section" {
+  let balance = Mutex[Int].new(0)
+  scope s {
+    s.spawn(fn() { deposit_safe(balance, 10) })
+    s.spawn(fn() { deposit_safe(balance, 20) })
+  }
+  expect(balance.with(fn(v) { v })) == 30
+}
+
+// the failing seed that --explore found, pinned: it fails the same way
+test "lost update, pinned" seed 2 {
+  let balance = Mutex[Int].new(0)
+  scope s {
+    s.spawn(fn() { deposit(balance, 10) })
+    s.spawn(fn() { deposit(balance, 20) })
+  }
+  expect(balance.with(fn(v) { v })) == 30
+}
+
+// a seed under which the race does not show
+test "lost update, passing seed" seed 3 {
+  let balance = Mutex[Int].new(0)
+  scope s {
+    s.spawn(fn() { deposit(balance, 10) })
+    s.spawn(fn() { deposit(balance, 20) })
+  }
+  expect(balance.with(fn(v) { v })) == 30
+}

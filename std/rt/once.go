@@ -20,6 +20,7 @@ type onceState[T, E any] struct {
 	res     Result[T, E]
 	fault   *FaultErr
 	q       []*onceWaiter
+	runner  *thread // the thread running f, for deadlock reports
 }
 
 // onceWaiter is a caller waiting for the result. run is set (under mu,
@@ -48,6 +49,7 @@ func (o Task_Once[T, E]) XoEq(x any) bool {
 // effect). Waiting is a cancellation point that unwinds; a canceled waiter
 // leaves the queue without affecting the run.
 func (o Task_Once[T, E]) M_get(tk *Task, f func(*Task) Result[T, E]) Result[T, E] {
+	tk.Yield()
 	s := o.s
 	s.mu.Lock()
 	if s.done {
@@ -58,7 +60,7 @@ func (o Task_Once[T, E]) M_get(tk *Task, f func(*Task) Result[T, E]) Result[T, E
 		ow := &onceWaiter{w: newWaiter(tk)}
 		s.q = append(s.q, ow)
 		s.mu.Unlock()
-		if !tk.wait(ow.w) {
+		if !tk.wait(ow.w, waitOnce, s) {
 			s.mu.Lock()
 			for i, x := range s.q {
 				if x == ow {
@@ -75,6 +77,7 @@ func (o Task_Once[T, E]) M_get(tk *Task, f func(*Task) Result[T, E]) Result[T, E
 		// handed the run by a canceled runner; running is still set
 	} else {
 		s.running = true
+		s.runner = tk.th
 		s.mu.Unlock()
 	}
 	return s.run(tk, f)
@@ -118,7 +121,7 @@ func (s *onceState[T, E]) run(tk *Task, f func(*Task) Result[T, E]) Result[T, E]
 // finish stores the outcome and wakes every waiter.
 func (s *onceState[T, E]) finish(res Result[T, E], fe *FaultErr) {
 	s.mu.Lock()
-	s.res, s.fault, s.done, s.running = res, fe, true, false
+	s.res, s.fault, s.done, s.running, s.runner = res, fe, true, false, nil
 	q := s.q
 	s.q = nil
 	s.mu.Unlock()
@@ -138,11 +141,13 @@ func (s *onceState[T, E]) handOff() {
 		s.q = s.q[1:]
 		if ow.w.claim() {
 			ow.run = true
+			s.runner = ow.w.tk.th
 			s.mu.Unlock()
 			ow.w.signal()
 			return
 		}
 	}
 	s.running = false
+	s.runner = nil
 	s.mu.Unlock()
 }

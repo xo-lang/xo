@@ -447,18 +447,40 @@ func (realNet) XoDebug(b *strings.Builder) { b.WriteString("<net>") }
 
 type realClock struct{}
 
-func (realClock) M_now(*Task) Time { return Time(time.Now().UnixNano()) }
+func (realClock) M_now(tk *Task) Time {
+	tk.Yield()
+	return Time(time.Now().UnixNano())
+}
 
+// M_sleep waits through a waiter, like a channel operation, so a sleeping
+// task shows in `xo dump` and gives the turn away under `xo run --seed`.
 func (realClock) M_sleep(tk *Task, d Duration) {
+	tk.Yield()
 	tk.CheckCancel()
 	if d <= 0 {
 		return
 	}
-	t := time.NewTimer(time.Duration(d))
-	defer t.Stop()
-	select {
-	case <-t.C:
-	case <-tk.Done():
+	if tk.w != nil {
+		// a test with a real clock: the sleep counts as running for the
+		// test's virtual clock
+		t := time.NewTimer(time.Duration(d))
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-tk.Done():
+			tk.Unwind()
+		}
+		return
+	}
+	w := newWaiter(tk)
+	t := time.AfterFunc(time.Duration(d), func() {
+		if w.claim() {
+			w.signal()
+		}
+	})
+	ok := tk.wait(w, waitSleep, nil)
+	t.Stop()
+	if !ok {
 		tk.Unwind()
 	}
 }
@@ -583,10 +605,10 @@ func outWrite(w *os.File, s string) {
 	stdoutMu.Unlock()
 }
 
-func (realStdio) M_print(_ *Task, s string)    { outWrite(os.Stdout, s) }
-func (realStdio) M_println(_ *Task, s string)  { outWrite(os.Stdout, s+"\n") }
-func (realStdio) M_eprint(_ *Task, s string)   { outWrite(os.Stderr, s) }
-func (realStdio) M_eprintln(_ *Task, s string) { outWrite(os.Stderr, s+"\n") }
+func (realStdio) M_print(tk *Task, s string)    { tk.Yield(); outWrite(os.Stdout, s) }
+func (realStdio) M_println(tk *Task, s string)  { tk.Yield(); outWrite(os.Stdout, s+"\n") }
+func (realStdio) M_eprint(tk *Task, s string)   { tk.Yield(); outWrite(os.Stderr, s) }
+func (realStdio) M_eprintln(tk *Task, s string) { tk.Yield(); outWrite(os.Stderr, s+"\n") }
 
 func (realStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 	if tk.Canceled() {
@@ -605,7 +627,9 @@ func (realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
 	if tk.Canceled() {
 		return Err[Option[string]](IoErr{Tag: 3})
 	}
+	tk.leave()
 	line, err := stdin().ReadString('\n')
+	tk.enter()
 	if err == io.EOF && line == "" {
 		return Ok[Option[string], IoErr](Option[string]{})
 	}
@@ -620,7 +644,9 @@ func (realStdio) M_read_all(tk *Task) Result[string, IoErr] {
 	if tk.Canceled() {
 		return Err[string](IoErr{Tag: 3})
 	}
+	tk.leave()
 	data, err := io.ReadAll(stdin())
+	tk.enter()
 	if err != nil {
 		return Err[string](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
 	}
@@ -671,7 +697,9 @@ func (realProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput
 	c := exec.CommandContext(ctx, cmd, args.s...)
 	var out, errb strings.Builder
 	c.Stdout, c.Stderr = &out, &errb
+	tk.leave()
 	err := c.Run()
+	tk.enter()
 	code := int64(0)
 	if err != nil {
 		var ee *exec.ExitError

@@ -36,8 +36,9 @@ gofmt -l internal cmd std                # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [dir...]
-go run ./cmd/xo run [--holes] [--no-mono] [--arenas] [dir] [-- args...]
-go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
+go run ./cmd/xo run [--seed=N] [--holes] [--no-mono] [--arenas] [dir] [-- args...]
+go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
+go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
 go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
@@ -168,9 +169,15 @@ passes with `-v`) and a summary line `ok: N passed, M failed, K skipped`;
 exit status 1 when a test fails. Tests that declare `uses` run only with
 `--real`, with real capabilities for the declared effects. Each test runs in
 its module's directory (as `go test` does per package), in a fresh test
-world (virtual clock, MemFs, FakeNet, ...); a test whose tasks are all
-blocked with no timer pending fails as a deadlock; a test that runs over
-60s of real time fails. Property tests (`test "x" for v: T`) and contract
+world (virtual clock, MemFs, FakeNet, ...) on the deterministic scheduler
+(core 7.4, see "Deterministic scheduling and live inspection"), seeded
+with the test's pinned seed (`test "x" seed N`), else `--seed`, else 1;
+the FAIL line prints the seed. A test whose tasks are all blocked with no
+timer pending fails with fault XO-F001 and the wait cycle (or every
+blocked task) with locations; a test that runs over 60s of real time
+fails. `--explore=N` runs each concurrent test that passed under its seed
+again under the next N-1 seeds and reports the first failing one, with
+how to reproduce and pin it. Property tests (`test "x" for v: T`) and contract
 fuzzing (every function with `requires`/`ensures` in a root module, core
 9.1) run 100 generated cases (`--cases=N`) and shrink a failing input.
 Last verified: 2026-10-07.
@@ -185,6 +192,72 @@ cache is reused; the layout tag keeps older xo binaries out, see
 empty). Last verified: 2026-10-08. Crash bundles go to
 `$XO_CRASH_DIR` or the system temporary directory. `XO_GO` overrides the go
 command (default: `go` on PATH).
+
+## Deterministic scheduling and live inspection
+
+Last verified: 2026-10-08. Code: `std/rt/sched.go` (threads, scheduler,
+monitor, reports, dump), hooks in `task.go`, `scope.go`, `chan.go`,
+`sync.go`, `once.go`, `world.go`, `stop.go`, `caps.go`, `http.go`,
+`testing.go`, `main.go`; `cmd/xo/dump.go`.
+
+- Threads: every goroutine that runs Xo code is a `thread` (main, test,
+  spawned task, HTTP request, runtime helper); tasks on one goroutine (a
+  scope body and its opener, an in memory request's handler task) share
+  it. `Task.th`. A thread records what it blocks on (`blockOn(kind, obj,
+  cancelable)`) for reports. Cancellation tree nodes carry a kind, their
+  task, a creation sequence number, and (scope bodies) the opening site.
+- Scheduler (`sched`): one thread holds the turn; scheduling points
+  (`Task.Yield`) are channel operations (send, recv, try_send, try_recv,
+  close, select), await, Mutex.with, Semaphore.with, Once.get, spawn,
+  Atomic operations, sleep, `task.is_canceled()`,
+  `task.stop_requested()`, and the effect calls of the fakes (clock.now,
+  stdio, MemFs, FakeNet) and of real clock and stdio. At each point a PCG
+  seeded with the seed picks the next ready thread. A blocking thread
+  gives the turn away; wakers move it to the ready list. In a test world
+  the scheduler shares `World.mu` and drives the virtual clock (fires the
+  next timer when no thread is ready, ends `FakeClock.advance`, and
+  closes `World.stuck` when nothing can fire). Tests with real
+  capabilities run without it. `xo run --seed=N` sets `XO_SEED=N` for the
+  program (any built binary honors `XO_SEED`): the same scheduler with
+  the real clock; real timers and I/O wake threads from outside, and
+  blocking I/O (stdin reads, HTTP client and server waits, `proc.run`)
+  leaves the scheduler while it waits. Interleavings are reproducible as
+  long as timer and I/O timing does not decide them.
+- Deadlocks (fault XO-F001): test worlds report when the scheduler or
+  the virtual clock finds every thread blocked with no timer pending.
+  Real runs have a `monitor` (`RunMain`): live threads versus threads
+  blocked on another task (channel, mutex, semaphore, await, scope end,
+  Once); waits on timers, `after` arms, `task.stopping()`, signals, and
+  I/O do not count. Wakers uncount the woken thread before signaling it,
+  cancellation bumps a generation counter, and a suspicion is reported
+  only after 200 ms with no change; then the fault, a crash bundle (with
+  the task tree), exit status 70. The report is the first wait cycle
+  over "waits for" edges (mutex holder, awaited task, a scope's running
+  tasks, Once runner), then the other blocked threads; without a cycle,
+  every blocked thread. Each line: thread, spawn site, operation, call
+  site, and the object (channel or mutex with where it was made, holder
+  and since where).
+- `xo dump <pid>` sends SIGQUIT; `RunMain` prints the task tree to stderr
+  and writes it to `$XO_DUMP_DIR` or the temp dir as
+  `xo-dump-<pid>.txt` (temporary file and rename), and the program goes
+  on (Go's default SIGQUIT exit is replaced). `xo dump` polls for the
+  file, prints it, removes it. Format: `xo dump: pid N, K tasks`, one
+  indented line per task or scope with its state (`blocked in <op> at
+  <loc> ...`, `in scope`, `waiting for its tasks`, `running`, `ready`,
+  `(canceled)`), `end of xo dump`.
+- Call sites: test worlds and the scheduler capture them with
+  `runtime.Callers` at each block; plain real runs do not (about 200 ns
+  per block, `gotchas/runtime-callers-per-block-cost.md`) and read them
+  from the goroutine profile through a per thread `runtime/pprof` label
+  when a dump or report needs them.
+- Tests: goldens `test_explore` (args.txt `-explore 40`: a lost update
+  race found at seed 2, pinned failing and passing seeds),
+  `test_deadlock` (two task mutex cycle, a channel nobody sends on, a
+  task awaiting itself), `deadlock_real` (real run, exit 70), changed
+  `test_runner`; all three new ones in `TestGoldenRace` (which now passes
+  `args.txt`); `TestRunSeedReproduces` (testdata/sched_run with
+  XO_SEED), `TestTestSeedReproduces`; `cmd/xo` `TestDump`; std/rt
+  `sched_test.go`.
 
 ## Benchmark tooling
 
@@ -233,7 +306,7 @@ Last verified: 2026-10-07
 
 ```
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
-                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go)
+                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go)
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments
@@ -519,6 +592,9 @@ Last verified: 2026-10-08.
   same results and fault messages as the generic forms, checked by
   `mono_test.go`); `core.go` `Iface` and `RegAdapter` (interface adapters
   registered by package main for generic code).
+- `sched.go` (2026-10-08): threads, the deterministic scheduler, the
+  deadlock monitor and XO-F001 reports, `xo dump` (see "Deterministic
+  scheduling and live inspection").
 - `task.go`, `scope.go`, `chan.go`, `sync.go`: the cancellation tree,
   scopes, tasks, channels and `select` with explicit wait queues, Mutex,
   Atomic, Semaphore, `task.*` (`once.go`: `task.Once`). `Mutex.with` records its acquisition site
@@ -599,6 +675,17 @@ Last verified: 2026-10-08.
   helpers and `go.Error`, 2026-10-08).
 
 ## Known gaps (2026-10-08)
+
+- Deterministic scheduling (2026-10-08): a loop with no scheduling point
+  keeps the turn forever (`gotchas/busy-loop-starves-deterministic-scheduler.md`);
+  there is no preemption at loop back edges. `xo run --seed` reproduces
+  interleavings only while real timers and I/O do not race with the
+  program. `--explore` tries consecutive seeds with a uniform choice at
+  each point, no smarter search (PCT, partial order reduction). Only
+  plain tests are explored, not property tests or contract fuzzing.
+  Deadlocks that involve a task blocked in I/O or a busy task are not
+  reported, and a cycle through a Semaphore has no holder edge. The dump
+  is not available on Windows (no SIGQUIT).
 
 - Two phase shutdown in tests (2026-10-08): `run_main` runs main on the
   test's own goroutine, so a third signal cannot end it immediately as

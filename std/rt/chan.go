@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ type Chan[T any] struct {
 	closed bool
 	recvq  []*recvEnt[T]
 	sendq  []*sendEnt[T]
+	made   [3]uintptr // where Chan.new was called, for deadlock reports
+	ext    bool       // closed from outside the program's tasks (task.stopping())
 }
 
 type recvEnt[T any] struct {
@@ -36,7 +39,9 @@ func Chan_new[T any](_ *Task, capacity int64) *Chan[T] {
 	if capacity < 0 {
 		FaultHere("negative channel capacity %d", capacity)
 	}
-	return &Chan[T]{cap: int(capacity)}
+	c := &Chan[T]{cap: int(capacity)}
+	runtime.Callers(2, c.made[:])
+	return c
 }
 
 // XoDebug implements Debug.
@@ -112,6 +117,7 @@ func (c *Chan[T]) tryRecvLocked() (T, bool, bool) {
 // M_send is `ch.send(x)`: blocks when full; a cancellation point that
 // unwinds. Sending on a closed channel faults.
 func (c *Chan[T]) M_send(tk *Task, x T) {
+	tk.Yield()
 	tk.CheckCancel()
 	c.mu.Lock()
 	if c.closed {
@@ -125,7 +131,7 @@ func (c *Chan[T]) M_send(tk *Task, x T) {
 	w := newWaiter(tk)
 	c.sendq = append(c.sendq, &sendEnt[T]{w: w, v: x})
 	c.mu.Unlock()
-	if !tk.wait(w) {
+	if !tk.wait(w, waitSend, c) {
 		c.dequeue(w)
 		tk.Unwind()
 	}
@@ -137,6 +143,7 @@ func (c *Chan[T]) M_send(tk *Task, x T) {
 // M_recv is `ch.recv()`: None when closed and drained; a cancellation
 // point that unwinds.
 func (c *Chan[T]) M_recv(tk *Task) Option[T] {
+	tk.Yield()
 	tk.CheckCancel()
 	c.mu.Lock()
 	if v, ok, done := c.tryRecvLocked(); done {
@@ -147,7 +154,7 @@ func (c *Chan[T]) M_recv(tk *Task) Option[T] {
 	var res Option[T]
 	c.recvq = append(c.recvq, &recvEnt[T]{w: w, set: func(v T, ok bool) { res = Option[T]{Some: ok, V: v} }})
 	c.mu.Unlock()
-	if !tk.wait(w) {
+	if !tk.wait(w, waitRecv, c) {
 		c.dequeue(w)
 		tk.Unwind()
 	}
@@ -155,7 +162,8 @@ func (c *Chan[T]) M_recv(tk *Task) Option[T] {
 }
 
 // M_try_send is `ch.try_send(x)`: false if full or closed; never blocks.
-func (c *Chan[T]) M_try_send(_ *Task, x T) bool {
+func (c *Chan[T]) M_try_send(tk *Task, x T) bool {
+	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -165,7 +173,8 @@ func (c *Chan[T]) M_try_send(_ *Task, x T) bool {
 }
 
 // M_try_recv is `ch.try_recv()`: None if empty; never blocks.
-func (c *Chan[T]) M_try_recv(*Task) Option[T] {
+func (c *Chan[T]) M_try_recv(tk *Task) Option[T] {
+	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok, _ := c.tryRecvLocked()
@@ -173,7 +182,8 @@ func (c *Chan[T]) M_try_recv(*Task) Option[T] {
 }
 
 // M_close is `ch.close()`. Closing twice has no effect.
-func (c *Chan[T]) M_close(*Task) {
+func (c *Chan[T]) M_close(tk *Task) {
+	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -253,6 +263,7 @@ func (c *Chan[T]) dequeue(w *waiter) {
 type Select struct {
 	tk    *Task
 	cases []*selCase
+	ext   bool // an arm can be ended from outside the program's tasks (after, task.stopping())
 }
 
 type selCase struct {
@@ -264,6 +275,7 @@ type selCase struct {
 	dequeue func(w *waiter)
 	after   Duration
 	isAfter bool
+	obj     any // the channel, for deadlock reports
 }
 
 // NewSelect starts a select in task tk.
@@ -305,7 +317,11 @@ func SelRecv[T any](s *Select, c *Chan[T]) *Option[T] {
 			return false
 		},
 		dequeue: c.dequeue,
+		obj:     c,
 	})
+	if c.ext {
+		s.ext = true
+	}
 	return slot
 }
 
@@ -343,18 +359,24 @@ func SelSend[T any](s *Select, c *Chan[T], v T) {
 			return false
 		},
 		dequeue: c.dequeue,
+		obj:     c,
 	})
+	if c.ext {
+		s.ext = true
+	}
 }
 
 // SelAfter adds an arm `after d`.
 func SelAfter(s *Select, d Duration) {
 	s.cases = append(s.cases, &selCase{isAfter: true, after: d})
+	s.ext = true
 }
 
 // Wait blocks until one arm can proceed, performs it, and returns its
 // index. It is a cancellation point that unwinds.
 func (s *Select) Wait() int {
 	tk := s.tk
+	tk.Yield()
 	tk.CheckCancel()
 	for i, c := range s.cases {
 		if c.isAfter {
@@ -399,7 +421,7 @@ func (s *Select) Wait() int {
 	}
 	ok := true
 	if !done {
-		ok = tk.wait(w)
+		ok = tk.wait(w, waitSelect, s)
 	} else {
 		<-w.ch
 	}

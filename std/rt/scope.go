@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,9 +25,7 @@ func (w *waiter) claim() bool { return w.fired.CompareAndSwap(false, true) }
 
 // signal wakes a claimed waiter, counting it as running in a test world.
 func (w *waiter) signal() {
-	if w.tk != nil && w.tk.w != nil {
-		w.tk.w.wake(w.tk)
-	}
+	wakeTask(w.tk)
 	close(w.ch)
 }
 
@@ -39,9 +38,18 @@ func (w *waiter) signalLocked() {
 }
 
 // wait blocks until w is signalled or the task is canceled. It reports
-// false when the task was canceled before anyone claimed w.
-func (tk *Task) wait(w *waiter) bool {
-	tk.block()
+// false when the task was canceled before anyone claimed w. k and obj say
+// what the task waits on (sched.go).
+func (tk *Task) wait(w *waiter, k waitKind, obj any) bool {
+	tk.blockOn(k, obj, true)
+	// a signal wins over a cancellation that came at the same time, so the
+	// outcome does not depend on Go's random choice in select
+	select {
+	case <-w.ch:
+		tk.unblock()
+		return true
+	default:
+	}
 	select {
 	case <-w.ch:
 		tk.unblock()
@@ -68,22 +76,20 @@ type event struct {
 
 func newEvent() *event { return &event{ch: make(chan struct{})} }
 
-// fire sets the event and wakes its waiters.
+// fire sets the event and wakes its waiters. The waiters are woken under
+// e.mu, so a waiter that leaves early (canceled) and finds the event not
+// fired is never woken late.
 func (e *event) fire() {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.fired {
-		e.mu.Unlock()
 		return
 	}
 	e.fired = true
-	ws := e.waiters
-	e.waiters = nil
-	e.mu.Unlock()
-	for _, tk := range ws {
-		if tk.w != nil {
-			tk.w.wake(tk)
-		}
+	for _, tk := range e.waiters {
+		wakeTask(tk)
 	}
+	e.waiters = nil
 	close(e.ch)
 }
 
@@ -97,8 +103,9 @@ func (e *event) isSet() bool {
 }
 
 // wait blocks until the event fires. When cancelable is set it reports
-// false if the task is canceled first.
-func (e *event) wait(tk *Task, cancelable bool) bool {
+// false if the task is canceled first. k and obj say what the task waits
+// on (sched.go).
+func (e *event) wait(tk *Task, cancelable bool, k waitKind, obj any) bool {
 	e.mu.Lock()
 	if e.fired {
 		e.mu.Unlock()
@@ -106,7 +113,7 @@ func (e *event) wait(tk *Task, cancelable bool) bool {
 	}
 	e.waiters = append(e.waiters, tk)
 	e.mu.Unlock()
-	tk.block()
+	tk.blockOn(k, obj, cancelable)
 	var done <-chan struct{}
 	if cancelable {
 		done = tk.Done()
@@ -117,6 +124,12 @@ func (e *event) wait(tk *Task, cancelable bool) bool {
 		return true
 	case <-done:
 		e.mu.Lock()
+		if e.fired {
+			// fired at the same time: the event wins
+			e.mu.Unlock()
+			tk.unblock()
+			return true
+		}
 		for i, x := range e.waiters {
 			if x == tk {
 				e.waiters = append(e.waiters[:i], e.waiters[i+1:]...)
@@ -153,6 +166,7 @@ type taskRec struct {
 	node       *cnode
 	background bool
 	done       *event
+	th         *thread
 }
 
 // failure is the first failure of a child task: an error value (of the
@@ -168,11 +182,14 @@ type failure struct {
 // NewScope opens a scope in task tk.
 func NewScope(tk *Task) *Scope {
 	s := &Scope{parent: tk, idle: newEvent()}
-	s.bodyNode = newNode(tk.node, tk.w)
-	s.tasksNode = newNode(s.bodyNode, tk.w)
-	// the body runs on the opening task's goroutine, so it may share its
-	// arena (see Arena)
-	s.body = &Task{node: s.bodyNode, w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop}
+	// the body runs on the opening task's goroutine (thread), so it may
+	// share its arena (see Arena)
+	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th}
+	bn := &cnode{parent: tk.node, done: make(chan struct{}), w: tk.w, seq: nodeSeq.Add(1), kind: nodeBody, tk: s.body}
+	runtime.Callers(2, bn.site[:])
+	s.bodyNode = bn.link()
+	s.body.node = s.bodyNode
+	s.tasksNode = newNodeOf(s.bodyNode, tk.w, nodeTasks, nil)
 	s.idle.fire()
 	return s
 }
@@ -252,7 +269,7 @@ func (s *Scope) wait() {
 		s.mu.Lock()
 		ev := s.idle
 		s.mu.Unlock()
-		ev.wait(s.parent, false)
+		ev.wait(s.parent, false, waitScope, s)
 		s.mu.Lock()
 		n := s.running
 		s.mu.Unlock()
@@ -287,7 +304,7 @@ func (s *Scope) fail(f *failure) {
 func (s *Scope) M_cancel(*Task) {
 	s.mu.Lock()
 	old := s.tasksNode
-	s.tasksNode = newNode(s.bodyNode, s.parent.w)
+	s.tasksNode = newNodeOf(s.bodyNode, s.parent.w, nodeTasks, nil)
 	s.mu.Unlock()
 	old.cancel()
 }
@@ -300,6 +317,7 @@ func (s *Scope) XoDebug(b *strings.Builder) { b.WriteString("<scope>") }
 
 // Handle is a task handle `Task[T, E]`.
 type Handle[T, E any] struct {
+	th       *thread // the task's thread, for deadlock reports
 	done     *event
 	res      Result[T, E]
 	fault    *FaultErr
@@ -319,18 +337,33 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 		s.mu.Unlock()
 		FaultHere("a task was started on a scope that has ended")
 	}
-	node := newNode(s.tasksNode, tk.w)
-	s.tasks = append(s.tasks, &taskRec{node: node, background: background, done: h.done})
+	child := tk.child(s.tasksNode, "task")
+	node := child.node
+	th := child.th
+	runtime.Callers(2, th.site[:])
+	h.th = th
+	s.tasks = append(s.tasks, &taskRec{node: node, background: background, done: h.done, th: th})
 	if s.running == 0 {
 		s.idle = newEvent()
 	}
 	s.running++
 	s.mu.Unlock()
-	child := tk.child(node)
-	if tk.w != nil {
+	if th.mon != nil {
+		th.mon.started()
+	}
+	if sch := th.sch; sch != nil {
+		sch.start(th)
+	} else if tk.w != nil {
 		tk.w.taskStarted()
 	}
 	go func() {
+		if sch := th.sch; sch != nil {
+			<-th.turn
+		} else if tk.w == nil {
+			// drop the profiler label inherited from the spawning
+			// goroutine: this thread sets its own when it first blocks
+			clearLabels()
+		}
 		defer func() {
 			s.mu.Lock()
 			s.running--
@@ -343,7 +376,15 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 			if idle != nil {
 				idle.fire()
 			}
-			if child.w != nil {
+			th.mu.Lock()
+			th.done = true
+			th.mu.Unlock()
+			if th.mon != nil {
+				th.mon.ended()
+			}
+			if sch := th.sch; sch != nil {
+				sch.end(th)
+			} else if child.w != nil {
 				child.w.taskEnded()
 			}
 		}()
@@ -368,6 +409,8 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 			s.fail(&failure{err: any(h.res.E), tr: h.res.Tr})
 		}
 	}()
+	// a scheduling point: the new task may run first
+	tk.Yield()
 	return h
 }
 
@@ -375,9 +418,10 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 // that unwinds) and yields its result. A fault in the task is raised in
 // the awaiting task.
 func Await[T, E any](tk *Task, h *Handle[T, E]) Result[T, E] {
+	tk.Yield()
 	if !h.done.isSet() {
 		tk.CheckCancel()
-		if !h.done.wait(tk, true) {
+		if !h.done.wait(tk, true, waitAwait, h) {
 			tk.Unwind()
 		}
 	}

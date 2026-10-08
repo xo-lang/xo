@@ -22,3 +22,9 @@ waiter list, so no stale wakeup survives.
 
 When every task is blocked and no timer is pending, the test can never
 finish: the runner reports a deadlock instead of hanging.
+
+Under the deterministic scheduler (2026-10-08, std/rt/sched.go) the same
+rule holds with a ready list instead of a count: the waker moves the
+blocked thread to the ready list before it signals it, a wake up that
+arrives before the thread blocked is kept as `pend`, and the clock moves
+only when no thread is ready.

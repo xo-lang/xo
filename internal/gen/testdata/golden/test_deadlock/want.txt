@@ -1,0 +1,22 @@
+exit 1
+--- stdout
+--- FAIL: two tasks lock in opposite order (main_test.xo:1:1, seed 1)
+    fault: XO-F001: deadlock: a wait cycle of 2 tasks at main.xo:10
+    wait cycle:
+    task 2 (spawned at main_test.xo:5) blocked in Mutex.with at main.xo:10 on a mutex made at main_test.xo:3, held by task 3 since main.xo:8
+    task 3 (spawned at main_test.xo:6) blocked in Mutex.with at main.xo:10 on a mutex made at main_test.xo:2, held by task 2 since main.xo:8
+    also blocked:
+    test blocked in scope end at main_test.xo:4 for task 2, task 3
+--- FAIL: a channel nobody sends on (main_test.xo:10:1, seed 1)
+    fault: XO-F001: deadlock: every task is blocked and no timer is pending at main_test.xo:14
+    blocked:
+    test blocked in await at main_test.xo:14 for task 2
+    task 2 (spawned at main_test.xo:13) blocked in receive at main_test.xo:13 on a channel made at main_test.xo:11 that no task can send on
+--- FAIL: a task awaits itself through a channel (main_test.xo:19:1, seed 1)
+    fault: XO-F001: deadlock: a task waits for itself at main_test.xo:24
+    wait cycle:
+    task 2 (spawned at main_test.xo:22) blocked in await at main_test.xo:24 for task 2
+    also blocked:
+    test blocked in scope end at main_test.xo:21 for task 2
+FAIL: 1 passed, 3 failed, 0 skipped
+--- stderr

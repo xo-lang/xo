@@ -8,7 +8,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -64,8 +66,49 @@ type exitUnwind struct{ code int64 }
 // `os.tasks`. Shutdown has two phases (core 7.5, stop.go): the first
 // SIGINT or SIGTERM requests a stop, the grace period or a second signal
 // cancels the root scope, and a third exits with status 130.
+//
+// Live inspection (core 11.4, sched.go): SIGQUIT prints the task tree to
+// standard error and to DumpPath (`xo dump <pid>`) and the program goes
+// on. A monitor faults with XO-F001 and exit status 70 when every task is
+// blocked on another task (a channel, mutex, await, or scope wait).
+// XO_SEED=N (`xo run --seed=N`) runs every task on the deterministic
+// scheduler with the real clock (core 7.4).
 func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	root := NewRootTask()
+	th := root.th
+	mon := &monitor{quiet: 200 * time.Millisecond, root: root.node}
+	mon.report = func(f *FaultErr) {
+		reportFault(f)
+		os.Exit(70)
+	}
+	th.mon = mon
+	runMon.Store(mon)
+	defer runMon.Store(nil)
+	mon.started()
+	if v := os.Getenv("XO_SEED"); v != "" {
+		if seed, err := strconv.ParseInt(v, 10, 64); err == nil {
+			realSched = newSched(new(sync.Mutex), nil, seed)
+			realSched.start(th)
+			<-th.turn
+		}
+	}
+	defer func() {
+		th.mu.Lock()
+		th.done = true
+		th.mu.Unlock()
+		mon.ended()
+		if realSched != nil {
+			realSched.end(th)
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGQUIT)
+	go func() {
+		for range quit {
+			writeDump(root.node)
+		}
+	}()
+	defer signal.Stop(quit)
 	st := newStopState(nil)
 	root.stop = st
 	s := NewScope(root)
@@ -157,6 +200,10 @@ func writeCrashBundle(f *FaultErr) string {
 		"target":   runtime.GOOS + "/" + runtime.GOARCH,
 		"time":     now.Format(time.RFC3339Nano),
 		"args":     os.Args,
+	}
+	if m := runMon.Load(); m != nil {
+		// the task tree (core 11.2)
+		bundle["tasks"] = strings.Split(strings.TrimRight(dumpText(m.root), "\n"), "\n")
 	}
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {

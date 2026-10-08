@@ -1,0 +1,21 @@
+// Deterministic scheduling (core 7.4): a data dependent race that the
+// default seed misses and `xo test --explore=N` finds (args.txt). Each
+// deposit reads the balance under the mutex and writes it back in a
+// second `with`; a lost update needs the other task to read in between.
+
+// deposit adds amount with a check then act race.
+fn deposit(m: Mutex[Int], amount: Int) {
+  let seen = m.with(fn(v) { v })
+  m.with(fn(var v) { v = seen + amount })
+}
+
+// deposit_safe adds amount in one critical section.
+fn deposit_safe(m: Mutex[Int], amount: Int) {
+  m.with(fn(var v) { v = v + amount })
+}
+
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  deposit(m, 1)
+  os.stdio.println("${m.with(fn(v) { v })}")
+}

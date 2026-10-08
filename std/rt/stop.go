@@ -46,7 +46,7 @@ type stopState struct {
 }
 
 func newStopState(w *World) *stopState {
-	return &stopState{w: w, ch: &Chan[Unit]{}, ev: newEvent(), grace: DefaultGrace}
+	return &stopState{w: w, ch: &Chan[Unit]{ext: true}, ev: newEvent(), grace: DefaultGrace}
 }
 
 // now is the time on the run's clock.
@@ -71,13 +71,9 @@ func (st *stopState) after(d Duration, f func()) func() {
 	if st.w != nil {
 		w := st.w
 		return w.timerFunc(d, func() {
-			// w.mu is held here: count the goroutine as running before it
+			// w.mu is held here: the goroutine counts as running before it
 			// starts, so the clock waits for it
-			w.running++
-			go func() {
-				defer w.taskEnded()
-				run()
-			}()
+			w.helperLocked(run)
 		})
 	}
 	t := time.AfterFunc(time.Duration(max(d, 0)), run)
@@ -187,13 +183,17 @@ func (st *stopState) finish() {
 }
 
 // Task_stop_requested is `task.stop_requested()` (core 7.5).
-func Task_stop_requested(tk *Task) bool { return tk.stop != nil && tk.stop.requested.Load() }
+// It is a scheduling point, like task.is_canceled().
+func Task_stop_requested(tk *Task) bool {
+	tk.Yield()
+	return tk.stop != nil && tk.stop.requested.Load()
+}
 
 // Task_stopping is `task.stopping()`: a channel closed when a stop is
 // requested. Outside a program run it is a channel that never closes.
 func Task_stopping(tk *Task) *Chan[Unit] {
 	if tk.stop == nil {
-		return &Chan[Unit]{}
+		return &Chan[Unit]{ext: true}
 	}
 	return tk.stop.ch
 }

@@ -1,0 +1,12 @@
+// Deadlock detection in a real run (core 11.4, fault XO-F001): the task
+// sends on an unbuffered channel that main receives from only after the
+// scope, which waits for the task. Every task is blocked on another task,
+// so the runtime faults instead of hanging (exit status 70).
+fn main(os: Os) {
+  let results = Chan[Int].new(cap: 0)
+  os.stdio.println("start")
+  scope s {
+    s.spawn(fn() { results.send(42) })
+  }
+  os.stdio.println("got ${results.recv() ?? 0}")
+}

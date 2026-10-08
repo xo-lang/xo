@@ -13,11 +13,21 @@ type lock struct {
 	mu      sync.Mutex
 	permits int
 	q       []*waiter
+	// a Mutex: where it was made and who holds it since where, for
+	// deadlock reports and `xo dump`
+	mutex bool
+	made  [3]uintptr
+	owner *Task
+	site  heldSite
 }
 
 // acquire takes a permit, waiting if none is free. It reports false when
 // the task was canceled while waiting.
 func (l *lock) acquire(tk *Task) bool {
+	k := waitSemaphore
+	if l.mutex {
+		k = waitMutex
+	}
 	l.mu.Lock()
 	if l.permits > 0 {
 		l.permits--
@@ -27,7 +37,7 @@ func (l *lock) acquire(tk *Task) bool {
 	w := newWaiter(tk)
 	l.q = append(l.q, w)
 	l.mu.Unlock()
-	if tk.wait(w) {
+	if tk.wait(w, k, l) {
 		return true
 	}
 	l.mu.Lock()
@@ -44,6 +54,7 @@ func (l *lock) acquire(tk *Task) bool {
 // release hands the permit to the next waiter or frees it.
 func (l *lock) release() {
 	l.mu.Lock()
+	l.owner = nil
 	for len(l.q) > 0 {
 		w := l.q[0]
 		l.q = l.q[1:]
@@ -80,6 +91,8 @@ type Mutex[T any] struct {
 func Mutex_new[T any](_ *Task, v T) *Mutex[T] {
 	m := &Mutex[T]{v: v}
 	m.l.permits = 1
+	m.l.mutex = true
+	runtime.Callers(2, m.l.made[:])
 	return m
 }
 
@@ -91,6 +104,7 @@ func (m *Mutex[T]) XoDebug(b *strings.Builder) { b.WriteString("<mutex>") }
 // cancellation point that unwinds. Re-entrant use in one task faults
 // (XO-F004).
 func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, E]) Result[R, E] {
+	tk.Yield()
 	if prev, ok := tk.held[m]; ok {
 		FaultCode("XO-F004", xoLocation(2), "Mutex.with called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
@@ -104,6 +118,9 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 	var site heldSite
 	site.n = runtime.Callers(2, site.pcs[:])
 	tk.held[m] = site
+	m.l.mu.Lock()
+	m.l.owner, m.l.site = tk, site
+	m.l.mu.Unlock()
 	defer func() {
 		delete(tk.held, m)
 		m.l.release()
@@ -126,21 +143,24 @@ type Atomic[T any] struct {
 func Atomic_new[T any](_ *Task, v T) *Atomic[T] { return &Atomic[T]{v: v} }
 
 // M_get is `a.get()`.
-func (a *Atomic[T]) M_get(*Task) T {
+func (a *Atomic[T]) M_get(tk *Task) T {
+	tk.Yield()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.v
 }
 
 // M_set is `a.set(v)`.
-func (a *Atomic[T]) M_set(_ *Task, v T) {
+func (a *Atomic[T]) M_set(tk *Task, v T) {
+	tk.Yield()
 	a.mu.Lock()
 	a.v = v
 	a.mu.Unlock()
 }
 
 // M_swap is `a.swap(v)`.
-func (a *Atomic[T]) M_swap(_ *Task, v T) T {
+func (a *Atomic[T]) M_swap(tk *Task, v T) T {
+	tk.Yield()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	old := a.v
@@ -149,7 +169,8 @@ func (a *Atomic[T]) M_swap(_ *Task, v T) T {
 }
 
 // M_compare_and_swap is `a.compare_and_swap(old, new)`.
-func (a *Atomic[T]) M_compare_and_swap(_ *Task, old, nv T) bool {
+func (a *Atomic[T]) M_compare_and_swap(tk *Task, old, nv T) bool {
+	tk.Yield()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !Eq(a.v, old) {
@@ -168,7 +189,8 @@ func (a *Atomic[T]) XoDebug(b *strings.Builder) {
 
 // Atomic_add is `a.add(n)` on Atomic[Int]: returns the new value; overflow
 // faults.
-func Atomic_add(_ *Task, a *Atomic[int64], n int64) int64 {
+func Atomic_add(tk *Task, a *Atomic[int64], n int64) int64 {
+	tk.Yield()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.v = AddS(a.v, n, "")
@@ -192,6 +214,7 @@ func (s Task_Semaphore) XoDebug(b *strings.Builder) { b.WriteString("<semaphore>
 // Task_Semaphore_with is `s.with(f)`: waits for a permit (a cancellation
 // point), runs f, releases the permit.
 func Task_Semaphore_with[R, E any](tk *Task, s Task_Semaphore, f func(*Task) Result[R, E]) Result[R, E] {
+	tk.Yield()
 	if !s.l.acquire(tk) {
 		tk.Unwind()
 	}
@@ -268,18 +291,19 @@ func Task_with_timeout[T, E any](tk *Task, clock Clock, d Duration, f func(*Task
 // tk is canceled first, the scope s is shut down and tk unwinds.
 func awaitDeadline(tk *Task, s *Scope, done *event, clock Clock, d Duration, onFire func()) bool {
 	timerCh := make(chan struct{})
-	var fired atomic.Bool
+	// claimed is taken by the timer when it fires, or by the waiting task
+	// when it leaves first (then the timer can no longer wake it late)
+	var claimed, fired atomic.Bool
 	stop := clockAfter(tk, clock, d, func(locked bool) {
-		if fired.CompareAndSwap(false, true) {
+		if claimed.CompareAndSwap(false, true) {
+			fired.Store(true)
 			if onFire != nil {
 				onFire()
 			}
-			if tk.w != nil {
-				if locked {
-					tk.w.wakeLocked(tk)
-				} else {
-					tk.w.wake(tk)
-				}
+			if locked {
+				tk.w.wakeLocked(tk)
+			} else {
+				wakeTask(tk)
 			}
 			close(timerCh)
 		}
@@ -289,14 +313,18 @@ func awaitDeadline(tk *Task, s *Scope, done *event, clock Clock, d Duration, onF
 		done.waiters = append(done.waiters, tk)
 	}
 	done.mu.Unlock()
-	tk.block()
-	canceled := false
+	tk.blockOn(waitTimeout, s, true)
 	select {
 	case <-done.ch:
 	case <-timerCh:
 	case <-tk.Done():
-		canceled = true
 	}
+	if !claimed.CompareAndSwap(false, true) {
+		// the timer fired: let its wakeup land before the wait ends
+		<-timerCh
+	}
+	// decided from the state, not from which case select chose
+	canceled := tk.Canceled()
 	done.mu.Lock()
 	for i, x := range done.waiters {
 		if x == tk {

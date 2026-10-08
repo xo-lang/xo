@@ -55,14 +55,24 @@ func ExpectCmp[T any](tk *Task, ok bool, a, b T, op, src, loc string) {
 type testOutcome struct {
 	status string // pass, fail, skip
 	msg    string
+	// concurrent is set when the test started a task (or a runtime helper
+	// thread): only then can another seed give another interleaving
+	concurrent bool
 }
 
 // RunTests runs test tables and returns the exit status: 0 when every
 // test passed, 1 otherwise. Flags: -seed N, -run text, -json, -v,
-// -timeout d.
+// -timeout d, -explore N, -real, -cases N.
+//
+// Every test runs on the deterministic scheduler (core 7.4, sched.go)
+// seeded with its seed (the pinned `test "x" seed N`, else -seed, else 1),
+// except tests with real capabilities. -explore N runs each concurrent
+// test that passes under its seed again under the next N-1 seeds and
+// reports the first failing one.
 func RunTests(args []string, tables ...[]TestCase) int {
 	fs := flag.NewFlagSet("xotest", flag.ContinueOnError)
-	seed := fs.Int64("seed", 0, "seed for rand")
+	seed := fs.Int64("seed", 0, "seed for rand and the scheduler")
+	explore := fs.Int("explore", 0, "run each concurrent test under this many seeds")
 	run := fs.String("run", "", "run only tests whose name contains this text")
 	asJSON := fs.Bool("json", false, "print JSON lines")
 	verbose := fs.Bool("v", false, "print passing tests too")
@@ -98,6 +108,18 @@ func RunTests(args []string, tables ...[]TestCase) int {
 				out = testOutcome{status: "skip", msg: "uses " + strings.Join(tc.Uses, ", ") + ": run with `xo test --real` for real capabilities"}
 			default:
 				out = runOneTest(tc, s, *timeout)
+				if out.status == "pass" && out.concurrent && *explore > 1 && tc.Seed == 0 {
+					first := s
+					for i := 1; i < *explore; i++ {
+						o := runOneTest(tc, first+int64(i), *timeout)
+						if o.status == "fail" {
+							s = first + int64(i)
+							o.msg = fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --seed=%d`, or pin it with `test %q seed %d`\n%s", first, s, s, s, tc.Name, s, o.msg)
+							out = o
+							break
+						}
+					}
+				}
 			}
 			switch out.status {
 			case "pass":
@@ -235,18 +257,31 @@ func shrinkProperty(tc TestCase, failing *GenRand, seed int64, limit time.Durati
 	return bestIn, bestOut, steps
 }
 
-// runOneTest runs a test in a fresh world.
+// runOneTest runs a test in a fresh world: on the deterministic scheduler
+// seeded with seed, unless the test has real capabilities.
 func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
-	w := NewWorld()
+	var w *World
+	if len(tc.Uses) == 0 {
+		w = NewSchedWorld(seed)
+	} else {
+		w = NewWorld()
+	}
 	done := make(chan testOutcome, 1)
 	go func() {
-		done <- runInWorld(w, tc, seed)
+		out := runInWorld(w, tc, seed)
+		if w.sch != nil {
+			w.mu.Lock()
+			out.concurrent = w.sch.started > 0
+			w.mu.Unlock()
+		}
+		done <- out
 	}()
 	select {
 	case out := <-done:
 		return out
 	case <-w.stuck:
-		return testOutcome{status: "fail", msg: "deadlock: every task of the test is blocked and no timer is pending"}
+		f := w.DeadlockFault()
+		return testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
 	case <-time.After(limit):
 		return testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
 	}
@@ -486,6 +521,7 @@ func (Testing_FakeClock) XoDebug(b *strings.Builder) { b.WriteString("<fake cloc
 
 // M_now is `clock.now()`.
 func (c Testing_FakeClock) M_now(tk *Task) Time {
+	tk.Yield()
 	if c.real {
 		return realClock{}.M_now(tk)
 	}
@@ -610,12 +646,13 @@ func (f Testing_FakeStdio) write(err bool, s string) {
 	}
 }
 
-func (f Testing_FakeStdio) M_print(_ *Task, s string)    { f.write(false, s) }
-func (f Testing_FakeStdio) M_println(_ *Task, s string)  { f.write(false, s+"\n") }
-func (f Testing_FakeStdio) M_eprint(_ *Task, s string)   { f.write(true, s) }
-func (f Testing_FakeStdio) M_eprintln(_ *Task, s string) { f.write(true, s+"\n") }
+func (f Testing_FakeStdio) M_print(tk *Task, s string)    { tk.Yield(); f.write(false, s) }
+func (f Testing_FakeStdio) M_println(tk *Task, s string)  { tk.Yield(); f.write(false, s+"\n") }
+func (f Testing_FakeStdio) M_eprint(tk *Task, s string)   { tk.Yield(); f.write(true, s) }
+func (f Testing_FakeStdio) M_eprintln(tk *Task, s string) { tk.Yield(); f.write(true, s+"\n") }
 
 func (f Testing_FakeStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
+	tk.Yield()
 	if tk.Canceled() {
 		return Err[Unit](IoErr{Tag: 3})
 	}
@@ -902,6 +939,7 @@ func matchFake(method, prefix string, r *route, req Http_Request, rawURL string)
 
 // dispatch serves a client request in process.
 func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	tk.Yield()
 	n := f.n
 	n.mu.Lock()
 	n.reqs = append(n.reqs, req)
@@ -942,7 +980,7 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 			htk := tk
 			if st != nil {
 				// the handler sees the serving program's stop state
-				htk = &Task{node: tk.node, w: tk.w, held: tk.held, shield: tk.shield, stop: st}
+				htk = &Task{node: tk.node, w: tk.w, held: tk.held, shield: tk.shield, stop: st, th: tk.th}
 			}
 			return Ok[Http_Response, Http_ClientErr](r.M_call(htk, req))
 		}
@@ -997,9 +1035,9 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.mu.Unlock()
 	stopped := false
 	if tk.stop != nil {
-		stopped = tk.stop.ev.wait(tk, true)
+		stopped = tk.stop.ev.wait(tk, true, waitStop, nil)
 	} else {
-		tk.block()
+		tk.blockOn(waitServe, nil, true)
 		<-tk.node.done
 		tk.unblock()
 	}
@@ -1013,7 +1051,7 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.mu.Unlock()
 	if drained != nil {
 		// cancellation (grace period, second signal) cuts the wait short
-		drained.wait(tk, true)
+		drained.wait(tk, true, waitDrain, nil)
 	}
 	return Ok[Unit, Http_HttpErr](Unit{})
 }
@@ -1205,6 +1243,7 @@ func (v *memView) info(n *memNode) FileInfo {
 
 // begin checks cancellation and access, resolves p, and locks the fs.
 func (v *memView) begin(tk *Task, p string, write bool) (string, *FsErr) {
+	tk.Yield()
 	if tk != nil && tk.Canceled() {
 		e := FsCanceled
 		return "", &e

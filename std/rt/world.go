@@ -2,6 +2,7 @@ package rt
 
 import (
 	"container/heap"
+	"sort"
 	"sync"
 	"time"
 )
@@ -32,6 +33,22 @@ type World struct {
 	// the test can never finish (a deadlock).
 	stuck     chan struct{}
 	stuckOnce sync.Once
+	// sch is the deterministic scheduler (core 7.4, sched.go), nil when
+	// the test's goroutines run freely (tests with real capabilities). It
+	// shares mu and replaces running, blocked, and pending.
+	sch *sched
+	// FakeClock.advance under the scheduler: the thread that advances and
+	// the target time
+	adv       *thread
+	advTarget Time
+}
+
+// NewSchedWorld returns a world whose tasks run on the deterministic
+// scheduler with the given seed (core 7.4).
+func NewSchedWorld(seed int64) *World {
+	w := NewWorld()
+	w.sch = newSched(&w.mu, w, seed)
+	return w
 }
 
 // NewWorld returns a world whose virtual clock starts at
@@ -43,16 +60,118 @@ func NewWorld() *World {
 }
 
 // NewTask returns a root task that lives in the world and counts as
-// running.
+// running. Under the scheduler it returns once the task has the turn.
 func (w *World) NewTask() *Task {
+	tk := &Task{w: w, th: newRootThread("test")}
+	tk.node = newNodeOf(nil, w, nodeRoot, tk)
+	if s := w.sch; s != nil {
+		s.start(tk.th)
+		<-tk.th.turn
+		return tk
+	}
 	w.mu.Lock()
 	w.running++
 	w.mu.Unlock()
-	return &Task{node: newNode(nil, w), w: w}
+	return tk
 }
 
 // EndTask marks a root task of the world as finished.
-func (w *World) EndTask(*Task) { w.taskEnded() }
+func (w *World) EndTask(tk *Task) {
+	tk.th.mu.Lock()
+	tk.th.done = true
+	tk.th.mu.Unlock()
+	if s := w.sch; s != nil {
+		s.end(tk.th)
+		return
+	}
+	w.taskEnded()
+}
+
+// helperLocked runs f on a new goroutine that counts as a running task, so
+// the virtual clock waits for it (stopState.after). w.mu is held. Under
+// the scheduler the goroutine is a thread that waits for its turn.
+func (w *World) helperLocked(f func()) {
+	if s := w.sch; s != nil {
+		var parent *thread
+		if len(s.threads) > 0 {
+			parent = s.threads[0]
+		}
+		var th *thread
+		if parent != nil {
+			th = parent.newChild("runtime")
+		} else {
+			th = newRootThread("runtime")
+		}
+		s.startLocked(th)
+		go func() {
+			<-th.turn
+			defer s.end(th)
+			f()
+		}()
+		return
+	}
+	w.running++
+	go func() {
+		defer w.taskEnded()
+		f()
+	}()
+}
+
+// schedIdleLocked is called by the scheduler when no thread is ready: it
+// ends a FakeClock.advance or fires the next timer and reports whether
+// that may have made a thread ready. With nothing left to fire while
+// threads are alive, every thread is blocked for good: a deadlock.
+func (w *World) schedIdleLocked() bool {
+	w.dropDeadLocked()
+	if w.adv != nil {
+		if len(w.timers) > 0 && w.timers[0].at <= w.advTarget {
+			w.fireNextLocked()
+			return true
+		}
+		if w.now < w.advTarget {
+			w.now = w.advTarget
+		}
+		th := w.adv
+		w.adv = nil
+		th.st = stBlocked
+		w.sch.wakeLocked(th)
+		return true
+	}
+	if len(w.timers) > 0 {
+		w.fireNextLocked()
+		return true
+	}
+	if len(w.sch.threads) > 0 {
+		w.stuckOnce.Do(func() { close(w.stuck) })
+	}
+	return false
+}
+
+// DeadlockFault is the XO-F001 fault of a world whose tasks are all
+// blocked (after Stuck is closed): the wait cycle, or every blocked task.
+func (w *World) DeadlockFault() *FaultErr {
+	w.mu.Lock()
+	var snaps []waitSnap
+	if s := w.sch; s != nil {
+		snaps = s.snapsLocked()
+	} else {
+		seen := map[*thread]bool{}
+		for tk := range w.blocked {
+			if !seen[tk.th] {
+				seen[tk.th] = true
+				if sn, ok := tk.th.snap(nil); ok {
+					snaps = append(snaps, sn)
+				}
+			}
+		}
+	}
+	w.mu.Unlock()
+	sort.Slice(snaps, func(i, j int) bool { return snaps[i].th.id < snaps[j].th.id })
+	return deadlockFault(snaps, "every task is blocked and no timer is pending")
+}
+
+// Stuck is closed when every task of the world is blocked for good.
+func (w *World) Stuck() <-chan struct{} { return w.stuck }
 
 func (w *World) taskStarted() {
 	w.mu.Lock()
@@ -105,6 +224,10 @@ func (w *World) wake(tk *Task) {
 }
 
 func (w *World) wakeLocked(tk *Task) {
+	if s := w.sch; s != nil {
+		s.wakeLocked(tk.th)
+		return
+	}
 	if w.blocked[tk] {
 		delete(w.blocked, tk)
 		w.running++
@@ -127,6 +250,10 @@ func (w *World) wakeCanceledLocked(nodes []*cnode) {
 	set := make(map[*cnode]bool, len(nodes))
 	for _, n := range nodes {
 		set[n] = true
+	}
+	if s := w.sch; s != nil {
+		s.wakeCanceledLocked(set)
+		return
 	}
 	for tk := range w.blocked {
 		if tk.node.under(set) {
@@ -223,6 +350,24 @@ func (w *World) timerFunc(d Duration, f func()) func() {
 // order, letting the woken tasks run (until every other task is blocked
 // again) after each instant.
 func (w *World) Advance(tk *Task, d Duration) {
+	if s := w.sch; s != nil {
+		// the thread gives up the turn; when no other thread is ready, the
+		// scheduler fires the timers due by the target, then wakes it
+		th := tk.th
+		th.setWait(tk, waitAdvance, nil)
+		w.mu.Lock()
+		w.adv = th
+		w.advTarget = w.now + Time(max(d, 0))
+		th.st = stOutside
+		if s.cur == th {
+			s.cur = nil
+			s.pickLocked()
+		}
+		w.mu.Unlock()
+		<-th.turn
+		th.clearWait()
+		return
+	}
 	w.mu.Lock()
 	target := w.now + Time(max(d, 0))
 	w.advancing = true
@@ -252,12 +397,20 @@ func (w *World) Advance(tk *Task, d Duration) {
 // Sleep blocks tk for d of virtual time (FakeClock.sleep). It is a
 // cancellation point that unwinds.
 func (w *World) Sleep(tk *Task, d Duration) {
+	tk.Yield()
 	tk.CheckCancel()
 	w.mu.Lock()
 	w.sleeps = append(w.sleeps, d)
 	w.mu.Unlock()
 	ch, stop := w.timer(tk, d)
-	tk.block()
+	tk.blockOn(waitSleep, nil, true)
+	// the timer wins over a cancellation at the same instant
+	select {
+	case <-ch:
+		tk.unblock()
+		return
+	default:
+	}
 	select {
 	case <-ch:
 		tk.unblock()

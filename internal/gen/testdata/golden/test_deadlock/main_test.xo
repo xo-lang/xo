@@ -1,0 +1,39 @@
+test "two tasks lock in opposite order" {
+  let a = Mutex[Int].new(10)
+  let b = Mutex[Int].new(10)
+  scope s {
+    s.spawn(fn() { transfer(os.clock, a, b, 1) })
+    s.spawn(fn() { transfer(os.clock, b, a, 2) })
+  }
+}
+
+test "a channel nobody sends on" {
+  let ch = Chan[Int].new(cap: 0)
+  let got = scope s {
+    let t = s.spawn(fn() { ch.recv() ?? 0 })
+    t.await
+  }
+  expect(got) == 0
+}
+
+test "a task awaits itself through a channel" {
+  let handles = Chan[Task[Int, Never]].new(cap: 1)
+  scope s {
+    let t = s.spawn(fn() {
+      let me = handles.recv() ?? fault("no handle")
+      me.await + 1
+    })
+    handles.send(t)
+  }
+}
+
+test "one order is fine" {
+  let a = Mutex[Int].new(10)
+  let b = Mutex[Int].new(10)
+  scope s {
+    s.spawn(fn() { transfer(os.clock, a, b, 1) })
+    s.spawn(fn() { transfer(os.clock, a, b, 2) })
+  }
+  expect(a.with(fn(v) { v })) == 7
+  expect(b.with(fn(v) { v })) == 13
+}

@@ -60,3 +60,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [fmt-comments-in-joined-lists-move.md](fmt-comments-in-joined-lists-move.md): `xo fmt` moves a comment inside a one line list to after the statement; break after the opening bracket to keep it.
 - [fmt-empty-block-is-map.md](fmt-empty-block-is-map.md): `{}` in an arm body or expression statement is an empty Map, not a block; write `()`.
 - [go-flag-stops-at-first-argument.md](go-flag-stops-at-first-argument.md): Go's flag package stops at the first positional argument; `xo query` scans flags itself.
+- [busy-loop-starves-deterministic-scheduler.md](busy-loop-starves-deterministic-scheduler.md): a loop without scheduling points keeps the turn forever under `--seed`; `task.is_canceled()` is a scheduling point.
+- [go-select-random-choice.md](go-select-random-choice.md): Go's select is random among ready cases; runtime waits decide wake up versus cancellation from state.
+- [stale-wakeup-after-early-leave.md](stale-wakeup-after-early-leave.md): a wake up landing after a task left its wait would skip its next block; waits end only after their wakers are claimed or done.
+- [runtime-callers-per-block-cost.md](runtime-callers-per-block-cost.md): `runtime.Callers` on every block doubled channel handoff cost; real runs recover call sites from the goroutine profile instead.
+- [scope-last-statement-line-directive.md](scope-last-statement-line-directive.md): the last statement of a scope body reported the next line (`pre` written after its `//line`); fixed in codegen.

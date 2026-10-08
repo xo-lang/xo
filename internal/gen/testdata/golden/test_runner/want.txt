@@ -14,6 +14,8 @@ exit 1
 --- FAIL: plain expect (main.xo:35:1, seed 1)
     expect failed: 1 + 1 == 3 at main.xo:36:3
 --- FAIL: deadlock is reported (main.xo:39:1, seed 1)
-    deadlock: every task of the test is blocked and no timer is pending
+    fault: XO-F001: deadlock: every task is blocked and no timer is pending at main.xo:41
+    blocked:
+    test blocked in receive at main.xo:41 on a channel made at main.xo:40 that no task can send on
 FAIL: 2 passed, 5 failed, 0 skipped
 --- stderr

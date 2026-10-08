@@ -108,6 +108,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("run", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
+	seed := fl.Int64("seed", 0, "run every task on the deterministic scheduler with this seed (core 7.4; sets XO_SEED)")
 	noMono := monoFlags(fl)
 	arenas := arenaFlag(fl)
 	if err := fl.Parse(args); err != nil {
@@ -135,11 +136,18 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	if res.Failed {
 		return 1
 	}
-	return execBinary(res.Binaries[build.Host()], progArgs, stdout, stderr)
+	var env []string
+	if *seed != 0 {
+		env = append(env, "XO_SEED="+strconv.FormatInt(*seed, 10))
+	}
+	return execBinary(res.Binaries[build.Host()], progArgs, stdout, stderr, env...)
 }
 
-func execBinary(bin string, args []string, stdout, stderr io.Writer) int {
+func execBinary(bin string, args []string, stdout, stderr io.Writer, env ...string) int {
 	cmd := exec.Command(bin, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
@@ -159,7 +167,8 @@ func execBinary(bin string, args []string, stdout, stderr io.Writer) int {
 func runTest(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("test", flag.ContinueOnError)
 	fl.SetOutput(stderr)
-	seed := fl.Int64("seed", 0, "seed for the test rand and generated values")
+	seed := fl.Int64("seed", 0, "seed for the scheduler, the test rand, and generated values (default 1)")
+	explore := fl.Int("explore", 0, "run each concurrent test under this many seeds and report the first failing one")
 	run := fl.String("run", "", "run only tests whose name contains this text")
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
 	race := fl.Bool("race", false, "build with the Go race detector")
@@ -188,6 +197,9 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	var targs []string
 	if *seed != 0 {
 		targs = append(targs, "-seed", strconv.FormatInt(*seed, 10))
+	}
+	if *explore > 0 {
+		targs = append(targs, "-explore", strconv.Itoa(*explore))
 	}
 	if *run != "" {
 		targs = append(targs, "-run", *run)

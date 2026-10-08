@@ -21,6 +21,9 @@ type Task struct {
 	// stop is the shutdown state of the program run the task belongs to
 	// (core 7.5, stop.go), nil outside RunMain and testing.run_main.
 	stop *stopState
+	// th is the goroutine the task runs on (sched.go): what it is blocked
+	// on, and its turn under the deterministic scheduler.
+	th *thread
 }
 
 // cnode is a node of the cancellation tree. Canceling a node cancels every
@@ -32,10 +35,25 @@ type cnode struct {
 	canceled atomic.Bool
 	done     chan struct{}
 	w        *World
+	// for `xo dump` (sched.go), set before the node is linked in
+	seq  uint64
+	kind uint8
+	tk   *Task      // the task that runs as this node (task, scope body, root)
+	site [4]uintptr // a scope body: where the scope was opened
 }
 
-func newNode(parent *cnode, w *World) *cnode {
-	n := &cnode{parent: parent, done: make(chan struct{}), w: w}
+func newNode(parent *cnode, w *World) *cnode { return newNodeOf(parent, w, nodePlain, nil) }
+
+// newNodeOf is newNode with the node's kind and task for `xo dump`.
+func newNodeOf(parent *cnode, w *World, kind uint8, tk *Task) *cnode {
+	n := &cnode{parent: parent, done: make(chan struct{}), w: w, seq: nodeSeq.Add(1), kind: kind, tk: tk}
+	return n.link()
+}
+
+// link adds n to its parent's children (or cancels it at once when the
+// parent is canceled).
+func (n *cnode) link() *cnode {
+	parent := n.parent
 	if parent != nil {
 		parent.mu.Lock()
 		if parent.canceled.Load() {
@@ -83,6 +101,11 @@ func (n *cnode) cancel() {
 	}
 	if n.w != nil {
 		n.w.wakeCanceled(nodes)
+	} else if realSched != nil {
+		realSched.wakeCanceled(nodes)
+	}
+	if m := runMon.Load(); m != nil {
+		m.gen.Add(1)
 	}
 	for _, c := range nodes {
 		close(c.done)
@@ -109,15 +132,25 @@ func (n *cnode) under(set map[*cnode]bool) bool {
 }
 
 // NewRootTask returns a task with a fresh cancellation root.
-func NewRootTask() *Task { return &Task{node: newNode(nil, nil)} }
+func NewRootTask() *Task { return newRootTask("main") }
+
+func newRootTask(kind string) *Task {
+	tk := &Task{th: newRootThread(kind)}
+	tk.node = newNodeOf(nil, nil, nodeRoot, tk)
+	return tk
+}
 
 // InitTask is the task used to evaluate constants and defaults at program
 // start.
 var InitTask = NewRootTask()
 
-// child returns a task for a new node of the tree. It has no arena: a
-// spawned task runs on its own goroutine (see Arena).
-func (tk *Task) child(n *cnode) *Task { return &Task{node: n, w: tk.w, stop: tk.stop} }
+// child returns a task for a new node below parent, on a new thread. It
+// has no arena: a spawned task runs on its own goroutine (see Arena).
+func (tk *Task) child(parent *cnode, kind string) *Task {
+	c := &Task{w: tk.w, stop: tk.stop, th: tk.th.newChild(kind)}
+	c.node = newNodeOf(parent, tk.w, nodeTask, c)
+	return c
+}
 
 // Canceled reports whether a cancellation point here reports cancellation:
 // the task is canceled and not inside a shielded `defer` (core 3.5, 7.2).
@@ -126,8 +159,12 @@ func (tk *Task) Canceled() bool {
 }
 
 // Task_is_canceled is `task.is_canceled()`: the task's state, shield
-// ignored.
-func Task_is_canceled(tk *Task) bool { return tk.node.canceled.Load() }
+// ignored. It is a scheduling point, so a loop that polls it lets the task
+// that cancels it run under the deterministic scheduler.
+func Task_is_canceled(tk *Task) bool {
+	tk.Yield()
+	return tk.node.canceled.Load()
+}
 
 // Done returns a channel closed on cancellation, or nil (never ready)
 // while shielded.
@@ -173,16 +210,43 @@ func (tk *Task) Shielded(at string, f func()) {
 	}
 }
 
-// block and unblock bracket a blocking wait so the virtual clock of a test
-// can tell when every task is blocked (std.md 8.2).
-func (tk *Task) block() {
-	if tk.w != nil {
+// blockOn and unblock bracket a blocking wait so the virtual clock of a
+// test can tell when every task is blocked (std.md 8.2), the deterministic
+// scheduler can hand the turn on (core 7.4), and deadlock reports and
+// `xo dump` can say what the task waits on and where (core 11.4).
+// cancelable tells whether cancellation ends the wait (it does not while
+// shielded).
+func (tk *Task) blockOn(k waitKind, obj any, cancelable bool) {
+	th := tk.th
+	th.setWait(tk, k, obj)
+	if s := th.sch; s != nil {
+		s.block(th, tk, cancelable && tk.shield == 0)
+	} else if tk.w != nil {
 		tk.w.block(tk)
 	}
 }
 
 func (tk *Task) unblock() {
-	if tk.w != nil {
+	th := tk.th
+	th.clearWait()
+	if s := th.sch; s != nil {
+		s.unblock(th)
+	} else if tk.w != nil {
 		tk.w.unblock(tk)
+	}
+}
+
+// wakeTask is called by whoever ends a blocked task's wait, before it
+// signals the task: the task counts as running again at once.
+func wakeTask(tk *Task) {
+	if tk == nil {
+		return
+	}
+	th := tk.th
+	th.woken()
+	if tk.w != nil {
+		tk.w.wake(tk)
+	} else if s := th.sch; s != nil {
+		s.wake(th)
 	}
 }

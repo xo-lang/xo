@@ -65,6 +65,10 @@ commands:
       example code blocks of each doc comment. Default: the modules under .
   explain [--json] <code>
       Long form explanation of a diagnostic code, with an example and a fix.
+  dump [--timeout=5s] <pid>
+      Print the task tree of a running Xo program (core 11.4): sends it
+      SIGQUIT and prints the dump it writes to $XO_DUMP_DIR or the system
+      temporary directory (xo-dump-<pid>.txt). The program goes on running.
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -95,6 +99,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDoc(args[1:], stdout, stderr)
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
+	case "dump":
+		return runDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

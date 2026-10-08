@@ -417,6 +417,9 @@ func (f *fnGen) into(e ast.Expr, d dest) {
 	case dReturn:
 		if d.pre != "" {
 			f.line("%s", d.pre)
+			// the pre statement took the line of e's //line directive
+			f.lastLine = ""
+			f.at(e)
 		}
 		f.ret(e)
 	}

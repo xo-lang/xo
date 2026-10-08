@@ -494,15 +494,40 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	// request tasks hang below reqRoot, not below the serving task: a
 	// canceled serve still lets them finish, unless the shutdown is cut
 	// short
-	reqRoot := newNode(nil, tk.w)
+	reqRoot := newNodeOf(nil, tk.w, nodeServer, nil)
+	// not below the serving task, so `xo dump` finds it here
+	extraRoots.Store(reqRoot, true)
+	defer extraRoots.Delete(reqRoot)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		var a *Arena
 		if useArena {
 			a = getArena()
 		}
-		node := newNode(reqRoot, tk.w)
+		reqTask := &Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.newChild("request")}
+		node := newNodeOf(reqRoot, tk.w, nodeRequest, reqTask)
+		reqTask.node = node
 		defer node.detach()
-		reqTask := &Task{node: node, w: tk.w, arena: a, stop: tk.stop}
+		th := reqTask.th
+		if th.mon != nil {
+			th.mon.started()
+		}
+		if sch := th.sch; sch != nil {
+			sch.start(th)
+			<-th.turn
+		} else {
+			clearLabels()
+		}
+		defer func() {
+			th.mu.Lock()
+			th.done = true
+			th.mu.Unlock()
+			if th.mon != nil {
+				th.mon.ended()
+			}
+			if sch := th.sch; sch != nil {
+				sch.end(th)
+			}
+		}()
 		var body Bytes
 		if a != nil {
 			body = a.readBody(hr.Body)
@@ -550,6 +575,8 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	})}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(s.l.l) }()
+	tk.leave()
+	defer tk.enter()
 	select {
 	case err := <-errc:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -660,7 +687,9 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 		hr.Header.Set(k, v)
 	}
 	hc := &http.Client{Timeout: time.Duration(c.timeout)}
+	tk.leave()
 	resp, err := hc.Do(hr)
+	tk.enter()
 	if err != nil {
 		var ne net.Error
 		switch {

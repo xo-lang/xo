@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+start
+--- stderr
+fault: XO-F001: deadlock: every task is blocked at main.xo:8
+blocked:
+main blocked in scope end at main.xo:8 for task 2
+task 2 (spawned at main.xo:9) blocked in send at main.xo:9 on a channel made at main.xo:6 that no task can receive from

@@ -1101,9 +1101,19 @@ select {
 
 ### 7.4 Deterministic scheduling [P2]
 
-`xo test --seed=N` and `xo run --seed=N` run all tasks on a deterministic
-scheduler. The same seed always produces the same interleaving. Failing seeds
-are printed on failure and can be pinned in a test with `test "x" seed 8812`.
+Every `xo test` runs its tasks on a deterministic scheduler, seeded with
+`--seed=N` (default 1): one task runs at a time, and at each scheduling point
+the next task is chosen from the seed, so the same seed always produces the
+same interleaving. Scheduling points are channel operations (including
+`select`, `try_*`, and `close`), `await`, `Mutex.with`, `Semaphore.with`,
+`Once.get`, `spawn`, `Atomic` operations, `sleep`, `task.is_canceled()`,
+`task.stop_requested()`, and effect calls. Failing seeds are printed and can
+be pinned with `test "x" seed 8812`.
+
+`xo test --explore=N` reruns each concurrent test that passed under N further
+seeds and reports the first failing seed. `xo run --seed=N` (or `XO_SEED=N` for
+any built binary) uses the same scheduler with the real clock; interleavings
+are then reproducible as long as timer and I/O timing does not decide them.
 
 ### 7.5 Process signals and graceful shutdown
 
@@ -1255,7 +1265,8 @@ test "retries after 503" {
 | `xo build [--targets=all\|os/arch,...]` | Build static binaries |
 | `xo run` | Build and run for the host |
 | `xo check` | Parse and type check all targets, no codegen |
-| `xo test [--seed=N] [--fuzz=10s]` | Tests, examples, contract fuzzing |
+| `xo test [--seed=N] [--explore=N] [--fuzz=10s]` | Tests, examples, contract fuzzing; deterministic scheduling |
+| `xo dump <pid>` | Task tree of a running program (11.4) |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--edition=YYYY]` | Apply all machine fixes, migrate editions |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
@@ -1361,10 +1372,16 @@ call and its result, plus scheduler decisions.
 
 ### 11.4 Live inspection
 
-- `xo dump` (or SIGQUIT) prints the task tree: each scope, its children, and
-  what each task is blocked on, with locations.
+- `xo dump <pid>` (or SIGQUIT) prints the task tree: each scope, its children,
+  and what each task is blocked on, with locations. The program keeps running;
+  the dump is also written to `$XO_DUMP_DIR` (or the temp dir) as
+  `xo-dump-<pid>.txt`.
 - **[P2]** Deadlocks are detected by the runtime and reported as a wait cycle
-  with locations (fault `XO-F001`).
+  with locations (fault `XO-F001`, exit status 70, crash bundle). A task
+  counts as blocked when it waits on another task (channel, mutex, semaphore,
+  `await`, scope end, `Once`); waits on timers, `after`, `task.stopping()`,
+  signals, and I/O do not. In test worlds the report is immediate; real runs
+  report after 200 ms with no progress.
 - `dbg(expr)` prints the expression source and its `Debug` value, returns the
   value, and is rejected by `xo build --ci`.
 

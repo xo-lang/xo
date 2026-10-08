@@ -26,7 +26,7 @@ import (
 // concurrentGolden are the golden programs that start tasks; they are also
 // run with the Go race detector.
 // Directories named test_* are built in test mode.
-var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "arena_escape", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until"}
+var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "arena_escape", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until", "test_explore", "test_deadlock", "deadlock_real"}
 
 // arenaRaceGolden are the golden programs also run with -race and
 // `--arenas` (TestGoldenRaceArenas): the servers among them hand arenas
@@ -61,7 +61,11 @@ func testGoldenRace(t *testing.T, names []string, arenas bool) {
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
-			cmd := exec.Command(res.Binaries[build.Host()])
+			var args []string
+			if data, err := os.ReadFile(filepath.Join(dir, "args.txt")); err == nil {
+				args = strings.Fields(string(data))
+			}
+			cmd := exec.Command(res.Binaries[build.Host()], args...)
 			cmd.Dir = dir
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -396,5 +400,79 @@ func TestHoles(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
 		}
+	}
+}
+
+// TestRunSeedReproduces runs a program on the deterministic scheduler with
+// the real clock (XO_SEED, `xo run --seed=N`, core 7.4): the same seed
+// prints the same interleaving every time, and different seeds give
+// different interleavings.
+func TestRunSeedReproduces(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds Go")
+	}
+	res, err := build.Build([]string{filepath.Join("testdata", "sched_run")}, build.Options{Mode: gen.Build})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %+v", err, res)
+	}
+	bin := res.Binaries[build.Host()]
+	runSeed := func(seed int) string {
+		cmd := exec.Command(bin)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("XO_SEED=%d", seed))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("seed %d: %v\n%s", seed, err, out)
+		}
+		return string(out)
+	}
+	distinct := map[string]bool{}
+	for seed := 1; seed <= 8; seed++ {
+		first := runSeed(seed)
+		if !strings.HasSuffix(first, "total 18\n") {
+			t.Fatalf("seed %d: output %q", seed, first)
+		}
+		for i := 0; i < 3; i++ {
+			if again := runSeed(seed); again != first {
+				t.Fatalf("seed %d printed\n%s\nthen\n%s", seed, first, again)
+			}
+		}
+		distinct[first] = true
+	}
+	if len(distinct) < 4 {
+		t.Errorf("8 seeds gave only %d interleavings", len(distinct))
+	}
+}
+
+// TestTestSeedReproduces runs the explore golden's race under its failing
+// seed several times: the same seed gives the same failure, byte for byte.
+func TestTestSeedReproduces(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds Go")
+	}
+	dir := filepath.Join("testdata", "golden", "test_explore")
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %+v", err, res)
+	}
+	bin := res.Binaries[build.Host()]
+	runSeed := func(seed string) string {
+		cmd := exec.Command(bin, "-seed", seed, "-run", "lost update", "-v")
+		cmd.Dir = dir
+		out, _ := cmd.CombinedOutput()
+		return string(out)
+	}
+	for _, seed := range []string{"2", "3"} {
+		first := runSeed(seed)
+		for i := 0; i < 5; i++ {
+			if again := runSeed(seed); again != first {
+				t.Fatalf("seed %s printed\n%s\nthen\n%s", seed, first, again)
+			}
+		}
+	}
+	if !strings.Contains(runSeed("2"), "--- FAIL: lost update (main_test.xo:1:1, seed 2)") {
+		t.Errorf("seed 2 does not fail:\n%s", runSeed("2"))
+	}
+	if strings.Contains(runSeed("3"), "--- FAIL: lost update (") {
+		t.Errorf("seed 3 fails:\n%s", runSeed("3"))
 	}
 }
