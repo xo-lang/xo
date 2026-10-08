@@ -36,6 +36,7 @@
 
 #include <math.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1035,6 +1036,36 @@ typedef struct {
 	int counted; // its context counts as blocked (dl.blocked)
 } xo_park;
 
+// xo_spin is a lock for short critical sections that many threads take
+// (the deadlock counters, the cancellation tree): a contended pthread
+// mutex sleeps in the kernel, which dominated spawn heavy programs.
+typedef struct {
+	int locked;
+} xo_spin;
+
+static inline void spin_relax(void) {
+#if defined(__aarch64__)
+	__asm__ volatile("yield");
+#elif defined(__x86_64__)
+	__asm__ volatile("pause");
+#endif
+}
+
+static void spin_lock(xo_spin *l) {
+	for (int n = 0;; n++) {
+		if (!__atomic_load_n(&l->locked, __ATOMIC_RELAXED) && !__atomic_exchange_n(&l->locked, 1, __ATOMIC_ACQUIRE)) {
+			return;
+		}
+		if (n > 64) {
+			sched_yield();
+		} else {
+			spin_relax();
+		}
+	}
+}
+
+static void spin_unlock(xo_spin *l) { __atomic_store_n(&l->locked, 0, __ATOMIC_RELEASE); }
+
 // Deadlock detection (core 11.4, fault XO-F001): live counts the
 // contexts that run Xo code (each program root, and each task a worker
 // took from a queue; a task run by a waiting context stands in for it),
@@ -1043,14 +1074,31 @@ typedef struct {
 // blocked means none can ever be woken: the native backends have no
 // timers, I/O, or signals that could.
 static struct {
-	pthread_mutex_t mu;
+	xo_spin mu;
 	int64_t live, blocked;
-} dl = {PTHREAD_MUTEX_INITIALIZER, 0, 0};
+} dl;
 
 static void dl_check_locked(void);
 
+// mu_init initializes a mutex of the task runtime. On Darwin the
+// default policy hands a contended mutex over in FIFO order through the
+// kernel, which cost a spawn heavy program four times its user time in
+// system time; first fit lets a running thread take it again
+// (gotchas/darwin-mutex-fairshare.md).
+static void mu_init(pthread_mutex_t *m) {
+#ifdef __APPLE__
+	pthread_mutexattr_t a;
+	pthread_mutexattr_init(&a);
+	pthread_mutexattr_setpolicy_np(&a, PTHREAD_MUTEX_POLICY_FIRSTFIT_NP);
+	pthread_mutex_init(m, &a);
+	pthread_mutexattr_destroy(&a);
+#else
+	pthread_mutex_init(m, NULL);
+#endif
+}
+
 static void park_init(xo_park *p) {
-	pthread_mutex_init(&p->mu, NULL);
+	mu_init(&p->mu);
 	pthread_cond_init(&p->cv, NULL);
 	p->signaled = 0;
 }
@@ -1071,9 +1119,9 @@ static void park_signal(xo_park *p) {
 	p->signaled = 1;
 	if (p->counted) {
 		p->counted = 0;
-		pthread_mutex_lock(&dl.mu);
+		spin_lock(&dl.mu);
 		dl.blocked--;
-		pthread_mutex_unlock(&dl.mu);
+		spin_unlock(&dl.mu);
 	}
 	pthread_cond_signal(&p->cv);
 	pthread_mutex_unlock(&p->mu);
@@ -1085,13 +1133,13 @@ typedef struct xo_node {
 	xo_park *waiter; // the park of a context blocked at this node (tree_mu)
 } xo_node;
 
-static pthread_mutex_t tree_mu = PTHREAD_MUTEX_INITIALIZER;
+static xo_spin tree_mu;
 
 static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __ATOMIC_ACQUIRE); }
 
 // node_link adds n below parent (canceled at once when parent is).
 static void node_link(xo_node *n, xo_node *parent) {
-	pthread_mutex_lock(&tree_mu);
+	spin_lock(&tree_mu);
 	n->parent = parent;
 	n->prev = NULL;
 	n->next = parent->child;
@@ -1102,7 +1150,7 @@ static void node_link(xo_node *n, xo_node *parent) {
 	if (parent->canceled) {
 		__atomic_store_n(&n->canceled, 1, __ATOMIC_RELEASE);
 	}
-	pthread_mutex_unlock(&tree_mu);
+	spin_unlock(&tree_mu);
 }
 
 static void node_unlink_locked(xo_node *n) {
@@ -1124,9 +1172,9 @@ static void node_unlink_locked(xo_node *n) {
 }
 
 static void node_unlink(xo_node *n) {
-	pthread_mutex_lock(&tree_mu);
+	spin_lock(&tree_mu);
 	node_unlink_locked(n);
-	pthread_mutex_unlock(&tree_mu);
+	spin_unlock(&tree_mu);
 }
 
 static void cancel_locked(xo_node *n) {
@@ -1145,9 +1193,9 @@ static void cancel_locked(xo_node *n) {
 // node_cancel cancels n and its subtree (core 7.2) and wakes every
 // context blocked in it.
 static void node_cancel(xo_node *n) {
-	pthread_mutex_lock(&tree_mu);
+	spin_lock(&tree_mu);
 	cancel_locked(n);
-	pthread_mutex_unlock(&tree_mu);
+	spin_unlock(&tree_mu);
 }
 
 typedef struct {
@@ -1170,6 +1218,12 @@ typedef struct xo_ctx {
 
 static __thread xo_ctx *cur;
 
+static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
+
+// rt_init gives the runtime's global mutexes their policy (mu_init)
+// before the first context uses them.
+static void rt_init(void);
+
 // ctx returns the current context, making a root for a thread that runs
 // Xo code outside any task (the program's main thread).
 static xo_ctx *ctx(void) {
@@ -1177,6 +1231,7 @@ static xo_ctx *ctx(void) {
 	if (__builtin_expect(c != NULL, 1)) {
 		return c;
 	}
+	pthread_once(&rt_once, rt_init);
 	c = calloc(1, sizeof(xo_ctx));
 	xo_node *root = calloc(1, sizeof(xo_node));
 	if (!c || !root) {
@@ -1185,9 +1240,9 @@ static xo_ctx *ctx(void) {
 	c->node = root;
 	park_init(&c->park);
 	cur = c;
-	pthread_mutex_lock(&dl.mu);
+	spin_lock(&dl.mu);
 	dl.live++;
-	pthread_mutex_unlock(&dl.mu);
+	spin_unlock(&dl.mu);
 	return c;
 }
 
@@ -1240,13 +1295,15 @@ static void held_del(xo_ctx *c, void *m) {
 // The worker pool
 
 typedef struct {
-	pthread_mutex_t mu;
+	xo_spin mu;
 	struct xo_task **buf;
-	int64_t head, len, cap; // a ring: head is the top, head+len-1 the bottom
+	// a ring: head is the top, head+len-1 the bottom; len is read
+	// without the lock to skip empty deques
+	int64_t head, len, cap;
 } xo_deque;
 
 static void dq_push(xo_deque *d, struct xo_task *t) {
-	pthread_mutex_lock(&d->mu);
+	spin_lock(&d->mu);
 	if (d->len == d->cap) {
 		int64_t nc = d->cap ? d->cap * 2 : 64;
 		struct xo_task **nb = malloc((size_t)nc * sizeof(*nb));
@@ -1262,13 +1319,16 @@ static void dq_push(xo_deque *d, struct xo_task *t) {
 		d->cap = nc;
 	}
 	d->buf[(d->head + d->len) % d->cap] = t;
-	d->len++;
-	pthread_mutex_unlock(&d->mu);
+	__atomic_store_n(&d->len, d->len + 1, __ATOMIC_RELEASE);
+	spin_unlock(&d->mu);
 }
 
 // dq_take pops from the bottom (the owner, bottom set) or the top.
 static struct xo_task *dq_take(xo_deque *d, int bottom) {
-	pthread_mutex_lock(&d->mu);
+	if (__atomic_load_n(&d->len, __ATOMIC_ACQUIRE) == 0) {
+		return NULL;
+	}
+	spin_lock(&d->mu);
 	struct xo_task *t = NULL;
 	if (d->len > 0) {
 		if (bottom) {
@@ -1277,9 +1337,9 @@ static struct xo_task *dq_take(xo_deque *d, int bottom) {
 			t = d->buf[d->head];
 			d->head = (d->head + 1) % d->cap;
 		}
-		d->len--;
+		__atomic_store_n(&d->len, d->len - 1, __ATOMIC_RELEASE);
 	}
-	pthread_mutex_unlock(&d->mu);
+	spin_unlock(&d->mu);
 	return t;
 }
 
@@ -1302,13 +1362,17 @@ static struct {
 	int nw;          // worker slots used
 	int alive;       // live workers
 	int idle;        // workers waiting for work
+	int spinning;    // workers looking for work before they sleep
 	int blocked;     // workers blocked in a task
 	int64_t nqueued; // tasks in the queues
 	xo_deque inject;
-} pool = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER,
-          .inject = {.mu = PTHREAD_MUTEX_INITIALIZER}};
+} pool = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER};
 
 static __thread xo_worker *tls_w;
+
+static void rt_init(void) {
+	mu_init(&pool.mu);
+}
 
 static void pool_init(void) {
 	xo_rt_threads_begin();
@@ -1345,7 +1409,6 @@ static void start_worker(void) {
 		if (!w) {
 			xo_oom();
 		}
-		pthread_mutex_init(&w->dq.mu, NULL);
 		pool.ws[pool.nw] = w;
 		STORE(pool.nw, pool.nw + 1);
 	}
@@ -1382,11 +1445,41 @@ static void pool_push(struct xo_task *t) {
 		dq_push(&pool.inject, t);
 	}
 	__atomic_fetch_add(&pool.nqueued, 1, __ATOMIC_SEQ_CST);
-	// a worker that goes idle checks nqueued after it counts itself idle,
-	// so it sees this task or is seen here
+	// a spinning worker will take it (it checks nqueued after it stops
+	// spinning); a worker that goes idle checks nqueued after it counts
+	// itself idle, so it sees this task or is seen here
+	if (LOAD(pool.spinning) > 0) {
+		return;
+	}
 	if (LOAD(pool.idle) > 0 || LOAD(pool.alive) - LOAD(pool.blocked) < pool.ncpu) {
 		wake();
 	}
+}
+
+static struct xo_task *pool_pop(xo_worker *w);
+
+static inline void cpu_relax(void) { spin_relax(); }
+
+// spin looks for work for a while before the worker sleeps (at most two
+// workers at once): a task spawned meanwhile costs no wake up.
+static struct xo_task *spin(xo_worker *w) {
+	if (LOAD(pool.spinning) >= 2) {
+		return NULL;
+	}
+	__atomic_fetch_add(&pool.spinning, 1, __ATOMIC_SEQ_CST);
+	struct xo_task *t = NULL;
+	for (int i = 0; i < 4000 && !t; i++) {
+		if (LOAD(pool.nqueued) > 0) {
+			t = pool_pop(w);
+		} else {
+			cpu_relax();
+		}
+	}
+	__atomic_fetch_sub(&pool.spinning, 1, __ATOMIC_SEQ_CST);
+	if (t && LOAD(pool.nqueued) > 0 && LOAD(pool.spinning) == 0) {
+		wake(); // more work: another worker looks for it
+	}
+	return t;
 }
 
 static struct xo_task *pool_pop(xo_worker *w) {
@@ -1408,10 +1501,10 @@ static struct xo_task *pool_pop(xo_worker *w) {
 	}
 	if (t) {
 		// live before it leaves the queue, so it is never missing from both
-		pthread_mutex_lock(&dl.mu);
+		spin_lock(&dl.mu);
 		dl.live++;
 		__atomic_fetch_sub(&pool.nqueued, 1, __ATOMIC_SEQ_CST);
-		pthread_mutex_unlock(&dl.mu);
+		spin_unlock(&dl.mu);
 	}
 	return t;
 }
@@ -1456,36 +1549,36 @@ static void block_end(void) {
 // when cancelable, its node is canceled.
 static void park_wait(xo_ctx *c, int cancelable) {
 	if (cancelable) {
-		pthread_mutex_lock(&tree_mu);
+		spin_lock(&tree_mu);
 		c->node->waiter = &c->park;
-		pthread_mutex_unlock(&tree_mu);
+		spin_unlock(&tree_mu);
 	}
 	block_begin();
 	pthread_mutex_lock(&c->park.mu);
 	if (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
 		c->park.counted = 1;
-		pthread_mutex_lock(&dl.mu);
+		spin_lock(&dl.mu);
 		dl.blocked++;
 		dl_check_locked();
-		pthread_mutex_unlock(&dl.mu);
+		spin_unlock(&dl.mu);
 		while (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
 			pthread_cond_wait(&c->park.cv, &c->park.mu);
 		}
 		if (c->park.counted) {
 			// woken by cancellation
 			c->park.counted = 0;
-			pthread_mutex_lock(&dl.mu);
+			spin_lock(&dl.mu);
 			dl.blocked--;
-			pthread_mutex_unlock(&dl.mu);
+			spin_unlock(&dl.mu);
 		}
 	}
 	c->park.signaled = 0;
 	pthread_mutex_unlock(&c->park.mu);
 	block_end();
 	if (cancelable) {
-		pthread_mutex_lock(&tree_mu);
+		spin_lock(&tree_mu);
 		c->node->waiter = NULL;
-		pthread_mutex_unlock(&tree_mu);
+		spin_unlock(&tree_mu);
 	}
 }
 
@@ -1600,7 +1693,7 @@ xo_scope *xo_scope_open(void) {
 	xo_scope *s = xo_alloc(sizeof(xo_scope));
 	memset(s, 0, sizeof *s);
 	h_init(s, scope_free);
-	pthread_mutex_init(&s->mu, NULL);
+	mu_init(&s->mu);
 	s->parent_node = c->node;
 	node_link(&s->body, c->node);
 	s->tasks = calloc(1, sizeof(xo_node));
@@ -1695,16 +1788,23 @@ static void *worker_main(void *arg) {
 	tls_w = w;
 	for (;;) {
 		xo_task *t = pool_pop(w);
+		if (!t) {
+			t = spin(w);
+		}
 		if (t) {
 			run_task(t);
 			dequeued(t);
-			pthread_mutex_lock(&dl.mu);
+			spin_lock(&dl.mu);
 			dl.live--;
 			dl_check_locked();
-			pthread_mutex_unlock(&dl.mu);
+			spin_unlock(&dl.mu);
 			continue;
 		}
 		pthread_mutex_lock(&pool.mu);
+		if (LOAD(pool.nqueued) > 0) {
+			pthread_mutex_unlock(&pool.mu);
+			continue;
+		}
 		if (pool.alive - pool.blocked > pool.ncpu) {
 			// more workers than CPUs since others came back from waiting
 			w->live = 0;
@@ -1736,7 +1836,7 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	// references: the handle returned, and the scope's list (which keeps
 	// t alive while a queue holds it)
 	t->h.rc = -2;
-	pthread_mutex_init(&t->mu, NULL);
+	mu_init(&t->mu);
 	t->run = (xo_run_fn)run;
 	t->drop = (xo_ldrop)drop;
 	t->fl = fl;
@@ -1878,13 +1978,13 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		h_release(list);
 		list = next;
 	}
-	pthread_mutex_lock(&tree_mu);
+	spin_lock(&tree_mu);
 	node_unlink_locked(s->tasks);
 	for (int i = 0; i < s->nold; i++) {
 		node_unlink_locked(s->old[i]);
 	}
 	node_unlink_locked(&s->body);
-	pthread_mutex_unlock(&tree_mu);
+	spin_unlock(&tree_mu);
 	c->node = s->parent_node;
 	if (!s->fail) {
 		return 0;
@@ -1988,7 +2088,7 @@ xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) {
 	xo_chan *c = xo_alloc(sizeof(xo_chan));
 	memset(c, 0, sizeof *c);
 	h_init(c, chan_free);
-	pthread_mutex_init(&c->mu, NULL);
+	mu_init(&c->mu);
 	c->cap = cap;
 	c->drop = (xo_ldrop)drop;
 	if (cap > 0) {
@@ -2398,7 +2498,7 @@ xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) {
 	xo_mutex *m = xo_alloc(sizeof(xo_mutex));
 	memset(m, 0, sizeof *m);
 	h_init(m, mutex_free);
-	pthread_mutex_init(&m->mu, NULL);
+	mu_init(&m->mu);
 	m->slot = l;
 	m->drop = (xo_ldrop)drop;
 	return m;
