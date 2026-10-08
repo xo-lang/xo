@@ -802,6 +802,12 @@ Last verified: 2026-10-08. Rules and choices; details in
   `crypto/pbkdf2` (Go 1.24+); random functions call the `Rand`
   capability's `M_bytes`. Goldens `crypto_basic` (known vectors),
   `test_crypto` (seeded rand); unit tests `TestCrypto*` in std/rt.
+- Test log capture (2026-10-08, decision 0057): `runOneTest` gives each
+  test world `newTestLogSink()` (std/rt/log.go); `logRecord` appends a
+  `Log_Record` and, with no configured output, the text line to the
+  capture instead of stderr; `RunTests` prints the lines under `--- FAIL`
+  (and `--- PASS` with `-v`), `--json` adds `log`. `testing.logs()` is
+  `rt.Testing_logs`. Golden: `test_logs`.
 
 ## SSA IR
 

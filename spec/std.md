@@ -653,6 +653,7 @@ pub fn debug(msg: Str, fields: Map[Str, Debug] = {})   // also info, warn, error
 pub fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 enum Level { Debug, Info, Warn, Error }
 enum Format { Text, Json }
+struct Record { level: Level, msg: Str, fields: Map[Str, Str] }   // as captured in tests (8.6)
 ```
 
 ```
@@ -661,6 +662,16 @@ log.info("listening", {"addr": addr, "port": port})
 
 Every record includes the time, the current span, and the request id.
 Without `configure`, logs go to standard error as text at `Info`.
+
+Under `xo test` (decision 0057) each test has its own log sink, starting at
+`Info` with no output configured. Records that would go to standard error
+are buffered instead and printed under the test's result only when the
+test fails (or with `xo test -v`), like `t.Log` in Go; `--json` adds them
+as a `log` array to the test's line. `log.configure(os.stdio, ...)` in a
+test (or in a `main` run by `testing.run_main`) sends records to the fake
+standard error instead, as in a program. Either way every record that
+passes the level is also kept for `testing.logs()` (section 8.6). Nothing
+logged in a test reaches the real standard error.
 
 ---
 
@@ -809,6 +820,27 @@ be omitted when the expected type is known (`fail_next(Rename, ...)`).
 Property tests (`test "x" for v: T`) generate values for any type built from
 builtin types, structs, and enums. `testing.gen[T](seed: Int) -> T` produces
 one value directly.
+
+### 8.6 Captured logs
+
+```
+pub fn logs() -> List[log.Record]     // records logged so far in this test, oldest first
+```
+
+A record's `fields` hold each value's text form, in the order given. Only
+records at or above the sink's level are kept (`Info` unless the test
+calls `log.configure`). Each test, and each case of a property test,
+starts with none; tasks of the test and a `main` run by `run_main` log to
+the same list. Outside a test, `logs()` is empty.
+
+```
+test "a failed purge is logged" {
+  purge_once(broken_db(), os.clock)
+  let recs = testing.logs()
+  expect(recs.map(fn(r) { r.msg })) == ["purge failed"]
+  expect(recs[0].level) == log.Level.Warn
+}
+```
 
 ---
 

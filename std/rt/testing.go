@@ -58,6 +58,9 @@ type testOutcome struct {
 	// concurrent is set when the test started a task (or a runtime helper
 	// thread): only then can another seed give another interleaving
 	concurrent bool
+	// logs is the test's log output that went to no configured Stdio
+	// (decision 0057): printed when the test fails, or with -v
+	logs []string
 }
 
 // RunTests runs test tables and returns the exit status: 0 when every
@@ -130,7 +133,11 @@ func RunTests(args []string, tables ...[]TestCase) int {
 				skip++
 			}
 			if *asJSON {
-				data, _ := json.Marshal(map[string]any{"name": tc.Name, "module": tc.Module, "loc": tc.Loc, "status": out.status, "message": out.msg, "seed": s})
+				rec := map[string]any{"name": tc.Name, "module": tc.Module, "loc": tc.Loc, "status": out.status, "message": out.msg, "seed": s}
+				if len(out.logs) > 0 && (out.status == "fail" || *verbose) {
+					rec["log"] = out.logs
+				}
+				data, _ := json.Marshal(rec)
 				fmt.Fprintln(os.Stdout, string(data))
 				continue
 			}
@@ -140,10 +147,12 @@ func RunTests(args []string, tables ...[]TestCase) int {
 				for _, l := range strings.Split(strings.TrimRight(out.msg, "\n"), "\n") {
 					fmt.Fprintf(os.Stdout, "    %s\n", l)
 				}
+				printTestLogs(out.logs)
 			case out.status == "skip" && *verbose:
 				fmt.Fprintf(os.Stdout, "--- SKIP: %s (%s)\n", tc.Name, out.msg)
 			case out.status == "pass" && *verbose:
 				fmt.Fprintf(os.Stdout, "--- PASS: %s\n", tc.Name)
+				printTestLogs(out.logs)
 			}
 		}
 	}
@@ -158,6 +167,17 @@ func RunTests(args []string, tables ...[]TestCase) int {
 		return 1
 	}
 	return 0
+}
+
+// printTestLogs prints a test's buffered log lines under its result.
+func printTestLogs(lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "    log:\n")
+	for _, l := range lines {
+		fmt.Fprintf(os.Stdout, "      %s\n", l)
+	}
 }
 
 // runProperty runs a property test on generated inputs, each case in a
@@ -266,6 +286,8 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 	} else {
 		w = NewWorld()
 	}
+	// logs go to a buffer per test (std.md 6, decision 0057)
+	w.log = newTestLogSink()
 	done := make(chan testOutcome, 1)
 	go func() {
 		out := runInWorld(w, tc, seed)
@@ -276,15 +298,17 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 		}
 		done <- out
 	}()
+	var out testOutcome
 	select {
-	case out := <-done:
-		return out
+	case out = <-done:
 	case <-w.stuck:
 		f := w.DeadlockFault()
-		return testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
+		out = testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
 	case <-time.After(limit):
-		return testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
+		out = testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
 	}
+	out.logs = testLogLines(w)
+	return out
 }
 
 func runInWorld(w *World, tc TestCase, seed int64) (out testOutcome) {

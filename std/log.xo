@@ -19,3 +19,11 @@ enum Format {
   Text
   Json
 }
+
+/// One log record as captured in tests (std.md 6, 8.6). Field values are
+/// their text form.
+struct Record {
+  level: Level
+  msg: Str
+  fields: Map[Str, Str]
+}
