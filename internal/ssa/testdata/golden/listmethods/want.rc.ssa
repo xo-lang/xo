@@ -1,0 +1,282 @@
+type Str? = enum { None | Some(v: Str) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Str] = call list.new
+  v2: Str = const "ab"
+  retain v2
+  v4: List[Str] = call list.push, v1, v2
+  v5: Str = const "abcd"
+  retain v5
+  v7: List[Str] = call list.push, v4, v5
+  v8: Str = const "abc"
+  retain v8
+  v10: List[Str] = call list.push, v7, v8
+  v11: (Int, Str) = call longest, v10
+  v12: Int = field 0, v11
+  v13: Str = field 1, v11
+  v14: Stdio = cap stdio, v0
+  v15: Str = const "longest "
+  retain v15
+  v17: Str = call str.concat_int, v15, v12
+  v18: Str = const " "
+  v19: Str = call str.concat, v17, v18
+  v20: Str = call str.concat, v19, v13
+  v21: Str = field 1, v11
+  release v21
+  v23: Str = const " first "
+  v24: Str = call str.concat, v20, v23
+  v25: Int = const 0
+  v26: Str? = call list.get, v10, v25
+  retain v26
+  v28: Int = tag v26
+  v29: Int = const 1
+  v30: Bool = eq v28, v29
+  br v30, b2(), b3()
+b1(v32: Str):  ; preds b2, b3
+  v33: Str = call str.concat, v24, v32
+  release v32
+  v35: Str = const " last "
+  v36: Str = call str.concat, v33, v35
+  v37: Int = call list.len, v10
+  v38: Int = const 1
+  v39: Int = sub v37, v38
+  v40: Str? = call list.get, v10, v39
+  retain v40
+  release v10
+  v43: Int = tag v40
+  v44: Int = const 1
+  v45: Bool = eq v43, v44
+  br v45, b5(), b6()
+b2:  ; preds b0
+  v47: Str = payload 1.0, v26
+  retain v47
+  release v26
+  jump b1(v47)
+b3:  ; preds b0
+  release v26
+  v52: Str = const "-"
+  retain v52
+  jump b1(v52)
+b4(v55: Str):  ; preds b5, b6
+  v56: Str = call str.concat, v36, v55
+  release v55
+  v58: () = call Stdio.println, v14, v56
+  release v56
+  v60: List[Str] = call list.new
+  v61: Stdio = cap stdio, v0
+  v62: Str = const "empty "
+  v63: Int = const 0
+  v64: Str? = call list.get, v60, v63
+  retain v64
+  v66: Int = tag v64
+  v67: Int = const 1
+  v68: Bool = eq v66, v67
+  br v68, b8(), b9()
+b5:  ; preds b1
+  v70: Str = payload 1.0, v40
+  retain v70
+  release v40
+  jump b4(v70)
+b6:  ; preds b1
+  release v40
+  v75: Str = const "-"
+  retain v75
+  jump b4(v75)
+b7(v78: Str):  ; preds b8, b9
+  retain v62
+  v80: Str = call str.concat, v62, v78
+  release v78
+  v82: Str = const " "
+  v83: Str = call str.concat, v80, v82
+  v84: Int = call list.len, v60
+  v85: Int = const 1
+  v86: Int = sub v84, v85
+  v87: Str? = call list.get, v60, v86
+  retain v87
+  v89: Int = tag v87
+  v90: Int = const 1
+  v91: Bool = eq v89, v90
+  br v91, b11(), b12()
+b8:  ; preds b4
+  v93: Str = payload 1.0, v64
+  retain v93
+  release v64
+  jump b7(v93)
+b9:  ; preds b4
+  release v64
+  v98: Str = const "-"
+  retain v98
+  jump b7(v98)
+b10(v101: Str):  ; preds b11, b12
+  v102: Str = call str.concat, v83, v101
+  release v101
+  v104: Str = const " "
+  v105: Str = call str.concat, v102, v104
+  v106: (Int, Str) = call longest, v60
+  v107: Str = field 1, v106
+  release v107
+  release v60
+  v110: Int = field 0, v106
+  v111: Str = call str.concat_int, v105, v110
+  v112: () = call Stdio.println, v61, v111
+  release v111
+  v114: Stdio = cap stdio, v0
+  v115: List[List[Str]] = call list.new
+  v116: List[Str] = call list.new
+  v117: Str = const "a"
+  retain v117
+  v119: List[Str] = call list.push, v116, v117
+  v120: Str = const "b"
+  retain v120
+  v122: List[Str] = call list.push, v119, v120
+  v123: List[List[Str]] = call list.push, v115, v122
+  v124: List[Str] = call list.new
+  v125: List[List[Str]] = call list.push, v123, v124
+  v126: List[Str] = call list.new
+  v127: Str = const "c"
+  retain v127
+  v129: List[Str] = call list.push, v126, v127
+  v130: List[List[Str]] = call list.push, v125, v129
+  v131: Str = call ends, v130
+  release v130
+  v133: () = call Stdio.println, v114, v131
+  release v131
+  ret v133
+b11:  ; preds b7
+  v136: Str = payload 1.0, v87
+  retain v136
+  release v87
+  jump b10(v136)
+b12:  ; preds b7
+  release v87
+  v141: Str = const "-"
+  retain v141
+  jump b10(v141)
+}
+
+func longest(borrow v0: List[Str]) -> (Int, Str) {
+b0(v0: List[Str]):
+  v1: Int = const 1
+  v2: Int = neg v1 @ main.xo:5:15
+  v3: Str = const ""
+  retain v3
+  v5: (Int, Str) = tuple v2, v3
+  v6: Int = call list.len, v0
+  v7: Int = const 0
+  jump b1(v7, v5)
+b1(v9: Int, v10: (Int, Str)):  ; preds b0, b3
+  v11: Bool = lt v9, v6
+  br v11, b2(), b4()
+b2:  ; preds b1
+  v13: Str = call list.index, v0, v9
+  retain v13
+  v15: (Int, Str) = tuple v9, v13
+  v16: Int = field 0, v15
+  v17: Str = field 1, v15
+  v18: Int = call Str.len, v17
+  v19: Str = field 1, v10
+  v20: Int = call Str.len, v19
+  v21: Bool = gt v18, v20
+  br v21, b6(), b7()
+b3:  ; preds b5
+  v23: Int = const 1
+  v24: Int = add v9, v23
+  jump b1(v24, v27)
+b4:  ; preds b1
+  ret v10
+b5(v27: (Int, Str)):  ; preds b6, b7
+  v28: () = tuple
+  jump b3()
+b6:  ; preds b2
+  v30: Str = field 1, v10
+  release v30
+  v32: (Int, Str) = tuple v16, v17
+  v33: () = tuple
+  jump b5(v32)
+b7:  ; preds b2
+  v35: Str = field 1, v15
+  release v35
+  v37: () = tuple
+  jump b5(v10)
+}
+
+func ends(borrow v0: List[List[Str]]) -> Str {
+b0(v0: List[List[Str]]):
+  v1: Str = const ""
+  v2: Int = call list.len, v0
+  v3: Int = const 0
+  retain v1
+  jump b1(v3, v1)
+b1(v6: Int, v7: Str):  ; preds b0, b3
+  v8: Bool = lt v6, v2
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: List[Str] = call list.index, v0, v6
+  retain v10
+  v12: (Int, List[Str]) = tuple v6, v10
+  v13: Int = field 0, v12
+  v14: List[Str] = field 1, v12
+  v15: Int = const 0
+  v16: Str? = call list.get, v14, v15
+  retain v16
+  v18: Int = tag v16
+  v19: Int = const 1
+  v20: Bool = eq v18, v19
+  br v20, b7(), b6()
+b3:  ; preds b8
+  v22: Int = const 1
+  v23: Int = add v6, v22
+  jump b1(v23, v60)
+b4:  ; preds b1
+  ret v7
+b5(v26: Str):  ; preds b7, b6
+  v27: () = tuple
+  v28: Str = const "-"
+  v29: Str = call str.concat, v26, v28
+  v30: Int = call list.len, v14
+  v31: Int = const 1
+  v32: Int = sub v30, v31
+  v33: Str? = call list.get, v14, v32
+  retain v33
+  v35: List[Str] = field 1, v12
+  release v35
+  v37: Int = tag v33
+  v38: Int = const 1
+  v39: Bool = eq v37, v38
+  br v39, b9(), b10()
+b6:  ; preds b2
+  release v16
+  v42: () = tuple
+  jump b5(v7)
+b7:  ; preds b2
+  v44: Str = payload 1.0, v16
+  retain v44
+  release v16
+  v47: Str = call str.of_int, v13
+  v48: Str = const ":"
+  v49: Str = call str.concat, v47, v48
+  v50: Str = call str.concat, v49, v44
+  release v44
+  v52: Str = call str.concat, v7, v50
+  release v50
+  v54: () = tuple
+  jump b5(v52)
+b8(v56: Str):  ; preds b9, b10
+  v57: Str = call str.concat, v29, v56
+  release v56
+  v59: Str = const " "
+  v60: Str = call str.concat, v57, v59
+  v61: () = tuple
+  jump b3()
+b9:  ; preds b5
+  v63: Str = payload 1.0, v33
+  retain v63
+  release v33
+  jump b8(v63)
+b10:  ; preds b5
+  release v33
+  v68: Str = const "none"
+  retain v68
+  jump b8(v68)
+}

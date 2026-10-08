@@ -1,0 +1,32 @@
+// `first`, `last`, and `for (i, x) in xs.indexed()` over lists of
+// strings and lists, and the `if let x = opt` shorthand: elements read
+// out of a list are borrowed, and kept ones are retained.
+fn longest(xs: List[Str]) -> (Int, Str) {
+  var best = (-1, "")
+  for (i, s) in xs.indexed() {
+    if s.len() > best.1.len() {
+      best = (i, s)
+    }
+  }
+  best
+}
+
+fn ends(xss: List[List[Str]]) -> Str {
+  var out = ""
+  for (i, xs) in xss.indexed() {
+    if let f = xs.first() {
+      out = out + "${i}:${f}"
+    }
+    out = out + "-" + (xs.last() ?? "none") + " "
+  }
+  out
+}
+
+fn main(os: Os) {
+  let words = ["ab", "abcd", "abc"]
+  let (i, w) = longest(words)
+  os.stdio.println("longest ${i} ${w} first ${words.first() ?? "-"} last ${words.last() ?? "-"}")
+  let empty: List[Str] = []
+  os.stdio.println("empty ${empty.first() ?? "-"} ${empty.last() ?? "-"} ${longest(empty).0}")
+  os.stdio.println(ends([["a", "b"], [], ["c"]]))
+}

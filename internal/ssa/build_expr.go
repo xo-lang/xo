@@ -382,6 +382,15 @@ func (s *fn) ifExpr(x *ast.IfExpr) *Value {
 	} else {
 		v := s.value(x.Value)
 		elseB = s.newBlock()
+		// `if let e = opt` is shorthand for `if let Some(e) = opt`
+		if bp, ok := x.Pattern.(*ast.BindPat); ok && v.Type.Kind == KEnum {
+			some := v.Type.VariantIndex("Some")
+			if vo := s.b.info.VarOf(bp.Name); vo != nil && some >= 0 && s.b.typ(vo.Type, bp) != v.Type {
+				m := s.b.mod
+				s.test(s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, m.Builtin(KInt), nil, v), s.cint(int64(some))), elseB)
+				v = s.add(OpPayload, v.Type.Variants[some].Fields[0].Type, PayloadRef{some, 0}, v)
+			}
+		}
 		s.pattern(v, x.Pattern, elseB)
 		s.seal(elseB)
 	}

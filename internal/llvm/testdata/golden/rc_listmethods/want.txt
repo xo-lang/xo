@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+longest 1 abcd first ab last abc
+empty - - -1
+0:a-b -none 2:c-c 
+--- stderr

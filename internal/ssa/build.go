@@ -63,7 +63,8 @@ type builder struct {
 // is_empty, failing functions (a Result return, `Ok`, `Err`, `?` on
 // Result with `from` conversion and on Option, the Result methods,
 // `or_fault`), `==` and `!=` on every type (structural), `is`, and local
-// `const`. Not yet: generics, closures.
+// `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
+// `if let x = opt` shorthand. Not yet: generics, closures.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }

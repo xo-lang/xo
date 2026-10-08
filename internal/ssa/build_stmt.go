@@ -124,8 +124,18 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	}
 	idx := &check.VarObj{Name: "$i"}
 	var hi, list *Value
+	var pairT *Type // `xs.indexed()`: the (Int, T) element type
 	inclusive := false
-	if r, ok := x.Iter.(*ast.RangeExpr); ok && r.Lo != nil && r.Hi != nil {
+	if recv := s.indexedRecv(x.Iter); recv != nil {
+		list = s.value(recv)
+		if list.Type.Kind != KList {
+			b.unsupported(x.Iter, "this `for` iteration")
+			return
+		}
+		pairT = b.mod.Tuple(intT, list.Type.Elems[0])
+		hi = s.call("list.len", intT, "", list)
+		s.writeVar(idx, s.cint(0))
+	} else if r, ok := x.Iter.(*ast.RangeExpr); ok && r.Lo != nil && r.Hi != nil {
 		s.writeVar(idx, s.valueAs(r.Lo, intT))
 		hi = s.valueAs(r.Hi, intT)
 		inclusive = r.Inclusive
@@ -152,7 +162,11 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	s.cur = body
 	var elem *Value
 	if list != nil {
-		elem = s.call("list.index", list.Type.Elems[0], "", list, s.read(idx))
+		i := s.read(idx)
+		elem = s.call("list.index", list.Type.Elems[0], "", list, i)
+		if pairT != nil {
+			elem = s.add(OpTuple, pairT, nil, i, elem)
+		}
 	} else {
 		elem = s.read(idx)
 	}
@@ -184,6 +198,20 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	s.seal(head)
 	s.seal(exit)
 	s.cur = exit
+}
+
+// indexedRecv returns xs of a `for` iterator `xs.indexed()` on a List,
+// or nil.
+func (s *fn) indexedRecv(e ast.Expr) ast.Expr {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	ci := s.b.info.CallOf(call)
+	if ci == nil || ci.Fn == nil || ci.Recv == nil || !ci.Fn.Module.IsPrelude || ci.Fn.Name != "indexed" || ci.Fn.Recv == nil || ci.Fn.Recv.Name != "List" {
+		return nil
+	}
+	return ci.Recv
 }
 
 // place is an assignable location: its current value and how to store a

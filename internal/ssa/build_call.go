@@ -387,6 +387,12 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			return s.add(OpEq, boolT, nil, s.call("list.len", intT, "", l), s.cint(0))
 		case "get":
 			return s.call("list.get", nt, "", l, s.valueAs(x.Args[0].Value, intT))
+		case "first":
+			return s.call("list.get", nt, "", l, s.cint(0))
+		case "last":
+			// an empty list asks for -1, which list.get answers with None
+			n := s.call("list.len", intT, "", l)
+			return s.call("list.get", nt, "", l, s.add(OpSub, intT, nil, n, s.cint(1)))
 		}
 	case "Option", "Result":
 		o := s.expr(ci.Recv)
