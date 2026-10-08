@@ -165,3 +165,64 @@ func (g *gen) loadCall(b *strings.Builder, sym, base string, off, n int) {
 	}
 	fmt.Fprintf(b, "\tbl %s\n", sym)
 }
+
+// retainFunc retains a function value inline (ws: code, environment):
+// the environment's count goes up by one when there is an environment.
+func (s *fstate) retainFunc(ws []vreg) {
+	if ws[1] == 0 {
+		return // no captures: nothing counted
+	}
+	env := ws[1]
+	before := s.m()
+	has := s.newBlock(false)
+	cont := s.newBlock(false)
+	s.add(&inst{kind: iCondBr, cond: "cbnz", uses: []vreg{env}, targets: []*mblock{has, cont}})
+	s.cur = has
+	s.inc(env)
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	s.cur = cont
+	s.inherit(before)
+	s.clobber()
+}
+
+// releaseFunc releases a function value inline: when there is an
+// environment, its count goes down by one, and at one the environment
+// goes to xo_rc_defer with its drop function (out of line, cold).
+func (s *fstate) releaseFunc(ws []vreg) {
+	if ws[1] == 0 {
+		return
+	}
+	env := ws[1]
+	before := s.m()
+	has := s.newBlock(false)
+	br := s.add(&inst{kind: iCondBr, cond: "cbnz", uses: []vreg{env}, targets: []*mblock{has, nil}})
+	s.cur = has
+	cont := s.decOrDefer(env, func() src {
+		return rsrc(s.def1(false, "ldr $d0, [$u0, #8]", env))
+	})
+	br.targets[1] = cont
+	s.cur = cont
+	s.inherit(before)
+	s.clobber()
+}
+
+// decOrDefer ends the current block with the inline release of the
+// counted cell p: when its count is one the cell goes to xo_rc_defer
+// with the drop function drop() (a cold block), else the count goes
+// down by one. It returns the block both paths continue at (created
+// after the decrement, so the hot path falls through).
+func (s *fstate) decOrDefer(p vreg, drop func() src) *mblock {
+	c := s.def1(false, "ldr $d0, [$u0]", p)
+	free := s.newBlock(true)
+	dec := s.newBlock(false)
+	cont := s.newBlock(false)
+	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "eq", targets: []*mblock{free, dec}})
+	s.cur = dec
+	c1 := s.def1(false, "sub $d0, $u0, #1", c)
+	s.store("str $u0, [$u1]", c1, p)
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	s.cur = free
+	s.rt("xo_rc_defer", []src{rsrc(p), drop()})
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
+	return cont
+}

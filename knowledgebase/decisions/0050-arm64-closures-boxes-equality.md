@@ -53,10 +53,17 @@ The LLVM backend lowers all of them (`internal/llvm/fromssa.go`).
 - Retaining a closure or a box calls its helper instead of an inline
   increment (a call per retain); equality of small structs calls a
   helper. Neither is on the bench programs' paths (timings unchanged,
-  `bench/results/arm64-native-2026-10-08.md`).
-- A recursive struct first met as its Option is not boxed by the SSA
-  builder and is rejected by both native backends
-  (`gotchas/ssa-option-first-recursive-type.md`).
+  `bench/results/arm64-native-2026-10-08.md`). Update 2026-10-08:
+  closure and box retains and releases are now inline (load, add or
+  subtract, store; a release calls `xo_rc_defer` from a cold block only
+  when the count is one; a closure tests its environment for null
+  first), at the call site and for the leaves inside the aggregate
+  helpers. Counts stay non atomic. A box walk loop runs 0.66x and a
+  closure call loop 0.59x of their previous time (same bench note).
+- A recursive struct first met as its Option was not boxed by the SSA
+  builder and was rejected by both native backends
+  (`gotchas/ssa-option-first-recursive-type.md`); resolved by decision
+  0051.
 
 ## Alternatives
 - **Indirect call through x16**: x16 is the parallel move cycle scratch
