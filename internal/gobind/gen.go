@@ -522,21 +522,23 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	}
 	xo += " uses fx"
 	rt := "func(" + strings.Join(append([]string{"*Task"}, rps...), ", ") + ") Result[" + rres + ", Never]"
-	// Go may call the callback on another goroutine, during or after the
-	// call that passed it (sync.WaitGroup.Go, a timer): it runs with
-	// rt.GoCallbackTask(tk), which never carries the request's arena
-	// (one goroutine per arena, decision 0066).
+	// Go may call the callback on the passing task's goroutine during a Go
+	// call (strings.Map) or on another goroutine, during or after the call
+	// that passed it (sync.WaitGroup.Go, a timer): rt.GoCallback decides
+	// per call which task it runs with, the passing task (without the
+	// request's arena, decision 0066) or a task of its own (decision 0067).
 	return conv{xo: xo, rt: rt, gt: gt, toGo: func(e string) string {
 		args := []string{"ctk"}
 		for i, pc := range pcs {
 			args = append(args, pc.toXo(fmt.Sprintf("b%d", i)))
 		}
 		call := e + "(" + strings.Join(args, ", ") + ")"
-		fn := "func(" + strings.Join(gps, ", ") + ") { " + call + " }"
+		const begin = "ctk := cb.Begin(); defer cb.End(ctk); "
+		fn := "func(" + strings.Join(gps, ", ") + ") { " + begin + call + " }"
 		if rc != nil {
-			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { return " + rc.toGo(call+".V") + " }"
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "return " + rc.toGo(call+".V") + " }"
 		}
-		return "func(ctk *Task) " + gt + " { return " + fn + " }(GoCallbackTask(tk))"
+		return "func(cb *GoCallback) " + gt + " { return " + fn + " }(NewGoCallback(tk))"
 	}}, nil
 }
 
@@ -688,7 +690,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	} else {
 		fmt.Fprintf(&a, "func %s%s(%s)%s {\n", g.b.Prefix, s.xoName, params, goRet)
 	}
-	fmt.Fprintf(&a, "\tdefer GoBoundary(%q)\n", s.display)
+	fmt.Fprintf(&a, "\tGoEnter(tk)\n\tdefer GoExit(tk, %q)\n", s.display)
 	call := s.goCall + "(" + strings.Join(args, ", ") + ")"
 	var lhs []string
 	for i := 0; i < nv; i++ {

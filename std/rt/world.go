@@ -120,7 +120,8 @@ func (w *World) helperLocked(f func()) {
 // schedIdleLocked is called by the scheduler when no thread is ready: it
 // ends a FakeClock.advance or fires the next timer and reports whether
 // that may have made a thread ready. With nothing left to fire while
-// threads are alive, every thread is blocked for good: a deadlock.
+// threads are alive and none is lent to a Go call, every thread is
+// blocked for good: a deadlock.
 func (w *World) schedIdleLocked() bool {
 	w.dropDeadLocked()
 	if w.adv != nil {
@@ -141,7 +142,10 @@ func (w *World) schedIdleLocked() bool {
 		w.fireNextLocked()
 		return true
 	}
-	if len(w.sch.threads) > 0 {
+	// a thread lent while in a Go call (gointerop.go) comes back when the
+	// call returns: not a deadlock (a Go call that never returns hangs,
+	// as it always did)
+	if len(w.sch.threads) > 0 && w.sch.lentN == 0 {
 		w.stuckOnce.Do(func() { close(w.stuck) })
 	}
 	return false

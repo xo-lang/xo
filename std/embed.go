@@ -14,9 +14,10 @@ import "embed"
 //go:embed *.xo
 var Files embed.FS
 
-// Runtime holds the Go source of package rt (std/rt/*.go).
+// Runtime holds the source of package rt: std/rt/*.go and the assembly
+// of curG (std/rt/*.s).
 //
-//go:embed rt/*.go
+//go:embed rt/*.go rt/*.s
 var Runtime embed.FS
 
 // LLRuntime holds the C runtime of the P3 LLVM backend prototype

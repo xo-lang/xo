@@ -82,7 +82,8 @@ import (
 //     scopes it opens (which run on the same goroutine) carry the arena;
 //     spawned tasks get none (Task.child), and an Xo function passed to Go
 //     as a callback, which Go may run on any goroutine, runs with a copy of
-//     the task without it (GoCallbackTask), so the bump allocators need no
+//     the task without it or a task of its own (GoCallback, decision
+//     0067), so the bump allocators need no
 //     locks. The free list is a channel, so a send by one request
 //     happens before the receive of the next request that reuses it.
 //

@@ -1,0 +1,28 @@
+use std/http
+
+test "a Go callback holds mutexes beside the test task" {
+  let a = Mutex[Hits].new(Hits{req: 0, cb: 0})
+  let b = Mutex[Int].new(0)
+  for _ in 0..20 {
+    work(a, b)
+  }
+  expect(a.with(fn(h) { h })) == Hits{req: 20, cb: 20}
+  expect(b.with(fn(n) { n })) == 40
+}
+
+test "a Go callback holds mutexes beside the request" {
+  let a = Mutex[Hits].new(Hits{req: 0, cb: 0})
+  let b = Mutex[Int].new(0)
+  let l = os.net.listen(":0")?
+  let srv = http.server(l, routes(a, b))
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    for _ in 0..10 {
+      let resp = c.get("http://${l.addr()}/work")?
+      expect(resp.status) == 200
+    }
+  }
+  expect(a.with(fn(h) { h })) == Hits{req: 10, cb: 10}
+  expect(b.with(fn(n) { n })) == 20
+}

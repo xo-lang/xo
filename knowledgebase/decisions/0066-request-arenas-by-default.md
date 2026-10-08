@@ -100,7 +100,9 @@ no Go callbacks, and it is not recorded).
   net/url return heap strings and that HTTP/1 writes copy the body
   synchronously; an HTTP/2 or custom transport would need its own check.
   A Go callback run on another goroutine still shares the request's
-  thread record and held mutex map, as before arenas.
+  thread record and held mutex map, as before arenas. (Update
+  2026-10-08: resolved by decision 0067; such a call is a task of its
+  own.)
 
 ## Alternatives
 

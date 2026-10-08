@@ -87,6 +87,12 @@ type thread struct {
 	// labeled: the goroutine carries the profiler label xo_thread=<id>
 	// (lazy call sites, see setWait); touched only by the thread itself
 	labeled bool
+
+	// inGo counts the Go calls (`use go` adapters) the thread is inside;
+	// lent: the scheduler took the turn from it while it was in one, for
+	// a Go callback thread (gointerop.go)
+	inGo atomic.Int32
+	lent atomic.Bool
 }
 
 func newRootThread(kind string) *thread {
@@ -291,6 +297,12 @@ type sched struct {
 	rec   *recorder
 	rp    *replayer
 	inbox []schedEv
+
+	// Go callbacks running on goroutines of Go's (gointerop.go): cbLive
+	// counts their threads, lentN the threads lent while in a Go call;
+	// both change under mu, cbLive is also read without it
+	cbLive atomic.Int32
+	lentN  int
 }
 
 func newSched(mu *sync.Mutex, w *World, seed int64) *sched {
@@ -490,6 +502,39 @@ func (s *sched) enter(th *thread) {
 	}
 	s.mu.Unlock()
 	<-th.turn
+}
+
+// startCallback adds the thread of a Go callback called on a goroutine of
+// Go's and waits for its turn (gointerop.go). A thread that holds the
+// turn while inside a Go call lends it: the Go code may be waiting for
+// this callback.
+func (s *sched) startCallback(th *thread) {
+	s.mu.Lock()
+	s.cbLive.Add(1)
+	if c := s.cur; c != nil && c.inGo.Load() > 0 {
+		s.lendLocked(c)
+	}
+	s.startLocked(th)
+	s.mu.Unlock()
+	<-th.turn
+}
+
+// endCallback removes the thread of a Go callback.
+func (s *sched) endCallback(th *thread) {
+	s.mu.Lock()
+	s.cbLive.Add(-1)
+	s.endLocked(th)
+	s.mu.Unlock()
+}
+
+// lendLocked takes the turn from c, which is inside a Go call: it runs on,
+// off the scheduler, until it leaves the call (goExit). The caller picks
+// the next thread.
+func (s *sched) lendLocked(c *thread) {
+	c.st = stOutside
+	c.lent.Store(true)
+	s.lentN++
+	s.cur = nil
 }
 
 // snapsLocked lists the blocked threads in creation order.

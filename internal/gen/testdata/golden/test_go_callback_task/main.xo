@@ -1,0 +1,50 @@
+// A Go callback that Go runs on a goroutine of its own
+// (sync.WaitGroup.Go) is a task of its own (decision 0067): its held
+// mutexes, cancellation, and blocking are its own, not those of the
+// request or test that passed it. Here the request holds `a` while the
+// callback runs and takes `b`, then waits for `a`; a callback sharing the
+// request's held mutex set saw `a` as held by itself (XO-F004) or raced on
+// the set.
+use std/http
+use go "sync" as gosync
+
+/// Hits counts the critical sections each side completed.
+pub struct Hits {
+  req: Int
+  cb: Int
+}
+
+/// work holds `a` while a Go callback takes `b` and then `a`, and takes
+/// `b` itself while the callback may hold it.
+fn work(a: Mutex[Hits], b: Mutex[Int]) {
+  let wg = gosync.WaitGroup.new()
+  a.with(fn(var h) {
+    wg.go_(fn() {
+      b.with(fn(var n) { n += 1 })
+      a.with(fn(var g) { g.cb += 1 })
+    })
+    b.with(fn(var n) { n += 1 })
+    h.req += 1
+  })
+  wg.wait()
+}
+
+/// routes serves `GET /work`, which runs `work` in the request task.
+fn routes(a: Mutex[Hits], b: Mutex[Int]) -> http.Router {
+  var r = http.router()
+  r.handle("GET /work", fn(req) {
+    work(a, b)
+    http.text(200, "ok")
+  })
+  r
+}
+
+fn main(os: Os) {
+  let a = Mutex[Hits].new(Hits{req: 0, cb: 0})
+  let b = Mutex[Int].new(0)
+  for _ in 0..50 {
+    work(a, b)
+  }
+  let h = a.with(fn(h) { h })
+  os.stdio.println("req ${h.req} cb ${h.cb} b ${b.with(fn(n) { n })}")
+}

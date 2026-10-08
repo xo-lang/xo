@@ -1108,8 +1108,11 @@ experiment of its work queue item 6. Results and coverage:
   (`.xo/` is in `.gitignore`; Go and the Xo module walk skip dot
   directories). A cached binding is reused unless its header has another
   `xo-bind: v<N>` (gobind.Version; 2 since 2026-10-08, when callbacks
-  started running with `rt.GoCallbackTask(tk)`, decision 0066) or another
-  module version than the pin. Pins: `require go <module> <version>` lines in xo.mod.
+  stopped carrying the request's arena, decision 0066; 3 since
+  2026-10-08, decision 0067: adapters call `GoEnter(tk)` and defer
+  `GoExit(tk, name)`, and callbacks go through `rt.NewGoCallback(tk)`
+  with `cb.Begin()`/`cb.End(ctk)` per call) or another module version
+  than the pin. Pins: `require go <module> <version>` lines in xo.mod.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and
   `Module.Go` holding the binding. XO1101 when binding fails, XO1102 when
@@ -1119,13 +1122,23 @@ experiment of its work queue item 6. Results and coverage:
   calls. `gen.Generate` adds `rt/xo_gobind_<path>.go` per binding and
   writes the workspace's `require` lines into the build `go.mod` and its
   `go.sum`. Runtime helpers: `std/rt/gointerop.go` (`Go_Error`,
-  `GoBoundary` panic to fault, `GoContext`, `GoListOf`/`GoSliceOf`/
-  `GoMapOf`/`GoMapToGo` copies, `GoCollect` for iterators).
+  `GoEnter`/`GoExit` around each Go call (panic to fault, `thread.inGo`),
+  `GoBoundary` for field accessors, `GoCallback` (a call on another
+  goroutine is a child task with its own thread, decision 0067),
+  `GoContext`, `GoListOf`/`GoSliceOf`/`GoMapOf`/`GoMapToGo` copies,
+  `GoCollect` for iterators). `curG` (goroutine identity) is assembly in
+  `std/rt/curg_amd64.s` and `curg_arm64.s` (the g register or TLS) with a
+  `runtime.Stack` fallback in `curg_other.go`; `std/embed.go` embeds
+  `rt/*.go rt/*.s`, so a new `.s` file in std/rt is copied into build
+  directories. Last verified: 2026-10-08.
 - Tests: `internal/gobind` (names, pins, mapping, cache staleness),
   `internal/check/rules_go_test.go`, `internal/gen/gobind_test.go`
   (`TestGoBindingSignatures`: 20 std packages, every declaration's Go
   signature as gen calls it equals the adapter's), goldens `go_*` and
-  `test_go_interop`, `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`.
+  `test_go_interop`, `test_go_callback_task` (`-explore 40`, also under
+  -race: a callback on Go's goroutine holds mutexes beside a test task and
+  a request), `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`,
+  `std/rt/gocallback_test.go`.
   The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the
   network or module cache and is skipped when `go mod download` fails. The
   golden and checker tests set `XO_GOBIND_DIR` to a temporary directory.

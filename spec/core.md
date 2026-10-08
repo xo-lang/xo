@@ -801,6 +801,11 @@ fn main(os: Os) ! {
   slices and maps are copied in and out; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
+- An Xo function passed to Go as a callback that Go calls during the Go call,
+  on the calling task's goroutine, runs as the calling task. A call from
+  another goroutine (`sync.WaitGroup.go_`, a timer) runs as a task of its own,
+  a child of the calling task (canceled with it), with its own held mutexes
+  (decision 0067).
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.

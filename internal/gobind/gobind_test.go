@@ -3,6 +3,7 @@ package gobind
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -86,15 +87,18 @@ func TestMapping(t *testing.T) {
 		t.Fatalf("Load = %+v, %v", l, err)
 	}
 	dp := declPath(dir, "os/exec")
-	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v2 ", "xo-bind: v1 ", 1)), 0o644)
+	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v"+strconv.Itoa(Version)+" ", "xo-bind: v1 ", 1)), 0o644)
 	if l, _ := Load("os/exec", Options{Dir: dir}); l != nil {
 		t.Error("stale binding loaded")
 	}
 
 	decl, sb, _ := bindDecl(t, "strings")
-	// a callback never runs with the request's arena (decision 0066)
-	if !strings.Contains(string(sb.Adapter), "}(GoCallbackTask(tk))") {
-		t.Error("callback adapter does not use GoCallbackTask(tk)")
+	// a callback never runs with the request's arena (decision 0066), and
+	// a call on another goroutine is a task of its own (decision 0067)
+	for _, want := range []string{"}(NewGoCallback(tk))", "ctk := cb.Begin(); defer cb.End(ctk); ", "\tGoEnter(tk)\n\tdefer GoExit(tk, "} {
+		if !strings.Contains(string(sb.Adapter), want) {
+			t.Errorf("adapter lacks %q", want)
+		}
 	}
 	for _, want := range []string{
 		"fn cut(s: Str, sep: Str) -> (Str, Str, Bool) uses go",

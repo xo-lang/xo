@@ -41,8 +41,11 @@ import (
 
 // Version is the format version of generated bindings. Cached bindings
 // written with another version are regenerated. 2 (2026-10-08, decision
-// 0066): callbacks run with rt.GoCallbackTask, never the request's arena.
-const Version = 2
+// 0066): callbacks run without the request's arena. 3 (2026-10-08,
+// decision 0067): adapters bracket the Go call with rt.GoEnter/GoExit and
+// callbacks go through rt.GoCallback, which runs a call on another
+// goroutine as a task of its own.
+const Version = 3
 
 // Binding is one bound Go package.
 type Binding struct {

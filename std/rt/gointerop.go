@@ -51,32 +51,194 @@ func (e Go_Error) XoEq(o any) bool {
 // XoHash hashes the error text.
 func (e Go_Error) XoHash() uint64 { return maphash.String(hashSeed, e.msg) ^ 0x67 }
 
-// GoCallbackTask is the task an Xo function passed to Go as a callback
-// runs with. Go may call it on another goroutine, while the request that
-// passed it still runs or after it ended (sync.WaitGroup.Go, a timer), so
-// it must not carry the request's arena: an arena is used by one goroutine
-// at a time (arena.go; decision 0066, hole 2). A request task gets a copy
-// without it; any other task is returned as is.
-func GoCallbackTask(tk *Task) *Task {
-	if tk == nil || tk.arena == nil {
-		return tk
-	}
-	return &Task{node: tk.node, shield: tk.shield, held: tk.held, w: tk.w, stop: tk.stop, th: tk.th}
+// GoCallback is an Xo function passed to Go as a callback (decision 0067).
+// The adapter (internal/gobind) makes one where the function crosses into
+// Go, on the goroutine of the task that passes it, and brackets every
+// call with Begin and End. Go may call it in two ways:
+//
+//   - On that goroutine, during a Go call of the task (strings.Map,
+//     sync.Once.Do): the task is suspended in Go, so the callback runs as
+//     the task, sharing its thread record, held mutexes, and cancellation,
+//     like a scope body. The request's arena is not shared: the callback
+//     may store what it makes in Go state that outlives the request
+//     (decision 0066, hole 2).
+//   - On another goroutine (sync.WaitGroup.Go, time.AfterFunc), while the
+//     task runs or after it ended: the call is a task of its own, a child
+//     of the passing task's cancellation node (canceled with it), on a
+//     thread of its own with its own held mutex set, counted by the
+//     deadlock monitor and taking turns under the deterministic
+//     scheduler. Before decision 0067 such a call shared the passing
+//     task's thread and held mutex set: a Mutex the task held looked held
+//     by the callback (a false XO-F004), two goroutines wrote one set, and
+//     both used one scheduler turn.
+//
+// The two are told apart by the goroutine (curG) and by whether the task
+// is inside a Go call (thread.inGo): a call on the task's goroutine while
+// it is not in a Go call cannot happen, and a call while it is in one
+// comes from Go code it called only if the goroutines match.
+type GoCallback struct {
+	own *Task   // the task that passed the callback
+	tk  *Task   // own, without the request's arena (the synchronous case)
+	g   uintptr // own's goroutine
 }
 
-// GoBoundary is deferred by every adapter: a Go panic becomes an Xo fault
-// located at the calling .xo line. A fault raised by an Xo callback that
-// the Go code called passes through unchanged.
+// NewGoCallback is called where an Xo function crosses into Go as a
+// callback, on the passing task's goroutine.
+func NewGoCallback(tk *Task) *GoCallback {
+	cb := &GoCallback{own: tk, tk: tk, g: curG()}
+	if tk != nil && tk.arena != nil {
+		cb.tk = &Task{node: tk.node, shield: tk.shield, held: tk.held, w: tk.w, stop: tk.stop, th: tk.th}
+	}
+	return cb
+}
+
+// Begin starts a call of the callback and returns the task it runs with;
+// the adapter defers End with it.
+func (cb *GoCallback) Begin() *Task {
+	o := cb.own
+	if o == nil || o.th == nil || o.node == nil {
+		return cb.tk
+	}
+	th := o.th
+	if th.inGo.Load() > 0 && curG() == cb.g {
+		// Go code the task called calls back: the task leaves the Go call
+		// for the duration (it takes the scheduler's turn back if it lent
+		// it) and enters it again at End
+		goExit(th)
+		return cb.tk
+	}
+	ctk := &Task{w: o.w, stop: o.stop, th: th.newChild("callback")}
+	ctk.node = newNodeOf(o.node, o.w, nodeTask, ctk)
+	cth := ctk.th
+	if cth.mon != nil {
+		cth.mon.started()
+	}
+	if s := cth.sch; s != nil {
+		s.startCallback(cth)
+	} else if o.w != nil {
+		o.w.taskStarted()
+	} else {
+		// drop the profiler label of the goroutine that started Go's
+		// goroutine: this thread sets its own when it first blocks
+		clearLabels()
+	}
+	return ctk
+}
+
+// End ends a call started by Begin. A call on another goroutine ends its
+// task: a cancellation unwind stops there (the callback returns zero
+// values to Go), a fault goes on into Go's goroutine as before. A
+// synchronous call re-enters the Go call; its panics go on to the
+// adapter's GoExit.
+func (cb *GoCallback) End(ctk *Task) {
+	if ctk == cb.tk {
+		if o := cb.own; o != nil && o.th != nil && o.node != nil {
+			goEnter(o.th)
+		}
+		return
+	}
+	r := recover()
+	ctk.node.detach()
+	th := ctk.th
+	th.mu.Lock()
+	th.done = true
+	th.mu.Unlock()
+	if th.mon != nil {
+		th.mon.ended()
+	}
+	if s := th.sch; s != nil {
+		s.endCallback(th)
+	} else if ctk.w != nil {
+		ctk.w.taskEnded()
+	}
+	if r != nil && !IsUnwind(r) {
+		panic(r)
+	}
+}
+
+// GoEnter is called by every adapter before its Go call; it defers
+// GoExit.
+func GoEnter(tk *Task) {
+	if tk != nil && tk.th != nil {
+		goEnter(tk.th)
+	}
+}
+
+// GoExit is deferred by every adapter that calls Go: the task leaves the
+// Go call, and a Go panic becomes an Xo fault located at the calling .xo
+// line. A fault or an unwind raised by an Xo callback that the Go code
+// called passes through unchanged.
+func GoExit(tk *Task, name string) {
+	r := recover()
+	if tk != nil && tk.th != nil {
+		goExit(tk.th)
+	}
+	if r == nil {
+		return
+	}
+	goRepanic(name, r)
+}
+
+// GoBoundary is deferred by adapters that only read or write a field of
+// a Go struct: a Go panic becomes an Xo fault, as in GoExit.
 func GoBoundary(name string) {
 	r := recover()
 	if r == nil {
 		return
 	}
+	goRepanic(name, r)
+}
+
+func goRepanic(name string, r any) {
 	switch r.(type) {
-	case *FaultErr, *arithFault:
+	case *FaultErr, *arithFault, cancelUnwind, *exitUnwind:
 		panic(r)
 	}
 	panic(newFault("", "", fmt.Sprintf("Go panic in %s: %v", name, r)))
+}
+
+// goEnter records that th entered a Go call. Under the deterministic
+// scheduler, while Go callback threads are alive, th gives its turn away:
+// Go code may wait for a callback (sync.WaitGroup.Wait), which needs the
+// turn to run.
+func goEnter(th *thread) {
+	s := th.sch
+	if s == nil {
+		th.inGo.Add(1)
+		return
+	}
+	s.mu.Lock()
+	th.inGo.Add(1)
+	if s.cbLive.Load() > 0 && s.cur == th {
+		s.lendLocked(th)
+		s.pickLocked()
+	}
+	s.mu.Unlock()
+}
+
+// goExit records that th left a Go call; a thread that lent its turn
+// waits to get one again.
+func goExit(th *thread) {
+	s := th.sch
+	if s == nil {
+		th.inGo.Add(-1)
+		return
+	}
+	s.mu.Lock()
+	th.inGo.Add(-1)
+	if !th.lent.Load() {
+		s.mu.Unlock()
+		return
+	}
+	th.lent.Store(false)
+	s.lentN--
+	th.st = stReady
+	s.ready = append(s.ready, th)
+	if s.cur == nil && !s.picking {
+		s.pickLocked()
+	}
+	s.mu.Unlock()
+	<-th.turn
 }
 
 // taskContext is the context.Context supplied to Go functions that take
