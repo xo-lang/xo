@@ -103,6 +103,36 @@ type mtable[K, V any] struct {
 	arr    atomic.Pointer[[]mentry[K, V]] // newest log array (len == cap)
 	idx    atomic.Pointer[mindex]         // own keys to newest own entry
 	keys   int                            // distinct keys in idx (owner only)
+	// The first log array header and the first index (up to 4 keys) live
+	// in the table, so a small map costs two allocations (table and log
+	// array) instead of five. Each is written once, before it is
+	// published through arr or idx, and never again (setArr, newIdx).
+	a0     []mentry[K, V]
+	ix0    mindex
+	slots0 [8]atomic.Int32
+}
+
+// setArr publishes a as t's newest log array. Only the owner calls it.
+func (t *mtable[K, V]) setArr(a []mentry[K, V]) {
+	if t.a0 == nil {
+		t.a0 = a
+		t.arr.Store(&t.a0)
+		return
+	}
+	// a fresh header, not &a: that would move a to the heap on both paths
+	p := new([]mentry[K, V])
+	*p = a
+	t.arr.Store(p)
+}
+
+// newIdx is newIndex, using the table's own slots the first time when
+// they are large enough. The caller publishes it.
+func (t *mtable[K, V]) newIdx(keys int) *mindex {
+	if t.ix0.slots == nil && 2*keys <= len(t.slots0) {
+		t.ix0 = mindex{slots: t.slots0[:], shift: 64 - 3}
+		return &t.ix0
+	}
+	return newIndex(keys)
 }
 
 // mindex is an open addressing index: a slot holds an own entry position
@@ -208,7 +238,7 @@ func (m *Map[K, V]) record(h uint64, k K, v V, del bool) {
 	t := m.t
 	ix := t.idx.Load()
 	if ix == nil {
-		ix = newIndex(4)
+		ix = t.newIdx(4)
 		t.idx.Store(ix)
 	}
 	pos, j := t.probe(m.es, ix, h, k)
@@ -259,7 +289,7 @@ func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del
 		a := make([]mentry[K, V], max(8, 2*cap(m.es)))
 		copy(a, m.es)
 		a[i] = e
-		t.arr.Store(&a)
+		t.setArr(a)
 		m.es = a[:i+1]
 	}
 	ix.slots[pos].Store(int32(i + 1))
@@ -271,7 +301,7 @@ func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del
 // grow doubles the index, publishing the new one; old readers keep the old
 // index, which still names every key of their views.
 func (t *mtable[K, V]) grow(es []mentry[K, V], ix *mindex) *mindex {
-	nx := newIndex(len(ix.slots))
+	nx := t.newIdx(len(ix.slots))
 	mask := uint64(len(nx.slots) - 1)
 	for i := range ix.slots {
 		v := ix.slots[i].Load()
@@ -297,7 +327,7 @@ func (m *Map[K, V]) flatten(extra int) {
 	}
 	t := &mtable[K, V]{}
 	a := make([]mentry[K, V], m.n+extra+8)
-	ix := newIndex(m.n + 1)
+	ix := t.newIdx(m.n + 1)
 	mask := uint64(len(ix.slots) - 1)
 	i := 0
 	m.each(func(e *mentry[K, V], v V) bool {
@@ -311,7 +341,7 @@ func (m *Map[K, V]) flatten(extra int) {
 		return true
 	})
 	t.keys = i
-	t.arr.Store(&a)
+	t.setArr(a)
 	t.idx.Store(ix)
 	t.used.Store(int64(i))
 	m.t, m.es = t, a[:i]
@@ -332,7 +362,7 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 	}
 	t := &mtable[K, V]{}
 	a := make([]mentry[K, V], m.n+extra+8)
-	nx := newIndex(m.n + 1)
+	nx := t.newIdx(m.n + 1)
 	mask := uint64(len(nx.slots) - 1)
 	i := 0
 	for _, v := range byOrg {
@@ -349,7 +379,7 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 		i++
 	}
 	t.keys = i
-	t.arr.Store(&a)
+	t.setArr(a)
 	t.idx.Store(nx)
 	t.used.Store(int64(i))
 	m.t, m.es = t, a[:i]
