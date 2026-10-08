@@ -200,16 +200,40 @@ func Dbg[T any](_ *Task, x T, src, loc string) T {
 }
 
 // Iface converts v to the interface type I. Values whose Go type already
-// implements I are converted directly; builtin values (Int, Str, List, ...)
-// are boxed in Dyn so they carry Display and Debug methods (core 2.10).
+// implements I are converted directly; values whose Go methods differ from
+// I's (a method that cannot fail where I's can) are wrapped in an adapter
+// registered with RegAdapter; builtin values (Int, Str, List, ...) are
+// boxed in Dyn so they carry Display and Debug methods (core 2.10).
 func Iface[I any](v any) I {
 	if i, ok := v.(I); ok {
 		return i
+	}
+	if fs := adapters[any((*I)(nil))]; fs != nil {
+		for _, f := range fs {
+			if a, ok := f(v); ok {
+				return a.(I)
+			}
+		}
 	}
 	if i, ok := any(Dyn{V: v}).(I); ok {
 		return i
 	}
 	panic(fmt.Sprintf("rt: %T does not implement the interface", v))
+}
+
+// adapters holds, per interface type I (keyed by a nil *I), constructors
+// that wrap a value in a generated adapter implementing I. Written only by
+// RegAdapter from the init of package main, so reads need no lock.
+var adapters = map[any][]func(any) (any, bool){}
+
+// RegAdapter registers f, which wraps a value whose Go type needs an
+// adapter to implement I (or reports false). Generic Go code converts a
+// type parameter to an interface with Iface, where the concrete type, and
+// so the adapter generated for it, is unknown; the generator registers
+// every adapter such a conversion can need (gen/adapt.go).
+func RegAdapter[I any](f func(v any) (I, bool)) {
+	k := any((*I)(nil))
+	adapters[k] = append(adapters[k], func(v any) (any, bool) { return f(v) })
 }
 
 // Dyn boxes a builtin value so it can be stored in an interface type such

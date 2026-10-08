@@ -3,8 +3,11 @@
 # workload REPS times (default 5), and print the best time of each side in
 # milliseconds with the ratio. Checksums must agree. Run from anywhere.
 #
-# MONO=1 also builds the Xo program with `xo build --mono` and adds a column
-# for it (and its ratio to Go). XOFLAGS adds flags to the default Xo build.
+# MONO=1 compares the two lowerings of generic code: the "Xo" column is
+# built with `--no-mono` (when the xo binary has it; older binaries, whose
+# default is the unspecialized lowering, build it with no flag) and the
+# "Xo --mono" column with `--mono` (the default since 2026-10-08).
+# XOFLAGS adds flags to the first Xo build.
 # Workloads: collection (putget get push update iter copymut branch) and
 # generic (sortint sortpt hof maxby iface); WORKLOADS selects some.
 set -eu
@@ -14,8 +17,12 @@ out=${PERF_OUT:-$(mktemp -d)}
 reps=${REPS:-5}
 mono=${MONO:-0}
 xo=${XO:-$root/.tools/bin/xo}
+nomono=""
+if [ "$mono" = 1 ] && "$xo" build --help 2>&1 | grep -q -- -no-mono; then
+	nomono=--no-mono
+fi
 # shellcheck disable=SC2086
-"$xo" build ${XOFLAGS:-} -o "$out/perf-xo" "$here/xo" >/dev/null
+"$xo" build $nomono ${XOFLAGS:-} -o "$out/perf-xo" "$here/xo" >/dev/null
 if [ "$mono" = 1 ]; then
 	"$xo" build --mono -o "$out/perf-xo-mono" "$here/xo" >/dev/null
 fi

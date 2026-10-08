@@ -1,0 +1,40 @@
+exit 1
+--- stdout
+--- FAIL: one past the loop bound faults (main.xo:56:1, seed 1)
+    fault: integer overflow: 11 + 9223372036854775797 does not fit Int at main.xo:59:9
+      x_testdata_golden_test_range_checks.T_1
+          main.xo:59
+--- FAIL: multiply by a constant faults (main.xo:64:1, seed 1)
+    fault: integer overflow: 3074457345618258603 * 3 does not fit Int at main.xo:66:10
+      x_testdata_golden_test_range_checks.T_2
+          main.xo:66
+--- FAIL: constant on the left faults in source order (main.xo:69:1, seed 1)
+    fault: integer overflow: 3 * -3074457345618258603 does not fit Int at main.xo:71:10
+      x_testdata_golden_test_range_checks.T_3
+          main.xo:71
+--- FAIL: adding a constant faults (main.xo:74:1, seed 1)
+    fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:77:10
+      x_testdata_golden_test_range_checks.T_4
+          main.xo:77
+--- FAIL: subtracting a constant faults (main.xo:80:1, seed 1)
+    fault: integer overflow: -9223372036854775808 - 1 does not fit Int at main.xo:82:10
+      x_testdata_golden_test_range_checks.T_5
+          main.xo:82
+--- FAIL: adding a negative constant faults (main.xo:85:1, seed 1)
+    fault: integer overflow: -9223372036854775808 + -1 does not fit Int at main.xo:87:10
+      x_testdata_golden_test_range_checks.T_6
+          main.xo:87
+--- FAIL: subtracting a negative constant faults (main.xo:90:1, seed 1)
+    fault: integer overflow: 9223372036854775807 - -1 does not fit Int at main.xo:92:10
+      x_testdata_golden_test_range_checks.T_7
+          main.xo:92
+--- FAIL: dividing by -1 faults (main.xo:95:1, seed 1)
+    fault: integer overflow: -9223372036854775808 / -1 does not fit Int at main.xo:97:10
+      x_testdata_golden_test_range_checks.T_8
+          main.xo:97
+--- FAIL: an index past the length faults (main.xo:100:1, seed 1)
+    fault: index 3 out of range for List of length 3 at main.xo:104:10
+      x_testdata_golden_test_range_checks.T_9
+          main.xo:104
+FAIL: 1 passed, 9 failed, 0 skipped
+--- stderr

@@ -73,8 +73,8 @@ func stableStderr(s string) string {
 // its .xo position), as printed by the test runner and crash reports.
 var goFrameRE = regexp.MustCompile(`(?m)^ +x_[^ \n]+\n +[^ \n]+\.xo:\d+\n`)
 
-// dropGoFrames removes the Go frame lists of fault stacks. Under --mono
-// they legitimately differ: specialized copies have their own Go names
+// dropGoFrames removes the Go frame lists of fault stacks. With and
+// without --no-mono they legitimately differ: specialized copies have their own Go names
 // (`F_max__int64`) and inlined closure literals have no frame. Fault
 // messages, locations, and Xo error frames ("  at ...") are kept.
 func dropGoFrames(s string) string { return goFrameRE.ReplaceAllString(s, "") }
@@ -123,23 +123,26 @@ func buildAndRunOpts(t *testing.T, dir string, opts build.Options, extra ...stri
 	return runResult{exit: code, stdout: stdout.String(), stderr: stderr.String()}, res
 }
 
-// TestGolden builds and runs every program under testdata/golden and
+// TestGolden builds and runs every program under testdata/golden with the
+// default lowering (specialized generics, inlined closure literals) and
 // compares exit status, stdout, and the stable lines of stderr with
-// want.txt. Programs with test blocks are run with `xo test` semantics
-// when the directory name starts with "test_".
-func TestGolden(t *testing.T) { testGolden(t, false) }
-
-// TestGoldenMono builds every golden program with `--mono` (specialized
-// generics, inlined closure literals) and compares with the same want.txt:
-// the two lowerings must not differ in behavior.
-func TestGoldenMono(t *testing.T) {
+// want.txt, apart from the Go frame lists of fault stacks (dropGoFrames).
+// Programs with test blocks are run with `xo test` semantics when the
+// directory name starts with "test_".
+func TestGolden(t *testing.T) {
 	if *updateGolden {
-		t.Skip("want.txt is written by TestGolden")
+		t.Skip("want.txt is written by TestGoldenNoMono")
 	}
-	testGolden(t, true)
+	testGolden(t, false)
 }
 
-func testGolden(t *testing.T, mono bool) {
+// TestGoldenNoMono builds every golden program with `--no-mono` (one Go
+// generic function per Xo generic function) and compares with want.txt
+// exactly, Go frames included; -golden-update writes want.txt from this
+// lowering. The two lowerings must not differ in behavior.
+func TestGoldenNoMono(t *testing.T) { testGolden(t, true) }
+
+func testGolden(t *testing.T, noMono bool) {
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil {
 		t.Fatal(err)
@@ -155,10 +158,10 @@ func testGolden(t *testing.T, mono bool) {
 			if strings.HasPrefix(filepath.Base(dir), "test_") {
 				mode = gen.Test
 			}
-			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, Mono: mono})
+			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, NoMono: noMono})
 			got.stderr = stableStderr(got.stderr)
 			wantPath := filepath.Join(dir, "want.txt")
-			if *updateGolden {
+			if *updateGolden && noMono {
 				if err := os.WriteFile(wantPath, []byte(got.String()), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -169,7 +172,7 @@ func testGolden(t *testing.T, mono bool) {
 				t.Fatalf("missing want.txt (run with -golden-update): %v", err)
 			}
 			gs, ws := got.String(), string(want)
-			if mono {
+			if !noMono {
 				gs, ws = dropGoFrames(gs), dropGoFrames(ws)
 			}
 			if gs != ws {

@@ -281,7 +281,7 @@ func (pg *pkgGen) ifaceAdapter(from, to check.Type) string {
 		if m == nil {
 			return ""
 		}
-		if m.Iface {
+		if m.Iface && !pg.g.isInterface(from) {
 			return ""
 		}
 		if pg.methodSig(m, ms) != pg.methodSig(im, isub) || !methodIsGoMethod(m) {
@@ -442,6 +442,7 @@ func (pg *pkgGen) genTest(td *ast.TestDecl) {
 		name := fg.declName(p)
 		ps = append(ps, name+" "+pg.goType(p.Type))
 	}
+	fg.analyzeRanges(td.Body, nil, nil)
 	body := fg.capture(func() { fg.topBlock(td.Body) })
 	idx := len(pg.tests)
 	name := fmt.Sprintf("T_%d", idx)

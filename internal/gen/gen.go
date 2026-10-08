@@ -49,10 +49,16 @@ type Options struct {
 	// LineRoot is the directory //line paths are made relative to; empty
 	// means each module's xo.mod root (or the working directory).
 	LineRoot string
-	// Mono specializes generic functions per concrete instantiation and
-	// inlines closure literals passed to List higher order methods
-	// (mono.go, `xo build --mono`).
-	Mono bool
+	// NoMono turns off monomorphization (mono.go, `xo build --no-mono`):
+	// by default generic functions are specialized per concrete
+	// instantiation and closure literals passed to List higher order
+	// methods are inlined; with NoMono each generic function is one Go
+	// generic function, which is also the fallback for recursion through
+	// type parameters and past the instantiation cap.
+	NoMono bool
+	// NoRanges turns off the range analysis of Int operations (ranges.go):
+	// every operation is checked. Used by tests that compare the two.
+	NoRanges bool
 }
 
 // Program is the generated Go source of one Xo program: file paths
@@ -61,7 +67,7 @@ type Program struct {
 	Files map[string][]byte
 	// MainModule is the Xo module whose `main` the program runs (Build).
 	MainModule string
-	// Specs counts the specialized copies of generic functions (Mono).
+	// Specs counts the specialized copies of generic functions.
 	Specs int
 }
 
@@ -92,6 +98,7 @@ type gen struct {
 	modRoot map[string]string // module dir -> xo.mod root dir
 	prelude *check.Module
 	boxed   map[*check.FieldObj]bool
+	ad      adaptState // interface adapters for generic code (adapt.go)
 }
 
 // Generate lowers the modules of a check result. roots are the modules
@@ -100,6 +107,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	info := res.Info()
 	g := &gen{info: info, opts: opts, roots: res.Modules, pkgs: map[*check.Module]*pkgGen{}, modRoot: map[string]string{}, prelude: info.Prelude()}
 	prog := &Program{Files: map[string][]byte{}}
+	g.initAdapt()
 	var mainMod *check.Module
 	for _, m := range info.AllModules() {
 		if m.IsStd {
@@ -120,7 +128,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 			}
 		}
 	}
-	if opts.Mono {
+	if !opts.NoMono {
 		g.drainSpecs()
 	}
 	if len(g.errs) > 0 {
@@ -154,6 +162,11 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		return nil, err
 	}
 	prog.Files["main.go"] = mainSrc
+	adaptSrc, err := g.adaptFile()
+	if err != nil {
+		return nil, err
+	}
+	prog.Files["xo_adapt.go"] = adaptSrc
 	prog.Files["go.mod"] = []byte("module " + ModulePath + "\n\ngo 1.26\n")
 	return prog, nil
 }
@@ -198,6 +211,10 @@ type pkgGen struct {
 	inRT bool
 	// ms is the specialization state (mono.go).
 	ms monoState
+	// noMono turns specialization off for this package (generated
+	// adapters in package main); noAdapt keeps it from recording types
+	// for the adapter registry (adapt.go).
+	noMono, noAdapt bool
 }
 
 func pkgIdent(path string) string {
@@ -422,6 +439,7 @@ func (pg *pkgGen) goType(t check.Type) string {
 	case *check.Func:
 		return pg.funcType(x)
 	case *check.Named:
+		pg.noteType(x)
 		return pg.namedType(x)
 	}
 	return "any"

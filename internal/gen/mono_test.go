@@ -21,7 +21,7 @@ func generateMono(t *testing.T, src string) *gen.Program {
 	if err != nil || !ok {
 		t.Fatalf("check: %v %v", err, res.Diagnostics)
 	}
-	prog, err := gen.Generate(res, gen.Options{Mode: gen.Build, Mono: true})
+	prog, err := gen.Generate(res, gen.Options{Mode: gen.Build})
 	if err != nil {
 		t.Fatal(err)
 	}

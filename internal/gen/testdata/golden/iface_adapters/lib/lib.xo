@@ -1,0 +1,18 @@
+// Interface conversions whose concrete type needs an adapter (a method
+// that cannot fail where the interface's can), from generic code in
+// another module than the concrete type.
+
+pub interface Named {
+  fn name(self) -> Str ! Error
+}
+
+pub struct Tag {
+  pub t: Str
+}
+
+pub fn (t: Tag) name() -> Str { "tag:" + t.t }
+
+pub fn label[T: Named](x: T) -> Str ! Error {
+  let n: Named = x
+  "<" + n.name()? + ">"
+}

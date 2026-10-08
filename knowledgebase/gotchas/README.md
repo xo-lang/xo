@@ -38,6 +38,10 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [map-copy-claims-log.md](map-copy-claims-log.md): Map copies share one entry log; the first write claims it, other copies fork; why transient trie nodes were unsound in Go.
 - [scope-send-hangs-run.md](scope-send-hangs-run.md): a task blocked on a send that is received only after its scope hangs `xo run` silently.
 - [mono-fault-go-frames.md](mono-fault-go-frames.md): under `--mono` fault stacks name specialized copies and lack inlined closure frames; messages and locations are unchanged.
-- [generic-constraint-no-adapter.md](generic-constraint-no-adapter.md): a fallible constraint method on a type whose method cannot fail faults with "does not implement the interface".
+- [generic-constraint-no-adapter.md](generic-constraint-no-adapter.md): a fallible constraint method on a type whose method cannot fail faulted with "does not implement the interface" (fixed: adapters in copies, an adapter registry for generic code).
 - [xo-test-writes-regressions.md](xo-test-writes-regressions.md): `xo test` writes regressions_test.xo into the tested module; test protected solutions from a copy.
-- [checked-arith-inline-budget.md](checked-arith-inline-budget.md): generic rt arithmetic and out of line fault calls keep checked code from inlining.
+- [checked-arith-inline-budget.md](checked-arith-inline-budget.md): generic rt arithmetic and out of line fault calls kept checked code from inlining (fixed: panic valued faults, constant forms, range analysis).
+- [panic-valued-fault-stack.md](panic-valued-fault-stack.md): a fault raised as a plain panic value must become a `*FaultErr` at the first recover, or its stack lists the wrong frames.
+- [range-over-func-loop-cost.md](range-over-func-loop-cost.md): `for i in a..b` through `rt.Range.All()` cost a closure call per iteration and an extra fault frame; range literals are counted loops.
+- [build-dir-shared-across-xo-versions.md](build-dir-shared-across-xo-versions.md): older xo binaries failed on build directories a newer xo wrote; the build hash carries a layout tag.
+- [bench-host-timing-drift.md](bench-host-timing-drift.md): host clock drift moves benchmark times by up to 10 percent; interleave before and after runs.

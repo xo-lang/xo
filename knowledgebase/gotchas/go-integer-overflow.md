@@ -10,5 +10,9 @@ runtime (`rt.AddS(a, b, "file.xo:L:C")`, `rt.Conv[int32, int64](x, at)`,
 Unsigned types use the `U` variants. Golden tests: `arith_overflow`,
 `int_ops`, `conversions`, `div_zero`.
 
-The calls are small generic functions; their cost in hot loops has not been
-benchmarked yet.
+Since 2026-10-08 Int (int64) operations use typed, inlinable helpers
+(`rt.AddI` and friends, constant operand forms such as `rt.MulIK`), and
+operations the range analysis in internal/gen/ranges.go proves cannot
+overflow are plain Go; see `checked-arith-inline-budget.md` and
+bench/results/perf-mono-2026-10-08.md. Golden test `test_range_checks`
+checks that operations at and past the bound still fault.

@@ -652,6 +652,22 @@ func (pg *pkgGen) genFuncWith(fo *check.FuncObj, sp *specReq) {
 		rtps := recvTParams(fo)
 		recvText = strings.Replace(recv, pg.goType(fo.RecvType), fo.Recv.Name+tparamUse(rtps), 1)
 	}
+	var fixed, byRef []*check.VarObj
+	if rv := info.RecvVar(fo); rv != nil {
+		if fo.RecvVar {
+			byRef = append(byRef, rv)
+		} else {
+			fixed = append(fixed, rv)
+		}
+	}
+	for i, pv := range info.ParamVars(fo) {
+		if fo.Params[i].Var {
+			byRef = append(byRef, pv)
+		} else {
+			fixed = append(fixed, pv)
+		}
+	}
+	fg.analyzeRanges(fd.Body, fixed, byRef)
 	body := fg.funcBody(fd)
 	sig := fmt.Sprintf("func %s%s%s(tk *%sTask", recvText, name, tparamDecl(tps), pg.rt())
 	for _, p := range params {

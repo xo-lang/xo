@@ -188,6 +188,10 @@ const CtlScopeFail = -1
 // body's panic, raises a child's fault, or returns CtlScopeFail for a
 // child's error.
 func (s *Scope) Close(r any, completed bool, ctl int) int {
+	if x, ok := r.(*arithFault); ok {
+		// convert while the stack is still the operation's (panicStack)
+		r = x.fault()
+	}
 	s.mu.Lock()
 	if completed && r == nil {
 		for _, t := range s.tasks {

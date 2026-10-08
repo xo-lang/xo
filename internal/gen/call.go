@@ -327,7 +327,9 @@ func (f *fnGen) recvCode(e ast.Expr, fo *check.FuncObj) string {
 	if pt, ok := check.Resolve(t).(*check.ParamType); ok && fo.Iface {
 		c := pt.P.Constraint
 		if c != nil {
-			return fmt.Sprintf("%sIface[%s](%s)", f.rt(), f.goType(c), code)
+			// toIface: an adapter in a specialized copy, the adapter
+			// registry in generic code
+			return f.toIface(code, pt, c)
 		}
 	}
 	return code

@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -140,18 +141,29 @@ func (f *fnGen) coerce(code string, from, to check.Type) string {
 
 // toIface converts a value to an interface type.
 func (f *fnGen) toIface(code string, from, to check.Type) string {
+	// inside a specialized copy the concrete types are known
+	from, to = f.pg.monoType(from), f.pg.monoType(to)
 	tt := f.goType(to)
 	if tt == "any" {
 		return "any(" + code + ")"
-	}
-	if f.g.isInterface(from) && f.goType(from) != tt {
-		return fmt.Sprintf("%sIface[%s](%s)", f.rt(), tt, code)
 	}
 	n := f.g.named(to)
 	if n != nil && n.Obj.Module.IsPrelude {
 		return fmt.Sprintf("%sIface[%s](%s)", f.rt(), tt, code)
 	}
+	if f.g.isInterface(from) && f.goType(from) != tt {
+		// an interface whose methods differ from the target's (a method
+		// that cannot fail where the target's can) needs an adapter: the
+		// dynamic value implements only the source's Go methods
+		if adapter := f.pg.ifaceAdapter(from, to); adapter != "" {
+			return adapter + "{V: " + code + "}"
+		}
+		return fmt.Sprintf("%sIface[%s](%s)", f.rt(), tt, code)
+	}
 	if _, ok := check.Resolve(from).(*check.ParamType); ok {
+		// the concrete type is known only at run time: rt.Iface consults
+		// the adapters registered for this interface (adapt.go)
+		f.pg.noteTarget(to)
 		return fmt.Sprintf("%sIface[%s](%s)", f.rt(), tt, code)
 	}
 	if check.IsNever(from) {
@@ -596,6 +608,8 @@ func (f *fnGen) unary(x *ast.UnaryExpr) string {
 			return "(-" + v + ")"
 		case f.g.isUnsigned(t):
 			return fmt.Sprintf("%sNegU(%s, %q)", f.rt(), v, f.g.loc(x))
+		case f.goType(t) == "int64" && f.safeOp(x):
+			return "(-" + v + ")"
 		}
 		return fmt.Sprintf("%sNegS(%s, %q)", f.rt(), v, f.g.loc(x))
 	}
@@ -802,12 +816,9 @@ func (f *fnGen) binop(op, a, b string, xt, yt, rt check.Type, at ast.Node) strin
 	if signed {
 		suffix = "S"
 	}
-	if f.pg.monoOn() && signed && f.goType(xt) == "int64" && f.goType(yt) == "int64" {
-		// typed, inlinable Int arithmetic (std/rt/mono.go)
-		switch op {
-		case "+", "-", "*", "/", "%":
-			name := map[string]string{"+": "Add", "-": "Sub", "*": "Mul", "/": "Div", "%": "Rem"}[op]
-			return fmt.Sprintf("%s%sI(%s, %s, %s)", r, name, a, b, loc)
+	if signed && f.goType(xt) == "int64" && f.goType(yt) == "int64" {
+		if code, ok := f.intOp(op, a, b, at, loc); ok {
+			return code
 		}
 	}
 	switch op {
@@ -830,6 +841,72 @@ func (f *fnGen) binop(op, a, b string, xt, yt, rt check.Type, at ast.Node) strin
 	}
 	f.g.errorf(at, "unsupported operator %s", op)
 	return "nil"
+}
+
+// intOp generates an Int (int64) operation: plain Go when the range
+// analysis proved it cannot fault (ranges.go), a cheaper checked form when
+// an operand is a constant, and otherwise the typed, inlinable checked
+// helpers (std/rt/mono.go; under --no-mono the generic AddS and friends).
+func (f *fnGen) intOp(op, a, b string, at ast.Node, loc string) (string, bool) {
+	switch op {
+	case "+", "-", "*", "/", "%", ">>":
+	default:
+		return "", false
+	}
+	if f.safeOp(at) {
+		return "(" + a + " " + op + " " + b + ")", true
+	}
+	if op == ">>" {
+		return "", false
+	}
+	var xe, ye ast.Expr
+	switch x := at.(type) {
+	case *ast.BinaryExpr:
+		xe, ye = x.X, x.Y
+	case *ast.AssignStmt:
+		ye = x.Value
+	}
+	r := f.rt()
+	if k, ok := f.constOperand(ye); ok {
+		switch {
+		case op == "/" && k != 0 && k != -1, op == "%" && k != 0:
+			// cannot fault: Go's `%` by -1 is 0, as in Xo
+			return "(" + a + " " + op + " " + b + ")", true
+		case (op == "+" || op == "-") && k == 0:
+			return "(" + a + " " + op + " " + b + ")", true
+		case op == "+" && k > 0, op == "-" && k < 0:
+			// the result can only grow: an overflow wraps below a
+			return fmt.Sprintf("%s%sIUp(%s, %s, %s)", r, map[string]string{"+": "Add", "-": "Sub"}[op], a, b, loc), true
+		case op == "+" && k < 0, op == "-" && k > 0:
+			return fmt.Sprintf("%s%sIDown(%s, %s, %s)", r, map[string]string{"+": "Add", "-": "Sub"}[op], a, b, loc), true
+		case op == "*" && (k == 0 || k == 1):
+			return "(" + a + " * " + b + ")", true
+		case op == "*" && k != -1:
+			lo, hi := mulBounds(k)
+			return fmt.Sprintf("%sMulIK(%s, %s, %d, %d, %s)", r, a, b, lo, hi, loc), true
+		}
+	}
+	if k, ok := f.constOperand(xe); ok && op == "*" && k != -1 {
+		if k == 0 || k == 1 {
+			return "(" + a + " * " + b + ")", true
+		}
+		lo, hi := mulBounds(k)
+		return fmt.Sprintf("%sMulKI(%s, %s, %d, %d, %s)", r, a, b, lo, hi, loc), true
+	}
+	if !f.pg.monoOn() {
+		return "", false
+	}
+	name := map[string]string{"+": "Add", "-": "Sub", "*": "Mul", "/": "Div", "%": "Rem"}[op]
+	return fmt.Sprintf("%s%sI(%s, %s, %s)", r, name, a, b, loc), true
+}
+
+// mulBounds returns the range of x for which x * k fits Int (|k| >= 2).
+func mulBounds(k int64) (lo, hi int64) {
+	// Go's division truncates toward zero, which rounds both bounds
+	// inward: for k > 0, x*k <= max iff x <= max/k and x*k >= min iff
+	// x >= min/k; for k < 0 the bounds swap
+	a, b := int64(math.MaxInt64)/k, int64(math.MinInt64)/k
+	return min(a, b), max(a, b)
 }
 
 // coalesce generates `opt ?? default`: the default is evaluated only when
@@ -909,6 +986,10 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 	case "Bytes":
 		return fmt.Sprintf("%sBytesAt(%s, %s, %s)", f.rt(), codes[0], codes[1], loc)
 	case "List":
+		if f.safeOp(x) {
+			// the range analysis proved 0 <= i < len (ranges.go)
+			return fmt.Sprintf("%s.AtU(%s)", codes[0], codes[1])
+		}
 		if f.pg.monoOn() {
 			return fmt.Sprintf("%s.AtM(%s, %s)", codes[0], codes[1], loc)
 		}

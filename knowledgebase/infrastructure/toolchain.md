@@ -33,15 +33,16 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--mono] [dir...]
-go run ./cmd/xo run [--holes] [--mono] [dir] [-- args...]
-go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--mono] [dir...]
-go test ./internal/gen -run TestGolden -golden-update   # rewrite want.txt of the golden programs
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [dir...]
+go run ./cmd/xo run [--holes] [--no-mono] [dir] [-- args...]
+go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [dir...]
+go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
+XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go test -short ./...                                    # skips the race, cross compile, and CLI build tests
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 bench/perf/run.sh                                       # Xo vs Go collection and generic workloads (see Benchmark tooling)
-MONO=1 bench/perf/run.sh                                # adds an `xo build --mono` column
+MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -94,9 +95,13 @@ fuzzing (every function with `requires`/`ensures` in a root module, core
 Last verified: 2026-10-07.
 
 Build directories live in `$XO_BUILD_DIR` or `<user cache>/xo/build/<hash of
-the module paths and mode>/` (stable, so Go's build cache is reused): `go.mod`
-(module `xoprog`), `rt/` (the runtime, copied from the embedded `std/rt`),
-`m/<module ident>/xo.go` per Xo module, and `main.go`. Crash bundles go to
+the module paths, mode, lowering, and layout tag>/` (stable, so Go's build
+cache is reused; the layout tag keeps older xo binaries out, see
+`gotchas/build-dir-shared-across-xo-versions.md`): `go.mod` (module
+`xoprog`), `rt/` (the runtime, copied from the embedded `std/rt`),
+`m/<module ident>/xo.go` per Xo module, `main.go`, and `xo_adapt.go`
+(package main: interface adapters registered for generic code, often
+empty). Last verified: 2026-10-08. Crash bundles go to
 `$XO_CRASH_DIR` or the system temporary directory. `XO_GO` overrides the go
 command (default: `go` on PATH).
 
@@ -118,11 +123,14 @@ Last verified: 2026-10-07
   (default 5), and prints a Markdown table of the best times and the
   ratio; checksums must agree. Workloads: collection (`putget get push
   update iter copymut branch`) and generic (`sortint sortpt hof maxby
-  iface`, idiomatic Go generics on the Go side). `MONO=1` also builds with
-  `xo build --mono` and adds a column, `XOFLAGS` passes flags to the
-  default Xo build, `XO=<path>` uses another xo binary (for before and
-  after runs), `WORKLOADS="..."` selects workloads, `PERF_OUT=<dir>` keeps
-  the binaries. Last verified: 2026-10-08.
+  iface`, idiomatic Go generics on the Go side). `MONO=1` builds the
+  "Xo" column with `--no-mono` (when the binary has the flag; an older
+  binary's default is that lowering) and adds an "Xo --mono" column (the
+  default lowering), `XOFLAGS` passes flags to the first Xo build,
+  `XO=<path>` uses another xo binary (for before and after runs),
+  `WORKLOADS="..."` selects workloads, `PERF_OUT=<dir>` keeps the
+  binaries. Timing drifts on the laptop host; interleave before and after
+  runs (`gotchas/bench-host-timing-drift.md`). Last verified: 2026-10-08.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -222,7 +230,7 @@ are implemented. Last verified: 2026-10-07.
 
 ## Code generation
 
-Last verified: 2026-10-07. Rules and choices; details in
+Last verified: 2026-10-08. Rules and choices; details in
 `bench/results/gen-run-v0.4.md`.
 
 - One Go package per Xo module (`xoprog/m/x_<module path>`), one file
@@ -272,36 +280,63 @@ Last verified: 2026-10-07. Rules and choices; details in
 - Integer arithmetic, conversions, indexing, and slicing call rt functions
   that fault with the values and the `file:line:col` of the operation;
   rt faults without a position use the innermost `.xo` frame of the stack.
+  Int (int64) operations (2026-10-08): before each body is generated, a
+  range analysis (internal/gen/ranges.go: intervals per binding through
+  constants, `let`/`var`, range loops, comparisons, `%`, masks, `len()`,
+  sized integer widening, loops iterated to a fixed point with widening,
+  plus symbolic `i <= len(xs) - 1` bounds for lists under parameters and
+  `let`/`for` bindings) marks operations that cannot fault; they are
+  plain Go, and `xs[i]` proven in range is `List.AtU`. Other operations
+  with a constant operand use one comparison forms (`rt.AddIUp`,
+  `rt.SubIDown`, `rt.MulIK`/`MulKI`, plain `/` and `%` by a constant other
+  than 0 and -1); the rest call `rt.AddI..RemI` and `List.AtM` (typed,
+  inlinable, fault by `panic(&arithFault{...})`, converted to a
+  `*FaultErr` with the operation's stack at the first recover), or under
+  `--no-mono` the generic `rt.AddS` family. `TestRangeElision`,
+  `TestRangeDifferential` (analysis on and off must print the same values
+  and faults), and golden `test_range_checks` cover it.
+- `for i in a..b` and `a..=b` over a range literal are counted Go loops
+  (bounds evaluated once); other Range values iterate `.All()`
+  (2026-10-08, `gotchas/range-over-func-loop-cost.md`).
 - A struct field whose type contains the struct by value (through Option,
   Result, tuples, other structs) is stored in `rt.Box[T]`.
 - Assignment resolves the place first (index operands left to right), then
   writes; through a box or a collection element it reads, modifies, and
   writes back (`m[k].count += 1`, `xs[i].push(x)` on a var receiver).
-- `--mono` (`gen.Options.Mono`, `build.Options.Mono`, flag on `xo build`,
-  `run`, `test`; default off; added 2026-10-08, internal/gen/mono.go):
-  calls of user generic functions and methods with concrete type
-  arguments call specialized copies `<name>__<types>` generated into the
+- Monomorphization (internal/gen/mono.go; added 2026-10-08 as `--mono`,
+  the default since 2026-10-08; `--no-mono` on `xo build`, `run`, `test`,
+  `gen.Options.NoMono`, `build.Options.NoMono` turn it off, `--mono` is
+  still accepted): calls of user generic functions and methods with
+  concrete type arguments call specialized copies `<name>__<types>` generated into the
   calling package (methods of generic types as top level copies, receiver
   first); `==`/`<` on a type parameter in a copy lower as for the concrete
   type, with typed `XoEqT`/`XoCmpT` methods generated for non generic
   structs and newtypes; constraint method calls call the concrete method;
   `List.map/filter/fold/any/all/find` with an inlinable closure literal
   become loops with the body inlined; a non capturing literal passed to a
-  user generic function gets a `_lit` copy that inlines it; Int
-  arithmetic uses `rt.AddI..RemI` and List indexing `AtM`. Fallback to the
-  Go generic function: non concrete type arguments, copy chains deeper
-  than 8, more than 64 copies of one function per package. Go forms are
-  decided on the generic types, so copies keep the generic signature
-  form. The build directory hash includes the mode. `TestGoldenMono` runs
-  every golden program both ways. Numbers:
+  user generic function gets a `_lit` copy that inlines it. Fallback to
+  the Go generic function: non concrete type arguments, copy chains
+  deeper than 8, more than 64 copies of one function per package. Go
+  forms are decided on the generic types, so copies keep the generic
+  signature form. The build directory hash includes the lowering.
+  `TestGolden` (default lowering, Go frame lists dropped) and
+  `TestGoldenNoMono` (exact) run every golden program both ways. Numbers:
   `bench/results/perf-mono-2026-10-08.md`.
+- Interface conversions (2026-10-08, internal/gen/adapt.go): a value whose
+  Go methods differ from the interface's (a method that cannot fail where
+  the interface's can) is wrapped in a generated adapter; inside a
+  specialized copy the concrete type is known; an interface value is
+  wrapped around the source interface; generic Go code converts with
+  `rt.Iface`, which consults adapters that package main registers with
+  `rt.RegAdapter` for every concrete user type named in generated code and
+  every interface generic code converts a type parameter to.
 - The std structs, enums, and interfaces are generated into
   `std/rt/std_gen.go` by `gen.StdTypes`; `TestStdTypes` fails when it is
   stale. Opaque std handles and every std function are hand written in rt.
 
 ## Runtime (std/rt)
 
-Last verified: 2026-10-07.
+Last verified: 2026-10-08.
 
 - `core.go` Option/Result/frames/tuples/Box; `arith.go` checked integer
   math; `fault.go` faults and contracts; `list.go`, `map.go` value
@@ -311,10 +346,13 @@ Last verified: 2026-10-07.
   value's log length equals the claimed length, otherwise it forks a child
   table in O(1); soundness argument in the comment on `Map`, see
   `gotchas/map-copy-claims-log.md`; since 2026-10-08); `show.go` Eq/Hash/Cmp/Debug/Display; `str.go`, `time.go`,
-  `option.go` prelude methods; `mono.go` typed helpers emitted only under
-  `--mono` (`AddI`, `SubI`, `MulI`, `DivI`, `RemI` on int64, `CmpO`,
-  `List.AtM`; same results and fault messages as the generic forms,
-  checked by `mono_test.go`).
+  `option.go` prelude methods; `mono.go` typed helpers of the default
+  lowering (`AddI`, `SubI`, `MulI`, `DivI`, `RemI` on int64 with panic
+  valued faults, the constant operand forms `AddIUp`, `AddIDown`,
+  `SubIUp`, `SubIDown`, `MulIK`, `MulKI`, `CmpO`, `List.AtM`, `List.AtU`;
+  same results and fault messages as the generic forms, checked by
+  `mono_test.go`); `core.go` `Iface` and `RegAdapter` (interface adapters
+  registered by package main for generic code).
 - `task.go`, `scope.go`, `chan.go`, `sync.go`: the cancellation tree,
   scopes, tasks, channels and `select` with explicit wait queues, Mutex,
   Atomic, Semaphore, `task.*`. `world.go`: the virtual clock of tests (it
@@ -327,15 +365,18 @@ Last verified: 2026-10-07.
 
 ## Known gaps (2026-10-08)
 
-- Generic code (2026-10-08): without `--mono`, `==`/`<` on a type
-  parameter box both operands (`rt.Eq`/`rt.Cmp`) and constraint method
-  calls convert to an interface; generic workloads run 1.6x to 17.8x
-  slower than Go generics, 0.49x to 2.26x with `--mono`. Checked Int
-  arithmetic still keeps small methods over Go's inlining budget
-  (`gotchas/checked-arith-inline-budget.md`). A fallible constraint
-  method on a type whose method cannot fail faults
-  (`gotchas/generic-constraint-no-adapter.md`). Polymorphic recursion is
-  rejected by Go in both modes.
+- Generic code (2026-10-08): with the default lowering generic workloads
+  run 0.49x to 1.08x of Go generics (`--no-mono`: 1.6x to 16.9x, `==`/`<`
+  on a type parameter box both operands and constraint method calls
+  convert to an interface). Polymorphic recursion is rejected by Go in
+  both modes. An interface adapter for a concrete type that exists only
+  inside generic code is not registered for the `--no-mono` lowering
+  (`gotchas/generic-constraint-no-adapter.md`).
+- Checked arithmetic (2026-10-08): the generic `rt.AddS` family
+  (`--no-mono`, sized integer types such as Int32) still faults through an
+  out of line call and does not inline; the range analysis has no
+  relational facts beyond list lengths and does not follow values across
+  calls (a function's result is unbounded at its callers).
 
 - Regression tests (core 9.2): `xo test` passes `XO_REGRESSION_OUT` to the
   test binary; `std/rt/regress.go` records shrunk contract fuzz failures and
@@ -344,7 +385,10 @@ Last verified: 2026-10-07.
 - `Map.put` in update heavy loops is no longer a gap (2026-10-08): 3M
   puts over 50k keys plus 3M gets take 142 ms against Go's 45 ms (3.2x,
   was 48x); `Map.update` loops 4.4x. `List[i] = x` (`SetAt`) and
-  `insert`/`remove_at` still copy the whole list (O(n) per write); the
-  entry log technique would apply but needs a version check on every List
-  read. Numbers: `bench/results/perf-map-2026-10-08.md`.
+  `insert`/`remove_at` still copy the whole list (O(n) per write, with an
+  allocation); the entry log technique would apply but needs a version
+  check on every List read. This is what keeps the sortint workload at
+  1.08x of Go: 5,000 sorted inserts take 7.4 ms against Go's 0.9 ms while
+  the 3M lookups run at Go's speed. Numbers:
+  `bench/results/perf-map-2026-10-08.md`, `perf-mono-2026-10-08.md`.
 

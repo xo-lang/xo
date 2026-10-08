@@ -82,11 +82,38 @@ func xoLocation(skip int) string {
 func stack(skip int) string {
 	pcs := make([]uintptr, 64)
 	n := runtime.Callers(skip+1, pcs)
-	frames := runtime.CallersFrames(pcs[:n])
+	// only Xo frames: generated code maps every line to a .xo file
+	return framesText(pcs[:n])
+}
+
+// panicStack is stack for a fault raised as a panic of a plain value
+// (arithFault) and converted when recovered: called from a deferred
+// function while the panic is in flight, it keeps the frames below the
+// innermost runtime.gopanic, the stack of the panicking operation. It
+// keeps as many frames as a fault raised in place by an out of line call
+// would (stack(3) in newFault starts two rt frames above the operation).
+func panicStack() string {
+	pcs := make([]uintptr, 128)
+	n := runtime.Callers(1, pcs)
+	pcs = pcs[:n]
+	for i, pc := range pcs {
+		if fn := runtime.FuncForPC(pc - 1); fn != nil && fn.Name() == "runtime.gopanic" {
+			pcs = pcs[i+1:]
+			if len(pcs) > 62 {
+				pcs = pcs[:62]
+			}
+			return framesText(pcs)
+		}
+	}
+	return stack(2)
+}
+
+// framesText formats the Xo frames of pcs as stack does.
+func framesText(pcs []uintptr) string {
+	frames := runtime.CallersFrames(pcs)
 	var b strings.Builder
 	for {
 		f, more := frames.Next()
-		// only Xo frames: generated code maps every line to a .xo file
 		if strings.HasSuffix(f.File, ".xo") && !isGlue(f.Function) {
 			fmt.Fprintf(&b, "  %s\n      %s:%d\n", strings.TrimPrefix(f.Function, "xoprog/m/"), f.File, f.Line)
 		}
@@ -124,6 +151,8 @@ func AsFault(r any) *FaultErr {
 	switch x := r.(type) {
 	case *FaultErr:
 		return x
+	case *arithFault:
+		return x.fault()
 	case runtime.Error:
 		return &FaultErr{Msg: "internal fault: " + x.Error(), Loc: xoLocation(3), Stack: stack(3)}
 	case error:

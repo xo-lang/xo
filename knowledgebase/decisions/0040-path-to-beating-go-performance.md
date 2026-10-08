@@ -49,4 +49,9 @@ Accept, amend, or reject this record based on those results.
   are checked Int arithmetic (iface runs in 6 ms against Go's 15 ms with
   checks stubbed) and O(n) `List.insert`. First measured case where P1 Xo
   beats Go.
+- Mono default and check elimination (2026-10-08, update section in
+  `bench/results/perf-mono-2026-10-08.md`): range analysis removes provably
+  safe overflow checks and the remaining checks inline. Against Go: iface
+  0.80x, iter 0.32x, sortpt 0.87x, hof 0.83x, maxby 0.49x, sortint 1.08x
+  (List.insert is O(n)). Overflow still faults with values and position.
 

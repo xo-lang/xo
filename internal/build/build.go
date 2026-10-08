@@ -76,8 +76,11 @@ type Options struct {
 	Out string
 	// Race builds with the race detector (host only).
 	Race bool
-	// Mono specializes generic code per instantiation (gen.Options.Mono).
-	Mono bool
+	// NoMono turns off the specialization of generic code per
+	// instantiation (gen.Options.NoMono, `--no-mono`).
+	NoMono bool
+	// NoRanges checks every Int operation (gen.Options.NoRanges; tests).
+	NoRanges bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }
@@ -93,7 +96,7 @@ type Result struct {
 	Dir string
 	// Name is the program name (the main module's directory name).
 	Name string
-	// Specs counts the specialized copies of generic functions (Mono).
+	// Specs counts the specialized copies of generic functions.
 	Specs int
 }
 
@@ -128,12 +131,12 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return out, nil
 	}
 	root := lineRoot(dirs)
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, Mono: opts.Mono})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges})
 	if err != nil {
 		return nil, err
 	}
 	out.Specs = prog.Specs
-	dir, err := buildDir(dirs, opts.Mode, opts.Mono)
+	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +223,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 
 // buildDir is a stable directory per program and mode under the user
 // cache, so Go's build cache is reused across builds.
-func buildDir(dirs []string, mode gen.Mode, mono bool) (string, error) {
+func buildDir(dirs []string, mode gen.Mode, mono, noRanges bool) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
 	if base == "" {
 		cache, err := os.UserCacheDir()
@@ -238,6 +241,12 @@ func buildDir(dirs []string, mode gen.Mode, mono bool) (string, error) {
 	if mono {
 		fmt.Fprintf(h, " mono")
 	}
+	if noRanges {
+		fmt.Fprintf(h, " noranges")
+	}
+	// layout 2 (2026-10-08) adds package main's xo_adapt.go; older xo
+	// binaries do not remove it, so they must not share the directory
+	fmt.Fprintf(h, " layout=2")
 	dir := filepath.Join(base, hex.EncodeToString(h.Sum(nil))[:16])
 	return dir, os.MkdirAll(dir, 0o755)
 }
@@ -265,6 +274,14 @@ func writeTree(dir string, prog *gen.Program) error {
 	})
 	if err != nil {
 		return err
+	}
+	// remove generated files of package main that no longer exist
+	if ents, err := os.ReadDir(dir); err == nil {
+		for _, e := range ents {
+			if _, ok := files[e.Name()]; !ok && !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+				os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
 	}
 	// remove runtime files that no longer exist
 	if ents, err := os.ReadDir(filepath.Join(dir, "rt")); err == nil {

@@ -34,6 +34,9 @@ type fnGen struct {
 	// litParams maps parameters of a specialized copy to the closure
 	// literals the copy inlines (mono.go).
 	litParams map[*check.VarObj]*ast.FnLit
+	// rng is the range analysis of the body being generated (ranges.go):
+	// the Int operations proved not to fault.
+	rng *rangeAn
 }
 
 // frame is an Xo function being generated: a declared function, a
@@ -206,9 +209,20 @@ func (f *fnGen) topBlock(b *ast.Block) {
 		f.line("var %s %s", f.fr.retVar, res)
 	}
 	f.out.WriteString(body)
-	if f.fr.goRes != "" {
+	if f.fr.goRes != "" && !endsInReturn(body, f.ind) {
 		f.line("panic(%q)", "unreachable: missing return")
 	}
+}
+
+// endsInReturn reports whether the last statement of body is a `return`
+// at indentation ind (a Go terminating statement, so no panic is needed
+// after it; the panic would only add to the function's inlining cost).
+func endsInReturn(body string, ind int) bool {
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	last := lines[len(lines)-1]
+	pre := strings.Repeat("\t", ind)
+	return strings.HasPrefix(last, pre+"return") && !strings.HasPrefix(last, pre+"\t") &&
+		(len(last) == len(pre)+len("return") || last[len(pre)+len("return")] == ' ')
 }
 
 func (f *fnGen) requires(c *ast.RequiresClause) {
@@ -1003,6 +1017,19 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	case "Range":
 		elem = f.tmp("i")
 		header = fmt.Sprintf("%s := range %s.All()", elem, itv)
+		if rng, ok := unparen(x.Iter).(*ast.RangeExpr); ok {
+			// a range literal: a counted loop, not an iterator (no
+			// closure call per iteration); bounds are evaluated once
+			if rng.Inclusive {
+				// stop after Hi without computing Hi + 1 into the
+				// binding (Hi may be the maximum value)
+				more := f.tmp("more")
+				header = fmt.Sprintf("%s, %s := %s.Lo, %s.Lo <= %s.Hi; %s; %s, %s = %s+1, %s < %s.Hi",
+					elem, more, itv, itv, itv, more, elem, more, elem, elem, itv)
+			} else {
+				header = fmt.Sprintf("%s := %s.Lo; %s < %s.Hi; %s++", elem, itv, elem, itv, elem)
+			}
+		}
 	default:
 		f.g.errorf(x.Iter, "cannot iterate over %s", itT)
 		f.popLoop()

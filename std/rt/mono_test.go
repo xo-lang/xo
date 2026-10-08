@@ -10,6 +10,9 @@ import (
 func outcome(f func() int64) (v int64, fault string) {
 	defer func() {
 		if r := recover(); r != nil {
+			if x, ok := r.(*arithFault); ok {
+				r = x.fault()
+			}
 			fe, ok := r.(*FaultErr)
 			if !ok {
 				panic(r)
@@ -52,6 +55,57 @@ func TestTypedIntArith(t *testing.T) {
 				if tv != gv || tf != gf {
 					t.Fatalf("%d %s %d: typed (%d, %q), generic (%d, %q)", a, op.name, b, tv, tf, gv, gf)
 				}
+			}
+		}
+	}
+}
+
+// TestConstIntArith checks the constant operand forms against the generic
+// checked operations on every value of TestTypedIntArith's kind and every
+// constant the generator gives each form.
+func TestConstIntArith(t *testing.T) {
+	ks := []int64{1, 2, 3, 7, 1000000, 1103515245, 1 << 31, 1<<32 + 1, 3037000499, 3037000500, math.MaxInt64 / 2, math.MaxInt64 - 1, math.MaxInt64}
+	var all []int64
+	for _, k := range ks {
+		all = append(all, k, -k)
+	}
+	all = append(all, math.MinInt64, math.MinInt64+1)
+	r := rand.New(rand.NewSource(2))
+	vals := []int64{0, 1, -1, 2, -2, math.MaxInt64, math.MinInt64, math.MaxInt64 - 1, math.MinInt64 + 1, 1 << 31, -(1 << 31), 1 << 32, 3037000499, -3037000500}
+	for _, k := range all {
+		if k != 0 {
+			vals = append(vals, math.MaxInt64/k, math.MaxInt64/k+1, math.MaxInt64/k-1, math.MinInt64/k, math.MinInt64/k+1, math.MinInt64/k-1, k, -k, math.MaxInt64-k, math.MinInt64-k)
+		}
+	}
+	for i := 0; i < 300; i++ {
+		vals = append(vals, r.Int63()-r.Int63(), r.Int63n(1<<34)-(1<<33))
+	}
+	mulBounds := func(k int64) (int64, int64) {
+		a, b := int64(math.MaxInt64)/k, int64(math.MinInt64)/k
+		return min(a, b), max(a, b)
+	}
+	const at = "x.xo:5:6"
+	for _, k := range all {
+		for _, a := range vals {
+			check := func(name string, got, want func() int64) {
+				gv, gf := outcome(got)
+				wv, wf := outcome(want)
+				if gv != wv || gf != wf {
+					t.Fatalf("%s a=%d k=%d: got (%d, %q), want (%d, %q)", name, a, k, gv, gf, wv, wf)
+				}
+			}
+			if k > 0 {
+				check("AddIUp", func() int64 { return AddIUp(a, k, at) }, func() int64 { return AddS(a, k, at) })
+				check("SubIDown", func() int64 { return SubIDown(a, k, at) }, func() int64 { return SubS(a, k, at) })
+			}
+			if k < 0 {
+				check("AddIDown", func() int64 { return AddIDown(a, k, at) }, func() int64 { return AddS(a, k, at) })
+				check("SubIUp", func() int64 { return SubIUp(a, k, at) }, func() int64 { return SubS(a, k, at) })
+			}
+			if k != -1 && k != 0 && k != 1 {
+				lo, hi := mulBounds(k)
+				check("MulIK", func() int64 { return MulIK(a, k, lo, hi, at) }, func() int64 { return MulS(a, k, at) })
+				check("MulKI", func() int64 { return MulKI(k, a, lo, hi, at) }, func() int64 { return MulS(k, a, at) })
 			}
 		}
 	}

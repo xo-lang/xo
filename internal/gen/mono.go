@@ -1,11 +1,12 @@
 package gen
 
-// Monomorphization (`xo build --mono`, bench/results/perf-mono-2026-10-08.md).
+// Monomorphization (the default lowering since 2026-10-08; `xo build
+// --no-mono` turns it off; bench/results/perf-mono-2026-10-08.md).
 //
-// Without --mono a generic Xo function is one Go generic function, and Go
+// With --no-mono a generic Xo function is one Go generic function, and Go
 // compiles it once per GC shape with a runtime dictionary; Eq, Ord, and
 // constraint interface methods go through rt functions that switch on the
-// dynamic type or convert to an interface. With --mono:
+// dynamic type or convert to an interface. By default:
 //
 //   - A call of a user generic function or method whose type arguments are
 //     concrete calls a specialized copy, `<name>__<types>`, generated into
@@ -28,7 +29,8 @@ package gen
 //     gets its own copy (`<name>__<types>_lit`) that inlines the literal
 //     where the copy calls the parameter (lambda specialization).
 //   - Int arithmetic and List indexing use typed, inlinable runtime
-//     helpers (rt.AddI and friends, List.AtM in std/rt/mono.go).
+//     helpers (rt.AddI and friends, List.AtM in std/rt/mono.go), unless
+//     the range analysis (ranges.go) proved them safe.
 //
 // Go forms (whether a function returns rt.Result, takes `.V`, and so on)
 // are decided on the generic, unsubstituted types exactly as without
@@ -84,7 +86,7 @@ type monoState struct {
 	generated int
 }
 
-func (pg *pkgGen) monoOn() bool { return pg.g.opts.Mono && !pg.inRT }
+func (pg *pkgGen) monoOn() bool { return !pg.g.opts.NoMono && !pg.inRT && !pg.noMono }
 
 // monoType applies the substitution of the copy being generated.
 func (pg *pkgGen) monoType(t check.Type) check.Type {

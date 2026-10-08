@@ -1,0 +1,107 @@
+// Int operations the range analysis (internal/gen/ranges.go) proves
+// cannot fault are emitted as plain Go; the others stay checked. These
+// tests check both: elided operations compute the right values, and
+// operations at or just past the bound still fault with their values and
+// position (core 2.1, 8).
+
+const MAX = 9223372036854775807
+const MIN = -9223372036854775807 - 1
+
+fn search(xs: List[Int], x: Int) -> Int {
+  var lo = 0
+  var hi = xs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if xs[mid] < x {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
+fn sum(xs: List[Int]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    s += xs[i]
+  }
+  s
+}
+
+fn square_small(x: Int) -> Int {
+  if x < 3037000500 && x > -3037000500 {
+    return x * x
+  }
+  -1
+}
+
+test "elided operations compute the right values" {
+  let xs = [1, 3, 5, 7, 9, 11]
+  expect(search(xs, 7)) == 3
+  expect(search(xs, 0)) == 0
+  expect(search(xs, 12)) == 6
+  expect(sum(xs)) == 36
+  expect(square_small(3037000499)) == 9223372030926249001
+  expect(square_small(3037000500)) == -1
+  var s = 0
+  for i in 0..=10 {
+    s = i + (MAX - 10)
+  }
+  expect(s) == MAX
+  expect(MIN % -1) == 0
+  expect((MAX % 1000) * 1000 + (MAX & 255)) == 807255
+}
+
+test "one past the loop bound faults" {
+  var s = 0
+  for j in 0..=11 {
+    s = j + (MAX - 10)
+  }
+  expect(s) == 0
+}
+
+test "multiply by a constant faults" {
+  let x = 3074457345618258603
+  expect(x * 3) == 0
+}
+
+test "constant on the left faults in source order" {
+  let x = -3074457345618258603
+  expect(3 * x) == 0
+}
+
+test "adding a constant faults" {
+  var x = MAX - 1
+  x += 1
+  expect(x + 1) == 0
+}
+
+test "subtracting a constant faults" {
+  let x = MIN + 1
+  expect(x - 1 - 1) == 0
+}
+
+test "adding a negative constant faults" {
+  let x = MIN
+  expect(x + -1) == 0
+}
+
+test "subtracting a negative constant faults" {
+  let x = MAX
+  expect(x - -1) == 0
+}
+
+test "dividing by -1 faults" {
+  let x = MIN
+  expect(x / -1) == 0
+}
+
+test "an index past the length faults" {
+  let xs = [10, 20, 30]
+  var s = 0
+  for j in 0..=xs.len() {
+    s += xs[j]
+  }
+  expect(s) == 0
+}
