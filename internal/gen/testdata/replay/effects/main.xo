@@ -1,0 +1,19 @@
+// Record and replay (core 11.3): reads standard input, the clock, rand,
+// the environment, and a file, then faults on an index computed from
+// them. TestReplay* in internal/gen/replay_test.go records it and replays
+// the trace offline: same output, same fault.
+fn main(os: Os) ! {
+  let line = os.stdio.read_line()? ?? "none"
+  os.stdio.println("line: ${line}")
+  let t = os.clock.now()
+  os.stdio.println("now: ${t}")
+  let n = os.rand.int(0, 1000000)
+  os.stdio.println("rand: ${n}")
+  let token = Secret[Str].new(os.env.get("XO_TEST_TOKEN") ?? "")
+  os.stdio.println("token length: ${token.reveal().len()}")
+  let data = os.fs.read_text(os.env.get("DATA") ?? "data.txt")?
+  os.stdio.println("file: ${data.trim()}")
+  os.clock.sleep(10ms)
+  let xs = [1, 2, 3]
+  os.stdio.println("value: ${xs[line.len() + data.len()]}")
+}

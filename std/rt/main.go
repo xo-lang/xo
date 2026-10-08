@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -74,23 +76,50 @@ type exitUnwind struct{ code int64 }
 // XO_SEED=N (`xo run --seed=N`) runs every task on the deterministic
 // scheduler with the real clock (core 7.4).
 func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
+	fxSetup()
 	root := NewRootTask()
 	th := root.th
 	mon := &monitor{quiet: 200 * time.Millisecond, root: root.node}
 	mon.report = func(f *FaultErr) {
-		reportFault(f)
+		c := &crashInfo{fault: f}
+		reportCrash(c)
+		fxFinish(70, c)
 		os.Exit(70)
 	}
 	th.mon = mon
 	runMon.Store(mon)
 	defer runMon.Store(nil)
 	mon.started()
+	seed, seeded := int64(0), false
 	if v := os.Getenv("XO_SEED"); v != "" {
-		if seed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			realSched = newSched(new(sync.Mutex), nil, seed)
-			realSched.start(th)
-			<-th.turn
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			seed, seeded = n, true
 		}
+	}
+	switch fxMode {
+	case fxRecord:
+		// a recording runs every task on the deterministic scheduler and
+		// logs its decisions (core 11.3); without XO_SEED the seed is
+		// random, so recordings see varied interleavings
+		if !seeded {
+			seed = time.Now().UnixNano()%1_000_000_000 + 1
+		}
+		seeded = true
+		rec.seed = seed
+	case fxReplay:
+		seed, seeded = rp.seed, rp.full
+	}
+	if seeded {
+		realSched = newSched(new(sync.Mutex), nil, seed)
+		switch {
+		case fxMode == fxRecord:
+			realSched.rec = rec
+		case fxMode == fxReplay:
+			realSched.rp = rp
+			go rp.watch(realSched)
+		}
+		realSched.start(th)
+		<-th.turn
 	}
 	defer func() {
 		th.mu.Lock()
@@ -101,6 +130,10 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 			realSched.end(th)
 		}
 	}()
+	// the outcome of the run, for the trace of a recording and the check
+	// of a replay (core 11.3)
+	var end *crashInfo
+	defer func() { fxFinish(code, end) }()
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGQUIT)
 	go func() {
@@ -111,19 +144,32 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	defer signal.Stop(quit)
 	st := newStopState(nil)
 	root.stop = st
+	if rp != nil {
+		rp.stop = st
+	}
 	s := NewScope(root)
 	st.cancelRoot = s.bodyNode.cancel
-	st.exit = func() { os.Exit(130) }
+	st.exit = func() {
+		fxFinish(130, nil)
+		os.Exit(130)
+	}
 	defer st.finish()
 	osv := RealOs(s.M_group(root))
-	sig := make(chan os.Signal, 3)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		for range sig {
-			st.signal()
-		}
-	}()
-	defer signal.Stop(sig)
+	if fxMode != fxReplay {
+		// a replay takes its signals from the trace
+		sig := make(chan os.Signal, 3)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			for range sig {
+				if rs := realSched; rs != nil && rs.rec != nil {
+					rs.post(schedEv{tok: func() string { return "g" }, run: st.signal})
+				} else {
+					st.signal()
+				}
+			}
+		}()
+		defer signal.Stop(sig)
+	}
 	var res Result[Unit, IError]
 	defer func() {
 		r := recover()
@@ -134,8 +180,8 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 			code = 0
 			return
 		}
-		f := AsFault(r)
-		reportFault(f)
+		end = &crashInfo{fault: AsFault(r)}
+		reportCrash(end)
 		code = 70
 	}()
 	ctl := func() (c int) {
@@ -148,43 +194,86 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	}()
 	if ctl == CtlScopeFail {
 		e, tr := s.Failure()
-		printError(root, e, tr)
+		end = errorInfo(root, e, tr)
+		reportCrash(end)
 		return 1
 	}
 	if !res.Ok {
-		printError(root, res.E, res.Tr)
+		end = errorInfo(root, res.E, res.Tr)
+		reportCrash(end)
 		return 1
 	}
 	return 0
 }
 
-// printError writes an error from main with its frames (core 11.1).
-func printError(tk *Task, e any, tr *Trace) {
+// crashInfo is what went wrong: a fault (in main, or isolated in a request
+// handler) or an error returned from main.
+type crashInfo struct {
+	fault    *FaultErr
+	errText  string // the error's display text, then its frames (core 11.1)
+	isolated bool   // a fault isolated in a request handler (std.md 4.2)
+	req      int64  // the request of an isolated fault
+}
+
+// errorInfo describes an error returned from main.
+func errorInfo(tk *Task, e any, tr *Trace) *crashInfo {
+	lines := append([]string{Display(tk, e)}, tr.Lines()...)
+	return &crashInfo{errText: strings.Join(lines, "\n")}
+}
+
+// reportCrash writes a fault or an error that reached main, with its
+// frames, and its crash bundle (core 11.1, 11.2).
+func reportCrash(c *crashInfo) {
 	var b strings.Builder
-	b.WriteString("error: ")
-	b.WriteString(Display(tk, e))
-	b.WriteByte('\n')
-	for _, l := range tr.Lines() {
-		b.WriteString(l)
-		b.WriteByte('\n')
+	if f := c.fault; f != nil {
+		b.WriteString("fault: " + f.Error() + "\n")
+		b.WriteString(f.Stack)
+	} else {
+		lines := strings.Split(c.errText, "\n")
+		b.WriteString("error: " + lines[0] + "\n")
+		for _, l := range lines[1:] {
+			b.WriteString(l + "\n")
+		}
+	}
+	if fxMode != fxReplay {
+		if p := writeCrashBundle(c); p != "" {
+			b.WriteString("crash bundle: " + p + "\n")
+		}
 	}
 	stderrWrite(b.String())
 }
 
-// reportFault writes a fault that reached main and its crash bundle.
-func reportFault(f *FaultErr) {
-	var b strings.Builder
-	b.WriteString("fault: " + f.Error() + "\n")
-	b.WriteString(f.Stack)
-	if p := writeCrashBundle(f); p != "" {
-		b.WriteString("crash bundle: " + p + "\n")
+// isolatedCrash handles a fault isolated in the handler of a request of a
+// real server: a crash bundle (core 11.2), or under a replay of one, the
+// check that it is the recorded crash.
+func isolatedCrash(tk *Task, f *FaultErr) {
+	if tk == nil || tk.w != nil || tk.th == nil || tk.th.kind != "request" {
+		return
 	}
-	stderrWrite(b.String())
+	if fxMode == fxReplay {
+		rp.isolatedFault(tk, f)
+		return
+	}
+	if p := writeCrashBundle(&crashInfo{fault: f, isolated: true, req: tk.th.req}); p != "" {
+		stderrWrite("crash bundle: " + p + "\n")
+	}
 }
+
+// isolatedBundles counts the crash bundles of isolated faults: a server
+// writes at most maxIsolatedBundles.
+var isolatedBundles atomic.Int32
+
+const maxIsolatedBundles = 100
 
 // writeCrashBundle writes `<name>-<time>.xocrash` (core 11.2) into
-// $XO_CRASH_DIR, or the system temporary directory.
-func writeCrashBundle(f *FaultErr) string {
+// $XO_CRASH_DIR, or the system temporary directory: the fault or error
+// with its frames, the task tree, the build id and source hashes, the
+// target, and with a recording (XO_RECORD) or ring buffers (XO_RING=N)
+// the effect trace of the failing request, which `xo replay` replays.
+func writeCrashBundle(c *crashInfo) string {
+	if c.isolated && isolatedBundles.Add(1) > maxIsolatedBundles {
+		return ""
+	}
 	dir := os.Getenv("XO_CRASH_DIR")
 	if dir == "" {
 		dir = os.TempDir()
@@ -192,22 +281,62 @@ func writeCrashBundle(f *FaultErr) string {
 	name := filepath.Base(os.Args[0])
 	now := time.Now().UTC()
 	path := filepath.Join(dir, fmt.Sprintf("%s-%s.xocrash", name, now.Format("20060102T150405.000000000")))
+	code := 70
 	bundle := map[string]any{
-		"fault":    f.Msg,
-		"code":     f.Code,
-		"location": f.Loc,
-		"stack":    strings.Split(strings.TrimRight(f.Stack, "\n"), "\n"),
-		"target":   runtime.GOOS + "/" + runtime.GOARCH,
-		"time":     now.Format(time.RFC3339Nano),
-		"args":     os.Args,
+		"target": runtime.GOOS + "/" + runtime.GOARCH,
+		"time":   now.Format(time.RFC3339Nano),
+		"args":   os.Args,
+	}
+	if f := c.fault; f != nil {
+		bundle["kind"] = "fault"
+		bundle["fault"] = f.Msg
+		bundle["code"] = f.Code
+		bundle["location"] = f.Loc
+		bundle["stack"] = strings.Split(strings.TrimRight(f.Stack, "\n"), "\n")
+		if f.Detail != "" {
+			bundle["detail"] = strings.Split(f.Detail, "\n")
+		}
+	} else {
+		code = 1
+		lines := strings.Split(c.errText, "\n")
+		bundle["kind"] = "error"
+		bundle["error"] = lines[0]
+		bundle["frames"] = lines[1:]
+	}
+	if c.isolated {
+		bundle["isolated"] = true
+		bundle["request"] = c.req
 	}
 	if m := runMon.Load(); m != nil {
 		// the task tree (core 11.2)
 		bundle["tasks"] = strings.Split(strings.TrimRight(dumpText(m.root), "\n"), "\n")
 	}
+	if buildInfo != nil {
+		bundle["build"] = buildInfo
+	}
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		return ""
+	}
+	if rec != nil {
+		// the effect trace, one JSON object per line
+		focus := int64(-1)
+		if c.isolated {
+			focus = c.req
+		}
+		lines := rec.lines(runOutcome(code, c), false, focus)
+		var b bytes.Buffer
+		b.Write(bytes.TrimRight(bytes.TrimSuffix(bytes.TrimRight(data, "\n"), []byte("}")), "\n"))
+		b.WriteString(",\n  \"trace\": [\n")
+		for i, l := range lines {
+			b.WriteString("    " + l)
+			if i < len(lines)-1 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString("  ]\n}\n")
+		data = b.Bytes()
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return ""

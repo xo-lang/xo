@@ -46,9 +46,12 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 	if level < min {
 		return
 	}
-	now := time.Now().UTC()
+	var now time.Time
 	if tk != nil && tk.w != nil {
 		now = time.Unix(0, int64(tk.w.Now())).UTC()
+	} else {
+		// an effect under record and replay (core 11.3)
+		now = fxNowTime(tk).UTC()
 	}
 	var line string
 	if asJSON {

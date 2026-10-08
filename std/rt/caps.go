@@ -195,6 +195,10 @@ func (f *realFs) info(osPath, given string, fi os.FileInfo) FileInfo {
 }
 
 func (f *realFs) M_stat(tk *Task, p string) Result[Option[FileInfo], FsErr] {
+	return fx(tk, "fs.stat", false, func() []any { return []any{p} }, func() Result[Option[FileInfo], FsErr] { return f.stat(tk, p) })
+}
+
+func (f *realFs) stat(tk *Task, p string) Result[Option[FileInfo], FsErr] {
 	op, e := f.check(tk, p, false)
 	if e != nil {
 		return Err[Option[FileInfo]](*e)
@@ -218,6 +222,10 @@ func (f *realFs) M_exists(tk *Task, p string) Result[bool, FsErr] {
 }
 
 func (f *realFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {
+	return fx(tk, "fs.read", false, func() []any { return []any{p} }, func() Result[Bytes, FsErr] { return f.read(tk, p) })
+}
+
+func (f *realFs) read(tk *Task, p string) Result[Bytes, FsErr] {
 	op, e := f.check(tk, p, false)
 	if e != nil {
 		return Err[Bytes](*e)
@@ -238,6 +246,10 @@ func (f *realFs) M_read_text(tk *Task, p string) Result[string, FsErr] {
 }
 
 func (f *realFs) M_read_dir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
+	return fx(tk, "fs.read_dir", false, func() []any { return []any{dir} }, func() Result[List[FileInfo], FsErr] { return f.readDir(tk, dir) })
+}
+
+func (f *realFs) readDir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 	op, e := f.check(tk, dir, false)
 	if e != nil {
 		return Err[List[FileInfo]](*e)
@@ -259,6 +271,10 @@ func (f *realFs) M_read_dir(tk *Task, dir string) Result[List[FileInfo], FsErr] 
 }
 
 func (f *realFs) M_walk(tk *Task, dir string) Result[List[FileInfo], FsErr] {
+	return fx(tk, "fs.walk", false, func() []any { return []any{dir} }, func() Result[List[FileInfo], FsErr] { return f.walk(tk, dir) })
+}
+
+func (f *realFs) walk(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 	op, e := f.check(tk, dir, false)
 	if e != nil {
 		return Err[List[FileInfo]](*e)
@@ -298,6 +314,10 @@ func (f *realFs) M_walk(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 }
 
 func (f *realFs) M_write(tk *Task, p string, data Bytes) Result[Unit, FsErr] {
+	return fx(tk, "fs.write", false, func() []any { return []any{p, int64(len(data))} }, func() Result[Unit, FsErr] { return f.write(tk, p, data) })
+}
+
+func (f *realFs) write(tk *Task, p string, data Bytes) Result[Unit, FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -309,6 +329,10 @@ func (f *realFs) M_write(tk *Task, p string, data Bytes) Result[Unit, FsErr] {
 }
 
 func (f *realFs) M_create_temp(tk *Task, dir, prefix string) Result[string, FsErr] {
+	return fx(tk, "fs.create_temp", false, func() []any { return []any{dir, prefix} }, func() Result[string, FsErr] { return f.createTemp(tk, dir, prefix) })
+}
+
+func (f *realFs) createTemp(tk *Task, dir, prefix string) Result[string, FsErr] {
 	op, e := f.check(tk, dir, true)
 	if e != nil {
 		return Err[string](*e)
@@ -323,6 +347,10 @@ func (f *realFs) M_create_temp(tk *Task, dir, prefix string) Result[string, FsEr
 }
 
 func (f *realFs) M_rename(tk *Task, from, to string) Result[Unit, FsErr] {
+	return fx(tk, "fs.rename", false, func() []any { return []any{from, to} }, func() Result[Unit, FsErr] { return f.rename(tk, from, to) })
+}
+
+func (f *realFs) rename(tk *Task, from, to string) Result[Unit, FsErr] {
 	of, e := f.check(tk, from, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -338,6 +366,10 @@ func (f *realFs) M_rename(tk *Task, from, to string) Result[Unit, FsErr] {
 }
 
 func (f *realFs) M_remove(tk *Task, p string) Result[Unit, FsErr] {
+	return fx(tk, "fs.remove", false, func() []any { return []any{p} }, func() Result[Unit, FsErr] { return f.remove(tk, p) })
+}
+
+func (f *realFs) remove(tk *Task, p string) Result[Unit, FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -349,6 +381,10 @@ func (f *realFs) M_remove(tk *Task, p string) Result[Unit, FsErr] {
 }
 
 func (f *realFs) M_remove_all(tk *Task, p string) Result[Unit, FsErr] {
+	return fx(tk, "fs.remove_all", false, func() []any { return []any{p} }, func() Result[Unit, FsErr] { return f.removeAll(tk, p) })
+}
+
+func (f *realFs) removeAll(tk *Task, p string) Result[Unit, FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -360,6 +396,10 @@ func (f *realFs) M_remove_all(tk *Task, p string) Result[Unit, FsErr] {
 }
 
 func (f *realFs) M_create_dir_all(tk *Task, p string) Result[Unit, FsErr] {
+	return fx(tk, "fs.create_dir_all", false, func() []any { return []any{p} }, func() Result[Unit, FsErr] { return f.createDirAll(tk, p) })
+}
+
+func (f *realFs) createDirAll(tk *Task, p string) Result[Unit, FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -371,6 +411,10 @@ func (f *realFs) M_create_dir_all(tk *Task, p string) Result[Unit, FsErr] {
 }
 
 func (f *realFs) M_set_modified(tk *Task, p string, t Time) Result[Unit, FsErr] {
+	return fx(tk, "fs.set_modified", false, func() []any { return []any{p, t} }, func() Result[Unit, FsErr] { return f.setModified(tk, p, t) })
+}
+
+func (f *realFs) setModified(tk *Task, p string, t Time) Result[Unit, FsErr] {
 	op, e := f.check(tk, p, true)
 	if e != nil {
 		return Err[Unit](*e)
@@ -388,10 +432,14 @@ func (f *realFs) XoDebug(b *strings.Builder) { b.WriteString("<fs>") }
 // ---------------------------------------------------------------------------
 // Net (std.md 3.2)
 
-// Listener is a listening socket (real or in memory).
+// Listener is a listening socket (real or in memory). id numbers the
+// real listeners of a run (record and replay); a replayed listener has
+// no socket.
 type Listener struct {
-	l   net.Listener
-	mem *memListener
+	l      net.Listener
+	mem    *memListener
+	id     int64
+	replay bool
 }
 
 // Conn is a connection.
@@ -415,7 +463,11 @@ func netErr(tag int, msg string) NetErr {
 	return NetErr{Tag: tag}
 }
 
-func (realNet) M_listen(tk *Task, addr string) Result[Listener, NetErr] {
+func (n realNet) M_listen(tk *Task, addr string) Result[Listener, NetErr] {
+	return fx(tk, "net.listen", false, func() []any { return []any{addr} }, func() Result[Listener, NetErr] { return n.listen(tk, addr) })
+}
+
+func (realNet) listen(tk *Task, addr string) Result[Listener, NetErr] {
 	if tk.Canceled() {
 		return Err[Listener](netErr(5, ""))
 	}
@@ -423,10 +475,14 @@ func (realNet) M_listen(tk *Task, addr string) Result[Listener, NetErr] {
 	if err != nil {
 		return Err[Listener](netErr(4, err.Error()))
 	}
-	return Ok[Listener, NetErr](Listener{l: l})
+	return Ok[Listener, NetErr](Listener{l: l, id: fxListenerSeq.Add(1)})
 }
 
-func (realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
+func (n realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
+	return fx(tk, "net.dial", false, func() []any { return []any{addr} }, func() Result[Conn, NetErr] { return n.dial(tk, addr) })
+}
+
+func (realNet) dial(tk *Task, addr string) Result[Conn, NetErr] {
 	if tk.Canceled() {
 		return Err[Conn](netErr(5, ""))
 	}
@@ -449,7 +505,7 @@ type realClock struct{}
 
 func (realClock) M_now(tk *Task) Time {
 	tk.Yield()
-	return Time(time.Now().UnixNano())
+	return fx(tk, "clock.now", false, nil, func() Time { return Time(time.Now().UnixNano()) })
 }
 
 // M_sleep waits through a waiter, like a channel operation, so a sleeping
@@ -457,6 +513,9 @@ func (realClock) M_now(tk *Task) Time {
 func (realClock) M_sleep(tk *Task, d Duration) {
 	tk.Yield()
 	tk.CheckCancel()
+	if fxMode != fxOff {
+		fx(tk, "clock.sleep", false, func() []any { return []any{d} }, func() Unit { return Unit{} })
+	}
 	if d <= 0 {
 		return
 	}
@@ -473,13 +532,13 @@ func (realClock) M_sleep(tk *Task, d Duration) {
 		return
 	}
 	w := newWaiter(tk)
-	t := time.AfterFunc(time.Duration(d), func() {
+	stop := realAfter(d, func() {
 		if w.claim() {
 			w.signal()
 		}
 	})
 	ok := tk.wait(w, waitSleep, nil)
-	t.Stop()
+	stop()
 	if !ok {
 		tk.Unwind()
 	}
@@ -502,18 +561,29 @@ func randUint64() uint64 {
 	return binary.LittleEndian.Uint64(b[:])
 }
 
-func (realRand) M_int(_ *Task, lo, hi int64) int64 { return randRange(randUint64, lo, hi) }
-
-func (realRand) M_float(*Task) float64 { return float64(randUint64()>>11) / (1 << 53) }
-
-func (realRand) M_bool(*Task) bool { return randUint64()&1 == 1 }
-
-func (realRand) M_bytes(_ *Task, n int64) Bytes {
-	b := make([]byte, max(n, 0))
-	if _, err := crand.Read(b); err != nil {
-		panic(err)
+func (realRand) M_int(tk *Task, lo, hi int64) int64 {
+	if hi <= lo {
+		FaultHere("rand.int(%d, %d): the range is empty", lo, hi)
 	}
-	return Bytes(b)
+	return fx(tk, "rand.int", false, func() []any { return []any{lo, hi} }, func() int64 { return randRange(randUint64, lo, hi) })
+}
+
+func (realRand) M_float(tk *Task) float64 {
+	return fx(tk, "rand.float", false, nil, func() float64 { return float64(randUint64()>>11) / (1 << 53) })
+}
+
+func (realRand) M_bool(tk *Task) bool {
+	return fx(tk, "rand.bool", false, nil, func() bool { return randUint64()&1 == 1 })
+}
+
+func (realRand) M_bytes(tk *Task, n int64) Bytes {
+	return fx(tk, "rand.bytes", false, func() []any { return []any{n} }, func() Bytes {
+		b := make([]byte, max(n, 0))
+		if _, err := crand.Read(b); err != nil {
+			panic(err)
+		}
+		return Bytes(b)
+	})
 }
 
 func (realRand) XoDebug(b *strings.Builder) { b.WriteString("<rand>") }
@@ -548,12 +618,18 @@ func Rand_shuffle[T any](tk *Task, r Rand, xs List[T]) List[T] {
 
 type realEnv struct{}
 
-func (realEnv) M_get(_ *Task, name string) Option[string] {
-	v, ok := os.LookupEnv(name)
-	return Option[string]{Some: ok, V: v}
+func (realEnv) M_get(tk *Task, name string) Option[string] {
+	return fx(tk, "env.get", false, func() []any { return []any{name} }, func() Option[string] {
+		v, ok := os.LookupEnv(name)
+		return Option[string]{Some: ok, V: v}
+	})
 }
 
-func (realEnv) M_vars(*Task) Map[string, string] {
+func (e realEnv) M_vars(tk *Task) Map[string, string] {
+	return fx(tk, "env.vars", false, nil, e.vars)
+}
+
+func (realEnv) vars() Map[string, string] {
 	var m Map[string, string]
 	env := os.Environ()
 	sort.Strings(env)
@@ -564,21 +640,27 @@ func (realEnv) M_vars(*Task) Map[string, string] {
 	return m
 }
 
-func (realEnv) M_args(*Task) List[string] {
-	if len(os.Args) <= 1 {
-		return List[string]{}
-	}
-	return ListOf(os.Args[1:]...)
+func (realEnv) M_args(tk *Task) List[string] {
+	return fx(tk, "env.args", false, nil, func() List[string] {
+		if len(os.Args) <= 1 {
+			return List[string]{}
+		}
+		return ListOf(os.Args[1:]...)
+	})
 }
 
-func (realEnv) M_program(*Task) string { return os.Args[0] }
+func (realEnv) M_program(tk *Task) string {
+	return fx(tk, "env.program", false, nil, func() string { return os.Args[0] })
+}
 
-func (realEnv) M_home(*Task) Result[string, EnvErr] {
-	h, err := os.UserHomeDir()
-	if err != nil {
-		return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "HOME"}})
-	}
-	return Ok[string, EnvErr](h)
+func (realEnv) M_home(tk *Task) Result[string, EnvErr] {
+	return fx(tk, "env.home", false, nil, func() Result[string, EnvErr] {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "HOME"}})
+		}
+		return Ok[string, EnvErr](h)
+	})
 }
 
 func (realEnv) XoDebug(b *strings.Builder) { b.WriteString("<env>") }
@@ -623,10 +705,14 @@ func (realStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 	return Ok[Unit, IoErr](Unit{})
 }
 
-func (realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
+func (s realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
 	if tk.Canceled() {
 		return Err[Option[string]](IoErr{Tag: 3})
 	}
+	return fx(tk, "stdio.read_line", true, nil, func() Result[Option[string], IoErr] { return s.readLine(tk) })
+}
+
+func (realStdio) readLine(tk *Task) Result[Option[string], IoErr] {
 	tk.leave()
 	line, err := stdin().ReadString('\n')
 	tk.enter()
@@ -640,10 +726,14 @@ func (realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
 	return Ok[Option[string], IoErr](Some(line))
 }
 
-func (realStdio) M_read_all(tk *Task) Result[string, IoErr] {
+func (s realStdio) M_read_all(tk *Task) Result[string, IoErr] {
 	if tk.Canceled() {
 		return Err[string](IoErr{Tag: 3})
 	}
+	return fx(tk, "stdio.read_all", true, nil, func() Result[string, IoErr] { return s.readAll(tk) })
+}
+
+func (realStdio) readAll(tk *Task) Result[string, IoErr] {
 	tk.leave()
 	data, err := io.ReadAll(stdin())
 	tk.enter()
@@ -668,7 +758,11 @@ func (realStdio) XoDebug(b *strings.Builder) { b.WriteString("<stdio>") }
 
 type realProc struct{}
 
-func (realProc) M_exit(_ *Task, code int64) Never {
+func (realProc) M_exit(tk *Task, code int64) Never {
+	if fxMode != fxOff {
+		fx(tk, "proc.exit", false, func() []any { return []any{code} }, func() Unit { return Unit{} })
+	}
+	fxFinish(int(code), nil)
 	os.Exit(int(code))
 	return Never{}
 }
@@ -681,10 +775,14 @@ func (realProc) M_set_grace(tk *Task, d Duration) {
 	}
 }
 
-func (realProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
+func (p realProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
 	if tk.Canceled() {
 		return Err[ProcOutput](ProcErr{Tag: 3})
 	}
+	return fx(tk, "proc.run", true, func() []any { return []any{cmd, args} }, func() Result[ProcOutput, ProcErr] { return p.run(tk, cmd, args) })
+}
+
+func (realProc) run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {

@@ -1,6 +1,6 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
 // `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo vet`,
-// `xo query`, `xo doc`, and `xo explain`.
+// `xo query`, `xo doc`, `xo explain`, `xo dump`, and `xo replay`.
 package main
 
 import (
@@ -69,6 +69,19 @@ commands:
       Print the task tree of a running Xo program (core 11.4): sends it
       SIGQUIT and prints the dump it writes to $XO_DUMP_DIR or the system
       temporary directory (xo-dump-<pid>.txt). The program goes on running.
+  run --record=<trace.xotrace> [dir] [-- args...]
+      Run with every effect (clock, rand, env, stdin, fs, net, http client
+      responses, server requests, signals) and every scheduling decision
+      recorded into the trace (core 11.3). XO_RECORD=<file> does the same
+      for any built program; XO_RING=N keeps per request ring buffers of
+      the last N effects for crash bundles.
+  replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>
+      Rebuild the recorded program and rerun it offline with every effect
+      result and interleaving taken from the trace: same output, same
+      fault. A divergence (the program asks for another effect than the
+      trace recorded) is reported with both locations, exit status 3.
+      Secrets are redacted in traces; a replay takes them from the
+      environment (the recorded variable, or XO_REPLAY_SECRET_<n>).
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -101,6 +114,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runExplain(args[1:], stdout, stderr)
 	case "dump":
 		return runDump(args[1:], stdout, stderr)
+	case "replay":
+		return runReplay(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

@@ -54,7 +54,7 @@ func (st *stopState) now() int64 {
 	if st.w != nil {
 		return int64(st.w.Now())
 	}
-	return monoNow()
+	return fxMono()
 }
 
 // after calls f with st.mu held after d on the run's clock, unless the run
@@ -76,8 +76,7 @@ func (st *stopState) after(d Duration, f func()) func() {
 			w.helperLocked(run)
 		})
 	}
-	t := time.AfterFunc(time.Duration(max(d, 0)), run)
-	return func() { t.Stop() }
+	return realAfter(d, run)
 }
 
 // signal delivers SIGINT or SIGTERM.

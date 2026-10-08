@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 
@@ -116,6 +117,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	fl.SetOutput(stderr)
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
 	seed := fl.Int64("seed", 0, "run every task on the deterministic scheduler with this seed (core 7.4; sets XO_SEED)")
+	record := fl.String("record", "", "record every effect and scheduling decision into this .xotrace file for xo replay (core 11.3; sets XO_RECORD)")
 	noMono := monoFlags(fl)
 	arenas := arenaFlag(fl)
 	backend := backendFlag(fl)
@@ -148,15 +150,37 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	if *seed != 0 {
 		env = append(env, "XO_SEED="+strconv.FormatInt(*seed, 10))
 	}
+	if *record != "" {
+		if *backend == "llvm" {
+			fmt.Fprintln(stderr, "xo run: --record needs the Go backend")
+			return 2
+		}
+		abs, err := filepath.Abs(*record)
+		if err != nil {
+			fmt.Fprintf(stderr, "xo run: %v\n", err)
+			return 2
+		}
+		env = append(env, "XO_RECORD="+abs)
+		code := execBinary(res.Binaries[build.Host()], progArgs, stdout, stderr, env...)
+		if _, err := os.Stat(abs); err == nil {
+			fmt.Fprintf(stderr, "xo run: recorded %s (xo replay %s)\n", *record, *record)
+		}
+		return code
+	}
 	return execBinary(res.Binaries[build.Host()], progArgs, stdout, stderr, env...)
 }
 
 func execBinary(bin string, args []string, stdout, stderr io.Writer, env ...string) int {
+	return execBinaryIn(bin, args, os.Stdin, stdout, stderr, env...)
+}
+
+// execBinaryIn is execBinary with the given standard input (nil: none).
+func execBinaryIn(bin string, args []string, stdin io.Reader, stdout, stderr io.Writer, env ...string) int {
 	cmd := exec.Command(bin, args...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = stdin
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
 	var ee *exec.ExitError

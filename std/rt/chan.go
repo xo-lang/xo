@@ -4,7 +4,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Chan is a channel handle `Chan[T]` (core 7.3). Copies share the
@@ -448,6 +447,5 @@ func afterFunc(tk *Task, d Duration, f func(locked bool)) func() {
 	if tk.w != nil {
 		return tk.w.timerFunc(d, func() { f(true) })
 	}
-	t := time.AfterFunc(time.Duration(d), func() { f(false) })
-	return func() { t.Stop() }
+	return realAfter(d, func() { f(false) })
 }

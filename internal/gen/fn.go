@@ -23,6 +23,8 @@ type fnGen struct {
 	used     map[string]int
 	fr       *frame
 	lastLine string
+	// sinceLine counts the lines emitted since the last //line directive
+	sinceLine int
 	// scopes maps the VarObj of `scope s` to its Go scope variable.
 	scopes map[*check.VarObj]*scopeInfo
 	// oldVals holds the `old(...)` values of an ensures clause.
@@ -110,11 +112,38 @@ func (pg *pkgGen) newFn(fo *check.FuncObj) *fnGen {
 // Emission
 
 func (f *fnGen) line(format string, args ...any) {
-	for i := 0; i < f.ind; i++ {
-		f.out.WriteByte('\t')
+	// every line of a statement carries its //line position: Go counts
+	// the lines after a directive up from it, so the second line of a
+	// statement that expands to several would name the next Xo line.
+	// Directives inside the text (a closure body) hold for the lines
+	// after them within the text.
+	text := fmt.Sprintf(format, args...)
+	cur := f.lastLine
+	for i, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "//line ") {
+			cur = l
+			f.out.WriteString(l)
+			f.out.WriteByte('\n')
+			f.sinceLine = 0
+			continue
+		}
+		if cur != "" && f.sinceLine > 0 {
+			f.out.WriteString(cur)
+			f.out.WriteByte('\n')
+		}
+		f.sinceLine++
+		if i == 0 {
+			for k := 0; k < f.ind; k++ {
+				f.out.WriteByte('\t')
+			}
+		}
+		f.out.WriteString(l)
+		f.out.WriteByte('\n')
 	}
-	fmt.Fprintf(f.out, format, args...)
-	f.out.WriteByte('\n')
+	if cur != f.lastLine {
+		// the lines after the text belong to the statement again
+		f.sinceLine = 1
+	}
 }
 
 // at emits a //line directive for n before the next statement.
@@ -127,6 +156,7 @@ func (f *fnGen) at(n ast.Node) {
 		return
 	}
 	f.lastLine = d
+	f.sinceLine = 0
 	f.out.WriteString(d)
 	f.out.WriteByte('\n')
 }
@@ -136,6 +166,9 @@ func (f *fnGen) capture(gen func()) string {
 	saved := f.out
 	var b strings.Builder
 	f.out = &b
+	// the text may be written after other lines: it starts with the
+	// statement's //line directive
+	f.sinceLine = 1
 	gen()
 	f.out = saved
 	return b.String()

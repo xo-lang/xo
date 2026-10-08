@@ -175,7 +175,14 @@ type Tuple6[A, B, C, D, E, F any] struct {
 type Secret[T any] struct{ v T }
 
 // Secret_new is `Secret[T].new(v)`.
-func Secret_new[T any](_ *Task, v T) Secret[T] { return Secret[T]{v: v} }
+// Under a recording or ring buffers, the value is redacted from traces
+// (core 11.3).
+func Secret_new[T any](_ *Task, v T) Secret[T] {
+	if fxMode == fxRecord || fxMode == fxRing {
+		fxSecret(any(v))
+	}
+	return Secret[T]{v: v}
+}
 
 // M_reveal returns the wrapped value.
 func (s Secret[T]) M_reveal(*Task) T { return s.v }

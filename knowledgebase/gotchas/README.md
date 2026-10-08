@@ -5,7 +5,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
-- [go-line-directives.md](go-line-directives.md): `//line` directive rules; relative paths kept verbatim; line but no column at run time.
+- [go-line-directives.md](go-line-directives.md): `//line` directive rules; lines after a directive count up, so the generator repeats it per Go line; relative paths kept verbatim; line but no column at run time.
 - [defer-differs-from-go.md](defer-differs-from-go.md): Xo `defer` is block scoped; blocks with defer run as closures.
 - [extension-availability-checks.md](extension-availability-checks.md): Linguist misses non source extensions.
 - [value-semantics-lost-update.md](value-semantics-lost-update.md): forgetting to write back a mutated copy loses the update silently.
@@ -78,3 +78,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-list-write-cost.md](llvm-list-write-cost.md): out of line list write helpers made LLVM builds 2 to 5x slower than Go; inline fast paths, TBAA tags, and a per block uniqueness cache fixed it.
 - [llvm-borrow-and-var-alias.md](llvm-borrow-and-var-alias.md): a list passed both as `var` and by value aliased in the LLVM backend; by value arguments of calls with `var` parameters are retained.
 - [go-backend-tuple-arity.md](go-backend-tuple-arity.md): tuples longer than six elements pass `xo check` but fail the Go build (`rt.Tuple11` undefined).
+- [record-replay-scheduler-decisions.md](record-replay-scheduler-decisions.md): a seed does not replay a real run; the recording logs every pick and every outside event (timers, signals, requests) at decisions.
+- [ring-replay-other-requests.md](ring-replay-other-requests.md): an `XO_RING` crash bundle replays main's startup and the failing request only; state from other requests needs `--record`.
+- [go-build-cache-growth.md](go-build-cache-growth.md): Xo builds filled Go's build cache; now a separate capped cache.

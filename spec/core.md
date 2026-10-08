@@ -1361,9 +1361,12 @@ error or fault with frames, the task tree, build id, source hashes, target, and
 All effect calls go through capability values, so the runtime can log each
 call and its result, plus scheduler decisions.
 
-- `xo run --record=trace.xotrace` records a full run.
-- In production, a per request ring buffer is kept and attached to crash
-  bundles.
+- `xo run --record=trace.xotrace` (or `XO_RECORD=trace.xotrace` for any built
+  binary) records a full run. Values of type `Secret[T]` are recorded redacted;
+  `xo replay` then requires them from the environment and exits with status 3
+  naming the missing one. Calls into Go packages (`use go`) are not recorded.
+- In production, a per request ring buffer (`XO_RING=N` requests) is kept and
+  attached to crash bundles.
 - `xo replay trace.xotrace` (or a `.xocrash`) re executes the program offline
   with identical effect results and interleavings.
 - `xo debug --replay trace.xotrace` supports stepping backward.

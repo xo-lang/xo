@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // lock is a cancelable FIFO lock with explicit waiters (see Chan).
@@ -355,8 +354,7 @@ func clockAfter(tk *Task, c Clock, d Duration, f func(locked bool)) func() {
 	if tk.w != nil {
 		return tk.w.timerFunc(d, func() { f(true) })
 	}
-	t := time.AfterFunc(time.Duration(d), func() { f(false) })
-	return func() { t.Stop() }
+	return realAfter(d, func() { f(false) })
 }
 
 // Task_map_concurrent is `task.map_concurrent(items, limit, f)` (std.md

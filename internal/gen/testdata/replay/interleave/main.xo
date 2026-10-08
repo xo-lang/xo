@@ -1,0 +1,41 @@
+// Record and replay of an interleaving (core 11.3): three producers race
+// to log into a mutex guarded list and a channel, sleeping at random; a
+// consumer selects between the channel and a timer. The output depends on
+// the interleaving, the random sleeps, and the timer firings, and the run
+// faults when the last item came from producer "b". A replay of the
+// trace prints the same lines and ends the same way.
+fn main(os: Os) {
+  let ch = Chan[Str].new(cap: 2)
+  let order = Mutex[List[Str]].new([])
+  scope s {
+    for name in ["a", "b", "c"] {
+      s.spawn(fn() {
+        for i in 0..4 {
+          order.with(fn(var xs) { xs.push("${name}${i}") })
+          if os.rand.bool() {
+            os.clock.sleep(2ms)
+          }
+          ch.send("${name}${i}")
+        }
+      })
+    }
+    s.spawn(fn() {
+      var got = 0
+      while got < 12 {
+        select {
+          v = ch.recv() => {
+            got += 1
+            os.stdio.println("got ${v ?? "closed"}")
+          }
+          after 1ms => os.stdio.println("tick")
+        }
+      }
+    })
+  }
+  let all = order.with(fn(xs) { xs })
+  os.stdio.println(all.join(","))
+  let last = all.last() ?? ""
+  if last.starts_with("b") {
+    fault("the last item came from b: ${last}")
+  }
+}

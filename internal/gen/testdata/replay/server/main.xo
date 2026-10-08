@@ -1,0 +1,29 @@
+// Record and replay of an HTTP server (core 11.3): the accepted requests
+// are recorded and delivered again by a replay, offline. GET /boom faults
+// in its handler (isolated: 500 and a crash bundle, core 11.2). Driven by
+// TestReplayServer in internal/gen/replay_test.go.
+use std/http
+
+fn main(os: Os) ! {
+  let port = os.env.get("PORT") ?? "18741"
+  let hits = Atomic[Int].new(0)
+  var r = http.router()
+  r.handle("GET /hello/{name}", fn(req) {
+    let n = hits.add(1)
+    os.stdio.println("hello ${req.param("name")} #${n}")
+    http.text(200, "hello ${req.param("name")} ${os.rand.int(0, 100)}")
+  })
+  r.handle("POST /echo", fn(req) {
+    hits.add(1)
+    os.stdio.println("echo ${req.body.len()} bytes")
+    http.text(200, req.body.to_str() ?? "")
+  })
+  r.handle("GET /boom", fn(req) {
+    let xs = [1]
+    http.text(200, "${xs[req.path.len()]}")
+  })
+  let srv = http.server(os.net.listen("127.0.0.1:${port}")?, r)
+  os.stdio.println("ready")
+  srv.serve()?
+  os.stdio.println("served ${hits.get()}")
+}

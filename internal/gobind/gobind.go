@@ -272,10 +272,23 @@ func goTool() string {
 	return "go"
 }
 
+// goCacheDir matches build.GoCacheDir (gobind cannot import build): Xo's own
+// capped Go cache, so bindings do not grow the user's default cache.
+func goCacheDir() string {
+	if d := os.Getenv("XO_GOCACHE"); d != "" {
+		return d
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "xo", "gocache")
+}
+
 func runGo(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command(goTool(), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod", "GOCACHE="+goCacheDir())
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

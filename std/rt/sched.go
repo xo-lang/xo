@@ -65,6 +65,7 @@ type thread struct {
 	ids  *atomic.Int64 // id source shared by the threads of a run
 	sch  *sched        // the deterministic scheduler, nil when goroutines run freely
 	mon  *monitor      // the deadlock monitor of a real run, nil otherwise
+	req  int64         // the HTTP request the thread works for (0: main), for ring buffers and traces
 
 	// scheduler state, guarded by the scheduler's lock
 	turn       chan struct{} // the turn is handed over here
@@ -94,7 +95,7 @@ func newRootThread(kind string) *thread {
 
 // newChild returns a thread of the same run.
 func (p *thread) newChild(kind string) *thread {
-	th := &thread{id: p.ids.Add(1), kind: kind, ids: p.ids, sch: p.sch, mon: p.mon}
+	th := &thread{id: p.ids.Add(1), kind: kind, ids: p.ids, sch: p.sch, mon: p.mon, req: p.req}
 	if th.sch != nil {
 		th.turn = make(chan struct{}, 1)
 	}
@@ -278,6 +279,13 @@ type sched struct {
 	threads []*thread // live threads in creation order
 	picking bool
 	started int // threads started after the first
+
+	// record and replay (core 11.3, replay.go): a recording logs every
+	// decision and runs the events from outside the program (inbox) at
+	// decisions; a replay takes both from the trace
+	rec   *recorder
+	rp    *replayer
+	inbox []schedEv
 }
 
 func newSched(mu *sync.Mutex, w *World, seed int64) *sched {
@@ -314,12 +322,21 @@ func (s *sched) pickLocked() {
 	s.picking = true
 	defer func() { s.picking = false }()
 	for {
+		if s.rec != nil {
+			s.drainLocked()
+		}
+		if s.rp != nil && s.replayLocked() {
+			return
+		}
 		if n := len(s.ready); n > 0 {
 			i := 0
 			if n > 1 {
 				i = int(s.rng.Uint64() % uint64(n))
 			}
 			th := s.ready[i]
+			if s.rec != nil {
+				s.rec.pick(th.id)
+			}
 			s.ready = append(s.ready[:i], s.ready[i+1:]...)
 			th.st = stRunning
 			s.cur = th
@@ -333,10 +350,11 @@ func (s *sched) pickLocked() {
 }
 
 // yield is a scheduling point: the running thread lets the PRNG choose who
-// runs next (possibly itself).
+// runs next (possibly itself). A recording makes (and logs) the decision
+// even when no other thread is ready, since one may be in a replay.
 func (s *sched) yield(th *thread) {
 	s.mu.Lock()
-	if s.cur != th || len(s.ready) == 0 {
+	if s.cur != th || len(s.ready) == 0 && s.rec == nil && s.rp == nil {
 		s.mu.Unlock()
 		return
 	}

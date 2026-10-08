@@ -260,6 +260,7 @@ func isolateHandler(tk *Task, f func(*Task) Http_Response) (resp Http_Response) 
 		}
 		fault := AsFault(r)
 		logRecord(tk, levelError, "handler fault", []logField{{k: "fault", v: fault.Error()}})
+		isolatedCrash(tk, fault)
 		resp = jsonError(tk, 500, "internal error")
 	}()
 	return f(tk)
@@ -485,6 +486,20 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.l.mem != nil {
 		return s.l.mem.serve(tk, s.r)
 	}
+	if s.l.replay {
+		return replayServe(tk, s)
+	}
+	r := s.serve(tk)
+	if fxMode == fxRecord || fxMode == fxRing {
+		rec.add(tk, "http.serve", []any{s.l.id}, r)
+	}
+	return r
+}
+
+// serve is M_serve on a real listener. Under a recording (core 11.3) a
+// request reaches its handler through an event of the scheduler, which
+// logs it, and the end of the serve is an event too.
+func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.l.l == nil {
 		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: "no listener"}})
 	}
@@ -498,36 +513,13 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	// not below the serving task, so `xo dump` finds it here
 	extraRoots.Store(reqRoot, true)
 	defer extraRoots.Delete(reqRoot)
+	sch := tk.th.sch
+	recording := sch != nil && sch.rec != nil
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		var a *Arena
 		if useArena {
 			a = getArena()
 		}
-		reqTask := &Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.newChild("request")}
-		node := newNodeOf(reqRoot, tk.w, nodeRequest, reqTask)
-		reqTask.node = node
-		defer node.detach()
-		th := reqTask.th
-		if th.mon != nil {
-			th.mon.started()
-		}
-		if sch := th.sch; sch != nil {
-			sch.start(th)
-			<-th.turn
-		} else {
-			clearLabels()
-		}
-		defer func() {
-			th.mu.Lock()
-			th.done = true
-			th.mu.Unlock()
-			if th.mon != nil {
-				th.mon.ended()
-			}
-			if sch := th.sch; sch != nil {
-				sch.end(th)
-			}
-		}()
 		var body Bytes
 		if a != nil {
 			body = a.readBody(hr.Body)
@@ -537,7 +529,7 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}
 		h := a.strMap()
 		for k, vs := range hr.Header {
-			h.M_put(reqTask, k, strings.Join(vs, ", "))
+			h.M_put(nil, k, strings.Join(vs, ", "))
 		}
 		u := parseURLArena(a, hr.URL.String())
 		u.F_host = hr.Host
@@ -549,6 +541,50 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 			ip = host
 		}
 		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
+		var reqTask *Task
+		var k int64
+		start := func() {
+			reqTask = &Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.newChild("request")}
+			reqTask.th.req = k
+			reqTask.node = newNodeOf(reqRoot, tk.w, nodeRequest, reqTask)
+			if reqTask.th.mon != nil {
+				reqTask.th.mon.started()
+			}
+			if sch != nil {
+				sch.start(reqTask.th)
+			}
+		}
+		switch {
+		case recording:
+			started := make(chan struct{})
+			sch.post(schedEv{
+				tok: func() string {
+					k = rec.newReq(s.l.id, req)
+					return "r" + strconv.FormatInt(k, 10)
+				},
+				run: func() {
+					start()
+					close(started)
+				},
+			})
+			<-started
+		case fxMode == fxRing:
+			k = rec.newReq(s.l.id, req)
+			start()
+		default:
+			start()
+		}
+		th := reqTask.th
+		defer reqTask.node.detach()
+		if sch != nil {
+			<-th.turn
+		} else {
+			clearLabels()
+		}
+		defer endThread(th)
+		if rec != nil {
+			defer rec.endReq(k)
+		}
 		if a != nil {
 			a.resp = true
 		}
@@ -559,10 +595,23 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 		w.WriteHeader(int(resp.F_status))
 		if resp.XStream != nil {
 			fl, _ := w.(http.Flusher)
-			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: w, fl: fl}})
+			var out io.Writer = w
+			var tee *bytes.Buffer
+			if rec != nil {
+				tee = &bytes.Buffer{}
+				out = io.MultiWriter(w, tee)
+			}
+			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl}})
+			if tee != nil {
+				resp.XStream = nil
+				resp.F_body = Bytes(tee.String())
+			}
 		} else {
 			// net/http copies the bytes into its own buffer
 			io.WriteString(w, string(resp.F_body))
+		}
+		if rec != nil {
+			rec.reqResp(k, resp)
 		}
 		if a != nil {
 			// the handler returned (every task it started in a scope has
@@ -573,12 +622,33 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 			a.release()
 		}
 	})}
+	// ended logs the end of the serve under a recording: x when the
+	// requests still running are canceled
+	ended := func(cancel bool) {
+		if !recording {
+			if cancel {
+				reqRoot.cancel()
+			}
+			return
+		}
+		t := "e"
+		if cancel {
+			t = "x"
+		}
+		t += strconv.FormatInt(s.l.id, 10)
+		sch.post(schedEv{tok: func() string { return t }, run: func() {
+			if cancel {
+				reqRoot.cancel()
+			}
+		}})
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(s.l.l) }()
 	tk.leave()
 	defer tk.enter()
 	select {
 	case err := <-errc:
+		ended(false)
 		if errors.Is(err, http.ErrServerClosed) {
 			return Ok[Unit, Http_HttpErr](Unit{})
 		}
@@ -595,13 +665,16 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}()
 		if srv.Shutdown(ctx) != nil {
 			srv.Close()
-			reqRoot.cancel()
+			ended(true)
+		} else {
+			ended(false)
 		}
 		return Ok[Unit, Http_HttpErr](Unit{})
 	case <-tk.node.done:
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
+		ended(false)
 		return Ok[Unit, Http_HttpErr](Unit{})
 	}
 }
@@ -670,6 +743,11 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 		}
 		return r
 	}
+	return fx(tk, "http.send", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_Response, Http_ClientErr] { return c.send(tk, req, rawURL) })
+}
+
+// send is M_send over the real network.
+func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {

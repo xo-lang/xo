@@ -44,7 +44,8 @@ gofmt -l internal cmd std                # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [--backend=go|llvm] [dir...]
-go run ./cmd/xo run [--seed=N] [--holes] [--no-mono] [--arenas] [--backend=go|llvm] [dir] [-- args...]
+go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--arenas] [--backend=go|llvm] [dir] [-- args...]
+go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
 go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
@@ -198,9 +199,11 @@ the module paths, mode, lowering, `--arenas`, and layout tag>/` (stable, so Go's
 cache is reused; the layout tag keeps older xo binaries out, see
 `gotchas/build-dir-shared-across-xo-versions.md`): `go.mod` (module
 `xoprog`), `rt/` (the runtime, copied from the embedded `std/rt`),
-`m/<module ident>/xo.go` per Xo module, `main.go`, and `xo_adapt.go`
+`m/<module ident>/xo.go` per Xo module, `main.go`, `xo_adapt.go`
 (package main: interface adapters registered for generic code, often
-empty). Last verified: 2026-10-08. Crash bundles go to
+empty), and (build mode, since 2026-10-08) `xo_buildinfo.go` (package
+main: `rt.SetBuildInfo` with the build id, source hashes, main module
+directory, and options, `build.Info`). Last verified: 2026-10-08. Crash bundles go to
 `$XO_CRASH_DIR` or the system temporary directory. `XO_GO` overrides the go
 command (default: `go` on PATH).
 
@@ -269,6 +272,88 @@ monitor, reports, dump), hooks in `task.go`, `scope.go`, `chan.go`,
   `args.txt`); `TestRunSeedReproduces` (testdata/sched_run with
   XO_SEED), `TestTestSeedReproduces`; `cmd/xo` `TestDump`; std/rt
   `sched_test.go`.
+
+## Record and replay, crash bundles (P2)
+
+Last verified: 2026-10-08. Code: `std/rt/replay.go` (modes, recorder,
+replayer, scheduler events, timers, verdicts), `std/rt/fxcodec.go` (value
+codec), hooks in `caps.go`, `http.go`, `sched.go`, `main.go`, `stop.go`,
+`chan.go`, `sync.go`, `log.go`, `core.go` (`Secret_new`);
+`internal/build` `Info`; `cmd/xo/replay.go`. Spec: core 11.2, 11.3.
+
+- Modes (read by `RunMain`, then removed from the environment so the
+  program and its children do not see them): `XO_RECORD=<file>` (set by
+  `xo run --record=<file>`, honored by any built binary) records a full
+  trace, written when the program ends (normal end, error, fault,
+  deadlock fault, `proc.exit`, third signal; a SIGKILL loses it; the
+  trace is kept in memory until then). `XO_RING=N` keeps per request ring
+  buffers of the last N effects (request 0 is main and its tasks), no
+  scheduler, attached to crash bundles. `XO_REPLAY=<file>` (set by `xo
+  replay`) replays a `.xotrace` or a `.xocrash`.
+- Effects: every capability method runs its I/O through `fx(tk, op, io,
+  args, real)`: recorded as op, encoded args, encoded result, Xo location;
+  replayed from the per thread queue (per request for ring buffers)
+  without doing the I/O. `io` effects (stdin reads, `proc.run`,
+  `http.send`) repeat `leave`/`enter` in a replay so the interleaving is
+  the same. Covered: `fs.*` (reads and writes; a replay never touches the
+  filesystem), `net.listen`/`dial`, `clock.now`/`sleep`, `rand.*`,
+  `env.*`, `stdio.read_line`/`read_all`, `proc.run`/`exit`, `http.send`,
+  `http.serve`, log record times (`log.time`), the stop grace clock
+  (`rt.mono`). Output (`stdio.print*`, `write`) is not recorded; a replay
+  prints it again.
+- Interleavings: a recording runs every task on the deterministic
+  scheduler (seed `XO_SEED` or random, kept in the header) and logs every
+  pick by thread id; `yield` always decides. Timers (`realAfter`, used by
+  sleep, `after` arms, `with_timeout`, the grace timer), SIGINT/SIGTERM,
+  accepted HTTP requests, and server ends are scheduler events (inbox,
+  run at the next decision with no thread running). See
+  `gotchas/record-replay-scheduler-decisions.md`.
+- HTTP server: a recording reads the request, posts it as an event that
+  creates the request thread, and logs the response (status, headers,
+  body; streamed bodies teed). A replay's listener has no socket;
+  `serve` waits for the trace's server end and requests are delivered
+  from the trace; each response is compared with the recorded one.
+- Trace format (JSON lines): header (`xotrace`, `mode` full or ring,
+  `complete`, `seed`, `args`, `target`, `build`), `{"secret":k,"src":
+  "env:NAME","at":...}`, effects `{"n","t","q","op","a","r","at"}`,
+  requests `{"req","l","r","resp"}`, scheduler stream `{"s": "1 1*4 2 t3
+  r1 g e1"}` (pick, run length, timer, request, signal, server end; `x`
+  is a server end that cancels its requests), `{"end": {code, fault,
+  fcode, loc, error, isolated, req}}`. Values: strings (non UTF-8 as
+  `{"b64":...}`), numbers exact, struct fields without `F_` and omitted
+  when zero, List as array, Map as [key, value] pairs, enums as
+  `{"tag", "p": {"$": payload type, "v"}}`.
+- Secrets: `Secret[T].new(v)` registers Str or Bytes values; every trace
+  line has them replaced by `<redacted:k>` when written. A replay puts
+  them back from `XO_REPLAY_SECRET_k` or the recorded env variable and
+  fails before running (exit 3) naming both when neither is set.
+- Replay verdicts on stderr, prefixed `xo replay:`: `identical run`
+  or `reproduced the crash` with the outcome and counts; a divergence
+  (other op or args, no more effects, unknown timer or server, a picked
+  thread that never becomes ready for 3 s, different end or response)
+  names the effect index, the task, and both locations, exit status 3
+  (`rt.ReplayDiverged`). Bundles are prefixes: running past their end
+  stops the replay; a reproduced isolated handler fault exits 0.
+- Crash bundles (`writeCrashBundle`): written for a fault reaching main,
+  an error returned from main (new 2026-10-08, `kind: "error"` with
+  `frames`), a deadlock fault, and a fault isolated in a real server's
+  request handler (at most 100 per process); stderr gets `crash bundle:
+  <path>`. Fields: `kind`, fault, code, location, stack, detail or error,
+  frames, `isolated`, `request`, `tasks`, `build` (id, dir, sources,
+  options), `target`, `time`, `args`, and with a recording or ring
+  buffers `trace` (one JSON line per element; ring bundles hold main's
+  and the failing request's buffers, see
+  `gotchas/ring-replay-other-requests.md`).
+- `xo replay` reads the header, rebuilds from `build.dir` (or `--dir`)
+  with the recorded options, warns when source hashes differ, and runs
+  the binary with `XO_REPLAY`, the recorded args, and no stdin.
+- Not recorded: `use go` functions that perform effects, the 5 s limit of
+  shielded defers (real time), wall clock reads of the runtime outside
+  capabilities. The LLVM backend has no record (`--record` is refused).
+- Tests: `internal/gen/replay_test.go` (`TestReplayEffects`,
+  `TestReplayInterleave`, `TestReplayServer`, `TestReplayDivergence`,
+  each also on a -race build) on `internal/gen/testdata/replay/*`;
+  `cmd/xo/replay_test.go` `TestRecordReplayCLI`.
 
 ## Benchmark tooling
 
@@ -870,4 +955,10 @@ Last verified: 2026-10-08.
   the list every time (push through them stays O(1)); `--no-mono` marks
   type parameter values through `rt.Own`, which allocates; lists grow by
   doubling (sieve peak RSS 68 MB against Go's 48 MB).
+
+## Go build cache (2026-10-08)
+
+Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
+`<user cache>/xo/gocache`), trimmed by least recent use to stay under
+`XO_GOCACHE_MAX` bytes (default 8 GiB). See `gotchas/go-build-cache-growth.md`.
 
