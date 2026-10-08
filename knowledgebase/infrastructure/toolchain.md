@@ -789,6 +789,14 @@ Last verified: 2026-10-08. Rules and choices; details in
   copy of the table map). Real drivers: implement `rt.SqlOpener`, call
   `rt.RegisterSqlDriver` (to be bound through `use go`; none yet). Goldens:
   `sql_basic`, `sql_tx`, `test_sql`. Not recorded by record and replay.
+- std/http request values and scoped middleware (2026-10-08, decision
+  0055): `Http_Key[T]`, `Http_Request_with_value`/`_value` (a persistent
+  list in the hidden `XValues` field of `Http_Request`, listed in
+  `rtExtraFields` in internal/gen/json.go), `Http_Router_wrap[E]` (generic
+  now; was the Go method `M_wrap`), `M_mount` (flattens the sub router's
+  routes, each behind `chain(sub.mws, h)`), `Listener.M_addr` (the
+  `addr` field, also in the recorded `net.listen` result). Golden:
+  `http_scoped`.
 
 ## SSA IR
 

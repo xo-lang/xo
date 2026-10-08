@@ -102,7 +102,8 @@ func fxEnc(v reflect.Value) any {
 	t := v.Type()
 	switch {
 	case t == listenerType:
-		return map[string]any{"id": json.Number(strconv.FormatInt(v.Interface().(Listener).id, 10))}
+		l := v.Interface().(Listener)
+		return map[string]any{"id": json.Number(strconv.FormatInt(l.id, 10)), "addr": l.addr}
 	case t == connType:
 		return map[string]any{}
 	case t.Implements(seqType) && v.CanInterface():
@@ -193,8 +194,10 @@ func fxDec(x any, t reflect.Type) reflect.Value {
 	}
 	switch {
 	case t == listenerType:
-		id, _ := x.(map[string]any)["id"].(json.Number).Int64()
-		out.Set(reflect.ValueOf(Listener{id: id, replay: true}))
+		m := x.(map[string]any)
+		id, _ := m["id"].(json.Number).Int64()
+		addr, _ := m["addr"].(string)
+		out.Set(reflect.ValueOf(Listener{id: id, replay: true, addr: addr}))
 		return out
 	case t == connType:
 		return out

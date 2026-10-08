@@ -14,10 +14,10 @@ var rtHandWritten = map[string]bool{
 }
 
 // rtExtraFields are hidden fields of std structs that the runtime needs:
-// the route parameters of a request, the body producer of a streamed
-// response.
+// the route parameters and typed values of a request, the body producer of
+// a streamed response.
 var rtExtraFields = map[string][]string{
-	"Http_Request":  {"XParams Map[string, string]"},
+	"Http_Request":  {"XParams Map[string, string]", "XValues *reqValues"},
 	"Http_Response": {"XStream func(*Task, Http_BodyWriter) Result[Unit, IoErr]"},
 }
 

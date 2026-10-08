@@ -440,6 +440,33 @@ type Listener struct {
 	mem    *memListener
 	id     int64
 	replay bool
+	addr   string // the bound address, recorded for replay
+}
+
+// M_addr is `l.addr()` (std.md 3.2): the bound address, with the port the
+// system chose for ":0". An unspecified host (":0", "0.0.0.0", "[::]")
+// becomes the loopback address, so the result can be dialed locally.
+func (l Listener) M_addr(*Task) string {
+	if l.mem != nil {
+		return l.mem.addr
+	}
+	return l.addr
+}
+
+// boundAddr is the dialable form of a listener's address.
+func boundAddr(a net.Addr) string {
+	host, port, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return a.String()
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			host = "127.0.0.1"
+		} else {
+			host = "::1"
+		}
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // Conn is a connection.
@@ -475,7 +502,7 @@ func (realNet) listen(tk *Task, addr string) Result[Listener, NetErr] {
 	if err != nil {
 		return Err[Listener](netErr(4, err.Error()))
 	}
-	return Ok[Listener, NetErr](Listener{l: l, id: fxListenerSeq.Add(1)})
+	return Ok[Listener, NetErr](Listener{l: l, id: fxListenerSeq.Add(1), addr: boundAddr(l.Addr())})
 }
 
 func (n realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {

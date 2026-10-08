@@ -1,0 +1,117 @@
+// Typed request values, failing middleware, mounted routers, and
+// Listener.addr (std.md 3.2, 4.1, 4.3, decision 0055).
+use std/http
+use std/log
+
+struct User {
+  id: Int
+  name: Str
+}
+
+enum AuthErr {
+  Missing
+  Unknown(token: Str)
+}
+
+fn (e: AuthErr) status() -> Int {
+  401
+}
+
+fn (e: AuthErr) display() -> Str {
+  match e {
+    Missing => "no token"
+    Unknown(t) => "unknown token ${t}"
+  }
+}
+
+enum Plain {
+  Broken
+} derive Display
+
+fn user_key() -> http.Key[User] {
+  http.key("user")
+}
+
+fn auth(req: http.Request, next: http.Next) -> http.Response ! AuthErr {
+  let token = req.header("X-Token").or_err(AuthErr.Missing)?
+  if token != "t1" {
+    return Err(AuthErr.Unknown(token: token))
+  }
+  next(req.with_value(user_key(), User{id: 1, name: "ada"}))
+}
+
+fn routes(trace: Mutex[List[Str]]) -> http.Router {
+  var api = http.router()
+  api.wrap(auth)
+  api.handle("GET /me", fn(req) {
+    let u = req.value(user_key()) ?? User{id: 0, name: "?"}
+    http.text(200, "me ${u.name} ${u.id}")
+  })
+  api.handle("GET /items/{id:Int}", fn(req) { http.text(200, "item ${req.param_int("id")} for ${(req.value(user_key()) ?? User{id: 0, name: "?"}).name}") })
+
+  var admin = http.router()
+  admin.wrap(fn(req, next) -> http.Response ! Plain {
+    if req.header("X-Admin") == Some("yes") { next(req) } else { Err(Plain.Broken) }
+  })
+  admin.handle("POST /reset", fn(_req) { http.empty(204) })
+
+  var r = http.router()
+  r.wrap(fn(req, next) {
+    trace.with(fn(var l) { l.push("${req.method} ${req.path}") })
+    let resp = next(req)
+    trace.with(fn(var l) { l.push("-> ${resp.status}") })
+    resp
+  })
+  r.handle("GET /health", fn(req) {
+    // no auth ran: no user
+    http.text(200, "ok user=${req.value(user_key()) is Some(_)}")
+  })
+  r.mount("/api", api)
+  r.mount("/admin", admin)
+  r
+}
+
+fn show(r: http.Router, req: http.Request) -> Str {
+  let resp = r.call(req)
+  "${req.method} ${req.path} -> ${resp.status} ${resp.body.to_str() ?? ""}"
+}
+
+fn main(os: Os) ! {
+  log.configure(os.stdio, level: log.Level.Error)
+  let trace = Mutex[List[Str]].new([])
+  let r = routes(trace)
+  let tok = {"X-Token": "t1"}
+  os.stdio.println(show(r, http.new_request("GET", "/health")))
+  os.stdio.println(show(r, http.new_request("GET", "/api/me")))
+  os.stdio.println(show(r, http.new_request("GET", "/api/me", headers: {"X-Token": "bad"})))
+  os.stdio.println(show(r, http.new_request("GET", "/api/me", headers: tok)))
+  os.stdio.println(show(r, http.new_request("GET", "/api/items/7", headers: tok)))
+  os.stdio.println(show(r, http.new_request("GET", "/api/items/x", headers: tok)))
+  os.stdio.println(show(r, http.new_request("GET", "/api/nothing", headers: tok)))
+  os.stdio.println(show(r, http.new_request("POST", "/admin/reset")))
+  os.stdio.println(show(r, http.new_request("POST", "/admin/reset", headers: {"X-Admin": "yes"})))
+  os.stdio.println(show(r, http.new_request("GET", "/admin/reset", headers: {"X-Admin": "yes"})))
+  os.stdio.println("trace ${trace.with(fn(l) { l.len() })}")
+
+  // values: typed, by name and type, invisible to equality
+  let plain = http.new_request("GET", "/x")
+  let k: http.Key[Int] = http.key("n")
+  let with = plain.with_value(k, 1).with_value(k, 2).with_value(http.key[Str]("n"), "s")
+  os.stdio.println("value ${with.value(k) ?? 0} ${with.value(http.key[Str]("n")) ?? ""} ${plain.value(k) ?? 0} eq=${with == plain} name=${k.name()}")
+  let h = plain.with_header("x-trace", "abc")
+  os.stdio.println("header ${h.header("X-Trace") ?? ""} ${plain.header("X-Trace") ?? "none"}")
+
+  // a real listener on :0 reports the port it got
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  let port = Int.parse(addr.split(":").last() ?? "") ?? 0
+  os.stdio.println("listener ${addr.starts_with("127.0.0.1:")} ${port > 0}")
+  let srv = http.server(l, r)
+  os.stdio.println("server ${srv.addr() == addr}")
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    let resp = c.send(http.new_request("GET", "http://${addr}/api/me", headers: tok))?
+    os.stdio.println("real ${resp.status} ${resp.body.to_str() ?? ""}")
+  }
+}
