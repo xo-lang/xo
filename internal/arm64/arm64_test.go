@@ -167,14 +167,17 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}, nil
 }
 
-// nativeGolden lists the programs of internal/llvm/testdata/golden that
-// must build with the arm64 backend (the ones the SSA path supports).
-var nativeGolden = []string{
-	"abs_fault", "arith", "closure_try", "closures", "div_zero", "enums", "float_int_fault", "generics", "index_oob", "lists", "loops", "misc", "neg_overflow", "option", "overflow_add",
-	"overflow_mul", "rc_aliasing", "rc_closures", "rc_equality", "rc_failing", "rc_generics", "rc_recursive", "rc_values", "recursion", "shl_overflow", "sort_structs", "strings", "structs", "tuples_consts", "user_fault", "value_semantics", "var_alias",
+// goldenDirs returns every program of internal/llvm/testdata/golden.
+func goldenDirs(t *testing.T) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join("..", "llvm", "testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	return dirs
 }
 
-// TestGoldenRun builds the golden programs of internal/llvm (read only)
+// TestGoldenRun builds every golden program of internal/llvm (read only)
 // with the arm64 backend and requires their want.txt: the same exit
 // status, stdout, and fault messages as the Go and LLVM backends, and no
 // allocation live at exit.
@@ -185,11 +188,10 @@ func TestGoldenRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
-	for _, name := range nativeGolden {
-		name := name
-		t.Run(name, func(t *testing.T) {
+	for _, dir := range goldenDirs(t) {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
 			got, err := buildRun(t, dir)
 			if err != nil {
 				t.Fatalf("build: %v", err)
@@ -357,9 +359,7 @@ func TestInlineVerifies(t *testing.T) {
 	for name := range benchWant {
 		dirs = append(dirs, filepath.Join(benchDir, name))
 	}
-	for _, name := range nativeGolden {
-		dirs = append(dirs, filepath.Join("..", "llvm", "testdata", "golden", name))
-	}
+	dirs = append(dirs, goldenDirs(t)...)
 	runs, _ := filepath.Glob(filepath.Join("testdata", "run", "*"))
 	dirs = append(dirs, runs...)
 	inlined := 0
