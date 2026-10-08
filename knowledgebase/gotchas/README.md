@@ -89,7 +89,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
-- [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): with no request locals, auth middleware passes the user in a header; always overwrite it or clients can spoof it.
+- [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): (Resolved 2026-10-08 by decision 0055) with no request locals, auth middleware passed the user in a spoofable header; use `req.with_value` / `req.value` with an `http.Key[T]` instead.
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
 - [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.
@@ -108,3 +108,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [gocache-trim-races-concurrent-build.md](gocache-trim-races-concurrent-build.md): one xo process trimming the shared Go cache can delete entries a concurrent `go build` reads ("could not import os"); rerun, or separate `XO_GOCACHE`.
 - [arm64-match-dispatch-prediction.md](arm64-match-dispatch-prediction.md): on Apple M4 a jump table sped interp up 1.8x but lost up to 3x on random tags; chain layout (taken branch per failed test) was most of interp's cost.
 - [native-float-nan-order.md](native-float-nan-order.md): the LLVM and arm64 backends compared Float with IEEE `<` (NaN false), the Go backend with the spec's total order (NaN last); also min/max ties and NaN in shared boxes. Fixed by decision 0053; after `fcmp`, mi/ls/gt/ge are false on NaN, lt/le/hi/hs true.
+- [fake-listener-before-serve.md](fake-listener-before-serve.md): a test request to an in memory listener before `serve` started was refused, and a background `serve` canceled before it started deadlocked; fixed (backlog style wait, cancel check before `blockOn`).
+- [canceled-error-logged-at-shutdown.md](canceled-error-logged-at-shutdown.md): a background loop's catch all `Err(e)` arm logged `Canceled` as a failure when shutdown landed inside a DB call; match `Err(Canceled)` first; found by `--explore` plus `testing.logs()`.

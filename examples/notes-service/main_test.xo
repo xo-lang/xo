@@ -1,4 +1,6 @@
+use std/crypto
 use std/http
+use std/log
 use std/sql
 
 fn setup() -> sql.Db ! sql.SqlErr {
@@ -32,17 +34,57 @@ test "missing, malformed, and unknown tokens are 401" {
   expect(body_of(resp)) == "{\"error\":\"missing or invalid bearer token\"}"
 }
 
-test "a client supplied user header is not trusted" {
-  let r = routes(setup()?, os.clock)
-  let req = http.new_request("GET", "/notes", headers: {"X-Notes-User": "1"})
-  expect(r.call(req).status) == 401
-  // with a valid token the spoofed header is overwritten by the real user
+test "identity comes only from the token, never from the client" {
   let db = setup()?
-  let r2 = routes(db, os.clock)
+  let r = routes(db, os.clock)
+  // headers cannot set the typed user value
+  let req = http.new_request("GET", "/notes", headers: {"X-Notes-User": "1", "User": "ada"})
+  expect(req.value(user_key())) == None
+  expect(r.call(req).status) == 401
   insert_note(db, 1, "ada's", os.clock.now(), 1h)?
   let spoof = http.new_request("GET", "/notes", headers: {"Authorization": "Bearer tok-bob", "X-Notes-User": "1"})
-  let got = r2.call(spoof).decode_json[List[Note]]()?
+  let got = r.call(spoof).decode_json[List[Note]]()?
   expect(got.len()) == 0
+}
+
+test "the auth middleware hands handlers a typed user" {
+  let db = setup()?
+  var r = http.router()
+  r.wrap(auth(db))
+  r.handle("GET /whoami", fn(req) -> http.Response ! ApiErr {
+    let u = current_user(req)?
+    http.text(200, "${u.id} ${u.name}")
+  })
+  expect(body_of(r.call(authed("GET", "/whoami", "tok-bob")))) == "2 bob"
+  expect(r.call(http.new_request("GET", "/whoami")).status) == 401
+}
+
+test "tokens are stored as digests and compared in constant time" {
+  let db = setup()?
+  let row = db.query_one("SELECT token_sha256 FROM users WHERE name = $1", [sql.str("ada")])?
+  let stored = row.str("token_sha256")?
+  expect(stored != "tok-ada")
+  expect(stored) == crypto.sha256(b"tok-ada").to_hex()
+  expect(crypto.equal(Bytes.from_hex(stored) ?? b"", token_digest("tok-ada")))
+  // a generated token works end to end
+  let t = crypto.token(os.rand)
+  add_user(db, "cy", t)?
+  expect(routes(db, os.clock).call(authed("GET", "/notes", t)).status) == 200
+}
+
+test "a listener on :0 reports its address" {
+  let l = os.net.listen(":0")?
+  let addr = l.addr()
+  expect(addr.starts_with("127.0.0.1:"))
+  expect(addr != "127.0.0.1:0")
+  let srv = http.server(l, routes(setup()?, os.clock))
+  expect(srv.addr()) == addr
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    let resp = c.get("http://${addr}/health")?
+    expect(resp.status) == 200
+  }
 }
 
 test "create, get, list, delete" {
@@ -94,6 +136,21 @@ test "purge_expired removes only expired notes" {
   expect(list_notes(db, 1)?.map(fn(n) { n.body })) == ["long"]
 }
 
+test "the purge job logs what it removed" {
+  let db = setup()?
+  insert_note(db, 1, "a", os.clock.now(), 30s)?
+  insert_note(db, 1, "b", os.clock.now(), 40s)?
+  scope s {
+    s.spawn_background(fn() { purge_loop(db, os.clock, 1m) })
+    os.clock.sleep(90s)
+  }
+  let recs = testing.logs()
+  expect(recs.len()) == 1
+  expect(recs[0].level) == log.Level.Info
+  expect(recs[0].msg) == "purged expired notes"
+  expect(recs[0].fields.get("count")) == Some("2")
+}
+
 test "the background purge job runs on virtual time" {
   let db = setup()?
   let start = os.clock.now()
@@ -113,13 +170,18 @@ test "the background purge job runs on virtual time" {
 
 test "end to end: serve, purge, and shut down on SIGTERM" {
   os.env.set("NOTES_TOKEN", "t0p")
-  os.env.set("NOTES_ADDR", "127.0.0.1:9000")
+  os.env.set("NOTES_ADDR", ":0")
   os.proc.signal_after(5m)
   let c = http.client(os.net, timeout: 10s)
-  let base = "http://127.0.0.1:9000"
+  // the port is chosen at listen time; main logs it
+  let listening = fn() -> Str {
+    let rec = testing.logs().find(fn(r) { r.msg == "listening" }).or_fault("main logged no address")
+    rec.fields.get("addr") ?? ""
+  }
   scope s {
     let calls = s.spawn(fn() -> List[Int] ! Error {
       os.clock.sleep(1s)
+      let base = "http://${listening()}"
       let created = c.send(authed("POST", "${base}/notes", "t0p", body: "{\"body\":\"soon gone\",\"ttl_secs\":30}"))?
       let denied = c.get("${base}/notes")?
       let before = c.send(authed("GET", "${base}/notes", "t0p"))?.decode_json[List[Note]]()?
@@ -130,6 +192,7 @@ test "end to end: serve, purge, and shut down on SIGTERM" {
     expect(testing.run_main(main, os)) == 0
     expect(calls.await?) == [201, 401, 1, 0]
   }
+  expect(testing.logs().map(fn(r) { r.msg })) == ["listening", "purged expired notes", "stopped"]
   // the server stopped accepting after the stop request
-  expect(http.client(os.net, timeout: 1s).get("${base}/health") is Err(_))
+  expect(http.client(os.net, timeout: 1s).get("http://${listening()}/health") is Err(_))
 }

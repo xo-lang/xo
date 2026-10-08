@@ -757,7 +757,12 @@ fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, incl
 - `http.client(os.net)` calls registered handlers in process. Unhandled
   requests fail with `ClientErr.Connect("no fake handler for GET ...")`.
 - `os.net.listen(":0")` gives an in memory listener, so a real `http.server`
-  can be tested end to end with `http.client(os.net)`.
+  can be tested end to end with `http.client(os.net)`. Its `addr()` is
+  `127.0.0.1:49152`, then `:49153`, ... A request to a listener whose
+  `serve` has not started yet waits until it starts, like a connection in
+  a real socket's backlog (a test that never serves it reports a deadlock
+  naming the wait); after `serve` returns, requests fail with
+  `ClientErr.Connect`.
 
 ### 8.2 FakeClock
 

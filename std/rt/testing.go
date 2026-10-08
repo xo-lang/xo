@@ -934,7 +934,7 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		f.n.nextPort++
 		port = fmt.Sprint(49151 + f.n.nextPort)
 	}
-	l := &memListener{n: f.n, addr: host + ":" + port}
+	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent()}
 	f.n.listeners[l.addr] = l
 	if host == "127.0.0.1" {
 		f.n.listeners["localhost:"+port] = l
@@ -998,6 +998,13 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 		req.XParams = params
 		return Ok[Http_Response, Http_ClientErr](best.h(tk, req).V)
 	}
+	if srv != nil && !srv.served.isSet() {
+		// like a real socket after listen: the connection waits in the
+		// backlog until http.server(l, r).serve() starts
+		if !srv.served.wait(tk, true, waitAccept, nil) {
+			return Err[Http_Response](clientErr(5, ""))
+		}
+	}
 	if srv != nil {
 		if r, st, ok := srv.begin(); ok {
 			defer srv.end()
@@ -1014,8 +1021,10 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 
 // memListener is an in memory listener served by http.server in tests.
 type memListener struct {
-	n        *fakeNet
-	addr     string
+	n      *fakeNet
+	addr   string
+	served *event // fired when serve starts
+
 	mu       sync.Mutex
 	r        *Http_Router
 	stop     *stopState // of the serving program
@@ -1057,10 +1066,13 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.r = &r
 	l.stop = tk.stop
 	l.mu.Unlock()
+	l.served.fire()
 	stopped := false
 	if tk.stop != nil {
 		stopped = tk.stop.ev.wait(tk, true, waitStop, nil)
-	} else {
+	} else if !tk.Canceled() {
+		// a task canceled before it got here (a background serve whose
+		// scope ended first) must not block: nothing would wake it
 		tk.blockOn(waitServe, nil, true)
 		<-tk.node.doneCh()
 		tk.unblock()

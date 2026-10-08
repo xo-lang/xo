@@ -808,6 +808,10 @@ Last verified: 2026-10-08. Rules and choices; details in
   capture instead of stderr; `RunTests` prints the lines under `--- FAIL`
   (and `--- PASS` with `-v`), `--json` adds `log`. `testing.logs()` is
   `rt.Testing_logs`. Golden: `test_logs`.
+- Fake network listeners (2026-10-08): `memListener.served` is fired when
+  `serve` starts; `Testing_FakeNet.dispatch` waits on it (wait kind
+  `waitAccept`) so a request sent before `serve` queues like a backlog
+  (gotcha `fake-listener-before-serve.md`).
 
 ## SSA IR
 
