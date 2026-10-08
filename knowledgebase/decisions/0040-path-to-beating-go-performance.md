@@ -84,3 +84,10 @@ Accept, amend, or reject this record based on those results.
   allocation heavy claim: on string churn LLVM Xo runs in 0.40x of Go's
   time with 0.55x of its memory; request handling with Map and I/O is
   still unmeasured on this path.
+- Native arm64 backend (2026-10-08, decision 0049,
+  `bench/results/arm64-native-2026-10-08.md`): the SSA IR lowered straight
+  to AArch64 assembly with no LLVM. ms, Go / LLVM / arm64: fib
+  228/222/226, sieve 107/98/108, nbody 163/186/174, sort 262/213/244,
+  interp 141/64/79, collatz 450/444/434, strings 89/35/38; same peak
+  memory as LLVM. A backend the project owns reaches 0.93x to 1.25x of
+  LLVM's time on these workloads (faster on nbody and collatz).

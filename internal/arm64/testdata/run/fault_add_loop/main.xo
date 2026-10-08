@@ -1,0 +1,11 @@
+// A checked add whose result shares a register with its operand (a loop
+// accumulator): the fault stub must recover the operand's value.
+fn main(os: Os) {
+  var x = 9223372036854770000
+  var i = 0
+  while i < 100 {
+    x = x + 1000
+    i += 1
+  }
+  os.stdio.println("${x}")
+}

@@ -1,0 +1,726 @@
+package arm64
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// mloc is a machine location: a register, or memory at [base, #off].
+type mloc struct {
+	reg  int // -1 for memory
+	base string
+	off  int
+}
+
+type msrcKind int
+
+const (
+	mLoc msrcKind = iota
+	mImm
+	mSym
+	mFrame
+	mZero
+)
+
+type msrc struct {
+	kind msrcKind
+	l    mloc
+	imm  int64
+	sym  string
+}
+
+type move struct {
+	dst mloc
+	src msrc
+}
+
+func regName(r int, w bool) string {
+	if r >= fpBase {
+		return "d" + strconv.Itoa(r-fpBase)
+	}
+	if r == 31 {
+		if w {
+			return "wzr"
+		}
+		return "xzr"
+	}
+	if w {
+		return "w" + strconv.Itoa(r)
+	}
+	return "x" + strconv.Itoa(r)
+}
+
+const (
+	scratch0 = 16
+	scratch1 = 17
+	scratch2 = 15
+	fscratch = fpBase + 31 // parallel move cycles
+)
+
+var gpScratch = []int{scratch0, scratch1, scratch2}
+var fpScratch = []int{fpBase + 30, fpBase + 29, fpBase + 31}
+
+// layout of the frame (sp relative, after the prologue), size bytes,
+// 16 byte aligned:
+//
+//	[0, outArgs)             stack arguments of calls (when any)
+//	[outOff, outOff+8)       the $OUT slot (length out parameter)
+//	[spillBase, ...)         spill slots, 8 bytes each
+//	[saveBase, ...)          callee saved registers
+//	[rec, rec+16)            the frame record (x29, x30); x29 = sp + rec
+//
+// The frame record is at the bottom (rec 0) when no call passes stack
+// arguments, so one `stp x29, x30, [sp, #-size]!` makes the frame. A
+// leaf function (no calls, nothing saved or spilled) has no frame:
+// x29 keeps pointing at its caller's record. Incoming stack arguments
+// are at [sp, #size + 8k].
+type frameInfo struct {
+	outArgs, outOff, spillBase, saveBase, rec, size int
+	leaf                                            bool
+}
+
+func align16(n int) int { return (n + 15) &^ 15 }
+
+func (s *fstate) label(b *mblock) string {
+	return s.g.local(fmt.Sprintf("f%d_b%d", s.g.nfunc, b.id))
+}
+
+func (s *fstate) vloc(v vreg, fr *frameInfo) (mloc, bool) {
+	l := s.loc[v]
+	if l.reg >= 0 {
+		return mloc{reg: l.reg}, true
+	}
+	if l.slot < 0 {
+		return mloc{}, false
+	}
+	return mloc{reg: -1, base: "sp", off: fr.spillBase + 8*l.slot}, true
+}
+
+func (s *fstate) emit() {
+	g := s.g
+	g.nfunc++
+	fr := &frameInfo{}
+	for _, b := range s.order {
+		for _, in := range b.insts {
+			if in.kind == iCall {
+				n := 0
+				for _, l := range s.abiLocs(in.srcs) {
+					if l.reg < 0 {
+						n = l.slot + 1
+					}
+				}
+				if 8*n > fr.outArgs {
+					fr.outArgs = 8 * n
+				}
+			}
+		}
+	}
+	calls := false
+	for _, b := range s.order {
+		for _, in := range b.insts {
+			calls = calls || in.kind == iCall
+		}
+	}
+	fr.leaf = !calls && len(s.saved) == 0 && s.slots == 0 && !s.out
+	base := 0
+	if fr.outArgs == 0 {
+		base = 16 // the frame record comes first
+	}
+	fr.outOff = base + fr.outArgs
+	fr.spillBase = fr.outOff
+	if s.out {
+		fr.spillBase += 8
+	}
+	fr.saveBase = fr.spillBase + 8*s.slots
+	if fr.outArgs == 0 {
+		fr.size = align16(fr.saveBase + 8*len(s.saved))
+	} else {
+		fr.rec = align16(fr.saveBase + 8*len(s.saved))
+		fr.size = fr.rec + 16
+	}
+	if fr.leaf {
+		fr.size = 0
+	}
+	if fr.size > 4000 {
+		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
+	}
+	b := &g.text
+	fmt.Fprintf(b, "// func %s\n", s.f.Name)
+	g.funcHeader(b, g.fname(s.f.Name), false)
+	s.prologue(b, fr)
+	// blocks reached once branches skip the blocks that only jump
+	live := map[*mblock]bool{}
+	var walk func(mb *mblock)
+	walk = func(mb *mblock) {
+		if live[mb] {
+			return
+		}
+		live[mb] = true
+		for _, t := range mb.succs {
+			walk(s.fwd(t, fr))
+			if ti := s.fwd(t, fr).insts; len(ti) == 1 && ti[0].kind == iCondBr {
+				for _, t2 := range ti[0].targets {
+					walk(s.fwd(t2, fr))
+				}
+			}
+		}
+	}
+	walk(s.order[0])
+	var emitted []*mblock
+	for _, mb := range s.order {
+		if live[mb] {
+			emitted = append(emitted, mb)
+		}
+	}
+	for bi, mb := range emitted {
+		var next *mblock
+		if bi+1 < len(emitted) {
+			next = emitted[bi+1]
+		}
+		fmt.Fprintf(b, "%s:\n", s.label(mb))
+		s.cur = mb
+		for _, in := range mb.insts {
+			s.emitInst(b, in, fr, next)
+		}
+	}
+	b.WriteString(s.stubs.String())
+	b.WriteString("\n")
+}
+
+func subSP(b *strings.Builder, op string, n int) {
+	if n >= 4096 {
+		fmt.Fprintf(b, "\t%s sp, sp, #%d, lsl #12\n", op, n>>12)
+		n &= 4095
+	}
+	if n > 0 {
+		fmt.Fprintf(b, "\t%s sp, sp, #%d\n", op, n)
+	}
+}
+
+func (s *fstate) prologue(b *strings.Builder, fr *frameInfo) {
+	if fr.leaf {
+		return
+	}
+	if fr.rec == 0 && fr.size <= 504 {
+		fmt.Fprintf(b, "\tstp x29, x30, [sp, #-%d]!\n\tmov x29, sp\n", fr.size)
+	} else {
+		subSP(b, "sub", fr.size)
+		if fr.rec <= 504 {
+			fmt.Fprintf(b, "\tstp x29, x30, [sp, #%d]\n", fr.rec)
+		} else {
+			fmt.Fprintf(b, "\tstr x29, [sp, #%d]\n\tstr x30, [sp, #%d]\n", fr.rec, fr.rec+8)
+		}
+		fmt.Fprintf(b, "\tadd x29, sp, #%d\n", fr.rec)
+	}
+	s.saves(b, fr, "str", "stp")
+}
+
+// saves stores or loads the callee saved registers, in pairs when it
+// can. A pair puts the higher register first (`stp x20, x19`), as LLVM
+// does: on Apple M4 the other order made recursive fib 1.4x slower
+// (gotchas/arm64-stp-pair-order.md).
+func (s *fstate) saves(b *strings.Builder, fr *frameInfo, one, two string) {
+	for k := 0; k < len(s.saved); k++ {
+		r, off := s.saved[k], fr.saveBase+8*k
+		if k+1 < len(s.saved) && (s.saved[k+1] >= fpBase) == (r >= fpBase) && off <= 496 {
+			fmt.Fprintf(b, "\t%s %s, %s, [sp, #%d]\n", two, regName(s.saved[k+1], false), regName(r, false), off)
+			k++
+			continue
+		}
+		fmt.Fprintf(b, "\t%s %s, [sp, #%d]\n", one, regName(r, false), off)
+	}
+}
+
+func (s *fstate) epilogue(b *strings.Builder, fr *frameInfo) {
+	if fr.leaf {
+		b.WriteString("\tret\n")
+		return
+	}
+	s.saves(b, fr, "ldr", "ldp")
+	if fr.rec == 0 && fr.size <= 504 {
+		fmt.Fprintf(b, "\tldp x29, x30, [sp], #%d\n\tret\n", fr.size)
+		return
+	}
+	if fr.rec <= 504 {
+		fmt.Fprintf(b, "\tldp x29, x30, [sp, #%d]\n", fr.rec)
+	} else {
+		fmt.Fprintf(b, "\tldr x29, [sp, #%d]\n\tldr x30, [sp, #%d]\n", fr.rec, fr.rec+8)
+	}
+	subSP(b, "add", fr.size)
+	b.WriteString("\tret\n")
+}
+
+var invCond = map[string]string{"eq": "ne", "ne": "eq", "lt": "ge", "ge": "lt", "gt": "le", "le": "gt",
+	"lo": "hs", "hs": "lo", "hi": "ls", "ls": "hi", "mi": "pl", "pl": "mi", "vs": "vc", "vc": "vs"}
+
+func (s *fstate) msrcOf(a src, fr *frameInfo) msrc {
+	switch a.kind {
+	case sReg:
+		if a.v == 0 {
+			return msrc{kind: mZero}
+		}
+		l, ok := s.vloc(a.v, fr)
+		if !ok {
+			return msrc{kind: mZero}
+		}
+		return msrc{kind: mLoc, l: l}
+	case sImm:
+		return msrc{kind: mImm, imm: a.imm}
+	case sSym:
+		return msrc{kind: mSym, sym: a.sym}
+	}
+	return msrc{kind: mFrame}
+}
+
+// callMoves returns the moves that put srcs in their ABI locations
+// (stack slots at [base, #off0 + 8k]).
+func (s *fstate) callMoves(srcs []src, fr *frameInfo, base string, off0 int) []move {
+	var ms []move
+	for k, l := range s.abiLocs(srcs) {
+		dst := mloc{reg: l.reg}
+		if l.reg < 0 {
+			dst = mloc{reg: -1, base: base, off: off0 + 8*l.slot}
+		}
+		ms = append(ms, move{dst, s.msrcOf(srcs[k], fr)})
+	}
+	return ms
+}
+
+func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mblock) {
+	switch in.kind {
+	case iPlain:
+		s.emitPlain(b, in, fr)
+	case iPmove:
+		var ms []move
+		for k, d := range in.defs {
+			l, ok := s.vloc(d, fr)
+			if !ok {
+				continue
+			}
+			ms = append(ms, move{l, s.msrcOf(in.srcs[k], fr)})
+		}
+		s.parallel(b, ms, fr)
+	case iCall:
+		s.parallel(b, s.callMoves(in.srcs, fr, "sp", 0), fr)
+		fmt.Fprintf(b, "\tbl %s\n", in.sym)
+		if in.noret {
+			return
+		}
+		var ms []move
+		for k, l := range s.abiLocs(regs(in.defs...)) {
+			if l.reg < 0 {
+				fail("a call of %s returns more than 8 words of a class", in.sym)
+			}
+			if d, ok := s.vloc(in.defs[k], fr); ok {
+				ms = append(ms, move{d, msrc{kind: mLoc, l: mloc{reg: l.reg}}})
+			}
+		}
+		s.parallel(b, ms, fr)
+	case iEntry:
+		var ms []move
+		for k, l := range s.abiLocs(regs(in.defs...)) {
+			src := mloc{reg: l.reg}
+			if l.reg < 0 {
+				src = mloc{reg: -1, base: "sp", off: fr.size + 8*l.slot}
+			}
+			if d, ok := s.vloc(in.defs[k], fr); ok {
+				ms = append(ms, move{d, msrc{kind: mLoc, l: src}})
+			}
+		}
+		s.parallel(b, ms, fr)
+	case iRet:
+		var ms []move
+		for k, l := range s.abiLocs(in.srcs) {
+			if l.reg < 0 {
+				fail("%s returns more than 8 words of a class", s.f.Name)
+			}
+			ms = append(ms, move{mloc{reg: l.reg}, s.msrcOf(in.srcs[k], fr)})
+		}
+		s.parallel(b, ms, fr)
+		s.epilogue(b, fr)
+	case iJump:
+		t := s.fwd(in.targets[0], fr)
+		if t == next {
+			return
+		}
+		if ti := t.insts; len(ti) == 1 && ti[0].kind == iCondBr && t != s.cur {
+			// a loop header that only tests: test here (one taken branch
+			// per iteration instead of two)
+			s.emitInst(b, ti[0], fr, next)
+			return
+		}
+		if t != next {
+			fmt.Fprintf(b, "\tb %s\n", s.label(t))
+		}
+	case iCondBr:
+		t, f := s.fwd(in.targets[0], fr), s.fwd(in.targets[1], fr)
+		if t == f {
+			if t != next {
+				fmt.Fprintf(b, "\tb %s\n", s.label(t))
+			}
+			return
+		}
+		if in.cond == "cbnz" {
+			r := s.useReg(b, in.uses[0], 0, fr)
+			if t == next {
+				fmt.Fprintf(b, "\tcbz %s, %s\n", r, s.label(f))
+				return
+			}
+			fmt.Fprintf(b, "\tcbnz %s, %s\n", r, s.label(t))
+		} else if in.cond == "tbz" || in.cond == "tbnz" {
+			r := s.useReg(b, in.uses[0], 0, fr)
+			c := in.cond
+			if t == next {
+				c = map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[c]
+				fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(f))
+				return
+			}
+			fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(t))
+		} else {
+			s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
+			if t == next {
+				fmt.Fprintf(b, "\tb.%s %s\n", invCond[in.cond], s.label(f))
+				return
+			}
+			fmt.Fprintf(b, "\tb.%s %s\n", in.cond, s.label(t))
+		}
+		if f != next {
+			fmt.Fprintf(b, "\tb %s\n", s.label(f))
+		}
+	case iTrap:
+		b.WriteString("\tbrk #1\n")
+	}
+}
+
+// useReg returns the register name of use v, reloading a spilled one
+// into scratch register k of its class.
+func (s *fstate) useReg(b *strings.Builder, v vreg, k int, fr *frameInfo) string {
+	if v == 0 {
+		return "xzr"
+	}
+	l, _ := s.vloc(v, fr)
+	if l.reg >= 0 {
+		return regName(l.reg, false)
+	}
+	r := gpScratch[k]
+	if s.fp[v] {
+		r = fpScratch[k]
+	}
+	fmt.Fprintf(b, "\tldr %s, [%s, #%d]\n", regName(r, false), l.base, l.off)
+	return regName(r, false)
+}
+
+// emitPlain expands a template.
+func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
+	t := in.text
+	// reload the spilled uses the template names
+	useReg := map[int]int{}
+	nscratch := [2]int{}
+	for i := 0; i < len(t); i++ {
+		if t[i] != '$' {
+			continue
+		}
+		j := i + 1
+		if j < len(t) && t[j] == 'w' {
+			j++
+		}
+		if j+1 < len(t) && t[j] == 'u' {
+			k := int(t[j+1] - '0')
+			if _, done := useReg[k]; done {
+				continue
+			}
+			v := in.uses[k]
+			if v == 0 {
+				useReg[k] = 31
+				continue
+			}
+			l, _ := s.vloc(v, fr)
+			if l.reg >= 0 {
+				useReg[k] = l.reg
+				continue
+			}
+			cls := 0
+			pool := gpScratch
+			if s.fp[v] {
+				cls, pool = 1, fpScratch
+			}
+			r := pool[nscratch[cls]]
+			nscratch[cls]++
+			fmt.Fprintf(b, "\tldr %s, [%s, #%d]\n", regName(r, false), l.base, l.off)
+			useReg[k] = r
+		}
+	}
+	defReg := map[int]int{}
+	var stores []string
+	for k, d := range in.defs {
+		l, ok := s.vloc(d, fr)
+		if ok && l.reg >= 0 {
+			defReg[k] = l.reg
+			continue
+		}
+		r := gpScratch[0]
+		if s.fp[d] {
+			r = fpScratch[0]
+		}
+		defReg[k] = r
+		if ok {
+			stores = append(stores, fmt.Sprintf("\tstr %s, [%s, #%d]\n", regName(r, false), l.base, l.off))
+		}
+	}
+	if t == "mov $d0, $u0" && defReg[0] == useReg[0] && len(stores) == 0 {
+		return // a copy into the same register
+	}
+	var out strings.Builder
+	out.WriteByte('\t')
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		if c == '\n' {
+			out.WriteString("\n\t")
+			continue
+		}
+		if c != '$' {
+			out.WriteByte(c)
+			continue
+		}
+		if strings.HasPrefix(t[i:], "$OUT") {
+			out.WriteString(strconv.Itoa(fr.outOff))
+			i += 3
+			continue
+		}
+		j := i + 1
+		w := false
+		if t[j] == 'w' {
+			w = true
+			j++
+		}
+		k := int(t[j+1] - '0')
+		if t[j] == 'u' {
+			out.WriteString(regName(useReg[k], w))
+		} else {
+			out.WriteString(regName(defReg[k], w))
+		}
+		i = j + 1
+	}
+	out.WriteByte('\n')
+	b.WriteString(out.String())
+	if in.fault != nil {
+		s.nstub++
+		l := s.g.local(fmt.Sprintf("f%d_fault%d", s.g.nfunc, s.nstub))
+		fmt.Fprintf(b, "\tb.%s %s\n", in.fault.cond, l)
+		fmt.Fprintf(&s.stubs, "%s:\n", l)
+		ms := s.callMoves(in.fault.args, fr, "sp", 0)
+		s.recoverOperand(&s.stubs, in, ms, fr)
+		s.parallel(&s.stubs, ms, fr)
+		fmt.Fprintf(&s.stubs, "\tbl %s\n\tbrk #1\n", in.fault.fn)
+	}
+	for _, st := range stores {
+		b.WriteString(st)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Parallel moves
+
+func sameLoc(a, b mloc) bool {
+	if a.reg >= 0 || b.reg >= 0 {
+		return a.reg == b.reg
+	}
+	return a.base == b.base && a.off == b.off
+}
+
+// parallel emits moves that all read their sources before any writes
+// its destination: moves whose destination no other pending move reads
+// go first; a cycle is broken by saving one destination in a scratch
+// register. Moves from constants come last.
+func (s *fstate) parallel(b *strings.Builder, moves []move, fr *frameInfo) {
+	var pending, consts []move
+	for _, m := range moves {
+		if m.src.kind != mLoc {
+			consts = append(consts, m)
+			continue
+		}
+		if sameLoc(m.dst, m.src.l) {
+			continue
+		}
+		pending = append(pending, m)
+	}
+	for len(pending) > 0 {
+		progress := false
+		for i, m := range pending {
+			read := false
+			for j, o := range pending {
+				if j != i && sameLoc(o.src.l, m.dst) {
+					read = true
+					break
+				}
+			}
+			if !read {
+				s.move(b, m.dst, m.src, fr)
+				pending = append(pending[:i], pending[i+1:]...)
+				progress = true
+				break
+			}
+		}
+		if progress {
+			continue
+		}
+		m := pending[0]
+		tmp := mloc{reg: scratch0}
+		if m.dst.reg >= fpBase {
+			tmp = mloc{reg: fscratch}
+		}
+		s.move(b, tmp, msrc{kind: mLoc, l: m.dst}, fr)
+		for j := range pending {
+			if sameLoc(pending[j].src.l, m.dst) {
+				pending[j].src.l = tmp
+			}
+		}
+	}
+	for _, m := range consts {
+		s.move(b, m.dst, m.src, fr)
+	}
+}
+
+func memRef(l mloc) string { return fmt.Sprintf("[%s, #%d]", l.base, l.off) }
+
+func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
+	g := s.g
+	// a source that is not a location goes through a register first
+	put := func(r int) {
+		switch src.kind {
+		case mZero:
+			if r >= fpBase {
+				fmt.Fprintf(b, "\tfmov %s, xzr\n", regName(r, false))
+			} else {
+				fmt.Fprintf(b, "\tmov %s, xzr\n", regName(r, false))
+			}
+		case mImm:
+			if r >= fpBase {
+				b.WriteString(immText(src.imm, "x17"))
+				fmt.Fprintf(b, "\tfmov %s, x17\n", regName(r, false))
+				return
+			}
+			b.WriteString(immText(src.imm, regName(r, false)))
+		case mSym:
+			b.WriteString(g.addr(regName(r, false), src.sym))
+		case mFrame:
+			fmt.Fprintf(b, "\tadd %s, sp, #%d\n", regName(r, false), fr.outOff)
+		}
+	}
+	if src.kind != mLoc {
+		if dst.reg >= 0 {
+			put(dst.reg)
+			return
+		}
+		if src.kind == mZero {
+			fmt.Fprintf(b, "\tstr xzr, %s\n", memRef(dst))
+			return
+		}
+		put(scratch1)
+		fmt.Fprintf(b, "\tstr x17, %s\n", memRef(dst))
+		return
+	}
+	sl := src.l
+	switch {
+	case dst.reg >= 0 && sl.reg >= 0:
+		dfp, sfp := dst.reg >= fpBase, sl.reg >= fpBase
+		switch {
+		case dfp && sfp:
+			fmt.Fprintf(b, "\tfmov %s, %s\n", regName(dst.reg, false), regName(sl.reg, false))
+		case !dfp && !sfp:
+			fmt.Fprintf(b, "\tmov %s, %s\n", regName(dst.reg, false), regName(sl.reg, false))
+		default:
+			fmt.Fprintf(b, "\tfmov %s, %s\n", regName(dst.reg, false), regName(sl.reg, false))
+		}
+	case dst.reg >= 0:
+		fmt.Fprintf(b, "\tldr %s, %s\n", regName(dst.reg, false), memRef(sl))
+	case sl.reg >= 0:
+		fmt.Fprintf(b, "\tstr %s, %s\n", regName(sl.reg, false), memRef(dst))
+	default:
+		fmt.Fprintf(b, "\tldr x17, %s\n\tstr x17, %s\n", memRef(sl), memRef(dst))
+	}
+}
+
+// immText is the assembly that puts n in register r.
+func immText(n int64, r string) string {
+	return strings.ReplaceAll("\t"+strings.ReplaceAll(movImm(n), "\n", "\n\t"), "$d0", r) + "\n"
+}
+
+// recoverOperand recomputes, in a fault stub, an operand of a checked
+// add, sub, or neg whose register the result took (the operation
+// wraps, so undoing it gives the operand back), and points its move at
+// the recomputed value (x15).
+func (s *fstate) recoverOperand(b *strings.Builder, in *inst, ms []move, fr *frameInfo) {
+	if in.recover == "" {
+		return
+	}
+	dl, ok := s.vloc(in.defs[0], fr)
+	if !ok || dl.reg < 0 {
+		return
+	}
+	d := regName(dl.reg, false)
+	args := in.fault.args
+	clobbered := func(k int) bool {
+		if k >= len(args) || args[k].kind != sReg || args[k].v == 0 {
+			return false
+		}
+		l, _ := s.vloc(args[k].v, fr)
+		return l.reg == dl.reg
+	}
+	// other puts operand k in a register
+	other := func(k int) string {
+		a := args[k]
+		if a.kind == sImm {
+			b.WriteString(immText(a.imm, "x17"))
+			return "x17"
+		}
+		l, _ := s.vloc(a.v, fr)
+		if l.reg >= 0 {
+			return regName(l.reg, false)
+		}
+		fmt.Fprintf(b, "\tldr x17, %s\n", memRef(l))
+		return "x17"
+	}
+	for _, k := range []int{0, 2} {
+		if !clobbered(k) {
+			continue
+		}
+		switch {
+		case in.recover == "neg":
+			fmt.Fprintf(b, "\tneg x15, %s\n", d)
+		case in.recover == "add":
+			fmt.Fprintf(b, "\tsub x15, %s, %s\n", d, other(2-k))
+		case in.recover == "sub" && k == 0:
+			fmt.Fprintf(b, "\tadd x15, %s, %s\n", d, other(2))
+		case in.recover == "sub":
+			fmt.Fprintf(b, "\tsub x15, %s, %s\n", other(0), d)
+		}
+		ms[k].src = msrc{kind: mLoc, l: mloc{reg: scratch2}}
+	}
+}
+
+// fwd follows blocks that do nothing but jump (their parallel moves are
+// all between the same locations after allocation).
+func (s *fstate) fwd(b *mblock, fr *frameInfo) *mblock {
+	for i := 0; i < 8; i++ {
+		t := b.term()
+		if t == nil || t.kind != iJump || t.targets[0] == b {
+			return b
+		}
+		for _, in := range b.insts[:len(b.insts)-1] {
+			if in.kind != iPmove {
+				return b
+			}
+			for k, d := range in.defs {
+				dl, ok := s.vloc(d, fr)
+				src := s.msrcOf(in.srcs[k], fr)
+				if ok && !(src.kind == mLoc && sameLoc(dl, src.l)) {
+					return b
+				}
+			}
+		}
+		b = t.targets[0]
+	}
+	return b
+}

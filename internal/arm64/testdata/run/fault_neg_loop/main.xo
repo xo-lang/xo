@@ -1,0 +1,13 @@
+// A checked negation whose result shares a register with its operand.
+fn main(os: Os) {
+  var x = 3
+  var i = 0
+  while i < 4 {
+    x = -x
+    i += 1
+    if i == 2 {
+      x = -9223372036854775807 - 1
+    }
+  }
+  os.stdio.println("${x}")
+}

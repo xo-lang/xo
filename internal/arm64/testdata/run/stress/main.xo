@@ -1,0 +1,154 @@
+// Backend stress (internal/arm64): stack arguments, many values live
+// across calls (spills), division by powers of two, Float payloads,
+// reference counting helpers of composite list elements.
+struct Pt {
+  x: Float
+  y: Int
+}
+
+struct Rec {
+  name: Str
+  tags: List[Str]
+  n: Int
+}
+
+enum Val {
+  Num(f: Float)
+  Pair(a: Int, b: Float)
+  Many(xs: List[Int])
+  Word(s: Str)
+  Nothing
+}
+
+fn many(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int, j: Int, k: Int, x1: Float, x2: Float, x3: Float, x4: Float, x5: Float, x6: Float, x7: Float, x8: Float, x9: Float, x10: Float) -> Float {
+  Float(a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h + 9 * i + 10 * j + 11 * k) + x1 + 2.0 * x2 + 3.0 * x3 + 4.0 * x4 + 5.0 * x5 + 6.0 * x6 + 7.0 * x7 + 8.0 * x8 + 9.0 * x9 + 10.0 * x10
+}
+
+fn id(n: Int) -> Int {
+  if n > 1000000 { id(n - 1) } else { n }
+}
+
+fn pressure(n: Int) -> Int {
+  let a = id(n + 1)
+  let b = id(n + 2)
+  let c = id(n + 3)
+  let d = id(n + 4)
+  let e = id(n + 5)
+  let f = id(n + 6)
+  let g = id(n + 7)
+  let h = id(n + 8)
+  let i = id(n + 9)
+  let j = id(n + 10)
+  let k = id(n + 11)
+  let l = id(n + 12)
+  let m = id(n + 13)
+  let o = id(n + 14)
+  let p = id(n + 15)
+  let q = id(n + 16)
+  let r = id(n + 17)
+  let s = id(n + 18)
+  let t = id(n + 19)
+  let u = id(n + 20)
+  a * b - c + d * e - f + g * h - i + j * k - l + m * o - p + q * r - s + t * u
+}
+
+fn describe(v: Val) -> Str {
+  match v {
+    Num(f) => "num ${f}"
+    Pair(a, b) => "pair ${a} ${b}"
+    Many(xs) => "many ${xs.len()}"
+    Word(s) => "word ${s}"
+    Nothing => "nothing"
+  }
+}
+
+fn grow(var xs: List[Int], var total: Int, k: Int) {
+  for i in 0..k {
+    xs.push(i)
+    total += i
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("many ${many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)}")
+  os.stdio.println("pressure ${pressure(3)} ${pressure(-50)}")
+  var q = 0
+  var r = 0
+  var even = 0
+  var q8 = 0
+  var r8 = 0
+  for i in -100..37 {
+    q += i / 2 + i / 4 * 3
+    r += i % 2 + i % 16 * 5
+    q8 += i / 8
+    r8 += i % 8
+    if i % 2 == 0 {
+      even += 1
+    }
+    if i % 4 != 0 {
+      even += 100
+    }
+  }
+  os.stdio.println("pow2 ${q} ${r} ${q8} ${r8} ${even} ${-9223372036854775807 / 2} ${-9223372036854775807 % 4}")
+  var pts: List[Pt] = []
+  for i in 0..50 {
+    pts.push(Pt{x: Float(i) * 0.5, y: i * 3})
+  }
+  pts[7] = pts[7] with {x: -1.25}
+  pts[8].y = 1000
+  var sx = 0.0
+  var sy = 0
+  while pts.len() > 40 {
+    if let Some(p) = pts.pop() {
+      sx += p.x
+      sy += p.y
+    }
+  }
+  let g1 = pts.get(7)
+  let g2 = pts.get(70)
+  match g1 {
+    Some(p) => os.stdio.println("got ${p.x} ${p.y}")
+    None => os.stdio.println("none")
+  }
+  match g2 {
+    Some(p) => os.stdio.println("got ${p.x} ${p.y}")
+    None => os.stdio.println("none")
+  }
+  os.stdio.println("pts ${pts.len()} ${sx} ${sy} ${pts[8].y} ${pts[7].x}")
+  var vals: List[Val] = [Val.Num(f: 2.5), Val.Pair(a: 3, b: -0.5), Val.Many(xs: [1, 2, 3]), Val.Word(s: "hi"), Val.Nothing]
+  vals.push(Val.Word(s: "there${vals.len()}"))
+  let copy = vals
+  vals[2] = Val.Many(xs: [9])
+  vals[3] = Val.Num(f: 1e100)
+  for v in vals {
+    os.stdio.println(describe(v))
+  }
+  os.stdio.println("copy ${describe(copy[2])} ${describe(copy[3])}")
+  var recs: List[Rec] = []
+  for i in 0..5 {
+    var tags: List[Str] = []
+    for j in 0..i {
+      tags.push("t${j}")
+    }
+    recs.push(Rec{name: "r${i}", tags: tags, n: i})
+  }
+  let snap = recs
+  recs[4].tags.push("extra")
+  recs[1] = Rec{name: "replaced", tags: ["z"], n: 99}
+  os.stdio.println("recs ${recs[4].tags.len()} ${snap[4].tags.len()} ${recs[1].name} ${snap[1].name} ${recs[3].tags[2]}")
+  var xs: List[Int] = []
+  var total = 0
+  grow(xs, total, 10)
+  grow(xs, total, 5)
+  let ys = xs
+  xs[0] = 42
+  os.stdio.println("grow ${xs.len()} ${total} ${xs[0]} ${ys[0]}")
+  var fl: List[Float] = [1.5, -2.0]
+  let a = fl.get(1) ?? 0.0
+  let b = fl.get(5) ?? 7.25
+  os.stdio.println("floats ${a} ${b} ${(0.0 / 0.0).is_nan()} ${(0.0 / 0.0) < 1.0} ${(0.0 / 0.0) != (0.0 / 0.0)} ${2.5.max(-1.0)}")
+  var words: List[Str] = ["a", "b"]
+  words[0] = "c${words.len()}"
+  words[1] = words[0] + "!"
+  os.stdio.println("words ${words[0]} ${words[1]} ${words[0] == "c2"} ${"b" < words[0]} ${true} ${1 < 0}")
+}

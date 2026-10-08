@@ -98,3 +98,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [rc-verifier-loop-param-leak.md](rc-verifier-loop-param-leak.md): an RC verifier that sets block parameter counts on entry hides a leak of the previous iteration's value; check they are zero first.
 - [rc-verifier-stop-block-merge.md](rc-verifier-stop-block-merge.md): predecessors of an `unreachable` or fault block need not agree on what they hold (nothing is released there); the RC verifier merges them.
 - [snprintf-int-formatting-cost.md](snprintf-int-formatting-cost.md): `snprintf("%lld")` dominated Int interpolation in the LLVM runtime (4x slower workload); use a digit loop.
+- [arm64-stp-pair-order.md](arm64-stp-pair-order.md): on Apple M4, `stp x19, x20` for callee saved registers made recursive fib 1.4x slower than `stp x20, x19`; store pairs high register first.
+- [arm64-loop-carried-store-forwarding.md](arm64-loop-carried-store-forwarding.md): a list length stored and reloaded every push iteration bound the native sieve on store to load forwarding; keep loop carried values in registers.
+- [arm64-zero-word-values.md](arm64-zero-word-values.md): `()` and capabilities have no words in the native backend; check the type before reading word 0.
+- [arm64-cheap-constants-across-blocks.md](arm64-cheap-constants-across-blocks.md): sharing one instruction constants across blocks blocks coalescing and costs a register and a copy; make them again per block.
+- [gocache-trim-races-concurrent-build.md](gocache-trim-races-concurrent-build.md): one xo process trimming the shared Go cache can delete entries a concurrent `go build` reads ("could not import os"); rerun, or separate `XO_GOCACHE`.

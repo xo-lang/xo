@@ -1,0 +1,18 @@
+// A checked subtraction whose result shares a register with its first
+// or second operand.
+fn step(a: Int, b: Int) -> Int { b - a }
+
+fn main(os: Os) {
+  var x = -9223372036854770000
+  var y = 5
+  var i = 0
+  while i < 3 {
+    y = step(y, 10)
+    i += 1
+  }
+  while i < 100 {
+    x = x - 1000
+    i += 1
+  }
+  os.stdio.println("${x} ${y}")
+}
