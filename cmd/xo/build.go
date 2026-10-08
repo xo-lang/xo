@@ -43,7 +43,7 @@ func arenaFlag(fl *flag.FlagSet) *bool {
 // backendFlag defines --backend: go (P1, the default) or llvm (the P3
 // prototype: LLVM IR compiled by clang, host only, a core subset).
 func backendFlag(fl *flag.FlagSet) *string {
-	return fl.String("backend", "go", "code generator: go (default) or llvm (P3 prototype: a core subset compiled with clang, host only)")
+	return fl.String("backend", "go", "code generator: go (default), llvm (P3 prototype: a core subset compiled with clang, host only), or arm64 (native AArch64 assembly linked with cc: darwin/arm64, linux/arm64)")
 }
 
 func runBuild(args []string, stdout, stderr io.Writer) int {
@@ -157,7 +157,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		env = append(env, "XO_SEED="+strconv.FormatInt(*seed, 10))
 	}
 	if *record != "" {
-		if *backend == "llvm" {
+		if *backend != "go" {
 			fmt.Fprintln(stderr, "xo run: --record needs the Go backend")
 			return 2
 		}

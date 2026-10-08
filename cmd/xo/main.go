@@ -41,10 +41,12 @@ commands:
       xo.mod and the embedded std). --json prints {"modules": [...],
       "diagnostics": [...]} on stdout. Exit status is 1 when any error is
       reported (warnings such as holes do not count), 2 on usage errors.
-  build [--targets=all|os/arch,...] [--backend=go|llvm] [--no-mono] [--arenas] [-o out] <dirs...>
+  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-mono] [--arenas] [-o out] <dirs...>
       Compile to static binaries (default: the host). --backend=llvm uses the
-      LLVM prototype (a core subset, needs clang).
-  run [--seed=N] [--backend=go|llvm] <dir> [-- args]
+      LLVM prototype (a core subset, needs clang); --backend=arm64 the native
+      AArch64 backend (the same subset, needs cc; linux/arm64 is emitted as
+      assembly when it is not the host).
+  run [--seed=N] [--backend=go|llvm|arm64] <dir> [-- args]
       Build for the host and run. --seed makes task interleavings
       reproducible. Recording is described under run --record below.
   test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] <dirs...>

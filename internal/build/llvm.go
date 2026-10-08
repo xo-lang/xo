@@ -161,11 +161,16 @@ func sysrootMemo() string {
 	return filepath.Join(cache, "xo", "llvm-sysroot")
 }
 
-// clangBuild compiles and links srcs into bin, finding a working macOS
-// SDK on the first build of the process.
+// clangBuild compiles and links LLVM IR and C sources into bin.
 func clangBuild(clang string, srcs []string, bin string) error {
+	return ccBuild(clang, []string{LLVMOptLevel, "-flto", "-Wno-override-module"}, srcs, bin)
+}
+
+// ccBuild compiles and links srcs into bin with the C compiler cc and
+// flags, finding a working macOS SDK on the first build of the process.
+func ccBuild(clang string, flags, srcs []string, bin string) error {
 	try := func(root string) (string, error) {
-		args := []string{LLVMOptLevel, "-flto", "-Wno-override-module", "-o", bin}
+		args := append(append([]string(nil), flags...), "-o", bin)
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}

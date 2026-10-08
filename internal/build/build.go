@@ -90,8 +90,10 @@ type Options struct {
 	// Arenas turns on request scoped arenas (gen.Options.Arenas,
 	// `--arenas`).
 	Arenas bool
-	// Backend is "go" (the default, P1) or "llvm" (the P3 prototype,
-	// internal/llvm: IR compiled by clang; host only, programs only).
+	// Backend is "go" (the default, P1), "llvm" (the P3 prototype,
+	// internal/llvm: IR compiled by clang; host only, programs only), or
+	// "arm64" (internal/arm64: assembly linked with cc; darwin/arm64 and
+	// linux/arm64).
 	Backend string
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
@@ -116,6 +118,9 @@ type Result struct {
 	LLVMPath string
 	// LLVMFallback says why the LLVM backend used the AST path.
 	LLVMFallback string
+	// Asm maps each target of the arm64 backend to its assembly file
+	// (a target other than the host is emitted, not linked).
+	Asm map[Target]string
 	// Info is the build information compiled into a program (Build mode,
 	// Go backend): the build id, the source hashes, the main module
 	// directory, and the options, for crash bundles and `xo replay`.
@@ -217,8 +222,10 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	case "", BackendGo:
 	case BackendLLVM:
 		return buildLLVM(dirs, res, out, opts)
+	case BackendArm64:
+		return buildArm64(dirs, res, out, opts)
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want go or llvm)", opts.Backend)
+		return nil, fmt.Errorf("unknown backend %q (want go, llvm, or arm64)", opts.Backend)
 	}
 	root := lineRoot(dirs)
 	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: opts.Arenas})
