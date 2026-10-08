@@ -12,8 +12,12 @@ import (
 type Task struct {
 	node   *cnode
 	shield int32
-	held   map[any]string // mutexes held by this task, with the acquisition site
-	w      *World         // the test world (virtual clock), nil in real programs
+	held   map[any]heldSite // mutexes held by this task, with the acquisition site
+	w      *World           // the test world (virtual clock), nil in real programs
+	// arena is the request scoped arena of an HTTP request task (arena.go),
+	// nil otherwise. Spawned tasks never inherit it (child), so only one
+	// goroutine uses an arena at a time.
+	arena *Arena
 }
 
 // cnode is a node of the cancellation tree. Canceling a node cancels every
@@ -116,7 +120,8 @@ func NewRootTask() *Task { return &Task{node: newNode(nil, nil)} }
 // start.
 var InitTask = NewRootTask()
 
-// child returns a task for a new node of the tree.
+// child returns a task for a new node of the tree. It has no arena: a
+// spawned task runs on its own goroutine (see Arena).
 func (tk *Task) child(n *cnode) *Task { return &Task{node: n, w: tk.w} }
 
 // Canceled reports whether a cancellation point here reports cancellation:

@@ -1,0 +1,97 @@
+use std/http
+use std/task
+
+const ADA = r#"{"name": "Ada Lovelace", "email": "ada@example.com"}"#
+
+fn send(r: http.Router, method: Str, path: Str, body: Str) -> http.Response {
+  r.call(http.new_request(method, path, body: body.bytes()))
+}
+
+fn error_of(resp: http.Response) -> Str ! Error {
+  let body = resp.decode_json[Map[Str, Str]]()?
+  body.get("error").or_err("response has no error key")?
+}
+
+test "create then get returns the same user" {
+  let r = routes(new_store())
+  let created = send(r, "POST", "/users", ADA)
+  expect(created.status) == 201
+  let u = created.decode_json[User]()?
+  expect(u.id) == 1
+  expect(u.name) == "Ada Lovelace"
+  expect(u.email) == "ada@example.com"
+  expect(u.nickname) == None
+
+  let got = send(r, "GET", "/users/${u.id}", "")
+  expect(got.status) == 200
+  expect(got.decode_json[User]()?) == u
+}
+
+test "duplicate email returns 409" {
+  let r = routes(new_store())
+  expect(send(r, "POST", "/users", ADA).status) == 201
+  let dup = send(r, "POST", "/users", r#"{"name": "Other", "email": "ada@example.com"}"#)
+  expect(dup.status) == 409
+  expect(error_of(dup)?) == "email ada@example.com already exists"
+
+  let all = send(r, "GET", "/users", "").decode_json[List[User]]()?
+  expect(all.len()) == 1
+}
+
+test "invalid email returns 400" {
+  let r = routes(new_store())
+  let resp = send(r, "POST", "/users", r#"{"name": "Ada", "email": "not-an-email"}"#)
+  expect(resp.status) == 400
+  expect(error_of(resp)?) == "email must contain @"
+
+  let all = send(r, "GET", "/users", "").decode_json[List[User]]()?
+  expect(all.is_empty())
+}
+
+test "patch with only nickname keeps other fields" {
+  let r = routes(new_store())
+  let created = send(r, "POST", "/users", ADA).decode_json[User]()?
+
+  let resp = send(r, "PATCH", "/users/${created.id}", r#"{"nickname": "Countess"}"#)
+  expect(resp.status) == 200
+  let patched = resp.decode_json[User]()?
+  expect(patched) == created with {nickname: "Countess"}
+
+  let got = send(r, "GET", "/users/${created.id}", "").decode_json[User]()?
+  expect(got) == patched
+}
+
+test "delete then get returns 404" {
+  let r = routes(new_store())
+  let created = send(r, "POST", "/users", ADA).decode_json[User]()?
+
+  expect(send(r, "DELETE", "/users/${created.id}", "").status) == 204
+  expect(send(r, "GET", "/users/${created.id}", "").status) == 404
+  expect(send(r, "DELETE", "/users/${created.id}", "").status) == 404
+}
+
+test "list returns users ordered by id" {
+  let r = routes(new_store())
+  expect(send(r, "POST", "/users", r#"{"name": "A", "email": "a@x.io"}"#).status) == 201
+  expect(send(r, "POST", "/users", r#"{"name": "B", "email": "b@x.io"}"#).status) == 201
+  let resp = send(r, "GET", "/users", "")
+  expect(resp.status) == 200
+  let ids = resp.decode_json[List[User]]()?.map(fn(u) { u.id })
+  expect(ids) == [1, 2]
+}
+
+test "concurrent creates assign distinct ids" {
+  let store = new_store()
+  var inputs: List[Int] = []
+  for i in 0..50 {
+    inputs.push(i)
+  }
+  let results = task.map_concurrent(inputs, 8, fn(i) {
+    store.create(NewUser{name: "user ${i}", email: "u${i}@example.com"})
+  })
+  expect(results.all(fn(res) { res is Ok(_) }))
+  let ids = store.list().map(fn(u) { u.id })
+  expect(ids.to_set().len()) == 50
+  expect(ids.first()) == Some(1)
+  expect(ids.last()) == Some(50)
+}

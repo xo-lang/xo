@@ -1,0 +1,42 @@
+use std/http
+use std/log
+
+const DEFAULT_PORT = 8080
+
+enum ConfigErr {
+  BadPort(value: Str)
+}
+
+fn (e: ConfigErr) display() -> Str {
+  match e {
+    BadPort(value) => "PORT must be a number from 1 to 65535, got \"${value}\""
+  }
+}
+
+/// Reads the listen port from the raw `PORT` value, defaulting to 8080.
+fn port_from(raw: Str?) -> Int ! ConfigErr {
+  let s = (raw ?? "").trim()
+  if s.is_empty() {
+    return DEFAULT_PORT
+  }
+  let n = Int.parse(s).or_err(ConfigErr.BadPort(value: s))?
+  if n < 1 || n > 65535 {
+    return Err(ConfigErr.BadPort(value: s))
+  }
+  n
+}
+
+fn main(os: Os) ! {
+  let port = port_from(os.env.get("PORT"))?
+  let addr = "127.0.0.1:${port}"
+  let srv = http.server(os.net.listen(addr)?, routes(new_store()))
+  log.info("listening", {"addr": addr})
+  srv.serve()?
+}
+
+test "port defaults to 8080" {
+  expect(port_from(None)) == Ok(8080)
+  expect(port_from(Some(""))) == Ok(8080)
+  expect(port_from(Some("9090"))) == Ok(9090)
+  expect(port_from(Some("abc")) is Err(BadPort(..)))
+}

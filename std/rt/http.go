@@ -25,6 +25,9 @@ type route struct {
 	method string // "" matches any method
 	segs   []routeSeg
 	h      func(tk *Task, req Http_Request) Http_Response
+	// arena is set when internal/gen proved that the handler confines its
+	// request (Http_Router_arenaLast), so it may get arena memory.
+	arena bool
 }
 
 type routeSeg struct {
@@ -81,10 +84,17 @@ func splitPath(p string) []string {
 }
 
 // match matches a path against a route: the parameters, whether an Int
-// segment failed to parse (its name), and whether it matched at all.
-func (r *route) match(path string) (Map[string, string], string, bool) {
+// segment failed to parse (its name), and whether it matched at all. The
+// parameter table is arena memory when a is not nil.
+func (r *route) match(a *Arena, path string) (Map[string, string], string, bool) {
 	parts := splitPath(path)
 	var params Map[string, string]
+	put := func(k, v string) {
+		if params.t == nil {
+			params = a.strMap()
+		}
+		params.M_put(nil, k, v)
+	}
 	badInt := ""
 	for i, s := range r.segs {
 		if s.rest {
@@ -92,7 +102,7 @@ func (r *route) match(path string) (Map[string, string], string, bool) {
 			if i < len(parts) {
 				rest = strings.Join(parts[i:], "/")
 			}
-			params.M_put(nil, s.param, rest)
+			put(s.param, rest)
 			return params, badInt, true
 		}
 		if i >= len(parts) {
@@ -110,7 +120,7 @@ func (r *route) match(path string) (Map[string, string], string, bool) {
 				badInt = s.param
 			}
 		}
-		params.M_put(nil, s.param, part)
+		put(s.param, part)
 	}
 	if len(parts) != len(r.segs) {
 		return params, "", false
@@ -175,8 +185,13 @@ func (r *Http_Router) M_wrap(_ *Task, m func(*Task, Http_Request, func(*Task, Ht
 }
 
 // M_call is `r.call(req)`: in process dispatch. A streamed body is
-// collected into the response.
+// collected into the response. The response goes back to Xo code, so no
+// arena response may be built while it runs (see Arena).
 func (r Http_Router) M_call(tk *Task, req Http_Request) Http_Response {
+	if a := tk.arena; a != nil && a.resp {
+		a.resp = false
+		defer func() { a.resp = true }()
+	}
 	return r.call(tk, req).collect(tk)
 }
 
@@ -201,7 +216,7 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	bestBad := ""
 	methodMismatch := false
 	for _, rt := range r.routes.s {
-		params, bad, ok := rt.match(req.F_path)
+		params, bad, ok := rt.match(tk.arena, req.F_path)
 		if !ok {
 			continue
 		}
@@ -223,6 +238,10 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 		return jsonError(tk, 400, "path segment `"+bestBad+"` must be an Int")
 	}
 	req.XParams = bestParams
+	if tk.arena != nil && !best.arena {
+		// the handler may keep the request: no arena memory for it
+		req = req.heapCopy()
+	}
 	return isolateHandler(tk, func(tk *Task) Http_Response { return best.h(tk, req) })
 }
 
@@ -307,7 +326,11 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 }
 
 // parseURLLoose parses an absolute or a path only URL.
-func parseURLLoose(raw string) Http_Url {
+func parseURLLoose(raw string) Http_Url { return parseURLArena(nil, raw) }
+
+// parseURLArena is parseURLLoose with the query table in arena a (when not
+// nil).
+func parseURLArena(a *Arena, raw string) Http_Url {
 	pu, err := url.Parse(raw)
 	if err != nil {
 		return Http_Url{F_path: raw}
@@ -321,12 +344,18 @@ func parseURLLoose(raw string) Http_Url {
 			u.F_port = Some(n)
 		}
 	}
+	if pu.RawQuery == "" {
+		return u
+	}
 	q := pu.Query()
 	keys := make([]string, 0, len(q))
 	for k := range q {
 		keys = append(keys, k)
 	}
 	sortStrings(keys)
+	if a != nil {
+		u.F_query = a.strMap()
+	}
 	for _, k := range keys {
 		u.F_query.M_put(nil, k, q.Get(k))
 	}
@@ -455,14 +484,27 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.l.l == nil {
 		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: "no listener"}})
 	}
+	// request scoped arenas (arena.go): not with middleware, which sees
+	// the request and the response
+	useArena := arenasOn && len(s.r.mws.s) == 0
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
-		reqTask := &Task{node: newNode(nil, tk.w), w: tk.w}
-		body, _ := io.ReadAll(hr.Body)
-		var h Map[string, string]
+		var a *Arena
+		if useArena {
+			a = getArena()
+		}
+		reqTask := &Task{node: newNode(nil, tk.w), w: tk.w, arena: a}
+		var body Bytes
+		if a != nil {
+			body = a.readBody(hr.Body)
+		} else {
+			data, _ := io.ReadAll(hr.Body)
+			body = Bytes(data)
+		}
+		h := a.strMap()
 		for k, vs := range hr.Header {
 			h.M_put(reqTask, k, strings.Join(vs, ", "))
 		}
-		u := parseURLLoose(hr.URL.String())
+		u := parseURLArena(a, hr.URL.String())
 		u.F_host = hr.Host
 		if hostOnly, _, err := net.SplitHostPort(hr.Host); err == nil {
 			u.F_host = hostOnly
@@ -471,7 +513,10 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: Bytes(body), F_remote_ip: ip}
+		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
+		if a != nil {
+			a.resp = true
+		}
 		resp := s.r.call(reqTask, req)
 		for k, v := range resp.F_headers.All() {
 			w.Header().Set(k, v)
@@ -480,9 +525,18 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if resp.XStream != nil {
 			fl, _ := w.(http.Flusher)
 			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: w, fl: fl}})
-			return
+		} else {
+			// net/http copies the bytes into its own buffer
+			io.WriteString(w, string(resp.F_body))
 		}
-		w.Write([]byte(resp.F_body))
+		if a != nil {
+			// the handler returned (every task it started in a scope has
+			// ended) and the response is written: nothing holds arena
+			// memory now (see Arena). A panic skips this; the arena is
+			// then left to the garbage collector.
+			reqTask.arena = nil
+			a.release()
+		}
 	})}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(s.l.l) }()

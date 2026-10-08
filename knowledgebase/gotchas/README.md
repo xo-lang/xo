@@ -45,3 +45,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [range-over-func-loop-cost.md](range-over-func-loop-cost.md): `for i in a..b` through `rt.Range.All()` cost a closure call per iteration and an extra fault frame; range literals are counted loops.
 - [build-dir-shared-across-xo-versions.md](build-dir-shared-across-xo-versions.md): older xo binaries failed on build directories a newer xo wrote; the build hash carries a layout tag.
 - [bench-host-timing-drift.md](bench-host-timing-drift.md): host clock drift moves benchmark times by up to 10 percent; interleave before and after runs.
+- [sync-pool-drops-on-gc.md](sync-pool-drops-on-gc.md): a `sync.Pool` empties at every GC, so request arenas pooled in one were barely reused; use a bounded channel.
+- [closed-loop-latency-confound.md](closed-loop-latency-confound.md): with a closed loop load generator a slower server shows lower latency; compare latency only at equal throughput.
+- [arena-handler-not-confined.md](arena-handler-not-confined.md): with `--arenas`, a handler that passes `req` on, reads `req.headers`/`req.body`, or captures it gets a heap copy, not an arena.

@@ -81,6 +81,9 @@ type Options struct {
 	NoMono bool
 	// NoRanges checks every Int operation (gen.Options.NoRanges; tests).
 	NoRanges bool
+	// Arenas turns on request scoped arenas (gen.Options.Arenas,
+	// `--arenas`).
+	Arenas bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }
@@ -131,12 +134,12 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return out, nil
 	}
 	root := lineRoot(dirs)
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: opts.Arenas})
 	if err != nil {
 		return nil, err
 	}
 	out.Specs = prog.Specs
-	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges)
+	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, opts.Arenas)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +226,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 
 // buildDir is a stable directory per program and mode under the user
 // cache, so Go's build cache is reused across builds.
-func buildDir(dirs []string, mode gen.Mode, mono, noRanges bool) (string, error) {
+func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
 	if base == "" {
 		cache, err := os.UserCacheDir()
@@ -243,6 +246,9 @@ func buildDir(dirs []string, mode gen.Mode, mono, noRanges bool) (string, error)
 	}
 	if noRanges {
 		fmt.Fprintf(h, " noranges")
+	}
+	if arenas {
+		fmt.Fprintf(h, " arenas")
 	}
 	// layout 2 (2026-10-08) adds package main's xo_adapt.go; older xo
 	// binaries do not remove it, so they must not share the directory

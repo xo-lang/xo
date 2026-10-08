@@ -1,0 +1,191 @@
+// Request scoped arenas (std/rt/arena.go): values derived from a request
+// escape it through a Mutex, a channel, the handler's response, and a
+// background task that runs after the response is sent. Many requests of
+// different sizes run concurrently, so arenas are reused while the escaped
+// values are still alive; every escaped value must still read back intact.
+// Built with and without `--arenas` the output is the same.
+use std/http
+use std/json
+use std/task
+
+struct Item {
+  name: Str
+  tags: List[Str]
+} derive Json
+
+struct Kept {
+  names: Map[Int, Str]
+  headers: Map[Int, Str]
+  params: Map[Int, Str]
+  bodies: Map[Int, Str]
+  late: Map[Int, Str]
+  firsts: Map[Int, Str]
+  keys: Map[Int, List[Str]]
+}
+
+const PORT = 18733
+const N = 40
+const CLIENTS = 4
+
+fn body_of(i: Int) -> Str {
+  "item-${i}-" + "x".repeat(i % 37)
+}
+
+fn raw_of(i: Int) -> Str {
+  "raw-${i}-" + "y".repeat((i * 7) % 53)
+}
+
+fn routes(kept: Mutex[Kept], ch: Chan[Str], g: task.Group, clock: Clock) -> http.Router {
+  var r = http.router()
+
+  // Confined handler: the request is only read through json, param_int,
+  // and header, so with --arenas its tables and body are arena memory.
+  r.handle("POST /items/{id:Int}", fn(req) -> http.Response {
+    let it = match req.json[Item]() {
+      Ok(v) => v
+      Err(e) => return http.text(400, "bad json: ${e}")
+    }
+    let id = req.param_int("id")
+    let tag = req.header("x-tag") ?? "none"
+    // stored in a Mutex
+    kept.with(fn(var k) {
+      k.names.put(id, it.name)
+      k.headers.put(id, tag)
+      k.params.put(id, "${id}")
+    })
+    // sent on a channel
+    ch.send("item ${id} ${it.name} ${tag}")
+    // captured by a background task that outlives the request
+    g.spawn_background(fn() {
+      clock.sleep(2ms)
+      kept.with(fn(var k) { k.late.put(id, it.name + "|" + it.tags.join(",")) })
+    })
+    // an element copied out of an arena temporary (values()) is stored
+    kept.with(fn(var k) {
+      let first = k.names.values().find(fn(s) { s.starts_with("item-${id}-") })
+      k.firsts.put(id, first ?? "missing")
+    })
+    // a List made by keys() is stored as a value: not a temporary
+    var mine: Map[Str, Int] = {}
+    mine.put(it.name, id)
+    mine.put(tag, id)
+    let mine_keys = mine.keys()
+    kept.with(fn(var k) { k.keys.put(id, mine_keys) })
+    // returned from the handler (an arena response)
+    http.json(201, it)
+  })
+
+  // Not confined: the handler keeps `req` itself (body read later by a
+  // background task), so it gets a heap copy of the request.
+  r.handle("POST /raw/{id:Int}", fn(req) -> http.Response {
+    let id = req.param_int("id")
+    let text = req.body.to_str() ?? ""
+    kept.with(fn(var k) { k.bodies.put(id, text) })
+    ch.send("raw ${id} ${text}")
+    g.spawn_background(fn() {
+      clock.sleep(2ms)
+      let later = req.body.to_str() ?? ""
+      let p = req.param("id")
+      kept.with(fn(var k) { k.late.put(1000 + id, "${p}:${later}") })
+    })
+    http.text(200, req.body.to_str() ?? "")
+  })
+
+  // Expression temporaries: keys(), values(), entries() feed consumers and
+  // loops; the response is built from their results.
+  r.handle("GET /stats", fn(_req) {
+    let total = kept.with(fn(k) { k.names.values().fold(0, fn(acc, s) { acc + s.len() }) })
+    let keys = kept.with(fn(k) { k.names.keys().sort() })
+    var longest = ""
+    let names = kept.with(fn(k) { k.names })
+    for (_, v) in names.entries() {
+      if v.len() > longest.len() {
+        longest = v
+      }
+    }
+    http.json(200, {"total": "${total}", "count": "${keys.len()}", "first": "${keys.first() ?? 0}", "longest": longest})
+  })
+
+  r
+}
+
+fn post(client: http.Client, path: Str, body: Str, tag: Str) -> http.Response ! http.ClientErr {
+  let url = "http://127.0.0.1:${PORT}${path}"
+  client.send(http.new_request("POST", url, headers: {"x-tag": tag}, body: body.bytes()))
+}
+
+fn run_client(client: http.Client, c: Int) -> Int ! http.ClientErr {
+  var bad = 0
+  for j in 0..N {
+    let i = c * N + j + 1
+    let item = Item{name: body_of(i), tags: ["t${i}", "u${i * 7}"]}
+    let a = post(client, "/items/${i}", json.encode_str(item), "tag${i}")?
+    if a.status != 201 || (a.body.to_str() ?? "") != json.encode_str(item) {
+      bad += 1
+    }
+    let b = post(client, "/raw/${i}", raw_of(i), "")?
+    if b.status != 200 || (b.body.to_str() ?? "") != raw_of(i) {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn main(os: Os) ! {
+  let kept = Mutex.new(Kept{names: {}, headers: {}, params: {}, bodies: {}, late: {}, firsts: {}, keys: {}})
+  let ch = Chan[Str].new(cap: 1000)
+  let client = http.client(os.net, timeout: 5s)
+  let srv = http.server(os.net.listen("127.0.0.1:${PORT}")?, routes(kept, ch, os.tasks, os.clock))
+  var bad_responses = 0
+  var stats = ""
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    os.clock.sleep(100ms)
+    let hs = scope c {
+      var handles: List[Task[Int, http.ClientErr]] = []
+      for k in 0..CLIENTS {
+        handles.push(c.spawn(fn() { run_client(client, k) }))
+      }
+      var sum = 0
+      for h in handles {
+        sum += h.await?
+      }
+      sum
+    }
+    bad_responses = hs
+    os.clock.sleep(200ms)
+    let st = client.get("http://127.0.0.1:${PORT}/stats")?
+    stats = st.body.to_str() ?? ""
+  }
+  let total = CLIENTS * N
+  let k = kept.with(fn(k) { k })
+  var bad_kept = 0
+  for i in 1..=total {
+    let item = Item{name: body_of(i), tags: ["t${i}", "u${i * 7}"]}
+    if k.names.get(i) != Some(item.name) { bad_kept += 1 }
+    if k.headers.get(i) != Some("tag${i}") { bad_kept += 1 }
+    if k.params.get(i) != Some("${i}") { bad_kept += 1 }
+    if k.firsts.get(i) != Some(item.name) { bad_kept += 1 }
+    if k.keys.get(i) != Some([item.name, "tag${i}"]) { bad_kept += 1 }
+    if k.bodies.get(i) != Some(raw_of(i)) { bad_kept += 1 }
+    if k.late.get(i) != Some(item.name + "|t${i},u${i * 7}") { bad_kept += 1 }
+    if k.late.get(1000 + i) != Some("${i}:${raw_of(i)}") { bad_kept += 1 }
+  }
+  var msgs: Set[Str] = #{}
+  while {
+    match ch.try_recv() {
+      Some(m) => msgs.add(m)
+      None => break
+    }
+  }
+  var bad_msgs = 0
+  for i in 1..=total {
+    if !msgs.contains("item ${i} ${body_of(i)} tag${i}") { bad_msgs += 1 }
+    if !msgs.contains("raw ${i} ${raw_of(i)}") { bad_msgs += 1 }
+  }
+  os.stdio.println("requests ${total * 2}")
+  os.stdio.println("bad responses ${bad_responses}")
+  os.stdio.println("bad kept ${bad_kept} of ${k.names.len() + k.bodies.len() + k.late.len()}")
+  os.stdio.println("bad messages ${bad_msgs} of ${msgs.len()}")
+  os.stdio.println("stats ${stats}")
+}

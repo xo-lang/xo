@@ -867,7 +867,7 @@ func matchFake(method, prefix string, r *route, req Http_Request, rawURL string)
 	if prefix != "" && !strings.HasPrefix(rawURL, prefix) {
 		return Map[string, string]{}, false
 	}
-	params, _, ok := r.match(req.F_path)
+	params, _, ok := r.match(nil, req.F_path)
 	return params, ok
 }
 

@@ -78,4 +78,5 @@ Stage 3 runs:
 - [2026-10-08 three arm comparison](results/three-arm-2026-10-08.md): writing is even (first try passes); safety bugs Xo 23 to 29 of 30 vs strict Go 13; Xo code about half the size.
 - [2026-10-08 Map performance](results/perf-map-2026-10-08.md): update heavy Map loops 45x slower than Go -> 3.2 to 4.4x; reads, iteration, copies faster.
 - [2026-10-08 Monomorphization](results/perf-mono-2026-10-08.md): `xo build --mono` vs idiomatic Go generics: generic workloads 1.6x to 17.8x slower -> 0.49x to 2.26x; beats Go on max_by and map/filter/fold.
+- [2026-10-08 Request scoped arenas](results/perf-arenas-2026-10-08.md): task 01 under loopback load (`bench/perf/http/`): `xo build --arenas` cuts GCs per request 3.6x and raises throughput 40 percent, but Xo still allocates 2x Go per request (Go 123k req/s, Xo 52k, Xo --arenas 73k).
 - [2026-10-08 stage 3, tasks 09 and 10](results/stage3-2026-10-08.md): first run success Xo 2/2, plain Go 1/2, strict Go 0/2; Xo about 55% of Go lines; graceful drain gap found.

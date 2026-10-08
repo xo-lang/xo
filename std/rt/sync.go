@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +57,19 @@ func (l *lock) release() {
 	l.mu.Unlock()
 }
 
+// heldSite is where a task acquired a mutex: the caller's program
+// counters, resolved to `file.xo:line` only when a re-entrant use is
+// reported (formatting the location on every `with` cost an allocation
+// and a full stack walk). 14 frames keep the value small enough to be
+// stored inline in the map; the caller of Mutex_with is generated code,
+// whose first frame is an Xo frame.
+type heldSite struct {
+	pcs [14]uintptr
+	n   int
+}
+
+func (h heldSite) loc() string { return xoLocationPCs(h.pcs[:h.n]) }
+
 // Mutex is `Mutex[T]` (core 5.4): a handle; copies share the state.
 type Mutex[T any] struct {
 	l lock
@@ -77,18 +91,19 @@ func (m *Mutex[T]) XoDebug(b *strings.Builder) { b.WriteString("<mutex>") }
 // cancellation point that unwinds. Re-entrant use in one task faults
 // (XO-F004).
 func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, E]) Result[R, E] {
-	at := xoLocation(2)
 	if prev, ok := tk.held[m]; ok {
-		FaultCode("XO-F004", at, "Mutex.with called re-entrantly in one task; the mutex is already held from %s", prev)
+		FaultCode("XO-F004", xoLocation(2), "Mutex.with called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
 	// a cancellation point only while waiting (core 7.2)
 	if !m.l.acquire(tk) {
 		tk.Unwind()
 	}
 	if tk.held == nil {
-		tk.held = map[any]string{}
+		tk.held = map[any]heldSite{}
 	}
-	tk.held[m] = at
+	var site heldSite
+	site.n = runtime.Callers(2, site.pcs[:])
+	tk.held[m] = site
 	defer func() {
 		delete(tk.held, m)
 		m.l.release()

@@ -37,6 +37,11 @@ type fnGen struct {
 	// rng is the range analysis of the body being generated (ranges.go):
 	// the Int operations proved not to fault.
 	rng *rangeAn
+	// arenaTemps are producer calls whose List is an arena temporary, and
+	// arenaResp the response calls in return position of a handler
+	// (arena.go, Options.Arenas).
+	arenaTemps map[*ast.CallExpr]bool
+	arenaResp  map[*ast.CallExpr]bool
 }
 
 // frame is an Xo function being generated: a declared function, a
@@ -974,6 +979,9 @@ func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at a
 }
 
 func (f *fnGen) forStmt(x *ast.ForStmt) {
+	if f.arenasOn() {
+		f.noteArenaTemp(x.Iter)
+	}
 	it := f.val(x.Iter)
 	itT := f.typeOf(x.Iter)
 	itv := f.tmp("it")

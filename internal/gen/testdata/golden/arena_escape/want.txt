@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+requests 320
+bad responses 0
+bad kept 0 of 640
+bad messages 0 of 320
+stats {"total":"4074","count":"160","first":"1","longest":"item-147-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+--- stderr

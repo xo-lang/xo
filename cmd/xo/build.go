@@ -32,6 +32,12 @@ func monoFlags(fl *flag.FlagSet) func() bool {
 	return func() bool { return *no || !*mono }
 }
 
+// arenaFlag defines --arenas: request scoped arenas for HTTP handlers and
+// collection temporaries (std/rt/arena.go, decision 0040 experiment).
+func arenaFlag(fl *flag.FlagSet) *bool {
+	return fl.Bool("arenas", false, "request scoped arenas: confined HTTP handlers and non escaping collection temporaries reuse per request memory")
+}
+
 func runBuild(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("build", flag.ContinueOnError)
 	fl.SetOutput(stderr)
@@ -39,6 +45,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	noMono := monoFlags(fl)
+	arenas := arenaFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -57,7 +64,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono()})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), Arenas: *arenas})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -102,6 +109,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	fl.SetOutput(stderr)
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
 	noMono := monoFlags(fl)
+	arenas := arenaFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -118,7 +126,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono()})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), Arenas: *arenas})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1
@@ -160,6 +168,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	real := fl.Bool("real", false, "give tests that declare `uses` real capabilities (core 9.2)")
 	cases := fl.Int("cases", 0, "cases per property test and contract fuzz (default 100)")
 	noMono := monoFlags(fl)
+	arenas := arenaFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -167,7 +176,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	if len(dirs) == 0 {
 		dirs = []string{"."}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono()})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), Arenas: *arenas})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1

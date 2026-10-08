@@ -398,8 +398,17 @@ func (g *gen) mainFile(mod *check.Module) ([]byte, error) {
 		fmt.Fprintf(&b, "\t%s %q\n", mp.imports[p], p)
 	}
 	b.WriteString(")\n\n")
-	fmt.Fprintf(&b, "func main() {\n\tos.Exit(%sRunMain(func(tk *%sTask, osv %sOs) %sResult[%sUnit, %sIError] { _ = osv; %s }))\n}\n", rt, rt, rt, rt, rt, rt, call)
+	fmt.Fprintf(&b, "func main() {\n\t%sos.Exit(%sRunMain(func(tk *%sTask, osv %sOs) %sResult[%sUnit, %sIError] { _ = osv; %s }))\n}\n", g.enableArenas(rt), rt, rt, rt, rt, rt, rt, call)
 	return format.Source(b.Bytes())
+}
+
+// enableArenas is the statement that turns request scoped arenas on at the
+// start of main (Options.Arenas), or "".
+func (g *gen) enableArenas(rt string) string {
+	if !g.opts.Arenas {
+		return ""
+	}
+	return rt + "EnableArenas(); "
 }
 
 // testMainFile runs the test tables of the root modules.
@@ -416,10 +425,10 @@ func (g *gen) testMainFile() ([]byte, error) {
 		refs = append(refs, pg.name+".Tests")
 	}
 	b.WriteString(")\n\n")
-	fmt.Fprintf(&b, "func main() {\n\tos.Exit(rt.RunTests(os.Args[1:], %s))\n}\n", strings.Join(append([]string{}, refs...), ", "))
+	fmt.Fprintf(&b, "func main() {\n\t%sos.Exit(rt.RunTests(os.Args[1:], %s))\n}\n", g.enableArenas("rt."), strings.Join(append([]string{}, refs...), ", "))
 	if len(refs) == 0 {
 		b.Reset()
-		b.WriteString("package main\n\nimport (\n\t\"os\"\n\trt \"" + ModulePath + "/rt\"\n)\n\nfunc main() { os.Exit(rt.RunTests(os.Args[1:])) }\n")
+		b.WriteString("package main\n\nimport (\n\t\"os\"\n\trt \"" + ModulePath + "/rt\"\n)\n\nfunc main() { " + g.enableArenas("rt.") + "os.Exit(rt.RunTests(os.Args[1:])) }\n")
 	}
 	return format.Source(b.Bytes())
 }

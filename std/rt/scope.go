@@ -170,7 +170,9 @@ func NewScope(tk *Task) *Scope {
 	s := &Scope{parent: tk, idle: newEvent()}
 	s.bodyNode = newNode(tk.node, tk.w)
 	s.tasksNode = newNode(s.bodyNode, tk.w)
-	s.body = &Task{node: s.bodyNode, w: tk.w, held: tk.held, shield: tk.shield}
+	// the body runs on the opening task's goroutine, so it may share its
+	// arena (see Arena)
+	s.body = &Task{node: s.bodyNode, w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena}
 	s.idle.fire()
 	return s
 }

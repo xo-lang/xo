@@ -19,23 +19,34 @@ import (
 
 // concurrentGolden are the golden programs that start tasks; they are also
 // run with the Go race detector.
-var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics"}
+var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "arena_escape"}
+
+// arenaRaceGolden are the golden programs also run with -race and
+// `--arenas` (TestGoldenRaceArenas): the servers among them hand arenas
+// from one request goroutine to the next.
+var arenaRaceGolden = []string{"arena_escape", "http_real", "http_router", "mutex_atomic", "scope_tasks"}
 
 // TestGoldenRace runs the concurrent golden programs built with -race and
 // expects the same output and no data race reports.
-func TestGoldenRace(t *testing.T) {
+func TestGoldenRace(t *testing.T) { testGoldenRace(t, concurrentGolden, false) }
+
+// TestGoldenRaceArenas is TestGoldenRace for programs built with
+// `--arenas`.
+func TestGoldenRaceArenas(t *testing.T) { testGoldenRace(t, arenaRaceGolden, true) }
+
+func testGoldenRace(t *testing.T, names []string, arenas bool) {
 	if testing.Short() {
 		t.Skip("race builds are slow")
 	}
 	if out, err := exec.Command("go", "env", "CGO_ENABLED").Output(); err != nil || strings.TrimSpace(string(out)) != "1" {
 		t.Skip("the race detector needs cgo")
 	}
-	for _, name := range concurrentGolden {
+	for _, name := range names {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("testdata", "golden", name)
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Race: true})
+			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Race: true, Arenas: arenas})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}

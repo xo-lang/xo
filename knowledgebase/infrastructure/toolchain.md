@@ -33,9 +33,9 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [dir...]
-go run ./cmd/xo run [--holes] [--no-mono] [dir] [-- args...]
-go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [dir...]
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [dir...]
+go run ./cmd/xo run [--holes] [--no-mono] [--arenas] [dir] [-- args...]
+go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -43,6 +43,7 @@ go test -short ./...                                    # skips the race, cross 
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 bench/perf/run.sh                                       # Xo vs Go collection and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
+bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -95,7 +96,7 @@ fuzzing (every function with `requires`/`ensures` in a root module, core
 Last verified: 2026-10-07.
 
 Build directories live in `$XO_BUILD_DIR` or `<user cache>/xo/build/<hash of
-the module paths, mode, lowering, and layout tag>/` (stable, so Go's build
+the module paths, mode, lowering, `--arenas`, and layout tag>/` (stable, so Go's build
 cache is reused; the layout tag keeps older xo binaries out, see
 `gotchas/build-dir-shared-across-xo-versions.md`): `go.mod` (module
 `xoprog`), `rt/` (the runtime, copied from the embedded `std/rt`),
@@ -131,6 +132,20 @@ Last verified: 2026-10-07
   `WORKLOADS="..."` selects workloads, `PERF_OUT=<dir>` keeps the
   binaries. Timing drifts on the laptop host; interleave before and after
   runs (`gotchas/bench-host-timing-drift.md`). Last verified: 2026-10-08.
+- `bench/perf/http/run.sh` (2026-10-08): HTTP load benchmark of task 01.
+  `go/` and `xo/` are copies of `bench/go/plain/01-crud-api` and
+  `bench/xo/v0.4/01-crud-api` that listen on 127.0.0.1 only; `loadgen/`
+  (own module) runs `CONC` keep alive workers (default 32) through a
+  create, get, patch, get, delete cycle (and a list every eighth cycle)
+  for `WARMUP` + `DURATION` (2s + 10s). Each server starts fresh with
+  `GODEBUG=gctrace=1` and is stopped with `kill` of its own PID. Prints
+  raw lines and a Markdown table of medians over `REPS` (3) interleaved
+  runs: req/s, p50/p99/p99.9, GC count, total STW pause, peak heap, GC
+  CPU percent, peak RSS, GCs per 10k requests. `CONFIGS` (default `go xo
+  xo-arenas`; `xo-base` builds with the binary in `XO_BASE` in its own
+  build directory), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
+  is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
+  `bench/results/perf-arenas-2026-10-08.md`.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -322,6 +337,22 @@ Last verified: 2026-10-08. Rules and choices; details in
   `TestGolden` (default lowering, Go frame lists dropped) and
   `TestGoldenNoMono` (exact) run every golden program both ways. Numbers:
   `bench/results/perf-mono-2026-10-08.md`.
+- Request scoped arenas (2026-10-08, internal/gen/arena.go, `--arenas`
+  on `xo build`, `run`, `test`; `gen.Options.Arenas`,
+  `build.Options.Arenas`; off by default, and off generates exactly the
+  code it did before): the generated main calls `rt.EnableArenas()`. A
+  closure literal passed to `r.handle` on a local router whose request
+  parameter is used only through `json`, `param`, `param_int`, `query`,
+  `header`, and the Str fields (never in a nested closure) is followed by
+  `rt.Http_Router_arenaLast(&r)`. `http.json`/`http.text` calls whose
+  value is the handler literal's result (tail of the body through
+  if/match/block tails, or a `return`) become `rt.Http_json_arena` /
+  `rt.Http_text_arena`. `m.values()`, `m.keys()`, `m.entries()`,
+  `s.to_list()` that are only the receiver of a List consumer that keeps
+  nothing (`arenaConsumers`) or the iterable of a `for` become
+  `rt.Map_values_arena` and friends. The build directory hash includes
+  the flag. Tests: `TestArenaEscapeAnalysis`, `TestGoldenArenas` (every
+  golden with `--arenas`), `TestGoldenRaceArenas`, golden `arena_escape`.
 - Interface conversions (2026-10-08, internal/gen/adapt.go): a value whose
   Go methods differ from the interface's (a method that cannot fail where
   the interface's can) is wrapped in a generated adapter; inside a
@@ -355,15 +386,37 @@ Last verified: 2026-10-08.
   registered by package main for generic code).
 - `task.go`, `scope.go`, `chan.go`, `sync.go`: the cancellation tree,
   scopes, tasks, channels and `select` with explicit wait queues, Mutex,
-  Atomic, Semaphore, `task.*`. `world.go`: the virtual clock of tests (it
+  Atomic, Semaphore, `task.*`. `Mutex.with` records its acquisition site
+  as program counters, resolved to `file.xo:line` only for XO-F004
+  (2026-10-08).
+- `arena.go` (2026-10-08): request scoped arenas for `--arenas`. The HTTP
+  server takes an `Arena` from a bounded channel free list (128 kept; not
+  a sync.Pool, `gotchas/sync-pool-drops-on-gc.md`) per request, puts it on
+  the request `Task` (`Task.arena`; scope bodies share it, spawned tasks
+  never get it), and resets it after the response is written. It holds
+  the request's header, parameter, and query Map tables, the body bytes,
+  an arena response's JSON bytes and header table, and typed bump slabs
+  for collection temporaries; buffers over 64 KB are not kept. Routes not
+  marked confined, and every route behind middleware, get `heapCopy` of
+  the request. Soundness argument: the comment on `Arena`. `world.go`: the virtual clock of tests (it
   advances when every task is blocked; wakers count the woken task as
   running first). `main.go`: `RunMain` (root scope, SIGINT/SIGTERM, exit
   status 0/1/70, crash bundles).
 - `caps.go` real capabilities (fs rooting per core 6.3), `http.go`,
-  `json.go`, `log.go`, `testing.go` (test runner, fakes, `run_main`),
+  `json.go` (`JsonW.str` escapes directly since 2026-10-08, matching
+  encoding/json with HTML escaping off, `TestAppendJSONString`),
+  `log.go`, `testing.go` (test runner, fakes, `run_main`),
   `std_gen.go` (generated).
 
 ## Known gaps (2026-10-08)
+
+- HTTP request cost (2026-10-08, `bench/results/perf-arenas-2026-10-08.md`):
+  task 01 under load allocates 13.1 KB and 97 objects per request (6.1 KB
+  and 68 with `--arenas`) against Go's 3.0 KB and 31; throughput is 0.43x
+  of Go (0.6x with arenas). Remaining sources: `JsonEnc` boxing fields
+  through `any`, encoding/json token parsing of bodies, `Mutex.with`
+  copying the value to the heap, the router splitting the path per route
+  tried, re-parsing the request URL, and the per request Task.
 
 - Generic code (2026-10-08): with the default lowering generic workloads
   run 0.49x to 1.08x of Go generics (`--no-mono`: 1.6x to 16.9x, `==`/`<`

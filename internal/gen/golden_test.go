@@ -133,16 +133,28 @@ func TestGolden(t *testing.T) {
 	if *updateGolden {
 		t.Skip("want.txt is written by TestGoldenNoMono")
 	}
-	testGolden(t, false)
+	testGolden(t, false, false)
 }
 
 // TestGoldenNoMono builds every golden program with `--no-mono` (one Go
 // generic function per Xo generic function) and compares with want.txt
 // exactly, Go frames included; -golden-update writes want.txt from this
 // lowering. The two lowerings must not differ in behavior.
-func TestGoldenNoMono(t *testing.T) { testGolden(t, true) }
+func TestGoldenNoMono(t *testing.T) { testGolden(t, true, false) }
 
-func testGolden(t *testing.T, noMono bool) {
+// TestGoldenArenas builds every golden program with `--arenas` (request
+// scoped arenas, std/rt/arena.go) and compares with want.txt like
+// TestGolden: arenas must not change behavior. arena_escape checks that
+// values escaping a request through a Mutex, a channel, the response, and
+// a background task survive arena reuse.
+func TestGoldenArenas(t *testing.T) {
+	if *updateGolden {
+		t.Skip("want.txt is written by TestGoldenNoMono")
+	}
+	testGolden(t, false, true)
+}
+
+func testGolden(t *testing.T, noMono, arenas bool) {
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +170,7 @@ func testGolden(t *testing.T, noMono bool) {
 			if strings.HasPrefix(filepath.Base(dir), "test_") {
 				mode = gen.Test
 			}
-			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, NoMono: noMono})
+			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, NoMono: noMono, Arenas: arenas})
 			got.stderr = stableStderr(got.stderr)
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden && noMono {

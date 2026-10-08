@@ -228,6 +228,12 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 	fo := ci.Fn
 	sub := ci.Subst
 	if fo.Module.IsStd {
+		if f.arenasOn() {
+			if code, ok := f.arenaProducer(x, ci); ok {
+				return code, ckValue
+			}
+			f.noteArenaCall(x, ci)
+		}
 		if code, kind, ok := f.specialStd(x, ci); ok {
 			return code, kind
 		}
@@ -299,7 +305,16 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 			return f.emitSpecCall(callee, calleeSub, name, recvCode, argCodes)
 		}
 	}
-	return f.emitCall(callee, calleeSub, recvCode, argCodes, x)
+	code, kind := f.emitCall(callee, calleeSub, recvCode, argCodes, x)
+	if f.arenasOn() && fo.Module.IsStd {
+		code = f.arenaRespCode(x, code)
+		if kind == ckVoid && f.handlerLit(x, ci) != nil {
+			f.line("%s", code)
+			f.arenaRoute(x, ci, recvCode)
+			return f.rt() + "Unit{}", ckValue
+		}
+	}
+	return code, kind
 }
 
 // emitSpecCall calls the specialized copy name of fo.

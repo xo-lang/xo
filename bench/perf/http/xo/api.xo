@@ -1,0 +1,50 @@
+use std/http
+use std/json
+
+/// Body of `POST /users`.
+struct CreateBody {
+  name: Str
+  email: Str
+  nickname: Str? = None
+} derive Json
+
+/// Body of `PATCH /users/{id}`. Missing keys leave the field unchanged.
+struct UserPatch {
+  name: json.Patch[Str]
+  email: json.Patch[Str]
+  nickname: json.Patch[Str]
+} derive Json
+
+fn bad_json(e: json.DecodeErr) -> ApiErr {
+  ApiErr.BadRequest(msg: "invalid JSON: ${e}")
+}
+
+fn routes(store: Store) -> http.Router {
+  var r = http.router()
+
+  r.handle("POST /users", fn(req) -> http.Response ! ApiErr {
+    let body = req.json[CreateBody]().map_err(bad_json)?
+    let u = store.create(NewUser{name: body.name, email: body.email, nickname: body.nickname})?
+    http.json(201, u)
+  })
+
+  r.handle("GET /users", fn(_req) { http.json(200, store.list()) })
+
+  r.handle("GET /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let u = store.get(req.param_int("id"))?
+    http.json(200, u)
+  })
+
+  r.handle("PATCH /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let patch = req.json[UserPatch]().map_err(bad_json)?
+    let u = store.update(req.param_int("id"), patch)?
+    http.json(200, u)
+  })
+
+  r.handle("DELETE /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    store.delete(req.param_int("id"))?
+    http.empty(204)
+  })
+
+  r
+}

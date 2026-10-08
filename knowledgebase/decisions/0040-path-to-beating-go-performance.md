@@ -54,4 +54,11 @@ Accept, amend, or reject this record based on those results.
   safe overflow checks and the remaining checks inline. Against Go: iface
   0.80x, iter 0.32x, sortpt 0.87x, hof 0.83x, maxby 0.49x, sortint 1.08x
   (List.insert is O(n)). Overflow still faults with values and position.
+- Arenas (2026-10-08, `bench/results/perf-arenas-2026-10-08.md`): task 01
+  under loopback load at 32 workers. Go 123k req/s, p99 872us, GC pause
+  2.9 ms per 10k requests. Xo 52k, 993us, 17.3 ms. Xo `--arenas` 73k, 834us,
+  4.8 ms. Arenas cut Xo's GC cost 3.6x and beat Go's p99, but Xo allocates
+  about 2x Go per request, so Go keeps higher throughput. The claim "beat Go on
+  allocation heavy request handling" is not supported in P1 yet; the next lever
+  is fewer allocations per request (unique value reuse, queue item 9h).
 

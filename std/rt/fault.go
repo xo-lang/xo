@@ -64,7 +64,12 @@ func newFault(code, loc, msg string) *FaultErr {
 func xoLocation(skip int) string {
 	pcs := make([]uintptr, 64)
 	n := runtime.Callers(skip+1, pcs)
-	frames := runtime.CallersFrames(pcs[:n])
+	return xoLocationPCs(pcs[:n])
+}
+
+// xoLocationPCs is xoLocation for program counters already captured.
+func xoLocationPCs(pcs []uintptr) string {
+	frames := runtime.CallersFrames(pcs)
 	for {
 		f, more := frames.Next()
 		if strings.HasSuffix(f.File, ".xo") {
