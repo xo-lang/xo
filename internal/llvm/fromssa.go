@@ -855,6 +855,7 @@ type sfn struct {
 	nlabel  int
 	end     map[*ssa.Block]string
 	text    map[*ssa.Block]*strings.Builder
+	cancel  map[*ssa.Value]bool // releases a retain cancelled (ssa.CancelledRelease)
 }
 
 func (s *sfn) tmp() string {
@@ -1285,9 +1286,22 @@ func (s *sfn) instr(v *ssa.Value) {
 		if x.Op == ssa.OpConst {
 			return // literals are immortal
 		}
+		if r := ssa.CancelledRelease(v); r != nil {
+			// a retain and a release of the same reference: neither
+			// (LLVM folded the pair while counts were plain; the shared
+			// paths of decision 0058 keep it from seeing through)
+			if s.cancel == nil {
+				s.cancel = map[*ssa.Value]bool{}
+			}
+			s.cancel[r] = true
+			return
+		}
 		s.emit("call void %s(%s)", g.rcFn("dup", x.Type), s.typed(x))
 	case ssa.OpRelease:
 		x := v.Args[0]
+		if s.cancel[v] {
+			return
+		}
 		s.emit("call void %s(%s)", g.rcFn("drop", x.Type), s.typed(x))
 	case ssa.OpShare:
 		x := v.Args[0]
