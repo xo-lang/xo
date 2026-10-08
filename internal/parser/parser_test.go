@@ -259,6 +259,7 @@ func file(t *testing.T, src string, mode Mode) string {
 func TestDeclarations(t *testing.T) {
 	tests := []struct{ name, src, want string }{
 		{"uses", "use std/http\nuse std/json as j\nuse acme/rate-limit\n", "(use std/http)\n(use std/json as j)\n(use acme/rate-limit)"},
+		{"use go", "use go \"net/url\"\nuse go \"github.com/google/uuid\" as gu\nuse go\n", "(use go \"net/url\")\n(use go \"github.com/google/uuid\" as gu)\n(use go)"},
 		{"fn", "fn f(a: Int, b: Str = \"x\") -> Int { a }", "(fn f (a: Int, b: Str = \"x\") -> Int {a})"},
 		{"pub fn no result", "pub fn f() {}", "(fn pub f () {})"},
 		{"main", "fn main(os: Os) ! {\n}", "(fn main (os: Os) ! _ {})"},
@@ -434,6 +435,7 @@ func TestErrorRecovery(t *testing.T) {
 		{"rest not last", "fn f() {\n  match x {\n    A(.., b) => 1\n  }\n}\n", "XO0171@3"},
 		{"missing body", "fn f() -> Int\nfn g() {}\n", "XO0172@1"},
 		{"use after decl", "fn f() {}\nuse std/http\n", "XO0173@2"},
+		{"malformed go import path", "use go \"\"\nuse go \"/abs\"\nuse go \"a${b}\"\n", "XO0158@1 XO0158@2 XO0158@3"},
 		{"self outside interface", "fn f(self, x: Int) {}\n", "XO0174@1"},
 		{"pub test", "pub test \"x\" {}\n", "XO0176@1"},
 		{"bad declarations resync at column one", "struct S {\n  a Int\n  b: Str\n}\nfn f( {\n}\nfn g() {}\n", "XO0160@2 XO0160@5"},

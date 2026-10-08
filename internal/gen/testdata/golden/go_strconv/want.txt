@@ -1,0 +1,13 @@
+exit 1
+--- stdout
+124 6.5
+-45 ff 3.14
+"hi\n\"x\""
+error: strconv.Atoi: parsing "12a": invalid syntax (*strconv.NumError)
+error: strconv.ParseInt: parsing "999999999999999999999": value out of range
+true int size 64
+a	b
+n=42
+--- stderr
+error: strconv.Atoi: parsing "x": invalid syntax
+  at go_strconv.main()                  main.xo:22

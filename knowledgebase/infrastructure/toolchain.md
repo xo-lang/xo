@@ -19,7 +19,9 @@ Last verified: 2026-10-08
   git remote is `github.com/josephspurrier/xo` (owner's choice, 2026-10-08).
   So `go install github.com/josephspurrier/xo/cmd/xo` does not work; build
   from a checkout with `go build -o .tools/bin/xo ./cmd/xo`.
-- Standard library only. No third party dependencies.
+- Standard library only. No third party dependencies. (Go packages bound
+  with `use go` are dependencies of the generated program, not of the
+  compiler; see "Go interop".)
 
 ## Commands
 
@@ -36,6 +38,7 @@ go run ./cmd/xo check [--json] <dirs...>
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [dir...]
 go run ./cmd/xo run [--holes] [--no-mono] [--arenas] [dir] [-- args...]
 go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
+go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -152,7 +155,7 @@ Last verified: 2026-10-07
 ## Package layout (P1, implemented parts)
 
 ```
-cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`
+cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments
@@ -162,8 +165,10 @@ internal/diag/          diagnostics (core 10.2 JSON), codes.go is the registry o
 internal/check/         name resolution and type checking (see below)
 internal/gen/           Go code generation with //line directives (see "Code generation")
 internal/build/         check, generate, write the build directory, `go build` per target
-std/                    std declaration files (prelude.xo, http.xo, json.xo, log.xo,
-                        task.xo, testing.xo, time.xo) embedded by std/embed.go
+internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
+                        file and Go adapter (decision 0041 prototype, see "Go interop")
+std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
+                        path.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 ```
@@ -365,6 +370,50 @@ Last verified: 2026-10-08. Rules and choices; details in
   `std/rt/std_gen.go` by `gen.StdTypes`; `TestStdTypes` fails when it is
   stale. Opaque std handles and every std function are hand written in rt.
 
+## Go interop (prototype)
+
+Last verified: 2026-10-08. Decision 0041 is still Proposed; this is the
+experiment of its work queue item 6. Results and coverage:
+`bench/results/go-interop-2026-10-08.md`.
+
+- Syntax: `use go "<Go import path>" [as name]` (`ast.UseDecl.Go`; the
+  lexer reads `go` as an import path and the parser takes the string after
+  it). Default local name: the Go package name. Not in `spec/core.md` yet.
+- Binding (`internal/gobind`, `xo bind`): runs `go list -e -export -deps
+  -json` with `CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=mod` in the binding
+  workspace `<cache>/_mod` (a Go module `xogobind`; third party packages
+  are added with `go get <path>@<pin or latest>`), reads export data with
+  `go/importer.ForCompiler(fset, "gc", lookup)`, and writes
+  `<cache>/<path>.xo` (declarations, signature mode, `use std/go`, every
+  function `uses go`; skipped names listed as `// skip: name: reason`
+  header lines) and `<cache>/<path>.go` (package `rt` adapters named with
+  the prefix `Go_<path with _>_`). Files are written to a temporary name
+  and renamed, so parallel builds never read a partial binding.
+- Cache: `$XO_GOBIND_DIR`, else `<xo.mod dir or module dir>/.xo/gobind`
+  (`.xo/` is in `.gitignore`; Go and the Xo module walk skip dot
+  directories). A cached binding is reused unless its header has another
+  `xo-bind: v<N>` (gobind.Version) or another module version than the pin.
+  Pins: `require go <module> <version>` lines in xo.mod.
+- Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
+  the declaration file as a module `go:<path>` with `IsStd` set and
+  `Module.Go` holding the binding. XO1101 when binding fails, XO1102 when
+  a name or `Type.method` is in the binding's skip list. Effect label `go`
+  (effects.go).
+- Codegen: `stdPrefix` returns the binding prefix, so calls lower as std
+  calls. `gen.Generate` adds `rt/xo_gobind_<path>.go` per binding and
+  writes the workspace's `require` lines into the build `go.mod` and its
+  `go.sum`. Runtime helpers: `std/rt/gointerop.go` (`Go_Error`,
+  `GoBoundary` panic to fault, `GoContext`, `GoListOf`/`GoSliceOf`/
+  `GoMapOf`/`GoMapToGo` copies, `GoCollect` for iterators).
+- Tests: `internal/gobind` (names, pins, mapping, cache staleness),
+  `internal/check/rules_go_test.go`, `internal/gen/gobind_test.go`
+  (`TestGoBindingSignatures`: 20 std packages, every declaration's Go
+  signature as gen calls it equals the adapter's), goldens `go_*` and
+  `test_go_interop`, `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`.
+  The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the
+  network or module cache and is skipped when `go mod download` fails. The
+  golden and checker tests set `XO_GOBIND_DIR` to a temporary directory.
+
 ## Runtime (std/rt)
 
 Last verified: 2026-10-08.
@@ -406,7 +455,8 @@ Last verified: 2026-10-08.
   `json.go` (`JsonW.str` escapes directly since 2026-10-08, matching
   encoding/json with HTML escaping off, `TestAppendJSONString`),
   `log.go`, `testing.go` (test runner, fakes, `run_main`),
-  `std_gen.go` (generated).
+  `std_gen.go` (generated), `gointerop.go` (Go interop boundary
+  helpers and `go.Error`, 2026-10-08).
 
 ## Known gaps (2026-10-08)
 

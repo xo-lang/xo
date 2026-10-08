@@ -172,8 +172,57 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		return nil, err
 	}
 	prog.Files["xo_adapt.go"] = adaptSrc
-	prog.Files["go.mod"] = []byte("module " + ModulePath + "\n\ngo 1.26\n")
+	gomod, gosum := g.goBindings(prog)
+	prog.Files["go.mod"] = gomod
+	if gosum != nil {
+		prog.Files["go.sum"] = gosum
+	}
 	return prog, nil
+}
+
+// goBindings adds the adapters of `use go` bindings (decision 0041) to the
+// runtime package and returns the build's go.mod and go.sum: third party
+// Go packages add the requirements and checksums of the binding
+// workspace.
+func (g *gen) goBindings(prog *Program) ([]byte, []byte) {
+	reqs := map[string]bool{}
+	sums := map[string]bool{}
+	for _, m := range g.info.AllModules() {
+		if m.Go == nil {
+			continue
+		}
+		prog.Files["rt/xo_gobind_"+strings.TrimSuffix(strings.TrimPrefix(m.Go.Prefix, "Go_"), "_")+".go"] = m.Go.Adapter
+		for _, r := range m.Go.Require {
+			reqs[r] = true
+		}
+		for _, l := range strings.Split(string(m.Go.Sum), "\n") {
+			if l != "" {
+				sums[l] = true
+			}
+		}
+	}
+	var b strings.Builder
+	b.WriteString("module " + ModulePath + "\n\ngo 1.26\n")
+	if len(reqs) > 0 {
+		b.WriteString("\nrequire (\n")
+		for _, r := range sortedSet(reqs) {
+			b.WriteString("\t" + r + "\n")
+		}
+		b.WriteString(")\n")
+	}
+	if len(sums) == 0 {
+		return []byte(b.String()), nil
+	}
+	return []byte(b.String()), []byte(strings.Join(sortedSet(sums), "\n") + "\n")
+}
+
+func sortedSet(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (g *gen) errList() error {
@@ -325,6 +374,10 @@ func goTParam(p *check.TParam) string {
 func stdPrefix(m *check.Module) string {
 	if m == nil || m.IsPrelude {
 		return ""
+	}
+	if m.Go != nil {
+		// a `use go` binding: adapters in rt named by internal/gobind
+		return m.Go.Prefix
 	}
 	n := m.Name
 	return strings.ToUpper(n[:1]) + n[1:] + "_"

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/build"
@@ -28,6 +29,9 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
+	// `use go` bindings (decision 0041) go to a shared temporary cache,
+	// not into testdata
+	os.Setenv("XO_GOBIND_DIR", filepath.Join(dir, "gobind"))
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -166,6 +170,7 @@ func testGolden(t *testing.T, noMono, arenas bool) {
 		}
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
+			skipOffline(t, dir)
 			mode := gen.Build
 			if strings.HasPrefix(filepath.Base(dir), "test_") {
 				mode = gen.Test
@@ -191,5 +196,31 @@ func testGolden(t *testing.T, noMono, arenas bool) {
 				t.Errorf("output differs\n--- got\n%s\n--- want\n%s", got.String(), want)
 			}
 		})
+	}
+}
+
+var (
+	goModOnce sync.Once
+	goModErr  error
+)
+
+// skipOffline skips a golden program that binds a third party Go module
+// (an xo.mod with `require go` lines) when the module cannot be downloaded
+// (no network and not in the module cache).
+func skipOffline(t *testing.T, dir string) {
+	data, err := os.ReadFile(filepath.Join(dir, "xo.mod"))
+	if err != nil || !strings.Contains(string(data), "require go ") {
+		return
+	}
+	goModOnce.Do(func() {
+		cmd := exec.Command("go", "mod", "download", "github.com/google/uuid@v1.6.0")
+		cmd.Dir = os.TempDir()
+		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GO111MODULE=on")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			goModErr = fmt.Errorf("%v: %s", err, out)
+		}
+	})
+	if goModErr != nil {
+		t.Skipf("third party Go module unavailable (offline?): %v", goModErr)
 	}
 }

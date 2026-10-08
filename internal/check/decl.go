@@ -522,7 +522,7 @@ func (c *checker) resolveEffects(effs []*ast.Effect, env *typeEnv) *EffSet {
 				note(d, token.Span{}, "did you mean `%s`?", strings.Join(s, "`, `"))
 				fix(d, fmt.Sprintf("replace with `%s`", s[0]), replaceEdit(e.Sp, s[0]))
 			} else {
-				note(d, token.Span{}, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
+				note(d, token.Span{}, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, go, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
 			}
 		}
 	}

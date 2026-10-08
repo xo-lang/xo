@@ -1,0 +1,19 @@
+use go "github.com/google/uuid"
+
+// A third party Go module through `use go`, pinned in xo.mod: uuid.UUID is
+// a [16]byte value type held by a handle that compares by value; package
+// variables are read through functions.
+fn main(os: Os) -> () ! Error {
+  let id = uuid.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")?
+  os.stdio.println("${id.string()} version ${id.version()} urn ${id.urn()}")
+  let v5 = uuid.new_sha1(uuid.name_space_dns(), b"example.com")
+  os.stdio.println("v5 ${v5.string()} version ${v5.version()}")
+  let r = uuid.new_random()?
+  os.stdio.println("random: ${r.string().len()} chars, version ${r.version()}, distinct ${r != id}")
+  os.stdio.println("equal by value: ${uuid.must_parse(id.string()) == id}")
+  os.stdio.println("nil ${uuid.nil().string()} valid ${uuid.validate("nope").is_err()}")
+  match uuid.parse("nope") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+}

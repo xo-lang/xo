@@ -1,0 +1,16 @@
+exit 70
+--- stdout
+alice@example.com
+match alice@example.com
+match bob@test.com
+user alice domain example
+user bob domain test
+first at 0..17
+<example:alice>, <test:bob>
+ALICE@EXAMPLE.COM, BOB@TEST.COM
+true false 2 (\w+)@(\w+)\.com
+compile error: error parsing regexp: missing closing ): `a(b`
+1\+1=2\?
+calls 1
+--- stderr
+fault: Go panic in regexp.MustCompile: regexp: Compile(`(`): error parsing regexp: missing closing ): `(` at main.xo:30

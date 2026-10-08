@@ -9,6 +9,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/diag"
@@ -381,6 +382,28 @@ func (p *parser) parseUse() *ast.UseDecl {
 	if p.at(token.ImportPath) {
 		u.Path = p.tok.Value
 		p.next()
+		if u.Path == "go" && (p.at(token.String) || p.at(token.RawString)) {
+			// `use go "<Go import path>"` (decision 0041)
+			u.Go = true
+			t := p.tok
+			u.Path = t.Value
+			interp := false
+			if t.Kind == token.String {
+				var b strings.Builder
+				for _, part := range t.Parts {
+					if part.IsExpr {
+						interp = true
+					}
+					b.WriteString(part.Text)
+				}
+				u.Path = b.String()
+			}
+			sp := t.Span
+			p.next()
+			if interp || u.Path == "" || strings.ContainsAny(u.Path, " \t\n\\") || strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, ".") || strings.HasSuffix(u.Path, "/") {
+				p.errorf(diag.MalformedImportPath, sp, "malformed Go import path %q", u.Path)
+			}
+		}
 	} else {
 		p.errorf(diag.MalformedImportPath, p.tok.Span, "expected an import path after `use`, found %s", describe(p.tok))
 	}

@@ -44,5 +44,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0038-map-index-wildcards-split-sections.md](0038-map-index-wildcards-split-sections.md): XO0410 no Map index reads; XO0305 and XO0804 warnings.
 - [0039-regressions-in-module.md](0039-regressions-in-module.md): regression tests go in the module's `regressions_test.xo`.
 - [0040-path-to-beating-go-performance.md](0040-path-to-beating-go-performance.md): where Xo could beat Go and how to test it. **Proposed.**
-- [0041-go-library-interop.md](0041-go-library-interop.md): `use go` bindings to Go packages until Xo has its own ecosystem. **Proposed.**
+- [0041-go-library-interop.md](0041-go-library-interop.md): `use go` bindings to Go packages until Xo has its own ecosystem (implemented, core 4.4).
 

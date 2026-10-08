@@ -1,0 +1,24 @@
+use go "strconv"
+
+// strconv through `use go`: errors as go.Error, sized integer and byte
+// parameters, constants.
+fn main(os: Os) -> () ! Error {
+  let n = strconv.atoi("123")?
+  let f = strconv.parse_float("3.25", 64)?
+  os.stdio.println("${n + 1} ${f * 2.0}")
+  os.stdio.println("${strconv.itoa(-45)} ${strconv.format_int(255, 16)} ${strconv.format_float(3.14159, 102, 2, 64)}")
+  os.stdio.println(strconv.quote("hi\n\"x\""))
+  match strconv.atoi("12a") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e} (${e.go_type()})")
+  }
+  match strconv.parse_int("999999999999999999999", 10, 64) {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+  os.stdio.println("${strconv.parse_bool("true")?} int size ${strconv.INT_SIZE}")
+  os.stdio.println(strconv.unquote("\"a\\tb\"")?)
+  os.stdio.println(strconv.append_int(b"n=", 42, 10).to_str() ?? "?")
+  let v = strconv.atoi("x")?
+  os.stdio.println("not reached ${v}")
+}

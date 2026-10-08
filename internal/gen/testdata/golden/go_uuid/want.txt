@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+6ba7b810-9dad-11d1-80b4-00c04fd430c8 version 1 urn urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8
+v5 cfbff0d1-9375-5685-968c-48ce8b15ae17 version 5
+random: 36 chars, version 4, distinct true
+equal by value: true
+nil 00000000-0000-0000-0000-000000000000 valid true
+error: invalid UUID length: 4
+--- stderr

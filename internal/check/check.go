@@ -37,6 +37,9 @@ type checker struct {
 	order   []*Module // dependency order
 	prelude *Module
 	roots   []modRoot
+	// goFailed holds `go:<path>` keys of Go packages that could not be
+	// bound (XO1101 reported once per run).
+	goFailed map[string]bool
 
 	nextVar int
 	trail   []func()

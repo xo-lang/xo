@@ -14,6 +14,8 @@ var effectLabels = map[string]bool{
 	"net": true, "net.dial": true, "net.listen": true,
 	"fs": true, "fs.read": true, "fs.write": true,
 	"clock": true, "rand": true, "env": true, "proc": true, "stdio": true, "ffi": true,
+	// go: a call into a Go package bound with `use go` (decision 0041)
+	"go": true,
 }
 
 // EffVar is an effect inference variable, created when a generic with an

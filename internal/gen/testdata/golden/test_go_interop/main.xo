@@ -1,0 +1,26 @@
+use go "strings"
+use go "strconv"
+
+/// A pub function that calls Go declares the `go` effect (decision 0041).
+pub fn shout(s: Str) -> Str uses go {
+  strings.to_upper(s) + "!"
+}
+
+fn parse_sum(a: Str, b: Str) -> Int ! Error {
+  strconv.atoi(a)? + strconv.atoi(b)?
+}
+
+test "go calls in tests" {
+  expect(shout("hi")) == "HI!"
+  expect(parse_sum("2", "40")?) == 42
+  expect(parse_sum("2", "x").is_err())
+}
+
+test "property through go" for s: Str {
+  expect(strings.to_lower(strings.to_upper(s)).len()) >= 0
+}
+
+test "go error fails the test" {
+  let n = strconv.atoi("nope")?
+  expect(n) == 0
+}

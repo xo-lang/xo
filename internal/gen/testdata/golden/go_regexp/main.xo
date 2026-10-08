@@ -1,0 +1,31 @@
+use go "regexp"
+
+// regexp through `use go`: a pointer handle with methods, List results,
+// nested lists, an Xo closure passed to Go, and a Go panic that becomes a
+// fault at the call.
+fn main(os: Os) {
+  let re = regexp.must_compile("(\\w+)@(\\w+)\\.com")
+  let text = "alice@example.com, bob@test.com"
+  os.stdio.println(re.find_string(text))
+  for m in re.find_all_string(text, -1) {
+    os.stdio.println("match ${m}")
+  }
+  for s in re.find_all_string_submatch(text, -1) {
+    os.stdio.println("user ${s[1]} domain ${s[2]}")
+  }
+  let loc = re.find_string_index(text)
+  os.stdio.println("first at ${loc[0]}..${loc[1]}")
+  os.stdio.println(re.replace_all_string(text, "<\$2:\$1>"))
+  var calls = 0
+  let upper = re.replace_all_string_func(text, fn(s) { s.to_upper() })
+  os.stdio.println(upper)
+  os.stdio.println("${re.match_string("x@y.com")} ${re.match_string("nope")} ${re.num_subexp()} ${re.string()}")
+  match regexp.compile("a(b") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("compile error: ${e}")
+  }
+  os.stdio.println(regexp.quote_meta("1+1=2?"))
+  calls = calls + 1
+  os.stdio.println("calls ${calls}")
+  os.stdio.println(regexp.must_compile("(").string())
+}

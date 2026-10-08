@@ -1,0 +1,17 @@
+use go "crypto/sha256"
+use go "encoding/hex"
+
+// crypto/sha256 through `use go` (decision 0041): [32]byte results become
+// Bytes, hash.Hash is a foreign interface handle, constants are bound.
+fn main(os: Os) -> () ! Error {
+  let sum = sha256.sum256(b"hello world")
+  os.stdio.println("len ${sum.len()} size ${sha256.SIZE} block ${sha256.BLOCK_SIZE}")
+  os.stdio.println(hex.encode_to_string(sum))
+  let h = sha256.new()
+  let n = h.write(b"hello ")?
+  let m = h.write(b"world")?
+  os.stdio.println("wrote ${n + m}; streaming equals one shot: ${h.sum(b"") == sum}")
+  h.reset()
+  os.stdio.println("empty ${hex.encode_to_string(h.sum(b""))}")
+  os.stdio.println("sha224 ${hex.encode_to_string(sha256.sum224(b"abc"))} size ${h.size()}")
+}

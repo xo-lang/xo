@@ -19,3 +19,6 @@ dist/
 
 # Logs
 *.log
+
+# xo bind cache (use go bindings, decision 0041)
+.xo/

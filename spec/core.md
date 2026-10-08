@@ -23,6 +23,7 @@ Driven by the independent replant of planted safety bugs
   later `with` on the same mutex (5.4).
 - Regression tests for shrunk contract fuzz failures go in the module's
   `regressions_test.xo`, not `testdata/regressions/` (9.2).
+- Go packages with `use go` (4.4), with the `go` effect.
 - Std: `Map.get_or_fault`, hex and base64 on `Bytes`, `Time.from_unix_millis`,
   `Atomic.max`, `Range.to_list`, `Patch.apply_to`/`apply_opt`, and `std/path`.
 
@@ -739,6 +740,39 @@ its content hash.
   - An upgrade that does not change a definition is a no-op for code using it.
   - A name that does not resolve to a hash fails at once with the nearest real
     names suggested (`XO0601`). APIs cannot be hallucinated silently.
+
+### 4.4 Go packages [P1]
+
+Until Xo has its own ecosystem, Go packages can be used directly (decision
+0041):
+
+```
+use go "regexp"
+use go "github.com/google/uuid" as uuid
+
+fn main(os: Os) ! {
+  let re = regexp.must_compile("[a-z]+")
+  os.stdio.println("${re.find_string("123abc")} ${uuid.new_string()}")
+}
+```
+
+- `xo check`, `build`, `run`, and `test` generate bindings automatically into
+  `.xo/gobind/` (or `$XO_GOBIND_DIR`); `xo bind <path>` does it explicitly.
+  Third party module versions follow Go's module resolution.
+- Names are converted to Xo naming: functions and methods to `snake_case`
+  (`Split` is `split`, `EncodeToString` is `encode_to_string`), types stay
+  `UpperCamel`.
+- Types at the boundary: `(T, error)` becomes `T ! go.Error`; a pointer result
+  that may be nil becomes `T?`; mutable Go objects become opaque handles;
+  slices and maps are copied in and out; a `context.Context` parameter is
+  supplied from the current task (deadline and cancellation); a panic becomes
+  a fault.
+- Every call into Go performs the effect `go`, which `pub` functions must
+  declare. Go code can reach files and the network without a capability, so
+  `uses go` marks that authority escape in signatures.
+- Exported names whose signatures cannot be mapped are skipped and listed at
+  the top of the generated binding; using one is `XO1102`. A package that
+  cannot be bound is `XO1101`.
 
 ---
 

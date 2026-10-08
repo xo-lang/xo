@@ -1,0 +1,23 @@
+use go "encoding/hex"
+
+// encoding/hex through `use go`: Bytes in and out, `(T, error)` as
+// `T ! go.Error`, and the Go error's text and dynamic type.
+fn main(os: Os) {
+  os.stdio.println(hex.encode_to_string(b"Xo\x00\xff"))
+  match hex.decode_string("48656c6c6f") {
+    Ok(b) => os.stdio.println(b.to_str() ?? "invalid utf-8")
+    Err(e) => os.stdio.println("unexpected: ${e}")
+  }
+  match hex.decode_string("4z") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e} (${e.go_type()})")
+  }
+  match hex.decode_string("abc") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+  os.stdio.println("${hex.encoded_len(5)} ${hex.decoded_len(10)}")
+  os.stdio.print(hex.dump(b"0123456789abcdefXYZ"))
+  let dst = hex.append_encode(b"hex:", b"\x01\x02")
+  os.stdio.println(dst.to_str() ?? "?")
+}

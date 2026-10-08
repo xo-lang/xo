@@ -1,0 +1,19 @@
+// std/go: values that cross the Go interop boundary (decision 0041,
+// prototype 2026-10-08). Declaration file; encoding rules are listed at the
+// top of std/prelude.xo. Bindings written by `xo bind` (internal/gobind)
+// import this module for `go.Error`; user code needs `use std/go` only to
+// name the type.
+
+/// An error returned by a Go function: the `error` of a Go `(T, error)`
+/// result, which a binding maps to `T ! go.Error`. Its text is captured at
+/// the boundary, so `display` performs no Go call.
+struct Error {}
+
+/// The Go error's `Error()` text.
+fn (e: Error) display() -> Str
+
+/// The Go error's `Error()` text (same as `display`).
+fn (e: Error) message() -> Str
+
+/// The Go dynamic type of the error, for example `*url.Error`.
+fn (e: Error) go_type() -> Str

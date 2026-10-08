@@ -70,11 +70,13 @@ type File struct {
 	Decls []Decl
 }
 
-// UseDecl is `use path [as name]`.
+// UseDecl is `use path [as name]`, or `use go "<Go import path>" [as
+// name]` (Go is set; decision 0041).
 type UseDecl struct {
 	Base
 	Path  string
 	Alias *Ident
+	Go    bool
 }
 
 // FnDecl is a function or method declaration. In interface bodies and in

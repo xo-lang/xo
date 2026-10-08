@@ -38,6 +38,12 @@ func sexpr(n any) string {
 		}
 		return strings.Join(items, "\n")
 	case *ast.UseDecl:
+		if x.Go {
+			if x.Alias != nil {
+				return fmt.Sprintf("(use go %q as %s)", x.Path, x.Alias.Name)
+			}
+			return fmt.Sprintf("(use go %q)", x.Path)
+		}
 		if x.Alias != nil {
 			return fmt.Sprintf("(use %s as %s)", x.Path, x.Alias.Name)
 		}

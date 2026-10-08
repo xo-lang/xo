@@ -1,0 +1,7 @@
+exit 1
+--- stdout
+--- FAIL: go error fails the test (main.xo:23:1, seed 1)
+    error: strconv.Atoi: parsing "nope": invalid syntax
+      at test_go_interop.test()             main.xo:24
+FAIL: 2 passed, 1 failed, 0 skipped
+--- stderr

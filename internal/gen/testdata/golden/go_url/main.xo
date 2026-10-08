@@ -1,0 +1,40 @@
+use go "net/url"
+
+// net/url through `use go`: struct fields as getters and setters, a
+// nilable pointer field as an Option, a map type with methods as a
+// handle, and `?` converting go.Error to Error.
+fn main(os: Os) -> () ! Error {
+  let u = url.parse("https://user:pw@example.com:8080/a/b?x=1&y=two#frag")?
+  os.stdio.println("${u.scheme()} ${u.host()} ${u.hostname()} ${u.port()} ${u.path()} ${u.fragment()} ${u.raw_query()}")
+  let q = u.query()
+  os.stdio.println("${q.get("x")} ${q.get("y")} ${q.has("z")}")
+  q.set("z", "3")
+  q.add("x", "4")
+  os.stdio.println(q.encode())
+  match u.user() {
+    Some(info) => {
+      let (pw, set) = info.password()
+      os.stdio.println("user ${info.username()} password ${pw} ${set}")
+    }
+    None => os.stdio.println("no user")
+  }
+  os.stdio.println("${url.query_escape("a b&c")} ${url.path_escape("a b/c")}")
+  match url.parse("http://[::1") {
+    Ok(_) => os.stdio.println("unexpected success")
+    Err(e) => os.stdio.println("error: ${e} (${e.go_type()})")
+  }
+  let base = url.parse("https://example.com/dir/sub/")?
+  match base.resolve_reference(url.parse("../x?y=1")?) {
+    Some(r) => os.stdio.println(r.string())
+    None => os.stdio.println("nil")
+  }
+  let b = url.URL.new()
+  b.set_scheme("http")
+  b.set_host("h.example")
+  b.set_path("/p q")
+  os.stdio.println(b.string())
+  let vals = url.parse_query("a=1&b=2&a=3")?
+  os.stdio.println("${vals.get("a")} ${vals.encode()}")
+  let p = url.parse("http://h/%zz")?
+  os.stdio.println(p.string())
+}

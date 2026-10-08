@@ -48,3 +48,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sync-pool-drops-on-gc.md](sync-pool-drops-on-gc.md): a `sync.Pool` empties at every GC, so request arenas pooled in one were barely reused; use a bounded channel.
 - [closed-loop-latency-confound.md](closed-loop-latency-confound.md): with a closed loop load generator a slower server shows lower latency; compare latency only at equal throughput.
 - [arena-handler-not-confined.md](arena-handler-not-confined.md): with `--arenas`, a handler that passes `req` on, reads `req.headers`/`req.body`, or captures it gets a heap copy, not an arena.
+- [go-bind-cache-in-source-tree.md](go-bind-cache-in-source-tree.md): `use go` bindings are cached in `<project>/.xo/gobind`; tests set `XO_GOBIND_DIR`, `.xo/` is gitignored.
+- [go-bind-name-mapping.md](go-bind-name-mapping.md): Go names become snake_case, keywords get `_` (`regexp.match_`), prelude type names get the package prefix (`url.UrlError`); read the generated `.xo` file.
+- [go-handles-shared.md](go-handles-shared.md): handles of Go objects are shared references; a setter on one copy is seen through all.

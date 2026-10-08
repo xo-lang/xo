@@ -86,6 +86,13 @@ const (
 	SplitCriticalSection Code = "XO0804" // warning: value read in one `Mutex.with` is written back in a later one (core 5.4)
 )
 
+// Go interop codes (11xx group, decision 0041, prototype 2026-10-08).
+// Emitted by internal/check for `use go "<path>"` imports.
+const (
+	GoBindFailed  Code = "XO1101" // Go package cannot be bound (not found, does not build, main package, or binding error)
+	GoNameSkipped Code = "XO1102" // Go name exists but its signature does not map to Xo, so the binding skipped it
+)
+
 // Descriptions maps every code to its one line description. Kept in sync
 // with the constants above by TestCodesDocumented.
 var Descriptions = map[Code]string{
@@ -132,6 +139,9 @@ var Descriptions = map[Code]string{
 	UnknownEffect:       "unknown effect label (core 6.1)",
 	ScopeEscape:         "scope handle, or a value containing a task group, escapes its scope (core 7.1)",
 	SpawnWithoutScope:   "task started without a scope handle (core 7.1)",
+
+	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
+	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+HÉLLO
+key value true
+a,b,c
+bAnAnA
+4 3 true
+a|b|c
+x+y+z
+2 lines
+&lt;b&gt;bold&lt;/b&gt;
+abcé 5 3
+é 2 left 1
+ababab
+--- stderr

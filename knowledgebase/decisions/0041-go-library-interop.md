@@ -1,6 +1,6 @@
 # 0041: Use Go libraries until Xo has its own ecosystem
 
-Status: Proposed (2026-10-08). Pending experiment in work queue item 6.
+Status: Accepted (2026-10-08). Prototype implemented; spec core 4.4.
 
 ## Context
 A new language lives or dies by its libraries. P1 compiles to Go, so calling
@@ -46,3 +46,12 @@ Prototype `xo bind` against Go standard library packages first
 third party pure Go package (for example `github.com/google/uuid`). Measure
 how much of a typical API maps cleanly and where hand written wrappers are
 needed.
+
+## Evidence
+Prototype (`internal/gobind`, `bench/results/go-interop-2026-10-08.md`):
+functions/methods mapped: crypto/sha256 4/4; encoding/hex 12/12, 0/1;
+regexp 8/8, 40/40; strings 57/57, 22/22; strconv 32/34, 2/2 (complex128
+skipped); net/url 10/10, 28/30; github.com/google/uuid v1.6.0 29/31, 20/28.
+Most skips are methods on named basic types or `any` parameters. Names are
+converted to Xo's snake_case.
+

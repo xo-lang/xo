@@ -2,6 +2,7 @@ package check
 
 import (
 	"github.com/xo-lang/xo/internal/ast"
+	"github.com/xo-lang/xo/internal/gobind"
 	"github.com/xo-lang/xo/internal/token"
 )
 
@@ -15,6 +16,10 @@ type Module struct {
 	Scope     map[string]Object
 	IsStd     bool
 	IsPrelude bool
+	// Go is the binding of a `use go "<path>"` module (decision 0041). Such
+	// a module is also IsStd: its declaration file is a bodiless signature
+	// listing like std/*.xo, and its functions are adapters in package rt.
+	Go *gobind.Binding
 	// Root is true for modules named on the command line (diagnostics are
 	// reported for them and for user modules they import).
 	Root bool

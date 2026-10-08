@@ -1,0 +1,26 @@
+use go "strings"
+
+// strings through `use go`: tuples from multiple results, callbacks,
+// variadic parameters as List, iterators collected into a List, and
+// handles built with the static `new`.
+fn main(os: Os) -> () ! Error {
+  os.stdio.println(strings.to_upper("héllo"))
+  let (before, after, found) = strings.cut("key=value", "=")
+  os.stdio.println("${before} ${after} ${found}")
+  os.stdio.println(strings.join(strings.fields("  a b   c "), ","))
+  os.stdio.println(strings.map(fn(r) { if r == 'a' { 'A' } else { r } }, "banana"))
+  os.stdio.println("${strings.index("chicken", "ken")} ${strings.count("cheese", "e")} ${strings.equal_fold("Go", "GO")}")
+  os.stdio.println(strings.join(strings.fields_func("a1b22c", fn(r) { r.is_digit() }), "|"))
+  os.stdio.println(strings.join(strings.split_seq("x-y-z", "-"), "+"))
+  os.stdio.println("${strings.lines("one\ntwo\n").len()} lines")
+  let r = strings.new_replacer(["<", "&lt;", ">", "&gt;"])
+  os.stdio.println(r.replace("<b>bold</b>"))
+  let b = strings.Builder.new()
+  let n = b.write_string("abc")?
+  b.write_rune('é')?
+  os.stdio.println("${b.string()} ${b.len()} ${n}")
+  let rd = strings.new_reader("ér")
+  let (ch, size) = rd.read_rune()?
+  os.stdio.println("${ch} ${size} left ${rd.len()}")
+  os.stdio.println(strings.repeat("ab", 3))
+}

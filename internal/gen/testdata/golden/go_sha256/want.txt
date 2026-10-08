@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+len 32 size 32 block 64
+b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+wrote 11; streaming equals one shot: true
+empty e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+sha224 23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7 size 32
+--- stderr

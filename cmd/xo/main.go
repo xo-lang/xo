@@ -38,6 +38,13 @@ commands:
       xo.mod and the embedded std). --json prints {"modules": [...],
       "diagnostics": [...]} on stdout. Exit status is 1 when any error is
       reported (warnings such as holes do not count), 2 on usage errors.
+  bind [--dir=<project dir>] [--json] <go import paths...>
+      Bind Go packages for use go "<path>" (decision 0041): write the Xo
+      declaration file and the Go adapter into the binding cache
+      ($XO_GOBIND_DIR or <xo.mod dir>/.xo/gobind) and print how much of the
+      package mapped. check, build, and test bind missing packages on their
+      own. Third party versions are pinned with a line
+      "require go <module> <version>" in xo.mod.
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -56,6 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRun(args[1:], stdout, stderr)
 	case "test":
 		return runTest(args[1:], stdout, stderr)
+	case "bind":
+		return runBind(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

@@ -272,6 +272,9 @@ func (c *checker) moduleMember(imp *Import, x *ast.SelectorExpr, targs []Type, h
 	name := x.Sel.Name
 	o := imp.Module.Scope[name]
 	if o == nil {
+		if c.goSkipped(imp.Module, name, x.Sel.Sp) {
+			return badType
+		}
 		var cands []string
 		for n := range imp.Module.Scope {
 			cands = append(cands, n)
@@ -475,6 +478,9 @@ func isTupleIndex(name string) bool {
 
 // noMember reports XO0601 for a missing field or method.
 func (c *checker) noMember(t Type, sel *ast.Ident, place bool) {
+	if n, ok := resolve(t).(*Named); ok && c.goSkipped(n.Obj.Module, n.Obj.Name+"."+sel.Name, sel.Sp) {
+		return
+	}
 	var cands []string
 	what := "field or method"
 	if place {
@@ -671,6 +677,10 @@ func (c *checker) callSelector(x *ast.CallExpr, sel *ast.SelectorExpr, targs []T
 			}
 			o := imp.Module.Scope[sel.Sel.Name]
 			if o == nil {
+				if c.goSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) {
+					c.inferArgs(x)
+					return badType
+				}
 				var cands []string
 				for n := range imp.Module.Scope {
 					cands = append(cands, n)

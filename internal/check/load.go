@@ -3,6 +3,7 @@ package check
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/gobind"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/token"
 	"github.com/xo-lang/xo/std"
@@ -240,6 +243,10 @@ func (c *checker) loadImports(m *Module) error {
 				continue
 			}
 			imp := &Import{Decl: u}
+			if u.Go {
+				c.loadGoImport(m, f, u, imp)
+				continue
+			}
 			if u.Alias != nil {
 				imp.Name = u.Alias.Name
 			} else {
@@ -347,4 +354,87 @@ func relDir(dir string) string {
 		return dir
 	}
 	return rel
+}
+
+// loadGoImport resolves `use go "<path>"` (decision 0041): it loads the
+// cached binding of the Go package, binding it first when the cache has
+// none (internal/gobind), and loads the declaration file as a std like
+// module whose functions carry the `go` effect.
+func (c *checker) loadGoImport(m *Module, f *File, u *ast.UseDecl, imp *Import) {
+	key := "go:" + u.Path
+	if c.goFailed[key] {
+		imp.Used = true
+		return
+	}
+	dep, ok := c.modules[key]
+	if !ok {
+		root := m.Dir
+		if r, found := c.findModRoot(m.Dir); found {
+			root = r.dir
+		}
+		pins := gobind.ReadPins(filepath.Join(root, "xo.mod"))
+		opts := gobind.Options{Dir: gobind.CacheDir(root), Version: gobind.PinFor(pins, u.Path)}
+		b, err := gobind.LoadOrBind(u.Path, opts)
+		if err != nil {
+			d := c.errorf(diag.GoBindFailed, u.Sp, "cannot bind Go package `%s`: %s", u.Path, gobindMsg(err))
+			note(d, token.Span{}, "`use go` binds the package with `xo bind %s` into %s (decision 0041)", u.Path, opts.Dir)
+			if c.goFailed == nil {
+				c.goFailed = map[string]bool{}
+			}
+			c.goFailed[key] = true
+			imp.Used = true
+			return
+		}
+		dep = &Module{Path: key, Name: b.Name, Dir: filepath.Dir(b.DeclPath), IsStd: true, Go: b, Scope: map[string]Object{}}
+		c.modules[key] = dep
+		df := c.parseFile(dep, b.DeclPath, b.Decl, parser.SignatureMode)
+		dep.Files = append(dep.Files, df)
+		dep.state = 1
+		if err := c.loadImports(dep); err != nil {
+			c.errorf(diag.GoBindFailed, u.Sp, "cannot load the binding of Go package `%s`: %v", u.Path, err)
+		}
+		dep.state = 2
+		c.order = append(c.order, dep)
+	}
+	imp.Module = dep
+	if u.Alias != nil {
+		imp.Name = u.Alias.Name
+	} else {
+		imp.Name = dep.Name
+		if _, ok := localName(dep.Name); !ok {
+			d := c.errorf(diag.ImportNeedsAlias, u.Sp, "import of Go package `%s` needs `as`: its package name `%s` is not a valid module name", u.Path, dep.Name)
+			fix(d, "add `as go_"+dep.Name+"`", insertEdit(u.Sp.File, u.Sp.End, " as go_"+dep.Name))
+			imp.Used = true
+			return
+		}
+	}
+	if prev, ok := f.Imports[imp.Name]; ok {
+		c.errorf(diag.Duplicate, u.Sp, "`%s` is already imported by `use %s`", imp.Name, prev.Decl.Path)
+		return
+	}
+	f.Imports[imp.Name] = imp
+}
+
+func gobindMsg(err error) string {
+	var be *gobind.Error
+	if errors.As(err, &be) {
+		return be.Msg
+	}
+	return err.Error()
+}
+
+// goSkipped reports XO1102 when name was skipped by the binding of Go
+// module m (qual is "name" or "Type.name"). It returns true when it
+// reported.
+func (c *checker) goSkipped(m *Module, qual string, sp token.Span) bool {
+	if m == nil || m.Go == nil {
+		return false
+	}
+	reason, ok := m.Go.Skipped[qual]
+	if !ok {
+		return false
+	}
+	d := c.errorf(diag.GoNameSkipped, sp, "Go `%s` in `%s` is not bound: %s", qual, m.Go.GoPath, reason)
+	note(d, token.Span{}, "the binding lists skipped names at the top of %s; write a Go wrapper with a mappable signature or use another function", m.Go.DeclPath)
+	return true
 }
