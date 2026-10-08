@@ -1,0 +1,117 @@
+// Jump tables (internal/arm64/jumptab.go): dense matches on enum tags and
+// Int literals (and shorter chains laid out as runs of tests), with gaps, an offset first value, alternatives, guards,
+// values outside the table, negative values, and a match whose arms call.
+enum Op {
+  Push(v: Int)
+  Load(slot: Int)
+  Store(slot: Int)
+  Add
+  Sub
+  Mul
+  Neg
+  Dup
+  Swap
+  Halt
+}
+
+fn code(o: Op) -> Int {
+  match o {
+    Push(v) => 100 + v
+    Load(s) => 200 + s
+    Store(s) => 300 + s
+    Add => 4
+    Sub => 5
+    Mul => 6
+    Neg => 7
+    Dup => 8
+    Swap => 9
+    Halt => 10
+  }
+}
+
+fn dense(n: Int) -> Int {
+  match n {
+    0 => 10
+    1 => 11
+    2 => 12
+    3 => 13
+    4 => 14
+    5 => 15
+    6 => 16
+    7 => 17
+    _ => -1
+  }
+}
+
+fn offset(n: Int) -> Int {
+  match n {
+    7 => 1
+    8 => 2
+    9 => 3
+    10 => 4
+    12 => 5
+    13 | 14 => 6
+    16 => 7
+    17 => 8
+    _ => 0
+  }
+}
+
+fn guarded(n: Int, k: Int) -> Int {
+  match n {
+    1 => 1
+    2 if k > 0 => 2
+    3 => 3
+    4 => 4
+    5 => 5
+    6 => 6
+    7 => 7
+    8 => 8
+    _ => 9
+  }
+}
+
+fn sparse(n: Int) -> Int {
+  match n {
+    1 => 1
+    100 => 2
+    1000 => 3
+    4000 => 4
+    _ => 0
+  }
+}
+
+fn calls(n: Int, acc: Int) -> Int {
+  match n {
+    0 => dense(acc % 7)
+    1 => offset(acc % 16) + acc
+    2 => sparse(acc)
+    3 => guarded(acc % 6, acc)
+    4 => acc * 2
+    _ => acc
+  }
+}
+
+fn main(os: Os) {
+  let ops = [Op.Push(5), Op.Load(1), Op.Store(2), Op.Add, Op.Sub, Op.Mul, Op.Neg, Op.Dup, Op.Swap, Op.Halt]
+  var sum = 0
+  for o in ops {
+    sum = sum * 3 + code(o)
+  }
+  os.stdio.println("code ${sum}")
+  var line = ""
+  for i in -3..18 {
+    line = "${line} ${dense(i)}/${offset(i)}/${guarded(i, i % 3)}/${guarded(i, 0)}"
+  }
+  os.stdio.println(line)
+  var s = 0
+  for n in [0, 1, 99, 100, 101, 999, 1000, 4000, 4001, -1] {
+    s = s * 5 + sparse(n)
+  }
+  os.stdio.println("sparse ${s}")
+  var acc = 1
+  for i in 0..2000 {
+    acc = (acc + calls(i % 7, acc + i)) % 1000003
+  }
+  os.stdio.println("calls ${acc}")
+}

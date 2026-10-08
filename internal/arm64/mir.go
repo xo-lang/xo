@@ -26,6 +26,7 @@ const (
 	iJump         // to targets[0]
 	iCondBr       // text sets flags (or cond is cbnz/cbz on uses[0]); targets[0] if cond, else targets[1]
 	iTrap         // after a call that does not return
+	iSwitch       // through a table on uses[0] minus text (a decimal): targets[k] for k, the last target otherwise (jumptab.go)
 )
 
 type srcKind int

@@ -29,6 +29,7 @@ type fstate struct {
 	endMemo map[*ssa.Block]*memo
 	lazy    map[*ssa.Value]bool // compares lowered into the branch that uses them
 	out     bool                // the function uses the $OUT slot
+	cancel  map[*ssa.Value]bool // releases cancelled by a retain (rc.go cancelRC)
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -50,8 +51,11 @@ func (g *gen) function(f *ssa.Func) {
 	s.threadConst()
 	s.threadCset()
 	s.thread()
+	s.jumpTables()
 	s.dce()
+	s.selectCompares()
 	s.hoistConsts()
+	s.reuseFlags()
 	s.regalloc()
 	s.emit()
 }
@@ -685,12 +689,15 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.add(&inst{kind: iTrap})
 	case ssa.OpRetain:
 		x := v.Args[0]
-		if x.Op == ssa.OpConst {
-			return // literals are immortal
+		if x.Op == ssa.OpConst || s.cancelRC(v) {
+			return // literals are immortal; see cancelRC
 		}
 		s.retain(x.Type, s.words(x))
 	case ssa.OpRelease:
 		x := v.Args[0]
+		if s.cancel[v] {
+			return
+		}
 		s.release(x.Type, s.words(x))
 	case ssa.OpReuse:
 		s.reuse(v)

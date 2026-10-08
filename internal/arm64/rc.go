@@ -189,3 +189,69 @@ func (g *gen) elemHelper(kind string, t *ssa.Type) string {
 	g.helpers.WriteString(b.String())
 	return sym
 }
+
+// cancelRC reports whether retain v can be dropped together with a
+// release later in its block: v retains the one heap field of the variant
+// its block is known to hold, and the release drops that enum value with
+// nothing in between but register aliases (`if let Some(w) = xs.pop()`
+// retains w and releases the Option). The release is marked in s.cancel.
+func (s *fstate) cancelRC(v *ssa.Value) bool {
+	x := v.Args[0]
+	if x.Op != ssa.OpPayload || (x.Type.Kind != ssa.KStr && x.Type.Kind != ssa.KList) {
+		return false
+	}
+	ref := x.Aux.(ssa.PayloadRef)
+	e := x.Args[0]
+	if e.Type.Kind != ssa.KEnum || len(e.Type.Variants[ref.Tag].Fields) != 1 {
+		return false
+	}
+	// the block runs only when e has the variant: its one predecessor
+	// branches on tag(e) == Tag
+	b := v.Block
+	if len(b.Preds) != 1 {
+		return false
+	}
+	br := b.Preds[0].From.Term()
+	if br == nil || br.Op != ssa.OpBranch || br.Succs[0].To == br.Succs[1].To || br.Succs[0].To != b {
+		return false
+	}
+	c := br.Args[0]
+	if c.Op != ssa.OpEq || c.Args[0].Op != ssa.OpTag || !sameRC(c.Args[0].Args[0], e) {
+		return false
+	}
+	if k, ok := constInt(c.Args[1]); !ok || k != int64(ref.Tag) {
+		return false
+	}
+	i := 0
+	for i < len(b.Instrs) && b.Instrs[i] != v {
+		i++
+	}
+	for _, w := range b.Instrs[i+1:] {
+		switch w.Op {
+		case ssa.OpField, ssa.OpTag, ssa.OpPayload, ssa.OpConst, ssa.OpTuple, ssa.OpStruct:
+			continue
+		case ssa.OpRelease:
+			if sameRC(w.Args[0], e) {
+				if s.cancel == nil {
+					s.cancel = map[*ssa.Value]bool{}
+				}
+				s.cancel[w] = true
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// sameRC reports whether a and b are the same value read through the
+// same chain of field projections.
+func sameRC(a, b *ssa.Value) bool {
+	for a.Op == ssa.OpField && b.Op == ssa.OpField {
+		if a.Aux.(int) != b.Aux.(int) {
+			return false
+		}
+		a, b = a.Args[0], b.Args[0]
+	}
+	return a == b
+}

@@ -78,7 +78,7 @@ func (s *fstate) thread() {
 		return b
 	}
 	for _, b := range blocks {
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			for i, x := range t.targets {
 				t.targets[i] = final(x)
 			}
@@ -92,7 +92,7 @@ func (s *fstate) thread() {
 			return
 		}
 		seen[b] = true
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			for _, x := range t.targets {
 				walk(x)
 			}
@@ -475,7 +475,7 @@ func (s *fstate) threadCset() {
 func (s *fstate) hoistConsts() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	succs := func(b *mblock) []*mblock {
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			return t.targets
 		}
 		return nil
@@ -587,5 +587,133 @@ func (s *fstate) hoistConsts() {
 		}
 		n := len(pre.insts)
 		pre.insts = append(append(append([]*inst(nil), pre.insts[:n-1]...), hoisted...), pre.insts[n-1])
+	}
+}
+
+// selectCompares turns a compare that only picks which of two other
+// compares decides a branch into straight line code: `if a.key != b.key {
+// a.key < b.key } else { a.id < b.id }` feeding a branch becomes both
+// compares with cset, a csel on the first compare, and one tbnz. The
+// branch on the first compare is often unpredictable (equal keys in a
+// sort); the two compares cost a few ALU operations.
+func (s *fstate) selectCompares() {
+	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	npred := map[*mblock]int{}
+	for _, b := range blocks {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
+			for _, x := range t.targets {
+				npred[x]++
+			}
+		}
+	}
+	flagTest := func(in *inst) bool {
+		return in != nil && in.kind == iCondBr && in.text != "" && in.cond != "cbnz" && in.cond != "tbz" && in.cond != "tbnz" && invCond[in.cond] != ""
+	}
+	// shift renumbers the uses of a template by k
+	shift := func(t string, k int) string {
+		var out strings.Builder
+		for i := 0; i < len(t); i++ {
+			out.WriteByte(t[i])
+			if t[i] == '$' && i+2 < len(t) && t[i+1] == 'u' && t[i+2] >= '0' && t[i+2] <= '9' {
+				out.WriteByte('u')
+				out.WriteByte(byte('0' + int(t[i+2]-'0') + k))
+				i += 2
+			}
+		}
+		return out.String()
+	}
+	changed := false
+	for _, p := range s.hot {
+		pt := p.term()
+		if !flagTest(pt) || (pt.cond != "eq" && pt.cond != "ne") || strings.Contains(pt.text, "\n") {
+			continue
+		}
+		e, n := pt.targets[0], pt.targets[1] // e: taken when the first compare is equal
+		if pt.cond == "ne" {
+			e, n = n, e
+		}
+		if e == n || e == p || n == p || len(e.insts) != 1 || len(n.insts) != 1 || npred[e] != 1 || npred[n] != 1 {
+			continue
+		}
+		et, nt := e.insts[0], n.insts[0]
+		if !flagTest(et) || !flagTest(nt) || strings.Contains(et.text, "\n") || strings.Contains(nt.text, "\n") {
+			continue
+		}
+		t, f := et.targets[0], et.targets[1]
+		if t == f {
+			continue
+		}
+		ec := et.cond
+		nc := nt.cond
+		switch {
+		case nt.targets[0] == t && nt.targets[1] == f:
+		case nt.targets[0] == f && nt.targets[1] == t:
+			nc = invCond[nc]
+		default:
+			continue
+		}
+		if len(et.uses)+len(pt.uses) > 9 || len(nt.uses)+len(pt.uses)+1 > 9 {
+			continue
+		}
+		insts := p.insts[:len(p.insts)-1]
+		a := s.newVreg(false)
+		insts = append(insts, &inst{kind: iPlain, text: et.text + "\ncset $d0, " + ec, defs: []vreg{a}, uses: append([]vreg(nil), et.uses...)})
+		r := s.newVreg(false)
+		same := nt.text == pt.text && len(nt.uses) == len(pt.uses)
+		for i := 0; same && i < len(nt.uses); i++ {
+			same = nt.uses[i] == pt.uses[i]
+		}
+		if same {
+			// the other compare is the first one: its flags pick too
+			insts = append(insts, &inst{kind: iPlain, text: shift(pt.text, 1) + "\ncset $d0, " + nc + "\ncsel $d0, $u0, $d0, eq",
+				defs: []vreg{r}, uses: append([]vreg{a}, pt.uses...), early: true})
+		} else {
+			b := s.newVreg(false)
+			insts = append(insts, &inst{kind: iPlain, text: nt.text + "\ncset $d0, " + nc, defs: []vreg{b}, uses: append([]vreg(nil), nt.uses...)})
+			insts = append(insts, &inst{kind: iPlain, text: shift(pt.text, 2) + "\ncsel $d0, $u0, $u1, eq",
+				defs: []vreg{r}, uses: append([]vreg{a, b}, pt.uses...)})
+		}
+		insts = append(insts, &inst{kind: iCondBr, cond: "tbnz", uses: []vreg{r}, targets: []*mblock{t, f}})
+		p.insts = insts
+		changed = true
+	}
+	if changed {
+		s.thread()
+	}
+}
+
+// reuseFlags drops the compare of a block that only branches when its one
+// predecessor ended with the same compare of the same registers: the
+// flags still hold (`a.key != b.key` then `a.key < b.key`).
+func (s *fstate) reuseFlags() {
+	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	preds := map[*mblock][]*mblock{}
+	for _, b := range blocks {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
+			for _, x := range t.targets {
+				if len(preds[x]) == 0 || preds[x][len(preds[x])-1] != b {
+					preds[x] = append(preds[x], b)
+				}
+			}
+		}
+	}
+	flags := func(in *inst) bool {
+		return in != nil && in.kind == iCondBr && in.text != "" && in.cond != "cbnz" && in.cond != "tbz" && in.cond != "tbnz"
+	}
+	for _, x := range blocks {
+		if len(x.insts) != 1 || !flags(x.insts[0]) || len(preds[x]) != 1 || preds[x][0] == x {
+			continue
+		}
+		in, p := x.insts[0], preds[x][0].term()
+		if !flags(p) || p.text != in.text || len(p.uses) != len(in.uses) {
+			continue
+		}
+		same := true
+		for i := range in.uses {
+			same = same && in.uses[i] == p.uses[i]
+		}
+		if same {
+			in.text, in.uses = "", nil
+		}
 	}
 }
