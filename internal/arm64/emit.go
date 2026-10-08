@@ -388,6 +388,8 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		if f != next {
 			fmt.Fprintf(b, "\tb %s\n", s.label(f))
 		}
+	case iSwitch:
+		s.emitSwitch(b, in, fr)
 	case iTrap:
 		b.WriteString("\tbrk #1\n")
 	}

@@ -50,6 +50,7 @@ func (g *gen) function(f *ssa.Func) {
 	s.threadConst()
 	s.threadCset()
 	s.thread()
+	s.jumpTables()
 	s.dce()
 	s.hoistConsts()
 	s.regalloc()

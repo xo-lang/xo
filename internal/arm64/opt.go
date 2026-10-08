@@ -78,7 +78,7 @@ func (s *fstate) thread() {
 		return b
 	}
 	for _, b := range blocks {
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			for i, x := range t.targets {
 				t.targets[i] = final(x)
 			}
@@ -92,7 +92,7 @@ func (s *fstate) thread() {
 			return
 		}
 		seen[b] = true
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			for _, x := range t.targets {
 				walk(x)
 			}
@@ -475,7 +475,7 @@ func (s *fstate) threadCset() {
 func (s *fstate) hoistConsts() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	succs := func(b *mblock) []*mblock {
-		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
 			return t.targets
 		}
 		return nil

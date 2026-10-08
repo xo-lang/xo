@@ -40,7 +40,7 @@ func (s *fstate) succs(b *mblock) []*mblock {
 		return nil
 	}
 	switch t.kind {
-	case iJump, iCondBr:
+	case iJump, iCondBr, iSwitch:
 		return t.targets
 	}
 	return nil
