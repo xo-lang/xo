@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+sha256 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+sha256 empty e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+hmac 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+equal true false false
+random 24 token 43 distinct true
+hash true 4
+verify true false false
+known true
+--- stderr

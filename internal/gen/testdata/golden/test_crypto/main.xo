@@ -1,0 +1,31 @@
+// std/crypto under test: the seeded Rand makes tokens and salts
+// reproducible (std.md 3.4, 11).
+use std/crypto
+
+fn new_token(r: Rand) -> Str uses rand {
+  crypto.token(r, n: 16)
+}
+
+test "tokens come from the seeded rand" seed 7 {
+  let a = new_token(os.rand)
+  expect(a.len()) == 22
+  expect(a != new_token(os.rand))
+}
+
+test "password hashes verify and differ by salt" {
+  let h1 = crypto.hash_password(os.rand, "s3cret", iterations: 10)
+  let h2 = crypto.hash_password(os.rand, "s3cret", iterations: 10)
+  expect(h1 != h2)
+  expect(crypto.verify_password("s3cret", h1))
+  expect(crypto.verify_password("s3cret", h2))
+  expect(!crypto.verify_password("S3cret", h1))
+  expect(!crypto.verify_password("s3cret", h1.replace("$10$", "$11$")))
+}
+
+test "stored token hashes compare in constant time" {
+  let token = crypto.token(os.rand)
+  let stored = crypto.sha256(token.bytes())
+  expect(crypto.equal(crypto.sha256(token.bytes()), stored))
+  expect(!crypto.equal(crypto.sha256("guess".bytes()), stored))
+  expect(crypto.hmac_sha256(b"k", b"m").len()) == 32
+}

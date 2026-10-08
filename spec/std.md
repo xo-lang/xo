@@ -959,3 +959,54 @@ Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
 grouping, subqueries, or `RETURNING`. Reads inside a transaction see its own
 writes; reads outside see the last commit.
 Results of a `Db` are not recorded by record and replay (core 11.3) yet.
+
+---
+
+## 11. std/crypto
+
+Status: draft (2026-10-08, decision 0056). Go standard library underneath;
+no third party code.
+
+```
+pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
+pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
+pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
+pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
+pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
+pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
+pub fn verify_password(password: Str, hash: Str) -> Bool
+```
+
+- Hashing and comparison are pure: no capability, no effect.
+- Randomness comes only from the `Rand` capability (section 3.4), as
+  everywhere else: cryptographically secure in programs, seeded from the
+  test seed in tests, so a test that creates tokens or salts is
+  reproducible. A function that makes tokens takes a `Rand` and declares
+  `uses rand`.
+- `equal` takes time that depends on the lengths but not on the contents;
+  compare digests of equal length (for example two `sha256` results) when
+  the length is secret too.
+- `hash_password` is PBKDF2-HMAC-SHA256 with a 16 byte salt from `r` and a
+  32 byte key, encoded as `pbkdf2-sha256$<iterations>$<salt>$<key>`
+  (salt and key in unpadded standard base64). It faults when `iterations`
+  is outside `1..=100000000`. The default, 600000, follows the OWASP 2023
+  guidance for PBKDF2-HMAC-SHA256; tests may pass a small count.
+- `verify_password` recomputes the key with the stored salt and iteration
+  count and compares in constant time. A malformed hash is `false`, never
+  an error.
+
+Storing API tokens: tokens from `token` have 256 bits of entropy, so a
+plain `sha256` digest is enough (no salt or stretching needed) and can be
+looked up by value; compare the digest found with `equal`:
+
+```
+fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dial) {
+  let t = crypto.token(r)
+  db.exec("INSERT INTO tokens (user_id, digest) VALUES ($1, $2)",
+    [sql.int(user), sql.str(crypto.sha256(t.bytes()).to_hex())])?
+  t
+}
+```
+
+Passwords chosen by people have little entropy: store
+`hash_password(os.rand, pw)` and check with `verify_password`.

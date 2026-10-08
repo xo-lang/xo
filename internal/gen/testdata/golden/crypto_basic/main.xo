@@ -1,0 +1,18 @@
+// std/crypto with known vectors (std.md 11, decision 0056).
+use std/crypto
+
+fn main(os: Os) {
+  os.stdio.println("sha256 ${crypto.sha256(b"abc").to_hex()}")
+  os.stdio.println("sha256 empty ${crypto.sha256(b"").to_hex()}")
+  // RFC 4231 test case 2
+  os.stdio.println("hmac ${crypto.hmac_sha256(b"Jefe", "what do ya want for nothing?".bytes()).to_hex()}")
+  os.stdio.println("equal ${crypto.equal(b"abc", b"abc")} ${crypto.equal(b"abc", b"abd")} ${crypto.equal(b"abc", b"ab")}")
+  let rb = crypto.random_bytes(os.rand, 24)
+  let t = crypto.token(os.rand)
+  os.stdio.println("random ${rb.len()} token ${t.len()} distinct ${t != crypto.token(os.rand)}")
+  let h = crypto.hash_password(os.rand, "hunter2", iterations: 1000)
+  os.stdio.println("hash ${h.starts_with("pbkdf2-sha256$1000$")} ${h.split("$").len()}")
+  os.stdio.println("verify ${crypto.verify_password("hunter2", h)} ${crypto.verify_password("hunter3", h)} ${crypto.verify_password("hunter2", "garbage")}")
+  // a hash with a known salt and key (PBKDF2-HMAC-SHA256, 1 iteration, salt "salt")
+  os.stdio.println("known ${crypto.verify_password("password", "pbkdf2-sha256$1$c2FsdA$Eg+2z/z4syxD5yJSVsT4N6hlSMkszDVICAWYfLcL4Xs")}")
+}

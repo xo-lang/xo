@@ -797,6 +797,11 @@ Last verified: 2026-10-08. Rules and choices; details in
   routes, each behind `chain(sub.mws, h)`), `Listener.M_addr` (the
   `addr` field, also in the recorded `net.listen` result). Golden:
   `http_scoped`.
+- std/crypto (2026-10-08, decision 0056, std.md 11): `std/crypto.xo`,
+  `std/rt/crypto.go` on `crypto/sha256`, `crypto/hmac`, `crypto/subtle`,
+  `crypto/pbkdf2` (Go 1.24+); random functions call the `Rand`
+  capability's `M_bytes`. Goldens `crypto_basic` (known vectors),
+  `test_crypto` (seeded rand); unit tests `TestCrypto*` in std/rt.
 
 ## SSA IR
 
