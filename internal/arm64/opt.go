@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/xo-lang/xo/internal/ssa"
@@ -333,4 +334,72 @@ func (s *fstate) safeAdd(a *ssa.Value, n int64, op ssa.Op) bool {
 		return hi <= math.MaxInt64-n
 	}
 	return lo >= math.MinInt64-n
+}
+
+// threadConst sends a jump to a block that only tests a register
+// straight to the test's outcome when the jumping block set that
+// register to a constant (the tag of an Option a pop or get built,
+// tested at once by `??` or `if let`).
+func (s *fstate) threadConst() {
+	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	for _, p := range blocks {
+		t := p.term()
+		if t == nil || t.kind != iJump {
+			continue
+		}
+		j := t.targets[0]
+		if len(j.insts) != 1 || j.insts[0].kind != iCondBr {
+			continue
+		}
+		br := j.insts[0]
+		r := br.uses[0]
+		var k int64
+		if br.cond != "cbnz" {
+			if len(br.uses) != 1 {
+				continue
+			}
+			if _, err := fmt.Sscanf(br.text, "cmp $u0, #%d", &k); err != nil || br.text != fmt.Sprintf("cmp $u0, #%d", k) {
+				continue
+			}
+		}
+		val, ok := int64(0), false
+		for _, in := range p.insts[:len(p.insts)-1] {
+			for i, d := range in.defs {
+				if d != r {
+					continue
+				}
+				ok = in.kind == iPmove && in.srcs[i].kind == sImm
+				if ok {
+					val = in.srcs[i].imm
+				}
+			}
+		}
+		if !ok {
+			continue
+		}
+		var taken bool
+		switch br.cond {
+		case "cbnz":
+			taken = val != 0
+		case "eq":
+			taken = val == k
+		case "ne":
+			taken = val != k
+		case "lt":
+			taken = val < k
+		case "le":
+			taken = val <= k
+		case "gt":
+			taken = val > k
+		case "ge":
+			taken = val >= k
+		default:
+			continue
+		}
+		if taken {
+			t.targets[0] = br.targets[0]
+		} else {
+			t.targets[0] = br.targets[1]
+		}
+	}
 }

@@ -459,6 +459,9 @@ func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
 			stores = append(stores, fmt.Sprintf("\tstr %s, [%s, #%d]\n", regName(r, false), l.base, l.off))
 		}
 	}
+	if t == "mov $d0, $u0" && defReg[0] == useReg[0] && len(stores) == 0 {
+		return // a copy into the same register
+	}
 	var out strings.Builder
 	out.WriteByte('\t')
 	for i := 0; i < len(t); i++ {

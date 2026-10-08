@@ -47,7 +47,9 @@ func (g *gen) function(f *ssa.Func) {
 		nuses: map[*ssa.Value]int{}, users: map[*ssa.Value]*ssa.Value{}, lenParam: map[vreg]vreg{}, endMemo: map[*ssa.Block]*memo{}, lazy: map[*ssa.Value]bool{}}
 	s.isel()
 	s.dce()
+	s.threadConst()
 	s.thread()
+	s.dce()
 	s.regalloc()
 	s.emit()
 }
@@ -404,6 +406,13 @@ func (s *fstate) isel() {
 				defs = append(defs, ws...)
 			}
 			s.add(&inst{kind: iEntry, defs: defs})
+			for _, p := range b.Params {
+				if p.Type.Kind == ssa.KList {
+					// known for the whole function (dead code removes
+					// the load when nothing uses it)
+					s.listLen(s.vals[p][0])
+				}
+			}
 		}
 		for _, v := range b.Instrs {
 			s.instr(v)
@@ -652,6 +661,16 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpBranch:
 		s.endMemo[v.Block] = s.m()
 		c := v.Args[0]
+		if k, ok := c.Aux.(bool); ok && c.Op == ssa.OpConst {
+			e := v.Succs[1]
+			if k {
+				e = v.Succs[0]
+			}
+			dsts, srcs := s.edgeMoves(e)
+			s.pmove(dsts, srcs)
+			s.add(&inst{kind: iJump, targets: []*mblock{s.bmap[e.To]}})
+			return
+		}
 		var in *inst
 		if s.lazy[c] {
 			text, uses, cond := s.compare(c)
@@ -1089,7 +1108,10 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 
 // option builds Option words on two paths: in the current block when
 // cond holds (some fills the payload), else none.
-func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, some func() []vreg) []vreg {
+//
+// extra registers are set on both paths too: from the sources some
+// returns, and from none.
+func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, extra []vreg, some func() ([]vreg, []src), none []src) []vreg {
 	g := s.g
 	si, ni := ot.VariantIndex("Some"), ot.VariantIndex("None")
 	ws := s.newVregs(make([]bool, g.nwords(ot)))
@@ -1097,7 +1119,7 @@ func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, som
 	yes, no, join := s.newBlock(false), s.newBlock(false), s.newBlock(false)
 	s.add(&inst{kind: iCondBr, text: text, uses: uses, cond: cond, targets: []*mblock{yes, no}})
 	s.cur = yes
-	pay := some()
+	pay, yesExtra := some()
 	srcs := []src{isrc(int64(si))}
 	for k := 1; k < len(ws); k++ {
 		if k-1 < len(pay) {
@@ -1106,14 +1128,14 @@ func (s *fstate) option(ot *ssa.Type, text string, uses []vreg, cond string, som
 			srcs = append(srcs, rsrc(0))
 		}
 	}
-	s.pmoveSrcs(ws, srcs)
+	s.pmoveSrcs(append(append([]vreg(nil), ws...), extra...), append(srcs, yesExtra...))
 	s.add(&inst{kind: iJump, targets: []*mblock{join}})
 	s.cur = no
 	srcs = []src{isrc(int64(ni))}
 	for k := 1; k < len(ws); k++ {
 		srcs = append(srcs, rsrc(0))
 	}
-	s.pmoveSrcs(ws, srcs)
+	s.pmoveSrcs(append(append([]vreg(nil), ws...), extra...), append(srcs, none...))
 	s.add(&inst{kind: iJump, targets: []*mblock{join}})
 	s.cur = join
 	s.inherit(before)
@@ -1166,9 +1188,9 @@ func (s *fstate) callOp(v *ssa.Value) {
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		et := v.Args[0].Type.Elems[0]
 		n := s.listLen(l)
-		s.set(v, s.option(v.Type, "cmp $u0, $u1", []vreg{i, n}, "lo", func() []vreg {
-			return s.loadElem(s.elemBase(l, i, g.esize(et)), et, true)
-		})...)
+		s.set(v, s.option(v.Type, "cmp $u0, $u1", []vreg{i, n}, "lo", nil, func() ([]vreg, []src) {
+			return s.loadElem(s.elemBase(l, i, g.esize(et)), et, true), nil
+		}, nil)...)
 	case "list.set":
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		et := v.Args[2].Type
@@ -1213,14 +1235,15 @@ func (s *fstate) callOp(v *ssa.Value) {
 		et := v.Args[0].Type.Elems[0]
 		ot := v.Type.Elems[1]
 		n := s.listLen(l)
-		o := s.option(ot, "cmp $u0, #0", []vreg{n}, "gt", func() []vreg {
+		// a new register for the shorter list (what is known about l,
+		// its length, must not reach blocks it dominates), and its length
+		l2, nl := s.newVreg(false), s.newVreg(false)
+		o := s.option(ot, "cmp $u0, #0", []vreg{n}, "gt", []vreg{l2, nl}, func() ([]vreg, []src) {
 			n1 := s.def1(false, "sub $d0, $u0, #1", n)
 			s.store("str $u0, [$u1, #8]", n1, l)
-			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true)
-		})
-		// a new register for the shorter list: what is known about l
-		// (its length) must not reach blocks it dominates
-		l2 := s.def1(false, "mov $d0, $u0", l)
+			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true), regs(l, n1)
+		}, regs(l, n))
+		s.m().lens[l2] = nl
 		s.set(v, append([]vreg{l2}, o...)...)
 	case "str.concat":
 		x, y := a(0), a(1)
