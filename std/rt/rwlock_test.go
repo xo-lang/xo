@@ -275,7 +275,7 @@ func TestMutexCanceledWaitForgetsSite(t *testing.T) {
 		left := make(chan bool, 1)
 		Spawn(wbody, ws, func(t *Task) Result[Unit, Never] {
 			defer func() {
-				_, still := t.held[m]
+				_, still := t.held.get(m)
 				left <- still
 			}()
 			if read {

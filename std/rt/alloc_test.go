@@ -89,6 +89,73 @@ func TestReadBody(t *testing.T) {
 	}
 }
 
+type allocState struct {
+	users Map[int64, string]
+	next  int64
+}
+
+// Mutex.with_read allocates nothing for a value without lists, once the
+// task has its held set (a request task's comes with its reqBlock), and
+// Own copies such a value without moving it to the heap.
+func TestAllocsMutexRead(t *testing.T) {
+	var users Map[int64, string]
+	users.M_put(nil, 1, "ada")
+	m := Mutex_new(nil, allocState{users: users, next: 2})
+	tk := &Task{node: newNode(nil, nil), th: newRootThread("test"), held: new(heldSet)}
+	n := testing.AllocsPerRun(100, func() {
+		r := Mutex_with_read(tk, m, func(_ *Task, st allocState) Result[Option[string], Never] {
+			return Ok[Option[string], Never](st.users.M_get(nil, 1))
+		})
+		if r.V.V != "ada" {
+			t.Fatal("read")
+		}
+	})
+	if n != 0 {
+		t.Errorf("Mutex.with_read: %v allocations, want 0", n)
+	}
+	if _, ok := tk.held.get(m); ok {
+		t.Error("mutex still in the held set")
+	}
+	n = testing.AllocsPerRun(100, func() {
+		if Own(allocState{next: 3}).next != 3 {
+			t.Fatal("own")
+		}
+	})
+	if n != 0 {
+		t.Errorf("Own of a value without lists: %v allocations, want 0", n)
+	}
+}
+
+// The held set keeps two mutexes inline and the rest in a map.
+func TestHeldSet(t *testing.T) {
+	var h heldSet
+	ms := []any{new(int), new(int), new(int), new(int)}
+	for i, m := range ms {
+		h.put(m, heldSite{n: i})
+	}
+	for i, m := range ms {
+		if s, ok := h.get(m); !ok || s.n != i {
+			t.Fatalf("get %d: %v %v", i, s.n, ok)
+		}
+	}
+	h.del(ms[0])
+	h.del(ms[3])
+	if _, ok := h.get(ms[0]); ok {
+		t.Fatal("deleted inline entry found")
+	}
+	if _, ok := h.get(ms[3]); ok {
+		t.Fatal("deleted map entry found")
+	}
+	if s, ok := h.get(ms[2]); !ok || s.n != 2 {
+		t.Fatal("map entry lost")
+	}
+	var nilSet *heldSet
+	if _, ok := nilSet.get(ms[1]); ok {
+		t.Fatal("nil set holds a mutex")
+	}
+	nilSet.del(ms[1])
+}
+
 // Ranging over m.All() allocates nothing.
 func TestAllocsMapAll(t *testing.T) {
 	var m Map[string, string]

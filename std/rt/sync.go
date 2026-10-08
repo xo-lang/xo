@@ -261,10 +261,61 @@ func holdSite(tk *Task, m any) heldSite {
 	var site heldSite
 	site.n = runtime.Callers(3, site.pcs[:])
 	if tk.held == nil {
-		tk.held = map[any]heldSite{}
+		tk.held = new(heldSet)
 	}
-	tk.held[m] = site
+	tk.held.put(m, site)
 	return site
+}
+
+// heldSet is the set of mutexes a task holds, with where it took them. A
+// task rarely holds more than two at once, so those live inline (the map
+// it replaced cost two allocations per task that took a mutex); a request
+// task's set is part of its reqBlock. A scope body shares its parent's
+// set (scope.go). Only the task's own thread touches it.
+type heldSet struct {
+	ms    [2]any
+	sites [2]heldSite
+	more  map[any]heldSite
+}
+
+// get is the site where m was taken, if the task holds m.
+func (h *heldSet) get(m any) (heldSite, bool) {
+	if h == nil {
+		return heldSite{}, false
+	}
+	for i, x := range h.ms {
+		if x == m {
+			return h.sites[i], true
+		}
+	}
+	s, ok := h.more[m]
+	return s, ok
+}
+
+func (h *heldSet) put(m any, s heldSite) {
+	for i, x := range h.ms {
+		if x == nil {
+			h.ms[i], h.sites[i] = m, s
+			return
+		}
+	}
+	if h.more == nil {
+		h.more = map[any]heldSite{}
+	}
+	h.more[m] = s
+}
+
+func (h *heldSet) del(m any) {
+	if h == nil {
+		return
+	}
+	for i, x := range h.ms {
+		if x == m {
+			h.ms[i], h.sites[i] = nil, heldSite{}
+			return
+		}
+	}
+	delete(h.more, m)
 }
 
 // Mutex is `Mutex[T]` (core 5.4): a handle; copies share the state.
@@ -291,7 +342,7 @@ func (m *Mutex[T]) XoDebug(b *strings.Builder) { b.WriteString("<mutex>") }
 // (XO-F004).
 func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, E]) Result[R, E] {
 	tk.Yield()
-	if prev, ok := tk.held[m]; ok {
+	if prev, ok := tk.held.get(m); ok {
 		FaultCode("XO-F004", xoLocation(2), "Mutex.with called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
 	// the bookkeeping happens before the wait, so the critical section
@@ -303,14 +354,14 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 	}
 	// a cancellation point only while waiting (core 7.2)
 	if !m.l.acquireMode(tk, false, &site) {
-		delete(tk.held, m)
+		tk.held.del(m)
 		tk.Unwind()
 	}
 	if lockStatsOn {
 		t1 = time.Now()
 	}
 	defer func() {
-		delete(tk.held, m)
+		tk.held.del(m)
 		if lockStatsOn {
 			t2 := time.Now()
 			m.l.release()
@@ -338,7 +389,7 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 // read could deadlock behind a waiting writer.
 func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result[R, E]) Result[R, E] {
 	tk.Yield()
-	if prev, ok := tk.held[m]; ok {
+	if prev, ok := tk.held.get(m); ok {
 		FaultCode("XO-F004", xoLocation(2), "Mutex.with_read called re-entrantly in one task; the mutex is already held from %s", prev.loc())
 	}
 	site := holdSite(tk, m)
@@ -347,14 +398,14 @@ func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result
 		t0 = time.Now()
 	}
 	if !m.l.acquireMode(tk, true, nil) {
-		delete(tk.held, m)
+		tk.held.del(m)
 		tk.Unwind()
 	}
 	if lockStatsOn {
 		t1 = time.Now()
 	}
 	defer func() {
-		delete(tk.held, m)
+		tk.held.del(m)
 		if lockStatsOn {
 			t2 := time.Now()
 			m.l.releaseRead(tk)
@@ -364,10 +415,9 @@ func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result
 		m.l.releaseRead(tk)
 	}()
 	// readers share m.v: the copy f gets must not write m.v's lists in
-	// place (see List); marking is atomic, so readers may race on it
-	v := m.v
-	MarkP(&v)
-	return f(tk, v)
+	// place (see List); marking is atomic, so readers may race on it.
+	// Own, not MarkP(&v): that moved v to the heap on every call.
+	return f(tk, Own(m.v))
 }
 
 // Atomic is `Atomic[T]` for Int and Bool (std.md 2.7).

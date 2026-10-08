@@ -98,9 +98,18 @@ func MarkP[T any](p *T) {
 
 // Own marks the lists held by v and returns it: generated code wraps a
 // value of a type parameter in Own where it copies it out of a place.
+//
+// Only types that hold lists take the marking path, through a heap copy:
+// MarkP(&v) moved v to the heap on every call, an allocation for every
+// type (escape analysis does not see that markable is false).
 func Own[T any](v T) T {
-	MarkP(&v)
-	return v
+	if !markable[T]() {
+		return v
+	}
+	p := new(T)
+	*p = v
+	MarkP(p)
+	return *p
 }
 
 // markable reports whether values of T may hold lists.

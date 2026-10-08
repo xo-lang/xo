@@ -806,12 +806,13 @@ type serveCtx struct {
 	sch     *sched
 }
 
-// reqBlock is a request's task, thread, and cancellation node in one
-// allocation: they live exactly as long as the request.
+// reqBlock is a request's task, thread, cancellation node, and held
+// mutex set in one allocation: they live exactly as long as the request.
 type reqBlock struct {
-	tk Task
-	th thread
-	n  cnode
+	tk   Task
+	th   thread
+	n    cnode
+	held heldSet
 }
 
 // start makes and starts the task of request k (0 when not recorded).
@@ -819,7 +820,7 @@ func (sc *serveCtx) start(a *Arena, k int64) *Task {
 	tk := sc.tk
 	b := new(reqBlock)
 	t := &b.tk
-	*t = Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.initChild(&b.th, "request")}
+	*t = Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.initChild(&b.th, "request"), held: &b.held}
 	t.th.req = k
 	t.node = initNode(&b.n, sc.reqRoot, tk.w, nodeRequest, t)
 	if t.th.mon != nil {

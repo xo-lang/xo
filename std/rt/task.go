@@ -12,8 +12,8 @@ import (
 type Task struct {
 	node   *cnode
 	shield int32
-	held   map[any]heldSite // mutexes held by this task, with the acquisition site
-	w      *World           // the test world (virtual clock), nil in real programs
+	held   *heldSet // mutexes held by this task, with the acquisition site
+	w      *World   // the test world (virtual clock), nil in real programs
 	// arena is the request scoped arena of an HTTP request task (arena.go),
 	// nil otherwise. Spawned tasks never inherit it (child), so only one
 	// goroutine uses an arena at a time.
