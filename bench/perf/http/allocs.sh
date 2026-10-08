@@ -19,7 +19,8 @@
 #
 # Environment: CONFIGS ("go xo xo-arenas"; xo builds with --no-arenas,
 # xo-arenas with the default request arenas of decision 0066; xo-base with
-# the binary in $XO_BASE and its default),
+# the binary in $XO_BASE and its default, xo-base-noarenas the same with
+# --no-arenas),
 # ROUTES ("get list patch createdel cycle"), N1 (500), N2 (5500), PRELOAD
 # (64), PORT (18190, apart from run.sh's 18080), XO, PERF_OUT.
 set -eu
@@ -42,6 +43,7 @@ for c in $configs; do
 	xo) "$xo" build --no-arenas -o "$out/srv-xo" "$here/xo" >/dev/null ;;
 	xo-arenas) "$xo" build -o "$out/srv-xo-arenas" "$here/xo" >/dev/null ;;
 	xo-base) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build -o "$out/srv-xo-base" "$here/xo" >/dev/null ;;
+	xo-base-noarenas) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --no-arenas -o "$out/srv-xo-base-noarenas" "$here/xo" >/dev/null ;;
 	*) echo "unknown config $c" >&2; exit 2 ;;
 	esac
 done

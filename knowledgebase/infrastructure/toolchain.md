@@ -500,6 +500,26 @@ Last verified: 2026-10-07
   `RunMain` returns, so stop a server with `kill <its PID>` (SIGTERM, a
   clean shutdown), not SIGKILL. Read with `go tool pprof -top -cum
   <binary> <file>`. Last verified: 2026-10-08.
+- Allocation profiling (2026-10-08): `XO_MEMPROFILE=<file>` writes the
+  `allocs` profile when `RunMain` returns (`XO_MEMPROFILERATE=N` samples
+  one allocation per N bytes, 1 for every allocation; read with `go tool
+  pprof -sample_index=alloc_objects -lines -top <binary> <file>`, or
+  `alloc_space`), and `XO_MEMSTATS=<file>` writes `mallocs`,
+  `total_alloc`, and `num_gc` of the whole run. The Go server of
+  bench/perf/http writes the same three lines with `MEMSTATS=<file>` on
+  SIGTERM. `bench/perf/http/allocs.sh` uses them: per config (`go`, `xo`
+  = `--no-arenas`, `xo-arenas` = default, `xo-base` and
+  `xo-base-noarenas` with `$XO_BASE`) and route (`get list patch
+  createdel cycle`), two fresh servers get N1 and N2 units of the route
+  from `loadgen -route <r> -n <n>` on one connection (port 18190), and
+  the difference gives allocations, bytes, and GCs per request. The
+  counts are deterministic to about 0.1 allocation and do not depend on
+  host load. An `xo-base` binary needs the XO_MEMSTATS hook (commit
+  8b65b93); for an older checkout apply that commit's std/rt/main.go
+  change first. Allocation budgets of the hot runtime paths are pinned
+  in `std/rt/alloc_test.go` (skipped where a sync.Pool is involved under
+  `-race`, which drops pooled items at random). Last verified:
+  2026-10-08.
 - Lock hold and wait times (2026-10-08): `XO_LOCKSTATS=<file>` makes every
   `Mutex.with` and `Mutex.with_read` of a built Xo program record how
   long it waited to acquire and how long it held the mutex, per call

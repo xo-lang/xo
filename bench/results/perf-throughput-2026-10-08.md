@@ -322,3 +322,113 @@ order of likelihood:
 3. The remaining hold gap (2 us for create and update) is the email scan
    of the Xo store; a solution with an email index (as Go's) would be a
    benchmark change in bench/xo, not a codegen one.
+
+## 2026-10-08: allocations per request (non-arena build first)
+
+Goal: cut the per request heap allocation of the Xo server toward Go's.
+The primary measure is allocations and bytes per request per route,
+which do not depend on host load (another agent ran load tests at the
+same time; load average 7 to 25). Tool: `bench/perf/http/allocs.sh`
+(new): `XO_MEMSTATS` / `MEMSTATS` counters of two fresh servers sent
+500 and 5500 units of one route on one connection, differenced. Routes:
+`get` (GET /users/1), `list` (GET /users, 64 users), `patch`,
+`createdel` (POST + DELETE, mean of the two), `cycle` (the run.sh mix).
+GCs/10k here are at one connection (a lower bound). Profiles:
+`XO_MEMPROFILE` with `XO_MEMPROFILERATE=1`.
+
+Before = main at b5381af (with the XO_MEMSTATS hook applied), after =
+branch head. `xo` = `--no-arenas`, `xo-arenas` = the default since
+decision 0066.
+
+| Route | Go allocs | Go bytes | Xo before allocs | Xo before bytes | Xo after allocs | Xo after bytes | Xo arenas before | Xo arenas after (bytes) |
+|---|---|---|---|---|---|---|---|---|
+| get | 22.0 | 2326 | 71.0 | 8114 | 29.0 | 3596 | 40.0 | 23.0 (2950) |
+| list | 26.1 | 5661 | 199.3 | 43238 | 35.3 | 18122 | 172.1 | 29.1 (8601) |
+| patch | 44.1 | 3938 | 88.1 | 8978 | 43.1 | 4357 | 55.1 | 36.1 (3568) |
+| createdel | 31.5 | 2803 | 62.1 | 6993 | 30.6 | 3453 | 42.6 | 26.1 (2927) |
+| cycle | 30.3 | 2920 | 75.2 | 8803 | 33.2 | 4092 | 48.0 | 27.5 (3211) |
+
+GCs per 10k requests at one connection, cycle: Go 9.4, Xo 30.4 -> 13.7,
+Xo arenas 16.8 -> 10.1.
+
+Sites fixed, in commit order (allocations per GET before -> after, no
+arenas):
+
+1. 8b65b93: measurement only (allocs.sh, `loadgen -route`, XO_MEMSTATS,
+   XO_MEMPROFILE, Go MEMSTATS).
+2. afddaae: a small `Map` was five allocations (table, index struct,
+   index slots, log array, the array's header box for the atomic
+   pointer); the first index (8 slots) and the first header now live in
+   the table: two. 71 -> 56.
+3. 8125716: router and server. Dispatch split the path once per route
+   and built a parameter table for every route whose path matched,
+   including the GET/PATCH/DELETE siblings of the one chosen; now one
+   split into a stack array and one table. The server printed the
+   request URL and parsed it again (two allocations): it reads
+   `hr.URL`. `io.ReadAll` of an empty body allocated 512 bytes and a
+   body was copied into a string: now nothing for an empty body and one
+   exact buffer otherwise (unsafe.String, nothing else holds it). The
+   request's Task, thread, and cancellation node are one `reqBlock`,
+   and the handler no longer captures its locals in closures. 56 -> 38.
+4. 2d00d4e: `Mutex` kept the held mutexes of a task in a map made per
+   task (two allocations per request): now one inline entry in a
+   `heldSet` (part of the reqBlock for requests). `Own` and
+   `Mutex.with_read` called `MarkP(&v)`, which moved `v` to the heap for
+   every type. 38 -> 35.
+5. ace6bca: JSON encode. `JsonEnc` switched on `any(&v)`, a heap copy of
+   every value, per field and per list element (the list route's 130
+   allocations); now Str/Int/Bool are read through unsafe without an
+   escape, list elements are encoded in place (`JsonEncP(&l.s[i])`),
+   and generated codecs call `v.F.XoJsonEnc(tk, w)` directly for Option,
+   List, Set, Map, Patch, and `derive Json` fields. `json.encode` builds
+   in a pooled buffer and copies out once. List 176 -> 34.
+6. ae1d416: maps of the server sized to their keys (`mapCap`; the
+   default first log array is 4 entries, was 8), `Map_values_seq` and
+   `Map_keys_seq` small enough to inline (the store's email scan cost
+   two closures per create and update), `sort_by` sorts positions
+   instead of (key, element) pairs. Cycle bytes 5158 -> 4092.
+
+Under load (run.sh, `REPS=3 PORT=18190 CONFIGS="go xo-base xo
+xo-arenas"`, `xo-base` = main b5381af default, i.e. arenas; load
+average 7.6 at the start, 18 at the end, req/s indicative only):
+
+| Config | Req/s | p50 us | p99 us | GC CPU % | GCs/10k req |
+|---|---|---|---|---|---|
+| Go | 126,835 | 217 | 872 | 4 | 24.6 |
+| Xo arenas, before (main) | 101,413 | 253 | 1090 | 9 | 53.6 |
+| Xo no arenas, after | 79,875 | 325 | 1300 | 14 | 113.3 |
+| Xo arenas, after | 108,539 | 240 | 1025 | 8 | 44.4 |
+
+The no arena build was 61k req/s and 173 GCs/10k at 7bcb24d (table
+above, a different session). Under 32 workers the GC count falls less
+than the bytes: one 5 s run with counters (`loadstats`) gave Go 30.8
+allocations, 3.0 KB per request, and 1.31 MB allocated per GC cycle;
+Xo no arenas 37.5 allocations, 5.3 KB, and only 0.54 MB per cycle. With
+`GOMAXPROCS=4` the same Xo binary allocated 2.34 MB per cycle (Go 2.65)
+and served about twice the requests. Both run at the 4 MB minimum heap
+goal with a 1 MB live heap; the likely cause is per P span caching
+counted against that small goal
+(`knowledgebase/gotchas/small-heap-gc-per-p-spans.md`).
+
+What is left, ranked by likely effect:
+
+1. GC goal for servers: the 4 MB minimum goal on 12 Ps is now the main
+   GC cost, not the bytes. Experiment: `debug.SetMemoryLimit(64 << 20)`
+   with `debug.SetGCPercent(400)` when `http.server` starts (or
+   `XO_GOGC`), measured with `CONFIGS="go xo xo-arenas"` run.sh plus peak
+   RSS; changes memory use, needs an ADR.
+2. Size class spread: the request path allocates map tables (144 B),
+   log arrays, the reqBlock (about 560 B), JSON buffers. Folding the
+   request header and parameter tables into the reqBlock (inline log
+   arrays for up to 4 entries) would remove 4 allocations and two size
+   classes per request.
+3. `Mutex.with` copies the value to the heap (`f(tk, &v)` escapes):
+   one allocation per write. A per mutex scratch slot is unsafe if a
+   closure captures the `var` parameter past the call; codegen could
+   prove it does not.
+4. The top level `json.encode` copy of a struct (`new(T)` in JsonEnc)
+   and the copy out of the pooled buffer: Http_json could encode
+   generated types with a direct XoJsonEnc call and hand the pooled
+   buffer to the server to write and release.
+5. `list`: `values()` then `sort_by` copies the users twice (18 KB);
+   codegen can sort the temporary in place when the receiver is dead.
