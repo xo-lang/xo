@@ -16,13 +16,9 @@
 //     (which releases the elements through a generated callback),
 //     xo_rl_copy (a shared list about to be updated), and xo_rl_grow (a
 //     unique full list, resized in place).
-//   - prototype lists (the AST path of internal/llvm, which never
-//     frees): a List[T] value is a pointer to a header {len, cap, shared}
-//     followed by the elements. `shared` is a sticky flag set when a list
-//     value is copied: a mutation through a binding whose buffer is
-//     shared copies the buffer first (copy on write).
-//   - strings: builders for interpolation (AST path), concatenation and
-//     formatting (both paths).
+//   - closure environments and boxes (decision 0048): freed through
+//     xo_rc_defer, a worklist, so long chains do not recurse.
+//   - strings: comparison, concatenation, and number formatting.
 //   - output: buffered stdout, flushed at exit and before a fault.
 //   - faults: messages and exit status 70, matching the Go backend's text.
 //   - main: runs the Xo entry on a thread with a 1 GiB stack, like Go's
@@ -448,77 +444,8 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 	fault_text(m, loc);
 }
 
-XO_NORETURN void xo_fault_unreachable(const char *loc) {
-	fault_text("unreachable code reached (internal compiler error)", loc);
-}
-
 // ---------------------------------------------------------------------------
 // Strings
-
-typedef struct {
-	char *p;
-	int64_t len, cap;
-} xo_sb;
-
-xo_sb *xo_sb_new(void) {
-	xo_sb *b = xo_alloc(sizeof(xo_sb));
-	b->cap = 64;
-	b->p = xo_alloc(b->cap);
-	b->len = 0;
-	return b;
-}
-
-static void sb_grow(xo_sb *b, int64_t n) {
-	if (b->len + n <= b->cap) {
-		return;
-	}
-	int64_t c = b->cap * 2;
-	while (c < b->len + n) {
-		c *= 2;
-	}
-	char *p = xo_alloc(c);
-	memcpy(p, b->p, (size_t)b->len);
-	b->p = p;
-	b->cap = c;
-}
-
-void xo_sb_str(xo_sb *b, const char *p, int64_t n) {
-	sb_grow(b, n);
-	memcpy(b->p + b->len, p, (size_t)n);
-	b->len += n;
-}
-
-void xo_sb_int(xo_sb *b, int64_t v) {
-	char t[32];
-	int n = fmt_int(t, v);
-	xo_sb_str(b, t, n);
-}
-
-void xo_sb_float(xo_sb *b, double v) {
-	char t[48];
-	int n = fmt_float(t, v);
-	xo_sb_str(b, t, n);
-}
-
-void xo_sb_bool(xo_sb *b, int32_t v) {
-	if (v) {
-		xo_sb_str(b, "true", 4);
-	} else {
-		xo_sb_str(b, "false", 5);
-	}
-}
-
-const char *xo_sb_done(xo_sb *b, int64_t *len) {
-	*len = b->len;
-	return b->p;
-}
-
-const char *xo_str_concat(const char *a, int64_t an, const char *b, int64_t bn) {
-	char *p = xo_alloc(an + bn + 1);
-	memcpy(p, a, (size_t)an);
-	memcpy(p + an, b, (size_t)bn);
-	return p;
-}
 
 int32_t xo_str_eq(const char *a, int64_t an, const char *b, int64_t bn) {
 	return an == bn && (a == b || memcmp(a, b, (size_t)an) == 0);
@@ -531,62 +458,6 @@ int64_t xo_str_cmp(const char *a, int64_t an, const char *b, int64_t bn) {
 		return c < 0 ? -1 : 1;
 	}
 	return an < bn ? -1 : (an > bn ? 1 : 0);
-}
-
-// ---------------------------------------------------------------------------
-// Lists
-
-typedef struct {
-	int64_t len, cap, shared;
-} xo_list;
-
-xo_list xo_list_empty = {0, 0, 1};
-
-typedef void (*xo_retain_fn)(void *);
-
-static inline char *list_data(xo_list *l) { return (char *)(l + 1); }
-
-// list_copy returns an unshared copy of l with room for cap elements.
-// When l is shared its elements are now held by two buffers, so each is
-// retained (its own lists marked shared).
-__attribute__((noinline)) static xo_list *list_copy(xo_list *l, int64_t esize, int64_t cap, xo_retain_fn retain) {
-	if (cap < 4) {
-		cap = 4;
-	}
-	xo_list *n = xo_alloc((int64_t)sizeof(xo_list) + cap * esize);
-	n->len = l->len;
-	n->cap = cap;
-	n->shared = 0;
-	memcpy(list_data(n), list_data(l), (size_t)(l->len * esize));
-	if (l->shared && retain) {
-		for (int64_t i = 0; i < l->len; i++) {
-			retain(list_data(n) + i * esize);
-		}
-	}
-	return n;
-}
-
-xo_list *xo_list_new(int64_t n, int64_t esize) {
-	int64_t cap = n < 4 ? 4 : n;
-	xo_list *l = xo_alloc((int64_t)sizeof(xo_list) + cap * esize);
-	l->len = n;
-	l->cap = cap;
-	l->shared = 0;
-	return l;
-}
-
-// xo_list_unshare returns an unshared copy of a shared list. Generated
-// code calls it on the slow path of a write: `if (l->shared) l =
-// xo_list_unshare(l, ...)`, then stores the result back in the binding.
-__attribute__((noinline)) xo_list *xo_list_unshare(xo_list *l, int64_t esize, xo_retain_fn retain) {
-	return list_copy(l, esize, l->len, retain);
-}
-
-// xo_list_grow returns an unshared list with room for one more element
-// (the slow path of push: the list is shared or full).
-__attribute__((noinline)) xo_list *xo_list_grow(xo_list *l, int64_t esize, xo_retain_fn retain) {
-	int64_t cap = l->len == l->cap ? l->cap * 2 : l->cap;
-	return list_copy(l, esize, cap, retain);
 }
 
 // ---------------------------------------------------------------------------

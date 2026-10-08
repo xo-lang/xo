@@ -1,1 +1,1 @@
-main.xo:3:5: the LLVM backend does not support list patterns
+main.xo:3:5: the SSA builder does not support list patterns

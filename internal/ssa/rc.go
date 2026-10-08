@@ -619,8 +619,7 @@ func (c *rcFunc) walk(b *Block) {
 		}
 		held := sortedLeaves(live)
 		for i, e := range term.Succs {
-			var code func(at *Block) []*Value
-			code = func(at *Block) []*Value {
+			code := func(at *Block) []*Value {
 				var out []*Value
 				for _, l := range held {
 					switch n := needs[i].n[l][0]; {

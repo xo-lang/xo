@@ -61,12 +61,10 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Race || opts.Arenas || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race, --arenas, or --holes")
 	}
-	astPath := opts.LLVMAST || os.Getenv("XO_LLVM_AST") == "1"
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), NoRanges: opts.NoRanges, NoSSA: astPath})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs)})
 	if err != nil {
 		return nil, err
 	}
-	out.LLVMPath, out.LLVMFallback = prog.Path, prog.Fallback
 	clang, err := Clang()
 	if err != nil {
 		return nil, err
@@ -75,11 +73,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	if astPath {
-		dir = filepath.Join(dir, "llvm-ast")
-	} else {
-		dir = filepath.Join(dir, "llvm")
-	}
+	dir = filepath.Join(dir, "llvm")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}

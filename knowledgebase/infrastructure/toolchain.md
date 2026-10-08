@@ -65,7 +65,6 @@ go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of t
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
-XO_LLVM_AST=1 go run ./cmd/xo build --backend=llvm .  # force the LLVM backend's AST path (never frees), for comparisons
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -512,7 +511,7 @@ internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")
 internal/build/         check, generate, write the build directory, `go build` per target;
                         llvm.go: the LLVM backend build (IR + std/llrt runtime -> clang)
-internal/llvm/          P3 prototype: LLVM IR for a core subset (see "LLVM backend (P3 prototype)")
+internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backend (P3 prototype)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
@@ -603,7 +602,8 @@ Parser tests live in `internal/parser`:
 `GOOS`/`GOARCH` per target and `CGO_ENABLED=0` -> static binaries. All stages
 are implemented. Last verified: 2026-10-07.
 
-With `--backend=llvm` (2026-10-08): checker -> LLVM IR (internal/llvm) ->
+With `--backend=llvm` (2026-10-08): checker -> SSA with reference
+counting (internal/ssa) -> LLVM IR (internal/llvm) ->
 `<build dir>/llvm/prog.ll` plus `xo_rt.c` -> `clang -O2 -flto` -> one host
 binary. The build directory keeps `prog.ll` for inspection.
 
@@ -765,9 +765,11 @@ Last verified: 2026-10-08. Rules and choices; details in
 
 ## SSA IR
 
-Last verified: 2026-10-08. Decision 0045. `ssa.Build(res)` lowers the
-functions reachable from `main` (non generic, non failing, no closures)
-to SSA with block parameters; `Module.Verify()` checks structure,
+Last verified: 2026-10-08. Decisions 0045, 0046, 0048. `ssa.Build(res)`
+lowers the functions reachable from `main` to SSA with block parameters
+(generic functions monomorphized per type arguments, closures as
+`Indirect` functions with a counted environment, recursive fields as
+`Box[T]`, failing functions returning their Result); `Module.Verify()` checks structure,
 dominance, and types; `Module.String()` prints it. `ssa.BuildOpts` takes
 a `LineRoot` for fault positions. `Module.InsertRC()` (decision 0046,
 `rc.go`) adds reference counting: borrow inference (`Func.Borrowed`,
@@ -785,94 +787,63 @@ release and requires a rejection). Rewrite goldens with
 ## LLVM backend (P3 prototype)
 
 Last verified: 2026-10-08. Experiment for decision 0040 ("own backend");
-results and design: `bench/results/llvm-prototype-2026-10-08.md` (AST
-path) and `bench/results/llvm-rc-2026-10-08.md` (SSA path with
-reference counting).
-
-- Two lowering paths. `llvm.Generate` first builds SSA
-  (`ssa.BuildOpts`), runs `InsertRC`, verifies, and lowers with
-  `GenerateSSA` (`internal/llvm/fromssa.go`; decision 0046): values are
-  LLVM values, block parameters phis, `retain`/`release` call generated
-  `xo.dup.<T>`/`xo.drop.<T>` helpers, `reuse` is a count check with a cold
-  copy (`xo_rl_copy`), list updates write in place. When any step fails
-  (a construct outside the SSA subset), the whole program uses the AST
-  path described below, which never frees. `Program.Path` ("ssa" or
-  "ast"), `Program.Fallback`, `build.Result.LLVMPath` and `LLVMFallback`;
-  `xo build` prints a note on stderr for the AST path.
-  `build.Options.LLVMAST` or `XO_LLVM_AST=1` forces the AST path (its own
-  build directory, `<build dir>/llvm-ast`).
-- SSA path layout: Str `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap,
-  bytes}` (literals are globals with count 2^60), List a pointer to
-  `{i64 rc, i64 len, i64 cap}` plus elements, structs and tuples LLVM
-  structs, enums `{i64 tag, [N x i64]}`. Recursive types are not
-  supported on this path yet (no boxes).
+results and design: `bench/results/llvm-prototype-2026-10-08.md` (the
+first, AST based prototype, since deleted) and
+`bench/results/llvm-rc-2026-10-08.md` (SSA with reference counting).
 
 - `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
   programs only (not `xo test`), no `--race`, `--arenas`, `--holes`,
   `--targets` other than the host. `build.Options.Backend`.
-- internal/llvm emits textual IR from the checker's typed AST (the same
-  `check.Info` accessors internal/gen uses: `TypeOf`, `NaturalType`,
-  `VarOf`, `Ref`, `Ctor`, `CallOf`, `PatVariant`, `PatType`,
-  `ParamVars`, `RecvVar`, `ClosureParams`, `FromVariant`). Functions are
-  emitted on demand from `main` (worklist), generic functions once per
-  concrete type arguments. Anything outside the subset is an error naming
-  the construct and its position ("the LLVM backend does not support
-  ..."); only reachable functions are checked.
-- Subset: Int, Bool, Float, Str (literals, interpolation of Int, Float,
-  Bool, Str; `+`, comparisons, `len`, `is_empty`), `os.stdio.print`,
-  `println`, `eprint`, `eprintln`, structs (defaults, `with`, methods,
-  `var` receivers), enums with payloads, Option, Result, tuples, `match`,
-  `if let`, `is` (patterns: `_`, bindings, literals, ranges, `|`, tuples,
-  variants positional, named, and `..`, structs; not list patterns),
-  `if`, `while`, labeled `break`/`continue`, `for` over `a..b`, `a..=b`,
-  a List, and `xs.indexed()`, functions, recursion, generic functions and
-  types, closures (capture by value), function values, `List[T]` (literal,
-  `push`, `pop`, `get`, `set`, `first`, `last`, `len`, `is_empty`, index,
-  index assignment, `==`), `?` on Result (with `from` conversion) and
-  Option, `??`, `fault`, `or_fault` on Option, `const`, `Int.abs`,
-  `min`/`max`, Float `sqrt floor ceil trunc round abs is_nan`,
-  `Float(i)`, `Int(f)`.
-- Lowering: Int i64, Bool i1, Float double, Str `{ptr, i64}`, `()` and
-  capabilities `{}`, structs named LLVM structs, tuples literal structs,
-  enums `{i64 tag, [N x i64]}` with the payload read and written through
-  memory as the variant's struct, List a pointer to `{len, cap, shared}`
-  plus elements, function values `{code, env}`. Recursive fields are boxed
-  (pointer to an immutable heap copy, copied on write). Every binding is
-  an alloca. A failing function returns its Result enum. Checked Int
-  operations use `llvm.s*.with.overflow` and cold fault calls; operations
-  `gen.SafeIntOps` (the range analysis of internal/gen, exported) proves
-  safe are plain `add nsw` and so on.
-- Lists keep value semantics with a sticky shared flag instead of
-  reference counts: copying a list out of a binding, field, element, or
-  pattern ("own") sets the flag on the buffers it holds (generated
-  `retain:<type>` helpers walk structs and enums); a write through a
-  binding whose buffer is shared copies it first (`xo_list_unshare`,
-  `xo_list_grow`). Arguments to non `var` parameters are borrowed (not
-  marked), except in calls that also have a `var` parameter
-  (`gotchas/llvm-borrow-and-var-alias.md`). Write fast paths are inline
-  IR with TBAA tags and a per block uniqueness cache
-  (`gotchas/llvm-list-write-cost.md`).
+- One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
+  root), verifies, runs `InsertRC`, verifies again (RC balance per
+  path), and lowers with `GenerateSSA` (`internal/llvm/fromssa.go`;
+  decisions 0046 and 0048): SSA values are LLVM values, block parameters
+  phis, `retain`/`release` call generated `xo.dup.<T>`/`xo.drop.<T>`
+  helpers, `reuse` is a count check with a cold copy (`xo_rl_copy`), list
+  updates write in place, `==` on aggregates calls generated `xo.eq.<T>`
+  helpers. A construct outside the SSA builder's subset is a build error
+  naming it and its position ("the SSA builder does not support ...").
+  The AST path (bump allocator, never freed) was deleted on 2026-10-08.
+- Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
+  `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
+  globals with count 2^60), List a pointer to `{i64 rc, i64 len, i64
+  cap}` plus elements, structs and tuples LLVM structs, enums `{i64 tag,
+  [N x i64]}` (payloads through a stack slot), function values `{ptr
+  code, ptr env}` with env null or `{i64 rc, ptr drop, captures...}`,
+  `Box[T]` a pointer to `{i64 rc, T}`. A failing function returns its
+  Result enum. Checked Int operations use `llvm.s*.with.overflow` and cold
+  fault calls; loop counters are unchecked (the range analysis of
+  internal/gen is not used by this backend).
+- Subset: what `ssa.Build` lowers (its doc comment lists it): Int, Bool,
+  Float, Str, printing, structs, enums, Option, Result, tuples, `match`,
+  `if let`, `is`, the usual patterns (not list patterns), loops, `for`
+  over ranges, lists, and `xs.indexed()`, functions, methods, `var`
+  parameters, recursion, generics, closures, function values, recursive
+  types, failing functions with `?` and `from` conversion, `??`,
+  `or_fault`, `fault`, `const`, `==` on every type, the List methods
+  push, pop, set, get, first, last, len, is_empty, and the Int, Float,
+  and Str methods the bench programs use.
 - Runtime `std/llrt/xo_rt.c`: size class allocator (16 byte classes to
   1 KiB, powers of two to 256 KiB, malloc above; free lists; 4 MiB
   chunks) with a live allocation counter (`XO_LEAKCHECK=1` prints it at
   exit); reference counted strings (`xo_rs_*`, append in place when
-  unique) and lists (`xo_rl_*`) for the SSA path; the AST path allocates
-  from the same allocator and never frees; buffered stdout; fault messages identical to std/rt's and exit
-  status 70; Go style float formatting (shortest round trip `'g'`, `.0`
-  appended); string builder for interpolation; list copy helpers; `main`
-  runs the program on a thread with a 1 GiB stack. The C interface passes
-  only scalars and pointers.
+  unique) and lists (`xo_rl_*`); `xo_rc_defer`, a worklist that frees
+  closure environments and boxes whose count reached zero without
+  recursing on long chains; buffered stdout; fault messages identical to
+  std/rt's and exit status 70; Go style float formatting (shortest round
+  trip `'g'`, `.0` appended); `main` runs the program on a thread with a
+  1 GiB stack. The C interface passes only scalars and pointers.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
   Fault output has no Go frame lines and no crash bundle; the golden test
   compares fault messages after dropping those lines.
 - Tests: `internal/llvm/llvm_test.go`. TestGolden builds each program in
-  `testdata/golden/` with the Go backend, the LLVM backend's default path,
-  and its AST path (with and without the range analysis) and requires
-  equal exit status, stdout, and fault messages, also matching
-  `want.txt`; programs listed in `ssaGolden` must take the SSA path, and
-  SSA path programs that exit normally must free every allocation
-  (`XO_LEAKCHECK=1`). TestLeakCheck does the same for the bench programs. TestUnsupported checks the
-  error for constructs outside the subset (`testdata/unsupported/`).
+  `testdata/golden/` with the Go backend and the LLVM backend and
+  requires equal exit status, stdout, and fault messages, also matching
+  `want.txt`; programs that exit normally must free every allocation
+  (`XO_LEAKCHECK=1`). The `rc_*` programs are copies of SSA goldens
+  (`internal/ssa/testdata/golden`) that stress ownership. TestLeakCheck
+  does the same for the bench programs. TestUnsupported checks the error
+  for constructs outside the subset (`testdata/unsupported/`).
   `cmd/xo/llvm_test.go` drives the CLI.
 
 ## Go interop (prototype)
@@ -1074,13 +1045,11 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
-  structs, `defer`, contracts, tasks, std modules, `use go`, `xo test`);
-  memory is reclaimed (reference counting) only for programs in the SSA
-  subset (no generics, closures, failing functions, `==` on aggregates,
-  recursive types, `List.first`/`last`/`indexed`); others take the AST
-  path, which never frees (a list buffer once copied stays shared, so the
-  first write after every copy clones it). Counts are not atomic. No
-  error traces, crash bundles, or debug info; host only. What a full backend
+  structs, `defer`, contracts, tasks, std modules, `use go`, `xo test`,
+  `var` parameters of function values, methods as values). Memory is
+  reference counted; counts are not atomic. `==` on deeply nested
+  recursive values recurses on the C stack. No error traces, crash
+  bundles, or debug info; host only. What a full backend
   needs is listed in `bench/results/llvm-prototype-2026-10-08.md`.
 
 - Deterministic scheduling (2026-10-08): a loop with no scheduling point

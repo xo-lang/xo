@@ -1,1 +1,1 @@
-main.xo:2:3: the LLVM backend does not support `defer`
+main.xo:2:3: the SSA builder does not support `defer`

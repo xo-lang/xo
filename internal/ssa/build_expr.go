@@ -138,8 +138,33 @@ func (s *fn) expr(e ast.Expr) *Value {
 		s.while("", nil, x.Body)
 		return s.unit()
 	}
-	b.unsupported(e, "this expression")
+	b.unsupported(e, unsupportedExpr(e))
 	return s.undef(s.natOf(e))
+}
+
+// unsupportedExpr names an expression the builder does not lower.
+func unsupportedExpr(e ast.Expr) string {
+	switch e.(type) {
+	case *ast.MapLit:
+		return "Map"
+	case *ast.SetLit:
+		return "Set"
+	case *ast.ScopeExpr:
+		return "`scope` and tasks"
+	case *ast.SelectExpr:
+		return "`select`"
+	case *ast.DurationLit:
+		return "Duration"
+	case *ast.RuneLit:
+		return "Rune"
+	case *ast.BytesLit:
+		return "Bytes"
+	case *ast.HoleExpr:
+		return "holes (`???`)"
+	case *ast.RangeExpr:
+		return "a range outside `for`"
+	}
+	return "this expression"
 }
 
 func (s *fn) ident(x *ast.Ident) *Value {
@@ -575,6 +600,8 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 		s.jump(fail)
 		s.seal(ok)
 		s.cur = ok
+	case *ast.ListPat:
+		b.unsupported(p, "list patterns")
 	default:
 		b.unsupported(p, "this pattern")
 	}

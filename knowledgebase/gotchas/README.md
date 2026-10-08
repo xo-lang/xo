@@ -92,6 +92,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
 - [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.
 - [ssa-braun-incomplete-phi.md](ssa-braun-incomplete-phi.md): sealing a block must use the recorded incomplete parameter, not `defs[var][block]`, which a later write replaces.
+- [ssa-generic-func-value-targs.md](ssa-generic-func-value-targs.md): the checker records no type arguments for a generic function used as a value; the SSA builder matches its signature against the value's function type.
 - [ssa-heap-visited-set.md](ssa-heap-visited-set.md): `Type.Heap`'s recursion guard was a visited set, so two `Int` fields made a struct "heap"; use a path set.
 - [rc-verifier-loop-param-leak.md](rc-verifier-loop-param-leak.md): an RC verifier that sets block parameter counts on entry hides a leak of the previous iteration's value; check they are zero first.
 - [rc-verifier-stop-block-merge.md](rc-verifier-stop-block-merge.md): predecessors of an `unreachable` or fault block need not agree on what they hold (nothing is released there); the RC verifier merges them.

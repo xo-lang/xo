@@ -1,1 +1,1 @@
-main.xo:7:28: the LLVM backend does not support interpolating a value of type `P`
+main.xo:7:28: the SSA builder does not support interpolating a value of type `P`

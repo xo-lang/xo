@@ -55,5 +55,6 @@ fn main(os: Os) {
   let p = pair("x", repeat([1, 2], 3))
   let lens = map_all(["ab", "c", ""], fn(w: Str) -> Int { w.len() })
   let words = twice(["p", "q"])
-  os.stdio.println("${top} ${s.size()} ${n.size()} ${p.0.len()} ${p.1} ${lens[0]} ${lens.len()} ${words.len()} ${words[3]} ${ident("id")}")
+  let f: fn(Str) -> Str = ident
+  os.stdio.println("${top} ${s.size()} ${n.size()} ${p.0.len()} ${p.1} ${lens[0]} ${lens.len()} ${words.len()} ${words[3]} ${f("id")}")
 }

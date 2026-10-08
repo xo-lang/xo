@@ -11,7 +11,7 @@ import (
 )
 
 // TestBuildRunLLVM drives `xo build --backend=llvm` and `xo run
-// --backend=llvm` (the P3 prototype, internal/llvm).
+// --backend=llvm` (internal/llvm).
 func TestBuildRunLLVM(t *testing.T) {
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
@@ -45,7 +45,7 @@ func TestBuildRunLLVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	errOut.Reset()
-	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:11: the LLVM backend does not support Map") {
+	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:11: the SSA builder does not support Map") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 }

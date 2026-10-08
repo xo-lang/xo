@@ -3,7 +3,9 @@
 Status: Accepted (2026-10-08). Implemented in `internal/ssa`. Update
 2026-10-08: the LLVM backend lowers from it, with reference counting
 inserted by `InsertRC` (decision 0046); programs outside the SSA subset
-fall back to the AST path.
+fall back to the AST path. Update 2026-10-08: the builder covers
+generics, closures, failing functions, and recursive types (decision
+0048); the LLVM backend's AST path is deleted.
 
 ## Context
 Decision 0040 lists three native paths: the LLVM backend (prototype in
@@ -56,10 +58,12 @@ from:
 - The LLVM backend keeps its AST walker for now (switching is a rewrite
   of about 4,000 lines). Next: an `internal/llvm` lowering from SSA for
   the subset, compared on the same goldens, then delete the AST path.
+  (Done 2026-10-08.)
 - The builder covers the subset the bench programs need (all six
   `bench/perf/llvm/xo` programs lower and verify, with goldens), not yet
   generics, closures, failing functions and `?`, `is`, list patterns,
-  `xs.indexed()`, `first`, `last`, `or_fault`.
+  `xs.indexed()`, `first`, `last`, `or_fault`. (All of these but list
+  patterns are lowered since 2026-10-08, decision 0048.)
 - Match is lowered as a chain of tag tests; a later pass can form a
   switch terminator.
 - Dead unit values (`tuple` of `()`) are left in place; a DCE pass is

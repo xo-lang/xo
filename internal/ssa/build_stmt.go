@@ -88,6 +88,8 @@ func (s *fn) stmt(st ast.Stmt) {
 		s.while(label, x.Cond, x.Body)
 	case *ast.ForStmt:
 		s.forStmt(x)
+	case *ast.DeferStmt:
+		b.unsupported(st, "`defer`")
 	default:
 		b.unsupported(st, "this statement")
 	}

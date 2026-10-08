@@ -28,8 +28,7 @@ import (
 //   - `reuse` checks the count and copies when it is not 1; list updates
 //     then write in place.
 
-// errSSA is a construct the SSA lowering does not handle (the AST path
-// is used instead).
+// errSSA is a construct the SSA lowering does not handle.
 type errSSA struct{ msg string }
 
 func (e *errSSA) Error() string { return e.msg }
@@ -159,7 +158,7 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 	out.WriteString("\n")
 	out.WriteString(g.helpers.String())
 	out.WriteString(g.funcs.String())
-	return &Program{IR: []byte(out.String()), Funcs: len(m.Funcs), Path: "ssa"}, nil
+	return &Program{IR: []byte(out.String()), Funcs: len(m.Funcs)}, nil
 }
 
 func fail(format string, args ...any) { panic(&errSSA{fmt.Sprintf(format, args...)}) }

@@ -153,10 +153,6 @@ func (b *builder) unsupported(n ast.Node, what string) {
 // ---------------------------------------------------------------------------
 // Types
 
-func (b *builder) prelude(t *check.Named, name string) bool {
-	return t.Obj.Module != nil && t.Obj.Module.IsPrelude && t.Obj.Name == name
-}
-
 // typ lowers a checker type.
 func (b *builder) typ(t check.Type, at ast.Node) *Type {
 	m := b.mod
@@ -245,6 +241,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			return x
 		case check.KAlias:
 			return b.typ(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), at)
+		case check.KInterface:
+			b.unsupported(at, "interface types (`"+obj.Name+"`)")
+			return m.Builtin(KUnit)
 		}
 	}
 	b.unsupported(at, "the type `"+t.String()+"`")
