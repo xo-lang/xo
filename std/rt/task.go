@@ -48,7 +48,12 @@ func newNode(parent *cnode, w *World) *cnode { return newNodeOf(parent, w, nodeP
 
 // newNodeOf is newNode with the node's kind and task for `xo dump`.
 func newNodeOf(parent *cnode, w *World, kind uint8, tk *Task) *cnode {
-	n := &cnode{parent: parent, w: w, seq: nodeSeq.Add(1), kind: kind, tk: tk}
+	return initNode(new(cnode), parent, w, kind, tk)
+}
+
+// initNode is newNodeOf in memory the caller allocated (a zero node).
+func initNode(n *cnode, parent *cnode, w *World, kind uint8, tk *Task) *cnode {
+	n.parent, n.w, n.seq, n.kind, n.tk = parent, w, nodeSeq.Add(1), kind, tk
 	return n.link()
 }
 

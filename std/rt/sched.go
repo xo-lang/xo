@@ -96,8 +96,11 @@ func newRootThread(kind string) *thread {
 }
 
 // newChild returns a thread of the same run.
-func (p *thread) newChild(kind string) *thread {
-	th := &thread{id: p.ids.Add(1), kind: kind, ids: p.ids, sch: p.sch, mon: p.mon, req: p.req}
+func (p *thread) newChild(kind string) *thread { return p.initChild(new(thread), kind) }
+
+// initChild is newChild in memory the caller allocated (a zero thread).
+func (p *thread) initChild(th *thread, kind string) *thread {
+	th.id, th.kind, th.ids, th.sch, th.mon, th.req = p.ids.Add(1), kind, p.ids, p.sch, p.mon, p.req
 	if th.sch != nil {
 		th.turn = make(chan struct{}, 1)
 	}

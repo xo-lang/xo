@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 // std/http (std.md 4).
@@ -88,13 +89,40 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
+// appendPathParts is splitPath appending to dst: dispatch splits the
+// path once into a stack array for all routes.
+func appendPathParts(dst []string, p string) []string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return dst
+	}
+	for {
+		i := strings.IndexByte(p, '/')
+		if i < 0 {
+			return append(dst, p)
+		}
+		dst = append(dst, p[:i])
+		p = p[i+1:]
+	}
+}
+
 // match matches a path against a route: the parameters, whether an Int
 // segment failed to parse (its name), and whether it matched at all. The
 // parameter table is arena memory when a is not nil.
 func (r *route) match(a *Arena, path string) (Map[string, string], string, bool) {
-	parts := splitPath(path)
+	var buf [16]string
+	return r.matchParts(a, appendPathParts(buf[:0], path), true)
+}
+
+// matchParts is match on the split path. Without bind it only decides
+// whether the route matches and builds no parameter table: dispatch binds
+// the one route it picks.
+func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, string], string, bool) {
 	var params Map[string, string]
 	put := func(k, v string) {
+		if !bind {
+			return
+		}
 		if params.t == nil {
 			params = a.strMap()
 		}
@@ -250,20 +278,22 @@ func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
 // dispatch finds the route and runs it isolated.
 func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	var best *route
-	var bestParams Map[string, string]
 	bestBad := ""
 	methodMismatch := false
+	var buf [16]string
+	parts := appendPathParts(buf[:0], req.F_path)
+	method := strings.ToUpper(req.F_method)
 	for _, rt := range r.routes.s {
-		params, bad, ok := rt.match(tk.arena, req.F_path)
+		_, bad, ok := rt.matchParts(nil, parts, false)
 		if !ok {
 			continue
 		}
-		if rt.method != "" && rt.method != strings.ToUpper(req.F_method) {
+		if rt.method != "" && rt.method != method {
 			methodMismatch = true
 			continue
 		}
 		if best == nil || rt.literals() > best.literals() {
-			best, bestParams, bestBad = rt, params, bad
+			best, bestBad = rt, bad
 		}
 	}
 	if best == nil {
@@ -275,7 +305,7 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	if bestBad != "" {
 		return jsonError(tk, 400, "path segment `"+bestBad+"` must be an Int")
 	}
-	req.XParams = bestParams
+	req.XParams, _, _ = best.matchParts(tk.arena, parts, true)
 	if tk.arena != nil && !best.arena {
 		// the handler may keep the request: no arena memory for it
 		req = req.heapCopy()
@@ -429,6 +459,13 @@ func parseURLArena(a *Arena, raw string) Http_Url {
 	if err != nil {
 		return Http_Url{F_path: raw}
 	}
+	return urlOf(a, pu)
+}
+
+// urlOf is the Http_Url of a parsed URL, with the query table in arena a
+// (when not nil). The server passes the request's own URL: printing it
+// and parsing the text again cost two allocations per request.
+func urlOf(a *Arena, pu *url.URL) Http_Url {
 	u := Http_Url{F_scheme: pu.Scheme, F_host: pu.Hostname(), F_path: pu.Path}
 	if u.F_path == "" {
 		u.F_path = "/"
@@ -617,6 +654,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	defer extraRoots.Delete(reqRoot)
 	sch := tk.th.sch
 	recording := sch != nil && sch.rec != nil
+	sc := &serveCtx{s: s, tk: tk, reqRoot: reqRoot, sch: sch}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		var a *Arena
 		if useArena {
@@ -626,14 +664,13 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if a != nil {
 			body = a.readBody(hr.Body)
 		} else {
-			data, _ := io.ReadAll(hr.Body)
-			body = Bytes(data)
+			body = readBody(hr)
 		}
 		h := a.strMap()
 		for k, vs := range hr.Header {
 			h.M_put(nil, k, strings.Join(vs, ", "))
 		}
-		u := parseURLArena(a, hr.URL.String())
+		u := urlOf(a, hr.URL)
 		u.F_host = hr.Host
 		if hostOnly, _, err := net.SplitHostPort(hr.Host); err == nil {
 			u.F_host = hostOnly
@@ -645,36 +682,14 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
 		var reqTask *Task
 		var k int64
-		start := func() {
-			reqTask = &Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.newChild("request")}
-			reqTask.th.req = k
-			reqTask.node = newNodeOf(reqRoot, tk.w, nodeRequest, reqTask)
-			if reqTask.th.mon != nil {
-				reqTask.th.mon.started()
-			}
-			if sch != nil {
-				sch.start(reqTask.th)
-			}
-		}
 		switch {
 		case recording:
-			started := make(chan struct{})
-			sch.post(schedEv{
-				tok: func() string {
-					k = rec.newReq(s.l.id, req)
-					return "r" + strconv.FormatInt(k, 10)
-				},
-				run: func() {
-					start()
-					close(started)
-				},
-			})
-			<-started
+			reqTask, k = sc.startRecorded(a, req)
 		case fxMode == fxRing:
 			k = rec.newReq(s.l.id, req)
-			start()
+			reqTask = sc.start(a, k)
 		default:
-			start()
+			reqTask = sc.start(a, 0)
 		}
 		th := reqTask.th
 		defer reqTask.node.detach()
@@ -779,6 +794,83 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		ended(false)
 		return Ok[Unit, Http_HttpErr](Unit{})
 	}
+}
+
+// serveCtx is what the request handler of serve needs from it, so the
+// handler's locals are not captured by closures (each captured local was
+// an allocation per request).
+type serveCtx struct {
+	s       Http_Server
+	tk      *Task
+	reqRoot *cnode
+	sch     *sched
+}
+
+// reqBlock is a request's task, thread, and cancellation node in one
+// allocation: they live exactly as long as the request.
+type reqBlock struct {
+	tk Task
+	th thread
+	n  cnode
+}
+
+// start makes and starts the task of request k (0 when not recorded).
+func (sc *serveCtx) start(a *Arena, k int64) *Task {
+	tk := sc.tk
+	b := new(reqBlock)
+	t := &b.tk
+	*t = Task{w: tk.w, arena: a, stop: tk.stop, th: tk.th.initChild(&b.th, "request")}
+	t.th.req = k
+	t.node = initNode(&b.n, sc.reqRoot, tk.w, nodeRequest, t)
+	if t.th.mon != nil {
+		t.th.mon.started()
+	}
+	if sc.sch != nil {
+		sc.sch.start(t.th)
+	}
+	return t
+}
+
+// startRecorded is start under a recording (core 11.3): the request
+// reaches its handler through an event of the scheduler, which logs it.
+func (sc *serveCtx) startRecorded(a *Arena, req Http_Request) (*Task, int64) {
+	var t *Task
+	var k int64
+	started := make(chan struct{})
+	sc.sch.post(schedEv{
+		tok: func() string {
+			k = rec.newReq(sc.s.l.id, req)
+			return "r" + strconv.FormatInt(k, 10)
+		},
+		run: func() {
+			t = sc.start(a, k)
+			close(started)
+		},
+	})
+	<-started
+	return t, k
+}
+
+// readBody reads a request body (not into an arena): nothing when the
+// request declares an empty body, one exact allocation when it declares
+// its length, and the bytes become the Bytes value without a copy.
+func readBody(hr *http.Request) Bytes {
+	if hr.ContentLength == 0 || hr.Body == nil || hr.Body == http.NoBody {
+		return ""
+	}
+	var data []byte
+	if n := hr.ContentLength; n > 0 && n <= 1<<20 {
+		data = make([]byte, n)
+		m, _ := io.ReadFull(hr.Body, data)
+		data = data[:m]
+	} else {
+		data, _ = io.ReadAll(hr.Body)
+	}
+	if len(data) == 0 {
+		return ""
+	}
+	// nothing else holds data
+	return Bytes(unsafe.String(&data[0], len(data)))
 }
 
 // ---------------------------------------------------------------------------
