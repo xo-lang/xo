@@ -48,6 +48,7 @@ func (g *gen) function(f *ssa.Func) {
 	s.isel()
 	s.dce()
 	s.threadConst()
+	s.threadCset()
 	s.thread()
 	s.dce()
 	s.regalloc()
@@ -1019,6 +1020,13 @@ func (s *fstate) elemBase1(l, i vreg, es int64) vreg {
 			k++
 		}
 		return s.def1(false, fmt.Sprintf("add $d0, $u0, $u1, lsl #%d", k), l, i)
+	}
+	for sh, k := range map[int]int64{1: 3, 2: 5, 3: 9} {
+		if es == 8*k {
+			// i*(2^sh + 1), then *8 in the address add
+			t := s.def1(false, fmt.Sprintf("add $d0, $u0, $u0, lsl #%d", sh), i)
+			return s.def1(false, "add $d0, $u0, $u1, lsl #3", l, t)
+		}
 	}
 	n := s.cimm(es)
 	return s.def1(false, "madd $d0, $u0, $u1, $u2", i, n, l)

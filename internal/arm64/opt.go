@@ -3,6 +3,7 @@ package arm64
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/ssa"
 )
@@ -401,5 +402,50 @@ func (s *fstate) threadConst() {
 		} else {
 			t.targets[0] = br.targets[1]
 		}
+	}
+}
+
+// threadCset turns `t = cmp ...; cset; r = t; jump J` where J only
+// branches on r into a branch on the comparison itself (an inlined
+// predicate returns its Bool through the continuation's parameter).
+func (s *fstate) threadCset() {
+	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	for _, p := range blocks {
+		t := p.term()
+		if t == nil || t.kind != iJump || len(p.insts) < 3 {
+			continue
+		}
+		j := t.targets[0]
+		if len(j.insts) != 1 || j.insts[0].kind != iCondBr || j.insts[0].cond != "cbnz" || j == p {
+			continue
+		}
+		r := j.insts[0].uses[0]
+		mv := p.insts[len(p.insts)-2]
+		if mv.kind != iPmove {
+			continue
+		}
+		var src vreg
+		for i, d := range mv.defs {
+			if d == r && mv.srcs[i].kind == sReg {
+				src = mv.srcs[i].v
+			}
+		}
+		if src == 0 {
+			continue
+		}
+		def := p.insts[len(p.insts)-3]
+		if def.kind != iPlain || len(def.defs) != 1 || def.defs[0] != src || def.fault != nil {
+			continue
+		}
+		i := strings.LastIndex(def.text, "\ncset $d0, ")
+		if i < 0 {
+			continue
+		}
+		cond := def.text[i+len("\ncset $d0, "):]
+		if _, ok := invCond[cond]; !ok {
+			continue
+		}
+		p.insts[len(p.insts)-1] = &inst{kind: iCondBr, text: def.text[:i], uses: append([]vreg(nil), def.uses...),
+			cond: cond, targets: append([]*mblock(nil), j.insts[0].targets...)}
 	}
 }
