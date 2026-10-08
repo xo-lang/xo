@@ -286,7 +286,7 @@ func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del
 		m.es = m.es[:i+1]
 		m.es[i] = e
 	} else {
-		a := make([]mentry[K, V], max(8, 2*cap(m.es)))
+		a := make([]mentry[K, V], max(4, 2*cap(m.es)))
 		copy(a, m.es)
 		a[i] = e
 		t.setArr(a)
@@ -475,6 +475,19 @@ func (m *Map[K, V]) each(f func(e *mentry[K, V], v V) bool) {
 	}
 }
 
+// mapCap returns an empty map whose log has room for n entries, for a map
+// built with a known number of keys: the default first array holds 4
+// entries, and the request and response tables of a server hold 1 to 3.
+func mapCap[K, V any](n int) Map[K, V] {
+	if n <= 0 {
+		return Map[K, V]{}
+	}
+	t := &mtable[K, V]{}
+	a := make([]mentry[K, V], n)
+	t.setArr(a)
+	return Map[K, V]{t: t, es: a[:0]}
+}
+
 // MapOf builds a map from alternating keys and values in a literal.
 func MapOf[K, V any](entries ...Tuple2[K, V]) Map[K, V] {
 	var m Map[K, V]
@@ -582,37 +595,27 @@ func (m Map[K, V]) Len() int { return m.n }
 // it for a loop over `m.values()` (an inlined any, all, find, fold, map,
 // or filter) instead of building the list (internal/gen/mono.go). Each
 // value is marked as M_values marks the list's elements: it stays in the
-// map too. Only types that hold lists take the marking path: taking the
-// address of the value for MarkP moves it to the heap, an allocation per
-// element.
+// map too (Own: only types that hold lists are marked).
+//
+// The function is small enough to inline, so the iterator closure does not
+// escape and a loop over it allocates nothing; the two closure versions
+// it had (with and without marking) were not inlined and cost two
+// allocations per loop.
 func Map_values_seq[K, V any](m Map[K, V]) iter.Seq[V] {
-	if !markable[V]() {
-		return func(yield func(V) bool) {
-			m.each(func(_ *mentry[K, V], v V) bool { return yield(v) })
-		}
-	}
-	return func(yield func(V) bool) {
-		m.each(func(_ *mentry[K, V], v V) bool {
-			MarkP(&v)
-			return yield(v)
-		})
-	}
+	return func(yield func(V) bool) { m.eachValue(yield) }
+}
+
+func (m *Map[K, V]) eachValue(yield func(V) bool) {
+	m.each(func(_ *mentry[K, V], v V) bool { return yield(Own(v)) })
 }
 
 // Map_keys_seq is Map_values_seq for `m.keys()`.
 func Map_keys_seq[K, V any](m Map[K, V]) iter.Seq[K] {
-	if !markable[K]() {
-		return func(yield func(K) bool) {
-			m.each(func(e *mentry[K, V], _ V) bool { return yield(e.k) })
-		}
-	}
-	return func(yield func(K) bool) {
-		m.each(func(e *mentry[K, V], _ V) bool {
-			k := e.k
-			MarkP(&k)
-			return yield(k)
-		})
-	}
+	return func(yield func(K) bool) { m.eachKey(yield) }
+}
+
+func (m *Map[K, V]) eachKey(yield func(K) bool) {
+	m.each(func(e *mentry[K, V], _ V) bool { return yield(Own(e.k)) })
 }
 
 // M_values is `m.values()`.

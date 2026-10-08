@@ -126,7 +126,7 @@ func TestAllocsMutexRead(t *testing.T) {
 	}
 }
 
-// The held set keeps two mutexes inline and the rest in a map.
+// The held set keeps one mutex inline and the rest in a map.
 func TestHeldSet(t *testing.T) {
 	var h heldSet
 	ms := []any{new(int), new(int), new(int), new(int)}
@@ -229,5 +229,25 @@ func TestAllocsMapAll(t *testing.T) {
 		if n != 0 {
 			t.Errorf("range over Map.All: %v allocations, want 0", n)
 		}
+	}
+	// m.values() in a loop (`m.values().any(f)`), as generated code ranges
+	var users Map[int64, allocRec]
+	for i := range int64(8) {
+		users.M_put(nil, i, allocRec{id: i, name: "u"})
+	}
+	n := testing.AllocsPerRun(100, func() {
+		found := false
+		for u := range Map_values_seq(users) {
+			if u.id == 7 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("not found")
+		}
+	})
+	if n != 0 {
+		t.Errorf("range over Map_values_seq: %v allocations, want 0", n)
 	}
 }

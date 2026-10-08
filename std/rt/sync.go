@@ -268,13 +268,13 @@ func holdSite(tk *Task, m any) heldSite {
 }
 
 // heldSet is the set of mutexes a task holds, with where it took them. A
-// task rarely holds more than two at once, so those live inline (the map
-// it replaced cost two allocations per task that took a mutex); a request
-// task's set is part of its reqBlock. A scope body shares its parent's
-// set (scope.go). Only the task's own thread touches it.
+// task rarely holds more than one at once, so that one lives inline (the
+// map it replaced cost two allocations per task that took a mutex); a
+// request task's set is part of its reqBlock. A scope body shares its
+// parent's set (scope.go). Only the task's own thread touches it.
 type heldSet struct {
-	ms    [2]any
-	sites [2]heldSite
+	ms    [1]any
+	sites [1]heldSite
 	more  map[any]heldSite
 }
 

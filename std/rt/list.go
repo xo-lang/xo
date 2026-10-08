@@ -606,22 +606,24 @@ func List_all[T, E any](tk *Task, l List[T], f func(*Task, T) Result[bool, E]) R
 
 // List_sort_by is `xs.sort_by(key)`: stable.
 func List_sort_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K, E]) Result[List[T], E] {
-	type kv struct {
-		k K
-		v T
-	}
-	tmp := make([]kv, len(l.s))
+	// sort the positions by key, then copy the elements once: a scratch
+	// array of (key, element) pairs copied every element twice
+	keys := make([]K, len(l.s))
 	for i, x := range l.s {
 		r := key(tk, x)
 		if !r.Ok {
 			return ErrTr[List[T]](r.E, r.Tr)
 		}
-		tmp[i] = kv{r.V, x}
+		keys[i] = r.V
 	}
-	slices.SortStableFunc(tmp, func(a, b kv) int { return Cmp(a.k, b.k) })
-	out := make([]T, len(tmp))
-	for i, p := range tmp {
-		out[i] = p.v
+	perm := make([]int32, len(l.s))
+	for i := range perm {
+		perm[i] = int32(i)
+	}
+	slices.SortStableFunc(perm, func(a, b int32) int { return Cmp(keys[a], keys[b]) })
+	out := make([]T, len(perm))
+	for i, j := range perm {
+		out[i] = l.s[j]
 	}
 	markElems(out)
 	return Ok[List[T], E](ListOf(out...))

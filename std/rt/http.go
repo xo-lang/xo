@@ -124,7 +124,11 @@ func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, str
 			return
 		}
 		if params.t == nil {
-			params = a.strMap()
+			if a != nil {
+				params = a.strMap()
+			} else {
+				params = mapCap[string, string](r.params())
+			}
 		}
 		params.M_put(nil, k, v)
 	}
@@ -159,6 +163,17 @@ func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, str
 		return params, "", false
 	}
 	return params, badInt, true
+}
+
+// params counts the parameter segments.
+func (r *route) params() int {
+	n := 0
+	for _, s := range r.segs {
+		if s.param != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // literals counts literal segments, for precedence.
@@ -206,7 +221,7 @@ func errorResponse(tk *Task, e any, tr *Trace) Http_Response {
 }
 
 func jsonError(tk *Task, status int64, msg string) Http_Response {
-	var m Map[string, string]
+	m := mapCap[string, string](1)
 	m.M_put(tk, "error", msg)
 	return Http_json(tk, status, m)
 }
@@ -511,14 +526,14 @@ func Http_parse_url(_ *Task, s string) Result[Http_Url, Http_UrlErr] {
 
 // Http_json is `http.json(status, v)`.
 func Http_json[T any](tk *Task, status int64, v T) Http_Response {
-	var h Map[string, string]
+	h := mapCap[string, string](1)
 	h.M_put(tk, "Content-Type", "application/json")
 	return Http_Response{F_status: status, F_headers: h, F_body: Json_encode(tk, v)}
 }
 
 // Http_text is `http.text(status, s)`.
 func Http_text(tk *Task, status int64, s string) Http_Response {
-	var h Map[string, string]
+	h := mapCap[string, string](1)
 	h.M_put(tk, "Content-Type", "text/plain; charset=utf-8")
 	return Http_Response{F_status: status, F_headers: h, F_body: Bytes(s)}
 }
@@ -666,7 +681,12 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		} else {
 			body = readBody(hr)
 		}
-		h := a.strMap()
+		var h Map[string, string]
+		if a != nil {
+			h = a.strMap()
+		} else {
+			h = mapCap[string, string](len(hr.Header))
+		}
 		for k, vs := range hr.Header {
 			h.M_put(nil, k, strings.Join(vs, ", "))
 		}
@@ -910,7 +930,7 @@ func (c Http_Client) M_get(tk *Task, rawURL string) Result[Http_Response, Http_C
 
 // Http_Client_post_json is `c.post_json(url, v)`.
 func Http_Client_post_json[T any](tk *Task, c Http_Client, rawURL string, v T) Result[Http_Response, Http_ClientErr] {
-	var h Map[string, string]
+	h := mapCap[string, string](1)
 	h.M_put(tk, "Content-Type", "application/json")
 	return c.M_send(tk, Http_new_request(tk, "POST", rawURL, h, Json_encode(tk, v)))
 }
