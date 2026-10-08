@@ -524,7 +524,7 @@ func (f *fnGen) ident(x *ast.Ident) string {
 	}
 	switch o := f.info.Ref(x).(type) {
 	case *check.FuncObj:
-		return f.funcValue(o, f.typeOf(x), nil)
+		return f.funcValue(o, f.nat(x), nil)
 	case *check.ConstObj:
 		return f.constRef(o)
 	}
@@ -562,7 +562,7 @@ func (f *fnGen) selector(x *ast.SelectorExpr) string {
 			if o.Recv != nil && !o.Static && f.info.TypeOf(x.X) != nil {
 				return f.methodValue(x, o)
 			}
-			return f.funcValue(o, f.typeOf(x), nil)
+			return f.funcValue(o, f.nat(x), nil)
 		}
 	}
 	bt := f.typeOf(x.X)

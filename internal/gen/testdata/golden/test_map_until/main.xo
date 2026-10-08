@@ -1,0 +1,31 @@
+// task.map_concurrent_until (std.md 7, decision 0043): items not finished
+// by the deadline give Err(TimedOut); finished results are kept, in input
+// order. Run in test mode, on the virtual clock.
+use std/task
+
+enum FetchErr {
+  NotFound(id: Int)
+} derive Display
+
+fn fetch(clock: Clock, id: Int) -> Str ! FetchErr uses clock {
+  clock.sleep(10ms * id)
+  if id == 3 {
+    return Err(FetchErr.NotFound(id))
+  }
+  "item${id}"
+}
+
+fn show(rs: List[Result[Str, task.Timed[FetchErr]]]) -> Str {
+  rs.map(fn(r) {
+    match r {
+      Ok(v) => v
+      Err(TimedOut) => "timeout"
+      Err(Failed(e)) => "failed(${e})"
+    }
+  }).join(",")
+}
+
+fn main(os: Os) ! {
+  let rs = task.map_concurrent_until(os.clock, 1s, [1, 2], 2, fn(id) { fetch(os.clock, id) })
+  os.stdio.println(show(rs))
+}

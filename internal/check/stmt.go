@@ -694,7 +694,9 @@ func (c *checker) forStmt(x *ast.ForStmt) {
 	})
 }
 
-// iterElem returns the element type of an iterable (List, Set, Map, Range).
+// iterElem returns the element type of an iterable (List, Set, Map, Range,
+// Chan). A `for` over a channel receives until it is closed and drained;
+// each receive is a cancellation point (core 3.5, 7.3).
 func (c *checker) iterElem(t Type, e ast.Expr) Type {
 	r := resolve(t)
 	if isBad(r) {
@@ -702,7 +704,7 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 	}
 	if n, ok := r.(*Named); ok && n.Obj.Module == c.prelude {
 		switch n.Obj.Name {
-		case "List", "Set", "Range", "Buf":
+		case "List", "Set", "Range", "Buf", "Chan":
 			return n.Args[0]
 		case "Map":
 			return &Tuple{Elems: []Type{n.Args[0], n.Args[1]}}
@@ -712,7 +714,7 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		c.errorf(diag.CannotInfer, e.Span(), "the type of the iterated value must be known here")
 		return badType
 	}
-	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, and ranges", deep(t))
+	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, Chan, and ranges", deep(t))
 	return badType
 }
 

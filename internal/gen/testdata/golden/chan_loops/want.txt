@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+closed empty ran 0
+drained 6
+jobs 1:job1,2:job2,3:job3,4:job4
+seen p0,p2,p3 left 1
+labeled total 6 next 4
+receive loop canceled, got 0
+--- stderr

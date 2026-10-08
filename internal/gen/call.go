@@ -589,7 +589,7 @@ func (f *fnGen) typeArgsValue(x *ast.TypeArgsExpr) string {
 		f.g.errorf(x, "unsupported generic function value")
 		return "nil"
 	}
-	return f.funcValue(fo, f.typeOf(x), nil)
+	return f.funcValue(fo, f.nat(x), nil)
 }
 
 // ---------------------------------------------------------------------------

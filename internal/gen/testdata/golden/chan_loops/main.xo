@@ -1,0 +1,96 @@
+// `for x in ch` (core 3.5, 7.3, decision 0043): receives until the channel
+// is closed and drained; each receive is a cancellation point.
+use std/task
+
+struct Job {
+  id: Int
+  name: Str
+}
+
+fn main(os: Os) {
+  // a closed empty channel: the body never runs
+  let empty = Chan[Int].new()
+  empty.close()
+  var runs = 0
+  for _ in empty {
+    runs += 1
+  }
+  os.stdio.println("closed empty ran ${runs}")
+
+  // buffered values are drained after close
+  let buffered = Chan[Int].new(cap: 3)
+  buffered.send(1)
+  buffered.send(2)
+  buffered.send(3)
+  buffered.close()
+  var drained = 0
+  for v in buffered {
+    drained += v
+  }
+  os.stdio.println("drained ${drained}")
+
+  // producer and consumer; struct pattern
+  let jobs = Chan[Job].new(cap: 2)
+  let names = scope s {
+    s.spawn(fn() {
+      for i in 1..=4 {
+        jobs.send(Job{id: i, name: "job${i}"})
+      }
+      jobs.close()
+    })
+    var out: List[Str] = []
+    for Job{id, name} in jobs {
+      out.push("${id}:${name}")
+    }
+    out
+  }
+  os.stdio.println("jobs ${names.join(",")}")
+
+  // tuple pattern, continue, and break leave the rest in the channel
+  let pairs = Chan[(Int, Str)].new(cap: 8)
+  for i in 0..6 {
+    pairs.send((i, "p${i}"))
+  }
+  var seen: List[Str] = []
+  for (i, p) in pairs {
+    if i == 1 {
+      continue
+    }
+    if i == 4 {
+      break
+    }
+    seen.push(p)
+  }
+  os.stdio.println("seen ${seen.join(",")} left ${pairs.len()}")
+
+  // a labeled outer loop broken from inside a channel loop
+  let nums = Chan[Int].new(cap: 8)
+  for i in 1..=5 {
+    nums.send(i)
+  }
+  nums.close()
+  var total = 0
+  outer: for round in 0..3 {
+    for n in nums {
+      total += n * (round + 1)
+      if n == 3 {
+        break outer
+      }
+    }
+  }
+  os.stdio.println("labeled total ${total} next ${nums.recv() ?? 0}")
+
+  // a loop on a channel that is never closed is canceled at its receive
+  let never = Chan[Int].new()
+  let got = Atomic[Int].new(0)
+  let r = task.with_timeout(os.clock, 20ms, fn() {
+    for v in never {
+      got.add(v)
+    }
+    "closed"
+  })
+  match r {
+    Ok(v) => os.stdio.println(v)
+    Err(TimedOut) => os.stdio.println("receive loop canceled, got ${got.get()}")
+  }
+}

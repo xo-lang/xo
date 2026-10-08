@@ -1,0 +1,4 @@
+// A main that cannot fail, passed where `fn(Os) -> () ! Error` is expected.
+fn main(os: Os) {
+  os.stdio.println("hi")
+}

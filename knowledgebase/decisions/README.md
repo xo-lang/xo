@@ -47,3 +47,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0041-go-library-interop.md](0041-go-library-interop.md): `use go` bindings to Go packages until Xo has its own ecosystem (implemented, core 4.4).
 
 - [0042-two-phase-shutdown.md](0042-two-phase-shutdown.md): first signal requests a stop, cancellation after a grace period.
+- [0043-channel-loops-once-deadline-map.md](0043-channel-loops-once-deadline-map.md): `for x in ch`, `task.Once`, `map_concurrent_until`.

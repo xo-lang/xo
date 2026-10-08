@@ -435,9 +435,36 @@ Last verified: 2026-10-08.
   registered by package main for generic code).
 - `task.go`, `scope.go`, `chan.go`, `sync.go`: the cancellation tree,
   scopes, tasks, channels and `select` with explicit wait queues, Mutex,
-  Atomic, Semaphore, `task.*`. `Mutex.with` records its acquisition site
+  Atomic, Semaphore, `task.*` (`once.go`: `task.Once`). `Mutex.with` records its acquisition site
   as program counters, resolved to `file.xo:line` only for XO-F004
   (2026-10-08).
+- Channel loops, `task.Once`, `task.map_concurrent_until` (2026-10-08,
+  decision 0043, core 3.5 and 7.3, std.md 7). Checker: `iterElem`
+  (internal/check/stmt.go) gives `Chan[T]` the element type T; patterns
+  are checked as in other `for` loops (irrefutable). Codegen
+  (`forStmt`, internal/gen/fn.go): `for { rv := ch.M_recv(tk); if
+  !rv.Some { break }; ... }`, so every receive is a cancellation point
+  that unwinds. `once.go`: `Task_Once[T, E]` is a handle (a pointer to
+  `onceState`; `XoEq` compares identity); `get[fx]` has no own non effect
+  type parameter, so it is the Go method `M_get`
+  (`gotchas/std-method-effect-only-go-method.md`). The first caller runs
+  f in its own task, the others queue as waiters; the outcome (value,
+  error, or fault) is stored and every waiter shares it. A runner that
+  unwinds (cancellation, `proc.exit` in tests) hands the run to the first
+  waiter still waiting, or clears the running flag when there is none. A
+  fault in f is shared: later callers fault with the same message (the
+  spec does not say; this is the choice of 2026-10-08).
+  `Task_map_concurrent_until` (sync.go) runs the shared `mapConcurrent`
+  loop in a child scope, waits with `awaitDeadline` (shared with
+  `with_timeout`), and keeps a result only if it was stored before the
+  timer callback set `expired` (one mutex, so the cut is the instant the
+  timer fires on the real or virtual clock); the rest are canceled and
+  give `Err(TimedOut)`. A fault in an item is raised in the caller.
+  `mapConcurrent` rechecks cancellation after acquiring a permit
+  (`gotchas/permit-handoff-after-cancel.md`; this also stops
+  `map_concurrent` from starting items once canceled). Tests: checker
+  `rules07_test.go`; goldens `chan_loops`, `test_once`,
+  `test_map_until` (virtual clock), all three in `TestGoldenRace`.
 - `arena.go` (2026-10-08): request scoped arenas for `--arenas`. The HTTP
   server takes an `Arena` from a bounded channel free list (128 kept; not
   a sync.Pool, `gotchas/sync-pool-drops-on-gc.md`) per request, puts it on

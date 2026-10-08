@@ -1,0 +1,68 @@
+use std/task
+
+test "finished results are kept, the rest time out" {
+  let start = os.clock.now()
+  let rs = task.map_concurrent_until(os.clock, 45ms, [5, 1, 9, 3, 2, 4], 6, fn(id) { fetch(os.clock, id) })
+  expect(show(rs)) == "timeout,item1,timeout,failed(NotFound(id: 3)),item2,item4"
+  expect(os.clock.since(start)) == 45ms
+}
+
+test "items not started by the deadline time out" {
+  let started = Atomic[Int].new(0)
+  let rs = task.map_concurrent_until(os.clock, 25ms, [1, 1, 1, 1, 1, 1], 2, fn(id) {
+    started.add(1)
+    fetch(os.clock, id)
+  })
+  // two at a time, 10ms each: four finish by 20ms, two run until 25ms
+  expect(show(rs)) == "item1,item1,item1,item1,timeout,timeout"
+  expect(started.get()) == 6
+}
+
+test "the limit holds back items past the deadline" {
+  let started = Atomic[Int].new(0)
+  let rs = task.map_concurrent_until(os.clock, 15ms, [1, 1, 1, 1], 1, fn(id) {
+    started.add(1)
+    fetch(os.clock, id)
+  })
+  expect(show(rs)) == "item1,timeout,timeout,timeout"
+  expect(started.get()) == 2
+}
+
+test "all finish before the deadline" {
+  let start = os.clock.now()
+  let rs = task.map_concurrent_until(os.clock, 1s, [2, 1, 3], 3, fn(id) { fetch(os.clock, id) })
+  expect(show(rs)) == "item2,item1,failed(NotFound(id: 3))"
+  // returns when the last item finishes, not at the deadline
+  expect(os.clock.since(start)) == 30ms
+}
+
+test "an empty list returns at once" {
+  let start = os.clock.now()
+  let rs = task.map_concurrent_until(os.clock, 1s, [], 4, fn(id: Int) { fetch(os.clock, id) })
+  expect(rs.len()) == 0
+  expect(os.clock.since(start)) == 0s
+}
+
+test "canceled items run their defer blocks" {
+  let cleaned = Atomic[Int].new(0)
+  let rs = task.map_concurrent_until(os.clock, 15ms, [1, 2, 3], 3, fn(id) {
+    defer {
+      cleaned.add(1)
+    }
+    os.clock.sleep(10ms * id)
+    id * 10
+  })
+  let shown = rs.map(fn(r) {
+    match r {
+      Ok(v) => "${v}"
+      Err(TimedOut) => "timeout"
+    }
+  })
+  expect(shown.join(",")) == "10,timeout,timeout"
+  expect(cleaned.get()) == 3
+}
+
+test "main" {
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "item1,item2\n"
+}

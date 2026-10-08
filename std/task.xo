@@ -1,6 +1,6 @@
 // std/task (spec/std.md 7, core 7.1). Declaration file; encoding rules are
-// listed at the top of std/prelude.xo. Semaphore and Group are opaque
-// handles: copies share the same permits, or the same group.
+// listed at the top of std/prelude.xo. Semaphore, Once, and Group are
+// opaque handles: copies share the same permits, result, or group.
 
 enum Timed[E] {
   TimedOut
@@ -27,6 +27,9 @@ fn stop_requested() -> Bool
 fn stopping() -> Chan[()]
 
 fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, E]] uses fx
+/// Like map_concurrent, but items not finished after d are cancelled and
+/// give Err(TimedOut); finished results are kept, in input order.
+fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, Timed[E]]] uses (clock, fx)
 
 /// A task group (core 7.1): created by `s.group()` or given as `os.tasks`.
 /// Its tasks belong to the scope that created it.
@@ -37,3 +40,11 @@ fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses f
 struct Semaphore {}
 fn semaphore(permits: Int) -> Semaphore
 fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx
+
+/// Single flight with a shared result (decision 0043): the first caller of
+/// `get` runs f; concurrent and later callers wait for and share its result.
+/// If the running caller is cancelled before f finishes, the next waiter
+/// runs f instead. A failed result is shared too.
+struct Once[T, E] {}
+fn once[T, E]() -> Once[T, E]
+fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx

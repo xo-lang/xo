@@ -1,0 +1,4 @@
+test "run_main with a main that cannot fail" {
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "hi\n"
+}

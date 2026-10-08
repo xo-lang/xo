@@ -99,7 +99,8 @@ fn routes(kept: Mutex[Kept], ch: Chan[Str], g: task.Group, clock: Clock) -> http
     var longest = ""
     let names = kept.with(fn(k) { k.names })
     for (_, v) in names.entries() {
-      if v.len() > longest.len() {
+      // ties broken by value: requests insert in any order
+      if v.len() > longest.len() || v.len() == longest.len() && v > longest {
         longest = v
       }
     }

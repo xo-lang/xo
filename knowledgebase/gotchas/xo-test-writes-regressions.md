@@ -1,7 +1,8 @@
 # `xo test` writes regressions_test.xo into the module it tests
 
 Status: Observed (2026-10-08, bench/xo/v0.4/03-retry-client; hit again
-the same day by the arena experiment's with and without `--arenas` runs)
+the same day by the arena experiment's with and without `--arenas` runs,
+and again on 2026-10-08 by the decision 0043 bench comparison)
 
 Symptom: running `xo test` on a benchmark solution leaves a new
 `regressions_test.xo` in the solution's directory, an edit to a directory

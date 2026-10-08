@@ -1,0 +1,22 @@
+// task.once and Once.get (std.md 7, decision 0043): single flight with a
+// shared result. Run in test mode, on the virtual clock.
+use std/task
+
+enum LoadErr {
+  Down
+} derive Display
+
+struct Cache {
+  config: task.Once[Str, LoadErr]
+}
+
+fn load(clock: Clock, calls: Atomic[Int], d: Duration, v: Str) -> Str uses clock {
+  calls.add(1)
+  clock.sleep(d)
+  v
+}
+
+fn main(os: Os) ! {
+  let o = task.once[Int, Never]()
+  os.stdio.println("once ${o.get(fn() { 42 })} ${o.get(fn() { 7 })}")
+}

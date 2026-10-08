@@ -31,6 +31,8 @@ Driven by the independent replant of planted safety bugs
 - Regression tests for shrunk contract fuzz failures go in the module's
   `regressions_test.xo`, not `testdata/regressions/` (9.2).
 - Go packages with `use go` (4.4), with the `go` effect.
+- `for x in ch` over channels (3.5, 7.3); `task.Once` and
+  `task.map_concurrent_until` in std.
 - Two phase shutdown: the first signal requests a stop (`task.stop_requested`,
   `task.stopping`), cancellation follows after a grace period (7.5).
 - Std: `Map.get_or_fault`, hex and base64 on `Bytes`, `Time.from_unix_millis`,
@@ -619,6 +621,7 @@ if cond { ... } else if other { ... } else { ... }   // also an expression
 for x in xs { ... }
 for (i, x) in xs.indexed() { ... }
 for (k, v) in m { ... }
+for job in jobs_chan { ... }  // receives until the channel is closed and drained
 for i in 0..10 { ... }        // half open range, 0..=10 is inclusive
 for _ in 0..3 { ... }
 while cond { ... }
@@ -1090,6 +1093,8 @@ select {
 ```
 
 - `ch.try_send(x) -> Bool` and `ch.try_recv() -> T?` never block.
+- `for x in ch { ... }` receives until `ch` is closed and drained; each receive
+  is a cancellation point.
 - `after` arms require the `clock` effect.
 - Sending moves move only values.
 

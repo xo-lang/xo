@@ -610,6 +610,18 @@ struct Group {}                              // handle; see core 7.1
 fn (g: Group) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
 fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses fx
 
+pub fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: List[T], limit: Int,
+    f: fn(T) -> R ! E uses fx) -> List[Result[R, Timed[E]]] uses (clock, fx)
+    // like map_concurrent, but items not finished after d are cancelled and give
+    // Err(TimedOut); finished results are kept, in input order
+
+pub fn once[T, E]() -> Once[T, E]           // Once is a handle: copies share it
+fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx
+    // the first caller runs f; concurrent and later callers wait for and share its
+    // result. If the running caller is cancelled before f finishes, the next
+    // waiter runs f instead. A failed result is shared too; use a new Once to retry.
+    // A fault in f is shared with every waiter as well.
+
 pub fn semaphore(permits: Int) -> Semaphore  // Semaphore is a handle: copies share permits
 fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx
     // waits for a permit (cancellation point), runs f, releases the permit

@@ -1,0 +1,135 @@
+use std/task
+
+test "concurrent callers share one run" {
+  let o = task.once[Str, Never]()
+  let calls = Atomic[Int].new(0)
+  let start = os.clock.now()
+  let got = scope s {
+    var ts: List[Task[Str, Never]] = []
+    for i in 0..6 {
+      ts.push(s.spawn(fn() {
+        os.clock.sleep(1ms * i)
+        o.get(fn() { load(os.clock, calls, 50ms, "v${i}") })
+      }))
+    }
+    ts.map(fn(t) { t.await })
+  }
+  expect(calls.get()) == 1
+  expect(got) == ["v0", "v0", "v0", "v0", "v0", "v0"]
+  expect(os.clock.since(start)) == 50ms
+  // a later caller gets the stored result without running f
+  expect(o.get(fn() { load(os.clock, calls, 1s, "late") })) == "v0"
+  expect(calls.get()) == 1
+  expect(os.clock.since(start)) == 50ms
+}
+
+test "copies of a Once share it" {
+  let c = Cache{config: task.once()}
+  let d = c
+  let calls = Atomic[Int].new(0)
+  let a = c.config.get(fn() { Ok(load(os.clock, calls, 1ms, "a")) })
+  let b = d.config.get(fn() { Ok(load(os.clock, calls, 1ms, "b")) })
+  expect(a) == Ok("a")
+  expect(b) == Ok("a")
+  expect(calls.get()) == 1
+}
+
+test "a failed result is shared" {
+  let o = task.once[Int, LoadErr]()
+  let calls = Atomic[Int].new(0)
+  let first = o.get(fn() {
+    calls.add(1)
+    Err(LoadErr.Down)
+  })
+  let second = o.get(fn() {
+    calls.add(1)
+    Ok(1)
+  })
+  expect(first is Err(Down)) == true
+  expect(second is Err(Down)) == true
+  expect(calls.get()) == 1
+}
+
+test "a canceled runner hands the run to the next waiter" {
+  let o = task.once[Str, Never]()
+  let calls = Atomic[Int].new(0)
+  let start = os.clock.now()
+  let res = scope s {
+    let a = s.spawn(fn() {
+      task.with_timeout(os.clock, 100ms, fn() {
+        o.get(fn() { load(os.clock, calls, 1s, "a") })
+      })
+    })
+    let b = s.spawn(fn() {
+      os.clock.sleep(10ms)
+      o.get(fn() { load(os.clock, calls, 30ms, "b") })
+    })
+    let c = s.spawn(fn() {
+      os.clock.sleep(20ms)
+      o.get(fn() { load(os.clock, calls, 30ms, "c") })
+    })
+    (a.await, b.await, c.await)
+  }
+  expect(res.0 is Err(TimedOut)) == true
+  expect(res.1) == "b"
+  expect(res.2) == "b"
+  expect(calls.get()) == 2
+  // b took over at 100ms and ran for 30ms
+  expect(os.clock.since(start)) == 130ms
+}
+
+test "a canceled runner with no waiters leaves the Once unset" {
+  let o = task.once[Str, Never]()
+  let calls = Atomic[Int].new(0)
+  let r = task.with_timeout(os.clock, 5ms, fn() {
+    o.get(fn() { load(os.clock, calls, 1s, "slow") })
+  })
+  expect(r is Err(TimedOut)) == true
+  expect(o.get(fn() { load(os.clock, calls, 1ms, "fast") })) == "fast"
+  expect(calls.get()) == 2
+}
+
+test "a canceled waiter leaves the run alone" {
+  let o = task.once[Str, Never]()
+  let calls = Atomic[Int].new(0)
+  let res = scope s {
+    let a = s.spawn(fn() { o.get(fn() { load(os.clock, calls, 50ms, "a") }) })
+    let b = s.spawn(fn() {
+      os.clock.sleep(1ms)
+      task.with_timeout(os.clock, 10ms, fn() {
+        o.get(fn() { load(os.clock, calls, 1ms, "b") })
+      })
+    })
+    (a.await, b.await)
+  }
+  expect(res.0) == "a"
+  expect(res.1 is Err(TimedOut)) == true
+  expect(calls.get()) == 1
+  expect(o.get(fn() { "late" })) == "a"
+}
+
+test "a fault in f is shared" {
+  let o = task.once[Int, Never]()
+  let calls = Atomic[Int].new(0)
+  let first = task.isolate(fn() {
+    o.get(fn() {
+      calls.add(1)
+      fault("config broken")
+    })
+  })
+  let second = task.isolate(fn() { o.get(fn() { 1 }) })
+  expect(calls.get()) == 1
+  match first {
+    Err(Faulted(info)) => expect(info.msg) == "config broken"
+    _ => expect(false) == true
+  }
+  match second {
+    Err(Faulted(info)) => expect(info.msg) == "config broken"
+    _ => expect(false) == true
+  }
+}
+
+test "main" {
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "once 42 42\n"
+}

@@ -243,48 +243,7 @@ func Task_with_timeout[T, E any](tk *Task, clock Clock, d Duration, f func(*Task
 	tk.CheckCancel()
 	s := NewScope(tk)
 	h := Spawn(tk, s, f, false, true)
-	timerCh := make(chan struct{})
-	var fired atomic.Bool
-	stop := clockAfter(tk, clock, d, func(locked bool) {
-		if fired.CompareAndSwap(false, true) {
-			if tk.w != nil {
-				if locked {
-					tk.w.wakeLocked(tk)
-				} else {
-					tk.w.wake(tk)
-				}
-			}
-			close(timerCh)
-		}
-	})
-	h.done.mu.Lock()
-	if !h.done.fired {
-		h.done.waiters = append(h.done.waiters, tk)
-	}
-	h.done.mu.Unlock()
-	tk.block()
-	canceled := false
-	select {
-	case <-h.done.ch:
-	case <-timerCh:
-	case <-tk.Done():
-		canceled = true
-	}
-	h.done.mu.Lock()
-	for i, x := range h.done.waiters {
-		if x == tk {
-			h.done.waiters = append(h.done.waiters[:i], h.done.waiters[i+1:]...)
-			break
-		}
-	}
-	h.done.mu.Unlock()
-	tk.unblock()
-	stop()
-	timedOut := !h.done.isSet() && fired.Load()
-	if canceled && !h.done.isSet() {
-		s.shutdown()
-		tk.Unwind()
-	}
+	timedOut := awaitDeadline(tk, s, h.done, clock, d, nil)
 	if timedOut {
 		s.shutdown()
 		return Err[T](Task_Timed[E]{Tag: 1})
@@ -301,6 +260,59 @@ func Task_with_timeout[T, E any](tk *Task, clock Clock, d Duration, f func(*Task
 		return Ok[T, Task_Timed[E]](h.res.V)
 	}
 	return ErrTr[T](Task_Timed[E]{Tag: 2, P: Task_Timed_Failed[E]{F0: h.res.E}}, h.res.Tr)
+}
+
+// awaitDeadline waits in tk until done fires or d passes on clock. It
+// reports whether the deadline passed first. onFire, when set, runs as
+// the deadline passes (in the timer callback, before tk is woken). When
+// tk is canceled first, the scope s is shut down and tk unwinds.
+func awaitDeadline(tk *Task, s *Scope, done *event, clock Clock, d Duration, onFire func()) bool {
+	timerCh := make(chan struct{})
+	var fired atomic.Bool
+	stop := clockAfter(tk, clock, d, func(locked bool) {
+		if fired.CompareAndSwap(false, true) {
+			if onFire != nil {
+				onFire()
+			}
+			if tk.w != nil {
+				if locked {
+					tk.w.wakeLocked(tk)
+				} else {
+					tk.w.wake(tk)
+				}
+			}
+			close(timerCh)
+		}
+	})
+	done.mu.Lock()
+	if !done.fired {
+		done.waiters = append(done.waiters, tk)
+	}
+	done.mu.Unlock()
+	tk.block()
+	canceled := false
+	select {
+	case <-done.ch:
+	case <-timerCh:
+	case <-tk.Done():
+		canceled = true
+	}
+	done.mu.Lock()
+	for i, x := range done.waiters {
+		if x == tk {
+			done.waiters = append(done.waiters[:i], done.waiters[i+1:]...)
+			break
+		}
+	}
+	done.mu.Unlock()
+	tk.unblock()
+	stop()
+	timedOut := !done.isSet() && fired.Load()
+	if canceled && !done.isSet() {
+		s.shutdown()
+		tk.Unwind()
+	}
+	return timedOut
 }
 
 // clockAfter calls f after d on the given clock: the virtual clock of a
@@ -323,6 +335,13 @@ func Task_map_concurrent[T, R, E any](tk *Task, items List[T], limit int64, f fu
 		FaultHere("map_concurrent needs a positive limit, got %d", limit)
 	}
 	out := make([]Result[R, E], len(items.s))
+	mapConcurrent(tk, items, limit, func(t *Task, i int, x T) { out[i] = f(t, x) })
+	return ListOf(out...)
+}
+
+// mapConcurrent runs each(t, i, items[i]) for every item in a child scope
+// of tk, with at most limit running at once, and waits for all of them.
+func mapConcurrent[T any](tk *Task, items List[T], limit int64, each func(*Task, int, T)) {
 	s := NewScope(tk)
 	sem := &lock{permits: int(limit)}
 	body := s.Body()
@@ -334,13 +353,75 @@ func Task_map_concurrent[T, R, E any](tk *Task, items List[T], limit int64, f fu
 			if !sem.acquire(body) {
 				body.Unwind()
 			}
+			if body.Canceled() {
+				// a finishing task handed its permit to the loop while the
+				// scope was being canceled: start nothing more
+				sem.release()
+				body.Unwind()
+			}
 			Spawn(body, s, func(t *Task) Result[Unit, Never] {
 				defer sem.release()
-				out[i] = f(t, x)
+				each(t, i, x)
 				return Ok[Unit, Never](Unit{})
 			}, false, true)
 		}
 		completed = true
 	}()
+}
+
+// Task_map_concurrent_until is `task.map_concurrent_until(clock, d, items,
+// limit, f)` (std.md 7, decision 0043): map_concurrent with a deadline.
+// When d passes on clock, the items still running or not started are
+// canceled and give `Err(TimedOut)`; results that finished before the
+// deadline are kept, in input order. A result that arrives after the
+// deadline fired (a task finishing while it is being canceled) counts as
+// timed out, so the cut is the instant the timer fires.
+func Task_map_concurrent_until[T, R, E any](tk *Task, clock Clock, d Duration, items List[T], limit int64, f func(*Task, T) Result[R, E]) List[Result[R, Task_Timed[E]]] {
+	if limit <= 0 {
+		FaultHere("map_concurrent_until needs a positive limit, got %d", limit)
+	}
+	tk.CheckCancel()
+	n := len(items.s)
+	var mu sync.Mutex
+	expired := false
+	res := make([]Result[R, E], n)
+	fin := make([]bool, n)
+	s := NewScope(tk)
+	h := Spawn(tk, s, func(t *Task) Result[Unit, Never] {
+		mapConcurrent(t, items, limit, func(t *Task, i int, x T) {
+			r := f(t, x)
+			mu.Lock()
+			if !expired {
+				res[i], fin[i] = r, true
+			}
+			mu.Unlock()
+		})
+		return Ok[Unit, Never](Unit{})
+	}, false, true)
+	awaitDeadline(tk, s, h.done, clock, d, func() {
+		mu.Lock()
+		expired = true
+		mu.Unlock()
+	})
+	s.shutdown()
+	if h.fault != nil {
+		panic(h.fault)
+	}
+	if h.canceled {
+		tk.CheckCancel()
+	}
+	out := make([]Result[R, Task_Timed[E]], n)
+	mu.Lock()
+	defer mu.Unlock()
+	for i := range out {
+		switch {
+		case !fin[i]:
+			out[i] = Err[R](Task_Timed[E]{Tag: 1})
+		case res[i].Ok:
+			out[i] = Ok[R, Task_Timed[E]](res[i].V)
+		default:
+			out[i] = ErrTr[R](Task_Timed[E]{Tag: 2, P: Task_Timed_Failed[E]{F0: res[i].E}}, res[i].Tr)
+		}
+	}
 	return ListOf(out...)
 }

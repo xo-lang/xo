@@ -1022,6 +1022,28 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 			f.emitLoop(l, header, body)
 			return
 		}
+	case "Chan":
+		// receive until closed and drained (core 3.5, 7.3); M_recv is a
+		// cancellation point that unwinds
+		rv := f.tmp("rv")
+		elem = rv + ".V"
+		body := f.capture(func() {
+			f.ind++
+			f.line("%s := %s.M_recv(tk)", rv, itv)
+			f.line("if !%s.Some {", rv)
+			f.line("\tbreak")
+			f.line("}")
+			ev := f.tmp("el")
+			f.line("%s := %s", ev, elem)
+			f.line("_ = %s", ev)
+			m := f.pattern(x.Pattern, ev, elemT)
+			f.declareBinds(m)
+			f.block(x.Body, dest{kind: dDiscard})
+			f.ind--
+		})
+		f.popLoop()
+		f.emitLoop(l, "", body)
+		return
 	case "Range":
 		elem = f.tmp("i")
 		header = fmt.Sprintf("%s := range %s.All()", elem, itv)
