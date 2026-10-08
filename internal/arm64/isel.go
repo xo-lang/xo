@@ -27,9 +27,10 @@ type fstate struct {
 	lenParam map[vreg]vreg
 	// endMemo is the memo at the end of each lowered SSA block
 	endMemo map[*ssa.Block]*memo
-	lazy    map[*ssa.Value]bool // compares lowered into the branch that uses them
-	out     bool                // the function uses the $OUT slot
-	cancel  map[*ssa.Value]bool // releases cancelled by a retain (rc.go cancelRC)
+	lazy    map[*ssa.Value]bool       // compares lowered into the branch that uses them
+	out     bool                      // the function uses the $OUT slot
+	cancel  map[*ssa.Value]bool       // releases cancelled by a retain (rc.go cancelRC)
+	lsr     map[*ssa.Block][]*lsrPlan // pointer induction variables of loop headers (lsr.go)
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -375,6 +376,7 @@ func (s *fstate) isel() {
 	}
 	blocks := rpo(f)
 	idom := dominators(blocks)
+	s.planLSR(blocks, idom)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -385,6 +387,7 @@ func (s *fstate) isel() {
 					s.lenParam[s.vals[p][0]] = s.newVreg(false)
 				}
 			}
+			s.lsrParams(b)
 		}
 	}
 	for i, b := range blocks {
@@ -411,6 +414,7 @@ func (s *fstate) isel() {
 				s.m().lens[s.vals[p][0]] = c
 			}
 		}
+		s.lsrSeed(b)
 		if i == 0 {
 			var defs []vreg
 			for _, p := range b.Params {
@@ -473,7 +477,7 @@ func (s *fstate) edgeMoves(e *ssa.Edge) ([]vreg, []src) {
 			}
 		}
 	}
-	return dsts, srcs
+	return s.lsrMoves(e, dsts, srcs)
 }
 
 func (s *fstate) pmove(dsts []vreg, srcs []src) {
@@ -1186,6 +1190,7 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 	m.checked[[2]vreg{l, i}] = true
 	n := s.listLen(l)
 	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	s.indexFacts(i)
 }
 
 // option builds Option words on two paths: in the current block when

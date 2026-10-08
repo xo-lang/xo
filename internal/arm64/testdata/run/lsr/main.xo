@@ -1,0 +1,203 @@
+// Pointer induction variables (internal/arm64 lsr.go, decision 0054):
+// element accesses xs[i] of 24 and 40 byte elements in loops that step
+// i by a constant, forward and backward, with the list updated in place,
+// grown, popped, copied, or replaced inside the loop, and nested loops.
+// The last access is out of bounds inside such a loop.
+struct Rec {
+  key: Int
+  id: Int
+  weight: Float
+}
+
+struct Wide {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+}
+
+fn recs(n: Int) -> List[Rec] {
+  var xs: List[Rec] = []
+  for i in 0..n {
+    xs.push(Rec{key: (i * 7919) % 101, id: i, weight: Float(i) * 0.25})
+  }
+  xs
+}
+
+fn sum_fwd(xs: List[Rec]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    s = s * 3 % 1000003 + xs[i].key + xs[i].id
+  }
+  s
+}
+
+fn sum_back(xs: List[Rec]) -> Int {
+  var s = 0
+  var i = xs.len() - 1
+  while i >= 0 {
+    s = s * 5 % 1000003 + xs[i].key
+    i -= 1
+  }
+  s
+}
+
+fn sum_step(xs: List[Rec], step: Int) -> Int {
+  var s = 0
+  var i = 1
+  if step == 2 {
+    while i < xs.len() {
+      s += xs[i].id
+      i += 2
+    }
+  } else {
+    while i < xs.len() {
+      s += xs[i].id * 2
+      i += 3
+    }
+  }
+  s
+}
+
+fn big_step(xs: List[Rec]) -> Int {
+  var s = 0
+  var i = 3
+  while i < xs.len() {
+    s += xs[i].key
+    i += 1000
+  }
+  s
+}
+
+// in place updates of a var parameter in the loop
+fn scale(var xs: List[Rec]) {
+  var i = 0
+  while i < xs.len() {
+    let r = xs[i]
+    xs[i] = Rec{key: r.key * 2, id: r.id, weight: r.weight + 1.0}
+    i += 1
+  }
+}
+
+// the list grows inside the loop: its buffer moves
+fn grow(var xs: List[Rec]) -> Int {
+  var i = 0
+  var s = 0
+  while i < xs.len() && i < 300 {
+    s += xs[i].key
+    if i % 3 == 0 {
+      xs.push(Rec{key: i, id: -i, weight: 0.0})
+    }
+    i += 1
+  }
+  s
+}
+
+// the list shrinks inside the loop
+fn shrink(var xs: List[Rec]) -> Int {
+  var i = 0
+  var s = 0
+  while i < xs.len() {
+    s += xs[i].id
+    if let Some(r) = xs.pop() {
+      s += r.key
+    }
+    i += 1
+  }
+  s
+}
+
+// the loop replaces the list it walks
+fn swap_lists(a: List[Rec], b: List[Rec]) -> Int {
+  var xs = a
+  var i = 0
+  var s = 0
+  while i < 40 {
+    s += xs[i].key * (i + 1)
+    if i == 20 {
+      xs = b
+    }
+    i += 1
+  }
+  s
+}
+
+// a copy taken before the loop keeps its values
+fn cow(xs: List[Rec]) -> Int {
+  var ys = xs
+  var i = 0
+  while i < ys.len() {
+    ys[i] = Rec{key: 0, id: 0, weight: 0.0}
+    i += 1
+  }
+  sum_fwd(xs) - sum_fwd(ys)
+}
+
+fn wide(n: Int) -> Int {
+  var ws: List[Wide] = []
+  for i in 0..n {
+    ws.push(Wide{a: i, b: i * 2, c: i * 3, d: i * 4, e: i * 5})
+  }
+  var s = 0
+  var i = n - 1
+  while i > 0 {
+    let w = ws[i]
+    ws[i] = Wide{a: w.e, b: w.d, c: w.c, d: w.b, e: w.a}
+    s += ws[i].a - ws[i - 1].e
+    i -= 1
+  }
+  s
+}
+
+fn nested(xs: List[Rec]) -> Int {
+  var s = 0
+  for i in 0..20 {
+    var j = i
+    while j < xs.len() {
+      s = (s + xs[j].key * xs[i].id) % 1000003
+      j += 17
+    }
+  }
+  s
+}
+
+fn triples(n: Int) -> Int {
+  var ts: List[(Int, Int, Int)] = []
+  for i in 0..n {
+    ts.push((i, i + 1, i + 2))
+  }
+  var s = 0
+  for i in 0..ts.len() {
+    let (a, b, c) = ts[i]
+    s += a * b - c
+  }
+  s
+}
+
+fn walk_past(xs: List[Rec], from: Int) -> Int {
+  var s = 0
+  var i = from
+  while i < 1000000 {
+    s += xs[i].key
+    i += 7
+  }
+  s
+}
+
+fn main(os: Os) {
+  let xs = recs(1000)
+  os.stdio.println("fwd ${sum_fwd(xs)} back ${sum_back(xs)}")
+  os.stdio.println("step ${sum_step(xs, 2)} ${sum_step(xs, 3)} big ${big_step(xs)}")
+  var ys = recs(500)
+  scale(ys)
+  os.stdio.println("scale ${sum_fwd(ys)} ${ys[499].weight}")
+  var gs = recs(100)
+  os.stdio.println("grow ${grow(gs)} ${gs.len()}")
+  var ss = recs(100)
+  os.stdio.println("shrink ${shrink(ss)} ${ss.len()}")
+  os.stdio.println("swap ${swap_lists(recs(50), recs(60))}")
+  os.stdio.println("cow ${cow(xs)}")
+  os.stdio.println("wide ${wide(300)} nested ${nested(xs)} triples ${triples(400)}")
+  os.stdio.println("past ${walk_past(xs, 5)}")
+}
