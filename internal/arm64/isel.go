@@ -674,6 +674,10 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.captureOp(v)
 	case ssa.OpCallValue:
 		s.callValueOp(v)
+	case ssa.OpBox:
+		s.boxOp(v)
+	case ssa.OpUnbox:
+		s.unboxOp(v)
 	case ssa.OpFault:
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", ws[0])

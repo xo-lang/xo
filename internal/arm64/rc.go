@@ -36,6 +36,8 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 	switch t.Kind {
 	case ssa.KFunc:
 		g.funcRC(&b, kind, sym)
+	case ssa.KBox:
+		g.boxRC(&b, kind, sym, t)
 	case ssa.KStr, ssa.KList:
 		if kind == "dup" {
 			b.WriteString("\tldr x1, [x0]\n\tadd x1, x1, #1\n\tstr x1, [x0]\n\tret\n")

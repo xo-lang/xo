@@ -170,8 +170,8 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 // nativeGolden lists the programs of internal/llvm/testdata/golden that
 // must build with the arm64 backend (the ones the SSA path supports).
 var nativeGolden = []string{
-	"abs_fault", "arith", "closure_try", "closures", "div_zero", "enums", "float_int_fault", "index_oob", "lists", "loops", "misc", "neg_overflow", "option", "overflow_add",
-	"overflow_mul", "rc_aliasing", "rc_closures", "rc_equality", "rc_failing", "rc_generics", "rc_values", "shl_overflow", "sort_structs", "strings", "structs", "tuples_consts", "user_fault", "var_alias",
+	"abs_fault", "arith", "closure_try", "closures", "div_zero", "enums", "float_int_fault", "generics", "index_oob", "lists", "loops", "misc", "neg_overflow", "option", "overflow_add",
+	"overflow_mul", "rc_aliasing", "rc_closures", "rc_equality", "rc_failing", "rc_generics", "rc_recursive", "rc_values", "recursion", "shl_overflow", "sort_structs", "strings", "structs", "tuples_consts", "user_fault", "value_semantics", "var_alias",
 }
 
 // TestGoldenRun builds the golden programs of internal/llvm (read only)
@@ -293,13 +293,23 @@ func TestBench(t *testing.T) {
 	}
 }
 
-// TestUnsupported checks that a program outside the SSA subset is
-// rejected with an error, not miscompiled.
+// TestUnsupported checks that an op outside what the backend lowers is
+// rejected with an error, not miscompiled. Every op the builder and the
+// RC pass emit is lowered, so the module is built by hand: OpDrop (drop
+// specialization) is declared in internal/ssa but never emitted yet.
 func TestUnsupported(t *testing.T) {
-	dir := filepath.Join("..", "llvm", "testdata", "golden", "recursion")
-	_, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64})
-	if err == nil {
-		t.Fatal("build succeeded; want an unsupported construct error")
+	m := ssa.NewModule()
+	str := m.Builtin(ssa.KStr)
+	f := m.NewFunc("main", []*ssa.Type{str}, []*ssa.Type{m.Builtin(ssa.KUnit)})
+	b := f.Blocks[0]
+	b.Add(ssa.OpDrop, m.Builtin(ssa.KUnit), nil, f.Params()[0])
+	u := b.Add(ssa.OpTuple, m.Builtin(ssa.KUnit), nil)
+	b.Add(ssa.OpReturn, nil, nil, u)
+	m.RC = true
+	_, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin, NoInline: true})
+	var ae *arm64.Error
+	if !errors.As(err, &ae) || !strings.Contains(err.Error(), "drop") {
+		t.Fatalf("got %v, want an unsupported op error naming drop", err)
 	}
 }
 
