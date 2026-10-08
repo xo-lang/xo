@@ -370,6 +370,7 @@ func (f *fnGen) stringLit(x *ast.StringLit) string {
 
 // display is the Display text of a value (core 1.6 interpolation).
 func (f *fnGen) display(code string, t check.Type) string {
+	t = f.pg.monoType(t)
 	if f.g.isPrelude(t, "Str") {
 		return code
 	}
@@ -718,6 +719,24 @@ func indent(s string, n int) string {
 
 // compare generates a comparison of two values of type t.
 func (f *fnGen) compare(op, a, b string, t check.Type) string {
+	// inside a specialized copy a type parameter compares as its concrete
+	// type (mono.go)
+	t = f.pg.monoType(t)
+	if f.pg.monoOn() {
+		eq := op == "==" || op == "!="
+		switch {
+		case f.g.isFloat(t) && !eq:
+			return fmt.Sprintf("(%sFloatCmp(float64(%s), float64(%s)) %s 0)", f.rt(), a, b, op)
+		case eq && f.pg.hasTypedEq(t, false):
+			// (a): a may be a composite literal, ambiguous in an if header
+			if op == "!=" {
+				return "!(" + a + ").XoEqT(" + b + ")"
+			}
+			return "(" + a + ").XoEqT(" + b + ")"
+		case !eq && f.pg.hasTypedEq(t, true):
+			return "((" + a + ").XoCmpT(" + b + ") " + op + " 0)"
+		}
+	}
 	if f.g.isScalar(t) && !f.g.isPrelude(t, "Bool") && !f.g.isFloat(t) {
 		return "(" + a + " " + op + " " + b + ")"
 	}
@@ -782,6 +801,14 @@ func (f *fnGen) binop(op, a, b string, xt, yt, rt check.Type, at ast.Node) strin
 	suffix := "U"
 	if signed {
 		suffix = "S"
+	}
+	if f.pg.monoOn() && signed && f.goType(xt) == "int64" && f.goType(yt) == "int64" {
+		// typed, inlinable Int arithmetic (std/rt/mono.go)
+		switch op {
+		case "+", "-", "*", "/", "%":
+			name := map[string]string{"+": "Add", "-": "Sub", "*": "Mul", "/": "Div", "%": "Rem"}[op]
+			return fmt.Sprintf("%s%sI(%s, %s, %s)", r, name, a, b, loc)
+		}
 	}
 	switch op {
 	case "+":
@@ -881,6 +908,10 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 	switch n.Obj.Name {
 	case "Bytes":
 		return fmt.Sprintf("%sBytesAt(%s, %s, %s)", f.rt(), codes[0], codes[1], loc)
+	case "List":
+		if f.pg.monoOn() {
+			return fmt.Sprintf("%s.AtM(%s, %s)", codes[0], codes[1], loc)
+		}
 	}
 	return fmt.Sprintf("%s.At(%s, %s)", codes[0], codes[1], loc)
 }

@@ -29,6 +29,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	targets := fl.String("targets", "", "comma separated os/arch list, or all")
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
+	mono := fl.Bool("mono", false, "specialize generic code per instantiation (experimental)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -47,7 +48,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, Mono: *mono})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -91,6 +92,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("run", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
+	mono := fl.Bool("mono", false, "specialize generic code per instantiation (experimental)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -107,7 +109,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, Mono: *mono})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1
@@ -148,6 +150,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	verbose := fl.Bool("v", false, "print every test, not only failures")
 	real := fl.Bool("real", false, "give tests that declare `uses` real capabilities (core 9.2)")
 	cases := fl.Int("cases", 0, "cases per property test and contract fuzz (default 100)")
+	mono := fl.Bool("mono", false, "specialize generic code per instantiation (experimental)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -155,7 +158,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	if len(dirs) == 0 {
 		dirs = []string{"."}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, Mono: *mono})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1

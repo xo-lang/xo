@@ -40,3 +40,13 @@ to measure, not a promise.
    throughput with Go on task 01 under load.
 
 Accept, amend, or reject this record based on those results.
+
+## Evidence
+- Monomorphization (work queue item 4, `bench/results/perf-mono-2026-10-08.md`,
+  reproduced independently): with `xo build --mono`, Xo against idiomatic Go
+  generics is 0.49x on `maxby` (twice as fast), 0.89 to 0.92x on `hof`, 0.96x
+  on `sortpt`, 1.14x on `sortint`, and 2.26x on `iface`. The remaining losses
+  are checked Int arithmetic (iface runs in 6 ms against Go's 15 ms with
+  checks stubbed) and O(n) `List.insert`. First measured case where P1 Xo
+  beats Go.
+

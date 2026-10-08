@@ -1,0 +1,237 @@
+use example.com/mono/lib
+
+interface Shape {
+  fn area(self) -> Int
+}
+
+interface Named {
+  fn name(self) -> Str ! Error
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) area() -> Int { q.s * q.s }
+
+fn (q: Sq) name() -> Str ! Error {
+  if q.s > 50 {
+    return Err("too big")
+  }
+  "sq${q.s}"
+}
+
+struct Circle {
+  r: Int
+}
+
+fn (c: Circle) area() -> Int { 3 * c.r * c.r }
+
+fn total[T: Shape](xs: List[T]) -> Int { xs.fold(0, fn(a, x) { a + x.area() }) }
+
+fn names[T: Named](xs: List[T]) -> Str ! Error {
+  var out = ""
+  for x in xs {
+    out = out + x.name()?
+  }
+  out
+}
+
+// generic recursion: one copy per type, calling itself
+fn depth[T](x: T, n: Int) -> Int {
+  if n == 0 {
+    0
+  } else {
+    1 + depth(x, n - 1)
+  }
+}
+
+fn map_all[T, U, E](xs: List[T], f: fn(T) -> U ! E) -> List[U] ! E {
+  var out: List[U] = []
+  for x in xs {
+    out.push(f(x)?)
+  }
+  out
+}
+
+fn checked_halves(xs: List[Int]) -> List[Int] ! Str {
+  map_all(xs, fn(x) {
+    if x % 2 == 1 {
+      return Err("odd ${x}")
+    }
+    x / 2
+  })
+}
+
+struct Inner {
+  k: Int
+} derive Ord
+
+struct P {
+  x: Float
+  name: Str
+  inner: Inner
+} derive Ord
+
+enum Color {
+  Red
+  Green
+} derive Ord, Display
+
+struct Tagged {
+  c: Color
+  n: Int
+} derive Ord
+
+type Meters struct(Int)
+
+fn max_of[T: Ord](a: T, b: T) -> T {
+  if a > b {
+    a
+  } else {
+    b
+  }
+}
+
+fn same[T: Eq](a: T, b: T) -> Bool { a == b }
+
+fn pad[T](x: T, n: Int = 2) -> List[T] {
+  var out: List[T] = []
+  for _ in 0..n {
+    out.push(x)
+  }
+  out
+}
+
+fn first_of[T](xs: List[T]) -> T
+  requires xs.len() > 0
+{
+  xs[0]
+}
+
+fn twice[T, fx: Effects](x: T, f: fn(T) -> T uses fx) -> T uses fx { f(f(x)) }
+
+fn pairs[T](x: T) -> (T, T) { (x, x) }
+
+fn ident_twice[T](x: T) -> T { twice(x, fn(v) { v }) }
+
+fn concrete_in_generic[T](x: T) -> (T, Int) { (x, twice(2, fn(v) { v + 1 })) }
+
+fn keyed[T, K: Ord](xs: List[T], key: fn(T) -> K) -> List[K] {
+  let ks = xs.map(key)
+  var best: List[K] = []
+  for x in xs {
+    if key(x) > (ks.first() ?? key(x)) {
+      best.push(key(x))
+    }
+  }
+  best
+}
+
+fn show_sum[T: Shape](xs: List[T]) -> Str { "sum=${xs.fold(0, fn(a, x) { a + x.area() })} n=${xs.len()}" }
+
+fn sh[T: Debug](x: T) -> Str { x.debug() }
+
+fn main(os: Os) {
+  let sqs = [Sq{s: 2}, Sq{s: 3}]
+  let cs = [Circle{r: 1}, Circle{r: 2}]
+  os.stdio.println("total ${total(sqs)} ${total(cs)} ${show_sum(sqs)}")
+  match names(sqs) {
+    Ok(s) => os.stdio.println("names ${s}")
+    Err(e) => os.stdio.println("names failed ${e}")
+  }
+  match names([Sq{s: 1}, Sq{s: 99}]) {
+    Ok(s) => os.stdio.println("names ${s}")
+    Err(e) => os.stdio.println("names failed ${e}")
+  }
+  os.stdio.println("depth ${depth(1, 12)} ${depth("s", 3)}")
+  os.stdio.println("map_all ${sh(map_all([1, 2, 3], fn(x) { x * 10 }))}")
+  match checked_halves([2, 4, 5, 6]) {
+    Ok(v) => os.stdio.println("halves ${sh(v)}")
+    Err(e) => os.stdio.println("halves failed: ${e}")
+  }
+  match checked_halves([2, 4]) {
+    Ok(v) => os.stdio.println("halves ${sh(v)}")
+    Err(e) => os.stdio.println("halves failed: ${e}")
+  }
+  let nan = 0.0 / 0.0
+  let p1 = P{x: 1.5, name: "a", inner: Inner{k: 1}}
+  let p2 = P{x: 1.5, name: "a", inner: Inner{k: 2}}
+  let pn = P{x: nan, name: "a", inner: Inner{k: 1}}
+  os.stdio.println("max_of ${max_of(p1, p2).inner.k} ${max_of(pn, p1).x} ${max_of(p1, pn).x} ${max_of(3, 9)} ${max_of("b", "a")} ${max_of(2.5, nan)}")
+  os.stdio.println("same ${same(p1, p1)} ${same(p1, p2)} ${same(pn, pn)} ${same(nan, nan)} ${same(Meters(3), Meters(3))} ${p1 == p1} ${pn != pn} ${p1 < p2}")
+  os.stdio.println("tagged ${max_of(Tagged{c: Green, n: 1}, Tagged{c: Red, n: 9}).n} ${max_of(Color.Red, Color.Green)}")
+  os.stdio.println("pad ${sh(pad("x"))} ${sh(pad(1, n: 3))} first ${first_of([7, 8])}")
+  os.stdio.println("twice ${twice(3, fn(x) { x * x })} ${twice("ab", fn(s) { s + s })}")
+  let k2 = 5
+  os.stdio.println("lambda ${twice(1, fn(x) { x + k2 })} ${ident_twice("id")} ${sh(keyed([3, 1, 4, 1, 5], fn(v) { v * 2 }))} ${sh(keyed(["b", "a", "c"], fn(v) { v + v }))}")
+  if (P{x: 1.5, name: "a", inner: Inner{k: 1}}) == p1 {
+    os.stdio.println("literal eq")
+  }
+  if (P{x: 1.5, name: "a", inner: Inner{k: 1}}) != p2 && (Inner{k: 0}) < (Inner{k: 1}) {
+    os.stdio.println("literal ne lt")
+  }
+  os.stdio.println("cig ${sh(concrete_in_generic("q"))}")
+  let ps = [1, 2].map(pairs)
+  let mo: fn(Int, Int) -> Int = max_of
+  os.stdio.println("pairs ${sh(ps)} fnval ${mo(4, 2)}")
+
+  // generic types across modules
+  let empty: List[Int] = []
+  var b = lib.Box{v: 5}
+  b.set(b.get() + 1)
+  let bs = lib.Box{v: "s"}
+  os.stdio.println("box ${b.get()} ${bs.get()} ${sh(lib.biggest([3, 8, 1, 9]))} ${sh(lib.biggest([p1, p2]))} ${sh(lib.biggest(empty))}")
+  os.stdio.println("count_if ${lib.count_if([1, 2, 3, 4], fn(x) { x > 1 })}")
+
+  // closure literals passed to List methods (inlined under --mono)
+  let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  var k = 3
+  let scaled = xs.map(fn(x) { x * k })
+  k = 10
+  os.stdio.println("scaled ${sh(scaled)} k ${k}")
+  let x = 100
+  let shadow = xs.map(fn(x) { x + 1 }).filter(fn(x) { x % 2 == 0 })
+  os.stdio.println("shadow ${sh(shadow)} x ${x}")
+  let loops = xs.map(fn(n) {
+    var acc = 0
+    for i in 0..n {
+      if i == 3 {
+        continue
+      }
+      if i > 6 {
+        break
+      }
+      acc += i
+    }
+    match n % 3 {
+      0 => acc
+      1 => -acc
+      _ => acc * 2
+    }
+  })
+  os.stdio.println("loops ${sh(loops)}")
+  let found = xs.find(fn(v) {
+    os.stdio.println("visit ${sh(v)}")
+    v * v > 10
+  })
+  os.stdio.println("found ${sh(found)} any ${xs.any(fn(v) { v > 8 })} ${xs.any(fn(v) { v > 9 })} all ${xs.all(fn(v) { v > 0 })} ${xs.all(fn(v) { v < 5 })}")
+  let deferred = [1, 2].map(fn(v) {
+    defer {
+      os.stdio.println("deferred ${sh(v)}")
+    }
+    v * 2
+  })
+  os.stdio.println("deferred list ${sh(deferred)}")
+  let xss = [[1, 2], [], [3, 4, 5]]
+  os.stdio.println("nested ${sh(xss.map(fn(row) { row.fold(0, fn(a, v) { a + v }) }))}")
+  os.stdio.println("fold str ${xs.fold("", fn(s, v) { s + "${v}" })} empty ${sh(xs.filter(fn(v) { v > 100 }))}")
+  let opts = xs.map(fn(v) {
+    if v > 7 {
+      Some(v)
+    } else {
+      None
+    }
+  })
+  os.stdio.println("opts ${sh(opts.filter(fn(o) { o != None }))}")
+}

@@ -49,6 +49,10 @@ type Options struct {
 	// LineRoot is the directory //line paths are made relative to; empty
 	// means each module's xo.mod root (or the working directory).
 	LineRoot string
+	// Mono specializes generic functions per concrete instantiation and
+	// inlines closure literals passed to List higher order methods
+	// (mono.go, `xo build --mono`).
+	Mono bool
 }
 
 // Program is the generated Go source of one Xo program: file paths
@@ -57,6 +61,8 @@ type Program struct {
 	Files map[string][]byte
 	// MainModule is the Xo module whose `main` the program runs (Build).
 	MainModule string
+	// Specs counts the specialized copies of generic functions (Mono).
+	Specs int
 }
 
 // Error is a generation failure: a construct the P1 generator does not
@@ -114,6 +120,9 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 			}
 		}
 	}
+	if opts.Mono {
+		g.drainSpecs()
+	}
 	if len(g.errs) > 0 {
 		return nil, g.errList()
 	}
@@ -122,6 +131,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		if pg == nil {
 			continue
 		}
+		prog.Specs += pg.ms.generated
 		src, err := pg.file()
 		if err != nil {
 			return nil, err
@@ -186,6 +196,8 @@ type pkgGen struct {
 	// inRT is set when generating the std type declarations into package
 	// rt itself.
 	inRT bool
+	// ms is the specialization state (mono.go).
+	ms monoState
 }
 
 func pkgIdent(path string) string {
@@ -209,7 +221,8 @@ func pkgIdent(path string) string {
 
 func (g *gen) newPkg(m *check.Module) *pkgGen {
 	name := pkgIdent(m.Path)
-	return &pkgGen{g: g, m: m, dir: "m/" + name, name: name, imports: map[string]string{}, adapt: map[string]bool{}}
+	return &pkgGen{g: g, m: m, dir: "m/" + name, name: name, imports: map[string]string{}, adapt: map[string]bool{},
+		ms: monoState{byKey: map[string]string{}, names: map[string]bool{}, perFunc: map[*check.FuncObj]int{}}}
 }
 
 // pkgRef returns the qualifier for module m as seen from pg ("" when m is
@@ -395,6 +408,11 @@ func (pg *pkgGen) goType(t check.Type) string {
 	case *check.BadType:
 		return "any"
 	case *check.ParamType:
+		if pg.ms.sub != nil {
+			if c := pg.ms.sub.Type(x.P); c != nil {
+				return pg.goType(c)
+			}
+		}
 		return goTParam(x.P)
 	case *check.Tuple:
 		if len(x.Elems) == 0 {

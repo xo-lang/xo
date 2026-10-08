@@ -1,0 +1,36 @@
+exit 0
+--- stdout
+total 13 15 sum=13 n=2
+names sq2sq3
+names failed too big
+depth 12 3
+map_all [10, 20, 30]
+halves failed: odd 5
+halves [1, 2]
+max_of 2 NaN NaN 9 b NaN
+same true false false false true true true true
+tagged 1 Green
+pad ["x", "x"] [1, 1, 1] first 7
+twice 81 abababab
+lambda 11 id [8, 10] ["cc"]
+literal eq
+literal ne lt
+cig ("q", 4)
+pairs [(1, 1), (2, 2)] fnval 4
+box 6 s Some((9, 2)) Some((P{x: 1.5, name: "a", inner: Inner{k: 2}}, 1)) None
+count_if 3
+scaled [3, 6, 9, 12, 15, 18, 21, 24, 27] k 10
+shadow [2, 4, 6, 8, 10] x 100
+loops [0, 2, 3, -3, 14, 12, -18, 36, 18]
+visit 1
+visit 2
+visit 3
+visit 4
+found Some(4) any true false all true false
+deferred 1
+deferred 2
+deferred list [2, 4]
+nested [3, 0, 12]
+fold str 123456789 empty []
+opts [Some(8), Some(9)]
+--- stderr

@@ -106,6 +106,12 @@ func (f *fnGen) valueCall(x *ast.CallExpr) (string, callKind) {
 }
 
 func (f *fnGen) valueCall1(x *ast.CallExpr) (string, callKind) {
+	if code, ok := f.litCall(x); ok {
+		if strings.HasPrefix(code, f.rt()+"Ok[") {
+			return code, ckCall
+		}
+		return code, ckValue
+	}
 	ft, ok := check.Resolve(f.exprType(x.Fun)).(*check.Func)
 	if !ok {
 		f.g.errorf(x, "call of a non function value")
@@ -225,6 +231,15 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 		if code, kind, ok := f.specialStd(x, ci); ok {
 			return code, kind
 		}
+		if code, ok := f.hofInline(x, ci); ok {
+			return code, ckValue
+		}
+	}
+	// a constraint method on a type parameter inside a specialized copy
+	// calls the concrete method (mono.go)
+	callee, calleeSub := fo, sub
+	if m, ms := f.devirt(fo, ci.Recv); m != nil {
+		callee, calleeSub = m, ms
 	}
 	params := fo.Params
 	exprs := argExprs(params, x)
@@ -249,7 +264,7 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 	codes := f.operandsKeep(len(order), func(k int) string {
 		i := order[k]
 		if i < 0 {
-			return f.recvCode(ci.Recv, fo)
+			return f.recvCode(ci.Recv, callee)
 		}
 		p := params[i]
 		if p.Var {
@@ -279,7 +294,26 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 			argCodes[i] = f.paramDefault(fo, i, p, sub)
 		}
 	}
-	return f.emitCall(fo, sub, recvCode, argCodes, x)
+	if lits := f.litArgs(callee, calleeSub, x); lits != nil {
+		if name, ok := f.specForLits(callee, calleeSub, lits); ok {
+			return f.emitSpecCall(callee, calleeSub, name, recvCode, argCodes)
+		}
+	}
+	return f.emitCall(callee, calleeSub, recvCode, argCodes, x)
+}
+
+// emitSpecCall calls the specialized copy name of fo.
+func (f *fnGen) emitSpecCall(fo *check.FuncObj, sub *check.Subst, name, recv string, args []string) (string, callKind) {
+	var call string
+	if fo.Recv == nil {
+		call = fmt.Sprintf("%s(tk%s)", name, prefixComma(args))
+	} else {
+		if fo.RecvVar {
+			recv = "&" + recv
+		}
+		call = fmt.Sprintf("%s(tk, %s%s)", name, recv, prefixComma(args))
+	}
+	return f.callResult(fo, sub, call)
 }
 
 // recvCode generates the receiver of a method call: an addressable place
@@ -336,6 +370,9 @@ func (f *fnGen) targs(ps []*check.TParam, sub *check.Subst) string {
 // emitCall builds the Go call of a declared function or method with the
 // receiver and arguments already generated.
 func (f *fnGen) emitCall(fo *check.FuncObj, sub *check.Subst, recv string, args []string, at ast.Node) (string, callKind) {
+	if spec, ok := f.specFor(fo, sub); ok {
+		return f.emitSpecCall(fo, sub, spec, recv, args)
+	}
 	var call string
 	switch {
 	case fo.Iface && methodIsGoMethod(fo):
@@ -352,6 +389,12 @@ func (f *fnGen) emitCall(fo *check.FuncObj, sub *check.Subst, recv string, args 
 		}
 		call = fmt.Sprintf("%s%s%s(tk, %s%s)", f.pg.pkgRef(fo.Module), funcGoName(fo), f.targs(fo.TParams, sub), recv, prefixComma(args))
 	}
+	return f.callResult(fo, sub, call)
+}
+
+// callResult classifies a generated call of fo: void, a Result whose
+// error type became Never (`.V` taken), or a call.
+func (f *fnGen) callResult(fo *check.FuncObj, sub *check.Subst, call string) (string, callKind) {
 	if returnsVoid(fo) {
 		return call, ckVoid
 	}

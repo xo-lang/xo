@@ -76,6 +76,8 @@ type Options struct {
 	Out string
 	// Race builds with the race detector (host only).
 	Race bool
+	// Mono specializes generic code per instantiation (gen.Options.Mono).
+	Mono bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }
@@ -91,6 +93,8 @@ type Result struct {
 	Dir string
 	// Name is the program name (the main module's directory name).
 	Name string
+	// Specs counts the specialized copies of generic functions (Mono).
+	Specs int
 }
 
 // Check runs the checker on dirs and reports whether errors block the
@@ -124,11 +128,12 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return out, nil
 	}
 	root := lineRoot(dirs)
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, Mono: opts.Mono})
 	if err != nil {
 		return nil, err
 	}
-	dir, err := buildDir(dirs, opts.Mode)
+	out.Specs = prog.Specs
+	dir, err := buildDir(dirs, opts.Mode, opts.Mono)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +220,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 
 // buildDir is a stable directory per program and mode under the user
 // cache, so Go's build cache is reused across builds.
-func buildDir(dirs []string, mode gen.Mode) (string, error) {
+func buildDir(dirs []string, mode gen.Mode, mono bool) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
 	if base == "" {
 		cache, err := os.UserCacheDir()
@@ -230,6 +235,9 @@ func buildDir(dirs []string, mode gen.Mode) (string, error) {
 		h.Write([]byte(abs + "\x00"))
 	}
 	fmt.Fprintf(h, "mode=%d", mode)
+	if mono {
+		fmt.Fprintf(h, " mono")
+	}
 	dir := filepath.Join(base, hex.EncodeToString(h.Sum(nil))[:16])
 	return dir, os.MkdirAll(dir, 0o755)
 }

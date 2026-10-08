@@ -69,11 +69,27 @@ func stableStderr(s string) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
+// goFrameRE matches one Go frame of a fault's stack (function name, then
+// its .xo position), as printed by the test runner and crash reports.
+var goFrameRE = regexp.MustCompile(`(?m)^ +x_[^ \n]+\n +[^ \n]+\.xo:\d+\n`)
+
+// dropGoFrames removes the Go frame lists of fault stacks. Under --mono
+// they legitimately differ: specialized copies have their own Go names
+// (`F_max__int64`) and inlined closure literals have no frame. Fault
+// messages, locations, and Xo error frames ("  at ...") are kept.
+func dropGoFrames(s string) string { return goFrameRE.ReplaceAllString(s, "") }
+
 // buildAndRun builds the program in dir and runs it with the arguments in
 // args.txt and the input in stdin.txt.
 func buildAndRun(t *testing.T, dir string, mode gen.Mode, extra ...string) (runResult, *build.Result) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: mode})
+	return buildAndRunOpts(t, dir, build.Options{Mode: mode}, extra...)
+}
+
+// buildAndRunOpts is buildAndRun with full build options.
+func buildAndRunOpts(t *testing.T, dir string, opts build.Options, extra ...string) (runResult, *build.Result) {
+	t.Helper()
+	res, err := build.Build([]string{dir}, opts)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -111,7 +127,19 @@ func buildAndRun(t *testing.T, dir string, mode gen.Mode, extra ...string) (runR
 // compares exit status, stdout, and the stable lines of stderr with
 // want.txt. Programs with test blocks are run with `xo test` semantics
 // when the directory name starts with "test_".
-func TestGolden(t *testing.T) {
+func TestGolden(t *testing.T) { testGolden(t, false) }
+
+// TestGoldenMono builds every golden program with `--mono` (specialized
+// generics, inlined closure literals) and compares with the same want.txt:
+// the two lowerings must not differ in behavior.
+func TestGoldenMono(t *testing.T) {
+	if *updateGolden {
+		t.Skip("want.txt is written by TestGolden")
+	}
+	testGolden(t, true)
+}
+
+func testGolden(t *testing.T, mono bool) {
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +155,7 @@ func TestGolden(t *testing.T) {
 			if strings.HasPrefix(filepath.Base(dir), "test_") {
 				mode = gen.Test
 			}
-			got, _ := buildAndRun(t, dir, mode)
+			got, _ := buildAndRunOpts(t, dir, build.Options{Mode: mode, Mono: mono})
 			got.stderr = stableStderr(got.stderr)
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
@@ -140,7 +168,11 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("missing want.txt (run with -golden-update): %v", err)
 			}
-			if got.String() != string(want) {
+			gs, ws := got.String(), string(want)
+			if mono {
+				gs, ws = dropGoFrames(gs), dropGoFrames(ws)
+			}
+			if gs != ws {
 				t.Errorf("output differs\n--- got\n%s\n--- want\n%s", got.String(), want)
 			}
 		})

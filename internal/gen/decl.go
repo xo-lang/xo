@@ -221,6 +221,7 @@ func (pg *pkgGen) genDerived(t *check.TypeObj, self string, fields func(recv str
 	}
 	pg.p("}\n")
 	pg.genIfaceMethods(t, self)
+	pg.genTypedEq(t, self, fields)
 }
 
 // genIfaceMethods emits M_debug unless declared, and M_display for
@@ -580,7 +581,18 @@ func funcGoName(fo *check.FuncObj) string {
 }
 
 // genFunc generates a declared function or method.
-func (pg *pkgGen) genFunc(fo *check.FuncObj) {
+func (pg *pkgGen) genFunc(fo *check.FuncObj) { pg.genFuncWith(fo, nil) }
+
+// genFuncWith generates a declared function or method, or with sp a
+// specialized copy of a generic one (mono.go): a top level function named
+// sp.name with the receiver, if any, as its first parameter and the type
+// parameters substituted.
+func (pg *pkgGen) genFuncWith(fo *check.FuncObj, sp *specReq) {
+	if sp != nil {
+		savedSub, savedDepth := pg.ms.sub, pg.ms.depth
+		pg.ms.sub, pg.ms.depth = sp.sub, sp.depth
+		defer func() { pg.ms.sub, pg.ms.depth = savedSub, savedDepth }()
+	}
 	fd := fo.Decl
 	fg := pg.newFn(fo)
 	fr := &frame{name: pg.frameName(fo), resT: fo.Result, errT: fo.Err, fo: fo}
@@ -602,13 +614,19 @@ func (pg *pkgGen) genFunc(fo *check.FuncObj) {
 			rtype = "*" + rtype
 		}
 		fr.params = append(fr.params, paramRef{xo: rv.Name, code: fg.names[rv], t: fo.RecvType})
-		if methodIsGoMethod(fo) {
+		if methodIsGoMethod(fo) && sp == nil {
 			recv = fmt.Sprintf("(%s %s) ", name, rtype)
 		} else {
 			params = append(params, name+" "+rtype)
 		}
 	}
 	for i, pv := range info.ParamVars(fo) {
+		if sp != nil && sp.lits[i] != nil {
+			if fg.litParams == nil {
+				fg.litParams = map[*check.VarObj]*ast.FnLit{}
+			}
+			fg.litParams[pv] = sp.lits[i]
+		}
 		name := fg.declName(pv)
 		pt := pg.goType(fo.Params[i].Type)
 		if fo.Params[i].Var {
@@ -619,11 +637,15 @@ func (pg *pkgGen) genFunc(fo *check.FuncObj) {
 		fr.params = append(fr.params, paramRef{xo: pv.Name, code: fg.names[pv], t: fo.Params[i].Type})
 	}
 	tps := fo.TParams
-	if recv != "" {
-		// a Go method gets its type parameters from the receiver
+	if recv != "" || sp != nil {
+		// a Go method gets its type parameters from the receiver; a copy
+		// has none
 		tps = nil
 	}
 	name := funcGoName(fo)
+	if sp != nil {
+		name = sp.name
+	}
 	// receiver type parameter names come from the receiver type pattern
 	recvText := recv
 	if recv != "" {
@@ -643,6 +665,9 @@ func (pg *pkgGen) genFunc(fo *check.FuncObj) {
 	pg.p("%s {", sig)
 	pg.out.WriteString(body)
 	pg.p("}\n")
+	if sp != nil {
+		return // a copy calls the generic default functions
+	}
 	// parameter defaults
 	for i, p := range fo.Params {
 		if p.Default == nil {
@@ -660,7 +685,7 @@ func (pg *pkgGen) genFunc(fo *check.FuncObj) {
 // frameName is the function name in error frames: `module.fn` or
 // `module.Type.fn` (core 11.1).
 func (pg *pkgGen) frameName(fo *check.FuncObj) string {
-	mod := pg.m.Name
+	mod := fo.Module.Name
 	if fo.Recv != nil {
 		return mod + "." + fo.Recv.Name + "." + fo.Name
 	}

@@ -31,6 +31,9 @@ type fnGen struct {
 	// writebacks store places copied for a `var` receiver or argument
 	// back after the call (place).
 	writebacks []func()
+	// litParams maps parameters of a specialized copy to the closure
+	// literals the copy inlines (mono.go).
+	litParams map[*check.VarObj]*ast.FnLit
 }
 
 // frame is an Xo function being generated: a declared function, a

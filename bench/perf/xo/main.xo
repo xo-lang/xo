@@ -91,10 +91,184 @@ fn branch(m: Map[Int, Int]) -> Int {
   sum
 }
 
+
+// ---------------------------------------------------------------------------
+// Generic workloads (bench/results/perf-mono-2026-10-08.md)
+
+const SORT_N = 5000
+const LOOKUPS = 3000000
+const HOF_N = 1000000
+
+fn lcg(s: Int) -> Int { (s * 1103515245 + 12345) % 2147483648 }
+
+// A sorted container over any Ord type: binary search, sorted insert.
+struct Sorted[T: Ord] {
+  items: List[T]
+}
+
+fn (s: Sorted[T]) search(x: T) -> Int {
+  var lo = 0
+  var hi = s.items.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if s.items[mid] < x {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
+fn (var s: Sorted[T]) insert(x: T) {
+  let i = s.search(x)
+  s.items.insert(i, x)
+}
+
+fn (s: Sorted[T]) contains(x: T) -> Bool {
+  let i = s.search(x)
+  i < s.items.len() && s.items[i] == x
+}
+
+struct Point {
+  x: Int
+  y: Int
+} derive Ord
+
+fn sorted_int() -> Int {
+  var s = Sorted[Int]{items: []}
+  var seed = 1
+  for _ in 0..SORT_N {
+    seed = lcg(seed)
+    s.insert(seed % 1000000)
+  }
+  var found = 0
+  for _ in 0..LOOKUPS {
+    seed = lcg(seed)
+    if s.contains(seed % 1000000) {
+      found += 1
+    }
+  }
+  found * 1000000 + s.items.len()
+}
+
+fn sorted_point() -> Int {
+  var s = Sorted[Point]{items: []}
+  var seed = 1
+  for _ in 0..SORT_N {
+    seed = lcg(seed)
+    let r = seed % 1000000
+    s.insert(Point{x: r % 1000, y: r / 1000})
+  }
+  var found = 0
+  for _ in 0..LOOKUPS {
+    seed = lcg(seed)
+    let r = seed % 1000000
+    if s.contains(Point{x: r % 1000, y: r / 1000}) {
+      found += 1
+    }
+  }
+  found * 1000000 + s.items.len()
+}
+
+fn hof_chain(xs: List[Int]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    sum += xs.map(fn(x) { x * 3 }).filter(fn(x) { x % 2 == 0 }).fold(0, fn(a, x) { a + x })
+  }
+  sum
+}
+
+struct Item {
+  id: Int
+  score: Int
+  name: Str
+}
+
+fn max_by[T, K: Ord](xs: List[T], key: fn(T) -> K) -> T? {
+  let first = xs.first()?
+  var best = first
+  var best_k = key(best)
+  for x in xs {
+    let k = key(x)
+    if k > best_k {
+      best = x
+      best_k = k
+    }
+  }
+  best
+}
+
+fn max_by_loop(items: List[Item]) -> Int {
+  var sum = 0
+  for i in 0..20 {
+    let by_score = max_by(items, fn(it) { it.score })
+    let by_name = max_by(items, fn(it) { it.name })
+    if let Some(a) = by_score {
+      sum += a.id
+    }
+    if let Some(b) = by_name {
+      sum += b.id
+    }
+    sum += i
+  }
+  sum
+}
+
+interface Shape {
+  fn area(self) -> Int
+}
+
+struct Rect {
+  w: Int
+  h: Int
+}
+
+fn (r: Rect) area() -> Int { r.w * r.h }
+
+fn total_area[T: Shape](xs: List[T]) -> Int {
+  var s = 0
+  for x in xs {
+    s += x.area()
+  }
+  s
+}
+
+fn iface_loop(rects: List[Rect]) -> Int {
+  var sum = 0
+  for _ in 0..20 {
+    sum += total_area(rects)
+  }
+  sum
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "putget"
   let base = build(KEYS)
+  var ints: List[Int] = []
+  var items: List[Item] = []
+  var rects: List[Rect] = []
+  match w {
+    "hof" => {
+      for i in 0..HOF_N {
+        ints.push(i)
+      }
+    }
+    "maxby" => {
+      var seed = 7
+      for i in 0..HOF_N {
+        seed = lcg(seed)
+        items.push(Item{id: i, score: seed % 1000003, name: "n${seed % 999983}"})
+      }
+    }
+    "iface" => {
+      for i in 0..HOF_N {
+        rects.push(Rect{w: i % 100, h: i % 37})
+      }
+    }
+    _ => {}
+  }
   let t = os.clock.now()
   let sum = match w {
     "putget" => put_get()
@@ -104,6 +278,11 @@ fn main(os: Os) {
     "iter" => iterate(base)
     "copymut" => copy_mutate(base)
     "branch" => branch(base)
+    "sortint" => sorted_int()
+    "sortpt" => sorted_point()
+    "hof" => hof_chain(ints)
+    "maxby" => max_by_loop(items)
+    "iface" => iface_loop(rects)
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

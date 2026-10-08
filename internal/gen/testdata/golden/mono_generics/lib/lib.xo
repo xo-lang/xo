@@ -1,0 +1,30 @@
+// Generic code called from another module: under --mono its copies are
+// generated into the caller's package and refer back to this module.
+
+pub struct Box[T] {
+  pub v: T
+}
+
+pub fn (b: Box[T]) get() -> T { b.v }
+
+pub fn (var b: Box[T]) set(v: T) { b.v = v }
+
+struct Acc[T] {
+  best: T
+  n: Int
+}
+
+fn bump[T](a: Acc[T]) -> Acc[T] { a with {n: a.n + 1} }
+
+pub fn biggest[T: Ord](xs: List[T]) -> (T, Int)? {
+  let first = xs.first()?
+  var acc = Acc{best: first, n: 0}
+  for x in xs {
+    if x > acc.best {
+      acc = bump(acc with {best: x})
+    }
+  }
+  (acc.best, acc.n)
+}
+
+pub fn count_if[T](xs: List[T], f: fn(T) -> Bool) -> Int { xs.filter(f).len() }
