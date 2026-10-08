@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+GET /health -> 200 ok user=false
+GET /api/me -> 401 {"error":"no token"}
+GET /api/me -> 401 {"error":"unknown token bad"}
+GET /api/me -> 200 me ada 1
+GET /api/items/7 -> 200 item 7 for ada
+GET /api/items/x -> 400 {"error":"path segment `id` must be an Int"}
+GET /api/nothing -> 404 {"error":"not found"}
+POST /admin/reset -> 500 {"error":"internal error"}
+POST /admin/reset -> 204 
+GET /admin/reset -> 405 {"error":"method not allowed"}
+trace 20
+value 2 s 0 eq=true name=n
+header abc none
+listener true true
+server true
+real 200 me ada 1
+--- stderr
+<time> ERROR handler failed error=Broken

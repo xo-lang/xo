@@ -1,22 +1,32 @@
 // notes-service: a small HTTP JSON service with users and expiring notes.
 //
 // - Users and notes live in std/sql (the in memory driver).
-// - Every route except GET /health needs `Authorization: Bearer <token>`,
-//   checked against the users table by a middleware.
+// - The /notes routes sit in their own router behind an auth middleware
+//   (mounted, so GET /health needs no exemption). The middleware resolves
+//   `Authorization: Bearer <token>` to a User and hands it to handlers as a
+//   typed request value; it fails with ApiErr, mapped like handler errors.
+// - Tokens are stored as SHA-256 digests and compared in constant time.
 // - A background task purges expired notes every PURGE_EVERY.
 // - Shutdown is two phase (core 7.5): the first signal stops the server
 //   accepting, in flight requests finish, then main returns.
+use std/crypto
 use std/http
 use std/log
 use std/sql
 
-const SCHEMA = "CREATE TABLE users (id SERIAL, name TEXT NOT NULL, token TEXT NOT NULL UNIQUE); CREATE TABLE notes (id SERIAL, owner INT NOT NULL, body TEXT NOT NULL, created TIMESTAMP NOT NULL, expires TIMESTAMP NOT NULL)"
+const SCHEMA = "CREATE TABLE users (id SERIAL, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE); CREATE TABLE notes (id SERIAL, owner INT NOT NULL, body TEXT NOT NULL, created TIMESTAMP NOT NULL, expires TIMESTAMP NOT NULL)"
 
 const PURGE_EVERY = 1m
 
-// The header the auth middleware sets for handlers. Request has no slot for
-// request scoped values, so the resolved user travels as a header.
-const USER_HEADER = "X-Notes-User"
+pub struct User {
+  id: Int
+  name: Str
+}
+
+/// The authenticated user, set by `auth` for the routes behind it.
+pub fn user_key() -> http.Key[User] {
+  http.key("user")
+}
 
 pub struct Note {
   id: Int
@@ -62,13 +72,27 @@ pub fn open_db() -> sql.Db ! sql.SqlErr {
   sql.memory(SCHEMA)
 }
 
-pub fn add_user(db: sql.Db, name: Str, token: Str) -> Int ! sql.SqlErr uses net.dial {
-  db.exec("INSERT INTO users (name, token) VALUES ($1, $2)", [sql.str(name), sql.str(token)])?.last_insert_id
+/// The stored form of a token: its SHA-256 digest. Tokens are random
+/// (crypto.token), so no salt or stretching is needed, and the digest can
+/// be looked up by value.
+pub fn token_digest(token: Str) -> Bytes {
+  crypto.sha256(token.bytes())
 }
 
-fn user_for_token(db: sql.Db, token: Str) -> Int? ! sql.SqlErr uses net.dial {
-  match db.query_one("SELECT id FROM users WHERE token = $1", [sql.str(token)]) {
-    Ok(row) => Some(row.int("id")?)
+pub fn add_user(db: sql.Db, name: Str, token: Str) -> Int ! sql.SqlErr uses net.dial {
+  db.exec("INSERT INTO users (name, token_sha256) VALUES ($1, $2)", [sql.str(name), sql.str(token_digest(token).to_hex())])?.last_insert_id
+}
+
+fn user_for_token(db: sql.Db, token: Str) -> User? ! sql.SqlErr uses net.dial {
+  let digest = token_digest(token)
+  match db.query_one("SELECT id, name, token_sha256 FROM users WHERE token_sha256 = $1", [sql.str(digest.to_hex())]) {
+    Ok(row) => {
+      let stored = Bytes.from_hex(row.str("token_sha256")?) ?? b""
+      if !crypto.equal(stored, digest) {
+        return None
+      }
+      Some(User{id: row.int("id")?, name: row.str("name")?})
+    }
     Err(NoRows) => None
     Err(e) => Err(e)
   }
@@ -115,7 +139,8 @@ pub fn purge_expired(db: sql.Db, now: Time) -> Int ! sql.SqlErr uses net.dial {
   db.exec("DELETE FROM notes WHERE expires <= $1", [sql.time(now)])?.rows_affected
 }
 
-/// Runs until cancelled. A failed purge is logged and retried next tick.
+/// Runs until cancelled. A failed purge is logged and retried next tick;
+/// a purge cut short by shutdown is not a failure.
 pub fn purge_loop(db: sql.Db, clock: Clock, every: Duration) uses (net.dial, clock) {
   while {
     clock.sleep(every)
@@ -125,6 +150,7 @@ pub fn purge_loop(db: sql.Db, clock: Clock, every: Duration) uses (net.dial, clo
           log.info("purged expired notes", {"count": n})
         }
       }
+      Err(Canceled) => return
       Err(e) => log.warn("purge failed", {"err": "${e}"})
     }
   }
@@ -141,44 +167,26 @@ fn bearer(req: http.Request) -> Str? {
   if t.is_empty() { None } else { Some(t) }
 }
 
-fn unauthorized() -> http.Response {
-  http.json(401, {"error": ApiErr.Unauthorized.display()})
-}
-
-/// Resolves the bearer token to a user id and passes it on in USER_HEADER.
-/// Any client supplied USER_HEADER is overwritten, never trusted.
-fn auth(db: sql.Db) -> fn(http.Request, http.Next) -> http.Response uses net.dial {
-  fn(req, next) {
-    if req.path == "/health" {
-      return next(req)
-    }
-    let token = match bearer(req) {
-      Some(t) => t
-      None => return unauthorized()
-    }
-    match user_for_token(db, token) {
-      Ok(Some(uid)) => {
-        var headers = req.headers
-        headers.put(USER_HEADER, "${uid}")
-        next(req with {headers: headers})
-      }
-      Ok(None) => unauthorized()
-      Err(e) => http.json(500, {"error": ApiErr.Db(e).display()})
-    }
+/// Resolves the bearer token to a User and passes it on as a typed request
+/// value. Clients cannot set request values, so nothing they send is
+/// trusted as identity. Errors map to responses through ApiErr.status.
+fn auth(db: sql.Db) -> fn(http.Request, http.Next) -> http.Response ! ApiErr uses net.dial {
+  fn(req, next) -> http.Response ! ApiErr {
+    let token = bearer(req).or_err(ApiErr.Unauthorized)?
+    let user = user_for_token(db, token)?.or_err(ApiErr.Unauthorized)?
+    next(req.with_value(user_key(), user))
   }
 }
 
-fn current_user(req: http.Request) -> Int ! ApiErr {
-  let h = req.header(USER_HEADER).or_err(ApiErr.Unauthorized)?
-  Int.parse(h).or_err(ApiErr.Unauthorized)
+fn current_user(req: http.Request) -> User ! ApiErr {
+  req.value(user_key()).or_err(ApiErr.Unauthorized)
 }
 
 pub fn routes(db: sql.Db, clock: Clock) -> http.Router uses (net.dial, clock) {
-  var r = http.router()
-  r.wrap(auth(db))
-  r.handle("GET /health", fn(_req) { http.json(200, {"status": "ok"}) })
-  r.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
-    let uid = current_user(req)?
+  var notes = http.router()
+  notes.wrap(auth(db))
+  notes.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
+    let uid = current_user(req)?.id
     let n = req.json[NewNote]().map_err(fn(e) { ApiErr.BadRequest(msg: "${e}") })?
     if n.body.is_empty() {
       return Err(ApiErr.BadRequest(msg: "body must not be empty"))
@@ -189,26 +197,31 @@ pub fn routes(db: sql.Db, clock: Clock) -> http.Router uses (net.dial, clock) {
     let note = insert_note(db, uid, n.body, clock.now(), 1s * n.ttl_secs)?
     http.json(201, note)
   })
-  r.handle("GET /notes", fn(req) -> http.Response ! ApiErr {
-    let uid = current_user(req)?
+  notes.handle("GET /notes", fn(req) -> http.Response ! ApiErr {
+    let uid = current_user(req)?.id
     http.json(200, list_notes(db, uid)?)
   })
-  r.handle("GET /notes/{id:Int}", fn(req) -> http.Response ! ApiErr {
-    let uid = current_user(req)?
+  notes.handle("GET /notes/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let uid = current_user(req)?.id
     http.json(200, get_note(db, uid, req.param_int("id"))?)
   })
-  r.handle("DELETE /notes/{id:Int}", fn(req) -> http.Response ! ApiErr {
-    let uid = current_user(req)?
+  notes.handle("DELETE /notes/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let uid = current_user(req)?.id
     delete_note(db, uid, req.param_int("id"))?
     http.empty(204)
   })
+  var r = http.router()
+  r.handle("GET /health", fn(_req) { http.json(200, {"status": "ok"}) })
+  r.mount("", notes)
   r
 }
 
 /// Serves until the first stop signal, with the purge job in the background.
 pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock) {
-  let srv = http.server(os.net.listen(addr)?, routes(db, os.clock))
-  log.info("listening", {"addr": addr})
+  let l = os.net.listen(addr)?
+  let srv = http.server(l, routes(db, os.clock))
+  // the bound address: the real port when addr asked for ":0"
+  log.info("listening", {"addr": l.addr()})
   scope s {
     s.spawn_background(fn() { purge_loop(db, os.clock, PURGE_EVERY) })
     srv.serve()?
@@ -218,7 +231,15 @@ pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock) {
 
 fn main(os: Os) ! {
   let db = open_db()?
-  let token = os.env.get("NOTES_TOKEN") ?? "dev-token"
+  let token = match os.env.get("NOTES_TOKEN") {
+    Some(t) => t
+    None => {
+      // a fresh random token, shown once; only its digest is stored
+      let t = crypto.token(os.rand)
+      os.stdio.println("admin token: ${t}")
+      t
+    }
+  }
   add_user(db, "admin", token)?
   let addr = os.env.get("NOTES_ADDR") ?? "127.0.0.1:8080"
   run(os, db, addr)?

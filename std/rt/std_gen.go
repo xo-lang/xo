@@ -20,6 +20,7 @@ type Http_Request struct {
 	F_body      Bytes
 	F_remote_ip string
 	XParams     Map[string, string]
+	XValues     *reqValues
 }
 
 func (v Http_Request) XoEq(x any) bool {
@@ -505,6 +506,51 @@ func (v Log_Format) XoDebug(b *strings.Builder) {
 }
 
 func (v Log_Format) M_debug(*Task) string { return Debug(v) }
+
+type Log_Record struct {
+	F_level  Log_Level
+	F_msg    string
+	F_fields Map[string, string]
+}
+
+func (v Log_Record) XoEq(x any) bool {
+	o, ok := x.(Log_Record)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_level, o.F_level) {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	if !Eq(v.F_fields, o.F_fields) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Log_Record) XoHash() uint64 {
+	h := uint64(7014664568630156441)
+	h = MixHash(h, Hash(v.F_level))
+	h = MixHash(h, Hash(v.F_msg))
+	h = MixHash(h, Hash(v.F_fields))
+	return h
+}
+
+func (v Log_Record) XoDebug(b *strings.Builder) {
+	b.WriteString("Record{")
+	b.WriteString("level: ")
+	DebugTo(b, v.F_level)
+	b.WriteString(", msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString(", fields: ")
+	DebugTo(b, v.F_fields)
+	b.WriteString("}")
+}
+
+func (v Log_Record) M_debug(*Task) string { return Debug(v) }
 
 type TargetOs struct {
 	Tag int

@@ -1,0 +1,16 @@
+// std/crypto (spec/std.md 11). Declaration file; encoding rules are listed
+// at the top of std/prelude.xo. Hashing and comparison are pure; anything
+// random takes the `Rand` capability (std.md 3.4), so tests are seeded and
+// deterministic.
+
+fn sha256(data: Bytes) -> Bytes
+fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes
+/// Constant time in the contents (not the lengths) of `a` and `b`.
+fn equal(a: Bytes, b: Bytes) -> Bool
+fn random_bytes(r: Rand, n: Int) -> Bytes uses rand
+/// `n` random bytes as unpadded URL safe base64.
+fn token(r: Rand, n: Int = 32) -> Str uses rand
+/// PBKDF2-HMAC-SHA256 with a 16 byte random salt; the result is
+/// `pbkdf2-sha256$<iterations>$<salt>$<key>` (std.md 11).
+fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
+fn verify_password(password: Str, hash: Str) -> Bool

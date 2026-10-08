@@ -89,7 +89,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
-- [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): with no request locals, auth middleware passes the user in a header; always overwrite it or clients can spoof it.
+- [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): (Resolved 2026-10-08 by decision 0055) with no request locals, auth middleware passed the user in a spoofable header; use `req.with_value` / `req.value` with an `http.Key[T]` instead.
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
 - [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.
@@ -111,3 +111,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-fewer-instructions-slower.md](arm64-fewer-instructions-slower.md): removing two never taken bounds checks from nbody's inner loop made it 1.4 percent slower at every alignment; measure every program in cycles before keeping a code shape change.
 - [arm64-mir-param-without-moves.md](arm64-mir-param-without-moves.md): a MIR register defined only on edges whose moves were never added compiled and segfaulted; regalloc now rejects registers live into the entry.
 - [bench-decomposition-changes-branches.md](bench-decomposition-changes-branches.md): cutting sort's quicksort call made its check loop's branch unpredictable and inflated the gap; split programs so every branch sees its real data.
+- [fake-listener-before-serve.md](fake-listener-before-serve.md): a test request to an in memory listener before `serve` started was refused, and a background `serve` canceled before it started deadlocked; fixed (backlog style wait, cancel check before `blockOn`).
+- [canceled-error-logged-at-shutdown.md](canceled-error-logged-at-shutdown.md): a background loop's catch all `Err(e)` arm logged `Canceled` as a failure when shutdown landed inside a DB call; match `Err(Canceled)` first; found by `--explore` plus `testing.logs()`.

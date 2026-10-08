@@ -25,9 +25,46 @@ type logField struct {
 
 type logSink struct {
 	mu    sync.Mutex
-	out   Stdio // nil: standard error
+	out   Stdio // nil: standard error, or the test's buffer when capturing
 	level int
 	json  bool
+	// capture is set for a test (std.md 6, decision 0057): every record
+	// written is kept for testing.logs(), and records with no configured
+	// output go to the test's buffer instead of standard error.
+	capture *logCapture
+}
+
+// logCapture holds the records of one test.
+type logCapture struct {
+	recs  []Log_Record
+	lines []string // records that had no configured output, as text
+}
+
+// newTestLogSink is the log sink of a test world.
+func newTestLogSink() *logSink {
+	return &logSink{level: levelInfo, capture: &logCapture{}}
+}
+
+// testLogLines returns the buffered output of a test world's log sink.
+func testLogLines(w *World) []string {
+	if w == nil || w.log == nil || w.log.capture == nil {
+		return nil
+	}
+	w.log.mu.Lock()
+	defer w.log.mu.Unlock()
+	return append([]string(nil), w.log.capture.lines...)
+}
+
+// Testing_logs is `testing.logs()` (std.md 8.6): the records logged so far
+// in the current test, oldest first; empty outside a test.
+func Testing_logs(tk *Task) List[Log_Record] {
+	if tk == nil || tk.w == nil || tk.w.log == nil || tk.w.log.capture == nil {
+		return List[Log_Record]{}
+	}
+	s := tk.w.log
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return ListOf(append([]Log_Record(nil), s.capture.recs...)...)
 }
 
 var logger = &logSink{level: levelInfo}
@@ -41,7 +78,7 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 		s = tk.w.log
 	}
 	s.mu.Lock()
-	out, min, asJSON := s.out, s.level, s.json
+	out, min, asJSON, capture := s.out, s.level, s.json, s.capture
 	s.mu.Unlock()
 	if level < min {
 		return
@@ -79,6 +116,21 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 			b.WriteString(f.v)
 		}
 		line = b.String()
+	}
+	if capture != nil {
+		var fm Map[string, string]
+		for _, f := range fields {
+			fm.M_put(nil, f.k, f.v)
+		}
+		s.mu.Lock()
+		capture.recs = append(capture.recs, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm})
+		if out == nil {
+			capture.lines = append(capture.lines, line)
+		}
+		s.mu.Unlock()
+		if out == nil {
+			return
+		}
 	}
 	if out == nil {
 		outWrite(stderrFile(), line+"\n")

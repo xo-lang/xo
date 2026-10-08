@@ -58,6 +58,9 @@ type testOutcome struct {
 	// concurrent is set when the test started a task (or a runtime helper
 	// thread): only then can another seed give another interleaving
 	concurrent bool
+	// logs is the test's log output that went to no configured Stdio
+	// (decision 0057): printed when the test fails, or with -v
+	logs []string
 }
 
 // RunTests runs test tables and returns the exit status: 0 when every
@@ -130,7 +133,11 @@ func RunTests(args []string, tables ...[]TestCase) int {
 				skip++
 			}
 			if *asJSON {
-				data, _ := json.Marshal(map[string]any{"name": tc.Name, "module": tc.Module, "loc": tc.Loc, "status": out.status, "message": out.msg, "seed": s})
+				rec := map[string]any{"name": tc.Name, "module": tc.Module, "loc": tc.Loc, "status": out.status, "message": out.msg, "seed": s}
+				if len(out.logs) > 0 && (out.status == "fail" || *verbose) {
+					rec["log"] = out.logs
+				}
+				data, _ := json.Marshal(rec)
 				fmt.Fprintln(os.Stdout, string(data))
 				continue
 			}
@@ -140,10 +147,12 @@ func RunTests(args []string, tables ...[]TestCase) int {
 				for _, l := range strings.Split(strings.TrimRight(out.msg, "\n"), "\n") {
 					fmt.Fprintf(os.Stdout, "    %s\n", l)
 				}
+				printTestLogs(out.logs)
 			case out.status == "skip" && *verbose:
 				fmt.Fprintf(os.Stdout, "--- SKIP: %s (%s)\n", tc.Name, out.msg)
 			case out.status == "pass" && *verbose:
 				fmt.Fprintf(os.Stdout, "--- PASS: %s\n", tc.Name)
+				printTestLogs(out.logs)
 			}
 		}
 	}
@@ -158,6 +167,17 @@ func RunTests(args []string, tables ...[]TestCase) int {
 		return 1
 	}
 	return 0
+}
+
+// printTestLogs prints a test's buffered log lines under its result.
+func printTestLogs(lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "    log:\n")
+	for _, l := range lines {
+		fmt.Fprintf(os.Stdout, "      %s\n", l)
+	}
 }
 
 // runProperty runs a property test on generated inputs, each case in a
@@ -266,6 +286,8 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 	} else {
 		w = NewWorld()
 	}
+	// logs go to a buffer per test (std.md 6, decision 0057)
+	w.log = newTestLogSink()
 	done := make(chan testOutcome, 1)
 	go func() {
 		out := runInWorld(w, tc, seed)
@@ -276,15 +298,17 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 		}
 		done <- out
 	}()
+	var out testOutcome
 	select {
-	case out := <-done:
-		return out
+	case out = <-done:
 	case <-w.stuck:
 		f := w.DeadlockFault()
-		return testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
+		out = testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
 	case <-time.After(limit):
-		return testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
+		out = testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
 	}
+	out.logs = testLogLines(w)
+	return out
 }
 
 func runInWorld(w *World, tc TestCase, seed int64) (out testOutcome) {
@@ -910,7 +934,7 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		f.n.nextPort++
 		port = fmt.Sprint(49151 + f.n.nextPort)
 	}
-	l := &memListener{n: f.n, addr: host + ":" + port}
+	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent()}
 	f.n.listeners[l.addr] = l
 	if host == "127.0.0.1" {
 		f.n.listeners["localhost:"+port] = l
@@ -974,6 +998,13 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 		req.XParams = params
 		return Ok[Http_Response, Http_ClientErr](best.h(tk, req).V)
 	}
+	if srv != nil && !srv.served.isSet() {
+		// like a real socket after listen: the connection waits in the
+		// backlog until http.server(l, r).serve() starts
+		if !srv.served.wait(tk, true, waitAccept, nil) {
+			return Err[Http_Response](clientErr(5, ""))
+		}
+	}
 	if srv != nil {
 		if r, st, ok := srv.begin(); ok {
 			defer srv.end()
@@ -990,8 +1021,10 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 
 // memListener is an in memory listener served by http.server in tests.
 type memListener struct {
-	n        *fakeNet
-	addr     string
+	n      *fakeNet
+	addr   string
+	served *event // fired when serve starts
+
 	mu       sync.Mutex
 	r        *Http_Router
 	stop     *stopState // of the serving program
@@ -1033,10 +1066,13 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.r = &r
 	l.stop = tk.stop
 	l.mu.Unlock()
+	l.served.fire()
 	stopped := false
 	if tk.stop != nil {
 		stopped = tk.stop.ev.wait(tk, true, waitStop, nil)
-	} else {
+	} else if !tk.Canceled() {
+		// a task canceled before it got here (a background serve whose
+		// scope ended first) must not block: nothing would wake it
 		tk.blockOn(waitServe, nil, true)
 		<-tk.node.doneCh()
 		tk.unblock()

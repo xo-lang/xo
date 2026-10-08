@@ -9,6 +9,7 @@
 //   comparison `a op b`. `os`, `expect`, and `testing` are predeclared in test
 //   blocks; `expect` and `testing` in all of a `_test.xo` file.
 use std/http
+use std/log
 use std/sql
 use std/task
 
@@ -28,6 +29,9 @@ struct Expect[T] {}
 fn expect[T](x: T) -> Expect[T]
 
 fn gen[T](seed: Int) -> T
+
+/// The records logged so far in the current test, oldest first (std.md 8.6).
+fn logs() -> List[log.Record]
 
 /// An in memory database created from `schema` (std.md 10.6); same as `sql.memory`.
 fn fake_db(schema: Str) -> sql.Db ! sql.SqlErr

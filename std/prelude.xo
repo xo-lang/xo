@@ -431,6 +431,9 @@ enum NetErr {
 } derive Display
 
 struct Listener {}
+/// The bound address, `host:port`, with the port the system chose for
+/// `:0` (std.md 3.2).
+fn (l: Listener) addr() -> Str
 struct Conn {}
 
 interface Net {

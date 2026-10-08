@@ -1,0 +1,44 @@
+// std/log under `xo test` (std.md 6, 8.6, decision 0057): logs are
+// buffered per test, printed only when the test fails, and readable with
+// testing.logs().
+use std/log
+
+fn work(n: Int) -> Int {
+  log.debug("not captured at the default level")
+  log.info("working", {"n": n, "ok": true})
+  if n > 2 {
+    log.warn("large input", {"n": n})
+  }
+  n * 2
+}
+
+test "a passing test prints no logs" {
+  expect(work(1)) == 2
+}
+
+test "records can be asserted" {
+  work(3)
+  let recs = testing.logs()
+  expect(recs.len()) == 2
+  expect(recs.map(fn(r) { r.msg })) == ["working", "large input"]
+  expect(recs[0].level) == log.Level.Info
+  expect(recs[0].fields.get("n")) == Some("3")
+  expect(recs[0].fields.get("ok")) == Some("true")
+  expect(recs[1].level) == log.Level.Warn
+}
+
+test "configured output still captures records" {
+  log.configure(os.stdio, level: log.Level.Debug)
+  work(1)
+  expect(testing.logs().len()) == 2
+  expect(os.stdio.errors().contains("DEBUG not captured at the default level"))
+}
+
+test "each test starts with no records" {
+  expect(testing.logs().len()) == 0
+}
+
+test "a failing test prints its logs" {
+  work(5)
+  expect(work(1)) == 3
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,11 +38,15 @@ type routeSeg struct {
 	rest  bool
 }
 
-// Http_Router is `http.Router`: a value; handle and wrap take a `var`
-// receiver.
+// middleware is one registered middleware, its error already mapped to a
+// response (std.md 4.2).
+type middleware = func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]
+
+// Http_Router is `http.Router`: a value; handle, wrap, and mount take a
+// `var` receiver.
 type Http_Router struct {
 	routes List[*route]
-	mws    List[func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]]
+	mws    List[middleware]
 }
 
 // XoDebug implements Debug.
@@ -178,10 +183,49 @@ func jsonError(tk *Task, status int64, msg string) Http_Response {
 	return Http_json(tk, status, m)
 }
 
-// M_wrap is `r.wrap(m)`: middleware run in registration order, outermost
-// first (std.md 4.1).
-func (r *Http_Router) M_wrap(_ *Task, m func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]) {
-	r.mws.M_push(nil, m)
+// Http_Router_wrap is `r.wrap(m)`: middleware run in registration order,
+// outermost first (std.md 4.1). An error returned by m is mapped to a
+// response like a handler's (std.md 4.2); the middleware registered
+// before it see that response.
+func Http_Router_wrap[E any](_ *Task, r *Http_Router, m func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, E]) {
+	r.mws.M_push(nil, func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+		res := m(tk, req, next)
+		if res.Ok {
+			return Ok[Http_Response, Never](res.V)
+		}
+		return Ok[Http_Response, Never](errorResponse(tk, any(res.E), res.Tr))
+	})
+}
+
+// M_mount is `r.mount(prefix, sub)` (std.md 4.1): every route of sub is
+// added to r under prefix, and runs behind the middleware of sub (inside
+// the middleware of r). Unmatched requests never reach the middleware of
+// sub. The routes are copied: later changes to sub do not affect r.
+func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
+	_, pre := parsePattern(prefix)
+	mws := append([]middleware(nil), sub.mws.s...)
+	for _, sr := range sub.routes.s {
+		nr := &route{method: sr.method, segs: append(append([]routeSeg(nil), pre...), sr.segs...), arena: sr.arena && len(mws) == 0}
+		nr.h = sr.h
+		if len(mws) > 0 {
+			nr.h = chain(mws, sr.h)
+		}
+		r.routes.M_push(nil, nr)
+	}
+}
+
+// chain runs inner behind mws, outermost first.
+func chain(mws []middleware, inner func(*Task, Http_Request) Http_Response) func(*Task, Http_Request) Http_Response {
+	next := func(tk *Task, req Http_Request) Result[Http_Response, Never] {
+		return Ok[Http_Response, Never](inner(tk, req))
+	}
+	for i := len(mws) - 1; i >= 0; i-- {
+		mw, in := mws[i], next
+		next = func(tk *Task, req Http_Request) Result[Http_Response, Never] {
+			return mw(tk, req, in)
+		}
+	}
+	return func(tk *Task, req Http_Request) Http_Response { return next(tk, req).V }
 }
 
 // M_call is `r.call(req)`: in process dispatch. A streamed body is
@@ -197,16 +241,10 @@ func (r Http_Router) M_call(tk *Task, req Http_Request) Http_Response {
 
 // call dispatches through the middleware without collecting a stream.
 func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
-	next := func(tk *Task, req Http_Request) Result[Http_Response, Never] {
-		return Ok[Http_Response, Never](r.dispatch(tk, req))
+	if len(r.mws.s) == 0 {
+		return r.dispatch(tk, req)
 	}
-	for i := len(r.mws.s) - 1; i >= 0; i-- {
-		mw, inner := r.mws.s[i], next
-		next = func(tk *Task, req Http_Request) Result[Http_Response, Never] {
-			return mw(tk, req, inner)
-		}
-	}
-	return next(tk, req).V
+	return chain(r.mws.s, r.dispatch)(tk, req)
 }
 
 // dispatch finds the route and runs it isolated.
@@ -308,6 +346,61 @@ func headerGet(h Map[string, string], name string) Option[string] {
 		}
 	}
 	return Option[string]{}
+}
+
+// M_with_header is `req.with_header(name, value)`: a copy of the request
+// with the header set (canonical key).
+func (r Http_Request) M_with_header(tk *Task, name, value string) Http_Request {
+	r.F_headers.M_put(tk, textproto.CanonicalMIMEHeaderKey(name), value)
+	return r
+}
+
+// Http_Key is `http.Key[T]` (std.md 4.3): a typed request value key. Two
+// keys with the same name and type are the same key.
+type Http_Key[T any] struct{ name string }
+
+// XoDebug implements Debug.
+func (k Http_Key[T]) XoDebug(b *strings.Builder) { b.WriteString("<key " + k.name + ">") }
+
+// XoEq implements Eq.
+func (k Http_Key[T]) XoEq(x any) bool { o, ok := x.(Http_Key[T]); return ok && o.name == k.name }
+
+// XoHash implements Hash.
+func (k Http_Key[T]) XoHash() uint64 { return Hash(k.name) }
+
+// M_name is `k.name()`.
+func (k Http_Key[T]) M_name(*Task) string { return k.name }
+
+// Http_key is `http.key[T](name)`.
+func Http_key[T any](_ *Task, name string) Http_Key[T] { return Http_Key[T]{name: name} }
+
+// reqValues is the persistent list of a request's typed values: with_value
+// prepends, so copies of a request never see each other's later values.
+type reqValues struct {
+	name string
+	t    reflect.Type
+	v    any
+	next *reqValues
+}
+
+// Http_Request_with_value is `req.with_value(k, v)`: a copy of the request
+// carrying v under k, replacing an earlier value of k. Values are not part
+// of the request's equality, debug text, or anything sent on the network.
+func Http_Request_with_value[T any](_ *Task, r Http_Request, k Http_Key[T], v T) Http_Request {
+	r.XValues = &reqValues{name: k.name, t: reflect.TypeFor[T](), v: v, next: r.XValues}
+	return r
+}
+
+// Http_Request_value is `req.value(k)`: the latest value set under k, or
+// None.
+func Http_Request_value[T any](_ *Task, r Http_Request, k Http_Key[T]) Option[T] {
+	t := reflect.TypeFor[T]()
+	for n := r.XValues; n != nil; n = n.next {
+		if n.name == k.name && n.t == t {
+			return Some(n.v.(T))
+		}
+	}
+	return Option[T]{}
 }
 
 // Http_Request_json is `req.json[T]()`.
@@ -475,6 +568,9 @@ func (Http_Server) XoDebug(b *strings.Builder) { b.WriteString("<server>") }
 
 // Http_server is `http.server(l, r)`.
 func Http_server(_ *Task, l Listener, r Http_Router) Http_Server { return Http_Server{l: l, r: r} }
+
+// M_addr is `srv.addr()`: the listener's address.
+func (s Http_Server) M_addr(tk *Task) string { return s.l.M_addr(tk) }
 
 // M_serve is `srv.serve()`: runs until a stop is requested (core 7.5) or
 // the task is canceled, then stops accepting, waits for in flight

@@ -789,6 +789,29 @@ Last verified: 2026-10-08. Rules and choices; details in
   copy of the table map). Real drivers: implement `rt.SqlOpener`, call
   `rt.RegisterSqlDriver` (to be bound through `use go`; none yet). Goldens:
   `sql_basic`, `sql_tx`, `test_sql`. Not recorded by record and replay.
+- std/http request values and scoped middleware (2026-10-08, decision
+  0055): `Http_Key[T]`, `Http_Request_with_value`/`_value` (a persistent
+  list in the hidden `XValues` field of `Http_Request`, listed in
+  `rtExtraFields` in internal/gen/json.go), `Http_Router_wrap[E]` (generic
+  now; was the Go method `M_wrap`), `M_mount` (flattens the sub router's
+  routes, each behind `chain(sub.mws, h)`), `Listener.M_addr` (the
+  `addr` field, also in the recorded `net.listen` result). Golden:
+  `http_scoped`.
+- std/crypto (2026-10-08, decision 0056, std.md 11): `std/crypto.xo`,
+  `std/rt/crypto.go` on `crypto/sha256`, `crypto/hmac`, `crypto/subtle`,
+  `crypto/pbkdf2` (Go 1.24+); random functions call the `Rand`
+  capability's `M_bytes`. Goldens `crypto_basic` (known vectors),
+  `test_crypto` (seeded rand); unit tests `TestCrypto*` in std/rt.
+- Test log capture (2026-10-08, decision 0057): `runOneTest` gives each
+  test world `newTestLogSink()` (std/rt/log.go); `logRecord` appends a
+  `Log_Record` and, with no configured output, the text line to the
+  capture instead of stderr; `RunTests` prints the lines under `--- FAIL`
+  (and `--- PASS` with `-v`), `--json` adds `log`. `testing.logs()` is
+  `rt.Testing_logs`. Golden: `test_logs`.
+- Fake network listeners (2026-10-08): `memListener.served` is fired when
+  `serve` starts; `Testing_FakeNet.dispatch` waits on it (wait kind
+  `waitAccept`) so a request sent before `serve` queues like a backlog
+  (gotcha `fake-listener-before-serve.md`).
 
 ## SSA IR
 

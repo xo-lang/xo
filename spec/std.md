@@ -338,7 +338,15 @@ enum NetErr { InvalidAddr(msg: Str), Refused, Timeout, Io(msg: Str), Canceled }
 
 fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
+fn (l: Listener) addr() -> Str                     // "host:port" actually bound
 ```
+
+`addr` reports the port the system chose for `listen(":0")`. An unspecified
+host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address
+(`127.0.0.1`, `::1`), so the result can be dialed locally:
+`"http://${l.addr()}/health"`. The fake network of tests gives
+`127.0.0.1:49152`, `127.0.0.1:49153`, ... for `:0`. Under record and
+replay (core 11.3) the recorded address is returned (decision 0055).
 
 Most code uses `std/http` instead of raw connections.
 
@@ -413,7 +421,8 @@ and exits with status 1. Prefer that over `exit` for failures.
 ```
 pub fn router() -> Router
 fn ([var] r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> Response ! E uses fx) uses fx
-fn ([var] r: Router) wrap[fx: Effects](m: fn(Request, Next) -> Response uses fx) uses fx
+fn ([var] r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response ! E uses fx) uses fx
+fn ([var] r: Router) mount(prefix: Str, sub: Router)   // sub's routes under prefix, behind sub's middleware
 fn (r: Router) call(req: Request) -> Response      // in process dispatch, for tests
 type Next = fn(Request) -> Response
 ```
@@ -428,9 +437,38 @@ type Next = fn(Request) -> Response
 - Unmatched path: 404. Path matched with another method: 405.
 - Middleware run in registration order, outermost first, and see the final
   response after error mapping.
+- Middleware may fail: `Err(e)` from a middleware is mapped to a response
+  exactly like a handler's (section 4.2), and the middleware registered
+  before it see that response. A middleware that cannot fail has
+  `E = Never`. `Next` itself cannot fail: it returns the mapped response
+  of everything inside.
+- Scoped middleware: `r.mount(prefix, sub)` adds every route of `sub` to
+  `r` with `prefix` (a path, segments as in patterns) in front of its
+  pattern. A mounted route runs `r`'s middleware, then `sub`'s, then the
+  handler. A request no route of `sub` matches never reaches `sub`'s
+  middleware (it is a 404 or 405 of `r`). The routes are copied (`Router`
+  is a value): registering on `sub` after `mount` does not change `r`. To
+  guard one route, mount a router holding only that route. `mount` has no
+  effects of its own; they were counted where `sub` registered them.
 - `Router`, `Next`, `call`, and `serve` carry no effects in their types:
   effects are accounted where handlers and middleware are registered, which
   is where their capabilities are captured.
+
+```
+// public routes on r, authenticated routes on api, no path comparison
+fn routes(db: sql.Db) -> http.Router uses net.dial {
+  var api = http.router()
+  api.wrap(fn(req, next) -> http.Response ! AuthErr {
+    let user = authenticate(db, req)?
+    next(req.with_value(user_key(), user))
+  })
+  api.handle("GET /notes", fn(req) { list(db, req.value(user_key()).or_fault("set by auth")) })
+  var r = http.router()
+  r.handle("GET /health", fn(_req) { http.text(200, "ok") })
+  r.mount("/api", api)
+  r
+}
+```
 
 ### 4.2 Error to status mapping
 
@@ -466,6 +504,13 @@ fn (r: Request) param_int(name: Str) -> Int         // segment must be declared 
 fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) header(name: Str) -> Str?           // case insensitive
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
+fn (r: Request) with_header(name: Str, value: Str) -> Request
+
+struct Key[T] {}                                   // handle
+pub fn key[T](name: Str) -> Key[T]
+fn (k: Key[T]) name() -> Str
+fn (r: Request) with_value[T](k: Key[T], v: T) -> Request
+fn (r: Request) value[T](k: Key[T]) -> T?
 
 pub fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = b"") -> Request
     // remote_ip is "127.0.0.1"; for tests and clients
@@ -487,11 +532,36 @@ fn (r: Response) header(name: Str) -> Str?          // case insensitive
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 ```
 
+Typed request values (decision 0055) let a middleware hand a value to the
+handlers behind it without encoding it in a header. `with_value` returns a
+copy of the request carrying `v` under `k`; `value` returns the latest value
+set under `k`, or `None`. A key is identified by its name and its type
+`T`: `http.key[User]("user")` called twice gives the same key, and
+`http.key[Int]("user")` is a different one, so a value is always read back
+at the type it was stored with. Values are local to the process: they are
+not headers, are never sent by a client or read from the network, take no
+part in `==`, `hash`, or `debug` of a `Request`, and a fresh request
+(`new_request`, or one received by `serve`) has none. So a client cannot
+forge one. Declare a key once as a function or pass it around:
+
+```
+fn user_key() -> http.Key[User] { http.key("user") }
+
+fn me(req: http.Request) -> http.Response ! ApiErr {
+  let user = req.value(user_key()).or_err(ApiErr.Unauthorized)?
+  http.json(200, user)
+}
+```
+
+`with_header` returns a copy with the header set (canonical key), like
+`Response.with_header`.
+
 ### 4.4 Server
 
 ```
 pub fn server(l: Listener, r: Router) -> Server
 fn (s: Server) serve() -> () ! HttpErr uses net.listen
+fn (s: Server) addr() -> Str                       // the listener's addr()
 enum HttpErr { Io(msg: Str), Canceled }
 ```
 
@@ -583,6 +653,7 @@ pub fn debug(msg: Str, fields: Map[Str, Debug] = {})   // also info, warn, error
 pub fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 enum Level { Debug, Info, Warn, Error }
 enum Format { Text, Json }
+struct Record { level: Level, msg: Str, fields: Map[Str, Str] }   // as captured in tests (8.6)
 ```
 
 ```
@@ -591,6 +662,16 @@ log.info("listening", {"addr": addr, "port": port})
 
 Every record includes the time, the current span, and the request id.
 Without `configure`, logs go to standard error as text at `Info`.
+
+Under `xo test` (decision 0057) each test has its own log sink, starting at
+`Info` with no output configured. Records that would go to standard error
+are buffered instead and printed under the test's result only when the
+test fails (or with `xo test -v`), like `t.Log` in Go; `--json` adds them
+as a `log` array to the test's line. `log.configure(os.stdio, ...)` in a
+test (or in a `main` run by `testing.run_main`) sends records to the fake
+standard error instead, as in a program. Either way every record that
+passes the level is also kept for `testing.logs()` (section 8.6). Nothing
+logged in a test reaches the real standard error.
 
 ---
 
@@ -676,7 +757,12 @@ fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, incl
 - `http.client(os.net)` calls registered handlers in process. Unhandled
   requests fail with `ClientErr.Connect("no fake handler for GET ...")`.
 - `os.net.listen(":0")` gives an in memory listener, so a real `http.server`
-  can be tested end to end with `http.client(os.net)`.
+  can be tested end to end with `http.client(os.net)`. Its `addr()` is
+  `127.0.0.1:49152`, then `:49153`, ... A request to a listener whose
+  `serve` has not started yet waits until it starts, like a connection in
+  a real socket's backlog (a test that never serves it reports a deadlock
+  naming the wait); after `serve` returns, requests fail with
+  `ClientErr.Connect`.
 
 ### 8.2 FakeClock
 
@@ -739,6 +825,27 @@ be omitted when the expected type is known (`fail_next(Rename, ...)`).
 Property tests (`test "x" for v: T`) generate values for any type built from
 builtin types, structs, and enums. `testing.gen[T](seed: Int) -> T` produces
 one value directly.
+
+### 8.6 Captured logs
+
+```
+pub fn logs() -> List[log.Record]     // records logged so far in this test, oldest first
+```
+
+A record's `fields` hold each value's text form, in the order given. Only
+records at or above the sink's level are kept (`Info` unless the test
+calls `log.configure`). Each test, and each case of a property test,
+starts with none; tasks of the test and a `main` run by `run_main` log to
+the same list. Outside a test, `logs()` is empty.
+
+```
+test "a failed purge is logged" {
+  purge_once(broken_db(), os.clock)
+  let recs = testing.logs()
+  expect(recs.map(fn(r) { r.msg })) == ["purge failed"]
+  expect(recs[0].level) == log.Level.Warn
+}
+```
 
 ---
 
@@ -889,3 +996,54 @@ Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
 grouping, subqueries, or `RETURNING`. Reads inside a transaction see its own
 writes; reads outside see the last commit.
 Results of a `Db` are not recorded by record and replay (core 11.3) yet.
+
+---
+
+## 11. std/crypto
+
+Status: draft (2026-10-08, decision 0056). Go standard library underneath;
+no third party code.
+
+```
+pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
+pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
+pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
+pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
+pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
+pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
+pub fn verify_password(password: Str, hash: Str) -> Bool
+```
+
+- Hashing and comparison are pure: no capability, no effect.
+- Randomness comes only from the `Rand` capability (section 3.4), as
+  everywhere else: cryptographically secure in programs, seeded from the
+  test seed in tests, so a test that creates tokens or salts is
+  reproducible. A function that makes tokens takes a `Rand` and declares
+  `uses rand`.
+- `equal` takes time that depends on the lengths but not on the contents;
+  compare digests of equal length (for example two `sha256` results) when
+  the length is secret too.
+- `hash_password` is PBKDF2-HMAC-SHA256 with a 16 byte salt from `r` and a
+  32 byte key, encoded as `pbkdf2-sha256$<iterations>$<salt>$<key>`
+  (salt and key in unpadded standard base64). It faults when `iterations`
+  is outside `1..=100000000`. The default, 600000, follows the OWASP 2023
+  guidance for PBKDF2-HMAC-SHA256; tests may pass a small count.
+- `verify_password` recomputes the key with the stored salt and iteration
+  count and compares in constant time. A malformed hash is `false`, never
+  an error.
+
+Storing API tokens: tokens from `token` have 256 bits of entropy, so a
+plain `sha256` digest is enough (no salt or stretching needed) and can be
+looked up by value; compare the digest found with `equal`:
+
+```
+fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dial) {
+  let t = crypto.token(r)
+  db.exec("INSERT INTO tokens (user_id, digest) VALUES ($1, $2)",
+    [sql.int(user), sql.str(crypto.sha256(t.bytes()).to_hex())])?
+  t
+}
+```
+
+Passwords chosen by people have little entropy: store
+`hash_password(os.rand, pw)` and check with `verify_password`.

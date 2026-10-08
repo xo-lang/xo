@@ -1505,8 +1505,10 @@ specified in `spec/std.md`. Modules:
 | `std/log` | Structured, ambient logging bound to spans |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
 | `std/time` | Time zones and formatting (arithmetic is in the prelude) |
-| `std/testing` | Fake capability types, generators |
-| `std/sql`, `std/trace`, `std/config`, `std/crypto`, `std/text`, `std/sys/<os>` | Later drafts |
+| `std/testing` | Fake capability types, generators, captured logs |
+| `std/sql` | Database handles over drivers, in memory driver (draft) |
+| `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
+| `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 
 ---
 

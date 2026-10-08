@@ -4,6 +4,8 @@
 // - Router, Server, Client are opaque handles (empty structs).
 // - `Router.handle` and `Router.wrap` take a `var` receiver (std.md `[var]`)
 //   and perform their callback's effects (std.md 4.1).
+// - `Key[T]` is a handle; keys with the same name and type are the same key
+//   (std.md 4.3).
 use std/json
 
 struct Router {}
@@ -11,7 +13,10 @@ type Next = fn(Request) -> Response
 
 fn router() -> Router
 fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> Response ! E uses fx) uses fx
-fn (var r: Router) wrap[fx: Effects](m: fn(Request, Next) -> Response uses fx) uses fx
+fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response ! E uses fx) uses fx
+/// Adds every route of `sub` under `prefix`, behind the middleware of `sub`
+/// (std.md 4.1).
+fn (var r: Router) mount(prefix: Str, sub: Router)
 fn (r: Router) call(req: Request) -> Response
 
 interface StatusError {
@@ -32,6 +37,14 @@ fn (r: Request) param_int(name: Str) -> Int
 fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
+fn (r: Request) with_header(name: Str, value: Str) -> Request
+fn (r: Request) with_value[T](k: Key[T], v: T) -> Request
+fn (r: Request) value[T](k: Key[T]) -> T?
+
+/// A typed request value key (std.md 4.3).
+struct Key[T] {}
+fn key[T](name: Str) -> Key[T]
+fn (k: Key[T]) name() -> Str
 
 fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = b"") -> Request
 
@@ -56,6 +69,7 @@ fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 struct Server {}
 fn server(l: Listener, r: Router) -> Server
 fn (s: Server) serve() -> () ! HttpErr uses net.listen
+fn (s: Server) addr() -> Str
 
 enum HttpErr {
   Io(msg: Str)
