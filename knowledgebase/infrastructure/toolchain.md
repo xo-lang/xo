@@ -97,6 +97,8 @@ go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
+python3 bench/harness/score.py solutions --claude        # rescore the stored agent benchmark outputs with the current toolchain (bench/harness/README.md)
+python3 bench/harness/run_openai_compatible.py --out runs/<model>   # rerun the agent benchmarks with any OpenAI compatible model
 bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo --no-arenas (config xo) vs Xo with arenas (config xo-arenas, the default build; see Benchmark tooling)
@@ -459,7 +461,26 @@ Last verified: 2026-10-07
   `GOBIN=$PWD/.tools/bin go install <pkg>@latest`. The built `xo` binary is
   also placed there (`go build -o .tools/bin/xo ./cmd/xo`).
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
-  exhaustive, `go test -race`.
+  exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
+  else the checkout's `.tools/bin` (a worktree has none; point
+  `XO_TOOLS_BIN` at the main checkout's). Last verified: 2026-10-08.
+- `bench/harness/` (2026-10-08): reruns the agent benchmarks with any model
+  and scores them; Python 3 standard library only, no third party packages.
+  `prompts.py render|all|tokens` renders the per arm and planted author
+  prompts (the Xo ones include `spec/core.md` and `spec/std.md`) and
+  estimates tokens; `run_openai_compatible.py --out DIR` drives any OpenAI
+  compatible endpoint (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`,
+  optional `OPENAI_EXTRA_BODY`) through the feedback loop, up to
+  `--max-runs` runs; `score.py solutions DIR|--claude` and
+  `score.py planted DIR|--claude` rerun every cell in a temporary copy and
+  print the three arm and planted tables. The scorer builds `xo` from the
+  checkout into `$TMPDIR/xo-harness/xo` unless `XO_BIN` is set, and finds
+  the analyzers through `XO_TOOLS_BIN`, `.tools/bin`, or the main
+  checkout's `.tools/bin`. Self test: `python3 bench/harness/test_harness.py`
+  (also `go test ./internal/benchharness`, about 7 s, skipped without
+  python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
+  solutions took about 12 minutes, all planted sets about 60 (measured
+  2026-10-08).
 - `bench/perf/run.sh`: builds `bench/perf/xo` (Xo) and `bench/perf/go`
   (hand written Go, its own `go.mod`), runs each workload `REPS` times
   (default 5), and prints a Markdown table of the best times and the
@@ -581,6 +602,9 @@ Last verified: 2026-10-07
   scripts; the parsing is a few lines of Python.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
+- `bench/harness/score.py planted DIR|--claude`: the same detection for the
+  Go set and both Xo sets in one run, with the current toolchain, for
+  planted sets written by any model (see `bench/harness/README.md`).
 
 ## Package layout (P1, implemented parts)
 
@@ -612,6 +636,7 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
+internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
