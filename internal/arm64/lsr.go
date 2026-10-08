@@ -3,6 +3,9 @@ package arm64
 import (
 	"fmt"
 	"math"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/ssa"
 )
@@ -492,3 +495,75 @@ func (s *fstate) offsetBase(l, i vreg, es int64) (vreg, bool) {
 	}
 	return 0, false
 }
+
+// Loop rotation of bounds checks: a jump back to a block that starts
+// with a check (a compare with a fault exit, like the bounds check of a
+// loop's xs[i]) does the check itself and branches into the block past
+// it, so the loop's back edge is the conditional branch of the check
+// (one taken branch and one instruction less per iteration). When the
+// check fails the jump goes to the block, which checks again and faults.
+
+// checkHead returns the check block b starts with, or nil.
+func checkHead(b *mblock) *inst {
+	if len(b.insts) < 2 {
+		return nil
+	}
+	in := b.insts[0]
+	if in.kind != iPlain || in.fault == nil || len(in.defs) != 0 || in.recover != "" ||
+		!strings.HasPrefix(in.text, "cmp ") || strings.Contains(in.text, "\n") || invCond[in.fault.cond] == "" {
+		return nil
+	}
+	return in
+}
+
+// rotateJump emits a jump to t, a block emitted before the current one
+// that starts with a check, as the check and a branch past it; false
+// when it does not apply.
+func (s *fstate) rotateJump(b *strings.Builder, t *mblock, fr *frameInfo) bool {
+	in := checkHead(t)
+	if in == nil {
+		return false
+	}
+	back := false
+	for _, x := range s.order {
+		if x == s.cur {
+			break
+		}
+		back = back || x == t
+	}
+	if !back {
+		return false
+	}
+	s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
+	fmt.Fprintf(b, "\tb.%s %s_c\n\tb %s\n", invCond[in.fault.cond], s.label(t), s.label(t))
+	return true
+}
+
+// pairLoads joins two loads of adjacent words through one base register
+// into a load pair: `ldr x11, [x13, #24]` and `ldr x9, [x13, #32]` are
+// `ldp x11, x9, [x13, #24]` (one instruction for a struct element's two
+// integer fields). Integer registers only: pairs of d registers made
+// nbody slower (bench/results/arm64-perf-2026-10-08.md).
+func pairLoads(text string) string {
+	lines := strings.Split(text, "\n")
+	out := lines[:0]
+	for i := 0; i < len(lines); i++ {
+		if i+1 < len(lines) {
+			a := ldrRE.FindStringSubmatch(lines[i])
+			c := ldrRE.FindStringSubmatch(lines[i+1])
+			if a != nil && c != nil && a[2] == c[2] && a[1] != c[1] && a[1] != a[2] {
+				ka, _ := strconv.Atoi(a[3])
+				kc, _ := strconv.Atoi(c[3])
+				if kc == ka+8 && ka%8 == 0 && ka >= -512 && ka <= 504 {
+					out = append(out, fmt.Sprintf("\tldp %s, %s, [%s, #%d]", a[1], c[1], a[2], ka))
+					i++
+					continue
+				}
+			}
+		}
+		out = append(out, lines[i])
+	}
+	return strings.Join(out, "\n")
+}
+
+var ldrRE = regexp.MustCompile(`^\tldr (x[0-9]+), \[(x[0-9]+|sp), #(-?[0-9]+)\]$`)

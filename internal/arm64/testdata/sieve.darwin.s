@@ -93,6 +93,7 @@ Lf2_b8:
 Lf2_b9:
 	cmp x11, x19
 	b.hs Lf2_fault3
+Lf2_b9_c:
 	add x9, x0, x11
 	ldrb w9, [x9, #24]
 	cbz x9, Lf2_b16
@@ -109,6 +110,7 @@ Lf2_b11:
 Lf2_b12:
 	cmp x10, x19
 	b.hs Lf2_fault6
+Lf2_b12_c:
 	add x9, x0, x10
 	strb wzr, [x9, #24]
 	adds x10, x10, x11

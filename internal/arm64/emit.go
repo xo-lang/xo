@@ -147,7 +147,8 @@ func (s *fstate) emit() {
 	if fr.size > 4000 {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
-	b := &g.text
+	b := &strings.Builder{}
+	defer func() { g.text.WriteString(pairLoads(b.String())) }()
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
 	s.prologue(b, fr)
@@ -182,8 +183,11 @@ func (s *fstate) emit() {
 		}
 		fmt.Fprintf(b, "%s:\n", s.label(mb))
 		s.cur = mb
-		for _, in := range mb.insts {
+		for k, in := range mb.insts {
 			s.emitInst(b, in, fr, next)
+			if k == 0 && checkHead(mb) != nil {
+				fmt.Fprintf(b, "%s_c:\n", s.label(mb)) // past the check (rotateJump)
+			}
 		}
 	}
 	b.WriteString(s.stubs.String())
@@ -354,6 +358,9 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 	case iJump:
 		t := s.fwd(in.targets[0], fr)
 		if t == next {
+			return
+		}
+		if s.rotateJump(b, t, fr) {
 			return
 		}
 		if ti := t.insts; len(ti) == 1 && ti[0].kind == iCondBr && t != s.cur {
