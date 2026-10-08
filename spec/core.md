@@ -1265,7 +1265,7 @@ test "retries after 503" {
 | `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
-| `xo fix [--edition=YYYY]` | Apply all machine fixes, migrate editions |
+| `xo fix [--dry-run] [--from=draft-0.N] [--edition=YYYY]` | Apply all machine fixes until none apply; `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
 | `xo query <kind> ...` | Semantic queries (10.3) |
 | `xo edit <op> ...` | Semantic edits (10.4) |

@@ -40,6 +40,11 @@ type checker struct {
 	// goFailed holds `go:<path>` keys of Go packages that could not be
 	// bound (XO1101 reported once per run).
 	goFailed map[string]bool
+	// overlay maps absolute .xo paths to contents that replace the files
+	// on disk (CheckOverlay).
+	overlay map[string][]byte
+	// modErr is the first malformed xo.mod line found (an unknown edition).
+	modErr error
 
 	nextVar int
 	trail   []func()
@@ -112,13 +117,25 @@ func newChecker() *checker {
 // Check loads and checks the modules found under dirs (every directory that
 // contains .xo files is a module).
 func Check(dirs []string) (*Result, error) {
+	return CheckOverlay(dirs, nil)
+}
+
+// CheckOverlay is Check with some source files replaced: overlay maps an
+// absolute .xo path to the contents to check instead of the file on disk.
+// Diagnostics still name the files by their usual paths. `xo fix` uses it to
+// check rewritten sources without writing them.
+func CheckOverlay(dirs []string, overlay map[string][]byte) (*Result, error) {
 	c := newChecker()
+	c.overlay = overlay
 	if err := c.loadPrelude(); err != nil {
 		return nil, err
 	}
 	roots, err := c.loadDirs(dirs)
 	if err != nil {
 		return nil, err
+	}
+	if c.modErr != nil {
+		return nil, c.modErr
 	}
 	c.run()
 	res := &Result{Modules: roots, c: c}
@@ -140,6 +157,7 @@ func (c *checker) run() {
 	for _, m := range c.order {
 		if !m.IsStd {
 			c.checkModule(m)
+			c.runEditionRules(m)
 		}
 	}
 	c.solveEffects()

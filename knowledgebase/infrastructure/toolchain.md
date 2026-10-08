@@ -51,6 +51,7 @@ go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of 
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
 go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
+go run ./cmd/xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]  # apply check fixes, migrate
 go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api (core 10.3)
 go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
@@ -133,6 +134,47 @@ prelude `.ignore_err(reason)` call with its reason and the Result type),
 XO1103 (note, one per module: `use go` packages and the functions whose
 performed effects include `go`), XO0901 (`dbg(...)` with a fix that keeps
 the argument). Human output goes to stdout, the summary to stderr.
+
+`xo fix` (2026-10-08, `internal/fix`) first runs the migration rewriters
+selected by `--from=draft-0.N` (also `0.N`, `v0.N`; every rewriter whose
+change came in a later draft), then loops: check the sources through
+`check.CheckOverlay` (rewritten contents in memory, nothing written yet),
+apply the first fix of every diagnostic whose edits do not overlap one
+already taken this round (a fix is all or nothing; two inserts at the same
+point conflict), and repeat until a round applies nothing, the sources
+return to an earlier state, or 25 rounds. Changed files are reformatted
+with `xo fmt` when they parse, then written (not with `--dry-run`). Output:
+one `file:line: rule: title` line per change and a summary; `--json` gives
+`{dry_run, changes, files, rounds, remaining}`. Exit 0 even when errors
+remain (listed on stderr), 2 on usage errors. Rewriter registry
+(`fix.Registry`, run in order): `variant-case` (0.2: `ok( err( some(` and
+bare `none` to `Ok Err Some None`; skips `.ok()`, `fn ok(`, `let err`, and a
+variable `err` not followed by `(`), `scope-timeout` (0.2: `scope s timeout
+d { b }` to `task.with_timeout(clock, d, fn() { scope s { b } })` plus `use
+std/task`, only in files that name `clock`; elsewhere reported as skipped),
+`interp-dollar` (0.3: `{x}` to `${x}` in plain and triple quoted strings
+when the content starts with a letter, digit, `_`, or `(` and holds no
+quote), `discard-reason` (0.4, the XO0206 fix), `map-get-or-fault` (0.6,
+the XO0410 fix added to the checker: `m[k]` to `m.get_or_fault(k, "TODO:
+why the key must exist")`). Code based rewriters are applied by the loop
+anyway; the report credits them as `name (XO0nnn)`.
+
+Measured 2026-10-08 on copies of `bench/paper` (originals untouched),
+modules with no check errors before and after `xo fix --from=<draft>`:
+v0.1 0/5 to 0/5 (135 errors to 36; the rest are API drift such as
+`std/test`, `http.Server.handle`, `?` on `Fs`), v0.2 0/5 to 4/5
+(04-file-sync keeps 9 XO0401 `?` on `Fs`), v0.3 5/8 to 8/8.
+
+Editions (2026-10-08): `edition YYYY` in xo.mod is recorded on
+`check.Module.Edition` (`check.CurrentEdition`, 2026, without the line or
+without an xo.mod). An edition outside `check.Editions` or a malformed
+line makes `xo check` fail with a usage error (exit 2) naming the xo.mod.
+Rules that change at an edition boundary are entries of `editionRules`
+(`internal/check/edition.go`, `Since` edition plus a per file check), run
+after `checkModule` for modules with `Module.AtLeast(Since)`; the list is
+empty for 2026 and `TestEditionRuleHook` exercises it with a fake 2027.
+`xo fix --edition=YYYY` only validates the edition until a second edition
+exists.
 
 `xo query` (2026-10-08, `internal/query`) checks `--dir` (default `.`; for
 `type`, also the file's directory when it lies outside) and answers:
@@ -421,6 +463,7 @@ Last verified: 2026-10-07
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
                         `xo mcp`, `xo serve` (agent.go)
+                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments
@@ -430,6 +473,7 @@ internal/diag/          diagnostics (core 10.2 JSON), codes.go is the registry o
 internal/check/         name resolution and type checking (see below)
 internal/format/        canonical printer for `xo fmt`; format.Decl prints signatures
 internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901, XO1103)
+internal/fix/           `xo fix`: the check fix loop and the migration rewriter registry
 internal/query/         `xo query` over a check run; Surface is shared with internal/doc
 internal/mcp/           `xo mcp`: MCP (JSON-RPC 2.0 over stdio) tools check, query, explain, fmt, test, build
 internal/serve/         `xo serve`: unix socket server, cache of checked sessions keyed by file mtimes

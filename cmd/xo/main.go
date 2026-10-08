@@ -1,5 +1,5 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
-// `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo vet`,
+// `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo fix`, `xo vet`,
 // `xo query`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
 // and `xo serve`.
 package main
@@ -63,6 +63,14 @@ commands:
       and print the names of the files changed. --check changes nothing,
       lists the unformatted files, and exits 1 if there are any. Files with
       syntax errors are reported and left alone (exit 1). Default: .
+  fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]
+      Apply the machine fixes of check diagnostics, round after round,
+      until none apply, then reformat the changed files and print what
+      changed. --from runs the migration rewriters for every breaking
+      change after that draft first (draft-0.1: ok/err/some/none case,
+      scope timeout, {x} interpolation, let _ =, Map index reads).
+      --dry-run writes nothing. Exit status 0 even when errors remain
+      (they are listed); 2 on usage errors. Default: .
   vet [--json] [dirs...]
       Advisory checks (never errors, exit 0): the warnings of check, unused
       declared effects (XO0703), x ?? [].f() precedence traps (XO0207), every
@@ -129,6 +137,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runFmt(args[1:], stdout, stderr)
 	case "vet":
 		return runVet(args[1:], stdout, stderr)
+	case "fix":
+		return runFix(args[1:], stdout, stderr)
 	case "query":
 		return runQuery(args[1:], stdout, stderr)
 	case "doc":

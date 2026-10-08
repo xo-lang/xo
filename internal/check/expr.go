@@ -310,6 +310,11 @@ func (c *checker) infer0(e ast.Expr, hint Type) Type {
 			d := c.errorf(diag.MapIndexRead, x.Sp, "reading a Map by index faults when the key is missing")
 			if d != nil {
 				note(d, token.Span{}, "use `m.get(k)` (an optional) or `m.get_or_fault(k, \"why the key must exist\")` (core 3.6)")
+				// The fix keeps the faulting behavior of the index read
+				// and makes the missing reason visible (xo fix, 0.6).
+				fix(d, "use get_or_fault",
+					replaceEdit(token.Span{File: x.Sp.File, Start: x.X.Span().End, End: x.Index.Span().Start}, ".get_or_fault("),
+					replaceEdit(token.Span{File: x.Sp.File, Start: x.Index.Span().End, End: x.Sp.End}, `, "TODO: why the key must exist")`))
 			}
 		}
 		return t
