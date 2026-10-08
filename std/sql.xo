@@ -67,6 +67,10 @@ fn memory(schema: Str = "") -> Db ! SqlErr
 fn (d: Db) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
 fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+/// `query` with every row decoded into `T` (`derive SqlRow`, std.md 10.4).
+fn (d: Db) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+/// `query_one` with the row decoded into `T`.
+fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
 fn (d: Db) begin() -> Tx ! SqlErr uses net.dial
 fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
@@ -74,10 +78,15 @@ fn (d: Db) close() -> () ! SqlErr
 fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
 fn (t: Tx) commit() -> () ! SqlErr uses net.dial
 fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
 
 fn (r: Row) columns() -> List[Str]
+/// Decodes the row into a struct with `derive SqlRow`: each field from the
+/// column of the same name (std.md 10.4).
+fn (r: Row) decode[T: SqlRow]() -> T ! SqlErr
 fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
 fn (r: Row) int(name: Str) -> Int ! SqlErr
 fn (r: Row) str(name: Str) -> Str ! SqlErr

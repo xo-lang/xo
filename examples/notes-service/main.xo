@@ -1,6 +1,8 @@
 // notes-service: a small HTTP JSON service with users and expiring notes.
 //
-// - Users and notes live in std/sql (the in memory driver).
+// - Users and notes live in std/sql (the in memory driver). Rows decode
+//   into structs with `derive SqlRow`; inserts read the stored row back
+//   with RETURNING.
 // - The /notes routes sit in their own router behind an auth middleware
 //   (mounted, so GET /health needs no exemption). The middleware resolves
 //   `Authorization: Bearer <token>` to a User and hands it to handlers as a
@@ -21,7 +23,7 @@ const PURGE_EVERY = 1m
 pub struct User {
   id: Int
   name: Str
-}
+} derive SqlRow
 
 /// The authenticated user, set by `auth` for the routes behind it.
 pub fn user_key() -> http.Key[User] {
@@ -34,7 +36,7 @@ pub struct Note {
   body: Str
   created: Time
   expires: Time
-} derive Json
+} derive Json, SqlRow
 
 struct NewNote {
   body: Str
@@ -91,37 +93,26 @@ fn user_for_token(db: sql.Db, token: Str) -> User? ! sql.SqlErr uses net.dial {
       if !crypto.equal(stored, digest) {
         return None
       }
-      Some(User{id: row.int("id")?, name: row.str("name")?})
+      Some(row.decode[User]()?)
     }
     Err(NoRows) => None
     Err(e) => Err(e)
   }
 }
 
-fn row_note(r: sql.Row) -> Note ! sql.SqlErr {
-  Note{
-    id: r.int("id")?,
-    owner: r.int("owner")?,
-    body: r.str("body")?,
-    created: r.time("created")?,
-    expires: r.time("expires")?,
-  }
-}
-
+/// Stores a note and returns the stored row (RETURNING), so the id and
+/// every column come from the database.
 fn insert_note(db: sql.Db, owner: Int, body: Str, now: Time, ttl: Duration) -> Note ! sql.SqlErr uses net.dial {
-  let expires = now + ttl
-  let id = db.exec("INSERT INTO notes (owner, body, created, expires) VALUES ($1, $2, $3, $4)", [sql.int(owner), sql.str(body), sql.time(now), sql.time(expires)])?.last_insert_id
-  Note{id: id, owner: owner, body: body, created: now, expires: expires}
+  db.query_one_as[Note]("INSERT INTO notes (owner, body, created, expires) VALUES ($1, $2, $3, $4) RETURNING *", [sql.int(owner), sql.str(body), sql.time(now), sql.time(now + ttl)])
 }
 
 fn list_notes(db: sql.Db, owner: Int) -> List[Note] ! sql.SqlErr uses net.dial {
-  let rows = db.query("SELECT * FROM notes WHERE owner = $1 ORDER BY id", [sql.int(owner)])?
-  rows.map(row_note)
+  db.query_as[Note]("SELECT * FROM notes WHERE owner = $1 ORDER BY id", [sql.int(owner)])
 }
 
 fn get_note(db: sql.Db, owner: Int, id: Int) -> Note ! ApiErr uses net.dial {
-  match db.query_one("SELECT * FROM notes WHERE id = $1 AND owner = $2", [sql.int(id), sql.int(owner)]) {
-    Ok(row) => row_note(row)?
+  match db.query_one_as[Note]("SELECT * FROM notes WHERE id = $1 AND owner = $2", [sql.int(id), sql.int(owner)]) {
+    Ok(n) => n
     Err(NoRows) => Err(ApiErr.NotFound(id: id))
     Err(e) => Err(ApiErr.Db(e))
   }

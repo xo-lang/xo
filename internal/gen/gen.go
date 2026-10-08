@@ -554,7 +554,7 @@ func (pg *pkgGen) namedType(n *check.Named) string {
 			return r + "IError"
 		case "Debug":
 			return r + "IDebug"
-		case "Eq", "Hash", "Ord", "Json", "OpenApi", "Proto":
+		case "Eq", "Hash", "Ord", "Json", "OpenApi", "Proto", "SqlRow":
 			return "any"
 		}
 	}

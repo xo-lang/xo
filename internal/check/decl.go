@@ -22,7 +22,7 @@ var protectedNames = map[string]bool{
 	"Map": true, "Set": true, "Buf": true, "Chan": true, "Mutex": true, "Atomic": true,
 	"Secret": true, "Option": true, "Result": true, "Never": true, "StrBuilder": true,
 	"Display": true, "Error": true, "Debug": true, "Eq": true, "Hash": true, "Ord": true,
-	"Json": true, "OpenApi": true, "Proto": true,
+	"Json": true, "OpenApi": true, "Proto": true, "SqlRow": true,
 	"Os": true, "Net": true, "Fs": true, "Clock": true, "Rand": true, "Env": true, "Proc": true, "Stdio": true,
 }
 
@@ -303,7 +303,7 @@ func (c *checker) resolveConstraints(tps []*ast.TypeParam, ps []*TParam, env *ty
 	}
 }
 
-var derivable = map[string]bool{"Display": true, "Ord": true, "Json": true, "OpenApi": true, "Proto": true, "Debug": true, "Eq": true, "Hash": true}
+var derivable = map[string]bool{"Display": true, "Ord": true, "Json": true, "OpenApi": true, "Proto": true, "Debug": true, "Eq": true, "Hash": true, "SqlRow": true}
 
 func (c *checker) derives(ids []*ast.Ident) map[string]bool {
 	out := map[string]bool{}

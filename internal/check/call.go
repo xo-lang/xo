@@ -910,7 +910,7 @@ func (c *checker) callFunc(fo *FuncObj, pre *substMap, targs []Type, call *ast.C
 		}
 		if !c.implements(at, cn, call.Sp) {
 			d := c.errorf(diag.NotImplemented, call.Sp, "`%s` does not implement `%s`, required by `%s` of `%s`", deep(at), cn, p.Name, fo.DisplayName())
-			if d != nil && cn.Obj.Module == c.prelude && (cn.Obj.Name == "Json" || cn.Obj.Name == "Ord" || cn.Obj.Name == "Display") {
+			if d != nil && cn.Obj.Module == c.prelude && (cn.Obj.Name == "Json" || cn.Obj.Name == "Ord" || cn.Obj.Name == "Display" || cn.Obj.Name == "SqlRow") {
 				note(d, token.Span{}, "add `derive %s` to the type declaration (core 2.9)", cn.Obj.Name)
 			}
 		}

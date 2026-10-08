@@ -10,7 +10,7 @@ deleted 2, left ann,cy
 no rows
 constraint: UNIQUE constraint failed: users.name
 constraint: NOT NULL constraint failed: users.name
-syntax: query needs a SELECT statement (use exec for writes)
+syntax: query needs a SELECT statement or a write with RETURNING (use exec for other statements)
 no table nothing
 param: statement has 2 placeholders but 1 arguments were given
 mismatch age: expected text, found an integer

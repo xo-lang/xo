@@ -959,6 +959,10 @@ func (c *checker) placeType(e ast.Expr) Type {
 // parameter are checked where the type is used.
 func (c *checker) checkDerives(t *TypeObj, ids []*ast.Ident) {
 	for _, id := range ids {
+		if id.Name == "SqlRow" {
+			c.checkSqlRowDerive(t, id)
+			continue
+		}
 		switch id.Name {
 		case "Json", "OpenApi", "Proto", "Ord":
 		default:
@@ -988,6 +992,25 @@ func (c *checker) checkDerives(t *TypeObj, ids []*ast.Ident) {
 			if !c.implements(ft, iface, token.Span{}) {
 				c.errorf(diag.NotImplemented, id.Sp, "`derive %s` needs every field to implement `%s`, but `%s` has type `%s`", id.Name, id.Name, names[i], deep(ft))
 			}
+		}
+	}
+}
+
+// checkSqlRowDerive checks `derive SqlRow` (std.md 10.4): a struct without
+// type parameters whose fields are column types.
+func (c *checker) checkSqlRowDerive(t *TypeObj, id *ast.Ident) {
+	if t.Kind != KStruct {
+		c.errorf(diag.WrongKind, id.Sp, "`derive SqlRow` applies only to structs; `%s` is not one", t.Name)
+		return
+	}
+	if len(t.TParams) > 0 {
+		c.errorf(diag.WrongKind, id.Sp, "`derive SqlRow` needs a struct without type parameters; `%s` has some", t.Name)
+		return
+	}
+	for _, f := range t.Fields {
+		if !c.isSqlColumn(f.Type) {
+			d := c.errorf(diag.NotImplemented, id.Sp, "`derive SqlRow` needs every field to be a column type, but `%s` has type `%s`", f.Name, deep(f.Type))
+			note(d, token.Span{}, "column types are Int, Float, Str, Bool, and Time, and an Option of one for a column that may be NULL (std.md 10.4)")
 		}
 	}
 }

@@ -1,0 +1,94 @@
+// `derive SqlRow`, row.decode, query_as, query_one_as, and RETURNING
+// (std.md 10.4, 10.6).
+use std/sql
+
+struct Item {
+  id: Int
+  name: Str
+  price: Float
+  in_stock: Bool
+  added: Time
+  note: Str?
+} derive SqlRow
+
+struct Named {
+  id: Int
+  label: Str
+} derive SqlRow
+
+struct Narrow {
+  id: Int
+  name: Int
+} derive SqlRow
+
+struct NoteOnly {
+  note: Str
+} derive SqlRow
+
+fn show(i: Item) -> Str {
+  "${i.id} ${i.name} ${i.price} ${i.in_stock} ${i.added.unix()} ${i.note ?? "-"}"
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE items (id SERIAL, name TEXT NOT NULL, price REAL NOT NULL, in_stock BOOL NOT NULL DEFAULT true, added TIMESTAMP NOT NULL, note TEXT)")?
+  let t0 = Time.from_unix(1000)
+  // RETURNING through query_one_as: the stored row, defaults included
+  let a = db.query_one_as[Item]("INSERT INTO items (name, price, added) VALUES ($1, $2, $3) RETURNING *", [sql.str("pen"), sql.int(2), sql.time(t0)])?
+  os.stdio.println(show(a))
+  let more = db.query_as[Item]("INSERT INTO items (name, price, added, note, in_stock) VALUES ('ink', 4.5, $1, 'blue', false), ('pad', 3, $1, NULL, true) RETURNING *", [sql.time(t0 + 1s)])?
+  os.stdio.println(more.map(show).join(" | "))
+  // RETURNING an expression with an alias, through exec the rows are dropped
+  let n = db.query_one_as[Named]("UPDATE items SET price = price * 2 WHERE id = $1 RETURNING id, name AS label", [sql.int(a.id)])?
+  os.stdio.println("named ${n.id} ${n.label}")
+  let r = db.exec("UPDATE items SET note = 'x' WHERE note IS NULL RETURNING id")?
+  os.stdio.println("exec affected ${r.rows_affected}")
+  // query_as and row.decode
+  let all = db.query_as[Item]("SELECT * FROM items ORDER BY id")?
+  os.stdio.println(all.map(show).join(" | "))
+  let row = db.query_one("SELECT id, name, price, in_stock, added, note, 42 AS extra FROM items WHERE id = 2")?
+  os.stdio.println("decoded ${show(row.decode[Item]()?)}")
+  let gone = db.query_as[Named]("DELETE FROM items WHERE price > $1 RETURNING id, name AS label", [sql.int(4)])?
+  os.stdio.println("deleted ${gone.map(fn(g) { g.label }).join(",")}")
+  // errors
+  match db.query_one_as[Item]("SELECT id, name FROM items") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(NoColumn(name)) => os.stdio.println("no column ${name}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.query_as[Narrow]("SELECT * FROM items") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(Mismatch(column, msg)) => os.stdio.println("mismatch ${column}: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  db.exec("INSERT INTO items (name, price, added) VALUES ('nil', 1, $1)", [sql.time(t0)])?
+  match db.query_as[NoteOnly]("SELECT note FROM items WHERE name = 'nil'") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(Mismatch(column, msg)) => os.stdio.println("mismatch ${column}: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.query_one_as[Item]("SELECT * FROM items WHERE id = 99") {
+    Ok(_) => os.stdio.println("found?")
+    Err(NoRows) => os.stdio.println("no rows")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.query("INSERT INTO items (name, price, added) VALUES ('q', 1, $1)", [sql.time(t0)]) {
+    Ok(_) => os.stdio.println("query wrote?")
+    Err(e) => os.stdio.println("${e}")
+  }
+  match db.query("INSERT INTO items (name, price, added) VALUES ('q', 1, $1) RETURNING COUNT(*)", [sql.time(t0)]) {
+    Ok(_) => os.stdio.println("count?")
+    Err(e) => os.stdio.println("${e}")
+  }
+  // a failed write through query changes nothing
+  match db.query("INSERT INTO items (name, price, added) VALUES (NULL, 1, $1) RETURNING id", [sql.time(t0)]) {
+    Ok(_) => os.stdio.println("inserted?")
+    Err(e) => os.stdio.println("${e}")
+  }
+  os.stdio.println("rows ${db.query_one("SELECT COUNT(*) AS n FROM items")?.int("n")?}")
+  // in a transaction, RETURNING sees and makes the transaction's writes
+  let tx = db.begin()?
+  let x = tx.query_one_as[Named]("INSERT INTO items (name, price, added) VALUES ('tx', 1, $1) RETURNING id, name AS label", [sql.time(t0)])?
+  let seen = tx.query_as[Named]("SELECT id, name AS label FROM items WHERE id = $1", [sql.int(x.id)])?
+  tx.rollback()?
+  os.stdio.println("tx saw ${seen.len()}, after rollback ${db.query("SELECT * FROM items WHERE name = 'tx'")?.len()}")
+}

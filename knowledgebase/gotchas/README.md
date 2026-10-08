@@ -88,7 +88,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [mcp-stdout-is-the-protocol.md](mcp-stdout-is-the-protocol.md): `xo mcp` runs commands in process, so a direct write to os.Stdout corrupts the JSON-RPC stream.
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
-- [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
+- [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback); RETURNING rows come only through `query`; `derive SqlRow` ignores field defaults.
 - [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): (Resolved 2026-10-08 by decision 0055) with no request locals, auth middleware passed the user in a spoofable header; use `req.with_value` / `req.value` with an `http.Key[T]` instead.
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.

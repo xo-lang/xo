@@ -174,6 +174,9 @@ func (pg *pkgGen) genStruct(t *check.TypeObj, d *ast.StructDecl) {
 	if t.Derives["Json"] && !rtHandWritten[localTypeName(t)+".json"] {
 		pg.genJSONStruct(t)
 	}
+	if t.Derives["SqlRow"] {
+		pg.genSqlRowStruct(t)
+	}
 	if pg.g.opts.Mode == Test && !pg.inRT {
 		pg.genGenStruct(t)
 	}

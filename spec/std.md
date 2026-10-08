@@ -50,7 +50,8 @@ order and NaNs end up last), derived `Ord` on types with Float fields,
 `Int`, the sized integers, `Float`, `Bool`, `Rune`, `Str`, `Duration`, `Time`,
 and every std error type implement `Display`. `Bytes` does not (use
 `to_str()`). `Json` is implemented by `derive Json` and by
-builtin types (section 5).
+builtin types (section 5). `SqlRow` is implemented only by `derive SqlRow`
+(section 10.4).
 
 Every `Ord` type has `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)`. `a.min(b)`
 is `b` when `b < a` and otherwise `a`; `a.max(b)` is `b` when `b > a` and
@@ -924,7 +925,9 @@ fn (d: Db) close() -> () ! SqlErr               // later operations fail with Cl
 struct ExecResult { rows_affected: Int, last_insert_id: Int }   // id is 0 when the driver has none
 ```
 
-`query` runs a statement that returns rows, `exec` one that does not.
+`query` runs a statement that returns rows, `exec` one that does not. A
+write with a `RETURNING` clause returns rows, so it goes through `query`
+(or `query_one`); through `exec` its rows are dropped.
 
 ### 10.4 Rows
 
@@ -940,6 +943,48 @@ Accessors read by column name (the first column of that name). A missing
 column is `NoColumn`; a value of another type, or NULL read by a non optional
 accessor, is `Mismatch(column, msg)`. `float` also accepts an integer. The
 `_opt` forms map NULL to `None`.
+
+Rows into structs (decision 0058):
+
+```
+interface SqlRow {}                              // prelude marker; only `derive SqlRow` implements it
+fn (r: Row) decode[T: SqlRow]() -> T ! SqlErr
+fn (d: Db) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+```
+
+`derive SqlRow` is allowed on a struct without type parameters whose fields
+are `Int`, `Float`, `Str`, `Bool`, `Time`, or an `Option` of one of them
+(else XO0404 at the derive). `decode` reads each field from the column of
+the same name with the rules of the accessors above: a missing column is
+`NoColumn(name)`, a value of another type is `Mismatch(column, msg)`, NULL is
+`None` for an `Option` field and `Mismatch` for any other. Fields are read in
+declaration order and the first failure is returned. Columns without a field
+are ignored, so `SELECT *` works with a struct naming some of the columns.
+Field defaults do not apply: every field needs its column. `query_as` is
+`query` followed by `decode` of every row; `query_one_as` is `query_one`
+followed by `decode` (`NoRows` when there is no row).
+
+```
+struct Note {
+  id: Int
+  owner: Int
+  body: Str
+  expires: Time
+  tag: Str?
+} derive SqlRow, Json
+
+fn notes(db: sql.Db, owner: Int) -> List[Note] ! sql.SqlErr uses net.dial {
+  db.query_as[Note]("SELECT * FROM notes WHERE owner = $1 ORDER BY id", [sql.int(owner)])
+}
+
+fn add(db: sql.Db, owner: Int, body: Str, at: Time) -> Note ! sql.SqlErr uses net.dial {
+  db.query_one_as[Note]("INSERT INTO notes (owner, body, expires) VALUES ($1, $2, $3) RETURNING *",
+    [sql.int(owner), sql.str(body), sql.time(at)])
+}
+```
 
 ### 10.5 Transactions
 
@@ -991,10 +1036,15 @@ auto-assigns keys; `NOT NULL`, `UNIQUE`, `DEFAULT literal`), `DROP TABLE`,
 `INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
 or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
 `LIMIT`/`OFFSET`, `UPDATE ... SET ... WHERE`, and `DELETE ... WHERE`.
+`INSERT`, `UPDATE`, and `DELETE` take `RETURNING` with the items of
+`SELECT` (`*`, expressions, `AS`; not `COUNT(*)`), yielding the inserted
+rows, the updated rows with their new values, or the deleted rows, in table
+order; generated keys and defaults are filled in.
 Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
 `OR`, `NOT`, `IS [NOT] NULL`, `[NOT] IN (...)`, `[NOT] LIKE`. No joins,
-grouping, subqueries, or `RETURNING`. Reads inside a transaction see its own
-writes; reads outside see the last commit.
+grouping, or subqueries. Reads inside a transaction see its own
+writes; reads outside see the last commit. A write through `query` that
+fails changes nothing, like one through `exec`.
 Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 
 ---

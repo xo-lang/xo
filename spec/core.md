@@ -525,6 +525,8 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 - `Json`, `OpenApi`, and `Proto` derives generate codecs and schemas from the
   same declaration so wire formats and docs cannot drift. JSON rules are in
   `spec/std.md`.
+- `SqlRow` (structs only) generates a decoder from a std/sql row: each field
+  is read from the column of the same name (`spec/std.md` 10.4).
 
 ### 2.10 Implicit conversions
 

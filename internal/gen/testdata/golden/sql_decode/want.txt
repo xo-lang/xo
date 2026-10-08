@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+1 pen 2.0 true 1000 -
+2 ink 4.5 false 1001 blue | 3 pad 3.0 true 1001 -
+named 1 pen
+exec affected 2
+1 pen 4.0 true 1000 x | 2 ink 4.5 false 1001 blue | 3 pad 3.0 true 1001 x
+decoded 2 ink 4.5 false 1001 blue
+deleted ink
+no column price
+mismatch name: expected an integer, found text
+mismatch note: expected text, found NULL
+no rows
+Syntax(msg: "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
+Syntax(msg: "RETURNING cannot use COUNT(*)")
+Constraint(msg: "NOT NULL constraint failed: items.name")
+rows 3
+tx saw 1, after rollback 0
+--- stderr
