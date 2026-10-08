@@ -1,6 +1,6 @@
 # 0003: Value semantics, no pointers
 
-Status: Proposed, pending benchmark (2026-10-07). See ../../bench/README.md
+Status: Accepted (2026-10-08). Zero value semantics violations in every benchmark run; data races were inexpressible or rejected for 5 of 5 planted races (author 1). The friction it caused (map entry updates, collecting worker results, background work) was removed by `Map.update`, task groups, and `map_concurrent` (0016, 0032); the performance cost was removed by in place writes for unshared Map and List (perf-map, perf-list results).
 
 ## Context
 Data races and aliasing bugs are among the hardest for agents to debug. A full

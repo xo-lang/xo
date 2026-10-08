@@ -1,6 +1,6 @@
 # 0010: Naming conventions are compiler errors
 
-Status: Proposed, pending benchmark (2026-10-07). See ../../bench/README.md
+Status: Accepted (2026-10-08). Zero naming or visibility violations in every run; the one collision it caused (predeclared `err`, `result`) was fixed by 0013.
 
 ## Decision
 `UpperCamel` types and variants, `snake_case` functions, variables, fields,

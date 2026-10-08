@@ -143,15 +143,10 @@ quality and tooling depth change.
 
 ### Experimental sections
 
-The following rules are hypotheses under test (see `bench/README.md` and the
-`Proposed` entries in `knowledgebase/decisions/`). They may change based on
-benchmark results:
-
-- Value semantics, persistent collections, move only buffers (section 5).
-- Required `uses` clauses on `pub` functions (section 6.2).
-- No module declaration (section 1.1).
-- Block scoped `defer` (section 3.4).
-- Enforced `snake_case` naming and `pub` exports (section 1.5).
+None. The five rules that were experimental through draft 0.6 (value
+semantics, required `uses` on `pub` functions, no module declaration, block
+scoped `defer`, enforced naming with `pub`) were accepted on 2026-10-08 from
+the benchmark evidence (decisions 0003, 0004, 0006, 0009, 0010).
 
 ---
 

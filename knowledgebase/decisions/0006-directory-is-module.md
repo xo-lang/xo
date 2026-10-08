@@ -1,6 +1,6 @@
 # 0006: The directory is the module
 
-Status: Proposed, pending benchmark (2026-10-07). See ../../bench/README.md
+Status: Accepted (2026-10-08). Zero violations across single and multi module tasks (08 notes service, 07 cache). The one weakness, directory names that are not identifiers, is handled by 0025.
 
 ## Context
 Go's `package` clause is redundant with the directory and a frequent source of

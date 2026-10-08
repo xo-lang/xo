@@ -1,6 +1,6 @@
 # 0004: Effects in signatures, authority via capability values
 
-Status: Proposed, pending benchmark (2026-10-07). See ../../bench/README.md
+Status: Accepted (2026-10-08). Zero effect violations; XO0701 caught every probe subjects ran. The plumbing cost in generic code was cut by effect elision (0033). Go interop keeps the authority escape visible as the `go` effect (0041).
 
 ## Context
 Agent written code and dependencies need an auditable blast radius. Record and

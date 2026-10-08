@@ -5,14 +5,14 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 
 - [0001-name-xo.md](0001-name-xo.md): language is named Xo, extension `.xo`.
 - [0002-transpile-to-go-first.md](0002-transpile-to-go-first.md): P1 compiles to Go source.
-- [0003-value-semantics.md](0003-value-semantics.md): no pointers, immutable persistent collections, move only Buf. **Proposed.**
-- [0004-effects-and-capabilities.md](0004-effects-and-capabilities.md): `uses` clauses plus capability values from `main`. **Proposed.**
+- [0003-value-semantics.md](0003-value-semantics.md): no pointers, immutable persistent collections, move only Buf.
+- [0004-effects-and-capabilities.md](0004-effects-and-capabilities.md): `uses` clauses plus capability values from `main`.
 - [0005-no-build-tags.md](0005-no-build-tags.md): platform code via compile time `match target.os`, all arms checked.
-- [0006-directory-is-module.md](0006-directory-is-module.md): no module declaration in source files. **Proposed.**
+- [0006-directory-is-module.md](0006-directory-is-module.md): no module declaration in source files.
 - [0007-structured-concurrency.md](0007-structured-concurrency.md): scopes replace goroutines and ctx.
 - [0008-errors-and-faults.md](0008-errors-and-faults.md): typed `! E`, no nil, faults are separate from errors.
-- [0009-block-scoped-defer.md](0009-block-scoped-defer.md): `defer` runs at block exit. **Proposed.**
-- [0010-naming-enforced.md](0010-naming-enforced.md): naming rules are compiler errors; `pub` marks exports. **Proposed.**
+- [0009-block-scoped-defer.md](0009-block-scoped-defer.md): `defer` runs at block exit.
+- [0010-naming-enforced.md](0010-naming-enforced.md): naming rules are compiler errors; `pub` marks exports.
 - [0011-explicit-failure.md](0011-explicit-failure.md): `return Err(e)`, `Never` type.
 - [0012-patterns-and-unused.md](0012-patterns-and-unused.md): full patterns, `_`, unused rule relaxed.
 - [0013-prelude-variants-uppercase.md](0013-prelude-variants-uppercase.md): `Ok Err Some None`, implicit `Some`.
@@ -43,7 +43,7 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0037-store-back-and-0-5-fixes.md](0037-store-back-and-0-5-fixes.md): XO0520 requires store back; `is` with `&&`; arm return position.
 - [0038-map-index-wildcards-split-sections.md](0038-map-index-wildcards-split-sections.md): XO0410 no Map index reads; XO0305 and XO0804 warnings.
 - [0039-regressions-in-module.md](0039-regressions-in-module.md): regression tests go in the module's `regressions_test.xo`.
-- [0040-path-to-beating-go-performance.md](0040-path-to-beating-go-performance.md): where Xo could beat Go and how to test it. **Proposed.**
+- [0040-path-to-beating-go-performance.md](0040-path-to-beating-go-performance.md): where Xo could beat Go and how to test it.
 - [0041-go-library-interop.md](0041-go-library-interop.md): `use go` bindings to Go packages until Xo has its own ecosystem (implemented, core 4.4).
 
 - [0042-two-phase-shutdown.md](0042-two-phase-shutdown.md): first signal requests a stop, cancellation after a grace period.

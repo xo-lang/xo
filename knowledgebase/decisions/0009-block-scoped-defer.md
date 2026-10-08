@@ -1,6 +1,6 @@
 # 0009: defer runs at block exit
 
-Status: Proposed, pending benchmark (2026-10-07). See ../../bench/README.md
+Status: Accepted (2026-10-08). Used correctly in every run, including temp file cleanup; shielding from cancellation (0022) made it work after timeouts and shutdown.
 
 ## Decision
 `defer` runs when the enclosing block exits, not the function.
