@@ -1,0 +1,105 @@
+use std/sql
+
+struct User {
+  id: Int
+  name: Str
+  age: Int
+  email: Str?
+}
+
+fn load(row: sql.Row) -> User ! sql.SqlErr {
+  User { id: row.int("id")?, name: row.str("name")?, age: row.int("age")?, email: row.str_opt("email")? }
+}
+
+fn users(db: sql.Db, q: Str, args: List[sql.SqlValue] = []) -> List[User] ! sql.SqlErr uses net.dial {
+  var out: List[User] = []
+  for row in db.query(q, args)? {
+    out.push(load(row)?)
+  }
+  out
+}
+
+fn names(us: List[User]) -> Str {
+  var parts: List[Str] = []
+  for u in us {
+    parts.push(u.name)
+  }
+  parts.join(",")
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, age INT, email TEXT);")?
+  let r = db.exec("INSERT INTO users (name, age, email) VALUES ($1, $2, $3)", [sql.str("ann"), sql.int(31), sql.str("ann@x.org")])?
+  os.stdio.println("inserted ${r.rows_affected} id ${r.last_insert_id}")
+  db.exec("INSERT INTO users (name, age) VALUES ('bob', 25), ('cy', 40), ('di', 25)")?
+  os.stdio.println(names(users(db, "SELECT * FROM users ORDER BY age DESC, name")?))
+  os.stdio.println(names(users(db, "SELECT * FROM users WHERE age = $1 ORDER BY name DESC", [sql.int(25)])?))
+  os.stdio.println(names(users(db, "SELECT * FROM users WHERE age >= 25 AND email IS NULL ORDER BY id LIMIT 2 OFFSET 1")?))
+  let n = db.query_one("SELECT COUNT(*) AS n FROM users WHERE name LIKE 'c%' OR name IN ('di', 'zed')")?
+  os.stdio.println("count ${n.int("n")?}")
+  let u = db.exec("UPDATE users SET age = age + 1, email = $1 WHERE name = $2", [sql.str("b@x.org"), sql.str("bob")])?
+  let b = db.query_one("SELECT * FROM users WHERE name = 'bob'")?
+  os.stdio.println("updated ${u.rows_affected}: ${b.int("age")?} ${b.str_opt("email")? ?? "none"} ${b.is_null("email")?}")
+  let d = db.exec("DELETE FROM users WHERE age < $1", [sql.int(30)])?
+  os.stdio.println("deleted ${d.rows_affected}, left ${names(users(db, "SELECT * FROM users ORDER BY id")?)}")
+
+  // typed errors
+  match db.query_one("SELECT * FROM users WHERE name = 'nobody'") {
+    Ok(_) => os.stdio.println("found?")
+    Err(NoRows) => os.stdio.println("no rows")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.exec("INSERT INTO users (name) VALUES ('ann')") {
+    Ok(_) => os.stdio.println("inserted?")
+    Err(Constraint(msg)) => os.stdio.println("constraint: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.exec("INSERT INTO users (age) VALUES (1)") {
+    Ok(_) => os.stdio.println("inserted?")
+    Err(Constraint(msg)) => os.stdio.println("constraint: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  // failed queries
+  match db.query("SELEC * FROM users") {
+    Ok(_) => os.stdio.println("ran?")
+    Err(Syntax(msg)) => os.stdio.println("syntax: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.query("SELECT * FROM nothing") {
+    Ok(_) => os.stdio.println("ran?")
+    Err(NoTable(name)) => os.stdio.println("no table ${name}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match db.query("SELECT * FROM users WHERE age = $1 AND id = $2", [sql.int(1)]) {
+    Ok(_) => os.stdio.println("ran?")
+    Err(Param(msg)) => os.stdio.println("param: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  let row = db.query_one("SELECT * FROM users WHERE name = 'cy'")?
+  match row.str("age") {
+    Ok(_) => os.stdio.println("str?")
+    Err(Mismatch(c, msg)) => os.stdio.println("mismatch ${c}: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match row.int("email") {
+    Ok(_) => os.stdio.println("int?")
+    Err(Mismatch(c, msg)) => os.stdio.println("mismatch ${c}: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match row.int("height") {
+    Ok(_) => os.stdio.println("int?")
+    Err(NoColumn(c)) => os.stdio.println("no column ${c}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  db.close()?
+  match db.query("SELECT * FROM users") {
+    Ok(_) => os.stdio.println("ran?")
+    Err(Closed) => os.stdio.println("closed")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match sql.open(os.net, "postgres", "postgres://localhost/x") {
+    Ok(_) => os.stdio.println("opened?")
+    Err(Driver(msg)) => os.stdio.println("driver: ${msg}")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+}

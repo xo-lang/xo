@@ -744,3 +744,136 @@ pub fn base(p: Str) -> Str           // the last element
 pub fn ext(p: Str) -> Str            // extension with the dot, or ""
 pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 ```
+
+---
+
+## 10. std/sql
+
+Status: draft, implemented with an in memory driver only (2026-10-08). Real
+drivers (Postgres, SQLite, ...) are Go packages bound with `use go` and
+registered with `rt.RegisterSqlDriver`; none ships yet.
+
+### 10.1 Opening
+
+```
+struct Db {}                                 // handle: copies share the database
+
+pub fn open(net: Net, driver: Str, dsn: Str,
+            max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m)
+    -> Db ! SqlErr uses net.dial
+pub fn memory(schema: Str = "") -> Db ! SqlErr         // no capability, no effect
+// std/testing: fake_db(schema: Str) -> Db ! SqlErr    // same as memory(schema)
+```
+
+A network driver is opened from the `Net` capability, so a function that is not
+given a `Net` (or an already opened `Db`) cannot reach a database. The in
+memory driver performs no I/O and needs no capability; it is what tests use.
+`schema` is a `;` separated list of statements run on the fresh database.
+
+Pooling: `max_open` bounds the operations and open transactions in flight on a
+`Db`; a task over the limit waits (a cancellation point, it gets `Canceled`).
+`max_idle` and `max_lifetime` are passed to the driver (the in memory driver
+ignores them). `max_open` below 1 is `Param`.
+
+Every operation on a `Db` or `Tx` declares `uses net.dial`, because the `Db`
+may be network backed. Declaring more than the in memory driver performs is
+allowed (core 6.2), so the same code runs against both.
+
+### 10.2 Parameters and values
+
+```
+enum SqlValue { Null, Integer(n: Int), Text(s: Str), Real(f: Float), Flag(b: Bool), At(t: Time) }
+pub fn null() -> SqlValue
+pub fn int(n: Int) -> SqlValue       // also str, float, bool, time
+```
+
+Parameters are written `$1`, `$2`, ... and passed as a `List[SqlValue]`
+(`[sql.str(name), sql.int(age)]`). Decision: a closed enum rather than
+`List[Display]`, because the driver needs the type of each value (an `Int` and
+its text look the same through `Display`), and the five variants cover the
+column types every driver has. The count must equal the highest placeholder
+number, else `Param`. Values are never interpolated into the statement by the
+library; build the statement text from constants.
+
+### 10.3 Queries
+
+```
+fn (d: Db) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial   // NoRows if empty; extra rows ignored
+fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+fn (d: Db) ping() -> () ! SqlErr uses net.dial
+fn (d: Db) close() -> () ! SqlErr               // later operations fail with Closed; idempotent
+
+struct ExecResult { rows_affected: Int, last_insert_id: Int }   // id is 0 when the driver has none
+```
+
+`query` runs a statement that returns rows, `exec` one that does not.
+
+### 10.4 Rows
+
+```
+struct Row {}
+fn (r: Row) columns() -> List[Str]
+fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
+fn (r: Row) int(name: Str) -> Int ! SqlErr       // also str, float, bool, time
+fn (r: Row) int_opt(name: Str) -> Int? ! SqlErr  // also str_opt, float_opt, bool_opt, time_opt
+```
+
+Accessors read by column name (the first column of that name). A missing
+column is `NoColumn`; a value of another type, or NULL read by a non optional
+accessor, is `Mismatch(column, msg)`. `float` also accepts an integer. The
+`_opt` forms map NULL to `None`.
+
+### 10.5 Transactions
+
+```
+fn (d: Db) begin() -> Tx ! SqlErr uses net.dial
+fn (t: Tx) query(...) / query_one(...) / exec(...)       // as on Db
+fn (t: Tx) commit() -> () ! SqlErr uses net.dial
+fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
+```
+
+A transaction holds one pool permit from `begin` until `commit` or
+`rollback`; a driver that is a single writer (the in memory one) also allows
+one open transaction at a time, later `begin` calls wait. Commit a second time,
+or use a finished `Tx`, and you get `TxDone`. `rollback` on a finished `Tx`
+does nothing and succeeds, so the cleanup pattern is:
+
+```
+let tx = db.begin()?
+defer { tx.rollback().ignore_err("nothing to undo if the commit ran") }
+tx.exec(...)?
+tx.commit()?
+```
+
+`defer` blocks are shielded (core 3.5), so the rollback still runs when the
+task is cancelled or the function returns an error. A statement that fails
+inside a transaction leaves the transaction usable and its earlier work intact.
+A `Tx` is a handle: copies share the transaction.
+
+### 10.6 Errors and the in memory driver
+
+```
+enum SqlErr {
+  Syntax(msg: Str), Constraint(msg: Str), Param(msg: Str), NoTable(name: Str),
+  NoRows, NoColumn(name: Str), Mismatch(column: Str, msg: Str),
+  Conn(msg: Str), Driver(msg: Str), TxDone, Closed, Canceled
+} derive Display
+```
+
+`Conn` is a lost or refused connection, `Driver` any other driver failure
+(including an unknown driver name), `Constraint` a key, uniqueness, NOT NULL,
+or type violation.
+
+The in memory driver (`memory`, `testing.fake_db`) supports: `CREATE TABLE [IF
+NOT EXISTS]` (types `INT`/`INTEGER`/`BIGINT`, `TEXT`/`VARCHAR`, `REAL`/`FLOAT`,
+`BOOL`, `TIMESTAMP`, `SERIAL`; `PRIMARY KEY` on a single integer column
+auto-assigns keys; `NOT NULL`, `UNIQUE`, `DEFAULT literal`), `DROP TABLE`,
+`INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
+or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
+`LIMIT`/`OFFSET`, `UPDATE ... SET ... WHERE`, and `DELETE ... WHERE`.
+Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
+`OR`, `NOT`, `IS [NOT] NULL`, `[NOT] IN (...)`, `[NOT] LIKE`. No joins,
+grouping, subqueries, or `RETURNING`. Reads inside a transaction see its own
+writes; reads outside see the last commit.
+Results of a `Db` are not recorded by record and replay (core 11.3) yet.

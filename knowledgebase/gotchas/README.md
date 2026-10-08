@@ -81,3 +81,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [record-replay-scheduler-decisions.md](record-replay-scheduler-decisions.md): a seed does not replay a real run; the recording logs every pick and every outside event (timers, signals, requests) at decisions.
 - [ring-replay-other-requests.md](ring-replay-other-requests.md): an `XO_RING` crash bundle replays main's startup and the failing request only; state from other requests needs `--record`.
 - [go-build-cache-growth.md](go-build-cache-growth.md): Xo builds filled Go's build cache; now a separate capped cache.
+- [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).

@@ -1,0 +1,59 @@
+use std/sql
+
+fn balance(db: sql.Db, id: Int) -> Int ! sql.SqlErr uses net.dial {
+  db.query_one("SELECT balance FROM accounts WHERE id = $1", [sql.int(id)])?.int("balance")
+}
+
+/// Moves money; the deferred rollback undoes everything unless commit ran.
+fn transfer(db: sql.Db, from: Int, to: Int, amount: Int) -> () ! sql.SqlErr uses net.dial {
+  let tx = db.begin()?
+  defer { tx.rollback().ignore_err("nothing to undo if the commit ran") }
+  tx.exec("UPDATE accounts SET balance = balance - $1 WHERE id = $2", [sql.int(amount), sql.int(from)])?
+  let left = tx.query_one("SELECT balance FROM accounts WHERE id = $1", [sql.int(from)])?.int("balance")?
+  if left < 0 {
+    return Err(sql.SqlErr.Constraint("insufficient funds"))
+  }
+  tx.exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", [sql.int(amount), sql.int(to)])?
+  tx.commit()?
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE accounts (id INT PRIMARY KEY, balance INT NOT NULL); INSERT INTO accounts VALUES (1, 100), (2, 5)")?
+  transfer(db, 1, 2, 30)?
+  os.stdio.println("after ok: ${balance(db, 1)?} ${balance(db, 2)?}")
+  match transfer(db, 1, 2, 500) {
+    Ok(_) => os.stdio.println("transferred?")
+    Err(e) => os.stdio.println("failed: ${e}")
+  }
+  os.stdio.println("after failed: ${balance(db, 1)?} ${balance(db, 2)?}")
+
+  // explicit rollback: reads inside see the transaction's writes, outside do not
+  let tx = db.begin()?
+  tx.exec("DELETE FROM accounts")?
+  os.stdio.println("inside: ${tx.query("SELECT * FROM accounts")?.len()} outside: ${db.query("SELECT * FROM accounts")?.len()}")
+  tx.rollback()?
+  os.stdio.println("rolled back: ${db.query("SELECT * FROM accounts")?.len()}")
+
+  // a failing statement leaves the transaction usable, earlier work intact
+  let tx2 = db.begin()?
+  tx2.exec("UPDATE accounts SET balance = 0 WHERE id = 1")?
+  match tx2.exec("INSERT INTO accounts VALUES (1, 9)") {
+    Ok(_) => os.stdio.println("dup?")
+    Err(Constraint(_)) => os.stdio.println("duplicate key")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  tx2.commit()?
+  os.stdio.println("committed: ${balance(db, 1)?}")
+  match tx2.commit() {
+    Ok(_) => os.stdio.println("again?")
+    Err(TxDone) => os.stdio.println("tx done")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  match tx2.exec("DELETE FROM accounts") {
+    Ok(_) => os.stdio.println("ran?")
+    Err(TxDone) => os.stdio.println("tx done")
+    Err(e) => os.stdio.println("other ${e}")
+  }
+  tx2.rollback()?
+  os.stdio.println("rollback after commit is a no-op: ${balance(db, 1)?}")
+}
