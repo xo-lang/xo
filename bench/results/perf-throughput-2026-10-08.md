@@ -119,3 +119,55 @@ email check under the lock. Next experiment: a shared read mode for
 bench/perf/http/run.sh` with `XO_BLOCKPROFILE` on one run to see whether
 the remaining wait moves to the network path. Without arenas the next
 cost is allocation (GC CPU 16 percent).
+
+## Shared reads: Mutex.with_read (2026-10-08)
+
+Change: `Mutex.with_read` (decision 0063: many readers or one writer,
+writer preference, barging in real runs) and `Store.get` and `Store.list`
+of `bench/perf/http/xo` switched from `with` to `with_read`. Same harness
+and settings as above: `REPS=5 CONFIGS="go xo xo-arenas" sh
+bench/perf/http/run.sh`, 32 workers, 2 s warmup, 10 s measured, 64
+preloaded users. Before is the xo binary of commit 05b84d1 on the old
+store; after is commit f1185de. Host load average (1 minute) at the start
+of each run: 3.75 before, 3.63 after (the runs themselves push it to
+about 17).
+
+| Config | Req/s before | Req/s after | p50 us before | p50 us after | p99 us before | p99 us after | GC CPU % after |
+|---|---|---|---|---|---|---|---|
+| Go | 122,732 | 123,993 | 220 | 219 | 919 | 911 | 4 |
+| Xo | 51,908 | 50,690 | 630 | 643 | 1506 | 1526 | 16 |
+| Xo --arenas | 84,716 | 84,939 | 303 | 306 | 1116 | 1088 | 10 |
+
+No measurable change: every difference is inside the run to run spread
+(Xo --arenas ranged 82k to 91k before and 82k to 89k after).
+
+Why (block profile, `XO_BLOCKPROFILE`, Xo `--arenas` under the same load,
+5 s, 107k req/s in the profiling run): `(*lock).acquireMode` is still 61
+percent of blocked time, now split between `Mutex_with_read` from
+`Store.get` (27 percent) and `Mutex_with` from create, update, and delete
+(22 percent). Each load cycle is create, get, patch, get, delete: three
+of five requests write. With 32 workers a writer is almost always waiting,
+and writer preference queues new readers behind it, so the GETs still
+take turns with the writes; readers only share the lock in the short
+windows between writers. CPU: `syscall.rawsyscalln` 66 percent,
+`runtime.usleep` 13, `pthread_cond_wait` 6; Xo code still about 2
+percent (`email_taken` 0.8).
+
+## Next biggest cost (after shared reads)
+
+Still the store lock, now on the write side: writes are 60 percent of
+requests and serialize, and each handoff between goroutines costs a wake
+(woken goroutine scheduling) that is long against a 2 us hold. Next
+experiments, in order of likelihood:
+
+1. Shorten and split the writes: keep an email index (`Map[Str, Int]`) in
+   `State` so `email_taken` is O(1) instead of a scan of every user under
+   the write lock, and move `sort_by` in `list` out of the read section.
+   Rerun `REPS=5 CONFIGS="go xo-arenas" sh bench/perf/http/run.sh`.
+2. Shard the store by id (`List[Mutex[Map[Int, User]]]`, email index in
+   its own mutex) so writes to different users do not contend; this is
+   what removes the serialization rather than shortening it.
+3. In the runtime lock, measure wake to run latency
+   (`XO_BLOCKPROFILE` plus a counter of lost races per acquire) and try
+   letting a woken reader batch include readers that arrive while the
+   batch is waking.
