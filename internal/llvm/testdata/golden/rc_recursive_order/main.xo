@@ -1,0 +1,91 @@
+// Recursive types are boxed from the type definition graph, not from
+// the order the program first meets them (decision 0051): each type
+// below is first used through its Option (or through another member of
+// its cycle), never by constructing it directly first.
+//
+// - Node: a recursive struct first met as `Node?`; a 100,000 node chain
+//   is built and freed (the box worklist, no stack recursion).
+// - Dept and Person: mutual recursion across two structs.
+// - Leaf and Step: recursion through a user enum payload (and a tuple).
+struct Node {
+  val: Int
+  next: Node?
+}
+
+struct Dept {
+  name: Str
+  head: Person?
+}
+
+struct Person {
+  name: Str
+  dept: Dept?
+}
+
+struct Leaf {
+  tag: Int
+  rest: Step
+}
+
+enum Step {
+  Stop
+  Go(pair: (Leaf, Int))
+}
+
+fn sum(n: Node?) -> Int {
+  var total = 0
+  var cur = n
+  while true {
+    match cur {
+      Some(x) => {
+        total += x.val
+        cur = x.next
+      }
+      None => break
+    }
+  }
+  total
+}
+
+fn depth(s: Step) -> Int {
+  var d = 0
+  var cur = s
+  while true {
+    match cur {
+      Stop => break
+      Go(p) => {
+        d += p.0.tag + p.1
+        cur = p.0.rest
+      }
+    }
+  }
+  d
+}
+
+fn main(os: Os) {
+  var head: Node? = None
+  for i in 0..100000 {
+    head = Node{val: i, next: head}
+  }
+  os.stdio.println("chain ${sum(head)}")
+  head = None
+  os.stdio.println("cleared ${sum(head)}")
+
+  var p: Person? = None
+  p = Person{name: "ada", dept: Dept{name: "math", head: Person{name: "bob", dept: None}}}
+  if let Some(x) = p {
+    if let Some(d) = x.dept {
+      if let Some(h) = d.head {
+        os.stdio.println("${x.name} in ${d.name} under ${h.name}")
+      }
+    }
+  }
+  let q = p
+  os.stdio.println("eq ${p == q}")
+
+  var s = Step.Stop
+  for i in 1..4 {
+    s = Step.Go(pair: (Leaf{tag: i, rest: s}, 10))
+  }
+  os.stdio.println("depth ${depth(s)}")
+}

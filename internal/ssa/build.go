@@ -214,7 +214,8 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			if created {
 				sub := check.NewSubst(obj.TParams, r.Args)
 				for _, f := range obj.Fields {
-					x.Fields = append(x.Fields, Field{f.Name, b.boxed(b.typ(sub.Apply(f.Type), at), x)})
+					ft := sub.Apply(f.Type)
+					x.Fields = append(x.Fields, Field{f.Name, b.boxed(ft, b.typ(ft, at), name)})
 				}
 			}
 			return x
@@ -229,9 +230,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 						if fn == "" {
 							fn = strconv.Itoa(i)
 						}
-						ft := b.typ(sub.Apply(f.Type), at)
+						ct := sub.Apply(f.Type)
+						ft := b.typ(ct, at)
 						if obj.Module == nil || !obj.Module.IsPrelude {
-							ft = b.boxed(ft, x)
+							ft = b.boxed(ct, ft, name)
 						}
 						nv.Fields = append(nv.Fields, Field{fn, ft})
 					}
@@ -250,50 +252,82 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 	return m.Builtin(KUnit)
 }
 
-// boxed returns the type of a field of type ft of the user struct or
-// enum x (under construction): Box[ft] when ft contains x by value (a
-// recursive type), else ft. Types are interned when first met, so for
-// any cycle of types the first one to start construction sees the
-// whole cycle when its field into it completes, and boxes that field
-// (decision 0048).
-func (b *builder) boxed(ft, x *Type) *Type {
-	if containsByValue(ft, x, map[*Type]bool{}) {
+// boxed returns the type of a field of the user struct or enum named
+// owner: Box[ft] when the field's checker type ct reaches owner by
+// value (a recursive type), else ft (the lowered ct).
+//
+// The decision is made on the type definition graph (the checker's
+// types, with type arguments substituted), not on the SSA types built
+// so far, so it does not depend on which type of a cycle the program
+// happens to use first (a `Node?` met before `Node` used to leave the
+// cycle unboxed). Each by-value cycle is boxed once, at the edge out of
+// its least user type by name: a field of owner is boxed when it
+// reaches owner through user types whose names sort after owner (and
+// through prelude enums and tuples, which are never boxed). Every cycle
+// has such an edge, and the choice is a property of the cycle alone
+// (decision 0051).
+func (b *builder) boxed(ct check.Type, ft *Type, owner string) *Type {
+	if reachesByValue(ct, owner, map[string]bool{}) {
 		return b.mod.Box(ft)
 	}
 	return ft
 }
 
-// containsByValue reports whether a value of type t holds a value of
-// type x inline (through struct fields, enum payloads, and tuple
-// elements, not through lists, boxes, or function values). seen is a
-// visited set: this is a reachability question.
-func containsByValue(t, x *Type, seen map[*Type]bool) bool {
-	if t == x {
-		return true
-	}
-	if seen[t] {
+// reachesByValue reports whether a value of checker type t holds a
+// value of the struct or enum named owner (its SSA name: the
+// instantiated type's String) inline: through struct fields, enum
+// payloads (prelude Option and Result included), tuple elements, and
+// aliases, not through lists, function values, or builtins, and not
+// through user types named before owner (their own cycles are boxed at
+// their fields). seen holds the named types already walked.
+func reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
+	if t == nil {
 		return false
 	}
-	seen[t] = true
-	switch t.Kind {
-	case KStruct:
-		for _, f := range t.Fields {
-			if containsByValue(f.Type, x, seen) {
+	t = check.Deep(t)
+	switch r := check.Resolve(t).(type) {
+	case *check.Tuple:
+		for _, e := range r.Elems {
+			if reachesByValue(e, owner, seen) {
 				return true
 			}
 		}
-	case KEnum:
-		for _, v := range t.Variants {
-			for _, f := range v.Fields {
-				if containsByValue(f.Type, x, seen) {
+	case *check.Named:
+		obj := r.Obj
+		if obj.Module != nil && obj.Module.IsPrelude {
+			switch obj.Name {
+			case "Int", "Int64", "Float", "Bool", "Str", "Never", "Os", "Stdio", "List":
+				return false
+			}
+		}
+		switch obj.Kind {
+		case check.KAlias:
+			return reachesByValue(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), owner, seen)
+		case check.KStruct, check.KEnum:
+			if obj.Kind == check.KStruct && obj.Module != nil && obj.Module.IsStd {
+				return false
+			}
+			name := r.String()
+			if name == owner {
+				return true
+			}
+			prelude := obj.Module != nil && obj.Module.IsPrelude
+			if seen[name] || (!prelude && name < owner) {
+				return false
+			}
+			seen[name] = true
+			sub := check.NewSubst(obj.TParams, r.Args)
+			for _, f := range obj.Fields {
+				if reachesByValue(sub.Apply(f.Type), owner, seen) {
 					return true
 				}
 			}
-		}
-	case KTuple:
-		for _, e := range t.Elems {
-			if containsByValue(e, x, seen) {
-				return true
+			for _, v := range obj.Variants {
+				for _, f := range v.Fields {
+					if reachesByValue(sub.Apply(f.Type), owner, seen) {
+						return true
+					}
+				}
 			}
 		}
 	}
