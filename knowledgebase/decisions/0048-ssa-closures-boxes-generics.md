@@ -1,7 +1,9 @@
 # 0048: Closures, recursive types, and generics in the SSA IR
 
 Status: Accepted (2026-10-08). Extends decisions 0045 (shared SSA IR)
-and 0046 (reference counting). Implemented in `internal/ssa` (builder,
+and 0046 (reference counting). The rule for which field of a recursive
+type is boxed is superseded by 0052 (decided from the type definition
+graph, not from the order types are first met). Implemented in `internal/ssa` (builder,
 `rc.go`, verifier) and lowered by `internal/llvm/fromssa.go`, runtime in
 `std/llrt/xo_rt.c`.
 

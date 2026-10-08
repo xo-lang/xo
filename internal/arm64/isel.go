@@ -998,8 +998,10 @@ func (s *fstate) inc(p vreg) {
 
 func (s *fstate) retain(t *ssa.Type, ws []vreg) {
 	switch t.Kind {
-	case ssa.KStr, ssa.KList:
+	case ssa.KStr, ssa.KList, ssa.KBox:
 		s.inc(s.real(ws[0]))
+	case ssa.KFunc:
+		s.retainFunc(ws)
 	default:
 		if !t.Heap() {
 			return
@@ -1015,6 +1017,10 @@ func (s *fstate) release(t *ssa.Type, ws []vreg) {
 	switch t.Kind {
 	case ssa.KStr, ssa.KList:
 		s.call(s.g.rcHelper("drop", t), regs(ws[0]), nil)
+	case ssa.KBox:
+		s.releaseBox(t, s.real(ws[0]))
+	case ssa.KFunc:
+		s.releaseFunc(ws)
 	default:
 		s.call(s.g.rcHelper("drop", t), regs(s.toInt(ws, s.g.layout(t))...), nil)
 	}

@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+chain 4999950000
+cleared 0
+ada in math under bob
+eq true
+depth 36
+--- stderr

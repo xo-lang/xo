@@ -77,3 +77,14 @@ func (g *gen) boxDrop(t *ssa.Type) string {
 	g.helpers.WriteString(b.String())
 	return sym
 }
+
+// releaseBox releases the box p of type t inline: its count goes down by
+// one, and at one the cell goes to xo_rc_defer with its boxdrop
+// function (out of line, cold).
+func (s *fstate) releaseBox(t *ssa.Type, p vreg) {
+	before := s.m()
+	cont := s.decOrDefer(p, func() src { return symsrc(s.g.boxDrop(t)) })
+	s.cur = cont
+	s.inherit(before)
+	s.clobber()
+}

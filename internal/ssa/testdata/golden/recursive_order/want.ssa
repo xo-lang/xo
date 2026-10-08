@@ -1,0 +1,211 @@
+type Node? = enum { None | Some(v: Node) }
+type Node = struct { val: Int, next: Box[Node?] }
+type Person? = enum { None | Some(v: Person) }
+type Person = struct { name: Str, dept: Dept? }
+type Dept? = enum { None | Some(v: Dept) }
+type Dept = struct { name: Str, head: Box[Person?] }
+type Step = enum { Stop | Go(pair: (Leaf, Int)) }
+type Leaf = struct { tag: Int, rest: Box[Step] }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Node? = variant 0
+  v2: Int = const 0
+  v3: Int = const 100000
+  jump b1(v2, v1)
+b1(v5: Int, v6: Node?):  ; preds b0, b3
+  v7: Bool = lt v5, v3
+  br v7, b2(), b4()
+b2:  ; preds b1
+  v9: Box[Node?] = box v6
+  v10: Node = struct v5, v9
+  v11: Node? = variant 1, v10
+  v12: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v14: Int = const 1
+  v15: Int = add v5, v14
+  jump b1(v15, v11)
+b4:  ; preds b1
+  v17: Stdio = cap stdio, v0
+  v18: Str = const "chain "
+  v19: Int = call sum, v6
+  v20: Str = call str.concat_int, v18, v19
+  v21: () = call Stdio.println, v17, v20
+  v22: Node? = variant 0
+  v23: Stdio = cap stdio, v0
+  v24: Str = const "cleared "
+  v25: Int = call sum, v22
+  v26: Str = call str.concat_int, v24, v25
+  v27: () = call Stdio.println, v23, v26
+  v28: Person? = variant 0
+  v29: Str = const "ada"
+  v30: Str = const "math"
+  v31: Str = const "bob"
+  v32: Dept? = variant 0
+  v33: Person = struct v31, v32
+  v34: Person? = variant 1, v33
+  v35: Box[Person?] = box v34
+  v36: Dept = struct v30, v35
+  v37: Dept? = variant 1, v36
+  v38: Person = struct v29, v37
+  v39: Person? = variant 1, v38
+  v40: Int = tag v39
+  v41: Int = const 1
+  v42: Bool = eq v40, v41
+  br v42, b7(), b6()
+b5:  ; preds b8, b6
+  v44: () = tuple
+  v45: Stdio = cap stdio, v0
+  v46: Str = const "eq "
+  v47: Bool = eq v39, v39
+  v48: Str = call str.of_bool, v47
+  v49: Str = call str.concat, v46, v48
+  v50: () = call Stdio.println, v45, v49
+  v51: Step = variant 0
+  v52: Int = const 1
+  v53: Int = const 4
+  jump b14(v52, v51)
+b6:  ; preds b4
+  v55: () = tuple
+  jump b5()
+b7:  ; preds b4
+  v57: Person = payload 1.0, v39
+  v58: Dept? = field 1, v57
+  v59: Int = tag v58
+  v60: Int = const 1
+  v61: Bool = eq v59, v60
+  br v61, b10(), b9()
+b8:  ; preds b11, b9
+  v63: () = tuple
+  jump b5()
+b9:  ; preds b7
+  v65: () = tuple
+  jump b8()
+b10:  ; preds b7
+  v67: Dept = payload 1.0, v58
+  v68: Box[Person?] = field 1, v67
+  v69: Person? = unbox v68
+  v70: Int = tag v69
+  v71: Int = const 1
+  v72: Bool = eq v70, v71
+  br v72, b13(), b12()
+b11:  ; preds b13, b12
+  v74: () = tuple
+  jump b8()
+b12:  ; preds b10
+  v76: () = tuple
+  jump b11()
+b13:  ; preds b10
+  v78: Person = payload 1.0, v69
+  v79: Stdio = cap stdio, v0
+  v80: Str = field 0, v57
+  v81: Str = const " in "
+  v82: Str = call str.concat, v80, v81
+  v83: Str = field 0, v67
+  v84: Str = call str.concat, v82, v83
+  v85: Str = const " under "
+  v86: Str = call str.concat, v84, v85
+  v87: Str = field 0, v78
+  v88: Str = call str.concat, v86, v87
+  v89: () = call Stdio.println, v79, v88
+  jump b11()
+b14(v91: Int, v92: Step):  ; preds b5, b16
+  v93: Bool = lt v91, v53
+  br v93, b15(), b17()
+b15:  ; preds b14
+  v95: Box[Step] = box v92
+  v96: Leaf = struct v91, v95
+  v97: Int = const 10
+  v98: (Leaf, Int) = tuple v96, v97
+  v99: Step = variant 1, v98
+  v100: () = tuple
+  jump b16()
+b16:  ; preds b15
+  v102: Int = const 1
+  v103: Int = add v91, v102
+  jump b14(v103, v99)
+b17:  ; preds b14
+  v105: Stdio = cap stdio, v0
+  v106: Str = const "depth "
+  v107: Int = call depth, v92
+  v108: Str = call str.concat_int, v106, v107
+  v109: () = call Stdio.println, v105, v108
+  ret v109
+}
+
+func sum(v0: Node?) -> Int {
+b0(v0: Node?):
+  v1: Int = const 0
+  jump b1(v0, v1)
+b1(v3: Node?, v4: Int):  ; preds b0, b4
+  v5: Bool = const true
+  br v5, b3(), b2()
+b2:  ; preds b1, b8
+  ret v4
+b3:  ; preds b1
+  v8: Int = tag v3
+  v9: Int = const 1
+  v10: Bool = eq v8, v9
+  br v10, b6(), b5()
+b4:  ; preds b6
+  v12: () = tuple
+  jump b1(v22, v20)
+b5:  ; preds b3
+  v14: Int = tag v3
+  v15: Int = const 0
+  v16: Bool = eq v14, v15
+  br v16, b8(), b7()
+b6:  ; preds b3
+  v18: Node = payload 1.0, v3
+  v19: Int = field 0, v18
+  v20: Int = add v4, v19 @ main.xo:41:9
+  v21: Box[Node?] = field 1, v18
+  v22: Node? = unbox v21
+  v23: () = tuple
+  jump b4()
+b7:  ; preds b5
+  unreachable
+b8:  ; preds b5
+  jump b2()
+}
+
+func depth(v0: Step) -> Int {
+b0(v0: Step):
+  v1: Int = const 0
+  jump b1(v0, v1)
+b1(v3: Step, v4: Int):  ; preds b0, b4
+  v5: Bool = const true
+  br v5, b3(), b2()
+b2:  ; preds b1, b6
+  ret v4
+b3:  ; preds b1
+  v8: Int = tag v3
+  v9: Int = const 0
+  v10: Bool = eq v8, v9
+  br v10, b6(), b5()
+b4:  ; preds b8
+  v12: () = tuple
+  jump b1(v28, v25)
+b5:  ; preds b3
+  v14: Int = tag v3
+  v15: Int = const 1
+  v16: Bool = eq v14, v15
+  br v16, b8(), b7()
+b6:  ; preds b3
+  jump b2()
+b7:  ; preds b5
+  unreachable
+b8:  ; preds b5
+  v20: (Leaf, Int) = payload 1.0, v3
+  v21: Leaf = field 0, v20
+  v22: Int = field 0, v21
+  v23: Int = field 1, v20
+  v24: Int = add v22, v23 @ main.xo:57:14
+  v25: Int = add v4, v24 @ main.xo:57:9
+  v26: Leaf = field 0, v20
+  v27: Box[Step] = field 1, v26
+  v28: Step = unbox v27
+  v29: () = tuple
+  jump b4()
+}

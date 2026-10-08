@@ -17,7 +17,10 @@ import (
 //   - element callbacks (dupp, dropp) for xo_rl_copy and xo_rl_free: x0
 //     points to a list element; they load it and go to dup or drop.
 //
-// Retaining a Str or List is inlined at the call site.
+// Retaining a Str, List, Box, or function value is inlined at the call
+// site and in the helpers; releasing a Box or function value is inlined
+// too (decrement, and only a count of one calls xo_rc_defer with the
+// drop function). Counts are not atomic.
 
 // rcHelper returns the symbol of the dup or drop helper of t.
 func (g *gen) rcHelper(kind string, t *ssa.Type) string {
@@ -107,14 +110,14 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 				}
 				next := g.local(fmt.Sprintf("xo_%s%d_v%d", kind, id, vi))
 				fmt.Fprintf(&b, "\tldr x9, [sp, #%d]\n\tcmp x9, #%d\n\tb.ne %s\n", base, vi, next)
-				for _, l := range ls {
-					g.leafCall(&b, kind, l, base)
+				for li, l := range ls {
+					g.leafCall(&b, kind, l, base, fmt.Sprintf("%s_v%dl%d", sym, vi, li))
 				}
 				fmt.Fprintf(&b, "\tb %s\n%s:\n", done, next)
 			}
 		} else {
-			for _, l := range all {
-				g.leafCall(&b, kind, l, base)
+			for li, l := range all {
+				g.leafCall(&b, kind, l, base, fmt.Sprintf("%s_l%d", sym, li))
 			}
 		}
 		fmt.Fprintf(&b, "%s:\n", done)
@@ -139,10 +142,29 @@ func (g *gen) leafWords(t *ssa.Type) int {
 }
 
 // leafCall loads leaf l of the value saved at [sp, #base] and retains or
-// releases it (words past x7 go to the stack arguments at [sp]).
-func (g *gen) leafCall(b *strings.Builder, kind string, l leaf, base int) {
-	if kind == "dup" && (l.t.Kind == ssa.KStr || l.t.Kind == ssa.KList) {
+// releases it (words past x7 go to the stack arguments at [sp]). Box and
+// function value leaves are counted inline; lbl prefixes the labels of
+// the inline code.
+func (g *gen) leafCall(b *strings.Builder, kind string, l leaf, base int, lbl string) {
+	if kind == "dup" && (l.t.Kind == ssa.KStr || l.t.Kind == ssa.KList || l.t.Kind == ssa.KBox) {
 		fmt.Fprintf(b, "\tldr x9, [sp, #%d]\n\tldr x10, [x9]\n\tadd x10, x10, #1\n\tstr x10, [x9]\n", base+8*l.off)
+		return
+	}
+	switch l.t.Kind {
+	case ssa.KFunc:
+		// the environment word; null: no captures
+		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n\tcbz x0, %s_done\n\tldr x9, [x0]\n", base+8*(l.off+1), lbl)
+		if kind == "dup" {
+			fmt.Fprintf(b, "\tadd x9, x9, #1\n\tstr x9, [x0]\n%s_done:\n", lbl)
+			return
+		}
+		fmt.Fprintf(b, "\tsubs x9, x9, #1\n\tb.eq %s_free\n\tstr x9, [x0]\n\tb %s_done\n%s_free:\n\tldr x1, [x0, #8]\n\tbl %s\n%s_done:\n",
+			lbl, lbl, lbl, g.sym("xo_rc_defer"), lbl)
+		return
+	case ssa.KBox:
+		fmt.Fprintf(b, "\tldr x0, [sp, #%d]\n\tldr x9, [x0]\n\tsubs x9, x9, #1\n\tb.eq %s_free\n\tstr x9, [x0]\n\tb %s_done\n%s_free:\n", base+8*l.off, lbl, lbl, lbl)
+		b.WriteString(g.addr("x1", g.boxDrop(l.t)))
+		fmt.Fprintf(b, "\tbl %s\n%s_done:\n", g.sym("xo_rc_defer"), lbl)
 		return
 	}
 	n := g.leafWords(l.t)
