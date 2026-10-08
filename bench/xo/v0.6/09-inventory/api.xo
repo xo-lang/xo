@@ -1,0 +1,58 @@
+use std/http
+use std/json
+use std/log
+
+struct CreateItemBody {
+  name: Str
+  stock: Int
+} derive Json
+
+struct ReserveBody {
+  item_id: Int
+  qty: Int
+  idempotency_key: Str?
+} derive Json
+
+fn bad_body(e: json.DecodeErr) -> InvErr {
+  InvErr.BadRequest(msg: "invalid body: ${e}")
+}
+
+fn routes(inv: Inventory) -> http.Router uses clock {
+  var r = http.router()
+  r.handle("POST /items", fn(req) -> http.Response ! InvErr {
+    let body = req.json[CreateItemBody]().map_err(bad_body)?
+    http.json(201, inv.create_item(body.name, body.stock)?)
+  })
+  r.handle("GET /items/{id:Int}", fn(req) -> http.Response ! InvErr {
+    http.json(200, inv.stock(req.param_int("id"))?)
+  })
+  r.handle("POST /reservations", fn(req) -> http.Response ! InvErr {
+    let body = req.json[ReserveBody]().map_err(bad_body)?
+    let key = match body.idempotency_key {
+      Some(k) => k
+      None => req.header("Idempotency-Key") ?? ""
+    }
+    http.json(201, inv.reserve(body.item_id, body.qty, key)?)
+  })
+  r.handle("POST /reservations/{id:Int}/confirm", fn(req) -> http.Response ! InvErr {
+    http.json(200, inv.confirm(req.param_int("id"))?)
+  })
+  r.handle("POST /reservations/{id:Int}/cancel", fn(req) -> http.Response ! InvErr {
+    http.json(200, inv.cancel(req.param_int("id"))?)
+  })
+  r
+}
+
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? ":8080"
+  let inv = new_inventory(os.clock)
+  let srv = http.server(os.net.listen(addr)?, routes(inv))
+  log.info("listening", {"addr": addr})
+  // The sweeper is a background task: when a signal cancels main's scope,
+  // serve returns, the scope ends, and the sweeper is cancelled with it.
+  scope s {
+    s.spawn_background(fn() { inv.run_sweeper() })
+    srv.serve()?
+  }
+  log.info("stopped")
+}

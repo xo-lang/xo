@@ -1,0 +1,303 @@
+use std/json
+use std/log
+
+/// Levels a line may carry, compared after upper casing.
+const LEVELS = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+
+/// How many frequent messages each service report keeps.
+const TOP_MESSAGES = 5
+
+pub struct Config {
+  pub workers: Int = 4
+  pub flush_every: Duration = 10s
+  pub out: Str = "out"
+  pub queue_cap: Int = 1000
+}
+
+/// One parsed input line: `<unix_millis> <level> <service> <message>`.
+pub struct LogEntry {
+  pub ts: Int
+  pub level: Str
+  pub service: Str
+  pub message: Str
+}
+
+pub struct Summary {
+  pub read: Int
+  pub parsed: Int
+  pub malformed: Int
+  pub flushes: Int
+} derive Json
+
+pub struct MsgCount {
+  pub message: Str
+  pub count: Int
+} derive Json
+
+/// One line of a flush file.
+pub struct ServiceReport {
+  pub service: Str
+  pub total: Int
+  pub counts: Map[Str, Int]
+  pub first_ts: Int
+  pub last_ts: Int
+  pub top_messages: List[MsgCount]
+} derive Json
+
+/// Splits off the first space separated word. None if there is no word or
+/// nothing follows it.
+fn split_word(s: Str) -> (Str, Str)? {
+  let i = s.find(" ")?
+  let word = s[..i]
+  if word.is_empty() {
+    return None
+  }
+  (word, s[i + 1..].trim_start())
+}
+
+/// Parses `<unix_millis> <level> <service> <message>`. None means malformed.
+pub fn parse_line(raw: Str) -> LogEntry? {
+  let (ts_text, rest) = split_word(raw.trim())?
+  let (level_text, rest2) = split_word(rest)?
+  let (service, message) = split_word(rest2)?
+  let ts = Int.parse(ts_text)?
+  let level = level_text.to_upper()
+  if ts < 0 || !LEVELS.contains(level) || message.is_empty() {
+    return None
+  }
+  LogEntry{ts: ts, level: level, service: service, message: message}
+}
+
+struct ServiceAgg {
+  total: Int = 0
+  counts: Map[Str, Int] = {}
+  first_ts: Int = 0
+  last_ts: Int = 0
+  messages: Map[Str, Int] = {}
+}
+
+fn (var s: ServiceAgg) record(e: LogEntry) {
+  s.counts.update(e.level, 0, fn(var n) { n += 1 })
+  s.messages.update(e.message, 0, fn(var n) { n += 1 })
+  s.first_ts = s.first_ts.min(e.ts)
+  s.last_ts = s.last_ts.max(e.ts)
+  s.total += 1
+}
+
+/// Sort key: highest count first, then message text for a stable order.
+struct Rank {
+  neg_count: Int
+  message: Str
+} derive Ord
+
+fn (s: ServiceAgg) top(n: Int) -> List[MsgCount] {
+  let ranked = s.messages.entries().sort_by(fn(e) { Rank{neg_count: -e.1, message: e.0} })
+  ranked[..n.min(ranked.len())].map(fn(e) { MsgCount{message: e.0, count: e.1} })
+}
+
+struct Aggregates {
+  services: Map[Str, ServiceAgg] = {}
+}
+
+fn (var a: Aggregates) ingest(e: LogEntry) {
+  a.services.update(e.service, ServiceAgg{first_ts: e.ts, last_ts: e.ts}, fn(var s) { s.record(e) })
+}
+
+fn (a: Aggregates) report() -> List[ServiceReport] {
+  a.services.entries()
+    .map(fn(e) {
+      ServiceReport{
+        service: e.0,
+        total: e.1.total,
+        counts: e.1.counts,
+        first_ts: e.1.first_ts,
+        last_ts: e.1.last_ts,
+        top_messages: e.1.top(TOP_MESSAGES),
+      }
+    })
+    .sort_by(fn(r) { r.service })
+}
+
+/// One JSON object per service, one per line.
+fn render(reports: List[ServiceReport]) -> Str {
+  reports.map(fn(r) { json.encode_str(r) + "\n" }).join("")
+}
+
+fn pad6(n: Int) -> Str {
+  let s = "${n}"
+  if s.len() >= 6 { s } else { "0".repeat(6 - s.len()) + s }
+}
+
+/// Writes `name` in `dir` through a temp file and a rename, so readers only
+/// ever see complete files. The temp file is removed if anything fails.
+fn write_atomic(dir: Fs, name: Str, data: Bytes) -> () ! FsErr uses fs {
+  let tmp = dir.create_temp(".", ".${name}.tmp-")?
+  var renamed = false
+  defer {
+    if !renamed {
+      let _ = dir.remove(tmp).ignore_err("best effort cleanup of a temp file that was never renamed")
+    }
+  }
+  dir.write(tmp, data)?
+  dir.rename(tmp, name)?
+  renamed = true
+}
+
+struct Stats {
+  read: Atomic[Int]
+  parsed: Atomic[Int]
+  malformed: Atomic[Int]
+  flushes: Atomic[Int]
+  seq: Atomic[Int]
+}
+
+/// The pipeline's shared state. Every field is a handle, so copies (for
+/// example captured by worker closures) share it.
+pub struct Pipeline {
+  cfg: Config
+  queue: Chan[Str]
+  agg: Mutex[Aggregates]
+  /// A line the reader had read but could not queue before it was cancelled.
+  spill: Mutex[List[Str]]
+  stats: Stats
+}
+
+pub fn new_pipeline(cfg: Config) -> Pipeline {
+  Pipeline{
+    cfg: cfg,
+    queue: Chan[Str].new(cap: cfg.queue_cap),
+    agg: Mutex[Aggregates].new(Aggregates{}),
+    spill: Mutex[List[Str]].new([]),
+    stats: Stats{
+      read: Atomic[Int].new(0),
+      parsed: Atomic[Int].new(0),
+      malformed: Atomic[Int].new(0),
+      flushes: Atomic[Int].new(0),
+      seq: Atomic[Int].new(0),
+    },
+  }
+}
+
+pub fn (p: Pipeline) summary() -> Summary {
+  Summary{
+    read: p.stats.read.get(),
+    parsed: p.stats.parsed.get(),
+    malformed: p.stats.malformed.get(),
+    flushes: p.stats.flushes.get(),
+  }
+}
+
+pub fn (p: Pipeline) snapshot() -> List[ServiceReport] {
+  p.agg.with(fn(a) { a.report() })
+}
+
+fn (p: Pipeline) process(line: Str) {
+  if let Some(e) = parse_line(line) {
+    p.agg.with(fn(var a) { a.ingest(e) })
+    let _ = p.stats.parsed.add(1)
+  } else {
+    let _ = p.stats.malformed.add(1)
+  }
+}
+
+/// Reads lines into the queue until end of input or cancellation. `send`
+/// blocks while the queue is full, so input is never dropped.
+fn (p: Pipeline) feed[fx: Effects](read_line: fn() -> Str? ! IoErr uses fx) uses fx {
+  var in_hand: Str? = None
+  defer {
+    // Shielded: keep a line whose send was interrupted, and let the workers
+    // see the end of the queue.
+    if let Some(line) = in_hand {
+      p.spill.with(fn(var xs) { xs.push(line) })
+    }
+    p.queue.close()
+  }
+  while {
+    match read_line() {
+      Ok(Some(line)) => {
+        let _ = p.stats.read.add(1)
+        in_hand = Some(line)
+        p.queue.send(line)
+        in_hand = None
+      }
+      Ok(None) => break
+      Err(IoErr.Canceled) => break
+      Err(e) => {
+        log.error("reading input failed", {"error": e})
+        break
+      }
+    }
+  }
+}
+
+fn (p: Pipeline) work() {
+  while {
+    match p.queue.recv() {
+      Some(line) => {
+        // A line taken off the queue is processed in a shielded block, so
+        // cancellation cannot drop it between recv and the aggregate update.
+        defer { p.process(line) }
+      }
+      None => break
+    }
+  }
+}
+
+/// Writes the current aggregates as the next flush file. Returns its name.
+fn (p: Pipeline) flush(out: Fs) -> Str ! FsErr uses fs {
+  let reports = p.snapshot()
+  let name = "flush-${pad6(p.stats.seq.add(1))}.json"
+  write_atomic(out, name, render(reports).bytes())?
+  let _ = p.stats.flushes.add(1)
+  name
+}
+
+fn (p: Pipeline) flush_loop(out: Fs, clock: Clock) uses (fs, clock) {
+  while {
+    clock.sleep(p.cfg.flush_every)
+    match p.flush(out) {
+      Ok(name) => log.info("flushed", {"file": name})
+      Err(e) => log.error("flush failed", {"error": e})
+    }
+  }
+}
+
+/// Runs after the workers have stopped: processes whatever is left, writes
+/// the final flush, and prints the summary.
+fn (p: Pipeline) finish(out: Fs, stdio: Stdio) uses (fs, stdio) {
+  let spilled = p.spill.with(fn(xs) { xs })
+  for line in spilled {
+    p.process(line)
+  }
+  while {
+    match p.queue.try_recv() {
+      Some(line) => p.process(line)
+      None => break
+    }
+  }
+  match p.flush(out) {
+    Ok(name) => log.info("final flush", {"file": name})
+    Err(e) => log.error("final flush failed", {"error": e})
+  }
+  let s = p.summary()
+  stdio.println("lines read: ${s.read}, parsed: ${s.parsed}, malformed: ${s.malformed}, flushes written: ${s.flushes}")
+}
+
+/// Runs the pipeline until end of input or until the enclosing scope is
+/// cancelled (a signal, in main). Either way every line read is aggregated
+/// and included in a final flush to `out`.
+pub fn (p: Pipeline) run[fx: Effects](
+  read_line: fn() -> Str? ! IoErr uses fx,
+  out: Fs,
+  clock: Clock,
+  stdio: Stdio,
+) uses (fx, fs, clock, stdio) {
+  defer { p.finish(out, stdio) }
+  scope s {
+    for _ in 0..p.cfg.workers {
+      s.spawn(fn() { p.work() })
+    }
+    s.spawn_background(fn() { p.flush_loop(out, clock) })
+    p.feed(read_line)
+  }
+}

@@ -1,0 +1,264 @@
+use std/log
+
+/// How long a reservation holds stock before it lapses.
+const HOLD_TTL = 15m
+
+/// How often the background sweeper releases lapsed holds.
+const SWEEP_EVERY = 30s
+
+pub struct Item {
+  pub id: Int
+  pub name: Str
+  pub stock: Int
+} invariant stock >= 0 derive Json
+
+pub enum ResStatus {
+  Held
+  Confirmed
+  Cancelled
+  Expired
+} derive Json
+
+pub struct Reservation {
+  pub id: Int
+  pub item_id: Int
+  pub qty: Int
+  pub key: Str
+  pub status: ResStatus
+  pub expires_at: Time
+} derive Json
+
+/// Stock as seen by clients: physical stock, units on hold, and what is left.
+pub struct StockView {
+  pub id: Int
+  pub name: Str
+  pub stock: Int
+  pub held: Int
+  pub available: Int
+} derive Json
+
+pub enum InvErr {
+  BadRequest(msg: Str)
+  ItemNotFound(id: Int)
+  ReservationNotFound(id: Int)
+  InsufficientStock(item_id: Int, requested: Int, available: Int)
+  KeyReused(key: Str)
+  AlreadyConfirmed(id: Int)
+  AlreadyCancelled(id: Int)
+  Expired(id: Int)
+}
+
+// std/http maps handler errors to responses through status and display.
+fn (e: InvErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    ItemNotFound(_) => 404
+    ReservationNotFound(_) => 404
+    InsufficientStock(..) => 409
+    KeyReused(_) => 409
+    AlreadyConfirmed(_) => 409
+    AlreadyCancelled(_) => 409
+    Expired(_) => 410
+  }
+}
+
+fn (e: InvErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    ItemNotFound(id) => "item ${id} not found"
+    ReservationNotFound(id) => "reservation ${id} not found"
+    InsufficientStock(item_id, requested, available) =>
+      "item ${item_id}: requested ${requested}, only ${available} available"
+    KeyReused(key) => "idempotency key ${key} was already used for a different request"
+    AlreadyConfirmed(id) => "reservation ${id} is already confirmed"
+    AlreadyCancelled(id) => "reservation ${id} is cancelled"
+    Expired(id) => "reservation ${id} has expired"
+  }
+}
+
+/// All inventory state. It lives behind one mutex so that checking available
+/// stock and placing a hold happen in a single critical section.
+struct State {
+  items: Map[Int, Item] = {}
+  reservations: Map[Int, Reservation] = {}
+  by_key: Map[Str, Int] = {}
+  next_item: Int = 1
+  next_res: Int = 1
+}
+
+/// Marks every held reservation whose deadline has passed as expired, which
+/// releases its units. Returns how many were released.
+fn (var st: State) expire_holds(now: Time) -> Int {
+  var released = 0
+  for (id, r) in st.reservations {
+    if r.status is Held && r.expires_at <= now {
+      st.reservations.put(id, r with {status: ResStatus.Expired})
+      released += 1
+    }
+  }
+  released
+}
+
+fn (st: State) held_for(item_id: Int) -> Int {
+  st.reservations.values()
+    .filter(fn(r) { r.item_id == item_id && r.status is Held })
+    .fold(0, fn(acc, r) { acc + r.qty })
+}
+
+fn (st: State) view(item_id: Int) -> StockView ! InvErr {
+  let item = st.items.get(item_id).or_err(InvErr.ItemNotFound(id: item_id))?
+  let held = st.held_for(item_id)
+  StockView{id: item.id, name: item.name, stock: item.stock, held: held, available: item.stock - held}
+}
+
+fn (var st: State) add_item(name: Str, stock: Int) -> Item {
+  let item = Item{id: st.next_item, name: name, stock: stock}
+  st.next_item += 1
+  st.items.put(item.id, item)
+  item
+}
+
+fn (var st: State) reserve(item_id: Int, qty: Int, key: Str, now: Time) -> Reservation ! InvErr {
+  if let Some(existing_id) = st.by_key.get(key) {
+    let existing = st.reservations.get_or_fault(existing_id, "the idempotency index only points at stored reservations")
+    if existing.item_id != item_id || existing.qty != qty {
+      return Err(InvErr.KeyReused(key: key))
+    }
+    return existing
+  }
+  let item = st.items.get(item_id).or_err(InvErr.ItemNotFound(id: item_id))?
+  let available = item.stock - st.held_for(item_id)
+  if qty > available {
+    return Err(InvErr.InsufficientStock(item_id: item_id, requested: qty, available: available))
+  }
+  let res = Reservation{
+    id: st.next_res,
+    item_id: item_id,
+    qty: qty,
+    key: key,
+    status: ResStatus.Held,
+    expires_at: now + HOLD_TTL,
+  }
+  st.next_res += 1
+  st.reservations.put(res.id, res)
+  st.by_key.put(key, res.id)
+  res
+}
+
+fn (var st: State) confirm(id: Int) -> Reservation ! InvErr {
+  let r = st.reservations.get(id).or_err(InvErr.ReservationNotFound(id: id))?
+  match r.status {
+    Held => {
+      let item = st.items.get_or_fault(r.item_id, "reservations only refer to existing items")
+      st.items.put(item.id, item with {stock: item.stock - r.qty})
+      let done = r with {status: ResStatus.Confirmed}
+      st.reservations.put(id, done)
+      done
+    }
+    Confirmed => Err(InvErr.AlreadyConfirmed(id: id))
+    Cancelled => Err(InvErr.AlreadyCancelled(id: id))
+    Expired => Err(InvErr.Expired(id: id))
+  }
+}
+
+fn (var st: State) cancel(id: Int) -> Reservation ! InvErr {
+  let r = st.reservations.get(id).or_err(InvErr.ReservationNotFound(id: id))?
+  match r.status {
+    Held => {
+      let done = r with {status: ResStatus.Cancelled}
+      st.reservations.put(id, done)
+      done
+    }
+    Confirmed => Err(InvErr.AlreadyConfirmed(id: id))
+    Cancelled => Err(InvErr.AlreadyCancelled(id: id))
+    Expired => Err(InvErr.Expired(id: id))
+  }
+}
+
+/// In memory inventory. Copies share the same state (the mutex is a handle).
+pub struct Inventory {
+  state: Mutex[State]
+  clock: Clock
+}
+
+pub fn new_inventory(clock: Clock) -> Inventory {
+  Inventory{state: Mutex[State].new(State{}), clock: clock}
+}
+
+pub fn (inv: Inventory) create_item(name: Str, stock: Int) -> Item ! InvErr {
+  if name.trim().is_empty() {
+    return Err(InvErr.BadRequest(msg: "name is required"))
+  }
+  if stock < 0 {
+    return Err(InvErr.BadRequest(msg: "stock must not be negative"))
+  }
+  inv.state.with(fn(var st) { st.add_item(name, stock) })
+}
+
+/// Holds `qty` units of an item for HOLD_TTL. Reusing an idempotency key
+/// returns the reservation made with it instead of holding stock again.
+pub fn (inv: Inventory) reserve(item_id: Int, qty: Int, key: Str) -> Reservation ! InvErr uses clock {
+  if qty <= 0 {
+    return Err(InvErr.BadRequest(msg: "qty must be positive"))
+  }
+  if key.trim().is_empty() {
+    return Err(InvErr.BadRequest(msg: "an idempotency key is required"))
+  }
+  let now = inv.clock.now()
+  // Expiry is kept even when the reservation itself fails.
+  let outcome = inv.state.with(fn(var st) -> Result[Reservation, InvErr] {
+    st.expire_holds(now)
+    st.reserve(item_id, qty, key, now)
+  })
+  outcome
+}
+
+pub fn (inv: Inventory) confirm(id: Int) -> Reservation ! InvErr uses clock {
+  let now = inv.clock.now()
+  let outcome = inv.state.with(fn(var st) -> Result[Reservation, InvErr] {
+    st.expire_holds(now)
+    st.confirm(id)
+  })
+  outcome
+}
+
+pub fn (inv: Inventory) cancel(id: Int) -> Reservation ! InvErr uses clock {
+  let now = inv.clock.now()
+  let outcome = inv.state.with(fn(var st) -> Result[Reservation, InvErr] {
+    st.expire_holds(now)
+    st.cancel(id)
+  })
+  outcome
+}
+
+/// Reads stock, releasing lapsed holds first.
+pub fn (inv: Inventory) stock(item_id: Int) -> StockView ! InvErr uses clock {
+  let now = inv.clock.now()
+  let outcome = inv.state.with(fn(var st) -> Result[StockView, InvErr] {
+    st.expire_holds(now)
+    st.view(item_id)
+  })
+  outcome
+}
+
+/// Returns a reservation as stored, without releasing lapsed holds.
+pub fn (inv: Inventory) reservation(id: Int) -> Reservation ! InvErr {
+  inv.state.with(fn(st) { st.reservations.get(id) }).or_err(InvErr.ReservationNotFound(id: id))
+}
+
+/// Releases every lapsed hold now. Returns how many were released.
+pub fn (inv: Inventory) sweep() -> Int uses clock {
+  let now = inv.clock.now()
+  inv.state.with(fn(var st) { st.expire_holds(now) })
+}
+
+/// Sweeps every SWEEP_EVERY until the enclosing scope is cancelled.
+pub fn (inv: Inventory) run_sweeper() uses clock {
+  while {
+    inv.clock.sleep(SWEEP_EVERY)
+    let released = inv.sweep()
+    if released > 0 {
+      log.info("released expired holds", {"count": released})
+    }
+  }
+}

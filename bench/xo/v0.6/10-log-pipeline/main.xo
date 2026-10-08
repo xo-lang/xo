@@ -1,0 +1,65 @@
+pub enum ArgErr {
+  MissingValue(flag: Str)
+  BadValue(flag: Str, value: Str)
+  Unknown(flag: Str)
+}
+
+fn (e: ArgErr) display() -> Str {
+  match e {
+    MissingValue(flag) => "${flag} needs a value"
+    BadValue(flag, value) => "invalid value for ${flag}: ${value}"
+    Unknown(flag) => "unknown flag ${flag} (use --workers N, --flush DURATION, --out DIR)"
+  }
+}
+
+/// Parses `10s`, `500ms`, `2m`, `1h`, or a bare number of seconds.
+fn parse_duration(s: Str) -> Duration? {
+  let (num, unit) = if s.ends_with("ms") {
+    (s.trim_suffix("ms"), 1ms)
+  } else if s.ends_with("s") {
+    (s.trim_suffix("s"), 1s)
+  } else if s.ends_with("m") {
+    (s.trim_suffix("m"), 1m)
+  } else if s.ends_with("h") {
+    (s.trim_suffix("h"), 1h)
+  } else {
+    (s, 1s)
+  }
+  let n = Int.parse(num)?
+  if n <= 0 {
+    return None
+  }
+  unit * n
+}
+
+fn parse_args(args: List[Str]) -> Config ! ArgErr {
+  var cfg = Config{}
+  var i = 0
+  while i < args.len() {
+    let flag = args[i]
+    let value = args.get(i + 1).or_err(ArgErr.MissingValue(flag: flag))?
+    match flag {
+      "--workers" => {
+        let n = Int.parse(value).or_err(ArgErr.BadValue(flag: flag, value: value))?
+        if n < 1 {
+          return Err(ArgErr.BadValue(flag: flag, value: value))
+        }
+        cfg.workers = n
+      }
+      "--flush" => cfg.flush_every = parse_duration(value).or_err(ArgErr.BadValue(flag: flag, value: value))?
+      "--out" => cfg.out = value
+      _ => return Err(ArgErr.Unknown(flag: flag))
+    }
+    i += 2
+  }
+  cfg
+}
+
+fn main(os: Os) ! {
+  let cfg = parse_args(os.env.args())?
+  os.fs.create_dir_all(cfg.out)?
+  let p = new_pipeline(cfg)
+  // SIGINT or SIGTERM cancels this scope: reading stops, run's shielded
+  // defer drains the queue, writes the final flush, and main returns 0.
+  p.run(fn() { os.stdio.read_line() }, os.fs.sub(cfg.out), os.clock, os.stdio)
+}

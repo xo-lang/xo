@@ -1,0 +1,195 @@
+use std/http
+use std/task
+
+fn post(r: http.Router, path: Str, body: Str) -> http.Response {
+  r.call(http.new_request("POST", path, body: body.bytes()))
+}
+
+fn get(r: http.Router, path: Str) -> http.Response {
+  r.call(http.new_request("GET", path))
+}
+
+test "100 concurrent reservations of 1 unit on 10 in stock: exactly 10 succeed" {
+  let inv = new_inventory(os.clock)
+  let item = inv.create_item("widget", 10)?
+  let results = task.map_concurrent((0..100).to_list(), 100, fn(i) {
+    inv.reserve(item.id, 1, "key-${i}")
+  })
+  let won = results.filter(fn(r) { r.is_ok() }).len()
+  let refused = results.filter(fn(r) { r is Err(InvErr.InsufficientStock(..)) }).len()
+  expect(won) == 10
+  expect(refused) == 90
+  let v = inv.stock(item.id)?
+  expect(v.stock) == 10
+  expect(v.held) == 10
+  expect(v.available) == 0
+}
+
+test "idempotent reserve returns the same reservation and holds stock once" {
+  let inv = new_inventory(os.clock)
+  let item = inv.create_item("widget", 10)?
+  let a = inv.reserve(item.id, 3, "order-1")?
+  let b = inv.reserve(item.id, 3, "order-1")?
+  expect(b) == a
+  expect(inv.stock(item.id)?.held) == 3
+
+  // The same key used concurrently still holds stock once.
+  let again = task.map_concurrent((0..20).to_list(), 20, fn(_i) {
+    inv.reserve(item.id, 3, "order-2")
+  })
+  let ids = again.map(fn(r) { r.or_fault("reserve with a reused key succeeds").id }).to_set()
+  expect(ids.len()) == 1
+  expect(inv.stock(item.id)?.held) == 6
+
+  // A key reused for a different request is refused.
+  expect(inv.reserve(item.id, 4, "order-1") is Err(InvErr.KeyReused(..)))
+  expect(inv.stock(item.id)?.held) == 6
+}
+
+test "an expired hold is released and confirm then returns 410" {
+  let inv = new_inventory(os.clock)
+  let r = routes(inv)
+  let item = inv.create_item("widget", 5)?
+  let res = inv.reserve(item.id, 4, "k")?
+  expect(inv.stock(item.id)?.available) == 1
+
+  os.clock.advance(15m + 1s)
+
+  let v = inv.stock(item.id)?
+  expect(v.held) == 0
+  expect(v.available) == 5
+  expect(inv.reservation(res.id)?.status) == ResStatus.Expired
+  expect(inv.confirm(res.id) is Err(InvErr.Expired(..)))
+  expect(post(r, "/reservations/${res.id}/confirm", "").status) == 410
+}
+
+test "the background sweeper releases expired holds" {
+  let inv = new_inventory(os.clock)
+  let item = inv.create_item("widget", 5)?
+  let res = inv.reserve(item.id, 2, "k")?
+  scope s {
+    s.spawn_background(fn() { inv.run_sweeper() })
+    os.clock.advance(14m)
+    expect(inv.reservation(res.id)?.status) == ResStatus.Held
+    os.clock.advance(2m)
+    // Read without the lazy release: only the sweeper can have expired it.
+    expect(inv.reservation(res.id)?.status) == ResStatus.Expired
+  }
+}
+
+test "confirm then cancel fails, cancel then confirm fails" {
+  let inv = new_inventory(os.clock)
+  let r = routes(inv)
+  let item = inv.create_item("widget", 5)?
+
+  let a = inv.reserve(item.id, 1, "a")?
+  inv.confirm(a.id)?
+  expect(inv.cancel(a.id) is Err(InvErr.AlreadyConfirmed(..)))
+  expect(post(r, "/reservations/${a.id}/cancel", "").status) == 409
+  expect(post(r, "/reservations/${a.id}/confirm", "").status) == 409
+
+  let b = inv.reserve(item.id, 1, "b")?
+  inv.cancel(b.id)?
+  expect(inv.confirm(b.id) is Err(InvErr.AlreadyCancelled(..)))
+  expect(post(r, "/reservations/${b.id}/confirm", "").status) == 409
+
+  let v = inv.stock(item.id)?
+  expect(v.stock) == 4
+  expect(v.held) == 0
+  expect(v.available) == 4
+}
+
+test "available stock is correct after reserve, confirm, cancel, and expiry" {
+  let inv = new_inventory(os.clock)
+  let item = inv.create_item("widget", 20)?
+
+  let r1 = inv.reserve(item.id, 5, "r1")?
+  inv.confirm(r1.id)?
+  let v1 = inv.stock(item.id)?
+  expect(v1.stock) == 15
+  expect(v1.held) == 0
+  expect(v1.available) == 15
+
+  let r2 = inv.reserve(item.id, 3, "r2")?
+  inv.cancel(r2.id)?
+  expect(inv.stock(item.id)?.available) == 15
+
+  let _r3 = inv.reserve(item.id, 4, "r3")?
+  let v3 = inv.stock(item.id)?
+  expect(v3.held) == 4
+  expect(v3.available) == 11
+
+  os.clock.advance(15m + 1s)
+  let v4 = inv.stock(item.id)?
+  expect(v4.held) == 0
+  expect(v4.available) == 15
+
+  let r4 = inv.reserve(item.id, 2, "r4")?
+  expect(inv.stock(item.id)?.available) == 13
+  expect(inv.reserve(item.id, 14, "too-many") is Err(InvErr.InsufficientStock(..)))
+  let r5 = inv.reserve(item.id, 13, "r5")?
+  let v5 = inv.stock(item.id)?
+  expect(v5.held) == 15
+  expect(v5.available) == 0
+
+  inv.confirm(r4.id)?
+  let v6 = inv.stock(item.id)?
+  expect(v6.stock) == 13
+  expect(v6.held) == 13
+  expect(v6.available) == 0
+
+  inv.cancel(r5.id)?
+  let v7 = inv.stock(item.id)?
+  expect(v7.stock) == 13
+  expect(v7.held) == 0
+  expect(v7.available) == 13
+}
+
+test "http api creates, reads, reserves, and maps errors" {
+  let inv = new_inventory(os.clock)
+  let r = routes(inv)
+
+  let created = post(r, "/items", r#"{"name": "widget", "stock": 2}"#)
+  expect(created.status) == 201
+  let item = created.decode_json[Item]()?
+  expect(item.stock) == 2
+
+  expect(post(r, "/items", "not json").status) == 400
+  expect(post(r, "/items", r#"{"name": "", "stock": 1}"#).status) == 400
+  expect(post(r, "/items", r#"{"name": "x", "stock": -1}"#).status) == 400
+  expect(get(r, "/items/999").status) == 404
+
+  let reserve_body = "{\"item_id\": ${item.id}, \"qty\": 2, \"idempotency_key\": \"a\"}"
+  let held = post(r, "/reservations", reserve_body)
+  expect(held.status) == 201
+  let res = held.decode_json[Reservation]()?
+  expect(res.status) == ResStatus.Held
+
+  // Replaying the same request returns the same reservation.
+  let replay = post(r, "/reservations", reserve_body)
+  expect(replay.decode_json[Reservation]()?.id) == res.id
+
+  let view = get(r, "/items/${item.id}").decode_json[StockView]()?
+  expect(view.held) == 2
+  expect(view.available) == 0
+
+  let more = "{\"item_id\": ${item.id}, \"qty\": 1, \"idempotency_key\": \"b\"}"
+  expect(post(r, "/reservations", more).status) == 409
+  let missing_item = "{\"item_id\": 999, \"qty\": 1, \"idempotency_key\": \"c\"}"
+  expect(post(r, "/reservations", missing_item).status) == 404
+  let zero = "{\"item_id\": ${item.id}, \"qty\": 0, \"idempotency_key\": \"d\"}"
+  expect(post(r, "/reservations", zero).status) == 400
+  let no_key = "{\"item_id\": ${item.id}, \"qty\": 1}"
+  expect(post(r, "/reservations", no_key).status) == 400
+
+  expect(post(r, "/reservations/${res.id}/confirm", "").status) == 200
+  expect(post(r, "/reservations/777/cancel", "").status) == 404
+  let after = get(r, "/items/${item.id}").decode_json[StockView]()?
+  expect(after.stock) == 0
+  expect(after.available) == 0
+}
+
+test "graceful shutdown stops the sweeper and exits cleanly" {
+  os.proc.signal_after(2m)
+  expect(testing.run_main(main, os)) == 0
+}

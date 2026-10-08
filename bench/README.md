@@ -77,3 +77,4 @@ Stage 3 runs:
 - [2026-10-07 planted bugs in Xo (measured)](results/planted-xo-2026-10-07.md): Xo prevents or catches 21 to 24 of 30 safety bugs across two independent authors (spec 0.6: 23 to 29 caught, 25 to 29 caught or warned); strict Go 13, plain Go 9; logic bugs 16/20 vs Go 17/20.
 - [2026-10-08 three arm comparison](results/three-arm-2026-10-08.md): writing is even (first try passes); safety bugs Xo 23 to 29 of 30 vs strict Go 13; Xo code about half the size.
 - [2026-10-08 Map performance](results/perf-map-2026-10-08.md): update heavy Map loops 45x slower than Go -> 3.2 to 4.4x; reads, iteration, copies faster.
+- [2026-10-08 stage 3, tasks 09 and 10](results/stage3-2026-10-08.md): first run success Xo 2/2, plain Go 1/2, strict Go 0/2; Xo about 55% of Go lines; graceful drain gap found.

@@ -1,0 +1,220 @@
+use std/json
+use std/path
+
+type ReadLine = fn() -> Str? ! IoErr
+
+/// Input that arrives only when the test sends it, so the test controls
+/// where "the middle of input" is.
+fn from_chan(src: Chan[Str]) -> ReadLine {
+  fn() -> Str? ! IoErr { src.recv() }
+}
+
+fn entry(i: Int) -> Str {
+  "${1000 + i} INFO svc${i % 3} message ${i % 7}"
+}
+
+fn flush_files(files: Map[Str, Bytes]) -> List[Str] {
+  files.keys().filter(fn(k) { path.base(k).starts_with("flush-") }).sort()
+}
+
+fn temp_files(files: Map[Str, Bytes]) -> List[Str] {
+  files.keys().filter(fn(k) { k.contains(".tmp-") })
+}
+
+fn decode_flush(data: Bytes) -> List[ServiceReport] ! Error {
+  let text = data.to_str().or_err("flush file is not UTF-8")?
+  let reports = text.lines()
+    .filter(fn(l) { !l.is_empty() })
+    .map(fn(l) { json.decode_str[ServiceReport](l) })?
+  reports
+}
+
+fn last_flush(files: Map[Str, Bytes]) -> List[ServiceReport] ! Error {
+  let name = flush_files(files).last().or_err("no flush file written")?
+  decode_flush(files.get_or_fault(name, "the name was just listed"))
+}
+
+fn total(reports: List[ServiceReport]) -> Int {
+  reports.fold(0, fn(acc, r) { acc + r.total })
+}
+
+test "parse_line accepts the format and rejects malformed lines" {
+  expect(parse_line("1700000000000 info api GET /users took 12ms")) == Some(LogEntry{
+    ts: 1700000000000,
+    level: "INFO",
+    service: "api",
+    message: "GET /users took 12ms",
+  })
+  expect(parse_line("")) == None
+  expect(parse_line("garbage")) == None
+  expect(parse_line("12 INFO api")) == None
+  expect(parse_line("x12 INFO api hello")) == None
+  expect(parse_line("12 LOUD api hello")) == None
+  expect(parse_line("-1 INFO api hello")) == None
+}
+
+test "parse_duration and parse_args" {
+  expect(parse_duration("10s")) == Some(10s)
+  expect(parse_duration("250ms")) == Some(250ms)
+  expect(parse_duration("2m")) == Some(2m)
+  expect(parse_duration("3")) == Some(3s)
+  expect(parse_duration("0s")) == None
+  expect(parse_duration("soon")) == None
+  let cfg = parse_args(["--workers", "8", "--flush", "1s", "--out", "/tmp/x"])?
+  expect(cfg.workers) == 8
+  expect(cfg.flush_every) == 1s
+  expect(cfg.out) == "/tmp/x"
+  expect(parse_args([]).ok().map(fn(c) { c.workers })) == Some(4)
+  expect(parse_args(["--workers", "0"]) is Err(ArgErr.BadValue(..)))
+  expect(parse_args(["--workers"]) is Err(ArgErr.MissingValue(..)))
+  expect(parse_args(["--fast", "yes"]) is Err(ArgErr.Unknown(..)))
+}
+
+test "every valid line is counted exactly once with several workers" {
+  os.fs.create_dir_all("out")?
+  let lines = (0..2500).to_list().map(entry)
+  os.stdio.set_input(lines.join("\n") + "\n")
+  let p = new_pipeline(Config{workers: 8})
+  p.run(fn() { os.stdio.read_line() }, os.fs.sub("out"), os.clock, os.stdio)
+
+  expect(p.summary()) == Summary{read: 2500, parsed: 2500, malformed: 0, flushes: 1}
+  let reports = p.snapshot()
+  expect(reports.map(fn(r) { r.service })) == ["svc0", "svc1", "svc2"]
+  expect(total(reports)) == 2500
+  for r in reports {
+    let expected = lines.filter(fn(l) { l.contains(" ${r.service} ") }).len()
+    expect(r.total) == expected
+    expect(r.counts.get("INFO")) == Some(expected)
+    expect(r.top_messages.len()) == 5
+  }
+  let svc0 = reports.first().or_err("no reports")?
+  expect(svc0.first_ts) == 1000
+  expect(svc0.last_ts) == 3499
+
+  // The final flush holds the same totals.
+  expect(total(last_flush(os.fs.files())?)) == 2500
+  expect(os.stdio.output().contains("lines read: 2500, parsed: 2500, malformed: 0, flushes written: 1"))
+}
+
+test "malformed lines are counted and skipped" {
+  os.fs.create_dir_all("out")?
+  let input = [
+    "1000 INFO api started",
+    "garbage",
+    "",
+    "abc INFO api not a timestamp",
+    "1001 NOPE api unknown level",
+    "1002 INFO api",
+    "-5 INFO api negative time",
+    "1003 warn api lower case level is fine",
+    "1004 ERROR db failed twice",
+  ]
+  os.stdio.set_input(input.join("\n") + "\n")
+  let p = new_pipeline(Config{workers: 3})
+  p.run(fn() { os.stdio.read_line() }, os.fs.sub("out"), os.clock, os.stdio)
+
+  expect(p.summary()) == Summary{read: 9, parsed: 3, malformed: 6, flushes: 1}
+  let reports = p.snapshot()
+  expect(reports.map(fn(r) { r.service })) == ["api", "db"]
+  let api = reports.first().or_err("no api report")?
+  expect(api.counts) == {"INFO": 1, "WARN": 1}
+  expect(api.first_ts) == 1000
+  expect(api.last_ts) == 1003
+  expect(api.top_messages.map(fn(m) { m.message })) == ["lower case level is fine", "started"]
+}
+
+test "the reader blocks rather than dropping when workers are slow" {
+  // No workers run here: the queue only drains when the test reads it.
+  let p = new_pipeline(Config{queue_cap: 3})
+  let lines = (0..10).to_list().map(entry)
+  let src = Chan[Str].new(cap: 100)
+  for l in lines {
+    src.send(l)
+  }
+  src.close()
+  scope s {
+    s.spawn(fn() { p.feed(from_chan(src)) })
+    os.clock.sleep(1ms) // returns once every task is blocked
+    expect(p.queue.len()) == 3
+    expect(p.stats.read.get()) == 4 // three queued, one waiting in send
+    var got: List[Str] = []
+    while {
+      match p.queue.recv() {
+        Some(l) => got.push(l)
+        None => break
+      }
+    }
+    expect(got) == lines
+  }
+  expect(p.stats.read.get()) == 10
+  expect(p.spill.with(fn(xs) { xs.len() })) == 0
+}
+
+test "flushes happen on the interval and files are written atomically" {
+  os.fs.create_dir_all("out")?
+  let p = new_pipeline(Config{workers: 2, flush_every: 10s})
+  let src = Chan[Str].new(cap: 100)
+  os.fs.fail_next(testing.FsOp.Rename, "out/flush-000002.json", FsErr.Io(path: "out/flush-000002.json", msg: "disk full"))
+  scope s {
+    s.spawn(fn() { p.run(from_chan(src), os.fs.sub("out"), os.clock, os.stdio) })
+    src.send(entry(0))
+    src.send(entry(1))
+    os.clock.sleep(1ms)
+    expect(flush_files(os.fs.files())) == []
+
+    os.clock.advance(10s)
+    expect(flush_files(os.fs.files()).len()) == 1
+    expect(total(last_flush(os.fs.files())?)) == 2
+
+    src.send(entry(2))
+    os.clock.sleep(1ms)
+    os.clock.advance(10s) // the rename of flush 2 fails: no partial file appears
+    expect(flush_files(os.fs.files()).len()) == 1
+    expect(temp_files(os.fs.files())) == []
+    expect(p.summary().flushes) == 1
+
+    os.clock.advance(10s)
+    expect(flush_files(os.fs.files()).len()) == 2
+    expect(total(last_flush(os.fs.files())?)) == 3
+    src.close()
+  }
+  // End of input: the final flush is written too.
+  expect(flush_files(os.fs.files()).len()) == 3
+  expect(temp_files(os.fs.files())) == []
+  expect(p.summary().flushes) == 3
+  expect(os.clock.sleeps().filter(fn(d) { d == 10s }).len()) >= 3
+}
+
+test "shutdown in the middle of input flushes every line read before the signal" {
+  os.fs.create_dir_all("out")?
+  let p = new_pipeline(Config{workers: 3, queue_cap: 50})
+  let src = Chan[Str].new()
+  scope s {
+    s.spawn(fn() { p.run(from_chan(src), os.fs.sub("out"), os.clock, os.stdio) })
+    for i in 0..500 {
+      src.send(entry(i)) // unbuffered: returns once the reader has the line
+    }
+    s.cancel() // what SIGINT or SIGTERM does to main's scope
+  }
+  let sum = p.summary()
+  expect(sum.read) == 500
+  expect(sum.parsed) == 500
+  expect(sum.malformed) == 0
+  expect(sum.flushes) == 1
+  expect(total(last_flush(os.fs.files())?)) == 500
+  expect(os.stdio.output().contains("lines read: 500, parsed: 500"))
+}
+
+test "main reads stdin, honors flags, and exits 0 with a summary" {
+  os.stdio.set_input("1 INFO a x\n2 ERROR a y\nbad line\n3 INFO b z\n")
+  let code = testing.run_main(main, os, ["--workers", "2", "--flush", "5s", "--out", "logs"])
+  expect(code) == 0
+  expect(os.stdio.output().contains("lines read: 4, parsed: 3, malformed: 1, flushes written: 1"))
+  let reports = last_flush(os.fs.files())?
+  expect(reports.map(fn(r) { r.service })) == ["a", "b"]
+  expect(flush_files(os.fs.files()).all(fn(k) { k.contains("logs") }))
+}
+
+test "main rejects bad flags with exit status 1" {
+  expect(testing.run_main(main, os, ["--workers", "none"])) == 1
+}

@@ -6,13 +6,19 @@ Last verified: 2026-10-07
 
 - Development host: macOS (darwin/arm64).
 - Go: 1.26.1 (`go version`). The P1 prototype is written in Go and emits Go.
-- Not yet a git repository.
+- Git repository, remote `git@github.com:josephspurrier/xo.git`, branch `main`
+  (initialized 2026-10-08). `.gitignore` excludes `.tools/`, build outputs
+  (`benchtask`, `*.exe`, `*.test`, `bin/`, `dist/`), logs, and editor files.
 - `go test ./...` needs a C toolchain for the race detector tests (skipped
   when `go env CGO_ENABLED` is 0).
 
 ## Go module
 
 - `go.mod` at the repo root: `module github.com/xo-lang/xo`, `go 1.26`.
+  The module path intentionally stays `github.com/xo-lang/xo` even though the
+  git remote is `github.com/josephspurrier/xo` (owner's choice, 2026-10-08).
+  So `go install github.com/josephspurrier/xo/cmd/xo` does not work; build
+  from a checkout with `go build -o .tools/bin/xo ./cmd/xo`.
 - Standard library only. No third party dependencies.
 
 ## Commands
