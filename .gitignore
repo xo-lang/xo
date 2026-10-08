@@ -25,3 +25,9 @@ dist/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Python bytecode (bench/harness)
+__pycache__/
+
+# Agent benchmark runs made with bench/harness (keep results in bench/results/)
+/runs/
