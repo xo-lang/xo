@@ -567,3 +567,144 @@ func pairLoads(text string) string {
 }
 
 var ldrRE = regexp.MustCompile(`^\tldr (x[0-9]+), \[(x[0-9]+|sp), #(-?[0-9]+)\]$`)
+
+// placeLatches lays out the latch of a loop right after a block that
+// branches either to it or into an inner loop: `for i in .. { if
+// flags[i] { inner loop } }` falls through to the latch when the test
+// fails (one taken branch per iteration, the back edge, instead of two),
+// and the path into the inner loop, whose iterations outweigh the extra
+// jumps around it, is the taken branch.
+func (s *fstate) placeLatches() {
+	succs := func(b *mblock) []*mblock {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
+			return t.targets
+		}
+		return nil
+	}
+	preds := map[*mblock][]*mblock{}
+	for _, b := range append(append([]*mblock(nil), s.hot...), s.cold...) {
+		for _, t := range succs(b) {
+			preds[t] = append(preds[t], b)
+		}
+	}
+	// natural loops of back edges found by depth first search
+	bodies := map[*mblock]map[*mblock]bool{}
+	state := map[*mblock]int{}
+	var dfs func(b *mblock)
+	dfs = func(b *mblock) {
+		state[b] = 1
+		for _, t := range succs(b) {
+			switch state[t] {
+			case 0:
+				dfs(t)
+			case 1:
+				body := bodies[t]
+				if body == nil {
+					body = map[*mblock]bool{}
+					bodies[t] = body
+				}
+				work := []*mblock{b}
+				body[t] = true
+				for len(work) > 0 {
+					x := work[len(work)-1]
+					work = work[:len(work)-1]
+					if !body[x] {
+						body[x] = true
+						work = append(work, preds[x]...)
+					}
+				}
+			}
+		}
+		state[b] = 2
+	}
+	dfs(s.hot[0])
+	hot := map[*mblock]bool{}
+	for _, b := range s.hot {
+		hot[b] = true
+	}
+	// heavy reports whether x reaches the header of a loop nested in the
+	// loop of h without going through h or the latch l
+	heavy := func(x, h, l *mblock) bool {
+		seen := map[*mblock]bool{h: true, l: true}
+		work := []*mblock{x}
+		for len(work) > 0 {
+			y := work[len(work)-1]
+			work = work[:len(work)-1]
+			if seen[y] || !bodies[h][y] {
+				continue
+			}
+			seen[y] = true
+			if bodies[y] != nil && y != h {
+				return true
+			}
+			work = append(work, succs(y)...)
+		}
+		return false
+	}
+	moved := map[*mblock]bool{}
+	for i := 0; i < len(s.hot); i++ {
+		b := s.hot[i]
+		t := b.term()
+		if t == nil || t.kind != iCondBr || t.targets[0] == t.targets[1] {
+			continue
+		}
+		for k := 0; k < 2; k++ {
+			l, x := t.targets[k], t.targets[1-k]
+			// l and the small blocks it jumps through reach the loop's
+			// header, or a block that only tests and branches to it
+			// (emission tests at the jump)
+			var chain []*mblock
+			var h *mblock
+			for y := l; h == nil && len(chain) < 4; {
+				yt := y.term()
+				if !hot[y] || moved[y] || y == b || len(y.insts) > 8 || yt == nil || yt.kind != iJump {
+					break
+				}
+				chain = append(chain, y)
+				j := yt.targets[0]
+				switch {
+				case bodies[j] != nil:
+					h = j
+				case len(j.insts) == 1 && j.insts[0].kind == iCondBr:
+					for _, z := range j.insts[0].targets {
+						if bodies[z] != nil && bodies[z][j] {
+							h = z
+						}
+					}
+					if h == nil {
+						y = j
+					}
+				default:
+					y = j
+				}
+			}
+			// b the test of a loop x is in, or before a loop x heads
+			// (while): falling into the loop is best
+			if h == nil || !bodies[h][b] || !bodies[h][l] || bodies[x] != nil || bodies[b][x] || !heavy(x, h, l) {
+				continue
+			}
+			if i+1 < len(s.hot) && s.hot[i+1] == l {
+				break
+			}
+			// move the chain to right after b
+			in := map[*mblock]bool{}
+			for _, y := range chain {
+				in[y] = true
+				moved[y] = true
+			}
+			out := make([]*mblock, 0, len(s.hot))
+			for _, y := range s.hot {
+				if in[y] {
+					continue
+				}
+				out = append(out, y)
+				if y == b {
+					out = append(out, chain...)
+				}
+			}
+			s.hot = out
+			i = -1 // positions changed: scan again (each latch moves once)
+			break
+		}
+	}
+}

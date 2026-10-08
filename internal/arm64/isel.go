@@ -59,6 +59,7 @@ func (g *gen) function(f *ssa.Func) {
 	s.selectCompares()
 	s.hoistConsts()
 	s.reuseFlags()
+	s.placeLatches()
 	s.regalloc()
 	s.emit()
 }
