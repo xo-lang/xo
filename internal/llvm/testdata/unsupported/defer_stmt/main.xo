@@ -1,4 +1,0 @@
-fn main(os: Os) {
-  defer os.stdio.println("bye")
-  os.stdio.println("hi")
-}

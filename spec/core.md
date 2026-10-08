@@ -678,6 +678,9 @@ match code {
   points do not report cancellation, so cleanup such as removing a temp file
   works after a timeout. A shielded `defer` that runs longer than 5 seconds
   faults (`XO-F005`).
+- On the native backends (`--backend=llvm`, `--backend=arm64`, decision
+  0070) a fault exits the process at once without running deferred code;
+  errors, early exits, and cancellation run it as above.
 
 **Patterns** are used in `match`, `let`, `if let`, and `for`:
 

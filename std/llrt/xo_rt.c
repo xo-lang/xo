@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
@@ -1210,6 +1211,10 @@ struct xo_task;
 typedef struct xo_ctx {
 	xo_node *node; // innermost: a scope body, or the task's node
 	int unwinding;
+	// shield counts the deferred code running (core 3.5, decision 0022):
+	// while it is not zero, cancellation points do not report
+	// cancellation
+	int shield;
 	xo_park park;
 	// the mutexes this context holds (re-entrant use faults, XO-F004)
 	xo_held *held;
@@ -1253,10 +1258,46 @@ int64_t xo_unwinding(void) {
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
+static int64_t mono_ns(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+// xo_shield_begin starts deferred code (core 3.5, decision 0022): it is
+// shielded from cancellation, and on the unwind path the unwinding flag
+// is clear while it runs. The result is the token xo_shield_end takes:
+// the start time and the flag.
+int64_t xo_shield_begin(void) {
+	xo_ctx *c = ctx();
+	int64_t tok = (mono_ns() << 1) | (c->unwinding & 1);
+	c->unwinding = 0;
+	c->shield++;
+	return tok;
+}
+
+// xo_shield_end ends deferred code started with token tok: the flag is
+// set again, and deferred code that ran longer than 5 seconds faults
+// (XO-F005, as the Go backend checks it when the code returns).
+void xo_shield_end(int64_t tok, const char *loc, int64_t n) {
+	xo_ctx *c = ctx();
+	c->shield--;
+	c->unwinding = (int)(tok & 1);
+	int64_t el = mono_ns() - (tok >> 1);
+	if (el > 5000000000LL) {
+		char msg[128];
+		snprintf(msg, sizeof msg, "XO-F005: a shielded defer ran for %.3gs, longer than 5s", (double)el / 1e9);
+		fault_at(msg, loc, n);
+	}
+}
+
+// ctx_canceled reports whether c is canceled and not shielded.
+static int ctx_canceled(xo_ctx *c) { return !c->shield && node_canceled(c->node); }
+
 // canceled reports whether a cancellation point in c reports
 // cancellation (and marks c unwinding when it does).
 static int canceled(xo_ctx *c) {
-	if (node_canceled(c->node)) {
+	if (ctx_canceled(c)) {
 		c->unwinding = 1;
 		return 1;
 	}
@@ -1548,6 +1589,9 @@ static void block_end(void) {
 // park_wait blocks the current context until its park is signaled or,
 // when cancelable, its node is canceled.
 static void park_wait(xo_ctx *c, int cancelable) {
+	if (c->shield) {
+		cancelable = 0;
+	}
 	if (cancelable) {
 		spin_lock(&tree_mu);
 		c->node->waiter = &c->park;
@@ -1629,7 +1673,7 @@ static int wl_wait(xo_ctx *c, pthread_mutex_t *mu, xo_wl *l, int cancelable) {
 	park_wait(c, cancelable);
 	pthread_mutex_lock(mu);
 	wl_del(l, &e);
-	return !(cancelable && node_canceled(c->node));
+	return !(cancelable && ctx_canceled(c));
 }
 
 // ---------------------------------------------------------------------------
@@ -2181,7 +2225,7 @@ void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
 		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
 			break;
 		}
-		if (node_canceled(x->node)) {
+		if (ctx_canceled(x)) {
 			pthread_mutex_lock(&c->mu);
 			if (claim(&fired)) {
 				cq_del(&c->sendq, &e);
@@ -2227,7 +2271,7 @@ xo_rlist *xo_chan_recv(xo_chan *c) {
 		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
 			break;
 		}
-		if (node_canceled(x->node)) {
+		if (ctx_canceled(x)) {
 			pthread_mutex_lock(&c->mu);
 			if (claim(&fired)) {
 				cq_del(&c->recvq, &e);
@@ -2422,7 +2466,7 @@ int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
 			if (__atomic_load_n(&s->fired, __ATOMIC_ACQUIRE)) {
 				break;
 			}
-			if (node_canceled(x->node)) {
+			if (ctx_canceled(x)) {
 				if (claim(&s->fired)) {
 					unwound = 1;
 				}

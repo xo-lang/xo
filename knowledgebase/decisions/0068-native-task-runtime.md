@@ -108,7 +108,7 @@ needs tasks first.
   `map_concurrent(_until)`, `isolate`, `Semaphore`, `Once`,
   `stop_requested`, `stopping`, `os.tasks`, `defer` (and so shielded
   defers), clock, I/O, and network effects. Each is a build error that
-  names it.
+  names it. (`defer` and shielded defers: decision 0070, 2026-10-08.)
 - A fault in a task exits the process from that task's thread at once;
   the Go backend first cancels and waits for the scope's other tasks.
   Without `defer` the difference shows only in output other tasks would

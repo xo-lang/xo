@@ -986,7 +986,8 @@ first, AST based prototype, since deleted) and
   (send, recv, try_send, try_recv, close, len, `for x in ch`), `select`
   without `after`, `Mutex` (`with`, `with_read`), and `Atomic`. Not yet:
   `after`, `task.with_timeout` and the other std/task functions,
-  `Semaphore`, `Once`, `os.tasks`, `defer`.
+  `Semaphore`, `Once`, `os.tasks`. `defer` since 2026-10-08 (decision
+  0070: inlined at every exit, shielded; a fault does not run it).
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated

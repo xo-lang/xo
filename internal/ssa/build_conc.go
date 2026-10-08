@@ -153,13 +153,13 @@ func (s *fn) unwindTarget() *Block {
 // check emits the unwinding check after a call (callee: see
 // unwindCheck).
 func (s *fn) check(callee string) {
-	if !s.b.conc || s.isDead() {
+	if !s.b.conc || s.isDead() || s.shield > 0 {
 		return
 	}
 	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
 	yes, no := s.branch(u)
 	s.cur = yes
-	s.jump(s.unwindTarget())
+	s.unwind()
 	s.cur = no
 	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, callee})
 }
@@ -167,14 +167,14 @@ func (s *fn) check(callee string) {
 // checkThen is check with cleanup code run on the unwind path first
 // (unlocking a mutex); it is never removed.
 func (s *fn) checkThen(cleanup func()) {
-	if !s.b.conc || s.isDead() {
+	if !s.b.conc || s.isDead() || s.shield > 0 {
 		return
 	}
 	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
 	yes, no := s.branch(u)
 	s.cur = yes
 	cleanup()
-	s.jump(s.unwindTarget())
+	s.unwind()
 	s.cur = no
 	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, ""})
 }
@@ -349,17 +349,13 @@ func (b *builder) pruneUnwind() {
 // ---------------------------------------------------------------------------
 // Scopes
 
-// closeScopes closes the scopes from the innermost down to depth, for
-// an exit in mode 1 (early) or 2 (unwinding): a failed child sends the
-// exit to the scope's failure block.
-func (s *fn) closeScopes(depth int) {
-	intT := s.b.mod.Builtin(KInt)
-	for i := len(s.scopes) - 1; i >= depth; i-- {
-		sc := s.scopes[i]
-		st := s.rt("scope_close", intT, sc.h, s.cint(1))
-		if len(sc.sites) > 0 {
-			s.failIf(sc, st)
-		}
+// closeEarly closes scope sc for an early exit (mode 1: `return`, `?`,
+// `break`, `continue`): a failed child sends the exit to the scope's
+// failure block.
+func (s *fn) closeEarly(sc *scopeCtx) {
+	st := s.rt("scope_close", s.b.mod.Builtin(KInt), sc.h, s.cint(1))
+	if len(sc.sites) > 0 {
+		s.failIf(sc, st)
 	}
 }
 
@@ -390,7 +386,9 @@ func (s *fn) scopeExpr(x *ast.ScopeExpr) *Value {
 	}
 	sc := &scopeCtx{h: h, sites: b.failingSpawns(s, x.Body)}
 	s.scopes = append(s.scopes, sc)
+	s.exits = append(s.exits, exitEntry{scope: sc})
 	v := s.block(x.Body)
+	s.exits = s.exits[:len(s.exits)-1]
 	s.scopes = s.scopes[:len(s.scopes)-1]
 	if !s.isDead() {
 		st := s.rt("scope_close", b.mod.Builtin(KInt), h, s.cint(0))
@@ -413,7 +411,7 @@ func (s *fn) finishScope(sc *scopeCtx, x *ast.ScopeExpr) {
 		if len(sc.sites) > 0 {
 			s.failIf(sc, st)
 		}
-		s.jump(s.unwindTarget())
+		s.unwind()
 	}
 	if sc.failB != nil {
 		s.seal(sc.failB)
@@ -864,7 +862,7 @@ func (s *fn) forChan(x *ast.ForStmt, label string) {
 	s.seal(fail)
 	s.add(OpUnreachable, nil, nil)
 	s.cur = cont
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes)})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes), exits: len(s.exits)})
 	s.block(x.Body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(head)
