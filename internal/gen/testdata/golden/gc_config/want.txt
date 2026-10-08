@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+percent 1200 limit 1073741824
+--- stderr

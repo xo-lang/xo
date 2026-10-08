@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,10 +83,20 @@ type exitUnwind struct{ code int64 }
 // scheduler with the real clock (core 7.4).
 func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	fxSetup()
+	// the heap goal: a floor of 2 MiB per P, at least 16 MiB, unless GOGC
+	// or xo.mod says otherwise (gc.go, decision 0065)
+	gcSetup()
 	if path := os.Getenv("XO_CPUPROFILE"); path != "" {
 		// CPU profile of the whole run, for `go tool pprof` (toolchain.md)
 		if f, err := os.Create(path); err == nil && pprof.StartCPUProfile(f) == nil {
 			defer func() { pprof.StopCPUProfile(); f.Close() }()
+		}
+	}
+	if path := os.Getenv("XO_TRACE"); path != "" {
+		// execution trace of the whole run, for `go tool trace` (where a
+		// slow request waited: GC, scheduling, locks, the network)
+		if f, err := os.Create(path); err == nil && trace.Start(f) == nil {
+			defer func() { trace.Stop(); f.Close() }()
 		}
 	}
 	if path := os.Getenv("XO_MEMPROFILE"); path != "" {

@@ -398,7 +398,7 @@ func (g *gen) mainFile(mod *check.Module) ([]byte, error) {
 		fmt.Fprintf(&b, "\t%s %q\n", mp.imports[p], p)
 	}
 	b.WriteString(")\n\n")
-	fmt.Fprintf(&b, "func main() {\n\t%sos.Exit(%sRunMain(func(tk *%sTask, osv %sOs) %sResult[%sUnit, %sIError] { _ = osv; %s }))\n}\n", g.enableArenas(rt), rt, rt, rt, rt, rt, rt, call)
+	fmt.Fprintf(&b, "func main() {\n\t%sos.Exit(%sRunMain(func(tk *%sTask, osv %sOs) %sResult[%sUnit, %sIError] { _ = osv; %s }))\n}\n", g.enableArenas(rt)+gcConfig(rt, mod), rt, rt, rt, rt, rt, rt, call)
 	return format.Source(b.Bytes())
 }
 
@@ -409,6 +409,16 @@ func (g *gen) enableArenas(rt string) string {
 		return ""
 	}
 	return rt + "EnableArenas(); "
+}
+
+// gcConfig is the statement that passes the `gc` lines of the main
+// module's xo.mod to the runtime (decision 0065), or "".
+func gcConfig(rt string, mod *check.Module) string {
+	c := mod.GC
+	if !c.IsSet() || c == (check.GCConfig{}) {
+		return ""
+	}
+	return fmt.Sprintf("%sGCConfig(%d, %d, %d); ", rt, c.Percent, c.MinHeap, c.MemoryLimit)
 }
 
 // testMainFile runs the test tables of the root modules.

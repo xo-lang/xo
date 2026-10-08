@@ -26,6 +26,9 @@ type Module struct {
 	// Edition is the `edition` of the module's xo.mod (core 13), or
 	// CurrentEdition when there is none.
 	Edition int
+	// GC is the `gc` lines of the module's xo.mod (decision 0065), used
+	// when the module is a program's main module.
+	GC GCConfig
 
 	state int // 0 new, 1 loading, 2 loaded (cycle detection)
 }
