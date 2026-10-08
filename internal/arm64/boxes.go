@@ -49,15 +49,41 @@ func (s *fstate) unboxOp(v *ssa.Value) {
 
 // boxRC writes the body of the dup or drop helper of a box (x0).
 func (g *gen) boxRC(b *strings.Builder, kind, sym string, t *ssa.Type) {
-	b.WriteString("\tldr x9, [x0]\n")
-	if kind == "dup" {
-		b.WriteString("\tadd x9, x9, #1\n\tstr x9, [x0]\n\tret\n")
-		return
+	switch kind {
+	case "dup":
+		b.WriteString(g.incText("x0", "x9", "w10", sym, true))
+	case "drop":
+		b.WriteString(g.decText("x0", "x9", "w10", sym, sym+"_free", ""))
+		fmt.Fprintf(b, "%s_free:\n", sym)
+		b.WriteString(g.addr("x1", g.boxDrop(t)))
+		fmt.Fprintf(b, "\tb %s\n", g.sym("xo_rc_defer"))
+	case "share":
+		b.WriteString(markText("x0", "x9", sym+"_ret"))
+		if t.Elems[0].Heap() {
+			// the contents through the worklist
+			b.WriteString(g.addr("x1", g.boxShare(t)))
+			fmt.Fprintf(b, "\tb %s\n", g.sym("xo_rc_defer"))
+		}
+		fmt.Fprintf(b, "%s_ret:\n\tret\n", sym)
 	}
-	fmt.Fprintf(b, "\tcmp x9, #1\n\tb.eq %s_free\n\tsub x9, x9, #1\n\tstr x9, [x0]\n\tret\n", sym)
-	fmt.Fprintf(b, "%s_free:\n", sym)
-	b.WriteString(g.addr("x1", g.boxDrop(t)))
-	fmt.Fprintf(b, "\tb %s\n", g.sym("xo_rc_defer"))
+}
+
+// boxShare returns the function that marks the contents of a box of
+// type t (x0) shared (decision 0058; the box itself was just marked).
+func (g *gen) boxShare(t *ssa.Type) string {
+	key := "boxshare " + t.Name
+	if s, ok := g.helped[key]; ok {
+		return s
+	}
+	sym := g.helperLabel("boxshare")
+	g.helped[key] = sym
+	var b strings.Builder
+	fmt.Fprintf(&b, "// boxshare %s\n\t.p2align 2\n%s:\n", t.Name, sym)
+	var ls []leaf
+	g.heapLeaves(t.Elems[0], 0, &ls)
+	g.leavesAndThen(&b, "share", ls, boxHdr, "")
+	g.helpers.WriteString(b.String())
+	return sym
 }
 
 // boxDrop returns the function that releases the contents of a box of

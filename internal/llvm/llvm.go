@@ -28,6 +28,9 @@ import (
 type Options struct {
 	// LineRoot is the directory fault locations are made relative to.
 	LineRoot string
+	// ShareProbes marks every heap value shared as it is defined
+	// (ssa.InsertShareProbes; a test of the atomic count paths).
+	ShareProbes bool
 }
 
 // Program is the generated IR of one Xo program.
@@ -49,6 +52,9 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	}
 	if err := m.Verify(); err != nil {
 		return nil, err
+	}
+	if opts.ShareProbes {
+		m.InsertShareProbes()
 	}
 	m.InsertRC()
 	if err := m.Verify(); err != nil {

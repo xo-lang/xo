@@ -284,10 +284,16 @@ const (
 	//             cell when its count is 1 (the update is then in place),
 	//             otherwise a copy (and Args[0] is released). InsertRC
 	//             emits it only where uniqueness is not proven statically.
+	//   OpShare   Args[0]: mark the value shared between threads
+	//             (decision 0058): every thread local count it reaches
+	//             becomes atomic. Borrows; no result. Emitted where a
+	//             value crosses to another task (none lower yet) and by
+	//             InsertShareProbes (tests).
 	OpRetain
 	OpRelease
 	OpDrop
 	OpReuse
+	OpShare
 
 	// Terminators.
 	OpJump        // Succs[0]
@@ -305,7 +311,7 @@ var opNames = [...]string{
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
 	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox",
-	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse",
+	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse", OpShare: "share",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }
 

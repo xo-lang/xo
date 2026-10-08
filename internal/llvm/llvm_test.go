@@ -174,6 +174,41 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestGoldenShared builds every golden program with share probes (every
+// heap value marked shared between threads as it is defined, decision
+// 0058) and requires want.txt and no allocation live at exit: the atomic
+// count paths, the shared claim of in place updates, and the share
+// walkers of every type must behave like the thread local ones.
+func TestGoldenShared(t *testing.T) {
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	if testing.Short() {
+		t.Skip("builds every golden program")
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	for _, dir := range dirs {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			got, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, ShareProbes: true})
+			if got.exit == 0 {
+				leakCheck(t, b.Binaries[build.Host()], dir)
+			}
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != got.String() {
+				t.Errorf("output differs from want.txt\n--- want\n%s\n--- got\n%s", want, got)
+			}
+		})
+	}
+}
+
 // TestUnsupported checks that constructs outside the subset are rejected
 // with an error naming the construct and its position. Each program's
 // want.txt lists substrings the error must contain, one per line.

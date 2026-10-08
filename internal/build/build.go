@@ -91,6 +91,11 @@ type Options struct {
 	// "arm64" (internal/arm64: assembly linked with cc; darwin/arm64 and
 	// linux/arm64).
 	Backend string
+	// ShareProbes (LLVM and arm64 backends; tests) marks every heap
+	// value shared between threads as it is defined, so every count
+	// update takes the atomic path (ssa.InsertShareProbes, decision
+	// 0058).
+	ShareProbes bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }

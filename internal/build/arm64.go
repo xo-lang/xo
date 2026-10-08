@@ -42,21 +42,30 @@ func CC() (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
-	asm, err := arm64Asm(res, root, goos, false)
+	return arm64AsmOpts(res, root, goos, false)
+}
+
+// arm64AsmOpts is Arm64Asm, with every heap value marked shared as it is
+// defined when probes is set (Options.ShareProbes).
+func arm64AsmOpts(res *check.Result, root, goos string, probes bool) ([]byte, error) {
+	asm, err := arm64Asm(res, root, goos, false, probes)
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		return arm64Asm(res, root, goos, true)
+		return arm64Asm(res, root, goos, true, probes)
 	}
 	return asm, err
 }
 
-func arm64Asm(res *check.Result, root, goos string, noInline bool) ([]byte, error) {
+func arm64Asm(res *check.Result, root, goos string, noInline, probes bool) ([]byte, error) {
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root})
 	if err != nil {
 		return nil, err
 	}
 	if err := m.Verify(); err != nil {
 		return nil, err
+	}
+	if probes {
+		m.InsertShareProbes()
 	}
 	m.InsertRC()
 	if err := m.Verify(); err != nil {
@@ -93,6 +102,9 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		return nil, err
 	}
 	dir = filepath.Join(dir, "arm64")
+	if opts.ShareProbes {
+		dir += "-share"
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -102,7 +114,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	out.Name = name
 	root := lineRoot(dirs)
 	for _, t := range ts {
-		asm, err := Arm64Asm(res, root, t.OS)
+		asm, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes)
 		if err != nil {
 			return nil, err
 		}

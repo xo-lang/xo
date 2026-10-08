@@ -10,19 +10,24 @@
 //   - reference counted values (decision 0046), used by code lowered from
 //     internal/ssa: every heap object starts with an i64 count; strings
 //     are {count, cap, bytes} (Str values are {object, len}), lists are
-//     {count, len, cap} and the elements. Counts of literals are
-//     immortal (2^60, never reaching zero). Generated code increments
+//     {count, len, cap} and the elements. Generated code increments
 //     and decrements counts inline and calls xo_rc_free, xo_rl_free
 //     (which releases the elements through a generated callback),
 //     xo_rl_copy (a shared list about to be updated), and xo_rl_grow (a
 //     unique full list, resized in place).
+//   - counts shared between threads (decision 0058): a positive count
+//     is thread local (plain increments), a negative count -n is shared
+//     (atomic), XO_RC_IMMORTAL marks literals (never written). See
+//     "Reference counts" below.
 //   - closure environments and boxes (decision 0048): freed through
 //     xo_rc_defer, a worklist, so long chains do not recurse.
 //   - strings: comparison, concatenation, and number formatting.
 //   - output: buffered stdout, flushed at exit and before a fault.
 //   - faults: messages and exit status 70, matching the Go backend's text.
 //   - main: runs the Xo entry on a thread with a 1 GiB stack, like Go's
-//     maximum goroutine stack, so deep recursion behaves alike.
+//     maximum goroutine stack, so deep recursion behaves alike. Built
+//     with -DXO_RT_TEST_THREADS=N it runs the entry on N threads at once
+//     (a test of the runtime's thread safety, rt_test.go).
 //
 // The interface to generated code uses only scalars and pointers (no
 // structs by value), so it does not depend on the C ABI of aggregates.
@@ -44,21 +49,108 @@
 // size class (1 to XO_NCLASS) or, for a block from malloc, minus its
 // size. Freed blocks of a class go on that class's free list (the next
 // pointer is stored in the block); new ones are carved from 4 MiB chunks.
+//
+// Threads (decision 0058): the free lists, the chunk, the counters, and
+// xo_rc_defer's worklist live in a heap. While the program has one
+// thread every call uses solo_heap (main_heap), so single threaded code
+// pays one load and a predicted branch.
+// xo_rt_threads_begin, called before a second thread runs Xo code,
+// switches to one heap per thread: the calling thread keeps main_heap,
+// every other thread gets its own on first use. A block may be freed by
+// another thread than the one that allocated it: it goes on the freeing
+// thread's list (the size class is in its prefix), and the leak check
+// sums the counters of all heaps. Heaps are never freed.
 
 #define XO_CHUNK (4 << 20)
 #define XO_SMALL_MAX 1024
 #define XO_MID_MAX (256 << 10)
 #define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
 
-static char *bump_cur;
-static char *bump_end;
-static void *free_lists[XO_NCLASS + 1];
-int64_t xo_live_allocs;  // blocks allocated and not yet freed
-int64_t xo_total_allocs; // blocks allocated
+typedef void (*xo_drop_fn)(void *);
+typedef struct {
+	void *obj;
+	xo_drop_fn drop;
+} xo_deferred;
+
+typedef struct xo_heap {
+	// blocks allocated, and blocks freed, by this heap's thread (the
+	// leak check reports the difference): one counter per call
+	int64_t allocs;
+	int64_t frees;
+	char *bump_cur;
+	char *bump_end;
+	void *free_lists[XO_NCLASS + 1];
+	// the worklist of xo_rc_defer
+	xo_deferred *defer_q;
+	int64_t defer_n, defer_cap;
+	int defer_busy;
+	struct xo_heap *next; // all heaps, for the leak check
+} xo_heap;
+
+static xo_heap main_heap;
+static int xo_threaded; // set once, before a second thread runs Xo code
+// solo_heap is main_heap while one thread runs, null after (one load
+// both tells the case and gives the heap)
+static xo_heap *solo_heap = &main_heap;
+static __thread xo_heap *tls_heap;
+static xo_heap *all_heaps = &main_heap;
+static pthread_mutex_t heaps_mu = PTHREAD_MUTEX_INITIALIZER;
 
 XO_NORETURN static void xo_oom(void) {
 	fputs("fault: out of memory\n", stderr);
 	exit(70);
+}
+
+__attribute__((noinline)) static xo_heap *heap_slow(void) {
+	xo_heap *h = tls_heap;
+	if (h) {
+		return h;
+	}
+	h = calloc(1, sizeof(xo_heap));
+	if (!h) {
+		xo_oom();
+	}
+	pthread_mutex_lock(&heaps_mu);
+	h->next = all_heaps;
+	all_heaps = h;
+	pthread_mutex_unlock(&heaps_mu);
+	tls_heap = h;
+	return h;
+}
+
+// heap returns the calling thread's heap.
+static inline xo_heap *heap(void) {
+	if (__builtin_expect(!__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED), 1)) {
+		return &main_heap;
+	}
+	return heap_slow();
+}
+
+// xo_rt_threads_begin switches the runtime to several threads. The
+// thread that ran so far calls it before it starts another thread
+// (thread creation orders it before everything the new thread does).
+void xo_rt_threads_begin(void) {
+	if (__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED)) {
+		return;
+	}
+	tls_heap = &main_heap;
+	__atomic_store_n(&solo_heap, NULL, __ATOMIC_RELAXED);
+	__atomic_store_n(&xo_threaded, 1, __ATOMIC_RELAXED);
+}
+
+// xo_rt_live returns the blocks allocated and not freed, and the blocks
+// allocated, over all heaps (for the leak check, when no other thread
+// runs).
+void xo_rt_live(int64_t *live, int64_t *total) {
+	int64_t l = 0, t = 0;
+	pthread_mutex_lock(&heaps_mu);
+	for (xo_heap *h = all_heaps; h; h = h->next) {
+		l += h->allocs - h->frees;
+		t += h->allocs;
+	}
+	pthread_mutex_unlock(&heaps_mu);
+	*live = l;
+	*total = t;
 }
 
 static inline int64_t size_class(int64_t n, int64_t *size) {
@@ -88,48 +180,70 @@ __attribute__((noinline)) static void *xo_alloc_large(int64_t n) {
 	return b + 1;
 }
 
-__attribute__((noinline)) static void xo_refill(int64_t need) {
+__attribute__((noinline)) static void xo_refill(xo_heap *h, int64_t need) {
 	char *c = malloc(XO_CHUNK);
 	if (!c) {
 		xo_oom();
 	}
 	(void)need;
-	bump_cur = c;
-	bump_end = c + XO_CHUNK;
+	h->bump_cur = c;
+	h->bump_end = c + XO_CHUNK;
 }
 
-void *xo_alloc(int64_t n) {
-	xo_live_allocs++;
-	xo_total_allocs++;
+static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
+	h->allocs++;
 	if (n > XO_MID_MAX) {
 		return xo_alloc_large(n);
 	}
 	int64_t size;
 	int64_t c = size_class(n, &size);
-	void *p = free_lists[c];
+	void *p = h->free_lists[c];
 	if (p) {
-		free_lists[c] = *(void **)p;
+		h->free_lists[c] = *(void **)p;
 		return p;
 	}
 	int64_t need = size + 8;
-	if (bump_end - bump_cur < need) {
-		xo_refill(need);
+	if (h->bump_end - h->bump_cur < need) {
+		xo_refill(h, need);
 	}
-	int64_t *b = (int64_t *)bump_cur;
-	bump_cur += need;
+	int64_t *b = (int64_t *)h->bump_cur;
+	h->bump_cur += need;
 	b[0] = c;
 	return b + 1;
 }
 
-void xo_free(void *p) {
-	xo_live_allocs--;
+static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
+	h->frees++;
 	int64_t *b = (int64_t *)p - 1;
 	if (b[0] < 0) {
 		free(b);
 		return;
 	}
-	*(void **)p = free_lists[b[0]];
-	free_lists[b[0]] = p;
+	*(void **)p = h->free_lists[b[0]];
+	h->free_lists[b[0]] = p;
+}
+
+// The threaded paths of xo_alloc and xo_free are tail calls, so the
+// single threaded paths stay leaf functions without a frame.
+__attribute__((noinline)) static void *alloc_mt(int64_t n) { return alloc_in(heap_slow(), n); }
+
+__attribute__((noinline)) static void free_mt(void *p) { free_in(heap_slow(), p); }
+
+void *xo_alloc(int64_t n) {
+	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
+	if (__builtin_expect(!h, 0)) {
+		return alloc_mt(n);
+	}
+	return alloc_in(h, n);
+}
+
+void xo_free(void *p) {
+	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
+	if (__builtin_expect(!h, 0)) {
+		free_mt(p);
+		return;
+	}
+	free_in(h, p);
 }
 
 // xo_resize returns a block of n bytes with the first old bytes of p (a
@@ -164,37 +278,142 @@ void xo_rc_free(void *p) { xo_free(p); }
 // (a closure environment or a box). drop releases the object's children
 // and frees it; a child that reaches zero meanwhile is queued instead of
 // dropped recursively, so freeing a long chain (a list built from boxes,
-// closures capturing closures) uses a worklist, not the C stack.
-typedef void (*xo_drop_fn)(void *);
-typedef struct {
-	void *obj;
-	xo_drop_fn drop;
-} xo_deferred;
-static xo_deferred *defer_q;
-static int64_t defer_n, defer_cap;
-static int defer_busy;
-
+// closures capturing closures) uses a worklist, not the C stack. Marking
+// a value shared uses the same worklist (drop is then the function that
+// marks the children of a box or an environment). The worklist is the
+// calling thread's.
 void xo_rc_defer(void *obj, xo_drop_fn drop) {
-	if (defer_busy) {
-		if (defer_n == defer_cap) {
-			defer_cap = defer_cap < 64 ? 64 : defer_cap * 2;
-			defer_q = realloc(defer_q, (size_t)defer_cap * sizeof(xo_deferred));
-			if (!defer_q) {
+	xo_heap *h = heap();
+	if (h->defer_busy) {
+		if (h->defer_n == h->defer_cap) {
+			h->defer_cap = h->defer_cap < 64 ? 64 : h->defer_cap * 2;
+			h->defer_q = realloc(h->defer_q, (size_t)h->defer_cap * sizeof(xo_deferred));
+			if (!h->defer_q) {
 				xo_oom();
 			}
 		}
-		defer_q[defer_n].obj = obj;
-		defer_q[defer_n].drop = drop;
-		defer_n++;
+		h->defer_q[h->defer_n].obj = obj;
+		h->defer_q[h->defer_n].drop = drop;
+		h->defer_n++;
 		return;
 	}
-	defer_busy = 1;
+	h->defer_busy = 1;
 	drop(obj);
-	while (defer_n > 0) {
-		defer_n--;
-		defer_q[defer_n].drop(defer_q[defer_n].obj);
+	while (h->defer_n > 0) {
+		h->defer_n--;
+		h->defer_q[h->defer_n].drop(h->defer_q[h->defer_n].obj);
 	}
-	defer_busy = 0;
+	h->defer_busy = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Reference counts (decisions 0046 and 0058)
+//
+// The first word of every counted object is its count c:
+//
+//   c > 0           thread local, c references: plain increments and
+//                   decrements (only one thread can reach the object)
+//   c = -n, n > 0   shared, n references: atomic read-modify-writes
+//   XO_RC_IMMORTAL  a literal: never written
+//
+// Bit 62 tells shared counts (every negative count of magnitude below
+// 2^62 has it) from XO_RC_IMMORTAL (INT64_MIN, which does not). A value
+// becomes shared when it crosses to another thread (spawn captures, a
+// channel send, a Mutex or Atomic store): xo_rc_mark and the generated
+// `share` helpers negate the counts of every thread local object it
+// reaches, stopping at objects already shared, so a shared object only
+// points to shared or immortal objects. Generated code inlines the same
+// tests: a retain is `c > 0 ? c + 1 : slow`, a release is
+// `c > 1 ? c - 1 : slow`, so the thread local paths cost one more
+// predicted branch (retain) or nothing (release: it already compared
+// with one) over plain counts. Retaining a shared object is a relaxed
+// atomic decrement; releasing it is an atomic increment with acquire
+// and release order, so the thread that takes it to zero sees every
+// other thread's writes before it frees (Rust's Arc uses a release
+// decrement and an acquire fence on the last one; ThreadSanitizer does
+// not model fences, and on arm64 both are one ldaddal).
+//
+// In place updates (Perceus reuse) need the only reference. A thread
+// local count of 1 proves it; a shared count of -1 does too once read
+// with acquire order (every other thread's release happened before),
+// and the object then goes back to thread local (xo_rc_claim).
+
+#define XO_RC_IMMORTAL INT64_MIN
+#define XO_RC_SHARED_BIT ((int64_t)1 << 62)
+
+static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+
+// xo_rc_inc adds a reference.
+static inline __attribute__((always_inline)) void rc_inc(int64_t *p) {
+	int64_t c = rc_load(p);
+	if (__builtin_expect(c > 0, 1)) {
+		*p = c + 1;
+		return;
+	}
+	if (c & XO_RC_SHARED_BIT) {
+		__atomic_fetch_sub(p, 1, __ATOMIC_RELAXED);
+	}
+}
+
+void xo_rc_inc(int64_t *p) { rc_inc(p); }
+
+__attribute__((noinline)) static int rc_dec_shared(int64_t *p) {
+	// acquire and release in one: the thread that frees sees every other
+	// thread's writes (a release decrement plus an acquire fence would do
+	// too, but ThreadSanitizer does not model fences)
+	if (__atomic_fetch_add(p, 1, __ATOMIC_ACQ_REL) == -1) {
+		return 1;
+	}
+	return 0;
+}
+
+// xo_rc_dec drops a reference and reports whether it was the last one
+// (the caller then releases the children and frees the object). The
+// thread local and immortal cases are inline (the slow atomic path is
+// not), so dropping a literal costs a few compares.
+static inline __attribute__((always_inline)) int rc_dec(int64_t *p) {
+	int64_t c = rc_load(p);
+	if (__builtin_expect(c > 1, 1)) {
+		*p = c - 1;
+		return 0;
+	}
+	if (c == 1) {
+		return 1;
+	}
+	if (!(c & XO_RC_SHARED_BIT)) {
+		return 0; // immortal
+	}
+	return rc_dec_shared(p);
+}
+
+int xo_rc_dec(int64_t *p) { return rc_dec(p); }
+
+// xo_rc_claim reports whether the caller holds the only reference, so
+// the object may be updated in place; a shared object is made thread
+// local again.
+static inline __attribute__((always_inline)) int rc_claim(int64_t *p) {
+	int64_t c = rc_load(p);
+	if (c == 1) {
+		return 1;
+	}
+	if (c == -1 && __atomic_load_n(p, __ATOMIC_ACQUIRE) == -1) {
+		__atomic_store_n(p, 1, __ATOMIC_RELAXED);
+		return 1;
+	}
+	return 0;
+}
+
+int xo_rc_claim(int64_t *p) { return rc_claim(p); }
+
+// xo_rc_mark makes the count at p shared and reports whether it was
+// thread local (the caller then marks the object's children).
+int xo_rc_mark(int64_t *p) {
+	int64_t c = rc_load(p);
+	if (c > 0) {
+		__atomic_store_n(p, -c, __ATOMIC_RELAXED);
+		return 1;
+	}
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,39 +433,76 @@ static void write_all(int fd, const char *p, size_t n) {
 	}
 }
 
-void xo_flush(void) {
+// With several threads (xo_rt_threads_begin) the buffer is locked; one
+// print's text stays together.
+static pthread_mutex_t out_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static inline int out_lock(void) {
+	if (__builtin_expect(!__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED), 1)) {
+		return 0;
+	}
+	pthread_mutex_lock(&out_mu);
+	return 1;
+}
+
+static inline void out_unlock(int locked) {
+	if (locked) {
+		pthread_mutex_unlock(&out_mu);
+	}
+}
+
+static void flush_locked(void) {
 	if (olen > 0) {
 		write_all(1, obuf, olen);
 		olen = 0;
 	}
 }
 
-void xo_print(const char *p, int64_t n) {
+static void print_locked(const char *p, int64_t n) {
 	if ((size_t)n > sizeof obuf / 2) {
-		xo_flush();
+		flush_locked();
 		write_all(1, p, (size_t)n);
 		return;
 	}
 	if (olen + (size_t)n > sizeof obuf) {
-		xo_flush();
+		flush_locked();
 	}
 	memcpy(obuf + olen, p, (size_t)n);
 	olen += (size_t)n;
 }
 
+void xo_flush(void) {
+	int l = out_lock();
+	flush_locked();
+	out_unlock(l);
+}
+
+void xo_print(const char *p, int64_t n) {
+	int l = out_lock();
+	print_locked(p, n);
+	out_unlock(l);
+}
+
 void xo_println(const char *p, int64_t n) {
-	xo_print(p, n);
-	xo_print("\n", 1);
+	int l = out_lock();
+	print_locked(p, n);
+	print_locked("\n", 1);
+	out_unlock(l);
 }
 
 void xo_eprint(const char *p, int64_t n) {
-	xo_flush();
+	int l = out_lock();
+	flush_locked();
 	write_all(2, p, (size_t)n);
+	out_unlock(l);
 }
 
 void xo_eprintln(const char *p, int64_t n) {
-	xo_eprint(p, n);
+	int l = out_lock();
+	flush_locked();
+	write_all(2, p, (size_t)n);
 	write_all(2, "\n", 1);
+	out_unlock(l);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,13 +744,13 @@ static xo_rstr *rs_new(int64_t n) {
 }
 
 // rs_append appends n bytes at p to a (of length an), consuming a: when
-// a is unique (count 1) the bytes go in place, growing a by doubling
+// a is unique (xo_rc_claim) the bytes go in place, growing a by doubling
 // when it is full (Perceus reuse of a string about to be dropped), so a
 // loop of `s = s + x` is linear. Otherwise a new string is made (with
 // slack to grow into) and a loses the reference the caller gave up.
 static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
 	int64_t need = an + n;
-	if (a->rc == 1) {
+	if (rc_claim(&a->rc)) {
 		if (a->cap < need) {
 			int64_t want = a->cap * 2;
 			if (want < need) {
@@ -511,7 +767,19 @@ static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
 	xo_rstr *s = rs_new(need < 16 ? 16 : need);
 	memcpy(s->data, a->data, (size_t)an);
 	memcpy(s->data + an, p, (size_t)n);
-	a->rc--;
+	// a loses the reference the caller gave up: it is a literal (common:
+	// `"w${i}"` appends to one; tested first, which measured faster), or
+	// it has others, or it is shared and freed here when the others went
+	// meanwhile
+	int64_t c = rc_load(&a->rc);
+	if (c == XO_RC_IMMORTAL) {
+		return s;
+	}
+	if (c > 1) {
+		a->rc = c - 1;
+	} else if (c == 1 || rc_dec_shared(&a->rc)) {
+		xo_free(a);
+	}
 	return s;
 }
 
@@ -570,10 +838,17 @@ xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
 	return l;
 }
 
-// xo_rl_copy is the slow path of `reuse`: l is shared (its count is not
-// 1), so the update goes to a copy. The copy holds its own references to
-// the elements (dup), and l loses the one the caller gave up.
-__attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup) {
+void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
+
+// xo_rl_copy is the slow path of `reuse`: l's count is not 1. A shared
+// list held only by the caller (xo_rc_claim) is updated in place.
+// Otherwise the update goes to a copy, which holds its own references to
+// the elements (dup), and l loses the one the caller gave up (freed with
+// drop when the other references went meanwhile).
+__attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup, xo_elem_fn drop) {
+	if (xo_rc_claim(&l->rc)) {
+		return l;
+	}
 	int64_t cap = l->len < 4 ? 4 : l->len;
 	xo_rlist *n = xo_rl_new(cap, esize);
 	n->len = l->len;
@@ -583,8 +858,20 @@ __attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_el
 			dup(rl_data(n) + i * esize);
 		}
 	}
-	l->rc--;
+	if (xo_rc_dec(&l->rc)) {
+		xo_rl_free(l, esize, drop);
+	}
 	return n;
+}
+
+// xo_rl_share marks the elements of a list that was just marked shared
+// (share is the generated element callback; boxes and environments
+// below go through xo_rc_defer's worklist, so the C stack is bounded by
+// the nesting of types, not of values).
+void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) {
+	for (int64_t i = 0; i < l->len; i++) {
+		share(rl_data(l) + i * esize);
+	}
 }
 
 // xo_rl_grow doubles the capacity of a unique full list.
@@ -608,8 +895,10 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
 }
 
 // ---------------------------------------------------------------------------
-// Entry
+// Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata
+// include this file and bring their own main)
 
+#ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
 static void *run_main(void *arg) {
@@ -623,6 +912,22 @@ int main(int argc, char **argv) {
 	(void)argv;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
+#ifdef XO_RT_TEST_THREADS
+	// N copies of the program at once: every thread has its own heap,
+	// literals are shared (and never written)
+	pthread_attr_setstacksize(&attr, (size_t)1 << 30);
+	xo_rt_threads_begin();
+	pthread_t ts[XO_RT_TEST_THREADS];
+	for (int i = 0; i < XO_RT_TEST_THREADS; i++) {
+		if (pthread_create(&ts[i], &attr, run_main, NULL) != 0) {
+			fputs("pthread_create failed\n", stderr);
+			return 1;
+		}
+	}
+	for (int i = 0; i < XO_RT_TEST_THREADS; i++) {
+		pthread_join(ts[i], NULL);
+	}
+#else
 	pthread_attr_setstacksize(&attr, (size_t)1 << 30);
 	pthread_t t;
 	if (pthread_create(&t, &attr, run_main, NULL) != 0) {
@@ -630,9 +935,13 @@ int main(int argc, char **argv) {
 	} else {
 		pthread_join(t, NULL);
 	}
+#endif
 	xo_flush();
 	if (getenv("XO_LEAKCHECK")) {
-		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)xo_live_allocs, (long long)xo_total_allocs);
+		int64_t live, total;
+		xo_rt_live(&live, &total);
+		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);
 	}
 	return 0;
 }
+#endif

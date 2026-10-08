@@ -61,7 +61,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Race || opts.Arenas || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race, --arenas, or --holes")
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs)})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes})
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +74,9 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 		return nil, err
 	}
 	dir = filepath.Join(dir, "llvm")
+	if opts.ShareProbes {
+		dir += "-share"
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -153,6 +156,17 @@ func sysrootMemo() string {
 		return ""
 	}
 	return filepath.Join(cache, "xo", "llvm-sysroot")
+}
+
+// CompileC compiles and links C and LLVM IR sources into bin with clang
+// and flags, choosing a macOS SDK as LLVM builds do (the runtime's thread
+// tests: ThreadSanitizer builds, decision 0058).
+func CompileC(flags, srcs []string, bin string) error {
+	clang, err := Clang()
+	if err != nil {
+		return err
+	}
+	return ccBuild(clang, flags, srcs, bin)
 }
 
 // clangBuild compiles and links LLVM IR and C sources into bin.
