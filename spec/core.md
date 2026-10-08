@@ -1262,6 +1262,8 @@ test "retries after 503" {
 | `xo check` | Parse and type check all targets, no codegen |
 | `xo test [--seed=N] [--explore=N] [--fuzz=10s]` | Tests, examples, contract fuzzing; deterministic scheduling |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
+| `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
+| `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--edition=YYYY]` | Apply all machine fixes, migrate editions |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |

@@ -22,3 +22,6 @@ dist/
 
 # xo bind cache (use go bindings, decision 0041)
 .xo/
+
+# Agent worktrees
+.claude/worktrees/
