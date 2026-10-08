@@ -15,11 +15,16 @@ import (
 //	CREATE TABLE [IF NOT EXISTS] t (col type [PRIMARY KEY] [NOT NULL] [UNIQUE]
 //	    [AUTOINCREMENT] [DEFAULT lit], ...)
 //	DROP TABLE [IF EXISTS] t
-//	INSERT INTO t [(cols)] VALUES (exprs) [, (exprs)]
+//	INSERT INTO t [(cols)] VALUES (exprs) [, (exprs)] [RETURNING items]
 //	SELECT * | expr [AS name] | COUNT(*) {, ...} FROM t [WHERE expr]
 //	    [ORDER BY expr [ASC|DESC] {, ...}] [LIMIT n [OFFSET m]]
-//	UPDATE t SET col = expr {, ...} [WHERE expr]
-//	DELETE FROM t [WHERE expr]
+//	UPDATE t SET col = expr {, ...} [WHERE expr] [RETURNING items]
+//	DELETE FROM t [WHERE expr] [RETURNING items]
+//
+// RETURNING takes the items of SELECT except COUNT(*) and yields the rows
+// inserted, the rows updated (new values), or the rows deleted, in table
+// order. A write with RETURNING may run through query (and query_one);
+// through exec the rows are dropped.
 //
 // Expressions: columns, literals, $n, + - * /, = != <> < <= > >=, AND, OR,
 // NOT, IS [NOT] NULL, [NOT] IN (...), [NOT] LIKE. Statements are separated by
@@ -93,7 +98,14 @@ func copyTables(src map[string]*memTable) map[string]*memTable {
 func (m *memBackend) Query(q string, args []any) ([]string, [][]any, error) {
 	m.db.mu.Lock()
 	defer m.db.mu.Unlock()
-	return memRun(m.db.tables, q, args)
+	// a write with RETURNING changes the tables
+	work := copyTables(m.db.tables)
+	cols, rows, err := memRun(work, q, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	m.db.tables = work
+	return cols, rows, nil
 }
 
 func (m *memBackend) Exec(q string, args []any) (int64, int64, error) {
@@ -120,7 +132,13 @@ type memTx struct {
 }
 
 func (t *memTx) Query(q string, args []any) ([]string, [][]any, error) {
-	return memRun(t.tables, q, args)
+	work := copyTables(t.tables)
+	cols, rows, err := memRun(work, q, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	t.tables = work
+	return cols, rows, nil
 }
 
 func (t *memTx) Exec(q string, args []any) (int64, int64, error) {
@@ -834,7 +852,8 @@ func splitStatements(toks []sqlTok) [][]sqlTok {
 	return out
 }
 
-// memRun runs a read statement.
+// memRun runs a statement that returns rows: a SELECT, or a write with
+// RETURNING on tables (a private copy of the map).
 func memRun(tables map[string]*memTable, q string, args []any) ([]string, [][]any, error) {
 	toks, err := sqlLex(q)
 	if err != nil {
@@ -845,10 +864,37 @@ func memRun(tables map[string]*memTable, q string, args []any) ([]string, [][]an
 		return nil, nil, sqlErr(SqlSyntax, "expected one statement")
 	}
 	p := &sqlParser{toks: stmts[0]}
-	if !p.isKw("select") {
-		return nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement (use exec for writes)")
+	var w memWrite
+	switch {
+	case p.isKw("select"):
+		return memSelect(tables, p, args)
+	case p.isKw("insert"):
+		w, err = memInsert(tables, p, args)
+	case p.isKw("update"):
+		w, err = memUpdate(tables, p, args)
+	case p.isKw("delete"):
+		w, err = memDelete(tables, p, args)
+	default:
+		return nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
 	}
-	return memSelect(tables, p, args)
+	if err == nil && p.peek().k != tEOF {
+		err = p.fail("end of statement")
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if !w.returning {
+		return nil, nil, sqlErr(SqlSyntax, "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
+	}
+	return w.cols, w.rows, nil
+}
+
+// memWrite is the outcome of an INSERT, UPDATE, or DELETE.
+type memWrite struct {
+	n, id     int64
+	returning bool
+	cols      []string
+	rows      [][]any
 }
 
 // memExec runs write statements on tables (a private copy of the map).
@@ -867,18 +913,18 @@ func memExec(tables map[string]*memTable, q string, args []any) (int64, int64, e
 	var total, lastID int64
 	for _, st := range stmts {
 		p := &sqlParser{toks: st}
-		var n, id int64
+		var w memWrite
 		switch {
 		case p.isKw("create"):
 			err = memCreate(tables, p)
 		case p.isKw("drop"):
 			err = memDrop(tables, p)
 		case p.isKw("insert"):
-			n, id, err = memInsert(tables, p, args)
+			w, err = memInsert(tables, p, args)
 		case p.isKw("update"):
-			n, err = memUpdate(tables, p, args)
+			w, err = memUpdate(tables, p, args)
 		case p.isKw("delete"):
-			n, err = memDelete(tables, p, args)
+			w, err = memDelete(tables, p, args)
 		case p.isKw("select"):
 			err = sqlErr(SqlSyntax, "exec cannot run a SELECT (use query)")
 		default:
@@ -890,9 +936,9 @@ func memExec(tables map[string]*memTable, q string, args []any) (int64, int64, e
 		if err != nil {
 			return 0, 0, err
 		}
-		total += n
-		if id != 0 {
-			lastID = id
+		total += w.n
+		if w.id != 0 {
+			lastID = w.id
 		}
 	}
 	return total, lastID, nil
@@ -1154,29 +1200,29 @@ func (t *memTable) checkRow(row []any, skip int) error {
 	return nil
 }
 
-func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, int64, error) {
+func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (memWrite, error) {
 	p.i++
 	if err := p.expectKw("into"); err != nil {
-		return 0, 0, err
+		return memWrite{}, err
 	}
 	name, err := p.ident("a table name")
 	if err != nil {
-		return 0, 0, err
+		return memWrite{}, err
 	}
 	old, err := memTableFor(tables, name)
 	if err != nil {
-		return 0, 0, err
+		return memWrite{}, err
 	}
 	var cols []int
 	if p.acceptSym("(") {
 		for {
 			c, err := p.ident("a column name")
 			if err != nil {
-				return 0, 0, err
+				return memWrite{}, err
 			}
 			i := old.index(c)
 			if i < 0 {
-				return 0, 0, sqlErr(SqlSyntax, "no such column %s", c)
+				return memWrite{}, sqlErr(SqlSyntax, "no such column %s", c)
 			}
 			cols = append(cols, i)
 			if !p.acceptSym(",") {
@@ -1184,7 +1230,7 @@ func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, in
 			}
 		}
 		if err := p.expectSym(")"); err != nil {
-			return 0, 0, err
+			return memWrite{}, err
 		}
 	} else {
 		for i := range old.cols {
@@ -1192,18 +1238,18 @@ func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, in
 		}
 	}
 	if err := p.expectKw("values"); err != nil {
-		return 0, 0, err
+		return memWrite{}, err
 	}
 	var tuples [][]*sqlNode
 	for {
 		if err := p.expectSym("("); err != nil {
-			return 0, 0, err
+			return memWrite{}, err
 		}
 		var tup []*sqlNode
 		for {
 			x, err := p.expr()
 			if err != nil {
-				return 0, 0, err
+				return memWrite{}, err
 			}
 			tup = append(tup, x)
 			if !p.acceptSym(",") {
@@ -1211,18 +1257,22 @@ func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, in
 			}
 		}
 		if err := p.expectSym(")"); err != nil {
-			return 0, 0, err
+			return memWrite{}, err
 		}
 		if len(tup) != len(cols) {
-			return 0, 0, sqlErr(SqlSyntax, "%d columns but %d values", len(cols), len(tup))
+			return memWrite{}, sqlErr(SqlSyntax, "%d columns but %d values", len(cols), len(tup))
 		}
 		tuples = append(tuples, tup)
 		if !p.acceptSym(",") {
 			break
 		}
 	}
+	ret, hasRet, err := p.returning()
+	if err != nil {
+		return memWrite{}, err
+	}
 	if err := checkParams(p, args); err != nil {
-		return 0, 0, err
+		return memWrite{}, err
 	}
 	t := old.clone()
 	env := &sqlEnv{args: args}
@@ -1235,10 +1285,10 @@ func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, in
 		for k, ci := range cols {
 			v, err := env.eval(tup[k])
 			if err != nil {
-				return 0, 0, err
+				return memWrite{}, err
 			}
 			if row[ci], err = t.cols[ci].coerce(v); err != nil {
-				return 0, 0, err
+				return memWrite{}, err
 			}
 		}
 		for i, c := range t.cols {
@@ -1255,26 +1305,26 @@ func memInsert(tables map[string]*memTable, p *sqlParser, args []any) (int64, in
 			lastID = id
 		}
 		if err := t.checkRow(row, -1); err != nil {
-			return 0, 0, err
+			return memWrite{}, err
 		}
 		t.rows = append(t.rows, row)
 	}
 	tables[name] = t
-	return int64(len(tuples)), lastID, nil
+	return memWritten(t, int64(len(tuples)), lastID, ret, hasRet, t.rows[len(old.rows):], args)
 }
 
-func memUpdate(tables map[string]*memTable, p *sqlParser, args []any) (int64, error) {
+func memUpdate(tables map[string]*memTable, p *sqlParser, args []any) (memWrite, error) {
 	p.i++
 	name, err := p.ident("a table name")
 	if err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	old, err := memTableFor(tables, name)
 	if err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	if err := p.expectKw("set"); err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	type asg struct {
 		col int
@@ -1284,18 +1334,18 @@ func memUpdate(tables map[string]*memTable, p *sqlParser, args []any) (int64, er
 	for {
 		c, err := p.ident("a column name")
 		if err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		i := old.index(c)
 		if i < 0 {
-			return 0, sqlErr(SqlSyntax, "no such column %s", c)
+			return memWrite{}, sqlErr(SqlSyntax, "no such column %s", c)
 		}
 		if err := p.expectSym("="); err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		e, err := p.expr()
 		if err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		asgs = append(asgs, asg{i, e})
 		if !p.acceptSym(",") {
@@ -1305,19 +1355,24 @@ func memUpdate(tables map[string]*memTable, p *sqlParser, args []any) (int64, er
 	var w *sqlNode
 	if p.acceptKw("where") {
 		if w, err = p.expr(); err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 	}
+	ret, hasRet, err := p.returning()
+	if err != nil {
+		return memWrite{}, err
+	}
 	if err := checkParams(p, args); err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	t := old.clone()
 	var n int64
+	var changed [][]any
 	for ri, row := range t.rows {
 		env := &sqlEnv{t: t, row: row, args: args}
 		ok, err := env.where(w)
 		if err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		if !ok {
 			continue
@@ -1326,90 +1381,189 @@ func memUpdate(tables map[string]*memTable, p *sqlParser, args []any) (int64, er
 		for _, a := range asgs {
 			v, err := env.eval(a.e)
 			if err != nil {
-				return 0, err
+				return memWrite{}, err
 			}
 			if nr[a.col], err = t.cols[a.col].coerce(v); err != nil {
-				return 0, err
+				return memWrite{}, err
 			}
 		}
 		if err := t.checkRow(nr, ri); err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		t.rows[ri] = nr
+		changed = append(changed, nr)
 		n++
 	}
 	tables[name] = t
-	return n, nil
+	return memWritten(t, n, 0, ret, hasRet, changed, args)
 }
 
-func memDelete(tables map[string]*memTable, p *sqlParser, args []any) (int64, error) {
+func memDelete(tables map[string]*memTable, p *sqlParser, args []any) (memWrite, error) {
 	p.i++
 	if err := p.expectKw("from"); err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	name, err := p.ident("a table name")
 	if err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	old, err := memTableFor(tables, name)
 	if err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	var w *sqlNode
 	if p.acceptKw("where") {
 		if w, err = p.expr(); err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 	}
+	ret, hasRet, err := p.returning()
+	if err != nil {
+		return memWrite{}, err
+	}
 	if err := checkParams(p, args); err != nil {
-		return 0, err
+		return memWrite{}, err
 	}
 	t := old.clone()
 	t.rows = nil
 	var n int64
+	var gone [][]any
 	for _, row := range old.rows {
 		env := &sqlEnv{t: old, row: row, args: args}
 		ok, err := env.where(w)
 		if err != nil {
-			return 0, err
+			return memWrite{}, err
 		}
 		if ok {
+			gone = append(gone, row)
 			n++
 		} else {
 			t.rows = append(t.rows, row)
 		}
 	}
 	tables[name] = t
-	return n, nil
+	return memWritten(old, n, 0, ret, hasRet, gone, args)
 }
 
-func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string, [][]any, error) {
-	p.i++
-	type item struct {
-		star  bool
-		e     *sqlNode
-		alias string
+// memWritten is the outcome of a write that touched rows of t.
+func memWritten(t *memTable, n, id int64, ret []selItem, hasRet bool, rows [][]any, args []any) (memWrite, error) {
+	w := memWrite{n: n, id: id, returning: hasRet}
+	if !hasRet {
+		return w, nil
 	}
-	var items []item
+	cols, out, err := memProject(t, ret, rows, args)
+	if err != nil {
+		return memWrite{}, err
+	}
+	w.cols, w.rows = cols, out
+	return w, nil
+}
+
+// returning parses an optional RETURNING clause.
+func (p *sqlParser) returning() ([]selItem, bool, error) {
+	if !p.acceptKw("returning") {
+		return nil, false, nil
+	}
+	items, err := p.selItems()
+	if err != nil {
+		return nil, false, err
+	}
+	for _, it := range items {
+		if !it.star && it.e.op == "count" {
+			return nil, false, sqlErr(SqlSyntax, "RETURNING cannot use COUNT(*)")
+		}
+	}
+	return items, true, nil
+}
+
+// selItem is one item of a SELECT or RETURNING list.
+type selItem struct {
+	star  bool
+	e     *sqlNode
+	alias string
+}
+
+// selItems parses `* | expr [AS name] {, ...}`.
+func (p *sqlParser) selItems() ([]selItem, error) {
+	var items []selItem
 	for {
 		if p.acceptSym("*") {
-			items = append(items, item{star: true})
+			items = append(items, selItem{star: true})
 		} else {
 			e, err := p.expr()
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			it := item{e: e}
+			it := selItem{e: e}
 			if p.acceptKw("as") {
 				if it.alias, err = p.ident("an alias"); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 			items = append(items, it)
 		}
 		if !p.acceptSym(",") {
-			break
+			return items, nil
 		}
+	}
+}
+
+// selCols names the result columns of items over t and counts the
+// COUNT(*) items.
+func selCols(t *memTable, items []selItem) ([]string, int) {
+	var cols []string
+	counts := 0
+	for _, it := range items {
+		switch {
+		case it.star:
+			for _, c := range t.cols {
+				cols = append(cols, c.name)
+			}
+		case it.alias != "":
+			cols = append(cols, it.alias)
+			if it.e.op == "count" {
+				counts++
+			}
+		case it.e.op == "col":
+			cols = append(cols, it.e.col)
+		case it.e.op == "count":
+			cols = append(cols, "count")
+			counts++
+		default:
+			cols = append(cols, "?column?")
+		}
+	}
+	return cols, counts
+}
+
+// memProject evaluates items (without COUNT(*)) on each row of t.
+func memProject(t *memTable, items []selItem, rows [][]any, args []any) ([]string, [][]any, error) {
+	cols, _ := selCols(t, items)
+	out := make([][]any, 0, len(rows))
+	for _, row := range rows {
+		env := &sqlEnv{t: t, row: row, args: args}
+		var r []any
+		for _, it := range items {
+			if it.star {
+				r = append(r, row...)
+				continue
+			}
+			v, err := env.eval(it.e)
+			if err != nil {
+				return nil, nil, err
+			}
+			r = append(r, v)
+		}
+		out = append(out, r)
+	}
+	return cols, out, nil
+}
+
+func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string, [][]any, error) {
+	p.i++
+	items, err := p.selItems()
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := p.expectKw("from"); err != nil {
 		return nil, nil, err
@@ -1564,28 +1718,7 @@ func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string,
 		}
 	}
 	// project
-	var cols []string
-	counts := 0
-	for _, it := range items {
-		switch {
-		case it.star:
-			for _, c := range t.cols {
-				cols = append(cols, c.name)
-			}
-		case it.alias != "":
-			cols = append(cols, it.alias)
-			if it.e.op == "count" {
-				counts++
-			}
-		case it.e.op == "col":
-			cols = append(cols, it.e.col)
-		case it.e.op == "count":
-			cols = append(cols, "count")
-			counts++
-		default:
-			cols = append(cols, "?column?")
-		}
-	}
+	cols, counts := selCols(t, items)
 	if counts > 0 {
 		if counts != len(items) {
 			return nil, nil, sqlErr(SqlSyntax, "COUNT(*) cannot be mixed with other columns")
@@ -1596,24 +1729,7 @@ func memSelect(tables map[string]*memTable, p *sqlParser, args []any) ([]string,
 		}
 		return cols, [][]any{out}, nil
 	}
-	out := make([][]any, 0, len(rows))
-	for _, row := range rows {
-		env := &sqlEnv{t: t, row: row, args: args}
-		var r []any
-		for _, it := range items {
-			if it.star {
-				r = append(r, row...)
-				continue
-			}
-			v, err := env.eval(it.e)
-			if err != nil {
-				return nil, nil, err
-			}
-			r = append(r, v)
-		}
-		out = append(out, r)
-	}
-	return cols, out, nil
+	return memProject(t, items, rows, args)
 }
 
 // memSchema builds a database from the statements of a schema.

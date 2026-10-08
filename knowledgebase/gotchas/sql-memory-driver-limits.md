@@ -6,7 +6,7 @@ Symptoms and causes:
 
 - A query that works against Postgres fails in tests with `Syntax(...)`:
   the in memory driver (`sql.memory`, `testing.fake_db`) has no joins,
-  grouping, subqueries, `RETURNING`, or `?` placeholders (only `$n`). Keep
+  grouping, subqueries, or `?` placeholders (only `$n`). Keep
   test schemas and statements inside the subset in spec/std.md 10.6, or test
   the real statements against a real driver.
 - A program hangs after `db.begin()` on a failing path: a `Tx` holds one pool
@@ -20,6 +20,13 @@ Symptoms and causes:
   cancellation is not reported, so cleanup queries still run.
 - Reads outside a transaction do not see its writes until commit (read
   committed); reads inside see their own writes.
+- `INSERT ... RETURNING *` through `exec` returns no rows: `RETURNING`
+  (supported since 2026-10-08, decision 0061) yields rows only through
+  `query`, `query_one`, or the `_as` forms, as with real drivers. A write
+  without `RETURNING` through `query` is `Syntax`.
+- `derive SqlRow` does not apply field defaults: every field needs a column
+  of the same name, else `NoColumn`. Select the column (or an expression
+  `AS` the field name) instead of relying on the default.
 - The module functions `sql.int`, `sql.str`, `sql.bool`, `sql.float`,
   `sql.time` build parameters and share names with Row accessors; the
   accessors are methods (`row.int("id")`), the builders are functions.

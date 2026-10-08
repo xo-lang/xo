@@ -1,0 +1,35 @@
+use std/sql
+
+struct Ok1 {
+  id: Int
+  name: Str
+  score: Float?
+  seen: Time?
+} derive SqlRow
+
+struct Tags {
+  id: Int
+  tags: List[Str]
+  size: Int32
+} derive SqlRow
+
+struct Box[T] {
+  v: T
+} derive SqlRow
+
+enum Kind {
+  A
+  B
+} derive SqlRow
+
+struct Plain {
+  id: Int
+}
+
+fn load(db: sql.Db) -> List[Ok1] ! sql.SqlErr uses net.dial {
+  db.query_as[Ok1]("SELECT * FROM t")
+}
+
+fn bad(db: sql.Db) -> Plain ! sql.SqlErr uses net.dial {
+  db.query_one_as[Plain]("SELECT * FROM t")
+}

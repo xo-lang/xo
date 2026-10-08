@@ -10,7 +10,14 @@ fn equal(a: Bytes, b: Bytes) -> Bool
 fn random_bytes(r: Rand, n: Int) -> Bytes uses rand
 /// `n` random bytes as unpadded URL safe base64.
 fn token(r: Rand, n: Int = 32) -> Str uses rand
+/// Argon2id (RFC 9106) with a 16 byte random salt and a 32 byte key, in the
+/// PHC format `$argon2id$v=19$m=<memory_kib>,t=<iterations>,p=<parallelism>$<salt>$<key>`.
+/// The defaults are the OWASP minimum (19 MiB, 2 passes, 1 lane). The
+/// recommended password hash (std.md 11).
+fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, iterations: Int = 2, parallelism: Int = 1) -> Str uses rand
 /// PBKDF2-HMAC-SHA256 with a 16 byte random salt; the result is
 /// `pbkdf2-sha256$<iterations>$<salt>$<key>` (std.md 11).
 fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
+/// Checks a result of `hash_password_argon2id` or `hash_password`, told apart
+/// by the prefix.
 fn verify_password(password: Str, hash: Str) -> Bool

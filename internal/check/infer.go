@@ -318,6 +318,8 @@ func (c *checker) implements(t Type, iface *Named, sp token.Span) bool {
 			return c.isOrd(t)
 		case "Json", "OpenApi", "Proto":
 			return c.isSerializable(t, io.Name)
+		case "SqlRow":
+			return c.isSqlRow(t)
 		case "Display", "Error":
 			if c.isDisplayBuiltin(t) {
 				return true
@@ -571,6 +573,38 @@ func (c *checker) isSerializable(t Type, name string) bool {
 		return len(x.Elems) == 0
 	}
 	return false
+}
+
+// isSqlRow decides SqlRow (std.md 10.4): only `derive SqlRow` provides it.
+func (c *checker) isSqlRow(t Type) bool {
+	switch x := resolve(t).(type) {
+	case *Named:
+		return x.Obj.Derives["SqlRow"]
+	case *ParamType:
+		if x.P.Constraint != nil {
+			if cn, ok := resolve(x.P.Constraint).(*Named); ok {
+				return cn.Obj.Module == c.prelude && cn.Obj.Name == "SqlRow"
+			}
+		}
+	}
+	return false
+}
+
+// sqlColumnTypes are the field types `derive SqlRow` decodes (alone or in
+// an Option): the value types of std/sql rows.
+var sqlColumnTypes = map[string]bool{"Int": true, "Float": true, "Str": true, "Bool": true, "Time": true}
+
+// isSqlColumn reports whether a field of type t can be decoded from a column.
+func (c *checker) isSqlColumn(t Type) bool {
+	n, ok := resolve(t).(*Named)
+	if !ok || n.Obj.Module != c.prelude {
+		return false
+	}
+	if n.Obj.Name == "Option" && len(n.Args) == 1 {
+		e, ok := resolve(n.Args[0]).(*Named)
+		return ok && e.Obj.Module == c.prelude && sqlColumnTypes[e.Obj.Name]
+	}
+	return sqlColumnTypes[n.Obj.Name]
 }
 
 var displayBuiltins = map[string]bool{"Int": true, "Int8": true, "Int16": true, "Int32": true, "Int64": true, "UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true, "Float": true, "Float32": true, "Bool": true, "Rune": true, "Str": true, "Duration": true, "Time": true, "Secret": true}

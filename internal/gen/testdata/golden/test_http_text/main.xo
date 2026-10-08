@@ -1,0 +1,32 @@
+// Response.text() (std.md 4.3): the body as text, None for invalid UTF-8,
+// a streamed body collected first.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hi", fn(_req) { http.text(200, "héllo") })
+  r.handle("GET /json", fn(_req) { http.json(200, {"ok": true}) })
+  r.handle("GET /raw", fn(_req) { http.empty(200) with {body: b"\xff\xfe"} })
+  r.handle("GET /stream", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write(b"a\n")?
+      w.write(b"b\n")
+    })
+  })
+  r
+}
+
+test "text reads the body" {
+  let r = routes()
+  expect(r.call(http.new_request("GET", "/hi")).text()) == Some("héllo")
+  expect(r.call(http.new_request("GET", "/json")).text()) == Some("{\"ok\":true}")
+  expect(r.call(http.new_request("GET", "/nope")).text() ?? "") == "{\"error\":\"not found\"}"
+}
+
+test "text is None for a body that is not UTF-8" {
+  expect(routes().call(http.new_request("GET", "/raw")).text()) == None
+}
+
+test "text collects a streamed body" {
+  expect(routes().call(http.new_request("GET", "/stream")).text()) == Some("a\nb\n")
+}

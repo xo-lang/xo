@@ -8,4 +8,7 @@ random 24 token 43 distinct true
 hash true 4
 verify true false false
 known true
+argon2id true 6
+verify argon2id true true false
+known argon2id true
 --- stderr

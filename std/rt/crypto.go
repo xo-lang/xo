@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-// std/crypto (std.md 11, decision 0056). Go standard library only.
+// std/crypto (std.md 11, decisions 0056 and 0059). Go standard library,
+// plus Argon2id vendored from golang.org/x/crypto (xcrypto_argon2.go,
+// xcrypto_blake2b.go).
 
 // Crypto_sha256 is `crypto.sha256(data)`.
 func Crypto_sha256(_ *Task, data Bytes) Bytes {
@@ -72,9 +74,13 @@ func Crypto_hash_password(tk *Task, r Rand, password string, iterations int64) s
 }
 
 // Crypto_verify_password is `crypto.verify_password(password, hash)`:
-// whether password matches a hash_password result. A malformed hash is
-// false. The key comparison is constant time.
+// whether password matches a hash_password or hash_password_argon2id
+// result, told apart by the prefix. A malformed hash is false. The key
+// comparison is constant time.
 func Crypto_verify_password(_ *Task, password, hash string) bool {
+	if strings.HasPrefix(hash, argon2idPrefix) {
+		return verifyArgon2id(password, hash)
+	}
 	parts := strings.Split(hash, "$")
 	if len(parts) != 4 || parts[0] != pbkdf2Prefix {
 		return false
@@ -96,5 +102,81 @@ func Crypto_verify_password(_ *Task, password, hash string) bool {
 	if err != nil {
 		return false
 	}
+	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// Argon2id (RFC 9106) in the PHC string format:
+// $argon2id$v=19$m=<KiB>,t=<passes>,p=<lanes>$<salt>$<key>, salt and key
+// in unpadded standard base64.
+const (
+	argon2idPrefix  = "$argon2id$"
+	argon2idSaltLen = 16
+	argon2idKeyLen  = 32
+	// The bounds hash_password_argon2id accepts; verify_password rejects a
+	// stored hash outside them rather than doing unbounded work.
+	argon2idMaxMemory = 4 * 1024 * 1024 // KiB, 4 GiB
+	argon2idMaxPasses = 1000
+	argon2idMaxLanes  = 255
+	argon2idMaxKeyLen = 1024
+)
+
+// argon2idParamsOK reports whether m, t, p are within the accepted bounds.
+func argon2idParamsOK(m, t, p int64) bool {
+	return p >= 1 && p <= argon2idMaxLanes && m >= 8*p && m <= argon2idMaxMemory && t >= 1 && t <= argon2idMaxPasses
+}
+
+// Crypto_hash_password_argon2id is `crypto.hash_password_argon2id(r,
+// password, memory_kib, iterations, parallelism)`: Argon2id with a 16 byte
+// salt from r and a 32 byte key. Faults when the parameters are outside
+// 1..=255 lanes, 8 * lanes..=4194304 KiB, or 1..=1000 passes.
+func Crypto_hash_password_argon2id(tk *Task, r Rand, password string, memoryKiB, iterations, parallelism int64) string {
+	if !argon2idParamsOK(memoryKiB, iterations, parallelism) {
+		FaultHere("crypto.hash_password_argon2id: need parallelism in 1..=%d, memory_kib in 8 * parallelism..=%d, iterations in 1..=%d; got memory_kib %d, iterations %d, parallelism %d",
+			argon2idMaxLanes, argon2idMaxMemory, argon2idMaxPasses, memoryKiB, iterations, parallelism)
+	}
+	salt := []byte(Crypto_random_bytes(tk, r, argon2idSaltLen))
+	key := argon2Key(argon2ModeID, []byte(password), salt, nil, nil, uint32(iterations), uint32(memoryKiB), uint8(parallelism), argon2idKeyLen)
+	enc := base64.RawStdEncoding
+	return argon2idPrefix + "v=19$m=" + strconv.FormatInt(memoryKiB, 10) + ",t=" + strconv.FormatInt(iterations, 10) + ",p=" + strconv.FormatInt(parallelism, 10) +
+		"$" + enc.EncodeToString(salt) + "$" + enc.EncodeToString(key)
+}
+
+// verifyArgon2id checks password against a PHC Argon2id string. Only
+// version 19 (0x13) and the parameter order m, t, p are accepted.
+func verifyArgon2id(password, hash string) bool {
+	parts := strings.Split(hash, "$")
+	// "", "argon2id", "v=19", "m=..,t=..,p=..", salt, key
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
+		return false
+	}
+	ps := strings.Split(parts[3], ",")
+	if len(ps) != 3 {
+		return false
+	}
+	var vals [3]int64
+	for i, name := range []string{"m=", "t=", "p="} {
+		if !strings.HasPrefix(ps[i], name) {
+			return false
+		}
+		v, err := strconv.ParseInt(ps[i][2:], 10, 64)
+		if err != nil {
+			return false
+		}
+		vals[i] = v
+	}
+	m, t, p := vals[0], vals[1], vals[2]
+	if !argon2idParamsOK(m, t, p) {
+		return false
+	}
+	enc := base64.RawStdEncoding
+	salt, err := enc.DecodeString(parts[4])
+	if err != nil || len(salt) < 8 {
+		return false
+	}
+	want, err := enc.DecodeString(parts[5])
+	if err != nil || len(want) < 4 || len(want) > argon2idMaxKeyLen {
+		return false
+	}
+	got := argon2Key(argon2ModeID, []byte(password), salt, nil, nil, uint32(t), uint32(m), uint8(p), uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
 }

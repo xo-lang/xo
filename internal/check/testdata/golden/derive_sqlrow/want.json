@@ -1,0 +1,84 @@
+[
+  {
+    "code": "XO0404",
+    "severity": "error",
+    "message": "`derive SqlRow` needs every field to be a column type, but `tags` has type `List[Str]`",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 10,
+      "end_line": 14,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "column types are Int, Float, Str, Bool, and Time, and an Option of one for a column that may be NULL (std.md 10.4)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0404",
+    "severity": "error",
+    "message": "`derive SqlRow` needs every field to be a column type, but `size` has type `Int32`",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 10,
+      "end_line": 14,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "column types are Int, Float, Str, Bool, and Time, and an Option of one for a column that may be NULL (std.md 10.4)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0407",
+    "severity": "error",
+    "message": "`derive SqlRow` needs a struct without type parameters; `Box` has some",
+    "span": {
+      "file": "main.xo",
+      "line": 18,
+      "col": 10,
+      "end_line": 18,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": []
+  },
+  {
+    "code": "XO0407",
+    "severity": "error",
+    "message": "`derive SqlRow` applies only to structs; `Kind` is not one",
+    "span": {
+      "file": "main.xo",
+      "line": 23,
+      "col": 10,
+      "end_line": 23,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": []
+  },
+  {
+    "code": "XO0404",
+    "severity": "error",
+    "message": "`Plain` does not implement `SqlRow`, required by `T` of `Db.query_one_as`",
+    "span": {
+      "file": "main.xo",
+      "line": 34,
+      "col": 3,
+      "end_line": 34,
+      "end_col": 44
+    },
+    "notes": [
+      {
+        "message": "add `derive SqlRow` to the type declaration (core 2.9)"
+      }
+    ],
+    "fixes": []
+  }
+]

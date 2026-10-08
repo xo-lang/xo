@@ -17,7 +17,7 @@ import (
 // (core.go, list.go, ...), so StdTypes skips them.
 var preludeBuiltin = map[string]bool{
 	"Never": true, "Option": true, "Result": true,
-	"Display": true, "Error": true, "Debug": true, "Eq": true, "Hash": true, "Ord": true, "Json": true, "OpenApi": true, "Proto": true,
+	"Display": true, "Error": true, "Debug": true, "Eq": true, "Hash": true, "Ord": true, "Json": true, "OpenApi": true, "Proto": true, "SqlRow": true,
 }
 
 // StdTypes generates the Go declarations of the std structs, enums, and

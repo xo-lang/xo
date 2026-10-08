@@ -50,7 +50,8 @@ order and NaNs end up last), derived `Ord` on types with Float fields,
 `Int`, the sized integers, `Float`, `Bool`, `Rune`, `Str`, `Duration`, `Time`,
 and every std error type implement `Display`. `Bytes` does not (use
 `to_str()`). `Json` is implemented by `derive Json` and by
-builtin types (section 5).
+builtin types (section 5). `SqlRow` is implemented only by `derive SqlRow`
+(section 10.4).
 
 Every `Ord` type has `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)`. `a.min(b)`
 is `b` when `b < a` and otherwise `a`; `a.max(b)` is `b` when `b > a` and
@@ -85,6 +86,12 @@ fn (n: Int) checked_add(m: Int) -> Int?      // also checked_sub, checked_mul, c
 fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sqrt
 fn (f: Float) is_nan() -> Bool
 ```
+
+A conversion is a call on the type name, `Float(n)`, not an associated
+function: there is no `Float.from(n)`. XO0601 for an unknown associated
+function of a numeric type called with one numeric argument (`Float.from(n)`,
+`Int.from(x)`, `Int64.new(n)`) carries the note `convert with Float(x)` and,
+as its first fix, the edit to `Float(n)`.
 
 ### 2.2 Str, Rune, Bytes
 
@@ -216,7 +223,8 @@ Operators are in core 2.1. `Duration` displays as `1.5s`, `250ms`; `Time`
 displays as RFC 3339 in UTC.
 
 ```
-Duration.from_secs(s: Float) -> Duration
+Duration.from_secs(s: Float) -> Duration      // rounds to the nearest nanosecond
+Duration.from_secs_int(s: Int) -> Duration    // the same as `1s * s`; faults on overflow
 Duration.from_millis(ms: Int) -> Duration
 Duration.from_nanos(ns: Int) -> Duration
 fn (d: Duration) seconds() -> Float
@@ -529,8 +537,13 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?          // case insensitive
+fn (r: Response) text() -> Str?                     // the body as text; None if not valid UTF-8
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 ```
+
+`text` and `decode_json` read the whole body, collecting a streamed one
+first; `text` is `r.body.to_str()` for a body that is not streamed. In
+tests: `expect(resp.text()) == Some("ok")`, or `resp.text() ?? ""`.
 
 Typed request values (decision 0055) let a middleware hand a value to the
 handlers behind it without encoding it in a header. `with_value` returns a
@@ -924,7 +937,9 @@ fn (d: Db) close() -> () ! SqlErr               // later operations fail with Cl
 struct ExecResult { rows_affected: Int, last_insert_id: Int }   // id is 0 when the driver has none
 ```
 
-`query` runs a statement that returns rows, `exec` one that does not.
+`query` runs a statement that returns rows, `exec` one that does not. A
+write with a `RETURNING` clause returns rows, so it goes through `query`
+(or `query_one`); through `exec` its rows are dropped.
 
 ### 10.4 Rows
 
@@ -940,6 +955,48 @@ Accessors read by column name (the first column of that name). A missing
 column is `NoColumn`; a value of another type, or NULL read by a non optional
 accessor, is `Mismatch(column, msg)`. `float` also accepts an integer. The
 `_opt` forms map NULL to `None`.
+
+Rows into structs (decision 0061):
+
+```
+interface SqlRow {}                              // prelude marker; only `derive SqlRow` implements it
+fn (r: Row) decode[T: SqlRow]() -> T ! SqlErr
+fn (d: Db) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
+fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
+```
+
+`derive SqlRow` is allowed on a struct without type parameters whose fields
+are `Int`, `Float`, `Str`, `Bool`, `Time`, or an `Option` of one of them
+(else XO0404 at the derive). `decode` reads each field from the column of
+the same name with the rules of the accessors above: a missing column is
+`NoColumn(name)`, a value of another type is `Mismatch(column, msg)`, NULL is
+`None` for an `Option` field and `Mismatch` for any other. Fields are read in
+declaration order and the first failure is returned. Columns without a field
+are ignored, so `SELECT *` works with a struct naming some of the columns.
+Field defaults do not apply: every field needs its column. `query_as` is
+`query` followed by `decode` of every row; `query_one_as` is `query_one`
+followed by `decode` (`NoRows` when there is no row).
+
+```
+struct Note {
+  id: Int
+  owner: Int
+  body: Str
+  expires: Time
+  tag: Str?
+} derive SqlRow, Json
+
+fn notes(db: sql.Db, owner: Int) -> List[Note] ! sql.SqlErr uses net.dial {
+  db.query_as[Note]("SELECT * FROM notes WHERE owner = $1 ORDER BY id", [sql.int(owner)])
+}
+
+fn add(db: sql.Db, owner: Int, body: Str, at: Time) -> Note ! sql.SqlErr uses net.dial {
+  db.query_one_as[Note]("INSERT INTO notes (owner, body, expires) VALUES ($1, $2, $3) RETURNING *",
+    [sql.int(owner), sql.str(body), sql.time(at)])
+}
+```
 
 ### 10.5 Transactions
 
@@ -991,18 +1048,24 @@ auto-assigns keys; `NOT NULL`, `UNIQUE`, `DEFAULT literal`), `DROP TABLE`,
 `INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
 or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
 `LIMIT`/`OFFSET`, `UPDATE ... SET ... WHERE`, and `DELETE ... WHERE`.
+`INSERT`, `UPDATE`, and `DELETE` take `RETURNING` with the items of
+`SELECT` (`*`, expressions, `AS`; not `COUNT(*)`), yielding the inserted
+rows, the updated rows with their new values, or the deleted rows, in table
+order; generated keys and defaults are filled in.
 Expressions: columns, literals, `$n`, `+ - * /`, `= != <> < <= > >=`, `AND`,
 `OR`, `NOT`, `IS [NOT] NULL`, `[NOT] IN (...)`, `[NOT] LIKE`. No joins,
-grouping, subqueries, or `RETURNING`. Reads inside a transaction see its own
-writes; reads outside see the last commit.
+grouping, or subqueries. Reads inside a transaction see its own
+writes; reads outside see the last commit. A write through `query` that
+fails changes nothing, like one through `exec`.
 Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 
 ---
 
 ## 11. std/crypto
 
-Status: draft (2026-10-08, decision 0056). Go standard library underneath;
-no third party code.
+Status: draft (2026-10-08, decisions 0056 and 0059). Go standard library
+underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
+into the runtime (no module dependency).
 
 ```
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
@@ -1010,6 +1073,8 @@ pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
 pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
+pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
+                              iterations: Int = 2, parallelism: Int = 1) -> Str uses rand
 pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
 pub fn verify_password(password: Str, hash: Str) -> Bool
 ```
@@ -1023,14 +1088,32 @@ pub fn verify_password(password: Str, hash: Str) -> Bool
 - `equal` takes time that depends on the lengths but not on the contents;
   compare digests of equal length (for example two `sha256` results) when
   the length is secret too.
+- `hash_password_argon2id` is the recommended password hash: Argon2id
+  (RFC 9106, version 0x13) with a 16 byte salt from `r` and a 32 byte key,
+  encoded in the PHC string format
+  `$argon2id$v=19$m=<memory_kib>,t=<iterations>,p=<parallelism>$<salt>$<key>`
+  (salt and key in unpadded standard base64), which other Argon2 libraries
+  read. The defaults, 19456 KiB (19 MiB), 2 passes, 1 lane, are the OWASP
+  minimum for Argon2id (Password Storage Cheat Sheet); raise `memory_kib`
+  first when the host allows. One hash at the defaults takes about 20 ms
+  on an Apple M series core. It faults when `parallelism` is outside
+  `1..=255`, `memory_kib` outside `8 * parallelism..=4194304` (4 GiB), or
+  `iterations` outside `1..=1000`. Tests may pass small values
+  (`memory_kib: 64, iterations: 1`).
 - `hash_password` is PBKDF2-HMAC-SHA256 with a 16 byte salt from `r` and a
   32 byte key, encoded as `pbkdf2-sha256$<iterations>$<salt>$<key>`
   (salt and key in unpadded standard base64). It faults when `iterations`
   is outside `1..=100000000`. The default, 600000, follows the OWASP 2023
   guidance for PBKDF2-HMAC-SHA256; tests may pass a small count.
-- `verify_password` recomputes the key with the stored salt and iteration
-  count and compares in constant time. A malformed hash is `false`, never
-  an error.
+  PBKDF2 stays supported for existing hashes and for hosts that need a
+  FIPS approved function; it is not memory hard, so prefer Argon2id for new
+  code.
+- `verify_password` tells the formats apart by prefix (`$argon2id$` or
+  `pbkdf2-sha256$`), recomputes the key with the stored salt and
+  parameters, and compares in constant time. A malformed hash, another
+  Argon2 variant or version, or parameters outside the bounds above is
+  `false`, never an error. To move users to Argon2id, rehash on the next
+  successful login when the stored hash starts with `pbkdf2-sha256$`.
 
 Storing API tokens: tokens from `token` have 256 bits of entropy, so a
 plain `sha256` digest is enough (no salt or stretching needed) and can be
@@ -1046,4 +1129,4 @@ fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dia
 ```
 
 Passwords chosen by people have little entropy: store
-`hash_password(os.rand, pw)` and check with `verify_password`.
+`hash_password_argon2id(os.rand, pw)` and check with `verify_password`.

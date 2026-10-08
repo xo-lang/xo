@@ -32,9 +32,24 @@ Last verified: 2026-10-08
   git remote is `github.com/josephspurrier/xo` (owner's choice, 2026-10-08).
   So `go install github.com/josephspurrier/xo/cmd/xo` does not work; build
   from a checkout with `go build -o .tools/bin/xo ./cmd/xo`.
-- Standard library only. No third party dependencies. (Go packages bound
-  with `use go` are dependencies of the generated program, not of the
-  compiler; see "Go interop".)
+- Standard library only. No third party module dependencies, for the
+  compiler or for generated programs. (Go packages bound with `use go` are
+  dependencies of the generated program, not of the compiler; see "Go
+  interop".) Last verified: 2026-10-08.
+- Vendored third party code (decision 0059): `std/rt/xcrypto_argon2.go`
+  and `std/rt/xcrypto_blake2b.go` hold the portable Go of
+  `golang.org/x/crypto` v0.55.0 packages `argon2` and `blake2b` (no
+  assembly, no `x/sys/cpu`), renamed into package `rt`, with the Go
+  authors' BSD 3 clause license in each file header. They are not a module
+  requirement: the generated `go.mod` stays `module xoprog` plus `use go`
+  requirements, so builds need no module download for any `--targets`
+  entry. Why not a dependency: `rt` is copied whole into every build, so a
+  requirement of any `rt` file is one of every program, and with an empty
+  module cache and no network the build fails (`module lookup disabled by
+  GOPROXY=off`; gotcha `runtime-import-is-every-programs-dependency.md`).
+  To update: diff a newer x/crypto release against these files and rerun
+  `go test ./std/rt -run 'Argon2|Blake2b'` (RFC 9106 and RFC 7693 vectors,
+  plus keys recorded from x/crypto in `std/rt/testdata/argon2id_xcrypto.txt`).
 
 ## Commands
 
@@ -791,7 +806,15 @@ Last verified: 2026-10-08. Rules and choices; details in
   and evaluator; tables are immutable and swapped on write, a transaction is a
   copy of the table map). Real drivers: implement `rt.SqlOpener`, call
   `rt.RegisterSqlDriver` (to be bound through `use go`; none yet). Goldens:
-  `sql_basic`, `sql_tx`, `test_sql`. Not recorded by record and replay.
+  `sql_basic`, `sql_tx`, `test_sql`, `sql_decode`. Not recorded by record and replay.
+  `derive SqlRow` (2026-10-08, decision 0061): `internal/gen/sqlrow.go` emits
+  `(*T).XoSqlRowDec`, one `rt.SqlRowField` call per field
+  (`std/rt/sqlrow.go`, a type switch over the column types);
+  `Sql_Row_decode[T]`, `Sql_Db_query_as[T]`, `Sql_Db_query_one_as[T]` and
+  the `Sql_Tx_` forms assert `sqlRowDecoder` on `*T`. `RETURNING` in
+  `sqlmem.go`: writes return a `memWrite` (count, last id, projected rows);
+  `memBackend.Query` and `memTx.Query` run on a copy of the table map and
+  publish it on success. Checker golden: `derive_sqlrow`.
 - std/http request values and scoped middleware (2026-10-08, decision
   0055): `Http_Key[T]`, `Http_Request_with_value`/`_value` (a persistent
   list in the hidden `XValues` field of `Http_Request`, listed in
@@ -805,6 +828,12 @@ Last verified: 2026-10-08. Rules and choices; details in
   `crypto/pbkdf2` (Go 1.24+); random functions call the `Rand`
   capability's `M_bytes`. Goldens `crypto_basic` (known vectors),
   `test_crypto` (seeded rand); unit tests `TestCrypto*` in std/rt.
+  Argon2id (2026-10-08, decision 0059): `Crypto_hash_password_argon2id`
+  and the `$argon2id$` branch of `Crypto_verify_password` call
+  `argon2Key` in the vendored `xcrypto_argon2.go`; tests in
+  `std/rt/xcrypto_test.go` (`TestArgon2RFC9106`, `TestBlake2bRFC7693`,
+  `TestArgon2idMatchesXCrypto`, `TestCryptoArgon2idHash`) and
+  `BenchmarkArgon2idDefault` (about 19 ms per hash on Apple M, 2026-10-08).
 - Test log capture (2026-10-08, decision 0057): `runOneTest` gives each
   test world `newTestLogSink()` (std/rt/log.go); `logRecord` appends a
   `Log_Record` and, with no configured output, the text line to the

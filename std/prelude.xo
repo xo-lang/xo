@@ -30,7 +30,7 @@
 //     (any numeric type to any numeric type); operators (core 2.1, 15);
 //     `min`, `max`, `clamp` on every `Ord` type; `t.await` on a Task without
 //     parentheses; `expect(a) <op> b` in tests; the predeclared `target`.
-//     Eq, Hash, Ord, Json, OpenApi, Proto, and Debug are marker interfaces
+//     Eq, Hash, Ord, Json, OpenApi, Proto, SqlRow, and Debug are marker interfaces
 //     whose satisfaction rules are builtin (std.md 1).
 // 10. The prelude imports std/task for `task.Group` (the type of `os.tasks`
 //     and of `s.group()`, core 7.1). The import is not visible to user code:
@@ -112,6 +112,8 @@ interface Ord {}
 interface Json {}
 interface OpenApi {}
 interface Proto {}
+/// Decodable from a std/sql row by column name (`derive SqlRow`, std.md 10.4).
+interface SqlRow {}
 
 // ---------------------------------------------------------------------------
 // Predeclared functions (core 1.4, 8, 11.4)
@@ -299,6 +301,8 @@ fn (r: Result[T, E]) ignore_err(reason: Str) -> T?
 // Duration and Time (std.md 2.6). Operators are builtin (core 2.1).
 
 fn (static: Duration) from_secs(s: Float) -> Duration
+/// Whole seconds; the same as `1s * s` (std.md 2.6).
+fn (static: Duration) from_secs_int(s: Int) -> Duration
 fn (static: Duration) from_millis(ms: Int) -> Duration
 fn (static: Duration) from_nanos(ns: Int) -> Duration
 fn (d: Duration) seconds() -> Float

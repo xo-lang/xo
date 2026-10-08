@@ -64,6 +64,8 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?
+/// The body as text; None if it is not valid UTF-8 (std.md 4.3).
+fn (r: Response) text() -> Str?
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 
 struct Server {}

@@ -1,4 +1,4 @@
 exit 0
 --- stdout
-ok: 3 passed, 0 failed, 0 skipped
+ok: 4 passed, 0 failed, 0 skipped
 --- stderr
