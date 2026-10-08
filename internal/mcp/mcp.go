@@ -211,6 +211,13 @@ func init() {
 			"arg":  map[string]any{"type": "string", "description": "the query argument; omitted for holes"},
 			"dir":  map[string]any{"type": "string", "description": "directory checked (default .)"},
 		}, []string{"kind"}, toolQuery)
+	register("edit", "Semantic edit through resolved symbols (core 10.4), atomic across the modules: rename (args [name, new name]), add-field (args [Struct, \"name: Type = default\"]), change-sig (args [fn, \"(params) -> Result ! Err\"]). Rejected, with nothing written, unless the program checks clean before and after. Returns {op, target, ok, written, reason, files, edits, diagnostics, sites}.",
+		map[string]any{
+			"op":      map[string]any{"type": "string", "enum": []string{"rename", "add-field", "change-sig"}},
+			"args":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "the operation's arguments"},
+			"dir":     map[string]any{"type": "string", "description": "directory checked and edited (default .)"},
+			"dry_run": map[string]any{"type": "boolean", "description": "check the edit without writing files"},
+		}, []string{"op", "args"}, toolEdit)
 	register("explain", "Long form explanation of a diagnostic code: title, summary, detail, example, fix.",
 		map[string]any{"code": map[string]any{"type": "string", "description": "diagnostic code such as XO0201 (or 0201)"}},
 		[]string{"code"}, toolExplain)
@@ -355,6 +362,38 @@ func toolQuery(s *Server, args map[string]any) (any, error) {
 	code, out, stderr := s.exec(cl...)
 	if code != 0 {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(stderr))
+	}
+	return json.RawMessage(bytes.TrimSpace(out)), nil
+}
+
+func toolEdit(s *Server, args map[string]any) (any, error) {
+	op, err := strArg(args, "op")
+	if err != nil {
+		return nil, err
+	}
+	rest, err := strsArg(args, "args", nil)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := strArg(args, "dir")
+	if err != nil {
+		return nil, err
+	}
+	dry, err := boolArg(args, "dry_run")
+	if err != nil {
+		return nil, err
+	}
+	cl := []string{"edit"}
+	if dir != "" {
+		cl = append(cl, "--dir="+dir)
+	}
+	if dry {
+		cl = append(cl, "--dry-run")
+	}
+	cl = append(append(cl, op, "--"), rest...)
+	code, out, stderr := s.exec(cl...)
+	if code == 2 {
+		return nil, usageErr(code, stderr)
 	}
 	return json.RawMessage(bytes.TrimSpace(out)), nil
 }

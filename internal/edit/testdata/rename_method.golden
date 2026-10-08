@@ -1,0 +1,44 @@
+{
+  "op": "rename",
+  "target": "users.User.display_name",
+  "ok": true,
+  "written": true,
+  "files": [
+    "api/api.xo",
+    "users/users.xo"
+  ],
+  "edits": 3,
+  "diagnostics": []
+}
+-- api/api.xo --
+use example.com/app/users
+
+pub fn get(id: Int) -> Str {
+  let u = users.fetch_user(id)
+  let v = users.lookup(id, "x")
+  let w = users.lookup(name: "y", id: users.MAX_ID)
+  let f = users.fetch_user
+  u.label() + v.label() + w.name + f(2).name
+}
+-- users/users.xo --
+pub struct User {
+  pub id: Int
+  pub name: Str
+}
+
+pub const MAX_ID: Int = 1000
+
+pub fn fetch_user(id: Int) -> User {
+  User{id: id, name: "u"}
+}
+
+pub fn (u: User) label() -> Str {
+  u.name
+}
+
+pub fn lookup(id: Int, name: Str) -> User {
+  User{
+    id: id,
+    name: name,
+  }
+}

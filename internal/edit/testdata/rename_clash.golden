@@ -1,0 +1,65 @@
+{
+  "op": "rename",
+  "target": "users.fetch_user",
+  "ok": false,
+  "written": false,
+  "reason": "the edited program does not check clean",
+  "files": [
+    "api/api.xo",
+    "users/users.xo"
+  ],
+  "edits": 3,
+  "diagnostics": [
+    {
+      "code": "XO0403",
+      "severity": "error",
+      "message": "too many arguments to `lookup`: it takes 1",
+      "span": {
+        "file": "api/api.xo",
+        "line": 5,
+        "col": 28,
+        "end_line": 5,
+        "end_col": 31
+      },
+      "notes": [],
+      "fixes": []
+    },
+    {
+      "code": "XO0403",
+      "severity": "error",
+      "message": "`lookup` has no parameter named `name`",
+      "span": {
+        "file": "api/api.xo",
+        "line": 6,
+        "col": 24,
+        "end_line": 6,
+        "end_col": 28
+      },
+      "notes": [],
+      "fixes": []
+    },
+    {
+      "code": "XO0603",
+      "severity": "error",
+      "message": "`lookup` is already declared in this module",
+      "span": {
+        "file": "users/users.xo",
+        "line": 16,
+        "col": 8,
+        "end_line": 16,
+        "end_col": 14
+      },
+      "notes": [
+        {
+          "message": "previous declaration",
+          "span": {
+            "file": "users/users.xo",
+            "line": 8,
+            "col": 8
+          }
+        }
+      ],
+      "fixes": []
+    }
+  ]
+}

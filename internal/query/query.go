@@ -225,7 +225,8 @@ type Def struct {
 	Signature string `json:"signature"`
 	Doc       string `json:"doc,omitempty"`
 
-	fn *check.FuncObj
+	fn  *check.FuncObj
+	obj check.Object
 }
 
 // Def returns the declarations name refers to: `name`, `Type.member`,
@@ -237,6 +238,19 @@ func (s *Session) Def(name string) ([]Def, error) {
 		return nil, fmt.Errorf("%q does not name a declaration in the checked modules", name)
 	}
 	return defs, nil
+}
+
+// Objects returns the checker objects (functions, methods, types, and
+// constants) that name refers to, resolved as by Def. Fields and variants
+// are not objects and are left out.
+func (s *Session) Objects(name string) []check.Object {
+	var out []check.Object
+	for _, d := range s.resolve(name) {
+		if d.obj != nil {
+			out = append(out, d.obj)
+		}
+	}
+	return out
 }
 
 func (s *Session) resolve(name string) []Def {
@@ -372,7 +386,7 @@ func docText(d *ast.Doc) string {
 }
 
 func (s *Session) fnDef(f *check.FuncObj) Def {
-	d := Def{Kind: "fn", Name: f.DisplayName(), Module: f.Module.Path, Pos: posOf(f.Span), fn: f}
+	d := Def{Kind: "fn", Name: f.DisplayName(), Module: f.Module.Path, Pos: posOf(f.Span), fn: f, obj: f}
 	if f.Recv != nil {
 		d.Kind = "method"
 	}
@@ -389,7 +403,7 @@ func (s *Session) fnDef(f *check.FuncObj) Def {
 var typeKinds = map[check.TypeKind]string{check.KStruct: "struct", check.KEnum: "enum", check.KInterface: "interface", check.KAlias: "alias", check.KNewtype: "newtype"}
 
 func (s *Session) typeDef(t *check.TypeObj) Def {
-	d := Def{Kind: typeKinds[t.Kind], Name: t.Name, Module: t.Module.Path, Pos: posOf(t.Span)}
+	d := Def{Kind: typeKinds[t.Kind], Name: t.Name, Module: t.Module.Path, Pos: posOf(t.Span), obj: t}
 	if decl, ok := t.Decl().(ast.Decl); ok && decl != nil {
 		if file := fileOf(t.Module, decl.Span().File); file != nil {
 			d.Signature = format.Decl(decl, file.Src, true)
@@ -400,7 +414,7 @@ func (s *Session) typeDef(t *check.TypeObj) Def {
 }
 
 func (s *Session) constDef(c *check.ConstObj) Def {
-	d := Def{Kind: "const", Name: c.Name, Module: c.Module.Path}
+	d := Def{Kind: "const", Name: c.Name, Module: c.Module.Path, obj: c}
 	if c.Decl != nil {
 		d.Pos = posOf(c.Decl.Name.Sp)
 		d.Doc = docText(c.Decl.Doc)

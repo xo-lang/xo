@@ -1,0 +1,33 @@
+{
+  "op": "change-sig",
+  "target": "users.fetch_user",
+  "ok": true,
+  "written": true,
+  "files": [
+    "users/users.xo"
+  ],
+  "edits": 2,
+  "diagnostics": []
+}
+-- users/users.xo --
+pub struct User {
+  pub id: Int
+  pub name: Str
+}
+
+pub const MAX_ID: Int = 1000
+
+pub fn fetch_user(uid: Int) -> User {
+  User{id: uid, name: "u"}
+}
+
+pub fn (u: User) display_name() -> Str {
+  u.name
+}
+
+pub fn lookup(id: Int, name: Str) -> User {
+  User{
+    id: id,
+    name: name,
+  }
+}

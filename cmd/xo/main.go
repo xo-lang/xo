@@ -1,6 +1,6 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
 // `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo fix`, `xo vet`,
-// `xo query`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
+// `xo query`, `xo edit`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
 // and `xo serve`.
 package main
 
@@ -80,6 +80,15 @@ commands:
       Semantic queries (core 10.3): type <file:line:col>, def <name>,
       callers <module.fn>, effects <module.fn>, holes, api <module path>.
       JSON is the default when stdout is not a terminal.
+  edit [--dry-run] [--dir=<dir>] <op> <args...>
+      Semantic edits (core 10.4) through the checker's resolved symbols:
+        rename <name> <new name>           function, method, or constant
+        add-field <Struct> <name: Type = default>
+        change-sig <fn> "(params) -> Result ! Err"
+      Every reference is rewritten at once, and the edit is rejected
+      (nothing written, exit 1) unless the program checks clean before and
+      after it; the JSON summary lists the files, the diagnostics, or the
+      call sites that blocked it. Default dir: .
   doc [--json] [--all] [--dir=<dir>] [module dir or import path]
       Markdown documentation from doc comments and signatures, with the
       example code blocks of each doc comment. Default: the modules under .
@@ -104,7 +113,7 @@ commands:
       environment (the recorded variable, or XO_REPLAY_SECRET_<n>).
   mcp
       Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one
-      message per line) with the tools check, query, explain, fmt, test,
+      message per line) with the tools check, query, edit, explain, fmt, test,
       and build, each returning compact JSON.
   serve [--socket=path] [stop|status]
       Keep checked programs in memory and answer xo check and xo query over
@@ -141,6 +150,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runFix(args[1:], stdout, stderr)
 	case "query":
 		return runQuery(args[1:], stdout, stderr)
+	case "edit":
+		return runEdit(args[1:], stdout, stderr)
 	case "doc":
 		return runDoc(args[1:], stdout, stderr)
 	case "explain":
