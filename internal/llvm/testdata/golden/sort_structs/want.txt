@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+21 p11 58.9
+22 p0 32.6
+22 p10 80.4
+22 p9 73.5
+23 p3 78.9
+23 p6 24.8
+24 p4 81.8
+24 p7 96.1
+26 p1 26.3
+26 p2 2.8
+26 p5 32.3
+26 p8 7.8
+original first p0 sorted first p11
+1 2 9 unchanged 5
+--- stderr

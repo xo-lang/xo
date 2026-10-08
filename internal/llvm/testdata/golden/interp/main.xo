@@ -1,0 +1,60 @@
+enum Op {
+  Push(v: Int)
+  Add
+  Mul
+  Dup
+  Swap
+  Pop
+  JumpIfPos(to: Int)
+  Dec
+}
+
+fn run(prog: List[Op]) -> Int {
+  var stack: List[Int] = []
+  var pc = 0
+  var steps = 0
+  while pc < prog.len() {
+    steps += 1
+    match prog[pc] {
+      Push(v) => stack.push(v)
+      Add => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(a + b)
+      }
+      Mul => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(a * b)
+      }
+      Dup => stack.push(stack.last() ?? 0)
+      Swap => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(b)
+        stack.push(a)
+      }
+      Pop => {
+        let _ = stack.pop()
+      }
+      JumpIfPos(to) => {
+        let top = stack.last() ?? 0
+        if top > 0 {
+          pc = to - 1
+        }
+      }
+      Dec => {
+        let a = stack.pop() ?? 0
+        stack.push(a - 1)
+      }
+    }
+    pc += 1
+  }
+  (stack.last() ?? 0) * 1000 + steps % 1000
+}
+
+fn main(os: Os) {
+  // acc = 0; n = 10; loop: acc += n; n -= 1 while n > 0
+  let prog = [Op.Push(0), Op.Push(10), Op.Dup, Op.Push(3), Op.Mul, Op.Swap, Op.Pop, Op.Swap, Op.Add, Op.Swap, Op.Dec, Op.JumpIfPos(2), Op.Pop]
+  os.stdio.println("result ${run(prog)}")
+}

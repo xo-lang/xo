@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+eval -10 fib 75025 ack 9 even true true
+deep 1000000 built 500501
+eq true false
+--- stderr

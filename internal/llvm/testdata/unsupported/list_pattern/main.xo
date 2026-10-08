@@ -1,0 +1,10 @@
+fn head(xs: List[Int]) -> Int {
+  match xs {
+    [first, ..] => first
+    [] => 0
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${head([3])}")
+}

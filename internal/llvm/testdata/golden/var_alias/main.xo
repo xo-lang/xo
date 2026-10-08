@@ -1,0 +1,14 @@
+fn append_all(var dst: List[Int], src: List[Int]) -> Int {
+  var seen = 0
+  for x in src {
+    dst.push(x)
+    seen += src.len()
+  }
+  seen
+}
+
+fn main(os: Os) {
+  var xs = [1, 2, 3]
+  let seen = append_all(xs, xs)
+  os.stdio.println("${xs.len()} ${seen}")
+}

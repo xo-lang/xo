@@ -1,0 +1,21 @@
+fn shout(s: Str) -> Str { s + "!" }
+
+fn main(os: Os) {
+  let a = "hello"
+  let b = a + ", " + "world"
+  os.stdio.println(shout(b))
+  os.stdio.println("len ${b.len()} empty ${"".is_empty()} ${a.is_empty()}")
+  os.stdio.println("eq ${a == "hello"} ${a != "hello"} lt ${"abc" < "abd"} ${"b" > "abc"} ${"ab" < "abc"} ${"x" <= "x"}")
+  os.stdio.println("nested ${"a${"b${1 + 1}"}c"} price: \$${5} braces {literal}")
+  os.stdio.println("tab\there quote \" backslash \\ unicode é ✓")
+  os.stdio.print("no newline")
+  os.stdio.println("")
+  let raw = r"no ${interp} \n here"
+  os.stdio.println(raw)
+  var acc = ""
+  for i in 0..5 {
+    acc = acc + "${i}"
+  }
+  os.stdio.println(acc)
+  os.stdio.eprintln("to stderr")
+}

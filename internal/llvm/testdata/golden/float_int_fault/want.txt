@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+1.5 -> 1
+1.5e+06 -> 1500000
+1.5e+12 -> 1500000000000
+1.5e+18 -> 1500000000000000000
+--- stderr
+fault: 1.5e+24 is out of range for Int at main.xo:1:30

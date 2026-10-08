@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+3 -3
+100 / 3 = 33
+100 / 2 = 50
+100 / 1 = 100
+--- stderr
+fault: division by zero: 100 / 0 at main.xo:1:35

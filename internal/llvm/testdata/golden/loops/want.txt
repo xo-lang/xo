@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+found 607
+odd 100
+n 5 inc 10 top 9223372036854775807 tri 15 w 12
+--- stderr

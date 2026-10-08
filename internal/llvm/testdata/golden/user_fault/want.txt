@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+balance 70
+--- stderr
+fault: insufficient funds in account 7: 70 < 80 at main.xo:8:5

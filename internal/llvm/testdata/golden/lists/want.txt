@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+len 10 sum 285 xs[3] 9
+after -1 11 snapshot 9 10
+ys 12 100 xs 11
+grid 42 copy 4 6
+items 2 1 20 2
+copied 3 2
+indexed 2065
+grow 6 30
+set 5 eq true false empty false
+--- stderr

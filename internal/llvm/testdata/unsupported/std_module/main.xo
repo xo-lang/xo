@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let t = os.clock.now()
+  os.stdio.println("started")
+  let _ = t
+}

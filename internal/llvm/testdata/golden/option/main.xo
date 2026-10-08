@@ -1,0 +1,47 @@
+struct User {
+  name: Str
+  email: Str?
+}
+
+fn find(users: List[User], name: Str) -> User? {
+  for u in users {
+    if u.name == name {
+      return u
+    }
+  }
+  None
+}
+
+fn email_domain_len(users: List[User], name: Str) -> Int? {
+  let u = find(users, name)?
+  let e = u.email?
+  e.len()
+}
+
+fn main(os: Os) {
+  let users = [User{name: "ann", email: "ann@x.io"}, User{name: "bob", email: None}]
+  os.stdio.println("${email_domain_len(users, "ann") ?? -1} ${email_domain_len(users, "bob") ?? -1} ${email_domain_len(users, "cy") ?? -1}")
+  if let Some(u) = find(users, "bob") {
+    os.stdio.println("found ${u.name} has email ${u.email.is_some()}")
+  }
+  if let u = find(users, "zed") {
+    os.stdio.println("unexpected ${u.name}")
+  } else {
+    os.stdio.println("no zed")
+  }
+  var xs = [3, 1, 4]
+  let last = xs.pop()
+  os.stdio.println("pop ${last ?? 0} len ${xs.len()} first ${xs.first() ?? 0} last ${xs.last() ?? 0} get ${xs.get(5) ?? 99}")
+  var empty: List[Int] = []
+  os.stdio.println("empty pop ${empty.pop().is_none()} ${empty.first() ?? -7}")
+  let maybe: Int? = 5
+  match maybe {
+    Some(n) if n > 3 => os.stdio.println("big ${n}")
+    Some(n) => os.stdio.println("small ${n}")
+    None => os.stdio.println("none")
+  }
+  let nested: Option[Int?] = Some(None)
+  os.stdio.println("nested ${nested is Some(None)} ${maybe == 5} ${maybe != None}")
+  let n = find(users, "nobody").or_fault("user must exist")
+  os.stdio.println("never ${n.name}")
+}

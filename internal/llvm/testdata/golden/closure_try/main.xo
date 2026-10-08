@@ -1,0 +1,31 @@
+enum E {
+  Bad(n: Int)
+}
+
+fn run(f: fn(Int) -> Int ! E, x: Int) -> Int ! E {
+  let v = f(x)?
+  v + 1
+}
+
+fn main(os: Os) {
+  let check = fn(n: Int) -> Int ! E {
+    if n < 0 {
+      return Err(E.Bad(n: n))
+    }
+    n * 2
+  }
+  let half = fn(n: Int) -> Int? {
+    if n % 2 == 1 {
+      return None
+    }
+    n / 2
+  }
+  let both = fn(n: Int) -> Int? { half(half(n)?)? + 1 }
+  for x in [4, -3, 6] {
+    match run(check, x) {
+      Ok(v) => os.stdio.println("ok ${v}")
+      Err(Bad(n)) => os.stdio.println("bad ${n}")
+    }
+  }
+  os.stdio.println("${both(8) ?? -1} ${both(6) ?? -1} ${both(3) ?? -1}")
+}

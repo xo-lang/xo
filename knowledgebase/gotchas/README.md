@@ -65,3 +65,10 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [stale-wakeup-after-early-leave.md](stale-wakeup-after-early-leave.md): a wake up landing after a task left its wait would skip its next block; waits end only after their wakers are claimed or done.
 - [runtime-callers-per-block-cost.md](runtime-callers-per-block-cost.md): `runtime.Callers` on every block doubled channel handoff cost; real runs recover call sites from the goroutine profile instead.
 - [scope-last-statement-line-directive.md](scope-last-statement-line-directive.md): the last statement of a scope body reported the next line (`pre` written after its `//line`); fixed in codegen.
+- [macos-clt-sdk-link-failure.md](macos-clt-sdk-link-failure.md): clang fails to link with the Command Line Tools SDK 27 ("unknown architecture arm64e.x1"); `xo build --backend=llvm` tries other SDKs and remembers the one that links.
+- [go-backend-list-set-quadratic.md](go-backend-list-set-quadratic.md): `xs[i] = x` copies the whole list on the Go backend, so element write loops are O(n^2) (a 10M sieve did not finish in 10 minutes); benchmarks need a timeout.
+- [go-negative-zero-literal.md](go-negative-zero-literal.md): `-0.0` is a Go constant without a sign, so the Go backend prints `0.0` where the LLVM backend prints `-0.0`.
+- [llvm-format-verb-in-ssa-name.md](llvm-format-verb-in-ssa-name.md): SSA names like `%t3` concatenated into a format string are read as verbs; pass them as arguments.
+- [llvm-list-write-cost.md](llvm-list-write-cost.md): out of line list write helpers made LLVM builds 2 to 5x slower than Go; inline fast paths, TBAA tags, and a per block uniqueness cache fixed it.
+- [llvm-borrow-and-var-alias.md](llvm-borrow-and-var-alias.md): a list passed both as `var` and by value aliased in the LLVM backend; by value arguments of calls with `var` parameters are retained.
+- [go-backend-tuple-arity.md](go-backend-tuple-arity.md): tuples longer than six elements pass `xo check` but fail the Go build (`rt.Tuple11` undefined).

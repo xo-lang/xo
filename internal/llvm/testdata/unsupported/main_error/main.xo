@@ -1,0 +1,9 @@
+enum E {
+  Bad
+}
+
+fn f() -> Int ! E { Err(E.Bad) }
+
+fn main(os: Os) ! E {
+  os.stdio.println("${f()?}")
+}

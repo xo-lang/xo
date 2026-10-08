@@ -1,0 +1,1 @@
+main.xo:7:1: the LLVM backend does not support `main` that returns an error

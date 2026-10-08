@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+3 2 10 hey 0
+t 2 1
+0=n0
+1=n1
+2=n2
+range -2..9
+none true true
+--- stderr

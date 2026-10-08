@@ -61,4 +61,12 @@ Accept, amend, or reject this record based on those results.
   about 2x Go per request, so Go keeps higher throughput. The claim "beat Go on
   allocation heavy request handling" is not supported in P1 yet; the next lever
   is fewer allocations per request (unique value reuse, queue item 9h).
+- LLVM backend prototype (2026-10-08, `bench/results/llvm-prototype-2026-10-08.md`),
+  ms, Go / Xo via Go backend / Xo via LLVM -O2: fib 225/224/231, sieve
+  111/>60000/113, nbody 162/18760/183, sort 267/>60000/232, interp
+  144/583/67, collatz 491/601/490. LLVM Xo is at or near Go on compute and
+  beats it on sort and the interpreter loop (a hand tuned Go interpreter runs
+  in 30 ms), with a bump allocator that never frees (up to 2.9x Go's memory).
+  The Go backend's catastrophic cases are O(n) list element writes, a bug, not
+  a language limit.
 

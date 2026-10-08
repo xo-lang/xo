@@ -1,0 +1,74 @@
+struct Person {
+  name: Str
+  age: Int
+  score: Float
+}
+
+fn swap(var xs: List[Person], i: Int, j: Int) {
+  let t = xs[i]
+  xs[i] = xs[j]
+  xs[j] = t
+}
+
+fn less(a: Person, b: Person) -> Bool {
+  if a.age != b.age {
+    return a.age < b.age
+  }
+  a.name < b.name
+}
+
+fn quicksort(var xs: List[Person], lo: Int, hi: Int) {
+  if lo >= hi {
+    return
+  }
+  let pivot = xs[(lo + hi) / 2]
+  var i = lo
+  var j = hi
+  while i <= j {
+    while less(xs[i], pivot) {
+      i += 1
+    }
+    while less(pivot, xs[j]) {
+      j -= 1
+    }
+    if i <= j {
+      swap(xs, i, j)
+      i += 1
+      j -= 1
+    }
+  }
+  quicksort(xs, lo, j)
+  quicksort(xs, i, hi)
+}
+
+fn insertion(xs: List[Int]) -> List[Int] {
+  var out = xs
+  for i in 1..out.len() {
+    var j = i
+    while j > 0 && out[j - 1] > out[j] {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      j -= 1
+    }
+  }
+  out
+}
+
+fn main(os: Os) {
+  var people: List[Person] = []
+  var seed = 17
+  for i in 0..12 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    people.push(Person{name: "p${i}", age: 20 + seed % 7, score: Float(seed % 1000) / 10.0})
+  }
+  let original = people
+  quicksort(people, 0, people.len() - 1)
+  for p in people {
+    os.stdio.println("${p.age} ${p.name} ${p.score}")
+  }
+  os.stdio.println("original first ${original[0].name} sorted first ${people[0].name}")
+  let xs = [5, 2, 9, 1, 5, 6]
+  let ys = insertion(xs)
+  os.stdio.println("${ys[0]} ${ys[1]} ${ys[5]} unchanged ${xs[0]}")
+}

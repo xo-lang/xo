@@ -11,6 +11,14 @@ Last verified: 2026-10-08
   (`benchtask`, `*.exe`, `*.test`, `bin/`, `dist/`), logs, and editor files.
 - `go test ./...` needs a C toolchain for the race detector tests (skipped
   when `go env CGO_ENABLED` is 0).
+- clang (2026-10-08): Apple clang 21.0.0 at `/usr/bin/clang` (Xcode 26.5
+  toolchain), used by the LLVM backend prototype (`xo build
+  --backend=llvm`, see "LLVM backend (P3 prototype)"). `llc` and `opt` are
+  not installed; clang compiles `.ll` files directly. The Command Line
+  Tools SDK that clang uses by default (MacOSX27.0.sdk) does not link
+  with this linker; the build falls back to the Xcode SDK
+  (`gotchas/macos-clt-sdk-link-failure.md`). The LLVM tests skip when no
+  clang is found (`$XO_CLANG`, then PATH).
 
 ## Go module
 
@@ -35,8 +43,8 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [dir...]
-go run ./cmd/xo run [--seed=N] [--holes] [--no-mono] [--arenas] [dir] [-- args...]
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [--backend=go|llvm] [dir...]
+go run ./cmd/xo run [--seed=N] [--holes] [--no-mono] [--arenas] [--backend=go|llvm] [dir] [-- args...]
 go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
@@ -47,6 +55,7 @@ go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
+go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go test -short ./...                                    # skips the race, cross compile, and CLI build tests
@@ -54,6 +63,7 @@ go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmar
 bench/perf/run.sh                                       # Xo vs Go collection and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
+bench/perf/llvm/run.sh                                  # compute workloads: Go vs Xo (Go backend) vs Xo --backend=llvm
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -299,6 +309,18 @@ Last verified: 2026-10-07
   build directory), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
   `bench/results/perf-arenas-2026-10-08.md`.
+- `bench/perf/llvm/run.sh` (2026-10-08): the LLVM backend prototype
+  against the Go backend and hand written Go on compute workloads in the
+  LLVM subset (`fib sieve nbody sort interp collatz`). Each Xo workload
+  is its own program (`xo/<name>/main.xo`, the subset has no arguments or
+  clock); `go/` (own module) is one binary `llperf <name>`, plus
+  `llperf interp_tuned` (a tuned interpreter, not part of the script).
+  Wall clock time per process, best of `REPS` (5); a run longer than
+  `TIMEOUT` seconds (60) is stopped and shown as `>60000`, needed because
+  the Go backend's list element writes are O(n)
+  (`gotchas/go-backend-list-set-quadratic.md`). Checksums must agree.
+  Needs python3 for timing. `XO`, `PERF_OUT`, `WORKLOADS` as in
+  `bench/perf/run.sh`. Results: `bench/results/llvm-prototype-2026-10-08.md`.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -319,13 +341,16 @@ internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901
 internal/query/         `xo query` over a check run; Surface is shared with internal/doc
 internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")
-internal/build/         check, generate, write the build directory, `go build` per target
+internal/build/         check, generate, write the build directory, `go build` per target;
+                        llvm.go: the LLVM backend build (IR + std/llrt runtime -> clang)
+internal/llvm/          P3 prototype: LLVM IR for a core subset (see "LLVM backend (P3 prototype)")
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
                         path.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
+std/llrt/               xo_rt.c, the C runtime of the LLVM backend (embedded as std.LLRuntime)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
@@ -406,6 +431,10 @@ Parser tests live in `internal/parser`:
 `//line` directives) -> build directory with the runtime -> `go build` with
 `GOOS`/`GOARCH` per target and `CGO_ENABLED=0` -> static binaries. All stages
 are implemented. Last verified: 2026-10-07.
+
+With `--backend=llvm` (2026-10-08): checker -> LLVM IR (internal/llvm) ->
+`<build dir>/llvm/prog.ll` plus `xo_rt.c` -> `clang -O2 -flto` -> one host
+binary. The build directory keeps `prog.ll` for inspection.
 
 ## Code generation
 
@@ -528,6 +557,72 @@ Last verified: 2026-10-08. Rules and choices; details in
 - The std structs, enums, and interfaces are generated into
   `std/rt/std_gen.go` by `gen.StdTypes`; `TestStdTypes` fails when it is
   stale. Opaque std handles and every std function are hand written in rt.
+
+## LLVM backend (P3 prototype)
+
+Last verified: 2026-10-08. Experiment for decision 0040 ("own backend");
+results and design: `bench/results/llvm-prototype-2026-10-08.md`.
+
+- `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
+  programs only (not `xo test`), no `--race`, `--arenas`, `--holes`,
+  `--targets` other than the host. `build.Options.Backend`.
+- internal/llvm emits textual IR from the checker's typed AST (the same
+  `check.Info` accessors internal/gen uses: `TypeOf`, `NaturalType`,
+  `VarOf`, `Ref`, `Ctor`, `CallOf`, `PatVariant`, `PatType`,
+  `ParamVars`, `RecvVar`, `ClosureParams`, `FromVariant`). Functions are
+  emitted on demand from `main` (worklist), generic functions once per
+  concrete type arguments. Anything outside the subset is an error naming
+  the construct and its position ("the LLVM backend does not support
+  ..."); only reachable functions are checked.
+- Subset: Int, Bool, Float, Str (literals, interpolation of Int, Float,
+  Bool, Str; `+`, comparisons, `len`, `is_empty`), `os.stdio.print`,
+  `println`, `eprint`, `eprintln`, structs (defaults, `with`, methods,
+  `var` receivers), enums with payloads, Option, Result, tuples, `match`,
+  `if let`, `is` (patterns: `_`, bindings, literals, ranges, `|`, tuples,
+  variants positional, named, and `..`, structs; not list patterns),
+  `if`, `while`, labeled `break`/`continue`, `for` over `a..b`, `a..=b`,
+  a List, and `xs.indexed()`, functions, recursion, generic functions and
+  types, closures (capture by value), function values, `List[T]` (literal,
+  `push`, `pop`, `get`, `set`, `first`, `last`, `len`, `is_empty`, index,
+  index assignment, `==`), `?` on Result (with `from` conversion) and
+  Option, `??`, `fault`, `or_fault` on Option, `const`, `Int.abs`,
+  `min`/`max`, Float `sqrt floor ceil trunc round abs is_nan`,
+  `Float(i)`, `Int(f)`.
+- Lowering: Int i64, Bool i1, Float double, Str `{ptr, i64}`, `()` and
+  capabilities `{}`, structs named LLVM structs, tuples literal structs,
+  enums `{i64 tag, [N x i64]}` with the payload read and written through
+  memory as the variant's struct, List a pointer to `{len, cap, shared}`
+  plus elements, function values `{code, env}`. Recursive fields are boxed
+  (pointer to an immutable heap copy, copied on write). Every binding is
+  an alloca. A failing function returns its Result enum. Checked Int
+  operations use `llvm.s*.with.overflow` and cold fault calls; operations
+  `gen.SafeIntOps` (the range analysis of internal/gen, exported) proves
+  safe are plain `add nsw` and so on.
+- Lists keep value semantics with a sticky shared flag instead of
+  reference counts: copying a list out of a binding, field, element, or
+  pattern ("own") sets the flag on the buffers it holds (generated
+  `retain:<type>` helpers walk structs and enums); a write through a
+  binding whose buffer is shared copies it first (`xo_list_unshare`,
+  `xo_list_grow`). Arguments to non `var` parameters are borrowed (not
+  marked), except in calls that also have a `var` parameter
+  (`gotchas/llvm-borrow-and-var-alias.md`). Write fast paths are inline
+  IR with TBAA tags and a per block uniqueness cache
+  (`gotchas/llvm-list-write-cost.md`).
+- Runtime `std/llrt/xo_rt.c`: bump allocator over 4 MiB chunks, never
+  freed; buffered stdout; fault messages identical to std/rt's and exit
+  status 70; Go style float formatting (shortest round trip `'g'`, `.0`
+  appended); string builder for interpolation; list copy helpers; `main`
+  runs the program on a thread with a 1 GiB stack. The C interface passes
+  only scalars and pointers.
+- Fault locations are `file:line:col` strings in the binary (no DWARF).
+  Fault output has no Go frame lines and no crash bundle; the golden test
+  compares fault messages after dropping those lines.
+- Tests: `internal/llvm/llvm_test.go`. TestGolden builds each program in
+  `testdata/golden/` with the Go backend and the LLVM backend (with and
+  without the range analysis) and requires equal exit status, stdout, and
+  fault messages, also matching `want.txt`. TestUnsupported checks the
+  error for constructs outside the subset (`testdata/unsupported/`).
+  `cmd/xo/llvm_test.go` drives the CLI.
 
 ## Go interop (prototype)
 
@@ -675,6 +770,14 @@ Last verified: 2026-10-08.
   helpers and `go.Error`, 2026-10-08).
 
 ## Known gaps (2026-10-08)
+
+- LLVM backend prototype (2026-10-08): the subset above only (no Map,
+  Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
+  structs, `defer`, contracts, tasks, std modules, `use go`, `xo test`);
+  no memory reclamation (bump allocator; a list buffer once copied stays
+  shared, so the first write after every copy clones it); no error
+  traces, crash bundles, or debug info; host only. What a full backend
+  needs is listed in `bench/results/llvm-prototype-2026-10-08.md`.
 
 - Deterministic scheduling (2026-10-08): a loop with no scheduling point
   keeps the turn forever (`gotchas/busy-loop-starves-deterministic-scheduler.md`);

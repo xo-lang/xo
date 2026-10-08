@@ -1,0 +1,43 @@
+fn make_adder(n: Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { x + n }
+}
+
+fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int { f(f(x)) }
+
+fn compose(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int {
+  fn(a: Int) -> Int { g(f(a)) }
+}
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn sum_with(xs: List[Int], f: fn(Int) -> Int) -> Int {
+  var t = 0
+  for x in xs {
+    t += f(x)
+  }
+  t
+}
+
+fn main(os: Os) {
+  var counter = 1
+  let read = fn() -> Int { counter * 10 }
+  counter = 5
+  os.stdio.println("captured by value: ${read()} now ${counter}")
+  let add5 = make_adder(5)
+  os.stdio.println("adder ${add5(1)} twice ${apply_twice(add5, 0)}")
+  let f = compose(double, fn(x: Int) -> Int { x + 1 })
+  os.stdio.println("compose ${f(21)}")
+  os.stdio.println("fn value ${apply_twice(double, 3)}")
+  let fs = [double, add5, fn(x: Int) -> Int { x - 1 }]
+  var out: List[Int] = []
+  for g in fs {
+    out.push(g(10))
+  }
+  os.stdio.println("list of fns ${out[0]} ${out[1]} ${out[2]}")
+  let base = [1, 2, 3]
+  let scale = 7
+  os.stdio.println("sum_with ${sum_with(base, fn(x) { x * scale })}")
+  let names = ["a", "bb"]
+  let greet = fn(i: Int) -> Str { "hi ${names[i]}" }
+  os.stdio.println(greet(1))
+}

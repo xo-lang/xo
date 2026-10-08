@@ -1,0 +1,61 @@
+// Quicksort of a List of structs through a `var` parameter: element
+// reads and writes in place.
+struct Rec {
+  key: Int
+  id: Int
+  weight: Float
+}
+
+fn less(a: Rec, b: Rec) -> Bool {
+  if a.key != b.key {
+    return a.key < b.key
+  }
+  a.id < b.id
+}
+
+fn quicksort(var xs: List[Rec], lo: Int, hi: Int) {
+  if lo >= hi {
+    return
+  }
+  let pivot = xs[lo + (hi - lo) / 2]
+  var i = lo
+  var j = hi
+  while i <= j {
+    while less(xs[i], pivot) {
+      i += 1
+    }
+    while less(pivot, xs[j]) {
+      j -= 1
+    }
+    if i <= j {
+      let t = xs[i]
+      xs[i] = xs[j]
+      xs[j] = t
+      i += 1
+      j -= 1
+    }
+  }
+  quicksort(xs, lo, j)
+  quicksort(xs, i, hi)
+}
+
+fn main(os: Os) {
+  var sum = 0
+  var seed = 42
+  for round in 0..3 {
+    var xs: List[Rec] = []
+    for i in 0..1000000 {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      xs.push(Rec{key: seed % 100000, id: i, weight: Float(i % 97) * 0.5})
+    }
+    quicksort(xs, 0, xs.len() - 1)
+    var ok = 1
+    for i in 1..xs.len() {
+      if less(xs[i], xs[i - 1]) {
+        ok = 0
+      }
+    }
+    sum += xs[0].key + xs[500000].id + xs[999999].key + ok * (round + 1)
+  }
+  os.stdio.println("sort ${sum}")
+}

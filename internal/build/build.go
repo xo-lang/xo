@@ -84,6 +84,9 @@ type Options struct {
 	// Arenas turns on request scoped arenas (gen.Options.Arenas,
 	// `--arenas`).
 	Arenas bool
+	// Backend is "go" (the default, P1) or "llvm" (the P3 prototype,
+	// internal/llvm: IR compiled by clang; host only, programs only).
+	Backend string
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }
@@ -132,6 +135,13 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if !ok {
 		out.Failed = true
 		return out, nil
+	}
+	switch opts.Backend {
+	case "", BackendGo:
+	case BackendLLVM:
+		return buildLLVM(dirs, res, out, opts)
+	default:
+		return nil, fmt.Errorf("unknown backend %q (want go or llvm)", opts.Backend)
 	}
 	root := lineRoot(dirs)
 	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: opts.Arenas})

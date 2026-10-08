@@ -1,0 +1,10 @@
+fn ratio(a: Int, b: Int) -> Int { a / b }
+
+fn main(os: Os) {
+  os.stdio.println("${ratio(10, 3)} ${-7 / 2}")
+  var d = 3
+  while d >= 0 {
+    os.stdio.println("100 / ${d} = ${ratio(100, d)}")
+    d -= 1
+  }
+}

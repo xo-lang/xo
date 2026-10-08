@@ -1,0 +1,46 @@
+enum Expr {
+  Num(n: Int)
+  Add(a: Expr, b: Expr)
+  Mul(a: Expr, b: Expr)
+  Neg(e: Expr)
+}
+
+fn eval(e: Expr) -> Int {
+  match e {
+    Num(n) => n
+    Add(a, b) => eval(a) + eval(b)
+    Mul(a, b) => eval(a) * eval(b)
+    Neg(x) => -eval(x)
+  }
+}
+
+fn fib(n: Int) -> Int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn ack(m: Int, n: Int) -> Int {
+  if m == 0 {
+    return n + 1
+  }
+  if n == 0 {
+    return ack(m - 1, 1)
+  }
+  ack(m - 1, ack(m, n - 1))
+}
+
+fn is_even(n: Int) -> Bool { if n == 0 { true } else { is_odd(n - 1) } }
+
+fn is_odd(n: Int) -> Bool { if n == 0 { false } else { is_even(n - 1) } }
+
+fn depth(n: Int) -> Int { if n == 0 { 0 } else { 1 + depth(n - 1) } }
+
+fn build(n: Int) -> Expr {
+  if n == 0 { Expr.Num(1) } else { Expr.Add(a: build(n - 1), b: Expr.Num(n)) }
+}
+
+fn main(os: Os) {
+  let e = Expr.Add(a: Expr.Num(2), b: Expr.Mul(a: Expr.Num(3), b: Expr.Neg(Expr.Num(4))))
+  os.stdio.println("eval ${eval(e)} fib ${fib(25)} ack ${ack(2, 3)} even ${is_even(10)} ${is_odd(7)}")
+  os.stdio.println("deep ${depth(1000000)} built ${eval(build(1000))}")
+  os.stdio.println("eq ${Expr.Num(1) == Expr.Num(1)} ${e == build(2)}")
+}

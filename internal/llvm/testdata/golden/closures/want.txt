@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+captured by value: 10 now 5
+adder 6 twice 10
+compose 43
+fn value 12
+list of fns 20 15 9
+sum_with 42
+hi bb
+--- stderr

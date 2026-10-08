@@ -1,0 +1,26 @@
+fn ratio(a: Int, b: Int) -> Int { a / b }
+
+fn main(os: Os) {
+  os.stdio.println("${ratio(10, 3)} ${-7 / 2} ${-7 % 2} ${7 % -2} ${9223372036854775807 % -1}")
+  let a = 12
+  let b = 10
+  os.stdio.println("bits ${a & b} ${a | 3} ${a ^ 5} ${~0} ${1 << 10} ${-16 >> 2} ${1024 >> 3}")
+  os.stdio.println("cmp ${a < b} ${a <= 12} ${a > b} ${a >= 13} ${a == 12} ${a != 12}")
+  os.stdio.println("minmax ${3.min(7)} ${3.max(7)} ${(-5).abs()} ${2.5.min(1.5)}")
+  let f = 2.5
+  let whole = 3.0
+  let tiny = 0.000001
+  os.stdio.println("floats ${f} ${whole} ${tiny} ${1.0 / 3.0} ${1e21} ${1234567.0} ${123456.0} ${0.1 + 0.2}")
+  os.stdio.println("more ${100.0} ${1e-05} ${0.0001} ${2.0 / 0.0} ${-1.0 / 0.0} ${(0.0 / 0.0).is_nan()} ${7.5 % 2.0}")
+  os.stdio.println("math ${1.5.floor()} ${1.5.ceil()} ${2.5.round()} ${(-2.5).round()} ${16.0.sqrt()} ${(-3.25).abs()} ${3.75.trunc()}")
+  os.stdio.println("conv ${Float(7) / 2.0} ${Int(7.9)} ${Int(-7.9)} ${Int(2.0e18)}")
+  os.stdio.println("bool ${true && false} ${true || false} ${!true} ${a > 5 && b > 5}")
+  var x = 5
+  x += 10
+  x -= 3
+  x *= 4
+  x /= 5
+  x %= 7
+  os.stdio.println("compound ${x}")
+  os.stdio.println("min ${-9223372036854775807 - 1} max ${9223372036854775807}")
+}

@@ -1,0 +1,7 @@
+fn negate(x: Int) -> Int { -x }
+
+fn main(os: Os) {
+  let small = -9223372036854775807
+  os.stdio.println("${negate(5)} ${negate(small)}")
+  os.stdio.println("${negate(small - 1)}")
+}

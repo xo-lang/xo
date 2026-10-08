@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+tiny circle -> 12
+rect -> 12
+empty -> 0
+big circle -> 363
+tri from 3 -> 6
+square 5 -> 25
+A B zero negative other
+1 2 0
+eq true false is true true
+--- stderr

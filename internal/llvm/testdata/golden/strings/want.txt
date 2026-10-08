@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+hello, world!
+len 12 empty true false
+eq true false lt true true true true
+nested ab2c price: $5 braces {literal}
+tab	here quote " backslash \ unicode é ✓
+no newline
+no ${interp} \n here
+01234
+--- stderr
+to stderr

@@ -1,0 +1,9 @@
+fn to_int(f: Float) -> Int { Int(f) }
+
+fn main(os: Os) {
+  var x = 1.5
+  while x < 1e30 {
+    os.stdio.println("${x} -> ${to_int(x)}")
+    x = x * 1000000.0
+  }
+}

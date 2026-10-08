@@ -1,0 +1,8 @@
+struct P {
+  x: Int
+} derive Display
+
+fn main(os: Os) {
+  let p = P{x: 1}
+  os.stdio.println("p is ${p}")
+}

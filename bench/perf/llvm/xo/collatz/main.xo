@@ -1,0 +1,26 @@
+// Collatz step counts: a tight loop of checked Int arithmetic that the
+// range analysis cannot prove safe.
+fn steps(start: Int) -> Int {
+  var n = start
+  var s = 0
+  while n != 1 {
+    if n % 2 == 0 {
+      n = n / 2
+    } else {
+      n = 3 * n + 1
+    }
+    s += 1
+  }
+  s
+}
+
+fn main(os: Os) {
+  var total = 0
+  var best = 0
+  for i in 1..3000000 {
+    let s = steps(i)
+    total += s
+    best = best.max(s)
+  }
+  os.stdio.println("collatz ${total} ${best}")
+}

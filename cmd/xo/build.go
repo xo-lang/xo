@@ -38,6 +38,12 @@ func arenaFlag(fl *flag.FlagSet) *bool {
 	return fl.Bool("arenas", false, "request scoped arenas: confined HTTP handlers and non escaping collection temporaries reuse per request memory")
 }
 
+// backendFlag defines --backend: go (P1, the default) or llvm (the P3
+// prototype: LLVM IR compiled by clang, host only, a core subset).
+func backendFlag(fl *flag.FlagSet) *string {
+	return fl.String("backend", "go", "code generator: go (default) or llvm (P3 prototype: a core subset compiled with clang, host only)")
+}
+
 func runBuild(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("build", flag.ContinueOnError)
 	fl.SetOutput(stderr)
@@ -46,6 +52,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	noMono := monoFlags(fl)
 	arenas := arenaFlag(fl)
+	backend := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -64,7 +71,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), Arenas: *arenas})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), Arenas: *arenas, Backend: *backend})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -111,6 +118,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	seed := fl.Int64("seed", 0, "run every task on the deterministic scheduler with this seed (core 7.4; sets XO_SEED)")
 	noMono := monoFlags(fl)
 	arenas := arenaFlag(fl)
+	backend := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -127,7 +135,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), Arenas: *arenas})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), Arenas: *arenas, Backend: *backend})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1

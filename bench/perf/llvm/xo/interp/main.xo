@@ -1,0 +1,71 @@
+// A stack machine interpreter: enum dispatch with `match` and List
+// push/pop in a hot loop.
+enum Op {
+  Push(v: Int)
+  Load(slot: Int)
+  Store(slot: Int)
+  Add
+  Sub
+  Mul
+  Mod
+  JumpIfZero(to: Int)
+  Jump(to: Int)
+  Halt
+}
+
+fn run(prog: List[Op], n: Int) -> Int {
+  var stack: List[Int] = []
+  var slots = [0, 0, 0, 0]
+  slots[0] = n
+  var pc = 0
+  var steps = 0
+  while true {
+    steps += 1
+    match prog[pc] {
+      Push(v) => stack.push(v)
+      Load(s) => stack.push(slots[s])
+      Store(s) => slots[s] = stack.pop() ?? 0
+      Add => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(a + b)
+      }
+      Sub => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(a - b)
+      }
+      Mul => {
+        let b = stack.pop() ?? 0
+        let a = stack.pop() ?? 0
+        stack.push(a * b)
+      }
+      Mod => {
+        let b = stack.pop() ?? 1
+        let a = stack.pop() ?? 0
+        stack.push(a % b)
+      }
+      JumpIfZero(to) => {
+        if (stack.pop() ?? 0) == 0 {
+          pc = to - 1
+        }
+      }
+      Jump(to) => pc = to - 1
+      Halt => break
+    }
+    pc += 1
+  }
+  slots[1] * 1000 + steps % 1000
+}
+
+fn main(os: Os) {
+  // slot0 = n; slot1 = acc; while n != 0 { acc = (acc + n * n) % 1000003; n -= 1 }
+  let prog = [
+    Op.Load(0), Op.JumpIfZero(19),
+    Op.Load(1), Op.Load(0), Op.Load(0), Op.Mul, Op.Add, Op.Push(1000003), Op.Mod, Op.Store(1),
+    Op.Load(0), Op.Push(1), Op.Sub, Op.Store(0),
+    Op.Push(0), Op.JumpIfZero(0),
+    Op.Halt, Op.Halt, Op.Halt, Op.Halt,
+  ]
+  os.stdio.println("interp ${run(prog, 3000000)}")
+}

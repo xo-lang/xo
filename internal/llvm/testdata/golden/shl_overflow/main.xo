@@ -1,0 +1,11 @@
+fn main(os: Os) {
+  var x = 3
+  var n = 0
+  while n < 70 {
+    x = x << 1
+    n += 1
+    if n % 10 == 0 {
+      os.stdio.println("${n}: ${x}")
+    }
+  }
+}

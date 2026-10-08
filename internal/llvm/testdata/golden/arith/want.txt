@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+3 -3 -1 1 0
+bits 8 15 9 -1 1024 -4 128
+cmp false true true false true false
+minmax 3 7 5 1.5
+floats 2.5 3.0 1e-06 0.3333333333333333 1e+21 1.234567e+06 123456.0 0.30000000000000004
+more 100.0 1e-05 0.0001 +Inf -Inf true 1.5
+math 1.0 2.0 3.0 -3.0 4.0 3.25 3.0
+conv 3.5 7 -7 2000000000000000000
+bool false true false true
+compound 2
+min -9223372036854775808 max 9223372036854775807
+--- stderr

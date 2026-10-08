@@ -1,0 +1,15 @@
+fn factorial(n: Int) -> Int {
+  var acc = 1
+  var i = 1
+  while i <= n {
+    acc = acc * i
+    i += 1
+  }
+  acc
+}
+
+fn main(os: Os) {
+  for n in 18..=25 {
+    os.stdio.println("${n}! = ${factorial(n)}")
+  }
+}

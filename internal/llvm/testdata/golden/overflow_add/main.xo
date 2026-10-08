@@ -1,0 +1,15 @@
+fn add_all(xs: List[Int]) -> Int {
+  var total = 0
+  for x in xs {
+    total += x
+  }
+  total
+}
+
+fn main(os: Os) {
+  os.stdio.println("small: ${add_all([1, 2, 3])}")
+  let big = 9223372036854775807
+  os.stdio.println("max: ${big}")
+  os.stdio.println("about to overflow")
+  os.stdio.println("never: ${add_all([big, 1])}")
+}

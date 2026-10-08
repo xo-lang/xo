@@ -1,0 +1,42 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+struct Rect {
+  min: Point
+  max: Point
+  label: Str = "rect"
+}
+
+fn (p: Point) add(q: Point) -> Point { Point{x: p.x + q.x, y: p.y + q.y} }
+
+fn (var p: Point) shift(dx: Int) {
+  p.x += dx
+}
+
+fn (r: Rect) area() -> Int { (r.max.x - r.min.x) * (r.max.y - r.min.y) }
+
+fn (var r: Rect) grow(n: Int) {
+  r.max.x += n
+  r.max.y += n
+}
+
+fn main(os: Os) {
+  let p = Point{x: 1, y: 2}
+  let q = p.add(Point{x: 10, y: 20})
+  os.stdio.println("q = (${q.x}, ${q.y})")
+  var m = q
+  m.shift(5)
+  m.y = 99
+  os.stdio.println("m = (${m.x}, ${m.y}) q still (${q.x}, ${q.y})")
+  var r = Rect{min: p, max: q}
+  os.stdio.println("${r.label} area ${r.area()}")
+  let before = r
+  r.grow(2)
+  r.min.x = 0
+  os.stdio.println("grown area ${r.area()} before ${before.area()} min.x ${r.min.x} ${before.min.x}")
+  let named = Rect{min: Point{x: 0, y: 0}, max: Point{x: 3, y: 3}, label: "sq"}
+  let moved = named with {label: "moved"}
+  os.stdio.println("${named.label} ${moved.label} ${moved.area()} eq ${p == Point{x: 1, y: 2}} ${p == q}")
+}

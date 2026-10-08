@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+largest 9 1.5 z
+swap one 1
+tree 3 6
+first_or 5 none
+--- stderr

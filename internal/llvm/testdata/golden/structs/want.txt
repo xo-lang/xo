@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+q = (11, 22)
+m = (16, 99) q still (11, 22)
+rect area 200
+grown area 286 before 200 min.x 0 1
+sq moved 9 eq true false
+--- stderr

@@ -1,0 +1,69 @@
+struct Node {
+  val: Int
+  next: Node?
+}
+
+enum Bag {
+  Items(xs: List[Int])
+  Nothing
+}
+
+struct Holder {
+  bag: Bag
+  extra: List[Int]?
+}
+
+fn len_of(n: Node) -> Int {
+  match n.next {
+    Some(m) => 1 + len_of(m)
+    None => 1
+  }
+}
+
+fn build(k: Int) -> Node {
+  var n = Node{val: 0, next: None}
+  for i in 1..k {
+    n = Node{val: i, next: n}
+  }
+  n
+}
+
+fn main(os: Os) {
+  var xs = [1, 2, 3]
+  let snap = fn() -> Int { xs.len() }
+  xs.push(4)
+  os.stdio.println("closure saw ${snap()} now ${xs.len()}")
+  var h = Holder{bag: Bag.Items(xs: xs), extra: xs}
+  let h2 = h
+  xs.push(5)
+  h.extra = None
+  match h2.bag {
+    Items(ys) => os.stdio.println("bag ${ys.len()} xs ${xs.len()}")
+    Nothing => os.stdio.println("nothing")
+  }
+  if let Some(e) = h2.extra {
+    var e2 = e
+    e2.push(99)
+    os.stdio.println("extra ${e.len()} ${e2.len()} ${h.extra.is_none()}")
+  }
+  var list = build(5)
+  let orig = list
+  list.val = 100
+  if let Some(second) = list.next {
+    var s = second
+    s.val = -1
+    os.stdio.println("second ${second.val} ${s.val}")
+  }
+  os.stdio.println("node ${list.val} ${orig.val} len ${len_of(list)} ${len_of(orig)}")
+  var deep = build(3)
+  let before = deep
+  deep.next = Some(Node{val: 7, next: None})
+  os.stdio.println("deep ${len_of(deep)} ${len_of(before)} eq ${before == build(3)} ${deep == before}")
+  var lists = [[1], [2, 2]]
+  let copy = lists
+  lists[0].push(5)
+  let base = copy[1]
+  var inner = base
+  inner.push(3)
+  os.stdio.println("lists ${lists[0].len()} ${copy[0].len()} ${copy[1].len()} ${inner.len()}")
+}

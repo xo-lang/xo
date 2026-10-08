@@ -1,0 +1,56 @@
+fn main(os: Os) {
+  var i = 0
+  var found = -1
+  outer: while i < 10 {
+    var j = 0
+    while j < 10 {
+      if i * j == 42 {
+        found = i * 100 + j
+        break outer
+      }
+      j += 1
+    }
+    i += 1
+  }
+  os.stdio.println("found ${found}")
+  var odd = 0
+  for k in 0..20 {
+    if k % 2 == 0 {
+      continue
+    }
+    odd += k
+  }
+  os.stdio.println("odd ${odd}")
+  var n = 0
+  while true {
+    n += 1
+    if n >= 5 {
+      break
+    }
+  }
+  var inc = 0
+  for k in 1..=4 {
+    inc += k
+  }
+  var top = 0
+  for k in 9223372036854775805..=9223372036854775807 {
+    top = k
+  }
+  var count = 0
+  rows: for r in 0..5 {
+    for c in 0..5 {
+      if c > r {
+        continue rows
+      }
+      count += 1
+    }
+  }
+  var w = 0
+  while {
+    w += 3
+    if w > 10 {
+      break
+    }
+  }
+  os.stdio.println("n ${n} inc ${inc} top ${top} tri ${count} w ${w}")
+}

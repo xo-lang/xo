@@ -1,0 +1,1 @@
+main.xo:4:11: the LLVM backend does not support `scope` and tasks

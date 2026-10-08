@@ -1,0 +1,19 @@
+struct Account {
+  id: Int
+  balance: Int
+}
+
+fn withdraw(a: Account, amt: Int) -> Account {
+  if amt > a.balance {
+    fault("insufficient funds in account ${a.id}: ${a.balance} < ${amt}")
+  }
+  a with {balance: a.balance - amt}
+}
+
+fn main(os: Os) {
+  var acct = Account{id: 7, balance: 100}
+  acct = withdraw(acct, 30)
+  os.stdio.println("balance ${acct.balance}")
+  acct = withdraw(acct, 80)
+  os.stdio.println("never")
+}

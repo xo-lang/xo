@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+18! = 6402373705728000
+19! = 121645100408832000
+20! = 2432902008176640000
+--- stderr
+fault: integer overflow: 2432902008176640000 * 21 does not fit Int at main.xo:5:11

@@ -1,0 +1,44 @@
+const LIMIT = 5
+const GREETING = "hey"
+const ORIGIN = Point{x: 0, y: 0}
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+fn divmod(a: Int, b: Int) -> (Int, Int) { (a / b, a % b) }
+
+fn min_max(xs: List[Int]) -> (Int, Int)? {
+  if xs.is_empty() {
+    return None
+  }
+  let first = xs[0]
+  var lo = first
+  var hi = first
+  for x in xs {
+    lo = lo.min(x)
+    hi = hi.max(x)
+  }
+  (lo, hi)
+}
+
+fn main(os: Os) {
+  let (q, r) = divmod(17, 5)
+  os.stdio.println("${q} ${r} ${LIMIT * 2} ${GREETING} ${ORIGIN.x}")
+  let t = divmod(9, 4)
+  os.stdio.println("t ${t.0} ${t.1}")
+  const LOCAL = 3
+  var pts: List[(Int, Str)] = []
+  for i in 0..LOCAL {
+    pts.push((i, "n${i}"))
+  }
+  for (n, s) in pts {
+    os.stdio.println("${n}=${s}")
+  }
+  match min_max([4, -2, 9]) {
+    Some((lo, hi)) => os.stdio.println("range ${lo}..${hi}")
+    None => os.stdio.println("empty")
+  }
+  os.stdio.println("none ${min_max([]).is_none()} ${(1, "a") == (1, "a")}")
+}

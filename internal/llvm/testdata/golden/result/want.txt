@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ok 123
+empty
+bad digit 12
+too big 9999
+negative 42
+is_ok true is_err false ok 77 err true
+--- stderr

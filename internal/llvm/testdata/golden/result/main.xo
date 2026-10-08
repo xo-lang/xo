@@ -1,0 +1,59 @@
+enum ParseErr {
+  Empty
+  BadDigit(at: Int)
+  TooBig(n: Int)
+}
+
+enum AppErr {
+  Parse(from ParseErr)
+  Negative(n: Int)
+}
+
+fn digit(c: Int) -> Int ! ParseErr {
+  if c < 0 || c > 9 {
+    return Err(ParseErr.BadDigit(at: c))
+  }
+  c
+}
+
+fn parse(ds: List[Int]) -> Int ! ParseErr {
+  if ds.is_empty() {
+    return Err(ParseErr.Empty)
+  }
+  var n = 0
+  for d in ds {
+    n = n * 10 + digit(d)?
+    if n > 1000 {
+      return Err(TooBig(n: n))
+    }
+  }
+  n
+}
+
+fn checked(ds: List[Int], sign: Int) -> Int ! AppErr {
+  let n = parse(ds)?
+  if sign < 0 {
+    return Err(AppErr.Negative(n: n))
+  }
+  n * sign
+}
+
+fn show(r: Result[Int, AppErr]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(Parse(Empty)) => "empty"
+    Err(Parse(BadDigit(at: c))) => "bad digit ${c}"
+    Err(Parse(TooBig(n))) => "too big ${n}"
+    Err(Negative(n)) => "negative ${n}"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(show(checked([1, 2, 3], 1)))
+  os.stdio.println(show(checked([], 1)))
+  os.stdio.println(show(checked([1, 12, 3], 1)))
+  os.stdio.println(show(checked([9, 9, 9, 9], 1)))
+  os.stdio.println(show(checked([4, 2], -1)))
+  let r = parse([7, 7])
+  os.stdio.println("is_ok ${r.is_ok()} is_err ${r.is_err()} ok ${r.ok() ?? 0} err ${parse([]).err().is_some()}")
+}

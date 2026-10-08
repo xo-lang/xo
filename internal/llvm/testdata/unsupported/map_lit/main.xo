@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let m = {"a": 1}
+  os.stdio.println("${m.len()}")
+}

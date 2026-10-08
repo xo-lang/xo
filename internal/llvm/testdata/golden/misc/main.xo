@@ -1,0 +1,96 @@
+struct Stack[T] {
+  items: List[T]
+}
+
+fn (var s: Stack[T]) push(x: T) {
+  s.items.push(x)
+}
+
+fn (s: Stack[T]) peek() -> T? { s.items.last() }
+
+fn (var s: Stack[T]) pop() -> T? { s.items.pop() }
+
+struct Counter {
+  hits: Int
+  names: List[Str]
+}
+
+fn (var c: Counter) see(n: Str) {
+  c.hits += 1
+  c.names.push(n)
+}
+
+fn find_first_neg(xs: List[Int]) -> Int {
+  for (i, x) in xs.indexed() {
+    if x < 0 {
+      return i
+    }
+  }
+  -1
+}
+
+fn classify(n: Int) -> Str {
+  let kind = if n < 0 { "neg" } else if n == 0 { "zero" } else { "pos" }
+  match n % 3 {
+    0 => {
+      return "${kind}/three"
+    }
+    _ => {}
+  }
+  kind
+}
+
+fn twice(f: fn(Int) -> Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { f(f(x)) }
+}
+
+fn log_it(c: Counter) {
+  if c.hits > 100 {
+    fault("too many")
+  }
+}
+
+fn main(os: Os) {
+  var s = Stack[Int]{items: []}
+  s.push(1)
+  s.push(2)
+  let top = s.peek() ?? 0
+  let popped = s.pop() ?? 0
+  var c = Counter{hits: 0, names: []}
+  c.see("a")
+  c.see("b")
+  let c2 = c
+  c.see("c")
+  log_it(c)
+  let quad = twice(twice(fn(x: Int) -> Int { x + 1 }))
+  let add = fn(a: Int) -> fn(Int) -> Int { fn(b: Int) -> Int { a + b } }
+  var strs = Stack[Str]{items: []}
+  strs.push("x")
+  let w = while {
+    break
+  }
+  let _ = w
+  var total = 0.0
+  for i in 0..4 {
+    total += Float(i) * 0.5
+  }
+  let r = classify(-3) + " " + classify(0) + " " + classify(4) + " " + classify(5)
+  let p = (top, popped, c.hits, c2.hits)
+  let (a, b, h1, h2) = p
+  let n1 = c.names.len()
+  let n2 = c2.names.len()
+  let q = quad(0)
+  let ad = add(2)(3)
+  let st = strs.peek() ?? "-"
+  let ng = find_first_neg([3, 4, -1])
+  let t = total
+  let msg = "${a} ${b} ${h1} ${h2} ${n1} ${n2} ${q} ${ad} ${st} ${ng} ${t} ${r}"
+  let out = msg
+  print_it(out)
+  os.stdio.println(out)
+}
+
+fn print_it(s: Str) {
+  let unused_os_ok = s.len()
+  let _ = unused_os_ok
+}

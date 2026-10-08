@@ -1,0 +1,7 @@
+fn dist(a: Int, b: Int) -> Int { (a - b).abs() }
+
+fn main(os: Os) {
+  os.stdio.println("${dist(3, 10)} ${dist(-5, 5)} ${(-9223372036854775807).abs()}")
+  let lo = -9223372036854775807 - 1
+  os.stdio.println("${dist(lo, 0)}")
+}

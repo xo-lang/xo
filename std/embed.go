@@ -18,3 +18,9 @@ var Files embed.FS
 //
 //go:embed rt/*.go
 var Runtime embed.FS
+
+// LLRuntime holds the C runtime of the P3 LLVM backend prototype
+// (std/llrt/xo_rt.c), compiled by clang with the IR internal/llvm emits.
+//
+//go:embed llrt/*.c
+var LLRuntime embed.FS

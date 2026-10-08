@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+ok 9
+bad -3
+ok 13
+3 -1 -1
+--- stderr

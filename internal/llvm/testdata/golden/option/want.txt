@@ -1,0 +1,11 @@
+exit 70
+--- stdout
+8 -1 -1
+found bob has email false
+no zed
+pop 4 len 2 first 3 last 1 get 99
+empty pop true -7
+big 5
+nested true true true
+--- stderr
+fault: user must exist at main.xo:45
