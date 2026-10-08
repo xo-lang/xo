@@ -472,6 +472,145 @@ func (g *sgen) elemFn(kind string, t *ssa.Type) string {
 	return name
 }
 
+// eqFn returns the helper that compares two values of type t
+// structurally (`==` on strings, structs, tuples, enums, and lists),
+// emitting it on first use.
+func (g *sgen) eqFn(t *ssa.Type) string {
+	name := "@" + strconv.Quote("xo.eq."+t.Name)
+	if g.emitted[name] {
+		return name
+	}
+	g.emitted[name] = true
+	w := &strings.Builder{} // the current block's text
+	n := 0
+	tmp := func() string { n++; return fmt.Sprintf("%%t%d", n) }
+	emit := func(format string, args ...any) { w.WriteString("  " + fmt.Sprintf(format, args...) + "\n") }
+	def := func(format string, args ...any) string {
+		r := tmp()
+		emit("%s = "+format, append([]any{r}, args...)...)
+		return r
+	}
+	// eq compares x and y of type ft
+	eq := func(ft *ssa.Type, x, y string) string {
+		switch ft.Kind {
+		case ssa.KUnit, ssa.KCap:
+			return "true"
+		case ssa.KInt:
+			return def("icmp eq i64 %s, %s", x, y)
+		case ssa.KBool:
+			return def("icmp eq i1 %s, %s", x, y)
+		case ssa.KFloat:
+			return def("fcmp oeq double %s, %s", x, y)
+		}
+		return def("call i1 %s(%s %s, %s %s)", g.eqFn(ft), g.ll(ft), x, g.ll(ft), y)
+	}
+	lt := g.ll(t)
+	var allocas strings.Builder
+	switch t.Kind {
+	case ssa.KStr:
+		var parts [2][2]string
+		for i, x := range []string{"%a", "%b"} {
+			obj := def("extractvalue %%xo.str %s, 0", x)
+			parts[i][0] = def("getelementptr i8, ptr %s, i64 16", obj)
+			parts[i][1] = def("extractvalue %%xo.str %s, 1", x)
+		}
+		r := def("call i32 @xo_str_eq(ptr %s, i64 %s, ptr %s, i64 %s)", parts[0][0], parts[0][1], parts[1][0], parts[1][1])
+		emit("ret i1 %s", def("icmp ne i32 %s, 0", r))
+	case ssa.KStruct, ssa.KTuple:
+		var fts []*ssa.Type
+		if t.Kind == ssa.KStruct {
+			for _, f := range t.Fields {
+				fts = append(fts, f.Type)
+			}
+		} else {
+			fts = t.Elems
+		}
+		acc := "true"
+		for i, ft := range fts {
+			if ft.Kind == ssa.KUnit || ft.Kind == ssa.KCap {
+				continue
+			}
+			x := def("extractvalue %s %%a, %d", lt, i)
+			y := def("extractvalue %s %%b, %d", lt, i)
+			acc = def("and i1 %s, %s", acc, eq(ft, x, y))
+		}
+		emit("ret i1 %s", acc)
+	case ssa.KEnum:
+		ta := def("extractvalue %s %%a, 0", lt)
+		tb := def("extractvalue %s %%b, 0", lt)
+		same := def("icmp eq i64 %s, %s", ta, tb)
+		emit("br i1 %s, label %%tags, label %%no", same)
+		w.WriteString("tags:\n")
+		pa, pb := tmp(), tmp()
+		fmt.Fprintf(&allocas, "  %s = alloca %s\n  %s = alloca %s\n", pa, lt, pb, lt)
+		emit("store %s %%a, ptr %s", lt, pa)
+		emit("store %s %%b, ptr %s", lt, pb)
+		head := w
+		var cases []string
+		arms := &strings.Builder{}
+		for vi, vr := range t.Variants {
+			if len(vr.Fields) == 0 {
+				continue
+			}
+			cases = append(cases, fmt.Sprintf("i64 %d, label %%v%d", vi, vi))
+			w = arms
+			fmt.Fprintf(w, "v%d:\n", vi)
+			vl := g.variantLL(t, vi)
+			payA := def("getelementptr %s, ptr %s, i32 0, i32 1", lt, pa)
+			payB := def("getelementptr %s, ptr %s, i32 0, i32 1", lt, pb)
+			acc := "true"
+			for fi, f := range vr.Fields {
+				if f.Type.Kind == ssa.KUnit || f.Type.Kind == ssa.KCap {
+					continue
+				}
+				fa := def("getelementptr %s, ptr %s, i32 0, i32 %d", vl, payA, fi)
+				fb := def("getelementptr %s, ptr %s, i32 0, i32 %d", vl, payB, fi)
+				x := def("load %s, ptr %s", g.ll(f.Type), fa)
+				y := def("load %s, ptr %s", g.ll(f.Type), fb)
+				acc = def("and i1 %s, %s", acc, eq(f.Type, x, y))
+			}
+			emit("ret i1 %s", acc)
+		}
+		w = head
+		emit("switch i64 %s, label %%yes [ %s ]", ta, strings.Join(cases, " "))
+		w.WriteString(arms.String())
+		w.WriteString("yes:\n  ret i1 true\nno:\n  ret i1 false\n")
+	case ssa.KList:
+		et := t.Elems[0]
+		var lens [2]string
+		for i, x := range []string{"%a", "%b"} {
+			p := def("getelementptr %%xo.rlist, ptr %s, i32 0, i32 1", x)
+			lens[i] = def("load i64, ptr %s%s", p, tbaaHdr)
+		}
+		same := def("icmp eq i64 %s, %s", lens[0], lens[1])
+		emit("br i1 %s, label %%loop, label %%no", same)
+		w.WriteString("loop:\n")
+		emit("%%i = phi i64 [ 0, %%entry ], [ %%i1, %%next ]")
+		done := def("icmp eq i64 %%i, %s", lens[0])
+		emit("br i1 %s, label %%yes, label %%body", done)
+		w.WriteString("body:\n")
+		e := "true"
+		if et.Kind != ssa.KUnit && et.Kind != ssa.KCap {
+			da := def("getelementptr %%xo.rlist, ptr %%a, i64 1")
+			db := def("getelementptr %%xo.rlist, ptr %%b, i64 1")
+			xa := def("getelementptr %s, ptr %s, i64 %%i", g.ll(et), da)
+			xb := def("getelementptr %s, ptr %s, i64 %%i", g.ll(et), db)
+			x := def("load %s, ptr %s%s", g.ll(et), xa, tbaaElem)
+			y := def("load %s, ptr %s%s", g.ll(et), xb, tbaaElem)
+			e = eq(et, x, y)
+		}
+		emit("br i1 %s, label %%next, label %%no", e)
+		w.WriteString("next:\n")
+		emit("%%i1 = add i64 %%i, 1")
+		emit("br label %%loop")
+		w.WriteString("yes:\n  ret i1 true\nno:\n  ret i1 false\n")
+	default:
+		fail("the SSA lowering does not compare `%s`", t.Name)
+	}
+	g.helpers.WriteString(fmt.Sprintf("define internal i1 %s(%s %%a, %s %%b) #1 {\nentry:\n%s%s}\n\n", name, lt, lt, allocas.String(), w.String()))
+	return name
+}
+
 // ---------------------------------------------------------------------------
 // Functions
 
@@ -750,6 +889,16 @@ func (s *sfn) instr(v *ssa.Value) {
 		case ssa.KUnit:
 			r := map[ssa.Op]string{ssa.OpEq: "true", ssa.OpNe: "false", ssa.OpLt: "false", ssa.OpLe: "true", ssa.OpGt: "false", ssa.OpGe: "true"}[v.Op]
 			s.set(v, "and i1 %s, true", r)
+		case ssa.KStr, ssa.KStruct, ssa.KTuple, ssa.KEnum, ssa.KList:
+			if v.Op != ssa.OpEq && v.Op != ssa.OpNe {
+				fail("the SSA lowering does not order `%s`", at.Name)
+			}
+			eq := s.def("call i1 %s(%s, %s)", g.eqFn(at), s.typed(v.Args[0]), s.typed(v.Args[1]))
+			if v.Op == ssa.OpNe {
+				s.set(v, "xor i1 %s, true", eq)
+			} else {
+				s.alias(v, eq)
+			}
 		default:
 			fail("the SSA lowering does not compare `%s`", at.Name)
 		}

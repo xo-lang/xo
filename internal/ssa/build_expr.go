@@ -101,6 +101,20 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.callExpr(x)
 	case *ast.TryExpr:
 		return s.try(x)
+	case *ast.IsExpr:
+		// `x is P`: the pattern test as a Bool (P binds nothing)
+		v := s.value(x.X)
+		boolT := m.Builtin(KBool)
+		join, no := s.newBlock(), s.newBlock()
+		res := join.AddParam(boolT)
+		s.pattern(v, x.Pattern, no)
+		s.jump(join, s.bool(true))
+		s.seal(no)
+		s.cur = no
+		s.jump(join, s.bool(false))
+		s.seal(join)
+		s.cur = join
+		return res
 	case *ast.Block:
 		return s.block(x)
 	case *ast.IfExpr:
@@ -330,6 +344,11 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 			}
 			c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
 			return s.add(o, boolT, nil, c, s.cint(0))
+		case KStruct, KTuple, KEnum, KList, KUnit:
+			// structural equality; backends generate a helper per type
+			if o == OpEq || o == OpNe {
+				return s.add(o, boolT, nil, l, r)
+			}
 		}
 		b.unsupported(x, "comparing values of type `"+l.Type.Name+"`")
 		return s.undef(boolT)

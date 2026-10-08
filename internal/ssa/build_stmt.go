@@ -41,7 +41,10 @@ func (s *fn) stmt(st ast.Stmt) {
 		vo := b.info.VarOf(x.Name)
 		s.writeVar(vo, s.value(x.Value))
 	case *ast.ConstDecl:
-		// inlined at each use
+		// a local constant is a binding
+		if vo := b.info.VarOf(x.Name); vo != nil {
+			s.writeVar(vo, s.value(x.Value))
+		}
 	case *ast.AssignStmt:
 		s.assign(x)
 	case *ast.ReturnStmt:

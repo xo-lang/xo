@@ -62,7 +62,8 @@ type builder struct {
 // `Int(f)`, `fault`, and the List methods push, pop, set, get, len,
 // is_empty, failing functions (a Result return, `Ok`, `Err`, `?` on
 // Result with `from` conversion and on Option, the Result methods,
-// `or_fault`). Not yet: generics, closures.
+// `or_fault`), `==` and `!=` on every type (structural), `is`, and local
+// `const`. Not yet: generics, closures.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }

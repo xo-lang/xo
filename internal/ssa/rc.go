@@ -228,7 +228,7 @@ func (r *rcInfo) modes(v *Value) []mode {
 	switch v.Op {
 	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse:
 		set(mConsume)
-	case OpFault, OpRetain:
+	case OpFault, OpRetain, OpEq, OpNe:
 		set(mBorrow)
 	case OpPayload:
 		if v.Type.Heap() {

@@ -1,0 +1,32 @@
+// `==` and `!=` on aggregates (structural, operands borrowed), `is`,
+// and local constants, over values that hold strings and lists: the
+// comparison must not consume or leak either side.
+struct Tag {
+  name: Str
+  ids: List[Int]
+}
+
+enum Item {
+  Named(tag: Tag)
+  Pair(a: Str, b: Float)
+  Nothing
+}
+
+fn same(a: Item, b: Item) -> Bool { a == b }
+
+fn main(os: Os) {
+  const BASE = 3
+  let t1 = Tag{name: "a", ids: [1, 2, BASE]}
+  let t2 = Tag{name: "a", ids: [1, 2, 3]}
+  var t3 = t2
+  t3.ids.push(4)
+  os.stdio.println("tags ${t1 == t2} ${t1 != t3} ${t2 == t3}")
+  let items = [Item.Named(tag: t1), Item.Pair(a: "x", b: 1.5), Item.Nothing]
+  let copy = [Item.Named(tag: t2), Item.Pair(a: "x", b: 1.5), Item.Nothing]
+  os.stdio.println("items ${items == copy} ${same(items[0], copy[0])} ${same(items[1], Item.Pair(a: "x", b: 2.5))}")
+  os.stdio.println("is ${items[0] is Named(..)} ${items[2] is Pair(..)} ${items[1] is Pair(a: "x", ..)}")
+  let lists = [["a"], ["b", "c"]]
+  os.stdio.println("nested ${lists == [["a"], ["b", "c"]]} ${lists[1] == ["b"]} ${(1, "q") == (1, "q")} ${(1, "q") != (2, "q")}")
+  let maybe: Str? = "m"
+  os.stdio.println("option ${maybe == "m"} ${maybe != None} ${maybe == Some("n")} ${t3.ids.len()}")
+}

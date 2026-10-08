@@ -162,7 +162,9 @@ const (
 	OpShl // checked: faults on a negative or too large shift, or overflow
 	OpShr
 
-	// Comparisons: two operands of one type, result Bool.
+	// Comparisons: two operands of one type, result Bool. OpEq and OpNe
+	// also compare structs, tuples, enums, and lists structurally (the
+	// operands are borrowed; backends generate a helper per type).
 	OpEq
 	OpNe
 	OpLt
