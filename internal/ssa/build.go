@@ -76,7 +76,9 @@ type builder struct {
 // `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
 // `if let x = opt` shorthand, closures and named functions as values
 // (decision 0048), and generics (monomorphized: one Func per list of
-// type arguments), and recursive types (recursive fields are boxed).
+// type arguments), and recursive types (recursive fields are boxed), and
+// structured concurrency (decision 0068, build_conc.go): scopes, tasks,
+// channels, select without `after`, Mutex, and Atomic.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }

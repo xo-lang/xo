@@ -1155,6 +1155,13 @@ seeds and reports the first failing seed. `xo run --seed=N` (or `XO_SEED=N` for
 any built binary) uses the same scheduler with the real clock; interleavings
 are then reproducible as long as timer and I/O timing does not decide them.
 
+The deterministic scheduler belongs to the Go backend. Native builds
+(`--backend=llvm` and `--backend=arm64`, decision 0068) run tasks on the real
+scheduler only, on a pool of threads: `xo run --seed` is refused with them and
+`XO_SEED` has no effect, and a native program whose output depends on how its
+tasks interleave may print differently from run to run. The rest of core 7
+means the same on every backend.
+
 ### 7.5 Process signals and graceful shutdown
 
 Shutdown has two phases, so programs can finish queued work without fighting
@@ -1448,7 +1455,10 @@ call and its result, plus scheduler decisions.
   counts as blocked when it waits on another task (channel, mutex, semaphore,
   `await`, scope end, `Once`); waits on timers, `after`, `task.stopping()`,
   signals, and I/O do not. In test worlds the report is immediate; real runs
-  report after 200 ms with no progress.
+  report after 200 ms with no progress. Native builds (decision 0068), which
+  have no timers, I/O, or signals, report at once when every task is blocked
+  and none is queued, with the fault's first line only (no location or list
+  of blocked tasks yet).
 - `dbg(expr)` prints the expression source and its `Debug` value, returns the
   value, and is rejected by `xo build --ci`.
 

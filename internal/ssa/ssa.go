@@ -296,7 +296,7 @@ const (
 	//   OpShare   Args[0]: mark the value shared between threads
 	//             (decision 0058): every thread local count it reaches
 	//             becomes atomic. Borrows; no result. Emitted where a
-	//             value crosses to another task (none lower yet) and by
+	//             value crosses to another task (build_conc.go) and by
 	//             InsertShareProbes (tests).
 	OpRetain
 	OpRelease

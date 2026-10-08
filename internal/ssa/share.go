@@ -3,9 +3,9 @@ package ssa
 // InsertShareProbes marks every heap value shared right after it is
 // defined (OpShare after each instruction and at the start of each block
 // for its parameters), as if each crossed to another thread at once. It
-// runs before InsertRC. A test hook (decision 0058): no construct lowers
-// to OpShare yet, and a program built with probes must behave exactly as
-// without them, with every count update taking the atomic path, every
+// runs before InsertRC. A test hook (decision 0058): crossings between
+// tasks emit OpShare only where values cross (decision 0068), and a
+// program built with probes must behave exactly as without them, with every count update taking the atomic path, every
 // in place update going through the shared claim, and the generated
 // share walkers visiting every type.
 func (m *Module) InsertShareProbes() {

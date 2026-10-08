@@ -86,6 +86,8 @@ go test ./internal/ssa -update                       # rewrite the SSA goldens (
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
+go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
+XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
 go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
@@ -973,14 +975,21 @@ first, AST based prototype, since deleted) and
   types, failing functions with `?` and `from` conversion, `??`,
   `or_fault`, `fault`, `const`, `==` on every type, the List methods
   push, pop, set, get, first, last, len, is_empty, and the Int, Float,
-  and Str methods the bench programs use.
+  and Str methods the bench programs use; since 2026-10-08 also core 7
+  (decision 0068): `scope`, `spawn`, `spawn_background`, `await`,
+  `s.cancel()`, groups from `s.group()`, `task.is_canceled()`, `Chan`
+  (send, recv, try_send, try_recv, close, len, `for x in ch`), `select`
+  without `after`, `Mutex` (`with`, `with_read`), and `Atomic`. Not yet:
+  `after`, `task.with_timeout` and the other std/task functions,
+  `Semaphore`, `Once`, `os.tasks`, `defer`.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
-  `xo.share.<T>` helpers that mark a value's heap graph shared. Nothing
-  emits `OpShare` yet except `build.Options.ShareProbes` /
-  `llvm.Options.ShareProbes` (tests: every heap value marked shared as it
-  is defined; builds go to `<build dir>/llvm-share`).
+  `xo.share.<T>` helpers that mark a value's heap graph shared. The
+  task lowering emits `OpShare` where values cross threads (decision
+  0068); `build.Options.ShareProbes` / `llvm.Options.ShareProbes` (tests)
+  marks every heap value shared as it is defined (builds go to
+  `<build dir>/llvm-share`).
 - Runtime `std/llrt/xo_rt.c`: size class allocator (16 byte classes to
   1 KiB, powers of two to 256 KiB, malloc above; free lists; 4 MiB
   chunks) with allocation counters (`XO_LEAKCHECK=1` prints live and
@@ -995,7 +1004,16 @@ first, AST based prototype, since deleted) and
   recursing on long chains; buffered stdout; fault messages identical to
   std/rt's and exit status 70; Go style float formatting (shortest round
   trip `'g'`, `.0` appended); `main` runs the program on a thread with a
-  1 GiB stack. The C interface passes only scalars and pointers.
+  1 GiB stack. The C interface passes only scalars and pointers. Tasks
+  (decision 0068, section "Tasks" of xo_rt.c): a pool of worker threads
+  (64 MiB stacks; one per CPU, `XO_THREADS=n` overrides; another starts
+  while workers are blocked and work is queued), work stealing deques,
+  awaits and scope joins that run tasks nobody started, a cancellation
+  tree, channels, select, Mutex (readers and writer, writers preferred),
+  Atomic, and deadlock detection (XO-F001). Generated code calls it as
+  `rt.<name>` SSA calls (C function `xo_<name>`), passing values as
+  lists of one; handles (Task, Scope, Chan, Mutex, Atomic) are counted
+  objects created shared.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
   Fault output has no Go frame lines and no crash bundle; the golden test
   compares fault messages after dropping those lines.
@@ -1010,8 +1028,16 @@ first, AST based prototype, since deleted) and
   (`std/llrt/testdata/rc_threads.c` under ThreadSanitizer, then `-O2`
   with more iterations) and TestGoldenThreads (goldens that exit 0, IR
   with probes, four threads at once, ThreadSanitizer except the deep
-  recursion ones, `gotchas/tsan-deep-recursion.md`); both skip when
-  clang has no ThreadSanitizer. TestUnsupported checks the error
+  recursion ones, `gotchas/tsan-deep-recursion.md`); TestRuntimeTasks
+  (`std/llrt/testdata/tasks.c`, the task runtime driven from C, under
+  ThreadSanitizer with one and three workers, then `-O2 -DN=20000`),
+  TestGoldenTasks (the goldens that use tasks, built with
+  ThreadSanitizer without probes and run with `XO_THREADS` 1, 2, and
+  the default against want.txt), TestDeadlock (internal/gen's
+  `deadlock_real`, read only, natively: XO-F001); they skip when clang
+  has no ThreadSanitizer. The `conc_*` goldens are concurrency programs
+  adapted from internal/gen's goldens without clock, I/O, Map, or
+  Display, so the Go, LLVM, and arm64 backends print the same. TestUnsupported checks the error
   for constructs outside the subset (`testdata/unsupported/`).
   `cmd/xo/llvm_test.go` drives the CLI.
 
@@ -1072,7 +1098,7 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   `tbz`/`tbnz` tests `inst.bit`.
 - Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
   it builds and runs every golden of internal/llvm against its want.txt
-  (35 on 2026-10-08), the bench programs, and `testdata/run/*` against the Go
+  (47 on 2026-10-08), the bench programs, and `testdata/run/*` against the Go
   backend, all with the leak check; TestGoldenRunShared runs the goldens
   with share probes and assembles their Linux output as ELF). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with
