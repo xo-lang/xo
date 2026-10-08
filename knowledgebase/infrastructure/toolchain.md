@@ -95,6 +95,7 @@ XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: mo
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
+bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 python3 bench/harness/score.py solutions --claude        # rescore the stored agent benchmark outputs with the current toolchain (bench/harness/README.md)

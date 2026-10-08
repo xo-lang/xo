@@ -4,6 +4,13 @@ Measures whether Xo's design actually helps AI agents, and which proposed rules
 cost more than they return. Decisions marked `Proposed` in
 `knowledgebase/decisions/` are kept, changed, or dropped based on these results.
 
+## Nightly
+
+`bench/nightly.sh` runs the full test suite with high random seeds, `-race`
+on the runtime, and vet; one summary line per run goes to
+`results/nightly/summary.txt`. Not scheduled by default.
+
+
 ## Tasks
 
 | # | Task | Main risks exercised |
