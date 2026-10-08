@@ -11,6 +11,8 @@ import "github.com/xo-lang/xo/internal/ssa"
 //	Int, Bool, List   one integer word (a Bool is 0 or 1)
 //	Float             one floating point word
 //	Str               two integer words: the object and the length
+//	function value    two integer words: the code and the environment
+//	                  (closures.go)
 //	struct, tuple     the words of the fields, in order
 //	enum              the tag, then W integer payload words, W the most
 //	                  words of any variant; a variant's fields are laid
@@ -43,7 +45,7 @@ func (g *gen) layoutPath(t *ssa.Type, path map[*ssa.Type]bool) []bool {
 		l = []bool{false}
 	case ssa.KFloat:
 		l = []bool{true}
-	case ssa.KStr:
+	case ssa.KStr, ssa.KFunc:
 		l = []bool{false, false}
 	case ssa.KStruct:
 		for _, f := range t.Fields {
@@ -122,7 +124,7 @@ func (g *gen) heapLeaves(t *ssa.Type, base int, out *[]leaf) {
 		return
 	}
 	switch t.Kind {
-	case ssa.KStr, ssa.KList, ssa.KEnum:
+	case ssa.KStr, ssa.KList, ssa.KEnum, ssa.KFunc:
 		*out = append(*out, leaf{base, t})
 	case ssa.KStruct, ssa.KTuple:
 		n := len(t.Elems)

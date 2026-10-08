@@ -668,6 +668,12 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.set(v, s.fromPayload(ws, g.layout(v.Type))...)
 	case ssa.OpCall:
 		s.callOp(v)
+	case ssa.OpClosure:
+		s.closureOp(v)
+	case ssa.OpCapture:
+		s.captureOp(v)
+	case ssa.OpCallValue:
+		s.callValueOp(v)
 	case ssa.OpFault:
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", ws[0])

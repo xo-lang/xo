@@ -170,8 +170,8 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 // nativeGolden lists the programs of internal/llvm/testdata/golden that
 // must build with the arm64 backend (the ones the SSA path supports).
 var nativeGolden = []string{
-	"abs_fault", "arith", "div_zero", "enums", "float_int_fault", "index_oob", "lists", "loops", "neg_overflow", "option", "overflow_add",
-	"overflow_mul", "rc_aliasing", "rc_equality", "rc_failing", "rc_values", "shl_overflow", "sort_structs", "strings", "structs", "tuples_consts", "user_fault", "var_alias",
+	"abs_fault", "arith", "closure_try", "closures", "div_zero", "enums", "float_int_fault", "index_oob", "lists", "loops", "misc", "neg_overflow", "option", "overflow_add",
+	"overflow_mul", "rc_aliasing", "rc_closures", "rc_equality", "rc_failing", "rc_generics", "rc_values", "shl_overflow", "sort_structs", "strings", "structs", "tuples_consts", "user_fault", "var_alias",
 }
 
 // TestGoldenRun builds the golden programs of internal/llvm (read only)
@@ -296,7 +296,7 @@ func TestBench(t *testing.T) {
 // TestUnsupported checks that a program outside the SSA subset is
 // rejected with an error, not miscompiled.
 func TestUnsupported(t *testing.T) {
-	dir := filepath.Join("..", "llvm", "testdata", "golden", "closures")
+	dir := filepath.Join("..", "llvm", "testdata", "golden", "recursion")
 	_, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64})
 	if err == nil {
 		t.Fatal("build succeeded; want an unsupported construct error")

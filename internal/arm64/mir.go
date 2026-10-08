@@ -76,6 +76,9 @@ type inst struct {
 	targets []*mblock
 	// iCall: the call never returns (a fault)
 	noret bool
+	// iCall: through the code word of a closure, in x0 (`blr x0`; sym
+	// is empty)
+	indirect bool
 	// konst: a plain instruction that makes a constant (no uses but
 	// other constants)
 	konst bool

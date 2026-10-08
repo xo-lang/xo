@@ -1,0 +1,68 @@
+// Calls through function values with arguments past x7 and d7 (stack
+// arguments), Float and Bool captures, closures in structs and lists,
+// closures returning structs, and a chain of closures capturing
+// closures.
+struct Pair {
+  x: Int
+  y: Float
+}
+
+struct Holder {
+  name: Str
+  f: fn(Int) -> Int
+}
+
+fn many(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int, j: Str) -> Int {
+  a + b + c + d + e + f + g + h + i + j.len()
+}
+
+fn chain(n: Int) -> fn(Int) -> Int {
+  var f = fn(x: Int) -> Int { x }
+  var i = 0
+  while i < n {
+    let prev = f
+    f = fn(x: Int) -> Int { prev(x) + 1 }
+    i += 1
+  }
+  f
+}
+
+fn main(os: Os) {
+  let scale = 2.5
+  let flag = true
+  let word = "w"
+  let big = fn(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int, s: Str) -> Int {
+    if flag { a + b + c + d + e + f + g + h + i + s.len() + word.len() } else { 0 }
+  }
+  os.stdio.println("big ${big(1, 2, 3, 4, 5, 6, 7, 8, 9, "abc")}")
+  let fl = fn(a: Float, b: Float, c: Float, d: Float, e: Float, f: Float, g: Float, h: Float, i: Float, j: Float) -> Float {
+    (a + b + c + d + e + f + g + h + i + j) * scale
+  }
+  os.stdio.println("floats ${fl(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0)}")
+  let named = many
+  os.stdio.println("named ${named(1, 1, 1, 1, 1, 1, 1, 1, 1, "xy")}")
+  let mk = fn(x: Int) -> Pair { Pair{x: x * 2, y: scale} }
+  let p = mk(21)
+  os.stdio.println("pair ${p.x} ${p.y}")
+  let hs = [Holder{name: "inc", f: fn(x: Int) -> Int { x + 1 }}, Holder{name: "dbl", f: fn(x: Int) -> Int { x * 2 }}]
+  var total = 0
+  for h in hs {
+    total += h.f(10)
+    os.stdio.println("${h.name} ${h.f(5)}")
+  }
+  os.stdio.println("total ${total}")
+  let c = chain(100000)
+  os.stdio.println("chain ${c(0)}")
+  var kept: List[fn(Int) -> Int] = []
+  var k = 0
+  while k < 5 {
+    let tag = "t${k}"
+    kept.push(fn(x: Int) -> Int { x + tag.len() + k })
+    k += 1
+  }
+  var sum = 0
+  for f in kept {
+    sum += f(1)
+  }
+  os.stdio.println("kept ${sum}")
+}

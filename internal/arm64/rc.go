@@ -34,6 +34,8 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "// %s %s\n\t.p2align 2\n%s:\n", kind, t.Name, sym)
 	switch t.Kind {
+	case ssa.KFunc:
+		g.funcRC(&b, kind, sym)
 	case ssa.KStr, ssa.KList:
 		if kind == "dup" {
 			b.WriteString("\tldr x1, [x0]\n\tadd x1, x1, #1\n\tstr x1, [x0]\n\tret\n")

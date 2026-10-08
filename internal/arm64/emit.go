@@ -303,7 +303,11 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		s.parallel(b, ms, fr)
 	case iCall:
 		s.parallel(b, s.callMoves(in.srcs, fr, "sp", 0), fr)
-		fmt.Fprintf(b, "\tbl %s\n", in.sym)
+		if in.indirect {
+			b.WriteString("\tblr x0\n")
+		} else {
+			fmt.Fprintf(b, "\tbl %s\n", in.sym)
+		}
 		if in.noret {
 			return
 		}
