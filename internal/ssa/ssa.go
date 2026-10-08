@@ -52,6 +52,11 @@ const (
 	KCap                // a capability such as Os or Stdio, zero size
 	KFunc               // a function value (closure): Elems are the parameters, Ret the result (heap: its environment)
 	KBox                // Box[T]: an immutable, reference counted heap copy of Elems[0]; breaks recursion in types
+	// KHandle is a runtime object shared by copies (decision 0068): Task,
+	// Scope, task.Group, Chan, Mutex, Atomic. One pointer to a reference
+	// counted object of std/llrt, shared between threads from its
+	// creation; Elems are its type arguments.
+	KHandle
 )
 
 // Type is an SSA type. Types are interned per Module: compare pointers.
@@ -94,7 +99,7 @@ func (t *Type) heap(seen map[*Type]bool) bool {
 	seen[t] = true
 	defer delete(seen, t)
 	switch t.Kind {
-	case KStr, KList, KFunc, KBox:
+	case KStr, KList, KFunc, KBox, KHandle:
 		return true
 	case KStruct:
 		for _, f := range t.Fields {
@@ -258,6 +263,10 @@ const (
 	OpBox
 	OpUnbox
 
+	// OpFuncAddr is the address of the function named Aux, as an Int: an
+	// entry function (Func.Entry) handed to the runtime, which calls it.
+	OpFuncAddr
+
 	// Calls. Aux is the callee name (string). A user function is called
 	// by its Func.Name; runtime and prelude operations (list ops, string
 	// building, printing, math) use dotted names such as `list.get`,
@@ -310,7 +319,7 @@ var opNames = [...]string{
 	OpIntToFloat: "itof", OpFloatToInt: "ftoi",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
-	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox",
+	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr",
 	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse", OpShare: "share",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }
@@ -399,8 +408,13 @@ type Func struct {
 	// closure body or the wrapper of a named function): parameter 0 is
 	// the closure (borrowed), the others are owned, since callers do not
 	// know the callee. Captures are the types of its environment.
-	Indirect  bool
-	Captures  []*Type
+	Indirect bool
+	Captures []*Type
+	// Entry marks a function the runtime calls (decision 0068: a task's
+	// body, the release of a list the runtime holds): its parameters are
+	// owned, its arguments and result are scalars or pointers (the C
+	// calling convention), and its address is taken with OpFuncAddr.
+	Entry     bool
 	nextValue int
 	nextBlock int
 }
@@ -470,6 +484,16 @@ func (m *Module) Box(elem *Type) *Type {
 		return t
 	}
 	t := &Type{Kind: KBox, Name: name, Elems: []*Type{elem}}
+	m.types[name] = t
+	return t
+}
+
+// Handle returns the interned handle type named name (decision 0068).
+func (m *Module) Handle(name string, elems ...*Type) *Type {
+	if t := m.types[name]; t != nil {
+		return t
+	}
+	t := &Type{Kind: KHandle, Name: name, Elems: elems}
 	m.types[name] = t
 	return t
 }
@@ -606,4 +630,6 @@ var RuntimeCalls = map[string]string{
 	"Float.max":        "(Float, Float) -> Float",
 	"Float.sqrt":       "(Float) -> Float (also floor, ceil, trunc, round, abs)",
 	"Str.len":          "(Str) -> Int",
+	"rt.*": "a call of the C runtime function xo_* (std/llrt, decision 0068): every operand is an Int, " +
+		"Bool, List, or handle (one word) or a Str (its bytes and length); the result is unit or one word",
 }

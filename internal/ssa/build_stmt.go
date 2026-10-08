@@ -1,6 +1,8 @@
 package ssa
 
 import (
+	"strings"
+
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/token"
@@ -29,6 +31,9 @@ func (s *fn) stmt(st ast.Stmt) {
 	case *ast.ExprStmt:
 		s.expr(x.X)
 	case *ast.LetStmt:
+		if bp, ok := x.Pattern.(*ast.BindPat); ok {
+			s.noteBinding(x.Value, b.info.VarOf(bp.Name))
+		}
 		v := s.value(x.Value)
 		fail := s.newBlock()
 		s.pattern(v, x.Pattern, fail)
@@ -39,6 +44,7 @@ func (s *fn) stmt(st ast.Stmt) {
 		s.cur = cont
 	case *ast.VarStmt:
 		vo := b.info.VarOf(x.Name)
+		s.noteBinding(x.Value, vo)
 		s.writeVar(vo, s.value(x.Value))
 	case *ast.ConstDecl:
 		// a local constant is a binding
@@ -74,6 +80,7 @@ func (s *fn) stmt(st ast.Stmt) {
 			b.unsupported(x, "this `break` or `continue`")
 			return
 		}
+		s.closeScopes(lc.scopes)
 		if brk {
 			s.jump(lc.brk)
 		} else {
@@ -107,7 +114,7 @@ func (s *fn) while(label string, cond ast.Expr, body *ast.Block) {
 		s.seal(in)
 		s.cur = in
 	}
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes)})
 	s.block(body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(head)
@@ -141,7 +148,10 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		s.writeVar(idx, s.valueAs(r.Lo, intT))
 		hi = s.valueAs(r.Hi, intT)
 		inclusive = r.Inclusive
-	} else if lt := s.natOf(x.Iter); lt.Kind == KList {
+	} else if lt := s.natOf(x.Iter); lt.Kind == KHandle && strings.HasPrefix(lt.Name, "Chan[") {
+		s.forChan(x, label)
+		return
+	} else if lt.Kind == KList {
 		list = s.value(x.Iter)
 		hi = s.call("list.len", intT, "", list)
 		s.writeVar(idx, s.cint(0))
@@ -179,7 +189,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	s.seal(fail)
 	s.add(OpUnreachable, nil, nil)
 	s.cur = cont
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: latch})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: latch, scopes: len(s.scopes)})
 	s.block(x.Body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(latch)

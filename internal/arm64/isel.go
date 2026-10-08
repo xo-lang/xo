@@ -746,6 +746,8 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.callValueOp(v)
 	case ssa.OpBox:
 		s.boxOp(v)
+	case ssa.OpFuncAddr:
+		s.set(v, s.symAddr(g.fname(v.Aux.(string))))
 	case ssa.OpUnbox:
 		s.unboxOp(v)
 	case ssa.OpFault:
@@ -1104,7 +1106,7 @@ func (s *fstate) inc(p vreg) {
 
 func (s *fstate) retain(t *ssa.Type, ws []vreg) {
 	switch t.Kind {
-	case ssa.KStr, ssa.KList, ssa.KBox:
+	case ssa.KStr, ssa.KList, ssa.KBox, ssa.KHandle:
 		s.inc(s.real(ws[0]))
 	case ssa.KFunc:
 		s.retainFunc(ws)
@@ -1121,7 +1123,7 @@ func (s *fstate) release(t *ssa.Type, ws []vreg) {
 		return
 	}
 	switch t.Kind {
-	case ssa.KStr, ssa.KList:
+	case ssa.KStr, ssa.KList, ssa.KHandle:
 		s.call(s.g.rcHelper("drop", t), regs(ws[0]), nil)
 	case ssa.KBox:
 		s.releaseBox(t, s.real(ws[0]))
@@ -1366,6 +1368,10 @@ func (s *fstate) callOp(v *ssa.Value) {
 		return
 	}
 	a := func(i int) []vreg { return s.words(v.Args[i]) }
+	if strings.HasPrefix(name, "rt.") {
+		s.rtCall(v)
+		return
+	}
 	switch name {
 	case "list.new":
 		s.set(v, s.rt("xo_rl_new", []src{isrc(4), isrc(g.esize(v.Type.Elems[0]))}, false)...)
@@ -1561,4 +1567,33 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 	}
 	delete(idom, blocks[0])
 	return idom
+}
+
+// rtCall lowers a call of the task runtime (`rt.name` is the C function
+// xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
+// Str its bytes and length; the result is nothing or one word.
+func (s *fstate) rtCall(v *ssa.Value) {
+	var args []src
+	for _, x := range v.Args {
+		ws := s.words(x)
+		switch x.Type.Kind {
+		case ssa.KInt, ssa.KBool, ssa.KList, ssa.KHandle:
+			args = append(args, rsrc(ws[0]))
+		case ssa.KStr:
+			d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
+			args = append(args, rsrc(d), rsrc(ws[1]))
+		default:
+			fail("the runtime call `%s` takes a `%s`", v.Aux, x.Type.Name)
+		}
+	}
+	name := "xo_" + strings.TrimPrefix(v.Aux.(string), "rt.")
+	switch v.Type.Kind {
+	case ssa.KUnit:
+		s.rt(name, args)
+		s.set(v)
+	case ssa.KInt, ssa.KBool, ssa.KList, ssa.KHandle:
+		s.set(v, s.rt(name, args, false)...)
+	default:
+		fail("the runtime call `%s` returns a `%s`", v.Aux, v.Type.Name)
+	}
 }

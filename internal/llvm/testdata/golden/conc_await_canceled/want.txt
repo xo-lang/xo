@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+canceled; await next
+--- stderr
+fault: awaited a task that was canceled before it finished at main.xo:9

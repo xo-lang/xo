@@ -1,0 +1,23 @@
+// Mutex.with inside Mutex.with on the same mutex in one task faults
+// (XO-F004) with both acquisition sites.
+struct Counts {
+  n: Int
+}
+
+fn main(os: Os) {
+  let m = Mutex[Counts].new(Counts{n: 1})
+  let hits = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        m.with(fn(var c) { c.n += 1 })
+        hits.add(1)
+      })
+    }
+  }
+  os.stdio.println("n ${m.with(fn(c) { c.n })} hits ${hits.get()}")
+  os.stdio.println("re-entrant with next")
+  m.with(fn(c) {
+    m.with(fn(c2) { c2.n })
+  })
+}

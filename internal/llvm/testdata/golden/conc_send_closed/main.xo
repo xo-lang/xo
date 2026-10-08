@@ -1,0 +1,14 @@
+// sending on a closed channel faults at the send
+fn main(os: Os) {
+  let ch = Chan[Int].new(cap: 1)
+  let got = scope s {
+    let t = s.spawn(fn() { ch.recv() ?? -1 })
+    ch.send(5)
+    t.await
+  }
+  os.stdio.println("got ${got}")
+  ch.close()
+  os.stdio.println("recv after close ${ch.recv() ?? -1}")
+  os.stdio.println("send on closed channel next")
+  ch.send(1)
+}

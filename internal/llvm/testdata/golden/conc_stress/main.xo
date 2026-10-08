@@ -1,0 +1,74 @@
+// thousands of tasks: fan out and await, discarded handles, a channel
+// with many senders, nested scopes, and a contended mutex
+struct Tally {
+  n: Int
+  seen: List[Int]
+}
+
+fn tree(depth: Int) -> Int {
+  if depth == 0 {
+    return 1
+  }
+  scope s {
+    let a = s.spawn(fn() { tree(depth - 1) })
+    let b = s.spawn(fn() { tree(depth - 1) })
+    a.await + b.await
+  }
+}
+
+fn main(os: Os) {
+  let n = 5000
+  let total = scope s {
+    var hs: List[Task[Int, Never]] = []
+    for i in 0..n {
+      hs.push(s.spawn(fn() { i * 2 }))
+    }
+    var sum = 0
+    for h in hs {
+      sum += h.await
+    }
+    sum
+  }
+  os.stdio.println("awaited ${total}")
+
+  let count = Atomic[Int].new(0)
+  scope s {
+    for i in 0..n {
+      s.spawn(fn() { count.add(i) })
+    }
+  }
+  os.stdio.println("discarded ${count.get()}")
+
+  let ch = Chan[Str].new(cap: 16)
+  let received = scope s {
+    for i in 0..2000 {
+      s.spawn(fn() { ch.send("m${i}") })
+    }
+    var bytes = 0
+    for _ in 0..2000 {
+      bytes += (ch.recv() ?? "").len()
+    }
+    bytes
+  }
+  os.stdio.println("received ${received}")
+
+  os.stdio.println("tree ${tree(10)}")
+
+  let m = Mutex[Tally].new(Tally{n: 0, seen: []})
+  scope s {
+    for w in 0..50 {
+      s.spawn(fn() {
+        for j in 0..100 {
+          m.with(fn(var t) {
+            t.n += 1
+            if j == 0 {
+              t.seen.push(w)
+            }
+          })
+        }
+      })
+    }
+  }
+  let (tn, ts) = m.with_read(fn(t) { (t.n, t.seen.len()) })
+  os.stdio.println("mutex ${tn} ${ts}")
+}

@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+n 5 hits 4
+re-entrant with next
+--- stderr
+fault: XO-F004: Mutex.with called re-entrantly in one task; the mutex is already held from main.xo:20 at main.xo:21

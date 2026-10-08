@@ -137,6 +137,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 	case *ast.WhileExpr:
 		s.while("", nil, x.Body)
 		return s.unit()
+	case *ast.ScopeExpr:
+		return s.scopeExpr(x)
 	}
 	b.unsupported(e, unsupportedExpr(e))
 	return s.undef(s.natOf(e))
@@ -196,6 +198,11 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	}
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
 		return s.valueAs(c.Decl.Value, s.natOf(x))
+	}
+	if x.Sel.Name == "await" {
+		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
+			return s.await(x)
+		}
 	}
 	v := s.expr(x.X)
 	if v.Type.Kind == KCap {

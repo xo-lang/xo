@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+len 3
+re-entrant with_read next
+--- stderr
+fault: XO-F004: Mutex.with_read called re-entrantly in one task; the mutex is already held from main.xo:8 at main.xo:9

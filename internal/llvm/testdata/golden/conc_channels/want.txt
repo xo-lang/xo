@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+closed empty ran 0
+drained 6 then -1
+sum 500500 after close true
+jobs 1:job1,2:job2,3:job3,4:job4,
+pool received 200
+seen p0p2p3 left 1
+try_send true false len 1
+try_recv 1 0
+ping x!!!!!
+shared 2 other 3
+--- stderr

@@ -378,6 +378,11 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		if nargs(1) != "" || arg(0).Kind != KBox || v.Type != arg(0).Elems[0] {
 			return "unbox takes Box[T] to T"
 		}
+	case OpFuncAddr:
+		name, _ := v.Aux.(string)
+		if callee := m.Func(name); callee == nil || !callee.Entry || len(v.Args) != 0 || v.Type == nil || v.Type.Kind != KInt {
+			return "funcaddr of a function that is not an entry, or not an Int"
+		}
 	case OpCapture:
 		i, ok := v.Aux.(int)
 		if !ok || nargs(1) != "" || !f.Indirect || v.Args[0] != f.Params()[0] || i < 0 || i >= len(f.Captures) || v.Type != f.Captures[i] {

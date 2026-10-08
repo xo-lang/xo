@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+even 10 odd 10 names 20
+failed true kept 10
+outcome 20 written 99
+a -100 b 200 log 200 reads 800 bad 0
+copy 201 kept 200
+error Empty
+last is set true
+atomic 8 8 1 true false 10
+flag true true false
+max 99
+--- stderr
