@@ -3,49 +3,44 @@
 // func main
 	.p2align 2
 _xo_f_main:
-	stp x29, x30, [sp, #-16]!
+	stp x29, x30, [sp, #-48]!
 	mov x29, sp
-	sub sp, sp, #32
-	str x19, [sp, #8]
-	str x20, [sp, #16]
+	stp x19, x20, [sp, #24]
 Lf1_b0:
-	mov x20, #0
 	mov x19, #0
+	mov x20, x19
 Lf1_b1:
-	cmp x20, #5
+	cmp x19, #5
 	b.ge Lf1_b4
 Lf1_b2:
 	movz x0, #38528, lsl #0
 	movk x0, #152, lsl #16
 	bl _xo_f_sieve
-	adds x10, x19, x0
+	adds x20, x20, x0
 	b.vs Lf1_fault1
 Lf1_b3:
-	add x9, x20, #1
-	mov x20, x9
-	mov x19, x10
+	add x19, x19, #1
 	b Lf1_b1
 Lf1_b4:
 	adrp x0, Lxo_str0@PAGE
 	add x0, x0, Lxo_str0@PAGEOFF
 	mov x1, #6
-	mov x2, x19
-	add x3, sp, #0
+	mov x2, x20
+	add x3, sp, #16
 	bl _xo_rs_concat_int
 	mov x19, x0
-	ldr x1, [sp, #0]
+	ldr x1, [sp, #16]
 	add x0, x19, #16
 	bl _xo_println
 	mov x0, x19
 	bl Lxo_drop1
-	ldr x19, [sp, #8]
-	ldr x20, [sp, #16]
-	mov sp, x29
-	ldp x29, x30, [sp], #16
+	ldp x19, x20, [sp, #24]
+	ldp x29, x30, [sp], #48
 	ret
 Lf1_fault1:
+	sub x15, x20, x0
 	mov x2, x0
-	mov x0, x19
+	mov x0, x15
 	mov x1, #43
 	adrp x3, Lxo_loc0@PAGE
 	add x3, x3, Lxo_loc0@PAGEOFF
@@ -55,14 +50,11 @@ Lf1_fault1:
 // func sieve
 	.p2align 2
 _xo_f_sieve:
-	stp x29, x30, [sp, #-16]!
+	stp x29, x30, [sp, #-64]!
 	mov x29, sp
-	sub sp, sp, #48
-	str x19, [sp, #0]
-	str x20, [sp, #8]
-	str x21, [sp, #16]
-	str x22, [sp, #24]
-	str x23, [sp, #32]
+	stp x19, x20, [sp, #16]
+	stp x21, x22, [sp, #32]
+	str x23, [sp, #48]
 Lf2_b0:
 	mov x22, x0
 	mov x0, #4
@@ -70,93 +62,77 @@ Lf2_b0:
 	bl _xo_rl_new
 	adds x23, x22, #1
 	b.vs Lf2_fault1
-	mov x21, #0
+	mov x20, #0
 Lf2_b1:
-	cmp x21, x23
-	b.ge Lf2_b6
+	cmp x20, x23
+	b.ge Lf2_b7
 Lf2_b2:
-	mov x20, #1
+	mov x21, #1
 	ldr x19, [x0, #8]
 	ldr x9, [x0, #16]
-	mov x10, x0
 	cmp x19, x9
 	b.eq Lf2_b3
 Lf2_b4:
-	add x9, x10, x19
-	strb w20, [x9, #24]
-	add x9, x19, #1
-	str x9, [x10, #8]
 Lf2_b5:
-	add x9, x21, #1
-	mov x21, x9
-	mov x0, x10
-	b Lf2_b1
+	add x9, x0, x19
+	strb w21, [x9, #24]
+	add x9, x19, #1
+	str x9, [x0, #8]
 Lf2_b6:
-	adds x8, x22, #1
-	b.vs Lf2_fault2
-	mov x13, #2
-	mov x19, #0
+	add x20, x20, #1
+	b Lf2_b1
 Lf2_b7:
-	cmp x13, x8
-	b.ge Lf2_b16
+	adds x12, x22, #1
+	b.vs Lf2_fault2
+	mov x11, #2
+	mov x19, #0
 Lf2_b8:
-	ldr x9, [x0, #8]
-	cmp x13, x9
-	b.hs Lf2_fault3
-	add x9, x0, x13
-	ldrb w9, [x9, #24]
-	cbz x9, Lf2_b13
+	cmp x11, x12
+	b.ge Lf2_b17
 Lf2_b9:
-	adds x14, x19, #1
+	ldr x9, [x0, #8]
+	cmp x11, x9
+	b.hs Lf2_fault3
+	add x9, x0, x11
+	ldrb w9, [x9, #24]
+	cbz x9, Lf2_b14
+Lf2_b10:
+	adds x19, x19, #1
 	b.vs Lf2_fault4
-	mul x10, x13, x13
-	smulh x9, x13, x13
+	mul x10, x11, x11
+	smulh x9, x11, x11
 	cmp x9, x10, asr #63
 	b.ne Lf2_fault5
-	mov x12, x0
-Lf2_b10:
-	cmp x10, x22
-	b.gt Lf2_b12
 Lf2_b11:
-	mov x11, #0
-	ldr x9, [x12, #8]
+	cmp x10, x22
+	b.gt Lf2_b13
+Lf2_b12:
+	ldr x9, [x0, #8]
 	cmp x10, x9
 	b.hs Lf2_fault6
-	add x9, x12, x10
-	strb w11, [x9, #24]
-	adds x9, x10, x13
+	add x9, x0, x10
+	strb wzr, [x9, #24]
+	adds x10, x10, x11
 	b.vs Lf2_fault7
-	mov x10, x9
-	b Lf2_b10
-Lf2_b12:
-	mov x10, x14
-	b Lf2_b14
+	b Lf2_b11
 Lf2_b13:
-	mov x12, x0
-	mov x10, x19
+	b Lf2_b16
 Lf2_b14:
-Lf2_b15:
-	add x9, x13, #1
-	mov x13, x9
-	mov x0, x12
-	mov x19, x10
-	b Lf2_b7
 Lf2_b16:
+	add x11, x11, #1
+	b Lf2_b8
+Lf2_b17:
 	bl Lxo_drop2
 	mov x0, x19
-	ldr x19, [sp, #0]
-	ldr x20, [sp, #8]
-	ldr x21, [sp, #16]
-	ldr x22, [sp, #24]
-	ldr x23, [sp, #32]
-	mov sp, x29
-	ldp x29, x30, [sp], #16
+	ldp x19, x20, [sp, #16]
+	ldp x21, x22, [sp, #32]
+	ldr x23, [sp, #48]
+	ldp x29, x30, [sp], #64
 	ret
 Lf2_b3:
 	mov x1, #1
 	bl _xo_rl_grow
-	mov x10, x0
-	b Lf2_b4
+	b Lf2_b5
 Lf2_fault1:
 	mov x0, x22
 	mov x1, #43
@@ -174,14 +150,16 @@ Lf2_fault2:
 	bl _xo_fault_overflow
 	brk #1
 Lf2_fault3:
-	mov x0, x13
+	mov x0, x11
 	mov x1, x9
 	adrp x2, Lxo_loc3@PAGE
 	add x2, x2, Lxo_loc3@PAGEOFF
 	bl _xo_fault_index
 	brk #1
 Lf2_fault4:
-	mov x0, x19
+	mov x17, #1
+	sub x15, x19, x17
+	mov x0, x15
 	mov x1, #43
 	mov x2, #1
 	adrp x3, Lxo_loc4@PAGE
@@ -189,8 +167,8 @@ Lf2_fault4:
 	bl _xo_fault_overflow
 	brk #1
 Lf2_fault5:
-	mov x0, x13
-	mov x2, x13
+	mov x0, x11
+	mov x2, x11
 	mov x1, #42
 	adrp x3, Lxo_loc5@PAGE
 	add x3, x3, Lxo_loc5@PAGEOFF
@@ -204,8 +182,9 @@ Lf2_fault6:
 	bl _xo_fault_index
 	brk #1
 Lf2_fault7:
-	mov x0, x10
-	mov x2, x13
+	sub x15, x10, x11
+	mov x0, x15
+	mov x2, x11
 	mov x1, #43
 	adrp x3, Lxo_loc7@PAGE
 	add x3, x3, Lxo_loc7@PAGEOFF

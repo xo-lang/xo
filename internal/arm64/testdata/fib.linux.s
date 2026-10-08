@@ -4,10 +4,9 @@
 	.p2align 2
 	.type xo_f_main, %function
 xo_f_main:
-	stp x29, x30, [sp, #-16]!
+	stp x29, x30, [sp, #-32]!
 	mov x29, sp
-	sub sp, sp, #16
-	str x19, [sp, #8]
+	str x19, [sp, #24]
 .Lf1_b0:
 	mov x0, #40
 	bl xo_f_fib
@@ -15,34 +14,30 @@ xo_f_main:
 	adrp x0, .Lxo_str0
 	add x0, x0, :lo12:.Lxo_str0
 	mov x1, #4
-	add x3, sp, #0
+	add x3, sp, #16
 	bl xo_rs_concat_int
 	mov x19, x0
-	ldr x1, [sp, #0]
+	ldr x1, [sp, #16]
 	add x0, x19, #16
 	bl xo_println
 	mov x0, x19
 	bl .Lxo_drop1
-	ldr x19, [sp, #8]
-	mov sp, x29
-	ldp x29, x30, [sp], #16
+	ldr x19, [sp, #24]
+	ldp x29, x30, [sp], #32
 	ret
 
 // func fib
 	.p2align 2
 	.type xo_f_fib, %function
 xo_f_fib:
-	stp x29, x30, [sp, #-16]!
+	stp x29, x30, [sp, #-32]!
 	mov x29, sp
-	sub sp, sp, #16
-	str x19, [sp, #0]
-	str x20, [sp, #8]
+	stp x19, x20, [sp, #16]
 .Lf2_b0:
 	mov x19, x0
 	cmp x19, #2
 	b.ge .Lf2_b2
 .Lf2_b1:
-	mov x0, x19
 	b .Lf2_b3
 .Lf2_b2:
 	subs x0, x19, #1
@@ -52,14 +47,12 @@ xo_f_fib:
 	subs x0, x19, #2
 	b.vs .Lf2_fault2
 	bl xo_f_fib
-	adds x9, x20, x0
+	adds x19, x20, x0
 	b.vs .Lf2_fault3
-	mov x0, x9
 .Lf2_b3:
-	ldr x19, [sp, #0]
-	ldr x20, [sp, #8]
-	mov sp, x29
-	ldp x29, x30, [sp], #16
+	mov x0, x19
+	ldp x19, x20, [sp, #16]
+	ldp x29, x30, [sp], #32
 	ret
 .Lf2_fault1:
 	mov x0, x19

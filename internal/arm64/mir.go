@@ -64,7 +64,10 @@ type inst struct {
 	defs  []vreg
 	uses  []vreg // template uses first, then the vregs of srcs and fault args
 	early bool   // the defs are written before the uses are dead (they must not share registers)
-	fault *fault
+	// recover: how a fault stub recomputes an operand whose register the
+	// result took ("add", "sub", "neg")
+	recover string
+	fault   *fault
 	// iCall: the callee symbol and the arguments; iPmove: the sources
 	sym  string
 	srcs []src

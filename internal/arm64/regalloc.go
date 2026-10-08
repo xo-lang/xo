@@ -189,17 +189,22 @@ func (s *fstate) regalloc() {
 		ranges[v] = mergeRanges(ranges[v])
 	}
 
-	// hints: registers a vreg would like (ABI registers, partners of moves)
+	// hints: registers a vreg would like (ABI registers), and pairs of
+	// registers joined by a move
 	fixed := make([][]int, n)
-	partners := make([][]vreg, n)
+	type pair struct {
+		a, b vreg
+		wt   float64
+	}
+	var pairs []pair
 	for _, b := range s.order {
+		wt := math.Pow(8, float64(min(b.depth, 6)))
 		for _, in := range b.insts {
 			switch in.kind {
 			case iPmove:
 				for k, d := range in.defs {
 					if a := in.srcs[k]; a.kind == sReg && a.v != 0 {
-						partners[d] = append(partners[d], a.v)
-						partners[a.v] = append(partners[a.v], d)
+						pairs = append(pairs, pair{d, a.v, wt})
 					}
 				}
 			case iCall:
@@ -230,10 +235,47 @@ func (s *fstate) regalloc() {
 		}
 	}
 
+	// coalescing: registers joined by a move whose ranges do not overlap
+	// share a location (most frequent moves first)
+	leader := make([]vreg, n)
+	for v := range leader {
+		leader[v] = vreg(v)
+	}
+	var find func(v vreg) vreg
+	find = func(v vreg) vreg {
+		for leader[v] != v {
+			leader[v] = leader[leader[v]]
+			v = leader[v]
+		}
+		return v
+	}
+	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].wt > pairs[j].wt })
+	var partners [][]vreg = make([][]vreg, n)
+	for _, p := range pairs {
+		a, b := find(p.a), find(p.b)
+		if a == b || s.fp[a] != s.fp[b] {
+			continue
+		}
+		if overlaps(ranges[a], ranges[b]) {
+			partners[a] = append(partners[a], b)
+			partners[b] = append(partners[b], a)
+			continue
+		}
+		if b < a {
+			a, b = b, a
+		}
+		leader[b] = a
+		ranges[a] = mergeRanges(append(ranges[a], ranges[b]...))
+		ranges[b] = nil
+		weight[a] += weight[b]
+		fixed[a] = append(fixed[a], fixed[b]...)
+		partners[a] = append(partners[a], partners[b]...)
+	}
+
 	// allocation: greedy first fit in order of weight per length
 	var order []vreg
 	for v := 1; v < n; v++ {
-		if len(ranges[v]) > 0 {
+		if find(vreg(v)) == vreg(v) && len(ranges[v]) > 0 {
 			order = append(order, vreg(v))
 		}
 	}
@@ -277,7 +319,7 @@ func (s *fstate) regalloc() {
 			}
 		}
 		for _, p := range partners[v] {
-			if r := s.loc[p].reg; r >= 0 {
+			if r := s.loc[find(p)].reg; r >= 0 {
 				cands = append(cands, r)
 			}
 		}
@@ -288,26 +330,22 @@ func (s *fstate) regalloc() {
 			cands = append(cands, gpCaller...)
 			cands = append(cands, gpCallee...)
 		}
-		// a used callee saved register before a fresh one
 		chosen := -1
 		for _, r := range cands {
-			if !overlaps(occ[r], ranges[v]) {
-				if isCallee(r) && !usedCallee[r] {
-					// look for an already saved one first
-					alt := -1
-					for _, r2 := range cands {
-						if isCallee(r2) && usedCallee[r2] && !overlaps(occ[r2], ranges[v]) {
-							alt = r2
-							break
-						}
-					}
-					if alt >= 0 {
-						r = alt
+			if overlaps(occ[r], ranges[v]) {
+				continue
+			}
+			if isCallee(r) && !usedCallee[r] {
+				// a callee saved register already saved before a fresh one
+				for _, r2 := range cands {
+					if isCallee(r2) && usedCallee[r2] && !overlaps(occ[r2], ranges[v]) {
+						r = r2
+						break
 					}
 				}
-				chosen = r
-				break
 			}
+			chosen = r
+			break
 		}
 		if chosen < 0 {
 			s.loc[v] = loc{reg: -1, slot: s.slots}
@@ -319,6 +357,9 @@ func (s *fstate) regalloc() {
 			usedCallee[chosen] = true
 		}
 		occ[chosen] = mergeRanges(append(occ[chosen], ranges[v]...))
+	}
+	for v := 1; v < n; v++ {
+		s.loc[v] = s.loc[find(vreg(v))]
 	}
 	for r := 0; r < 64; r++ {
 		if usedCallee[r] {

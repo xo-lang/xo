@@ -33,12 +33,15 @@ type fstate struct {
 	frame   int
 	stubs   strings.Builder
 	nstub   int
+	mm      *memo
 }
 
 func (g *gen) function(f *ssa.Func) {
 	s := &fstate{g: g, f: f, fp: []bool{false}, vals: map[*ssa.Value][]vreg{}, bmap: map[*ssa.Block]*mblock{},
 		nuses: map[*ssa.Value]int{}, lazy: map[*ssa.Value]bool{}}
 	s.isel()
+	s.dce()
+	s.thread()
 	s.regalloc()
 	s.emit()
 }
@@ -110,10 +113,18 @@ func (s *fstate) check(text string, uses []vreg, cond, fn string, args ...src) {
 // checked adds an instruction defining one register, with a fault side
 // exit; the result never shares a register with the operands, which the
 // fault stub reads.
-func (s *fstate) checked(fp bool, text string, uses []vreg, cond, fn string, args ...src) vreg {
+//
+// recover names how the fault stub gets back an operand whose register
+// the result took ("add", "sub", "neg": the operation is undone); with no
+// recover, the result is early (never shares a register with an operand).
+func (s *fstate) checked(fp bool, text string, uses []vreg, recover string, cond, fn string, args ...src) vreg {
 	d := s.newVreg(fp)
 	in := s.plain(text, []vreg{d}, uses...)
-	in.early = true
+	if recover == "" || (len(uses) == 2 && uses[0] == uses[1]) {
+		in.early = true
+	} else {
+		in.recover = recover
+	}
 	in.fault = &fault{cond: cond, fn: s.g.sym(fn), args: args}
 	for _, a := range args {
 		if a.kind == sReg && a.v != 0 {
@@ -137,6 +148,7 @@ func (s *fstate) call(sym string, args []src, res []bool) []vreg {
 		}
 	}
 	s.add(in)
+	s.clobber()
 	return defs
 }
 
@@ -212,6 +224,17 @@ func movImm(n int64) string {
 
 func (s *fstate) imm(n int64) vreg { return s.def1(false, movImm(n)) }
 
+// cimm is imm, shared within the block.
+func (s *fstate) cimm(n int64) vreg {
+	m := s.m()
+	if r, ok := m.consts[n]; ok {
+		return r
+	}
+	r := s.imm(n)
+	m.consts[n] = r
+	return r
+}
+
 // fimm puts the double with bits b in a floating point register.
 func (s *fstate) fimm(bits uint64) vreg {
 	if bits == 0 {
@@ -234,20 +257,35 @@ func (s *fstate) symAddr(sym string) vreg {
 // registers where they are used).
 func (s *fstate) words(v *ssa.Value) []vreg {
 	if v.Op == ssa.OpConst {
+		m := s.m()
+		if r, ok := m.consts[v.Aux]; ok {
+			if x, isStr := v.Aux.(string); isStr {
+				return []vreg{r, s.cimm(int64(len(x)))}
+			}
+			return []vreg{r}
+		}
+		var r vreg
 		switch x := v.Aux.(type) {
 		case int64:
-			return []vreg{s.imm(x)}
+			r = s.cimm(x)
 		case float64:
-			return []vreg{s.fimm(math.Float64bits(x))}
+			r = s.fimm(math.Float64bits(x))
 		case bool:
+			r = 0
 			if x {
-				return []vreg{s.imm(1)}
+				r = s.cimm(1)
+			} else {
+				r = s.cimm(0)
 			}
-			return []vreg{s.imm(0)}
 		case string:
-			return []vreg{s.symAddr(s.g.strObj(x)), s.imm(int64(len(x)))}
+			r = s.symAddr(s.g.strObj(x))
+			m.consts[v.Aux] = r
+			return []vreg{r, s.cimm(int64(len(x)))}
+		default:
+			fail("constant %T", v.Aux)
 		}
-		fail("constant %T", v.Aux)
+		m.consts[v.Aux] = r
+		return []vreg{r}
 	}
 	if ws, ok := s.vals[v]; ok {
 		return ws
@@ -487,7 +525,7 @@ func (s *fstate) instr(v *ssa.Value) {
 			s.set(v, s.def1(false, "neg $d0, $u0", a))
 			return
 		}
-		s.set(v, s.checked(false, "negs $d0, $u0", []vreg{a}, "vs", "xo_fault_neg", rsrc(a), symsrc(g.loc(v.Pos))))
+		s.set(v, s.checked(false, "negs $d0, $u0", []vreg{a}, "neg", "vs", "xo_fault_neg", rsrc(a), symsrc(g.loc(v.Pos))))
 	case ssa.OpNot:
 		a := s.word(v.Args[0])
 		if v.Type.Kind == ssa.KBool {
@@ -630,7 +668,7 @@ func (s *fstate) addSub(v *ssa.Value) {
 			s.set(v, s.def1(false, text, av))
 			return
 		}
-		s.set(v, s.checked(false, text, []vreg{av}, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), isrc(mustConst(b)), symsrc(g.loc(v.Pos))))
+		s.set(v, s.checked(false, text, []vreg{av}, ins, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), isrc(mustConst(b)), symsrc(g.loc(v.Pos))))
 		return
 	}
 	av, bv := s.word(a), s.word(b)
@@ -639,7 +677,7 @@ func (s *fstate) addSub(v *ssa.Value) {
 		s.set(v, s.def1(false, text, av, bv))
 		return
 	}
-	s.set(v, s.checked(false, text, []vreg{av, bv}, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), rsrc(bv), symsrc(g.loc(v.Pos))))
+	s.set(v, s.checked(false, text, []vreg{av, bv}, ins, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), rsrc(bv), symsrc(g.loc(v.Pos))))
 }
 
 func mustConst(v *ssa.Value) int64 {
@@ -762,7 +800,7 @@ func (s *fstate) toInt(ws []vreg, layout []bool) []vreg {
 func (s *fstate) inc(p vreg) {
 	c := s.def1(false, "ldr $d0, [$u0]", p)
 	c1 := s.def1(false, "add $d0, $u0, #1", c)
-	s.plain("str $u0, [$u1]", nil, c1, p)
+	s.store("str $u0, [$u1]", c1, p)
 }
 
 func (s *fstate) retain(t *ssa.Type, ws []vreg) {
@@ -798,11 +836,15 @@ func (s *fstate) reuse(v *ssa.Value) {
 	}
 	et := x.Type.Elems[0]
 	l := s.word(x)
-	r := s.def1(false, "mov $d0, $u0", l)
+	r := s.newVreg(false)
 	c := s.def1(false, "ldr $d0, [$u0]", l)
 	slow := s.newBlock(true)
+	fast := s.newBlock(false)
 	cont := s.newBlock(false)
-	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "ne", targets: []*mblock{slow, cont}})
+	s.add(&inst{kind: iCondBr, text: "cmp $u0, #1", uses: []vreg{c}, cond: "ne", targets: []*mblock{slow, fast}})
+	s.cur = fast
+	s.pmove([]vreg{r}, regs(l))
+	s.add(&inst{kind: iJump, targets: []*mblock{cont}})
 	s.cur = slow
 	cp := s.rt("xo_rl_copy", []src{rsrc(l), isrc(s.g.esize(et)), s.elemFn("dup", et)}, false)
 	s.pmove([]vreg{r}, regs(cp[0]))
@@ -828,6 +870,17 @@ const listHdr = 24 // {rc, len, cap}
 // elemBase returns a register b such that element i of list l starts at
 // b + listHdr.
 func (s *fstate) elemBase(l, i vreg, es int64) vreg {
+	m := s.m()
+	key := [3]int64{int64(l), int64(i), es}
+	if b, ok := m.bases[key]; ok {
+		return b
+	}
+	b := s.elemBase1(l, i, es)
+	m.bases[key] = b
+	return b
+}
+
+func (s *fstate) elemBase1(l, i vreg, es int64) vreg {
 	switch {
 	case es == 0:
 		return l
@@ -840,39 +893,88 @@ func (s *fstate) elemBase(l, i vreg, es int64) vreg {
 		}
 		return s.def1(false, fmt.Sprintf("add $d0, $u0, $u1, lsl #%d", k), l, i)
 	}
-	n := s.imm(es)
+	n := s.cimm(es)
 	return s.def1(false, "madd $d0, $u0, $u1, $u2", i, n, l)
 }
 
 // loadElem loads the element words at base (as integer registers when
 // asInt).
 func (s *fstate) loadElem(base vreg, et *ssa.Type, asInt bool) []vreg {
+	m := s.m()
 	if et.Kind == ssa.KBool {
-		return []vreg{s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", listHdr), base)}
+		d := s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", listHdr), base)
+		m.loaded[d] = memAt{base, listHdr, m.epoch}
+		return []vreg{d}
 	}
 	var out []vreg
 	for k, fp := range s.g.layout(et) {
-		out = append(out, s.def1(fp && !asInt, fmt.Sprintf("ldr $d0, [$u0, #%d]", listHdr+8*k), base))
+		d := s.def1(fp && !asInt, fmt.Sprintf("ldr $d0, [$u0, #%d]", listHdr+8*k), base)
+		m.loaded[d] = memAt{base, listHdr + 8*k, m.epoch}
+		out = append(out, d)
 	}
 	return out
 }
 
+// storeWords returns the words of a value to store: a zero constant is
+// xzr.
+func (s *fstate) storeWords(v *ssa.Value) []vreg {
+	if v.Op == ssa.OpConst {
+		switch x := v.Aux.(type) {
+		case int64:
+			if x == 0 {
+				return []vreg{0}
+			}
+		case bool:
+			if !x {
+				return []vreg{0}
+			}
+		}
+	}
+	return s.words(v)
+}
+
 func (s *fstate) storeElem(base vreg, et *ssa.Type, ws []vreg) {
+	m := s.m()
+	same := func(w vreg, off int) bool {
+		at, ok := m.loaded[w]
+		return ok && at == memAt{base, off, m.epoch}
+	}
 	if et.Kind == ssa.KBool {
-		s.plain(fmt.Sprintf("strb $wu0, [$u1, #%d]", listHdr), nil, ws[0], base)
+		if !same(ws[0], listHdr) {
+			s.store(fmt.Sprintf("strb $wu0, [$u1, #%d]", listHdr), ws[0], base)
+		}
 		return
 	}
+	var skip []bool
 	for k := range s.g.layout(et) {
-		s.plain(fmt.Sprintf("str $u0, [$u1, #%d]", listHdr+8*k), nil, ws[k], base)
+		skip = append(skip, same(ws[k], listHdr+8*k))
+	}
+	for k := range s.g.layout(et) {
+		if !skip[k] {
+			s.store(fmt.Sprintf("str $u0, [$u1, #%d]", listHdr+8*k), ws[k], base)
+		}
 	}
 }
 
-func (s *fstate) listLen(l vreg) vreg { return s.def1(false, "ldr $d0, [$u0, #8]", l) }
+func (s *fstate) listLen(l vreg) vreg {
+	m := s.m()
+	if n, ok := m.lens[l]; ok {
+		return n
+	}
+	n := s.def1(false, "ldr $d0, [$u0, #8]", l)
+	m.lens[l] = n
+	return n
+}
 
 func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 	if v.Pos == "" {
 		return
 	}
+	m := s.m()
+	if m.checked[[2]vreg{l, i}] {
+		return
+	}
+	m.checked[[2]vreg{l, i}] = true
 	n := s.listLen(l)
 	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
 }
@@ -959,7 +1061,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 	case "list.set":
 		l, i := s.word(v.Args[0]), s.word(v.Args[1])
 		et := v.Args[2].Type
-		x := a(2)
+		x := s.storeWords(v.Args[2])
 		s.boundsCheck(v, l, i)
 		base := s.elemBase(l, i, g.esize(et))
 		if et.Heap() {
@@ -971,12 +1073,15 @@ func (s *fstate) callOp(v *ssa.Value) {
 	case "list.push":
 		l := s.word(v.Args[0])
 		et := v.Args[1].Type
-		x := a(1)
+		x := s.storeWords(v.Args[1])
 		n := s.listLen(l)
 		c := s.def1(false, "ldr $d0, [$u0, #16]", l)
-		lm := s.def1(false, "mov $d0, $u0", l)
-		grow, room := s.newBlock(true), s.newBlock(false)
-		s.add(&inst{kind: iCondBr, text: "cmp $u0, $u1", uses: []vreg{n, c}, cond: "eq", targets: []*mblock{grow, room}})
+		lm := s.newVreg(false)
+		grow, fast, room := s.newBlock(true), s.newBlock(false), s.newBlock(false)
+		s.add(&inst{kind: iCondBr, text: "cmp $u0, $u1", uses: []vreg{n, c}, cond: "eq", targets: []*mblock{grow, fast}})
+		s.cur = fast
+		s.pmove([]vreg{lm}, regs(l))
+		s.add(&inst{kind: iJump, targets: []*mblock{room}})
 		s.cur = grow
 		l2 := s.rt("xo_rl_grow", []src{rsrc(l), isrc(g.esize(et))}, false)
 		s.pmove([]vreg{lm}, regs(l2[0]))
@@ -986,7 +1091,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 			s.storeElem(s.elemBase(lm, n, g.esize(et)), et, x)
 		}
 		n1 := s.def1(false, "add $d0, $u0, #1", n)
-		s.plain("str $u0, [$u1, #8]", nil, n1, lm)
+		s.store("str $u0, [$u1, #8]", n1, lm)
 		s.set(v, lm)
 	case "list.pop":
 		l := s.word(v.Args[0])
@@ -995,7 +1100,7 @@ func (s *fstate) callOp(v *ssa.Value) {
 		n := s.listLen(l)
 		o := s.option(ot, "cmp $u0, #0", []vreg{n}, "gt", func() []vreg {
 			n1 := s.def1(false, "sub $d0, $u0, #1", n)
-			s.plain("str $u0, [$u1, #8]", nil, n1, l)
+			s.store("str $u0, [$u1, #8]", n1, l)
 			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true)
 		})
 		s.set(v, append([]vreg{l}, o...)...)

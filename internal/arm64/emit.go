@@ -61,15 +61,23 @@ const (
 var gpScratch = []int{scratch0, scratch1, scratch2}
 var fpScratch = []int{fpBase + 30, fpBase + 29, fpBase + 31}
 
-// layout of the frame (sp relative, after the prologue):
+// layout of the frame (sp relative, after the prologue), size bytes,
+// 16 byte aligned:
 //
-//	[0, outArgs)             stack arguments of calls
+//	[0, outArgs)             stack arguments of calls (when any)
 //	[outOff, outOff+8)       the $OUT slot (length out parameter)
 //	[spillBase, ...)         spill slots, 8 bytes each
 //	[saveBase, ...)          callee saved registers
-//	frame                    (16 byte aligned), then the saved x29, x30
+//	[rec, rec+16)            the frame record (x29, x30); x29 = sp + rec
+//
+// The frame record is at the bottom (rec 0) when no call passes stack
+// arguments, so one `stp x29, x30, [sp, #-size]!` makes the frame. A
+// leaf function (no calls, nothing saved or spilled) has no frame:
+// x29 keeps pointing at its caller's record. Incoming stack arguments
+// are at [sp, #size + 8k].
 type frameInfo struct {
-	outArgs, outOff, spillBase, saveBase, size int
+	outArgs, outOff, spillBase, saveBase, rec, size int
+	leaf                                            bool
 }
 
 func align16(n int) int { return (n + 15) &^ 15 }
@@ -108,26 +116,39 @@ func (s *fstate) emit() {
 			}
 		}
 	}
-	fr.outOff = fr.outArgs
+	calls := false
+	for _, b := range s.order {
+		for _, in := range b.insts {
+			calls = calls || in.kind == iCall
+		}
+	}
+	fr.leaf = !calls && len(s.saved) == 0 && s.slots == 0 && !s.out
+	base := 0
+	if fr.outArgs == 0 {
+		base = 16 // the frame record comes first
+	}
+	fr.outOff = base + fr.outArgs
 	fr.spillBase = fr.outOff
 	if s.out {
 		fr.spillBase += 8
 	}
 	fr.saveBase = fr.spillBase + 8*s.slots
-	fr.size = align16(fr.saveBase + 8*len(s.saved))
-	if fr.size+16 > 32000 {
+	if fr.outArgs == 0 {
+		fr.size = align16(fr.saveBase + 8*len(s.saved))
+	} else {
+		fr.rec = align16(fr.saveBase + 8*len(s.saved))
+		fr.size = fr.rec + 16
+	}
+	if fr.leaf {
+		fr.size = 0
+	}
+	if fr.size > 4000 {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
 	b := &g.text
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
-	b.WriteString("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
-	if fr.size > 0 {
-		subSP(b, "sub", fr.size)
-	}
-	for k, r := range s.saved {
-		fmt.Fprintf(b, "\tstr %s, [sp, #%d]\n", regName(r, false), fr.saveBase+8*k)
-	}
+	s.prologue(b, fr)
 	for bi, mb := range s.order {
 		var next *mblock
 		if bi+1 < len(s.order) {
@@ -152,11 +173,55 @@ func subSP(b *strings.Builder, op string, n int) {
 	}
 }
 
-func (s *fstate) epilogue(b *strings.Builder, fr *frameInfo) {
-	for k, r := range s.saved {
-		fmt.Fprintf(b, "\tldr %s, [sp, #%d]\n", regName(r, false), fr.saveBase+8*k)
+func (s *fstate) prologue(b *strings.Builder, fr *frameInfo) {
+	if fr.leaf {
+		return
 	}
-	b.WriteString("\tmov sp, x29\n\tldp x29, x30, [sp], #16\n\tret\n")
+	if fr.rec == 0 && fr.size <= 504 {
+		fmt.Fprintf(b, "\tstp x29, x30, [sp, #-%d]!\n\tmov x29, sp\n", fr.size)
+	} else {
+		subSP(b, "sub", fr.size)
+		if fr.rec <= 504 {
+			fmt.Fprintf(b, "\tstp x29, x30, [sp, #%d]\n", fr.rec)
+		} else {
+			fmt.Fprintf(b, "\tstr x29, [sp, #%d]\n\tstr x30, [sp, #%d]\n", fr.rec, fr.rec+8)
+		}
+		fmt.Fprintf(b, "\tadd x29, sp, #%d\n", fr.rec)
+	}
+	s.saves(b, fr, "str", "stp")
+}
+
+// saves stores or loads the callee saved registers, in pairs when it
+// can.
+func (s *fstate) saves(b *strings.Builder, fr *frameInfo, one, two string) {
+	for k := 0; k < len(s.saved); k++ {
+		r, off := s.saved[k], fr.saveBase+8*k
+		if k+1 < len(s.saved) && (s.saved[k+1] >= fpBase) == (r >= fpBase) && off <= 496 {
+			fmt.Fprintf(b, "\t%s %s, %s, [sp, #%d]\n", two, regName(r, false), regName(s.saved[k+1], false), off)
+			k++
+			continue
+		}
+		fmt.Fprintf(b, "\t%s %s, [sp, #%d]\n", one, regName(r, false), off)
+	}
+}
+
+func (s *fstate) epilogue(b *strings.Builder, fr *frameInfo) {
+	if fr.leaf {
+		b.WriteString("\tret\n")
+		return
+	}
+	s.saves(b, fr, "ldr", "ldp")
+	if fr.rec == 0 && fr.size <= 504 {
+		fmt.Fprintf(b, "\tldp x29, x30, [sp], #%d\n\tret\n", fr.size)
+		return
+	}
+	if fr.rec <= 504 {
+		fmt.Fprintf(b, "\tldp x29, x30, [sp, #%d]\n", fr.rec)
+	} else {
+		fmt.Fprintf(b, "\tldr x29, [sp, #%d]\n\tldr x30, [sp, #%d]\n", fr.rec, fr.rec+8)
+	}
+	subSP(b, "add", fr.size)
+	b.WriteString("\tret\n")
 }
 
 var invCond = map[string]string{"eq": "ne", "ne": "eq", "lt": "ge", "ge": "lt", "gt": "le", "le": "gt",
@@ -230,7 +295,7 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		for k, l := range s.abiLocs(regs(in.defs...)) {
 			src := mloc{reg: l.reg}
 			if l.reg < 0 {
-				src = mloc{reg: -1, base: "x29", off: 16 + 8*l.slot}
+				src = mloc{reg: -1, base: "sp", off: fr.size + 8*l.slot}
 			}
 			if d, ok := s.vloc(in.defs[k], fr); ok {
 				ms = append(ms, move{d, msrc{kind: mLoc, l: src}})
@@ -395,7 +460,9 @@ func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
 		l := s.g.local(fmt.Sprintf("f%d_fault%d", s.g.nfunc, s.nstub))
 		fmt.Fprintf(b, "\tb.%s %s\n", in.fault.cond, l)
 		fmt.Fprintf(&s.stubs, "%s:\n", l)
-		s.parallel(&s.stubs, s.callMoves(in.fault.args, fr, "sp", 0), fr)
+		ms := s.callMoves(in.fault.args, fr, "sp", 0)
+		s.recoverOperand(&s.stubs, in, ms, fr)
+		s.parallel(&s.stubs, ms, fr)
 		fmt.Fprintf(&s.stubs, "\tbl %s\n\tbrk #1\n", in.fault.fn)
 	}
 	for _, st := range stores {
@@ -529,4 +596,57 @@ func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 // immText is the assembly that puts n in register r.
 func immText(n int64, r string) string {
 	return strings.ReplaceAll("\t"+strings.ReplaceAll(movImm(n), "\n", "\n\t"), "$d0", r) + "\n"
+}
+
+// recoverOperand recomputes, in a fault stub, an operand of a checked
+// add, sub, or neg whose register the result took (the operation
+// wraps, so undoing it gives the operand back), and points its move at
+// the recomputed value (x15).
+func (s *fstate) recoverOperand(b *strings.Builder, in *inst, ms []move, fr *frameInfo) {
+	if in.recover == "" {
+		return
+	}
+	dl, ok := s.vloc(in.defs[0], fr)
+	if !ok || dl.reg < 0 {
+		return
+	}
+	d := regName(dl.reg, false)
+	args := in.fault.args
+	clobbered := func(k int) bool {
+		if k >= len(args) || args[k].kind != sReg || args[k].v == 0 {
+			return false
+		}
+		l, _ := s.vloc(args[k].v, fr)
+		return l.reg == dl.reg
+	}
+	// other puts operand k in a register
+	other := func(k int) string {
+		a := args[k]
+		if a.kind == sImm {
+			b.WriteString(immText(a.imm, "x17"))
+			return "x17"
+		}
+		l, _ := s.vloc(a.v, fr)
+		if l.reg >= 0 {
+			return regName(l.reg, false)
+		}
+		fmt.Fprintf(b, "\tldr x17, %s\n", memRef(l))
+		return "x17"
+	}
+	for _, k := range []int{0, 2} {
+		if !clobbered(k) {
+			continue
+		}
+		switch {
+		case in.recover == "neg":
+			fmt.Fprintf(b, "\tneg x15, %s\n", d)
+		case in.recover == "add":
+			fmt.Fprintf(b, "\tsub x15, %s, %s\n", d, other(2-k))
+		case in.recover == "sub" && k == 0:
+			fmt.Fprintf(b, "\tadd x15, %s, %s\n", d, other(2))
+		case in.recover == "sub":
+			fmt.Fprintf(b, "\tsub x15, %s, %s\n", other(0), d)
+		}
+		ms[k].src = msrc{kind: mLoc, l: mloc{reg: scratch2}}
+	}
 }
