@@ -45,7 +45,10 @@ gave a read only view (core 5.4).
 - Reads of shared state no longer serialize. In bench/perf/http the
   store's `get` and `list` use `with_read`; results in
   `bench/results/perf-throughput-2026-10-08.md` (section dated
-  2026-10-08, "Shared reads").
+  2026-10-08, "Shared reads"): no measurable throughput change there,
+  because three of the five requests per cycle write and writer
+  preference queues the GETs behind them; the write side is the next
+  cost.
 - A reader that waits for another reader to enter can deadlock when a
   writer queues in between (as with Go's RWMutex). The deterministic
   scheduler finds it under some seeds and reports XO-F001
