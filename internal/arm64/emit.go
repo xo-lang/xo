@@ -368,6 +368,15 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 				return
 			}
 			fmt.Fprintf(b, "\tcbnz %s, %s\n", r, s.label(t))
+		} else if in.cond == "tbz" || in.cond == "tbnz" {
+			r := s.useReg(b, in.uses[0], 0, fr)
+			c := in.cond
+			if t == next {
+				c = map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[c]
+				fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(f))
+				return
+			}
+			fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(t))
 		} else {
 			s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
 			if t == next {

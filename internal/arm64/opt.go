@@ -40,13 +40,15 @@ type memo struct {
 	// bounds of Int registers known from the branches that dominate
 	// the block
 	lo, hi map[vreg]int64
+	// lowZero: the number of low bits a branch proved zero
+	lowZero map[vreg]int
 }
 
 // m returns the memo of the current block.
 func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}}
+			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
 	}
 	return s.mm
 }
@@ -189,7 +191,10 @@ func (s *fstate) dce() {
 // that dominates it.
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}}
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+	for k, v := range from.lowZero {
+		m.lowZero[k] = v
+	}
 	for k, v := range from.lo {
 		m.lo[k] = v
 	}
@@ -286,6 +291,17 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 		op = negateCmp[op]
 	}
 	x, y := c.Args[0], c.Args[1]
+	if op == ssa.OpEq {
+		// x % 2^k == 0: the low k bits of x are zero
+		for _, r := range []*ssa.Value{x, y} {
+			if s.remTest(r) {
+				k, _ := pow2(r.Args[1])
+				if ws, ok := s.vals[r.Args[0]]; ok && len(ws) == 1 {
+					s.m().lowZero[ws[0]] = k
+				}
+			}
+		}
+	}
 	xlo, xhi := s.bounds(x)
 	ylo, yhi := s.bounds(y)
 	s.narrow(x, op, ylo, yhi)
@@ -536,6 +552,19 @@ func (s *fstate) hoistConsts() {
 			pre = p
 		}
 		if pre == nil || pre.term() == nil || pre.term().kind != iJump {
+			continue
+		}
+		// across a call a constant needs a callee saved register, and a
+		// spilled one would be reloaded from the stack: leave loops that
+		// call on their hot path alone (rematerializing spilled
+		// constants would lift this)
+		calls := false
+		for b := range l.body {
+			for _, in := range b.insts {
+				calls = calls || (in.kind == iCall && !b.cold)
+			}
+		}
+		if calls {
 			continue
 		}
 		var hoisted []*inst

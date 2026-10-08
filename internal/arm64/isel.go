@@ -562,12 +562,31 @@ func (s *fstate) instr(v *ssa.Value) {
 			s.set(v, s.def1(true, "fmul $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
 			return
 		}
+		x, y := v.Args[0], v.Args[1]
+		if _, ok := constInt(x); ok {
+			x, y = y, x
+		}
 		a, b := s.word(v.Args[0]), s.word(v.Args[1])
+		// the low word by shifts: x*2^k, x*(2^k + 1)
+		low := ""
+		if c, ok := constInt(y); ok {
+			if k, ok := pow2(y); ok {
+				low = fmt.Sprintf("lsl $d0, $u0, #%d", k)
+			} else if k, ok := pow2c(c - 1); ok {
+				low = fmt.Sprintf("add $d0, $u0, $u0, lsl #%d", k)
+			}
+		}
+		mul := func() vreg {
+			if low != "" {
+				return s.def1(false, low, s.word(x))
+			}
+			return s.def1(false, "mul $d0, $u0, $u1", a, b)
+		}
 		if v.Pos == "" {
-			s.set(v, s.def1(false, "mul $d0, $u0, $u1", a, b))
+			s.set(v, mul())
 			return
 		}
-		r := s.def1(false, "mul $d0, $u0, $u1", a, b)
+		r := mul()
 		hi := s.def1(false, "smulh $d0, $u0, $u1", a, b)
 		s.check("cmp $u0, $u1, asr #63", []vreg{hi, r}, "ne", "xo_fault_overflow", rsrc(a), isrc('*'), rsrc(b), symsrc(g.loc(v.Pos)))
 		s.set(v, r)
@@ -684,6 +703,10 @@ func (s *fstate) instr(v *ssa.Value) {
 		if s.lazy[c] {
 			text, uses, cond := s.compare(c)
 			in = &inst{kind: iCondBr, text: text, uses: uses, cond: cond}
+			if text == "tst $u0, #1" && (cond == "eq" || cond == "ne") {
+				// test bit 0 and branch
+				in = &inst{kind: iCondBr, uses: uses, cond: map[string]string{"eq": "tbz", "ne": "tbnz"}[cond]}
+			}
 		} else {
 			in = &inst{kind: iCondBr, cond: "cbnz", uses: []vreg{s.word(c)}}
 		}
@@ -766,7 +789,15 @@ func mustConst(v *ssa.Value) int64 {
 // pow2 reports k when v is the Int constant 2^k, k >= 1.
 func pow2(v *ssa.Value) (int, bool) {
 	n, ok := constInt(v)
-	if !ok || n < 2 || n&(n-1) != 0 {
+	if !ok {
+		return 0, false
+	}
+	return pow2c(n)
+}
+
+// pow2c reports k when n is 2^k, k >= 1.
+func pow2c(n int64) (int, bool) {
+	if n < 2 || n&(n-1) != 0 {
 		return 0, false
 	}
 	k := 0
@@ -805,6 +836,15 @@ func (s *fstate) divRem(v *ssa.Value) {
 		}
 		// round toward zero: add 2^k - 1 to negative dividends
 		a := s.word(v.Args[0])
+		if s.m().lowZero[a] >= k {
+			// a branch proved a % 2^k == 0: exact
+			if v.Op == ssa.OpDiv {
+				s.set(v, s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), a))
+			} else {
+				s.set(v, s.cimm(0))
+			}
+			return
+		}
 		var t vreg
 		if k == 1 {
 			t = s.def1(false, "add $d0, $u0, $u0, lsr #63", a)
