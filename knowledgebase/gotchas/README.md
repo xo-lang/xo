@@ -128,3 +128,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [small-heap-gc-per-p-spans.md](small-heap-gc-per-p-spans.md): with a 4 MB goal on 12 Ps the Xo server collected every 0.54 MB of allocation (Go 1.31 MB); compare total_alloc / num_gc, not bytes per request alone.
 - [bench-prompts-not-saved.md](bench-prompts-not-saved.md): the prompts of the original agent benchmark runs were never stored; `bench/harness/prompts/` reconstructs them, and new runs must save the exact prompt with the outputs.
 - [strict-check-in-worktree.md](strict-check-in-worktree.md): a git worktree has no `.tools/bin`, so `strict-check.sh` failed every analyzer; set `XO_TOOLS_BIN` (the harness finds the main checkout's tools itself).
+- [nilaway-trace-names-work-dir.md](nilaway-trace-names-work-dir.md): planted bug scoring counted nilaway on every variant because base and variant were built in differently named directories; build both under the same name.

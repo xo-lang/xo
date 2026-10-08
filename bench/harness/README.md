@@ -153,7 +153,15 @@ conventions, `bench/planted/README.md`, and the result files). Differences:
 
 ## Validation against the existing Claude outputs (2026-10-08)
 
-See "Validation" in `bench/results/harness-validation-2026-10-08.md`.
+Scoring the stored Claude outputs reproduces the published numbers
+(`bench/results/harness-validation-2026-10-08.md`): every runs to green,
+line, and test count of the three arm table (10 of 10 tasks); escaped
+strict findings on plain Go; every Go planted variant's plain and strict
+result (9/30 and 14/30 raw, 13/30 after the published manual exclusion);
+Xo author 1 at 29/30 and N 16/20; Xo author 2 at 23/30 (25 with warnings).
+With today's toolchain two Xo cells are no longer green: 03 fails its
+contract fuzz (the known `backoff` overflow) and 06 fails XO0410, a spec 0.6
+rule.
 
 ## Cost estimate
 

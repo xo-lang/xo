@@ -54,7 +54,8 @@ PUBLISHED = {
 }
 # planted-and-harder-2026-10-07.md and planted-xo-2026-10-07.md (spec 0.6 update)
 PUBLISHED_PLANTED = {
-    "go": "X: plain 9/30, plain + strict 13/30; N: 17/20 (plain and strict)",
+    "go": ("X: plain 9/30, plain + strict 13/30 (14 raw: the 05 X3 staticcheck S1000 style hit was "
+           "excluded by hand); N: 17/20 (plain and strict)"),
     "xo-translate": "X: 29/30 prevented or caught (conservative 23 to 24 after faithfulness adjustments); N: 16/20",
     "xo-independent": "X: 23/30 caught, 25/30 caught or warned (spec 0.6 rules)",
 }
@@ -399,7 +400,7 @@ def planted_go(tdir, task):
     man = load_manifest(tdir)
     recs = []
     with tempfile.TemporaryDirectory() as tmp:
-        w = os.path.join(tmp, "base")
+        w = os.path.join(tmp, task)  # same name as the variants: nilaway traces print it
         overlay(base_dir, None, w)
         base = go_strict_findings(w)
     for vid in sorted(man):
@@ -410,7 +411,7 @@ def planted_go(tdir, task):
             recs.append(rec)
             continue
         with tempfile.TemporaryDirectory() as tmp:
-            w = os.path.join(tmp, "m")
+            w = os.path.join(tmp, task)
             overlay(base_dir, vdir, w)
             rec["plain_caught_by"] = go_plain_caught(w)
             caught = []

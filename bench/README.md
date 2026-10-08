@@ -88,3 +88,16 @@ Stage 3 runs:
 - [2026-10-08 stage 3, tasks 09 and 10](results/stage3-2026-10-08.md): first run success Xo 2/2, plain Go 1/2, strict Go 0/2; Xo about 55% of Go lines; graceful drain gap found.
 - [2026-10-08 Go library interop prototype](results/go-interop-2026-10-08.md): `use go` and `xo bind` (decision 0041); crypto/sha256, encoding/hex, regexp, strings, strconv, net/url bind 123/125 functions and 92/95 methods with goldens for each; github.com/google/uuid binds and runs (29/31 functions, 20/28 methods); gaps: interface conversion between handles, methods of named basic types, `any` parameters.
 - [2026-10-08 real application: notes-service](results/real-app-2026-10-08.md): HTTP, std/sql, bearer auth, purge job, and two phase shutdown in `examples/notes-service/`; check, test (9/9), and all targets pass with no compiler change; top gaps: no request scoped values, global non failing middleware, `Listener` has no `addr()`, no std crypto, test logs go to real stderr.
+
+## Other models: `bench/harness/`
+
+`bench/harness/` packages stage 3 and the planted bug benchmark so they can
+be rerun with any model (GPT, Gemini, local) outside Claude Code, and scored
+the same way: one prompt per task and arm (Xo, plain Go, strict Go) and per
+planted bug author set, an adapter for any OpenAI compatible endpoint with
+the same write then iterate loop, and `score.py`, which reruns every cell
+with the current toolchain and prints the tables of the three arm and
+planted results. A full run is about 0.9M input and 0.4M output tokens.
+See [harness/README.md](harness/README.md).
+
+- [2026-10-08 harness validation](results/harness-validation-2026-10-08.md): scoring the stored Claude outputs reproduces every published runs to green, line, and test count and every planted bug result (Go 9 and 13 of 30, Xo 29 and 23 of 30); with today's toolchain Xo 03 fails its contract fuzz (the known `backoff` overflow) and Xo 06 fails XO0410 (a spec 0.6 rule).

@@ -477,7 +477,8 @@ Last verified: 2026-10-07
   checkout's `.tools/bin`. Self test: `python3 bench/harness/test_harness.py`
   (also `go test ./internal/benchharness`, about 7 s, skipped without
   python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
-  solutions took about 12 minutes (measured 2026-10-08).
+  solutions took about 12 minutes, all planted sets about 60 (measured
+  2026-10-08).
 - `bench/perf/run.sh`: builds `bench/perf/xo` (Xo) and `bench/perf/go`
   (hand written Go, its own `go.mod`), runs each workload `REPS` times
   (default 5), and prints a Markdown table of the best times and the
