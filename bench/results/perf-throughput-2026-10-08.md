@@ -432,3 +432,64 @@ What is left, ranked by likely effect:
    buffer to the server to write and release.
 5. `list`: `values()` then `sort_by` copies the users twice (18 KB);
    codegen can sort the temporary in place when the receiver is dead.
+
+## 2026-10-08: Fair comparison (equal GC settings for both languages)
+
+Question: with the same GC settings for every server, does Xo beat,
+match, or trail Go? Harness: `bench/perf/http/run.sh` unchanged, 32
+workers, 2 s warmup, 10 s measured, 64 preloaded users, port 18290,
+`GODEBUG=gctrace=1` for the GC count (GCs/10k = gctrace GCs per 10k
+requests of the whole run, as above). Xo built from main at 74a71de with
+a fresh `go build ./cmd/xo` (`.tools/bin/xo` was older than HEAD). Five
+rounds; each round ran `REPS=1` run.sh once per setting with the three
+servers in a rotated order (go, xo-arenas, xo / xo-arenas, xo, go / xo,
+go, xo-arenas), so drift lands on all three. The GC environment
+(`GOGC`, `GOMEMLIMIT`) was set for every server the same way. Before
+each run.sh call the driver waited until the 1 minute load average was
+under 4 (it always got there, after 105 to 180 s; the benchmark itself
+pushes the load to about 12 on this 12 core laptop), and recorded
+`uptime`: 1 minute load 3.38 to 3.98 at every start, 5 minute load
+falling from 15.4 to 5.7 over the session (other agents were idle by
+then). The GOMEMLIMIT set ran after the other two (17:27 to 17:40), not
+interleaved with them. Medians of 5:
+
+| Setting | Config | Req/s | Xo/Go | p50 us | p99 us | GCs/10k req | GC CPU % | Peak RSS MB |
+|---|---|---|---|---|---|---|---|---|
+| default GOGC | Go | 126,185 | 1.00 | 217 | 870 | 24.8 | 4 | 22.6 |
+| default GOGC | Xo (arenas, default) | 107,512 | 0.85 | 242 | 1033 | 45.4 | 8 | 28.4 |
+| default GOGC | Xo `--no-arenas` | 89,345 | 0.71 | 277 | 1161 | 88.4 | 11 | 28.0 |
+| GOGC=800 | Go | 140,285 | 1.00 | 206 | 685 | 1.03 | 0 | 50.8 |
+| GOGC=800 | Xo (arenas, default) | 140,165 | 1.00 | 206 | 705 | 1.25 | 0 | 55.5 |
+| GOGC=800 | Xo `--no-arenas` | 139,802 | 1.00 | 206 | 716 | 1.58 | 0 | 55.8 |
+| GOGC=off, GOMEMLIMIT=256MiB | Go | 135,494 | 1.00 | 215 | 656 | 0.14 | 0 | 243.6 |
+| GOGC=off, GOMEMLIMIT=256MiB | Xo (arenas, default) | 136,721 | 1.01 | 212 | 673 | 0.16 | 0 | 245.0 |
+| GOGC=off, GOMEMLIMIT=256MiB | Xo `--no-arenas` | 136,322 | 1.01 | 213 | 666 | 0.20 | 0 | 244.6 |
+
+Run to run spread inside a setting was about 1 to 2 percent of req/s
+(Go at GOGC=800: 139.5k to 141.4k; Xo arenas at default: 105.4k to
+113.9k), so differences under 2 percent are noise.
+
+Conclusion: under equal settings that take GC off the critical path
+(GOGC=800, or GOGC=off with a 256 MiB limit), Xo matches Go: req/s
+within 0.3 percent at GOGC=800 and 1 percent above Go with the memory
+limit, both inside the noise, p50 equal, p99 within 3 percent. At the
+default GOGC=100 Xo trails Go: 0.85x with arenas (the default) and 0.71x
+without. The whole remaining gap is GC frequency: Xo still triggers
+1.8x (arenas) and 3.6x (no arenas) as many collections per request at
+the 4 MB minimum heap goal, from about 10 (arenas) to 40 (no arenas) percent more bytes per
+request plus the per P span caching against a tiny goal
+(`knowledgebase/gotchas/small-heap-gc-per-p-spans.md`). Request handling
+CPU outside GC is at parity. Even with GC almost gone, Xo still runs 20
+to 50 percent more GCs than Go (1.25 and 1.58 against 1.03 per 10k at
+GOGC=800), so the allocation volume difference is real but no longer
+costs throughput there. Next experiments, ranked:
+
+1. The server GC goal from the earlier list (`debug.SetGCPercent(400)`
+   plus `debug.SetMemoryLimit(64 << 20)` when `http.server` starts,
+   ADR needed): this table says it would close the default setting gap
+   for Xo users who never tune GOGC. Measure with
+   `CONFIGS="go xo-arenas xo"` run.sh at default GOGC for Go and the
+   new Xo default, plus peak RSS.
+2. Cut bytes per request at default GOGC (the size class and copy items
+   listed above, starting with folding header and parameter tables into
+   the reqBlock), rerunning this exact table at default GOGC.
