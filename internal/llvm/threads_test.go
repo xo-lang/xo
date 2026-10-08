@@ -81,6 +81,34 @@ func TestRuntimeThreads(t *testing.T) {
 	runTSan(t, opt, ".")
 }
 
+// TestRuntimeTasks runs the C stress test of the task runtime (decision
+// 0068): scopes with thousands of tasks, trees of nested scopes, awaits
+// that run tasks not started yet, channels (buffered and not), canceled
+// background tasks blocked in send and receive, child failure, mutexes
+// and atomics. Under ThreadSanitizer with one worker and with three,
+// then optimized with ten times the tasks; every allocation must be
+// freed.
+func TestRuntimeTasks(t *testing.T) {
+	src := filepath.Join(rtDir, "testdata", "tasks.c")
+	bin := tsanBuild(t, nil, []string{src})
+	for _, threads := range []string{"1", "3"} {
+		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
+		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex"} {
+			if !strings.Contains(out, name+": ok") {
+				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
+			}
+		}
+	}
+	if testing.Short() {
+		return
+	}
+	opt := filepath.Join(t.TempDir(), "opt")
+	if err := build.CompileC([]string{"-O2", "-DN=20000"}, []string{src}, opt); err != nil {
+		t.Fatal(err)
+	}
+	runTSan(t, opt, ".")
+}
+
 // deepRecursion lists golden programs that recurse hundreds of thousands
 // of calls deep: ThreadSanitizer crashes on them even on one thread (its
 // own limit, checked 2026-10-08), so they run on four threads without it.
