@@ -1,0 +1,57 @@
+// Inputs where the direct decoder (std/rt/jsonfast.go) must agree with
+// the tree decoder: escapes, non-ASCII and invalid UTF-8, unknown and
+// duplicate keys, whitespace, nested lists and options, numbers the
+// target type rejects, and trailing data. want.txt was checked against
+// a run with the fast path disabled.
+use std/json
+
+struct Inner {
+  n: Int
+  ok: Bool
+} derive Json
+
+struct Doc {
+  name: Str
+  nick: Str? = None
+  ids: List[Int] = []
+  inner: Inner? = None
+  ratio: Float = 1.0
+  edit: json.Patch[Str]
+} derive Json
+
+fn show(text: Str) -> Str {
+  match json.decode_str[Doc](text) {
+    Ok(d) => json.encode_str(d)
+    Err(e) => "error ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let cases = [
+    r#"{"name": "plain"}"#,
+    r#"  { "name" : "spaced" , "ids" : [ 1 , 2 ,3 ] }  "#,
+    r#"{"name": "esc \"q\" \\ \n \u00e9 \ud83d\ude00"}"#,
+    r#"{"name": "caf\u00e9", "nick": "日本"}"#,
+    r#"{"name": "a", "unknown": {"x": [1, {"y": "}"}]}, "more": null}"#,
+    r#"{"name": "first", "name": "second"}"#,
+    r#"{"name": 1, "name": "fixed by the later key"}"#,
+    r#"{"name": "n", "inner": {"n": 5, "ok": true}, "nick": null}"#,
+    r#"{"name": "n", "inner": {"n": 5}}"#,
+    r#"{"name": "n", "ids": [1.5]}"#,
+    r#"{"name": "n", "ids": [9223372036854775808]}"#,
+    r#"{"name": "n", "ratio": -1.5e3, "edit": null}"#,
+    r#"{"name": "n", "edit": "v"}"#,
+    r#"{"name": "n"} {"name": "m"}"#,
+    r#"{"na\u006de": "escaped key"}"#,
+    r#"{"name": "n", "ratio": "x"}"#,
+    r#"[]"#,
+    "",
+  ]
+  for c in cases {
+    os.stdio.println(show(c))
+  }
+  let bad = json.decode[Doc](b"{\"name\": \"\xff\"}")
+  os.stdio.println("invalid utf8 ${bad.is_ok()} ${json.encode_str(bad.map(fn(d) { d.name }).ok())}")
+  let list = json.decode_str[List[Inner]](r#"[{"n": 1, "ok": false}, {"ok": true, "n": -2}]"#)
+  os.stdio.println("list ${json.encode_str(list.ok())}")
+}

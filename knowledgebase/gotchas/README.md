@@ -89,3 +89,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
 - [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): with no request locals, auth middleware passes the user in a header; always overwrite it or clients can spoof it.
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
+- [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
+- [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.

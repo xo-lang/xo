@@ -16,6 +16,9 @@ type waiter struct {
 	fired atomic.Bool
 	idx   int  // select: the case that fired
 	shut  bool // channel closed while waiting to send
+	// lock: the permit was handed over, not just freed (see lock);
+	// written before the signal closes ch
+	granted bool
 }
 
 func newWaiter(tk *Task) *waiter { return &waiter{tk: tk, ch: make(chan struct{})} }

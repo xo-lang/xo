@@ -50,3 +50,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0043-channel-loops-once-deadline-map.md](0043-channel-loops-once-deadline-map.md): `for x in ch`, `task.Once`, `map_concurrent_until`.
 - [0044-semantic-edit-rules.md](0044-semantic-edit-rules.md): `xo edit` resolves through the checker, rechecks before writing, add-field backfills literals, change-sig keeps argument order.
 - [0045-shared-ssa-ir.md](0045-shared-ssa-ir.md): `internal/ssa`, the typed SSA IR (block parameters, value semantics, RC hooks) native backends lower from.
+- [0047-mutex-barging-in-real-runs.md](0047-mutex-barging-in-real-runs.md): the runtime lock barges in real runs, stays FIFO under test and the deterministic scheduler.

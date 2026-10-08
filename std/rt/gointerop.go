@@ -71,7 +71,7 @@ func GoBoundary(name string) {
 type taskContext struct{ n *cnode }
 
 func (c taskContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c taskContext) Done() <-chan struct{}       { return c.n.done }
+func (c taskContext) Done() <-chan struct{}       { return c.n.doneCh() }
 func (c taskContext) Value(any) any               { return nil }
 func (c taskContext) Err() error {
 	if c.n.canceled.Load() {

@@ -658,7 +658,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		defer cancel()
 		go func() {
 			select {
-			case <-tk.node.done:
+			case <-tk.node.doneCh():
 				cancel()
 			case <-ctx.Done():
 			}
@@ -670,7 +670,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			ended(false)
 		}
 		return Ok[Unit, Http_HttpErr](Unit{})
-	case <-tk.node.done:
+	case <-tk.node.doneCh():
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)

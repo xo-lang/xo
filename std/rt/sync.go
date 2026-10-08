@@ -7,17 +7,38 @@ import (
 	"sync/atomic"
 )
 
-// lock is a cancelable FIFO lock with explicit waiters (see Chan).
+// lock is a cancelable lock with explicit waiters (see Chan).
+//
+// Under a test world or the deterministic scheduler it is strictly FIFO:
+// release hands the permit to the first waiter. In a real program that
+// handoff made a lock convoy under contention (the permit sat unused until
+// the woken goroutine was scheduled, most of the request time of
+// bench/perf/http under 32 workers), so there release frees the permit
+// and wakes the first waiter, which competes for it again like a new
+// acquirer (barging, as Go's sync.Mutex). A waiter that loses lockStarve
+// times in a row sets starving, which switches release back to handoff
+// until a handed off waiter gets the permit. Decision 0047.
 type lock struct {
 	mu      sync.Mutex
 	permits int
 	q       []*waiter
+	// starving: a waiter lost the race too often; hand off (see above)
+	starving bool
 	// a Mutex: where it was made and who holds it since where, for
 	// deadlock reports and `xo dump`
 	mutex bool
 	made  [3]uintptr
 	owner *Task
 	site  heldSite
+}
+
+// lockStarve is how many lost races make a waiter ask for handoff.
+const lockStarve = 4
+
+// barging reports whether tk runs in a real program, where the lock may
+// let a running task take a permit ahead of a woken waiter.
+func barging(tk *Task) bool {
+	return tk != nil && tk.w == nil && (tk.th == nil || tk.th.sch == nil)
 }
 
 // acquire takes a permit, waiting if none is free. It reports false when
@@ -27,30 +48,53 @@ func (l *lock) acquire(tk *Task) bool {
 	if l.mutex {
 		k = waitMutex
 	}
-	l.mu.Lock()
-	if l.permits > 0 {
-		l.permits--
-		l.mu.Unlock()
-		return true
-	}
-	w := newWaiter(tk)
-	l.q = append(l.q, w)
-	l.mu.Unlock()
-	if tk.wait(w, k, l) {
-		return true
-	}
-	l.mu.Lock()
-	for i, x := range l.q {
-		if x == w {
-			l.q = append(l.q[:i], l.q[i+1:]...)
-			break
+	lost := 0
+	for {
+		l.mu.Lock()
+		if l.permits > 0 {
+			l.permits--
+			if lost > 0 {
+				l.starving = false
+			}
+			l.mu.Unlock()
+			return true
 		}
+		w := newWaiter(tk)
+		if lost > 0 {
+			// a woken waiter that lost the permit keeps its place
+			l.q = append(l.q, nil)
+			copy(l.q[1:], l.q)
+			l.q[0] = w
+			if lost >= lockStarve {
+				l.starving = true
+			}
+		} else {
+			l.q = append(l.q, w)
+		}
+		l.mu.Unlock()
+		if !tk.wait(w, k, l) {
+			l.mu.Lock()
+			for i, x := range l.q {
+				if x == w {
+					l.q = append(l.q[:i], l.q[i+1:]...)
+					break
+				}
+			}
+			l.mu.Unlock()
+			return false
+		}
+		if w.granted {
+			l.mu.Lock()
+			l.starving = false
+			l.mu.Unlock()
+			return true
+		}
+		lost++
 	}
-	l.mu.Unlock()
-	return false
 }
 
-// release hands the permit to the next waiter or frees it.
+// release hands the permit to the next waiter or frees it and wakes the
+// next waiter (see lock).
 func (l *lock) release() {
 	l.mu.Lock()
 	l.owner = nil
@@ -58,8 +102,20 @@ func (l *lock) release() {
 		w := l.q[0]
 		l.q = l.q[1:]
 		if w.claim() {
+			bg := barging(w.tk)
+			if l.starving || !bg {
+				w.granted = true
+			} else {
+				l.permits++
+			}
 			l.mu.Unlock()
 			w.signal()
+			if bg {
+				// the woken goroutine waits in this processor's runnext
+				// slot until this one blocks, which can be a whole request
+				// later; let it run now (knowledgebase/gotchas/lock-convoy-runnext-wake.md)
+				runtime.Gosched()
+			}
 			return
 		}
 	}
