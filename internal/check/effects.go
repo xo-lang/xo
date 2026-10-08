@@ -313,18 +313,34 @@ func (c *checker) solveEffects() {
 // effectChain appends the call chain that performs effect key, starting at
 // item w, as notes on d.
 func (c *checker) effectChain(d *diag.Diagnostic, w EffItem, key string, inferred map[*FuncObj]*flatEff) {
+	for _, st := range chainSteps(w, key, inferred) {
+		sp := diag.FromSpan(st.Span)
+		d.Notes = append(d.Notes, diag.NoteItem{Message: st.Message, Span: &sp})
+	}
+}
+
+// EffectStep is one link of the call chain that performs an effect: a call
+// of a function that performs it, or the place where it is performed.
+type EffectStep struct {
+	Message string
+	Span    token.Span
+}
+
+// chainSteps follows the call chain that performs effect key, starting at
+// item w.
+func chainSteps(w EffItem, key string, inferred map[*FuncObj]*flatEff) []EffectStep {
+	var out []EffectStep
 	visited := map[*FuncObj]bool{}
 	for i := 0; i < 20; i++ {
-		sp := diag.FromSpan(w.Span)
 		if w.Fn != nil && w.Fn.Declared == nil {
-			d.Notes = append(d.Notes, diag.NoteItem{Message: fmt.Sprintf("calls `%s`, which performs `%s`", w.Fn.DisplayName(), key), Span: &sp})
+			out = append(out, EffectStep{Message: fmt.Sprintf("calls `%s`, which performs `%s`", w.Fn.DisplayName(), key), Span: w.Span})
 			if visited[w.Fn] {
-				return
+				return out
 			}
 			visited[w.Fn] = true
 			fl := inferred[w.Fn]
 			if fl == nil {
-				return
+				return out
 			}
 			next, ok := fl.labels[key]
 			if !ok {
@@ -335,7 +351,7 @@ func (c *checker) effectChain(d *diag.Diagnostic, w EffItem, key string, inferre
 				}
 			}
 			if !ok {
-				return
+				return out
 			}
 			w = next
 			continue
@@ -348,8 +364,9 @@ func (c *checker) effectChain(d *diag.Diagnostic, w EffItem, key string, inferre
 			via = "this"
 		}
 		if w.Span.File != "" {
-			d.Notes = append(d.Notes, diag.NoteItem{Message: fmt.Sprintf("`%s` uses `%s` here", via, key), Span: &sp})
+			out = append(out, EffectStep{Message: fmt.Sprintf("`%s` uses `%s` here", via, key), Span: w.Span})
 		}
-		return
+		return out
 	}
+	return out
 }

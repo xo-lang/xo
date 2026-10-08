@@ -39,6 +39,12 @@ go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] 
 go run ./cmd/xo run [--holes] [--no-mono] [--arenas] [dir] [-- args...]
 go run ./cmd/xo test [--seed=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
+go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
+go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
+go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api (core 10.3)
+go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
+go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
+go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -73,6 +79,77 @@ XOnnnn: message` lines (with notes and fix titles) and a summary on stderr, or
 with `--json` `{"modules": [...], "diagnostics": [...]}` on stdout. Exit status
 is 1 when any error is reported (warnings such as XO0900 holes do not count),
 2 on usage errors.
+
+`xo fmt` (2026-10-08, `internal/format`) prints each file from its syntax
+tree in the one canonical layout (rules at the top of
+`internal/format/format.go`): 2 space indentation; one statement,
+declaration, member, or arm per line; blank line runs collapse to one; a
+bracketed list is split one element per line with a trailing comma when
+the source breaks the line right after the opening bracket, else joined
+on one line without one; a body stays on one line only if it was on one
+line with at most one statement (struct, enum, and interface bodies with
+any number of members); breaks the grammar allows mid expression are kept
+(before `.` in a chain, after a binary operator, after `=>`, before `->`
+and each clause of a function header), with continuation lines one level
+deeper; `} else {`, `} invariant`, `} derive` on the brace line;
+comments kept, trailing comments of consecutive lines aligned; literals
+copied byte for byte. It writes changed files in place and prints their
+names; `--check` changes nothing, lists unformatted files, and exits 1
+when there are any; files with syntax errors are reported and skipped
+(exit 1). Dot directories are skipped. Files that only parse as signature
+listings (`std/*.xo`) are formatted in that mode. Tests:
+`internal/format` `TestLayout`, `TestGolden` (`testdata/tricky.xo`),
+`TestSpecExamples` (every core.md example that parses), and `TestCorpus`
+(temporary copies of bench/xo, bench/paper, internal/check/testdata,
+internal/gen/testdata, and std: each file must parse to the same tree
+without spans, comments are kept, a second format is a no op, and each of
+110 programs must type check with the same diagnostics, code, severity,
+and message, before and after). `xo build --ci` does not exist yet.
+
+`xo vet` (2026-10-08, `internal/vet`) checks like `xo check` and reports,
+for the root modules, only warnings and notes (exit 0; check errors are
+counted on stderr, `check_errors` in JSON): the check warnings (XO0900,
+XO0305, XO0804) plus XO0703 (an effect written in a `uses` clause that
+the body never performs; a sub effect counts for its parent and the
+parent for a sub effect; implicit effect variables are never reported),
+XO0207 (`x ?? [].f()`: a selector chain on the right of `??` whose base is
+a literal, with a fix that parenthesizes the `??`), XO0208 (note: every
+prelude `.ignore_err(reason)` call with its reason and the Result type),
+XO1103 (note, one per module: `use go` packages and the functions whose
+performed effects include `go`), XO0901 (`dbg(...)` with a fix that keeps
+the argument). Human output goes to stdout, the summary to stderr.
+
+`xo query` (2026-10-08, `internal/query`) checks `--dir` (default `.`; for
+`type`, also the file's directory when it lies outside) and answers:
+`type file:line:col` (innermost typed expression or binding pattern; the
+natural type too when an implicit conversion applied), `def <name>`
+(`name`, `Type.member`, `module.name`, `module.Type.member`, `module` a
+local name such as `http` or an import path; functions, methods, statics,
+types, constants, fields, variants; signature printed by
+`format.Decl`), `callers <fn>` (calls and uses as a value in user
+modules, with the enclosing declaration), `effects <fn>` (declared or
+inferred set, and each performed effect with its call chain, the
+XO0701 note chain, `check.Info.Performed`), `holes` (the XO0900
+diagnostics), `api <module path or dir>` (pub declarations outside test
+files; struct signatures show only pub fields and no invariant). JSON is
+the default when stdout is not a terminal (`--text` forces text);
+unknown names exit 1, usage errors 2.
+
+`xo doc` (2026-10-08, `internal/doc`) prints Markdown for the root modules
+under a directory (default `.`) or one module by import path (`--dir`):
+an index, then constants, types (methods under their type), and
+functions, each with its signature in an `xo` block, its doc comment
+(example fences without an info string retagged `xo`), the number of
+examples, and its position. `--all` includes non pub declarations,
+`--json` emits the same data with `examples` (the bodies of the fenced
+examples). Running the examples (core 1.2: `xo test`) is not implemented.
+
+`xo explain <code>` (2026-10-08, `internal/diag/explain.go`) prints the
+long form explanation of a code (`XO0201`, `xo0201`, or `0201`): title,
+severity, detail, an example that triggers it, and the fix;
+`TestExplanationsComplete` requires an entry for every code in
+`codes.go`, and every example was run through `xo check` when written.
+Last verified: 2026-10-08.
 
 Diagnostic positions: lines and columns are 1 based, columns count bytes, and
 spans are half open (`end_col` is one past the last character), which matches
@@ -155,7 +232,8 @@ Last verified: 2026-10-07
 ## Package layout (P1, implemented parts)
 
 ```
-cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`
+cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
+                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go)
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments
@@ -163,6 +241,10 @@ internal/ast/           syntax tree for the whole 0.4 grammar; JSON dump (ast.To
 internal/parser/        recursive descent parser with error recovery; SignatureMode
 internal/diag/          diagnostics (core 10.2 JSON), codes.go is the registry of all codes
 internal/check/         name resolution and type checking (see below)
+internal/format/        canonical printer for `xo fmt`; format.Decl prints signatures
+internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901, XO1103)
+internal/query/         `xo query` over a check run; Surface is shared with internal/doc
+internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")
 internal/build/         check, generate, write the build directory, `go build` per target
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
@@ -197,7 +279,11 @@ prelude imports `std/task` for `task.Group` (`os.tasks`, `s.group()`), so
   witnesses, XO0301 to XO0304).
 - `effects.go`: effect sets with labels, effect parameters, effect inference
   variables, and references to the inferred effects of non pub functions;
-  fixpoint and XO0701 obligations with call chains.
+  fixpoint and XO0701 obligations with call chains (`chainSteps`, shared
+  with `query.go`).
+- `query.go` (2026-10-08): accessors for the tools: `Inspect`,
+  `Info.Performed` (effects a body performs with call chains),
+  `Info.Funcs`. `File.Src` keeps each file's source.
 - `flow.go`: moves of `Buf`/`StrBuilder` (XO0510) and lost updates (XO0520:
   copies out of a collection, including `.or_err(...)?`, and locals mutated
   after being stored into a collection), run after typing.

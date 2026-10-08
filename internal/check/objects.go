@@ -34,6 +34,7 @@ type File struct {
 	Module  *Module
 	Imports map[string]*Import
 	IsTest  bool // name ends in _test.xo
+	Src     []byte
 }
 
 // Import is one `use` declaration in a file.

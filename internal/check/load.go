@@ -94,7 +94,7 @@ func (c *checker) parseFile(m *Module, path string, src []byte, mode parser.Mode
 	for _, d := range ds {
 		c.diags.Add(d)
 	}
-	return &File{AST: af, Path: path, Module: m, Imports: map[string]*Import{}, IsTest: strings.HasSuffix(path, "_test.xo")}
+	return &File{AST: af, Path: path, Module: m, Imports: map[string]*Import{}, IsTest: strings.HasSuffix(path, "_test.xo"), Src: src}
 }
 
 // loadDirs finds every directory under dirs that holds .xo files and loads

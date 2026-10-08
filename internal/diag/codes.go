@@ -93,6 +93,17 @@ const (
 	GoNameSkipped Code = "XO1102" // Go name exists but its signature does not map to Xo, so the binding skipped it
 )
 
+// Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
+// internal/vet, never by `xo check`: advisory warnings and review notes
+// that never fail a build.
+const (
+	CoalesceChainTrap  Code = "XO0207" // warning: method chain on the right of `??` starts at a literal, so it applies only to the default (core 15 precedence)
+	IgnoredErrorReview Code = "XO0208" // note: `.ignore_err("reason")` discards an error; listed with its reason for review (core 2.6)
+	UnusedEffect       Code = "XO0703" // warning: effect declared in `uses` is never performed (core 6.2)
+	DebugLeft          Code = "XO0901" // warning: `dbg(...)` left in code (core 11.4)
+	GoUsageReport      Code = "XO1103" // note: per module report of `use go` packages and the functions that perform `go` (decision 0041)
+)
+
 // Descriptions maps every code to its one line description. Kept in sync
 // with the constants above by TestCodesDocumented.
 var Descriptions = map[Code]string{
@@ -139,6 +150,12 @@ var Descriptions = map[Code]string{
 	UnknownEffect:       "unknown effect label (core 6.1)",
 	ScopeEscape:         "scope handle, or a value containing a task group, escapes its scope (core 7.1)",
 	SpawnWithoutScope:   "task started without a scope handle (core 7.1)",
+
+	CoalesceChainTrap:  "warning: method chain on the right of `??` starts at a literal, so it applies only to the default (core 15 precedence)",
+	IgnoredErrorReview: "note: `.ignore_err(\"reason\")` discards an error; listed with its reason for review (core 2.6)",
+	UnusedEffect:       "warning: effect declared in `uses` is never performed (core 6.2)",
+	DebugLeft:          "warning: `dbg(...)` left in code (core 11.4)",
+	GoUsageReport:      "note: per module report of `use go` packages and the functions that perform `go` (decision 0041)",
 
 	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
 	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",

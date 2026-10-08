@@ -1,0 +1,91 @@
+// header comment
+use std/http // trailing on use
+use std/task
+
+/// A doc
+///   with indent
+pub struct Job[T: Ord, fx: Effects] { // trailing on open
+  /// field doc
+  pub id: Int = 1 // trailing on field
+  // own line in struct
+
+  name: Str?
+  // last in struct
+} invariant id >= 0 derive Json, Display
+
+enum E { A, B(x: Int) }
+
+pub fn run[T](
+  // leading in params
+  a: Int, // after a
+  b: fn(Int) -> Int uses (net, clock),
+  c: (Int, Str),
+) -> Int ! E
+  uses net
+  requires(debug) a > 0
+    else E.A
+  ensures result > 0
+{
+  outer: for (i, x) in xs.indexed() {
+    while i < 10 { break outer }
+    continue
+  }
+  defer { cleanup() }
+  defer log.info("x")
+  let v = scope s {
+    let t = s.spawn(fn() { 1 })
+    t.await?
+  }
+  let r = select {
+    v = ch.recv() => v
+    after 5s => {
+      None
+    }
+  }
+  let m = {"a": 1, "b": [1, 2, #{3}]}
+  let p = P{x: 1} with {x: 2}
+  let q = xs
+    .map(fn(x) {
+      x * 2 // double
+    })
+    // between links
+    .filter(fn(x) { x > 0 })
+  if let Some(y) = q.get(0) { y } else if a == 1 { 2 } else {
+    3
+  }
+  let z = match r {
+    Some(Ok(v)) if v > 0 => v
+    Err(LoadErr.NotFound(id: i, ..)) | Err(_) => -1
+    User{id: 1, ..} => ???
+    [] => 0
+  }
+  m[k] += -(-1)
+  x is Some(_) && y is None
+  json.decode[User](b)?.name
+  xs[1..]
+  xs[..n]
+  t.0
+  r"raw ${x}"
+  "interp ${a + b} done"
+  """
+    multi  
+      line
+    """
+  ()
+}
+
+test "prop" for n: Int, s: Str uses net {
+  expect(n == n)
+}
+
+const A: Int = 1
+
+type Id = Int
+type Uid struct(Int)
+
+interface Store[K] {
+  /// doc on method
+  fn get(self, k: K) -> Str?
+  fn put(self, k: K, v: Str)
+}
+// trailing file comment

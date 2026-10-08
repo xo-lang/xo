@@ -1,5 +1,6 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
-// `xo build`, `xo run`, and `xo test`.
+// `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo vet`,
+// `xo query`, `xo doc`, and `xo explain`.
 package main
 
 import (
@@ -45,6 +46,25 @@ commands:
       package mapped. check, build, and test bind missing packages on their
       own. Third party versions are pinned with a line
       "require go <module> <version>" in xo.mod.
+  fmt [--check] [--json] [files or dirs...]
+      Rewrite .xo files in the one canonical layout (core 10.5; no options)
+      and print the names of the files changed. --check changes nothing,
+      lists the unformatted files, and exits 1 if there are any. Files with
+      syntax errors are reported and left alone (exit 1). Default: .
+  vet [--json] [dirs...]
+      Advisory checks (never errors, exit 0): the warnings of check, unused
+      declared effects (XO0703), x ?? [].f() precedence traps (XO0207), every
+      .ignore_err reason (XO0208), use go packages and functions that perform
+      go per module (XO1103), dbg(...) left in code (XO0901). Default: .
+  query <kind> [--json|--text] [--dir=<dir>] <argument>
+      Semantic queries (core 10.3): type <file:line:col>, def <name>,
+      callers <module.fn>, effects <module.fn>, holes, api <module path>.
+      JSON is the default when stdout is not a terminal.
+  doc [--json] [--all] [--dir=<dir>] [module dir or import path]
+      Markdown documentation from doc comments and signatures, with the
+      example code blocks of each doc comment. Default: the modules under .
+  explain [--json] <code>
+      Long form explanation of a diagnostic code, with an example and a fix.
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -65,6 +85,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runTest(args[1:], stdout, stderr)
 	case "bind":
 		return runBind(args[1:], stdout, stderr)
+	case "fmt":
+		return runFmt(args[1:], stdout, stderr)
+	case "vet":
+		return runVet(args[1:], stdout, stderr)
+	case "query":
+		return runQuery(args[1:], stdout, stderr)
+	case "doc":
+		return runDoc(args[1:], stdout, stderr)
+	case "explain":
+		return runExplain(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

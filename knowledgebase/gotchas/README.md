@@ -56,3 +56,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [run-main-without-error.md](run-main-without-error.md): `testing.run_main(main, os)` with `fn main(os: Os)` (no `!`) fails the Go build; declare `main` with `!`.
 - [permit-handoff-after-cancel.md](permit-handoff-after-cancel.md): a canceled item's permit release can wake the spawn loop, which then started one more item; recheck cancellation after acquire.
 - [golden-tie-insertion-order.md](golden-tie-insertion-order.md): arena_escape's `longest` ties depended on concurrent insertion order (fixed: ties broken by value).
+- [fmt-line-indent-set-on-first-write.md](fmt-line-indent-set-on-first-write.md): the formatter fixes a line's indentation at its first write; write the continuation token before restoring `p.indent`.
+- [fmt-comments-in-joined-lists-move.md](fmt-comments-in-joined-lists-move.md): `xo fmt` moves a comment inside a one line list to after the statement; break after the opening bracket to keep it.
+- [fmt-empty-block-is-map.md](fmt-empty-block-is-map.md): `{}` in an arm body or expression statement is an empty Map, not a block; write `()`.
+- [go-flag-stops-at-first-argument.md](go-flag-stops-at-first-argument.md): Go's flag package stops at the first positional argument; `xo query` scans flags itself.

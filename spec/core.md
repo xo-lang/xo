@@ -174,7 +174,8 @@ benchmark results:
 ```
 
 There are no block comments. Fenced `xo` code blocks inside doc comments are
-compiled and executed by `xo test` as examples.
+rendered by `xo doc`; compiling and running them as examples under `xo test`
+is planned ([P2]).
 
 ### 1.3 Statement termination
 
@@ -1257,7 +1258,7 @@ test "retries after 503" {
 | `xo test [--seed=N] [--fuzz=10s]` | Tests, examples, contract fuzzing |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--edition=YYYY]` | Apply all machine fixes, migrate editions |
-| `xo vet` | Advisory checks |
+| `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
 | `xo query <kind> ...` | Semantic queries (10.3) |
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo why`, `xo dump`, `xo debug` | Debugging (section 11) |
