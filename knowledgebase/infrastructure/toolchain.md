@@ -498,6 +498,19 @@ Last verified: 2026-10-07
   `RunMain` returns, so stop a server with `kill <its PID>` (SIGTERM, a
   clean shutdown), not SIGKILL. Read with `go tool pprof -top -cum
   <binary> <file>`. Last verified: 2026-10-08.
+- Lock hold and wait times (2026-10-08): `XO_LOCKSTATS=<file>` makes every
+  `Mutex.with` and `Mutex.with_read` of a built Xo program record how
+  long it waited to acquire and how long it held the mutex, per call
+  site, and `RunMain` writes a Markdown table (count, p50, p99, mean in
+  us) to the file on return (stop a server with `kill <its PID>`;
+  `std/rt/lockstats.go`). Off by default (one bool load per
+  acquisition). The Go server of bench/perf/http records the same table
+  per store operation with `HOLDSTATS=<file>` (written on SIGTERM;
+  `bench/perf/http/go/lockstats.go`), so both columns compare directly.
+  The samples stay in memory (tens of MB), which changes GC pacing: do
+  not read throughput from an instrumented run
+  (`gotchas/sample-recording-changes-gc-pacing.md`).
+  Last verified: 2026-10-08.
 - `bench/perf/llvm/run.sh` (2026-10-08): the LLVM backend prototype
   against the Go backend and hand written Go on compute workloads in the
   LLVM subset (`fib sieve nbody sort interp collatz strings`; `strings`

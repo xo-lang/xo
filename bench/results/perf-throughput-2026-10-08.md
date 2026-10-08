@@ -171,3 +171,154 @@ experiments, in order of likelihood:
    (`XO_BLOCKPROFILE` plus a counter of lost races per acquire) and try
    letting a woken reader batch include readers that arrive while the
    batch is waking.
+
+## Lock hold time: why Xo waits longer on the same lock design (2026-10-08)
+
+Question: Go and Xo use the same lock design on this workload (an
+RWMutex, reads shared, the list sorted inside the read section), yet the
+store lock was 61 percent of Xo's blocked time. Is it hold time or the
+lock implementation?
+
+Instrument (off by default): `XO_LOCKSTATS=<file>` in the Xo runtime and
+`HOLDSTATS=<file>` in the Go server record, per operation, the wait to
+acquire and the time inside the critical section
+(`knowledgebase/infrastructure/toolchain.md`). One 10 s run per config
+after 2 s warmup, 32 workers, 64 preloaded users, same harness as
+`run.sh`. The samples stay in memory and change GC pacing, so these runs'
+req/s are not comparable with `run.sh`
+(`gotchas/sample-recording-changes-gc-pacing.md`); only the times are.
+
+### Experiment 1: hold time
+
+Before (commit 45349e6; host load 4.4 at the start), microseconds:
+
+| Operation | Go wait p50 | Go wait p99 | Go hold p50 | Go hold p99 | Xo wait p50 | Xo wait p99 | Xo hold p50 | Xo hold p99 | Xo arenas hold p50 | Xo arenas hold p99 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| create | 0.21 | 213 | 0.17 | 0.75 | 22.3 | 530 | 5.79 | 80.5 | 5.62 | 32.2 |
+| get (read) | 0.17 | 67 | 0.17 | 0.50 | 51.3 | 605 | 1.33 | 20.1 | 1.33 | 7.3 |
+| list (read) | 0.17 | 67 | 6.79 | 46.5 | 46.4 | 604 | 6.21 | 204 | 5.79 | 86.5 |
+| update | 0.21 | 217 | 0.21 | 0.71 | 22.4 | 537 | 5.75 | 74.7 | 5.62 | 32.1 |
+| delete | 0.21 | 217 | 0.21 | 0.75 | 21.9 | 530 | 1.50 | 20.4 | 1.50 | 12.5 |
+
+Mean waits: Go 4.8 (reads) to 20 us (writes); Xo 66 to 95 us; Xo
+`--arenas` 43 to 65 us.
+
+So Xo held the lock 7 to 28 times longer at p50 (the list is the
+exception: Go also sorts inside its read lock). Splitting the hold
+(a temporary timestamp between the runtime's setup and the closure):
+about 1.2 us of every hold was runtime bookkeeping after the permit was
+taken (a 14 frame `runtime.Callers` walk for the holding site, the
+task's held map insert, and a second lock of the lock's internal `l.mu`
+to record the owner, which every waiter and releaser also hammers), and
+about 3.7 us of create and update was the closure, mostly
+`State.email_taken`: `st.users.values()` copied every user into a new
+list, `Map.each` did a hash lookup per log entry on the churned map, and
+`same_email` lowered both strings per user. The CPU profile showed only
+about 0.8 us of CPU per scan; the wall clock hold was five times that
+(`gotchas/lock-wait-is-hold-time-in-disguise.md`).
+
+Fixes (commit 7bcb24d; no change to the benchmark source):
+
+1. `Mutex.with`/`with_read`: the site walk and the held map insert run
+   before the wait (`holdSite`); the owner and site are set in the same
+   `l.mu` section that takes the permit; a canceled wait removes its
+   entry (`TestMutexCanceledWaitForgetsSite`).
+2. Codegen: inlined `any/all/find/fold/map/filter` and `for` loops over
+   `m.values()` or `m.keys()` iterate the map in place
+   (`rt.Map_values_seq`, `rt.Map_keys_seq`; golden `map_view_loops`
+   matches the list form, value semantics included). A first version
+   took `&v` for marking inside the per element closure, which moved
+   every element to the heap (128 allocations per scan); types without
+   lists now take a closure without it.
+3. `Map.each` on a root table with overwrites and tombstones: two linear
+   passes (superseded bitmap, current entry per origin) instead of a
+   hash lookup per entry (`TestMapLargeChurnedLog`, the model tests).
+4. `a.to_lower() == b.to_lower()` (and `!=`) lowers to
+   `rt.Str_eq_lower`, which compares ASCII bytes lowered in place and
+   falls back to `strings.ToLower` at the first non-ASCII byte
+   (`TestStrEqLower`).
+
+Micro benchmark of the scan on a churned 96 user map
+(`BenchmarkStoreScanChurn`, std/rt): the list form cost about 3.0 us and
+2 allocations (6.5 KB); in place with the four fixes about 1.3 us
+including the churn step's own put, get, and remove.
+
+After (commit 7bcb24d; host load 2.6 at the start), microseconds; Go
+from the same session's run at 15:03 (load 2.0):
+
+| Operation | Go wait p50 | Go wait p99 | Go hold p50 | Go hold p99 | Xo wait p50 | Xo wait p99 | Xo hold p50 | Xo hold p99 | Xo arenas hold p50 | Xo arenas hold p99 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| create | 0.21 | 206 | 0.21 | 0.75 | 0.29 | 283 | 1.96 | 7.75 | 1.96 | 7.83 |
+| get (read) | 0.17 | 65 | 0.17 | 0.50 | 0.29 | 314 | 0.21 | 1.00 | 0.21 | 0.92 |
+| list (read) | 0.17 | 65 | 6.75 | 41.1 | 0.29 | 311 | 4.79 | 227 | 4.25 | 86.9 |
+| update | 0.21 | 213 | 0.21 | 0.67 | 0.29 | 287 | 2.12 | 10.3 | 2.12 | 9.9 |
+| delete | 0.21 | 210 | 0.21 | 0.75 | 0.29 | 283 | 0.38 | 6.17 | 0.38 | 5.50 |
+
+Mean waits now: Xo 11.5 (writes) to 16 us (reads), Xo `--arenas` 7.8 to
+12 us, against Go's 4.6 to 19.5 us. Get and delete hold about what Go
+holds; create and update still hold about 2 us against 0.2 us because
+the Xo store scans every user for the email check (Go keeps an email
+index), which is the benchmark's design, not a codegen cost.
+
+Throughput, `REPS=5 CONFIGS="go xo-base xo xo-base-arenas xo-arenas"
+bench/perf/http/run.sh` with `xo-base` the xo binary of 45349e6 and the
+others of 7bcb24d (load average 3.86 at the start, about 15 at the end):
+
+| Config | Req/s | p50 us | p99 us | p99.9 us | GC CPU % | GCs/10k req |
+|---|---|---|---|---|---|---|
+| Go | 123,104 | 219 | 910 | 1470 | 4 | 24.7 |
+| Xo before | 51,976 | 630 | 1500 | 1993 | 16 | 231.3 |
+| Xo after | 61,034 | 427 | 1803 | 2517 | 15 | 172.8 |
+| Xo --arenas before | 84,240 | 309 | 1088 | 1600 | 10 | 76.3 |
+| Xo --arenas after | 95,137 | 271 | 1149 | 1818 | 10 | 58.0 |
+
+Xo rises 17 percent and Xo `--arenas` 13 percent (ranges: Xo 50.9k to
+52.1k before, 59.5k to 62.8k after; arenas 82.9k to 90.1k before, 94.1k
+to 97.8k after), p50 falls, and p99 rises (1500 to 1803 us without
+arenas): more requests now finish fast, and the tail is the GC (see
+below), not the lock.
+
+### Experiment 2: sync.RWMutex in real runs
+
+A prototype backed `Mutex.with` with `sync.RWMutex.Lock` and `with_read`
+with `RLock` when `barging(tk)` (real runs only), ignoring cancellation
+and deadlock reports: the most a sync lock could gain. Same harness,
+`xo-base` = the runtime lock (7bcb24d), `xo` = the prototype
+(`XO_LOCKIMPL=sync`), load 3.88 at the start:
+
+| Config | Req/s | p50 us | p99 us | p99.9 us |
+|---|---|---|---|---|
+| Go | 127,770 | 215 | 873 | 1429 |
+| Xo, runtime lock | 63,180 | 408 | 1752 | 2493 |
+| Xo, sync.RWMutex | 62,037 | 375 | 1786 | 2495 |
+| Xo --arenas, runtime lock | 100,008 | 257 | 1139 | 1749 |
+| Xo --arenas, sync.RWMutex | 101,267 | 233 | 1158 | 1676 |
+
+No difference outside the spread (runtime lock 60.2k to 65.6k, sync
+61.0k to 65.4k; arenas 99.0k to 104.9k against 96.0k to 104.2k). With
+lock stats on, sync.RWMutex writers waited longer (mean 91 us against 8
+us): new readers enter ahead of a writer that is still waiting for the
+current readers to leave. Decision 0064: real runs keep the cancelable
+runtime lock; the prototype was not kept.
+
+### Next biggest cost: GC
+
+The lock is no longer the gap. The Xo server is GC bound: 173 GCs per
+10k requests against Go's 25, 15 percent GC CPU, a live heap of about 5
+MB, so the default `GOGC=100` collects every few MB of allocation. One
+uninstrumented run with `GOGC=800` (load 14, not comparable to the table
+above) gave Xo 137k and Xo `--arenas` 136k req/s. Next experiments, in
+order of likelihood:
+
+1. Allocation profile of one request per route
+   (`XO_CPUPROFILE` plus a `-memprofile` style `XO_MEMPROFILE` hook in
+   `RunMain`, then `go tool pprof -sample_index=alloc_space`), and cut
+   the top allocation sites in the router, `http.json`, and request
+   decoding (Go allocates about a seventh as often per request).
+2. A runtime GC target for servers: `debug.SetMemoryLimit` with a larger
+   `GOGC` when `http.server` starts (or `XO_GOGC`), measured with
+   `CONFIGS="go xo xo-arenas"` and peak RSS in the table; this changes
+   memory use, so it needs an ADR.
+3. The remaining hold gap (2 us for create and update) is the email scan
+   of the Xo store; a solution with an email index (as Go's) would be a
+   benchmark change in bench/xo, not a codegen one.
