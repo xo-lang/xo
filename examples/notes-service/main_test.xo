@@ -15,13 +15,13 @@ fn authed(method: Str, url: Str, token: Str, body: Str = "") -> http.Request {
 }
 
 test "health needs no token" {
-  let r = routes(setup()?, os.clock)
+  let r = routes(setup()?, os.clock, os.rand)
   let resp = r.call(http.new_request("GET", "/health"))
   expect(resp.status) == 200
 }
 
 test "missing, malformed, and unknown tokens are 401" {
-  let r = routes(setup()?, os.clock)
+  let r = routes(setup()?, os.clock, os.rand)
   expect(r.call(http.new_request("GET", "/notes")).status) == 401
   expect(r.call(http.new_request("GET", "/notes", headers: {"Authorization": "tok-ada"})).status) == 401
   expect(r.call(http.new_request("GET", "/notes", headers: {"Authorization": "Bearer "})).status) == 401
@@ -32,7 +32,7 @@ test "missing, malformed, and unknown tokens are 401" {
 
 test "identity comes only from the token, never from the client" {
   let db = setup()?
-  let r = routes(db, os.clock)
+  let r = routes(db, os.clock, os.rand)
   // headers cannot set the typed user value
   let req = http.new_request("GET", "/notes", headers: {"X-Notes-User": "1", "User": "ada"})
   expect(req.value(user_key())) == None
@@ -65,7 +65,55 @@ test "tokens are stored as digests and compared in constant time" {
   // a generated token works end to end
   let t = crypto.token(os.rand)
   add_user(db, "cy", t)?
-  expect(routes(db, os.clock).call(authed("GET", "/notes", t)).status) == 200
+  expect(routes(db, os.clock, os.rand).call(authed("GET", "/notes", t)).status) == 200
+}
+
+fn login_req(name: Str, password: Str) -> http.Request {
+  http.new_request("POST", "/login", body: "{\"name\":\"${name}\",\"password\":\"${password}\"}".bytes())
+}
+
+struct Issued {
+  token: Str
+} derive Json
+
+test "passwords are stored as Argon2id at the OWASP defaults" {
+  let db = setup()?
+  set_password(db, os.rand, 1, "correct horse")?
+  let stored = db.query_one("SELECT password_argon2id FROM users WHERE id = 1")?.str("password_argon2id")?
+  expect(stored.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"))
+  expect(crypto.verify_password("correct horse", stored))
+  expect(!crypto.verify_password("correct horsE", stored))
+  // bob has no password
+  expect(db.query_one("SELECT password_argon2id FROM users WHERE id = 2")?.is_null("password_argon2id")?)
+}
+
+test "login issues a fresh token and retires the old one" {
+  let db = setup()?
+  set_password(db, os.rand, 1, "correct horse")?
+  let r = routes(db, os.clock, os.rand)
+  let resp = r.call(login_req("ada", "correct horse"))
+  expect(resp.status) == 200
+  let t = resp.decode_json[Issued]()?.token
+  expect(r.call(authed("GET", "/notes", t)).status) == 200
+  expect(r.call(authed("GET", "/notes", "tok-ada")).status) == 401
+  // a second login rotates it again
+  let t2 = r.call(login_req("ada", "correct horse")).decode_json[Issued]()?.token
+  expect(t2 != t)
+  expect(r.call(authed("GET", "/notes", t)).status) == 401
+}
+
+test "login fails alike for a wrong password, an unknown name, and no password" {
+  let db = setup()?
+  set_password(db, os.rand, 1, "correct horse")?
+  let r = routes(db, os.clock, os.rand)
+  for req in [login_req("ada", "wrong"), login_req("nobody", "correct horse"), login_req("bob", "")] {
+    let resp = r.call(req)
+    expect(resp.status) == 401
+    expect(resp.text()) == Some("{\"error\":\"missing or invalid bearer token\"}")
+  }
+  expect(r.call(http.new_request("POST", "/login", body: b"{}")).status) == 400
+  // bob's token still works: failed logins change nothing
+  expect(r.call(authed("GET", "/notes", "tok-bob")).status) == 200
 }
 
 test "a listener on :0 reports its address" {
@@ -73,7 +121,7 @@ test "a listener on :0 reports its address" {
   let addr = l.addr()
   expect(addr.starts_with("127.0.0.1:"))
   expect(addr != "127.0.0.1:0")
-  let srv = http.server(l, routes(setup()?, os.clock))
+  let srv = http.server(l, routes(setup()?, os.clock, os.rand))
   expect(srv.addr()) == addr
   let c = http.client(os.net, timeout: 5s)
   scope s {
@@ -84,7 +132,7 @@ test "a listener on :0 reports its address" {
 }
 
 test "create, get, list, delete" {
-  let r = routes(setup()?, os.clock)
+  let r = routes(setup()?, os.clock, os.rand)
   let created = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"buy milk\",\"ttl_secs\":60}"))
   expect(created.status) == 201
   let n = created.decode_json[Note]()?
@@ -105,7 +153,7 @@ test "create, get, list, delete" {
 }
 
 test "notes are private to their owner" {
-  let r = routes(setup()?, os.clock)
+  let r = routes(setup()?, os.clock, os.rand)
   let n = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"secret\"}")).decode_json[Note]()?
   let resp = r.call(authed("GET", "/notes/${n.id}", "tok-bob"))
   expect(resp.status) == 404
@@ -114,7 +162,7 @@ test "notes are private to their owner" {
 }
 
 test "bad input is 400" {
-  let r = routes(setup()?, os.clock)
+  let r = routes(setup()?, os.clock, os.rand)
   expect(r.call(authed("POST", "/notes", "tok-ada", body: "not json")).status) == 400
   expect(r.call(authed("POST", "/notes", "tok-ada", body: "{\"ttl_secs\":5}")).status) == 400
   expect(r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"\"}")).status) == 400

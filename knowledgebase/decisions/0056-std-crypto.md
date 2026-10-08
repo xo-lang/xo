@@ -1,6 +1,7 @@
 # 0056: std/crypto on the Go standard library, randomness through Rand
 
-Status: Accepted (2026-10-08)
+Status: Accepted (2026-10-08). The Argon2id alternative below is superseded by
+0059 (Argon2id vendored from x/crypto, now the recommended password hash).
 
 ## Context
 notes-service stored and compared bearer tokens in plain text (gap 4 in

@@ -1063,8 +1063,9 @@ Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 
 ## 11. std/crypto
 
-Status: draft (2026-10-08, decision 0056). Go standard library underneath;
-no third party code.
+Status: draft (2026-10-08, decisions 0056 and 0059). Go standard library
+underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
+into the runtime (no module dependency).
 
 ```
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
@@ -1072,6 +1073,8 @@ pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes     // 32 bytes
 pub fn equal(a: Bytes, b: Bytes) -> Bool                // constant time in the contents
 pub fn random_bytes(r: Rand, n: Int) -> Bytes uses rand // faults when n < 0
 pub fn token(r: Rand, n: Int = 32) -> Str uses rand     // n random bytes, unpadded URL safe base64
+pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
+                              iterations: Int = 2, parallelism: Int = 1) -> Str uses rand
 pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
 pub fn verify_password(password: Str, hash: Str) -> Bool
 ```
@@ -1085,14 +1088,32 @@ pub fn verify_password(password: Str, hash: Str) -> Bool
 - `equal` takes time that depends on the lengths but not on the contents;
   compare digests of equal length (for example two `sha256` results) when
   the length is secret too.
+- `hash_password_argon2id` is the recommended password hash: Argon2id
+  (RFC 9106, version 0x13) with a 16 byte salt from `r` and a 32 byte key,
+  encoded in the PHC string format
+  `$argon2id$v=19$m=<memory_kib>,t=<iterations>,p=<parallelism>$<salt>$<key>`
+  (salt and key in unpadded standard base64), which other Argon2 libraries
+  read. The defaults, 19456 KiB (19 MiB), 2 passes, 1 lane, are the OWASP
+  minimum for Argon2id (Password Storage Cheat Sheet); raise `memory_kib`
+  first when the host allows. One hash at the defaults takes about 20 ms
+  on an Apple M series core. It faults when `parallelism` is outside
+  `1..=255`, `memory_kib` outside `8 * parallelism..=4194304` (4 GiB), or
+  `iterations` outside `1..=1000`. Tests may pass small values
+  (`memory_kib: 64, iterations: 1`).
 - `hash_password` is PBKDF2-HMAC-SHA256 with a 16 byte salt from `r` and a
   32 byte key, encoded as `pbkdf2-sha256$<iterations>$<salt>$<key>`
   (salt and key in unpadded standard base64). It faults when `iterations`
   is outside `1..=100000000`. The default, 600000, follows the OWASP 2023
   guidance for PBKDF2-HMAC-SHA256; tests may pass a small count.
-- `verify_password` recomputes the key with the stored salt and iteration
-  count and compares in constant time. A malformed hash is `false`, never
-  an error.
+  PBKDF2 stays supported for existing hashes and for hosts that need a
+  FIPS approved function; it is not memory hard, so prefer Argon2id for new
+  code.
+- `verify_password` tells the formats apart by prefix (`$argon2id$` or
+  `pbkdf2-sha256$`), recomputes the key with the stored salt and
+  parameters, and compares in constant time. A malformed hash, another
+  Argon2 variant or version, or parameters outside the bounds above is
+  `false`, never an error. To move users to Argon2id, rehash on the next
+  successful login when the stored hash starts with `pbkdf2-sha256$`.
 
 Storing API tokens: tokens from `token` have 256 bits of entropy, so a
 plain `sha256` digest is enough (no salt or stretching needed) and can be
@@ -1108,4 +1129,4 @@ fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dia
 ```
 
 Passwords chosen by people have little entropy: store
-`hash_password(os.rand, pw)` and check with `verify_password`.
+`hash_password_argon2id(os.rand, pw)` and check with `verify_password`.

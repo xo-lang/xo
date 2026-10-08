@@ -29,3 +29,13 @@ test "stored token hashes compare in constant time" {
   expect(!crypto.equal(crypto.sha256("guess".bytes()), stored))
   expect(crypto.hmac_sha256(b"k", b"m").len()) == 32
 }
+
+test "argon2id hashes verify, differ by salt, and record their parameters" {
+  let h1 = crypto.hash_password_argon2id(os.rand, "s3cret", memory_kib: 32, iterations: 1)
+  let h2 = crypto.hash_password_argon2id(os.rand, "s3cret", memory_kib: 32, iterations: 1)
+  expect(h1 != h2)
+  expect(h1.starts_with("$argon2id$v=19$m=32,t=1,p=1$"))
+  expect(crypto.verify_password("s3cret", h1))
+  expect(!crypto.verify_password("S3cret", h1))
+  expect(!crypto.verify_password("s3cret", h1.replace("t=1", "t=2")))
+}

@@ -8,6 +8,8 @@
 //   `Authorization: Bearer <token>` to a User and hands it to handlers as a
 //   typed request value; it fails with ApiErr, mapped like handler errors.
 // - Tokens are stored as SHA-256 digests and compared in constant time.
+//   A user with a password (stored as Argon2id) gets a fresh token from
+//   POST /login, which replaces the old one.
 // - A background task purges expired notes every PURGE_EVERY.
 // - Shutdown is two phase (core 7.5): the first signal stops the server
 //   accepting, in flight requests finish, then main returns.
@@ -16,9 +18,13 @@ use std/http
 use std/log
 use std/sql
 
-const SCHEMA = "CREATE TABLE users (id SERIAL, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE); CREATE TABLE notes (id SERIAL, owner INT NOT NULL, body TEXT NOT NULL, created TIMESTAMP NOT NULL, expires TIMESTAMP NOT NULL)"
+const SCHEMA = "CREATE TABLE users (id SERIAL, name TEXT NOT NULL UNIQUE, token_sha256 TEXT NOT NULL UNIQUE, password_argon2id TEXT); CREATE TABLE notes (id SERIAL, owner INT NOT NULL, body TEXT NOT NULL, created TIMESTAMP NOT NULL, expires TIMESTAMP NOT NULL)"
 
 const PURGE_EVERY = 1m
+
+/// Verified when a login names no user (or one without a password), so the
+/// response time does not tell which names exist. Its password is unknown.
+const DUMMY_HASH = "$argon2id$v=19$m=19456,t=2,p=1$prbLOfyFJVdeQkl/h/f7TQ$ZWOb9ArALfFYC98SWC30JzBovBdpBHDoOytGmIPRgas"
 
 pub struct User {
   id: Int
@@ -37,6 +43,16 @@ pub struct Note {
   created: Time
   expires: Time
 } derive Json, SqlRow
+
+struct Credentials {
+  name: Str
+  password: Str
+} derive Json
+
+struct LoginRow {
+  id: Int
+  password_argon2id: Str?
+} derive SqlRow
 
 struct NewNote {
   body: Str
@@ -83,6 +99,32 @@ pub fn token_digest(token: Str) -> Bytes {
 
 pub fn add_user(db: sql.Db, name: Str, token: Str) -> Int ! sql.SqlErr uses net.dial {
   db.exec("INSERT INTO users (name, token_sha256) VALUES ($1, $2)", [sql.str(name), sql.str(token_digest(token).to_hex())])?.last_insert_id
+}
+
+/// Sets the password of user `uid`, stored as an Argon2id hash at the
+/// std/crypto defaults (OWASP minimum).
+pub fn set_password(db: sql.Db, r: Rand, uid: Int, password: Str) -> () ! sql.SqlErr uses (rand, net.dial) {
+  let hash = crypto.hash_password_argon2id(r, password)
+  db.exec("UPDATE users SET password_argon2id = $1 WHERE id = $2", [sql.str(hash), sql.int(uid)])?
+}
+
+/// Checks a name and password and issues a fresh token, which replaces the
+/// user's old one. None for an unknown name, a user without a password, or
+/// a wrong password; each costs one Argon2id verification.
+pub fn login(db: sql.Db, r: Rand, name: Str, password: Str) -> Str? ! sql.SqlErr uses (rand, net.dial) {
+  let found = match db.query_one_as[LoginRow]("SELECT id, password_argon2id FROM users WHERE name = $1", [sql.str(name)]) {
+    Ok(u) => Some(u)
+    Err(NoRows) => None
+    Err(e) => return Err(e)
+  }
+  let stored = found.and_then(fn(u) { u.password_argon2id }) ?? DUMMY_HASH
+  if !crypto.verify_password(password, stored) || found.is_none() {
+    return None
+  }
+  let uid = found.or_fault("checked above").id
+  let token = crypto.token(r)
+  db.exec("UPDATE users SET token_sha256 = $1 WHERE id = $2", [sql.str(token_digest(token).to_hex()), sql.int(uid)])?
+  Some(token)
 }
 
 fn user_for_token(db: sql.Db, token: Str) -> User? ! sql.SqlErr uses net.dial {
@@ -173,7 +215,7 @@ fn current_user(req: http.Request) -> User ! ApiErr {
   req.value(user_key()).or_err(ApiErr.Unauthorized)
 }
 
-pub fn routes(db: sql.Db, clock: Clock) -> http.Router uses (net.dial, clock) {
+pub fn routes(db: sql.Db, clock: Clock, rand: Rand) -> http.Router uses (net.dial, clock, rand) {
   var notes = http.router()
   notes.wrap(auth(db))
   notes.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
@@ -203,14 +245,19 @@ pub fn routes(db: sql.Db, clock: Clock) -> http.Router uses (net.dial, clock) {
   })
   var r = http.router()
   r.handle("GET /health", fn(_req) { http.json(200, {"status": "ok"}) })
+  r.handle("POST /login", fn(req) -> http.Response ! ApiErr {
+    let c = req.json[Credentials]().map_err(fn(e) { ApiErr.BadRequest(msg: "${e}") })?
+    let token = login(db, rand, c.name, c.password)?.or_err(ApiErr.Unauthorized)?
+    http.json(200, {"token": token})
+  })
   r.mount("", notes)
   r
 }
 
 /// Serves until the first stop signal, with the purge job in the background.
-pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock) {
+pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock, rand) {
   let l = os.net.listen(addr)?
-  let srv = http.server(l, routes(db, os.clock))
+  let srv = http.server(l, routes(db, os.clock, os.rand))
   // the bound address: the real port when addr asked for ":0"
   log.info("listening", {"addr": l.addr()})
   scope s {
@@ -231,7 +278,10 @@ fn main(os: Os) ! {
       t
     }
   }
-  add_user(db, "admin", token)?
+  let admin = add_user(db, "admin", token)?
+  if let Some(pw) = os.env.get("NOTES_PASSWORD") {
+    set_password(db, os.rand, admin, pw)?
+  }
   let addr = os.env.get("NOTES_ADDR") ?? "127.0.0.1:8080"
   run(os, db, addr)?
 }

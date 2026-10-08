@@ -1,4 +1,4 @@
-// std/crypto with known vectors (std.md 11, decision 0056).
+// std/crypto with known vectors (std.md 11, decisions 0056 and 0059).
 use std/crypto
 
 fn main(os: Os) {
@@ -15,4 +15,11 @@ fn main(os: Os) {
   os.stdio.println("verify ${crypto.verify_password("hunter2", h)} ${crypto.verify_password("hunter3", h)} ${crypto.verify_password("hunter2", "garbage")}")
   // a hash with a known salt and key (PBKDF2-HMAC-SHA256, 1 iteration, salt "salt")
   os.stdio.println("known ${crypto.verify_password("password", "pbkdf2-sha256$1$c2FsdA$Eg+2z/z4syxD5yJSVsT4N6hlSMkszDVICAWYfLcL4Xs")}")
+  // Argon2id at the defaults (OWASP: 19 MiB, 2 passes, 1 lane), and small
+  let a = crypto.hash_password_argon2id(os.rand, "hunter2")
+  os.stdio.println("argon2id ${a.starts_with("$argon2id$v=19$m=19456,t=2,p=1$")} ${a.split("$").len()}")
+  let small = crypto.hash_password_argon2id(os.rand, "hunter2", memory_kib: 64, iterations: 1)
+  os.stdio.println("verify argon2id ${crypto.verify_password("hunter2", a)} ${crypto.verify_password("hunter2", small)} ${crypto.verify_password("hunter3", small)}")
+  // made with golang.org/x/crypto/argon2.IDKey("password", "somesaltsomesalt", 2, 64, 1, 32)
+  os.stdio.println("known argon2id ${crypto.verify_password("password", "$argon2id$v=19$m=64,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$Gpj7qOY5RCXJvcMzqcdQqvgR3wcPX7SleI4c9NtXk6E")}")
 }
