@@ -1,0 +1,135 @@
+use std/http
+use std/sql
+
+fn setup() -> sql.Db ! sql.SqlErr {
+  let db = open_db()?
+  add_user(db, "ada", "tok-ada")?
+  add_user(db, "bob", "tok-bob")?
+  db
+}
+
+fn authed(method: Str, url: Str, token: Str, body: Str = "") -> http.Request {
+  http.new_request(method, url, headers: {"Authorization": "Bearer ${token}"}, body: body.bytes())
+}
+
+fn body_of(resp: http.Response) -> Str {
+  resp.body.to_str() ?? ""
+}
+
+test "health needs no token" {
+  let r = routes(setup()?, os.clock)
+  let resp = r.call(http.new_request("GET", "/health"))
+  expect(resp.status) == 200
+}
+
+test "missing, malformed, and unknown tokens are 401" {
+  let r = routes(setup()?, os.clock)
+  expect(r.call(http.new_request("GET", "/notes")).status) == 401
+  expect(r.call(http.new_request("GET", "/notes", headers: {"Authorization": "tok-ada"})).status) == 401
+  expect(r.call(http.new_request("GET", "/notes", headers: {"Authorization": "Bearer "})).status) == 401
+  let resp = r.call(authed("GET", "/notes", "nope"))
+  expect(resp.status) == 401
+  expect(body_of(resp)) == "{\"error\":\"missing or invalid bearer token\"}"
+}
+
+test "a client supplied user header is not trusted" {
+  let r = routes(setup()?, os.clock)
+  let req = http.new_request("GET", "/notes", headers: {"X-Notes-User": "1"})
+  expect(r.call(req).status) == 401
+  // with a valid token the spoofed header is overwritten by the real user
+  let db = setup()?
+  let r2 = routes(db, os.clock)
+  insert_note(db, 1, "ada's", os.clock.now(), 1h)?
+  let spoof = http.new_request("GET", "/notes", headers: {"Authorization": "Bearer tok-bob", "X-Notes-User": "1"})
+  let got = r2.call(spoof).decode_json[List[Note]]()?
+  expect(got.len()) == 0
+}
+
+test "create, get, list, delete" {
+  let r = routes(setup()?, os.clock)
+  let created = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"buy milk\",\"ttl_secs\":60}"))
+  expect(created.status) == 201
+  let n = created.decode_json[Note]()?
+  expect(n.body) == "buy milk"
+  expect(n.owner) == 1
+  expect(n.expires) == os.clock.now() + 60s
+
+  let got = r.call(authed("GET", "/notes/${n.id}", "tok-ada"))
+  expect(got.status) == 200
+  expect(got.decode_json[Note]()?) == n
+
+  let all = r.call(authed("GET", "/notes", "tok-ada")).decode_json[List[Note]]()?
+  expect(all) == [n]
+
+  expect(r.call(authed("DELETE", "/notes/${n.id}", "tok-ada")).status) == 204
+  expect(r.call(authed("GET", "/notes/${n.id}", "tok-ada")).status) == 404
+  expect(r.call(authed("DELETE", "/notes/${n.id}", "tok-ada")).status) == 404
+}
+
+test "notes are private to their owner" {
+  let r = routes(setup()?, os.clock)
+  let n = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"secret\"}")).decode_json[Note]()?
+  let resp = r.call(authed("GET", "/notes/${n.id}", "tok-bob"))
+  expect(resp.status) == 404
+  expect(body_of(resp)) == "{\"error\":\"note ${n.id} not found\"}"
+  expect(r.call(authed("DELETE", "/notes/${n.id}", "tok-bob")).status) == 404
+}
+
+test "bad input is 400" {
+  let r = routes(setup()?, os.clock)
+  expect(r.call(authed("POST", "/notes", "tok-ada", body: "not json")).status) == 400
+  expect(r.call(authed("POST", "/notes", "tok-ada", body: "{\"ttl_secs\":5}")).status) == 400
+  expect(r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"\"}")).status) == 400
+  expect(r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"x\",\"ttl_secs\":0}")).status) == 400
+  expect(r.call(authed("GET", "/notes/abc", "tok-ada")).status) == 400
+}
+
+test "purge_expired removes only expired notes" {
+  let db = setup()?
+  let now = os.clock.now()
+  insert_note(db, 1, "short", now, 10s)?
+  insert_note(db, 1, "long", now, 1h)?
+  expect(purge_expired(db, now + 5s)?) == 0
+  expect(purge_expired(db, now + 10s)?) == 1
+  expect(list_notes(db, 1)?.map(fn(n) { n.body })) == ["long"]
+}
+
+test "the background purge job runs on virtual time" {
+  let db = setup()?
+  let start = os.clock.now()
+  insert_note(db, 1, "a", start, 90s)?
+  insert_note(db, 2, "b", start, 10m)?
+  scope s {
+    s.spawn_background(fn() { purge_loop(db, os.clock, 1m) })
+    os.clock.sleep(150s)
+    // the tick at 2m removed "a"; "b" is still there
+    expect(list_notes(db, 1)?.len()) == 0
+    expect(list_notes(db, 2)?.len()) == 1
+    os.clock.sleep(10m)
+    expect(list_notes(db, 2)?.len()) == 0
+  }
+  expect(os.clock.since(start)) == 750s
+}
+
+test "end to end: serve, purge, and shut down on SIGTERM" {
+  os.env.set("NOTES_TOKEN", "t0p")
+  os.env.set("NOTES_ADDR", "127.0.0.1:9000")
+  os.proc.signal_after(5m)
+  let c = http.client(os.net, timeout: 10s)
+  let base = "http://127.0.0.1:9000"
+  scope s {
+    let calls = s.spawn(fn() -> List[Int] ! Error {
+      os.clock.sleep(1s)
+      let created = c.send(authed("POST", "${base}/notes", "t0p", body: "{\"body\":\"soon gone\",\"ttl_secs\":30}"))?
+      let denied = c.get("${base}/notes")?
+      let before = c.send(authed("GET", "${base}/notes", "t0p"))?.decode_json[List[Note]]()?
+      os.clock.sleep(2m)
+      let after = c.send(authed("GET", "${base}/notes", "t0p"))?.decode_json[List[Note]]()?
+      [created.status, denied.status, before.len(), after.len()]
+    })
+    expect(testing.run_main(main, os)) == 0
+    expect(calls.await?) == [201, 401, 1, 0]
+  }
+  // the server stopped accepting after the stop request
+  expect(http.client(os.net, timeout: 1s).get("${base}/health") is Err(_))
+}

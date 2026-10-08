@@ -73,6 +73,7 @@ go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional 
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
 go test ./internal/check -run TestCorpusMutations -mutations -v   # slow: plant mutations in the corpus, count detections
+.tools/bin/xo check examples/notes-service && .tools/bin/xo test examples/notes-service && .tools/bin/xo build --targets=all examples/notes-service   # example app; not run by go test (last verified 2026-10-08)
 ```
 
 `./...` is safe since `bench/go.mod` made `bench/` its own module (see

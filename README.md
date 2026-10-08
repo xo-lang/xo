@@ -109,6 +109,7 @@ The module path is `github.com/xo-lang/xo` (local name; see
 | `internal/gobind` | Go package bindings |
 | `std/*.xo`, `std/rt` | Standard library declarations and the Go runtime |
 | `bench/` | Benchmarks: tasks, Go and Xo solutions, planted bugs, results |
+| `examples/` | Realistic programs; `notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown |
 | `knowledgebase/` | Decisions (ADRs), gotchas, infrastructure notes |
 
 ## Evidence so far
