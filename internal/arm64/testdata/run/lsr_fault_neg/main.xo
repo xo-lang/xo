@@ -1,0 +1,33 @@
+// A loop bounded by the list's length whose index starts below zero:
+// the bounds check of xs[i] must stay (i < len holds, i >= 0 does not).
+struct Rec {
+  key: Int
+  id: Int
+  weight: Float
+}
+
+fn total(xs: List[Rec], ys: List[Rec], from: Int) -> Int {
+  var s = 0
+  // bounded by another list's length: ys is longer
+  for i in 0..ys.len() {
+    if i < 3 {
+      s += xs[i].key
+    }
+  }
+  for i in from..xs.len() {
+    s += xs[i].key
+  }
+  s
+}
+
+fn main(os: Os) {
+  var xs: List[Rec] = []
+  var ys: List[Rec] = []
+  for i in 0..10 {
+    xs.push(Rec{key: i, id: i, weight: 0.5})
+    ys.push(Rec{key: i, id: i, weight: 0.5})
+    ys.push(Rec{key: i, id: i, weight: 0.5})
+  }
+  os.stdio.println("${total(xs, ys, 0)}")
+  os.stdio.println("${total(xs, ys, -2)}")
+}

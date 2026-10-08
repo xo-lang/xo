@@ -95,9 +95,15 @@ xo_f_sieve:
 .Lf2_b9:
 	cmp x11, x19
 	b.hs .Lf2_fault3
+.Lf2_b9_c:
 	add x9, x0, x11
 	ldrb w9, [x9, #24]
-	cbz x9, .Lf2_b16
+	cbnz x9, .Lf2_b10
+.Lf2_b16:
+	add x11, x11, #1
+	cmp x11, x12
+	b.lt .Lf2_b9
+	b .Lf2_b17
 .Lf2_b10:
 	adds x20, x20, #1
 	b.vs .Lf2_fault4
@@ -111,16 +117,14 @@ xo_f_sieve:
 .Lf2_b12:
 	cmp x10, x19
 	b.hs .Lf2_fault6
+.Lf2_b12_c:
 	add x9, x0, x10
 	strb wzr, [x9, #24]
 	adds x10, x10, x11
 	b.vs .Lf2_fault7
 	cmp x10, x21
 	b.le .Lf2_b12
-.Lf2_b16:
-	add x11, x11, #1
-	cmp x11, x12
-	b.lt .Lf2_b9
+	b .Lf2_b16
 .Lf2_b17:
 	bl .Lxo_drop2
 	mov x0, x20

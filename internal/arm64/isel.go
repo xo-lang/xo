@@ -27,9 +27,12 @@ type fstate struct {
 	lenParam map[vreg]vreg
 	// endMemo is the memo at the end of each lowered SSA block
 	endMemo map[*ssa.Block]*memo
-	lazy    map[*ssa.Value]bool // compares lowered into the branch that uses them
-	out     bool                // the function uses the $OUT slot
-	cancel  map[*ssa.Value]bool // releases cancelled by a retain (rc.go cancelRC)
+	lazy    map[*ssa.Value]bool     // compares lowered into the branch that uses them
+	out     bool                    // the function uses the $OUT slot
+	cancel  map[*ssa.Value]bool     // releases cancelled by a retain (rc.go cancelRC)
+	lsr     map[*ssa.Block]*lsrLoop // loop headers: induction variables (lsr.go)
+	ranges  map[*ssa.Value]interval // intervals of Int values (ranges.go)
+	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -56,6 +59,7 @@ func (g *gen) function(f *ssa.Func) {
 	s.selectCompares()
 	s.hoistConsts()
 	s.reuseFlags()
+	s.placeLatches()
 	s.regalloc()
 	s.emit()
 }
@@ -375,6 +379,8 @@ func (s *fstate) isel() {
 	}
 	blocks := rpo(f)
 	idom := dominators(blocks)
+	s.planLSR(blocks, idom)
+	s.computeRanges(blocks)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -385,6 +391,7 @@ func (s *fstate) isel() {
 					s.lenParam[s.vals[p][0]] = s.newVreg(false)
 				}
 			}
+			s.lsrParams(b)
 		}
 	}
 	for i, b := range blocks {
@@ -411,6 +418,7 @@ func (s *fstate) isel() {
 				s.m().lens[s.vals[p][0]] = c
 			}
 		}
+		s.lsrHeader(b)
 		if i == 0 {
 			var defs []vreg
 			for _, p := range b.Params {
@@ -473,7 +481,7 @@ func (s *fstate) edgeMoves(e *ssa.Edge) ([]vreg, []src) {
 			}
 		}
 	}
-	return dsts, srcs
+	return s.lsrMoves(e, dsts, srcs)
 }
 
 func (s *fstate) pmove(dsts []vreg, srcs []src) {
@@ -643,7 +651,7 @@ func (s *fstate) instr(v *ssa.Value) {
 			}
 			return s.def1(false, "mul $d0, $u0, $u1", a, b)
 		}
-		if v.Pos == "" {
+		if v.Pos == "" || s.safeMul(v) {
 			s.set(v, mul())
 			return
 		}
@@ -826,6 +834,9 @@ func (s *fstate) addSub(v *ssa.Value) {
 			a, b = b, a
 		}
 	}
+	if n, ok := constInt(b); ok {
+		defer s.offsetFacts(v, a, n)
+	}
 	checked := v.Pos != ""
 	if n, ok := constInt(b); ok && checked && s.safeAdd(a, n, v.Op) {
 		checked = false // the bounds of a prove it
@@ -913,6 +924,15 @@ func (s *fstate) divRem(v *ssa.Value) {
 		}
 		// round toward zero: add 2^k - 1 to negative dividends
 		a := s.word(v.Args[0])
+		if lo, _ := s.bounds(v.Args[0]); lo >= 0 {
+			// not negative: a mask or a shift
+			if v.Op == ssa.OpDiv {
+				s.set(v, s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), a))
+			} else {
+				s.set(v, s.def1(false, fmt.Sprintf("and $d0, $u0, #%d", int64(1)<<k-1), a))
+			}
+			return
+		}
 		if s.m().lowZero[a] >= k {
 			// a branch proved a % 2^k == 0: exact
 			if v.Op == ssa.OpDiv {
@@ -1134,7 +1154,10 @@ func (s *fstate) elemBase(l, i vreg, es int64) vreg {
 	if b, ok := m.bases[key]; ok {
 		return b
 	}
-	b := s.elemBase1(l, i, es)
+	b, ok := s.offsetBase(l, i, es)
+	if !ok {
+		b = s.elemBase1(l, i, es)
+	}
 	m.bases[key] = b
 	return b
 }
@@ -1243,6 +1266,7 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 	m.checked[[2]vreg{l, i}] = true
 	n := s.listLen(l)
 	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	s.indexFacts(i)
 }
 
 // option builds Option words on two paths: in the current block when

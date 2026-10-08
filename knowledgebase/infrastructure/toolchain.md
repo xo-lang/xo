@@ -875,8 +875,9 @@ first, AST based prototype, since deleted) and
 
 ## arm64 backend (native)
 
-Last verified: 2026-10-08. Decisions 0049 and 0051; results
-`bench/results/arm64-native-2026-10-08.md`.
+Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
+`bench/results/arm64-native-2026-10-08.md` and
+`bench/results/arm64-perf-2026-10-08.md`.
 
 - `xo build --backend=arm64` and `xo run --backend=arm64`; programs only,
   no `--race`, `--arenas`, `--holes`; targets darwin/arm64 and
@@ -897,7 +898,13 @@ Last verified: 2026-10-08. Decisions 0049 and 0051; results
   against the release of its enum, `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
-  `rc.go` (dup and drop helpers in assembly), `closures.go` (function
+  `rc.go` (dup and drop helpers in assembly), `lsr.go` (decision 0054:
+  loops found on the SSA, pointer induction variables for list element
+  accesses, induction variable bounds, `xs[i + c]` from xs[i]'s pointer,
+  rotation of a back edge at a bounds check (`_c` labels), integer `ldp`
+  pairs as a text peephole, latch layout around inner loops),
+  `ranges.go` (intervals of Int values: unchecked multiplies, `and`/`asr`
+  for `%`/`/` by 2^k of non negative values), `closures.go` (function
   values, environments, `blr x0`), `boxes.go` (Box cells), `eq.go`
   (`==` helpers), `inline.go` (small leaf functions, SSA to SSA, before
   lowering).
@@ -918,7 +925,13 @@ Last verified: 2026-10-08. Decisions 0049 and 0051; results
   backend, all with the leak check). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with
   `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the
-  default SDK does not link).
+  default SDK does not link; on 2026-10-08 the default MacOSX27.0 SDK
+  failed with "tapi error: unknown architecture arm64e.x1" and
+  `-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`
+  linked). `XO_BUILD_DIR=<dir>` keeps the build directory (and the `.s`)
+  where you want it. `regalloc` fails with "reads virtual register n
+  before it is written" when MIR uses a register no path defines
+  (`gotchas/arm64-mir-param-without-moves.md`).
 
 ## Go interop (prototype)
 

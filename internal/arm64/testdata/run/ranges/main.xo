@@ -1,0 +1,55 @@
+// Value ranges (internal/arm64 ranges.go, decision 0054): loop values
+// kept in an interval by a remainder or a mask lose their overflow
+// checks, `% 2^k` and `/ 2^k` of values that are never negative become a
+// mask and a shift, and everything else still faults. The last line
+// overflows a multiplication whose operand's interval grows without a
+// bound.
+fn lcg(n: Int) -> Int {
+  var seed = 42
+  var s = 0
+  for i in 0..n {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    s = (s + seed % 1000 + i % 7) % 1000000007
+  }
+  s
+}
+
+fn masked(n: Int) -> Int {
+  var x = 7
+  var s = 0
+  for _ in 0..n {
+    x = (x * 6364136223 + 1) & 1048575
+    s += x / 16 + x % 32
+  }
+  s
+}
+
+// may be negative: the remainder keeps the sign of the dividend
+fn signed(n: Int) -> Int {
+  var x = -5
+  var s = 0
+  for _ in 0..n {
+    x = (x * 31 - 17) % 4096
+    s = s + x % 8 + x / 4
+  }
+  s
+}
+
+fn halves(a: Int, b: Int) -> Int {
+  (a % 1000) * (b % 1000) / 2 + (a % 100 - b % 100) % 16
+}
+
+fn grow(n: Int) -> Int {
+  var x = 3
+  for _ in 0..n {
+    x = x * 3 + 1
+  }
+  x
+}
+
+fn main(os: Os) {
+  os.stdio.println("lcg ${lcg(100000)} masked ${masked(100000)} signed ${signed(1000)}")
+  os.stdio.println("halves ${halves(123456, -98765)} ${halves(-7, 3)} ${halves(-9223372036854775807, 9223372036854775807)}")
+  os.stdio.println("grow ${grow(30)}")
+  os.stdio.println("grow ${grow(60)}")
+}
