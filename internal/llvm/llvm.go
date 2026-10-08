@@ -3,6 +3,12 @@
 // internal/build compiles with the system clang together with the C
 // runtime in std/llrt (`xo build --backend=llvm`).
 //
+// There are two paths. Generate first lowers through the shared SSA IR
+// (internal/ssa) with reference counting and in place reuse (decision
+// 0046; fromssa.go). A program outside the SSA subset falls back to the
+// typed AST walker described below (the first prototype), which never
+// frees memory.
+//
 // The subset: Int (checked arithmetic that faults with the operands and
 // the position, with the range analysis of internal/gen removing proven
 // safe checks), Bool, Float, Str (literals, interpolation of Int, Float,
@@ -14,7 +20,7 @@
 // `?` on Result and Option, `fault`, and `const`. Anything else is
 // rejected with an error that names the construct and its position.
 //
-// Lowering, in short:
+// AST path lowering, in short:
 //   - every Xo type is an LLVM first class value: Int i64, Bool i1, Float
 //     double, Str {ptr, i64}, `()` and capabilities `{}`, a struct a named
 //     LLVM struct, a tuple a literal struct, an enum {i64 tag, [N x i64]

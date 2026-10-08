@@ -63,3 +63,11 @@ for w in ${WORKLOADS:-fib sieve nbody sort interp collatz strings}; do
 		r3 = (x == "-") ? sprintf(">%.0fx", to * 1000 / l) : sprintf("%.2fx", x / l)
 		printf "| %s | %.1f | %s | %.1f | %s | %s | %s |\n", w, g, xs, l, r1, r2, r3 }'
 done
+if [ "${RSS:-0}" = 1 ]; then
+	# peak resident memory, MB (macOS /usr/bin/time -l reports bytes)
+	rss() { /usr/bin/time -l "$@" 2>&1 >/dev/null | awk '/maximum resident set size/ { printf "%.1f", $1 / 1e6 }'; }
+	printf '\n| Workload | Go MB | Xo LLVM MB |\n|---|---|---|\n'
+	for w in ${WORKLOADS:-fib sieve nbody sort interp collatz strings}; do
+		printf '| %s | %s | %s |\n' "$w" "$(rss "$out/llperf-go" "$w")" "$(rss "$out/xo-ll-$w")"
+	done
+fi

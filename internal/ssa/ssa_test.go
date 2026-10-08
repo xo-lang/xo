@@ -246,4 +246,5 @@ func TestVerifyRCMutations(t *testing.T) {
 	if n < 10 {
 		t.Fatalf("only %d mutants", n)
 	}
+	t.Logf("%d mutants rejected", n)
 }

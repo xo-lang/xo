@@ -73,4 +73,14 @@ Accept, amend, or reject this record based on those results.
   backend now writes unshared lists in place (sticky shared flag set at copy
   points). ms against Go: sieve >60000 -> 149 (110), nbody 18632 -> 256 (162),
   sort >60000 -> 274 (266), interp 588 -> 173 (143).
-
+- Reference counting with Perceus style reuse in the LLVM backend
+  (2026-10-08, decision 0046, `bench/results/llvm-rc-2026-10-08.md`):
+  the backend now lowers from the SSA IR, frees every allocation (leak
+  check 0 live on all bench programs), and updates unique lists and
+  strings in place. ms and peak MB, Go / prototype / RC: sieve 106/114/98
+  ms and 49/136/54 MB, sort 263/230/213 ms and 78/150/78 MB, a new string
+  churn workload 91/1572/36 ms and 28/10441/16 MB; fib, nbody, interp,
+  collatz unchanged (0.47x to 1.15x of Go). First evidence for the
+  allocation heavy claim: on string churn LLVM Xo runs in 0.40x of Go's
+  time with 0.55x of its memory; request handling with Map and I/O is
+  still unmeasured on this path.

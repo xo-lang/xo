@@ -161,6 +161,7 @@ func TestGolden(t *testing.T) {
 			if goRes.String() != llRes.String() {
 				t.Errorf("LLVM backend (%s path) differs from the Go backend\n--- go\n%s\n--- llvm\n%s", b.LLVMPath, goRes, llRes)
 			}
+			t.Logf("LLVM path: %s %s", b.LLVMPath, firstLine(b.LLVMFallback))
 			if ssaGolden[name] && b.LLVMPath != "ssa" {
 				t.Errorf("took the %s path, want ssa: %s", b.LLVMPath, b.LLVMFallback)
 			}
@@ -282,4 +283,11 @@ func TestLeakCheck(t *testing.T) {
 			t.Log(strings.TrimSpace(r.stdout), "; ", leakCheck(t, b.Binaries[build.Host()], dir))
 		})
 	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
