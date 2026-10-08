@@ -1,0 +1,30 @@
+// A retain of a variant's payload cancelled against the release of the
+// enum (internal/arm64 cancelRC): `if let Some(w) = xs.pop()` on lists of
+// Str and of List, the payload kept, appended to, and mutated after.
+fn main(os: Os) {
+  var words: List[Str] = []
+  for i in 0..50 {
+    words.push("w${i}")
+  }
+  var acc = ""
+  var kept: List[Str] = []
+  while words.len() > 0 {
+    if let Some(w) = words.pop() {
+      acc = acc + w
+      if w.len() == 2 {
+        kept.push(w)
+      }
+    }
+  }
+  var lists: List[List[Int]] = [[1, 2], [3], [4, 5, 6]]
+  var sum = 0
+  while lists.len() > 0 {
+    if let Some(l) = lists.pop() {
+      var m = l
+      m.push(10)
+      sum = sum * 7 + m.len() + l.len()
+    }
+  }
+  let first = kept.first() ?? "none"
+  os.stdio.println("${acc.len()} ${kept.len()} ${first} ${sum}")
+}
