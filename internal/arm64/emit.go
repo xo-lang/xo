@@ -378,7 +378,9 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			}
 			fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(t))
 		} else {
-			s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
+			if in.text != "" { // empty: the flags of the predecessor's compare (reuseFlags)
+				s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
+			}
 			if t == next {
 				fmt.Fprintf(b, "\tb.%s %s\n", invCond[in.cond], s.label(f))
 				return

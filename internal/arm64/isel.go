@@ -52,7 +52,9 @@ func (g *gen) function(f *ssa.Func) {
 	s.thread()
 	s.jumpTables()
 	s.dce()
+	s.selectCompares()
 	s.hoistConsts()
+	s.reuseFlags()
 	s.regalloc()
 	s.emit()
 }
