@@ -42,13 +42,15 @@ type memo struct {
 	lo, hi map[vreg]int64
 	// lowZero: the number of low bits a branch proved zero
 	lowZero map[vreg]int
+	// lt: x < y (signed) holds for the registers {x, y} (lsr.go)
+	lt map[[2]vreg]bool
 }
 
 // m returns the memo of the current block.
 func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}, lt: map[[2]vreg]bool{}}
 	}
 	return s.mm
 }
@@ -191,7 +193,10 @@ func (s *fstate) dce() {
 // that dominates it.
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}}
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}, lowZero: map[vreg]int{}, lt: map[[2]vreg]bool{}}
+	for k, v := range from.lt {
+		m.lt[k] = v
+	}
 	for k, v := range from.lowZero {
 		m.lowZero[k] = v
 	}
@@ -306,6 +311,7 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 	ylo, yhi := s.bounds(y)
 	s.narrow(x, op, ylo, yhi)
 	s.narrow(y, swapCmp[op], xlo, xhi)
+	s.ltFact(x, op, y)
 }
 
 // narrow records that x op y holds, y in [ylo, yhi].

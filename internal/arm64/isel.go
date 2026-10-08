@@ -27,10 +27,11 @@ type fstate struct {
 	lenParam map[vreg]vreg
 	// endMemo is the memo at the end of each lowered SSA block
 	endMemo map[*ssa.Block]*memo
-	lazy    map[*ssa.Value]bool       // compares lowered into the branch that uses them
-	out     bool                      // the function uses the $OUT slot
-	cancel  map[*ssa.Value]bool       // releases cancelled by a retain (rc.go cancelRC)
-	lsr     map[*ssa.Block][]*lsrPlan // pointer induction variables of loop headers (lsr.go)
+	lazy    map[*ssa.Value]bool     // compares lowered into the branch that uses them
+	out     bool                    // the function uses the $OUT slot
+	cancel  map[*ssa.Value]bool     // releases cancelled by a retain (rc.go cancelRC)
+	lsr     map[*ssa.Block]*lsrLoop // loop headers: induction variables (lsr.go)
+	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -414,7 +415,7 @@ func (s *fstate) isel() {
 				s.m().lens[s.vals[p][0]] = c
 			}
 		}
-		s.lsrSeed(b)
+		s.lsrHeader(b)
 		if i == 0 {
 			var defs []vreg
 			for _, p := range b.Params {
@@ -773,6 +774,9 @@ func (s *fstate) addSub(v *ssa.Value) {
 			a, b = b, a
 		}
 	}
+	if n, ok := constInt(b); ok {
+		defer s.offsetFacts(v, a, n)
+	}
 	checked := v.Pos != ""
 	if n, ok := constInt(b); ok && checked && s.safeAdd(a, n, v.Op) {
 		checked = false // the bounds of a prove it
@@ -1081,7 +1085,10 @@ func (s *fstate) elemBase(l, i vreg, es int64) vreg {
 	if b, ok := m.bases[key]; ok {
 		return b
 	}
-	b := s.elemBase1(l, i, es)
+	b, ok := s.offsetBase(l, i, es)
+	if !ok {
+		b = s.elemBase1(l, i, es)
+	}
 	m.bases[key] = b
 	return b
 }
@@ -1188,6 +1195,10 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 		return
 	}
 	m.checked[[2]vreg{l, i}] = true
+	if s.provenIndex(l, i) {
+		s.indexFacts(i)
+		return
+	}
 	n := s.listLen(l)
 	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
 	s.indexFacts(i)
