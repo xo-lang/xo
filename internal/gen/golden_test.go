@@ -143,8 +143,15 @@ func TestGolden(t *testing.T) {
 // TestGoldenNoMono builds every golden program with `--no-mono` (one Go
 // generic function per Xo generic function) and compares with want.txt
 // exactly, Go frames included; -golden-update writes want.txt from this
-// lowering. The two lowerings must not differ in behavior.
-func TestGoldenNoMono(t *testing.T) { testGolden(t, true, false) }
+// lowering. The two lowerings must not differ in behavior. Skipped with
+// -short unless updating: -short runs each golden program once, with the
+// default lowering (TestGolden).
+func TestGoldenNoMono(t *testing.T) {
+	if testing.Short() && !*updateGolden {
+		t.Skip("alternate lowering; run without -short")
+	}
+	testGolden(t, true, false)
+}
 
 // TestGoldenArenas builds every golden program with `--arenas` (request
 // scoped arenas, std/rt/arena.go) and compares with want.txt like
@@ -154,6 +161,9 @@ func TestGoldenNoMono(t *testing.T) { testGolden(t, true, false) }
 func TestGoldenArenas(t *testing.T) {
 	if *updateGolden {
 		t.Skip("want.txt is written by TestGoldenNoMono")
+	}
+	if testing.Short() {
+		t.Skip("alternate lowering; run without -short")
 	}
 	testGolden(t, false, true)
 }

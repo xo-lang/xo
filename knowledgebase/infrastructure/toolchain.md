@@ -75,7 +75,7 @@ go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build di
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
-go test -short ./...                                    # skips the race, cross compile, and CLI build tests
+go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, and the --no-mono and --arenas golden lowerings; use per commit, run the full suite before merging (about 2.5 min)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns

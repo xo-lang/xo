@@ -63,6 +63,7 @@ Update the knowledgebase in the same change as the work, not later:
 
 - Prototype code: Go, standard library preferred, `gofmt`, table driven and
   golden file tests under `testdata/`.
+- Tests: `go test -short ./...` (about 10s) for each commit; full `go test ./...` once before a merge or push.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.
