@@ -41,6 +41,7 @@ import (
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 	gogen "github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/ssa"
 )
 
 // Options configure generation.
@@ -50,6 +51,9 @@ type Options struct {
 	// NoRanges turns off the range analysis: every Int operation is
 	// checked.
 	NoRanges bool
+	// NoSSA lowers from the typed AST (the prototype path, bump
+	// allocated, never freeing) even when the program lowers to SSA.
+	NoSSA bool
 }
 
 // Program is the generated IR of one Xo program.
@@ -59,6 +63,12 @@ type Program struct {
 	MainModule string
 	// Funcs counts the function instances emitted.
 	Funcs int
+	// Path is "ssa" when the program was lowered from internal/ssa with
+	// reference counting, "ast" when from the typed AST (the fallback).
+	Path string
+	// Fallback says why the SSA path was not taken (empty on the SSA
+	// path or when Options.NoSSA asked for the AST path).
+	Fallback string
 }
 
 // Error is a construct the backend does not support, with its position.
@@ -111,8 +121,56 @@ type gen struct {
 	nstr    int
 }
 
-// Generate lowers the program whose roots are the modules of res.
+// Generate lowers the program whose roots are the modules of res: from
+// the shared SSA IR with reference counting (decision 0046) when the
+// whole program lowers to it, otherwise from the typed AST (the
+// prototype path, which never frees), recording why in
+// Program.Fallback.
 func Generate(res *check.Result, opts Options) (*Program, error) {
+	if opts.NoSSA {
+		return generateAST(res, opts)
+	}
+	prog, err := generateViaSSA(res, opts)
+	if err == nil {
+		return prog, nil
+	}
+	prog, err2 := generateAST(res, opts)
+	if err2 != nil {
+		return nil, err2
+	}
+	prog.Fallback = err.Error()
+	return prog, nil
+}
+
+// generateViaSSA builds SSA, inserts reference counting, verifies, and
+// lowers.
+func generateViaSSA(res *check.Result, opts Options) (*Program, error) {
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.Verify(); err != nil {
+		return nil, err
+	}
+	m.InsertRC()
+	if err := m.Verify(); err != nil {
+		return nil, err
+	}
+	prog, err := GenerateSSA(m)
+	if err != nil {
+		return nil, err
+	}
+	for _, mod := range res.Modules {
+		if fo, ok := mod.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
+			prog.MainModule = mod.Path
+			break
+		}
+	}
+	return prog, nil
+}
+
+// generateAST lowers from the typed AST.
+func generateAST(res *check.Result, opts Options) (*Program, error) {
 	info := res.Info()
 	g := &gen{info: info, opts: opts, prelude: info.Prelude(), errSeen: map[string]bool{},
 		types: map[string]*ty{}, strs: map[string]string{}, locs: map[string]string{}, insts: map[string]*inst{},
@@ -157,7 +215,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	out.WriteString(g.globals.String())
 	out.WriteString("\n")
 	out.WriteString(g.funcs.String())
-	return &Program{IR: []byte(out.String()), MainModule: mainMod.Path, Funcs: len(g.insts)}, nil
+	return &Program{IR: []byte(out.String()), MainModule: mainMod.Path, Funcs: len(g.insts), Path: "ast"}, nil
 }
 
 // runtimeDecls declares the C runtime (std/llrt/xo_rt.c) and intrinsics.

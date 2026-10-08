@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +70,14 @@ func stableStderr(s string) string {
 
 func buildAndRun(t *testing.T, dir string, opts build.Options) runResult {
 	t.Helper()
+	r, _ := buildRun(t, dir, opts)
+	return r
+}
+
+// buildRun builds and runs the program in dir and also returns the build
+// result.
+func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.Result) {
+	t.Helper()
 	res, err := build.Build([]string{dir}, opts)
 	if err != nil {
 		t.Fatalf("build (%s): %v", opts.Backend, err)
@@ -92,8 +101,40 @@ func buildAndRun(t *testing.T, dir string, opts build.Options) runResult {
 	} else if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}
+	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}, res
 }
+
+// ssaGolden lists the golden programs that must take the SSA path (with
+// reference counting): a silent fallback to the AST path fails the test.
+var ssaGolden = map[string]bool{
+	"abs_fault": true, "arith": true, "div_zero": true, "float_int_fault": true, "index_oob": true,
+	"loops": true, "neg_overflow": true, "overflow_add": true, "overflow_mul": true, "rc_values": true,
+	"shl_overflow": true, "sort_structs": true, "strings": true, "user_fault": true, "var_alias": true,
+}
+
+// leakCheck runs bin with XO_LEAKCHECK=1 and requires every allocation
+// freed at exit.
+func leakCheck(t *testing.T, bin, dir string) string {
+	t.Helper()
+	cmd := exec.Command(bin)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("leak check run: %v\n%s", err, stderr.String())
+	}
+	m := leakRE.FindStringSubmatch(stderr.String())
+	if m == nil {
+		t.Fatalf("no leak check line in stderr:\n%s", stderr.String())
+	}
+	if m[1] != "0" {
+		t.Errorf("%s allocations still live at exit (of %s)", m[1], m[2])
+	}
+	return m[0]
+}
+
+var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
 // TestGolden builds every program under testdata/golden with the Go
 // backend and with the LLVM backend (with and without the range
@@ -114,14 +155,26 @@ func TestGolden(t *testing.T) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
+			name := filepath.Base(dir)
 			goRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendGo})
-			llRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			llRes, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
 			if goRes.String() != llRes.String() {
-				t.Errorf("LLVM backend differs from the Go backend\n--- go\n%s\n--- llvm\n%s", goRes, llRes)
+				t.Errorf("LLVM backend (%s path) differs from the Go backend\n--- go\n%s\n--- llvm\n%s", b.LLVMPath, goRes, llRes)
 			}
-			noRanges := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, NoRanges: true})
+			if ssaGolden[name] && b.LLVMPath != "ssa" {
+				t.Errorf("took the %s path, want ssa: %s", b.LLVMPath, b.LLVMFallback)
+			}
+			if b.LLVMPath == "ssa" && llRes.exit == 0 {
+				leakCheck(t, b.Binaries[build.Host()], dir)
+			}
+			// the prototype AST path, with and without the range analysis
+			astRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, LLVMAST: true})
+			if astRes.String() != llRes.String() {
+				t.Errorf("LLVM AST path differs\n--- default\n%s\n--- ast\n%s", llRes, astRes)
+			}
+			noRanges := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM, LLVMAST: true, NoRanges: true})
 			if noRanges.String() != llRes.String() {
-				t.Errorf("LLVM backend without range analysis differs\n--- ranges\n%s\n--- no ranges\n%s", llRes, noRanges)
+				t.Errorf("LLVM AST path without range analysis differs\n--- ranges\n%s\n--- no ranges\n%s", llRes, noRanges)
 			}
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
@@ -197,5 +250,36 @@ func TestBuildErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: got %v, want an error containing %q", c.opts, err, c.want)
 		}
+	}
+}
+
+// TestLeakCheck builds each benchmark program (bench/perf/llvm/xo) with
+// the LLVM backend, requires the SSA path, the expected output, and that
+// every allocation is freed by exit (the runtime's allocation counter,
+// XO_LEAKCHECK=1).
+func TestLeakCheck(t *testing.T) {
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	if testing.Short() {
+		t.Skip("runs the benchmark programs")
+	}
+	dirs, err := filepath.Glob(filepath.Join("..", "..", "bench", "perf", "llvm", "xo", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no bench programs: %v", err)
+	}
+	for _, dir := range dirs {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			r, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
+			if b.LLVMPath != "ssa" {
+				t.Fatalf("took the %s path, want ssa: %s", b.LLVMPath, b.LLVMFallback)
+			}
+			if r.exit != 0 || !strings.HasPrefix(r.stdout, filepath.Base(dir)+" ") {
+				t.Fatalf("run: %s", r)
+			}
+			t.Log(strings.TrimSpace(r.stdout), "; ", leakCheck(t, b.Binaries[build.Host()], dir))
+		})
 	}
 }

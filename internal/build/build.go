@@ -83,6 +83,10 @@ type Options struct {
 	NoMono bool
 	// NoRanges checks every Int operation (gen.Options.NoRanges; tests).
 	NoRanges bool
+	// LLVMAST makes the LLVM backend lower from the typed AST (the
+	// prototype path, which never frees) even when the program lowers to
+	// SSA; for comparisons and tests. XO_LLVM_AST=1 does the same.
+	LLVMAST bool
 	// Arenas turns on request scoped arenas (gen.Options.Arenas,
 	// `--arenas`).
 	Arenas bool
@@ -106,6 +110,12 @@ type Result struct {
 	Name string
 	// Specs counts the specialized copies of generic functions.
 	Specs int
+	// LLVMPath is how the LLVM backend lowered the program: "ssa" (from
+	// internal/ssa, reference counted) or "ast" (the prototype path,
+	// which never frees).
+	LLVMPath string
+	// LLVMFallback says why the LLVM backend used the AST path.
+	LLVMFallback string
 	// Info is the build information compiled into a program (Build mode,
 	// Go backend): the build id, the source hashes, the main module
 	// directory, and the options, for crash bundles and `xo replay`.

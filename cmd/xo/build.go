@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
@@ -102,6 +103,11 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		sort.Strings(names)
 		for _, n := range names {
 			fmt.Fprintln(stdout, n)
+		}
+		if res.LLVMFallback != "" {
+			// the program builds, but without reference counting (decision 0046)
+			first := strings.SplitN(res.LLVMFallback, "\n", 2)[0]
+			fmt.Fprintf(stderr, "xo build: note: lowered from the typed AST, which never frees memory (the SSA path does not support it yet: %s)\n", first)
 		}
 	}
 	if res.Failed {

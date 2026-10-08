@@ -1,20 +1,28 @@
-// xo_rt.c: the runtime of the P3 LLVM backend prototype (internal/llvm,
-// `xo build --backend=llvm`). It is compiled by clang together with the
-// generated LLVM IR (with -flto, so the small helpers inline into Xo code).
+// xo_rt.c: the runtime of the LLVM backend (internal/llvm, `xo build
+// --backend=llvm`). It is compiled by clang together with the generated
+// LLVM IR (with -flto, so the small helpers inline into Xo code).
 //
 // Contents:
-//   - memory: a bump allocator over 4 MiB chunks with no free. Every
-//     allocation lives until the process exits. Fine for short programs and
-//     benchmarks; a long running program needs reference counting or a GC
-//     (see bench/results/llvm-prototype-2026-10-08.md).
-//   - lists: a List[T] value is a pointer to a header {len, cap, shared}
+//   - memory: a size class allocator with free lists (16 byte classes up
+//     to 1 KiB, powers of two up to 256 KiB, malloc above), and a count
+//     of live allocations that the leak check reads (XO_LEAKCHECK=1
+//     prints it at exit).
+//   - reference counted values (decision 0046), used by code lowered from
+//     internal/ssa: every heap object starts with an i64 count; strings
+//     are {count, cap, bytes} (Str values are {object, len}), lists are
+//     {count, len, cap} and the elements. Counts of literals are
+//     immortal (2^60, never reaching zero). Generated code increments
+//     and decrements counts inline and calls xo_rc_free, xo_rl_free
+//     (which releases the elements through a generated callback),
+//     xo_rl_copy (a shared list about to be updated), and xo_rl_grow (a
+//     unique full list, resized in place).
+//   - prototype lists (the AST path of internal/llvm, which never
+//     frees): a List[T] value is a pointer to a header {len, cap, shared}
 //     followed by the elements. `shared` is a sticky flag set when a list
-//     value is copied (a binding, a field, a capture): a mutation through a
-//     binding whose buffer is shared copies the buffer first (copy on
-//     write), so value semantics hold without reference counts. Without
-//     decrements a buffer once shared stays shared, so the first mutation
-//     after every copy clones.
-//   - strings: a Str is (ptr, len), immutable; builders for interpolation.
+//     value is copied: a mutation through a binding whose buffer is
+//     shared copies the buffer first (copy on write).
+//   - strings: builders for interpolation (AST path), concatenation and
+//     formatting (both paths).
 //   - output: buffered stdout, flushed at exit and before a fault.
 //   - faults: messages and exit status 70, matching the Go backend's text.
 //   - main: runs the Xo entry on a thread with a 1 GiB stack, like Go's
@@ -35,40 +43,126 @@
 
 // ---------------------------------------------------------------------------
 // Memory
+//
+// Every block has an 8 byte prefix before the pointer handed out: the
+// size class (1 to XO_NCLASS) or, for a block from malloc, minus its
+// size. Freed blocks of a class go on that class's free list (the next
+// pointer is stored in the block); new ones are carved from 4 MiB chunks.
 
 #define XO_CHUNK (4 << 20)
+#define XO_SMALL_MAX 1024
+#define XO_MID_MAX (256 << 10)
+#define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
 
 static char *bump_cur;
 static char *bump_end;
+static void *free_lists[XO_NCLASS + 1];
+int64_t xo_live_allocs;  // blocks allocated and not yet freed
+int64_t xo_total_allocs; // blocks allocated
 
-__attribute__((noinline)) static void *xo_alloc_slow(int64_t n) {
-	if (n > XO_CHUNK / 4) {
-		void *p = malloc((size_t)n);
-		if (!p) {
-			fputs("fault: out of memory\n", stderr);
-			exit(70);
+XO_NORETURN static void xo_oom(void) {
+	fputs("fault: out of memory\n", stderr);
+	exit(70);
+}
+
+static inline int64_t size_class(int64_t n, int64_t *size) {
+	if (n <= XO_SMALL_MAX) {
+		int64_t c = (n + 15) >> 4;
+		if (c == 0) {
+			c = 1;
 		}
-		return p;
+		*size = c << 4;
+		return c;
 	}
-	char *c = malloc(XO_CHUNK);
-	if (!c) {
-		fputs("fault: out of memory\n", stderr);
-		exit(70);
+	int64_t c = 65, s = 2048;
+	while (s < n) {
+		s <<= 1;
+		c++;
 	}
-	bump_cur = c + n;
-	bump_end = c + XO_CHUNK;
+	*size = s;
 	return c;
 }
 
-void *xo_alloc(int64_t n) {
-	n = (n + 15) & ~(int64_t)15;
-	if (bump_end - bump_cur < n) {
-		return xo_alloc_slow(n);
+__attribute__((noinline)) static void *xo_alloc_large(int64_t n) {
+	int64_t *b = malloc((size_t)n + 8);
+	if (!b) {
+		xo_oom();
 	}
-	void *p = bump_cur;
-	bump_cur += n;
-	return p;
+	b[0] = -n;
+	return b + 1;
 }
+
+__attribute__((noinline)) static void xo_refill(int64_t need) {
+	char *c = malloc(XO_CHUNK);
+	if (!c) {
+		xo_oom();
+	}
+	(void)need;
+	bump_cur = c;
+	bump_end = c + XO_CHUNK;
+}
+
+void *xo_alloc(int64_t n) {
+	xo_live_allocs++;
+	xo_total_allocs++;
+	if (n > XO_MID_MAX) {
+		return xo_alloc_large(n);
+	}
+	int64_t size;
+	int64_t c = size_class(n, &size);
+	void *p = free_lists[c];
+	if (p) {
+		free_lists[c] = *(void **)p;
+		return p;
+	}
+	int64_t need = size + 8;
+	if (bump_end - bump_cur < need) {
+		xo_refill(need);
+	}
+	int64_t *b = (int64_t *)bump_cur;
+	bump_cur += need;
+	b[0] = c;
+	return b + 1;
+}
+
+void xo_free(void *p) {
+	xo_live_allocs--;
+	int64_t *b = (int64_t *)p - 1;
+	if (b[0] < 0) {
+		free(b);
+		return;
+	}
+	*(void **)p = free_lists[b[0]];
+	free_lists[b[0]] = p;
+}
+
+// xo_resize returns a block of n bytes with the first old bytes of p (a
+// block of old bytes, which is freed).
+static void *xo_resize(void *p, int64_t old, int64_t n) {
+	int64_t *b = (int64_t *)p - 1;
+	if (b[0] < 0 && n > XO_MID_MAX) {
+		int64_t *nb = realloc(b, (size_t)n + 8);
+		if (!nb) {
+			xo_oom();
+		}
+		nb[0] = -n;
+		return nb + 1;
+	}
+	if (b[0] > 0) {
+		int64_t size;
+		if (n <= XO_MID_MAX && size_class(n, &size) == b[0]) {
+			return p;
+		}
+	}
+	void *q = xo_alloc(n);
+	memcpy(q, p, (size_t)(old < n ? old : n));
+	xo_free(p);
+	return q;
+}
+
+void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
+
+void xo_rc_free(void *p) { xo_free(p); }
 
 // ---------------------------------------------------------------------------
 // Output
@@ -442,6 +536,99 @@ __attribute__((noinline)) xo_list *xo_list_grow(xo_list *l, int64_t esize, xo_re
 }
 
 // ---------------------------------------------------------------------------
+// Reference counted strings and lists (code lowered from internal/ssa)
+
+typedef struct {
+	int64_t rc, cap;
+	char data[];
+} xo_rstr;
+
+static xo_rstr *rs_new(int64_t n) {
+	xo_rstr *s = xo_alloc((int64_t)sizeof(xo_rstr) + n);
+	s->rc = 1;
+	s->cap = n;
+	return s;
+}
+
+xo_rstr *xo_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) {
+	xo_rstr *s = rs_new(an + bn);
+	memcpy(s->data, a->data, (size_t)an);
+	memcpy(s->data + an, b->data, (size_t)bn);
+	return s;
+}
+
+xo_rstr *xo_rs_of_int(int64_t v, int64_t *len) {
+	char t[32];
+	int n = fmt_int(t, v);
+	xo_rstr *s = rs_new(n);
+	memcpy(s->data, t, (size_t)n);
+	*len = n;
+	return s;
+}
+
+xo_rstr *xo_rs_of_float(double v, int64_t *len) {
+	char t[48];
+	int n = fmt_float(t, v);
+	xo_rstr *s = rs_new(n);
+	memcpy(s->data, t, (size_t)n);
+	*len = n;
+	return s;
+}
+
+typedef struct {
+	int64_t rc, len, cap;
+} xo_rlist;
+
+typedef void (*xo_elem_fn)(void *);
+
+static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
+
+xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
+	xo_rlist *l = xo_alloc((int64_t)sizeof(xo_rlist) + cap * esize);
+	l->rc = 1;
+	l->len = 0;
+	l->cap = cap;
+	return l;
+}
+
+// xo_rl_copy is the slow path of `reuse`: l is shared (its count is not
+// 1), so the update goes to a copy. The copy holds its own references to
+// the elements (dup), and l loses the one the caller gave up.
+__attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup) {
+	int64_t cap = l->len < 4 ? 4 : l->len;
+	xo_rlist *n = xo_rl_new(cap, esize);
+	n->len = l->len;
+	memcpy(rl_data(n), rl_data(l), (size_t)(l->len * esize));
+	if (dup) {
+		for (int64_t i = 0; i < l->len; i++) {
+			dup(rl_data(n) + i * esize);
+		}
+	}
+	l->rc--;
+	return n;
+}
+
+// xo_rl_grow doubles the capacity of a unique full list.
+__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) {
+	int64_t cap = l->cap < 4 ? 4 : l->cap * 2;
+	int64_t hdr = (int64_t)sizeof(xo_rlist);
+	xo_rlist *n = xo_resize(l, hdr + l->cap * esize, hdr + cap * esize);
+	n->cap = cap;
+	return n;
+}
+
+// xo_rl_free frees a list whose count reached zero, releasing its
+// elements first.
+void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
+	if (drop) {
+		for (int64_t i = 0; i < l->len; i++) {
+			drop(rl_data(l) + i * esize);
+		}
+	}
+	xo_free(l);
+}
+
+// ---------------------------------------------------------------------------
 // Entry
 
 extern void xo_entry(void);
@@ -465,5 +652,8 @@ int main(int argc, char **argv) {
 		pthread_join(t, NULL);
 	}
 	xo_flush();
+	if (getenv("XO_LEAKCHECK")) {
+		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)xo_live_allocs, (long long)xo_total_allocs);
+	}
 	return 0;
 }
