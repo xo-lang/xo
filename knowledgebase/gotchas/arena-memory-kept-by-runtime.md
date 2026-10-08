@@ -27,4 +27,7 @@ route with middleware runs inside `noArenaResp` (as `r.call` does). Any
 new runtime code that keeps a request, a response, or their bodies past
 the request must copy them first (the list is the comment on `Arena` in
 `std/rt/arena.go`) and get a case in golden `arena_holes` or
-`TestReplayServer`.
+`TestReplayServer`. The same holds for net/http itself: a writer that
+may read the bytes after `Write` returned (HTTP/2's frame writer on a
+reset stream) gets a heap copy (2026-10-08); `TestArenaHTTP2` poisons
+released arenas (`arenaPoison`) so such a late read shows as `#` bytes.

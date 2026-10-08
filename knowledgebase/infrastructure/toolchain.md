@@ -853,7 +853,12 @@ Last verified: 2026-10-08. Rules and choices; details in
   `TestGoldenRaceNoArenas`, goldens `arena_escape` and `arena_holes`,
   `TestExampleArenaDiff` and `TestExampleArenaServeDiff`
   (examples/notes-service tests and real server both ways),
-  `TestReplayServer` (recorded arena bodies). Last verified: 2026-10-08.
+  `TestReplayServer` (recorded arena bodies), `TestArenaHTTP2` (std/rt,
+  not with -short: the server over a TLS listener with net/http's
+  built in h2 client from `httptest`; `rt.arenaPoison` fills released
+  arena buffers with `#` so a late reader shows at once) and
+  `TestServeNoH2C` (plain listeners speak HTTP/1 only). On HTTP/2 serve
+  writes a heap copy of an arena body. Last verified: 2026-10-08.
 - Interface conversions (2026-10-08, internal/gen/adapt.go): a value whose
   Go methods differ from the interface's (a method that cannot fail where
   the interface's can) is wrapped in a generated adapter; inside a

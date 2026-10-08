@@ -57,7 +57,9 @@ import (
 //     return position of a handler literal, so its value is the handler's
 //     result and nothing else holds it. The runtime writes it to the
 //     connection (net/http copies the bytes into its own buffer) before the
-//     arena is reset. In process dispatch (`r.call(req)`, whose response
+//     arena is reset; on HTTP/2 it writes a heap copy, since the HTTP/2
+//     frame writer may still read a slice of a reset stream after Write
+//     returned (TestArenaHTTP2). In process dispatch (`r.call(req)`, whose response
 //     goes back to Xo code) and the middleware of a mounted router (which
 //     sees the response and may keep it) clear Arena.resp while they run
 //     (noArenaResp), so a handler reached that way builds a heap response.
@@ -116,6 +118,10 @@ const arenaFreeMax = 128
 var (
 	arenasOn  bool
 	arenaFree = make(chan *Arena, arenaFreeMax)
+	// arenaPoison (tests only) overwrites the request body and response
+	// JSON buffers at release, so a reader that still holds them sees
+	// '#' bytes at once instead of only when a later request reuses them
+	arenaPoison bool
 )
 
 // EnableArenas turns request scoped arenas on; the generated main of a
@@ -134,6 +140,13 @@ func getArena() *Arena {
 // release resets a and returns it to the pool. The caller must hold no
 // arena memory any more (see the soundness argument above).
 func (a *Arena) release() {
+	if arenaPoison {
+		for _, b := range [][]byte{a.body[:cap(a.body)], a.jbuf[:cap(a.jbuf)]} {
+			for i := range b {
+				b[i] = '#'
+			}
+		}
+	}
 	if cap(a.body) > arenaKeep {
 		a.body = nil
 	}

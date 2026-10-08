@@ -62,6 +62,13 @@ both ways and `TestExampleArenaServeDiff` its real server (scripted plus
 forms, 10 escaping ones, nested in if, match, scope, and loops) and
 requires a route to be arena backed exactly when it has no escaping form.
 
+### Audit update 2026-10-08: HTTP/2 and Go callback tasks
+
+| Escape route | How it is handled | Evidence | Result |
+|---|---|---|---|
+| HTTP/2 response written from an arena (S body, headers), read by net/http after the handler returned: buffered frames, flow control, stream resets, trailers, push | Every Xo listener is plain TCP and `serve` sets no `http.Server.Protocols`, so the server speaks HTTP/1 only (no h2c); HTTP/2 needs a TLS listener, which Xo cannot create yet. Reading Go 1.26's `h2_bundle.go`: `serve` writes the body with `io.WriteString`, which goes through the stream's 4 KB `bufio.Writer` (its `http2chunkWriter` has no `WriteString`), so the bytes are copied before `Write` returns; header values are heap or constant strings (copied into `w.Header()`); Xo sets no trailers and never pushes. The one path that keeps a caller's slice is `writeDataFromHandler` returning `errStreamClosed` while a frame of a reset stream is in flight (it then leaves `writeData` out of its pool for that reason), reachable only if a body ever reached the frame writer directly | `TestArenaHTTP2` (std/rt: TLS listener, h2 client from `httptest`, 12x40 multiplexed GET and POST streams of 100 B to 70 KB, every fifth reset mid body, arenas poisoned with `#` at release via `arenaPoison`; passes before and after, also under -race; a mutation that writes the body after release fails it with `####` bodies), `TestServeNoH2C` (an h2c prior knowledge client is refused) | Clean today. Hardened: on a non HTTP/1 request an arena body is copied to the heap before the write (`strings.Clone`, one allocation, HTTP/2 only), so the invariant no longer rests on net/http's buffering; cheaper than turning arenas off for HTTP/2 requests |
+| Go callback run by Go on another goroutine: thread record and held mutex set | Before: shared with the passing task (false XO-F004, races on the held set). Now a child task of its own (decision 0067) | golden `test_go_callback_task` (`-explore 40`, TestGoldenRace) | Fixed |
+
 ## Decision
 
 Arenas are on by default for programs built with the Go backend: `xo
@@ -98,7 +105,9 @@ no Go callbacks, and it is not recorded).
 - Cached `use go` bindings of format version 1 are regenerated (version 2).
 - Remaining risks, not holes found: the analysis trusts that net/http and
   net/url return heap strings and that HTTP/1 writes copy the body
-  synchronously; an HTTP/2 or custom transport would need its own check.
+  synchronously; an HTTP/2 or custom transport would need its own check
+  (update 2026-10-08: HTTP/2 checked, see the audit update; arena bodies
+  are copied on HTTP/2).
   A Go callback run on another goroutine still shares the request's
   thread record and held mutex map, as before arenas. (Update
   2026-10-08: resolved by decision 0067; such a call is a task of its

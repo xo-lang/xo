@@ -763,8 +763,18 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				resp.F_body = Bytes(tee.String())
 			}
 		} else {
-			// net/http copies the bytes into its own buffer
-			io.WriteString(w, string(resp.F_body))
+			// net/http copies the bytes into its own buffer: HTTP/1 and
+			// HTTP/2 both pass a string through a bufio.Writer whose
+			// writer has no WriteString. HTTP/2 (TLS listeners only; no
+			// h2c) gets a heap copy of an arena body all the same: had
+			// the bytes reached its frame writer directly, a frame of a
+			// reset stream could still read them after Write returned
+			// (decision 0066, audit update 2026-10-08)
+			body := string(resp.F_body)
+			if a != nil && a.respUsed && hr.ProtoMajor != 1 {
+				body = strings.Clone(body)
+			}
+			io.WriteString(w, body)
 		}
 		if rec != nil {
 			rec.reqResp(k, recCopyResp(a, resp))
