@@ -101,6 +101,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.callExpr(x)
 	case *ast.TryExpr:
 		return s.try(x)
+	case *ast.FnLit:
+		return s.closure(x)
 	case *ast.IsExpr:
 		// `x is P`: the pattern test as a Bool (P binds nothing)
 		v := s.value(x.X)
@@ -143,6 +145,9 @@ func (s *fn) ident(x *ast.Ident) *Value {
 	}
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
 		return s.valueAs(c.Decl.Value, s.natOf(x))
+	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok {
+		return s.funcValue(fo, x)
 	}
 	b.unsupported(x, "the name `"+x.Name+"` here")
 	return s.undef(s.natOf(x))

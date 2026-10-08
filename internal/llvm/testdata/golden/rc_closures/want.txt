@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+2 3 hello x!
+p: hello abc
+s: abc!
+l: 3
+ok 3
+bad six
+end
+--- stderr

@@ -1,0 +1,63 @@
+// Closures under reference counting: captures by value of strings,
+// lists, and other closures (the environment is a counted heap cell
+// that releases its captures when freed), named functions as values,
+// closures in lists and structs, closures that can fail, and a long
+// chain of closures capturing closures, freed without deep recursion.
+struct Handler {
+  name: Str
+  run: fn(Str) -> Str
+}
+
+fn shout(s: Str) -> Str { s + "!" }
+
+fn prefixer(p: Str) -> fn(Str) -> Str {
+  fn(s: Str) -> Str { p + s }
+}
+
+fn then(f: fn(Str) -> Str, g: fn(Str) -> Str) -> fn(Str) -> Str {
+  fn(s: Str) -> Str { g(f(s)) }
+}
+
+fn parse_all(xs: List[Str], parse: fn(Str) -> Int ! Str) -> Int ! Str {
+  var total = 0
+  for x in xs {
+    total += parse(x)?
+  }
+  total
+}
+
+fn main(os: Os) {
+  var words = ["a", "b"]
+  let count = fn() -> Int { words.len() }
+  words.push("c")
+  let hello = prefixer("hello ")
+  let loud = then(hello, shout)
+  os.stdio.println("${count()} ${words.len()} ${loud("x")}")
+  let hs = [Handler{name: "p", run: hello}, Handler{name: "s", run: shout}, Handler{name: "l", run: fn(s: Str) -> Str { "${s.len()}" }}]
+  for h in hs {
+    os.stdio.println("${h.name}: ${h.run("abc")}")
+  }
+  let digits = fn(s: Str) -> Int ! Str {
+    if s == "one" {
+      return 1
+    }
+    if s == "two" {
+      return 2
+    }
+    Err("bad ${s}")
+  }
+  match parse_all(["one", "two"], digits) {
+    Ok(n) => os.stdio.println("ok ${n}")
+    Err(e) => os.stdio.println(e)
+  }
+  match parse_all(["one", "six", "two"], digits) {
+    Ok(n) => os.stdio.println("ok ${n}")
+    Err(e) => os.stdio.println(e)
+  }
+  var chain = fn(s: Str) -> Str { s }
+  for _ in 0..100000 {
+    let prev = chain
+    chain = fn(s: Str) -> Str { prev(s) }
+  }
+  os.stdio.println(chain("end"))
+}

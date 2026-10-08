@@ -346,6 +346,48 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		} else if _, ok := RuntimeCalls[name]; !ok && !strings.Contains(name, ".") {
 			return "call of an unknown function"
 		}
+	case OpClosure:
+		name, _ := v.Aux.(string)
+		callee := m.Func(name)
+		t := v.Type
+		if callee == nil || !callee.Indirect || t == nil || t.Kind != KFunc {
+			return "closure of a function that is not Indirect, or not of a function type"
+		}
+		ps := callee.Params()
+		if len(ps) != len(t.Elems)+1 || ps[0].Type != t || len(callee.Results) != 1 || callee.Results[0] != t.Ret {
+			return "closure type does not match its function"
+		}
+		for i, p := range ps[1:] {
+			if p.Type != t.Elems[i] {
+				return "closure type does not match its function"
+			}
+		}
+		if len(v.Args) != len(callee.Captures) {
+			return "closure captures do not match its function"
+		}
+		for i, a := range v.Args {
+			if a.Type != callee.Captures[i] {
+				return fmt.Sprintf("capture %d has the wrong type", i)
+			}
+		}
+	case OpCapture:
+		i, ok := v.Aux.(int)
+		if !ok || nargs(1) != "" || !f.Indirect || v.Args[0] != f.Params()[0] || i < 0 || i >= len(f.Captures) || v.Type != f.Captures[i] {
+			return "capture must read the environment of its own function"
+		}
+	case OpCallValue:
+		if len(v.Args) == 0 || arg(0).Kind != KFunc {
+			return "callv needs a function value"
+		}
+		ft := arg(0)
+		if len(v.Args)-1 != len(ft.Elems) || v.Type != ft.Ret {
+			return "callv arguments or result do not match the function type"
+		}
+		for i, a := range v.Args[1:] {
+			if a.Type != ft.Elems[i] {
+				return fmt.Sprintf("callv argument %d has the wrong type", i)
+			}
+		}
 	case OpBranch:
 		if nargs(1) != "" || arg(0) != boolT || len(v.Succs) != 2 {
 			return "br takes a Bool and two successors"

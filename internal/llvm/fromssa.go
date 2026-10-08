@@ -18,6 +18,9 @@ import (
 //     literals are globals with an immortal count;
 //   - a List is a ptr to {i64 rc, i64 len, i64 cap} and the elements;
 //   - structs and tuples are LLVM structs, enums {i64 tag, [N x i64]};
+//   - a function value is {ptr code, ptr env}; env is null or points to
+//     {i64 rc, ptr drop, captures...}, where drop releases the captures
+//     and frees env; code takes the function value and the arguments;
 //   - retain and release call generated `xo.dup.T` and `xo.drop.T`
 //     helpers (inlined): a count increment, or a decrement that frees at
 //     zero after releasing the children;
@@ -36,6 +39,7 @@ const ssaRuntimeDecls = `%xo.str = type { ptr, i64 }
 
 declare ptr @xo_rc_alloc(i64) #2
 declare void @xo_rc_free(ptr) #2
+declare void @xo_rc_defer(ptr, ptr) #2
 declare ptr @xo_rs_concat(ptr, i64, ptr, i64) #2
 declare ptr @xo_rs_concat_int(ptr, i64, i64, ptr) #2
 declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2
@@ -188,6 +192,7 @@ func (g *sgen) checkType(t *ssa.Type, path map[*ssa.Type]bool) {
 	case ssa.KList:
 		g.checkType(t.Elems[0], path)
 	}
+	// a function value's environment is on the heap: no recursion by value
 }
 
 func (g *sgen) fname(n string) string { return "@" + strconv.Quote("x."+n) }
@@ -208,6 +213,8 @@ func (g *sgen) ll(t *ssa.Type) string {
 	case ssa.KList:
 		g.checkType(t, nil)
 		return "ptr"
+	case ssa.KFunc:
+		return "{ ptr, ptr }"
 	case ssa.KTuple:
 		var es []string
 		for _, e := range t.Elems {
@@ -262,7 +269,7 @@ func (g *sgen) layout(t *ssa.Type) (int64, int64) {
 		return 8, 8
 	case ssa.KBool:
 		return 1, 1
-	case ssa.KStr:
+	case ssa.KStr, ssa.KFunc:
 		return 16, 8
 	case ssa.KEnum:
 		return 8 + 8*g.words(t), 8
@@ -367,7 +374,7 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 	lt := g.ll(t)
 	attr := "#1"
 	switch t.Kind {
-	case ssa.KStr, ssa.KList:
+	case ssa.KStr, ssa.KList, ssa.KFunc:
 		attr = "#4"
 	}
 	fmt.Fprintf(&b, "define internal void %s(%s %%x) %s {\n", name, lt, attr)
@@ -395,6 +402,28 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 			et := t.Elems[0]
 			fmt.Fprintf(&b, "free:\n  call void @xo_rl_free(ptr %s, i64 %d, ptr %s)\n  ret void\n", obj, g.size(et), g.elemFn("drop", et))
 		}
+	case ssa.KFunc:
+		// the environment: null for a closure without captures
+		env := tmp()
+		fmt.Fprintf(&b, "  %s = extractvalue { ptr, ptr } %%x, 1\n", env)
+		isNull := tmp()
+		fmt.Fprintf(&b, "  %s = icmp eq ptr %s, null\n  br i1 %s, label %%done, label %%live\nlive:\n", isNull, env, isNull)
+		c := tmp()
+		fmt.Fprintf(&b, "  %s = load i64, ptr %s%s\n", c, env, tbaaRC)
+		if kind == "dup" {
+			c1 := tmp()
+			fmt.Fprintf(&b, "  %s = add i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, env, tbaaRC)
+		} else {
+			one := tmp()
+			fmt.Fprintf(&b, "  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%dec\n", one, c, one)
+			c1 := tmp()
+			fmt.Fprintf(&b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %s%s\n  br label %%done\n", c1, c, c1, env, tbaaRC)
+			dp, dfn := tmp(), tmp()
+			// the drop function frees the environment; deferred so long
+			// chains do not recurse on the C stack
+			fmt.Fprintf(&b, "free:\n  %s = getelementptr i8, ptr %s, i64 8\n  %s = load ptr, ptr %s\n  call void @xo_rc_defer(ptr %s, ptr %s)\n  br label %%done\n", dp, env, dfn, dp, env, dfn)
+		}
+		b.WriteString("done:\n  ret void\n")
 	case ssa.KStruct, ssa.KTuple:
 		var fts []*ssa.Type
 		if t.Kind == ssa.KStruct {
@@ -469,6 +498,40 @@ func (g *sgen) elemFn(kind string, t *ssa.Type) string {
 	inner := g.rcFn(kind, t)
 	lt := g.ll(t)
 	fmt.Fprintf(&g.helpers, "define internal void %s(ptr %%p) #1 {\n  %%x = load %s, ptr %%p\n  call void %s(%s %%x)\n  ret void\n}\n\n", name, lt, inner, lt)
+	return name
+}
+
+// envLL is the LLVM type of the environment of Indirect function f:
+// {i64 rc, ptr drop, captures...}.
+func (g *sgen) envLL(f *ssa.Func) string {
+	parts := []string{"i64", "ptr"}
+	for _, c := range f.Captures {
+		parts = append(parts, g.ll(c))
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
+}
+
+// envDropFn returns the function that releases the captures of an
+// environment of f and frees it (called when its count reaches zero).
+func (g *sgen) envDropFn(f *ssa.Func) string {
+	name := "@" + strconv.Quote("xo.envdrop."+f.Name)
+	if g.emitted[name] {
+		return name
+	}
+	g.emitted[name] = true
+	var b strings.Builder
+	el := g.envLL(f)
+	fmt.Fprintf(&b, "define internal void %s(ptr %%e) #1 {\n", name)
+	for i, c := range f.Captures {
+		if !c.Heap() {
+			continue
+		}
+		fmt.Fprintf(&b, "  %%p%d = getelementptr %s, ptr %%e, i32 0, i32 %d\n", i, el, i+2)
+		fmt.Fprintf(&b, "  %%c%d = load %s, ptr %%p%d\n", i, g.ll(c), i)
+		fmt.Fprintf(&b, "  call void %s(%s %%c%d)\n", g.rcFn("drop", c), g.ll(c), i)
+	}
+	b.WriteString("  call void @xo_rc_free(ptr %e)\n  ret void\n}\n\n")
+	g.helpers.WriteString(b.String())
 	return name
 }
 
@@ -954,6 +1017,45 @@ func (s *sfn) instr(v *ssa.Value) {
 		s.alias(v, s.payload(v.Args[0].Type, a(0), r.Tag, r.Field))
 	case ssa.OpCall:
 		s.call(v)
+	case ssa.OpClosure:
+		callee := g.byName[v.Aux.(string)]
+		env := "null"
+		if len(v.Args) > 0 {
+			el := g.envLL(callee)
+			size, _ := g.structLayout(append([]*ssa.Type{g.m.Builtin(ssa.KInt), g.m.Builtin(ssa.KInt)}, callee.Captures...))
+			env = s.def("call ptr @xo_rc_alloc(i64 %d)", size)
+			s.emit("store i64 1, ptr %s%s", env, tbaaRC)
+			dp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", el, env)
+			s.emit("store ptr %s, ptr %s", g.envDropFn(callee), dp)
+			for i, x := range v.Args {
+				if x.Type.Kind == ssa.KUnit || x.Type.Kind == ssa.KCap {
+					continue
+				}
+				p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", el, env, i+2)
+				s.emit("store %s, ptr %s", s.typed(x), p)
+			}
+		}
+		t0 := s.def("insertvalue { ptr, ptr } undef, ptr %s, 0", g.fname(callee.Name))
+		s.set(v, "insertvalue { ptr, ptr } %s, ptr %s, 1", t0, env)
+	case ssa.OpCapture:
+		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
+			return
+		}
+		env := s.def("extractvalue { ptr, ptr } %s, 1", a(0))
+		p := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.envLL(s.f), env, v.Aux.(int)+2)
+		s.set(v, "load %s, ptr %s", g.ll(v.Type), p)
+	case ssa.OpCallValue:
+		code := s.def("extractvalue { ptr, ptr } %s, 0", a(0))
+		var args []string
+		for _, x := range v.Args {
+			args = append(args, s.typed(x))
+		}
+		c := fmt.Sprintf("call %s %s(%s)", g.ll(v.Type), code, strings.Join(args, ", "))
+		if v.Type.Kind == ssa.KUnit {
+			s.emit("%s", c)
+			return
+		}
+		s.set(v, "%s", c)
 	case ssa.OpFault:
 		m := a(0)
 		obj := s.def("extractvalue %%xo.str %s, 0", m)

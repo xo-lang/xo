@@ -50,6 +50,7 @@ const (
 	KTuple              // anonymous product: Elems
 	KList               // List[Elem] (heap, value semantics)
 	KCap                // a capability such as Os or Stdio, zero size
+	KFunc               // a function value (closure): Elems are the parameters, Ret the result (heap: its environment)
 )
 
 // Type is an SSA type. Types are interned per Module: compare pointers.
@@ -58,7 +59,8 @@ type Type struct {
 	Name     string     // printed name: `Int`, `Body`, `List[Op]`, `(Int, Bool)`
 	Fields   []Field    // KStruct
 	Variants []*Variant // KEnum
-	Elems    []*Type    // KTuple elements; KList: Elems[0] is the element type
+	Elems    []*Type    // KTuple elements; KList: Elems[0] is the element type; KFunc: parameters
+	Ret      *Type      // KFunc: the result (a Result for a function value that can fail)
 }
 
 // Field is a named struct field or variant field.
@@ -91,7 +93,7 @@ func (t *Type) heap(seen map[*Type]bool) bool {
 	seen[t] = true
 	defer delete(seen, t)
 	switch t.Kind {
-	case KStr, KList:
+	case KStr, KList, KFunc:
 		return true
 	case KStruct:
 		for _, f := range t.Fields {
@@ -191,6 +193,21 @@ const (
 	// unreachable blocks are pruned, and Verify rejects it.
 	OpUndef
 
+	// Function values (closures). A closure is a code pointer and a
+	// reference counted environment holding the captured values (by
+	// value, at creation); its Func has Indirect set and the closure
+	// itself as parameter 0.
+	//   OpClosure: Aux is the Func name; Args are the captured values
+	//              (consumed), matching Func.Captures. Result KFunc.
+	//   OpCapture: Args[0] is the closure parameter of the function it
+	//              is in; Aux the index into Func.Captures. A projection
+	//              out of the environment (borrows it).
+	//   OpCallValue: Args[0] is the KFunc value (borrowed), the rest the
+	//              arguments (consumed: an Indirect function owns them).
+	OpClosure
+	OpCapture
+	OpCallValue
+
 	// Calls. Aux is the callee name (string). A user function is called
 	// by its Func.Name; runtime and prelude operations (list ops, string
 	// building, printing, math) use dotted names such as `list.get`,
@@ -237,7 +254,7 @@ var opNames = [...]string{
 	OpIntToFloat: "itof", OpFloatToInt: "ftoi",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
-	OpCall: "call", OpFault: "fault",
+	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv",
 	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }
@@ -321,7 +338,13 @@ type Func struct {
 	// Borrowed marks, per parameter, the ones the callee only reads (set
 	// by InsertRC's borrow inference): the caller keeps ownership, and
 	// the callee never releases them. Nil before InsertRC.
-	Borrowed  []bool
+	Borrowed []bool
+	// Indirect marks a function called through function values (a
+	// closure body or the wrapper of a named function): parameter 0 is
+	// the closure (borrowed), the others are owned, since callers do not
+	// know the callee. Captures are the types of its environment.
+	Indirect  bool
+	Captures  []*Type
 	nextValue int
 	nextBlock int
 }
@@ -380,6 +403,22 @@ func (m *Module) List(elem *Type) *Type {
 		return t
 	}
 	t := &Type{Kind: KList, Name: name, Elems: []*Type{elem}}
+	m.types[name] = t
+	return t
+}
+
+// FuncType returns the interned type of function values taking params
+// and returning ret.
+func (m *Module) FuncType(params []*Type, ret *Type) *Type {
+	var names []string
+	for _, p := range params {
+		names = append(names, p.Name)
+	}
+	name := "fn(" + strings.Join(names, ", ") + ") -> " + ret.Name
+	if t := m.types[name]; t != nil {
+		return t
+	}
+	t := &Type{Kind: KFunc, Name: name, Elems: params, Ret: ret}
 	m.types[name] = t
 	return t
 }

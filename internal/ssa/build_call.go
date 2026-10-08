@@ -32,13 +32,112 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		return s.undef(s.natOf(x))
 	}
 	if ci.Fn == nil {
-		b.unsupported(x, "calls of function values (closures)")
-		return s.undef(s.natOf(x))
+		return s.valueCall(x)
 	}
 	if ci.Fn.Module.IsStd {
 		return s.stdCall(x, ci)
 	}
 	return s.declCall(x, ci)
+}
+
+// valueCall calls a function value (a closure).
+func (s *fn) valueCall(x *ast.CallExpr) *Value {
+	fv := s.expr(x.Fun)
+	ft := fv.Type
+	if ft.Kind != KFunc || len(x.Args) != len(ft.Elems) {
+		s.b.unsupported(x, "this call of a function value")
+		return s.undef(s.natOf(x))
+	}
+	args := []*Value{fv}
+	for i, a := range x.Args {
+		if a.Name != nil {
+			s.b.unsupported(a, "a named argument to a function value")
+		}
+		args = append(args, s.valueAs(a.Value, ft.Elems[i]))
+	}
+	r := s.add(OpCallValue, ft.Ret, nil, args...)
+	return s.callResult(r, x)
+}
+
+// closure lowers a function literal: its body becomes an Indirect
+// function whose environment holds the captured bindings, read here by
+// value (the closure sees their values at creation).
+func (s *fn) closure(x *ast.FnLit) *Value {
+	b := s.b
+	t := s.natOf(x)
+	ct, ok := check.Resolve(s.natCheck(x)).(*check.Func)
+	if !ok || t.Kind != KFunc {
+		b.unsupported(x, "this closure")
+		return s.undef(t)
+	}
+	// captured bindings: used inside, bound outside, in first use order
+	var caps []*check.VarObj
+	seen := map[*check.VarObj]bool{}
+	check.Inspect(x.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			if vo := b.info.VarOf(id); vo != nil && !seen[vo] {
+				if _, outer := s.varType[vo]; outer {
+					seen[vo] = true
+					caps = append(caps, vo)
+				}
+			}
+		}
+		return true
+	})
+	var vals []*Value
+	var capTs []*Type
+	for _, vo := range caps {
+		v := s.read(vo)
+		vals = append(vals, v)
+		capTs = append(capTs, v.Type)
+	}
+	b.nclos++
+	name := s.f.Name + ".fn" + itoa(b.nclos)
+	f := b.mod.NewFunc(name, append([]*Type{t}, t.Elems...), []*Type{t.Ret})
+	f.Indirect = true
+	f.Captures = capTs
+	errT := failErr(ct.Err)
+	b.queue = append(b.queue, func() {
+		c := b.newFn(f, ct.Result, errT)
+		env := f.Params()[0]
+		for i, vo := range caps {
+			c.writeVar(vo, c.add(OpCapture, capTs[i], i, env))
+		}
+		for i, vo := range b.info.ClosureParams(x) {
+			if vo != nil && i+1 < len(f.Params()) {
+				c.writeVar(vo, f.Params()[i+1])
+			}
+		}
+		v := c.block(x.Body)
+		c.ret(v, x.Body)
+	})
+	return s.add(OpClosure, t, name, vals...)
+}
+
+// funcValue is a named function used as a value: a closure without an
+// environment over a wrapper that calls it.
+func (s *fn) funcValue(fo *check.FuncObj, at ast.Node) *Value {
+	b := s.b
+	t := s.natOf(at.(ast.Expr))
+	if t.Kind != KFunc || fo.Recv != nil || len(fo.TParams) > 0 {
+		b.unsupported(at, "the function `"+fo.DisplayName()+"` as a value")
+		return s.undef(t)
+	}
+	w := b.thunks[fo]
+	if w == nil {
+		callee := b.declare(fo, at)
+		if len(callee.VarParams) > 0 {
+			b.unsupported(at, "a function with `var` parameters as a value")
+			return s.undef(t)
+		}
+		w = b.mod.NewFunc(callee.Name+".value", append([]*Type{t}, t.Elems...), []*Type{t.Ret})
+		w.Indirect = true
+		e := w.Blocks[0]
+		r := e.Add(OpCall, callee.Results[0], callee.Name, w.Params()[1:]...)
+		e.Add(OpReturn, nil, nil, r)
+		b.thunks[fo] = w
+	}
+	return s.add(OpClosure, t, w.Name)
 }
 
 // ctorCall constructs a variant from call arguments (positional or

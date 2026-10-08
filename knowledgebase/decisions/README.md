@@ -52,3 +52,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0045-shared-ssa-ir.md](0045-shared-ssa-ir.md): `internal/ssa`, the typed SSA IR (block parameters, value semantics, RC hooks) native backends lower from.
 - [0046-reference-counting-ownership.md](0046-reference-counting-ownership.md): native memory is reference counted with Perceus style ownership per heap leaf on the SSA IR, borrow inference, in place reuse when unique, verified per path.
 - [0047-mutex-barging-in-real-runs.md](0047-mutex-barging-in-real-runs.md): the runtime lock barges in real runs, stays FIFO under test and the deterministic scheduler.
+- [0048-ssa-closures-boxes-generics.md](0048-ssa-closures-boxes-generics.md): closures as a counted environment leaf, recursive types as boxes, generics monomorphized in the SSA builder; deferred drops free long chains with a worklist.

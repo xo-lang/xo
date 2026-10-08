@@ -65,6 +65,13 @@ func (f *Func) String() string {
 	if len(rs) != 1 {
 		res = "(" + res + ")"
 	}
+	if f.Indirect {
+		var cs []string
+		for _, c := range f.Captures {
+			cs = append(cs, c.Name)
+		}
+		res += " captures (" + strings.Join(cs, ", ") + ")"
+	}
 	fmt.Fprintf(&b, "func %s(%s) -> %s {\n", f.Name, strings.Join(ps, ", "), res)
 	for _, bl := range f.Blocks {
 		b.WriteString(bl.Name())

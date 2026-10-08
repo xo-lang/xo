@@ -200,7 +200,7 @@ func (r *rcInfo) kind(v *Value) rootKind {
 		}
 	case OpConst:
 		return rkBorrowed
-	case OpPayload:
+	case OpPayload, OpCapture:
 		return rkProj
 	case OpCall:
 		if name, _ := v.Aux.(string); projCalls[name] {
@@ -226,10 +226,13 @@ func (r *rcInfo) modes(v *Value) []mode {
 		}
 	}
 	switch v.Op {
-	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse:
+	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse, OpClosure:
 		set(mConsume)
-	case OpFault, OpRetain, OpEq, OpNe:
+	case OpFault, OpRetain, OpEq, OpNe, OpCapture:
 		set(mBorrow)
+	case OpCallValue:
+		set(mConsume)
+		ms[0] = mBorrow
 	case OpPayload:
 		if v.Type.Heap() {
 			set(mBorrow)
@@ -354,6 +357,11 @@ func (r *rcInfo) inferBorrows() {
 		}
 		for i, p := range ps {
 			f.Borrowed[i] = p.Type.Heap() && !isVar[i]
+			if f.Indirect {
+				// callers through a function value pass the closure
+				// borrowed and the arguments owned
+				f.Borrowed[i] = i == 0
+			}
 		}
 	}
 	for changed := true; changed; {

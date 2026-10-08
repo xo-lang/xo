@@ -164,6 +164,43 @@ void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 
 void xo_rc_free(void *p) { xo_free(p); }
 
+// xo_rc_defer runs drop(obj) for an object whose count reached zero
+// (a closure environment or a box). drop releases the object's children
+// and frees it; a child that reaches zero meanwhile is queued instead of
+// dropped recursively, so freeing a long chain (a list built from boxes,
+// closures capturing closures) uses a worklist, not the C stack.
+typedef void (*xo_drop_fn)(void *);
+typedef struct {
+	void *obj;
+	xo_drop_fn drop;
+} xo_deferred;
+static xo_deferred *defer_q;
+static int64_t defer_n, defer_cap;
+static int defer_busy;
+
+void xo_rc_defer(void *obj, xo_drop_fn drop) {
+	if (defer_busy) {
+		if (defer_n == defer_cap) {
+			defer_cap = defer_cap < 64 ? 64 : defer_cap * 2;
+			defer_q = realloc(defer_q, (size_t)defer_cap * sizeof(xo_deferred));
+			if (!defer_q) {
+				xo_oom();
+			}
+		}
+		defer_q[defer_n].obj = obj;
+		defer_q[defer_n].drop = drop;
+		defer_n++;
+		return;
+	}
+	defer_busy = 1;
+	drop(obj);
+	while (defer_n > 0) {
+		defer_n--;
+		defer_q[defer_n].drop(defer_q[defer_n].obj);
+	}
+	defer_busy = 0;
+}
+
 // ---------------------------------------------------------------------------
 // Output
 

@@ -36,14 +36,16 @@ func (es Errors) Error() string {
 
 // builder lowers a checked program.
 type builder struct {
-	opts  Options
-	info  *check.Info
-	mod   *Module
-	main  *check.Module
-	errs  Errors
-	seen  map[string]bool
-	funcs map[*check.FuncObj]*Func
-	queue []*check.FuncObj
+	opts   Options
+	info   *check.Info
+	mod    *Module
+	main   *check.Module
+	errs   Errors
+	seen   map[string]bool
+	funcs  map[*check.FuncObj]*Func
+	queue  []func() // bodies to build
+	nclos  int
+	thunks map[*check.FuncObj]*Func // named functions used as values
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -64,7 +66,8 @@ type builder struct {
 // Result with `from` conversion and on Option, the Result methods,
 // `or_fault`), `==` and `!=` on every type (structural), `is`, and local
 // `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
-// `if let x = opt` shorthand. Not yet: generics, closures.
+// `if let x = opt` shorthand, closures and named functions as values
+// (decision 0048). Not yet: generics, recursive types.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -80,7 +83,7 @@ type Options struct {
 // BuildOpts is Build with options.
 func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	info := res.Info()
-	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[*check.FuncObj]*Func{}}
+	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[*check.FuncObj]*Func{}, thunks: map[*check.FuncObj]*Func{}}
 	var mainFo *check.FuncObj
 	for _, m := range res.Modules {
 		if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
@@ -96,9 +99,9 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	}
 	b.declare(mainFo, mainFo.Decl)
 	for len(b.queue) > 0 {
-		fo := b.queue[0]
+		next := b.queue[0]
 		b.queue = b.queue[1:]
-		b.body(fo)
+		next()
 	}
 	if len(b.errs) > 0 {
 		return nil, b.errs
@@ -167,6 +170,15 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			es = append(es, b.typ(e, at))
 		}
 		return m.Tuple(es...)
+	case *check.Func:
+		var ps []*Type
+		for _, p := range r.Params {
+			if p.Var {
+				b.unsupported(at, "function values with `var` parameters")
+			}
+			ps = append(ps, b.typ(p.T, at))
+		}
+		return m.FuncType(ps, b.typ(b.resultOf(r.Result, failErr(r.Err)), at))
 	case *check.Var:
 		switch r.LitKind() {
 		case "float":
@@ -275,7 +287,7 @@ func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
 	f := b.mod.NewFunc(b.funcName(fo), params, results)
 	f.VarParams = varIdx
 	b.funcs[fo] = f
-	b.queue = append(b.queue, fo)
+	b.queue = append(b.queue, func() { b.body(fo) })
 	return f
 }
 
@@ -334,13 +346,20 @@ type loopCtx struct {
 	brk, cont *Block
 }
 
-func (b *builder) body(fo *check.FuncObj) {
-	f := b.funcs[fo]
-	s := &fn{b: b, fo: fo, f: f, cur: f.Blocks[0],
+// newFn starts building the body of f.
+func (b *builder) newFn(f *Func, res, errT check.Type) *fn {
+	s := &fn{b: b, f: f, cur: f.Blocks[0],
 		defs: map[*check.VarObj]map[*Block]*Value{}, varType: map[*check.VarObj]*Type{},
 		sealed: map[*Block]bool{}, incomplete: map[*Block][]*Value{}, paramVar: map[*Value]*check.VarObj{},
-		res: fo.Result, errT: failErr(fo.Err)}
+		res: res, errT: errT}
 	s.sealed[s.cur] = true
+	return s
+}
+
+func (b *builder) body(fo *check.FuncObj) {
+	f := b.funcs[fo]
+	s := b.newFn(f, fo.Result, failErr(fo.Err))
+	s.fo = fo
 	var vars []*check.VarObj
 	if fo.Recv != nil {
 		vars = append(vars, b.info.RecvVar(fo))

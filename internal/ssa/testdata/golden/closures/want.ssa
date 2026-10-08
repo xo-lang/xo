@@ -1,0 +1,286 @@
+type Handler = struct { name: Str, run: fn(Str) -> Str }
+type Result[Int, Str] = enum { Ok(v: Int) | Err(e: Str) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Str] = call list.new
+  v2: Str = const "a"
+  v3: List[Str] = call list.push, v1, v2
+  v4: Str = const "b"
+  v5: List[Str] = call list.push, v3, v4
+  v6: fn() -> Int = closure main.fn1, v5
+  v7: Str = const "c"
+  v8: List[Str] = call list.push, v5, v7
+  v9: () = tuple
+  v10: Str = const "hello "
+  v11: fn(Str) -> Str = call prefixer, v10
+  v12: fn(Str) -> Str = closure shout.value
+  v13: fn(Str) -> Str = call then, v11, v12
+  v14: Stdio = cap stdio, v0
+  v15: Int = callv v6
+  v16: Str = call str.of_int, v15
+  v17: Str = const " "
+  v18: Str = call str.concat, v16, v17
+  v19: Int = call list.len, v8
+  v20: Str = call str.concat_int, v18, v19
+  v21: Str = const " "
+  v22: Str = call str.concat, v20, v21
+  v23: Str = const "x"
+  v24: Str = callv v13, v23
+  v25: Str = call str.concat, v22, v24
+  v26: () = call Stdio.println, v14, v25
+  v27: List[Handler] = call list.new
+  v28: Str = const "p"
+  v29: Handler = struct v28, v11
+  v30: List[Handler] = call list.push, v27, v29
+  v31: Str = const "s"
+  v32: fn(Str) -> Str = closure shout.value
+  v33: Handler = struct v31, v32
+  v34: List[Handler] = call list.push, v30, v33
+  v35: Str = const "l"
+  v36: fn(Str) -> Str = closure main.fn2
+  v37: Handler = struct v35, v36
+  v38: List[Handler] = call list.push, v34, v37
+  v39: Int = call list.len, v38
+  v40: Int = const 0
+  jump b1(v40)
+b1(v42: Int):  ; preds b0, b3
+  v43: Bool = lt v42, v39
+  br v43, b2(), b4()
+b2:  ; preds b1
+  v45: Handler = call list.index, v38, v42
+  v46: Stdio = cap stdio, v0
+  v47: Str = field 0, v45
+  v48: Str = const ": "
+  v49: Str = call str.concat, v47, v48
+  v50: fn(Str) -> Str = field 1, v45
+  v51: Str = const "abc"
+  v52: Str = callv v50, v51
+  v53: Str = call str.concat, v49, v52
+  v54: () = call Stdio.println, v46, v53
+  jump b3()
+b3:  ; preds b2
+  v56: Int = const 1
+  v57: Int = add v42, v56
+  jump b1(v57)
+b4:  ; preds b1
+  v59: fn(Str) -> Result[Int, Str] = closure main.fn3
+  v60: List[Str] = call list.new
+  v61: Str = const "one"
+  v62: List[Str] = call list.push, v60, v61
+  v63: Str = const "two"
+  v64: List[Str] = call list.push, v62, v63
+  v65: Result[Int, Str] = call parse_all, v64, v59
+  v66: Int = tag v65
+  v67: Int = const 0
+  v68: Bool = eq v66, v67
+  br v68, b7(), b6()
+b5:  ; preds b7, b9
+  v70: () = tuple
+  v71: List[Str] = call list.new
+  v72: Str = const "one"
+  v73: List[Str] = call list.push, v71, v72
+  v74: Str = const "six"
+  v75: List[Str] = call list.push, v73, v74
+  v76: Str = const "two"
+  v77: List[Str] = call list.push, v75, v76
+  v78: Result[Int, Str] = call parse_all, v77, v59
+  v79: Int = tag v78
+  v80: Int = const 0
+  v81: Bool = eq v79, v80
+  br v81, b12(), b11()
+b6:  ; preds b4
+  v83: Int = tag v65
+  v84: Int = const 1
+  v85: Bool = eq v83, v84
+  br v85, b9(), b8()
+b7:  ; preds b4
+  v87: Int = payload 0.0, v65
+  v88: Stdio = cap stdio, v0
+  v89: Str = const "ok "
+  v90: Str = call str.concat_int, v89, v87
+  v91: () = call Stdio.println, v88, v90
+  jump b5()
+b8:  ; preds b6
+  unreachable
+b9:  ; preds b6
+  v94: Str = payload 1.0, v65
+  v95: Stdio = cap stdio, v0
+  v96: () = call Stdio.println, v95, v94
+  jump b5()
+b10:  ; preds b12, b14
+  v98: () = tuple
+  v99: fn(Str) -> Str = closure main.fn4
+  v100: Int = const 0
+  v101: Int = const 100000
+  jump b15(v100, v99)
+b11:  ; preds b5
+  v103: Int = tag v78
+  v104: Int = const 1
+  v105: Bool = eq v103, v104
+  br v105, b14(), b13()
+b12:  ; preds b5
+  v107: Int = payload 0.0, v78
+  v108: Stdio = cap stdio, v0
+  v109: Str = const "ok "
+  v110: Str = call str.concat_int, v109, v107
+  v111: () = call Stdio.println, v108, v110
+  jump b10()
+b13:  ; preds b11
+  unreachable
+b14:  ; preds b11
+  v114: Str = payload 1.0, v78
+  v115: Stdio = cap stdio, v0
+  v116: () = call Stdio.println, v115, v114
+  jump b10()
+b15(v118: Int, v119: fn(Str) -> Str):  ; preds b10, b17
+  v120: Bool = lt v118, v101
+  br v120, b16(), b18()
+b16:  ; preds b15
+  v122: fn(Str) -> Str = closure main.fn5, v119
+  v123: () = tuple
+  jump b17()
+b17:  ; preds b16
+  v125: Int = const 1
+  v126: Int = add v118, v125
+  jump b15(v126, v122)
+b18:  ; preds b15
+  v128: Stdio = cap stdio, v0
+  v129: Str = const "end"
+  v130: Str = callv v119, v129
+  v131: () = call Stdio.println, v128, v130
+  ret v131
+}
+
+func main.fn1(v0: fn() -> Int) -> Int captures (List[Str]) {
+b0(v0: fn() -> Int):
+  v1: List[Str] = capture 0, v0
+  v2: Int = call list.len, v1
+  ret v2
+}
+
+func prefixer(v0: Str) -> fn(Str) -> Str {
+b0(v0: Str):
+  v1: fn(Str) -> Str = closure prefixer.fn6, v0
+  ret v1
+}
+
+func then(v0: fn(Str) -> Str, v1: fn(Str) -> Str) -> fn(Str) -> Str {
+b0(v0: fn(Str) -> Str, v1: fn(Str) -> Str):
+  v2: fn(Str) -> Str = closure then.fn7, v1, v0
+  ret v2
+}
+
+func shout(v0: Str) -> Str {
+b0(v0: Str):
+  v1: Str = const "!"
+  v2: Str = call str.concat, v0, v1
+  ret v2
+}
+
+func shout.value(v0: fn(Str) -> Str, v1: Str) -> Str captures () {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: Str = call shout, v1
+  ret v2
+}
+
+func main.fn2(v0: fn(Str) -> Str, v1: Str) -> Str captures () {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: Int = call Str.len, v1
+  v3: Str = call str.of_int, v2
+  ret v3
+}
+
+func main.fn3(v0: fn(Str) -> Result[Int, Str], v1: Str) -> Result[Int, Str] captures () {
+b0(v0: fn(Str) -> Result[Int, Str], v1: Str):
+  v2: Str = const "one"
+  v3: Bool = call str.eq, v1, v2
+  br v3, b2(), b3()
+b1:  ; preds b3
+  v5: () = tuple
+  v6: Str = const "two"
+  v7: Bool = call str.eq, v1, v6
+  br v7, b5(), b6()
+b2:  ; preds b0
+  v9: Int = const 1
+  v10: Result[Int, Str] = variant 0, v9
+  ret v10
+b3:  ; preds b0
+  v12: () = tuple
+  jump b1()
+b4:  ; preds b6
+  v14: () = tuple
+  v15: Str = const "bad "
+  v16: Str = call str.concat, v15, v1
+  v17: Result[Int, Str] = variant 1, v16
+  ret v17
+b5:  ; preds b1
+  v19: Int = const 2
+  v20: Result[Int, Str] = variant 0, v19
+  ret v20
+b6:  ; preds b1
+  v22: () = tuple
+  jump b4()
+}
+
+func parse_all(v0: List[Str], v1: fn(Str) -> Result[Int, Str]) -> Result[Int, Str] {
+b0(v0: List[Str], v1: fn(Str) -> Result[Int, Str]):
+  v2: Int = const 0
+  v3: Int = call list.len, v0
+  v4: Int = const 0
+  jump b1(v4, v2)
+b1(v6: Int, v7: Int):  ; preds b0, b3
+  v8: Bool = lt v6, v3
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: Str = call list.index, v0, v6
+  v11: Result[Int, Str] = callv v1, v10
+  v12: Int = tag v11
+  v13: Int = const 1
+  v14: Bool = eq v12, v13
+  br v14, b5(), b6()
+b3:  ; preds b6
+  v16: Int = const 1
+  v17: Int = add v6, v16
+  jump b1(v17, v25)
+b4:  ; preds b1
+  v19: Result[Int, Str] = variant 0, v7
+  ret v19
+b5:  ; preds b2
+  v21: Str = payload 1.0, v11
+  v22: Result[Int, Str] = variant 1, v21
+  ret v22
+b6:  ; preds b2
+  v24: Int = payload 0.0, v11
+  v25: Int = add v7, v24 @ main.xo:24:5
+  v26: () = tuple
+  jump b3()
+}
+
+func main.fn4(v0: fn(Str) -> Str, v1: Str) -> Str captures () {
+b0(v0: fn(Str) -> Str, v1: Str):
+  ret v1
+}
+
+func main.fn5(v0: fn(Str) -> Str, v1: Str) -> Str captures (fn(Str) -> Str) {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: fn(Str) -> Str = capture 0, v0
+  v3: Str = callv v2, v1
+  ret v3
+}
+
+func prefixer.fn6(v0: fn(Str) -> Str, v1: Str) -> Str captures (Str) {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: Str = capture 0, v0
+  v3: Str = call str.concat, v2, v1
+  ret v3
+}
+
+func then.fn7(v0: fn(Str) -> Str, v1: Str) -> Str captures (fn(Str) -> Str, fn(Str) -> Str) {
+b0(v0: fn(Str) -> Str, v1: Str):
+  v2: fn(Str) -> Str = capture 0, v0
+  v3: fn(Str) -> Str = capture 1, v0
+  v4: Str = callv v3, v1
+  v5: Str = callv v2, v4
+  ret v5
+}
