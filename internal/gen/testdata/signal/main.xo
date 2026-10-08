@@ -1,11 +1,56 @@
+// Real signal path of the two phase shutdown (core 7.5), driven by
+// TestSignal* in internal/gen/build_test.go. MODE picks the behavior.
+use std/http
+use std/task
+
+fn wait_for_stop(os: Os) {
+  select {
+    _ = task.stopping().recv() => os.stdio.println("stop requested ${task.stop_requested()}")
+  }
+}
+
+fn serve(os: Os) ! {
+  let port = os.env.get("PORT") ?? "18733"
+  var r = http.router()
+  r.handle("GET /slow", fn(_req) {
+    os.stdio.println("handling")
+    os.clock.sleep(500ms)
+    http.text(200, "slow done")
+  })
+  let srv = http.server(os.net.listen("127.0.0.1:${port}")?, r)
+  os.stdio.println("ready")
+  srv.serve()?
+  os.stdio.println("serve returned")
+}
+
 fn main(os: Os) ! {
+  let mode = os.env.get("MODE") ?? "cancel"
+  if mode == "http" {
+    serve(os)?
+    return
+  }
+  if mode == "grace" {
+    os.proc.set_grace(300ms)
+  }
   defer os.stdio.println("cleanup ran")
   scope s {
     s.spawn_background(fn() {
       defer os.stdio.println("background stopped")
       os.clock.sleep(1h)
     })
+    // defer is block scoped: it must sit in the scope body itself
+    defer {
+      if mode == "hung" {
+        os.clock.sleep(1h)
+      }
+    }
     os.stdio.println("ready")
+    wait_for_stop(os)
+    if mode == "drain" {
+      os.clock.sleep(200ms)
+      os.stdio.println("drained")
+      return
+    }
     os.clock.sleep(1h)
   }
   os.stdio.println("not reached")

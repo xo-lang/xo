@@ -475,8 +475,12 @@ func (Http_Server) XoDebug(b *strings.Builder) { b.WriteString("<server>") }
 // Http_server is `http.server(l, r)`.
 func Http_server(_ *Task, l Listener, r Http_Router) Http_Server { return Http_Server{l: l, r: r} }
 
-// M_serve is `srv.serve()`: runs until the task is canceled, then stops
-// accepting, waits for in flight requests, and returns Ok(()).
+// M_serve is `srv.serve()`: runs until a stop is requested (core 7.5) or
+// the task is canceled, then stops accepting, waits for in flight
+// requests, and returns Ok(()). After a stop request the wait lasts until
+// the requests finish or the task is canceled (end of the grace period,
+// second signal); then the remaining connections are closed and their
+// request tasks canceled.
 func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.l.mem != nil {
 		return s.l.mem.serve(tk, s.r)
@@ -487,12 +491,18 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 	// request scoped arenas (arena.go): not with middleware, which sees
 	// the request and the response
 	useArena := arenasOn && len(s.r.mws.s) == 0
+	// request tasks hang below reqRoot, not below the serving task: a
+	// canceled serve still lets them finish, unless the shutdown is cut
+	// short
+	reqRoot := newNode(nil, tk.w)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		var a *Arena
 		if useArena {
 			a = getArena()
 		}
-		reqTask := &Task{node: newNode(nil, tk.w), w: tk.w, arena: a}
+		node := newNode(reqRoot, tk.w)
+		defer node.detach()
+		reqTask := &Task{node: node, w: tk.w, arena: a, stop: tk.stop}
 		var body Bytes
 		if a != nil {
 			body = a.readBody(hr.Body)
@@ -546,6 +556,21 @@ func (s Http_Server) M_serve(tk *Task) Result[Unit, Http_HttpErr] {
 			return Ok[Unit, Http_HttpErr](Unit{})
 		}
 		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: err.Error()}})
+	case <-tk.stopDone():
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			select {
+			case <-tk.node.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		if srv.Shutdown(ctx) != nil {
+			srv.Close()
+			reqRoot.cancel()
+		}
+		return Ok[Unit, Http_HttpErr](Unit{})
 	case <-tk.node.done:
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

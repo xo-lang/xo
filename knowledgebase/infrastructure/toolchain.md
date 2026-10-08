@@ -451,6 +451,33 @@ Last verified: 2026-10-08.
   advances when every task is blocked; wakers count the woken task as
   running first). `main.go`: `RunMain` (root scope, SIGINT/SIGTERM, exit
   status 0/1/70, crash bundles).
+- `stop.go` (2026-10-08, decision 0042, core 7.5): two phase shutdown.
+  `stopState` belongs to one program run (`RunMain` or
+  `testing.run_main`) and every task of the run points to it
+  (`Task.stop`, inherited by scope bodies, spawned tasks, and HTTP
+  request tasks). Signals are counted: the first sets `requested`, closes
+  the `task.stopping()` channel and an `event` for runtime waiters, and
+  starts the grace timer (default `rt.DefaultGrace` 30s,
+  `Proc.set_grace`; set after the stop it moves the deadline to stop
+  time + d; `0s` cancels at once); the grace timer or the second signal
+  cancels main's root scope; the third calls `os.Exit(130)` (real) or
+  makes `run_main` return 130 and record it as `exit_code()`. Outside a
+  run `task.stop_requested()` is false and `task.stopping()` never
+  closes. `serve` (real): on the stop, `http.Server.Shutdown` with a
+  context canceled when the serving task is canceled, then `Close` and
+  cancellation of the request tasks (they hang below a per server node);
+  in tests the in memory listener stops routing (new requests fail with
+  `ClientErr.Connect`) and waits for requests in
+  flight, which run with the server's stop state. Tests:
+  `FakeProc.signal_after(d)` queues one signal per call (d from the start
+  of the next `run_main`, or from now when the program calls it);
+  `set_grace` before `run_main` sets the next run's grace. Timers of the
+  virtual clock run the stop logic on a goroutine counted as a running
+  task (`stopState.after`, `gotchas/virtual-timer-callback-holds-world-lock.md`).
+  Golden `test_shutdown` (also in `TestGoldenRace`, which builds `test_*`
+  directories in test mode), real process tests `TestSignal*` in
+  `internal/gen/build_test.go` on `testdata/signal` (SIGTERM to the
+  test's own child by PID).
 - `caps.go` real capabilities (fs rooting per core 6.3), `http.go`,
   `json.go` (`JsonW.str` escapes directly since 2026-10-08, matching
   encoding/json with HTML escaping off, `TestAppendJSONString`),
@@ -459,6 +486,14 @@ Last verified: 2026-10-08.
   helpers and `go.Error`, 2026-10-08).
 
 ## Known gaps (2026-10-08)
+
+- Two phase shutdown in tests (2026-10-08): `run_main` runs main on the
+  test's own goroutine, so a third signal cannot end it immediately as
+  `os.Exit(130)` does; `run_main` returns 130 once main has unwound (a
+  shielded `defer` that blocks keeps it waiting, on the virtual clock).
+  Requests to an in memory server run on the client's task, so a stop
+  (as opposed to cancellation) of the serving program does not cancel
+  them; they only see its `task.stop_requested()`.
 
 - HTTP request cost (2026-10-08, `bench/results/perf-arenas-2026-10-08.md`):
   task 01 under load allocates 13.1 KB and 97 objects per request (6.1 KB

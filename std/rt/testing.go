@@ -9,7 +9,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -362,12 +361,27 @@ func realCaps(tos *Testing_TestOs, uses []string) {
 
 // Testing_run_main is `testing.run_main(main, os, args)` (std.md 8.4): runs
 // a program's main against the fakes and returns its exit status: 0, 1 for
-// an error (printed to the fake standard error), 70 for a fault, or the
-// code passed to exit.
+// an error (printed to the fake standard error), 70 for a fault, the code
+// passed to exit, or 130 after a third signal. Signals queued with
+// `os.proc.signal_after` are delivered on the virtual clock and drive the
+// two phase shutdown of core 7.5 as in RunMain.
 func Testing_run_main(tk *Task, main func(*Task, Os) Result[Unit, IError], tos Testing_TestOs, args List[string]) (code int64) {
 	tos.F_env.e.setArgs(args)
 	osv := Os{F_net: tos.F_net, F_fs: tos.F_fs, F_clock: tos.F_clock, F_rand: tos.F_rand, F_env: tos.F_env, F_proc: tos.F_proc, F_stdio: tos.F_stdio, F_tasks: tos.F_tasks}
-	var signaled atomic.Bool
+	p := tos.F_proc.p
+	st := newStopState(tk.w)
+	st.proc = p
+	defer func() {
+		// a third signal exits with 130 however main ended (it was
+		// canceled by the second, so it unwound to here)
+		if st.exited.Load() {
+			code = 130
+			p.mu.Lock()
+			p.code = Some(int64(130))
+			p.mu.Unlock()
+		}
+	}()
+	defer st.finish()
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -381,10 +395,10 @@ func Testing_run_main(tk *Task, main func(*Task, Os) Result[Unit, IError], tos T
 			panic(r)
 		}
 		if IsUnwind(r) {
-			// main unwound because of the delivered SIGTERM: a clean
-			// shutdown, as in RunMain. Anything else is the test's own
-			// cancellation and keeps unwinding.
-			if signaled.Load() && !tk.Canceled() {
+			// main unwound because the stop state canceled its root
+			// scope: a clean shutdown, as in RunMain. Anything else is the
+			// test's own cancellation and keeps unwinding.
+			if st.canceled.Load() && !tk.Canceled() {
 				code = 0
 				return
 			}
@@ -395,24 +409,18 @@ func Testing_run_main(tk *Task, main func(*Task, Os) Result[Unit, IError], tos T
 		code = 70
 	}()
 	s := NewScope(tk)
-	osv.F_tasks = s.M_group(tk)
-	tos.F_proc.p.mu.Lock()
-	sig := tos.F_proc.p.signal
-	tos.F_proc.p.signal = None[Duration]()
-	tos.F_proc.p.mu.Unlock()
-	if sig.Some {
-		// Delivered like the first SIGTERM in RunMain. A program that does
-		// not shut down then fails the test as a deadlock or keeps running
-		// until the test timeout.
-		stop := afterFunc(tk, sig.V, func(locked bool) {
-			signaled.Store(true)
-			if locked {
-				s.bodyNode.cancelLocked()
-			} else {
-				s.bodyNode.cancel()
-			}
-		})
-		defer stop()
+	s.body.stop = st
+	st.cancelRoot = s.bodyNode.cancel
+	osv.F_tasks = s.M_group(s.body)
+	p.mu.Lock()
+	sigs := p.signals
+	p.signals = nil
+	if p.grace.Some {
+		st.grace = p.grace.V
+	}
+	p.mu.Unlock()
+	for _, d := range sigs {
+		st.signalAfter(d)
 	}
 	var res Result[Unit, IError]
 	ctl := func() (c int) {
@@ -676,11 +684,12 @@ func (f Testing_FakeStdio) M_errors(*Task) string {
 }
 
 type fakeProc struct {
-	real   Proc
-	mu     sync.Mutex
-	code   Option[int64]
-	runs   map[string]ProcOutput
-	signal Option[Duration] // SIGTERM delivery time for run_main
+	real    Proc
+	mu      sync.Mutex
+	code    Option[int64]
+	runs    map[string]ProcOutput
+	signals []Duration       // signals for the next run_main, from its start
+	grace   Option[Duration] // grace period for the next run_main
 }
 
 // Testing_FakeProc is the fake process control of a test.
@@ -719,11 +728,31 @@ func (f Testing_FakeProc) M_exit_code(*Task) Option[int64] {
 	return f.p.code
 }
 
-// M_signal_after makes the next run_main deliver SIGTERM to the program
-// after d of virtual time, which cancels main's root scope (core 7.5).
-func (f Testing_FakeProc) M_signal_after(_ *Task, d Duration) {
+// M_signal_after delivers a signal (SIGTERM) to a program run by
+// testing.run_main after d of virtual time (core 7.5): called before
+// run_main, d counts from the start of the next run_main; called by the
+// program itself, from now. Each call delivers one more signal: the first
+// requests a stop, the second cancels main's root scope, the third exits
+// with status 130.
+func (f Testing_FakeProc) M_signal_after(tk *Task, d Duration) {
+	if st := tk.stop; st != nil && st.proc == f.p {
+		st.signalAfter(d)
+		return
+	}
 	f.p.mu.Lock()
-	f.p.signal = Some(d)
+	f.p.signals = append(f.p.signals, d)
+	f.p.mu.Unlock()
+}
+
+// M_set_grace is `os.proc.set_grace(d)` (core 7.5): inside run_main it sets
+// the running program's grace period; before, the next run_main's.
+func (f Testing_FakeProc) M_set_grace(tk *Task, d Duration) {
+	if st := tk.stop; st != nil && st.proc == f.p {
+		st.setGrace(d)
+		return
+	}
+	f.p.mu.Lock()
+	f.p.grace = Some(max(d, 0))
 	f.p.mu.Unlock()
 }
 
@@ -908,8 +937,14 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 		return Ok[Http_Response, Http_ClientErr](best.h(tk, req).V)
 	}
 	if srv != nil {
-		if r, ok := srv.router(); ok {
-			return Ok[Http_Response, Http_ClientErr](r.M_call(tk, req))
+		if r, st, ok := srv.begin(); ok {
+			defer srv.end()
+			htk := tk
+			if st != nil {
+				// the handler sees the serving program's stop state
+				htk = &Task{node: tk.node, w: tk.w, held: tk.held, shield: tk.shield, stop: st}
+			}
+			return Ok[Http_Response, Http_ClientErr](r.M_call(htk, req))
 		}
 	}
 	return Err[Http_Response](clientErr(2, "no fake handler for "+req.F_method+" "+rawURL))
@@ -917,33 +952,69 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 
 // memListener is an in memory listener served by http.server in tests.
 type memListener struct {
-	n    *fakeNet
-	addr string
-	mu   sync.Mutex
-	r    *Http_Router
+	n        *fakeNet
+	addr     string
+	mu       sync.Mutex
+	r        *Http_Router
+	stop     *stopState // of the serving program
+	inflight int
+	drained  *event // fired when inflight drops to 0 while draining
 }
 
-func (l *memListener) router() (Http_Router, bool) {
+// begin starts a request on the listener: it reports the router and the
+// serving program's stop state, or false when nothing is served.
+func (l *memListener) begin() (Http_Router, *stopState, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.r == nil {
-		return Http_Router{}, false
+		return Http_Router{}, nil, false
 	}
-	return *l.r, true
+	l.inflight++
+	return *l.r, l.stop, true
 }
 
-// serve routes requests for the listener's address to r until the task is
-// canceled.
+// end finishes a request started by begin.
+func (l *memListener) end() {
+	l.mu.Lock()
+	l.inflight--
+	var ev *event
+	if l.inflight == 0 && l.drained != nil {
+		ev, l.drained = l.drained, nil
+	}
+	l.mu.Unlock()
+	if ev != nil {
+		ev.fire()
+	}
+}
+
+// serve routes requests for the listener's address to r until a stop is
+// requested (then it waits for the requests in flight, core 7.5) or the
+// task is canceled.
 func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] {
 	l.mu.Lock()
 	l.r = &r
+	l.stop = tk.stop
 	l.mu.Unlock()
-	tk.block()
-	<-tk.node.done
-	tk.unblock()
+	stopped := false
+	if tk.stop != nil {
+		stopped = tk.stop.ev.wait(tk, true)
+	} else {
+		tk.block()
+		<-tk.node.done
+		tk.unblock()
+	}
 	l.mu.Lock()
 	l.r = nil
+	var drained *event
+	if stopped && l.inflight > 0 {
+		drained = newEvent()
+		l.drained = drained
+	}
 	l.mu.Unlock()
+	if drained != nil {
+		// cancellation (grace period, second signal) cuts the wait short
+		drained.wait(tk, true)
+	}
 	return Ok[Unit, Http_HttpErr](Unit{})
 }
 

@@ -61,19 +61,24 @@ type exitUnwind struct{ code int64 }
 // RunMain runs a program's `main` (core 6.3, 7.5, 8, 11.2) and returns the
 // process exit status: 0, 1 for an error returned from main, 70 for a
 // fault. main runs as the body of the root scope, whose group is
-// `os.tasks`. The first SIGINT or SIGTERM cancels the root scope; a second
-// exits with status 130.
+// `os.tasks`. Shutdown has two phases (core 7.5, stop.go): the first
+// SIGINT or SIGTERM requests a stop, the grace period or a second signal
+// cancels the root scope, and a third exits with status 130.
 func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	root := NewRootTask()
+	st := newStopState(nil)
+	root.stop = st
 	s := NewScope(root)
+	st.cancelRoot = s.bodyNode.cancel
+	st.exit = func() { os.Exit(130) }
+	defer st.finish()
 	osv := RealOs(s.M_group(root))
-	sig := make(chan os.Signal, 2)
+	sig := make(chan os.Signal, 3)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sig
-		s.bodyNode.cancel()
-		<-sig
-		os.Exit(130)
+		for range sig {
+			st.signal()
+		}
 	}()
 	defer signal.Stop(sig)
 	var res Result[Unit, IError]

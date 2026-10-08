@@ -1,6 +1,6 @@
 # Xo Language Specification (Core)
 
-Status: draft 0.6 (2026-10-08)
+Status: draft 0.7 (2026-10-08)
 Edition: 2026
 Companion: `spec/std.md` (prelude methods and standard library surface)
 
@@ -9,6 +9,13 @@ web services. It keeps what makes Go productive (few keywords, one obvious way,
 fast builds, static binaries, a strong standard library, a compatibility
 promise) and is designed so that an AI agent can write, check, build, and debug
 programs for any OS with fast, structured, unambiguous feedback.
+
+## Changes in 0.7
+
+Decisions 0041 (Go packages) and 0042 (two phase shutdown).
+
+- Go packages with `use go` (4.4).
+- Two phase shutdown (7.5).
 
 ## Changes in 0.6
 
@@ -24,6 +31,8 @@ Driven by the independent replant of planted safety bugs
 - Regression tests for shrunk contract fuzz failures go in the module's
   `regressions_test.xo`, not `testdata/regressions/` (9.2).
 - Go packages with `use go` (4.4), with the `go` effect.
+- Two phase shutdown: the first signal requests a stop (`task.stop_requested`,
+  `task.stopping`), cancellation follows after a grace period (7.5).
 - Std: `Map.get_or_fault`, hex and base64 on `Bytes`, `Time.from_unix_millis`,
   `Atomic.max`, `Range.to_list`, `Patch.apply_to`/`apply_opt`, and `std/path`.
 
@@ -1090,11 +1099,44 @@ select {
 scheduler. The same seed always produces the same interleaving. Failing seeds
 are printed on failure and can be pinned in a test with `test "x" seed 8812`.
 
-### 7.5 Process signals
+### 7.5 Process signals and graceful shutdown
 
-The first SIGINT or SIGTERM cancels `main`'s root scope: servers stop
-accepting, background tasks stop, `defer` blocks run, and `main` returns
-normally. A second signal exits immediately with status 130.
+Shutdown has two phases, so programs can finish queued work without fighting
+sticky cancellation:
+
+1. **Stop requested.** The first SIGINT or SIGTERM cancels nothing. It sets
+   the program's stop state: `task.stop_requested()` returns `true` and the
+   channel `task.stopping()` is closed, so loops can `select` on it. Servers
+   started with `serve` stop accepting new connections and finish in flight
+   requests. Readers stop reading; workers drain what is queued.
+2. **Cancel.** When `main`'s body has not returned after the grace period
+   (default 30s, set with `os.proc.set_grace(d)`), or on a second signal,
+   `main`'s root scope is cancelled as in 7.2: blocking calls unwind and
+   `defer` blocks run. A third signal exits immediately with status 130.
+
+A program that ignores phase 1 behaves as before, only 30 seconds later; a
+program that wants the old behavior calls `os.proc.set_grace(0s)`.
+
+```
+fn reader(os: Os, queue: Chan[Str]) {
+  while {
+    select {
+      line = read_line(os) => queue.send(line)
+      _ = task.stopping().recv() => break
+    }
+  }
+  queue.close()                    // workers drain the queue, then exit
+}
+```
+
+In tests, `os.proc.signal_after(d)` delivers the first signal to a program run
+by `testing.run_main`; `os.proc.signal_after(d)` called again delivers the
+next one.
+
+Under `testing.run_main`, a third signal makes `run_main` return 130 after
+`main` has unwound (the test process itself does not exit), and requests
+handled in memory by a fake network observe the stop state but are not
+cancelled by it.
 
 
 ---

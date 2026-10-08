@@ -34,7 +34,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [spawn-background-never-result.md](spawn-background-never-result.md): `spawn_background` with an infinite loop closure fails inference (XO0402).
 - [go-constant-float-division.md](go-constant-float-division.md): `0.0 / 0.0` is a Go compile time error; float division goes through rt.
 - [recursive-struct-option.md](recursive-struct-option.md): a struct containing itself through Option needs `rt.Box`.
-- [virtual-timer-callback-holds-world-lock.md](virtual-timer-callback-holds-world-lock.md): cancel from a virtual timer callback with `cancelLocked`.
+- [virtual-timer-callback-holds-world-lock.md](virtual-timer-callback-holds-world-lock.md): virtual timer callbacks hold the world lock; do real work on a goroutine counted as running (`stopState.after`).
 - [map-copy-claims-log.md](map-copy-claims-log.md): Map copies share one entry log; the first write claims it, other copies fork; why transient trie nodes were unsound in Go.
 - [scope-send-hangs-run.md](scope-send-hangs-run.md): a task blocked on a send that is received only after its scope hangs `xo run` silently.
 - [mono-fault-go-frames.md](mono-fault-go-frames.md): under `--mono` fault stacks name specialized copies and lack inlined closure frames; messages and locations are unchanged.
@@ -51,3 +51,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-bind-cache-in-source-tree.md](go-bind-cache-in-source-tree.md): `use go` bindings are cached in `<project>/.xo/gobind`; tests set `XO_GOBIND_DIR`, `.xo/` is gitignored.
 - [go-bind-name-mapping.md](go-bind-name-mapping.md): Go names become snake_case, keywords get `_` (`regexp.match_`), prelude type names get the package prefix (`url.UrlError`); read the generated `.xo` file.
 - [go-handles-shared.md](go-handles-shared.md): handles of Go objects are shared references; a setter on one copy is seen through all.
+- [first-signal-no-longer-cancels.md](first-signal-no-longer-cancels.md): since 0.7 the first SIGTERM only requests a stop; cancellation follows after 30s or a second signal.

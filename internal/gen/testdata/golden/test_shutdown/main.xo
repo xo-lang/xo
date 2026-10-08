@@ -1,0 +1,96 @@
+// Two phase shutdown (core 7.5): signals delivered by
+// `os.proc.signal_after` on the virtual clock. The first requests a stop,
+// the grace period or a second signal cancels main's root scope, a third
+// exits with status 130.
+use std/http
+use std/task
+
+// A pipeline that drains its queue on stop: the reader stops producing,
+// closes the queue, and the workers finish every queued line.
+fn pipeline(os: Os) ! {
+  let queue = Chan[Int].new(cap: 100)
+  let done = Atomic[Int].new(0)
+  scope s {
+    s.spawn(fn() {
+      var n = 0
+      while {
+        select {
+          _ = task.stopping().recv() => break
+          after 100ms => {
+            n += 1
+            queue.send(n)
+          }
+        }
+      }
+      queue.close()
+      os.stdio.println("reader stopped after ${n} lines")
+    })
+    for _ in 0..2 {
+      s.spawn(fn() {
+        while {
+          match queue.recv() {
+            Some(_) => {
+              os.clock.sleep(250ms)
+              done.add(1)
+            }
+            None => break
+          }
+        }
+      })
+    }
+  }
+  os.stdio.println("processed ${done.get()} stop_requested ${task.stop_requested()}")
+}
+
+// Ignores the stop state: canceled when the grace period ends.
+fn stubborn(os: Os) ! {
+  defer os.stdio.println("stubborn: cleanup ran")
+  while {
+    os.clock.sleep(1s)
+  }
+}
+
+// Asks for the old behavior: canceled at the first signal.
+fn impatient(os: Os) ! {
+  os.proc.set_grace(0s)
+  defer os.stdio.println("impatient: cleanup ran")
+  while {
+    os.clock.sleep(1s)
+  }
+}
+
+// Polls the stop state and stops on its own.
+fn polite(os: Os) ! {
+  var ticks = 0
+  while !task.stop_requested() {
+    os.clock.sleep(1s)
+    ticks += 1
+  }
+  os.stdio.println("polite: stopped after ${ticks} ticks")
+}
+
+// Cleanup that ignores cancellation: only a third signal ends it.
+fn hung(os: Os) ! {
+  defer {
+    os.clock.sleep(1h)
+  }
+  while {
+    os.clock.sleep(1s)
+  }
+}
+
+// An HTTP server whose handler is in flight when the stop arrives.
+fn server(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /slow", fn(_req) {
+    os.clock.sleep(2s)
+    http.text(200, "slow done, stop requested ${task.stop_requested()}")
+  })
+  let srv = http.server(os.net.listen("127.0.0.1:8080")?, r)
+  srv.serve()?
+  os.stdio.println("serve returned")
+}
+
+fn main(os: Os) ! {
+  pipeline(os)?
+}

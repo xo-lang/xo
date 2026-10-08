@@ -647,6 +647,14 @@ func (realProc) M_exit(_ *Task, code int64) Never {
 	return Never{}
 }
 
+// M_set_grace is `os.proc.set_grace(d)`: the time between a stop request
+// and the cancellation of main's root scope (core 7.5).
+func (realProc) M_set_grace(tk *Task, d Duration) {
+	if tk.stop != nil {
+		tk.stop.setGrace(d)
+	}
+}
+
 func (realProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
 	if tk.Canceled() {
 		return Err[ProcOutput](ProcErr{Tag: 3})

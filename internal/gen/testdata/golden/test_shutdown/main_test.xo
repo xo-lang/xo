@@ -1,0 +1,84 @@
+use std/http
+use std/task
+
+test "a pipeline drains its queue on stop and exits 0" {
+  let start = os.clock.now()
+  os.proc.signal_after(1050ms)
+  expect(testing.run_main(pipeline, os)) == 0
+  expect(os.stdio.output()) == "reader stopped after 10 lines\nprocessed 10 stop_requested true\n"
+  expect(os.clock.since(start)) == 1450ms
+}
+
+test "a program that ignores the stop is canceled after the grace period" {
+  let start = os.clock.now()
+  os.proc.signal_after(5500ms)
+  expect(testing.run_main(stubborn, os)) == 0
+  expect(os.stdio.output()) == "stubborn: cleanup ran\n"
+  expect(os.clock.since(start)) == 35500ms
+}
+
+test "set_grace before run_main sets the grace period" {
+  let start = os.clock.now()
+  os.proc.set_grace(10s)
+  os.proc.signal_after(2s)
+  expect(testing.run_main(stubborn, os)) == 0
+  expect(os.clock.since(start)) == 12s
+}
+
+test "set_grace(0s) cancels at the first signal" {
+  let start = os.clock.now()
+  os.proc.signal_after(2500ms)
+  expect(testing.run_main(impatient, os)) == 0
+  expect(os.stdio.output()) == "impatient: cleanup ran\n"
+  expect(os.clock.since(start)) == 2500ms
+}
+
+test "a second signal cancels before the grace period ends" {
+  let start = os.clock.now()
+  os.proc.signal_after(1s)
+  os.proc.signal_after(3500ms)
+  expect(testing.run_main(stubborn, os)) == 0
+  expect(os.clock.since(start)) == 3500ms
+}
+
+test "a program that checks stop_requested stops on its own" {
+  os.proc.signal_after(4500ms)
+  expect(testing.run_main(polite, os)) == 0
+  expect(os.stdio.output()) == "polite: stopped after 5 ticks\n"
+}
+
+test "a third signal exits with status 130" {
+  os.proc.signal_after(1500ms)
+  os.proc.signal_after(2500ms)
+  os.proc.signal_after(3500ms)
+  expect(testing.run_main(hung, os)) == 130
+  expect(os.proc.exit_code()) == Some(130)
+}
+
+test "no signal: stop is never requested" {
+  expect(!task.stop_requested())
+  let r = task.with_timeout(os.clock, 1m, fn() { testing.run_main(stubborn, os) })
+  expect(r is Err(TimedOut))
+}
+
+test "a server finishes the request in flight after the stop" {
+  let start = os.clock.now()
+  os.proc.signal_after(1s)
+  scope s {
+    let inflight = s.spawn(fn() {
+      os.clock.sleep(500ms)
+      http.client(os.net, timeout: 10s).get("http://127.0.0.1:8080/slow")
+    })
+    let late = s.spawn(fn() {
+      os.clock.sleep(1500ms)
+      http.client(os.net, timeout: 10s).get("http://127.0.0.1:8080/slow")
+    })
+    expect(testing.run_main(server, os)) == 0
+    let resp = inflight.await?
+    expect(resp.status) == 200
+    expect(resp.body.to_str() ?? "") == "slow done, stop requested true"
+    expect(late.await is Err(_))
+  }
+  expect(os.stdio.output()) == "serve returned\n"
+  expect(os.clock.since(start)) == 2500ms
+}

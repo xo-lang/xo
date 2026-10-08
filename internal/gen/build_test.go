@@ -4,14 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
@@ -19,7 +25,8 @@ import (
 
 // concurrentGolden are the golden programs that start tasks; they are also
 // run with the Go race detector.
-var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "arena_escape"}
+// Directories named test_* are built in test mode.
+var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "arena_escape", "test_shutdown", "test_signal_after"}
 
 // arenaRaceGolden are the golden programs also run with -race and
 // `--arenas` (TestGoldenRaceArenas): the servers among them hand arenas
@@ -46,7 +53,11 @@ func testGoldenRace(t *testing.T, names []string, arenas bool) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("testdata", "golden", name)
-			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Race: true, Arenas: arenas})
+			mode := gen.Build
+			if strings.HasPrefix(name, "test_") {
+				mode = gen.Test
+			}
+			res, err := build.Build([]string{dir}, build.Options{Mode: mode, Race: true, Arenas: arenas})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
@@ -116,17 +127,39 @@ func TestFaultStackPointsAtXo(t *testing.T) {
 	}
 }
 
-// TestSignalCancelsMain sends SIGINT to a running program: the root scope
-// is canceled, defer blocks run, and main returns normally (core 7.5).
-func TestSignalCancelsMain(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no SIGINT on windows")
-	}
+// signalBinary builds testdata/signal once for the real signal tests.
+var signalBinary = sync.OnceValues(func() (string, error) {
 	res, err := build.Build([]string{filepath.Join("testdata", "signal")}, build.Options{Mode: gen.Build})
-	if err != nil || res.Failed {
-		t.Fatalf("build: %v %v", err, res)
+	if err != nil {
+		return "", err
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	if res.Failed {
+		return "", fmt.Errorf("check failed: %+v", res.Diagnostics)
+	}
+	return res.Binaries[build.Host()], nil
+})
+
+// signalChild is a started testdata/signal process. Only this test's own
+// child is ever signaled, by the PID exec gave it.
+type signalChild struct {
+	t     *testing.T
+	cmd   *exec.Cmd
+	lines chan string
+	out   strings.Builder
+	done  chan struct{}
+}
+
+func startSignalChild(t *testing.T, env ...string) *signalChild {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGTERM on windows")
+	}
+	bin, err := signalBinary()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), env...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -134,29 +167,201 @@ func TestSignalCancelsMain(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	r := bufio.NewReader(stdout)
-	line, _ := r.ReadString('\n')
-	if line != "ready\n" {
-		cmd.Process.Kill()
-		t.Fatalf("first line %q", line)
+	c := &signalChild{t: t, cmd: cmd, lines: make(chan string, 100), done: make(chan struct{})}
+	go func() {
+		defer close(c.lines)
+		r := bufio.NewReader(stdout)
+		for {
+			line, err := r.ReadString('\n')
+			if line != "" {
+				c.lines <- line
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-c.done:
+		default:
+			cmd.Process.Kill() // our own child, by its PID
+			cmd.Wait()
+		}
+	})
+	return c
+}
+
+// expect waits for the next line of output and checks it.
+func (c *signalChild) expect(want string) {
+	c.t.Helper()
+	select {
+	case line, ok := <-c.lines:
+		if !ok {
+			c.t.Fatalf("output ended, want %q (so far %q)", want, c.out.String())
+		}
+		c.out.WriteString(line)
+		if line != want+"\n" {
+			c.t.Fatalf("line %q, want %q (so far %q)", line, want, c.out.String())
+		}
+	case <-time.After(20 * time.Second):
+		c.t.Fatalf("no line %q within 20s (so far %q)", want, c.out.String())
 	}
-	// the PID belongs to the process this test started
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatal(err)
+}
+
+func (c *signalChild) signal() {
+	c.t.Helper()
+	if err := c.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		c.t.Fatal(err)
 	}
-	rest, _ := io.ReadAll(r)
-	err = cmd.Wait()
-	if err != nil {
-		t.Fatalf("exit: %v (output %q)", err, rest)
-	}
-	got := string(rest)
-	for _, want := range []string{"background stopped", "cleanup ran"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("output %q lacks %q", got, want)
+}
+
+// wait waits for the process to exit and returns its status and the rest
+// of its output.
+func (c *signalChild) wait() (int, string) {
+	c.t.Helper()
+	var rest strings.Builder
+	timeout := time.After(20 * time.Second)
+	for {
+		select {
+		case line, ok := <-c.lines:
+			if ok {
+				rest.WriteString(line)
+				continue
+			}
+			err := c.cmd.Wait()
+			close(c.done)
+			code := 0
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				code = ee.ExitCode()
+			} else if err != nil {
+				c.t.Fatal(err)
+			}
+			return code, rest.String()
+		case <-timeout:
+			c.t.Fatalf("the program did not exit within 20s (output %q)", c.out.String()+rest.String())
 		}
 	}
-	if strings.Contains(got, "not reached") {
-		t.Errorf("main continued after cancellation: %q", got)
+}
+
+// TestSignalTwoPhase sends SIGTERM to a running program (core 7.5): the
+// first signal only requests a stop, the second cancels main's root scope
+// (defer blocks run, main returns normally).
+func TestSignalTwoPhase(t *testing.T) {
+	c := startSignalChild(t)
+	c.expect("ready")
+	c.signal()
+	c.expect("stop requested true")
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case line := <-c.lines:
+		t.Fatalf("output after the first signal: %q", line)
+	default:
+	}
+	c.signal()
+	code, rest := c.wait()
+	if code != 0 {
+		t.Fatalf("exit %d (output %q)", code, rest)
+	}
+	for _, want := range []string{"background stopped", "cleanup ran"} {
+		if !strings.Contains(rest, want) {
+			t.Errorf("output %q lacks %q", rest, want)
+		}
+	}
+	if strings.Contains(rest, "not reached") {
+		t.Errorf("main continued after cancellation: %q", rest)
+	}
+}
+
+// TestSignalDrain: a program that finishes its work after the stop
+// request exits 0 without being canceled.
+func TestSignalDrain(t *testing.T) {
+	c := startSignalChild(t, "MODE=drain")
+	c.expect("ready")
+	c.signal()
+	c.expect("stop requested true")
+	c.expect("drained")
+	code, rest := c.wait()
+	if code != 0 || !strings.Contains(rest, "cleanup ran") {
+		t.Fatalf("exit %d, output %q", code, rest)
+	}
+}
+
+// TestSignalGrace: `os.proc.set_grace(300ms)` cancels a program that
+// ignores the stop 300ms after the first signal.
+func TestSignalGrace(t *testing.T) {
+	c := startSignalChild(t, "MODE=grace")
+	c.expect("ready")
+	start := time.Now()
+	c.signal()
+	c.expect("stop requested true")
+	code, rest := c.wait()
+	el := time.Since(start)
+	if code != 0 || !strings.Contains(rest, "cleanup ran") {
+		t.Fatalf("exit %d, output %q", code, rest)
+	}
+	if el < 250*time.Millisecond || el > 10*time.Second {
+		t.Errorf("canceled after %s, want about 300ms", el)
+	}
+}
+
+// TestSignalThirdExits: a program stuck in cleanup that ignores
+// cancellation exits with status 130 at the third signal.
+func TestSignalThirdExits(t *testing.T) {
+	c := startSignalChild(t, "MODE=hung")
+	c.expect("ready")
+	c.signal()
+	c.expect("stop requested true")
+	c.signal()
+	time.Sleep(300 * time.Millisecond)
+	c.signal()
+	code, rest := c.wait()
+	if code != 130 {
+		t.Fatalf("exit %d, want 130 (output %q)", code, rest)
+	}
+}
+
+// TestSignalHTTPInFlight: after SIGTERM, `serve` stops accepting, finishes
+// the request in flight, and returns Ok.
+func TestSignalHTTPInFlight(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	c := startSignalChild(t, "MODE=http", fmt.Sprintf("PORT=%d", port))
+	c.expect("ready")
+	url := fmt.Sprintf("http://127.0.0.1:%d/slow", port)
+	type result struct {
+		status int
+		body   string
+		err    error
+	}
+	got := make(chan result, 1)
+	go func() {
+		resp, err := http.Get(url)
+		if err != nil {
+			got <- result{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		got <- result{status: resp.StatusCode, body: string(b), err: err}
+	}()
+	c.expect("handling")
+	c.signal()
+	r := <-got
+	if r.err != nil || r.status != 200 || r.body != "slow done" {
+		t.Fatalf("in flight request: %+v", r)
+	}
+	code, rest := c.wait()
+	if code != 0 || rest != "serve returned\n" {
+		t.Fatalf("exit %d, output %q", code, rest)
+	}
+	if _, err := http.Get(url); err == nil {
+		t.Errorf("the server still accepts after the stop")
 	}
 }
 

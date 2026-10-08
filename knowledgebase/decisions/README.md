@@ -46,3 +46,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0040-path-to-beating-go-performance.md](0040-path-to-beating-go-performance.md): where Xo could beat Go and how to test it. **Proposed.**
 - [0041-go-library-interop.md](0041-go-library-interop.md): `use go` bindings to Go packages until Xo has its own ecosystem (implemented, core 4.4).
 
+- [0042-two-phase-shutdown.md](0042-two-phase-shutdown.md): first signal requests a stop, cancellation after a grace period.

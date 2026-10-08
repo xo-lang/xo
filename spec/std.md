@@ -387,6 +387,7 @@ struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes }
 enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled }
 
 fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks do not run
+fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
 fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
 ```
 
@@ -597,6 +598,8 @@ pub fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T !
 pub fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
 
 pub fn is_canceled() -> Bool
+pub fn stop_requested() -> Bool          // the first shutdown signal arrived (core 7.5)
+pub fn stopping() -> Chan[()]            // closed when a stop is requested
 
 pub fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx)
     -> List[Result[R, E]] uses fx

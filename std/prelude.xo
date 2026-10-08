@@ -495,5 +495,8 @@ enum ProcErr {
 
 interface Proc {
   fn exit(self, code: Int) -> Never uses proc
+  /// Time between a stop request and the cancellation of main's root scope
+  /// (core 7.5, default 30s; 0s cancels at the first signal).
+  fn set_grace(self, d: Duration) uses proc
   fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
 }

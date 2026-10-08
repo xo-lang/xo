@@ -21,6 +21,10 @@ struct Fault {
 fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T ! E uses fx) -> T ! Timed[E] uses (clock, fx)
 fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
 fn is_canceled() -> Bool
+/// The first shutdown signal arrived (core 7.5).
+fn stop_requested() -> Bool
+/// A channel closed when a stop is requested (core 7.5).
+fn stopping() -> Chan[()]
 
 fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, E]] uses fx
 

@@ -1241,6 +1241,7 @@ func (v ProcErr) M_display(*Task) string { return Debug(v) }
 
 type Proc interface {
 	M_exit(tk *Task, p0 int64) Never
+	M_set_grace(tk *Task, p0 Duration)
 	M_run(tk *Task, p0 string, p1 List[string]) Result[ProcOutput, ProcErr]
 }
 

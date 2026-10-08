@@ -18,6 +18,9 @@ type Task struct {
 	// nil otherwise. Spawned tasks never inherit it (child), so only one
 	// goroutine uses an arena at a time.
 	arena *Arena
+	// stop is the shutdown state of the program run the task belongs to
+	// (core 7.5, stop.go), nil outside RunMain and testing.run_main.
+	stop *stopState
 }
 
 // cnode is a node of the cancellation tree. Canceling a node cancels every
@@ -52,13 +55,9 @@ func newNode(parent *cnode, w *World) *cnode {
 // cancel cancels n and its subtree. In a test world, tasks blocked below n
 // are counted as running again before they are woken, so the virtual clock
 // does not move while they unwind (std.md 8.2).
-func (n *cnode) cancel() { n.cancelWorld(false) }
-
-// cancelLocked is cancel for callers that already hold the test world's lock,
-// such as virtual clock timer callbacks.
-func (n *cnode) cancelLocked() { n.cancelWorld(true) }
-
-func (n *cnode) cancelWorld(worldLocked bool) {
+// It takes the world lock, so virtual clock timer callbacks must not call
+// it (see stopState.after).
+func (n *cnode) cancel() {
 	var nodes []*cnode
 	var collect func(c *cnode)
 	collect = func(c *cnode) {
@@ -83,11 +82,7 @@ func (n *cnode) cancelWorld(worldLocked bool) {
 		return
 	}
 	if n.w != nil {
-		if worldLocked {
-			n.w.wakeCanceledLocked(nodes)
-		} else {
-			n.w.wakeCanceled(nodes)
-		}
+		n.w.wakeCanceled(nodes)
 	}
 	for _, c := range nodes {
 		close(c.done)
@@ -122,7 +117,7 @@ var InitTask = NewRootTask()
 
 // child returns a task for a new node of the tree. It has no arena: a
 // spawned task runs on its own goroutine (see Arena).
-func (tk *Task) child(n *cnode) *Task { return &Task{node: n, w: tk.w} }
+func (tk *Task) child(n *cnode) *Task { return &Task{node: n, w: tk.w, stop: tk.stop} }
 
 // Canceled reports whether a cancellation point here reports cancellation:
 // the task is canceled and not inside a shielded `defer` (core 3.5, 7.2).

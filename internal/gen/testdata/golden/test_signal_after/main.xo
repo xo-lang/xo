@@ -1,5 +1,6 @@
-// SIGTERM delivered by `os.proc.signal_after` cancels main's root scope,
-// including foreground tasks, so main exits cleanly (core 7.5, std 8.4).
+// SIGTERM delivered by `os.proc.signal_after` requests a stop; main ignores
+// it, so its root scope, including foreground tasks, is canceled when the
+// 30s grace period ends, and main exits cleanly (core 7.5, std 8.4).
 fn tick(clock: Clock) {
   while {
     clock.sleep(1m)

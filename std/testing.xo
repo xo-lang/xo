@@ -107,6 +107,7 @@ fn (s: FakeStdio) errors() -> Str
 
 struct FakeProc {}
 fn (p: FakeProc) exit(code: Int) -> Never uses proc
+fn (p: FakeProc) set_grace(d: Duration) uses proc
 fn (p: FakeProc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
 fn (p: FakeProc) exit_code() -> Int?
 fn (p: FakeProc) signal_after(d: Duration)
