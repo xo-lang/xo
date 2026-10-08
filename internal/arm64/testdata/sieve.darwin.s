@@ -5,7 +5,7 @@
 _xo_f_main:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
-	stp x19, x20, [sp, #24]
+	stp x20, x19, [sp, #24]
 Lf1_b0:
 	mov x19, #0
 	mov x20, x19
@@ -35,7 +35,7 @@ Lf1_b4:
 	bl _xo_println
 	mov x0, x19
 	bl Lxo_drop1
-	ldp x19, x20, [sp, #24]
+	ldp x20, x19, [sp, #24]
 	ldp x29, x30, [sp], #48
 	ret
 Lf1_fault1:
@@ -53,8 +53,8 @@ Lf1_fault1:
 _xo_f_sieve:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
-	stp x19, x20, [sp, #16]
-	stp x21, x22, [sp, #32]
+	stp x20, x19, [sp, #16]
+	stp x22, x21, [sp, #32]
 	str x23, [sp, #48]
 Lf2_b0:
 	mov x22, x0
@@ -122,8 +122,8 @@ Lf2_b16:
 Lf2_b17:
 	bl Lxo_drop2
 	mov x0, x20
-	ldp x19, x20, [sp, #16]
-	ldp x21, x22, [sp, #32]
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
 	ldr x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret

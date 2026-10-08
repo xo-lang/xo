@@ -32,7 +32,7 @@ xo_f_main:
 xo_f_fib:
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
-	stp x19, x20, [sp, #16]
+	stp x20, x19, [sp, #16]
 .Lf2_b0:
 	mov x19, x0
 	cmp x19, #2
@@ -47,7 +47,7 @@ xo_f_fib:
 	b.vs .Lf2_fault1
 .Lf2_b3:
 	mov x0, x19
-	ldp x19, x20, [sp, #16]
+	ldp x20, x19, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
 .Lf2_fault1:

@@ -217,12 +217,14 @@ func (s *fstate) prologue(b *strings.Builder, fr *frameInfo) {
 }
 
 // saves stores or loads the callee saved registers, in pairs when it
-// can.
+// can. A pair puts the higher register first (`stp x20, x19`), as LLVM
+// does: on Apple M4 the other order made recursive fib 1.4x slower
+// (gotchas/arm64-stp-pair-order.md).
 func (s *fstate) saves(b *strings.Builder, fr *frameInfo, one, two string) {
 	for k := 0; k < len(s.saved); k++ {
 		r, off := s.saved[k], fr.saveBase+8*k
 		if k+1 < len(s.saved) && (s.saved[k+1] >= fpBase) == (r >= fpBase) && off <= 496 {
-			fmt.Fprintf(b, "\t%s %s, %s, [sp, #%d]\n", two, regName(r, false), regName(s.saved[k+1], false), off)
+			fmt.Fprintf(b, "\t%s %s, %s, [sp, #%d]\n", two, regName(s.saved[k+1], false), regName(r, false), off)
 			k++
 			continue
 		}
