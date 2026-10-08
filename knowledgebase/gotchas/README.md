@@ -102,4 +102,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-loop-carried-store-forwarding.md](arm64-loop-carried-store-forwarding.md): a list length stored and reloaded every push iteration bound the native sieve on store to load forwarding; keep loop carried values in registers.
 - [arm64-zero-word-values.md](arm64-zero-word-values.md): `()` and capabilities have no words in the native backend; check the type before reading word 0.
 - [arm64-cheap-constants-across-blocks.md](arm64-cheap-constants-across-blocks.md): sharing one instruction constants across blocks blocks coalescing and costs a register and a copy; make them again per block.
+- [arm64-nested-helper-labels.md](arm64-nested-helper-labels.md): a helper generator that recurses must take its label number before the recursion advances the shared counter (duplicate `Lxo_drop6_v1`).
+- [ssa-option-first-recursive-type.md](ssa-option-first-recursive-type.md): a recursive struct first met as `T?` is not boxed by the SSA builder, so both native backends reject it; use the struct before its Option until the builder is fixed.
 - [gocache-trim-races-concurrent-build.md](gocache-trim-races-concurrent-build.md): one xo process trimming the shared Go cache can delete entries a concurrent `go build` reads ("could not import os"); rerun, or separate `XO_GOCACHE`.

@@ -616,6 +616,9 @@ func (s *fstate) instr(v *ssa.Value) {
 			s.set(v, s.def1(false, "mvn $d0, $u0", a))
 		}
 	case ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLe, ssa.OpGt, ssa.OpGe:
+		if s.eqAggregate(v) {
+			return
+		}
 		if v.Args[0].Type.Kind == ssa.KUnit {
 			r := map[ssa.Op]int64{ssa.OpEq: 1, ssa.OpNe: 0, ssa.OpLt: 0, ssa.OpLe: 1, ssa.OpGt: 0, ssa.OpGe: 1}[v.Op]
 			s.set(v, s.imm(r))
@@ -665,6 +668,16 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.set(v, s.fromPayload(ws, g.layout(v.Type))...)
 	case ssa.OpCall:
 		s.callOp(v)
+	case ssa.OpClosure:
+		s.closureOp(v)
+	case ssa.OpCapture:
+		s.captureOp(v)
+	case ssa.OpCallValue:
+		s.callValueOp(v)
+	case ssa.OpBox:
+		s.boxOp(v)
+	case ssa.OpUnbox:
+		s.unboxOp(v)
 	case ssa.OpFault:
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", ws[0])

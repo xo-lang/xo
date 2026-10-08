@@ -11,6 +11,9 @@ import "github.com/xo-lang/xo/internal/ssa"
 //	Int, Bool, List   one integer word (a Bool is 0 or 1)
 //	Float             one floating point word
 //	Str               two integer words: the object and the length
+//	function value    two integer words: the code and the environment
+//	                  (closures.go)
+//	Box[T]            one integer word: the cell (boxes.go)
 //	struct, tuple     the words of the fields, in order
 //	enum              the tag, then W integer payload words, W the most
 //	                  words of any variant; a variant's fields are laid
@@ -28,7 +31,7 @@ func (g *gen) layoutPath(t *ssa.Type, path map[*ssa.Type]bool) []bool {
 		return l
 	}
 	if path[t] {
-		fail("recursive type `%s` (needs boxes)", t.Name)
+		fail("recursive type `%s` (not boxed)", t.Name)
 	}
 	path[t] = true
 	defer delete(path, t)
@@ -36,14 +39,13 @@ func (g *gen) layoutPath(t *ssa.Type, path map[*ssa.Type]bool) []bool {
 	switch t.Kind {
 	case ssa.KUnit, ssa.KCap:
 		l = []bool{}
-	case ssa.KInt, ssa.KBool, ssa.KList:
-		if t.Kind == ssa.KList {
-			g.layoutPath(t.Elems[0], path)
-		}
+	case ssa.KInt, ssa.KBool, ssa.KList, ssa.KBox:
+		// a List or Box is a pointer: its element may contain the type
+		// that contains it
 		l = []bool{false}
 	case ssa.KFloat:
 		l = []bool{true}
-	case ssa.KStr:
+	case ssa.KStr, ssa.KFunc:
 		l = []bool{false, false}
 	case ssa.KStruct:
 		for _, f := range t.Fields {
@@ -122,7 +124,7 @@ func (g *gen) heapLeaves(t *ssa.Type, base int, out *[]leaf) {
 		return
 	}
 	switch t.Kind {
-	case ssa.KStr, ssa.KList, ssa.KEnum:
+	case ssa.KStr, ssa.KList, ssa.KEnum, ssa.KFunc, ssa.KBox:
 		*out = append(*out, leaf{base, t})
 	case ssa.KStruct, ssa.KTuple:
 		n := len(t.Elems)

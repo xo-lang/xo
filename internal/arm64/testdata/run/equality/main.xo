@@ -1,0 +1,49 @@
+// Structural equality on values wider than the argument registers
+// (stack arguments of the helper), Float fields (NaN is unequal to
+// itself), enum payloads with floats and strings, List[Bool], and
+// nested lists of structs.
+struct Wide {
+  a: Int
+  b: Float
+  c: Str
+  d: Bool
+  e: (Int, Float)
+  f: Str
+}
+
+enum Shape {
+  Circle(r: Float)
+  Rect(w: Int, h: Int, name: Str)
+  Empty
+}
+
+fn wide(c: Str, x: Float) -> Wide {
+  Wide{a: 1, b: x, c: c, d: true, e: (7, 2.5), f: "tail"}
+}
+
+fn main(os: Os) {
+  let nan = 0.0 / 0.0
+  let w1 = wide("x", 1.0)
+  let w2 = wide("x", 1.0)
+  let w3 = wide("y", 1.0)
+  let w4 = wide("x", nan)
+  os.stdio.println("wide ${w1 == w2} ${w1 != w3} ${w4 == w4} ${w4 != w4}")
+  let s1 = Shape.Circle(r: 2.0)
+  let s2 = Shape.Rect(w: 1, h: 2, name: "r")
+  let s3 = Shape.Rect(w: 1, h: 2, name: "r")
+  let s4 = Shape.Rect(w: 1, h: 3, name: "r")
+  os.stdio.println("shape ${s1 == Shape.Circle(r: 2.0)} ${s2 == s3} ${s3 == s4} ${s1 == s2} ${Shape.Empty == Shape.Empty} ${Shape.Circle(r: nan) == Shape.Circle(r: nan)}")
+  let b1 = [true, false, true]
+  let b2 = [true, false, true]
+  let b3 = [true, true, true]
+  os.stdio.println("bools ${b1 == b2} ${b1 == b3} ${b1 != b3}")
+  let l1 = [[w1, w2], [w3]]
+  let l2 = [[w2, w1], [w3]]
+  let l3 = [[w1], [w3]]
+  os.stdio.println("lists ${l1 == l2} ${l1 == l3} ${[nan] == [nan]} ${[1.5] == [1.5]}")
+  let shapes = [s1, s2, Shape.Empty]
+  os.stdio.println("shapes ${shapes == [Shape.Circle(r: 2.0), s3, Shape.Empty]} ${shapes == [s1, s4, Shape.Empty]}")
+  let t1 = (w1, s2, "z")
+  let t2 = (w2, s3, "z")
+  os.stdio.println("tuples ${t1 == t2} ${t1 != t2}")
+}

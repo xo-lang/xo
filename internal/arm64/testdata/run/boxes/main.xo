@@ -1,0 +1,57 @@
+// Recursive types: a 1,000,000 node chain freed with the worklist,
+// equality of boxed values, a box whose contents are wider than eight
+// words, and Float payloads in a boxed enum.
+struct Node {
+  val: Int
+  next: Node?
+}
+
+enum Expr {
+  Num(x: Float)
+  Add(a: Expr, b: Expr)
+  Named(name: Str, e: Expr)
+}
+
+struct Big {
+  a: Str
+  b: Str
+  c: Str
+  d: Str
+  e: Str
+  rest: Big?
+}
+
+fn eval(e: Expr) -> Float {
+  match e {
+    Num(x) => x
+    Add(a, b) => eval(a) + eval(b)
+    Named(_, x) => eval(x)
+  }
+}
+
+fn main(os: Os) {
+  // Node before `Node?`: the SSA builder boxes a cycle only when its
+  // struct starts construction before the Option of it (see the gotcha
+  // ssa-option-first-recursive-type)
+  let l1 = Node{val: 1, next: Some(Node{val: 2, next: None})}
+  let l2 = Node{val: 1, next: Some(Node{val: 2, next: None})}
+  let l3 = Node{val: 1, next: Some(Node{val: 3, next: None})}
+  os.stdio.println("nodes ${l1 == l2} ${l1 == l3} ${l1 != l3}")
+  var head: Node? = None
+  var i = 0
+  while i < 1000000 {
+    head = Some(Node{val: i, next: head})
+    i += 1
+  }
+  match head {
+    Some(n) => os.stdio.println("head ${n.val}")
+    None => os.stdio.println("empty")
+  }
+  let e = Expr.Add(a: Expr.Num(x: 1.5), b: Expr.Named(name: "n", e: Expr.Num(x: 2.0)))
+  let e2 = Expr.Add(a: Expr.Num(x: 1.5), b: Expr.Named(name: "n", e: Expr.Num(x: 2.0)))
+  let nan = Expr.Num(x: 0.0 / 0.0)
+  os.stdio.println("expr ${eval(e)} ${e == e2} ${e == Expr.Num(x: 3.5)} ${nan == nan}")
+  let big = Big{a: "a", b: "b", c: "c", d: "d", e: "e", rest: Some(Big{a: "1", b: "2", c: "3", d: "4", e: "5", rest: None})}
+  let copy = big
+  os.stdio.println("big ${big == copy} ${big.a}")
+}

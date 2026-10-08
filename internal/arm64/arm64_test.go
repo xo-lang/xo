@@ -167,14 +167,17 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}, nil
 }
 
-// nativeGolden lists the programs of internal/llvm/testdata/golden that
-// must build with the arm64 backend (the ones the SSA path supports).
-var nativeGolden = []string{
-	"abs_fault", "arith", "div_zero", "float_int_fault", "index_oob", "loops", "neg_overflow", "overflow_add",
-	"overflow_mul", "rc_aliasing", "rc_values", "shl_overflow", "sort_structs", "strings", "user_fault", "var_alias",
+// goldenDirs returns every program of internal/llvm/testdata/golden.
+func goldenDirs(t *testing.T) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join("..", "llvm", "testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	return dirs
 }
 
-// TestGoldenRun builds the golden programs of internal/llvm (read only)
+// TestGoldenRun builds every golden program of internal/llvm (read only)
 // with the arm64 backend and requires their want.txt: the same exit
 // status, stdout, and fault messages as the Go and LLVM backends, and no
 // allocation live at exit.
@@ -185,11 +188,10 @@ func TestGoldenRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
-	for _, name := range nativeGolden {
-		name := name
-		t.Run(name, func(t *testing.T) {
+	for _, dir := range goldenDirs(t) {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
 			got, err := buildRun(t, dir)
 			if err != nil {
 				t.Fatalf("build: %v", err)
@@ -293,13 +295,23 @@ func TestBench(t *testing.T) {
 	}
 }
 
-// TestUnsupported checks that a program outside the SSA subset is
-// rejected with an error, not miscompiled.
+// TestUnsupported checks that an op outside what the backend lowers is
+// rejected with an error, not miscompiled. Every op the builder and the
+// RC pass emit is lowered, so the module is built by hand: OpDrop (drop
+// specialization) is declared in internal/ssa but never emitted yet.
 func TestUnsupported(t *testing.T) {
-	dir := filepath.Join("..", "llvm", "testdata", "golden", "closures")
-	_, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64})
-	if err == nil {
-		t.Fatal("build succeeded; want an unsupported construct error")
+	m := ssa.NewModule()
+	str := m.Builtin(ssa.KStr)
+	f := m.NewFunc("main", []*ssa.Type{str}, []*ssa.Type{m.Builtin(ssa.KUnit)})
+	b := f.Blocks[0]
+	b.Add(ssa.OpDrop, m.Builtin(ssa.KUnit), nil, f.Params()[0])
+	u := b.Add(ssa.OpTuple, m.Builtin(ssa.KUnit), nil)
+	b.Add(ssa.OpReturn, nil, nil, u)
+	m.RC = true
+	_, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin, NoInline: true})
+	var ae *arm64.Error
+	if !errors.As(err, &ae) || !strings.Contains(err.Error(), "drop") {
+		t.Fatalf("got %v, want an unsupported op error naming drop", err)
 	}
 }
 
@@ -347,9 +359,7 @@ func TestInlineVerifies(t *testing.T) {
 	for name := range benchWant {
 		dirs = append(dirs, filepath.Join(benchDir, name))
 	}
-	for _, name := range nativeGolden {
-		dirs = append(dirs, filepath.Join("..", "llvm", "testdata", "golden", name))
-	}
+	dirs = append(dirs, goldenDirs(t)...)
 	runs, _ := filepath.Glob(filepath.Join("testdata", "run", "*"))
 	dirs = append(dirs, runs...)
 	inlined := 0
