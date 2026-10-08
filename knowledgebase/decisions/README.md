@@ -54,3 +54,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0047-mutex-barging-in-real-runs.md](0047-mutex-barging-in-real-runs.md): the runtime lock barges in real runs, stays FIFO under test and the deterministic scheduler.
 - [0048-ssa-closures-boxes-generics.md](0048-ssa-closures-boxes-generics.md): closures as a counted environment leaf, recursive types as boxes, generics monomorphized in the SSA builder; deferred drops free long chains with a worklist.
 - [0049-native-arm64-backend.md](0049-native-arm64-backend.md): `internal/arm64` lowers the SSA IR after reference counting straight to AArch64 assembly (word layout, range set allocation with coalescing, AAPCS64, fault stubs), linked with cc; darwin and linux arm64.
+- [0051-arm64-match-dispatch.md](0051-arm64-match-dispatch.md): native arm64 lays out `match` compare chains as runs of tests and uses jump tables only from 8 values (tables lose on unpredictable tags on Apple M4).

@@ -494,11 +494,14 @@ Last verified: 2026-10-07
 - `bench/perf/llvm/native.sh` (2026-10-08): the native arm64 backend
   against the LLVM backend and hand written Go on the same workloads.
   Binaries run interleaved (Go, LLVM, arm64) `REPS` times (5) under
-  `/usr/bin/time -l`; the table has best wall time, the two ratios, and
-  peak RSS of all three. Checksums must agree. `XO`, `PERF_OUT`,
-  `WORKLOADS` as above. Check the load average first
-  (`gotchas/bench-host-timing-drift.md`). Results:
-  `bench/results/arm64-native-2026-10-08.md`.
+  `/usr/bin/time -l`; the table has best wall time (`STAT=median`: the
+  median, added 2026-10-08), the two ratios, and peak RSS of all three.
+  Checksums must agree. `XO`, `PERF_OUT`, `WORKLOADS` as above. Check the
+  load average first (`gotchas/bench-host-timing-drift.md`).
+  `/usr/bin/time -l` also prints instructions retired and cycles, which
+  separate "more instructions" from "slower instructions". Results:
+  `bench/results/arm64-native-2026-10-08.md`,
+  `bench/results/arm64-perf-2026-10-08.md`.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -872,7 +875,7 @@ first, AST based prototype, since deleted) and
 
 ## arm64 backend (native)
 
-Last verified: 2026-10-08. Decision 0049; results
+Last verified: 2026-10-08. Decisions 0049 and 0051; results
 `bench/results/arm64-native-2026-10-08.md`.
 
 - `xo build --backend=arm64` and `xo run --backend=arm64`; programs only,
@@ -885,7 +888,12 @@ Last verified: 2026-10-08. Decision 0049; results
   virtual registers with assembly templates; values flattened into words,
   `layout.go`), `opt.go` (memos inherited from dominators, list length
   registers, dead code, constant tag and inlined predicate threading,
-  branch bounds, constant hoisting out of loops), `regalloc.go` (liveness, live ranges with holes, move
+  branch bounds, constant hoisting out of loops, branchless select of a
+  compare picked by another compare, flag reuse), `jumptab.go` (`match`
+  compare chains laid out as runs of tests, jump tables from 8 values,
+  decision 0051; `XO_ARM64_JT_MIN=n` overrides the threshold for
+  measurement, 0 disables tables), `rc.go` also cancels a payload retain
+  against the release of its enum, `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
   `rc.go` (dup and drop helpers in assembly), `inline.go` (small leaf

@@ -103,3 +103,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-zero-word-values.md](arm64-zero-word-values.md): `()` and capabilities have no words in the native backend; check the type before reading word 0.
 - [arm64-cheap-constants-across-blocks.md](arm64-cheap-constants-across-blocks.md): sharing one instruction constants across blocks blocks coalescing and costs a register and a copy; make them again per block.
 - [gocache-trim-races-concurrent-build.md](gocache-trim-races-concurrent-build.md): one xo process trimming the shared Go cache can delete entries a concurrent `go build` reads ("could not import os"); rerun, or separate `XO_GOCACHE`.
+- [arm64-match-dispatch-prediction.md](arm64-match-dispatch-prediction.md): on Apple M4 a jump table sped interp up 1.8x but lost up to 3x on random tags; chain layout (taken branch per failed test) was most of interp's cost.
+- [native-float-nan-order.md](native-float-nan-order.md): the LLVM and arm64 backends compare Float with IEEE `<` (NaN false), the Go backend with the spec's total order (NaN last).
