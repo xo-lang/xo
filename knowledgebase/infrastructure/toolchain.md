@@ -519,6 +519,24 @@ Last verified: 2026-10-07
   separate "more instructions" from "slower instructions". Results:
   `bench/results/arm64-native-2026-10-08.md`,
   `bench/results/arm64-perf-2026-10-08.md`.
+- Instruction level profiles on macOS (Xcode 16 `xctrace`, no root;
+  Last verified: 2026-10-08). Make the program run for seconds first
+  (more rounds in a copy of the bench program), then
+  `xctrace record --template 'CPU Profiler' --output p.trace --launch -- ./bin`
+  (a sample every 1M cycles, user and kernel) and
+  `xctrace export --input p.trace --xpath '/trace-toc/run[@number="1"]/data/table[@schema="cpu-profile"]'`:
+  each row has a `cycle-weight` and a backtrace whose first frame is the
+  sampled PC; its `binary` element (often a `ref` to an earlier id) has
+  the `load-addr`, so `pc - load-addr + 0x100000000` is the address in
+  `otool -tvV ./bin`. Samples skid to the instruction after a stall. The
+  `CPU Counters` template (default "bottleneck" mode) gives, in table
+  `CounterMetricAggregatedForProcess`, one row per 1 ms of four values
+  in hundredths of a percent: useful, instruction processing,
+  instruction delivery, and discarded (that order). Useful is
+  instruction based: compare it per instruction of work, not across
+  programs that retire different counts. xctrace sometimes dies with
+  `Trace/BPT trap` under load; rerun. Neither is in the repository's
+  scripts; the parsing is a few lines of Python.
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 

@@ -33,6 +33,7 @@ type fstate struct {
 	lsr     map[*ssa.Block]*lsrLoop // loop headers: induction variables (lsr.go)
 	ranges  map[*ssa.Value]interval // intervals of Int values (ranges.go)
 	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
+	dupOK   map[*mblock]bool        // moved latches copied at a branch into them (lsr.go dupLatch)
 	// register allocation results
 	loc     []loc
 	order   []*mblock

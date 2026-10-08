@@ -113,7 +113,11 @@ xo_f_sieve:
 	b.ne .Lf2_fault5
 .Lf2_b11:
 	cmp x10, x21
-	b.gt .Lf2_b16
+	b.le .Lf2_b12
+	add x11, x11, #1
+	cmp x11, x12
+	b.lt .Lf2_b9
+	b .Lf2_b17
 .Lf2_b12:
 	cmp x10, x19
 	b.hs .Lf2_fault6

@@ -1,6 +1,6 @@
 # 0054: Native arm64 loop optimizations: pointer induction variables, value ranges, rotation, latch layout
 
-Status: Accepted (2026-10-08). Implemented in `internal/arm64/lsr.go` and
+Status: Accepted (2026-10-08); extended by 0060. Implemented in `internal/arm64/lsr.go` and
 `internal/arm64/ranges.go` (hooks in `isel.go`, `opt.go`, `emit.go`).
 Evidence: `bench/results/arm64-perf-2026-10-08.md` (section "Loops,
 2026-10-08").

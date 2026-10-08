@@ -1,0 +1,93 @@
+// Latch copies (internal/arm64 lsr.go dupLatch): the guard of an inner
+// loop inside `if flags[i] { .. }` that skips the loop branches to a copy
+// of the outer loop's latch. Inner loops that run zero times, once, and
+// many times, outer loops that start past the guard's bound, loops that
+// carry more values than the index, and empty ranges.
+fn sieve(n: Int) -> Int {
+  var flags: List[Bool] = []
+  for _ in 0..n + 1 {
+    flags.push(true)
+  }
+  var count = 0
+  for i in 2..n + 1 {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+  }
+  count
+}
+
+// the sum and the largest prime as well as the count
+fn primes(n: Int) -> (Int, Int, Int) {
+  var flags: List[Bool] = []
+  for _ in 0..n + 1 {
+    flags.push(true)
+  }
+  var count = 0
+  var sum = 0
+  var last = -1
+  for i in 2..n + 1 {
+    if flags[i] {
+      count += 1
+      sum += i
+      last = i
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+  }
+  (count, sum, last)
+}
+
+// marks from a start past n for every odd i: the inner loop never runs
+fn skips(n: Int) -> Int {
+  var xs: List[Bool] = []
+  for _ in 0..n {
+    xs.push(true)
+  }
+  var hits = 0
+  for i in 0..n {
+    if xs[i] {
+      hits += 1
+      var j = n + i % 2
+      while j < n {
+        xs[j] = false
+        j += 1
+      }
+    }
+  }
+  hits
+}
+
+// the inner loop runs exactly once for even i, never for odd i
+fn once(n: Int) -> Int {
+  var xs: List[Bool] = []
+  for k in 0..n {
+    xs.push(k % 3 != 0)
+  }
+  var s = 0
+  for i in 0..n {
+    if xs[i] {
+      var j = i + i % 2
+      while j <= i {
+        s += j
+        j += 1
+      }
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  for n in [0, 1, 2, 3, 4, 10, 30, 100, 1000, 65536] {
+    let (c, s, l) = primes(n)
+    os.stdio.println("n=${n} sieve=${sieve(n)} count=${c} sum=${s} last=${l} skips=${skips(n)} once=${once(n)}")
+  }
+}
