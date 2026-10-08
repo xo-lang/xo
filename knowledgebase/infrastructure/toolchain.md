@@ -879,8 +879,9 @@ Last verified: 2026-10-08. Decision 0049; results
   no `--race`, `--arenas`, `--holes`; targets darwin/arm64 and
   linux/arm64. `build.Arm64Asm(res, root, goos)` returns the assembly
   (it retries without inlining if the inlined module does not verify,
-  `arm64.InlineError`). Programs outside the SSA subset are an error, no
-  fallback.
+  `arm64.InlineError`). Every op the SSA builder and InsertRC emit is
+  lowered (decision 0050: closures, boxes, structural equality); an op
+  outside that is an error, no fallback.
 - Pipeline per function (`internal/arm64`): `isel.go` (SSA to MIR over
   virtual registers with assembly templates; values flattened into words,
   `layout.go`), `opt.go` (memos inherited from dominators, list length
@@ -888,10 +889,13 @@ Last verified: 2026-10-08. Decision 0049; results
   branch bounds, constant hoisting out of loops), `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
-  `rc.go` (dup and drop helpers in assembly), `inline.go` (small leaf
-  functions, SSA to SSA, before lowering).
+  `rc.go` (dup and drop helpers in assembly), `closures.go` (function
+  values, environments, `blr x0`), `boxes.go` (Box cells), `eq.go`
+  (`==` helpers), `inline.go` (small leaf functions, SSA to SSA, before
+  lowering).
 - ABI: AAPCS64 (x0 to x7, d0 to d7, 8 byte stack slots for more Xo to Xo
-  arguments; at most 8 result words per class). Scratch x15 to x17 and
+  arguments; result words past 8 of a class are stored by the callee in
+  the caller's stack argument area). Scratch x15 to x17 and
   d29 to d31; x18 never used. Frame record kept in non leaf functions,
   callee saved pairs stored high register first
   (`gotchas/arm64-stp-pair-order.md`). Darwin: `_` prefix, Mach-O
@@ -901,8 +905,8 @@ Last verified: 2026-10-08. Decision 0049; results
   8 bytes per word except `List[Bool]` (1 byte). The runtime sees only
   element sizes and callbacks.
 - Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
-  it builds and runs the SSA path goldens of internal/llvm against their
-  want.txt, the bench programs, and `testdata/run/*` against the Go
+  it builds and runs every golden of internal/llvm against its want.txt
+  (35 on 2026-10-08), the bench programs, and `testdata/run/*` against the Go
   backend, all with the leak check). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with
   `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the

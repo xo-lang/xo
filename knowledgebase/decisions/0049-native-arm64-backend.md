@@ -1,6 +1,7 @@
 # 0049: Native arm64 backend from the SSA IR
 
-Status: Accepted (2026-10-08). Implemented in `internal/arm64`, wired as
+Status: Accepted (2026-10-08); extended by 0050 (closures, boxes,
+equality, wide results). Implemented in `internal/arm64`, wired as
 `xo build --backend=arm64` (`internal/build/arm64.go`). Evidence:
 `bench/results/arm64-native-2026-10-08.md`.
 
