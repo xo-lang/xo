@@ -1,0 +1,145 @@
+const LINUX = Platform{case_sensitive: true, ignored: #{}}
+const MAC = Platform{case_sensitive: false, ignored: #{".DS_Store"}}
+
+fn opts(src: Str, dst: Str) -> Options {
+  Options{src: src, dst: dst}
+}
+
+fn has_temp_file(files: Map[Str, Bytes]) -> Bool {
+  files.keys().any(fn(k) { k.contains(".filesync-") })
+}
+
+test "new file is copied and unchanged file is skipped" {
+  os.fs.write("src/new.txt", b"new data")?
+  os.fs.write("src/same.txt", b"same")?
+  os.fs.write("dst/same.txt", b"same")?
+  let src = os.fs.sub("src").read_only()
+  let dst = os.fs.sub("dst")
+
+  let first = sync(src, dst, opts("src", "dst"), LINUX, os.stdio)?
+  expect(first.copied) == 1
+  expect(first.skipped) == 1
+  expect(first.failed) == 0
+  expect(os.fs.read("dst/new.txt")?) == b"new data"
+
+  let second = sync(src, dst, opts("src", "dst"), LINUX, os.stdio)?
+  expect(second.copied) == 0
+  expect(second.skipped) == 2
+}
+
+test "newer source file is copied again" {
+  os.fs.write("src/a.txt", b"v1")?
+  let src = os.fs.sub("src").read_only()
+  let dst = os.fs.sub("dst")
+  let first = sync(src, dst, opts("src", "dst"), LINUX, os.stdio)?
+  expect(first.copied) == 1
+
+  os.clock.advance(5s)
+  os.fs.write("src/a.txt", b"v2")?
+  let second = sync(src, dst, opts("src", "dst"), LINUX, os.stdio)?
+  expect(second.copied) == 1
+  expect(os.fs.read("dst/a.txt")?) == b"v2"
+}
+
+test "nested directories are created" {
+  os.fs.write("src/a/b/c.txt", b"deep")?
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts("src", "dst"), LINUX, os.stdio)?
+  expect(sum.copied) == 1
+  expect(os.fs.read("dst/a/b/c.txt")?) == b"deep"
+}
+
+test "dry run writes nothing" {
+  os.fs.write("src/a.txt", b"a")?
+  os.fs.write("src/dir/b.txt", b"b")?
+  os.fs.write("dst/extra.txt", b"x")?
+  let before = os.fs.files()
+  let o = Options{src: "src", dst: "dst", dry_run: true, delete: true}
+
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst").read_only(), o, LINUX, os.stdio)?
+  expect(sum.copied) == 2
+  expect(sum.deleted) == 1
+  expect(sum.failed) == 0
+  expect(os.fs.files()) == before
+  expect(os.stdio.output().contains("would copy a.txt"))
+  expect(os.stdio.output().contains("would delete extra.txt"))
+}
+
+test "delete removes extra files and empty directories" {
+  os.fs.write("src/keep.txt", b"k")?
+  os.fs.write("dst/keep.txt", b"k")?
+  os.fs.write("dst/extra.txt", b"x")?
+  os.fs.write("dst/old/deep.txt", b"d")?
+  let o = Options{src: "src", dst: "dst", delete: true}
+
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), o, LINUX, os.stdio)?
+  expect(sum.deleted) == 3
+  expect(sum.failed) == 0
+  expect(os.fs.exists("dst/keep.txt")?)
+  expect(os.fs.exists("dst/extra.txt")?) == false
+  expect(os.fs.exists("dst/old/deep.txt")?) == false
+  expect(os.fs.exists("dst/old")?) == false
+}
+
+test "without delete extra files stay" {
+  os.fs.write("src/keep.txt", b"k")?
+  os.fs.write("dst/extra.txt", b"x")?
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts("src", "dst"), LINUX, os.stdio)?
+  expect(sum.deleted) == 0
+  expect(os.fs.exists("dst/extra.txt")?)
+}
+
+test "a failed rename leaves no temp file behind" {
+  os.fs.write("src/a.txt", b"data")?
+  os.fs.fail_next(Rename, "dst/a.txt", FsErr.Io(path: "dst/a.txt", msg: "disk full"))
+
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts("src", "dst"), LINUX, os.stdio)?
+  expect(sum.failed) == 1
+  expect(sum.copied) == 0
+  expect(has_temp_file(os.fs.files())) == false
+  expect(os.fs.exists("dst/a.txt")?) == false
+}
+
+test "a failed temp write leaves no temp file behind" {
+  os.fs.write("src/a.txt", b"data")?
+  os.fs.fail_next(Write, "dst/.filesync-*", FsErr.Io(path: "dst/.filesync-", msg: "disk full"))
+
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts("src", "dst"), LINUX, os.stdio)?
+  expect(sum.failed) == 1
+  expect(has_temp_file(os.fs.files())) == false
+}
+
+test "case insensitive platform matches names and skips metadata files" {
+  os.fs.write("src/Readme.txt", b"r")?
+  os.fs.write("src/.DS_Store", b"junk")?
+  os.fs.write("dst/README.TXT", b"r")?
+  os.fs.write("dst/.DS_Store", b"junk")?
+  let o = Options{src: "src", dst: "dst", delete: true}
+
+  let sum = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), o, MAC, os.stdio)?
+  expect(sum.copied) == 0
+  expect(sum.skipped) == 1
+  expect(sum.deleted) == 0
+  expect(os.fs.exists("dst/README.TXT")?)
+}
+
+test "parse flags and paths" {
+  let o = parse_args(["--delete", "--dry-run", "a", "b"])?
+  expect(o) == Options{src: "a", dst: "b", dry_run: true, delete: true}
+  expect(parse_args(["a"]).is_err())
+  expect(parse_args(["--force", "a", "b"]).is_err())
+}
+
+test "main exits 1 and prints the summary when a copy fails" {
+  os.fs.write("src/a.txt", b"data")?
+  os.fs.fail_next(Rename, "dst/a.txt", FsErr.Io(path: "dst/a.txt", msg: "disk full"))
+  let code = testing.run_main(main, os, ["src", "dst"])
+  expect(code) == 1
+  expect(os.stdio.output().contains("failed: 1"))
+}
+
+test "main exits 0 on success" {
+  os.fs.write("src/a.txt", b"data")?
+  let code = testing.run_main(main, os, ["src", "dst"])
+  expect(code) == 0
+  expect(os.stdio.output().contains("copied: 1"))
+}

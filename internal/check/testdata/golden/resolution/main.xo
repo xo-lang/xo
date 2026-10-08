@@ -1,0 +1,13 @@
+use std/http
+
+fn count_items(xs: List[Int]) -> Int {
+  xs.lenght()
+}
+
+fn handler() -> http.Response {
+  http.jsno(200, {"ok": true})
+}
+
+fn total(xs: List[Int]) -> Int {
+  count_itmes(xs)
+}

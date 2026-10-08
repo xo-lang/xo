@@ -1,0 +1,28 @@
+// Std helpers added in 0.6: hex and base64, Time.from_unix_millis,
+// Atomic.max, Range.to_list, Patch.apply_to and apply_opt.
+use std/json
+
+struct Body {
+  name: json.Patch[Str]
+  nick: json.Patch[Str]
+} derive Json
+
+fn main(os: Os) ! {
+  let b = b"hi!"
+  os.stdio.println("${b.to_hex()} ${b.to_base64()}")
+  let back = Bytes.from_hex("686921") ?? b""
+  let bad = Bytes.from_base64("@@@")
+  os.stdio.println("${back.to_str() ?? "?"} ${bad.is_none()}")
+  os.stdio.println("${Time.from_unix_millis(1500)}")
+  let peak = Atomic[Int].new(3)
+  let _a = peak.max(1)
+  os.stdio.println("peak ${peak.max(7)}")
+  let xs = (0..4).to_list()
+  os.stdio.println("${xs.len()} ${xs.fold(0, fn(a, x) { a + x })}")
+  let p = json.decode_str[Body](r#"{"name": "Ada", "nick": null}"#)?
+  let name = p.name.apply_to("old")
+  let nick: Str? = Some("n")
+  let cleared = p.nick.apply_opt(nick)
+  let absent: json.Patch[Str] = json.Patch.Absent
+  os.stdio.println("${name} ${cleared.is_none()} ${absent.apply_to("kept")}")
+}

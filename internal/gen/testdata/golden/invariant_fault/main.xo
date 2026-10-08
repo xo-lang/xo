@@ -1,0 +1,27 @@
+struct Range {
+  lo: Int
+  hi: Int
+} invariant lo <= hi
+
+fn (var r: Range) widen(by: Int) {
+  r.lo -= by
+  r.hi += by
+}
+
+fn (var r: Range) shrink(by: Int) {
+  r.lo += by
+  r.hi -= by
+}
+
+fn main(os: Os) {
+  let ok = Range{lo: 1, hi: 2}
+  os.stdio.println("ok ${ok.lo}")
+  let shifted = ok with {hi: 5}
+  os.stdio.println("shifted ${shifted.hi}")
+  var r = Range{lo: 0, hi: 4}
+  r.widen(1)
+  os.stdio.println("widened ${r.lo}..${r.hi}")
+  os.stdio.println("shrink past the invariant next")
+  r.shrink(10)
+  os.stdio.println("never ${r.lo}")
+}

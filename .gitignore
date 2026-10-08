@@ -1,0 +1,21 @@
+# Locally installed tools and built xo binaries (see knowledgebase/infrastructure/toolchain.md)
+.tools/
+
+# Go and Xo build outputs
+benchtask
+*.exe
+*.test
+*.out
+*.prof
+/xo
+bin/
+dist/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log

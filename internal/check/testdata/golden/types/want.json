@@ -1,0 +1,98 @@
+[
+  {
+    "code": "XO0401",
+    "severity": "error",
+    "message": "expected `Float`, found `Int`",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 3,
+      "end_line": 7,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "there are no implicit numeric conversions; convert explicitly with `Float(...)` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "convert with `Float(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 7,
+              "col": 3,
+              "end_line": 7,
+              "end_col": 3
+            },
+            "replace": "Float("
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 7,
+              "col": 8,
+              "end_line": 7,
+              "end_col": 8
+            },
+            "replace": ")"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0404",
+    "severity": "error",
+    "message": "`Point` does not implement `Display`, so it cannot be interpolated",
+    "span": {
+      "file": "main.xo",
+      "line": 11,
+      "col": 6,
+      "end_line": 11,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "implement `fn display(self) -\u003e Str` or add `derive Display` (core 2.9)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0403",
+    "severity": "error",
+    "message": "missing field(s) `y` in `Point` literal",
+    "span": {
+      "file": "main.xo",
+      "line": 19,
+      "col": 3,
+      "end_line": 19,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "construction names every field without a default (core 2.2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "add the missing fields as holes",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 19,
+              "col": 13,
+              "end_line": 19,
+              "end_col": 13
+            },
+            "replace": ", y: ???"
+          }
+        ]
+      }
+    ]
+  }
+]

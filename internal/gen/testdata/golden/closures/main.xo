@@ -1,0 +1,31 @@
+fn make_adder(n: Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { x + n }
+}
+
+fn apply_twice[T](f: fn(T) -> T, x: T) -> T { f(f(x)) }
+
+fn compose[A, B, C](f: fn(A) -> B, g: fn(B) -> C) -> fn(A) -> C {
+  fn(a: A) -> C { g(f(a)) }
+}
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn main(os: Os) {
+  var counter = 1
+  let read = fn() -> Int { counter * 10 }
+  counter = 5
+  os.stdio.println("captured by value: ${read()} now ${counter}")
+  let add5 = make_adder(5)
+  os.stdio.println("adder ${add5(1)} twice ${apply_twice(add5, 0)}")
+  let f = compose(double, fn(x: Int) -> Str { "<${x}>" })
+  os.stdio.println("compose ${f(21)}")
+  os.stdio.println("fn value ${apply_twice(double, 3)}")
+  let fs = [double, add5, fn(x: Int) -> Int { x - 1 }]
+  var out: List[Int] = []
+  for g in fs {
+    out.push(g(10))
+  }
+  os.stdio.println("list of fns ${out[0]} ${out[1]} ${out[2]}")
+  let total = [1, 2, 3].map(fn(x) { x * counter }).fold(0, fn(a, b) { a + b })
+  os.stdio.println("total ${total}")
+}

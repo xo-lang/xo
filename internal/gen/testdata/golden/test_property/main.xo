@@ -1,0 +1,51 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Shape {
+  Dot
+  Line(from: Point, to: Point)
+  Group(items: List[Shape])
+}
+
+struct Range {
+  lo: Int
+  hi: Int
+} invariant lo <= hi
+
+fn count(s: Shape) -> Int {
+  match s {
+    Dot => 1
+    Line(..) => 1
+    Group(items: xs) => xs.fold(0, fn(a, x) { a + count(x) })
+  }
+}
+
+test "reverse twice is identity" for xs: List[Int] {
+  expect(xs.reverse().reverse()) == xs
+}
+
+test "sort is idempotent and keeps length" for xs: List[Str] {
+  expect(xs.sort().sort()) == xs.sort()
+  expect(xs.sort().len()) == xs.len()
+}
+
+test "generated shapes count at least zero" for s: Shape, label: Str? {
+  expect(count(s)) >= 0
+  expect(label == label)
+}
+
+test "generated ranges satisfy the invariant" for r: Range {
+  expect(r.lo) <= r.hi
+}
+
+test "a false property is reported with its input" for m: Map[Str, Int] {
+  expect(m.len()) < 3
+}
+
+test "testing.gen is deterministic" {
+  let a = testing.gen[List[Int]](7)
+  let b = testing.gen[List[Int]](7)
+  expect(a) == b
+}

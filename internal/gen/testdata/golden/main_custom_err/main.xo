@@ -1,0 +1,19 @@
+enum AppErr {
+  Config(key: Str)
+}
+
+fn (e: AppErr) display() -> Str {
+  match e {
+    Config(k) => "missing config key ${k}"
+  }
+}
+
+fn load(key: Str) -> Str ! AppErr {
+  Err(AppErr.Config(key: key))
+}
+
+fn main(os: Os) -> () ! AppErr {
+  os.stdio.println("starting")
+  let v = load("PORT")?
+  os.stdio.println(v)
+}

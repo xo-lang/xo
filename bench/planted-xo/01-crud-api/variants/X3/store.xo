@@ -1,0 +1,131 @@
+/// A stored user.
+pub struct User {
+  pub id: Int
+  pub name: Str
+  pub email: Str
+  pub nickname: Str?
+} derive Json
+
+/// Errors returned by the store and the handlers. Implements
+/// http.StatusError through `status` and `display`.
+pub enum ApiErr {
+  BadRequest(msg: Str)
+  NotFound(id: Int)
+  Conflict(email: Str)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(..) => 400
+    NotFound(..) => 404
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    NotFound(id) => "user ${id} not found"
+    Conflict(email) => "email ${email} already exists"
+  }
+}
+
+/// Validated input for creating a user.
+struct NewUser {
+  name: Str
+  email: Str
+  nickname: Str? = None
+}
+
+fn validate_name(name: Str) -> () ! ApiErr
+  requires name.rune_count() >= 1 && name.rune_count() <= 100
+    else ApiErr.BadRequest(msg: "name must be 1 to 100 characters")
+{}
+
+fn validate_email(email: Str) -> () ! ApiErr
+  requires email.contains("@") else ApiErr.BadRequest(msg: "email must contain @")
+{}
+
+fn same_email(a: Str, b: Str) -> Bool {
+  a.to_lower() == b.to_lower()
+}
+
+/// The data protected by the store mutex.
+struct State {
+  users: Map[Int, User]
+  next_id: Int
+}
+
+/// True when a user other than `except_id` already has `email`.
+fn (st: State) email_taken(email: Str, except_id: Int) -> Bool {
+  st.users.values().any(fn(u) { u.id != except_id && same_email(u.email, email) })
+}
+
+/// In memory user store, safe under concurrent requests.
+struct Store {
+  state: Mutex[State]
+}
+
+fn new_store() -> Store {
+  Store{state: Mutex.new(State{users: {}, next_id: 1})}
+}
+
+fn (s: Store) create(input: NewUser) -> User ! ApiErr {
+  validate_name(input.name)?
+  validate_email(input.email)?
+  s.state.with(fn(var st) -> User ! ApiErr {
+    if st.email_taken(input.email, 0) {
+      return Err(ApiErr.Conflict(email: input.email))
+    }
+    let u = User{id: st.next_id, name: input.name, email: input.email, nickname: input.nickname}
+    st.users.put(u.id, u)
+    st.next_id += 1
+    u
+  })
+}
+
+fn (s: Store) get(id: Int) -> User ! ApiErr {
+  s.state.with(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))
+}
+
+/// All users ordered by id.
+fn (s: Store) list() -> List[User] {
+  s.state.with(fn(st) { st.users.values().sort_by(fn(u) { u.id }) })
+}
+
+/// Applies a partial update. Validation and the uniqueness check happen
+/// under the lock so concurrent patches cannot both claim one email.
+fn (s: Store) update(id: Int, p: UserPatch) -> User ! ApiErr {
+  s.state.with(fn(var st) -> User ! ApiErr {
+    var u = st.users.get(id).or_err(ApiErr.NotFound(id: id))?
+    match p.name {
+      Absent => ()
+      Null => return Err(ApiErr.BadRequest(msg: "name cannot be null"))
+      Value(v) => u.name = v
+    }
+    match p.email {
+      Absent => ()
+      Null => return Err(ApiErr.BadRequest(msg: "email cannot be null"))
+      Value(v) => u.email = v
+    }
+    match p.nickname {
+      Absent => ()
+      Null => u.nickname = None
+      Value(v) => u.nickname = v
+    }
+    validate_name(u.name)?
+    validate_email(u.email)?
+    if st.email_taken(u.email, id) {
+      return Err(ApiErr.Conflict(email: u.email))
+    }
+    st.users.put(id, u)
+    u
+  })
+}
+
+fn (s: Store) delete(id: Int) -> () ! ApiErr {
+  s.state.with(fn(var st) -> () ! ApiErr {
+    if st.users.remove(id) is None {
+      return Err(ApiErr.NotFound(id: id))
+    }
+  })
+}

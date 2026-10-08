@@ -1,0 +1,100 @@
+// filesync makes directory dst mirror directory src (one way).
+//
+// Usage: filesync [--dry-run] [--delete] <src> <dst>
+
+const USAGE = "usage: filesync [--dry-run] [--delete] <src> <dst>"
+
+struct Options {
+  src: Str
+  dst: Str
+  dry_run: Bool = false
+  delete: Bool = false
+}
+
+enum ArgErr {
+  UnknownFlag(flag: Str)
+  WrongArgCount(got: Int)
+}
+
+fn (e: ArgErr) display() -> Str {
+  match e {
+    UnknownFlag(flag) => "unknown flag {flag}"
+    WrongArgCount(got) => "expected 2 paths (src and dst), got {got}"
+  }
+}
+
+fn parse_args(args: List[Str]) -> Options ! ArgErr {
+  var dry_run = false
+  var delete = false
+  var paths: List[Str] = []
+  for a in args {
+    match a {
+      "--dry-run" => dry_run = true
+      "--delete" => delete = true
+      _ => {
+        if a.starts_with("--") {
+          return Err(UnknownFlag(a))
+        }
+        paths.push(a)
+      }
+    }
+  }
+  match paths {
+    [src, dst] => Options{src: src, dst: dst, dry_run: dry_run, delete: delete}
+    _ => return Err(WrongArgCount(paths.len()))
+  }
+}
+
+/// Platform rules: path comparison and files that are never synced.
+struct Platform {
+  case_insensitive: Bool
+  skip_names: Set[Str]
+}
+
+fn host_platform() -> Platform {
+  match target.os {
+    Linux => Platform{case_insensitive: false, skip_names: #{}}
+    Darwin => Platform{case_insensitive: true, skip_names: #{".DS_Store"}}
+    Windows => Platform{case_insensitive: true, skip_names: #{"Thumbs.db"}}
+    // GUESS: the task does not mention WASI; treat it like Linux.
+    Wasi => Platform{case_insensitive: false, skip_names: #{}}
+  }
+}
+
+/// Opens the destination root. In dry run mode it is read only, and a
+/// missing destination is None (nothing exists there yet).
+fn open_dst(fs: Fs, path: Str, dry_run: Bool) -> Fs? ! FsErr {
+  if dry_run {
+    if fs.exists(path)? {
+      Some(fs.sub(path)?.read_only())
+    } else {
+      None
+    }
+  } else {
+    fs.create_dir_all(path)?
+    Some(fs.sub(path)?)
+  }
+}
+
+fn main(os: Os) ! {
+  let opts = match parse_args(os.env.args()) {
+    Ok(o) => o
+    Err(e) => {
+      os.stdio.eprintln("filesync: {e}")
+      os.stdio.eprintln(USAGE)
+      os.proc.exit(2)
+    }
+  }
+  // Attenuate first: src is read only, dst is the only writable root, and
+  // nothing below this point sees os.fs.
+  // GUESS: the spec does not say where the root of the real os.fs is or how
+  // user supplied absolute paths map onto it. Assume os.fs is rooted so that
+  // command line paths (relative or absolute) resolve as the user expects.
+  let src = os.fs.sub(opts.src)?.read_only()
+  let dst = open_dst(os.fs, opts.dst, opts.dry_run)?
+  let report = sync(src, dst, os.stdio, opts, host_platform())?
+  os.stdio.println(report.summary())
+  if report.failed > 0 {
+    return Err("{report.failed} operation(s) failed")
+  }
+}

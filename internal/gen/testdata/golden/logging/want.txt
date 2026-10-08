@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+--- stderr
+<time> INFO not shown: default sink is stderr
+<time> WARN disk low free=12 unit=GB
+{"level":"DEBUG","msg":"json record","ok":true,"time":"<time>"}

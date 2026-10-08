@@ -1,0 +1,82 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "go_bug": "In copyFile, the result of s.opt.copyFn(out, in) is discarded (call made as a bare statement) instead of `if _, err = s.opt.copyFn(out, in); err != nil { return fmt.Errorf(\"copy: %w\", err) }`",
+    "xo_change": "dst.write Result dropped as a bare statement in copy_file",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "go_bug": "Removed the `if s.dst == nil { return }` guard at the top of deleteExtra",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "no nil root; dst is a plain Fs value so the guard being removed has no analogue"
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "go_bug": "In copyTree, the switch over the walked entry's kind (directory, regular file, anything else) lost its default branch, which counted the entry as skipped and logged `skip <p> (not a regular file)`",
+    "xo_change": "remove the Wasi arm from the match over target.os",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "go_bug": "copyTree was changed to copy regular files concurrently: it declares a sync.WaitGroup, defers wg.Wait(), and runs `wg.Go(func() { s.syncFile(p, d) })` for each regular file",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "no goroutines in this solution and Xo cannot share mutable Summary across tasks"
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "go_bug": "Removed `defer in.Close()` after opening the source file in copyFile, so every copied source file handle is leaked for the life of the process",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Xo has no file handles; fs.read and fs.write are whole-file calls, nothing to leak"
+  },
+  {
+    "id": "X6",
+    "class": "lost update",
+    "go_bug": "The receiver of syncer.fail was changed from *syncer to syncer",
+    "xo_change": "failure counter incremented on a by-value copy of Summary in a helper, so sum.failed stays 0",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "go_bug": "In deleteExtra, the reverse loop over the collected destination entries changed from `i >= 0` to `i > 0`, so entries[0] (the first entry of the destination walk in lexical order) is never considered for deletion.",
+    "xo_change": "first destination entry never considered for deletion",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "go_bug": "In run, a wrong number of positional arguments now returns exit status 1 instead of 2. Status 2 is the usage error code (also used for flag parse errors) and 1 means the sync ran and had failures. No HTTP in this program, so the closest instance is the CLI exit status contract.",
+    "xo_change": "usage error exits 1 instead of 2",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "go_bug": "In syncFile, the unchanged check became `!si.ModTime().Truncate(time.Second).After(di.ModTime())` (plus a time import). The source mtime is truncated to whole seconds but the destination mtime (copied from the source at full precision) is not, so a source modification within the same wall clock second as the previous version compares as not newer.",
+    "xo_change": "source up to one second newer is treated as unchanged",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "go_bug": "parentExtra now returns `dir != \".\" && s.seen[s.key(dir)]` instead of `!s.seen[...]`. Ignored names (SkipNames, e.g. .DS_Store) are now deleted from directories that still exist in the source, and kept in directories that are being removed.",
+    "xo_change": "ignored-name test inverted in the delete loop",
+    "status": "variant",
+    "reason": ""
+  }
+]

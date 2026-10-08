@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+10 50 -1
+--- stderr
+fault: index 7 out of range for List of length 5 at main.xo:5:23

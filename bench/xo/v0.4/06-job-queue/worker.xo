@@ -1,0 +1,123 @@
+// Worker runner: N workers lease jobs, heartbeat while the handler runs,
+// ack on success, nack on failure, and shut down gracefully.
+
+use std/log
+use std/task
+
+pub struct WorkerConfig {
+  pub workers: Int = 4
+  pub lease_duration: Duration = 30s
+  pub poll_interval: Duration = 100ms
+  pub grace: Duration = 10s
+}
+
+pub struct Runner {
+  queue: Queue
+  clock: Clock
+  cfg: WorkerConfig
+  stopping: Atomic[Bool]
+  stop: Chan[()]
+  done: Chan[()]
+  active: Atomic[Int]
+}
+
+pub fn new_runner(q: Queue, cfg: WorkerConfig = WorkerConfig{}) -> Runner
+  requires cfg.workers > 0
+  requires cfg.lease_duration >= 3ms
+{
+  Runner{
+    queue: q,
+    clock: q.clock,
+    cfg: cfg,
+    stopping: Atomic[Bool].new(false),
+    stop: Chan[()].new(),
+    done: Chan[()].new(),
+    active: Atomic[Int].new(0),
+  }
+}
+
+/// Runs the workers until `shutdown` is called. After the stop signal, running
+/// handlers get `cfg.grace` to finish; then they are canceled and their jobs
+/// are nacked. Returns only after every worker has exited.
+pub fn (r: Runner) run[fx: Effects](handler: fn(Job) -> () ! Error uses fx) uses (clock, fx) {
+  defer r.done.close()
+  scope s {
+    let workers = s.spawn(fn() {
+      scope w {
+        for i in 0..r.cfg.workers {
+          w.spawn(fn() { r.worker_loop("worker-${i}", handler) })
+        }
+      }
+    })
+    r.stop.recv()
+    let waited = task.with_timeout(r.clock, r.cfg.grace, fn() { workers.await })
+    if waited is Err(TimedOut) {
+      log.warn("grace period expired, canceling handlers", {"grace": r.cfg.grace})
+      s.cancel()
+    }
+  }
+}
+
+/// Stops leasing and waits until `run` has returned (no worker is running
+/// after this returns). Safe to call more than once.
+pub fn (r: Runner) shutdown() {
+  if r.stopping.compare_and_swap(false, true) {
+    r.stop.close()
+  }
+  r.done.recv()
+}
+
+/// Number of worker loops currently running.
+pub fn (r: Runner) active_workers() -> Int {
+  r.active.get()
+}
+
+fn (r: Runner) worker_loop[fx: Effects](worker_id: Str, handler: fn(Job) -> () ! Error uses fx)
+  uses (clock, fx)
+{
+  r.active.add(1)
+  defer r.active.add(-1)
+  while !r.stopping.get() {
+    if let Some(l) = r.queue.lease(worker_id, r.cfg.lease_duration) {
+      r.handle_one(l, handler)
+    } else {
+      r.clock.sleep(r.cfg.poll_interval)
+    }
+  }
+}
+
+fn (r: Runner) handle_one[fx: Effects](l: Lease, handler: fn(Job) -> () ! Error uses fx)
+  uses (clock, fx)
+{
+  var settled = false
+  defer {
+    // Runs shielded, so the nack still happens when the handler was canceled.
+    if !settled {
+      let _ = r.queue.nack(l.job.id, l.token, "canceled during shutdown")
+        .ignore_err("the lease may already have expired; expiry counts the attempt")
+    }
+  }
+  let outcome = scope h {
+    h.spawn_background(fn() { r.heartbeat(l) })
+    handler(l.job)
+  }
+  match outcome {
+    Ok(()) => r.queue.ack(l.job.id, l.token)
+      .ignore_err("the lease was lost; the job will be redelivered")
+    Err(e) => r.queue.nack(l.job.id, l.token, e.display())
+      .ignore_err("the lease was lost; expiry already counted the attempt")
+  }
+  settled = true
+}
+
+/// Extends the lease every lease_duration / 3 until canceled or the lease is lost.
+fn (r: Runner) heartbeat(l: Lease) uses clock {
+  let every = r.cfg.lease_duration / 3
+  while {
+    r.clock.sleep(every)
+    if let Err(e) = r.queue.extend(l.job.id, l.token, r.cfg.lease_duration) {
+      log.warn("heartbeat failed", {"job": l.job.id, "error": e.display()})
+      return
+    }
+  }
+}

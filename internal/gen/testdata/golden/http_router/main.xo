@@ -1,0 +1,97 @@
+use std/http
+use std/log
+
+enum ApiErr {
+  NotFound(id: Int)
+  Bad(msg: Str)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    NotFound(_) => 404
+    Bad(_) => 400
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    NotFound(id) => "item ${id} not found"
+    Bad(m) => m
+  }
+}
+
+enum Plain {
+  Boom
+} derive Display
+
+struct Msg {
+  text: Str
+} derive Json
+
+fn routes(log: Mutex[List[Str]]) -> http.Router {
+  var r = http.router()
+  r.wrap(fn(req, next) {
+    log.with(fn(var l) { l.push("before ${req.method} ${req.path}") })
+    let resp = next(req)
+    log.with(fn(var l) { l.push("after ${resp.status}") })
+    resp.with_header("X-Seen", "yes")
+  })
+  r.handle("GET /items/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let id = req.param_int("id")
+    if id > 10 {
+      return Err(ApiErr.NotFound(id: id))
+    }
+    http.json(200, Msg{text: "item ${id}"})
+  })
+  r.handle("GET /items/special", fn(req) { http.text(200, "special") })
+  r.handle("POST /echo", fn(req) -> http.Response ! ApiErr {
+    let m = req.json[Msg]().map_err(fn(e) { ApiErr.Bad(msg: "${e}") })?
+    http.json(201, m).with_header("Location", "/echo/1")
+  })
+  r.handle("GET /files/{path...}", fn(req) { http.text(200, "path=${req.param("path")} q=${req.query("q") ?? "-"}") })
+  r.handle("GET /plain", fn(req) -> http.Response ! Plain { Err(Plain.Boom) })
+  r.handle("GET /fault", fn(req) {
+    let xs: List[Int] = []
+    http.text(200, "${xs[1]}")
+  })
+  r.handle("GET /stream", fn(req) {
+    http.stream(200, fn(w) {
+      w.write(b"a\n")?
+      w.write(b"b\n")
+    })
+  })
+  r
+}
+
+fn show(r: http.Router, method: Str, path: Str, body: Str) -> Str {
+  let resp = r.call(http.new_request(method, path, body: body.bytes()))
+  "${method} ${path} -> ${resp.status} ${resp.body.to_str() ?? ""} seen=${resp.header("x-seen") ?? "no"}"
+}
+
+fn main(os: Os) {
+  log.configure(os.stdio, level: log.Level.Error)
+  let l = Mutex[List[Str]].new([])
+  let r = routes(l)
+  os.stdio.println(show(r, "GET", "/items/3", ""))
+  os.stdio.println(show(r, "GET", "/items/30", ""))
+  os.stdio.println(show(r, "GET", "/items/abc", ""))
+  os.stdio.println(show(r, "GET", "/items/special", ""))
+  os.stdio.println(show(r, "DELETE", "/items/3", ""))
+  os.stdio.println(show(r, "GET", "/nothing", ""))
+  os.stdio.println(show(r, "POST", "/echo", "{\"text\": \"hi\"}"))
+  os.stdio.println(show(r, "POST", "/echo", "{\"txt\": 1}"))
+  os.stdio.println(show(r, "GET", "/files/a/b/c.txt?q=1", ""))
+  os.stdio.println(show(r, "GET", "/plain", ""))
+  os.stdio.println(show(r, "GET", "/fault", ""))
+  os.stdio.println(show(r, "GET", "/stream", ""))
+  let first = l.with(fn(x) { x.len() })
+  os.stdio.println("middleware entries ${first}")
+  let req = http.new_request("GET", "https://example.com:8443/a/b?x=1&y=2", headers: {"content-type": "text/plain"})
+  os.stdio.println("url ${req.url.scheme} ${req.url.host} ${req.url.port ?? 0} ${req.url.path} ${req.query("y") ?? ""} ${req.header("Content-Type") ?? ""}")
+  match http.parse_url("ftp://x") {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("parse_url ${e.msg}")
+  }
+  let resp = http.json(200, Msg{text: "x"})
+  os.stdio.println("decode ${(resp.decode_json[Msg]().ok() ?? Msg{text: "?"}).text} ${resp.header("content-type") ?? ""}")
+}

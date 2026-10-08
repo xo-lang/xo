@@ -1,0 +1,71 @@
+// Enforces the module dependency rules by reading the `use` lines of each
+// module's source files. Lives in its own module so that it may look at every
+// other module without being one of the checked ones.
+
+const PROJECT = "example.com/notes/"
+
+/// Project modules each checked module may import. Anything under std/ is
+/// always allowed.
+const RULES: Map[Str, List[Str]] = {
+  "domain": [],
+  "store": ["domain"],
+  "api": ["domain", "store"],
+}
+
+/// Project imports (without the PROJECT prefix) of every .xo file in `dir`.
+/// `use` declarations come first in a file (core 15: File = { UseDecl } { TopDecl }),
+/// so scanning stops at the first line that is not blank, a comment, or a use.
+fn project_imports(fs: Fs, dir: Str) -> List[Str] ! FsErr {
+  var out: List[Str] = []
+  for info in fs.read_dir(dir)? {
+    if info.is_dir || !info.name.ends_with(".xo") {
+      continue
+    }
+    for raw in fs.read_text("${dir}/${info.name}")?.lines() {
+      let line = raw.trim()
+      if line.is_empty() || line.starts_with("//") {
+        continue
+      }
+      if !line.starts_with("use ") {
+        break
+      }
+      // "use a/b/c as x" -> "a/b/c"
+      let path = line.trim_prefix("use ").trim().split(" ")[0]
+      if path.starts_with(PROJECT) {
+        out.push(path.trim_prefix(PROJECT))
+      }
+    }
+  }
+  out
+}
+
+fn violations(fs: Fs, root: Str) -> List[Str] ! FsErr {
+  var bad: List[Str] = []
+  for (name, allowed) in RULES {
+    for dep in project_imports(fs, "${root}/${name}")? {
+      if !allowed.contains(dep) {
+        bad.push("${name} imports ${dep}")
+      }
+    }
+  }
+  bad
+}
+
+// GUESS: `uses fs.read` plus `xo test --real` gives a real os.fs (core 9.2),
+// and the working directory of a test is its module directory, as in Go, so
+// the project root is "..". The spec does not say what the working directory
+// is during `xo test`, nor what happens to a `uses` test without `--real`.
+test "domain, store and api respect the dependency rules" uses fs.read {
+  expect(violations(os.fs, "..")?) == []
+}
+
+test "the rule check catches a forbidden import" {
+  // os.fs is the in memory fake here, so build a tiny bad project in it.
+  os.fs.create_dir_all("p/domain")?
+  os.fs.create_dir_all("p/store")?
+  os.fs.create_dir_all("p/api")?
+  os.fs.write("p/domain/note.xo", b"use std/json\nuse example.com/notes/store\n\npub struct Note {}\n")?
+  os.fs.write("p/store/store.xo", b"use example.com/notes/domain\nuse example.com/notes/api as web\n")?
+  os.fs.write("p/api/api.xo", b"use example.com/notes/domain\nuse example.com/notes/store\n")?
+  expect(violations(os.fs, "p")?) == ["domain imports store", "store imports api"]
+}

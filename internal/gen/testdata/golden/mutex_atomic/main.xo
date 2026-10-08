@@ -1,0 +1,42 @@
+enum E {
+  Stop
+} derive Display
+
+fn main(os: Os) {
+  let counter = Mutex[Map[Str, Int]].new({})
+  scope s {
+    for i in 0..20 {
+      s.spawn(fn() {
+        let key = if i % 2 == 0 { "even" } else { "odd" }
+        counter.with(fn(var m) {
+          let cur = m.get(key) ?? 0
+          m.put(key, cur + 1)
+        })
+      })
+    }
+  }
+  let snapshot = counter.with(fn(m) { m })
+  os.stdio.println("even ${snapshot.get_or_fault("even", "golden: key exists")} odd ${snapshot.get_or_fault("odd", "golden: key exists")}")
+  let failed = counter.with(fn(var m) -> Int ! E {
+    m.put("even", 1000)
+    Err(E.Stop)
+  })
+  os.stdio.println("failed ${failed.is_err()} kept ${counter.with(fn(m) { m.get_or_fault("even", "golden: key exists") })}")
+  let outcome = counter.with(fn(var m) -> Result[Int, E] {
+    m.put("odd", 99)
+    if m.len() > 1 {
+      return Ok(m.len())
+    }
+    Err(E.Stop)
+  })
+  os.stdio.println("outcome ${outcome.ok() ?? 0} written ${counter.with(fn(m) { m.get_or_fault("odd", "golden: key exists") })}")
+  let a = Atomic[Int].new(5)
+  os.stdio.println("atomic ${a.add(3)} ${a.swap(1)} ${a.get()} ${a.compare_and_swap(1, 10)} ${a.compare_and_swap(1, 20)} ${a.get()}")
+  let flag = Atomic[Bool].new(false)
+  flag.set(true)
+  os.stdio.println("flag ${flag.get()}")
+  os.stdio.println("re-entrant with next")
+  counter.with(fn(m) {
+    counter.with(fn(m2) { m2.len() })
+  })
+}

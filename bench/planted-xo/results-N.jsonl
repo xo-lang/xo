@@ -1,0 +1,20 @@
+{"task": "01-crud-api", "bug": "N1", "class": "off by one", "caught_by": "none"}
+{"task": "01-crud-api", "bug": "N2", "class": "wrong HTTP status or error kind", "caught_by": "test"}
+{"task": "01-crud-api", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "caught_by": "test"}
+{"task": "01-crud-api", "bug": "N4", "class": "inverted or wrong condition", "caught_by": "test"}
+{"task": "02-worker-pool", "bug": "N1", "class": "off by one", "caught_by": "test"}
+{"task": "02-worker-pool", "bug": "N2", "class": "wrong HTTP status or error kind", "caught_by": "none"}
+{"task": "02-worker-pool", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "caught_by": "test"}
+{"task": "02-worker-pool", "bug": "N4", "class": "inverted or wrong condition", "caught_by": "test"}
+{"task": "03-retry-client", "bug": "N1", "class": "off by one", "caught_by": "test"}
+{"task": "03-retry-client", "bug": "N2", "class": "wrong HTTP status or error kind", "caught_by": "test"}
+{"task": "03-retry-client", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "caught_by": "test"}
+{"task": "03-retry-client", "bug": "N4", "class": "inverted or wrong condition", "caught_by": "test"}
+{"task": "04-file-sync", "bug": "N1", "class": "off by one", "caught_by": "test"}
+{"task": "04-file-sync", "bug": "N2", "class": "wrong HTTP status or error kind", "caught_by": "none"}
+{"task": "04-file-sync", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "caught_by": "none"}
+{"task": "04-file-sync", "bug": "N4", "class": "inverted or wrong condition", "caught_by": "test"}
+{"task": "05-rate-limiter", "bug": "N1", "class": "off by one", "caught_by": "test"}
+{"task": "05-rate-limiter", "bug": "N2", "class": "wrong HTTP status or error kind", "caught_by": "test"}
+{"task": "05-rate-limiter", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "caught_by": "test"}
+{"task": "05-rate-limiter", "bug": "N4", "class": "inverted or wrong condition", "caught_by": "test"}

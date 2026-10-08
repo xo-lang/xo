@@ -1,0 +1,115 @@
+// Package api holds the HTTP handlers. It depends on domain and store.
+
+use std/http
+use std/json
+use example.com/notes/domain
+use example.com/notes/store
+
+pub enum ApiErr {
+  BadRequest(msg: Str)
+  PreconditionRequired
+  PreconditionFailed
+  Storage(from store.StoreErr)
+}
+
+// http maps handler errors to responses through StatusError (std 4.2).
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    PreconditionRequired => 428
+    PreconditionFailed => 412
+    Storage(store.StoreErr.NotFound(_)) => 404
+    Storage(store.StoreErr.Conflict(..)) => 412
+    Storage(store.StoreErr.Invalid(_)) => 400
+    Storage(store.StoreErr.Corrupt(..)) | Storage(store.StoreErr.Io(_)) => 500
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    PreconditionRequired => "If-Match header is required"
+    PreconditionFailed => "If-Match does not match the current version"
+    Storage(store.StoreErr.Conflict(current: c, ..)) => "version conflict, current version is ${c}"
+    Storage(store.StoreErr.Corrupt(..)) | Storage(store.StoreErr.Io(_)) => "internal error"
+    Storage(inner) => "${inner}"
+  }
+}
+
+fn etag(n: domain.Note) -> Str {
+  "\"${n.version}\""
+}
+
+/// Reads the version from If-Match. Accepts `"3"`, `W/"3"`, and bare `3`.
+fn if_match(req: http.Request) -> Int ! ApiErr {
+  let raw = req.header("If-Match").or_err(ApiErr.PreconditionRequired)?
+  let v = raw.trim().trim_prefix("W/").trim_prefix("\"").trim_suffix("\"")
+  // A value that is not a version can never match the current one.
+  Int.parse(v).or_err(ApiErr.PreconditionFailed)
+}
+
+fn decode_input(req: http.Request) -> domain.NoteInput ! ApiErr {
+  req.json[domain.NoteInput]().map_err(fn(e) { ApiErr.BadRequest(msg: "invalid body: ${e}") })
+}
+
+fn parse_query(req: http.Request) -> domain.Query ! ApiErr {
+  let limit = match req.query("limit") {
+    Some(s) => Int.parse(s).or_err(ApiErr.BadRequest(msg: "limit must be an integer"))?
+    None => domain.DEFAULT_LIMIT
+  }
+  if limit < 1 || limit > domain.MAX_LIMIT {
+    return Err(BadRequest(msg: "limit must be 1 to ${domain.MAX_LIMIT}"))
+  }
+  let cursor: domain.Cursor? = match req.query("cursor") {
+    Some(c) => domain.parse_cursor(c).or_err(ApiErr.BadRequest(msg: "invalid cursor"))?
+    None => None
+  }
+  domain.Query{tag: req.query("tag"), text: req.query("q"), limit: limit, cursor: cursor}
+}
+
+pub fn router(st: store.Store, clock: Clock) -> http.Router uses (fs, rand, clock) {
+  var r = http.router()
+
+  r.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
+    let n = st.create(decode_input(req)?, clock.now())?
+    http.json(201, n)
+      .with_header("ETag", etag(n))
+      .with_header("Location", "/notes/${n.id}")
+  })
+
+  r.handle("GET /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let n = st.get(req.param("id"))?
+    http.json(200, n).with_header("ETag", etag(n))
+  })
+
+  r.handle("PUT /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let expected = if_match(req)?
+    let input = decode_input(req)?
+    let n = st.update(req.param("id"), expected, input, clock.now())?
+    http.json(200, n).with_header("ETag", etag(n))
+  })
+
+  r.handle("DELETE /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let expected = if_match(req)?
+    st.delete(req.param("id"), expected)?
+    http.empty(204)
+  })
+
+  r.handle("GET /notes", fn(req) -> http.Response ! ApiErr {
+    let q = parse_query(req)?
+    http.json(200, domain.search(st.all()?, q))
+  })
+
+  // GUESS: std/http has no streaming response body (std 4.3 Response.body is
+  // Bytes), so the export is built in memory as JSON lines and sent at once.
+  r.handle("GET /export", fn(_req) -> http.Response ! ApiErr {
+    var b = StrBuilder.new()
+    for n in domain.newest_first(st.all()?) {
+      b.write(json.encode_str(n))
+      b.write("\n")
+    }
+    http.text(200, b.freeze()).with_header("Content-Type", "application/x-ndjson")
+  })
+
+  r
+}

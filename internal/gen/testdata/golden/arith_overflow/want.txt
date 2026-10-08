@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+small: 6
+max: 9223372036854775807
+int8: -128
+about to overflow
+--- stderr
+fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:4:5

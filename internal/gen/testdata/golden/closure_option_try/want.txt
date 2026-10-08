@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+10 0 30 0 10 -1
+--- stderr

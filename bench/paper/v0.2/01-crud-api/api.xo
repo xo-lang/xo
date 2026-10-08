@@ -1,0 +1,49 @@
+use std/http
+use std/json
+use std/log
+
+fn bad_body(e: json.DecodeErr) -> ApiErr {
+  ApiErr.BadRequest(msg: "invalid body: {e}")
+}
+
+fn routes(store: Store) -> http.Router {
+  var r = http.router()
+
+  r.handle(r"POST /users", fn(req) -> http.Response ! ApiErr {
+    // GUESS: a named function can be passed where a closure is expected.
+    // The spec only shows closure literals as arguments.
+    let input = req.json[NewUser]().map_err(bad_body)?
+    http.json(201, store.create(input)?)
+  })
+
+  r.handle(r"GET /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    http.json(200, store.get(req.param_int("id"))?)
+  })
+
+  // GUESS: a handler that cannot fail is accepted by `handle[E: Error, ...]`.
+  // Subsumption (core 6.2) says a non failing function is accepted where a
+  // failing one is expected, but not what E is inferred to (Never?) or whether
+  // Never satisfies the `Error` constraint.
+  r.handle(r"GET /users", fn(_req) { http.json(200, store.list()) })
+
+  r.handle(r"PATCH /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let p = req.json[UserPatch]().map_err(bad_body)?
+    http.json(200, store.patch(req.param_int("id"), p)?)
+  })
+
+  r.handle(r"DELETE /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    store.delete(req.param_int("id"))?
+    http.empty(204)
+  })
+
+  r
+}
+
+fn main(os: Os) ! {
+  let raw_port = os.env.get("PORT") ?? "8080"
+  let port = Int.parse(raw_port).or_err("PORT is not a number: {raw_port}")?
+  let addr = ":{port}"
+  let srv = http.server(os.net.listen(addr)?, routes(new_store()))
+  log.info("listening", {"addr": addr})
+  srv.serve()?
+}

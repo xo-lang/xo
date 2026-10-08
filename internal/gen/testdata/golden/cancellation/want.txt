@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+timed out true
+second timed out true
+defer write ok=true
+read reported Canceled
+--- stderr

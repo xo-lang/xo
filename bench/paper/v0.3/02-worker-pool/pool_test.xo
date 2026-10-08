@@ -1,0 +1,99 @@
+use std/task
+
+struct Work {
+  delay: Duration
+  value: Int
+  fails: Bool = false
+}
+
+enum WorkErr {
+  Boom(value: Int)
+}
+
+struct Gauge {
+  running: Int
+  peak: Int
+}
+
+fn jobs_of(ws: List[Work]) -> List[Job[Work]] {
+  var jobs: List[Job[Work]] = []
+  for (i, w) in ws.indexed() {
+    jobs.push(Job{id: i + 1, input: w})
+  }
+  jobs
+}
+
+/// Sleeps for the work's delay, then returns its value or fails.
+fn worker(clock: Clock) -> fn(Work) -> Int ! WorkErr uses clock {
+  fn(w: Work) -> Int ! WorkErr {
+    clock.sleep(w.delay)
+    if w.fails {
+      return Err(WorkErr.Boom(value: w.value))
+    }
+    w.value
+  }
+}
+
+test "results keep original order when later jobs finish first" {
+  let jobs = jobs_of([
+    Work{delay: 30ms, value: 1},
+    Work{delay: 20ms, value: 2},
+    Work{delay: 10ms, value: 3},
+  ])
+  let report = run_pool(os.clock, jobs, workers: 3, timeout: 1s, f: worker(os.clock))
+  expect(report.results) == [1, 2, 3]
+  expect(report.failures.is_empty())
+  expect(report.elapsed) == 30ms
+}
+
+test "one failing job does not affect the others" {
+  let jobs = jobs_of([
+    Work{delay: 10ms, value: 1},
+    Work{delay: 5ms, value: 2, fails: true},
+    Work{delay: 10ms, value: 3},
+  ])
+  let report = run_pool(os.clock, jobs, workers: 2, timeout: 1s, f: worker(os.clock))
+  expect(report.results) == [1, 3]
+  expect(report.failures) == [(2, task.Timed.Failed(WorkErr.Boom(value: 2)))]
+}
+
+test "timeout cancels slow jobs and reports them" {
+  let jobs = jobs_of([
+    Work{delay: 1s, value: 1},
+    Work{delay: 5s, value: 2},
+    Work{delay: 50ms, value: 3},
+    Work{delay: 10s, value: 4},
+  ])
+  let report = run_pool(os.clock, jobs, workers: 4, timeout: 2s, f: worker(os.clock))
+  expect(report.results) == [1, 3]
+  expect(report.failures) == [
+    (2, task.Timed.TimedOut),
+    (4, task.Timed.TimedOut),
+  ]
+  expect(report.elapsed) == 2s
+}
+
+test "never more than workers jobs run at the same time" {
+  let gauge = Mutex[Gauge].new(Gauge{running: 0, peak: 0})
+  let tracked = fn(w: Work) -> Int {
+    gauge.with(fn(var g) {
+      g.running += 1
+      g.peak = g.peak.max(g.running)
+    })
+    os.clock.sleep(w.delay)
+    gauge.with(fn(var g) { g.running -= 1 })
+    w.value
+  }
+
+  var ws: List[Work] = []
+  for i in 0..10 {
+    ws.push(Work{delay: 10ms, value: i})
+  }
+  let report = run_pool(os.clock, jobs_of(ws), workers: 3, timeout: 1s, f: tracked)
+
+  expect(report.results.len()) == 10
+  expect(gauge.with(fn(g) { g.peak })) == 3
+  expect(gauge.with(fn(g) { g.running })) == 0
+  // 10 jobs, 3 at a time, 10ms each: 4 rounds.
+  expect(report.elapsed) == 40ms
+}

@@ -1,0 +1,54 @@
+pub const MAX_TITLE_RUNES = 200
+pub const MAX_TAGS = 10
+pub const MAX_TAG_LEN = 32
+
+pub enum ValidationErr {
+  EmptyTitle
+  TitleTooLong(len: Int)
+  TooManyTags(count: Int)
+  BadTag(tag: Str)
+}
+
+pub fn (e: ValidationErr) display() -> Str {
+  match e {
+    EmptyTitle => "title must not be empty"
+    TitleTooLong(len) => "title is ${len} characters, at most ${MAX_TITLE_RUNES} allowed"
+    TooManyTags(count) => "${count} tags given, at most ${MAX_TAGS} allowed"
+    BadTag(tag) => "tag \"${tag}\" must match [a-z0-9-]{1,32}"
+  }
+}
+
+/// Checks the title and tags of a note.
+pub fn validate(title: Str, tags: List[Str]) -> () ! ValidationErr {
+  validate_title(title)?
+  validate_tags(tags)
+}
+
+/// A title is 1 to 200 characters (Unicode scalar values, not bytes).
+pub fn validate_title(title: Str) -> () ! ValidationErr
+  requires title.rune_count() >= 1 else ValidationErr.EmptyTitle
+  requires title.rune_count() <= MAX_TITLE_RUNES else ValidationErr.TitleTooLong(len: title.rune_count())
+{}
+
+/// At most 10 tags, each a lowercase `[a-z0-9-]{1,32}`.
+pub fn validate_tags(tags: List[Str]) -> () ! ValidationErr
+  requires tags.len() <= MAX_TAGS else ValidationErr.TooManyTags(count: tags.len())
+{
+  for t in tags {
+    if !is_valid_tag(t) {
+      return Err(ValidationErr.BadTag(tag: t))
+    }
+  }
+}
+
+pub fn is_valid_tag(tag: Str) -> Bool {
+  let n = tag.len()
+  n >= 1 && n <= MAX_TAG_LEN && tag.runes().all(fn(r) { is_tag_rune(r) })
+}
+
+fn is_tag_rune(r: Rune) -> Bool {
+  match r {
+    'a'..='z' | '0'..='9' | '-' => true
+    _ => false
+  }
+}

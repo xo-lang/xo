@@ -1,0 +1,46 @@
+fn main(os: Os) {
+  var m: Map[Str, Int] = {}
+  m.put("one", 1)
+  m.put("two", 2)
+  m.put("three", 3)
+  m.put("one", 11)
+  os.stdio.println("keys ${m.keys().join(",")} one=${m.get_or_fault("one", "golden: key exists")} len=${m.len()}")
+  let removed = m.remove("two")
+  m.put("two", 22)
+  os.stdio.println("after remove ${m.keys().join(",")} removed ${removed ?? 0}")
+  let evens = m.filter(fn(k, v) { v % 2 == 0 })
+  os.stdio.println("filter ${evens.keys().join(",")} contains ${m.contains("two")} ${m.contains("zzz")}")
+  var total = 0
+  for (_k, v) in m {
+    total += v
+  }
+  os.stdio.println("sum ${total} entries ${m.entries().len()} values ${m.values().len()}")
+  var s = #{3, 1, 2}
+  s.add(2)
+  s.add(5)
+  let had = s.remove(1)
+  let other = #{5, 6}
+  os.stdio.println("set ${s.len()} ${had} ${s.contains(3)} union ${s.union(other).len()} inter ${s.intersect(other).len()} diff ${s.difference(other).len()}")
+  os.stdio.println("set order ${s.to_list().map(fn(x) { "${x}" }).join(",")}")
+  let xs = [5, 3, 8, 1, 9, 2]
+  os.stdio.println("slice ${xs[1..3].len()} ${xs[..2][1]} ${xs[4..][0]} ${xs[1..=2].len()}")
+  os.stdio.println("sort ${xs.sort()[0]} by ${xs.sort_by(fn(x) { -x })[0]} rev ${xs.reverse()[0]}")
+  os.stdio.println("any ${xs.any(fn(x) { x > 8 })} all ${xs.all(fn(x) { x > 0 })} contains ${xs.contains(8)} index ${xs.index_of(8) ?? -1}")
+  os.stdio.println("first ${xs.first() ?? 0} last ${xs.last() ?? 0} empty ${xs.is_empty()} ${[0].is_empty()}")
+  for (i, x) in xs.indexed() {
+    if i < 2 {
+      os.stdio.print("${i}:${x} ")
+    }
+  }
+  os.stdio.println("")
+  let words = ["b", "a", "c"]
+  os.stdio.println("${(words + ["d"]).sort().join("")} set ${words.to_set().len()}")
+  var buf = Buf[Int].new()
+  buf.push(1)
+  buf.push(2)
+  let frozen = buf.freeze()
+  var sb = StrBuilder.new()
+  sb.write("ab")
+  sb.write("cd")
+  os.stdio.println("buf ${frozen.len()} sb ${sb.freeze()}")
+}

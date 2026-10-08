@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+ok 1
+shifted 5
+widened -1..5
+shrink past the invariant next
+--- stderr
+fault: invariant of Range failed: lo <= hi at main.xo:11:19

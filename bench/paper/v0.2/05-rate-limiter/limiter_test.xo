@@ -1,0 +1,118 @@
+use std/http
+
+fn hello_req(key: Str) -> http.Request {
+  http.new_request("GET", "/hello", headers: {"X-Api-Key": key})
+}
+
+test "hello returns msg hi" {
+  let r = routes(new_limiter(DEFAULT_LIMIT, {}), os.clock)
+  let resp = r.call(hello_req("k"))
+  expect(resp.status) == 200
+  expect(resp.decode_json[Map[Str, Str]]()?) == {"msg": "hi"}
+}
+
+test "20 immediate requests succeed and the 21st gets 429" {
+  let r = routes(new_limiter(DEFAULT_LIMIT, {}), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello_req("k1")).status) == 200
+  }
+  expect(r.call(hello_req("k1")).status) == 429
+  // another client is not affected
+  expect(r.call(hello_req("k2")).status) == 200
+}
+
+test "after 1 second 5 more succeed" {
+  let r = routes(new_limiter(DEFAULT_LIMIT, {}), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello_req("k1")).status) == 200
+  }
+  expect(r.call(hello_req("k1")).status) == 429
+  os.clock.advance(1s)
+  for _ in 0..5 {
+    expect(r.call(hello_req("k1")).status) == 200
+  }
+  expect(r.call(hello_req("k1")).status) == 429
+}
+
+test "missing api key falls back to remote ip" {
+  let r = routes(new_limiter(Limit{capacity: 1, refill_per_sec: 1.0}, {}), os.clock)
+  let req = http.new_request("GET", "/hello")
+  expect(r.call(req).status) == 200
+  expect(r.call(req).status) == 429
+  expect(r.call(hello_req("127.0.0.1")).status) == 429
+}
+
+test "Retry-After is whole seconds until one token, at least 1" {
+  let custom = {
+    "slow": Limit{capacity: 1, refill_per_sec: 0.25},
+    "odd": Limit{capacity: 1, refill_per_sec: 0.4},
+  }
+  let r = routes(new_limiter(DEFAULT_LIMIT, custom), os.clock)
+
+  // default: 0.2s until a token, rounded up to the minimum of 1
+  for _ in 0..20 {
+    expect(r.call(hello_req("d")).status) == 200
+  }
+  let d = r.call(hello_req("d"))
+  expect(d.status) == 429
+  expect(d.header("Retry-After")) == Some("1")
+
+  // 0.25 tokens per second: 4s from empty, 3s after one more second
+  expect(r.call(hello_req("slow")).status) == 200
+  expect(r.call(hello_req("slow")).header("Retry-After")) == Some("4")
+  os.clock.advance(1s)
+  expect(r.call(hello_req("slow")).header("Retry-After")) == Some("3")
+
+  // 0.4 tokens per second: 2.5s rounds up to 3
+  expect(r.call(hello_req("odd")).status) == 200
+  expect(r.call(hello_req("odd")).header("Retry-After")) == Some("3")
+}
+
+test "custom limit for a key is applied" {
+  let custom = {"vip": Limit{capacity: 2, refill_per_sec: 1.0}}
+  let r = routes(new_limiter(DEFAULT_LIMIT, custom), os.clock)
+  expect(r.call(hello_req("vip")).status) == 200
+  expect(r.call(hello_req("vip")).status) == 200
+  expect(r.call(hello_req("vip")).status) == 429
+  // other keys still get the default capacity of 20
+  for _ in 0..20 {
+    expect(r.call(hello_req("plain")).status) == 200
+  }
+}
+
+test "bucket refill is capped at capacity" {
+  var b = new_bucket(Limit{capacity: 2, refill_per_sec: 1.0}, os.clock.now())
+  expect(b.take(os.clock.now())) == true
+  expect(b.take(os.clock.now())) == true
+  expect(b.take(os.clock.now())) == false
+  let later = os.clock.now() + 1h
+  expect(b.take(later)) == true
+  expect(b.take(later)) == true
+  expect(b.take(later)) == false
+  // reading b here also satisfies the lost update check (XO0520)
+  expect(b.tokens) == 0.0
+}
+
+test "idle buckets are evicted" {
+  let l = new_limiter(DEFAULT_LIMIT, {})
+  l.check("old", os.clock.now())
+  os.clock.advance(5m)
+  l.check("fresh", os.clock.now())
+  os.clock.advance(6m)
+  expect(l.evict_idle(os.clock.now(), IDLE_TTL)) == 1
+  expect(l.keys()) == ["fresh"]
+}
+
+test "background evictor runs every minute and stops with its scope" {
+  let l = new_limiter(DEFAULT_LIMIT, {})
+  l.check("a", os.clock.now())
+  scope s {
+    s.spawn_background(fn() { run_evictor(l, os.clock) })
+    // ticks at 1m..11m; "a" is idle more than 10m at the 11m tick.
+    // Sleep to 11m30s so the body never wakes at the same instant as a tick.
+    os.clock.sleep(11m + 30s)
+  }
+  // reaching this line proves the evictor stopped: a scope waits for every
+  // task, and its body finishing cancels background tasks (core 7.1)
+  expect(l.keys()) == []
+}

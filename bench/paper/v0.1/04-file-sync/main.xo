@@ -1,0 +1,85 @@
+// filesync: make <dst> mirror <src> (one way).
+//
+// Usage: filesync [--dry-run] [--delete] <src> <dst>
+
+enum UsageErr {
+  Unknown(flag: Str)
+  WrongArgs(count: Int)
+} derive Display
+
+struct Options {
+  dry_run: Bool = false
+  delete: Bool = false
+  src: Str
+  dst: Str
+}
+
+fn parse_args(args: List[Str]) -> Options ! UsageErr {
+  var dry_run = false
+  var delete = false
+  var paths: List[Str] = []
+  for (i, a) in args.indexed() {
+    // GUESS: os.env.args() includes the program name at index 0, like Go's os.Args.
+    if i == 0 {
+      continue
+    }
+    if a == "--dry-run" {
+      dry_run = true
+    } else if a == "--delete" {
+      delete = true
+    } else if a.starts_with("--") { // GUESS: Str.starts_with exists
+      // GUESS: `return err(e)` is how a `! E` function returns an error early
+      return err(UsageErr.Unknown(flag: a))
+    } else {
+      paths.push(a)
+    }
+  }
+  if paths.len() != 2 {
+    return err(UsageErr.WrongArgs(count: paths.len()))
+  }
+  Options{dry_run: dry_run, delete: delete, src: paths[0], dst: paths[1]}
+}
+
+/// Case and ignore rules for the host OS.
+fn host_rules() -> Rules {
+  match target.os {
+    Linux => Rules{fold_case: false, ignored: #{}} // GUESS: `#{}` is the empty Set literal
+    Darwin => Rules{fold_case: true, ignored: #{".ds_store"}}
+    Windows => Rules{fold_case: true, ignored: #{"thumbs.db"}}
+    Wasi => Rules{fold_case: false, ignored: #{}}
+  }
+}
+
+fn main(os: Os) ! {
+  // GUESS: Env.args() -> List[Str]; Stdio.eprintln/println are infallible.
+  let opts = match parse_args(os.env.args()) {
+    ok(o) => o
+    err(e) => {
+      os.stdio.eprintln("filesync: {e}")
+      os.stdio.eprintln("usage: filesync [--dry-run] [--delete] <src> <dst>")
+      // GUESS: Proc.exit has a never/bottom type so this arm unifies with Options
+      os.proc.exit(2)
+    }
+  }
+
+  // Attenuate authority before handing it to the sync code: src is read only,
+  // and in dry run mode dst is read only too, so a bug cannot write.
+  if !opts.dry_run {
+    os.fs.create_dir_all(opts.dst)? // GUESS: Fs.create_dir_all(path) -> () ! Error
+  }
+  let src = os.fs.sub(opts.src)?.read_only()
+  // GUESS: read_only() returns the same type Fs (writes then fail at runtime),
+  // so both if branches have one type.
+  let dst = if opts.dry_run {
+    os.fs.sub(opts.dst)?.read_only()
+  } else {
+    os.fs.sub(opts.dst)?
+  }
+
+  let stats = sync(src: src, dst: dst, rules: host_rules(), dry_run: opts.dry_run, delete: opts.delete, out: os.stdio)?
+
+  os.stdio.println("copied: {stats.copied}, deleted: {stats.deleted}, skipped: {stats.skipped}, failed: {stats.failed}")
+  if stats.failed > 0 {
+    os.proc.exit(1)
+  }
+}

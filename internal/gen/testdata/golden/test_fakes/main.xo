@@ -1,0 +1,126 @@
+use std/http
+use std/task
+
+fn fetch(net: Net, url: Str) -> Str ! http.ClientErr uses net.dial {
+  let resp = http.client(net).get(url)?
+  "${resp.status} ${resp.body.to_str() ?? ""}"
+}
+
+fn program(os: Os) ! {
+  let name = os.env.get("NAME") ?? "nobody"
+  os.stdio.println("hello ${name} args ${os.env.args().join(",")}")
+  let line = os.stdio.read_line()? ?? "<eof>"
+  os.stdio.println("read ${line}")
+  if name == "quit" {
+    os.proc.exit(3)
+  }
+  os.fs.write("out/result.txt", b"done")?
+  Err("finished with an error")?
+}
+
+test "virtual clock auto advances and records sleeps" {
+  let start = os.clock.now()
+  os.clock.sleep(5s)
+  os.clock.sleep(250ms)
+  expect(os.clock.since(start)) == 5250ms
+  expect(os.clock.sleeps()) == [5s, 250ms]
+  expect("${start}") == "2026-01-01T00:00:00Z"
+}
+
+test "timers fire in order across tasks" {
+  let order = Mutex[List[Int]].new([])
+  scope s {
+    for i in [3, 1, 2] {
+      s.spawn(fn() {
+        os.clock.sleep(1s * i)
+        order.with(fn(var xs) { xs.push(i) })
+      })
+    }
+  }
+  expect(order.with(fn(xs) { xs })) == [1, 2, 3]
+  expect(os.clock.since(Time.parse_rfc3339("2026-01-01T00:00:00Z") ?? Time.UNIX_EPOCH)) == 3s
+}
+
+test "with_timeout uses virtual time" {
+  let r = task.with_timeout(os.clock, 10s, fn() {
+    os.clock.sleep(1h)
+    1
+  })
+  expect(r is Err(TimedOut))
+  expect(os.clock.since(Time.parse_rfc3339("2026-01-01T00:00:00Z") ?? Time.UNIX_EPOCH)) == 10s
+}
+
+test "advance fires due timers and lets tasks run" {
+  let hits = Atomic[Int].new(0)
+  scope s {
+    s.spawn(fn() {
+      os.clock.sleep(2s)
+      hits.add(1)
+    })
+    os.clock.advance(1s)
+    expect(hits.get()) == 0
+    os.clock.advance(1s)
+    expect(hits.get()) == 1
+  }
+}
+
+test "memfs" {
+  os.fs.write("a/b/c.txt", b"hi")?
+  expect(os.fs.read_text("a/b/c.txt")?) == "hi"
+  expect(os.fs.exists("a/b")?)
+  let sub = os.fs.sub("a")
+  expect(sub.read_text("b/c.txt")?) == "hi"
+  expect(sub.read("../x") is Err(Denied(..)))
+  os.fs.fail_next(testing.FsOp.Write, "a/*.txt", FsErr.Io(path: "a", msg: "disk full"))
+  expect(os.fs.write("a/x.txt", b"1") is Err(Io(..)))
+  os.fs.write("a/x.txt", b"1")?
+  expect(os.fs.files().keys()) == ["a/b/c.txt", "a/x.txt"]
+  os.fs.rename("a/x.txt", "a/y.txt")?
+  expect(os.fs.read_dir("a")?.map(fn(f) { f.name })) == ["b", "y.txt"]
+  expect(os.fs.remove("a") is Err(NotEmpty(..)))
+  os.fs.remove_all("a")?
+  expect(os.fs.files().is_empty())
+  let info = os.fs.stat("missing")?
+  expect(info.is_none())
+}
+
+test "fake net" {
+  os.net.handle("GET https://api.test/users/{id}", fn(req) { http.text(200, "user ${req.param("id")}") })
+  expect(fetch(os.net, "https://api.test/users/7")?) == "200 user 7"
+  os.net.fail_next("GET https://api.test/users/{id}", http.ClientErr.Timeout)
+  expect(fetch(os.net, "https://api.test/users/8")) == Err(http.ClientErr.Timeout)
+  expect(fetch(os.net, "https://other.test/") is Err(Connect(..)))
+  expect(os.net.requests().len()) == 3
+  os.net.fail("GET https://api.test/users/{id}", http.ClientErr.Canceled)
+  expect(fetch(os.net, "https://api.test/users/1")) == Err(http.ClientErr.Canceled)
+  os.net.clear_failures()
+  expect(fetch(os.net, "https://api.test/users/1")?) == "200 user 1"
+}
+
+test "run_main with env, stdio, proc" {
+  os.env.set("NAME", "ada")
+  os.stdio.set_input("first line\nsecond\n")
+  let code = testing.run_main(program, os, ["x", "y"])
+  expect(code) == 1
+  expect(os.stdio.output()) == "hello ada args x,y\nread first line\n"
+  expect(os.stdio.errors().starts_with("error: finished with an error"))
+  expect(os.fs.read_text("out/result.txt")?) == "done"
+  os.env.set("NAME", "quit")
+  expect(testing.run_main(program, os)) == 3
+  expect(os.proc.exit_code()) == Some(3)
+}
+
+test "seeded rand is deterministic" seed 42 {
+  let a = os.rand.int(0, 1000000)
+  let b = os.rand.int(0, 1000000)
+  expect(a != b)
+  expect(os.rand.float() < 1.0)
+  expect(os.rand.shuffle([1, 2, 3]).sort()) == [1, 2, 3]
+}
+
+test "os.tasks is canceled when the test ends" {
+  os.tasks.spawn_background(fn() {
+    os.clock.sleep(1h)
+  })
+  expect(true)
+}

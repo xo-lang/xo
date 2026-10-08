@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+total 10
+hits 10
+background ran: true stopped quickly: true
+group 42
+--- stderr

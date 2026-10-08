@@ -1,0 +1,72 @@
+[
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "`report` is pub with no `uses` clause, so it is pure, but performs `clock`",
+    "span": {
+      "file": "main.xo",
+      "line": 10,
+      "col": 8,
+      "end_line": 10,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "calls `stamp`, which performs `clock`",
+        "span": {
+          "file": "main.xo",
+          "line": 11,
+          "col": 6,
+          "end_line": 11,
+          "end_col": 14
+        }
+      },
+      {
+        "message": "calls `read_clock`, which performs `clock`",
+        "span": {
+          "file": "main.xo",
+          "line": 6,
+          "col": 3,
+          "end_line": 6,
+          "end_col": 16
+        }
+      },
+      {
+        "message": "`Clock.now` uses `clock` here",
+        "span": {
+          "file": "main.xo",
+          "line": 2,
+          "col": 3,
+          "end_line": 2,
+          "end_col": 10
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "`fetch` declares `uses fs.read`, but performs `fs.write`",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 8,
+      "end_line": 14,
+      "end_col": 13
+    },
+    "notes": [
+      {
+        "message": "`Fs.write` uses `fs.write` here",
+        "span": {
+          "file": "main.xo",
+          "line": 15,
+          "col": 3,
+          "end_line": 15,
+          "end_col": 22
+        }
+      }
+    ],
+    "fixes": []
+  }
+]

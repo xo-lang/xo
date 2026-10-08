@@ -1,0 +1,16 @@
+fn main(os: Os) {
+  let a: UInt8 = 250
+  let b: UInt8 = 5
+  os.stdio.println("u8 ${a + b} ${a - b} ${a / b} ${a % 7}")
+  let x = 1
+  os.stdio.println("shifts ${x << 10} ${1024 >> 3} ${-16 >> 2} bits ${12 & 10} ${12 | 3} ${12 ^ 5} ${~0}")
+  let i16: Int16 = 300
+  os.stdio.println("i16 ${i16 * 100} ${Int16.try(40000).is_none()}")
+  let big: UInt64 = 18446744073709551615
+  os.stdio.println("u64 ${big} ${big / 2}")
+  os.stdio.println("pow ${2.pow(10)} abs ${(-5).abs()} wrapping ${9223372036854775807.wrapping_add(1)} saturating ${9223372036854775807.saturating_add(1)} checked ${(5).checked_div(0).is_none()}")
+  os.stdio.println("float ${1.5.floor()} ${1.5.ceil()} ${2.5.round()} ${(-2.5).round()} ${16.0.sqrt()} ${(0.0 / 0.0).is_nan()} ${7.5 % 2.0}")
+  os.stdio.println("min max ${3.min(7)} ${3.max(7)} ${15.clamp(0, 10)} ${"b".max("a")}")
+  os.stdio.println("u8 underflow next")
+  os.stdio.println("${b - a}")
+}

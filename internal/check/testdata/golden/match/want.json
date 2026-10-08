@@ -1,0 +1,120 @@
+[
+  {
+    "code": "XO0301",
+    "severity": "error",
+    "message": "match on `Shape` is not exhaustive: missing `Rect(..)`, `Empty`",
+    "span": {
+      "file": "main.xo",
+      "line": 8,
+      "col": 9,
+      "end_line": 8,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "add an arm for each missing case; matches must be exhaustive (core 2.3)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "add the missing arms as holes",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 10,
+              "col": 3,
+              "end_line": 10,
+              "end_col": 3
+            },
+            "replace": "  Rect(..) =\u003e ???\n    Empty =\u003e ???\n  "
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0301",
+    "severity": "error",
+    "message": "match on `Result[Shape, Str]?` is not exhaustive: missing `Some(Ok(Circle(_)))`, `Some(Ok(Rect(..)))`",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 9,
+      "end_line": 14,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "add an arm for each missing case; matches must be exhaustive (core 2.3)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "add the missing arms as holes",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 18,
+              "col": 3,
+              "end_line": 18,
+              "end_col": 3
+            },
+            "replace": "  Some(Ok(Circle(_))) =\u003e ???\n    Some(Ok(Rect(..))) =\u003e ???\n  "
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0302",
+    "severity": "error",
+    "message": "`Some` is a variant of `Option`, but the value is `Shape`",
+    "span": {
+      "file": "main.xo",
+      "line": 23,
+      "col": 5,
+      "end_line": 23,
+      "end_col": 12
+    },
+    "notes": [],
+    "fixes": []
+  },
+  {
+    "code": "XO0305",
+    "severity": "warning",
+    "message": "this arm hides `Circle`, `Rect`, `Empty` of `Shape`, declared in this module",
+    "span": {
+      "file": "main.xo",
+      "line": 24,
+      "col": 5,
+      "end_line": 24,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "list the variants so that adding one later is a compile error (core 3.5)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0303",
+    "severity": "error",
+    "message": "a `let` pattern must match every value of `Int?`, but `None` is not covered",
+    "span": {
+      "file": "main.xo",
+      "line": 29,
+      "col": 7,
+      "end_line": 29,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "use `if let` or `match` for patterns that can fail (core 3.5)"
+      }
+    ],
+    "fixes": []
+  }
+]

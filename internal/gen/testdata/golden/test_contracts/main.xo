@@ -1,0 +1,48 @@
+enum E {
+  Neg
+} derive Display
+
+fn clamp_pct(n: Int) -> Int
+  ensures result >= 0 && result <= 100
+{
+  if n < 0 { 0 } else if n > 100 { 100 } else { n }
+}
+
+fn bad_abs(n: Int) -> Int
+  ensures result >= 0
+{
+  if n < -500 { n } else { n.abs() }
+}
+
+fn checked_sqrt(n: Int) -> Int ! E
+  requires n >= 0 else E.Neg
+  ensures result * result <= n
+{
+  var r = 0
+  while (r + 1) * (r + 1) <= n {
+    r += 1
+  }
+  r
+}
+
+fn first_letters(words: List[Str], n: Int) -> Str
+  requires n >= 0
+{
+  words.map(fn(w) { if w.len() >= n { w[..n] } else { w } }).join("")
+}
+
+fn stamp(clock: Clock, label: Str) -> Str uses clock
+  requires !label.is_empty()
+{
+  "${label}@${clock.now()}"
+}
+
+fn takes_fn(f: fn(Int) -> Int, x: Int) -> Int
+  requires x > 0
+{
+  f(x)
+}
+
+test "a regular test still runs" {
+  expect(clamp_pct(150)) == 100
+}

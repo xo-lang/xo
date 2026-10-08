@@ -1,0 +1,12 @@
+exit 70
+--- stdout
+u8 255 245 50 5
+shifts 1024 128 -4 bits 8 15 9 -1
+i16 30000 true
+u64 18446744073709551615 9223372036854775807
+pow 1024 abs 5 wrapping -9223372036854775808 saturating 9223372036854775807 checked true
+float 1.0 2.0 3.0 -3.0 4.0 true 1.5
+min max 3 7 10 b
+u8 underflow next
+--- stderr
+fault: integer overflow: 5 - 250 does not fit UInt8 at main.xo:15:23

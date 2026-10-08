@@ -1,0 +1,87 @@
+// The notes service executable: flags, wiring, graceful shutdown.
+// GUESS: a module whose files declare `fn main(os: Os)` builds to an
+// executable named after the directory (the spec never says how a binary is
+// selected).
+
+use std/http
+use std/log
+use example.com/notes/api
+use example.com/notes/store
+
+struct Flags {
+  data_dir: Str = "./data"
+  addr: Str = ":8080"
+}
+
+enum FlagErr {
+  Unknown(flag: Str)
+  MissingValue(flag: Str)
+}
+
+fn (e: FlagErr) display() -> Str {
+  match e {
+    Unknown(flag) => "unknown flag ${flag} (known: --data-dir, --addr)"
+    MissingValue(flag) => "flag ${flag} needs a value"
+  }
+}
+
+/// Splits "--name=value" into ("--name", Some("value")).
+fn split_flag(arg: Str) -> (Str, Str?) {
+  match arg.find("=") {
+    Some(eq) => (arg[..eq], Some(arg[eq + 1..]))
+    None => (arg, None)
+  }
+}
+
+/// Accepts `--data-dir DIR`, `--data-dir=DIR`, `--addr ADDR`, `--addr=ADDR`.
+fn parse_flags(args: List[Str]) -> Flags ! FlagErr {
+  var f = Flags{}
+  var i = 0
+  while i < args.len() {
+    let (name, inline) = split_flag(args[i])
+    let value = match inline {
+      Some(v) => v
+      None => {
+        i += 1
+        args.get(i).or_err(FlagErr.MissingValue(flag: name))?
+      }
+    }
+    match name {
+      "--data-dir" => f.data_dir = value
+      "--addr" => f.addr = value
+      _ => return Err(Unknown(flag: name))
+    }
+    i += 1
+  }
+  f
+}
+
+fn main(os: Os) ! {
+  let flags = parse_flags(os.env.args())?
+  let st = store.open(os.fs, flags.data_dir, os.rand)?
+  let srv = http.server(os.net.listen(flags.addr)?, api.router(st, os.clock))
+  log.info("notes service listening", {"addr": flags.addr, "data_dir": flags.data_dir})
+  // Graceful shutdown comes from the runtime (core 7.5, std 4.4): the first
+  // SIGINT or SIGTERM cancels main's scope, serve stops accepting, waits for
+  // in flight requests, and returns Ok. Every write finishes or is never
+  // started because each one is a single atomic rename.
+  srv.serve()?
+  log.info("notes service stopped")
+}
+
+test "flags have defaults" {
+  let f = parse_flags([])?
+  expect(f.data_dir) == "./data"
+  expect(f.addr) == ":8080"
+}
+
+test "flags accept both spellings" {
+  let f = parse_flags(["--data-dir", "/var/notes", "--addr=:9000"])?
+  expect(f.data_dir) == "/var/notes"
+  expect(f.addr) == ":9000"
+}
+
+test "bad flags are errors" {
+  expect(parse_flags(["--port", "1"])) == Err(FlagErr.Unknown(flag: "--port"))
+  expect(parse_flags(["--addr"])) == Err(FlagErr.MissingValue(flag: "--addr"))
+}

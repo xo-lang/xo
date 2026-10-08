@@ -1,0 +1,158 @@
+[
+  {
+    "code": "XO0520",
+    "severity": "error",
+    "message": "mutation of `b` is never written back",
+    "span": {
+      "file": "main.xo",
+      "line": 12,
+      "col": 3,
+      "end_line": 12,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`b` is a copy of a collection element taken here; changing it does not change the collection (core 5.2)",
+        "span": {
+          "file": "main.xo",
+          "line": 11,
+          "col": 11
+        }
+      },
+      {
+        "message": "write it back (for example `m.put(k, b)`) or mutate in place with `update` (core 5.2)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0501",
+    "severity": "error",
+    "message": "method `push` needs `xs` to be `var`, but it is an immutable binding",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 3,
+      "end_line": 17,
+      "end_col": 5
+    },
+    "notes": [
+      {
+        "message": "`xs` is declared here",
+        "span": {
+          "file": "main.xo",
+          "line": 16,
+          "col": 7
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare `xs` with `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 16,
+              "col": 3,
+              "end_line": 16,
+              "end_col": 6
+            },
+            "replace": "var"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0502",
+    "severity": "error",
+    "message": "assignment needs `n` to be `var`, but it is an immutable binding",
+    "span": {
+      "file": "main.xo",
+      "line": 19,
+      "col": 3,
+      "end_line": 19,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`n` is declared here",
+        "span": {
+          "file": "main.xo",
+          "line": 18,
+          "col": 7
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare `n` with `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 18,
+              "col": 3,
+              "end_line": 18,
+              "end_col": 6
+            },
+            "replace": "var"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0502",
+    "severity": "error",
+    "message": "assignment mutates `total`, which is captured by a closure; closures capture by value (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 26,
+      "col": 5,
+      "end_line": 26,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`total` is declared here, outside the closure",
+        "span": {
+          "file": "main.xo",
+          "line": 24,
+          "col": 7
+        }
+      },
+      {
+        "message": "to share mutable state with a closure, capture a `Mutex` or `Atomic` handle (core 5.4)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0510",
+    "severity": "error",
+    "message": "use of moved value `b`",
+    "span": {
+      "file": "main.xo",
+      "line": 36,
+      "col": 3,
+      "end_line": 36,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`b` was moved here",
+        "span": {
+          "file": "main.xo",
+          "line": 35,
+          "col": 12
+        }
+      },
+      {
+        "message": "`Buf` and `StrBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)"
+      }
+    ],
+    "fixes": []
+  }
+]

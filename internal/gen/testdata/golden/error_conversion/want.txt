@@ -1,0 +1,13 @@
+exit 1
+--- stdout
+ok 20
+parse failed: not a number: x
+load failed: Missing(id: 9)
+open 17
+open 99 failed true
+--- stderr
+error: parse failed: not a number: abc
+  at error_conversion.parse(s="abc")    main.xo:25
+  at error_conversion.api(s="abc")      main.xo:29
+  at error_conversion.open(s="abc")     main.xo:34
+  at error_conversion.main()            main.xo:52

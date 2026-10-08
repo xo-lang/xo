@@ -1,0 +1,162 @@
+package diag
+
+// Code is a stable diagnostic code (core 10.2). Never change the meaning of
+// an existing code; add a new one.
+type Code string
+
+// Codes defined by the spec (core.md). The parser does not emit these; they
+// are listed so this file is the single registry of every code.
+const (
+	NamingConvention   Code = "XO0101" // name breaks the enforced naming rules (core 1.5)
+	UnusedBinding      Code = "XO0110" // unused local binding or import (core 3.1)
+	UnhandledResult    Code = "XO0201" // Result value is never used (core 2.6)
+	ResultNeedsOk      Code = "XO0203" // success of a Result typed T must be written Ok(x) (core 2.6)
+	OptionInResultFn   Code = "XO0204" // `?` on an Option in a function returning a Result (core 2.5)
+	NonExhaustiveMatch Code = "XO0301" // match does not cover every case (core 2.3)
+	AmbiguousTypeArgs  Code = "XO0402" // type arguments cannot be inferred (core 2.7)
+	VarReceiverNeedVar Code = "XO0501" // var method called on a non var binding (core 3.4)
+	UseOfMovedValue    Code = "XO0510" // use of a moved Buf or StrBuilder (core 5.3)
+	LostUpdate         Code = "XO0520" // mutation of a copied or stored collection element is never written back (core 5.2)
+	UnresolvedName     Code = "XO0601" // name does not resolve (core 4.3)
+	ImportNeedsAlias   Code = "XO0602" // import path does not yield a valid local name (core 4.1)
+	UndeclaredEffect   Code = "XO0701" // effect performed outside the declared set (core 6.2)
+	ScopeErrorConvert  Code = "XO0801" // child or group task error does not convert to the enclosing error type (core 7.1)
+	Hole               Code = "XO0900" // typed hole report (core 3.7)
+	PlatformAPIOutside Code = "XO1001" // std/sys/<os> used outside the matching target arm (core 12.2)
+)
+
+// Lexical and syntax errors (01xx group, 0150 onward). Emitted by
+// internal/lexer and internal/parser.
+const (
+	InvalidChar          Code = "XO0150" // character that cannot start any token
+	UnterminatedString   Code = "XO0151" // string, raw string, bytes, or triple quoted string not closed
+	InvalidRune          Code = "XO0152" // rune literal that is empty, unterminated, or holds more than one character
+	InvalidEscape        Code = "XO0153" // unknown or malformed escape sequence
+	MalformedNumber      Code = "XO0154" // bad digit, misplaced `_`, missing digits, or out of range integer
+	InvalidDuration      Code = "XO0155" // unknown duration unit, fractional or non decimal duration
+	UnterminatedInterp   Code = "XO0156" // `${` without a matching `}` in the same string
+	EmptyInterp          Code = "XO0157" // `${}` with no expression
+	MalformedImportPath  Code = "XO0158" // `use` not followed by a valid import path
+	UnexpectedToken      Code = "XO0160" // a token that does not fit the grammar here
+	MissingComma         Code = "XO0161" // list element followed by a newline instead of a comma (core 1.3)
+	ElseOnNewLine        Code = "XO0162" // `else` must be on the line of the closing brace (core 1.3)
+	StructLitInCondition Code = "XO0163" // unparenthesized struct literal in a condition (core 1.4)
+	UnclosedDelimiter    Code = "XO0164" // `(`, `[`, or `{` not closed before end of file
+	InvalidPattern       Code = "XO0165" // syntax that is not a pattern (core 3.5)
+	WhileCondAsExpr      Code = "XO0166" // `while cond` used as an expression; only `while { }` is one
+	DeclInBlock          Code = "XO0167" // top level declaration (fn, struct, const, ...) inside a block
+	StmtAtTopLevel       Code = "XO0168" // statement (let, expression, ...) at top level
+	MatchArmSeparator    Code = "XO0169" // match or select arms separated by `,` instead of newlines
+	FnTypeEffectsParens  Code = "XO0170" // several effects in a function type must be parenthesized (core 15)
+	MisplacedRest        Code = "XO0171" // `..` used more than once or not last in pattern fields
+	MissingBody          Code = "XO0172" // function declaration without a body
+	UseAfterDecl         Code = "XO0173" // `use` after the first declaration (core 15: File)
+	MisplacedSelf        Code = "XO0174" // bare `self` parameter outside an interface method signature
+	ExpectedNewline      Code = "XO0175" // two statements or arms on one line
+	MisplacedPub         Code = "XO0176" // `pub` before something that cannot be exported
+)
+
+// Checker codes (internal/check), chosen inside the spec's groups (core 10.2).
+const (
+	ErrorNoConvert       Code = "XO0202" // error type does not convert to the enclosing error type (core 2.6)
+	TryNeedsFailing      Code = "XO0205" // `?` where the enclosing function cannot return the failure (core 2.5, 2.6)
+	DiscardNeedsReason   Code = "XO0206" // `let _ =` discards a Result; use `.ignore_err("reason")` (core 2.6)
+	PatternTypeMismatch  Code = "XO0302" // pattern does not fit the type of the matched value (core 3.5)
+	RefutablePattern     Code = "XO0303" // refutable pattern where an irrefutable one is required (core 3.5)
+	OrPatternBindings    Code = "XO0304" // alternatives of an or pattern bind different names or types (core 3.5)
+	WildcardOwnEnum      Code = "XO0305" // warning: `_` arm hides variants of an enum declared in this module (core 3.5)
+	TypeMismatch         Code = "XO0401" // value of the wrong type; only three implicit conversions exist (core 2.10)
+	BadArguments         Code = "XO0403" // wrong arguments or fields: count, names, missing, or duplicates
+	NotImplemented       Code = "XO0404" // type does not implement a required interface or constraint (core 2.4)
+	CannotInfer          Code = "XO0405" // type cannot be inferred here; annotate it
+	BadOperand           Code = "XO0406" // operator, index, slice, or iteration not defined for the type
+	WrongKind            Code = "XO0407" // name used as the wrong kind of thing (a type as a value, a value that is not callable)
+	ConstNotConstant     Code = "XO0408" // const initializer is not a compile time value (core 3.1)
+	BadConversion        Code = "XO0409" // invalid explicit conversion (core 2.1)
+	MapIndexRead         Code = "XO0410" // reading a Map by index; use `get` or `get_or_fault` (core 3.6)
+	AssignImmutable      Code = "XO0502" // assignment to an immutable binding or to a captured variable (core 5.2, 3.3)
+	Duplicate            Code = "XO0603" // name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4)
+	ImportCycle          Code = "XO0604" // cyclic module imports (core 4.1)
+	NotVisible           Code = "XO0605" // name is not `pub` in its module, or the std type is an opaque handle (core 1.5)
+	ForeignMethod        Code = "XO0606" // method declared outside the module of its type (core 3.4)
+	BadJump              Code = "XO0607" // `break` or `continue` outside a loop, or an unknown label (core 3.5)
+	UnknownEffect        Code = "XO0702" // unknown effect label (core 6.1)
+	ScopeEscape          Code = "XO0802" // scope handle, or a value containing a task group, escapes its scope (core 7.1)
+	SpawnWithoutScope    Code = "XO0803" // task started without a scope handle (core 7.1)
+	SplitCriticalSection Code = "XO0804" // warning: value read in one `Mutex.with` is written back in a later one (core 5.4)
+)
+
+// Descriptions maps every code to its one line description. Kept in sync
+// with the constants above by TestCodesDocumented.
+var Descriptions = map[Code]string{
+	WildcardOwnEnum:      "warning: `_` arm hides variants of an enum declared in this module (core 3.5)",
+	MapIndexRead:         "reading a Map by index; use `get` or `get_or_fault` (core 3.6)",
+	SplitCriticalSection: "warning: value read in one `Mutex.with` is written back in a later one (core 5.4)",
+	NamingConvention:     "name breaks the enforced naming rules (core 1.5)",
+	UnusedBinding:        "unused local binding or import (core 3.1)",
+	UnhandledResult:      "Result value is never used (core 2.6)",
+	ResultNeedsOk:        "success of a Result typed T must be written Ok(x) (core 2.6)",
+	OptionInResultFn:     "`?` on an Option in a function returning a Result (core 2.5)",
+	NonExhaustiveMatch:   "match does not cover every case (core 2.3)",
+	AmbiguousTypeArgs:    "type arguments cannot be inferred (core 2.7)",
+	VarReceiverNeedVar:   "var method called on a non var binding (core 3.4)",
+	UseOfMovedValue:      "use of a moved Buf or StrBuilder (core 5.3)",
+	LostUpdate:           "mutation of a copied or stored collection element is never written back (core 5.2)",
+	UnresolvedName:       "name does not resolve (core 4.3)",
+	ImportNeedsAlias:     "import path does not yield a valid local name (core 4.1)",
+	UndeclaredEffect:     "effect performed outside the declared set (core 6.2)",
+	ScopeErrorConvert:    "child or group task error does not convert to the enclosing error type (core 7.1)",
+	Hole:                 "typed hole report (core 3.7)",
+	PlatformAPIOutside:   "std/sys/<os> used outside the matching target arm (core 12.2)",
+
+	ErrorNoConvert:      "error type does not convert to the enclosing error type (core 2.6)",
+	TryNeedsFailing:     "`?` where the enclosing function cannot return the failure (core 2.5, 2.6)",
+	DiscardNeedsReason:  "`let _ =` discards a Result; use `.ignore_err(\"reason\")` (core 2.6)",
+	PatternTypeMismatch: "pattern does not fit the type of the matched value (core 3.5)",
+	RefutablePattern:    "refutable pattern where an irrefutable one is required (core 3.5)",
+	OrPatternBindings:   "alternatives of an or pattern bind different names or types (core 3.5)",
+	TypeMismatch:        "value of the wrong type; only three implicit conversions exist (core 2.10)",
+	BadArguments:        "wrong arguments or fields: count, names, missing, or duplicates",
+	NotImplemented:      "type does not implement a required interface or constraint (core 2.4)",
+	CannotInfer:         "type cannot be inferred here; annotate it",
+	BadOperand:          "operator, index, slice, or iteration not defined for the type",
+	WrongKind:           "name used as the wrong kind of thing (a type as a value, a value that is not callable)",
+	ConstNotConstant:    "const initializer is not a compile time value (core 3.1)",
+	BadConversion:       "invalid explicit conversion (core 2.1)",
+	AssignImmutable:     "assignment to an immutable binding or to a captured variable (core 5.2, 3.3)",
+	Duplicate:           "name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4)",
+	ImportCycle:         "cyclic module imports (core 4.1)",
+	NotVisible:          "name is not `pub` in its module, or the std type is an opaque handle (core 1.5)",
+	ForeignMethod:       "method declared outside the module of its type (core 3.4)",
+	BadJump:             "`break` or `continue` outside a loop, or an unknown label (core 3.5)",
+	UnknownEffect:       "unknown effect label (core 6.1)",
+	ScopeEscape:         "scope handle, or a value containing a task group, escapes its scope (core 7.1)",
+	SpawnWithoutScope:   "task started without a scope handle (core 7.1)",
+
+	InvalidChar:          "character that cannot start any token",
+	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",
+	InvalidRune:          "rune literal that is empty, unterminated, or holds more than one character",
+	InvalidEscape:        "unknown or malformed escape sequence",
+	MalformedNumber:      "bad digit, misplaced `_`, missing digits, or out of range integer",
+	InvalidDuration:      "unknown duration unit, fractional or non decimal duration",
+	UnterminatedInterp:   "`${` without a matching `}` in the same string",
+	EmptyInterp:          "`${}` with no expression",
+	MalformedImportPath:  "`use` not followed by a valid import path",
+	UnexpectedToken:      "a token that does not fit the grammar here",
+	MissingComma:         "list element followed by a newline instead of a comma (core 1.3)",
+	ElseOnNewLine:        "`else` must be on the line of the closing brace (core 1.3)",
+	StructLitInCondition: "unparenthesized struct literal in a condition (core 1.4)",
+	UnclosedDelimiter:    "`(`, `[`, or `{` not closed before end of file",
+	InvalidPattern:       "syntax that is not a pattern (core 3.5)",
+	WhileCondAsExpr:      "`while cond` used as an expression; only `while { }` is one",
+	DeclInBlock:          "top level declaration (fn, struct, const, ...) inside a block",
+	StmtAtTopLevel:       "statement (let, expression, ...) at top level",
+	MatchArmSeparator:    "match or select arms separated by `,` instead of newlines",
+	FnTypeEffectsParens:  "several effects in a function type must be parenthesized (core 15)",
+	MisplacedRest:        "`..` used more than once or not last in pattern fields",
+	MissingBody:          "function declaration without a body",
+	UseAfterDecl:         "`use` after the first declaration (core 15: File)",
+	MisplacedSelf:        "bare `self` parameter outside an interface method signature",
+	ExpectedNewline:      "two statements or arms on one line",
+	MisplacedPub:         "`pub` before something that cannot be exported",
+}

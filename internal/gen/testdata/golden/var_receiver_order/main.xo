@@ -1,0 +1,25 @@
+struct Counter {
+  counts: Map[Str, Int]
+  log: List[Str]
+}
+
+fn (var c: Counter) bump(key: Str, by: Int) {
+  c.counts.put(key, (c.counts.get(key) ?? 0) + by)
+}
+
+fn (var c: Counter) note(s: Str) { c.log.push(s) }
+
+fn main(os: Os) {
+  var c = Counter{counts: {}, log: []}
+  let k = "x"
+  // the argument needs statements (match, ??); the receiver must still be
+  // the original binding, not a copy
+  c.bump(k, match k {
+    "x" => 2
+    _ => 1
+  })
+  c.bump(k, if c.log.is_empty() { 10 } else { 0 })
+  c.note("${c.counts.get(k) ?? -1}")
+  c.counts.put("y", Some(3) ?? 0)
+  os.stdio.println("x=${c.counts.get_or_fault("x", "golden: key exists")} y=${c.counts.get_or_fault("y", "golden: key exists")} log=${c.log.join(",")}")
+}

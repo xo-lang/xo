@@ -1,0 +1,108 @@
+use std/http
+use std/task
+
+enum TestErr {
+  Boom(id: Int)
+} derive Display
+
+test "results keep original order when later jobs finish first" {
+  let jobs = [
+    Job{id: 1, input: 300ms},
+    Job{id: 2, input: 200ms},
+    Job{id: 3, input: 100ms},
+  ]
+  let finish_order = Mutex[List[Int]].new([])
+  let report = run_pool(os.clock, jobs, 3, 10s, fn(job: Job[Duration]) -> Int {
+    os.clock.sleep(job.input)
+    finish_order.with(fn(var xs) { xs.push(job.id) })
+    job.id * 10
+  })
+  expect(finish_order.with(fn(xs) { xs })) == [3, 2, 1]
+  expect(report.results) == [10, 20, 30]
+  expect(report.failures.is_empty())
+}
+
+test "one failing job does not affect the others" {
+  let jobs = [
+    Job{id: 1, input: 1},
+    Job{id: 2, input: 2},
+    Job{id: 3, input: 3},
+    Job{id: 4, input: 4},
+  ]
+  let report = run_pool(os.clock, jobs, 2, 10s, fn(job: Job[Int]) -> Int ! TestErr {
+    if job.input == 2 {
+      return Err(TestErr.Boom(id: job.id))
+    }
+    job.input * 2
+  })
+  expect(report.results) == [2, 6, 8]
+  expect(report.failures) == [(2, task.Timed.Failed(TestErr.Boom(id: 2)))]
+}
+
+test "timeout cancels slow jobs and reports them" {
+  let jobs = [
+    Job{id: 1, input: 100ms},
+    Job{id: 2, input: 1h},
+    Job{id: 3, input: 200ms},
+    Job{id: 4, input: 2h},
+  ]
+  let report = run_pool(os.clock, jobs, 4, 5s, fn(job: Job[Duration]) -> Int {
+    os.clock.sleep(job.input)
+    job.id
+  })
+  expect(report.results) == [1, 3]
+  expect(report.failures) == [(2, task.Timed.TimedOut), (4, task.Timed.TimedOut)]
+  expect(report.elapsed) == 5s
+}
+
+test "jobs still queued at the timeout are reported as timed out" {
+  let jobs = [
+    Job{id: 1, input: 1h},
+    Job{id: 2, input: 10ms},
+  ]
+  let report = run_pool(os.clock, jobs, 1, 1s, fn(job: Job[Duration]) -> Int {
+    os.clock.sleep(job.input)
+    job.id
+  })
+  expect(report.results.is_empty())
+  expect(report.failures) == [(1, task.Timed.TimedOut), (2, task.Timed.TimedOut)]
+}
+
+test "never more than workers jobs run at the same time" {
+  var jobs: List[Job[Int]] = []
+  for i in 0..20 {
+    jobs.push(Job{id: i, input: i})
+  }
+  let active = Atomic[Int].new(0)
+  let peak = Atomic[Int].new(0)
+  let report = run_pool(os.clock, jobs, 3, 1m, fn(job: Job[Int]) -> Int {
+    let now_active = active.add(1)
+    while {
+      let seen = peak.get()
+      if now_active <= seen || peak.compare_and_swap(seen, now_active) {
+        break
+      }
+    }
+    os.clock.sleep(10ms * (job.input % 4 + 1))
+    active.add(-1)
+    job.input
+  })
+  expect(report.results.len()) == 20
+  expect(report.failures.is_empty())
+  expect(peak.get()) <= 3
+  expect(peak.get()) == 3
+  expect(active.get()) == 0
+}
+
+test "program prints one line per url and a summary" {
+  os.net.handle("GET https://a.test/ok", fn(_req) { http.text(200, "ok") })
+  os.net.handle("GET https://a.test/missing", fn(_req) { http.empty(404) })
+  os.stdio.set_input("https://a.test/ok\n\nhttps://a.test/missing\nhttps://b.test/down\n")
+  let code = testing.run_main(main, os)
+  expect(code) == 0
+  let out = os.stdio.output().lines()
+  expect(out[0]) == "https://a.test/ok 200"
+  expect(out[1]) == "https://a.test/missing 404"
+  expect(out[2].starts_with("https://b.test/down error: "))
+  expect(out[3].starts_with("summary: 3 urls, 2 ok, 1 failed"))
+}

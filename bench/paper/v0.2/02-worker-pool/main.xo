@@ -1,0 +1,35 @@
+use std/http
+
+const WORKERS = 8
+const OVERALL_TIMEOUT = 30s
+
+/// Reads URLs from standard input, one per line, fetches them with a worker
+/// pool, and prints one line per URL followed by a summary.
+fn main(os: Os) ! {
+  let urls = os.stdio.lines()?.map(fn(l) { l.trim() }).filter(fn(l) { !l.is_empty() })
+  var jobs: List[Job[Str]] = []
+  for (i, url) in urls.indexed() {
+    // GUESS: type argument of a generic struct literal is inferred from the
+    // field values (and here from the binding type).
+    jobs.push(Job{id: i, input: url})
+  }
+
+  let client = http.client(os.net)
+  let report = run_pool(os.clock, jobs, WORKERS, OVERALL_TIMEOUT, fn(url: Str) -> Int ! http.ClientErr {
+    client.get(url)?.status
+  })
+
+  var out: Map[Int, Str] = {}
+  for (id, status) in report.results {
+    // GUESS: Int implements Display (std 1 lists scalars as Ord but never
+    // says Display).
+    out.put(id, "{urls[id]} {status}")
+  }
+  for (id, e) in report.failures {
+    out.put(id, "{urls[id]} error: {e}")
+  }
+  for i in 0..urls.len() {
+    os.stdio.println(out[i])
+  }
+  os.stdio.println("{report.results.len()} ok, {report.failures.len()} failed, elapsed {report.elapsed}")
+}

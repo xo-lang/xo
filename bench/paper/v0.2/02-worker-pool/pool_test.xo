@@ -1,0 +1,91 @@
+use std/task
+
+enum TestErr {
+  Boom(n: Int)
+}
+
+test "results keep original order when later jobs finish first" {
+  let clock = os.clock
+  let finished = Mutex[List[Int]].new([])
+  let jobs = [
+    Job{id: 0, input: 30ms},
+    Job{id: 1, input: 20ms},
+    Job{id: 2, input: 10ms},
+  ]
+  let report = run_pool(clock, jobs, 3, 1s, fn(d: Duration) -> Duration {
+    clock.sleep(d)
+    finished.with(fn(var xs) { xs.push(d.millis()) })
+    d
+  })
+  expect(finished.with(fn(xs) { xs })) == [10, 20, 30]
+  expect(report.results) == [(0, 30ms), (1, 20ms), (2, 10ms)]
+  expect(report.failures.is_empty())
+}
+
+test "one failing job does not affect the others" {
+  let jobs = [
+    Job{id: 0, input: 1},
+    Job{id: 1, input: 2},
+    Job{id: 2, input: 3},
+    Job{id: 3, input: 4},
+  ]
+  let report = run_pool(os.clock, jobs, 2, 1s, fn(n: Int) -> Int ! TestErr {
+    if n == 2 {
+      return Err(TestErr.Boom(n: n))
+    }
+    n * 10
+  })
+  expect(report.results) == [(0, 10), (2, 30), (3, 40)]
+  expect(report.failures) == [(1, task.Timed.Failed(TestErr.Boom(n: 2)))]
+}
+
+test "timeout cancels slow jobs and reports them" {
+  let clock = os.clock
+  let completed = Atomic[Int].new(0)
+  // With 2 workers: job 0 finishes at 1s, then one of jobs 2 and 3 takes its
+  // slot while the other stays queued. At 5s jobs 1, 2, 3 are all unfinished
+  // (running or queued), whichever order the semaphore grants permits in.
+  let jobs = [
+    Job{id: 0, input: 1s},
+    Job{id: 1, input: 1m},
+    Job{id: 2, input: 1m},
+    Job{id: 3, input: 1m},
+  ]
+  let report = run_pool(clock, jobs, 2, 5s, fn(d: Duration) -> Duration {
+    clock.sleep(d)
+    completed.add(1)
+    d
+  })
+  expect(report.results) == [(0, 1s)]
+  expect(report.failures) == [
+    (1, task.Timed.TimedOut),
+    (2, task.Timed.TimedOut),
+    (3, task.Timed.TimedOut),
+  ]
+  expect(completed.get()) == 1
+  // GUESS: the virtual clock does not move while cancelled tasks unwind, so
+  // elapsed is exactly the timeout.
+  expect(report.elapsed) == 5s
+}
+
+test "never more than workers jobs run at once" {
+  let clock = os.clock
+  let running = Atomic[Int].new(0)
+  let peak = Mutex[Int].new(0)
+  var jobs: List[Job[Int]] = []
+  for i in 0..20 {
+    jobs.push(Job{id: i, input: i})
+  }
+  let report = run_pool(clock, jobs, 3, 1m, fn(n: Int) -> Int {
+    let now = running.add(1)
+    defer running.add(-1)
+    peak.with(fn(var p) { p = p.max(now) })
+    clock.sleep(10ms)
+    n
+  })
+  expect(report.results.len()) == 20
+  expect(peak.with(fn(p) { p })) <= 3
+  // The limit is reached, not just respected, so the pool really runs jobs in
+  // parallel.
+  expect(peak.with(fn(p) { p })) == 3
+}

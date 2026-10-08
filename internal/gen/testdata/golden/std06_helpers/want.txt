@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+686921 aGkh
+hi! true
+1970-01-01T00:00:01.5Z
+peak 7
+4 6
+Ada true kept
+--- stderr

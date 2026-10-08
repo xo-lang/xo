@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+00 01 10 11 20 21
+n=5
+pair 0 3
+collatz 111
+acc 172
+found 5
+--- stderr

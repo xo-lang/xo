@@ -1,0 +1,54 @@
+use std/json
+
+struct Node {
+  value: Int
+  next: Node?
+}
+
+struct Tree {
+  label: Str
+  left: Tree?
+  right: Tree?
+} derive Json
+
+struct Stat {
+  hits: Int
+  tags: List[Str]
+}
+
+fn (var s: Stat) tag(t: Str) { s.tags.push(t) }
+
+fn sum(n: Node) -> Int {
+  match n.next {
+    Some(rest) => n.value + sum(rest)
+    None => n.value
+  }
+}
+
+fn depth(t: Tree?) -> Int {
+  match t {
+    None => 0
+    Some(Tree{left: l, right: r, ..}) => 1 + depth(l).max(depth(r))
+  }
+}
+
+fn main(os: Os) {
+  var list = Node{value: 1, next: Some(Node{value: 2, next: Some(Node{value: 3, next: None})})}
+  let before = list
+  list.value = 10
+  os.stdio.println("sum ${sum(list)} before ${sum(before)} eq ${list == before}")
+  let t = Tree{label: "r", left: Some(Tree{label: "a", left: None, right: None}), right: None}
+  os.stdio.println("depth ${depth(Some(t))} json ${json_text(t)}")
+  var stats: Map[Str, Stat] = {"x": Stat{hits: 0, tags: []}}
+  stats.update("x", Stat{hits: 0, tags: []}, fn(var s) { s.hits += 5 })
+  stats.update("x", Stat{hits: 0, tags: []}, fn(var s) { s.tag("first") })
+  stats.update("x", Stat{hits: 0, tags: []}, fn(var s) { s.tags.push("second") })
+  var rows = [Stat{hits: 1, tags: []}, Stat{hits: 2, tags: []}]
+  rows[1].hits *= 10
+  rows[0].tag("row0")
+  var grid = [[0, 0], [0, 0]]
+  grid[1][1] += 7
+  os.stdio.println("stats ${stats.get_or_fault("x", "golden: key exists").hits} ${stats.get_or_fault("x", "golden: key exists").tags.join(",")} rows ${rows[1].hits} ${rows[0].tags.join("")} grid ${grid[1][1]}")
+}
+
+fn json_text(t: Tree) -> Str { json.encode_str(t) }

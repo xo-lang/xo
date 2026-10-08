@@ -1,0 +1,48 @@
+use std/http
+use std/task
+
+/// A successful fetch, carrying enough to print one line per URL.
+struct Fetched {
+  id: Int
+  url: Str
+  status: Int
+}
+
+fn fetch(client: http.Client, job: Job[Str]) -> Fetched ! http.ClientErr uses net.dial {
+  let resp = client.get(job.input)?
+  Fetched{id: job.id, url: job.input, status: resp.status}
+}
+
+fn describe(e: task.Timed[http.ClientErr]) -> Str {
+  match e {
+    TimedOut => "timed out"
+    Failed(inner) => "${inner}"
+  }
+}
+
+/// Reads URLs from standard input, one per line, fetches them with 8
+/// workers and a 30 second overall timeout, and prints one line per URL
+/// followed by a summary line.
+fn main(os: Os) ! {
+  let urls = os.stdio.lines()?
+    .map(fn(l) { l.trim() })
+    .filter(fn(l) { !l.is_empty() })
+  let jobs = urls.indexed().map(fn(p) { Job{id: p.0, input: p.1} })
+  let client = http.client(os.net)
+
+  let report = run_pool(os.clock, jobs, 8, 30s, fn(job) { fetch(client, job) })
+
+  var out_lines: Map[Int, Str] = {}
+  for r in report.results {
+    out_lines.put(r.id, "${r.url} ${r.status}")
+  }
+  for (id, e) in report.failures {
+    out_lines.put(id, "${urls[id]} error: ${describe(e)}")
+  }
+  for job in jobs {
+    os.stdio.println(out_lines.get(job.id) ?? "${job.input} error: no result")
+  }
+  let ok = report.results.len()
+  let failed = report.failures.len()
+  os.stdio.println("summary: ${urls.len()} urls, ${ok} ok, ${failed} failed, elapsed ${report.elapsed}")
+}

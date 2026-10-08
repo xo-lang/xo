@@ -1,0 +1,16 @@
+use std/http
+use std/log
+
+fn main(os: Os) ! {
+  let q = new_queue(os.clock)
+  let runner = new_runner(q, WorkerConfig{workers: 8})
+  let srv = http.server(os.net.listen(":8080")?, routes(q))
+  log.info("listening", {"addr": ":8080"})
+  scope s {
+    s.spawn(fn() {
+      runner.run(fn(j) { log.info("handled job", {"id": j.id, "bytes": j.payload.len()}) })
+    })
+    defer runner.shutdown()
+    srv.serve()?
+  }
+}

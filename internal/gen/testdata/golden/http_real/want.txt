@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+200 hello xo
+200 {"len":6} application/json
+404
+connect error
+invalid url
+server stopped
+--- stderr

@@ -1,0 +1,155 @@
+// Package store keeps one JSON file per note in a data directory.
+// It depends on domain only.
+
+use std/json
+// GUESS: a module inside this project is imported as "<module path from xo.mod>/<dir>"
+// (core 4.1 and 4.2 show only external modules).
+use example.com/notes/domain
+
+const TMP_PREFIX = ".tmp-"
+const HEX = "0123456789abcdef"
+
+pub enum StoreErr {
+  NotFound(id: Str)
+  Conflict(id: Str, current: Int)
+  Invalid(from domain.ValidationErr)
+  Corrupt(path: Str, msg: Str)
+  Io(from FsErr)
+}
+
+fn (e: StoreErr) display() -> Str {
+  match e {
+    NotFound(id) => "note ${id} not found"
+    Conflict(id, current) => "note ${id} is at version ${current}"
+    Invalid(v) => "${v}"
+    Corrupt(path, msg) => "corrupt note file ${path}: ${msg}"
+    Io(fe) => "${fe}"
+  }
+}
+
+/// A handle to the note directory. Copies share the same lock (Mutex is a
+/// handle type), so every copy of a Store serializes its writes.
+pub struct Store {
+  fs: Fs
+  rand: Rand
+  writes: Mutex[Int]
+}
+
+/// Opens (creating if needed) the data directory `dir` under `fs` and removes
+/// temp files left behind by a crash.
+pub fn open(fs: Fs, dir: Str, rand: Rand) -> Store ! StoreErr uses fs {
+  fs.create_dir_all(dir)?
+  let data = fs.sub(dir)
+  for info in data.read_dir(".")? {
+    if !info.is_dir && info.name.starts_with(TMP_PREFIX) {
+      data.remove(info.name)?
+    }
+  }
+  Store{fs: data, rand: rand, writes: Mutex[Int].new(0)}
+}
+
+fn file_name(id: Str) -> Str {
+  "${id}.json"
+}
+
+fn new_id(r: Rand) -> Str {
+  var b = StrBuilder.new()
+  for _ in 0..domain.ID_LEN {
+    let i = r.int(0, 16)
+    b.write(HEX[i..i + 1])
+  }
+  b.freeze()
+}
+
+fn (s: Store) load(id: Str) -> domain.Note ! StoreErr {
+  // Ids from the URL are checked here so no caller can reach a path outside
+  // the data directory.
+  if !domain.valid_id(id) {
+    return Err(StoreErr.NotFound(id: id))
+  }
+  let path = file_name(id)
+  let text = match s.fs.read_text(path) {
+    Ok(t) => t
+    Err(FsErr.NotFound(..)) => return Err(StoreErr.NotFound(id: id))
+    Err(e) => return Err(StoreErr.Io(e))
+  }
+  json.decode_str[domain.Note](text).map_err(fn(e) { StoreErr.Corrupt(path: path, msg: "${e}") })
+}
+
+fn write_and_rename(fs: Fs, tmp: Str, path: Str, data: Bytes) -> () ! FsErr {
+  fs.write(tmp, data)?
+  fs.rename(tmp, path)
+}
+
+/// Atomic write: the note goes to a temp file in the same directory, then is
+/// renamed over the target. On any failure the temp file is removed.
+fn (s: Store) save(n: domain.Note) -> () ! StoreErr {
+  let tmp = s.fs.create_temp(".", TMP_PREFIX)?
+  let res = write_and_rename(s.fs, tmp, file_name(n.id), json.encode(n))
+  if res.is_err() {
+    // Best effort: the original error is what the caller needs to see.
+    let _ = s.fs.remove(tmp)
+  }
+  res?
+}
+
+pub fn (s: Store) get(id: Str) -> domain.Note ! StoreErr uses fs.read {
+  s.load(id)
+}
+
+pub fn (s: Store) create(input: domain.NoteInput, now: Time) -> domain.Note ! StoreErr
+  uses fs, rand
+{
+  let n = domain.new_note(new_id(s.rand), input, now)?
+  s.writes.with(fn(var count: Int) -> () ! StoreErr {
+    s.save(n)?
+    count += 1
+  })?
+  n
+}
+
+/// Compare and swap on the version. The read, the version check, and the
+/// write all happen while holding the lock, so two updates that both expect
+/// version v cannot both succeed: the second sees v + 1 and gets Conflict.
+pub fn (s: Store) update(id: Str, expected: Int, input: domain.NoteInput, now: Time) -> domain.Note ! StoreErr
+  uses fs
+{
+  s.writes.with(fn(var count: Int) -> domain.Note ! StoreErr {
+    let cur = s.load(id)?
+    if cur.version != expected {
+      return Err(Conflict(id: id, current: cur.version))
+    }
+    let next = domain.apply_update(cur, input, now)?
+    s.save(next)?
+    count += 1
+    next
+  })
+}
+
+pub fn (s: Store) delete(id: Str, expected: Int) -> () ! StoreErr uses fs {
+  s.writes.with(fn(var count: Int) -> () ! StoreErr {
+    let cur = s.load(id)?
+    if cur.version != expected {
+      return Err(Conflict(id: id, current: cur.version))
+    }
+    s.fs.remove(file_name(id))?
+    count += 1
+  })
+}
+
+/// Every stored note, in directory order. Temp files are skipped.
+pub fn (s: Store) all() -> List[domain.Note] ! StoreErr uses fs.read {
+  var out: List[domain.Note] = []
+  for info in s.fs.read_dir(".")? {
+    if info.is_dir || !info.name.ends_with(".json") {
+      continue
+    }
+    match s.load(info.name.trim_suffix(".json")) {
+      Ok(n) => out.push(n)
+      // Deleted between read_dir and read.
+      Err(NotFound(..)) => continue
+      Err(e) => return Err(e)
+    }
+  }
+  out
+}

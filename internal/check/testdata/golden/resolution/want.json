@@ -1,0 +1,104 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`List[Int]` has no field or method `lenght`",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 6,
+      "end_line": 4,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "did you mean `len`?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "replace with `len`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 6,
+              "end_line": 4,
+              "end_col": 12
+            },
+            "replace": "len"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "module `http` has no member `jsno`",
+    "span": {
+      "file": "main.xo",
+      "line": 8,
+      "col": 8,
+      "end_line": 8,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "did you mean `json`?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "replace with `json`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 8,
+              "col": 8,
+              "end_line": 8,
+              "end_col": 12
+            },
+            "replace": "json"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `count_itmes` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 12,
+      "col": 3,
+      "end_line": 12,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "did you mean `count_items`?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "replace with `count_items`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 12,
+              "col": 3,
+              "end_line": 12,
+              "end_col": 14
+            },
+            "replace": "count_items"
+          }
+        ]
+      }
+    ]
+  }
+]

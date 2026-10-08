@@ -1,0 +1,17 @@
+fn main(os: Os) {
+  let s = "  Hello, Wörld  "
+  let t = s.trim()
+  os.stdio.println("[${t}] len ${t.len()} runes ${t.rune_count()} lower ${t.to_lower()} upper ${t.to_upper()}")
+  os.stdio.println("${t.contains("llo")} ${t.starts_with("He")} ${t.ends_with("ld")} ${t.find("o") ?? -1} ${t.find("zz") ?? -1}")
+  os.stdio.println("${t.replace("l", "L")} ${"ab".repeat(3)} ${t.trim_prefix("Hello, ")} ${t.trim_suffix("ld")}")
+  os.stdio.println("${"a\nb\r\nc\n".lines().len()} ${"x".is_empty()} ${"".is_empty()} [${s.trim_start()}] [${s.trim_end()}]")
+  os.stdio.println("${t[0..5]} ${t[7..]} ${"héllo".runes().len()} ${"abc".bytes().len()}")
+  let b = b"bytes\x00!"
+  os.stdio.println("${b.len()} ${b[5]} ${(b + b"?").len()} ${b.to_str() ?? "invalid"} ${b"\xff".to_str() ?? "invalid"}")
+  for r in "aZ9 ".runes() {
+    os.stdio.print("${r.is_letter()}${r.is_digit()}${r.is_space()}${r.to_upper()} ")
+  }
+  os.stdio.println("")
+  os.stdio.println("slice inside a UTF-8 sequence next")
+  os.stdio.println("${"héllo"[0..2]}")
+}

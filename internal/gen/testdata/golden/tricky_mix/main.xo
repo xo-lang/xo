@@ -1,0 +1,121 @@
+enum ParseErr {
+  Bad(text: Str)
+} derive Display
+
+struct Cache[K, V] {
+  items: Map[K, V]
+  loader: fn(K) -> V ! ParseErr
+}
+
+fn (var c: Cache[K, V]) get(k: K) -> V ! ParseErr {
+  if let Some(v) = c.items.get(k) {
+    return v
+  }
+  let v = (c.loader)(k)?
+  c.items.put(k, v)
+  v
+}
+
+enum Tree[T] {
+  Leaf(v: T)
+  Node(kids: List[Tree[T]])
+}
+
+fn (t: Tree[T]) flatten() -> List[T] {
+  match t {
+    Leaf(v) => [v]
+    Node(kids) => kids.fold([], fn(acc: List[T], k: Tree[T]) -> List[T] { acc + k.flatten() })
+  }
+}
+
+interface Visitor {
+  fn visit(self, f: fn(Int) -> Int) -> Int
+}
+
+struct Holder {
+  n: Int
+}
+
+fn (h: Holder) visit(f: fn(Int) -> Int) -> Int { f(h.n) }
+
+fn parse_all(xs: List[Str]) -> List[Int] ! ParseErr {
+  xs.map(fn(s) { Int.parse(s).or_err(ParseErr.Bad(text: s)) })
+}
+
+fn make_multiplier[T](factor: Int, tag: T) -> fn(Int) -> (Int, T) {
+  fn(x: Int) -> (Int, T) { (x * factor, tag) }
+}
+
+fn classify(pair: (Tree[Int], Int?)) -> Str {
+  match pair {
+    (Leaf(v), Some(n)) if v == n => "leaf equal"
+    (Leaf(_), _) => "leaf"
+    (Node(kids), None) if kids.is_empty() => "empty node"
+    (Node(_), _) => "node"
+  }
+}
+
+fn main(os: Os) ! {
+  var c = Cache[Str, Int]{items: {}, loader: fn(s) { Int.parse(s).or_err(ParseErr.Bad(text: s)) }}
+  os.stdio.println("cache ${c.get("12")?} ${c.get("12")?} size ${c.items.len()}")
+  match c.get("zz") {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("cache error ${e}")
+  }
+  let t = Tree.Node(kids: [Tree.Leaf(v: 1), Tree.Node(kids: [Tree.Leaf(v: 2), Tree.Leaf(v: 3)])])
+  os.stdio.println("flatten ${t.flatten().len()} ${classify((Tree.Leaf(v: 4), Some(4)))} ${classify((Tree.Node(kids: []), None))}")
+  let vs: List[Visitor] = [Holder{n: 3}, Holder{n: 4}]
+  os.stdio.println("visit ${vs.map(fn(v) { v.visit(fn(x) { x * x }) }).fold(0, fn(a, b) { a + b })}")
+  os.stdio.println("parse ok ${parse_all(["1", "2"])?.len()}")
+  match parse_all(["1", "x", "3"]) {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("parse error ${e}")
+  }
+  let m = make_multiplier(3, "t")
+  let (val, tag) = m(5)
+  os.stdio.println("mult ${val} ${tag}")
+  var nested: Map[Str, List[(Int, Str)?]] = {}
+  nested.put("a", [Some((1, "x")), None])
+  nested["a"] = nested.get_or_fault("a", "golden: key exists") + [Some((2, "y"))]
+  os.stdio.println("nested ${nested.get_or_fault("a", "golden: key exists").len()} ${(nested.get_or_fault("a", "golden: key exists")[2] ?? (0, "")).1}")
+  let results = scope s {
+    var hs: List[Task[Int, ParseErr]] = []
+    for word in ["10", "20", "30"] {
+      hs.push(s.spawn(fn() {
+        let n = Int.parse(word).or_err(ParseErr.Bad(text: word))?
+        n + 1
+      }))
+    }
+    var out: List[Int] = []
+    for h in hs {
+      match h.await {
+        Ok(v) => out.push(v)
+        Err(_) => out.push(-1)
+      }
+    }
+    out
+  }
+  os.stdio.println("tasks ${results.fold(0, fn(a, b) { a + b })}")
+  var total = 0
+  rows: for row in [[1, 2, 3], [4, -1, 6], [7, 8, 9]] {
+    for x in row {
+      defer total += 0
+      if x < 0 {
+        continue rows
+      }
+      total += x
+    }
+  }
+  os.stdio.println("total ${total}")
+  let fib = fn(n: Int) -> Int {
+    var a = 0
+    var b = 1
+    for _ in 0..n {
+      let t2 = a + b
+      a = b
+      b = t2
+    }
+    a
+  }
+  os.stdio.println("fib ${fib(30)}")
+}

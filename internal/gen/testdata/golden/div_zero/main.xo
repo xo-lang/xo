@@ -1,0 +1,6 @@
+fn ratio(a: Int, b: Int) -> Int { a / b }
+
+fn main(os: Os) {
+  os.stdio.println("${ratio(10, 3)} ${-7 / 2} ${-7 % 2} ${7 % -2}")
+  os.stdio.println("${1.0 / 4.0} ${ratio(5, 0)}")
+}

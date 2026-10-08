@@ -1,0 +1,89 @@
+use std/http
+
+fn hello(key: Str) -> http.Request {
+  http.new_request("GET", "/hello", headers: {"X-Api-Key": key})
+}
+
+test "20 immediate requests succeed and the 21st gets 429" {
+  let r = routes(new_limiter(), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello("a")).status) == 200
+  }
+  expect(r.call(hello("a")).status) == 429
+}
+
+test "after 1 second 5 more succeed" {
+  let r = routes(new_limiter(), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello("a")).status) == 200
+  }
+  expect(r.call(hello("a")).status) == 429
+  os.clock.advance(1s)
+  for _ in 0..5 {
+    expect(r.call(hello("a")).status) == 200
+  }
+  expect(r.call(hello("a")).status) == 429
+}
+
+test "Retry-After is whole seconds until one token, at least 1" {
+  let l = new_limiter(limits: {"slow": Limit{capacity: 1, refill_per_sec: 0.25}})
+  let r = routes(l, os.clock)
+
+  expect(r.call(hello("slow")).status) == 200
+  let resp = r.call(hello("slow"))
+  expect(resp.status) == 429
+  expect(resp.header("Retry-After")) == Some("4")
+
+  os.clock.advance(3s)
+  expect(r.call(hello("slow")).header("Retry-After")) == Some("1")
+
+  // Default limit: 0.2s until the next token rounds up to 1.
+  for _ in 0..20 {
+    let _ = r.call(hello("fast"))
+  }
+  expect(r.call(hello("fast")).header("Retry-After")) == Some("1")
+}
+
+test "custom limit for a key is applied" {
+  let l = new_limiter(limits: {"vip": Limit{capacity: 2, refill_per_sec: 1.0}})
+  let r = routes(l, os.clock)
+  expect(r.call(hello("vip")).status) == 200
+  expect(r.call(hello("vip")).status) == 200
+  expect(r.call(hello("vip")).status) == 429
+  // Other keys still get the default of 20.
+  for _ in 0..20 {
+    expect(r.call(hello("other")).status) == 200
+  }
+}
+
+test "missing api key falls back to remote ip" {
+  expect(client_key(http.new_request("GET", "/hello"))) == "127.0.0.1"
+  expect(client_key(hello("k"))) == "k"
+}
+
+test "bucket refill is capped at capacity" {
+  let t0 = os.clock.now()
+  var b = new_bucket(Limit{capacity: 2, refill_per_sec: 1.0}, t0)
+  expect(b.take(t0))
+  expect(b.take(t0))
+  expect(!b.take(t0))
+  expect(b.take(t0 + 1h))
+  expect(b.take(t0 + 1h))
+  expect(!b.take(t0 + 1h))
+}
+
+test "idle buckets are evicted" {
+  let l = new_limiter()
+  l.check("a", os.clock.now())
+  scope s {
+    s.spawn_background(fn() { run_evictor(l, os.clock) })
+    // Evictor runs at 1m, 2m, ... 10m. At 10m "a" is idle exactly 10m: kept.
+    os.clock.sleep(10m + 30s)
+    expect(l.size()) == 1
+    l.check("b", os.clock.now())
+    // At 11m "a" is idle 11m: evicted. "b" is idle 30s: kept.
+    os.clock.sleep(1m)
+    expect(l.size()) == 1
+    expect(l.evict_idle(os.clock.now(), 0s)) == 1
+  }
+}

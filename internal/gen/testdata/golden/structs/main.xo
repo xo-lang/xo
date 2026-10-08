@@ -1,0 +1,40 @@
+struct Config {
+  host: Str = "localhost"
+  port: Int = 8080
+  tags: List[Str] = []
+}
+
+struct Account {
+  id: Int
+  balance: Int
+  cfg: Config
+}
+
+fn (var a: Account) deposit(amt: Int) {
+  a.balance += amt
+}
+
+fn (a: Account) describe() -> Str { "#${a.id}: ${a.balance}" }
+
+fn bump(var c: Config) {
+  c.port += 1
+  c.tags.push("bumped")
+}
+
+fn main(os: Os) {
+  let c = Config{}
+  let c2 = Config{port: 9090}
+  os.stdio.println("${c.host}:${c.port} ${c2.host}:${c2.port}")
+  var a = Account{id: 1, balance: 10, cfg: c}
+  let before = a
+  a.deposit(5)
+  a.cfg.port = 1
+  a.cfg.tags.push("x")
+  os.stdio.println("${a.describe()} ${before.describe()}")
+  os.stdio.println("${a.cfg.port} ${before.cfg.port} ${a.cfg.tags.len()} ${before.cfg.tags.len()}")
+  var cfg = c with {host: "example.com"}
+  bump(cfg)
+  bump(cfg)
+  os.stdio.println("${cfg.host} ${cfg.port} ${cfg.tags.len()} ${c.port}")
+  os.stdio.println("eq: ${c == Config{}} ${c == c2} ${a == before}")
+}

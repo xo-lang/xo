@@ -1,0 +1,37 @@
+use std/json
+
+pub struct Profile {
+  pub id: Int
+  pub name: Str
+  pub email: Str?
+} derive Json
+
+pub enum ProfileErr {
+  Fetch(from FetchErr)
+  // GUESS: a `from` field naming a type from another module (`json.DecodeErr`).
+  // The grammar has `TypeName = ident`, but qualified types are used everywhere
+  // in the spec's prose and examples.
+  Decode(from json.DecodeErr)
+}
+
+pub fn (e: ProfileErr) display() -> Str {
+  match e {
+    Fetch(inner) => "fetch profile: ${inner}"
+    Decode(inner) => "decode profile: ${inner}"
+  }
+}
+
+/// Loads `<base_url>/users/<user_id>` with retries and decodes it.
+pub fn fetch_profile(
+  net: Net,
+  clock: Clock,
+  rand: Rand,
+  base_url: Str,
+  user_id: Int,
+  policy: RetryPolicy = RetryPolicy{},
+) -> Profile ! ProfileErr
+  uses net.dial, clock, rand
+{
+  let body = get_with_retry(net, clock, rand, "${base_url}/users/${user_id}", policy)?
+  json.decode[Profile](body)?
+}

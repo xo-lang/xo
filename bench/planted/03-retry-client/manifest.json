@@ -1,0 +1,112 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "xo_prevents": "yes",
+    "files": [
+      "retry.go"
+    ],
+    "description": "In doOnce, the 2xx branch replaces `body, err := io.ReadAll(resp.Body)` plus its error check with `body, _ := io.ReadAll(resp.Body)`, so a body read failure is discarded and the partial body is returned as success.",
+    "trigger": "A server (or fake Doer) that returns 200 with a body reader that fails mid stream (connection reset, unexpected EOF).",
+    "symptom": "Instead of retrying a broken transfer, the client returns a truncated or empty body as a successful response; FetchProfile then reports a JSON decode error (or a partially filled profile) for a server that was merely flaky."
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "xo_prevents": "yes",
+    "files": [
+      "retry.go"
+    ],
+    "description": "In doOnce, `defer resp.Body.Close()` is moved above the `if err != nil` check after `net.Do(req)`. When Do returns an error, resp is nil and the deferred Close dereferences it.",
+    "trigger": "Any transport level failure from Doer.Do (connection refused, DNS failure, timeout) where resp is nil.",
+    "symptom": "The process panics with a nil pointer dereference whenever the upstream is unreachable, instead of retrying and eventually returning an attempts exhausted error."
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "xo_prevents": "yes",
+    "files": [
+      "retry.go"
+    ],
+    "description": "The `case KindCancelled: return \"cancelled\"` arm is removed from FetchErrKind.String, so KindCancelled falls through to the default \"unknown\".",
+    "trigger": "Cancel the context (or let a deadline expire) before or during a retry so GetWithRetry returns a KindCancelled FetchError, then format the error or the kind.",
+    "symptom": "Cancelled fetches log as `fetch \"...\": unknown: context canceled`; log based alerting and dashboards keyed on the kind string misclassify cancellations."
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "xo_prevents": "yes",
+    "files": [
+      "profile.go"
+    ],
+    "description": "FetchProfile lazily defaults the clock with `if f.Clock == nil { f.Clock = RealClock{} }`, writing a field of the shared *Fetcher from inside a method that callers invoke concurrently.",
+    "trigger": "A single Fetcher constructed with a nil Clock, used by FetchProfile from two or more goroutines at the same time (run with -race).",
+    "symptom": "The race detector reports concurrent write/read of Fetcher.Clock under concurrent profile fetches; without the detector it is undefined behavior (torn interface value) that can surface as sporadic crashes in production load."
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "xo_prevents": "yes",
+    "files": [
+      "retry.go"
+    ],
+    "description": "GetWithRetry runs doOnce in a goroutine that sends its result on an unbuffered channel, and selects on ctx.Done() versus that channel. When the context is cancelled first, GetWithRetry returns and nothing ever receives, so the goroutine blocks forever on the send once doOnce returns.",
+    "trigger": "Cancel the context (or hit a deadline) while a request is in flight; the Doer returns afterwards (a real http.Client does so promptly with a context error).",
+    "symptom": "Under load with timeouts or client cancellations the goroutine count grows without bound and memory climbs steadily; goroutine dumps show many goroutines parked on a channel send inside the retry helper."
+  },
+  {
+    "id": "X6",
+    "class": "lost update (copy modified, never written back)",
+    "xo_prevents": "partly",
+    "files": [
+      "retry.go"
+    ],
+    "description": "The inline `maxAttempts < 1 -> 1` clamp is replaced by a call to a new `func (p RetryPolicy) normalize()` with a value receiver that clamps MaxAttempts and Jitter on its copy. The caller's policy is unchanged, and maxAttempts is read directly from policy.MaxAttempts.",
+    "trigger": "A RetryPolicy with MaxAttempts of 0 or negative (for example a zero value RetryPolicy{}).",
+    "symptom": "With a zero or negative MaxAttempts the client never sends a request and immediately returns `attempts exhausted after 0 attempts` (with a nil underlying error), instead of making the documented single attempt."
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "xo_prevents": "no",
+    "files": [
+      "retry.go"
+    ],
+    "description": "In backoff, the doubling loop starts at `i := 1` instead of `i := 2`, so the delay before attempt n is base*2^(n-1) instead of base*2^(n-2).",
+    "trigger": "Any retry with BaseDelay > 0 where the cap is not reached, e.g. BaseDelay 100ms, MaxDelay 5s, Jitter 0: delay before attempt 2 is 200ms instead of 100ms.",
+    "symptom": "Every retry waits twice as long as configured (the first retry waits 2x BaseDelay), and the MaxDelay cap is reached one attempt early, making requests slower to recover than the policy promises."
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "xo_prevents": "no",
+    "files": [
+      "retry.go"
+    ],
+    "description": "In isRetryableStatus, `http.StatusGatewayTimeout` (504) is replaced by `http.StatusRequestTimeout` (408).",
+    "trigger": "Upstream returns 504 Gateway Timeout (now treated as non retryable), or 408 Request Timeout (now retried).",
+    "symptom": "Requests that hit a gateway timeout fail immediately with a non retryable status error instead of being retried, while 408 responses are unexpectedly retried."
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "xo_prevents": "no",
+    "files": [
+      "retry.go"
+    ],
+    "description": "In jittered, the offset is computed as `(rnd.Float64() - 0.5) * jitter * float64(d)` instead of `(2*rnd.Float64() - 1) * jitter * float64(d)`, so the jitter range is +/- jitter*d/2 rather than +/- jitter*d.",
+    "trigger": "Jitter > 0 with any Rand; e.g. d=100ms, Jitter 0.2, Rand returning 0 gives 90ms instead of 80ms, Rand near 1 gives about 110ms instead of about 120ms.",
+    "symptom": "Retry delays spread over only half the configured jitter window, so many clients that fail together retry in tighter bursts than the policy specifies."
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "xo_prevents": "no",
+    "files": [
+      "retry.go"
+    ],
+    "description": "The Retry-After clamp is inverted: `if policy.MaxDelay > 0 && d < policy.MaxDelay { d = policy.MaxDelay }` instead of `d > policy.MaxDelay`.",
+    "trigger": "A 429 or 503 response carrying a Retry-After header with MaxDelay > 0, e.g. Retry-After: 1 with MaxDelay 5s (waits 5s), or Retry-After: 120 with MaxDelay 5s (waits 120s).",
+    "symptom": "Short server provided Retry-After hints are stretched up to MaxDelay, and long ones are no longer capped, so the client sometimes stalls for minutes despite a small configured MaxDelay."
+  }
+]

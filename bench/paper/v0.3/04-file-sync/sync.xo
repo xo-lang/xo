@@ -1,0 +1,177 @@
+// Core sync logic. Works only through the two Fs capabilities it is given.
+
+const TEMP_PREFIX = ".filesync-"
+
+struct Options {
+  dry_run: Bool = false
+  delete: Bool = false
+  fold_case: Bool = false
+  skip_names: Set[Str] = #{}
+}
+
+struct Report {
+  copied: Int = 0
+  deleted: Int = 0
+  skipped: Int = 0
+  failed: Int = 0
+}
+
+fn (r: Report) display() -> Str {
+  "copied: ${r.copied}, deleted: ${r.deleted}, skipped: ${r.skipped}, failed: ${r.failed}"
+}
+
+/// Mirrors `src` into `dst`. Per file failures are counted in the report;
+/// only failures to list a directory (or cancellation) abort the run.
+fn sync(src: Fs, dst: Fs, opts: Options, out: Stdio) -> Report ! FsErr
+  uses fs, stdio
+{
+  let src_entries = src.walk(".")?.filter(fn(e) { !is_skipped(e.name, opts) })
+  let dst_entries = match dst.walk(".") {
+    Ok(es) => es
+    Err(NotFound(..)) => []
+    Err(e) => return Err(e)
+  }
+
+  var dst_by_key: Map[Str, FileInfo] = {}
+  for e in dst_entries {
+    dst_by_key.put(path_key(e.path, opts.fold_case), e)
+  }
+
+  var report = Report{}
+
+  // Copy phase. walk lists parents before children, so directories are
+  // created before the files inside them.
+  for e in src_entries {
+    let existing = dst_by_key.get(path_key(e.path, opts.fold_case))
+    if e.is_dir {
+      if existing.is_none() && !opts.dry_run {
+        match dst.create_dir_all(e.path) {
+          Ok(_) => ()
+          Err(Canceled) => return Err(FsErr.Canceled)
+          Err(err) => {
+            out.eprintln("failed mkdir ${e.path}: ${err}")
+            report.failed += 1
+          }
+        }
+      }
+      continue
+    }
+    if !needs_copy(e, existing) {
+      report.skipped += 1
+      continue
+    }
+    if opts.dry_run {
+      out.println("would copy ${e.path}")
+      report.copied += 1
+      continue
+    }
+    match copy_file(src, dst, e) {
+      Ok(_) => {
+        out.println("copied ${e.path}")
+        report.copied += 1
+      }
+      Err(Canceled) => return Err(FsErr.Canceled)
+      Err(err) => {
+        out.eprintln("failed copy ${e.path}: ${err}")
+        report.failed += 1
+      }
+    }
+  }
+
+  if opts.delete {
+    let src_keys = src_entries.map(fn(e) { path_key(e.path, opts.fold_case) }).to_set()
+
+    // Directories that still hold something we keep cannot be removed.
+    var keep_dirs: Set[Str] = #{}
+    for e in dst_entries {
+      if src_keys.contains(path_key(e.path, opts.fold_case)) || is_skipped(e.name, opts) {
+        for d in ancestors(e.path) {
+          keep_dirs.add(path_key(d, opts.fold_case))
+        }
+      }
+    }
+
+    // Children before parents, so a directory is empty when its turn comes.
+    for e in dst_entries.reverse() {
+      let k = path_key(e.path, opts.fold_case)
+      if src_keys.contains(k) || keep_dirs.contains(k) || is_skipped(e.name, opts) {
+        continue
+      }
+      if opts.dry_run {
+        out.println("would delete ${e.path}")
+        report.deleted += 1
+        continue
+      }
+      match dst.remove(e.path) {
+        Ok(_) => {
+          out.println("deleted ${e.path}")
+          report.deleted += 1
+        }
+        Err(Canceled) => return Err(FsErr.Canceled)
+        Err(err) => {
+          out.eprintln("failed delete ${e.path}: ${err}")
+          report.failed += 1
+        }
+      }
+    }
+  }
+
+  report
+}
+
+/// A file is copied when it is missing in dst, differs in size, or is newer
+/// in src. A directory in dst where src has a file also counts as different.
+fn needs_copy(s: FileInfo, d: FileInfo?) -> Bool {
+  match d {
+    None => true
+    Some(existing) => existing.is_dir || existing.size != s.size || s.modified > existing.modified
+  }
+}
+
+/// Copies one file through a temp file in the destination directory and a
+/// rename, so a partial file is never visible under the final name.
+fn copy_file(src: Fs, dst: Fs, info: FileInfo) -> () ! FsErr uses fs {
+  let data = src.read(info.path)?
+  let dir = parent_dir(info.path)
+  if dir != "." {
+    dst.create_dir_all(dir)?
+  }
+  // GUESS: create_temp returns a path relative to the capability root
+  // (like FileInfo.path), not relative to `dir`.
+  let tmp = dst.create_temp(dir, TEMP_PREFIX)?
+  var done = false
+  defer {
+    if !done {
+      let _ = dst.remove(tmp)
+    }
+  }
+  dst.write(tmp, data)?
+  // Keep the source mtime so the next run sees the file as unchanged.
+  dst.set_modified(tmp, info.modified)?
+  dst.rename(tmp, info.path)?
+  done = true
+}
+
+fn path_key(path: Str, fold_case: Bool) -> Str {
+  if fold_case { path.to_lower() } else { path }
+}
+
+fn is_skipped(name: Str, opts: Options) -> Bool {
+  let k = path_key(name, opts.fold_case)
+  opts.skip_names.to_list().any(fn(s) { path_key(s, opts.fold_case) == k })
+}
+
+/// "a/b/c.txt" gives ["a", "a/b"].
+fn ancestors(path: Str) -> List[Str] {
+  let parts = path.split("/")
+  var dirs: List[Str] = []
+  for i in 1..parts.len() {
+    dirs.push(parts[..i].join("/"))
+  }
+  dirs
+}
+
+/// "a/b/c.txt" gives "a/b"; a top level path gives "." (the capability root).
+fn parent_dir(path: Str) -> Str {
+  ancestors(path).last() ?? "."
+}

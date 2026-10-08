@@ -1,0 +1,6 @@
+fn main() {
+  let x = 1 + 2
+  if x != 3 {
+    fault("math is broken")
+  }
+}

@@ -1,0 +1,14 @@
+exit 70
+--- stdout
+lookup: 2 0
+quarter: 2 -1
+err Bad(code: 3)
+is_err true is_ok false
+mapped 500
+wrapped Bad(code: 1)
+opt true 5 4
+ignored true
+err() true
+fault next
+--- stderr
+fault: expected a value at main.xo:46

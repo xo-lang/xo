@@ -1,0 +1,31 @@
+enum Shape {
+  Circle(r: Float)
+  Rect(w: Float, h: Float)
+  Empty
+}
+
+fn area(s: Shape) -> Float {
+  match s {
+    Circle(r) => r * r * 3.14
+  }
+}
+
+fn nested(x: Result[Shape, Str]?) -> Int {
+  match x {
+    Some(Ok(Empty)) => 0
+    Some(Err(_)) => 1
+    None => 2
+  }
+}
+
+fn wrong(s: Shape) -> Int {
+  match s {
+    Some(_) => 1
+    _ => 0
+  }
+}
+
+fn first(o: Int?) -> Int {
+  let Some(v) = o
+  v
+}

@@ -1,0 +1,30 @@
+{"task": "01-crud-api", "bug": "X1", "class": "X1", "status": "variant", "caught_by": "test", "failed": ["invalid email returns 400 (api_test.xo:41:1, seed 1)"]}
+{"task": "01-crud-api", "bug": "X2", "class": "X2", "status": "variant", "caught_by": "none"}
+{"task": "01-crud-api", "bug": "X3", "class": "X3", "status": "variant", "caught_by": "test", "failed": ["duplicate email returns 409 (api_test.xo:30:1, seed 1)"]}
+{"task": "01-crud-api", "bug": "X4", "class": "X4", "status": "variant", "caught_by": "none"}
+{"task": "01-crud-api", "bug": "X5", "class": "X5", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "01-crud-api", "bug": "X6", "class": "X6", "status": "variant", "caught_by": "check", "codes": ["XO0520"]}
+{"task": "02-worker-pool", "bug": "X1", "class": "X1", "status": "variant", "caught_by": "check", "codes": ["XO0405"]}
+{"task": "02-worker-pool", "bug": "X2", "class": "X2", "status": "variant", "caught_by": "none"}
+{"task": "02-worker-pool", "bug": "X3", "class": "X3", "status": "variant", "caught_by": "test", "failed": ["one failing job does not affect the others (pool_test.xo:25:1, seed 1)"]}
+{"task": "02-worker-pool", "bug": "X4", "class": "X4", "status": "variant", "caught_by": "test", "failed": ["one failing job does not affect the others (pool_test.xo:25:1, seed 1)", "never more than workers jobs run at the same time (pool_test.xo:71:1, seed 1)"]}
+{"task": "02-worker-pool", "bug": "X5", "class": "X5", "status": "variant", "caught_by": "none"}
+{"task": "02-worker-pool", "bug": "X6", "class": "X6", "status": "variant", "caught_by": "test", "failed": ["results keep original order when later jobs finish first (pool_test.xo:8:1, seed 1)", "one failing job does not affect the others (pool_test.xo:25:1, seed 1)", "timeout cancels slow jobs and reports them (pool_test.xo:42:1, seed 1)"]}
+{"task": "03-retry-client", "bug": "X1", "class": "X1", "status": "variant", "caught_by": "test", "failed": ["contract fuzz: retry_client.backoff (retry.xo:131:1, seed 1)"]}
+{"task": "03-retry-client", "bug": "X2", "class": "X2", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X3", "class": "X3", "status": "variant", "caught_by": "test", "failed": ["contract fuzz: retry_client.backoff (retry.xo:130:1, seed 1)"]}
+{"task": "03-retry-client", "bug": "X4", "class": "X4", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X5", "class": "X5", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X6", "class": "X6", "status": "variant", "caught_by": "test", "failed": ["contract fuzz: retry_client.backoff (retry.xo:132:1, seed 1)", "succeeds on the third attempt after two 503s (retry_test.xo:5:1, seed 1)", "jitter stays within the configured fraction (retry_test.xo:16:1, seed 1)"]}
+{"task": "04-file-sync", "bug": "X1", "class": "X1", "status": "variant", "caught_by": "none"}
+{"task": "04-file-sync", "bug": "X2", "class": "X2", "status": "variant", "caught_by": "test", "failed": ["new file is copied and unchanged file is skipped (main_test.xo:12:1, seed 1)", "newer source file is copied again (main_test.xo:30:1, seed 1)", "nested directories are created (main_test.xo:44:1, seed 1)"]}
+{"task": "04-file-sync", "bug": "X3", "class": "X3", "status": "variant", "caught_by": "none"}
+{"task": "04-file-sync", "bug": "X4", "class": "X4", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "04-file-sync", "bug": "X5", "class": "X5", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "04-file-sync", "bug": "X6", "class": "X6", "status": "variant", "caught_by": "check", "codes": ["XO0110"]}
+{"task": "05-rate-limiter", "bug": "X1", "class": "X1", "status": "variant", "caught_by": "none"}
+{"task": "05-rate-limiter", "bug": "X2", "class": "X2", "status": "variant", "caught_by": "test", "failed": ["twenty immediate requests pass and the 21st is limited (limiter_test.xo:11:1, seed 1)", "after one second five more requests pass (limiter_test.xo:21:1, seed 1)", "retry after is whole seconds until a token is available (limiter_test.xo:34:1, seed 1)"]}
+{"task": "05-rate-limiter", "bug": "X3", "class": "X3", "status": "variant", "caught_by": "test", "failed": ["retry after is whole seconds until a token is available (limiter_test.xo:34:1, seed 1)"]}
+{"task": "05-rate-limiter", "bug": "X4", "class": "X4", "status": "variant", "caught_by": "none"}
+{"task": "05-rate-limiter", "bug": "X5", "class": "X5", "status": "variant", "caught_by": "none"}
+{"task": "05-rate-limiter", "bug": "X6", "class": "X6", "status": "variant", "caught_by": "check", "codes": ["XO0520"]}

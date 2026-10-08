@@ -1,0 +1,92 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "xo_prevents": "yes",
+    "files": ["limiter.go"],
+    "description": "ClientKey discards the error from net.SplitHostPort (host, _, _ := ...) and returns host unconditionally, removing the fallback to the raw r.RemoteAddr.",
+    "trigger": "Requests without X-Api-Key whose RemoteAddr has no port (for example a bare IP set by a proxy or a unix socket address such as \"@\").",
+    "symptom": "Unrelated anonymous clients behind certain listeners or proxies share one rate limit bucket, so one noisy client gets everyone else throttled with 429."
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "xo_prevents": "yes",
+    "files": ["limiter.go"],
+    "description": "NewLimiter no longer initializes the custom field (the custom: make(map[string]Limit, len(custom)) line is dropped), so the copy loop writes into a nil map.",
+    "trigger": "Calling NewLimiter with a non empty custom limits map (as main does with \"premium\").",
+    "symptom": "The service panics at startup with 'assignment to entry in nil map' whenever per key limits are configured; it only starts when no custom limits are given."
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "xo_prevents": "yes",
+    "files": ["main.go"],
+    "description": "Run's select over the closed set of shutdown events {ctx done, server error} drops the case err = <-errc, keeping only case <-ctx.Done(). The code has no switch over a closed set, so the closest natural instance is this select over the two events Run must react to.",
+    "trigger": "ListenAndServe returns an error before ctx is cancelled, for example the port is already in use or the address is invalid.",
+    "symptom": "The process starts, never serves traffic, logs nothing, and hangs until it is sent SIGINT or SIGTERM, after which it exits with the bind error."
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "xo_prevents": "yes",
+    "files": ["limiter.go"],
+    "description": "Allow replaces defer l.mu.Unlock() with an explicit unlock right after b.Take(now), so b.RetryAfter(now), which calls refill and mutates Tokens and LastRefill, runs outside the mutex.",
+    "trigger": "Concurrent requests for the same key while it is being denied (one goroutine in RetryAfter while another is in Take or Evict reads LastRefill).",
+    "symptom": "Under concurrent load a throttled client occasionally gets extra requests through or odd Retry-After values; the race detector reports a race on the bucket fields."
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "xo_prevents": "yes",
+    "files": ["main.go"],
+    "description": "The errc channel in Run is made unbuffered (make(chan error) instead of make(chan error, 1)).",
+    "trigger": "Run returns because ctx was cancelled: Shutdown makes ListenAndServe return ErrServerClosed, and the serving goroutine blocks forever sending to errc since nobody receives anymore.",
+    "symptom": "Each Run that ends by cancellation leaves a goroutine stuck forever; embedding Run repeatedly (tests, reloads) shows steadily growing goroutine counts."
+  },
+  {
+    "id": "X6",
+    "class": "lost update (copy modified, never written back)",
+    "xo_prevents": "partly",
+    "files": ["limiter.go"],
+    "description": "Bucket.refill gets a value receiver (func (b Bucket) refill) instead of a pointer receiver, so the refilled Tokens and updated LastRefill are written to a copy and discarded.",
+    "trigger": "Any client that uses up its burst capacity and then waits for tokens to refill.",
+    "symptom": "Once a client exhausts its burst it stays at 429 permanently (Retry-After keeps saying 1) until its bucket is evicted; active clients are also evicted and reset every idle timeout because last-seen never advances."
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "xo_prevents": "no",
+    "files": ["limiter.go"],
+    "description": "Bucket.Take checks b.Tokens > 1 instead of b.Tokens >= 1.",
+    "trigger": "A burst of requests up to the configured capacity, or a request that arrives when exactly one token has refilled.",
+    "symptom": "Clients get one fewer request than their configured burst (19 of 20, 99 of 100), and the request at the advertised Retry-After time is still rejected."
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "xo_prevents": "no",
+    "files": ["limiter.go"],
+    "description": "Middleware rejects over limit requests with http.StatusServiceUnavailable (503) instead of http.StatusTooManyRequests (429).",
+    "trigger": "Any request over the client's limit.",
+    "symptom": "Throttled clients receive 503 Service Unavailable, so monitoring reports an outage and client libraries treat it as a server failure rather than rate limiting."
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "xo_prevents": "no",
+    "files": ["limiter.go"],
+    "description": "RetryAfter computes secs as (1 - b.Tokens) * b.RefillPerSec instead of dividing by b.RefillPerSec.",
+    "trigger": "A denied request on any bucket whose refill rate is not 1 token per second (for example the default 5/s or premium 50/s, or a slow 0.1/s limit).",
+    "symptom": "Retry-After is wrong: fast refilling keys are told to wait many seconds (5 instead of 1, 50 instead of 1) and slow keys are told to retry after 1 second and get rejected again."
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "xo_prevents": "no",
+    "files": ["limiter.go"],
+    "description": "Evict deletes buckets when now.Sub(b.LastRefill) < l.idle instead of > l.idle.",
+    "trigger": "The evictor ticking while clients are active (any bucket used within the idle timeout), and idle buckets older than the timeout.",
+    "symptom": "Active clients get their limits reset every eviction tick, letting a heavy client exceed its rate by a full burst each minute, while idle client entries are never cleaned up and memory grows."
+  }
+]

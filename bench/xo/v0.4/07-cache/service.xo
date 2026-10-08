@@ -1,0 +1,89 @@
+use std/http
+
+pub struct Item {
+  pub id: Int
+  pub name: Str
+  pub price: Int
+} derive Json
+
+/// Errors from the upstream item service.
+pub enum UpstreamErr {
+  NotFound(id: Int)
+  Failed(msg: Str)
+}
+
+pub fn (e: UpstreamErr) display() -> Str {
+  match e {
+    NotFound(id) => "item ${id} not found upstream"
+    Failed(msg) => "upstream failed: ${msg}"
+  }
+}
+
+/// Fetches one item from the upstream HTTP service.
+pub fn fetch_item(client: http.Client, base: Str, id: Int) -> Item ! UpstreamErr uses net.dial {
+  let resp = client.get("${base}/items/${id}").map_err(fn(e) { UpstreamErr.Failed(msg: "${e}") })?
+  match resp.status {
+    200 => resp.decode_json[Item]().map_err(fn(e) { UpstreamErr.Failed(msg: "bad upstream body: ${e}") })
+    404 => Err(UpstreamErr.NotFound(id: id))
+    s => Err(UpstreamErr.Failed(msg: "upstream status ${s}"))
+  }
+}
+
+/// A cache loader backed by the upstream HTTP service.
+pub fn http_fetcher(client: http.Client, base: Str) -> fn(Int) -> Item ! UpstreamErr uses net.dial {
+  fn(id: Int) -> Item ! UpstreamErr { fetch_item(client, base, id) }
+}
+
+/// Errors returned by the HTTP handlers.
+pub enum ApiErr {
+  NotFound(id: Int)
+  BadGateway(msg: Str)
+  Unavailable
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    NotFound(_) => 404
+    BadGateway(_) => 502
+    Unavailable => 503
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    NotFound(id) => "item ${id} not found"
+    BadGateway(msg) => msg
+    Unavailable => "service unavailable"
+  }
+}
+
+fn to_api(e: CacheErr[UpstreamErr]) -> ApiErr {
+  match e {
+    Load(UpstreamErr.NotFound(id)) => ApiErr.NotFound(id: id)
+    Load(UpstreamErr.Failed(msg)) => ApiErr.BadGateway(msg: msg)
+    Timeout => ApiErr.BadGateway(msg: "upstream timed out")
+    Panicked(msg) => ApiErr.BadGateway(msg: "upstream loader crashed: ${msg}")
+    Canceled => ApiErr.Unavailable
+  }
+}
+
+pub struct Service {
+  cache: Cache[Int, Item, UpstreamErr]
+}
+
+pub fn new_service(cache: Cache[Int, Item, UpstreamErr]) -> Service {
+  Service{cache: cache}
+}
+
+fn routes(svc: Service) -> http.Router {
+  var r = http.router()
+  r.handle("GET /items/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let item = svc.cache.get(req.param_int("id")).map_err(to_api)?
+    http.json(200, item)
+  })
+  r.handle("DELETE /items/{id:Int}/cache", fn(req) {
+    svc.cache.invalidate(req.param_int("id"))
+    http.empty(204)
+  })
+  r
+}

@@ -1,0 +1,39 @@
+/// The directory holding xo.mod: the working directory or its parent,
+/// depending on where `xo test` runs a module's tests.
+fn project_root(fs: Fs) -> Fs ! Error {
+  if fs.exists("xo.mod")? {
+    return fs.sub(".")
+  }
+  if fs.exists("../xo.mod")? {
+    return fs.sub("..")
+  }
+  Err("xo.mod not found in the working directory or its parent")
+}
+
+test "the rule flags forbidden imports and allows the rest" {
+  let src = "use std/json\nuse example.com/notes/store\n\nfn f() {}\n"
+  expect(violations("domain", "x.xo", src)) == ["domain/x.xo imports example.com/notes/store"]
+  expect(violations("domain", "x.xo", "use example.com/notes/api as handlers")) == ["domain/x.xo imports example.com/notes/api"]
+  expect(violations("store", "x.xo", "use example.com/notes/domain")) == []
+  expect(violations("store", "x.xo", "use example.com/notes/api")) == ["store/x.xo imports example.com/notes/api"]
+  expect(violations("api", "x.xo", "use example.com/notes/domain\nuse example.com/notes/store")) == []
+  expect(imports("  use std/http\nuse a/b as c\n// use x/y\n")) == ["std/http", "a/b"]
+}
+
+test "project modules respect the dependency rules" uses fs.read {
+  let root = project_root(os.fs)?
+  var found: List[Str] = []
+  var scanned = 0
+  for module in CHECKED {
+    for info in root.read_dir(module)? {
+      if info.is_dir || !info.name.ends_with(".xo") {
+        continue
+      }
+      let source = root.read_text(info.path)?
+      found = found + violations(module, info.name, source)
+      scanned += 1
+    }
+  }
+  expect(scanned) > 0
+  expect(found) == []
+}

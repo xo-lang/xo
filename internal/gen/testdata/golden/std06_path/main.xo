@@ -1,0 +1,6 @@
+use std/path
+
+fn main(os: Os) ! {
+  let p = path.join("dst/a", "../b/c.txt")
+  os.stdio.println("${p} ${path.dir(p)} ${path.base(p)} ${path.ext(p)} ${path.clean("a//b/./c")}")
+}

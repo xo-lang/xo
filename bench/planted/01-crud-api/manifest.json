@@ -1,0 +1,92 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "xo_prevents": "yes",
+    "files": ["handlers.go"],
+    "description": "handleCreate: `nick, _, err := nicknameField(fields)` followed by an `if err != nil` 400 return was replaced with `nick, _, _ := nicknameField(fields)`, discarding the nickname decode error.",
+    "trigger": "POST /users with a valid name and email and a non string, non null nickname, e.g. {\"name\":\"a\",\"email\":\"a@x\",\"nickname\":42}.",
+    "symptom": "Creating a user with a malformed nickname succeeds with 201 and the user has no nickname, instead of the request being rejected with 400."
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "xo_prevents": "yes",
+    "files": ["store.go"],
+    "description": "Store.Update: nickname branch `} else if p.Nickname != nil {` changed to `} else if p.Nickname != nil && *p.Nickname != *u.Nickname {` (skip unchanged nickname), which dereferences u.Nickname even when the stored user has no nickname.",
+    "trigger": "Create a user without a nickname, then PATCH /users/{id} with {\"nickname\":\"bob\"}.",
+    "symptom": "Setting a nickname on a user who never had one fails: the server drops the connection with no response (a handler panic is logged), and the nickname is never set."
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "xo_prevents": "yes",
+    "files": ["handlers.go"],
+    "description": "handlePatch: the `case errors.Is(err, errDuplicateEmail): writeError(w, http.StatusConflict, ...)` arm was removed from the switch over Store.Update's error outcomes, so the duplicate email error falls into `case err != nil` (500).",
+    "trigger": "Create two users, then PATCH the second with {\"email\": <first user's email>}.",
+    "symptom": "Changing a user's email to one that already belongs to another user returns 500 internal error instead of 409 conflict."
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "xo_prevents": "yes",
+    "files": ["store.go"],
+    "description": "Store.Delete takes `s.mu.RLock()` / `defer s.mu.RUnlock()` instead of `s.mu.Lock()` / `defer s.mu.Unlock()`, so it mutates the users and byEmail maps while holding only a shared read lock.",
+    "trigger": "Concurrent DELETE requests (or DELETE concurrent with GET /users or GET /users/{id}) for different users.",
+    "symptom": "Under concurrent deletes the whole server process crashes intermittently with 'fatal error: concurrent map writes' (or map read and write), or the race detector flags store access."
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "xo_prevents": "yes",
+    "files": ["handlers.go"],
+    "description": "readFields now reads the body in a goroutine that sends on an unbuffered channel, and the caller selects between that channel and r.Context().Done(). When the context wins, the caller returns and the reader goroutine blocks forever on `done <- readResult{...}`.",
+    "trigger": "POST or PATCH where the client disconnects (or the request context is canceled) before the body has been fully read, e.g. send headers with Content-Length and a partial body, then close the connection.",
+    "symptom": "Goroutine count and memory grow steadily over time when clients abort uploads; goroutine dumps show many goroutines stuck in a channel send under readFields."
+  },
+  {
+    "id": "X6",
+    "class": "lost update (copy modified, never written back)",
+    "xo_prevents": "partly",
+    "files": ["store.go"],
+    "description": "Store.Update: the final `s.users[id] = u` write back was removed; the local copy u is modified and returned but the map keeps the old value (the byEmail index is still updated).",
+    "trigger": "PATCH /users/{id} with any change (e.g. {\"name\":\"new\"}), then GET /users/{id}.",
+    "symptom": "PATCH responds 200 with the new values, but subsequent GETs and the list still show the old values; after an email change, the old email is free and the new email is reported as taken while the user still shows the old one."
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "xo_prevents": "no",
+    "files": ["handlers.go"],
+    "description": "validateName: `n > 100` changed to `n >= 100`, so the upper bound is exclusive.",
+    "trigger": "POST /users or PATCH with a name of exactly 100 characters.",
+    "symptom": "A name of exactly 100 characters is rejected with 400 'name must be 1 to 100 characters'."
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "xo_prevents": "no",
+    "files": ["handlers.go"],
+    "description": "handleCreate: success response `writeJSON(w, http.StatusCreated, u)` changed to `writeJSON(w, http.StatusOK, u)`.",
+    "trigger": "Any successful POST /users.",
+    "symptom": "Creating a user returns 200 OK instead of 201 Created."
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "xo_prevents": "no",
+    "files": ["handlers.go"],
+    "description": "`const maxBodyBytes = 1 << 20` (1 MiB) changed to `1 << 10` (1 KiB).",
+    "trigger": "POST or PATCH with a JSON body larger than 1024 bytes, e.g. a nickname of 2000 characters (nickname has no length limit).",
+    "symptom": "Requests with moderately sized bodies (over about 1 KB) fail with 400 'could not read body' even though they are well under the intended 1 MB limit."
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "xo_prevents": "no",
+    "files": ["store.go"],
+    "description": "Store.Update: `if p.Email != nil && *p.Email != u.Email {` changed to `if p.Email != nil && *p.Email == u.Email {`.",
+    "trigger": "PATCH /users/{id} with {\"email\": a new unused address}, or with the user's current email.",
+    "symptom": "Changing a user's email to a new address returns 200 but the email is unchanged; re-sending the user's current email returns 409 conflict."
+  }
+]

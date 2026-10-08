@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+0 50
+construct out of range next
+--- stderr
+fault: invariant of Percent failed: value >= 0 && value <= 100 at main.xo:10:13

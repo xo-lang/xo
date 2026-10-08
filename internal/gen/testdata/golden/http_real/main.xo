@@ -1,0 +1,34 @@
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello/{name}", fn(req) { http.text(200, "hello ${req.param("name")}") })
+  r.handle("POST /len", fn(req) { http.json(200, {"len": req.body.len()}) })
+  r
+}
+
+fn main(os: Os) ! {
+  let srv = http.server(os.net.listen("127.0.0.1:18732")?, routes())
+  let client = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    os.clock.sleep(100ms)
+    let a = client.get("http://127.0.0.1:18732/hello/xo")?
+    os.stdio.println("${a.status} ${a.body.to_str() ?? ""}")
+    let b = client.post_json("http://127.0.0.1:18732/len", "abcd")?
+    os.stdio.println("${b.status} ${b.body.to_str() ?? ""} ${b.header("content-type") ?? ""}")
+    let c = client.get("http://127.0.0.1:18732/missing")?
+    os.stdio.println("${c.status}")
+    match client.get("http://127.0.0.1:1/") {
+      Ok(_) => os.stdio.println("connected?")
+      Err(Connect(_)) => os.stdio.println("connect error")
+      Err(e) => os.stdio.println("other error ${e}")
+    }
+    match client.get("not a url") {
+      Ok(_) => os.stdio.println("?")
+      Err(InvalidUrl(_)) => os.stdio.println("invalid url")
+      Err(e) => os.stdio.println("other error ${e}")
+    }
+  }
+  os.stdio.println("server stopped")
+}

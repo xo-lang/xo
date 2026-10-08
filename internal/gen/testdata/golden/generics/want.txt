@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+size 3 pop 3 size 2 peek 200
+count 4
+largest 9 pear 1.5
+show [1][2] [x]
+swap one 1
+str stack 1
+--- stderr

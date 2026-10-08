@@ -1,0 +1,350 @@
+package check
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/parser"
+	"github.com/xo-lang/xo/internal/token"
+	"github.com/xo-lang/xo/std"
+)
+
+// modRoot maps a module path prefix declared in an xo.mod to its directory.
+type modRoot struct {
+	path string
+	dir  string
+}
+
+// localName derives a module's local name from an import path (core 4.1):
+// the last segment with `-` replaced by `_`. ok is false when the result is
+// not a valid identifier or is a keyword (XO0602).
+func localName(path string) (string, bool) {
+	seg := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		seg = path[i+1:]
+	}
+	name := strings.ReplaceAll(seg, "-", "_")
+	if name == "" || token.Lookup(name) != token.Ident {
+		return name, false
+	}
+	for i, ch := range name {
+		if !(ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || i > 0 && ch >= '0' && ch <= '9') {
+			return name, false
+		}
+	}
+	return name, true
+}
+
+func (c *checker) loadPrelude() error {
+	m, err := c.loadStd("prelude")
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return fmt.Errorf("std/prelude.xo is missing")
+	}
+	m.IsPrelude = true
+	c.prelude = m
+	// std/testing provides the predeclared `os`, `expect`, and `testing` of
+	// test blocks (core 9.2), so it is always loaded.
+	if _, err := c.loadStd("testing"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// loadStd loads std/<name>.xo, returning nil if it does not exist.
+func (c *checker) loadStd(name string) (*Module, error) {
+	path := "std/" + name
+	if m, ok := c.modules[path]; ok {
+		return m, nil
+	}
+	src, err := fs.ReadFile(std.Files, name+".xo")
+	if err != nil {
+		return nil, nil
+	}
+	m := &Module{Path: path, Name: name, Dir: "std", IsStd: true, Scope: map[string]Object{}}
+	if name == "prelude" {
+		m.IsPrelude = true
+	}
+	c.modules[path] = m
+	f := c.parseFile(m, "std/"+name+".xo", src, parser.SignatureMode)
+	m.Files = append(m.Files, f)
+	m.state = 1
+	if err := c.loadImports(m); err != nil {
+		return nil, err
+	}
+	m.state = 2
+	c.order = append(c.order, m)
+	return m, nil
+}
+
+func (c *checker) parseFile(m *Module, path string, src []byte, mode parser.Mode) *File {
+	af, ds := parser.ParseFile(path, src, mode)
+	for _, d := range ds {
+		c.diags.Add(d)
+	}
+	return &File{AST: af, Path: path, Module: m, Imports: map[string]*Import{}, IsTest: strings.HasSuffix(path, "_test.xo")}
+}
+
+// loadDirs finds every directory under dirs that holds .xo files and loads
+// it as a module.
+func (c *checker) loadDirs(dirs []string) ([]*Module, error) {
+	var moduleDirs []string
+	seen := map[string]bool{}
+	for _, d := range dirs {
+		info, err := os.Stat(d)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("%s is not a directory (a module is a directory, core 1.1)", d)
+		}
+		err = filepath.WalkDir(d, func(path string, e fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if e.IsDir() {
+				if path != d && (e.Name() == "testdata" || strings.HasPrefix(e.Name(), ".")) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".xo") {
+				dir := filepath.Dir(path)
+				if !seen[dir] {
+					seen[dir] = true
+					moduleDirs = append(moduleDirs, dir)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(moduleDirs)
+	var roots []*Module
+	for _, dir := range moduleDirs {
+		m, err := c.loadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		m.Root = true
+		roots = append(roots, m)
+	}
+	return roots, nil
+}
+
+// findModRoot looks for xo.mod in dir or its parents and registers it.
+func (c *checker) findModRoot(dir string) (modRoot, bool) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return modRoot{}, false
+	}
+	for d := abs; ; {
+		data, err := os.ReadFile(filepath.Join(d, "xo.mod"))
+		if err == nil {
+			sc := bufio.NewScanner(bytes.NewReader(data))
+			for sc.Scan() {
+				fields := strings.Fields(sc.Text())
+				if len(fields) == 2 && fields[0] == "module" {
+					r := modRoot{path: fields[1], dir: d}
+					known := false
+					for _, x := range c.roots {
+						if x == r {
+							known = true
+						}
+					}
+					if !known {
+						c.roots = append(c.roots, r)
+					}
+					return r, true
+				}
+			}
+			return modRoot{}, false
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return modRoot{}, false
+		}
+		d = parent
+	}
+}
+
+// modulePathFor returns the import path of the module in dir.
+func (c *checker) modulePathFor(dir string) string {
+	abs, _ := filepath.Abs(dir)
+	if r, ok := c.findModRoot(dir); ok {
+		rel, err := filepath.Rel(r.dir, abs)
+		if err == nil {
+			if rel == "." {
+				return r.path
+			}
+			return r.path + "/" + filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(dir))
+}
+
+func (c *checker) loadDir(dir string) (*Module, error) {
+	dir = relDir(dir)
+	path := c.modulePathFor(dir)
+	if m, ok := c.modules[path]; ok {
+		return m, nil
+	}
+	name, _ := localName(path)
+	m := &Module{Path: path, Name: name, Dir: dir, Scope: map[string]Object{}}
+	c.modules[path] = m
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".xo") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		p := filepath.Join(dir, n)
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		m.Files = append(m.Files, c.parseFile(m, p, src, 0))
+	}
+	m.state = 1
+	if err := c.loadImports(m); err != nil {
+		return nil, err
+	}
+	m.state = 2
+	c.order = append(c.order, m)
+	return m, nil
+}
+
+// loadImports resolves each file's `use` declarations, loading modules as
+// needed. Cycles are XO0604.
+func (c *checker) loadImports(m *Module) error {
+	for _, f := range m.Files {
+		for _, u := range f.AST.Uses {
+			if u.Path == "" {
+				continue
+			}
+			imp := &Import{Decl: u}
+			if u.Alias != nil {
+				imp.Name = u.Alias.Name
+			} else {
+				name, ok := localName(u.Path)
+				imp.Name = name
+				if !ok {
+					d := c.errorf(diag.ImportNeedsAlias, u.Sp, "import `%s` needs `as`: `%s` is not a valid module name", u.Path, name)
+					if d != nil {
+						alt := toSnake(name)
+						if _, ok2 := localName(alt); !ok2 || alt == "" {
+							alt = "m_" + strings.Trim(toSnake(name), "_")
+						}
+						note(d, token.Span{}, "the local name is the last path segment with `-` replaced by `_` (core 4.1)")
+						fix(d, fmt.Sprintf("add `as %s`", alt), insertEdit(u.Sp.File, u.Sp.End, " as "+alt))
+					}
+					imp.Name = ""
+				}
+			}
+			dep, err := c.resolveImport(u.Path)
+			if err != nil {
+				return err
+			}
+			if dep == nil {
+				d := c.errorf(diag.UnresolvedName, u.Sp, "module `%s` not found", u.Path)
+				if strings.HasPrefix(u.Path, "std/") {
+					var cands []string
+					entries, _ := fs.ReadDir(std.Files, ".")
+					for _, e := range entries {
+						n := strings.TrimSuffix(e.Name(), ".xo")
+						if n != "prelude" && strings.HasSuffix(e.Name(), ".xo") {
+							cands = append(cands, "std/"+n)
+						}
+					}
+					if s := nearest(u.Path, cands); len(s) > 0 {
+						note(d, token.Span{}, "did you mean `%s`?", strings.Join(s, "`, `"))
+					}
+				}
+				imp.Used = true
+			} else if dep.state == 1 {
+				c.errorf(diag.ImportCycle, u.Sp, "import cycle: `%s` imports `%s`, which imports it back", m.Path, dep.Path)
+				imp.Used = true
+				dep = nil
+			}
+			imp.Module = dep
+			if imp.Name == "" {
+				imp.Used = true
+				continue
+			}
+			if prev, ok := f.Imports[imp.Name]; ok {
+				c.errorf(diag.Duplicate, u.Sp, "`%s` is already imported by `use %s`", imp.Name, prev.Decl.Path)
+				continue
+			}
+			f.Imports[imp.Name] = imp
+		}
+	}
+	return nil
+}
+
+func (c *checker) resolveImport(path string) (*Module, error) {
+	if strings.HasPrefix(path, "std/") {
+		return c.loadStd(strings.TrimPrefix(path, "std/"))
+	}
+	if m, ok := c.modules[path]; ok {
+		return m, nil
+	}
+	for _, r := range c.roots {
+		if path == r.path || strings.HasPrefix(path, r.path+"/") {
+			rel := strings.TrimPrefix(strings.TrimPrefix(path, r.path), "/")
+			dir := filepath.Join(r.dir, filepath.FromSlash(rel))
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				return c.loadDir(dir)
+			}
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+// checkUnusedImports reports XO0110 for imports never referenced.
+func (c *checker) checkUnusedImports(f *File) {
+	for _, u := range f.AST.Uses {
+		for _, imp := range f.Imports {
+			if imp.Decl != u || imp.Used {
+				continue
+			}
+			d := c.errorf(diag.UnusedBinding, u.Sp, "import `%s` is never used", u.Path)
+			fix(d, "remove the import", replaceEdit(u.Sp, ""))
+		}
+	}
+}
+
+// relDir makes an absolute directory relative to the working directory when
+// it lies below it, so diagnostics use the same paths however a module was
+// reached (named on the command line or imported through xo.mod).
+func relDir(dir string) string {
+	if !filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return dir
+	}
+	rel, err := filepath.Rel(wd, dir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return dir
+	}
+	return rel
+}

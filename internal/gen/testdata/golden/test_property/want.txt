@@ -1,0 +1,10 @@
+exit 1
+--- stdout
+--- FAIL: a false property is reported with its input (main.xo:43:1, seed 1)
+    property failed on case 6; shrunk in 20 steps to
+    m = {"aaaa": 0, "a": 0, "": 0}
+    expect failed: expect(m.len()) < 3 at main.xo:44:3
+          left:  3
+          right: 3
+FAIL: 5 passed, 1 failed, 0 skipped
+--- stderr

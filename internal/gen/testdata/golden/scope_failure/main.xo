@@ -1,0 +1,49 @@
+enum JobErr {
+  Bad(id: Int)
+} derive Display
+
+fn job(clock: Clock, id: Int) -> Int ! JobErr uses clock {
+  clock.sleep(10ms * id)
+  if id == 2 {
+    return Err(JobErr.Bad(id: id))
+  }
+  id
+}
+
+fn run_all(stdio: Stdio, clock: Clock) -> Int ! JobErr uses (stdio, clock) {
+  scope s {
+    let a = s.spawn(fn() { job(clock, 1) })
+    let r = a.await?
+    s.spawn(fn() { job(clock, 2) })
+    s.spawn(fn() {
+      defer stdio.println("sibling unwound")
+      clock.sleep(10s)
+      stdio.println("sibling finished (should not happen)")
+    })
+    clock.sleep(10s)
+    r
+  }
+}
+
+fn main(os: Os) ! {
+  let handled = scope s {
+    let t = s.spawn(fn() { job(os.clock, 2) })
+    match t.await {
+      Ok(v) => v
+      Err(e) => {
+        os.stdio.println("awaited error consumed: ${e}")
+        -1
+      }
+    }
+  }
+  os.stdio.println("handled ${handled}")
+  let start = os.clock.now()
+  let r = run_all(os.stdio, os.clock)
+  os.stdio.println("run_all failed: ${r.is_err()} quickly: ${os.clock.since(start) < 5s}")
+  match r {
+    Err(e) => os.stdio.println("error ${e}")
+    Ok(_) => os.stdio.println("?")
+  }
+  let n = run_all(os.stdio, os.clock)?
+  os.stdio.println("never ${n}")
+}

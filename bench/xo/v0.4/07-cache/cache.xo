@@ -1,0 +1,286 @@
+use std/task
+
+/// Tuning knobs for a loading cache.
+pub struct Config {
+  /// Maximum number of entries kept; the least recently used is evicted.
+  pub max_entries: Int = 1000
+  /// Age below which an entry is served without any reload.
+  pub ttl: Duration = 60s
+  /// Extra window after `ttl` in which a stale value is served while one
+  /// background refresh runs.
+  pub stale_ttl: Duration = 30s
+  /// How long a loader error is cached.
+  pub negative_ttl: Duration = 5s
+  /// A load that runs longer than this fails every waiter with `Timeout`.
+  pub load_timeout: Duration = 2s
+}
+
+/// Counters exposed by `Cache.metrics`.
+pub struct Metrics {
+  pub hits: Int = 0
+  pub stale_hits: Int = 0
+  pub misses: Int = 0
+  pub loads: Int = 0
+  pub load_errors: Int = 0
+  pub evictions: Int = 0
+} derive Json
+
+/// Errors returned by `Cache.get`.
+pub enum CacheErr[E: Display] {
+  /// The loader failed (also returned from the negative cache).
+  Load(from E)
+  /// The loader exceeded `load_timeout`.
+  Timeout
+  /// The loader faulted.
+  Panicked(msg: Str)
+  /// The task running the shared load was cancelled before it finished.
+  Canceled
+}
+
+pub fn (e: CacheErr[E]) display() -> Str {
+  match e {
+    Load(inner) => "load failed: ${inner}"
+    Timeout => "load timed out"
+    Panicked(msg) => "loader crashed: ${msg}"
+    Canceled => "load was canceled"
+  }
+}
+
+/// A cached value or a cached loader error, with the time it was loaded.
+struct Entry[V, E] {
+  value: Result[V, E]
+  loaded_at: Time
+}
+
+/// One in flight load shared by every caller that asks for the key while it
+/// runs. `done` is closed when the load finishes; `outcome` holds the result.
+struct Flight[V, E: Display] {
+  id: Int
+  done: Chan[()]
+  outcome: Mutex[Result[V, CacheErr[E]]?]
+}
+
+struct State[K, V, E: Display] {
+  /// Insertion order is recency order: the first key is the least recently used.
+  entries: Map[K, Entry[V, E]]
+  flights: Map[K, Flight[V, E]]
+  next_flight: Int
+  metrics: Metrics
+}
+
+/// What a `get` must do, decided under the state lock.
+enum Plan[V, E: Display] {
+  Hit(v: V)
+  NegativeHit(err: E)
+  Stale(v: V, refresh: Flight[V, E]?)
+  Wait(flight: Flight[V, E])
+  Lead(flight: Flight[V, E])
+}
+
+/// A generic in memory loading cache with single flight loads, stale while
+/// revalidate, negative caching, load timeouts, and LRU eviction.
+pub struct Cache[K, V, E: Display, fx: Effects] {
+  loader: fn(K) -> V ! E uses fx
+  clock: Clock
+  group: task.Group
+  cfg: Config
+  state: Mutex[State[K, V, E]]
+}
+
+/// Creates a cache. Background refreshes run on `group` (use `os.tasks` for a
+/// cache that lives as long as the program).
+pub fn new_cache[K, V, E: Display, fx: Effects](
+  clock: Clock,
+  group: task.Group,
+  cfg: Config,
+  loader: fn(K) -> V ! E uses fx,
+) -> Cache[K, V, E, fx]
+  requires cfg.max_entries > 0
+{
+  let st = State{entries: {}, flights: {}, next_flight: 0, metrics: Metrics{}}
+  Cache{loader: loader, clock: clock, group: group, cfg: cfg, state: Mutex.new(st)}
+}
+
+/// Returns the value for `key`, loading it if needed.
+pub fn (c: Cache[K, V, E]) get(key: K) -> V ! CacheErr[E] uses clock {
+  let now = c.clock.now()
+  let cfg = c.cfg
+  let plan = c.state.with(fn(var st) { st.plan(key, now, cfg) })
+  match plan {
+    Hit(v) => Ok(v)
+    NegativeHit(e) => Err(CacheErr.Load(e))
+    Stale(v, refresh) => {
+      if let Some(f) = refresh {
+        c.start_refresh(key, f)
+      }
+      Ok(v)
+    }
+    Wait(f) => f.wait()
+    Lead(f) => c.run_flight(key, f)
+  }
+}
+
+/// Removes the entry for `key`. A load in flight for it will not be stored,
+/// though callers already waiting on it still receive its result.
+pub fn (c: Cache[K, V, E]) invalidate(key: K) {
+  c.state.with(fn(var st) { st.forget(key) })
+}
+
+/// A snapshot of the counters.
+pub fn (c: Cache[K, V, E]) metrics() -> Metrics {
+  c.state.with(fn(st) { st.metrics })
+}
+
+fn (c: Cache[K, V, E]) start_refresh(key: K, f: Flight[V, E]) {
+  c.group.spawn_background(fn() {
+    let _ = c.run_flight(key, f).ignore_err("refresh failures are counted in metrics and the stale value stays")
+  })
+}
+
+/// Runs the load for flight `f`, stores the result unless the flight was
+/// invalidated, and publishes the outcome to every waiter.
+fn (c: Cache[K, V, E]) run_flight(key: K, f: Flight[V, E]) -> V ! CacheErr[E] {
+  defer {
+    c.state.with(fn(var st) { st.drop_flight(key, f.id) })
+    f.done.close()
+  }
+  let res = c.load_guarded(key)
+  let now = c.clock.now()
+  let max_entries = c.cfg.max_entries
+  c.state.with(fn(var st) { st.store(key, f.id, res, now, max_entries) })
+  f.outcome.with(fn(var o) { o = Some(res) })
+  res
+}
+
+/// Calls the loader with a timeout, turning a fault into `Panicked`.
+fn (c: Cache[K, V, E]) load_guarded(key: K) -> V ! CacheErr[E] {
+  let loader = c.loader
+  let res = task.with_timeout(c.clock, c.cfg.load_timeout, fn() {
+    task.isolate(fn() { loader(key) })
+  })
+  match res {
+    Ok(v) => v
+    Err(task.Timed.TimedOut) => return Err(CacheErr.Timeout)
+    Err(task.Timed.Failed(task.Isolated.Faulted(info))) => return Err(CacheErr.Panicked(msg: info.msg))
+    Err(task.Timed.Failed(task.Isolated.Failed(e))) => return Err(CacheErr.Load(e))
+  }
+}
+
+/// Waits for another caller's load and returns its outcome.
+fn (f: Flight[V, E]) wait() -> V ! CacheErr[E] {
+  f.done.recv()
+  let outcome = f.outcome.with(fn(o) { o })
+  outcome ?? Err(CacheErr.Canceled)
+}
+
+fn (var st: State[K, V, E]) plan(key: K, now: Time, cfg: Config) -> Plan[V, E] {
+  if let Some(entry) = st.entries.get(key) {
+    let age = now - entry.loaded_at
+    match entry.value {
+      Ok(v) => {
+        if age < cfg.ttl {
+          st.touch(key, entry)
+          st.metrics.hits += 1
+          return Plan.Hit(v)
+        }
+        if age < cfg.ttl + cfg.stale_ttl {
+          st.touch(key, entry)
+          st.metrics.stale_hits += 1
+          if st.flights.contains(key) {
+            return Plan.Stale(v: v, refresh: None)
+          }
+          return Plan.Stale(v: v, refresh: Some(st.new_flight(key)))
+        }
+      }
+      Err(e) => {
+        if age < cfg.negative_ttl {
+          st.touch(key, entry)
+          st.metrics.hits += 1
+          return Plan.NegativeHit(e)
+        }
+      }
+    }
+    let _ = st.entries.remove(key)
+  }
+  st.metrics.misses += 1
+  if let Some(f) = st.flights.get(key) {
+    return Plan.Wait(f)
+  }
+  Plan.Lead(st.new_flight(key))
+}
+
+fn (var st: State[K, V, E]) new_flight(key: K) -> Flight[V, E] {
+  st.next_flight += 1
+  st.metrics.loads += 1
+  let f = Flight{
+    id: st.next_flight,
+    done: Chan[()].new(),
+    outcome: Mutex[Result[V, CacheErr[E]]?].new(None),
+  }
+  st.flights.put(key, f)
+  f
+}
+
+/// Moves `key` to the most recently used position.
+fn (var st: State[K, V, E]) touch(key: K, e: Entry[V, E]) {
+  let _ = st.entries.remove(key)
+  st.entries.put(key, e)
+}
+
+fn (st: State[K, V, E]) owns(key: K, flight_id: Int) -> Bool {
+  match st.flights.get(key) {
+    Some(f) => f.id == flight_id
+    None => false
+  }
+}
+
+fn (var st: State[K, V, E]) forget(key: K) {
+  let _ = st.entries.remove(key)
+  let _ = st.flights.remove(key)
+}
+
+fn (var st: State[K, V, E]) drop_flight(key: K, flight_id: Int) {
+  if st.owns(key, flight_id) {
+    let _ = st.flights.remove(key)
+  }
+}
+
+fn (var st: State[K, V, E]) store(
+  key: K,
+  flight_id: Int,
+  res: Result[V, CacheErr[E]],
+  now: Time,
+  max_entries: Int,
+) {
+  if res.is_err() {
+    st.metrics.load_errors += 1
+  }
+  if !st.owns(key, flight_id) {
+    return
+  }
+  let _ = st.flights.remove(key)
+  match res {
+    Ok(v) => st.insert(key, Entry{value: Ok(v), loaded_at: now}, max_entries)
+    Err(Load(e)) => {
+      // A failed refresh keeps the stale value instead of replacing it.
+      let keep_stale = match st.entries.get(key) {
+        Some(old) => old.value.is_ok()
+        None => false
+      }
+      if !keep_stale {
+        st.insert(key, Entry{value: Err(e), loaded_at: now}, max_entries)
+      }
+    }
+    Err(_) => ()
+  }
+}
+
+fn (var st: State[K, V, E]) insert(key: K, e: Entry[V, E], max_entries: Int) {
+  let _ = st.entries.remove(key)
+  st.entries.put(key, e)
+  while st.entries.len() > max_entries {
+    let oldest = st.entries.keys().first().or_fault("a non empty map has a first key")
+    let _ = st.entries.remove(oldest)
+    st.metrics.evictions += 1
+  }
+}

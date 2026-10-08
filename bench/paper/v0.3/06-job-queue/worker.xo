@@ -1,0 +1,103 @@
+// Worker runner: N workers lease jobs, run a handler, heartbeat the lease,
+// and ack or nack. Shutdown is graceful with a grace period.
+
+use std/log
+use std/task
+
+pub struct RunnerConfig {
+  pub workers: Int = 4
+  pub lease_duration: Duration = 30s
+  pub poll_interval: Duration = 200ms
+  pub grace: Duration = 10s
+} invariant workers >= 1 && lease_duration > 0s
+
+/// Runs `cfg.workers` workers until `stop` is closed or receives a value.
+/// Then it stops leasing, waits up to `cfg.grace` for running handlers, and
+/// cancels the rest; cancelled jobs are nacked. When this returns, no worker
+/// is running (the scope guarantees it).
+pub fn run_workers[fx: Effects](
+  q: Queue,
+  clock: Clock,
+  cfg: RunnerConfig,
+  stop: Chan[()],
+  handler: fn(Job) -> () ! Error uses fx,
+) uses (clock, fx) {
+  let stopping = Atomic[Bool].new(false)
+  let finished = Chan[()].new(cap: cfg.workers)
+  scope s {
+    for i in 0..cfg.workers {
+      let worker_id = "worker-${i}"
+      s.spawn(fn() { work(q, clock, cfg, worker_id, stopping, finished, handler) })
+    }
+    let _ = stop.recv()
+    stopping.set(true)
+    let drained = task.with_timeout(clock, cfg.grace, fn() {
+      for _ in 0..cfg.workers {
+        let _ = finished.recv()
+      }
+    })
+    if drained.is_err() {
+      s.cancel()
+    }
+  }
+}
+
+fn work[fx: Effects](
+  q: Queue,
+  clock: Clock,
+  cfg: RunnerConfig,
+  worker_id: Str,
+  stopping: Atomic[Bool],
+  finished: Chan[()],
+  handler: fn(Job) -> () ! Error uses fx,
+) uses (clock, fx) {
+  // Capacity equals the worker count, so this send never blocks.
+  defer finished.send(())
+  while !stopping.get() {
+    match q.lease(worker_id, cfg.lease_duration) {
+      Some(l) => run_one(q, clock, cfg, l, handler)
+      None => clock.sleep(cfg.poll_interval)
+    }
+  }
+}
+
+fn run_one[fx: Effects](
+  q: Queue,
+  clock: Clock,
+  cfg: RunnerConfig,
+  l: Lease,
+  handler: fn(Job) -> () ! Error uses fx,
+) uses (clock, fx) {
+  var settled = false
+  // Shielded from cancellation, so the nack still runs after shutdown cancels
+  // this worker in the middle of the handler.
+  defer {
+    if !settled {
+      let _ = q.nack(l.job.id, l.token, "canceled")
+    }
+  }
+  // GUESS: a scope body whose tail value is an Err is just a value; only
+  // unawaited failed tasks propagate out of a scope (7.1 does not say).
+  let outcome = scope s {
+    s.spawn_background(fn() { heartbeat(q, clock, l, cfg.lease_duration) })
+    handler(l.job)
+  }
+  let settle = match outcome {
+    Ok(()) => q.ack(l.job.id, l.token)
+    Err(e) => q.nack(l.job.id, l.token, "${e}")
+  }
+  settled = true
+  if let Err(e) = settle {
+    log.warn("could not settle job", {"job": l.job.id, "error": "${e}"})
+  }
+}
+
+fn heartbeat(q: Queue, clock: Clock, l: Lease, lease_duration: Duration) {
+  let every = lease_duration / 3
+  while {
+    clock.sleep(every)
+    if q.extend(l.job.id, l.token, lease_duration).is_err() {
+      return
+    }
+  }
+}

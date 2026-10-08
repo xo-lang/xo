@@ -1,0 +1,19 @@
+exit 1
+--- stdout
+--- FAIL: failed expect prints both values (main.xo:20:1, seed 1)
+    expect failed: expect(xs.map(fn(x) { x * 2 })) == [2, 4, 7] at main.xo:22:3
+          left:  [2, 4, 6]
+          right: [2, 4, 7]
+--- FAIL: error from ? fails the test with frames (main.xo:25:1, seed 1)
+    error: Oops(n: 5)
+      at test_runner.test()                 main.xo:26
+--- FAIL: fault fails the test (main.xo:30:1, seed 1)
+    fault: index 3 out of range for List of length 0 at main.xo:32:10
+      x_testdata_golden_test_runner.T_3
+          main.xo:32
+--- FAIL: plain expect (main.xo:35:1, seed 1)
+    expect failed: 1 + 1 == 3 at main.xo:36:3
+--- FAIL: deadlock is reported (main.xo:39:1, seed 1)
+    deadlock: every task of the test is blocked and no timer is pending
+FAIL: 2 passed, 5 failed, 0 skipped
+--- stderr

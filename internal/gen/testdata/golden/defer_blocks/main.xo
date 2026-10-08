@@ -1,0 +1,62 @@
+enum E {
+  Fail
+} derive Display
+
+fn work(stdio: Stdio, fail: Bool) -> Int ! E uses stdio {
+  defer stdio.println("cleanup work")
+  stdio.println("working")
+  if fail {
+    return Err(E.Fail)
+  }
+  42
+}
+
+fn early(stdio: Stdio, n: Int) -> Str uses stdio {
+  defer stdio.println("leave early(${n})")
+  if n > 0 {
+    return "positive"
+  }
+  "non-positive"
+}
+
+fn with_try(stdio: Stdio) -> Int ! E uses stdio {
+  defer stdio.println("with_try deferred")
+  let v = work(stdio, true)?
+  v + 1
+}
+
+fn main(os: Os) {
+  defer os.stdio.println("main deferred 1")
+  defer os.stdio.println("main deferred 2")
+  os.stdio.println("work ok: ${work(os.stdio, false).ok() ?? 0}")
+  os.stdio.println("early: ${early(os.stdio, 1)} ${early(os.stdio, 0)}")
+  os.stdio.println("with_try: ${with_try(os.stdio).is_err()}")
+  for i in 0..3 {
+    defer os.stdio.println("end of iteration ${i}")
+    if i == 1 {
+      continue
+    }
+    os.stdio.println("iteration ${i}")
+  }
+  var x = 1
+  {
+    defer os.stdio.println("block sees x=${x}")
+    x = 2
+  }
+  let v = {
+    defer os.stdio.println("value block deferred")
+    10
+  }
+  os.stdio.println("v=${v}")
+  outer: for i in 0..5 {
+    defer os.stdio.println("leaving ${i}")
+    if i == 2 {
+      break outer
+    }
+  }
+  os.stdio.println("fault with defer pending")
+  {
+    defer os.stdio.println("runs during fault")
+    fault("explicit fault")
+  }
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "xo_prevents": "yes",
+    "files": ["main.go"],
+    "description": "In run, `urls, err := readURLs(in)` followed by the `if err != nil { return fmt.Errorf(\"reading urls: %w\", err) }` check was replaced with `urls, _ := readURLs(in)`; the later summary write changed from `_, err = fmt.Fprintf(...)` to `_, err := fmt.Fprintf(...)` so it still compiles.",
+    "trigger": "Standard input containing a line longer than 1 MiB (bufio.Scanner returns ErrTooLong), or a reader that returns a read error partway through. The URLs read before the error are fetched and the error is dropped.",
+    "symptom": "The command silently processes only part of the input and exits 0 with a normal summary; URLs after a very long line (or after an input read failure) never appear in the output and no error is printed."
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "xo_prevents": "yes",
+    "files": ["main.go"],
+    "description": "In fetch, `defer resp.Body.Close()` was moved above the `if err != nil { return 0, err }` check after `client.Do(req)`. When Do fails, resp is nil and the deferred call dereferences it.",
+    "trigger": "Any URL whose request fails at the transport level: connection refused, DNS failure, unsupported scheme, TLS error, or the request context being cancelled by the pool timeout.",
+    "symptom": "The program crashes with a nil pointer dereference panic (in a worker goroutine) as soon as any URL is unreachable, instead of printing an error line for that URL."
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "xo_prevents": "yes",
+    "files": ["pool/pool.go"],
+    "description": "This code has no switch over an enum. The closest natural closed set is the collector's select over its three event sources (outcome delivered, timer fired, parent context done). The `case <-ctx.Done(): cancel(context.Cause(ctx)); cancelled = true; break loop` arm was removed from the collector select in RunWithOptions.",
+    "trigger": "Cancel the parent context passed to Run while jobs are still pending, especially with timeout <= 0. The dispatcher stops starting jobs (runCtx is derived from ctx) but the collector keeps waiting for outcomes that will never arrive.",
+    "symptom": "Cancelling the caller's context does not make Run return: with no timeout it hangs forever; with a timeout it returns only when the timeout fires and then reports the jobs as timed out instead of with the caller's cancellation cause. Jobs that observed the cancellation are reported with a bare context.Canceled instead of the cause."
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "xo_prevents": "yes",
+    "files": ["pool/pool.go"],
+    "description": "The `done` slice is now allocated before the dispatcher goroutine, and each worker goroutine writes `done[i] = true` right after f returns and before sending its outcome. The collector goroutine reads and writes the same slice in record and in the post-cancel loop without synchronization.",
+    "trigger": "An overall timeout (or parent cancellation) that fires while a job is finishing: the worker sets done[i] after the collector's non-blocking drain ran but before the collector checks `!done[i]`, or between f returning and the outcome send. Run with -race to see the race report on any workload with a timeout.",
+    "symptom": "After a timeout, some jobs are missing from the report entirely: they are neither in Results nor in Failures, so the CLI prints a blank line for that URL and the summary's ok plus failed count is less than the URL count. Intermittent and timing dependent."
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "xo_prevents": "yes",
+    "files": ["pool/pool.go"],
+    "description": "The outcomes channel was changed from `make(chan outcome[R], len(jobs))` to an unbuffered `make(chan outcome[R])` (and the comment explaining the buffer was removed). Worker goroutines that finish after the collector stops receiving block forever on the send while holding a semaphore slot.",
+    "trigger": "A timeout or parent cancellation while any job is still running (or finishes after the collector's drain loop). Each such worker goroutine blocks on `outcomes <-` forever.",
+    "symptom": "In a long running process that calls Run repeatedly with timeouts, goroutine count and memory grow without bound. Also, results from jobs that finished right at the timeout are reported as timed out because their outcome could not be buffered for the drain."
+  },
+  {
+    "id": "X6",
+    "class": "lost update (copy modified, never written back)",
+    "xo_prevents": "partly",
+    "files": ["pool/pool.go"],
+    "description": "In record, the failure is built as a local `fail := Failure{...Err: o.err}` and appended to report.Failures first; the subsequent cancellation rewrite `fail.Err = cancelErr(runCtx, fail.Err)` modifies the local copy after the append, so the slice element keeps the original error.",
+    "trigger": "A timeout (or parent cancellation) where a job honours its context and returns ctx.Err() (context.Canceled) quickly, so its outcome is already buffered when the collector drains after cancelling.",
+    "symptom": "Jobs cut off by the overall timeout sometimes report a bare \"context canceled\" error instead of the pool timeout error; callers checking errors.Is(err, ErrTimeout) or the parent's cancellation cause miss them."
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "xo_prevents": "no",
+    "files": ["pool/pool.go"],
+    "description": "The collector loop condition changed from `for received < len(jobs)` to `for received <= len(jobs)`, so after every outcome is received it waits for one more that never comes.",
+    "trigger": "Any Run call where all jobs complete normally (including an empty job list). With timeout <= 0 and a context that is never cancelled, Run never returns; with a timeout, Run returns only when the timer fires.",
+    "symptom": "The pool always takes the full timeout to return even when all work finished quickly (the CLI always takes about 30 seconds and reports that elapsed time), and with no timeout it hangs forever."
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "xo_prevents": "no",
+    "files": ["pool/pool.go"],
+    "description": "When the overall timer fires, the collector calls `cancel(context.DeadlineExceeded)` instead of `cancel(ErrTimeout)`, so the cancellation cause and every timed out job's error is context.DeadlineExceeded rather than the package's ErrTimeout.",
+    "trigger": "Any Run with a positive timeout where at least one job has not finished when the timeout passes.",
+    "symptom": "Timed out jobs report \"context deadline exceeded\" and errors.Is(err, pool.ErrTimeout) returns false, so callers cannot distinguish the pool's overall timeout from a per request deadline and their timeout handling never runs."
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "xo_prevents": "no",
+    "files": ["pool/pool.go"],
+    "description": "Elapsed is computed as `start.Sub(clock.Now())` instead of `clock.Now().Sub(start)`, reversing the subtraction.",
+    "trigger": "Any Run where any time passes between start and return (every real run).",
+    "symptom": "The report's elapsed time is negative; the CLI summary prints something like \"elapsed -1.234s\"."
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "xo_prevents": "no",
+    "files": ["pool/pool.go"],
+    "description": "The timer guard changed from `if timeout > 0` to `if timeout >= 0`, so a zero timeout (documented as no overall timeout) creates a timer of zero duration.",
+    "trigger": "Call Run with timeout == 0 and at least one job that does not complete instantly.",
+    "symptom": "Passing a zero timeout, documented as no timeout, makes jobs fail almost immediately with the overall timeout error instead of running to completion."
+  }
+]

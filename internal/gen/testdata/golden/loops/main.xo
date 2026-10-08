@@ -1,0 +1,65 @@
+fn find_pair(xs: List[Int], target: Int) -> (Int, Int)? {
+  for i in 0..xs.len() {
+    for j in i + 1..xs.len() {
+      if xs[i] + xs[j] == target {
+        return Some((i, j))
+      }
+    }
+  }
+  None
+}
+
+fn main(os: Os) {
+  var out: List[Str] = []
+  outer: for i in 0..4 {
+    for j in 0..4 {
+      if j == 2 {
+        continue outer
+      }
+      if i == 3 {
+        break outer
+      }
+      out.push("${i}${j}")
+    }
+  }
+  os.stdio.println(out.join(" "))
+  var n = 0
+  while {
+    n += 1
+    if n >= 5 {
+      break
+    }
+  }
+  os.stdio.println("n=${n}")
+  let r = find_pair([1, 4, 6, 9], 10) ?? (-1, -1)
+  os.stdio.println("pair ${r.0} ${r.1}")
+  var steps = 0
+  var x = 27
+  while x != 1 {
+    x = if x % 2 == 0 { x / 2 } else { 3 * x + 1 }
+    steps += 1
+  }
+  os.stdio.println("collatz ${steps}")
+  var acc = 0
+  for i in 1..=10 {
+    let v = match i % 3 {
+      0 => continue
+      1 => i
+      _ => i * 10
+    }
+    acc += v
+  }
+  os.stdio.println("acc ${acc}")
+  let found = loop_find([3, 5, 7])
+  os.stdio.println("found ${found}")
+}
+
+fn loop_find(xs: List[Int]) -> Int {
+  var i = 0
+  while {
+    if xs[i] > 4 {
+      return xs[i]
+    }
+    i += 1
+  }
+}

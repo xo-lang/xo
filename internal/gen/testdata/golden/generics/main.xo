@@ -1,0 +1,64 @@
+struct Stack[T] {
+  items: List[T]
+}
+
+fn (var s: Stack[T]) push(x: T) { s.items.push(x) }
+
+fn (var s: Stack[T]) pop() -> T? { s.items.pop() }
+
+fn (s: Stack[T]) size() -> Int { s.items.len() }
+
+fn (s: Stack[T]) peek_map[U](f: fn(T) -> U) -> U? {
+  let top = s.items.last()?
+  f(top)
+}
+
+enum Tree[T] {
+  Leaf
+  Node(value: T, rest: List[Tree[T]])
+}
+
+fn count[T](t: Tree[T]) -> Int {
+  match t {
+    Leaf => 0
+    Node(value: _, rest: rs) => 1 + rs.fold(0, fn(acc, r) { acc + count(r) })
+  }
+}
+
+fn largest[T: Ord](xs: List[T]) -> T? {
+  let start = xs.first()?
+  var best = start
+  for x in xs {
+    if x > best {
+      best = x
+    }
+  }
+  best
+}
+
+fn show_all[T: Display](xs: List[T]) -> Str {
+  xs.map(fn(x) { "[${x}]" }).join("")
+}
+
+struct Pair[A, B] {
+  a: A
+  b: B
+}
+
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] { Pair{a: p.b, b: p.a} }
+
+fn main(os: Os) {
+  var s = Stack[Int]{items: []}
+  s.push(1)
+  s.push(2)
+  s.push(3)
+  os.stdio.println("size ${s.size()} pop ${s.pop() ?? 0} size ${s.size()} peek ${s.peek_map(fn(x) { x * 100 }) ?? 0}")
+  let t = Tree.Node(value: "root", rest: [Tree.Node(value: "a", rest: []), Tree.Leaf, Tree.Node(value: "b", rest: [Tree.Node(value: "c", rest: [])])])
+  os.stdio.println("count ${count(t)}")
+  os.stdio.println("largest ${largest([3, 9, 2]) ?? 0} ${largest(["pear", "apple"]) ?? ""} ${largest([1.5, 0.5]) ?? 0.0}")
+  os.stdio.println("show ${show_all([1, 2])} ${show_all(["x"])}")
+  let p = swap(Pair{a: 1, b: "one"})
+  os.stdio.println("swap ${p.a} ${p.b}")
+  let strs = Stack[Str]{items: ["z"]}
+  os.stdio.println("str stack ${strs.size()}")
+}

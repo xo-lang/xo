@@ -1,0 +1,120 @@
+// std/testing (spec/std.md 8, core 9.2). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Notes for this file:
+//
+// - Fakes are opaque handles. Each declares every method of the capability
+//   interface it satisfies, with the same signature and effects, plus its
+//   control methods (which are pure).
+// - `expect(x)` returns an `Expect[T]`; the comparison that follows it
+//   (`expect(a) == b`, `expect(n) <= 3`) is checked by the checker as the
+//   comparison `a op b`. `os`, `expect`, and `testing` are predeclared in test
+//   blocks; `expect` and `testing` in all of a `_test.xo` file.
+use std/http
+use std/task
+
+struct TestOs {
+  net: FakeNet
+  fs: MemFs
+  clock: FakeClock
+  rand: Rand
+  env: FakeEnv
+  stdio: FakeStdio
+  proc: FakeProc
+  /// Lives for the test; cancelled when the test ends.
+  tasks: task.Group
+}
+
+struct Expect[T] {}
+fn expect[T](x: T) -> Expect[T]
+
+fn gen[T](seed: Int) -> T
+
+// FakeNet (std.md 8.1)
+struct FakeNet {}
+fn (n: FakeNet) listen(addr: Str) -> Listener ! NetErr uses net.listen
+fn (n: FakeNet) dial(addr: Str) -> Conn ! NetErr uses net.dial
+fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
+/// Every matching request fails, until clear_failures.
+fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)
+/// The next matching request fails, once.
+fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)
+fn (n: FakeNet) clear_failures()
+fn (n: FakeNet) requests() -> List[http.Request]
+
+// FakeClock (std.md 8.2)
+struct FakeClock {}
+fn (c: FakeClock) now() -> Time uses clock
+fn (c: FakeClock) sleep(d: Duration) uses clock
+fn (c: FakeClock) since(t: Time) -> Duration uses clock
+fn (c: FakeClock) advance(d: Duration)
+fn (c: FakeClock) set(t: Time)
+fn (c: FakeClock) sleeps() -> List[Duration]
+
+// MemFs (std.md 8.3)
+enum FsOp {
+  Read
+  Write
+  Rename
+  Remove
+  CreateDir
+  ReadDir
+}
+
+struct MemFs {}
+fn (f: MemFs) sub(dir: Str) -> Fs
+fn (f: MemFs) cwd() -> Fs
+fn (f: MemFs) read_only() -> Fs
+fn (f: MemFs) write_only() -> Fs
+fn (f: MemFs) case_sensitive() -> Bool
+fn (f: MemFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read
+fn (f: MemFs) exists(path: Str) -> Bool ! FsErr uses fs.read
+fn (f: MemFs) read(path: Str) -> Bytes ! FsErr uses fs.read
+fn (f: MemFs) read_text(path: Str) -> Str ! FsErr uses fs.read
+fn (f: MemFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+fn (f: MemFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+fn (f: MemFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn (f: MemFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
+fn (f: MemFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write
+fn (f: MemFs) remove(path: Str) -> () ! FsErr uses fs.write
+fn (f: MemFs) remove_all(path: Str) -> () ! FsErr uses fs.write
+fn (f: MemFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write
+fn (f: MemFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
+fn (f: MemFs) fail_next(op: FsOp, path: Str, err: FsErr)
+fn (f: MemFs) set_case_sensitive(on: Bool)
+fn (f: MemFs) files() -> Map[Str, Bytes]
+
+// FakeEnv, FakeStdio, FakeProc (std.md 8.4)
+struct FakeEnv {}
+fn (e: FakeEnv) get(name: Str) -> Str? uses env
+fn (e: FakeEnv) vars() -> Map[Str, Str] uses env
+fn (e: FakeEnv) args() -> List[Str] uses env
+fn (e: FakeEnv) program() -> Str uses env
+fn (e: FakeEnv) home() -> Str ! EnvErr uses env
+fn (e: FakeEnv) set(name: Str, value: Str)
+fn (e: FakeEnv) set_args(args: List[Str])
+
+struct FakeStdio {}
+fn (s: FakeStdio) print(text: Str) uses stdio
+fn (s: FakeStdio) println(text: Str) uses stdio
+fn (s: FakeStdio) eprint(text: Str) uses stdio
+fn (s: FakeStdio) eprintln(text: Str) uses stdio
+fn (s: FakeStdio) write(data: Bytes) -> () ! IoErr uses stdio
+fn (s: FakeStdio) read_line() -> Str? ! IoErr uses stdio
+fn (s: FakeStdio) read_all() -> Str ! IoErr uses stdio
+fn (s: FakeStdio) lines() -> List[Str] ! IoErr uses stdio
+fn (s: FakeStdio) set_input(text: Str)
+fn (s: FakeStdio) output() -> Str
+fn (s: FakeStdio) errors() -> Str
+
+struct FakeProc {}
+fn (p: FakeProc) exit(code: Int) -> Never uses proc
+fn (p: FakeProc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+fn (p: FakeProc) exit_code() -> Int?
+fn (p: FakeProc) signal_after(d: Duration)
+fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
+
+/// Runs a program's main against fakes and returns its exit status: 0, 1
+/// for an error returned from main, or the code passed to exit (std.md 8.4).
+/// std.md writes `main: fn(Os) -> () ! Error` without effects; a main
+/// performs effects on its `os`, so the effects pass through an effect
+/// variable here (a pure function type would reject every real main).
+fn run_main[fx: Effects](main: fn(Os) -> () ! Error uses fx, os: TestOs, args: List[Str] = []) -> Int uses fx

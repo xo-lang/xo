@@ -1,0 +1,82 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "go_bug": "In doOnce, the 2xx branch replaces `body, err := io.ReadAll(resp.Body)` plus its error check with `body, _ := io.ReadAll(resp.Body)`, so a body read failure is discarded and the partial body is return",
+    "xo_change": "parse_url Result is dropped as a bare statement",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "go_bug": "In doOnce, `defer resp.Body.Close()` is moved above the `if err != nil` check after `net.Do(req)`",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Xo has no nil, null or unwrap-style panic, so a nil dereference or nil map write cannot be written; maps are initialised by literal"
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "go_bug": "The `case KindCancelled: return \"cancelled\"` arm is removed from FetchErrKind.String, so KindCancelled falls through to the default \"unknown\".",
+    "xo_change": "remove the Canceled arm from FetchErr.display",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "go_bug": "FetchProfile lazily defaults the clock with `if f.Clock == nil { f.Clock = RealClock{} }`, writing a field of the shared *Fetcher from inside a method that callers invoke concurrently.",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Fetcher struct with lazily written shared field does not exist; Xo has no shared mutable fields across tasks"
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "go_bug": "GetWithRetry runs doOnce in a goroutine that sends its result on an unbuffered channel, and selects on ctx.Done() versus that channel",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "tasks cannot outlive their scope, so a result goroutine abandoned on cancel cannot be written"
+  },
+  {
+    "id": "X6",
+    "class": "lost update",
+    "go_bug": "The inline `maxAttempts < 1 -> 1` clamp is replaced by a call to a new `func (p RetryPolicy) normalize()` with a value receiver that clamps MaxAttempts and Jitter on its copy",
+    "xo_change": "clamp max_attempts on a local copy p, but the loop still reads policy.max_attempts",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "go_bug": "In backoff, the doubling loop starts at `i := 1` instead of `i := 2`, so the delay before attempt n is base*2^(n-1) instead of base*2^(n-2).",
+    "xo_change": "doubling loop runs one extra time",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "go_bug": "In isRetryableStatus, `http.StatusGatewayTimeout` (504) is replaced by `http.StatusRequestTimeout` (408).",
+    "xo_change": "504 replaced by 408 in retryable statuses",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "go_bug": "In jittered, the offset is computed as `(rnd.Float64() - 0.5) * jitter * float64(d)` instead of `(2*rnd.Float64() - 1) * jitter * float64(d)`, so the jitter range is +/- jitter*d/2 rather than +/- jitter*d.",
+    "xo_change": "jitter range halved",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "go_bug": "The Retry-After clamp is inverted: `if policy.MaxDelay > 0 && d < policy.MaxDelay { d = policy.MaxDelay }` instead of `d > policy.MaxDelay`.",
+    "xo_change": "Retry-After clamp inverted (min to max)",
+    "status": "variant",
+    "reason": ""
+  }
+]

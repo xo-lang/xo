@@ -1,0 +1,44 @@
+[
+  {
+    "id": "X1",
+    "class": "X1",
+    "xo_change": "main discards the stdin read error with ignore_err and defaults to no URLs",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X2",
+    "class": "X2",
+    "xo_change": "main indexes out_lines[job.id], faulting if a job has no line",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X3",
+    "class": "X3",
+    "xo_change": "result collection uses a wildcard arm so failed jobs are reported as timed out",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X4",
+    "class": "X4",
+    "xo_change": "workers record outcomes by reading the map, copying, and writing it back in separate lock sections",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X5",
+    "class": "X5",
+    "xo_change": "queue is never closed so workers block in recv until the timeout cancels them",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X6",
+    "class": "X6",
+    "xo_change": "successful results are pushed onto a copy of the list that is never written back",
+    "status": "variant",
+    "reason": "parses"
+  }
+]

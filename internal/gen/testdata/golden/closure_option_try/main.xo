@@ -1,0 +1,10 @@
+fn main(os: Os) {
+  let m = {"a": 1, "b": 2}
+  let lookup = fn(k: Str) -> Int? {
+    let v = m.get(k)?
+    v * 10
+  }
+  let both = fn(a: Str, b: Str) -> Int? { lookup(a)? + lookup(b)? }
+  let pairs = ["a", "z"].map(fn(k) { lookup(k) ?? -1 })
+  os.stdio.println("${lookup("a") ?? 0} ${lookup("z") ?? 0} ${both("a", "b") ?? 0} ${both("a", "z") ?? 0} ${pairs[0]} ${pairs[1]}")
+}

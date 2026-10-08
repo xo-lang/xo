@@ -1,0 +1,34 @@
+use std/task
+
+fn main(os: Os) {
+  let tmp = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let log = Mutex[List[Str]].new([])
+  let r = task.with_timeout(os.clock, 30ms, fn() {
+    defer {
+      // shielded: cleanup works after cancellation
+      let ok = tmp.write("xo-cancel-test.txt", b"x").is_ok()
+      log.with(fn(var l) { l.push("defer write ok=${ok}") })
+    }
+    os.clock.sleep(10s)
+    log.with(fn(var l) { l.push("not reached") })
+  })
+  os.stdio.println("timed out ${r.is_err()}")
+  let canceled_read = task.with_timeout(os.clock, 30ms, fn() {
+    // clock.sleep would unwind a canceled task (core 7.2), so poll
+    while !task.is_canceled() {
+      let _x = 1
+    }
+    let res = tmp.read("xo-cancel-test.txt")
+    let msg = match res {
+      Err(Canceled) => "read reported Canceled"
+      Err(_) => "other error"
+      Ok(_) => "read succeeded"
+    }
+    log.with(fn(var l) { l.push(msg) })
+  })
+  os.stdio.println("second timed out ${canceled_read.is_err()}")
+  for line in log.with(fn(l) { l }) {
+    os.stdio.println(line)
+  }
+  let _ = tmp.remove("xo-cancel-test.txt").ignore_err("test cleanup")
+}

@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+x=12 y=3 log=12
+--- stderr

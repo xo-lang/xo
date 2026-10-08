@@ -1,0 +1,72 @@
+// main.xo: HTTP routes and process entry point.
+use std/http
+use std/json
+use std/log
+
+const DEFAULT_PORT = "8080"
+
+// Turns a store result into a response. Errors become {"error": "..."}.
+// GUESS: `Json` (the derive name) is also an interface usable as a generic
+// constraint, which http.json needs to encode T.
+fn reply[T: Json](status: Int, r: Result[T, ApiErr]) -> http.Response {
+  match r {
+    ok(v) => http.json(status, v)
+    err(e) => http.json(e.status(), ErrBody{error: e.message()})
+  }
+}
+
+// GUESS: req.body() -> Bytes and json.decode[T](Bytes) -> T ! json.DecodeErr.
+// The spec lists "derive based encode/decode" in std/json but no signatures.
+fn create_from(store: Store, req: http.Request) -> User ! ApiErr {
+  let body = json.decode[CreateBody](req.body())?
+  store.create(body)?
+}
+
+fn patch_from(store: Store, req: http.Request) -> User ! ApiErr {
+  let body = json.decode[PatchBody](req.body())?
+  store.patch(req.param_int("id"), body)?
+}
+
+fn main(os: Os) ! {
+  let store = new_store()
+
+  let port_str = os.env.get("PORT") ?? DEFAULT_PORT
+  // GUESS: Int.parse(Str) -> Int?. The spec only has Int32.try(x) for
+  // numeric narrowing, nothing for parsing text.
+  let port = Int.parse(port_str).or_err("PORT must be an integer, got {port_str}")?
+
+  let srv = http.server(os.net.listen(":{port}")?)
+
+  // GUESS: passing a failing call directly as a Result typed argument counts
+  // as "binding the Result" for XO0201.
+  srv.handle("POST /users", fn(req) -> http.Response {
+    reply(201, create_from(store, req))
+  })
+
+  // GUESS: `_` is accepted as an unused closure parameter name (XO0110
+  // forbids unused bindings; the spec does not say whether params count).
+  srv.handle("GET /users", fn(_) -> http.Response {
+    http.json(200, store.list())
+  })
+
+  // Raw strings: a plain "..." literal would interpolate {id:Int} (section
+  // 1.6). Appendix A writes it as a plain string, which looks like a spec bug.
+  srv.handle(r"GET /users/{id:Int}", fn(req) -> http.Response {
+    reply(200, store.get(req.param_int("id")))
+  })
+
+  srv.handle(r"PATCH /users/{id:Int}", fn(req) -> http.Response {
+    reply(200, patch_from(store, req))
+  })
+
+  srv.handle(r"DELETE /users/{id:Int}", fn(req) -> http.Response {
+    match store.delete(req.param_int("id")) {
+      // GUESS: http.empty(status) builds a response with no body.
+      ok(_) => http.empty(204)
+      err(e) => http.json(e.status(), ErrBody{error: e.message()})
+    }
+  })
+
+  log.info("listening", addr: ":{port}")
+  srv.serve()?
+}

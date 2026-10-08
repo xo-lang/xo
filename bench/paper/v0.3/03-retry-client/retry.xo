@@ -1,0 +1,128 @@
+use std/http
+use std/task
+
+/// How `get_with_retry` spaces out and limits its attempts.
+pub struct RetryPolicy {
+  pub max_attempts: Int = 5
+  pub base_delay: Duration = 100ms
+  pub max_delay: Duration = 5s
+  // GUESS: `///` on a struct field. core 1.2 says doc comments attach to the
+  // next declaration; whether a field counts is not stated.
+  /// Fraction of the computed delay added or removed at random, in [0, 1].
+  pub jitter: Float = 0.2
+} invariant max_attempts >= 1 && jitter >= 0.0 && jitter <= 1.0 && base_delay <= max_delay
+
+/// What went wrong on a single retryable attempt.
+pub enum AttemptErr {
+  Connect(msg: Str)
+  Timeout
+  BadStatus(code: Int)
+}
+
+pub fn (e: AttemptErr) display() -> Str {
+  match e {
+    Connect(msg) => "connection failed: ${msg}"
+    Timeout => "timed out"
+    BadStatus(code) => "status ${code}"
+  }
+}
+
+pub enum FetchErr {
+  InvalidUrl(msg: Str)
+  /// A status that retrying cannot fix (4xx other than 429, 3xx, 501, ...).
+  Status(code: Int)
+  /// The server spoke, but not valid HTTP. Not retried.
+  Protocol(msg: Str)
+  Exhausted(attempts: Int, last: AttemptErr)
+  Canceled
+}
+
+pub fn (e: FetchErr) display() -> Str {
+  match e {
+    InvalidUrl(msg) => "invalid url: ${msg}"
+    Status(code) => "non retryable status ${code}"
+    Protocol(msg) => "protocol error: ${msg}"
+    Exhausted(attempts, last) => "gave up after ${attempts} attempts, last error: ${last}"
+    Canceled => "canceled"
+  }
+}
+
+/// Outcome of one attempt, decided without any effects.
+enum Step {
+  Done(body: Bytes)
+  Stop(err: FetchErr)
+  Again(err: AttemptErr, retry_after: Duration?)
+}
+
+/// GETs `url`, retrying transport failures, timeouts, and 429/500/502/503/504
+/// with capped exponential backoff and jitter.
+pub fn get_with_retry(net: Net, clock: Clock, rand: Rand, url: Str, policy: RetryPolicy) -> Bytes ! FetchErr
+  uses net.dial, clock, rand
+{
+  http.parse_url(url).map_err(fn(e) { FetchErr.InvalidUrl(e.msg) })?
+  let client = http.client(net)
+  var attempt = 1
+  while {
+    match classify(client.get(url)) {
+      Done(body) => return body
+      Stop(err) => return Err(err)
+      Again(err, hint) => {
+        if attempt >= policy.max_attempts {
+          return Err(FetchErr.Exhausted(attempts: attempt, last: err))
+        }
+        attempt += 1
+        let wait = match hint {
+          Some(d) => d.min(policy.max_delay)
+          None => jittered(rand, backoff(policy, attempt), policy.jitter)
+        }
+        if task.is_canceled() {
+          return Err(FetchErr.Canceled)
+        }
+        clock.sleep(wait)
+      }
+    }
+  }
+}
+
+fn classify(r: Result[http.Response, http.ClientErr]) -> Step {
+  match r {
+    Ok(resp) => match resp.status {
+      200..=299 => Done(resp.body)
+      429 | 503 => Again(err: BadStatus(resp.status), retry_after: retry_after(resp))
+      500 | 502 | 504 => Again(err: BadStatus(resp.status), retry_after: None)
+      _ => Stop(FetchErr.Status(resp.status))
+    }
+    Err(http.ClientErr.InvalidUrl(msg)) => Stop(FetchErr.InvalidUrl(msg))
+    Err(http.ClientErr.Connect(msg)) => Again(err: Connect(msg), retry_after: None)
+    Err(http.ClientErr.Timeout) => Again(err: AttemptErr.Timeout, retry_after: None)
+    Err(http.ClientErr.Protocol(msg)) => Stop(FetchErr.Protocol(msg))
+    Err(http.ClientErr.Canceled) => Stop(FetchErr.Canceled)
+  }
+}
+
+/// Seconds from a `Retry-After` header. HTTP dates are not supported.
+fn retry_after(resp: http.Response) -> Duration? {
+  let secs = Int.parse(resp.header("Retry-After")?.trim())?
+  if secs < 0 {
+    return None
+  }
+  1s * secs
+}
+
+/// min(max_delay, base_delay * 2^(attempt-2)) for attempt >= 2.
+fn backoff(p: RetryPolicy, attempt: Int) -> Duration
+  requires attempt >= 2
+{
+  // The shift is capped so the multiplication cannot overflow Int; any
+  // realistic max_delay is reached long before 2^30.
+  let shift = (attempt - 2).min(30)
+  (p.base_delay * (1 << shift)).min(p.max_delay)
+}
+
+/// d scaled by a random factor in [1 - jitter, 1 + jitter).
+fn jittered(rand: Rand, d: Duration, jitter: Float) -> Duration {
+  if jitter == 0.0 {
+    return d
+  }
+  d.scale(1.0 + jitter * (rand.float() * 2.0 - 1.0))
+}

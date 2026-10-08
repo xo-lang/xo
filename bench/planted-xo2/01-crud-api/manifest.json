@@ -1,0 +1,44 @@
+[
+  {
+    "id": "X1",
+    "class": "X1",
+    "xo_change": "create discards the validate_email error with ignore_err",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X2",
+    "class": "X2",
+    "xo_change": "update reads st.users[id], which faults on a missing id instead of returning NotFound",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X3",
+    "class": "X3",
+    "xo_change": "status() uses a wildcard arm so Conflict maps to 404",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X4",
+    "class": "X4",
+    "xo_change": "create checks email uniqueness in one lock section and inserts in another (check then act race)",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X5",
+    "class": "X5",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "The solution starts no tasks; the server owns request concurrency, so there is nothing to leak."
+  },
+  {
+    "id": "X6",
+    "class": "X6",
+    "xo_change": "update writes the user back before applying the patch, so edits to the copy are lost",
+    "status": "variant",
+    "reason": "parses"
+  }
+]

@@ -1,0 +1,85 @@
+// filesync: make directory <dst> mirror directory <src> (one way).
+
+const USAGE = "usage: filesync [--dry-run] [--delete] <src> <dst>"
+
+enum CliErr {
+  Usage(msg: Str)
+  Failed(count: Int)
+}
+
+fn (e: CliErr) display() -> Str {
+  match e {
+    Usage(msg) => msg
+    Failed(count) => "${count} operation(s) failed"
+  }
+}
+
+struct Args {
+  dry_run: Bool
+  delete: Bool
+  src: Str
+  dst: Str
+}
+
+fn parse_args(args: List[Str]) -> Args ! CliErr {
+  var dry_run = false
+  var delete = false
+  var paths: List[Str] = []
+  for a in args {
+    match a {
+      "--dry-run" => dry_run = true
+      "--delete" => delete = true
+      _ => {
+        if a.starts_with("-") {
+          return Err(CliErr.Usage(msg: "unknown flag ${a}"))
+        }
+        paths.push(a)
+      }
+    }
+  }
+  match paths {
+    [src, dst] => Args{dry_run: dry_run, delete: delete, src: src, dst: dst}
+    _ => Err(CliErr.Usage(msg: "expected exactly two paths, <src> and <dst>"))
+  }
+}
+
+/// Case folding and names to ignore, per host OS.
+fn platform_rules() -> (Bool, Set[Str]) {
+  match target.os {
+    Linux => (false, #{})
+    Darwin => (true, #{".DS_Store"})
+    Windows => (true, #{"Thumbs.db"})
+    Wasi => (false, #{})
+  }
+}
+
+fn main(os: Os) ! {
+  let args = match parse_args(os.env.args()) {
+    Ok(a) => a
+    Err(e) => {
+      os.stdio.eprintln("${e}")
+      os.stdio.eprintln(USAGE)
+      // GUESS: returning Err(e) with e: CliErr from a `! Error` function
+      // converts CliErr to Error (core 2.10 rule 2, "a return"); the spec
+      // only shows this conversion explicitly for `?` sites.
+      return Err(e)
+    }
+  }
+  let (fold_case, skip_names) = platform_rules()
+  let opts = Options{
+    dry_run: args.dry_run,
+    delete: args.delete,
+    fold_case: fold_case,
+    skip_names: skip_names,
+  }
+  // Authority: read only under src, read and write only under dst.
+  // In a dry run dst is read only too, so a write cannot happen by mistake.
+  let src = os.fs.sub(args.src).read_only()
+  let dst = if args.dry_run { os.fs.sub(args.dst).read_only() } else { os.fs.sub(args.dst) }
+
+  let report = sync(src, dst, opts, os.stdio)?
+  os.stdio.println("${report}")
+  if report.failed > 0 {
+    return Err(CliErr.Failed(count: report.failed))
+  }
+}

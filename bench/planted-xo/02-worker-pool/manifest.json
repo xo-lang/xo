@@ -1,0 +1,82 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "go_bug": "In run, `urls, err := readURLs(in)` followed by the `if err != nil { return fmt.Errorf(\"reading urls: %w\", err) }` check was replaced with `urls, _ := readURLs(in)`; the later summary write changed fr",
+    "xo_change": "replace the Result-propagating lines()? with a fallback to an empty list, swallowing the read error",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "go_bug": "In fetch, `defer resp.Body.Close()` was moved above the `if err != nil { return 0, err }` check after `client.Do(req)`",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Xo has no nil, null or unwrap-style panic, so a nil dereference or nil map write cannot be written; maps are initialised by literal"
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "go_bug": "This code has no switch over an enum",
+    "xo_change": "remove the None (timed out) arm from the match over finished.get(i)",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "go_bug": "The `done` slice is now allocated before the dispatcher goroutine, and each worker goroutine writes `done[i] = true` right after f returns and before sending its outcome",
+    "xo_change": "workers write a plain captured var Map directly instead of through a Mutex",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "go_bug": "The outcomes channel was changed from `make(chan outcome[R], len(jobs))` to an unbuffered `make(chan outcome[R])` (and the comment explaining the buffer was removed)",
+    "xo_change": "unbuffered queue channel filled before any worker receives",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X6",
+    "class": "lost update",
+    "go_bug": "In record, the failure is built as a local `fail := Failure{...Err: o.err}` and appended to report.Failures first; the subsequent cancellation rewrite `fail.Err = cancelErr(runCtx, fail.Err)` modifies",
+    "xo_change": "worker copies the map out of the mutex, modifies the copy, never writes it back",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "go_bug": "The collector loop condition changed from `for received < len(jobs)` to `for received <= len(jobs)`, so after every outcome is received it waits for one more that never comes.",
+    "xo_change": "spawns one worker too many",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "go_bug": "When the overall timer fires, the collector calls `cancel(context.DeadlineExceeded)` instead of `cancel(ErrTimeout)`, so the cancellation cause and every timed out job's error is context.DeadlineExceeded rather than the package's ErrTimeout.",
+    "xo_change": "timeout outcome mapped to the wrong value, so the timeout is never logged",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "go_bug": "Elapsed is computed as `start.Sub(clock.Now())` instead of `clock.Now().Sub(start)`, reversing the subtraction.",
+    "xo_change": "elapsed subtraction reversed",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "go_bug": "The timer guard changed from `if timeout > 0` to `if timeout >= 0`, so a zero timeout (documented as no overall timeout) creates a timer of zero duration.",
+    "xo_change": "outcome recorded only for cancelled jobs",
+    "status": "variant",
+    "reason": ""
+  }
+]

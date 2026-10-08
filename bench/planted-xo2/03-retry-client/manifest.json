@@ -1,0 +1,44 @@
+[
+  {
+    "id": "X1",
+    "class": "X1",
+    "xo_change": "URL validation error is discarded with ignore_err",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X2",
+    "class": "X2",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "No collections or indexing; every optional value is consumed with ?, match, or ??, and Xo has no nil to dereference."
+  },
+  {
+    "id": "X3",
+    "class": "X3",
+    "xo_change": "classify uses a wildcard arm so InvalidUrl client errors are retried",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X4",
+    "class": "X4",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Single task and no Mutex or Atomic state; values cannot be shared mutably, so a race cannot be written."
+  },
+  {
+    "id": "X5",
+    "class": "X5",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "The retry loop starts no tasks."
+  },
+  {
+    "id": "X6",
+    "class": "X6",
+    "xo_change": "attempt counter is incremented on a copy so the loop never reaches max_attempts",
+    "status": "variant",
+    "reason": "parses"
+  }
+]

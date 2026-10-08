@@ -1,0 +1,111 @@
+// Collection performance workloads. Usage: perf <workload>
+// Each workload prints "<workload> <checksum> <elapsed microseconds>"; the checksum
+// must match the Go version in ../go.
+
+const N = 3000000
+const KEYS = 50000
+
+fn build(n: Int) -> Map[Int, Int] {
+  var m: Map[Int, Int] = {}
+  for i in 0..n {
+    m.put(i, i)
+  }
+  m
+}
+
+fn put_get() -> Int {
+  var m: Map[Int, Int] = {}
+  for i in 0..N {
+    m.put(i % KEYS, i)
+  }
+  var sum = 0
+  for i in 0..N {
+    sum += m.get(i % KEYS) ?? 0
+  }
+  sum
+}
+
+fn get_only(m: Map[Int, Int]) -> Int {
+  var sum = 0
+  for i in 0..N {
+    sum += m.get(i % KEYS) ?? 0
+  }
+  sum
+}
+
+fn push_sum() -> Int {
+  var xs: List[Int] = []
+  for i in 0..N {
+    xs.push(i)
+  }
+  var sum = 0
+  for x in xs {
+    sum += x
+  }
+  sum
+}
+
+fn update_loop() -> Int {
+  var m: Map[Int, Int] = {}
+  for i in 0..N {
+    m.update(i % KEYS, 0, fn(var v) { v += 1 })
+  }
+  m.get(7) ?? 0
+}
+
+fn iterate(m: Map[Int, Int]) -> Int {
+  var sum = 0
+  for _ in 0..60 {
+    for (k, v) in m {
+      sum += k + v
+    }
+  }
+  sum
+}
+
+// Copy a 50k map, mutate every key of the copy, read every key of the
+// original; ten rounds from the same original.
+fn copy_mutate(m: Map[Int, Int]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    var c = m
+    for k in 0..KEYS {
+      c.put(k, k * 2)
+    }
+    for k in 0..KEYS {
+      sum += m.get(k) ?? 0
+    }
+    sum += c.get(KEYS - 1) ?? 0
+  }
+  sum
+}
+
+// Many one-key branches from the same 50k map.
+fn branch(m: Map[Int, Int]) -> Int {
+  var sum = 0
+  for i in 0..2000 {
+    var c = m
+    c.put(KEYS + i, i)
+    sum += c.len() + (c.get(i) ?? 0)
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "putget"
+  let base = build(KEYS)
+  let t = os.clock.now()
+  let sum = match w {
+    "putget" => put_get()
+    "get" => get_only(base)
+    "push" => push_sum()
+    "update" => update_loop()
+    "iter" => iterate(base)
+    "copymut" => copy_mutate(base)
+    "branch" => branch(base)
+    _ => -1
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

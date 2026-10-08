@@ -1,0 +1,3 @@
+fn retry_after(base: Duration, attempt: Int) -> Duration {
+  ???
+}

@@ -1,0 +1,38 @@
+use std/json
+
+/// A user profile as served by the profile API.
+pub struct Profile {
+  pub id: Int
+  pub name: Str
+  pub email: Str?
+} derive Json
+
+pub enum ProfileErr {
+  /// The HTTP fetch failed (see `FetchErr`).
+  Fetch(from FetchErr)
+  /// The body was not a valid `Profile` document.
+  Decode(from json.DecodeErr)
+}
+
+pub fn (e: ProfileErr) display() -> Str {
+  match e {
+    Fetch(inner) => "fetching profile: {inner}"
+    Decode(inner) => "decoding profile: {inner}"
+  }
+}
+
+/// Fetches `{base_url}/users/{user_id}` with retries and decodes it as a `Profile`.
+pub fn fetch_profile(
+  net: Net,
+  clock: Clock,
+  rand: Rand,
+  base_url: Str,
+  user_id: Int,
+  policy: RetryPolicy = RetryPolicy{},
+) -> Profile ! ProfileErr
+  uses net.dial, clock, rand
+  requires user_id > 0
+{
+  let body = get_with_retry(net, clock, rand, "{base_url}/users/{user_id}", policy)?
+  json.decode[Profile](body)?
+}

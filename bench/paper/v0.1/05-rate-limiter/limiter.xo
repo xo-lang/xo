@@ -1,0 +1,101 @@
+use std/http
+use std/log
+
+const IDLE_TTL = 10m
+const EVICT_EVERY = 1m
+
+/// The outcome of checking one request against the limiter.
+pub enum Decision {
+  Allowed
+  Limited(retry_after_secs: Int)
+}
+
+/// One token bucket per client key, shared safely across request tasks.
+pub struct Limiter {
+  buckets: Mutex[Map[Str, Bucket]]
+  default_limit: Limit
+  overrides: Map[Str, Limit]
+}
+
+/// A limiter with the default limit, and per key limits from `overrides`.
+pub fn new_limiter(overrides: Map[Str, Limit]) -> Limiter {
+  // GUESS: `{}` infers Map[Str, Bucket] from the field type, as in the
+  // Appendix A `Mutex.new({})`.
+  Limiter{buckets: Mutex.new({}), default_limit: DEFAULT_LIMIT, overrides: overrides}
+}
+
+/// Takes one token for `key` at `now`.
+pub fn (l: Limiter) check(key: Str, now: Time) -> Decision {
+  let limit = l.overrides.get(key) ?? l.default_limit
+  // GUESS: Mutex.with returns the closure's value (Appendix A relies on this)
+  // and the `var m` parameter writes back into the mutex on return.
+  l.buckets.with(fn(var m) {
+    var b = m.get(key) ?? new_bucket(limit, now)
+    let allowed = b.take(now)
+    m.put(key, b)
+    if allowed {
+      Decision.Allowed
+    } else {
+      Decision.Limited(retry_after_secs: b.retry_after_secs())
+    }
+  })
+}
+
+/// Removes buckets untouched for longer than `idle`. Returns how many were
+/// removed.
+pub fn (l: Limiter) evict_idle(now: Time, idle: Duration) -> Int {
+  l.buckets.with(fn(var m) {
+    // Iterate a snapshot so removals rebind `m` without touching the loop.
+    let snapshot = m
+    var evicted = 0
+    for (key, b) in snapshot {
+      if now - b.last_used() > idle {
+        // GUESS: Map.remove on a var binding rebinds it, like List.push (5.2).
+        m.remove(key)
+        evicted += 1
+      }
+    }
+    evicted
+  })
+}
+
+/// The handler shape the limiter wraps.
+// GUESS: http.Request, http.Response, and a function type carrying `uses`
+// are spelled this way. Spec 6.2 shows `fn(Int) -> Int uses clock`.
+pub type Handler = fn(http.Request) -> http.Response ! Error uses clock
+
+fn client_key(req: http.Request) -> Str {
+  // GUESS: req.header(name) -> Str? and req.remote_ip() -> Str. std/http
+  // request API is not in the spec.
+  req.header("X-Api-Key") ?? req.remote_ip()
+}
+
+/// Wraps `next` so requests over the client's limit get 429 with a
+/// Retry-After header.
+pub fn (l: Limiter) wrap(clock: Clock, next: Handler) -> Handler {
+  // GUESS: an anonymous fn may declare `uses`, matching the function type.
+  fn(req: http.Request) -> http.Response ! Error uses clock {
+    // GUESS: clock.now() -> Time, not fallible.
+    match l.check(client_key(req), clock.now()) {
+      Allowed => next(req)?
+      // GUESS: variant fields bind by name in a pattern, as in `NotFound(id)`.
+      Limited(retry_after_secs) => {
+        // GUESS: http.json(status, value) and Response.with_header(k, v).
+        http.json(429, {"error": "rate limit exceeded"})
+          .with_header("Retry-After", "{retry_after_secs}")
+      }
+    }
+  }
+}
+
+/// Evicts idle buckets every minute until the enclosing scope is cancelled.
+fn run_evictor(limiter: Limiter, clock: Clock) {
+  while {
+    // GUESS: Clock.sleep(d) is a cancellation point that does not return a
+    // Result; cancellation unwinds the task (spec 7.2).
+    clock.sleep(EVICT_EVERY)
+    let n = limiter.evict_idle(clock.now(), IDLE_TTL)
+    // GUESS: log.info takes named key/value fields as in Appendix A.
+    log.info("evicted idle buckets", count: n)
+  }
+}

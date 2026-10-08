@@ -1,0 +1,147 @@
+// retry.xo: HTTP GET with retries, exponential backoff, and jitter.
+use std/http
+
+/// How `get_with_retry` spaces and limits its attempts.
+pub struct RetryPolicy {
+  pub max_attempts: Int = 5
+  pub base_delay: Duration = 100ms
+  pub max_delay: Duration = 5s
+  /// Fraction of the computed delay that may be added or removed at random.
+  pub jitter: Float = 0.2
+} invariant max_attempts >= 1 && base_delay > 0ms && max_delay >= base_delay && jitter >= 0.0 && jitter <= 1.0
+
+/// Why a single attempt failed in a way that is worth retrying.
+pub enum AttemptErr {
+  Connect(msg: Str)
+  Timeout
+  BadStatus(code: Int)
+} derive Display
+
+/// Errors from `get_with_retry`.
+pub enum FetchErr {
+  InvalidUrl(url: Str, msg: Str)
+  /// The server answered with a status that must not be retried (most 4xx).
+  Status(code: Int, url: Str)
+  /// Every attempt failed. `last` is the failure of the final attempt.
+  Exhausted(attempts: Int, last: AttemptErr)
+  Cancelled
+} derive Display
+
+const RETRYABLE_STATUS: Set[Int] = #{429, 500, 502, 503, 504}
+
+/// Performs a GET on `url`, retrying connection errors, timeouts, and
+/// 429/500/502/503/504 responses according to `policy`.
+pub fn get_with_retry(net: Net, clock: Clock, rand: Rand, url: Str, policy: RetryPolicy) -> Bytes ! FetchErr
+  uses net, clock, rand
+{
+  // GUESS: std/http exposes a pure URL parser returning `http.Url ! http.UrlErr`.
+  // Parsing up front keeps an invalid URL from being retried.
+  let target = match http.parse_url(url) {
+    ok(u) => u
+    // GUESS: failing from a `T ! E` function is written `return err(e)`; the
+    // spec only shows the success path returning a plain T.
+    err(e) => return err(FetchErr.InvalidUrl(url: url, msg: "{e}"))
+  }
+  // GUESS: `http.client(net)` builds a client bound to the net capability.
+  let client = http.client(net)
+
+  var last: AttemptErr? = none
+  var retry_after: Duration? = none
+
+  for attempt in 1..=policy.max_attempts {
+    if attempt > 1 {
+      let wait = match retry_after {
+        some(d) => min_duration(d, policy.max_delay)
+        none => backoff_delay(rand, policy, attempt)
+      }
+      // GUESS: `Clock.sleep(d) -> ()` has no error type; cancellation unwinds
+      // the task (section 7.2) instead of returning a value.
+      clock.sleep(wait)
+    }
+    retry_after = none
+
+    // GUESS: `Client.get(url) -> http.Response ! http.ClientErr uses net`.
+    match client.get(target) {
+      ok(resp) => {
+        let code = resp.status
+        if code >= 200 && code < 300 {
+          return resp.body
+        }
+        if !RETRYABLE_STATUS.contains(code) {
+          return err(FetchErr.Status(code: code, url: url))
+        }
+        last = some(AttemptErr.BadStatus(code: code))
+        if code == 429 || code == 503 {
+          // GUESS: `resp.headers` is a `Map[Str, Str]` and lookups are exact
+          // case; the spec says nothing about header normalization.
+          retry_after = parse_retry_after(resp.headers.get("Retry-After"))
+        }
+      }
+      // GUESS: http.ClientErr has exactly these variants. The spec does not
+      // list them; `match` must be exhaustive so the guess matters.
+      // Assignment is a statement, not an Expr (section 15), so each arm that
+      // assigns is wrapped in a block.
+      err(e) => match e {
+        Connect(msg) => { last = some(AttemptErr.Connect(msg: msg)) }
+        Protocol(msg) => { last = some(AttemptErr.Connect(msg: msg)) }
+        Timeout => { last = some(AttemptErr.Timeout) }
+        // GUESS: per section 7.2 cancellation is unobservable, so this arm only
+        // fires if the client itself reports a cancelled request.
+        Canceled => return err(FetchErr.Cancelled)
+      }
+    }
+  }
+
+  // GUESS: `fault(msg)` has a bottom type, so it can sit on the right of `??`.
+  let final = last ?? fault("max_attempts invariant violated: no attempt was made")
+  // GUESS: a tail `err(e)` is accepted as the failing value of the block.
+  err(FetchErr.Exhausted(attempts: policy.max_attempts, last: final))
+}
+
+/// Exponential backoff for attempt `attempt` (2 or more), capped by
+/// `max_delay`, then jittered.
+fn backoff_delay(rand: Rand, policy: RetryPolicy, attempt: Int) -> Duration
+  requires attempt >= 2
+{
+  // Double step by step and cap each time, so large attempt numbers cannot
+  // overflow the Duration.
+  var d = policy.base_delay
+  // GUESS: `_` is a valid pattern in `for` to ignore the loop variable.
+  for _ in 0..(attempt - 2) {
+    // GUESS: `Duration * Int` is defined and yields a Duration.
+    d = min_duration(d * 2, policy.max_delay)
+  }
+  apply_jitter(rand, d, policy.jitter)
+}
+
+/// Returns `d` scaled by a random factor in [1 - jitter, 1 + jitter).
+fn apply_jitter(rand: Rand, d: Duration, jitter: Float) -> Duration {
+  if jitter == 0.0 {
+    return d
+  }
+  // GUESS: `Rand.float() -> Float` returns a value in [0.0, 1.0).
+  let r = rand.float()
+  let factor = 1.0 + jitter * (2.0 * r - 1.0)
+  // GUESS: `Duration.nanos()`, `Duration.from_nanos(Int)`, `Float(Int)`,
+  // `Float.round()`, and `Int(Float)` exist. The spec only shows `Int32(x)`.
+  let nanos = Float(d.nanos()) * factor
+  Duration.from_nanos(Int(nanos.round()))
+}
+
+fn min_duration(a: Duration, b: Duration) -> Duration {
+  if a < b { a } else { b }
+}
+
+/// Parses a `Retry-After` header given in whole seconds. HTTP dates are not
+/// supported and are treated as absent.
+fn parse_retry_after(header: Str?) -> Duration? {
+  if let raw = header {
+    // GUESS: `Int.parse(Str) -> Int?` and `Str.trim()`; modelled on `Int32.try`.
+    if let secs = Int.parse(raw.trim()) {
+      if secs >= 0 {
+        return some(1s * secs)
+      }
+    }
+  }
+  none
+}

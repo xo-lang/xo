@@ -1,0 +1,112 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "xo_prevents": "yes",
+    "files": [
+      "main.go"
+    ],
+    "description": "In copyFile, the result of s.opt.copyFn(out, in) is discarded (call made as a bare statement) instead of `if _, err = s.opt.copyFn(out, in); err != nil { return fmt.Errorf(\"copy: %w\", err) }`. A failed data copy no longer aborts; the partial temp file is fsynced, chmodded, and renamed over the destination.",
+    "trigger": "A read or write error part way through copying a file (source on a failing disk or network mount, destination out of space, or an injected copyFn that returns an error after writing some bytes).",
+    "symptom": "Sync reports the file as copied with exit status 0, but the destination file is truncated or empty, and a previously good destination copy has been overwritten with it."
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "xo_prevents": "yes",
+    "files": [
+      "main.go"
+    ],
+    "description": "Removed the `if s.dst == nil { return }` guard at the top of deleteExtra. In a dry run against a destination that does not exist, openDst returns a nil *os.Root, and deleteExtra calls s.dst.FS() and walks it, dereferencing the nil root.",
+    "trigger": "filesync --dry-run --delete <src> <dst> where <dst> does not exist yet.",
+    "symptom": "A dry run with --delete against a not yet created destination crashes with a nil pointer dereference panic instead of printing the planned copies."
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "xo_prevents": "yes",
+    "files": [
+      "main.go"
+    ],
+    "description": "In copyTree, the switch over the walked entry's kind (directory, regular file, anything else) lost its default branch, which counted the entry as skipped and logged `skip <p> (not a regular file)`. Symlinks, sockets, FIFOs, and devices now fall through silently. Closest closed set in this code: the file type classification of a directory entry.",
+    "trigger": "A source tree containing a symlink, named pipe, or other non regular, non directory entry.",
+    "symptom": "Symlinks in the source are neither copied nor reported: no 'skip' line appears in the output and the skipped count in the summary is lower than the number of entries left behind."
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "xo_prevents": "yes",
+    "files": [
+      "main.go"
+    ],
+    "description": "copyTree was changed to copy regular files concurrently: it declares a sync.WaitGroup, defers wg.Wait(), and runs `wg.Go(func() { s.syncFile(p, d) })` for each regular file. syncFile and fail mutate the shared s.sum counters and write to the shared Out/Err writers without synchronization, concurrently with each other and with the walk goroutine (which also increments s.sum.Skipped). The code had no concurrency, so this is the closest natural instance: an unsynchronized parallel copy optimization.",
+    "trigger": "Syncing a source with many regular files (dozens or more), especially with several changed files and some skipped entries, so multiple syncFile goroutines run at once; reproducible under the race detector.",
+    "symptom": "The summary line reports inconsistent counts between runs on the same tree (copied plus skipped does not add up to the number of files, failures sometimes reported as 0 with exit status 0), and log lines are occasionally interleaved or garbled."
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "xo_prevents": "yes",
+    "files": [
+      "main.go"
+    ],
+    "description": "Removed `defer in.Close()` after opening the source file in copyFile, so every copied source file handle is leaked for the life of the process. The program has no goroutines, so the closest natural instance of a resource outliving its scope is a leaked file descriptor.",
+    "trigger": "Syncing more changed files in one run than the process open file limit (for example a tree with tens of thousands of new files, or a lowered `ulimit -n`), or calling Sync repeatedly from a long lived process.",
+    "symptom": "Large syncs start failing part way through with 'too many open files' errors on later files, and memory and descriptor usage grow with the number of files copied."
+  },
+  {
+    "id": "X6",
+    "class": "lost update (copy modified, never written back)",
+    "xo_prevents": "partly",
+    "files": [
+      "main.go"
+    ],
+    "description": "The receiver of syncer.fail was changed from *syncer to syncer. The error line is still printed, but s.sum.Failed++ increments a copy of the syncer, so the real Summary.Failed stays 0.",
+    "trigger": "Any per file failure: unreadable source file, destination path occupied by a directory, permission denied on the destination, a copy error.",
+    "symptom": "Errors are printed to stderr but the summary says 'failed: 0' and the command exits 0, so scripts and cron jobs think the sync succeeded."
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "xo_prevents": "no",
+    "files": [
+      "main.go"
+    ],
+    "description": "In deleteExtra, the reverse loop over the collected destination entries changed from `i >= 0` to `i > 0`, so entries[0] (the first entry of the destination walk in lexical order) is never considered for deletion.",
+    "trigger": "--delete where the lexically first top level entry in the destination (for example 'a.txt' or a directory 'aaa') does not exist in the source.",
+    "symptom": "With --delete, one stale file or directory at the top of the destination is never removed, run after run, while all other extras are deleted; the deleted count is one short."
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "xo_prevents": "no",
+    "files": [
+      "main.go"
+    ],
+    "description": "In run, a wrong number of positional arguments now returns exit status 1 instead of 2. Status 2 is the usage error code (also used for flag parse errors) and 1 means the sync ran and had failures. No HTTP in this program, so the closest instance is the CLI exit status contract.",
+    "trigger": "Invoking filesync with zero, one, or three or more positional arguments, e.g. `filesync onlysrc`.",
+    "symptom": "A usage mistake (missing destination argument) exits with 1, the same code as a sync with file failures, so wrapper scripts misclassify invocation errors as partial sync failures."
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "xo_prevents": "no",
+    "files": [
+      "main.go"
+    ],
+    "description": "In syncFile, the unchanged check became `!si.ModTime().Truncate(time.Second).After(di.ModTime())` (plus a time import). The source mtime is truncated to whole seconds but the destination mtime (copied from the source at full precision) is not, so a source modification within the same wall clock second as the previous version compares as not newer.",
+    "trigger": "A source file rewritten with the same size within the same second as its previously synced version (e.g. synced at 10:00:00.300, edited at 10:00:00.800), then synced again.",
+    "symptom": "Some edited files are reported as 'skip (unchanged)' and the destination keeps stale content; touching the file again a second later makes it copy."
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "xo_prevents": "no",
+    "files": [
+      "main.go"
+    ],
+    "description": "parentExtra now returns `dir != \".\" && s.seen[s.key(dir)]` instead of `!s.seen[...]`. Ignored names (SkipNames, e.g. .DS_Store) are now deleted from directories that still exist in the source, and kept in directories that are being removed.",
+    "trigger": "--delete with SkipNames set (default on macOS and Windows) and an ignored file such as .DS_Store in a destination subdirectory, either one that exists in the source or one that does not.",
+    "symptom": "With --delete, .DS_Store files are removed from destination folders that should be left alone, while stale folders that contain one can no longer be removed and fail with 'directory not empty'."
+  }
+]

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+floats 2.5 3.0 1e-06 0.3333333333333333 1e+21
+bool true rune x str in dur 1.5s 2m0s 1m30s
+user P(1) nested ab2c
+price: $5 braces {literal} dollar $ alone
+no ${interp} \n here
+line one
+  indented
+line three
+secret <redacted> revealed 7
+sized 200 -5
+--- stderr

@@ -1,0 +1,44 @@
+// Package archtest enforces the dependency rules between project modules:
+// domain imports no project module, store imports only domain, and api
+// imports only domain and store. Nothing may import the server executable.
+
+const MODULE_PATH = "example.com/notes"
+
+/// Checked modules, in dependency order.
+pub const CHECKED = ["domain", "store", "api"]
+
+/// Project modules that `module` must not import.
+pub fn forbidden_imports(module: Str) -> List[Str] {
+  match module {
+    "domain" => ["store", "api", "server"]
+    "store" => ["api", "server"]
+    "api" => ["server"]
+    _ => []
+  }
+}
+
+/// Import paths named by the `use` lines of a source file.
+pub fn imports(source: Str) -> List[Str] {
+  var out: List[Str] = []
+  for line in source.lines() {
+    let t = line.trim()
+    if !t.starts_with("use ") {
+      continue
+    }
+    let rest = t.trim_prefix("use ").trim()
+    let path = match rest.find(" ") {
+      Some(i) => rest[..i]
+      None => rest
+    }
+    out.push(path)
+  }
+  out
+}
+
+/// One message per forbidden import in `source`, a file of `module`.
+pub fn violations(module: Str, file: Str, source: Str) -> List[Str] {
+  let banned = forbidden_imports(module).map(fn(m) { "${MODULE_PATH}/${m}" })
+  imports(source)
+    .filter(fn(p) { banned.contains(p) })
+    .map(fn(p) { "${module}/${file} imports ${p}" })
+}

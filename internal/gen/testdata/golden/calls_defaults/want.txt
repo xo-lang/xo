@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+hello ada
+hi bob
+yo  cyyo  cy
+1->2:5
+2x4 3x5 13x16
+seen 5
+closures 5
+--- stderr

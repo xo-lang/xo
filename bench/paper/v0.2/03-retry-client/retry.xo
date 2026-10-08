@@ -1,0 +1,141 @@
+use std/http
+use std/log
+use std/task
+
+/// Controls how `get_with_retry` spaces out and limits attempts.
+pub struct RetryPolicy {
+  pub max_attempts: Int = 5
+  pub base_delay: Duration = 100ms
+  pub max_delay: Duration = 5s
+  /// Fraction of the computed delay that is randomly added or removed.
+  pub jitter: Float = 0.2
+} invariant max_attempts >= 1 &&
+  base_delay >= 0ms &&
+  max_delay >= base_delay &&
+  jitter >= 0.0 &&
+  jitter <= 1.0
+
+/// Why a single attempt failed in a way that is worth retrying.
+pub enum AttemptErr {
+  /// The request never produced a response (connect error, timeout, protocol error).
+  Transport(err: http.ClientErr)
+  /// The server answered with a retryable status (429, 500, 502, 503, 504).
+  BadStatus(code: Int)
+}
+
+pub fn (e: AttemptErr) display() -> Str {
+  match e {
+    Transport(err) => "transport error: {err}"
+    BadStatus(code) => "status {code}"
+  }
+}
+
+pub enum FetchErr {
+  /// The URL could not be parsed or has an unsupported scheme.
+  InvalidUrl(msg: Str)
+  /// The server answered with a status that is not retried.
+  Status(code: Int)
+  /// Every attempt failed. `last` is the failure of the final attempt.
+  Exhausted(attempts: Int, last: AttemptErr)
+  /// The surrounding task was cancelled.
+  Canceled
+}
+
+pub fn (e: FetchErr) display() -> Str {
+  match e {
+    InvalidUrl(msg) => "invalid url: {msg}"
+    Status(code) => "non retryable status {code}"
+    Exhausted(attempts, last) => "gave up after {attempts} attempts, last error: {last}"
+    Canceled => "canceled"
+  }
+}
+
+/// Performs a GET on `url` and returns the body of the first 2xx response.
+///
+/// Retries connection errors, timeouts, and statuses 429, 500, 502, 503, 504.
+/// The delay before attempt n (n >= 2) is
+/// `min(max_delay, base_delay * 2^(n-2))`, plus or minus up to `jitter` of it.
+/// A `Retry-After` header in seconds on a 429 or 503 replaces that delay,
+/// still capped by `max_delay`. Any other non 2xx status fails at once.
+pub fn get_with_retry(net: Net, clock: Clock, rand: Rand, url: Str, policy: RetryPolicy) -> Bytes ! FetchErr
+  uses net.dial, clock, rand
+{
+  let parsed = http.parse_url(url).map_err(fn(e) { FetchErr.InvalidUrl(msg: e.msg) })?
+  if parsed.scheme != "http" && parsed.scheme != "https" {
+    return Err(FetchErr.InvalidUrl(msg: "unsupported scheme \"{parsed.scheme}\""))
+  }
+  let client = http.client(net)
+  var attempt = 1
+  // GUESS: an infinite `while { ... }` as the last item of a body has type
+  // Never (core 2.1), so it satisfies the `Bytes ! FetchErr` return type even
+  // though the grammar lists `while` as a statement, not an expression.
+  while {
+    if task.is_canceled() {
+      return Err(FetchErr.Canceled)
+    }
+    let (failure, retry_after): (AttemptErr, Duration?) = match client.get(url) {
+      Ok(resp) => match resp.status {
+        200..=299 => return resp.body
+        429 | 500 | 502 | 503 | 504 => (AttemptErr.BadStatus(code: resp.status), retry_after_of(resp))
+        _ => return Err(FetchErr.Status(code: resp.status))
+      }
+      Err(Canceled) => return Err(FetchErr.Canceled)
+      Err(InvalidUrl(msg)) => return Err(FetchErr.InvalidUrl(msg: msg))
+      // Connect, Timeout, and Protocol are all treated as transient.
+      Err(e) => (AttemptErr.Transport(e), None)
+    }
+    if attempt >= policy.max_attempts {
+      return Err(FetchErr.Exhausted(attempts: attempt, last: failure))
+    }
+    attempt += 1
+    let wait = delay_before(policy, rand, attempt, retry_after)
+    log.debug("retrying request", {"url": url, "attempt": attempt, "wait": wait, "after": failure})
+    clock.sleep(wait)
+  }
+}
+
+/// Delay before attempt `n`. A server supplied `retry_after` wins over backoff.
+fn delay_before(policy: RetryPolicy, rand: Rand, n: Int, retry_after: Duration?) -> Duration {
+  if let Some(d) = retry_after {
+    return d.min(policy.max_delay)
+  }
+  let base = backoff(policy, n)
+  // rand.float() is in [0, 1), so spread is in [-jitter, jitter).
+  let spread = (rand.float() * 2.0 - 1.0) * policy.jitter
+  // GUESS: Duration.scale accepts a negative factor and yields a negative
+  // Duration; the spec does not say whether Duration can be negative.
+  base + base.scale(spread)
+}
+
+/// Backoff before attempt `n`, without jitter: min(max_delay, base_delay * 2^(n-2)).
+fn backoff(policy: RetryPolicy, n: Int) -> Duration
+  requires n >= 2
+{
+  // Double step by step and stop at the cap, so a large `n` cannot overflow
+  // the Duration (overflow faults) or loop for long.
+  var d = policy.base_delay
+  var step = 2
+  while step < n && d > 0ms && d < policy.max_delay {
+    d = d * 2
+    step += 1
+  }
+  d.min(policy.max_delay)
+}
+
+/// Reads a `Retry-After` header given in whole seconds on a 429 or 503.
+/// The HTTP date form is not supported and falls back to normal backoff.
+fn retry_after_of(resp: http.Response) -> Duration? {
+  if resp.status != 429 && resp.status != 503 {
+    return None
+  }
+  if let Some(raw) = resp.header("Retry-After") {
+    if let Some(secs) = Int.parse(raw.trim()) {
+      if secs >= 0 {
+        // Clamp before multiplying: the header is untrusted and Duration
+        // overflow faults. The caller caps by max_delay anyway.
+        return 1s * secs.min(86_400)
+      }
+    }
+  }
+  None
+}

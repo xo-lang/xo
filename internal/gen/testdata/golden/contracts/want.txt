@@ -1,0 +1,9 @@
+exit 70
+--- stdout
+withdraw 30: true balance 70
+withdraw 500: Insufficient
+withdraw -1: Invalid(msg: "amount must be positive")
+sqrt 4
+buggy next
+--- stderr
+fault: ensures failed: result > n at main.xo:31:11

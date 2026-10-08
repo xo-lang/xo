@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+ok 25
+failed: Boom
+faulted: negative input -1
+with_timeout fast
+slow timed out
+failed Boom
+map_concurrent 20,25,33,50,100,Boom peak<=2 true
+semaphore max 1
+--- stderr

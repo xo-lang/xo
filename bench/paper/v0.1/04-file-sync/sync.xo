@@ -1,0 +1,230 @@
+// Walking, planning, and applying a one way sync.
+//
+// Paths inside an Fs capability are slash separated and relative to its root.
+// GUESS: capability paths use "/" on every OS (like Go io/fs) and "." names the root.
+
+/// Platform rules for comparing paths and skipping OS junk files.
+struct Rules {
+  fold_case: Bool
+  /// Names to skip, already passed through `key`.
+  ignored: Set[Str]
+}
+
+/// The comparison key for a path under these rules.
+fn (r: Rules) key(p: Str) -> Str {
+  // GUESS: Str.to_lower exists. Simple lowercasing, not full Unicode case folding.
+  if r.fold_case { p.to_lower() } else { p }
+}
+
+fn (r: Rules) is_ignored(name: Str) -> Bool {
+  r.ignored.contains(r.key(name)) // GUESS: Set.contains exists
+}
+
+struct FileInfo {
+  dir: Str
+  name: Str
+  rel: Str
+  size: Int
+  modified: Time
+}
+
+struct Tree {
+  /// key(rel) -> file
+  files: Map[Str, FileInfo]
+  /// key(rel) -> rel, in breadth first order (parents before children)
+  dirs: Map[Str, Str]
+}
+
+enum Action {
+  Copy(file: FileInfo)
+  Skip(rel: Str)
+  Delete(rel: Str)
+  RemoveDir(rel: Str)
+}
+
+struct Stats {
+  copied: Int = 0
+  deleted: Int = 0
+  skipped: Int = 0
+  failed: Int = 0
+}
+
+fn join(dir: Str, name: Str) -> Str {
+  if dir == "." { name } else { "{dir}/{name}" }
+}
+
+/// Lists every file and directory under the root of `root`, breadth first.
+fn walk(root: Fs, rules: Rules) -> Tree ! Error uses fs.read {
+  var files: Map[Str, FileInfo] = {}
+  var dirs: Map[Str, Str] = {}
+  // A missing destination is an empty tree (matters for --dry-run).
+  // GUESS: Fs.exists(path) -> Bool ! Error
+  if !root.exists(".")? {
+    return Tree{files: files, dirs: dirs}
+  }
+  var queue: List[Str] = ["."]
+  var i = 0
+  while i < queue.len() {
+    let dir = queue[i]
+    i += 1
+    // GUESS: Fs.read_dir(path) -> List[DirEntry] ! Error, where DirEntry has
+    // name: Str, is_dir: Bool, size: Int, modified: Time.
+    for e in root.read_dir(dir)? {
+      if rules.is_ignored(e.name) {
+        continue
+      }
+      let rel = join(dir, e.name)
+      if e.is_dir {
+        dirs.put(rules.key(rel), rel)
+        queue.push(rel)
+      } else {
+        files.put(rules.key(rel), FileInfo{dir: dir, name: e.name, rel: rel, size: e.size, modified: e.modified})
+      }
+    }
+  }
+  Tree{files: files, dirs: dirs}
+}
+
+/// Decides what to do for every path. Pure.
+fn plan(src: Tree, dst: Tree, delete: Bool) -> List[Action] {
+  var actions: List[Action] = []
+  for (key, f) in src.files {
+    if let d = dst.files.get(key) {
+      // GUESS: Time implements Ord so `>` works.
+      if f.size != d.size || f.modified > d.modified {
+        actions.push(Action.Copy(file: f))
+      } else {
+        actions.push(Action.Skip(rel: f.rel))
+      }
+    } else {
+      actions.push(Action.Copy(file: f))
+    }
+  }
+  if delete {
+    for (key, d) in dst.files {
+      if src.files.get(key) == none {
+        actions.push(Action.Delete(rel: d.rel))
+      }
+    }
+    // Remove children before parents: reverse of breadth first order.
+    var gone: List[Str] = []
+    for (key, rel) in dst.dirs {
+      if src.dirs.get(key) == none {
+        gone.push(rel)
+      }
+    }
+    for rel in gone.reverse() {
+      actions.push(Action.RemoveDir(rel: rel))
+    }
+  }
+  actions
+}
+
+/// Copies one file through a temp file in the destination directory, then
+/// renames it into place. The temp file is removed on every exit path.
+fn copy_file(src: Fs, dst: Fs, f: FileInfo) -> () ! Error uses fs.read, fs.write {
+  if f.dir != "." {
+    dst.create_dir_all(f.dir)?
+  }
+  // GUESS: Fs.read(path) -> Bytes ! Error; whole file in memory, no streaming API in spec.
+  let data = src.read(f.rel)?
+  let tmp = join(f.dir, ".{f.name}.xo-sync-tmp")
+  // Runs on success, error, fault, and cancellation. After a successful
+  // rename the temp file is gone and this remove fails, which is fine.
+  defer {
+    let _ = dst.remove(tmp) // ignored on purpose: best effort cleanup
+  }
+  dst.write(tmp, data)? // GUESS: Fs.write(path, Bytes) -> () ! Error, creates or truncates
+  dst.rename(tmp, f.rel)? // GUESS: Fs.rename(from, to) -> () ! Error, replaces a file atomically
+}
+
+/// Removes an empty directory. Returns false if it was not empty.
+fn remove_empty_dir(dst: Fs, rel: Str) -> Bool ! Error uses fs.read, fs.write {
+  if dst.read_dir(rel)?.len() > 0 {
+    return false
+  }
+  dst.remove_dir(rel)? // GUESS: Fs.remove_dir removes an empty directory
+  true
+}
+
+fn apply(src: Fs, dst: Fs, actions: List[Action], dry_run: Bool, out: Stdio) -> Stats
+  uses fs.read, fs.write, stdio
+{
+  var stats = Stats{}
+  for a in actions {
+    match a {
+      Copy(file) => {
+        if dry_run {
+          out.println("would copy {file.rel}")
+          stats.copied += 1
+        } else {
+          match copy_file(src, dst, file) {
+            ok(_) => { // GUESS: `_` is a wildcard pattern
+              out.println("copied {file.rel}")
+              stats.copied += 1
+            }
+            err(e) => {
+              out.println("failed {file.rel}: {e}")
+              stats.failed += 1
+            }
+          }
+        }
+      }
+      Skip(_) => { // binding `rel` would be unused (XO0110)
+        stats.skipped += 1
+      }
+      Delete(rel) => {
+        if dry_run {
+          out.println("would delete {rel}")
+          stats.deleted += 1
+        } else {
+          match dst.remove(rel) { // GUESS: Fs.remove(path) -> () ! Error
+            ok(_) => {
+              out.println("deleted {rel}")
+              stats.deleted += 1
+            }
+            err(e) => {
+              out.println("failed to delete {rel}: {e}")
+              stats.failed += 1
+            }
+          }
+        }
+      }
+      RemoveDir(rel) => {
+        if dry_run {
+          // Not exact: the dir may still hold ignored files and be kept.
+          out.println("would remove dir {rel}")
+          stats.deleted += 1
+        } else {
+          match remove_empty_dir(dst, rel) {
+            ok(removed) => {
+              if removed {
+                out.println("removed dir {rel}")
+                stats.deleted += 1
+              } else {
+                out.println("kept non empty dir {rel}")
+                stats.skipped += 1
+              }
+            }
+            err(e) => {
+              out.println("failed to remove dir {rel}: {e}")
+              stats.failed += 1
+            }
+          }
+        }
+      }
+    }
+  }
+  stats
+}
+
+/// Makes `dst` mirror `src`. Per file failures are counted in the result;
+/// only a failure to list a tree is returned as an error.
+fn sync(src: Fs, dst: Fs, rules: Rules, dry_run: Bool, delete: Bool, out: Stdio) -> Stats ! Error
+  uses fs.read, fs.write, stdio
+{
+  let src_tree = walk(src, rules)?
+  let dst_tree = walk(dst, rules)?
+  let actions = plan(src_tree, dst_tree, delete)
+  apply(src, dst, actions, dry_run, out)
+}

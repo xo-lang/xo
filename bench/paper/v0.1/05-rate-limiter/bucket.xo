@@ -1,0 +1,69 @@
+/// A per client limit: bucket size and steady refill rate.
+pub struct Limit {
+  pub capacity: Int
+  pub refill_per_sec: Float
+} invariant capacity > 0 && refill_per_sec > 0.0
+
+// GUESS: a struct literal is allowed as a const initializer (spec 3.1 only
+// shows an Int const).
+const DEFAULT_LIMIT = Limit{capacity: 20, refill_per_sec: 5.0}
+
+/// A token bucket. Tokens are fractional so slow refill rates still work.
+pub struct Bucket {
+  capacity: Int
+  tokens: Float
+  refill_per_sec: Float
+  last_refill: Time
+} invariant tokens >= 0.0
+
+/// A full bucket for `limit`, stamped at `now`.
+pub fn new_bucket(limit: Limit, now: Time) -> Bucket {
+  // GUESS: Float(x) is the explicit Int to Float conversion, by analogy with
+  // Int32(x) in spec 2.1.
+  Bucket{
+    capacity: limit.capacity,
+    tokens: Float(limit.capacity),
+    refill_per_sec: limit.refill_per_sec,
+    last_refill: now,
+  }
+}
+
+fn (var b: Bucket) refill(now: Time) {
+  // GUESS: Time - Time yields a Duration, and Duration compares with a
+  // Duration literal (spec 2.1 names the types but no operators).
+  let elapsed = now - b.last_refill
+  if elapsed > 0s {
+    // GUESS: Duration.seconds() returns the duration as a Float number of
+    // seconds. GUESS: Float has a .min method.
+    let added = elapsed.seconds() * b.refill_per_sec
+    b.tokens = (b.tokens + added).min(Float(b.capacity))
+    b.last_refill = now
+  }
+}
+
+/// Refills based on time elapsed since the last refill, then consumes one
+/// token if one is available.
+pub fn (var b: Bucket) take(now: Time) -> Bool {
+  b.refill(now)
+  if b.tokens >= 1.0 {
+    b.tokens -= 1.0
+    true
+  } else {
+    false
+  }
+}
+
+/// Whole seconds until one token is available, at least 1.
+pub fn (b: Bucket) retry_after_secs() -> Int
+  ensures result >= 1
+{
+  let wait = (1.0 - b.tokens) / b.refill_per_sec
+  // GUESS: Float.ceil() exists and Int(f) converts a Float to Int (faulting
+  // when out of range), mirroring Int32(x) in spec 2.1.
+  Int(wait.ceil()).max(1)
+}
+
+/// When the bucket was last touched. Used for idle eviction.
+pub fn (b: Bucket) last_used() -> Time {
+  b.last_refill
+}

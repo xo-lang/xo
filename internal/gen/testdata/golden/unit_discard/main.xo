@@ -1,0 +1,21 @@
+fn run_all(fs: List[fn() -> ()]) {
+  for f in fs {
+    f()
+  }
+}
+
+fn main(os: Os) {
+  let hits = Atomic[Int].new(0)
+  // closures expected to return () whose tails are values
+  run_all([fn() { hits.add(1) }, fn() { hits.add(10) }])
+  let x = 3
+  // a unit match whose arms are values
+  match x {
+    3 => hits.add(100)
+    _ => hits.add(1000)
+  }
+  if x > 1 {
+    hits.add(5)
+  }
+  os.stdio.println("hits ${hits.get()}")
+}

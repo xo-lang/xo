@@ -1,0 +1,47 @@
+enum E {
+  Oops(n: Int)
+} derive Display
+
+fn half(n: Int) -> Int ! E {
+  if n % 2 == 1 {
+    return Err(E.Oops(n: n))
+  }
+  n / 2
+}
+
+test "passes" {
+  expect(half(4)?) == 2
+  expect(half(3).is_err())
+  expect([1, 2]) == [1, 2]
+  expect(Some(3)) == Some(3)
+  expect(3) <= 4
+}
+
+test "failed expect prints both values" {
+  let xs = [1, 2, 3]
+  expect(xs.map(fn(x) { x * 2 })) == [2, 4, 7]
+}
+
+test "error from ? fails the test with frames" {
+  let v = half(5)?
+  expect(v) == 0
+}
+
+test "fault fails the test" {
+  let xs: List[Int] = []
+  expect(xs[3]) == 0
+}
+
+test "plain expect" {
+  expect(1 + 1 == 3)
+}
+
+test "deadlock is reported" {
+  let ch = Chan[Int].new()
+  let v = ch.recv()
+  expect(v.is_none())
+}
+
+test "a property over Int" for n: Int {
+  expect(n == n)
+}

@@ -1,0 +1,51 @@
+struct Box {
+  w: Int
+  h: Int
+}
+
+fn (b: Box) scaled(by: Int = 2, extra: Int = 0) -> Box {
+  Box{w: b.w * by + extra, h: b.h * by + extra}
+}
+
+fn greet(name: Str, greeting: Str = "hello", times: Int = 1) -> Str {
+  "${greeting} ${name}".repeat(times)
+}
+
+fn transfer(from: Int, to: Int, amt: Int) -> Str { "${from}->${to}:${amt}" }
+
+fn main(os: Os) {
+  os.stdio.println(greet("ada"))
+  os.stdio.println(greet("bob", greeting: "hi"))
+  os.stdio.println(greet("cy", times: 2, greeting: "yo "))
+  os.stdio.println(transfer(to: 2, from: 1, amt: 5))
+  let b = Box{w: 1, h: 2}
+  let s1 = b.scaled()
+  let s2 = b.scaled(extra: 1)
+  let s3 = b.scaled(3, extra: 10)
+  os.stdio.println("${s1.w}x${s1.h} ${s2.w}x${s2.h} ${s3.w}x${s3.h}")
+  let ch = Chan[Int].new(cap: 10)
+  var seen: List[Int] = []
+  scope s {
+    s.spawn(fn() {
+      for i in 0..5 {
+        ch.send(i)
+      }
+      ch.close()
+    })
+    outer: while true {
+      select {
+        v = ch.recv() => match v {
+          Some(x) => seen.push(x)
+          None => break outer
+        }
+        after 5s => break outer
+      }
+    }
+  }
+  os.stdio.println("seen ${seen.len()}")
+  var fns: List[fn() -> Int] = []
+  for i in 0..3 {
+    fns.push(fn() -> Int { i * i })
+  }
+  os.stdio.println("closures ${fns.map(fn(f) { f() }).fold(0, fn(a, b) { a + b })}")
+}

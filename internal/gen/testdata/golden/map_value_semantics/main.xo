@@ -1,0 +1,179 @@
+// Value semantics of Map (and Set) under the runtime's in place appends:
+// whichever copy writes first, no other copy may observe the change, and
+// insertion order survives every path.
+
+struct Holder {
+  name: Str
+  tags: Map[Str, Int]
+}
+
+fn show(m: Map[Str, Int]) -> Str {
+  m.entries().map(fn(e) { "${e.0}=${e.1}" }).join(",")
+}
+
+fn at(m: Map[Str, Map[Str, Int]], k: Str) -> Map[Str, Int] {
+  m.get(k) ?? {}
+}
+
+fn bump(var m: Map[Str, Int], k: Str) {
+  m.update(k, 0, fn(var v) { v += 1 })
+}
+
+fn grow(m: Map[Str, Int], k: Str) -> Map[Str, Int] {
+  var c = m
+  c.put(k, 99)
+  c
+}
+
+fn main(os: Os) {
+  // 1. Copy to another binding, then mutate: the copy first, then the
+  // original, then both again.
+  var a: Map[Str, Int] = {"x": 1, "y": 2}
+  var b = a
+  b.put("z", 3)
+  b.put("x", 10)
+  os.stdio.println("copy: a ${show(a)} b ${show(b)}")
+  a.put("w", 4)
+  a.remove("y")
+  b.remove("x")
+  b.put("x", 11)
+  os.stdio.println("both: a ${show(a)} b ${show(b)}")
+
+  // The original mutates first, then the copy.
+  var c: Map[Str, Int] = {"p": 1}
+  let d = c
+  c.put("q", 2)
+  var e = d
+  e.put("r", 3)
+  os.stdio.println("order: c ${show(c)} d ${show(d)} e ${show(e)}")
+
+  // 2. A map inside a struct, copied, mutated through the copy.
+  var h1 = Holder{name: "one", tags: {"a": 1}}
+  var h2 = h1
+  h2.tags.put("b", 2)
+  h2.tags["a"] = 5
+  h1.tags.put("c", 3)
+  os.stdio.println("struct: h1 ${show(h1.tags)} h2 ${show(h2.tags)}")
+  let hs = [h1, h2]
+  var hs2 = hs
+  hs2[0].tags.put("d", 4)
+  os.stdio.println("list of structs: hs ${show(hs[0].tags)} hs2 ${show(hs2[0].tags)}")
+
+  // 3. Captured by a closure, then the binding is mutated.
+  var cap: Map[Str, Int] = {"k": 1}
+  let read = fn() { show(cap) }
+  cap.put("k", 2)
+  cap.put("l", 3)
+  let grown = grow(cap, "m")
+  os.stdio.println("closure: captured ${read()} now ${show(cap)} grown ${show(grown)}")
+
+  // 4. Sent on a channel: the sender keeps mutating, the receiver mutates
+  // its own copy.
+  let ch = Chan[Map[Str, Int]].new(cap: 1)
+  var sent: Map[Str, Int] = {"s": 1}
+  ch.send(sent)
+  sent.put("s", 2)
+  sent.put("t", 3)
+  var got = ch.recv() ?? {}
+  got.put("u", 4)
+  os.stdio.println("channel: sent ${show(sent)} got ${show(got)}")
+  let back = Chan[Map[Str, Int]].new(cap: 1)
+  let base: Map[Str, Int] = {"v": 1}
+  scope sc {
+    sc.spawn(fn() {
+      var mine = base
+      for i in 0..50 {
+        mine.put("n${i % 5}", i)
+      }
+      back.send(mine)
+    })
+    var local = base
+    for i in 0..50 {
+      local.put("L${i % 3}", i)
+    }
+    os.stdio.println("task: local ${show(local)}")
+  }
+  os.stdio.println("task: theirs ${show(back.recv() ?? {})} base ${show(base)}")
+
+  // 5. Elements updated with update, including nested maps.
+  var counts: Map[Str, Int] = {"a": 0, "b": 0}
+  let before = counts
+  for w in ["b", "a", "c", "b", "c", "c"] {
+    bump(counts, w)
+  }
+  os.stdio.println("update: counts ${show(counts)} before ${show(before)}")
+  var nested: Map[Str, Map[Str, Int]] = {"g": {"x": 1}}
+  let snap = nested
+  nested.update("g", {}, fn(var inner) { inner.put("y", 2) })
+  nested.update("g", {}, fn(var inner) { inner["x"] = 7 })
+  nested.update("h", {"z": 0}, fn(var inner) { inner.update("z", 0, fn(var z) { z += 1 }) })
+  let inner_copy = at(nested, "g")
+  nested.update("g", {}, fn(var inner) { inner.put("w", 8) })
+  os.stdio.println("nested: g ${show(at(nested, "g"))} h ${show(at(nested, "h"))} snap ${show(at(snap, "g"))} inner_copy ${show(inner_copy)} keys ${nested.keys().join(",")}")
+
+  // 6. Mutated inside Mutex.with while other tasks take and read
+  // snapshots.
+  let guarded = Mutex[Map[Str, Int]].new({"start": 0})
+  let first = guarded.with(fn(m) { m })
+  let sums = Chan[Int].new(cap: 5)
+  scope sc {
+    for t in 0..4 {
+      sc.spawn(fn() {
+        var total = 0
+        for i in 0..200 {
+          let seen = guarded.with(fn(var m) {
+            m.put("t${t}", i)
+            m
+          })
+          // Read the snapshot while other tasks keep writing.
+          for (_k, v) in seen {
+            total += v - v
+          }
+          total += seen.get("start") ?? 1000
+        }
+        sums.send(total)
+      })
+    }
+    var checks = 0
+    for _ in 0..200 {
+      checks += first.len() + (first.get("start") ?? 1000)
+    }
+    sums.send(checks - 200)
+  }
+  var all = 0
+  for _ in 0..5 {
+    all += sums.recv() ?? 1
+  }
+  let last = guarded.with(fn(m) { m })
+  os.stdio.println("mutex: first ${show(first)} snapshots ${all} last ${last.len()} t0 ${last.get("t0") ?? -1} start ${last.get("start") ?? -1} keys ${last.keys().join(",").len()}")
+
+  // 7. Order through removal, re-adding, many overwrites (log
+  // compaction), and many branches of one map.
+  var big: Map[Str, Int] = {}
+  for i in 0..100 {
+    big.put("k${i}", i)
+  }
+  let big_snap = big
+  for round in 0..50 {
+    for i in 0..100 {
+      if i % 10 == round % 10 {
+        big.put("k${i}", round)
+      }
+    }
+  }
+  big.remove("k0")
+  big.put("k0", -1)
+  let keys = big.keys()
+  var branches = 0
+  for i in 0..30 {
+    var br = big_snap
+    br.put("extra", i)
+    branches += br.len()
+  }
+  os.stdio.println("order: first ${keys[0]} last ${keys[keys.len() - 1]} k5 ${big.get("k5") ?? -1} snap k5 ${big_snap.get("k5") ?? -1} snap len ${big_snap.len()} branches ${branches}")
+  var set = #{"a", "b"}
+  let set_copy = set
+  set.add("c")
+  set.remove("a")
+  os.stdio.println("set: ${set.to_list().join(",")} copy ${set_copy.to_list().join(",")}")
+}

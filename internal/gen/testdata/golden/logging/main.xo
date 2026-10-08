@@ -1,0 +1,10 @@
+use std/log
+
+fn main(os: Os) {
+  log.info("not shown: default sink is stderr", {})
+  log.configure(os.stdio, level: log.Level.Warn)
+  log.info("filtered out", {})
+  log.warn("disk low", {"free": 12, "unit": "GB"})
+  log.configure(os.stdio, level: log.Level.Debug, format: log.Format.Json)
+  log.debug("json record", {"ok": true})
+}

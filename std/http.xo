@@ -1,0 +1,91 @@
+// std/http (spec/std.md 4). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. Notes for this file:
+//
+// - Router, Server, Client are opaque handles (empty structs).
+// - `Router.handle` and `Router.wrap` take a `var` receiver (std.md `[var]`)
+//   and perform their callback's effects (std.md 4.1).
+use std/json
+
+struct Router {}
+type Next = fn(Request) -> Response
+
+fn router() -> Router
+fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> Response ! E uses fx) uses fx
+fn (var r: Router) wrap[fx: Effects](m: fn(Request, Next) -> Response uses fx) uses fx
+fn (r: Router) call(req: Request) -> Response
+
+interface StatusError {
+  fn status(self) -> Int
+  fn display(self) -> Str
+}
+
+struct Request {
+  method: Str
+  path: Str
+  url: Url
+  headers: Map[Str, Str]
+  body: Bytes
+  remote_ip: Str
+}
+fn (r: Request) param(name: Str) -> Str
+fn (r: Request) param_int(name: Str) -> Int
+fn (r: Request) query(name: Str) -> Str?
+fn (r: Request) header(name: Str) -> Str?
+fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
+
+fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = b"") -> Request
+
+struct Response {
+  status: Int
+  headers: Map[Str, Str]
+  body: Bytes
+}
+fn json[T: Json](status: Int, v: T) -> Response
+fn text(status: Int, s: Str) -> Response
+fn empty(status: Int) -> Response
+fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx
+
+/// The body of a streamed response (std.md 4.3).
+struct BodyWriter {}
+fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
+fn (w: BodyWriter) flush() -> () ! IoErr
+fn (r: Response) with_header(name: Str, value: Str) -> Response
+fn (r: Response) header(name: Str) -> Str?
+fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
+
+struct Server {}
+fn server(l: Listener, r: Router) -> Server
+fn (s: Server) serve() -> () ! HttpErr uses net.listen
+
+enum HttpErr {
+  Io(msg: Str)
+  Canceled
+} derive Display
+
+struct Client {}
+fn client(net: Net, timeout: Duration = 30s) -> Client
+fn (c: Client) get(url: Str) -> Response ! ClientErr uses net.dial
+fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
+fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
+
+enum ClientErr {
+  InvalidUrl(msg: Str)
+  Connect(msg: Str)
+  Timeout
+  Protocol(msg: Str)
+  Canceled
+} derive Display
+
+fn parse_url(s: Str) -> Url ! UrlErr
+
+struct Url {
+  scheme: Str
+  host: Str
+  port: Int?
+  path: Str
+  query: Map[Str, Str]
+}
+
+struct UrlErr {
+  msg: Str
+} derive Display

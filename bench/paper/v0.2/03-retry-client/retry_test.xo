@@ -1,0 +1,135 @@
+use std/http
+use std/task
+
+test "succeeds on the third attempt after two 503s" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle(r"GET https://api.test/flaky", fn(_req) {
+    if calls.add(1) < 3 { http.empty(503) } else { http.text(200, "ok") }
+  })
+  let policy = RetryPolicy{jitter: 0.0}
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/flaky", policy)?
+  expect(body) == b"ok"
+  expect(calls.get()) == 3
+  expect(os.clock.sleeps()) == [100ms, 200ms]
+}
+
+test "jitter stays within the configured fraction" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle(r"GET https://api.test/flaky", fn(_req) {
+    if calls.add(1) < 3 { http.empty(503) } else { http.text(200, "ok") }
+  })
+  get_with_retry(os.net, os.clock, os.rand, "https://api.test/flaky", RetryPolicy{})?
+  let sleeps = os.clock.sleeps()
+  expect(sleeps.len()) == 2
+  expect(sleeps[0]) >= 80ms
+  expect(sleeps[0]) <= 120ms
+  expect(sleeps[1]) >= 160ms
+  expect(sleeps[1]) <= 240ms
+}
+
+test "404 returns immediately after one attempt" {
+  os.net.handle(r"GET https://api.test/missing", fn(_req) { http.text(404, "not found") })
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/missing", RetryPolicy{})
+  expect(r) == Err(FetchErr.Status(code: 404))
+  expect(os.net.requests().len()) == 1
+  expect(os.clock.sleeps()) == []
+}
+
+test "Retry-After header is respected" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle(r"GET https://api.test/limited", fn(_req) {
+    if calls.add(1) == 1 {
+      http.empty(429).with_header("Retry-After", "3")
+    } else {
+      http.text(200, "ok")
+    }
+  })
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/limited", RetryPolicy{jitter: 0.0})?
+  expect(body) == b"ok"
+  expect(os.clock.sleeps()) == [3s]
+}
+
+test "Retry-After is capped by max_delay" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle(r"GET https://api.test/limited", fn(_req) {
+    if calls.add(1) == 1 {
+      http.empty(503).with_header("Retry-After", "120")
+    } else {
+      http.text(200, "ok")
+    }
+  })
+  let policy = RetryPolicy{max_delay: 2s, jitter: 0.0}
+  get_with_retry(os.net, os.clock, os.rand, "https://api.test/limited", policy)?
+  expect(os.clock.sleeps()) == [2s]
+}
+
+test "exhausted attempts error contains the last status" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle(r"GET https://api.test/down", fn(_req) {
+    if calls.add(1) < 3 { http.empty(503) } else { http.empty(502) }
+  })
+  let policy = RetryPolicy{max_attempts: 3, jitter: 0.0}
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/down", policy)
+  expect(r) == Err(FetchErr.Exhausted(attempts: 3, last: AttemptErr.BadStatus(code: 502)))
+  expect(os.clock.sleeps()) == [100ms, 200ms]
+  let e = r.err().or_fault("expected an error")
+  expect(e.display().contains("502"))
+}
+
+test "connection errors are retried" {
+  os.net.fail(r"GET https://api.test/dead", http.ClientErr.Timeout)
+  let policy = RetryPolicy{max_attempts: 2, jitter: 0.0}
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/dead", policy)
+  expect(r) == Err(FetchErr.Exhausted(attempts: 2, last: AttemptErr.Transport(http.ClientErr.Timeout)))
+  expect(os.clock.sleeps()) == [100ms]
+}
+
+test "invalid url fails before any request" {
+  let r = get_with_retry(os.net, os.clock, os.rand, "not a url", RetryPolicy{})
+  let invalid = match r {
+    Err(InvalidUrl(..)) => true
+    _ => false
+  }
+  expect(invalid)
+  expect(os.net.requests()) == []
+}
+
+test "a timeout around the call stops further attempts" {
+  os.net.handle(r"GET https://api.test/slow", fn(_req) { http.empty(503) })
+  let r = task.with_timeout(os.clock, 150ms, fn() {
+    get_with_retry(os.net, os.clock, os.rand, "https://api.test/slow", RetryPolicy{jitter: 0.0})
+  })
+  // GUESS: the variant of the generic std enum `task.Timed[FetchErr]` can be
+  // written without its prefix in a pattern because the scrutinee type is known.
+  let timed_out = match r {
+    Err(TimedOut) => true
+    _ => false
+  }
+  expect(timed_out)
+  // Attempt 1 at 0ms, attempt 2 at 100ms, cancelled during the 200ms sleep.
+  expect(os.net.requests().len()) == 2
+}
+
+test "fetch_profile decodes a valid profile" {
+  let ada = Profile{id: 7, name: "Ada", email: None}
+  os.net.handle(r"GET https://api.test/users/7", fn(_req) { http.json(200, ada) })
+  let p = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 7)?
+  expect(p) == ada
+}
+
+test "fetch_profile reports a decode error for invalid JSON" {
+  os.net.handle(r"GET https://api.test/users/7", fn(_req) { http.text(200, r"{not json") })
+  let r = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 7)
+  let is_decode = match r {
+    Err(Decode(_)) => true
+    _ => false
+  }
+  expect(is_decode)
+  expect(os.net.requests().len()) == 1
+}
+
+test "fetch_profile wraps fetch errors" {
+  os.net.handle(r"GET https://api.test/users/8", fn(_req) { http.empty(404) })
+  let r = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 8)
+  expect(r) == Err(ProfileErr.Fetch(FetchErr.Status(code: 404)))
+}

@@ -1,0 +1,39 @@
+# Gotchas
+
+One file per gotcha: symptom, cause, fix or workaround. Mark each as
+`Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
+
+- [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
+- [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
+- [go-line-directives.md](go-line-directives.md): `//line` directive rules; relative paths kept verbatim; line but no column at run time.
+- [defer-differs-from-go.md](defer-differs-from-go.md): Xo `defer` is block scoped; blocks with defer run as closures.
+- [extension-availability-checks.md](extension-availability-checks.md): Linguist misses non source extensions.
+- [value-semantics-lost-update.md](value-semantics-lost-update.md): forgetting to write back a mutated copy loses the update silently.
+- [spec-examples-drift.md](spec-examples-drift.md): spec examples that break spec rules get copied by agents.
+- [predeclared-names-collide.md](predeclared-names-collide.md): `err`, `result`, `test` are taken by the language.
+- [sticky-cancellation-blocks-cleanup.md](sticky-cancellation-blocks-cleanup.md): cleanup in defer fails after cancellation (spec 0.2).
+- [root-module-absorbs-bench-go.md](root-module-absorbs-bench-go.md): `go test ./...` at the root picks up Go code under bench/; use `./internal/... ./cmd/...`.
+- [type-args-vs-index.md](type-args-vs-index.md): how the parser tells `f[T](x)` from `xs[i]`, and the `m[Red](x)` trap.
+- [fn-type-return-takes-uses.md](fn-type-return-takes-uses.md): `-> fn(A) -> B uses e {` gives the effect to the returned type, not the declaration.
+- [parser-error-cascades.md](parser-error-cascades.md): how the parser avoids double reports and cascades after an error.
+- [gopls-nested-module-noise.md](gopls-nested-module-noise.md): editor "undefined" errors in bench Go code are workspace noise.
+- [macos-temp-path-realpath.md](macos-temp-path-realpath.md): `/var` vs `/private/var` broke finding comparison.
+- [checker-error-type-hides-bugs.md](checker-error-type-hides-bugs.md): a checker bug that yields `<error>` silently disables checking; how to find it.
+- [checker-hint-binds-open-error.md](checker-hint-binds-open-error.md): unifying a generic call's result with the expected type before its error type is known.
+- [checker-generic-effects-per-call.md](checker-generic-effects-per-call.md): inferred effects of generic methods must be instantiated at each call.
+- [effect-elision-result-type.md](effect-elision-result-type.md): an omitted effect argument in a result type is inferred, not a caller's variable.
+- [tuple-field-float-lexing.md](tuple-field-float-lexing.md): `t.0.1` would lex as `t.` and the float `0.1`; numbers after `.` are indexes.
+- [group-task-from-field-cannot-fail.md](group-task-from-field-cannot-fail.md): tasks on a task group from a field or parameter must handle their errors (XO0801).
+- [xo-mod-modules-absolute-paths.md](xo-mod-modules-absolute-paths.md): modules loaded through xo.mod keep absolute paths in test output.
+- [xo0520-misses-read-after-mutation.md](xo0520-misses-read-after-mutation.md): deleting a write back is not caught if the stale copy is read later.
+- [codegen-var-receiver-spill.md](codegen-var-receiver-spill.md): spilling a `var` receiver into a temporary loses its mutation.
+- [go-instantiation-cycle.md](go-instantiation-cycle.md): a generic method returning its type with other arguments is a Go instantiation cycle.
+- [go-enotempty-is-errexist.md](go-enotempty-is-errexist.md): `errors.Is(ENOTEMPTY, fs.ErrExist)` is true; test errnos first.
+- [virtual-clock-wake-before-block.md](virtual-clock-wake-before-block.md): the test clock must count a woken task as running before it runs.
+- [canceled-sleep-unwinds.md](canceled-sleep-unwinds.md): `clock.sleep` unwinds a canceled task, so polling `is_canceled` around it never sees cancellation.
+- [spawn-background-never-result.md](spawn-background-never-result.md): `spawn_background` with an infinite loop closure fails inference (XO0402).
+- [go-constant-float-division.md](go-constant-float-division.md): `0.0 / 0.0` is a Go compile time error; float division goes through rt.
+- [recursive-struct-option.md](recursive-struct-option.md): a struct containing itself through Option needs `rt.Box`.
+- [virtual-timer-callback-holds-world-lock.md](virtual-timer-callback-holds-world-lock.md): cancel from a virtual timer callback with `cancelLocked`.
+- [map-copy-claims-log.md](map-copy-claims-log.md): Map copies share one entry log; the first write claims it, other copies fork; why transient trie nodes were unsound in Go.
+- [scope-send-hangs-run.md](scope-send-hangs-run.md): a task blocked on a send that is received only after its scope hangs `xo run` silently.

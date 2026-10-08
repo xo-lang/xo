@@ -1,0 +1,684 @@
+package rt
+
+import (
+	"bufio"
+	"context"
+	crand "crypto/rand"
+	"encoding/binary"
+	"errors"
+	"io"
+	"io/fs"
+	"net"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// RealOs returns the real capabilities given to `main` (core 6.3).
+func RealOs(tasks Task_Group) Os {
+	return Os{
+		F_net:   realNet{},
+		F_fs:    &realFs{},
+		F_clock: realClock{},
+		F_rand:  realRand{},
+		F_env:   realEnv{},
+		F_proc:  realProc{},
+		F_stdio: realStdio{},
+		F_tasks: tasks,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fs (std.md 3.1)
+
+// realFs is the real filesystem, rooted at the filesystem root (root "")
+// or, for a sub capability, at root.
+type realFs struct {
+	root      string // "" for os.fs
+	sub       bool
+	readOnly  bool
+	writeOnly bool
+}
+
+func fsErr(tag int, p string) FsErr {
+	switch tag {
+	case 1:
+		return FsErr{Tag: 1, P: FsErr_NotFound{F_path: p}}
+	case 2:
+		return FsErr{Tag: 2, P: FsErr_Exists{F_path: p}}
+	case 3:
+		return FsErr{Tag: 3, P: FsErr_NotEmpty{F_path: p}}
+	case 4:
+		return FsErr{Tag: 4, P: FsErr_NotDir{F_path: p}}
+	case 5:
+		return FsErr{Tag: 5, P: FsErr_IsDir{F_path: p}}
+	case 6:
+		return FsErr{Tag: 6, P: FsErr_Denied{F_path: p}}
+	}
+	return FsErr{Tag: 8}
+}
+
+func fsIo(p, msg string) FsErr { return FsErr{Tag: 7, P: FsErr_Io{F_path: p, F_msg: msg}} }
+
+// FsCanceled is FsErr.Canceled.
+var FsCanceled = FsErr{Tag: 8}
+
+// mapFsErr converts an OS error to FsErr.
+func mapFsErr(err error, p string) FsErr {
+	// specific errnos first: Go maps ENOTEMPTY to fs.ErrExist
+	switch {
+	case errors.Is(err, syscall.ENOTEMPTY):
+		return fsErr(3, p)
+	case errors.Is(err, syscall.ENOTDIR):
+		return fsErr(4, p)
+	case errors.Is(err, syscall.EISDIR):
+		return fsErr(5, p)
+	case errors.Is(err, fs.ErrNotExist):
+		return fsErr(1, p)
+	case errors.Is(err, fs.ErrExist):
+		return fsErr(2, p)
+	case errors.Is(err, fs.ErrPermission):
+		return fsErr(6, p)
+	}
+	msg := err.Error()
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		msg = pe.Err.Error()
+	}
+	return fsIo(p, msg)
+}
+
+// resolve maps an Xo path to an OS path (std.md 3.1): os.fs takes
+// absolute paths and resolves relative ones against the working
+// directory; a sub capability resolves paths against its root and denies
+// paths that escape it.
+func (f *realFs) resolve(p string) (string, bool) {
+	if !f.sub {
+		if p == "" {
+			p = "."
+		}
+		return filepath.FromSlash(p), true
+	}
+	clean := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
+	if strings.Contains(p, "..") {
+		// a path that names a parent beyond the root escapes it
+		depth := 0
+		for _, seg := range strings.Split(p, "/") {
+			switch seg {
+			case "..":
+				depth--
+			case "", ".":
+			default:
+				depth++
+			}
+			if depth < 0 {
+				return "", false
+			}
+		}
+	}
+	return filepath.Join(f.root, filepath.FromSlash(clean)), true
+}
+
+// relPath is the path of an OS path relative to the capability root.
+func (f *realFs) relPath(osPath, given string) string {
+	if !f.sub {
+		return filepath.ToSlash(osPath)
+	}
+	rel, err := filepath.Rel(f.root, osPath)
+	if err != nil {
+		return filepath.ToSlash(given)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		return ""
+	}
+	return rel
+}
+
+func (f *realFs) check(tk *Task, p string, write bool) (string, *FsErr) {
+	if tk != nil && tk.Canceled() {
+		e := FsCanceled
+		return "", &e
+	}
+	if write && f.readOnly || !write && f.writeOnly {
+		e := fsErr(6, p)
+		return "", &e
+	}
+	op, ok := f.resolve(p)
+	if !ok {
+		e := fsErr(6, p)
+		return "", &e
+	}
+	return op, nil
+}
+
+func (f *realFs) M_sub(_ *Task, dir string) Fs {
+	op, ok := f.resolve(dir)
+	if !ok {
+		return &realFs{root: filepath.Join(f.root, "denied"), sub: true, readOnly: true, writeOnly: true}
+	}
+	if abs, err := filepath.Abs(op); err == nil {
+		op = abs
+	}
+	return &realFs{root: op, sub: true, readOnly: f.readOnly, writeOnly: f.writeOnly}
+}
+
+func (f *realFs) M_cwd(*Task) Fs {
+	wd, _ := os.Getwd()
+	return &realFs{root: wd, sub: true, readOnly: f.readOnly, writeOnly: f.writeOnly}
+}
+
+func (f *realFs) M_read_only(*Task) Fs {
+	c := *f
+	c.readOnly = true
+	return &c
+}
+
+func (f *realFs) M_write_only(*Task) Fs {
+	c := *f
+	c.writeOnly = true
+	return &c
+}
+
+func (f *realFs) M_case_sensitive(*Task) bool {
+	return !(runtimeGOOS() == "darwin" || runtimeGOOS() == "windows")
+}
+
+func (f *realFs) info(osPath, given string, fi os.FileInfo) FileInfo {
+	return FileInfo{F_name: fi.Name(), F_path: f.relPath(osPath, given), F_is_dir: fi.IsDir(), F_size: fi.Size(), F_modified: Time(fi.ModTime().UnixNano())}
+}
+
+func (f *realFs) M_stat(tk *Task, p string) Result[Option[FileInfo], FsErr] {
+	op, e := f.check(tk, p, false)
+	if e != nil {
+		return Err[Option[FileInfo]](*e)
+	}
+	fi, err := os.Stat(op)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Ok[Option[FileInfo], FsErr](Option[FileInfo]{})
+	}
+	if err != nil {
+		return Err[Option[FileInfo]](mapFsErr(err, p))
+	}
+	return Ok[Option[FileInfo], FsErr](Some(f.info(op, p, fi)))
+}
+
+func (f *realFs) M_exists(tk *Task, p string) Result[bool, FsErr] {
+	r := f.M_stat(tk, p)
+	if !r.Ok {
+		return Err[bool](r.E)
+	}
+	return Ok[bool, FsErr](r.V.Some)
+}
+
+func (f *realFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {
+	op, e := f.check(tk, p, false)
+	if e != nil {
+		return Err[Bytes](*e)
+	}
+	data, err := os.ReadFile(op)
+	if err != nil {
+		return Err[Bytes](mapFsErr(err, p))
+	}
+	return Ok[Bytes, FsErr](Bytes(data))
+}
+
+func (f *realFs) M_read_text(tk *Task, p string) Result[string, FsErr] {
+	r := f.M_read(tk, p)
+	if !r.Ok {
+		return Err[string](r.E)
+	}
+	return Ok[string, FsErr](string(r.V))
+}
+
+func (f *realFs) M_read_dir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
+	op, e := f.check(tk, dir, false)
+	if e != nil {
+		return Err[List[FileInfo]](*e)
+	}
+	ents, err := os.ReadDir(op)
+	if err != nil {
+		return Err[List[FileInfo]](mapFsErr(err, dir))
+	}
+	var out []FileInfo
+	for _, de := range ents {
+		fi, err := de.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, f.info(filepath.Join(op, de.Name()), path.Join(dir, de.Name()), fi))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].F_name < out[j].F_name })
+	return Ok[List[FileInfo], FsErr](ListOf(out...))
+}
+
+func (f *realFs) M_walk(tk *Task, dir string) Result[List[FileInfo], FsErr] {
+	op, e := f.check(tk, dir, false)
+	if e != nil {
+		return Err[List[FileInfo]](*e)
+	}
+	if _, err := os.Stat(op); err != nil {
+		return Err[List[FileInfo]](mapFsErr(err, dir))
+	}
+	var out []FileInfo
+	var walk func(osDir, xoDir string) *FsErr
+	walk = func(osDir, xoDir string) *FsErr {
+		ents, err := os.ReadDir(osDir)
+		if err != nil {
+			e := mapFsErr(err, xoDir)
+			return &e
+		}
+		sort.Slice(ents, func(i, j int) bool { return ents[i].Name() < ents[j].Name() })
+		for _, de := range ents {
+			fi, err := de.Info()
+			if err != nil {
+				continue
+			}
+			child := filepath.Join(osDir, de.Name())
+			xc := path.Join(xoDir, de.Name())
+			out = append(out, f.info(child, xc, fi))
+			if fi.IsDir() {
+				if e := walk(child, xc); e != nil {
+					return e
+				}
+			}
+		}
+		return nil
+	}
+	if e := walk(op, dir); e != nil {
+		return Err[List[FileInfo]](*e)
+	}
+	return Ok[List[FileInfo], FsErr](ListOf(out...))
+}
+
+func (f *realFs) M_write(tk *Task, p string, data Bytes) Result[Unit, FsErr] {
+	op, e := f.check(tk, p, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.WriteFile(op, []byte(data), 0o644); err != nil {
+		return Err[Unit](mapFsErr(err, p))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func (f *realFs) M_create_temp(tk *Task, dir, prefix string) Result[string, FsErr] {
+	op, e := f.check(tk, dir, true)
+	if e != nil {
+		return Err[string](*e)
+	}
+	tf, err := os.CreateTemp(op, prefix+"*")
+	if err != nil {
+		return Err[string](mapFsErr(err, dir))
+	}
+	name := tf.Name()
+	tf.Close()
+	return Ok[string, FsErr](f.relPath(name, path.Join(dir, filepath.Base(name))))
+}
+
+func (f *realFs) M_rename(tk *Task, from, to string) Result[Unit, FsErr] {
+	of, e := f.check(tk, from, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	ot, e := f.check(tk, to, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.Rename(of, ot); err != nil {
+		return Err[Unit](mapFsErr(err, from))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func (f *realFs) M_remove(tk *Task, p string) Result[Unit, FsErr] {
+	op, e := f.check(tk, p, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.Remove(op); err != nil {
+		return Err[Unit](mapFsErr(err, p))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func (f *realFs) M_remove_all(tk *Task, p string) Result[Unit, FsErr] {
+	op, e := f.check(tk, p, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.RemoveAll(op); err != nil {
+		return Err[Unit](mapFsErr(err, p))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func (f *realFs) M_create_dir_all(tk *Task, p string) Result[Unit, FsErr] {
+	op, e := f.check(tk, p, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	if err := os.MkdirAll(op, 0o755); err != nil {
+		return Err[Unit](mapFsErr(err, p))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func (f *realFs) M_set_modified(tk *Task, p string, t Time) Result[Unit, FsErr] {
+	op, e := f.check(tk, p, true)
+	if e != nil {
+		return Err[Unit](*e)
+	}
+	tt := time.Unix(0, int64(t))
+	if err := os.Chtimes(op, tt, tt); err != nil {
+		return Err[Unit](mapFsErr(err, p))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+// XoDebug implements Debug.
+func (f *realFs) XoDebug(b *strings.Builder) { b.WriteString("<fs>") }
+
+// ---------------------------------------------------------------------------
+// Net (std.md 3.2)
+
+// Listener is a listening socket (real or in memory).
+type Listener struct {
+	l   net.Listener
+	mem *memListener
+}
+
+// Conn is a connection.
+type Conn struct{ c net.Conn }
+
+// XoDebug implements Debug.
+func (l Listener) XoDebug(b *strings.Builder) { b.WriteString("<listener>") }
+
+// XoDebug implements Debug.
+func (c Conn) XoDebug(b *strings.Builder) { b.WriteString("<conn>") }
+
+type realNet struct{}
+
+func netErr(tag int, msg string) NetErr {
+	switch tag {
+	case 1:
+		return NetErr{Tag: 1, P: NetErr_InvalidAddr{F_msg: msg}}
+	case 4:
+		return NetErr{Tag: 4, P: NetErr_Io{F_msg: msg}}
+	}
+	return NetErr{Tag: tag}
+}
+
+func (realNet) M_listen(tk *Task, addr string) Result[Listener, NetErr] {
+	if tk.Canceled() {
+		return Err[Listener](netErr(5, ""))
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return Err[Listener](netErr(4, err.Error()))
+	}
+	return Ok[Listener, NetErr](Listener{l: l})
+}
+
+func (realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
+	if tk.Canceled() {
+		return Err[Conn](netErr(5, ""))
+	}
+	c, err := net.DialTimeout("tcp", addr, 30*time.Second)
+	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return Err[Conn](netErr(2, ""))
+		}
+		return Err[Conn](netErr(4, err.Error()))
+	}
+	return Ok[Conn, NetErr](Conn{c: c})
+}
+
+func (realNet) XoDebug(b *strings.Builder) { b.WriteString("<net>") }
+
+// ---------------------------------------------------------------------------
+// Clock (std.md 3.3)
+
+type realClock struct{}
+
+func (realClock) M_now(*Task) Time { return Time(time.Now().UnixNano()) }
+
+func (realClock) M_sleep(tk *Task, d Duration) {
+	tk.CheckCancel()
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(time.Duration(d))
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-tk.Done():
+		tk.Unwind()
+	}
+}
+
+func (c realClock) M_since(tk *Task, t Time) Duration { return Duration(c.M_now(tk) - t) }
+
+func (realClock) XoDebug(b *strings.Builder) { b.WriteString("<clock>") }
+
+// ---------------------------------------------------------------------------
+// Rand (std.md 3.4)
+
+type realRand struct{}
+
+func randUint64() uint64 {
+	var b [8]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return binary.LittleEndian.Uint64(b[:])
+}
+
+func (realRand) M_int(_ *Task, lo, hi int64) int64 { return randRange(randUint64, lo, hi) }
+
+func (realRand) M_float(*Task) float64 { return float64(randUint64()>>11) / (1 << 53) }
+
+func (realRand) M_bool(*Task) bool { return randUint64()&1 == 1 }
+
+func (realRand) M_bytes(_ *Task, n int64) Bytes {
+	b := make([]byte, max(n, 0))
+	if _, err := crand.Read(b); err != nil {
+		panic(err)
+	}
+	return Bytes(b)
+}
+
+func (realRand) XoDebug(b *strings.Builder) { b.WriteString("<rand>") }
+
+// randRange returns a uniform value in [lo, hi).
+func randRange(next func() uint64, lo, hi int64) int64 {
+	if hi <= lo {
+		FaultHere("rand.int(%d, %d): the range is empty", lo, hi)
+	}
+	span := uint64(hi - lo)
+	limit := ^uint64(0) - (^uint64(0) % span)
+	for {
+		v := next()
+		if v < limit {
+			return lo + int64(v%span)
+		}
+	}
+}
+
+// Rand_shuffle is `r.shuffle(xs)`.
+func Rand_shuffle[T any](tk *Task, r Rand, xs List[T]) List[T] {
+	out := append([]T(nil), xs.s...)
+	for i := len(out) - 1; i > 0; i-- {
+		j := r.M_int(tk, 0, int64(i+1))
+		out[i], out[j] = out[j], out[i]
+	}
+	return ListOf(out...)
+}
+
+// ---------------------------------------------------------------------------
+// Env (std.md 3.5)
+
+type realEnv struct{}
+
+func (realEnv) M_get(_ *Task, name string) Option[string] {
+	v, ok := os.LookupEnv(name)
+	return Option[string]{Some: ok, V: v}
+}
+
+func (realEnv) M_vars(*Task) Map[string, string] {
+	var m Map[string, string]
+	env := os.Environ()
+	sort.Strings(env)
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		m.M_put(nil, k, v)
+	}
+	return m
+}
+
+func (realEnv) M_args(*Task) List[string] {
+	if len(os.Args) <= 1 {
+		return List[string]{}
+	}
+	return ListOf(os.Args[1:]...)
+}
+
+func (realEnv) M_program(*Task) string { return os.Args[0] }
+
+func (realEnv) M_home(*Task) Result[string, EnvErr] {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "HOME"}})
+	}
+	return Ok[string, EnvErr](h)
+}
+
+func (realEnv) XoDebug(b *strings.Builder) { b.WriteString("<env>") }
+
+// ---------------------------------------------------------------------------
+// Stdio (std.md 3.6)
+
+type realStdio struct{}
+
+var (
+	stdinOnce sync.Once
+	stdinR    *bufio.Reader
+	stdoutMu  sync.Mutex
+)
+
+func stdin() *bufio.Reader {
+	stdinOnce.Do(func() { stdinR = bufio.NewReader(os.Stdin) })
+	return stdinR
+}
+
+func outWrite(w *os.File, s string) {
+	stdoutMu.Lock()
+	w.WriteString(s)
+	stdoutMu.Unlock()
+}
+
+func (realStdio) M_print(_ *Task, s string)    { outWrite(os.Stdout, s) }
+func (realStdio) M_println(_ *Task, s string)  { outWrite(os.Stdout, s+"\n") }
+func (realStdio) M_eprint(_ *Task, s string)   { outWrite(os.Stderr, s) }
+func (realStdio) M_eprintln(_ *Task, s string) { outWrite(os.Stderr, s+"\n") }
+
+func (realStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
+	if tk.Canceled() {
+		return Err[Unit](IoErr{Tag: 3})
+	}
+	stdoutMu.Lock()
+	_, err := os.Stdout.WriteString(string(data))
+	stdoutMu.Unlock()
+	if err != nil {
+		return Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+	}
+	return Ok[Unit, IoErr](Unit{})
+}
+
+func (realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
+	if tk.Canceled() {
+		return Err[Option[string]](IoErr{Tag: 3})
+	}
+	line, err := stdin().ReadString('\n')
+	if err == io.EOF && line == "" {
+		return Ok[Option[string], IoErr](Option[string]{})
+	}
+	if err != nil && err != io.EOF {
+		return Err[Option[string]](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+	}
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	return Ok[Option[string], IoErr](Some(line))
+}
+
+func (realStdio) M_read_all(tk *Task) Result[string, IoErr] {
+	if tk.Canceled() {
+		return Err[string](IoErr{Tag: 3})
+	}
+	data, err := io.ReadAll(stdin())
+	if err != nil {
+		return Err[string](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+	}
+	return Ok[string, IoErr](string(data))
+}
+
+func (s realStdio) M_lines(tk *Task) Result[List[string], IoErr] {
+	r := s.M_read_all(tk)
+	if !r.Ok {
+		return Err[List[string]](r.E)
+	}
+	return Ok[List[string], IoErr](Str_lines(tk, r.V))
+}
+
+func (realStdio) XoDebug(b *strings.Builder) { b.WriteString("<stdio>") }
+
+// ---------------------------------------------------------------------------
+// Proc (std.md 3.7)
+
+type realProc struct{}
+
+func (realProc) M_exit(_ *Task, code int64) Never {
+	os.Exit(int(code))
+	return Never{}
+}
+
+func (realProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
+	if tk.Canceled() {
+		return Err[ProcOutput](ProcErr{Tag: 3})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-tk.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	c := exec.CommandContext(ctx, cmd, args.s...)
+	var out, errb strings.Builder
+	c.Stdout, c.Stderr = &out, &errb
+	err := c.Run()
+	code := int64(0)
+	if err != nil {
+		var ee *exec.ExitError
+		switch {
+		case errors.As(err, &ee):
+			code = int64(ee.ExitCode())
+		case errors.Is(err, exec.ErrNotFound):
+			return Err[ProcOutput](ProcErr{Tag: 1, P: ProcErr_NotFound{F_cmd: cmd}})
+		case tk.Canceled():
+			return Err[ProcOutput](ProcErr{Tag: 3})
+		default:
+			return Err[ProcOutput](ProcErr{Tag: 2, P: ProcErr_Io{F_msg: err.Error()}})
+		}
+	}
+	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(errb.String())})
+}
+
+func (realProc) XoDebug(b *strings.Builder) { b.WriteString("<proc>") }

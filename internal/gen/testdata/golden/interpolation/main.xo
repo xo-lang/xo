@@ -1,0 +1,30 @@
+struct P {
+  x: Int
+}
+
+fn (p: P) display() -> Str { "P(${p.x})" }
+
+fn main(os: Os) {
+  let f = 2.5
+  let whole = 3.0
+  let tiny = 0.000001
+  os.stdio.println("floats ${f} ${whole} ${tiny} ${1.0 / 3.0} ${1e21}")
+  os.stdio.println("bool ${true} rune ${'x'} str ${"in"} dur ${1500ms} ${2m} ${90s}")
+  os.stdio.println("user ${P{x: 1}} nested ${"a${"b${1 + 1}"}c"}")
+  let price = 5
+  os.stdio.println("price: \$${price} braces {literal} dollar $ alone")
+  let raw = r"no ${interp} \n here"
+  os.stdio.println(raw)
+  let multi = """
+    line one
+      indented
+    line three
+    """
+  os.stdio.print(multi)
+  os.stdio.println("")
+  let s = Secret[Str].new("hunter2")
+  os.stdio.println("secret ${s} revealed ${s.reveal().len()}")
+  let small: UInt8 = 200
+  let i32: Int32 = -5
+  os.stdio.println("sized ${small} ${i32}")
+}

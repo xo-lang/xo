@@ -1,0 +1,30 @@
+use std/http
+
+// GUESS: a handler with no effects is accepted where the Handler type says
+// `uses clock` (subsumption; spec 6.2 only says the reverse is rejected).
+// GUESS: unused function parameters are not XO0110 errors (spec 3.1 only
+// mentions bindings and imports).
+fn hello(req: http.Request) -> http.Response ! Error {
+  http.json(200, {"msg": "hi"})
+}
+
+fn main(os: Os) ! {
+  let limiter = new_limiter({
+    "partner-key": Limit{capacity: 100, refill_per_sec: 50.0},
+  })
+  let srv = http.server(os.net.listen(":8080")?)
+  srv.handle("GET /hello", limiter.wrap(os.clock, hello))
+
+  scope s {
+    s.spawn(fn() { run_evictor(limiter, os.clock) })
+    // Bind the Result instead of using `?` so the evictor is always cancelled
+    // before the scope waits on it.
+    // GUESS: an early exit via `?` inside a scope would block forever on the
+    // infinite child; the spec does not say early exit cancels children.
+    let served = srv.serve()
+    s.cancel()
+    // GUESS: a child ended by s.cancel() does not count as a failed child, so
+    // the scope itself does not fail.
+    served?
+  }
+}

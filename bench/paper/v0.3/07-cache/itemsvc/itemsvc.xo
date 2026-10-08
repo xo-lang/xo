@@ -1,0 +1,109 @@
+use std/http
+use std/log
+// GUESS: a module in the same xo.mod is imported by module path plus
+// directory, like an external module. The spec only shows std and remote paths.
+use example.com/itemcache/cache
+
+pub struct Item {
+  pub id: Int
+  pub name: Str
+} derive Json
+
+pub enum UpstreamErr {
+  NotFound(id: Int)
+  Failed(msg: Str)
+}
+
+fn (e: UpstreamErr) display() -> Str {
+  match e {
+    NotFound(id) => "item ${id} not found upstream"
+    Failed(msg) => "upstream failed: ${msg}"
+  }
+}
+
+enum ApiErr {
+  NotFound(id: Int)
+  BadGateway(msg: Str)
+}
+
+// http maps handler errors to responses through StatusError.
+fn (e: ApiErr) status() -> Int {
+  match e {
+    NotFound(_) => 404
+    BadGateway(_) => 502
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    NotFound(id) => "item ${id} not found"
+    BadGateway(msg) => msg
+  }
+}
+
+/// Client for the slow upstream item service (about 200ms per call).
+pub struct Upstream {
+  client: http.Client
+  base: Str
+}
+
+pub fn (u: Upstream) fetch(id: Int) -> Item ! UpstreamErr uses net.dial {
+  let resp = u.client.get("${u.base}/items/${id}")
+    .map_err(fn(e) { UpstreamErr.Failed(msg: "${e}") })?
+  match resp.status {
+    200 => resp.decode_json[Item]().map_err(fn(e) { UpstreamErr.Failed(msg: "bad body: ${e}") })
+    404 => Err(UpstreamErr.NotFound(id: id))
+    _ => Err(UpstreamErr.Failed(msg: "status ${resp.status}"))
+  }
+}
+
+const ITEM_CACHE = cache.CacheConfig{
+  max_entries: 10_000,
+  ttl: 30s,
+  stale_ttl: 2m,
+  negative_ttl: 10s,
+  load_timeout: 2s,
+}
+
+// GUESS: an effect label (`net.dial`) can be written as the argument for an
+// effect variable in a type (`Cache[..., fx]`). The spec never names a
+// concrete effect set in type argument position.
+pub fn item_cache(clock: Clock, net: Net, base: Str) -> cache.Cache[Int, Item, UpstreamErr, net.dial] {
+  let up = Upstream{client: http.client(net, timeout: 5s), base: base}
+  cache.new_cache(clock, ITEM_CACHE, fn(id: Int) { up.fetch(id) })
+}
+
+fn to_api(e: cache.CacheErr[UpstreamErr]) -> ApiErr {
+  match e {
+    cache.CacheErr.Load(UpstreamErr.NotFound(id)) => ApiErr.NotFound(id: id)
+    cache.CacheErr.Load(UpstreamErr.Failed(msg)) => ApiErr.BadGateway(msg: msg)
+    cache.CacheErr.Timeout => ApiErr.BadGateway(msg: "upstream timed out")
+    cache.CacheErr.Crashed(msg) => ApiErr.BadGateway(msg: "upstream crashed: ${msg}")
+  }
+}
+
+fn routes(items: cache.Cache[Int, Item, UpstreamErr, net.dial]) -> http.Router
+  uses (clock, net.dial)
+{
+  var r = http.router()
+  r.handle("GET /items/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let item = items.get(req.param_int("id")).map_err(to_api)?
+    http.json(200, item)
+  })
+  r.handle("DELETE /items/{id:Int}/cache", fn(req) {
+    items.invalidate(req.param_int("id"))
+    http.empty(204)
+  })
+  r
+}
+
+fn main(os: Os) ! {
+  let base = os.env.get("UPSTREAM_URL") ?? "http://localhost:9000"
+  let items = item_cache(os.clock, os.net, base)
+  let srv = http.server(os.net.listen(":8080")?, routes(items))
+  log.info("listening", {"addr": ":8080", "upstream": base})
+  scope s {
+    s.spawn_background(fn() { items.run_refresher() })
+    srv.serve()?
+  }
+}

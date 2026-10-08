@@ -1,0 +1,10 @@
+exit 70
+--- stdout
+float: 300.0 3.5
+trunc: 3 -3
+try: 255 0 -5
+int32: 1000 1001
+parse: 42 0 2.5
+convert 300 to UInt8
+--- stderr
+fault: 300 is out of range for UInt8 at main.xo:10:11

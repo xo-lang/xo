@@ -1,0 +1,61 @@
+use std/http
+use std/json
+
+fn send(app: http.Router, method: Str, path: Str, body: Map[Str, Str]) -> http.Response {
+  app.call(http.new_request(method, path, body: json.encode(body)))
+}
+
+fn create_ada(app: http.Router) -> User ! Error {
+  let resp = send(app, "POST", "/users", {"name": "Ada", "email": "ada@example.com"})
+  // `expect` is predeclared only inside test blocks, so a helper reports
+  // failure as an error instead.
+  if resp.status != 201 {
+    // GUESS: a Str is accepted as `Err(e)` for `! Error`. Core 2.6 requires
+    // `e: E`; std 1 says values convert to an interface type implicitly, but
+    // core 2.5 says only Some wrapping and `?` conversion are implicit.
+    return Err("create returned {resp.status}")
+  }
+  resp.decode_json[User]()?
+}
+
+test "create then get returns the same user" {
+  let app = routes(new_store())
+  let created = create_ada(app)?
+  expect(created.id) == 1
+  let resp = app.call(http.new_request("GET", "/users/{created.id}"))
+  expect(resp.status) == 200
+  expect(resp.decode_json[User]()?) == created
+}
+
+test "duplicate email returns 409" {
+  let app = routes(new_store())
+  let _ = create_ada(app)?
+  let resp = send(app, "POST", "/users", {"name": "Other", "email": "ada@example.com"})
+  expect(resp.status) == 409
+}
+
+test "invalid email returns 400" {
+  let app = routes(new_store())
+  let resp = send(app, "POST", "/users", {"name": "Ada", "email": "not-an-email"})
+  expect(resp.status) == 400
+  let body = resp.decode_json[Map[Str, Str]]()?
+  expect(body.get("error")) == Some("email must contain @")
+}
+
+test "patch with only nickname keeps other fields" {
+  let app = routes(new_store())
+  let created = create_ada(app)?
+  let resp = send(app, "PATCH", "/users/{created.id}", {"nickname": "Addy"})
+  expect(resp.status) == 200
+  let patched = resp.decode_json[User]()?
+  expect(patched) == created with {nickname: "Addy"}
+}
+
+test "delete then get returns 404" {
+  let app = routes(new_store())
+  let created = create_ada(app)?
+  let del = app.call(http.new_request("DELETE", "/users/{created.id}"))
+  expect(del.status) == 204
+  let resp = app.call(http.new_request("GET", "/users/{created.id}"))
+  expect(resp.status) == 404
+}

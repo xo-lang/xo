@@ -1,0 +1,48 @@
+enum E {
+  Bad(code: Int)
+} derive Display
+
+fn half(n: Int) -> Int ! E {
+  if n % 2 != 0 {
+    return Err(E.Bad(code: n))
+  }
+  n / 2
+}
+
+fn quarter(n: Int) -> Int ! E {
+  let h = half(n)?
+  half(h)
+}
+
+fn lookup(m: Map[Str, Int], k: Str) -> Int? {
+  let v = m.get(k)?
+  v + 1
+}
+
+fn main(os: Os) {
+  let m = {"a": 1, "b": 2}
+  os.stdio.println("lookup: ${lookup(m, "a") ?? 0} ${lookup(m, "z") ?? 0}")
+  os.stdio.println("quarter: ${quarter(8).ok() ?? -1} ${quarter(6).ok() ?? -1}")
+  match quarter(6) {
+    Ok(v) => os.stdio.println("ok ${v}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  let r = half(3)
+  os.stdio.println("is_err ${r.is_err()} is_ok ${r.is_ok()}")
+  let mapped = half(10).map(fn(x) { x * 100 })
+  os.stdio.println("mapped ${mapped.ok() ?? 0}")
+  let me = half(1).map_err(fn(e) { "wrapped ${e}" })
+  match me {
+    Err(s) => os.stdio.println(s)
+    Ok(_) => os.stdio.println("?")
+  }
+  let o: Int? = Some(4)
+  os.stdio.println("opt ${o.is_some()} ${o.map(fn(x) { x + 1 }) ?? 0} ${o.and_then(fn(x) { if x > 3 { Some(x) } else { None } }) ?? 0}")
+  let ignored = half(5).ignore_err("odd numbers are fine here")
+  os.stdio.println("ignored ${ignored.is_none()}")
+  os.stdio.println("err() ${half(7).err() == Some(E.Bad(code: 7))}")
+  let n: Int? = None
+  os.stdio.println("fault next")
+  let v = n.or_fault("expected a value")
+  os.stdio.println("never ${v}")
+}

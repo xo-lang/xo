@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+3 3 0 hi 3 13 true true example
+--- stderr

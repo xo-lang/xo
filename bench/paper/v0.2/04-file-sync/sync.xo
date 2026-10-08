@@ -1,0 +1,184 @@
+// Planning and applying a one way sync between two Fs roots.
+
+enum Action {
+  Copy(path: Str, modified: Time)
+  MakeDir(path: Str)
+  Skip(path: Str, reason: Str)
+  Delete(path: Str, is_dir: Bool)
+  Conflict(path: Str, msg: Str)
+}
+
+struct Report {
+  copied: Int = 0
+  deleted: Int = 0
+  skipped: Int = 0
+  failed: Int = 0
+}
+
+fn (r: Report) summary() -> Str {
+  "copied {r.copied}, deleted {r.deleted}, skipped {r.skipped}, failed {r.failed}"
+}
+
+fn (var r: Report) fail(out: Stdio, msg: Str) {
+  out.eprintln(msg)
+  r.failed += 1
+}
+
+/// Syncs src into dst. With dst None (dry run, destination missing) every
+/// source file is reported as a copy.
+fn sync(src: Fs, dst: Fs?, out: Stdio, opts: Options, p: Platform) -> Report ! FsErr {
+  let src_entries = src.walk(".")?
+  let dst_entries = match dst {
+    Some(d) => d.walk(".")?
+    None => []
+  }
+  let actions = plan(src_entries, dst_entries, opts.delete, p)
+  match dst {
+    Some(d) if !opts.dry_run => apply(actions, src, d, out)
+    _ => preview(actions, out)
+  }
+}
+
+fn path_key(p: Platform, path: Str) -> Str {
+  if p.case_insensitive { path.to_lower() } else { path }
+}
+
+/// Pure: decides what to do for every entry. walk lists parents first, so
+/// deletes are planned in reverse to remove children before their directory.
+fn plan(src: List[FileInfo], dst: List[FileInfo], delete: Bool, p: Platform) -> List[Action] {
+  var dst_by_key: Map[Str, FileInfo] = {}
+  for d in dst {
+    dst_by_key.put(path_key(p, d.path), d)
+  }
+  var src_keys: Set[Str] = #{}
+  var actions: List[Action] = []
+  for s in src {
+    let k = path_key(p, s.path)
+    src_keys.add(k)
+    if p.skip_names.contains(s.name) {
+      actions.push(Skip(path: s.path, reason: "platform metadata file"))
+      continue
+    }
+    if let a = decide(s, dst_by_key.get(k)) {
+      actions.push(a)
+    }
+  }
+  if delete {
+    for d in dst.reverse() {
+      if src_keys.contains(path_key(p, d.path)) || p.skip_names.contains(d.name) {
+        continue
+      }
+      actions.push(Delete(path: d.path, is_dir: d.is_dir))
+    }
+  }
+  actions
+}
+
+fn decide(s: FileInfo, existing: FileInfo?) -> Action? {
+  match (s.is_dir, existing) {
+    (true, None) => Some(MakeDir(path: s.path))
+    (true, Some(d)) if d.is_dir => None
+    (true, Some(_)) => Some(Conflict(path: s.path, msg: "a file in dst has this directory's path"))
+    (false, None) => Some(Copy(path: s.path, modified: s.modified))
+    (false, Some(d)) if d.is_dir => Some(Conflict(path: s.path, msg: "a directory in dst has this file's path"))
+    (false, Some(d)) => {
+      if d.size != s.size || s.modified > d.modified {
+        Some(Copy(path: s.path, modified: s.modified))
+      } else {
+        Some(Skip(path: s.path, reason: "unchanged"))
+      }
+    }
+  }
+}
+
+/// Dry run: prints what would happen and counts it, writes nothing.
+fn preview(actions: List[Action], out: Stdio) -> Report {
+  var r = Report{}
+  for a in actions {
+    match a {
+      Copy(path, _) => {
+        out.println("would copy {path}")
+        r.copied += 1
+      }
+      MakeDir(path) => out.println("would create dir {path}")
+      Skip(path, reason) => {
+        out.println("skip {path} ({reason})")
+        r.skipped += 1
+      }
+      Delete(path, _) => {
+        out.println("would delete {path}")
+        r.deleted += 1
+      }
+      Conflict(path, msg) => r.fail(out, "conflict at {path}: {msg}")
+    }
+  }
+  r
+}
+
+fn apply(actions: List[Action], src: Fs, dst: Fs, out: Stdio) -> Report {
+  var r = Report{}
+  for a in actions {
+    match a {
+      Copy(path, modified) => match copy_file(src, dst, path, modified) {
+        Ok(_) => {
+          out.println("copied {path}")
+          r.copied += 1
+        }
+        Err(e) => r.fail(out, "failed to copy {path}: {e}")
+      }
+      MakeDir(path) => match dst.create_dir_all(path) {
+        Ok(_) => out.println("created dir {path}")
+        Err(e) => r.fail(out, "failed to create dir {path}: {e}")
+      }
+      Skip(path, reason) => {
+        out.println("skip {path} ({reason})")
+        r.skipped += 1
+      }
+      Delete(path, is_dir) => match dst.remove(path) {
+        Ok(_) => {
+          out.println("deleted {path}")
+          r.deleted += 1
+        }
+        // A directory that still holds a skipped file (.DS_Store) is kept.
+        Err(NotEmpty(_)) if is_dir => {
+          out.println("kept {path} (not empty)")
+          r.skipped += 1
+        }
+        Err(e) => r.fail(out, "failed to delete {path}: {e}")
+      }
+      Conflict(path, msg) => r.fail(out, "conflict at {path}: {msg}")
+    }
+  }
+  r
+}
+
+fn parent_dir(path: Str) -> Str {
+  let parts = path.split("/")
+  if parts.len() <= 1 { "." } else { parts[..parts.len() - 1].join("/") }
+}
+
+/// Copies one file through a temp file in the destination directory, then
+/// renames it into place. The temp file is removed on any failure.
+fn copy_file(src: Fs, dst: Fs, path: Str, modified: Time) -> () ! FsErr {
+  let data = src.read(path)?
+  let dir = parent_dir(path)
+  dst.create_dir_all(dir)?
+  let tmp = dst.create_temp(dir, ".filesync-")?
+  var committed = false
+  // GUESS: the lost update check (XO0520) counts the read inside this defer
+  // as an observation of `committed`. The spec says defer reads values when
+  // it runs but does not say how XO0520 treats it.
+  defer {
+    if !committed {
+      let _ = dst.remove(tmp)
+    }
+  }
+  dst.write(tmp, data)?
+  // Keep the source mtime so the next run sees the file as unchanged.
+  dst.set_modified(tmp, modified)?
+  dst.rename(tmp, path)?
+  committed = true
+  // GUESS: a block that ends in an assignment statement has value (), so this
+  // body is a success of type (). Written explicitly to be safe.
+  ()
+}

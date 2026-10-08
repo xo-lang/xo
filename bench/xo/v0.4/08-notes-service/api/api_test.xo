@@ -1,0 +1,188 @@
+use std/http
+use std/testing
+use std/json
+use example.com/notes/domain
+use example.com/notes/store
+
+fn new_router(os: testing.TestOs) -> http.Router ! Error {
+  let st = store.open(os.fs.sub("data"))?
+  routes(st, os.clock, os.rand)
+}
+
+fn create_req(title: Str, tags: List[Str]) -> http.Request {
+  let body = json.encode(domain.Edit{title: title, body: "body of ${title}", tags: tags})
+  http.new_request("POST", "/notes", body: body)
+}
+
+fn post_note(r: http.Router, title: Str, tags: List[Str]) -> domain.Note ! Error {
+  let resp = r.call(create_req(title, tags))
+  expect(resp.status) == 201
+  resp.decode_json[domain.Note]()?
+}
+
+fn put_req(id: Str, if_match: Str?, title: Str) -> http.Request {
+  let body = json.encode(domain.Edit{title: title})
+  match if_match {
+    Some(v) => http.new_request("PUT", "/notes/${id}", headers: {"If-Match": v}, body: body)
+    None => http.new_request("PUT", "/notes/${id}", body: body)
+  }
+}
+
+fn get(r: http.Router, url: Str) -> http.Response {
+  r.call(http.new_request("GET", url))
+}
+
+test "POST creates a note at version 1 with an ETag" {
+  let r = new_router(os)?
+  let resp = r.call(create_req("hello", ["greeting"]))
+  expect(resp.status) == 201
+  expect(resp.header("ETag")) == Some("\"1\"")
+  let n = resp.decode_json[domain.Note]()?
+  expect(n.version) == 1
+  expect(n.title) == "hello"
+  expect(resp.header("Location")) == Some("/notes/${n.id}")
+}
+
+test "POST rejects invalid notes with 422 and bad JSON with 400" {
+  let r = new_router(os)?
+  expect(r.call(create_req("", [])).status) == 422
+  expect(r.call(create_req("ok", ["Upper"])).status) == 422
+  expect(r.call(http.new_request("POST", "/notes", body: b"{nope")).status) == 400
+}
+
+test "GET returns the note with its ETag, unknown ids are 404" {
+  let r = new_router(os)?
+  let n = post_note(r, "read me", [])?
+  let resp = get(r, "/notes/${n.id}")
+  expect(resp.status) == 200
+  expect(resp.header("ETag")) == Some("\"1\"")
+  expect(resp.decode_json[domain.Note]()?) == n
+  expect(get(r, "/notes/00000000000000000000").status) == 404
+  expect(get(r, "/notes/..%2F..%2Fetc").status) == 404
+}
+
+test "PUT needs If-Match: missing is 428, stale is 412, current increments" {
+  let r = new_router(os)?
+  let n = post_note(r, "v1", [])?
+  expect(r.call(put_req(n.id, None, "x")).status) == 428
+  let ok = r.call(put_req(n.id, Some(domain.etag(1)), "v2"))
+  expect(ok.status) == 200
+  expect(ok.header("ETag")) == Some("\"2\"")
+  expect(ok.decode_json[domain.Note]()?.version) == 2
+  expect(r.call(put_req(n.id, Some(domain.etag(1)), "lost")).status) == 412
+  expect(r.call(put_req(n.id, Some("garbage"), "lost")).status) == 412
+  expect(get(r, "/notes/${n.id}").decode_json[domain.Note]()?.title) == "v2"
+}
+
+test "DELETE needs If-Match" {
+  let r = new_router(os)?
+  let n = post_note(r, "doomed", [])?
+  expect(r.call(http.new_request("DELETE", "/notes/${n.id}")).status) == 428
+  let stale = http.new_request("DELETE", "/notes/${n.id}", headers: {"If-Match": domain.etag(5)})
+  expect(r.call(stale).status) == 412
+  let current = http.new_request("DELETE", "/notes/${n.id}", headers: {"If-Match": domain.etag(1)})
+  expect(r.call(current).status) == 204
+  expect(get(r, "/notes/${n.id}").status) == 404
+}
+
+test "two concurrent PUTs with the same version: exactly one succeeds" {
+  let r = new_router(os)?
+  for round in 0..20 {
+    let n = post_note(r, "shared ${round}", [])?
+    let (a, b) = scope s {
+      let t1 = s.spawn(fn() { r.call(put_req(n.id, Some(domain.etag(1)), "from a")) })
+      let t2 = s.spawn(fn() { r.call(put_req(n.id, Some(domain.etag(1)), "from b")) })
+      (t1.await, t2.await)
+    }
+    expect([a.status, b.status].sort()) == [200, 412]
+    let after = get(r, "/notes/${n.id}")
+    expect(after.header("ETag")) == Some("\"2\"")
+  }
+}
+
+test "pagination: 25 notes, limit 10, no duplicates or gaps with a mid way create" {
+  let r = new_router(os)?
+  var created: List[Str] = []
+  for i in 0..25 {
+    let n = post_note(r, "note ${i}", [])?
+    created.push(n.id)
+    os.clock.advance(1s)
+  }
+  var seen: List[Str] = []
+  var cursor: Str? = None
+  var pages = 0
+  while {
+    let url = match cursor {
+      Some(c) => "/notes?limit=10&cursor=${c}"
+      None => "/notes?limit=10"
+    }
+    let resp = get(r, url)
+    expect(resp.status) == 200
+    let page = resp.decode_json[NoteList]()?
+    for n in page.notes {
+      seen.push(n.id)
+    }
+    pages += 1
+    if pages == 1 {
+      // Created after the first page was served. It is newer than every
+      // cursor, so it must not appear on later pages or shift them.
+      post_note(r, "late arrival", [])?
+    }
+    match page.next_cursor {
+      Some(c) => cursor = Some(c)
+      None => break
+    }
+  }
+  expect(pages) == 3
+  expect(seen.len()) == 25
+  expect(seen.to_set().len()) == 25
+  expect(seen) == created.reverse()
+}
+
+test "pagination with notes created in the same instant" {
+  let r = new_router(os)?
+  for i in 0..25 {
+    post_note(r, "same time ${i}", [])?
+  }
+  let p1 = get(r, "/notes?limit=10").decode_json[NoteList]()?
+  let c1 = p1.next_cursor.or_err("expected a second page")?
+  let p2 = get(r, "/notes?limit=10&cursor=${c1}").decode_json[NoteList]()?
+  let c2 = p2.next_cursor.or_err("expected a third page")?
+  let p3 = get(r, "/notes?limit=10&cursor=${c2}").decode_json[NoteList]()?
+  let ids = (p1.notes + p2.notes + p3.notes).map(fn(n) { n.id })
+  expect(ids.len()) == 25
+  expect(ids.to_set().len()) == 25
+  expect(p3.next_cursor) == None
+}
+
+test "list filters by tag and text" {
+  let r = new_router(os)?
+  post_note(r, "Groceries", ["home"])?
+  os.clock.advance(1s)
+  post_note(r, "Quarterly PLAN", ["work"])?
+  os.clock.advance(1s)
+  post_note(r, "Garden plan", ["home"])?
+  let plans = get(r, "/notes?q=plan").decode_json[NoteList]()?
+  expect(plans.notes.map(fn(n) { n.title })) == ["Garden plan", "Quarterly PLAN"]
+  let home_plans = get(r, "/notes?q=plan&tag=home").decode_json[NoteList]()?
+  expect(home_plans.notes.map(fn(n) { n.title })) == ["Garden plan"]
+  expect(get(r, "/notes?limit=0").status) == 400
+  expect(get(r, "/notes?cursor=bogus").status) == 400
+}
+
+test "export streams every note as JSON lines" {
+  let r = new_router(os)?
+  for i in 0..3 {
+    post_note(r, "export ${i}", [])?
+  }
+  let resp = get(r, "/export")
+  expect(resp.status) == 200
+  expect(resp.header("Content-Type")) == Some("application/x-ndjson")
+  let text = resp.body.to_str().or_err("export is not UTF-8")?
+  let lines = text.lines().filter(fn(l) { !l.is_empty() })
+  expect(lines.len()) == 3
+  for l in lines {
+    let n = json.decode_str[domain.Note](l)?
+    expect(n.version) == 1
+  }
+}

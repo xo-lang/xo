@@ -1,0 +1,54 @@
+enum LoadErr {
+  Missing(id: Int)
+} derive Display
+
+enum ApiErr {
+  Load(from LoadErr)
+  Parse(from Str)
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    Load(inner) => "load failed: ${inner}"
+    Parse(msg) => "parse failed: ${msg}"
+  }
+}
+
+fn load(id: Int) -> Int ! LoadErr {
+  if id > 3 {
+    return Err(LoadErr.Missing(id: id))
+  }
+  id * 10
+}
+
+fn parse(s: Str) -> Int ! Str {
+  Int.parse(s).or_err("not a number: ${s}")?
+}
+
+fn api(s: Str) -> Int ! ApiErr {
+  let id = parse(s)?
+  load(id)?
+}
+
+fn open(s: Str) -> Int ! {
+  let v = api(s)?
+  let n = parse("7")?
+  v + n
+}
+
+fn main(os: Os) ! {
+  for s in ["2", "x", "9"] {
+    match api(s) {
+      Ok(v) => os.stdio.println("ok ${v}")
+      Err(e) => os.stdio.println("${e}")
+    }
+  }
+  match open("1") {
+    Ok(v) => os.stdio.println("open ${v}")
+    Err(e) => os.stdio.println("open error ${e}")
+  }
+  let r = open("99")
+  os.stdio.println("open 99 failed ${r.is_err()}")
+  open("abc")?
+  os.stdio.println("never")
+}

@@ -1,0 +1,52 @@
+use std/http
+use std/task
+
+const WORKERS = 8
+const TIMEOUT = 30s
+
+/// Reads URLs from standard input, one per line, fetches them with a worker
+/// pool, and prints one line per URL followed by a summary line.
+fn main(os: Os) ! {
+  let urls = os.stdio.lines()?
+    .map(fn(l) { l.trim() })
+    .filter(fn(l) { !l.is_empty() })
+
+  var jobs: List[Job[Str]] = []
+  for (i, url) in urls.indexed() {
+    jobs.push(Job{id: i + 1, input: url})
+  }
+
+  let client = http.client(os.net)
+  let fetch = fn(url: Str) -> Int ! http.ClientErr {
+    client.get(url)?.status
+  }
+  let report = run_pool(os.clock, jobs, workers: WORKERS, timeout: TIMEOUT, f: fetch)
+
+  var failed: Map[Int, task.Timed[http.ClientErr]] = {}
+  for (id, e) in report.failures {
+    failed.put(id, e)
+  }
+
+  // `results` holds only the successes, in job order, so walk the jobs and
+  // take the next result whenever a job did not fail.
+  var next = 0
+  for job in jobs {
+    if let Some(e) = failed.get(job.id) {
+      os.stdio.println("${job.input} error: ${describe(e)}")
+    } else {
+      os.stdio.println("${job.input} ${report.results[next]}")
+      next += 1
+    }
+  }
+
+  os.stdio.println(
+    "${jobs.len()} urls: ${report.results.len()} ok, ${report.failures.len()} failed in ${report.elapsed}",
+  )
+}
+
+fn describe(e: task.Timed[http.ClientErr]) -> Str {
+  match e {
+    TimedOut => "timed out after ${TIMEOUT}"
+    Failed(inner) => "${inner}"
+  }
+}

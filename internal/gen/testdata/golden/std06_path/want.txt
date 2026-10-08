@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+dst/b/c.txt dst/b c.txt .txt a/b/c
+--- stderr

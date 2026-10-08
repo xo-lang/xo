@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+ok alpha
+ok alpha
+err Denied(path: "../escape.txt")
+err Denied(path: "inner/../../escape.txt")
+err NotFound(path: "missing.txt")
+ok beta
+walk inner dir=true size=0
+walk inner/a.txt dir=false size=5
+walk inner/deep dir=true size=0
+walk inner/deep/b.txt dir=false size=4
+walk top.txt dir=false size=3
+read_dir a.txt a.txt
+read_dir deep deep
+read only: Denied(path: "x.txt")
+write only: Denied(path: "top.txt")
+temp starts with inner/tmp-: true
+exists true false
+remove non-empty: NotEmpty(path: "inner")
+stat 3 true
+--- stderr

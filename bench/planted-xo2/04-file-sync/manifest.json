@@ -1,0 +1,44 @@
+[
+  {
+    "id": "X1",
+    "class": "X1",
+    "xo_change": "copy_file discards the set_modified error with ignore_err",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X2",
+    "class": "X2",
+    "xo_change": "sync indexes dst_by_key[key], faulting for every file missing from dst",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X3",
+    "class": "X3",
+    "xo_change": "host_platform folds Wasi into the Windows arm with a wildcard",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X4",
+    "class": "X4",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Sequential program with no tasks or Mutex state; nothing is shared."
+  },
+  {
+    "id": "X5",
+    "class": "X5",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "The program starts no tasks."
+  },
+  {
+    "id": "X6",
+    "class": "X6",
+    "xo_change": "delete pass counts into a copy of the summary that is never written back",
+    "status": "variant",
+    "reason": "parses"
+  }
+]

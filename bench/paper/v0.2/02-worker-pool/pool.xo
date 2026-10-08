@@ -1,0 +1,81 @@
+use std/task
+
+/// One unit of work for `run_pool`. `id` identifies the job in the report.
+pub struct Job[T] {
+  pub id: Int
+  pub input: T
+}
+
+/// Outcome of `run_pool`.
+pub struct Report[R, E] {
+  /// Successful results as (job id, value), in the original job order.
+  pub results: List[(Int, R)]
+  /// Failed jobs as (job id, error), in the original job order. Jobs that were
+  /// still queued or running when the timeout passed fail with `TimedOut`.
+  pub failures: List[(Int, task.Timed[E])]
+  /// Wall time from the start of the pool until every job finished or was
+  /// cancelled.
+  pub elapsed: Duration
+}
+
+/// Runs `f` on every job with at most `workers` jobs running at once.
+///
+/// A failing job does not stop the others. When `timeout` passes, every job
+/// that has not finished is cancelled and reported as `Timed.TimedOut`.
+/// A fault in `f` is a bug and cancels the whole pool (core 8).
+pub fn run_pool[T, R, E, fx: Effects](
+  clock: Clock,
+  jobs: List[Job[T]],
+  workers: Int,
+  timeout: Duration,
+  f: fn(T) -> R ! E uses fx,
+) -> Report[R, E]
+  // GUESS: parenthesized effect list in a declaration `uses` clause. The
+  // grammar (core 15) has no parens for FnClause, but the examples in core 6.2
+  // and std 7 write `uses (clock, fx)`.
+  uses (clock, fx)
+  requires workers > 0
+{
+  let start = clock.now()
+  let sem = task.semaphore(workers)
+  // Finished outcomes keyed by the job's position in `jobs`.
+  let done = Mutex[Map[Int, Result[R, E]]].new({})
+
+  // The closure cannot fail, so this is `() ! Timed[Never]`. On timeout the
+  // jobs that never reached `done` are exactly the unfinished ones, so the
+  // outcome itself carries no extra information.
+  let _ = task.with_timeout(clock, timeout, fn() {
+    // GUESS: a block whose last item is a `for` statement has type `()`.
+    scope s {
+      for (i, job) in jobs.indexed() {
+        s.spawn(fn() {
+          sem.with(fn() {
+            let r = f(job.input)
+            // A job cut off by the timeout must report TimedOut, not the
+            // Canceled error its interrupted network call produced.
+            // GUESS: Mutex.with is only a cancellation point "while waiting"
+            // (core 7.2), so an uncontended with could still record the
+            // Canceled error. Check explicitly.
+            if !task.is_canceled() {
+              done.with(fn(var m) { m.put(i, r) })
+            }
+          })
+        })
+      }
+    }
+  })
+
+  let outcomes = done.with(fn(m) { m })
+  var results: List[(Int, R)] = []
+  var failures: List[(Int, task.Timed[E])] = []
+  for (i, job) in jobs.indexed() {
+    match outcomes.get(i) {
+      Some(Ok(v)) => results.push((job.id, v))
+      // GUESS: generic enum variant written with the module and type prefix
+      // and type argument inferred, `task.Timed.Failed(e)`.
+      Some(Err(e)) => failures.push((job.id, task.Timed.Failed(e)))
+      None => failures.push((job.id, task.Timed.TimedOut))
+    }
+  }
+  Report{results: results, failures: failures, elapsed: clock.since(start)}
+}

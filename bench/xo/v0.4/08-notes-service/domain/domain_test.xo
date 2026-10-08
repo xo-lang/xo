@@ -1,0 +1,157 @@
+fn note_at(id: Str, created: Time, title: Str, body: Str, tags: List[Str]) -> Note {
+  Note{
+    id: id,
+    title: title,
+    body: body,
+    tags: tags,
+    version: 1,
+    created: created,
+    updated: created,
+  }
+}
+
+/// `count` notes with ids 0..count, the i-th created at `t + step * i`.
+fn make_notes(count: Int, t: Time, step: Duration) -> List[Note] {
+  var out: List[Note] = []
+  for i in 0..count {
+    out.push(note_at(hex_id(i), t + step * i, "n${i}", "", []))
+  }
+  out
+}
+
+fn hex_id(n: Int) -> Str {
+  // 20 hex digits, zero padded, so ids sort by n.
+  let digits = "${n}"
+  "0".repeat(ID_LEN - digits.len()) + digits
+}
+
+test "title must be 1 to 200 characters" {
+  expect(validate_title("")) == Err(ValidationErr.EmptyTitle)
+  expect(validate_title("a")) == Ok(())
+  expect(validate_title("a".repeat(200))) == Ok(())
+  expect(validate_title("a".repeat(201))) == Err(ValidationErr.TitleTooLong(len: 201))
+  // characters, not bytes: 200 two byte runes are fine
+  expect(validate_title("é".repeat(200))) == Ok(())
+  expect(validate_title("é".repeat(201))) == Err(ValidationErr.TitleTooLong(len: 201))
+}
+
+test "at most 10 tags" {
+  var ten: List[Str] = []
+  for i in 0..10 {
+    ten.push("t${i}")
+  }
+  expect(validate_tags(ten)) == Ok(())
+  expect(validate_tags(ten + ["t10"])) == Err(ValidationErr.TooManyTags(count: 11))
+  expect(validate_tags([])) == Ok(())
+}
+
+test "tags are lowercase [a-z0-9-] with 1 to 32 characters" {
+  expect(is_valid_tag("go")) == true
+  expect(is_valid_tag("web-2")) == true
+  expect(is_valid_tag("-")) == true
+  expect(is_valid_tag("a".repeat(32))) == true
+  expect(is_valid_tag("a".repeat(33))) == false
+  expect(is_valid_tag("")) == false
+  expect(is_valid_tag("Go")) == false
+  expect(is_valid_tag("a_b")) == false
+  expect(is_valid_tag("a b")) == false
+  expect(is_valid_tag("café")) == false
+  expect(validate_tags(["ok", "Bad"])) == Err(ValidationErr.BadTag(tag: "Bad"))
+}
+
+test "validate checks title before tags" {
+  expect(validate("", ["Bad"])) == Err(ValidationErr.EmptyTitle)
+  expect(validate("fine", ["Bad"])) == Err(ValidationErr.BadTag(tag: "Bad"))
+  expect(validate("fine", ["good"])) == Ok(())
+}
+
+test "new_note and apply_edit validate and version" {
+  let now = os.clock.now()
+  let n = new_note(hex_id(1), Edit{title: "first", tags: ["a"]}, now)?
+  expect(n.version) == 1
+  expect(n.body) == ""
+  let later = now + 5s
+  let m = apply_edit(n, Edit{title: "second", body: "b"}, later)?
+  expect(m.version) == 2
+  expect(m.created) == now
+  expect(m.updated) == later
+  expect(m.tags) == []
+  expect(apply_edit(n, Edit{title: ""}, later)) == Err(ValidationErr.EmptyTitle)
+}
+
+test "generated ids are valid and file name safe" {
+  for _ in 0..50 {
+    let id = new_id(os.rand)
+    expect(is_valid_id(id)) == true
+    expect(id.len()) == ID_LEN
+  }
+  expect(is_valid_id("../../etc/passwd")) == false
+  expect(is_valid_id("CON")) == false
+  expect(is_valid_id("ABCDEF0123456789ABCD")) == false
+  expect(is_valid_id("abcdef0123456789abcd")) == true
+}
+
+test "etag round trip" {
+  expect(etag(3)) == "\"3\""
+  expect(parse_etag("\"3\"")) == Some(3)
+  expect(parse_etag("W/\"7\"")) == Some(7)
+  expect(parse_etag("nope")) == None
+}
+
+test "cursor round trip" {
+  let c = Cursor{created_ms: 1767225600000, id: hex_id(42)}
+  expect(decode_cursor(encode_cursor(c))) == Some(c)
+  expect(decode_cursor("garbage")) == None
+  expect(decode_cursor("12.../etc")) == None
+}
+
+test "search filters by tag and case insensitive text" {
+  let t = os.clock.now()
+  let notes = [
+    note_at(hex_id(1), t, "Shopping list", "milk", ["home"]),
+    note_at(hex_id(2), t + 1s, "Work plan", "Ship the MILKSHAKE feature", ["work"]),
+    note_at(hex_id(3), t + 2s, "Ideas", "nothing here", ["home", "work"]),
+  ]
+  let by_text = search(notes, Query{text: "milk"})
+  expect(by_text.notes.map(fn(n) { n.id })) == [hex_id(2), hex_id(1)]
+  let by_tag = search(notes, Query{tag: "work"})
+  expect(by_tag.notes.map(fn(n) { n.id })) == [hex_id(3), hex_id(2)]
+  let both = search(notes, Query{tag: "home", text: "LIST"})
+  expect(both.notes.map(fn(n) { n.id })) == [hex_id(1)]
+  expect(both.next) == None
+}
+
+test "pagination over notes with equal timestamps has no duplicates or gaps" {
+  let t = os.clock.now()
+  let notes = make_notes(25, t, 0s)
+  var seen: List[Str] = []
+  var after: Cursor? = None
+  var pages = 0
+  while {
+    let page = search(notes, Query{limit: 10, after: after})
+    for n in page.notes {
+      seen.push(n.id)
+    }
+    pages += 1
+    match page.next {
+      Some(c) => after = Some(c)
+      None => break
+    }
+  }
+  expect(pages) == 3
+  expect(seen.len()) == 25
+  expect(seen.to_set().len()) == 25
+  expect(seen) == newest_first(notes).map(fn(n) { n.id })
+}
+
+test "a note created between pages does not shift later pages" {
+  let t = os.clock.now()
+  var notes = make_notes(25, t, 1s)
+  let first = search(notes, Query{limit: 10})
+  notes.push(note_at(hex_id(99), t + 1h, "late", "", []))
+  let second = search(notes, Query{limit: 10, after: first.next})
+  let third = search(notes, Query{limit: 10, after: second.next})
+  let ids = (first.notes + second.notes + third.notes).map(fn(n) { n.id })
+  expect(ids) == make_notes(25, t, 1s).reverse().map(fn(n) { n.id })
+  expect(third.next) == None
+}

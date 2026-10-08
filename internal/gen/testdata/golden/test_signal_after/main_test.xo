@@ -1,0 +1,12 @@
+use std/task
+
+
+test "main exits cleanly on SIGTERM" {
+  os.proc.signal_after(90s)
+  expect(testing.run_main(main, os)) == 0
+}
+
+test "without a signal main keeps running past the deadline" {
+  let r = task.with_timeout(os.clock, 10m, fn() { testing.run_main(main, os) })
+  expect(r is Err(TimedOut))
+}

@@ -1,0 +1,171 @@
+// store.xo: user model, validation, and the concurrency safe in memory store.
+use std/json
+
+const NAME_MIN = 1
+const NAME_MAX = 100
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of `POST /users`.
+struct CreateBody {
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of `PATCH /users/{id}`. Every field is optional.
+// GUESS: a `Str?` field decodes to `none` when the JSON key is absent. The
+// spec says nothing about how `derive Json` treats missing keys.
+struct PatchBody {
+  name: Str?
+  email: Str?
+  nickname: Str?
+} derive Json
+
+/// JSON shape of every error response: `{"error": "..."}`.
+struct ErrBody {
+  error: Str
+} derive Json
+
+enum ApiErr {
+  BadRequest(msg: Str)
+  BadJson(from json.DecodeErr) // GUESS: std/json names its error type `DecodeErr`
+  NotFound(id: Int)
+  Conflict(email: Str)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    BadJson(_) => 400
+    NotFound(_) => 404
+    Conflict(_) => 409
+  }
+}
+
+fn (e: ApiErr) message() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    // GUESS: a `from` variant binds the wrapped error positionally, and
+    // json.DecodeErr implements Display so it can be interpolated.
+    BadJson(inner) => "invalid JSON body: {inner}"
+    NotFound(id) => "user {id} not found"
+    Conflict(email) => "email {email} already exists"
+  }
+}
+
+// State guarded by the mutex. Ids are never reused.
+struct State {
+  next_id: Int = 1
+  users: Map[Int, User] = {}
+} invariant next_id >= 1
+
+struct Store {
+  state: Mutex[State]
+}
+
+fn new_store() -> Store {
+  Store{state: Mutex.new(State{})}
+}
+
+// GUESS: a function whose body is only contracts has an empty block, and an
+// empty block has type (). The spec never shows `{}` as a body.
+fn check_name(name: Str) -> () ! ApiErr
+  // GUESS: `rune_count()` counts Unicode scalar values. The spec defines no
+  // Str methods; "characters" in the task is read as runes, not bytes.
+  requires name.rune_count() >= NAME_MIN else ApiErr.BadRequest(msg: "name must be 1 to 100 characters")
+  requires name.rune_count() <= NAME_MAX else ApiErr.BadRequest(msg: "name must be 1 to 100 characters")
+{
+}
+
+fn check_email(email: Str) -> () ! ApiErr
+  // GUESS: Str.contains(Str) -> Bool. Only seen in a match guard in section 3.4.
+  requires email.contains("@") else ApiErr.BadRequest(msg: "email must contain @")
+{
+}
+
+// True if some user other than `except_id` already has `email`.
+fn email_taken(users: Map[Int, User], email: Str, except_id: Int?) -> Bool {
+  for (id, u) in users {
+    // GUESS: Int? supports == against some(id), via derived Eq.
+    if u.email == email && except_id != some(id) {
+      return true
+    }
+  }
+  false
+}
+
+fn (s: Store) create(body: CreateBody) -> User ! ApiErr {
+  check_name(body.name)?
+  check_email(body.email)?
+  // GUESS: Mutex.with returns whatever the closure returns, so a closure that
+  // can fail makes `with` yield a Result that `?` can propagate.
+  s.state.with(fn(var st: State) -> User ! ApiErr {
+    if email_taken(st.users, body.email, except_id: none) {
+      // GUESS: `return err(e)` is how a function declared `! E` fails early.
+      // The spec only shows `?` and `requires ... else` producing errors.
+      return err(ApiErr.Conflict(email: body.email))
+    }
+    let u = User{id: st.next_id, name: body.name, email: body.email, nickname: body.nickname}
+    // GUESS: a rebinding method on a field of a var binding (st.users.put)
+    // rebinds st.users, same as `xs.push(v)` on a var List (section 5.2).
+    st.users.put(u.id, u)
+    st.next_id += 1
+    u
+  })?
+}
+
+fn (s: Store) get(id: Int) -> User ! ApiErr {
+  s.state.with(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))?
+}
+
+/// All users ordered by id.
+fn (s: Store) list() -> List[User] {
+  let users = s.state.with(fn(st) { st.users })
+  // GUESS: Map.values() -> List[V] and List.sort_by(key fn). Map is insertion
+  // ordered and ids only grow, so this is already sorted, but the task asks for
+  // id order explicitly and I do not want to depend on put-on-existing-key
+  // keeping the original position (not specified).
+  users.values().sort_by(fn(u) { u.id })
+}
+
+fn (s: Store) patch(id: Int, body: PatchBody) -> User ! ApiErr {
+  if let n = body.name {
+    check_name(n)?
+  }
+  if let e = body.email {
+    check_email(e)?
+  }
+  s.state.with(fn(var st: State) -> User ! ApiErr {
+    var u = st.users.get(id).or_err(ApiErr.NotFound(id: id))?
+    if let n = body.name {
+      u.name = n
+    }
+    if let e = body.email {
+      if email_taken(st.users, e, except_id: some(id)) {
+        return err(ApiErr.Conflict(email: e))
+      }
+      u.email = e
+    }
+    if let nick = body.nickname {
+      u.nickname = some(nick)
+    }
+    st.users.put(id, u)
+    u
+  })?
+}
+
+fn (s: Store) delete(id: Int) -> () ! ApiErr {
+  s.state.with(fn(var st: State) -> () ! ApiErr {
+    if st.users.get(id) == none {
+      return err(ApiErr.NotFound(id: id))
+    }
+    // GUESS: Map.remove(k) on a var binding rebinds it, like put.
+    st.users.remove(id)
+  })?
+}

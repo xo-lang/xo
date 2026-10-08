@@ -1,0 +1,55 @@
+fn main(os: Os) {
+  let ch = Chan[Int].new(cap: 2)
+  let results = Chan[Str].new()
+  let sum = scope s {
+    s.spawn(fn() {
+      for i in 1..=5 {
+        ch.send(i)
+      }
+      ch.close()
+    })
+    var total = 0
+    while {
+      match ch.recv() {
+        Some(v) => total += v
+        None => break
+      }
+    }
+    total
+  }
+  os.stdio.println("sum ${sum} after close ${ch.recv().is_none()}")
+  let got = scope s {
+    s.spawn(fn() { results.send("hello") })
+    var out = ""
+    select {
+      msg = results.recv() => out = msg ?? "closed"
+      after 5s => out = "timeout"
+    }
+    out
+  }
+  os.stdio.println("select ${got}")
+  let empty = Chan[Int].new()
+  var label = ""
+  select {
+    v = empty.recv() => label = "got ${v ?? 0}"
+    after 20ms => label = "timed out"
+  }
+  os.stdio.println("select ${label}")
+  let small = Chan[Int].new(cap: 1)
+  os.stdio.println("try_send ${small.try_send(1)} ${small.try_send(2)} len ${small.len()}")
+  os.stdio.println("try_recv ${small.try_recv() ?? 0} ${small.try_recv() ?? 0}")
+  let out = Chan[Int].new(cap: 1)
+  scope s {
+    s.spawn(fn() {
+      os.clock.sleep(10ms)
+      os.stdio.println("received ${out.recv() ?? 0}")
+    })
+    select {
+      out.send(7) => os.stdio.println("sent")
+      after 1s => os.stdio.println("send timed out")
+    }
+  }
+  small.close()
+  os.stdio.println("send on closed channel next")
+  small.send(1)
+}

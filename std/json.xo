@@ -1,0 +1,24 @@
+// std/json (spec/std.md 5). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. Which types implement `Json` is builtin to the
+// checker (std.md 5 table): scalars, Str, Bytes, Duration, Time, List, Set,
+// Map[Str, V], Option of Json types, and types with `derive Json`.
+
+fn encode[T: Json](v: T) -> Bytes
+fn encode_str[T: Json](v: T) -> Str
+fn decode[T: Json](data: Bytes) -> T ! DecodeErr
+fn decode_str[T: Json](s: Str) -> T ! DecodeErr
+
+/// Displays as "at $.user.email: expected string".
+struct DecodeErr {
+  path: Str
+  msg: Str
+} derive Display
+
+fn (p: Patch[T]) apply_to(current: T) -> T
+fn (p: Patch[T]) apply_opt(current: T?) -> T?
+
+enum Patch[T] {
+  Absent
+  Null
+  Value(v: T)
+} derive Json

@@ -1,0 +1,189 @@
+[
+  {
+    "code": "XO0201",
+    "severity": "error",
+    "message": "result of `load` is not handled",
+    "span": {
+      "file": "main.xo",
+      "line": 25,
+      "col": 3,
+      "end_line": 25,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`load` can fail with `LoadErr`; propagate with `?`, match on it, or discard it with `.ignore_err(\"reason\")` (core 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "propagate with ?",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 25,
+              "col": 11,
+              "end_line": 25,
+              "end_col": 11
+            },
+            "replace": "?"
+          }
+        ]
+      },
+      {
+        "title": "discard with a reason",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 25,
+              "col": 11,
+              "end_line": 25,
+              "end_col": 11
+            },
+            "replace": ".ignore_err(\"TODO: reason\")"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0202",
+    "severity": "error",
+    "message": "`?` propagates `OtherErr`, which does not convert to `ApiErr`, the error type of `api`",
+    "span": {
+      "file": "main.xo",
+      "line": 27,
+      "col": 11,
+      "end_line": 27,
+      "end_col": 19
+    },
+    "notes": [
+      {
+        "message": "an error converts when it is the same type, when the target is `Error` and it implements `Display`, or when the target enum has a `from OtherErr` variant (core 2.6)"
+      },
+      {
+        "message": "add a variant such as `OtherErr(from OtherErr)` to `ApiErr`",
+        "span": {
+          "file": "main.xo",
+          "line": 6,
+          "col": 6
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0205",
+    "severity": "error",
+    "message": "`?` propagates `LoadErr`, but `plain` cannot fail",
+    "span": {
+      "file": "main.xo",
+      "line": 32,
+      "col": 3,
+      "end_line": 32,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "declare the error type: `-\u003e Int ! LoadErr`, or handle the error with `match` (core 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare `! LoadErr`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 31,
+              "col": 25,
+              "end_line": 31,
+              "end_col": 25
+            },
+            "replace": " ! LoadErr"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0204",
+    "severity": "error",
+    "message": "`?` on an optional value in a function that returns a Result",
+    "span": {
+      "file": "main.xo",
+      "line": 36,
+      "col": 3,
+      "end_line": 36,
+      "end_col": 5
+    },
+    "notes": [
+      {
+        "message": "convert the optional to a Result first: `.or_err(e)?` (core 2.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "convert with .or_err(...)",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 36,
+              "col": 4,
+              "end_line": 36,
+              "end_col": 4
+            },
+            "replace": ".or_err(???)"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0203",
+    "severity": "error",
+    "message": "the success value of `Result[Int, Str] ! ApiErr` is itself a Result; write `Ok(...)` explicitly",
+    "span": {
+      "file": "main.xo",
+      "line": 40,
+      "col": 3,
+      "end_line": 40,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "a bare Result here would be ambiguous between success and returning the value as is (core 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "wrap in Ok(...)",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 40,
+              "col": 3,
+              "end_line": 40,
+              "end_col": 3
+            },
+            "replace": "Ok("
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 40,
+              "col": 4,
+              "end_line": 40,
+              "end_col": 4
+            },
+            "replace": ")"
+          }
+        ]
+      }
+    ]
+  }
+]

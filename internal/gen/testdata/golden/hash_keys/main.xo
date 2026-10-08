@@ -1,0 +1,47 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Color {
+  Red
+  Rgb(r: Int, g: Int, b: Int)
+}
+
+fn main(os: Os) {
+  var seen: Set[Point] = #{}
+  for p in [Point{x: 1, y: 2}, Point{x: 1, y: 2}, Point{x: 2, y: 1}] {
+    seen.add(p)
+  }
+  var names: Map[Color, Str] = {}
+  names.put(Color.Red, "red")
+  names.put(Color.Rgb(r: 0, g: 0, b: 255), "blue")
+  names.put(Color.Rgb(r: 0, g: 0, b: 255), "still blue")
+  var grid: Map[(Int, Int), Str] = {(0, 0): "origin"}
+  grid[(1, 2)] = "a"
+  var opt_keys: Map[Int?, Int] = {}
+  opt_keys.put(None, 1)
+  opt_keys.put(Some(1), 2)
+  opt_keys.put(None, 3)
+  let lists = #{[1, 2], [1, 2], [2, 1]}
+  os.stdio.println("points ${seen.len()} colors ${names.len()} ${names.get_or_fault(Color.Rgb(r: 0, g: 0, b: 255), "golden: key exists")} grid ${grid.get_or_fault((1, 2), "golden: key exists")} ${grid.len()} opt ${opt_keys.get_or_fault(None, "golden: key exists")} lists ${lists.len()}")
+  var big: Map[Int, Int] = {}
+  for i in 0..2000 {
+    big.put(i * 7919 % 2003, i)
+  }
+  var removed = 0
+  for i in 0..1000 {
+    if big.remove(i).is_some() {
+      removed += 1
+    }
+  }
+  var order_ok = true
+  var last = -1
+  for (k, _v) in big {
+    if k < 1000 {
+      order_ok = false
+    }
+    last = k
+  }
+  os.stdio.println("big ${big.len()} removed ${removed} order_ok ${order_ok} first ${big.keys()[0]} last ${last}")
+}

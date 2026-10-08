@@ -1,0 +1,82 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "go_bug": "ClientKey discards the error from net.SplitHostPort (host, _, _ := ...) and returns host unconditionally, removing the fallback to the raw r.RemoteAddr.",
+    "xo_change": "serve() Result dropped as a bare statement",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "go_bug": "NewLimiter no longer initializes the custom field (the custom: make(map[string]Limit, len(custom)) line is dropped), so the copy loop writes into a nil map.",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "no nil maps; Mutex.new({}) always yields an initialised map and there is no field to forget"
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "go_bug": "Run's select over the closed set of shutdown events {ctx done, server error} drops the case err = <-errc, keeping only case <-ctx.Done()",
+    "xo_change": "remove the Limited arm from the match over Decision in rate_limit",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "go_bug": "Allow replaces defer l.mu.Unlock() with an explicit unlock right after b.Take(now), so b.RetryAfter(now), which calls refill and mutates Tokens and LastRefill, runs outside the mutex.",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "bucket map is only reachable inside Mutex.with, so an unlocked mutation cannot be written"
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "go_bug": "The errc channel in Run is made unbuffered (make(chan error) instead of make(chan error, 1)).",
+    "xo_change": "evictor spawned as a normal task instead of spawn_background, so the scope never exits",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X6",
+    "class": "lost update",
+    "go_bug": "Bucket.refill gets a value receiver (func (b Bucket) refill) instead of a pointer receiver, so the refilled Tokens and updated LastRefill are written to a copy and discarded.",
+    "xo_change": "refill takes a by-value receiver instead of var, so refilled tokens are discarded",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "go_bug": "Bucket.Take checks b.Tokens > 1 instead of b.Tokens >= 1.",
+    "xo_change": "take requires strictly more than one token",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "go_bug": "Middleware rejects over limit requests with http.StatusServiceUnavailable (503) instead of http.StatusTooManyRequests (429).",
+    "xo_change": "rejection uses 503 instead of 429",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "go_bug": "RetryAfter computes secs as (1 - b.Tokens) * b.RefillPerSec instead of dividing by b.RefillPerSec.",
+    "xo_change": "retry-after multiplies instead of dividing by refill rate",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "go_bug": "Evict deletes buckets when now.Sub(b.LastRefill) < l.idle instead of > l.idle.",
+    "xo_change": "eviction keeps idle buckets and drops active ones",
+    "status": "variant",
+    "reason": ""
+  }
+]

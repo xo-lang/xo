@@ -1,0 +1,11 @@
+use std/http
+use std/log
+
+fn main(os: Os) ! {
+  let base = os.env.get("UPSTREAM_URL") ?? "http://localhost:9000"
+  let fetch = http_fetcher(http.client(os.net, timeout: 5s), base)
+  let cache = new_cache(os.clock, os.tasks, Config{}, fetch)
+  let srv = http.server(os.net.listen(":8080")?, routes(new_service(cache)))
+  log.info("listening", {"addr": ":8080", "upstream": base})
+  srv.serve()?
+}

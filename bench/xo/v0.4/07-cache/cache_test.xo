@@ -1,0 +1,173 @@
+use std/task
+
+enum TestErr {
+  Missing(key: Int)
+}
+
+fn (e: TestErr) display() -> Str {
+  match e {
+    Missing(key) => "missing ${key}"
+  }
+}
+
+fn ids(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i)
+  }
+  xs
+}
+
+test "100 concurrent gets for one missing key call the loader exactly once" {
+  let calls = Atomic[Int].new(0)
+  let clock = os.clock
+  let cache = new_cache(os.clock, os.tasks, Config{}, fn(k: Int) -> Int ! TestErr {
+    calls.add(1)
+    clock.sleep(200ms)
+    k * 10
+  })
+  let results = task.map_concurrent(ids(100), 100, fn(_i: Int) { cache.get(7) })
+  expect(results.len()) == 100
+  expect(results.all(fn(r) { r is Ok(70) }))
+  expect(calls.get()) == 1
+  let m = cache.metrics()
+  expect(m.loads) == 1
+  expect(m.misses) == 100
+}
+
+test "ttl expiry and stale while revalidate with exactly one background refresh" {
+  let calls = Atomic[Int].new(0)
+  let clock = os.clock
+  let cfg = Config{max_entries: 10, ttl: 10s, stale_ttl: 20s, negative_ttl: 5s, load_timeout: 5s}
+  let cache = new_cache(os.clock, os.tasks, cfg, fn(k: Int) -> Int ! TestErr {
+    let n = calls.add(1)
+    clock.sleep(100ms)
+    k * 100 + n
+  })
+
+  expect(cache.get(1)?) == 101
+  os.clock.advance(5s)
+  expect(cache.get(1)?) == 101
+  expect(calls.get()) == 1
+
+  // Age is now past ttl but inside the stale window.
+  os.clock.advance(10s)
+  for _ in 0..10 {
+    expect(cache.get(1)?) == 101
+  }
+  // Block the test so the refresh task runs; virtual time auto advances.
+  os.clock.sleep(1s)
+  expect(calls.get()) == 2
+  expect(cache.get(1)?) == 102
+  expect(cache.metrics().stale_hits) == 10
+
+  // Past ttl + stale_ttl the entry is expired and loaded in the foreground.
+  os.clock.advance(31s)
+  expect(cache.get(1)?) == 103
+  expect(calls.get()) == 3
+  expect(cache.metrics().misses) == 2
+}
+
+test "lru evicts the least recently used entry" {
+  let calls = Atomic[Int].new(0)
+  let cfg = Config{max_entries: 2}
+  let cache = new_cache(os.clock, os.tasks, cfg, fn(k: Int) -> Int ! TestErr {
+    calls.add(1)
+    k
+  })
+  expect(cache.get(1)?) == 1
+  expect(cache.get(2)?) == 2
+  expect(cache.get(1)?) == 1      // 1 is now more recent than 2
+  expect(cache.get(3)?) == 3      // evicts 2
+  expect(calls.get()) == 3
+  expect(cache.get(1)?) == 1      // still cached
+  expect(calls.get()) == 3
+  expect(cache.get(2)?) == 2      // was evicted, loads again
+  expect(calls.get()) == 4
+  expect(cache.metrics().evictions) == 2
+}
+
+test "invalidate during an in flight load does not cache its result" {
+  let calls = Atomic[Int].new(0)
+  let clock = os.clock
+  let cfg = Config{load_timeout: 5s}
+  let cache = new_cache(os.clock, os.tasks, cfg, fn(k: Int) -> Int ! TestErr {
+    let n = calls.add(1)
+    clock.sleep(1s)
+    k * 10 + n
+  })
+  scope s {
+    let first = s.spawn(fn() { cache.get(5) })
+    let second = s.spawn(fn() { cache.get(5) })
+    os.clock.sleep(100ms)
+    cache.invalidate(5)
+    // Callers already waiting still receive the result.
+    expect(first.await?) == 51
+    expect(second.await?) == 51
+  }
+  expect(calls.get()) == 1
+  // The result was not stored, so the next get loads again.
+  expect(cache.get(5)?) == 52
+  expect(calls.get()) == 2
+}
+
+test "loader errors are negatively cached" {
+  let calls = Atomic[Int].new(0)
+  let cfg = Config{negative_ttl: 5s}
+  let cache = new_cache(os.clock, os.tasks, cfg, fn(k: Int) -> Int ! TestErr {
+    calls.add(1)
+    Err(TestErr.Missing(k))
+  })
+  expect(cache.get(9) is Err(Load(Missing(9))))
+  expect(cache.get(9) is Err(Load(Missing(9))))
+  expect(calls.get()) == 1
+  os.clock.advance(6s)
+  expect(cache.get(9) is Err(Load(Missing(9))))
+  expect(calls.get()) == 2
+  expect(cache.metrics().load_errors) == 2
+}
+
+test "loader timeout fails all waiters and the cache works afterwards" {
+  let calls = Atomic[Int].new(0)
+  let slow = Atomic[Bool].new(true)
+  let clock = os.clock
+  let cfg = Config{load_timeout: 1s}
+  let cache = new_cache(os.clock, os.tasks, cfg, fn(k: Int) -> Int ! TestErr {
+    calls.add(1)
+    if slow.get() {
+      clock.sleep(10s)
+    }
+    k
+  })
+  let results = task.map_concurrent(ids(10), 10, fn(_i: Int) { cache.get(3) })
+  expect(results.len()) == 10
+  expect(results.all(fn(r) { r is Err(Timeout) }))
+  expect(calls.get()) == 1
+
+  slow.set(false)
+  expect(cache.get(3)?) == 3
+  expect(calls.get()) == 2
+}
+
+test "loader panic fails all waiters and the cache works afterwards" {
+  let calls = Atomic[Int].new(0)
+  let crash = Atomic[Bool].new(true)
+  let clock = os.clock
+  let cache = new_cache(os.clock, os.tasks, Config{}, fn(k: Int) -> Int ! TestErr {
+    calls.add(1)
+    clock.sleep(50ms)
+    if crash.get() {
+      fault("loader exploded")
+    }
+    k
+  })
+  let results = task.map_concurrent(ids(10), 10, fn(_i: Int) { cache.get(4) })
+  expect(results.len()) == 10
+  expect(results.all(fn(r) { r is Err(Panicked(..)) }))
+  expect(calls.get()) == 1
+
+  crash.set(false)
+  expect(cache.get(4)?) == 4
+  expect(cache.get(4)?) == 4
+  expect(calls.get()) == 2
+}

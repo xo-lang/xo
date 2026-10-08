@@ -1,0 +1,137 @@
+use std/http
+use std/test
+
+// GUESS: std/test provides fake_clock(start) returning a Clock whose time only
+// moves through advance(d). Spec 6.4 promises a deterministic clock but does
+// not say how a test reaches it (test blocks have no `os` parameter).
+// GUESS: test.FakeClock is accepted wherever a Clock capability is expected
+// (Clock is treated as an interface here; the spec never says whether
+// capability types are structs or interfaces).
+fn start_clock() -> test.FakeClock {
+  test.fake_clock(start: Time.UNIX_EPOCH)
+}
+
+// GUESS: http.fake_request builds a request without a socket.
+fn req_from(ip: Str, api_key: Str?) -> http.Request {
+  let headers = if let k = api_key { {"X-Api-Key": k} } else { {} }
+  http.fake_request(method: "GET", path: "/hello", headers: headers, remote_ip: ip)
+}
+
+// GUESS: `?` is allowed inside a test block (tests return `() ! Error`).
+// GUESS: `_` is accepted as a discarded loop pattern so the counter is not an
+// unused binding (XO0110).
+test "20 immediate requests pass and the 21st gets 429" {
+  let clock = start_clock()
+  let h = new_limiter({}).wrap(clock, hello)
+  let r = req_from("10.0.0.1", none)
+  for _ in 0..20 {
+    // GUESS: Response has a pub `status: Int` field.
+    expect(h(r)?.status) == 200
+  }
+  expect(h(r)?.status) == 429
+}
+
+test "after 1 second on a fake clock 5 more pass" {
+  let clock = start_clock()
+  let h = new_limiter({}).wrap(clock, hello)
+  let r = req_from("10.0.0.2", none)
+  for _ in 0..20 {
+    expect(h(r)?.status) == 200
+  }
+  expect(h(r)?.status) == 429
+  // GUESS: FakeClock.advance(d) moves time forward.
+  clock.advance(1s)
+  for _ in 0..5 {
+    expect(h(r)?.status) == 200
+  }
+  expect(h(r)?.status) == 429
+}
+
+test "Retry-After is whole seconds until one token, at least 1" {
+  let clock = start_clock()
+  let h = new_limiter({}).wrap(clock, hello)
+  let r = req_from("10.0.0.3", none)
+  for _ in 0..20 {
+    let _ = h(r)?
+  }
+  // Empty bucket at 5 per second: 0.2s until a token, rounds up to 1.
+  let limited = h(r)?
+  expect(limited.status) == 429
+  // GUESS: Response.header(name) -> Str?.
+  expect(limited.header("Retry-After")) == some("1")
+}
+
+test "Retry-After rounds up for a slow bucket" {
+  let now = Time.UNIX_EPOCH
+  var b = new_bucket(Limit{capacity: 1, refill_per_sec: 0.4}, now)
+  expect(b.take(now)) == true
+  expect(b.take(now)) == false
+  // 1 token at 0.4 per second is 2.5s, so 3.
+  expect(b.retry_after_secs()) == 3
+  // GUESS: Time + Duration yields a Time.
+  expect(b.take(now + 2s)) == false
+  // 0.2 token missing at 0.4 per second is 0.5s, so at least 1.
+  expect(b.retry_after_secs()) == 1
+}
+
+test "custom limit for a key is applied" {
+  let clock = start_clock()
+  let limiter = new_limiter({"vip": Limit{capacity: 2, refill_per_sec: 0.25}})
+  let h = limiter.wrap(clock, hello)
+  let vip = req_from("10.0.0.4", some("vip"))
+  expect(h(vip)?.status) == 200
+  expect(h(vip)?.status) == 200
+  let limited = h(vip)?
+  expect(limited.status) == 429
+  // 1 token at 0.25 per second is 4s.
+  expect(limited.header("Retry-After")) == some("4")
+
+  // A different key on the same IP still gets the default 20.
+  let other = req_from("10.0.0.4", some("regular"))
+  for _ in 0..20 {
+    expect(h(other)?.status) == 200
+  }
+  expect(h(other)?.status) == 429
+}
+
+test "key falls back to remote IP when the header is missing" {
+  let now = Time.UNIX_EPOCH
+  let l = new_limiter({"10.0.0.9": Limit{capacity: 1, refill_per_sec: 1.0}})
+  expect(l.check("10.0.0.9", now)) == Decision.Allowed
+  expect(client_key(req_from("10.0.0.9", none))) == "10.0.0.9"
+  expect(client_key(req_from("10.0.0.9", some("k")))) == "k"
+}
+
+test "idle buckets are evicted" {
+  let t0 = Time.UNIX_EPOCH
+  let l = new_limiter({})
+  expect(l.check("old", t0)) == Decision.Allowed
+  expect(l.check("fresh", t0 + 9m)) == Decision.Allowed
+  expect(l.evict_idle(t0 + 10m, IDLE_TTL)) == 0
+  expect(l.evict_idle(t0 + 10m + 1s, IDLE_TTL)) == 1
+  // "old" was removed, so it comes back as a full bucket.
+  for _ in 0..20 {
+    expect(l.check("old", t0 + 11m)) == Decision.Allowed
+  }
+  expect(l.check("old", t0 + 11m)) == Decision.Limited(retry_after_secs: 1)
+  // "fresh" (idle 2m) and the new "old" (idle 0) both survive.
+  expect(l.evict_idle(t0 + 11m, IDLE_TTL)) == 0
+}
+
+test "background evictor stops when its scope is cancelled" {
+  let clock = start_clock()
+  let l = new_limiter({})
+  expect(l.check("idle", clock.now())) == Decision.Allowed
+  scope s {
+    s.spawn(fn() { run_evictor(l, clock) })
+    // GUESS: advancing a fake clock wakes sleepers whose deadline passed, and
+    // test.yield() lets the spawned task run before we continue.
+    clock.advance(11m)
+    test.yield()
+    s.cancel()
+  }
+  // Scope exited, so the evictor stopped. The background pass already removed
+  // the idle bucket, so a manual pass finds nothing left.
+  expect(l.evict_idle(clock.now(), IDLE_TTL)) == 0
+  expect(l.check("idle", clock.now())) == Decision.Allowed
+}

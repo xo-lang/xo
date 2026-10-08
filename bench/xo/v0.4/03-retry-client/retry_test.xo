@@ -1,0 +1,135 @@
+use std/http
+
+const NO_JITTER = RetryPolicy{jitter: 0.0}
+
+test "succeeds on the third attempt after two 503s" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET https://api.test/data", fn(_req) {
+    if calls.add(1) < 3 { http.empty(503) } else { http.text(200, "ok") }
+  })
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/data", NO_JITTER)?
+  expect(body) == b"ok"
+  expect(calls.get()) == 3
+  expect(os.clock.sleeps()) == [100ms, 200ms]
+}
+
+test "jitter stays within the configured fraction" {
+  os.net.handle("GET https://api.test/flaky", fn(_req) { http.empty(500) })
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/flaky", RetryPolicy{max_attempts: 4})
+  expect(r is Err(FetchErr.Exhausted(..)))
+  let sleeps = os.clock.sleeps()
+  expect(sleeps.len()) == 3
+  let bases = [100ms, 200ms, 400ms]
+  for (i, d) in sleeps.indexed() {
+    expect(d) >= bases[i].scale(0.8)
+    expect(d) <= bases[i].scale(1.2)
+  }
+}
+
+test "404 returns immediately after one attempt" {
+  os.net.handle("GET https://api.test/missing", fn(_req) { http.empty(404) })
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/missing", RetryPolicy{})
+  expect(r) == Err(FetchErr.NonRetryable(status: 404))
+  expect(os.net.requests().len()) == 1
+  expect(os.clock.sleeps().is_empty())
+}
+
+test "Retry-After header is respected" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET https://api.test/limited", fn(_req) {
+    if calls.add(1) == 1 {
+      http.empty(429).with_header("Retry-After", "2")
+    } else {
+      http.text(200, "done")
+    }
+  })
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/limited", RetryPolicy{})?
+  expect(body) == b"done"
+  expect(os.clock.sleeps()) == [2s]
+}
+
+test "Retry-After is capped by max_delay" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET https://api.test/busy", fn(_req) {
+    if calls.add(1) == 1 {
+      http.empty(503).with_header("Retry-After", "60")
+    } else {
+      http.text(200, "done")
+    }
+  })
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/busy", RetryPolicy{max_delay: 5s})?
+  expect(body) == b"done"
+  expect(os.clock.sleeps()) == [5s]
+}
+
+test "exhausted attempts error contains the last status" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET https://api.test/down", fn(_req) {
+    if calls.add(1) < 3 { http.empty(503) } else { http.empty(502) }
+  })
+  let policy = RetryPolicy{max_attempts: 3, jitter: 0.0}
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/down", policy)
+  expect(r) == Err(FetchErr.Exhausted(attempts: 3, last: AttemptErr.Status(502)))
+  let e = r.err().or_fault("expected the fetch to fail")
+  expect(e.last_status()) == Some(502)
+  expect("${e}".contains("502"))
+  expect(os.clock.sleeps()) == [100ms, 200ms]
+}
+
+test "connection errors are retried" {
+  os.net.fail_next("GET https://api.test/conn", http.ClientErr.Connect("refused"))
+  os.net.handle("GET https://api.test/conn", fn(_req) { http.text(200, "ok") })
+  let body = get_with_retry(os.net, os.clock, os.rand, "https://api.test/conn", NO_JITTER)?
+  expect(body) == b"ok"
+  expect(os.net.requests().len()) == 2
+  expect(os.clock.sleeps()) == [100ms]
+}
+
+test "exhausted transport errors keep the last error" {
+  os.net.fail("GET https://api.test/slow", http.ClientErr.Timeout)
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/slow", RetryPolicy{max_attempts: 2, jitter: 0.0})
+  expect(r) == Err(FetchErr.Exhausted(attempts: 2, last: AttemptErr.Transport(http.ClientErr.Timeout)))
+}
+
+test "invalid url fails without a request" {
+  let r = get_with_retry(os.net, os.clock, os.rand, "not a url", RetryPolicy{})
+  expect(r is Err(FetchErr.InvalidUrl(..)))
+  expect(os.net.requests().is_empty())
+}
+
+test "cancellation is reported and not retried" {
+  os.net.fail("GET https://api.test/cancel", http.ClientErr.Canceled)
+  let r = get_with_retry(os.net, os.clock, os.rand, "https://api.test/cancel", RetryPolicy{})
+  expect(r) == Err(FetchErr.Canceled)
+  expect(os.net.requests().len()) == 1
+}
+
+test "backoff doubles and caps at max_delay" {
+  let p = RetryPolicy{base_delay: 1s, max_delay: 5s}
+  expect(backoff(p, 2)) == 1s
+  expect(backoff(p, 3)) == 2s
+  expect(backoff(p, 4)) == 4s
+  expect(backoff(p, 5)) == 5s
+  expect(backoff(p, 80)) == 5s
+}
+
+test "fetch_profile decodes a profile" {
+  os.net.handle("GET https://api.test/users/7", fn(_req) {
+    http.text(200, r#"{"id": 7, "name": "Ada", "email": null}"#)
+  })
+  let p = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 7)?
+  expect(p) == Profile{id: 7, name: "Ada", email: None}
+}
+
+test "fetch_profile reports a decode error for invalid JSON" {
+  os.net.handle("GET https://api.test/users/7", fn(_req) { http.text(200, "{not json") })
+  let r = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 7)
+  expect(r is Err(ProfileErr.Decode(_)))
+  expect(os.net.requests().len()) == 1
+}
+
+test "fetch_profile wraps fetch errors" {
+  os.net.handle("GET https://api.test/users/9", fn(_req) { http.empty(404) })
+  let r = fetch_profile(os.net, os.clock, os.rand, "https://api.test", 9)
+  expect(r) == Err(ProfileErr.Fetch(FetchErr.NonRetryable(status: 404)))
+}

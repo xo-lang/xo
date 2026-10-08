@@ -1,0 +1,57 @@
+pub const MAX_TITLE = 200
+pub const MAX_TAGS = 10
+pub const MAX_TAG_LEN = 32
+
+/// Why a note input was rejected.
+pub enum ValidationErr {
+  TitleEmpty
+  TitleTooLong(len: Int)
+  TooManyTags(count: Int)
+  BadTag(tag: Str)
+}
+
+fn (e: ValidationErr) display() -> Str {
+  match e {
+    TitleEmpty => "title must not be empty"
+    TitleTooLong(len) => "title has ${len} characters, the maximum is ${MAX_TITLE}"
+    TooManyTags(count) => "note has ${count} tags, the maximum is ${MAX_TAGS}"
+    BadTag(tag) => "tag \"${tag}\" must match [a-z0-9-]{1,32}"
+  }
+}
+
+/// Checks the input and returns it normalized (title trimmed).
+/// Title: 1 to 200 characters (Unicode scalar values) after trimming.
+/// Tags: at most 10, each matching [a-z0-9-]{1,32}.
+pub fn validate(input: NoteInput) -> NoteInput ! ValidationErr {
+  let title = input.title.trim()
+  let n = title.rune_count()
+  if n == 0 {
+    return Err(TitleEmpty)
+  }
+  if n > MAX_TITLE {
+    return Err(TitleTooLong(len: n))
+  }
+  if input.tags.len() > MAX_TAGS {
+    return Err(TooManyTags(count: input.tags.len()))
+  }
+  for t in input.tags {
+    if !valid_tag(t) {
+      return Err(BadTag(tag: t))
+    }
+  }
+  input with {title: title}
+}
+
+pub fn valid_tag(t: Str) -> Bool {
+  // Byte length equals character count once every rune is ASCII, which the
+  // rune check below enforces.
+  if t.len() < 1 || t.len() > MAX_TAG_LEN {
+    return false
+  }
+  t.runes().all(fn(r) {
+    match r {
+      'a'..='z' | '0'..='9' | '-' => true
+      _ => false
+    }
+  })
+}

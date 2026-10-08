@@ -1,0 +1,154 @@
+// Package store persists notes as one JSON file per note in a directory.
+// It depends on domain only.
+//
+// Every write goes to a temp file in the same directory and is then renamed
+// over the target, so readers see either the old or the new note, never a
+// partial one. Read, compare version, and write run under one mutex, so two
+// updates with the same expected version cannot both succeed.
+
+use std/json
+use example.com/notes/domain
+
+const SUFFIX = ".json"
+pub const TEMP_PREFIX = ".tmp-"
+
+pub enum StoreErr {
+  NotFound(id: Str)
+  /// The expected version did not match; `current` is the stored one.
+  Conflict(id: Str, current: Int)
+  AlreadyExists(id: Str)
+  Invalid(from domain.ValidationErr)
+  Corrupt(path: Str, msg: Str)
+  Io(from FsErr)
+}
+
+pub fn (e: StoreErr) display() -> Str {
+  match e {
+    NotFound(id) => "note ${id} not found"
+    Conflict(id, current) => "note ${id} is at version ${current}"
+    AlreadyExists(id) => "note ${id} already exists"
+    Invalid(inner) => inner.display()
+    Corrupt(path, msg) => "corrupt note file ${path}: ${msg}"
+    Io(inner) => "storage error: ${inner}"
+  }
+}
+
+pub struct Store {
+  dir: Fs
+  /// Counts committed writes. Holding the lock serializes writers.
+  writes: Mutex[Int]
+}
+
+/// Opens (creating if needed) the data directory behind `dir` and removes
+/// temp files left by a crash.
+pub fn open(dir: Fs) -> Store ! StoreErr uses fs {
+  dir.create_dir_all(".")?
+  for info in dir.read_dir(".")? {
+    if !info.is_dir && info.name.starts_with(TEMP_PREFIX) {
+      dir.remove(info.path)?
+    }
+  }
+  Store{dir: dir, writes: Mutex[Int].new(0)}
+}
+
+fn note_path(id: Str) -> Str {
+  "${id}${SUFFIX}"
+}
+
+pub fn (s: Store) get(id: Str) -> domain.Note ! StoreErr
+  uses fs.read
+  requires domain.is_valid_id(id) else StoreErr.NotFound(id: id)
+{
+  s.read_note(id)
+}
+
+/// Every stored note, in no particular order.
+pub fn (s: Store) list() -> List[domain.Note] ! StoreErr uses fs.read {
+  var notes: List[domain.Note] = []
+  for info in s.dir.read_dir(".")? {
+    if info.is_dir || info.name.starts_with(TEMP_PREFIX) || !info.name.ends_with(SUFFIX) {
+      continue
+    }
+    let id = info.name.trim_suffix(SUFFIX)
+    if !domain.is_valid_id(id) {
+      continue
+    }
+    match s.read_note(id) {
+      Ok(n) => notes.push(n)
+      Err(StoreErr.NotFound(..)) => () // deleted after read_dir
+      Err(e) => return Err(e)
+    }
+  }
+  notes
+}
+
+pub fn (s: Store) create(n: domain.Note) -> domain.Note ! StoreErr
+  uses fs
+  requires domain.is_valid_id(n.id) else StoreErr.NotFound(id: n.id)
+{
+  s.writes.with(fn(var count) -> domain.Note ! StoreErr {
+    if s.dir.exists(note_path(n.id))? {
+      return Err(StoreErr.AlreadyExists(id: n.id))
+    }
+    s.write_atomic(n)?
+    count += 1
+    n
+  })
+}
+
+/// Applies `edit` if the stored version equals `expected`.
+pub fn (s: Store) update(id: Str, expected: Int, edit: domain.Edit, now: Time) -> domain.Note ! StoreErr
+  uses fs
+  requires domain.is_valid_id(id) else StoreErr.NotFound(id: id)
+{
+  s.writes.with(fn(var count) -> domain.Note ! StoreErr {
+    let cur = s.read_note(id)?
+    if cur.version != expected {
+      return Err(StoreErr.Conflict(id: id, current: cur.version))
+    }
+    let next = domain.apply_edit(cur, edit, now)?
+    s.write_atomic(next)?
+    count += 1
+    next
+  })
+}
+
+/// Deletes the note if the stored version equals `expected`.
+pub fn (s: Store) delete(id: Str, expected: Int) -> () ! StoreErr
+  uses fs
+  requires domain.is_valid_id(id) else StoreErr.NotFound(id: id)
+{
+  s.writes.with(fn(var count) -> () ! StoreErr {
+    let cur = s.read_note(id)?
+    if cur.version != expected {
+      return Err(StoreErr.Conflict(id: id, current: cur.version))
+    }
+    s.dir.remove(note_path(id))?
+    count += 1
+  })
+}
+
+fn (s: Store) read_note(id: Str) -> domain.Note ! StoreErr uses fs.read {
+  let path = note_path(id)
+  let data = match s.dir.read(path) {
+    Ok(b) => b
+    Err(FsErr.NotFound(..)) => return Err(StoreErr.NotFound(id: id))
+    Err(e) => return Err(StoreErr.Io(e))
+  }
+  json.decode[domain.Note](data).map_err(fn(e) { StoreErr.Corrupt(path: path, msg: "${e}") })
+}
+
+/// Writes a temp file and renames it over the note's file. On any failure,
+/// including cancellation, the temp file is removed.
+fn (s: Store) write_atomic(n: domain.Note) -> () ! StoreErr uses fs.write {
+  let tmp = s.dir.create_temp(".", TEMP_PREFIX)?
+  var committed = false
+  defer {
+    if !committed {
+      let _ = s.dir.remove(tmp).ignore_err("best effort temp file cleanup after a failed write")
+    }
+  }
+  s.dir.write(tmp, json.encode(n))?
+  s.dir.rename(tmp, note_path(n.id))?
+  committed = true
+}

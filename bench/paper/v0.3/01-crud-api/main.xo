@@ -1,0 +1,175 @@
+use std/http
+use std/json
+use std/log
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of POST /users.
+struct CreateUser {
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of PATCH /users/{id}. Missing keys decode to `Absent`.
+struct PatchUser {
+  name: json.Patch[Str]
+  email: json.Patch[Str]
+  nickname: json.Patch[Str]
+} derive Json
+
+enum ApiErr {
+  BadRequest(msg: Str)
+  BadJson(from json.DecodeErr)
+  NotFound(id: Int)
+  Conflict(email: Str)
+}
+
+// http maps handler errors to responses through StatusError.
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    BadJson(_) => 400
+    NotFound(_) => 404
+    Conflict(_) => 409
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    BadJson(inner) => "invalid body: ${inner}"
+    NotFound(id) => "user ${id} not found"
+    Conflict(email) => "email ${email} already exists"
+  }
+}
+
+// ---------- validation ----------
+
+fn check_name(name: Str) ! ApiErr
+  requires name.rune_count() >= 1 else ApiErr.BadRequest(msg: "name must not be empty")
+  requires name.rune_count() <= 100 else ApiErr.BadRequest(msg: "name must be at most 100 characters")
+{}
+
+fn check_email(email: Str) ! ApiErr
+  requires email.contains("@") else ApiErr.BadRequest(msg: "email must contain @")
+{}
+
+// ---------- store ----------
+
+struct Db {
+  next_id: Int = 1
+  users: Map[Int, User] = {}
+}
+
+struct Store {
+  db: Mutex[Db]
+}
+
+fn new_store() -> Store {
+  Store{db: Mutex.new(Db{})}
+}
+
+fn (s: Store) create(input: CreateUser) -> User ! ApiErr {
+  check_name(input.name)?
+  check_email(input.email)?
+  s.db.with(fn(var db) -> User ! ApiErr {
+    if db.users.values().any(fn(u) { u.email == input.email }) {
+      return Err(ApiErr.Conflict(email: input.email))
+    }
+    let u = User{id: db.next_id, name: input.name, email: input.email, nickname: input.nickname}
+    db.users.put(u.id, u)
+    db.next_id += 1
+    u
+  })
+}
+
+fn (s: Store) get(id: Int) -> User ! ApiErr {
+  s.db.with(fn(db) { db.users.get(id) }).or_err(ApiErr.NotFound(id: id))?
+}
+
+fn (s: Store) list() -> List[User] {
+  s.db.with(fn(db) { db.users.values() }).sort_by(fn(u) { u.id })
+}
+
+fn (s: Store) patch(id: Int, p: PatchUser) -> User ! ApiErr {
+  s.db.with(fn(var db) -> User ! ApiErr {
+    var u = db.users.get(id).or_err(ApiErr.NotFound(id: id))?
+    // GUESS: variants of an enum from another module (json.Patch) written bare in
+    // match arms. 2.3 says other-module enums are qualified, but the pattern
+    // table in 3.5 says unit variants may be "bare or qualified".
+    match p.name {
+      Absent => ()
+      Null => return Err(ApiErr.BadRequest(msg: "name must not be null"))
+      Value(v) => u.name = v
+    }
+    match p.email {
+      Absent => ()
+      Null => return Err(ApiErr.BadRequest(msg: "email must not be null"))
+      Value(v) => u.email = v
+    }
+    match p.nickname {
+      Absent => ()
+      Null => u.nickname = None
+      Value(v) => u.nickname = v
+    }
+    check_name(u.name)?
+    check_email(u.email)?
+    if db.users.values().any(fn(o) { o.id != id && o.email == u.email }) {
+      return Err(ApiErr.Conflict(email: u.email))
+    }
+    db.users.put(id, u)
+    u
+  })
+}
+
+fn (s: Store) delete(id: Int) ! ApiErr {
+  s.db.with(fn(var db) -> () ! ApiErr {
+    if db.users.remove(id).is_none() {
+      return Err(ApiErr.NotFound(id: id))
+    }
+  })
+}
+
+// ---------- http ----------
+
+fn routes(store: Store) -> http.Router {
+  var r = http.router()
+  r.handle("POST /users", fn(req) -> http.Response ! ApiErr {
+    let input = req.json[CreateUser]()?
+    http.json(201, store.create(input)?)
+  })
+  // GUESS: a handler that cannot fail instantiates E as Never; assumed that
+  // Never satisfies the `E: Error` constraint on Router.handle.
+  r.handle("GET /users", fn(_req) { http.json(200, store.list()) })
+  r.handle("GET /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    http.json(200, store.get(req.param_int("id"))?)
+  })
+  r.handle("PATCH /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let p = req.json[PatchUser]()?
+    http.json(200, store.patch(req.param_int("id"), p)?)
+  })
+  r.handle("DELETE /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    store.delete(req.param_int("id"))?
+    http.empty(204)
+  })
+  r
+}
+
+fn listen_addr(env: Env) -> Str ! Error {
+  let raw = env.get("PORT") ?? "8080"
+  let port = Int.parse(raw).or_err("PORT must be an integer, got ${raw}")?
+  ":${port}"
+}
+
+fn main(os: Os) ! {
+  let addr = listen_addr(os.env)?
+  let srv = http.server(os.net.listen(addr)?, routes(new_store()))
+  log.info("listening", {"addr": addr})
+  srv.serve()?
+}

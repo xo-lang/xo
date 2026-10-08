@@ -1,0 +1,10 @@
+exit 70
+--- stdout
+even 10 odd 10
+failed true kept 10
+outcome 2 written 99
+atomic 8 8 1 true false 10
+flag true
+re-entrant with next
+--- stderr
+fault: XO-F004: Mutex.with called re-entrantly in one task; the mutex is already held from main.xo:39 at main.xo:40

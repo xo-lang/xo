@@ -1,0 +1,53 @@
+use std/http
+
+/// Reads URLs from standard input (one per line), fetches them with 8
+/// workers and a 30 second overall timeout, and prints one line per URL plus
+/// a summary line.
+fn main(os: Os) ! {
+  // GUESS: Stdio has `read_all() -> Str ! Error`.
+  let input = os.stdio.read_all()?
+
+  var jobs: List[Job[Str]] = []
+  // GUESS: Str has `lines() -> List[Str]` and `trim() -> Str`.
+  for line in input.lines() {
+    let url = line.trim()
+    if url != "" {
+      jobs.push(Job{id: jobs.len(), input: url})
+    }
+  }
+
+  // GUESS: http.client takes the Net capability and returns a client whose
+  // `get(url)` returns `http.Response ! http.ClientErr`. The response exposes
+  // the status code as `status: Int`. ClientErr is assumed to derive Display.
+  let client = http.client(os.net)
+
+  let report = run_pool(
+    jobs: jobs,
+    workers: 8,
+    timeout: 30s,
+    clock: os.clock,
+    f: fn(job: Job[Str]) -> Int ! http.ClientErr {
+      client.get(job.input)?.status
+    },
+  )
+
+  // Job ids are indexes into `jobs`, so we can line outcomes back up with
+  // their URLs and print in input order.
+  var lines: Map[Int, Str] = {}
+  for (id, status) in report.results {
+    lines.put(id, "{jobs[id].input} {status}")
+  }
+  for (id, failure) in report.failures {
+    let why = match failure {
+      Failed(cause) => "error: {cause}"
+      TimedOut => "error: timed out"
+    }
+    lines.put(id, "{jobs[id].input} {why}")
+  }
+
+  // GUESS: Stdio has `println(s: Str) -> () ! Error`.
+  for job in jobs {
+    os.stdio.println(lines.get(job.id) ?? "{job.input} error: no outcome")?
+  }
+  os.stdio.println("{report.results.len()} ok, {report.failures.len()} failed, {jobs.len()} total in {report.elapsed}")?
+}

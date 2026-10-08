@@ -1,0 +1,20 @@
+exit 1
+--- stdout
+--- FAIL: contract fuzz: test_contracts.bad_abs (main.xo:11:1, seed 1)
+    property failed on case 1; shrunk in 13 steps to
+    n = -501
+    fault: ensures failed: result >= 0 at main.xo:12:11
+       result = -501
+      x_testdata_golden_test_contracts.F_bad_abs
+          main.xo:12
+--- FAIL: contract fuzz: test_contracts.first_letters (main.xo:28:1, seed 1)
+    property failed on case 39; shrunk in 16 steps to
+    words = ["", "éaaa"]
+    n = 1
+    fault: slice 0..1 of Str splits a UTF-8 sequence at main.xo:31:39
+      x_testdata_golden_test_contracts.F_first_letters.func1
+          main.xo:31
+      x_testdata_golden_test_contracts.F_first_letters
+          main.xo:31
+FAIL: 4 passed, 2 failed, 0 skipped
+--- stderr

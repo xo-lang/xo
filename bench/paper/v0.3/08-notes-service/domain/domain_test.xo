@@ -1,0 +1,123 @@
+// Helpers build notes directly so the search tests do not depend on a clock.
+
+fn id_for(n: Int) -> Str {
+  let digits = "${n}"
+  "0".repeat(ID_LEN - digits.len()) + digits
+}
+
+fn note_at(n: Int, ms: Int, title: Str, body: Str, tags: List[Str]) -> Note {
+  let at = Time.UNIX_EPOCH + Duration.from_millis(ms)
+  Note{id: id_for(n), title: title, body: body, tags: tags, version: 1, created: at, updated: at}
+}
+
+fn make_tags(n: Int) -> List[Str] {
+  var out: List[Str] = []
+  for i in 0..n {
+    out.push("t${i}")
+  }
+  out
+}
+
+test "title must be 1 to 200 characters" {
+  expect(validate(NoteInput{title: ""})) == Err(ValidationErr.TitleEmpty)
+  expect(validate(NoteInput{title: "   "})) == Err(ValidationErr.TitleEmpty)
+  expect(validate(NoteInput{title: "a"}).is_ok())
+  expect(validate(NoteInput{title: "a".repeat(200)}).is_ok())
+  expect(validate(NoteInput{title: "a".repeat(201)})) == Err(ValidationErr.TitleTooLong(len: 201))
+  // 200 characters but 400 bytes: the limit counts characters.
+  expect(validate(NoteInput{title: "é".repeat(200)}).is_ok())
+}
+
+test "title is trimmed" {
+  let clean = validate(NoteInput{title: "  hello  "})?
+  expect(clean.title) == "hello"
+}
+
+test "at most 10 tags" {
+  expect(validate(NoteInput{title: "x", tags: make_tags(10)}).is_ok())
+  expect(validate(NoteInput{title: "x", tags: make_tags(11)})) == Err(ValidationErr.TooManyTags(count: 11))
+}
+
+test "tags are lowercase [a-z0-9-] with 1 to 32 characters" {
+  expect(valid_tag("go"))
+  expect(valid_tag("web-2"))
+  expect(valid_tag("a".repeat(32)))
+  expect(!valid_tag(""))
+  expect(!valid_tag("a".repeat(33)))
+  expect(!valid_tag("Go"))
+  expect(!valid_tag("snake_case"))
+  expect(!valid_tag("has space"))
+  expect(!valid_tag("café"))
+  expect(validate(NoteInput{title: "x", tags: ["ok", "Bad"]})) == Err(ValidationErr.BadTag(tag: "Bad"))
+}
+
+test "ids are safe file names" {
+  expect(valid_id("0123456789abcdef0123456789abcdef"))
+  expect(!valid_id("../../etc/passwd"))
+  expect(!valid_id("CON"))
+  expect(!valid_id("0123456789ABCDEF0123456789ABCDEF"))
+  expect(!valid_id("0123456789abcdef0123456789abcde:"))
+}
+
+test "update bumps the version and keeps the id" {
+  let t0 = Time.UNIX_EPOCH
+  let n = new_note(id_for(1), NoteInput{title: "a"}, t0)?
+  let m = apply_update(n, NoteInput{title: "b", tags: ["x"]}, t0 + 1s)?
+  expect(m.version) == 2
+  expect(m.id) == n.id
+  expect(m.created) == n.created
+  expect(m.updated) == t0 + 1s
+}
+
+test "search filters by tag and by case insensitive text" {
+  let notes = [
+    note_at(1, 1, "Shopping list", "milk", ["home"]),
+    note_at(2, 2, "Release plan", "Ship the MILK feature", ["work"]),
+    note_at(3, 3, "Ideas", "nothing here", ["work"]),
+  ]
+  let by_tag = search(notes, Query{tag: "work"})
+  expect(by_tag.notes.map(fn(n) { n.id })) == [id_for(3), id_for(2)]
+
+  let by_text = search(notes, Query{text: "Milk"})
+  expect(by_text.notes.map(fn(n) { n.id })) == [id_for(2), id_for(1)]
+
+  let both = search(notes, Query{tag: "home", text: "milk"})
+  expect(both.notes.map(fn(n) { n.id })) == [id_for(1)]
+}
+
+test "cursor round trips and rejects garbage" {
+  let c = Cursor{ms: 1234, id: id_for(7)}
+  expect(parse_cursor(encode_cursor(c))) == Some(c)
+  expect(parse_cursor("nope")) == None
+  expect(parse_cursor("12-../x")) == None
+}
+
+test "keyset pages have no duplicates or gaps even with equal timestamps and inserts" {
+  // Every note shares one timestamp, so the order rests on the id tie breaker.
+  var notes: List[Note] = []
+  for i in 0..25 {
+    notes.push(note_at(i * 2, 0, "n${i}", "", []))
+  }
+  let originals = notes.map(fn(n) { n.id })
+
+  var seen: List[Str] = []
+  var cursor: Cursor? = None
+  var pages = 0
+  while {
+    let page = search(notes, Query{limit: 10, cursor: cursor})
+    pages += 1
+    for n in page.notes {
+      seen.push(n.id)
+    }
+    if pages == 1 {
+      // An odd id lands in the middle of the remaining range.
+      notes.push(note_at(13, 0, "late", "", []))
+    }
+    match page.next_cursor {
+      Some(text) => cursor = parse_cursor(text)
+      None => break
+    }
+  }
+  expect(seen.to_set().len()) == seen.len()
+  expect(originals.all(fn(id) { seen.contains(id) }))
+}

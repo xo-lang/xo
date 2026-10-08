@@ -1,0 +1,12 @@
+struct Percent {
+  value: Int = 0
+} invariant value >= 0 && value <= 100
+
+fn main(os: Os) {
+  let p = Percent{}
+  let q = p with {value: 50}
+  os.stdio.println("${p.value} ${q.value}")
+  os.stdio.println("construct out of range next")
+  let bad = Percent{value: 150}
+  os.stdio.println("never ${bad.value}")
+}

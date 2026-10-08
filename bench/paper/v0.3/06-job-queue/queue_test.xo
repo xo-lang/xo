@@ -1,0 +1,204 @@
+use std/http
+
+test "lease expiry redelivers to another worker and the stale ack fails" {
+  let q = new_queue(os.clock)
+  let id = q.enqueue(b"a", 0).id
+  let first = q.lease("w1", 10s).or_err("no job for w1")?
+  expect(q.lease("w2", 10s)) == None
+
+  // Lease ends at +10s, backoff after attempt 1 is 1s, so visible at +11s.
+  os.clock.advance(12s)
+  let second = q.lease("w2", 10s).or_err("job was not redelivered")?
+  expect(second.job.id) == id
+  expect(second.job.attempts) == 2
+  expect(second.token != first.token)
+  expect(q.ack(id, first.token)) == Err(QueueErr.StaleToken(id: id))
+  expect(q.extend(id, first.token, 10s)) == Err(QueueErr.StaleToken(id: id))
+
+  q.ack(id, second.token)?
+  expect(q.get(id)?.state) == JobState.Done
+}
+
+test "job dead letters after max attempts and retry_dead brings it back" {
+  let q = new_queue(os.clock, max_attempts: 3)
+  let id = q.enqueue(b"x", 0).id
+  expect(q.retry_dead(id)) == Err(QueueErr.NotDead(id: id))
+  for _ in 0..3 {
+    let l = q.lease("w", 30s).or_err("job not visible")?
+    q.nack(id, l.token, "boom")?
+    os.clock.advance(30s)
+  }
+  let dead = q.get(id)?
+  expect(dead.state) == JobState.Dead
+  expect(dead.attempts) == 3
+  expect(dead.last_error) == Some("boom")
+  expect(q.lease("w", 30s)) == None
+  expect(q.stats().dead) == 1
+
+  q.retry_dead(id)?
+  let revived = q.get(id)?
+  expect(revived.state) == JobState.Queued
+  expect(revived.attempts) == 0
+  expect(q.lease("w", 30s).is_some())
+}
+
+test "backoff delays double from 1s and cap at 30s" {
+  expect(backoff(1)) == 1s
+  expect(backoff(2)) == 2s
+  expect(backoff(5)) == 16s
+  expect(backoff(6)) == 30s
+  expect(backoff(40)) == 30s
+
+  let q = new_queue(os.clock, max_attempts: 10)
+  let id = q.enqueue(b"x", 0).id
+  for d in [1s, 2s, 4s, 8s, 16s, 30s, 30s] {
+    let l = q.lease("w", 1m).or_err("job not visible after backoff")?
+    q.nack(id, l.token, "fail")?
+    os.clock.advance(d - 1ms)
+    expect(q.lease("w", 1m)) == None
+    os.clock.advance(1ms)
+  }
+  expect(q.lease("w", 1m).is_some())
+}
+
+test "heartbeats keep a long running job from being redelivered" {
+  let q = new_queue(os.clock)
+  let id = q.enqueue(b"long", 0).id
+  let calls = Atomic[Int].new(0)
+  let stop = Chan[()].new()
+  let clock = os.clock
+  let cfg = RunnerConfig{workers: 2, lease_duration: 10s, grace: 5m}
+  scope s {
+    s.spawn(fn() {
+      run_workers(q, clock, cfg, stop, fn(_job) -> () ! Error {
+        calls.add(1)
+        clock.sleep(100s)
+      })
+    })
+    while q.get(id)?.state != JobState.Done {
+      clock.sleep(1s)
+    }
+    stop.close()
+  }
+  expect(calls.get()) == 1
+  expect(q.get(id)?.attempts) == 1
+}
+
+test "shutdown nacks in flight jobs after the grace period and leaves no workers" {
+  let q = new_queue(os.clock)
+  let a = q.enqueue(b"a", 0).id
+  let b = q.enqueue(b"b", 0).id
+  let running = Atomic[Int].new(0)
+  let stop = Chan[()].new()
+  let clock = os.clock
+  let cfg = RunnerConfig{workers: 2, lease_duration: 10s, grace: 5s}
+  scope s {
+    let runner = s.spawn(fn() {
+      run_workers(q, clock, cfg, stop, fn(_job) -> () ! Error {
+        running.add(1)
+        defer running.add(-1)
+        clock.sleep(1h)
+      })
+    })
+    while running.get() < 2 {
+      clock.sleep(10ms)
+    }
+    let started = clock.now()
+    stop.close()
+    runner.await
+    expect(clock.now() - started) == cfg.grace
+    expect(running.get()) == 0
+  }
+  for id in [a, b] {
+    let job = q.get(id)?
+    expect(job.state) == JobState.Queued
+    expect(job.attempts) == 1
+    expect(job.last_error) == Some("canceled")
+  }
+  expect(q.stats().leased) == 0
+}
+
+test "idempotency key deduplicates within 24 hours" {
+  let q = new_queue(os.clock)
+  let first = q.enqueue(b"a", 0, idempotency_key: "k1")
+  let dup = q.enqueue(b"b", 5, idempotency_key: "k1")
+  expect(first.created)
+  expect(!dup.created)
+  expect(dup.id) == first.id
+  expect(q.stats().queued) == 1
+
+  let other = q.enqueue(b"c", 0, idempotency_key: "k2")
+  expect(other.id != first.id)
+
+  os.clock.advance(24h + 1s)
+  let later = q.enqueue(b"d", 0, idempotency_key: "k1")
+  expect(later.created)
+  expect(later.id != first.id)
+}
+
+test "priority ordering, FIFO within a priority" {
+  let q = new_queue(os.clock)
+  let low1 = q.enqueue(b"l1", 0).id
+  let high1 = q.enqueue(b"h1", 10).id
+  let low2 = q.enqueue(b"l2", 0).id
+  let high2 = q.enqueue(b"h2", 10).id
+  let mid = q.enqueue(b"m", 5).id
+  var order: List[Str] = []
+  for _ in 0..5 {
+    let l = q.lease("w", 1m).or_err("expected a job")?
+    order.push(l.job.id)
+  }
+  expect(order) == [high1, high2, mid, low1, low2]
+  expect(q.lease("w", 1m)) == None
+}
+
+test "50 workers, 1000 jobs, every job handled exactly once" {
+  let q = new_queue(os.clock)
+  for i in 0..1000 {
+    q.enqueue("${i}".bytes(), i % 3)
+  }
+  let seen = Mutex[Map[Str, Int]].new({})
+  let stop = Chan[()].new()
+  let clock = os.clock
+  scope s {
+    s.spawn(fn() {
+      run_workers(q, clock, RunnerConfig{workers: 50, lease_duration: 30s}, stop, fn(job) -> () ! Error {
+        seen.with(fn(var m) { m.update(job.id, 0, fn(var n) { n += 1 }) })
+      })
+    })
+    while q.stats().done < 1000 {
+      clock.sleep(100ms)
+    }
+    stop.close()
+  }
+  let counts = seen.with(fn(m) { m })
+  expect(counts.len()) == 1000
+  expect(counts.values().all(fn(n) { n == 1 }))
+  let st = q.stats()
+  expect(st.done) == 1000
+  expect(st.queued) == 0
+  expect(st.leased) == 0
+  expect(st.dead) == 0
+}
+
+test "http: enqueue returns 201 then 200 for a duplicate key, retry of a live job is 404" {
+  let q = new_queue(os.clock)
+  let app = routes(q)
+  let body = r#"{"payload": "aGVsbG8=", "priority": 2, "idempotency_key": "abc"}"#.bytes()
+  let first = app.call(http.new_request("POST", "/jobs", body: body))
+  expect(first.status) == 201
+  let second = app.call(http.new_request("POST", "/jobs", body: body))
+  expect(second.status) == 200
+  let id = first.decode_json[EnqueueResp]()?.id
+  expect(second.decode_json[EnqueueResp]()?.id) == id
+
+  let view = app.call(http.new_request("GET", "/jobs/${id}")).decode_json[JobView]()?
+  expect(view.state) == JobState.Queued
+  expect(view.attempts) == 0
+
+  expect(app.call(http.new_request("POST", "/dead/${id}/retry")).status) == 404
+  expect(app.call(http.new_request("GET", "/jobs/nope")).status) == 404
+  expect(app.call(http.new_request("POST", "/jobs", body: b"not json")).status) == 400
+  let stats = app.call(http.new_request("GET", "/stats")).decode_json[Stats]()?
+  expect(stats.queued) == 1
+}

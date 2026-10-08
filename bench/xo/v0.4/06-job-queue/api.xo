@@ -1,0 +1,79 @@
+// HTTP API for the queue.
+
+use std/http
+
+struct EnqueueReq {
+  payload: Bytes
+  priority: Int = 0
+  idempotency_key: Str?
+} derive Json
+
+struct IdResp {
+  id: Str
+} derive Json
+
+struct JobView {
+  id: Str
+  state: JobState
+  priority: Int
+  attempts: Int
+  last_error: Str?
+} derive Json
+
+enum ApiErr {
+  BadRequest(msg: Str)
+  NotFound(id: Int)
+  NotDead(id: Int)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    NotFound(_) | NotDead(_) => 404
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    NotFound(id) => "job ${id} not found"
+    NotDead(id) => "job ${id} is not dead"
+  }
+}
+
+fn view(j: Job) -> JobView {
+  JobView{
+    id: "${j.id}",
+    state: j.state,
+    priority: j.priority,
+    attempts: j.attempts,
+    last_error: j.last_error,
+  }
+}
+
+pub fn routes(q: Queue) -> http.Router uses clock {
+  var r = http.router()
+
+  r.handle("POST /jobs", fn(req) -> http.Response ! ApiErr {
+    let body = req.json[EnqueueReq]().map_err(fn(e) { ApiErr.BadRequest(msg: "${e}") })?
+    let res = q.enqueue(body.payload, body.priority, body.idempotency_key)
+    let status = if res.duplicate { 200 } else { 201 }
+    http.json(status, IdResp{id: "${res.id}"})
+  })
+
+  r.handle("GET /jobs/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let id = req.param_int("id")
+    let j = q.get(id).or_err(ApiErr.NotFound(id: id))?
+    http.json(200, view(j))
+  })
+
+  r.handle("GET /stats", fn(_req) { http.json(200, q.stats()) })
+
+  r.handle("POST /dead/{id:Int}/retry", fn(req) -> http.Response ! ApiErr {
+    let id = req.param_int("id")
+    q.retry_dead(id).map_err(fn(_e) { ApiErr.NotDead(id: id) })?
+    http.json(200, IdResp{id: "${id}"})
+  })
+
+  r
+}

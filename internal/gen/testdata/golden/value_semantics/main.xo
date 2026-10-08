@@ -1,0 +1,39 @@
+struct Bag {
+  items: List[Int]
+  index: Map[Str, Int]
+}
+
+fn add(var b: Bag, k: Str, v: Int) {
+  b.items.push(v)
+  b.index.put(k, v)
+}
+
+fn main(os: Os) {
+  var xs = [1, 2, 3]
+  let snapshot = xs
+  xs.push(4)
+  xs[0] = 100
+  os.stdio.println("xs ${xs.len()} ${xs[0]} snapshot ${snapshot.len()} ${snapshot[0]}")
+  var a = xs
+  var b = xs
+  a.push(5)
+  b.push(6)
+  os.stdio.println("a ${a[4]} b ${b[4]} xs ${xs.len()}")
+  var bag = Bag{items: [], index: {}}
+  add(bag, "x", 1)
+  let copy = bag
+  add(bag, "y", 2)
+  os.stdio.println("bag ${bag.items.len()} ${bag.index.len()} copy ${copy.items.len()} ${copy.index.len()}")
+  var grid = [[1, 2], [3, 4]]
+  grid[1][0] = 30
+  os.stdio.println("grid ${grid[1][0]} ${grid[0][1]}")
+  var m: Map[Str, List[Int]] = {"a": [1]}
+  m["a"] = m.get_or_fault("a", "golden: key exists") + [2]
+  m["b"] = [9]
+  os.stdio.println("m ${m.get_or_fault("a", "golden: key exists").len()} ${m.get_or_fault("b", "golden: key exists")[0]} ${m.keys().join(",")}")
+  var popped = [1, 2, 3]
+  let last = popped.pop()
+  popped.insert(0, 0)
+  let removed = popped.remove_at(1)
+  os.stdio.println("pop ${last ?? 0} removed ${removed} now ${popped.len()} first ${popped[0]}")
+}

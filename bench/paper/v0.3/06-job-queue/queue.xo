@@ -1,0 +1,272 @@
+// In memory job queue with leases, retries, backoff, and a dead letter state.
+// All state lives behind one Mutex, so a Queue value can be copied freely and
+// shared by many workers.
+
+pub enum JobState {
+  Queued
+  Leased
+  Done
+  Dead
+} derive Display, Json
+
+/// The lease currently held on a job. Present exactly when the job is Leased.
+struct LeaseInfo {
+  token: Str
+  worker: Str
+  until: Time
+}
+
+pub struct Job {
+  pub id: Str
+  pub payload: Bytes
+  pub priority: Int
+  pub state: JobState = JobState.Queued
+  pub attempts: Int = 0
+  pub last_error: Str? = None
+  seq: Int
+  visible_at: Time
+  // GUESS: a pub struct may have a non pub field whose type is a non pub
+  // struct; the spec does not say whether this leaks a private type.
+  lease: LeaseInfo? = None
+} invariant (state == JobState.Leased) == lease.is_some()
+
+/// A job handed to a worker, with the token that proves the lease.
+pub struct Lease {
+  pub job: Job
+  pub token: Str
+}
+
+/// Result of enqueue. `created` is false when an idempotency key matched.
+pub struct Enqueued {
+  pub id: Str
+  pub created: Bool
+}
+
+pub struct Stats {
+  pub queued: Int = 0
+  pub leased: Int = 0
+  pub done: Int = 0
+  pub dead: Int = 0
+} derive Json
+
+pub enum QueueErr {
+  NotFound(id: Str)
+  StaleToken(id: Str)
+  NotDead(id: Str)
+}
+
+fn (e: QueueErr) display() -> Str {
+  match e {
+    NotFound(id) => "job ${id} not found"
+    StaleToken(id) => "lease token for job ${id} is not current"
+    NotDead(id) => "job ${id} is not dead"
+  }
+}
+
+const IDEMPOTENCY_WINDOW = 24h
+const MAX_BACKOFF = 30s
+
+struct QueueState {
+  jobs: Map[Str, Job] = {}
+  idempotency: Map[Str, (Str, Time)] = {}
+  next_seq: Int = 1
+  next_token: Int = 1
+  max_attempts: Int = 5
+}
+
+pub struct Queue {
+  state: Mutex[QueueState]
+  clock: Clock
+}
+
+pub fn new_queue(clock: Clock, max_attempts: Int = 5) -> Queue
+  requires max_attempts >= 1
+{
+  Queue{state: Mutex.new(QueueState{max_attempts: max_attempts}), clock: clock}
+}
+
+/// Delay before a job that failed its `attempts`-th attempt is visible again:
+/// min(30s, 1s * 2^(attempts-1)).
+fn backoff(attempts: Int) -> Duration
+  requires attempts >= 1
+{
+  if attempts > 6 {
+    return MAX_BACKOFF
+  }
+  (1s * (1 << (attempts - 1))).min(MAX_BACKOFF)
+}
+
+pub fn (q: Queue) enqueue(payload: Bytes, priority: Int, idempotency_key: Str? = None) -> Enqueued
+  uses clock
+{
+  let now = q.clock.now()
+  q.state.with(fn(var st) -> Enqueued {
+    if let Some(key) = idempotency_key {
+      if let Some((existing, at)) = st.idempotency.get(key) {
+        if now - at < IDEMPOTENCY_WINDOW {
+          return Enqueued{id: existing, created: false}
+        }
+      }
+    }
+    // Drop keys that fell out of the window so the map does not grow forever.
+    st.idempotency = st.idempotency.filter(fn(_key, entry) {
+      let (_, at) = entry
+      now - at < IDEMPOTENCY_WINDOW
+    })
+    let id = "job-${st.next_seq}"
+    st.jobs.put(id, Job{
+      id: id,
+      payload: payload,
+      priority: priority,
+      seq: st.next_seq,
+      visible_at: now,
+    })
+    st.next_seq += 1
+    if let Some(key) = idempotency_key {
+      st.idempotency.put(key, (id, now))
+    }
+    Enqueued{id: id, created: true}
+  })
+}
+
+/// Leases the visible job with the highest priority, FIFO within a priority.
+pub fn (q: Queue) lease(worker_id: Str, lease_duration: Duration) -> Lease?
+  uses clock
+  requires lease_duration > 0s
+{
+  let now = q.clock.now()
+  q.state.with(fn(var st) -> Lease? {
+    st.reap(now)
+    // GUESS: `?` on an Option works inside a closure whose declared return
+    // type is optional (2.5 only says "in a function that returns U?").
+    let job = st.next_visible(now)?
+    let token = "${job.id}/${st.next_token}"
+    st.next_token += 1
+    let leased = job with {
+      state: JobState.Leased,
+      attempts: job.attempts + 1,
+      lease: LeaseInfo{token: token, worker: worker_id, until: now + lease_duration},
+    }
+    st.jobs.put(job.id, leased)
+    Lease{job: leased, token: token}
+  })
+}
+
+pub fn (q: Queue) ack(job_id: Str, token: Str) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  // Expiry runs in its own critical section: a `with` closure that returns
+  // Err discards its mutations, and the expiry must stick even when ack fails.
+  q.expire(now)
+  q.state.with(fn(var st) -> () ! QueueErr {
+    let j = st.leased_job(job_id, token)?
+    st.jobs.put(job_id, j with {state: JobState.Done, lease: None})
+  })
+}
+
+pub fn (q: Queue) nack(job_id: Str, token: Str, reason: Str) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  q.expire(now)
+  q.state.with(fn(var st) -> () ! QueueErr {
+    let _ = st.leased_job(job_id, token)?
+    st.fail(job_id, reason, now)
+  })
+}
+
+/// Heartbeat: pushes the lease deadline to now + lease_duration.
+pub fn (q: Queue) extend(job_id: Str, token: Str, lease_duration: Duration) -> () ! QueueErr
+  uses clock
+  requires lease_duration > 0s
+{
+  let now = q.clock.now()
+  q.expire(now)
+  q.state.with(fn(var st) -> () ! QueueErr {
+    let j = st.leased_job(job_id, token)?
+    let lease = j.lease.map(fn(l) { l with {until: now + lease_duration} })
+    st.jobs.put(job_id, j with {lease: lease})
+  })
+}
+
+pub fn (q: Queue) retry_dead(job_id: Str) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  q.state.with(fn(var st) -> () ! QueueErr {
+    let j = st.jobs.get(job_id).or_err(QueueErr.NotFound(id: job_id))?
+    if j.state != JobState.Dead {
+      return Err(QueueErr.NotDead(id: job_id))
+    }
+    st.jobs.put(job_id, j with {state: JobState.Queued, attempts: 0, visible_at: now})
+  })
+}
+
+pub fn (q: Queue) get(job_id: Str) -> Job ! QueueErr uses clock {
+  q.expire(q.clock.now())
+  q.state.with(fn(st) { st.jobs.get(job_id) }).or_err(QueueErr.NotFound(id: job_id))
+}
+
+pub fn (q: Queue) stats() -> Stats uses clock {
+  q.expire(q.clock.now())
+  q.state.with(fn(st) {
+    var s = Stats{}
+    for j in st.jobs.values() {
+      match j.state {
+        Queued => s.queued += 1
+        Leased => s.leased += 1
+        Done => s.done += 1
+        Dead => s.dead += 1
+      }
+    }
+    s
+  })
+}
+
+fn (q: Queue) expire(now: Time) {
+  q.state.with(fn(var st) { st.reap(now) })
+}
+
+/// Treats every lease that ended at or before `now` as a failed attempt.
+fn (var st: QueueState) reap(now: Time) {
+  for (id, j) in st.jobs {
+    match j.lease {
+      Some(l) if l.until <= now => st.fail(id, "lease expired", l.until)
+      _ => ()
+    }
+  }
+}
+
+/// Records a failed attempt that ended at `at`: dead letter when attempts are
+/// used up, otherwise visible again after the backoff.
+fn (var st: QueueState) fail(id: Str, reason: Str, at: Time) {
+  let j = st.jobs[id]
+  let next = if j.attempts >= st.max_attempts {
+    j with {state: JobState.Dead, lease: None, last_error: reason}
+  } else {
+    j with {
+      state: JobState.Queued,
+      lease: None,
+      last_error: reason,
+      visible_at: at + backoff(j.attempts),
+    }
+  }
+  st.jobs.put(id, next)
+}
+
+fn (st: QueueState) leased_job(id: Str, token: Str) -> Job ! QueueErr {
+  let j = st.jobs.get(id).or_err(QueueErr.NotFound(id: id))?
+  match j.lease {
+    Some(l) if l.token == token => j
+    _ => return Err(QueueErr.StaleToken(id: id))
+  }
+}
+
+fn (st: QueueState) next_visible(now: Time) -> Job? {
+  var best: Job? = None
+  for j in st.jobs.values() {
+    if j.state != JobState.Queued || j.visible_at > now {
+      continue
+    }
+    best = match best {
+      Some(b) if b.priority > j.priority || (b.priority == j.priority && b.seq < j.seq) => Some(b)
+      _ => Some(j)
+    }
+  }
+  best
+}

@@ -1,0 +1,116 @@
+fn setup_dirs(fs: Fs) -> () ! FsErr uses fs.write {
+  fs.create_dir_all("src")?
+  fs.create_dir_all("dst")?
+}
+
+test "new file is copied and unchanged file is skipped" {
+  setup_dirs(os.fs)?
+  os.fs.write("src/new.txt", b"hello")?
+  os.fs.write("src/same.txt", b"same")?
+  // dst copy is written later, so it is not older than the source.
+  os.clock.advance(1s)
+  os.fs.write("dst/same.txt", b"same")?
+
+  let src = os.fs.sub("src").read_only()
+  let dst = os.fs.sub("dst")
+  let r = sync(src, dst, Options{}, os.stdio)?
+
+  expect(r) == Report{copied: 1, skipped: 1}
+  expect(os.fs.read("dst/new.txt")?) == b"hello"
+  expect(os.stdio.output().contains("copied new.txt"))
+
+  // A second run has nothing to do.
+  let again = sync(src, dst, Options{}, os.stdio)?
+  expect(again) == Report{skipped: 2}
+}
+
+test "newer source file is copied over an older destination" {
+  setup_dirs(os.fs)?
+  os.fs.write("dst/a.txt", b"old!")?
+  os.clock.advance(1s)
+  os.fs.write("src/a.txt", b"new!")?
+
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), Options{}, os.stdio)?
+  expect(r) == Report{copied: 1}
+  expect(os.fs.read("dst/a.txt")?) == b"new!"
+}
+
+test "dry run writes nothing" {
+  setup_dirs(os.fs)?
+  os.fs.create_dir_all("src/sub")?
+  os.fs.write("src/sub/a.txt", b"a")?
+  os.fs.write("dst/extra.txt", b"x")?
+  let before = os.fs.files()
+
+  // Same wiring as main: a dry run gets a read only dst.
+  let opts = Options{dry_run: true, delete: true}
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst").read_only(), opts, os.stdio)?
+
+  expect(r) == Report{copied: 1, deleted: 1}
+  expect(os.fs.files()) == before
+  expect(os.fs.exists("dst/sub")?) == false
+  expect(os.stdio.output().contains("would copy sub/a.txt"))
+  expect(os.stdio.output().contains("would delete extra.txt"))
+}
+
+test "delete removes extra files and empty directories" {
+  setup_dirs(os.fs)?
+  os.fs.write("src/keep.txt", b"k")?
+  os.fs.create_dir_all("dst/old")?
+  os.fs.write("dst/old/x.txt", b"x")?
+  os.fs.write("dst/extra.txt", b"e")?
+
+  let opts = Options{delete: true}
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts, os.stdio)?
+
+  // extra.txt, old/x.txt, and the now empty old/
+  expect(r) == Report{copied: 1, deleted: 3}
+  expect(os.fs.exists("dst/extra.txt")?) == false
+  expect(os.fs.exists("dst/old")?) == false
+  expect(os.fs.exists("dst/keep.txt")?) == true
+}
+
+test "without delete extra files stay" {
+  setup_dirs(os.fs)?
+  os.fs.write("dst/extra.txt", b"e")?
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), Options{}, os.stdio)?
+  expect(r) == Report{}
+  expect(os.fs.exists("dst/extra.txt")?) == true
+}
+
+test "failure while copying leaves no temp file" {
+  setup_dirs(os.fs)?
+  os.fs.write("src/a.txt", b"data")?
+  os.fs.fail_next(FsOp.Rename, "dst/a.txt", FsErr.Io(path: "dst/a.txt", msg: "disk full"))
+
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), Options{}, os.stdio)?
+
+  expect(r) == Report{failed: 1}
+  let left = os.fs.files().keys().filter(fn(p) { p.starts_with("dst/") })
+  expect(left) == []
+  expect(os.stdio.errors().contains("failed copy a.txt"))
+}
+
+test "case insensitive match treats differently cased names as the same file" {
+  setup_dirs(os.fs)?
+  os.fs.write("src/Readme.md", b"r")?
+  os.clock.advance(1s)
+  os.fs.write("dst/README.md", b"r")?
+
+  let opts = Options{delete: true, fold_case: true, skip_names: #{".DS_Store"}}
+  os.fs.write("dst/.DS_Store", b"junk")?
+  let r = sync(os.fs.sub("src").read_only(), os.fs.sub("dst"), opts, os.stdio)?
+
+  expect(r) == Report{skipped: 1}
+  expect(os.fs.exists("dst/.DS_Store")?) == true
+}
+
+test "parse args" {
+  let a = parse_args(["--delete", "a", "b"])?
+  expect(a.delete)
+  expect(a.dry_run) == false
+  expect(a.src) == "a"
+  expect(a.dst) == "b"
+  expect(parse_args(["a"]).is_err())
+  expect(parse_args(["--force", "a", "b"]).is_err())
+}

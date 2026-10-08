@@ -1,0 +1,12 @@
+fn main(os: Os) {
+  let big = 300
+  os.stdio.println("float: ${Float(big)} ${Float(7) / 2.0}")
+  os.stdio.println("trunc: ${Int(3.9)} ${Int(-3.9)}")
+  os.stdio.println("try: ${UInt8.try(255) ?? 0} ${UInt8.try(256) ?? 0} ${Int32.try(-5) ?? 0}")
+  let small: Int32 = Int32(1000)
+  os.stdio.println("int32: ${small} ${Int(small) + 1}")
+  os.stdio.println("parse: ${Int.parse("42") ?? 0} ${Int.parse("x") ?? 0} ${Float.parse("2.5") ?? 0.0}")
+  os.stdio.println("convert 300 to UInt8")
+  let b = UInt8(big)
+  os.stdio.println("never ${b}")
+}

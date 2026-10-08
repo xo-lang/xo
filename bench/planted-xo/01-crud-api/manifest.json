@@ -1,0 +1,82 @@
+[
+  {
+    "id": "X1",
+    "class": "ignored error",
+    "go_bug": "handleCreate: `nick, _, err := nicknameField(fields)` followed by an `if err != nil` 400 return was replaced with `nick, _, _ := nicknameField(fields)`, discarding the nickname decode error.",
+    "xo_change": "create calls validate_email as a bare statement, dropping its Result",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X2",
+    "class": "nil dereference or nil map write",
+    "go_bug": "Store.Update: nickname branch `} else if p.Nickname != nil {` changed to `} else if p.Nickname != nil && *p.Nickname != *u.Nickname {` (skip unchanged nickname), which dereferences u.Nickname even whe",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Xo has no nil, null or unwrap-style panic, so a nil dereference or nil map write cannot be written; maps are initialised by literal"
+  },
+  {
+    "id": "X3",
+    "class": "missing case in a switch over a closed set",
+    "go_bug": "handlePatch: the `case errors.Is(err, errDuplicateEmail): writeError(w, http.StatusConflict, ...)` arm was removed from the switch over Store.Update's error outcomes, so the duplicate email error fall",
+    "xo_change": "remove the Conflict arm from ApiErr.status match",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "X4",
+    "class": "data race on shared state",
+    "go_bug": "Store.Delete takes `s.mu.RLock()` / `defer s.mu.RUnlock()` instead of `s.mu.Lock()` / `defer s.mu.Unlock()`, so it mutates the users and byEmail maps while holding only a shared read lock.",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "Store state is only reachable through Mutex.with, Xo has no way to touch it unlocked"
+  },
+  {
+    "id": "X5",
+    "class": "goroutine leak",
+    "go_bug": "readFields now reads the body in a goroutine that sends on an unbuffered channel, and the caller selects between that channel and r.Context().Done()",
+    "xo_change": "",
+    "status": "inexpressible",
+    "reason": "tasks are scope bound and request handlers cannot spawn detached work, so a leak cannot be written"
+  },
+  {
+    "id": "X6",
+    "class": "lost update",
+    "go_bug": "Store.Update: the final `s.users[id] = u` write back was removed; the local copy u is modified and returned but the map keeps the old value (the byEmail index is still updated).",
+    "xo_change": "remove st.users.put(id, u) in update so the modified copy is never stored",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N1",
+    "class": "off by one",
+    "go_bug": "validateName: `n > 100` changed to `n >= 100`, so the upper bound is exclusive.",
+    "xo_change": "validate_name upper bound made exclusive",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N2",
+    "class": "wrong HTTP status or error kind",
+    "go_bug": "handleCreate: success response `writeJSON(w, http.StatusCreated, u)` changed to `writeJSON(w, http.StatusOK, u)`.",
+    "xo_change": "POST /users success returns 200 instead of 201",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N3",
+    "class": "wrong time, backoff, or limit arithmetic",
+    "go_bug": "`const maxBodyBytes = 1 << 20` (1 MiB) changed to `1 << 10` (1 KiB).",
+    "xo_change": "name length limit constant shrunk from 100 to 10 (Xo has no body size limit constant)",
+    "status": "variant",
+    "reason": ""
+  },
+  {
+    "id": "N4",
+    "class": "inverted or wrong condition",
+    "go_bug": "Store.Update: `if p.Email != nil && *p.Email != u.Email {` changed to `if p.Email != nil && *p.Email == u.Email {`.",
+    "xo_change": "update conflict check inverted",
+    "status": "variant",
+    "reason": ""
+  }
+]

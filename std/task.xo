@@ -1,0 +1,35 @@
+// std/task (spec/std.md 7, core 7.1). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Semaphore and Group are opaque
+// handles: copies share the same permits, or the same group.
+
+enum Timed[E] {
+  TimedOut
+  Failed(from E)
+} derive Display
+
+enum Isolated[E] {
+  Faulted(info: Fault)
+  Failed(from E)
+} derive Display
+
+struct Fault {
+  msg: Str
+  location: Str
+  frames: List[Str]
+} derive Display
+
+fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T ! E uses fx) -> T ! Timed[E] uses (clock, fx)
+fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
+fn is_canceled() -> Bool
+
+fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, E]] uses fx
+
+/// A task group (core 7.1): created by `s.group()` or given as `os.tasks`.
+/// Its tasks belong to the scope that created it.
+struct Group {}
+fn (g: Group) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses fx
+
+struct Semaphore {}
+fn semaphore(permits: Int) -> Semaphore
+fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx

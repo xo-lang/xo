@@ -1,0 +1,307 @@
+// In memory job queue with leases, retries, backoff, and dead letters.
+
+const DEFAULT_MAX_ATTEMPTS = 5
+const MAX_BACKOFF = 30s
+const IDEMPOTENCY_WINDOW = 24h
+
+pub enum JobState {
+  Queued
+  Leased
+  Done
+  Dead
+} derive Display, Json
+
+pub struct Job {
+  pub id: Int
+  pub payload: Bytes
+  pub priority: Int
+  pub state: JobState
+  /// Number of leases handed out since the job was created or last retried.
+  pub attempts: Int
+  pub last_error: Str?
+  /// The job may not be leased before this instant.
+  pub visible_at: Time
+  pub lease_token: Int?
+  pub lease_until: Time
+  pub worker_id: Str?
+  pub idempotency_key: Str?
+}
+
+pub struct Lease {
+  pub job: Job
+  pub token: Int
+}
+
+pub struct Enqueued {
+  pub id: Int
+  pub duplicate: Bool
+}
+
+pub struct Stats {
+  pub queued: Int
+  pub leased: Int
+  pub done: Int
+  pub dead: Int
+} derive Json
+
+pub enum QueueErr {
+  NotFound(id: Int)
+  StaleToken(id: Int)
+  NotDead(id: Int)
+}
+
+fn (e: QueueErr) display() -> Str {
+  match e {
+    NotFound(id) => "job ${id} not found"
+    StaleToken(id) => "lease token for job ${id} is not current"
+    NotDead(id) => "job ${id} is not dead"
+  }
+}
+
+struct IdemEntry {
+  job_id: Int
+  at: Time
+}
+
+struct State {
+  jobs: Map[Int, Job]
+  idem: Map[Str, IdemEntry]
+  dead: List[Int]
+  next_id: Int = 1
+  next_token: Int = 1
+}
+
+pub struct Queue {
+  state: Mutex[State]
+  clock: Clock
+  max_attempts: Int
+}
+
+pub fn new_queue(clock: Clock, max_attempts: Int = DEFAULT_MAX_ATTEMPTS) -> Queue
+  requires max_attempts > 0
+{
+  Queue{
+    state: Mutex[State].new(State{jobs: {}, idem: {}, dead: []}),
+    clock: clock,
+    max_attempts: max_attempts,
+  }
+}
+
+/// Delay before a job becomes visible again after its `attempts`-th failure:
+/// min(30s, 1s * 2^(attempts-1)).
+pub fn backoff(attempts: Int) -> Duration {
+  var d = 1s
+  for _ in 1..attempts {
+    d = d * 2
+    if d >= MAX_BACKOFF {
+      return MAX_BACKOFF
+    }
+  }
+  d.min(MAX_BACKOFF)
+}
+
+// ---- Queue API (thread safe through the Mutex) ----
+
+pub fn (q: Queue) enqueue(payload: Bytes, priority: Int = 0, idempotency_key: Str? = None) -> Enqueued
+  uses clock
+{
+  let now = q.clock.now()
+  q.state.with(fn(var st) {
+    st.expire_leases(now, q.max_attempts)
+    st.insert_job(payload, priority, idempotency_key, now)
+  })
+}
+
+pub fn (q: Queue) lease(worker_id: Str, lease_duration: Duration) -> Lease? uses clock {
+  let now = q.clock.now()
+  q.state.with(fn(var st) {
+    st.expire_leases(now, q.max_attempts)
+    st.take_next(worker_id, now, lease_duration)
+  })
+}
+
+pub fn (q: Queue) ack(job_id: Int, token: Int) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  let outcome = q.state.with(fn(var st) -> Result[(), QueueErr] {
+    st.expire_leases(now, q.max_attempts)
+    st.ack(job_id, token)
+  })
+  outcome
+}
+
+pub fn (q: Queue) nack(job_id: Int, token: Int, reason: Str) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  let outcome = q.state.with(fn(var st) -> Result[(), QueueErr] {
+    st.expire_leases(now, q.max_attempts)
+    st.nack(job_id, token, reason, now, q.max_attempts)
+  })
+  outcome
+}
+
+pub fn (q: Queue) extend(job_id: Int, token: Int, lease_duration: Duration) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  let outcome = q.state.with(fn(var st) -> Result[(), QueueErr] {
+    st.expire_leases(now, q.max_attempts)
+    st.extend(job_id, token, now + lease_duration)
+  })
+  outcome
+}
+
+pub fn (q: Queue) retry_dead(job_id: Int) -> () ! QueueErr uses clock {
+  let now = q.clock.now()
+  let outcome = q.state.with(fn(var st) -> Result[(), QueueErr] {
+    st.expire_leases(now, q.max_attempts)
+    st.retry_dead(job_id, now)
+  })
+  outcome
+}
+
+pub fn (q: Queue) get(job_id: Int) -> Job? uses clock {
+  let now = q.clock.now()
+  q.state.with(fn(var st) {
+    st.expire_leases(now, q.max_attempts)
+    st.jobs.get(job_id)
+  })
+}
+
+pub fn (q: Queue) stats() -> Stats uses clock {
+  let now = q.clock.now()
+  q.state.with(fn(var st) {
+    st.expire_leases(now, q.max_attempts)
+    st.stats()
+  })
+}
+
+pub fn (q: Queue) dead_jobs() -> List[Job] uses clock {
+  let now = q.clock.now()
+  q.state.with(fn(var st) {
+    st.expire_leases(now, q.max_attempts)
+    st.dead.map(fn(id) { st.jobs[id] })
+  })
+}
+
+// ---- State transitions (pure, called with the lock held) ----
+
+fn (var st: State) insert_job(payload: Bytes, priority: Int, key: Str?, now: Time) -> Enqueued {
+  if let Some(k) = key {
+    if let Some(prev) = st.idem.get(k) {
+      if now - prev.at < IDEMPOTENCY_WINDOW {
+        return Enqueued{id: prev.job_id, duplicate: true}
+      }
+    }
+  }
+  let id = st.next_id
+  st.next_id += 1
+  st.jobs.put(id, Job{
+    id: id,
+    payload: payload,
+    priority: priority,
+    state: JobState.Queued,
+    attempts: 0,
+    last_error: None,
+    visible_at: now,
+    lease_token: None,
+    lease_until: Time.UNIX_EPOCH,
+    worker_id: None,
+    idempotency_key: key,
+  })
+  if let Some(k) = key {
+    st.idem.put(k, IdemEntry{job_id: id, at: now})
+  }
+  Enqueued{id: id, duplicate: false}
+}
+
+/// Returns true when `j` should be leased before the current best candidate.
+fn better(j: Job, best: Job?) -> Bool {
+  match best {
+    None => true
+    Some(b) => j.priority > b.priority || (j.priority == b.priority && j.id < b.id)
+  }
+}
+
+fn (var st: State) take_next(worker_id: Str, now: Time, lease_duration: Duration) -> Lease? {
+  var best: Job? = None
+  for j in st.jobs.values() {
+    if j.state is Queued && j.visible_at <= now && better(j, best) {
+      best = Some(j)
+    }
+  }
+  let j = best?
+  let token = st.next_token
+  st.next_token += 1
+  let leased = j with {
+    state: JobState.Leased,
+    attempts: j.attempts + 1,
+    lease_token: Some(token),
+    lease_until: now + lease_duration,
+    worker_id: Some(worker_id),
+  }
+  st.jobs.put(j.id, leased)
+  Lease{job: leased, token: token}
+}
+
+/// An expired lease counts as a failed attempt.
+fn (var st: State) expire_leases(now: Time, max_attempts: Int) {
+  for j in st.jobs.values() {
+    if j.state is Leased && j.lease_until <= now {
+      st.fail_job(j.id, "lease expired", j.lease_until, max_attempts)
+    }
+  }
+}
+
+fn (var st: State) fail_job(id: Int, reason: Str, at: Time, max_attempts: Int) {
+  if let Some(j) = st.jobs.get(id) {
+    let released = j with {lease_token: None, worker_id: None, last_error: Some(reason)}
+    if j.attempts >= max_attempts {
+      st.jobs.put(id, released with {state: JobState.Dead})
+      st.dead.push(id)
+    } else {
+      st.jobs.put(id, released with {state: JobState.Queued, visible_at: at + backoff(j.attempts)})
+    }
+  }
+}
+
+fn (st: State) current_lease(id: Int, token: Int) -> Job ! QueueErr {
+  let j = st.jobs.get(id).or_err(QueueErr.NotFound(id))?
+  if !(j.state is Leased) || j.lease_token != Some(token) {
+    return Err(QueueErr.StaleToken(id))
+  }
+  j
+}
+
+fn (var st: State) ack(id: Int, token: Int) -> () ! QueueErr {
+  let j = st.current_lease(id, token)?
+  st.jobs.put(id, j with {state: JobState.Done, lease_token: None, worker_id: None})
+}
+
+fn (var st: State) nack(id: Int, token: Int, reason: Str, now: Time, max_attempts: Int) -> () ! QueueErr {
+  st.current_lease(id, token)?
+  st.fail_job(id, reason, now, max_attempts)
+}
+
+fn (var st: State) extend(id: Int, token: Int, until: Time) -> () ! QueueErr {
+  let j = st.current_lease(id, token)?
+  st.jobs.put(id, j with {lease_until: until})
+}
+
+fn (var st: State) retry_dead(id: Int, now: Time) -> () ! QueueErr {
+  let j = st.jobs.get(id).or_err(QueueErr.NotFound(id))?
+  if !(j.state is Dead) {
+    return Err(QueueErr.NotDead(id))
+  }
+  st.jobs.put(id, j with {state: JobState.Queued, attempts: 0, visible_at: now})
+  st.dead = st.dead.filter(fn(x) { x != id })
+}
+
+fn (st: State) stats() -> Stats {
+  var s = Stats{queued: 0, leased: 0, done: 0, dead: 0}
+  for j in st.jobs.values() {
+    match j.state {
+      Queued => s.queued += 1
+      Leased => s.leased += 1
+      Done => s.done += 1
+      Dead => s.dead += 1
+    }
+  }
+  s
+}

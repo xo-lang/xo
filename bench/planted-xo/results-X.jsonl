@@ -1,0 +1,30 @@
+{"task": "01-crud-api", "bug": "X1", "class": "ignored error", "status": "variant", "caught_by": "check", "codes": ["XO0201"]}
+{"task": "01-crud-api", "bug": "X2", "class": "nil dereference or nil map write", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "01-crud-api", "bug": "X3", "class": "missing case in a switch over a closed set", "status": "variant", "caught_by": "check", "codes": ["XO0301"]}
+{"task": "01-crud-api", "bug": "X4", "class": "data race on shared state", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "01-crud-api", "bug": "X5", "class": "goroutine leak", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "01-crud-api", "bug": "X6", "class": "lost update", "status": "variant", "caught_by": "check", "codes": ["XO0520"]}
+{"task": "02-worker-pool", "bug": "X1", "class": "ignored error", "status": "variant", "caught_by": "check", "codes": ["XO0402", "XO0405", "XO0406"]}
+{"task": "02-worker-pool", "bug": "X2", "class": "nil dereference or nil map write", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "02-worker-pool", "bug": "X3", "class": "missing case in a switch over a closed set", "status": "variant", "caught_by": "check", "codes": ["XO0301"]}
+{"task": "02-worker-pool", "bug": "X4", "class": "data race on shared state", "status": "variant", "caught_by": "check", "codes": ["XO0501"]}
+{"task": "02-worker-pool", "bug": "X5", "class": "goroutine leak", "status": "variant", "caught_by": "test", "failed": ["results keep original order when later jobs finish first (pool_test.xo:8:1, seed 1)", "one failing job does not affect the others (pool_test.xo:25:1, seed 1)", "timeout cancels slow jobs and reports them (pool_test.xo:42:1, seed 1)"]}
+{"task": "02-worker-pool", "bug": "X6", "class": "lost update", "status": "variant", "caught_by": "test", "failed": ["results keep original order when later jobs finish first (pool_test.xo:8:1, seed 1)", "one failing job does not affect the others (pool_test.xo:25:1, seed 1)", "timeout cancels slow jobs and reports them (pool_test.xo:42:1, seed 1)"]}
+{"task": "03-retry-client", "bug": "X1", "class": "ignored error", "status": "variant", "caught_by": "check", "codes": ["XO0201"]}
+{"task": "03-retry-client", "bug": "X2", "class": "nil dereference or nil map write", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X3", "class": "missing case in a switch over a closed set", "status": "variant", "caught_by": "check", "codes": ["XO0301"]}
+{"task": "03-retry-client", "bug": "X4", "class": "data race on shared state", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X5", "class": "goroutine leak", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "03-retry-client", "bug": "X6", "class": "lost update", "status": "variant", "caught_by": "test", "failed": ["contract fuzz: retry_client.backoff (retry.xo:133:1, seed 1)"]}
+{"task": "04-file-sync", "bug": "X1", "class": "ignored error", "status": "variant", "caught_by": "check", "codes": ["XO0201"]}
+{"task": "04-file-sync", "bug": "X2", "class": "nil dereference or nil map write", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "04-file-sync", "bug": "X3", "class": "missing case in a switch over a closed set", "status": "variant", "caught_by": "check", "codes": ["XO0301"]}
+{"task": "04-file-sync", "bug": "X4", "class": "data race on shared state", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "04-file-sync", "bug": "X5", "class": "goroutine leak", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "04-file-sync", "bug": "X6", "class": "lost update", "status": "variant", "caught_by": "check", "codes": ["XO0110"]}
+{"task": "05-rate-limiter", "bug": "X1", "class": "ignored error", "status": "variant", "caught_by": "check", "codes": ["XO0401"]}
+{"task": "05-rate-limiter", "bug": "X2", "class": "nil dereference or nil map write", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "05-rate-limiter", "bug": "X3", "class": "missing case in a switch over a closed set", "status": "variant", "caught_by": "check", "codes": ["XO0301"]}
+{"task": "05-rate-limiter", "bug": "X4", "class": "data race on shared state", "status": "inexpressible", "caught_by": "inexpressible"}
+{"task": "05-rate-limiter", "bug": "X5", "class": "goroutine leak", "status": "variant", "caught_by": "none"}
+{"task": "05-rate-limiter", "bug": "X6", "class": "lost update", "status": "variant", "caught_by": "check", "codes": ["XO0502"]}

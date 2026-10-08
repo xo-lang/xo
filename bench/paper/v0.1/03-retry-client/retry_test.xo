@@ -1,0 +1,176 @@
+// retry_test.xo: tests for get_with_retry and fetch_profile.
+use std/http
+// GUESS: the default local name would be `test`, which is a keyword, so the
+// import must be renamed. Assumed contents: fake_net, fake_clock, fake_rand.
+use std/test as t
+
+const BASE_URL = "https://api.test"
+const USER_URL = "https://api.test/users/1"
+
+// Jitter off so the recorded sleeps are exact.
+// GUESS: a const may hold a struct literal (spec only shows an Int const).
+const NO_JITTER = RetryPolicy{jitter: 0.0}
+
+// GUESS: `http.Response` is a struct with these three fields.
+fn reply(status: Int) -> http.Response {
+  http.Response{status: status, headers: {}, body: b""}
+}
+
+fn reply_body(status: Int, body: Bytes) -> http.Response {
+  http.Response{status: status, headers: {}, body: body}
+}
+
+fn reply_retry_after(status: Int, secs: Str) -> http.Response {
+  http.Response{status: status, headers: {"Retry-After": secs}, body: b""}
+}
+
+test "succeeds on the third attempt after two 503s" {
+  // GUESS: std/test fakes. `fake_net()` fails every request unless a handler
+  // is registered (section 6.4); `fake_clock()` records each sleep instead of
+  // blocking and exposes them through `sleeps() -> List[Duration]`.
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  // The handler is a closure that captures by value, so the call counter has
+  // to be an explicit shared handle.
+  let calls = Atomic[Int].new(0)
+  // GUESS: `handle(pattern, fn(http.Request) -> http.Response)`, and
+  // `Atomic.add` returns the new value.
+  // GUESS: `_req` (leading underscore) silences the unused binding rule for
+  // closure parameters; the spec does not say whether XO0110 covers them.
+  net.handle("GET {USER_URL}", fn(_req) {
+    let n = calls.add(1)
+    if n <= 2 { reply(503) } else { reply_body(200, b"hello") }
+  })
+
+  expect(get_with_retry(net, clock, rand, USER_URL, NO_JITTER)) == ok(b"hello")
+  expect(calls.get()) == 3
+  expect(clock.sleeps()) == [100ms, 200ms]
+}
+
+test "404 returns immediately after one attempt" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  let calls = Atomic[Int].new(0)
+  net.handle("GET {USER_URL}", fn(_req) {
+    let _ = calls.add(1)
+    reply(404)
+  })
+
+  expect(get_with_retry(net, clock, rand, USER_URL, NO_JITTER)) == err(FetchErr.Status(code: 404, url: USER_URL))
+  expect(calls.get()) == 1
+  expect(clock.sleeps()) == []
+}
+
+test "Retry-After header is respected" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  let calls = Atomic[Int].new(0)
+  net.handle("GET {USER_URL}", fn(_req) {
+    let n = calls.add(1)
+    match n {
+      1 => reply_retry_after(429, "2")
+      2 => reply_retry_after(503, "60")
+      _ => reply_body(200, b"ok")
+    }
+  })
+
+  expect(get_with_retry(net, clock, rand, USER_URL, NO_JITTER)) == ok(b"ok")
+  // 2s from the 429; 60s from the 503 is capped by max_delay (5s).
+  expect(clock.sleeps()) == [2s, 5s]
+}
+
+test "exhausted attempts error carries the last status" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  let calls = Atomic[Int].new(0)
+  net.handle("GET {USER_URL}", fn(_req) {
+    let n = calls.add(1)
+    if n < 3 { reply(500) } else { reply(502) }
+  })
+  let policy = NO_JITTER with {max_attempts: 3}
+
+  let want = FetchErr.Exhausted(attempts: 3, last: AttemptErr.BadStatus(code: 502))
+  expect(get_with_retry(net, clock, rand, USER_URL, policy)) == err(want)
+  expect(calls.get()) == 3
+  expect(clock.sleeps()) == [100ms, 200ms]
+}
+
+test "connection errors are retried and reported" {
+  // No handler registered: the fake network fails every dial.
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  let policy = NO_JITTER with {max_attempts: 2}
+
+  let is_connect = match get_with_retry(net, clock, rand, USER_URL, policy) {
+    err(FetchErr.Exhausted(attempts, last)) => attempts == 2 && match last {
+      Connect(_) => true
+      _ => false
+    }
+    _ => false
+  }
+  expect(is_connect) == true
+}
+
+test "invalid url is not retried" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+
+  let is_invalid = match get_with_retry(net, clock, rand, "::not a url::", NO_JITTER) {
+    err(FetchErr.InvalidUrl(_, _)) => true
+    _ => false
+  }
+  expect(is_invalid) == true
+  expect(clock.sleeps()) == []
+}
+
+test "backoff is capped and jitter stays in range" for seed: Int {
+  let rand = t.fake_rand(seed: seed)
+  let policy = RetryPolicy{}
+  let d = backoff_delay(rand, policy, 10)
+  // 100ms * 2^8 = 25.6s, capped at 5s, then +/- 20%.
+  expect(d >= 4s && d <= 6s) == true
+}
+
+test "fetch_profile decodes a profile" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  // GUESS: b"..." does not interpolate (it is described as raw bytes) and
+  // accepts \" as an escape. If it does interpolate, the braces need {{ }}.
+  net.handle("GET {USER_URL}", fn(_req) {
+    reply_body(200, b"{\"id\": 1, \"name\": \"Ada\", \"email\": null}")
+  })
+
+  let want = Profile{id: 1, name: "Ada", email: none}
+  expect(fetch_profile(net, clock, rand, BASE_URL, 1)) == ok(want)
+}
+
+test "fetch_profile reports a decode error for invalid JSON" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  net.handle("GET {USER_URL}", fn(_req) { reply_body(200, b"not json {") })
+
+  let is_decode = match fetch_profile(net, clock, rand, BASE_URL, 1) {
+    err(ProfileErr.Decode(user_id, _)) => user_id == 1
+    _ => false
+  }
+  expect(is_decode) == true
+}
+
+test "fetch_profile wraps fetch errors" {
+  let net = t.fake_net()
+  let clock = t.fake_clock()
+  let rand = t.fake_rand(seed: 1)
+  net.handle("GET {USER_URL}", fn(_req) { reply(404) })
+
+  // GUESS: a `from` variant is constructed positionally with the wrapped value.
+  let want = ProfileErr.Fetch(FetchErr.Status(code: 404, url: USER_URL))
+  expect(fetch_profile(net, clock, rand, BASE_URL, 1)) == err(want)
+}

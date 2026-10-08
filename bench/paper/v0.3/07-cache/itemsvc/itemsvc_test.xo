@@ -1,0 +1,51 @@
+use std/http
+
+const BASE = "https://upstream.test"
+
+// The fake upstream handlers do not sleep for 200ms: FakeNet.handle takes a
+// pure `fn(http.Request) -> http.Response`, so a handler cannot call
+// `clock.sleep`. Latency driven behavior is covered in cache_test.xo, where
+// the loader sleeps on the fake clock.
+
+test "items are cached and DELETE invalidates" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET ${BASE}/items/{id:Int}", fn(req) {
+    calls.add(1)
+    http.json(200, Item{id: req.param_int("id"), name: "widget"})
+  })
+  let r = routes(item_cache(os.clock, os.net, BASE))
+
+  let first = r.call(http.new_request("GET", "/items/7"))
+  expect(first.status) == 200
+  expect(first.decode_json[Item]()?) == Item{id: 7, name: "widget"}
+  expect(r.call(http.new_request("GET", "/items/7")).status) == 200
+  expect(calls.get()) == 1
+
+  expect(r.call(http.new_request("DELETE", "/items/7/cache")).status) == 204
+  expect(r.call(http.new_request("GET", "/items/7")).status) == 200
+  expect(calls.get()) == 2
+}
+
+test "upstream 404 becomes 404 and is negatively cached" {
+  let calls = Atomic[Int].new(0)
+  os.net.handle("GET ${BASE}/items/{id:Int}", fn(_req) {
+    calls.add(1)
+    http.empty(404)
+  })
+  let r = routes(item_cache(os.clock, os.net, BASE))
+
+  let resp = r.call(http.new_request("GET", "/items/5"))
+  expect(resp.status) == 404
+  expect(resp.decode_json[Map[Str, Str]]()?) == {"error": "item 5 not found"}
+  expect(r.call(http.new_request("GET", "/items/5")).status) == 404
+  expect(calls.get()) == 1
+}
+
+test "upstream failure becomes 502" {
+  os.net.fail("GET ${BASE}/items/1", http.ClientErr.Connect(msg: "refused"))
+  os.net.handle("GET ${BASE}/items/2", fn(_req) { http.empty(503) })
+  let r = routes(item_cache(os.clock, os.net, BASE))
+
+  expect(r.call(http.new_request("GET", "/items/1")).status) == 502
+  expect(r.call(http.new_request("GET", "/items/2")).status) == 502
+}

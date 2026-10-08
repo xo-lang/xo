@@ -1,0 +1,50 @@
+{"task": "01-crud-api", "bug": "N1", "class": "off by one", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "N2", "class": "wrong HTTP status or error kind", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "N4", "class": "inverted or wrong condition", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X1", "class": "ignored error", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X2", "class": "nil dereference or nil map write", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X3", "class": "missing case in a switch over a closed set", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X4", "class": "data race on shared state", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X5", "class": "goroutine leak", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "01-crud-api", "bug": "X6", "class": "lost update (copy modified, never written back)", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "N1", "class": "off by one", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "N2", "class": "wrong HTTP status or error kind", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "N4", "class": "inverted or wrong condition", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "X1", "class": "ignored error", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "X2", "class": "nil dereference or nil map write", "plain_caught_by": "vet", "strict_new_findings": ["vet", "staticcheck"]}
+{"task": "02-worker-pool", "bug": "X3", "class": "missing case in a switch over a closed set", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "X4", "class": "data race on shared state", "plain_caught_by": "none", "strict_new_findings": ["race"]}
+{"task": "02-worker-pool", "bug": "X5", "class": "goroutine leak", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "02-worker-pool", "bug": "X6", "class": "lost update (copy modified, never written back)", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "N1", "class": "off by one", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "N2", "class": "wrong HTTP status or error kind", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "N4", "class": "inverted or wrong condition", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "X1", "class": "ignored error", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "X2", "class": "nil dereference or nil map write", "plain_caught_by": "test", "strict_new_findings": ["staticcheck"]}
+{"task": "03-retry-client", "bug": "X3", "class": "missing case in a switch over a closed set", "plain_caught_by": "none", "strict_new_findings": ["exhaustive"]}
+{"task": "03-retry-client", "bug": "X4", "class": "data race on shared state", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "X5", "class": "goroutine leak", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "03-retry-client", "bug": "X6", "class": "lost update (copy modified, never written back)", "plain_caught_by": "none", "strict_new_findings": ["staticcheck"]}
+{"task": "04-file-sync", "bug": "N1", "class": "off by one", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "N2", "class": "wrong HTTP status or error kind", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "N4", "class": "inverted or wrong condition", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "X1", "class": "ignored error", "plain_caught_by": "test", "strict_new_findings": ["errcheck"]}
+{"task": "04-file-sync", "bug": "X2", "class": "nil dereference or nil map write", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "X3", "class": "missing case in a switch over a closed set", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "X4", "class": "data race on shared state", "plain_caught_by": "none", "strict_new_findings": ["race"]}
+{"task": "04-file-sync", "bug": "X5", "class": "goroutine leak", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "04-file-sync", "bug": "X6", "class": "lost update (copy modified, never written back)", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "N1", "class": "off by one", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "N2", "class": "wrong HTTP status or error kind", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "N3", "class": "wrong time, backoff, or limit arithmetic", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "N4", "class": "inverted or wrong condition", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "X1", "class": "ignored error", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "X2", "class": "nil dereference or nil map write", "plain_caught_by": "test", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "X3", "class": "missing case in a switch over a closed set", "plain_caught_by": "none", "strict_new_findings": ["staticcheck"]}
+{"task": "05-rate-limiter", "bug": "X4", "class": "data race on shared state", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "X5", "class": "goroutine leak", "plain_caught_by": "none", "strict_new_findings": []}
+{"task": "05-rate-limiter", "bug": "X6", "class": "lost update (copy modified, never written back)", "plain_caught_by": "test", "strict_new_findings": ["staticcheck"]}

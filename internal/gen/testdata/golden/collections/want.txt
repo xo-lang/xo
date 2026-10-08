@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+keys one,two,three one=11 len=3
+after remove one,three,two removed 2
+filter two contains true false
+sum 36 entries 3 values 3
+set 3 true true union 4 inter 1 diff 2
+set order 3,2,5
+slice 2 3 9 2
+sort 1 by 9 rev 2
+any true all true contains true index 2
+first 5 last 2 empty false false
+0:5 1:3 
+abcd set 3
+buf 2 sb abcd
+--- stderr

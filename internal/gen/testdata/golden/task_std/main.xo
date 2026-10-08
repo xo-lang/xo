@@ -1,0 +1,87 @@
+use std/task
+
+enum E {
+  Boom
+} derive Display
+
+fn risky(n: Int) -> Int ! E {
+  if n == 0 {
+    return Err(E.Boom)
+  }
+  if n < 0 {
+    fault("negative input ${n}")
+  }
+  100 / n
+}
+
+fn describe(r: Result[Int, task.Isolated[E]]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(Faulted(info)) => "faulted: ${info.msg}"
+    Err(Failed(e)) => "failed: ${e}"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(describe(task.isolate(fn() { risky(4) })))
+  os.stdio.println(describe(task.isolate(fn() { risky(0) })))
+  os.stdio.println(describe(task.isolate(fn() { risky(-1) })))
+  let fast = task.with_timeout(os.clock, 1s, fn() {
+    os.clock.sleep(5ms)
+    "fast"
+  })
+  let slow = task.with_timeout(os.clock, 20ms, fn() {
+    os.clock.sleep(10s)
+    "slow"
+  })
+  let failing = task.with_timeout(os.clock, 1s, fn() -> Str ! E { Err(E.Boom) })
+  match fast {
+    Ok(v) => os.stdio.println("with_timeout ${v}")
+    Err(TimedOut) => os.stdio.println("timed out")
+  }
+  match slow {
+    Ok(v) => os.stdio.println("with_timeout ${v}")
+    Err(TimedOut) => os.stdio.println("slow timed out")
+  }
+  match failing {
+    Ok(v) => os.stdio.println(v)
+    Err(TimedOut) => os.stdio.println("?")
+    Err(Failed(e)) => os.stdio.println("failed ${e}")
+  }
+  let active = Atomic[Int].new(0)
+  let peak = Atomic[Int].new(0)
+  let results = task.map_concurrent([5, 4, 3, 2, 1, 0], 2, fn(n) {
+    let now = active.add(1)
+    if now > peak.get() {
+      peak.set(now)
+    }
+    os.clock.sleep(2ms * n)
+    active.add(-1)
+    risky(n)
+  })
+  let shown = results.map(fn(r) {
+    match r {
+      Ok(v) => "${v}"
+      Err(e) => "${e}"
+    }
+  })
+  os.stdio.println("map_concurrent ${shown.join(",")} peak<=2 ${peak.get() <= 2}")
+  let sem = task.semaphore(1)
+  let inside = Atomic[Int].new(0)
+  let max_inside = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..5 {
+      s.spawn(fn() {
+        sem.with(fn() {
+          let n = inside.add(1)
+          if n > max_inside.get() {
+            max_inside.set(n)
+          }
+          os.clock.sleep(1ms)
+          inside.add(-1)
+        })
+      })
+    }
+  }
+  os.stdio.println("semaphore max ${max_inside.get()}")
+}

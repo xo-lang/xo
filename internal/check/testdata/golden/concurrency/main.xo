@@ -1,0 +1,20 @@
+enum JobErr {
+  Failed
+}
+
+fn job(n: Int) -> Int ! JobErr {
+  n
+}
+
+fn run_all(xs: List[Int]) -> Int {
+  scope s {
+    for x in xs {
+      s.spawn(fn() { job(x) })
+    }
+    0
+  }
+}
+
+fn detached() {
+  spawn(fn() { 1 })
+}

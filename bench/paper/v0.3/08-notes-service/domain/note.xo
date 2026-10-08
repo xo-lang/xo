@@ -1,0 +1,64 @@
+// Package domain holds the Note type, its validation, and pure search logic.
+// It imports nothing from this project.
+
+/// A stored note. `version` starts at 1 and grows by one on every update.
+pub struct Note {
+  pub id: Str
+  pub title: Str
+  pub body: Str
+  pub tags: List[Str]
+  pub version: Int
+  pub created: Time
+  pub updated: Time
+} invariant version >= 1 derive Json
+
+/// The client supplied part of a note, used for create and update.
+pub struct NoteInput {
+  pub title: Str
+  pub body: Str = ""
+  pub tags: List[Str] = []
+} derive Json
+
+pub const ID_LEN = 32
+
+/// Ids are exactly 32 lowercase hex characters. That alphabet has no path
+/// separators, no characters Windows forbids, cannot collide with reserved
+/// Windows names (CON, NUL, COM1, ...), and has no case variants, so an id is
+/// a safe file name on Linux, macOS, and Windows.
+pub fn valid_id(id: Str) -> Bool {
+  if id.len() != ID_LEN {
+    return false
+  }
+  id.runes().all(fn(r) {
+    match r {
+      '0'..='9' | 'a'..='f' => true
+      _ => false
+    }
+  })
+}
+
+/// Builds version 1 of a note from validated input.
+pub fn new_note(id: Str, input: NoteInput, now: Time) -> Note ! ValidationErr
+  requires valid_id(id)
+  ensures result.version == 1
+{
+  let clean = validate(input)?
+  Note{
+    id: id,
+    title: clean.title,
+    body: clean.body,
+    tags: clean.tags,
+    version: 1,
+    created: now,
+    updated: now,
+  }
+}
+
+/// Returns the next version of `n` with the fields of `input`.
+pub fn apply_update(n: Note, input: NoteInput, now: Time) -> Note ! ValidationErr
+  ensures result.version == n.version + 1
+  ensures result.id == n.id
+{
+  let clean = validate(input)?
+  n with {title: clean.title, body: clean.body, tags: clean.tags, version: n.version + 1, updated: now}
+}

@@ -1,0 +1,12 @@
+exit 70
+--- stdout
+sum 15 after close true
+select hello
+select timed out
+try_send true false len 1
+try_recv 1 0
+sent
+received 7
+send on closed channel next
+--- stderr
+fault: send on a closed channel at main.xo:54

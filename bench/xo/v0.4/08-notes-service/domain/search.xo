@@ -1,0 +1,91 @@
+// Pure search and pagination.
+//
+// Notes are ordered newest first by (created millis, id), both descending.
+// A cursor names the last note of a page by that key, and the next page
+// holds the notes strictly after it in the order. Notes created between
+// pages are newer than every cursor, so they sort before it and never shift
+// the remaining pages: no duplicates and no gaps.
+
+/// Position after which the next page starts.
+pub struct Cursor {
+  pub created_ms: Int
+  pub id: Str
+}
+
+pub struct Query {
+  pub tag: Str? = None
+  /// Case insensitive substring of the title or body.
+  pub text: Str? = None
+  pub limit: Int = 20
+  pub after: Cursor? = None
+}
+
+pub struct Page {
+  pub notes: List[Note]
+  /// Present when more notes follow this page.
+  pub next: Cursor?
+}
+
+/// Opaque text form of a cursor for clients. Uses only URL safe characters.
+pub fn encode_cursor(c: Cursor) -> Str {
+  "${c.created_ms}.${c.id}"
+}
+
+pub fn decode_cursor(s: Str) -> Cursor? {
+  let dot = s.find(".")?
+  let ms = Int.parse(s[..dot])?
+  let id = s[dot + 1..]
+  if !is_valid_id(id) {
+    return None
+  }
+  Cursor{created_ms: ms, id: id}
+}
+
+/// Newest first, ties broken by id descending, so the order is total.
+pub fn newest_first(notes: List[Note]) -> List[Note] {
+  notes
+    .sort_by(fn(n) { n.id })
+    .sort_by(fn(n) { n.created.unix_millis() })
+    .reverse()
+}
+
+/// Reports whether a note passes the tag and text filters of a query.
+pub fn matches(n: Note, q: Query) -> Bool {
+  if let Some(tag) = q.tag {
+    if !n.tags.contains(tag) {
+      return false
+    }
+  }
+  if let Some(text) = q.text {
+    let needle = text.to_lower()
+    if !n.title.to_lower().contains(needle) && !n.body.to_lower().contains(needle) {
+      return false
+    }
+  }
+  true
+}
+
+fn after_cursor(n: Note, after: Cursor?) -> Bool {
+  match after {
+    Some(c) => {
+      let ms = n.created.unix_millis()
+      ms < c.created_ms || (ms == c.created_ms && n.id < c.id)
+    }
+    None => true
+  }
+}
+
+/// One page of the notes matching `q`, newest first.
+pub fn search(notes: List[Note], q: Query) -> Page
+  requires q.limit > 0
+{
+  let candidates = newest_first(notes).filter(fn(n) { matches(n, q) && after_cursor(n, q.after) })
+  let page = candidates[..q.limit.min(candidates.len())]
+  let next = if candidates.len() > q.limit {
+    let last = page[page.len() - 1]
+    Some(Cursor{created_ms: last.created.unix_millis(), id: last.id})
+  } else {
+    None
+  }
+  Page{notes: page, next: next}
+}

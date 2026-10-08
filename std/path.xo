@@ -1,0 +1,9 @@
+// std/path (spec/std.md 9). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. Pure helpers for `/` separated paths, the form
+// every Fs capability uses on every OS (std.md 3.1).
+
+fn join(a: Str, b: Str) -> Str
+fn dir(p: Str) -> Str
+fn base(p: Str) -> Str
+fn ext(p: Str) -> Str
+fn clean(p: Str) -> Str

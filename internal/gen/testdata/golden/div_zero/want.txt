@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+3 -3 -1 1
+--- stderr
+fault: division by zero: 5 / 0 at main.xo:1:35

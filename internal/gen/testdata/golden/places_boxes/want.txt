@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+sum 15 before 6 eq false
+depth 2 json {"label":"r","left":{"label":"a","left":null,"right":null},"right":null}
+stats 5 first,second rows 20 row0 grid 7
+--- stderr

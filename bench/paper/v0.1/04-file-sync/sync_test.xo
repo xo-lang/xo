@@ -1,0 +1,78 @@
+// Tests run against the test Os, whose fs is an in memory fake (spec 6.4).
+//
+// GUESS: inside a `test` block the test Os is available as a predeclared
+// binding named `os`. The spec says tests "receive a test Os" but not how.
+// GUESS: `?` is allowed in a test block; an error fails the test.
+
+fn plain_rules() -> Rules {
+  Rules{fold_case: false, ignored: #{}}
+}
+
+/// Creates empty src and dst roots and returns capabilities for them.
+fn roots(os: Os) -> (Fs, Fs) ! Error uses fs.read, fs.write {
+  os.fs.create_dir_all("src")?
+  os.fs.create_dir_all("dst")?
+  (os.fs.sub("src")?, os.fs.sub("dst")?)
+}
+
+test "new file is copied and unchanged file is skipped" {
+  let (src, dst) = roots(os)?
+  src.write("same.txt", b"hello")?
+  dst.write("same.txt", b"hello")? // written after src, so dst is not older
+  src.create_dir_all("sub")?
+  src.write("sub/new.txt", b"fresh")?
+
+  let stats = sync(src: src, dst: dst, rules: plain_rules(), dry_run: false, delete: false, out: os.stdio)?
+
+  expect(stats.copied) == 1
+  expect(stats.skipped) == 1
+  expect(stats.failed) == 0
+  expect(dst.read("sub/new.txt")?) == b"fresh"
+}
+
+test "dry run writes nothing" {
+  let (src, dst) = roots(os)?
+  src.write("a.txt", b"a")?
+  dst.write("extra.txt", b"x")?
+
+  let stats = sync(src: src, dst: dst.read_only(), rules: plain_rules(), dry_run: true, delete: true, out: os.stdio)?
+
+  expect(stats.copied) == 1
+  expect(stats.deleted) == 1
+  expect(dst.exists("a.txt")?) == false
+  expect(dst.exists("extra.txt")?) == true
+}
+
+test "delete removes extra files and empty dirs" {
+  let (src, dst) = roots(os)?
+  src.write("keep.txt", b"k")?
+  dst.write("keep.txt", b"k")?
+  dst.write("extra.txt", b"x")?
+  dst.create_dir_all("old")?
+  dst.write("old/x.txt", b"x")?
+
+  let stats = sync(src: src, dst: dst, rules: plain_rules(), dry_run: false, delete: true, out: os.stdio)?
+
+  expect(stats.deleted) == 3 // extra.txt, old/x.txt, old
+  expect(stats.failed) == 0
+  expect(dst.exists("keep.txt")?) == true
+  expect(dst.exists("extra.txt")?) == false
+  expect(dst.exists("old")?) == false
+}
+
+test "failed copy leaves no temp file" {
+  let (src, dst) = roots(os)?
+  src.write("f", b"data")?
+  // A non empty directory where the file should go makes the final rename
+  // fail after the temp file has been written.
+  // GUESS: the fake fs rejects rename onto a non empty directory, like POSIX.
+  dst.create_dir_all("f/inner")?
+
+  let stats = sync(src: src, dst: dst, rules: plain_rules(), dry_run: false, delete: false, out: os.stdio)?
+
+  expect(stats.failed) == 1
+  expect(stats.copied) == 0
+  expect(dst.exists(".f.xo-sync-tmp")?) == false
+  // Only the pre existing directory remains at the root.
+  expect(dst.read_dir(".")?.len()) == 1
+}

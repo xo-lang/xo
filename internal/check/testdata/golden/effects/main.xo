@@ -1,0 +1,17 @@
+fn read_clock(c: Clock) -> Time {
+  c.now()
+}
+
+fn stamp(c: Clock) -> Int {
+  read_clock(c).unix()
+}
+
+/// Pure by declaration: no uses clause.
+pub fn report(c: Clock) -> Str {
+  "${stamp(c)}"
+}
+
+pub fn fetch(f: Fs, path: Str) -> Bytes ! FsErr uses fs.read {
+  f.write(path, b"x")?
+  f.read(path)?
+}

@@ -1,0 +1,12 @@
+exit 1
+--- stdout
+awaited error consumed: Bad(id: 2)
+handled -1
+sibling unwound
+run_all failed: true quickly: true
+error Bad(id: 2)
+sibling unwound
+--- stderr
+error: Bad(id: 2)
+  at scope_failure.run_all()            main.xo:14
+  at scope_failure.main()               main.xo:47

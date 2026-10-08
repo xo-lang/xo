@@ -1,0 +1,44 @@
+[
+  {
+    "id": "X1",
+    "class": "X1",
+    "xo_change": "main discards the serve error with ignore_err",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X2",
+    "class": "X2",
+    "xo_change": "limit_for indexes l.limits[key], faulting for any key without an override",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X3",
+    "class": "X3",
+    "xo_change": "rate_limit uses a wildcard arm so Limited drops the Retry-After header",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X4",
+    "class": "X4",
+    "xo_change": "check reads the bucket and writes it back in separate lock sections so concurrent takes are lost",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X5",
+    "class": "X5",
+    "xo_change": "evictor is spawned as a foreground task so the scope waits for it forever after serve returns",
+    "status": "variant",
+    "reason": "parses"
+  },
+  {
+    "id": "X6",
+    "class": "X6",
+    "xo_change": "check takes a token from a copy of the bucket that is never put back in the map",
+    "status": "variant",
+    "reason": "parses"
+  }
+]

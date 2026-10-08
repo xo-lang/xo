@@ -1,0 +1,15 @@
+use std/http
+use std/log
+
+fn main(os: Os) ! {
+  let limiter = new_limiter({
+    "partner-key": Limit{capacity: 100, refill_per_sec: 50.0},
+  })
+  let srv = http.server(os.net.listen(":8080")?, routes(limiter, os.clock))
+  log.info("listening", {"addr": ":8080"})
+  scope s {
+    // Cancelled automatically when serve returns, so it stops with the server.
+    s.spawn_background(fn() { run_evictor(limiter, os.clock) })
+    srv.serve()?
+  }
+}

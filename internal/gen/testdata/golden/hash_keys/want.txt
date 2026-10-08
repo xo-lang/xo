@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+points 2 colors 2 still blue grid a 2 opt 3 lists 2
+big 1003 removed 997 order_ok true first 1910 last 1023
+--- stderr

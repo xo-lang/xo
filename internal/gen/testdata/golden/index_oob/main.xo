@@ -1,0 +1,6 @@
+fn main(os: Os) {
+  let xs = [10, 20, 30, 40, 50]
+  os.stdio.println("${xs[0]} ${xs[4]} ${xs.get(7) ?? -1}")
+  let i = xs.len() + 2
+  os.stdio.println("${xs[i]}")
+}

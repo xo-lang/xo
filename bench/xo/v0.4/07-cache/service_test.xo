@@ -1,0 +1,57 @@
+use std/http
+
+test "get item is served from the cache and delete invalidates" {
+  let calls = Atomic[Int].new(0)
+  let clock = os.clock
+  let fetch = fn(id: Int) -> Item ! UpstreamErr {
+    calls.add(1)
+    clock.sleep(200ms)
+    Item{id: id, name: "item ${id}", price: id * 100}
+  }
+  let r = routes(new_service(new_cache(os.clock, os.tasks, Config{}, fetch)))
+
+  let resp = r.call(http.new_request("GET", "/items/7"))
+  expect(resp.status) == 200
+  expect(resp.decode_json[Item]()?) == Item{id: 7, name: "item 7", price: 700}
+  expect(r.call(http.new_request("GET", "/items/7")).status) == 200
+  expect(calls.get()) == 1
+
+  expect(r.call(http.new_request("DELETE", "/items/7/cache")).status) == 204
+  expect(r.call(http.new_request("GET", "/items/7")).status) == 200
+  expect(calls.get()) == 2
+}
+
+test "upstream 404 becomes 404 and is negatively cached" {
+  let calls = Atomic[Int].new(0)
+  let fetch = fn(id: Int) -> Item ! UpstreamErr {
+    calls.add(1)
+    Err(UpstreamErr.NotFound(id: id))
+  }
+  let r = routes(new_service(new_cache(os.clock, os.tasks, Config{}, fetch)))
+  expect(r.call(http.new_request("GET", "/items/3")).status) == 404
+  expect(r.call(http.new_request("GET", "/items/3")).status) == 404
+  expect(calls.get()) == 1
+}
+
+test "upstream failure becomes 502" {
+  let fetch = fn(_id: Int) -> Item ! UpstreamErr {
+    Err(UpstreamErr.Failed(msg: "connection reset"))
+  }
+  let r = routes(new_service(new_cache(os.clock, os.tasks, Config{}, fetch)))
+  expect(r.call(http.new_request("GET", "/items/3")).status) == 502
+}
+
+test "http upstream maps status codes through the fake network" {
+  os.net.handle("GET https://upstream.test/items/{id}", fn(req) {
+    match req.param("id") {
+      "1" => http.json(200, Item{id: 1, name: "one", price: 5})
+      "2" => http.empty(404)
+      _ => http.empty(500)
+    }
+  })
+  let fetch = http_fetcher(http.client(os.net), "https://upstream.test")
+  let r = routes(new_service(new_cache(os.clock, os.tasks, Config{}, fetch)))
+  expect(r.call(http.new_request("GET", "/items/1")).status) == 200
+  expect(r.call(http.new_request("GET", "/items/2")).status) == 404
+  expect(r.call(http.new_request("GET", "/items/3")).status) == 502
+}

@@ -1,0 +1,55 @@
+use std/json
+
+enum Kind {
+  Note
+  Task(due: Time)
+  Wrapped(from Int)
+} derive Json
+
+struct Item {
+  id: Int
+  title: Str
+  tags: List[Str]
+  rating: Float = 0.5
+  kind: Kind
+  extra: Str? = None
+  meta: Map[Str, Int] = {}
+  timeout: Duration = 1500ms
+  raw: Bytes = b""
+} derive Json
+
+struct Patch {
+  title: json.Patch[Str]
+  extra: json.Patch[Str]
+} derive Json
+
+fn main(os: Os) ! {
+  let it = Item{id: 1, title: "a \"quoted\" <b>", tags: ["x", "y"], kind: Kind.Task(due: Time.from_unix(0)), meta: {"z": 1, "a": 2}, raw: b"hi"}
+  let text = json.encode_str(it)
+  os.stdio.println(text)
+  let back = json.decode_str[Item](text)?
+  os.stdio.println("roundtrip ${back == it}")
+  let minimal = json.decode_str[Item](r#"{"id": 2, "title": "t", "tags": [], "kind": "Note"}"#)?
+  os.stdio.println("defaults ${minimal.rating} ${minimal.timeout} ${minimal.extra.is_none()} ${minimal.meta.len()}")
+  let w = json.decode_str[Item](r#"{"id": 3, "title": "t", "tags": [], "kind": {"Wrapped": 7}, "extra": null, "meta": {"b": 1, "a": 2}}"#)?
+  os.stdio.println("wrapped ${json.encode_str(w.kind)} extra none ${w.extra.is_none()} meta order ${w.meta.keys().join(",")}")
+  let errs = [
+    r#"{"id": "1"}"#,
+    r#"{"id": 1, "title": "t", "tags": [1], "kind": "Note"}"#,
+    r#"{"id": 1, "title": "t", "tags": []}"#,
+    r#"{"id": 1, "title": "t", "tags": [], "kind": "Nope"}"#,
+    r#"{"id": 1.5}"#,
+    "not json",
+  ]
+  for e in errs {
+    match json.decode_str[Item](e) {
+      Ok(_) => os.stdio.println("decoded?")
+      Err(err) => os.stdio.println("${err}")
+    }
+  }
+  let p1 = json.decode_str[Patch](r#"{"title": "new"}"#)?
+  let p2 = json.decode_str[Patch](r#"{"title": null, "extra": "x"}"#)?
+  os.stdio.println("patch ${p1.title is Value(_)} ${p1.extra is Absent} ${p2.title is Null} ${p2.extra is Value(_)}")
+  os.stdio.println("patch encode ${json.encode_str(p1)} ${json.encode_str(p2)}")
+  os.stdio.println("builtins ${json.encode_str([1, 2])} ${json.encode_str({"k": [true, false]})} ${json.encode_str(Some(1.25))} ${json.encode_str(#{"s"})}")
+}

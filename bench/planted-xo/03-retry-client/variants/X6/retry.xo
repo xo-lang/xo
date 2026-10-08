@@ -1,0 +1,153 @@
+use std/http
+use std/log
+
+/// How `get_with_retry` spaces out and limits its attempts.
+pub struct RetryPolicy {
+  /// Total attempts, including the first one.
+  pub max_attempts: Int = 5
+  /// Delay before the second attempt; doubles for each attempt after that.
+  pub base_delay: Duration = 100ms
+  /// Upper bound for the computed delay and for a Retry-After hint.
+  pub max_delay: Duration = 5s
+  /// Fraction of the delay added or removed at random (0.2 means plus or minus 20%).
+  pub jitter: Float = 0.2
+} invariant max_attempts >= 1 && jitter >= 0.0 && jitter <= 1.0
+
+/// Why a single attempt did not succeed but may be retried.
+pub enum AttemptErr {
+  /// The server answered with a retryable status.
+  Status(code: Int)
+  /// The request failed before a response arrived.
+  Transport(err: http.ClientErr)
+}
+
+/// Errors from `get_with_retry`.
+pub enum FetchErr {
+  /// The URL could not be parsed or was rejected by the client.
+  InvalidUrl(msg: Str)
+  /// The server answered with a status that is not worth retrying.
+  NonRetryable(status: Int)
+  /// Every attempt failed; `last` is the failure of the final attempt.
+  Exhausted(attempts: Int, last: AttemptErr)
+  /// The calling task was cancelled.
+  Canceled
+}
+
+pub fn (e: AttemptErr) display() -> Str {
+  match e {
+    Status(code) => "status ${code}"
+    Transport(err) => "transport error: ${err}"
+  }
+}
+
+pub fn (e: FetchErr) display() -> Str {
+  match e {
+    InvalidUrl(msg) => "invalid url: ${msg}"
+    NonRetryable(status) => "non retryable status ${status}"
+    Exhausted(attempts, last) => "gave up after ${attempts} attempts, last error: ${last}"
+    Canceled => "canceled"
+  }
+}
+
+/// The HTTP status of the last attempt, when the failure carries one.
+pub fn (e: FetchErr) last_status() -> Int? {
+  match e {
+    NonRetryable(status) => Some(status)
+    Exhausted(last: AttemptErr.Status(code), ..) => Some(code)
+    _ => None
+  }
+}
+
+/// What to do after one attempt.
+enum Step {
+  Done(body: Bytes)
+  Fail(err: FetchErr)
+  Retry(cause: AttemptErr, hint: Duration?)
+}
+
+/// GETs `url`, retrying transport failures and 429, 500, 502, 503, 504
+/// with exponential backoff and jitter. Other non 2xx statuses fail at once.
+pub fn get_with_retry(
+  net: Net,
+  clock: Clock,
+  rand: Rand,
+  url: Str,
+  policy: RetryPolicy = RetryPolicy{},
+) -> Bytes ! FetchErr
+  uses (net.dial, clock, rand)
+{
+  http.parse_url(url).map_err(fn(e) { FetchErr.InvalidUrl(msg: e.msg) })?
+  let client = http.client(net)
+  var p = policy
+  p.max_attempts = p.max_attempts.max(1)
+  var attempt = 1
+  while {
+    match classify(client.get(url)) {
+      Done(body) => return body
+      Fail(err) => return Err(err)
+      Retry(cause, hint) => {
+        if attempt >= policy.max_attempts {
+          return Err(FetchErr.Exhausted(attempts: attempt, last: cause))
+        }
+        attempt += 1
+        let delay = match hint {
+          Some(h) => h.min(policy.max_delay)
+          None => apply_jitter(rand, backoff(policy, attempt), policy.jitter)
+        }
+        log.debug("retrying request", {"url": url, "attempt": attempt, "delay": delay, "cause": cause})
+        clock.sleep(delay)
+      }
+    }
+  }
+}
+
+/// Decides whether one attempt succeeded, failed for good, or may be retried.
+fn classify(outcome: Result[http.Response, http.ClientErr]) -> Step {
+  match outcome {
+    Ok(resp) => match resp.status {
+      200..=299 => Step.Done(body: resp.body)
+      429 | 503 => Step.Retry(cause: AttemptErr.Status(resp.status), hint: retry_after(resp))
+      500 | 502 | 504 => Step.Retry(cause: AttemptErr.Status(resp.status), hint: None)
+      _ => Step.Fail(err: FetchErr.NonRetryable(status: resp.status))
+    }
+    Err(e) => match e {
+      http.ClientErr.Canceled => Step.Fail(err: FetchErr.Canceled)
+      http.ClientErr.InvalidUrl(msg) => Step.Fail(err: FetchErr.InvalidUrl(msg: msg))
+      http.ClientErr.Connect(_) | http.ClientErr.Timeout | http.ClientErr.Protocol(_) =>
+        Step.Retry(cause: AttemptErr.Transport(e), hint: None)
+    }
+  }
+}
+
+/// A Retry-After header given in whole seconds, if present and valid.
+fn retry_after(resp: http.Response) -> Duration? {
+  let secs = Int.parse(resp.header("Retry-After")?.trim())?
+  if secs < 0 {
+    return None
+  }
+  1s * secs
+}
+
+/// The delay before attempt `attempt` (2 or more), without jitter:
+/// min(max_delay, base_delay * 2^(attempt - 2)).
+fn backoff(policy: RetryPolicy, attempt: Int) -> Duration
+  requires attempt >= 2
+{
+  var d = policy.base_delay
+  for _ in 0..(attempt - 2) {
+    if d >= policy.max_delay {
+      break
+    }
+    d = d * 2
+  }
+  d.min(policy.max_delay)
+}
+
+/// Moves `d` by a random amount of up to `jitter * d` in either direction.
+fn apply_jitter(rand: Rand, d: Duration, jitter: Float) -> Duration uses rand {
+  if jitter <= 0.0 {
+    return d
+  }
+  let factor = 1.0 + jitter * (rand.float() * 2.0 - 1.0)
+  d.scale(factor)
+}

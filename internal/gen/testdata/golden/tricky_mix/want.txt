@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+cache 12 12 size 1
+cache error Bad(text: "zz")
+flatten 3 leaf equal empty node
+visit 25
+parse ok 2
+parse error Bad(text: "x")
+mult 15 t
+nested 3 y
+tasks 63
+total 34
+fib 832040
+--- stderr

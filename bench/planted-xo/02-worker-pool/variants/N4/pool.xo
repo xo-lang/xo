@@ -1,0 +1,85 @@
+use std/log
+use std/task
+
+/// One unit of work for the pool. `id` is what failures are reported with.
+pub struct Job[T] {
+  pub id: Int
+  pub input: T
+}
+
+/// Outcome of a pool run.
+pub struct Report[R, E] {
+  /// Successful results, in the original job order.
+  pub results: List[R]
+  /// Failed jobs as (job id, error). Jobs that did not finish before the
+  /// overall timeout are reported as `task.Timed.TimedOut`.
+  pub failures: List[(Int, task.Timed[E])]
+  /// Wall time from start until every worker has stopped.
+  pub elapsed: Duration
+}
+
+/// Runs `f` on every job with at most `workers` jobs in flight at once.
+/// A failing job does not stop the others. When `timeout` passes, the
+/// unfinished jobs are cancelled and reported as timed out.
+pub fn run_pool[T, R, E, fx: Effects](
+  clock: Clock,
+  jobs: List[Job[T]],
+  workers: Int,
+  timeout: Duration,
+  f: fn(Job[T]) -> R ! E uses fx,
+) -> Report[R, E]
+  uses (clock, fx)
+  requires workers > 0
+{
+  let start = clock.now()
+
+  // Outcomes by job index. A job with no entry did not finish in time.
+  let done = Mutex[Map[Int, Result[R, E]]].new({})
+
+  // Every job index is queued up front, then the queue is closed, so a
+  // worker stops when recv returns None.
+  let queue = Chan[Int].new(cap: jobs.len())
+  for (i, _) in jobs.indexed() {
+    queue.send(i)
+  }
+  queue.close()
+
+  let timed_out = match task.with_timeout(clock, timeout, fn() {
+    scope s {
+      for _ in 0..workers.min(jobs.len()) {
+        s.spawn(fn() {
+          while {
+            let idx = match queue.recv() {
+              Some(n) => n
+              None => break
+            }
+            let outcome = f(jobs[idx])
+            // A job that was cancelled by the timeout is reported as timed
+            // out, not with whatever error the cancellation produced.
+            if task.is_canceled() {
+              done.with(fn(var m) { m.put(idx, outcome) })
+            }
+          }
+        })
+      }
+    }
+  }) {
+    Ok(()) => false
+    Err(TimedOut) => true
+  }
+
+  let finished = done.with(fn(m) { m })
+  var results: List[R] = []
+  var failures: List[(Int, task.Timed[E])] = []
+  for (i, job) in jobs.indexed() {
+    match finished.get(i) {
+      Some(Ok(r)) => results.push(r)
+      Some(Err(e)) => failures.push((job.id, task.Timed.Failed(e)))
+      None => failures.push((job.id, task.Timed.TimedOut))
+    }
+  }
+  if timed_out {
+    log.warn("worker pool timed out", {"timeout": timeout})
+  }
+  Report{results: results, failures: failures, elapsed: clock.since(start)}
+}

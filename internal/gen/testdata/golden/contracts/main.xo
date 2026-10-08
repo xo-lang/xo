@@ -1,0 +1,50 @@
+enum TxErr {
+  Insufficient
+  Invalid(msg: Str)
+} derive Display
+
+struct Account {
+  id: Int
+  balance: Int
+} invariant balance >= 0
+
+fn withdraw(var a: Account, amt: Int) -> () ! TxErr
+  requires amt > 0 else TxErr.Invalid(msg: "amount must be positive")
+  requires a.balance >= amt else TxErr.Insufficient
+  ensures a.balance == old(a.balance) - amt
+{
+  a.balance -= amt
+}
+
+fn sqrt_floor(n: Int) -> Int
+  requires n >= 0
+  ensures result * result <= n
+{
+  var r = 0
+  while (r + 1) * (r + 1) <= n {
+    r += 1
+  }
+  r
+}
+
+fn buggy(n: Int) -> Int
+  ensures result > n
+{
+  n
+}
+
+fn main(os: Os) {
+  var a = Account{id: 1, balance: 100}
+  os.stdio.println("withdraw 30: ${withdraw(a, 30).is_ok()} balance ${a.balance}")
+  match withdraw(a, 500) {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("withdraw 500: ${e}")
+  }
+  match withdraw(a, -1) {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("withdraw -1: ${e}")
+  }
+  os.stdio.println("sqrt ${sqrt_floor(17)}")
+  os.stdio.println("buggy next")
+  os.stdio.println("${buggy(3)}")
+}

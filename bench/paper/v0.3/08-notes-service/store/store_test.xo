@@ -1,0 +1,54 @@
+use example.com/notes/domain
+
+fn input(title: Str) -> domain.NoteInput {
+  domain.NoteInput{title: title}
+}
+
+test "a new store on the same directory sees the notes" {
+  let first = open(os.fs, "data", os.rand)?
+  let a = first.create(input("one"), os.clock.now())?
+  let b = first.create(input("two"), os.clock.now())?
+  let b2 = first.update(b.id, 1, input("two, edited"), os.clock.now())?
+
+  let second = open(os.fs, "data", os.rand)?
+  expect(second.get(a.id)?) == a
+  expect(second.get(b.id)?) == b2
+  expect(second.all()?.len()) == 2
+}
+
+test "a failed rename leaves no temp file and keeps the old version" {
+  let st = open(os.fs, "data", os.rand)?
+  let n = st.create(input("first"), os.clock.now())?
+  let target = "data/${n.id}.json"
+  // GUESS: fail_next paths are relative to the test's os.fs root (std 8.3), so
+  // the store's sub directory "data" is part of the path.
+  // GUESS: FsOp lives in std/testing, reached through the predeclared `testing`.
+  os.fs.fail_next(testing.FsOp.Rename, target, FsErr.Io(path: target, msg: "disk full"))
+
+  let res = st.update(n.id, 1, input("second"), os.clock.now())
+  expect(res.is_err())
+  expect(os.fs.files().keys()) == [target]
+  expect(st.get(n.id)?.version) == 1
+}
+
+test "temp files left by a crash are removed on open" {
+  os.fs.create_dir_all("data")?
+  os.fs.write("data/.tmp-crashed", b"{partial")?
+  let st = open(os.fs, "data", os.rand)?
+  expect(os.fs.files().keys().any(fn(p) { p.contains(".tmp-") })) == false
+  expect(st.all()?.len()) == 0
+}
+
+test "update and delete check the version" {
+  let st = open(os.fs, "data", os.rand)?
+  let n = st.create(input("v1"), os.clock.now())?
+  expect(st.update(n.id, 7, input("x"), os.clock.now())) == Err(StoreErr.Conflict(id: n.id, current: 1))
+  expect(st.delete(n.id, 2)) == Err(StoreErr.Conflict(id: n.id, current: 1))
+  st.delete(n.id, 1)?
+  expect(st.get(n.id)) == Err(StoreErr.NotFound(id: n.id))
+}
+
+test "ids that are not safe file names are not found" {
+  let st = open(os.fs, "data", os.rand)?
+  expect(st.get("../secrets")) == Err(StoreErr.NotFound(id: "../secrets"))
+}

@@ -1,0 +1,22 @@
+use std/http
+use std/log
+
+pub fn routes(l: Limiter, clock: Clock) -> http.Router uses clock {
+  var r = http.router()
+  r.wrap(rate_limit(l, clock))
+  r.handle("GET /hello", fn(_req) { http.json(200, {"msg": "hi"}) })
+  r
+}
+
+fn main(os: Os) ! {
+  let limiter = new_limiter(limits: {
+    "partner-key": Limit{capacity: 100, refill_per_sec: 50.0},
+  })
+  let srv = http.server(os.net.listen(":8080")?, routes(limiter, os.clock))
+  log.info("listening", {"addr": ":8080"})
+  scope s {
+    // Background: cancelled when serve returns (server stopped).
+    s.spawn_background(fn() { run_evictor(limiter, os.clock) })
+    srv.serve()?
+  }
+}

@@ -1,0 +1,157 @@
+use std/http
+use std/log
+
+/// A per key rate limit: bucket size and refill rate.
+pub struct Limit {
+  pub capacity: Int
+  pub refill_per_sec: Float
+} invariant capacity >= 1 && refill_per_sec > 0.0
+
+/// Used for every key without an entry in the config map.
+pub const DEFAULT_LIMIT = Limit{capacity: 20, refill_per_sec: 5.0}
+
+/// Buckets untouched for longer than this are evicted.
+pub const IDLE_TTL = 10m
+
+/// How often the evictor runs.
+pub const EVICT_EVERY = 1m
+
+/// A token bucket. Tokens are fractional so partial refills accumulate.
+pub struct Bucket {
+  pub capacity: Int
+  pub tokens: Float
+  pub refill_per_sec: Float
+  pub last_refill: Time
+}
+
+/// A full bucket for the given limit.
+pub fn new_bucket(limit: Limit, now: Time) -> Bucket {
+  Bucket{
+    capacity: limit.capacity,
+    tokens: Float(limit.capacity),
+    refill_per_sec: limit.refill_per_sec,
+    last_refill: now,
+  }
+}
+
+/// Adds the tokens earned since the last refill, capped at capacity.
+fn (b: Bucket) refill(now: Time) {
+  let elapsed = now - b.last_refill
+  if elapsed > 0s {
+    let earned = elapsed.seconds() * b.refill_per_sec
+    b.tokens = (b.tokens + earned).min(Float(b.capacity))
+    b.last_refill = now
+  }
+}
+
+/// Refills, then consumes one token if one is available.
+pub fn (var b: Bucket) take(now: Time) -> Bool {
+  b.refill(now)
+  if b.tokens >= 1.0 {
+    b.tokens -= 1.0
+    true
+  } else {
+    false
+  }
+}
+
+/// Whole seconds until one token is available, at least 1.
+pub fn (b: Bucket) retry_after_secs(now: Time) -> Int
+  requires b.refill_per_sec > 0.0
+{
+  var probe = b
+  probe.refill(now)
+  if probe.tokens >= 1.0 {
+    return 1
+  }
+  let wait = Duration.from_secs((1.0 - probe.tokens) / probe.refill_per_sec)
+  wait.ceil_seconds().max(1)
+}
+
+/// Outcome of a rate limit check.
+pub enum Decision {
+  Allowed
+  Limited(retry_after_secs: Int)
+}
+
+/// One bucket per client key. Copies share the same buckets.
+pub struct Limiter {
+  buckets: Mutex[Map[Str, Bucket]]
+  limits: Map[Str, Limit]
+  default_limit: Limit
+}
+
+/// A limiter with per key overrides in `limits`.
+pub fn new_limiter(limits: Map[Str, Limit], default_limit: Limit = DEFAULT_LIMIT) -> Limiter {
+  Limiter{buckets: Mutex.new({}), limits: limits, default_limit: default_limit}
+}
+
+fn (l: Limiter) limit_for(key: Str) -> Limit {
+  l.limits.get(key) ?? l.default_limit
+}
+
+/// Takes one token from the bucket for `key`, creating it if needed.
+pub fn (l: Limiter) check(key: Str, now: Time) -> Decision {
+  let limit = l.limit_for(key)
+  l.buckets.with(fn(var m) {
+    m.update(key, new_bucket(limit, now), fn(var b) {
+      if b.take(now) {
+        Decision.Allowed
+      } else {
+        Decision.Limited(retry_after_secs: b.retry_after_secs(now))
+      }
+    })
+  })
+}
+
+/// Removes buckets idle for longer than `idle`. Returns how many were removed.
+pub fn (l: Limiter) evict_idle(now: Time, idle: Duration) -> Int {
+  l.buckets.with(fn(var m) {
+    let before = m.len()
+    m = m.filter(fn(_key, b) { now - b.last_refill <= idle })
+    before - m.len()
+  })
+}
+
+/// Number of buckets currently held.
+pub fn (l: Limiter) len() -> Int {
+  l.buckets.with(fn(m) { m.len() })
+}
+
+/// Evicts idle buckets every EVICT_EVERY until cancelled.
+pub fn run_evictor(l: Limiter, clock: Clock) uses clock {
+  while {
+    clock.sleep(EVICT_EVERY)
+    let n = l.evict_idle(clock.now(), IDLE_TTL)
+    if n > 0 {
+      log.debug("evicted idle buckets", {"count": n})
+    }
+  }
+}
+
+/// The `X-Api-Key` header, or the remote IP when it is missing or empty.
+pub fn client_key(req: http.Request) -> Str {
+  match req.header("X-Api-Key") {
+    Some(k) if !k.is_empty() => k
+    _ => req.remote_ip
+  }
+}
+
+/// Middleware body: passes the request on or answers 429 with Retry-After.
+pub fn rate_limit(l: Limiter, clock: Clock, req: http.Request, next: http.Next) -> http.Response
+  uses clock
+{
+  match l.check(client_key(req), clock.now()) {
+    Allowed => next(req)
+    Limited(retry_after_secs: secs) => http.json(429, {"error": "rate limited"})
+      .with_header("Retry-After", "${secs}")
+  }
+}
+
+/// The router: `GET /hello` behind the rate limiter.
+pub fn routes(l: Limiter, clock: Clock) -> http.Router uses clock {
+  var r = http.router()
+  r.wrap(fn(req, next) { rate_limit(l, clock, req, next) })
+  r.handle("GET /hello", fn(_req) { http.json(200, {"msg": "hi"}) })
+  r
+}

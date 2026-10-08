@@ -1,0 +1,499 @@
+// The prelude: builtin types, prelude interfaces, capability interfaces, and
+// methods on builtin types (spec/std.md sections 1 to 3, core 2.1, 5.4, 7.1).
+// Available in every module without `use`.
+//
+// This is a declaration file. It is parsed in signature mode (function
+// declarations have no bodies) and read by internal/check. It is never
+// compiled. Encoding rules shared by every file under std/:
+//
+//  1. Everything declared in a std file is public; `pub` is not written.
+//     Fields of std structs are public (std.md 0).
+//  2. A struct with no fields is an opaque handle: it cannot be built with a
+//     struct literal (Int, List, Router, Task, ...). Builtin types are such
+//     structs; the checker knows their literals and operators by name.
+//  3. `[var] xs` receivers in std.md are written `var xs`.
+//  4. A receiver named `static` declares an associated function, called on
+//     the type rather than on a value: `Int.parse(s)`, `Chan[Job].new(cap: 8)`,
+//     `Duration.from_secs(1.5)`. A static with an UPPER_SNAKE name and no
+//     parameters is an associated constant, read without a call:
+//     `Time.UNIX_EPOCH`.
+//  5. In a receiver type, a type argument that is a bare name not declared
+//     as a type (T, K, V, E) is an implicit type parameter of the method. A
+//     declared type there restricts the method: `fn (xs: List[Str]) join`
+//     exists only on `List[Str]`.
+//  6. `T?` receivers are written `Option[T]`.
+//  7. "also x, y" comments in std.md are expanded into one declaration each.
+//  8. A doc comment line `@moves` marks a method that moves its receiver
+//     (core 5.3: `freeze`).
+//  9. Things the checker builds in rather than reads from here: numeric
+//     conversions `Int(x)`, `Float(x)`, `Int32(x)` and the other sized types
+//     (any numeric type to any numeric type); operators (core 2.1, 15);
+//     `min`, `max`, `clamp` on every `Ord` type; `t.await` on a Task without
+//     parentheses; `expect(a) <op> b` in tests; the predeclared `target`.
+//     Eq, Hash, Ord, Json, OpenApi, Proto, and Debug are marker interfaces
+//     whose satisfaction rules are builtin (std.md 1).
+// 10. The prelude imports std/task for `task.Group` (the type of `os.tasks`
+//     and of `s.group()`, core 7.1). The import is not visible to user code:
+//     a module still needs `use std/task` to name `task.Group`.
+use std/task
+
+// ---------------------------------------------------------------------------
+// Builtin types (core 2.1)
+
+struct Bool {}
+struct Int {}
+struct Int8 {}
+struct Int16 {}
+struct Int32 {}
+struct Int64 {}
+struct UInt8 {}
+struct UInt16 {}
+struct UInt32 {}
+struct UInt64 {}
+struct Float {}
+struct Float32 {}
+struct Rune {}
+struct Str {}
+struct Bytes {}
+struct Duration {}
+struct Time {}
+struct List[T] {}
+struct Map[K, V] {}
+struct Set[T] {}
+struct Buf[T] {}
+struct StrBuilder {}
+struct Chan[T] {}
+struct Mutex[T] {}
+struct Atomic[T] {}
+struct Secret[T] {}
+
+/// The type of a range expression `a..b` or `a..=b` (core 3.5, 3.6). Not
+/// named by the spec; it exists so ranges can be stored and iterated.
+struct Range[T] {}
+fn (r: Range[Int]) to_list() -> List[Int]
+
+/// The type with no values (core 2.1). An enum with no variants, so a match
+/// on it needs no arms. Converts to every type.
+enum Never {}
+
+/// `T?` (core 2.5).
+enum Option[T] {
+  None
+  Some(v: T)
+}
+
+/// Success or failure (core 2.6).
+enum Result[T, E] {
+  Ok(v: T)
+  Err(e: E)
+}
+
+// ---------------------------------------------------------------------------
+// Prelude interfaces (std.md 1)
+
+interface Display {
+  fn display(self) -> Str
+}
+
+/// The open error interface: any Display type is an Error.
+interface Error {
+  fn display(self) -> Str
+}
+
+/// Implemented by every type.
+interface Debug {
+  fn debug(self) -> Str
+}
+
+// Marker interfaces with builtin satisfaction rules.
+interface Eq {}
+interface Hash {}
+interface Ord {}
+interface Json {}
+interface OpenApi {}
+interface Proto {}
+
+// ---------------------------------------------------------------------------
+// Predeclared functions (core 1.4, 8, 11.4)
+
+fn fault(msg: Str) -> Never
+fn dbg[T](x: T) -> T
+
+// ---------------------------------------------------------------------------
+// Targets (core 12.2). `target` is a predeclared value of type Target.
+
+enum TargetOs {
+  Linux
+  Darwin
+  Windows
+  Wasi
+}
+
+enum TargetArch {
+  Amd64
+  Arm64
+  Wasm32
+}
+
+struct Target {
+  os: TargetOs
+  arch: TargetArch
+}
+
+// ---------------------------------------------------------------------------
+// Numbers (std.md 2.1)
+
+fn (static: Int) parse(s: Str) -> Int?
+fn (static: Float) parse(s: Str) -> Float?
+fn (static: Int8) try(x: Int) -> Int8?
+fn (static: Int16) try(x: Int) -> Int16?
+fn (static: Int32) try(x: Int) -> Int32?
+fn (static: Int64) try(x: Int) -> Int64?
+fn (static: UInt8) try(x: Int) -> UInt8?
+fn (static: UInt16) try(x: Int) -> UInt16?
+fn (static: UInt32) try(x: Int) -> UInt32?
+fn (static: UInt64) try(x: Int) -> UInt64?
+
+fn (n: Int) abs() -> Int
+fn (n: Int) pow(e: Int) -> Int
+fn (n: Int) wrapping_add(m: Int) -> Int
+fn (n: Int) wrapping_sub(m: Int) -> Int
+fn (n: Int) wrapping_mul(m: Int) -> Int
+fn (n: Int) saturating_add(m: Int) -> Int
+fn (n: Int) saturating_sub(m: Int) -> Int
+fn (n: Int) saturating_mul(m: Int) -> Int
+fn (n: Int) checked_add(m: Int) -> Int?
+fn (n: Int) checked_sub(m: Int) -> Int?
+fn (n: Int) checked_mul(m: Int) -> Int?
+fn (n: Int) checked_div(m: Int) -> Int?
+
+fn (f: Float) floor() -> Float
+fn (f: Float) ceil() -> Float
+fn (f: Float) round() -> Float
+fn (f: Float) trunc() -> Float
+fn (f: Float) abs() -> Float
+fn (f: Float) sqrt() -> Float
+fn (f: Float) is_nan() -> Bool
+
+// ---------------------------------------------------------------------------
+// Str, Rune, Bytes (std.md 2.2)
+
+fn (s: Str) len() -> Int
+fn (s: Str) rune_count() -> Int
+fn (s: Str) is_empty() -> Bool
+fn (s: Str) contains(sub: Str) -> Bool
+fn (s: Str) starts_with(p: Str) -> Bool
+fn (s: Str) ends_with(p: Str) -> Bool
+fn (s: Str) find(sub: Str) -> Int?
+fn (s: Str) split(sep: Str) -> List[Str]
+fn (s: Str) lines() -> List[Str]
+fn (s: Str) trim() -> Str
+fn (s: Str) trim_start() -> Str
+fn (s: Str) trim_end() -> Str
+fn (s: Str) trim_prefix(p: Str) -> Str
+fn (s: Str) trim_suffix(p: Str) -> Str
+fn (s: Str) to_lower() -> Str
+fn (s: Str) to_upper() -> Str
+fn (s: Str) replace(old: Str, new: Str) -> Str
+fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) runes() -> List[Rune]
+fn (s: Str) bytes() -> Bytes
+
+fn (b: Bytes) len() -> Int
+fn (b: Bytes) is_empty() -> Bool
+fn (b: Bytes) to_str() -> Str?
+fn (b: Bytes) to_hex() -> Str
+fn (b: Bytes) to_base64() -> Str
+fn (static: Bytes) from_hex(s: Str) -> Bytes?
+fn (static: Bytes) from_base64(s: Str) -> Bytes?
+
+fn (r: Rune) is_digit() -> Bool
+fn (r: Rune) is_letter() -> Bool
+fn (r: Rune) is_space() -> Bool
+fn (r: Rune) to_lower() -> Rune
+fn (r: Rune) to_upper() -> Rune
+
+// ---------------------------------------------------------------------------
+// List[T] (std.md 2.3). Higher order methods pass through the callback's
+// effects and errors (std.md 2.3, core 6.2).
+
+fn (xs: List[T]) len() -> Int
+fn (xs: List[T]) is_empty() -> Bool
+fn (xs: List[T]) get(i: Int) -> T?
+fn (xs: List[T]) first() -> T?
+fn (xs: List[T]) last() -> T?
+fn (xs: List[T]) contains(x: T) -> Bool
+fn (xs: List[T]) index_of(x: T) -> Int?
+fn (xs: List[T]) indexed() -> List[(Int, T)]
+fn (xs: List[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx
+fn (xs: List[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) fold[A, E, fx: Effects](init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx
+fn (xs: List[T]) find[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx
+fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) sort() -> List[T]
+fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) reverse() -> List[T]
+fn (xs: List[T]) to_set() -> Set[T]
+fn (xs: List[Str]) join(sep: Str) -> Str
+
+fn (var xs: List[T]) push(x: T)
+fn (var xs: List[T]) pop() -> T?
+fn (var xs: List[T]) insert(i: Int, x: T)
+fn (var xs: List[T]) remove_at(i: Int) -> T
+fn (var xs: List[T]) set(i: Int, x: T)
+
+// ---------------------------------------------------------------------------
+// Map[K, V] and Set[T] (std.md 2.4)
+
+fn (m: Map[K, V]) len() -> Int
+fn (m: Map[K, V]) is_empty() -> Bool
+fn (m: Map[K, V]) get(k: K) -> V?
+fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V
+fn (m: Map[K, V]) contains(k: K) -> Bool
+fn (m: Map[K, V]) keys() -> List[K]
+fn (m: Map[K, V]) values() -> List[V]
+fn (m: Map[K, V]) entries() -> List[(K, V)]
+fn (m: Map[K, V]) filter[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx
+
+fn (var m: Map[K, V]) put(k: K, v: V)
+fn (var m: Map[K, V]) remove(k: K) -> V?
+fn (var m: Map[K, V]) update[R, E, fx: Effects](k: K, init: V, f: fn(var V) -> R ! E uses fx) -> R ! E uses fx
+
+fn (s: Set[T]) len() -> Int
+fn (s: Set[T]) is_empty() -> Bool
+fn (s: Set[T]) contains(x: T) -> Bool
+fn (s: Set[T]) union(o: Set[T]) -> Set[T]
+fn (s: Set[T]) intersect(o: Set[T]) -> Set[T]
+fn (s: Set[T]) difference(o: Set[T]) -> Set[T]
+fn (s: Set[T]) to_list() -> List[T]
+fn (s: Set[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (s: Set[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (s: Set[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Set[T] ! E uses fx
+fn (s: Set[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> Set[U] ! E uses fx
+fn (var s: Set[T]) add(x: T)
+fn (var s: Set[T]) remove(x: T) -> Bool
+
+// ---------------------------------------------------------------------------
+// Option[T] and Result[T, E] (std.md 2.5)
+
+fn (o: Option[T]) is_some() -> Bool
+fn (o: Option[T]) is_none() -> Bool
+fn (o: Option[T]) or_err[E](e: E) -> Result[T, E]
+fn (o: Option[T]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> U? uses fx
+fn (o: Option[T]) and_then[U, fx: Effects](f: fn(T) -> U? uses fx) -> U? uses fx
+fn (o: Option[T]) or_fault(msg: Str) -> T
+
+fn (r: Result[T, E]) is_ok() -> Bool
+fn (r: Result[T, E]) is_err() -> Bool
+fn (r: Result[T, E]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> Result[U, E] uses fx
+fn (r: Result[T, E]) map_err[F, fx: Effects](f: fn(E) -> F uses fx) -> Result[T, F] uses fx
+fn (r: Result[T, E]) ok() -> T?
+fn (r: Result[T, E]) err() -> E?
+fn (r: Result[T, E]) or_fault(msg: Str) -> T
+/// The only way to discard an error (core 2.6): yields the success value or
+/// None, and logs the error with the reason at debug level.
+fn (r: Result[T, E]) ignore_err(reason: Str) -> T?
+
+// ---------------------------------------------------------------------------
+// Duration and Time (std.md 2.6). Operators are builtin (core 2.1).
+
+fn (static: Duration) from_secs(s: Float) -> Duration
+fn (static: Duration) from_millis(ms: Int) -> Duration
+fn (static: Duration) from_nanos(ns: Int) -> Duration
+fn (d: Duration) seconds() -> Float
+fn (d: Duration) millis() -> Int
+fn (d: Duration) nanos() -> Int
+fn (d: Duration) scale(f: Float) -> Duration
+fn (d: Duration) ceil_seconds() -> Int
+fn (d: Duration) abs() -> Duration
+
+fn (static: Time) UNIX_EPOCH() -> Time
+fn (static: Time) from_unix(secs: Int) -> Time
+fn (static: Time) from_unix_millis(ms: Int) -> Time
+fn (static: Time) parse_rfc3339(s: Str) -> Time?
+fn (t: Time) unix() -> Int
+fn (t: Time) unix_millis() -> Int
+fn (t: Time) format_rfc3339() -> Str
+
+// ---------------------------------------------------------------------------
+// Concurrency and state types (std.md 2.7, core 5.4, 7)
+
+fn (static: Chan[T]) new(cap: Int = 0) -> Chan[T]
+fn (c: Chan[T]) send(x: T)
+fn (c: Chan[T]) recv() -> T?
+fn (c: Chan[T]) try_send(x: T) -> Bool
+fn (c: Chan[T]) try_recv() -> T?
+fn (c: Chan[T]) close()
+fn (c: Chan[T]) len() -> Int
+
+fn (static: Mutex[T]) new(v: T) -> Mutex[T]
+fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
+
+fn (static: Atomic[T]) new(v: T) -> Atomic[T]
+fn (a: Atomic[T]) get() -> T
+fn (a: Atomic[T]) set(v: T)
+fn (a: Atomic[Int]) add(n: Int) -> Int
+fn (a: Atomic[Int]) max(n: Int) -> Int
+fn (a: Atomic[T]) swap(v: T) -> T
+fn (a: Atomic[T]) compare_and_swap(old: T, new: T) -> Bool
+
+/// The handle bound by `scope s { ... }` (core 7.1). The only way to start a
+/// task.
+struct Scope {}
+fn (s: Scope) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+fn (s: Scope) spawn_background[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+fn (s: Scope) cancel()
+/// A storable handle whose tasks belong to this scope (core 7.1).
+fn (s: Scope) group() -> task.Group
+
+struct Task[T, E] {}
+/// Written `t.await`, without parentheses.
+fn (t: Task[T, E]) await() -> T ! E
+
+fn (static: Buf[T]) new() -> Buf[T]
+fn (static: Buf[T]) with_capacity(n: Int) -> Buf[T]
+fn (var b: Buf[T]) push(x: T)
+fn (b: Buf[T]) len() -> Int
+/// @moves
+fn (b: Buf[T]) freeze() -> List[T]
+
+fn (static: StrBuilder) new() -> StrBuilder
+fn (var b: StrBuilder) write(s: Str)
+fn (b: StrBuilder) len() -> Int
+/// @moves
+fn (b: StrBuilder) freeze() -> Str
+
+fn (static: Secret[T]) new(v: T) -> Secret[T]
+fn (s: Secret[T]) reveal() -> T
+
+// ---------------------------------------------------------------------------
+// Capabilities (std.md 3, core 6.3)
+
+struct Os {
+  net: Net
+  fs: Fs
+  clock: Clock
+  rand: Rand
+  env: Env
+  proc: Proc
+  stdio: Stdio
+  /// Program lifetime task group (core 6.3, 7.1).
+  tasks: task.Group
+}
+
+enum FsErr {
+  NotFound(path: Str)
+  Exists(path: Str)
+  NotEmpty(path: Str)
+  NotDir(path: Str)
+  IsDir(path: Str)
+  Denied(path: Str)
+  Io(path: Str, msg: Str)
+  Canceled
+} derive Display
+
+struct FileInfo {
+  name: Str
+  path: Str
+  is_dir: Bool
+  size: Int
+  modified: Time
+}
+
+interface Fs {
+  fn sub(self, dir: Str) -> Fs
+  fn cwd(self) -> Fs
+  fn read_only(self) -> Fs
+  fn write_only(self) -> Fs
+  fn case_sensitive(self) -> Bool
+  fn stat(self, path: Str) -> FileInfo? ! FsErr uses fs.read
+  fn exists(self, path: Str) -> Bool ! FsErr uses fs.read
+  fn read(self, path: Str) -> Bytes ! FsErr uses fs.read
+  fn read_text(self, path: Str) -> Str ! FsErr uses fs.read
+  fn read_dir(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+  fn walk(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+  fn write(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+  fn create_temp(self, dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
+  fn rename(self, from: Str, to: Str) -> () ! FsErr uses fs.write
+  fn remove(self, path: Str) -> () ! FsErr uses fs.write
+  fn remove_all(self, path: Str) -> () ! FsErr uses fs.write
+  fn create_dir_all(self, dir: Str) -> () ! FsErr uses fs.write
+  fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
+}
+
+enum NetErr {
+  InvalidAddr(msg: Str)
+  Refused
+  Timeout
+  Io(msg: Str)
+  Canceled
+} derive Display
+
+struct Listener {}
+struct Conn {}
+
+interface Net {
+  fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
+  fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+}
+
+interface Clock {
+  fn now(self) -> Time uses clock
+  fn sleep(self, d: Duration) uses clock
+  fn since(self, t: Time) -> Duration uses clock
+}
+
+interface Rand {
+  fn int(self, lo: Int, hi: Int) -> Int uses rand
+  fn float(self) -> Float uses rand
+  fn bool(self) -> Bool uses rand
+  fn bytes(self, n: Int) -> Bytes uses rand
+  fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
+}
+
+enum EnvErr {
+  Missing(name: Str)
+} derive Display
+
+interface Env {
+  fn get(self, name: Str) -> Str? uses env
+  fn vars(self) -> Map[Str, Str] uses env
+  fn args(self) -> List[Str] uses env
+  fn program(self) -> Str uses env
+  fn home(self) -> Str ! EnvErr uses env
+}
+
+enum IoErr {
+  Closed
+  Io(msg: Str)
+  Canceled
+} derive Display
+
+interface Stdio {
+  fn print(self, text: Str) uses stdio
+  fn println(self, text: Str) uses stdio
+  fn eprint(self, text: Str) uses stdio
+  fn eprintln(self, text: Str) uses stdio
+  fn write(self, data: Bytes) -> () ! IoErr uses stdio
+  fn read_line(self) -> Str? ! IoErr uses stdio
+  fn read_all(self) -> Str ! IoErr uses stdio
+  fn lines(self) -> List[Str] ! IoErr uses stdio
+}
+
+struct ProcOutput {
+  code: Int
+  stdout: Bytes
+  stderr: Bytes
+}
+
+enum ProcErr {
+  NotFound(cmd: Str)
+  Io(msg: Str)
+  Canceled
+} derive Display
+
+interface Proc {
+  fn exit(self, code: Int) -> Never uses proc
+  fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+}

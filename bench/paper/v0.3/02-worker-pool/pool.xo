@@ -1,0 +1,76 @@
+use std/task
+
+/// One unit of work for `run_pool`. `id` is reported back with failures.
+pub struct Job[T] {
+  pub id: Int
+  pub input: T
+}
+
+/// Outcome of a pool run.
+pub struct Report[R, E] {
+  /// Successful results, in the original job order.
+  pub results: List[R]
+  /// Failed jobs as `(job id, error)`, in the original job order.
+  /// Jobs still running when the overall timeout passed are `TimedOut`.
+  pub failures: List[(Int, task.Timed[E])]
+  pub elapsed: Duration
+}
+
+/// Runs `f` on every job with at most `workers` calls in flight at once.
+/// A failing job does not stop the others. When `timeout` passes, every
+/// unfinished job is cancelled and reported as `task.Timed.TimedOut`.
+pub fn run_pool[T, R, E, fx: Effects](
+  clock: Clock,
+  jobs: List[Job[T]],
+  workers: Int,
+  timeout: Duration,
+  f: fn(T) -> R ! E uses fx,
+) -> Report[R, E]
+  uses (clock, fx)
+  requires workers > 0
+{
+  let start = clock.now()
+  // Outcomes keyed by position in `jobs`. A missing key means the job never
+  // finished before the deadline.
+  let outcomes = Mutex[Map[Int, Result[R, E]]].new({})
+  // GUESS: Semaphore is a handle like Mutex, so copies captured by each
+  // spawned closure share the same permits. std.md does not say.
+  let permits = task.semaphore(workers)
+
+  let run = task.with_timeout(clock, timeout, fn() {
+    scope s {
+      for (i, job) in jobs.indexed() {
+        s.spawn(fn() {
+          permits.with(fn() {
+            let r = f(job.input)
+            // A call cut short by the deadline returns its Canceled error (or
+            // nothing useful). Do not record it as the job's own failure: the
+            // missing key makes it a TimedOut below.
+            if !task.is_canceled() {
+              outcomes.with(fn(var m) { m.put(i, r) })
+            }
+          })
+        })
+      }
+    }
+  })
+  let timed_out = run.is_err()
+
+  let done = outcomes.with(fn(m) { m })
+  var results: List[R] = []
+  var failures: List[(Int, task.Timed[E])] = []
+  for (i, job) in jobs.indexed() {
+    match done.get(i) {
+      Some(Ok(v)) => results.push(v)
+      Some(Err(e)) => failures.push((job.id, task.Timed.Failed(e)))
+      None => {
+        if !timed_out {
+          fault("job ${job.id} has no outcome but the pool did not time out")
+        }
+        failures.push((job.id, task.Timed.TimedOut))
+      }
+    }
+  }
+
+  Report{results: results, failures: failures, elapsed: clock.since(start)}
+}

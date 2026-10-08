@@ -1,0 +1,12 @@
+fn main(os: Os) ! {
+  defer os.stdio.println("cleanup ran")
+  scope s {
+    s.spawn_background(fn() {
+      defer os.stdio.println("background stopped")
+      os.clock.sleep(1h)
+    })
+    os.stdio.println("ready")
+    os.clock.sleep(1h)
+  }
+  os.stdio.println("not reached")
+}

@@ -1,0 +1,56 @@
+// users_test.xo: tests for the store and its HTTP status mapping.
+
+fn ada() -> CreateBody {
+  CreateBody{name: "Ada", email: "ada@example.com", nickname: none}
+}
+
+// Fails the test unless `r` is an error with HTTP status `want`.
+// GUESS: fault() inside a test fails that test (section 8 says a fault ends
+// the task; the spec does not say how a test reports failure other than expect).
+fn expect_status[T](r: Result[T, ApiErr], want: Int) {
+  match r {
+    ok(_) => fault("expected an error with status {want}, got ok")
+    err(e) => expect(e.status()) == want
+  }
+}
+
+// GUESS: `?` is allowed inside a test block and an err fails the test. The
+// spec never gives a test block an error type.
+test "create then get returns the same user" {
+  let s = new_store()
+  let created = s.create(ada())?
+  expect(created.id) == 1
+  expect(s.get(created.id)) == ok(created)
+}
+
+test "duplicate email returns 409" {
+  let s = new_store()
+  // GUESS: an expression statement whose value (User) is discarded is fine
+  // once the error is handled with `?`; only Results are called out (2.6).
+  s.create(ada())?
+  let dup = CreateBody{name: "Other", email: "ada@example.com", nickname: some("o")}
+  expect_status(s.create(dup), 409)
+}
+
+test "invalid email returns 400" {
+  let s = new_store()
+  let bad = ada() with {email: "ada.example.com"}
+  expect_status(s.create(bad), 400)
+  // Nothing was stored and no id was consumed.
+  expect(s.list()) == []
+}
+
+test "patch with only nickname keeps other fields" {
+  let s = new_store()
+  let created = s.create(ada())?
+  let patched = s.patch(created.id, PatchBody{name: none, email: none, nickname: some("countess")})?
+  expect(patched) == created with {nickname: some("countess")}
+  expect(s.get(created.id)) == ok(patched)
+}
+
+test "delete then get returns 404" {
+  let s = new_store()
+  let created = s.create(ada())?
+  s.delete(created.id)?
+  expect_status(s.get(created.id), 404)
+}

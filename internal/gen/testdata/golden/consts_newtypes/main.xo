@@ -1,0 +1,27 @@
+const LIMIT = 3
+const NAMES = ["a", "b", "c"]
+const ORIGIN = Point{x: 0, y: 0}
+const GREETING = "hi ${LIMIT}"
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+type UserId = Int
+type Email struct(Str)
+
+fn (e: Email) domain() -> Str {
+  match e {
+    _ => "example"
+  }
+}
+
+fn check(id: UserId) -> Bool { id > 0 }
+
+fn main(os: Os) {
+  const LOCAL = 10
+  let id: UserId = 5
+  let e = Email("ada@example.com")
+  os.stdio.println("${LIMIT} ${NAMES.len()} ${ORIGIN.x} ${GREETING} ${LOCAL + LIMIT} ${check(id)} ${e == Email("ada@example.com")} ${e.domain()}")
+}

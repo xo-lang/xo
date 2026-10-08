@@ -1,0 +1,43 @@
+fn slow_square(clock: Clock, n: Int) -> Int uses clock {
+  clock.sleep(20ms * n)
+  n * n
+}
+
+fn main(os: Os) {
+  let total = scope s {
+    let a = s.spawn(fn() { slow_square(os.clock, 3) })
+    let b = s.spawn(fn() { slow_square(os.clock, 1) })
+    a.await + b.await
+  }
+  os.stdio.println("total ${total}")
+  let hits = Atomic[Int].new(0)
+  scope s {
+    for i in 0..10 {
+      s.spawn(fn() {
+        os.clock.sleep(1ms * i)
+        hits.add(1)
+      })
+    }
+  }
+  os.stdio.println("hits ${hits.get()}")
+  let ticks = Atomic[Int].new(0)
+  let start = os.clock.now()
+  scope s {
+    s.spawn_background(fn() {
+      while ticks.get() < 1000000 {
+        os.clock.sleep(5ms)
+        ticks.add(1)
+      }
+    })
+    os.clock.sleep(60ms)
+  }
+  let elapsed = os.clock.since(start)
+  os.stdio.println("background ran: ${ticks.get() > 2} stopped quickly: ${elapsed < 2s}")
+  let g_total = scope s {
+    let g = s.group()
+    let h = g.spawn(fn() { 41 })
+    g.spawn(fn() { os.clock.sleep(1ms) })
+    h.await + 1
+  }
+  os.stdio.println("group ${g_total}")
+}

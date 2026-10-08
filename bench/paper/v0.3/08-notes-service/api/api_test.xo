@@ -1,0 +1,146 @@
+use std/http
+use std/json
+use example.com/notes/domain
+use example.com/notes/store
+
+fn new_api(fs: Fs, rand: Rand, clock: Clock) -> http.Router ! store.StoreErr {
+  let st = store.open(fs, "data", rand)?
+  router(st, clock)
+}
+
+fn body(title: Str) -> Bytes {
+  json.encode(domain.NoteInput{title: title})
+}
+
+fn post(r: http.Router, title: Str) -> domain.Note {
+  let resp = r.call(http.new_request("POST", "/notes", body: body(title)))
+  expect(resp.status) == 201
+  resp.decode_json[domain.Note]().or_fault("create returned an invalid note")
+}
+
+fn put(id: Str, version: Str?, title: Str) -> http.Request {
+  let headers: Map[Str, Str] = match version {
+    Some(v) => {"If-Match": v}
+    None => {}
+  }
+  http.new_request("PUT", "/notes/${id}", headers: headers, body: body(title))
+}
+
+test "create returns 201, version 1, and an ETag" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  let resp = r.call(http.new_request("POST", "/notes", body: body("hello")))
+  expect(resp.status) == 201
+  expect(resp.header("ETag")) == Some("\"1\"")
+  let n = resp.decode_json[domain.Note]()?
+  expect(n.version) == 1
+
+  let got = r.call(http.new_request("GET", "/notes/${n.id}"))
+  expect(got.status) == 200
+  expect(got.header("ETag")) == Some("\"1\"")
+}
+
+test "invalid input is 400 and unknown ids are 404" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  expect(r.call(http.new_request("POST", "/notes", body: body(""))).status) == 400
+  expect(r.call(http.new_request("POST", "/notes", body: b"not json")).status) == 400
+  expect(r.call(http.new_request("GET", "/notes/0123456789abcdef0123456789abcdef")).status) == 404
+  expect(r.call(http.new_request("GET", "/notes/..%2F..%2Fetc")).status) == 404
+}
+
+test "PUT and DELETE need a current If-Match" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  let n = post(r, "v1")
+  expect(r.call(put(n.id, None, "x")).status) == 428
+  expect(r.call(put(n.id, "\"9\"", "x")).status) == 412
+
+  let ok = r.call(put(n.id, "\"1\"", "v2"))
+  expect(ok.status) == 200
+  expect(ok.header("ETag")) == Some("\"2\"")
+
+  expect(r.call(http.new_request("DELETE", "/notes/${n.id}")).status) == 428
+  let stale = http.new_request("DELETE", "/notes/${n.id}", headers: {"If-Match": "\"1\""})
+  expect(r.call(stale).status) == 412
+  let del = http.new_request("DELETE", "/notes/${n.id}", headers: {"If-Match": "\"2\""})
+  expect(r.call(del).status) == 204
+  expect(r.call(http.new_request("GET", "/notes/${n.id}")).status) == 404
+}
+
+test "two concurrent PUTs with the same version: exactly one succeeds" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  let n = post(r, "original")
+  let statuses = scope s {
+    let a = s.spawn(fn() { r.call(put(n.id, "\"1\"", "from a")) })
+    let b = s.spawn(fn() { r.call(put(n.id, "\"1\"", "from b")) })
+    [a.await.status, b.await.status]
+  }
+  expect(statuses.sort()) == [200, 412]
+
+  let after = r.call(http.new_request("GET", "/notes/${n.id}"))
+  expect(after.header("ETag")) == Some("\"2\"")
+}
+
+test "pagination: 25 notes, limit 10, no duplicates or gaps with a create mid way" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  var created: List[Str] = []
+  for i in 0..25 {
+    // Distinct timestamps so newest first has an obvious expected order.
+    os.clock.advance(1s)
+    created.push(post(r, "note ${i}").id)
+  }
+
+  var seen: List[Str] = []
+  var cursor: Str? = None
+  var pages = 0
+  while {
+    let url = match cursor {
+      Some(c) => "/notes?limit=10&cursor=${c}"
+      None => "/notes?limit=10"
+    }
+    let resp = r.call(http.new_request("GET", url))
+    expect(resp.status) == 200
+    let page = resp.decode_json[domain.Page]()?
+    pages += 1
+    for n in page.notes {
+      seen.push(n.id)
+    }
+    if pages == 1 {
+      os.clock.advance(1s)
+      post(r, "created mid way")
+    }
+    match page.next_cursor {
+      Some(c) => cursor = c
+      None => break
+    }
+  }
+  expect(pages) == 3
+  expect(seen.to_set().len()) == 25
+  expect(seen) == created.reverse()
+}
+
+test "list filters by tag and text" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  let tagged = json.encode(domain.NoteInput{title: "Groceries", body: "Buy MILK", tags: ["home"]})
+  expect(r.call(http.new_request("POST", "/notes", body: tagged)).status) == 201
+  post(r, "Work plan")
+
+  let resp = r.call(http.new_request("GET", "/notes?tag=home&q=milk"))
+  let page = resp.decode_json[domain.Page]()?
+  expect(page.notes.map(fn(n) { n.title })) == ["Groceries"]
+  expect(page.next_cursor) == None
+}
+
+test "export writes one JSON note per line" {
+  let r = new_api(os.fs, os.rand, os.clock)?
+  post(r, "a")
+  post(r, "b")
+  let resp = r.call(http.new_request("GET", "/export"))
+  expect(resp.status) == 200
+  let text = resp.body.to_str().or_fault("export is not UTF-8")
+  // GUESS: whether lines() yields a trailing "" after a final "\n" is not
+  // specified (std 2.2), so empty lines are dropped before counting.
+  let lines = text.lines().filter(fn(l) { !l.is_empty() })
+  expect(lines.len()) == 2
+  for l in lines {
+    let _n = json.decode_str[domain.Note](l)?
+  }
+}

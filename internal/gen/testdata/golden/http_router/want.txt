@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+GET /items/3 -> 200 {"text":"item 3"} seen=yes
+GET /items/30 -> 404 {"error":"item 30 not found"} seen=yes
+GET /items/abc -> 400 {"error":"path segment `id` must be an Int"} seen=yes
+GET /items/special -> 200 special seen=yes
+DELETE /items/3 -> 405 {"error":"method not allowed"} seen=yes
+GET /nothing -> 404 {"error":"not found"} seen=yes
+POST /echo -> 201 {"text":"hi"} seen=yes
+POST /echo -> 400 {"error":"at $: missing field `text`"} seen=yes
+GET /files/a/b/c.txt?q=1 -> 200 path=a/b/c.txt q=1 seen=yes
+GET /plain -> 500 {"error":"internal error"} seen=yes
+GET /fault -> 500 {"error":"internal error"} seen=yes
+GET /stream -> 200 a
+b
+ seen=yes
+middleware entries 24
+url https example.com 8443 /a/b 2 text/plain
+parse_url scheme must be http or https: ftp://x
+decode x application/json
+--- stderr
+<time> ERROR handler failed error=Boom
+<time> ERROR handler fault fault=index 1 out of range for List of length 0 at main.xo:55:23

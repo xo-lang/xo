@@ -1,0 +1,120 @@
+// GUESS: test blocks see an implicit `os: Os` binding holding the fake
+// capabilities from section 6.4. The spec says tests "receive a test Os" but
+// test blocks have no parameter list, so the name is assumed to be `os`.
+// GUESS: the fake clock is virtual. `sleep` returns as soon as every task is
+// blocked, advancing virtual time, so these tests do not wait in real time.
+// GUESS: `expect` is in scope in tests without `use std/test`, as in the
+// examples in sections 9.2 and Appendix A.
+
+enum TestErr {
+  Boom(id: Int)
+} derive Display
+
+fn make_jobs(n: Int) -> List[Job[Int]] {
+  var jobs: List[Job[Int]] = []
+  for i in 0..n {
+    jobs.push(Job{id: i, input: i})
+  }
+  jobs
+}
+
+test "results keep original order even when later jobs finish first" {
+  let clock = os.clock
+  let finish_order = Mutex[List[Int]].new([])
+
+  let report = run_pool(
+    jobs: make_jobs(5),
+    workers: 5,
+    timeout: 10s,
+    clock: clock,
+    f: fn(j: Job[Int]) -> Int ! TestErr {
+      // Job 0 sleeps longest, job 4 shortest.
+      // GUESS: Duration * Int is defined and yields a Duration.
+      clock.sleep(10ms * (5 - j.input))
+      finish_order.with(fn(var xs) { xs.push(j.id) })
+      j.input * 10
+    },
+  )
+
+  expect(finish_order.with(fn(xs) { xs })) == [4, 3, 2, 1, 0]
+  expect(report.results) == [(0, 0), (1, 10), (2, 20), (3, 30), (4, 40)]
+  expect(report.failures) == []
+}
+
+test "one failing job does not affect the others" {
+  let report = run_pool(
+    jobs: make_jobs(5),
+    workers: 2,
+    timeout: 10s,
+    clock: os.clock,
+    f: fn(j: Job[Int]) -> Int ! TestErr {
+      // GUESS: inside a `! E` function, `return err(e)` fails with e. The spec
+      // shows `?` and `requires ... else` but never a direct error return.
+      if j.input == 2 {
+        return err(TestErr.Boom(id: j.id))
+      }
+      j.input * 10
+    },
+  )
+
+  expect(report.results) == [(0, 0), (1, 10), (3, 30), (4, 40)]
+  expect(report.failures) == [(2, JobErr.Failed(cause: TestErr.Boom(id: 2)))]
+}
+
+test "timeout cancels slow jobs and reports them" {
+  let clock = os.clock
+
+  let report = run_pool(
+    jobs: make_jobs(4),
+    workers: 4,
+    timeout: 1s,
+    clock: clock,
+    f: fn(j: Job[Int]) -> Int ! TestErr {
+      if j.id == 3 {
+        clock.sleep(1h)
+      }
+      j.input
+    },
+  )
+
+  expect(report.results) == [(0, 0), (1, 1), (2, 2)]
+  expect(report.failures) == [(3, JobErr.TimedOut)]
+  // The pool stopped at the deadline instead of waiting for the slow job.
+  expect(report.elapsed < 2s) == true
+}
+
+test "never more than workers jobs run at the same time" {
+  let clock = os.clock
+  let active = Mutex[Int].new(0)
+  let peak = Mutex[Int].new(0)
+
+  let report = run_pool(
+    jobs: make_jobs(20),
+    workers: 3,
+    timeout: 1m,
+    clock: clock,
+    f: fn(j: Job[Int]) -> Int ! TestErr {
+      let now_active = active.with(fn(var n) {
+        n += 1
+        n
+      })
+      // Block scoped defer: runs when this closure body exits, including on
+      // cancellation.
+      defer active.with(fn(var n) { n -= 1 })
+      peak.with(fn(var p) {
+        if now_active > p {
+          p = now_active
+        }
+      })
+      clock.sleep(10ms)
+      j.input
+    },
+  )
+
+  let max_seen = peak.with(fn(p) { p })
+  expect(report.results.len()) == 20
+  expect(max_seen <= 3) == true
+  // With 20 equal jobs and 3 workers, the pool should actually reach its
+  // limit; otherwise this test proves nothing.
+  expect(max_seen) == 3
+}

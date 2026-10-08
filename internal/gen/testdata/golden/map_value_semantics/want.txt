@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+copy: a x=1,y=2 b x=10,y=2,z=3
+both: a x=1,w=4 b y=2,z=3,x=11
+order: c p=1,q=2 d p=1 e p=1,r=3
+struct: h1 a=1,c=3 h2 a=5,b=2
+list of structs: hs a=1,c=3 hs2 a=1,c=3,d=4
+closure: captured k=1 now k=2,l=3 grown k=2,l=3,m=99
+channel: sent s=2,t=3 got s=1,u=4
+task: local v=1,L0=48,L1=49,L2=47
+task: theirs v=1,n0=45,n1=46,n2=47,n3=48,n4=49 base v=1
+update: counts a=1,b=2,c=3 before a=0,b=0
+nested: g x=7,y=2,w=8 h z=1 snap x=1 inner_copy x=7,y=2 keys g,h
+mutex: first start=0 snapshots 0 last 5 t0 199 start 0 keys 17
+order: first k1 last k0 k5 45 snap k5 5 snap len 100 branches 3030
+set: b,c copy a,b
+--- stderr

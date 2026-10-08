@@ -1,0 +1,162 @@
+// Package api holds the HTTP handlers. It depends on domain and store.
+
+use std/http
+use std/json
+use example.com/notes/domain
+use example.com/notes/store
+
+pub const DEFAULT_LIMIT = 20
+pub const MAX_LIMIT = 100
+
+pub enum ApiErr {
+  BadRequest(msg: Str)
+  NotFound(id: Str)
+  PreconditionRequired
+  PreconditionFailed(msg: Str)
+  Invalid(from domain.ValidationErr)
+  Store(from store.StoreErr)
+}
+
+// std/http maps handler errors to responses through status and display.
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    NotFound(_) => 404
+    PreconditionRequired => 428
+    PreconditionFailed(_) => 412
+    Invalid(_) => 422
+    Store(inner) => match inner {
+      store.StoreErr.NotFound(..) => 404
+      store.StoreErr.Conflict(..) => 412
+      store.StoreErr.AlreadyExists(..) => 409
+      store.StoreErr.Invalid(_) => 422
+      store.StoreErr.Corrupt(..) => 500
+      store.StoreErr.Io(_) => 500
+    }
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    NotFound(id) => "note ${id} not found"
+    PreconditionRequired => "If-Match header with the current ETag is required"
+    PreconditionFailed(msg) => msg
+    Invalid(inner) => inner.display()
+    Store(inner) => match inner {
+      store.StoreErr.Corrupt(..) | store.StoreErr.Io(_) => "internal error"
+      _ => inner.display()
+    }
+  }
+}
+
+/// The body of `GET /notes`.
+pub struct NoteList {
+  pub notes: List[domain.Note]
+  /// Pass back as `cursor` to get the next page; absent on the last page.
+  pub next_cursor: Str?
+} derive Json
+
+/// Builds the router. Handlers capture the store, clock, and rand.
+pub fn routes(st: store.Store, clock: Clock, rand: Rand) -> http.Router
+  uses (fs, clock, rand)
+{
+  var r = http.router()
+
+  r.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
+    let edit = decode_edit(req)?
+    let note = domain.new_note(domain.new_id(rand), edit, clock.now())?
+    let saved = st.create(note)?
+    with_etag(http.json(201, saved), saved.version)
+      .with_header("Location", "/notes/${saved.id}")
+  })
+
+  r.handle("GET /notes", fn(req) -> http.Response ! ApiErr {
+    let q = parse_query(req)?
+    let page = domain.search(st.list()?, q)
+    http.json(200, NoteList{notes: page.notes, next_cursor: page.next.map(domain.encode_cursor)})
+  })
+
+  r.handle("GET /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let id = note_id(req)?
+    let n = st.get(id)?
+    with_etag(http.json(200, n), n.version)
+  })
+
+  r.handle("PUT /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let id = note_id(req)?
+    let expected = if_match(req)?
+    let edit = decode_edit(req)?
+    domain.validate(edit.title, edit.tags)?
+    let n = st.update(id, expected, edit, clock.now())?
+    with_etag(http.json(200, n), n.version)
+  })
+
+  r.handle("DELETE /notes/{id}", fn(req) -> http.Response ! ApiErr {
+    let id = note_id(req)?
+    let expected = if_match(req)?
+    st.delete(id, expected)?
+    http.empty(204)
+  })
+
+  // JSON lines, newest first. The notes are read before streaming starts,
+  // so a storage error is still a proper error response.
+  r.handle("GET /export", fn(_req) -> http.Response ! ApiErr {
+    let notes = domain.newest_first(st.list()?)
+    http.stream(200, fn(w) {
+      for n in notes {
+        w.write(json.encode(n) + b"\n")?
+      }
+    })
+      .with_header("Content-Type", "application/x-ndjson")
+  })
+
+  r
+}
+
+fn with_etag(resp: http.Response, version: Int) -> http.Response {
+  resp.with_header("ETag", domain.etag(version))
+}
+
+fn note_id(req: http.Request) -> Str ! ApiErr {
+  let id = req.param("id")
+  if !domain.is_valid_id(id) {
+    return Err(ApiErr.NotFound(id: id))
+  }
+  id
+}
+
+fn decode_edit(req: http.Request) -> domain.Edit ! ApiErr {
+  req.json[domain.Edit]().map_err(fn(e) { ApiErr.BadRequest(msg: "invalid JSON body: ${e}") })
+}
+
+/// The version named by `If-Match`: 428 when missing, 412 when unusable.
+fn if_match(req: http.Request) -> Int ! ApiErr {
+  let raw = req.header("If-Match").or_err(ApiErr.PreconditionRequired)?
+  domain.parse_etag(raw).or_err(ApiErr.PreconditionFailed(msg: "If-Match ${raw} does not name a version"))
+}
+
+fn non_empty(s: Str?) -> Str? {
+  let v = s?
+  if v.is_empty() { None } else { Some(v) }
+}
+
+fn parse_query(req: http.Request) -> domain.Query ! ApiErr {
+  let limit = match req.query("limit") {
+    Some(raw) => Int.parse(raw).or_err(ApiErr.BadRequest(msg: "limit must be an integer"))?
+    None => DEFAULT_LIMIT
+  }
+  if limit < 1 || limit > MAX_LIMIT {
+    return Err(ApiErr.BadRequest(msg: "limit must be between 1 and ${MAX_LIMIT}"))
+  }
+  let after = match non_empty(req.query("cursor")) {
+    Some(raw) => Some(domain.decode_cursor(raw).or_err(ApiErr.BadRequest(msg: "invalid cursor"))?)
+    None => None
+  }
+  domain.Query{
+    tag: non_empty(req.query("tag")),
+    text: non_empty(req.query("q")),
+    limit: limit,
+    after: after,
+  }
+}

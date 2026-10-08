@@ -1,0 +1,7 @@
+fn todo(n: Int) -> Int { ??? }
+
+fn main(os: Os) {
+  let d = dbg(1 + 2)
+  os.stdio.println("before hole ${d}")
+  os.stdio.println("${todo(1)}")
+}

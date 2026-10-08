@@ -1,0 +1,30 @@
+// Note ids are 20 lowercase hex digits. That alphabet is safe as a file name
+// on Linux, macOS, and Windows: no separators, no dots, no reserved device
+// names (CON, NUL, ...), and no two ids differ only by case, so a case
+// insensitive filesystem cannot merge two notes.
+
+pub const ID_LEN = 20
+const HEX = "0123456789abcdef"
+
+/// A fresh random note id (80 bits).
+pub fn new_id(r: Rand) -> Str uses rand {
+  var b = StrBuilder.new()
+  for _ in 0..ID_LEN {
+    let d = r.int(0, 16)
+    b.write(HEX[d..d + 1])
+  }
+  b.freeze()
+}
+
+/// Reports whether `s` has the shape of a note id. Everything that turns an
+/// id into a path checks this first, so ids from requests cannot traverse.
+pub fn is_valid_id(s: Str) -> Bool {
+  s.len() == ID_LEN && s.runes().all(fn(r) { is_hex_rune(r) })
+}
+
+fn is_hex_rune(r: Rune) -> Bool {
+  match r {
+    '0'..='9' | 'a'..='f' => true
+    _ => false
+  }
+}

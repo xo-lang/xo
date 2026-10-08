@@ -1,0 +1,134 @@
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of POST /users.
+struct NewUser {
+  name: Str
+  email: Str
+  nickname: Str?
+} derive Json
+
+/// Body of PATCH /users/{id}. Every field may be left out.
+struct UserPatch {
+  // GUESS: a qualified generic type from another module is written
+  // `json.Patch[Str]`. The grammar's TypeName does not say whether it may be
+  // qualified, but `http.Router` and `json.DecodeErr` appear in the spec.
+  name: json.Patch[Str]
+  email: json.Patch[Str]
+  nickname: json.Patch[Str]
+} derive Json
+
+enum ApiErr {
+  BadRequest(msg: Str)
+  NotFound(id: Int)
+  Conflict(email: Str)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    NotFound(_) => 404
+    Conflict(_) => 409
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    NotFound(id) => "user {id} not found"
+    Conflict(email) => "email {email} already exists"
+  }
+}
+
+fn check_name(name: Str) -> () ! ApiErr
+  requires name.rune_count() >= 1 && name.rune_count() <= 100
+    else ApiErr.BadRequest(msg: "name must be 1 to 100 characters")
+{}
+
+fn check_email(email: Str) -> () ! ApiErr
+  requires email.contains("@") else ApiErr.BadRequest(msg: "email must contain @")
+{}
+
+/// Fails with Conflict when another user (not `skip_id`) has `email`.
+fn check_email_free(users: Map[Int, User], email: Str, skip_id: Int) -> () ! ApiErr {
+  if users.values().any(fn(u) { u.id != skip_id && u.email == email }) {
+    return Err(ApiErr.Conflict(email: email))
+  }
+}
+
+struct State {
+  next_id: Int = 1
+  users: Map[Int, User] = {}
+}
+
+struct Store {
+  state: Mutex[State]
+}
+
+fn new_store() -> Store {
+  Store{state: Mutex.new(State{})}
+}
+
+fn (s: Store) create(input: NewUser) -> User ! ApiErr {
+  check_name(input.name)?
+  check_email(input.email)?
+  s.state.with(fn(var st) -> User ! ApiErr {
+    check_email_free(st.users, input.email, skip_id: 0)?
+    let u = User{id: st.next_id, name: input.name, email: input.email, nickname: input.nickname}
+    st.users.put(u.id, u)
+    st.next_id += 1
+    u
+  })
+}
+
+fn (s: Store) get(id: Int) -> User ! ApiErr {
+  s.state.with(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))?
+}
+
+fn (s: Store) list() -> List[User] {
+  s.state.with(fn(st) { st.users.values().sort_by(fn(u) { u.id }) })
+}
+
+fn (s: Store) patch(id: Int, p: UserPatch) -> User ! ApiErr {
+  s.state.with(fn(var st) -> User ! ApiErr {
+    var u = st.users.get(id).or_err(ApiErr.NotFound(id: id))?
+    match p.name {
+      Absent => ()
+      Null => return Err(BadRequest(msg: "name cannot be null"))
+      Value(n) => {
+        check_name(n)?
+        u.name = n
+      }
+    }
+    match p.email {
+      Absent => ()
+      Null => return Err(BadRequest(msg: "email cannot be null"))
+      Value(e) => {
+        check_email(e)?
+        check_email_free(st.users, e, skip_id: id)?
+        u.email = e
+      }
+    }
+    match p.nickname {
+      Absent => ()
+      Null => u.nickname = None
+      Value(n) => u.nickname = n
+    }
+    st.users.put(id, u)
+    u
+  })
+}
+
+fn (s: Store) delete(id: Int) -> () ! ApiErr {
+  s.state.with(fn(var st) -> () ! ApiErr {
+    if st.users.remove(id).is_none() {
+      return Err(ApiErr.NotFound(id: id))
+    }
+  })
+}

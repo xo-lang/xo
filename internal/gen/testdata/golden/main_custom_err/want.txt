@@ -1,0 +1,6 @@
+exit 1
+--- stdout
+starting
+--- stderr
+error: missing config key PORT
+  at main_custom_err.main()             main.xo:17

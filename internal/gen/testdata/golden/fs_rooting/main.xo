@@ -1,0 +1,49 @@
+fn show(r: Result[Str, FsErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let base = os.env.get("TMPDIR") ?? "/tmp"
+  let root = os.fs.sub(base).sub("xo-fs-rooting-test")
+  root.remove_all(".")?
+  root.create_dir_all("inner/deep")?
+  root.write("inner/a.txt", b"alpha")?
+  root.write("inner/deep/b.txt", b"beta")?
+  root.write("top.txt", b"top")?
+  os.stdio.println(show(root.read_text("inner/a.txt")))
+  os.stdio.println(show(root.read_text("/inner/a.txt")))
+  os.stdio.println(show(root.read_text("../escape.txt")))
+  os.stdio.println(show(root.read_text("inner/../../escape.txt")))
+  os.stdio.println(show(root.read_text("missing.txt")))
+  let inner = root.sub("inner")
+  os.stdio.println(show(inner.read_text("deep/b.txt")))
+  for fi in root.walk(".")? {
+    os.stdio.println("walk ${fi.path} dir=${fi.is_dir} size=${if fi.is_dir { 0 } else { fi.size }}")
+  }
+  for fi in inner.read_dir("/")? {
+    os.stdio.println("read_dir ${fi.name} ${fi.path}")
+  }
+  let ro = root.read_only()
+  match ro.write("x.txt", b"x") {
+    Ok(_) => os.stdio.println("read only wrote?")
+    Err(e) => os.stdio.println("read only: ${e}")
+  }
+  let wo = root.write_only()
+  match wo.read("top.txt") {
+    Ok(_) => os.stdio.println("write only read?")
+    Err(e) => os.stdio.println("write only: ${e}")
+  }
+  let tmp = root.create_temp("inner", "tmp-")?
+  os.stdio.println("temp starts with inner/tmp-: ${tmp.starts_with("inner/tmp-")}")
+  root.rename(tmp, "inner/renamed.txt")?
+  os.stdio.println("exists ${root.exists("inner/renamed.txt")?} ${root.exists(tmp)?}")
+  match root.remove("inner") {
+    Ok(_) => os.stdio.println("removed non-empty?")
+    Err(e) => os.stdio.println("remove non-empty: ${e}")
+  }
+  os.stdio.println("stat ${(root.stat("top.txt")? ?? FileInfo{name: "", path: "", is_dir: false, size: -1, modified: Time.UNIX_EPOCH}).size} ${root.stat("nope")?.is_none()}")
+  root.remove_all(".")?
+}

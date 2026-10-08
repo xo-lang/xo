@@ -1,0 +1,88 @@
+use std/testing
+use example.com/notes/domain
+
+fn sample(os: testing.TestOs, title: Str) -> domain.Note ! Error {
+  domain.new_note(domain.new_id(os.rand), domain.Edit{title: title, tags: ["a"]}, os.clock.now())?
+}
+
+fn temp_files(os: testing.TestOs) -> List[Str] {
+  os.fs.files().keys().filter(fn(p) { p.contains(TEMP_PREFIX) })
+}
+
+test "store survives a restart" {
+  let first = open(os.fs.sub("data"))?
+  let a = sample(os, "keep me")?
+  let b = sample(os, "me too")?
+  first.create(a)?
+  first.create(b)?
+  let updated = first.update(a.id, 1, domain.Edit{title: "kept"}, os.clock.now())?
+
+  let second = open(os.fs.sub("data"))?
+  expect(second.get(a.id)?) == updated
+  expect(second.get(b.id)?) == b
+  expect(domain.newest_first(second.list()?).len()) == 2
+}
+
+test "a failed rename leaves no temp file and keeps the old note" {
+  let st = open(os.fs.sub("data"))?
+  let n = sample(os, "original")?
+  st.create(n)?
+  let path = "data/${n.id}.json"
+  os.fs.fail_next(testing.FsOp.Rename, path, FsErr.Io(path: path, msg: "disk full"))
+  let r = st.update(n.id, 1, domain.Edit{title: "changed"}, os.clock.now())
+  expect(r is Err(StoreErr.Io(_))) == true
+  expect(temp_files(os)) == []
+  expect(st.get(n.id)?.title) == "original"
+  expect(st.get(n.id)?.version) == 1
+}
+
+test "a failed temp write leaves no temp file" {
+  let st = open(os.fs.sub("data"))?
+  let n = sample(os, "never stored")?
+  os.fs.fail_next(testing.FsOp.Write, "data/${TEMP_PREFIX}*", FsErr.Io(path: "data", msg: "disk full"))
+  let r = st.create(n)
+  expect(r.is_err()) == true
+  expect(temp_files(os)) == []
+  expect(st.get(n.id)) == Err(StoreErr.NotFound(id: n.id))
+}
+
+test "open removes temp files left by a crash" {
+  os.fs.write("data/${TEMP_PREFIX}crashed", b"{")?
+  let st = open(os.fs.sub("data"))?
+  expect(temp_files(os)) == []
+  expect(st.list()?) == []
+}
+
+test "stale versions are rejected" {
+  let st = open(os.fs.sub("data"))?
+  let n = sample(os, "v1")?
+  st.create(n)?
+  st.update(n.id, 1, domain.Edit{title: "v2"}, os.clock.now())?
+  let stale = st.update(n.id, 1, domain.Edit{title: "lost"}, os.clock.now())
+  expect(stale) == Err(StoreErr.Conflict(id: n.id, current: 2))
+  expect(st.delete(n.id, 1)) == Err(StoreErr.Conflict(id: n.id, current: 2))
+  st.delete(n.id, 2)?
+  expect(st.get(n.id)) == Err(StoreErr.NotFound(id: n.id))
+}
+
+test "ids that are not note ids never reach the filesystem" {
+  let st = open(os.fs.sub("data"))?
+  expect(st.get("../secret")) == Err(StoreErr.NotFound(id: "../secret"))
+}
+
+test "concurrent updates with the same version: exactly one wins" {
+  let st = open(os.fs.sub("data"))?
+  for round in 0..20 {
+    let n = sample(os, "round ${round}")?
+    st.create(n)?
+    let (a, b) = scope s {
+      let t1 = s.spawn(fn() { st.update(n.id, 1, domain.Edit{title: "from a"}, os.clock.now()) })
+      let t2 = s.spawn(fn() { st.update(n.id, 1, domain.Edit{title: "from b"}, os.clock.now()) })
+      (t1.await, t2.await)
+    }
+    let wins = [a.is_ok(), b.is_ok()].filter(fn(ok) { ok }).len()
+    expect(wins) == 1
+    expect(a is Err(StoreErr.Conflict(..)) || b is Err(StoreErr.Conflict(..))) == true
+    expect(st.get(n.id)?.version) == 2
+  }
+}

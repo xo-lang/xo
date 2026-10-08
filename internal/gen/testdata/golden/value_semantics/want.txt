@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+xs 4 100 snapshot 3 1
+a 5 b 6 xs 4
+bag 2 2 copy 1 1
+grid 30 2
+m 2 9 a,b
+pop 3 removed 1 now 2 first 0
+--- stderr

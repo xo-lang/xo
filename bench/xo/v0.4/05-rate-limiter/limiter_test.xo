@@ -1,0 +1,113 @@
+use std/http
+
+fn hello() -> http.Request {
+  http.new_request("GET", "/hello")
+}
+
+fn hello_as(key: Str) -> http.Request {
+  http.new_request("GET", "/hello", headers: {"X-Api-Key": key})
+}
+
+test "twenty immediate requests pass and the 21st is limited" {
+  let r = routes(new_limiter({}), os.clock)
+  for _ in 0..20 {
+    let resp = r.call(hello())
+    expect(resp.status) == 200
+  }
+  let resp = r.call(hello())
+  expect(resp.status) == 429
+}
+
+test "after one second five more requests pass" {
+  let r = routes(new_limiter({}), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello()).status) == 200
+  }
+  expect(r.call(hello()).status) == 429
+  os.clock.advance(1s)
+  for _ in 0..5 {
+    expect(r.call(hello()).status) == 200
+  }
+  expect(r.call(hello()).status) == 429
+}
+
+test "retry after is whole seconds until a token is available" {
+  let l = new_limiter({"slow": Limit{capacity: 1, refill_per_sec: 0.25}})
+  let r = routes(l, os.clock)
+  expect(r.call(hello_as("slow")).status) == 200
+
+  let limited = r.call(hello_as("slow"))
+  expect(limited.status) == 429
+  expect(limited.header("Retry-After")) == Some("4")
+
+  // 2.5s later the bucket holds 0.625 tokens: 1.5s to go, rounded up to 2.
+  os.clock.advance(2500ms)
+  expect(r.call(hello_as("slow")).header("Retry-After")) == Some("2")
+
+  // The default limit refills 5 per second, so the wait rounds up to 1.
+  for _ in 0..20 {
+    expect(r.call(hello()).status) == 200
+  }
+  expect(r.call(hello()).header("Retry-After")) == Some("1")
+}
+
+test "bucket take and retry after" {
+  let t0 = os.clock.now()
+  var b = new_bucket(Limit{capacity: 2, refill_per_sec: 0.5}, t0)
+  expect(b.take(t0))
+  expect(b.take(t0))
+  expect(!b.take(t0))
+  expect(b.retry_after_secs(t0)) == 2
+  expect(!b.take(t0 + 1s))
+  expect(b.take(t0 + 2s))
+  expect(b.tokens) == 0.0
+}
+
+test "custom limit for a key is applied" {
+  let l = new_limiter({"vip": Limit{capacity: 3, refill_per_sec: 1.0}})
+  let r = routes(l, os.clock)
+  for _ in 0..3 {
+    expect(r.call(hello_as("vip")).status) == 200
+  }
+  expect(r.call(hello_as("vip")).status) == 429
+
+  // Other keys keep the default limit of 20.
+  for _ in 0..20 {
+    expect(r.call(hello_as("other")).status) == 200
+  }
+  expect(r.call(hello_as("other")).status) == 429
+}
+
+test "missing api key falls back to the remote ip" {
+  let r = routes(new_limiter({}), os.clock)
+  for _ in 0..20 {
+    expect(r.call(hello()).status) == 200
+  }
+  expect(r.call(hello()).status) == 429
+  expect(r.call(hello_as("someone")).status) == 200
+}
+
+test "idle buckets are evicted" {
+  let l = new_limiter({})
+  let t0 = os.clock.now()
+  expect(l.check("old", t0)) == Decision.Allowed
+  expect(l.check("fresh", t0 + 9m)) == Decision.Allowed
+  expect(l.len()) == 2
+
+  expect(l.evict_idle(t0 + 10m, IDLE_TTL)) == 0
+  expect(l.evict_idle(t0 + 10m + 1s, IDLE_TTL)) == 1
+  expect(l.len()) == 1
+  expect(l.check("fresh", t0 + 10m + 1s)) == Decision.Allowed
+}
+
+test "background evictor removes idle buckets" {
+  let l = new_limiter({})
+  expect(l.check("idle", os.clock.now())) == Decision.Allowed
+  scope s {
+    s.spawn_background(fn() { run_evictor(l, os.clock) })
+    // The evictor runs at 1m, 2m, ... and evicts at 11m, when the bucket
+    // has been idle for more than 10 minutes.
+    os.clock.sleep(11m + 1s)
+    expect(l.len()) == 0
+  }
+}

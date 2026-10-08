@@ -1,0 +1,50 @@
+[
+  {
+    "code": "XO0801",
+    "severity": "error",
+    "message": "a task here can fail with `JobErr`, which propagates out of the scope, but `run_all` cannot fail",
+    "span": {
+      "file": "main.xo",
+      "line": 12,
+      "col": 7,
+      "end_line": 12,
+      "end_col": 31
+    },
+    "notes": [
+      {
+        "message": "await the handle and handle its error, or declare an error type that `JobErr` converts to (core 7.1)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0803",
+    "severity": "error",
+    "message": "`spawn` without a scope handle: tasks are started with `s.spawn(f)` inside `scope s { ... }`, so no task outlives its scope (core 7.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 19,
+      "col": 3,
+      "end_line": 19,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "use a scope",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 19,
+              "col": 3,
+              "end_line": 19,
+              "end_col": 3
+            },
+            "replace": "s."
+          }
+        ]
+      }
+    ]
+  }
+]

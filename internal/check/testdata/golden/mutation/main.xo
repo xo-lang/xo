@@ -1,0 +1,38 @@
+struct Bucket {
+  tokens: Int
+}
+
+fn (var b: Bucket) take() -> Bool {
+  b.tokens -= 1
+  b.tokens >= 0
+}
+
+fn lost(m: Map[Str, Bucket], k: Str) -> Bool {
+  var b = m.get(k) ?? Bucket{tokens: 3}
+  b.take()
+}
+
+fn immutable() -> Int {
+  let xs = [1]
+  xs.push(2)
+  let n = 1
+  n = 2
+  n + xs.len()
+}
+
+fn captured(xs: List[Int]) -> Int {
+  var total = 0
+  let _ys = xs.map(fn(x) {
+    total += x
+    x
+  })
+  total
+}
+
+fn moved() -> List[Int] {
+  var b = Buf[Int].new()
+  b.push(1)
+  let xs = b.freeze()
+  b.push(2)
+  xs
+}

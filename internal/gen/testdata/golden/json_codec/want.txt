@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+{"id":1,"title":"a \"quoted\" <b>","tags":["x","y"],"rating":0.5,"kind":{"Task":{"due":"1970-01-01T00:00:00Z"}},"extra":null,"meta":{"z":1,"a":2},"timeout":"1.5s","raw":"aGk="}
+roundtrip true
+defaults 0.5 1.5s true 0
+wrapped {"Wrapped":7} extra none true meta order b,a
+at $.id: expected integer
+at $.tags[0]: expected string
+at $: missing field `kind`
+at $.kind: unknown variant `Nope`
+at $.id: expected integer
+at $: invalid JSON: invalid character 'o' in literal null (expecting 'u')
+patch true true true true
+patch encode {"title":"new"} {"title":null,"extra":"x"}
+builtins [1,2] {"k":[true,false]} 1.25 ["s"]
+--- stderr

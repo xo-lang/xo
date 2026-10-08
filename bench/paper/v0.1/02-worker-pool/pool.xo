@@ -1,0 +1,102 @@
+/// One unit of work for `run_pool`. `id` is reported back in results and
+/// failures so callers can correlate outcomes with inputs.
+pub struct Job[T] {
+  pub id: Int
+  pub input: T
+}
+
+/// Why a job did not produce a result.
+pub enum JobErr[E] {
+  Failed(cause: E)
+  TimedOut
+}
+
+/// Outcome of a pool run. `results` and `failures` are both in original job
+/// order.
+pub struct Report[R, E] {
+  pub results: List[(Int, R)]
+  pub failures: List[(Int, JobErr[E])]
+  pub elapsed: Duration
+}
+
+/// Processes every job with `f`, running at most `workers` jobs at once.
+///
+/// A job whose `f` returns an error is reported in `failures` and does not
+/// stop the other jobs. When `timeout` passes, every unfinished job is
+/// cancelled and reported as `JobErr.TimedOut`.
+// GUESS: the task signature is run_pool(jobs, workers, timeout, f). A Clock
+// capability is added because measuring `elapsed` needs authority (section 6.3)
+// and there is no ambient clock.
+// GUESS: there is no effect polymorphism, so `f` must name a fixed effect set.
+// `net` is required by the task; `clock` is added so jobs (and tests) can
+// sleep or back off. A pure or net only closure is assumed to be accepted where
+// `uses net, clock` is expected (section 6.2 only says the reverse is rejected).
+// GUESS: parameter lists may span lines with a trailing comma (grammar in
+// section 15 does not show one; Go style is assumed).
+pub fn run_pool[T, R, E](
+  jobs: List[Job[T]],
+  workers: Int,
+  timeout: Duration,
+  clock: Clock,
+  f: fn(Job[T]) -> R ! E uses net, clock,
+) -> Report[R, E]
+  uses net, clock
+  requires workers > 0
+  requires timeout > 0s
+  ensures result.results.len() + result.failures.len() == jobs.len()
+{
+  // GUESS: Clock has a `now() -> Time` method.
+  let start = clock.now()
+
+  // Index of every job, consumed by the workers. Filled and closed up front so
+  // workers exit their loop once the queue drains.
+  let queue = Chan[Int].new(cap: jobs.len())
+  for i in 0..jobs.len() {
+    queue.send(i)
+  }
+  queue.close()
+
+  // Outcome per job index. Jobs missing at the end never finished.
+  let done = Mutex[Map[Int, Result[R, E]]].new({})
+
+  let worker_count = if workers < jobs.len() { workers } else { jobs.len() }
+
+  // GUESS: a `scope ... timeout` expression evaluates to Result[T, Canceled]
+  // (or similar) so expiry is a value, not a propagated error. The spec does
+  // not say what a timed out scope yields. We do not need the value: expiry
+  // shows up below as jobs with no recorded outcome.
+  let _ = scope s timeout timeout {
+    for _ in 0..worker_count {
+      // GUESS: the task handle returned by spawn may be dropped without a
+      // binding, since it is not a Result.
+      s.spawn(fn() {
+        while {
+          if let i = queue.recv() {
+            // Binding the Result (instead of `?`) keeps one failure from
+            // failing this task and cancelling its siblings.
+            let r = f(jobs[i])
+            done.with(fn(var m) { m.put(i, r) })
+          } else {
+            break
+          }
+        }
+      })
+    }
+  }
+
+  let outcomes = done.with(fn(m) { m })
+
+  var results: List[(Int, R)] = []
+  var failures: List[(Int, JobErr[E])] = []
+  for (i, job) in jobs.indexed() {
+    // GUESS: nested patterns such as some(ok(v)) are allowed in match arms.
+    match outcomes.get(i) {
+      some(ok(v)) => results.push((job.id, v))
+      some(err(e)) => failures.push((job.id, JobErr.Failed(cause: e)))
+      none => failures.push((job.id, JobErr.TimedOut))
+    }
+  }
+
+  // GUESS: Time - Time yields a Duration. No method for this is specified.
+  Report{results: results, failures: failures, elapsed: clock.now() - start}
+}

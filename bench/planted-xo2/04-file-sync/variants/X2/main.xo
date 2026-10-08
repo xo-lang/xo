@@ -1,0 +1,238 @@
+// filesync makes directory <dst> mirror directory <src> (one way).
+
+const USAGE = "usage: filesync [--dry-run] [--delete] <src> <dst>"
+
+/// Command line options.
+struct Options {
+  dry_run: Bool = false
+  delete: Bool = false
+  src: Str
+  dst: Str
+}
+
+/// Platform rules for comparing paths and skipping OS metadata files.
+struct Platform {
+  case_sensitive: Bool
+  ignored: Set[Str]
+}
+
+/// Counts reported at the end of a run.
+struct Summary {
+  copied: Int = 0
+  deleted: Int = 0
+  skipped: Int = 0
+  failed: Int = 0
+}
+
+fn (s: Summary) display() -> Str {
+  "copied: ${s.copied}, deleted: ${s.deleted}, skipped: ${s.skipped}, failed: ${s.failed}"
+}
+
+enum CliErr {
+  Usage(msg: Str)
+  Failed(count: Int)
+}
+
+fn (e: CliErr) display() -> Str {
+  match e {
+    Usage(msg) => msg
+    Failed(count) => "${count} operation(s) failed"
+  }
+}
+
+/// Rules for the platform this binary is built for.
+fn host_platform() -> Platform {
+  match target.os {
+    Linux => Platform{case_sensitive: true, ignored: #{}}
+    Darwin => Platform{case_sensitive: false, ignored: #{".DS_Store"}}
+    Windows => Platform{case_sensitive: false, ignored: #{"Thumbs.db"}}
+    Wasi => Platform{case_sensitive: true, ignored: #{}}
+  }
+}
+
+fn parse_args(args: List[Str]) -> Options ! CliErr {
+  var dry_run = false
+  var delete = false
+  var paths: List[Str] = []
+  for a in args {
+    match a {
+      "--dry-run" => dry_run = true
+      "--delete" => delete = true
+      _ => {
+        if a.starts_with("-") {
+          return Err(CliErr.Usage(msg: "unknown flag ${a}"))
+        }
+        paths.push(a)
+      }
+    }
+  }
+  if paths.len() != 2 {
+    return Err(CliErr.Usage(msg: "expected exactly two paths, got ${paths.len()}"))
+  }
+  Options{dry_run: dry_run, delete: delete, src: paths[0], dst: paths[1]}
+}
+
+/// The key used to compare a path between src and dst.
+fn path_key(path: Str, plat: Platform) -> Str {
+  if plat.case_sensitive { path } else { path.to_lower() }
+}
+
+/// The directory containing `path`, or "." for the root.
+fn parent_dir(path: Str) -> Str {
+  let parts = path.split("/")
+  if parts.len() <= 1 { "." } else { parts[..parts.len() - 1].join("/") }
+}
+
+/// Copies one file through a temp file in the destination directory, then
+/// renames it into place. The temp file is removed if any step fails.
+fn copy_file(src: Fs, dst: Fs, info: FileInfo, to: Str) -> () ! FsErr uses fs {
+  let data = src.read(info.path)?
+  let dir = parent_dir(to)
+  dst.create_dir_all(dir)?
+  let tmp = dst.create_temp(dir, ".filesync-")?
+  var committed = false
+  defer {
+    if !committed {
+      let _ = dst.remove(tmp).ignore_err("best effort cleanup of the temp file after a failed copy")
+    }
+  }
+  dst.write(tmp, data)?
+  dst.set_modified(tmp, info.modified)?
+  dst.rename(tmp, to)?
+  committed = true
+}
+
+/// Makes `dst` mirror `src`. Per file failures are counted in the summary;
+/// failing to list either tree fails the whole run.
+fn sync(src: Fs, dst: Fs, opts: Options, plat: Platform, out: Stdio) -> Summary ! FsErr
+  uses (fs, stdio)
+{
+  var sum = Summary{}
+  let src_entries = src.walk(".")?.filter(fn(e) { !plat.ignored.contains(e.name) })
+  let dst_entries: List[FileInfo] = if dst.exists(".")? { dst.walk(".")? } else { [] }
+
+  var dst_by_key: Map[Str, FileInfo] = {}
+  for d in dst_entries {
+    dst_by_key.put(path_key(d.path, plat), d)
+  }
+
+  var src_keys: Set[Str] = #{}
+  for e in src_entries {
+    let key = path_key(e.path, plat)
+    src_keys.add(key)
+    let existing = Some(dst_by_key[key])
+
+    if e.is_dir {
+      match existing {
+        Some(d) => {
+          if !d.is_dir {
+            sum.failed += 1
+            out.eprintln("cannot create directory ${e.path}: a file is in the way")
+          }
+        }
+        None => {
+          if opts.dry_run {
+            out.println("would mkdir ${e.path}")
+          } else {
+            match dst.create_dir_all(e.path) {
+              Ok(_) => out.println("mkdir ${e.path}")
+              Err(err) => {
+                sum.failed += 1
+                out.eprintln("failed to create ${e.path}: ${err}")
+              }
+            }
+          }
+        }
+      }
+      continue
+    }
+
+    match existing {
+      Some(d) if d.is_dir => {
+        sum.failed += 1
+        out.eprintln("cannot copy ${e.path}: a directory is in the way")
+        continue
+      }
+      Some(d) if d.size == e.size && e.modified <= d.modified => {
+        sum.skipped += 1
+        continue
+      }
+      _ => ()
+    }
+
+    let target_path = match existing {
+      Some(d) => d.path
+      None => e.path
+    }
+    if opts.dry_run {
+      out.println("would copy ${e.path}")
+      sum.copied += 1
+      continue
+    }
+    match copy_file(src, dst, e, target_path) {
+      Ok(_) => {
+        sum.copied += 1
+        out.println("copy ${e.path}")
+      }
+      Err(err) => {
+        sum.failed += 1
+        out.eprintln("failed to copy ${e.path}: ${err}")
+      }
+    }
+  }
+
+  if opts.delete {
+    // Entries of dst that stay: they exist in src, or are OS metadata files.
+    let kept_keys = dst_entries
+      .filter(fn(d) { src_keys.contains(path_key(d.path, plat)) || plat.ignored.contains(d.name) })
+      .map(fn(d) { path_key(d.path, plat) })
+    let verb = if opts.dry_run { "would delete" } else { "delete" }
+
+    // Children come before their parents in reverse walk order.
+    for d in dst_entries.reverse() {
+      let key = path_key(d.path, plat)
+      if src_keys.contains(key) || plat.ignored.contains(d.name) {
+        continue
+      }
+      if d.is_dir && kept_keys.any(fn(k) { k.starts_with(key + "/") }) {
+        sum.skipped += 1
+        out.println("keep ${d.path}: directory is not empty")
+        continue
+      }
+      if !opts.dry_run {
+        match dst.remove(d.path) {
+          Ok(_) => ()
+          Err(err) => {
+            sum.failed += 1
+            out.eprintln("failed to delete ${d.path}: ${err}")
+            continue
+          }
+        }
+      }
+      sum.deleted += 1
+      out.println("${verb} ${d.path}")
+    }
+  }
+
+  sum
+}
+
+fn main(os: Os) ! {
+  let opts = match parse_args(os.env.args()) {
+    Ok(o) => o
+    Err(e) => {
+      os.stdio.eprintln("${e}")
+      os.stdio.eprintln(USAGE)
+      os.proc.exit(2)
+    }
+  }
+  // The tool can only read under src, and only touch dst (read only on a dry run).
+  let src = os.fs.sub(opts.src).read_only()
+  let dst = if opts.dry_run { os.fs.sub(opts.dst).read_only() } else { os.fs.sub(opts.dst) }
+
+  let sum = sync(src, dst, opts, host_platform(), os.stdio)?
+  os.stdio.println("${sum}")
+  if sum.failed > 0 {
+    return Err(CliErr.Failed(count: sum.failed))
+  }
+}

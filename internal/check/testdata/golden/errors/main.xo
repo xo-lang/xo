@@ -1,0 +1,41 @@
+enum LoadErr {
+  NotFound(id: Int)
+  Timeout
+}
+
+enum ApiErr {
+  Load(from LoadErr)
+  BadRequest(msg: Str)
+}
+
+enum OtherErr {
+  Boom
+}
+
+fn load(id: Int) -> Int ! LoadErr {
+  if id < 0 {
+    return Err(LoadErr.NotFound(id: id))
+  }
+  id
+}
+
+fn other() -> Int ! OtherErr { 1 }
+
+fn api(id: Int) -> Int ! ApiErr {
+  load(id)
+  let a = load(id)?
+  let b = other()?
+  a + b
+}
+
+fn plain(id: Int) -> Int {
+  load(id)?
+}
+
+fn opt(s: Str?) -> Str ! ApiErr {
+  s?
+}
+
+fn nested(r: Result[Int, Str]) -> Result[Int, Str] ! ApiErr {
+  r
+}

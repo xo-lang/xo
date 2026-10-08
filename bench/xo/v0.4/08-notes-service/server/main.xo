@@ -1,0 +1,90 @@
+// The notes server executable: flags, wiring, and graceful shutdown.
+//
+// Shutdown: the first SIGINT or SIGTERM cancels main's root scope (core 7.5).
+// `serve` then stops accepting, waits for in flight requests, and returns
+// Ok(()). Writes in flight finish or clean up their temp file in a shielded
+// defer, so a shutdown never leaves a partial note behind.
+
+use std/http
+use std/log
+use example.com/notes/api
+use example.com/notes/store
+
+struct Flags {
+  data_dir: Str = "./data"
+  addr: Str = ":8080"
+}
+
+enum FlagErr {
+  Unknown(flag: Str)
+  MissingValue(flag: Str)
+  Empty(flag: Str)
+}
+
+fn (e: FlagErr) display() -> Str {
+  match e {
+    Unknown(flag) => "unknown flag ${flag} (want --data-dir or --addr)"
+    MissingValue(flag) => "flag ${flag} needs a value"
+    Empty(flag) => "flag ${flag} must not be empty"
+  }
+}
+
+/// Accepts `--data-dir DIR`, `--data-dir=DIR`, `--addr ADDR`, `--addr=ADDR`.
+fn parse_flags(args: List[Str]) -> Flags ! FlagErr {
+  var flags = Flags{}
+  var i = 0
+  while i < args.len() {
+    let arg = args[i]
+    var name = arg
+    var inline: Str? = None
+    if let Some(eq) = arg.find("=") {
+      name = arg[..eq]
+      inline = Some(arg[eq + 1..])
+    }
+    let value = match inline {
+      Some(v) => v
+      None => {
+        i += 1
+        args.get(i).or_err(FlagErr.MissingValue(flag: name))?
+      }
+    }
+    if value.is_empty() {
+      return Err(FlagErr.Empty(flag: name))
+    }
+    match name {
+      "--data-dir" => flags.data_dir = value
+      "--addr" => flags.addr = value
+      _ => return Err(FlagErr.Unknown(flag: arg))
+    }
+    i += 1
+  }
+  flags
+}
+
+fn main(os: Os) ! {
+  let flags = parse_flags(os.env.args())?
+  let st = store.open(os.fs.sub(flags.data_dir))?
+  let router = api.routes(st, os.clock, os.rand)
+  let srv = http.server(os.net.listen(flags.addr)?, router)
+  log.info("listening", {"addr": flags.addr, "data_dir": flags.data_dir})
+  srv.serve()?
+  log.info("stopped", {})
+}
+
+test "flags have defaults" {
+  let f = parse_flags([])?
+  expect(f.data_dir) == "./data"
+  expect(f.addr) == ":8080"
+}
+
+test "flags accept both spellings" {
+  let f = parse_flags(["--data-dir", "/var/notes", "--addr=:9000"])?
+  expect(f.data_dir) == "/var/notes"
+  expect(f.addr) == ":9000"
+}
+
+test "bad flags are errors" {
+  expect(parse_flags(["--port", "1"])) == Err(FlagErr.Unknown(flag: "--port"))
+  expect(parse_flags(["--addr"])) == Err(FlagErr.MissingValue(flag: "--addr"))
+  expect(parse_flags(["--data-dir="])) == Err(FlagErr.Empty(flag: "--data-dir"))
+}

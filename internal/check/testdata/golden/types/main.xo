@@ -1,0 +1,20 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+fn half(n: Int) -> Float {
+  n / 2
+}
+
+fn show(p: Point) -> Str {
+  "${p}"
+}
+
+fn later(d: Duration) -> Duration {
+  2 * d
+}
+
+fn make() -> Point {
+  Point{x: 1}
+}

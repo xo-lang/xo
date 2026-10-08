@@ -1,0 +1,81 @@
+/// Position of a note in the newest first order. Comparing two keys with `<`
+/// means "older than": created time first, then id as a tie breaker, so the
+/// order is total even when two notes share a timestamp.
+pub struct Cursor {
+  pub ms: Int
+  pub id: Str
+} derive Ord
+
+pub const DEFAULT_LIMIT = 20
+pub const MAX_LIMIT = 100
+
+pub struct Query {
+  pub tag: Str? = None
+  pub text: Str? = None
+  pub limit: Int = DEFAULT_LIMIT
+  pub cursor: Cursor? = None
+}
+
+pub struct Page {
+  pub notes: List[Note]
+  pub next_cursor: Str?
+} derive Json
+
+pub fn (n: Note) sort_key() -> Cursor {
+  Cursor{ms: n.created.unix_millis(), id: n.id}
+}
+
+/// The cursor is opaque to clients. Its text form is "<millis>-<id>"; ids
+/// contain no '-' so the split is unambiguous.
+pub fn encode_cursor(c: Cursor) -> Str {
+  "${c.ms}-${c.id}"
+}
+
+pub fn parse_cursor(s: Str) -> Cursor? {
+  let dash = s.find("-")?
+  let ms = Int.parse(s[..dash])?
+  let id = s[dash + 1..]
+  if !valid_id(id) {
+    return None
+  }
+  Cursor{ms: ms, id: id}
+}
+
+pub fn newest_first(notes: List[Note]) -> List[Note] {
+  notes.sort_by(fn(n) { n.sort_key() }).reverse()
+}
+
+/// True when the note passes the tag filter and the case insensitive text
+/// filter on title or body.
+pub fn matches(n: Note, q: Query) -> Bool {
+  if let Some(tag) = q.tag {
+    if !n.tags.contains(tag) {
+      return false
+    }
+  }
+  if let Some(text) = q.text {
+    let needle = text.to_lower()
+    if !n.title.to_lower().contains(needle) && !n.body.to_lower().contains(needle) {
+      return false
+    }
+  }
+  true
+}
+
+/// Keyset pagination: a page holds the newest matching notes strictly older
+/// than the cursor. Notes created after the first page are newer than every
+/// cursor handed out, so they never shift later pages (no duplicates, no gaps).
+pub fn search(notes: List[Note], q: Query) -> Page
+  requires q.limit > 0
+{
+  let sorted = newest_first(notes.filter(fn(n) { matches(n, q) }))
+  let after = match q.cursor {
+    Some(c) => sorted.filter(fn(n) { n.sort_key() < c })
+    None => sorted
+  }
+  if after.len() <= q.limit {
+    return Page{notes: after, next_cursor: None}
+  }
+  let page = after[..q.limit]
+  Page{notes: page, next_cursor: page.last().map(fn(n) { encode_cursor(n.sort_key()) })}
+}

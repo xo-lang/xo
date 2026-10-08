@@ -1,0 +1,381 @@
+{"task": "01-crud-api", "file": "store.xo", "line": 19, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 20, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 21, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 27, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 28, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 29, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 102, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 103, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 104, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 107, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 108, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 109, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 112, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 113, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 114, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 100, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 4}
+{"task": "01-crud-api", "file": "store.xo", "line": 81, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "01-crud-api", "file": "store.xo", "line": 121, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 37, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 113, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "store.xo", "line": 128, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 27, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 35, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 45, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 79, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 3}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 85, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 87, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "api_test.xo", "line": 23, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "main.xo", "line": 32, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "main.xo", "line": 12, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "main.xo", "line": 38, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "01-crud-api", "file": "main.xo", "line": 23, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "01-crud-api", "file": "api.xo", "line": 23, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 5}
+{"task": "01-crud-api", "file": "api.xo", "line": 8, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool_test.xo", "line": 72, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool_test.xo", "line": 74, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 53, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 54, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 2}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 67, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 68, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 76, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 77, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 78, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 72, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 73, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 31, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 54, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "pool.xo", "line": 78, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "main.xo", "line": 18, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "main.xo", "line": 19, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "main.xo", "line": 35, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "02-worker-pool", "file": "main.xo", "line": 37, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "02-worker-pool", "file": "main.xo", "line": 40, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 2}
+{"task": "03-retry-client", "file": "profile.xo", "line": 20, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "profile.xo", "line": 21, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "profile.xo", "line": 34, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry_test.xo", "line": 121, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry_test.xo", "line": 8, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "03-retry-client", "file": "retry_test.xo", "line": 68, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "03-retry-client", "file": "retry.xo", "line": 122, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 38, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 39, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 45, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 46, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 47, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 48, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 55, "op": "drop_match_arm", "class": "missing case", "caught": false, "errors": 0}
+{"task": "03-retry-client", "file": "retry.xo", "line": 56, "op": "drop_match_arm", "class": "missing case", "caught": false, "errors": 0}
+{"task": "03-retry-client", "file": "retry.xo", "line": 84, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 85, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 86, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 12}
+{"task": "03-retry-client", "file": "retry.xo", "line": 92, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 93, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 105, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 15}
+{"task": "03-retry-client", "file": "retry.xo", "line": 111, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 7}
+{"task": "03-retry-client", "file": "retry.xo", "line": 81, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 134, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 77, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 57, "op": "some_to_raw", "class": "nil or optional", "caught": false, "errors": 0}
+{"task": "03-retry-client", "file": "retry.xo", "line": 93, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 108, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 115, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 124, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "03-retry-client", "file": "retry.xo", "line": 123, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 23, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 41, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 48, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 77, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 78, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 79, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 80, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 88, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 99, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main_test.xo", "line": 122, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 111, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 112, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 38, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 39, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 46, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 47, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 48, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 49, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 127, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 21}
+{"task": "04-file-sync", "file": "main.xo", "line": 133, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 20}
+{"task": "04-file-sync", "file": "main.xo", "line": 138, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 139, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 22}
+{"task": "04-file-sync", "file": "main.xo", "line": 164, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 165, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 173, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 10}
+{"task": "04-file-sync", "file": "main.xo", "line": 177, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 8}
+{"task": "04-file-sync", "file": "main.xo", "line": 204, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 205, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 10}
+{"task": "04-file-sync", "file": "main.xo", "line": 222, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 5}
+{"task": "04-file-sync", "file": "main.xo", "line": 223, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 9}
+{"task": "04-file-sync", "file": "main.xo", "line": 54, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 55, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 56, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 93, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 110, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 10}
+{"task": "04-file-sync", "file": "main.xo", "line": 114, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 119, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 65, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "04-file-sync", "file": "main.xo", "line": 116, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 108, "op": "drop_uses", "class": "effects", "caught": false, "errors": 0}
+{"task": "04-file-sync", "file": "main.xo", "line": 133, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "04-file-sync", "file": "main.xo", "line": 165, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "05-rate-limiter", "file": "limiter_test.xo", "line": 56, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 5}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 135, "op": "drop_match_arm", "class": "missing case", "caught": false, "errors": 0}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 145, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 146, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 2}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 62, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 153, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "05-rate-limiter", "file": "limiter.xo", "line": 142, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "05-rate-limiter", "file": "main.xo", "line": 8, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue_test.xo", "line": 235, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue_test.xo", "line": 188, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue_test.xo", "line": 191, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue_test.xo", "line": 150, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue_test.xo", "line": 212, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "worker.xo", "line": 105, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "worker.xo", "line": 107, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 2}
+{"task": "06-job-queue", "file": "worker.xo", "line": 92, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "worker.xo", "line": 76, "op": "drop_uses", "class": "effects", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "worker.xo", "line": 90, "op": "drop_uses", "class": "effects", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 55, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 56, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 57, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 217, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 218, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 300, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 301, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 302, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 303, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 93, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 223, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 297, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 4}
+{"task": "06-job-queue", "file": "queue.xo", "line": 209, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 239, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 256, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 257, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 259, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 274, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 284, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 292, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 106, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 105, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 201, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 203, "op": "some_to_raw", "class": "nil or optional", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 205, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 217, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 223, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "queue.xo", "line": 254, "op": "some_to_raw", "class": "nil or optional", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 274, "op": "some_to_raw", "class": "nil or optional", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 188, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "queue.xo", "line": 218, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "06-job-queue", "file": "main.xo", "line": 7, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 31, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 32, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 38, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 39, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 40, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "06-job-queue", "file": "api.xo", "line": 55, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 4}
+{"task": "07-cache", "file": "cache.xo", "line": 42, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 43, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 44, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 45, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 110, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 111, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 112, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 13}
+{"task": "07-cache", "file": "cache.xo", "line": 118, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 119, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 162, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 163, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 164, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 165, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 180, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 10}
+{"task": "07-cache", "file": "cache.xo", "line": 195, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 5}
+{"task": "07-cache", "file": "cache.xo", "line": 232, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 233, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 263, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 264, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 7}
+{"task": "07-cache", "file": "cache.xo", "line": 267, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 268, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 274, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 220, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache.xo", "line": 227, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache.xo", "line": 271, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 280, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache.xo", "line": 190, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 218, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 233, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 268, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache.xo", "line": 181, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache.xo", "line": 186, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache.xo", "line": 196, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "service_test.xo", "line": 15, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 48, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 50, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 56, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 61, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 66, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 78, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 79, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 80, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 81, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 83, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 85, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 110, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 148, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 170, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 171, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 9, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 14, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 16, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "cache_test.xo", "line": 147, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "cache_test.xo", "line": 169, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "07-cache", "file": "service.xo", "line": 17, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 18, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 46, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 47, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 48, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 54, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 55, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 56, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 62, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 63, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 64, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 65, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 66, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "07-cache", "file": "service.xo", "line": 79, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "07-cache", "file": "main.xo", "line": 8, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 68, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 26, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 27, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 28, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 45, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 46, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 16}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 34, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 35, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 2}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 38, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 39, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 39, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 46, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "server/main.xo", "line": 36, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 59, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 71, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 74, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 26, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 27, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 116, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 117, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 132, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 133, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 105, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 111, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 112, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 113, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 108, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 123, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 27, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 67, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 112, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 117, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 133, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api_test.xo", "line": 155, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 76, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 105, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 153, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 23, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 24, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 25, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 26, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 27, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 28, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 7}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 41, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 42, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 43, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 44, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 45, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 46, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 4}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 146, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 147, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 153, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 154, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 64, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 6}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 62, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 141, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 147, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 154, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "api/api.xo", "line": 149, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 137, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 138, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 15, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 39, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 127, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 128, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 129, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 149, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 17, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 41, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 133, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 151, "op": "drop_store_back", "class": "lost update", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 98, "op": "some_to_raw", "class": "nil or optional", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 104, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 105, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 121, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 128, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 138, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/domain_test.xo", "line": 156, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/id.xo", "line": 11, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 70, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 6}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 74, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 16, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 18, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 20, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 39, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 74, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 88, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/search.xo", "line": 72, "op": "flip_compare", "class": "logic (not a target)", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "domain/validate.xo", "line": 14, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/validate.xo", "line": 15, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/validate.xo", "line": 16, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "domain/validate.xo", "line": 17, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 21, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 22, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 23, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 35, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 36, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 53, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store_test.xo", "line": 86, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 46, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 68, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 90, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 27, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 28, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 29, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 30, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 31, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 32, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 77, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 78, "op": "drop_match_arm", "class": "missing case", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 79, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 134, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 135, "op": "drop_match_arm", "class": "missing case", "caught": false, "errors": 0}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 136, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 67, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 145, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 59, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 86, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 101, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "store/store.xo", "line": 118, "op": "drop_uses", "class": "effects", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps.xo", "line": 30, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps.xo", "line": 31, "op": "drop_match_arm", "class": "missing case", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps.xo", "line": 22, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps.xo", "line": 33, "op": "drop_store_back", "class": "lost update", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps.xo", "line": 31, "op": "some_to_raw", "class": "nil or optional", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps_test.xo", "line": 4, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps_test.xo", "line": 7, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps_test.xo", "line": 28, "op": "drop_try", "class": "ignored error", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps_test.xo", "line": 25, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}
+{"task": "08-notes-service", "file": "archtest/deps_test.xo", "line": 26, "op": "var_to_let", "class": "mutation rule", "caught": true, "errors": 1}

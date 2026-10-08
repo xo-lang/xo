@@ -1,0 +1,11 @@
+fn main(os: Os) {
+  let d = 1500ms
+  os.stdio.println("${d} ${d * 2} ${3 * d} ${d / 3} ${d + 500ms} ${d - 2s} ${(d - 2s).abs()}")
+  os.stdio.println("${d.seconds()} ${d.millis()} ${d.nanos()} ${d.scale(1.5)} ${2500ms.ceil_seconds()} ${10s / 3s}")
+  os.stdio.println("${Duration.from_secs(0.25)} ${Duration.from_millis(1200)} ${Duration.from_nanos(5)}")
+  let t = Time.from_unix(1700000000)
+  let later = t + 90s
+  os.stdio.println("${t} ${later} ${later - t} ${later > t} ${t.unix()} ${later.unix_millis()}")
+  os.stdio.println("${Time.UNIX_EPOCH} ${(Time.parse_rfc3339("2026-01-02T03:04:05Z") ?? t).format_rfc3339()}")
+  os.stdio.println("${Time.parse_rfc3339("not a time").is_none()} ${1s < 2s} ${5s.max(3s)} ${5s.min(3s)}")
+}

@@ -1,0 +1,27 @@
+// profile.xo: a typed client call on top of get_with_retry.
+use std/json
+
+pub struct Profile {
+  pub id: Int
+  pub name: Str
+  pub email: Str?
+} derive Json
+
+pub enum ProfileErr {
+  Fetch(from FetchErr)
+  Decode(user_id: Int, msg: Str)
+} derive Display
+
+/// Loads the profile of `user_id` from `{base_url}/users/{user_id}`.
+pub fn fetch_profile(net: Net, clock: Clock, rand: Rand, base_url: Str, user_id: Int, policy: RetryPolicy = RetryPolicy{}) -> Profile ! ProfileErr
+  uses net, clock, rand
+{
+  // `?` wraps FetchErr into ProfileErr.Fetch through the `from` variant.
+  let body = get_with_retry(net, clock, rand, "{base_url}/users/{user_id}", policy)?
+  // GUESS: explicit type arguments on a call are written `f[T](...)`, matching
+  // the declaration syntax. Here the target type cannot be inferred otherwise.
+  match json.decode[Profile](body) {
+    ok(p) => p
+    err(e) => return err(ProfileErr.Decode(user_id: user_id, msg: "{e}"))
+  }
+}

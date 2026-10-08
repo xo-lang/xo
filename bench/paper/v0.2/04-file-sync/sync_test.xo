@@ -1,0 +1,149 @@
+// Tests for filesync. Each test block gets `os: TestOs` with an in memory fs.
+
+const T0 = 1_767_225_600   // 2026-01-01T00:00:00Z
+
+fn linux() -> Platform {
+  Platform{case_insensitive: false, skip_names: #{}}
+}
+
+fn put_file(fs: Fs, path: Str, data: Bytes, at: Time) -> () ! FsErr {
+  fs.create_dir_all(parent_dir(path))?
+  fs.write(path, data)?
+  fs.set_modified(path, at)
+}
+
+fn files_under(all: Map[Str, Bytes], dir: Str) -> List[Str] {
+  all.keys().filter(fn(k) { k.starts_with("{dir}/") })
+}
+
+test "new file is copied and unchanged file is skipped" {
+  let t = Time.from_unix(T0)
+  put_file(os.fs, "src/new.txt", b"new", t)?
+  put_file(os.fs, "src/same.txt", b"same", t)?
+  put_file(os.fs, "dst/same.txt", b"same", t)?
+  let opts = Options{src: "src", dst: "dst"}
+
+  let src = os.fs.sub("src")?.read_only()
+  let dst = open_dst(os.fs, "dst", false)?
+  let report = sync(src, dst, os.stdio, opts, linux())?
+
+  expect(report.copied) == 1
+  expect(report.skipped) == 1
+  expect(report.failed) == 0
+  expect(os.fs.read("dst/new.txt")?) == b"new"
+  expect(os.fs.stat("dst/new.txt")?.or_fault("dst/new.txt missing").modified) == t
+
+  // A second run has nothing left to copy.
+  let again = sync(src, open_dst(os.fs, "dst", false)?, os.stdio, opts, linux())?
+  expect(again.copied) == 0
+  expect(again.skipped) == 2
+}
+
+test "dry run writes nothing" {
+  let t = Time.from_unix(T0)
+  put_file(os.fs, "src/a.txt", b"a", t)?
+  put_file(os.fs, "src/sub/b.txt", b"b", t)?
+  put_file(os.fs, "dst/extra.txt", b"x", t)?
+  let before = os.fs.files()
+  let opts = Options{src: "src", dst: "dst", dry_run: true, delete: true}
+
+  let src = os.fs.sub("src")?.read_only()
+  let dst = open_dst(os.fs, "dst", true)?
+  let report = sync(src, dst, os.stdio, opts, linux())?
+
+  expect(os.fs.files()) == before
+  expect(os.fs.exists("dst/sub")?) == false
+  expect(report.copied) == 2
+  expect(report.deleted) == 1
+  expect(os.stdio.output().contains("would copy sub/b.txt"))
+  expect(os.stdio.output().contains("would delete extra.txt"))
+}
+
+test "dry run with a missing destination creates nothing" {
+  put_file(os.fs, "src/a.txt", b"a", Time.from_unix(T0))?
+  let opts = Options{src: "src", dst: "dst", dry_run: true}
+
+  let dst = open_dst(os.fs, "dst", true)?
+  expect(dst.is_none())
+  let report = sync(os.fs.sub("src")?.read_only(), dst, os.stdio, opts, linux())?
+
+  expect(report.copied) == 1
+  expect(os.fs.exists("dst")?) == false
+}
+
+test "delete removes extra files and empty directories" {
+  let t = Time.from_unix(T0)
+  put_file(os.fs, "src/keep.txt", b"k", t)?
+  put_file(os.fs, "dst/keep.txt", b"k", t)?
+  put_file(os.fs, "dst/extra.txt", b"x", t)?
+  put_file(os.fs, "dst/old/gone.txt", b"g", t)?
+  let opts = Options{src: "src", dst: "dst", delete: true}
+
+  let src = os.fs.sub("src")?.read_only()
+  let dst = open_dst(os.fs, "dst", false)?
+  let report = sync(src, dst, os.stdio, opts, linux())?
+
+  expect(report.deleted) == 3   // extra.txt, old/gone.txt, old
+  expect(report.failed) == 0
+  expect(files_under(os.fs.files(), "dst")) == ["dst/keep.txt"]
+  expect(os.fs.exists("dst/old")?) == false
+}
+
+test "without delete extra files stay" {
+  let t = Time.from_unix(T0)
+  put_file(os.fs, "src/keep.txt", b"k", t)?
+  put_file(os.fs, "dst/extra.txt", b"x", t)?
+  let opts = Options{src: "src", dst: "dst"}
+
+  let report = sync(os.fs.sub("src")?.read_only(), open_dst(os.fs, "dst", false)?, os.stdio, opts, linux())?
+
+  expect(report.deleted) == 0
+  expect(os.fs.exists("dst/extra.txt")?)
+}
+
+test "a failure while copying leaves no temp file behind" {
+  let t = Time.from_unix(T0)
+  put_file(os.fs, "src/a.txt", b"a", t)?
+  put_file(os.fs, "src/b.txt", b"b", t)?
+  os.fs.create_dir_all("dst")?
+  // GUESS: fail_next matches a path as the MemFs sees it (including the "dst/"
+  // prefix added by sub), and for Rename it matches the target path.
+  os.fs.fail_next(Rename, "dst/a.txt", FsErr.Io(path: "dst/a.txt", msg: "disk full"))
+  let opts = Options{src: "src", dst: "dst"}
+
+  let src = os.fs.sub("src")?.read_only()
+  let dst = open_dst(os.fs, "dst", false)?
+  let report = sync(src, dst, os.stdio, opts, linux())?
+
+  expect(report.failed) == 1
+  expect(report.copied) == 1
+  // Only the file that succeeded exists: no a.txt, no .filesync-* temp file.
+  expect(files_under(os.fs.files(), "dst")) == ["dst/b.txt"]
+  expect(os.stdio.errors().contains("failed to copy a.txt"))
+}
+
+test "macOS rules skip .DS_Store and match paths case insensitively" {
+  let t = Time.from_unix(T0)
+  let mac = Platform{case_insensitive: true, skip_names: #{".DS_Store"}}
+  let src = [
+    FileInfo{name: ".DS_Store", path: ".DS_Store", is_dir: false, size: 10, modified: t},
+    FileInfo{name: "Readme.md", path: "Readme.md", is_dir: false, size: 3, modified: t},
+  ]
+  let dst = [
+    FileInfo{name: "README.md", path: "README.md", is_dir: false, size: 3, modified: t},
+  ]
+
+  let actions = plan(src, dst, true, mac)
+
+  expect(actions) == [
+    Action.Skip(path: ".DS_Store", reason: "platform metadata file"),
+    Action.Skip(path: "Readme.md", reason: "unchanged"),
+  ]
+}
+
+test "parse args" {
+  let o = parse_args(["--delete", "a", "b"])?
+  expect(o) == Options{src: "a", dst: "b", delete: true}
+  expect(parse_args(["a"])) == Err(ArgErr.WrongArgCount(1))
+  expect(parse_args(["--force", "a", "b"])) == Err(ArgErr.UnknownFlag("--force"))
+}

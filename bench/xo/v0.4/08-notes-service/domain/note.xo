@@ -1,0 +1,52 @@
+// Package domain holds the note type, validation, and search.
+// It depends on nothing else in the project.
+
+/// A note as stored and served.
+pub struct Note {
+  pub id: Str
+  pub title: Str
+  pub body: Str
+  pub tags: List[Str]
+  /// Starts at 1 and increments on every successful update.
+  pub version: Int
+  pub created: Time
+  pub updated: Time
+} derive Json
+
+/// The client supplied part of a note, used for both create and update.
+pub struct Edit {
+  pub title: Str
+  pub body: Str = ""
+  pub tags: List[Str] = []
+} derive Json
+
+/// Builds a new note at version 1 after validating the edit.
+pub fn new_note(id: Str, e: Edit, now: Time) -> Note ! ValidationErr {
+  validate(e.title, e.tags)?
+  Note{
+    id: id,
+    title: e.title,
+    body: e.body,
+    tags: e.tags,
+    version: 1,
+    created: now,
+    updated: now,
+  }
+}
+
+/// Applies an edit to a note and increments its version.
+pub fn apply_edit(n: Note, e: Edit, now: Time) -> Note ! ValidationErr {
+  validate(e.title, e.tags)?
+  n with {title: e.title, body: e.body, tags: e.tags, version: n.version + 1, updated: now}
+}
+
+/// The ETag value for a version, including the quotes.
+pub fn etag(version: Int) -> Str {
+  "\"${version}\""
+}
+
+/// Parses an `If-Match` or `ETag` value such as `"3"` or `W/"3"`.
+pub fn parse_etag(raw: Str) -> Int? {
+  let v = raw.trim().trim_prefix("W/").trim_prefix("\"").trim_suffix("\"")
+  Int.parse(v)
+}
