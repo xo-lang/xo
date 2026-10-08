@@ -66,7 +66,13 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [runtime-callers-per-block-cost.md](runtime-callers-per-block-cost.md): `runtime.Callers` on every block doubled channel handoff cost; real runs recover call sites from the goroutine profile instead.
 - [scope-last-statement-line-directive.md](scope-last-statement-line-directive.md): the last statement of a scope body reported the next line (`pre` written after its `//line`); fixed in codegen.
 - [macos-clt-sdk-link-failure.md](macos-clt-sdk-link-failure.md): clang fails to link with the Command Line Tools SDK 27 ("unknown architecture arm64e.x1"); `xo build --backend=llvm` tries other SDKs and remembers the one that links.
-- [go-backend-list-set-quadratic.md](go-backend-list-set-quadratic.md): `xs[i] = x` copies the whole list on the Go backend, so element write loops are O(n^2) (a 10M sieve did not finish in 10 minutes); benchmarks need a timeout.
+- [go-backend-list-set-quadratic.md](go-backend-list-set-quadratic.md): `xs[i] = x` copied the whole list on the Go backend, so element write loops were O(n^2) (fixed 2026-10-08: in place writes for the unique owner).
+- [list-own-marks.md](list-own-marks.md): Lists write in place while unshared, so every copy site must mark (own reads by default, borrows checked); rules for changing codegen or rt.
+- [go-generic-shape-inline-budget.md](go-generic-shape-inline-budget.md): generic List methods with a copy call exceed Go's inlining budget per shape; generated code uses small value receiver write forms.
+- [go-large-struct-element-copy.md](go-large-struct-element-copy.md): `xs[i].f` copied the whole element when it has more than four fields; field reads use `RefM`, only when the statement cannot write the list.
+- [gen-source-cache-race.md](gen-source-cache-race.md): parallel golden tests crashed on gen's unlocked source cache map (fixed with a mutex).
+- [xo0520-in-generated-tests.md](xo0520-in-generated-tests.md): random value semantics programs fail the lost update check; store through a call (`m[k] = id(c)`).
+- [macos-first-run-latency.md](macos-first-run-latency.md): the first run of a new binary waits about 0.2 s on macOS checks; time best of N.
 - [go-negative-zero-literal.md](go-negative-zero-literal.md): `-0.0` is a Go constant without a sign, so the Go backend prints `0.0` where the LLVM backend prints `-0.0`.
 - [llvm-format-verb-in-ssa-name.md](llvm-format-verb-in-ssa-name.md): SSA names like `%t3` concatenated into a format string are read as verbs; pass them as arguments.
 - [llvm-list-write-cost.md](llvm-list-write-cost.md): out of line list write helpers made LLVM builds 2 to 5x slower than Go; inline fast paths, TBAA tags, and a per block uniqueness cache fixed it.

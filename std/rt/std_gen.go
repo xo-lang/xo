@@ -1402,6 +1402,11 @@ func (v Task_Fault) M_debug(*Task) string { return Debug(v) }
 
 func (v Task_Fault) M_display(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Task_Fault) XoMark() {
+	v.F_frames.XoMark()
+}
+
 type Testing_TestOs struct {
 	F_net   Testing_FakeNet
 	F_fs    Testing_MemFs

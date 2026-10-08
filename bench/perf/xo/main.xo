@@ -93,6 +93,125 @@ fn branch(m: Map[Int, Int]) -> Int {
 
 
 // ---------------------------------------------------------------------------
+// List writes (bench/results/perf-list-2026-10-08.md)
+
+const LN = 50000
+
+fn sum_list(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x
+  }
+  t
+}
+
+// 3M element reads and writes of a 50k list.
+fn set_at() -> Int {
+  var xs: List[Int] = []
+  for i in 0..LN {
+    xs.push(i)
+  }
+  for i in 0..N {
+    xs[i % LN] = xs[(i * 7) % LN] + i % 13
+  }
+  sum_list(xs)
+}
+
+// A stack: 2M pushes and 1M pops interleaved.
+fn stack() -> Int {
+  var xs: List[Int] = []
+  var sum = 0
+  for i in 0..N {
+    if i % 3 == 2 {
+      sum += xs.pop() ?? 0
+    } else {
+      xs.push(i)
+    }
+  }
+  sum + xs.len()
+}
+
+struct Particle {
+  x: Int
+  y: Int
+  vx: Int
+  vy: Int
+  mass: Int
+}
+
+// 3M field updates of elements of a list of 1000 structs.
+fn fields() -> Int {
+  var ps: List[Particle] = []
+  for i in 0..1000 {
+    ps.push(Particle{x: i, y: 0, vx: i % 7, vy: 1, mass: 1})
+  }
+  for i in 0..N {
+    let j = i % 1000
+    ps[j].x += ps[j].vx
+    ps[(i * 13) % 1000].y = ps[j].x % 1000
+  }
+  var sum = 0
+  for p in ps {
+    sum += p.x + p.y
+  }
+  sum
+}
+
+// 3M writes into a 300 x 300 List[List[Int]], plus 300 row pushes.
+fn grid() -> Int {
+  var g: List[List[Int]] = []
+  for i in 0..300 {
+    var row: List[Int] = []
+    for j in 0..300 {
+      row.push(i + j)
+    }
+    g.push(row)
+  }
+  for i in 0..N {
+    g[i % 300][(i * 7) % 300] += 1
+  }
+  for i in 0..300 {
+    g[i].push(i)
+  }
+  var sum = 0
+  for row in g {
+    sum += sum_list(row)
+  }
+  sum
+}
+
+// 20k inserts into the middle of a growing list, then 20k removals from
+// the middle: O(n) shifts, as on a Go slice.
+fn ins_rem() -> Int {
+  var xs: List[Int] = []
+  for i in 0..20000 {
+    xs.insert(xs.len() / 2, i)
+  }
+  var sum = 0
+  for _ in 0..20000 {
+    sum += xs.remove_at(xs.len() / 2)
+  }
+  sum + xs.len()
+}
+
+// 200 rounds: copy a 50k list, write one element of the copy, read the
+// original: each write after a copy copies the list once (Go: a clone).
+fn copy_set() -> Int {
+  var base: List[Int] = []
+  for i in 0..LN {
+    base.push(i)
+  }
+  var sum = 0
+  for r in 0..200 {
+    var c = base
+    c[r] = -1
+    c[r + 1] = -2
+    sum += base[r] + c[r] + c.len()
+  }
+  sum
+}
+
+// ---------------------------------------------------------------------------
 // Generic workloads (bench/results/perf-mono-2026-10-08.md)
 
 const SORT_N = 5000
@@ -283,6 +402,12 @@ fn main(os: Os) {
     "hof" => hof_chain(ints)
     "maxby" => max_by_loop(items)
     "iface" => iface_loop(rects)
+    "setat" => set_at()
+    "stack" => stack()
+    "fields" => fields()
+    "grid" => grid()
+    "insrem" => ins_rem()
+    "copyset" => copy_set()
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

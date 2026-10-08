@@ -335,3 +335,56 @@ func (b *Box[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 	*b = BoxOf(v)
 	return nil
 }
+
+// XoMark methods let MarkP reach the lists inside the generic value types
+// (see List). Generated code marks values of concrete types through
+// static helpers instead (internal/gen/own.go).
+
+// XoMark marks the lists held by the optional's value.
+func (o *Option[T]) XoMark() {
+	if o.Some {
+		MarkP(&o.V)
+	}
+}
+
+// XoMark marks the lists held by the result's value or error.
+func (r *Result[T, E]) XoMark() {
+	if r.Ok {
+		MarkP(&r.V)
+	} else {
+		MarkP(&r.E)
+	}
+}
+
+// XoMark marks the lists held by the tuple's elements.
+func (t *Tuple2[A, B]) XoMark() { MarkP(&t.F0); MarkP(&t.F1) }
+
+// XoMark marks the lists held by the tuple's elements.
+func (t *Tuple3[A, B, C]) XoMark() { MarkP(&t.F0); MarkP(&t.F1); MarkP(&t.F2) }
+
+// XoMark marks the lists held by the tuple's elements.
+func (t *Tuple4[A, B, C, D]) XoMark() {
+	MarkP(&t.F0)
+	MarkP(&t.F1)
+	MarkP(&t.F2)
+	MarkP(&t.F3)
+}
+
+// XoMark marks the lists held by the tuple's elements.
+func (t *Tuple5[A, B, C, D, E]) XoMark() {
+	MarkP(&t.F0)
+	MarkP(&t.F1)
+	MarkP(&t.F2)
+	MarkP(&t.F3)
+	MarkP(&t.F4)
+}
+
+// XoMark marks the lists held by the tuple's elements.
+func (t *Tuple6[A, B, C, D, E, F]) XoMark() {
+	MarkP(&t.F0)
+	MarkP(&t.F1)
+	MarkP(&t.F2)
+	MarkP(&t.F3)
+	MarkP(&t.F4)
+	MarkP(&t.F5)
+}

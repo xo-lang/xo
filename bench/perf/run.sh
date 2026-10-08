@@ -8,8 +8,9 @@
 # default is the unspecialized lowering, build it with no flag) and the
 # "Xo --mono" column with `--mono` (the default since 2026-10-08).
 # XOFLAGS adds flags to the first Xo build.
-# Workloads: collection (putget get push update iter copymut branch) and
-# generic (sortint sortpt hof maxby iface); WORKLOADS selects some.
+# Workloads: collection (putget get push update iter copymut branch), list
+# writes (setat stack fields grid insrem copyset), and generic (sortint
+# sortpt hof maxby iface); WORKLOADS selects some.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
@@ -45,7 +46,7 @@ if [ "$mono" = 1 ]; then
 else
 	printf '| Workload | Go ms | Xo ms | Ratio |\n|---|---|---|---|\n'
 fi
-for w in ${WORKLOADS:-putget get push update iter copymut branch sortint sortpt hof maxby iface}; do
+for w in ${WORKLOADS:-putget get push update iter copymut branch setat stack fields grid insrem copyset sortint sortpt hof maxby iface}; do
 	set -- $(best "$out/perf-go" "$w")
 	gs=$1 gt=$2
 	set -- $(best "$out/perf-xo" "$w")

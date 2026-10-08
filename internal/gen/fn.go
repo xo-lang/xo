@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
@@ -42,6 +43,22 @@ type fnGen struct {
 	// (arena.go, Options.Arenas).
 	arenaTemps map[*ast.CallExpr]bool
 	arenaResp  map[*ast.CallExpr]bool
+	// borrowed are place reads that skip their own mark (own.go).
+	borrowed map[ast.Expr]bool
+	// unit is the expression whose Go code is being generated as one
+	// statement or condition (nil when unknown): a read in place of a
+	// List element's field (List.RefM) is used only when unit cannot write
+	// the list, since Go may load the field after a later call in the same
+	// expression.
+	unit ast.Node
+}
+
+// inUnit sets the evaluation unit (fnGen.unit) and returns the function
+// that restores the previous one.
+func (f *fnGen) inUnit(n ast.Node) func() {
+	saved := f.unit
+	f.unit = n
+	return func() { f.unit = saved }
 }
 
 // frame is an Xo function being generated: a declared function, a
@@ -816,10 +833,18 @@ func (f *fnGen) stmt(s ast.Stmt) {
 	f.at(s)
 	switch x := s.(type) {
 	case *ast.ExprStmt:
+		switch x.X.(type) {
+		case *ast.IfExpr, *ast.MatchExpr, *ast.WhileExpr, *ast.Block, *ast.ScopeExpr, *ast.SelectExpr, *ast.ParenExpr:
+			defer f.inUnit(nil)()
+		default:
+			defer f.inUnit(x.X)()
+		}
 		f.into(x.X, dest{kind: dDiscard})
 	case *ast.LetStmt:
+		defer f.inUnit(x.Value)()
 		f.letStmt(x)
 	case *ast.VarStmt:
+		defer f.inUnit(x.Value)()
 		v := f.info.VarOf(x.Name)
 		f.noteBinding(x.Value, v)
 		code := f.val(x.Value)
@@ -831,6 +856,7 @@ func (f *fnGen) stmt(s ast.Stmt) {
 		f.line("var %s %s = %s", name, f.goType(v.Type), code)
 		f.line("_ = %s", name)
 	case *ast.ConstDecl:
+		defer f.inUnit(x.Value)()
 		v := f.info.VarOf(x.Name)
 		code := f.val(x.Value)
 		if v == nil {
@@ -841,10 +867,13 @@ func (f *fnGen) stmt(s ast.Stmt) {
 		f.line("%s := %s", name, code)
 		f.line("_ = %s", name)
 	case *ast.AssignStmt:
+		// the target is written after the value is computed
+		defer f.inUnit(x.Value)()
 		f.assign(x)
 	case *ast.DeferStmt:
 		f.deferStmt(x)
 	case *ast.ReturnStmt:
+		defer f.inUnit(x.Value)()
 		if x.Value == nil {
 			f.retUnit()
 			return
@@ -859,9 +888,13 @@ func (f *fnGen) stmt(s ast.Stmt) {
 			f.continueLoop(l)
 		}
 	case *ast.ForStmt:
+		defer f.inUnit(nil)()
 		f.forStmt(x)
 	case *ast.WhileStmt:
+		defer f.inUnit(nil)()
 		f.loopWhile(x.Label, x.Cond, x.Body, x)
+	default:
+		defer f.inUnit(nil)()
 	case *ast.BadStmt:
 		f.g.errorf(x, "bad statement")
 	}
@@ -969,7 +1002,9 @@ func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at a
 	text := f.capture(func() {
 		f.ind++
 		if cond != nil {
+			restore := f.inUnit(cond)
 			c := f.val(cond)
+			restore()
 			f.line("if !(%s) {", c)
 			f.line("\tbreak")
 			f.line("}")
@@ -985,7 +1020,16 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	if f.arenasOn() {
 		f.noteArenaTemp(x.Iter)
 	}
-	it := f.val(x.Iter)
+	// the loop reads the subject's elements while the body runs: a borrow
+	// unless the body writes the subject's binding (own.go)
+	var it string
+	restore := f.inUnit(x.Iter)
+	if f.borrowOK(x.Iter, x.Body) {
+		it = f.borrow(x.Iter)
+	} else {
+		it = f.val(x.Iter)
+	}
+	restore()
 	itT := f.typeOf(x.Iter)
 	itv := f.tmp("it")
 	f.line("%s := %s", itv, it)
@@ -1091,6 +1135,7 @@ type pstep struct {
 	name string // Go field (F_x, F0, F1, ...)
 	idx  string // index temporary (psList, psMap)
 	loc  string
+	t    check.Type // the type of the value the step reaches
 }
 
 const (
@@ -1142,6 +1187,7 @@ func (f *fnGen) resolvePlace(e ast.Expr) *placeRef {
 		default:
 			st = pstep{kind: psField, name: goField(x.Sel.Name)}
 		}
+		st.t = f.typeOf(x)
 		base.steps = append(base.steps, st)
 		return base
 	case *ast.IndexExpr:
@@ -1153,7 +1199,7 @@ func (f *fnGen) resolvePlace(e ast.Expr) *placeRef {
 		}
 		iv := f.tmp("ix")
 		f.line("%s := %s", iv, f.val(x.Index))
-		base.steps = append(base.steps, pstep{kind: kind, idx: iv, loc: f.g.loc(x)})
+		base.steps = append(base.steps, pstep{kind: kind, idx: iv, loc: f.g.loc(x), t: f.typeOf(x)})
 		return base
 	}
 	f.g.errorf(e, "not an assignable place")
@@ -1169,6 +1215,12 @@ func (f *fnGen) readPlace(p *placeRef) string {
 			code += "." + st.name
 		case psBoxed:
 			code += "." + st.name + ".Get()"
+		case psList:
+			if f.pg.monoOn() {
+				code += fmt.Sprintf(".AtM(%s, %q)", st.idx, st.loc)
+			} else {
+				code += fmt.Sprintf(".At(%s, %q)", st.idx, st.loc)
+			}
 		default:
 			code += fmt.Sprintf(".At(%s, %q)", st.idx, st.loc)
 		}
@@ -1176,63 +1228,178 @@ func (f *fnGen) readPlace(p *placeRef) string {
 	return code
 }
 
-// writePlace stores v into a place, writing modified copies back through
-// boxes and collection elements.
-func (f *fnGen) writePlace(p *placeRef, v string) {
-	k := -1
-	for i, st := range p.steps {
-		if st.kind != psField {
-			k = i
+// listPath reports a place whose steps are fields and List elements only:
+// it has an address (placeAddr).
+func (p *placeRef) listPath() bool {
+	for _, s := range p.steps {
+		if s.kind != psField && s.kind != psList {
+			return false
 		}
 	}
-	if k < 0 {
+	return true
+}
+
+// resolveAddrPlace resolves e when it is a place through at least one
+// List element and otherwise only fields (a listPath), else returns nil
+// without emitting anything.
+func (f *fnGen) resolveAddrPlace(e ast.Expr) *placeRef {
+	elem := false
+	for x := unparenExpr(e); ; {
+		switch y := x.(type) {
+		case *ast.Ident:
+			if !elem || f.info.VarOf(y) == nil {
+				return nil
+			}
+			return f.resolvePlace(e)
+		case *ast.SelectorExpr:
+			if f.g.boxedFieldNamed(f.typeOf(y.X), y.Sel.Name) {
+				return nil
+			}
+			x = unparenExpr(y.X)
+		case *ast.IndexExpr:
+			if !f.g.isPrelude(f.typeOf(y.X), "List") {
+				return nil
+			}
+			if _, rng := y.Index.(*ast.RangeExpr); rng {
+				return nil
+			}
+			elem = true
+			x = unparenExpr(y.X)
+		default:
+			return nil
+		}
+	}
+}
+
+// placeAddr emits the steps of a listPath place (uniqueList, then
+// List.PtrM, per element) and returns an addressable Go expression for
+// it; each list on the way becomes the unique owner of its array
+// (rt/list.go).
+func (f *fnGen) placeAddr(p *placeRef) string {
+	cur := p.root
+	for _, st := range p.steps {
+		if st.kind == psField {
+			cur += "." + st.name
+			continue
+		}
+		f.uniqueList(cur)
+		pt := f.tmp("ep")
+		f.line("%s := %s.PtrM(%s, %q)", pt, cur, st.idx, st.loc)
+		cur = "(*" + pt + ")"
+	}
+	return cur
+}
+
+// uniqueList makes the List at the addressable Go expression cur the
+// unique owner of its array, copying it if it is shared (rt/list.go:
+// the inline write forms).
+func (f *fnGen) uniqueList(cur string) {
+	f.line("if !%s.Mine() {", cur)
+	f.line("	%s = %s.Unshared()", cur, cur)
+	f.line("}")
+}
+
+// writePlace stores v into a place. List elements on the path are
+// written in place through pointers (each list on the way is made the
+// unique owner of its array first, uniqueList); Map values and boxed
+// fields are read, modified, and stored back, and the value read is
+// marked first because the Map's or box's copy is still shared.
+//
+// keep tells that v cannot write the place's root binding, so it may be
+// evaluated after the pointers are taken (as late as before: after the
+// bounds checks of the outer steps); otherwise it is computed first,
+// since a call in it could grow a list on the path.
+func (f *fnGen) writePlace(p *placeRef, v string, keep bool) {
+	if !p.rmw() {
 		f.line("%s = %s", f.readPlace(p), v)
 		return
 	}
-	outer := &placeRef{root: p.root, steps: p.steps[:k]}
-	tmp := f.tmp("rw")
-	f.line("%s := %s", tmp, f.readPlace(outer))
-	st := p.steps[k]
-	inner := v
-	if k < len(p.steps)-1 {
-		cur := f.tmp("rw")
+	if !keep && !trivialCode(v) {
+		t := f.tmp("wv")
+		f.line("%s := %s", t, v)
+		v = t
+	}
+	f.writeSteps(p.root, p.steps, v)
+}
+
+// writeSteps writes v at cur (an addressable Go expression) followed by
+// steps.
+func (f *fnGen) writeSteps(cur string, steps []pstep, v string) {
+	for i, st := range steps {
+		last := i == len(steps)-1
 		switch st.kind {
-		case psBoxed:
-			f.line("%s := %s.%s.Get()", cur, tmp, st.name)
-		default:
-			f.line("%s := %s.At(%s, %q)", cur, tmp, st.idx, st.loc)
+		case psField:
+			cur += "." + st.name
+			if last {
+				f.line("%s = %s", cur, v)
+			}
+		case psList:
+			f.uniqueList(cur)
+			if last {
+				f.line("%s.PutM(%s, %s, %q)", cur, st.idx, v, st.loc)
+				return
+			}
+			pt := f.tmp("ep")
+			f.line("%s := %s.PtrM(%s, %q)", pt, cur, st.idx, st.loc)
+			cur = "(*" + pt + ")"
+		case psMap, psBoxed:
+			if last && st.kind == psMap {
+				f.line("%s.M_put(tk, %s, %s)", cur, st.idx, v)
+				return
+			}
+			if last {
+				f.line("%s.%s = %sBoxOf(%s)", cur, st.name, f.rt(), v)
+				return
+			}
+			tmp := f.tmp("rw")
+			if st.kind == psMap {
+				f.line("%s := %s.At(%s, %q)", tmp, cur, st.idx, st.loc)
+			} else {
+				f.line("%s := %s.%s.Get()", tmp, cur, st.name)
+			}
+			// the Map's or box's own copy still holds tmp's lists
+			for _, l := range f.pg.markStmts(tmp, st.t) {
+				f.line("%s", l)
+			}
+			f.writeSteps(tmp, steps[i+1:], v)
+			if st.kind == psMap {
+				f.line("%s.M_put(tk, %s, %s)", cur, st.idx, tmp)
+			} else {
+				f.line("%s.%s = %sBoxOf(%s)", cur, st.name, f.rt(), tmp)
+			}
+			return
 		}
-		f.writePlace(&placeRef{root: cur, steps: p.steps[k+1:]}, v)
-		inner = cur
 	}
-	switch st.kind {
-	case psBoxed:
-		f.line("%s.%s = %sBoxOf(%s)", tmp, st.name, f.rt(), inner)
-	case psList:
-		f.line("%s.SetAt(%s, %s, %q)", tmp, st.idx, inner, st.loc)
-	case psMap:
-		f.line("%s.M_put(tk, %s, %s)", tmp, st.idx, inner)
-	}
-	f.writePlace(outer, tmp)
 }
 
 func (f *fnGen) assign(x *ast.AssignStmt) {
 	tt := f.typeOf(x.Target)
 	ref := f.resolvePlace(x.Target)
+	root := f.rootVar(x.Target)
+	keep := root != nil && !f.mutates(x.Value, root)
 	if x.Op == assignOp {
-		f.writePlace(ref, f.val(x.Value))
+		f.writePlace(ref, f.val(x.Value), keep)
 		return
 	}
 	op := compoundOp(x.Op)
 	yt := f.nat(x.Value)
 	yv := f.coerce(f.expr(x.Value), yt, yt)
+	if ref.rmw() && ref.listPath() && keep {
+		// `xs[i].f += y`: one address for the read and the write; y is
+		// evaluated after the place's bounds checks, as before
+		addr := f.placeAddr(ref)
+		f.line("%s = %s", addr, f.binop(op, addr, yv, tt, yt, tt, x))
+		return
+	}
 	cur := f.readPlace(ref)
-	f.writePlace(ref, f.binop(op, cur, yv, tt, yt, tt, x))
+	f.writePlace(ref, f.binop(op, cur, yv, tt, yt, tt, x), keep)
 }
 
 // place is the addressable Go expression of a place, for `var` receivers
 // and `&` arguments. A place through a box or a collection element is
 // copied into a temporary; wb records how to write it back after the call.
+// The temporary is marked: its lists are still reachable from the
+// collection (and from copies of it) until the write back.
 func (f *fnGen) place(e ast.Expr) string {
 	ref := f.resolvePlace(e)
 	if !ref.rmw() {
@@ -1240,7 +1407,10 @@ func (f *fnGen) place(e ast.Expr) string {
 	}
 	tmp := f.tmp("pl")
 	f.line("%s := %s", tmp, f.readPlace(ref))
-	f.writebacks = append(f.writebacks, func() { f.writePlace(ref, tmp) })
+	for _, l := range f.pg.markStmts(tmp, f.typeOf(e)) {
+		f.line("%s", l)
+	}
+	f.writebacks = append(f.writebacks, func() { f.writePlace(ref, tmp, true) })
 	return tmp
 }
 
@@ -1259,17 +1429,24 @@ func isDigits(s string) bool {
 // ---------------------------------------------------------------------------
 // Source text
 
-var sourceCache = map[string][]byte{}
+// sourceCache holds source files read by source; generation runs
+// concurrently in tests (parallel golden programs), hence the lock.
+var (
+	sourceMu    sync.Mutex
+	sourceCache = map[string][]byte{}
+)
 
 // source returns the source text of a node, for contract and expect
 // messages.
 func (g *gen) source(n ast.Node) string {
 	sp := n.Span()
+	sourceMu.Lock()
 	src, ok := sourceCache[sp.File]
 	if !ok {
 		src, _ = os.ReadFile(sp.File)
 		sourceCache[sp.File] = src
 	}
+	sourceMu.Unlock()
 	if sp.Start.Offset < 0 || sp.End.Offset > len(src) || sp.Start.Offset > sp.End.Offset {
 		return ""
 	}

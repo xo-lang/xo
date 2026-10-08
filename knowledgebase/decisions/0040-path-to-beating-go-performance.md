@@ -69,4 +69,8 @@ Accept, amend, or reject this record based on those results.
   in 30 ms), with a bump allocator that never frees (up to 2.9x Go's memory).
   The Go backend's catastrophic cases are O(n) list element writes, a bug, not
   a language limit.
+- List writes (2026-10-08, `bench/results/perf-list-2026-10-08.md`): the Go
+  backend now writes unshared lists in place (sticky shared flag set at copy
+  points). ms against Go: sieve >60000 -> 149 (110), nbody 18632 -> 256 (162),
+  sort >60000 -> 274 (266), interp 588 -> 173 (143).
 

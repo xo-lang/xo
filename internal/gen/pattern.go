@@ -319,7 +319,9 @@ func (f *fnGen) variantFields(x *ast.VariantPat, v *check.VariantObj, n *check.N
 func (f *fnGen) matchExpr(x *ast.MatchExpr, d dest) {
 	st := f.typeOf(x.Subject)
 	subj := f.tmp("m")
+	restore := f.inUnit(x.Subject)
 	f.line("%s := %s", subj, f.val(x.Subject))
+	restore()
 	f.line("_ = %s", subj)
 	if len(x.Arms) == 0 {
 		f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
@@ -371,7 +373,9 @@ func (f *fnGen) armBody(s ast.Stmt, d dest) {
 
 func (f *fnGen) ifExpr(x *ast.IfExpr, d dest) {
 	if x.Cond != nil {
+		restore := f.inUnit(x.Cond)
 		c := f.val(x.Cond)
+		restore()
 		f.line("if %s {", c)
 		f.ind++
 		f.blockInline(x.Then, d)
@@ -379,7 +383,9 @@ func (f *fnGen) ifExpr(x *ast.IfExpr, d dest) {
 	} else {
 		vt := f.nat(x.Value)
 		v := f.tmp("l")
+		restore := f.inUnit(x.Value)
 		f.line("%s := %s", v, f.valAs(x.Value, vt))
+		restore()
 		var m *match
 		if bp, ok := x.Pattern.(*ast.BindPat); ok && f.g.optionElem(vt) != nil {
 			if pt := f.info.PatType(bp); pt != nil && f.goType(pt) != f.goType(vt) {

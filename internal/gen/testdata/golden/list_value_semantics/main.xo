@@ -1,0 +1,423 @@
+// Value semantics of List under the runtime's in place writes (std/rt
+// list.go): a list writes its elements in place only while no other value
+// can see its array, so no copy may ever observe another copy's change,
+// whichever writes first, through any path that copies a list.
+
+use std/task
+
+struct P {
+  x: Int
+  tags: List[Int]
+}
+
+struct Node {
+  items: List[Int]
+  next: Node?
+}
+
+enum Shape {
+  Poly(points: List[Int])
+  Dot
+}
+
+fn show(xs: List[Int]) -> Str {
+  xs.map(fn(x) { "${x}" }).join(",")
+}
+
+fn showg(g: List[List[Int]]) -> Str {
+  g.map(fn(r) { "[${show(r)}]" }).join("")
+}
+
+fn showp(ps: List[P]) -> Str {
+  ps.map(fn(p) { "${p.x}:[${show(p.tags)}]" }).join(" ")
+}
+
+// Section 12: interfaces, generics, patterns, keys, defaults, Once,
+// task results, method values.
+
+interface Shower {
+  fn show(self) -> Str
+}
+
+struct Bag {
+  items: List[Int]
+}
+
+fn (b: Bag) show() -> Str { show(b.items) }
+
+fn idl(xs: List[Int]) -> List[Int] { xs }
+
+fn dup[T](x: T) -> (T, T) { (x, x) }
+
+fn first_of[T](xs: List[T]) -> T? { xs.first() }
+
+fn with_default(xs: List[Int] = [1, 2]) -> List[Int] {
+  var c = xs
+  c[0] = 50
+  c
+}
+
+fn set0(var xs: List[Int], v: Int) {
+  xs[0] = v
+}
+
+fn both(var a: List[Int], var b: List[Int]) {
+  for x in a {
+    b[0] = b[0] + x
+  }
+  a.push(b[0])
+}
+
+fn mixed(var a: List[Int], b: List[Int]) -> Int {
+  a[0] = 100
+  b[0]
+}
+
+fn reader(xs: List[Int]) -> fn() -> Str {
+  fn() { show(xs) }
+}
+
+fn keep(xs: List[List[Int]]) -> List[Int] {
+  xs[0]
+}
+
+fn grown(xs: List[Int]) -> List[Int] {
+  var c = xs
+  c.push(7)
+  c[0] = -1
+  c
+}
+
+fn swap[T](var xs: List[T], i: Int, j: Int) {
+  let t = xs[i]
+  xs[i] = xs[j]
+  xs[j] = t
+}
+
+fn fresh() -> List[Int] {
+  var r: List[Int] = []
+  for i in 0..4 {
+    r.push(i)
+  }
+  r
+}
+
+fn main(os: Os) {
+  // 1. Copy, then mutate both, in both orders.
+  var a = [1, 2, 3]
+  var b = a
+  a[0] = 10
+  b[1] = 20
+  a.push(4)
+  b.push(5)
+  os.stdio.println("copy: a ${show(a)} b ${show(b)}")
+  var c = [1, 2, 3]
+  let d = c
+  c[2] = 30
+  var e = d
+  e[0] = 40
+  c[0] = 50
+  os.stdio.println("order: c ${show(c)} d ${show(d)} e ${show(e)}")
+
+  // 2. A field of an element updated through a copy of the list, and a
+  // list inside a struct.
+  var ps = [P{x: 1, tags: [1]}, P{x: 2, tags: [2]}]
+  var qs = ps
+  qs[0].x = 9
+  qs[1].tags[0] = 22
+  qs[1].tags.push(23)
+  ps[0].tags.push(11)
+  ps[1].x += 5
+  os.stdio.println("fields: ps ${showp(ps)} qs ${showp(qs)}")
+  var p1 = P{x: 1, tags: [1, 2]}
+  let p2 = p1
+  p1.tags[0] = 5
+  p1.tags.pop()
+  var p3 = p2
+  p3.tags[1] = 6
+  os.stdio.println("struct: p1 ${show(p1.tags)} p2 ${show(p2.tags)} p3 ${show(p3.tags)}")
+
+  // 3. Captured by a closure, then the binding is mutated; a closure that
+  // captured a parameter, then the caller's binding is mutated.
+  var cap = [1, 2]
+  let read = fn() { show(cap) }
+  cap[0] = 3
+  cap.push(4)
+  var param = [5, 6]
+  let r2 = reader(param)
+  param[0] = 7
+  param.push(8)
+  os.stdio.println("closure: captured ${read()} now ${show(cap)} param ${r2()} now ${show(param)}")
+
+  // 4. Sent on a channel: sender and receiver mutate their copies, and a
+  // task mutates its own.
+  let ch = Chan[List[Int]].new(cap: 1)
+  var sent = [1, 2, 3]
+  ch.send(sent)
+  sent[0] = 9
+  sent.push(4)
+  var got = ch.recv() ?? []
+  got[1] = 8
+  os.stdio.println("channel: sent ${show(sent)} got ${show(got)}")
+  let back = Chan[List[Int]].new(cap: 1)
+  var base = [0, 0, 0]
+  scope sc {
+    sc.spawn(fn() {
+      var mine = base
+      for i in 0..300 {
+        mine[i % 3] = mine[i % 3] + i
+      }
+      back.send(mine)
+    })
+    for i in 0..300 {
+      base[i % 3] = base[i % 3] - 1
+    }
+    os.stdio.println("task: local ${show(base)}")
+  }
+  os.stdio.println("task: theirs ${show(back.recv() ?? [])} base ${show(base)}")
+
+  // 5. A list in a Mutex: the value given to new, the result of with,
+  // and a with whose closure fails after writing.
+  var init = [1, 2, 3]
+  let guarded = Mutex[List[Int]].new(init)
+  init[0] = 100
+  let snap = guarded.with(fn(xs) { xs })
+  guarded.with(fn(var xs) { xs[0] = 10 })
+  let failed = guarded.with(fn(var xs) -> Int ! Str {
+    xs[1] = 20
+    xs.push(30)
+    Err("no")
+  })
+  let after = guarded.with(fn(xs) { xs })
+  let sums = Chan[Int].new(cap: 4)
+  scope sc {
+    for t in 0..4 {
+      sc.spawn(fn() {
+        for i in 0..50 {
+          guarded.with(fn(var xs) {
+            xs[t % 3] = xs[t % 3] + 1
+            xs.push(i)
+          })
+        }
+        let mine = guarded.with(fn(xs) { xs })
+        var total = 0
+        for x in mine {
+          total += x
+        }
+        sums.send(total)
+      })
+    }
+  }
+  let fin = guarded.with(fn(xs) { xs })
+  os.stdio.println("mutex: init ${show(init)} snap ${show(snap)} failed ${failed.is_err()} after ${show(after)} final len ${fin.len()} head ${fin[0] + fin[1] + fin[2]}")
+
+  // 6. Nested lists: rows read out, rows written through a copy, a row
+  // pushed through its place, a loop over the list while it is written.
+  var grid = [[1, 2], [3, 4]]
+  let row = grid[0]
+  var g2 = grid
+  grid[0][0] = 9
+  g2[1][1] = 8
+  grid[1].push(5)
+  let kept = keep(grid)
+  grid[0][1] = 7
+  os.stdio.println("nested: grid ${showg(grid)} g2 ${showg(g2)} row ${show(row)} kept ${show(kept)}")
+  var it = [1, 2, 3]
+  for x in it {
+    it[0] = it[0] + x * 10
+    it.push(x)
+  }
+  var rows = [[1], [2]]
+  for r in rows {
+    rows[0][0] = rows[0][0] + r[0]
+  }
+  os.stdio.println("loop: it ${show(it)} rows ${showg(rows)}")
+  var outer = [[0, 0], [0, 0]]
+  let o2 = outer
+  for i in 0..2 {
+    for j in 0..2 {
+      outer[i][j] = i * 10 + j
+    }
+  }
+  swap(outer, 0, 1)
+  var o3 = outer
+  swap(o3[0], 0, 1)
+  os.stdio.println("swap: outer ${showg(outer)} o2 ${showg(o2)} o3 ${showg(o3)}")
+
+  // 7. Maps, Options, tuples, and enums holding lists.
+  var m: Map[Str, List[Int]] = {"a": [1, 2]}
+  let m2 = m
+  m.update("a", [], fn(var xs) { xs[0] = 5 })
+  m.update("a", [], fn(var xs) { xs.push(3) })
+  let upd = m.update("a", [], fn(var xs) -> () ! Str {
+    xs[1] = 99
+    Err("no")
+  })
+  let vals = m.values()
+  var v0 = vals[0]
+  v0[0] = 77
+  var mm: Map[Str, List[Int]] = {"k": [1]}
+  let mm2 = mm
+  mm["k"] = mm.get_or_fault("k", "golden: key exists") + [2]
+  os.stdio.println("map: m ${show(m.get("a") ?? [])} m2 ${show(m2.get("a") ?? [])} upd ${upd.is_err()} v0 ${show(v0)} mm ${show(mm.get("k") ?? [])} mm2 ${show(mm2.get("k") ?? [])}")
+  var opt: List[Int]? = Some([1, 2])
+  let o_copy = opt
+  var t = ([1], 2)
+  let t2 = t
+  t.0[0] = 3
+  if let Some(xs) = opt {
+    var ys = xs
+    ys[0] = 4
+    opt = Some(ys)
+  }
+  let sh = Shape.Poly(points: [1, 2])
+  var pts: List[Int] = []
+  match sh {
+    Poly(points) => pts = points
+    Dot => ()
+  }
+  pts[0] = 6
+  let again = match sh {
+    Poly(points) => show(points)
+    Dot => ""
+  }
+  os.stdio.println("wrapped: opt ${show(opt ?? [])} o_copy ${show(o_copy ?? [])} t ${show(t.0)} t2 ${show(t2.0)} pts ${show(pts)} sh ${again}")
+
+  // 8. pop, push, insert, remove_at, set, slices, and concatenation with
+  // copies alive.
+  var s = [1, 2, 3]
+  let s0 = s
+  let popped = s.pop()
+  s.push(9)
+  s.insert(0, 0)
+  let s1 = s
+  let removed = s.remove_at(1)
+  s.set(0, -5)
+  s[1] += 100
+  os.stdio.println("ops: s ${show(s)} s0 ${show(s0)} s1 ${show(s1)} popped ${popped ?? 0} removed ${removed}")
+  var whole = [1, 2, 3, 4]
+  let part = whole[1..3]
+  let joined = whole + []
+  let joined2 = [] + whole
+  let joined3 = whole + [5]
+  whole[1] = 20
+  whole[0] = 10
+  whole.push(6)
+  os.stdio.println("slices: whole ${show(whole)} part ${show(part)} joined ${show(joined)} ${show(joined2)} ${show(joined3)}")
+
+  // 9. var parameters: aliasing, and a by value argument of the same
+  // binding.
+  var al = [1, 2, 3]
+  both(al, al)
+  var mx = [1, 2]
+  let seen = mixed(mx, mx)
+  var fx = fresh()
+  let fx2 = fx
+  set0(fx, 42)
+  let gr = grown(fx)
+  os.stdio.println("params: al ${show(al)} mx ${show(mx)} seen ${seen} fx ${show(fx)} fx2 ${show(fx2)} gr ${show(gr)}")
+
+  // 10. Results of std methods that copy elements out of a list.
+  var src = [[3], [1], [2]]
+  let sorted = src.sort()
+  let rev = src.reverse()
+  let filt = src.filter(fn(r) { r[0] > 1 })
+  let idx = src.indexed()
+  let first = src.first() ?? []
+  let set = src.to_set()
+  src[0][0] = 30
+  src[1].push(10)
+  os.stdio.println("std: src ${showg(src)} sorted ${showg(sorted)} rev ${showg(rev)} filt ${showg(filt)} idx ${show(idx[0].1)} first ${show(first)} set ${set.contains([3])}")
+
+  // 11. A recursive struct (boxed field) holding a list.
+  var n1 = Node{items: [1], next: Some(Node{items: [2], next: None})}
+  let n2 = n1
+  if let Some(nx) = n1.next {
+    var nn = nx
+    nn.items[0] = 20
+    n1.next = Some(nn)
+  }
+  n1.items[0] = 10
+  os.stdio.println("boxed: n1 ${show(n1.items)} ${show((n1.next ?? Node{items: [], next: None}).items)} n2 ${show(n2.items)} ${show((n2.next ?? Node{items: [], next: None}).items)}")
+
+  // 12. Interfaces, generics, patterns, Map and Set keys, defaults,
+  // indexed loops, Once read by several tasks, task results, method
+  // values.
+  var bag = Bag{items: [1, 2]}
+  let shower: Shower = bag
+  bag.items[0] = 9
+  os.stdio.println("iface ${shower.show()} ${bag.show()}")
+  // generic tuple of copies
+  var g = [1, 2]
+  var pair = dup(g)
+  pair.0[0] = 7
+  g[1] = 8
+  os.stdio.println("dup ${show(pair.0)} ${show(pair.1)} ${show(g)}")
+  var gg = [[1], [2]]
+  var f1 = first_of(gg) ?? []
+  f1[0] = 5
+  gg[0][0] = 6
+  os.stdio.println("first ${show(f1)} ${show(gg[0])}")
+  // match binding then mutate original
+  var b2 = Bag{items: [3, 4]}
+  match b2 {
+    Bag{items} => {
+      b2.items[0] = 30
+      os.stdio.println("match ${show(items)} ${show(b2.items)}")
+    }
+  }
+  // Map and Set with list keys
+  var key = [1, 2]
+  var km: Map[List[Int], Int] = {}
+  km.put(idl(key), 1)
+  key[0] = 9
+  var st: Set[List[Int]] = #{}
+  st.add(idl(key))
+  key[1] = 10
+  os.stdio.println("key ${show(key)}")
+  os.stdio.println("keys ${km.get([1, 2]) ?? 0} ${km.get([9, 2]) ?? 0} ${st.contains([9, 2])} ${st.contains([9, 10])}")
+  // defaults
+  let d1 = with_default()
+  let d2 = with_default()
+  os.stdio.println("defaults ${show(d1)} ${show(d2)}")
+  // indexed while mutating
+  var ix = [1, 2, 3]
+  for (i, x) in ix.indexed() {
+    ix[2 - i] = x * 100
+  }
+  os.stdio.println("indexed ${show(ix)}")
+  // Once read by several tasks that write their copies
+  let once = task.once[List[Int], Never]()
+  let out = Chan[Int].new(cap: 8)
+  scope sc {
+    for t in 0..8 {
+      sc.spawn(fn() {
+        var mine = once.get(fn() { [1, 2, 3] })
+        mine[0] = t
+        mine.push(t)
+        out.send(mine[0] + mine.len())
+      })
+    }
+  }
+  var total = 0
+  for _ in 0..8 {
+    total += out.recv() ?? 0
+  }
+  os.stdio.println("once ${total} ${show(once.get(fn() { [0] }))}")
+  // task results awaited twice
+  var hs = [0, 0]
+  scope sc2 {
+    let h = sc2.spawn(fn() { [5, 6] })
+    var r1 = h.await
+    r1[0] = 50
+    os.stdio.println("r1 ${show(r1)}")
+    let r2 = h.await
+    hs = r2
+  }
+  os.stdio.println("await ${show(hs)}")
+  // method value captured
+  var mv = [1, 2, 3]
+  let getter = mv.get
+  mv[1] = 20
+  os.stdio.println("method value ${getter(1) ?? 0} ${mv[1]}")
+}

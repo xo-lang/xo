@@ -567,16 +567,24 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 	et := f.goType(elemT)
 	r := f.rt()
 	var src, init string
+	// the receiver is only read by the loop: a borrow (own.go); the
+	// inlined body cannot write it unless it names its binding
+	recv := func() string {
+		if f.borrowOK(ci.Recv, x) {
+			return f.borrow(ci.Recv)
+		}
+		return f.val(ci.Recv)
+	}
 	if fo.Name == "fold" {
 		codes := f.operands(2, func(i int) string {
 			if i == 0 {
-				return f.val(ci.Recv)
+				return recv()
 			}
 			return f.valAs(exprs[0], sub.Apply(fo.Params[0].Type))
 		})
 		src, init = codes[0], codes[1]
 	} else {
-		src = f.val(ci.Recv)
+		src = recv()
 	}
 	sv := f.tmp("src")
 	f.line("%s := %s", sv, src)
@@ -608,6 +616,10 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 			f.line("var %s bool", v)
 			f.inlineLit(lit, ft, []string{e}, dest{kind: dAssign, name: v, typ: want.Result})
 			f.line("if %s {", v)
+			// the element stays in the source list too
+			for _, l := range f.pg.markStmts(e, elemT) {
+				f.line("\t%s", l)
+			}
 			f.line("\t%s = append(%s, %s)", out, out, e)
 			f.line("}")
 		})

@@ -183,3 +183,18 @@ func (l List[T]) AtM(i int64, at string) T {
 	}
 	return l.s[i]
 }
+
+// RefM is the address of element i for reading one field of it in place
+// (`xs[i].f`, emitted by default): the generated code reads through it at
+// once, so it never sees a later write. Copying a struct of more than
+// four fields out of the list (AtM) would cost a memory copy, since Go
+// keeps only small structs in registers.
+func (l List[T]) RefM(i int64, at string) *T {
+	if uint64(i) >= uint64(len(l.s)) {
+		panic(&arithFault{i, int64(len(l.s)), 'i', at})
+	}
+	return &l.s[i]
+}
+
+// RefU is RefM where the range analysis proved i in range.
+func (l List[T]) RefU(i int64) *T { return &l.s[i] }

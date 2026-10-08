@@ -143,6 +143,9 @@ func (f *fnGen) coerce(code string, from, to check.Type) string {
 func (f *fnGen) toIface(code string, from, to check.Type) string {
 	// inside a specialized copy the concrete types are known
 	from, to = f.pg.monoType(from), f.pg.monoType(to)
+	// an interface value's type no longer says it holds lists, so they
+	// are marked shared now (own.go)
+	code = f.ownCode(code, from)
 	tt := f.goType(to)
 	if tt == "any" {
 		return "any(" + code + ")"
@@ -282,7 +285,7 @@ func (f *fnGen) expr(e ast.Expr) string {
 	case *ast.HoleExpr:
 		return fmt.Sprintf("%sHole[%s](%q)", f.rt(), f.goType(f.typeOf(x)), f.g.loc(x))
 	case *ast.Ident:
-		return f.ident(x)
+		return f.ownRead(x, f.ident(x))
 	case *ast.TupleExpr:
 		t := check.Resolve(f.nat(x)).(*check.Tuple)
 		codes := f.operands(len(x.Elems), func(i int) string { return f.valAs(x.Elems[i], t.Elems[i]) })
@@ -325,13 +328,13 @@ func (f *fnGen) expr(e ast.Expr) string {
 		})
 		return fmt.Sprintf("%sRange[%s]{Lo: %s, Hi: %s, Incl: %v}", f.rt(), et, codes[0], codes[1], x.Inclusive)
 	case *ast.SelectorExpr:
-		return f.selector(x)
+		return f.ownRead(x, f.selector(x))
 	case *ast.CallExpr:
 		return f.call(x)
 	case *ast.TypeArgsExpr:
 		return f.typeArgsValue(x)
 	case *ast.IndexExpr:
-		return f.index(x)
+		return f.ownRead(x, f.index(x))
 	case *ast.TryExpr:
 		return f.try(x)
 	case *ast.FnLit:
@@ -371,6 +374,16 @@ func (f *fnGen) stringLit(x *ast.StringLit) string {
 		p := parts[i]
 		if p.Expr == nil {
 			return strconv.Quote(p.Text)
+		}
+		var others []ast.Node
+		for _, q := range parts {
+			if q.Expr != nil && q.Expr != p.Expr {
+				others = append(others, q.Expr)
+			}
+		}
+		if f.borrowOK(p.Expr, others...) {
+			// only formatted: a borrow (own.go)
+			return f.display(f.borrow(p.Expr), f.typeOf(p.Expr))
 		}
 		return f.display(f.val(p.Expr), f.typeOf(p.Expr))
 	})
@@ -578,7 +591,18 @@ func (f *fnGen) selector(x *ast.SelectorExpr) string {
 		}
 		return code
 	}
-	base := f.val(x.X)
+	// the base is only read for the field: a borrow; a List element is
+	// read in place (List.RefM)
+	var base string
+	if ix, ok := unparenExpr(x.X).(*ast.IndexExpr); ok && f.pg.monoOn() && f.g.isPrelude(f.typeOf(ix.X), "List") &&
+		f.unit != nil && !f.mutates(f.unit, f.rootVar(ix.X)) {
+		if _, rng := ix.Index.(*ast.RangeExpr); !rng {
+			base = f.indexRef(ix)
+		}
+	}
+	if base == "" {
+		base = f.borrow(x.X)
+	}
 	if isDigits(x.Sel.Name) {
 		return base + ".F" + x.Sel.Name
 	}
@@ -698,17 +722,34 @@ func (f *fnGen) binary(x *ast.BinaryExpr) string {
 				common = yt
 			}
 		}
+		// the operands are only read: borrows (own.go)
+		bx, by := f.borrowOK(x.X, x.Y), f.borrowOK(x.Y, x.X)
 		codes := f.operands(2, func(i int) string {
 			if i == 0 {
+				if bx {
+					return f.borrowAs(x.X, common)
+				}
 				return f.valAs(x.X, common)
+			}
+			if by {
+				return f.borrowAs(x.Y, common)
 			}
 			return f.valAs(x.Y, common)
 		})
 		return f.compare(op, codes[0], codes[1], common)
 	}
+	// List `+` (rt List.Concat) marks the arrays its result shares, so
+	// its operands are borrows too
+	bx, by := f.borrowOK(x.X, x.Y), f.borrowOK(x.Y, x.X)
 	codes := f.operands(2, func(i int) string {
 		if i == 0 {
+			if bx {
+				return f.borrow(x.X)
+			}
 			return f.val(x.X)
+		}
+		if by {
+			return f.borrow(x.Y)
 		}
 		return f.val(x.Y)
 	})
@@ -947,9 +988,14 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 	loc := strconv.Quote(f.g.loc(x))
 	if rng, ok := x.Index.(*ast.RangeExpr); ok {
 		var lo, hi string
+		baseOK := f.borrowOK(x.X, rng.Lo, rng.Hi)
 		codes := f.operands(3, func(i int) string {
 			switch i {
 			case 0:
+				// SliceRange marks the array it shares
+				if baseOK {
+					return f.borrow(x.X)
+				}
 				return f.val(x.X)
 			case 1:
 				if rng.Lo == nil {
@@ -976,8 +1022,13 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 		}
 		return fmt.Sprintf("%s.SliceRange(%s)", base, args)
 	}
+	baseOK := f.borrowOK(x.X, x.Index)
 	codes := f.operands(2, func(i int) string {
 		if i == 0 {
+			// only element i is copied out (and marked by ownRead)
+			if baseOK {
+				return f.borrow(x.X)
+			}
 			return f.val(x.X)
 		}
 		return f.val(x.Index)
@@ -995,6 +1046,26 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 		}
 	}
 	return fmt.Sprintf("%s.At(%s, %s)", codes[0], codes[1], loc)
+}
+
+// indexRef is the address of List element x (`xs.RefM(i)`), for reading
+// a field of it in place: a borrow of the element.
+func (f *fnGen) indexRef(x *ast.IndexExpr) string {
+	loc := strconv.Quote(f.g.loc(x))
+	baseOK := f.borrowOK(x.X, x.Index)
+	codes := f.operands(2, func(i int) string {
+		if i == 0 {
+			if baseOK {
+				return f.borrow(x.X)
+			}
+			return f.val(x.X)
+		}
+		return f.val(x.Index)
+	})
+	if f.safeOp(x) {
+		return fmt.Sprintf("%s.RefU(%s)", codes[0], codes[1])
+	}
+	return fmt.Sprintf("%s.RefM(%s, %s)", codes[0], codes[1], loc)
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,12 +1131,21 @@ func (f *fnGen) fnLit(x *ast.FnLit) string {
 		f.g.errorf(x, "closure without a function type")
 		return "nil"
 	}
-	// captured mutable bindings are copied: closures capture by value
+	// captured mutable bindings are copied: closures capture by value.
+	// Every captured binding's lists are marked shared: the closure may
+	// run after the binding (or, for a borrowed parameter, the caller's
+	// binding) is written in place (own.go).
 	saved := map[*check.VarObj]string{}
-	for _, v := range f.freeMutable(x) {
+	for _, v := range f.freeVars(x) {
 		cur := f.varName(v)
+		if !v.Mutable {
+			for _, l := range f.pg.markStmts(cur, v.Type) {
+				f.line("%s", l)
+			}
+			continue
+		}
 		c := f.tmp("cap")
-		f.line("%s := %s", c, cur)
+		f.line("%s := %s", c, f.ownCode(cur, v.Type))
 		saved[v] = cur
 		f.names[v] = c
 	}
@@ -1113,9 +1193,9 @@ func (f *fnGen) fnLit(x *ast.FnLit) string {
 	return b.String()
 }
 
-// freeMutable returns the mutable bindings declared outside closure x and
-// used inside it.
-func (f *fnGen) freeMutable(x *ast.FnLit) []*check.VarObj {
+// freeVars returns the bindings declared outside closure x and used
+// inside it, in order of first use.
+func (f *fnGen) freeVars(x *ast.FnLit) []*check.VarObj {
 	declared := map[*check.VarObj]bool{}
 	for _, v := range f.info.ClosureParams(x) {
 		declared[v] = true
@@ -1132,7 +1212,7 @@ func (f *fnGen) freeMutable(x *ast.FnLit) []*check.VarObj {
 				return true // declared inside the closure
 			}
 			seen[v] = true
-			if v.Mutable && !declared[v] {
+			if !declared[v] {
 				out = append(out, v)
 			}
 		}

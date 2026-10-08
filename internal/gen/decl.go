@@ -161,6 +161,16 @@ func (pg *pkgGen) genStruct(t *check.TypeObj, d *ast.StructDecl) {
 	if t.Invariant != nil {
 		pg.genInvariant(t)
 	}
+	var mfs []fieldRef
+	var mts []check.Type
+	for _, f := range t.Fields {
+		if pg.g.isBoxedField(t, f) {
+			continue
+		}
+		mfs = append(mfs, fieldRef{name: f.Name, code: "v." + goField(f.Name)})
+		mts = append(mts, f.Type)
+	}
+	pg.markMethod(self, mfs, mts)
 	if t.Derives["Json"] && !rtHandWritten[localTypeName(t)+".json"] {
 		pg.genJSONStruct(t)
 	}
@@ -251,6 +261,7 @@ func (pg *pkgGen) genNewtype(t *check.TypeObj, d *ast.TypeDecl) {
 	pg.genDerived(t, selfType(t), func(recv string) []fieldRef {
 		return []fieldRef{{name: "0", code: recv + ".F0"}}
 	})
+	pg.markMethod(selfType(t), []fieldRef{{name: "0", code: "v.F0"}}, []check.Type{t.Target})
 	if t.Derives["Json"] {
 		pg.genJSONNewtype(t)
 	}

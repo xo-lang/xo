@@ -494,6 +494,8 @@ func (m Map[K, V]) M_keys(*Task) List[K] {
 	for k := range m.All() {
 		out = append(out, k)
 	}
+	// the elements stay in the map too (see List)
+	markElems(out)
 	return ListOf(out...)
 }
 
@@ -503,6 +505,8 @@ func (m Map[K, V]) M_values(*Task) List[V] {
 	for _, v := range m.All() {
 		out = append(out, v)
 	}
+	// the elements stay in the map too (see List)
+	markElems(out)
 	return ListOf(out...)
 }
 
@@ -512,6 +516,8 @@ func Map_entries[K, V any](_ *Task, m Map[K, V]) List[Tuple2[K, V]] {
 	for k, v := range m.All() {
 		out = append(out, Tuple2[K, V]{k, v})
 	}
+	// the elements stay in the map too (see List)
+	markElems(out)
 	return ListOf(out...)
 }
 
@@ -554,6 +560,8 @@ func Map_update[K, V, R, E any](tk *Task, m *Map[K, V], k K, init V, f func(*Tas
 			if j >= 0 && m.es[j].org >= 0 {
 				v = m.es[j].v
 			}
+			// v is still in the log: writes through f must copy its lists
+			MarkP(&v)
 			r := f(tk, &v)
 			if r.Ok {
 				if m.t == t && len(m.es) == L && t.idx.Load() == ix && t.used.CompareAndSwap(int64(L), int64(L+1)) {
@@ -570,6 +578,7 @@ func Map_update[K, V, R, E any](tk *Task, m *Map[K, V], k K, init V, f func(*Tas
 	if s := m.find(h, k); s != nil {
 		v = s.v
 	}
+	MarkP(&v)
 	r := f(tk, &v)
 	if r.Ok {
 		m.claim()

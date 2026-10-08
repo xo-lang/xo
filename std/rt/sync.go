@@ -126,6 +126,9 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 		m.l.release()
 	}()
 	v := m.v
+	// m.v keeps the old value if f fails or faults, so f's writes to
+	// lists in v must copy them (see List)
+	MarkP(&v)
 	r := f(tk, &v)
 	if r.Ok {
 		m.v = v

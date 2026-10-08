@@ -57,10 +57,11 @@ go test ./internal/format -run TestGolden -update        # rewrite internal/form
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
+XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go test -short ./...                                    # skips the race, cross compile, and CLI build tests
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
-bench/perf/run.sh                                       # Xo vs Go collection and generic workloads (see Benchmark tooling)
+bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
 bench/perf/llvm/run.sh                                  # compute workloads: Go vs Xo (Go backend) vs Xo --backend=llvm
@@ -286,8 +287,11 @@ Last verified: 2026-10-07
   (hand written Go, its own `go.mod`), runs each workload `REPS` times
   (default 5), and prints a Markdown table of the best times and the
   ratio; checksums must agree. Workloads: collection (`putget get push
-  update iter copymut branch`) and generic (`sortint sortpt hof maxby
-  iface`, idiomatic Go generics on the Go side). `MONO=1` builds the
+  update iter copymut branch`), List writes (`setat stack fields grid
+  insrem copyset`, added 2026-10-08, Go slices on the Go side; an xo
+  binary from before 2026-10-08 does not finish `setat` or `stack`), and
+  generic (`sortint sortpt hof maxby iface`, idiomatic Go generics on the
+  Go side). `MONO=1` builds the
   "Xo" column with `--no-mono` (when the binary has the flag; an older
   binary's default is that lowering) and adds an "Xo --mono" column (the
   default lowering), `XOFLAGS` passes flags to the first Xo build,
@@ -316,8 +320,8 @@ Last verified: 2026-10-07
   clock); `go/` (own module) is one binary `llperf <name>`, plus
   `llperf interp_tuned` (a tuned interpreter, not part of the script).
   Wall clock time per process, best of `REPS` (5); a run longer than
-  `TIMEOUT` seconds (60) is stopped and shown as `>60000`, needed because
-  the Go backend's list element writes are O(n)
+  `TIMEOUT` seconds (60) is stopped and shown as `>60000`, needed with xo
+  binaries from before 2026-10-08, whose list element writes were O(n)
   (`gotchas/go-backend-list-set-quadratic.md`). Checksums must agree.
   Needs python3 for timing. `XO`, `PERF_OUT`, `WORKLOADS` as in
   `bench/perf/run.sh`. Results: `bench/results/llvm-prototype-2026-10-08.md`.
@@ -509,8 +513,33 @@ Last verified: 2026-10-08. Rules and choices; details in
 - A struct field whose type contains the struct by value (through Option,
   Result, tuples, other structs) is stored in `rt.Box[T]`.
 - Assignment resolves the place first (index operands left to right), then
-  writes; through a box or a collection element it reads, modifies, and
-  writes back (`m[k].count += 1`, `xs[i].push(x)` on a var receiver).
+  writes. Through List elements and fields it writes in place: each list
+  on the path is made the unique owner of its array (`if !p.Mine() { p =
+  p.Unshared() }`), then `p.PtrM(i)` or `p.PutM(i, v)`; a compound
+  assignment uses one address for the read and the write. Through a Map
+  value or a box it reads, marks, modifies, and writes back
+  (`m[k].count += 1`). A std `var` method on an element (`xs[i].push(x)`)
+  gets the element's address; a user `var` method gets a marked copy
+  that is written back. The value is computed first when it could write
+  the place's root (2026-10-08).
+- List ownership (2026-10-08, internal/gen/own.go, rationale and numbers
+  in `bench/results/perf-list-2026-10-08.md`): a read of a binding,
+  field, or element whose type holds lists is wrapped in an own mark
+  (`(x).Own()`, or a function literal calling generated `XoMark` methods
+  for structs, tuples, Options, Results; `rt.Own` for type parameters)
+  unless the reading expression borrows it: field and element bases,
+  receivers of read only List methods, comparison, `+`, and
+  interpolation operands, loop subjects the body does not write, by value
+  arguments of user calls without `var` parameters (each checked with
+  `mutates`; `var` parameters may alias). Std call results holding lists
+  are marked except fresh producers (`freshStd`); closures mark what they
+  capture; interface conversions mark. Structs and newtypes whose fields
+  hold lists get `func (v *T) XoMark()`. `push` on a binding or field
+  path is `if p.CanPush() { p = p.PushFast(x) } else { p = p.PushSlow(x)
+  }`. A field read of an element is `xs.RefM(i, at).F_f` (no copy of the
+  element) when the statement cannot write the list. Rules for changes:
+  `gotchas/list-own-marks.md`. Tests: golden `list_value_semantics`
+  (also under `-race`), `TestListModel`.
 - Monomorphization (internal/gen/mono.go; added 2026-10-08 as `--mono`,
   the default since 2026-10-08; `--no-mono` on `xo build`, `run`, `test`,
   `gen.Options.NoMono`, `build.Options.NoMono` turn it off, `--mono` is
@@ -674,8 +703,12 @@ Last verified: 2026-10-08.
 
 - `core.go` Option/Result/frames/tuples/Box; `arith.go` checked integer
   math; `fault.go` faults and contracts; `list.go`, `map.go` value
-  semantics collections: List (shared backing array, append in place when
-  the list ends at the claimed length) and Map/Set (append only entry log
+  semantics collections: List (a header over a backing array whose block
+  has a claimed length and a sticky shared flag: append in place when the
+  list ends at the claimed length; element writes, `pop`, `insert`,
+  `remove_at` in place while the block is not shared, else copy first and
+  mark the copied elements; own marks from generated code, soundness
+  argument in the comment on `List`; since 2026-10-08) and Map/Set (append only entry log
   plus an atomic open addressing index; a write appends in place when the
   value's log length equals the claimed length, otherwise it forks a child
   table in O(1); soundness argument in the comment on `Map`, see
@@ -825,11 +858,16 @@ Last verified: 2026-10-08.
   type checking a copy. Property test failures are not written.
 - `Map.put` in update heavy loops is no longer a gap (2026-10-08): 3M
   puts over 50k keys plus 3M gets take 142 ms against Go's 45 ms (3.2x,
-  was 48x); `Map.update` loops 4.4x. `List[i] = x` (`SetAt`) and
-  `insert`/`remove_at` still copy the whole list (O(n) per write, with an
-  allocation); the entry log technique would apply but needs a version
-  check on every List read. This is what keeps the sortint workload at
-  1.08x of Go: 5,000 sorted inserts take 7.4 ms against Go's 0.9 ms while
-  the 3M lookups run at Go's speed. Numbers:
+  was 48x); `Map.update` loops 4.4x. Numbers:
   `bench/results/perf-map-2026-10-08.md`, `perf-mono-2026-10-08.md`.
+- List writes (2026-10-08, `bench/results/perf-list-2026-10-08.md`):
+  element writes, `push`, `pop`, field updates of elements, `insert`,
+  and `remove_at` are in place for the unique owner (sieve 1.4x of Go,
+  nbody 1.6x, sort 1.0x, List workloads 1.0x to 1.5x). Remaining costs:
+  the shared flag is sticky, so the first write after any copy (including
+  `return xs` of a local) copies the list even if the other copy is dead;
+  writes through a Map value, a box, `Map.update`, or `Mutex.with` copy
+  the list every time (push through them stays O(1)); `--no-mono` marks
+  type parameter values through `rt.Own`, which allocates; lists grow by
+  doubling (sieve peak RSS 68 MB against Go's 48 MB).
 

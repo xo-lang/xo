@@ -128,8 +128,13 @@ func (f *fnGen) valueCall1(x *ast.CallExpr) (string, callKind) {
 		return f.valAs(x.Args[i-1].Value, p.T)
 	}, func(i int) bool { return i > 0 && ft.Params[i-1].Var })
 	call := fmt.Sprintf("%s(tk%s)", codes[0], prefixComma(codes[1:]))
+	// the callee may be a std function wrapped as a value, whose result
+	// can still be held elsewhere (own.go)
 	if ft.Err == nil {
-		return call + ".V", ckValue
+		return f.ownCode(call+".V", ft.Result), ckValue
+	}
+	if f.typeHoldsList(ft.Result) || f.typeHoldsList(ft.Err) {
+		return f.ownResult(call, ft.Result, ft.Err), ckCall
 	}
 	return call, ckCall
 }
@@ -235,9 +240,12 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 			f.noteArenaCall(x, ci)
 		}
 		if code, kind, ok := f.specialStd(x, ci); ok {
-			return code, kind
+			return f.ownStdResult(fo, sub, code, kind)
 		}
 		if code, ok := f.hofInline(x, ci); ok {
+			return f.ownStdResult(fo, sub, code, ckValue)
+		}
+		if code, ok := f.inlinePush(x, ci); ok {
 			return code, ckValue
 		}
 	}
@@ -267,10 +275,42 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 	}
 	recvCode := ""
 	argCodes := make([]string, len(params))
+	// by value arguments of a user function and the receiver of a read
+	// only List method are borrowed (own.go) when no `var` parameter or
+	// receiver can write them during the call and no other operand
+	// writes them
+	anyVar := fo.RecvVar
+	for _, p := range params {
+		anyVar = anyVar || p.Var
+	}
+	userFn := !fo.Module.IsStd && fo.Decl != nil && fo.Decl.Body != nil
+	others := func(skip ast.Expr) []ast.Node {
+		var ns []ast.Node
+		if ci.Recv != nil && ci.Recv != skip {
+			ns = append(ns, ci.Recv)
+		}
+		for _, e := range exprs {
+			if e != nil && e != skip {
+				ns = append(ns, e)
+			}
+		}
+		return ns
+	}
 	codes := f.operandsKeep(len(order), func(k int) string {
 		i := order[k]
 		if i < 0 {
-			return f.recvCode(ci.Recv, callee)
+			listRead := fo.Module.IsStd && fo.Recv != nil && fo.Recv.Module.IsPrelude && fo.Recv.Name == "List" && borrowRecv[fo.Name]
+			calm := f.borrowOK(ci.Recv, others(ci.Recv)...)
+			if fo.RecvVar && fo.Module.IsStd && calm {
+				// a std method writes only its receiver: an element
+				// place is passed by address, with no copy and no write
+				// back (placeAddr makes the lists on the way unique)
+				if ref := f.resolveAddrPlace(ci.Recv); ref != nil {
+					return f.placeAddr(ref)
+				}
+			}
+			b := !anyVar && (userFn || listRead) && calm
+			return f.recvCode(ci.Recv, callee, b)
 		}
 		p := params[i]
 		if p.Var {
@@ -279,6 +319,9 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 		pt := p.Type
 		if sub != nil {
 			pt = sub.Apply(pt)
+		}
+		if userFn && !anyVar && f.borrowOK(exprs[i], others(exprs[i])...) {
+			return f.borrowAs(exprs[i], pt)
 		}
 		return f.valAs(exprs[i], pt)
 	}, func(k int) bool {
@@ -306,6 +349,9 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 		}
 	}
 	code, kind := f.emitCall(callee, calleeSub, recvCode, argCodes, x)
+	if fo.Module.IsStd {
+		code, kind = f.ownStdResult(fo, sub, code, kind)
+	}
 	if f.arenasOn() && fo.Module.IsStd {
 		code = f.arenaRespCode(x, code)
 		if kind == ckVoid && f.handlerLit(x, ci) != nil {
@@ -333,12 +379,17 @@ func (f *fnGen) emitSpecCall(fo *check.FuncObj, sub *check.Subst, name, recv str
 
 // recvCode generates the receiver of a method call: an addressable place
 // for a `var` receiver.
-func (f *fnGen) recvCode(e ast.Expr, fo *check.FuncObj) string {
+func (f *fnGen) recvCode(e ast.Expr, fo *check.FuncObj, borrow bool) string {
 	if fo.RecvVar {
 		return f.place(e)
 	}
 	t := f.typeOf(e)
-	code := f.val(e)
+	var code string
+	if borrow {
+		code = f.borrow(e)
+	} else {
+		code = f.val(e)
+	}
 	if pt, ok := check.Resolve(t).(*check.ParamType); ok && fo.Iface {
 		c := pt.P.Constraint
 		if c != nil {
@@ -495,7 +546,7 @@ func (f *fnGen) funcValue(fo *check.FuncObj, t check.Type, recv *string) string 
 // methodValue is `x.method` used as a value: the receiver is evaluated
 // now and captured.
 func (f *fnGen) methodValue(x *ast.SelectorExpr, fo *check.FuncObj) string {
-	rv := f.spill(f.recvCode(x.X, fo))
+	rv := f.spill(f.recvCode(x.X, fo, false))
 	return f.funcValue(fo, f.typeOf(x), &rv)
 }
 

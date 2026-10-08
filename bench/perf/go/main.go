@@ -105,6 +105,116 @@ func branch(m map[int64]int64) int64 {
 }
 
 // ---------------------------------------------------------------------------
+// List writes: the same algorithms over Go slices.
+
+const ln = 50000
+
+func sumList(xs []int64) int64 {
+	var t int64
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func setAt() int64 {
+	var xs []int64
+	for i := range int64(ln) {
+		xs = append(xs, i)
+	}
+	for i := range int64(n) {
+		xs[i%ln] = xs[(i*7)%ln] + i%13
+	}
+	return sumList(xs)
+}
+
+func stack() int64 {
+	var xs []int64
+	var sum int64
+	for i := range int64(n) {
+		if i%3 == 2 {
+			if len(xs) > 0 {
+				sum += xs[len(xs)-1]
+				xs = xs[:len(xs)-1]
+			}
+		} else {
+			xs = append(xs, i)
+		}
+	}
+	return sum + int64(len(xs))
+}
+
+type particle struct{ x, y, vx, vy, mass int64 }
+
+func fields() int64 {
+	var ps []particle
+	for i := range int64(1000) {
+		ps = append(ps, particle{x: i, vx: i % 7, vy: 1, mass: 1})
+	}
+	for i := range int64(n) {
+		j := i % 1000
+		ps[j].x += ps[j].vx
+		ps[(i*13)%1000].y = ps[j].x % 1000
+	}
+	var sum int64
+	for _, p := range ps {
+		sum += p.x + p.y
+	}
+	return sum
+}
+
+func grid() int64 {
+	var g [][]int64
+	for i := range int64(300) {
+		var row []int64
+		for j := range int64(300) {
+			row = append(row, i+j)
+		}
+		g = append(g, row)
+	}
+	for i := range int64(n) {
+		g[i%300][(i*7)%300]++
+	}
+	for i := range int64(300) {
+		g[i] = append(g[i], i)
+	}
+	var sum int64
+	for _, row := range g {
+		sum += sumList(row)
+	}
+	return sum
+}
+
+func insRem() int64 {
+	var xs []int64
+	for i := range int64(20000) {
+		xs = slices.Insert(xs, len(xs)/2, i)
+	}
+	var sum int64
+	for range 20000 {
+		k := len(xs) / 2
+		sum += xs[k]
+		xs = slices.Delete(xs, k, k+1)
+	}
+	return sum + int64(len(xs))
+}
+
+func copySet() int64 {
+	var base []int64
+	for i := range int64(ln) {
+		base = append(base, i)
+	}
+	var sum int64
+	for r := range int64(200) {
+		c := slices.Clone(base)
+		c[r] = -1
+		c[r+1] = -2
+		sum += base[r] + c[r] + int64(len(c))
+	}
+	return sum
+}
+
+// ---------------------------------------------------------------------------
 // Generic workloads, written as idiomatic Go generics: a cmp.Ordered
 // container for Int, a comparison function container (the
 // slices.BinarySearchFunc style) for a struct, generic Map/Filter/Reduce
@@ -365,6 +475,18 @@ func main() {
 		sum = maxByLoop(items)
 	case "iface":
 		sum = ifaceLoop(rects)
+	case "setat":
+		sum = setAt()
+	case "stack":
+		sum = stack()
+	case "fields":
+		sum = fields()
+	case "grid":
+		sum = grid()
+	case "insrem":
+		sum = insRem()
+	case "copyset":
+		sum = copySet()
 	default:
 		sum = -1
 	}
