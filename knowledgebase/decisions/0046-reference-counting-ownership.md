@@ -76,7 +76,8 @@ Perceus (Reinking, Xie, de Moura, Leijen, PLDI 2021) and Lean 4:
    result or provably unique. A test removes each inserted retain and
    release in turn and requires the verifier to reject the result.
 9. **Runtime.** Every heap object starts with an i64 count; literals
-   have an immortal count (2^60). A size class allocator with free lists
+   have an immortal count (2^60; INT64_MIN and never written since
+   decision 0058). A size class allocator with free lists
    (16 byte classes to 1 KiB, powers of two to 256 KiB, malloc above)
    replaces the bump allocator, with a live allocation counter
    (`XO_LEAKCHECK=1` prints it at exit; the tests require zero).
@@ -93,7 +94,9 @@ Perceus (Reinking, Xie, de Moura, Leijen, PLDI 2021) and Lean 4:
   Update 2026-10-08: all of these lower to SSA now (decision 0048).
 - Counts are not atomic: the runtime is single threaded today. Tasks
   (structured concurrency) will need atomic counts for values that cross
-  tasks, or a per task heap with copying at boundaries.
+  tasks, or a per task heap with copying at boundaries. Update
+  2026-10-08: decision 0058 (counts stay plain until a value is marked
+  shared; shared counts are atomic).
 - Perceus "drop reuse" of a freed cell for a new constructor of the same
   size is not done: structs and enums are unboxed, so constructors do
   not allocate; a released list followed by `list.new` goes through the

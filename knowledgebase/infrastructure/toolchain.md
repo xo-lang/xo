@@ -70,6 +70,8 @@ go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of t
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
+go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
+clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
 go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
@@ -541,7 +543,8 @@ std/                    std declaration files (prelude.xo, go.xo, http.xo, json.
                         path.xo, sql.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
-std/llrt/               xo_rt.c, the C runtime of the LLVM backend (embedded as std.LLRuntime)
+std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime);
+                        testdata/rc_threads.c, its thread stress test (not embedded)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
@@ -833,10 +836,12 @@ first, AST based prototype, since deleted) and
   The AST path (bump allocator, never freed) was deleted on 2026-10-08.
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
-  globals with count 2^60), List a pointer to `{i64 rc, i64 len, i64
+  constants with the immortal count INT64_MIN, never written), List a
+  pointer to `{i64 rc, i64 len, i64
   cap}` plus elements, structs and tuples LLVM structs, enums `{i64 tag,
   [N x i64]}` (payloads through a stack slot), function values `{ptr
-  code, ptr env}` with env null or `{i64 rc, ptr drop, captures...}`,
+  code, ptr env}` with env null or `{i64 rc, ptr drop, ptr share,
+  captures...}`,
   `Box[T]` a pointer to `{i64 rc, T}`. A failing function returns its
   Result enum. Checked Int operations use `llvm.s*.with.overflow` and cold
   fault calls; loop counters are unchecked (the range analysis of
@@ -850,10 +855,22 @@ first, AST based prototype, since deleted) and
   `or_fault`, `fault`, `const`, `==` on every type, the List methods
   push, pop, set, get, first, last, len, is_empty, and the Int, Float,
   and Str methods the bench programs use.
+- Counts (decision 0058): positive is thread local (plain updates),
+  negative is shared (atomic: `atomicrmw`, counts read with `load atomic
+  unordered`), INT64_MIN immortal. `OpShare` calls generated
+  `xo.share.<T>` helpers that mark a value's heap graph shared. Nothing
+  emits `OpShare` yet except `build.Options.ShareProbes` /
+  `llvm.Options.ShareProbes` (tests: every heap value marked shared as it
+  is defined; builds go to `<build dir>/llvm-share`).
 - Runtime `std/llrt/xo_rt.c`: size class allocator (16 byte classes to
   1 KiB, powers of two to 256 KiB, malloc above; free lists; 4 MiB
-  chunks) with a live allocation counter (`XO_LEAKCHECK=1` prints it at
-  exit); reference counted strings (`xo_rs_*`, append in place when
+  chunks) with allocation counters (`XO_LEAKCHECK=1` prints live and
+  total at exit); per thread heaps after `xo_rt_threads_begin()` (one
+  pointer load while single threaded), `xo_rc_inc`/`xo_rc_dec`/
+  `xo_rc_claim`/`xo_rc_mark` (the count semantics generated code inlines),
+  a locked output buffer when threaded; `-DXO_RT_TEST_THREADS=N` runs the
+  program on N threads at once, `-DXO_RT_NO_MAIN` leaves out `main` (the
+  C tests in `std/llrt/testdata/` include the runtime); reference counted strings (`xo_rs_*`, append in place when
   unique) and lists (`xo_rl_*`); `xo_rc_defer`, a worklist that frees
   closure environments and boxes whose count reached zero without
   recursing on long chains; buffered stdout; fault messages identical to
@@ -869,7 +886,13 @@ first, AST based prototype, since deleted) and
   `want.txt`; programs that exit normally must free every allocation
   (`XO_LEAKCHECK=1`). The `rc_*` programs are copies of SSA goldens
   (`internal/ssa/testdata/golden`) that stress ownership. TestLeakCheck
-  does the same for the bench programs. TestUnsupported checks the error
+  does the same for the bench programs. TestGoldenShared runs every
+  golden with share probes. `threads_test.go`: TestRuntimeThreads
+  (`std/llrt/testdata/rc_threads.c` under ThreadSanitizer, then `-O2`
+  with more iterations) and TestGoldenThreads (goldens that exit 0, IR
+  with probes, four threads at once, ThreadSanitizer except the deep
+  recursion ones, `gotchas/tsan-deep-recursion.md`); both skip when
+  clang has no ThreadSanitizer. TestUnsupported checks the error
   for constructs outside the subset (`testdata/unsupported/`).
   `cmd/xo/llvm_test.go` drives the CLI.
 
@@ -894,7 +917,8 @@ Last verified: 2026-10-08. Decisions 0049 and 0051; results
   compare chains laid out as runs of tests, jump tables from 8 values,
   decision 0051; `XO_ARM64_JT_MIN=n` overrides the threshold for
   measurement, 0 disables tables), `rc.go` also cancels a payload retain
-  against the release of its enum, `regalloc.go` (liveness, live ranges with holes, move
+  against the release of its enum (`ssa.CancelledRelease`, which the
+  LLVM backend uses too), `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
   `rc.go` (dup and drop helpers in assembly), `closures.go` (function
@@ -912,10 +936,19 @@ Last verified: 2026-10-08. Decisions 0049 and 0051; results
   word per field word (a Bool field takes a word); list elements are
   8 bytes per word except `List[Bool]` (1 byte). The runtime sees only
   element sizes and callbacks.
+- Counts (decision 0058): retains inline `tbnz #63` to a cold atomic
+  block, releases `cmp #1; b.le` to a cold path that frees at one,
+  ignores the immortal count (bit 62 clear) and otherwise drops a shared
+  reference atomically: LSE `stadd`/`ldaddal` on Darwin, `ldxr`/`stxr`
+  and `ldaxr`/`stlxr` loops on Linux (scratch x17 and w15 in inline
+  templates). Environments are `{rc, drop, share, captures}` (24 byte
+  header). Literals are in `__TEXT,__const` / `.rodata`. `iCondBr` with
+  `tbz`/`tbnz` tests `inst.bit`.
 - Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
   it builds and runs every golden of internal/llvm against its want.txt
   (35 on 2026-10-08), the bench programs, and `testdata/run/*` against the Go
-  backend, all with the leak check). To try a code change by hand, edit
+  backend, all with the leak check; TestGoldenRunShared runs the goldens
+  with share probes and assembles their Linux output as ELF). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with
   `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the
   default SDK does not link).
