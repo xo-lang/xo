@@ -48,7 +48,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [bench-host-timing-drift.md](bench-host-timing-drift.md): host clock drift moves benchmark times by up to 10 percent; interleave before and after runs.
 - [sync-pool-drops-on-gc.md](sync-pool-drops-on-gc.md): a `sync.Pool` empties at every GC, so request arenas pooled in one were barely reused; use a bounded channel.
 - [closed-loop-latency-confound.md](closed-loop-latency-confound.md): with a closed loop load generator a slower server shows lower latency; compare latency only at equal throughput.
-- [arena-handler-not-confined.md](arena-handler-not-confined.md): with `--arenas`, a handler that passes `req` on, reads `req.headers`/`req.body`, or captures it gets a heap copy, not an arena.
+- [arena-handler-not-confined.md](arena-handler-not-confined.md): with arenas (the default), a handler that passes `req` on, reads `req.headers`/`req.body`, or captures it gets a heap copy, not an arena.
 - [go-bind-cache-in-source-tree.md](go-bind-cache-in-source-tree.md): `use go` bindings are cached in `<project>/.xo/gobind`; tests set `XO_GOBIND_DIR`, `.xo/` is gitignored.
 - [go-bind-name-mapping.md](go-bind-name-mapping.md): Go names become snake_case, keywords get `_` (`regexp.match_`), prelude type names get the package prefix (`url.UrlError`); read the generated `.xo` file.
 - [go-handles-shared.md](go-handles-shared.md): handles of Go objects are shared references; a setter on one copy is seen through all.
@@ -122,3 +122,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [var-closure-param-by-value.md](var-closure-param-by-value.md): `fn(var x)` given for a `fn(T)` parameter was accepted and miscompiled (pointer vs value); now XO0401.
 - [lock-wait-is-hold-time-in-disguise.md](lock-wait-is-hold-time-in-disguise.md): Xo waited far longer than Go on the same lock design because it held the lock 8 to 30 times longer (stack walk and a second internal lock inside the hold, `values()` copied to scan, a per element heap escape); the CPU profile hid it, `XO_LOCKSTATS` shows it.
 - [sample-recording-changes-gc-pacing.md](sample-recording-changes-gc-pacing.md): keeping lock samples in memory grew the live heap, so the GC bound Xo server collected a tenth as often and doubled its req/s; take throughput only from uninstrumented runs.
+- [arena-memory-kept-by-runtime.md](arena-memory-kept-by-runtime.md): the recorder and mounted middleware kept arena backed bodies that the next request overwrote; runtime code that keeps a request or response must copy it.
+- [go-callback-on-foreign-goroutine.md](go-callback-on-foreign-goroutine.md): Go may run an Xo callback on another goroutine with the caller's task; callbacks now get `GoCallbackTask` (no request arena).

@@ -33,10 +33,13 @@ func monoFlags(fl *flag.FlagSet) func() bool {
 	return func() bool { return *no || !*mono }
 }
 
-// arenaFlag defines --arenas: request scoped arenas for HTTP handlers and
-// collection temporaries (std/rt/arena.go, decision 0040 experiment).
-func arenaFlag(fl *flag.FlagSet) *bool {
-	return fl.Bool("arenas", false, "request scoped arenas: confined HTTP handlers and non escaping collection temporaries reuse per request memory")
+// arenaFlags defines --arenas (the default since 2026-10-08, decision
+// 0066, kept so older command lines work; --arenas=false turns it off) and
+// --no-arenas, and returns a function reporting whether arenas are off.
+func arenaFlags(fl *flag.FlagSet) func() bool {
+	on := fl.Bool("arenas", true, "request scoped arenas for confined HTTP handlers and non escaping collection temporaries (default; --no-arenas turns it off)")
+	no := fl.Bool("no-arenas", false, "no request scoped arenas: every request and response is heap memory")
+	return func() bool { return *no || !*on }
 }
 
 // backendFlag defines --backend: go (P1, the default) or llvm (the P3
@@ -52,7 +55,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	noMono := monoFlags(fl)
-	arenas := arenaFlag(fl)
+	noArenas := arenaFlags(fl)
 	backend := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
@@ -72,7 +75,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), Arenas: *arenas, Backend: *backend})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: *backend})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -119,7 +122,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	seed := fl.Int64("seed", 0, "run every task on the deterministic scheduler with this seed (core 7.4; sets XO_SEED)")
 	record := fl.String("record", "", "record every effect and scheduling decision into this .xotrace file for xo replay (core 11.3; sets XO_RECORD)")
 	noMono := monoFlags(fl)
-	arenas := arenaFlag(fl)
+	noArenas := arenaFlags(fl)
 	backend := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
@@ -137,7 +140,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), Arenas: *arenas, Backend: *backend})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: *backend})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1
@@ -209,7 +212,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	real := fl.Bool("real", false, "give tests that declare `uses` real capabilities (core 9.2)")
 	cases := fl.Int("cases", 0, "cases per property test and contract fuzz (default 100)")
 	noMono := monoFlags(fl)
-	arenas := arenaFlag(fl)
+	noArenas := arenaFlags(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -217,7 +220,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	if len(dirs) == 0 {
 		dirs = []string{"."}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), Arenas: *arenas})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas()})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1

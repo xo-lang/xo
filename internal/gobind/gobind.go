@@ -40,8 +40,9 @@ import (
 )
 
 // Version is the format version of generated bindings. Cached bindings
-// written with another version are regenerated.
-const Version = 1
+// written with another version are regenerated. 2 (2026-10-08, decision
+// 0066): callbacks run with rt.GoCallbackTask, never the request's arena.
+const Version = 2
 
 // Binding is one bound Go package.
 type Binding struct {

@@ -6,8 +6,11 @@ import (
 	"unsafe"
 )
 
-// Request scoped arenas (`xo build --arenas`; spec core 5.5 lists them as
-// P2; experiment of decision 0040, bench/results/perf-arenas-2026-10-08.md).
+// Request scoped arenas (spec core 5.5): on by default since decision 0066
+// (`--no-arenas` turns them off); first measured in
+// bench/results/perf-arenas-2026-10-08.md (decision 0040). The audit of
+// every way a value can leave a request is the table of decision 0066;
+// the goldens arena_escape and arena_holes run it with and without arenas.
 //
 // An Arena is memory owned by one HTTP request. The server takes one from
 // a pool when a request arrives, hangs it on the request's task, and puts
@@ -55,8 +58,13 @@ import (
 //     result and nothing else holds it. The runtime writes it to the
 //     connection (net/http copies the bytes into its own buffer) before the
 //     arena is reset. In process dispatch (`r.call(req)`, whose response
-//     goes back to Xo code) clears Arena.resp, so a handler reached that
-//     way builds a heap response.
+//     goes back to Xo code) and the middleware of a mounted router (which
+//     sees the response and may keep it) clear Arena.resp while they run
+//     (noArenaResp), so a handler reached that way builds a heap response.
+//     A router with middleware of its own gets no arena at all (serve).
+//   - The recorder (XO_RECORD, XO_RING) keeps the request and response of
+//     every request past it: serve hands it heap copies of the bodies
+//     (recCopyReq, recCopyResp).
 //   - A temporary List of the second kind is bound to a compiler temporary
 //     the program cannot name. The consumers allowed (internal/gen
 //     arenaConsumers) copy elements out (Go value copies) and return fresh
@@ -72,7 +80,9 @@ import (
 //     points above show are heap values.
 //   - One goroutine at a time: only the request task and the bodies of
 //     scopes it opens (which run on the same goroutine) carry the arena;
-//     spawned tasks get none (Task.child), so the bump allocators need no
+//     spawned tasks get none (Task.child), and an Xo function passed to Go
+//     as a callback, which Go may run on any goroutine, runs with a copy of
+//     the task without it (GoCallbackTask), so the bump allocators need no
 //     locks. The free list is a channel, so a send by one request
 //     happens before the receive of the next request that reuses it.
 //
@@ -108,7 +118,7 @@ var (
 )
 
 // EnableArenas turns request scoped arenas on; the generated main of a
-// program built with `--arenas` calls it first.
+// program built without `--no-arenas` calls it first.
 func EnableArenas() { arenasOn = true }
 
 func getArena() *Arena {
@@ -225,6 +235,28 @@ func (r Http_Request) heapCopy() Http_Request {
 	r.F_url.F_query = copyMap(r.F_url.F_query)
 	r.F_body = Bytes(strings.Clone(string(r.F_body)))
 	return r
+}
+
+// recCopyReq returns req for the recorder (replay.go), which keeps it
+// past the request: its body, arena memory when a is not nil, copied to
+// the heap. The tables need no copy: the recorder encodes their entries,
+// and the strings in them are heap strings. Decision 0066, hole 1: before
+// this copy, a recorded body was overwritten by the next request that
+// reused the arena.
+func recCopyReq(a *Arena, req Http_Request) Http_Request {
+	if a != nil {
+		req.F_body = Bytes(strings.Clone(string(req.F_body)))
+	}
+	return req
+}
+
+// recCopyResp is recCopyReq for a response, whose body is arena memory
+// when it was built by Http_json_arena.
+func recCopyResp(a *Arena, resp Http_Response) Http_Response {
+	if a != nil {
+		resp.F_body = Bytes(strings.Clone(string(resp.F_body)))
+	}
+	return resp
 }
 
 // Http_Router_arenaLast marks the route registered last as one whose

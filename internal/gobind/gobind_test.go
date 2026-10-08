@@ -86,12 +86,16 @@ func TestMapping(t *testing.T) {
 		t.Fatalf("Load = %+v, %v", l, err)
 	}
 	dp := declPath(dir, "os/exec")
-	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v1 ", "xo-bind: v0 ", 1)), 0o644)
+	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v2 ", "xo-bind: v1 ", 1)), 0o644)
 	if l, _ := Load("os/exec", Options{Dir: dir}); l != nil {
 		t.Error("stale binding loaded")
 	}
 
-	decl, _, _ = bindDecl(t, "strings")
+	decl, sb, _ := bindDecl(t, "strings")
+	// a callback never runs with the request's arena (decision 0066)
+	if !strings.Contains(string(sb.Adapter), "}(GoCallbackTask(tk))") {
+		t.Error("callback adapter does not use GoCallbackTask(tk)")
+	}
 	for _, want := range []string{
 		"fn cut(s: Str, sep: Str) -> (Str, Str, Bool) uses go",
 		"fn map[fx: Effects](mapping: fn(Rune) -> Rune uses fx, s: Str) -> Str uses go, fx",

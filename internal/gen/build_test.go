@@ -26,22 +26,23 @@ import (
 // concurrentGolden are the golden programs that start tasks; they are also
 // run with the Go race detector.
 // Directories named test_* are built in test mode.
-var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "list_value_semantics", "arena_escape", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until", "test_explore", "test_deadlock", "deadlock_real", "mutex_read", "test_mutex_read"}
+var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "list_value_semantics", "arena_escape", "arena_holes", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until", "test_explore", "test_deadlock", "deadlock_real", "mutex_read", "test_mutex_read"}
 
 // arenaRaceGolden are the golden programs also run with -race and
-// `--arenas` (TestGoldenRaceArenas): the servers among them hand arenas
-// from one request goroutine to the next.
-var arenaRaceGolden = []string{"arena_escape", "http_real", "http_router", "mutex_atomic", "scope_tasks"}
+// `--no-arenas` (TestGoldenRaceNoArenas); TestGoldenRace builds with
+// arenas (the default), and the servers among them hand arenas from one
+// request goroutine to the next.
+var arenaRaceGolden = []string{"arena_escape", "arena_holes", "http_real", "http_router", "mutex_atomic", "scope_tasks"}
 
 // TestGoldenRace runs the concurrent golden programs built with -race and
 // expects the same output and no data race reports.
 func TestGoldenRace(t *testing.T) { testGoldenRace(t, concurrentGolden, false) }
 
-// TestGoldenRaceArenas is TestGoldenRace for programs built with
-// `--arenas`.
-func TestGoldenRaceArenas(t *testing.T) { testGoldenRace(t, arenaRaceGolden, true) }
+// TestGoldenRaceNoArenas is TestGoldenRace for programs built with
+// `--no-arenas`.
+func TestGoldenRaceNoArenas(t *testing.T) { testGoldenRace(t, arenaRaceGolden, true) }
 
-func testGoldenRace(t *testing.T, names []string, arenas bool) {
+func testGoldenRace(t *testing.T, names []string, noArenas bool) {
 	if testing.Short() {
 		t.Skip("race builds are slow")
 	}
@@ -57,7 +58,7 @@ func testGoldenRace(t *testing.T, names []string, arenas bool) {
 			if strings.HasPrefix(name, "test_") {
 				mode = gen.Test
 			}
-			res, err := build.Build([]string{dir}, build.Options{Mode: mode, Race: true, Arenas: arenas})
+			res, err := build.Build([]string{dir}, build.Options{Mode: mode, Race: true, NoArenas: noArenas})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}

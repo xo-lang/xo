@@ -1,8 +1,15 @@
 // Record and replay of an HTTP server (core 11.3): the accepted requests
 // are recorded and delivered again by a replay, offline. GET /boom faults
 // in its handler (isolated: 500 and a crash bundle, core 11.2). Driven by
-// TestReplayServer in internal/gen/replay_test.go.
+// TestReplayServer in internal/gen/replay_test.go. POST /item is a
+// confined handler: with request scoped arenas (the default) its body and
+// its JSON response are arena memory, which the recording must copy
+// before the next request reuses the arena (decision 0066).
 use std/http
+
+struct Item {
+  name: Str
+} derive Json
 
 fn main(os: Os) ! {
   let port = os.env.get("PORT") ?? "18741"
@@ -17,6 +24,11 @@ fn main(os: Os) ! {
     hits.add(1)
     os.stdio.println("echo ${req.body.len()} bytes")
     http.text(200, req.body.to_str() ?? "")
+  })
+  r.handle("POST /item", fn(req) {
+    let it = req.json[Item]().ok() ?? Item{name: "?"}
+    os.stdio.println("item ${it.name}")
+    http.json(200, it)
   })
   r.handle("GET /boom", fn(req) {
     let xs = [1]

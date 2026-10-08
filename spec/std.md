@@ -622,7 +622,8 @@ enum HttpErr { Io(msg: Str), Canceled }
 
 `serve` runs until its scope is cancelled, then stops accepting, waits for
 in flight requests, and returns `Ok(())`. Each request runs as an isolated
-task with its own span and request id. To run a server alongside background
+task with its own span and request id. Its memory may come from a request
+scoped arena (core 5.5, decision 0066), which no program can observe. To run a server alongside background
 work:
 
 ```

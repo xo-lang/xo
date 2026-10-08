@@ -208,7 +208,8 @@ func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
 		nr := &route{method: sr.method, segs: append(append([]routeSeg(nil), pre...), sr.segs...), arena: sr.arena && len(mws) == 0}
 		nr.h = sr.h
 		if len(mws) > 0 {
-			nr.h = chain(mws, sr.h)
+			// the middleware sees the handler's response and may keep it
+			nr.h = noArenaResp(chain(mws, sr.h))
 		}
 		r.routes.M_push(nil, nr)
 	}
@@ -232,11 +233,23 @@ func chain(mws []middleware, inner func(*Task, Http_Request) Http_Response) func
 // collected into the response. The response goes back to Xo code, so no
 // arena response may be built while it runs (see Arena).
 func (r Http_Router) M_call(tk *Task, req Http_Request) Http_Response {
-	if a := tk.arena; a != nil && a.resp {
-		a.resp = false
-		defer func() { a.resp = true }()
+	return noArenaResp(func(tk *Task, req Http_Request) Http_Response {
+		return r.call(tk, req).collect(tk)
+	})(tk, req)
+}
+
+// noArenaResp wraps h so that no arena response is built while it runs:
+// its response goes to Xo code (in process dispatch) or through
+// middleware, which may keep it past the request (see Arena; decision
+// 0066, hole 3).
+func noArenaResp(h func(*Task, Http_Request) Http_Response) func(*Task, Http_Request) Http_Response {
+	return func(tk *Task, req Http_Request) Http_Response {
+		if a := tk.arena; a != nil && a.resp {
+			a.resp = false
+			defer func() { a.resp = true }()
+		}
+		return h(tk, req)
 	}
-	return r.call(tk, req).collect(tk)
 }
 
 // call dispatches through the middleware without collecting a stream.
@@ -643,6 +656,12 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			ip = host
 		}
 		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
+		// the recorder keeps what it is given past the request: never
+		// arena memory (recCopy)
+		recReq := req
+		if rec != nil {
+			recReq = recCopyReq(a, req)
+		}
 		var reqTask *Task
 		var k int64
 		start := func() {
@@ -661,7 +680,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			started := make(chan struct{})
 			sch.post(schedEv{
 				tok: func() string {
-					k = rec.newReq(s.l.id, req)
+					k = rec.newReq(s.l.id, recReq)
 					return "r" + strconv.FormatInt(k, 10)
 				},
 				run: func() {
@@ -671,7 +690,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			})
 			<-started
 		case fxMode == fxRing:
-			k = rec.newReq(s.l.id, req)
+			k = rec.newReq(s.l.id, recReq)
 			start()
 		default:
 			start()
@@ -713,7 +732,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			io.WriteString(w, string(resp.F_body))
 		}
 		if rec != nil {
-			rec.reqResp(k, resp)
+			rec.reqResp(k, recCopyResp(a, resp))
 		}
 		if a != nil {
 			// the handler returned (every task it started in a scope has

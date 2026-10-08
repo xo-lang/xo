@@ -257,7 +257,6 @@ func TestBuildErrors(t *testing.T) {
 	}{
 		{build.Options{Mode: gen.Test, Backend: build.BackendLLVM}, "programs only"},
 		{build.Options{Mode: gen.Build, Backend: build.BackendLLVM, Targets: []build.Target{{OS: "plan9", Arch: "amd64"}}}, "host"},
-		{build.Options{Mode: gen.Build, Backend: build.BackendLLVM, Arenas: true}, "--arenas"},
 		{build.Options{Mode: gen.Build, Backend: "wasm"}, "unknown backend"},
 	}
 	for _, c := range cases {

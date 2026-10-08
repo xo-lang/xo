@@ -522,16 +522,21 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	}
 	xo += " uses fx"
 	rt := "func(" + strings.Join(append([]string{"*Task"}, rps...), ", ") + ") Result[" + rres + ", Never]"
+	// Go may call the callback on another goroutine, during or after the
+	// call that passed it (sync.WaitGroup.Go, a timer): it runs with
+	// rt.GoCallbackTask(tk), which never carries the request's arena
+	// (one goroutine per arena, decision 0066).
 	return conv{xo: xo, rt: rt, gt: gt, toGo: func(e string) string {
-		args := []string{"tk"}
+		args := []string{"ctk"}
 		for i, pc := range pcs {
 			args = append(args, pc.toXo(fmt.Sprintf("b%d", i)))
 		}
 		call := e + "(" + strings.Join(args, ", ") + ")"
-		if rc == nil {
-			return "func(" + strings.Join(gps, ", ") + ") { " + call + " }"
+		fn := "func(" + strings.Join(gps, ", ") + ") { " + call + " }"
+		if rc != nil {
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { return " + rc.toGo(call+".V") + " }"
 		}
-		return "func(" + strings.Join(gps, ", ") + ")" + gres + " { return " + rc.toGo(call+".V") + " }"
+		return "func(ctk *Task) " + gt + " { return " + fn + " }(GoCallbackTask(tk))"
 	}}, nil
 }
 

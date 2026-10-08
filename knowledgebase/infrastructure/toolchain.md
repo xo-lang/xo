@@ -63,10 +63,10 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--arenas] [--backend=go|llvm|arm64] [dir...]
-go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--arenas] [--backend=go|llvm|arm64] [dir] [-- args...]
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [dir...]
+go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [dir] [-- args...]
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
-go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--arenas] [dir...]
+go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--no-arenas] [dir...]
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
@@ -92,12 +92,12 @@ go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build di
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
-go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, and the --no-mono and --arenas golden lowerings; use per commit, run the full suite before merging (about 2.5 min)
+go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
 bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
-bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
+bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo --no-arenas (config xo) vs Xo with arenas (config xo-arenas, the default build; see Benchmark tooling)
 bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
 bench/perf/llvm/native.sh                               # same workloads: Go vs Xo --backend=llvm vs Xo --backend=arm64, time and peak RSS (arm64 host)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
@@ -284,7 +284,7 @@ fuzzing (every function with `requires`/`ensures` in a root module, core
 Last verified: 2026-10-07.
 
 Build directories live in `$XO_BUILD_DIR` or `<user cache>/xo/build/<hash of
-the module paths, mode, lowering, `--arenas`, and layout tag>/` (stable, so Go's build
+the module paths, mode, lowering, arenas on or off, and layout tag>/` (stable, so Go's build
 cache is reused; the layout tag keeps older xo binaries out, see
 `gotchas/build-dir-shared-across-xo-versions.md`): `go.mod` (module
 `xoprog`), `rt/` (the runtime, copied from the embedded `std/rt`),
@@ -487,8 +487,10 @@ Last verified: 2026-10-07
   raw lines and a Markdown table of medians over `REPS` (3) interleaved
   runs: req/s, p50/p99/p99.9, GC count, total STW pause, peak heap, GC
   CPU percent, peak RSS, GCs per 10k requests. `CONFIGS` (default `go xo
-  xo-arenas`; `xo-base` builds with the binary in `XO_BASE` in its own
-  build directory, `xo-base-arenas` the same with `--arenas`), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
+  xo-arenas`; since decision 0066 `xo` builds with `--no-arenas` and
+  `xo-arenas` with the default; `xo-base` builds with the binary in
+  `XO_BASE` in its own build directory and that binary's default,
+  `xo-base-arenas` the same with `--arenas`), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
   `bench/results/perf-arenas-2026-10-08.md`,
   `bench/results/perf-throughput-2026-10-08.md`.
@@ -807,10 +809,13 @@ Last verified: 2026-10-08. Rules and choices; details in
   `TestGolden` (default lowering, Go frame lists dropped) and
   `TestGoldenNoMono` (exact) run every golden program both ways. Numbers:
   `bench/results/perf-mono-2026-10-08.md`.
-- Request scoped arenas (2026-10-08, internal/gen/arena.go, `--arenas`
-  on `xo build`, `run`, `test`; `gen.Options.Arenas`,
-  `build.Options.Arenas`; off by default, and off generates exactly the
-  code it did before): the generated main calls `rt.EnableArenas()`. A
+- Request scoped arenas (2026-10-08, internal/gen/arena.go; on by
+  default since decision 0066, `--no-arenas` on `xo build`, `run`, `test`
+  turns them off, `--arenas` is accepted for older command lines;
+  `gen.Options.Arenas`, `build.Options.NoArenas`, build info
+  `no_arenas`; off generates exactly the code of before arenas; the
+  llvm and arm64 backends ignore them): the generated main calls
+  `rt.EnableArenas()`. A
   closure literal passed to `r.handle` on a local router whose request
   parameter is used only through `json`, `param`, `param_int`, `query`,
   `header`, and the Str fields (never in a nested closure) is followed by
@@ -821,8 +826,14 @@ Last verified: 2026-10-08. Rules and choices; details in
   `s.to_list()` that are only the receiver of a List consumer that keeps
   nothing (`arenaConsumers`) or the iterable of a `for` become
   `rt.Map_values_arena` and friends. The build directory hash includes
-  the flag. Tests: `TestArenaEscapeAnalysis`, `TestGoldenArenas` (every
-  golden with `--arenas`), `TestGoldenRaceArenas`, golden `arena_escape`.
+  the flag. Tests: `TestArenaEscapeAnalysis`, `TestArenaConfineRandom`
+  (160 random handler bodies, confined exactly when no escaping use),
+  `TestGolden` (arenas) with `TestGoldenNoArenas` (every golden with
+  `--no-arenas`, same want.txt), `TestGoldenRace` with
+  `TestGoldenRaceNoArenas`, goldens `arena_escape` and `arena_holes`,
+  `TestExampleArenaDiff` and `TestExampleArenaServeDiff`
+  (examples/notes-service tests and real server both ways),
+  `TestReplayServer` (recorded arena bodies). Last verified: 2026-10-08.
 - Interface conversions (2026-10-08, internal/gen/adapt.go): a value whose
   Go methods differ from the interface's (a method that cannot fail where
   the interface's can) is wrapped in a generated adapter; inside a
@@ -910,7 +921,7 @@ first, AST based prototype, since deleted) and
 `bench/results/llvm-rc-2026-10-08.md` (SSA with reference counting).
 
 - `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
-  programs only (not `xo test`), no `--race`, `--arenas`, `--holes`,
+  programs only (not `xo test`), no `--race`, `--holes` (arenas are ignored),
   `--targets` other than the host. `build.Options.Backend`.
 - One path: `llvm.Generate` builds SSA (`ssa.BuildOpts` with the line
   root), verifies, runs `InsertRC`, verifies again (RC balance per
@@ -991,7 +1002,7 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
 `bench/results/arm64-perf-2026-10-08.md`.
 
 - `xo build --backend=arm64` and `xo run --backend=arm64`; programs only,
-  no `--race`, `--arenas`, `--holes`; targets darwin/arm64 and
+  no `--race`, `--holes` (arenas are ignored); targets darwin/arm64 and
   linux/arm64. `build.Arm64Asm(res, root, goos)` returns the assembly
   (it retries without inlining if the inlined module does not verify,
   `arm64.InlineError`). Every op the SSA builder and InsertRC emit is
@@ -1076,8 +1087,9 @@ experiment of its work queue item 6. Results and coverage:
 - Cache: `$XO_GOBIND_DIR`, else `<xo.mod dir or module dir>/.xo/gobind`
   (`.xo/` is in `.gitignore`; Go and the Xo module walk skip dot
   directories). A cached binding is reused unless its header has another
-  `xo-bind: v<N>` (gobind.Version) or another module version than the pin.
-  Pins: `require go <module> <version>` lines in xo.mod.
+  `xo-bind: v<N>` (gobind.Version; 2 since 2026-10-08, when callbacks
+  started running with `rt.GoCallbackTask(tk)`, decision 0066) or another
+  module version than the pin. Pins: `require go <module> <version>` lines in xo.mod.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and
   `Module.Go` holding the binding. XO1101 when binding fails, XO1102 when
@@ -1156,7 +1168,7 @@ Last verified: 2026-10-08.
   `map_concurrent` from starting items once canceled). Tests: checker
   `rules07_test.go`; goldens `chan_loops`, `test_once`,
   `test_map_until` (virtual clock), all three in `TestGoldenRace`.
-- `arena.go` (2026-10-08): request scoped arenas for `--arenas`. The HTTP
+- `arena.go` (2026-10-08): request scoped arenas (default, decision 0066). The HTTP
   server takes an `Arena` from a bounded channel free list (128 kept; not
   a sync.Pool, `gotchas/sync-pool-drops-on-gc.md`) per request, puts it on
   the request `Task` (`Task.arena`; scope bodies share it, spawned tasks
@@ -1165,7 +1177,11 @@ Last verified: 2026-10-08.
   an arena response's JSON bytes and header table, and typed bump slabs
   for collection temporaries; buffers over 64 KB are not kept. Routes not
   marked confined, and every route behind middleware, get `heapCopy` of
-  the request. Soundness argument: the comment on `Arena`. `world.go`: the virtual clock of tests (it
+  the request; a mounted router's middleware and `r.call` run with arena
+  responses off (`noArenaResp`); the recorder gets heap copies of bodies
+  (`recCopyReq`, `recCopyResp`); Go callbacks run with
+  `GoCallbackTask` (no arena). Soundness argument: the comment on
+  `Arena`; audit table: decision 0066. `world.go`: the virtual clock of tests (it
   advances when every task is blocked; wakers count the woken task as
   running first). `main.go`: `RunMain` (root scope, SIGINT/SIGTERM, exit
   status 0/1/70, crash bundles).
@@ -1281,7 +1297,9 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 
 - HTTP request cost (2026-10-08, `bench/results/perf-arenas-2026-10-08.md`):
   task 01 under load allocates 13.1 KB and 97 objects per request (6.1 KB
-  and 68 with `--arenas`) against Go's 3.0 KB and 31; throughput is 0.43x
+  and 68 with `--arenas`) against Go's 3.0 KB and 31 (later, after other
+  allocation cuts: 9.5 KB and 77 with `--no-arenas`, 5.5 KB and 49 with
+  arenas, the default; decision 0066); throughput is 0.43x
   of Go (0.6x with arenas). Remaining sources: `JsonEnc` boxing fields
   through `any`, encoding/json token parsing of bodies, `Mutex.with`
   copying the value to the heap, the router splitting the path per route
