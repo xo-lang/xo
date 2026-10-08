@@ -171,7 +171,7 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 // must build with the arm64 backend (the ones the SSA path supports).
 var nativeGolden = []string{
 	"abs_fault", "arith", "div_zero", "float_int_fault", "index_oob", "loops", "neg_overflow", "overflow_add",
-	"overflow_mul", "rc_aliasing", "rc_values", "shl_overflow", "sort_structs", "strings", "user_fault", "var_alias",
+	"overflow_mul", "rc_aliasing", "rc_failing", "rc_values", "shl_overflow", "sort_structs", "strings", "user_fault", "var_alias",
 }
 
 // TestGoldenRun builds the golden programs of internal/llvm (read only)

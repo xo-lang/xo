@@ -26,7 +26,10 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		return s
 	}
 	g.nhelp++
-	sym := g.local(fmt.Sprintf("xo_%s%d", kind, g.nhelp))
+	// id names this helper's labels: helpers of the leaves are generated
+	// while this one is, and advance g.nhelp
+	id := g.nhelp
+	sym := g.local(fmt.Sprintf("xo_%s%d", kind, id))
 	g.helped[key] = sym
 	var b strings.Builder
 	fmt.Fprintf(&b, "// %s %s\n\t.p2align 2\n%s:\n", kind, t.Name, sym)
@@ -36,7 +39,7 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 			b.WriteString("\tldr x1, [x0]\n\tadd x1, x1, #1\n\tstr x1, [x0]\n\tret\n")
 			break
 		}
-		free := g.local(fmt.Sprintf("xo_%s%d_free", kind, g.nhelp))
+		free := g.local(fmt.Sprintf("xo_%s%d_free", kind, id))
 		fmt.Fprintf(&b, "\tldr x1, [x0]\n\tcmp x1, #1\n\tb.eq %s\n\tsub x1, x1, #1\n\tstr x1, [x0]\n\tret\n%s:\n", free, free)
 		if t.Kind == ssa.KStr {
 			fmt.Fprintf(&b, "\tb %s\n", g.sym("xo_rc_free"))
@@ -60,7 +63,7 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		for k := 0; k < n; k++ {
 			fmt.Fprintf(&b, "\tstr x%d, [sp, #%d]\n", k, 16+8*k)
 		}
-		done := g.local(fmt.Sprintf("xo_%s%d_done", kind, g.nhelp))
+		done := g.local(fmt.Sprintf("xo_%s%d_done", kind, id))
 		if t.Kind == ssa.KEnum {
 			for vi, v := range t.Variants {
 				var ls []leaf
@@ -71,7 +74,7 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 				if len(ls) == 0 {
 					continue
 				}
-				next := g.local(fmt.Sprintf("xo_%s%d_v%d", kind, g.nhelp, vi))
+				next := g.local(fmt.Sprintf("xo_%s%d_v%d", kind, id, vi))
 				fmt.Fprintf(&b, "\tldr x9, [sp, #16]\n\tcmp x9, #%d\n\tb.ne %s\n", vi, next)
 				for _, l := range ls {
 					g.leafCall(&b, kind, l)
