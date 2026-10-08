@@ -1,0 +1,19 @@
+// Struct literals with defaults, `with`, nested field and element
+// assignment, and `var` parameters returned as extra results.
+struct P {
+  x: Int
+  y: Int = 7
+}
+
+fn bump(var ps: List[P], i: Int) {
+  ps[i].x += 1
+}
+
+fn main(os: Os) {
+  var ps = [P{x: 1}, P{x: 2, y: 3}]
+  bump(ps, 1)
+  let q = ps[0] with {y: 9}
+  var t = (q, 4)
+  t.0.x = 5
+  os.stdio.println("${ps[1].x} ${q.y} ${t.0.x} ${t.1}")
+}

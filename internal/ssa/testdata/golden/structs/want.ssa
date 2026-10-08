@@ -1,0 +1,63 @@
+type P = struct { x: Int, y: Int }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[P] = call list.new
+  v2: Int = const 1
+  v3: Int = const 7
+  v4: P = struct v2, v3
+  v5: List[P] = call list.push, v1, v4
+  v6: Int = const 2
+  v7: Int = const 3
+  v8: P = struct v6, v7
+  v9: List[P] = call list.push, v5, v8
+  v10: Int = const 1
+  v11: ((), List[P]) = call bump, v9, v10
+  v12: List[P] = field 1, v11
+  v13: () = field 0, v11
+  v14: Int = const 0
+  v15: P = call list.index, v12, v14 @ main.xo:15:11
+  v16: Int = const 9
+  v17: P = setfield 1, v15, v16
+  v18: Int = const 4
+  v19: (P, Int) = tuple v17, v18
+  v20: Int = const 5
+  v21: P = field 0, v19
+  v22: P = setfield 0, v21, v20
+  v23: (P, Int) = setfield 0, v19, v22
+  v24: Stdio = cap stdio, v0
+  v25: Int = const 1
+  v26: P = call list.index, v12, v25 @ main.xo:18:23
+  v27: Int = field 0, v26
+  v28: Str = call str.of_int, v27
+  v29: Str = const " "
+  v30: Str = call str.concat, v28, v29
+  v31: Int = field 1, v17
+  v32: Str = call str.of_int, v31
+  v33: Str = call str.concat, v30, v32
+  v34: Str = const " "
+  v35: Str = call str.concat, v33, v34
+  v36: P = field 0, v23
+  v37: Int = field 0, v36
+  v38: Str = call str.of_int, v37
+  v39: Str = call str.concat, v35, v38
+  v40: Str = const " "
+  v41: Str = call str.concat, v39, v40
+  v42: Int = field 1, v23
+  v43: Str = call str.of_int, v42
+  v44: Str = call str.concat, v41, v43
+  v45: () = call Stdio.println, v24, v44
+  ret v45
+}
+
+func bump(v0: List[P], v1: Int) -> ((), List[P]) {
+b0(v0: List[P], v1: Int):
+  v2: P = call list.index, v0, v1 @ main.xo:9:3
+  v3: Int = field 0, v2
+  v4: Int = const 1
+  v5: Int = add v3, v4 @ main.xo:9:3
+  v6: P = setfield 0, v2, v5
+  v7: List[P] = call list.set, v0, v1, v6 @ main.xo:9:3
+  v8: () = tuple
+  ret v8, v7
+}

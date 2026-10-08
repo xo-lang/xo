@@ -1,0 +1,31 @@
+// Mutable locals become block parameters; break, continue, labels.
+fn sum_odd(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    if i % 2 == 0 {
+      continue
+    }
+    s += i
+  }
+  s
+}
+
+fn first_over(xs: List[Int], limit: Int) -> Int {
+  var found = -1
+  outer: for x in xs {
+    var k = 0
+    while k < 3 {
+      if x * k > limit {
+        found = x
+        break outer
+      }
+      k += 1
+    }
+  }
+  found
+}
+
+fn main(os: Os) {
+  let ok = sum_odd(10) > 3 && first_over([1, 2, 30], 50) != 0
+  os.stdio.println("${sum_odd(10)} ${first_over([1, 2, 30], 50)} ${ok}")
+}

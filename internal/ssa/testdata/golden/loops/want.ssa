@@ -1,0 +1,124 @@
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Int = const 10
+  v2: Int = call sum_odd, v1
+  v3: Int = const 3
+  v4: Bool = gt v2, v3
+  br v4, b2(), b3()
+b1(v6: Bool):  ; preds b3, b2
+  v7: Stdio = cap stdio, v0
+  v8: Int = const 10
+  v9: Int = call sum_odd, v8
+  v10: Str = call str.of_int, v9
+  v11: Str = const " "
+  v12: Str = call str.concat, v10, v11
+  v13: List[Int] = call list.new
+  v14: Int = const 1
+  v15: List[Int] = call list.push, v13, v14
+  v16: Int = const 2
+  v17: List[Int] = call list.push, v15, v16
+  v18: Int = const 30
+  v19: List[Int] = call list.push, v17, v18
+  v20: Int = const 50
+  v21: Int = call first_over, v19, v20
+  v22: Str = call str.of_int, v21
+  v23: Str = call str.concat, v12, v22
+  v24: Str = const " "
+  v25: Str = call str.concat, v23, v24
+  v26: Str = call str.of_bool, v6
+  v27: Str = call str.concat, v25, v26
+  v28: () = call Stdio.println, v7, v27
+  ret v28
+b2:  ; preds b0
+  v30: List[Int] = call list.new
+  v31: Int = const 1
+  v32: List[Int] = call list.push, v30, v31
+  v33: Int = const 2
+  v34: List[Int] = call list.push, v32, v33
+  v35: Int = const 30
+  v36: List[Int] = call list.push, v34, v35
+  v37: Int = const 50
+  v38: Int = call first_over, v36, v37
+  v39: Int = const 0
+  v40: Bool = ne v38, v39
+  jump b1(v40)
+b3:  ; preds b0
+  v42: Bool = const false
+  jump b1(v42)
+}
+
+func sum_odd(v0: Int) -> Int {
+b0(v0: Int):
+  v1: Int = const 0
+  v2: Int = const 0
+  jump b1(v2, v1)
+b1(v4: Int, v5: Int):  ; preds b0, b3
+  v6: Bool = lt v4, v0
+  br v6, b2(), b4()
+b2:  ; preds b1
+  v8: Int = const 2
+  v9: Int = rem v4, v8 @ main.xo:5:8
+  v10: Int = const 0
+  v11: Bool = eq v9, v10
+  br v11, b6(), b7()
+b3(v13: Int):  ; preds b6, b5
+  v14: Int = const 1
+  v15: Int = add v4, v14
+  jump b1(v15, v13)
+b4:  ; preds b1
+  ret v5
+b5:  ; preds b7
+  v18: () = tuple
+  v19: Int = add v5, v4 @ main.xo:8:5
+  v20: () = tuple
+  jump b3(v19)
+b6:  ; preds b2
+  jump b3(v5)
+b7:  ; preds b2
+  v23: () = tuple
+  jump b5()
+}
+
+func first_over(v0: List[Int], v1: Int) -> Int {
+b0(v0: List[Int], v1: Int):
+  v2: Int = const 1
+  v3: Int = neg v2 @ main.xo:14:15
+  v4: Int = call list.len, v0
+  v5: Int = const 0
+  jump b1(v5)
+b1(v7: Int):  ; preds b0, b3
+  v8: Bool = lt v7, v4
+  br v8, b2(), b4(v3)
+b2:  ; preds b1
+  v10: Int = call list.index, v0, v7
+  v11: Int = const 0
+  jump b5(v11)
+b3:  ; preds b6
+  v13: Int = const 1
+  v14: Int = add v7, v13
+  jump b1(v14)
+b4(v16: Int):  ; preds b1, b9
+  ret v16
+b5(v18: Int):  ; preds b2, b8
+  v19: Int = const 3
+  v20: Bool = lt v18, v19
+  br v20, b7(), b6()
+b6:  ; preds b5
+  v22: () = tuple
+  jump b3()
+b7:  ; preds b5
+  v24: Int = mul v10, v18 @ main.xo:18:10
+  v25: Bool = gt v24, v1
+  br v25, b9(), b10()
+b8:  ; preds b10
+  v27: () = tuple
+  v28: Int = const 1
+  v29: Int = add v18, v28 @ main.xo:22:7
+  v30: () = tuple
+  jump b5(v29)
+b9:  ; preds b7
+  jump b4(v10)
+b10:  ; preds b7
+  v33: () = tuple
+  jump b8()
+}
