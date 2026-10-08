@@ -1,0 +1,283 @@
+package ssa
+
+import (
+	"github.com/xo-lang/xo/internal/ast"
+	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/token"
+)
+
+// block lowers a block and returns the value of its last expression
+// statement (unit when there is none).
+func (s *fn) block(bl *ast.Block) *Value {
+	var last *Value
+	for i, st := range bl.Stmts {
+		if es, ok := st.(*ast.ExprStmt); ok && i == len(bl.Stmts)-1 {
+			last = s.expr(es.X)
+			break
+		}
+		s.stmt(st)
+	}
+	if last == nil {
+		return s.unit()
+	}
+	return last
+}
+
+func (s *fn) stmt(st ast.Stmt) {
+	b := s.b
+	switch x := st.(type) {
+	case *ast.ExprStmt:
+		s.expr(x.X)
+	case *ast.LetStmt:
+		v := s.value(x.Value)
+		fail := s.newBlock()
+		s.pattern(v, x.Pattern, fail)
+		cont := s.cur
+		s.cur = fail
+		s.seal(fail)
+		s.add(OpUnreachable, nil, nil) // `let` patterns are irrefutable
+		s.cur = cont
+	case *ast.VarStmt:
+		vo := b.info.VarOf(x.Name)
+		s.writeVar(vo, s.value(x.Value))
+	case *ast.ConstDecl:
+		// inlined at each use
+	case *ast.AssignStmt:
+		s.assign(x)
+	case *ast.ReturnStmt:
+		var v *Value
+		if x.Value == nil {
+			v = s.unit()
+		} else {
+			v = s.valueAs(x.Value, s.f.Results[0])
+		}
+		s.ret(v, x)
+	case *ast.BreakStmt, *ast.ContinueStmt:
+		var label *ast.Ident
+		brk := false
+		if bs, ok := x.(*ast.BreakStmt); ok {
+			label, brk = bs.Label, true
+		} else {
+			label = x.(*ast.ContinueStmt).Label
+		}
+		var lc *loopCtx
+		for i := len(s.loops) - 1; i >= 0; i-- {
+			if label == nil || s.loops[i].label == label.Name {
+				lc = s.loops[i]
+				break
+			}
+		}
+		if lc == nil {
+			b.unsupported(x, "this `break` or `continue`")
+			return
+		}
+		if brk {
+			s.jump(lc.brk)
+		} else {
+			s.jump(lc.cont)
+		}
+		s.dead()
+	case *ast.WhileStmt:
+		label := ""
+		if x.Label != nil {
+			label = x.Label.Name
+		}
+		s.while(label, x.Cond, x.Body)
+	case *ast.ForStmt:
+		s.forStmt(x)
+	default:
+		b.unsupported(st, "this statement")
+	}
+}
+
+// while lowers `while cond { body }` (cond nil: forever).
+func (s *fn) while(label string, cond ast.Expr, body *ast.Block) {
+	head, exit := s.newBlock(), s.newBlock()
+	s.jump(head)
+	s.cur = head
+	if cond != nil {
+		c := s.value(cond)
+		in := s.newBlock()
+		s.cur.Branch(c, in, exit)
+		s.seal(in)
+		s.cur = in
+	}
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head})
+	s.block(body)
+	s.loops = s.loops[:len(s.loops)-1]
+	s.jump(head)
+	s.seal(head)
+	s.seal(exit)
+	s.cur = exit
+}
+
+// forStmt lowers `for p in a..b`, `a..=b`, and a List.
+func (s *fn) forStmt(x *ast.ForStmt) {
+	b := s.b
+	intT := b.mod.Builtin(KInt)
+	label := ""
+	if x.Label != nil {
+		label = x.Label.Name
+	}
+	idx := &check.VarObj{Name: "$i"}
+	var hi, list *Value
+	inclusive := false
+	if r, ok := x.Iter.(*ast.RangeExpr); ok && r.Lo != nil && r.Hi != nil {
+		s.writeVar(idx, s.valueAs(r.Lo, intT))
+		hi = s.valueAs(r.Hi, intT)
+		inclusive = r.Inclusive
+	} else if lt := s.natOf(x.Iter); lt.Kind == KList {
+		list = s.value(x.Iter)
+		hi = s.call("list.len", intT, "", list)
+		s.writeVar(idx, s.cint(0))
+	} else {
+		b.unsupported(x.Iter, "this `for` iteration")
+		return
+	}
+	head, body, latch, exit := s.newBlock(), s.newBlock(), s.newBlock(), s.newBlock()
+	s.jump(head)
+	s.cur = head
+	i := s.read(idx)
+	var c *Value
+	if inclusive {
+		c = s.add(OpLe, b.mod.Builtin(KBool), nil, i, hi)
+	} else {
+		c = s.add(OpLt, b.mod.Builtin(KBool), nil, i, hi)
+	}
+	s.cur.Branch(c, body, exit)
+	s.seal(body)
+	s.cur = body
+	var elem *Value
+	if list != nil {
+		elem = s.call("list.index", list.Type.Elems[0], "", list, s.read(idx))
+	} else {
+		elem = s.read(idx)
+	}
+	fail := s.newBlock()
+	s.pattern(elem, x.Pattern, fail)
+	cont := s.cur
+	s.cur = fail
+	s.seal(fail)
+	s.add(OpUnreachable, nil, nil)
+	s.cur = cont
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: latch})
+	s.block(x.Body)
+	s.loops = s.loops[:len(s.loops)-1]
+	s.jump(latch)
+	s.seal(latch)
+	s.cur = latch
+	i = s.read(idx)
+	if inclusive {
+		// i == hi ends the loop before i + 1 could overflow
+		done := s.add(OpEq, b.mod.Builtin(KBool), nil, i, hi)
+		next := s.newBlock()
+		s.cur.Branch(done, exit, next)
+		s.seal(next)
+		s.cur = next
+	}
+	// i < hi (or i != hi): the increment cannot overflow, so no Pos
+	s.writeVar(idx, s.add(OpAdd, intT, nil, i, s.cint(1)))
+	s.jump(head)
+	s.seal(head)
+	s.seal(exit)
+	s.cur = exit
+}
+
+// place is an assignable location: its current value and how to store a
+// new one. Storing into a field or element rebuilds the enclosing values
+// (setfield, list.set) up to the local.
+type place struct {
+	t   *Type
+	get func() *Value
+	set func(*Value)
+}
+
+func (s *fn) place(e ast.Expr) (place, bool) {
+	b := s.b
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return s.place(x.X)
+	case *ast.Ident:
+		vo := b.info.VarOf(x)
+		if vo == nil {
+			break
+		}
+		return place{s.typeOf(x), func() *Value { return s.read(vo) }, func(v *Value) { s.writeVar(vo, v) }}, true
+	case *ast.SelectorExpr:
+		base, ok := s.place(x.X)
+		if !ok {
+			break
+		}
+		idx, ft := s.fieldIndex(base.t, x.Sel.Name)
+		if idx < 0 {
+			break
+		}
+		var bv *Value
+		cur := func() *Value {
+			if bv == nil {
+				bv = base.get()
+			}
+			return bv
+		}
+		return place{ft,
+			func() *Value { return s.add(OpField, ft, idx, cur()) },
+			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), v)) }}, true
+	case *ast.IndexExpr:
+		base, ok := s.place(x.X)
+		if !ok || base.t.Kind != KList {
+			break
+		}
+		l := base.get()
+		i := s.valueAs(x.Index, b.mod.Builtin(KInt))
+		et := base.t.Elems[0]
+		pos := b.pos(x)
+		return place{et,
+			func() *Value { return s.call("list.index", et, pos, l, i) },
+			func(v *Value) { base.set(s.call("list.set", base.t, pos, l, i, v)) }}, true
+	}
+	b.unsupported(e, "assigning to this expression")
+	return place{}, false
+}
+
+// fieldIndex is the index and type of a struct field or tuple element.
+func (s *fn) fieldIndex(t *Type, name string) (int, *Type) {
+	switch t.Kind {
+	case KStruct:
+		if i := t.FieldIndex(name); i >= 0 {
+			return i, t.Fields[i].Type
+		}
+	case KTuple:
+		for i, e := range t.Elems {
+			if name == itoa(i) {
+				return i, e
+			}
+		}
+	}
+	return -1, nil
+}
+
+var compound = map[token.Kind]token.Kind{
+	token.PlusAssign: token.Plus, token.MinusAssign: token.Minus, token.StarAssign: token.Star,
+	token.SlashAssign: token.Slash, token.PercentAssign: token.Percent, token.AmpAssign: token.Amp,
+	token.PipeAssign: token.Pipe, token.CaretAssign: token.Caret, token.ShlAssign: token.Shl,
+	token.ShrAssign: token.Shr,
+}
+
+func (s *fn) assign(x *ast.AssignStmt) {
+	p, ok := s.place(x.Target)
+	if !ok {
+		return
+	}
+	if x.Op == token.Assign {
+		p.set(s.valueAs(x.Value, p.t))
+		return
+	}
+	op, ok := compound[x.Op]
+	if !ok {
+		s.b.unsupported(x, "this assignment operator")
+		return
+	}
+	old := p.get()
+	r := s.valueAs(x.Value, p.t)
+	p.set(s.arith(op, old, r, x))
+}

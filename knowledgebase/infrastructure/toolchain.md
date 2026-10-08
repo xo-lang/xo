@@ -60,6 +60,7 @@ go run ./cmd/xo serve [--socket=path] [stop|status]              # resident chec
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
+go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa, testdata/bench/*.ssa)
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -482,6 +483,8 @@ internal/gen/           Go code generation with //line directives (see "Code gen
 internal/build/         check, generate, write the build directory, `go build` per target;
                         llvm.go: the LLVM backend build (IR + std/llrt runtime -> clang)
 internal/llvm/          P3 prototype: LLVM IR for a core subset (see "LLVM backend (P3 prototype)")
+internal/ssa/           shared typed SSA IR for native backends (decision 0044): builder from the
+                        checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
@@ -729,6 +732,17 @@ Last verified: 2026-10-08. Rules and choices; details in
   copy of the table map). Real drivers: implement `rt.SqlOpener`, call
   `rt.RegisterSqlDriver` (to be bound through `use go`; none yet). Goldens:
   `sql_basic`, `sql_tx`, `test_sql`. Not recorded by record and replay.
+
+## SSA IR
+
+Last verified: 2026-10-08. Decision 0044. `ssa.Build(res)` lowers the
+functions reachable from `main` (non generic, non failing, no closures)
+to SSA with block parameters; `Module.Verify()` checks structure,
+dominance, and types; `Module.String()` prints it. Tests:
+`go test ./internal/ssa` (testdata/golden/<name>/main.xo with want.ssa;
+testdata/bench/<name>.ssa for bench/perf/llvm/xo; verifier rejections).
+Rewrite goldens with `go test ./internal/ssa -update`. internal/llvm does
+not use it yet.
 
 ## LLVM backend (P3 prototype)
 

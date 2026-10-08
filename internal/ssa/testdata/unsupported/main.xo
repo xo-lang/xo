@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let f = fn(x: Int) -> Int { x + 1 }
+  os.stdio.println("${f(1)}")
+}

@@ -1,0 +1,204 @@
+type Rec = struct { key: Int, id: Int, weight: Float }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Int = const 0
+  v2: Int = const 42
+  v3: Int = const 0
+  v4: Int = const 3
+  jump b1(v3, v2, v1)
+b1(v6: Int, v7: Int, v8: Int):  ; preds b0, b3
+  v9: Bool = lt v6, v4
+  br v9, b2(), b4()
+b2:  ; preds b1
+  v11: List[Rec] = call list.new
+  v12: Int = const 0
+  v13: Int = const 1000000
+  jump b5(v12, v7, v11)
+b3:  ; preds b12
+  v15: Int = const 1
+  v16: Int = add v6, v15
+  jump b1(v16, v25, v88)
+b4:  ; preds b1
+  v18: Stdio = cap stdio, v0
+  v19: Str = const "sort "
+  v20: Str = call str.of_int, v8
+  v21: Str = call str.concat, v19, v20
+  v22: () = call Stdio.println, v18, v21
+  ret v22
+b5(v24: Int, v25: Int, v26: List[Rec]):  ; preds b2, b7
+  v27: Bool = lt v24, v13
+  br v27, b6(), b8()
+b6:  ; preds b5
+  v29: Int = const 1103515245
+  v30: Int = mul v25, v29 @ main.xo:48:15
+  v31: Int = const 12345
+  v32: Int = add v30, v31 @ main.xo:48:15
+  v33: Int = const 2147483648
+  v34: Int = rem v32, v33 @ main.xo:48:14
+  v35: Int = const 100000
+  v36: Int = rem v34, v35 @ main.xo:49:24
+  v37: Int = const 97
+  v38: Int = rem v24, v37 @ main.xo:49:60
+  v39: Float = itof v38
+  v40: Float = const 0.5
+  v41: Float = mul v39, v40
+  v42: Rec = struct v36, v24, v41
+  v43: List[Rec] = call list.push, v26, v42
+  v44: () = tuple
+  jump b7()
+b7:  ; preds b6
+  v46: Int = const 1
+  v47: Int = add v24, v46
+  jump b5(v47, v34, v43)
+b8:  ; preds b5
+  v49: Int = const 0
+  v50: Int = call list.len, v26
+  v51: Int = const 1
+  v52: Int = sub v50, v51 @ main.xo:51:22
+  v53: ((), List[Rec]) = call quicksort, v26, v49, v52
+  v54: List[Rec] = field 1, v53
+  v55: () = field 0, v53
+  v56: Int = const 1
+  v57: Int = const 1
+  v58: Int = call list.len, v54
+  jump b9(v57, v56)
+b9(v60: Int, v61: Int):  ; preds b8, b11
+  v62: Bool = lt v60, v58
+  br v62, b10(), b12()
+b10:  ; preds b9
+  v64: Rec = call list.index, v54, v60 @ main.xo:54:15
+  v65: Int = const 1
+  v66: Int = sub v60, v65 @ main.xo:54:25
+  v67: Rec = call list.index, v54, v66 @ main.xo:54:22
+  v68: Bool = call less, v64, v67
+  br v68, b14(), b15()
+b11:  ; preds b13
+  v70: Int = const 1
+  v71: Int = add v60, v70
+  jump b9(v71, v91)
+b12:  ; preds b9
+  v73: Int = const 0
+  v74: Rec = call list.index, v54, v73 @ main.xo:58:12
+  v75: Int = field 0, v74
+  v76: Int = const 500000
+  v77: Rec = call list.index, v54, v76 @ main.xo:58:24
+  v78: Int = field 1, v77
+  v79: Int = add v75, v78 @ main.xo:58:12
+  v80: Int = const 999999
+  v81: Rec = call list.index, v54, v80 @ main.xo:58:40
+  v82: Int = field 0, v81
+  v83: Int = add v79, v82 @ main.xo:58:12
+  v84: Int = const 1
+  v85: Int = add v6, v84 @ main.xo:58:63
+  v86: Int = mul v61, v85 @ main.xo:58:57
+  v87: Int = add v83, v86 @ main.xo:58:12
+  v88: Int = add v8, v87 @ main.xo:58:5
+  v89: () = tuple
+  jump b3()
+b13(v91: Int):  ; preds b14, b15
+  v92: () = tuple
+  jump b11()
+b14:  ; preds b10
+  v94: Int = const 0
+  v95: () = tuple
+  jump b13(v94)
+b15:  ; preds b10
+  v97: () = tuple
+  jump b13(v61)
+}
+
+func quicksort(v0: List[Rec], v1: Int, v2: Int) -> ((), List[Rec]) {
+b0(v0: List[Rec], v1: Int, v2: Int):
+  v3: Bool = ge v1, v2
+  br v3, b2(), b3()
+b1:  ; preds b3
+  v5: () = tuple
+  v6: Int = sub v2, v1 @ main.xo:20:24
+  v7: Int = const 2
+  v8: Int = div v6, v7 @ main.xo:20:23
+  v9: Int = add v1, v8 @ main.xo:20:18
+  v10: Rec = call list.index, v0, v9 @ main.xo:20:15
+  jump b4(v1, v2, v0)
+b2:  ; preds b0
+  v12: () = tuple
+  ret v12, v0
+b3:  ; preds b0
+  v14: () = tuple
+  jump b1()
+b4(v16: Int, v17: Int, v18: List[Rec]):  ; preds b1, b13
+  v19: Bool = le v16, v17
+  br v19, b6(), b5()
+b5:  ; preds b4
+  v21: ((), List[Rec]) = call quicksort, v18, v1, v17
+  v22: List[Rec] = field 1, v21
+  v23: () = field 0, v21
+  v24: ((), List[Rec]) = call quicksort, v22, v16, v2
+  v25: List[Rec] = field 1, v24
+  v26: () = field 0, v24
+  ret v26, v25
+b6:  ; preds b4
+  jump b7(v16)
+b7(v29: Int):  ; preds b6, b9
+  v30: Rec = call list.index, v18, v29 @ main.xo:24:16
+  v31: Bool = call less, v30, v10
+  br v31, b9(), b8()
+b8:  ; preds b7
+  jump b10(v17)
+b9:  ; preds b7
+  v34: Int = const 1
+  v35: Int = add v29, v34 @ main.xo:25:7
+  v36: () = tuple
+  jump b7(v35)
+b10(v38: Int):  ; preds b8, b12
+  v39: Rec = call list.index, v18, v38 @ main.xo:27:23
+  v40: Bool = call less, v10, v39
+  br v40, b12(), b11()
+b11:  ; preds b10
+  v42: Bool = le v29, v38
+  br v42, b14(), b15()
+b12:  ; preds b10
+  v44: Int = const 1
+  v45: Int = sub v38, v44 @ main.xo:28:7
+  v46: () = tuple
+  jump b10(v45)
+b13(v48: Int, v49: Int, v50: List[Rec]):  ; preds b14, b15
+  v51: () = tuple
+  jump b4(v48, v49, v50)
+b14:  ; preds b11
+  v53: Rec = call list.index, v18, v29 @ main.xo:31:15
+  v54: Rec = call list.index, v18, v38 @ main.xo:32:15
+  v55: List[Rec] = call list.set, v18, v29, v54 @ main.xo:32:7
+  v56: List[Rec] = call list.set, v55, v38, v53 @ main.xo:33:7
+  v57: Int = const 1
+  v58: Int = add v29, v57 @ main.xo:34:7
+  v59: Int = const 1
+  v60: Int = sub v38, v59 @ main.xo:35:7
+  v61: () = tuple
+  jump b13(v58, v60, v56)
+b15:  ; preds b11
+  v63: () = tuple
+  jump b13(v29, v38, v18)
+}
+
+func less(v0: Rec, v1: Rec) -> Bool {
+b0(v0: Rec, v1: Rec):
+  v2: Int = field 0, v0
+  v3: Int = field 0, v1
+  v4: Bool = ne v2, v3
+  br v4, b2(), b3()
+b1:  ; preds b3
+  v6: () = tuple
+  v7: Int = field 1, v0
+  v8: Int = field 1, v1
+  v9: Bool = lt v7, v8
+  ret v9
+b2:  ; preds b0
+  v11: Int = field 0, v0
+  v12: Int = field 0, v1
+  v13: Bool = lt v11, v12
+  ret v13
+b3:  ; preds b0
+  v15: () = tuple
+  jump b1()
+}
