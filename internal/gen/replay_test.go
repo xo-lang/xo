@@ -317,6 +317,15 @@ func TestReplayServer(t *testing.T) {
 		if st, body := c.get(t, "POST", "/echo", "payload"); st != 200 || body != "payload" {
 			t.Fatalf("echo: %d %q", st, body)
 		}
+		// arena backed bodies (decision 0066): the second, shorter
+		// request reuses the arena of the first one; the trace must keep
+		// both bodies and both responses as they were
+		items := []string{`{"name":"first-and-much-longer"}`, `{"name":"b"}`}
+		for _, it := range items {
+			if st, body := c.get(t, "POST", "/item", it); st != 200 || body != it {
+				t.Fatalf("item: %d %q", st, body)
+			}
+		}
 		if st, _ := c.get(t, "GET", "/boom", ""); st != 500 {
 			t.Fatalf("boom: %d", st)
 		}
@@ -333,7 +342,7 @@ func TestReplayServer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{`"req":1`, `"req":4`, `"path":"/boom"`, `"status":500`, ` r1 `, ` g `} {
+		for _, want := range []string{`"req":1`, `"req":6`, `"path":"/boom"`, `"status":500`, ` r1 `, ` g `, `first-and-much-longer`, `"body":"{\"name\":\"b\"}"`} {
 			if !bytes.Contains(data, []byte(want)) {
 				t.Errorf("the trace has no %s:\n%s", want, data)
 			}
@@ -351,7 +360,7 @@ func TestReplayServer(t *testing.T) {
 		// the bundle of the isolated fault
 		bundle := bundlePath(t, recdErr)
 		brep := runProg(t, bin, t.TempDir(), "", "XO_REPLAY="+bundle)
-		if brep.code != 0 || !strings.Contains(brep.stderr, "xo replay: reproduced the crash: fault: index 5 out of range for List of length 1 at main.xo:23:23 (isolated, in the handler of request 3)") {
+		if brep.code != 0 || !strings.Contains(brep.stderr, "xo replay: reproduced the crash: fault: index 5 out of range for List of length 1 at main.xo:35:23 (isolated, in the handler of request 5)") {
 			t.Fatalf("bundle replay: exit %d\n%s\n%s", brep.code, brep.stdout, brep.stderr)
 		}
 

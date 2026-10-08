@@ -59,8 +59,8 @@ type Options struct {
 	// NoRanges turns off the range analysis of Int operations (ranges.go):
 	// every operation is checked. Used by tests that compare the two.
 	NoRanges bool
-	// Arenas turns on request scoped arenas (arena.go, std/rt/arena.go,
-	// `xo build --arenas`): confined HTTP handlers get arena backed
+	// Arenas turns on request scoped arenas (arena.go, std/rt/arena.go;
+	// internal/build sets it unless `--no-arenas`, decision 0066): confined HTTP handlers get arena backed
 	// requests and responses, and collection temporaries that do not
 	// escape their expression are bump allocated in the request's arena.
 	Arenas bool

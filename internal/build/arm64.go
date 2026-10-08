@@ -85,8 +85,8 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	if opts.Mode != gen.Build {
 		return nil, fmt.Errorf("the arm64 backend builds programs only (not tests)")
 	}
-	if opts.Race || opts.Arenas || opts.Holes {
-		return nil, fmt.Errorf("the arm64 backend does not support --race, --arenas, or --holes")
+	if opts.Race || opts.Holes {
+		return nil, fmt.Errorf("the arm64 backend does not support --race or --holes")
 	}
 	ts := opts.Targets
 	if len(ts) == 0 {

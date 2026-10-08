@@ -14,6 +14,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 
+- Request scoped arenas are on by default for HTTP handlers (5.5; decision
+  0066): an implementation detail with no observable effect, off with
+  `--no-arenas`.
+
 - Go packages with `use go` (4.4).
 - Two phase shutdown (7.5).
 - `Mutex.with_read`, shared read only access (5.4, std.md 2.7; decision
@@ -910,9 +914,20 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
 
 ### 5.5 Memory management
 
-Tracing GC. **[P2]** Request scoped arenas: allocations inside an
-`arena scope` are freed when the scope exits, and values escaping it are copied
-out automatically.
+Tracing GC, plus request scoped arenas (decision 0066; on by default, off
+with `--no-arenas`). An arena is memory owned by one HTTP request served by
+`http.server` (std.md 4.4) and reused by a later request once the handler has
+returned and the response is written. The compiler and the runtime place in it
+only memory that provably cannot outlive the request: the request's header,
+parameter, and query tables and its body when the handler uses the request
+only through `json`, `param`, `param_int`, `query`, `header`, and its `Str`
+fields (and not in a nested closure); the response built by `http.json` or
+`http.text` that is directly the handler's result; and the `List` made by
+`m.values()`, `m.keys()`, `m.entries()`, or `s.to_list()` when it is only
+consumed in its own expression. Everything else, including every value a
+program stores, sends, captures, returns, or hands to Go, is ordinary garbage
+collected memory, so arenas are invisible: a program prints the same with and
+without them. A user written `arena scope` block remains **[P2]**.
 
 ---
 

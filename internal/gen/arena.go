@@ -1,8 +1,9 @@
 package gen
 
-// Request scoped arenas (`xo build --arenas`, Options.Arenas). The runtime
-// side and the soundness argument are in std/rt/arena.go; this file is the
-// escape analysis that decides what may live in an arena. All of it is
+// Request scoped arenas (Options.Arenas; internal/build sets it unless
+// `--no-arenas`, decision 0066). The runtime side and the soundness
+// argument are in std/rt/arena.go; this file is the escape analysis that
+// decides what may live in an arena. All of it is
 // intraprocedural and syntactic over checked code, and it relies on Xo's
 // value semantics: a value can only reach shared state by being copied
 // into it, and only through a binding, an argument, a capture, or a

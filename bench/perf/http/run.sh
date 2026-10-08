@@ -3,8 +3,10 @@
 # plain Go solution (go/, a copy of bench/go/plain/01-crud-api) against the
 # Xo solution (xo/, a copy of bench/xo/v0.4/01-crud-api whose Store.get and
 # Store.list use Mutex.with_read since 2026-10-08), built with
-# .tools/bin/xo (or $XO) with and without --arenas. Both copies listen on
-# 127.0.0.1 only. Run from anywhere.
+# .tools/bin/xo (or $XO) with and without request scoped arenas (on by
+# default since decision 0066: config xo builds with --no-arenas, xo-arenas
+# with the default). Both copies listen on 127.0.0.1 only. Run from
+# anywhere.
 #
 # Each server is started fresh with GODEBUG=gctrace=1, loaded by loadgen/
 # for WARMUP then DURATION, and stopped with `kill <its own PID>`. Configs
@@ -17,7 +19,8 @@
 #
 # Environment: REPS (3), DURATION (10s), WARMUP (2s), CONC (32), PRELOAD
 # (64), PORT (18080), CONFIGS ("go xo xo-arenas"; "xo-base" builds the Xo
-# server with the xo binary in $XO_BASE, for before and after runs, and
+# server with the xo binary in $XO_BASE, for before and after runs, with
+# that binary's default (no arenas before decision 0066), and
 # "xo-base-arenas" the same with --arenas), XO,
 # PERF_OUT (keep binaries and logs there), GOGC passed through to the
 # servers.
@@ -39,7 +42,7 @@ xo=${XO:-$root/.tools/bin/xo}
 for c in $configs; do
 	case $c in
 	go) (cd "$here/go" && go build -o "$out/srv-go" .) ;;
-	xo) "$xo" build -o "$out/srv-xo" "$here/xo" >/dev/null ;;
+	xo) "$xo" build --no-arenas -o "$out/srv-xo" "$here/xo" >/dev/null ;;
 	xo-arenas) "$xo" build --arenas -o "$out/srv-xo-arenas" "$here/xo" >/dev/null ;;
 	xo-base) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build -o "$out/srv-xo-base" "$here/xo" >/dev/null ;;
 	xo-base-arenas) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --arenas -o "$out/srv-xo-base-arenas" "$here/xo" >/dev/null ;;

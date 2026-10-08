@@ -1,6 +1,8 @@
 package gen_test
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,5 +173,92 @@ fn keep(m: Map[Str, Str]) -> List[Str] {
 				t.Errorf("arena code generated without Arenas")
 			}
 		})
+	}
+}
+
+// TestArenaConfineRandom generates one program with many routes whose
+// handler bodies are random mixes of request uses, each either a confined
+// form (a Str or decoded value comes out, never the request's memory) or
+// an escaping one (the request, a table, the body, or a capture by a
+// nested closure), optionally nested in if, match, scope, and loop
+// bodies. A route must be marked arena (rt.Http_Router_arenaLast) exactly
+// when its body has no escaping form (decision 0066).
+func TestArenaConfineRandom(t *testing.T) {
+	safe := []string{
+		`let _v%d = req.param("id")`,
+		`let _v%d = req.param_int("n")`,
+		`let _v%d = req.header("x") ?? ""`,
+		`let _v%d = req.query("q") ?? ""`,
+		`let _v%d = req.json[In]().ok()`,
+		`let _v%d = req.method`,
+		`let _v%d = req.path`,
+		`let _v%d = req.remote_ip`,
+		`let _v%d = req.url.path`,
+		`let _v%d = req.url.host`,
+		`keep.with(fn(var l) { l.push("x%d") })`,
+		`let _v%d = fn() { 1 }`,
+	}
+	escape := []string{
+		`let _v%d = req`,
+		`let _v%d = req.headers`,
+		`let _v%d = req.body`,
+		`let _v%d = req.url`,
+		`let _v%d = req.url.query`,
+		`let _v%d = name_of(req)`,
+		`let _v%d = fn() { req.param("id") }`,
+		`keep.with(fn(var l) { l.push(req.param("id%d")) })`,
+		`let _v%d = [req]`,
+		`let _v%d = Some(req)`,
+	}
+	wrap := []string{"%s", "if keep.with(fn(l) { l.len() }) > 0 {\n%s\n}", "for _i in 0..2 {\n%s\n}", "scope s {\n%s\n}", "match 1 {\n1 => {\n%s\n}\n_ => {}\n}"}
+	rng := rand.New(rand.NewPCG(66, 2026))
+	var src strings.Builder
+	src.WriteString("use std/http\n\nstruct In {\n  name: Str\n} derive Json\n\nfn name_of(r: http.Request) -> Str { r.path }\n\nfn main(os: Os) {}\n\nfn routes(keep: Mutex[List[Str]]) -> http.Router {\n  var r = http.router()\n")
+	const n = 160
+	want := make([]bool, n)
+	k := 0
+	for i := 0; i < n; i++ {
+		confined := true
+		var body []string
+		for j := 0; j < 1+rng.IntN(5); j++ {
+			var form string
+			if rng.IntN(4) == 0 {
+				form, confined = escape[rng.IntN(len(escape))], false
+			} else {
+				form = safe[rng.IntN(len(safe))]
+			}
+			k++
+			form = strings.ReplaceAll(form, "%d", fmt.Sprint(k))
+			body = append(body, fmt.Sprintf(wrap[rng.IntN(len(wrap))], form))
+		}
+		want[i] = confined
+		fmt.Fprintf(&src, "  r.handle(\"GET /r%d/{id}\", fn(req) {\n%s\n    http.text(200, \"ok\")\n  })\n", i, strings.Join(body, "\n"))
+	}
+	src.WriteString("  r\n}\n")
+	nConfined := 0
+	for _, c := range want {
+		if c {
+			nConfined++
+		}
+	}
+	if nConfined < n/5 || nConfined > n*4/5 {
+		t.Fatalf("%d of %d routes confined: the mix tests too little", nConfined, n)
+	}
+	got := generateArenas(t, src.String(), true)
+	for i := 0; i < n; i++ {
+		start := strings.Index(got, fmt.Sprintf(`"GET /r%d/{id}"`, i))
+		if start < 0 {
+			t.Fatalf("route %d not found", i)
+		}
+		end := len(got)
+		if e := strings.Index(got[start:], fmt.Sprintf(`"GET /r%d/{id}"`, i+1)); e >= 0 {
+			end = start + e
+		}
+		if marked := strings.Contains(got[start:end], "Http_Router_arenaLast"); marked != want[i] {
+			t.Errorf("route %d: arena %v, want %v", i, marked, want[i])
+		}
+	}
+	if t.Failed() {
+		t.Logf("source:\n%s", src.String())
 	}
 }

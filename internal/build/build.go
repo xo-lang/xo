@@ -83,9 +83,11 @@ type Options struct {
 	NoMono bool
 	// NoRanges checks every Int operation (gen.Options.NoRanges; tests).
 	NoRanges bool
-	// Arenas turns on request scoped arenas (gen.Options.Arenas,
-	// `--arenas`).
-	Arenas bool
+	// NoArenas turns off request scoped arenas (gen.Options.Arenas,
+	// `--no-arenas`). Arenas are on by default since 2026-10-08 (decision
+	// 0066) on the Go backend; the llvm and arm64 backends have no HTTP
+	// server and ignore them.
+	NoArenas bool
 	// Backend is "go" (the default, P1), "llvm" (the P3 prototype,
 	// internal/llvm: IR compiled by clang; host only, programs only), or
 	// "arm64" (internal/arm64: assembly linked with cc; darwin/arm64 and
@@ -125,18 +127,18 @@ type Result struct {
 // Info identifies a program build (core 11.2): a crash bundle and a trace
 // carry it, and `xo replay` rebuilds the program from it.
 type Info struct {
-	ID      string            `json:"id"`
-	Dir     string            `json:"dir"`
-	Sources map[string]string `json:"sources"` // path relative to the line root -> sha256
-	Holes   bool              `json:"holes,omitempty"`
-	NoMono  bool              `json:"no_mono,omitempty"`
-	Arenas  bool              `json:"arenas,omitempty"`
-	Race    bool              `json:"race,omitempty"`
+	ID       string            `json:"id"`
+	Dir      string            `json:"dir"`
+	Sources  map[string]string `json:"sources"` // path relative to the line root -> sha256
+	Holes    bool              `json:"holes,omitempty"`
+	NoMono   bool              `json:"no_mono,omitempty"`
+	NoArenas bool              `json:"no_arenas,omitempty"`
+	Race     bool              `json:"race,omitempty"`
 }
 
 // buildInfo computes the build information of a checked program.
 func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Info {
-	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, Arenas: opts.Arenas, Race: opts.Race}
+	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
 	}
@@ -164,7 +166,7 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 	for _, p := range paths {
 		fmt.Fprintf(h, "%s %s\n", p, info.Sources[p])
 	}
-	fmt.Fprintf(h, "holes=%v mono=%v arenas=%v race=%v\n", opts.Holes, !opts.NoMono, opts.Arenas, opts.Race)
+	fmt.Fprintf(h, "holes=%v mono=%v arenas=%v race=%v\n", opts.Holes, !opts.NoMono, !opts.NoArenas, opts.Race)
 	fs.WalkDir(std.Runtime, "rt", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			data, _ := fs.ReadFile(std.Runtime, p)
@@ -223,7 +225,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("unknown backend %q (want go, llvm, or arm64)", opts.Backend)
 	}
 	root := lineRoot(dirs)
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: opts.Arenas})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas})
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +234,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		out.Info = buildInfo(dirs, res, root, opts)
 		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
 	}
-	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, opts.Arenas)
+	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas)
 	if err != nil {
 		return nil, err
 	}

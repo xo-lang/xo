@@ -1,0 +1,395 @@
+// Request scoped arenas are the default (decision 0066). arena_escape
+// covers a Mutex, a channel, the response, and background tasks; this
+// program covers the other ways a value made during a request can outlive
+// it or be used beside it: a Go callback run on another goroutine (during
+// and after the request), a task.Once filled inside a handler, a streamed
+// body produced after the handler returned, a fault in the middle of a
+// handler, std/sql, in process dispatch (`r.call`) whose response is kept,
+// closures stored for later, and a client that gives up mid request. Every
+// handler below is confined (its request is arena memory) and builds
+// collection temporaries in the arena. Built with and without
+// `--no-arenas` the output is the same.
+use go "sync" as gosync
+use std/http
+use std/json
+use std/sql
+use std/task
+
+struct Item {
+  name: Str
+  tags: List[Str]
+} derive Json
+
+struct State {
+  go_bad: Int
+  go_runs: Int
+  late_runs: Int
+  once_bad: Int
+  inner: Map[Int, http.Response]
+  later: List[fn() -> Str]
+  slow: Map[Int, Str]
+  cached: Map[Str, http.Response]
+}
+
+const PORT = 18735
+const N = 24
+const CLIENTS = 3
+const SIZE = 150
+
+fn big(i: Int) -> Map[Int, Int] {
+  var m: Map[Int, Int] = {}
+  for k in 0..SIZE {
+    m.put(k, k * 3 + i)
+  }
+  m
+}
+
+// sum_of reads the map through an arena temporary (`values()` consumed
+// by `sort`)
+fn sum_of(m: Map[Int, Int]) -> Int {
+  m.values().sort().fold(0, fn(a, v) { a + v })
+}
+
+fn expected(i: Int) -> Int {
+  3 * (SIZE * (SIZE - 1) / 2) + SIZE * i
+}
+
+// spin reads big(i) through arena temporaries n times and counts wrong
+// results: two goroutines bump allocating in one arena would hand out the
+// same slots and mix their values
+fn spin(m: Map[Int, Int], i: Int, n: Int) -> Int {
+  var bad = 0
+  for _ in 0..n {
+    let xs = m.values().sort()
+    if xs.len() != SIZE || xs.first() != Some(i) || xs.last() != Some(3 * (SIZE - 1) + i) {
+      bad += 1
+    }
+    var keys = 0
+    for k in m.keys().reverse() {
+      keys += k
+    }
+    if keys != SIZE * (SIZE - 1) / 2 {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn show(l: List[Int]) -> Str {
+  l.map(fn(x) { "${x}" }).join(",")
+}
+
+fn name_of(i: Int) -> Str {
+  "item-${i}-" + "z".repeat(i % 23)
+}
+
+fn once_value() -> List[Int] {
+  big(1).values().sort()
+}
+
+fn routes(state: Mutex[State], once: task.Once[List[Int], Never], db: sql.Db, inner: http.Router, clock: Clock) -> http.Router {
+  var r = http.router()
+
+  // A Go callback: sync.WaitGroup.Go runs it on a goroutine of its own
+  // while the handler keeps computing; a second callback is not waited
+  // for and runs after the response.
+  r.handle("POST /go/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let it = req.json[Item]().ok() ?? Item{name: "?", tags: []}
+    let m = big(id)
+    let other = big(id + 1000)
+    let wg = gosync.WaitGroup.new()
+    wg.go_(fn() {
+      let bad = spin(other, id + 1000, 40)
+      state.with(fn(var s) {
+        s.go_bad += bad
+        s.go_runs += 1
+      })
+    })
+    let mine = spin(m, id, 40)
+    wg.wait()
+    let late = gosync.WaitGroup.new()
+    late.go_(fn() {
+      let bad = spin(other, id + 1000, 40)
+      state.with(fn(var s) {
+        s.go_bad += bad
+        s.late_runs += 1
+      })
+    })
+    http.json(200, {"name": it.name, "bad": "${mine}"})
+  })
+
+  // A task.Once filled by the first request that gets here: the value
+  // lives for the whole program while later requests reuse the arena.
+  r.handle("GET /once/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let v = once.get(fn() { once_value() })
+    let m = big(id)
+    let bad = spin(m, id, 5)
+    if v != once_value() {
+      state.with(fn(var s) { s.once_bad += 1 })
+    }
+    http.json(200, {"len": "${v.len()}", "bad": "${bad}"})
+  })
+
+  // A streamed body: the closure runs after the handler returned, on the
+  // request task, and builds temporaries of its own.
+  r.handle("GET /stream/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let m = big(id)
+    http.stream(200, fn(w) {
+      for k in m.keys().sort() {
+        if k % 50 == 0 {
+          w.write("${k}:".bytes())?
+        }
+      }
+      w.write("${sum_of(m)}".bytes())?
+    })
+  })
+
+  // A fault in the middle of a handler, after temporaries were made.
+  r.handle("GET /fault/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let m = big(id)
+    let xs = m.values().sort()
+    http.text(200, "${xs[SIZE + 1]}")
+  })
+
+  // std/sql keeps values from the request (body and header) in a table.
+  r.handle("POST /sql/{id:Int}", fn(req) -> http.Response ! sql.SqlErr {
+    let id = req.param_int("id")
+    let it = req.json[Item]().ok() ?? Item{name: "?", tags: []}
+    let tag = req.header("x-tag") ?? "none"
+    db.exec("INSERT INTO items (id, name, tag) VALUES ($1, $2, $3)", [sql.int(id), sql.str(it.name), sql.str(tag)])?
+    http.json(201, it)
+  })
+
+  // In process dispatch inside a request: the inner response is kept in a
+  // Mutex, and a closure that captures request values is stored to be
+  // called after every request has ended.
+  r.handle("GET /inner/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let tag = req.header("x-tag") ?? "none"
+    let resp = inner.call(http.new_request("GET", "/x/${id}"))
+    let first = big(id).keys().sort().first() ?? -1
+    state.with(fn(var s) {
+      s.inner.put(id, resp)
+      s.later.push(fn() { "${id}:${tag}:${first}" })
+    })
+    http.text(200, resp.text() ?? "")
+  })
+
+  // The client gives up before this handler answers; the handler goes on
+  // and keeps what it computed.
+  r.handle("POST /slow/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    let it = req.json[Item]().ok() ?? Item{name: "?", tags: []}
+    clock.sleep(150ms)
+    let m = big(id)
+    let s1 = sum_of(m)
+    state.with(fn(var s) { s.slow.put(id, "${it.name}|${s1}") })
+    http.json(200, it)
+  })
+
+  // Value semantics through temporaries: an element copied out of an
+  // arena temporary is a second header of the list the map holds, so
+  // writing it must copy (the map's list is unchanged).
+  r.handle("GET /vs/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    var m: Map[Int, List[Int]] = {}
+    m.put(1, [id, id])
+    var lists: Set[List[Int]] = #{}
+    lists.add([id])
+    var bad = 0
+    var a = m.values().first() ?? []
+    a[0] = -1
+    var b = m.values().find(fn(l) { l.len() == 2 }) ?? []
+    b[1] = -2
+    var c = m.values().fold([], fn(acc, l) { l })
+    c[0] = -3
+    var d = m.entries().last().map(fn(e) { e.1 }) ?? []
+    d[0] = -4
+    for l in m.values() {
+      var e = l
+      e[1] = -5
+      if e[1] != -5 {
+        bad += 1
+      }
+    }
+    var f = lists.to_list().get(0) ?? []
+    f[0] = -6
+    var g = m.values().reverse().first() ?? []
+    g[0] = -7
+    if m.get(1) != Some([id, id]) {
+      bad += 1
+    }
+    if !lists.contains([id]) {
+      bad += 1
+    }
+    http.text(200, "${bad} ${show(a)} ${show(b)} ${show(c)} ${show(d)} ${show(f)} ${show(g)}")
+  })
+
+  // A mounted router with middleware: its handler is confined and returns
+  // its response directly, and the middleware keeps that response (a
+  // cache) after the request ended.
+  var cached = http.router()
+  cached.wrap(fn(req, next) {
+    let resp = next(req)
+    state.with(fn(var s) { s.cached.put(req.path, resp) })
+    resp
+  })
+  cached.handle("GET /c/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    http.json(200, {"cached": "${id}", "sum": "${sum_of(big(id))}"})
+  })
+  r.mount("/m", cached)
+
+  r
+}
+
+fn inner_routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /x/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    http.json(200, {"inner": "${id}", "sum": "${sum_of(big(id))}"})
+  })
+  r
+}
+
+fn url(path: Str) -> Str {
+  "http://127.0.0.1:${PORT}${path}"
+}
+
+fn run_client(client: http.Client, c: Int) -> Int ! http.ClientErr {
+  var bad = 0
+  for j in 0..N {
+    let i = c * N + j + 1
+    let item = Item{name: name_of(i), tags: ["t${i}"]}
+    let body = json.encode_str(item).bytes()
+    let a = client.send(http.new_request("POST", url("/go/${i}"), body: body))?
+    if a.status != 200 || (a.text() ?? "") != json.encode_str({"name": item.name, "bad": "0"}) {
+      bad += 1
+    }
+    let b = client.get(url("/once/${i}"))?
+    if b.status != 200 || (b.text() ?? "") != json.encode_str({"len": "${SIZE}", "bad": "0"}) {
+      bad += 1
+    }
+    let s = client.get(url("/stream/${i}"))?
+    if s.status != 200 || (s.text() ?? "") != "0:50:100:${expected(i)}" {
+      bad += 1
+    }
+    let q = client.send(http.new_request("POST", url("/sql/${i}"), headers: {"x-tag": "tag${i}"}, body: body))?
+    if q.status != 201 || (q.text() ?? "") != json.encode_str(item) {
+      bad += 1
+    }
+    let n = client.send(http.new_request("GET", url("/inner/${i}"), headers: {"x-tag": "in${i}"}))?
+    if n.status != 200 || (n.text() ?? "") != json.encode_str({"inner": "${i}", "sum": "${expected(i)}"}) {
+      bad += 1
+    }
+    let mc = client.get(url("/m/c/${i}"))?
+    if mc.status != 200 || (mc.text() ?? "") != json.encode_str({"cached": "${i}", "sum": "${expected(i)}"}) {
+      bad += 1
+    }
+    let vs = client.get(url("/vs/${i}"))?
+    if vs.status != 200 || (vs.text() ?? "") != "0 -1,${i} ${i},-2 -3,${i} -4,${i} -6 -7,${i}" {
+      bad += 1
+    }
+    if j % 8 == 0 {
+      let f = client.get(url("/fault/${i}"))?
+      if f.status != 500 {
+        bad += 1
+      }
+    }
+  }
+  bad
+}
+
+fn main(os: Os) ! {
+  let state = Mutex.new(State{go_bad: 0, go_runs: 0, late_runs: 0, once_bad: 0, inner: {}, later: [], slow: {}, cached: {}})
+  let once: task.Once[List[Int], Never] = task.once()
+  let db = sql.memory("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tag TEXT NOT NULL);")?
+  let client = http.client(os.net, timeout: 5s)
+  let impatient = http.client(os.net, timeout: 40ms)
+  let srv = http.server(os.net.listen("127.0.0.1:${PORT}")?, routes(state, once, db, inner_routes(), os.clock))
+  var bad_responses = 0
+  var timeouts = 0
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    os.clock.sleep(100ms)
+    let hs = scope c {
+      var handles: List[Task[Int, http.ClientErr]] = []
+      for k in 0..CLIENTS {
+        handles.push(c.spawn(fn() { run_client(client, k) }))
+      }
+      var sum = 0
+      for h in handles {
+        sum += h.await?
+      }
+      sum
+    }
+    bad_responses = hs
+    for i in 1..=6 {
+      let item = Item{name: name_of(1000 + i), tags: []}
+      match impatient.send(http.new_request("POST", url("/slow/${i}"), body: json.encode_str(item).bytes())) {
+        Ok(_) => {}
+        Err(_) => timeouts += 1
+      }
+    }
+    // the late Go callbacks and the slow handlers finish after their
+    // responses (or the client's timeout); the server stops with the scope
+    var waited = 0
+    while waited < 1000 && state.with(fn(s) { s.late_runs }) < CLIENTS * N {
+      os.clock.sleep(5ms)
+      waited += 1
+    }
+    os.clock.sleep(400ms)
+  }
+  let total = CLIENTS * N
+  let st = state.with(fn(s) { s })
+  var bad_kept = 0
+  for i in 1..=total {
+    match st.inner.get(i) {
+      Some(resp) => if (resp.text() ?? "") != json.encode_str({"inner": "${i}", "sum": "${expected(i)}"}) { bad_kept += 1 }
+      None => bad_kept += 1
+    }
+    let row = db.query_one("SELECT name, tag FROM items WHERE id = $1", [sql.int(i)])?
+    if row.str("name")? != name_of(i) || row.str("tag")? != "tag${i}" {
+      bad_kept += 1
+    }
+  }
+  var later: Set[Str] = #{}
+  for f in st.later {
+    later.add(f())
+  }
+  var bad_later = 0
+  for i in 1..=total {
+    if !later.contains("${i}:in${i}:0") {
+      bad_later += 1
+    }
+  }
+  var bad_cached = 0
+  for i in 1..=total {
+    match st.cached.get("/m/c/${i}") {
+      Some(resp) => if (resp.text() ?? "") != json.encode_str({"cached": "${i}", "sum": "${expected(i)}"}) { bad_cached += 1 }
+      None => bad_cached += 1
+    }
+  }
+  // a request the client gave up on before sending it never ran: only
+  // the slow handlers that ran are checked
+  var bad_slow = 0
+  for i in 1..=6 {
+    match st.slow.get(i) {
+      Some(v) => if v != "${name_of(1000 + i)}|${expected(i)}" { bad_slow += 1 }
+      None => {}
+    }
+  }
+  let ov = once.get(fn() { [] })
+  os.stdio.println("requests ${total * 7 + CLIENTS * 3}")
+  os.stdio.println("bad responses ${bad_responses}")
+  os.stdio.println("go callbacks ${st.go_runs} late ${st.late_runs} bad ${st.go_bad}")
+  os.stdio.println("once ${ov == once_value()} bad ${st.once_bad}")
+  os.stdio.println("bad kept ${bad_kept} of ${st.inner.len()}")
+  os.stdio.println("bad later ${bad_later} of ${later.len()}")
+  os.stdio.println("bad cached ${bad_cached} of ${st.cached.len()}")
+  os.stdio.println("slow timeouts ${timeouts} bad ${bad_slow}")
+}

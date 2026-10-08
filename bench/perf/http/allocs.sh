@@ -17,7 +17,9 @@
 # and GCs per 10k requests (GOGC=100; at one connection the live heap is
 # smaller than under run.sh's 32, so this GC count is a lower bound).
 #
-# Environment: CONFIGS ("go xo"; also xo-arenas, xo-base with $XO_BASE),
+# Environment: CONFIGS ("go xo xo-arenas"; xo builds with --no-arenas,
+# xo-arenas with the default request arenas of decision 0066; xo-base with
+# the binary in $XO_BASE and its default),
 # ROUTES ("get list patch createdel cycle"), N1 (500), N2 (5500), PRELOAD
 # (64), PORT (18190, apart from run.sh's 18080), XO, PERF_OUT.
 set -eu
@@ -25,7 +27,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 out=${PERF_OUT:-$(mktemp -d)}
 mkdir -p "$out"
-configs=${CONFIGS:-go xo}
+configs=${CONFIGS:-go xo xo-arenas}
 routes=${ROUTES:-get list patch createdel cycle}
 n1=${N1:-500}
 n2=${N2:-5500}
@@ -37,8 +39,8 @@ xo=${XO:-$root/.tools/bin/xo}
 for c in $configs; do
 	case $c in
 	go) (cd "$here/go" && go build -o "$out/srv-go" .) ;;
-	xo) "$xo" build -o "$out/srv-xo" "$here/xo" >/dev/null ;;
-	xo-arenas) "$xo" build --arenas -o "$out/srv-xo-arenas" "$here/xo" >/dev/null ;;
+	xo) "$xo" build --no-arenas -o "$out/srv-xo" "$here/xo" >/dev/null ;;
+	xo-arenas) "$xo" build -o "$out/srv-xo-arenas" "$here/xo" >/dev/null ;;
 	xo-base) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build -o "$out/srv-xo-base" "$here/xo" >/dev/null ;;
 	*) echo "unknown config $c" >&2; exit 2 ;;
 	esac

@@ -58,8 +58,8 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 			return nil, fmt.Errorf("the LLVM backend builds for the host (%s) only, not %s", Host(), t)
 		}
 	}
-	if opts.Race || opts.Arenas || opts.Holes {
-		return nil, fmt.Errorf("the LLVM backend does not support --race, --arenas, or --holes")
+	if opts.Race || opts.Holes {
+		return nil, fmt.Errorf("the LLVM backend does not support --race or --holes")
 	}
 	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes})
 	if err != nil {

@@ -1,9 +1,10 @@
 # A handler that lets its request escape gets no arena
 
-Status: Anticipated (2026-10-08, `xo build --arenas`)
+Status: Anticipated (2026-10-08, request scoped arenas; on by default
+since decision 0066)
 
-Symptom: building with `--arenas` makes no difference for one route, or
-a service gets slower than expected with arenas on.
+Symptom: arenas (the default; compare with `--no-arenas`) make no
+difference for one route, or a service gets slower than expected.
 
 Cause: the request of a route is arena memory only when internal/gen
 proves its handler confines it (`confinesReq` in `internal/gen/arena.go`):
@@ -14,7 +15,9 @@ the handler must be a closure literal passed to `r.handle`, and it may use
 nested closure. Passing `req` to a helper function, reading `req.headers`
 or `req.body` directly, capturing `req` in a closure, or a router with
 middleware (`r.wrap`) makes dispatch copy the request to the heap
-(`heapCopy`), which costs a little more than no arena at all. The same
+(`heapCopy`), which costs a little more than no arena at all. Reading a
+typed request value (`req.value(k)`) also counts as escaping. A mounted
+router with middleware also builds heap responses (decision 0066). The same
 holds for responses: only `http.json`/`http.text` whose value is directly
 the handler's result are arena responses; `http.json(..).with_header(..)`
 or a response bound to a `let` first is a heap response.

@@ -51,6 +51,19 @@ func (e Go_Error) XoEq(o any) bool {
 // XoHash hashes the error text.
 func (e Go_Error) XoHash() uint64 { return maphash.String(hashSeed, e.msg) ^ 0x67 }
 
+// GoCallbackTask is the task an Xo function passed to Go as a callback
+// runs with. Go may call it on another goroutine, while the request that
+// passed it still runs or after it ended (sync.WaitGroup.Go, a timer), so
+// it must not carry the request's arena: an arena is used by one goroutine
+// at a time (arena.go; decision 0066, hole 2). A request task gets a copy
+// without it; any other task is returned as is.
+func GoCallbackTask(tk *Task) *Task {
+	if tk == nil || tk.arena == nil {
+		return tk
+	}
+	return &Task{node: tk.node, shield: tk.shield, held: tk.held, w: tk.w, stop: tk.stop, th: tk.th}
+}
+
 // GoBoundary is deferred by every adapter: a Go panic becomes an Xo fault
 // located at the calling .xo line. A fault raised by an Xo callback that
 // the Go code called passes through unchanged.
