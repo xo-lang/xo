@@ -1,0 +1,41 @@
+{
+  "op": "add-field",
+  "target": "users.User",
+  "ok": false,
+  "written": false,
+  "reason": "the edited program does not check clean",
+  "files": [
+    "users/users.xo"
+  ],
+  "edits": 3,
+  "diagnostics": [
+    {
+      "code": "XO0401",
+      "severity": "error",
+      "message": "expected `Int`, found `Str`",
+      "span": {
+        "file": "users/users.xo",
+        "line": 10,
+        "col": 36,
+        "end_line": 10,
+        "end_col": 41
+      },
+      "notes": [],
+      "fixes": []
+    },
+    {
+      "code": "XO0401",
+      "severity": "error",
+      "message": "expected `Int`, found `Str`",
+      "span": {
+        "file": "users/users.xo",
+        "line": 21,
+        "col": 14,
+        "end_line": 21,
+        "end_col": 19
+      },
+      "notes": [],
+      "fixes": []
+    }
+  ]
+}

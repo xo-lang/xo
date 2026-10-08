@@ -48,3 +48,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 
 - [0042-two-phase-shutdown.md](0042-two-phase-shutdown.md): first signal requests a stop, cancellation after a grace period.
 - [0043-channel-loops-once-deadline-map.md](0043-channel-loops-once-deadline-map.md): `for x in ch`, `task.Once`, `map_concurrent_until`.
+- [0044-semantic-edit-rules.md](0044-semantic-edit-rules.md): `xo edit` resolves through the checker, rechecks before writing, add-field backfills literals, change-sig keeps argument order.

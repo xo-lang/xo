@@ -118,7 +118,7 @@ func TestMCPSession(t *testing.T) {
 			t.Errorf("tool %v has no object input schema", m["name"])
 		}
 	}
-	for _, n := range []string{"check", "query", "explain", "fmt", "test", "build"} {
+	for _, n := range []string{"check", "query", "edit", "explain", "fmt", "test", "build"} {
 		if !names[n] {
 			t.Errorf("tools/list lacks %s: %v", n, names)
 		}
@@ -137,6 +137,12 @@ func TestMCPSession(t *testing.T) {
 	def, isErr := c.tool("query", map[string]any{"kind": "def", "arg": "g", "dir": dir})
 	if isErr || !strings.Contains(fmt.Sprint(def), "fn g() -> Int ! E") {
 		t.Errorf("query def = %v", def)
+	}
+
+	// The module has an error, so the edit is rejected with it.
+	ed, isErr := c.tool("edit", map[string]any{"op": "rename", "args": []string{"g", "h"}, "dir": dir, "dry_run": true})
+	if isErr || ed["ok"] != false || !strings.Contains(fmt.Sprint(ed["reason"]), "before the edit") {
+		t.Errorf("edit = %v", ed)
 	}
 
 	ex, isErr := c.tool("explain", map[string]any{"code": "XO0201"})

@@ -1,0 +1,24 @@
+{
+  "op": "add-field",
+  "target": "users.User",
+  "ok": false,
+  "written": false,
+  "reason": "the new field has no default and the type has struct literals",
+  "files": [],
+  "edits": 0,
+  "diagnostics": [],
+  "sites": [
+    {
+      "file": "users/users.xo",
+      "line": 9,
+      "col": 3,
+      "reason": "struct literal needs a value for created"
+    },
+    {
+      "file": "users/users.xo",
+      "line": 17,
+      "col": 3,
+      "reason": "struct literal needs a value for created"
+    }
+  ]
+}

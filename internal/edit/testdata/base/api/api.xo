@@ -1,0 +1,9 @@
+use example.com/app/users
+
+pub fn get(id: Int) -> Str {
+  let u = users.fetch_user(id)
+  let v = users.lookup(id, "x")
+  let w = users.lookup(name: "y", id: users.MAX_ID)
+  let f = users.fetch_user
+  u.display_name() + v.display_name() + w.name + f(2).name
+}

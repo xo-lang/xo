@@ -53,6 +53,8 @@ go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical lay
 go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
 go run ./cmd/xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]  # apply check fixes, migrate
 go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api (core 10.3)
+go run ./cmd/xo edit [--dry-run] [--dir=<dir>] <op> <args...>   # rename, add-field, change-sig (core 10.4); JSON summary, exit 1 when rejected
+go test ./internal/edit -run TestGolden -update          # rewrite internal/edit/testdata/*.golden
 go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
 go run ./cmd/xo mcp                                              # MCP server on stdio for agents (see "Agent interfaces")
@@ -192,6 +194,19 @@ diagnostics), `api <module path or dir>` (pub declarations outside test
 files; struct signatures show only pub fields and no invariant). JSON is
 the default when stdout is not a terminal (`--text` forces text);
 unknown names exit 1, usage errors 2.
+
+`xo edit` (2026-10-08, `internal/edit`, decision 0044) checks `--dir`
+(default `.`), resolves the target with `query.Session.Objects`, collects
+every reference from the checker's records (`Info.CallOf`, `Info.Ref`,
+`Info.TypeOf` of struct literals, `Info.VarOf` of parameters), applies the
+edits in memory, rechecks with `check.CheckOverlay`, and only then writes
+all files (temporary file plus rename per file). Files that were in
+canonical layout are reformatted. Always prints the JSON summary `{op,
+target, ok, written, reason, files, edits, diagnostics, sites}`; exit 0
+when applied (or checked with `--dry-run`), 1 when rejected (nothing
+written), 2 on usage errors (unknown name, bad signature). Limits: rename
+covers functions, methods, and constants, not types, fields, or interface
+methods; change-sig takes no clauses (`uses`, `requires`).
 
 `xo doc` (2026-10-08, `internal/doc`) prints Markdown for the root modules
 under a directory (default `.`) or one module by import path (`--dir`):
@@ -476,6 +491,7 @@ internal/format/        canonical printer for `xo fmt`; format.Decl prints signa
 internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901, XO1103)
 internal/fix/           `xo fix`: the check fix loop and the migration rewriter registry
 internal/query/         `xo query` over a check run; Surface is shared with internal/doc
+internal/edit/          `xo edit`: rename, add-field, change-sig through resolved symbols
 internal/mcp/           `xo mcp`: MCP (JSON-RPC 2.0 over stdio) tools check, query, explain, fmt, test, build
 internal/serve/         `xo serve`: unix socket server, cache of checked sessions keyed by file mtimes
 internal/doc/           `xo doc` Markdown and JSON documentation
@@ -960,6 +976,7 @@ result (`isError` true for usage errors):
 |---|---|---|
 | `check` | `dirs` | `{ok, errors, warnings, modules, diagnostics}` (diagnostics with notes and fixes, core 10.2) |
 | `query` | `kind` (type, def, callers, effects, holes, api), `arg`, `dir` | the `xo query --json` answer |
+| `edit` | `op` (rename, add-field, change-sig), `args`, `dir`, `dry_run` | the `xo edit` summary `{op, target, ok, written, reason, files, edits, diagnostics, sites}` |
 | `explain` | `code` | `{code, severity, title, summary, detail, example, fix}` |
 | `fmt` | `paths`, `write` (default false: report only) | `{changed, unchanged, written, diagnostics}` |
 | `test` | `dirs`, `run`, `seed`, `holes` | `{ok, passed, failed, skipped, failures}`; `errors` (human text) when the tests do not build |

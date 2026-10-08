@@ -1,0 +1,35 @@
+{
+  "op": "add-field",
+  "target": "users.User",
+  "ok": true,
+  "written": true,
+  "files": [
+    "users/users.xo"
+  ],
+  "edits": 3,
+  "diagnostics": []
+}
+-- users/users.xo --
+pub struct User {
+  pub id: Int
+  pub name: Str
+  created: Int
+}
+
+pub const MAX_ID: Int = 1000
+
+pub fn fetch_user(id: Int) -> User {
+  User{id: id, name: "u", created: 0}
+}
+
+pub fn (u: User) display_name() -> Str {
+  u.name
+}
+
+pub fn lookup(id: Int, name: Str) -> User {
+  User{
+    id: id,
+    name: name,
+    created: 0,
+  }
+}

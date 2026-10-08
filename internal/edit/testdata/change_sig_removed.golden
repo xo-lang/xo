@@ -1,0 +1,24 @@
+{
+  "op": "change-sig",
+  "target": "users.lookup",
+  "ok": false,
+  "written": false,
+  "reason": "some call sites cannot be rewritten mechanically",
+  "files": [],
+  "edits": 0,
+  "diagnostics": [],
+  "sites": [
+    {
+      "file": "api/api.xo",
+      "line": 5,
+      "col": 11,
+      "reason": "passes an argument for removed parameter name"
+    },
+    {
+      "file": "api/api.xo",
+      "line": 6,
+      "col": 11,
+      "reason": "passes an argument for removed parameter name"
+    }
+  ]
+}

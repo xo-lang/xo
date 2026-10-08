@@ -1311,7 +1311,7 @@ xo query holes
 xo query api github.com/acme/billing   // exported surface of a module
 ```
 
-### 10.4 Semantic edits [P2]
+### 10.4 Semantic edits [P1: rename, add-field, change-sig]
 
 ```
 xo edit rename users.fetch_user users.load_user
@@ -1321,6 +1321,28 @@ xo edit change-sig users.load_user "(db: Db, id: UserId) -> User ! LoadErr"
 
 Edits update every reference atomically and are rejected if the result does
 not type check.
+
+- References are found through the checker's resolved symbols, never by
+  text search. An edit of a program that does not check clean is rejected
+  before anything is computed.
+- `rename` renames a function, method, or constant and every call and use
+  as a value. The new name may repeat the target's qualifier.
+- `add-field` adds `name: Type` to the struct declaration and
+  `name: default` to every struct literal of the type. The default is a
+  migration value; it is not kept as a declared field default. Without
+  `= default` the edit is rejected when struct literals exist.
+- `change-sig` replaces the parameter list, result, and error type (not
+  the clauses). Call arguments are matched to the new parameters by name;
+  a parameter renamed in place keeps its position, and its uses in the body
+  are renamed. New parameters with a default need no argument. A call that
+  passes an argument for a removed parameter, or lacks one for a new
+  parameter without a default, rejects the edit, listing those call sites.
+  Arguments keep their order (and so their evaluation order); arguments
+  that no longer match their position become named.
+- The result is a JSON summary: `{op, target, ok, written, reason, files,
+  edits, diagnostics, sites}`. `diagnostics` holds the errors that rejected
+  the edit; `sites` the call sites or literals that blocked it. `--dry-run`
+  checks the edit without writing.
 
 ### 10.5 Formatting
 

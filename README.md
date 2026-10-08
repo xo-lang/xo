@@ -92,6 +92,7 @@ The module path is `github.com/xo-lang/xo` (local name; see
 | `xo fmt [--check]` | Canonical formatting, no options |
 | `xo vet` | Advisory checks |
 | `xo query <type\|def\|callers\|effects\|holes\|api>` | Semantic queries for tools and agents |
+| `xo edit <rename\|add-field\|change-sig>` | Semantic edits through resolved symbols, rechecked before writing |
 | `xo doc`, `xo explain <code>` | Documentation and diagnostic explanations |
 | `xo bind <go package>` | Bindings for `use go "<package>"` |
 | `xo dump <pid>` | Task tree of a running program |
