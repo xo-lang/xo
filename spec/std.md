@@ -530,8 +530,13 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?          // case insensitive
+fn (r: Response) text() -> Str?                     // the body as text; None if not valid UTF-8
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 ```
+
+`text` and `decode_json` read the whole body, collecting a streamed one
+first; `text` is `r.body.to_str()` for a body that is not streamed. In
+tests: `expect(resp.text()) == Some("ok")`, or `resp.text() ?? ""`.
 
 Typed request values (decision 0055) let a middleware hand a value to the
 handlers behind it without encoding it in a header. `with_value` returns a

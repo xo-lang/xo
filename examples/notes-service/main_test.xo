@@ -14,10 +14,6 @@ fn authed(method: Str, url: Str, token: Str, body: Str = "") -> http.Request {
   http.new_request(method, url, headers: {"Authorization": "Bearer ${token}"}, body: body.bytes())
 }
 
-fn body_of(resp: http.Response) -> Str {
-  resp.body.to_str() ?? ""
-}
-
 test "health needs no token" {
   let r = routes(setup()?, os.clock)
   let resp = r.call(http.new_request("GET", "/health"))
@@ -31,7 +27,7 @@ test "missing, malformed, and unknown tokens are 401" {
   expect(r.call(http.new_request("GET", "/notes", headers: {"Authorization": "Bearer "})).status) == 401
   let resp = r.call(authed("GET", "/notes", "nope"))
   expect(resp.status) == 401
-  expect(body_of(resp)) == "{\"error\":\"missing or invalid bearer token\"}"
+  expect(resp.text()) == Some("{\"error\":\"missing or invalid bearer token\"}")
 }
 
 test "identity comes only from the token, never from the client" {
@@ -55,7 +51,7 @@ test "the auth middleware hands handlers a typed user" {
     let u = current_user(req)?
     http.text(200, "${u.id} ${u.name}")
   })
-  expect(body_of(r.call(authed("GET", "/whoami", "tok-bob")))) == "2 bob"
+  expect(r.call(authed("GET", "/whoami", "tok-bob")).text()) == Some("2 bob")
   expect(r.call(http.new_request("GET", "/whoami")).status) == 401
 }
 
@@ -113,7 +109,7 @@ test "notes are private to their owner" {
   let n = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"secret\"}")).decode_json[Note]()?
   let resp = r.call(authed("GET", "/notes/${n.id}", "tok-bob"))
   expect(resp.status) == 404
-  expect(body_of(resp)) == "{\"error\":\"note ${n.id} not found\"}"
+  expect(resp.text()) == Some("{\"error\":\"note ${n.id} not found\"}")
   expect(r.call(authed("DELETE", "/notes/${n.id}", "tok-bob")).status) == 404
 }
 

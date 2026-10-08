@@ -506,6 +506,12 @@ func (r Http_Response) M_header(_ *Task, name string) Option[string] {
 	return headerGet(r.F_headers, name)
 }
 
+// M_text is `resp.text()`: the body as text, None if it is not valid
+// UTF-8. A streamed body is collected first.
+func (r Http_Response) M_text(tk *Task) Option[string] {
+	return Bytes_to_str(tk, r.collect(tk).F_body)
+}
+
 // Http_Response_decode_json is `resp.decode_json[T]()`.
 func Http_Response_decode_json[T any](tk *Task, r Http_Response) Result[T, Json_DecodeErr] {
 	return Json_decode[T](tk, r.collect(tk).F_body)
