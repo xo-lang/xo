@@ -37,6 +37,27 @@ themselves by value, and generic functions.
   recursively. A chain of closures capturing closures (or of boxes, see
   below) is freed with a worklist instead of the C stack.
 
+### Recursive types
+- A field of a user struct or enum whose type contains that struct or
+  enum by value (directly or through structs, enums, and tuples) has
+  type `Box[T]`: a pointer to an immutable counted cell `{rc, T}`. The
+  builder decides while lowering the type: types are interned when
+  first met, so the first type of any cycle to start construction sees
+  the whole cycle when its field into it completes, and boxes exactly
+  that field (`Node.next: Box[Node?]`, `Expr.Add(a: Box[Expr], ...)`).
+  Prelude enums (Option, Result) are never boxed themselves.
+- `box` copies a value into a new box (consumes it); `unbox` reads it (a
+  projection that borrows the box). Every read of such a field or
+  payload unboxes; every store boxes (`coerce`), so the rest of the
+  builder never sees boxes. Boxes are immutable: an update rebuilds the
+  enclosing value with a new box, so sharing a box between copies is
+  value semantics, and no uniqueness check is needed.
+- A box whose count reaches zero is dropped through `xo_rc_defer` (as
+  closure environments): releasing a 1,000,000 node chain uses the
+  worklist, not 1,000,000 nested calls.
+- `==` compares boxes by contents (equal pointers short cut); it still
+  recurses once per level of nesting.
+
 ### Generics
 - Monomorphized in the SSA builder, before the IR exists: `declare`
   takes the concrete type arguments of a call (`check.Call.Subst`,
@@ -60,7 +81,11 @@ themselves by value, and generic functions.
 - `var` parameters of function values and methods as values are not
   supported (the builder reports them).
 - The goldens with generic structs, methods, and functions take the SSA
-  path (`misc`, `rc_generics`).
+  path (`misc`, `rc_generics`), and so do those with recursive types
+  (`recursion`, `value_semantics`, `generics`, `rc_recursive`).
+- Equality of deeply nested recursive values recurses on the C stack
+  (one frame per level); an explicit stack for `xo.eq` is the fix if a
+  program compares long chains.
 
 ## Alternatives
 - **Closure conversion to a struct of captures passed by value**: no

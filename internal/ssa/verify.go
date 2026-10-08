@@ -370,6 +370,14 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 				return fmt.Sprintf("capture %d has the wrong type", i)
 			}
 		}
+	case OpBox:
+		if nargs(1) != "" || v.Type == nil || v.Type.Kind != KBox || v.Type.Elems[0] != arg(0) {
+			return "box takes T to Box[T]"
+		}
+	case OpUnbox:
+		if nargs(1) != "" || arg(0).Kind != KBox || v.Type != arg(0).Elems[0] {
+			return "unbox takes Box[T] to T"
+		}
 	case OpCapture:
 		i, ok := v.Aux.(int)
 		if !ok || nargs(1) != "" || !f.Indirect || v.Args[0] != f.Params()[0] || i < 0 || i >= len(f.Captures) || v.Type != f.Captures[i] {

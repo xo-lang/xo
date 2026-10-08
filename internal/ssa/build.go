@@ -68,7 +68,7 @@ type builder struct {
 // `const`, `first`, `last`, `for (i, x) in xs.indexed()`, and the
 // `if let x = opt` shorthand, closures and named functions as values
 // (decision 0048), and generics (monomorphized: one Func per list of
-// type arguments). Not yet: recursive types.
+// type arguments), and recursive types (recursive fields are boxed).
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -218,7 +218,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			if created {
 				sub := check.NewSubst(obj.TParams, r.Args)
 				for _, f := range obj.Fields {
-					x.Fields = append(x.Fields, Field{f.Name, b.typ(sub.Apply(f.Type), at)})
+					x.Fields = append(x.Fields, Field{f.Name, b.boxed(b.typ(sub.Apply(f.Type), at), x)})
 				}
 			}
 			return x
@@ -233,7 +233,11 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 						if fn == "" {
 							fn = strconv.Itoa(i)
 						}
-						nv.Fields = append(nv.Fields, Field{fn, b.typ(sub.Apply(f.Type), at)})
+						ft := b.typ(sub.Apply(f.Type), at)
+						if obj.Module == nil || !obj.Module.IsPrelude {
+							ft = b.boxed(ft, x)
+						}
+						nv.Fields = append(nv.Fields, Field{fn, ft})
 					}
 					x.Variants = append(x.Variants, nv)
 				}
@@ -245,6 +249,56 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 	}
 	b.unsupported(at, "the type `"+t.String()+"`")
 	return m.Builtin(KUnit)
+}
+
+// boxed returns the type of a field of type ft of the user struct or
+// enum x (under construction): Box[ft] when ft contains x by value (a
+// recursive type), else ft. Types are interned when first met, so for
+// any cycle of types the first one to start construction sees the
+// whole cycle when its field into it completes, and boxes that field
+// (decision 0048).
+func (b *builder) boxed(ft, x *Type) *Type {
+	if containsByValue(ft, x, map[*Type]bool{}) {
+		return b.mod.Box(ft)
+	}
+	return ft
+}
+
+// containsByValue reports whether a value of type t holds a value of
+// type x inline (through struct fields, enum payloads, and tuple
+// elements, not through lists, boxes, or function values). seen is a
+// visited set: this is a reachability question.
+func containsByValue(t, x *Type, seen map[*Type]bool) bool {
+	if t == x {
+		return true
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch t.Kind {
+	case KStruct:
+		for _, f := range t.Fields {
+			if containsByValue(f.Type, x, seen) {
+				return true
+			}
+		}
+	case KEnum:
+		for _, v := range t.Variants {
+			for _, f := range v.Fields {
+				if containsByValue(f.Type, x, seen) {
+					return true
+				}
+			}
+		}
+	case KTuple:
+		for _, e := range t.Elems {
+			if containsByValue(e, x, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -551,6 +605,15 @@ func (s *fn) unit() *Value { return s.add(OpTuple, s.b.mod.Builtin(KUnit), nil) 
 
 func (s *fn) undef(t *Type) *Value { return s.add(OpUndef, t, nil) }
 
+// unbox reads the value out of a Box (a field of a recursive type);
+// other values are returned as they are.
+func (s *fn) unbox(v *Value) *Value {
+	if v.Type.Kind != KBox {
+		return v
+	}
+	return s.add(OpUnbox, v.Type.Elems[0], nil, v)
+}
+
 func (s *fn) cint(n int64) *Value { return s.add(OpConst, s.b.mod.Builtin(KInt), n) }
 
 func (s *fn) bool(x bool) *Value { return s.add(OpConst, s.b.mod.Builtin(KBool), x) }
@@ -671,6 +734,9 @@ func (s *fn) coerce(v *Value, t *Type, at ast.Node) *Value {
 			return s.undef(t)
 		}
 		return v
+	}
+	if t.Kind == KBox {
+		return s.add(OpBox, t, nil, s.coerce(v, t.Elems[0], at))
 	}
 	if t.Kind == KEnum {
 		if i := t.VariantIndex("Some"); i >= 0 && len(t.Variants[i].Fields) == 1 && t.Variants[i].Fields[0].Type == v.Type {

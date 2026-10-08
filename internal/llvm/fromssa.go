@@ -18,6 +18,7 @@ import (
 //     literals are globals with an immortal count;
 //   - a List is a ptr to {i64 rc, i64 len, i64 cap} and the elements;
 //   - structs and tuples are LLVM structs, enums {i64 tag, [N x i64]};
+//   - a Box[T] (a field of a recursive type) is a ptr to {i64 rc, T};
 //   - a function value is {ptr code, ptr env}; env is null or points to
 //     {i64 rc, ptr drop, captures...}, where drop releases the captures
 //     and frees env; code takes the function value and the arguments;
@@ -163,8 +164,8 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 
 func fail(format string, args ...any) { panic(&errSSA{fmt.Sprintf(format, args...)}) }
 
-// checkType rejects recursive types (they need boxes, which the SSA
-// lowering does not have yet).
+// checkType rejects types that contain themselves by value (the SSA
+// builder boxes recursive fields, so none should reach here).
 func (g *sgen) checkType(t *ssa.Type, path map[*ssa.Type]bool) {
 	if path == nil {
 		path = map[*ssa.Type]bool{}
@@ -192,7 +193,7 @@ func (g *sgen) checkType(t *ssa.Type, path map[*ssa.Type]bool) {
 	case ssa.KList:
 		g.checkType(t.Elems[0], path)
 	}
-	// a function value's environment is on the heap: no recursion by value
+	// boxes and function values are on the heap: no recursion by value
 }
 
 func (g *sgen) fname(n string) string { return "@" + strconv.Quote("x."+n) }
@@ -215,6 +216,8 @@ func (g *sgen) ll(t *ssa.Type) string {
 		return "ptr"
 	case ssa.KFunc:
 		return "{ ptr, ptr }"
+	case ssa.KBox:
+		return "ptr"
 	case ssa.KTuple:
 		var es []string
 		for _, e := range t.Elems {
@@ -265,7 +268,7 @@ func (g *sgen) layout(t *ssa.Type) (int64, int64) {
 	switch t.Kind {
 	case ssa.KUnit, ssa.KCap:
 		return 0, 1
-	case ssa.KInt, ssa.KFloat, ssa.KList:
+	case ssa.KInt, ssa.KFloat, ssa.KList, ssa.KBox:
 		return 8, 8
 	case ssa.KBool:
 		return 1, 1
@@ -374,7 +377,7 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 	lt := g.ll(t)
 	attr := "#1"
 	switch t.Kind {
-	case ssa.KStr, ssa.KList, ssa.KFunc:
+	case ssa.KStr, ssa.KList, ssa.KFunc, ssa.KBox:
 		attr = "#4"
 	}
 	fmt.Fprintf(&b, "define internal void %s(%s %%x) %s {\n", name, lt, attr)
@@ -402,6 +405,20 @@ func (g *sgen) rcFn(kind string, t *ssa.Type) string {
 			et := t.Elems[0]
 			fmt.Fprintf(&b, "free:\n  call void @xo_rl_free(ptr %s, i64 %d, ptr %s)\n  ret void\n", obj, g.size(et), g.elemFn("drop", et))
 		}
+	case ssa.KBox:
+		c := tmp()
+		fmt.Fprintf(&b, "  %s = load i64, ptr %%x%s\n", c, tbaaRC)
+		if kind == "dup" {
+			c1 := tmp()
+			fmt.Fprintf(&b, "  %s = add i64 %s, 1\n  store i64 %s, ptr %%x%s\n  ret void\n", c1, c, c1, tbaaRC)
+			break
+		}
+		one := tmp()
+		fmt.Fprintf(&b, "  %s = icmp eq i64 %s, 1\n  br i1 %s, label %%free, label %%dec\n", one, c, one)
+		c1 := tmp()
+		fmt.Fprintf(&b, "dec:\n  %s = sub i64 %s, 1\n  store i64 %s, ptr %%x%s\n  ret void\n", c1, c, c1, tbaaRC)
+		// deferred: a long chain of boxes is freed with a worklist
+		fmt.Fprintf(&b, "free:\n  call void @xo_rc_defer(ptr %%x, ptr %s)\n  ret void\n", g.boxDropFn(t))
 	case ssa.KFunc:
 		// the environment: null for a closure without captures
 		env := tmp()
@@ -501,6 +518,32 @@ func (g *sgen) elemFn(kind string, t *ssa.Type) string {
 	return name
 }
 
+// boxLL is the LLVM type of the cell of a Box[T]: {i64 rc, T}.
+func (g *sgen) boxLL(t *ssa.Type) string {
+	return "{ i64, " + g.ll(t.Elems[0]) + " }"
+}
+
+// boxDropFn returns the function that releases the contents of a box
+// whose count reached zero and frees it.
+func (g *sgen) boxDropFn(t *ssa.Type) string {
+	name := "@" + strconv.Quote("xo.boxdrop."+t.Name)
+	if g.emitted[name] {
+		return name
+	}
+	g.emitted[name] = true
+	et := t.Elems[0]
+	var b strings.Builder
+	fmt.Fprintf(&b, "define internal void %s(ptr %%p) #1 {\n", name)
+	if et.Heap() {
+		fmt.Fprintf(&b, "  %%vp = getelementptr %s, ptr %%p, i32 0, i32 1\n", g.boxLL(t))
+		fmt.Fprintf(&b, "  %%v = load %s, ptr %%vp\n", g.ll(et))
+		fmt.Fprintf(&b, "  call void %s(%s %%v)\n", g.rcFn("drop", et), g.ll(et))
+	}
+	b.WriteString("  call void @xo_rc_free(ptr %p)\n  ret void\n}\n\n")
+	g.helpers.WriteString(b.String())
+	return name
+}
+
 // envLL is the LLVM type of the environment of Indirect function f:
 // {i64 rc, ptr drop, captures...}.
 func (g *sgen) envLL(f *ssa.Func) string {
@@ -570,6 +613,18 @@ func (g *sgen) eqFn(t *ssa.Type) string {
 	lt := g.ll(t)
 	var allocas strings.Builder
 	switch t.Kind {
+	case ssa.KBox:
+		// the same cell, or equal contents
+		et := t.Elems[0]
+		same := def("icmp eq ptr %%a, %%b")
+		emit("br i1 %s, label %%yes, label %%cmp", same)
+		w.WriteString("cmp:\n")
+		pa := def("getelementptr %s, ptr %%a, i32 0, i32 1", g.boxLL(t))
+		pb := def("getelementptr %s, ptr %%b, i32 0, i32 1", g.boxLL(t))
+		x := def("load %s, ptr %s", g.ll(et), pa)
+		y := def("load %s, ptr %s", g.ll(et), pb)
+		emit("ret i1 %s", eq(et, x, y))
+		w.WriteString("yes:\n  ret i1 true\n")
 	case ssa.KStr:
 		var parts [2][2]string
 		for i, x := range []string{"%a", "%b"} {
@@ -1037,6 +1092,22 @@ func (s *sfn) instr(v *ssa.Value) {
 		}
 		t0 := s.def("insertvalue { ptr, ptr } undef, ptr %s, 0", g.fname(callee.Name))
 		s.set(v, "insertvalue { ptr, ptr } %s, ptr %s, 1", t0, env)
+	case ssa.OpBox:
+		et := v.Args[0].Type
+		size, _ := g.structLayout([]*ssa.Type{g.m.Builtin(ssa.KInt), et})
+		p := s.def("call ptr @xo_rc_alloc(i64 %d)", size)
+		s.emit("store i64 1, ptr %s%s", p, tbaaRC)
+		if et.Kind != ssa.KUnit && et.Kind != ssa.KCap {
+			vp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.boxLL(v.Type), p)
+			s.emit("store %s, ptr %s", s.typed(v.Args[0]), vp)
+		}
+		s.alias(v, p)
+	case ssa.OpUnbox:
+		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
+			return
+		}
+		vp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.boxLL(v.Args[0].Type), a(0))
+		s.set(v, "load %s, ptr %s", g.ll(v.Type), vp)
 	case ssa.OpCapture:
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
 			return

@@ -177,7 +177,7 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 		return s.add(OpCap, s.natOf(x), x.Sel.Name, v)
 	}
 	if i, ft := s.fieldIndex(v.Type, x.Sel.Name); i >= 0 {
-		return s.add(OpField, ft, i, v)
+		return s.unbox(s.add(OpField, ft, i, v))
 	}
 	b.unsupported(x, "the selector `."+x.Sel.Name+"`")
 	return s.undef(s.natOf(x))
@@ -543,7 +543,7 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			if sub == nil && pf.Name != nil {
 				continue
 			}
-			s.pattern(s.add(OpPayload, fs[fi].Type, PayloadRef{tag, fi}, v), sub, fail)
+			s.pattern(s.unbox(s.add(OpPayload, fs[fi].Type, PayloadRef{tag, fi}, v)), sub, fail)
 		}
 	case *ast.StructPat:
 		if v.Type.Kind != KStruct {
@@ -559,7 +559,7 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 				b.unsupported(pf, "this struct pattern field")
 				continue
 			}
-			s.pattern(s.add(OpField, v.Type.Fields[i].Type, i, v), pf.Pattern, fail)
+			s.pattern(s.unbox(s.add(OpField, v.Type.Fields[i].Type, i, v)), pf.Pattern, fail)
 		}
 	case *ast.OrPat:
 		// each alternative falls through to the next; bindings meet in

@@ -1,0 +1,95 @@
+// Recursive types: a field whose type contains its own struct or enum
+// by value is a Box (an immutable counted heap cell). Boxes are shared
+// on copy, rebuilt on update (value semantics), compared by contents,
+// and freed with a worklist: the 1,000,000 node chain below is released
+// without recursing once per node.
+struct Node {
+  name: Str
+  next: Node?
+}
+
+enum Expr {
+  Lit(n: Int)
+  Var(name: Str)
+  Add(a: Expr, b: Expr)
+  Neg(e: Expr)
+}
+
+enum Tree[T] {
+  Leaf(v: T)
+  Pair(l: Tree[T], r: Tree[T])
+}
+
+fn chain(n: Int) -> Node {
+  var head = Node{name: "end", next: None}
+  for i in 0..n {
+    head = Node{name: "n${i % 3}", next: head}
+  }
+  head
+}
+
+fn length(n: Node) -> Int {
+  var len = 1
+  var cur = n
+  while true {
+    match cur.next {
+      Some(m) => {
+        cur = m
+        len += 1
+      }
+      None => break
+    }
+  }
+  len
+}
+
+fn eval(e: Expr, x: Int) -> Int {
+  match e {
+    Lit(n) => n
+    Var(_) => x
+    Add(a, b) => eval(a, x) + eval(b, x)
+    Neg(e) => -eval(e, x)
+  }
+}
+
+fn show(e: Expr) -> Str {
+  match e {
+    Lit(n) => "${n}"
+    Var(name) => name
+    Add(a, b) => "(${show(a)} + ${show(b)})"
+    Neg(e) => "-${show(e)}"
+  }
+}
+
+fn leaves[T](t: Tree[T]) -> List[T] {
+  match t {
+    Leaf(v) => [v]
+    Pair(l, r) => {
+      var out = leaves(l)
+      for v in leaves(r) {
+        out.push(v)
+      }
+      out
+    }
+  }
+}
+
+fn main(os: Os) {
+  let long = chain(1000000)
+  os.stdio.println("chain ${length(long)} ${long.name}")
+  var a = chain(3)
+  let b = a
+  a.name = "head"
+  if let Some(second) = a.next {
+    var s = second
+    s.name = "changed"
+    os.stdio.println("${a.name} ${b.name} ${second.name} ${s.name} ${length(a)}")
+  }
+  a.next = None
+  os.stdio.println("eq ${a == b} ${b == chain(3)} ${length(a)} ${length(b)}")
+  let e = Expr.Add(a: Expr.Lit(n: 2), b: Expr.Neg(e: Expr.Var(name: "x")))
+  os.stdio.println("${show(e)} = ${eval(e, 5)} ${e == Expr.Add(a: Expr.Lit(n: 2), b: Expr.Neg(e: Expr.Var(name: "x")))}")
+  let t = Tree.Pair(l: Tree.Leaf(v: "a"), r: Tree.Pair(l: Tree.Leaf(v: "b"), r: Tree.Leaf(v: "c")))
+  let ls = leaves(t)
+  os.stdio.println("leaves ${ls.len()} ${ls[0]}${ls[1]}${ls[2]}")
+}

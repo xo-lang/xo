@@ -108,7 +108,7 @@ func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.R
 // reference counting): a silent fallback to the AST path fails the test.
 var ssaGolden = map[string]bool{
 	"abs_fault": true, "arith": true, "div_zero": true, "float_int_fault": true, "index_oob": true,
-	"loops": true, "neg_overflow": true, "rc_failing": true, "enums": true, "structs": true, "tuples_consts": true, "rc_equality": true, "interp": true, "lists": true, "option": true, "rc_listmethods": true, "closures": true, "closure_try": true, "rc_closures": true, "misc": true, "rc_generics": true, "result": true, "overflow_add": true, "overflow_mul": true, "rc_values": true, "rc_aliasing": true,
+	"loops": true, "neg_overflow": true, "rc_failing": true, "enums": true, "structs": true, "tuples_consts": true, "rc_equality": true, "interp": true, "lists": true, "option": true, "rc_listmethods": true, "closures": true, "closure_try": true, "rc_closures": true, "misc": true, "rc_generics": true, "generics": true, "recursion": true, "value_semantics": true, "rc_recursive": true, "result": true, "overflow_add": true, "overflow_mul": true, "rc_values": true, "rc_aliasing": true,
 	"shl_overflow": true, "sort_structs": true, "strings": true, "user_fault": true, "var_alias": true,
 }
 

@@ -90,6 +90,7 @@ Perceus (Reinking, Xie, de Moura, Leijen, PLDI 2021) and Lean 4:
 - Programs outside the SSA subset (generics, closures, failing
   functions, `==` on aggregates, recursive types, some List methods)
   still use the AST path, which never frees; `xo build` says so.
+  Update 2026-10-08: all of these lower to SSA now (decision 0048).
 - Counts are not atomic: the runtime is single threaded today. Tasks
   (structured concurrency) will need atomic counts for values that cross
   tasks, or a per task heap with copying at boundaries.
@@ -98,7 +99,8 @@ Perceus (Reinking, Xie, de Moura, Leijen, PLDI 2021) and Lean 4:
   not allocate; a released list followed by `list.new` goes through the
   allocator's free list instead.
 - Recursive types need boxes in the SSA lowering before they can be
-  reference counted (a box is one more leaf kind).
+  reference counted (a box is one more leaf kind). Done 2026-10-08,
+  decision 0048 (with closures and generics).
 
 ## Alternatives
 - **Tracing GC** (Boehm, or precise with stack maps via `gc.statepoint`

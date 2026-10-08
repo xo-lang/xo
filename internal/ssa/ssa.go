@@ -51,6 +51,7 @@ const (
 	KList               // List[Elem] (heap, value semantics)
 	KCap                // a capability such as Os or Stdio, zero size
 	KFunc               // a function value (closure): Elems are the parameters, Ret the result (heap: its environment)
+	KBox                // Box[T]: an immutable, reference counted heap copy of Elems[0]; breaks recursion in types
 )
 
 // Type is an SSA type. Types are interned per Module: compare pointers.
@@ -93,7 +94,7 @@ func (t *Type) heap(seen map[*Type]bool) bool {
 	seen[t] = true
 	defer delete(seen, t)
 	switch t.Kind {
-	case KStr, KList, KFunc:
+	case KStr, KList, KFunc, KBox:
 		return true
 	case KStruct:
 		for _, f := range t.Fields {
@@ -208,6 +209,14 @@ const (
 	OpCapture
 	OpCallValue
 
+	// Boxes (recursive types). A field of a struct or enum whose type
+	// contains that struct or enum by value has type Box[T] (decision
+	// 0048).
+	//   OpBox:   Args[0] (consumed) copied into a new Box.
+	//   OpUnbox: the value in the box Args[0]: a projection (borrows it).
+	OpBox
+	OpUnbox
+
 	// Calls. Aux is the callee name (string). A user function is called
 	// by its Func.Name; runtime and prelude operations (list ops, string
 	// building, printing, math) use dotted names such as `list.get`,
@@ -254,7 +263,7 @@ var opNames = [...]string{
 	OpIntToFloat: "itof", OpFloatToInt: "ftoi",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
-	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv",
+	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox",
 	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }
@@ -403,6 +412,17 @@ func (m *Module) List(elem *Type) *Type {
 		return t
 	}
 	t := &Type{Kind: KList, Name: name, Elems: []*Type{elem}}
+	m.types[name] = t
+	return t
+}
+
+// Box returns the interned Box[elem] type.
+func (m *Module) Box(elem *Type) *Type {
+	name := "Box[" + elem.Name + "]"
+	if t := m.types[name]; t != nil {
+		return t
+	}
+	t := &Type{Kind: KBox, Name: name, Elems: []*Type{elem}}
 	m.types[name] = t
 	return t
 }

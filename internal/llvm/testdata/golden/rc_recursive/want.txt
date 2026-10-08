@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+chain 1000001 n0
+head n2 n1 changed 4
+eq false true 1 4
+(2 + -x) = -3 true
+leaves 3 abc
+--- stderr

@@ -250,9 +250,14 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 			}
 			return bv
 		}
-		return place{ft,
-			func() *Value { return s.add(OpField, ft, idx, cur()) },
-			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), v)) }}, true
+		pt := ft
+		if ft.Kind == KBox {
+			// a field of a recursive type: read out of and store into a box
+			pt = ft.Elems[0]
+		}
+		return place{pt,
+			func() *Value { return s.unbox(s.add(OpField, ft, idx, cur())) },
+			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }}, true
 	case *ast.IndexExpr:
 		base, ok := s.place(x.X)
 		if !ok || base.t.Kind != KList {

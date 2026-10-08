@@ -200,7 +200,7 @@ func (r *rcInfo) kind(v *Value) rootKind {
 		}
 	case OpConst:
 		return rkBorrowed
-	case OpPayload, OpCapture:
+	case OpPayload, OpCapture, OpUnbox:
 		return rkProj
 	case OpCall:
 		if name, _ := v.Aux.(string); projCalls[name] {
@@ -226,9 +226,9 @@ func (r *rcInfo) modes(v *Value) []mode {
 		}
 	}
 	switch v.Op {
-	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse, OpClosure:
+	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse, OpClosure, OpBox:
 		set(mConsume)
-	case OpFault, OpRetain, OpEq, OpNe, OpCapture:
+	case OpFault, OpRetain, OpEq, OpNe, OpCapture, OpUnbox:
 		set(mBorrow)
 	case OpCallValue:
 		set(mConsume)
