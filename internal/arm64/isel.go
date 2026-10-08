@@ -51,6 +51,7 @@ func (g *gen) function(f *ssa.Func) {
 	s.threadCset()
 	s.thread()
 	s.dce()
+	s.hoistConsts()
 	s.regalloc()
 	s.emit()
 }
@@ -231,7 +232,14 @@ func movImm(n int64) string {
 	return strings.Join(lines, "\n")
 }
 
-func (s *fstate) imm(n int64) vreg { return s.def1(false, movImm(n)) }
+func (s *fstate) imm(n int64) vreg { return s.konst(s.def1(false, movImm(n))) }
+
+// konst marks the instruction that just defined d as a constant (loop
+// invariant: hoistConsts may move it out of a loop).
+func (s *fstate) konst(d vreg) vreg {
+	s.cur.insts[len(s.cur.insts)-1].konst = true
+	return d
+}
 
 // cimm is imm, shared within the block.
 func (s *fstate) cimm(n int64) vreg {
@@ -247,19 +255,19 @@ func (s *fstate) cimm(n int64) vreg {
 // fimm puts the double with bits b in a floating point register.
 func (s *fstate) fimm(bits uint64) vreg {
 	if bits == 0 {
-		return s.def1(true, "fmov $d0, xzr")
+		return s.konst(s.def1(true, "fmov $d0, xzr"))
 	}
 	t := s.imm(int64(bits))
-	return s.def1(true, "fmov $d0, $u0", t)
+	return s.konst(s.def1(true, "fmov $d0, $u0", t))
 }
 
 // symAddr puts the address of a symbol in a register.
 func (s *fstate) symAddr(sym string) vreg {
 	g := s.g
 	if g.os == Darwin {
-		return s.def1(false, fmt.Sprintf("adrp $d0, %s@PAGE\nadd $d0, $d0, %s@PAGEOFF", sym, sym))
+		return s.konst(s.def1(false, fmt.Sprintf("adrp $d0, %s@PAGE\nadd $d0, $d0, %s@PAGEOFF", sym, sym)))
 	}
-	return s.def1(false, fmt.Sprintf("adrp $d0, %s\nadd $d0, $d0, :lo12:%s", sym, sym))
+	return s.konst(s.def1(false, fmt.Sprintf("adrp $d0, %s\nadd $d0, $d0, :lo12:%s", sym, sym)))
 }
 
 // words returns the registers of SSA value v (constants are put in

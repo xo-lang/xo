@@ -76,6 +76,9 @@ type inst struct {
 	targets []*mblock
 	// iCall: the call never returns (a fault)
 	noret bool
+	// konst: a plain instruction that makes a constant (no uses but
+	// other constants)
+	konst bool
 }
 
 type mblock struct {

@@ -449,3 +449,114 @@ func (s *fstate) threadCset() {
 			cond: cond, targets: append([]*mblock(nil), j.insts[0].targets...)}
 	}
 }
+
+// hoistConsts moves the instructions that make constants out of loops,
+// into the loop's preheader (the header's one predecessor outside the
+// loop, when it ends in a jump), innermost loops first. A constant that
+// feeds a parallel move, a call, or a return stays: made in place it
+// goes straight into the block parameter or argument register
+// (gotchas/arm64-cheap-constants-across-blocks.md).
+func (s *fstate) hoistConsts() {
+	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
+	succs := func(b *mblock) []*mblock {
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr) {
+			return t.targets
+		}
+		return nil
+	}
+	preds := map[*mblock][]*mblock{}
+	for _, b := range blocks {
+		for _, t := range succs(b) {
+			preds[t] = append(preds[t], b)
+		}
+	}
+	moved := map[vreg]bool{}
+	for _, b := range blocks {
+		for _, in := range b.insts {
+			// a constant a move, call, or return takes is made straight
+			// into its register in place
+			if in.kind == iPmove || in.kind == iCall || in.kind == iRet {
+				for _, a := range in.srcs {
+					if a.kind == sReg {
+						moved[a.v] = true
+					}
+				}
+			}
+		}
+	}
+	// natural loops of back edges found by depth first search
+	type loop struct {
+		head *mblock
+		body map[*mblock]bool
+	}
+	var loops []loop
+	state := map[*mblock]int{}
+	var dfs func(b *mblock)
+	dfs = func(b *mblock) {
+		state[b] = 1
+		for _, t := range succs(b) {
+			switch state[t] {
+			case 0:
+				dfs(t)
+			case 1:
+				body := map[*mblock]bool{t: true}
+				work := []*mblock{b}
+				for len(work) > 0 {
+					x := work[len(work)-1]
+					work = work[:len(work)-1]
+					if !body[x] {
+						body[x] = true
+						work = append(work, preds[x]...)
+					}
+				}
+				loops = append(loops, loop{t, body})
+			}
+		}
+		state[b] = 2
+	}
+	dfs(s.hot[0])
+	// innermost first: smaller bodies first
+	for i := 0; i < len(loops); i++ {
+		for j := i + 1; j < len(loops); j++ {
+			if len(loops[j].body) < len(loops[i].body) {
+				loops[i], loops[j] = loops[j], loops[i]
+			}
+		}
+	}
+	for _, l := range loops {
+		var pre *mblock
+		for _, p := range preds[l.head] {
+			if l.body[p] {
+				continue
+			}
+			if pre != nil {
+				pre = nil
+				break
+			}
+			pre = p
+		}
+		if pre == nil || pre.term() == nil || pre.term().kind != iJump {
+			continue
+		}
+		var hoisted []*inst
+		for _, b := range blocks {
+			if !l.body[b] {
+				continue
+			}
+			out := b.insts[:0]
+			for _, in := range b.insts {
+				if in.konst && !moved[in.defs[0]] {
+					hoisted = append(hoisted, in)
+					continue
+				}
+				out = append(out, in)
+			}
+			b.insts = out
+		}
+		if len(hoisted) == 0 {
+			continue
+		}
+		n := len(pre.insts)
+		pre.insts = append(append(append([]*inst(nil), pre.insts[:n-1]...), hoisted...), pre.insts[n-1])
+	}
+}

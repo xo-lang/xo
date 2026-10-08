@@ -57,25 +57,25 @@ _xo_f_sieve:
 	stp x22, x21, [sp, #32]
 	str x23, [sp, #48]
 Lf2_b0:
-	mov x22, x0
+	mov x21, x0
 	mov x0, #4
 	mov x1, #1
 	bl _xo_rl_new
-	adds x23, x22, #1
+	adds x23, x21, #1
 	b.vs Lf2_fault1
 	mov x20, #0
 	ldr x19, [x0, #8]
+	mov x22, #1
 Lf2_b1:
 	cmp x20, x23
 	b.ge Lf2_b7
 Lf2_b2:
-	mov x21, #1
 	ldr x9, [x0, #16]
 	cmp x19, x9
 	b.eq Lf2_b3
 Lf2_b5:
 	add x9, x0, x19
-	strb w21, [x9, #24]
+	strb w22, [x9, #24]
 	add x19, x19, #1
 	str x19, [x0, #8]
 Lf2_b6:
@@ -83,7 +83,7 @@ Lf2_b6:
 	cmp x20, x23
 	b.lt Lf2_b2
 Lf2_b7:
-	adds x12, x22, #1
+	adds x12, x21, #1
 	b.vs Lf2_fault2
 	mov x11, #2
 	mov x20, #0
@@ -104,7 +104,7 @@ Lf2_b10:
 	cmp x9, x10, asr #63
 	b.ne Lf2_fault5
 Lf2_b11:
-	cmp x10, x22
+	cmp x10, x21
 	b.gt Lf2_b16
 Lf2_b12:
 	cmp x10, x19
@@ -113,7 +113,7 @@ Lf2_b12:
 	strb wzr, [x9, #24]
 	adds x10, x10, x11
 	b.vs Lf2_fault7
-	cmp x10, x22
+	cmp x10, x21
 	b.le Lf2_b12
 Lf2_b16:
 	add x11, x11, #1
@@ -132,7 +132,7 @@ Lf2_b3:
 	bl _xo_rl_grow
 	b Lf2_b5
 Lf2_fault1:
-	mov x0, x22
+	mov x0, x21
 	mov x1, #43
 	mov x2, #1
 	adrp x3, Lxo_loc1@PAGE
@@ -140,7 +140,7 @@ Lf2_fault1:
 	bl _xo_fault_overflow
 	brk #1
 Lf2_fault2:
-	mov x0, x22
+	mov x0, x21
 	mov x1, #43
 	mov x2, #1
 	adrp x3, Lxo_loc2@PAGE
