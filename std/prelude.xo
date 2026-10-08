@@ -301,6 +301,8 @@ fn (r: Result[T, E]) ignore_err(reason: Str) -> T?
 // Duration and Time (std.md 2.6). Operators are builtin (core 2.1).
 
 fn (static: Duration) from_secs(s: Float) -> Duration
+/// Whole seconds; the same as `1s * s` (std.md 2.6).
+fn (static: Duration) from_secs_int(s: Int) -> Duration
 fn (static: Duration) from_millis(ms: Int) -> Duration
 fn (static: Duration) from_nanos(ns: Int) -> Duration
 fn (d: Duration) seconds() -> Float

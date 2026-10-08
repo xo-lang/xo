@@ -90,7 +90,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback); RETURNING rows come only through `query`; `derive SqlRow` ignores field defaults.
 - [middleware-identity-header-spoofing.md](middleware-identity-header-spoofing.md): (Resolved 2026-10-08 by decision 0055) with no request locals, auth middleware passed the user in a spoofable header; use `req.with_value` / `req.value` with an `http.Key[T]` instead.
-- [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
+- [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 now suggests the conversion as its first fix.
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
 - [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.
 - [ssa-braun-incomplete-phi.md](ssa-braun-incomplete-phi.md): sealing a block must use the recorded incomplete parameter, not `defs[var][block]`, which a later write replaces.

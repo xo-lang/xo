@@ -796,7 +796,8 @@ fn bump(m: Mutex[Map[Str, B]]) {
 	UnresolvedName: {
 		Title: "name does not resolve",
 		Detail: "A variable, function, type, field, method, module, or effect name does not exist where it is used. The diagnostic suggests the nearest real names, so an API cannot be hallucinated silently. " +
-			"It also covers `os`, `expect`, and `testing` outside tests, a tuple field out of range, and `result` outside an `ensures` clause. See core 4.3.",
+			"It also covers `os`, `expect`, and `testing` outside tests, a tuple field out of range, and `result` outside an `ensures` clause. " +
+			"`Float.from(n)` and other unknown associated functions of a numeric type called with one numeric argument get the fix `Float(n)`: numeric conversions are calls on the type name (std.md 2.1). See core 4.3.",
 		Example: `fn f() -> Int {
   let count = 1
   coutn

@@ -45,6 +45,10 @@ func Duration_from_secs(_ *Task, s float64) Duration {
 	return Duration(FloatToInt[int64](math.Round(s*1e9), ""))
 }
 
+// Duration_from_secs_int is `Duration.from_secs_int(s)`: faults on
+// overflow like `1s * s`.
+func Duration_from_secs_int(_ *Task, s int64) Duration { return Duration(MulS(s, 1e9, "")) }
+
 // Duration_from_millis is `Duration.from_millis(ms)`.
 func Duration_from_millis(_ *Task, ms int64) Duration { return Duration(MulS(ms, 1e6, "")) }
 

@@ -87,6 +87,12 @@ fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sq
 fn (f: Float) is_nan() -> Bool
 ```
 
+A conversion is a call on the type name, `Float(n)`, not an associated
+function: there is no `Float.from(n)`. XO0601 for an unknown associated
+function of a numeric type called with one numeric argument (`Float.from(n)`,
+`Int.from(x)`, `Int64.new(n)`) carries the note `convert with Float(x)` and,
+as its first fix, the edit to `Float(n)`.
+
 ### 2.2 Str, Rune, Bytes
 
 `Str` is UTF-8. `+` concatenates `Str` and `Bytes`.
@@ -217,7 +223,8 @@ Operators are in core 2.1. `Duration` displays as `1.5s`, `250ms`; `Time`
 displays as RFC 3339 in UTC.
 
 ```
-Duration.from_secs(s: Float) -> Duration
+Duration.from_secs(s: Float) -> Duration      // rounds to the nearest nanosecond
+Duration.from_secs_int(s: Int) -> Duration    // the same as `1s * s`; faults on overflow
 Duration.from_millis(ms: Int) -> Duration
 Duration.from_nanos(ns: Int) -> Duration
 fn (d: Duration) seconds() -> Float

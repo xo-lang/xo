@@ -185,7 +185,7 @@ pub fn routes(db: sql.Db, clock: Clock) -> http.Router uses (net.dial, clock) {
     if n.ttl_secs <= 0 {
       return Err(ApiErr.BadRequest(msg: "ttl_secs must be positive"))
     }
-    let note = insert_note(db, uid, n.body, clock.now(), 1s * n.ttl_secs)?
+    let note = insert_note(db, uid, n.body, clock.now(), Duration.from_secs_int(n.ttl_secs))?
     http.json(201, note)
   })
   notes.handle("GET /notes", fn(req) -> http.Response ! ApiErr {

@@ -1,0 +1,27 @@
+struct Cfg {
+  ttl_secs: Int
+}
+
+fn secs(c: Cfg) -> Duration {
+  Duration.from_secs(Float.from(c.ttl_secs))
+}
+
+fn whole(x: Float) -> Int {
+  Int.from(x)
+}
+
+fn narrow(n: Int) -> Int32 {
+  Int32.new(n)
+}
+
+fn text(s: Str) -> Int {
+  Int.from(s)
+}
+
+fn two(a: Int, b: Int) -> Float {
+  Float.from(a, b)
+}
+
+fn ok(c: Cfg) -> Duration {
+  Duration.from_secs_int(c.ttl_secs) + Duration.from_secs(Float(c.ttl_secs))
+}

@@ -361,7 +361,33 @@ func (c *checker) typeMember(obj *TypeObj, targs []Type, x *ast.SelectorExpr, hi
 	if d != nil && obj.Methods[name] != nil {
 		note(d, token.Span{}, "`%s` is a method; call it on a value of type `%s`", name, obj.Name)
 	}
+	if call != nil {
+		c.numericConversionHint(d, obj, x, call)
+	}
 	return badType
+}
+
+// numericConversionHint helps with `Float.from(n)` and the like (gap 8 of
+// bench/results/real-app-2026-10-08.md): when an associated function that
+// does not exist is called on a numeric type with one numeric argument,
+// the conversion is a call on the type, `Float(n)` (std.md 2.1). The fix
+// comes first so `xo fix` prefers it over a "did you mean" guess. The
+// argument is checked here (the failed call does not check its arguments).
+func (c *checker) numericConversionHint(d *diag.Diagnostic, obj *TypeObj, x *ast.SelectorExpr, call *ast.CallExpr) {
+	if d == nil || obj.Module != c.prelude || !intTypes[obj.Name] && !floatTypes[obj.Name] {
+		return
+	}
+	if len(call.Args) != 1 || call.Args[0].Name != nil {
+		return
+	}
+	if _, ok := unparen(call.Args[0].Value).(*ast.FnLit); ok {
+		return
+	}
+	if !c.isNumeric(c.infer(call.Args[0].Value, nil)) {
+		return
+	}
+	note(d, token.Span{}, "convert with `%s(x)`: a numeric conversion is a call on the type name, from any numeric type (std.md 2.1)", obj.Name)
+	d.Fixes = append([]diag.Fix{{Title: fmt.Sprintf("convert with `%s(x)`", obj.Name), Edits: []diag.Edit{replaceEdit(x.Sp, obj.Name)}}}, d.Fixes...)
 }
 
 // staticSubst maps the implicit receiver parameters of a static function to
