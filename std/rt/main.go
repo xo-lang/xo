@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,22 @@ type exitUnwind struct{ code int64 }
 // scheduler with the real clock (core 7.4).
 func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 	fxSetup()
+	if path := os.Getenv("XO_CPUPROFILE"); path != "" {
+		// CPU profile of the whole run, for `go tool pprof` (toolchain.md)
+		if f, err := os.Create(path); err == nil && pprof.StartCPUProfile(f) == nil {
+			defer func() { pprof.StopCPUProfile(); f.Close() }()
+		}
+	}
+	if path := os.Getenv("XO_BLOCKPROFILE"); path != "" {
+		// where goroutines wait (channels, locks, select), same tool
+		runtime.SetBlockProfileRate(1000)
+		defer func() {
+			if f, err := os.Create(path); err == nil {
+				pprof.Lookup("block").WriteTo(f, 0)
+				f.Close()
+			}
+		}()
+	}
 	root := NewRootTask()
 	th := root.th
 	mon := &monitor{quiet: 200 * time.Millisecond, root: root.node}

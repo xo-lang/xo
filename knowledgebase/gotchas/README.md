@@ -87,3 +87,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
 - [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
+- [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
+- [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.

@@ -33,8 +33,10 @@ type cnode struct {
 	parent   *cnode
 	children map[*cnode]struct{}
 	canceled atomic.Bool
-	done     chan struct{}
-	w        *World
+	done     chan struct{} // made lazily (doneCh), guarded by mu
+	// closeDone: cancel must close done (it was made before the cancel)
+	closeDone bool
+	w         *World
 	// for `xo dump` (sched.go), set before the node is linked in
 	seq  uint64
 	kind uint8
@@ -46,8 +48,32 @@ func newNode(parent *cnode, w *World) *cnode { return newNodeOf(parent, w, nodeP
 
 // newNodeOf is newNode with the node's kind and task for `xo dump`.
 func newNodeOf(parent *cnode, w *World, kind uint8, tk *Task) *cnode {
-	n := &cnode{parent: parent, done: make(chan struct{}), w: w, seq: nodeSeq.Add(1), kind: kind, tk: tk}
+	n := &cnode{parent: parent, w: w, seq: nodeSeq.Add(1), kind: kind, tk: tk}
 	return n.link()
+}
+
+// closedDone is the done channel of a node canceled before anyone asked
+// for it.
+var closedDone = func() chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}()
+
+// doneCh returns the channel closed when n is canceled. It is made on
+// first use: most request and task nodes end without anyone waiting on
+// cancellation, and the channel was one allocation per task.
+func (n *cnode) doneCh() chan struct{} {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.done == nil {
+		if n.canceled.Load() {
+			n.done = closedDone
+		} else {
+			n.done = make(chan struct{})
+		}
+	}
+	return n.done
 }
 
 // link adds n to its parent's children (or cancels it at once when the
@@ -85,6 +111,11 @@ func (n *cnode) cancel() {
 			return
 		}
 		c.canceled.Store(true)
+		if c.done == nil {
+			c.done = closedDone
+		} else {
+			c.closeDone = true
+		}
 		kids := make([]*cnode, 0, len(c.children))
 		for k := range c.children {
 			kids = append(kids, k)
@@ -108,7 +139,9 @@ func (n *cnode) cancel() {
 		m.gen.Add(1)
 	}
 	for _, c := range nodes {
-		close(c.done)
+		if c.closeDone {
+			close(c.done)
+		}
 	}
 }
 
@@ -172,7 +205,7 @@ func (tk *Task) Done() <-chan struct{} {
 	if tk.shield > 0 {
 		return nil
 	}
-	return tk.node.done
+	return tk.node.doneCh()
 }
 
 // cancelUnwind is the panic value that unwinds a canceled task from a

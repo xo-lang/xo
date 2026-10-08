@@ -439,9 +439,16 @@ Last verified: 2026-10-07
   runs: req/s, p50/p99/p99.9, GC count, total STW pause, peak heap, GC
   CPU percent, peak RSS, GCs per 10k requests. `CONFIGS` (default `go xo
   xo-arenas`; `xo-base` builds with the binary in `XO_BASE` in its own
-  build directory), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
+  build directory, `xo-base-arenas` the same with `--arenas`), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
-  `bench/results/perf-arenas-2026-10-08.md`.
+  `bench/results/perf-arenas-2026-10-08.md`,
+  `bench/results/perf-throughput-2026-10-08.md`.
+- Profiling a built Xo program (2026-10-08): `XO_CPUPROFILE=<file>` writes
+  a CPU profile of the whole run and `XO_BLOCKPROFILE=<file>` a block
+  profile (where goroutines waited: locks, channels, select) when
+  `RunMain` returns, so stop a server with `kill <its PID>` (SIGTERM, a
+  clean shutdown), not SIGKILL. Read with `go tool pprof -top -cum
+  <binary> <file>`. Last verified: 2026-10-08.
 - `bench/perf/llvm/run.sh` (2026-10-08): the LLVM backend prototype
   against the Go backend and hand written Go on compute workloads in the
   LLVM subset (`fib sieve nbody sort interp collatz`). Each Xo workload

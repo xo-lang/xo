@@ -1038,7 +1038,7 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 		stopped = tk.stop.ev.wait(tk, true, waitStop, nil)
 	} else {
 		tk.blockOn(waitServe, nil, true)
-		<-tk.node.done
+		<-tk.node.doneCh()
 		tk.unblock()
 	}
 	l.mu.Lock()

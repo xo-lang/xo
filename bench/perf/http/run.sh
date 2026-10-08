@@ -16,7 +16,8 @@
 #
 # Environment: REPS (3), DURATION (10s), WARMUP (2s), CONC (32), PRELOAD
 # (64), PORT (18080), CONFIGS ("go xo xo-arenas"; "xo-base" builds the Xo
-# server with the xo binary in $XO_BASE, for before and after runs), XO,
+# server with the xo binary in $XO_BASE, for before and after runs, and
+# "xo-base-arenas" the same with --arenas), XO,
 # PERF_OUT (keep binaries and logs there), GOGC passed through to the
 # servers.
 set -eu
@@ -40,6 +41,7 @@ for c in $configs; do
 	xo) "$xo" build -o "$out/srv-xo" "$here/xo" >/dev/null ;;
 	xo-arenas) "$xo" build --arenas -o "$out/srv-xo-arenas" "$here/xo" >/dev/null ;;
 	xo-base) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build -o "$out/srv-xo-base" "$here/xo" >/dev/null ;;
+	xo-base-arenas) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --arenas -o "$out/srv-xo-base-arenas" "$here/xo" >/dev/null ;;
 	*) echo "unknown config $c" >&2; exit 2 ;;
 	esac
 done

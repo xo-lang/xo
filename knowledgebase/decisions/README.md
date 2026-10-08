@@ -48,3 +48,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 
 - [0042-two-phase-shutdown.md](0042-two-phase-shutdown.md): first signal requests a stop, cancellation after a grace period.
 - [0043-channel-loops-once-deadline-map.md](0043-channel-loops-once-deadline-map.md): `for x in ch`, `task.Once`, `map_concurrent_until`.
+- [0044-mutex-barging-in-real-runs.md](0044-mutex-barging-in-real-runs.md): the runtime lock barges in real runs, stays FIFO under test and the deterministic scheduler.

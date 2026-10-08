@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+{"name":"plain","nick":null,"ids":[],"inner":null,"ratio":1}
+{"name":"spaced","nick":null,"ids":[1,2,3],"inner":null,"ratio":1}
+{"name":"esc \"q\" \\ \n é 😀","nick":null,"ids":[],"inner":null,"ratio":1}
+{"name":"café","nick":"日本","ids":[],"inner":null,"ratio":1}
+{"name":"a","nick":null,"ids":[],"inner":null,"ratio":1}
+{"name":"second","nick":null,"ids":[],"inner":null,"ratio":1}
+{"name":"fixed by the later key","nick":null,"ids":[],"inner":null,"ratio":1}
+{"name":"n","nick":null,"ids":[],"inner":{"n":5,"ok":true},"ratio":1}
+error at $.inner: missing field `ok`
+error at $.ids[0]: expected integer
+error at $.ids[0]: expected integer
+{"name":"n","nick":null,"ids":[],"inner":null,"ratio":-1500,"edit":null}
+{"name":"n","nick":null,"ids":[],"inner":null,"ratio":1,"edit":"v"}
+error at $: invalid JSON: trailing data
+{"name":"escaped key","nick":null,"ids":[],"inner":null,"ratio":1}
+error at $.ratio: expected number
+error at $: expected object
+error at $: invalid JSON: EOF
+invalid utf8 true "�"
+list [{"n":1,"ok":false},{"n":-2,"ok":true}]
+--- stderr

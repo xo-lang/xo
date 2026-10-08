@@ -1,0 +1,154 @@
+func (v User) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
+	w.Raw("{\"id\":")
+	w.Int(v.F_id)
+	w.Raw(",\"name\":")
+	w.Str(v.F_name)
+	w.Raw(",\"admin\":")
+	w.Bool(v.F_admin)
+	w.Raw(",\"nickname\":")
+	rt.JsonEnc(tk, w, v.F_nickname)
+	w.Raw(",\"tags\":")
+	rt.JsonEnc(tk, w, v.F_tags)
+	w.Raw(",\"score\":")
+	rt.JsonEnc(tk, w, v.F_score)
+	w.Raw("}")
+}
+
+func (v *User) XoJsonRead(tk *rt.Task, r *rt.JsonR) bool {
+	if !r.ObjStart() {
+		return false
+	}
+	var seen [6]bool
+	for {
+		k, more, ok := r.Key()
+		if !ok {
+			return false
+		}
+		if !more {
+			break
+		}
+		switch string(k) {
+		case "id":
+			if !rt.JsonRead(tk, r, &v.F_id) {
+				return false
+			}
+			seen[0] = true
+		case "name":
+			if !rt.JsonRead(tk, r, &v.F_name) {
+				return false
+			}
+			seen[1] = true
+		case "admin":
+			if !rt.JsonRead(tk, r, &v.F_admin) {
+				return false
+			}
+			seen[2] = true
+		case "nickname":
+			if !rt.JsonRead(tk, r, &v.F_nickname) {
+				return false
+			}
+			seen[3] = true
+		case "tags":
+			if !rt.JsonRead(tk, r, &v.F_tags) {
+				return false
+			}
+			seen[4] = true
+		case "score":
+			if !rt.JsonRead(tk, r, &v.F_score) {
+				return false
+			}
+			seen[5] = true
+		default:
+			r.Skip()
+		}
+	}
+	if !seen[0] {
+		return false
+	}
+	if !seen[1] {
+		return false
+	}
+	if !seen[2] {
+		return false
+	}
+	if !seen[3] {
+		v.F_nickname = User_D_nickname(tk)
+	}
+	if !seen[4] {
+		v.F_tags = User_D_tags(tk)
+	}
+	if !seen[5] {
+		v.F_score = User_D_score(tk)
+	}
+	return true
+}
+
+func (v Edit) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
+	w.ObjStart()
+	if !v.F_name.PatchAbsent() {
+		w.Field("name")
+		rt.JsonEnc(tk, w, v.F_name)
+	}
+	w.Field("id")
+	w.Int(v.F_id)
+	w.ObjEnd()
+}
+
+func (v *Edit) XoJsonRead(tk *rt.Task, r *rt.JsonR) bool {
+	if !r.ObjStart() {
+		return false
+	}
+	var seen [2]bool
+	for {
+		k, more, ok := r.Key()
+		if !ok {
+			return false
+		}
+		if !more {
+			break
+		}
+		switch string(k) {
+		case "name":
+			if !rt.JsonRead(tk, r, &v.F_name) {
+				return false
+			}
+			seen[0] = true
+		case "id":
+			if !rt.JsonRead(tk, r, &v.F_id) {
+				return false
+			}
+			seen[1] = true
+		default:
+			r.Skip()
+		}
+	}
+	if !seen[0] {
+		v.F_name = rt.Json_Patch[string]{Tag: 1}
+	}
+	if !seen[1] {
+		return false
+	}
+	return true
+}
+
+func (v Empty) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
+	w.Raw("{}")
+}
+
+func (v *Empty) XoJsonRead(tk *rt.Task, r *rt.JsonR) bool {
+	if !r.ObjStart() {
+		return false
+	}
+	for {
+		k, more, ok := r.Key()
+		if !ok {
+			return false
+		}
+		if !more {
+			break
+		}
+		_ = k
+		r.Skip()
+	}
+	return true
+}

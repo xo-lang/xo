@@ -150,6 +150,21 @@ func (e Json_DecodeErr) M_display(*Task) string {
 
 // JsonEnc writes v.
 func JsonEnc[T any](tk *Task, w *JsonW, v T) {
+	// a pointer in the interface does not box v (no allocation)
+	switch p := any(&v).(type) {
+	case *string:
+		w.str(*p)
+		return
+	case *int64:
+		w.Int(*p)
+		return
+	case *bool:
+		w.Bool(*p)
+		return
+	case jsonEncoder:
+		p.XoJsonEnc(tk, w)
+		return
+	}
 	jsonEncAny(tk, w, any(v))
 }
 
@@ -433,6 +448,10 @@ func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk
 
 // Json_decode is `json.decode[T](data)`.
 func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
+	var fast T
+	if jsonDecodeFast(tk, []byte(data), &fast) {
+		return Ok[T, Json_DecodeErr](fast)
+	}
 	x, err := jsonParse([]byte(data))
 	if err != nil {
 		return Err[T](*err)
