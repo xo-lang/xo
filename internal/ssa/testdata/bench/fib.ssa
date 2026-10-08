@@ -4,10 +4,9 @@ b0(v0: Os):
   v2: Str = const "fib "
   v3: Int = const 40
   v4: Int = call fib, v3
-  v5: Str = call str.of_int, v4
-  v6: Str = call str.concat, v2, v5
-  v7: () = call Stdio.println, v1, v6
-  ret v7
+  v5: Str = call str.concat_int, v2, v4
+  v6: () = call Stdio.println, v1, v5
+  ret v6
 }
 
 func fib(v0: Int) -> Int {

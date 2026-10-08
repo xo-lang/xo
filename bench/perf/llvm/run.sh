@@ -8,7 +8,9 @@
 # clock time in milliseconds, process start included. A run longer than
 # TIMEOUT seconds (default 60) is stopped and shown as ">TIMEOUT s".
 # Checksums must agree. Needs .tools/bin/xo (or $XO), go, clang, python3.
-# WORKLOADS selects some of: fib sieve nbody sort interp collatz.
+# WORKLOADS selects some of: fib sieve nbody sort interp collatz strings.
+# RSS=1 adds peak resident memory (MB, /usr/bin/time -l) of the Go and
+# LLVM binaries.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -43,7 +45,7 @@ fmt() { # ms -> text
 	if [ "$1" = "-" ]; then echo ">${timeout}000"; else echo "$1"; fi
 }
 printf '| Workload | Go ms | Xo Go backend ms | Xo LLVM ms | LLVM/Go | Go backend/Go | Go backend/LLVM |\n|---|---|---|---|---|---|---|\n'
-for w in ${WORKLOADS:-fib sieve nbody sort interp collatz}; do
+for w in ${WORKLOADS:-fib sieve nbody sort interp collatz strings}; do
 	"$xo" build -o "$out/xo-go-$w" "$here/xo/$w" >/dev/null
 	"$xo" build --backend=llvm -o "$out/xo-ll-$w" "$here/xo/$w" >/dev/null
 	set -- $(best "$out/llperf-go" "$w")
@@ -61,3 +63,11 @@ for w in ${WORKLOADS:-fib sieve nbody sort interp collatz}; do
 		r3 = (x == "-") ? sprintf(">%.0fx", to * 1000 / l) : sprintf("%.2fx", x / l)
 		printf "| %s | %.1f | %s | %.1f | %s | %s | %s |\n", w, g, xs, l, r1, r2, r3 }'
 done
+if [ "${RSS:-0}" = 1 ]; then
+	# peak resident memory, MB (macOS /usr/bin/time -l reports bytes)
+	rss() { /usr/bin/time -l "$@" 2>&1 >/dev/null | awk '/maximum resident set size/ { printf "%.1f", $1 / 1e6 }'; }
+	printf '\n| Workload | Go MB | Xo LLVM MB |\n|---|---|---|\n'
+	for w in ${WORKLOADS:-fib sieve nbody sort interp collatz strings}; do
+		printf '| %s | %s | %s |\n' "$w" "$(rss "$out/llperf-go" "$w")" "$(rss "$out/xo-ll-$w")"
+	done
+fi

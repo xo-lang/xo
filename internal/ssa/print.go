@@ -50,8 +50,12 @@ func (m *Module) String() string {
 func (f *Func) String() string {
 	var b strings.Builder
 	var ps []string
-	for _, p := range f.Params() {
-		ps = append(ps, p.Name()+": "+p.Type.Name)
+	for i, p := range f.Params() {
+		b := ""
+		if i < len(f.Borrowed) && f.Borrowed[i] {
+			b = "borrow "
+		}
+		ps = append(ps, b+p.Name()+": "+p.Type.Name)
 	}
 	var rs []string
 	for _, r := range f.Results {

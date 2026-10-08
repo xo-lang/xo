@@ -62,7 +62,9 @@ go run ./cmd/xo serve [--socket=path] [stop|status]              # resident chec
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
-go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa, testdata/bench/*.ssa)
+go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
+XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
+XO_LLVM_AST=1 go run ./cmd/xo build --backend=llvm .  # force the LLVM backend's AST path (never frees), for comparisons
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
@@ -71,7 +73,7 @@ go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmar
 bench/perf/run.sh                                       # Xo vs Go collection, List write, and generic workloads (see Benchmark tooling)
 MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (default, --mono) columns
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo vs Xo --arenas (see Benchmark tooling)
-bench/perf/llvm/run.sh                                  # compute workloads: Go vs Xo (Go backend) vs Xo --backend=llvm
+bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -468,7 +470,9 @@ Last verified: 2026-10-07
   <binary> <file>`. Last verified: 2026-10-08.
 - `bench/perf/llvm/run.sh` (2026-10-08): the LLVM backend prototype
   against the Go backend and hand written Go on compute workloads in the
-  LLVM subset (`fib sieve nbody sort interp collatz`). Each Xo workload
+  LLVM subset (`fib sieve nbody sort interp collatz strings`; `strings`
+  added 2026-10-08 for allocation churn). `RSS=1` adds a peak memory
+  table (`/usr/bin/time -l`). Each Xo workload
   is its own program (`xo/<name>/main.xo`, the subset has no arguments or
   clock); `go/` (own module) is one binary `llperf <name>`, plus
   `llperf interp_tuned` (a tuned interpreter, not part of the script).
@@ -477,7 +481,8 @@ Last verified: 2026-10-07
   binaries from before 2026-10-08, whose list element writes were O(n)
   (`gotchas/go-backend-list-set-quadratic.md`). Checksums must agree.
   Needs python3 for timing. `XO`, `PERF_OUT`, `WORKLOADS` as in
-  `bench/perf/run.sh`. Results: `bench/results/llvm-prototype-2026-10-08.md`.
+  `bench/perf/run.sh`. Results: `bench/results/llvm-prototype-2026-10-08.md`,
+  `bench/results/llvm-rc-2026-10-08.md` (reference counting).
 - `bench/planted/run_detection.py [task...]`: runs planted bug variants
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 
@@ -762,16 +767,44 @@ Last verified: 2026-10-08. Rules and choices; details in
 Last verified: 2026-10-08. Decision 0045. `ssa.Build(res)` lowers the
 functions reachable from `main` (non generic, non failing, no closures)
 to SSA with block parameters; `Module.Verify()` checks structure,
-dominance, and types; `Module.String()` prints it. Tests:
-`go test ./internal/ssa` (testdata/golden/<name>/main.xo with want.ssa;
-testdata/bench/<name>.ssa for bench/perf/llvm/xo; verifier rejections).
-Rewrite goldens with `go test ./internal/ssa -update`. internal/llvm does
-not use it yet.
+dominance, and types; `Module.String()` prints it. `ssa.BuildOpts` takes
+a `LineRoot` for fault positions. `Module.InsertRC()` (decision 0046,
+`rc.go`) adds reference counting: borrow inference (`Func.Borrowed`,
+printed `borrow v0`), retain and release per heap leaf, cancellation,
+and `reuse` before list updates not proven unique; afterwards
+`Module.RC` is set and `Verify` also checks RC balance on every path
+(`verify_rc.go`). Tests: `go test ./internal/ssa`
+(testdata/golden/<name>/main.xo with want.ssa and want.rc.ssa;
+testdata/bench/<name>.ssa and .rc.ssa for bench/perf/llvm/xo; verifier
+rejections; `TestVerifyRCMutations` deletes each inserted retain and
+release and requires a rejection). Rewrite goldens with
+`go test ./internal/ssa -update`. internal/llvm lowers from it
+(below).
 
 ## LLVM backend (P3 prototype)
 
 Last verified: 2026-10-08. Experiment for decision 0040 ("own backend");
-results and design: `bench/results/llvm-prototype-2026-10-08.md`.
+results and design: `bench/results/llvm-prototype-2026-10-08.md` (AST
+path) and `bench/results/llvm-rc-2026-10-08.md` (SSA path with
+reference counting).
+
+- Two lowering paths. `llvm.Generate` first builds SSA
+  (`ssa.BuildOpts`), runs `InsertRC`, verifies, and lowers with
+  `GenerateSSA` (`internal/llvm/fromssa.go`; decision 0046): values are
+  LLVM values, block parameters phis, `retain`/`release` call generated
+  `xo.dup.<T>`/`xo.drop.<T>` helpers, `reuse` is a count check with a cold
+  copy (`xo_rl_copy`), list updates write in place. When any step fails
+  (a construct outside the SSA subset), the whole program uses the AST
+  path described below, which never frees. `Program.Path` ("ssa" or
+  "ast"), `Program.Fallback`, `build.Result.LLVMPath` and `LLVMFallback`;
+  `xo build` prints a note on stderr for the AST path.
+  `build.Options.LLVMAST` or `XO_LLVM_AST=1` forces the AST path (its own
+  build directory, `<build dir>/llvm-ast`).
+- SSA path layout: Str `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap,
+  bytes}` (literals are globals with count 2^60), List a pointer to
+  `{i64 rc, i64 len, i64 cap}` plus elements, structs and tuples LLVM
+  structs, enums `{i64 tag, [N x i64]}`. Recursive types are not
+  supported on this path yet (no boxes).
 
 - `xo build --backend=llvm` and `xo run --backend=llvm`; host only,
   programs only (not `xo test`), no `--race`, `--arenas`, `--holes`,
@@ -818,8 +851,12 @@ results and design: `bench/results/llvm-prototype-2026-10-08.md`.
   (`gotchas/llvm-borrow-and-var-alias.md`). Write fast paths are inline
   IR with TBAA tags and a per block uniqueness cache
   (`gotchas/llvm-list-write-cost.md`).
-- Runtime `std/llrt/xo_rt.c`: bump allocator over 4 MiB chunks, never
-  freed; buffered stdout; fault messages identical to std/rt's and exit
+- Runtime `std/llrt/xo_rt.c`: size class allocator (16 byte classes to
+  1 KiB, powers of two to 256 KiB, malloc above; free lists; 4 MiB
+  chunks) with a live allocation counter (`XO_LEAKCHECK=1` prints it at
+  exit); reference counted strings (`xo_rs_*`, append in place when
+  unique) and lists (`xo_rl_*`) for the SSA path; the AST path allocates
+  from the same allocator and never frees; buffered stdout; fault messages identical to std/rt's and exit
   status 70; Go style float formatting (shortest round trip `'g'`, `.0`
   appended); string builder for interpolation; list copy helpers; `main`
   runs the program on a thread with a 1 GiB stack. The C interface passes
@@ -828,9 +865,12 @@ results and design: `bench/results/llvm-prototype-2026-10-08.md`.
   Fault output has no Go frame lines and no crash bundle; the golden test
   compares fault messages after dropping those lines.
 - Tests: `internal/llvm/llvm_test.go`. TestGolden builds each program in
-  `testdata/golden/` with the Go backend and the LLVM backend (with and
-  without the range analysis) and requires equal exit status, stdout, and
-  fault messages, also matching `want.txt`. TestUnsupported checks the
+  `testdata/golden/` with the Go backend, the LLVM backend's default path,
+  and its AST path (with and without the range analysis) and requires
+  equal exit status, stdout, and fault messages, also matching
+  `want.txt`; programs listed in `ssaGolden` must take the SSA path, and
+  SSA path programs that exit normally must free every allocation
+  (`XO_LEAKCHECK=1`). TestLeakCheck does the same for the bench programs. TestUnsupported checks the
   error for constructs outside the subset (`testdata/unsupported/`).
   `cmd/xo/llvm_test.go` drives the CLI.
 
@@ -1034,9 +1074,12 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
   structs, `defer`, contracts, tasks, std modules, `use go`, `xo test`);
-  no memory reclamation (bump allocator; a list buffer once copied stays
-  shared, so the first write after every copy clones it); no error
-  traces, crash bundles, or debug info; host only. What a full backend
+  memory is reclaimed (reference counting) only for programs in the SSA
+  subset (no generics, closures, failing functions, `==` on aggregates,
+  recursive types, `List.first`/`last`/`indexed`); others take the AST
+  path, which never frees (a list buffer once copied stays shared, so the
+  first write after every copy clones it). Counts are not atomic. No
+  error traces, crash bundles, or debug info; host only. What a full backend
   needs is listed in `bench/results/llvm-prototype-2026-10-08.md`.
 
 - Deterministic scheduling (2026-10-08): a loop with no scheduling point

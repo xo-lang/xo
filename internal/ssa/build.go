@@ -36,6 +36,7 @@ func (es Errors) Error() string {
 
 // builder lowers a checked program.
 type builder struct {
+	opts  Options
 	info  *check.Info
 	mod   *Module
 	main  *check.Module
@@ -61,8 +62,21 @@ type builder struct {
 // `Int(f)`, `fault`, and the List methods push, pop, set, get, len,
 // is_empty. Not yet: generics, closures, failing functions and `?`.
 func Build(res *check.Result) (*Module, error) {
+	return BuildOpts(res, Options{})
+}
+
+// Options configure Build.
+type Options struct {
+	// LineRoot is the directory fault positions are made relative to (as
+	// internal/llvm prints them). Empty: positions use the file's base
+	// name.
+	LineRoot string
+}
+
+// BuildOpts is Build with options.
+func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	info := res.Info()
-	b := &builder{info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[*check.FuncObj]*Func{}}
+	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[*check.FuncObj]*Func{}}
 	var mainFo *check.FuncObj
 	for _, m := range res.Modules {
 		if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
@@ -93,7 +107,26 @@ func (b *builder) pos(n ast.Node) string {
 		return ""
 	}
 	sp := n.Span()
-	return fmt.Sprintf("%s:%d:%d", filepath.Base(sp.File), sp.Start.Line, sp.Start.Col)
+	return fmt.Sprintf("%s:%d:%d", b.file(sp.File), sp.Start.Line, sp.Start.Col)
+}
+
+// posLine is `file:line`, for the faults the Go backend locates from the
+// stack (`List.set`, `Int.abs`), so every backend prints the same text.
+func (b *builder) posLine(n ast.Node) string {
+	sp := n.Span()
+	return fmt.Sprintf("%s:%d", b.file(sp.File), sp.Start.Line)
+}
+
+func (b *builder) file(f string) string {
+	if b.opts.LineRoot != "" {
+		if abs, err := filepath.Abs(f); err == nil {
+			if rel, err := filepath.Rel(b.opts.LineRoot, abs); err == nil && !strings.HasPrefix(rel, "..") {
+				return filepath.ToSlash(rel)
+			}
+		}
+		return filepath.ToSlash(filepath.Clean(f))
+	}
+	return filepath.Base(f)
 }
 
 func (b *builder) unsupported(n ast.Node, what string) {
@@ -255,7 +288,7 @@ type fn struct {
 	defs       map[*check.VarObj]map[*Block]*Value
 	varType    map[*check.VarObj]*Type
 	sealed     map[*Block]bool
-	incomplete map[*Block][]*check.VarObj
+	incomplete map[*Block][]*Value // parameters added before the block was sealed
 	paramVar   map[*Value]*check.VarObj
 	loops      []*loopCtx
 	varParams  []*check.VarObj // bindings of `var` parameters, returned updated
@@ -270,7 +303,7 @@ func (b *builder) body(fo *check.FuncObj) {
 	f := b.funcs[fo]
 	s := &fn{b: b, fo: fo, f: f, cur: f.Blocks[0],
 		defs: map[*check.VarObj]map[*Block]*Value{}, varType: map[*check.VarObj]*Type{},
-		sealed: map[*Block]bool{}, incomplete: map[*Block][]*check.VarObj{}, paramVar: map[*Value]*check.VarObj{}}
+		sealed: map[*Block]bool{}, incomplete: map[*Block][]*Value{}, paramVar: map[*Value]*check.VarObj{}}
 	s.sealed[s.cur] = true
 	var vars []*check.VarObj
 	if fo.Recv != nil {
@@ -323,7 +356,7 @@ func (s *fn) readVar(vo *check.VarObj, bl *Block) *Value {
 	switch {
 	case !s.sealed[bl]:
 		v = s.newParam(bl, vo)
-		s.incomplete[bl] = append(s.incomplete[bl], vo)
+		s.incomplete[bl] = append(s.incomplete[bl], v)
 	case len(bl.Preds) == 1:
 		v = s.readVar(vo, bl.Preds[0].From)
 	default:
@@ -373,8 +406,10 @@ func (s *fn) seal(bl *Block) {
 		return
 	}
 	for i := 0; i < len(s.incomplete[bl]); i++ {
-		vo := s.incomplete[bl][i]
-		s.addArgs(vo, s.defs[vo][bl])
+		// the parameter itself, not defs[vo][bl]: a later write in bl
+		// replaces that entry (gotchas/ssa-braun-incomplete-phi.md)
+		p := s.incomplete[bl][i]
+		s.addArgs(s.paramVar[p], p)
 	}
 	delete(s.incomplete, bl)
 	s.sealed[bl] = true

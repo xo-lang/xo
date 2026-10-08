@@ -1,0 +1,91 @@
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: Int = const 0
+  v2: Int = const 0
+  v3: Int = const 5
+  jump b1(v2, v1)
+b1(v5: Int, v6: Int):  ; preds b0, b3
+  v7: Bool = lt v5, v3
+  br v7, b2(), b4()
+b2:  ; preds b1
+  v9: Int = const 10000000
+  v10: Int = call sieve, v9
+  v11: Int = add v6, v10 @ main.xo:24:5
+  v12: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v14: Int = const 1
+  v15: Int = add v5, v14
+  jump b1(v15, v11)
+b4:  ; preds b1
+  v17: Stdio = cap stdio, v0
+  v18: Str = const "sieve "
+  retain v18
+  v20: Str = call str.concat_int, v18, v6
+  v21: () = call Stdio.println, v17, v20
+  release v20
+  ret v21
+}
+
+func sieve(v0: Int) -> Int {
+b0(v0: Int):
+  v1: List[Bool] = call list.new
+  v2: Int = const 0
+  v3: Int = const 1
+  v4: Int = add v0, v3 @ main.xo:4:15
+  jump b1(v2, v1)
+b1(v6: Int, v7: List[Bool]):  ; preds b0, b3
+  v8: Bool = lt v6, v4
+  br v8, b2(), b4()
+b2:  ; preds b1
+  v10: Bool = const true
+  v11: List[Bool] = call list.push, v7, v10
+  v12: () = tuple
+  jump b3()
+b3:  ; preds b2
+  v14: Int = const 1
+  v15: Int = add v6, v14
+  jump b1(v15, v11)
+b4:  ; preds b1
+  v17: Int = const 0
+  v18: Int = const 2
+  v19: Int = const 1
+  v20: Int = add v0, v19 @ main.xo:8:15
+  jump b5(v18, v7, v17)
+b5(v22: Int, v23: List[Bool], v24: Int):  ; preds b4, b7
+  v25: Bool = lt v22, v20
+  br v25, b6(), b8()
+b6:  ; preds b5
+  v27: Bool = call list.index, v23, v22 @ main.xo:9:8
+  br v27, b10(), b11()
+b7:  ; preds b9
+  v29: Int = const 1
+  v30: Int = add v22, v29
+  jump b5(v30, v34, v35)
+b8:  ; preds b5
+  release v23
+  ret v24
+b9(v34: List[Bool], v35: Int):  ; preds b13, b11
+  v36: () = tuple
+  jump b7()
+b10:  ; preds b6
+  v38: Int = const 1
+  v39: Int = add v24, v38 @ main.xo:10:7
+  v40: Int = mul v22, v22 @ main.xo:11:15
+  jump b12(v40, v23)
+b11:  ; preds b6
+  v42: () = tuple
+  jump b9(v23, v24)
+b12(v44: Int, v45: List[Bool]):  ; preds b10, b14
+  v46: Bool = le v44, v0
+  br v46, b14(), b13()
+b13:  ; preds b12
+  v48: () = tuple
+  jump b9(v45, v39)
+b14:  ; preds b12
+  v50: Bool = const false
+  v51: List[Bool] = call list.set, v45, v44, v50 @ main.xo:13:9
+  v52: Int = add v44, v22 @ main.xo:14:9
+  v53: () = tuple
+  jump b12(v52, v51)
+}

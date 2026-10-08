@@ -20,6 +20,11 @@ func (m *Module) Verify() error {
 	for _, f := range m.Funcs {
 		errs = append(errs, m.verifyFunc(f)...)
 	}
+	if len(errs) == 0 && m.RC {
+		for _, f := range m.Funcs {
+			errs = append(errs, m.verifyRC(f)...)
+		}
+	}
 	if len(errs) > 0 {
 		return errs
 	}
@@ -28,7 +33,11 @@ func (m *Module) Verify() error {
 
 // VerifyFunc checks one function (see Verify).
 func (m *Module) VerifyFunc(f *Func) error {
-	if errs := m.verifyFunc(f); len(errs) > 0 {
+	errs := m.verifyFunc(f)
+	if len(errs) == 0 && m.RC {
+		errs = m.verifyRC(f)
+	}
+	if len(errs) > 0 {
 		return VerifyError(errs)
 	}
 	return nil

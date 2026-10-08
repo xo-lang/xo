@@ -15,3 +15,9 @@ Fix: `fn.def` passes the name as an argument
 contains `%` (temporaries, labels, string constants) must go through an
 argument, never be concatenated into a format; literal `%` in a format is
 written `%%` (`"getelementptr %%xo.list, ..."`).
+
+Hit again (2026-10-08) in `internal/llvm/fromssa.go`: its `def` and `set`
+were first written as `emit(name+" = "+format, ...)` and the first build
+printed `%!s(MISSING)`; fixed the same way. New emitters: copy the
+`emit("%s = "+format, append([]any{name}, args...)...)` form, do not
+retype it.

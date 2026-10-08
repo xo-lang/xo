@@ -1,7 +1,9 @@
 # 0045: Shared typed SSA IR for native backends
 
-Status: Accepted (2026-10-08). First step implemented in `internal/ssa`;
-the LLVM backend does not lower from it yet.
+Status: Accepted (2026-10-08). Implemented in `internal/ssa`. Update
+2026-10-08: the LLVM backend lowers from it, with reference counting
+inserted by `InsertRC` (decision 0046); programs outside the SSA subset
+fall back to the AST path.
 
 ## Context
 Decision 0040 lists three native paths: the LLVM backend (prototype in

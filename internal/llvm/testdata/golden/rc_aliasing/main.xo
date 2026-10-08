@@ -1,0 +1,113 @@
+// Reference counting under aliasing (decision 0046): one list held by
+// two fields, by a list and a binding, and through Option payloads;
+// methods with `var` receivers; element overwrites that must release the
+// old element; early exits from nested loops that hold lists. Value
+// semantics must hold and everything must be freed.
+struct Pair {
+  left: List[Str]
+  right: List[Str]
+}
+
+struct Person {
+  name: Str
+  tags: List[Str]
+}
+
+enum Slot {
+  Full(items: List[Str])
+  Tagged(p: Person)
+  Free
+}
+
+fn (var p: Pair) push_left(s: Str) {
+  p.left.push(s)
+}
+
+fn (p: Pair) sizes() -> Str {
+  "${p.left.len()}/${p.right.len()}"
+}
+
+fn find(grid: List[List[Str]], want: Str) -> Int {
+  var i = 0
+  for row in grid {
+    for cell in row {
+      if cell == want {
+        return i
+      }
+      i += 1
+    }
+  }
+  -1
+}
+
+fn describe(s: Slot) -> Str {
+  match s {
+    Full(items) => "full ${items.len()}"
+    Tagged(p) => "${p.name}:${p.tags.len()}"
+    Free => "free"
+  }
+}
+
+fn longest(xs: List[Str]) -> Str? {
+  var best: Str? = None
+  var n = -1
+  for x in xs {
+    if x.len() > n {
+      n = x.len()
+      best = Some(x)
+    }
+  }
+  best
+}
+
+fn main(os: Os) {
+  let shared = ["a", "b"]
+  var pair = Pair{left: shared, right: shared}
+  pair.push_left("c")
+  os.stdio.println("pair ${pair.sizes()} shared ${shared.len()}")
+  var people = [Person{name: "ann", tags: ["x"]}, Person{name: "bob", tags: []}]
+  let before = people
+  people[1].tags.push("y")
+  people[0] = Person{name: "cy", tags: ["p", "q", "r"]}
+  people[1].name = "bo"
+  os.stdio.println("${people[0].name} ${people[0].tags.len()} ${people[1].name} ${people[1].tags.len()} | ${before[0].name} ${before[1].tags.len()}")
+  var grid: List[List[Str]] = []
+  for r in 0..3 {
+    var row: List[Str] = []
+    for c in 0..3 {
+      row.push("${r}${c}")
+    }
+    grid.push(row)
+  }
+  os.stdio.println("find ${find(grid, "21")} ${find(grid, "99")}")
+  let slots = [Slot.Full(items: shared), Slot.Tagged(p: people[0]), Slot.Free]
+  var out = ""
+  for s in slots {
+    out = out + describe(s) + ";"
+  }
+  os.stdio.println(out)
+  var names: List[Str] = []
+  for p in people {
+    names.push(p.name)
+    names.push(p.name + p.name)
+  }
+  names[0] = "replaced"
+  let l = longest(names) ?? "none"
+  os.stdio.println("${names.len()} ${names[0]} ${l}")
+  var stack: List[List[Int]] = [[1], [2, 3]]
+  let top = stack.pop() ?? []
+  stack.push(top)
+  stack.push(top)
+  stack[2].push(4)
+  os.stdio.println("stack ${stack.len()} ${stack[1].len()} ${stack[2].len()} ${top.len()}")
+  var total = 0
+  outer: for row in grid {
+    for cell in row {
+      if cell == "11" {
+        break outer
+      }
+      total += cell.len()
+    }
+  }
+  os.stdio.println("total ${total}")
+}

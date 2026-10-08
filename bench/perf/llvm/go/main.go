@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func fib(n int) int {
@@ -312,6 +313,32 @@ func collatzSteps(start int) int {
 	return s
 }
 
+// stringsWorkload builds strings the idiomatic Go way: concatenation for
+// the words and a strings.Builder for the accumulated string (Xo's
+// `acc = acc + w` appends in place when acc is unique).
+func stringsWorkload() int {
+	total := 0
+	for round := 0; round < 10; round++ {
+		words := make([]string, 0)
+		for i := 0; i < 200000; i++ {
+			words = append(words, "w"+strconv.Itoa(i%1000)+"-"+strconv.Itoa(round))
+		}
+		var acc strings.Builder
+		k := 0
+		for len(words) > 0 {
+			w := words[len(words)-1]
+			words = words[:len(words)-1]
+			if k%10 == 0 {
+				acc.WriteString(w)
+			}
+			k++
+			total += len(w)
+		}
+		total += acc.Len()
+	}
+	return total
+}
+
 func main() {
 	w := "fib"
 	if len(os.Args) > 1 {
@@ -349,6 +376,8 @@ func main() {
 			best = max(best, s)
 		}
 		fmt.Printf("collatz %d %d\n", total, best)
+	case "strings":
+		fmt.Println("strings " + strconv.Itoa(stringsWorkload()))
 	default:
 		fmt.Fprintln(os.Stderr, "unknown workload", w)
 		os.Exit(2)

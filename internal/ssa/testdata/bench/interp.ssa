@@ -60,10 +60,9 @@ b0(v0: Os):
   v55: Str = const "interp "
   v56: Int = const 3000000
   v57: Int = call run, v53, v56
-  v58: Str = call str.of_int, v57
-  v59: Str = call str.concat, v55, v58
-  v60: () = call Stdio.println, v54, v59
-  ret v60
+  v58: Str = call str.concat_int, v55, v57
+  v59: () = call Stdio.println, v54, v58
+  ret v59
 }
 
 func run(v0: List[Op], v1: Int) -> Int {

@@ -91,3 +91,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [numeric-conversion-is-call.md](numeric-conversion-is-call.md): convert with `Float(n)`, not `Float.from(n)`; XO0601 gives no hint.
 - [lock-convoy-runnext-wake.md](lock-convoy-runnext-wake.md): a FIFO handoff lock convoys because Go runs a woken goroutine only when its waker blocks; barge and Gosched after waking.
 - [lock-spin-starves-holder.md](lock-spin-starves-holder.md): spinning before parking on the runtime lock (Gosched or busy loop) cut HTTP throughput 3x to 6x.
+- [ssa-braun-incomplete-phi.md](ssa-braun-incomplete-phi.md): sealing a block must use the recorded incomplete parameter, not `defs[var][block]`, which a later write replaces.
+- [ssa-heap-visited-set.md](ssa-heap-visited-set.md): `Type.Heap`'s recursion guard was a visited set, so two `Int` fields made a struct "heap"; use a path set.
+- [rc-verifier-loop-param-leak.md](rc-verifier-loop-param-leak.md): an RC verifier that sets block parameter counts on entry hides a leak of the previous iteration's value; check they are zero first.
+- [snprintf-int-formatting-cost.md](snprintf-int-formatting-cost.md): `snprintf("%lld")` dominated Int interpolation in the LLVM runtime (4x slower workload); use a digit loop.

@@ -1,0 +1,25 @@
+// String churn: interpolation, a List[Str] filled and popped empty each
+// round, and a string grown with `acc = acc + w` (appended in place
+// when the string is unique, under reference counting).
+fn main(os: Os) {
+  var total = 0
+  for round in 0..10 {
+    var words: List[Str] = []
+    for i in 0..200000 {
+      words.push("w${i % 1000}-${round}")
+    }
+    var acc = ""
+    var k = 0
+    while words.len() > 0 {
+      if let Some(w) = words.pop() {
+        if k % 10 == 0 {
+          acc = acc + w
+        }
+        k += 1
+        total += w.len()
+      }
+    }
+    total += acc.len()
+  }
+  os.stdio.println("strings ${total}")
+}

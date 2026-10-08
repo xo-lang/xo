@@ -23,12 +23,12 @@
 // with explicit ownership, `list.set` on a uniquely owned list is done
 // in place.
 //
-// Reference counting hooks: OpRetain, OpRelease, OpDrop, and OpReuse
-// exist in the instruction set but the builder never emits them. The RC
-// pass (next step) inserts them after building: a value of a type with
-// Type.Heap() true is owned by its definition, consumed by an operand
-// position that takes ownership (call arguments, constructors, edge
-// arguments, ret), and borrowed elsewhere. See the comments on the ops.
+// Reference counting: OpRetain, OpRelease, and OpReuse are inserted
+// after building by InsertRC (rc.go, decision 0046): every heap value is
+// owned once, consumed by an operand position that takes ownership (call
+// arguments of owned parameters, constructors, edge arguments, ret,
+// list updates) and borrowed elsewhere; a value is released on every
+// path after its last use. See the comments on the ops.
 package ssa
 
 import (
@@ -81,12 +81,15 @@ func (t *Type) Heap() bool {
 	return t.heap(map[*Type]bool{})
 }
 
+// heap walks the types t contains; seen holds the types on the current
+// path (not every type visited: two Int fields are not a recursion).
 func (t *Type) heap(seen map[*Type]bool) bool {
 	if seen[t] {
 		// a recursive struct or enum is boxed
 		return true
 	}
 	seen[t] = true
+	defer delete(seen, t)
 	switch t.Kind {
 	case KStr, KList:
 		return true
@@ -196,16 +199,22 @@ const (
 	// It is a terminator.
 	OpFault
 
-	// Reference counting (never emitted by the builder; inserted by the
-	// RC pass, decision 0045):
-	//   OpRetain  Args[0]: increment the count of a Heap() value (dup).
-	//   OpRelease Args[0]: decrement, freeing at zero (drop).
+	// Reference counting (never emitted by the builder; inserted by
+	// InsertRC, decision 0046). They apply to the heap leaves of a value
+	// (a Str, a List, an enum with heap payload), never to a struct or
+	// tuple as a whole (see rc.go):
+	//   OpRetain  Args[0]: increment the count (dup); no result.
+	//   OpRelease Args[0]: decrement, freeing at zero and releasing the
+	//             children (drop); no result.
 	//   OpDrop    Args[0]: release only the children of a value whose
-	//             cell is reused (Perceus "drop specialization").
-	//   OpReuse   Args[0]: the memory token of a value that is dead after
-	//             this point and unique at run time; a later OpStruct,
-	//             OpVariant, or list call with Aux reuse token writes into
-	//             it in place (Perceus reuse analysis).
+	//             cell is reused (Perceus "drop specialization"); not
+	//             emitted yet.
+	//   OpReuse   Args[0]: a List the next instruction updates (list.set,
+	//             list.push, list.pop). It consumes Args[0] and yields a
+	//             uniquely owned List with the same contents: the same
+	//             cell when its count is 1 (the update is then in place),
+	//             otherwise a copy (and Args[0] is released). InsertRC
+	//             emits it only where uniqueness is not proven statically.
 	OpRetain
 	OpRelease
 	OpDrop
@@ -307,6 +316,10 @@ type Func struct {
 	// VarParams lists, in order, the indexes of the parameters that are
 	// `var` (returned after the result, updated).
 	VarParams []int
+	// Borrowed marks, per parameter, the ones the callee only reads (set
+	// by InsertRC's borrow inference): the caller keeps ownership, and
+	// the callee never releases them. Nil before InsertRC.
+	Borrowed  []bool
 	nextValue int
 	nextBlock int
 }
@@ -317,6 +330,9 @@ func (f *Func) Params() []*Value { return f.Blocks[0].Params }
 // Module is a lowered program.
 type Module struct {
 	Funcs []*Func
+	// RC is set by InsertRC: the functions carry explicit retain,
+	// release, and reuse instructions, and Verify checks their balance.
+	RC    bool
 	types map[string]*Type
 	order []*Type // named struct and enum types, in creation order
 }
@@ -456,28 +472,30 @@ func link(from, to *Block, args []*Value) *Edge {
 // emits as OpCall, with their operand and result shapes. Backends map
 // each name to a runtime function or inline code.
 var RuntimeCalls = map[string]string{
-	"list.new":       "() -> List[T]: an empty list",
-	"list.len":       "(List[T]) -> Int",
-	"list.get":       "(List[T], Int) -> Option[T]",
-	"list.index":     "(List[T], Int) -> T: faults when out of range (Pos)",
-	"list.set":       "(List[T], Int, T) -> List[T]: faults when out of range; in place when unique",
-	"list.push":      "(List[T], T) -> List[T]",
-	"list.pop":       "(List[T]) -> (List[T], Option[T])",
-	"str.concat":     "(Str, Str) -> Str",
-	"str.eq":         "(Str, Str) -> Bool",
-	"str.cmp":        "(Str, Str) -> Int: negative, zero, or positive",
-	"str.of_int":     "(Int) -> Str",
-	"str.of_float":   "(Float) -> Str",
-	"str.of_bool":    "(Bool) -> Str",
-	"Stdio.print":    "(Stdio, Str) -> ()",
-	"Stdio.println":  "(Stdio, Str) -> ()",
-	"Stdio.eprint":   "(Stdio, Str) -> ()",
-	"Stdio.eprintln": "(Stdio, Str) -> ()",
-	"Int.min":        "(Int, Int) -> Int",
-	"Int.max":        "(Int, Int) -> Int",
-	"Int.abs":        "(Int) -> Int: faults on the minimum Int",
-	"Float.min":      "(Float, Float) -> Float",
-	"Float.max":      "(Float, Float) -> Float",
-	"Float.sqrt":     "(Float) -> Float (also floor, ceil, trunc, round, abs)",
-	"Str.len":        "(Str) -> Int",
+	"list.new":         "() -> List[T]: an empty list",
+	"list.len":         "(List[T]) -> Int",
+	"list.get":         "(List[T], Int) -> Option[T]",
+	"list.index":       "(List[T], Int) -> T: faults when out of range (Pos)",
+	"list.set":         "(List[T], Int, T) -> List[T]: faults when out of range; in place when unique",
+	"list.push":        "(List[T], T) -> List[T]",
+	"list.pop":         "(List[T]) -> (List[T], Option[T])",
+	"str.concat":       "(Str, Str) -> Str: consumes the left operand (appended in place when unique)",
+	"str.eq":           "(Str, Str) -> Bool",
+	"str.cmp":          "(Str, Str) -> Int: negative, zero, or positive",
+	"str.concat_int":   "(Str, Int) -> Str: str.concat with the Int's text, no temporary (interpolation)",
+	"str.concat_float": "(Str, Float) -> Str: str.concat with the Float's text, no temporary",
+	"str.of_int":       "(Int) -> Str",
+	"str.of_float":     "(Float) -> Str",
+	"str.of_bool":      "(Bool) -> Str",
+	"Stdio.print":      "(Stdio, Str) -> ()",
+	"Stdio.println":    "(Stdio, Str) -> ()",
+	"Stdio.eprint":     "(Stdio, Str) -> ()",
+	"Stdio.eprintln":   "(Stdio, Str) -> ()",
+	"Int.min":          "(Int, Int) -> Int",
+	"Int.max":          "(Int, Int) -> Int",
+	"Int.abs":          "(Int) -> Int: faults on the minimum Int",
+	"Float.min":        "(Float, Float) -> Float",
+	"Float.max":        "(Float, Float) -> Float",
+	"Float.sqrt":       "(Float) -> Float (also floor, ceil, trunc, round, abs)",
+	"Str.len":          "(Str) -> Int",
 }
