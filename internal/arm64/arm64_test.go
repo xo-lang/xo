@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/arm64"
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/ssa"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden assembly files")
@@ -335,4 +337,48 @@ func TestLinuxEmit(t *testing.T) {
 		t.Errorf("linked a binary for linux/arm64 on %s", build.Host())
 	}
 	assembleELF(t, res.Asm[lin])
+}
+
+// TestInlineVerifies requires every program to verify (reference
+// counting balance included) after the backend inlines small functions:
+// build.Arm64Asm would otherwise fall back to no inlining silently.
+func TestInlineVerifies(t *testing.T) {
+	var dirs []string
+	for name := range benchWant {
+		dirs = append(dirs, filepath.Join(benchDir, name))
+	}
+	for _, name := range nativeGolden {
+		dirs = append(dirs, filepath.Join("..", "llvm", "testdata", "golden", name))
+	}
+	runs, _ := filepath.Glob(filepath.Join("testdata", "run", "*"))
+	dirs = append(dirs, runs...)
+	inlined := 0
+	for _, dir := range dirs {
+		res, ok, err := build.Check([]string{dir}, false)
+		if err != nil || !ok {
+			t.Fatalf("%s: check failed: %v", dir, err)
+		}
+		m, err := ssa.Build(res)
+		if err != nil {
+			t.Fatalf("%s: %v", dir, err)
+		}
+		m.InsertRC()
+		before := len(m.Funcs[0].Blocks)
+		for _, f := range m.Funcs {
+			before += len(f.Blocks)
+		}
+		if _, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin}); err != nil {
+			t.Errorf("%s: %v", dir, err)
+		}
+		after := len(m.Funcs[0].Blocks)
+		for _, f := range m.Funcs {
+			after += len(f.Blocks)
+		}
+		if after != before {
+			inlined++
+		}
+	}
+	if inlined == 0 {
+		t.Error("nothing was inlined")
+	}
 }

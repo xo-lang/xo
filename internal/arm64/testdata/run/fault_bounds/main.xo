@@ -1,0 +1,22 @@
+// Branch bounds remove only the checks they prove: `x - 1` under
+// `x >= 2` is safe, `x - 1` under `x < 10` is not.
+fn down(x: Int) -> Int {
+  if x < 2 {
+    0
+  } else {
+    x - 1 + down(x - 2)
+  }
+}
+
+fn below(x: Int) -> Int {
+  if x < 10 {
+    x - 1
+  } else {
+    x + 1
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${down(9)} ${below(5)} ${below(20)}")
+  os.stdio.println("${below(-9223372036854775807 - 1)}")
+}

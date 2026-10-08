@@ -42,6 +42,15 @@ func CC() (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
+	asm, err := arm64Asm(res, root, goos, false)
+	var ie *arm64.InlineError
+	if errors.As(err, &ie) {
+		return arm64Asm(res, root, goos, true)
+	}
+	return asm, err
+}
+
+func arm64Asm(res *check.Result, root, goos string, noInline bool) ([]byte, error) {
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root})
 	if err != nil {
 		return nil, err
@@ -53,7 +62,7 @@ func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
 	if err := m.Verify(); err != nil {
 		return nil, err
 	}
-	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos)})
+	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline})
 	if err != nil {
 		return nil, err
 	}

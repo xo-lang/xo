@@ -57,7 +57,16 @@ const (
 // Options configure generation.
 type Options struct {
 	OS OS
+	// NoInline turns off the inlining of small leaf functions.
+	NoInline bool
 }
+
+// InlineError is a module that no longer verifies after inlining (a bug
+// of the inliner): the caller can build the module again and generate
+// with NoInline.
+type InlineError struct{ Err error }
+
+func (e *InlineError) Error() string { return "arm64 backend: after inlining: " + e.Err.Error() }
 
 // Program is the generated assembly of one Xo program.
 type Program struct {
@@ -108,6 +117,11 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	}
 	g := &gen{m: m, os: opts.OS, byName: map[string]*ssa.Func{}, layouts: map[*ssa.Type][]bool{},
 		strs: map[string]string{}, locs: map[string]string{}, helped: map[string]string{}}
+	if !opts.NoInline && inline(m) {
+		if err := m.Verify(); err != nil {
+			return nil, &InlineError{err}
+		}
+	}
 	for _, f := range m.Funcs {
 		g.byName[f.Name] = f
 	}

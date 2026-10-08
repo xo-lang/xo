@@ -359,6 +359,7 @@ func (s *fstate) isel() {
 		}
 	}
 	blocks := rpo(f)
+	idom := dominators(blocks)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -380,6 +381,12 @@ func (s *fstate) isel() {
 		if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds
 			s.inherit(s.endMemo[b.Preds[0].From])
+			s.branchFacts(b)
+		} else if d := idom[b]; d != nil && s.endMemo[d] != nil {
+			// so do the facts of the immediate dominator, except what
+			// memory held (a path from it may have stored)
+			s.inherit(s.endMemo[d])
+			s.clobber()
 		}
 		for _, p := range b.Params {
 			if p.Type.Kind != ssa.KList || i == 0 {
@@ -434,7 +441,10 @@ func (s *fstate) edgeMoves(e *ssa.Edge) ([]vreg, []src) {
 			dsts = append(dsts, pw[k])
 			srcs = append(srcs, rsrc(aw[k]))
 		}
-		if c, ok := s.lenParam[pw[0]]; ok && p.Type.Kind == ssa.KList {
+		if p.Type.Kind != ssa.KList {
+			continue
+		}
+		if c, ok := s.lenParam[pw[0]]; ok {
 			if n := s.listLen(aw[0]); n != c {
 				dsts = append(dsts, c)
 				srcs = append(srcs, rsrc(n))
@@ -689,6 +699,9 @@ func (s *fstate) addSub(v *ssa.Value) {
 		}
 	}
 	checked := v.Pos != ""
+	if n, ok := constInt(b); ok && checked && s.safeAdd(a, n, v.Op) {
+		checked = false // the bounds of a prove it
+	}
 	flag := ""
 	if checked {
 		flag = "s"
@@ -1205,8 +1218,10 @@ func (s *fstate) callOp(v *ssa.Value) {
 			s.store("str $u0, [$u1, #8]", n1, l)
 			return s.loadElem(s.elemBase(l, n1, g.esize(et)), et, true)
 		})
-		s.forgetLen(l)
-		s.set(v, append([]vreg{l}, o...)...)
+		// a new register for the shorter list: what is known about l
+		// (its length) must not reach blocks it dominates
+		l2 := s.def1(false, "mov $d0, $u0", l)
+		s.set(v, append([]vreg{l2}, o...)...)
 	case "str.concat":
 		x, y := a(0), a(1)
 		n := s.def1(false, "add $d0, $u0, $u1", x[1], y[1])
@@ -1278,4 +1293,48 @@ func (s *fstate) callOp(v *ssa.Value) {
 	default:
 		fail("runtime call `%s`", name)
 	}
+}
+
+// dominators returns the immediate dominator of each block (blocks in
+// reverse postorder; Cooper, Harvey, Kennedy 2001).
+func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
+	num := map[*ssa.Block]int{}
+	for i, b := range blocks {
+		num[b] = i
+	}
+	idom := map[*ssa.Block]*ssa.Block{blocks[0]: blocks[0]}
+	intersect := func(a, b *ssa.Block) *ssa.Block {
+		for a != b {
+			for num[a] > num[b] {
+				a = idom[a]
+			}
+			for num[b] > num[a] {
+				b = idom[b]
+			}
+		}
+		return a
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, b := range blocks[1:] {
+			var nd *ssa.Block
+			for _, e := range b.Preds {
+				p := e.From
+				if _, ok := idom[p]; !ok {
+					continue
+				}
+				if nd == nil {
+					nd = p
+				} else {
+					nd = intersect(p, nd)
+				}
+			}
+			if nd != nil && idom[b] != nd {
+				idom[b] = nd
+				changed = true
+			}
+		}
+	}
+	delete(idom, blocks[0])
+	return idom
 }

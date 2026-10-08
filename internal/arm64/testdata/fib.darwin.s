@@ -36,42 +36,24 @@ Lf2_b0:
 	cmp x19, #2
 	b.lt Lf2_b3
 Lf2_b2:
-	subs x0, x19, #1
-	b.vs Lf2_fault1
+	sub x0, x19, #1
 	bl _xo_f_fib
 	mov x20, x0
-	subs x0, x19, #2
-	b.vs Lf2_fault2
+	sub x0, x19, #2
 	bl _xo_f_fib
 	adds x19, x20, x0
-	b.vs Lf2_fault3
+	b.vs Lf2_fault1
 Lf2_b3:
 	mov x0, x19
 	ldp x19, x20, [sp, #16]
 	ldp x29, x30, [sp], #32
 	ret
 Lf2_fault1:
-	mov x0, x19
-	mov x1, #45
-	mov x2, #1
-	adrp x3, Lxo_loc0@PAGE
-	add x3, x3, Lxo_loc0@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf2_fault2:
-	mov x0, x19
-	mov x1, #45
-	mov x2, #2
-	adrp x3, Lxo_loc1@PAGE
-	add x3, x3, Lxo_loc1@PAGEOFF
-	bl _xo_fault_overflow
-	brk #1
-Lf2_fault3:
 	mov x2, x0
 	mov x0, x20
 	mov x1, #43
-	adrp x3, Lxo_loc2@PAGE
-	add x3, x3, Lxo_loc2@PAGEOFF
+	adrp x3, Lxo_loc0@PAGE
+	add x3, x3, Lxo_loc0@PAGEOFF
 	bl _xo_fault_overflow
 	brk #1
 
@@ -104,8 +86,4 @@ Lxo_str0:
 	.ascii "fib "
 	.section __TEXT,__cstring,cstring_literals
 Lxo_loc0:
-	.asciz "main.xo:3:29"
-Lxo_loc1:
-	.asciz "main.xo:3:42"
-Lxo_loc2:
 	.asciz "main.xo:3:25"

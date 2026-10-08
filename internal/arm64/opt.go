@@ -1,5 +1,11 @@
 package arm64
 
+import (
+	"math"
+
+	"github.com/xo-lang/xo/internal/ssa"
+)
+
 // Local optimizations of instruction selection and MIR.
 //
 //   - Per MIR block memos: constants, list lengths, bounds checks done,
@@ -29,13 +35,16 @@ type memo struct {
 	bases   map[[3]int64]vreg
 	loaded  map[vreg]memAt
 	epoch   int
+	// bounds of Int registers known from the branches that dominate
+	// the block
+	lo, hi map[vreg]int64
 }
 
 // m returns the memo of the current block.
 func (s *fstate) m() *memo {
 	if s.mm == nil || s.mm.blk != s.cur {
 		s.mm = &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}}
+			bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, lo: map[vreg]int64{}, hi: map[vreg]int64{}}
 	}
 	return s.mm
 }
@@ -178,8 +187,29 @@ func (s *fstate) dce() {
 // that dominates it.
 func (s *fstate) inherit(from *memo) {
 	m := &memo{blk: s.cur, consts: map[any]vreg{}, lens: map[vreg]vreg{}, checked: map[[2]vreg]bool{},
-		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch}
+		bases: map[[3]int64]vreg{}, loaded: map[vreg]memAt{}, epoch: from.epoch, lo: map[vreg]int64{}, hi: map[vreg]int64{}}
+	for k, v := range from.lo {
+		m.lo[k] = v
+	}
+	for k, v := range from.hi {
+		m.hi[k] = v
+	}
 	for k, v := range from.consts {
+		// a constant one instruction makes is not worth a register
+		// across blocks (and a fresh one coalesces with a block
+		// parameter)
+		switch x := k.(type) {
+		case int64:
+			if x >= -65536 && x < 65536 {
+				continue
+			}
+		case bool:
+			continue
+		case float64:
+			if x == 0 {
+				continue
+			}
+		}
 		m.consts[k] = v
 	}
 	for k, v := range from.lens {
@@ -207,4 +237,100 @@ func (s *fstate) forgetLen(l vreg) {
 			delete(m.checked, k)
 		}
 	}
+}
+
+// Bounds: a block whose only predecessor ends in `br (x < y)` knows
+// x < y on the edge it is reached by, which bounds x and y. A checked
+// add or subtract of a constant whose bounds prove it cannot overflow
+// is not checked (`n - 1` under `n >= 2`, `i + 1` under `i < n`).
+
+// bounds returns what is known of Int value v.
+func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
+	if n, ok := constInt(v); ok {
+		return n, n
+	}
+	lo, hi := int64(math.MinInt64), int64(math.MaxInt64)
+	ws, ok := s.vals[v]
+	if !ok || len(ws) != 1 {
+		return lo, hi
+	}
+	m := s.m()
+	if x, ok := m.lo[ws[0]]; ok {
+		lo = x
+	}
+	if x, ok := m.hi[ws[0]]; ok {
+		hi = x
+	}
+	return lo, hi
+}
+
+var negateCmp = map[ssa.Op]ssa.Op{ssa.OpLt: ssa.OpGe, ssa.OpGe: ssa.OpLt, ssa.OpLe: ssa.OpGt, ssa.OpGt: ssa.OpLe, ssa.OpEq: ssa.OpNe, ssa.OpNe: ssa.OpEq}
+var swapCmp = map[ssa.Op]ssa.Op{ssa.OpLt: ssa.OpGt, ssa.OpGt: ssa.OpLt, ssa.OpLe: ssa.OpGe, ssa.OpGe: ssa.OpLe, ssa.OpEq: ssa.OpEq, ssa.OpNe: ssa.OpNe}
+
+// branchFacts records the bounds the branch into b (its only
+// predecessor's terminator) implies.
+func (s *fstate) branchFacts(b *ssa.Block) {
+	t := b.Preds[0].From.Term()
+	if t == nil || t.Op != ssa.OpBranch {
+		return
+	}
+	yes, no := t.Succs[0].To == b, t.Succs[1].To == b
+	c := t.Args[0]
+	if yes == no || !isCompare(c.Op) || c.Args[0].Type.Kind != ssa.KInt {
+		return
+	}
+	op := c.Op
+	if no {
+		op = negateCmp[op]
+	}
+	x, y := c.Args[0], c.Args[1]
+	xlo, xhi := s.bounds(x)
+	ylo, yhi := s.bounds(y)
+	s.narrow(x, op, ylo, yhi)
+	s.narrow(y, swapCmp[op], xlo, xhi)
+}
+
+// narrow records that x op y holds, y in [ylo, yhi].
+func (s *fstate) narrow(x *ssa.Value, op ssa.Op, ylo, yhi int64) {
+	if x.Op == ssa.OpConst {
+		return
+	}
+	ws, ok := s.vals[x]
+	if !ok || len(ws) != 1 || ws[0] == 0 {
+		return
+	}
+	lo, hi := s.bounds(x)
+	switch op {
+	case ssa.OpLt:
+		if yhi > math.MinInt64 {
+			hi = min(hi, yhi-1)
+		}
+	case ssa.OpLe:
+		hi = min(hi, yhi)
+	case ssa.OpGt:
+		if ylo < math.MaxInt64 {
+			lo = max(lo, ylo+1)
+		}
+	case ssa.OpGe:
+		lo = max(lo, ylo)
+	case ssa.OpEq:
+		lo, hi = max(lo, ylo), min(hi, yhi)
+	}
+	m := s.m()
+	m.lo[ws[0]], m.hi[ws[0]] = lo, hi
+}
+
+// safeAdd reports whether a + n (or a - n) cannot overflow.
+func (s *fstate) safeAdd(a *ssa.Value, n int64, op ssa.Op) bool {
+	if op == ssa.OpSub {
+		if n == math.MinInt64 {
+			return false
+		}
+		n = -n
+	}
+	lo, hi := s.bounds(a)
+	if n >= 0 {
+		return hi <= math.MaxInt64-n
+	}
+	return lo >= math.MinInt64-n
 }
