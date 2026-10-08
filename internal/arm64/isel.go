@@ -31,6 +31,7 @@ type fstate struct {
 	out     bool                    // the function uses the $OUT slot
 	cancel  map[*ssa.Value]bool     // releases cancelled by a retain (rc.go cancelRC)
 	lsr     map[*ssa.Block]*lsrLoop // loop headers: induction variables (lsr.go)
+	ranges  map[*ssa.Value]interval // intervals of Int values (ranges.go)
 	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
 	// register allocation results
 	loc     []loc
@@ -378,6 +379,7 @@ func (s *fstate) isel() {
 	blocks := rpo(f)
 	idom := dominators(blocks)
 	s.planLSR(blocks, idom)
+	s.computeRanges(blocks)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -591,7 +593,7 @@ func (s *fstate) instr(v *ssa.Value) {
 			}
 			return s.def1(false, "mul $d0, $u0, $u1", a, b)
 		}
-		if v.Pos == "" {
+		if v.Pos == "" || s.safeMul(v) {
 			s.set(v, mul())
 			return
 		}
@@ -864,6 +866,15 @@ func (s *fstate) divRem(v *ssa.Value) {
 		}
 		// round toward zero: add 2^k - 1 to negative dividends
 		a := s.word(v.Args[0])
+		if lo, _ := s.bounds(v.Args[0]); lo >= 0 {
+			// not negative: a mask or a shift
+			if v.Op == ssa.OpDiv {
+				s.set(v, s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), a))
+			} else {
+				s.set(v, s.def1(false, fmt.Sprintf("and $d0, $u0, #%d", int64(1)<<k-1), a))
+			}
+			return
+		}
 		if s.m().lowZero[a] >= k {
 			// a branch proved a % 2^k == 0: exact
 			if v.Op == ssa.OpDiv {

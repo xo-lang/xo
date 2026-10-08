@@ -256,17 +256,18 @@ func (s *fstate) bounds(v *ssa.Value) (int64, int64) {
 	if n, ok := constInt(v); ok {
 		return n, n
 	}
-	lo, hi := int64(math.MinInt64), int64(math.MaxInt64)
+	r := s.ssaRange(v) // ranges.go
+	lo, hi := r.lo, r.hi
 	ws, ok := s.vals[v]
 	if !ok || len(ws) != 1 {
 		return lo, hi
 	}
 	m := s.m()
 	if x, ok := m.lo[ws[0]]; ok {
-		lo = x
+		lo = max(lo, x)
 	}
 	if x, ok := m.hi[ws[0]]; ok {
-		hi = x
+		hi = min(hi, x)
 	}
 	return lo, hi
 }
