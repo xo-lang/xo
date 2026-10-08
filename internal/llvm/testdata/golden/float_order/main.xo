@@ -1,0 +1,271 @@
+// Float comparison and ordering with NaN, signed zeros, and infinities
+// (core 2.1, std.md 1, decisions/0053): `<`, `<=`, `>`, `>=` follow the
+// total order with NaN after every other value and -0.0 equal to 0.0;
+// `==` and `!=` are IEEE (NaN differs from itself), also inside
+// aggregates; `min` and `max` follow the total order and keep the
+// receiver on a tie. Every backend must print the same.
+struct P {
+  x: Float
+  n: Int
+}
+
+enum Shape {
+  Circle(r: Float)
+  Square(s: Float)
+}
+
+struct Rec {
+  w: Float
+  id: Int
+}
+
+fn zero() -> Float { 0.0 }
+
+fn bit(b: Bool) -> Str {
+  if b {
+    return "1"
+  }
+  "0"
+}
+
+// the compares as values (cset)
+fn table(a: Float, b: Float) -> Str {
+  let lt = a < b
+  let le = a <= b
+  let gt = a > b
+  let ge = a >= b
+  let eq = a == b
+  let ne = a != b
+  "${bit(lt)}${bit(le)}${bit(gt)}${bit(ge)}${bit(eq)}${bit(ne)}"
+}
+
+// the compares as branches
+fn branches(a: Float, b: Float) -> Str {
+  var s = ""
+  if a < b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  if a <= b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  if a > b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  if a >= b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  if a == b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  if a != b {
+    s = s + "1"
+  } else {
+    s = s + "0"
+  }
+  s
+}
+
+// compares against constants, both sides
+fn consts(a: Float) -> Str {
+  let r = "${bit(a < 0.0)}${bit(a <= 0.0)}${bit(a > 0.0)}${bit(a >= 0.0)}${bit(a < 1.5)}${bit(a > -2.0)}"
+  r + " ${bit(0.0 < a)}${bit(0.0 <= a)}${bit(0.0 > a)}${bit(0.0 >= a)}${bit(1.5 > a)}${bit(-2.0 < a)}"
+}
+
+// a compare picked by another compare (arm64 selectCompares, reuseFlags)
+fn less(a: Rec, b: Rec) -> Bool {
+  if a.w != b.w {
+    return a.w < b.w
+  }
+  a.id < b.id
+}
+
+fn less_eq(a: Rec, b: Rec) -> Bool {
+  if a.w == b.w {
+    return a.id <= b.id
+  }
+  a.w <= b.w
+}
+
+fn insertion(xs: List[Float]) -> List[Float] {
+  var out = xs
+  for i in 1..out.len() {
+    var j = i
+    while j > 0 && out[j - 1] > out[j] {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      j -= 1
+    }
+  }
+  out
+}
+
+fn quicksort(var xs: List[Float], lo: Int, hi: Int) {
+  if lo >= hi {
+    return
+  }
+  let pivot = xs[(lo + hi) / 2]
+  var i = lo
+  var j = hi
+  while i <= j {
+    while xs[i] < pivot {
+      i += 1
+    }
+    while pivot < xs[j] {
+      j -= 1
+    }
+    if i <= j {
+      let t = xs[i]
+      xs[i] = xs[j]
+      xs[j] = t
+      i += 1
+      j -= 1
+    }
+  }
+  quicksort(xs, lo, j)
+  quicksort(xs, i, hi)
+}
+
+fn show(xs: List[Float]) -> Str {
+  var s = "["
+  for i in 0..xs.len() {
+    if i > 0 {
+      s = s + " "
+    }
+    s = s + "${xs[i]}"
+  }
+  s + "]"
+}
+
+fn main(os: Os) {
+  let z = zero()
+  let nan = z / z
+  let inf = 1.0 / z
+  let ninf = -inf
+  let nz = -z
+  let vals = [nan, ninf, -1.5, nz, z, 1.0, inf]
+  let names = ["nan", "-inf", "-1.5", "-0", "0", "1", "inf"]
+  os.stdio.println("pair lt le gt ge eq ne")
+  for i in 0..vals.len() {
+    for j in 0..vals.len() {
+      let t = table(vals[i], vals[j])
+      let b = branches(vals[i], vals[j])
+      var note = ""
+      if t != b {
+        note = " branch " + b
+      }
+      os.stdio.println("${names[i]} ${names[j]} ${t}${note}")
+    }
+  }
+  for i in 0..vals.len() {
+    os.stdio.println("const ${names[i]} ${consts(vals[i])}")
+  }
+  for i in 0..vals.len() {
+    var line = "minmax ${names[i]}"
+    for j in 0..vals.len() {
+      line = line + " ${vals[i].min(vals[j])}/${vals[i].max(vals[j])}"
+    }
+    os.stdio.println(line)
+  }
+  // which zero min and max keep: the receiver on a tie
+  os.stdio.println("zeros ${1.0 / nz.min(z)} ${1.0 / z.min(nz)} ${1.0 / nz.max(z)} ${1.0 / z.max(nz)}")
+  // aggregates: IEEE == per field
+  let p = P{x: nan, n: 1}
+  let q = p
+  os.stdio.println("struct ${p == q} ${p != q} ${P{x: nz, n: 1} == P{x: z, n: 1}} ${P{x: inf, n: 2} == P{x: inf, n: 2}}")
+  os.stdio.println("tuple ${(nan, 1) == (nan, 1)} ${(nz, 1) == (z, 1)} ${(ninf, 2) != (ninf, 2)}")
+  let xs = [1.0, nan]
+  let ys = xs
+  os.stdio.println("list ${xs == ys} ${xs != ys} ${[nz] == [z]} ${[inf, ninf] == [inf, ninf]}")
+  let c = Shape.Circle(r: nan)
+  os.stdio.println("enum ${c == c} ${Shape.Square(s: nz) == Shape.Square(s: z)} ${Shape.Circle(r: inf) == Shape.Square(s: inf)}")
+  let o: Float? = nan
+  os.stdio.println("option ${o == Some(nan)} ${o != None}")
+  // sorting with NaN, signed zeros, and infinities
+  let data = [3.0, nan, -0.0, inf, -1.5, 0.0, nan, ninf, 2.5, nz, 1.0]
+  os.stdio.println("insertion ${show(insertion(data))}")
+  var qs = data
+  quicksort(qs, 0, qs.len() - 1)
+  os.stdio.println("quicksort ${show(qs)}")
+  var recs: List[Rec] = []
+  let ws = [nan, 1.5, nz, z, inf, nan, ninf, 1.5]
+  for i in 0..8 {
+    recs.push(Rec{w: ws[i], id: i % 3})
+  }
+  var n = 0
+  var m = 0
+  for i in 0..8 {
+    for j in 0..8 {
+      if less(recs[i], recs[j]) {
+        n += i * 8 + j
+      }
+      if less_eq(recs[i], recs[j]) {
+        m += i + 3 * j
+      }
+    }
+  }
+  os.stdio.println("select ${n} ${m}")
+  // differential: pseudo random pairs, one in four a special value; the
+  // six compares, min, and max fold into checksums that every backend
+  // must reproduce
+  let specials = [nan, inf, ninf, nz, z]
+  var seed = 12345
+  var sums = [0, 0, 0, 0, 0, 0, 0, 0]
+  for i in 0..4000 {
+    var pair: List[Float] = []
+    for _ in 0..2 {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      // the high bits: the low bits of this generator have short periods
+      let r = seed / 65536
+      if r % 4 == 0 {
+        pair.push(specials[(r / 4) % 5])
+      } else {
+        pair.push(Float((r / 4) % 41 - 20) / 4.0)
+      }
+    }
+    let a = pair[0]
+    let b = pair[1]
+    let w = i % 97 + 1
+    if a < b {
+      sums[0] = sums[0] + w
+    }
+    if a <= b {
+      sums[1] = sums[1] + w
+    }
+    if a > b {
+      sums[2] = sums[2] + w
+    }
+    if a >= b {
+      sums[3] = sums[3] + w
+    }
+    if a == b {
+      sums[4] = sums[4] + w
+    }
+    if a != b {
+      sums[5] = sums[5] + w
+    }
+    let lo = a.min(b)
+    let hi = a.max(b)
+    if lo.is_nan() {
+      sums[6] = sums[6] + w
+    } else if 1.0 / lo < 0.0 {
+      sums[6] = sums[6] + 2 * w
+    }
+    if hi.is_nan() {
+      sums[7] = sums[7] + w
+    } else if 1.0 / hi < 0.0 {
+      sums[7] = sums[7] + 2 * w
+    }
+  }
+  os.stdio.println("random ${sums[0]} ${sums[1]} ${sums[2]} ${sums[3]} ${sums[4]} ${sums[5]} ${sums[6]} ${sums[7]}")
+}

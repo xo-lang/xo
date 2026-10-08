@@ -1,7 +1,7 @@
 // Compares that pick another compare (internal/arm64 selectCompares):
 // lexicographic less on Int and Float fields (signed zeros), with the
-// tie breaking compare different from the first. No NaN: the Go backend
-// orders it last (std.md), the native backends use IEEE `<`
+// tie breaking compare different from the first. NaN keys order last
+// (std.md 1, decisions/0053) and differ from themselves under `!=`
 // (gotchas/native-float-nan-order.md).
 struct Rec {
   key: Int
@@ -30,8 +30,11 @@ fn mixed(a: Int, b: Int, c: Int) -> Bool {
   b < c
 }
 
+fn zero() -> Float { 0.0 }
+
 fn main(os: Os) {
-  let ws = [1.5, -2.0, 9.0, 1.5, 0.0, -0.0, 9.0, 7.25]
+  let nan = zero() / zero()
+  let ws = [1.5, -2.0, nan, 1.5, 0.0, -0.0, 9.0, nan]
   var recs: List[Rec] = []
   var seed = 7
   for i in 0..64 {

@@ -39,14 +39,24 @@ interface Debug   { fn debug(self) -> Str }     // implemented for every type
 `Eq` and `Hash` are automatic when all fields implement them; `Ord` comes from
 `derive Ord` (field order, then variant order). Builtin scalar types, `Str`,
 `Duration`, and `Time` are `Ord`. `Float` is `Ord` with a total order in which
-NaN sorts after every other value.
+NaN sorts after every other value (all NaNs are equal in the order) and
+`-0.0` and `0.0` are equal: `-Inf < ... < -0.0 = 0.0 < ... < +Inf < NaN`
+(decision 0053). This order drives `<`, `<=`, `>`, `>=` on Float (core
+2.1), `sort` and `sort_by` (stable, so `-0.0` and `0.0` keep their input
+order and NaNs end up last), derived `Ord` on types with Float fields,
+`T: Ord` generic code, and `min`, `max`, `clamp`. `==` on Float is IEEE
+(NaN differs from itself), not this order.
 
 `Int`, the sized integers, `Float`, `Bool`, `Rune`, `Str`, `Duration`, `Time`,
 and every std error type implement `Display`. `Bytes` does not (use
 `to_str()`). `Json` is implemented by `derive Json` and by
 builtin types (section 5).
 
-Every `Ord` type has `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)`.
+Every `Ord` type has `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)`. `a.min(b)`
+is `b` when `b < a` and otherwise `a`; `a.max(b)` is `b` when `b > a` and
+otherwise `a`: on a tie the receiver is kept (`(-0.0).min(0.0)` is
+`-0.0`, `(0.0).min(-0.0)` is `0.0`). Under the Float order `x.min(NaN)` is
+`x` and `x.max(NaN)` is NaN. `a.clamp(lo, hi)` is `a.max(lo).min(hi)`.
 
 When a value is passed where an interface type is expected (for example a
 `Map[Str, Debug]` literal), it is converted to that interface implicitly

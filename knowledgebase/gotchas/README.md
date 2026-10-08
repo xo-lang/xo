@@ -33,6 +33,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [canceled-sleep-unwinds.md](canceled-sleep-unwinds.md): `clock.sleep` unwinds a canceled task, so polling `is_canceled` around it never sees cancellation.
 - [spawn-background-never-result.md](spawn-background-never-result.md): `spawn_background` with an infinite loop closure fails inference (XO0402).
 - [go-constant-float-division.md](go-constant-float-division.md): `0.0 / 0.0` is a Go compile time error; float division goes through rt.
+- [go-constant-negative-zero.md](go-constant-negative-zero.md): `-0.0` emitted as a Go constant expression is positive zero; Float negation goes through `rt.FNeg`.
 - [recursive-struct-option.md](recursive-struct-option.md): a struct containing itself through Option needs `rt.Box`.
 - [virtual-timer-callback-holds-world-lock.md](virtual-timer-callback-holds-world-lock.md): virtual timer callbacks hold the world lock; do real work on a goroutine counted as running (`stopState.after`).
 - [map-copy-claims-log.md](map-copy-claims-log.md): Map copies share one entry log; the first write claims it, other copies fork; why transient trie nodes were unsound in Go.
@@ -106,4 +107,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-option-first-recursive-type.md](ssa-option-first-recursive-type.md): a recursive struct first met as `T?` was not boxed by the SSA builder, so both native backends rejected it (resolved by decision 0052: boxing decided from the checker types).
 - [gocache-trim-races-concurrent-build.md](gocache-trim-races-concurrent-build.md): one xo process trimming the shared Go cache can delete entries a concurrent `go build` reads ("could not import os"); rerun, or separate `XO_GOCACHE`.
 - [arm64-match-dispatch-prediction.md](arm64-match-dispatch-prediction.md): on Apple M4 a jump table sped interp up 1.8x but lost up to 3x on random tags; chain layout (taken branch per failed test) was most of interp's cost.
-- [native-float-nan-order.md](native-float-nan-order.md): the LLVM and arm64 backends compare Float with IEEE `<` (NaN false), the Go backend with the spec's total order (NaN last).
+- [native-float-nan-order.md](native-float-nan-order.md): the LLVM and arm64 backends compared Float with IEEE `<` (NaN false), the Go backend with the spec's total order (NaN last); also min/max ties and NaN in shared boxes. Fixed by decision 0053; after `fcmp`, mi/ls/gt/ge are false on NaN, lt/le/hi/hs true.

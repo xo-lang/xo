@@ -495,9 +495,63 @@ func (s *fstate) pmove(dsts []vreg, srcs []src) {
 var intCond = map[ssa.Op]string{ssa.OpEq: "eq", ssa.OpNe: "ne", ssa.OpLt: "lt", ssa.OpLe: "le", ssa.OpGt: "gt", ssa.OpGe: "ge"}
 var uintCond = map[ssa.Op]string{ssa.OpEq: "eq", ssa.OpNe: "ne", ssa.OpLt: "lo", ssa.OpLe: "ls", ssa.OpGt: "hi", ssa.OpGe: "hs"}
 
-// floatCond are the conditions after fcmp that are false when either
-// operand is NaN (ordered), except ne (unordered or not equal).
-var floatCond = map[ssa.Op]string{ssa.OpEq: "eq", ssa.OpNe: "ne", ssa.OpLt: "mi", ssa.OpLe: "ls", ssa.OpGt: "gt", ssa.OpGe: "ge"}
+// floatCond are the conditions after fcmp for IEEE `==` (false when
+// either operand is NaN) and `!=` (unordered or not equal). The ordering
+// compares use floatOrder.
+var floatCond = map[ssa.Op]string{ssa.OpEq: "eq", ssa.OpNe: "ne"}
+
+// isPosZero reports whether v is the constant +0.0 (fcmp's #0.0).
+func isPosZero(v *ssa.Value) bool {
+	x, ok := v.Aux.(float64)
+	return v.Op == ssa.OpConst && ok && x == 0 && !math.Signbit(x)
+}
+
+// notNaNConst reports whether v is a Float constant other than NaN.
+func notNaNConst(v *ssa.Value) bool {
+	x, ok := v.Aux.(float64)
+	return v.Op == ssa.OpConst && ok && !math.IsNaN(x)
+}
+
+// floatOrder lowers `<`, `<=`, `>`, `>=` on Floats to the total order of
+// std.md 1 (decisions/0053): NaN after every other value and equal to
+// NaN, -0.0 equal to 0.0. After `fcmp a, b` the flags are N for less, ZC
+// for equal, C for greater, CV for unordered; mi, ls, gt, ge are false
+// on NaN, lt, le, hi, hs true.
+//
+//   - b a constant other than NaN: a < b is mi, a <= b ls, a > b hi
+//     (greater or a NaN), a >= b hs.
+//   - a a constant other than NaN: a < b is lt (less or b NaN), a <= b
+//     le, a > b gt, a >= b ge.
+//   - otherwise x < y is `fcmp x, x; fccmp x, y, #0, vc` then lt: when x
+//     is a number, the second compare decides and lt holds for less or
+//     unordered (y NaN); when x is NaN, the flags are 0000 and lt is
+//     false. x >= y is the same flags with ge, a > b and a <= b swap the
+//     operands.
+func (s *fstate) floatOrder(op ssa.Op, a, b *ssa.Value) (text string, uses []vreg, cond string) {
+	if notNaNConst(b) {
+		cond = map[ssa.Op]string{ssa.OpLt: "mi", ssa.OpLe: "ls", ssa.OpGt: "hi", ssa.OpGe: "hs"}[op]
+		if isPosZero(b) {
+			return "fcmp $u0, #0.0", []vreg{s.word(a)}, cond
+		}
+		return "fcmp $u0, $u1", []vreg{s.word(a), s.word(b)}, cond
+	}
+	if notNaNConst(a) {
+		cond = map[ssa.Op]string{ssa.OpLt: "lt", ssa.OpLe: "le", ssa.OpGt: "gt", ssa.OpGe: "ge"}[op]
+		return "fcmp $u0, $u1", []vreg{s.word(a), s.word(b)}, cond
+	}
+	x, y := a, b
+	cond = "lt"
+	switch op {
+	case ssa.OpGt:
+		x, y = b, a
+	case ssa.OpLe:
+		x, y = b, a
+		cond = "ge"
+	case ssa.OpGe:
+		cond = "ge"
+	}
+	return "fcmp $u0, $u0\nfccmp $u0, $u1, #0, vc", []vreg{s.word(x), s.word(y)}, cond
+}
 
 var swapCond = map[string]string{"eq": "eq", "ne": "ne", "lt": "gt", "gt": "lt", "le": "ge", "ge": "le",
 	"lo": "hi", "hi": "lo", "ls": "hs", "hs": "ls"}
@@ -542,11 +596,14 @@ func (s *fstate) compare(v *ssa.Value) (text string, uses []vreg, cond string) {
 		}
 		return "cmp $u0, $u1", []vreg{s.word(a), s.word(b)}, cond
 	case ssa.KFloat:
-		cond = floatCond[v.Op]
-		if b.Op == ssa.OpConst && b.Aux == float64(0) && !math.Signbit(b.Aux.(float64)) {
-			return "fcmp $u0, #0.0", []vreg{s.word(a)}, cond
+		if v.Op == ssa.OpEq || v.Op == ssa.OpNe {
+			cond = floatCond[v.Op]
+			if isPosZero(b) {
+				return "fcmp $u0, #0.0", []vreg{s.word(a)}, cond
+			}
+			return "fcmp $u0, $u1", []vreg{s.word(a), s.word(b)}, cond
 		}
-		return "fcmp $u0, $u1", []vreg{s.word(a), s.word(b)}, cond
+		return s.floatOrder(v.Op, a, b)
 	}
 	fail("compare of `%s`", a.Type.Name)
 	return
@@ -1374,10 +1431,18 @@ func (s *fstate) callOp(v *ssa.Value) {
 	case "Int.min", "Int.max":
 		c := map[string]string{"Int.min": "lt", "Int.max": "gt"}[name]
 		s.set(v, s.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, "+c, s.word(v.Args[0]), s.word(v.Args[1])))
-	case "Float.min":
-		s.set(v, s.def1(true, "fcmp $u0, $u1\nfcsel $d0, $u0, $u1, mi", s.word(v.Args[0]), s.word(v.Args[1])))
-	case "Float.max":
-		s.set(v, s.def1(true, "fcmp $u0, $u1\nfcsel $d0, $u1, $u0, mi", s.word(v.Args[0]), s.word(v.Args[1])))
+	case "Float.min", "Float.max":
+		// the total order, the receiver on a tie (std.md 1,
+		// decisions/0053): min is `b < a ? b : a`, max `a < b ? b : a`
+		x, y := v.Args[0], v.Args[1]
+		if name == "Float.min" {
+			x, y = y, x
+		}
+		text, uses, cond := s.floatOrder(ssa.OpLt, x, y)
+		ra, rb := s.word(v.Args[0]), s.word(v.Args[1])
+		n := len(uses)
+		uses = append(uses, ra, rb)
+		s.set(v, s.def1(true, fmt.Sprintf("%s\nfcsel $d0, $u%d, $u%d, %s", text, n+1, n, cond), uses...))
 	case "Int.abs":
 		x := s.word(v.Args[0])
 		if v.Pos != "" {

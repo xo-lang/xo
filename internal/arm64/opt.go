@@ -636,7 +636,7 @@ func (s *fstate) selectCompares() {
 			continue
 		}
 		et, nt := e.insts[0], n.insts[0]
-		if !flagTest(et) || !flagTest(nt) || strings.Contains(et.text, "\n") || strings.Contains(nt.text, "\n") {
+		if !flagTest(et) || !flagTest(nt) || !oneCompare(et.text) || !oneCompare(nt.text) {
 			continue
 		}
 		t, f := et.targets[0], et.targets[1]
@@ -680,6 +680,21 @@ func (s *fstate) selectCompares() {
 	if changed {
 		s.thread()
 	}
+}
+
+// oneCompare reports whether a branch's flag setting text is one
+// compare: one instruction, or a Float ordering compare (fcmp then
+// fccmp, floatOrder) that only sets the flags.
+func oneCompare(text string) bool {
+	if !strings.Contains(text, "\n") {
+		return true
+	}
+	for _, l := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(l, "fcmp ") && !strings.HasPrefix(l, "fccmp ") {
+			return false
+		}
+	}
+	return true
 }
 
 // reuseFlags drops the compare of a block that only branches when its one

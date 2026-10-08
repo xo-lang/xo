@@ -629,7 +629,8 @@ func (f *fnGen) unary(x *ast.UnaryExpr) string {
 		v := f.val(x.X)
 		switch {
 		case f.g.isFloat(t):
-			return "(-" + v + ")"
+			// a call: `-0.0` must be negative zero (core 2.1)
+			return fmt.Sprintf("%sFNeg(%s)", f.rt(), v)
 		case f.g.isUnsigned(t):
 			return fmt.Sprintf("%sNegU(%s, %q)", f.rt(), v, f.g.loc(x))
 		case f.goType(t) == "int64" && f.safeOp(x):

@@ -1,0 +1,49 @@
+// Float ordering through Ord (std.md 1, decisions/0053): `sort`,
+// `sort_by`, `min`, `max`, `clamp`, derived Ord on a struct with a
+// Float field, and a generic `T: Ord` compare all use the total order
+// (NaN after every other value and equal to NaN, -0.0 equal to 0.0,
+// ties keep input order or the receiver); `==` stays IEEE.
+// internal/llvm/testdata/golden/float_order covers the operators on all
+// backends.
+struct Pt {
+  x: Float
+  tag: Int
+} derive Ord
+
+fn zero() -> Float { 0.0 }
+
+fn largest[T: Ord](a: T, b: T) -> T {
+  if a > b {
+    return a
+  }
+  b
+}
+
+fn below[T: Ord](a: T, b: T) -> Bool { a < b }
+
+fn main(os: Os) {
+  let z = zero()
+  let nan = z / z
+  let inf = 1.0 / z
+  let ninf = -inf
+  let nz = -0.0
+  let data = [3.0, nan, nz, inf, -1.5, z, nan, ninf, 2.5, -z, 1.0]
+  let sorted = data.sort()
+  os.stdio.println("sort ${sorted.map(fn(x) { "${x}" }).join(" ")}")
+  os.stdio.println("signs ${sorted.map(fn(x) { "${1.0 / x}" }).join(" ")}")
+  let by = data.sort_by(fn(x) { -x })
+  os.stdio.println("sort_by ${by.map(fn(x) { "${x}" }).join(" ")}")
+  os.stdio.println("min ${nan.min(1.0)} ${(1.0).min(nan)} ${nan.min(nan)} ${1.0 / nz.min(z)} ${1.0 / z.min(nz)}")
+  os.stdio.println("max ${nan.max(1.0)} ${(1.0).max(nan)} ${inf.max(nan)} ${1.0 / nz.max(z)} ${1.0 / z.max(nz)}")
+  os.stdio.println("clamp ${nan.clamp(0.0, 1.0)} ${(5.0).clamp(0.0, nan)} ${(-5.0).clamp(nan, 1.0)} ${ninf.clamp(-1.0, 1.0)}")
+  let pts = [Pt{x: nan, tag: 1}, Pt{x: 1.0, tag: 2}, Pt{x: nz, tag: 3}, Pt{x: z, tag: 0}, Pt{x: nan, tag: 0}]
+  let ps = pts.sort()
+  var line = "pts"
+  for p in ps {
+    line = line + " ${p.x}/${p.tag}"
+  }
+  os.stdio.println(line)
+  os.stdio.println("ord ${pts[0] > pts[1]} ${pts[0] == pts[0]} ${pts[0] <= pts[0]} ${pts[2] < pts[3]} ${pts[3] < pts[2]}")
+  os.stdio.println("generic ${largest(nan, 1.0)} ${largest(1.0, nan)} ${below(nan, nan)} ${below(1.0, nan)} ${below(nz, z)}")
+  os.stdio.println("ops ${nan < nan} ${nan <= nan} ${nan == nan} ${nan != nan} ${nan > inf} ${nz < z} ${nz == z}")
+}

@@ -31,6 +31,10 @@ func FMod[F ~float32 | ~float64](a, b F) F { return F(math.Mod(float64(a), float
 // NaN, not a fault).
 func FDiv[F ~float32 | ~float64](a, b F) F { return a / b }
 
+// FNeg is unary `-x` on floats: a call, so `-0.0` is negative zero and
+// not a Go constant expression (Go constants have no negative zero).
+func FNeg[F ~float32 | ~float64](x F) F { return -x }
+
 // IntMulDur is checked `n * d`.
 func IntMulDur(n int64, d Duration, at string) Duration { return MulS(Duration(n), d, at) }
 

@@ -1,0 +1,77 @@
+exit 0
+--- stdout
+pair lt le gt ge eq ne
+nan nan 010101
+nan -inf 001101
+nan -1.5 001101
+nan -0 001101
+nan 0 001101
+nan 1 001101
+nan inf 001101
+-inf nan 110001
+-inf -inf 010110
+-inf -1.5 110001
+-inf -0 110001
+-inf 0 110001
+-inf 1 110001
+-inf inf 110001
+-1.5 nan 110001
+-1.5 -inf 001101
+-1.5 -1.5 010110
+-1.5 -0 110001
+-1.5 0 110001
+-1.5 1 110001
+-1.5 inf 110001
+-0 nan 110001
+-0 -inf 001101
+-0 -1.5 001101
+-0 -0 010110
+-0 0 010110
+-0 1 110001
+-0 inf 110001
+0 nan 110001
+0 -inf 001101
+0 -1.5 001101
+0 -0 010110
+0 0 010110
+0 1 110001
+0 inf 110001
+1 nan 110001
+1 -inf 001101
+1 -1.5 001101
+1 -0 001101
+1 0 001101
+1 1 010110
+1 inf 110001
+inf nan 110001
+inf -inf 001101
+inf -1.5 001101
+inf -0 001101
+inf 0 001101
+inf 1 001101
+inf inf 010110
+const nan 001101 110001
+const -inf 110010 001110
+const -1.5 110011 001111
+const -0 010111 010111
+const 0 010111 010111
+const 1 001111 110011
+const inf 001101 110001
+minmax nan NaN/NaN -Inf/NaN -1.5/NaN -0.0/NaN 0.0/NaN 1.0/NaN +Inf/NaN
+minmax -inf -Inf/NaN -Inf/-Inf -Inf/-1.5 -Inf/-0.0 -Inf/0.0 -Inf/1.0 -Inf/+Inf
+minmax -1.5 -1.5/NaN -Inf/-1.5 -1.5/-1.5 -1.5/-0.0 -1.5/0.0 -1.5/1.0 -1.5/+Inf
+minmax -0 -0.0/NaN -Inf/-0.0 -1.5/-0.0 -0.0/-0.0 -0.0/-0.0 -0.0/1.0 -0.0/+Inf
+minmax 0 0.0/NaN -Inf/0.0 -1.5/0.0 0.0/0.0 0.0/0.0 0.0/1.0 0.0/+Inf
+minmax 1 1.0/NaN -Inf/1.0 -1.5/1.0 -0.0/1.0 0.0/1.0 1.0/1.0 1.0/+Inf
+minmax inf +Inf/NaN -Inf/+Inf -1.5/+Inf -0.0/+Inf 0.0/+Inf 1.0/+Inf +Inf/+Inf
+zeros -Inf +Inf -Inf +Inf
+struct false true true true
+tuple false true false
+list false true true true
+enum false true false
+option false true
+insertion [-Inf -1.5 -0.0 0.0 -0.0 1.0 2.5 3.0 +Inf NaN NaN]
+quicksort [-Inf -1.5 0.0 -0.0 -0.0 1.0 2.5 3.0 +Inf NaN NaN]
+select 897 509
+random 94144 101377 93772 101005 6669 188480 237602 101720
+--- stderr

@@ -304,6 +304,23 @@ type: `Float(i)`, `Int(f)` (truncates toward zero, faults on NaN or out of
 range), `Int32(x)` (faults out of range), `Int32.try(x) -> Int32?`. Parsing
 text is `Int.parse(s) -> Int?`, `Float.parse(s) -> Float?`.
 
+Float comparison (decision 0053; the same for `Float32`):
+
+- `==` and `!=` are IEEE 754: NaN is not equal to anything, itself
+  included, and `-0.0 == 0.0`. Structural `==` on structs, tuples, enums,
+  options, lists, and recursive (boxed) values compares Float fields this
+  way, so a value holding a NaN is not equal to itself (`x == x` is
+  false).
+- `<`, `<=`, `>`, `>=` use the total order of `Ord` (std.md 1): every
+  NaN sorts after `+Inf` and equals every other NaN in the order, and
+  `-0.0` and `0.0` are equal in the order. So `NaN < NaN` is false,
+  `NaN <= NaN` is true, `NaN > x` is true for every non NaN `x`,
+  `-0.0 < 0.0` is false, and `!(a < b)` is always `a >= b`. Because the
+  two families differ, `a <= b && a >= b` does not imply `a == b` (both
+  NaN).
+- Unary `-` flips the sign of every Float, zero included: `-0.0` is
+  negative zero.
+
 `Duration` may be negative (`d.abs()` gives the magnitude).
 
 Operators on `Duration` and `Time`:

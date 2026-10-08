@@ -85,7 +85,11 @@ func (g *gen) eqHelper(t *ssa.Type) string {
 	frame := 32
 	switch t.Kind {
 	case ssa.KBox:
-		fmt.Fprintf(&b, "\tcmp x0, x1\n\tb.ne %s_cmp\n\tmov x0, #1\n\tret\n%s_cmp:\n", sym, sym)
+		if !t.Elems[0].HasFloat() {
+			// the same cell is equal, unless it holds a Float (NaN is
+			// not equal to itself, decisions/0053)
+			fmt.Fprintf(&b, "\tcmp x0, x1\n\tb.ne %s_cmp\n\tmov x0, #1\n\tret\n%s_cmp:\n", sym, sym)
+		}
 		b.WriteString("\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
 		b.WriteString("\tadd x19, x0, #8\n\tadd x20, x1, #8\n")
 		g.eqAt(&b, t.Elems[0], "x19", "x20", 0, no, false)

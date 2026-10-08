@@ -613,10 +613,15 @@ func (g *sgen) eqFn(t *ssa.Type) string {
 	var allocas strings.Builder
 	switch t.Kind {
 	case ssa.KBox:
-		// the same cell, or equal contents
+		// the same cell, or equal contents; a cell holding a Float is
+		// always compared (NaN is not equal to itself, decisions/0053)
 		et := t.Elems[0]
-		same := def("icmp eq ptr %%a, %%b")
-		emit("br i1 %s, label %%yes, label %%cmp", same)
+		if et.HasFloat() {
+			emit("br label %%cmp")
+		} else {
+			same := def("icmp eq ptr %%a, %%b")
+			emit("br i1 %s, label %%yes, label %%cmp", same)
+		}
 		w.WriteString("cmp:\n")
 		pa := def("getelementptr %s, ptr %%a, i32 0, i32 1", g.boxLL(t))
 		pb := def("getelementptr %s, ptr %%b, i32 0, i32 1", g.boxLL(t))
@@ -911,6 +916,34 @@ var cmpBool = map[ssa.Op]string{ssa.OpEq: "eq", ssa.OpNe: "ne", ssa.OpLt: "ult",
 var cmpFloat = map[ssa.Op]string{ssa.OpEq: "oeq", ssa.OpNe: "une", ssa.OpLt: "olt", ssa.OpLe: "ole", ssa.OpGt: "ogt", ssa.OpGe: "oge"}
 var opChar = map[ssa.Op]int64{ssa.OpAdd: '+', ssa.OpSub: '-', ssa.OpMul: '*', ssa.OpDiv: '/', ssa.OpRem: '%'}
 
+// floatOrder emits the parts of an ordering compare of two Floats and
+// returns the instruction (without its result name) that combines them.
+// `<`, `<=`, `>`, `>=` follow the total order of std.md 1 (decisions/0053):
+// NaN after every other value and equal to NaN, -0.0 equal to 0.0. The
+// plain IEEE predicates (olt and friends) are false on NaN.
+func (s *sfn) floatOrder(op ssa.Op, a, b string) string {
+	switch op {
+	case ssa.OpLt: // a < b, or b is NaN and a is not
+		x := s.def("fcmp ult double %s, %s", a, b)
+		y := s.def("fcmp ord double %s, %s", a, a)
+		return fmt.Sprintf("and i1 %s, %s", x, y)
+	case ssa.OpGt: // a > b, or a is NaN and b is not
+		x := s.def("fcmp ugt double %s, %s", a, b)
+		y := s.def("fcmp ord double %s, %s", b, b)
+		return fmt.Sprintf("and i1 %s, %s", x, y)
+	case ssa.OpLe: // a <= b, or b is NaN
+		x := s.def("fcmp ole double %s, %s", a, b)
+		y := s.def("fcmp uno double %s, %s", b, b)
+		return fmt.Sprintf("or i1 %s, %s", x, y)
+	case ssa.OpGe: // a >= b, or a is NaN
+		x := s.def("fcmp oge double %s, %s", a, b)
+		y := s.def("fcmp uno double %s, %s", a, a)
+		return fmt.Sprintf("or i1 %s, %s", x, y)
+	}
+	fail("float order of op %v", op)
+	return ""
+}
+
 func (s *sfn) instr(v *ssa.Value) {
 	g := s.g
 	a := func(i int) string { return s.op(v.Args[i]) }
@@ -1002,7 +1035,11 @@ func (s *sfn) instr(v *ssa.Value) {
 		case ssa.KBool:
 			s.set(v, "icmp %s i1 %s, %s", cmpBool[v.Op], a(0), a(1))
 		case ssa.KFloat:
-			s.set(v, "fcmp %s double %s, %s", cmpFloat[v.Op], a(0), a(1))
+			if v.Op == ssa.OpEq || v.Op == ssa.OpNe {
+				s.set(v, "fcmp %s double %s, %s", cmpFloat[v.Op], a(0), a(1))
+				break
+			}
+			s.set(v, "%s", s.floatOrder(v.Op, a(0), a(1)))
 		case ssa.KUnit:
 			r := map[ssa.Op]string{ssa.OpEq: "true", ssa.OpNe: "false", ssa.OpLt: "false", ssa.OpLe: "true", ssa.OpGt: "false", ssa.OpGe: "true"}[v.Op]
 			s.set(v, "and i1 %s, true", r)
@@ -1372,7 +1409,16 @@ func (s *sfn) call(v *ssa.Value) {
 		if v.Type.Kind == ssa.KInt {
 			c = s.def("icmp slt i64 %s, %s", a(0), a(1))
 		} else {
-			c = s.def("fcmp olt double %s, %s", a(0), a(1))
+			// the total order, the receiver on a tie (std.md 1,
+			// decisions/0053): min is `b < a ? b : a`, max `a < b ? b : a`
+			if strings.HasSuffix(name, ".min") {
+				c = s.def("%s", s.floatOrder(ssa.OpLt, a(1), a(0)))
+				s.set(v, "select i1 %s, double %s, double %s", c, a(1), a(0))
+			} else {
+				c = s.def("%s", s.floatOrder(ssa.OpLt, a(0), a(1)))
+				s.set(v, "select i1 %s, double %s, double %s", c, a(1), a(0))
+			}
+			break
 		}
 		if strings.HasSuffix(name, ".min") {
 			s.set(v, "select i1 %s, %s %s, %s %s", c, lt, a(0), lt, a(1))

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+sort -Inf -1.5 -0.0 0.0 -0.0 1.0 2.5 3.0 +Inf NaN NaN
+signs -0.0 -0.6666666666666666 -Inf +Inf -Inf 1.0 0.4 0.3333333333333333 0.0 NaN NaN
+sort_by +Inf 3.0 2.5 1.0 -0.0 0.0 -0.0 -1.5 -Inf NaN NaN
+min 1.0 1.0 NaN -Inf +Inf
+max NaN NaN NaN -Inf +Inf
+clamp 1.0 5.0 1.0 -1.0
+pts 0.0/0 -0.0/3 1.0/2 NaN/0 NaN/1
+ord true false true false true
+generic NaN NaN false true false
+ops false true false true true false true
+--- stderr

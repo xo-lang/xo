@@ -120,6 +120,47 @@ func (t *Type) heap(seen map[*Type]bool) bool {
 	return false
 }
 
+// HasFloat reports whether a value of t holds a Float, directly or
+// through fields, variants, elements, lists, and boxes. `==` on such a
+// value can be false for a value and itself (a NaN field, core 2.1), so
+// equality helpers must not answer true for the same cell without
+// comparing its contents (decisions/0053).
+func (t *Type) HasFloat() bool {
+	return t.hasFloat(map[*Type]bool{})
+}
+
+func (t *Type) hasFloat(seen map[*Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch t.Kind {
+	case KFloat:
+		return true
+	case KStruct:
+		for _, f := range t.Fields {
+			if f.Type.hasFloat(seen) {
+				return true
+			}
+		}
+	case KEnum:
+		for _, v := range t.Variants {
+			for _, f := range v.Fields {
+				if f.Type.hasFloat(seen) {
+					return true
+				}
+			}
+		}
+	case KTuple, KList, KBox:
+		for _, e := range t.Elems {
+			if e.hasFloat(seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // FieldIndex returns the index of the named struct field, or -1.
 func (t *Type) FieldIndex(name string) int {
 	for i, f := range t.Fields {
