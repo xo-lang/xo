@@ -39,6 +39,16 @@ commands:
       xo.mod and the embedded std). --json prints {"modules": [...],
       "diagnostics": [...]} on stdout. Exit status is 1 when any error is
       reported (warnings such as holes do not count), 2 on usage errors.
+  build [--targets=all|os/arch,...] [--backend=go|llvm] [--no-mono] [--arenas] [-o out] <dirs...>
+      Compile to static binaries (default: the host). --backend=llvm uses the
+      LLVM prototype (a core subset, needs clang).
+  run [--seed=N] [--backend=go|llvm] <dir> [-- args]
+      Build for the host and run. --seed makes task interleavings
+      reproducible. Recording is described under run --record below.
+  test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] <dirs...>
+      Run test blocks, property tests, and contract fuzzing on the
+      deterministic scheduler. Shrunk contract failures are written to the
+      module's regressions_test.xo.
   bind [--dir=<project dir>] [--json] <go import paths...>
       Bind Go packages for use go "<path>" (decision 0041): write the Xo
       declaration file and the Go adapter into the binding cache
