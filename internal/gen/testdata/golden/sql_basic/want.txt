@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+inserted 1 id 1
+cy,ann,bob,di
+di,bob
+cy,di
+count 2
+updated 1: 26 b@x.org false
+deleted 2, left ann,cy
+no rows
+constraint: UNIQUE constraint failed: users.name
+constraint: NOT NULL constraint failed: users.name
+syntax: query needs a SELECT statement (use exec for writes)
+no table nothing
+param: statement has 2 placeholders but 1 arguments were given
+mismatch age: expected text, found an integer
+mismatch email: expected an integer, found NULL
+no column height
+closed
+driver: unknown driver postgres
+--- stderr

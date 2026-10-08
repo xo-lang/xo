@@ -1,0 +1,91 @@
+// std/sql (spec/std.md 10). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. Notes for this file:
+//
+// - Db, Tx, and Row are opaque handles (empty structs).
+// - Every operation on a Db or Tx declares `uses net.dial`: a Db may be backed
+//   by a network driver. The in memory driver (`memory`) performs no I/O but
+//   keeps the same signatures, so code under test is typed like production
+//   code. Opening the in memory driver needs no capability.
+// - Real drivers are Go packages bound with `use go` and registered with
+//   `rt.RegisterSqlDriver`; none ships with the compiler yet.
+
+/// A query parameter. `$1` is `args[0]`.
+enum SqlValue {
+  Null
+  Integer(n: Int)
+  Text(s: Str)
+  Real(f: Float)
+  Flag(b: Bool)
+  At(t: Time)
+}
+
+fn null() -> SqlValue
+fn int(n: Int) -> SqlValue
+fn str(s: Str) -> SqlValue
+fn float(f: Float) -> SqlValue
+fn bool(b: Bool) -> SqlValue
+fn time(t: Time) -> SqlValue
+
+enum SqlErr {
+  Syntax(msg: Str)
+  Constraint(msg: Str)
+  /// The number of arguments does not match the placeholders.
+  Param(msg: Str)
+  NoTable(name: Str)
+  /// `query_one` found no row.
+  NoRows
+  /// A row accessor named a column the row does not have.
+  NoColumn(name: Str)
+  /// A row accessor of the wrong type, or a NULL read by a non optional one.
+  Mismatch(column: Str, msg: Str)
+  Conn(msg: Str)
+  Driver(msg: Str)
+  /// The transaction was already committed or rolled back.
+  TxDone
+  Closed
+  Canceled
+} derive Display
+
+struct ExecResult {
+  rows_affected: Int
+  /// The last generated integer key (0 when the driver has none).
+  last_insert_id: Int
+}
+
+struct Db {}
+struct Tx {}
+struct Row {}
+
+/// Opens a database with a registered driver. `max_open` bounds concurrent
+/// operations and open transactions (waiting is a cancellation point),
+/// `max_idle` and `max_lifetime` are passed to the driver.
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
+/// An in memory database, optionally created with `schema` (`;` separated
+/// statements). Needs no capability.
+fn memory(schema: Str = "") -> Db ! SqlErr
+
+fn (d: Db) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
+fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+fn (d: Db) begin() -> Tx ! SqlErr uses net.dial
+fn (d: Db) ping() -> () ! SqlErr uses net.dial
+fn (d: Db) close() -> () ! SqlErr
+
+fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
+fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
+fn (t: Tx) commit() -> () ! SqlErr uses net.dial
+fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
+
+fn (r: Row) columns() -> List[Str]
+fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
+fn (r: Row) int(name: Str) -> Int ! SqlErr
+fn (r: Row) str(name: Str) -> Str ! SqlErr
+fn (r: Row) float(name: Str) -> Float ! SqlErr
+fn (r: Row) bool(name: Str) -> Bool ! SqlErr
+fn (r: Row) time(name: Str) -> Time ! SqlErr
+fn (r: Row) int_opt(name: Str) -> Int? ! SqlErr
+fn (r: Row) str_opt(name: Str) -> Str? ! SqlErr
+fn (r: Row) float_opt(name: Str) -> Float? ! SqlErr
+fn (r: Row) bool_opt(name: Str) -> Bool? ! SqlErr
+fn (r: Row) time_opt(name: Str) -> Time? ! SqlErr

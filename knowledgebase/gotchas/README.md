@@ -85,7 +85,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [serve-tests-and-stale-server.md](serve-tests-and-stale-server.md): `xo check` and `xo query` forward to a running `xo serve`, which runs the code it was built from; tests set `XO_NO_SERVE=1`.
 - [unix-socket-path-length.md](unix-socket-path-length.md): unix socket paths over 104 bytes fail on macOS; keep test sockets under a short temp dir.
 - [mcp-stdout-is-the-protocol.md](mcp-stdout-is-the-protocol.md): `xo mcp` runs commands in process, so a direct write to os.Stdout corrupts the JSON-RPC stream.
-=======
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
->>>>>>> worktree-agent-ac77cf5f5da5c01a5
+=======
+- [sql-memory-driver-limits.md](sql-memory-driver-limits.md): the std/sql in memory driver is an SQL subset; an unfinished Tx holds a pool permit (always defer a rollback).
+>>>>>>> worktree-agent-a871e05658af1b1ad

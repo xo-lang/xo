@@ -485,7 +485,7 @@ internal/llvm/          P3 prototype: LLVM IR for a core subset (see "LLVM backe
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
-                        path.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
+                        path.xo, sql.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM backend (embedded as std.LLRuntime)
@@ -720,6 +720,15 @@ Last verified: 2026-10-08. Rules and choices; details in
 - The std structs, enums, and interfaces are generated into
   `std/rt/std_gen.go` by `gen.StdTypes`; `TestStdTypes` fails when it is
   stale. Opaque std handles and every std function are hand written in rt.
+- std/sql (2026-10-08, std.md 10): `std/sql.xo` declares Db, Tx, Row, SqlValue,
+  SqlErr; `std/rt/sql.go` implements them over a Go `SqlBackend` interface
+  (values nil, int64, string, float64, bool, Time; errors `*SqlError` by kind) with
+  a cancelable pool (`lock`, `max_open` permits, plus one writer permit for single
+  writer backends). `std/rt/sqlmem.go` is the in memory driver (small SQL parser
+  and evaluator; tables are immutable and swapped on write, a transaction is a
+  copy of the table map). Real drivers: implement `rt.SqlOpener`, call
+  `rt.RegisterSqlDriver` (to be bound through `use go`; none yet). Goldens:
+  `sql_basic`, `sql_tx`, `test_sql`. Not recorded by record and replay.
 
 ## LLVM backend (P3 prototype)
 

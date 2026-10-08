@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+after ok: 70 35
+failed: Constraint(msg: "insufficient funds")
+after failed: 70 35
+inside: 0 outside: 2
+rolled back: 2
+duplicate key
+committed: 0
+tx done
+tx done
+rollback after commit is a no-op: 0
+--- stderr

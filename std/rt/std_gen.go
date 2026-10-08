@@ -1245,6 +1245,326 @@ type Proc interface {
 	M_run(tk *Task, p0 string, p1 List[string]) Result[ProcOutput, ProcErr]
 }
 
+type Sql_SqlValue struct {
+	Tag int
+	P   any
+}
+
+type Sql_SqlValue_Integer struct {
+	F_n int64
+}
+
+type Sql_SqlValue_Text struct {
+	F_s string
+}
+
+type Sql_SqlValue_Real struct {
+	F_f float64
+}
+
+type Sql_SqlValue_Flag struct {
+	F_b bool
+}
+
+type Sql_SqlValue_At struct {
+	F_t Time
+}
+
+func (v Sql_SqlValue) XoEq(x any) bool {
+	o, ok := x.(Sql_SqlValue)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 2:
+		a, b := v.P.(Sql_SqlValue_Integer), o.P.(Sql_SqlValue_Integer)
+		return Eq(a.F_n, b.F_n)
+	case 3:
+		a, b := v.P.(Sql_SqlValue_Text), o.P.(Sql_SqlValue_Text)
+		return Eq(a.F_s, b.F_s)
+	case 4:
+		a, b := v.P.(Sql_SqlValue_Real), o.P.(Sql_SqlValue_Real)
+		return Eq(a.F_f, b.F_f)
+	case 5:
+		a, b := v.P.(Sql_SqlValue_Flag), o.P.(Sql_SqlValue_Flag)
+		return Eq(a.F_b, b.F_b)
+	case 6:
+		a, b := v.P.(Sql_SqlValue_At), o.P.(Sql_SqlValue_At)
+		return Eq(a.F_t, b.F_t)
+	}
+	return true
+}
+
+func (v Sql_SqlValue) XoHash() uint64 {
+	h := MixHash(uint64(83631390995688473), uint64(v.Tag))
+	switch v.Tag {
+	case 2:
+		a := v.P.(Sql_SqlValue_Integer)
+		h = MixHash(h, Hash(a.F_n))
+	case 3:
+		a := v.P.(Sql_SqlValue_Text)
+		h = MixHash(h, Hash(a.F_s))
+	case 4:
+		a := v.P.(Sql_SqlValue_Real)
+		h = MixHash(h, Hash(a.F_f))
+	case 5:
+		a := v.P.(Sql_SqlValue_Flag)
+		h = MixHash(h, Hash(a.F_b))
+	case 6:
+		a := v.P.(Sql_SqlValue_At)
+		h = MixHash(h, Hash(a.F_t))
+	}
+	return h
+}
+
+func (v Sql_SqlValue) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Null")
+	case 2:
+		a := v.P.(Sql_SqlValue_Integer)
+		b.WriteString("Integer(")
+		b.WriteString("n: ")
+		DebugTo(b, a.F_n)
+		b.WriteString(")")
+	case 3:
+		a := v.P.(Sql_SqlValue_Text)
+		b.WriteString("Text(")
+		b.WriteString("s: ")
+		DebugTo(b, a.F_s)
+		b.WriteString(")")
+	case 4:
+		a := v.P.(Sql_SqlValue_Real)
+		b.WriteString("Real(")
+		b.WriteString("f: ")
+		DebugTo(b, a.F_f)
+		b.WriteString(")")
+	case 5:
+		a := v.P.(Sql_SqlValue_Flag)
+		b.WriteString("Flag(")
+		b.WriteString("b: ")
+		DebugTo(b, a.F_b)
+		b.WriteString(")")
+	case 6:
+		a := v.P.(Sql_SqlValue_At)
+		b.WriteString("At(")
+		b.WriteString("t: ")
+		DebugTo(b, a.F_t)
+		b.WriteString(")")
+	}
+}
+
+func (v Sql_SqlValue) M_debug(*Task) string { return Debug(v) }
+
+type Sql_SqlErr struct {
+	Tag int
+	P   any
+}
+
+type Sql_SqlErr_Syntax struct {
+	F_msg string
+}
+
+type Sql_SqlErr_Constraint struct {
+	F_msg string
+}
+
+type Sql_SqlErr_Param struct {
+	F_msg string
+}
+
+type Sql_SqlErr_NoTable struct {
+	F_name string
+}
+
+type Sql_SqlErr_NoColumn struct {
+	F_name string
+}
+
+type Sql_SqlErr_Mismatch struct {
+	F_column string
+	F_msg    string
+}
+
+type Sql_SqlErr_Conn struct {
+	F_msg string
+}
+
+type Sql_SqlErr_Driver struct {
+	F_msg string
+}
+
+func (v Sql_SqlErr) XoEq(x any) bool {
+	o, ok := x.(Sql_SqlErr)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Sql_SqlErr_Syntax), o.P.(Sql_SqlErr_Syntax)
+		return Eq(a.F_msg, b.F_msg)
+	case 2:
+		a, b := v.P.(Sql_SqlErr_Constraint), o.P.(Sql_SqlErr_Constraint)
+		return Eq(a.F_msg, b.F_msg)
+	case 3:
+		a, b := v.P.(Sql_SqlErr_Param), o.P.(Sql_SqlErr_Param)
+		return Eq(a.F_msg, b.F_msg)
+	case 4:
+		a, b := v.P.(Sql_SqlErr_NoTable), o.P.(Sql_SqlErr_NoTable)
+		return Eq(a.F_name, b.F_name)
+	case 6:
+		a, b := v.P.(Sql_SqlErr_NoColumn), o.P.(Sql_SqlErr_NoColumn)
+		return Eq(a.F_name, b.F_name)
+	case 7:
+		a, b := v.P.(Sql_SqlErr_Mismatch), o.P.(Sql_SqlErr_Mismatch)
+		return Eq(a.F_column, b.F_column) && Eq(a.F_msg, b.F_msg)
+	case 8:
+		a, b := v.P.(Sql_SqlErr_Conn), o.P.(Sql_SqlErr_Conn)
+		return Eq(a.F_msg, b.F_msg)
+	case 9:
+		a, b := v.P.(Sql_SqlErr_Driver), o.P.(Sql_SqlErr_Driver)
+		return Eq(a.F_msg, b.F_msg)
+	}
+	return true
+}
+
+func (v Sql_SqlErr) XoHash() uint64 {
+	h := MixHash(uint64(3564149779525009394), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_SqlErr_Syntax)
+		h = MixHash(h, Hash(a.F_msg))
+	case 2:
+		a := v.P.(Sql_SqlErr_Constraint)
+		h = MixHash(h, Hash(a.F_msg))
+	case 3:
+		a := v.P.(Sql_SqlErr_Param)
+		h = MixHash(h, Hash(a.F_msg))
+	case 4:
+		a := v.P.(Sql_SqlErr_NoTable)
+		h = MixHash(h, Hash(a.F_name))
+	case 6:
+		a := v.P.(Sql_SqlErr_NoColumn)
+		h = MixHash(h, Hash(a.F_name))
+	case 7:
+		a := v.P.(Sql_SqlErr_Mismatch)
+		h = MixHash(h, Hash(a.F_column))
+		h = MixHash(h, Hash(a.F_msg))
+	case 8:
+		a := v.P.(Sql_SqlErr_Conn)
+		h = MixHash(h, Hash(a.F_msg))
+	case 9:
+		a := v.P.(Sql_SqlErr_Driver)
+		h = MixHash(h, Hash(a.F_msg))
+	}
+	return h
+}
+
+func (v Sql_SqlErr) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Sql_SqlErr_Syntax)
+		b.WriteString("Syntax(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 2:
+		a := v.P.(Sql_SqlErr_Constraint)
+		b.WriteString("Constraint(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 3:
+		a := v.P.(Sql_SqlErr_Param)
+		b.WriteString("Param(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 4:
+		a := v.P.(Sql_SqlErr_NoTable)
+		b.WriteString("NoTable(")
+		b.WriteString("name: ")
+		DebugTo(b, a.F_name)
+		b.WriteString(")")
+	case 5:
+		b.WriteString("NoRows")
+	case 6:
+		a := v.P.(Sql_SqlErr_NoColumn)
+		b.WriteString("NoColumn(")
+		b.WriteString("name: ")
+		DebugTo(b, a.F_name)
+		b.WriteString(")")
+	case 7:
+		a := v.P.(Sql_SqlErr_Mismatch)
+		b.WriteString("Mismatch(")
+		b.WriteString("column: ")
+		DebugTo(b, a.F_column)
+		b.WriteString(", msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 8:
+		a := v.P.(Sql_SqlErr_Conn)
+		b.WriteString("Conn(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 9:
+		a := v.P.(Sql_SqlErr_Driver)
+		b.WriteString("Driver(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
+	case 10:
+		b.WriteString("TxDone")
+	case 11:
+		b.WriteString("Closed")
+	case 12:
+		b.WriteString("Canceled")
+	}
+}
+
+func (v Sql_SqlErr) M_debug(*Task) string { return Debug(v) }
+
+func (v Sql_SqlErr) M_display(*Task) string { return Debug(v) }
+
+type Sql_ExecResult struct {
+	F_rows_affected  int64
+	F_last_insert_id int64
+}
+
+func (v Sql_ExecResult) XoEq(x any) bool {
+	o, ok := x.(Sql_ExecResult)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_rows_affected, o.F_rows_affected) {
+		return false
+	}
+	if !Eq(v.F_last_insert_id, o.F_last_insert_id) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Sql_ExecResult) XoHash() uint64 {
+	h := uint64(5787328777339493607)
+	h = MixHash(h, Hash(v.F_rows_affected))
+	h = MixHash(h, Hash(v.F_last_insert_id))
+	return h
+}
+
+func (v Sql_ExecResult) XoDebug(b *strings.Builder) {
+	b.WriteString("ExecResult{")
+	b.WriteString("rows_affected: ")
+	DebugTo(b, v.F_rows_affected)
+	b.WriteString(", last_insert_id: ")
+	DebugTo(b, v.F_last_insert_id)
+	b.WriteString("}")
+}
+
+func (v Sql_ExecResult) M_debug(*Task) string { return Debug(v) }
+
 type Task_Timed[tp_E any] struct {
 	Tag int
 	P   any
