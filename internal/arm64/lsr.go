@@ -706,8 +706,70 @@ func (s *fstate) placeLatches() {
 				}
 			}
 			s.hot = out
+			// the blocks a branch reaches the latch through (emission
+			// skips the ones whose moves are empty)
+			for _, y := range chain {
+				if copyable(y) {
+					if s.dupOK == nil {
+						s.dupOK = map[*mblock]bool{}
+					}
+					s.dupOK[y] = true
+				}
+			}
 			i = -1 // positions changed: scan again (each latch moves once)
 			break
 		}
+	}
+}
+
+// Latch copies: a moved latch (placeLatches) sits after the test of the
+// outer loop, so a conditional branch to it from elsewhere in the loop,
+// like the guard of a rotated inner loop that runs zero times (`while j
+// <= n` with j = i * i > n, every prime past sqrt(n) in sieve), is a
+// taken branch to the latch and then the latch's taken back edge. When
+// the branch would fall through to its other target, it is inverted to
+// jump there and a copy of the latch follows it: the path that skips the
+// inner loop takes one branch, the back edge. On Apple M4 this cut
+// sieve's instruction delivery stalls after the prime test's mispredicts
+// (bench/results/arm64-perf-2026-10-08.md).
+
+// copyable reports whether latch b is small and straight: moves and
+// plain instructions without fault exits, then a jump.
+func copyable(b *mblock) bool {
+	if len(b.insts) > 4 || b.term() == nil || b.term().kind != iJump {
+		return false
+	}
+	for _, in := range b.insts[:len(b.insts)-1] {
+		switch {
+		case in.kind == iPmove:
+		case in.kind == iPlain && in.fault == nil && in.recover == "":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// dupLatch returns the target of a conditional branch (to t or f) that
+// is a moved latch to copy after the branch, when the other target is
+// next (the branch then jumps to next, past the copy), or nil.
+func (s *fstate) dupLatch(t, f, next *mblock) *mblock {
+	for _, l := range []*mblock{t, f} {
+		o := t
+		if l == t {
+			o = f
+		}
+		if s.dupOK[l] && o == next && l != next && l != s.cur {
+			return l
+		}
+	}
+	return nil
+}
+
+// emitLatch emits a copy of latch t (after the branch to its other
+// target).
+func (s *fstate) emitLatch(b *strings.Builder, t *mblock, fr *frameInfo, next *mblock) {
+	for _, in := range t.insts {
+		s.emitInst(b, in, fr, next)
 	}
 }

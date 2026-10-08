@@ -380,9 +380,16 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			}
 			return
 		}
+		// fall: the target the branch falls through to; a moved latch
+		// is copied after the branch instead (lsr.go dupLatch)
+		fall := next
+		if l := s.dupLatch(t, f, next); l != nil {
+			fall = l
+			defer s.emitLatch(b, l, fr, next)
+		}
 		if in.cond == "cbnz" {
 			r := s.useReg(b, in.uses[0], 0, fr)
-			if t == next {
+			if t == fall {
 				fmt.Fprintf(b, "\tcbz %s, %s\n", r, s.label(f))
 				return
 			}
@@ -390,7 +397,7 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		} else if in.cond == "tbz" || in.cond == "tbnz" {
 			r := s.useReg(b, in.uses[0], 0, fr)
 			c := in.cond
-			if t == next {
+			if t == fall {
 				c = map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[c]
 				fmt.Fprintf(b, "\t%s %s, #0, %s\n", c, r, s.label(f))
 				return
@@ -400,13 +407,13 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			if in.text != "" { // empty: the flags of the predecessor's compare (reuseFlags)
 				s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
 			}
-			if t == next {
+			if t == fall {
 				fmt.Fprintf(b, "\tb.%s %s\n", invCond[in.cond], s.label(f))
 				return
 			}
 			fmt.Fprintf(b, "\tb.%s %s\n", in.cond, s.label(t))
 		}
-		if f != next {
+		if f != fall {
 			fmt.Fprintf(b, "\tb %s\n", s.label(f))
 		}
 	case iSwitch:
