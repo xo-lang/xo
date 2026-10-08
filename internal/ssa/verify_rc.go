@@ -48,6 +48,12 @@ func (s rcState) equal(t rcState) bool {
 	return true
 }
 
+// stops reports a block that ends the program (unreachable or a fault).
+func stops(b *Block) bool {
+	t := b.Term()
+	return t != nil && (t.Op == OpUnreachable || t.Op == OpFault)
+}
+
 // verifyRC checks that a function after InsertRC balances ownership on
 // every path: each owned leaf is consumed or released exactly once
 // before `ret` (paths that end in a fault are exempt), nothing is used
@@ -184,7 +190,15 @@ func (m *Module) verifyRC(f *Func) []string {
 							}
 						}
 					}
-					if old, ok := entry[e.To]; ok {
+					if old, ok := entry[e.To]; ok && stops(e.To) {
+						// the program stops there: paths need not agree
+						// (InsertRC releases nothing on them)
+						for l, n := range est {
+							if n > old[l] {
+								old[l] = n
+							}
+						}
+					} else if ok {
 						if !old.equal(est) {
 							bad(b, "edge to %s holds %s, another predecessor %s", e.To.Name(), est, old)
 						}

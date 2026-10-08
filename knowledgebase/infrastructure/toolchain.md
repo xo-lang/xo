@@ -63,6 +63,7 @@ go test ./internal/format -run TestGolden -update        # rewrite internal/form
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
+XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 XO_LLVM_AST=1 go run ./cmd/xo build --backend=llvm .  # force the LLVM backend's AST path (never frees), for comparisons
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked

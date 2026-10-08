@@ -49,7 +49,7 @@ func (s *fn) stmt(st ast.Stmt) {
 		if x.Value == nil {
 			v = s.unit()
 		} else {
-			v = s.valueAs(x.Value, s.f.Results[0])
+			v = s.expr(x.Value)
 		}
 		s.ret(v, x)
 	case *ast.BreakStmt, *ast.ContinueStmt:

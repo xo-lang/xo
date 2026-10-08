@@ -14,6 +14,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	if vo := info.Ctor(x.Fun); vo != nil {
 		return s.ctorCall(vo, x)
 	}
+	if s.isRetCtor(x) {
+		return s.retCtor(x)
+	}
 	if obj := info.TypeCall(x); obj != nil {
 		return s.typeCall(obj, x)
 	}
@@ -75,6 +78,115 @@ func (s *fn) ctorCall(vo *check.VariantObj, x *ast.CallExpr) *Value {
 		}
 	}
 	return s.add(OpVariant, t, tag, vals...)
+}
+
+// isRetCtor reports a bare `Err(x)` or `Ok(x)` that the checker typed
+// against the enclosing function's Result without recording a
+// constructor.
+func (s *fn) isRetCtor(x *ast.CallExpr) bool {
+	id, ok := x.Fun.(*ast.Ident)
+	if !ok || (id.Name != "Err" && id.Name != "Ok") || len(x.Args) != 1 {
+		return false
+	}
+	info := s.b.info
+	return info.VarOf(id) == nil && info.Ref(id) == nil && info.Ctor(x) == nil && info.CallOf(x) == nil
+}
+
+// retCtor is a bare `Ok(x)` or `Err(x)`: a Result of the call's type, or
+// of the enclosing function's.
+func (s *fn) retCtor(x *ast.CallExpr) *Value {
+	b := s.b
+	id := x.Fun.(*ast.Ident)
+	ct := s.checkType(x)
+	rt, et, ok := resultParts(ct)
+	if !ok {
+		if s.errT == nil {
+			b.unsupported(x, "`"+id.Name+"(...)` here")
+			return s.undef(s.natOf(x))
+		}
+		rt, et, ct = s.res, s.errT, b.resultOf(s.res, s.errT)
+	}
+	t := b.typ(ct, x)
+	arg := x.Args[0].Value
+	if id.Name == "Err" {
+		ev := s.coerceErr(s.expr(arg), s.natCheck(arg), et, arg)
+		return s.add(OpVariant, t, t.VariantIndex("Err"), ev)
+	}
+	return s.add(OpVariant, t, t.VariantIndex("Ok"), s.valueAs(arg, b.typ(rt, x)))
+}
+
+// resultParts returns T and E of Result[T, E].
+func resultParts(t check.Type) (check.Type, check.Type, bool) {
+	if n, ok := check.Resolve(check.Deep(t)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Result" && len(n.Args) == 2 {
+		return n.Args[0], n.Args[1], true
+	}
+	return nil, nil, false
+}
+
+// optionElem returns T of Option[T].
+func optionElem(t check.Type) (check.Type, bool) {
+	if n, ok := check.Resolve(check.Deep(t)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Option" && len(n.Args) == 1 {
+		return n.Args[0], true
+	}
+	return nil, false
+}
+
+// coerceErr converts an error at a `?` or `Err` site (core 2.6): the same
+// type, or wrapped in the target's `from` variant.
+func (s *fn) coerceErr(v *Value, from, to check.Type, at ast.Node) *Value {
+	b := s.b
+	tt := b.typ(to, at)
+	if v.Type == tt || v.Op == OpUndef {
+		return s.coerce(v, tt, at)
+	}
+	if vo := b.info.FromVariant(to, from); vo != nil {
+		return s.variant(tt, vo.Name, []*Value{v}, at)
+	}
+	b.unsupported(at, "converting the error `"+v.Type.Name+"` to `"+tt.Name+"`")
+	return s.undef(tt)
+}
+
+// try is `x?`: on a Result, return its error (converted) from the
+// function; on an Option, return None. Otherwise it is the payload.
+func (s *fn) try(x *ast.TryExpr) *Value {
+	b := s.b
+	m := b.mod
+	xt := s.natCheck(x.X)
+	v := s.expr(x.X)
+	if v.Type.Kind != KEnum {
+		b.unsupported(x, "`?` on `"+v.Type.Name+"`")
+		return s.undef(s.natOf(x))
+	}
+	failTag, okTag := v.Type.VariantIndex("Err"), v.Type.VariantIndex("Ok")
+	_, et, isResult := resultParts(xt)
+	if !isResult {
+		failTag, okTag = v.Type.VariantIndex("None"), v.Type.VariantIndex("Some")
+	}
+	if failTag < 0 || okTag < 0 {
+		b.unsupported(x, "`?` on `"+v.Type.Name+"`")
+		return s.undef(s.natOf(x))
+	}
+	c := s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, m.Builtin(KInt), nil, v), s.cint(int64(failTag)))
+	yes, no := s.branch(c)
+	s.cur = yes
+	want := s.f.Results[0]
+	if isResult {
+		if s.errT == nil {
+			b.unsupported(x, "`?` on a Result in a function that cannot fail")
+		} else {
+			ev := s.add(OpPayload, v.Type.Variants[failTag].Fields[0].Type, PayloadRef{failTag, 0}, v)
+			s.ret(s.add(OpVariant, want, want.VariantIndex("Err"), s.coerceErr(ev, et, s.errT, x)), x)
+		}
+	} else {
+		rt := b.typ(s.res, x)
+		if _, ok := optionElem(s.res); !ok {
+			b.unsupported(x, "`?` on an Option outside a function returning an Option")
+		} else {
+			s.ret(s.add(OpVariant, rt, rt.VariantIndex("None")), x)
+		}
+	}
+	s.cur = no
+	return s.add(OpPayload, v.Type.Variants[okTag].Fields[0].Type, PayloadRef{okTag, 0}, v)
 }
 
 // typeCall is a numeric conversion `Float(i)`, `Int(f)`.
@@ -276,16 +388,50 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		case "get":
 			return s.call("list.get", nt, "", l, s.valueAs(x.Args[0].Value, intT))
 		}
-	case "Option":
+	case "Option", "Result":
 		o := s.expr(ci.Recv)
-		switch fo.Name {
-		case "is_some", "is_none":
-			name := "Some"
-			if fo.Name == "is_none" {
-				name = "None"
+		if o.Type.Kind != KEnum {
+			break
+		}
+		isTag := func(name string) *Value {
+			return s.add(OpEq, boolT, nil, s.add(OpTag, intT, nil, o), s.cint(int64(o.Type.VariantIndex(name))))
+		}
+		switch fo.Recv.Name + "." + fo.Name {
+		case "Option.is_some":
+			return isTag("Some")
+		case "Option.is_none":
+			return isTag("None")
+		case "Result.is_ok":
+			return isTag("Ok")
+		case "Result.is_err":
+			return isTag("Err")
+		case "Result.ok", "Result.err":
+			// the Ok or Err payload as an Option
+			name := "Ok"
+			if fo.Name == "err" {
+				name = "Err"
 			}
-			tag := o.Type.VariantIndex(name)
-			return s.add(OpEq, boolT, nil, s.add(OpTag, intT, nil, o), s.cint(int64(tag)))
+			from := o.Type.VariantIndex(name)
+			join := s.newBlock()
+			res := join.AddParam(nt)
+			yes, no := s.branch(isTag(name))
+			s.cur = yes
+			pv := s.add(OpPayload, o.Type.Variants[from].Fields[0].Type, PayloadRef{from, 0}, o)
+			s.jump(join, s.variant(nt, "Some", []*Value{pv}, x))
+			s.cur = no
+			s.jump(join, s.variant(nt, "None", nil, x))
+			s.seal(join)
+			s.cur = join
+			return res
+		case "Option.or_fault":
+			msg := s.valueAs(x.Args[0].Value, m.Builtin(KStr))
+			none, some := s.branch(isTag("None"))
+			s.cur = none
+			f := s.add(OpFault, nil, nil, msg)
+			f.Pos = b.posLine(x)
+			s.cur = some
+			i := o.Type.VariantIndex("Some")
+			return s.add(OpPayload, o.Type.Variants[i].Fields[0].Type, PayloadRef{i, 0}, o)
 		}
 	case "Int", "Float", "Str":
 		v := s.expr(ci.Recv)

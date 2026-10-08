@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+ok 2
+empty
+bad got x
+limit words 3
+log 7 a!/b! -
+true true q! ? true
+zz!
+--- stderr

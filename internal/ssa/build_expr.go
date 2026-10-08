@@ -99,6 +99,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.call("list.index", l.Type.Elems[0], b.pos(x), l, i)
 	case *ast.CallExpr:
 		return s.callExpr(x)
+	case *ast.TryExpr:
+		return s.try(x)
 	case *ast.Block:
 		return s.block(x)
 	case *ast.IfExpr:

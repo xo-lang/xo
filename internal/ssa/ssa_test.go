@@ -215,10 +215,10 @@ func TestVerifyRejects(t *testing.T) {
 }
 
 // TestVerifyRCMutations removes, one at a time, every retain and release
-// InsertRC put into the RC golden program and the benchmarks, and
+// InsertRC put into the golden programs and the benchmarks, and
 // requires the verifier to reject each mutant.
 func TestVerifyRCMutations(t *testing.T) {
-	dirs := []string{filepath.Join("testdata", "golden", "rc")}
+	dirs, _ := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	bench, _ := filepath.Glob(filepath.Join("..", "..", "bench", "perf", "llvm", "xo", "*"))
 	dirs = append(dirs, bench...)
 	n := 0

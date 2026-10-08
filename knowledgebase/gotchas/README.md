@@ -94,4 +94,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-braun-incomplete-phi.md](ssa-braun-incomplete-phi.md): sealing a block must use the recorded incomplete parameter, not `defs[var][block]`, which a later write replaces.
 - [ssa-heap-visited-set.md](ssa-heap-visited-set.md): `Type.Heap`'s recursion guard was a visited set, so two `Int` fields made a struct "heap"; use a path set.
 - [rc-verifier-loop-param-leak.md](rc-verifier-loop-param-leak.md): an RC verifier that sets block parameter counts on entry hides a leak of the previous iteration's value; check they are zero first.
+- [rc-verifier-stop-block-merge.md](rc-verifier-stop-block-merge.md): predecessors of an `unreachable` or fault block need not agree on what they hold (nothing is released there); the RC verifier merges them.
 - [snprintf-int-formatting-cost.md](snprintf-int-formatting-cost.md): `snprintf("%lld")` dominated Int interpolation in the LLVM runtime (4x slower workload); use a digit loop.

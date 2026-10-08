@@ -60,7 +60,9 @@ type builder struct {
 // (labeled too), `return`, non generic functions and methods (`var`
 // parameters and receivers), recursion, `const`, `??`, `Float(i)`,
 // `Int(f)`, `fault`, and the List methods push, pop, set, get, len,
-// is_empty. Not yet: generics, closures, failing functions and `?`.
+// is_empty, failing functions (a Result return, `Ok`, `Err`, `?` on
+// Result with `from` conversion and on Option, the Result methods,
+// `or_fault`). Not yet: generics, closures.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -86,6 +88,9 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 	}
 	if mainFo == nil {
 		return nil, Errors{{Msg: "no `main` function in the root module"}}
+	}
+	if failErr(mainFo.Err) != nil {
+		b.unsupported(mainFo.Decl, "`main` that returns an error (declare `fn main(os: Os)` and handle errors with match)")
 	}
 	b.declare(mainFo, mainFo.Decl)
 	for len(b.queue) > 0 {
@@ -247,9 +252,6 @@ func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
 	if len(fo.TParams) > 0 {
 		b.unsupported(at, "generic functions (`"+fo.DisplayName()+"`)")
 	}
-	if fo.Err != nil && !check.IsNever(fo.Err) {
-		b.unsupported(at, "failing functions (`"+fo.DisplayName()+"`)")
-	}
 	var params []*Type
 	var varIdx []int
 	if fo.Recv != nil {
@@ -264,7 +266,7 @@ func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
 		}
 		params = append(params, b.typ(p.Type, at))
 	}
-	results := []*Type{b.typ(fo.Result, at)}
+	results := []*Type{b.typ(b.resultOf(fo.Result, failErr(fo.Err)), at)}
 	for _, i := range varIdx {
 		results = append(results, params[i])
 	}
@@ -273,6 +275,32 @@ func (b *builder) declare(fo *check.FuncObj, at ast.Node) *Func {
 	b.funcs[fo] = f
 	b.queue = append(b.queue, fo)
 	return f
+}
+
+// failErr is the error type of a function that can fail, or nil.
+func failErr(e check.Type) check.Type {
+	if e == nil || check.IsNever(e) {
+		return nil
+	}
+	return e
+}
+
+// preludeType is the prelude type name applied to args.
+func (b *builder) preludeType(name string, args ...check.Type) check.Type {
+	obj, _ := b.info.Prelude().Scope[name].(*check.TypeObj)
+	return &check.Named{Obj: obj, Args: args}
+}
+
+// resultOf is what a function with success type res and error type err
+// returns: res, or Result[res, err] when err is not nil (core 2.6).
+func (b *builder) resultOf(res, err check.Type) check.Type {
+	if err == nil {
+		return res
+	}
+	if res == nil {
+		res = &check.Tuple{}
+	}
+	return b.preludeType("Result", res, err)
 }
 
 // fn is the state of one function body under construction. Locals are
@@ -292,6 +320,11 @@ type fn struct {
 	paramVar   map[*Value]*check.VarObj
 	loops      []*loopCtx
 	varParams  []*check.VarObj // bindings of `var` parameters, returned updated
+
+	// res is the success type, errT the error type of a function that
+	// can fail (nil otherwise); its SSA result is then Result[res, errT].
+	res  check.Type
+	errT check.Type
 }
 
 type loopCtx struct {
@@ -303,7 +336,8 @@ func (b *builder) body(fo *check.FuncObj) {
 	f := b.funcs[fo]
 	s := &fn{b: b, fo: fo, f: f, cur: f.Blocks[0],
 		defs: map[*check.VarObj]map[*Block]*Value{}, varType: map[*check.VarObj]*Type{},
-		sealed: map[*Block]bool{}, incomplete: map[*Block][]*Value{}, paramVar: map[*Value]*check.VarObj{}}
+		sealed: map[*Block]bool{}, incomplete: map[*Block][]*Value{}, paramVar: map[*Value]*check.VarObj{},
+		res: fo.Result, errT: failErr(fo.Err)}
 	s.sealed[s.cur] = true
 	var vars []*check.VarObj
 	if fo.Recv != nil {
@@ -461,18 +495,30 @@ func (s *fn) test(cond *Value, fail *Block) {
 	s.cur = ok
 }
 
-// ret returns v (the body value) and the updated `var` parameters.
+// isDead reports whether the current block is unreachable: code after a
+// terminator (return, break, a call that never returns), or the join of
+// branches that all left.
+func (s *fn) isDead() bool {
+	return s.cur != s.f.Blocks[0] && len(s.cur.Preds) == 0 && s.sealed[s.cur]
+}
+
+// ret returns v and the updated `var` parameters. v is a value of the
+// success type (converted: Some wrapping, unit) or, in a function that
+// can fail, its Result as is; a success value is then wrapped in `Ok`.
 func (s *fn) ret(v *Value, at ast.Node) {
 	want := s.f.Results[0]
-	switch {
-	case v.Type == want:
-	case want.Kind == KUnit:
-		v = s.unit()
-	default:
-		// a body whose every path returns: the end is unreachable
+	if s.isDead() {
 		s.add(OpUnreachable, nil, nil)
 		s.dead()
 		return
+	}
+	if s.errT != nil {
+		if v.Type != want {
+			ok := want.VariantIndex("Ok")
+			v = s.add(OpVariant, want, ok, s.coerce(v, want.Variants[ok].Fields[0].Type, at))
+		}
+	} else {
+		v = s.coerce(v, want, at)
 	}
 	args := []*Value{v}
 	for _, vo := range s.varParams {
@@ -494,6 +540,24 @@ func (s *fn) typeOf(e ast.Expr) *Type {
 		return s.b.mod.Builtin(KUnit)
 	}
 	return s.b.typ(t, e)
+}
+
+// checkType is the checker type of e in context.
+func (s *fn) checkType(e ast.Expr) check.Type {
+	t := s.b.info.TypeOf(e)
+	if t == nil {
+		t = s.b.info.NaturalType(e)
+	}
+	return check.Deep(t)
+}
+
+// natCheck is the checker type of e before implicit conversion.
+func (s *fn) natCheck(e ast.Expr) check.Type {
+	t := s.b.info.NaturalType(e)
+	if t == nil {
+		t = s.b.info.TypeOf(e)
+	}
+	return check.Deep(t)
 }
 
 func (s *fn) natOf(e ast.Expr) *Type {

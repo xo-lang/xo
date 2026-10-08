@@ -1,0 +1,66 @@
+// Failing functions and `?` (core 2.6) under reference counting: errors
+// and results that hold strings and lists, `from` conversion, `?` on
+// Option, `var` parameters of a failing function, and the Result
+// methods. Every path must release what it holds, the early returns of
+// `?` included.
+enum ParseErr {
+  Empty
+  Bad(text: Str)
+}
+
+enum AppErr {
+  Parse(from ParseErr)
+  Limit(what: Str, n: Int)
+}
+
+fn word(s: Str) -> Str ! ParseErr {
+  if s.len() == 0 {
+    return Err(ParseErr.Empty)
+  }
+  if s == "x" {
+    return Err(Bad(text: "got ${s}"))
+  }
+  s + "!"
+}
+
+fn words(xs: List[Str], var log: List[Str]) -> List[Str] ! AppErr {
+  var out: List[Str] = []
+  for x in xs {
+    let w = word(x)?
+    log.push(w)
+    out.push(w)
+    if out.len() > 2 {
+      return Err(AppErr.Limit(what: "words", n: out.len()))
+    }
+  }
+  out
+}
+
+fn first_upper(xs: List[Str]) -> Str? {
+  let s = xs.get(0)?
+  let t = xs.get(1)?
+  "${s}/${t}"
+}
+
+fn show(r: Result[List[Str], AppErr]) -> Str {
+  match r {
+    Ok(ws) => "ok ${ws.len()}"
+    Err(Parse(Empty)) => "empty"
+    Err(Parse(Bad(text))) => "bad ${text}"
+    Err(Limit(what, n)) => "limit ${what} ${n}"
+  }
+}
+
+fn main(os: Os) {
+  var log: List[Str] = []
+  os.stdio.println(show(words(["a", "b"], log)))
+  os.stdio.println(show(words(["a", "", "c"], log)))
+  os.stdio.println(show(words(["a", "x"], log)))
+  os.stdio.println(show(words(["a", "b", "c", "d"], log)))
+  os.stdio.println("log ${log.len()} ${first_upper(log) ?? "-"} ${first_upper([]) ?? "-"}")
+  let r = word("q")
+  let e = word("x")
+  os.stdio.println("${r.is_ok()} ${e.is_err()} ${r.ok() ?? "?"} ${e.ok() ?? "?"} ${e.err().is_some()}")
+  let v = word("zz").ok().or_fault("must parse")
+  os.stdio.println(v)
+}

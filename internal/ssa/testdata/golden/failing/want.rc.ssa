@@ -1,0 +1,529 @@
+type Result[List[Str], AppErr] = enum { Ok(v: List[Str]) | Err(e: AppErr) }
+type AppErr = enum { Parse(0: ParseErr) | Limit(what: Str, n: Int) }
+type ParseErr = enum { Empty | Bad(text: Str) }
+type Str? = enum { None | Some(v: Str) }
+type Result[Str, ParseErr] = enum { Ok(v: Str) | Err(e: ParseErr) }
+type ParseErr? = enum { None | Some(v: ParseErr) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Str] = call list.new
+  v2: Stdio = cap stdio, v0
+  v3: List[Str] = call list.new
+  v4: Str = const "a"
+  retain v4
+  v6: List[Str] = call list.push, v3, v4
+  v7: Str = const "b"
+  retain v7
+  v9: List[Str] = call list.push, v6, v7
+  v10: (Result[List[Str], AppErr], List[Str]) = call words, v9, v1
+  release v9
+  v12: List[Str] = field 1, v10
+  v13: Result[List[Str], AppErr] = field 0, v10
+  v14: Str = call show, v13
+  v15: Result[List[Str], AppErr] = field 0, v10
+  release v15
+  v17: () = call Stdio.println, v2, v14
+  release v14
+  v19: Stdio = cap stdio, v0
+  v20: List[Str] = call list.new
+  v21: Str = const "a"
+  retain v21
+  v23: List[Str] = call list.push, v20, v21
+  v24: Str = const ""
+  retain v24
+  v26: List[Str] = call list.push, v23, v24
+  v27: Str = const "c"
+  retain v27
+  v29: List[Str] = call list.push, v26, v27
+  v30: (Result[List[Str], AppErr], List[Str]) = call words, v29, v12
+  release v29
+  v32: List[Str] = field 1, v30
+  v33: Result[List[Str], AppErr] = field 0, v30
+  v34: Str = call show, v33
+  v35: Result[List[Str], AppErr] = field 0, v30
+  release v35
+  v37: () = call Stdio.println, v19, v34
+  release v34
+  v39: Stdio = cap stdio, v0
+  v40: List[Str] = call list.new
+  v41: Str = const "a"
+  retain v41
+  v43: List[Str] = call list.push, v40, v41
+  v44: Str = const "x"
+  retain v44
+  v46: List[Str] = call list.push, v43, v44
+  v47: (Result[List[Str], AppErr], List[Str]) = call words, v46, v32
+  release v46
+  v49: List[Str] = field 1, v47
+  v50: Result[List[Str], AppErr] = field 0, v47
+  v51: Str = call show, v50
+  v52: Result[List[Str], AppErr] = field 0, v47
+  release v52
+  v54: () = call Stdio.println, v39, v51
+  release v51
+  v56: Stdio = cap stdio, v0
+  v57: List[Str] = call list.new
+  v58: Str = const "a"
+  retain v58
+  v60: List[Str] = call list.push, v57, v58
+  v61: Str = const "b"
+  retain v61
+  v63: List[Str] = call list.push, v60, v61
+  v64: Str = const "c"
+  retain v64
+  v66: List[Str] = call list.push, v63, v64
+  v67: Str = const "d"
+  retain v67
+  v69: List[Str] = call list.push, v66, v67
+  v70: (Result[List[Str], AppErr], List[Str]) = call words, v69, v49
+  release v69
+  v72: List[Str] = field 1, v70
+  v73: Result[List[Str], AppErr] = field 0, v70
+  v74: Str = call show, v73
+  v75: Result[List[Str], AppErr] = field 0, v70
+  release v75
+  v77: () = call Stdio.println, v56, v74
+  release v74
+  v79: Stdio = cap stdio, v0
+  v80: Str = const "log "
+  v81: Int = call list.len, v72
+  retain v80
+  v83: Str = call str.concat_int, v80, v81
+  v84: Str = const " "
+  v85: Str = call str.concat, v83, v84
+  v86: Str? = call first_upper, v72
+  v87: List[Str] = field 1, v70
+  release v87
+  v89: Int = tag v86
+  v90: Int = const 1
+  v91: Bool = eq v89, v90
+  br v91, b2(), b3()
+b1(v93: Str):  ; preds b2, b3
+  v94: Str = call str.concat, v85, v93
+  release v93
+  v96: Str = const " "
+  v97: Str = call str.concat, v94, v96
+  v98: List[Str] = call list.new
+  v99: Str? = call first_upper, v98
+  release v98
+  v101: Int = tag v99
+  v102: Int = const 1
+  v103: Bool = eq v101, v102
+  br v103, b5(), b6()
+b2:  ; preds b0
+  v105: Str = payload 1.0, v86
+  retain v105
+  release v86
+  jump b1(v105)
+b3:  ; preds b0
+  release v86
+  v110: Str = const "-"
+  retain v110
+  jump b1(v110)
+b4(v113: Str):  ; preds b5, b6
+  v114: Str = call str.concat, v97, v113
+  release v113
+  v116: () = call Stdio.println, v79, v114
+  release v114
+  v118: Str = const "q"
+  retain v118
+  v120: Result[Str, ParseErr] = call word, v118
+  v121: Str = const "x"
+  retain v121
+  v123: Result[Str, ParseErr] = call word, v121
+  v124: Stdio = cap stdio, v0
+  v125: Int = tag v120
+  v126: Int = const 0
+  v127: Bool = eq v125, v126
+  v128: Str = call str.of_bool, v127
+  v129: Str = const " "
+  v130: Str = call str.concat, v128, v129
+  v131: Int = tag v123
+  v132: Int = const 1
+  v133: Bool = eq v131, v132
+  v134: Str = call str.of_bool, v133
+  v135: Str = call str.concat, v130, v134
+  release v134
+  v137: Str = const " "
+  v138: Str = call str.concat, v135, v137
+  v139: Int = tag v120
+  v140: Int = const 0
+  v141: Bool = eq v139, v140
+  br v141, b8(), b9()
+b5:  ; preds b1
+  v143: Str = payload 1.0, v99
+  retain v143
+  release v99
+  jump b4(v143)
+b6:  ; preds b1
+  release v99
+  v148: Str = const "-"
+  retain v148
+  jump b4(v148)
+b7(v151: Str?):  ; preds b8, b9
+  v152: Int = tag v151
+  v153: Int = const 1
+  v154: Bool = eq v152, v153
+  br v154, b11(), b12()
+b8:  ; preds b4
+  v156: Str = payload 0.0, v120
+  retain v156
+  release v120
+  v159: Str? = variant 1, v156
+  jump b7(v159)
+b9:  ; preds b4
+  release v120
+  v162: Str? = variant 0
+  jump b7(v162)
+b10(v164: Str):  ; preds b11, b12
+  v165: Str = call str.concat, v138, v164
+  release v164
+  v167: Str = const " "
+  v168: Str = call str.concat, v165, v167
+  v169: Int = tag v123
+  v170: Int = const 0
+  v171: Bool = eq v169, v170
+  br v171, b14(), b15()
+b11:  ; preds b7
+  v173: Str = payload 1.0, v151
+  retain v173
+  release v151
+  jump b10(v173)
+b12:  ; preds b7
+  release v151
+  v178: Str = const "?"
+  retain v178
+  jump b10(v178)
+b13(v181: Str?):  ; preds b14, b15
+  v182: Int = tag v181
+  v183: Int = const 1
+  v184: Bool = eq v182, v183
+  br v184, b17(), b18()
+b14:  ; preds b10
+  v186: Str = payload 0.0, v123
+  retain v186
+  v188: Str? = variant 1, v186
+  jump b13(v188)
+b15:  ; preds b10
+  v190: Str? = variant 0
+  jump b13(v190)
+b16(v192: Str):  ; preds b17, b18
+  v193: Str = call str.concat, v168, v192
+  release v192
+  v195: Str = const " "
+  v196: Str = call str.concat, v193, v195
+  v197: Int = tag v123
+  v198: Int = const 1
+  v199: Bool = eq v197, v198
+  br v199, b20(), b21()
+b17:  ; preds b13
+  v201: Str = payload 1.0, v181
+  retain v201
+  release v181
+  jump b16(v201)
+b18:  ; preds b13
+  release v181
+  v206: Str = const "?"
+  retain v206
+  jump b16(v206)
+b19(v209: ParseErr?):  ; preds b20, b21
+  release v209
+  v211: Int = tag v209
+  v212: Int = const 1
+  v213: Bool = eq v211, v212
+  v214: Str = call str.of_bool, v213
+  v215: Str = call str.concat, v196, v214
+  release v214
+  v217: () = call Stdio.println, v124, v215
+  release v215
+  v219: Str = const "zz"
+  retain v219
+  v221: Result[Str, ParseErr] = call word, v219
+  v222: Int = tag v221
+  v223: Int = const 0
+  v224: Bool = eq v222, v223
+  br v224, b23(), b24()
+b20:  ; preds b16
+  v226: ParseErr = payload 1.0, v123
+  retain v226
+  release v123
+  v229: ParseErr? = variant 1, v226
+  jump b19(v229)
+b21:  ; preds b16
+  release v123
+  v232: ParseErr? = variant 0
+  jump b19(v232)
+b22(v234: Str?):  ; preds b23, b24
+  v235: Str = const "must parse"
+  v236: Int = tag v234
+  v237: Int = const 0
+  v238: Bool = eq v236, v237
+  br v238, b25(), b26()
+b23:  ; preds b19
+  v240: Str = payload 0.0, v221
+  retain v240
+  release v221
+  v243: Str? = variant 1, v240
+  jump b22(v243)
+b24:  ; preds b19
+  release v221
+  v246: Str? = variant 0
+  jump b22(v246)
+b25:  ; preds b22
+  fault v235 @ main.xo:64
+b26:  ; preds b22
+  v249: Str = payload 1.0, v234
+  retain v249
+  release v234
+  v252: Stdio = cap stdio, v0
+  v253: () = call Stdio.println, v252, v249
+  release v249
+  ret v253
+}
+
+func show(borrow v0: Result[List[Str], AppErr]) -> Str {
+b0(v0: Result[List[Str], AppErr]):
+  v1: Int = tag v0
+  v2: Int = const 0
+  v3: Bool = eq v1, v2
+  br v3, b3(), b2()
+b1(v5: Str):  ; preds b3, b7, b11, b14
+  ret v5
+b2:  ; preds b0
+  v7: Int = tag v0
+  v8: Int = const 1
+  v9: Bool = eq v7, v8
+  br v9, b5(), b4()
+b3:  ; preds b0
+  v11: List[Str] = payload 0.0, v0
+  v12: Str = const "ok "
+  v13: Int = call list.len, v11
+  retain v12
+  v15: Str = call str.concat_int, v12, v13
+  jump b1(v15)
+b4:  ; preds b2, b15, b6
+  v17: Int = tag v0
+  v18: Int = const 1
+  v19: Bool = eq v17, v18
+  br v19, b9(), b8()
+b5:  ; preds b2
+  v21: AppErr = payload 1.0, v0
+  retain v21
+  v23: Int = tag v21
+  v24: Int = const 0
+  v25: Bool = eq v23, v24
+  br v25, b6(), b15()
+b6:  ; preds b5
+  v27: ParseErr = payload 0.0, v21
+  release v21
+  v29: Int = tag v27
+  v30: Int = const 0
+  v31: Bool = eq v29, v30
+  br v31, b7(), b4()
+b7:  ; preds b6
+  v33: Str = const "empty"
+  retain v33
+  jump b1(v33)
+b8:  ; preds b4, b16, b17
+  v36: Int = tag v0
+  v37: Int = const 1
+  v38: Bool = eq v36, v37
+  br v38, b13(), b12()
+b9:  ; preds b4
+  v40: AppErr = payload 1.0, v0
+  retain v40
+  v42: Int = tag v40
+  v43: Int = const 0
+  v44: Bool = eq v42, v43
+  br v44, b10(), b16()
+b10:  ; preds b9
+  v46: ParseErr = payload 0.0, v40
+  retain v46
+  release v40
+  v49: Int = tag v46
+  v50: Int = const 1
+  v51: Bool = eq v49, v50
+  br v51, b11(), b17()
+b11:  ; preds b10
+  v53: Str = payload 1.0, v46
+  retain v53
+  release v46
+  v56: Str = const "bad "
+  retain v56
+  v58: Str = call str.concat, v56, v53
+  release v53
+  jump b1(v58)
+b12:  ; preds b8, b13
+  unreachable
+b13:  ; preds b8
+  v62: AppErr = payload 1.0, v0
+  retain v62
+  v64: Int = tag v62
+  v65: Int = const 1
+  v66: Bool = eq v64, v65
+  br v66, b14(), b12()
+b14:  ; preds b13
+  v68: Str = payload 1.0, v62
+  retain v68
+  release v62
+  v71: Int = payload 1.1, v62
+  v72: Str = const "limit "
+  retain v72
+  v74: Str = call str.concat, v72, v68
+  release v68
+  v76: Str = const " "
+  v77: Str = call str.concat, v74, v76
+  v78: Str = call str.concat_int, v77, v71
+  jump b1(v78)
+b15:  ; preds b5
+  release v21
+  jump b4()
+b16:  ; preds b9
+  release v40
+  jump b8()
+b17:  ; preds b10
+  release v46
+  jump b8()
+}
+
+func words(borrow v0: List[Str], v1: List[Str]) -> (Result[List[Str], AppErr], List[Str]) {
+b0(v0: List[Str], v1: List[Str]):
+  v2: List[Str] = reuse v1
+  v3: List[Str] = call list.new
+  v4: Int = call list.len, v0
+  v5: Int = const 0
+  jump b1(v5, v2, v3)
+b1(v7: Int, v8: List[Str], v9: List[Str]):  ; preds b0, b3
+  v10: Bool = lt v7, v4
+  br v10, b2(), b4()
+b2:  ; preds b1
+  v12: Str = call list.index, v0, v7
+  retain v12
+  v14: Result[Str, ParseErr] = call word, v12
+  v15: Int = tag v14
+  v16: Int = const 1
+  v17: Bool = eq v15, v16
+  br v17, b5(), b6()
+b3:  ; preds b7
+  v19: Int = const 1
+  v20: Int = add v7, v19
+  jump b1(v20, v35, v37)
+b4:  ; preds b1
+  v22: Result[List[Str], AppErr] = variant 0, v9
+  ret v22, v8
+b5:  ; preds b2
+  release v9
+  v25: ParseErr = payload 1.0, v14
+  retain v25
+  release v14
+  v28: AppErr = variant 0, v25
+  v29: Result[List[Str], AppErr] = variant 1, v28
+  ret v29, v8
+b6:  ; preds b2
+  v31: Str = payload 0.0, v14
+  retain v31
+  release v14
+  retain v31
+  v35: List[Str] = call list.push, v8, v31
+  v36: () = tuple
+  v37: List[Str] = call list.push, v9, v31
+  v38: () = tuple
+  v39: Int = call list.len, v37
+  v40: Int = const 2
+  v41: Bool = gt v39, v40
+  br v41, b8(), b9()
+b7:  ; preds b9
+  v43: () = tuple
+  jump b3()
+b8:  ; preds b6
+  v45: Str = const "words"
+  v46: Int = call list.len, v37
+  release v37
+  retain v45
+  v49: AppErr = variant 1, v45, v46
+  v50: Result[List[Str], AppErr] = variant 1, v49
+  ret v50, v35
+b9:  ; preds b6
+  v52: () = tuple
+  jump b7()
+}
+
+func first_upper(borrow v0: List[Str]) -> Str? {
+b0(v0: List[Str]):
+  v1: Int = const 0
+  v2: Str? = call list.get, v0, v1
+  retain v2
+  v4: Int = tag v2
+  v5: Int = const 0
+  v6: Bool = eq v4, v5
+  br v6, b1(), b2()
+b1:  ; preds b0
+  release v2
+  v9: Str? = variant 0
+  ret v9
+b2:  ; preds b0
+  v11: Str = payload 1.0, v2
+  retain v11
+  release v2
+  v14: Int = const 1
+  v15: Str? = call list.get, v0, v14
+  retain v15
+  v17: Int = tag v15
+  v18: Int = const 0
+  v19: Bool = eq v17, v18
+  br v19, b3(), b4()
+b3:  ; preds b2
+  release v11
+  release v15
+  v23: Str? = variant 0
+  ret v23
+b4:  ; preds b2
+  v25: Str = payload 1.0, v15
+  retain v25
+  release v15
+  v28: Str = const "/"
+  v29: Str = call str.concat, v11, v28
+  v30: Str = call str.concat, v29, v25
+  release v25
+  v32: Str? = variant 1, v30
+  ret v32
+}
+
+func word(v0: Str) -> Result[Str, ParseErr] {
+b0(v0: Str):
+  v1: Int = call Str.len, v0
+  v2: Int = const 0
+  v3: Bool = eq v1, v2
+  br v3, b2(), b3()
+b1:  ; preds b3
+  v5: () = tuple
+  v6: Str = const "x"
+  v7: Bool = call str.eq, v0, v6
+  br v7, b5(), b6()
+b2:  ; preds b0
+  release v0
+  v10: ParseErr = variant 0
+  v11: Result[Str, ParseErr] = variant 1, v10
+  ret v11
+b3:  ; preds b0
+  v13: () = tuple
+  jump b1()
+b4:  ; preds b6
+  v15: () = tuple
+  v16: Str = const "!"
+  v17: Str = call str.concat, v0, v16
+  v18: Result[Str, ParseErr] = variant 0, v17
+  ret v18
+b5:  ; preds b1
+  v20: Str = const "got "
+  retain v20
+  v22: Str = call str.concat, v20, v0
+  release v0
+  v24: ParseErr = variant 1, v22
+  v25: Result[Str, ParseErr] = variant 1, v24
+  ret v25
+b6:  ; preds b1
+  v27: () = tuple
+  jump b4()
+}
