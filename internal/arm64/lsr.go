@@ -30,8 +30,8 @@ import (
 // starts with p for (xs, i).
 
 type lsrPlan struct {
-	iv      *ssa.Value // the Int parameter of the header, or an index defined before the loop
-	ivIdx   int        // iv's parameter index, or -1
+	iv      *ssa.Value // the Int parameter of the header
+	ivIdx   int        // its index
 	list    *ssa.Value // outside the loop, or a parameter of the header
 	listIdx int        // its parameter index, or -1
 	es      int64
@@ -46,10 +46,7 @@ type lsrLoop struct {
 	// up, down: Int parameters every back edge passes as i + c with c
 	// >= 0 (with c <= 0)
 	up, down []int
-	// lists: List parameters every back edge passes back updated in
-	// place (same buffer, same length)
-	lists []int
-	plans []*lsrPlan
+	plans    []*lsrPlan
 }
 
 // planLSR finds the loops of f and their pointer induction variables
@@ -138,10 +135,6 @@ func (s *fstate) planLSR(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 				if down {
 					lp.down = append(lp.down, k)
 				}
-			case ssa.KList:
-				if l, _ := s.stableList(p, h, body, lp.latches); l == p {
-					lp.lists = append(lp.lists, k)
-				}
 			}
 		}
 		// blocks that run on every iteration
@@ -171,21 +164,16 @@ func (s *fstate) planLSR(blocks []*ssa.Block, idom map[*ssa.Block]*ssa.Block) {
 					continue
 				}
 				x := v.Args[1]
-				k, isIV := ivIdx[x]
-				if !isIV {
-					// an index the loop does not change: its address
-					// is computed once, before the loop
-					if x.Op == ssa.OpConst || body[x.Block] {
-						continue
-					}
-					k = -1
+				k, ok := ivIdx[x]
+				if !ok {
+					continue
 				}
 				l, li := s.stableList(v.Args[0], h, body, lp.latches)
 				if l == nil {
 					continue
 				}
 				es := s.g.esize(l.Type.Elems[0])
-				if es == 0 || (isIV && es&(es-1) == 0) {
+				if es == 0 || es&(es-1) == 0 {
 					continue // xs + i << k is one instruction already
 				}
 				dup := false
@@ -320,8 +308,9 @@ func (s *fstate) plans(b *ssa.Block) []*lsrPlan {
 }
 
 // lsrHeader starts the memo of loop header b: the address memo with its
-// pointers, the bounds of its induction variables from their initial
-// values, and the lengths of the lists it updates in place.
+// pointers, and the bounds of its induction variables from their initial
+// values (an index that only grows is at least its smallest initial
+// value: a step that would overflow faults, or was proved not to).
 func (s *fstate) lsrHeader(b *ssa.Block) {
 	lp := s.lsr[b]
 	if lp == nil {
@@ -383,38 +372,13 @@ func (s *fstate) lsrHeader(b *ssa.Block) {
 			m.hi[s.vals[b.Params[k]][0]] = hi
 		}
 	}
-	// a list updated in place keeps the length it entered with
-	for _, k := range lp.lists {
-		var n vreg
-		for _, e := range lp.entries {
-			em, w := at(e, e.Args[k])
-			var x vreg
-			if em != nil {
-				x = em.lens[w]
-			}
-			if x == 0 || (n != 0 && x != n) {
-				n = 0
-				break
-			}
-			n = x
-		}
-		if n != 0 {
-			m.lens[s.vals[b.Params[k]][0]] = n
-		}
-	}
 }
 
 // lsrMoves adds the moves of the pointer parameters along e.
 func (s *fstate) lsrMoves(e *ssa.Edge, dsts []vreg, srcs []src) ([]vreg, []src) {
 	for _, p := range s.plans(e.To) {
-		a := p.iv
-		if p.ivIdx >= 0 {
-			a = e.Args[p.ivIdx]
-		}
+		a := e.Args[p.ivIdx]
 		if p.body[e.From] {
-			if p.ivIdx < 0 {
-				continue // loop invariant
-			}
 			c, _ := stepOf(p.iv, a)
 			if c == 0 {
 				continue
@@ -461,36 +425,6 @@ func (s *fstate) indexFacts(i vreg) {
 	m.lo[i], m.hi[i] = lo, hi
 }
 
-// ltFact records x < y (signed) when the branch into the current block
-// proved x op y.
-func (s *fstate) ltFact(x *ssa.Value, op ssa.Op, y *ssa.Value) {
-	switch op {
-	case ssa.OpGt:
-		x, y = y, x
-	case ssa.OpLt:
-	default:
-		return
-	}
-	xw, ok1 := s.vals[x]
-	yw, ok2 := s.vals[y]
-	if !ok1 || !ok2 || len(xw) != 1 || len(yw) != 1 || xw[0] == 0 || yw[0] == 0 {
-		return
-	}
-	s.m().lt[[2]vreg{xw[0], yw[0]}] = true
-}
-
-// provenIndex reports whether 0 <= i < len(l) is known: i >= 0 from its
-// bounds and i < n from a branch, n the register of l's length.
-func (s *fstate) provenIndex(l, i vreg) bool {
-	m := s.m()
-	n, ok := m.lens[l]
-	if !ok {
-		return false
-	}
-	lo, ok := m.lo[i]
-	return ok && lo >= 0 && m.lt[[2]vreg{i, n}]
-}
-
 // offset is a register that holds a + c (exactly: the add was checked or
 // proved not to overflow). The relation holds wherever the register is
 // used: its definition dominates the use, and a is not written between
@@ -501,8 +435,8 @@ type offset struct {
 	c int64
 }
 
-// offsetFacts records that v = a + n (OpAdd) or a - n (OpSub), and what
-// follows from a's facts: v's bounds, and v < y when a < y and n <= 0.
+// offsetFacts records that v = a + n (OpAdd) or a - n (OpSub), and v's
+// bounds from a's.
 func (s *fstate) offsetFacts(v, a *ssa.Value, n int64) {
 	if v.Type.Kind != ssa.KInt {
 		return
@@ -534,13 +468,6 @@ func (s *fstate) offsetFacts(v, a *ssa.Value, n int64) {
 			m.hi[d] = hi + n
 		}
 	}
-	if n <= 0 {
-		for k := range m.lt {
-			if k[0] == ar {
-				m.lt[[2]vreg{d, k[1]}] = true
-			}
-		}
-	}
 }
 
 // offsetBase returns the address of element i of list l from the
@@ -551,7 +478,7 @@ func (s *fstate) offsetBase(l, i vreg, es int64) (vreg, bool) {
 		return 0, false
 	}
 	b, ok := s.m().bases[[3]int64{int64(l), int64(o.a), es}]
-	if !ok || o.c > math.MaxInt64/4096 || o.c < -math.MaxInt64/4096 {
+	if !ok || o.c >= 4096 || o.c <= -4096 || es >= 4096 {
 		return 0, false
 	}
 	n := o.c * es

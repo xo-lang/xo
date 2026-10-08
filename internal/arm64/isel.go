@@ -1195,10 +1195,6 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 		return
 	}
 	m.checked[[2]vreg{l, i}] = true
-	if s.provenIndex(l, i) {
-		s.indexFacts(i)
-		return
-	}
 	n := s.listLen(l)
 	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
 	s.indexFacts(i)
