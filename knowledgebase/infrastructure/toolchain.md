@@ -913,7 +913,7 @@ Last verified: 2026-10-08. Decision 0049; results
   virtual registers with assembly templates; values flattened into words,
   `layout.go`), `opt.go` (memos inherited from dominators, list length
   registers, dead code, constant tag and inlined predicate threading,
-  branch bounds), `regalloc.go` (liveness, live ranges with holes, move
+  branch bounds, constant hoisting out of loops), `regalloc.go` (liveness, live ranges with holes, move
   coalescing, greedy first fit by spill weight, spill slots),
   `emit.go` (frames, parallel moves, fault stubs with operand recovery),
   `rc.go` (dup and drop helpers in assembly), `inline.go` (small leaf

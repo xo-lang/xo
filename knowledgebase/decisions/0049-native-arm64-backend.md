@@ -85,7 +85,10 @@ AArch64 assembly text, assembled and linked by the system C compiler
   stores of `list.set` that write back an unchanged word are dropped;
   bounds from dominating branches remove overflow checks of add and
   subtract by a constant (`n - 1` under `n >= 2`); division and remainder
-  by powers of two; `x % 2^k == 0` as a bit test; small leaf functions
+  by powers of two (a plain shift when a branch proved the low bits
+  zero); multiplication by 2^k and 2^k + 1 with shifts;
+  `x % 2^k == 0` as a bit test (`tbz`/`tbnz` for bit 0); constants
+  hoisted out of loops that make no call on their hot path; small leaf functions
   (at most 40 instructions, no calls of Xo functions) are inlined on the
   SSA, after which the module is verified again (reference counting
   balance included) and generation falls back to no inlining if it does
@@ -103,8 +106,8 @@ AArch64 assembly text, assembled and linked by the system C compiler
 - All seven `bench/perf/llvm/xo` programs and the 16 SSA path golden
   programs of `internal/llvm` run natively with output identical to the
   other backends and no allocation live at exit. On the bench programs
-  the native code runs at 0.9x to 1.2x of the LLVM backend's time
-  (faster on nbody, even on fib) with the same peak memory. Builds take
+  the native code runs at 0.93x to 1.25x of the LLVM backend's time
+  (faster on nbody and collatz, even on fib) with the same peak memory. Builds take
   the same time end to end (about 110 ms for a bench program) because
   both backends compile `xo_rt.c` with clang on every build; caching the
   runtime object would make arm64 builds a few milliseconds plus the
@@ -114,8 +117,9 @@ AArch64 assembly text, assembled and linked by the system C compiler
   and testable with golden assembly (`internal/arm64/testdata/*.s`).
 - What LLVM does that this backend does not: loop invariant code motion
   of loads (beyond list lengths), induction variable strength reduction,
-  scheduling, jump tables for `match`, inlining across larger functions.
-  These are the remaining gaps on sort, interp, and collatz.
+  scheduling, jump tables for `match`, inlining across larger functions,
+  rematerialization of spilled constants. These are the remaining gaps
+  on sort and interp.
 - linux/arm64 is not run in CI; the tests assemble its output as ELF with
   clang when available.
 - Concurrency (tasks) will need the same atomic or per task counts as the
