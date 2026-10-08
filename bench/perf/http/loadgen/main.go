@@ -47,6 +47,8 @@ func main() {
 	warm := flag.Duration("warmup", 2*time.Second, "warmup before measuring")
 	preload := flag.Int("preload", 64, "users created before the run")
 	pid := flag.Int("pid", 0, "server pid whose RSS is sampled")
+	route := flag.String("route", "", "allocation mode: send -n requests of one route on one connection and exit (get, list, patch, createdel, cycle)")
+	n := flag.Int("n", 1000, "requests (create and delete pairs, cycles) in -route mode")
 	flag.Parse()
 	if !strings.HasPrefix(*base, "http://127.0.0.1:") && !strings.HasPrefix(*base, "http://localhost:") {
 		fmt.Fprintln(os.Stderr, "loadgen: loopback URLs only")
@@ -64,6 +66,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "loadgen: preload:", err)
 			os.Exit(1)
 		}
+	}
+	if *route != "" {
+		os.Exit(runRoute(client, *base, *route, *n))
 	}
 
 	var peak atomic.Int64
@@ -159,6 +164,53 @@ func main() {
 	}
 	out, _ := json.Marshal(r)
 	fmt.Println(string(out))
+}
+
+// runRoute sends n units of one route, one at a time (allocs.sh): get
+// (GET /users/1), list (GET /users), patch (PATCH /users/1), createdel (a
+// POST and a DELETE of the new user, so the store keeps its size), or
+// cycle (one worker cycle of the load: POST, GET, PATCH, GET, DELETE, and
+// a list every eighth). Prints {"requests": count} and returns the exit
+// status.
+func runRoute(c *http.Client, base, route string, n int) int {
+	reqs := 0
+	do := func(method, path, body string, want int) []byte {
+		reqs++
+		data, code, err := call(c, method, base+path, body)
+		if err != nil || code != want {
+			fmt.Fprintf(os.Stderr, "loadgen: %s %s: status %d, %v\n", method, path, code, err)
+			os.Exit(1)
+		}
+		return data
+	}
+	for i := 1; i <= n; i++ {
+		switch route {
+		case "get":
+			do("GET", "/users/1", "", 200)
+		case "list":
+			do("GET", "/users", "", 200)
+		case "patch":
+			do("PATCH", "/users/1", `{"nickname": "nick`+strconv.Itoa(i)+`"}`, 200)
+		case "createdel", "cycle":
+			email := fmt.Sprintf("r-%d@x.io", i)
+			id := idOf(do("POST", "/users", `{"name": "Worker 0", "email": "`+email+`"}`, 201))
+			p := "/users/" + strconv.Itoa(id)
+			if route == "cycle" {
+				do("GET", p, "", 200)
+				do("PATCH", p, `{"nickname": "nick`+strconv.Itoa(i)+`"}`, 200)
+				do("GET", p, "", 200)
+			}
+			do("DELETE", p, "", 204)
+			if route == "cycle" && i%8 == 0 {
+				do("GET", "/users", "", 200)
+			}
+		default:
+			fmt.Fprintln(os.Stderr, "loadgen: unknown route", route)
+			return 2
+		}
+	}
+	fmt.Printf("{\"requests\":%d}\n", reqs)
+	return 0
 }
 
 func call(c *http.Client, method, url, body string) ([]byte, int, error) {

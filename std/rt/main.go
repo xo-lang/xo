@@ -88,6 +88,29 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 			defer func() { pprof.StopCPUProfile(); f.Close() }()
 		}
 	}
+	if path := os.Getenv("XO_MEMPROFILE"); path != "" {
+		// where the run allocated (pprof -sample_index=alloc_space or
+		// alloc_objects); XO_MEMPROFILERATE=N samples one allocation per N
+		// bytes (1: every allocation) instead of Go's 512 KiB default
+		if v, err := strconv.Atoi(os.Getenv("XO_MEMPROFILERATE")); err == nil && v > 0 {
+			runtime.MemProfileRate = v
+		}
+		defer func() {
+			if f, err := os.Create(path); err == nil {
+				pprof.Lookup("allocs").WriteTo(f, 0)
+				f.Close()
+			}
+		}()
+	}
+	if path := os.Getenv("XO_MEMSTATS"); path != "" {
+		// allocation counters of the whole run, for allocations per
+		// request (bench/perf/http/allocs.sh)
+		defer func() {
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			os.WriteFile(path, fmt.Appendf(nil, "mallocs %d\ntotal_alloc %d\nnum_gc %d\n", ms.Mallocs, ms.TotalAlloc, ms.NumGC), 0o644)
+		}()
+	}
 	if path := os.Getenv("XO_BLOCKPROFILE"); path != "" {
 		// where goroutines wait (channels, locks, select), same tool
 		runtime.SetBlockProfileRate(1000)

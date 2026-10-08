@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"sync"
 	"syscall"
@@ -34,18 +35,33 @@ var (
 )
 
 func init() {
-	path := os.Getenv("HOLDSTATS")
-	if path == "" {
+	hold := os.Getenv("HOLDSTATS")
+	mem := os.Getenv("MEMSTATS")
+	if hold == "" && mem == "" {
 		return
 	}
-	statsOn = true
+	statsOn = hold != ""
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-c
-		writeStats(path)
+		if hold != "" {
+			writeStats(hold)
+		}
+		if mem != "" {
+			writeMemStats(mem)
+		}
 		os.Exit(0)
 	}()
+}
+
+// writeMemStats writes the allocation counters of the whole run, with
+// MEMSTATS=<file> (the same format as XO_MEMSTATS of the Xo runtime):
+// bench/perf/http/allocs.sh divides their growth by the request count.
+func writeMemStats(path string) {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	os.WriteFile(path, []byte(fmt.Sprintf("mallocs %d\ntotal_alloc %d\nnum_gc %d\n", ms.Mallocs, ms.TotalAlloc, ms.NumGC)), 0o644)
 }
 
 func statNow() time.Time {
