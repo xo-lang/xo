@@ -23,6 +23,9 @@ type Module struct {
 	// Root is true for modules named on the command line (diagnostics are
 	// reported for them and for user modules they import).
 	Root bool
+	// Edition is the `edition` of the module's xo.mod (core 13), or
+	// CurrentEdition when there is none.
+	Edition int
 
 	state int // 0 new, 1 loading, 2 loaded (cycle detection)
 }

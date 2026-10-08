@@ -21,8 +21,9 @@ import (
 
 // modRoot maps a module path prefix declared in an xo.mod to its directory.
 type modRoot struct {
-	path string
-	dir  string
+	path    string
+	dir     string
+	edition int
 }
 
 // localName derives a module's local name from an import path (core 4.1):
@@ -146,6 +147,19 @@ func (c *checker) loadDirs(dirs []string) ([]*Module, error) {
 	return roots, nil
 }
 
+// readSource reads a module source file, from the overlay when it holds
+// the file (xo fix checks rewritten sources before writing them).
+func (c *checker) readSource(p string) ([]byte, error) {
+	if c.overlay != nil {
+		if abs, err := filepath.Abs(p); err == nil {
+			if src, ok := c.overlay[abs]; ok {
+				return src, nil
+			}
+		}
+	}
+	return os.ReadFile(p)
+}
+
 // findModRoot looks for xo.mod in dir or its parents and registers it.
 func (c *checker) findModRoot(dir string) (modRoot, bool) {
 	abs, err := filepath.Abs(dir)
@@ -155,24 +169,40 @@ func (c *checker) findModRoot(dir string) (modRoot, bool) {
 	for d := abs; ; {
 		data, err := os.ReadFile(filepath.Join(d, "xo.mod"))
 		if err == nil {
+			r := modRoot{dir: d, edition: CurrentEdition}
 			sc := bufio.NewScanner(bytes.NewReader(data))
 			for sc.Scan() {
 				fields := strings.Fields(sc.Text())
-				if len(fields) == 2 && fields[0] == "module" {
-					r := modRoot{path: fields[1], dir: d}
-					known := false
-					for _, x := range c.roots {
-						if x == r {
-							known = true
-						}
+				if len(fields) == 2 && fields[0] == "module" && r.path == "" {
+					r.path = fields[1]
+				}
+				if len(fields) >= 1 && fields[0] == "edition" {
+					arg := ""
+					if len(fields) == 2 {
+						arg = fields[1]
 					}
-					if !known {
-						c.roots = append(c.roots, r)
+					e, err := parseEdition(arg)
+					if err != nil && c.modErr == nil {
+						c.modErr = fmt.Errorf("%s: %v", filepath.Join(d, "xo.mod"), err)
 					}
-					return r, true
+					if err == nil {
+						r.edition = e
+					}
 				}
 			}
-			return modRoot{}, false
+			if r.path == "" {
+				return modRoot{}, false
+			}
+			known := false
+			for _, x := range c.roots {
+				if x == r {
+					known = true
+				}
+			}
+			if !known {
+				c.roots = append(c.roots, r)
+			}
+			return r, true
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
@@ -204,7 +234,10 @@ func (c *checker) loadDir(dir string) (*Module, error) {
 		return m, nil
 	}
 	name, _ := localName(path)
-	m := &Module{Path: path, Name: name, Dir: dir, Scope: map[string]Object{}}
+	m := &Module{Path: path, Name: name, Dir: dir, Scope: map[string]Object{}, Edition: CurrentEdition}
+	if r, ok := c.findModRoot(dir); ok {
+		m.Edition = r.edition
+	}
 	c.modules[path] = m
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -219,7 +252,7 @@ func (c *checker) loadDir(dir string) (*Module, error) {
 	sort.Strings(names)
 	for _, n := range names {
 		p := filepath.Join(dir, n)
-		src, err := os.ReadFile(p)
+		src, err := c.readSource(p)
 		if err != nil {
 			return nil, err
 		}

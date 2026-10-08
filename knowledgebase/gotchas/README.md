@@ -81,3 +81,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [record-replay-scheduler-decisions.md](record-replay-scheduler-decisions.md): a seed does not replay a real run; the recording logs every pick and every outside event (timers, signals, requests) at decisions.
 - [ring-replay-other-requests.md](ring-replay-other-requests.md): an `XO_RING` crash bundle replays main's startup and the failing request only; state from other requests needs `--record`.
 - [go-build-cache-growth.md](go-build-cache-growth.md): Xo builds filled Go's build cache; now a separate capped cache.
+- [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
+- [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
