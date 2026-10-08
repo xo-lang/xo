@@ -17,6 +17,7 @@ import (
 	"github.com/xo-lang/xo/internal/doc"
 	"github.com/xo-lang/xo/internal/format"
 	"github.com/xo-lang/xo/internal/query"
+	"github.com/xo-lang/xo/internal/serve"
 	"github.com/xo-lang/xo/internal/vet"
 )
 
@@ -232,6 +233,31 @@ is not a terminal.
 `
 
 func runQuery(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		fwd := append([]string{"query"}, args...)
+		if isTerminal(stdout) && !hasFormatFlag(args) {
+			fwd = append(fwd, "--text")
+		}
+		if code, ok := serve.Forward(fwd, stdout, stderr); ok {
+			return code
+		}
+	}
+	return runQueryWith(args, query.Load, stdout, stderr)
+}
+
+// hasFormatFlag reports whether a query command line picks JSON or text.
+func hasFormatFlag(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "--json", "-json", "--text", "-text":
+			return true
+		}
+	}
+	return false
+}
+
+// runQueryWith is `xo query` with the given session loader.
+func runQueryWith(args []string, load loader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, queryUsage)
 		return 2
@@ -283,7 +309,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "xo query: unknown kind %q\n\n%s", kind, queryUsage)
 		return 2
 	}
-	s, err := query.Load(dirs)
+	s, err := load(dirs)
 	if err != nil {
 		fmt.Fprintf(stderr, "xo query: %v\n", err)
 		return 2

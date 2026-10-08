@@ -54,6 +54,8 @@ go run ./cmd/xo vet [--json] [dirs...]                           # advisory chec
 go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api (core 10.3)
 go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
+go run ./cmd/xo mcp                                              # MCP server on stdio for agents (see "Agent interfaces")
+go run ./cmd/xo serve [--socket=path] [stop|status]              # resident checker; check and query use it when it answers
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
@@ -417,7 +419,8 @@ Last verified: 2026-10-07
 
 ```
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
-                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go)
+                        `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
+                        `xo mcp`, `xo serve` (agent.go)
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments
@@ -428,6 +431,8 @@ internal/check/         name resolution and type checking (see below)
 internal/format/        canonical printer for `xo fmt`; format.Decl prints signatures
 internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901, XO1103)
 internal/query/         `xo query` over a check run; Surface is shared with internal/doc
+internal/mcp/           `xo mcp`: MCP (JSON-RPC 2.0 over stdio) tools check, query, explain, fmt, test, build
+internal/serve/         `xo serve`: unix socket server, cache of checked sessions keyed by file mtimes
 internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")
 internal/build/         check, generate, write the build directory, `go build` per target;
@@ -886,6 +891,51 @@ Last verified: 2026-10-08.
   `log.go`, `testing.go` (test runner, fakes, `run_main`),
   `std_gen.go` (generated), `gointerop.go` (Go interop boundary
   helpers and `go.Error`, 2026-10-08).
+
+## Agent interfaces (2026-10-08)
+
+Last verified: 2026-10-08.
+
+`xo mcp` (internal/mcp) is a Model Context Protocol server: JSON-RPC 2.0 on
+stdin and stdout, one message per line, protocol revision 2025-06-18. It
+answers `initialize`, `ping`, `tools/list`, and `tools/call`, and ignores
+notifications. Tools, each with a JSON input schema and a compact JSON text
+result (`isError` true for usage errors):
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `check` | `dirs` | `{ok, errors, warnings, modules, diagnostics}` (diagnostics with notes and fixes, core 10.2) |
+| `query` | `kind` (type, def, callers, effects, holes, api), `arg`, `dir` | the `xo query --json` answer |
+| `explain` | `code` | `{code, severity, title, summary, detail, example, fix}` |
+| `fmt` | `paths`, `write` (default false: report only) | `{changed, unchanged, written, diagnostics}` |
+| `test` | `dirs`, `run`, `seed`, `holes` | `{ok, passed, failed, skipped, failures}`; `errors` (human text) when the tests do not build |
+| `build` | `dirs`, `targets`, `out` | `{ok, binaries, diagnostics}` |
+
+Each tool runs the CLI command line in process with `--json` and reshapes the
+output, so it answers what the CLI answers. Client config example:
+`{"command": "xo", "args": ["mcp"]}`.
+
+`xo serve` (internal/serve) listens on a unix socket
+(`$XO_SERVE_SOCKET`, default `<user cache dir>/xo/serve.sock`, so
+`~/Library/Caches/xo/serve.sock` on macOS) and answers `xo check` and
+`xo query`. The CLI forwards those two commands when the socket answers
+(dial timeout 300 ms) and checks in process otherwise; `XO_NO_SERVE=1`
+turns forwarding off. `xo serve stop` shuts the server down through its own
+request; `xo serve status` prints cache hits, misses, and entries.
+
+Cache: whole check results (query.Session), keyed by the client's working
+directory and the directories checked, at most 16 entries (least recently
+used dropped). An entry is reused when every .xo and xo.mod file under the
+directories, plus every file of the user modules it loaded, has the same
+modification time and size, and no source file appeared. Any change rechecks
+the whole program; there is no per module incremental recheck yet. Requests
+run one at a time (the server changes to the client's directory for each).
+A cached check of a small module took 0.26 ms against 3.3 ms uncached in
+`TestServe` (2026-10-08).
+
+Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
+"args": [...], "cwd": "..."}` answered by `{"code", "stdout", "stderr",
+"cached", "error", "stats"}`.
 
 ## Known gaps (2026-10-08)
 

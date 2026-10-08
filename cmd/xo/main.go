@@ -1,6 +1,7 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
 // `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo vet`,
-// `xo query`, `xo doc`, `xo explain`, `xo dump`, and `xo replay`.
+// `xo query`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
+// and `xo serve`.
 package main
 
 import (
@@ -15,9 +16,10 @@ import (
 	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
-	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/parser"
+	"github.com/xo-lang/xo/internal/query"
+	"github.com/xo-lang/xo/internal/serve"
 )
 
 func main() {
@@ -92,6 +94,17 @@ commands:
       trace recorded) is reported with both locations, exit status 3.
       Secrets are redacted in traces; a replay takes them from the
       environment (the recorded variable, or XO_REPLAY_SECRET_<n>).
+  mcp
+      Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one
+      message per line) with the tools check, query, explain, fmt, test,
+      and build, each returning compact JSON.
+  serve [--socket=path] [stop|status]
+      Keep checked programs in memory and answer xo check and xo query over
+      a unix socket (default $XO_SERVE_SOCKET or <user cache dir>/xo/
+      serve.sock). Results are cached per directory set and rechecked when
+      any source file's modification time or size changes. check and query
+      use a running server automatically; XO_NO_SERVE=1 turns that off.
+      stop shuts the server down; status prints its cache counters.
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -126,6 +139,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDump(args[1:], stdout, stderr)
 	case "replay":
 		return runReplay(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], os.Stdin, stdout, stderr)
+	case "serve":
+		return runServe(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -252,6 +269,15 @@ func collect(paths []string) ([]string, error) {
 }
 
 func runCheck(args []string, stdout, stderr io.Writer) int {
+	if code, ok := serve.Forward(append([]string{"check"}, args...), stdout, stderr); ok {
+		return code
+	}
+	return runCheckWith(args, query.Load, stdout, stderr)
+}
+
+// runCheckWith is `xo check` with the given session loader (in process, or
+// the cache of `xo serve`).
+func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("check", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	asJSON := fl.Bool("json", false, "print diagnostics as JSON")
@@ -262,11 +288,12 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "xo check: no directories given")
 		return 2
 	}
-	res, err := check.Check(fl.Args())
+	sess, err := load(fl.Args())
 	if err != nil {
 		fmt.Fprintf(stderr, "xo check: %v\n", err)
 		return 2
 	}
+	res := sess.Res
 	var mods []string
 	for _, m := range res.Modules {
 		mods = append(mods, m.Path)
