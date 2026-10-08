@@ -1,0 +1,62 @@
+// Results wider than eight words of a class: the words past x7 and d7
+// come back in the caller's stack argument area. Direct calls (kept out
+// of line by recursion), calls through function values, and a `var`
+// parameter returned after a wide result.
+struct Big {
+  a: Str
+  b: Str
+  c: Str
+  d: Str
+  e: Str
+  n: Int
+}
+
+struct Floats {
+  a: Float
+  b: Float
+  c: Float
+  d: Float
+  e: Float
+  f: Float
+  g: Float
+  h: Float
+  i: Float
+  j: Float
+}
+
+fn mk(s: Str, depth: Int) -> Big {
+  if depth > 0 {
+    let inner = mk(s, depth - 1)
+    Big{a: inner.a, b: "b", c: "c", d: "d", e: "e${depth}", n: inner.n + depth}
+  } else {
+    Big{a: s, b: "b", c: "c", d: "d", e: "e", n: 0}
+  }
+}
+
+fn fl(x: Float, depth: Int) -> Floats {
+  if depth > 0 {
+    let r = fl(x + 1.0, depth - 1)
+    Floats{a: r.a, b: r.b, c: r.c, d: r.d, e: r.e, f: r.f, g: r.g, h: r.h, i: r.i, j: r.j + x}
+  } else {
+    Floats{a: x, b: x, c: x, d: x, e: x, f: x, g: x, h: x, i: x * 2.0, j: x * 3.0}
+  }
+}
+
+fn bump(var count: Int, s: Str, depth: Int) -> Big {
+  count += 1
+  mk(s, depth)
+}
+
+fn main(os: Os) {
+  let b = mk("a", 3)
+  os.stdio.println("big ${b.a} ${b.e} ${b.n}")
+  let f = fl(1.0, 3)
+  os.stdio.println("floats ${f.a} ${f.i} ${f.j}")
+  let g = fn(s: Str) -> Big { mk(s, 2) }
+  let r = g("z")
+  os.stdio.println("closure ${r.a} ${r.e} ${r.n}")
+  var count = 0
+  let x = bump(count, "v", 1)
+  let y = bump(count, "w", 0)
+  os.stdio.println("var ${count} ${x.a}${x.e} ${y.a}${y.e}")
+}

@@ -105,9 +105,11 @@ func (s *fstate) emit() {
 		for _, in := range b.insts {
 			if in.kind == iCall {
 				n := 0
-				for _, l := range s.abiLocs(in.srcs) {
+				// stack arguments, and the result words past the
+				// registers, which the callee stores in the same area
+				for _, l := range append(s.abiLocs(in.srcs), s.abiLocs(regs(in.defs...))...) {
 					if l.reg < 0 {
-						n = l.slot + 1
+						n = max(n, l.slot+1)
 					}
 				}
 				if 8*n > fr.outArgs {
@@ -313,11 +315,14 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		var ms []move
 		for k, l := range s.abiLocs(regs(in.defs...)) {
+			src := mloc{reg: l.reg}
 			if l.reg < 0 {
-				fail("a call of %s returns more than 8 words of a class", in.sym)
+				// a result word past the registers: the callee stored it
+				// in the stack argument area
+				src = mloc{reg: -1, base: "sp", off: 8 * l.slot}
 			}
 			if d, ok := s.vloc(in.defs[k], fr); ok {
-				ms = append(ms, move{d, msrc{kind: mLoc, l: mloc{reg: l.reg}}})
+				ms = append(ms, move{d, msrc{kind: mLoc, l: src}})
 			}
 		}
 		s.parallel(b, ms, fr)
@@ -336,10 +341,13 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 	case iRet:
 		var ms []move
 		for k, l := range s.abiLocs(in.srcs) {
+			dst := mloc{reg: l.reg}
 			if l.reg < 0 {
-				fail("%s returns more than 8 words of a class", s.f.Name)
+				// past the registers: into the caller's stack argument
+				// area (its arguments were all read at entry)
+				dst = mloc{reg: -1, base: "sp", off: fr.size + 8*l.slot}
 			}
-			ms = append(ms, move{mloc{reg: l.reg}, s.msrcOf(in.srcs[k], fr)})
+			ms = append(ms, move{dst, s.msrcOf(in.srcs[k], fr)})
 		}
 		s.parallel(b, ms, fr)
 		s.epilogue(b, fr)

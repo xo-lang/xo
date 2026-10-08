@@ -32,7 +32,10 @@
 // The calling convention is AAPCS64 for every call: integer words in x0
 // to x7, floating point words in d0 to d7, the rest on the stack in 8
 // byte slots (Xo to Xo calls only; the runtime takes at most four
-// scalars), results in the same registers. x18 is never touched (Apple
+// scalars), results in the same registers; result words past x7 or d7
+// are stored by the callee in the caller's stack argument area (the
+// same 8 byte slots, which the caller reserves). Function values are
+// called with `blr x0` (closures.go). x18 is never touched (Apple
 // reserves it), x16 and x17 (and x15, d29 to d31) are scratch registers
 // of the backend, x29 is the frame pointer. Darwin symbols get a leading
 // underscore and Mach-O sections; Linux gets ELF sections.
