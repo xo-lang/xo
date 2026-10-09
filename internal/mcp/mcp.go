@@ -204,7 +204,7 @@ var dirsProp = map[string]any{
 
 func init() {
 	register("check", "Type check the modules under dirs. Returns {ok, errors, warnings, modules, diagnostics}; each diagnostic has code, severity, message, span, notes, and fixes (machine applicable edits).",
-		map[string]any{"dirs": dirsProp}, nil, toolCheck)
+		map[string]any{"dirs": dirsProp, "no_gc": noGCProp}, nil, toolCheck)
 	register("query", "Semantic query: type (arg file:line:col), def (arg name, Type.member, module.name), callers (arg module.fn), effects (arg module.fn, with the call chain per effect), holes (no arg), api (arg module import path or directory).",
 		map[string]any{
 			"kind": map[string]any{"type": "string", "enum": []string{"type", "def", "callers", "effects", "holes", "api"}},
@@ -232,13 +232,29 @@ func init() {
 			"run":   map[string]any{"type": "string", "description": "run only tests whose name contains this text"},
 			"seed":  map[string]any{"type": "integer", "description": "scheduler and generator seed"},
 			"holes": map[string]any{"type": "boolean", "description": "allow holes (???), which fault when evaluated"},
+			"no_gc": noGCProp,
 		}, nil, toolTest)
 	register("build", "Compile to static binaries. Returns {ok, binaries: {os/arch: path}, diagnostics}.",
 		map[string]any{
 			"dirs":    dirsProp,
 			"targets": map[string]any{"type": "string", "description": "comma separated os/arch list, or all (default: the host)"},
 			"out":     map[string]any{"type": "string", "description": "output binary (one target) or directory (several)"},
+			"no_gc":   noGCProp,
 		}, nil, toolBuild)
+}
+
+var noGCProp = map[string]any{"type": "boolean", "description": "build without a garbage collector on a native backend (`--no-gc`, decision 0083): XO1201 diagnostics name what it cannot build, planned or impossible"}
+
+// noGCFlag appends --no-gc to cl when args sets no_gc.
+func noGCFlag(cl []string, args map[string]any) ([]string, error) {
+	on, err := boolArg(args, "no_gc")
+	if err != nil {
+		return nil, err
+	}
+	if on {
+		cl = append(cl, "--no-gc")
+	}
+	return cl, nil
 }
 
 // strArg returns a string argument.
@@ -313,7 +329,11 @@ func toolCheck(s *Server, args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	code, out, stderr := s.exec(append([]string{"check", "--json"}, dirs...)...)
+	cl, err := noGCFlag([]string{"check", "--json"}, args)
+	if err != nil {
+		return nil, err
+	}
+	code, out, stderr := s.exec(append(cl, dirs...)...)
 	if err := usageErr(code, stderr); err != nil {
 		return nil, err
 	}
@@ -464,7 +484,10 @@ func toolTest(s *Server, args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cl := []string{"test", "--json"}
+	cl, err := noGCFlag([]string{"test", "--json"}, args)
+	if err != nil {
+		return nil, err
+	}
 	if run != "" {
 		cl = append(cl, "--run="+run)
 	}
@@ -540,7 +563,10 @@ func toolBuild(s *Server, args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cl := []string{"build", "--json"}
+	cl, err := noGCFlag([]string{"build", "--json"}, args)
+	if err != nil {
+		return nil, err
+	}
 	if targets != "" {
 		cl = append(cl, "--targets="+targets)
 	}

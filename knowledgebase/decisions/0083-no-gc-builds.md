@@ -46,7 +46,8 @@ as stable diagnostics before anything is generated.
    fake network in process. A test build is checked as the test binary
    (point 7): every test block and what it reaches.
 5. `xo check --no-gc` checks programs only (the builder starts at
-   `main`); a library is not checked by it.
+   `main`); a library is not checked by it. The MCP server's `check`,
+   `test`, and `build` tools take `no_gc`.
 6. **Native std parity**, one feature at a time, each with a golden
    program whose output is identical on Go, LLVM, and arm64 and that
    frees every allocation:
@@ -147,7 +148,11 @@ as stable diagnostics before anything is generated.
      are not recorded natively, so those reports are shorter.
    - examples/notes-service passes its 16 tests on arm64 and LLVM with a
      report identical to the Go backend's (logs and virtual times
-     included), and no allocation is live at exit.
+     included), and no allocation is live at exit. Built with `--no-gc`
+     and served on a socket, it answers a scripted session (health,
+     notes, login, 401 and 400 cases, 20 concurrent creates) like the Go
+     backend's build and stops on SIGTERM with status 0 after logging
+     "stopped" (cmd/xo TestNoGCNotesServer; smoke test 2026-10-09).
 
 ## Consequences
 - `xo build --backend=llvm` of an unsupported program now fails with
