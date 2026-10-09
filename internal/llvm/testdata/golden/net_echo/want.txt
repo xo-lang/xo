@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+client 0 got: hello number 0, echoed in pieces
+client 1 got: hello number 1, echoed in pieces
+client 2 got: hello number 2, echoed in pieces
+accept ended: Canceled
+accept after close: Io
+dial after close: Refused
+bad port: Io
+--- stderr
