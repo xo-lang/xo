@@ -83,7 +83,7 @@ func (s *fn) runDefers(fr *deferFrame) {
 func (s *fn) exitTo(depth int) {
 	saved := s.exits
 	for i := len(saved) - 1; i >= depth && !s.isDead(); i-- {
-		s.exits = saved[:i]
+		s.exits = saved[:i:i] // appends must not overwrite saved
 		if e := saved[i]; e.defers != nil {
 			s.runDefers(e.defers)
 		} else {
@@ -99,7 +99,7 @@ func (s *fn) exitTo(depth int) {
 func (s *fn) unwind() {
 	saved := s.exits
 	for i := len(saved) - 1; i >= 0 && saved[i].scope == nil && !s.isDead(); i-- {
-		s.exits = saved[:i]
+		s.exits = saved[:i:i] // appends must not overwrite saved
 		s.runDefers(saved[i].defers)
 	}
 	s.exits = saved

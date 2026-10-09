@@ -94,4 +94,24 @@ fn main(os: Os) {
   for s in loop_value(os.stdio) {
     os.stdio.println(s)
   }
+  for n in 0..4 {
+    os.stdio.println("exits ${exits(os.stdio, n)}")
+  }
+}
+
+// deferred code with blocks of its own, lowered at several exits (each
+// copy must see the same pending defers: gotchas/ssa-exit-stack-aliasing.md)
+fn exits(stdio: Stdio, n: Int) -> Int uses stdio {
+  defer {
+    if n > 0 {
+      stdio.println("deferred sees n=${n}")
+    }
+  }
+  if n == 1 {
+    return 1
+  }
+  if n == 2 {
+    return 2
+  }
+  0
 }
