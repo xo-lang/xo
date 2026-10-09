@@ -189,20 +189,20 @@ func (p *parser) foreignImport(f *ast.File) ast.Decl {
 	var paths []string
 	endIdx := -1
 	i := p.pos + 1
-	if p.toks[i].Kind == token.LParen && t.Text == "import" {
+	if p.tokAt(i).Kind == token.LParen && t.Text == "import" {
 		endIdx = p.matchClose(i)
 		for j := i + 1; endIdx > 0 && j < endIdx; j++ {
-			if p.toks[j].Kind == token.String {
-				paths = append(paths, strTokText(p.toks[j]))
+			if p.tokAt(j).Kind == token.String {
+				paths = append(paths, strTokText(p.tokAt(j)))
 			}
 		}
 	} else {
-		for j := i; j < len(p.toks) && p.toks[j].Kind != token.Newline && p.toks[j].Kind != token.EOF; j++ {
+		for j := i; j < len(p.toks) && p.tokAt(j).Kind != token.Newline && p.tokAt(j).Kind != token.EOF; j++ {
 			endIdx = j
 		}
 		if endIdx >= i {
-			first := p.toks[i]
-			last := p.toks[endIdx]
+			first := p.tokAt(i)
+			last := p.tokAt(endIdx)
 			switch {
 			case first.Kind == token.String:
 				// Go: import "encoding/json"
@@ -219,7 +219,7 @@ func (p *parser) foreignImport(f *ast.File) ast.Decl {
 	if endIdx < 0 {
 		endIdx = p.pos
 	}
-	endTok := p.toks[endIdx]
+	endTok := p.tokAt(endIdx)
 	sp := t.Span.To(endTok.Span)
 	d := p.foreign(sp, "`%s` is Go, Python, or TypeScript syntax; Xo imports a module with `use`, for example `use std/json` (core 4.1)", t.Text)
 	if len(paths) > 0 && startLine.Col == 1 {
@@ -335,8 +335,8 @@ func (p *parser) parseImpl(doc *ast.Doc, start token.Pos) ast.Decl {
 		decls = append(decls, fn)
 	})
 	p.inImpl = saved
-	if p.toks[p.pos-1].Kind == token.RBrace {
-		closeTok := p.toks[p.pos-1]
+	if p.tokAt(p.pos-1).Kind == token.RBrace {
+		closeTok := p.tokAt(p.pos - 1)
 		edits = append(edits, p.replaceRange(p.lineStart(closeTok.Span.Start), p.nextLineStart(closeTok.Span.End), ""))
 	} else {
 		fixable = false
@@ -364,7 +364,7 @@ func (p *parser) foreignResult(fn *ast.FnDecl) {
 	case t.Kind == token.Colon && p.startsTypeAt(p.pos+1):
 		d := p.foreign(t.Span, "`): T` is TypeScript, Kotlin, and Python syntax for a result type; Xo writes `-> T` (core 3.2)")
 		repl := "->"
-		if adjacent(p.toks[p.pos-1], t) {
+		if adjacent(p.tokAt(p.pos-1), t) {
 			repl = " ->"
 		}
 		addFix(d, "write `->`", p.replaceSpan(t.Span, repl))
@@ -472,17 +472,17 @@ func (p *parser) foreignSelfParam(prm *ast.Param, allowSelf bool) bool {
 	start := p.tok
 	i := p.pos
 	mut := false
-	if p.toks[i].Kind == token.Amp {
+	if p.tokAt(i).Kind == token.Amp {
 		i++
 	}
-	if p.toks[i].Kind == token.Ident && p.toks[i].Text == "mut" {
+	if p.tokAt(i).Kind == token.Ident && p.tokAt(i).Text == "mut" {
 		mut = true
 		i++
 	}
-	if i == p.pos || p.toks[i].Kind != token.Ident || p.toks[i].Text != "self" {
+	if i == p.pos || p.tokAt(i).Kind != token.Ident || p.tokAt(i).Text != "self" {
 		return false
 	}
-	selfTok := p.toks[i]
+	selfTok := p.tokAt(i)
 	if !p.inImpl {
 		d := p.foreign(start.Span.To(selfTok.Span), "`%s` is Rust syntax; an Xo interface method takes a bare `self`, and a method declares its receiver before the name, `fn (var p: P) name()` (core 2.4, 3.4)", p.spanText(start.Span.To(selfTok.Span)))
 		addFix(d, "write `self`", p.replaceRange(start.Span.Start, selfTok.Span.Start, ""))
@@ -530,14 +530,14 @@ func (p *parser) foreignField(f *ast.Field) bool {
 }
 
 // prevIs reports whether the token before the current one has kind k.
-func (p *parser) prevIs(k token.Kind) bool { return p.pos > 0 && p.toks[p.pos-1].Kind == k }
+func (p *parser) prevIs(k token.Kind) bool { return p.pos > 0 && p.tokAt(p.pos-1).Kind == k }
 
 // startsTypeAt reports whether the token at index i can start a type.
 func (p *parser) startsTypeAt(i int) bool {
 	if i >= len(p.toks) {
 		return false
 	}
-	switch p.toks[i].Kind {
+	switch p.tokAt(i).Kind {
 	case token.Ident, token.LParen, token.Fn, token.LBrack, token.Star, token.Amp:
 		return true
 	}

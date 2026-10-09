@@ -58,13 +58,12 @@ TypeScript, Python, Swift, and Kotlin, and Codex's five):
 | Toolchain | Errors | With a fix | Green after `xo fix` |
 |---|---:|---:|---:|
 | before (`6f771ce`) | 250 | 47 | 10/149 |
-| after | 157 | 145 | 138/149 |
+| after | 157 | 146 | 139/149 |
 
-The 11 without a fix are the policy's no-fix cases: `x!!`, `x!`,
+The 10 without a fix are the policy's no-fix cases: `x!!`, `x!`,
 `.unwrap()` (a reason is needed), `try`/`catch`, bare `print` with no
-capability in scope, `go f()`, `make(...)`, `class`, `any`, an `impl`
-with a function that takes no `self`, and `x?.f` in a function that does
-not return an optional.
+capability in scope, `go f()`, `make(...)`, `class`, `any`, and an `impl`
+with a function that takes no `self`.
 
 Whole first drafts, one per language
 ([bench/habits/drafts](../habits/drafts)), written the way a programmer of
@@ -77,7 +76,7 @@ that language writes a first Xo file:
 | TypeScript | 9 | 44 | 43 | 1 (`import { encode } from "json"`) |
 | Swift | 4 | 29 | 28 | 1 (`xs.first` without `()`, reported downstream) |
 | Rust | 10 | 30 | 27 | 2 (`.unwrap()` reason; `derive Json` missing) |
-| Kotlin | 3 | 30 | 27 | 3 (`data class`, `!!`, `u?.name`) |
+| Kotlin | 3 | 30 | 28 | 2 (`data class`, `!!`) |
 
 Before, the first hard syntax error stopped the declaration and hid the
 rest (2 errors for the whole Go draft); now every habit is reported once,
@@ -86,6 +85,11 @@ and what remains after `xo fix` is a decision the code has to make.
 No accepted program changed: `xo check` over all 361 directories with
 `.xo` files in the repository reports the same codes at the same places
 before and after.
+
+Robustness: `FuzzParse` (seeded with every habit input and draft) ran
+clean for 400 s after two lookahead bounds fixes it found, and `xo check`
+on every 3 byte prefix of every habit input and draft (4359 programs)
+does not panic.
 
 ## Next experiments (ranked)
 
@@ -100,9 +104,10 @@ before and after.
    values (`xs.first`, `xs.count`): report them where the value is used,
    in internal/check/habits.go `habitField`, with a negative test for real
    method values.
-4. A fix for simple optional chains, `u?.name` to `u.map(fn(u) { u.name })`,
-   when the chain is one field and the function does not return an
-   optional (XO0205 in internal/check/expr.go).
+4. Longer optional chains, `u?.a.b?.c`, in a function that does not return
+   an optional: the one step chain `u?.name` already gets
+   `u.map(fn(u) { u.name })` (`safeNavFix` in internal/check/habits.go);
+   extend it to a chain of `map` and `and_then` calls.
 5. Kotlin trailing lambdas, `xs.map { it * 2 }`, in parsePostfix (a `{`
    after a call or selector on the same line outside a condition).
 6. `xo check a b` with a repeated module path: make it a usage error

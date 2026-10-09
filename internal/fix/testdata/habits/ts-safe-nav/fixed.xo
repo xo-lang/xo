@@ -1,0 +1,7 @@
+struct User {
+  name: Str
+}
+
+fn nick(u: User?) -> Str {
+  u.map(fn(u) { u.name }) ?? "anon"
+}

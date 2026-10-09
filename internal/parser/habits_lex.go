@@ -20,7 +20,7 @@ import (
 func (p *parser) lexHabits() {
 	var out []token.Token
 	for i := 0; i < len(p.toks); i++ {
-		t := p.toks[i]
+		t := p.tokAt(i)
 		switch {
 		case t.Kind == token.Illegal && t.Text == "#":
 			if j, ok := p.hashHabit(i); ok {
@@ -28,14 +28,14 @@ func (p *parser) lexHabits() {
 				i = j - 1
 				continue
 			}
-		case t.Kind == token.Illegal && t.Text == "@" && i+1 < len(p.toks) && p.toks[i+1].Kind == token.Ident && adjacent(t, p.toks[i+1]):
+		case t.Kind == token.Illegal && t.Text == "@" && i+1 < len(p.toks) && p.tokAt(i+1).Kind == token.Ident && adjacent(t, p.tokAt(i+1)):
 			j := i + 2
-			if p.toks[j].Kind == token.LParen && adjacent(p.toks[j-1], p.toks[j]) {
+			if p.tokAt(j).Kind == token.LParen && adjacent(p.tokAt(j-1), p.tokAt(j)) {
 				if c := p.matchClose(j); c > 0 {
 					j = c + 1
 				}
 			}
-			name := p.toks[i+1].Text
+			name := p.tokAt(i + 1).Text
 			d := p.lexDiag(t.Span.Start)
 			if d != nil {
 				d.Message = "`@" + name + "` is a Kotlin, Swift, TypeScript, or Python annotation; Xo has none: tests are `test \"name\" { ... }` blocks (core 9.2), and derived behavior is `derive Json` after a type body (core 2.9)"
@@ -49,7 +49,7 @@ func (p *parser) lexHabits() {
 				i = j - 1
 				continue
 			}
-		case t.Kind == token.Slash && i+1 < len(p.toks) && p.toks[i+1].Kind == token.Star && adjacent(t, p.toks[i+1]):
+		case t.Kind == token.Slash && i+1 < len(p.toks) && p.tokAt(i+1).Kind == token.Star && adjacent(t, p.tokAt(i+1)):
 			if j, ok := p.blockComment(i); ok {
 				out = p.dropRange(out, i, j)
 				i = j - 1
@@ -57,12 +57,12 @@ func (p *parser) lexHabits() {
 			}
 		case t.Kind == token.String:
 			p.swiftInterp(&t)
-		case (t.Kind == token.Plus || t.Kind == token.Minus) && i+2 < len(p.toks) && p.toks[i+1].Kind == t.Kind && adjacent(t, p.toks[i+1]) &&
-			p.toks[i+2].Kind != token.Newline && p.toks[i+2].Span.Start.Line > t.Span.Start.Line:
+		case (t.Kind == token.Plus || t.Kind == token.Minus) && i+2 < len(p.toks) && p.tokAt(i+1).Kind == t.Kind && adjacent(t, p.tokAt(i+1)) &&
+			p.tokAt(i+2).Kind != token.Newline && p.tokAt(i+2).Span.Start.Line > t.Span.Start.Line:
 			// `x++` at the end of a line: the lexer inserts no newline after
 			// an operator, so add the one the Xo form `x += 1` would get.
-			out = append(out, t, p.toks[i+1])
-			end := p.toks[i+1].Span.End
+			out = append(out, t, p.tokAt(i+1))
+			end := p.tokAt(i + 1).Span.End
 			out = append(out, token.Token{Kind: token.Newline, Span: token.Span{File: p.file, Start: end, End: end}, Text: "\n"})
 			i++
 			continue
@@ -82,7 +82,7 @@ func (p *parser) dropRange(out []token.Token, i, j int) []token.Token {
 		return out
 	}
 	prev := out[len(out)-1]
-	next := p.toks[j]
+	next := p.tokAt(j)
 	if prev.Kind != token.Newline && next.Kind != token.Newline && next.Kind != token.EOF &&
 		next.Span.Start.Line > prev.Span.End.Line && endsStmt(prev.Kind) {
 		sp := token.Span{File: p.file, Start: prev.Span.End, End: prev.Span.End}
@@ -144,9 +144,9 @@ func (p *parser) dropLexDiags(a, b token.Pos) *diag.Diagnostic {
 // lineEnd is the index of the first token after i on a later line, or the
 // newline token that ends i's line.
 func (p *parser) lineEnd(i int) int {
-	line := p.toks[i].Span.Start.Line
+	line := p.tokAt(i).Span.Start.Line
 	j := i + 1
-	for j < len(p.toks) && p.toks[j].Kind != token.EOF && p.toks[j].Span.Start.Line == line && p.toks[j].Kind != token.Newline {
+	for j < len(p.toks) && p.tokAt(j).Kind != token.EOF && p.tokAt(j).Span.Start.Line == line && p.tokAt(j).Kind != token.Newline {
 		j++
 	}
 	return j
@@ -155,7 +155,7 @@ func (p *parser) lineEnd(i int) int {
 // hashHabit handles `# comment` (Python, shell), `#!` lines, and Rust's
 // `#[attribute]`. It returns the index of the first token to keep.
 func (p *parser) hashHabit(i int) (int, bool) {
-	t := p.toks[i]
+	t := p.tokAt(i)
 	off := t.Span.Start.Offset
 	var c byte
 	if off+1 < len(p.src) {
@@ -165,15 +165,15 @@ func (p *parser) hashHabit(i int) (int, bool) {
 	case c == '[' || (c == '!' && off+2 < len(p.src) && p.src[off+2] == '['):
 		// Rust attribute: up to the matching `]` on this line.
 		k := i + 1
-		for k < len(p.toks) && p.toks[k].Kind != token.LBrack {
+		for k < len(p.toks) && p.tokAt(k).Kind != token.LBrack {
 			k++
 		}
 		e := p.matchClose(k)
-		if e < 0 || p.toks[e].Span.Start.Line != t.Span.Start.Line {
+		if e < 0 || p.tokAt(e).Span.Start.Line != t.Span.Start.Line {
 			return 0, false
 		}
-		text := p.srcText(t.Span.Start, p.toks[e].Span.End)
-		d := p.dropLexDiags(t.Span.Start, p.toks[e].Span.End)
+		text := p.srcText(t.Span.Start, p.tokAt(e).Span.End)
+		d := p.dropLexDiags(t.Span.Start, p.tokAt(e).Span.End)
 		if d != nil {
 			d.Message = "`" + text + "` is a Rust attribute; Xo has none: write `derive Display, Ord, Json` after a struct or enum body, and `Eq`, `Hash`, and `Debug` are automatic for every type whose fields have them (core 2.9)"
 			if names, ok := deriveNames(text); ok {
@@ -190,11 +190,11 @@ func (p *parser) hashHabit(i int) (int, bool) {
 					break
 				}
 				nx := e + 1
-				for nx < len(p.toks)-1 && p.toks[nx].Kind == token.Newline {
+				for nx < len(p.toks)-1 && p.tokAt(nx).Kind == token.Newline {
 					nx++
 				}
-				if len(keep) == 0 && strings.TrimSpace(p.srcText(p.lineStart(t.Span.Start), t.Span.Start)) == "" && p.toks[nx].Span.Start.Line != t.Span.Start.Line {
-					d.Fixes = append(d.Fixes, diag.Fix{Title: "remove the attribute", Edits: []diag.Edit{p.replaceRange(p.lineStart(t.Span.Start), p.nextLineStart(p.toks[e].Span.End), "")}})
+				if len(keep) == 0 && strings.TrimSpace(p.srcText(p.lineStart(t.Span.Start), t.Span.Start)) == "" && p.tokAt(nx).Span.Start.Line != t.Span.Start.Line {
+					d.Fixes = append(d.Fixes, diag.Fix{Title: "remove the attribute", Edits: []diag.Edit{p.replaceRange(p.lineStart(t.Span.Start), p.nextLineStart(p.tokAt(e).Span.End), "")}})
 				} else if len(keep) > 0 {
 					d.Notes = append(d.Notes, diag.NoteItem{Message: "write `derive " + strings.Join(keep, ", ") + "` after the closing `}` of the type"})
 				}
@@ -214,7 +214,7 @@ func (p *parser) hashHabit(i int) (int, bool) {
 			d.Fixes = append(d.Fixes, diag.Fix{Title: "write `//`", Edits: []diag.Edit{p.replaceSpan(t.Span, "//")}})
 		}
 		j := i + 1
-		for j < len(p.toks) && p.toks[j].Kind != token.EOF && p.toks[j].Span.Start.Offset < lineEnd.Offset {
+		for j < len(p.toks) && p.tokAt(j).Kind != token.EOF && p.tokAt(j).Span.Start.Offset < lineEnd.Offset {
 			j++
 		}
 		return j, true
@@ -254,7 +254,7 @@ func deriveNames(text string) ([]string, bool) {
 // blockComment handles `/* ... */` (and `/** ... */`). It returns the index
 // of the first token after the comment.
 func (p *parser) blockComment(i int) (int, bool) {
-	t := p.toks[i]
+	t := p.tokAt(i)
 	off := t.Span.Start.Offset
 	k := strings.Index(string(p.src[off+2:]), "*/")
 	if k < 0 {
@@ -308,7 +308,7 @@ func (p *parser) blockComment(i int) (int, bool) {
 		d.Fixes = append(d.Fixes, diag.Fix{Title: "write `//` comments", Edits: []diag.Edit{p.replaceRange(t.Span.Start, end, b.String())}})
 	}
 	j := i
-	for j < len(p.toks) && p.toks[j].Kind != token.EOF && p.toks[j].Span.Start.Offset < endOff {
+	for j < len(p.toks) && p.tokAt(j).Kind != token.EOF && p.tokAt(j).Span.Start.Offset < endOff {
 		j++
 	}
 	return j, true
@@ -331,7 +331,7 @@ func posAt(src []byte, pos token.Pos, off int) token.Pos {
 // templateHabit handles TypeScript template strings `...${x}...` in
 // backticks: it builds the String token the Xo form would have produced.
 func (p *parser) templateHabit(i int) (int, token.Token, bool) {
-	t := p.toks[i]
+	t := p.tokAt(i)
 	off := t.Span.Start.Offset
 	// Find the closing backtick, skipping `${...}` and escapes.
 	k := off + 1
@@ -413,7 +413,7 @@ func (p *parser) templateHabit(i int) (int, token.Token, bool) {
 		nt.Parts = append(nt.Parts, token.StrPart{Text: lit.String()})
 	}
 	j := i
-	for j < len(p.toks) && p.toks[j].Kind != token.EOF && p.toks[j].Span.Start.Offset < endOff {
+	for j < len(p.toks) && p.tokAt(j).Kind != token.EOF && p.tokAt(j).Span.Start.Offset < endOff {
 		j++
 	}
 	return j, nt, true

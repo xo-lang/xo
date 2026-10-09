@@ -265,6 +265,7 @@ func (c *checker) selector(x *ast.SelectorExpr, hint Type) Type {
 		return c.typeMember(obj, args, x, hint, nil)
 	}
 	bt := c.infer(x.X, nil)
+	c.safeNavFix(x)
 	return c.fieldOf(bt, x, false)
 }
 

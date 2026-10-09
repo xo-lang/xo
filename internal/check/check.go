@@ -58,7 +58,8 @@ type checker struct {
 	// the bodies are checked (decision 0087).
 	renames []pendingRename
 	// safeNavs are `x?.f` optional chains reported as XO0205.
-	safeNavs map[*ast.TryExpr]bool
+	safeNavs    map[*ast.TryExpr]bool
+	safeNavDiag map[*ast.TryExpr]int // index of its XO0205 in c.diags.Items
 
 	// per body information used by the flow checks
 	identObj  map[*ast.Ident]*VarObj
@@ -114,6 +115,7 @@ func newChecker() *checker {
 		modules:     map[string]*Module{},
 		identObj:    map[*ast.Ident]*VarObj{},
 		safeNavs:    map[*ast.TryExpr]bool{},
+		safeNavDiag: map[*ast.TryExpr]int{},
 		exprType:    map[ast.Expr]Type{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},

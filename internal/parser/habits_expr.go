@@ -146,7 +146,7 @@ func (p *parser) ternaryAhead() bool {
 	}
 	depth := 0
 	for i := p.pos + 1; i < len(p.toks); i++ {
-		switch p.toks[i].Kind {
+		switch p.tokAt(i).Kind {
 		case token.Newline, token.EOF:
 			return false
 		case token.LParen, token.LBrack, token.LBrace, token.HashLBrace:
@@ -200,12 +200,12 @@ func (p *parser) pyCondAhead() bool {
 	}
 	depth := 0
 	for i := p.pos + 1; i < len(p.toks); i++ {
-		switch p.toks[i].Kind {
+		switch p.tokAt(i).Kind {
 		case token.Newline, token.EOF, token.LBrace:
-			if p.toks[i].Kind == token.LBrace && depth == 0 {
+			if p.tokAt(i).Kind == token.LBrace && depth == 0 {
 				return false
 			}
-			if p.toks[i].Kind != token.LBrace {
+			if p.tokAt(i).Kind != token.LBrace {
 				return false
 			}
 			depth++
@@ -297,7 +297,7 @@ func (p *parser) foreignPrimary() (ast.Expr, bool) {
 			return nil, false
 		}
 		end := p.matchClose(p.pos)
-		if end < 0 || p.toks[end+1].Kind != token.FatArrow {
+		if end < 0 || p.tokAt(end+1).Kind != token.FatArrow {
 			return nil, false
 		}
 		return p.arrowFn(end), true
@@ -322,10 +322,10 @@ func (p *parser) foreignPrimary() (ast.Expr, bool) {
 		d := p.foreign(t.Span, "`new` is TypeScript, Java, and Kotlin syntax; Xo builds a struct with a literal naming every field, `%s{field: value}` (core 2.2)", next.Text)
 		// `new P{...}` drops `new`; `new P(...)` needs field names.
 		end := p.pos + 2
-		for end+1 < len(p.toks) && p.toks[end].Kind == token.Dot && p.toks[end+1].Kind == token.Ident {
+		for end+1 < len(p.toks) && p.tokAt(end).Kind == token.Dot && p.tokAt(end+1).Kind == token.Ident {
 			end += 2
 		}
-		if p.toks[end].Kind == token.LBrace {
+		if p.tokAt(end).Kind == token.LBrace {
 			addFix(d, "remove `new`", p.deleteToken(t))
 		}
 		p.next()
@@ -334,7 +334,7 @@ func (p *parser) foreignPrimary() (ast.Expr, bool) {
 		return p.pyLambda(), true
 	case next.Kind == token.FatArrow && !p.noArrowFn && sameLine:
 		return p.arrowFn(-1), true
-	case (t.Text == "f" || t.Text == "F") && (next.Kind == token.String) && adjacent(t, next):
+	case (t.Text == "f" || t.Text == "F") && next.Kind == token.String && adjacent(t, next) && len(next.Text) >= 2 && strings.HasSuffix(next.Text, `"`) && !next.Triple:
 		return p.fString(), true
 	case next.Kind == token.Bang && adjacent(t, next) && (p.peek(2).Kind == token.LParen || p.peek(2).Kind == token.LBrack) && adjacent(next, p.peek(2)):
 		return p.rustMacro(), true
@@ -531,7 +531,7 @@ func (p *parser) arrowFn(close int) ast.Expr {
 		headEnd = id.Sp.End
 	} else {
 		params = p.parseParams(paramClosure, false)
-		headEnd = p.toks[p.pos-1].Span.End
+		headEnd = p.tokAt(p.pos - 1).Span.End
 	}
 	arrow := p.tok
 	p.next() // =>
@@ -819,15 +819,15 @@ func (p *parser) tryCatch() ast.Expr {
 	}
 	// catch clauses and finally.
 	for {
-		k := p.toks[end+1]
+		k := p.tokAt(end + 1)
 		if k.Kind != token.Ident || (k.Text != "catch" && k.Text != "except" && k.Text != "finally") {
 			break
 		}
 		j := end + 2
-		for j < len(p.toks) && p.toks[j].Kind != token.LBrace && p.toks[j].Kind != token.Newline && p.toks[j].Kind != token.EOF {
+		for j < len(p.toks) && p.tokAt(j).Kind != token.LBrace && p.tokAt(j).Kind != token.Newline && p.tokAt(j).Kind != token.EOF {
 			j++
 		}
-		if p.toks[j].Kind != token.LBrace {
+		if p.tokAt(j).Kind != token.LBrace {
 			break
 		}
 		e := p.matchClose(j)
@@ -888,7 +888,7 @@ func (p *parser) foreignPostfix(x ast.Expr) (y ast.Expr, ok, stop bool) {
 		sp := x.Span().To(typ.Span())
 		return &ast.CallExpr{Base: ast.Base{Sp: sp}, Fun: fun, Args: []*ast.Arg{{Base: ast.Base{Sp: x.Span()}, Value: x}}}, true, false
 	case token.Bang:
-		if !adjacent(p.toks[p.pos-1], t) {
+		if !adjacent(p.tokAt(p.pos-1), t) {
 			return x, false, false
 		}
 		end := t

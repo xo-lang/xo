@@ -131,18 +131,18 @@ func (p *parser) shortDecl() (ast.Stmt, bool) {
 	i := p.pos
 	var names []token.Token
 	for {
-		if p.toks[i].Kind != token.Ident {
+		if p.tokAt(i).Kind != token.Ident {
 			return nil, false
 		}
-		names = append(names, p.toks[i])
+		names = append(names, p.tokAt(i))
 		i++
-		if p.toks[i].Kind == token.Comma {
+		if p.tokAt(i).Kind == token.Comma {
 			i++
 			continue
 		}
 		break
 	}
-	colon, assign := p.toks[i], p.toks[i+1]
+	colon, assign := p.tokAt(i), p.tokAt(i+1)
 	if colon.Kind != token.Colon || assign.Kind != token.Assign || !adjacent(colon, assign) {
 		return nil, false
 	}
@@ -183,7 +183,7 @@ func (p *parser) shortDecl() (ast.Stmt, bool) {
 			edits := []diag.Edit{
 				p.replaceRange(names[0].Span.Start, p.afterBlanks(assign.Span.End), repl),
 				p.insertAt(value.Span().End, "?"),
-				p.replaceRange(p.lineStart(ifTok.Span.Start), p.nextLineStart(p.toks[blockEnd].Span.End), ""),
+				p.replaceRange(p.lineStart(ifTok.Span.Start), p.nextLineStart(p.tokAt(blockEnd).Span.End), ""),
 			}
 			addFix(d, "propagate with `?`", edits...)
 			// Consume the error check: it has no Xo meaning.
@@ -210,7 +210,7 @@ func (p *parser) assignedLater(name string) bool {
 	depth := 0
 	stmtStart := true
 	for i := p.pos; i < len(p.toks); i++ {
-		t := p.toks[i]
+		t := p.tokAt(i)
 		switch t.Kind {
 		case token.EOF:
 			return false
@@ -230,14 +230,14 @@ func (p *parser) assignedLater(name string) bool {
 		}
 		if stmtStart && t.Kind == token.Ident && t.Text == name {
 			j := i + 1
-			for j+1 < len(p.toks) && p.toks[j].Kind == token.Dot && p.toks[j+1].Kind == token.Ident {
-				if k := p.toks[j+2]; k.Kind == token.LParen && mutatingMethods[p.toks[j+1].Text] {
+			for j+1 < len(p.toks) && p.tokAt(j).Kind == token.Dot && p.tokAt(j+1).Kind == token.Ident {
+				if k := p.tokAt(j + 2); k.Kind == token.LParen && mutatingMethods[p.tokAt(j+1).Text] {
 					return true
 				}
 				j += 2
 			}
-			k := p.toks[j]
-			if k.Kind.IsAssign() || ((k.Kind == token.Plus || k.Kind == token.Minus) && p.toks[j+1].Kind == k.Kind) {
+			k := p.tokAt(j)
+			if k.Kind.IsAssign() || ((k.Kind == token.Plus || k.Kind == token.Minus) && p.tokAt(j+1).Kind == k.Kind) {
 				return true
 			}
 		}
@@ -254,13 +254,13 @@ var mutatingMethods = map[string]bool{"push": true, "pop": true, "put": true, "r
 // returns the index of its closing brace.
 func (p *parser) errCheckAhead(name string) (int, bool) {
 	i := p.pos
-	for i < len(p.toks) && p.toks[i].Kind == token.Newline {
+	for i < len(p.toks) && p.tokAt(i).Kind == token.Newline {
 		i++
 	}
 	if i == p.pos {
 		return 0, false
 	}
-	k := func(j int) token.Token { return p.toks[min(j, len(p.toks)-1)] }
+	k := func(j int) token.Token { return p.tokAt(min(j, len(p.toks)-1)) }
 	if k(i).Kind != token.If || k(i+1).Kind != token.Ident || k(i+1).Text != name ||
 		k(i+2).Kind != token.NotEq || k(i+3).Kind != token.Ident || k(i+3).Text != "nil" || k(i+4).Kind != token.LBrace {
 		return 0, false
@@ -271,7 +271,7 @@ func (p *parser) errCheckAhead(name string) (int, bool) {
 	}
 	stmts, depth, inStmt := 0, 0, false
 	for j := i + 5; j < end; j++ {
-		tk := p.toks[j].Kind
+		tk := p.tokAt(j).Kind
 		if depth == 0 && tk == token.Newline {
 			inStmt = false
 			continue
@@ -403,7 +403,7 @@ func (p *parser) scanForHeader() forHeader {
 	depth := 0
 	prevOperand := false
 	for i := p.pos + 1; i < len(p.toks); i++ {
-		t := p.toks[i]
+		t := p.tokAt(i)
 		operand := false
 		switch t.Kind {
 		case token.Ident, token.Int, token.Float, token.String, token.RawString, token.Duration, token.Rune:
@@ -431,7 +431,7 @@ func (p *parser) scanForHeader() forHeader {
 			depth--
 		case token.LBrace:
 			// A brace after a type name is a struct pattern, not the body.
-			if prev := p.toks[i-1]; depth == 0 && !(prev.Kind == token.Ident && isUpper(prev.Text)) {
+			if prev := p.tokAt(i - 1); depth == 0 && !(prev.Kind == token.Ident && isUpper(prev.Text)) {
 				h.braceIdx = i
 				return h
 			}
@@ -441,9 +441,9 @@ func (p *parser) scanForHeader() forHeader {
 				h.hasIn = true
 			}
 		case token.Colon:
-			if depth == 0 && p.toks[i+1].Kind == token.Assign && adjacent(t, p.toks[i+1]) {
+			if depth == 0 && p.tokAt(i+1).Kind == token.Assign && adjacent(t, p.tokAt(i+1)) {
 				h.shortDecl = true
-				if k := p.toks[i+2]; k.Kind == token.Ident && k.Text == "range" {
+				if k := p.tokAt(i + 2); k.Kind == token.Ident && k.Text == "range" {
 					h.rangeKw = true
 				}
 			}
@@ -487,13 +487,13 @@ func (p *parser) foreignFor(label *ast.Ident, start token.Pos) (ast.Stmt, bool) 
 func (p *parser) parenFor(label *ast.Ident, start token.Pos) (ast.Stmt, bool) {
 	open := p.pos + 1
 	close := p.matchClose(open)
-	if close < 0 || p.toks[close+1].Kind != token.LBrace {
+	if close < 0 || p.tokAt(close+1).Kind != token.LBrace {
 		return nil, false
 	}
 	semi, in, of := false, -1, -1
 	depth := 0
 	for i := open + 1; i < close; i++ {
-		t := p.toks[i]
+		t := p.tokAt(i)
 		switch t.Kind {
 		case token.LParen, token.LBrack, token.LBrace, token.HashLBrace:
 			depth++
@@ -640,6 +640,10 @@ func (p *parser) goRangeFor(label *ast.Ident, start token.Pos) ast.Stmt {
 		if !p.got(token.Comma) {
 			break
 		}
+	}
+	if len(pats) == 0 {
+		p.errorExpected("a loop variable")
+		return &ast.BadStmt{Base: ast.Base{Sp: p.tok.Span}}
 	}
 	p.next() // :
 	p.next() // =

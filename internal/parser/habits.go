@@ -148,7 +148,7 @@ func (p *parser) operandText(e ast.Expr) string {
 func (p *parser) restOfLineHas(kind token.Kind) bool {
 	depth := 0
 	for i := p.pos; i < len(p.toks); i++ {
-		switch p.toks[i].Kind {
+		switch p.tokAt(i).Kind {
 		case token.Newline, token.EOF:
 			return false
 		case token.LParen, token.LBrack, token.HashLBrace:
@@ -169,7 +169,7 @@ func (p *parser) restOfLineHas(kind token.Kind) bool {
 				return false
 			}
 		}
-		if depth == 0 && p.toks[i].Kind == kind && i > p.pos {
+		if depth == 0 && p.tokAt(i).Kind == kind && i > p.pos {
 			return true
 		}
 	}
@@ -179,7 +179,7 @@ func (p *parser) restOfLineHas(kind token.Kind) bool {
 // matchClose returns the index of the token that closes the bracket at
 // index i, or -1.
 func (p *parser) matchClose(i int) int {
-	open := p.toks[i].Kind
+	open := p.tokAt(i).Kind
 	var close token.Kind
 	switch open {
 	case token.LParen:
@@ -193,7 +193,7 @@ func (p *parser) matchClose(i int) int {
 	}
 	depth := 0
 	for j := i; j < len(p.toks); j++ {
-		k := p.toks[j].Kind
+		k := p.tokAt(j).Kind
 		switch {
 		case k == open || (close == token.RBrace && (k == token.LBrace || k == token.HashLBrace)):
 			depth++
@@ -265,3 +265,15 @@ func strLit(s string, sp token.Span) *ast.StringLit {
 // orFaultReason is the reason text recovery uses for a force unwrap. It is
 // never written to source: force unwraps get no machine fix.
 const orFaultReason = "forced unwrap"
+
+// tokAt returns the token at index i, or the final EOF token past the end,
+// so lookahead in the habit code never indexes out of range.
+func (p *parser) tokAt(i int) token.Token {
+	if i < 0 {
+		return p.toks[0]
+	}
+	if i >= len(p.toks) {
+		return p.toks[len(p.toks)-1]
+	}
+	return p.toks[i]
+}

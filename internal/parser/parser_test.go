@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -512,6 +514,14 @@ func FuzzParse(f *testing.F) {
 	f.Add("fn main(os: Os) ! { let x = \"${y}\" }")
 	f.Add("match x { A(..) | B => 1 }")
 	f.Add("struct S { a: Int } derive Json")
+	// Habit inputs (decision 0087): the recovery code paths.
+	seeds, _ := filepath.Glob("../fix/testdata/habits/*/in.xo")
+	drafts, _ := filepath.Glob("../../bench/habits/drafts/*.xo.txt")
+	for _, p := range append(seeds, drafts...) {
+		if b, err := os.ReadFile(p); err == nil {
+			f.Add(string(b))
+		}
+	}
 	f.Fuzz(func(t *testing.T, src string) {
 		ParseFile("f.xo", []byte(src), 0)
 	})

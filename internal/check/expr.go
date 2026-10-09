@@ -522,6 +522,7 @@ func (c *checker) try(x *ast.TryExpr) Type {
 			if src := c.file.Src; x.Sp.End.Offset < len(src) && src[x.Sp.End.Offset] == '.' {
 				// `x?.f` (decision 0087)
 				c.safeNavs[x] = true
+				c.safeNavDiag[x] = len(c.diags.Items) - 1
 				note(d, token.Span{}, "`x?.f` is optional chaining in TypeScript, Kotlin, and Swift; Xo's postfix `?` instead returns early from the function. To keep the value optional, write `x.map(fn(v) { v.f })`, then `?? default` (spec/std.md 2)")
 			}
 		}

@@ -45,6 +45,9 @@ teach.
    `.unwrap()` need a reason for `or_fault`, `try`/`catch` needs a choice
    between `?` and `match`, a bare `print` has no capability in scope,
    `map.get_or_fault(k)` needs its reason. Those name the form and stop.
+   The checker's habit fixes read the source around the site (a postfix
+   after `range(n)` gets `(0..n)`; Go's `range` loop is rewritten for the
+   type of what it ranges over), which only the checker knows.
 3. **Code allocation.** Syntax that the grammar would reject only with a
    generic code (`XO0160`, `XO0168`, `XO0172`, `XO0175`) gets one new
    code, `XO0177` (syntax from another language), whose `xo explain`
@@ -54,8 +57,9 @@ teach.
    `.unwrap()`, `.length`, camelCase methods, Python's declaration by
    assignment), `XO0169` (arm commas), `XO0173` (`use` after declarations,
    now with a fix that moves it), `XO0701` (elided effect argument), `XO0408`
-   (TypeScript `const`), `XO0110` (Kotlin `"$name"`), `XO0101`, `XO0502`,
-   `XO0150`, `XO0152`, `XO0153`. No existing code changes meaning; one
+   (TypeScript `const`), `XO0110` (Kotlin `"$name"`), `XO0205` (`x?.f`),
+   `XO0403` (missing reason), `XO0404` (JSON for tuples), `XO0101`,
+   `XO0502`, `XO0150`, `XO0152`, `XO0153`. No existing code changes meaning; one
    code for all syntax habits keeps the code space small and lets an agent
    look up every habit with one `xo explain`.
 4. **Edit distance guesses become fixes only when clear**: a unique

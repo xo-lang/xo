@@ -1481,7 +1481,9 @@ where the Go backend fuses a multiply and an add (decision 0084).
     match arms), `XO0173` (`use` after declarations), `XO0701` (an effect
     argument left out of a parameter type, which stays an abstract effect
     variable), `XO0408` (TypeScript's `const x = f()`), `XO0110` (Kotlin's
-    `"$name"`, literal text in Xo), `XO0101`, `XO0502`, and the lexical
+    `"$name"`, literal text in Xo), `XO0205` (`x?.f` optional chaining in
+    a function that does not return an optional), `XO0403` (a missing
+    `reason`), `XO0404` (JSON for tuples), `XO0101`, `XO0502`, and the lexical
     codes `XO0150` (`#` comments, `#[derive]`), `XO0152` (`'text'`), and
     `XO0153` (Swift's `\(x)`).
   - A habit gets a fix only when one rewrite keeps the meaning; where the

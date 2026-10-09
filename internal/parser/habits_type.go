@@ -40,7 +40,7 @@ func (p *parser) angleArgs(nt *ast.NamedType) {
 	case p.bad:
 	case st.pendingGt:
 		st.pendingGt = false
-		end = p.toks[p.pos-1].Span.End
+		end = p.tokAt(p.pos - 1).Span.End
 	case p.at(token.Gt):
 		st.edits = append(st.edits, p.replaceSpan(p.tok.Span, "]"))
 		p.next()
@@ -120,7 +120,7 @@ func (p *parser) foreignType() (ast.Type, bool) {
 		// Go `*T`, Rust `&T`, `&mut T`, `&'a T` (the lifetime lexes as a
 		// rune error, so only the plain forms are handled).
 		end := p.pos + 1
-		if p.toks[end].Kind == token.Ident && p.toks[end].Text == "mut" && p.toks[end+1].Kind != token.Comma && p.toks[end+1].Kind != token.RParen {
+		if p.tokAt(end).Kind == token.Ident && p.tokAt(end).Text == "mut" && p.tokAt(end+1).Kind != token.Comma && p.tokAt(end+1).Kind != token.RParen {
 			end++
 		}
 		if !p.startsTypeAt(end) {
@@ -130,8 +130,8 @@ func (p *parser) foreignType() (ast.Type, bool) {
 		if t.Kind != token.Star {
 			what, lang = "a reference type", "Rust"
 		}
-		d := p.foreign(t.Span, "`%s` is %s, %s syntax; Xo has no pointers or references: values are passed and stored as is, and a `var` parameter changes the caller's binding (core 5.1, 3.2)", p.srcText(t.Span.Start, p.toks[end].Span.Start), what, lang)
-		addFix(d, "remove `"+p.srcText(t.Span.Start, p.toks[end].Span.Start)+"`", p.replaceRange(t.Span.Start, p.toks[end].Span.Start, ""))
+		d := p.foreign(t.Span, "`%s` is %s, %s syntax; Xo has no pointers or references: values are passed and stored as is, and a `var` parameter changes the caller's binding (core 5.1, 3.2)", p.srcText(t.Span.Start, p.tokAt(end).Span.Start), what, lang)
+		addFix(d, "remove `"+p.srcText(t.Span.Start, p.tokAt(end).Span.Start)+"`", p.replaceRange(t.Span.Start, p.tokAt(end).Span.Start, ""))
 		p.skipTo(end)
 		return p.parseType(), true
 	case token.Question:

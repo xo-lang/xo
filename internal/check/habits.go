@@ -130,6 +130,29 @@ func posFrom(src []byte, pos token.Pos, off int) token.Pos {
 	return pos
 }
 
+// safeNavFix adds a fix to the XO0205 of a one step optional chain,
+// `u?.name` with nothing chained after it: `u.map(fn(u) { u.name })`.
+func (c *checker) safeNavFix(x *ast.SelectorExpr) {
+	tx, ok := x.X.(*ast.TryExpr)
+	if !ok || !c.safeNavs[tx] {
+		return
+	}
+	id, ok := tx.X.(*ast.Ident)
+	i, have := c.safeNavDiag[tx]
+	if !ok || !have || i >= len(c.diags.Items) {
+		return
+	}
+	src := c.file.Src
+	if e := x.Sp.End.Offset; e < len(src) && strings.IndexByte(".([?", src[e]) >= 0 {
+		return
+	}
+	d := &c.diags.Items[i]
+	if d.Code != string(diag.TryNeedsFailing) || len(d.Fixes) > 0 {
+		return
+	}
+	fix(d, "write `.map(...)`", replaceEdit(x.Sp, id.Name+".map(fn("+id.Name+") { "+id.Name+"."+x.Sel.Name+" })"))
+}
+
 // safeNav reports whether e is, or starts with, a TypeScript, Kotlin, or
 // Swift optional chain `x?.f` that was reported as XO0205.
 func (c *checker) safeNav(e ast.Expr) bool {
