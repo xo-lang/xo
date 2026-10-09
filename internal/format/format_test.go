@@ -180,6 +180,24 @@ func TestSignatureMode(t *testing.T) {
 	}
 }
 
+// TestFnTypeResultParens keeps the parentheses around a function type
+// result that the declaration's uses clause or error follows: without
+// them the function type would take the clause
+// (gotchas/fn-type-return-takes-uses.md).
+func TestFnTypeResultParens(t *testing.T) {
+	for _, src := range []string{
+		"fn f[A, fx: Effects](g: fn(A) -> A uses fx) -> (fn(A) -> A) uses fx\n",
+		"fn f() -> (fn(Int) -> Int) ! Str\n",
+		"fn f() -> fn(Int) -> Int uses fx\n",
+		"fn f() -> fn(Int) -> Int uses fx uses fx\n",
+	} {
+		out := roundTrip(t, "sig.xo", []byte(src))
+		if string(out) != src {
+			t.Errorf("%q formatted as %q", src, out)
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // Golden corpus: spec examples, testdata programs, bench solutions.
 

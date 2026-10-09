@@ -1,0 +1,62 @@
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  nickname: Str? = None
+  score: Float = 1.5
+  tags: List[Str] = []
+} derive Json
+
+struct UserPatch {
+  name: json.Patch[Str]
+  nickname: json.Patch[Str]
+} derive Json
+
+enum Shape {
+  Circle(r: Float)
+  Rect(w: Int, h: Int)
+  Empty
+  Wrapped(from Str)
+} derive Json
+
+fn show[T: Json](os: Os, s: Str) {
+  match json.decode_str[T](s) {
+    Ok(v) => os.stdio.println("ok: ${json.encode_str(v)}")
+    Err(e) => os.stdio.println("err: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let u = User{id: 1, name: "Ada \"L\"\n", email: "a@x.io", tags: ["x", "y"]}
+  os.stdio.println(json.encode_str(u))
+  os.stdio.println(json.encode_str([1, 2, 3]))
+  os.stdio.println(json.encode_str({"a": 1.25, "b": 0.000001, "c": 1e21, "d": 100.0}))
+  os.stdio.println(json.encode_str([Shape.Circle(r: 2.0), Shape.Rect(w: 1, h: 2), Shape.Empty, Shape.Wrapped("w")]))
+  os.stdio.println(json.encode_str(UserPatch{name: json.Patch.Value("n"), nickname: json.Patch.Absent}))
+  os.stdio.println(json.encode_str(UserPatch{name: json.Patch.Null, nickname: json.Patch.Value("k")}))
+  let some: Int? = Some(3)
+  let none: Int? = None
+  os.stdio.println("${json.encode_str(some)} ${json.encode_str(none)} ${json.encode_str(1500ms)}")
+  show[User](os, r#"{"id": 7, "name": "B", "email": "b@x.io"}"#)
+  show[User](os, r#"{"id": 7, "name": "B", "email": "b@x.io", "nickname": "bee", "tags": ["q"], "extra": [1,{}]}"#)
+  show[User](os, r#"{"id": 7.5, "name": "B", "email": "b@x.io"}"#)
+  show[User](os, r#"{"id": 7, "email": "b@x.io"}"#)
+  show[User](os, r#"{"id": 7, "name": "B", "email": "b@x.io", "tags": ["q", 3]}"#)
+  show[User](os, r#"{"id": 7, "name": "B""#)
+  show[User](os, r#"[1]"#)
+  show[UserPatch](os, r#"{"name": null}"#)
+  show[UserPatch](os, r#"{"nickname": "z"}"#)
+  show[List[Shape]](os, r#"["Empty", {"Circle": {"r": 1}}, {"Rect": {"w": 3, "h": 4}}, {"Wrapped": "s"}]"#)
+  show[List[Shape]](os, r#"["Nope"]"#)
+  show[List[Shape]](os, r#"[{"Rect": {"w": 3}}]"#)
+  show[List[Shape]](os, r#"[{"Rect": 5}]"#)
+  show[List[Shape]](os, r#"["Rect"]"#)
+  show[Map[Str, Int]](os, r#"{"b": 1, "a": 2, "b": 3}"#)
+  show[Map[Str, Int]](os, r#"{"b": 1, "a": "x"}"#)
+  show[Duration](os, r#""1h2m3.5s""#)
+  show[Int?](os, "null")
+  show[Bool](os, "true")
+  show[Str](os, r#""é😀""#)
+}

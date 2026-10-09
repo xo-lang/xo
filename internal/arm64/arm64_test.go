@@ -42,7 +42,7 @@ func native() bool {
 
 func asm(t *testing.T, dir, goos string) string {
 	t.Helper()
-	res, ok, err := build.Check([]string{dir}, false)
+	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil || !ok {
 		var b strings.Builder
 		if res != nil {
@@ -114,9 +114,12 @@ func (r runResult) String() string {
 	return fmt.Sprintf("exit %d\n--- stdout\n%s--- stderr\n%s", r.exit, r.stdout, r.stderr)
 }
 
+var timeRE = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
+
 // stableStderr drops the lines of stderr that depend on the backend, as
-// internal/llvm's golden test does.
+// internal/llvm's golden test does, and log times.
 func stableStderr(s string) string {
+	s = timeRE.ReplaceAllString(s, "<time>")
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
 		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || strings.HasPrefix(l, "xo leakcheck:") {
@@ -409,7 +412,7 @@ func TestInlineVerifies(t *testing.T) {
 	dirs = append(dirs, runs...)
 	inlined := 0
 	for _, dir := range dirs {
-		res, ok, err := build.Check([]string{dir}, false)
+		res, ok, err := build.CheckNative([]string{dir}, false)
 		if err != nil || !ok {
 			t.Fatalf("%s: check failed: %v", dir, err)
 		}

@@ -14,6 +14,14 @@ import "embed"
 //go:embed *.xo
 var Files embed.FS
 
+// NativeFiles holds the implementation modules of the native backends
+// (native/<name>.xo implements std/<name>, native/prelude.xo the prelude)
+// and the declarations of their intrinsics (native/rt.xo), decision 0074.
+// internal/check loads them only for the native backends.
+//
+//go:embed native/*.xo
+var NativeFiles embed.FS
+
 // Runtime holds the source of package rt: std/rt/*.go and the assembly
 // of curG (std/rt/*.s).
 //

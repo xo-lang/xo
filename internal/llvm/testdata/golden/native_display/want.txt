@@ -1,0 +1,10 @@
+exit 1
+--- stdout
+d=1.5s 1m30s 3h2m0s 0s 1.5µs 2.5ms
+t=2023-11-14T22:13:20Z
+BadRequest(msg: "x\"y") NotFound(id: 4) Gone
+User{id: 1, name: "ann", tags: ["a", "b"], nick: None}
+6
+true false
+--- stderr
+error: bad port -1

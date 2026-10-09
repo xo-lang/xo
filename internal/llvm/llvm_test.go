@@ -220,7 +220,7 @@ func TestUnsupported(t *testing.T) {
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
-			res, ok, err := build.Check([]string{dir}, false)
+			res, ok, err := build.CheckNative([]string{dir}, false)
 			if err != nil || !ok {
 				var b strings.Builder
 				if res != nil {

@@ -125,8 +125,26 @@ func Check(dirs []string) (*Result, error) {
 // Diagnostics still name the files by their usual paths. `xo fix` uses it to
 // check rewritten sources without writing them.
 func CheckOverlay(dirs []string, overlay map[string][]byte) (*Result, error) {
+	return CheckOpts(dirs, Options{Overlay: overlay})
+}
+
+// Options configure CheckOpts.
+type Options struct {
+	// Overlay maps absolute .xo paths to contents that replace the files
+	// on disk (CheckOverlay).
+	Overlay map[string][]byte
+	// Native also loads the implementation modules of the native
+	// backends (std/native/*.xo, decision 0074): for the prelude and for
+	// every std module the program uses that has one. They are checked
+	// like user modules and lowered by internal/ssa in place of the std
+	// declarations.
+	Native bool
+}
+
+// CheckOpts is Check with options.
+func CheckOpts(dirs []string, opts Options) (*Result, error) {
 	c := newChecker()
-	c.overlay = overlay
+	c.overlay = opts.Overlay
 	if err := c.loadPrelude(); err != nil {
 		return nil, err
 	}
@@ -136,6 +154,11 @@ func CheckOverlay(dirs []string, overlay map[string][]byte) (*Result, error) {
 	}
 	if c.modErr != nil {
 		return nil, c.modErr
+	}
+	if opts.Native {
+		if err := c.loadNative(); err != nil {
+			return nil, err
+		}
 	}
 	c.run()
 	res := &Result{Modules: roots, c: c}

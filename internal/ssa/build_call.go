@@ -1,6 +1,8 @@
 package ssa
 
 import (
+	"strings"
+
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 )
@@ -34,7 +36,17 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	if ci.Fn == nil {
 		return s.valueCall(x)
 	}
+	if ci.Fn.Iface && ci.Fn.Recv != nil && (!ci.Fn.Recv.Module.IsPrelude || dynIface(ci.Fn.Recv)) {
+		// not a capability's method (those are lowered as std calls)
+		return s.ifaceCall(x, ci)
+	}
 	if ci.Fn.Module.IsStd {
+		if strings.HasPrefix(ci.Fn.Module.Path, "native/") {
+			return s.intrinsic(x, ci)
+		}
+		if impl := b.implOf(ci.Fn); impl != nil {
+			return s.callAs(x, ci, impl)
+		}
 		if v, ok := s.ioCall(x, ci); ok {
 			return v
 		}
@@ -211,6 +223,16 @@ func matchTParams(pattern, actual check.Type, bound map[*check.TParam]check.Type
 // named).
 func (s *fn) ctorCall(vo *check.VariantObj, x *ast.CallExpr) *Value {
 	t := s.natOf(x)
+	if _, et, ok := resultParts(s.natCheck(x)); ok && check.IsNever(et) && len(x.Args) == 1 {
+		// Result[T, Never] is T (decision 0074)
+		if vo.Name == "Err" {
+			s.expr(x.Args[0].Value)
+			s.add(OpUnreachable, nil, nil)
+			s.dead()
+			return s.undef(t)
+		}
+		return s.valueAs(x.Args[0].Value, t)
+	}
 	tag := t.VariantIndex(vo.Name)
 	if t.Kind != KEnum || tag < 0 {
 		s.b.unsupported(x, "constructing `"+vo.Name+"` here")
@@ -274,6 +296,16 @@ func (s *fn) retCtor(x *ast.CallExpr) *Value {
 	}
 	t := b.typ(ct, x)
 	arg := x.Args[0].Value
+	if check.IsNever(et) {
+		// Result[T, Never] is T (decision 0074)
+		if id.Name == "Err" {
+			s.expr(arg)
+			s.add(OpUnreachable, nil, nil)
+			s.dead()
+			return s.undef(t)
+		}
+		return s.valueAs(arg, t)
+	}
 	if id.Name == "Err" {
 		ev := s.coerceErr(s.expr(arg), s.natCheck(arg), et, arg)
 		return s.add(OpVariant, t, t.VariantIndex("Err"), ev)
@@ -308,6 +340,10 @@ func (s *fn) coerceErr(v *Value, from, to check.Type, at ast.Node) *Value {
 	if vo := b.info.FromVariant(to, from); vo != nil {
 		return s.variant(tt, vo.Name, []*Value{v}, at)
 	}
+	if isDyn(tt) {
+		// an error converted to the Error interface (`main ! Error`)
+		return s.toDyn(v, from, "Error", at)
+	}
 	b.unsupported(at, "converting the error `"+v.Type.Name+"` to `"+tt.Name+"`")
 	return s.undef(tt)
 }
@@ -319,6 +355,10 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 	m := b.mod
 	xt := s.natCheck(x.X)
 	v := s.expr(x.X)
+	if _, et, ok := resultParts(xt); ok && check.IsNever(et) {
+		// a Result[T, Never] is its T: `?` cannot fail
+		return v
+	}
 	if v.Type.Kind != KEnum {
 		b.unsupported(x, "`?` on `"+v.Type.Name+"`")
 		return s.undef(s.natOf(x))
@@ -403,6 +443,16 @@ func argExprs(params []*check.ParamInfo, x *ast.CallExpr) []ast.Expr {
 // parameters returns a tuple (result, updated vars...), and the updated
 // values are stored back into the argument places.
 func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
+	return s.callAs(x, ci, ci.Fn)
+}
+
+// callAs is declCall of the function impl in place of ci.Fn (fo): the
+// arguments are matched against fo's parameters, and impl, which has
+// fo's type parameters in order, is called with them. impl is fo, a
+// method of the same receiver, or (for an implementation of a std
+// method, decision 0074) a free function whose first parameter is the
+// receiver. A missing argument takes impl's default.
+func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value {
 	b := s.b
 	fo := ci.Fn
 	var targs []check.Type
@@ -414,11 +464,16 @@ func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
 		}
 		targs = append(targs, s.apply(t))
 	}
-	callee := b.declare(fo, targs, x)
+	callee := b.declare(impl, targs, x)
 	ps := callee.Params()
+	// the parameters of impl that correspond to fo's
+	implParams := impl.Params
+	if fo.Recv != nil && !fo.Static && impl.Recv == nil && len(implParams) > 0 {
+		implParams = implParams[1:]
+	}
 	var args []*Value
 	var places []place
-	if fo.Recv != nil {
+	if fo.Recv != nil && !fo.Static {
 		if ci.Recv == nil {
 			b.unsupported(x, "this method call")
 			return s.undef(callee.Results[0])
@@ -458,18 +513,28 @@ func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
 	}
 	for i, p := range fo.Params {
 		if vals[i] == nil {
-			if p.Default == nil {
+			d := p.Default
+			if impl != fo {
+				d = nil
+				if i < len(implParams) {
+					d = implParams[i].Default
+				}
+			}
+			if d == nil {
 				b.unsupported(x, "a call with a missing argument")
 				vals[i] = s.undef(ps[off+i].Type)
 				continue
 			}
-			vals[i] = s.valueAs(p.Default, ps[off+i].Type)
+			vals[i] = s.valueAs(d, ps[off+i].Type)
 		}
 		if argPlaces[i] != nil {
 			places = append(places, *argPlaces[i])
 		}
 	}
 	args = append(args, vals...)
+	if impl != fo {
+		args = append(args, s.locArgs(x, implParams, len(fo.Params))...)
+	}
 	if len(callee.Results) == 1 {
 		r := s.call(callee.Name, callee.Results[0], "", args...)
 		s.check(callee.Name)

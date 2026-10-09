@@ -1,0 +1,82 @@
+// std/log on the native backends (decision 0074): records to standard
+// error as std/rt/log.go writes them (text: time, level, message, then
+// key=value fields; JSON: an object with sorted keys).
+use std/log
+use native/rt
+use native/rtjson
+use native/rthttp
+
+fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields) }
+
+fn info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, fields) }
+
+fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields) }
+
+fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields) }
+
+fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format = log.Format.Text) uses stdio {
+  let n = match level {
+    log.Level.Debug => 1
+    log.Level.Info => 2
+    log.Level.Warn => 3
+    log.Level.Error => 4
+  }
+  rthttp.log_configure(n, format is log.Format.Json)
+}
+
+fn level_name(level: Int) -> Str {
+  match level {
+    1 => "DEBUG"
+    2 => "INFO"
+    3 => "WARN"
+    _ => "ERROR"
+  }
+}
+
+fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
+  if level < rthttp.log_level() {
+    return
+  }
+  if rthttp.log_json() {
+    // encoding/json of a map: keys sorted
+    var keys: List[Str] = ["time", "level", "msg"]
+    var vals: List[Str] = [rtjson.json_enc("", rthttp.log_now(true)), rtjson.json_enc("", level_name(level)), rtjson.json_enc("", msg)]
+    for (k, v) in fields {
+      let text = rt.dyn_text(v)
+      var j = rtjson.json_enc("", text)
+      if rt.dyn_raw(v) {
+        j = text
+      }
+      var found = false
+      for (i, x) in keys.indexed() {
+        if x == k {
+          vals.set(i, j)
+          found = true
+        }
+      }
+      if !found {
+        keys.push(k)
+        vals.push(j)
+      }
+    }
+    var idx: List[Int] = []
+    for i in 0..keys.len() {
+      idx.push(i)
+    }
+    let order = idx.sort_by(fn(i) { keys[i] })
+    var line = "{"
+    for (n, i) in order.indexed() {
+      if n > 0 {
+        line = line + ","
+      }
+      line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
+    }
+    rt.eprintln(line + "}")
+    return
+  }
+  var line = "${rthttp.log_now(false)} ${level_name(level)} ${msg}"
+  for (k, v) in fields {
+    line = line + " ${k}=${rt.dyn_text(v)}"
+  }
+  rt.eprintln(line)
+}

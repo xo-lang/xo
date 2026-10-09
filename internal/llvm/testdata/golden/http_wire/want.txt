@@ -1,0 +1,167 @@
+exit 0
+--- stdout
+== get
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 5
+Connection: close
+
+hello
+== pipelined
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 5
+
+helloHTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 18
+Connection: close
+
+got 5 bytes: hello
+== http/1.0
+HTTP/1.0 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 5
+
+hello
+== http/1.0 keep-alive
+HTTP/1.0 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 5
+Connection: keep-alive
+
+helloHTTP/1.0 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 5
+
+hello
+== chunked
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 22
+Connection: close
+
+got 9 bytes: wikipedia
+== continue
+HTTP/1.1 100 Continue
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 16
+Connection: close
+
+got 3 bytes: abc
+== head
+HTTP/1.1 405 Method Not Allowed
+Content-Type: application/json
+Date: <date>
+Content-Length: 30
+Connection: close
+
+
+== no content
+HTTP/1.1 204 No Content
+Date: <date>
+Connection: close
+
+
+== big
+HTTP/1.1 200 OK
+Content-Length: 3000
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Connection: close
+
+<3000 bytes>
+== sniffed
+HTTP/1.1 200 OK
+Date: <date>
+Content-Length: 28
+Content-Type: text/html; charset=utf-8
+Connection: close
+
+<html><body>hi</body></html>
+== host
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 31
+Connection: close
+
+host=example.com path=/host q=1
+== absolute
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 25
+Connection: close
+
+host=other path=/host q=A
+== not found
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+Date: <date>
+Content-Length: 21
+Connection: close
+
+{"error":"not found"}
+== options
+HTTP/1.1 200 OK
+Content-Length: 0
+Date: <date>
+Connection: close
+
+
+== no host
+HTTP/1.1 400 Bad Request: missing required Host header
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+400 Bad Request: missing required Host header
+== bad request line
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+400 Bad Request
+== bad header
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+400 Bad Request
+== bad version
+HTTP/1.1 505 HTTP Version Not Supported: unsupported protocol version
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+505 HTTP Version Not Supported: unsupported protocol version
+== bad encoding
+HTTP/1.1 501 Not Implemented
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+Unsupported transfer encoding
+== bad length
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+400 Bad Request
+== expectation
+HTTP/1.1 417 Expectation Failed
+Connection: close
+Date: <date>
+Content-Length: 0
+
+
+done
+--- stderr

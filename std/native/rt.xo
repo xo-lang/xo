@@ -1,0 +1,74 @@
+// Intrinsics of the native backends (decision 0074). A declaration file
+// like std/*.xo, imported only by the implementation modules in this
+// directory as `use native/rt`. internal/ssa lowers a call of a function
+// declared here to a call of the C runtime function xo_<name> (std/llrt):
+// Int and Bool are one word, Float a double, Str its bytes and length (a
+// function named rs_* gets the string object instead and consumes its
+// first Str), List and handles a pointer; a Str result is the string
+// object with its length through a pointer. The generic intrinsics at
+// the end are lowered by internal/ssa itself (build_native.go).
+
+// ---------------------------------------------------------------------------
+// Strings
+
+fn str_contains(s: Str, sub: Str) -> Bool
+fn str_starts_with(s: Str, p: Str) -> Bool
+fn str_ends_with(s: Str, p: Str) -> Bool
+/// The byte index of the first sub at or after from, or -1.
+fn str_find(s: Str, sub: Str, from: Int) -> Int
+/// The bytes from lo to hi (clamped to the string).
+fn str_slice(s: Str, lo: Int, hi: Int) -> Str
+/// The byte at i (0 to 255), or -1 out of range.
+fn str_byte(s: Str, i: Int) -> Int
+/// Unicode white space removed: mode 0 both ends, 1 the start, 2 the end.
+fn str_trim(s: Str, mode: Int) -> Str
+fn str_lower(s: Str) -> Str
+fn str_upper(s: Str) -> Str
+fn str_rune_count(s: Str) -> Int
+fn str_split(s: Str, sep: Str) -> List[Str]
+fn str_lines(s: Str) -> List[Str]
+fn str_replace(s: Str, old: Str, new: Str) -> Str
+fn str_repeat(s: Str, n: Int) -> Str
+fn str_join(xs: List[Str], sep: Str) -> Str
+/// The string of one byte (0 to 255).
+fn str_of_byte(b: Int) -> Str
+/// Whether s parses as an Int (strconv.ParseInt(s, 10, 64)).
+fn int_parse_ok(s: Str) -> Bool
+fn int_parse(s: Str) -> Int
+fn float_parse_ok(s: Str) -> Bool
+fn float_parse(s: Str) -> Float
+/// s + t, appended in place when s is unique.
+fn rs_append(s: Str, t: Str) -> Str
+/// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
+fn rs_append_duration(s: Str, d: Int) -> Str
+/// Writes s and a newline to standard error.
+fn eprintln(s: Str)
+
+// ---------------------------------------------------------------------------
+// Generic intrinsics (lowered by internal/ssa, build_native.go)
+
+/// A value of any type, which remembers its type (a request value).
+struct Any {}
+fn any_of[T](v: T) -> Any
+/// The value if it has type T.
+fn any_get[T](a: Any) -> T?
+
+/// e.status() when E has a `status` method (implements http.StatusError).
+fn status_of[E](e: E) -> Int?
+
+/// f, its effects counted here: what a registered handler or middleware
+/// does is accounted where it is registered (std.md 4.1).
+fn launder1[A, R, fx: Effects](f: fn(A) -> R uses fx) -> (fn(A) -> R) uses fx
+fn launder2[A, B, R, fx: Effects](f: fn(A, B) -> R uses fx) -> (fn(A, B) -> R) uses fx
+
+/// The `file:line` of the call of the std function that is being
+/// implemented (a parameter of this type gets it, for faults).
+struct Loc {}
+/// Faults with msg at loc.
+fn fault_at(msg: Str, at: Loc) -> Never
+
+/// Whether a log field value is a number or a Bool (written bare in a
+/// JSON record).
+fn dyn_raw(v: Debug) -> Bool
+/// The text of a log field value (its Display text, else its Debug text).
+fn dyn_text(v: Debug) -> Str

@@ -1,0 +1,567 @@
+// std/http on the native backends (decision 0074). std/rt/http.go is the
+// reference; std/llrt/xo_http.c reads requests and writes responses as
+// net/http does.
+use std/http
+use std/json as js
+use std/log
+use std/task
+use native/rt
+use native/rthttp
+
+// ---------------------------------------------------------------------------
+// Types: the implementations of the std types of the same names
+
+/// http.Request with its route parameters and typed values (hidden from
+/// Xo code, as std/rt's XParams and XValues).
+struct Request {
+  method: Str
+  path: Str
+  url: http.Url
+  headers: Map[Str, Str]
+  body: Bytes
+  remote_ip: Str
+  params: Map[Str, Str] = {}
+  values: List[ReqValue] = []
+}
+
+struct ReqValue {
+  name: Str
+  v: rt.Any
+}
+
+struct Key[T] {
+  key_name: Str
+}
+
+struct Route {
+  method: Str
+  segs: List[Seg]
+  h: fn(Request) -> http.Response
+}
+
+struct Seg {
+  lit: Str
+  param: Str
+  is_int: Bool
+  rest: Bool
+}
+
+struct Router {
+  routes: List[Route]
+  mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response]
+}
+
+struct Server {
+  l: Listener
+  r: Router
+}
+
+struct Client {
+  timeout: Duration
+}
+
+// ---------------------------------------------------------------------------
+// Routing (std.md 4.1)
+
+fn router() -> Router { Router{routes: [], mws: []} }
+
+fn split_path(p: Str) -> List[Str] {
+  var s = p
+  while s.starts_with("/") {
+    s = s.trim_prefix("/")
+  }
+  while s.ends_with("/") {
+    s = s.trim_suffix("/")
+  }
+  if s.is_empty() {
+    return []
+  }
+  s.split("/")
+}
+
+fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
+  var method = ""
+  var p = pattern
+  match pattern.find(" ") {
+    Some(i) => {
+      if i > 0 {
+        method = rt.str_slice(pattern, 0, i).to_upper()
+        p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+      }
+    }
+    None => ()
+  }
+  var segs: List[Seg] = []
+  for s in split_path(p) {
+    if s.starts_with("{") && s.ends_with("}") {
+      let inner = rt.str_slice(s, 1, s.len() - 1)
+      if inner.ends_with("...") {
+        segs.push(Seg{lit: "", param: inner.trim_suffix("..."), is_int: false, rest: true})
+      } else if inner.ends_with(":Int") {
+        segs.push(Seg{lit: "", param: inner.trim_suffix(":Int"), is_int: true, rest: false})
+      } else {
+        segs.push(Seg{lit: "", param: inner, is_int: false, rest: false})
+      }
+      continue
+    }
+    segs.push(Seg{lit: s, param: "", is_int: false, rest: false})
+  }
+  (method, segs)
+}
+
+fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> http.Response ! E uses fx) uses fx {
+  let (method, segs) = parse_pattern(pattern)
+  let g = fn(req: Request) -> http.Response {
+    match h(req) {
+      Ok(resp) => resp
+      Err(e) => error_response(e)
+    }
+  }
+  r.routes.push(Route{method: method, segs: segs, h: rt.launder1(g)})
+}
+
+fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, fn(Request) -> http.Response) -> http.Response ! E uses fx) uses fx {
+  let g = fn(req: Request, next: fn(Request) -> http.Response) -> http.Response {
+    match m(req, next) {
+      Ok(resp) => resp
+      Err(e) => error_response(e)
+    }
+  }
+  r.mws.push(rt.launder2(g))
+}
+
+fn (var r: Router) mount(prefix: Str, sub: Router) {
+  let (_, pre) = parse_pattern(prefix)
+  for sr in sub.routes {
+    var segs = pre
+    for s in sr.segs {
+      segs.push(s)
+    }
+    var h = sr.h
+    if !sub.mws.is_empty() {
+      h = chain(sub.mws, sr.h)
+    }
+    r.routes.push(Route{method: sr.method, segs: segs, h: h})
+  }
+}
+
+/// inner behind the middleware mws, outermost first.
+fn chain(mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response], inner: fn(Request) -> http.Response) -> fn(Request) -> http.Response {
+  var next = inner
+  var i = mws.len() - 1
+  while i >= 0 {
+    let mw = mws[i]
+    let inn = next
+    next = fn(q: Request) -> http.Response { mw(q, inn) }
+    i -= 1
+  }
+  next
+}
+
+fn (r: Router) call(req: Request) -> http.Response {
+  if r.mws.is_empty() {
+    return dispatch(r, req)
+  }
+  let h = chain(r.mws, fn(q: Request) -> http.Response { dispatch(r, q) })
+  h(req)
+}
+
+fn literals(rt: Route) -> Int {
+  var n = 0
+  for s in rt.segs {
+    if s.param.is_empty() {
+      n += 1
+    }
+  }
+  n
+}
+
+/// Whether the route matches the path parts, and its first Int segment
+/// that does not parse ("" when none).
+fn match_parts(route: Route, parts: List[Str]) -> (Bool, Str) {
+  var bad = ""
+  for (i, s) in route.segs.indexed() {
+    if s.rest {
+      return (true, bad)
+    }
+    if i >= parts.len() {
+      return (false, "")
+    }
+    let part = rthttp.path_unescape(parts[i])
+    if s.param.is_empty() {
+      if part != s.lit {
+        return (false, "")
+      }
+      continue
+    }
+    if s.is_int && Int.parse(part) is None && bad.is_empty() {
+      bad = s.param
+    }
+  }
+  if parts.len() != route.segs.len() {
+    return (false, "")
+  }
+  (true, bad)
+}
+
+fn bind_params(route: Route, parts: List[Str]) -> Map[Str, Str] {
+  var params: Map[Str, Str] = {}
+  for (i, s) in route.segs.indexed() {
+    if s.rest {
+      var rest = ""
+      if i < parts.len() {
+        var tail: List[Str] = []
+        var j = i
+        while j < parts.len() {
+          tail.push(parts[j])
+          j += 1
+        }
+        rest = tail.join("/")
+      }
+      params.put(s.param, rest)
+      return params
+    }
+    if !s.param.is_empty() && i < parts.len() {
+      params.put(s.param, rthttp.path_unescape(parts[i]))
+    }
+  }
+  params
+}
+
+fn dispatch(r: Router, req: Request) -> http.Response {
+  let parts = split_path(req.path)
+  let method = req.method.to_upper()
+  var best = -1
+  var best_lits = 0
+  var best_bad = ""
+  var mismatch = false
+  for (i, route) in r.routes.indexed() {
+    let (ok, bad) = match_parts(route, parts)
+    if !ok {
+      continue
+    }
+    if !route.method.is_empty() && route.method != method {
+      mismatch = true
+      continue
+    }
+    let lits = literals(route)
+    if best < 0 || lits > best_lits {
+      best = i
+      best_lits = lits
+      best_bad = bad
+    }
+  }
+  if best < 0 {
+    if mismatch {
+      return json_error(405, "method not allowed")
+    }
+    return json_error(404, "not found")
+  }
+  if !best_bad.is_empty() {
+    return json_error(400, "path segment `${best_bad}` must be an Int")
+  }
+  let route = r.routes[best]
+  let h = route.h
+  h(req with {params: bind_params(route, parts)})
+}
+
+/// A handler's or middleware's error as a response (std.md 4.2).
+fn error_response[E: Error](e: E) -> http.Response {
+  match rt.status_of(e) {
+    Some(status) => json_error(status, e.display())
+    None => {
+      log.error("handler failed", {"error": e.display()})
+      json_error(500, "internal error")
+    }
+  }
+}
+
+fn json_error(status: Int, msg: Str) -> http.Response { json(status, {"error": msg}) }
+
+// ---------------------------------------------------------------------------
+// Requests and responses (std.md 4.3)
+
+fn request_param(r: Request, name: Str, at: rt.Loc) -> Str {
+  match r.params.get(name) {
+    Some(v) => v
+    None => rt.fault_at("request has no path parameter `${name}`", at)
+  }
+}
+
+fn request_param_int(r: Request, name: Str, at: rt.Loc) -> Int {
+  let s = request_param(r, name, at)
+  match Int.parse(s) {
+    Some(n) => n
+    None => rt.fault_at("path parameter `${name}` is not an Int: ${rthttp.go_quote(s)} (declare it as {${name}:Int})", at)
+  }
+}
+
+fn request_query(r: Request, name: Str) -> Str? { r.url.query.get(name) }
+
+fn header_get(h: Map[Str, Str], name: Str) -> Str? {
+  match h.get(rthttp.canonical_key(name)) {
+    Some(v) => return Some(v)
+    None => ()
+  }
+  for (k, v) in h {
+    if rthttp.equal_fold(k, name) {
+      return Some(v)
+    }
+  }
+  None
+}
+
+fn request_header(r: Request, name: Str) -> Str? { header_get(r.headers, name) }
+
+fn request_json[T: Json](r: Request) -> T ! js.DecodeErr { js.decode(r.body) }
+
+fn request_with_header(r: Request, name: Str, value: Str) -> Request {
+  var h = r.headers
+  h.put(rthttp.canonical_key(name), value)
+  r with {headers: h}
+}
+
+fn request_with_value[T](r: Request, k: Key[T], v: T) -> Request {
+  var vs = r.values
+  vs.push(ReqValue{name: k.key_name, v: rt.any_of(v)})
+  r with {values: vs}
+}
+
+fn request_value[T](r: Request, k: Key[T]) -> T? {
+  var i = r.values.len() - 1
+  while i >= 0 {
+    let rv = r.values[i]
+    if rv.name == k.key_name {
+      match rt.any_get[T](rv.v) {
+        Some(v) => return Some(v)
+        None => ()
+      }
+    }
+    i -= 1
+  }
+  None
+}
+
+fn key[T](name: Str) -> Key[T] { Key{key_name: name} }
+
+fn (k: Key[T]) name() -> Str { k.key_name }
+
+/// url.Parse of an absolute or path only URL; a URL that does not parse
+/// is its text as the path (std/rt's parseURLLoose).
+fn parse_url_loose(raw: Str) -> http.Url {
+  let parts = rthttp.url_parts(raw, false)
+  if parts.is_empty() {
+    return http.Url{scheme: "", host: "", port: None, path: raw, query: {}}
+  }
+  let path = if parts[3].is_empty() { "/" } else { parts[3] }
+  var port: Int? = None
+  if !parts[2].is_empty() {
+    port = Int.parse(parts[2])
+  }
+  var query: Map[Str, Str] = {}
+  if !parts[4].is_empty() {
+    let q = rthttp.query_parts(parts[4])
+    var i = 0
+    while i + 1 < q.len() {
+      query.put(q[i], q[i + 1])
+      i += 2
+    }
+  }
+  http.Url{scheme: parts[0], host: parts[1], port: port, path: path, query: query}
+}
+
+fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = "".bytes()) -> Request {
+  let u = parse_url_loose(url)
+  var h: Map[Str, Str] = {}
+  for (k, v) in headers {
+    h.put(rthttp.canonical_key(k), v)
+  }
+  let parts = rthttp.url_parts(url, false)
+  let path = if parts.is_empty() { url } else { parts[3] }
+  Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1"}
+}
+
+fn parse_url(s: Str) -> http.Url ! http.UrlErr {
+  let parts = rthttp.url_parts(s, false)
+  if parts.is_empty() {
+    return Err(http.UrlErr{msg: rthttp.url_error(s)})
+  }
+  if parts[0] != "http" && parts[0] != "https" {
+    return Err(http.UrlErr{msg: "scheme must be http or https: ${s}"})
+  }
+  if parts[5].is_empty() {
+    return Err(http.UrlErr{msg: "missing host: ${s}"})
+  }
+  parse_url_loose(s)
+}
+
+fn json[T: Json](status: Int, v: T) -> http.Response {
+  http.Response{status: status, headers: {"Content-Type": "application/json"}, body: js.encode(v)}
+}
+
+fn text(status: Int, s: Str) -> http.Response {
+  http.Response{status: status, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: s.bytes()}
+}
+
+fn empty(status: Int) -> http.Response { http.Response{status: status, headers: {}, body: "".bytes()} }
+
+fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Response {
+  var h = r.headers
+  h.put(rthttp.canonical_key(name), value)
+  r with {headers: h}
+}
+
+fn response_header(r: http.Response, name: Str) -> Str? { header_get(r.headers, name) }
+
+fn response_text(r: http.Response) -> Str? { r.body.to_str() }
+
+fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.decode(r.body) }
+
+// ---------------------------------------------------------------------------
+// Server (std.md 4.4)
+
+fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r} }
+
+fn (s: Server) addr() -> Str { s.l.addr() }
+
+fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
+  let srv = rthttp.srv_new()
+  defer rthttp.srv_close(srv)
+  let conns = rthttp.srv_group(srv)
+  let l = s.l
+  let r = s.r
+  var failed = ""
+  scope sc {
+    sc.spawn_background(fn() {
+      // a stop request (core 7.5): stop accepting, close idle
+      // connections
+      let _ = task.stopping().recv()
+      rthttp.srv_stop(srv)
+      l.close()
+    })
+    while {
+      match l.accept() {
+        Ok(c) => {
+          let hc = rthttp.hc_new(srv, c)
+          conns.spawn_background(fn() { serve_conn(hc, r) })
+        }
+        Err(NetErr.Io(msg)) => {
+          if !task.stop_requested() && !task.is_canceled() {
+            failed = msg
+          }
+          break
+        }
+        Err(_) => break
+      }
+    }
+  }
+  rthttp.srv_stop(srv)
+  rthttp.srv_wait(srv)
+  if !failed.is_empty() {
+    return Err(http.HttpErr.Io(msg: failed))
+  }
+}
+
+/// Serves the requests of one connection until it closes.
+fn serve_conn(hc: rthttp.HConn, r: Router) {
+  defer rthttp.hc_close(hc)
+  while rthttp.hc_read(hc) {
+    let resp = r.call(conn_request(hc))
+    for (k, v) in resp.headers {
+      rthttp.hc_header(hc, k, v)
+    }
+    if !rthttp.hc_respond(hc, resp.status, resp.body) {
+      break
+    }
+  }
+}
+
+/// The request read from the connection (std/rt's serve).
+fn conn_request(hc: rthttp.HConn) -> Request {
+  var headers: Map[Str, Str] = {}
+  for i in 0..rthttp.hc_nheaders(hc) {
+    headers.put(rthttp.hc_hname(hc, i), rthttp.hc_hval(hc, i))
+  }
+  var query: Map[Str, Str] = {}
+  for i in 0..rthttp.hc_nquery(hc) {
+    query.put(rthttp.hc_qkey(hc, i), rthttp.hc_qval(hc, i))
+  }
+  let path = rthttp.hc_path(hc)
+  var upath = path
+  if upath.is_empty() {
+    upath = "/"
+  }
+  var port: Int? = None
+  let p = rthttp.hc_port(hc)
+  if p >= 0 {
+    port = Some(p)
+  }
+  let url = http.Url{scheme: rthttp.hc_scheme(hc), host: rthttp.hc_host(hc), port: port, path: upath, query: query}
+  Request{method: rthttp.hc_method(hc), path: path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
+}
+
+// ---------------------------------------------------------------------------
+// Client (std.md 4.5)
+
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout} }
+
+fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
+
+fn (c: Client) post_json[T: Json](url: Str, v: T) -> http.Response ! http.ClientErr uses net.dial {
+  c.send(new_request("POST", url, {"Content-Type": "application/json"}, js.encode(v)))
+}
+
+/// The text of a URL (std/rt's urlString).
+fn url_string(u: http.Url) -> Str {
+  var s = ""
+  if !u.scheme.is_empty() {
+    s = u.scheme + "://"
+  }
+  s = s + u.host
+  match u.port {
+    Some(p) => s = s + ":${p}"
+    None => ()
+  }
+  s = s + u.path
+  var first = true
+  for (k, v) in u.query {
+    if first {
+      s = s + "?"
+      first = false
+    } else {
+      s = s + "&"
+    }
+    s = s + rthttp.query_escape(k) + "=" + rthttp.query_escape(v)
+  }
+  s
+}
+
+fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dial {
+  if task.is_canceled() {
+    return Err(http.ClientErr.Canceled)
+  }
+  let raw = url_string(req.url)
+  if req.url.scheme.is_empty() || req.url.host.is_empty() {
+    return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
+  }
+  var names: List[Str] = []
+  var values: List[Str] = []
+  for (k, v) in req.headers {
+    names.push(k)
+    values.push(v)
+  }
+  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos())
+  match rthttp.cr_err(r) {
+    0 => ()
+    1 => return Err(http.ClientErr.InvalidUrl(msg: rthttp.cr_msg(r)))
+    2 => return Err(http.ClientErr.Connect(msg: rthttp.cr_msg(r)))
+    3 => return Err(http.ClientErr.Timeout)
+    5 => return Err(http.ClientErr.Canceled)
+    _ => return Err(http.ClientErr.Protocol(msg: rthttp.cr_msg(r)))
+  }
+  var h: Map[Str, Str] = {}
+  for i in 0..rthttp.cr_nheaders(r) {
+    h.put(rthttp.cr_hname(r, i), rthttp.cr_hval(r, i))
+  }
+  http.Response{status: rthttp.cr_status(r), headers: h, body: rthttp.cr_body(r)}
+}

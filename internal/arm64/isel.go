@@ -1574,12 +1574,19 @@ func dominators(blocks []*ssa.Block) map[*ssa.Block]*ssa.Block {
 // Str its bytes and length; the result is nothing or one word.
 func (s *fstate) rtCall(v *ssa.Value) {
 	var args []src
+	// `rt.rs_*` functions take their Str operands as the string object
+	// (the first is consumed, decision 0074); the others its bytes
+	obj := strings.HasPrefix(v.Aux.(string), "rt.rs_")
 	for _, x := range v.Args {
 		ws := s.words(x)
 		switch x.Type.Kind {
-		case ssa.KInt, ssa.KBool, ssa.KList, ssa.KHandle:
+		case ssa.KInt, ssa.KBool, ssa.KList, ssa.KHandle, ssa.KFloat:
 			args = append(args, rsrc(ws[0]))
 		case ssa.KStr:
+			if obj {
+				args = append(args, rsrc(ws[0]), rsrc(ws[1]))
+				break
+			}
 			d := s.def1(false, "add $d0, $u0, #16", s.real(ws[0]))
 			args = append(args, rsrc(d), rsrc(ws[1]))
 		default:
@@ -1593,6 +1600,13 @@ func (s *fstate) rtCall(v *ssa.Value) {
 		s.set(v)
 	case ssa.KInt, ssa.KBool, ssa.KList, ssa.KHandle:
 		s.set(v, s.rt(name, args, false)...)
+	case ssa.KFloat:
+		s.set(v, s.rt(name, args, true)...)
+	case ssa.KStr:
+		// the string object; its length in the frame's out slot
+		o := s.rt(name, append(args, framesrc()), false)
+		n := s.def1(false, "ldr $d0, [sp, #$OUT]")
+		s.set(v, o[0], n)
 	default:
 		fail("the runtime call `%s` returns a `%s`", v.Aux, v.Type.Name)
 	}

@@ -1,0 +1,24 @@
+fn main(os: Os) {
+  let s = "  Hello, World  "
+  os.stdio.println("[${s.trim()}]")
+  os.stdio.println("${s.contains("World")} ${s.contains("x")}")
+  os.stdio.println(s.to_lower())
+  os.stdio.println(s.to_upper())
+  os.stdio.println("${"héllo".rune_count()}")
+  let parts = "a,b,,c".split(",")
+  os.stdio.println("${parts.len()} ${parts.join("|")}")
+  match Int.parse("123") {
+    Some(n) => os.stdio.println("n=${n}")
+    None => os.stdio.println("none")
+  }
+  match Int.parse("12x") {
+    Some(n) => os.stdio.println("n=${n}")
+    None => os.stdio.println("none")
+  }
+  let xs = [3, 1, 2]
+  os.stdio.println("${xs.any(fn(x) { x > 2 })} ${xs.all(fn(x) { x > 2 })}")
+  let ys = xs.sort_by(fn(x) { x })
+  os.stdio.println("${ys[0]} ${ys[1]} ${ys[2]}")
+  let zs = xs.map(fn(x) { x * 10 })
+  os.stdio.println("${zs[0]} ${zs[1]} ${zs[2]}")
+}

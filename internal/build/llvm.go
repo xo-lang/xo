@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +15,6 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/llvm"
-	"github.com/xo-lang/xo/std"
 )
 
 // Backends accepted by Options.Backend.
@@ -85,12 +83,8 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 		return nil, err
 	}
-	rtSrc, err := fs.ReadFile(std.LLRuntime, "llrt/xo_rt.c")
+	rt, err := writeRuntime(dir)
 	if err != nil {
-		return nil, err
-	}
-	rt := filepath.Join(dir, "xo_rt.c")
-	if err := os.WriteFile(rt, rtSrc, 0o644); err != nil {
 		return nil, err
 	}
 	name := progName(dirs)

@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+p is P{x: 1}
+--- stderr

@@ -549,7 +549,10 @@ When a handler returns `Err(e)`:
 - otherwise the response is 500 with `{"error": "internal error"}` and the
   error is logged with its frames.
 
-A fault in a handler is isolated: 500, logged, crash bundle written.
+A fault in a handler is isolated: 500, logged, crash bundle written. On the
+native backends (`--backend=llvm`, `--backend=arm64`, decision 0074) a fault
+exits the process, as every native fault does (core 3.5), and the error of a
+500 is logged without frames.
 
 ### 4.3 Requests and responses
 
@@ -673,7 +676,9 @@ struct UrlErr { msg: Str }
 Any HTTP status is a successful `Response`; only transport failures are
 `ClientErr`. The client does not retry. It follows up to 10 redirects for
 `GET` and `HEAD`. `parse_url` accepts absolute RFC 3986 URLs with an
-`http` or `https` scheme and a host; anything else is a `UrlErr`.
+`http` or `https` scheme and a host; anything else is a `UrlErr`. The native
+backends (decision 0074) have no TLS: a request to an `https` URL is
+`Protocol`.
 
 ---
 

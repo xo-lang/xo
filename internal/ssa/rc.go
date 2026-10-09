@@ -96,6 +96,8 @@ var runtimeModes = map[string][]mode{
 	"rt.mutex_unlock":  {mBorrow, mConsume},
 	"rt.mutex_runlock": {mBorrow, mConsume},
 	"rt.select_send":   {mBorrow, mBorrow, mConsume},
+	// a value of any type (decision 0074) keeps its list of one
+	"rt.any_new": {mConsume, mNone, mBorrow},
 }
 
 // projCalls are the runtime calls whose result is a projection out of
@@ -260,6 +262,13 @@ func (r *rcInfo) modes(v *Value) []mode {
 			}
 		} else if rm, ok := runtimeModes[name]; ok {
 			copy(ms, rm)
+		} else if strings.HasPrefix(name, "rt.rs_") {
+			// the native intrinsics that append to a string object
+			// consume it (decision 0074)
+			set(mBorrow)
+			if len(ms) > 0 {
+				ms[0] = mConsume
+			}
 		} else {
 			set(mBorrow)
 		}

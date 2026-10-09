@@ -1,0 +1,27 @@
+exit 0
+--- stdout
+hello: 200 [text/plain; charset=utf-8] [xo] hello ada
+hello escaped: 200 [text/plain; charset=utf-8] [xo] hello a b
+note: 200 [application/json] [xo] {"id":7,"title":"seven","tags":["a","b"],"done":true}
+note missing: 404 [application/json] [xo] {"error":"note 8 not found"}
+note not int: 400 [application/json] [xo] {"error":"path segment `id` must be an Int"}
+files: 200 [text/plain; charset=utf-8] [xo] file a/b/c.txt
+search: 200 [application/json] [xo] {"q":"xo lang","page":"2"}
+search empty: 200 [application/json] [xo] {"q":"-","page":"1"}
+unknown: 404 [application/json] [xo] {"error":"not found"}
+wrong method: 405 [application/json] [xo] {"error":"method not allowed"}
+broken: 500 [application/json] [xo] {"error":"internal error"}
+delete: 204 [-] [xo] 
+echo: 200 [text/plain; charset=utf-8] [xo] POST /echo text/plain body text
+me anonymous: 401 [application/json] [xo] {"error":"who are you?"}
+me: 200 [application/json] [xo] {"name":"ada"}
+create: 201 [application/json] [xo] {"id":7,"title":"buy milk","tags":["home"],"done":false}
+create empty: 422 [application/json] [xo] {"error":"title is empty"}
+create bad: 422 [application/json] [xo] {"error":"bad note: at $.title: expected string"}
+create anonymous: 401 [application/json] [xo] {"error":"who are you?"}
+api unknown: 404 [application/json] [xo] {"error":"not found"}
+call: 200 {"id":7,"title":"seven","tags":["a","b"],"done":true}
+decoded: seven 2 true
+server stopped
+--- stderr
+<time> ERROR handler failed error=Oops

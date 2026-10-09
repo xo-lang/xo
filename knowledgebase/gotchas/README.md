@@ -14,7 +14,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sticky-cancellation-blocks-cleanup.md](sticky-cancellation-blocks-cleanup.md): cleanup in defer fails after cancellation (spec 0.2).
 - [root-module-absorbs-bench-go.md](root-module-absorbs-bench-go.md): `go test ./...` at the root picks up Go code under bench/; use `./internal/... ./cmd/...`.
 - [type-args-vs-index.md](type-args-vs-index.md): how the parser tells `f[T](x)` from `xs[i]`, and the `m[Red](x)` trap.
-- [fn-type-return-takes-uses.md](fn-type-return-takes-uses.md): `-> fn(A) -> B uses e {` gives the effect to the returned type, not the declaration.
+- [fn-type-return-takes-uses.md](fn-type-return-takes-uses.md): `-> fn(A) -> B uses e {` gives the effect to the returned type, not the declaration; `xo fmt` used to drop the parentheses that avoid it.
 - [parser-error-cascades.md](parser-error-cascades.md): how the parser avoids double reports and cascades after an error.
 - [gopls-nested-module-noise.md](gopls-nested-module-noise.md): editor "undefined" errors in bench Go code are workspace noise.
 - [macos-temp-path-realpath.md](macos-temp-path-realpath.md): `/var` vs `/private/var` broke finding comparison.
@@ -142,3 +142,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [goroutine-dump-deadlock-proof.md](goroutine-dump-deadlock-proof.md): proving a deadlock through a Go call from `runtime.Stack` states failed until signal and go test helper goroutines were ignored and inherited profiler labels were replaced per callback thread.
 - [replay-identical-with-go-callbacks.md](replay-identical-with-go-callbacks.md): Resolved: foreign Go callbacks joined the scheduler whenever Go's goroutine got there, so seeds did not reproduce them and replays printed other output while reporting "identical run"; they are now admitted at settled decisions and recorded.
 - [go-runtime-timer-linkname.md](go-runtime-timer-linkname.md): a pending Go timer (time.AfterFunc) shows in no goroutine stack, so the deadlock proof through Go calls killed a correct program; the runtime now reads runtime.timeSleepUntil through a linkname (needs -checklinkname=0, only for programs with Go callbacks, retried without it on a failed link) and its own waits use osSleep.
+- [llvm-lowering-order-aliases.md](llvm-lowering-order-aliases.md): internal/llvm names some values by alias when it lowers them; lowering a block before the block defining a value it uses printed an undefined name; blocks are now lowered in reverse postorder.
+- [llrt-static-names-in-tests.md](llrt-static-names-in-tests.md): the C tests include xo_rt.c and its std files, so a runtime `static` helper collides with a test helper of the same name; prefix new helpers.
+- [net-http-quirks-to-copy.md](net-http-quirks-to-copy.md): what TestHTTPParseDiff and FuzzHTTPDiff found net/http doing (two token matchers, Peek(4) between requests, the invalid Content-Length copy, 100-continue and short bodies, requestTooLarge, OPTIONS *, HTTP/0.0, trailers, 101, SplitHostPort).

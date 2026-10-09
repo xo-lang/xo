@@ -41,11 +41,11 @@ func TestBuildRunLLVM(t *testing.T) {
 		t.Fatalf("run: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
 	// constructs outside the subset are build errors naming them
-	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn main(os: Os) {\n  let m = {\"a\": 1}\n  let n = {\"a\": 1}\n  os.stdio.println(\"${m == n}\")\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn head(xs: List[Int]) -> Int {\n  match xs {\n    [first, ..] => first\n    [] => 0\n  }\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	errOut.Reset()
-	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:4:23: the SSA builder does not support comparing values that hold a Map or Set") {
+	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:3:5: the SSA builder does not support list patterns") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 	// the deterministic scheduler is the Go backend's (decision 0068)

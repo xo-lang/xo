@@ -1,0 +1,99 @@
+// The HTTP/1.1 server on the wire (decision 0074): raw requests over TCP
+// connections to an std/http server on 127.0.0.1:0, printing the bytes
+// of each answer with the Date value left out. The Go backend (net/http)
+// and the native server must answer alike: keep-alive and pipelining,
+// HTTP/1.0, chunked request bodies, Expect: 100-continue, HEAD, 204, a
+// body chunked past 2048 bytes, sniffed Content-Type, malformed
+// requests (400 and its reasons, 501, 505), and OPTIONS *.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello") })
+  r.handle("POST /echo", fn(req) { http.text(200, "got ${req.body.len()} bytes: ${req.body.to_str() ?? "?"}") })
+  r.handle("GET /big", fn(_req) { http.text(200, "x".repeat(3000)) })
+  r.handle("GET /html", fn(_req) { http.Response{status: 200, headers: {}, body: "<html><body>hi</body></html>".bytes()} })
+  r.handle("GET /none", fn(_req) { http.empty(204) })
+  r.handle("GET /host", fn(req) { http.text(200, "host=${req.url.host} path=${req.path} q=${req.query("a") ?? "-"}") })
+  r
+}
+
+/// The answer without the Date value; a long body is summarized.
+fn clean(s: Str) -> Str {
+  var out: List[Str] = []
+  for line in s.split("\r\n") {
+    if line.starts_with("Date: ") {
+      out.push("Date: <date>")
+    } else if line.len() > 80 {
+      out.push("<${line.len()} bytes>")
+    } else {
+      out.push(line)
+    }
+  }
+  out.join("\n")
+}
+
+/// Sends raw on a new connection and prints everything the server
+/// answers until it closes the connection.
+fn exchange(os: Os, addr: Str, label: Str, raw: Str) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      match c.write(raw.bytes()) {
+        Ok(_) => ()
+        Err(_) => os.stdio.println("${label}: write failed")
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        exchange(os, addr, "get", "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "pipelined", "GET /hello HTTP/1.1\r\nHost: h\r\n\r\nPOST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+        exchange(os, addr, "http/1.0", "GET /hello HTTP/1.0\r\n\r\n")
+        exchange(os, addr, "http/1.0 keep-alive", "GET /hello HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET /hello HTTP/1.0\r\n\r\n")
+        exchange(os, addr, "chunked", "POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nwiki\r\n5;x=y\r\npedia\r\n0\r\n\r\n")
+        exchange(os, addr, "continue", "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nExpect: 100-continue\r\nConnection: close\r\n\r\nabc")
+        exchange(os, addr, "head", "HEAD /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "no content", "GET /none HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "big", "GET /big HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "sniffed", "GET /html HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "host", "GET /host?a=1&a=2 HTTP/1.1\r\nHost: example.com:8080\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "absolute", "GET http://other:81/host?a=%41 HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "not found", "GET /missing HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "options", "OPTIONS * HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "no host", "GET /hello HTTP/1.1\r\n\r\n")
+        exchange(os, addr, "bad request line", "GARBAGE\r\n\r\n")
+        exchange(os, addr, "bad header", "GET /hello HTTP/1.1\r\nHost: h\r\nNo colon here\r\n\r\n")
+        exchange(os, addr, "bad version", "GET /hello HTTP/2.0\r\nHost: h\r\n\r\n")
+        exchange(os, addr, "bad encoding", "POST /echo HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip\r\n\r\n")
+        exchange(os, addr, "bad length", "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab")
+        exchange(os, addr, "expectation", "GET /hello HTTP/1.1\r\nHost: h\r\nExpect: magic\r\n\r\n")
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

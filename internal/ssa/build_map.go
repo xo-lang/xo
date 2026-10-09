@@ -133,6 +133,76 @@ func (s *fn) eqValues(l, r *Value) *Value {
 	return s.add(OpEq, boolT, nil, l, r)
 }
 
+// eqColl returns xo.eqc[T](a, b) -> Bool: `==` on a type that holds a
+// Map or Set (std/rt's Eq): a Map or Set equals another with the same
+// live entries in any order; structs, tuples, enums, lists, and boxes
+// compare their parts, and parts without a Map or Set compare with `==`.
+func (b *builder) eqColl(t *Type) string {
+	m := b.mod
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	return b.genFunc("xo.eqc["+t.Name+"]", []*Type{t, t}, []*Type{boolT}, func(s *fn, ps []*Value) {
+		l, r := ps[0], ps[1]
+		eq := func(x, y *Value) *Value {
+			if holdsColl(x.Type, map[*Type]bool{}) {
+				return s.call(b.eqColl(x.Type), boolT, "", x, y)
+			}
+			return s.eqValues(x, y)
+		}
+		no := func(c *Value) {
+			s.ifThen(s.add(OpNot, boolT, nil, c), func() { s.retv(s.bool(false)) })
+		}
+		switch {
+		case t.Coll:
+			K, V := mapKey(t), mapVal(t)
+			no(s.add(OpEq, boolT, nil, s.add(OpField, intT, 4, l), s.add(OpField, intT, 4, r)))
+			keys := s.add(OpField, t.Fields[0].Type, 0, l)
+			vals := s.add(OpField, t.Fields[1].Type, 1, l)
+			live := s.add(OpField, t.Fields[2].Type, 2, l)
+			rvals := s.add(OpField, t.Fields[1].Type, 1, r)
+			find := b.mapFind(t, nil)
+			s.forUpTo(s.call("list.len", intT, "", keys), func(i *Value) {
+				s.ifThen(s.call("list.index", boolT, "", live, i), func() {
+					k := s.call("list.index", K, "", keys, i)
+					j := s.call(find, intT, "", r, k, s.call(b.hashFunc(K, nil), intT, "", k))
+					no(s.add(OpGe, boolT, nil, j, s.cint(0)))
+					if V.Kind != KUnit {
+						no(eq(s.call("list.index", V, "", vals, i), s.call("list.index", V, "", rvals, j)))
+					}
+				})
+			})
+		case t.Kind == KStruct || t.Kind == KTuple:
+			for i := 0; i < numFields(t); i++ {
+				ft := fieldType(t, i)
+				no(eq(s.add(OpField, ft, i, l), s.add(OpField, ft, i, r)))
+			}
+		case t.Kind == KBox:
+			et := t.Elems[0]
+			no(eq(s.add(OpUnbox, et, nil, l), s.add(OpUnbox, et, nil, r)))
+		case t.Kind == KList:
+			et := t.Elems[0]
+			n := s.call("list.len", intT, "", l)
+			no(s.add(OpEq, boolT, nil, n, s.call("list.len", intT, "", r)))
+			s.forUpTo(n, func(i *Value) {
+				no(eq(s.call("list.index", et, "", l, i), s.call("list.index", et, "", r, i)))
+			})
+		case t.Kind == KEnum:
+			tag := s.add(OpTag, intT, nil, l)
+			no(s.add(OpEq, boolT, nil, tag, s.add(OpTag, intT, nil, r)))
+			for vi, vr := range t.Variants {
+				if len(vr.Fields) == 0 {
+					continue
+				}
+				s.ifThen(s.add(OpEq, boolT, nil, tag, s.cint(int64(vi))), func() {
+					for fi, fl := range vr.Fields {
+						no(eq(s.add(OpPayload, fl.Type, PayloadRef{vi, fi}, l), s.add(OpPayload, fl.Type, PayloadRef{vi, fi}, r)))
+					}
+				})
+			}
+		}
+		s.retv(s.bool(true))
+	})
+}
+
 func (s *fn) retv(v *Value) {
 	s.add(OpReturn, nil, nil, v)
 	s.dead()
@@ -147,6 +217,7 @@ func (b *builder) genFunc(name string, params, results []*Type, body func(s *fn,
 	f := b.mod.NewFunc(name, params, results)
 	s := b.newFn(f, nil, nil)
 	body(s, f.Params())
+	s.finishFn()
 	return name
 }
 

@@ -1,6 +1,6 @@
 # A function type return value takes the `uses` clause
 
-Status: Anticipated (seen in bench/paper/v0.2/05-rate-limiter/limiter.xo)
+Status: Observed (2026-10-08: the native intrinsic `rt.launder1` returned an effectful function type until its result was parenthesized; first seen in bench/paper/v0.2/05-rate-limiter/limiter.xo)
 
 In `pub fn rate_limit(l: Limiter, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses clock {`
 the parser attaches `uses clock` to the returned function type, because a
@@ -13,3 +13,9 @@ meaning silently. To give the declaration an effect, parenthesize the return
 type: `-> (fn(A) -> B) uses clock { ... }`, or write both:
 `-> fn(A) -> B uses clock uses clock`. The spec does not mention this; it is a
 candidate clarification for core 6.2.
+
+`xo fmt` dropped those parentheses (the parser keeps no node for them), so
+formatting changed the meaning; observed on 2026-10-08 with
+`std/native/rt.xo`'s `launder1`. Fixed: the printer parenthesizes a function
+type result followed by the declaration's `uses` clause or `! E`
+(internal/format TestFnTypeResultParens).

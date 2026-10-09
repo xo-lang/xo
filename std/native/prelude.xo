@@ -1,0 +1,277 @@
+// The prelude methods the native backends implement in Xo (decision
+// 0074). internal/ssa lowers a prelude method `T.name` that it has no
+// lowering of its own for to the function `T_name` here, whose first
+// parameter is the receiver and whose type parameters are those of the
+// declaration in std/prelude.xo, in order. Semantics are std/rt's.
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Str (std.md 2.2)
+
+fn str_rune_count(s: Str) -> Int { rt.str_rune_count(s) }
+
+fn str_contains(s: Str, sub: Str) -> Bool { rt.str_contains(s, sub) }
+
+fn str_starts_with(s: Str, p: Str) -> Bool { rt.str_starts_with(s, p) }
+
+fn str_ends_with(s: Str, p: Str) -> Bool { rt.str_ends_with(s, p) }
+
+fn str_find(s: Str, sub: Str) -> Int? {
+  let i = rt.str_find(s, sub, 0)
+  if i < 0 {
+    return None
+  }
+  Some(i)
+}
+
+fn str_split(s: Str, sep: Str) -> List[Str] { rt.str_split(s, sep) }
+
+fn str_lines(s: Str) -> List[Str] { rt.str_lines(s) }
+
+fn str_trim(s: Str) -> Str { rt.str_trim(s, 0) }
+
+fn str_trim_start(s: Str) -> Str { rt.str_trim(s, 1) }
+
+fn str_trim_end(s: Str) -> Str { rt.str_trim(s, 2) }
+
+fn str_trim_prefix(s: Str, p: Str) -> Str {
+  if rt.str_starts_with(s, p) {
+    return rt.str_slice(s, p.len(), s.len())
+  }
+  s
+}
+
+fn str_trim_suffix(s: Str, p: Str) -> Str {
+  if rt.str_ends_with(s, p) {
+    return rt.str_slice(s, 0, s.len() - p.len())
+  }
+  s
+}
+
+fn str_to_lower(s: Str) -> Str { rt.str_lower(s) }
+
+fn str_to_upper(s: Str) -> Str { rt.str_upper(s) }
+
+fn str_replace(s: Str, old: Str, new: Str) -> Str { rt.str_replace(s, old, new) }
+
+fn str_repeat(s: Str, n: Int) -> Str { rt.str_repeat(s, n) }
+
+fn list_join(xs: List[Str], sep: Str) -> Str { rt.str_join(xs, sep) }
+
+fn int_parse(s: Str) -> Int? {
+  if rt.int_parse_ok(s) {
+    return Some(rt.int_parse(s))
+  }
+  None
+}
+
+fn float_parse(s: Str) -> Float? {
+  if rt.float_parse_ok(s) {
+    return Some(rt.float_parse(s))
+  }
+  None
+}
+
+// ---------------------------------------------------------------------------
+// List[T] (std.md 2.3)
+
+fn list_contains[T](xs: List[T], x: T) -> Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
+}
+
+fn list_index_of[T](xs: List[T], x: T) -> Int? {
+  for (i, y) in xs.indexed() {
+    if y == x {
+      return Some(i)
+    }
+  }
+  None
+}
+
+fn list_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx {
+  var out: List[U] = []
+  for x in xs {
+    out.push(f(x)?)
+  }
+  out
+}
+
+fn list_filter[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx {
+  var out: List[T] = []
+  for x in xs {
+    if f(x)? {
+      out.push(x)
+    }
+  }
+  out
+}
+
+fn list_fold[T, A, E, fx: Effects](xs: List[T], init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx {
+  var acc = init
+  for x in xs {
+    acc = f(acc, x)?
+  }
+  acc
+}
+
+fn list_find[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx {
+  for x in xs {
+    if f(x)? {
+      return Some(x)
+    }
+  }
+  None
+}
+
+fn list_any[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  for x in xs {
+    if f(x)? {
+      return true
+    }
+  }
+  false
+}
+
+fn list_all[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  for x in xs {
+    if !f(x)? {
+      return false
+    }
+  }
+  true
+}
+
+fn list_reverse[T](xs: List[T]) -> List[T] {
+  var out: List[T] = []
+  var i = xs.len() - 1
+  while i >= 0 {
+    out.push(xs[i])
+    i -= 1
+  }
+  out
+}
+
+/// A stable merge sort of xs by keys (std/rt sorts stably).
+fn list_sort_by[T, K: Ord, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx {
+  var keys: List[K] = []
+  for x in xs {
+    keys.push(key(x)?)
+  }
+  var idx: List[Int] = []
+  for i in 0..xs.len() {
+    idx.push(i)
+  }
+  let sorted = merge_sort(idx, fn(a, b) { keys[a] < keys[b] })
+  var out: List[T] = []
+  for i in sorted {
+    out.push(xs[i])
+  }
+  out
+}
+
+fn list_sort[T: Ord](xs: List[T]) -> List[T] { merge_sort(xs, fn(a, b) { a < b }) }
+
+/// A stable bottom up merge sort: less(a, b) when a sorts before b.
+fn merge_sort[T](xs: List[T], less: fn(T, T) -> Bool) -> List[T] {
+  let n = xs.len()
+  if n < 2 {
+    return xs
+  }
+  var src = xs
+  var width = 1
+  while width < n {
+    var dst: List[T] = []
+    var lo = 0
+    while lo < n {
+      var mid = lo + width
+      if mid > n {
+        mid = n
+      }
+      var hi = mid + width
+      if hi > n {
+        hi = n
+      }
+      var i = lo
+      var j = mid
+      while i < mid && j < hi {
+        if less(src[j], src[i]) {
+          dst.push(src[j])
+          j += 1
+        } else {
+          dst.push(src[i])
+          i += 1
+        }
+      }
+      while i < mid {
+        dst.push(src[i])
+        i += 1
+      }
+      while j < hi {
+        dst.push(src[j])
+        j += 1
+      }
+      lo = hi
+    }
+    src = dst
+    width *= 2
+  }
+  src
+}
+
+fn list_to_set[T](xs: List[T]) -> Set[T] {
+  var s: Set[T] = #{}
+  for x in xs {
+    s.add(x)
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Option[T] and Result[T, E] (std.md 2.5)
+
+fn option_or_err[T, E](o: T?, e: E) -> Result[T, E] {
+  match o {
+    Some(v) => Ok(v)
+    None => Err(e)
+  }
+}
+
+fn option_map[T, U, fx: Effects](o: T?, f: fn(T) -> U uses fx) -> U? uses fx {
+  match o {
+    Some(v) => Some(f(v))
+    None => None
+  }
+}
+
+fn option_and_then[T, U, fx: Effects](o: T?, f: fn(T) -> U? uses fx) -> U? uses fx {
+  match o {
+    Some(v) => f(v)
+    None => None
+  }
+}
+
+fn result_map[T, E, U, fx: Effects](r: Result[T, E], f: fn(T) -> U uses fx) -> Result[U, E] uses fx {
+  match r {
+    Ok(v) => Ok(f(v))
+    Err(e) => Err(e)
+  }
+}
+
+fn result_map_err[T, E, F, fx: Effects](r: Result[T, E], f: fn(E) -> F uses fx) -> Result[T, F] uses fx {
+  match r {
+    Ok(v) => Ok(v)
+    Err(e) => Err(f(e))
+  }
+}
+
+fn result_ignore_err[T, E](r: Result[T, E], reason: Str) -> T? {
+  match r {
+    Ok(v) => Some(v)
+    Err(_) => None
+  }
+}

@@ -99,6 +99,69 @@ func (c *checker) parseFile(m *Module, path string, src []byte, mode parser.Mode
 	return &File{AST: af, Path: path, Module: m, Imports: map[string]*Import{}, IsTest: strings.HasSuffix(path, "_test.xo"), Src: src}
 }
 
+// loadNative loads the implementation modules of the native backends
+// (decision 0074): std/native/prelude.xo and std/native/<name>.xo for
+// every std module <name> loaded so far, until no new std module appears
+// (an implementation may import more std modules).
+func (c *checker) loadNative() error {
+	done := map[string]bool{}
+	for {
+		var todo []string
+		for path, m := range c.modules {
+			if !m.IsStd || m.Go != nil || done[path] || !strings.HasPrefix(path, "std/") {
+				continue
+			}
+			todo = append(todo, path)
+		}
+		if len(todo) == 0 {
+			return nil
+		}
+		sort.Strings(todo)
+		for _, path := range todo {
+			done[path] = true
+			name := strings.TrimPrefix(path, "std/")
+			src, err := fs.ReadFile(std.NativeFiles, "native/"+name+".xo")
+			if err != nil {
+				continue
+			}
+			npath := "native/" + name
+			m := &Module{Path: npath, Name: name, Dir: "std/native", Native: true, Implements: path, Scope: map[string]Object{}, Edition: CurrentEdition}
+			c.modules[npath] = m
+			m.Files = append(m.Files, c.parseFile(m, "std/native/"+name+".xo", src, 0))
+			m.state = 1
+			if err := c.loadImports(m); err != nil {
+				return err
+			}
+			m.state = 2
+			c.order = append(c.order, m)
+		}
+	}
+}
+
+// loadNativeRT loads the intrinsics module of the native backends,
+// std/native/rt.xo: bodiless declarations that internal/ssa lowers to
+// calls of the C runtime.
+func (c *checker) loadNativeRT(path string) (*Module, error) {
+	if m, ok := c.modules[path]; ok {
+		return m, nil
+	}
+	src, err := fs.ReadFile(std.NativeFiles, path+".xo")
+	if err != nil {
+		return nil, nil
+	}
+	name := strings.TrimPrefix(path, "native/")
+	m := &Module{Path: path, Name: name, Dir: "std/native", IsStd: true, Scope: map[string]Object{}}
+	c.modules[path] = m
+	m.Files = append(m.Files, c.parseFile(m, "std/"+path+".xo", src, parser.SignatureMode))
+	m.state = 1
+	if err := c.loadImports(m); err != nil {
+		return nil, err
+	}
+	m.state = 2
+	c.order = append(c.order, m)
+	return m, nil
+}
+
 // loadDirs finds every directory under dirs that holds .xo files and loads
 // it as a module.
 func (c *checker) loadDirs(dirs []string) ([]*Module, error) {
@@ -306,6 +369,14 @@ func (c *checker) loadImports(m *Module) error {
 				}
 			}
 			dep, err := c.resolveImport(u.Path)
+			if strings.HasPrefix(u.Path, "native/") {
+				// the intrinsics of the native backends: only their
+				// implementation modules see them (decision 0074)
+				dep, err = nil, nil
+				if m.Native {
+					dep, err = c.loadNativeRT(u.Path)
+				}
+			}
 			if err != nil {
 				return err
 			}

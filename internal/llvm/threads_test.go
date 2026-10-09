@@ -175,7 +175,7 @@ func TestGoldenThreads(t *testing.T) {
 		ran++
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			res, ok, err := build.Check([]string{dir}, false)
+			res, ok, err := build.CheckNative([]string{dir}, false)
 			if err != nil || !ok {
 				t.Fatalf("check: %v", err)
 			}
@@ -251,7 +251,7 @@ func TestGoldenTasks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, ok, err := build.Check([]string{dir}, false)
+			res, ok, err := build.CheckNative([]string{dir}, false)
 			if err != nil || !ok {
 				t.Fatalf("check: %v", err)
 			}
