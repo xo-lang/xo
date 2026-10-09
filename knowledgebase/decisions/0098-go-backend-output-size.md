@@ -74,3 +74,25 @@ crypto/tls, x509, mime, gzip, and idna into every program.
   packages registered at init: a larger change for the same effect as a
   build tag; the tag needs no new package boundary through rt's
   internals.
+
+## Possible enhancements (deferred by the owner, 2026-10-09)
+
+Not scheduled; recorded so the 3 MB hello world target has a known path.
+
+1. Opt-in profiling: keep the deadlock and task labels without linking
+   `runtime/pprof` by default; profiling behind a flag. Estimated hello
+   world about 3.27 MB (`bench/results/binary-size-2026-10-09.md`).
+2. `encoding/json` only on demand. It cannot be linked only when a
+   program declares `std/json`: the runtime also uses it for crash
+   bundles (`main.go`, every program), record and replay traces
+   (`replay.go`, `fxcodec.go`, every program), `std/log` lines
+   (`log.go`), and test output (`testing.go`, `regress.go`). The path is
+   a small reflect-free JSON reader and writer in `std/rt` for those
+   internal formats, then a build tag (as `xo_nohttp`) so `encoding/json`
+   links only with `std/json` or `derive Json`, and later moving
+   `jsonfast.go`'s remaining fallback off it. Trace and crash bundle
+   output must stay byte identical (key order, numbers, escaping), since
+   `xo replay` reads old files: compare old and new encoders on the
+   replay and crash bundle tests. First measurement: `go tool nm -size`
+   on the hello binary, summing `encoding/json` symbols (it shares
+   `reflect` with the rest of the runtime, so the gain is uncertain).
