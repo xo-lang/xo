@@ -1389,6 +1389,12 @@ typedef struct xo_ctx {
 	// the frame address the unwinding never passes: the C function that
 	// runs the context's code (0: the end of the stack)
 	uintptr_t boundary;
+	// the exception object of the fault unwinding this context. It lives
+	// here, not in fault_raise's frame: a cleanup that resumes the unwind
+	// (_Unwind_Resume) reads it after the raising frames are gone, and
+	// ThreadSanitizer gives every function such a cleanup (its
+	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md)
+	struct _Unwind_Exception fault_exc;
 } xo_ctx;
 
 static __thread xo_ctx *cur;
@@ -1488,16 +1494,17 @@ static void fault_cleanup(_Unwind_Reason_Code r, struct _Unwind_Exception *e) {
 }
 
 // fault_raise unwinds the current context with the fault it records. The
-// exception object lives in this frame: only the unwinder's walk uses it
-// (a landing pad never resumes it; xo_fault_continue raises anew).
+// exception object is the context's: generated landing pads never resume
+// it (xo_fault_continue raises anew, reusing it), but a sanitizer's
+// cleanup in a C frame does, after the frame of this call is gone.
 XO_NORETURN static void fault_raise(xo_ctx *c) {
 	c->faulting = 1;
 	c->unwinding = 1;
-	struct _Unwind_Exception exc;
-	memset(&exc, 0, sizeof exc);
-	exc.exception_class = XO_EXC_CLASS;
-	exc.exception_cleanup = fault_cleanup;
-	_Unwind_ForcedUnwind(&exc, fault_stop, c);
+	struct _Unwind_Exception *exc = &c->fault_exc;
+	memset(exc, 0, sizeof *exc);
+	exc->exception_class = XO_EXC_CLASS;
+	exc->exception_cleanup = fault_cleanup;
+	_Unwind_ForcedUnwind(exc, fault_stop, c);
 	// the unwinder found no way up
 	fault_exit(c);
 }

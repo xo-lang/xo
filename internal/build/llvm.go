@@ -110,7 +110,26 @@ type ClangError struct {
 }
 
 func (e *ClangError) Error() string {
-	return "clang failed on the generated LLVM IR:\n" + e.Output
+	msg := "clang failed on the generated LLVM IR:\n" + e.Output
+	if missingSanitizerRuntime(e.Output) {
+		msg += "\nhint: clang is installed without its compiler-rt sanitizer runtimes " +
+			"(Ubuntu: apt-get install libclang-rt-<clang major>-dev; Debian: libclang-rt-dev), " +
+			"see knowledgebase/gotchas/ubuntu-clang-without-sanitizer-runtimes.md"
+	}
+	return msg
+}
+
+// missingSanitizerRuntime reports whether clang's output says the linker
+// could not find a compiler-rt archive (libclang_rt.tsan, .asan, ...):
+// Ubuntu's clang package does not depend on them.
+func missingSanitizerRuntime(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "libclang_rt.") &&
+			(strings.Contains(line, "cannot find") || strings.Contains(line, "No such file")) {
+			return true
+		}
+	}
+	return false
 }
 
 var (

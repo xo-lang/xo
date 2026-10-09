@@ -1382,7 +1382,8 @@ Last verified: 2026-10-09. Results: `bench/results/linux-2026-10-09.md`.
   the Docker volume `xo-linux-cache-<arch>` (`docker volume rm` it to
   start cold). `GOFLAGS=-buildvcs=false` because the worktree's `.git`
   points outside the mount.
-- Default arm64 run: `go vet ./...` then `go test -count=1 -p 2 ./...`
+- Default arm64 run: `go vet` then `go test -count=1 -p 2` over
+  `go list -e ./... | grep -v /runs/`
   (about 6 min on an M series Mac): the Go backend on Linux, the LLVM and
   arm64 backends' goldens linked as ELF and run (epoll poller, futex
   parks, fibers, SIGTERM, TCP, HTTP), ThreadSanitizer, AddressSanitizer,
@@ -1402,6 +1403,31 @@ Last verified: 2026-10-09. Results: `bench/results/linux-2026-10-09.md`.
   (`gotchas/docker-vm-memory-go-compile-killed.md`).
 - Requires Docker; the container gets `SYS_PTRACE` and no seccomp
   profile (sanitizers). Containers are named `xo-linux-<arch>-<pid>`.
+
+## Linux (EC2, infra/ci-aws)
+
+Last verified: 2026-10-09. Results: `bench/results/ci-aws-2026-10-09.md`.
+
+- `infra/ci-aws/ci.sh [short|full|race|sanitizers ...]` runs the CI jobs on
+  real Linux machines: Terraform (local state in `infra/ci-aws/`) creates
+  one key pair, one security group (tcp 22 from 203.0.113.10/32 only),
+  and a `c7g.4xlarge` (arm64) and a `c7i.4xlarge` (amd64) with Ubuntu
+  24.04 (Canonical's AMI by data source), all tagged `project=xo-ci`, in
+  AWS account ACCOUNT_ID only (the provider's `allowed_account_ids`).
+- It rsyncs the working tree (no `.git/`, `runs/`, `.tools/`, `.claude/`),
+  installs the host's Go version from go.dev plus clang 18, lld, llvm,
+  build-essential, and `libclang-rt-18-dev`
+  (`gotchas/ubuntu-clang-without-sanitizer-runtimes.md`), runs the jobs on
+  both machines in parallel, each job with a cold `GOCACHE`, and copies
+  the logs to `infra/ci-aws/logs/<timestamp>/<arch>/` (gitignored).
+- An EXIT trap always runs `terraform destroy -auto-approve`, deletes the
+  generated key `infra/ci-aws/xo-ci-key.pem`, and runs
+  `infra/ci-aws/verify-teardown.sh` (instances, key pair, security group,
+  volumes: every list must be `[]`). By hand:
+  `terraform -chdir=infra/ci-aws destroy -auto-approve`.
+- A whole run takes about 20 minutes and costs about $0.45 on demand
+  (2026-10-09). TSan runs natively on both (unlike amd64 under Rosetta).
+- Needs terraform (1.16.2 used), the AWS CLI, rsync, ssh, python3.
 
 ## Go interop (prototype)
 

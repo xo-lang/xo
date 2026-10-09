@@ -40,10 +40,11 @@ if [ $# -gt 0 ]; then
 	tests=("$@")
 	cmd='go test "$@"'
 elif [ "$arch" = arm64 ]; then
-	cmd='go vet ./... && go test -count=1 -p 2 -timeout 60m ./...'
+	# without the gitignored runs/ (gotchas/runs-dir-breaks-go-dot-dot-dot.md)
+	cmd='pkgs="$(go list -e ./... | grep -v /runs/)" && go vet $pkgs && go test -count=1 -p 2 -parallel 4 -timeout 60m $pkgs'
 	tests=()
 else
-	cmd='go test -count=1 -p 2 -short -timeout 120m ./... && go test -count=1 -p 1 -timeout 120m ./internal/llvm'
+	cmd='pkgs="$(go list -e ./... | grep -v /runs/)" && go test -count=1 -p 2 -parallel 4 -short -timeout 120m $pkgs && go test -count=1 -p 1 -timeout 120m ./internal/llvm'
 	tests=()
 fi
 

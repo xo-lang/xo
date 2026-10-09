@@ -179,3 +179,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-scope-failure-unused-trace.md](go-scope-failure-unused-trace.md): Go backend: a scope in a failing closure whose tasks cannot fail declared an unused trace (`x_ftrN`); fixed.
 - [unwind-zero-sized-int.md](unwind-zero-sized-int.md): an unwind exit's zero value of a `Rune` result was an `Int` (the verifier rejected it); build constants of the type itself.
 - [runs-dir-breaks-go-dot-dot-dot.md](runs-dir-breaks-go-dot-dot-dot.md): model outputs in `runs/` make `go build ./...` fail; exclude `/runs/` from the package list.
+- [ubuntu-clang-without-sanitizer-runtimes.md](ubuntu-clang-without-sanitizer-runtimes.md): Ubuntu's `clang` lacks the TSan and ASan archives; install `libclang-rt-<major>-dev` (link error `cannot find libclang_rt.tsan-*.a`).
+- [bash-c-newline-package-list.md](bash-c-newline-package-list.md): a `go list` result spliced into `bash -c` runs each package line as a command; join it with spaces first.
+- [tsan-resumes-fault-unwind.md](tsan-resumes-fault-unwind.md): TSan's cleanup pads resume a fault's forced unwind; the exception object must not live in the raising frame (now in `xo_ctx`).
+- [http-diff-driver-leak.md](http-diff-driver-leak.md): LeakSanitizer (Linux only) caught the http_diff driver never freeing the per connection response buffer; macOS has no LSan.

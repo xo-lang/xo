@@ -145,6 +145,7 @@ static void serve(const char *in, int64_t n, nbuf *out) {
 	}
 	free(hc.buf);
 	free(hc.body.p);
+	free(hc.out.p); // the response buffer, reused per connection
 	hl_free(&hc.resp);
 }
 
