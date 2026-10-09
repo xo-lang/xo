@@ -206,3 +206,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [spec-xomod-blocks-need-skip.md](spec-xomod-blocks-need-skip.md): a new xo.mod (or other non Xo) block in core.md fails `TestSpecCoreExamples` unless its first line matches a `specSkips` prefix.
 - [replay-go-handle-calls-by-value.md](replay-go-handle-calls-by-value.md): answering a Go handle method (`WaitGroup.wait`) from a trace would skip its side effects; only handle free, callback free Go calls are replayed by value (decision 0093).
 - [fxcodec-unexported-fields.md](fxcodec-unexported-fields.md): the record and replay codec drops unexported fields; `go.Error` has its own case, new runtime types crossing a recorded boundary need one too.
+- [reproducible-build-records-source-dir.md](reproducible-build-records-source-dir.md): builds are byte identical only from the same source directory; the binary records the absolute directory for crash bundles.

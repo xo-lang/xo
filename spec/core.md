@@ -72,6 +72,10 @@ specified in std.md 13 (decision 0094).
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP
   `check` tool takes `fix`.
+- From the second pass of the spec audit: `x.debug()` is callable on
+  every value, as std.md 1 says every type implements `Debug` (it was
+  `XO0601` on concrete types); reproducible builds are stated for the same
+  source directory (12.1), which a test now checks.
 - Modules in repository subdirectories (4.2; decision 0086): the module
   `github.com/acme/tools/cli` in `cli/` with tags `cli/vX.Y.Z`; fetch,
   version selection, xo.lock, vendoring, `xo get`, and `xo publish`
@@ -2124,10 +2128,12 @@ id, and `XO_OTEL_ENDPOINT` is not read.
 `xo build --targets=all` builds every supported target from any host:
 `linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 wasi/wasm32`.
 
-Binaries are static and builds are reproducible: the same source, lockfile,
-and toolchain version produce byte identical output. Each build writes an SBOM
-(`<bin>.sbom.json`). **[later]** No SBOM is written yet, and byte identical
-output is not tested yet.
+Binaries are static and builds are reproducible: the same source in the
+same directory, lockfile, and toolchain version produce byte identical
+output (the binary records the absolute source directory, which crash
+bundles and `xo replay` use, so a copy elsewhere differs in those bytes).
+Each build writes an SBOM (`<bin>.sbom.json`). **[later]** No SBOM is
+written yet.
 
 ### 12.2 Platform specific code
 

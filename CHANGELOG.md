@@ -47,6 +47,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache growth per program 34 to 2.9 MB, compile memory 286 to 123 MB.
   Binaries carry no DWARF or symbol table (`XO_GO_DWARF=1` keeps them for
   a debugger); programs that do not import std/http do not link net/http.
+- Spec audit second pass: `x.debug()` works on every value (std.md 1;
+  was XO0601 on concrete types); new tests for single field positional
+  variants, `Secret` redaction in Debug and log fields, `target` at run
+  time, `Stdio.write`, `Fs.cwd`, `Fs.case_sensitive`, a real `Proc.run`,
+  `XO-F005`, `xo test --real`, and byte identical rebuilds (spec 12.1 now
+  says "in the same directory").
 - Modules in repository subdirectories (decision 0086): a module path
   `github.com/acme/tools/cli` is the directory `cli/` of the repository
   `github.com/acme/tools`, versioned by tags `cli/vX.Y.Z` (as Go);

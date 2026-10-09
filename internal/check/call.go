@@ -825,6 +825,11 @@ func (c *checker) callMethod(bt Type, sel *ast.SelectorExpr, targs []Type, x *as
 			// implements Display)
 			return c.named("Str")
 		}
+		if name == "debug" && len(x.Args) == 0 && len(targs) == 0 {
+			// every type implements Debug (std.md 1), so its method is
+			// callable on any value
+			return c.named("Str")
+		}
 		if (name == "spawn" || name == "spawn_background") && !c.isPrelude(r, "Scope") {
 			c.errorf(diag.SpawnWithoutScope, sel.Sel.Sp, "`%s` is called on `%s`, not on a scope handle; tasks are started with `s.spawn(f)` inside `scope s { ... }` (core 7.1)", name, deep(r))
 			c.inferArgs(x)

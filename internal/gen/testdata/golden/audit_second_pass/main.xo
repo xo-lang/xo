@@ -1,0 +1,81 @@
+use std/log
+
+// Spec claims that had no Go backend test before the second pass of the
+// spec audit (bench/results/spec-audit-2026-10-09.md): a single field
+// variant constructed positionally (core 2.3), `Secret[T]` redacted in
+// Debug output and log fields (core 2.1), `target` read at run time
+// (core 12.2), `Stdio.write` (std.md 3.6), `Fs.cwd` and
+// `Fs.case_sensitive` (std.md 3.1), and a real `Proc.run` (std.md 3.7).
+
+enum Shape {
+  Circle(radius: Int)
+  Square(side: Int)
+  Dot
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => 3 * r * r
+    Square(side: n) => n * n
+    Dot => 0
+  }
+}
+
+struct Login {
+  user: Str
+  pass: Secret[Str]
+}
+
+fn os_name() -> Str {
+  match target.os {
+    Linux => "unix"
+    Darwin => "unix"
+    Windows => "windows"
+    Wasi => "wasi"
+  }
+}
+
+fn main(os: Os) -> () ! Error {
+  // positional construction of single field variants, also inferred
+  let shapes: List[Shape] = [Shape.Circle(2), Square(3), Shape.Square(side: 4), Dot]
+  for s in shapes {
+    os.stdio.println("${s.debug()} area ${area(s)}")
+  }
+
+  // Secret[T] in every output path: interpolation, Debug of a struct and
+  // of collections, log fields
+  let l = Login { user: "ann", pass: Secret[Str].new("hunter2") }
+  os.stdio.println("${l.pass} ${l.debug()}")
+  os.stdio.println([l.pass].debug())
+  os.stdio.println({"k": l.pass}.debug())
+  log.info("login", {"user": l.user, "pass": l.pass, "login": l})
+  os.stdio.println("revealed ${l.pass.reveal().len()} chars")
+
+  // target at run time (the arm for this machine's OS)
+  let t = target.os
+  os.stdio.println("os family ${os_name()} known ${t == target.os}")
+
+  // Stdio.write: raw bytes
+  os.stdio.write(b"written bytes\n")?
+
+  // Fs.cwd: the working directory (this golden's directory)
+  let here = os.fs.cwd()
+  os.stdio.println("cwd has main.xo ${here.exists("main.xo")?} missing ${here.exists("no-such-file.txt")?}")
+  // Fs.case_sensitive agrees with a lookup under another case
+  let base = os.env.get("TMPDIR") ?? "/tmp"
+  let dir = os.fs.sub(base).sub("xo-audit-case-test")
+  dir.remove_all(".")?
+  dir.create_dir_all(".")?
+  dir.write("probe.txt", b"x")?
+  let other_case = dir.exists("PROBE.TXT")?
+  os.stdio.println("case_sensitive agrees ${dir.case_sensitive() == !other_case}")
+  dir.remove_all(".")?
+
+  // Proc.run of a real command
+  let out = os.proc.run("sh", ["-c", "echo out; echo err 1>&2; exit 3"])?
+  os.stdio.println("run code ${out.code} stdout ${(out.stdout.to_str() ?? "?").trim()} stderr ${(out.stderr.to_str() ?? "?").trim()}")
+  match os.proc.run("xo-no-such-command-audit", []) {
+    Ok(_) => os.stdio.println("ran a missing command?")
+    Err(e) => os.stdio.println("missing command: ${e.debug()}")
+  }
+}
