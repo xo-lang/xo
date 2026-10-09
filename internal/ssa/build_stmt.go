@@ -158,6 +158,9 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	} else if lt := s.natOf(x.Iter); lt.Kind == KHandle && strings.HasPrefix(lt.Name, "Chan[") {
 		s.forChan(x, label)
 		return
+	} else if lt.Coll {
+		s.forMap(x, label, s.value(x.Iter))
+		return
 	} else if lt.Kind == KList {
 		list = s.value(x.Iter)
 		hi = s.call("list.len", intT, "", list)
@@ -279,6 +282,18 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }}, true
 	case *ast.IndexExpr:
 		base, ok := s.place(x.X)
+		if ok && base.t.Coll {
+			// `m[k] = v` is `m.put(k, v)` (core 3.6); reading m[k] is a
+			// checker error
+			t := base.t
+			k := s.valueAs(x.Index, mapKey(t))
+			return place{mapVal(t),
+				func() *Value {
+					b.unsupported(x, "reading `m[k]`")
+					return s.undef(mapVal(t))
+				},
+				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }}, true
+		}
 		if !ok || base.t.Kind != KList {
 			break
 		}

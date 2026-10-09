@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+1
+--- stderr
+fault: key "b" not found in Map of length 1: the key was inserted above at main.xo:4

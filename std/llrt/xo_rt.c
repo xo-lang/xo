@@ -4158,6 +4158,67 @@ int64_t xo_utf8_valid(const char *p, int64_t n) {
 	return 1;
 }
 
+// xo_str_hash hashes the n bytes at p (FNV-1a, then a final mix): Map
+// keys and Set elements (decision 0072).
+int64_t xo_str_hash(const char *p, int64_t n) {
+	uint64_t h = 1469598103934665603ULL;
+	for (int64_t i = 0; i < n; i++) {
+		h ^= (unsigned char)p[i];
+		h *= 1099511628211ULL;
+	}
+	h ^= h >> 31;
+	h *= 0x9E3779B97F4A7C15ULL;
+	h ^= h >> 29;
+	return (int64_t)h;
+}
+
+// xo_str_quote is the text of a Str in double quotes with Go's escapes
+// for quotes, backslashes, and control bytes (the Go backend's Debug of a
+// Str in fault messages), in a list of one.
+xo_rlist *xo_str_quote(const char *p, int64_t n) {
+	char *b = malloc((size_t)n * 4 + 3);
+	if (!b) {
+		xo_oom();
+	}
+	int64_t o = 0;
+	b[o++] = '"';
+	for (int64_t i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)p[i];
+		switch (c) {
+		case '"':
+			b[o++] = '\\';
+			b[o++] = '"';
+			break;
+		case '\\':
+			b[o++] = '\\';
+			b[o++] = '\\';
+			break;
+		case '\n':
+			b[o++] = '\\';
+			b[o++] = 'n';
+			break;
+		case '\t':
+			b[o++] = '\\';
+			b[o++] = 't';
+			break;
+		case '\r':
+			b[o++] = '\\';
+			b[o++] = 'r';
+			break;
+		default:
+			if (c < 0x20 || c == 0x7f) {
+				o += sprintf(b + o, "\\x%02x", c);
+			} else {
+				b[o++] = (char)c;
+			}
+		}
+	}
+	b[o++] = '"';
+	xo_rlist *l = str_list(b, o);
+	free(b);
+	return l;
+}
+
 // xo_floor_div is a / b rounded down (b > 0): `Time.unix()`.
 int64_t xo_floor_div(int64_t a, int64_t b) {
 	int64_t q = a / b;

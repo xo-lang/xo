@@ -519,6 +519,10 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		return s.undef(nt)
 	}
 	switch fo.Recv.Name {
+	case "Map", "Set":
+		if v, ok := s.mapCall(x, ci); ok {
+			return v
+		}
 	case "Stdio":
 		switch fo.Name {
 		case "print", "println", "eprint", "eprintln":

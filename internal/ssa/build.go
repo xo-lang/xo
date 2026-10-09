@@ -236,6 +236,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return x
 			case "List":
 				return m.List(b.typ(r.Args[0], at))
+			case "Map":
+				return b.mapType(false, b.typ(r.Args[0], at), b.typ(r.Args[1], at))
+			case "Set":
+				return b.mapType(true, b.typ(r.Args[0], at), m.Builtin(KUnit))
 			}
 		}
 		name := r.String()

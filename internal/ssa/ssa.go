@@ -67,6 +67,9 @@ type Type struct {
 	Variants []*Variant // KEnum
 	Elems    []*Type    // KTuple elements; KList: Elems[0] is the element type; KFunc: parameters
 	Ret      *Type      // KFunc: the result (a Result for a function value that can fail)
+	// Coll marks the KStruct that represents a Map or Set (build_map.go):
+	// its fields are not its value, so `==` on it is not structural
+	Coll bool
 }
 
 // Field is a named struct field or variant field.

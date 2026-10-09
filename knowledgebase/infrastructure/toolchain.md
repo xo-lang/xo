@@ -997,6 +997,10 @@ first, AST based prototype, since deleted) and
   Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
   nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
   `is_empty`); interpolating a Duration, Time, or Bytes is not lowered.
+  Map and Set (decision 0072) are structs of lists with generated
+  operations: literals, get, contains, get_or_fault, put, remove,
+  update, keys, values, entries, add, to_list, `m[k] = v`, and `for`
+  loops; not `==` on them, Float keys, filter, or Set algebra.
   `os.net.listen`/`dial`, `Listener.addr`/`accept`/`close`, and
   `Conn.read`/`write`/`close` (decision 0071) run on the event loop;
   SIGINT/SIGTERM give the two phase shutdown of core 7.5.
