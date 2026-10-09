@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "time layout written with Go's reference date (`2006`, `01`, `02`, `15`); Xo layouts use named, lowercase fields such as {year}-{month}-{day} (std.md 13.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 30,
+      "end_line": 4,
+      "end_col": 57
+    },
+    "notes": [
+      {
+        "message": "write \"{year}-{month}-{day}T{hour}:{minute}:{second}{offset}\""
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write \"{year}-{month}-{day}T{hour}:{minute}:{second}{offset}\"",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 30,
+              "end_line": 4,
+              "end_col": 57
+            },
+            "replace": "\"{year}-{month}-{day}T{hour}:{minute}:{second}{offset}\""
+          }
+        ]
+      }
+    ]
+  }
+]

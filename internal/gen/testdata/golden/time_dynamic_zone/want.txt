@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+Asia/Tokyo: Wed, 01 Jul 2026 21:00:00 JST 9h0m0s
+Australia/Lord_Howe: Wed, 01 Jul 2026 22:30:00 +1030 10h30m0s
+Asia/Kathmandu: Wed, 01 Jul 2026 17:45:00 +0545 5h45m0s
+America/St_Johns: Wed, 01 Jul 2026 09:30:00 NDT -2h30m0s
+Pacific/Chatham: Thu, 02 Jul 2026 00:45:00 +1245 12h45m0s
+Etc/GMT+5: Wed, 01 Jul 2026 07:00:00 -05 -5h0m0s
+Nowhere/City: Unknown(name: "Nowhere/City")
+--- stderr

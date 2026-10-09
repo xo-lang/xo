@@ -23,6 +23,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   previous tag (XO1310, XO1311; prints the tag command, never pushes),
   `xo init`, `/vN` major version module paths, and `xo serve` noticing a
   new or changed xo.work above the directories.
+- `std/time` (decision 0094, Go backend): zones with per use embedded
+  data (`--tzdata=system`), civil dates and times with explicit daylight
+  saving gaps and overlaps, layouts with named fields checked at compile
+  time (XO0420; XO0177 for `{yyyy}`, `%Y`, `2006-01-02` habits).
 
 ## v0.7.0 (2026-10-09)
 

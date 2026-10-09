@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "time layout written with the strftime codes of C, Python, Ruby, and PHP (`%d`, `%m`, `%y`); Xo layouts use named, lowercase fields such as {year}-{month}-{day} (std.md 13.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 30,
+      "end_line": 4,
+      "end_col": 40
+    },
+    "notes": [
+      {
+        "message": "fields: {year} {month} {month:1} {month:short} {month:name} {day} {day:1} {weekday:short} {weekday:name} {hour} {hour12} {ampm} {minute} {second} {frac} {frac:3} {offset} {offset:compact} {zone}; a two digit year is not offered"
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -209,6 +209,7 @@ func (c *checker) run() {
 	for _, b := range c.bodies {
 		c.flowBody(b)
 	}
+	c.checkTimeLayouts()
 	c.reportUnused()
 	c.reportAmbiguous()
 	c.finishRenames()

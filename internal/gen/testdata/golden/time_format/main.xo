@@ -1,0 +1,85 @@
+// std/time layouts (std.md 13.3, decision 0094): every field, format and
+// parse round trips, strict parsing errors, and check_layout.
+use std/time
+
+fn p(os: Os, s: Str, layout: Str, z: time.Zone) {
+  match time.parse(s, layout, z) {
+    Ok(t) => os.stdio.println("parse ${s} -> ${t}")
+    Err(e) => os.stdio.println("parse ${s} -> ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let utc = time.utc()
+  let ny = time.zone("America/New_York").or_fault("ny")
+  let berlin = time.zone("Europe/Berlin").or_fault("berlin")
+  let t = Time.parse_rfc3339("2026-10-09T08:05:03.120Z").or_fault("rfc3339")
+  let leap = Time.parse_rfc3339("2024-02-29T23:59:59Z").or_fault("rfc3339")
+  // the constants
+  for z in [utc, ny, berlin] {
+    os.stdio.println("${z}: ${time.format(t, z, time.RFC3339)} | ${time.format(t, z, time.RFC1123)} | ${time.format(t, z, time.DATE)} | ${time.format(t, z, time.TIME)}")
+  }
+  // every field
+  os.stdio.println(time.format(t, ny, "{year} {month} {month:1} {month:short} {month:name} {day} {day:1} {weekday:short} {weekday:name}"))
+  os.stdio.println(time.format(t, ny, "{hour} {hour12} {ampm} {minute} {second} [{frac}] [{frac:1}] [{frac:3}] [{frac:9}] {offset} {offset:compact} {zone} {lbrace}literal{rbrace}"))
+  os.stdio.println(time.format(Time.from_unix(43200), utc, "{hour12}{ampm} [{frac}] {offset} {offset:compact}"))
+  os.stdio.println(time.format(Time.from_unix(0), utc, "{hour12}{ampm} {weekday:name}"))
+  os.stdio.println(time.format(leap, berlin, time.RFC3339))
+  // round trips: format then parse gives the same instant
+  for layout in [time.RFC3339, time.RFC1123, "{weekday:name}, {month:name} {day:1}, {year} {hour12}:{minute}:{second}{frac:3} {ampm} {offset:compact}"] {
+    for z in [utc, ny, berlin] {
+      for x in [t, leap, Time.from_unix(-1000000000), Time.from_unix_millis(1700000000123)] {
+        let s = time.format(x, z, layout)
+        match time.parse(s, layout, z) {
+          Ok(back) => {
+            if back != x && layout != time.RFC1123 {
+              os.stdio.println("round trip differs: ${s} -> ${back}, want ${x}")
+            }
+          }
+          Err(e) => os.stdio.println("round trip failed: ${e}")
+        }
+      }
+    }
+  }
+  os.stdio.println("round trips done")
+  // parsing: the zone applies when the text has no offset
+  p(os, "2026-10-09", time.DATE, utc)
+  p(os, "2026-10-09", time.DATE, ny)
+  p(os, "2026-10-09 14:30", "{year}-{month}-{day} {hour}:{minute}", berlin)
+  p(os, "12:00:00", time.TIME, utc)
+  p(os, "2026-10-09T10:00:00+02:00", time.RFC3339, ny)
+  p(os, "2026-10-09T10:00:00.5Z", time.RFC3339, ny)
+  p(os, "Fri, 09 Oct 2026 08:05:03 GMT", time.RFC1123, utc)
+  p(os, "Fri, 09 Oct 2026 04:05:03 EDT", time.RFC1123, ny)
+  p(os, "9/10/2026 07:05:03 PM", "{day:1}/{month:1}/{year} {hour12}:{minute}:{second} {ampm}", utc)
+  p(os, "9/10/2026 7:05:03 PM", "{day:1}/{month:1}/{year} {hour12}:{minute}:{second} {ampm}", utc)
+  p(os, "12:30 AM", "{hour12}:{minute} {ampm}", utc)
+  // the overlap of 2026-11-01 01:30 in New York: {zone} or {offset} decide
+  p(os, "2026-11-01 01:30 EDT", "{year}-{month}-{day} {hour}:{minute} {zone}", ny)
+  p(os, "2026-11-01 01:30 EST", "{year}-{month}-{day} {hour}:{minute} {zone}", ny)
+  p(os, "2026-11-01 01:30", "{year}-{month}-{day} {hour}:{minute}", ny)
+  p(os, "2026-03-08 02:30", "{year}-{month}-{day} {hour}:{minute}", ny)
+  // strict errors
+  p(os, "2026-1x-09", time.DATE, utc)
+  p(os, "2026-13-09", time.DATE, utc)
+  p(os, "2026-02-30", time.DATE, utc)
+  p(os, "2026-10-9", time.DATE, utc)
+  p(os, "26-10-09", time.DATE, utc)
+  p(os, "2026/10/09", time.DATE, utc)
+  p(os, "2026-10-09 ", time.DATE, utc)
+  p(os, "Thu, 09 Oct 2026 08:05:03 GMT", time.RFC1123, utc)
+  p(os, "Fri, 09 Okt 2026 08:05:03 GMT", time.RFC1123, utc)
+  p(os, "Fri, 09 Oct 2026 08:05:03 CET", time.RFC1123, ny)
+  p(os, "2026-10-09T10:00:00", time.RFC3339, utc)
+  p(os, "2026-10-09T10:00:00.Z", time.RFC3339, utc)
+  p(os, "2026-10-09T25:00:00Z", time.RFC3339, utc)
+  p(os, "10:00:00.12", "{hour}:{minute}:{second}{frac:3}", utc)
+  p(os, "13:00 PM", "{hour12}:{minute} {ampm}", utc)
+  // check_layout for layouts built at run time
+  for l in ["{year}-{month}", "{yaer}", "{month:long}", "{hour12}", "{year", "}", "{lbrace}{rbrace}"] {
+    match time.check_layout(l) {
+      Ok(_) => os.stdio.println("layout ${l} ok")
+      Err(e) => os.stdio.println("${e}")
+    }
+  }
+}

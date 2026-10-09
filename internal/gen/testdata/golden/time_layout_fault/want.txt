@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+1970
+--- stderr
+fault: time.format: bad layout "{yaer}": unknown field {yaer} (check layouts built at run time with time.check_layout) at main.xo:8

@@ -198,3 +198,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [serve-new-xo-work-unnoticed.md](serve-new-xo-work-unnoticed.md): `xo serve` missed an xo.work created above the checked directories; fixed by recording the nearest xo.work per module root.
 - [major-version-needs-vn-path.md](major-version-needs-vn-path.md): a v2+ version of a path without `/vN` is XO1301 at parse time, not a fetch error.
 - [effect-ceiling-scope.md](effect-ceiling-scope.md): a ceiling counts the effects a dependency function declares; callback and caller owned interface effects are the caller's.
+- [std-methods-are-go-methods.md](std-methods-are-go-methods.md): a method declared on a std struct or enum is called as a Go method `M_<name>` of its rt type, not as `<Prefix><Type>_<name>`.
+- [go-loadlocation-prefers-host.md](go-loadlocation-prefers-host.md): `time.LoadLocation` reads the host database before `time/tzdata`; std/time embeds TZif data and uses `LoadLocationFromTZData`.
+- [http-date-utc-not-gmt.md](http-date-utc-not-gmt.md): `time.RFC1123` in `utc()` ends in `UTC`; HTTP dates need a literal `GMT`.

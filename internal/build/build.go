@@ -111,6 +111,10 @@ type Options struct {
 	Hybrid, HybridAll, HybridPure bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
+	// TZData is where std/time finds zone data (decision 0094): "" or
+	// "embedded" embeds the zones the program uses (tzdata.go), "system"
+	// reads the host database at run time (`--tzdata=system`).
+	TZData string
 }
 
 // Result is the outcome of a build.
@@ -140,6 +144,9 @@ type Result struct {
 	Tests []TestInfo
 	// Hybrid reports what a hybrid build compiled to assembly.
 	Hybrid *HybridInfo
+	// Notes are build notes, such as the embedding of the whole zone
+	// database (tzdata.go).
+	Notes []string
 }
 
 // Info identifies a program build (core 11.2): a crash bundle and a trace
@@ -152,6 +159,7 @@ type Info struct {
 	NoMono   bool              `json:"no_mono,omitempty"`
 	NoArenas bool              `json:"no_arenas,omitempty"`
 	Race     bool              `json:"race,omitempty"`
+	TZData   string            `json:"tzdata,omitempty"`
 	// Deps are the required module versions the program was built with
 	// (decision 0086): "<path>" -> "<version>", or "workspace <dir>" for a
 	// module an xo.work overrides (local paths are recorded here only,
@@ -161,7 +169,7 @@ type Info struct {
 
 // buildInfo computes the build information of a checked program.
 func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Info {
-	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race}
+	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
 	}
@@ -200,6 +208,9 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 		fmt.Fprintf(h, "%s %s\n", p, info.Sources[p])
 	}
 	fmt.Fprintf(h, "holes=%v mono=%v arenas=%v race=%v\n", opts.Holes, !opts.NoMono, !opts.NoArenas, opts.Race)
+	if opts.TZData != "" {
+		fmt.Fprintf(h, "tzdata=%s\n", opts.TZData)
+	}
 	fs.WalkDir(std.Runtime, "rt", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			data, _ := fs.ReadFile(std.Runtime, p)
@@ -299,6 +310,12 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return nil, err
 	}
 	out.Specs = prog.Specs
+	if opts.TZData != "" && opts.TZData != "embedded" && opts.TZData != TZDataSystem {
+		return nil, fmt.Errorf("unknown --tzdata=%s (want embedded or system)", opts.TZData)
+	}
+	if out.Notes, err = tzFiles(prog, opts.TZData); err != nil {
+		return nil, err
+	}
 	if opts.Mode == gen.Build {
 		out.Info = buildInfo(dirs, res, root, opts)
 		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)

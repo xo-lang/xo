@@ -236,6 +236,7 @@ func (f *fnGen) declCall1(x *ast.CallExpr, ci *check.Call) (string, callKind) {
 	fo := ci.Fn
 	sub := ci.Subst
 	if fo.Module.IsStd {
+		f.noteZoneCall(x, fo)
 		if f.arenasOn() {
 			if code, ok := f.arenaProducer(x, ci); ok {
 				return code, ckValue

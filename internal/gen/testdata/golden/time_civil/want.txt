@@ -1,0 +1,37 @@
+exit 0
+--- stdout
+date 2024-02-29 Thursday
+date 2023-2-29: Invalid(msg: "day 29 out of range 1 to 28 for 2023-02")
+date 1900-2-29: Invalid(msg: "day 29 out of range 1 to 28 for 1900-02")
+date 2000-02-29 Tuesday
+date 2026-13-1: Invalid(msg: "month 13 out of range 1 to 12")
+date 2026-4-31: Invalid(msg: "day 31 out of range 1 to 30 for 2026-04")
+date 0-1-1: Invalid(msg: "year 0 out of range 1 to 9999")
+date 10000-1-1: Invalid(msg: "year 10000 out of range 1 to 9999")
+clamp 2024-02-29 2023-02-28 2024-03-31 2024-04-30 2023-11-30 2025-02-28 2025-02-28 2028-02-29
+days 2024-03-01 2023-12-31 2024-01-01 2024-02-29 2023-03-01 1972-01-06
+until 366 365 -20735 -2
+weekday Thursday Friday Saturday Monday true
+order true true true
+gap New York
+  2026-03-08 2:30 -> Skipped(at: "2026-03-08T02:30:00 America/New_York")
+  2026-03-08 2:30 -> 2026-03-08T07:30:00Z (03:30 EDT)
+  2026-03-08 2:30 -> 2026-03-08T06:30:00Z (01:30 EST)
+overlap New York
+  2026-11-01 1:30 -> Repeated(at: "2026-11-01T01:30:00 America/New_York")
+  2026-11-01 1:30 -> 2026-11-01T05:30:00Z (01:30 EDT)
+  2026-11-01 1:30 -> 2026-11-01T06:30:00Z (01:30 EST)
+gap and overlap Berlin
+  2026-03-29 2:15 -> Skipped(at: "2026-03-29T02:15:00 Europe/Berlin")
+  2026-03-29 2:15 -> 2026-03-29T01:15:00Z (03:15 CEST)
+  2026-10-25 2:15 -> Repeated(at: "2026-10-25T02:15:00 Europe/Berlin")
+  2026-10-25 2:15 -> 2026-10-25T01:15:00Z (02:15 CET)
+unique
+  2026-07-04 12:0 -> 2026-07-04T16:00:00Z (12:00 EDT)
+  2026-07-04 12:0 -> 2026-07-04T10:00:00Z (12:00 CEST)
+invalid
+  2026-07-04 24:0 -> Invalid(msg: "hour 24 out of range 0 to 23")
+  2026-02-30 0:0 -> Invalid(msg: "day 30 out of range 1 to 28 for 2026-02")
+  2263-01-01 0:0 -> Invalid(msg: "2263-01-01T00:00:00 UTC is outside the range of Time (1678 to 2262)")
+round trip 2026-10-09 14:34:56.789000000 true
+--- stderr

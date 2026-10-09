@@ -45,7 +45,7 @@ commands:
       builds (XO1201 for what they cannot build yet, or ever; decision 0083).
       Exit status is 1 when any error is reported (warnings such as holes do
       not count), 2 on usage errors.
-  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-gc] [--no-mono] [--no-arenas] [--ci] [-o out] <dirs...>
+  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci] [-o out] <dirs...>
       Compile to static binaries (default: the host). --backend=llvm uses the
       LLVM prototype (a core subset, needs clang); --backend=arm64 the native
       AArch64 backend (the same subset, needs cc; linux/arm64 is emitted as
@@ -57,6 +57,10 @@ commands:
       handlers are on by default (decision 0066); --no-arenas (also on run
       and test) turns them off. --ci fails before building when a .xo file
       is not formatted (core 10.5) or dbg(...) is left in code (core 11.4).
+      std/time zone data is embedded per use (decision 0094): the zones
+      named by constants, or the whole database (with a note naming the
+      call) for a name known only at run time; --tzdata=system (also on run
+      and test) reads the host's database instead.
   run [--seed=N] [--backend=go|llvm|arm64] [--no-gc] <dir> [-- args]
       Build for the host and run. --seed makes task interleavings
       reproducible. Recording is described under run --record below.

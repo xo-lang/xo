@@ -1,0 +1,50 @@
+// std/time zones across daylight saving transitions (std.md 13.1,
+// decision 0094). The zone names are constants, so only America/New_York
+// and Europe/Berlin are embedded.
+use std/time
+
+fn show(os: Os, t: Time, z: time.Zone) {
+  let c = time.civil(t, z)
+  let s = time.format(t, z, "{year}-{month}-{day} {hour}:{minute}:{second} {zone} {offset}")
+  os.stdio.println("${t} in ${z}: ${s} | offset ${z.offset_at(t)} ${z.abbreviation_at(t)} | civil ${c.date} ${c.time.hour}:${c.time.minute} ${c.offset} ${c.zone}")
+}
+
+fn main(os: Os) {
+  let ny = time.zone("America/New_York").or_fault("New York is embedded")
+  let berlin = time.zone("Europe/Berlin").or_fault("Berlin is embedded")
+  // US spring forward 2026-03-08 07:00 UTC (02:00 EST -> 03:00 EDT)
+  let spring = Time.parse_rfc3339("2026-03-08T07:00:00Z").or_fault("rfc3339")
+  show(os, spring - 1s, ny)
+  show(os, spring, ny)
+  // US fall back 2026-11-01 06:00 UTC (02:00 EDT -> 01:00 EST)
+  let fall = Time.parse_rfc3339("2026-11-01T06:00:00Z").or_fault("rfc3339")
+  show(os, fall - 1s, ny)
+  show(os, fall, ny)
+  // EU spring forward 2026-03-29 01:00 UTC, fall back 2026-10-25 01:00 UTC
+  let eu_spring = Time.parse_rfc3339("2026-03-29T01:00:00Z").or_fault("rfc3339")
+  show(os, eu_spring - 1s, berlin)
+  show(os, eu_spring, berlin)
+  let eu_fall = Time.parse_rfc3339("2026-10-25T01:00:00Z").or_fault("rfc3339")
+  show(os, eu_fall - 1s, berlin)
+  show(os, eu_fall, berlin)
+  // Time arithmetic stays exact across the change: 24h is 24 hours
+  show(os, spring - 12h + 24h, ny)
+  // before 1883 New York kept local mean time
+  show(os, Time.from_unix(-3000000000), ny)
+  // utc, fixed, UTC by name, equality, unknown zones
+  let utc = time.utc()
+  let plus = time.fixed("UTC+5:30", 5h + 30m)
+  show(os, spring, utc)
+  show(os, spring, plus)
+  let by_name = time.zone("UTC").or_fault("UTC needs no data")
+  os.stdio.println("eq ${utc == by_name} ${ny == time.zone("America/New_York").or_fault("ny")} ${ny == berlin} ${plus == time.fixed("UTC+5:30", 330m)} ${plus == time.fixed("UTC+5:30", 5h)}")
+  os.stdio.println("names ${ny.name()} ${berlin.name()} ${utc.name()} ${plus.name()}")
+  match time.zone("Mars/Olympus_Mons") {
+    Ok(z) => os.stdio.println("unexpected ${z}")
+    Err(e) => os.stdio.println("unknown: ${e}")
+  }
+  match time.zone("europe/berlin") {
+    Ok(z) => os.stdio.println("unexpected ${z}")
+    Err(e) => os.stdio.println("names are case sensitive: ${e}")
+  }
+}

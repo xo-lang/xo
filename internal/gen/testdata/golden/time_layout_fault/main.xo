@@ -1,0 +1,9 @@
+// A bad layout built at run time faults (std.md 13.4, decision 0094);
+// constant layouts are checked at compile time instead.
+use std/time
+
+fn main(os: Os) {
+  let field = "yaer"
+  os.stdio.println(time.format(Time.UNIX_EPOCH, time.utc(), "{year}"))
+  os.stdio.println(time.format(Time.UNIX_EPOCH, time.utc(), "{" + field + "}"))
+}

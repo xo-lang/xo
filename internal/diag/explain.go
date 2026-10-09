@@ -1233,6 +1233,26 @@ xo publish --check --version v2.0.0   # module path .../v2`,
 		Example: `xo publish --version v1.4.0   # v1.4.0 is already a tag`,
 		Fix:     `xo publish --version v1.4.1`,
 	},
+
+	// ---------------------------------------------------------------
+	// std/time layouts (decision 0094)
+
+	TimeLayout: {
+		Title: "constant std/time layout is invalid",
+		Detail: "A layout passed to `time.format`, `time.parse`, or `time.check_layout` is written with named, lowercase fields: `{year}`, `{month}` (also `{month:1}`, `{month:short}`, `{month:name}`), `{day}` (`{day:1}`), `{weekday:short}`, `{weekday:name}`, `{hour}`, `{hour12}` with `{ampm}`, `{minute}`, `{second}`, `{frac}` (`{frac:1}` to `{frac:9}`), `{offset}` (`{offset:compact}`), `{zone}`, and `{lbrace}`/`{rbrace}` for literal braces (std.md 13.3). " +
+			"When the layout is a constant (a string literal, a `const`, or a `+` of them) the checker parses it: an unknown field, a field form that does not exist, a stray brace, or `{hour12}` without `{ampm}` is this error, with a did you mean fix for a misspelled field. " +
+			"Date patterns of other languages (`{yyyy}`, `yyyy-MM-dd`, `%Y-%m-%d`, Go's `2006-01-02`) are the habit XO0177 instead, with a fix to the named fields. A layout built at run time is not checked here: `format` and `parse` fault on a bad one, and `time.check_layout` returns a `Result` for layouts that come from input. See decision 0094.",
+		Example: `use std/time
+
+fn stamp(t: Time) -> Str {
+  time.format(t, time.utc(), "{year}-{month}-{dya}")
+}`,
+		Fix: `use std/time
+
+fn stamp(t: Time) -> Str {
+  time.format(t, time.utc(), "{year}-{month}-{day}")
+}`,
+	},
 }
 
 // SeverityOf is the severity a code is reported with.

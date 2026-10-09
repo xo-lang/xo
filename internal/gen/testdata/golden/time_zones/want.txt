@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+2026-03-08T06:59:59Z in America/New_York: 2026-03-08 01:59:59 EST -05:00 | offset -5h0m0s EST | civil 2026-03-08 1:59 -5h0m0s America/New_York
+2026-03-08T07:00:00Z in America/New_York: 2026-03-08 03:00:00 EDT -04:00 | offset -4h0m0s EDT | civil 2026-03-08 3:0 -4h0m0s America/New_York
+2026-11-01T05:59:59Z in America/New_York: 2026-11-01 01:59:59 EDT -04:00 | offset -4h0m0s EDT | civil 2026-11-01 1:59 -4h0m0s America/New_York
+2026-11-01T06:00:00Z in America/New_York: 2026-11-01 01:00:00 EST -05:00 | offset -5h0m0s EST | civil 2026-11-01 1:0 -5h0m0s America/New_York
+2026-03-29T00:59:59Z in Europe/Berlin: 2026-03-29 01:59:59 CET +01:00 | offset 1h0m0s CET | civil 2026-03-29 1:59 1h0m0s Europe/Berlin
+2026-03-29T01:00:00Z in Europe/Berlin: 2026-03-29 03:00:00 CEST +02:00 | offset 2h0m0s CEST | civil 2026-03-29 3:0 2h0m0s Europe/Berlin
+2026-10-25T00:59:59Z in Europe/Berlin: 2026-10-25 02:59:59 CEST +02:00 | offset 2h0m0s CEST | civil 2026-10-25 2:59 2h0m0s Europe/Berlin
+2026-10-25T01:00:00Z in Europe/Berlin: 2026-10-25 02:00:00 CET +01:00 | offset 1h0m0s CET | civil 2026-10-25 2:0 1h0m0s Europe/Berlin
+2026-03-08T19:00:00Z in America/New_York: 2026-03-08 15:00:00 EDT -04:00 | offset -4h0m0s EDT | civil 2026-03-08 15:0 -4h0m0s America/New_York
+1874-12-07T18:40:00Z in America/New_York: 1874-12-07 13:43:58 LMT -04:56 | offset -4h56m2s LMT | civil 1874-12-07 13:43 -4h56m2s America/New_York
+2026-03-08T07:00:00Z in UTC: 2026-03-08 07:00:00 UTC Z | offset 0s UTC | civil 2026-03-08 7:0 0s UTC
+2026-03-08T07:00:00Z in UTC+5:30: 2026-03-08 12:30:00 UTC+5:30 +05:30 | offset 5h30m0s UTC+5:30 | civil 2026-03-08 12:30 5h30m0s UTC+5:30
+eq true true false true false
+names America/New_York Europe/Berlin UTC UTC+5:30
+unknown: Unknown(name: "Mars/Olympus_Mons")
+names are case sensitive: Unknown(name: "europe/berlin")
+--- stderr

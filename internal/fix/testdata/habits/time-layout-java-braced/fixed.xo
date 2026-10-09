@@ -1,0 +1,5 @@
+use std/time
+
+pub fn stamp(t: Time) -> Str {
+  time.format(t, time.utc(), "{year}-{month}-{day} {hour}:{minute}:{second}")
+}
