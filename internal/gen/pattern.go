@@ -128,17 +128,17 @@ func (f *fnGen) pat(p ast.Pattern, subj string, t check.Type, m *match) {
 		et := n.Args[0]
 		k := len(x.Elems)
 		if x.Rest < 0 {
-			m.conds = append(m.conds, fmt.Sprintf("%s.M_len(tk) == %d", subj, k))
+			m.conds = append(m.conds, fmt.Sprintf("%sList_len(tk, %s) == %d", f.rt(), subj, k))
 		} else {
-			m.conds = append(m.conds, fmt.Sprintf("%s.M_len(tk) >= %d", subj, k))
+			m.conds = append(m.conds, fmt.Sprintf("%sList_len(tk, %s) >= %d", f.rt(), subj, k))
 		}
 		for i, e := range x.Elems {
 			var es string
 			if x.Rest < 0 || i < x.Rest {
-				es = fmt.Sprintf("%s.Items()[%d]", subj, i)
+				es = fmt.Sprintf("%sList_Items(%s)[%d]", f.rt(), subj, i)
 			} else {
 				back := k - i
-				es = fmt.Sprintf("%s.Items()[len(%s.Items())-%d]", subj, subj, back)
+				es = fmt.Sprintf("%sList_Items(%s)[len(%sList_Items(%s))-%d]", f.rt(), subj, f.rt(), subj, back)
 			}
 			f.pat(e, es, et, m)
 		}

@@ -73,6 +73,24 @@ type testOutcome struct {
 // test that passes under its seed again under the next N-1 seeds and
 // reports the first failing one.
 func RunTests(args []string, tables ...[]TestCase) int {
+	return runTests(args, tables)
+}
+
+// RunTestTables is RunTests for the generated package main: each table
+// is a module's Tests ([]TestCase) as an any, so that package main names
+// no runtime type (a Go package naming one compiles the method sets of
+// every generic runtime type it reaches); not inlined for the same reason.
+//
+//go:noinline
+func RunTestTables(args []string, tables ...any) int {
+	ts := make([][]TestCase, len(tables))
+	for i, t := range tables {
+		ts[i] = t.([]TestCase)
+	}
+	return runTests(args, ts)
+}
+
+func runTests(args []string, tables [][]TestCase) int {
 	fs := flag.NewFlagSet("xotest", flag.ContinueOnError)
 	seed := fs.Int64("seed", 0, "seed for rand and the scheduler")
 	explore := fs.Int("explore", 0, "run each concurrent test under this many seeds")
@@ -610,7 +628,7 @@ func (f Testing_FakeEnv) M_get(tk *Task, name string) Option[string] {
 	}
 	f.e.mu.Lock()
 	defer f.e.mu.Unlock()
-	return f.e.vars.M_get(nil, name)
+	return Map_get(nil, f.e.vars, name)
 }
 
 func (f Testing_FakeEnv) M_vars(tk *Task) Map[string, string] {
@@ -640,7 +658,7 @@ func (f Testing_FakeEnv) M_home(tk *Task) Result[string, EnvErr] {
 // M_set is `env.set(name, value)`.
 func (f Testing_FakeEnv) M_set(_ *Task, name, value string) {
 	f.e.mu.Lock()
-	f.e.vars.M_put(nil, name, value)
+	Map_put(nil, &f.e.vars, name, value)
 	f.e.mu.Unlock()
 }
 
@@ -1692,7 +1710,7 @@ func (f Testing_MemFs) M_files(*Task) Map[string, Bytes] {
 	var m Map[string, Bytes]
 	for _, name := range names {
 		if rel := f.v.rel(name); f.v.root == "" || strings.HasPrefix(name, f.v.root+"/") {
-			m.M_put(nil, rel, byName[name].data)
+			Map_put(nil, &m, rel, byName[name].data)
 		}
 	}
 	return m

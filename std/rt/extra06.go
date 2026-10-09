@@ -55,18 +55,18 @@ func Range_to_list(_ *Task, r Range[int64]) List[int64] {
 	return ListOf(xs...)
 }
 
-// M_apply_to is `p.apply_to(current)`: the new value, or current when the
+// Json_Patch_apply_to is `p.apply_to(current)`: the new value, or current when the
 // key was absent or null.
-func (p Json_Patch[T]) M_apply_to(_ *Task, current T) T {
+func Json_Patch_apply_to[T any](_ *Task, p Json_Patch[T], current T) T {
 	if p.Tag == 3 {
 		return p.P.(Json_Patch_Value[T]).F_v
 	}
 	return current
 }
 
-// M_apply_opt is `p.apply_opt(current)` for optional fields: absent keeps
+// Json_Patch_apply_opt is `p.apply_opt(current)` for optional fields: absent keeps
 // current, null clears it, a value sets it.
-func (p Json_Patch[T]) M_apply_opt(_ *Task, current Option[T]) Option[T] {
+func Json_Patch_apply_opt[T any](_ *Task, p Json_Patch[T], current Option[T]) Option[T] {
 	switch p.Tag {
 	case 2:
 		return None[T]()

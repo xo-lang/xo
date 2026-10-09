@@ -85,7 +85,7 @@ func (v *User) XoJsonRead(tk *rt.Task, r *rt.JsonR) bool {
 
 func (v Edit) XoJsonEnc(tk *rt.Task, w *rt.JsonW) {
 	w.ObjStart()
-	if !v.F_name.PatchAbsent() {
+	if !rt.Json_Patch_PatchAbsent(v.F_name) {
 		w.Field("name")
 		v.F_name.XoJsonEnc(tk, w)
 	}

@@ -102,7 +102,7 @@ func TestRangeElision(t *testing.T) {
   }
   s
 }`,
-			want: []string{`v_xs\.AtU\(v_i\)`},
+			want: []string{`List_AtU\(v_xs, v_i\)`},
 			not:  []string{`AtM`},
 		},
 		{
@@ -120,7 +120,7 @@ func TestRangeElision(t *testing.T) {
   }
   lo
 }`,
-			want: []string{`\(\(v_lo \+ v_hi\) / int64\(2\)\)`, `v_xs\.AtU\(v_mid\)`, `\(v_mid \+ int64\(1\)\)`},
+			want: []string{`\(\(v_lo \+ v_hi\) / int64\(2\)\)`, `List_AtU\(v_xs, v_mid\)`, `\(v_mid \+ int64\(1\)\)`},
 			not:  []string{checked, `AtM`},
 		},
 		{
@@ -136,7 +136,7 @@ func TestRangeElision(t *testing.T) {
   }
   s
 }`,
-			want: []string{`v_ys\.AtM\(v_i,`, `v_xs\.AtM\(v_j,`},
+			want: []string{`List_AtM\(v_ys, v_i,`, `List_AtM\(v_xs, v_j,`},
 			not:  []string{`AtU`},
 		},
 		{

@@ -131,23 +131,23 @@ func markElems[T any](s []T) {
 }
 
 // XoMark marks the list's block shared.
-func (l *List[T]) XoMark() { l.markShared() }
+func (l *List[T]) XoMark() { List_markShared(*l) }
 
-// Own marks the list's block shared and returns the list (an own site in
+// List_Own marks the list's block shared and returns the list (an own site in
 // generated code).
-func (l List[T]) Own() List[T] {
-	l.markShared()
+func List_Own[T any](l List[T]) List[T] {
+	List_markShared(l)
 	return l
 }
 
-func (l List[T]) markShared() {
+func List_markShared[T any](l List[T]) {
 	if b := l.b; b != nil && !b.shared.Load() {
 		b.shared.Store(true)
 	}
 }
 
-// unique reports whether l may write its elements in place.
-func (l *List[T]) unique() bool {
+// List_unique reports whether l may write its elements in place.
+func List_unique[T any](l *List[T]) bool {
 	b := l.b
 	return b != nil && !b.shared.Load()
 }
@@ -163,39 +163,39 @@ func ListOf[T any](xs ...T) List[T] {
 // ListFromSlice wraps a slice the caller no longer uses.
 func ListFromSlice[T any](xs []T) List[T] { return ListOf(xs...) }
 
-// Slice returns the elements; callers must not modify them.
-func (l List[T]) Slice() []T { return l.s }
+// List_Slice returns the elements; callers must not modify them.
+func List_Slice[T any](l List[T]) []T { return l.s }
 
-// M_len is `xs.len()`.
-func (l List[T]) M_len(*Task) int64 { return int64(len(l.s)) }
+// List_len is `xs.len()`.
+func List_len[T any](_ *Task, l List[T]) int64 { return int64(len(l.s)) }
 
-// M_is_empty is `xs.is_empty()`.
-func (l List[T]) M_is_empty(*Task) bool { return len(l.s) == 0 }
+// List_is_empty is `xs.is_empty()`.
+func List_is_empty[T any](_ *Task, l List[T]) bool { return len(l.s) == 0 }
 
-// At is `xs[i]`: faults out of range (core 3.6).
-func (l List[T]) At(i int64, at string) T {
+// List_At is `xs[i]`: faults out of range (core 3.6).
+func List_At[T any](l List[T], i int64, at string) T {
 	if i < 0 || i >= int64(len(l.s)) {
 		Faultf(at, "index %d out of range for List of length %d", i, len(l.s))
 	}
 	return l.s[i]
 }
 
-// M_get is `xs.get(i)`.
-func (l List[T]) M_get(_ *Task, i int64) Option[T] {
+// List_get is `xs.get(i)`.
+func List_get[T any](_ *Task, l List[T], i int64) Option[T] {
 	if i < 0 || i >= int64(len(l.s)) {
 		return Option[T]{}
 	}
 	return Some(l.s[i])
 }
 
-// M_first is `xs.first()`.
-func (l List[T]) M_first(tk *Task) Option[T] { return l.M_get(tk, 0) }
+// List_first is `xs.first()`.
+func List_first[T any](tk *Task, l List[T]) Option[T] { return List_get(tk, l, 0) }
 
-// M_last is `xs.last()`.
-func (l List[T]) M_last(tk *Task) Option[T] { return l.M_get(tk, int64(len(l.s))-1) }
+// List_last is `xs.last()`.
+func List_last[T any](tk *Task, l List[T]) Option[T] { return List_get(tk, l, int64(len(l.s))-1) }
 
-// All iterates the elements.
-func (l List[T]) All() iter.Seq[T] {
+// List_All iterates the elements.
+func List_All[T any](l List[T]) iter.Seq[T] {
 	return func(yield func(T) bool) {
 		for _, x := range l.s {
 			if !yield(x) {
@@ -205,20 +205,20 @@ func (l List[T]) All() iter.Seq[T] {
 	}
 }
 
-// own makes l the unique owner of its elements: a no op when it already
+// List_own makes l the unique owner of its elements: a no op when it already
 // is, else a copy into a fresh block with capacity for extra more
 // elements (marking the duplicated elements).
-func (l *List[T]) own(extra int) {
-	if l.unique() && len(l.s)+extra <= cap(l.s) {
+func List_own[T any](l *List[T], extra int) {
+	if List_unique(l) && len(l.s)+extra <= cap(l.s) {
 		return
 	}
-	l.copyOut(extra)
+	List_copyOut(l, extra)
 }
 
-// copyOut copies the elements into a fresh unshared block with room for
+// List_copyOut copies the elements into a fresh unshared block with room for
 // extra more. If l's block was unique, the old array is dropped and its
 // elements move; otherwise they are duplicated and marked.
-func (l *List[T]) copyOut(extra int) {
+func List_copyOut[T any](l *List[T], extra int) {
 	n := len(l.s)
 	c := n + extra
 	if extra > 0 {
@@ -226,19 +226,19 @@ func (l *List[T]) copyOut(extra int) {
 	}
 	s := make([]T, n, c)
 	copy(s, l.s)
-	if !l.unique() {
+	if !List_unique(l) {
 		markElems(s)
 	}
 	l.s, l.b = s, newBlock(n)
 }
 
-// SetAt is `xs[i] = x`: in place when l is the unique owner.
-func (l *List[T]) SetAt(i int64, x T, at string) {
+// List_SetAt is `xs[i] = x`: in place when l is the unique owner.
+func List_SetAt[T any](l *List[T], i int64, x T, at string) {
 	if uint64(i) >= uint64(len(l.s)) {
 		panic(&arithFault{i, int64(len(l.s)), 'i', at})
 	}
 	if b := l.b; b == nil || b.shared.Load() {
-		l.copyOut(0)
+		List_copyOut(l, 0)
 	}
 	l.s[i] = x
 }
@@ -246,60 +246,60 @@ func (l *List[T]) SetAt(i int64, x T, at string) {
 // Inline write forms. Generated code writes element i of a list place p
 // as
 //
-//	if !p.Mine() { p = p.Unshared() }
-//	p.PutM(i, x, at)        // or p.PtrM(i, at) for a write below i
+//	if !List_Mine(p) { p = List_Unshared(p) }
+//	List_PutM(p, i, x, at)        // or List_PtrM(p, i, at) for a write below i
 //
 // and pushes as
 //
-//	if p.CanPush() { p = p.PushFast(x) } else { p = p.PushSlow(x) }
+//	if List_CanPush(p) { p = List_PushFast(p, x) } else { p = List_PushSlow(p, x) }
 //
-// Each method inlines, and none takes the address of p, so a local list
+// Each function inlines, and none takes the address of p, so a local list
 // stays in registers (SetAt and M_push are over Go's inlining budget for
 // generic shapes, and their pointer receivers keep the binding in memory).
 
-// Mine reports whether l is the unique owner of its array: it may write
+// List_Mine reports whether l is the unique owner of its array: it may write
 // its elements in place.
-func (l List[T]) Mine() bool {
+func List_Mine[T any](l List[T]) bool {
 	b := l.b
 	return b != nil && !b.shared.Load()
 }
 
-// Unshared returns l as the unique owner of a copy of its elements (see
+// List_Unshared returns l as the unique owner of a copy of its elements (see
 // copyOut).
-func (l List[T]) Unshared() List[T] {
-	l.copyOut(0)
+func List_Unshared[T any](l List[T]) List[T] {
+	List_copyOut(&l, 0)
 	return l
 }
 
-// PutM stores x at i (faults out of range). l must be the unique owner
+// List_PutM stores x at i (faults out of range). l must be the unique owner
 // (Mine): the store goes to the array l shares with its place.
-func (l List[T]) PutM(i int64, x T, at string) {
+func List_PutM[T any](l List[T], i int64, x T, at string) {
 	if uint64(i) >= uint64(len(l.s)) {
 		panic(&arithFault{i, int64(len(l.s)), 'i', at})
 	}
 	l.s[i] = x
 }
 
-// PtrM is the address of element i (faults out of range). l must be the
+// List_PtrM is the address of element i (faults out of range). l must be the
 // unique owner (Mine).
-func (l List[T]) PtrM(i int64, at string) *T {
+func List_PtrM[T any](l List[T], i int64, at string) *T {
 	if uint64(i) >= uint64(len(l.s)) {
 		panic(&arithFault{i, int64(len(l.s)), 'i', at})
 	}
 	return &l.s[i]
 }
 
-// CanPush reports whether PushFast applies: l is the unique owner and its
+// List_CanPush reports whether PushFast applies: l is the unique owner and its
 // array has room.
-func (l List[T]) CanPush() bool {
+func List_CanPush[T any](l List[T]) bool {
 	b := l.b
 	n := len(l.s)
 	// shared first: once it is set, used may change under another task
 	return b != nil && n < cap(l.s) && !b.shared.Load() && b.used == int64(n)
 }
 
-// PushFast is l with x appended in place (CanPush must hold).
-func (l List[T]) PushFast(x T) List[T] {
+// List_PushFast is l with x appended in place (CanPush must hold).
+func List_PushFast[T any](l List[T], x T) List[T] {
 	n := len(l.s)
 	l.b.used = int64(n + 1)
 	l.s = l.s[:n+1]
@@ -307,31 +307,31 @@ func (l List[T]) PushFast(x T) List[T] {
 	return l
 }
 
-// PushSlow is l with x appended (M_push).
-func (l List[T]) PushSlow(x T) List[T] {
-	l.M_push(nil, x)
+// List_PushSlow is l with x appended (M_push).
+func List_PushSlow[T any](l List[T], x T) List[T] {
+	List_push(nil, &l, x)
 	return l
 }
 
-// M_set is `xs.set(i, x)`: the fault is located at the caller's line.
-func (l *List[T]) M_set(_ *Task, i int64, x T) {
+// List_set is `xs.set(i, x)`: the fault is located at the caller's line.
+func List_set[T any](_ *Task, l *List[T], i int64, x T) {
 	if i < 0 || i >= int64(len(l.s)) {
 		Faultf("", "index %d out of range for List of length %d", i, len(l.s))
 	}
-	l.SetAt(i, x, "")
+	List_SetAt(l, i, x, "")
 }
 
-// With returns a copy with element i replaced; l is unchanged.
-func (l List[T]) With(i int64, x T, at string) List[T] {
-	l.markShared()
-	l.SetAt(i, x, at)
+// List_With returns a copy with element i replaced; l is unchanged.
+func List_With[T any](l List[T], i int64, x T, at string) List[T] {
+	List_markShared(l)
+	List_SetAt(&l, i, x, at)
 	return l
 }
 
-// M_push is `xs.push(x)` on a `var` list: amortized O(1). It appends in
+// List_push is `xs.push(x)` on a `var` list: amortized O(1). It appends in
 // place when l ends at the block's claimed length (shared or not: no
 // header sees that slot), else it copies.
-func (l *List[T]) M_push(_ *Task, x T) {
+func List_push[T any](_ *Task, l *List[T], x T) {
 	n := len(l.s)
 	if b := l.b; b != nil && n < cap(l.s) {
 		shared := b.shared.Load()
@@ -348,16 +348,16 @@ func (l *List[T]) M_push(_ *Task, x T) {
 			return
 		}
 	}
-	l.copyOut(1)
+	List_copyOut(l, 1)
 	l.b.used = int64(n + 1)
 	l.s = l.s[:n+1]
 	l.s[n] = x
 }
 
-// Push1 appends x in place when l is the unique owner and has room, and
+// List_Push1 appends x in place when l is the unique owner and has room, and
 // reports whether it did. Generated code pushes as
-// `if !xs.Push1(x) { xs.M_push(tk, x) }`, which inlines the fast path.
-func (l *List[T]) Push1(x T) bool {
+// `if !List_Push1(&xs, x) { List_push(tk, &xs, x) }`, which inlines the fast path.
+func List_Push1[T any](l *List[T], x T) bool {
 	b := l.b
 	n := len(l.s)
 	// shared first: once it is set, used may change under another task
@@ -370,15 +370,15 @@ func (l *List[T]) Push1(x T) bool {
 	return true
 }
 
-// M_pop is `xs.pop()`. The unique owner gives the slot back (the next
+// List_pop is `xs.pop()`. The unique owner gives the slot back (the next
 // push reuses it); a shared list only shortens its own view.
-func (l *List[T]) M_pop(*Task) Option[T] {
+func List_pop[T any](_ *Task, l *List[T]) Option[T] {
 	n := len(l.s)
 	if n == 0 {
 		return Option[T]{}
 	}
 	x := l.s[n-1]
-	if l.unique() && l.b.used == int64(n) {
+	if List_unique(l) && l.b.used == int64(n) {
 		var z T
 		l.s[n-1] = z
 		l.b.used = int64(n - 1)
@@ -387,26 +387,26 @@ func (l *List[T]) M_pop(*Task) Option[T] {
 	return Some(x)
 }
 
-// M_insert is `xs.insert(i, x)`; i may equal the length. In place for the
+// List_insert is `xs.insert(i, x)`; i may equal the length. In place for the
 // unique owner (a shift, like a Go slice insert).
-func (l *List[T]) M_insert(_ *Task, i int64, x T) {
+func List_insert[T any](_ *Task, l *List[T], i int64, x T) {
 	n := len(l.s)
 	if i < 0 || i > int64(n) {
 		FaultHere("index %d out of range for insert into List of length %d", i, n)
 	}
-	l.own(1)
+	List_own(l, 1)
 	l.b.used = int64(n + 1)
 	l.s = l.s[:n+1]
 	copy(l.s[i+1:], l.s[i:n])
 	l.s[i] = x
 }
 
-// M_remove_at is `xs.remove_at(i)`. In place for the unique owner (a
+// List_remove_at is `xs.remove_at(i)`. In place for the unique owner (a
 // shift, like a Go slice delete).
-func (l *List[T]) M_remove_at(_ *Task, i int64) T {
-	x := l.At(i, "")
+func List_remove_at[T any](_ *Task, l *List[T], i int64) T {
+	x := List_At(*l, i, "")
 	n := len(l.s)
-	if !l.unique() {
+	if !List_unique(l) {
 		s := make([]T, n-1, max(n-1, 4))
 		copy(s, l.s[:i])
 		copy(s[i:], l.s[i+1:])
@@ -422,8 +422,8 @@ func (l *List[T]) M_remove_at(_ *Task, i int64) T {
 	return x
 }
 
-// SliceRange is `xs[lo..hi]` with -1 for an omitted bound (core 3.6).
-func (l List[T]) SliceRange(lo, hi int64, hasLo, hasHi bool, at string) List[T] {
+// List_SliceRange is `xs[lo..hi]` with -1 for an omitted bound (core 3.6).
+func List_SliceRange[T any](l List[T], lo, hi int64, hasLo, hasHi bool, at string) List[T] {
 	n := int64(len(l.s))
 	if !hasLo {
 		lo = 0
@@ -435,16 +435,16 @@ func (l List[T]) SliceRange(lo, hi int64, hasLo, hasHi bool, at string) List[T] 
 		Faultf(at, "slice %d..%d out of range for List of length %d", lo, hi, n)
 	}
 	// the slice shares l's array
-	l.markShared()
+	List_markShared(l)
 	return List[T]{s: l.s[lo:hi:hi], b: l.b}
 }
 
-// Concat is `xs + ys`. The result may share l's or o's array, so both
+// List_Concat is `xs + ys`. The result may share l's or o's array, so both
 // are marked; o's elements are duplicated into the result, so they are
 // marked too.
-func (l List[T]) Concat(o List[T]) List[T] {
-	l.markShared()
-	o.markShared()
+func List_Concat[T any](l List[T], o List[T]) List[T] {
+	List_markShared(l)
+	List_markShared(o)
 	if len(o.s) == 0 {
 		return l
 	}
@@ -454,13 +454,13 @@ func (l List[T]) Concat(o List[T]) List[T] {
 	markElems(o.s)
 	r := l
 	for _, x := range o.s {
-		r.M_push(nil, x)
+		List_push(nil, &r, x)
 	}
 	return r
 }
 
-// M_contains is `xs.contains(x)`.
-func (l List[T]) M_contains(_ *Task, x T) bool {
+// List_contains is `xs.contains(x)`.
+func List_contains[T any](_ *Task, l List[T], x T) bool {
 	for _, y := range l.s {
 		if Eq(x, y) {
 			return true
@@ -469,8 +469,8 @@ func (l List[T]) M_contains(_ *Task, x T) bool {
 	return false
 }
 
-// M_index_of is `xs.index_of(x)`.
-func (l List[T]) M_index_of(_ *Task, x T) Option[int64] {
+// List_index_of is `xs.index_of(x)`.
+func List_index_of[T any](_ *Task, l List[T], x T) Option[int64] {
 	for i, y := range l.s {
 		if Eq(x, y) {
 			return Some(int64(i))
@@ -490,8 +490,8 @@ func List_indexed[T any](_ *Task, l List[T]) List[Tuple2[int64, T]] {
 	return ListOf(out...)
 }
 
-// M_reverse is `xs.reverse()`.
-func (l List[T]) M_reverse(*Task) List[T] {
+// List_reverse is `xs.reverse()`.
+func List_reverse[T any](_ *Task, l List[T]) List[T] {
 	out := make([]T, len(l.s))
 	for i, x := range l.s {
 		out[len(l.s)-1-i] = x
@@ -500,20 +500,20 @@ func (l List[T]) M_reverse(*Task) List[T] {
 	return ListOf(out...)
 }
 
-// M_sort is `xs.sort()`: stable, by the Ord of T.
-func (l List[T]) M_sort(*Task) List[T] {
+// List_sort is `xs.sort()`: stable, by the Ord of T.
+func List_sort[T any](_ *Task, l List[T]) List[T] {
 	out := slices.Clone(l.s)
 	slices.SortStableFunc(out, func(a, b T) int { return Cmp(a, b) })
 	markElems(out)
 	return ListOf(out...)
 }
 
-// M_to_set is `xs.to_set()`.
-func (l List[T]) M_to_set(*Task) Set[T] {
+// List_to_set is `xs.to_set()`.
+func List_to_set[T any](_ *Task, l List[T]) Set[T] {
 	var s Set[T]
 	markElems(l.s)
 	for _, x := range l.s {
-		s.M_add(nil, x)
+		Set_add(nil, &s, x)
 	}
 	return s
 }
@@ -695,7 +695,7 @@ func (b Buf[T]) M_len(*Task) int64 { return int64(len(b.s)) }
 func (b Buf[T]) M_freeze(*Task) List[T] { return ListOf(b.s...) }
 
 // All iterates the elements.
-func (b Buf[T]) All() iter.Seq[T] { return List[T]{s: b.s}.All() }
+func (b Buf[T]) All() iter.Seq[T] { return List_All(List[T]{s: b.s}) }
 
 // XoDebug implements Debug.
 func (b Buf[T]) XoDebug(sb *strings.Builder) {
@@ -776,6 +776,6 @@ func cmpInt(a, b int) int {
 	return 0
 }
 
-// Items returns the elements of a list for iteration; callers must not
+// List_Items returns the elements of a list for iteration; callers must not
 // modify them.
-func (l List[T]) Items() []T { return l.s }
+func List_Items[T any](l List[T]) []T { return l.s }

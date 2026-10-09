@@ -546,7 +546,7 @@ func (l *List[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 }
 
 // XoJsonEnc encodes a set as an array.
-func (s Set[T]) XoJsonEnc(tk *Task, w *JsonW) { s.M_to_list(tk).XoJsonEnc(tk, w) }
+func (s Set[T]) XoJsonEnc(tk *Task, w *JsonW) { Set_to_list(tk, s).XoJsonEnc(tk, w) }
 
 // XoJsonDec decodes an array into a set.
 func (s *Set[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
@@ -554,14 +554,14 @@ func (s *Set[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 	if err := l.XoJsonDec(tk, x, path); err != nil {
 		return err
 	}
-	*s = l.M_to_set(tk)
+	*s = List_to_set(tk, l)
 	return nil
 }
 
 // XoJsonEnc encodes a Map[Str, V] as an object, in insertion order.
 func (m Map[K, V]) XoJsonEnc(tk *Task, w *JsonW) {
 	w.ObjStart()
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		ks, ok := any(k).(string)
 		if !ok {
 			FaultHere("only Map[Str, V] encodes as JSON")
@@ -589,7 +589,7 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 		if err := JsonDec(tk, &v, obj.vals[k], path+"."+k); err != nil {
 			return err
 		}
-		out.M_put(tk, kk, v)
+		Map_put(tk, &out, kk, v)
 	}
 	*m = out
 	return nil
@@ -644,8 +644,8 @@ func (p *Json_Patch[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr 
 	return nil
 }
 
-// PatchAbsent reports whether a Patch value is Absent.
-func (p Json_Patch[T]) PatchAbsent() bool { return p.Tag <= 1 }
+// Json_Patch_PatchAbsent reports whether a Patch value is Absent.
+func Json_Patch_PatchAbsent[T any](p Json_Patch[T]) bool { return p.Tag <= 1 }
 
 // JsonObject returns the fields of a parsed object for generated decoders.
 func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {

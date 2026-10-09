@@ -18,10 +18,10 @@ var sinkStrMap Map[string, string]
 func TestAllocsSmallMap(t *testing.T) {
 	n := testing.AllocsPerRun(100, func() {
 		var m Map[string, string]
-		m.M_put(nil, "Content-Type", "application/json")
-		m.M_put(nil, "Accept", "*/*")
-		m.M_put(nil, "User-Agent", "x")
-		if m.M_get(nil, "Accept").V != "*/*" {
+		Map_put(nil, &m, "Content-Type", "application/json")
+		Map_put(nil, &m, "Accept", "*/*")
+		Map_put(nil, &m, "User-Agent", "x")
+		if Map_get(nil, m, "Accept").V != "*/*" {
 			t.Fatal("lookup")
 		}
 		sinkStrMap = m
@@ -99,12 +99,12 @@ type allocState struct {
 // Own copies such a value without moving it to the heap.
 func TestAllocsMutexRead(t *testing.T) {
 	var users Map[int64, string]
-	users.M_put(nil, 1, "ada")
+	Map_put(nil, &users, 1, "ada")
 	m := Mutex_new(nil, allocState{users: users, next: 2})
 	tk := &Task{node: newNode(nil, nil), th: newRootThread("test"), held: new(heldSet)}
 	n := testing.AllocsPerRun(100, func() {
 		r := Mutex_with_read(tk, m, func(_ *Task, st allocState) Result[Option[string], Never] {
-			return Ok[Option[string], Never](st.users.M_get(nil, 1))
+			return Ok[Option[string], Never](Map_get(nil, st.users, 1))
 		})
 		if r.V.V != "ada" {
 			t.Fatal("read")
@@ -211,15 +211,15 @@ func TestAllocsJsonEncode(t *testing.T) {
 // Ranging over m.All() allocates nothing.
 func TestAllocsMapAll(t *testing.T) {
 	var m Map[string, string]
-	m.M_put(nil, "a", "1")
-	m.M_put(nil, "b", "2")
-	m.M_put(nil, "a", "3") // an overwrite: the eachRoot path
+	Map_put(nil, &m, "a", "1")
+	Map_put(nil, &m, "b", "2")
+	Map_put(nil, &m, "a", "3") // an overwrite: the eachRoot path
 	var mm Map[string, string]
-	mm.M_put(nil, "a", "1")
+	Map_put(nil, &mm, "a", "1")
 	for _, x := range []Map[string, string]{m, mm} {
 		n := testing.AllocsPerRun(100, func() {
 			c := 0
-			for k, v := range x.All() {
+			for k, v := range Map_All(x) {
 				c += len(k) + len(v)
 			}
 			if c != 4 && c != 2 {
@@ -233,7 +233,7 @@ func TestAllocsMapAll(t *testing.T) {
 	// m.values() in a loop (`m.values().any(f)`), as generated code ranges
 	var users Map[int64, allocRec]
 	for i := range int64(8) {
-		users.M_put(nil, i, allocRec{id: i, name: "u"})
+		Map_put(nil, &users, i, allocRec{id: i, name: "u"})
 	}
 	n := testing.AllocsPerRun(100, func() {
 		found := false

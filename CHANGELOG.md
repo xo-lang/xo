@@ -43,6 +43,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (as `xo fix`), reformats, then reports what remains plus an `applied`
   list; the MCP `check` tool takes `fix`, and the bench harness agent
   loop uses it while still scoring first runs as written and after fix.
+- Go backend output (decision 0098): hello world 7.9 to 3.6 MB, Go build
+  cache growth per program 34 to 2.9 MB, compile memory 286 to 123 MB.
+  Binaries carry no DWARF or symbol table (`XO_GO_DWARF=1` keeps them for
+  a debugger); programs that do not import std/http do not link net/http.
 
 ## v0.7.0 (2026-10-09)
 

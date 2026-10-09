@@ -308,7 +308,18 @@ for deadlock reports through Go calls (decision 0073); `XO_GOTIMERS=off`
 drops them, and a failed link of that symbol is retried without them with
 one warning line (`xo build: warning: deadlock detection through Go
 callbacks is off ...`; gotcha `go-runtime-timer-linkname.md`; Last
-verified: 2026-10-08 with Go 1.26.1). It prints one
+verified: 2026-10-08 with Go 1.26.1). Every Go backend build also passes
+`-gcflags=all=-dwarf=false` and `-ldflags=-s -w` (merged with the
+`-ldflags` above): no DWARF in the cached objects (a third of each) or the
+binary, and no symbol table. Xo's stack traces, faults, crash bundles, and
+`xo dump` read the pclntab through the Go runtime, which stays; only a
+native debugger (Delve) needs DWARF, and `XO_GO_DWARF=1` keeps both. A
+program (not a test binary) that does not import std/http, directly or
+through std modules, is built with the tag `xo_nohttp` (gen.Program.Tags),
+which swaps the real server and client in `std/rt/http_net.go` for the stubs
+in `http_nonet.go`, so the binary does not link Go's net/http (hello world
+3.6 MB instead of 4.9 MB; bench/results/binary-size-2026-10-09.md; Last
+verified: 2026-10-09). It prints one
 `os/arch: path` line per binary. `--targets=all` is linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, and
 `wasi/wasm32` (Go's wasip1/wasm). Binaries go to `-o` (a file for one
@@ -512,6 +523,11 @@ Last verified: 2026-10-07
   `.tools/bin` (staticcheck, errcheck, nilaway, exhaustive), installed with
   `GOBIN=$PWD/.tools/bin go install <pkg>@latest`. The built `xo` binary is
   also placed there (`go build -o .tools/bin/xo ./cmd/xo`).
+- `bench/size/measure.sh <dirs>` (2026-10-09): binary size, Go build
+  cache growth, peak RSS, and wall time of `xo build` per program against
+  a fresh cache with the runtime warmed (`MODE=test` for `xo test`,
+  `XO=<binary>` to compare builds); results in
+  `bench/results/binary-size-2026-10-09.md`. Last verified: 2026-10-09.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -866,7 +882,9 @@ Last verified: 2026-10-08. Rules and choices; details in
 `bench/results/gen-run-v0.4.md`.
 
 - One Go package per Xo module (`xoprog/m/x_<module path>`), one file
-  `xo.go`. Std modules map onto package `rt`. Go names: types keep their
+  `xo.go`; the main module's package also has `xo_main.go` with `XoMain`
+  (2026-10-09), the run of `main` that package main calls, so package
+  main names no runtime type (see the bullet on runtime generic types). Std modules map onto package `rt`. Go names: types keep their
   Xo name (std types are `<Module>_<Name>` in rt, `Http_Request`), payload
   types `<Enum>_<Variant>`, functions `F_<name>`, constants `C_<NAME>`,
   methods `M_<name>`, fields `F_<name>`, locals `v_<name>` (numbered when
@@ -882,6 +900,18 @@ Last verified: 2026-10-08. Rules and choices; details in
   `Display`/`Error`/`Debug` `rt.IDisplay`/`rt.IError`/`rt.IDebug`,
   `Chan`/`Mutex`/`Atomic` pointers to rt handles, List/Map/Set rt
   persistent collections.
+- Runtime generic types carry only protocol methods (2026-10-09):
+  `XoEq`, `XoHash`, `XoCmp`, `XoDebug`, `XoJsonEnc`, `XoJsonDec`,
+  `XoJsonRead`, `XoGenAny`, `XoMark`, `M_display`, `M_debug`. Prelude
+  methods of List, Map, Set, Option, Result, Chan, Secret, and json.Patch
+  and the generator's helpers are package level functions:
+  `rt.List_len[T](tk, xs)`, `rt.Map_put(tk, &m, k, v)`,
+  `rt.List_At(xs, i, loc)`, `rt.List_PushFast(xs, x)` (`rtFuncMethods`,
+  internal/gen/decl.go). Go compiles every method of every generic type a
+  package mentions, in that package, so methods there cost every
+  generated package (`gotchas/go-generic-method-sets-per-package.md`,
+  enforced by `TestGenericMethodSets`). These types satisfy Xo interfaces
+  through generated adapters (also in the `--no-mono` registry).
 - A function value of type `fn(A) -> R ! E` is `func(*rt.Task, A)
   rt.Result[R, E]`; one that cannot fail uses E = `rt.Never`, so the form
   never depends on whether a generic error parameter was instantiated with
@@ -918,10 +948,10 @@ Last verified: 2026-10-08. Rules and choices; details in
   sized integer widening, loops iterated to a fixed point with widening,
   plus symbolic `i <= len(xs) - 1` bounds for lists under parameters and
   `let`/`for` bindings) marks operations that cannot fault; they are
-  plain Go, and `xs[i]` proven in range is `List.AtU`. Other operations
+  plain Go, and `xs[i]` proven in range is `rt.List_AtU`. Other operations
   with a constant operand use one comparison forms (`rt.AddIUp`,
   `rt.SubIDown`, `rt.MulIK`/`MulKI`, plain `/` and `%` by a constant other
-  than 0 and -1); the rest call `rt.AddI..RemI` and `List.AtM` (typed,
+  than 0 and -1); the rest call `rt.AddI..RemI` and `rt.List_AtM` (typed,
   inlinable, fault by `panic(&arithFault{...})`, converted to a
   `*FaultErr` with the operation's stack at the first recover), or under
   `--no-mono` the generic `rt.AddS` family. `TestRangeElision`,
@@ -934,8 +964,9 @@ Last verified: 2026-10-08. Rules and choices; details in
   Result, tuples, other structs) is stored in `rt.Box[T]`.
 - Assignment resolves the place first (index operands left to right), then
   writes. Through List elements and fields it writes in place: each list
-  on the path is made the unique owner of its array (`if !p.Mine() { p =
-  p.Unshared() }`), then `p.PtrM(i)` or `p.PutM(i, v)`; a compound
+  on the path is made the unique owner of its array (`if
+  !rt.List_Mine(p) { p = rt.List_Unshared(p) }`), then
+  `rt.List_PtrM(p, i)` or `rt.List_PutM(p, i, v)`; a compound
   assignment uses one address for the read and the write. Through a Map
   value or a box it reads, marks, modifies, and writes back
   (`m[k].count += 1`). A std `var` method on an element (`xs[i].push(x)`)
@@ -945,7 +976,7 @@ Last verified: 2026-10-08. Rules and choices; details in
 - List ownership (2026-10-08, internal/gen/own.go, rationale and numbers
   in `bench/results/perf-list-2026-10-08.md`): a read of a binding,
   field, or element whose type holds lists is wrapped in an own mark
-  (`(x).Own()`, or a function literal calling generated `XoMark` methods
+  (`rt.List_Own(x)`, or a function literal calling generated `XoMark` methods
   for structs, tuples, Options, Results; `rt.Own` for type parameters)
   unless the reading expression borrows it: field and element bases,
   receivers of read only List methods, comparison, `+`, and
@@ -955,8 +986,9 @@ Last verified: 2026-10-08. Rules and choices; details in
   are marked except fresh producers (`freshStd`); closures mark what they
   capture; interface conversions mark. Structs and newtypes whose fields
   hold lists get `func (v *T) XoMark()`. `push` on a binding or field
-  path is `if p.CanPush() { p = p.PushFast(x) } else { p = p.PushSlow(x)
-  }`. A field read of an element is `xs.RefM(i, at).F_f` (no copy of the
+  path is `if rt.List_CanPush(p) { p = rt.List_PushFast(p, x) } else { p
+  = rt.List_PushSlow(p, x) }`. A field read of an element is
+  `rt.List_RefM(xs, i, at).F_f` (no copy of the
   element) when the statement cannot write the list. Rules for changes:
   `gotchas/list-own-marks.md`. Tests: golden `list_value_semantics`
   (also under `-race`), `TestListModel`.
@@ -1662,7 +1694,7 @@ Last verified: 2026-10-08.
   `option.go` prelude methods; `mono.go` typed helpers of the default
   lowering (`AddI`, `SubI`, `MulI`, `DivI`, `RemI` on int64 with panic
   valued faults, the constant operand forms `AddIUp`, `AddIDown`,
-  `SubIUp`, `SubIDown`, `MulIK`, `MulKI`, `CmpO`, `List.AtM`, `List.AtU`;
+  `SubIUp`, `SubIDown`, `MulIK`, `MulKI`, `CmpO`, `List_AtM`, `List_AtU`;
   same results and fault messages as the generic forms, checked by
   `mono_test.go`); `core.go` `Iface` and `RegAdapter` (interface adapters
   registered by package main for generic code).
@@ -1888,6 +1920,12 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
   doubling (sieve peak RSS 68 MB against Go's 48 MB).
 
 ## Go build cache (2026-10-08)
+
+Per program growth (2026-10-09, after the fixes of
+`gotchas/go-generic-method-sets-per-package.md`): hello world 2.9 MB,
+examples/notes-service 6.9 MB, its test binary 8.4 MB (34, 54, and 68 MB
+before); the runtime itself is about 13 MB per variant (with and without
+`xo_nohttp`). Last verified: 2026-10-09.
 
 Xo builds and bindings run Go with `GOCACHE` set to `$XO_GOCACHE` (default
 `<user cache>/xo/gocache`), trimmed by least recent use to stay under

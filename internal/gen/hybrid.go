@@ -102,9 +102,9 @@ func (pg *pkgGen) genHybrid(fo *check.FuncObj, hf HybridFunc, name string, pname
 		if et := pg.hybridSlice(p.Type); et != "" {
 			decl = append(decl, fmt.Sprintf("p%d []%s", i, et))
 			if unshare[i] {
-				pre = append(pre, fmt.Sprintf("\tif !%s.Mine() {\n\t\t%s = %s.Unshared()\n\t}\n", ref, ref, ref))
+				pre = append(pre, fmt.Sprintf("\tif !%sList_Mine(%s) {\n\t\t%s = %sList_Unshared(%s)\n\t}\n", pg.rt(), ref, ref, pg.rt(), ref))
 			}
-			call = append(call, ref+".Slice()")
+			call = append(call, pg.rt()+"List_Slice("+ref+")")
 			continue
 		}
 		decl = append(decl, fmt.Sprintf("p%d %s", i, pg.goType(p.Type)))

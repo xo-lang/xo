@@ -120,7 +120,7 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 	if capture != nil {
 		var fm Map[string, string]
 		for _, f := range fields {
-			fm.M_put(nil, f.k, f.v)
+			Map_put(nil, &fm, f.k, f.v)
 		}
 		s.mu.Lock()
 		capture.recs = append(capture.recs, Log_Record{F_level: Log_Level{Tag: level}, F_msg: msg, F_fields: fm})
@@ -141,7 +141,7 @@ func logRecord(tk *Task, level int, msg string, fields []logField) {
 
 func logFields(tk *Task, m Map[string, IDebug]) []logField {
 	var out []logField
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		s := ""
 		var raw any
 		if v != nil {

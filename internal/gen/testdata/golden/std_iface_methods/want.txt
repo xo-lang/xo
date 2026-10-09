@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+list 3 3 false true
+map 1 1 false
+set 2 2 true false
+empty true
+option true 3 result true 1
+--- stderr

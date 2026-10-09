@@ -49,7 +49,7 @@ type fnGen struct {
 	borrowed map[ast.Expr]bool
 	// unit is the expression whose Go code is being generated as one
 	// statement or condition (nil when unknown): a read in place of a
-	// List element's field (List.RefM) is used only when unit cannot write
+	// List element's field (rt.List_RefM) is used only when unit cannot write
 	// the list, since Go may load the field after a later call in the same
 	// expression.
 	unit ast.Node
@@ -1089,15 +1089,18 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	case "MapView":
 		elem = f.tmp("e")
 		header = fmt.Sprintf("%s := range %s%s(%s)", elem, f.rt(), seq, itv)
-	case "List", "Buf":
+	case "List":
+		elem = f.tmp("e")
+		header = fmt.Sprintf("_, %s := range %sList_Items(%s)", elem, f.rt(), itv)
+	case "Buf":
 		elem = f.tmp("e")
 		header = fmt.Sprintf("_, %s := range %s.Items()", elem, itv)
 	case "Set":
 		elem = f.tmp("e")
-		header = fmt.Sprintf("%s := range %s.All()", elem, itv)
+		header = fmt.Sprintf("%s := range %sSet_All(%s)", elem, f.rt(), itv)
 	case "Map":
 		k, v := f.tmp("k"), f.tmp("v")
-		header = fmt.Sprintf("%s, %s := range %s.All()", k, v, itv)
+		header = fmt.Sprintf("%s, %s := range %sMap_All(%s)", k, v, f.rt(), itv)
 		elem = fmt.Sprintf("%sTuple2[%s, %s]{F0: %s, F1: %s}", f.rt(), f.goType(n.Args[0]), f.goType(n.Args[1]), k, v)
 		if tp, ok := x.Pattern.(*ast.TuplePat); ok && len(tp.Elems) == 2 {
 			elem = ""
@@ -1116,13 +1119,13 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 			return
 		}
 	case "Chan":
-		// receive until closed and drained (core 3.5, 7.3); M_recv is a
-		// cancellation point that unwinds
+		// receive until closed and drained (core 3.5, 7.3); Chan_recv is
+		// a cancellation point that unwinds
 		rv := f.tmp("rv")
 		elem = rv + ".V"
 		body := f.capture(func() {
 			f.ind++
-			f.line("%s := %s.M_recv(tk)", rv, itv)
+			f.line("%s := %sChan_recv(tk, %s)", rv, f.rt(), itv)
 			f.line("if !%s.Some {", rv)
 			f.line("\tbreak")
 			f.line("}")
@@ -1263,12 +1266,12 @@ func (f *fnGen) readPlace(p *placeRef) string {
 			code += "." + st.name + ".Get()"
 		case psList:
 			if f.pg.monoOn() {
-				code += fmt.Sprintf(".AtM(%s, %q)", st.idx, st.loc)
+				code = fmt.Sprintf("%sList_AtM(%s, %s, %q)", f.rt(), code, st.idx, st.loc)
 			} else {
-				code += fmt.Sprintf(".At(%s, %q)", st.idx, st.loc)
+				code = fmt.Sprintf("%sList_At(%s, %s, %q)", f.rt(), code, st.idx, st.loc)
 			}
 		default:
-			code += fmt.Sprintf(".At(%s, %q)", st.idx, st.loc)
+			code = fmt.Sprintf("%sMap_At(%s, %s, %q)", f.rt(), code, st.idx, st.loc)
 		}
 	}
 	return code
@@ -1318,7 +1321,7 @@ func (f *fnGen) resolveAddrPlace(e ast.Expr) *placeRef {
 }
 
 // placeAddr emits the steps of a listPath place (uniqueList, then
-// List.PtrM, per element) and returns an addressable Go expression for
+// rt.List_PtrM, per element) and returns an addressable Go expression for
 // it; each list on the way becomes the unique owner of its array
 // (rt/list.go).
 func (f *fnGen) placeAddr(p *placeRef) string {
@@ -1330,7 +1333,7 @@ func (f *fnGen) placeAddr(p *placeRef) string {
 		}
 		f.uniqueList(cur)
 		pt := f.tmp("ep")
-		f.line("%s := %s.PtrM(%s, %q)", pt, cur, st.idx, st.loc)
+		f.line("%s := %sList_PtrM(%s, %s, %q)", pt, f.rt(), cur, st.idx, st.loc)
 		cur = "(*" + pt + ")"
 	}
 	return cur
@@ -1340,8 +1343,8 @@ func (f *fnGen) placeAddr(p *placeRef) string {
 // unique owner of its array, copying it if it is shared (rt/list.go:
 // the inline write forms).
 func (f *fnGen) uniqueList(cur string) {
-	f.line("if !%s.Mine() {", cur)
-	f.line("	%s = %s.Unshared()", cur, cur)
+	f.line("if !%sList_Mine(%s) {", f.rt(), cur)
+	f.line("	%s = %sList_Unshared(%s)", cur, f.rt(), cur)
 	f.line("}")
 }
 
@@ -1382,15 +1385,15 @@ func (f *fnGen) writeSteps(cur string, steps []pstep, v string) {
 		case psList:
 			f.uniqueList(cur)
 			if last {
-				f.line("%s.PutM(%s, %s, %q)", cur, st.idx, v, st.loc)
+				f.line("%sList_PutM(%s, %s, %s, %q)", f.rt(), cur, st.idx, v, st.loc)
 				return
 			}
 			pt := f.tmp("ep")
-			f.line("%s := %s.PtrM(%s, %q)", pt, cur, st.idx, st.loc)
+			f.line("%s := %sList_PtrM(%s, %s, %q)", pt, f.rt(), cur, st.idx, st.loc)
 			cur = "(*" + pt + ")"
 		case psMap, psBoxed:
 			if last && st.kind == psMap {
-				f.line("%s.M_put(tk, %s, %s)", cur, st.idx, v)
+				f.line("%sMap_put(tk, &%s, %s, %s)", f.rt(), cur, st.idx, v)
 				return
 			}
 			if last {
@@ -1399,7 +1402,7 @@ func (f *fnGen) writeSteps(cur string, steps []pstep, v string) {
 			}
 			tmp := f.tmp("rw")
 			if st.kind == psMap {
-				f.line("%s := %s.At(%s, %q)", tmp, cur, st.idx, st.loc)
+				f.line("%s := %sMap_At(%s, %s, %q)", tmp, f.rt(), cur, st.idx, st.loc)
 			} else {
 				f.line("%s := %s.%s.Get()", tmp, cur, st.name)
 			}
@@ -1409,7 +1412,7 @@ func (f *fnGen) writeSteps(cur string, steps []pstep, v string) {
 			}
 			f.writeSteps(tmp, steps[i+1:], v)
 			if st.kind == psMap {
-				f.line("%s.M_put(tk, %s, %s)", cur, st.idx, tmp)
+				f.line("%sMap_put(tk, &%s, %s, %s)", f.rt(), cur, st.idx, tmp)
 			} else {
 				f.line("%s.%s = %sBoxOf(%s)", cur, st.name, f.rt(), tmp)
 			}

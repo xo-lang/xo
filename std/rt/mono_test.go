@@ -114,8 +114,8 @@ func TestConstIntArith(t *testing.T) {
 func TestAtM(t *testing.T) {
 	l := ListOf[int64](10, 20, 30)
 	for _, i := range []int64{-1, 0, 2, 3, math.MinInt64, math.MaxInt64} {
-		tv, tf := outcome(func() int64 { return l.AtM(i, "x.xo:3:4") })
-		gv, gf := outcome(func() int64 { return l.At(i, "x.xo:3:4") })
+		tv, tf := outcome(func() int64 { return List_AtM(l, i, "x.xo:3:4") })
+		gv, gf := outcome(func() int64 { return List_At(l, i, "x.xo:3:4") })
 		if tv != gv || tf != gf {
 			t.Fatalf("index %d: AtM (%d, %q), At (%d, %q)", i, tv, tf, gv, gf)
 		}

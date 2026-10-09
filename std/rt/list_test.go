@@ -13,24 +13,24 @@ import (
 // CanPush/PushFast/PushSlow.
 
 func setL[T any](l *List[T], i int, x T) {
-	if !l.Mine() {
-		*l = l.Unshared()
+	if !List_Mine(*l) {
+		*l = List_Unshared(*l)
 	}
-	l.PutM(int64(i), x, "test")
+	List_PutM(*l, int64(i), x, "test")
 }
 
 func pushL[T any](l *List[T], x T) {
-	if l.CanPush() {
-		*l = l.PushFast(x)
+	if List_CanPush(*l) {
+		*l = List_PushFast(*l, x)
 	} else {
-		*l = l.PushSlow(x)
+		*l = List_PushSlow(*l, x)
 	}
 }
 
 func checkList(t *testing.T, where string, l List[int64], want []int64) {
 	t.Helper()
-	if !slices.Equal(l.Slice(), want) {
-		t.Fatalf("%s: %v, want %v", where, l.Slice(), want)
+	if !slices.Equal(List_Slice(l), want) {
+		t.Fatalf("%s: %v, want %v", where, List_Slice(l), want)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestListModel(t *testing.T) {
 			switch op := rng.IntN(11); {
 			case op == 0: // copy out of a place
 				j := rng.IntN(len(pool))
-				pool[j] = pool[i].Own()
+				pool[j] = List_Own(pool[i])
 				refs[j] = slices.Clone(r)
 			case op <= 2 && len(r) > 0:
 				k := rng.IntN(len(r))
@@ -59,18 +59,18 @@ func TestListModel(t *testing.T) {
 				pushL(l, v)
 				refs[i] = append(r, v)
 			case op == 5 && len(r) > 0:
-				got := l.M_pop(nil)
+				got := List_pop(nil, l)
 				if !got.Some || got.V != r[len(r)-1] {
 					t.Fatalf("seed %d step %d: pop %v, want %d", seed, step, got, r[len(r)-1])
 				}
 				refs[i] = r[:len(r)-1]
 			case op == 6:
 				k := rng.IntN(len(r) + 1)
-				l.M_insert(nil, int64(k), v)
+				List_insert(nil, l, int64(k), v)
 				refs[i] = slices.Insert(r, k, v)
 			case op == 7 && len(r) > 0:
 				k := rng.IntN(len(r))
-				if got := l.M_remove_at(nil, int64(k)); got != r[k] {
+				if got := List_remove_at(nil, l, int64(k)); got != r[k] {
 					t.Fatalf("seed %d step %d: remove_at %d, want %d", seed, step, got, r[k])
 				}
 				refs[i] = slices.Delete(r, k, k+1)
@@ -78,16 +78,16 @@ func TestListModel(t *testing.T) {
 				lo := rng.IntN(len(r) + 1)
 				hi := lo + rng.IntN(len(r)-lo+1)
 				j := rng.IntN(len(pool))
-				pool[j] = pool[i].SliceRange(int64(lo), int64(hi), true, true, "test")
+				pool[j] = List_SliceRange(pool[i], int64(lo), int64(hi), true, true, "test")
 				refs[j] = slices.Clone(r[lo:hi])
 			case op == 9:
 				j := rng.IntN(len(pool))
 				k := rng.IntN(len(pool))
-				pool[k] = pool[i].Concat(pool[j])
+				pool[k] = List_Concat(pool[i], pool[j])
 				refs[k] = append(slices.Clone(refs[i]), refs[j]...)
 			case op == 10 && len(r) > 0:
 				k := rng.IntN(len(r))
-				l.M_set(nil, int64(k), v)
+				List_set(nil, l, int64(k), v)
 				r[k] = v
 			}
 			for k := range pool {
@@ -122,12 +122,12 @@ func TestListNested(t *testing.T) {
 		switch op := rng.IntN(6); {
 		case op == 0:
 			j := rng.IntN(3)
-			pool[j] = pool[i].Own()
+			pool[j] = List_Own(pool[i])
 			refs[j] = clone(r)
 		case op == 1 && len(r) > 0:
 			// `let row = g[k]`: an element copied out of a place
 			k := rng.IntN(len(r))
-			rows = append(rows, g.AtM(int64(k), "test").Own())
+			rows = append(rows, List_Own(List_AtM(*g, int64(k), "test")))
 			rowRefs = append(rowRefs, slices.Clone(r[k]))
 		case op == 2 && len(r) > 0 && len(r[0]) > 0:
 			// `g[k][c] = v`
@@ -136,18 +136,18 @@ func TestListNested(t *testing.T) {
 				break
 			}
 			c := rng.IntN(len(r[k]))
-			if !g.Mine() {
-				*g = g.Unshared()
+			if !List_Mine(*g) {
+				*g = List_Unshared(*g)
 			}
-			setL(g.PtrM(int64(k), "test"), c, v)
+			setL(List_PtrM(*g, int64(k), "test"), c, v)
 			r[k][c] = v
 		case op == 3 && len(r) > 0:
 			// `g[k].push(v)` through the element's address
 			k := rng.IntN(len(r))
-			if !g.Mine() {
-				*g = g.Unshared()
+			if !List_Mine(*g) {
+				*g = List_Unshared(*g)
 			}
-			pushL(g.PtrM(int64(k), "test"), v)
+			pushL(List_PtrM(*g, int64(k), "test"), v)
 			r[k] = append(r[k], v)
 		case op == 4:
 			// `g.push(row)` of a fresh row
@@ -156,11 +156,11 @@ func TestListNested(t *testing.T) {
 		case op == 5 && len(rows) > 0:
 			// `g.push(row)` of a row read out earlier (an own site)
 			k := rng.IntN(len(rows))
-			pushL(g, rows[k].Own())
+			pushL(g, List_Own(rows[k]))
 			refs[i] = append(r, slices.Clone(rowRefs[k]))
 		}
 		for k := range pool {
-			got := pool[k].Slice()
+			got := List_Slice(pool[k])
 			if len(got) != len(refs[k]) {
 				t.Fatalf("step %d: list %d has %d rows, want %d", step, k, len(got), len(refs[k]))
 			}
@@ -184,19 +184,19 @@ func TestListConcurrentReaders(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for round := range 8 {
-		snap := l.Own()
-		want := slices.Clone(snap.Slice())
+		snap := List_Own(l)
+		want := slices.Clone(List_Slice(snap))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for range 200 {
-				if !slices.Equal(snap.Slice(), want) {
+				if !slices.Equal(List_Slice(snap), want) {
 					t.Errorf("round %d: snapshot changed", round)
 					return
 				}
 			}
 			// the reader writes its own copy too
-			c := snap.Own()
+			c := List_Own(snap)
 			setL(&c, 0, -1)
 			pushL(&c, -2)
 		}()
@@ -225,8 +225,8 @@ func BenchmarkListPushPop(b *testing.B) {
 	for i := range b.N {
 		pushL(&l, int64(i))
 		if i%3 == 2 {
-			l.M_pop(nil)
-			l.M_pop(nil)
+			List_pop(nil, &l)
+			List_pop(nil, &l)
 		}
 	}
 }
@@ -247,7 +247,7 @@ func BenchmarkListCopySet(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := range b.N {
-		c := base.Own()
+		c := List_Own(base)
 		setL(&c, i%50000, -1)
 	}
 }
@@ -256,7 +256,7 @@ func BenchmarkListInsertMiddle(b *testing.B) {
 	for range b.N {
 		var l List[int64]
 		for i := range int64(2000) {
-			l.M_insert(nil, int64(l.M_len(nil)/2), i)
+			List_insert(nil, &l, int64(List_len(nil, l)/2), i)
 		}
 	}
 }

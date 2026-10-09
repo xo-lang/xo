@@ -33,3 +33,10 @@ trim runs at most once a minute. Tests:
 `TestTrimGoCache{KeepsRecentDuringBuild,RemovesRecentWhenIdle,WaitsForBuild}`.
 Older xo binaries (`.tools/bin/xo-0.6`) take no lock; a build of theirs
 during a trim can still hit the original race and recovers on rerun.
+
+Update (2026-10-09, later): the per program growth itself is down from
+about 34 MB to 3 to 9 MB (hello world 2.9 MB, examples/notes-service
+6.9 MB, its test binary 8.4 MB): runtime generic types no longer carry
+their method sets into every package and objects have no DWARF
+(`go-generic-method-sets-per-package.md`,
+bench/results/binary-size-2026-10-09.md).

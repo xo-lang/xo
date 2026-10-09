@@ -29,7 +29,7 @@ package gen
 //     gets its own copy (`<name>__<types>_lit`) that inlines the literal
 //     where the copy calls the parameter (lambda specialization).
 //   - Int arithmetic and List indexing use typed, inlinable runtime
-//     helpers (rt.AddI and friends, List.AtM in std/rt/mono.go), unless
+//     helpers (rt.AddI and friends, rt.List_AtM in std/rt/mono.go), unless
 //     the range analysis (ranges.go) proved them safe.
 //
 // Go forms (whether a function returns rt.Result, takes `.V`, and so on)
@@ -629,11 +629,11 @@ func (f *fnGen) hofInline(x *ast.CallExpr, ci *check.Call) (string, bool) {
 	sv := f.tmp("src")
 	f.line("%s := %s", sv, src)
 	e := f.tmp("e")
-	header := fmt.Sprintf("_, %s := range %s.Items()", e, sv)
-	length := fmt.Sprintf("len(%s.Items())", sv)
+	header := fmt.Sprintf("_, %s := range %sList_Items(%s)", e, f.rt(), sv)
+	length := fmt.Sprintf("len(%sList_Items(%s))", f.rt(), sv)
 	if mapE != nil {
 		header = fmt.Sprintf("%s := range %s%s(%s)", e, r, seq, sv)
-		length = fmt.Sprintf("%s.Len()", sv)
+		length = fmt.Sprintf("%sMap_Len(%s)", f.rt(), sv)
 	}
 	loop := func(body func()) {
 		f.line("for %s {", header)

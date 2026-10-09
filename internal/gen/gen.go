@@ -79,6 +79,11 @@ type Program struct {
 	Specs int
 	// TZ is what the program needs of the zone database (timezone.go).
 	TZ TZUse
+	// Tags are the Go build tags the runtime needs for this program:
+	// xo_nohttp for a program (not a test binary) that does not import
+	// std/http, directly or through std modules, so the binary does not
+	// link net/http (std/rt/http_nonet.go).
+	Tags []string
 }
 
 // Error is a generation failure: a construct the P1 generator does not
@@ -118,6 +123,9 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	info := res.Info()
 	g := &gen{info: info, opts: opts, roots: res.Modules, pkgs: map[*check.Module]*pkgGen{}, modRoot: map[string]string{}, prelude: info.Prelude()}
 	prog := &Program{Files: map[string][]byte{}}
+	if opts.Mode == Build && !reachesStd(info, "std/http") {
+		prog.Tags = append(prog.Tags, "xo_nohttp")
+	}
 	g.initAdapt()
 	var mainMod *check.Module
 	for _, m := range info.AllModules() {
@@ -176,6 +184,11 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		}
 		prog.MainModule = mainMod.Path
 		mainSrc, err = g.mainFile(mainMod)
+		if err == nil {
+			var entry []byte
+			entry, err = g.mainEntryFile(mainMod)
+			prog.Files[g.pkgs[mainMod].dir+"/xo_main.go"] = entry
+		}
 	case Test:
 		mainSrc, err = g.testMainFile()
 	}
@@ -195,6 +208,39 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		prog.Files["go.sum"] = gosum
 	}
 	return prog, nil
+}
+
+// reachesStd reports whether the program's modules or the prelude import
+// the std module path, directly or through other std modules. std/testing,
+// which the checker always loads for test blocks, counts only when a
+// module imports it; callers treat test builds as importing it.
+func reachesStd(info *check.Info, path string) bool {
+	seen := map[*check.Module]bool{}
+	var stack []*check.Module
+	for _, m := range info.AllModules() {
+		if !m.IsStd || m.IsPrelude {
+			stack = append(stack, m)
+		}
+	}
+	for len(stack) > 0 {
+		m := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
+		if m.Path == path {
+			return true
+		}
+		for _, f := range m.Files {
+			for _, imp := range f.Imports {
+				if imp.Module != nil && !seen[imp.Module] {
+					stack = append(stack, imp.Module)
+				}
+			}
+		}
+	}
+	return false
 }
 
 // goBindings adds the adapters of `use go` bindings (decision 0041) to the

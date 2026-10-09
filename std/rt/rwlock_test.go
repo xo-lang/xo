@@ -393,11 +393,11 @@ func readerWaitsForReader(writer bool) func(w *World, s *Scope, add func(string)
 		m := Mutex_new[int64](body, 0)
 		ping := Chan_new[int64](body, 0)
 		Spawn(body, s, func(t *Task) Result[Unit, Never] {
-			Mutex_with_read(t, m, readFn(func(t *Task, v int64) { add("a"); ping.M_recv(t) }))
+			Mutex_with_read(t, m, readFn(func(t *Task, v int64) { add("a"); Chan_recv(t, ping) }))
 			return unit()
 		}, false, true)
 		Spawn(body, s, func(t *Task) Result[Unit, Never] {
-			Mutex_with_read(t, m, readFn(func(t *Task, v int64) { add("b"); ping.M_send(t, v) }))
+			Mutex_with_read(t, m, readFn(func(t *Task, v int64) { add("b"); Chan_send(t, ping, v) }))
 			return unit()
 		}, false, true)
 		if writer {
@@ -450,15 +450,15 @@ func TestMutexReadWriteStress(t *testing.T) {
 			for j := 0; j < 300; j++ {
 				if write {
 					Mutex_with(t, m, func(t *Task, v *List[int64]) Result[Unit, Never] {
-						v.M_push(t, int64(j))
+						List_push(t, v, int64(j))
 						return unit()
 					})
 				} else {
 					Mutex_with_read(t, m, func(t *Task, v List[int64]) Result[Unit, Never] {
 						// a reader's own copy may grow without touching m
 						w := v
-						w.M_push(t, -1)
-						if w.M_len(t) != v.M_len(t)+1 {
+						List_push(t, &w, -1)
+						if List_len(t, w) != List_len(t, v)+1 {
 							panic("copy")
 						}
 						return unit()
@@ -469,7 +469,7 @@ func TestMutexReadWriteStress(t *testing.T) {
 		}, false, true)
 	}
 	s.Close(nil, true, 0)
-	if n := m.v.M_len(nil); n != 4*300 {
+	if n := List_len(nil, m.v); n != 4*300 {
 		t.Fatalf("len %d, want %d", n, 4*300)
 	}
 }

@@ -32,13 +32,13 @@ func schedTrace(t *testing.T, seed int64) string {
 					return Ok[Unit, Never](Unit{})
 				})
 				add(string(rune('a'+i)) + string(rune('0'+j)))
-				ch.M_send(t, i)
+				Chan_send(t, ch, i)
 			}
 			return Ok[Unit, Never](Unit{})
 		}, false, true)
 	}
 	for k := 0; k < 9; k++ {
-		v := ch.M_recv(body)
+		v := Chan_recv(body, ch)
 		add("r" + string(rune('0'+v.V)))
 	}
 	s.Close(nil, true, 0)
@@ -174,14 +174,14 @@ func TestMonitorDeadlockAndDump(t *testing.T) {
 	held := Chan_new[int64](body, 1)
 	Spawn(body, s, func(t *Task) Result[Unit, Never] {
 		Mutex_with(t, m, func(t *Task, _ *int64) Result[Unit, Never] {
-			held.M_send(t, 1)
-			ch.M_recv(t)
+			Chan_send(t, held, 1)
+			Chan_recv(t, ch)
 			return Ok[Unit, Never](Unit{})
 		})
 		return Ok[Unit, Never](Unit{})
 	}, false, true)
 	Spawn(body, s, func(t *Task) Result[Unit, Never] {
-		held.M_recv(t)
+		Chan_recv(t, held)
 		Mutex_with(t, m, func(*Task, *int64) Result[Unit, Never] { return Ok[Unit, Never](Unit{}) })
 		return Ok[Unit, Never](Unit{})
 	}, false, true)

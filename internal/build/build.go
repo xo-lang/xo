@@ -115,6 +115,8 @@ type Options struct {
 	// "embedded" embeds the zones the program uses (tzdata.go), "system"
 	// reads the host database at run time (`--tzdata=system`).
 	TZData string
+	// tags are the program's Go build tags (gen.Program.Tags).
+	tags []string
 }
 
 // Result is the outcome of a build.
@@ -316,6 +318,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if out.Notes, err = tzFiles(prog, opts.TZData); err != nil {
 		return nil, err
 	}
+	opts.tags = prog.Tags
 	if opts.Mode == gen.Build {
 		out.Info = buildInfo(dirs, res, root, opts)
 		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
@@ -577,7 +580,30 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 	if opts.HybridPure {
 		extra = withTag(extra, "xo_pure")
 	}
-	args := append([]string{"build", "-trimpath"}, extra...)
+	for _, tag := range opts.tags {
+		extra = withTag(extra, tag)
+	}
+	args := []string{"build", "-trimpath"}
+	var ld []string
+	for _, a := range extra {
+		if s, ok := strings.CutPrefix(a, "-ldflags="); ok {
+			ld = append(ld, s)
+			continue
+		}
+		args = append(args, a)
+	}
+	if !GoDWARF() {
+		// no DWARF in the cached objects (a third of each) or in the
+		// binary, and no symbol table: Xo's stack traces, faults, crash
+		// bundles, and `xo dump` read the pclntab through the Go runtime,
+		// which -s -w keep (knowledgebase/infrastructure/toolchain.md,
+		// `xo build`)
+		args = append(args, "-gcflags=all=-dwarf=false")
+		ld = append(ld, "-s", "-w")
+	}
+	if len(ld) > 0 {
+		args = append(args, "-ldflags="+strings.Join(ld, " "))
+	}
 	args = append(args, "-o", bin)
 	if opts.Race {
 		args = append(args, "-race")
@@ -603,6 +629,11 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 	}
 	return nil
 }
+
+// GoDWARF reports whether Go backend builds keep DWARF and the symbol
+// table, for a native debugger such as Delve: XO_GO_DWARF=1. By default
+// they are left out.
+func GoDWARF() bool { return os.Getenv("XO_GO_DWARF") == "1" }
 
 // goTool finds the go command: $XO_GO, then PATH.
 func goTool() string {

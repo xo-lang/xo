@@ -42,11 +42,11 @@ func (r *mmodel) remove(k int64) {
 
 func checkModel(t *testing.T, where string, m Map[int64, int64], r mmodel, keys int64) {
 	t.Helper()
-	if int(m.M_len(nil)) != len(r.vals) {
-		t.Fatalf("%s: len %d, want %d", where, m.M_len(nil), len(r.vals))
+	if int(Map_len(nil, m)) != len(r.vals) {
+		t.Fatalf("%s: len %d, want %d", where, Map_len(nil, m), len(r.vals))
 	}
 	i := 0
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		if i >= len(r.order) || r.order[i] != k || r.vals[k] != v {
 			t.Fatalf("%s: entry %d is %d=%d, want order %v", where, i, k, v, r.order)
 		}
@@ -56,7 +56,7 @@ func checkModel(t *testing.T, where string, m Map[int64, int64], r mmodel, keys 
 		t.Fatalf("%s: iterated %d entries, want %d", where, i, len(r.order))
 	}
 	for k := range keys {
-		got := m.M_get(nil, k)
+		got := Map_get(nil, m, k)
 		want, ok := r.vals[k]
 		if got.Some != ok || got.V != want {
 			t.Fatalf("%s: get(%d) = %v, want %d %v", where, k, got, want, ok)
@@ -87,7 +87,7 @@ func TestMapModel(t *testing.T) {
 			switch op := rng.IntN(10); {
 			case op < 5:
 				v := rng.Int64()
-				pool[i].M_put(nil, k, v)
+				Map_put(nil, &pool[i], k, v)
 				refs[i].put(k, v)
 			case op < 6 && rng.IntN(2) == 0:
 				fail := rng.IntN(4) == 0
@@ -109,7 +109,7 @@ func TestMapModel(t *testing.T) {
 					refs[i].put(k, old+3)
 				}
 			case op < 7:
-				got := pool[i].M_remove(nil, k)
+				got := Map_remove(nil, &pool[i], k)
 				want, ok := refs[i].vals[k]
 				if got.Some != ok || got.V != want {
 					t.Fatalf("seed %d step %d: remove(%d) = %v, want %d %v", seed, step, k, got, want, ok)
@@ -121,14 +121,14 @@ func TestMapModel(t *testing.T) {
 				refs[j] = refs[i].clone()
 			case op < 9:
 				var u Map[int64, int64]
-				pool[i] = u.With(k, 1)
+				pool[i] = Map_With(u, k, 1)
 				refs[i] = mmodel{vals: map[int64]int64{}}
 				refs[i].put(k, 1)
 			default:
 				// A put that a copy makes and then drops: the original
 				// must not see it.
 				c := pool[i]
-				c.M_put(nil, k, -1)
+				Map_put(nil, &c, k, -1)
 			}
 			if step%7 == 0 || step == steps-1 {
 				for j := range pool {
@@ -154,14 +154,14 @@ func TestMapHeavyRewrite(t *testing.T) {
 		// Write through the snapshot first half the time, so m becomes
 		// stale and forks.
 		if round%2 == 0 {
-			snap.M_put(nil, 1000+round, round)
+			Map_put(nil, &snap, 1000+round, round)
 		}
 		for i := range int64(500) {
 			k := (i * 7) % 97
-			m.M_put(nil, k, round*1000+i)
+			Map_put(nil, &m, k, round*1000+i)
 			ref.put(k, round*1000+i)
 			if i%11 == 0 {
-				m.M_remove(nil, (k+3)%97)
+				Map_remove(nil, &m, (k+3)%97)
 				ref.remove((k + 3) % 97)
 			}
 		}
@@ -179,25 +179,25 @@ func TestMapLargeChurnedLog(t *testing.T) {
 	var m Map[int64, int64]
 	ref := mmodel{vals: map[int64]int64{}}
 	for k := range int64(400) {
-		m.M_put(nil, k, k)
+		Map_put(nil, &m, k, k)
 		ref.put(k, k)
 	}
 	snap, snapRef := m, ref.clone()
 	for k := int64(0); k < 300; k++ {
-		m.M_put(nil, (k*7)%400, -k)
+		Map_put(nil, &m, (k*7)%400, -k)
 		ref.put((k*7)%400, -k)
 	}
 	for k := int64(0); k < 20; k++ {
-		m.M_remove(nil, k*13)
+		Map_remove(nil, &m, k*13)
 		ref.remove(k * 13)
 	}
-	m.M_put(nil, 13, 99) // back after its removal: last in order
+	Map_put(nil, &m, 13, 99) // back after its removal: last in order
 	ref.put(13, 99)
 	if m.t.parent != nil || len(m.es) <= 512 || len(m.es) == m.n {
 		t.Fatalf("setup: parent %v log %d live %d, want a root log over 512 with garbage", m.t.parent != nil, len(m.es), m.n)
 	}
 	checkModel(t, "churned", m, ref, 400)
-	snap.M_put(nil, 1, 5) // the snapshot is stale now: it forks
+	Map_put(nil, &snap, 1, 5) // the snapshot is stale now: it forks
 	snapRef.put(1, 5)
 	checkModel(t, "snapshot", snap, snapRef, 400)
 	checkModel(t, "churned after fork", m, ref, 400)
@@ -208,7 +208,7 @@ func TestMapLargeChurnedLog(t *testing.T) {
 func TestMapConcurrentReaders(t *testing.T) {
 	var m Map[int64, int64]
 	for i := range int64(1000) {
-		m.M_put(nil, i, i)
+		Map_put(nil, &m, i, i)
 	}
 	var wg sync.WaitGroup
 	for r := range 4 {
@@ -218,19 +218,19 @@ func TestMapConcurrentReaders(t *testing.T) {
 			defer wg.Done()
 			for range 20 {
 				var sum int64
-				for k, v := range snap.All() {
+				for k, v := range Map_All(snap) {
 					if k != v {
 						t.Errorf("reader %d: %d=%d", r, k, v)
 						return
 					}
 					sum += v
 				}
-				if sum != 999*1000/2 || snap.M_len(nil) != 1000 {
-					t.Errorf("reader %d: sum %d len %d", r, sum, snap.M_len(nil))
+				if sum != 999*1000/2 || Map_len(nil, snap) != 1000 {
+					t.Errorf("reader %d: sum %d len %d", r, sum, Map_len(nil, snap))
 					return
 				}
 				for k := range int64(1000) {
-					if snap.M_get(nil, k).V != k {
+					if Map_get(nil, snap, k).V != k {
 						t.Errorf("reader %d: get %d", r, k)
 						return
 					}
@@ -245,13 +245,13 @@ func TestMapConcurrentReaders(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range int64(5000) {
-			other.M_put(nil, i%1500, -i)
+			Map_put(nil, &other, i%1500, -i)
 		}
 	}()
 	for i := range int64(20000) {
-		m.M_put(nil, i%1200, i+1)
+		Map_put(nil, &m, i%1200, i+1)
 		if i%5 == 0 {
-			m.M_remove(nil, (i+1)%1200)
+			Map_remove(nil, &m, (i+1)%1200)
 		}
 	}
 	wg.Wait()
@@ -259,12 +259,12 @@ func TestMapConcurrentReaders(t *testing.T) {
 
 func TestSetValueSemantics(t *testing.T) {
 	var s Set[string]
-	s.M_add(nil, "a")
-	s.M_add(nil, "b")
+	Set_add(nil, &s, "a")
+	Set_add(nil, &s, "b")
 	c := s
-	c.M_add(nil, "c")
-	c.M_remove(nil, "a")
-	s.M_add(nil, "d")
+	Set_add(nil, &c, "c")
+	Set_remove(nil, &c, "a")
+	Set_add(nil, &s, "d")
 	if got := Debug(s); got != `#{"a", "b", "d"}` {
 		t.Fatalf("s = %s", got)
 	}
@@ -282,21 +282,21 @@ func (c collide) XoEq(o any) bool { p, ok := o.(collide); return ok && p.n == c.
 func TestMapHashCollisions(t *testing.T) {
 	var m Map[collide, int64]
 	for i := range int64(200) {
-		m.M_put(nil, collide{i}, i)
+		Map_put(nil, &m, collide{i}, i)
 	}
 	snap := m
 	for i := range int64(200) {
 		if i%3 == 0 {
-			m.M_remove(nil, collide{i})
+			Map_remove(nil, &m, collide{i})
 		} else {
-			m.M_put(nil, collide{i}, -i)
+			Map_put(nil, &m, collide{i}, -i)
 		}
 	}
 	for i := range int64(200) {
-		if got := snap.M_get(nil, collide{i}); !got.Some || got.V != i {
+		if got := Map_get(nil, snap, collide{i}); !got.Some || got.V != i {
 			t.Fatalf("snapshot get %d = %v", i, got)
 		}
-		got := m.M_get(nil, collide{i})
+		got := Map_get(nil, m, collide{i})
 		if i%3 == 0 && got.Some || i%3 != 0 && got.V != -i {
 			t.Fatalf("get %d = %v", i, got)
 		}

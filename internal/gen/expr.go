@@ -597,7 +597,7 @@ func (f *fnGen) selector(x *ast.SelectorExpr) string {
 		return code
 	}
 	// the base is only read for the field: a borrow; a List element is
-	// read in place (List.RefM)
+	// read in place (rt.List_RefM)
 	var base string
 	if ix, ok := unparenExpr(x.X).(*ast.IndexExpr); ok && f.pg.monoOn() && f.g.isPrelude(f.typeOf(ix.X), "List") &&
 		f.unit != nil && !f.mutates(f.unit, f.rootVar(ix.X)) {
@@ -860,7 +860,7 @@ func (f *fnGen) binop(op, a, b string, xt, yt, rt check.Type, at ast.Node) strin
 		return "(" + a + " + " + b + ")"
 	}
 	if f.g.isPrelude(xt, "List") {
-		return a + ".Concat(" + b + ")"
+		return f.rt() + "List_Concat(" + a + ", " + b + ")"
 	}
 	if f.g.isFloat(xt) {
 		switch op {
@@ -1041,7 +1041,7 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 		case "Bytes":
 			return fmt.Sprintf("%sBytesSlice(%s, %s)", f.rt(), base, args)
 		}
-		return fmt.Sprintf("%s.SliceRange(%s)", base, args)
+		return fmt.Sprintf("%sList_SliceRange(%s, %s)", f.rt(), base, args)
 	}
 	baseOK := f.borrowOK(x.X, x.Index)
 	codes := f.operands(2, func(i int) string {
@@ -1060,16 +1060,16 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 	case "List":
 		if f.safeOp(x) {
 			// the range analysis proved 0 <= i < len (ranges.go)
-			return fmt.Sprintf("%s.AtU(%s)", codes[0], codes[1])
+			return fmt.Sprintf("%sList_AtU(%s, %s)", f.rt(), codes[0], codes[1])
 		}
 		if f.pg.monoOn() {
-			return fmt.Sprintf("%s.AtM(%s, %s)", codes[0], codes[1], loc)
+			return fmt.Sprintf("%sList_AtM(%s, %s, %s)", f.rt(), codes[0], codes[1], loc)
 		}
 	}
-	return fmt.Sprintf("%s.At(%s, %s)", codes[0], codes[1], loc)
+	return fmt.Sprintf("%s%s_At(%s, %s, %s)", f.rt(), n.Obj.Name, codes[0], codes[1], loc)
 }
 
-// indexRef is the address of List element x (`xs.RefM(i)`), for reading
+// indexRef is the address of List element x (`rt.List_RefM(xs, i)`), for reading
 // a field of it in place: a borrow of the element.
 func (f *fnGen) indexRef(x *ast.IndexExpr) string {
 	loc := strconv.Quote(f.g.loc(x))
@@ -1084,9 +1084,9 @@ func (f *fnGen) indexRef(x *ast.IndexExpr) string {
 		return f.val(x.Index)
 	})
 	if f.safeOp(x) {
-		return fmt.Sprintf("%s.RefU(%s)", codes[0], codes[1])
+		return fmt.Sprintf("%sList_RefU(%s, %s)", f.rt(), codes[0], codes[1])
 	}
-	return fmt.Sprintf("%s.RefM(%s, %s)", codes[0], codes[1], loc)
+	return fmt.Sprintf("%sList_RefM(%s, %s, %s)", f.rt(), codes[0], codes[1], loc)
 }
 
 // ---------------------------------------------------------------------------

@@ -184,8 +184,8 @@ func Secret_new[T any](_ *Task, v T) Secret[T] {
 	return Secret[T]{v: v}
 }
 
-// M_reveal returns the wrapped value.
-func (s Secret[T]) M_reveal(*Task) T { return s.v }
+// Secret_reveal returns the wrapped value.
+func Secret_reveal[T any](_ *Task, s Secret[T]) T { return s.v }
 
 // M_display implements Display.
 func (s Secret[T]) M_display(*Task) string { return "<redacted>" }

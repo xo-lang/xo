@@ -158,7 +158,7 @@ func (f *fnGen) ownCode(code string, t check.Type) string {
 	}
 	t = f.pg.monoType(t)
 	if f.g.isPrelude(t, "List") {
-		return "(" + code + ").Own()"
+		return f.rt() + "List_Own(" + code + ")"
 	}
 	if containsParam(t) {
 		return fmt.Sprintf("%sOwn(%s)", f.rt(), code)
@@ -405,10 +405,10 @@ func (f *fnGen) inlinePush(x *ast.CallExpr, ci *check.Call) (string, bool) {
 		f.line("%s := %s", t, v)
 		v = t
 	}
-	f.line("if %s.CanPush() {", r)
-	f.line("	%s = %s.PushFast(%s)", r, r, v)
+	f.line("if %sList_CanPush(%s) {", f.rt(), r)
+	f.line("	%s = %sList_PushFast(%s, %s)", r, f.rt(), r, v)
 	f.line("} else {")
-	f.line("	%s = %s.PushSlow(%s)", r, r, v)
+	f.line("	%s = %sList_PushSlow(%s, %s)", r, f.rt(), r, v)
 	f.line("}")
 	return f.rt() + "Unit{}", true
 }

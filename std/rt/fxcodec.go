@@ -39,7 +39,7 @@ func (List[T]) fxFrom(v reflect.Value) any { return ListOf(v.Interface().([]T)..
 func (m Map[K, V]) fxPairs() (reflect.Value, reflect.Value) {
 	ks := []K{}
 	vs := []V{}
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		ks = append(ks, k)
 		vs = append(vs, v)
 	}
@@ -50,7 +50,7 @@ func (Map[K, V]) fxFrom2(ks, vs reflect.Value) any {
 	var m Map[K, V]
 	kk, vv := ks.Interface().([]K), vs.Interface().([]V)
 	for i := range kk {
-		m.M_put(nil, kk[i], vv[i])
+		Map_put(nil, &m, kk[i], vv[i])
 	}
 	return m
 }

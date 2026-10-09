@@ -14,3 +14,6 @@ quarters of `XO_GOCACHE_MAX` (default 8 GiB) by least recent use, at most
 every ten minutes. `internal/gobind` uses the same directory. To reclaim
 space by hand: `rm -rf ~/Library/Caches/xo/gocache` (and `go clean -cache`
 for Go's default cache).
+
+Update (2026-10-09): a generated program now adds 3 to 9 MB, not 15 to
+34 MB (`go-generic-method-sets-per-package.md`).
