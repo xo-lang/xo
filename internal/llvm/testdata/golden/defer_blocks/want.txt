@@ -1,0 +1,45 @@
+exit 0
+--- stdout
+working
+cleanup work
+work ok: 42
+leave early(1)
+leave early(0)
+early: positive non-positive
+working
+cleanup work
+with_try deferred
+with_try: true
+iteration 0
+end of iteration 0
+end of iteration 1
+iteration 2
+end of iteration 2
+block sees x=2
+value block deferred
+v=10
+leaving 0
+leaving 1
+leaving 2
+outer of 0
+inner of 0
+outer of 1
+inner of 1
+outer of 2
+inner of 2
+nested total 21
+nested 21
+loop ended at 4
+seen 0
+seen 2
+seen 3
+exits 0
+deferred sees n=1
+exits 1
+deferred sees n=2
+exits 2
+deferred sees n=3
+exits 0
+main deferred 2
+main deferred 1
+--- stderr

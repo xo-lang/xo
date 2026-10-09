@@ -12,12 +12,19 @@ import (
 // statement (unit when there is none).
 func (s *fn) block(bl *ast.Block) *Value {
 	var last *Value
+	fr := &deferFrame{}
+	s.exits = append(s.exits, exitEntry{defers: fr})
 	for i, st := range bl.Stmts {
 		if es, ok := st.(*ast.ExprStmt); ok && i == len(bl.Stmts)-1 {
 			last = s.expr(es.X)
 			break
 		}
 		s.stmt(st)
+	}
+	s.exits = s.exits[:len(s.exits)-1]
+	if !s.isDead() {
+		// the block's value is computed before its deferred code runs
+		s.runDefers(fr)
 	}
 	if last == nil {
 		return s.unit()
@@ -80,7 +87,7 @@ func (s *fn) stmt(st ast.Stmt) {
 			b.unsupported(x, "this `break` or `continue`")
 			return
 		}
-		s.closeScopes(lc.scopes)
+		s.exitTo(lc.exits)
 		if brk {
 			s.jump(lc.brk)
 		} else {
@@ -96,7 +103,7 @@ func (s *fn) stmt(st ast.Stmt) {
 	case *ast.ForStmt:
 		s.forStmt(x)
 	case *ast.DeferStmt:
-		b.unsupported(st, "`defer`")
+		s.deferStmt(x)
 	default:
 		b.unsupported(st, "this statement")
 	}
@@ -114,7 +121,7 @@ func (s *fn) while(label string, cond ast.Expr, body *ast.Block) {
 		s.seal(in)
 		s.cur = in
 	}
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes)})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes), exits: len(s.exits)})
 	s.block(body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(head)
@@ -150,6 +157,9 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		inclusive = r.Inclusive
 	} else if lt := s.natOf(x.Iter); lt.Kind == KHandle && strings.HasPrefix(lt.Name, "Chan[") {
 		s.forChan(x, label)
+		return
+	} else if lt.Coll {
+		s.forMap(x, label, s.value(x.Iter))
 		return
 	} else if lt.Kind == KList {
 		list = s.value(x.Iter)
@@ -189,7 +199,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	s.seal(fail)
 	s.add(OpUnreachable, nil, nil)
 	s.cur = cont
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: latch, scopes: len(s.scopes)})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: latch, scopes: len(s.scopes), exits: len(s.exits)})
 	s.block(x.Body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(latch)
@@ -272,6 +282,18 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 			func(v *Value) { base.set(s.add(OpSetField, base.t, idx, cur(), s.coerce(v, ft, x))) }}, true
 	case *ast.IndexExpr:
 		base, ok := s.place(x.X)
+		if ok && base.t.Coll {
+			// `m[k] = v` is `m.put(k, v)` (core 3.6); reading m[k] is a
+			// checker error
+			t := base.t
+			k := s.valueAs(x.Index, mapKey(t))
+			return place{mapVal(t),
+				func() *Value {
+					b.unsupported(x, "reading `m[k]`")
+					return s.undef(mapVal(t))
+				},
+				func(v *Value) { base.set(s.call(b.mapPut(t, x), t, "", base.get(), k, s.coerce(v, mapVal(t), x))) }}, true
+		}
 		if !ok || base.t.Kind != KList {
 			break
 		}

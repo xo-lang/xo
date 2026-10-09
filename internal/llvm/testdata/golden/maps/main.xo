@@ -1,0 +1,166 @@
+// Map and Set on the native backends (std.md 2.4, decision 0072):
+// literals, put, get, remove, contains, insertion order through removal
+// and re-adding, growth and rebuilds, value semantics of copies (also in
+// structs, closures, channels, and tasks), `m[k] = v`, update, keys,
+// values, entries, keys of every shape, and Set.
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Shape {
+  Dot
+  Circle(r: Int)
+  Rect(w: Int, h: Int)
+}
+
+struct Holder {
+  name: Str
+  tags: Map[Str, Int]
+}
+
+fn show(m: Map[Str, Int]) -> Str {
+  var out = ""
+  for (k, v) in m {
+    if out.len() > 0 {
+      out = out + ","
+    }
+    out = out + "${k}=${v}"
+  }
+  out
+}
+
+fn show_set(s: Set[Str]) -> Str {
+  var out = ""
+  for x in s {
+    out = out + "[${x}]"
+  }
+  out
+}
+
+fn bump(var m: Map[Str, Int], k: Str) {
+  m.update(k, 0, fn(var v) { v += 1 })
+}
+
+fn grow(m: Map[Str, Int], k: Str) -> Map[Str, Int] {
+  var c = m
+  c.put(k, 99)
+  c
+}
+
+fn main(os: Os) {
+  var a: Map[Str, Int] = {"x": 1, "y": 2}
+  var b = a
+  b.put("z", 3)
+  b.put("x", 10)
+  os.stdio.println("copy: a ${show(a)} b ${show(b)}")
+  a.put("w", 4)
+  let removed = a.remove("y")
+  let missing = a.remove("nope")
+  b.remove("x")
+  b.put("x", 11)
+  os.stdio.println("both: a ${show(a)} b ${show(b)} removed ${removed ?? -1} missing ${missing ?? -1}")
+  os.stdio.println("get: ${a.get("x") ?? -1} ${a.get("y") ?? -1} contains ${a.contains("w")} ${a.contains("y")} len ${a.len()} empty ${a.is_empty()}")
+
+  var h1 = Holder{name: "one", tags: {"a": 1}}
+  var h2 = h1
+  h2.tags.put("b", 2)
+  h2.tags["a"] = 5
+  h1.tags.put("c", 3)
+  os.stdio.println("struct: h1 ${show(h1.tags)} h2 ${show(h2.tags)}")
+
+  var cap: Map[Str, Int] = {"k": 1}
+  let read = fn() { show(cap) }
+  cap.put("k", 2)
+  cap.put("l", 3)
+  let grown = grow(cap, "m")
+  os.stdio.println("closure: captured ${read()} now ${show(cap)} grown ${show(grown)}")
+
+  var counts: Map[Str, Int] = {"a": 0, "b": 0}
+  let before = counts
+  for w in ["b", "a", "c", "b", "c", "c"] {
+    bump(counts, w)
+  }
+  os.stdio.println("update: counts ${show(counts)} before ${show(before)}")
+
+  var big: Map[Int, Int] = {}
+  for i in 0..1000 {
+    big.put(i, i * i)
+  }
+  for i in 0..1000 {
+    if i % 3 != 0 {
+      big.remove(i)
+    }
+  }
+  big.put(1, -1)
+  big.remove(0)
+  big.put(0, 7)
+  var sum = 0
+  for (k, v) in big {
+    sum += k + v
+  }
+  let ks = big.keys()
+  os.stdio.println("big: len ${big.len()} first ${ks[0]} second ${ks[1]} last ${ks[ks.len() - 1]} sum ${sum} 999 ${big.get(999) ?? -1} 998 ${big.get(998) ?? -1}")
+  let vs = big.values()
+  let es = big.entries()
+  os.stdio.println("values ${vs.len()} ${vs[0]} entries ${es[es.len() - 1].0}=${es[es.len() - 1].1}")
+
+  var pts: Map[Point, Str] = {}
+  pts.put(Point{x: 1, y: 2}, "a")
+  pts.put(Point{x: 2, y: 1}, "b")
+  pts[Point{x: 1, y: 2}] = "c"
+  var shapes: Map[Shape, Int] = {}
+  shapes.put(Shape.Dot, 1)
+  shapes.put(Shape.Circle(r: 2), 2)
+  shapes.put(Shape.Rect(w: 1, h: 2), 3)
+  shapes.put(Shape.Circle(r: 2), 4)
+  var lists: Map[List[Int], Bool] = {}
+  lists.put([1, 2], true)
+  lists.put([2, 1], false)
+  var pairs: Map[(Str, Bool), Int] = {}
+  pairs.put(("a", true), 1)
+  pairs.put(("a", false), 2)
+  os.stdio.println("keys: ${pts.len()} ${pts.get(Point{x: 1, y: 2}) ?? "?"} ${shapes.len()} ${shapes.get(Shape.Circle(r: 2)) ?? -1} ${shapes.get(Shape.Rect(w: 2, h: 1)) ?? -1} ${lists.get([2, 1]) ?? true} ${pairs.get(("a", false)) ?? -1}")
+
+  var nested: Map[Str, Map[Str, Int]] = {"g": {"x": 1}}
+  let snap = nested
+  nested.update("g", {}, fn(var inner) { inner.put("y", 2) })
+  nested.update("h", {"z": 0}, fn(var inner) { inner["z"] = 9 })
+  os.stdio.println("nested: g ${show(nested.get("g") ?? {})} h ${show(nested.get("h") ?? {})} snap ${show(snap.get("g") ?? {})}")
+
+  let ch = Chan[Map[Str, Int]].new(cap: 1)
+  var sent: Map[Str, Int] = {"s": 1}
+  ch.send(sent)
+  sent.put("s", 2)
+  var got = ch.recv() ?? {}
+  got.put("u", 4)
+  os.stdio.println("channel: sent ${show(sent)} got ${show(got)}")
+  let base: Map[Str, Int] = {"v": 1}
+  let back = Chan[Map[Str, Int]].new(cap: 1)
+  scope sc {
+    sc.spawn(fn() {
+      var mine = base
+      for i in 0..50 {
+        mine.put("n${i % 5}", i)
+      }
+      back.send(mine)
+    })
+    var local = base
+    for i in 0..50 {
+      local.put("L${i % 3}", i)
+    }
+    os.stdio.println("task: local ${show(local)}")
+  }
+  os.stdio.println("task: theirs ${show(back.recv() ?? {})} base ${show(base)}")
+
+  var set = #{"a", "b"}
+  let set_copy = set
+  set.add("c")
+  set.add("a")
+  let had = set.remove("a")
+  let had_not = set.remove("zz")
+  os.stdio.println("set: ${show_set(set)} copy ${show_set(set_copy)} removed ${had} ${had_not} contains ${set.contains("b")} len ${set.len()} list ${set.to_list().len()}")
+  let found = {"one": 1}
+  os.stdio.println("or fault: ${found.get_or_fault("one", "inserted above")}")
+}

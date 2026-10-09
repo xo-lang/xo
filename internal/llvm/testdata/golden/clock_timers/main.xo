@@ -1,0 +1,98 @@
+// The clock on the event loop (std.md 3.3, decision 0069): sleep, now,
+// since, `after` in select, task.with_timeout, cancellation that wakes a
+// sleeping task, many sleepers at once, and Duration and Time arithmetic.
+use std/task
+
+enum Oops {
+  Bad
+} derive Display
+
+fn slow(clock: Clock, log: Chan[Str]) -> Int {
+  defer log.send("slow unwound")
+  clock.sleep(1h)
+  1
+}
+
+fn drain(os: Os, log: Chan[Str]) {
+  while {
+    match log.try_recv() {
+      Some(l) => os.stdio.println("  ${l}")
+      None => break
+    }
+  }
+}
+
+fn main(os: Os) {
+  let start = os.clock.now()
+  os.clock.sleep(30ms)
+  let el = os.clock.since(start)
+  os.stdio.println("slept at least 30ms: ${el >= 30ms}")
+  os.stdio.println("millis at least 30: ${el.millis() >= 30}")
+
+  let never: Chan[Int] = Chan[Int].new()
+  select {
+    v = never.recv() => os.stdio.println("got ${v ?? 0}")
+    after 20ms => os.stdio.println("after fired")
+  }
+  let ready = Chan[Int].new(cap: 1)
+  ready.send(7)
+  select {
+    v = ready.recv() => os.stdio.println("ready got ${v ?? 0}")
+    after 10s => os.stdio.println("after should not fire")
+  }
+  scope s {
+    let ch: Chan[Int] = Chan[Int].new()
+    s.spawn(fn() {
+      os.clock.sleep(10ms)
+      ch.send(42)
+    })
+    select {
+      v = ch.recv() => os.stdio.println("task sent ${v ?? 0}")
+      after 10s => os.stdio.println("too slow")
+    }
+  }
+
+  let log = Chan[Str].new(cap: 8)
+  match task.with_timeout(os.clock, 20ms, fn() { slow(os.clock, log) }) {
+    Ok(v) => os.stdio.println("slow returned ${v}")
+    Err(task.Timed.TimedOut) => os.stdio.println("slow timed out")
+  }
+  drain(os, log)
+  match task.with_timeout(os.clock, 10s, fn() { 5 }) {
+    Ok(v) => os.stdio.println("fast returned ${v}")
+    Err(task.Timed.TimedOut) => os.stdio.println("fast timed out")
+  }
+  let failing = fn() -> Int ! Oops { Err(Oops.Bad) }
+  match task.with_timeout(os.clock, 10s, failing) {
+    Ok(v) => os.stdio.println("failing returned ${v}")
+    Err(task.Timed.TimedOut) => os.stdio.println("failing timed out")
+    Err(task.Timed.Failed(Oops.Bad)) => os.stdio.println("failing failed: Bad")
+  }
+
+  scope s {
+    s.spawn_background(fn() {
+      defer log.send("sleeper woken by cancellation")
+      os.clock.sleep(1h)
+      log.send("sleeper not reached")
+    })
+    os.clock.sleep(10ms)
+  }
+  drain(os, log)
+
+  let total = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..200 {
+      s.spawn(fn() {
+        os.clock.sleep(20ms)
+        let _ = total.add(1)
+      })
+    }
+  }
+  os.stdio.println("sleepers done: ${total.get()}")
+
+  let t = Time.from_unix_millis(1500)
+  os.stdio.println("unix ${t.unix()} millis ${t.unix_millis()}")
+  let d = Duration.from_millis(1500)
+  os.stdio.println("d ${d.millis()} ${d.nanos()} ${d.seconds()} ${(d * 2).millis()} ${(d / 3).millis()} ${d / 500ms}")
+  os.stdio.println("compare ${d > 1s} ${(t + d).unix_millis()} ${(t - Time.from_unix(0)).millis()}")
+}

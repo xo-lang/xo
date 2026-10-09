@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let m = {"a": 1}
+  os.stdio.println("${m.get_or_fault("a", "the key was inserted above")}")
+  os.stdio.println("${m.get_or_fault("b", "the key was inserted above")}")
+}

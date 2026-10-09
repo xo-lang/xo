@@ -440,7 +440,17 @@ struct Listener {}
 /// The bound address, `host:port`, with the port the system chose for
 /// `:0` (std.md 3.2).
 fn (l: Listener) addr() -> Str
+/// Waits for the next connection (std.md 3.2, decision 0071).
+fn (l: Listener) accept() -> Conn ! NetErr uses net.listen
+/// Stops listening; a waiting `accept` fails with `Io`.
+fn (l: Listener) close()
 struct Conn {}
+/// At most max bytes (at most 1 MiB); None at the end of the stream.
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net
+/// Writes every byte of data.
+fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net
+/// Closes the connection; waiting reads and writes fail with `Io`.
+fn (c: Conn) close()
 
 interface Net {
   fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen

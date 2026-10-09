@@ -74,7 +74,7 @@ func (b *builder) concType(obj *check.TypeObj, r *check.Named, at ast.Node) *Typ
 	switch {
 	case obj.Module.IsPrelude:
 		switch obj.Name {
-		case "Chan", "Mutex", "Atomic", "Scope", "Task":
+		case "Chan", "Mutex", "Atomic", "Scope", "Task", "Listener", "Conn":
 			name = obj.Name
 		}
 	case obj.Module.Path == "std/task" && obj.Name == "Group":
@@ -153,13 +153,13 @@ func (s *fn) unwindTarget() *Block {
 // check emits the unwinding check after a call (callee: see
 // unwindCheck).
 func (s *fn) check(callee string) {
-	if !s.b.conc || s.isDead() {
+	if !s.b.conc || s.isDead() || s.shield > 0 {
 		return
 	}
 	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
 	yes, no := s.branch(u)
 	s.cur = yes
-	s.jump(s.unwindTarget())
+	s.unwind()
 	s.cur = no
 	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, callee})
 }
@@ -167,14 +167,14 @@ func (s *fn) check(callee string) {
 // checkThen is check with cleanup code run on the unwind path first
 // (unlocking a mutex); it is never removed.
 func (s *fn) checkThen(cleanup func()) {
-	if !s.b.conc || s.isDead() {
+	if !s.b.conc || s.isDead() || s.shield > 0 {
 		return
 	}
 	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
 	yes, no := s.branch(u)
 	s.cur = yes
 	cleanup()
-	s.jump(s.unwindTarget())
+	s.unwind()
 	s.cur = no
 	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, ""})
 }
@@ -349,17 +349,13 @@ func (b *builder) pruneUnwind() {
 // ---------------------------------------------------------------------------
 // Scopes
 
-// closeScopes closes the scopes from the innermost down to depth, for
-// an exit in mode 1 (early) or 2 (unwinding): a failed child sends the
-// exit to the scope's failure block.
-func (s *fn) closeScopes(depth int) {
-	intT := s.b.mod.Builtin(KInt)
-	for i := len(s.scopes) - 1; i >= depth; i-- {
-		sc := s.scopes[i]
-		st := s.rt("scope_close", intT, sc.h, s.cint(1))
-		if len(sc.sites) > 0 {
-			s.failIf(sc, st)
-		}
+// closeEarly closes scope sc for an early exit (mode 1: `return`, `?`,
+// `break`, `continue`): a failed child sends the exit to the scope's
+// failure block.
+func (s *fn) closeEarly(sc *scopeCtx) {
+	st := s.rt("scope_close", s.b.mod.Builtin(KInt), sc.h, s.cint(1))
+	if len(sc.sites) > 0 {
+		s.failIf(sc, st)
 	}
 }
 
@@ -390,7 +386,9 @@ func (s *fn) scopeExpr(x *ast.ScopeExpr) *Value {
 	}
 	sc := &scopeCtx{h: h, sites: b.failingSpawns(s, x.Body)}
 	s.scopes = append(s.scopes, sc)
+	s.exits = append(s.exits, exitEntry{scope: sc})
 	v := s.block(x.Body)
+	s.exits = s.exits[:len(s.exits)-1]
 	s.scopes = s.scopes[:len(s.scopes)-1]
 	if !s.isDead() {
 		st := s.rt("scope_close", b.mod.Builtin(KInt), h, s.cint(0))
@@ -413,7 +411,7 @@ func (s *fn) finishScope(sc *scopeCtx, x *ast.ScopeExpr) {
 		if len(sc.sites) > 0 {
 			s.failIf(sc, st)
 		}
-		s.jump(s.unwindTarget())
+		s.unwind()
 	}
 	if sc.failB != nil {
 		s.seal(sc.failB)
@@ -666,9 +664,12 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	switch key {
 	case "task.is_canceled":
 		return s.rt("is_canceled", boolT), true
-	case "task.with_timeout", "task.map_concurrent_until", "task.stop_requested", "task.stopping":
-		b.unsupported(x, "`task."+fo.Name+"` (the native backends have no clock or signals)")
-		return s.undef(nt), true
+	case "task.with_timeout":
+		return s.withTimeout(x, fo), true
+	case "task.stop_requested":
+		return s.rt("stop_requested", boolT), true
+	case "task.stopping":
+		return s.rt("task_stopping", nt, s.add(OpFuncAddr, intT, b.dropList(nt.Elems[0]))), true
 	case "Scope.spawn", "Scope.spawn_background", "Group.spawn", "Group.spawn_background":
 		h := s.expr(ci.Recv)
 		bg := strings.HasSuffix(key, "background")
@@ -864,7 +865,7 @@ func (s *fn) forChan(x *ast.ForStmt, label string) {
 	s.seal(fail)
 	s.add(OpUnreachable, nil, nil)
 	s.cur = cont
-	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes)})
+	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes), exits: len(s.exits)})
 	s.block(x.Body)
 	s.loops = s.loops[:len(s.loops)-1]
 	s.jump(head)
@@ -971,11 +972,18 @@ func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
 	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
 	sel := s.rt("select_new", m.Handle("Select"))
 	recvs := make([]*Type, len(x.Arms)) // the Option a receive arm binds
+	// the index select_wait returns for each arm: channel arms are
+	// numbered in order, an `after` arm is -2
+	rtIdx := make([]int64, len(x.Arms))
+	n := int64(0)
 	for i, a := range x.Arms {
 		if a.After != nil {
-			b.unsupported(a, "`after` in `select` (the native backends have no clock)")
+			s.rt("select_after", nil, sel, s.valueAs(a.After, intT))
+			rtIdx[i] = -2
 			continue
 		}
+		rtIdx[i] = n
+		n++
 		call, ok := a.Op.(*ast.CallExpr)
 		var se *ast.SelectorExpr
 		if ok {
@@ -1009,7 +1017,7 @@ func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
 		res = join.AddParam(t)
 	}
 	for i, a := range x.Arms {
-		c := s.add(OpEq, boolT, nil, idx, s.cint(int64(i)))
+		c := s.add(OpEq, boolT, nil, idx, s.cint(rtIdx[i]))
 		yes, no := s.branch(c)
 		s.cur = yes
 		if ot := recvs[i]; ot != nil {

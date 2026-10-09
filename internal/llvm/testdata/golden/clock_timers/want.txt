@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+slept at least 30ms: true
+millis at least 30: true
+after fired
+ready got 7
+task sent 42
+slow timed out
+  slow unwound
+fast returned 5
+failing failed: Bad
+  sleeper woken by cancellation
+sleepers done: 200
+unix 1 millis 1500
+d 1500 1500000000 1.5 3000 500 3
+compare true 3000 1500
+--- stderr

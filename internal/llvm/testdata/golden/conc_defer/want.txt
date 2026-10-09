@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+background task canceled at the end of the body:
+  scope body deferred
+  background cleanup
+canceled task unwinds through two functions:
+  inner block deferred
+  inner deferred
+  worker deferred
+canceled task unwinds through a nested scope:
+  nested scope body deferred
+  nested_scope deferred
+  grandchild deferred
+deferred code in a task that finishes:
+  count 0 done
+  count 1 done
+  count 2 done
+  count 3 done
+total 6
+--- stderr

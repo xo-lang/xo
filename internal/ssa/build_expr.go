@@ -39,6 +39,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.add(OpConst, m.Builtin(KFloat), f)
 	case *ast.StringLit:
 		return s.stringLit(x)
+	case *ast.DurationLit:
+		return s.durationLit(x)
 	case *ast.UnitExpr:
 		return s.unit()
 	case *ast.Ident:
@@ -114,6 +116,17 @@ func (s *fn) expr(e ast.Expr) *Value {
 				return s.unit()
 			}
 		}
+		var ks, vs []ast.Expr
+		for _, en := range x.Entries {
+			ks = append(ks, en.Key)
+			vs = append(vs, en.Value)
+		}
+		if vs == nil {
+			vs = []ast.Expr{}
+		}
+		return s.mapLit(s.typeOf(x), ks, vs, x)
+	case *ast.SetLit:
+		return s.mapLit(s.typeOf(x), x.Elems, nil, x)
 	case *ast.IsExpr:
 		// `x is P`: the pattern test as a Bool (P binds nothing)
 		v := s.value(x.X)
@@ -251,6 +264,9 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 				cat(s.add(OpConst, st, p.Text))
 			}
 			continue
+		}
+		if isPreludeNamed(s.natCheck(p.Expr), "Duration", "Time", "Bytes") {
+			s.b.unsupported(p.Expr, "interpolating a `Duration`, `Time`, or `Bytes`")
 		}
 		v := s.expr(p.Expr)
 		switch v.Type.Kind {
@@ -402,6 +418,10 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 			c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
 			return s.add(o, boolT, nil, c, s.cint(0))
 		case KStruct, KTuple, KEnum, KList, KUnit:
+			if holdsColl(l.Type, map[*Type]bool{}) {
+				b.unsupported(x, "comparing values that hold a Map or Set")
+				return s.undef(boolT)
+			}
 			// structural equality; backends generate a helper per type
 			if o == OpEq || o == OpNe {
 				return s.add(o, boolT, nil, l, r)

@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+copy: a x=1,y=2 b x=10,y=2,z=3
+both: a x=1,w=4 b y=2,z=3,x=11 removed 2 missing -1
+get: 1 -1 contains true false len 2 empty false
+struct: h1 a=1,c=3 h2 a=5,b=2
+closure: captured k=1 now k=2,l=3 grown k=2,l=3,m=99
+update: counts a=1,b=2,c=3 before a=0,b=0
+big: len 335 first 3 second 6 last 0 sum 111444451 999 998001 998 -1
+values 335 9 entries 0=7
+keys: 2 c 3 4 -1 false 2
+nested: g x=1,y=2 h z=9 snap x=1
+channel: sent s=2 got s=1,u=4
+task: local v=1,L0=48,L1=49,L2=47
+task: theirs v=1,n0=45,n1=46,n2=47,n3=48,n4=49 base v=1
+set: [b][c] copy [a][b] removed true false contains true len 2 list 2
+or fault: 1
+--- stderr

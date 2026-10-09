@@ -223,15 +223,23 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KFloat)
 			case "Bool":
 				return m.Builtin(KBool)
-			case "Str":
+			case "Str", "Bytes":
+				// Bytes is an immutable byte string like Str (decision 0069)
 				return m.Builtin(KStr)
+			case "Duration", "Time":
+				// nanoseconds (decision 0069)
+				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio":
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
 				return m.List(b.typ(r.Args[0], at))
+			case "Map":
+				return b.mapType(false, b.typ(r.Args[0], at), b.typ(r.Args[1], at))
+			case "Set":
+				return b.mapType(true, b.typ(r.Args[0], at), m.Builtin(KUnit))
 			}
 		}
 		name := r.String()
@@ -511,6 +519,13 @@ type fn struct {
 	packVar bool
 	scopes  []*scopeCtx // the scopes open around the current code
 	unwindB *Block      // the function's unwind block (lazy)
+	// exits are the blocks and scopes open around the current code, the
+	// innermost last: leaving them runs each block's pending `defer`
+	// statements and closes each scope (build_defer.go)
+	exits []exitEntry
+	// shield counts the deferred code being lowered around the current
+	// code: it is shielded from cancellation, so it never unwinds
+	shield int
 
 	// res is the success type, errT the error type of a function that
 	// can fail (nil otherwise); its SSA result is then Result[res, errT].
@@ -536,6 +551,7 @@ type loopCtx struct {
 	label     string
 	brk, cont *Block
 	scopes    int // the scopes open around the loop (left by break and continue)
+	exits     int // the exits open around the loop (left by break and continue)
 }
 
 // newFn starts building the body of f.
@@ -751,7 +767,7 @@ func (s *fn) ret(v *Value, at ast.Node) {
 	if s.packVar {
 		args = []*Value{s.add(OpTuple, s.f.Results[0], nil, args...)}
 	}
-	s.closeScopes(0)
+	s.exitTo(0)
 	s.add(OpReturn, nil, nil, args...)
 	s.dead()
 }

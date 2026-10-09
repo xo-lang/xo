@@ -1,0 +1,99 @@
+// A TCP echo server and its clients in one program (std.md 3.2, decision
+// 0071): listen on 127.0.0.1:0, accept in a background task, echo each
+// connection in a task of its own (small reads, so a message takes
+// several), and dial from the main task. Then the error paths: accept on
+// a closed listener, a refused dial, and an accept canceled with its
+// scope.
+
+fn describe(e: NetErr) -> Str {
+  match e {
+    NetErr.InvalidAddr(_) => "InvalidAddr"
+    NetErr.Refused => "Refused"
+    NetErr.Timeout => "Timeout"
+    NetErr.Io(_) => "Io"
+    NetErr.Canceled => "Canceled"
+  }
+}
+
+fn echo(c: Conn) -> () ! NetErr {
+  while {
+    match c.read(4)? {
+      Some(data) => c.write(data)?
+      None => break
+    }
+  }
+}
+
+fn client(os: Os, addr: Str, msg: Str) -> Str ! NetErr {
+  let c = os.net.dial(addr)?
+  c.write(msg.bytes())?
+  var got = ""
+  while got.len() < msg.len() {
+    match c.read(64)? {
+      Some(b) => got = got + (b.to_str() ?? "?")
+      None => break
+    }
+  }
+  c.close()
+  got
+}
+
+fn serve(os: Os, l: Listener) {
+  let addr = l.addr()
+  scope s {
+    let g = s.group()
+    s.spawn_background(fn() {
+      while {
+        match l.accept() {
+          Ok(c) => g.spawn_background(fn() {
+            // errors here (a canceled read at the end) are not printed:
+            // when they happen depends on scheduling
+            let _ = echo(c).is_ok()
+            c.close()
+          })
+          Err(e) => {
+            os.stdio.println("accept ended: ${describe(e)}")
+            break
+          }
+        }
+      }
+    })
+    for i in 0..3 {
+      match client(os, addr, "hello number ${i}, echoed in pieces") {
+        Ok(r) => os.stdio.println("client ${i} got: ${r}")
+        Err(e) => os.stdio.println("client ${i} failed: ${describe(e)}")
+      }
+    }
+  }
+  l.close()
+  match l.accept() {
+    Ok(_) => os.stdio.println("accepted after close")
+    Err(e) => os.stdio.println("accept after close: ${describe(e)}")
+  }
+}
+
+fn refused(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let addr = l.addr()
+      l.close()
+      match os.net.dial(addr) {
+        Ok(_) => os.stdio.println("dial after close: connected")
+        Err(e) => os.stdio.println("dial after close: ${describe(e)}")
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${describe(e)}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => serve(os, l)
+    Err(e) => os.stdio.println("listen failed: ${describe(e)}")
+  }
+  refused(os)
+  match os.net.listen("127.0.0.1:99999") {
+    Ok(_) => os.stdio.println("listened on a bad port")
+    Err(e) => os.stdio.println("bad port: ${describe(e)}")
+  }
+}

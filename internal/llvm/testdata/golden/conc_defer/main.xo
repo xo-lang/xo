@@ -1,0 +1,103 @@
+// Deferred code on the unwind path of cancellation (core 7.2): it runs
+// in every function and block being left, innermost first, shielded
+// (decision 0022: a send in deferred code of a canceled task works).
+
+fn inner(log: Chan[Str], ready: Chan[()]) {
+  defer log.send("inner deferred")
+  {
+    defer log.send("inner block deferred")
+    ready.send(())
+    let never: Chan[Int] = Chan[Int].new()
+    let _ = never.recv()
+  }
+  log.send("inner not reached")
+}
+
+fn worker(log: Chan[Str], ready: Chan[()]) {
+  defer log.send("worker deferred")
+  inner(log, ready)
+  log.send("worker not reached")
+}
+
+fn nested_scope(log: Chan[Str], glog: Chan[Str], ready: Chan[()]) {
+  defer log.send("nested_scope deferred")
+  scope s {
+    s.spawn(fn() {
+      // its own log: it unwinds at the same time as the scope body
+      defer glog.send("grandchild deferred")
+      let never: Chan[Int] = Chan[Int].new()
+      let _ = never.recv()
+    })
+    defer log.send("nested scope body deferred")
+    ready.send(())
+    let never: Chan[Int] = Chan[Int].new()
+    let _ = never.recv()
+  }
+  log.send("nested_scope not reached")
+}
+
+fn drain(os: Os, log: Chan[Str]) {
+  var lines: List[Str] = []
+  while {
+    match log.try_recv() {
+      Some(l) => lines.push(l)
+      None => break
+    }
+  }
+  for l in lines {
+    os.stdio.println("  ${l}")
+  }
+}
+
+fn count(n: Int, log: Chan[Str]) -> Int {
+  defer log.send("count ${n} done")
+  if n == 0 {
+    return 0
+  }
+  n + count(n - 1, log)
+}
+
+fn main(os: Os) {
+  let log = Chan[Str].new(cap: 64)
+  let glog = Chan[Str].new(cap: 64)
+  os.stdio.println("background task canceled at the end of the body:")
+  scope s {
+    let block: Chan[Int] = Chan[Int].new()
+    s.spawn_background(fn() {
+      defer {
+        log.send("background cleanup")
+      }
+      let _ = block.recv()
+      log.send("background not reached")
+    })
+    defer log.send("scope body deferred")
+  }
+  drain(os, log)
+
+  os.stdio.println("canceled task unwinds through two functions:")
+  scope s {
+    let ready = Chan[()].new(cap: 1)
+    s.spawn(fn() { worker(log, ready) })
+    let _ = ready.recv()
+    s.cancel()
+  }
+  drain(os, log)
+
+  os.stdio.println("canceled task unwinds through a nested scope:")
+  scope s {
+    let ready = Chan[()].new(cap: 1)
+    s.spawn(fn() { nested_scope(log, glog, ready) })
+    let _ = ready.recv()
+    s.cancel()
+  }
+  drain(os, log)
+  drain(os, glog)
+
+  os.stdio.println("deferred code in a task that finishes:")
+  let total = scope s {
+    let t = s.spawn(fn() { count(3, log) })
+    t.await
+  }
+  drain(os, log)
+  os.stdio.println("total ${total}")
+}

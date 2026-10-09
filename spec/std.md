@@ -389,7 +389,20 @@ enum NetErr { InvalidAddr(msg: Str), Refused, Timeout, Io(msg: Str), Canceled }
 fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
 fn (l: Listener) addr() -> Str                     // "host:port" actually bound
+fn (l: Listener) accept() -> Conn ! NetErr         uses net.listen
+fn (l: Listener) close()
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr     uses net   // None at the end of the stream
+fn (c: Conn) write(data: Bytes) -> () ! NetErr     uses net   // writes every byte
+fn (c: Conn) close()
 ```
+
+TCP connections (decision 0071): `accept` waits for the next connection;
+`read` returns at most `max` bytes (at most 1 MiB; fewer when fewer are
+there) and `None` at the end of the stream; `write` returns when every
+byte is written. All three are cancellation points that report
+cancellation as `Canceled` (core 7.2). `close` is idempotent and makes a
+waiting `accept`, `read`, or `write` on the same listener or connection
+fail with `Io`. A refused `dial` is `Refused`.
 
 `addr` reports the port the system chose for `listen(":0")`. An unspecified
 host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address

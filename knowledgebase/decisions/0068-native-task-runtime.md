@@ -1,6 +1,6 @@
 # 0068: Structured concurrency on the native backends: a thread pool runtime and explicit unwinding
 
-Status: Accepted (2026-10-08). Implemented in `std/llrt/xo_rt.c`
+Status: Accepted (2026-10-08); point 1 (a blocked task holds a thread) superseded by 0069, which also narrows point 7. Implemented in `std/llrt/xo_rt.c`
 ("Tasks"), `internal/ssa/build_conc.go` (lowering), `internal/ssa`
 (`KHandle`, `OpFuncAddr`, `Func.Entry`), `internal/llvm/fromssa.go` and
 `internal/arm64/isel.go` (`rtCall`, handle counts). Tests:
@@ -108,7 +108,7 @@ needs tasks first.
   `map_concurrent(_until)`, `isolate`, `Semaphore`, `Once`,
   `stop_requested`, `stopping`, `os.tasks`, `defer` (and so shielded
   defers), clock, I/O, and network effects. Each is a build error that
-  names it.
+  names it. (`defer` and shielded defers: decision 0070, 2026-10-08.)
 - A fault in a task exits the process from that task's thread at once;
   the Go backend first cancels and waits for the scope's other tasks.
   Without `defer` the difference shows only in output other tasks would

@@ -472,6 +472,144 @@ func boundAddr(a net.Addr) string {
 // Conn is a connection.
 type Conn struct{ c net.Conn }
 
+// netClosedText is the message of an operation on a closed listener or
+// connection (Go's net.ErrClosed, as the native runtime words it).
+const netClosedText = "use of closed network connection"
+
+// interruptible runs op, a blocking socket operation, so that canceling
+// tk ends it: the socket's deadline is set to the past, and op's error
+// then reports Canceled (true).
+func interruptible(tk *Task, setDeadline func(time.Time) error, op func() error) (canceled bool, err error) {
+	done := make(chan struct{})
+	stopped := make(chan bool, 1)
+	go func() {
+		select {
+		case <-tk.Done():
+			setDeadline(time.Unix(1, 0))
+			stopped <- true
+		case <-done:
+			stopped <- false
+		}
+	}()
+	err = op()
+	close(done)
+	if <-stopped {
+		setDeadline(time.Time{})
+		return err != nil, err
+	}
+	return false, err
+}
+
+// netIoErr is the NetErr of a failed socket operation.
+func netIoErr(err error) NetErr {
+	if errors.Is(err, net.ErrClosed) {
+		return netErr(4, netClosedText)
+	}
+	return netErr(4, err.Error())
+}
+
+// M_accept is `l.accept()` (std.md 3.2, decision 0071): waits for the
+// next connection; canceling the task gives NetErr.Canceled.
+func (l Listener) M_accept(tk *Task) Result[Conn, NetErr] {
+	if tk.Canceled() {
+		return Err[Conn](netErr(5, ""))
+	}
+	return fx(tk, "net.accept", true, nil, func() Result[Conn, NetErr] {
+		if l.l == nil {
+			return Err[Conn](netErr(4, "accept on a listener without a socket"))
+		}
+		var c net.Conn
+		dl := func(t time.Time) error {
+			if d, ok := l.l.(interface{ SetDeadline(time.Time) error }); ok {
+				return d.SetDeadline(t)
+			}
+			return nil
+		}
+		canceled, err := interruptible(tk, dl, func() error {
+			var e error
+			c, e = l.l.Accept()
+			return e
+		})
+		if canceled {
+			return Err[Conn](netErr(5, ""))
+		}
+		if err != nil {
+			return Err[Conn](netIoErr(err))
+		}
+		return Ok[Conn, NetErr](Conn{c: c})
+	})
+}
+
+// M_close is `l.close()`: stops listening; a waiting accept fails.
+func (l Listener) M_close(*Task) {
+	if l.l != nil {
+		l.l.Close()
+	}
+}
+
+// M_read is `c.read(max)` (decision 0071): at most max bytes (at most 1
+// MiB), None at the end of the stream.
+func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
+	if tk.Canceled() {
+		return Err[Option[Bytes]](netErr(5, ""))
+	}
+	return fx(tk, "net.read", true, func() []any { return []any{max} }, func() Result[Option[Bytes], NetErr] {
+		if max <= 0 {
+			return Ok[Option[Bytes], NetErr](Some(Bytes("")))
+		}
+		if c.c == nil {
+			return Err[Option[Bytes]](netErr(4, netClosedText))
+		}
+		buf := make([]byte, min(max, 1<<20))
+		var n int
+		canceled, err := interruptible(tk, c.c.SetReadDeadline, func() error {
+			var e error
+			n, e = c.c.Read(buf)
+			return e
+		})
+		if canceled {
+			return Err[Option[Bytes]](netErr(5, ""))
+		}
+		if n > 0 {
+			return Ok[Option[Bytes], NetErr](Some(Bytes(buf[:n])))
+		}
+		if err == nil || errors.Is(err, io.EOF) {
+			return Ok[Option[Bytes], NetErr](Option[Bytes]{})
+		}
+		return Err[Option[Bytes]](netIoErr(err))
+	})
+}
+
+// M_write is `c.write(data)`: writes every byte.
+func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
+	if tk.Canceled() {
+		return Err[Unit](netErr(5, ""))
+	}
+	return fx(tk, "net.write", true, func() []any { return []any{data} }, func() Result[Unit, NetErr] {
+		if c.c == nil {
+			return Err[Unit](netErr(4, netClosedText))
+		}
+		canceled, err := interruptible(tk, c.c.SetWriteDeadline, func() error {
+			_, e := c.c.Write([]byte(data))
+			return e
+		})
+		if canceled {
+			return Err[Unit](netErr(5, ""))
+		}
+		if err != nil {
+			return Err[Unit](netIoErr(err))
+		}
+		return Ok[Unit, NetErr](Unit{})
+	})
+}
+
+// M_close is `c.close()`.
+func (c Conn) M_close(*Task) {
+	if c.c != nil {
+		c.c.Close()
+	}
+}
+
 // XoDebug implements Debug.
 func (l Listener) XoDebug(b *strings.Builder) { b.WriteString("<listener>") }
 

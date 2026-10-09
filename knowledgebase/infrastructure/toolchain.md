@@ -87,6 +87,8 @@ XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # p
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
+go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
+go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
@@ -1010,9 +1012,24 @@ first, AST based prototype, since deleted) and
   (decision 0068): `scope`, `spawn`, `spawn_background`, `await`,
   `s.cancel()`, groups from `s.group()`, `task.is_canceled()`, `Chan`
   (send, recv, try_send, try_recv, close, len, `for x in ch`), `select`
-  without `after`, `Mutex` (`with`, `with_read`), and `Atomic`. Not yet:
-  `after`, `task.with_timeout` and the other std/task functions,
-  `Semaphore`, `Once`, `os.tasks`, `defer`.
+  (with `after` since decision 0069), `Mutex` (`with`, `with_read`), and
+  `Atomic`. Not yet: `map_concurrent(_until)`, `isolate`, `Semaphore`,
+  `Once`, `os.tasks`. `defer` since 2026-10-08 (decision 0070: inlined
+  at every exit, shielded; a fault does not run it). Decision 0069 adds
+  `os.clock` (`now`, `sleep`, `since`), `task.with_timeout`,
+  `task.stop_requested`, `task.stopping`, `os.proc.set_grace`,
+  `os.env.get`, Duration (literals, arithmetic, `from_millis`,
+  `from_nanos`, `from_secs_int`, `millis`, `nanos`, `seconds`, `abs`) and
+  Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
+  nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
+  `is_empty`); interpolating a Duration, Time, or Bytes is not lowered.
+  Map and Set (decision 0072) are structs of lists with generated
+  operations: literals, get, contains, get_or_fault, put, remove,
+  update, keys, values, entries, add, to_list, `m[k] = v`, and `for`
+  loops; not `==` on them, Float keys, filter, or Set algebra.
+  `os.net.listen`/`dial`, `Listener.addr`/`accept`/`close`, and
+  `Conn.read`/`write`/`close` (decision 0071) run on the event loop;
+  SIGINT/SIGTERM give the two phase shutdown of core 7.5.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
@@ -1037,14 +1054,23 @@ first, AST based prototype, since deleted) and
   trip `'g'`, `.0` appended); `main` runs the program on a thread with a
   1 GiB stack. The C interface passes only scalars and pointers. Tasks
   (decision 0068, section "Tasks" of xo_rt.c): a pool of worker threads
-  (64 MiB stacks; one per CPU, `XO_THREADS=n` overrides; another starts
-  while workers are blocked and work is queued), work stealing deques,
+  (one per CPU, `XO_THREADS=n` overrides), work stealing deques,
   awaits and scope joins that run tasks nobody started, a cancellation
   tree, channels, select, Mutex (readers and writer, writers preferred),
-  Atomic, and deadlock detection (XO-F001). Generated code calls it as
+  Atomic, and deadlock detection (XO-F001). Since decision 0069 every task
+  runs on a fiber (64 MiB reserved stack with a guard page,
+  `XO_TASK_STACK_MB=n` overrides, 64 cached; register switch in top level
+  assembly for arm64 and x86_64, ThreadSanitizer fiber API at each
+  switch): every wait parks the fiber and frees its worker. A poller
+  thread started in `main` (kqueue on Darwin, epoll on Linux, a self
+  pipe) runs the timer heap, socket readiness, and SIGINT/SIGTERM (two
+  phase shutdown, core 7.5); SIGPIPE is ignored; buffered stdout is
+  flushed before any context waits. Thread locals only through
+  `noinline` accessors, errno only through `noinline` syscall wrappers
+  (`gotchas/fiber-thread-local-address.md`). Generated code calls it as
   `rt.<name>` SSA calls (C function `xo_<name>`), passing values as
-  lists of one; handles (Task, Scope, Chan, Mutex, Atomic) are counted
-  objects created shared.
+  lists of one; handles (Task, Scope, Chan, Mutex, Atomic, Listener,
+  Conn) are counted objects created shared.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
   Fault output has no Go frame lines and no crash bundle; the golden test
   compares fault messages after dropping those lines.
@@ -1062,7 +1088,10 @@ first, AST based prototype, since deleted) and
   recursion ones, `gotchas/tsan-deep-recursion.md`); TestRuntimeTasks
   (`std/llrt/testdata/tasks.c`, the task runtime driven from C, under
   ThreadSanitizer with one and three workers, then `-O2 -DN=20000`),
-  TestGoldenTasks (the goldens that use tasks, built with
+  TestRuntimeEventLoop (`std/llrt/testdata/evloop.c`: 2000 sleepers on
+  few workers, an 8 MiB echo through a socket, close and cancellation
+  waking parked socket operations, a refused dial, select `after`; same
+  runs), TestGoldenTasks (the goldens that use tasks, built with
   ThreadSanitizer without probes and run with `XO_THREADS` 1, 2, and
   the default against want.txt), TestDeadlock (internal/gen's
   `deadlock_real`, read only, natively: XO-F001); they skip when clang
