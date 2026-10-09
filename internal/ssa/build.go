@@ -564,7 +564,7 @@ type fn struct {
 	// back when it fails or unwinds (packedValue)
 	packOrig *Value
 	scopes   []*scopeCtx // the scopes open around the current code
-	unwindB *Block      // the function's unwind block (lazy)
+	unwindB  *Block      // the function's unwind block (lazy)
 	// exits are the blocks and scopes open around the current code, the
 	// innermost last: leaving them runs each block's pending `defer`
 	// statements and closes each scope (build_defer.go)
