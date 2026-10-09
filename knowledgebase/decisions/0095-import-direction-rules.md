@@ -1,6 +1,6 @@
 # 0095: Import direction rules (architecture tests)
 
-Status: Proposed (2026-10-09)
+Status: Accepted (2026-10-09, by the owner: option 3 with option 2; not yet implemented)
 
 ## Context
 
