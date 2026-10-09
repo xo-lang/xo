@@ -1,0 +1,45 @@
+// Std container types satisfy Xo interfaces through their prelude
+// methods. Since 2026-10-09 those methods are runtime functions, not Go
+// methods (std/rt, rtFuncMethods in internal/gen/decl.go), so every
+// conversion goes through an adapter: a direct one in specialized code,
+// the adapter registry in generic code under --no-mono.
+
+interface Sized {
+  fn len(self) -> Int
+  fn is_empty(self) -> Bool
+}
+
+interface HasInt {
+  fn contains(self, x: Int) -> Bool
+}
+
+fn size(s: Sized) -> Int { s.len() }
+
+fn gsize[T: Sized](s: T) -> Int { s.len() }
+
+fn gempty[T: Sized](s: T) -> Bool {
+  let d: Sized = s
+  d.is_empty()
+}
+
+fn has[C: HasInt](c: C, x: Int) -> Bool { c.contains(x) }
+
+fn parse(s: Str) -> Int ! Str {
+  if s == "1" {
+    return 1
+  }
+  Err("no")
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  os.stdio.println("list ${size(xs)} ${gsize(xs)} ${gempty(xs)} ${has(xs, 2)}")
+  let m: Map[Str, Int] = {"a": 1}
+  os.stdio.println("map ${size(m)} ${gsize(m)} ${gempty(m)}")
+  let s: Set[Int] = [4, 5].to_set()
+  os.stdio.println("set ${size(s)} ${gsize(s)} ${has(s, 5)} ${has(s, 6)}")
+  let e: List[Str] = []
+  os.stdio.println("empty ${gempty(e)}")
+  let o: Int? = Some(3)
+  os.stdio.println("option ${o.is_some()} ${o.or_fault("x")} result ${parse("x").is_err()} ${parse("1").ok() ?? 0}")
+}
