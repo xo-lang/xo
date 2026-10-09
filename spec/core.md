@@ -12,7 +12,20 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.8
 
-None yet.
+From the spec audit of 2026-10-09 (`bench/results/spec-audit-2026-10-09.md`):
+no meaning changes, the spec now says what is not implemented yet.
+
+- `xo build --ci` exists: it fails before building on an unformatted file
+  or a `dbg` left in code (10.1, 10.5, 11.4).
+- 10.6 lists every diagnostic and fault code with its severity, kept equal
+  to the toolchain's registry by a test. `XO1001` is reserved.
+- `--json` is accepted by the commands that report results, not by every
+  command; `xo test` takes `--cases=N`, not `--fuzz` (10.1).
+- **[later]** markers for what is specified but not built: `xo why`,
+  `xo debug`, release builds and `--error-args`, the task line of error
+  traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
+  derives, `require` and `xo.lock` (decision 0086), and reading a
+  newtype's value (2.8).
 
 ## Changes in 0.7
 
@@ -170,6 +183,10 @@ Each section is tagged with the phase in which it is implemented.
 
 The language semantics do not change between phases. Only implementation
 quality and tooling depth change.
+
+**[later]** marks a feature this draft specifies but the toolchain does not
+implement yet, in a section otherwise implemented. The spec audit
+(`bench/results/spec-audit-2026-10-09.md`) lists every such gap.
 
 ### Experimental sections
 
@@ -551,6 +568,10 @@ type Email struct(Str)              // newtype, distinct, construct with Email("
 type Handler = fn(http.Request) -> http.Response ! Error uses net
 ```
 
+A newtype has the equality, hashing, and JSON of its underlying value. There is no way yet to read the underlying value back (neither
+`e.0` nor a pattern `Email(s)` is accepted): an open gap recorded in the
+2026-10-09 spec audit (`bench/results/spec-audit-2026-10-09.md`).
+
 ### 2.9 Derived behavior
 
 Every type automatically implements:
@@ -569,7 +590,9 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   (`fn (e: ApiErr) display() -> Str`) for user facing text.
 - `Json`, `OpenApi`, and `Proto` derives generate codecs and schemas from the
   same declaration so wire formats and docs cannot drift. JSON rules are in
-  `spec/std.md`.
+  `spec/std.md`. **[later]** `OpenApi` and `Proto` are reserved: the
+  derives are accepted only when every field derives them too (no builtin
+  type implements them yet), and nothing is generated.
 - `SqlRow` (structs only) generates a decoder from a std/sql row: each field
   is read from the column of the same name (`spec/std.md` 10.4).
 
@@ -715,7 +738,8 @@ match code {
 - Deferred code is **shielded from cancellation**: inside it, cancellation
   points do not report cancellation, so cleanup such as removing a temp file
   works after a timeout. A shielded `defer` that runs longer than 5 seconds
-  faults (`XO-F005`).
+  of real time faults (`XO-F005`); the Go backend checks this when the
+  deferred code returns, and not in test worlds, whose clock is virtual.
 - The native backends (`--backend=llvm`, `--backend=arm64`) run deferred
   code on every way out alike, faults included (decisions 0070, 0085).
 
@@ -804,6 +828,12 @@ edition 2026
 require github.com/acme/billing v1.4.0
 ```
 
+**[P1, not implemented yet]** `require` lines of Xo modules are read by
+nothing yet: fetching, version selection, and vendoring follow decision
+0086 (Accepted). Today imports resolve inside the main module (the path
+after the `module` line) and the embedded `std`; `require go <module>
+<version>` pins a Go module for `use go` (4.4).
+
 **[P1]** `gc` lines tune the garbage collector of a program whose main
 module this is (decision 0065); they are ignored in imported modules:
 
@@ -827,6 +857,7 @@ Written only by the toolchain. Maps every imported definition actually used to
 its content hash.
 
 - **[P1]** Hash is per module version (source tree hash), like Go's `go.sum`.
+  Not implemented yet (decision 0086): no command writes `xo.lock`.
 - **[P3]** Hash is per definition: the normalized AST with local names erased
   and referenced definitions replaced by their hashes. Consequences:
   - Two versions of a dependency coexist without conflict. Types from different
@@ -1316,7 +1347,9 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
 
 There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly
-marked `requires(debug)` or `ensures(debug)`.
+marked `requires(debug)` or `ensures(debug)`. **[later]** There is no
+release build mode yet: every build checks `requires(debug)` and
+`ensures(debug)` like other contracts.
 
 ---
 
@@ -1405,10 +1438,10 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below) |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
-| `xo test [--seed=N] [--explore=N] [--fuzz=10s]` | Tests, examples, contract fuzzing; deterministic scheduling |
+| `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
 | `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
@@ -1417,12 +1450,15 @@ test "retries after 503" {
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
 | `xo query <kind> ...` | Semantic queries (10.3) |
 | `xo edit <op> ...` | Semantic edits (10.4) |
-| `xo replay`, `xo why`, `xo dump`, `xo debug` | Debugging (section 11) |
+| `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 
-Every command accepts `--json`. When stdout is not a terminal, `--json` is the
-default for `check`, `build`, `test`, and `query`.
+The commands that report diagnostics or results accept `--json`: `parse`,
+`check`, `build`, `test`, `fmt`, `fix`, `vet`, `query`, `edit` (always
+JSON), `doc`, `explain`, and `bind`. `run`, `replay`, `dump`, `serve`, and
+`version` print the program's or the tool's own output. When stdout is not a
+terminal, JSON is the default for `query`.
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
@@ -1476,7 +1512,7 @@ where the Go backend fuses a multiply and an add (decision 0084).
   `06xx` resolution, `07xx` effects, `08xx` concurrency, `09xx` holes and
   contracts, `10xx` platform, `11xx` Go interop, `12xx` native builds
   without a garbage collector (`XO1201`: not available with `--no-gc`,
-  planned or impossible; 10.1).
+  planned or impossible; 10.1). Every code is listed in 10.6.
 - The compiler reports all errors it can, not just the first, and never
   cascades: a bad expression has type `<error>` and suppresses dependent
   diagnostics.
@@ -1566,6 +1602,106 @@ not type check.
 `xo fmt` produces one canonical layout from the AST. There are no options.
 `xo build` fails on unformatted files in CI mode (`--ci`).
 
+### 10.6 Diagnostic codes
+
+Every code the toolchain reports, its default severity, and what reports
+it: the lexer and parser (`xo parse` and every later command), the checker
+(`xo check`), `xo vet` (advisory, never an error except `XO0901` under
+`xo build --ci`), and the no GC check (`--no-gc`, 10.1). `xo explain
+<code>` prints the long form of each. The registry is
+`internal/diag/codes.go`; a test keeps this table equal to it.
+
+| Code | Severity | Reported by | Meaning |
+|---|---|---|---|
+| `XO0101` | error | checker | name breaks the enforced naming rules (core 1.5) |
+| `XO0110` | error | checker | unused local binding or import (core 3.1) |
+| `XO0150` | error | lexer | character that cannot start any token |
+| `XO0151` | error | lexer | string, raw string, bytes, or triple quoted string not closed |
+| `XO0152` | error | lexer | rune literal that is empty, unterminated, or holds more than one character |
+| `XO0153` | error | lexer | unknown or malformed escape sequence |
+| `XO0154` | error | lexer | bad digit, misplaced `_`, missing digits, or out of range integer |
+| `XO0155` | error | lexer | unknown duration unit, fractional or non decimal duration |
+| `XO0156` | error | lexer | `${` without a matching `}` in the same string |
+| `XO0157` | error | lexer | `${}` with no expression |
+| `XO0158` | error | lexer | `use` not followed by a valid import path |
+| `XO0160` | error | parser | a token that does not fit the grammar here |
+| `XO0161` | error | parser | list element followed by a newline instead of a comma (core 1.3) |
+| `XO0162` | error | parser | `else` must be on the line of the closing brace (core 1.3) |
+| `XO0163` | error | parser | unparenthesized struct literal in a condition (core 1.4) |
+| `XO0164` | error | parser | `(`, `[`, or `{` not closed before end of file |
+| `XO0165` | error | parser | syntax that is not a pattern (core 3.5) |
+| `XO0166` | error | parser | `while cond` used as an expression; only `while { }` is one |
+| `XO0167` | error | parser | top level declaration (fn, struct, const, ...) inside a block |
+| `XO0168` | error | parser | statement (let, expression, ...) at top level |
+| `XO0169` | error | parser | match or select arms separated by `,` instead of newlines |
+| `XO0170` | error | parser | several effects in a function type must be parenthesized (core 15) |
+| `XO0171` | error | parser | `..` used more than once or not last in pattern fields |
+| `XO0172` | error | parser | function declaration without a body |
+| `XO0173` | error | parser | `use` after the first declaration (core 15: File) |
+| `XO0174` | error | parser | bare `self` parameter outside an interface method signature |
+| `XO0175` | error | parser | two statements or arms on one line |
+| `XO0176` | error | parser | `pub` before something that cannot be exported |
+| `XO0177` | error | parser | syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087) |
+| `XO0201` | error | checker | Result value is never used (core 2.6) |
+| `XO0202` | error | checker | error type does not convert to the enclosing error type (core 2.6) |
+| `XO0203` | error | checker | success of a Result typed T must be written Ok(x) (core 2.6) |
+| `XO0204` | error | checker | `?` on an Option in a function returning a Result (core 2.5) |
+| `XO0205` | error | checker | `?` where the enclosing function cannot return the failure (core 2.5, 2.6) |
+| `XO0206` | error | checker | `let _ =` discards a Result; use `.ignore_err("reason")` (core 2.6) |
+| `XO0207` | warning | vet | method chain on the right of `??` starts at a literal, so it applies only to the default (core 15 precedence) |
+| `XO0208` | note | vet | `.ignore_err("reason")` discards an error; listed with its reason for review (core 2.6) |
+| `XO0301` | error | checker | match does not cover every case (core 2.3) |
+| `XO0302` | error | checker | pattern does not fit the type of the matched value (core 3.5) |
+| `XO0303` | error | checker | refutable pattern where an irrefutable one is required (core 3.5) |
+| `XO0304` | error | checker | alternatives of an or pattern bind different names or types (core 3.5) |
+| `XO0305` | warning | checker | `_` arm hides variants of an enum declared in this module (core 3.5) |
+| `XO0401` | error | checker | value of the wrong type; only three implicit conversions exist (core 2.10) |
+| `XO0402` | error | checker | type arguments cannot be inferred (core 2.7) |
+| `XO0403` | error | checker | wrong arguments or fields: count, names, missing, or duplicates |
+| `XO0404` | error | checker | type does not implement a required interface or constraint (core 2.4) |
+| `XO0405` | error | checker | type cannot be inferred here; annotate it |
+| `XO0406` | error | checker | operator, index, slice, or iteration not defined for the type |
+| `XO0407` | error | checker | name used as the wrong kind of thing (a type as a value, a value that is not callable) |
+| `XO0408` | error | checker | const initializer is not a compile time value (core 3.1) |
+| `XO0409` | error | checker | invalid explicit conversion (core 2.1) |
+| `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
+| `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
+| `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
+| `XO0510` | error | checker | use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3) |
+| `XO0520` | error | checker | mutation of a copied or stored collection element is never written back (core 5.2) |
+| `XO0601` | error | checker | name does not resolve (core 4.3) |
+| `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
+| `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |
+| `XO0604` | error | checker | cyclic module imports (core 4.1) |
+| `XO0605` | error | checker | name is not `pub` in its module, or the std type is an opaque handle (core 1.5) |
+| `XO0606` | error | checker | method declared outside the module of its type (core 3.4) |
+| `XO0607` | error | checker | `break` or `continue` outside a loop, or an unknown label (core 3.5) |
+| `XO0701` | error | checker | effect performed outside the declared set (core 6.2) |
+| `XO0702` | error | checker | unknown effect label (core 6.1) |
+| `XO0703` | warning | vet | effect declared in `uses` is never performed (core 6.2) |
+| `XO0801` | error | checker | child or group task error does not convert to the enclosing error type (core 7.1) |
+| `XO0802` | error | checker | scope handle, or a value containing a task group, escapes its scope (core 7.1) |
+| `XO0803` | error | checker | task started without a scope handle (core 7.1) |
+| `XO0804` | warning | checker | value read in one `Mutex.with` is written back in a later one (core 5.4) |
+| `XO0900` | warning | checker | typed hole report (core 3.7) |
+| `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
+| `XO1001` | error | reserved | std/sys/<os> used outside the matching target arm (core 12.2) |
+| `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
+| `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
+| `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
+| `XO1201` | error | no GC check | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
+
+`XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
+never reported.
+
+Faults (8) that have a stable code print it in their message:
+
+| Code | Fault |
+|---|---|
+| `XO-F001` | deadlock: every task is blocked on another task (11.4) |
+| `XO-F004` | `Mutex.with` or `with_read` called re entrantly on a mutex the task holds (5.4) |
+| `XO-F005` | a shielded `defer` ran longer than 5 seconds (3.5) |
+
 ---
 
 ## 11. Debugging [P1 basics, P2 replay]
@@ -1578,12 +1714,16 @@ Each `?` that propagates an error appends a frame:
 LoadErr.Db(msg: "timeout")
   at users.fetch_user(id=42)          users/fetch.xo:18
   at api.get_profile(req=GET /u/42)   api/profile.xo:7
-  in task "handler#913" (scope api.serve)
 ```
 
 - Frames record function, location, and parameters that implement `Debug`,
-  truncated to 64 bytes each. `Secret[T]` prints `<redacted>`.
-- Release builds record parameters only with `--error-args`.
+  truncated to 64 bytes each. `Secret[T]` prints `<redacted>`. Capability
+  parameters are left out. Frames are built only when an error
+  propagates; the success path records nothing.
+- **[later]** A last line naming the task and its scope
+  (`in task "handler#913" (scope api.serve)`) is planned.
+- Release builds record parameters only with `--error-args` (**[later]**:
+  there is no release build mode yet, see 8; Appendix B question 3).
 
 ### 11.2 Crash bundles
 
@@ -1651,7 +1791,10 @@ breakpoints, break on contract failure, eval, step, step back with replay).
 **[P1]** The generated Go code carries `//line file.xo:N` directives, so Delve,
 Go stack traces, and pprof report Xo source locations.
 
-### 11.6 Observability
+### 11.6 Observability [later]
+
+Not implemented yet: no spans exist, log records carry no span or request
+id, and `XO_OTEL_ENDPOINT` is not read.
 
 - Every `scope` and every effect call is a trace span. `std/log` is structured
   and attaches the current span and request id automatically.
@@ -1668,7 +1811,8 @@ Go stack traces, and pprof report Xo source locations.
 
 Binaries are static and builds are reproducible: the same source, lockfile,
 and toolchain version produce byte identical output. Each build writes an SBOM
-(`<bin>.sbom.json`).
+(`<bin>.sbom.json`). **[later]** No SBOM is written yet, and byte identical
+output is not tested yet.
 
 ### 12.2 Platform specific code
 
@@ -1694,7 +1838,9 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
   `xo build`**, so a broken Windows branch fails on a macOS machine. A missing
   OS is a non exhaustive match error.
 - Platform specific APIs live in `std/sys/<os>` and can only be referenced from
-  inside the matching arm (error `XO1001` otherwise).
+  inside the matching arm (error `XO1001` otherwise). **[later]** No
+  `std/sys/<os>` module exists yet, so `XO1001` is reserved (10.6).
+- The native backends do not build `target` yet (`XO1201`, planned).
 
 ---
 
@@ -1722,10 +1868,12 @@ specified in `spec/std.md`. Modules:
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
 | `std/log` | Structured, ambient logging bound to spans |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
-| `std/time` | Time zones and formatting (arithmetic is in the prelude) |
+| `std/time` | Time zones and formatting (arithmetic is in the prelude). **[later]** The module is empty; std.md 13 is a Proposed API |
 | `std/testing` | Fake capability types, generators, captured logs |
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
+| `std/path` | Pure helpers for `/` separated paths |
+| `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 
 ---
@@ -1917,9 +2065,14 @@ test "missing user is 404" {
 Tracked in `knowledgebase/decisions/` once decided.
 
 1. Method syntax: Go style receivers (current) or `impl` blocks.
+   Proposed in 0090: keep receivers.
 2. Whether `Map` iteration order should be insertion ordered (current) or
-   sorted, given the cost on the Go backend.
-3. Error frame capture cost in release builds.
+   sorted, given the cost on the Go backend. Proposed in 0091: keep
+   insertion order (measured: no cost on the Go backend).
+3. Error frame capture cost in release builds. Proposed in 0092: frames
+   always on, captured lazily.
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
-5. FFI design and how `ffi` interacts with record/replay.
+5. FFI design and how `ffi` interacts with record/replay. Proposed in
+   0093: `use go` and native `use c`, foreign calls recorded at the
+   boundary.
 6. ~~Interpolation syntax.~~ Decided in 0021: `${x}`.

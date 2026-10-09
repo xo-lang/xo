@@ -1,6 +1,6 @@
 # Xo Standard Library and Prelude
 
-Status: draft 0.6 (2026-10-08)
+Status: draft 0.8 (2026-10-09; the same draft number as `spec/core.md`, decision 0089)
 Companion to `spec/core.md`.
 
 Signatures are written in Xo syntax. `[var]` before a receiver means the method
@@ -311,6 +311,7 @@ fn (t: Task[T, E]) await() -> T ! E          // written `t.await`
 
 Buf[T].new() -> Buf[T]                       // also with_capacity(n)
 fn ([var] b: Buf[T]) push(x: T)
+fn (b: Buf[T]) len() -> Int
 fn (b: Buf[T]) freeze() -> List[T]           // moves b
 StrBuilder.new() -> StrBuilder
 fn ([var] b: StrBuilder) write(s: Str)
@@ -814,8 +815,9 @@ struct Record { level: Level, msg: Str, fields: Map[Str, Str] }   // as captured
 log.info("listening", {"addr": addr, "port": port})
 ```
 
-Every record includes the time, the current span, and the request id.
-Without `configure`, logs go to standard error as text at `Info`.
+Every record includes the time. **[later]** The current span and the
+request id (core 11.6) are not attached yet. Without `configure`, logs go
+to standard error as text at `Info`.
 
 Under `xo test` (decision 0057) each test has its own log sink, starting at
 `Info` with no output configured. Records that would go to standard error
@@ -1288,3 +1290,131 @@ fn issue(db: sql.Db, r: Rand, user: Int) -> Str ! sql.SqlErr uses (rand, net.dia
 
 Passwords chosen by people have little entropy: store
 `hash_password_argon2id(os.rand, pw)` and check with `verify_password`.
+
+---
+
+## 12. std/go
+
+Values that cross the Go interop boundary (core 4.4, decision 0041).
+Bindings written by `xo bind` import this module; user code needs
+`use std/go` only to name the type, for example in `! go.Error`.
+
+```
+struct Error {}                      // handle; implements Display, so it converts to Error at `?`
+fn (e: Error) display() -> Str       // the Go error's Error() text, captured at the boundary
+fn (e: Error) message() -> Str       // the same text
+fn (e: Error) go_type() -> Str       // the Go dynamic type, for example "*url.Error"
+```
+
+Calling these performs no Go call (no `go` effect). The native backends do
+not build `use go` code at all (`XO1201`, impossible).
+
+---
+
+## 13. std/time (Proposed, not implemented)
+
+Status: **Proposed** draft for the owner (2026-10-09 spec audit,
+`bench/results/spec-audit-2026-10-09.md`). Nothing here is implemented:
+`std/time` resolves but declares nothing (every name in it is `XO0601`).
+Until this is decided, the prelude (2.6) is the whole time API: instants,
+durations, Unix seconds and milliseconds, and RFC 3339 in UTC.
+
+Principles:
+
+- `Time` stays an instant with no zone. A zone is a separate value, and a
+  civil (wall clock) reading is a separate type, so code never compares a
+  zoned and an unzoned value by accident.
+- Zone data is embedded in the toolchain (the IANA database, as Go's
+  `time/tzdata`, about 450 KB), so loading a zone by name is pure, needs no
+  capability, and gives the same answer on every OS and in tests. Only the
+  machine's own zone needs authority: `local` takes `Env` (`TZ`, then the
+  system setting), so a function that depends on where it runs says so.
+- Layouts are written with named fields, not Go's reference date and not
+  C's `%` codes, because both are easy to get wrong without looking them
+  up: `"{yyyy}-{MM}-{dd} {HH}:{mm}:{ss}"`. Common formats are constants.
+- Parsing returns a `Result` whose error names the position and the field
+  expected, like `json.DecodeErr`.
+- Daylight saving gaps and overlaps are explicit: converting a civil time
+  that does not exist or exists twice is an error unless the caller picks
+  a rule.
+
+### 13.1 Zones
+
+```
+struct Zone {}                                   // handle; Eq, Display (its name)
+enum ZoneErr { Unknown(name: Str), NoLocal(msg: Str) } derive Display
+
+pub fn utc() -> Zone
+pub fn zone(name: Str) -> Zone ! ZoneErr         // IANA name: "Europe/Berlin"; pure (embedded data)
+pub fn fixed(name: Str, offset: Duration) -> Zone   // "UTC+2" style; faults past 24h
+pub fn local(env: Env) -> Zone ! ZoneErr uses env   // TZ, then the system zone
+
+fn (z: Zone) name() -> Str
+fn (z: Zone) offset_at(t: Time) -> Duration      // offset from UTC at that instant
+fn (z: Zone) abbreviation_at(t: Time) -> Str     // "CET", "CEST"
+```
+
+In tests `os.env` is a fake, so `local(os.env)` is `utc()` unless the
+test sets `TZ`.
+
+### 13.2 Civil time
+
+```
+struct Date { year: Int, month: Int, day: Int } derive Ord, Json
+struct ClockTime { hour: Int, minute: Int, second: Int, nanos: Int } derive Ord, Json
+struct Civil { date: Date, time: ClockTime, offset: Duration, zone: Str } derive Json
+enum Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday } derive Display, Ord, Json
+enum Ambiguity { Earlier, Later, Reject }
+enum CivilErr { Invalid(msg: Str), Skipped(at: Str), Repeated(at: Str) } derive Display
+
+pub fn civil(t: Time, z: Zone) -> Civil
+pub fn instant(date: Date, time: ClockTime, z: Zone, ambiguity: Ambiguity = Ambiguity.Reject) -> Time ! CivilErr
+pub fn date(year: Int, month: Int, day: Int) -> Date ! CivilErr
+fn (d: Date) weekday() -> Weekday
+fn (d: Date) add_days(n: Int) -> Date
+fn (d: Date) add_months(n: Int) -> Date          // clamps the day: Jan 31 + 1 month is Feb 28 or 29
+fn (d: Date) days_until(o: Date) -> Int
+fn (d: Date) display() -> Str                    // "2026-10-09"
+```
+
+`instant` with `Reject` returns `Skipped` for a time inside a spring
+forward gap and `Repeated` for one inside a fall back overlap; `Earlier`
+and `Later` pick the first or second instant (for a gap, the instant the
+offset before or after the change gives). Arithmetic on `Time` stays exact
+(`t + 24h` is always 24 hours); calendar arithmetic is on `Date`.
+
+### 13.3 Formatting and parsing
+
+```
+const RFC3339: Str = "{yyyy}-{MM}-{dd}T{HH}:{mm}:{ss}{.f}{Z}"
+const RFC1123: Str = "{EEE}, {dd} {MMM} {yyyy} {HH}:{mm}:{ss} {zzz}"   // HTTP dates
+const DATE: Str = "{yyyy}-{MM}-{dd}"
+const TIME: Str = "{HH}:{mm}:{ss}"
+
+struct ParseErr { input: Str, layout: Str, at: Int, msg: Str }   // "at byte 5 of \"2026-1x-09\": expected 2 digit month"
+struct LayoutErr { layout: Str, msg: Str }
+
+pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked by xo vet)
+pub fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr   // z applies when the text has no offset
+pub fn check_layout(layout: Str) -> () ! LayoutErr
+```
+
+Fields: `{yyyy}` year, `{MM}` month 01 to 12, `{M}` month without padding,
+`{MMM}` `Jan`, `{MMMM}` `January`, `{dd}` day, `{d}`, `{EEE}` `Mon`,
+`{EEEE}` `Monday`, `{HH}` hour 00 to 23, `{hh}` 01 to 12 with `{a}` AM or
+PM, `{mm}` minute, `{ss}` second, `{.f}` a fraction with as many digits as
+needed (none when zero), `{.fff}` exactly three, `{Z}` `Z` or `+02:00`,
+`{ZZ}` `+0200`, `{zzz}` the zone abbreviation. A literal brace is written `{lbrace}` or `{rbrace}`.
+Names are English only; locales are out of scope. Parsing accepts exactly
+the layout (no guessing between formats); a two digit year is not offered.
+
+### 13.4 Open points for the owner
+
+- Embedding tzdata costs about 450 KB per binary on every backend; the
+  alternative is reading the system database through the `fs` capability
+  (smaller binaries, but zone results then depend on the host and need
+  authority).
+- Whether `format` with a bad dynamic layout faults (proposed, like a bad
+  index) or returns a `Result`.
+- Native backends need the same embedded data in C; the Go backend can use
+  Go's `time` package directly.

@@ -1,4 +1,4 @@
 // std/time (core 14): time zones and formatting. Arithmetic and RFC 3339
-// are in the prelude (std.md 2.6). spec/std.md does not list this module's
-// surface yet, so the file is empty: `use std/time` resolves, and every name
-// in it is reported as unresolved (XO0601).
+// are in the prelude (std.md 2.6). spec/std.md 13 is a Proposed API that is
+// not decided or implemented yet, so the file is empty: `use std/time`
+// resolves, and every name in it is reported as unresolved (XO0601).

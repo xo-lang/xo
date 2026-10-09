@@ -16,7 +16,9 @@ import (
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/format"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/vet"
 )
 
 // printDiags prints diagnostics in the human form and a summary.
@@ -77,6 +79,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	targets := fl.String("targets", "", "comma separated os/arch list, or all")
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
+	ci := fl.Bool("ci", false, "CI mode: fail before building when a .xo file is not formatted (core 10.5) or `dbg(...)` is left in code (core 11.4)")
 	hybrid := fl.Bool("hybrid", false, "compile the hot leaf functions of the main module (loops over scalars and Lists of flat structs, no allocation) to Go assembler with the arm64 backend, keeping the Go runtime (Go backend, decision 0084); the tag xo_pure builds the Go versions")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
@@ -113,6 +116,11 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	if *hybrid && backend != "go" {
 		fmt.Fprintln(stderr, "xo build: --hybrid needs the Go backend")
 		return 2
+	}
+	if *ci {
+		if code := ciCheck(dirs, *asJSON, stdout, stderr); code != 0 {
+			return code
+		}
 	}
 	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid})
 	if err != nil {
@@ -160,6 +168,64 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// ciCheck is the CI mode of `xo build --ci`: every .xo file under dirs
+// must be in the canonical format (core 10.5) and no `dbg(...)` may be
+// left in code (core 11.4; XO0901, an error here). It returns 0 when the
+// build may go on, 1 when it must fail, and 2 on a usage error.
+func ciCheck(dirs []string, asJSON bool, stdout, stderr io.Writer) int {
+	files, err := collectFmt(dirs)
+	if err != nil {
+		fmt.Fprintf(stderr, "xo build: %v\n", err)
+		return 2
+	}
+	unformatted := []string{}
+	ds := []diag.Diagnostic{}
+	for _, path := range files {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "xo build: %v\n", err)
+			return 2
+		}
+		out, err := format.Source(path, src)
+		if err != nil {
+			// syntax errors are reported by the build itself
+			continue
+		}
+		if string(out) != string(src) {
+			unformatted = append(unformatted, path)
+		}
+	}
+	r, err := vet.Vet(dirs)
+	if err != nil {
+		fmt.Fprintf(stderr, "xo build: %v\n", err)
+		return 2
+	}
+	for _, d := range r.Diagnostics {
+		if d.Code == string(diag.DebugLeft) {
+			d.Severity = diag.Error
+			ds = append(ds, d)
+		}
+	}
+	if len(unformatted) == 0 && len(ds) == 0 {
+		return 0
+	}
+	if asJSON {
+		writeJSON(stdout, struct {
+			Ok          bool              `json:"ok"`
+			Binaries    map[string]string `json:"binaries"`
+			Diagnostics []diag.Diagnostic `json:"diagnostics"`
+			Unformatted []string          `json:"unformatted"`
+		}{false, map[string]string{}, ds, unformatted})
+		return 1
+	}
+	printDiags(ds, stderr)
+	for _, p := range unformatted {
+		fmt.Fprintf(stderr, "%s: not formatted; run `xo fmt` (core 10.5)\n", p)
+	}
+	fmt.Fprintln(stderr, "xo build: --ci: nothing built")
+	return 1
 }
 
 // runRun builds for the host and runs the program with the arguments after

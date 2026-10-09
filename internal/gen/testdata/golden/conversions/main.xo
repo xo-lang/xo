@@ -6,6 +6,8 @@ fn main(os: Os) {
   let small: Int32 = Int32(1000)
   os.stdio.println("int32: ${small} ${Int(small) + 1}")
   os.stdio.println("parse: ${Int.parse("42") ?? 0} ${Int.parse("x") ?? 0} ${Float.parse("2.5") ?? 0.0}")
+  let f32: Float32 = Float32(2.5) * Float32(3)
+  os.stdio.println("float32: ${f32} ${Float(f32)} ${Int(f32)} ${f32 < Float32(8)}")
   os.stdio.println("convert 300 to UInt8")
   let b = UInt8(big)
   os.stdio.println("never ${b}")
