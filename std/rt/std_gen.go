@@ -2020,8 +2020,6 @@ func (v Time_ZoneErr) XoDebug(b *strings.Builder) {
 
 func (v Time_ZoneErr) M_debug(*Task) string { return Debug(v) }
 
-func (v Time_ZoneErr) M_display(*Task) string { return Debug(v) }
-
 type Time_Date struct {
 	F_year  int64
 	F_month int64
@@ -2710,8 +2708,6 @@ func (v Time_CivilErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Time_CivilErr) M_debug(*Task) string { return Debug(v) }
-
-func (v Time_CivilErr) M_display(*Task) string { return Debug(v) }
 
 type Time_ParseErr struct {
 	F_input  string

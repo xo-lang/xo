@@ -336,10 +336,14 @@ func TestTidy(t *testing.T) {
 		t.Errorf("after tidy: %v %s", b.Problems, selected(b))
 	}
 	// money at a version the graph already selects is dropped
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/money v1.0.0\n"), 0o644)
+	// (and a deny line, decision 0095, is kept as written)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/money v1.0.0\n\ndeny example.com/app/main -> github.com/acme/money/...\n"), 0o644)
 	changes, ps = mod.Tidy(dir)
 	if len(ps) > 0 || len(changes) != 1 || changes[0] != (mod.Change{Path: "github.com/acme/money", Old: "v1.0.0"}) {
 		t.Errorf("changes %+v %v", changes, ps)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "xo.mod")); !strings.Contains(string(data), "\ndeny example.com/app/main -> github.com/acme/money/...\n") {
+		t.Errorf("tidy dropped the deny line:\n%s", data)
 	}
 	lock, _ := os.ReadFile(filepath.Join(dir, "xo.lock"))
 	golden(t, "tidy.lock", string(lock))
@@ -456,5 +460,40 @@ func TestRepoURL(t *testing.T) {
 	}
 	if got := mod.EscapePath("github.com/Acme/X"); got != "github.com/!acme/!x" {
 		t.Errorf("EscapePath = %s", got)
+	}
+}
+
+// TestDenyParse: `deny` lines of xo.mod (decision 0095).
+func TestDenyParse(t *testing.T) {
+	src := "module example.com/notes\n\ndeny example.com/notes/domain -> example.com/notes/store, example.com/notes/api // layers\ndeny example.com/notes/store -> example.com/notes/api/...\ndeny example.com/notes/x\ndeny -> a\ndeny a -> b,\n"
+	f, ps := mod.Parse("xo.mod", []byte(src))
+	if len(f.Denies) != 2 {
+		t.Fatalf("denies %+v", f.Denies)
+	}
+	d := f.Denies[0]
+	if d.Line != 3 || d.String() != "deny example.com/notes/domain -> example.com/notes/store, example.com/notes/api" {
+		t.Errorf("rule %+v %q", d, d.String())
+	}
+	if len(ps) != 3 {
+		t.Fatalf("problems %v", ps)
+	}
+	for i, p := range ps {
+		if p.Code != diag.ModFileInvalid || p.Line != 5+i {
+			t.Errorf("problem %d: %v", i, p)
+		}
+	}
+	r := f.Denies[1]
+	for _, c := range []struct {
+		from, to string
+		want     bool
+	}{
+		{"example.com/notes/store", "example.com/notes/api", true},
+		{"example.com/notes/store", "example.com/notes/api/v1", true},
+		{"example.com/notes/store", "example.com/notes/apix", false},
+		{"example.com/notes/store/sql", "example.com/notes/api", false},
+	} {
+		if got := r.Denies(c.from, c.to) != ""; got != c.want {
+			t.Errorf("%s -> %s: %v, want %v", c.from, c.to, got, c.want)
+		}
 	}
 }

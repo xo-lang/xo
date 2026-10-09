@@ -14,6 +14,6 @@ exit 0
 2026-03-08T07:00:00Z in UTC+5:30: 2026-03-08 12:30:00 UTC+5:30 +05:30 | offset 5h30m0s UTC+5:30 | civil 2026-03-08 12:30 5h30m0s UTC+5:30
 eq true true false true false
 names America/New_York Europe/Berlin UTC UTC+5:30
-unknown: Unknown(name: "Mars/Olympus_Mons")
-names are case sensitive: Unknown(name: "europe/berlin")
+unknown: unknown time zone "Mars/Olympus_Mons"
+names are case sensitive: unknown time zone "europe/berlin"
 --- stderr

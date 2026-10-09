@@ -227,6 +227,8 @@ kinds:
   effects <module.fn>      effects the function performs, with the call chain per effect
   holes                    holes (???) with their expected types
   api <module path>        exported surface of a module (import path or directory)
+  imports <package>        the package's use lines, with any deny rule that forbids one
+  deps <package>           imports, transitively (std and Go packages are not followed)
 
 --dir (default .) is the directory checked. JSON is the default when stdout
 is not a terminal.
@@ -304,7 +306,7 @@ func runQueryWith(args []string, load loader, stdout, stderr io.Writer) int {
 		}
 	}
 	switch kind {
-	case "type", "def", "callers", "effects", "holes", "api":
+	case "type", "def", "callers", "effects", "holes", "api", "imports", "deps":
 	default:
 		fmt.Fprintf(stderr, "xo query: unknown kind %q\n\n%s", kind, queryUsage)
 		return 2
@@ -385,6 +387,24 @@ func runQueryWith(args []string, load loader, stdout, stderr io.Writer) int {
 				fmt.Fprintln(&b, diag.Human(d))
 			}
 			fmt.Fprintf(&b, "%d hole(s)\n", len(r))
+			return b.String()
+		}
+	case "imports", "deps":
+		r, e := s.Imports(rest[0], kind == "deps")
+		res, err = r, e
+		text = func() string {
+			var b strings.Builder
+			for _, e := range r.Imports {
+				fmt.Fprintf(&b, "%s: %s uses %s", e.Pos, e.From, e.Path)
+				if e.Missing {
+					b.WriteString(" (not found)")
+				}
+				if e.Denied != "" {
+					b.WriteString(" (denied, XO1312)")
+				}
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "%d use line(s), %d package(s)\n", len(r.Imports), len(r.Packages))
 			return b.String()
 		}
 	case "api":

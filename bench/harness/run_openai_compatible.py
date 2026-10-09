@@ -18,7 +18,8 @@ Usage:
 Protocol (matches the original runs, see README.md): the model gets one
 prompt with the task, the required layout, and the output contract, and
 writes the whole solution in its first reply. The harness writes the files,
-runs the arm's feedback loop (xo: `xo check --json` then `xo test --race`;
+runs the arm's feedback loop (xo: `xo check --fix --json`, which applies the
+machine fixes, then `xo test --race`;
 go-plain: build, vet, test; go-strict: strict-check.sh), and stops when it is
 green. Otherwise it sends the tool output back and the model replies with
 the files it changed, up to --max-runs runs in total. Planted bug authors get
@@ -137,7 +138,7 @@ def run_solution(client, arm, task, out, max_runs, resume):
         else:
             c.write_files(d, files)
             snapshot(d, run)
-            fb = c.feedback(arm, d)
+            fb = c.feedback(arm, d, agent=True)
         rec.update({k: v for k, v in fb.items() if k not in ("output", "arm")})
         append_jsonl(runs_path, rec)
         print("  green=%s stage=%s" % (fb["green"], fb.get("stage")), file=sys.stderr, flush=True)

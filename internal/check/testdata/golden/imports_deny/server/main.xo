@@ -1,0 +1,7 @@
+use example.com/notes/api
+use example.com/notes/domain
+use example.com/notes/store
+
+fn main(os: Os) {
+  os.stdio.println("${api.name()} ${domain.load(1).id} ${store.get(2)}")
+}

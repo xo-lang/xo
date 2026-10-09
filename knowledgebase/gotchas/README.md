@@ -201,3 +201,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-methods-are-go-methods.md](std-methods-are-go-methods.md): a method declared on a std struct or enum is called as a Go method `M_<name>` of its rt type, not as `<Prefix><Type>_<name>`.
 - [go-loadlocation-prefers-host.md](go-loadlocation-prefers-host.md): `time.LoadLocation` reads the host database before `time/tzdata`; std/time embeds TZif data and uses `LoadLocationFromTZData`.
 - [http-date-utc-not-gmt.md](http-date-utc-not-gmt.md): `time.RFC1123` in `utc()` ends in `UTC`; HTTP dates need a literal `GMT`.
+- [spec-xomod-blocks-need-skip.md](spec-xomod-blocks-need-skip.md): a new xo.mod (or other non Xo) block in core.md fails `TestSpecCoreExamples` unless its first line matches a `specSkips` prefix.

@@ -125,6 +125,34 @@ func TestResolution(t *testing.T) {
 			"xo.mod":       "module example.com/app\nedition 2026\n",
 			"main/main.xo": "use github.com/acme/billing/invoice\n\nfn f() -> Int { invoice.total() }\n",
 		}, want: []string{"XO1306"}},
+		{name: "deny rule forbids a use", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/store\n",
+			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store\n\npub fn f() -> Int { store.one() }\n",
+		}, want: []string{"XO1312"}},
+		{name: "deny pattern forbids a nested use", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/...\n",
+			"store/sql/a.xo": "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store/sql\n\npub fn f() -> Int { sql.one() }\n",
+		}, want: []string{"XO1312"}},
+		{name: "deny rule allows other uses", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/store -> example.com/app/domain\n",
+			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store\n\npub fn f() -> Int { store.one() }\n",
+		}},
+		{name: "deny rule names a missing package", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/nope\n",
+			"domain/main.xo": "pub fn f() -> Int { 1 }\n",
+		}, want: []string{"XO1301"}},
+		{name: "malformed deny line", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain example.com/app/nope\n",
+			"domain/main.xo": "pub fn f() -> Int { 1 }\n",
+		}, want: []string{"XO1301"}},
+		{name: "newtype of another module", files: map[string]string{
+			"xo.mod":       "module example.com/app\nedition 2026\n",
+			"lib/a.xo":     "pub type Email struct(Str)\n",
+			"main/main.xo": "use example.com/app/lib\n\nfn f(e: lib.Email) -> Str {\n  let lib.Email(s) = e\n  s + e.0\n}\n",
+		}},
 		{name: "missing package of the main module", files: map[string]string{
 			"xo.mod":       "module example.com/app\nedition 2026\n",
 			"main/main.xo": "use example.com/app/nope\n\nfn f() -> Int { nope.total() }\n",
@@ -222,6 +250,19 @@ func TestErrors(t *testing.T) {
 
 func TestMatch(t *testing.T) {
 	runCases(t, []ruleCase{
+		// newtypes (core 2.8, decision 0097)
+		{name: "newtype value", src: "type Email struct(Str)\nfn f(e: Email) -> Int { e.0.len() }\n"},
+		{name: "newtype value assigned", src: "type Email struct(Str)\nfn f() -> Str {\n  var e = Email(\"a\")\n  e.0 = \"b\"\n  e.0\n}\n"},
+		{name: "newtype has only .0", src: "type Email struct(Str)\nfn f(e: Email) -> Str { e.1 }\n", want: []string{"XO0601"}},
+		{name: "newtype pattern let", src: "type Email struct(Str)\nfn f(e: Email) -> Str {\n  let Email(s) = e\n  s\n}\n"},
+		{name: "newtype pattern generic", src: "type Wrap[T] struct(T)\nfn f(w: Wrap[Int]) -> Int {\n  let Wrap(n) = w\n  n + w.0\n}\n"},
+		{name: "newtype pattern refutable let", src: "type Email struct(Str)\nfn f(e: Email) -> Int {\n  let Email(\"x\") = e\n  1\n}\n", want: []string{"XO0303"}},
+		{name: "newtype match exhaustive", src: "type Email struct(Str)\nfn f(e: Email) -> Int {\n  match e {\n    Email(\"\") => 0\n    Email(s) => s.len()\n  }\n}\n"},
+		{name: "newtype match missing", src: "type Email struct(Str)\nfn f(e: Email) -> Int {\n  match e {\n    Email(\"\") => 0\n  }\n}\n", want: []string{"XO0301"}},
+		{name: "newtype pattern without parens", src: "type Email struct(Str)\nfn f(e: Email) -> Int {\n  match e {\n    Email => 0\n  }\n}\n", want: []string{"XO0302"}},
+		{name: "newtype pattern two fields", src: "type Email struct(Str)\nfn f(e: Email) -> Int {\n  match e {\n    Email(a, b) => 0\n  }\n}\n", want: []string{"XO0302"}},
+		{name: "newtype pattern other type", src: "type Email struct(Str)\ntype Id struct(Int)\nfn f(i: Id) -> Int {\n  match i {\n    Email(s) => 0\n    Id(n) => n\n  }\n}\n", want: []string{"XO0302"}},
+		{name: "variant wins over newtype", src: "type B struct(Int)\nenum E { B(n: Int), C }\nfn f(e: E) -> Int {\n  match e {\n    B(n) => n\n    C => 0\n  }\n}\n"},
 		{name: "missing variant", src: "enum E { A, B, C }\nfn f(e: E) -> Int {\n  match e {\n    A => 1\n    B => 2\n  }\n}\n", want: []string{"XO0301"}},
 		{name: "all variants", src: "enum E { A, B, C }\nfn f(e: E) -> Int {\n  match e {\n    A => 1\n    B | C => 2\n  }\n}\n"},
 		{name: "nested missing", src: "fn f(x: Result[Int, Str]?) -> Int {\n  match x {\n    Some(Ok(v)) => v\n    None => 0\n  }\n}\n", want: []string{"XO0301"}},

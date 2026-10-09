@@ -230,6 +230,17 @@ func (f *fnGen) orPat(x *ast.OrPat, subj string, t check.Type, m *match) {
 }
 
 func (f *fnGen) variantPat(x *ast.VariantPat, subj string, t check.Type, m *match) {
+	if nt := f.info.PatNewtype(x); nt != nil {
+		// `Email(p)`: p against the underlying value (decision 0097)
+		if len(x.Fields) == 1 {
+			inner := nt.Target
+			if n := f.g.named(t); n != nil {
+				inner = check.NewSubst(nt.TParams, n.Args).Apply(nt.Target)
+			}
+			f.pat(x.Fields[0].Pattern, subj+".F0", inner, m)
+		}
+		return
+	}
 	v := f.info.PatVariant(x)
 	if v == nil {
 		f.g.errorf(x, "unresolved variant pattern")

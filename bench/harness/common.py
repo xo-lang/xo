@@ -209,20 +209,24 @@ def copy_solution(src, dst):
 
 # ---------------------------------------------------------------- feedback loops
 
-def xo_check(d):
-    """Returns (errors, warnings, raw json text). Diagnostics are dicts."""
-    rc, out = run([xo_bin(), "check", "--json", d], cwd=d)
+def xo_check(d, fix=False):
+    """Returns (errors, warnings, applied fixes, raw json text). Diagnostics
+    and applied fixes are dicts. fix=True runs `xo check --fix` (decision
+    0096), which applies the machine fixes in place first."""
+    cmd = [xo_bin(), "check", "--json"] + (["--fix"] if fix else []) + [d]
+    rc, out = run(cmd, cwd=d)
     start = out.find("{")
     try:
         data = json.loads(out[start:]) if start >= 0 else {}
     except ValueError:
         data = {}
     diags = data.get("diagnostics") or []
+    applied = data.get("applied") or []
     errs = [x for x in diags if x.get("severity") == "error"]
     warns = [x for x in diags if x.get("severity") == "warning"]
     if rc != 0 and not errs:
         errs = [{"code": "HARNESS", "severity": "error", "message": out.strip()[:2000]}]
-    return errs, warns, out.replace(d + os.sep, "").replace(d, ".")
+    return errs, warns, applied, out.replace(d + os.sep, "").replace(d, ".")
 
 
 def xo_test(d):
@@ -230,32 +234,32 @@ def xo_test(d):
     return rc, out.replace(d + os.sep, "").replace(d, ".")
 
 
-def loop_xo(d):
-    errs, warns, out = xo_check(d)
+def loop_xo(d, fix=False):
+    """The Xo loop: check, then test when the check has no errors. fix=True
+    is the agent loop (`xo check --fix`, decision 0096): the machine fixes
+    are applied to d first and counted in "fixes"."""
+    errs, warns, applied, out = xo_check(d, fix)
     res = {"arm": "xo", "errors": len(errs), "warnings": len(warns),
            "codes": sorted({x.get("code", "?") for x in errs + warns})}
+    head = "$ xo check --fix --json .\n" if fix else "$ xo check --json .\n"
+    if fix:
+        res["fixes"] = len(applied)
     if errs:
-        res.update(green=False, stage="check", output="$ xo check --json .\n" + out)
+        res.update(green=False, stage="check", output=head + out)
         return res
     rc, tout = xo_test(d)
     m = re.search(r"(\d+) passed, (\d+) failed", tout)
     if m:
         res["tests_passed"], res["tests_failed"] = int(m.group(1)), int(m.group(2))
     res.update(green=(rc == 0), stage="test" if rc else "none",
-               output="$ xo check --json .\n" + out + "\n$ xo test --race .\n" + tout)
+               output=head + out + "\n$ xo test --race .\n" + tout)
     return res
-
-
-def xo_fix(d):
-    """Runs `xo fix` on d in place; returns (exit code, number of changes, output)."""
-    rc, out = run([xo_bin(), "fix", d], cwd=d)
-    m = re.search(r"(\d+) change\(s\)", out)
-    return rc, int(m.group(1)) if m else 0, out.replace(d + os.sep, "").replace(d, ".")
 
 
 def first_try(arm, snap):
     """Reruns a first run snapshot through the arm's loop with the current
-    toolchain, as is ("plain") and, for Xo, after `xo fix` ("after_fix").
+    toolchain, as written ("plain", read only `xo check`) and, for Xo, after
+    the machine fixes ("after_fix", `xo check --fix` as in the agent loop).
 
     The snapshot is copied to a temporary directory and never changed.
     Returns {"plain": {...}, "after_fix": {...} or None}; each holds green,
@@ -272,10 +276,9 @@ def first_try(arm, snap):
         if arm == "xo":
             d = os.path.join(tmp, "fixed")
             copy_solution(snap, d)
-            _, n, _ = xo_fix(d)
-            fb = feedback(arm, d)
+            fb = loop_xo(d, fix=True)
             res["after_fix"] = {k: v for k, v in fb.items() if k in keep}
-            res["after_fix"]["fixes"] = n
+            res["after_fix"]["fixes"] = fb["fixes"]
     return res
 
 
@@ -301,8 +304,13 @@ def loop_go_strict(d):
 LOOPS = {"xo": loop_xo, "go-plain": loop_go_plain, "go-strict": loop_go_strict}
 
 
-def feedback(arm, d):
-    """Runs the arm's feedback loop on directory d (in place)."""
+def feedback(arm, d, agent=False):
+    """Runs the arm's feedback loop on directory d (in place). agent=True is
+    the loop an agent run gets after each reply: for Xo `xo check --fix`
+    (decision 0096), which may change files in d; scoring reruns use the
+    read only loop."""
+    if agent and arm == "xo":
+        return loop_xo(d, fix=True)
     return LOOPS[arm](d)
 
 

@@ -1,6 +1,6 @@
 # 0096: `xo check --fix` for the agent loop
 
-Status: Accepted (2026-10-09, by the owner; not yet implemented)
+Status: Accepted (2026-10-09, by the owner); implemented 2026-10-09
 
 ## Context
 
@@ -33,3 +33,17 @@ apply them itself, and Codex usually did not (for example XO0162,
 
 - Prompt instructions only: agents forget.
 - `xo check` always fixing: surprising, breaks the read only guarantee.
+
+## Implementation notes (2026-10-09)
+
+- `xo check --fix` runs `fix.Run` with no migration rewriters, then checks
+  in process (never through `xo serve`, whose working directory and cache
+  may differ). JSON gains `applied: [{file, line, rule, title}]`, present
+  (possibly empty) only with `--fix`; the human form prints one
+  `file:line: fixed CODE: title` line per fix and a count.
+- MCP `check` takes `fix: true` and returns `applied`.
+- Bench harness: the agent loop (`run_openai_compatible.py`) runs
+  `xo check --fix --json`, records `fixes` per run in `runs.jsonl`, and
+  the fixed files stay in the solution. The scorer's "First try now"
+  reruns the run 1 snapshot (taken before the loop) read only; "First
+  try after `xo check --fix`" reruns it with the fix.

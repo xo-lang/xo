@@ -1,6 +1,6 @@
 # 0095: Import direction rules (architecture tests)
 
-Status: Accepted (2026-10-09, by the owner: option 3 with option 2; not yet implemented)
+Status: Accepted (2026-10-09, by the owner: option 3 with option 2); implemented 2026-10-09
 
 ## Context
 
@@ -111,3 +111,21 @@ build facts and agents read it first; and per package `// deny`
 comments in source, rejected because a rule about a package should not
 live inside the package it constrains, where the change that breaks it
 would also delete it.
+
+## Implementation notes (2026-10-09)
+
+- `internal/mod/deny.go` parses `deny` lines into `File.Denies`
+  (malformed: XO1301 through module loading). `internal/check/deny.go`
+  reads the rules of each main module when its requirements are
+  resolved, reports a pattern that names no package (std file, package
+  directory of the main or a required module, or a `/...` prefix of a
+  module path) as XO1301 on the rule's line, and checks each resolved
+  `use` of a non std, non dependency package (`checkDeny`, called from
+  `loadImports`, so unused imports are covered). The first rule that
+  matches is named; the note points at the xo.mod line.
+- Goldens: `internal/check/testdata/golden/imports_deny` (direct
+  forbidden import, `/...` pattern, unused but present `use`, unknown
+  packages on both sides of a rule, `std/` pattern); rule cases in
+  `rules_test.go`; `TestDenyParse` and the tidy case in `internal/mod`.
+- `xo query imports|deps` is `query.Session.Imports`; the MCP `query`
+  tool's `kind` enum includes both.

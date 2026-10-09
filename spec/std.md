@@ -1356,7 +1356,8 @@ Principles:
 
 ```
 struct Zone {}                                   // handle; Eq, Display (its name)
-enum ZoneErr { Unknown(name: Str), NoLocal(msg: Str) } derive Display
+enum ZoneErr { Unknown(name: Str), NoLocal(msg: Str) }
+fn (e: ZoneErr) display() -> Str                 // unknown time zone "Mars/Olympus"
 
 pub fn utc() -> Zone
 pub fn zone(name: Str) -> Zone ! ZoneErr         // IANA name: "Europe/Berlin"; pure (embedded data)
@@ -1379,7 +1380,8 @@ struct ClockTime { hour: Int, minute: Int, second: Int, nanos: Int } derive Ord,
 struct Civil { date: Date, time: ClockTime, offset: Duration, zone: Str } derive Json
 enum Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday } derive Display, Ord, Json
 enum Ambiguity { Earlier, Later, Reject }
-enum CivilErr { Invalid(msg: Str), Skipped(at: Str), Repeated(at: Str) } derive Display
+enum CivilErr { Invalid(msg: Str), Skipped(at: Str), Repeated(at: Str) }
+fn (e: CivilErr) display() -> Str                // invalid civil time: month 13 out of range 1 to 12
 
 pub fn civil(t: Time, z: Zone) -> Civil
 pub fn instant(date: Date, time: ClockTime, z: Zone, ambiguity: Ambiguity = Ambiguity.Reject) -> Time ! CivilErr
@@ -1405,8 +1407,10 @@ const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute
 const DATE: Str = "{year}-{month}-{day}"
 const TIME: Str = "{hour}:{minute}:{second}"
 
-struct ParseErr { input: Str, layout: Str, at: Int, msg: Str }   // "at byte 5 of \"2026-1x-09\": expected 2 digit month"
+struct ParseErr { input: Str, layout: Str, at: Int, msg: Str }
+fn (e: ParseErr) display() -> Str                // at byte 5 of "2026-1x-09": expected 2 digit month
 struct LayoutErr { layout: Str, msg: Str }
+fn (e: LayoutErr) display() -> Str               // bad layout "{yr}": unknown field {yr}
 
 pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked at compile time)
 pub fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr   // z applies when the text has no offset
@@ -1469,8 +1473,17 @@ Settled while implementing; examples are in the goldens
   next year). For a gap, `Earlier` uses the offset before the change and
   `Later` the one after: 02:30 on 2026-03-08 in New York is 03:30 EDT
   with `Earlier` and 01:30 EST with `Later` (Python's `fold=0` and `1`).
-  `ZoneErr` and `CivilErr` display in the derived form
-  (`Skipped(at: "2026-03-08T02:30:00 America/New_York")`).
+  Error display text, one sentence each, no trailing period:
+  `ZoneErr.Unknown` is `unknown time zone "Mars/Olympus"`, `NoLocal` is
+  `cannot determine the local time zone: <msg>`; `CivilErr.Invalid` is
+  `invalid civil time: <msg>` (`month 13 out of range 1 to 12`),
+  `Skipped` is `2026-03-08T02:30:00 America/New_York does not exist
+  (skipped by a daylight saving change)`, `Repeated` is
+  `2026-11-01T01:30:00 America/New_York happens twice (repeated by a
+  daylight saving change)`; `ParseErr` is `at byte 5 of "2026-1x-09":
+  expected 2 digit month` and `LayoutErr` is `bad layout "{yaer}":
+  unknown field {yaer}`. The payload fields stay readable for code that
+  matches on the error.
 - **Layouts.** `{frac}` and `{frac:N}` include the leading `.` (so
   `{frac}` prints nothing for a whole second). `{offset}` prints `Z` for
   a zero offset, `{offset:compact}` prints `+0000`. `{hour12}` needs

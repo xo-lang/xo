@@ -1,0 +1,6 @@
+// an unused import is still checked against the rules
+use example.com/notes/api
+
+pub fn none() -> Int {
+  0
+}

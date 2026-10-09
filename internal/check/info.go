@@ -16,6 +16,7 @@ type records struct {
 	typeCall   map[*ast.CallExpr]*TypeObj // `T(x)`: numeric conversion or newtype construction
 	patType    map[ast.Pattern]Type       // type of the value a pattern is matched against
 	patVariant map[*ast.VariantPat]*VariantObj
+	patNewtype map[*ast.VariantPat]*TypeObj // `Email(p)`: newtype pattern (decision 0097)
 	resultVar  map[*ast.EnsuresClause]*VarObj
 	testOs     map[*ast.TestDecl]*VarObj
 	testParams map[*ast.TestDecl][]*VarObj
@@ -34,6 +35,7 @@ func newRecords() *records {
 		typeCall:   map[*ast.CallExpr]*TypeObj{},
 		patType:    map[ast.Pattern]Type{},
 		patVariant: map[*ast.VariantPat]*VariantObj{},
+		patNewtype: map[*ast.VariantPat]*TypeObj{},
 		resultVar:  map[*ast.EnsuresClause]*VarObj{},
 		testOs:     map[*ast.TestDecl]*VarObj{},
 		testParams: map[*ast.TestDecl][]*VarObj{},
@@ -136,6 +138,10 @@ func (i *Info) PatType(p ast.Pattern) Type {
 
 // PatVariant returns the variant a variant pattern names.
 func (i *Info) PatVariant(p *ast.VariantPat) *VariantObj { return i.c.rec.patVariant[p] }
+
+// PatNewtype returns the newtype a pattern `Email(p)` unwraps (decision
+// 0097), or nil when the pattern is a variant pattern.
+func (i *Info) PatNewtype(p *ast.VariantPat) *TypeObj { return i.c.rec.patNewtype[p] }
 
 // ResultVar returns the `result` binding of an ensures clause.
 func (i *Info) ResultVar(e *ast.EnsuresClause) *VarObj { return i.c.rec.resultVar[e] }

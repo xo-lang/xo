@@ -28,7 +28,7 @@ specified in std.md 13 (decision 0094).
 - **[later]** markers for what is specified but not built: `xo why`,
   `xo debug`, release builds and `--error-args`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
-  derives, and reading a newtype's value (2.8).
+  derives.
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
   <version>` of Xo modules with minimal version selection, git fetch into
   a read only module cache, `xo.lock` hashes verified by every command,
@@ -58,6 +58,20 @@ specified in std.md 13 (decision 0094).
   compile time: `XO0420` for an unknown field (10.6), `XO0177` for date
   patterns of other languages. Native backends report it as `XO1201`
   (planned).
+- Import direction rules (4.2, 10.3; decision 0095): `deny <pkg> ->
+  <pkg>, ...` lines in xo.mod, with `/...` patterns; a forbidden `use` is
+  the new error `XO1312` at that line, a rule naming no package is
+  `XO1301`. `xo query imports` and `xo query deps` list the `use` lines.
+- `std/time` errors display as sentences (std.md 13.5): `ZoneErr` and
+  `CivilErr` no longer derive `Display`.
+- Newtypes (2.8; decision 0097): `e.0` reads (and on a `var` assigns) the
+  underlying value, and the pattern `Email(p)` matches it, irrefutably
+  when `p` is (`let Email(s) = e`). Go backend; native builds report
+  `XO1201` as for every newtype.
+- `xo check --fix` (10.1, 10.2; decision 0096) applies every unambiguous
+  machine fix, reformats the changed files, and reports what remains with
+  the list of applied fixes; plain `xo check` stays read only. The MCP
+  `check` tool takes `fix`.
 
 ## Changes in 0.7
 
@@ -600,9 +614,31 @@ type Email struct(Str)              // newtype, distinct, construct with Email("
 type Handler = fn(http.Request) -> http.Response ! Error uses net
 ```
 
-A newtype has the equality, hashing, and JSON of its underlying value. There is no way yet to read the underlying value back (neither
-`e.0` nor a pattern `Email(s)` is accepted): an open gap recorded in the
-2026-10-09 spec audit (`bench/results/spec-audit-2026-10-09.md`).
+A newtype has the equality, hashing, and JSON of its underlying value
+(decision 0097):
+
+- `e.0` is the underlying value, typed with the newtype's type arguments
+  (`Wrap[Int]`'s `.0` is `Int`); on a `var` it is assignable like a tuple
+  field. Any other index is `XO0601`.
+- The pattern `Email(p)` (`mod.Email(p)` for another module's newtype)
+  matches when `p` matches `e.0`; it is irrefutable when `p` is, so
+  `let Email(s) = e` destructures. `Email(..)` matches any value. Without
+  parentheses, with other than one positional pattern, or against another
+  type it is `XO0302`. When the value is an enum with a variant of the
+  same name, the variant is meant.
+- Construction and reading are open wherever the type is visible; a type
+  that must guard its value is a struct with a non `pub` field.
+
+```
+type Email struct(Str)
+
+fn domain(e: Email) -> Str {
+  let Email(s) = e
+  s.split("@").last() ?? ""
+}
+
+fn is_blank(e: Email) -> Bool { e.0.trim() == "" }
+```
 
 ### 2.9 Derived behavior
 
@@ -975,6 +1011,37 @@ previous tag:
   (`github.com/acme/billing/v2`), in the same repository: the xo.mod of
   those tags declares that path, and a require of a path without the
   suffix takes only v0 and v1 tags (`XO1301` otherwise).
+
+**[P1]** Import direction rules (decision 0095): `deny` lines state which
+packages of the module may not import which.
+
+```
+module example.com/notes
+
+deny example.com/notes/domain -> example.com/notes/store, example.com/notes/api
+deny example.com/notes/store -> example.com/notes/api/...
+```
+
+- `deny <pattern> -> <pattern>, ...`: a package matching the left pattern
+  may not `use` a package matching any pattern on the right. A pattern is
+  a package import path (of this module, a required module, or std), or
+  such a path ending in `/...`, which matches the path and every package
+  under it (`example.com/notes/...` is the whole module, so "`domain`
+  imports only std" is `deny example.com/notes/domain ->
+  example.com/notes/...`).
+- Every direct `use` line is checked, whether the import is used or not:
+  a forbidden one is error `XO1312` at the `use` line, naming the rule and
+  its xo.mod line; it has no machine fix (removing an import is a design
+  change). Transitive edges are not checked: a chain is caught at its
+  first forbidden step.
+- Rules apply to the packages of the module whose xo.mod holds them
+  (the main module, and each workspace module checked as one);
+  a dependency's rules are checked when it is built as a main module.
+- A malformed `deny` line, or a pattern that names no package, is
+  `XO1301` on its line. `xo mod tidy` and `xo get` keep `deny` lines.
+- `xo test` checks first, so a broken rule fails the tests too.
+  `xo query imports <package>` and `xo query deps <package>` list the
+  `use` lines (10.3).
 
 **[P1]** `gc` lines tune the garbage collector of a program whose main
 module this is (decision 0065); they are ignored in imported modules:
@@ -1588,15 +1655,15 @@ test "retries after 503" {
 |---|---|
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
 | `xo run` | Build and run for the host |
-| `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
+| `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
-| `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
+| `xo mcp` | Model Context Protocol server over stdio: `check` (with an optional `fix`), `query`, `edit`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=YYYY]` | Apply all machine fixes until none apply; `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
-| `xo query <kind> ...` | Semantic queries (10.3) |
+| `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
@@ -1609,6 +1676,17 @@ The commands that report diagnostics or results accept `--json`: `parse`,
 JSON), `doc`, `explain`, and `bind`. `run`, `replay`, `dump`, `serve`, and
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
+
+**Check and fix.** `xo check` is read only. `xo check --fix` first
+applies every unambiguous machine fix, the same set `xo fix` applies
+(without `--from`), round after round until none applies, reformats the
+files it changed, and then reports the diagnostics that remain, with the
+exit status of `xo check` on them. Its JSON adds `applied`, the list of
+fixes made (`{file, line, rule, title}`, `rule` being the diagnostic
+code); plain `xo check --json` has no `applied` field. This is the agent
+loop's check: an agent runs `xo check --fix` and then `xo test`, so a
+diagnostic with an exact fix never costs a run (decision 0096). The MCP
+`check` tool takes `fix: true` for the same.
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
@@ -1702,6 +1780,10 @@ where the Go backend fuses a multiply and an add (decision 0084).
 - A suggestion from edit distance (`did you mean`) is a note; it is also a
   fix only when it is clear: a unique closest candidate at most half the
   name's length away, for names of three or more characters.
+- A diagnostic's first fix is the one `xo fix` and `xo check --fix` apply
+  (10.1); fixes whose edits overlap in one round wait for the next round.
+  `xo check --fix --json` adds `"applied": [{"file", "line", "rule",
+  "title"}]` next to `modules` and `diagnostics`.
 
 ### 10.3 Queries
 
@@ -1712,7 +1794,16 @@ xo query callers users.fetch_user
 xo query effects api.get_user          // with the call chain per effect
 xo query holes
 xo query api github.com/acme/billing   // exported surface of a module
+xo query imports example.com/notes/domain   // its `use` lines
+xo query deps example.com/notes/server      // the same, transitively
 ```
+
+`imports` and `deps` (decision 0095) answer
+`{package, transitive, imports, packages}`: each entry of `imports` is a
+`use` line `{from, path, pos, std, go, test, missing, denied}`, where
+`denied` is the `XO1312` message when a `deny` rule forbids the line, and
+`packages` lists the distinct paths reached. `deps` follows every
+imported package of the program (not std or Go packages).
 
 ### 10.4 Semantic edits [P1: rename, add-field, change-sig]
 
@@ -1844,7 +1935,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
 | `XO1201` | error | no GC check | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
-| `XO1301` | error | modules | malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3) |
+| `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
 | `XO1304` | error | modules | module tree does not match its xo.lock content hash (core 4.3) |
@@ -1855,6 +1946,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
+| `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

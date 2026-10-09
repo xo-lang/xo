@@ -38,8 +38,10 @@ type Require struct {
 type File struct {
 	Path     string // the `module` line
 	Requires []Require
-	File     string // path of the xo.mod file
-	Dir      string // directory holding it
+	// Denies are the import direction rules (`deny` lines, decision 0095).
+	Denies []Deny
+	File   string // path of the xo.mod file
+	Dir    string // directory holding it
 }
 
 // Problem is a module error: a diagnostic about xo.mod, xo.lock, xo.work,
@@ -242,6 +244,14 @@ func Parse(name string, data []byte) (*File, []*Problem) {
 			}
 			seen[p] = line
 			f.Requires = append(f.Requires, Require{Path: p, Version: v, Line: line, Ceiling: ceiling})
+		case "deny":
+			_, rest, _ := strings.Cut(text, "deny")
+			d, p := parseDeny(name, line, rest)
+			if p != nil {
+				probs = append(probs, p)
+				continue
+			}
+			f.Denies = append(f.Denies, d)
 		case "replace", "exclude", "retract":
 			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("xo.mod has no `%s` directive", fields[0]), Notes: []string{"point a dependency at local code with an xo.work workspace (decision 0086)"}})
 		}

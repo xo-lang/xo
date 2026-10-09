@@ -72,3 +72,12 @@ of habit agents carry over.
   `{ampm}`, parsing a gap or overlap without an offset is an error.
 - Native backends: every function is `XO1201` (planned); types and
   constants build.
+
+## Note (2026-10-09): error display text
+
+`ZoneErr` and `CivilErr` first shipped with `derive Display`, which
+printed `Skipped(at: "2026-03-08T02:30:00 America/New_York")`. They now
+declare `display()` with sentences in the style of `ParseErr` and
+`LayoutErr` (std.md 13.5 lists all four); the variants and fields are
+unchanged. Pinned by `std/rt/timedisplay_test.go` and the
+`time_civil`, `time_zones`, and `time_dynamic_zone` goldens.

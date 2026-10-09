@@ -159,6 +159,16 @@ func TestMCPSession(t *testing.T) {
 		t.Logf("query of a missing name = %v", bad)
 	}
 
+	// check with fix=true applies the machine fixes (decision 0096)
+	fixDir := writeFiles(t, map[string]string{"app/main.xo": "fn f(n: Int) -> Int {\n  if n > 0 {\n    return 1\n  }\n  else {\n    return 2\n  }\n}\nfn main(os: Os) {\n  os.stdio.println(\"${f(1)}\")\n}\n"})
+	fx, isErr := c.tool("check", map[string]any{"dirs": []string{fixDir}, "fix": true})
+	if applied, _ := fx["applied"].([]any); isErr || fx["ok"] != true || len(applied) != 1 {
+		t.Errorf("check fix = %v", fx)
+	}
+	if _, has := chk["applied"]; has {
+		t.Errorf("plain check has applied: %v", chk)
+	}
+
 	// an unknown method is a JSON-RPC error, not a crash
 	c.send("no/such", nil, false)
 	line, _ := c.out.ReadBytes('\n')

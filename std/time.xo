@@ -14,12 +14,16 @@ struct Zone {}
 
 fn (z: Zone) display() -> Str
 
+/// Displays as `unknown time zone "Mars/Olympus"` or
+/// `cannot determine the local time zone: the system zone is not set`.
 enum ZoneErr {
   /// No zone with this IANA name is embedded or known.
   Unknown(name: Str)
   /// The machine's own zone could not be determined.
   NoLocal(msg: Str)
-} derive Display
+}
+
+fn (e: ZoneErr) display() -> Str
 
 /// `utc()` needs no zone data.
 fn utc() -> Zone
@@ -78,6 +82,10 @@ enum Ambiguity {
   Reject
 }
 
+/// Displays as `invalid civil time: month 13 out of range 1 to 12`,
+/// `2026-03-08T02:30:00 America/New_York does not exist (skipped by a
+/// daylight saving change)`, or `2026-11-01T01:30:00 America/New_York
+/// happens twice (repeated by a daylight saving change)`.
 enum CivilErr {
   /// A field out of range (month 13, February 30, hour 24) or a year
   /// outside the range of `Time`.
@@ -86,7 +94,9 @@ enum CivilErr {
   Skipped(at: Str)
   /// The civil time is inside a fall back overlap.
   Repeated(at: Str)
-} derive Display
+}
+
+fn (e: CivilErr) display() -> Str
 
 fn civil(t: Time, z: Zone) -> Civil
 fn instant(date: Date, time: ClockTime, z: Zone, ambiguity: Ambiguity = Ambiguity.Reject) -> Time ! CivilErr

@@ -19,6 +19,7 @@ import (
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/fix"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/query"
 	"github.com/xo-lang/xo/internal/serve"
@@ -367,13 +368,18 @@ func collect(paths []string) ([]string, error) {
 }
 
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	noGC := false
+	inProcess := false
 	for _, a := range args {
-		if a == "--no-gc" || a == "-no-gc" || a == "--no-gc=true" || a == "-no-gc=true" {
-			noGC = true
+		switch a {
+		case "--no-gc", "-no-gc", "--no-gc=true", "-no-gc=true":
+			inProcess = true
+		case "--fix", "-fix", "--fix=true", "-fix=true":
+			// --fix writes files: run it here, where the paths and the
+			// cache of this process are current (decision 0096).
+			inProcess = true
 		}
 	}
-	if !noGC {
+	if !inProcess {
 		if code, ok := serve.Forward(append([]string{"check"}, args...), stdout, stderr); ok {
 			return code
 		}
@@ -388,12 +394,26 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 	fl.SetOutput(stderr)
 	asJSON := fl.Bool("json", false, "print diagnostics as JSON")
 	noGC := fl.Bool("no-gc", false, "also run the no GC check of native builds (XO1201, decision 0083)")
+	doFix := fl.Bool("fix", false, "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
 	if fl.NArg() == 0 {
 		fmt.Fprintln(stderr, "xo check: no directories given")
 		return 2
+	}
+	var applied []fix.Change
+	if *doFix {
+		fr, err := fix.Run(fl.Args(), fix.Options{})
+		if err != nil {
+			fmt.Fprintf(stderr, "xo check: --fix: %v\n", err)
+			return 2
+		}
+		applied = fr.Changes
+		if len(fr.Files) > 0 {
+			// The loader may hold a session for the old contents.
+			load = query.Load
+		}
 	}
 	var res *check.Result
 	var ds []diag.Diagnostic
@@ -428,12 +448,20 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 		out := struct {
 			Modules     []string          `json:"modules"`
 			Diagnostics []diag.Diagnostic `json:"diagnostics"`
-		}{mods, ds}
+			// Applied lists the fixes --fix applied (absent without --fix).
+			Applied *[]fix.Change `json:"applied,omitempty"`
+		}{Modules: mods, Diagnostics: ds}
 		if out.Modules == nil {
 			out.Modules = []string{}
 		}
 		if out.Diagnostics == nil {
 			out.Diagnostics = []diag.Diagnostic{}
+		}
+		if *doFix {
+			if applied == nil {
+				applied = []fix.Change{}
+			}
+			out.Applied = &applied
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
@@ -443,6 +471,12 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	} else {
+		for _, c := range applied {
+			fmt.Fprintf(stderr, "%s:%d: fixed %s: %s\n", c.File, c.Line, c.Rule, c.Title)
+		}
+		if *doFix {
+			fmt.Fprintf(stderr, "%d fix(es) applied\n", len(applied))
+		}
 		for _, d := range ds {
 			fmt.Fprintln(stderr, diag.Human(d))
 		}

@@ -104,9 +104,9 @@ report has the class tables of `planted-and-harder-2026-10-07.md` (Go) and
 | Column | How |
 |---|---|
 | Runs to green | first green run in `runs.jsonl`, else in the cell's `BUILD_LOG.md` table (the original runs) |
-| First try pass rate | run 1 green, per arm |
+| First try pass rate | run 1 green, per arm. Xo runs since 2026-10-09 get `xo check --fix` in their loop (decision 0096), so this is after fix; the as written rate is "First try now". `runs.jsonl` records `fixes` per Xo run |
 | First try now | the first run's sources (`<cell>/.attempts/run-1` from the adapter, or `<out>/history/<task>/1` for a path 2b run) rerun through the arm's loop with the current toolchain |
-| First try after `xo fix` | Xo only: the same sources after `xo fix` (the machine fixes of the diagnostics), then check and test; the per cell table "First runs" shows the codes left and the number of fixes |
+| First try after `xo check --fix` | Xo only: the same sources through `xo check --fix` (the machine fixes of the diagnostics, decision 0096), then test; the per cell table "First runs" shows the codes left and the number of fixes. "First try now" stays as written (read only `xo check`) |
 | Xo tests when first run | from `runs.jsonl`; for the original runs, the rerun of the final code (their tests had never run before) |
 | Lines, tests | `.go` or `.xo` lines including tests; `func Test` in `_test.go`, `test "..."` blocks in `_test.xo` |
 | Green now | the final code through its arm's loop with the current toolchain |

@@ -8,7 +8,10 @@ correct Xo. Solve the task below in Xo.
 2. Standard library only: the `std/...` modules in `spec/std.md`.
 3. After each reply the harness runs this feedback loop in the solution
    directory and shows you the output:
-   - `xo check --json .` (the type checker; errors block, warnings do not)
+   - `xo check --fix --json .` (the type checker; errors block, warnings do
+     not). `--fix` first applies every unambiguous machine fix to your
+     files and reformats them; the JSON lists them under `applied`, and
+     the changed files stay changed for the next run
    - only if the check reports no errors: `xo test --race .` (runs every
      `test` block, property tests, and contract fuzzing)
 

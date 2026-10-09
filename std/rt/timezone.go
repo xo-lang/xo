@@ -3,6 +3,7 @@ package rt
 import (
 	"encoding/binary"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -272,4 +273,15 @@ func goTime(t Time, z Time_Zone) time.Time {
 func (z Time_Zone) offsetSecs(ns int64) int64 {
 	_, off := time.Unix(0, ns).In(z.data().loc).Zone()
 	return int64(off)
+}
+
+// M_display of a ZoneErr (std.md 13.1): `unknown time zone "Mars/Olympus"`.
+func (v Time_ZoneErr) M_display(*Task) string {
+	switch p := v.P.(type) {
+	case Time_ZoneErr_Unknown:
+		return "unknown time zone " + strconv.Quote(p.F_name)
+	case Time_ZoneErr_NoLocal:
+		return "cannot determine the local time zone: " + p.F_msg
+	}
+	return Debug(v)
 }

@@ -213,7 +213,7 @@ def score_cell(arm, task, src, hidden=True):
     rec["history"] = hist
     snap = first_snapshot(src, task)
     if snap:
-        # first try now, and first try after `xo fix`, with this toolchain
+        # first try now (as written), and after `xo check --fix`, with this toolchain
         rec["first"] = c.first_try(arm, snap)
     with tempfile.TemporaryDirectory() as tmp:
         d = os.path.join(tmp, task)
@@ -318,7 +318,7 @@ def solutions_report(args, recs):
 
     L.append("| First try pass rate | %s |" % col(first_rate))
     L.append("| First try now (first run sources, current toolchain) | %s |" % col(first_now("plain")))
-    L.append("| First try after `xo fix` (current toolchain) | %s |" % col(first_now("after_fix")))
+    L.append("| First try after `xo check --fix` (current toolchain) | %s |" % col(first_now("after_fix")))
     L.append("| Runs in total | %s |" % col(total_runs))
     L.append("| Lines (code and tests) | %s |" % col(lambda rs: str(sum(r["lines"] for r in rs))))
     L.append("| Green now (current toolchain) | %s |" % col(lambda rs: "%d/%d" % (sum(1 for r in rs if r["final"]["green"]), len(rs))))
@@ -352,9 +352,9 @@ def solutions_report(args, recs):
     if firsts:
         L.append("## First runs (current toolchain)")
         L.append("")
-        L.append("The first run's sources rerun as they were, and after `xo fix` (Xo only).")
+        L.append("The first run's sources rerun as written (read only `xo check`), and after `xo check --fix` (Xo only). Recorded is the run's own result; Xo runs since decision 0096 get `xo check --fix` in their loop, so it counts after fix.")
         L.append("")
-        L.append("| Arm | Task | Recorded | Now | After `xo fix` |")
+        L.append("| Arm | Task | Recorded | Now | After `xo check --fix` |")
         L.append("|---|---|---|---|---|")
 
         def cell(f):
@@ -514,7 +514,7 @@ def planted_xo(tdir, task, set_name):
     with tempfile.TemporaryDirectory() as tmp:
         w = os.path.join(tmp, task)
         overlay(base_dir, None, w)
-        _, bw, _ = c.xo_check(w)
+        _, bw, _, _ = c.xo_check(w)
         base_warn = {(x.get("code"), x.get("message")) for x in bw}
         base_tests = test_base(*c.xo_test(w))
     if base_tests[0] != 0:
@@ -533,7 +533,7 @@ def planted_xo(tdir, task, set_name):
             with tempfile.TemporaryDirectory() as tmp:
                 w = os.path.join(tmp, task)
                 overlay(base_dir, vdir, w)
-                errs, warns, _ = c.xo_check(w)
+                errs, warns, _, _ = c.xo_check(w)
                 rec["warnings"] = sorted({x.get("code") for x in warns
                                           if (x.get("code"), x.get("message")) not in base_warn})
                 if errs:

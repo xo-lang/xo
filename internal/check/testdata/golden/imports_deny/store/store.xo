@@ -1,0 +1,5 @@
+use example.com/notes/api/v1
+
+pub fn get(id: Int) -> Int {
+  v1.version() + id
+}
