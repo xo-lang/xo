@@ -247,14 +247,15 @@ func (b *builder) hashFunc(t *Type, at ast.Node) string {
 	s := b.newFn(f, nil, nil)
 	v := f.Params()[0]
 	mix := func(h, x *Value) *Value {
-		// h * 31 + x, wrapping (no Pos: unchecked)
-		return s.add(OpAdd, intT, nil, s.add(OpMul, intT, nil, h, s.cint(31)), x)
+		// h * 31 + x, wrapping (no Pos: unchecked; Wrap: overflow is
+		// expected, not undefined)
+		return s.add(OpAdd, intT, Wrap, s.add(OpMul, intT, Wrap, h, s.cint(31)), x)
 	}
 	var h *Value
 	switch t.Kind {
 	case KInt:
 		// a multiplicative mix, then the high bits folded down
-		x := s.add(OpMul, intT, nil, v, s.cint(-7046029254386353131))
+		x := s.add(OpMul, intT, Wrap, v, s.cint(-7046029254386353131))
 		h = s.add(OpXor, intT, nil, x, s.add(OpShr, intT, nil, x, s.cint(29)))
 	case KBool:
 		hv := local("h")

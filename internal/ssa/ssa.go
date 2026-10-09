@@ -381,6 +381,13 @@ type Value struct {
 	Pos   string  // `file:line:col` for faults; empty when it cannot fault
 }
 
+// Wrap is the Aux of an Int add, sub, or mul without Pos whose overflow
+// wraps by design (hash mixing). Other unchecked arithmetic cannot
+// overflow, and the LLVM backend tells LLVM so (nsw); a wrapping one
+// marked that way is poison when it overflows, which the optimizer may
+// fold into wrong code (gotchas/llvm-nsw-hash-overflow.md).
+const Wrap = "wrap"
+
 // Name is the printed name of v: `v12`.
 func (v *Value) Name() string { return fmt.Sprintf("v%d", v.ID) }
 

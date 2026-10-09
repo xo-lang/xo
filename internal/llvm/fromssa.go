@@ -1117,6 +1117,10 @@ func (s *sfn) instr(v *ssa.Value) {
 			return
 		}
 		if v.Pos == "" {
+			if v.Aux == ssa.Wrap {
+				s.set(v, "%s i64 %s, %s", ins, a(0), a(1))
+				return
+			}
 			s.set(v, "%s nsw i64 %s, %s", ins, a(0), a(1))
 			return
 		}

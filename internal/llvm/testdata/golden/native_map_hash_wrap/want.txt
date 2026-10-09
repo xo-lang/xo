@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+A len 5 true 5
+1 1
+2 2
+3 3
+6 6
+7 7
+--- stderr

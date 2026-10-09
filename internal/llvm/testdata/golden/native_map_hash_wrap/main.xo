@@ -1,0 +1,22 @@
+// The Int key hash multiplies with wrapping overflow. Emitted as `mul
+// nsw` (overflow is poison), LLVM -O2 learned the key range of the two
+// removes below (4 and 5, after inlining) and folded the hash to 0, so
+// both removes missed (gotchas/llvm-nsw-hash-overflow.md).
+struct User {
+  id: Int
+  email: Str
+  tags: List[Str]
+}
+
+fn main(os: Os) {
+  var users: Map[Int, User] = {}
+  for i in 1..8 {
+    users.put(i, User{id: i, email: "U${i}@X.io", tags: ["t${i}"]})
+  }
+  let _ = users.remove(4)
+  let r = users.remove(5)
+  os.stdio.println("A len ${users.len()} ${r is Some(_)} ${users.values().len()}")
+  for (k, u) in users {
+    os.stdio.println("${k} ${u.id}")
+  }
+}
