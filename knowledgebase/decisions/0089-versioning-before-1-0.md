@@ -31,7 +31,9 @@ possible and decide personally when it is 1.0.
 ## Owner's 1.0 criteria (2026-10-09)
 
 - Native TLS is required for 1.0: native builds must serve and call
-  HTTPS, so the native backends are not reduced to a preview for 1.0.
+  HTTPS in addition to plain HTTP (which stays first class, for TLS
+  terminated at a proxy or load balancer), so the native backends are not
+  reduced to a preview for 1.0.
 
 ## Consequences
 
