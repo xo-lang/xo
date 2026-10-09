@@ -707,6 +707,8 @@ internal/selfhost/      Go side of the self hosted components (tests only): buil
                         its dump with lexer.Dump (decision 0076)
 selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
                         lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
+scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
+                        (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
@@ -1312,7 +1314,9 @@ Last verified: 2026-10-09. Results: `bench/results/linux-2026-10-09.md`.
   `./internal/llvm` (x86-64 LLVM IR, the x86_64 fiber switch, epoll).
   ThreadSanitizer cannot start there; the TSan tests run their programs
   without it (`gotchas/tsan-under-x86-emulation.md`). The arm64 backend
-  only emits assembly on amd64.
+  only emits assembly on amd64. The full amd64 suite also passes but
+  needs `-p 1 -parallel 4` for internal/gen and internal/llvm (about
+  4 and 5 min): translated compilers use more memory.
 - Extra arguments replace the default, for example
   `scripts/linux-test.sh arm64 -count=1 -p 1 -run 'ASan|HTTP' ./internal/llvm`.
   Keep `-p` low: the Docker VM (8 GiB on 2026-10-09) runs out of memory
