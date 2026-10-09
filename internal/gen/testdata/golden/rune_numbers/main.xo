@@ -1,0 +1,38 @@
+const QUOTE: UInt8 = '"'
+
+fn class(c: UInt8) -> Str {
+  match c {
+    'a'..='z' | 'A'..='Z' | '_' => "letter"
+    '0'..='9' => "digit"
+    ' ' | '\t' | '\n' => "space"
+    '"' => "quote"
+    _ => "other"
+  }
+}
+
+fn main(os: Os) {
+  let src = b"if x1 == \"y\"\n"
+  var out = ""
+  for i in 0..src.len() {
+    let c = src[i]
+    out = out + class(c)[..1]
+    if c == QUOTE || '"' == c {
+      out = out + "!"
+    }
+  }
+  os.stdio.println(out)
+  let r = 'é'
+  let n = Int(r)
+  let back = Rune(n + 1)
+  os.stdio.println("${n} ${back} ${UInt32('€')} ${Int('\u{1F600}')}")
+  let k: Int = 'A'
+  os.stdio.println("${k + 1} ${Rune.try(0xd800).is_none()} ${Rune.try(65) ?? '?'}")
+  match Rune.try(0x110000) {
+    Some(x) => os.stdio.println("bad ${x}")
+    None => os.stdio.println("none")
+  }
+  let lower = UInt8('A') + 32
+  os.stdio.println("${lower} ${Rune(lower)}")
+  let big = Rune(-1)
+  os.stdio.println("unreachable ${big}")
+}

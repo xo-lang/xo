@@ -145,7 +145,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-lowering-order-aliases.md](llvm-lowering-order-aliases.md): internal/llvm names some values by alias when it lowers them; lowering a block before the block defining a value it uses printed an undefined name; blocks are now lowered in reverse postorder.
 - [llrt-static-names-in-tests.md](llrt-static-names-in-tests.md): the C tests include xo_rt.c and its std files, so a runtime `static` helper collides with a test helper of the same name; prefix new helpers.
 - [net-http-quirks-to-copy.md](net-http-quirks-to-copy.md): what TestHTTPParseDiff and FuzzHTTPDiff found net/http doing (two token matchers, Peek(4) between requests, the invalid Content-Length copy, 100-continue and short bodies, requestTooLarge, OPTIONS *, HTTP/0.0, trailers, 101, SplitHostPort).
-- [rune-is-not-a-number.md](rune-is-not-a-number.md): `Int('a')` is XO0409 and `Rune(n)` XO0407; byte level code compares `Int(b[i])` with named hex constants.
+- [rune-is-not-a-number.md](rune-is-not-a-number.md): resolved by 0079: a rune literal is its code point where an integer is expected (`b[i] == '"'`); `Int(r)`, `Rune(n)`, `Rune.try(n)`; 8 bit types take only ASCII literals.
 - [go-string-is-xo-bytes.md](go-string-is-xo-bytes.md): Go strings hold any bytes, Xo `Str` must be UTF-8; port byte level text to `Bytes` and convert only ASCII to `Str`.
 - [xo0305-large-enum-default-arm.md](xo0305-large-enum-default-arm.md): a `_` arm on an 88 variant enum warns and lists 79 names; use `k is A | B` or a lookup list.
 - [property-int-min-abs.md](property-int-min-abs.md): Int property tests generate `Int.MIN`, whose `abs()` faults; reduce with `%` or `/` first.

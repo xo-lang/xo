@@ -76,6 +76,9 @@ Int(x: Float) -> Int                 // truncates toward zero; faults on NaN or 
 Float(x: Int) -> Float
 Int32(x: Int) -> Int32               // faults out of range; same for every sized type
 Int32.try(x: Int) -> Int32?
+Int(r: Rune) -> Int                  // the code point; every integer type (core 2.1)
+Rune(n: Int) -> Rune                 // faults unless n is a Unicode scalar value
+Rune.try(n: Int) -> Rune?
 
 fn (n: Int) abs() -> Int
 fn (n: Int) pow(e: Int) -> Int

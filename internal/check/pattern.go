@@ -152,6 +152,10 @@ func (c *checker) litPattern(v ast.Expr, t Type, sp token.Span) *ipat {
 		text = strconv.Quote(text)
 	case *ast.RuneLit:
 		text = x.Raw
+		if c.isInt(lt) {
+			// the same arm as the integer literal of its code point
+			text = strconv.Itoa(int(x.Value))
+		}
 	case *ast.FloatLit:
 		text = x.Raw
 	case *ast.UnaryExpr:

@@ -156,6 +156,9 @@ fn (static: UInt8) try(x: Int) -> UInt8?
 fn (static: UInt16) try(x: Int) -> UInt16?
 fn (static: UInt32) try(x: Int) -> UInt32?
 fn (static: UInt64) try(x: Int) -> UInt64?
+/// The character with code point x, or None when x is not a Unicode
+/// scalar value (a surrogate, negative, or above U+10FFFF).
+fn (static: Rune) try(x: Int) -> Rune?
 
 fn (n: Int) abs() -> Int
 fn (n: Int) pow(e: Int) -> Int

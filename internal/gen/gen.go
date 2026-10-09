@@ -579,6 +579,19 @@ func (g *gen) isScalar(t check.Type) bool {
 	return false
 }
 
+// isIntType reports whether t is one of the integer types.
+func (g *gen) isIntType(t check.Type) bool {
+	n := g.named(t)
+	if n == nil || !n.Obj.Module.IsPrelude {
+		return false
+	}
+	switch n.Obj.Name {
+	case "Int", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64":
+		return true
+	}
+	return false
+}
+
 func (g *gen) isSigned(t check.Type) bool {
 	n := g.named(t)
 	if n == nil || !n.Obj.Module.IsPrelude {

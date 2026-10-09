@@ -164,6 +164,9 @@ func (f *fnGen) litPatValue(e ast.Expr, t check.Type) string {
 	case *ast.FloatLit:
 		return fmt.Sprintf("%s(%s)", f.goType(t), x.Raw)
 	case *ast.RuneLit:
+		if f.g.isIntType(t) {
+			return f.intLit(strconv.Itoa(int(x.Value)), t)
+		}
 		return fmt.Sprintf("%sRune(%d)", f.rt(), x.Value)
 	case *ast.StringLit:
 		var s string

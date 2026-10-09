@@ -25,6 +25,9 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
   type takes it by value is error `XO0401` (it changed a copy only).
 - `BytesBuilder`, the move only builder of `Bytes` (5.3, std.md 2.7;
   decision 0078).
+- A rune literal where an integer type is expected is its code point
+  (1.6); `Int(r)`, `Rune(n)`, and `Rune.try(n)` convert between `Rune` and
+  the integer types (2.1; decision 0079).
 
 ## Changes in 0.6
 
@@ -270,6 +273,13 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   also contain `"`, which makes JSON fixtures easy to write.
 - An integer literal takes the integer type expected in context (`Int32`,
   `UInt8`, ...), defaulting to `Int`. It never becomes a `Float`; write `2.0`.
+- A rune literal is a `Rune`, except where an integer type is expected (an
+  annotation, a parameter, the other operand of an operator, a pattern on
+  an integer, a `const` of an integer type): there it is that type's value
+  of its code point, so byte level code reads `b[i] == '"'` and
+  `match c { 'a'..='z' => ... }` on a `UInt8` (decision 0079). The code
+  point must fit the type; `Int8` and `UInt8` take only ASCII (`'é'` is two
+  bytes in UTF-8, so it is never one byte): error `XO0401` otherwise.
 - Duration literals are an integer followed by `ns`, `us`, `ms`, `s`, `m`,
   or `h`. `1.5s` is not a literal; write `1500ms`.
 - Escapes in `Str` and `Bytes`: `\n \t \r \0 \\ \" \' \$ \xHH \u{...}`.
@@ -312,6 +322,14 @@ There are no implicit numeric conversions. Conversions are calls on the target
 type: `Float(i)`, `Int(f)` (truncates toward zero, faults on NaN or out of
 range), `Int32(x)` (faults out of range), `Int32.try(x) -> Int32?`. Parsing
 text is `Int.parse(s) -> Int?`, `Float.parse(s) -> Float?`.
+
+A `Rune` is not a number, but converts both ways with an integer type
+(decision 0079): `Int(r)` (and every sized integer type, faulting out of
+range: `UInt8('é')` faults) is its code point; `Rune(n)` from any integer
+type is the character with code point `n` and faults when `n` is not a
+Unicode scalar value (negative, a surrogate `0xd800` to `0xdfff`, or above
+`0x10ffff`); `Rune.try(n) -> Rune?` is `None` there instead. A `Rune`
+does not convert to `Float` (`XO0409`, with a note pointing at `Int(r)`).
 
 Float comparison (decision 0053; the same for `Float32`):
 

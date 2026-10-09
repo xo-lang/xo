@@ -1,0 +1,9 @@
+exit 70
+--- stdout
+llsldsoosq!lq!s
+233 ê 8364 128512
+66 true A
+none
+97 a
+--- stderr
+fault: -1 is not a Unicode scalar value, so it is not a Rune at main.xo:36:13
