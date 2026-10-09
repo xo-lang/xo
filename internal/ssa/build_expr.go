@@ -353,6 +353,21 @@ func (s *fn) structLit(x *ast.StructLit) *Value {
 			vals[i] = s.valueAs(named.Obj.Fields[i].Default, t.Fields[i].Type)
 			continue
 		}
+		if named != nil {
+			// a hidden field of a std type's implementation (decision
+			// 0074): its default
+			if it := b.implType(named.Obj); it != nil {
+				for _, f := range it.Fields {
+					if f.Name == t.Fields[i].Name && f.Default != nil {
+						vals[i] = s.valueAs(f.Default, t.Fields[i].Type)
+						break
+					}
+				}
+				if vals[i] != nil {
+					continue
+				}
+			}
+		}
 		b.unsupported(x, "a struct literal without the field `"+t.Fields[i].Name+"`")
 		vals[i] = s.undef(t.Fields[i].Type)
 	}

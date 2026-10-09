@@ -2,6 +2,7 @@
 // native/rt.xo: imported only by the implementation modules as
 // `use native/rthttp`. std/llrt/xo_http.c implements them.
 use std/task
+use native/rt
 
 /// A server's connections and the scope of their tasks (xo_srv).
 struct Srv {}
@@ -70,6 +71,23 @@ fn cr_nheaders(r: CResp) -> Int
 fn cr_hname(r: CResp, i: Int) -> Str
 fn cr_hval(r: CResp, i: Int) -> Str
 fn cr_body(r: CResp) -> Bytes
+
+/// Streamed bodies (http.stream, decision 0083): a sink takes a stream's
+/// writes, into a buffer or to a connection as net/http sends them.
+struct Sink {}
+fn sink_buf() -> Sink
+fn sink_conn(h: HConn, status: Int) -> Sink
+/// false: the connection failed.
+fn sink_write(s: Sink, data: Bytes) -> Bool
+fn sink_flush(s: Sink) -> Bool
+/// Ends the stream on its connection: whether it stays open.
+fn sink_end(s: Sink) -> Bool
+/// The body a buffer sink collected.
+fn sink_take(s: Sink) -> Bytes
+/// Keeps a stream's function (an Any): its number (a Response's stream).
+fn stream_put(f: rt.Any) -> Int
+/// The function of stream id, or none; take removes it.
+fn stream_get(id: Int, take: Bool) -> List[rt.Any]
 
 /// Logging (std.md 6): the level and format of log.configure.
 fn log_level() -> Int

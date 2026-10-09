@@ -1,0 +1,123 @@
+// http.stream on the wire and in process (decision 0083): the native
+// server sends a streamed body as net/http does (a 2048 byte buffer, a
+// large write straight through, the head with the first data that leaves
+// it, chunked on HTTP/1.1, a flush a chunk, a stream that never leaves
+// the buffer as an ordinary response), and a response dispatched in
+// process collects it.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /small", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("hello".bytes())?
+      w.write(" world".bytes())?
+    })
+  })
+  r.handle("GET /big", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("x".repeat(3000).bytes())?
+    })
+  })
+  r.handle("GET /pieces", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("one,".bytes())?
+      w.flush()?
+      w.write("two,".bytes())?
+      w.flush()?
+      w.write("three".bytes())?
+    })
+  })
+  r.handle("GET /many", fn(_req) {
+    http.stream(201, fn(w) {
+      for i in 0..7 {
+        w.write("${i}".repeat(500).bytes())?
+      }
+    })
+  })
+  r.handle("GET /flushfirst", fn(_req) {
+    http.stream(200, fn(w) {
+      w.flush()?
+      w.write("{\"a\":1}".bytes())?
+    }).with_header("Content-Type", "application/json")
+  })
+  r.handle("GET /empty", fn(_req) { http.stream(200, fn(_w) { Ok(()) }) })
+  r
+}
+
+/// The answer without the Date value; a long body is summarized.
+fn clean(s: Str) -> Str {
+  var out: List[Str] = []
+  for line in s.split("\r\n") {
+    if line.starts_with("Date: ") {
+      out.push("Date: <date>")
+    } else if line.len() > 80 {
+      out.push("<${line.len()} bytes>")
+    } else {
+      out.push(line)
+    }
+  }
+  out.join("\n")
+}
+
+fn exchange(os: Os, addr: Str, label: Str, raw: Str) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      match c.write(raw.bytes()) {
+        Ok(_) => ()
+        Err(_) => os.stdio.println("${label}: write failed")
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+fn main(os: Os) {
+  // in process: the body is collected
+  let r = routes()
+  for p in ["/small", "/big", "/pieces", "/many", "/flushfirst", "/empty"] {
+    let resp = r.call(http.new_request("GET", p))
+    let text = resp.text() ?? "?"
+    os.stdio.println("call ${p}: ${resp.status} ${text.len()} ${resp.header("Content-Type") ?? "-"}")
+  }
+  // a copy collects again
+  let s = http.stream(200, fn(w) { w.write("again".bytes()) })
+  os.stdio.println("collect twice: ${s.text() ?? "?"} ${s.text() ?? "?"}")
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let addr = srv.addr()
+      scope sc {
+        sc.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        for p in ["/small", "/big", "/pieces", "/many", "/flushfirst", "/empty"] {
+          exchange(os, addr, p, "GET ${p} HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        }
+        exchange(os, addr, "head", "HEAD /pieces HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "http/1.0", "GET /pieces HTTP/1.0\r\n\r\n")
+        exchange(os, addr, "keep-alive", "GET /pieces HTTP/1.1\r\nHost: h\r\n\r\nGET /small HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+        let c = http.client(os.net, timeout: 10s)
+        match c.get("http://${addr}/many") {
+          Ok(resp) => os.stdio.println("client /many: ${resp.status} ${resp.body.len()} ${resp.header("Transfer-Encoding") ?? "-"}")
+          Err(e) => os.stdio.println("client: ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

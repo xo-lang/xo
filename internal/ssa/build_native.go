@@ -205,6 +205,14 @@ func (s *fn) genericIntrinsic(x *ast.CallExpr, ci *check.Call, es []ast.Expr) *V
 	case "launder1", "launder2":
 		// the function itself (only its effects are accounted for here)
 		return s.valueAs(es[0], nt)
+	case "cast":
+		// a std type and its implementation lower to one type
+		v := s.valueAs(es[0], b.typ(targ(0), x))
+		if v.Type != nt {
+			b.unsupported(x, "the cast of `"+v.Type.Name+"` to `"+nt.Name+"`")
+			return s.undef(nt)
+		}
+		return v
 	case "status_of":
 		ct := targ(0)
 		v := s.valueAs(es[0], b.typ(ct, x))

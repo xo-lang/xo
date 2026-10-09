@@ -589,9 +589,10 @@ When a handler returns `Err(e)`:
   error is logged with its frames.
 
 A fault in a handler is isolated: 500, logged, crash bundle written. On the
-native backends (`--backend=llvm`, `--backend=arm64`, decision 0074) a fault
-exits the process, as every native fault does (core 3.5), and the error of a
-500 is logged without frames.
+native backends (`--no-gc`, decisions 0074 and 0083) a fault still exits the
+process, as every native fault does (core 3.5; a 500 there needs faults to
+unwind, planned), and the error of a 500 is logged without frames. Streamed
+bodies (`http.stream`) are sent natively as net/http sends them.
 
 ### 4.3 Requests and responses
 

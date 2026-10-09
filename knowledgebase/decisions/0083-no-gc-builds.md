@@ -84,6 +84,33 @@ as stable diagnostics before anything is generated.
      generic instances keyed by checker types
      (`gotchas/ssa-types-that-lower-alike.md`); LLVM accepts an enum
      holding a List of itself (`gotchas/llvm-recursion-through-list.md`).
+   - **http.stream** (`std/native/http.xo`, sinks in `std/llrt/xo_http.c`;
+     golden `http_stream`): the implementation's Response has a hidden
+     `stream` field, the number of the stream's function in a table of
+     the C runtime (an Int, so `==` on responses still lowers; a function
+     field would not). Serving sends the body as std/rt over net/http
+     does: writes go through a 2048 byte buffer as bufio's WriteString
+     fills it (no write goes around it), the head leaves with the first
+     data out of the buffer or the first flush while the handler is not
+     done (chunked on HTTP/1.1, close delimited on HTTP/1.0, none for
+     HEAD), each flush or full buffer is a chunk, and a stream that never
+     leaves the buffer is an ordinary response with Content-Length.
+     `Router.call`, `text`, and `decode_json` collect it into a buffer; a
+     copy can be collected again, so the table keeps a function until
+     its response is sent (or the program exits; a streamed response that
+     is only collected keeps its entry). The builder gained the generic
+     intrinsic `cast[A, B]` (a std type and its implementation type are
+     one lowered type) and defaults for the hidden fields of an
+     implementation in a std struct literal.
+   - **A fault in a handler still exits** (not a 500): native faults do
+     not unwind (decision 0070). Answering 500 needs the handler's task
+     to unwind from a fault: its deferred code run, what its frames hold
+     released, its Mutex values (moved into `with` closures, decision
+     0082) handed back and its locks released, its open scopes closed.
+     Planned; the next experiment is a protected call at the connection
+     task (a setjmp point the fault path jumps to on a fiber that has
+     one), measuring what a fault then leaks and leaves locked before
+     making it unwind properly.
 7. **Native test binaries** (`xo test --no-gc`; `internal/ssa/
    build_testmode.go`, `std/llrt/xo_testing.c`, `std/native/testing.xo`,
    `rttest.xo`, `cmd/xo/nativetest.go`; tests `cmd/xo` TestNoGCTests and

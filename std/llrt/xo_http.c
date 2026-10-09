@@ -1614,7 +1614,7 @@ static void hw_status_line(nbuf *o, int is11, int64_t code) {
 // reader's error is sticky, so discarding the rest fails too); too_big:
 // 256 KiB or more of a Content-Length body were never sent (net/http's
 // requestTooLarge).
-static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big) {
+static int hw_response_x(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big, int stream, int *chunked) {
 	int is11 = r->major > 1 || (r->major == 1 && r->minor >= 1);
 	int head = hs_eq(r->method, "HEAD");
 	if (status < 100 || status > 999) {
@@ -1648,9 +1648,11 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 		written = 0; // ErrContentLength
 	}
 	// chunkWriter.writeHeader(p): the whole body when it fits the 2048
-	// byte buffer (the handler is done by then), else its first 2048
-	int64_t plen = written <= 2048 ? written : 2048;
-	int done = written <= 2048;
+	// byte buffer (the handler is done by then), else its first 2048. A
+	// stream's head goes out with its first write while the handler is
+	// not done (p: that write)
+	int64_t plen = stream || written <= 2048 ? written : 2048;
+	int done = !stream && written <= 2048;
 	const char *excl[8];
 	int nexcl = 0;
 	const char *set_ct = NULL, *set_conn = NULL, *set_te = NULL;
@@ -1780,12 +1782,15 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 		nbuf_put(o, "\r\n", 2);
 	}
 	nbuf_put(o, "\r\n", 2);
+	if (chunked) {
+		*chunked = chunking && !head && body_ok;
+	}
 	if (!head && body_ok && written > 0) {
 		if (chunking) {
 			int64_t left = written;
 			const char *p = body;
 			while (left > 0) {
-				int64_t c = left > 2048 ? 2048 : left;
+				int64_t c = left > 2048 && !stream ? 2048 : left;
 				char hx[24];
 				snprintf(hx, sizeof hx, "%llx\r\n", (long long)c);
 				nbuf_str(o, hx);
@@ -1798,6 +1803,10 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 			nbuf_put(o, body, written);
 		}
 	}
+	if (stream) {
+		// the stream's later writes and its end follow (hs_*)
+		return !close;
+	}
 	if (chunking) {
 		nbuf_str(o, "0\r\n\r\n");
 	}
@@ -1806,6 +1815,10 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 		close = 1;
 	}
 	return !close;
+}
+
+static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big) {
+	return hw_response_x(o, r, h, status, body, bn, expect_unread, body_bad, too_big, 0, NULL);
 }
 
 // hw_error is the answer of conn.serve to a request it could not read.
@@ -2468,6 +2481,216 @@ int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn
 	int stopping = hc->srv->stopping;
 	pthread_mutex_unlock(&hc->srv->mu);
 	return !stopping;
+}
+
+// ---------------------------------------------------------------------------
+// Streamed bodies (http.stream, decision 0083)
+//
+// A sink takes the writes of a stream's body: into a buffer (a response
+// dispatched in process, collected), or to a connection as net/http's
+// response writer sends them: through a 2048 byte buffer (std/rt writes
+// strings, and bufio.Writer.WriteString fills and flushes the buffer in
+// turn), the head going out with the first data that leaves the buffer
+// (or the first flush) while the handler is not done, so chunked
+// on HTTP/1.1; a stream that never leaves the buffer is an ordinary
+// response when it ends.
+
+typedef struct {
+	xo_hdr h;
+	int conn;
+	nbuf buf;
+	xo_hconn *hc;
+	int64_t status;
+	int started, chunking, raw, keep, failed;
+} xo_sink;
+
+static void sink_free(void *p) {
+	xo_sink *s = p;
+	free(s->buf.p);
+	if (s->hc) {
+		h_release(s->hc);
+	}
+	xo_free(s);
+}
+
+static xo_sink *sink_new(void) {
+	xo_sink *s = xo_alloc(sizeof(xo_sink));
+	memset(s, 0, sizeof *s);
+	h_init(s, sink_free);
+	return s;
+}
+
+// xo_sink_buf is a sink into a buffer.
+xo_sink *xo_sink_buf(void) { return sink_new(); }
+
+// xo_sink_conn is a sink that sends the response of status on hc (its
+// header set with xo_hc_header).
+xo_sink *xo_sink_conn(xo_hconn *hc, int64_t status) {
+	xo_sink *s = sink_new();
+	h_retain(hc);
+	s->conn = 1;
+	s->hc = hc;
+	s->status = status;
+	return s;
+}
+
+// sink_emit writes p as net/http's chunkWriter does: the head with the
+// first data, then a chunk per write.
+static void sink_emit(xo_sink *s, const char *p, int64_t n) {
+	if (s->failed) {
+		return;
+	}
+	xo_hconn *hc = s->hc;
+	nbuf *o = &hc->out;
+	o->n = 0;
+	if (!s->started) {
+		s->started = 1;
+		int ch = 0;
+		s->keep = hw_response_x(o, &hc->req, &hc->resp, s->status, p, n, hc->expect_unread, hc->body_bad, hc->too_big, 1, &ch);
+		s->chunking = ch;
+		s->raw = !ch && !hs_eq(hc->req.method, "HEAD") && h_body_allowed(s->status);
+		hl_clear(&hc->resp);
+	} else if (n > 0 && s->chunking) {
+		char hx[24];
+		snprintf(hx, sizeof hx, "%llx\r\n", (long long)n);
+		nbuf_str(o, hx);
+		nbuf_put(o, p, n);
+		nbuf_put(o, "\r\n", 2);
+	} else if (n > 0 && s->raw) {
+		nbuf_put(o, p, n);
+	}
+	if (o->n > 0 && !hc_send(hc, o->p, o->n)) {
+		s->failed = 1;
+	}
+	o->n = 0;
+}
+
+// xo_sink_write is BodyWriter.write: 0 when the connection failed.
+int64_t xo_sink_write(xo_sink *s, const char *p, int64_t n) {
+	if (!s->conn) {
+		nbuf_put(&s->buf, p, n);
+		return 1;
+	}
+	// bufio.Writer.WriteString (std/rt writes strings): no write goes
+	// around the buffer, since chunkWriter has no WriteString
+	while (n > 2048 - s->buf.n) {
+		int64_t k = 2048 - s->buf.n;
+		nbuf_put(&s->buf, p, k);
+		p += k;
+		n -= k;
+		sink_emit(s, s->buf.p, s->buf.n);
+		s->buf.n = 0;
+	}
+	if (n > 0) {
+		nbuf_put(&s->buf, p, n);
+	}
+	return !s->failed;
+}
+
+// xo_sink_flush is BodyWriter.flush: what is buffered goes out (the head
+// at the latest).
+int64_t xo_sink_flush(xo_sink *s) {
+	if (!s->conn) {
+		return 1;
+	}
+	if (s->buf.n > 0) {
+		sink_emit(s, s->buf.p, s->buf.n);
+		s->buf.n = 0;
+	} else if (!s->started) {
+		sink_emit(s, "", 0);
+	}
+	return !s->failed;
+}
+
+// xo_sink_end ends the stream on its connection: 1 when the connection
+// stays open for another request.
+int64_t xo_sink_end(xo_sink *s) {
+	xo_hconn *hc = s->hc;
+	if (!s->started) {
+		return xo_hc_respond(hc, s->status, s->buf.p ? s->buf.p : "", s->buf.n);
+	}
+	if (s->buf.n > 0) {
+		sink_emit(s, s->buf.p, s->buf.n);
+		s->buf.n = 0;
+	}
+	if (s->chunking && !s->failed && !hc_send(hc, "0\r\n\r\n", 5)) {
+		s->failed = 1;
+	}
+	if (hc->out.cap > (64 << 10)) {
+		free(hc->out.p);
+		hc->out = (nbuf){0};
+	}
+	hc->served = 1;
+	if (s->failed || !s->keep) {
+		return 0;
+	}
+	if (!hc->srv) {
+		return 1;
+	}
+	pthread_mutex_lock(&hc->srv->mu);
+	int stopping = hc->srv->stopping;
+	pthread_mutex_unlock(&hc->srv->mu);
+	return !stopping;
+}
+
+// xo_sink_take is the body a buffer sink collected.
+xo_rstr *xo_sink_take(xo_sink *s, int64_t *len) { return nstr(s->buf.p ? s->buf.p : "", s->buf.n, len); }
+
+// The functions of streamed responses: a Response carries the number of
+// its function here (0: no stream). Sending a response takes its
+// function; a response dispatched in process keeps it, since a copy may
+// be collected again (as on the Go backend); xo_streams_free empties the
+// table at exit (leak check).
+static struct {
+	pthread_mutex_t mu;
+	void **fs;
+	int64_t n;
+} streams = {.mu = PTHREAD_MUTEX_INITIALIZER};
+
+// xo_stream_put keeps f (an Any of the stream's function): its number.
+int64_t xo_stream_put(void *f) {
+	h_retain(f);
+	pthread_mutex_lock(&streams.mu);
+	if ((streams.n & (streams.n - 1)) == 0) {
+		streams.fs = realloc(streams.fs, (size_t)(streams.n == 0 ? 4 : 2 * streams.n) * sizeof(void *));
+		if (!streams.fs) {
+			xo_oom();
+		}
+	}
+	streams.fs[streams.n++] = f;
+	int64_t id = streams.n;
+	pthread_mutex_unlock(&streams.mu);
+	return id;
+}
+
+// xo_stream_get is the function of stream id in a list of one (empty
+// when it was taken); take removes it from the table.
+xo_rlist *xo_stream_get(int64_t id, int64_t take) {
+	xo_rlist *l = xo_rl_new(4, 8);
+	pthread_mutex_lock(&streams.mu);
+	void *f = id >= 1 && id <= streams.n ? streams.fs[id - 1] : NULL;
+	if (f) {
+		if (take) {
+			streams.fs[id - 1] = NULL;
+		} else {
+			h_retain(f);
+		}
+		((void **)rl_data(l))[0] = f;
+		l->len = 1;
+	}
+	pthread_mutex_unlock(&streams.mu);
+	return l;
+}
+
+__attribute__((unused)) static void xo_streams_free(void) {
+	pthread_mutex_lock(&streams.mu);
+	for (int64_t i = 0; i < streams.n; i++) {
+		if (streams.fs[i]) {
+			h_release(streams.fs[i]);
+			streams.fs[i] = NULL;
+		}
+	}
+	pthread_mutex_unlock(&streams.mu);
 }
 
 // xo_hc_close closes the connection and ends its registration.

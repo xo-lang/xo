@@ -1,6 +1,7 @@
 # 0074: std/http, std/json, and std/log on the native backends; std written in Xo
 
-Status: Accepted (2026-10-08). Implemented in `std/native/*.xo`
+Status: Accepted (2026-10-08); amended by 0083 (http.stream, std/crypto, std/sql,
+and test binaries on the native backends). Implemented in `std/native/*.xo`
 (implementation modules), `std/llrt/xo_std.c`, `xo_json.c`, `xo_http.c`,
 `xo_unicode.c` (C intrinsics), `internal/check/load.go` (`loadNative`),
 `internal/ssa/build_native.go`, `build_show.go`, `build_json.go`. Tests:

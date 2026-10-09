@@ -61,6 +61,20 @@ struct Client {
   timeout: Duration
 }
 
+/// http.Response with the number of its streamed body's function (0:
+/// none; decision 0083, std/rt's XStream), hidden from Xo code.
+struct Response {
+  status: Int
+  headers: Map[Str, Str]
+  body: Bytes
+  stream: Int = 0
+}
+
+/// The writer of a streamed body: a sink into a buffer or a connection.
+struct BodyWriter {
+  s: rthttp.Sink
+}
+
 // ---------------------------------------------------------------------------
 // Routing (std.md 4.1)
 
@@ -159,7 +173,12 @@ fn chain(mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response], 
   next
 }
 
-fn (r: Router) call(req: Request) -> http.Response {
+/// In process dispatch: a streamed body is collected (std/rt's M_call).
+fn (r: Router) call(req: Request) -> http.Response { collect(call_raw(r, req)) }
+
+/// call without collecting a streamed body (serve sends it as it is
+/// made).
+fn call_raw(r: Router, req: Request) -> http.Response {
   if r.mws.is_empty() {
     return dispatch(r, req)
   }
@@ -421,9 +440,53 @@ fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Respons
 
 fn response_header(r: http.Response, name: Str) -> Str? { header_get(r.headers, name) }
 
-fn response_text(r: http.Response) -> Str? { r.body.to_str() }
+fn response_text(r: http.Response) -> Str? { collect(r).body.to_str() }
 
-fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.decode(r.body) }
+fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.decode(collect(r).body) }
+
+/// The body is produced by f while the response is sent; dispatched in
+/// process it is collected (std.md 4.3, decision 0083).
+fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> http.Response uses fx {
+  let r = Response{status: status, headers: {}, body: "".bytes(), stream: rthttp.stream_put(rt.any_of(f))}
+  rt.cast[Response, http.Response](r)
+}
+
+/// r with a streamed body run into it (std/rt's collect); a copy may be
+/// collected again.
+fn collect(r0: http.Response) -> http.Response {
+  let r = rt.cast[http.Response, Response](r0)
+  if r.stream == 0 {
+    return r0
+  }
+  var body = "".bytes()
+  let fs = rthttp.stream_get(r.stream, false)
+  if !fs.is_empty() {
+    if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+      let s = rthttp.sink_buf()
+      f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as std/rt's collect")
+      body = rthttp.sink_take(s)
+    }
+  }
+  rt.cast[Response, http.Response](r with {body: body, stream: 0})
+}
+
+fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
+  if task.is_canceled() {
+    return Err(IoErr.Canceled)
+  }
+  if !rthttp.sink_write(w.s, data) {
+    return Err(IoErr.Io(msg: "write: connection closed"))
+  }
+}
+
+fn (w: BodyWriter) flush() -> () ! IoErr {
+  if task.is_canceled() {
+    return Err(IoErr.Canceled)
+  }
+  if !rthttp.sink_flush(w.s) {
+    return Err(IoErr.Io(msg: "flush: connection closed"))
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Server (std.md 4.4)
@@ -491,9 +554,23 @@ fn serve_mem(l: Listener, r: Router) {
 fn serve_conn(hc: rthttp.HConn, r: Router) {
   defer rthttp.hc_close(hc)
   while rthttp.hc_read(hc) {
-    let resp = r.call(conn_request(hc))
+    let resp = rt.cast[http.Response, Response](call_raw(r, conn_request(hc)))
     for (k, v) in resp.headers {
       rthttp.hc_header(hc, k, v)
+    }
+    if resp.stream != 0 {
+      // a streamed body goes out as f makes it (std/rt's serve)
+      let s = rthttp.sink_conn(hc, resp.status)
+      let fs = rthttp.stream_get(resp.stream, true)
+      if !fs.is_empty() {
+        if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+          f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
+        }
+      }
+      if !rthttp.sink_end(s) {
+        break
+      }
+      continue
     }
     if !rthttp.hc_respond(hc, resp.status, resp.body) {
       break

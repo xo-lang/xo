@@ -5057,6 +5057,7 @@ static void *run_main(void *arg) {
 
 static void tw_init(void);
 static void tw_cleanup(void);
+static void xo_streams_free(void);
 
 int main(int argc, char **argv) {
 	xo_argc = argc;
@@ -5101,6 +5102,7 @@ int main(int argc, char **argv) {
 	}
 	pthread_mutex_unlock(&stop.mu);
 	xo_rt_stats();
+	xo_streams_free();
 	if (tw.on) {
 		tw_cleanup();
 	}

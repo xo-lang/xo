@@ -83,6 +83,11 @@ fn any_of[T](v: T) -> Any
 /// The value if it has type T.
 fn any_get[T](a: Any) -> T?
 
+/// a as a B: a std type and its implementation type (http.Response and
+/// the implementation's Response), which lower to one type (decision
+/// 0083); any other pair is not available.
+fn cast[A, B](a: A) -> B
+
 /// e.status() when E has a `status` method (implements http.StatusError).
 fn status_of[E](e: E) -> Int?
 

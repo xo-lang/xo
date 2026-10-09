@@ -1,0 +1,117 @@
+exit 0
+--- stdout
+call /small: 200 11 -
+call /big: 200 3000 -
+call /pieces: 200 13 -
+call /many: 201 3500 -
+call /flushfirst: 200 7 application/json
+call /empty: 200 0 -
+collect twice: again again
+== /small
+HTTP/1.1 200 OK
+Date: <date>
+Content-Length: 11
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+hello world
+== /big
+HTTP/1.1 200 OK
+Date: <date>
+Content-Type: text/plain; charset=utf-8
+Connection: close
+Transfer-Encoding: chunked
+
+800
+<2048 bytes>
+3b8
+<952 bytes>
+0
+
+
+== /pieces
+HTTP/1.1 200 OK
+Date: <date>
+Content-Type: text/plain; charset=utf-8
+Connection: close
+Transfer-Encoding: chunked
+
+4
+one,
+4
+two,
+5
+three
+0
+
+
+== /many
+HTTP/1.1 201 Created
+Date: <date>
+Content-Type: text/plain; charset=utf-8
+Connection: close
+Transfer-Encoding: chunked
+
+800
+<2048 bytes>
+5ac
+<1452 bytes>
+0
+
+
+== /flushfirst
+HTTP/1.1 200 OK
+Content-Type: application/json
+Date: <date>
+Connection: close
+Transfer-Encoding: chunked
+
+7
+{"a":1}
+0
+
+
+== /empty
+HTTP/1.1 200 OK
+Date: <date>
+Content-Length: 0
+Connection: close
+
+
+== head
+HTTP/1.1 405 Method Not Allowed
+Content-Type: application/json
+Date: <date>
+Content-Length: 30
+Connection: close
+
+
+== http/1.0
+HTTP/1.0 200 OK
+Date: <date>
+Content-Type: text/plain; charset=utf-8
+
+one,two,three
+== keep-alive
+HTTP/1.1 200 OK
+Date: <date>
+Content-Type: text/plain; charset=utf-8
+Transfer-Encoding: chunked
+
+4
+one,
+4
+two,
+5
+three
+0
+
+HTTP/1.1 200 OK
+Date: <date>
+Content-Length: 11
+Content-Type: text/plain; charset=utf-8
+Connection: close
+
+hello world
+client /many: 201 3500 -
+--- stderr
