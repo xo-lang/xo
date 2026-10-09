@@ -127,9 +127,32 @@ fn (b: Bytes) to_hex() -> Str                // lowercase
 fn (b: Bytes) to_base64() -> Str             // standard encoding, padded
 Bytes.from_hex(s: Str) -> Bytes?
 Bytes.from_base64(s: Str) -> Bytes?
+fn (b: Bytes) rune_count() -> Int            // an invalid byte counts as one rune
+fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)  // the rune at byte i and its size
+fn (b: Bytes) quote() -> Str                 // also on Str: a quoted literal
 
 fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space, to_lower, to_upper
+fn (r: Rune) is_print() -> Bool
+fn (r: Rune) quote() -> Str                  // 'a', '\n', '\u2028'
 ```
+
+Unicode and quoting follow Go's `unicode`, `unicode/utf8`, and `strconv`
+packages exactly (decision 0079), so text a Go program prints can be
+reproduced:
+
+- `is_letter` is a letter (category L), `is_digit` a decimal digit (Nd),
+  `is_space` white space (`\t \n \v \f \r`, space, U+0085, U+00A0, and
+  category Zs, plus U+2028 and U+2029), `is_print` `strconv.IsPrint` (a
+  letter, mark, number, punctuation, symbol, or the ASCII space).
+- `decode_rune(i)` reads the UTF-8 sequence at byte `i`: `(U+FFFD, 1)`
+  for an invalid or short sequence, `(U+FFFD, 0)` at `i == len()`, and a
+  fault when `i` is negative or past the end.
+- `r.quote()` is `strconv.QuoteRune`: single quotes, `\'` and `\\`
+  escaped, printable runes as they are, `\a \b \f \n \r \t \v`, then
+  `\xHH` below U+0080, `\uHHHH`, or `\UHHHHHHHH`.
+- `s.quote()` and `b.quote()` are `strconv.Quote`: double quotes, the same
+  escapes with `\"` in place of `\'`, and every byte of an invalid UTF-8
+  sequence as `\xHH`.
 
 Slicing (`s[a..b]`) is in core 3.6.
 

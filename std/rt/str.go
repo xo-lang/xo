@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -207,3 +208,30 @@ func Rune_to_upper(_ *Task, r Rune) Rune { return Rune(unicode.ToUpper(rune(r)))
 
 // Interp concatenates the parts of an interpolated string.
 func Interp(parts ...string) string { return strings.Join(parts, "") }
+
+// Rune_is_print is `r.is_print()`: Go's strconv.IsPrint (decision 0079).
+func Rune_is_print(_ *Task, r Rune) bool { return strconv.IsPrint(rune(r)) }
+
+// Rune_quote is `r.quote()`: Go's strconv.QuoteRune.
+func Rune_quote(_ *Task, r Rune) string { return strconv.QuoteRune(rune(r)) }
+
+// Str_quote is `s.quote()`: Go's strconv.Quote.
+func Str_quote(_ *Task, s string) string { return strconv.Quote(s) }
+
+// Bytes_quote is `b.quote()`: Go's strconv.Quote of the bytes.
+func Bytes_quote(_ *Task, b Bytes) string { return strconv.Quote(string(b)) }
+
+// Bytes_rune_count is `b.rune_count()`: utf8.RuneCount, an invalid byte
+// counting as one rune.
+func Bytes_rune_count(_ *Task, b Bytes) int64 { return int64(utf8.RuneCountInString(string(b))) }
+
+// Bytes_decode_rune is `b.decode_rune(i)`: utf8.DecodeRune of b[i..],
+// (U+FFFD, 1) for an invalid or short sequence and (U+FFFD, 0) at the end.
+// It faults when i is outside 0 to len.
+func Bytes_decode_rune(_ *Task, b Bytes, i int64) Tuple2[Rune, int64] {
+	if i < 0 || i > int64(len(b)) {
+		FaultHere("index %d out of range for decode_rune on Bytes of length %d", i, len(b))
+	}
+	r, n := utf8.DecodeRuneInString(string(b[i:]))
+	return Tuple2[Rune, int64]{F0: Rune(r), F1: int64(n)}
+}

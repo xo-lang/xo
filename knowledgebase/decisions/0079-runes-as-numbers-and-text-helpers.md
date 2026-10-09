@@ -1,8 +1,8 @@
 # 0079: Runes convert to and from integers; Unicode and quoting helpers
 
-Status: Accepted (2026-10-08). Implemented in `internal/check` (`expr.go`
+Status: Accepted (2026-10-08). Implemented in `std/prelude.xo`, `internal/check` (`expr.go`
 rune literals, `call.go` conversions), `internal/gen`, `std/rt`
-(`RuneOf`, `Rune_try`). Gaps 2 and 4 of
+(`RuneOf`, `Rune_try`, the text helpers in `str.go`). Gaps 2 and 4 of
 `bench/results/selfhost-lexer-2026-10-08.md`.
 
 ## Context
@@ -30,6 +30,17 @@ check (`b[i]` is `UInt8`). The lexer named 50 byte constants
   `Float(r)` stays `XO0409`, now with a note pointing at `Int(r)`; an
   operator between a `Rune` and an integer (`XO0406`) gets a note naming
   the conversion and the literal rule.
+
+- **Unicode and quoting in the prelude, with Go's exact rules** (std.md
+  2.2): `Rune.is_print` (`strconv.IsPrint`), `Rune.quote`
+  (`strconv.QuoteRune`), `Str.quote` and `Bytes.quote` (`strconv.Quote`),
+  `Bytes.rune_count` and `Bytes.decode_rune(i) -> (Rune, Int)`
+  (`unicode/utf8`), next to the existing `is_letter`, `is_digit`,
+  `is_space` (`unicode`). Matching Go byte for byte is the point: the
+  self hosted toolchain must print the messages the Go one prints, and an
+  agent porting Go code expects `%q`. The Unicode tables are those of the
+  Go release that builds the compiler; the native runtime carries tables
+  generated from it and a test compares every rune (decision 0081).
 
 ## Consequences
 - `match c { 'a'..='z' | '_' => ... }` and `c == '"'` work on `UInt8`

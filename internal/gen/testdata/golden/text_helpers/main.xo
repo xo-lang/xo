@@ -1,0 +1,17 @@
+fn main(os: Os) {
+  for r in ['a', '\'', '\\', '"', '\n', '\u{7f}', ' ', 'é', '\u{e0001}', '\u{fffd}', '\u{2028}'] {
+    os.stdio.println("${r.quote()} ${r.is_print()} ${r.is_letter()} ${r.is_space()} ${r.is_digit()}")
+  }
+  os.stdio.println("tab\there \"q\" é \u{0}".quote())
+  let b = b"a\xffé\xe2\x82"
+  os.stdio.println("${b.quote()} ${b.rune_count()}")
+  var i = 0
+  while i <= b.len() {
+    let (r, n) = b.decode_rune(i)
+    os.stdio.println("${i}: ${Int(r)} ${n}")
+    if n == 0 {
+      break
+    }
+    i += n
+  }
+}

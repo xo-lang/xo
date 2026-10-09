@@ -212,12 +212,18 @@ fn (b: Bytes) to_hex() -> Str
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
 fn (static: Bytes) from_base64(s: Str) -> Bytes?
+fn (b: Bytes) rune_count() -> Int
+fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
+fn (b: Bytes) quote() -> Str
+fn (s: Str) quote() -> Str
 
 fn (r: Rune) is_digit() -> Bool
 fn (r: Rune) is_letter() -> Bool
 fn (r: Rune) is_space() -> Bool
 fn (r: Rune) to_lower() -> Rune
 fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) is_print() -> Bool
+fn (r: Rune) quote() -> Str
 
 // ---------------------------------------------------------------------------
 // List[T] (std.md 2.3). Higher order methods pass through the callback's
