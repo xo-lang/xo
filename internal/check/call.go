@@ -468,6 +468,14 @@ func (c *checker) fieldOf(bt Type, x *ast.SelectorExpr, place bool) Type {
 		c.errorf(diag.UnresolvedName, x.Sel.Sp, "tuple `%s` has no field `%s`; its fields are `.0` to `.%d`", deep(r), name, len(tt.Elems)-1)
 		return badType
 	}
+	if n, ok := r.(*Named); ok && n.Obj.Kind == KNewtype && isTupleIndex(name) {
+		// the underlying value of a newtype `e.0` (core 2.8, decision 0097)
+		if name == "0" {
+			return subst(n.Obj.Target, typeArgsSubst(n.Obj.TParams, n.Args))
+		}
+		c.errorf(diag.UnresolvedName, x.Sel.Sp, "newtype `%s` has one field, `.0`", deep(r))
+		return badType
+	}
 	if n, ok := r.(*Named); ok {
 		if n.Obj.Module == c.prelude && n.Obj.Name == "Task" && name == "await" && !place {
 			if id, ok := x.X.(*ast.Ident); ok {
@@ -784,6 +792,9 @@ func (c *checker) callMethod(bt Type, sel *ast.SelectorExpr, targs []Type, x *as
 		return c.fieldOf(bt, sel, false)
 	}
 	if _, ok := r.(*Tuple); ok && isTupleIndex(name) {
+		return c.callValue(c.fieldOf(bt, sel, false), x, hint, name)
+	}
+	if isNamed && n.Obj.Kind == KNewtype && isTupleIndex(name) {
 		return c.callValue(c.fieldOf(bt, sel, false), x, hint, name)
 	}
 	m, _ := c.findMethodAny(r, name)

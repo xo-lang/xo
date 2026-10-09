@@ -283,7 +283,90 @@ func (c *checker) resolveVariantPath(x *ast.VariantPat, t Type) (*VariantObj, bo
 	return v, true
 }
 
+// newtypeOfPattern returns the newtype a pattern path `Email` or
+// `mod.Email` names, unless the value is an enum with a variant of that
+// name (variants win, as before newtype patterns existed).
+func (c *checker) newtypeOfPattern(x *ast.VariantPat, t Type) *TypeObj {
+	var o Object
+	switch len(x.Path) {
+	case 1:
+		name := x.Path[0].Name
+		if n, ok := resolve(t).(*Named); ok && n.Obj.Kind == KEnum && n.Obj.variant(name) != nil {
+			return nil
+		}
+		if c.preludeVariant(name) != nil {
+			return nil
+		}
+		o = c.lookupModuleObj(c.mod, name)
+	case 2:
+		imp := c.file.Imports[x.Path[0].Name]
+		if imp == nil || imp.Module == nil {
+			return nil
+		}
+		o = imp.Module.Scope[x.Path[1].Name]
+		if o != nil {
+			imp.Used = true
+		}
+	}
+	to, ok := o.(*TypeObj)
+	if !ok {
+		return nil
+	}
+	if to.Kind == KAlias {
+		if o2, _ := c.aliasNamed(to, nil, x.Sp); o2 != nil {
+			to = o2
+		}
+	}
+	if to.Kind != KNewtype {
+		return nil
+	}
+	return to
+}
+
+// newtypePattern types `Email(p)`: p matches the newtype's underlying
+// value (core 2.8, decision 0097). It is irrefutable when p is.
+func (c *checker) newtypePattern(x *ast.VariantPat, obj *TypeObj, t Type, refutable bool) *ipat {
+	c.rec.patNewtype[x] = obj
+	r := resolve(t)
+	n, isNamed := r.(*Named)
+	var inner Type = badType
+	if isNamed && n.Obj == obj {
+		inner = subst(obj.Target, typeArgsSubst(obj.TParams, n.Args))
+	} else if !isBad(r) {
+		c.errorf(diag.PatternTypeMismatch, x.Sp, "newtype pattern `%s(..)` does not fit a value of type `%s`", obj.Name, deep(t))
+	}
+	if !x.Parens || len(x.Fields) > 1 || (len(x.Fields) == 1 && x.Fields[0].Name != nil) || (len(x.Fields) == 0 && !x.Rest) {
+		d := c.errorf(diag.PatternTypeMismatch, x.Sp, "a newtype pattern has one positional pattern: `%s(p)`", obj.Name)
+		if !x.Parens {
+			fix(d, "match any value", insertEdit(x.Sp.File, x.Sp.End, "(_)"))
+		}
+		before := len(c.sc.order)
+		for _, f := range x.Fields {
+			c.pattern(f.Pattern, badType, refutable)
+		}
+		for _, v := range c.sc.order[before:] {
+			v.Used = true // no unused binding warning on top of the error
+		}
+		return wildPat
+	}
+	sub := wildPat
+	before := len(c.sc.order)
+	if len(x.Fields) == 1 {
+		sub = c.pattern(x.Fields[0].Pattern, inner, refutable)
+	}
+	if isBad(inner) {
+		for _, v := range c.sc.order[before:] {
+			v.Used = true
+		}
+		return wildPat
+	}
+	return &ipat{kind: ipCtor, key: 0, args: []*ipat{sub}}
+}
+
 func (c *checker) variantPattern(x *ast.VariantPat, t Type, refutable bool) *ipat {
+	if nt := c.newtypeOfPattern(x, t); nt != nil {
+		return c.newtypePattern(x, nt, t, refutable)
+	}
 	v, ok := c.resolveVariantPath(x, t)
 	if ok {
 		c.rec.patVariant[x] = v
@@ -526,6 +609,8 @@ func (c *checker) ctorsOf(t Type, heads []*ipat) ([]ctorInfo, bool) {
 				}
 			}
 			return out, false
+		case KNewtype:
+			return []ctorInfo{{key: 0, arity: 1, argTypes: []Type{subst(x.Obj.Target, s)}}}, false
 		case KStruct:
 			if x.Obj.Opaque {
 				return nil, true
@@ -750,6 +835,9 @@ func (c *checker) witnessString(w *witness) string {
 				parts = append(parts, c.witnessString(a))
 			}
 			return v.Name + "(" + strings.Join(parts, ", ") + ")"
+		}
+		if x.Obj.Kind == KNewtype && len(w.args) == 1 {
+			return x.Obj.Name + "(" + c.witnessString(w.args[0]) + ")"
 		}
 		if x.Obj.Kind == KStruct {
 			if allWild {

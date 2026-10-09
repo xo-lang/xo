@@ -1,0 +1,2 @@
+main.xo:4:7: the SSA builder does not support this variant pattern
+the type `Email`

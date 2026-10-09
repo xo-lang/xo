@@ -1,0 +1,10 @@
+type Email struct(Str)
+
+fn raw(e: Email) -> Str {
+  let Email(s) = e
+  s
+}
+
+fn main(os: Os) {
+  os.stdio.println(raw(Email("a@b")))
+}

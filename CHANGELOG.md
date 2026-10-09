@@ -32,6 +32,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (new code XO1312; a rule naming no package is XO1301), kept by `xo mod
   tidy`; `xo query imports` and `xo query deps` list the `use` lines
   (also in the MCP `query` tool).
+- Newtypes (decision 0097, spec audit gap 4): `e.0` reads the underlying
+  value and `Email(s)` destructures it in `let` and `match`.
 - `xo check --fix` (decision 0096): applies the unambiguous machine fixes
   (as `xo fix`), reformats, then reports what remains plus an `applied`
   list; the MCP `check` tool takes `fix`, and the bench harness agent

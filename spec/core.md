@@ -28,7 +28,7 @@ specified in std.md 13 (decision 0094).
 - **[later]** markers for what is specified but not built: `xo why`,
   `xo debug`, release builds and `--error-args`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
-  derives, and reading a newtype's value (2.8).
+  derives.
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
   <version>` of Xo modules with minimal version selection, git fetch into
   a read only module cache, `xo.lock` hashes verified by every command,
@@ -62,6 +62,10 @@ specified in std.md 13 (decision 0094).
   <pkg>, ...` lines in xo.mod, with `/...` patterns; a forbidden `use` is
   the new error `XO1312` at that line, a rule naming no package is
   `XO1301`. `xo query imports` and `xo query deps` list the `use` lines.
+- Newtypes (2.8; decision 0097): `e.0` reads (and on a `var` assigns) the
+  underlying value, and the pattern `Email(p)` matches it, irrefutably
+  when `p` is (`let Email(s) = e`). Go backend; native builds report
+  `XO1201` as for every newtype.
 - `xo check --fix` (10.1, 10.2; decision 0096) applies every unambiguous
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP
@@ -608,9 +612,31 @@ type Email struct(Str)              // newtype, distinct, construct with Email("
 type Handler = fn(http.Request) -> http.Response ! Error uses net
 ```
 
-A newtype has the equality, hashing, and JSON of its underlying value. There is no way yet to read the underlying value back (neither
-`e.0` nor a pattern `Email(s)` is accepted): an open gap recorded in the
-2026-10-09 spec audit (`bench/results/spec-audit-2026-10-09.md`).
+A newtype has the equality, hashing, and JSON of its underlying value
+(decision 0097):
+
+- `e.0` is the underlying value, typed with the newtype's type arguments
+  (`Wrap[Int]`'s `.0` is `Int`); on a `var` it is assignable like a tuple
+  field. Any other index is `XO0601`.
+- The pattern `Email(p)` (`mod.Email(p)` for another module's newtype)
+  matches when `p` matches `e.0`; it is irrefutable when `p` is, so
+  `let Email(s) = e` destructures. `Email(..)` matches any value. Without
+  parentheses, with other than one positional pattern, or against another
+  type it is `XO0302`. When the value is an enum with a variant of the
+  same name, the variant is meant.
+- Construction and reading are open wherever the type is visible; a type
+  that must guard its value is a struct with a non `pub` field.
+
+```
+type Email struct(Str)
+
+fn domain(e: Email) -> Str {
+  let Email(s) = e
+  s.split("@").last() ?? ""
+}
+
+fn is_blank(e: Email) -> Bool { e.0.trim() == "" }
+```
 
 ### 2.9 Derived behavior
 
