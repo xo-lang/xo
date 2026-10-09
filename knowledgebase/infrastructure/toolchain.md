@@ -684,7 +684,12 @@ Last verified: 2026-10-07
   through the plain and strict loops, writes `bench/planted/results.jsonl`.
 - `bench/harness/score.py planted DIR|--claude`: the same detection for the
   Go set and both Xo sets in one run, with the current toolchain, for
-  planted sets written by any model (see `bench/harness/README.md`).
+  planted sets written by any model (see `bench/harness/README.md`). Since
+  2026-10-09 a test failure counts as a catch only for a test that passes
+  on the unplanted base (`new_test_failures`, also in
+  `bench/planted-xo/run_detection_xo.py`; tested by
+  `TestPlantedTestCatches` in `bench/harness/test_harness.py`). Last
+  verified: 2026-10-09.
 
 ## Package layout (P1, implemented parts)
 
@@ -1600,7 +1605,14 @@ Last verified: 2026-10-08.
   Golden `test_shutdown` (also in `TestGoldenRace`, which builds `test_*`
   directories in test mode), real process tests `TestSignal*` in
   `internal/gen/build_test.go` on `testdata/signal` (SIGTERM to the
-  test's own child by PID).
+  test's own child by PID). `TestSignalStopsReadLine` and
+  `TestCancelStopsReadLine` (2026-10-09, decision 0088) run it with
+  `STDIN=pipe` so standard input stays open and `read_line` blocks.
+- `stdin.go` (2026-10-09, decision 0088): stoppable reads of the real
+  standard input through one reader goroutine; golden `test_stdin_stop`
+  covers the fake standard input and `sleep_or_cancel` on the fake clock,
+  golden `codex_gaps` (Go and native: internal/llvm/testdata/golden)
+  covers `Duration.parse`, tuple JSON, and `sleep_or_cancel`.
 - `caps.go` real capabilities (fs rooting per core 6.3), `http.go`,
   `json.go` (`JsonW.str` escapes directly since 2026-10-08, matching
   encoding/json with HTML escaping off, `TestAppendJSONString`),

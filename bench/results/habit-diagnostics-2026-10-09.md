@@ -45,10 +45,17 @@ Codex's failing first runs, reconstructed (7 snapshots; 01 and the
 |---|---:|---:|---:|---:|
 | before (`6f771ce`) | 118 | 6 | 0/7 | 0/7 |
 | after | 15 | 12 | 5/7 | 5/7 |
+| after decision 0088 (std gaps) | 14 | 13 | 6/7 | 6/7 |
 
 The two that stay red need a decision or a std change: 05 needs the
 `get_or_fault` reason, 10 needs JSON for a struct instead of a tuple and a
 way to parse a duration (both std gaps Codex reported).
+
+Update 2026-10-09 (decision 0088): with JSON for tuples and
+`Duration.parse`, 10's only error is `Duration.parse(...).or_err(...)`
+(Codex assumed an Option, like `Int.parse`); `or_err` on a Result now has
+a habit fix to `map_err`, and 10 is green after `xo fix`, its 5 tests
+passing. Only 05 stays red (it needs a reason string).
 
 Synthetic habits: 149 golden cases in
 [internal/fix/testdata/habits](../../internal/fix/testdata/habits), one
@@ -99,7 +106,8 @@ does not panic.
    report: 7/10 or better. Also run Claude's arm to confirm no regression.
 2. Close the std gaps behind task 10: `Duration.parse` (or a documented
    parse path) and either JSON for tuples or a clearer note; then rerun
-   task 10 alone.
+   task 10 alone. Done 2026-10-09 (decision 0088); the reconstruction is
+   green after `xo fix`, the live Codex rerun of task 10 is still to do.
 3. Kotlin and Swift property habits that pass the checker as method
    values (`xs.first`, `xs.count`): report them where the value is used,
    in internal/check/habits.go `habitField`, with a negative test for real

@@ -147,6 +147,43 @@ class TestPrompts(unittest.TestCase):
         self.assertEqual(score.strict_findings(out), 3)
 
 
+class TestPlantedTestCatches(unittest.TestCase):
+    """Caught by tests subtracts tests that already fail on the base."""
+
+    XO_OUT = ("--- FAIL: contract fuzz: retry_client.backoff (retry.xo:%d:1, seed 1)\n"
+              "--- FAIL: succeeds on the third attempt (retry_test.xo:5:1, seed 1)\n")
+
+    def test_failed_tests_drop_location(self):
+        self.assertEqual(score.failed_tests(self.XO_OUT % 131),
+                         {"contract fuzz: retry_client.backoff", "succeeds on the third attempt"})
+        self.assertEqual(score.failed_tests("--- FAIL: TestAdd (0.00s)\nFAIL\n"), {"TestAdd"})
+
+    def test_base_failures_do_not_count(self):
+        base = score.test_base(1, "--- FAIL: contract fuzz: retry_client.backoff (retry.xo:131:1, seed 1)\n")
+        # the variant moved the contract by four lines: still the base's failure
+        only_base = "--- FAIL: contract fuzz: retry_client.backoff (retry.xo:135:1, seed 1)\n"
+        self.assertEqual(score.new_test_failures(1, only_base, base), (False, []))
+        self.assertEqual(score.new_test_failures(1, self.XO_OUT % 135, base),
+                         (True, ["succeeds on the third attempt"]))
+        self.assertEqual(score.new_test_failures(0, "", base), (False, []))
+        # a passing base: any failure counts, as before
+        self.assertEqual(score.new_test_failures(1, only_base, score.test_base(0, "")),
+                         (True, ["contract fuzz: retry_client.backoff"]))
+        # a failing run without test names over a failing base does not count
+        self.assertEqual(score.new_test_failures(1, "panic: boom\n", base), (False, []))
+
+    def test_go_plain_subtracts_base_failures(self):
+        tmp = tempfile.mkdtemp(prefix="xo-harness-test-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for name, body in (("go.mod", GO_MOD), ("main.go", GO_MAIN), ("main_test.go", GO_TEST_BAD)):
+            with open(os.path.join(tmp, name), "w") as f:
+                f.write(body)
+        base = score.test_base(*c.run(score.GO_TEST, cwd=tmp, timeout=c.T_TEST))
+        self.assertEqual(base, (1, {"TestAdd"}))
+        self.assertEqual(score.go_plain_caught(tmp), "test")
+        self.assertEqual(score.go_plain_caught(tmp, base), "none")
+
+
 class TestAdapter(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="xo-harness-test-")
