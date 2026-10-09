@@ -1446,6 +1446,82 @@ Last verified: 2026-10-09. Results: `bench/results/ci-aws-2026-10-09.md`.
   (2026-10-09). TSan runs natively on both (unlike amd64 under Rosetta).
 - Needs terraform (1.16.2 used), the AWS CLI, rsync, ssh, python3.
 
+## Modules and workspaces (decision 0086, steps 1 and 2)
+
+Last verified: 2026-10-09.
+
+- Package `internal/mod`: `modfile.go` (xo.mod `require <path> <version>`
+  parsing, `SetRequire`, semver `Compare`), `cache.go` (module cache, git
+  fetch, `RepoURL`), `lock.go` (`HashDir`, `HashModFile`, xo.lock read and
+  write), `load.go` (`Load`: MVS, verification, vendor mode, workspace),
+  `work.go` (xo.work, `WorkspaceDirs`), `cmds.go` (`Get`, `Tidy`,
+  `Vendor`). `internal/mod/modtest` builds local git repositories for
+  tests from `internal/mod/testdata/repos/<module path>@<version>/`.
+- Module cache: `$XO_MODCACHE`, else `<user cache dir>/xo/mod` (macOS
+  `~/Library/Caches/xo/mod`, Linux `~/.cache/xo/mod`). A version is
+  extracted to `<cache>/<escaped path>@<version>` (upper case letters
+  escaped as `!` plus lower case) and made read only (files 0444, dirs
+  0555); bare clones live in `<cache>/cache/vcs/<sha256 of URL>`. `xo mod
+  clean` removes the cache (plain `rm -rf` fails on the read only dirs).
+- Fetch: `git clone --bare --no-local`, `git fetch` of tags when a tag is
+  missing, `git archive refs/tags/<v>` extracted in Go (no symlinks, no
+  paths leaving the tree). git runs with `core.hooksPath=/dev/null`,
+  `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`. The module must have
+  its xo.mod at the repository root declaring the same path.
+- Locations: `github.com/a/b` is `https://github.com/a/b.git` (also
+  gitlab.com, bitbucket.org), any other path `https://<path>`.
+  `XO_GIT_BASE=<dir or URL>` maps every path to `<base>/<path>`;
+  `XO_GIT_REWRITE=<prefix>=<url>,...` rewrites by longest prefix (wins
+  over XO_GIT_BASE).
+- MVS: walk every reachable `path version` from the main module (or every
+  workspace module), keep the highest version per path. Every visited
+  version is downloaded (its xo.mod is read from the cache tree).
+- xo.lock: `<path> <version> h1:<tree hash>` for selected versions and
+  `<path> <version>/xo.mod h1:<hash>` for every version read. Hash: base64
+  SHA-256 of sorted `"<sha256 hex>  <slash path>\n"` lines (Go's h1
+  shape over the raw tree). Every check and build rehashes the trees and
+  compares (XO1304 mismatch, XO1305 missing). Only `xo get` and `xo mod
+  tidy` write it, always without workspace and vendor.
+- Vendor: `xo vendor` copies selected trees to `vendor/<path>/` (writable
+  copies) and writes `vendor/modules.txt` (`# <path> <version>` lines).
+  When `vendor/modules.txt` exists (and no workspace is active), builds
+  read only vendor/, check each direct require is vendored at its version
+  or above (XO1307), and verify tree hashes against xo.lock. The checker
+  skips a `vendor/` directory holding `modules.txt` when walking dirs.
+- Offline: `XO_OFFLINE=1` or `--offline` (any command; removed from the
+  arguments before dispatch in `cmd/xo/mod.go` `moduleFlags`, env
+  restored after the command) never runs git; a missing version is
+  XO1303; `xo get` resolves `latest` from the cached versions.
+- Workspaces: `xo.work` (`xo 2026`, `use <dir>` lines) found at or above
+  the main module, or `XO_WORK=<file>`; `XO_WORK=off` or `--workspace=off`
+  ignores it. It applies only when it uses the main module. Used modules
+  override requirements (their requirements join MVS; xo.lock is the
+  union of their locks for verification). `query.Load` (check, query,
+  mcp), `xo edit`, and `xo test` add every workspace module's directory
+  (`mod.WorkspaceDirs`); `xo doc` uses `query.LoadExact`. `xo build --ci`
+  fails with XO1308 naming the overridden modules. Build info records
+  `deps` (path to version, or `workspace <dir>`).
+- Checker integration (`internal/check/deps.go`): `loadDirs` calls
+  `mod.Load` once per main module and registers each selected module's
+  directory as a root; imports resolve by the longest module path prefix.
+  Problems become diagnostics on the xo.mod/xo.lock/xo.work line;
+  imports of a module with a problem are not reported again. XO1306: a
+  remote import no root covers, or a package of a module that is in the
+  build only because another module requires it. Modules from the cache
+  or vendor/ have `Module.Dependency` set; `xo edit` refuses to change
+  them. `use go` in a dependency binds into the main module's cache.
+- `xo serve` stamps xo.lock, vendor/modules.txt, and the active xo.work;
+  `serve.Forward` checks in process when XO_OFFLINE, XO_WORK,
+  XO_MODCACHE, XO_GIT_BASE, or XO_GIT_REWRITE is set.
+- Tests: `internal/mod/mod_test.go` (MVS, lock goldens
+  `testdata/golden/*.lock`, moved tag, fetch errors, offline, get, tidy,
+  vendor, workspace), `cmd/xo/mod_test.go` (`TestModules`: the commands
+  end to end; runs the built program unless -short),
+  `internal/check/rules_test.go` (XO1306). No test touches the network.
+- Not yet: effect ceilings per dependency (step 3), `xo publish` semver
+  checks (step 4), per definition hashes (step 5), a proxy or checksum
+  log, modules in repository subdirectories, major version suffixes.
+
 ## Go interop (prototype)
 
 Last verified: 2026-10-08. Decision 0041 is still Proposed; this is the

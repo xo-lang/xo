@@ -180,7 +180,7 @@ func (c *checker) loadDirs(dirs []string) ([]*Module, error) {
 				return err
 			}
 			if e.IsDir() {
-				if path != d && (e.Name() == "testdata" || strings.HasPrefix(e.Name(), ".")) {
+				if path != d && (e.Name() == "testdata" || strings.HasPrefix(e.Name(), ".") || isVendorDir(path)) {
 					return filepath.SkipDir
 				}
 				return nil
@@ -199,6 +199,13 @@ func (c *checker) loadDirs(dirs []string) ([]*Module, error) {
 		}
 	}
 	sort.Strings(moduleDirs)
+	// resolve the requirements of every main module before loading, so
+	// imports of required modules find their selected versions
+	for _, dir := range moduleDirs {
+		if r, ok := c.findModRoot(dir); ok {
+			c.resolveDeps(r)
+		}
+	}
 	var roots []*Module
 	for _, dir := range moduleDirs {
 		m, err := c.loadDir(dir)
@@ -307,6 +314,7 @@ func (c *checker) loadDir(dir string) (*Module, error) {
 	if r, ok := c.findModRoot(dir); ok {
 		m.Edition = r.edition
 		m.GC = r.gc
+		m.Dependency = c.dependencyOf(r.dir)
 	}
 	c.modules[path] = m
 	entries, err := os.ReadDir(dir)
@@ -381,7 +389,9 @@ func (c *checker) loadImports(m *Module) error {
 			if err != nil {
 				return err
 			}
-			if dep == nil {
+			if dep == nil && c.unrequired(u) {
+				imp.Used = true
+			} else if dep == nil {
 				d := c.errorf(diag.UnresolvedName, u.Sp, "module `%s` not found", u.Path)
 				if strings.HasPrefix(u.Path, "std/") {
 					var cands []string
@@ -401,6 +411,8 @@ func (c *checker) loadImports(m *Module) error {
 				c.errorf(diag.ImportCycle, u.Sp, "import cycle: `%s` imports `%s`, which imports it back", m.Path, dep.Path)
 				imp.Used = true
 				dep = nil
+			} else if !m.IsStd {
+				c.checkRequired(m, u)
 			}
 			imp.Module = dep
 			if imp.Name == "" {
@@ -424,14 +436,11 @@ func (c *checker) resolveImport(path string) (*Module, error) {
 	if m, ok := c.modules[path]; ok {
 		return m, nil
 	}
-	for _, r := range c.roots {
-		if path == r.path || strings.HasPrefix(path, r.path+"/") {
-			rel := strings.TrimPrefix(strings.TrimPrefix(path, r.path), "/")
-			dir := filepath.Join(r.dir, filepath.FromSlash(rel))
-			if info, err := os.Stat(dir); err == nil && info.IsDir() {
-				return c.loadDir(dir)
-			}
-			return nil, nil
+	if r, ok := c.ownerRoot(path); ok {
+		rel := strings.TrimPrefix(strings.TrimPrefix(path, r.path), "/")
+		dir := filepath.Join(r.dir, filepath.FromSlash(rel))
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return c.loadDir(dir)
 		}
 	}
 	return nil, nil
@@ -482,7 +491,7 @@ func (c *checker) loadGoImport(m *Module, f *File, u *ast.UseDecl, imp *Import) 
 	if !ok {
 		root := m.Dir
 		if r, found := c.findModRoot(m.Dir); found {
-			root = r.dir
+			root = c.goBindRoot(r.dir)
 		}
 		pins := gobind.ReadPins(filepath.Join(root, "xo.mod"))
 		opts := gobind.Options{Dir: gobind.CacheDir(root), Version: gobind.PinFor(pins, u.Path)}

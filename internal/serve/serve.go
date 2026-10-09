@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/query"
 )
 
@@ -181,10 +182,20 @@ func (e *entry) snapshot(sess *query.Session) map[string]fileStamp {
 				}
 			}
 			if m.Dir != "" {
-				mod := filepath.Join(m.Dir, "xo.mod")
-				if ap, err := filepath.Abs(mod); err == nil {
-					if st, err := os.Stat(ap); err == nil {
-						out[ap] = fileStamp{st.ModTime(), st.Size()}
+				// xo.mod, and the module files that change what imports
+				// resolve to (decision 0086): xo.lock, vendor/modules.txt
+				for _, name := range []string{"xo.mod", "xo.lock", filepath.Join("vendor", "modules.txt")} {
+					if ap, err := filepath.Abs(filepath.Join(m.Dir, name)); err == nil {
+						if st, err := os.Stat(ap); err == nil {
+							out[ap] = fileStamp{st.ModTime(), st.Size()}
+						}
+					}
+				}
+				if root := mod.ModRoot(m.Dir); root != "" {
+					if w, _ := mod.FindWork(root); w != nil {
+						if st, err := os.Stat(w.File); err == nil {
+							out[w.File] = fileStamp{st.ModTime(), st.Size()}
+						}
 					}
 				}
 			}
@@ -208,7 +219,7 @@ func (e *entry) walk() map[string]fileStamp {
 				}
 				return nil
 			}
-			if strings.HasSuffix(path, ".xo") || d.Name() == "xo.mod" {
+			if strings.HasSuffix(path, ".xo") || d.Name() == "xo.mod" || d.Name() == "xo.lock" || d.Name() == "xo.work" {
 				if st, err := d.Info(); err == nil {
 					out[path] = fileStamp{st.ModTime(), st.Size()}
 				}
@@ -405,6 +416,11 @@ func Call(path string, req Request) (*Response, error) {
 // and the caller should run the command itself.
 func Forward(args []string, stdout, stderr io.Writer) (code int, ok bool) {
 	if os.Getenv(DisableEnv) != "" {
+		return 0, false
+	}
+	// module settings of this process (decision 0086) that the server's
+	// environment may not share: check in process
+	if os.Getenv("XO_OFFLINE") != "" || os.Getenv("XO_WORK") != "" || os.Getenv("XO_MODCACHE") != "" || os.Getenv("XO_GIT_BASE") != "" || os.Getenv("XO_GIT_REWRITE") != "" {
 		return 0, false
 	}
 	path, err := SocketPath()

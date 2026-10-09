@@ -15,6 +15,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/format"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/token"
 )
 
@@ -26,6 +27,14 @@ type Session struct {
 
 // Load checks the modules under dirs.
 func Load(dirs []string) (*Session, error) {
+	// a workspace is one program (decision 0086): check and query see
+	// every module of it
+	return LoadExact(mod.WorkspaceDirs(dirs))
+}
+
+// LoadExact is Load of exactly dirs, without the other modules of a
+// workspace (xo doc).
+func LoadExact(dirs []string) (*Session, error) {
 	res, err := check.Check(dirs)
 	if err != nil {
 		return nil, err

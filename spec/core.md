@@ -24,8 +24,14 @@ no meaning changes, the spec now says what is not implemented yet.
 - **[later]** markers for what is specified but not built: `xo why`,
   `xo debug`, release builds and `--error-args`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
-  derives, `require` and `xo.lock` (decision 0086), and reading a
-  newtype's value (2.8).
+  derives, effect ceilings and checked semver of dependencies (decision
+  0086 steps 3 and 4), and reading a newtype's value (2.8).
+- Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
+  <version>` of Xo modules with minimal version selection, git fetch into
+  a read only module cache, `xo.lock` hashes verified by every command,
+  `xo get`, `xo mod tidy`, `xo vendor`, `--offline`, and `xo.work`
+  workspaces (`--workspace=off`). New codes `XO1301` to `XO1308` (10.6).
+  An import from a module that is not required is `XO1306`.
 
 ## Changes in 0.7
 
@@ -828,11 +834,60 @@ edition 2026
 require github.com/acme/billing v1.4.0
 ```
 
-**[P1, not implemented yet]** `require` lines of Xo modules are read by
-nothing yet: fetching, version selection, and vendoring follow decision
-0086 (Accepted). Today imports resolve inside the main module (the path
-after the `module` line) and the embedded `std`; `require go <module>
-<version>` pins a Go module for `use go` (4.4).
+**[P1]** Dependencies (decision 0086):
+
+- `require <module path> <version>` requires another Xo module. The module
+  path is its git location (`github.com/acme/billing` is fetched from
+  https://github.com/acme/billing.git; the module is the repository root
+  and its xo.mod declares the same path); the version is a tag `vX.Y.Z`
+  (`-prerelease` allowed). A module is required once. `require go
+  <module> <version>` pins a Go module for `use go` instead (4.4).
+- There is no `replace`, `exclude`, or `retract` (`XO1301`); local copies
+  are reached only through a workspace (below).
+- Minimal version selection: the build uses, for each module, the highest
+  version that any reached xo.mod requires (the main module's, then those
+  of every required version, transitively). No ranges, no solver; a
+  version changes only when an xo.mod changes.
+- Imports resolve inside the main module, the embedded `std`, and the
+  selected module versions (the longest module path that prefixes the
+  import path). A module must require every module it imports from:
+  importing a package of a module xo.mod does not require, even one in the
+  build because another module requires it, is `XO1306`.
+- Fetching runs git and extracts the tag's tree (`git archive`) into a read
+  only module cache; no code from a module runs at fetch or build setup
+  (no scripts, no hooks). A version that cannot be fetched is `XO1302`.
+- Offline (`--offline` on any command, or `XO_OFFLINE=1`) nothing is
+  fetched: every version must be in the module cache or vendored, else
+  `XO1303`.
+- `xo vendor` copies every selected version into `vendor/<module path>/`
+  with `vendor/modules.txt`. When `vendor/modules.txt` exists, builds use
+  only vendor/ (no cache, no network); a requirement it lacks is `XO1307`.
+- Commands: `xo get <path>[@version|@latest|@none]` sets a requirement
+  (latest tag by default) and rewrites xo.mod and xo.lock; `xo mod tidy`
+  requires every imported module, removes requirements nothing imports
+  (unless they raise a version the graph selects), and rewrites xo.lock.
+
+**[P1]** Workspaces: an `xo.work` file at or above the main module makes
+the modules it lists build from their directories:
+
+```
+xo 2026
+use ./api
+use ./billing
+```
+
+- A listed module overrides every `require` of it; minimal version
+  selection runs over the requirements of all listed modules.
+- The workspace applies when it lists the main module; `--workspace=off`
+  (or `XO_WORK=off`) ignores it, `XO_WORK=<file>` names another one.
+- `xo check`, `test`, `query`, `edit`, and `mcp` take every listed module
+  as one program (a rename reaches all of them, atomically).
+- xo.lock is never written with workspace overrides (`xo get`, `xo mod
+  tidy`, and `xo vendor` ignore the workspace); builds record the local
+  directories in build information only. A release build (`xo build
+  --ci`) fails while a workspace overrides a required module (`XO1308`).
+- **[later]** Effect ceilings per dependency (`require ... uses none`)
+  and semver checked at `xo publish` (decision 0086 steps 3 and 4).
 
 **[P1]** `gc` lines tune the garbage collector of a program whose main
 module this is (decision 0065); they are ignored in imported modules:
@@ -856,8 +911,14 @@ percent, `GOMEMLIMIT` replaces `memory_limit`, `XO_GC_MIN_HEAP` replaces
 Written only by the toolchain. Maps every imported definition actually used to
 its content hash.
 
-- **[P1]** Hash is per module version (source tree hash), like Go's `go.sum`.
-  Not implemented yet (decision 0086): no command writes `xo.lock`.
+- **[P1]** Hash is per module version (source tree hash), like Go's `go.sum`:
+  `<path> <version> h1:<hash>` for the tree of every selected version and
+  `<path> <version>/xo.mod h1:<hash>` for the xo.mod of every version
+  version selection read. `xo get` and `xo mod tidy` write it; every
+  command that loads the program recomputes the hashes from the module
+  cache or vendor/ and compares them. A mismatch (a moved tag, an edited
+  cache or vendor copy) is `XO1304` and nothing builds; a version with no
+  entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
 - **[P3]** Hash is per definition: the normalized AST with local names erased
   and referenced definitions replaced by their hashes. Consequences:
   - Two versions of a dependency coexist without conflict. Types from different
@@ -1452,6 +1513,7 @@ test "retries after 503" {
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
+| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache. Every command takes `--offline` and `--workspace=off` |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 
 The commands that report diagnostics or results accept `--json`: `parse`,
@@ -1607,7 +1669,10 @@ not type check.
 Every code the toolchain reports, its default severity, and what reports
 it: the lexer and parser (`xo parse` and every later command), the checker
 (`xo check`), `xo vet` (advisory, never an error except `XO0901` under
-`xo build --ci`), and the no GC check (`--no-gc`, 10.1). `xo explain
+`xo build --ci`), the no GC check (`--no-gc`, 10.1), and module
+resolution (`modules`: every command that loads a program reports these
+on the xo.mod, xo.lock, or xo.work line, and so do `xo get`, `xo mod
+tidy`, and `xo vendor`; 4.2, 4.3). `xo explain
 <code>` prints the long form of each. The registry is
 `internal/diag/codes.go`; a test keeps this table equal to it.
 
@@ -1690,6 +1755,14 @@ it: the lexer and parser (`xo parse` and every later command), the checker
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
 | `XO1201` | error | no GC check | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
+| `XO1301` | error | modules | malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3) |
+| `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
+| `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
+| `XO1304` | error | modules | module tree does not match its xo.lock content hash (core 4.3) |
+| `XO1305` | error | modules | xo.lock has no hash for a module version the build uses; run `xo mod tidy` |
+| `XO1306` | error | checker | import of a package from a module that xo.mod does not require |
+| `XO1307` | error | modules | vendor/ does not match xo.mod; run `xo vendor` |
+| `XO1308` | error | build | release build (`xo build --ci`) while an xo.work workspace overrides required modules |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

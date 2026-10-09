@@ -1,0 +1,3 @@
+# vendor/modules.txt: written by `xo vendor`; do not edit.
+# github.com/acme/billing v1.2.0
+# github.com/acme/money v1.1.0

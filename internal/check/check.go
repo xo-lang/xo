@@ -46,6 +46,8 @@ type checker struct {
 	overlay map[string][]byte
 	// modErr is the first malformed xo.mod line found (an unknown edition).
 	modErr error
+	// deps are the resolved requirements of the main modules (deps.go).
+	deps depState
 
 	nextVar int
 	trail   []func()

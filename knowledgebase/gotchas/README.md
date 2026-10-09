@@ -189,3 +189,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [stdin-read-not-interruptible.md](stdin-read-not-interruptible.md): a blocked `read_line` ignored cancellation and SIGTERM (os.Stdin reads cannot be interrupted); one reader goroutine plus a select on cancellation and stop, keeping leftover input.
 - [spec-text-double-brace.md](spec-text-double-brace.md): a literal `{{` in spec/std.md failed the benchmark harness self test, which reads it as an unfilled prompt placeholder; never write `{{` in the spec.
 - [or-err-guess-to-is-err.md](or-err-guess-to-is-err.md): `Duration.parse(s).or_err(...)` got a did you mean fix to `is_err` that made two errors from one; `or_err` on a Result now has its own habit fix to `map_err`.
+- [module-cache-read-only.md](module-cache-read-only.md): the module cache is read only, so `rm -rf` and `t.TempDir` cleanup fail; use `xo mod clean` or `modtest.MakeWritable`.
+- [mod-tidy-drops-unimported-requires.md](mod-tidy-drops-unimported-requires.md): `xo mod tidy` removed every requirement of a module with no imports; write the imports first.
+- [transitive-module-import.md](transitive-module-import.md): a package of a module required only by a dependency was importable; now XO1306.
+- [serve-new-xo-work-unnoticed.md](serve-new-xo-work-unnoticed.md): `xo serve` may miss an xo.work created above the checked directories; stop it or pass a module flag.
