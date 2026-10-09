@@ -1283,3 +1283,6 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
+
+// std/crypto and the Rand capability (decision 0083)
+#include "xo_crypto.c"

@@ -1,5 +1,5 @@
+use std/path
+
 fn main(os: Os) {
-  let t = os.rand.int(0, 10)
-  os.stdio.println("started")
-  let _ = t
+  os.stdio.println(path.join("a", "b"))
 }

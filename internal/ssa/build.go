@@ -275,7 +275,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Fs":
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Fs", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":

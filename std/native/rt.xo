@@ -65,6 +65,10 @@ fn bytes_decode(b: Bytes, i: Int) -> Int
 fn bytes_rune_count(b: Bytes) -> Int
 /// The lowercase hex of b.
 fn bytes_hex(b: Bytes) -> Str
+/// Whether s is hexadecimal that hex.DecodeString accepts.
+fn bytes_hex_ok(s: Str) -> Bool
+/// The bytes of hexadecimal that bytes_hex_ok accepted.
+fn bytes_from_hex(s: Str) -> Bytes
 
 // ---------------------------------------------------------------------------
 // Generic intrinsics (lowered by internal/ssa, build_native.go)

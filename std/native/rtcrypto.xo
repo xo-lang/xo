@@ -1,0 +1,16 @@
+// Intrinsics of std/crypto on the native backends (decision 0083),
+// implemented in std/llrt/xo_crypto.c; imported by std/native/crypto.xo
+// as `use native/rtcrypto`. Bytes arguments are their bytes and length.
+
+fn crypto_sha256(data: Bytes) -> Bytes
+fn crypto_hmac_sha256(key: Bytes, msg: Bytes) -> Bytes
+/// subtle.ConstantTimeCompare: constant time in the contents.
+fn crypto_equal(a: Bytes, b: Bytes) -> Bool
+/// PBKDF2-HMAC-SHA256.
+fn crypto_pbkdf2(password: Str, salt: Bytes, iterations: Int, key_len: Int) -> Bytes
+/// Argon2id without a secret or associated data.
+fn crypto_argon2id(password: Str, salt: Bytes, iterations: Int, memory_kib: Int, parallelism: Int, key_len: Int) -> Bytes
+/// Unpadded base64: URL safe when url is set, else standard.
+fn crypto_b64(data: Bytes, url: Bool) -> Str
+/// std/rt's Crypto_verify_password.
+fn crypto_verify_password(password: Str, hash: Str) -> Bool

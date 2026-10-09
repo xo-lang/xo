@@ -46,6 +46,22 @@ as stable diagnostics before anything is generated.
    exist.
 5. `xo check --no-gc` checks programs only (the builder starts at
    `main`); a library is not checked by it.
+6. **Native std parity**, one feature at a time, each with a golden
+   program whose output is identical on Go, LLVM, and arm64 and that
+   frees every allocation:
+   - **Rand and std/crypto** (`std/native/crypto.xo`, `rtcrypto.xo`,
+     `std/llrt/xo_crypto.c`; golden `native_crypto`): the Rand
+     capability draws from `getentropy` (macOS) or `getrandom` (Linux)
+     (`int`, `float`, `bool`, `bytes`; `shuffle` stays XO1201). SHA-256,
+     HMAC, PBKDF2, BLAKE2b, and Argon2 are written in C from their
+     specifications and x/crypto's portable code (lanes of a slice run
+     one after another, same result); verify_password ports std/rt's
+     parsing (strings.Split, strconv.ParseInt, RawStdEncoding with its
+     skipped newlines and ignored trailing bits). TestCryptoDiff checks
+     them against Go on random inputs, the RFC 9106 vectors, the x/crypto
+     outputs of std/rt/testdata, and mutated hashes, under
+     AddressSanitizer and UBSan. `Bytes.from_hex` and `Str.runes` were
+     added to the native prelude on the way.
 
 ## Consequences
 - `xo build --backend=llvm` of an unsupported program now fails with

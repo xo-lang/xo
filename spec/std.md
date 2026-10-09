@@ -469,6 +469,10 @@ fn (r: Rand) bytes(n: Int) -> Bytes
 fn (r: Rand) shuffle[T](xs: List[T]) -> List[T]
 ```
 
+Native builds (`--no-gc`, decision 0083) draw from the operating system's
+generator (`getentropy`, `getrandom`); `shuffle` is not available there yet
+(XO1201, planned).
+
 ### 3.5 Env (`uses env`)
 
 ```
@@ -1164,7 +1168,10 @@ Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 
 Status: draft (2026-10-08, decisions 0056 and 0059). Go standard library
 underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
-into the runtime (no module dependency).
+into the runtime (no module dependency). Native builds (`--no-gc`,
+decision 0083) compute the same results in C (SHA-256, HMAC, PBKDF2,
+BLAKE2b, Argon2), with random bytes from the operating system
+(`getentropy` on macOS, `getrandom` on Linux).
 
 ```
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes

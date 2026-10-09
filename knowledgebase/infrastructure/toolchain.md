@@ -92,6 +92,7 @@ go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   #
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
+go test ./internal/llvm -run TestCryptoDiff        # native std/crypto (std/llrt/xo_crypto.c) vs Go's crypto, RFC 9106 vectors, x/crypto Argon2id outputs, std/rt's verify_password on mutated hashes (decision 0083; AddressSanitizer and UBSan; about 3 s)
 XO_HTTP_DIFF_SEED=7 XO_HTTP_DIFF_N=30000 go test ./internal/llvm -run TestHTTPParseDiff   # more random and mutated connections
 go test ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s -parallel 6   # Go's fuzzer on the same comparison (more workers than about 6 starved it on 2026-10-08: "context deadline exceeded")
 XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # std/llrt/testdata/http_fuzz.c: mutated HTTP and JSON under AddressSanitizer and UBSan (5 s by default, 1 s with -short)

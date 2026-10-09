@@ -36,7 +36,7 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	intT, boolT, strT, floatT := m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr), m.Builtin(KFloat)
 	key := fo.Recv.Name + "." + fo.Name
 	switch fo.Recv.Name {
-	case "Clock", "Net", "Listener", "Conn", "Proc", "Env", "Duration", "Time", "Bytes", "Fs", "StrBuilder", "BytesBuilder":
+	case "Clock", "Net", "Listener", "Conn", "Proc", "Env", "Duration", "Time", "Bytes", "Fs", "StrBuilder", "BytesBuilder", "Rand":
 	case "Str":
 		if fo.Name != "bytes" {
 			return nil, false
@@ -129,6 +129,15 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		s.add(OpUnreachable, nil, nil)
 		s.dead()
 		return s.undef(nt), true
+	case "Rand.int":
+		// the operating system's generator (decision 0083)
+		return s.rt("rand_int", intT, arg(0, intT), arg(1, intT), s.add(OpConst, strT, pos)), true
+	case "Rand.float":
+		return s.rt("rand_float", floatT), true
+	case "Rand.bool":
+		return s.rt("rand_bool", boolT), true
+	case "Rand.bytes":
+		return s.rt("rand_bytes", strT, arg(0, intT)), true
 	case "Clock.now":
 		return s.rt("clock_now", intT), true
 	case "Clock.since":

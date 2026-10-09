@@ -1,0 +1,73 @@
+// std/crypto and Rand on every backend (decision 0083): digests of the
+// FIPS 180-4 and RFC 4231 vectors, hashes made with the Go backend
+// verified natively, fresh hashes verified, and the shapes of random
+// values (their contents differ per run).
+use std/crypto
+
+const ARGON_A = "$argon2id$v=19$m=256,t=3,p=2$Fc880YW1GSiiNrFUKtk/9g$HnknJSKCZTvBCAJBYAYoszsKngpyvVPJCEg1pRZEtcc"
+const ARGON_B = "$argon2id$v=19$m=1024,t=1,p=1$jEQHZZ7AHLhxFQRsdD2Guw$ru94YC8DTnNjdZh+XDspelvC6E/yp5QbDcf/BU0OxRs"
+const PBKDF2_A = "pbkdf2-sha256$1000$ttdGdw/+1G9t3qA0tAakDg$b+RajFTSI4ThZyWf9ChEng/GYpdqqIvyyDP9Hzjo4cE"
+
+fn show(os: Os, label: Str, b: Bytes) uses stdio {
+  os.stdio.println("${label} ${b.to_hex()}")
+}
+
+fn main(os: Os) uses (stdio, rand) {
+  show(os, "sha256 empty", crypto.sha256(b""))
+  show(os, "sha256 abc", crypto.sha256(b"abc"))
+  show(os, "sha256 448", crypto.sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
+  show(os, "sha256 55", crypto.sha256("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".bytes()))
+  show(os, "sha256 64", crypto.sha256("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".bytes()))
+  var long = StrBuilder.new()
+  for _ in 0..1000 {
+    long.write("abcdefghij")
+  }
+  show(os, "sha256 10000", crypto.sha256(long.freeze().bytes()))
+  // RFC 4231 test cases 1, 2, and 6 (a key longer than a block)
+  show(os, "hmac 1", crypto.hmac_sha256(Bytes.from_hex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b") ?? b"", b"Hi There"))
+  show(os, "hmac 2", crypto.hmac_sha256(b"Jefe", b"what do ya want for nothing?"))
+  var key = BytesBuilder.new()
+  for _ in 0..131 {
+    key.write_byte(170)
+  }
+  show(os, "hmac 6", crypto.hmac_sha256(key.freeze(), b"Test Using Larger Than Block-Size Key - Hash Key First"))
+  os.stdio.println("equal ${crypto.equal(b"abc", b"abc")} ${crypto.equal(b"abc", b"abd")} ${crypto.equal(b"abc", b"ab")} ${crypto.equal(b"", b"")}")
+
+  // made by the Go backend (x/crypto's Argon2id, Go's PBKDF2)
+  os.stdio.println("argon a ${crypto.verify_password("correct horse", ARGON_A)} ${crypto.verify_password("correct horsE", ARGON_A)}")
+  os.stdio.println("argon b ${crypto.verify_password("p\u{e9}ss", ARGON_B)} ${crypto.verify_password("pess", ARGON_B)}")
+  os.stdio.println("pbkdf2 a ${crypto.verify_password("correct horse", PBKDF2_A)} ${crypto.verify_password("", PBKDF2_A)}")
+  // malformed hashes are false
+  for h in ["", "$argon2id$", "$argon2id$v=19$m=256,t=3,p=2$Fc880YW1GSiiNrFUKtk/9g", "$argon2id$v=18$m=256,t=3,p=2$Fc880YW1GSiiNrFUKtk/9g$HnknJSKCZTvBCAJBYAYoszsKngpyvVPJCEg1pRZEtcc", "$argon2id$v=19$t=3,m=256,p=2$Fc880YW1GSiiNrFUKtk/9g$HnknJSKCZTvBCAJBYAYoszsKngpyvVPJCEg1pRZEtcc", "$argon2id$v=19$m=7,t=1,p=1$Fc880YW1GSiiNrFUKtk/9g$HnknJSKCZTvBCAJBYAYoszsKngpyvVPJCEg1pRZEtcc", "$argon2id$v=19$m=256,t=3,p=2$Fc880YW1GSiiNrFUKtk/9g==$HnknJSKCZTvBCAJBYAYoszsKngpyvVPJCEg1pRZEtcc", "pbkdf2-sha256$0$ttdGdw/+1G9t3qA0tAakDg$b+RajFTSI4ThZyWf9ChEng/GYpdqqIvyyDP9Hzjo4cE", "pbkdf2-sha256$1000$ttdGdw/+1G9t3qA0tAakDg$", "pbkdf2-sha256$+1000$ttdGdw/+1G9t3qA0tAakDg$b+RajFTSI4ThZyWf9ChEng/GYpdqqIvyyDP9Hzjo4cE", "pbkdf2-sha512$1000$ttdGdw/+1G9t3qA0tAakDg$b+RajFTSI4ThZyWf9ChEng/GYpdqqIvyyDP9Hzjo4cE"] {
+    os.stdio.println("malformed ${h.len()} ${crypto.verify_password("correct horse", h)}")
+  }
+
+  // fresh hashes
+  let a = crypto.hash_password_argon2id(os.rand, "s3cret", memory_kib: 64, iterations: 1)
+  os.stdio.println("argon fresh ${a.starts_with("$argon2id$v=19$m=64,t=1,p=1$")} ${a.len()} ${crypto.verify_password("s3cret", a)} ${crypto.verify_password("s3creT", a)}")
+  let d = crypto.hash_password_argon2id(os.rand, "x")
+  os.stdio.println("argon default ${d.starts_with("$argon2id$v=19$m=19456,t=2,p=1$")} ${crypto.verify_password("x", d)}")
+  let p = crypto.hash_password(os.rand, "s3cret", iterations: 2000)
+  os.stdio.println("pbkdf2 fresh ${p.starts_with("pbkdf2-sha256$2000$")} ${p.len()} ${crypto.verify_password("s3cret", p)} ${crypto.verify_password("s3cre", p)}")
+  os.stdio.println("salts differ ${crypto.hash_password(os.rand, "s", iterations: 1) != crypto.hash_password(os.rand, "s", iterations: 1)}")
+
+  // random values: shapes only
+  let t = crypto.token(os.rand)
+  let url_safe = t.runes().all(fn(c) { (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c.is_digit() || c == '-' || c == '_' })
+  os.stdio.println("token ${t.len()} ${url_safe} ${crypto.token(os.rand, n: 3).len()} ${crypto.token(os.rand) != t}")
+  os.stdio.println("random_bytes ${crypto.random_bytes(os.rand, 0).len()} ${crypto.random_bytes(os.rand, 1000).len()}")
+  var in_range = true
+  var seen_true = false
+  var seen_false = false
+  for _ in 0..200 {
+    let n = os.rand.int(-3, 4)
+    let f = os.rand.float()
+    in_range = in_range && n >= -3 && n < 4 && f >= 0.0 && f < 1.0
+    if os.rand.bool() {
+      seen_true = true
+    } else {
+      seen_false = true
+    }
+  }
+  os.stdio.println("rand ${in_range} ${seen_true} ${seen_false} ${os.rand.int(5, 6)} ${os.rand.bytes(7).len()} ${os.rand.bytes(-1).len()}")
+}

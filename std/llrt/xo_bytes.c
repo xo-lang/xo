@@ -421,6 +421,44 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+static int n_hex_val(char c) {
+	if (c >= '0' && c <= '9') {
+		return c - '0';
+	}
+	if (c >= 'a' && c <= 'f') {
+		return c - 'a' + 10;
+	}
+	if (c >= 'A' && c <= 'F') {
+		return c - 'A' + 10;
+	}
+	return -1;
+}
+
+// xo_bytes_hex_ok reports whether s is hexadecimal that
+// hex.DecodeString accepts (an even number of hex digits, either case).
+int64_t xo_bytes_hex_ok(const char *p, int64_t n) {
+	if (n % 2 != 0) {
+		return 0;
+	}
+	for (int64_t i = 0; i < n; i++) {
+		if (n_hex_val(p[i]) < 0) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+// xo_bytes_from_hex decodes hexadecimal that xo_bytes_hex_ok accepted
+// (Bytes.from_hex).
+xo_rstr *xo_bytes_from_hex(const char *p, int64_t n, int64_t *len) {
+	xo_rstr *s = rs_new(n / 2);
+	for (int64_t i = 0; i + 1 < n; i += 2) {
+		s->data[i / 2] = (char)(n_hex_val(p[i]) << 4 | n_hex_val(p[i + 1]));
+	}
+	*len = n / 2;
+	return s;
+}
+
 // The outcome of the last file operation of this thread (fs.read blocks
 // the thread, and its status is read before the task can move): std/rt's
 // FsErr tag (0 for success), and the error's path and message.

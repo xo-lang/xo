@@ -90,6 +90,26 @@ fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
 
 fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
 
+fn bytes_from_hex(s: Str) -> Bytes? {
+  if !rt.bytes_hex_ok(s) {
+    return None
+  }
+  Some(rt.bytes_from_hex(s))
+}
+
+/// []rune(s): an invalid byte is U+FFFD.
+fn str_runes(s: Str) -> List[Rune] {
+  let b = s.bytes()
+  var out: List[Rune] = []
+  var i = 0
+  while i < b.len() {
+    let p = rt.bytes_decode(b, i)
+    out.push(Rune(p >> 3))
+    i += p & 7
+  }
+  out
+}
+
 fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
   if i < 0 || i > b.len() {
     rt.fault_at("index ${i} out of range for decode_rune on Bytes of length ${b.len()}", at)
