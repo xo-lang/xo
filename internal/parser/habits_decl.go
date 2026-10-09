@@ -193,7 +193,7 @@ func (p *parser) foreignImport() ast.Decl {
 		endIdx = p.matchClose(i)
 		for j := i + 1; endIdx > 0 && j < endIdx; j++ {
 			if p.toks[j].Kind == token.String {
-				paths = append(paths, p.toks[j].Value)
+				paths = append(paths, strTokText(p.toks[j]))
 			}
 		}
 	} else {
@@ -202,14 +202,17 @@ func (p *parser) foreignImport() ast.Decl {
 		}
 		if endIdx >= i {
 			first := p.toks[i]
+			last := p.toks[endIdx]
 			switch {
 			case first.Kind == token.String:
-				paths = append(paths, first.Value)
-				if len(first.Parts) == 1 {
-					paths[0] = first.Parts[0].Text
-				}
+				// Go: import "encoding/json"
+				paths = append(paths, strTokText(first))
 			case first.Kind == token.Ident && t.Text == "import" && endIdx == i:
+				// Python: import json
 				paths = append(paths, first.Text)
+			case first.Kind == token.Star && last.Kind == token.String:
+				// TypeScript: import * as json from "json"
+				paths = append(paths, strTokText(last))
 			}
 		}
 	}
@@ -249,6 +252,17 @@ func (p *parser) foreignImport() ast.Decl {
 	p.skipLine()
 	p.lineDone = true
 	return nil
+}
+
+// strTokText is the literal text of a plain string token.
+func strTokText(t token.Token) string {
+	var b strings.Builder
+	for _, part := range t.Parts {
+		if !part.IsExpr {
+			b.WriteString(part.Text)
+		}
+	}
+	return b.String()
 }
 
 // parseImpl recovers a Rust `impl Type { fn m(&self) ... }` block as

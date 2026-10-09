@@ -905,6 +905,7 @@ func (c *checker) requireMutable(e ast.Expr, code diag.Code, what string) {
 	if d != nil && v.Kind == VLocal && v.decl != nil {
 		if ls, ok := v.decl.(*ast.LetStmt); ok && v.Span.File != "" {
 			fix(d, fmt.Sprintf("declare `%s` with `var`", id.Name), replaceEdit(token.Span{File: ls.Sp.File, Start: ls.Sp.Start, End: token.Pos{Line: ls.Sp.Start.Line, Col: ls.Sp.Start.Col + 3, Offset: ls.Sp.Start.Offset + 3}}, "var"))
+			note(d, token.Span{}, "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)")
 		}
 	}
 	if d != nil {

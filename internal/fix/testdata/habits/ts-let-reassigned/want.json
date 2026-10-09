@@ -1,0 +1,44 @@
+[
+  {
+    "code": "XO0502",
+    "severity": "error",
+    "message": "assignment needs `n` to be `var`, but it is an immutable binding",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)"
+      },
+      {
+        "message": "`n` is declared here",
+        "span": {
+          "file": "main.xo",
+          "line": 2,
+          "col": 7
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare `n` with `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 6
+            },
+            "replace": "var"
+          }
+        ]
+      }
+    ]
+  }
+]

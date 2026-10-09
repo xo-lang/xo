@@ -1028,7 +1028,7 @@ func (p *parser) armComma(what string) {
 	d := p.softErrorf(diag.MatchArmSeparator, c.Span, "%ss are separated by newlines, not `,`", what)
 	addNote(d, "Rust and Kotlin separate arms with `,`; an Xo arm ends at its newline (core 3.5)")
 	next := p.peek(1)
-	if next.Kind != token.Newline && next.Kind != token.RBrace && next.Kind != token.EOF {
+	if next.Kind != token.Newline && next.Kind != token.RBrace && next.Kind != token.EOF && next.Span.Start.Line == c.Span.Start.Line {
 		addFix(d, "put the next arm on its own line", p.replaceRange(c.Span.Start, next.Span.Start, "\n"))
 	} else {
 		addFix(d, "remove `,`", p.replaceSpan(c.Span, ""))

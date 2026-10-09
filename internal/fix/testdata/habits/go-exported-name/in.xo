@@ -1,0 +1,3 @@
+fn Double(x: Int) -> Int {
+  x * 2
+}

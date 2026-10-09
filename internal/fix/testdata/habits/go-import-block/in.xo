@@ -1,0 +1,8 @@
+import (
+  "encoding/json"
+  "strings"
+)
+
+fn encode(n: Int) -> Str {
+  json.encode_str(n)
+}

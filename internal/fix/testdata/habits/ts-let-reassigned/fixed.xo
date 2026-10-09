@@ -1,0 +1,5 @@
+fn count() -> Int {
+  var n = 1
+  n = 2
+  n
+}

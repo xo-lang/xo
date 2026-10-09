@@ -62,6 +62,27 @@ func (p *parser) angleArgs(nt *ast.NamedType) {
 	}
 }
 
+// angleTypeParams parses the type parameters of a declaration written in
+// angle brackets, `fn f<T: Ord>(...)`, with elem parsing one parameter.
+func (p *parser) angleTypeParams(elem func()) {
+	open := p.tok
+	p.next() // <
+	for !p.bad && !p.at(token.Gt) && !p.at(token.EOF) {
+		elem()
+		if !p.got(token.Comma) {
+			break
+		}
+	}
+	closeTok := p.tok
+	if !p.at(token.Gt) {
+		p.errorExpected("`>` to close the type parameters")
+		return
+	}
+	p.next()
+	d := p.foreign(open.Span.To(closeTok.Span), "`<T>` type parameters are Rust, TypeScript, Kotlin, and Swift syntax; Xo writes them in square brackets, `[T]` (core 2.7)")
+	addFix(d, "use square brackets", p.replaceSpan(open.Span, "["), p.replaceSpan(closeTok.Span, "]"))
+}
+
 // foreignType recognizes types written with another language's syntax at
 // the start of a type. ok is false when none applies.
 func (p *parser) foreignType() (ast.Type, bool) {

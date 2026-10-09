@@ -1,0 +1,4 @@
+fn count() -> Int {
+  let my_count = 1
+  my_count
+}

@@ -461,7 +461,7 @@ func (p *parser) parseFnDecl(doc *ast.Doc, pub bool, start token.Pos, inInterfac
 		fn.Recv = p.parseReceiver()
 	}
 	fn.Name = p.expectIdent("a function name")
-	if p.at(token.LBrack) {
+	if p.atTypeParams() {
 		fn.TypeParams = p.parseTypeParams()
 	}
 	fn.Params = p.parseParams(paramDecl, inInterface || p.inImpl)
@@ -531,9 +531,15 @@ func (p *parser) parseReceiver() *ast.Receiver {
 	return r
 }
 
+// atTypeParams reports whether a type parameter list starts here: `[` or,
+// as a habit, `<` right after the declared name.
+func (p *parser) atTypeParams() bool {
+	return p.at(token.LBrack) || (p.at(token.Lt) && p.pos > 0 && p.toks[p.pos-1].Kind == token.Ident && adjacent(p.toks[p.pos-1], p.tok))
+}
+
 func (p *parser) parseTypeParams() []*ast.TypeParam {
 	var out []*ast.TypeParam
-	p.parseList(token.LBrack, token.RBrack, "type parameter", func() {
+	elem := func() {
 		start := p.tok.Span.Start
 		tp := &ast.TypeParam{Name: p.expectIdent("a type parameter name")}
 		if p.atIdent("extends") && p.peek(1).Kind == token.Ident {
@@ -556,7 +562,12 @@ func (p *parser) parseTypeParams() []*ast.TypeParam {
 		}
 		tp.Sp = p.spanFrom(start)
 		out = append(out, tp)
-	})
+	}
+	if p.at(token.Lt) {
+		p.angleTypeParams(elem)
+		return out
+	}
+	p.parseList(token.LBrack, token.RBrack, "type parameter", elem)
 	return out
 }
 
@@ -774,7 +785,7 @@ func (p *parser) parseStruct(doc *ast.Doc, pub bool, start token.Pos) *ast.Struc
 	s := &ast.StructDecl{Doc: doc, Pub: pub}
 	p.next() // struct
 	s.Name = p.expectIdent("a struct name")
-	if p.at(token.LBrack) {
+	if p.atTypeParams() {
 		s.TypeParams = p.parseTypeParams()
 	}
 	return p.parseStructBody(s, start)
@@ -876,7 +887,7 @@ func (p *parser) parseEnum(doc *ast.Doc, pub bool, start token.Pos) *ast.EnumDec
 	e := &ast.EnumDecl{Doc: doc, Pub: pub}
 	p.next() // enum
 	e.Name = p.expectIdent("an enum name")
-	if p.at(token.LBrack) {
+	if p.atTypeParams() {
 		e.TypeParams = p.parseTypeParams()
 	}
 	p.parseMembers("enum variant", func() {
@@ -913,7 +924,7 @@ func (p *parser) parseInterface(doc *ast.Doc, pub bool, start token.Pos) *ast.In
 	d := &ast.InterfaceDecl{Doc: doc, Pub: pub}
 	p.next() // interface
 	d.Name = p.expectIdent("an interface name")
-	if p.at(token.LBrack) {
+	if p.atTypeParams() {
 		d.TypeParams = p.parseTypeParams()
 	}
 	return p.parseInterfaceBody(d, start)
@@ -940,7 +951,7 @@ func (p *parser) parseTypeDecl(doc *ast.Doc, pub bool, start token.Pos) ast.Decl
 	typeTok := p.tok
 	p.next() // type
 	d.Name = p.expectIdent("a type name")
-	if p.at(token.LBrack) {
+	if p.atTypeParams() {
 		d.TypeParams = p.parseTypeParams()
 	}
 	if !p.bad && (p.at(token.Struct) || p.at(token.Interface)) && p.peek(1).Kind == token.LBrace {

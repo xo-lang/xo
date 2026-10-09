@@ -38,6 +38,9 @@
     },
     "notes": [
       {
+        "message": "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)"
+      },
+      {
         "message": "`xs` is declared here",
         "span": {
           "file": "main.xo",
@@ -76,6 +79,9 @@
       "end_col": 4
     },
     "notes": [
+      {
+        "message": "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)"
+      },
       {
         "message": "`n` is declared here",
         "span": {

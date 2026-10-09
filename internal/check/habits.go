@@ -262,7 +262,7 @@ func (c *checker) listElem(t Type) Type {
 // habitModules are module-like names whose members are calls from another
 // language's standard library.
 var habitModules = map[string]string{
-	"fmt": "Go", "console": "TypeScript", "System": "Java and Kotlin", "Math": "TypeScript and Java",
+	"fmt": "Go", "console": "TypeScript", "System": "Java and Kotlin", "Math": "TypeScript and Java", "String": "Rust",
 	"math": "Go and Python", "strings": "Go", "strconv": "Go", "errors": "Go", "time": "Go and Python",
 }
 
@@ -275,6 +275,29 @@ func (c *checker) habitModuleCall(x *ast.CallExpr, mod *ast.Ident, sel *ast.Sele
 		return nil, false
 	}
 	full := mod.Name + "." + sel.Sel.Name
+	if full == "String.from" || full == "String.new" {
+		d := c.errorf(diag.UnresolvedName, mod.Sp, "name `%s` not found", mod.Name)
+		if full == "String.new" && len(x.Args) == 0 {
+			habitNote(d, "`String::new()` is Rust; an empty Xo string is `\"\"`, and a `Str` is immutable (core 1.6)")
+			fix(d, "write `\"\"`", replaceEdit(x.Sp, `""`))
+			return c.named("Str"), true
+		}
+		habitNote(d, "`String::from(s)` is Rust; a string literal already is a `Str`, and other values interpolate, `\"${x}\"` (core 1.6)")
+		if len(x.Args) == 1 {
+			t := c.infer(x.Args[0].Value, nil)
+			if c.isPrelude(t, "Str") {
+				fix(d, "remove `String::from`", replaceEdit(x.Sp, c.srcOf(x.Args[0].Value.Span())))
+			} else {
+				fix(d, "write `\"${...}\"`", replaceEdit(x.Sp, "\"${"+c.srcOf(x.Args[0].Value.Span())+"}\""))
+			}
+			return c.named("Str"), true
+		}
+		c.inferArgs(x)
+		return c.named("Str"), true
+	}
+	if mod.Name == "String" {
+		return nil, false
+	}
 	if mod.Name == "System" {
 		full = c.srcOf(x.Fun.Span())
 	}

@@ -1,0 +1,50 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`import` is Go, Python, or TypeScript syntax; Xo imports a module with `use`, for example `use std/json` (core 4.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 4,
+      "end_col": 2
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "replace with `use`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 5,
+              "end_col": 1
+            },
+            "replace": "use std/json\n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `json` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 3,
+      "end_line": 7,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`json` is declared in `std/http`; refer to it as `http.json` (core 2.3, 4.1)"
+      }
+    ],
+    "fixes": []
+  }
+]

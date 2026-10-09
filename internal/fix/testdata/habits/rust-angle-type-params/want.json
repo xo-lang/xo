@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`\u003cT\u003e` type parameters are Rust, TypeScript, Kotlin, and Swift syntax; Xo writes them in square brackets, `[T]` (core 2.7)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 11,
+      "end_line": 1,
+      "end_col": 19
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "use square brackets",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 11,
+              "end_line": 1,
+              "end_col": 12
+            },
+            "replace": "["
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 18,
+              "end_line": 1,
+              "end_col": 19
+            },
+            "replace": "]"
+          }
+        ]
+      }
+    ]
+  }
+]

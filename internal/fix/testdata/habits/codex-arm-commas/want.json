@@ -17,17 +17,17 @@
     ],
     "fixes": [
       {
-        "title": "put the next arm on its own line",
+        "title": "remove `,`",
         "edits": [
           {
             "span": {
               "file": "main.xo",
               "line": 3,
               "col": 15,
-              "end_line": 4,
-              "end_col": 5
+              "end_line": 3,
+              "end_col": 16
             },
-            "replace": "\n"
+            "replace": ""
           }
         ]
       }

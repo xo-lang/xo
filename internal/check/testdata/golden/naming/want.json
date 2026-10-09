@@ -40,7 +40,11 @@
       "end_line": 3,
       "end_col": 19
     },
-    "notes": [],
+    "notes": [
+      {
+        "message": "Go marks an unexported type with a lowercase letter; Xo types are UpperCamel, and only `pub` exports (core 1.5)"
+      }
+    ],
     "fixes": [
       {
         "title": "rename to `UserRecord`",
@@ -70,7 +74,11 @@
       "end_line": 4,
       "end_col": 11
     },
-    "notes": [],
+    "notes": [
+      {
+        "message": "camelCase is the TypeScript, Java, Kotlin, and Swift convention; Xo spells fields in snake_case (core 1.5)"
+      }
+    ],
     "fixes": [
       {
         "title": "rename to `user_name`",
@@ -130,7 +138,11 @@
       "end_line": 9,
       "end_col": 12
     },
-    "notes": [],
+    "notes": [
+      {
+        "message": "Go exports a name by capitalizing it; Xo exports with `pub` and spells functions in snake_case (core 1.5)"
+      }
+    ],
     "fixes": [
       {
         "title": "rename to `load_user`",
