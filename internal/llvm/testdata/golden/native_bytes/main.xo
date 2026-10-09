@@ -1,0 +1,63 @@
+// Bytes, slicing, the builders, text helpers, constant collections, and
+// files on the native backends (decisions 0078, 0079, 0081).
+
+const WORDS = {"if": 1, "else": 2, "while": 3}
+const PRIMES = [2, 3, 5, 7, 11]
+
+fn word(w: Str) -> Int {
+  WORDS.get(w) ?? 0
+}
+
+fn show(xs: List[Int]) -> Str {
+  "[" + xs.map(fn(x) { "${x}" }).join(",") + "]"
+}
+
+fn hex2(b: UInt8) -> Str {
+  (b"0123456789abcdef"[Int(b >> 4)..Int(b >> 4) + 1].to_str() ?? "") + (b"0123456789abcdef"[Int(b & 15)..Int(b & 15) + 1].to_str() ?? "")
+}
+
+fn main(os: Os) ! {
+  let src = b"let s = \"h\xc3\xa9\" \xff\n"
+  var out = BytesBuilder.with_capacity(4)
+  for i in 0..src.len() {
+    if src[i] == '"' {
+      out.write_byte('\\')
+    }
+    out.write_byte(src[i])
+  }
+  out.write(b"|")
+  out.write_str("é")
+  out.write_rune('€')
+  out.write_rune(Rune(0x1f600))
+  let n = out.len()
+  let built = out.freeze()
+  os.stdio.println("${n} ${built.len()} ${built.to_hex()} ${built.quote()} ${built.rune_count()}")
+  os.stdio.println("${src[4..5].to_hex()} ${src[..3].to_str() ?? "?"} ${src[src.len() - 1..].to_hex()} ${src[9..=10].quote()} ${src[0..0].is_empty()}")
+  var i = 0
+  var decoded: List[Str] = []
+  while i <= src.len() {
+    let (r, size) = src.decode_rune(i)
+    decoded.push("${Int(r)}/${size}")
+    if size == 0 {
+      break
+    }
+    i += size
+  }
+  os.stdio.println(decoded.join(" "))
+  let text = "héllo, wörld"
+  os.stdio.println("${text[0..1]} ${text[1..3]} ${text[7..]} ${text.quote()} ${"tab\there \"q\" \u{0}\u{7f}\u{85}".quote()}")
+  let xs = [10, 20, 30, 40, 50]
+  os.stdio.println("${show(xs[1..3])} ${show(xs[..2])} ${show(xs[3..])} ${show(xs[1..=1])} ${show(xs[2..2])}")
+  var sb = StrBuilder.new()
+  for w in ["if", "x", "else", "while", "if"] {
+    sb.write("${word(w)}")
+  }
+  os.stdio.println("${sb.len()} ${sb.freeze()} ${PRIMES[2]} ${PRIMES.len()} ${hex2(0xa7)}")
+  let data = os.fs.read("data.txt")?
+  os.stdio.println("${data.len()} ${data.quote()}")
+  match os.fs.read("missing.txt") {
+    Ok(_) => os.stdio.println("read a missing file")
+    Err(e) => os.stdio.println("${e}")
+  }
+  os.stdio.println("${os.env.args().len()}")
+}

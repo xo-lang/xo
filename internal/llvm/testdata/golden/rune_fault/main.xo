@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let n = 0xd7ff
+  os.stdio.println("${Int(Rune(n))} ${UInt8(Int('a') + 1)}")
+  os.stdio.println("${Rune(n + 1)}")
+}

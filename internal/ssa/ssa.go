@@ -70,7 +70,23 @@ type Type struct {
 	// Coll marks the KStruct that represents a Map or Set (build_map.go):
 	// its fields are not its value, so `==` on it is not structural
 	Coll bool
+	// Bits and Unsigned describe a sized integer type of kind KInt
+	// (decision 0081): Int8 to UInt64, and Rune (32 bits, signed). Its
+	// values are held in the 64 bit word as Int values are, sign or zero
+	// extended, so every operation that cannot leave the range (moves,
+	// comparisons of narrow values, `&`, `|`, `^`) is the Int operation;
+	// the builder lowers the others to checked runtime calls. Bits is 0
+	// for Int itself.
+	Bits     int
+	Unsigned bool
 }
+
+// Sized reports whether t is a sized integer type (not Int).
+func (t *Type) Sized() bool { return t.Kind == KInt && t.Bits != 0 }
+
+// U64 reports whether t is UInt64, whose values above the Int range are
+// held as negative words: its order, division, and text are unsigned.
+func (t *Type) U64() bool { return t.Kind == KInt && t.Bits == 64 && t.Unsigned }
 
 // Field is a named struct field or variant field.
 type Field struct {
@@ -227,6 +243,11 @@ const (
 	// Conversions.
 	OpIntToFloat
 	OpFloatToInt // checked: faults on NaN and out of range
+	// OpIntConv is Args[0], an integer, as the integer type of the result:
+	// the same word. The builder emits it only where every value of the
+	// source type is a value of the result type (a widening conversion,
+	// decision 0081); other conversions are checked runtime calls.
+	OpIntConv
 
 	// Aggregates. Construction consumes its operands (ownership moves in).
 	OpStruct   // Args are the fields in declaration order
@@ -319,7 +340,7 @@ var opNames = [...]string{
 	OpAdd: "add", OpSub: "sub", OpMul: "mul", OpDiv: "div", OpRem: "rem", OpNeg: "neg",
 	OpAnd: "and", OpOr: "or", OpXor: "xor", OpNot: "not", OpShl: "shl", OpShr: "shr",
 	OpEq: "eq", OpNe: "ne", OpLt: "lt", OpLe: "le", OpGt: "gt", OpGe: "ge",
-	OpIntToFloat: "itof", OpFloatToInt: "ftoi",
+	OpIntToFloat: "itof", OpFloatToInt: "ftoi", OpIntConv: "iconv",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
 	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr",
@@ -447,6 +468,31 @@ func (m *Module) Builtin(k Kind) *Type {
 		return t
 	}
 	t := &Type{Kind: k, Name: name}
+	m.types[name] = t
+	return t
+}
+
+// sizedInts are the sized integer types: bits and signedness.
+var sizedInts = map[string]struct {
+	bits     int
+	unsigned bool
+}{
+	"Int8": {8, false}, "Int16": {16, false}, "Int32": {32, false},
+	"UInt8": {8, true}, "UInt16": {16, true}, "UInt32": {32, true}, "UInt64": {64, true},
+	"Rune": {32, false},
+}
+
+// IntType returns the interned sized integer type named name (Int8 to
+// UInt64, or Rune), or nil.
+func (m *Module) IntType(name string) *Type {
+	if t := m.types[name]; t != nil {
+		return t
+	}
+	si, ok := sizedInts[name]
+	if !ok {
+		return nil
+	}
+	t := &Type{Kind: KInt, Name: name, Bits: si.bits, Unsigned: si.unsigned}
 	m.types[name] = t
 	return t
 }
@@ -633,6 +679,7 @@ var RuntimeCalls = map[string]string{
 	"Float.max":        "(Float, Float) -> Float",
 	"Float.sqrt":       "(Float) -> Float (also floor, ceil, trunc, round, abs)",
 	"Str.len":          "(Str) -> Int",
+	"bytes.index":      "(Bytes, Int) -> UInt8: the byte at the index; faults when out of range (Pos)",
 	"rt.*": "a call of the C runtime function xo_* (std/llrt, decision 0068): every operand is an Int, " +
 		"Bool, List, or handle (one word) or a Str (its bytes and length); the result is unit or one word",
 }

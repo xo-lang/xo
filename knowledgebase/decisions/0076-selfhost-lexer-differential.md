@@ -46,7 +46,7 @@ first step: small, pure, and with a rich error surface.
   The same holds for a new lexical diagnostic code.
 - The test costs one Xo build (about 3 s cold, cached afterwards) and about
   1 s of lexing.
-- The Xo lexer builds only on the Go backend: the native backends lack
+- The Xo lexer builds only on the Go backend (until decision 0081): the native backends lack
   `Bytes`, `UInt8`, `UInt64`, and the capability methods it uses (gap 3 in
   the results).
 

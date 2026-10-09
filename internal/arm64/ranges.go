@@ -288,7 +288,11 @@ func (s *fstate) rangeOf(v *ssa.Value, get func(*ssa.Value) (interval, bool)) (i
 		switch v.Aux {
 		case "list.len", "Str.len":
 			return interval{0, math.MaxInt64}, true
+		case "bytes.index":
+			return interval{0, 255}, true
 		}
+	case ssa.OpIntConv:
+		return arg(0)
 	}
 	return fullInterval, true
 }

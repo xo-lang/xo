@@ -1,0 +1,68 @@
+// Sized integers, UInt64, and Rune on the native backends (decision 0081).
+
+const BIG: UInt64 = 18446744073709551615
+const SEP: UInt8 = ','
+
+fn class(c: UInt8) -> Str {
+  match c {
+    'a'..='z' | 'A'..='Z' | '_' => "letter"
+    '0'..='9' => "digit"
+    ' ' | '\t' | '\n' => "space"
+    _ => "other"
+  }
+}
+
+fn sum8(xs: List[UInt8]) -> Int {
+  var total = 0
+  for x in xs {
+    total += Int(x)
+  }
+  total
+}
+
+fn main(os: Os) {
+  let a: UInt8 = 200
+  let b: UInt8 = 55
+  os.stdio.println("${a + b} ${a - b} ${a / b} ${a % b} ${a & b} ${a | b} ${a ^ b} ${~a} ${a >> 3} ${b << 2}")
+  let i8: Int8 = -100
+  os.stdio.println("${i8 - 28} ${-i8} ${i8 / 3} ${i8 % 7} ${~i8} ${i8 >> 2}")
+  let s16: Int16 = 30000
+  let u16: UInt16 = 65000
+  let s32: Int32 = -2000000000
+  let u32: UInt32 = 4000000000
+  os.stdio.println("${s16 + 2767} ${u16 + 535} ${s32 - 147483648} ${u32 + 294967295} ${u32 / 3}")
+  let big = BIG
+  let half = big / 2
+  os.stdio.println("${big} ${half} ${half + 1} ${big - half} ${big % 1000} ${big > half} ${half < big} ${big >= BIG}")
+  let m: UInt64 = 9223372036854775808
+  os.stdio.println("${m} ${m > UInt64(9223372036854775807)} ${m * 1} ${m >> 63} ${UInt64(5) << 60}")
+  os.stdio.println("${Int(a) * 1000} ${UInt8(Int(b) + 1)} ${Int64(s32)} ${UInt64(u32) * 4000000000} ${Int(half)}")
+  os.stdio.println("${Float(a) / 2.0} ${Float(m)} ${Int(-7.9)} ${UInt8(7.9)}")
+  let r = 'é'
+  let code = Int(r)
+  os.stdio.println("${r} ${code} ${Rune(code + 1)} ${Rune(a)} ${UInt32(r)} ${Rune.try(0xd800).is_none()} ${Rune.try(66) ?? '?'}")
+  let runes = ['a', 'Z', '7', ' ', '\u{2028}', 'λ', '٣', '\u{e0001}', '\'', '\n']
+  for c in runes {
+    os.stdio.println("${c.quote()} ${c.is_letter()} ${c.is_digit()} ${c.is_space()} ${c.is_print()} ${c.to_upper()} ${c.to_lower()}")
+  }
+  dbg_like(os, r)
+  let src = b"if x1 == y, \"q\""
+  var classes: List[Str] = []
+  var bytes: List[UInt8] = []
+  for k in 0..src.len() {
+    classes.push(class(src[k]))
+    bytes.push(src[k])
+    if src[k] == SEP || '"' == src[k] {
+      classes.push("!")
+    }
+  }
+  os.stdio.println("${classes.join(" ")} ${sum8(bytes)}")
+  let k: Int = 'A'
+  let t: (UInt8, Rune) = ('b', 'c')
+  os.stdio.println("${k + 1} ${t.0} ${t.1} ${[UInt8(1), 2, 3] == [UInt8(1), 2, 3]} ${a == 200} ${a.max(b)} ${b.min(a)}")
+}
+
+fn dbg_like(os: Os, r: Rune) {
+  let xs = [r, 'x', '\\']
+  os.stdio.println("${xs.len()} ${xs[0]}${xs[1]}${xs[2]}")
+}

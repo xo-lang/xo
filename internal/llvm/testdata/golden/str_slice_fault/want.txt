@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+h llo
+--- stderr
+fault: slice 0..2 of Str splits a UTF-8 sequence at main.xo:4:23

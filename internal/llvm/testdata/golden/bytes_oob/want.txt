@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+97 99 2
+--- stderr
+fault: index 3 out of range for Bytes of length 3 at main.xo:5:23

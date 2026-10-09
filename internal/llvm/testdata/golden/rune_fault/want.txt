@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+55295 98
+--- stderr
+fault: 55296 is not a Unicode scalar value, so it is not a Rune at main.xo:4:23

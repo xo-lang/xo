@@ -348,6 +348,11 @@ func (s *fn) assign(x *ast.AssignStmt) {
 		return
 	}
 	old := p.get()
-	r := s.valueAs(x.Value, p.t)
+	var r *Value
+	if op == token.Shl || op == token.Shr {
+		r = s.shiftCount(x.Value, p.t)
+	} else {
+		r = s.valueAs(x.Value, p.t)
+	}
 	p.set(s.arith(op, old, r, x))
 }
