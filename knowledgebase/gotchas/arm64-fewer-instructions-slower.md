@@ -45,3 +45,13 @@ The bounds check removal stays off for this reason (decisions 0054,
 0060). Not tried: making the loop's speed independent of placement
 (LLVM's version of the loop is 9 percent slower and placed differently;
 nothing to copy).
+
+Update 2026-10-08 (decision 0075): placement made deliberate does not
+rescue the removal. Swept over 16 shifts of every function
+(`XO_ARM64_LAYOUT=pad=K`, K = 0 to 15) at no alignment, functions at 64
+bytes, and loop tops at 64 bytes, nbody with the removal is 1.4, 1.5,
+and 1.0 percent slower by median, and without alignment or with loop
+tops aligned every shift with the removal is slower than every shift
+without it. The cost belongs to the loop's shape (the relative offsets of
+its instructions), not to its absolute address. The pad sweep is now the
+way to judge a code shape change: compare medians over the 16 shifts.

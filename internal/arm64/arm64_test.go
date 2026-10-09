@@ -437,3 +437,41 @@ func TestInlineVerifies(t *testing.T) {
 		t.Error("nothing was inlined")
 	}
 }
+
+// TestLayoutRun builds the bench programs and the loop heavy run programs
+// with code placement settings ($XO_ARM64_LAYOUT, decision 0075): loop
+// tops aligned with a jump over the padding or nops run through, outer
+// loops, offsets, functions moved by nops. The output must not change.
+func TestLayoutRun(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	runs := []string{"lsr", "lsr_fault_neg", "latch", "switch", "ranges", "select", "fault_bounds"}
+	for _, lay := range []string{"func=6,loop=6,pad=3", "func=4,loop=5,fall=1,off=3,outer=1,pad=1"} {
+		t.Run(lay, func(t *testing.T) {
+			t.Setenv("XO_ARM64_LAYOUT", lay)
+			for name, want := range benchWant {
+				got, err := buildRun(t, filepath.Join(benchDir, name))
+				if err != nil {
+					t.Fatalf("%s: build: %v", name, err)
+				}
+				if got.exit != 0 || got.stdout != want {
+					t.Errorf("%s: got %s\nwant stdout %q", name, got, want)
+				}
+			}
+			for _, r := range runs {
+				dir := filepath.Join("testdata", "run", r)
+				got, err := buildRun(t, dir)
+				if err != nil {
+					t.Fatalf("%s: build: %v", r, err)
+				}
+				if want := goRun(t, dir); want.String() != got.String() {
+					t.Errorf("%s: arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", r, want, got)
+				}
+			}
+		})
+	}
+}

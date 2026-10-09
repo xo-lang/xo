@@ -190,6 +190,13 @@ func (s *fstate) emit() {
 			}
 		}
 	}
+	var loop map[string]int
+	if g.place.Loop > 2 {
+		loop = s.innerLoops(g.place.Outer)
+	}
+	body := alignLoops(b.String(), g.place.Loop, g.place.LoopFall, g.place.LoopOff, loop)
+	b.Reset()
+	b.WriteString(body)
 	b.WriteString(s.stubs.String())
 	b.WriteString("\n")
 }

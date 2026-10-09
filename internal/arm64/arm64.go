@@ -63,6 +63,8 @@ type Options struct {
 	OS OS
 	// NoInline turns off the inlining of small leaf functions.
 	NoInline bool
+	// Layout is the placement of code (align.go).
+	Layout Layout
 }
 
 // InlineError is a module that no longer verifies after inlining (a bug
@@ -100,6 +102,7 @@ type gen struct {
 	nhelp   int
 	nfunc   int
 	text    strings.Builder
+	place   Layout
 }
 
 // Generate lowers a module (after InsertRC) to AArch64 assembly.
@@ -120,7 +123,7 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 		opts.OS = Darwin
 	}
 	g := &gen{m: m, os: opts.OS, byName: map[string]*ssa.Func{}, layouts: map[*ssa.Type][]bool{},
-		strs: map[string]string{}, locs: map[string]string{}, helped: map[string]string{}}
+		strs: map[string]string{}, locs: map[string]string{}, helped: map[string]string{}, place: opts.Layout}
 	if !opts.NoInline && inline(m) {
 		if err := m.Verify(); err != nil {
 			return nil, &InlineError{err}
@@ -222,7 +225,10 @@ func (g *gen) section(kind string) string {
 
 // funcHeader starts a function symbol (local unless global).
 func (g *gen) funcHeader(b *strings.Builder, s string, global bool) {
-	b.WriteString("\t.p2align 2\n")
+	fmt.Fprintf(b, "\t.p2align %d\n", max(2, g.place.Func))
+	for range g.place.Pad {
+		b.WriteString("\tnop\n")
+	}
 	if global {
 		fmt.Fprintf(b, "\t.globl %s\n", s)
 	}

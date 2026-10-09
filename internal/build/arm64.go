@@ -71,7 +71,11 @@ func arm64Asm(res *check.Result, root, goos string, noInline, probes bool) ([]by
 	if err := m.Verify(); err != nil {
 		return nil, err
 	}
-	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline})
+	place, err := arm64.ParseLayout(os.Getenv("XO_ARM64_LAYOUT"))
+	if err != nil {
+		return nil, fmt.Errorf("XO_ARM64_LAYOUT: %v", err)
+	}
+	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline, Layout: place})
 	if err != nil {
 		return nil, err
 	}

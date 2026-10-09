@@ -605,6 +605,16 @@ Last verified: 2026-10-07
   separate "more instructions" from "slower instructions". Results:
   `bench/results/arm64-native-2026-10-08.md`,
   `bench/results/arm64-perf-2026-10-08.md`.
+- Code placement sweeps for the arm64 backend (decision 0075; Last
+  verified: 2026-10-08): `XO_ARM64_LAYOUT=pad=K xo build --backend=arm64`
+  puts K nops (never run) before every function label, moving all code;
+  build K = 0 to 15 and compare the median cycles over the 16 binaries
+  (and 16 copies of one binary as the noise floor) to judge a code shape
+  change. Also `func=N` and `loop=N` (log2 alignment of functions and
+  innermost loop tops), `fall=1`, `off=K`, `outer=1`. Unset is the
+  default placement; a bad value fails the build. The build directory is
+  keyed by the program, not the layout: copy `prog-darwin.s` before the
+  next build.
 - Instruction level profiles on macOS (Xcode 16 `xctrace`, no root;
   Last verified: 2026-10-08). Make the program run for seconds first
   (more rounds in a copy of the bench program), then
