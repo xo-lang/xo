@@ -954,30 +954,27 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
 //     created shared (count -1): they cross threads by design. Generated
 //     code retains and releases them like lists and calls xo_h_free at
 //     zero.
-//   - Threads. A pool of worker threads, started on the first spawn, one
-//     per CPU (XO_THREADS overrides). Each worker has a deque (the owner
-//     pushes and pops at the bottom, others steal from the top); spawns
-//     from other threads go to a shared inject queue. A worker that blocks
-//     (a channel, a lock, await, a scope join) counts as blocked, and when
-//     work is queued and fewer than one worker per CPU can run, another
-//     worker starts, so blocked tasks never starve queued ones (the
-//     managed blocking of Java's ForkJoinPool). Workers beyond one per CPU
-//     exit when they find no work; their heaps go to the next thread.
+//   - Threads. A pool of worker threads, started on demand, one per CPU
+//     (XO_THREADS overrides), each with a run queue; every task runs on
+//     a fiber (decision 0069), so a task that waits gives its worker back.
+//     A root thread (the program's main) has a run queue too once it
+//     spawns, and runs queued work while it waits (decision 0077; see
+//     "The worker pool").
 //   - Helping. `t.await` on a task that has not started runs it on the
 //     awaiting thread, and a scope's join runs its tasks that have not
 //     started before it blocks.
-//   - Cancellation. Every task and scope body is a node of a tree (under
-//     one lock, tree_mu); canceling a node marks its subtree canceled
-//     (sticky) and wakes every context blocked at a node in it. A
-//     context's node is its innermost scope body, or its task.
+//   - Cancellation. Every task and scope body is a node of a tree (a lock
+//     per node, taken parent first); canceling a node marks its subtree
+//     canceled (sticky) and wakes every context blocked at a node in it.
+//     A context's node is its innermost scope body, or its task.
 //   - Unwinding. A cancellation point (send, recv, await, waiting for a
 //     lock) in a canceled context sets the context's unwinding flag and
 //     returns an immortal placeholder; generated code checks xo_unwinding
 //     after each call that may unwind and returns, closing the scopes it
 //     leaves, up to the task's entry (or to a scope whose child failed,
 //     where the unwinding becomes that failure).
-//   - Waiting. Every context has a park (a mutex, a condition variable,
-//     and a flag); objects keep lists of the parks of their waiters and
+//   - Waiting. Every context has a park (a lock and a futex word);
+//     objects keep lists of the parks of their waiters and
 //     signal them, and cancellation signals the park registered at a
 //     canceled node.
 
@@ -1150,27 +1147,25 @@ static inline void unlk(xo_lock *l) {
 	}
 }
 
-// Deadlock detection (core 11.4, fault XO-F001): live counts the
-// contexts that run Xo code or will (each program root, each task from
-// its spawn until it ends on a fiber, and each queue entry of a task a
-// waiting context ran: decision 0077), blocked those waiting in
-// park_wait. A context counts as running again as soon as a waker
-// signals it. Every live context blocked means none can ever be woken:
-// waits that a timer, a socket, or a signal can end are not counted.
-// Both counts are one word (live in the high half), so every change is
-// one atomic add that also tells whether it completed a deadlock.
-static int64_t dl_state;
-#define DL_LIVE ((int64_t)1 << 32)
+// Deadlock detection (core 11.4, fault XO-F001), decision 0077: the
+// program is deadlocked when nothing runs and nothing can wake anything:
+// every worker thread is idle and no queue holds an item, every root
+// context (a thread that runs Xo code outside tasks: the program's main)
+// sleeps in a counted wait, and no context waits for a timer, a socket,
+// or a signal (uncounted waits). Fibers parked in counted waits need no
+// count: only a running context can wake them. The check runs under
+// pool.mu when a worker goes idle and when a root goes to sleep, and
+// workers count themselves idle under that lock too, so a worker that
+// signaled a root before it went idle is seen with the root awake. (The
+// counts used to be updated by every spawn and every task end, an atomic
+// that all workers contended for.)
+static struct {
+	int64_t roots;     // root contexts made (never fewer: decision 0068)
+	int64_t blocked;   // roots asleep in a counted wait
+	int64_t uncounted; // contexts in a wait a timer, the network, or a signal can end
+} dlk;
 
 XO_NORETURN static void deadlock(void);
-
-static void dl_add(int64_t d) {
-	int64_t n = __atomic_add_fetch(&dl_state, d, __ATOMIC_ACQ_REL);
-	int64_t live = n >> 32, blocked = n & 0xffffffff;
-	if (live > 0 && blocked == live) {
-		deadlock();
-	}
-}
 
 // mu_init initializes a pthread mutex of the runtime (the event loop's,
 // the network's, the HTTP server's). On Darwin the default policy hands
@@ -1197,7 +1192,7 @@ typedef struct {
 	xo_lock mu;
 	uint32_t signaled; // written under mu, read atomically
 	int sleeping;      // a thread sleeps on signaled
-	int counted;       // its context counts as blocked (dl_state)
+	int counted;       // a root asleep here counts in dlk.blocked
 	// the fiber parked here (decision 0069): a signal makes it runnable
 	struct xo_fiber *fiber;
 } xo_park;
@@ -1222,7 +1217,7 @@ static void park_signal(xo_park *p) {
 	__atomic_store_n(&p->signaled, 1, __ATOMIC_RELEASE);
 	if (p->counted) {
 		p->counted = 0;
-		dl_add(-1);
+		__atomic_fetch_sub(&dlk.blocked, 1, __ATOMIC_SEQ_CST);
 	}
 	struct xo_fiber *f = p->fiber;
 	if (f) {
@@ -1378,7 +1373,7 @@ static xo_ctx *ctx(void) {
 	c->node = root;
 	park_init(&c->park);
 	cur_set(c);
-	dl_add(DL_LIVE);
+	__atomic_fetch_add(&dlk.roots, 1, __ATOMIC_SEQ_CST);
 	return c;
 }
 
@@ -1469,102 +1464,101 @@ static void held_del(xo_ctx *c, void *m) {
 // A queue item is a task to start, or a parked fiber to resume (its
 // pointer with the low bit set, decision 0069). Every worker thread, and
 // every root thread once it spawns or waits, has a record with
-//   - a deque (Chase and Lev): the owner pushes and pops at the bottom
-//     without a lock, others steal from the top with a compare and swap;
+//   - a run queue (Go's runq): a ring of 256 items that only the owner
+//     adds to; the owner takes from the head with a compare and swap,
+//     and a thief takes half of the items with one compare and swap. A
+//     full ring moves half of itself to the inject queue in one batch;
 //   - next: one fiber its thread woke (Go's runnext), run before the
-//     deque, so a fiber that wakes another and then waits hands over on
+//     ring, so a fiber that wakes another and then waits hands over on
 //     the same thread; others take it only on their last look for work.
 // Items from threads without a record (the poller) go to the inject
-// queue. Idle workers sleep on a futex word of their own. Waking follows
+// queue, a locked queue that a worker takes a share of at once. Idle workers sleep on a futex word of their own. Waking follows
 // Go's spinning rule: a push wakes an idle worker only when no worker is
 // spinning (looking for work), the woken worker spins, and a spinning
 // worker that finds work wakes the next one only if it was the last
 // spinner. So a burst of spawns wakes workers one at a time and a steady
 // stream of hand overs wakes nobody.
 
-typedef struct xo_ring {
-	int64_t mask;
-	struct xo_ring *old; // the ring this one replaced (kept: a thief may read it)
-	void *slot[];
-} xo_ring;
+#define XO_RUNQ 256
 
 typedef struct {
-	int64_t top, bottom; // atomic
-	xo_ring *ring;       // atomic
-} xo_deque;
+	uint32_t head; // atomic: consumers (the owner and thieves) CAS it
+	char pad[124];
+	uint32_t tail;        // atomic: only the owner writes it
+	void *slot[XO_RUNQ]; // atomic accesses: a thief may read a stale one
+} xo_runq;
 
-static xo_ring *ring_new(int64_t n, xo_ring *old) {
-	xo_ring *r = malloc(sizeof(xo_ring) + (size_t)n * sizeof(void *));
-	if (!r) {
-		xo_oom();
-	}
-	r->mask = n - 1;
-	r->old = old;
-	return r;
-}
+// rq_put adds x (the owner); a full ring moves half of itself and x to
+// the inject queue.
+static int rq_put_slow(xo_runq *q, void *x, uint32_t h, uint32_t t);
 
-// dq_push adds t at the bottom (the owner).
-static void dq_push(xo_deque *d, void *t) {
-	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_RELAXED);
-	int64_t tp = __atomic_load_n(&d->top, __ATOMIC_ACQUIRE);
-	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_RELAXED);
-	if (!r || b - tp > r->mask) {
-		int64_t n = r ? (r->mask + 1) * 2 : 256;
-		xo_ring *nr = ring_new(n, r);
-		for (int64_t i = tp; i < b; i++) {
-			__atomic_store_n(&nr->slot[i & nr->mask], __atomic_load_n(&r->slot[i & r->mask], __ATOMIC_RELAXED), __ATOMIC_RELAXED);
+static void rq_put(xo_runq *q, void *x) {
+	for (;;) {
+		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		uint32_t t = q->tail;
+		if (t - h < XO_RUNQ) {
+			__atomic_store_n(&q->slot[t % XO_RUNQ], x, __ATOMIC_RELAXED);
+			// sequentially consistent: ordered before the pusher's look at
+			// the spinning and idle counts (wakep), as a worker going idle
+			// counts itself idle before it looks at the queues again
+			__atomic_store_n(&q->tail, t + 1, __ATOMIC_SEQ_CST);
+			return;
 		}
-		__atomic_store_n(&d->ring, nr, __ATOMIC_RELEASE);
-		r = nr;
-	}
-	__atomic_store_n(&r->slot[b & r->mask], t, __ATOMIC_RELAXED);
-	// sequentially consistent: ordered before the pusher's later look at
-	// the spinning and idle counts (wakep), as a worker going idle counts
-	// itself idle before it looks at the deques again
-	__atomic_store_n(&d->bottom, b + 1, __ATOMIC_SEQ_CST);
-}
-
-// dq_pop takes from the bottom (the owner).
-static void *dq_pop(xo_deque *d) {
-	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_RELAXED) - 1;
-	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_RELAXED);
-	if (!r) {
-		return NULL;
-	}
-	__atomic_store_n(&d->bottom, b, __ATOMIC_SEQ_CST);
-	int64_t t = __atomic_load_n(&d->top, __ATOMIC_SEQ_CST);
-	if (t > b) {
-		__atomic_store_n(&d->bottom, b + 1, __ATOMIC_RELAXED);
-		return NULL;
-	}
-	void *x = __atomic_load_n(&r->slot[b & r->mask], __ATOMIC_RELAXED);
-	if (t == b) {
-		// the last item: race the thieves for it
-		if (!__atomic_compare_exchange_n(&d->top, &t, t + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
-			x = NULL;
+		if (rq_put_slow(q, x, h, t)) {
+			return;
 		}
-		__atomic_store_n(&d->bottom, b + 1, __ATOMIC_RELAXED);
 	}
-	return x;
 }
 
-// dq_steal takes from the top (a thief): NULL when empty or lost a race.
-static void *dq_steal(xo_deque *d) {
-	int64_t t = __atomic_load_n(&d->top, __ATOMIC_SEQ_CST);
-	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_SEQ_CST);
-	if (t >= b) {
-		return NULL;
+// rq_get takes the item at the head (the owner).
+static void *rq_get(xo_runq *q) {
+	for (;;) {
+		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		uint32_t t = q->tail;
+		if (t == h) {
+			return NULL;
+		}
+		void *x = __atomic_load_n(&q->slot[h % XO_RUNQ], __ATOMIC_RELAXED);
+		if (__atomic_compare_exchange_n(&q->head, &h, h + 1, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+			return x;
+		}
 	}
-	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_ACQUIRE);
-	void *x = __atomic_load_n(&r->slot[t & r->mask], __ATOMIC_RELAXED);
-	if (!__atomic_compare_exchange_n(&d->top, &t, t + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
-		return NULL;
-	}
-	return x;
 }
 
-static int dq_nonempty(xo_deque *d) {
-	return __atomic_load_n(&d->top, __ATOMIC_SEQ_CST) < __atomic_load_n(&d->bottom, __ATOMIC_SEQ_CST);
+// rq_grab takes half of q's items (rounded up) into batch (a thief) and
+// returns how many.
+static uint32_t rq_grab(xo_runq *q, void **batch) {
+	for (;;) {
+		uint32_t h = __atomic_load_n(&q->head, __ATOMIC_ACQUIRE);
+		uint32_t t = __atomic_load_n(&q->tail, __ATOMIC_ACQUIRE);
+		uint32_t n = t - h;
+		n -= n / 2;
+		if (n == 0) {
+			return 0;
+		}
+		if (n > XO_RUNQ / 2) {
+			continue; // h and t read at different times: again
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			batch[i] = __atomic_load_n(&q->slot[(h + i) % XO_RUNQ], __ATOMIC_RELAXED);
+		}
+		if (__atomic_compare_exchange_n(&q->head, &h, h + n, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+			return n;
+		}
+	}
+}
+
+// rq_put_batch adds n items to an empty ring (the owner).
+static void rq_put_batch(xo_runq *q, void **batch, uint32_t n) {
+	uint32_t t = q->tail;
+	for (uint32_t i = 0; i < n; i++) {
+		__atomic_store_n(&q->slot[(t + i) % XO_RUNQ], batch[i], __ATOMIC_RELAXED);
+	}
+	__atomic_store_n(&q->tail, t + n, __ATOMIC_SEQ_CST);
+}
+
+static int rq_nonempty(xo_runq *q) {
+	return __atomic_load_n(&q->head, __ATOMIC_SEQ_CST) != __atomic_load_n(&q->tail, __ATOMIC_SEQ_CST);
 }
 
 #define XO_MAXW 4096
@@ -1573,8 +1567,9 @@ static int dq_nonempty(xo_deque *d) {
 #define XO_FCACHE 8
 
 typedef struct xo_worker {
-	xo_deque dq;
-	void *next; // atomic: a fiber its thread woke
+	xo_runq q;
+	void *next;      // atomic: a fiber its thread woke
+	int64_t next_at; // atomic: when it was put there (mono_ns)
 	int live;
 	int root;       // the record of a root thread that helps while it waits
 	void *sched_sp; // the scheduler's stack pointer while a fiber runs
@@ -1701,10 +1696,14 @@ static void wakep(void) {
 	}
 }
 
-static void inject_push(void *t) {
+// inject_push_batch adds n items to the inject queue.
+static void inject_push_batch(void **items, int64_t n) {
 	lk(&pool.imu);
-	if (pool.ilen == pool.icap) {
+	if (pool.ilen + n > pool.icap) {
 		int64_t nc = pool.icap ? pool.icap * 2 : 64;
+		while (nc < pool.ilen + n) {
+			nc *= 2;
+		}
 		void **nb = malloc((size_t)nc * sizeof(*nb));
 		if (!nb) {
 			xo_oom();
@@ -1717,56 +1716,106 @@ static void inject_push(void *t) {
 		pool.ihead = 0;
 		pool.icap = nc;
 	}
-	pool.ibuf[(pool.ihead + pool.ilen) % pool.icap] = t;
-	__atomic_store_n(&pool.ilen, pool.ilen + 1, __ATOMIC_SEQ_CST);
+	for (int64_t i = 0; i < n; i++) {
+		pool.ibuf[(pool.ihead + pool.ilen + i) % pool.icap] = items[i];
+	}
+	__atomic_store_n(&pool.ilen, pool.ilen + n, __ATOMIC_SEQ_CST);
 	unlk(&pool.imu);
 }
 
-static void *inject_pop(void) {
+static void inject_push(void *t) { inject_push_batch(&t, 1); }
+
+static int rq_put_slow(xo_runq *q, void *x, uint32_t h, uint32_t t) {
+	void *batch[XO_RUNQ / 2 + 1];
+	uint32_t n = (t - h) / 2;
+	for (uint32_t i = 0; i < n; i++) {
+		batch[i] = __atomic_load_n(&q->slot[(h + i) % XO_RUNQ], __ATOMIC_RELAXED);
+	}
+	if (!__atomic_compare_exchange_n(&q->head, &h, h + n, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+		return 0; // thieves took some: the ring has room again
+	}
+	batch[n] = x;
+	inject_push_batch(batch, n + 1);
+	return 1;
+}
+
+// inject_pop takes a share of the inject queue for w: one item to run,
+// the rest into w's empty ring.
+static void *inject_pop(xo_worker *w) {
 	if (__atomic_load_n(&pool.ilen, __ATOMIC_SEQ_CST) == 0) {
 		return NULL;
 	}
-	void *t = NULL;
+	void *batch[XO_RUNQ / 2];
+	int64_t n = 0;
 	lk(&pool.imu);
 	if (pool.ilen > 0) {
-		t = pool.ibuf[pool.ihead];
-		pool.ihead = (pool.ihead + 1) % pool.icap;
-		__atomic_store_n(&pool.ilen, pool.ilen - 1, __ATOMIC_RELAXED);
+		n = pool.ilen / (pool.ncpu + 1) + 1;
+		if (n > pool.ilen) {
+			n = pool.ilen;
+		}
+		if (n > XO_RUNQ / 2) {
+			n = XO_RUNQ / 2;
+		}
+		if (!w) {
+			n = 1;
+		}
+		for (int64_t i = 0; i < n; i++) {
+			batch[i] = pool.ibuf[pool.ihead];
+			pool.ihead = (pool.ihead + 1) % pool.icap;
+		}
+		__atomic_store_n(&pool.ilen, pool.ilen - n, __ATOMIC_RELAXED);
 	}
 	unlk(&pool.imu);
-	if (t) {
-		STAT(inject);
+	if (n == 0) {
+		return NULL;
 	}
-	return t;
+	STAT(inject);
+	if (n > 1) {
+		rq_put_batch(&w->q, batch + 1, (uint32_t)(n - 1));
+	}
+	return batch[0];
 }
 
 // pool_push queues t: a woken fiber goes to the waking thread's next
-// (the one there before moves to its deque), a new task to its deque,
-// and either from a thread without a record to the inject queue.
+// (the one there before moves to its ring), a new task to its ring, and
+// either from a thread without a record to the inject queue.
 static void pool_push(void *t) {
 	xo_worker *w = w_get();
 	if (!w) {
 		inject_push(t);
+	} else if ((uintptr_t)t & 1) {
+		__atomic_store_n(&w->next_at, mono_ns(), __ATOMIC_RELAXED);
+		void *old = __atomic_exchange_n(&w->next, t, __ATOMIC_SEQ_CST);
+		if (old) {
+			rq_put(&w->q, old);
+		}
 	} else {
-		dq_push(&w->dq, t);
+		rq_put(&w->q, t);
 	}
 	wakep();
 }
 
-// take_local takes w's own work: next, then the bottom of its deque.
+// take_local takes w's own work: next, then the head of its ring.
 static void *take_local(xo_worker *w) {
 	void *t = NULL;
 	if (__atomic_load_n(&w->next, __ATOMIC_RELAXED)) {
 		t = __atomic_exchange_n(&w->next, NULL, __ATOMIC_ACQ_REL);
 	}
 	if (!t) {
-		t = dq_pop(&w->dq);
+		t = rq_get(&w->q);
 	}
 	return t;
 }
 
-// steal_round looks once at every other record, from a random one;
-// next only when last is set.
+// XO_NEXT_GRACE_NS is how long a fiber stays in its waker's next before
+// a thief may take it: the waker usually waits soon after it woke a
+// fiber and then runs it itself, with no thread wake up (decision 0077).
+#define XO_NEXT_GRACE_NS 50000
+
+// steal_round looks once at every other record, from a random one, and
+// takes half of the first ring it finds items in: one to run, the rest
+// into w's (empty) ring; next only when last is set and it waited there
+// longer than the grace.
 static void *steal_round(xo_worker *w, int last) {
 	int n = LOAD(pool.nw);
 	if (n == 0) {
@@ -1781,10 +1830,18 @@ static void *steal_round(xo_worker *w, int last) {
 		if (v == w) {
 			continue;
 		}
-		void *t = dq_steal(&v->dq);
+		void *batch[XO_RUNQ / 2];
+		void *t = NULL;
+		uint32_t got = rq_nonempty(&v->q) ? rq_grab(&v->q, batch) : 0;
+		if (got > 0) {
+			t = batch[got - 1];
+			if (got > 1) {
+				rq_put_batch(&w->q, batch, got - 1);
+			}
+		}
 		if (!t && last) {
 			void *x = __atomic_load_n(&v->next, __ATOMIC_ACQUIRE);
-			if (x && __atomic_compare_exchange_n(&v->next, &x, NULL, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+			if (x && mono_ns() - __atomic_load_n(&v->next_at, __ATOMIC_RELAXED) > XO_NEXT_GRACE_NS && __atomic_compare_exchange_n(&v->next, &x, NULL, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
 				t = x;
 			}
 		}
@@ -1805,7 +1862,7 @@ static int any_work(void) {
 	int n = LOAD(pool.nw);
 	for (int i = 0; i < n; i++) {
 		xo_worker *v = pool.ws[i];
-		if (__atomic_load_n(&v->next, __ATOMIC_SEQ_CST) || dq_nonempty(&v->dq)) {
+		if (__atomic_load_n(&v->next, __ATOMIC_SEQ_CST) || rq_nonempty(&v->q)) {
 			return 1;
 		}
 	}
@@ -1817,7 +1874,7 @@ static int any_work(void) {
 static void *find_work(xo_worker *w, int spinning) {
 	void *t = take_local(w);
 	if (!t) {
-		t = inject_pop();
+		t = inject_pop(w);
 	}
 	if (t || !spinning) {
 		return t;
@@ -1827,7 +1884,7 @@ static void *find_work(xo_worker *w, int spinning) {
 		STAT(spin_round);
 		t = steal_round(w, r == rounds);
 		if (!t) {
-			t = inject_pop();
+			t = inject_pop(w);
 		}
 		if (!t && r < rounds) {
 			for (int i = 0; i < 32; i++) {
@@ -1845,6 +1902,16 @@ XO_NORETURN static void deadlock(void) {
 	exit(70);
 }
 
+// dl_check_locked faults when the program is deadlocked (pool.mu held;
+// see dlk).
+static void dl_check_locked(void) {
+	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
+	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
+	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
+		deadlock();
+	}
+}
+
 static void fiber_park(struct xo_fiber *f);
 static void fiber_parking(struct xo_fiber *f);
 static void run_item(xo_worker *w, void *it);
@@ -1853,7 +1920,7 @@ static void tsan_worker(xo_worker *w);
 // root_worker returns the record of the calling root thread, made on
 // first use: its spawns go to its deque, and while it waits it runs work
 // (decision 0077).
-__attribute__((unused)) static xo_worker *root_worker(void) {
+static xo_worker *root_worker(void) {
 	xo_worker *w = w_get();
 	if (w) {
 		return w;
@@ -1891,14 +1958,13 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	struct xo_fiber *f = fib_get();
 	// a root thread helps once the pool exists (a program that only
 	// sleeps stays single threaded)
-	xo_worker *rw = NULL;
+	xo_worker *rw = f || !__atomic_load_n(&pool.ncpu, __ATOMIC_ACQUIRE) ? NULL : root_worker();
 	xo_park *p = &c->park;
+	if (!counted) {
+		__atomic_fetch_add(&dlk.uncounted, 1, __ATOMIC_SEQ_CST);
+	}
 	lk(&p->mu);
 	if (!p->signaled && !(cancelable && node_canceled(c->node))) {
-		if (counted) {
-			p->counted = 1;
-			dl_add(1);
-		}
 		while (!p->signaled && !(cancelable && node_canceled(c->node))) {
 			if (f) {
 				p->fiber = f;
@@ -1928,20 +1994,31 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 				break;
 			}
 			p->sleeping = 1;
+			p->counted = counted;
 			unlk(&p->mu);
+			if (counted) {
+				// a signal meanwhile cleared counted and took one off
+				lk(&pool.mu);
+				__atomic_fetch_add(&dlk.blocked, 1, __ATOMIC_SEQ_CST);
+				dl_check_locked();
+				unlk(&pool.mu);
+			}
 			STAT(thread_wait);
 			futex_wait(&p->signaled, 0);
 			lk(&p->mu);
 			p->sleeping = 0;
-		}
-		if (p->counted) {
-			// woken by cancellation
-			p->counted = 0;
-			dl_add(-1);
+			if (p->counted) {
+				// not signaled (a spurious wake up)
+				p->counted = 0;
+				__atomic_fetch_sub(&dlk.blocked, 1, __ATOMIC_SEQ_CST);
+			}
 		}
 	}
 	__atomic_store_n(&p->signaled, 0, __ATOMIC_RELAXED);
 	unlk(&p->mu);
+	if (!counted) {
+		__atomic_fetch_sub(&dlk.uncounted, 1, __ATOMIC_SEQ_CST);
+	}
 	if (cancelable) {
 		node_set_waiter(c->node, NULL);
 	}
@@ -2011,9 +2088,12 @@ typedef struct xo_scope {
 	xo_node *parent_node; // the opening context's node before the scope
 	xo_lock mu;           // list, fail, closed, tasks
 	// atomic: two for each task not finished and each queue entry of its
-	// tasks not taken yet, plus 1 while the joiner waits for zero
+	// tasks not taken yet, plus 1 while the joiner waits for zero. Every
+	// worker writes it: padded off the lines the spawning thread uses.
+	char pad0[128];
 	int64_t pending;
 	xo_park *joiner; // the joiner's park (set before it sets bit 0)
+	char pad1[128];
 	struct xo_task *list; // every task, each holding a reference, until the scope closes
 	struct xo_task *fail; // the first task that failed (a reference)
 	int closed;
@@ -2111,12 +2191,13 @@ static void task_free(void *p) {
 	xo_free(t);
 }
 
-// scope_unit_done records that one of s's tasks ended or one of its queue
-// entries was taken; the last one wakes the joiner if it waits. It is
+// scope_units_done records that one of s's tasks ended or one of its
+// queue entries was taken (units 2), or both (4); the last one wakes the
+// joiner if it waits. It is
 // the caller's last touch of s (decision 0077: the counts were under the
 // scope's mutex, which every worker took twice per task).
-static void scope_unit_done(xo_scope *s) {
-	if (__atomic_sub_fetch(&s->pending, 2, __ATOMIC_ACQ_REL) == 1) {
+static void scope_units_done(xo_scope *s, int64_t units) {
+	if (__atomic_sub_fetch(&s->pending, units, __ATOMIC_ACQ_REL) == 1) {
 		// the joiner waits for this signal, so s is still there
 		park_signal(s->joiner);
 	}
@@ -2131,7 +2212,7 @@ static int claim_task(xo_task *t) {
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
 // or a thread that helps).
-static void run_claimed(xo_task *t) {
+static void run_claimed(xo_task *t, int64_t units) {
 	xo_ctx c = {.node = &t->node};
 	park_init(&c.park);
 	xo_ctx *saved = cur_get();
@@ -2150,20 +2231,20 @@ static void run_claimed(xo_task *t) {
 	wl_wake(&t->waiters);
 	unlk(&t->mu);
 	// the last touch of t and s: the scope's join may free them after
-	scope_unit_done(s);
+	scope_units_done(s, units);
 }
 
 // run_task runs t on this thread if nobody has started it.
 static void run_task(xo_task *t) {
 	if (claim_task(t)) {
-		run_claimed(t);
+		run_claimed(t, 2); // its queue entry is still queued
 	}
 }
 
 // dequeued records that a worker took t's queue entry (and ran it, or
 // found it run by a helper). The scope's join waits for this too, so no
 // queue holds a task the scope frees.
-static void dequeued(xo_task *t) { scope_unit_done(t->scope); }
+static void dequeued(xo_task *t) { scope_units_done(t->scope, 2); }
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2408,8 +2489,8 @@ static void fiber_free(xo_worker *w, xo_fiber *f) {
 // fiber_main runs on the fiber: the task, then back to the scheduler for
 // good.
 static void fiber_main(xo_fiber *f) {
-	run_claimed(f->task);
-	dl_add(-DL_LIVE);
+	// the fiber's task came from a queue: its entry and its run end here
+	run_claimed(f->task, 4);
 	f->done = 1;
 	xo_worker *w = w_get();
 	TSAN_SWITCH(w->tsan);
@@ -2471,14 +2552,12 @@ static void run_item(xo_worker *w, void *it) {
 	}
 	xo_task *t = it;
 	if (!claim_task(t)) {
-		// run by a thread that helped: the entry was live until now
+		// run by a thread that helped
 		dequeued(t);
-		dl_add(-DL_LIVE);
 		return;
 	}
-	// claimed: the scope waits for it to finish, so the queue entry can
-	// be counted taken before it runs
-	dequeued(t);
+	// claimed: the entry is counted taken when the task ends (one atomic
+	// on the scope instead of two)
 	run_fiber(w, fiber_new(w, t));
 }
 
@@ -2491,6 +2570,7 @@ static int go_idle(xo_worker *w) {
 	w->idle_next = pool.idle;
 	pool.idle = w;
 	__atomic_fetch_add(&pool.nidle, 1, __ATOMIC_SEQ_CST);
+	dl_check_locked();
 	unlk(&pool.mu);
 	// a push before the count went up was not seen by its wakep: look
 	if (any_work()) {
@@ -2562,6 +2642,9 @@ static void *worker_main(void *arg) {
 xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t flags, int64_t site, const char *loc, int64_t n) {
 	pthread_once(&pool.once, pool_init);
 	STAT(spawn);
+	if (!w_get()) {
+		root_worker();
+	}
 	xo_task *t = xo_alloc(sizeof(xo_task));
 	memset(t, 0, sizeof *t);
 	h_init(t, task_free);
@@ -2581,10 +2664,8 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	}
 	t->scope = s;
 	// counted before a helper can find it in the list: the task runs and
-	// its queue entry is taken (two units of two), and it is live
-	// (decision 0077)
+	// its queue entry is taken (two units of two)
 	__atomic_fetch_add(&s->pending, 4, __ATOMIC_ACQ_REL);
-	dl_add(DL_LIVE);
 	node_link(&t->node, s->tasks);
 	t->snext = s->list;
 	s->list = t;
@@ -3350,6 +3431,9 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 
 typedef struct {
 	xo_hdr h;
+	// the value on a cache line apart from the count, which every closure
+	// that captures the Atomic retains and releases (decision 0077)
+	char pad[128 - sizeof(xo_hdr)];
 	int64_t v;
 } xo_atomic;
 
