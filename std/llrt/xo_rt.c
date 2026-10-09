@@ -1047,8 +1047,12 @@ XO_NORETURN static void fault_at(const char *msg, const char *loc, int64_t n) { 
 static int rtstats = -1; // -1 not read yet
 static struct {
 	int64_t spawn, steal, inject, wake, idle_sleep, spin_round, fiber_park, fiber_new, thread_wait, thread_wake, lock_slow, spin_yield;
+	// sockets: read and write system calls, those that would block
+	// (EAGAIN), poller returns, readiness events, and waiters they woke
+	int64_t net_read, net_write, net_again, poll_return, poll_event, poll_wake;
 } st;
-static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield"};
+static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield",
+                                       "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake"};
 
 static void stats_init(void) {
 	const char *e = getenv("XO_RTSTATS");
@@ -3597,11 +3601,24 @@ static struct {
 	int sigs; // signals not handled yet (atomic)
 } ev = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER};
 
-__attribute__((noinline)) static int64_t x_ret(int64_t r) { return r < 0 ? -(int64_t)errno : r; }
+__attribute__((noinline)) static int64_t x_ret(int64_t r) {
+	if (r < 0) {
+		int e = errno;
+		if (e == EAGAIN || e == EWOULDBLOCK) {
+			STAT(net_again);
+		}
+		return -(int64_t)e;
+	}
+	return r;
+}
 
-__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) { return x_ret(read(fd, b, n)); }
+__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
+	STAT(net_read);
+	return x_ret(read(fd, b, n));
+}
 
 __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
+	STAT(net_write);
 #ifdef MSG_NOSIGNAL
 	return x_ret(send(fd, b, n, MSG_NOSIGNAL));
 #else
@@ -3772,9 +3789,11 @@ static int64_t deadline(int64_t d) {
 // Socket descriptors
 
 static void pd_ready(xo_pd *pd, int mode) {
+	STAT(poll_event);
 	pthread_mutex_lock(&pd->mu);
 	if (mode & 1) {
 		if (pd->rwait) {
+			STAT(poll_wake);
 			park_signal(pd->rwait);
 			pd->rwait = NULL;
 		} else {
@@ -3783,6 +3802,7 @@ static void pd_ready(xo_pd *pd, int mode) {
 	}
 	if (mode & 2) {
 		if (pd->wwait) {
+			STAT(poll_wake);
 			park_signal(pd->wwait);
 			pd->wwait = NULL;
 		} else {
@@ -3956,6 +3976,33 @@ static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, w
 
 static void stop_signal(void);
 
+#ifdef XO_KQUEUE
+typedef struct kevent xo_event;
+#else
+typedef struct epoll_event xo_event;
+#endif
+
+// ev_dispatch hands the readiness of socket event e to its descriptor's
+// waiters: 0 when e is the self pipe's.
+static int ev_dispatch(xo_event *e) {
+#ifdef XO_KQUEUE
+	xo_pd *pd = e->udata;
+	int mode = e->filter == EVFILT_READ ? 1 : e->filter == EVFILT_WRITE ? 2 : 0;
+	if (e->flags & EV_ERROR) {
+		mode = 3;
+	}
+#else
+	xo_pd *pd = e->data.ptr;
+	uint32_t f = e->events;
+	int mode = ((f & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) ? 1 : 0) | ((f & (EPOLLOUT | EPOLLHUP | EPOLLERR)) ? 2 : 0);
+#endif
+	if (!pd) {
+		return 0;
+	}
+	pd_ready(pd, mode);
+	return 1;
+}
+
 static void *poller_main(void *arg) {
 	(void)arg;
 #ifdef XO_KQUEUE
@@ -3987,27 +4034,17 @@ static void *poller_main(void *arg) {
 #ifdef XO_KQUEUE
 		struct timespec ts = {.tv_sec = wait / 1000000000, .tv_nsec = wait % 1000000000};
 		int n = kevent(ev.poll, NULL, 0, evs, 64, wait < 0 ? NULL : &ts);
+		STAT(poll_return);
 #else
 		int ms = wait < 0 ? -1 : (int)((wait + 999999) / 1000000);
 		if (wait > (int64_t)1 << 40) {
 			ms = 1 << 30;
 		}
 		int n = epoll_wait(ev.poll, evs, 64, ms);
+		STAT(poll_return);
 #endif
 		for (int i = 0; i < n; i++) {
-#ifdef XO_KQUEUE
-			xo_pd *pd = evs[i].udata;
-			int mode = evs[i].filter == EVFILT_READ ? 1 : evs[i].filter == EVFILT_WRITE ? 2 : 0;
-			if (evs[i].flags & EV_ERROR) {
-				mode = 3;
-			}
-#else
-			xo_pd *pd = evs[i].data.ptr;
-			uint32_t e = evs[i].events;
-			int mode = ((e & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) ? 1 : 0) | ((e & (EPOLLOUT | EPOLLHUP | EPOLLERR)) ? 2 : 0);
-#endif
-			if (pd) {
-				pd_ready(pd, mode);
+			if (ev_dispatch(&evs[i])) {
 				continue;
 			}
 			char b[64];
