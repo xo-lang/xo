@@ -168,6 +168,11 @@ func (m *Module) verifyRC(f *Func) []string {
 						bad(b, "%s can fault while %s is held %d times (no landing releases it)", v.Name(), l, n)
 					}
 				}
+				if keepsOperands(v) {
+					for _, l := range consumedLeaves(r, v) {
+						bad(b, "%s can fault before it takes %s (no landing releases it)", v.Name(), l)
+					}
+				}
 			}
 			if isRoot(v) {
 				for _, l := range r.leaves(v) {
@@ -199,6 +204,12 @@ func (m *Module) verifyRC(f *Func) []string {
 						for l := range est {
 							if l.root == site || (site == nil && l.root.Op == OpParam && l.root.Block == b) {
 								delete(est, l)
+							}
+						}
+						if site != nil && keepsOperands(site) {
+							// it faulted before taking its operands
+							for _, l := range consumedLeaves(r, site) {
+								est[l]++
 							}
 						}
 					}

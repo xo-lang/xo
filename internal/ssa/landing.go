@@ -1,6 +1,9 @@
 package ssa
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 )
@@ -347,6 +350,26 @@ func landingSite(b *Block) (w, u *Value) {
 	return nil, u
 }
 
+// keepsOperands reports an inline operation that faults before it
+// consumes its operands (`list.set` checks the index first): a landing
+// releases them. Calls hand theirs to the callee (or the runtime), which
+// releases what it holds when it faults.
+func keepsOperands(w *Value) bool {
+	name, _ := w.Aux.(string)
+	return w.Op == OpCall && name == "list.set" && w.Pos != ""
+}
+
+// consumedLeaves lists the leaves w consumes that the function owns.
+func consumedLeaves(r *rcInfo, w *Value) []leaf {
+	var out []leaf
+	for _, u := range r.uses(w) {
+		if u.m == mConsume && r.tracked(u.l) && r.kind(u.l.root) == rkOwned {
+			out = append(out, u.l)
+		}
+	}
+	return out
+}
+
 // isRCOp reports the counting instructions InsertRC places after an
 // operation, which move into the check's successors.
 func isRCOp(v *Value) bool {
@@ -361,11 +384,29 @@ func isRCOp(v *Value) bool {
 // check into the check's successors: on the cleanup path it runs from the
 // landing pad, except what concerns the site's own results (they do not
 // exist there). A site followed by anything else loses its landing.
-func (f *Func) sinkLandings() {
+func (f *Func) sinkLandings(r *rcInfo) {
 	for _, b := range append([]*Block(nil), f.Blocks...) {
 		w, u := landingSite(b)
 		if w == nil || w.Block != b {
 			continue
+		}
+		if keepsOperands(w) {
+			// the operation faults before it takes its operands: on the
+			// cleanup path the function still owns them
+			t := b.Term()
+			var code []*Value
+			for _, l := range consumedLeaves(r, w) {
+				v := l.root
+				if l.path != "" {
+					for _, s := range strings.Split(l.path[1:], ".") {
+						i, _ := strconv.Atoi(s)
+						v = f.newValue(OpField, fieldType(v.Type, i), []*Value{v}, i)
+						code = append(code, v)
+					}
+				}
+				code = append(code, f.newValue(OpRelease, nil, []*Value{v}, nil))
+			}
+			f.edgePrepend(t.Succs[0], code)
 		}
 		wi, ui := -1, -1
 		for i, v := range b.Instrs {

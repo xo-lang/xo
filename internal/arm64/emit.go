@@ -898,7 +898,15 @@ func (s *fstate) cfiFrame(b *strings.Builder, fr *frameInfo) {
 		return
 	}
 	fmt.Fprintf(b, "\t.cfi_def_cfa w29, %d\n", fr.size-fr.rec)
-	fmt.Fprintf(b, "\t.cfi_offset w30, %d\n\t.cfi_offset w29, %d\n", fr.rec+8-fr.size, fr.rec-fr.size)
+	if fr.size-fr.rec == 16 {
+		fmt.Fprintf(b, "\t.cfi_offset w30, %d\n\t.cfi_offset w29, %d\n", fr.rec+8-fr.size, fr.rec-fr.size)
+	} else {
+		// the frame record is not at the top of the frame: the Darwin
+		// assembler's compact unwind encoding (frame mode) ignores the
+		// CFA offset and would assume 16; with the frame pointer's rule
+		// first it keeps the DWARF rules (gotchas/arm64-compact-unwind-cfa.md)
+		fmt.Fprintf(b, "\t.cfi_offset w29, %d\n\t.cfi_offset w30, %d\n", fr.rec-fr.size, fr.rec+8-fr.size)
+	}
 	at := func(r, off int) {
 		name := regName(r, false)
 		if r < fpBase {

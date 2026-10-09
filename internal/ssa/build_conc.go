@@ -611,7 +611,8 @@ func (s *fn) spawn(x *ast.CallExpr, h *Value, background bool, ret bool) *Value 
 	intT := m.Builtin(KInt)
 	run := s.add(OpFuncAddr, intT, b.runner(ft, tt))
 	drop := s.add(OpFuncAddr, intT, b.dropList(rt))
-	t := s.rt("task_spawn", tt, h, fl, run, drop, s.cint(flags), s.cint(site), s.loc(x))
+	fdrop := s.add(OpFuncAddr, intT, b.dropList(ft))
+	t := s.rt("task_spawn", tt, h, fl, run, drop, fdrop, s.cint(flags), s.cint(site), s.loc(x))
 	if !ret {
 		return s.unit()
 	}

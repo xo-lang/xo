@@ -119,103 +119,105 @@ b0(v0: Chan[Int]):
   share v4
   v6: Int = funcaddr xo.run[Task[Int, E]]
   v7: Int = funcaddr xo.droplist[Result[Int, E]]
-  v8: Int = const 0
+  v8: Int = funcaddr xo.droplist[fn() -> Result[Int, E]]
   v9: Int = const 0
-  v10: Str = const "main.xo:26"
-  v11: Task[Int, E] = call rt.task_spawn, v1, v4, v6, v7, v8, v9, v10 lands v12
-  v12: Bool = call rt.landing
-  br v12, b1(), b2()
+  v10: Int = const 0
+  v11: Str = const "main.xo:26"
+  v12: Task[Int, E] = call rt.task_spawn, v1, v4, v6, v7, v8, v9, v10, v11 lands v13
+  v13: Bool = call rt.landing
+  br v13, b1(), b2()
 b1:  ; preds b0
   release v0
   jump b3()
 b2:  ; preds b0
-  release v11
-  v17: fn() -> Int = closure run.fn3, v0
-  v18: List[fn() -> Int] = call list.new
-  v19: List[fn() -> Int] = call list.push, v18, v17
-  share v19
-  v21: Int = funcaddr xo.run[Task[Int, ()]]
-  v22: Int = funcaddr xo.droplist[Int]
-  v23: Int = const 2
-  v24: Int = const -1
-  v25: Str = const "main.xo:27"
-  v26: Task[Int, ()] = call rt.task_spawn, v1, v19, v21, v22, v23, v24, v25 lands v27
-  v27: Bool = call rt.landing
-  br v27, b19(), b18()
+  release v12
+  v18: fn() -> Int = closure run.fn3, v0
+  v19: List[fn() -> Int] = call list.new
+  v20: List[fn() -> Int] = call list.push, v19, v18
+  share v20
+  v22: Int = funcaddr xo.run[Task[Int, ()]]
+  v23: Int = funcaddr xo.droplist[Int]
+  v24: Int = funcaddr xo.droplist[fn() -> Int]
+  v25: Int = const 2
+  v26: Int = const -1
+  v27: Str = const "main.xo:27"
+  v28: Task[Int, ()] = call rt.task_spawn, v1, v20, v22, v23, v24, v25, v26, v27 lands v29
+  v29: Bool = call rt.landing
+  br v29, b19(), b18()
 b3:  ; preds b1, b4
-  v29: Int = const 2
-  v30: Int = call rt.scope_close, v1, v29
-  v31: Int = const 1
-  v32: Bool = eq v30, v31
-  br v32, b11(), b12()
+  v31: Int = const 2
+  v32: Int = call rt.scope_close, v1, v31
+  v33: Int = const 1
+  v34: Bool = eq v32, v33
+  br v34, b11(), b12()
 b4:  ; preds b18
-  release v26
+  release v28
   jump b3()
 b5:  ; preds b18
-  release v26
-  v37: Int = const 0
-  v38: Int = call list.index, v84, v37
-  release v84
-  v40: Int = const 0
-  v41: Int = call rt.scope_close, v1, v40
-  v42: Int = const 1
-  v43: Bool = eq v41, v42
-  br v43, b6(), b7()
+  release v28
+  v39: Int = const 0
+  v40: Int = call list.index, v86, v39
+  release v86
+  v42: Int = const 0
+  v43: Int = call rt.scope_close, v1, v42
+  v44: Int = const 1
+  v45: Bool = eq v43, v44
+  br v45, b6(), b7()
 b6:  ; preds b5
   jump b8()
 b7:  ; preds b5
-  v46: Int = const 3
-  v47: Bool = eq v41, v46
-  br v47, b9(), b10()
+  v48: Int = const 3
+  v49: Bool = eq v43, v48
+  br v49, b9(), b10()
 b8:  ; preds b6, b11
-  v49: Int = call rt.scope_fail_site, v1
-  v50: Int = const 0
-  v51: Bool = eq v49, v50
-  br v51, b16(), b17()
+  v51: Int = call rt.scope_fail_site, v1
+  v52: Int = const 0
+  v53: Bool = eq v51, v52
+  br v53, b16(), b17()
 b9:  ; preds b7
-  v53: () = call rt.fault_rethrow, v1 lands v54
-  v54: Bool = call rt.landing
-  br v54, b21(), b20()
+  v55: () = call rt.fault_rethrow, v1 lands v56
+  v56: Bool = call rt.landing
+  br v56, b21(), b20()
 b10:  ; preds b7
   release v1
-  v57: Result[Int, E] = variant 0, v38
-  ret v57
+  v59: Result[Int, E] = variant 0, v40
+  ret v59
 b11:  ; preds b3
   jump b8()
 b12:  ; preds b3
-  v60: Int = const 3
-  v61: Bool = eq v30, v60
-  br v61, b13(), b14()
+  v62: Int = const 3
+  v63: Bool = eq v32, v62
+  br v63, b13(), b14()
 b13:  ; preds b12
-  v63: () = call rt.fault_rethrow, v1 lands v64
-  v64: Bool = call rt.landing
-  br v64, b23(), b22()
+  v65: () = call rt.fault_rethrow, v1 lands v66
+  v66: Bool = call rt.landing
+  br v66, b23(), b22()
 b14:  ; preds b12
   release v1
   jump b15()
 b15:  ; preds b14, b19, b21, b23
-  v68: () = call rt.fault_continue
-  v69: Int = const 0
-  v70: Result[Int, E] = variant 0, v69
-  ret v70
+  v70: () = call rt.fault_continue
+  v71: Int = const 0
+  v72: Result[Int, E] = variant 0, v71
+  ret v72
 b16:  ; preds b8
-  v72: Task[Int, E] = call rt.scope_fail_task, v1
+  v74: Task[Int, E] = call rt.scope_fail_task, v1
   release v1
-  v74: List[Result[Int, E]] = call rt.task_result, v72
-  release v72
-  v76: Int = const 0
-  v77: Result[Int, E] = call list.index, v74, v76
+  v76: List[Result[Int, E]] = call rt.task_result, v74
   release v74
-  v79: E = payload 1.0, v77
-  v80: Result[Int, E] = variant 1, v79
-  ret v80
+  v78: Int = const 0
+  v79: Result[Int, E] = call list.index, v76, v78
+  release v76
+  v81: E = payload 1.0, v79
+  v82: Result[Int, E] = variant 1, v81
+  ret v82
 b17:  ; preds b8
   unreachable
 b18:  ; preds b2
-  v83: Str = const "main.xo:28"
-  v84: List[Int] = call rt.task_await, v26, v83 lands v85
-  v85: Bool = call rt.unwinding
-  br v85, b4(), b5()
+  v85: Str = const "main.xo:28"
+  v86: List[Int] = call rt.task_await, v28, v85 lands v87
+  v87: Bool = call rt.unwinding
+  br v87, b4(), b5()
 b19:  ; preds b2
   release v1
   jump b15()
@@ -274,6 +276,13 @@ b0(v0: List[Result[Int, E]]):
   ret v2
 }
 
+func xo.droplist[fn() -> Result[Int, E]](v0: List[fn() -> Result[Int, E]]) -> () {
+b0(v0: List[fn() -> Result[Int, E]]):
+  release v0
+  v2: () = tuple
+  ret v2
+}
+
 func run.fn3(borrow v0: fn() -> Int) -> Int captures (Chan[Int]) {
 b0(v0: fn() -> Int):
   v1: Chan[Int] = capture 0, v0
@@ -315,6 +324,13 @@ b2:  ; preds b0
   release v1
   v21: () = tuple
   ret v21
+}
+
+func xo.droplist[fn() -> Int](v0: List[fn() -> Int]) -> () {
+b0(v0: List[fn() -> Int]):
+  release v0
+  v2: () = tuple
+  ret v2
 }
 
 func fails(v0: Int) -> Result[Int, E] {

@@ -215,7 +215,7 @@ b2:  ; preds b0
 b3:  ; preds b0
   v12: () = tuple
   jump b1()
-b4(v14: Int, v15: Int, v16: List[Rec]):  ; preds b35, b14
+b4(v14: Int, v15: Int, v16: List[Rec]):  ; preds b37, b14
   v17: Bool = le v14, v15
   br v17, b6(), b5()
 b5:  ; preds b4
@@ -233,7 +233,7 @@ b7(v26: Int):  ; preds b6, b21
   br v28, b20(), b19()
 b8:  ; preds b19
   jump b11(v15)
-b9:  ; preds b18, b20, b22, b24, b26, b28, b30, b32, b34, b36, b38, b40
+b9:  ; preds b18, b20, b22, b24, b26, b28, b30, b32, b34, b36, b38, b40, b42, b44
   v31: () = call rt.fault_continue
   v32: () = tuple
   v33: List[Rec] = call rt.rl_empty
@@ -255,7 +255,7 @@ b13:  ; preds b23
   v46: Int = sub v39, v45 @ main.xo:28:7 lands v47
   v47: Bool = call rt.landing
   br v47, b26(), b25()
-b14(v49: Int, v50: Int, v51: List[Rec]):  ; preds b39, b16
+b14(v49: Int, v50: Int, v51: List[Rec]):  ; preds b43, b16
   v52: () = tuple
   jump b4(v49, v50, v51)
 b15:  ; preds b12
@@ -274,7 +274,7 @@ b18:  ; preds b1
   release v3
   jump b9()
 b19:  ; preds b7
-  v65: Bool = call less, v27, v99
+  v65: Bool = call less, v27, v96
   br v65, b10(), b8()
 b20:  ; preds b7
   release v16
@@ -286,7 +286,7 @@ b22:  ; preds b10
   release v16
   jump b9()
 b23:  ; preds b11
-  v73: Bool = call less, v99, v40
+  v73: Bool = call less, v96, v40
   br v73, b13(), b12()
 b24:  ; preds b11
   release v16
@@ -312,40 +312,52 @@ b30:  ; preds b17
   release v3
   jump b9()
 b31:  ; preds b27
-  v91: List[Rec] = call list.set, v16, v26, v81 @ main.xo:32:7
-  v92: List[Rec] = call list.set, v91, v39, v54 @ main.xo:33:7
-  v93: Int = const 1
-  v94: Int = add v26, v93 @ main.xo:34:7 lands v95
-  v95: Bool = call rt.landing
-  br v95, b38(), b37()
+  v91: List[Rec] = call list.set, v16, v26, v81 @ main.xo:32:7 lands v92
+  v92: Bool = call rt.landing
+  br v92, b36(), b35()
 b32:  ; preds b27
   release v16
   jump b9()
 b33:  ; preds b29
-  v99: Rec = call list.index, v3, v86 @ main.xo:20:15 lands v100
-  v100: Bool = call rt.landing
-  br v100, b36(), b35()
+  v96: Rec = call list.index, v3, v86 @ main.xo:20:15 lands v97
+  v97: Bool = call rt.landing
+  br v97, b38(), b37()
 b34:  ; preds b29
   release v3
   jump b9()
-b35:  ; preds b33
+b35:  ; preds b31
+  v101: List[Rec] = call list.set, v91, v39, v54 @ main.xo:33:7 lands v102
+  v102: Bool = call rt.landing
+  br v102, b40(), b39()
+b36:  ; preds b31
+  release v16
+  jump b9()
+b37:  ; preds b33
   jump b4(v1, v2, v3)
-b36:  ; preds b33
+b38:  ; preds b33
   release v3
   jump b9()
-b37:  ; preds b31
-  v107: Int = const 1
-  v108: Int = sub v39, v107 @ main.xo:35:7 lands v109
-  v109: Bool = call rt.landing
-  br v109, b40(), b39()
-b38:  ; preds b31
-  release v92
+b39:  ; preds b35
+  v109: Int = const 1
+  v110: Int = add v26, v109 @ main.xo:34:7 lands v111
+  v111: Bool = call rt.landing
+  br v111, b42(), b41()
+b40:  ; preds b35
+  release v91
   jump b9()
-b39:  ; preds b37
-  v113: () = tuple
-  jump b14(v94, v108, v92)
-b40:  ; preds b37
-  release v92
+b41:  ; preds b39
+  v115: Int = const 1
+  v116: Int = sub v39, v115 @ main.xo:35:7 lands v117
+  v117: Bool = call rt.landing
+  br v117, b44(), b43()
+b42:  ; preds b39
+  release v101
+  jump b9()
+b43:  ; preds b41
+  v121: () = tuple
+  jump b14(v110, v116, v101)
+b44:  ; preds b41
+  release v101
   jump b9()
 }
 

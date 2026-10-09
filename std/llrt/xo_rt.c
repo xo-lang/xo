@@ -3045,8 +3045,10 @@ static void *worker_main(void *arg) {
 // background, bit 1: its handle is bound and awaited, so its error does
 // not fail the scope). fl is the closure in a list of one (consumed);
 // run is the entry function that calls it, drop the one that releases
-// its result list. site tells the scope which spawn failed.
-xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t flags, int64_t site, const char *loc, int64_t n) {
+// its result list, fdrop the one that releases fl (a spawn on a scope
+// that has ended faults and gives it back, decision 0085). site tells the
+// scope which spawn failed.
+xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, const char *loc, int64_t n) {
 	pthread_once(&pool.once, pool_init);
 	STAT(spawn);
 	if (!w_get()) {
@@ -3067,6 +3069,8 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	lk(&s->mu);
 	if (s->closed) {
 		unlk(&s->mu);
+		xo_free(t);
+		list_release(fl, (xo_ldrop)fdrop);
 		fault_at("a task was started on a scope that has ended", loc, n);
 	}
 	t->scope = s;
@@ -3448,6 +3452,7 @@ void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
 	lk(&c->mu);
 	if (c->closed) {
 		unlk(&c->mu);
+		list_release(l, c->drop); // the fault unwinds the sender (decision 0085)
 		fault_at("send on a closed channel", loc, n);
 	}
 	if (try_send_locked(c, l)) {

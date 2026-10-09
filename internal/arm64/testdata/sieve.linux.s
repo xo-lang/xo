@@ -10,8 +10,8 @@ xo_f_main:
 	mov x29, sp
 	stp x20, x19, [sp, #24]
 	.cfi_def_cfa w29, 48
-	.cfi_offset w30, -40
 	.cfi_offset w29, -48
+	.cfi_offset w30, -40
 	.cfi_offset w20, -24
 	.cfi_offset w19, -16
 .Lf1_b0:
@@ -71,8 +71,8 @@ xo_f_sieve:
 	stp x22, x21, [sp, #32]
 	stp x24, x23, [sp, #48]
 	.cfi_def_cfa w29, 64
-	.cfi_offset w30, -56
 	.cfi_offset w29, -64
+	.cfi_offset w30, -56
 	.cfi_offset w20, -48
 	.cfi_offset w19, -40
 	.cfi_offset w22, -32
@@ -115,7 +115,7 @@ xo_f_sieve:
 	mov x21, #0
 .Lf2_b12:
 	cmp x11, x12
-	b.ge .Lf2_b30
+	b.ge .Lf2_b32
 .Lf2_b13:
 	cmp x11, x19
 	b.hs .Lf2_fault3
@@ -124,11 +124,11 @@ xo_f_sieve:
 	ldrb w9, [x9, #24]
 .Lf2_b15:
 	cbnz x9, .Lf2_b16
-.Lf2_b29:
+.Lf2_b31:
 	add x11, x11, #1
 	cmp x11, x12
 	b.lt .Lf2_b13
-	b .Lf2_b30
+	b .Lf2_b32
 .Lf2_b16:
 	adds x21, x21, #1
 	b.vs .Lf2_fault4
@@ -143,19 +143,20 @@ xo_f_sieve:
 	add x11, x11, #1
 	cmp x11, x12
 	b.lt .Lf2_b13
-	b .Lf2_b30
+	b .Lf2_b32
 .Lf2_b22:
 	cmp x10, x19
 	b.hs .Lf2_fault6
 .Lf2_b22_c:
 	add x9, x20, x10
 	strb wzr, [x9, #24]
+.Lf2_b24:
 	adds x10, x10, x11
 	b.vs .Lf2_fault7
 	cmp x10, x22
 	b.le .Lf2_b22
-	b .Lf2_b29
-.Lf2_b30:
+	b .Lf2_b31
+.Lf2_b32:
 	mov x0, x20
 	bl .Lxo_drop2
 	mov x0, x21
@@ -167,7 +168,7 @@ xo_f_sieve:
 .Lf2_b1:
 	mov x0, x20
 	bl .Lxo_drop2
-	b .Lf2_b24
+	b .Lf2_b26
 .Lf2_b5:
 	mov x0, x20
 	mov x1, #1
@@ -177,23 +178,27 @@ xo_f_sieve:
 .Lf2_b10:
 	mov x0, x20
 	bl .Lxo_drop2
-	b .Lf2_b24
+	b .Lf2_b26
 .Lf2_b14:
 	mov x0, x20
 	bl .Lxo_drop2
-	b .Lf2_b24
+	b .Lf2_b26
 .Lf2_b17:
 	mov x0, x20
 	bl .Lxo_drop2
-	b .Lf2_b24
+	b .Lf2_b26
 .Lf2_b19:
 	mov x0, x20
 	bl .Lxo_drop2
-	b .Lf2_b24
+	b .Lf2_b26
 .Lf2_b23:
 	mov x0, x20
 	bl .Lxo_drop2
-.Lf2_b24:
+	b .Lf2_b26
+.Lf2_b25:
+	mov x0, x20
+	bl .Lxo_drop2
+.Lf2_b26:
 	bl xo_fault_continue
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
@@ -257,7 +262,9 @@ xo_f_sieve:
 	mov x1, x19
 	adrp x2, .Lxo_loc6
 	add x2, x2, :lo12:.Lxo_loc6
+.Lf2_cs6a:
 	bl xo_fault_index
+.Lf2_cs6b:
 	brk #1
 .Lf2_fault7:
 	sub x15, x10, x11
@@ -266,9 +273,9 @@ xo_f_sieve:
 	mov x1, #43
 	adrp x3, .Lxo_loc7
 	add x3, x3, :lo12:.Lxo_loc7
-.Lf2_cs6a:
+.Lf2_cs7a:
 	bl xo_fault_overflow
-.Lf2_cs6b:
+.Lf2_cs7b:
 	brk #1
 	.cfi_endproc
 
@@ -368,6 +375,10 @@ xo_entry:
 	.uleb128 .Lf2_cs6a-.Lf2_begin
 	.uleb128 .Lf2_cs6b-.Lf2_cs6a
 	.uleb128 .Lf2_b23-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs7a-.Lf2_begin
+	.uleb128 .Lf2_cs7b-.Lf2_cs7a
+	.uleb128 .Lf2_b25-.Lf2_begin
 	.byte 0
 .Lf2_cste:
 	.hidden DW.ref.xo_personality

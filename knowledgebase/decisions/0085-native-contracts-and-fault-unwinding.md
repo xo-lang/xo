@@ -10,7 +10,7 @@ call site tables in emit.go, `noCaller` in regalloc.go), the "Fault
 unwinding" section of `std/llrt/xo_rt.c`, `task.isolate` natively, and
 `dispatch` of `std/native/http.xo`. Goldens (Go, LLVM, and arm64
 compared, leak check where the program goes on, ThreadSanitizer for the
-task ones): `internal/llvm/testdata/golden/contract_*`, `fault_unwind`,
+task ones): `internal/llvm/testdata/golden/contract_*`, `fault_audit`, `fault_unwind`,
 `fault_exit`, `fault_tasks`, `fault_task_exit`, `http_fault`.
 
 ## Context
@@ -115,17 +115,43 @@ and a fault in an HTTP handler killed the server instead of answering
    landing pad never resumes it). AddressSanitizer learns the fiber
    switches (gotchas/asan-fiber-no-return.md).
 
+5. **Audit of what the Go backend checks** (2026-10-09; golden
+   `fault_audit` isolates one of each and compares the three backends,
+   leak check 0):
+
+   | Check | Native |
+   |---|---|
+   | Int `+ - *`, unary `-`, `abs`, `/ %` by zero, minimum `/ -1` | same message and location |
+   | `<<` overflow, shift amount out of range | same |
+   | sized integer arithmetic and conversions (`Int8(x)`, UInt8 `+`), `Rune(n)` | same (C runtime) |
+   | `Int(f)` out of range or NaN | same |
+   | List index and `set`, Bytes index, Str/Bytes/List slicing | same; a faulting `list.set` releases its operands |
+   | `Map.get_or_fault`, `Option.or_fault` | same |
+   | `Result.or_fault` | was XO1201 (planned); now lowered (`msg: <error>`) |
+   | `requires`, `ensures`, invariants, `fault(...)` | same (point 1) |
+   | XO-F001 deadlock, XO-F004 re-entrant Mutex, XO-F005 slow defer, Atomic overflow, send on closed channel, spawn on an ended scope, await of a canceled task | same message; the runtime releases what the call took before raising |
+   | holes `???` (`--holes`) | rejected as before (native builds take no `--holes`) |
+   | contract fuzzing in `xo test` (core 9.1) | was silently missing; native test binaries now list each `contract fuzz:` test as skipped (planned) |
+   | property tests | XO1201 (planned), as before |
+   | stack overflow | not a fault on either: Go's runtime aborts, native gets SIGSEGV on the guard page |
+   | crash bundles, fault frames | not written natively (core 8, 11.2) |
+
 ## Consequences
 - The goldens above print the same on the Go, LLVM, and arm64 backends;
   where the program goes on (`task.isolate`, the server) the leak check
   counts no allocation live, also under ThreadSanitizer with 1, 2, and N
   workers.
-- Benchmarks (2026-10-09, bench/perf/llvm/native.sh 11 runs and
-  bench/perf/conc 9 runs, against 0d69fab): LLVM unchanged; arm64 within
-  noise except sort 216.9 -> 221.1 ms (+1.9%: the `var` list parameter
-  lives in a callee saved register for its pads) and strings +1.4%;
-  conc workloads within noise. While measuring, a thread local layout
-  effect moved fanout by 7% (gotchas/tls-layout-moves-fanout.md).
+- Benchmarks (2026-10-09, bench/perf/llvm/native.sh 15 runs and
+  bench/perf/conc 9 runs, against 0d69fab, best of runs): LLVM within
+  noise; arm64 sort 221.3 -> 225.8 ms (+2.0%), interp 46.3 -> 47.3
+  (+2.2%), nbody +1.4%, fib, sieve, collatz, strings within noise (the
+  list a function owns lives in a callee saved register for its pads,
+  with one more register saved; the hot loops' instructions are the
+  same); conc workloads within noise. While measuring, a thread local
+  layout effect moved fanout by 7% (gotchas/tls-layout-moves-fanout.md).
+  Next experiment for the 2%: let a pad reload what it releases from a
+  spill slot written at the function's entry instead of pinning a callee
+  saved register for the whole function.
 - `Mutex.with` closures with a `var` heap value that can fault after
   changing it copy the value first (the old value must survive for the
   mutex); before, they updated it in place.

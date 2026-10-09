@@ -100,25 +100,85 @@ func (g *gen) generatable(t check.Type, seen map[*check.TypeObj]bool) bool {
 	return false
 }
 
+// ContractFuzzTargets lists the functions of the root modules of res
+// (outside test files) that `xo test` fuzzes (core 9.1), in declaration
+// order, with the name of their test (`contract fuzz: mod.f`): the native
+// test binaries do not fuzz yet and report them as skipped (decision
+// 0085).
+func ContractFuzzTargets(res *check.Result) []FuzzTarget {
+	info := res.Info()
+	g := &gen{info: info, pkgs: map[*check.Module]*pkgGen{}, modRoot: map[string]string{}, prelude: info.Prelude()}
+	g.initAdapt()
+	var out []FuzzTarget
+	for _, m := range res.Modules {
+		if !m.Root {
+			continue
+		}
+		pg := g.newPkg(m)
+		for _, f := range m.Files {
+			if f.IsTest {
+				continue
+			}
+			for _, d := range f.AST.Decls {
+				fd, ok := d.(*ast.FnDecl)
+				if !ok || fd.Body == nil {
+					continue
+				}
+				if fo := info.FuncOf(m, fd); fo != nil && pg.fuzzable(fo) {
+					out = append(out, FuzzTarget{Name: "contract fuzz: " + pg.frameName(fo), Fn: fo})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// FuzzTarget is a function `xo test` fuzzes.
+type FuzzTarget struct {
+	Name string
+	Fn   *check.FuncObj
+}
+
+// fuzzable reports whether fo gets a contract fuzz test: it has contracts,
+// no type parameters, and inputs that can be generated.
+func (pg *pkgGen) fuzzable(fo *check.FuncObj) bool {
+	hasContract := false
+	for _, cl := range fo.Decl.Clauses {
+		switch cl.(type) {
+		case *ast.RequiresClause, *ast.EnsuresClause:
+			hasContract = true
+		}
+	}
+	if !hasContract || len(typeParams(fo.TParams)) > 0 || fo.Static {
+		return false
+	}
+	ts := []check.Type{}
+	if rv := pg.g.info.RecvVar(fo); rv != nil {
+		ts = append(ts, fo.RecvType)
+	}
+	for i := range pg.g.info.ParamVars(fo) {
+		ts = append(ts, fo.Params[i].Type)
+	}
+	for _, t := range ts {
+		if pg.g.capField(t) == "" && !pg.g.generatable(t, map[*check.TypeObj]bool{}) {
+			return false
+		}
+	}
+	return true
+}
+
 // genFuzz emits a contract fuzz test for fo when it has contracts and
 // generatable inputs.
 func (pg *pkgGen) genFuzz(fo *check.FuncObj) {
+	if !pg.fuzzable(fo) {
+		return
+	}
 	fd := fo.Decl
 	var reqs []*ast.RequiresClause
-	hasEnsures := false
 	for _, cl := range fd.Clauses {
-		switch c := cl.(type) {
-		case *ast.RequiresClause:
+		if c, ok := cl.(*ast.RequiresClause); ok {
 			reqs = append(reqs, c)
-		case *ast.EnsuresClause:
-			hasEnsures = true
 		}
-	}
-	if len(reqs) == 0 && !hasEnsures {
-		return
-	}
-	if len(typeParams(fo.TParams)) > 0 || fo.Static {
-		return
 	}
 	info := pg.g.info
 	type param struct {

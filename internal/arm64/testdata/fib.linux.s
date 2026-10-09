@@ -10,8 +10,8 @@ xo_f_main:
 	mov x29, sp
 	str x19, [sp, #24]
 	.cfi_def_cfa w29, 32
-	.cfi_offset w30, -24
 	.cfi_offset w29, -32
+	.cfi_offset w30, -24
 	.cfi_offset w19, -8
 .Lf1_b0:
 	mov x0, #40
@@ -43,8 +43,8 @@ xo_f_fib:
 	mov x29, sp
 	stp x20, x19, [sp, #16]
 	.cfi_def_cfa w29, 32
-	.cfi_offset w30, -24
 	.cfi_offset w29, -32
+	.cfi_offset w30, -24
 	.cfi_offset w20, -16
 	.cfi_offset w19, -8
 .Lf2_b0:

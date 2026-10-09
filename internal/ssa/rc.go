@@ -88,7 +88,7 @@ var runtimeModes = map[string][]mode{
 	"list.pop":         {mConsume},
 	// the task runtime (decision 0068) takes the lists of one that carry
 	// values into it
-	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mBorrow},
+	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mNone, mBorrow},
 	"rt.task_done":     {mBorrow, mConsume, mNone},
 	"rt.chan_send":     {mBorrow, mConsume, mBorrow},
 	"rt.chan_try_send": {mBorrow, mConsume},
@@ -465,7 +465,7 @@ func (m *Module) InsertRC() {
 		c.cancel()
 		c.reuse()
 		if m.FaultUnwind {
-			f.sinkLandings()
+			f.sinkLandings(r)
 			f.pruneLandings()
 		}
 		f.renumber()

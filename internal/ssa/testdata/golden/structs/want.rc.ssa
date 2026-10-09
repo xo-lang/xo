@@ -82,17 +82,23 @@ b1:  ; preds b0
 b2:  ; preds b0
   release v2
   jump b3()
-b3:  ; preds b2, b5
+b3:  ; preds b2, b5, b7
   v13: () = call rt.fault_continue
   v14: () = tuple
   v15: List[P] = call rt.rl_empty
   ret v14, v15
 b4:  ; preds b1
   v17: P = setfield 0, v3, v8
-  v18: List[P] = call list.set, v2, v1, v17 @ main.xo:9:3
-  v19: () = tuple
-  ret v19, v18
+  v18: List[P] = call list.set, v2, v1, v17 @ main.xo:9:3 lands v19
+  v19: Bool = call rt.landing
+  br v19, b7(), b6()
 b5:  ; preds b1
+  release v2
+  jump b3()
+b6:  ; preds b4
+  v23: () = tuple
+  ret v23, v18
+b7:  ; preds b4
   release v2
   jump b3()
 }

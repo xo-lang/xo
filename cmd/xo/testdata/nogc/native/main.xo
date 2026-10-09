@@ -21,6 +21,15 @@ fn main(os: Os) ! {
   }
 }
 
+// contract fuzzing is not native yet: its test is reported as skipped
+// (decision 0085)
+fn half(n: Int) -> Int
+  requires n >= 0
+  ensures result * 2 <= n
+{
+  n / 2
+}
+
 test "error returned" {
   let n = may_fail(-3)?
   expect(n) == 0

@@ -1,0 +1,31 @@
+exit 0
+--- stdout
+add: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:39:53
+sub: integer overflow: -9223372036854775808 - 1 does not fit Int at main.xo:40:53
+mul: integer overflow: 9223372036854775807 * 2 does not fit Int at main.xo:41:53
+neg: integer overflow: -(-9223372036854775808) does not fit Int at main.xo:42:53
+abs: integer overflow: abs(-9223372036854775808) does not fit Int at main.xo:43
+div: division by zero: 9223372036854775807 / 0 at main.xo:44:53
+rem: division by zero: 9223372036854775807 % 0 at main.xo:45:53
+div min: integer overflow: -9223372036854775808 / -1 does not fit Int at main.xo:46:57
+shl: integer overflow: 9223372036854775807 << 2 does not fit Int at main.xo:47:53
+shift: shift amount 70 out of range for Int at main.xo:48:55
+float: 1e+300 is out of range for Int at main.xo:49:55
+nan: cannot convert NaN to Int at main.xo:50:53
+int8: 9223372036854775807 is out of range for Int8 at main.xo:51:54
+uint8 add: integer overflow: 200 + 100 does not fit UInt8 at main.xo:55:8
+rune: 55296 is not a Unicode scalar value, so it is not a Rune at main.xo:57:54
+index: index 3 out of range for List of length 3 at main.xo:58:55
+set: index 5 out of range for List of length 2 at main.xo:61:5
+bytes: index 4 out of range for Bytes of length 3 at main.xo:64:55
+slice: slice 0..2 of Str splits a UTF-8 sequence at main.xo:65:55
+slice range: slice 2..1 out of range for Str of length 3 at main.xo:66:61
+list slice: slice 1..9 out of range for List of length 3 at main.xo:67:60
+map: key "b" not found in Map of length 1: no b at main.xo:68
+option: need a value at main.xo:71
+result: checked: Bad(code: 12) at main.xo:73
+requires: requires failed: n % 2 == 0 at main.xo:28:12
+explicit: stop at 0 at main.xo:75:55
+error: failed Bad(code: 10)
+fine: ok 4
+--- stderr

@@ -114,32 +114,32 @@ b4(v31: Int, v32: List[Int], v33: List[Int]):  ; preds b6, b67, b69, b71, b73, b
   v37: Bool = call rt.landing
   br v37, b66(), b65()
 b5:  ; preds b83
-  v39: Int = tag v257
+  v39: Int = tag v258
   v40: Int = const 1
   v41: Bool = eq v39, v40
   br v41, b8(), b7()
 b6:  ; preds b83
-  v43: Int = payload 0.0, v257
+  v43: Int = payload 0.0, v258
   v44: List[Int] = call list.push, v18, v43
   v45: () = tuple
   jump b4(v17, v44, v19)
 b7:  ; preds b5
-  v47: Int = tag v257
+  v47: Int = tag v258
   v48: Int = const 2
   v49: Bool = eq v47, v48
   br v49, b10(), b9()
 b8:  ; preds b5
-  v51: Int = payload 1.0, v257
+  v51: Int = payload 1.0, v258
   v52: Int = call list.index, v19, v51 @ main.xo:26:29 lands v53
   v53: Bool = call rt.landing
   br v53, b68(), b67()
 b9:  ; preds b7
-  v55: Int = tag v257
+  v55: Int = tag v258
   v56: Int = const 3
   v57: Bool = eq v55, v56
   br v57, b15(), b14()
 b10:  ; preds b7
-  v59: Int = payload 2.0, v257
+  v59: Int = payload 2.0, v258
   v60: (List[Int], Int?) = call list.pop, v18
   v61: List[Int] = field 0, v60
   v62: Int? = field 1, v60
@@ -158,7 +158,7 @@ b13:  ; preds b10
   v73: Int = const 0
   jump b11(v73)
 b14:  ; preds b9
-  v75: Int = tag v257
+  v75: Int = tag v258
   v76: Int = const 4
   v77: Bool = eq v75, v76
   br v77, b23(), b22()
@@ -195,7 +195,7 @@ b21:  ; preds b16
   v104: Int = const 0
   jump b19(v104)
 b22:  ; preds b14
-  v106: Int = tag v257
+  v106: Int = tag v258
   v107: Int = const 5
   v108: Bool = eq v106, v107
   br v108, b31(), b30()
@@ -232,7 +232,7 @@ b29:  ; preds b24
   v135: Int = const 0
   jump b27(v135)
 b30:  ; preds b22
-  v137: Int = tag v257
+  v137: Int = tag v258
   v138: Int = const 6
   v139: Bool = eq v137, v138
   br v139, b39(), b38()
@@ -269,7 +269,7 @@ b37:  ; preds b32
   v166: Int = const 0
   jump b35(v166)
 b38:  ; preds b30
-  v168: Int = tag v257
+  v168: Int = tag v258
   v169: Int = const 7
   v170: Bool = eq v168, v169
   br v170, b47(), b46()
@@ -306,12 +306,12 @@ b45:  ; preds b40
   v197: Int = const 0
   jump b43(v197)
 b46:  ; preds b38
-  v199: Int = tag v257
+  v199: Int = tag v258
   v200: Int = const 8
   v201: Bool = eq v199, v200
   br v201, b55(), b54()
 b47:  ; preds b38
-  v203: Int = payload 7.0, v257
+  v203: Int = payload 7.0, v258
   v204: (List[Int], Int?) = call list.pop, v18
   v205: List[Int] = field 0, v204
   v206: Int? = field 1, v204
@@ -342,12 +342,12 @@ b53:  ; preds b49
   jump b48(v17)
 b54:  ; preds b46
   release v18
-  v229: Int = tag v257
+  v229: Int = tag v258
   v230: Int = const 9
   v231: Bool = eq v229, v230
   br v231, b57(), b56()
 b55:  ; preds b46
-  v233: Int = payload 8.0, v257
+  v233: Int = payload 8.0, v258
   v234: Int = const 1
   v235: Int = sub v233, v234 @ main.xo:53:24 lands v236
   v236: Bool = call rt.landing
@@ -361,109 +361,111 @@ b58:  ; preds b0
   v241: Int = const 0
   jump b1(v241, v240, v2, v13)
 b59:  ; preds b0
+  release v11
   release v2
   jump b60()
 b60:  ; preds b59, b62, b64, b66, b68, b70, b72, b74, b76, b78, b80, b82, b84
-  v245: () = call rt.fault_continue
-  v246: Int = const 0
-  ret v246
+  v246: () = call rt.fault_continue
+  v247: Int = const 0
+  ret v247
 b61:  ; preds b2
   release v19
-  v249: Int = const 1000
-  v250: Int = mul v24, v249 @ main.xo:58:3
-  v251: Int = const 1000
-  v252: Int = rem v22, v251 @ main.xo:58:21
-  v253: Int = add v250, v252 @ main.xo:58:3
-  ret v253
+  v250: Int = const 1000
+  v251: Int = mul v24, v250 @ main.xo:58:3
+  v252: Int = const 1000
+  v253: Int = rem v22, v252 @ main.xo:58:21
+  v254: Int = add v251, v253 @ main.xo:58:3
+  ret v254
 b62:  ; preds b2
   release v19
   jump b60()
 b63:  ; preds b3
-  v257: Op = call list.index, v0, v17 @ main.xo:24:11 lands v258
-  v258: Bool = call rt.landing
-  br v258, b84(), b83()
+  v258: Op = call list.index, v0, v17 @ main.xo:24:11 lands v259
+  v259: Bool = call rt.landing
+  br v259, b84(), b83()
 b64:  ; preds b3
   release v18
   release v19
   jump b60()
 b65:  ; preds b4
-  v263: () = tuple
+  v264: () = tuple
   jump b1(v28, v36, v32, v33)
 b66:  ; preds b4
   release v32
   release v33
   jump b60()
 b67:  ; preds b8
-  v268: List[Int] = call list.push, v18, v52
-  v269: () = tuple
-  jump b4(v17, v268, v19)
+  v269: List[Int] = call list.push, v18, v52
+  v270: () = tuple
+  jump b4(v17, v269, v19)
 b68:  ; preds b8
   release v18
   release v19
   jump b60()
 b69:  ; preds b11
-  v274: () = tuple
+  v275: () = tuple
   jump b4(v17, v61, v68)
 b70:  ; preds b11
-  v276: List[Int] = field 0, v60
-  release v276
+  release v19
+  v278: List[Int] = field 0, v60
+  release v278
   jump b60()
 b71:  ; preds b19
-  v279: List[Int] = call list.push, v88, v99
-  v280: () = tuple
-  jump b4(v17, v279, v19)
+  v281: List[Int] = call list.push, v88, v99
+  v282: () = tuple
+  jump b4(v17, v281, v19)
 b72:  ; preds b19
   release v19
-  v283: List[Int] = field 0, v87
-  release v283
+  v285: List[Int] = field 0, v87
+  release v285
   jump b60()
 b73:  ; preds b27
-  v286: List[Int] = call list.push, v119, v130
-  v287: () = tuple
-  jump b4(v17, v286, v19)
+  v288: List[Int] = call list.push, v119, v130
+  v289: () = tuple
+  jump b4(v17, v288, v19)
 b74:  ; preds b27
   release v19
-  v290: List[Int] = field 0, v118
-  release v290
+  v292: List[Int] = field 0, v118
+  release v292
   jump b60()
 b75:  ; preds b35
-  v293: List[Int] = call list.push, v150, v161
-  v294: () = tuple
-  jump b4(v17, v293, v19)
+  v295: List[Int] = call list.push, v150, v161
+  v296: () = tuple
+  jump b4(v17, v295, v19)
 b76:  ; preds b35
   release v19
-  v297: List[Int] = field 0, v149
-  release v297
+  v299: List[Int] = field 0, v149
+  release v299
   jump b60()
 b77:  ; preds b43
-  v300: List[Int] = call list.push, v181, v192
-  v301: () = tuple
-  jump b4(v17, v300, v19)
+  v302: List[Int] = call list.push, v181, v192
+  v303: () = tuple
+  jump b4(v17, v302, v19)
 b78:  ; preds b43
   release v19
-  v304: List[Int] = field 0, v180
-  release v304
+  v306: List[Int] = field 0, v180
+  release v306
   jump b60()
 b79:  ; preds b52
-  v307: () = tuple
+  v309: () = tuple
   jump b48(v223)
 b80:  ; preds b52
   release v19
-  v310: List[Int] = field 0, v204
-  release v310
+  v312: List[Int] = field 0, v204
+  release v312
   jump b60()
 b81:  ; preds b55
-  v313: () = tuple
+  v315: () = tuple
   jump b4(v235, v18, v19)
 b82:  ; preds b55
   release v18
   release v19
   jump b60()
 b83:  ; preds b63
-  v318: Int = tag v257
-  v319: Int = const 0
-  v320: Bool = eq v318, v319
-  br v320, b6(), b5()
+  v320: Int = tag v258
+  v321: Int = const 0
+  v322: Bool = eq v320, v321
+  br v322, b6(), b5()
 b84:  ; preds b63
   release v18
   release v19

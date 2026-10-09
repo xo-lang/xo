@@ -1416,7 +1416,8 @@ native test binary and runs each test in a process of its own against the
 fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network) with the same report as the Go backend; a fault fails only its test.
 Property tests and `--real` are not available there yet (XO1201, skipped),
-and error traces and fault frames are not recorded natively.
+contract fuzzing (9.1) is reported as skipped (decision 0085), and error
+traces and fault frames are not recorded natively.
 
 **Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
 functions of the main module (a loop over `Int`, `Float`, `Bool`, and
