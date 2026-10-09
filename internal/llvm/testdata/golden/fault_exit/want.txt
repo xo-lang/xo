@@ -1,0 +1,15 @@
+exit 70
+--- stdout
+fault with defer pending
+leaf: deferred
+branch: leave 0
+leaf: deferred
+branch: leave 1
+leaf: deferred
+branch: leave 2
+branch: deferred
+runs during fault
+main deferred 2
+main deferred 1
+--- stderr
+fault: index 2 out of range for List of length 2 at main.xo:8:3

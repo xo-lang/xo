@@ -32,6 +32,10 @@ func inlinable(f *ssa.Func, byName map[string]*ssa.Func) bool {
 			if v.Op == ssa.OpCall && byName[v.Aux.(string)] != nil {
 				return false
 			}
+			if v.Pad != nil {
+				// it has landing pads of its own (decision 0085)
+				return false
+			}
 		}
 	}
 	return n <= inlineMaxInstrs
@@ -53,7 +57,7 @@ func inline(m *ssa.Module) bool {
 	changed := false
 	for _, f := range m.Funcs {
 		for budget := 0; budget < 200; budget++ {
-			v := findCall(f, small)
+			v := findCall(f, small, byName)
 			if v == nil {
 				break
 			}
@@ -64,10 +68,10 @@ func inline(m *ssa.Module) bool {
 	return changed
 }
 
-func findCall(f *ssa.Func, small map[string]bool) *ssa.Value {
+func findCall(f *ssa.Func, small map[string]bool, byName map[string]*ssa.Func) *ssa.Value {
 	for _, b := range f.Blocks {
 		for _, v := range b.Instrs {
-			if v.Op == ssa.OpCall && small[v.Aux.(string)] {
+			if v.Op == ssa.OpCall && small[v.Aux.(string)] && (v.Pad == nil || len(byName[v.Aux.(string)].Results) == 1) {
 				return v
 			}
 		}
@@ -158,6 +162,9 @@ func inlineCall(f *ssa.Func, call *ssa.Value, callee *ssa.Func) {
 			default:
 				nv := nb.Add(v.Op, v.Type, v.Aux, mapArgs(v.Args)...)
 				nv.Pos = v.Pos
+				// a fault in the copy lands where one in the call would
+				// (decision 0085): the callee holds nothing then
+				nv.Pad = call.Pad
 				vm[v] = nv
 			}
 		}

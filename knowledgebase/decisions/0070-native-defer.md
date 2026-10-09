@@ -1,6 +1,7 @@
 # 0070: defer on the native backends: inline at every exit, shielded by the runtime
 
-Status: Accepted (2026-10-08). Implemented in `internal/ssa/build_defer.go`
+Status: Accepted (2026-10-08); point 4 superseded by 0085 (2026-10-09:
+faults unwind and run deferred code). Implemented in `internal/ssa/build_defer.go`
 and `xo_shield_begin`/`xo_shield_end` in `std/llrt/xo_rt.c`. Goldens:
 `internal/llvm/testdata/golden/defer_blocks`, `conc_defer`.
 

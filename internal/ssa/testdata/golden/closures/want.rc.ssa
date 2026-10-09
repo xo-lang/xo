@@ -24,181 +24,231 @@ b0(v0: Os):
   retain v17
   v20: fn(Str) -> Str = call then, v17, v18
   v21: Stdio = cap stdio, v0
-  v22: Int = callv v9
+  v22: Int = callv v9 lands v23
+  v23: Bool = call rt.landing
+  br v23, b2(), b3()
+b1:  ; preds b2, b4, b10, b12, b19, b30
+  v25: () = call rt.fault_continue
+  v26: () = tuple
+  ret v26
+b2:  ; preds b0
   release v9
-  v24: Str = call str.of_int, v22
-  v25: Str = const " "
-  v26: Str = call str.concat, v24, v25
-  v27: Int = call list.len, v13
   release v13
-  v29: Str = call str.concat_int, v26, v27
-  v30: Str = const " "
-  v31: Str = call str.concat, v29, v30
-  v32: Str = const "x"
-  retain v32
-  v34: Str = callv v20, v32
+  release v17
   release v20
-  v36: Str = call str.concat, v31, v34
-  release v34
-  v38: () = call Stdio.println, v21, v36
-  release v36
-  v40: List[Handler] = call list.new
-  v41: Str = const "p"
-  retain v41
-  v43: Handler = struct v41, v17
-  v44: List[Handler] = call list.push, v40, v43
-  v45: Str = const "s"
-  v46: fn(Str) -> Str = closure shout.value
-  retain v45
-  v48: Handler = struct v45, v46
-  v49: List[Handler] = call list.push, v44, v48
-  v50: Str = const "l"
-  v51: fn(Str) -> Str = closure main.fn2
-  retain v50
-  v53: Handler = struct v50, v51
-  v54: List[Handler] = call list.push, v49, v53
-  v55: Int = call list.len, v54
-  v56: Int = const 0
-  jump b1(v56)
-b1(v58: Int):  ; preds b0, b3
-  v59: Bool = lt v58, v55
-  br v59, b2(), b4()
-b2:  ; preds b1
-  v61: Handler = call list.index, v54, v58
-  v62: Str = field 0, v61
-  retain v62
-  v64: fn(Str) -> Str = field 1, v61
-  retain v64
-  v66: Stdio = cap stdio, v0
-  v67: Str = field 0, v61
-  v68: Str = const ": "
-  v69: Str = call str.concat, v67, v68
-  v70: fn(Str) -> Str = field 1, v61
-  v71: Str = const "abc"
-  retain v71
-  v73: Str = callv v70, v71
-  v74: fn(Str) -> Str = field 1, v61
-  release v74
-  v76: Str = call str.concat, v69, v73
-  release v73
-  v78: () = call Stdio.println, v66, v76
-  release v76
-  jump b3()
-b3:  ; preds b2
-  v81: Int = const 1
-  v82: Int = add v58, v81
-  jump b1(v82)
-b4:  ; preds b1
-  release v54
-  v85: fn(Str) -> Result[Int, Str] = closure main.fn3
-  v86: List[Str] = call list.new
-  v87: Str = const "one"
+  jump b1()
+b3:  ; preds b0
+  release v9
+  v34: Str = call str.of_int, v22
+  v35: Str = const " "
+  v36: Str = call str.concat, v34, v35
+  v37: Int = call list.len, v13
+  release v13
+  v39: Str = call str.concat_int, v36, v37
+  v40: Str = const " "
+  v41: Str = call str.concat, v39, v40
+  v42: Str = const "x"
+  retain v42
+  v44: Str = callv v20, v42 lands v45
+  v45: Bool = call rt.landing
+  br v45, b4(), b5()
+b4:  ; preds b3
+  release v20
+  release v17
+  release v41
+  jump b1()
+b5:  ; preds b3
+  release v20
+  v52: Str = call str.concat, v41, v44
+  release v44
+  v54: () = call Stdio.println, v21, v52
+  release v52
+  v56: List[Handler] = call list.new
+  v57: Str = const "p"
+  retain v57
+  v59: Handler = struct v57, v17
+  v60: List[Handler] = call list.push, v56, v59
+  v61: Str = const "s"
+  v62: fn(Str) -> Str = closure shout.value
+  retain v61
+  v64: Handler = struct v61, v62
+  v65: List[Handler] = call list.push, v60, v64
+  v66: Str = const "l"
+  v67: fn(Str) -> Str = closure main.fn2
+  retain v66
+  v69: Handler = struct v66, v67
+  v70: List[Handler] = call list.push, v65, v69
+  v71: Int = call list.len, v70
+  v72: Int = const 0
+  jump b6(v72)
+b6(v74: Int):  ; preds b5, b8
+  v75: Bool = lt v74, v71
+  br v75, b7(), b9()
+b7:  ; preds b6
+  v77: Handler = call list.index, v70, v74
+  v78: Str = field 0, v77
+  retain v78
+  v80: fn(Str) -> Str = field 1, v77
+  retain v80
+  v82: Stdio = cap stdio, v0
+  v83: Str = field 0, v77
+  v84: Str = const ": "
+  v85: Str = call str.concat, v83, v84
+  v86: fn(Str) -> Str = field 1, v77
+  v87: Str = const "abc"
   retain v87
-  v89: List[Str] = call list.push, v86, v87
-  v90: Str = const "two"
-  retain v90
-  v92: List[Str] = call list.push, v89, v90
-  v93: Result[Int, Str] = call parse_all, v92, v85
-  release v92
-  v95: Int = tag v93
-  v96: Int = const 0
-  v97: Bool = eq v95, v96
-  br v97, b7(), b6()
-b5:  ; preds b7, b9
-  v99: () = tuple
-  v100: List[Str] = call list.new
-  v101: Str = const "one"
+  v89: Str = callv v86, v87 lands v90
+  v90: Bool = call rt.landing
+  br v90, b10(), b11()
+b8:  ; preds b11
+  v92: Int = const 1
+  v93: Int = add v74, v92
+  jump b6(v93)
+b9:  ; preds b6
+  release v70
+  v96: fn(Str) -> Result[Int, Str] = closure main.fn3
+  v97: List[Str] = call list.new
+  v98: Str = const "one"
+  retain v98
+  v100: List[Str] = call list.push, v97, v98
+  v101: Str = const "two"
   retain v101
   v103: List[Str] = call list.push, v100, v101
-  v104: Str = const "six"
-  retain v104
-  v106: List[Str] = call list.push, v103, v104
-  v107: Str = const "two"
-  retain v107
-  v109: List[Str] = call list.push, v106, v107
-  v110: Result[Int, Str] = call parse_all, v109, v85
-  release v109
+  v104: Result[Int, Str] = call parse_all, v103, v96 lands v105
+  v105: Bool = call rt.landing
+  br v105, b12(), b13()
+b10:  ; preds b7
+  v107: fn(Str) -> Str = field 1, v77
+  release v107
+  release v70
   release v85
-  v113: Int = tag v110
-  v114: Int = const 0
-  v115: Bool = eq v113, v114
-  br v115, b12(), b11()
-b6:  ; preds b4
-  v117: Int = tag v93
-  v118: Int = const 1
-  v119: Bool = eq v117, v118
-  br v119, b9(), b8()
-b7:  ; preds b4
-  release v93
-  v122: Int = payload 0.0, v93
-  v123: Stdio = cap stdio, v0
-  v124: Str = const "ok "
-  retain v124
-  v126: Str = call str.concat_int, v124, v122
-  v127: () = call Stdio.println, v123, v126
-  release v126
-  jump b5()
-b8:  ; preds b6
+  jump b1()
+b11:  ; preds b7
+  v112: fn(Str) -> Str = field 1, v77
+  release v112
+  v114: Str = call str.concat, v85, v89
+  release v89
+  v116: () = call Stdio.println, v82, v114
+  release v114
+  jump b8()
+b12:  ; preds b9
+  release v103
+  release v96
+  jump b1()
+b13:  ; preds b9
+  release v103
+  v123: Int = tag v104
+  v124: Int = const 0
+  v125: Bool = eq v123, v124
+  br v125, b16(), b15()
+b14:  ; preds b16, b18
+  v127: () = tuple
+  v128: List[Str] = call list.new
+  v129: Str = const "one"
+  retain v129
+  v131: List[Str] = call list.push, v128, v129
+  v132: Str = const "six"
+  retain v132
+  v134: List[Str] = call list.push, v131, v132
+  v135: Str = const "two"
+  retain v135
+  v137: List[Str] = call list.push, v134, v135
+  v138: Result[Int, Str] = call parse_all, v137, v96 lands v139
+  v139: Bool = call rt.landing
+  br v139, b19(), b20()
+b15:  ; preds b13
+  v141: Int = tag v104
+  v142: Int = const 1
+  v143: Bool = eq v141, v142
+  br v143, b18(), b17()
+b16:  ; preds b13
+  release v104
+  v146: Int = payload 0.0, v104
+  v147: Stdio = cap stdio, v0
+  v148: Str = const "ok "
+  retain v148
+  v150: Str = call str.concat_int, v148, v146
+  v151: () = call Stdio.println, v147, v150
+  release v150
+  jump b14()
+b17:  ; preds b15
   unreachable
-b9:  ; preds b6
-  v131: Str = payload 1.0, v93
-  retain v131
-  release v93
-  v134: Stdio = cap stdio, v0
-  v135: () = call Stdio.println, v134, v131
-  release v131
-  jump b5()
-b10:  ; preds b12, b14
-  v138: () = tuple
-  v139: fn(Str) -> Str = closure main.fn4
-  v140: Int = const 0
-  v141: Int = const 100000
-  jump b15(v140, v139)
-b11:  ; preds b5
-  v143: Int = tag v110
-  v144: Int = const 1
-  v145: Bool = eq v143, v144
-  br v145, b14(), b13()
-b12:  ; preds b5
-  release v110
-  v148: Int = payload 0.0, v110
-  v149: Stdio = cap stdio, v0
-  v150: Str = const "ok "
-  retain v150
-  v152: Str = call str.concat_int, v150, v148
-  v153: () = call Stdio.println, v149, v152
-  release v152
-  jump b10()
-b13:  ; preds b11
-  unreachable
-b14:  ; preds b11
-  v157: Str = payload 1.0, v110
-  retain v157
-  release v110
-  v160: Stdio = cap stdio, v0
-  v161: () = call Stdio.println, v160, v157
-  release v157
-  jump b10()
-b15(v164: Int, v165: fn(Str) -> Str):  ; preds b10, b17
-  v166: Bool = lt v164, v141
-  br v166, b16(), b18()
-b16:  ; preds b15
-  v168: fn(Str) -> Str = closure main.fn5, v165
-  v169: () = tuple
-  jump b17()
-b17:  ; preds b16
-  v171: Int = const 1
-  v172: Int = add v164, v171
-  jump b15(v172, v168)
 b18:  ; preds b15
-  v174: Stdio = cap stdio, v0
-  v175: Str = const "end"
-  retain v175
-  v177: Str = callv v165, v175
-  release v165
-  v179: () = call Stdio.println, v174, v177
-  release v177
-  ret v179
+  v155: Str = payload 1.0, v104
+  retain v155
+  release v104
+  v158: Stdio = cap stdio, v0
+  v159: () = call Stdio.println, v158, v155
+  release v155
+  jump b14()
+b19:  ; preds b14
+  release v137
+  release v96
+  jump b1()
+b20:  ; preds b14
+  release v137
+  release v96
+  v167: Int = tag v138
+  v168: Int = const 0
+  v169: Bool = eq v167, v168
+  br v169, b23(), b22()
+b21:  ; preds b23, b25
+  v171: () = tuple
+  v172: fn(Str) -> Str = closure main.fn4
+  v173: Int = const 0
+  v174: Int = const 100000
+  jump b26(v173, v172)
+b22:  ; preds b20
+  v176: Int = tag v138
+  v177: Int = const 1
+  v178: Bool = eq v176, v177
+  br v178, b25(), b24()
+b23:  ; preds b20
+  release v138
+  v181: Int = payload 0.0, v138
+  v182: Stdio = cap stdio, v0
+  v183: Str = const "ok "
+  retain v183
+  v185: Str = call str.concat_int, v183, v181
+  v186: () = call Stdio.println, v182, v185
+  release v185
+  jump b21()
+b24:  ; preds b22
+  unreachable
+b25:  ; preds b22
+  v190: Str = payload 1.0, v138
+  retain v190
+  release v138
+  v193: Stdio = cap stdio, v0
+  v194: () = call Stdio.println, v193, v190
+  release v190
+  jump b21()
+b26(v197: Int, v198: fn(Str) -> Str):  ; preds b21, b28
+  v199: Bool = lt v197, v174
+  br v199, b27(), b29()
+b27:  ; preds b26
+  v201: fn(Str) -> Str = closure main.fn5, v198
+  v202: () = tuple
+  jump b28()
+b28:  ; preds b27
+  v204: Int = const 1
+  v205: Int = add v197, v204
+  jump b26(v205, v201)
+b29:  ; preds b26
+  v207: Stdio = cap stdio, v0
+  v208: Str = const "end"
+  retain v208
+  v210: Str = callv v198, v208 lands v211
+  v211: Bool = call rt.landing
+  br v211, b30(), b31()
+b30:  ; preds b29
+  release v198
+  jump b1()
+b31:  ; preds b29
+  release v198
+  v216: () = call Stdio.println, v207, v210
+  release v210
+  ret v216
 }
 
 func main.fn1(borrow v0: fn() -> Int) -> Int captures (List[Str]) {

@@ -21,6 +21,10 @@ func (m *Module) Verify() error {
 		errs = append(errs, m.verifyFunc(f)...)
 	}
 	if len(errs) == 0 && m.RC {
+		if m.FaultUnwind {
+			m.faults = m.mayFault()
+			defer func() { m.faults = nil }()
+		}
 		for _, f := range m.Funcs {
 			errs = append(errs, m.verifyRC(f)...)
 		}
@@ -77,6 +81,15 @@ func (m *Module) verifyFunc(f *Func) []string {
 				bad("%s: value %s defined twice", b.Name(), v.Name())
 			}
 			def[v] = site{b, i}
+			if p := v.Pad; p != nil {
+				// a landing: the check's call, which a branch on it ends
+				// its block with (decision 0085)
+				name, _ := p.Aux.(string)
+				t := p.Block.Term()
+				if p.Op != OpCall || (name != "rt.landing" && name != "rt.unwinding") || !inFunc[p.Block] || t == nil || t.Op != OpBranch || t.Args[0] != p {
+					bad("%s: %s lands on %s, which is not a check", b.Name(), v.Name(), p.Name())
+				}
+			}
 			if v.Block != b {
 				bad("%s: %s does not belong to its block", b.Name(), v.Name())
 			}

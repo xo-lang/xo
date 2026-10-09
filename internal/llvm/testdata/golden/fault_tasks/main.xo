@@ -1,0 +1,82 @@
+// A fault in a task (core 7.1, 8, decision 0085) unwinds that task: its
+// deferred code runs, a Mutex it holds in `with` is unlocked (the value
+// keeps what it was before the closure), and its scope treats it like a
+// failed child: the other tasks are canceled (their deferred code runs)
+// and the fault goes on where the scope closes, here into task.isolate.
+// The leak check counts every allocation.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: fault ${info.msg} at ${info.location}")
+    Err(_) => stdio.println("${label}: failed")
+  }
+}
+
+fn bump(m: Mutex[List[Int]], n: Int) -> Int {
+  m.with(fn(var xs) {
+    xs.push(n)
+    if n > 2 {
+      fault("bump ${n} with ${xs.len()} values")
+    }
+    xs.len()
+  })
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex.new([0])
+  show(io, "with", task.isolate(fn() -> Int ! () { bump(m, 1) + bump(m, 5) }))
+  m.with_read(fn(xs) { io.println("after the fault: ${xs.len()} values, last ${xs[xs.len() - 1]}") })
+  let gate: Chan[Int] = Chan.new(0)
+  show(io, "scope", task.isolate(fn() -> Int ! () {
+    scope s {
+      s.spawn(fn() {
+        defer io.println("  waiter: deferred (canceled)")
+        let names = ["held", "by", "waiter"]
+        match gate.recv() {
+          Some(v) => io.println("  waiter got ${v} ${names.len()}")
+          None => io.println("  waiter: closed")
+        }
+      })
+      s.spawn(fn() {
+        defer io.println("  faulter: deferred")
+        let xs = [1, 2, 3]
+        let i = xs.len() + 4
+        io.println("  faulter: index ${xs[i]}")
+      })
+    }
+    7
+  }))
+  show(io, "background", task.isolate(fn() -> Int ! () {
+    scope s {
+      s.spawn_background(fn() {
+        defer io.println("  background: deferred")
+        let label = "background"
+        if label.len() > 3 {
+          fault("${label} task fault")
+        }
+      })
+    }
+    1
+  }))
+  show(io, "nested", task.isolate(fn() -> Int ! () {
+    scope outer {
+      outer.spawn(fn() {
+        defer io.println("  outer task: deferred")
+        scope inner {
+          inner.spawn(fn() {
+            defer io.println("  inner task: deferred")
+            let d = 0
+            io.println("  inner ${10 / d}")
+          })
+        }
+      })
+    }
+    2
+  }))
+  m.with(fn(var xs) { xs.push(9) })
+  m.with_read(fn(xs) { io.println("mutex still works: ${xs.len()} values") })
+  io.println("done")
+}

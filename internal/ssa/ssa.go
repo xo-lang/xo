@@ -379,6 +379,12 @@ type Value struct {
 	Block *Block
 	Succs []*Edge // terminators
 	Pos   string  // `file:line:col` for faults; empty when it cannot fault
+	// Pad is where a fault raised by this value lands (decision 0085,
+	// landing.go): the `rt.unwinding` or `rt.landing` call whose branch
+	// goes to the cleanup (its first successor) when the value faults.
+	// Set on calls and on operations that can fault; nil when a fault
+	// leaves the function without cleanup.
+	Pad *Value
 }
 
 // Wrap is the Aux of an Int add, sub, or mul without Pos whose overflow
@@ -445,7 +451,20 @@ type Func struct {
 	// body, the release of a list the runtime holds): its parameters are
 	// owned, its arguments and result are scalars or pointers (the C
 	// calling convention), and its address is taken with OpFuncAddr.
-	Entry     bool
+	Entry bool
+	// UnwindExit is the block that ends the function when it unwinds
+	// (cancellation or a fault, decision 0085): it hands a fault on to
+	// the caller (`rt.fault_continue`) or returns zero values. Nil when
+	// nothing in the function unwinds.
+	UnwindExit *Block
+	// Catches marks a function whose unwind exit returns even on a fault
+	// (the fault stays pending, as cancellation does): the closure given
+	// to Mutex.with with a `var` parameter, which hands back the value it
+	// was given so the mutex keeps it. Its caller checks for unwinding.
+	Catches bool
+	// landRest are the blocks addLandings split off after an operation
+	// (merged back when its check goes, landing.go)
+	landRest  map[*Block]bool
 	nextValue int
 	nextBlock int
 }
@@ -458,9 +477,14 @@ type Module struct {
 	Funcs []*Func
 	// RC is set by InsertRC: the functions carry explicit retain,
 	// release, and reuse instructions, and Verify checks their balance.
-	RC    bool
-	types map[string]*Type
-	order []*Type // named struct and enum types, in creation order
+	RC bool
+	// FaultUnwind is set when faults unwind (decision 0085, landing.go):
+	// faults are raised by `rt.fault_raise`, and the values that can
+	// fault carry their landing (Value.Pad).
+	FaultUnwind bool
+	faults      map[*Func]bool // mayFault while Verify runs
+	types       map[string]*Type
+	order       []*Type // named struct and enum types, in creation order
 }
 
 // NewModule returns an empty module with the builtin types.
@@ -687,6 +711,8 @@ var RuntimeCalls = map[string]string{
 	"Float.sqrt":       "(Float) -> Float (also floor, ceil, trunc, round, abs)",
 	"Str.len":          "(Str) -> Int",
 	"bytes.index":      "(Bytes, Int) -> UInt8: the byte at the index; faults when out of range (Pos)",
+	"rt.landing": "() -> Bool: marks a check that only a fault takes (decision 0085, landing.go): " +
+		"backends emit no call and branch to the second successor; the first runs when the value whose Pad it is faults",
 	"rt.*": "a call of the C runtime function xo_* (std/llrt, decision 0068): every operand is an Int, " +
 		"Bool, List, or handle (one word) or a Str (its bytes and length); the result is unit or one word",
 }

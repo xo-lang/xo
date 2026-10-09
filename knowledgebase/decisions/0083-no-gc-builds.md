@@ -104,7 +104,8 @@ as stable diagnostics before anything is generated.
      one lowered type) and defaults for the hidden fields of an
      implementation in a std struct literal.
    - **A fault in a handler still exits** (not a 500): native faults do
-     not unwind (decision 0070). Answering 500 needs the handler's task
+     not unwind (decision 0070). (Superseded 2026-10-09 by decision 0085:
+     faults unwind and the handler answers 500.) Answering 500 needs the handler's task
      to unwind from a fault: its deferred code run, what its frames hold
      released, its Mutex values (moved into `with` closures, decision
      0082) handed back and its locks released, its open scopes closed.
@@ -121,7 +122,8 @@ as stable diagnostics before anything is generated.
      the binary once per test with XO_TEST and XO_TEST_SEED and prints
      the report std/rt's RunTests prints (`-v`, `-json`, `-run`,
      `--seed`). A fault fails its test only, with no unwinding: natively
-     faults exit (decision 0070). A failed `expect` writes XO-TEST-FAIL
+     faults exit (decision 0070; since decision 0085 the test's deferred
+     code runs before the process exits). A failed `expect` writes XO-TEST-FAIL
      and its message (left and right as Debug text) and exits 1, which
      works anywhere (helpers, closures, tasks).
    - **The fakes are the capabilities.** TestOs, FakeNet, MemFs,

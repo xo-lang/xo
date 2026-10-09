@@ -1,0 +1,31 @@
+exit 0
+--- stdout
+  explicit: inner defer sees 3 words
+  explicit: outer defer
+explicit: fault explicit fault at main.xo:29:5
+  deepest: defer
+  middle: defer
+  top: defer
+overflow: fault integer overflow: 3 * 9223372036854775807 does not fit Int at main.xo:37:3
+  loop: leave iteration 0
+  loop: leave iteration 1
+  loop: leave iteration 2
+  loop: leave iteration 3
+index: fault index 3 out of range for List of length 3 at main.xo:60:14
+  divide: defer
+divide: fault division by zero: 7 / 0 at main.xo:67:3
+requires: fault requires failed: n > 0 at main.xo:71:12
+ensures: fault ensures failed: result.len() == n at main.xo:77:11
+  bad_box: defer
+invariant: fault invariant of Box failed: !name.is_empty() at main.xo:89:11
+  closure: defer closure
+  closure: defer closure
+closure: fault index 7 out of range for List of length 2 at main.xo:97:5
+  missing_key: defer
+map: fault key "z" not found in Map of length 2: z is required at main.xo:112
+ok: ok 1
+error: failed Bad(msg: "too big")
+  divide: defer
+after all: 3
+main: deferred
+--- stderr

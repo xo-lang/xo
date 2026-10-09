@@ -6,140 +6,203 @@ type Tree[Str] = enum { Leaf(v: Str) | Pair(l: Box[Tree[Str]], r: Box[Tree[Str]]
 func main(v0: Os) -> () {
 b0(v0: Os):
   v1: Int = const 1000000
-  v2: Node = call chain, v1
-  v3: Stdio = cap stdio, v0
-  v4: Str = const "chain "
-  v5: Int = call length, v2
-  v6: Str = call str.concat_int, v4, v5
-  v7: Str = const " "
-  v8: Str = call str.concat, v6, v7
-  v9: Str = field 0, v2
-  v10: Str = call str.concat, v8, v9
-  v11: () = call Stdio.println, v3, v10
-  v12: Int = const 3
-  v13: Node = call chain, v12
-  v14: Str = const "head"
-  v15: Node = setfield 0, v13, v14
-  v16: Box[Node?] = field 1, v15
-  v17: Node? = unbox v16
-  v18: Int = tag v17
-  v19: Int = const 1
-  v20: Bool = eq v18, v19
-  br v20, b3(), b2()
-b1:  ; preds b3, b2
-  v22: () = tuple
-  v23: Node? = variant 0
-  v24: Box[Node?] = box v23
-  v25: Node = setfield 1, v15, v24
-  v26: Stdio = cap stdio, v0
-  v27: Str = const "eq "
-  v28: Bool = eq v25, v13
-  v29: Str = call str.of_bool, v28
-  v30: Str = call str.concat, v27, v29
-  v31: Str = const " "
-  v32: Str = call str.concat, v30, v31
-  v33: Int = const 3
-  v34: Node = call chain, v33
-  v35: Bool = eq v13, v34
-  v36: Str = call str.of_bool, v35
-  v37: Str = call str.concat, v32, v36
-  v38: Str = const " "
-  v39: Str = call str.concat, v37, v38
-  v40: Int = call length, v25
-  v41: Str = call str.concat_int, v39, v40
-  v42: Str = const " "
-  v43: Str = call str.concat, v41, v42
-  v44: Int = call length, v13
-  v45: Str = call str.concat_int, v43, v44
-  v46: () = call Stdio.println, v26, v45
-  v47: Int = const 2
-  v48: Expr = variant 0, v47
-  v49: Box[Expr] = box v48
-  v50: Str = const "x"
-  v51: Expr = variant 1, v50
-  v52: Box[Expr] = box v51
-  v53: Expr = variant 3, v52
-  v54: Box[Expr] = box v53
-  v55: Expr = variant 2, v49, v54
-  v56: Stdio = cap stdio, v0
-  v57: Str = call show, v55
-  v58: Str = const " = "
-  v59: Str = call str.concat, v57, v58
-  v60: Int = const 5
-  v61: Int = call eval, v55, v60
-  v62: Str = call str.concat_int, v59, v61
-  v63: Str = const " "
-  v64: Str = call str.concat, v62, v63
-  v65: Int = const 2
-  v66: Expr = variant 0, v65
-  v67: Box[Expr] = box v66
-  v68: Str = const "x"
-  v69: Expr = variant 1, v68
-  v70: Box[Expr] = box v69
-  v71: Expr = variant 3, v70
-  v72: Box[Expr] = box v71
-  v73: Expr = variant 2, v67, v72
-  v74: Bool = eq v55, v73
-  v75: Str = call str.of_bool, v74
-  v76: Str = call str.concat, v64, v75
-  v77: () = call Stdio.println, v56, v76
-  v78: Str = const "a"
-  v79: Tree[Str] = variant 0, v78
-  v80: Box[Tree[Str]] = box v79
-  v81: Str = const "b"
-  v82: Tree[Str] = variant 0, v81
-  v83: Box[Tree[Str]] = box v82
-  v84: Str = const "c"
-  v85: Tree[Str] = variant 0, v84
-  v86: Box[Tree[Str]] = box v85
-  v87: Tree[Str] = variant 1, v83, v86
-  v88: Box[Tree[Str]] = box v87
-  v89: Tree[Str] = variant 1, v80, v88
-  v90: List[Str] = call leaves[Str], v89
-  v91: Stdio = cap stdio, v0
-  v92: Str = const "leaves "
-  v93: Int = call list.len, v90
-  v94: Str = call str.concat_int, v92, v93
-  v95: Str = const " "
-  v96: Str = call str.concat, v94, v95
-  v97: Int = const 0
-  v98: Str = call list.index, v90, v97 @ main.xo:94:42
-  v99: Str = call str.concat, v96, v98
-  v100: Int = const 1
-  v101: Str = call list.index, v90, v100 @ main.xo:94:50
-  v102: Str = call str.concat, v99, v101
-  v103: Int = const 2
-  v104: Str = call list.index, v90, v103 @ main.xo:94:58
-  v105: Str = call str.concat, v102, v104
-  v106: () = call Stdio.println, v91, v105
-  ret v106
+  v2: Node = call chain, v1 lands v3
+  v3: Bool = call rt.landing
+  br v3, b1(), b2()
+b1:  ; preds b0
+  jump b3()
 b2:  ; preds b0
-  v108: () = tuple
-  jump b1()
-b3:  ; preds b0
-  v110: Node = payload 1.0, v17
-  v111: Str = const "changed"
-  v112: Node = setfield 0, v110, v111
-  v113: Stdio = cap stdio, v0
-  v114: Str = field 0, v15
-  v115: Str = const " "
-  v116: Str = call str.concat, v114, v115
-  v117: Str = field 0, v13
-  v118: Str = call str.concat, v116, v117
-  v119: Str = const " "
-  v120: Str = call str.concat, v118, v119
-  v121: Str = field 0, v110
-  v122: Str = call str.concat, v120, v121
-  v123: Str = const " "
-  v124: Str = call str.concat, v122, v123
-  v125: Str = field 0, v112
-  v126: Str = call str.concat, v124, v125
-  v127: Str = const " "
-  v128: Str = call str.concat, v126, v127
-  v129: Int = call length, v15
-  v130: Str = call str.concat_int, v128, v129
-  v131: () = call Stdio.println, v113, v130
-  jump b1()
+  v6: Stdio = cap stdio, v0
+  v7: Str = const "chain "
+  v8: Int = call length, v2 lands v9
+  v9: Bool = call rt.landing
+  br v9, b4(), b5()
+b3:  ; preds b1, b4, b6, b11, b13, b15, b17, b20, b24, b26, b28
+  v11: () = call rt.fault_continue
+  v12: () = tuple
+  ret v12
+b4:  ; preds b2
+  jump b3()
+b5:  ; preds b2
+  v15: Str = call str.concat_int, v7, v8
+  v16: Str = const " "
+  v17: Str = call str.concat, v15, v16
+  v18: Str = field 0, v2
+  v19: Str = call str.concat, v17, v18
+  v20: () = call Stdio.println, v6, v19
+  v21: Int = const 3
+  v22: Node = call chain, v21 lands v23
+  v23: Bool = call rt.landing
+  br v23, b6(), b7()
+b6:  ; preds b5
+  jump b3()
+b7:  ; preds b5
+  v26: Str = const "head"
+  v27: Node = setfield 0, v22, v26
+  v28: Box[Node?] = field 1, v27
+  v29: Node? = unbox v28
+  v30: Int = tag v29
+  v31: Int = const 1
+  v32: Bool = eq v30, v31
+  br v32, b10(), b9()
+b8:  ; preds b12, b9
+  v34: () = tuple
+  v35: Node? = variant 0
+  v36: Box[Node?] = box v35
+  v37: Node = setfield 1, v27, v36
+  v38: Stdio = cap stdio, v0
+  v39: Str = const "eq "
+  v40: Bool = eq v37, v22
+  v41: Str = call str.of_bool, v40
+  v42: Str = call str.concat, v39, v41
+  v43: Str = const " "
+  v44: Str = call str.concat, v42, v43
+  v45: Int = const 3
+  v46: Node = call chain, v45 lands v47
+  v47: Bool = call rt.landing
+  br v47, b13(), b14()
+b9:  ; preds b7
+  v49: () = tuple
+  jump b8()
+b10:  ; preds b7
+  v51: Node = payload 1.0, v29
+  v52: Str = const "changed"
+  v53: Node = setfield 0, v51, v52
+  v54: Stdio = cap stdio, v0
+  v55: Str = field 0, v27
+  v56: Str = const " "
+  v57: Str = call str.concat, v55, v56
+  v58: Str = field 0, v22
+  v59: Str = call str.concat, v57, v58
+  v60: Str = const " "
+  v61: Str = call str.concat, v59, v60
+  v62: Str = field 0, v51
+  v63: Str = call str.concat, v61, v62
+  v64: Str = const " "
+  v65: Str = call str.concat, v63, v64
+  v66: Str = field 0, v53
+  v67: Str = call str.concat, v65, v66
+  v68: Str = const " "
+  v69: Str = call str.concat, v67, v68
+  v70: Int = call length, v27 lands v71
+  v71: Bool = call rt.landing
+  br v71, b11(), b12()
+b11:  ; preds b10
+  jump b3()
+b12:  ; preds b10
+  v74: Str = call str.concat_int, v69, v70
+  v75: () = call Stdio.println, v54, v74
+  jump b8()
+b13:  ; preds b8
+  jump b3()
+b14:  ; preds b8
+  v78: Bool = eq v22, v46
+  v79: Str = call str.of_bool, v78
+  v80: Str = call str.concat, v44, v79
+  v81: Str = const " "
+  v82: Str = call str.concat, v80, v81
+  v83: Int = call length, v37 lands v84
+  v84: Bool = call rt.landing
+  br v84, b15(), b16()
+b15:  ; preds b14
+  jump b3()
+b16:  ; preds b14
+  v87: Str = call str.concat_int, v82, v83
+  v88: Str = const " "
+  v89: Str = call str.concat, v87, v88
+  v90: Int = call length, v22 lands v91
+  v91: Bool = call rt.landing
+  br v91, b17(), b18()
+b17:  ; preds b16
+  jump b3()
+b18:  ; preds b16
+  v94: Str = call str.concat_int, v89, v90
+  v95: () = call Stdio.println, v38, v94
+  v96: Int = const 2
+  v97: Expr = variant 0, v96
+  v98: Box[Expr] = box v97
+  v99: Str = const "x"
+  v100: Expr = variant 1, v99
+  v101: Box[Expr] = box v100
+  v102: Expr = variant 3, v101
+  v103: Box[Expr] = box v102
+  v104: Expr = variant 2, v98, v103
+  v105: Stdio = cap stdio, v0
+  v106: Str = call show, v104
+  jump b19()
+b19:  ; preds b18
+  v108: Str = const " = "
+  v109: Str = call str.concat, v106, v108
+  v110: Int = const 5
+  v111: Int = call eval, v104, v110 lands v112
+  v112: Bool = call rt.landing
+  br v112, b20(), b21()
+b20:  ; preds b19
+  jump b3()
+b21:  ; preds b19
+  v115: Str = call str.concat_int, v109, v111
+  v116: Str = const " "
+  v117: Str = call str.concat, v115, v116
+  v118: Int = const 2
+  v119: Expr = variant 0, v118
+  v120: Box[Expr] = box v119
+  v121: Str = const "x"
+  v122: Expr = variant 1, v121
+  v123: Box[Expr] = box v122
+  v124: Expr = variant 3, v123
+  v125: Box[Expr] = box v124
+  v126: Expr = variant 2, v120, v125
+  v127: Bool = eq v104, v126
+  v128: Str = call str.of_bool, v127
+  v129: Str = call str.concat, v117, v128
+  v130: () = call Stdio.println, v105, v129
+  v131: Str = const "a"
+  v132: Tree[Str] = variant 0, v131
+  v133: Box[Tree[Str]] = box v132
+  v134: Str = const "b"
+  v135: Tree[Str] = variant 0, v134
+  v136: Box[Tree[Str]] = box v135
+  v137: Str = const "c"
+  v138: Tree[Str] = variant 0, v137
+  v139: Box[Tree[Str]] = box v138
+  v140: Tree[Str] = variant 1, v136, v139
+  v141: Box[Tree[Str]] = box v140
+  v142: Tree[Str] = variant 1, v133, v141
+  v143: List[Str] = call leaves[Str], v142
+  jump b22()
+b22:  ; preds b21
+  v145: Stdio = cap stdio, v0
+  v146: Str = const "leaves "
+  v147: Int = call list.len, v143
+  v148: Str = call str.concat_int, v146, v147
+  v149: Str = const " "
+  v150: Str = call str.concat, v148, v149
+  v151: Int = const 0
+  v152: Str = call list.index, v143, v151 @ main.xo:94:42 lands v153
+  v153: Bool = call rt.landing
+  br v153, b24(), b23()
+b23:  ; preds b22
+  v155: Str = call str.concat, v150, v152
+  v156: Int = const 1
+  v157: Str = call list.index, v143, v156 @ main.xo:94:50 lands v158
+  v158: Bool = call rt.landing
+  br v158, b26(), b25()
+b24:  ; preds b22
+  jump b3()
+b25:  ; preds b23
+  v161: Str = call str.concat, v155, v157
+  v162: Int = const 2
+  v163: Str = call list.index, v143, v162 @ main.xo:94:58 lands v164
+  v164: Bool = call rt.landing
+  br v164, b28(), b27()
+b26:  ; preds b23
+  jump b3()
+b27:  ; preds b25
+  v167: Str = call str.concat, v161, v163
+  v168: () = call Stdio.println, v145, v167
+  ret v168
+b28:  ; preds b25
+  jump b3()
 }
 
 func chain(v0: Int) -> Node {
@@ -156,19 +219,31 @@ b1(v7: Int, v8: Node):  ; preds b0, b3
 b2:  ; preds b1
   v11: Str = const "n"
   v12: Int = const 3
-  v13: Int = rem v7, v12 @ main.xo:26:27
-  v14: Str = call str.concat_int, v11, v13
-  v15: Node? = variant 1, v8
-  v16: Box[Node?] = box v15
-  v17: Node = struct v14, v16
-  v18: () = tuple
-  jump b3()
-b3:  ; preds b2
-  v20: Int = const 1
-  v21: Int = add v7, v20
-  jump b1(v21, v17)
+  v13: Int = rem v7, v12 @ main.xo:26:27 lands v14
+  v14: Bool = call rt.landing
+  br v14, b6(), b5()
+b3:  ; preds b5
+  v16: Int = const 1
+  v17: Int = add v7, v16
+  jump b1(v17, v23)
 b4:  ; preds b1
   ret v8
+b5:  ; preds b2
+  v20: Str = call str.concat_int, v11, v13
+  v21: Node? = variant 1, v8
+  v22: Box[Node?] = box v21
+  v23: Node = struct v20, v22
+  v24: () = tuple
+  jump b3()
+b6:  ; preds b2
+  jump b7()
+b7:  ; preds b6
+  v27: () = call rt.fault_continue
+  v28: Str = const ""
+  v29: Node? = variant 0
+  v30: Box[Node?] = box v29
+  v31: Node = struct v28, v30
+  ret v31
 }
 
 func length(v0: Node) -> Int {
@@ -187,7 +262,7 @@ b3:  ; preds b1
   v11: Int = const 1
   v12: Bool = eq v10, v11
   br v12, b6(), b5()
-b4:  ; preds b6
+b4:  ; preds b9
   v14: () = tuple
   jump b1(v20, v22)
 b5:  ; preds b3
@@ -198,13 +273,22 @@ b5:  ; preds b3
 b6:  ; preds b3
   v20: Node = payload 1.0, v9
   v21: Int = const 1
-  v22: Int = add v4, v21 @ main.xo:38:9
-  v23: () = tuple
-  jump b4()
+  v22: Int = add v4, v21 @ main.xo:38:9 lands v23
+  v23: Bool = call rt.landing
+  br v23, b10(), b9()
 b7:  ; preds b5
   unreachable
 b8:  ; preds b5
   jump b2()
+b9:  ; preds b6
+  v27: () = tuple
+  jump b4()
+b10:  ; preds b6
+  jump b11()
+b11:  ; preds b10
+  v30: () = call rt.fault_continue
+  v31: Int = const 0
+  ret v31
 }
 
 func show(v0: Expr) -> Str {
@@ -213,7 +297,7 @@ b0(v0: Expr):
   v2: Int = const 0
   v3: Bool = eq v1, v2
   br v3, b3(), b2()
-b1(v5: Str):  ; preds b3, b5, b7, b9
+b1(v5: Str):  ; preds b3, b5, b9, b12
   ret v5
 b2:  ; preds b0
   v7: Int = tag v0
@@ -236,7 +320,7 @@ b6:  ; preds b4
   v20: Int = tag v0
   v21: Int = const 3
   v22: Bool = eq v20, v21
-  br v22, b9(), b8()
+  br v22, b11(), b10()
 b7:  ; preds b4
   v24: Box[Expr] = payload 2.0, v0
   v25: Expr = unbox v24
@@ -244,23 +328,29 @@ b7:  ; preds b4
   v27: Expr = unbox v26
   v28: Str = const "("
   v29: Str = call show, v25
-  v30: Str = call str.concat, v28, v29
-  v31: Str = const " + "
-  v32: Str = call str.concat, v30, v31
-  v33: Str = call show, v27
-  v34: Str = call str.concat, v32, v33
-  v35: Str = const ")"
-  v36: Str = call str.concat, v34, v35
-  jump b1(v36)
-b8:  ; preds b6
+  jump b8()
+b8:  ; preds b7
+  v31: Str = call str.concat, v28, v29
+  v32: Str = const " + "
+  v33: Str = call str.concat, v31, v32
+  v34: Str = call show, v27
+  jump b9()
+b9:  ; preds b8
+  v36: Str = call str.concat, v33, v34
+  v37: Str = const ")"
+  v38: Str = call str.concat, v36, v37
+  jump b1(v38)
+b10:  ; preds b6
   unreachable
-b9:  ; preds b6
-  v39: Box[Expr] = payload 3.0, v0
-  v40: Expr = unbox v39
-  v41: Str = const "-"
-  v42: Str = call show, v40
-  v43: Str = call str.concat, v41, v42
-  jump b1(v43)
+b11:  ; preds b6
+  v41: Box[Expr] = payload 3.0, v0
+  v42: Expr = unbox v41
+  v43: Str = const "-"
+  v44: Str = call show, v42
+  jump b12()
+b12:  ; preds b11
+  v46: Str = call str.concat, v43, v44
+  jump b1(v46)
 }
 
 func eval(v0: Expr, v1: Int) -> Int {
@@ -269,7 +359,7 @@ b0(v0: Expr, v1: Int):
   v3: Int = const 0
   v4: Bool = eq v2, v3
   br v4, b3(), b2()
-b1(v6: Int):  ; preds b3, b5, b7, b9
+b1(v6: Int):  ; preds b3, b5, b17, b19
   ret v6
 b2:  ; preds b0
   v8: Int = tag v0
@@ -291,24 +381,53 @@ b6:  ; preds b4
   v20: Int = tag v0
   v21: Int = const 3
   v22: Bool = eq v20, v21
-  br v22, b9(), b8()
+  br v22, b14(), b13()
 b7:  ; preds b4
   v24: Box[Expr] = payload 2.0, v0
   v25: Expr = unbox v24
   v26: Box[Expr] = payload 2.1, v0
   v27: Expr = unbox v26
-  v28: Int = call eval, v25, v1
-  v29: Int = call eval, v27, v1
-  v30: Int = add v28, v29 @ main.xo:50:18
-  jump b1(v30)
-b8:  ; preds b6
+  v28: Int = call eval, v25, v1 lands v29
+  v29: Bool = call rt.landing
+  br v29, b8(), b9()
+b8:  ; preds b7
+  jump b10()
+b9:  ; preds b7
+  v32: Int = call eval, v27, v1 lands v33
+  v33: Bool = call rt.landing
+  br v33, b11(), b12()
+b10:  ; preds b8, b11, b15, b18, b20
+  v35: () = call rt.fault_continue
+  v36: Int = const 0
+  ret v36
+b11:  ; preds b9
+  jump b10()
+b12:  ; preds b9
+  v39: Int = add v28, v32 @ main.xo:50:18 lands v40
+  v40: Bool = call rt.landing
+  br v40, b18(), b17()
+b13:  ; preds b6
   unreachable
-b9:  ; preds b6
-  v33: Box[Expr] = payload 3.0, v0
-  v34: Expr = unbox v33
-  v35: Int = call eval, v34, v1
-  v36: Int = neg v35 @ main.xo:51:15
-  jump b1(v36)
+b14:  ; preds b6
+  v43: Box[Expr] = payload 3.0, v0
+  v44: Expr = unbox v43
+  v45: Int = call eval, v44, v1 lands v46
+  v46: Bool = call rt.landing
+  br v46, b15(), b16()
+b15:  ; preds b14
+  jump b10()
+b16:  ; preds b14
+  v49: Int = neg v45 @ main.xo:51:15 lands v50
+  v50: Bool = call rt.landing
+  br v50, b20(), b19()
+b17:  ; preds b12
+  jump b1(v39)
+b18:  ; preds b12
+  jump b10()
+b19:  ; preds b16
+  jump b1(v49)
+b20:  ; preds b16
+  jump b10()
 }
 
 func leaves[Str](v0: Tree[Str]) -> List[Str] {
@@ -317,7 +436,7 @@ b0(v0: Tree[Str]):
   v2: Int = const 0
   v3: Bool = eq v1, v2
   br v3, b3(), b2()
-b1(v5: List[Str]):  ; preds b3, b9
+b1(v5: List[Str]):  ; preds b3, b11
   ret v5
 b2:  ; preds b0
   v7: Int = tag v0
@@ -337,22 +456,26 @@ b5:  ; preds b2
   v18: Box[Tree[Str]] = payload 1.1, v0
   v19: Tree[Str] = unbox v18
   v20: List[Str] = call leaves[Str], v17
-  v21: List[Str] = call leaves[Str], v19
-  v22: Int = call list.len, v21
-  v23: Int = const 0
-  jump b6(v23, v20)
-b6(v25: Int, v26: List[Str]):  ; preds b5, b8
-  v27: Bool = lt v25, v22
-  br v27, b7(), b9()
+  jump b6()
+b6:  ; preds b5
+  v22: List[Str] = call leaves[Str], v19
+  jump b7()
 b7:  ; preds b6
-  v29: Str = call list.index, v21, v25
-  v30: List[Str] = call list.push, v26, v29
-  v31: () = tuple
-  jump b8()
-b8:  ; preds b7
-  v33: Int = const 1
-  v34: Int = add v25, v33
-  jump b6(v34, v30)
-b9:  ; preds b6
-  jump b1(v26)
+  v24: Int = call list.len, v22
+  v25: Int = const 0
+  jump b8(v25, v20)
+b8(v27: Int, v28: List[Str]):  ; preds b7, b10
+  v29: Bool = lt v27, v24
+  br v29, b9(), b11()
+b9:  ; preds b8
+  v31: Str = call list.index, v22, v27
+  v32: List[Str] = call list.push, v28, v31
+  v33: () = tuple
+  jump b10()
+b10:  ; preds b9
+  v35: Int = const 1
+  v36: Int = add v27, v35
+  jump b8(v36, v32)
+b11:  ; preds b8
+  jump b1(v28)
 }

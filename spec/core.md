@@ -32,6 +32,9 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
   the integer types (2.1; decision 0079).
 - `xo build --hybrid` compiles hot leaf loops to native assembly inside Go
   backend builds (10.1; decision 0084).
+- The native backends check `ensures` and struct invariants and unwind
+  faults (deferred code, scopes, Mutexes, `task.isolate`, a 500 from an
+  HTTP handler) as the Go backend does (3.5, 8, 9.1; decision 0085).
 
 ## Changes in 0.6
 
@@ -702,9 +705,8 @@ match code {
   points do not report cancellation, so cleanup such as removing a temp file
   works after a timeout. A shielded `defer` that runs longer than 5 seconds
   faults (`XO-F005`).
-- On the native backends (`--backend=llvm`, `--backend=arm64`, decision
-  0070) a fault exits the process at once without running deferred code;
-  errors, early exits, and cancellation run it as above.
+- The native backends (`--backend=llvm`, `--backend=arm64`) run deferred
+  code on every way out alike, faults included (decisions 0070, 0085).
 
 **Patterns** are used in `match`, `let`, `if let`, and `for`:
 
@@ -1280,6 +1282,10 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   fault into a value. `std/http` isolates every request and returns 500.
 - Every fault message includes the evaluated values:
   `index 7 out of range for List of length 5 at users.xo:41:18`.
+- The native backends unwind a fault the same way (decision 0085: deferred
+  code, scopes, Mutexes, and references are released on the way); they
+  print the fault without its frames, write no crash bundle, and
+  `Fault.frames` of `task.isolate` is empty there.
 
 There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly
@@ -1520,7 +1526,8 @@ LoadErr.Db(msg: "timeout")
 On a fault reaching `main`, an unhandled error from `main`, or an isolated
 fault in a server, the runtime writes `<name>-<time>.xocrash` containing: the
 error or fault with frames, the task tree, build id, source hashes, target, and
-**[P2]** the effect trace for the failing request.
+**[P2]** the effect trace for the failing request. Native builds (`--no-gc`)
+write none yet (decision 0085).
 
 ### 11.3 Record and replay [P2]
 

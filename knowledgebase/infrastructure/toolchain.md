@@ -826,6 +826,13 @@ With `--backend=arm64` (2026-10-08): checker -> SSA (internal/ssa,
 for darwin/arm64 or linux/arm64 when that is the host; another arm64
 target is written as assembly only (`build.Result.Asm`).
 
+Both native links (and every C compile through `build.CompileC`, the
+sanitizer tests included) add `-fexceptions -funwind-tables` (2026-10-09,
+decision 0085): faults unwind through the runtime's frames and generated
+code's (call frame information, call site tables, `xo_personality`), so
+no C function may be assumed not to unwind. When linking a kept
+`prog-darwin.s` by hand, add the same flags. Last verified: 2026-10-09.
+
 ## Code generation
 
 Last verified: 2026-10-08. Rules and choices; details in
@@ -1286,6 +1293,16 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   templates). Environments are `{rc, drop, share, captures}` (24 byte
   header). Literals are in `__TEXT,__const` / `.rodata`. `iCondBr` with
   `tbz`/`tbnz` tests `inst.bit`.
+- Unwinding (2026-10-09, decision 0085): every function has `.cfi_*`
+  call frame information (leaf functions' fault stubs push a frame record
+  first); a function with landing pads (`inst.pad`) gets
+  `.cfi_personality 155, _xo_personality`, `.cfi_lsda`, and a call site
+  table in `__gcc_except_tab` / `.gcc_except_table` labelled
+  `GCC_except_table_xoN` on Mach-O (a symbol: see
+  gotchas/arm64-lsda-local-label.md); call sites are `fN_csKa`..`fN_csKb`
+  around each `bl`. A check only a fault takes is an `iJump` with the pad
+  as a second target (liveness and reachability only); values live into a
+  pad entered from a fault stub avoid caller saved registers.
 - Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
   it builds and runs every golden of internal/llvm against its want.txt
   (62 on 2026-10-08, with the native_* and http_* goldens of decision 0074), the bench programs, and `testdata/run/*` against the Go

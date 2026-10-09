@@ -1,0 +1,130 @@
+// A fault unwinds (core 8, decision 0085): deferred code runs in every
+// block and frame it leaves, innermost first, and what the frames own is
+// released (the leak check counts every allocation). task.isolate turns
+// each fault into a value, so one program shows many.
+use std/task
+
+enum E {
+  Bad(msg: Str)
+} derive Display
+
+struct Box {
+  name: Str
+  items: List[Str]
+} invariant !name.is_empty()
+
+fn show(stdio: Stdio, label: Str, r: Result[Int, task.Isolated[E]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: fault ${info.msg} at ${info.location}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn explicit(stdio: Stdio) -> Int uses stdio {
+  defer stdio.println("  explicit: outer defer")
+  let words = ["a", "b", "c"]
+  {
+    defer stdio.println("  explicit: inner defer sees ${words.len()} words")
+    fault("explicit fault")
+  }
+  0
+}
+
+fn deepest(stdio: Stdio, n: Int) -> Int uses stdio {
+  defer stdio.println("  deepest: defer")
+  let label = "level ${n}"
+  n * 9223372036854775807 + label.len()
+}
+
+fn middle(stdio: Stdio, n: Int) -> Int uses stdio {
+  defer stdio.println("  middle: defer")
+  var names: List[Str] = []
+  for i in 0..n {
+    names.push("name ${i}")
+  }
+  deepest(stdio, n) + names.len()
+}
+
+fn top(stdio: Stdio) -> Int uses stdio {
+  defer stdio.println("  top: defer")
+  let owned = "owned by top"
+  middle(stdio, 3) + owned.len()
+}
+
+fn index_in_loop(stdio: Stdio) -> Int uses stdio {
+  let xs = [10, 20, 30]
+  var total = 0
+  for i in 0..5 {
+    defer stdio.println("  loop: leave iteration ${i}")
+    total += xs[i]
+  }
+  total
+}
+
+fn divide(stdio: Stdio, a: Int, b: Int) -> Int uses stdio {
+  defer stdio.println("  divide: defer")
+  a / b
+}
+
+fn needs_positive(n: Int) -> Int
+  requires n > 0
+{
+  n * 2
+}
+
+fn wrong_ensures(n: Int) -> List[Int]
+  ensures result.len() == n
+{
+  var out: List[Int] = []
+  for i in 0..n + 1 {
+    out.push(i)
+  }
+  out
+}
+
+fn bad_box(stdio: Stdio) -> Int uses stdio {
+  defer stdio.println("  bad_box: defer")
+  let b = Box{name: "ok", items: ["x"]}
+  let c = b with {name: ""}
+  c.items.len()
+}
+
+fn through_closure(stdio: Stdio) -> Int uses stdio {
+  let tag = "closure"
+  let f = fn(n: Int) -> Int {
+    defer stdio.println("  closure: defer ${tag}")
+    [1, 2][n]
+  }
+  f(0) + f(7)
+}
+
+fn fails(n: Int) -> Int ! E {
+  if n > 1 {
+    return Err(E.Bad(msg: "too big"))
+  }
+  n
+}
+
+fn missing_key(stdio: Stdio) -> Int uses stdio {
+  defer stdio.println("  missing_key: defer")
+  let m = {"a": 1, "b": 2}
+  m.get_or_fault("z", "z is required")
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  defer io.println("main: deferred")
+  show(io, "explicit", task.isolate(fn() -> Int ! E { explicit(io) }))
+  show(io, "overflow", task.isolate(fn() -> Int ! E { top(io) }))
+  show(io, "index", task.isolate(fn() -> Int ! E { index_in_loop(io) }))
+  show(io, "divide", task.isolate(fn() -> Int ! E { divide(io, 7, 0) }))
+  show(io, "requires", task.isolate(fn() -> Int ! E { needs_positive(-3) }))
+  show(io, "ensures", task.isolate(fn() -> Int ! E { wrong_ensures(2).len() }))
+  show(io, "invariant", task.isolate(fn() -> Int ! E { bad_box(io) }))
+  show(io, "closure", task.isolate(fn() -> Int ! E { through_closure(io) }))
+  show(io, "map", task.isolate(fn() -> Int ! E { missing_key(io) }))
+  show(io, "ok", task.isolate(fn() -> Int ! E { fails(1) }))
+  show(io, "error", task.isolate(fn() -> Int ! E { fails(5) }))
+  io.println("after all: ${divide(io, 9, 3)}")
+}

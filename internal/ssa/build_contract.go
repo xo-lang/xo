@@ -170,8 +170,7 @@ func (s *fn) contractCheck(cond ast.Expr, prefix string) {
 	fail, good := s.branch(s.add(OpNot, boolT, nil, ok))
 	s.cur = fail
 	s.faultDetail(cond)
-	f := s.add(OpFault, nil, nil, s.add(OpConst, b.mod.Builtin(KStr), prefix+b.sourceText(cond)))
-	f.Pos = b.pos(cond)
+	s.fault(s.add(OpConst, b.mod.Builtin(KStr), prefix+b.sourceText(cond)), b.pos(cond))
 	s.cur = good
 }
 
@@ -222,8 +221,7 @@ func (s *fn) checkInvariant(v *Value, ct check.Type, at ast.Node) {
 	s.check(inv)
 	fail, good := s.branch(s.add(OpNot, boolT, nil, holds))
 	s.cur = fail
-	f := s.add(OpFault, nil, nil, s.add(OpConst, b.mod.Builtin(KStr), "invariant of "+n.Obj.Name+" failed: "+b.sourceText(n.Obj.Invariant)))
-	f.Pos = b.pos(at)
+	s.fault(s.add(OpConst, b.mod.Builtin(KStr), "invariant of "+n.Obj.Name+" failed: "+b.sourceText(n.Obj.Invariant)), b.pos(at))
 	s.cur = good
 }
 

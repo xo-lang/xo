@@ -29,109 +29,128 @@ b3:  ; preds b2
 b4:  ; preds b1
   v17: Stdio = cap stdio, v0
   v18: Str = const "chain "
-  v19: Int = call sum, v6
-  v20: Str = call str.concat_int, v18, v19
-  v21: () = call Stdio.println, v17, v20
-  v22: Node? = variant 0
-  v23: Stdio = cap stdio, v0
-  v24: Str = const "cleared "
-  v25: Int = call sum, v22
-  v26: Str = call str.concat_int, v24, v25
-  v27: () = call Stdio.println, v23, v26
-  v28: Person? = variant 0
-  v29: Str = const "ada"
-  v30: Str = const "math"
-  v31: Str = const "bob"
-  v32: Dept? = variant 0
-  v33: Person = struct v31, v32
-  v34: Person? = variant 1, v33
-  v35: Box[Person?] = box v34
-  v36: Dept = struct v30, v35
-  v37: Dept? = variant 1, v36
-  v38: Person = struct v29, v37
-  v39: Person? = variant 1, v38
-  v40: Int = tag v39
-  v41: Int = const 1
-  v42: Bool = eq v40, v41
-  br v42, b7(), b6()
-b5:  ; preds b8, b6
-  v44: () = tuple
-  v45: Stdio = cap stdio, v0
-  v46: Str = const "eq "
-  v47: Bool = eq v39, v39
-  v48: Str = call str.of_bool, v47
-  v49: Str = call str.concat, v46, v48
-  v50: () = call Stdio.println, v45, v49
-  v51: Step = variant 0
-  v52: Int = const 1
-  v53: Int = const 4
-  jump b14(v52, v51)
+  v19: Int = call sum, v6 lands v20
+  v20: Bool = call rt.landing
+  br v20, b5(), b6()
+b5:  ; preds b4
+  jump b7()
 b6:  ; preds b4
-  v55: () = tuple
-  jump b5()
-b7:  ; preds b4
-  v57: Person = payload 1.0, v39
-  v58: Dept? = field 1, v57
-  v59: Int = tag v58
-  v60: Int = const 1
-  v61: Bool = eq v59, v60
-  br v61, b10(), b9()
-b8:  ; preds b11, b9
-  v63: () = tuple
-  jump b5()
-b9:  ; preds b7
-  v65: () = tuple
-  jump b8()
-b10:  ; preds b7
-  v67: Dept = payload 1.0, v58
-  v68: Box[Person?] = field 1, v67
-  v69: Person? = unbox v68
-  v70: Int = tag v69
-  v71: Int = const 1
-  v72: Bool = eq v70, v71
-  br v72, b13(), b12()
-b11:  ; preds b13, b12
+  v23: Str = call str.concat_int, v18, v19
+  v24: () = call Stdio.println, v17, v23
+  v25: Node? = variant 0
+  v26: Stdio = cap stdio, v0
+  v27: Str = const "cleared "
+  v28: Int = call sum, v25 lands v29
+  v29: Bool = call rt.landing
+  br v29, b8(), b9()
+b7:  ; preds b5, b8, b23
+  v31: () = call rt.fault_continue
+  v32: () = tuple
+  ret v32
+b8:  ; preds b6
+  jump b7()
+b9:  ; preds b6
+  v35: Str = call str.concat_int, v27, v28
+  v36: () = call Stdio.println, v26, v35
+  v37: Person? = variant 0
+  v38: Str = const "ada"
+  v39: Str = const "math"
+  v40: Str = const "bob"
+  v41: Dept? = variant 0
+  v42: Person = struct v40, v41
+  v43: Person? = variant 1, v42
+  v44: Box[Person?] = box v43
+  v45: Dept = struct v39, v44
+  v46: Dept? = variant 1, v45
+  v47: Person = struct v38, v46
+  v48: Person? = variant 1, v47
+  v49: Int = tag v48
+  v50: Int = const 1
+  v51: Bool = eq v49, v50
+  br v51, b12(), b11()
+b10:  ; preds b13, b11
+  v53: () = tuple
+  v54: Stdio = cap stdio, v0
+  v55: Str = const "eq "
+  v56: Bool = eq v48, v48
+  v57: Str = call str.of_bool, v56
+  v58: Str = call str.concat, v55, v57
+  v59: () = call Stdio.println, v54, v58
+  v60: Step = variant 0
+  v61: Int = const 1
+  v62: Int = const 4
+  jump b19(v61, v60)
+b11:  ; preds b9
+  v64: () = tuple
+  jump b10()
+b12:  ; preds b9
+  v66: Person = payload 1.0, v48
+  v67: Dept? = field 1, v66
+  v68: Int = tag v67
+  v69: Int = const 1
+  v70: Bool = eq v68, v69
+  br v70, b15(), b14()
+b13:  ; preds b16, b14
+  v72: () = tuple
+  jump b10()
+b14:  ; preds b12
   v74: () = tuple
-  jump b8()
-b12:  ; preds b10
-  v76: () = tuple
-  jump b11()
-b13:  ; preds b10
-  v78: Person = payload 1.0, v69
-  v79: Stdio = cap stdio, v0
-  v80: Str = field 0, v57
-  v81: Str = const " in "
-  v82: Str = call str.concat, v80, v81
-  v83: Str = field 0, v67
-  v84: Str = call str.concat, v82, v83
-  v85: Str = const " under "
-  v86: Str = call str.concat, v84, v85
-  v87: Str = field 0, v78
-  v88: Str = call str.concat, v86, v87
-  v89: () = call Stdio.println, v79, v88
-  jump b11()
-b14(v91: Int, v92: Step):  ; preds b5, b16
-  v93: Bool = lt v91, v53
-  br v93, b15(), b17()
-b15:  ; preds b14
-  v95: Box[Step] = box v92
-  v96: Leaf = struct v91, v95
-  v97: Int = const 10
-  v98: (Leaf, Int) = tuple v96, v97
-  v99: Step = variant 1, v98
-  v100: () = tuple
+  jump b13()
+b15:  ; preds b12
+  v76: Dept = payload 1.0, v67
+  v77: Box[Person?] = field 1, v76
+  v78: Person? = unbox v77
+  v79: Int = tag v78
+  v80: Int = const 1
+  v81: Bool = eq v79, v80
+  br v81, b18(), b17()
+b16:  ; preds b18, b17
+  v83: () = tuple
+  jump b13()
+b17:  ; preds b15
+  v85: () = tuple
   jump b16()
-b16:  ; preds b15
-  v102: Int = const 1
-  v103: Int = add v91, v102
-  jump b14(v103, v99)
-b17:  ; preds b14
-  v105: Stdio = cap stdio, v0
-  v106: Str = const "depth "
-  v107: Int = call depth, v92
-  v108: Str = call str.concat_int, v106, v107
-  v109: () = call Stdio.println, v105, v108
-  ret v109
+b18:  ; preds b15
+  v87: Person = payload 1.0, v78
+  v88: Stdio = cap stdio, v0
+  v89: Str = field 0, v66
+  v90: Str = const " in "
+  v91: Str = call str.concat, v89, v90
+  v92: Str = field 0, v76
+  v93: Str = call str.concat, v91, v92
+  v94: Str = const " under "
+  v95: Str = call str.concat, v93, v94
+  v96: Str = field 0, v87
+  v97: Str = call str.concat, v95, v96
+  v98: () = call Stdio.println, v88, v97
+  jump b16()
+b19(v100: Int, v101: Step):  ; preds b10, b21
+  v102: Bool = lt v100, v62
+  br v102, b20(), b22()
+b20:  ; preds b19
+  v104: Box[Step] = box v101
+  v105: Leaf = struct v100, v104
+  v106: Int = const 10
+  v107: (Leaf, Int) = tuple v105, v106
+  v108: Step = variant 1, v107
+  v109: () = tuple
+  jump b21()
+b21:  ; preds b20
+  v111: Int = const 1
+  v112: Int = add v100, v111
+  jump b19(v112, v108)
+b22:  ; preds b19
+  v114: Stdio = cap stdio, v0
+  v115: Str = const "depth "
+  v116: Int = call depth, v101 lands v117
+  v117: Bool = call rt.landing
+  br v117, b23(), b24()
+b23:  ; preds b22
+  jump b7()
+b24:  ; preds b22
+  v120: Str = call str.concat_int, v115, v116
+  v121: () = call Stdio.println, v114, v120
+  ret v121
 }
 
 func sum(v0: Node?) -> Int {
@@ -148,9 +167,9 @@ b3:  ; preds b1
   v9: Int = const 1
   v10: Bool = eq v8, v9
   br v10, b6(), b5()
-b4:  ; preds b6
+b4:  ; preds b9
   v12: () = tuple
-  jump b1(v22, v20)
+  jump b1(v26, v20)
 b5:  ; preds b3
   v14: Int = tag v3
   v15: Int = const 0
@@ -159,15 +178,24 @@ b5:  ; preds b3
 b6:  ; preds b3
   v18: Node = payload 1.0, v3
   v19: Int = field 0, v18
-  v20: Int = add v4, v19 @ main.xo:41:9
-  v21: Box[Node?] = field 1, v18
-  v22: Node? = unbox v21
-  v23: () = tuple
-  jump b4()
+  v20: Int = add v4, v19 @ main.xo:41:9 lands v21
+  v21: Bool = call rt.landing
+  br v21, b10(), b9()
 b7:  ; preds b5
   unreachable
 b8:  ; preds b5
   jump b2()
+b9:  ; preds b6
+  v25: Box[Node?] = field 1, v18
+  v26: Node? = unbox v25
+  v27: () = tuple
+  jump b4()
+b10:  ; preds b6
+  jump b11()
+b11:  ; preds b10
+  v30: () = call rt.fault_continue
+  v31: Int = const 0
+  ret v31
 }
 
 func depth(v0: Step) -> Int {
@@ -184,9 +212,9 @@ b3:  ; preds b1
   v9: Int = const 0
   v10: Bool = eq v8, v9
   br v10, b6(), b5()
-b4:  ; preds b8
+b4:  ; preds b12
   v12: () = tuple
-  jump b1(v28, v25)
+  jump b1(v36, v27)
 b5:  ; preds b3
   v14: Int = tag v3
   v15: Int = const 1
@@ -201,11 +229,25 @@ b8:  ; preds b5
   v21: Leaf = field 0, v20
   v22: Int = field 0, v21
   v23: Int = field 1, v20
-  v24: Int = add v22, v23 @ main.xo:57:14
-  v25: Int = add v4, v24 @ main.xo:57:9
-  v26: Leaf = field 0, v20
-  v27: Box[Step] = field 1, v26
-  v28: Step = unbox v27
-  v29: () = tuple
+  v24: Int = add v22, v23 @ main.xo:57:14 lands v25
+  v25: Bool = call rt.landing
+  br v25, b10(), b9()
+b9:  ; preds b8
+  v27: Int = add v4, v24 @ main.xo:57:9 lands v28
+  v28: Bool = call rt.landing
+  br v28, b13(), b12()
+b10:  ; preds b8
+  jump b11()
+b11:  ; preds b10, b13
+  v31: () = call rt.fault_continue
+  v32: Int = const 0
+  ret v32
+b12:  ; preds b9
+  v34: Leaf = field 0, v20
+  v35: Box[Step] = field 1, v34
+  v36: Step = unbox v35
+  v37: () = tuple
   jump b4()
+b13:  ; preds b9
+  jump b11()
 }

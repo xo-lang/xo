@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+ok 1: 200 ok 1
+handler: deferred
+boom 1: 200 part b
+handler: deferred
+boom 9: 500 {"error":"internal error"}
+ok 2: 200 ok 2
+fault: 500 {"error":"internal error"}
+ok 3: 200 ok 3
+server stopped
+--- stderr
+<time> ERROR handler fault fault=index 9 out of range for List of length 3 at main.xo:13:28
+<time> ERROR handler fault fault=handler gave up after 4 words at main.xo:18:7

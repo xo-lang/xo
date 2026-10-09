@@ -634,8 +634,7 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 	if fo.Recv == nil {
 		if fo.Name == "fault" && len(x.Args) == 1 {
 			msg := s.valueAs(x.Args[0].Value, m.Builtin(KStr))
-			f := s.add(OpFault, nil, nil, msg)
-			f.Pos = b.pos(x)
+			s.fault(msg, b.pos(x))
 			s.dead()
 			return s.undef(nt)
 		}
@@ -738,8 +737,7 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			msg := s.valueAs(x.Args[0].Value, m.Builtin(KStr))
 			none, some := s.branch(isTag("None"))
 			s.cur = none
-			f := s.add(OpFault, nil, nil, msg)
-			f.Pos = b.posLine(x)
+			s.fault(msg, b.posLine(x))
 			s.cur = some
 			i := o.Type.VariantIndex("Some")
 			return s.add(OpPayload, o.Type.Variants[i].Fields[0].Type, PayloadRef{i, 0}, o)

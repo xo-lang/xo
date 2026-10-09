@@ -5,41 +5,64 @@ b0(v0: Os):
   v1: List[Body] = call bodies
   v2: ((), List[Body]) = call offset, v1
   v3: List[Body] = field 1, v2
-  v4: Float = call energy, v3
-  v5: Int = const 0
-  v6: Int = const 5000000
-  jump b1(v5, v3)
-b1(v8: Int, v9: List[Body]):  ; preds b0, b3
-  v10: Bool = lt v8, v6
-  br v10, b2(), b4()
-b2:  ; preds b1
-  v12: Float = const 0.01
-  v13: ((), List[Body]) = call advance, v9, v12
-  v14: List[Body] = field 1, v13
-  jump b3()
-b3:  ; preds b2
-  v16: Int = const 1
-  v17: Int = add v8, v16
-  jump b1(v17, v14)
-b4:  ; preds b1
-  v19: Float = call energy, v9
-  release v9
-  v21: Stdio = cap stdio, v0
-  v22: Str = const "nbody "
-  v23: Float = const 1e+09
-  v24: Float = mul v4, v23
-  v25: Int = ftoi v24 @ main.xo:98:29
-  retain v22
-  v27: Str = call str.concat_int, v22, v25
-  v28: Str = const " "
-  v29: Str = call str.concat, v27, v28
-  v30: Float = const 1e+09
-  v31: Float = mul v19, v30
-  v32: Int = ftoi v31 @ main.xo:98:59
-  v33: Str = call str.concat_int, v29, v32
-  v34: () = call Stdio.println, v21, v33
-  release v33
-  ret v34
+  v4: Float = call energy, v3 lands v5
+  v5: Bool = call rt.landing
+  br v5, b2(), b3()
+b1:  ; preds b2, b8, b11
+  v7: () = call rt.fault_continue
+  v8: () = tuple
+  ret v8
+b2:  ; preds b0
+  v10: List[Body] = field 1, v2
+  release v10
+  jump b1()
+b3:  ; preds b0
+  v13: Int = const 0
+  v14: Int = const 5000000
+  jump b4(v13, v3)
+b4(v16: Int, v17: List[Body]):  ; preds b3, b6
+  v18: Bool = lt v16, v14
+  br v18, b5(), b7()
+b5:  ; preds b4
+  v20: Float = const 0.01
+  v21: ((), List[Body]) = call advance, v17, v20
+  v22: List[Body] = field 1, v21
+  jump b6()
+b6:  ; preds b5
+  v24: Int = const 1
+  v25: Int = add v16, v24
+  jump b4(v25, v22)
+b7:  ; preds b4
+  v27: Float = call energy, v17 lands v28
+  v28: Bool = call rt.landing
+  br v28, b8(), b9()
+b8:  ; preds b7
+  release v17
+  jump b1()
+b9:  ; preds b7
+  release v17
+  v33: Stdio = cap stdio, v0
+  v34: Str = const "nbody "
+  v35: Float = const 1e+09
+  v36: Float = mul v4, v35
+  v37: Int = ftoi v36 @ main.xo:98:29
+  retain v34
+  v39: Str = call str.concat_int, v34, v37
+  v40: Str = const " "
+  v41: Str = call str.concat, v39, v40
+  v42: Float = const 1e+09
+  v43: Float = mul v27, v42
+  v44: Int = ftoi v43 @ main.xo:98:59 lands v45
+  v45: Bool = call rt.landing
+  br v45, b11(), b10()
+b10:  ; preds b9
+  v47: Str = call str.concat_int, v41, v44
+  v48: () = call Stdio.println, v33, v47
+  release v47
+  ret v48
+b11:  ; preds b9
+  release v41
+  jump b1()
 }
 
 func bodies() -> List[Body] {
@@ -169,25 +192,48 @@ b4:  ; preds b1
   v34: Float = const 0.0
   v35: Float = div v9, v32
   v36: Float = sub v34, v35
-  v37: Body = call list.index, v1, v33 @ main.xo:39:3
-  v38: Body = setfield 3, v37, v36
-  v39: List[Body] = call list.set, v1, v33, v38 @ main.xo:39:3
-  v40: Int = const 0
-  v41: Float = const 0.0
-  v42: Float = div v10, v32
-  v43: Float = sub v41, v42
-  v44: Body = call list.index, v39, v40 @ main.xo:40:3
-  v45: Body = setfield 4, v44, v43
-  v46: List[Body] = call list.set, v39, v40, v45 @ main.xo:40:3
-  v47: Int = const 0
-  v48: Float = const 0.0
-  v49: Float = div v11, v32
-  v50: Float = sub v48, v49
-  v51: Body = call list.index, v46, v47 @ main.xo:41:3
-  v52: Body = setfield 5, v51, v50
-  v53: List[Body] = call list.set, v46, v47, v52 @ main.xo:41:3
-  v54: () = tuple
-  ret v54, v53
+  v37: Body = call list.index, v1, v33 @ main.xo:39:3 lands v38
+  v38: Bool = call rt.landing
+  br v38, b7(), b6()
+b5:  ; preds b7, b9, b11
+  v40: () = call rt.fault_continue
+  v41: () = tuple
+  v42: List[Body] = call rt.rl_empty
+  ret v41, v42
+b6:  ; preds b4
+  v44: Body = setfield 3, v37, v36
+  v45: List[Body] = call list.set, v1, v33, v44 @ main.xo:39:3
+  v46: Int = const 0
+  v47: Float = const 0.0
+  v48: Float = div v10, v32
+  v49: Float = sub v47, v48
+  v50: Body = call list.index, v45, v46 @ main.xo:40:3 lands v51
+  v51: Bool = call rt.landing
+  br v51, b9(), b8()
+b7:  ; preds b4
+  release v1
+  jump b5()
+b8:  ; preds b6
+  v55: Body = setfield 4, v50, v49
+  v56: List[Body] = call list.set, v45, v46, v55 @ main.xo:40:3
+  v57: Int = const 0
+  v58: Float = const 0.0
+  v59: Float = div v11, v32
+  v60: Float = sub v58, v59
+  v61: Body = call list.index, v56, v57 @ main.xo:41:3 lands v62
+  v62: Bool = call rt.landing
+  br v62, b11(), b10()
+b9:  ; preds b6
+  release v45
+  jump b5()
+b10:  ; preds b8
+  v66: Body = setfield 5, v61, v60
+  v67: List[Body] = call list.set, v56, v57, v66 @ main.xo:41:3
+  v68: () = tuple
+  ret v68, v67
+b11:  ; preds b8
+  release v56
+  jump b5()
 }
 
 func energy(borrow v0: List[Body]) -> Float {
@@ -273,130 +319,261 @@ b1(v6: Int, v7: List[Body]):  ; preds b0, b3
   br v8, b2(), b4()
 b2:  ; preds b1
   v10: Int = const 1
-  v11: Int = add v6, v10 @ main.xo:64:14
-  jump b5(v11, v7)
+  v11: Int = add v6, v10 @ main.xo:64:14 lands v12
+  v12: Bool = call rt.landing
+  br v12, b14(), b13()
 b3:  ; preds b8
-  v13: Int = const 1
-  v14: Int = add v6, v13
-  jump b1(v14, v19)
+  v14: Int = const 1
+  v15: Int = add v6, v14
+  jump b1(v15, v20)
 b4:  ; preds b1
-  v16: Int = const 0
-  jump b9(v16, v7)
-b5(v18: Int, v19: List[Body]):  ; preds b2, b7
-  v20: Bool = lt v18, v3
-  br v20, b6(), b8()
+  v17: Int = const 0
+  jump b9(v17, v7)
+b5(v19: Int, v20: List[Body]):  ; preds b13, b7
+  v21: Bool = lt v19, v3
+  br v21, b6(), b8()
 b6:  ; preds b5
-  v22: Body = call list.index, v19, v6 @ main.xo:65:16
-  v23: Float = field 0, v22
-  v24: Body = call list.index, v19, v18 @ main.xo:65:26
-  v25: Float = field 0, v24
-  v26: Float = sub v23, v25
-  v27: Body = call list.index, v19, v6 @ main.xo:66:16
-  v28: Float = field 1, v27
-  v29: Body = call list.index, v19, v18 @ main.xo:66:26
-  v30: Float = field 1, v29
-  v31: Float = sub v28, v30
-  v32: Body = call list.index, v19, v6 @ main.xo:67:16
-  v33: Float = field 2, v32
-  v34: Body = call list.index, v19, v18 @ main.xo:67:26
-  v35: Float = field 2, v34
-  v36: Float = sub v33, v35
-  v37: Float = mul v26, v26
-  v38: Float = mul v31, v31
-  v39: Float = add v37, v38
-  v40: Float = mul v36, v36
-  v41: Float = add v39, v40
-  v42: Float = call Float.sqrt, v41
-  v43: Float = mul v41, v42
-  v44: Float = div v1, v43
-  v45: Body = call list.index, v19, v6 @ main.xo:70:16
-  v46: Float = field 6, v45
-  v47: Float = mul v46, v44
-  v48: Body = call list.index, v19, v18 @ main.xo:71:16
-  v49: Float = field 6, v48
-  v50: Float = mul v49, v44
-  v51: Body = call list.index, v19, v6 @ main.xo:72:7
-  v52: Float = field 3, v51
-  v53: Float = mul v26, v50
-  v54: Float = sub v52, v53
-  v55: Body = setfield 3, v51, v54
-  v56: List[Body] = call list.set, v19, v6, v55 @ main.xo:72:7
-  v57: Body = call list.index, v56, v6 @ main.xo:73:7
-  v58: Float = field 4, v57
-  v59: Float = mul v31, v50
-  v60: Float = sub v58, v59
-  v61: Body = setfield 4, v57, v60
-  v62: List[Body] = call list.set, v56, v6, v61 @ main.xo:73:7
-  v63: Body = call list.index, v62, v6 @ main.xo:74:7
-  v64: Float = field 5, v63
-  v65: Float = mul v36, v50
-  v66: Float = sub v64, v65
-  v67: Body = setfield 5, v63, v66
-  v68: List[Body] = call list.set, v62, v6, v67 @ main.xo:74:7
-  v69: Body = call list.index, v68, v18 @ main.xo:75:7
-  v70: Float = field 3, v69
-  v71: Float = mul v26, v47
-  v72: Float = add v70, v71
-  v73: Body = setfield 3, v69, v72
-  v74: List[Body] = call list.set, v68, v18, v73 @ main.xo:75:7
-  v75: Body = call list.index, v74, v18 @ main.xo:76:7
-  v76: Float = field 4, v75
-  v77: Float = mul v31, v47
-  v78: Float = add v76, v77
-  v79: Body = setfield 4, v75, v78
-  v80: List[Body] = call list.set, v74, v18, v79 @ main.xo:76:7
-  v81: Body = call list.index, v80, v18 @ main.xo:77:7
-  v82: Float = field 5, v81
-  v83: Float = mul v36, v47
-  v84: Float = add v82, v83
-  v85: Body = setfield 5, v81, v84
-  v86: List[Body] = call list.set, v80, v18, v85 @ main.xo:77:7
-  v87: () = tuple
-  jump b7()
-b7:  ; preds b6
-  v89: Int = const 1
-  v90: Int = add v18, v89
-  jump b5(v90, v86)
+  v23: Body = call list.index, v20, v6 @ main.xo:65:16 lands v24
+  v24: Bool = call rt.landing
+  br v24, b17(), b16()
+b7:  ; preds b54
+  v26: Int = const 1
+  v27: Int = add v19, v26
+  jump b5(v27, v212)
 b8:  ; preds b5
-  v92: () = tuple
+  v29: () = tuple
   jump b3()
-b9(v94: Int, v95: List[Body]):  ; preds b4, b11
-  v96: Bool = lt v94, v3
-  br v96, b10(), b12()
+b9(v31: Int, v32: List[Body]):  ; preds b4, b11
+  v33: Bool = lt v31, v3
+  br v33, b10(), b12()
 b10:  ; preds b9
-  v98: Body = call list.index, v95, v94 @ main.xo:81:14
-  v99: Float = field 3, v98
-  v100: Body = call list.index, v95, v94 @ main.xo:82:14
-  v101: Float = field 4, v100
-  v102: Body = call list.index, v95, v94 @ main.xo:83:14
-  v103: Float = field 5, v102
-  v104: Body = call list.index, v95, v94 @ main.xo:84:5
-  v105: Float = field 0, v104
-  v106: Float = mul v1, v99
-  v107: Float = add v105, v106
-  v108: Body = setfield 0, v104, v107
-  v109: List[Body] = call list.set, v95, v94, v108 @ main.xo:84:5
-  v110: Body = call list.index, v109, v94 @ main.xo:85:5
-  v111: Float = field 1, v110
-  v112: Float = mul v1, v101
-  v113: Float = add v111, v112
-  v114: Body = setfield 1, v110, v113
-  v115: List[Body] = call list.set, v109, v94, v114 @ main.xo:85:5
-  v116: Body = call list.index, v115, v94 @ main.xo:86:5
-  v117: Float = field 2, v116
-  v118: Float = mul v1, v103
-  v119: Float = add v117, v118
-  v120: Body = setfield 2, v116, v119
-  v121: List[Body] = call list.set, v115, v94, v120 @ main.xo:86:5
-  v122: () = tuple
-  jump b11()
-b11:  ; preds b10
-  v124: Int = const 1
-  v125: Int = add v94, v124
-  jump b9(v125, v121)
+  v35: Body = call list.index, v32, v31 @ main.xo:81:14 lands v36
+  v36: Bool = call rt.landing
+  br v36, b19(), b18()
+b11:  ; preds b42
+  v38: Int = const 1
+  v39: Int = add v31, v38
+  jump b9(v39, v153)
 b12:  ; preds b9
-  v127: () = tuple
-  ret v127, v95
+  v41: () = tuple
+  ret v41, v32
+b13:  ; preds b2
+  jump b5(v11, v7)
+b14:  ; preds b2
+  release v7
+  jump b15()
+b15:  ; preds b14, b17, b19, b21, b23, b25, b27, b29, b31, b33, b35, b37, b39, b41, b43, b45, b47, b49, b51, b53, b55
+  v46: () = call rt.fault_continue
+  v47: () = tuple
+  v48: List[Body] = call rt.rl_empty
+  ret v47, v48
+b16:  ; preds b6
+  v50: Float = field 0, v23
+  v51: Body = call list.index, v20, v19 @ main.xo:65:26 lands v52
+  v52: Bool = call rt.landing
+  br v52, b21(), b20()
+b17:  ; preds b6
+  release v20
+  jump b15()
+b18:  ; preds b10
+  v56: Float = field 3, v35
+  v57: Body = call list.index, v32, v31 @ main.xo:82:14 lands v58
+  v58: Bool = call rt.landing
+  br v58, b23(), b22()
+b19:  ; preds b10
+  release v32
+  jump b15()
+b20:  ; preds b16
+  v62: Float = field 0, v51
+  v63: Float = sub v50, v62
+  v64: Body = call list.index, v20, v6 @ main.xo:66:16 lands v65
+  v65: Bool = call rt.landing
+  br v65, b25(), b24()
+b21:  ; preds b16
+  release v20
+  jump b15()
+b22:  ; preds b18
+  v69: Float = field 4, v57
+  v70: Body = call list.index, v32, v31 @ main.xo:83:14 lands v71
+  v71: Bool = call rt.landing
+  br v71, b27(), b26()
+b23:  ; preds b18
+  release v32
+  jump b15()
+b24:  ; preds b20
+  v75: Float = field 1, v64
+  v76: Body = call list.index, v20, v19 @ main.xo:66:26 lands v77
+  v77: Bool = call rt.landing
+  br v77, b29(), b28()
+b25:  ; preds b20
+  release v20
+  jump b15()
+b26:  ; preds b22
+  v81: Float = field 5, v70
+  v82: Body = call list.index, v32, v31 @ main.xo:84:5 lands v83
+  v83: Bool = call rt.landing
+  br v83, b31(), b30()
+b27:  ; preds b22
+  release v32
+  jump b15()
+b28:  ; preds b24
+  v87: Float = field 1, v76
+  v88: Float = sub v75, v87
+  v89: Body = call list.index, v20, v6 @ main.xo:67:16 lands v90
+  v90: Bool = call rt.landing
+  br v90, b33(), b32()
+b29:  ; preds b24
+  release v20
+  jump b15()
+b30:  ; preds b26
+  v94: Float = field 0, v82
+  v95: Float = mul v1, v56
+  v96: Float = add v94, v95
+  v97: Body = setfield 0, v82, v96
+  v98: List[Body] = call list.set, v32, v31, v97 @ main.xo:84:5
+  v99: Body = call list.index, v98, v31 @ main.xo:85:5 lands v100
+  v100: Bool = call rt.landing
+  br v100, b37(), b36()
+b31:  ; preds b26
+  release v32
+  jump b15()
+b32:  ; preds b28
+  v104: Float = field 2, v89
+  v105: Body = call list.index, v20, v19 @ main.xo:67:26 lands v106
+  v106: Bool = call rt.landing
+  br v106, b35(), b34()
+b33:  ; preds b28
+  release v20
+  jump b15()
+b34:  ; preds b32
+  v110: Float = field 2, v105
+  v111: Float = sub v104, v110
+  v112: Float = mul v63, v63
+  v113: Float = mul v88, v88
+  v114: Float = add v112, v113
+  v115: Float = mul v111, v111
+  v116: Float = add v114, v115
+  v117: Float = call Float.sqrt, v116
+  v118: Float = mul v116, v117
+  v119: Float = div v1, v118
+  v120: Body = call list.index, v20, v6 @ main.xo:70:16 lands v121
+  v121: Bool = call rt.landing
+  br v121, b39(), b38()
+b35:  ; preds b32
+  release v20
+  jump b15()
+b36:  ; preds b30
+  v125: Float = field 1, v99
+  v126: Float = mul v1, v69
+  v127: Float = add v125, v126
+  v128: Body = setfield 1, v99, v127
+  v129: List[Body] = call list.set, v98, v31, v128 @ main.xo:85:5
+  v130: Body = call list.index, v129, v31 @ main.xo:86:5 lands v131
+  v131: Bool = call rt.landing
+  br v131, b43(), b42()
+b37:  ; preds b30
+  release v98
+  jump b15()
+b38:  ; preds b34
+  v135: Float = field 6, v120
+  v136: Float = mul v135, v119
+  v137: Body = call list.index, v20, v19 @ main.xo:71:16 lands v138
+  v138: Bool = call rt.landing
+  br v138, b41(), b40()
+b39:  ; preds b34
+  release v20
+  jump b15()
+b40:  ; preds b38
+  v142: Float = field 6, v137
+  v143: Float = mul v142, v119
+  v144: Body = call list.index, v20, v6 @ main.xo:72:7 lands v145
+  v145: Bool = call rt.landing
+  br v145, b45(), b44()
+b41:  ; preds b38
+  release v20
+  jump b15()
+b42:  ; preds b36
+  v149: Float = field 2, v130
+  v150: Float = mul v1, v81
+  v151: Float = add v149, v150
+  v152: Body = setfield 2, v130, v151
+  v153: List[Body] = call list.set, v129, v31, v152 @ main.xo:86:5
+  v154: () = tuple
+  jump b11()
+b43:  ; preds b36
+  release v129
+  jump b15()
+b44:  ; preds b40
+  v158: Float = field 3, v144
+  v159: Float = mul v63, v143
+  v160: Float = sub v158, v159
+  v161: Body = setfield 3, v144, v160
+  v162: List[Body] = call list.set, v20, v6, v161 @ main.xo:72:7
+  v163: Body = call list.index, v162, v6 @ main.xo:73:7 lands v164
+  v164: Bool = call rt.landing
+  br v164, b47(), b46()
+b45:  ; preds b40
+  release v20
+  jump b15()
+b46:  ; preds b44
+  v168: Float = field 4, v163
+  v169: Float = mul v88, v143
+  v170: Float = sub v168, v169
+  v171: Body = setfield 4, v163, v170
+  v172: List[Body] = call list.set, v162, v6, v171 @ main.xo:73:7
+  v173: Body = call list.index, v172, v6 @ main.xo:74:7 lands v174
+  v174: Bool = call rt.landing
+  br v174, b49(), b48()
+b47:  ; preds b44
+  release v162
+  jump b15()
+b48:  ; preds b46
+  v178: Float = field 5, v173
+  v179: Float = mul v111, v143
+  v180: Float = sub v178, v179
+  v181: Body = setfield 5, v173, v180
+  v182: List[Body] = call list.set, v172, v6, v181 @ main.xo:74:7
+  v183: Body = call list.index, v182, v19 @ main.xo:75:7 lands v184
+  v184: Bool = call rt.landing
+  br v184, b51(), b50()
+b49:  ; preds b46
+  release v172
+  jump b15()
+b50:  ; preds b48
+  v188: Float = field 3, v183
+  v189: Float = mul v63, v136
+  v190: Float = add v188, v189
+  v191: Body = setfield 3, v183, v190
+  v192: List[Body] = call list.set, v182, v19, v191 @ main.xo:75:7
+  v193: Body = call list.index, v192, v19 @ main.xo:76:7 lands v194
+  v194: Bool = call rt.landing
+  br v194, b53(), b52()
+b51:  ; preds b48
+  release v182
+  jump b15()
+b52:  ; preds b50
+  v198: Float = field 4, v193
+  v199: Float = mul v88, v136
+  v200: Float = add v198, v199
+  v201: Body = setfield 4, v193, v200
+  v202: List[Body] = call list.set, v192, v19, v201 @ main.xo:76:7
+  v203: Body = call list.index, v202, v19 @ main.xo:77:7 lands v204
+  v204: Bool = call rt.landing
+  br v204, b55(), b54()
+b53:  ; preds b50
+  release v192
+  jump b15()
+b54:  ; preds b52
+  v208: Float = field 5, v203
+  v209: Float = mul v111, v136
+  v210: Float = add v208, v209
+  v211: Body = setfield 5, v203, v210
+  v212: List[Body] = call list.set, v202, v19, v211 @ main.xo:77:7
+  v213: () = tuple
+  jump b7()
+b55:  ; preds b52
+  release v202
+  jump b15()
 }
 
 func solar_mass() -> Float {

@@ -60,8 +60,10 @@ type builder struct {
 	conc     bool
 	needConc bool
 	checks   []unwindCheck
-	sites    map[*ast.CallExpr]int           // spawns that can fail a scope
-	boundTo  map[*ast.CallExpr]*check.VarObj // spawn calls bound with let
+	// faultUnwind: faults unwind to landings (decision 0085, landing.go)
+	faultUnwind bool
+	sites       map[*ast.CallExpr]int           // spawns that can fail a scope
+	boundTo     map[*ast.CallExpr]*check.VarObj // spawn calls bound with let
 
 	// natives are the implementation modules of the native backends by
 	// the std path they implement (build_native.go)
@@ -113,6 +115,10 @@ type Options struct {
 	// function per test block of the root modules (in TestDecls order)
 	// and a main that runs the one XO_TEST names.
 	Tests bool
+	// NoFaultUnwind keeps faults as program exits (OpFault, no landings):
+	// for Go mode assembly (decision 0084), where a fault is a Go panic.
+	// Native builds unwind (decision 0085, landing.go).
+	NoFaultUnwind bool
 }
 
 // BuildOpts is Build with options.
@@ -135,7 +141,9 @@ func BuildOpts(res *check.Result, opts Options) (*Module, error) {
 func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	info := res.Info()
 	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{},
-		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{}}
+		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{},
+		faultUnwind: !opts.NoFaultUnwind}
+	b.mod.FaultUnwind = b.faultUnwind
 	if opts.Tests {
 		// a test binary (build_testmode.go): its main runs one test
 		b.buildTests(res)
@@ -163,8 +171,9 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	if len(b.errs) > 0 {
 		return b, b.errs
 	}
-	if b.conc {
-		b.pruneUnwind()
+	b.pruneUnwind()
+	if b.faultUnwind {
+		b.addLandings()
 	}
 	for _, f := range b.mod.Funcs {
 		f.cleanup()
@@ -658,6 +667,12 @@ type fn struct {
 	// olds are the values of the `old(...)` calls of the ensures clauses
 	// being checked (build_contract.go)
 	olds map[*ast.CallExpr]*Value
+	// pending is an operation that may fault inside a block with
+	// deferred code or an open scope, waiting for its landing
+	// (landing.go flushLanding)
+	pending     *Value
+	pendingAt   pendingAt
+	pendingDefs map[*check.VarObj]*Value // definitions in its block it replaced since
 }
 
 // apply resolves a checker type in the instance being built.
@@ -757,8 +772,7 @@ func (s *fn) requires(c *ast.RequiresClause) {
 	s.cur = fail
 	if c.Else == nil {
 		s.faultDetail(c.Cond)
-		f := s.add(OpFault, nil, nil, s.add(OpConst, b.mod.Builtin(KStr), "requires failed: "+b.sourceText(c.Cond)))
-		f.Pos = b.pos(c.Cond)
+		s.fault(s.add(OpConst, b.mod.Builtin(KStr), "requires failed: "+b.sourceText(c.Cond)), b.pos(c.Cond))
 	} else if s.errT == nil {
 		b.unsupported(c, "`requires ... else` in a function that cannot fail")
 		s.add(OpUnreachable, nil, nil)
@@ -798,6 +812,16 @@ func (s *fn) dead() {
 func (s *fn) writeVar(vo *check.VarObj, v *Value) {
 	if s.defs[vo] == nil {
 		s.defs[vo] = map[*Block]*Value{}
+	}
+	if s.pending != nil && s.pending.Block == s.cur {
+		// the landing of the pending operation reads what the variable
+		// held before it (landing.go flushLanding)
+		if _, ok := s.pendingDefs[vo]; !ok {
+			if s.pendingDefs == nil {
+				s.pendingDefs = map[*check.VarObj]*Value{}
+			}
+			s.pendingDefs[vo] = s.defs[vo][s.cur]
+		}
 	}
 	s.defs[vo][s.cur] = v
 	if _, ok := s.varType[vo]; !ok {
@@ -879,7 +903,18 @@ func (s *fn) read(vo *check.VarObj) *Value { return s.readVar(vo, s.cur) }
 // Emission helpers
 
 func (s *fn) add(op Op, t *Type, aux any, args ...*Value) *Value {
-	return s.cur.Add(op, t, aux, args...)
+	if s.pending != nil {
+		s.flushLanding()
+	}
+	v := s.cur.Add(op, t, aux, args...)
+	if s.b.faultUnwind && s.shield == 0 && mayRaise(v) && s.lexicalCleanup() {
+		// its landing is placed when the next instruction comes (the
+		// caller sets Pos after adding it)
+		s.pending = v
+		s.pendingAt = s.snapshot()
+		s.pendingDefs = nil
+	}
+	return v
 }
 
 func (s *fn) unit() *Value { return s.add(OpTuple, s.b.mod.Builtin(KUnit), nil) }
@@ -906,11 +941,19 @@ func (s *fn) call(name string, t *Type, pos string, args ...*Value) *Value {
 }
 
 // jump ends the current block with a jump carrying value arguments.
-func (s *fn) jump(to *Block, args ...*Value) { s.cur.Jump(to, args...) }
+func (s *fn) jump(to *Block, args ...*Value) {
+	if s.pending != nil {
+		s.flushLanding()
+	}
+	s.cur.Jump(to, args...)
+}
 
 // branch ends the current block and returns the two new single
 // predecessor successor blocks, sealed.
 func (s *fn) branch(cond *Value) (yes, no *Block) {
+	if s.pending != nil {
+		s.flushLanding()
+	}
 	yes, no = s.newBlock(), s.newBlock()
 	s.cur.Branch(cond, yes, no)
 	s.seal(yes)
@@ -921,6 +964,9 @@ func (s *fn) branch(cond *Value) (yes, no *Block) {
 // test continues in a new block when cond holds and goes to fail when it
 // does not.
 func (s *fn) test(cond *Value, fail *Block) {
+	if s.pending != nil {
+		s.flushLanding()
+	}
 	ok := s.newBlock()
 	s.cur.Branch(cond, ok, fail)
 	s.seal(ok)

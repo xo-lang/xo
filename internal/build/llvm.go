@@ -175,7 +175,10 @@ func clangBuild(clang string, srcs []string, bin string) error {
 // flags, finding a working macOS SDK on the first build of the process.
 func ccBuild(clang string, flags, srcs []string, bin string) error {
 	try := func(root string) (string, error) {
-		args := append(append([]string(nil), flags...), "-o", bin)
+		// the C runtime raises faults through the frames of generated
+		// code and its own (decision 0085): its functions may unwind, and
+		// every frame needs unwind tables
+		args := append(append([]string(nil), flags...), "-fexceptions", "-funwind-tables", "-o", bin)
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}

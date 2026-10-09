@@ -62,7 +62,7 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 }
 
 func hybridGo(res *check.Result, root string, all, noInline bool) (*arm64.GoProgram, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, NoFaultUnwind: true})
 	if err != nil {
 		return nil, err
 	}

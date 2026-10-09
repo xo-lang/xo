@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+with: fault bump 5 with 3 values at main.xo:21:7
+after the fault: 2 values, last 1
+  faulter: deferred
+  waiter: deferred (canceled)
+scope: fault index 7 out of range for List of length 3 at main.xo:47:40
+  background: deferred
+background: fault background task fault at main.xo:58:11
+  inner task: deferred
+  outer task: deferred
+nested: fault division by zero: 10 / 0 at main.xo:72:35
+mutex still works: 3 values
+done
+--- stderr
