@@ -1,0 +1,99 @@
+use example.com/adapters/lib
+
+// Constraint and conversion targets whose methods can fail, implemented by
+// types whose methods cannot: generic code must wrap the value in an
+// adapter (before 2026-10-08 these faulted with "does not implement the
+// interface").
+
+interface Named {
+  fn name(self) -> Str ! Error
+}
+
+interface Sized {
+  fn size(self) -> Int ! Str
+}
+
+interface Plain {
+  fn name(self) -> Str
+}
+
+interface Both {
+  fn name(self) -> Str ! Error
+  fn size(self) -> Int ! Str
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) name() -> Str { "sq${q.s}" }
+
+fn (q: Sq) size() -> Int { q.s }
+
+struct Box[T] {
+  v: T
+}
+
+fn (b: Box[T]) name() -> Str { "box" }
+
+// a type whose method can fail needs no adapter
+struct Big {
+  n: Int
+}
+
+fn (b: Big) name() -> Str ! Error {
+  if b.n > 9 {
+    return Err("too big: ${b.n}")
+  }
+  "big${b.n}"
+}
+
+fn names[T: Named](xs: List[T]) -> Str ! Error {
+  var out = ""
+  for x in xs {
+    out = out + x.name()? + " "
+  }
+  out
+}
+
+fn as_named[T: Named](x: T) -> Named { x }
+
+fn sizes[T: Sized](xs: List[T]) -> Int ! Str {
+  var n = 0
+  for x in xs {
+    n = n + x.size()?
+  }
+  n
+}
+
+// generic code calling generic code: the concrete type is only known at
+// the outermost call
+fn outer[T: Named](xs: List[T]) -> Str ! Error { names(xs)? }
+
+// a constraint with more methods converted to one with fewer
+fn narrow[T: Both](x: T) -> Str ! Error {
+  let n: Named = x
+  n.name()?
+}
+
+// an interface value converted to an interface whose method can fail
+fn widen(p: Plain) -> Str ! Error {
+  let n: Named = p
+  n.name()?
+}
+
+fn main(os: Os) ! Error {
+  os.stdio.println("names: ${names([Sq{s: 1}, Sq{s: 2}])?}")
+  os.stdio.println("as_named: ${as_named(Sq{s: 3}).name()?}")
+  os.stdio.println("outer: ${outer([Sq{s: 4}])?}")
+  os.stdio.println("box: ${names([Box{v: 1}, Box{v: 2}])?}")
+  os.stdio.println("sizes: ${sizes([Sq{s: 5}, Sq{s: 6}])?}")
+  os.stdio.println("narrow: ${narrow(Sq{s: 7})?}")
+  os.stdio.println("widen: ${widen(Sq{s: 8})?}")
+  os.stdio.println("lib: ${lib.label(lib.Tag{t: "x"})?} ${lib.label(Sq{s: 9})?}")
+  os.stdio.println("big: ${names([Big{n: 1}])?}")
+  match names([Big{n: 1}, Big{n: 12}]) {
+    Ok(s) => os.stdio.println("unexpected ${s}")
+    Err(e) => os.stdio.println("big failed: ${e}")
+  }
+}

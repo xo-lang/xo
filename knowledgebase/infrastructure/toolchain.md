@@ -1235,7 +1235,11 @@ first, AST based prototype, since deleted) and
   build_json.go), and std/log run natively; also interpolation of any
   type (Display, Debug of `derive Display`, Duration, Time,
   build_show.go), `main ! Error` (`error: <text>`, exit 1), `requires`
-  clauses, and values of Error, Display, Debug as their text. The
+  clauses, and values of Error, Display, Debug as their text. Values of
+  other interface types (decision 0100, 2026-10-09,
+  `internal/ssa/build_iface.go`) are `xo.iface[I]` structs of closures
+  sharing one environment (`OpRebind`), with hidden `xo.eq`, `xo.tid`,
+  `xo.show` fields; goldens `iface_*`. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no TLS; no `http.stream`).
 - Counts (decision 0058): positive is thread local (plain updates),

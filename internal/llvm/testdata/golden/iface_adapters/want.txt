@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+names: sq1 sq2 
+as_named: sq3
+outer: sq4 
+box: box box 
+sizes: 11
+narrow: sq7
+widen: sq8
+lib: <tag:x> <sq9>
+big: big1 
+big failed: too big: 12
+--- stderr

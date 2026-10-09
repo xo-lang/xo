@@ -45,6 +45,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			v := s.expr(sel.X)
 			return s.appendDisplay(s.add(OpConst, b.mod.Builtin(KStr), ""), v, ct, sel.X)
 		}
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 0 && sel.Sel.Name == "debug" {
+			// the derived Debug text (core 2.9)
+			ct := s.natCheck(sel.X)
+			v := s.expr(sel.X)
+			return s.appendDebug(s.add(OpConst, b.mod.Builtin(KStr), ""), v, ct, sel.X)
+		}
 		b.unsupported(x, "this call")
 		return s.undef(s.natOf(x))
 	}

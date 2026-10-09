@@ -55,7 +55,8 @@ func holdsColl(t *Type, seen map[*Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	if t.Coll {
+	if t.Coll || isIface(t) {
+		// an interface value compares through its xo.eq function
 		return true
 	}
 	switch t.Kind {
@@ -154,6 +155,9 @@ func (b *builder) eqColl(t *Type) string {
 			s.ifThen(s.add(OpNot, boolT, nil, c), func() { s.retv(s.bool(false)) })
 		}
 		switch {
+		case isIface(t):
+			s.retv(s.ifaceEqual(l, r))
+			return
 		case t.Coll:
 			K, V := mapKey(t), mapVal(t)
 			no(s.add(OpEq, boolT, nil, s.add(OpField, intT, 4, l), s.add(OpField, intT, 4, r)))

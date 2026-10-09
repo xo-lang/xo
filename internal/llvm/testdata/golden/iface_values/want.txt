@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+total 35
+doubled 140
+ok 20
+ok 90
+err Shape(Negative(n: -1))
+debug Rect{w: 2, h: 3, label: "a"} and Sq{s: 2}
+debug [Sq{s: 2}, Rect{w: 2, h: 3, label: "a"}, Sq{s: 5}]
+holder Holder{main: Sq{s: 3}, spare: Some(Rect{w: 1, h: 1, label: "s"}), tag: "h"}
+holder2 9 true
+biggest 25 Sq{s: 5}
+narrow 6 Rect{w: 2, h: 3, label: "a"}
+shout rect n 4x4!
+as display rect d 9x9
+k0=0 k1=1 k2=4 k3=3 k4=16 k5=5 
+getters 42 const
+names names(2) ["a", "b"] Names{xs: ["a", "b"]}
+closure 225
+many 1323400 199
+tasks 89
+--- stderr

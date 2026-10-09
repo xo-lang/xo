@@ -710,7 +710,7 @@ func (s *fstate) instr(v *ssa.Value) {
 	}
 	if g.goMode {
 		switch v.Op {
-		case ssa.OpClosure, ssa.OpCapture, ssa.OpCallValue, ssa.OpBox, ssa.OpUnbox, ssa.OpFuncAddr:
+		case ssa.OpClosure, ssa.OpRebind, ssa.OpCapture, ssa.OpCallValue, ssa.OpBox, ssa.OpUnbox, ssa.OpFuncAddr:
 			fail("op `%s`", v.Op)
 		}
 	}
@@ -843,6 +843,9 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.boxOp(v)
 	case ssa.OpFuncAddr:
 		s.set(v, s.symAddr(g.fname(v.Aux.(string))))
+	case ssa.OpRebind:
+		// the new code word and the environment word of Args[0]
+		s.set(v, s.symAddr(g.fname(v.Aux.(string))), s.words(v.Args[0])[1])
 	case ssa.OpUnbox:
 		s.unboxOp(v)
 	case ssa.OpFault:

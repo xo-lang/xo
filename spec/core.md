@@ -12,7 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.9
 
-None yet.
+No meaning changes yet; native support grew (`--no-gc`, 10.1):
+
+- Interface types as values (2.4) build natively (decision 0100).
 
 ## Changes in 0.8
 

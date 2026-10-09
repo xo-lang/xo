@@ -151,6 +151,9 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 	if isDyn(v.Type) {
 		return s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v))
 	}
+	if isIface(v.Type) {
+		return s.ifaceShowCall(acc, v, false)
+	}
 	switch {
 	case isPreludeNamed(ct, "Duration"):
 		return s.rt("rs_append_duration", st, acc, v)
@@ -215,6 +218,10 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 		}
 		if isDyn(t) {
 			s.retv(s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v)))
+			return
+		}
+		if isIface(t) {
+			s.retv(s.ifaceShowCall(acc, v, true))
 			return
 		}
 		switch {
@@ -399,36 +406,72 @@ func lowerName(n string) string {
 	return string(out)
 }
 
-// ifaceCall lowers a call of an interface method (`e.display()` on a
-// value of a type parameter constrained by Error, or on an Error): the
-// method of the concrete type, or the text of an interface value.
+// ifaceCall lowers a call of an interface method: on a value of a type
+// parameter constrained by an interface (the method of the concrete
+// type, adapted to the interface's signature), on an interface value (a
+// call through its function value, build_iface.go), or on a value of
+// Error, Display, or Debug (its text).
 func (s *fn) ifaceCall(x *ast.CallExpr, ci *check.Call) *Value {
 	b := s.b
 	fo := ci.Fn
 	nt := s.natOf(x)
-	if ci.Recv == nil || len(x.Args) != 0 {
+	if ci.Recv == nil {
 		b.unsupported(x, "the interface method `"+fo.DisplayName()+"`")
 		return s.undef(nt)
 	}
 	ct := s.natCheck(ci.Recv)
 	v := s.expr(ci.Recv)
 	st := b.mod.Builtin(KStr)
-	if isDyn(v.Type) {
+	if isDyn(v.Type) && len(x.Args) == 0 {
 		if fo.Name == "display" || fo.Name == "debug" {
 			return s.add(OpField, st, 0, v)
 		}
 		b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of an interface value")
 		return s.undef(nt)
 	}
-	if m := s.methodOf(ct, fo.Name); m != nil {
-		return s.callMethod(m, ct, v, x)
+	// the arguments, against the interface method's parameters
+	var pts []*Type
+	if isIface(v.Type) {
+		j := v.Type.FieldIndex(fo.Name)
+		if j < 0 {
+			b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of `"+ct.String()+"`")
+			return s.undef(nt)
+		}
+		pts = v.Type.Fields[j].Type.Elems
+	} else {
+		sub := ifaceSubst(ci, fo)
+		for _, p := range fo.Params {
+			pts = append(pts, b.typ(s.apply(sub.Apply(p.Type)), x))
+		}
 	}
-	switch fo.Name {
-	case "display":
-		return s.appendDisplay(s.add(OpConst, st, ""), v, ct, x)
-	case "debug":
-		return s.appendDebug(s.add(OpConst, st, ""), v, ct, x)
+	exprs := argExprs(fo.Params, x)
+	var args []*Value
+	for i, e := range exprs {
+		if e == nil || fo.Params[i].Var || i >= len(pts) {
+			b.unsupported(x, "a call of the interface method `"+fo.DisplayName()+"` with a missing or `var` argument")
+			return s.undef(nt)
+		}
+		args = append(args, s.valueAs(e, pts[i]))
 	}
-	b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of `"+ct.String()+"`")
-	return s.undef(nt)
+	var toErr check.Type
+	if fo.Err != nil {
+		if _, et, ok := resultParts(s.natCheck(x)); ok {
+			toErr = check.Deep(et)
+		}
+	}
+	return s.callResult(s.methodOn(fo.Name, ct, v, args, nt, failErr(toErr), x), x)
+}
+
+// ifaceSubst maps the type parameters of the interface declaring the
+// method fo to the type arguments of the call ci.
+func ifaceSubst(ci *check.Call, fo *check.FuncObj) *check.Subst {
+	var args []check.Type
+	for _, tp := range fo.Recv.TParams {
+		a := ci.Subst.Type(tp)
+		if a == nil {
+			a = &check.ParamType{P: tp}
+		}
+		args = append(args, a)
+	}
+	return check.NewSubst(fo.Recv.TParams, args)
 }

@@ -6,7 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-Nothing yet.
+- Native backends (`--no-gc`, LLVM and arm64): interface types as values
+  (decision 0100): dynamic dispatch, adapters for methods that cannot
+  fail, error conversion, interface to interface conversion, Display and
+  Debug of the dynamic value, and `==`; `x.debug()` on any value.
 
 ## v0.8.0 (2026-10-09)
 

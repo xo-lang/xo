@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+map 1
+map Missing(key: "b")
+const c:a
+const c:b
+Missing(key: "k")
+1;two;3.5;
+--- stderr

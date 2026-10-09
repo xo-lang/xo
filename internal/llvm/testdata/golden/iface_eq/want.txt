@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+> ab
+> abcdef
+done 3
+strict ab
+isolated 4: line too long: 6
+tagged 2 ab
+tagged 2 abcdef
+done 2
+fn 7 ab
+fn 7 abcdef
+done 14
+eq true false true false true
+maps true true false
+narrowed false true 6
+pairs true false true
+--- stderr

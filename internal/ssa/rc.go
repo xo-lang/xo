@@ -256,7 +256,7 @@ func (r *rcInfo) modes(v *Value) []mode {
 		}
 	}
 	switch v.Op {
-	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse, OpClosure, OpBox:
+	case OpStruct, OpTuple, OpVariant, OpReturn, OpRelease, OpReuse, OpClosure, OpRebind, OpBox:
 		set(mConsume)
 	case OpFault, OpRetain, OpEq, OpNe, OpCapture, OpUnbox, OpShare:
 		set(mBorrow)

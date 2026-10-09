@@ -291,6 +291,14 @@ const (
 	// entry function (Func.Entry) handed to the runtime, which calls it.
 	OpFuncAddr
 
+	// OpRebind is a function value with the code of the Indirect function
+	// named Aux and the environment of the function value Args[0]
+	// (consumed: the environment moves into the result). The two
+	// functions' Captures must be the same types: the builder emits it
+	// only for the method functions of an interface value, which share
+	// one environment holding the concrete value (build_iface.go).
+	OpRebind
+
 	// Calls. Aux is the callee name (string). A user function is called
 	// by its Func.Name; runtime and prelude operations (list ops, string
 	// building, printing, math) use dotted names such as `list.get`,
@@ -343,7 +351,7 @@ var opNames = [...]string{
 	OpIntToFloat: "itof", OpFloatToInt: "ftoi", OpIntConv: "iconv",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
-	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr",
+	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr", OpRebind: "rebind",
 	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse", OpShare: "share",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }

@@ -1347,6 +1347,8 @@ func (s *sfn) instr(v *ssa.Value) {
 		s.set(v, "insertvalue { ptr, ptr } %s, ptr %s, 1", t0, env)
 	case ssa.OpFuncAddr:
 		s.set(v, "ptrtoint ptr %s to i64", g.fname(v.Aux.(string)))
+	case ssa.OpRebind:
+		s.set(v, "insertvalue { ptr, ptr } %s, ptr %s, 0", a(0), g.fname(v.Aux.(string)))
 	case ssa.OpBox:
 		et := v.Args[0].Type
 		size, _ := g.structLayout([]*ssa.Type{g.m.Builtin(ssa.KInt), et})

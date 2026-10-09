@@ -72,6 +72,12 @@ type builder struct {
 	// consts are the ids of the constants of heap types read so far
 	// (build_int.go constValue)
 	consts map[*check.ConstObj]int
+
+	// ifaces are the interface types lowered as xo.iface[I]
+	// (build_iface.go), by their SSA type
+	ifaces map[*Type]*check.Named
+	// tids number the concrete types held by interface values
+	tids map[string]int
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -395,8 +401,8 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				// its text (build_show.go)
 				return b.dynType()
 			}
-			b.unsupported(at, "interface types (`"+obj.Name+"`)")
-			return m.Builtin(KUnit)
+			// function values over the concrete value (build_iface.go)
+			return b.ifaceType(r, at)
 		}
 	}
 	b.unsupported(at, "the type `"+t.String()+"`")
@@ -1145,8 +1151,52 @@ func (s *fn) coerce(v *Value, t *Type, at ast.Node) *Value {
 	if t.Kind == KUnit {
 		return s.unit()
 	}
+	if e, ok := at.(ast.Expr); ok && v.Op != OpUndef {
+		// a value converted to an interface (core 2.10), or wrapped in
+		// Some as one
+		ct := s.valueCheck(e)
+		if ct == nil {
+			s.b.unsupported(at, "converting `"+v.Type.Name+"` to `"+t.Name+"` here")
+			return s.undef(t)
+		}
+		if isIface(t) {
+			return s.toIface(v, ct, t, at)
+		}
+		if isDyn(t) && !isDyn(v.Type) {
+			return s.toDyn(v, ct, s.ifaceName(e), e)
+		}
+		if t.Kind == KEnum {
+			if i := t.VariantIndex("Some"); i >= 0 && len(t.Variants[i].Fields) == 1 && isIface(t.Variants[i].Fields[0].Type) {
+				return s.add(OpVariant, t, i, s.toIface(v, ct, t.Variants[i].Fields[0].Type, at))
+			}
+		}
+	}
 	s.b.unsupported(at, "converting `"+v.Type.Name+"` to `"+t.Name+"`")
 	return s.undef(t)
+}
+
+// valueCheck is the checker type of the value e evaluates to before
+// implicit conversion: of a block, its last expression's.
+func (s *fn) valueCheck(e ast.Expr) check.Type {
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+			continue
+		case *ast.Block:
+			if len(x.Stmts) > 0 {
+				if es, ok := x.Stmts[len(x.Stmts)-1].(*ast.ExprStmt); ok {
+					e = es.X
+					continue
+				}
+			}
+			return nil
+		}
+		if s.b.info.NaturalType(e) == nil && s.b.info.TypeOf(e) == nil {
+			return nil
+		}
+		return s.natCheck(e)
+	}
 }
 
 // value evaluates e in its context type.

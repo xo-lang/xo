@@ -1,0 +1,183 @@
+// Interface values natively (decision 0100): dispatch, adapters, error
+// conversion, Display and Debug, generic interfaces, interface to
+// interface conversion, values in collections and fields, tasks.
+
+enum ShapeErr {
+  Negative(n: Int)
+}
+
+enum AppErr {
+  Shape(from ShapeErr)
+  Other(msg: Str)
+} derive Display
+
+interface Shape {
+  fn area(self) -> Int
+  fn scaled(self, k: Int) -> Shape
+  fn check(self, limit: Int) -> Int ! AppErr
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) area() -> Int { q.s * q.s }
+
+fn (q: Sq) scaled(k: Int) -> Shape { Sq{s: q.s * k} }
+
+fn (q: Sq) check(limit: Int) -> Int ! ShapeErr {
+  if q.s < 0 {
+    return Err(ShapeErr.Negative(n: q.s))
+  }
+  if q.s > limit {
+    return Err(ShapeErr.Negative(n: limit - q.s))
+  }
+  q.s
+}
+
+struct Rect {
+  w: Int
+  h: Int
+  label: Str
+}
+
+fn (r: Rect) area() -> Int { r.w * r.h }
+
+fn (r: Rect) scaled(k: Int) -> Shape { Rect{w: r.w * k, h: r.h * k, label: r.label + "*"} }
+
+fn (r: Rect) check(limit: Int) -> Int { r.w + r.h + limit }
+
+fn (r: Rect) display() -> Str { "rect ${r.label} ${r.w}x${r.h}" }
+
+interface Getter[T] {
+  fn get(self) -> T
+  fn name(self) -> Str
+}
+
+struct Const[T] {
+  v: T
+}
+
+fn (c: Const[T]) get() -> T { c.v }
+
+fn (c: Const[T]) name() -> Str { "const" }
+
+struct Names {
+  xs: List[Str]
+}
+
+fn (n: Names) get() -> List[Str] { n.xs }
+
+fn (n: Names) name() -> Str { "names(${n.xs.len()})" }
+
+interface Areaed {
+  fn area(self) -> Int
+}
+
+interface Named {
+  fn display(self) -> Str
+}
+
+struct Holder {
+  main: Shape
+  spare: Shape?
+  tag: Str
+}
+
+fn total(xs: List[Shape]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x.area()
+  }
+  t
+}
+
+fn checked(s: Shape, limit: Int) -> Int ! AppErr {
+  let n = s.check(limit)?
+  n * 10
+}
+
+fn biggest(xs: List[Shape]) -> Shape? {
+  var best: Shape? = None
+  var at = -1
+  for x in xs {
+    if x.area() > at {
+      at = x.area()
+      best = Some(x)
+    }
+  }
+  best
+}
+
+fn narrow(s: Shape) -> Areaed { s }
+
+fn shout(n: Named) -> Str { n.display() + "!" }
+
+fn make(k: Int) -> Shape {
+  if k % 2 == 0 {
+    return Sq{s: k}
+  }
+  Rect{w: k, h: 1, label: "r${k}"}
+}
+
+fn sum_getters(gs: List[Getter[Int]]) -> Int {
+  var t = 0
+  for g in gs {
+    t += g.get()
+  }
+  t
+}
+
+fn main(os: Os) {
+  let shapes: List[Shape] = [Sq{s: 2}, Rect{w: 2, h: 3, label: "a"}, Sq{s: 5}]
+  os.stdio.println("total ${total(shapes)}")
+  let doubled = shapes.map(fn(s) { s.scaled(2) })
+  os.stdio.println("doubled ${total(doubled)}")
+  for s in shapes {
+    match checked(s, 4) {
+      Ok(n) => os.stdio.println("ok ${n}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+  os.stdio.println("debug ${shapes[1].debug()} and ${shapes[0].debug()}")
+  os.stdio.println("debug ${shapes.debug()}")
+  let h = Holder{main: Sq{s: 3}, spare: Some(Rect{w: 1, h: 1, label: "s"}), tag: "h"}
+  os.stdio.println("holder ${h.debug()}")
+  let h2 = h with { spare: None }
+  os.stdio.println("holder2 ${h2.main.area()} ${h2.spare.is_none()}")
+  match biggest(shapes) {
+    Some(b) => os.stdio.println("biggest ${b.area()} ${b.debug()}")
+    None => os.stdio.println("none")
+  }
+  let a = narrow(shapes[1])
+  os.stdio.println("narrow ${a.area()} ${a.debug()}")
+  os.stdio.println("shout ${shout(Rect{w: 4, h: 4, label: "n"})}")
+  let d: Display = Rect{w: 9, h: 9, label: "d"}
+  os.stdio.println("as display ${d}")
+  var m: Map[Str, Shape] = {}
+  for i in 0..6 {
+    m["k${i}"] = make(i)
+  }
+  var keys = ""
+  for (k, v) in m {
+    keys = keys + "${k}=${v.area()} "
+  }
+  os.stdio.println(keys)
+  let gs: List[Getter[Int]] = [Const{v: 4}, Const{v: 38}]
+  os.stdio.println("getters ${sum_getters(gs)} ${gs[0].name()}")
+  let ns: Getter[List[Str]] = Names{xs: ["a", "b"]}
+  os.stdio.println("names ${ns.name()} ${ns.get().debug()} ${ns.debug()}")
+  let f = fn(k: Int) -> Int { shapes[2].scaled(k).area() }
+  os.stdio.println("closure ${f(3)}")
+  var acc: List[Shape] = []
+  for i in 1..200 {
+    acc.push(make(i).scaled(1))
+  }
+  os.stdio.println("many ${total(acc)} ${acc.len()}")
+  let r = scope s {
+    let t1 = s.spawn(fn() { total(shapes) })
+    let t2 = s.spawn(fn() { shapes[1].scaled(3).area() })
+    t1.await + t2.await
+  }
+  os.stdio.println("tasks ${r}")
+}
