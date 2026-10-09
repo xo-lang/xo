@@ -183,3 +183,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [bash-c-newline-package-list.md](bash-c-newline-package-list.md): a `go list` result spliced into `bash -c` runs each package line as a command; join it with spaces first.
 - [tsan-resumes-fault-unwind.md](tsan-resumes-fault-unwind.md): TSan's cleanup pads resume a fault's forced unwind; the exception object must not live in the raising frame (now in `xo_ctx`).
 - [http-diff-driver-leak.md](http-diff-driver-leak.md): LeakSanitizer (Linux only) caught the http_diff driver never freeing the per connection response buffer; macOS has no LSan.
+- [xo-check-same-module-path.md](xo-check-same-module-path.md): `xo check a b` with two directories declaring the same module path checks only the first, silently; check copies one at a time.
+- [xo-fix-applies-guesses.md](xo-fix-applies-guesses.md): `xo fix` applied did you mean guesses that changed programs (`t` to `it`); guesses are fixes only when clear, habits get their Xo form.

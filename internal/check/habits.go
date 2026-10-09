@@ -834,7 +834,7 @@ func (c *checker) goRange(x *ast.ForStmt, it Type) Type {
 		}
 	}
 	d := c.errorf(diag.ForeignSyntax, token.Span{File: header.File, Start: header.Start, End: token.Pos{Line: header.Start.Line, Col: header.Start.Col + 3, Offset: header.Start.Offset + 3}},
-		"`for %s := range x` is Go syntax; Xo writes `for pattern in x` (core 3.5)", strings.Join(names, ", "))
+		"`for %s := range %s` is Go syntax; Xo writes `for pattern in %s` (core 3.5)", strings.Join(names, ", "), c.srcOf(x.Iter.Span()), c.srcOf(x.Iter.Span()))
 	iter := c.operandSrc(x.Iter)
 	r := resolve(it)
 	if isBad(r) {

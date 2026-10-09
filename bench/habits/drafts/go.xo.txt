@@ -1,0 +1,40 @@
+package main
+
+import "strings"
+
+type User struct {
+	name string
+	age  int
+}
+
+func (u *User) Greeting() string {
+	return "hi " + strings.ToUpper(u.name)
+}
+
+func parseAge(s string) (int, error) {
+	n := len(s)
+	if n == 0 {
+		return 0, "empty"
+	}
+	return n, nil
+}
+
+func total(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	for i := 0; i < len(xs); i++ {
+		t++
+	}
+	return t
+}
+
+func label(x int) string {
+	switch x {
+	case 1:
+		return "one"
+	default:
+		return "many"
+	}
+}

@@ -182,7 +182,7 @@ func (p *parser) ternary(c ast.Expr) ast.Expr {
 	}
 	p.next()
 	b := p.parseExpr()
-	d := p.foreign(q.Span, "`c ? a : b` is Go-adjacent C, TypeScript, Kotlin, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
+	d := p.foreign(q.Span, "`c ? a : b` is C, Java, TypeScript, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
 	addFix(d, "write `if ... else`",
 		p.insertAt(c.Span().Start, "if "),
 		p.replaceRange(c.Span().End, a.Span().Start, " { "),

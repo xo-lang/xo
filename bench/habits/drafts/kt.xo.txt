@@ -1,0 +1,41 @@
+data class Ignored(val x: Int)
+
+struct User {
+  name: String
+  age: Int
+}
+
+fun greet(u: User): String {
+  val prefix = if (u.age > 60) "Dear" else "Hi"
+  return "$prefix ${u.name}"
+}
+
+fun oldest(users: List<User>): User? {
+  var best: User? = null
+  for (u in users) {
+    if (best == null || u.age > best!!.age) {
+      best = u
+    }
+  }
+  return best
+}
+
+fun label(n: Int): String {
+  return when (n) {
+    0 -> "none"
+    1, 2 -> "few"
+    else -> "many"
+  }
+}
+
+fun total(xs: List<Int>): Int {
+  var t = 0
+  for (i in 0 until xs.size) {
+    t += xs[i]
+  }
+  return t
+}
+
+fun nick(u: User?): String {
+  return u?.name ?: "anon"
+}

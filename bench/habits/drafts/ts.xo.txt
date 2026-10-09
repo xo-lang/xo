@@ -1,0 +1,52 @@
+import { encode } from "json";
+
+interface Shape {
+  fn area(self) -> Float
+}
+
+struct Rect {
+  w: number;
+  h: number;
+  label?: string;
+}
+
+/**
+ * Area of a rectangle.
+ */
+export function area(r: Rect): number {
+  return r.w * r.h;
+}
+
+function describe(r: Rect): string {
+  const a = area(r);
+  const name = r.label ?? "rect";
+  return `${name} has area ${a}`;
+}
+
+function biggest(rs: Array<Rect>): Rect? {
+  if (rs.length === 0) {
+    return null;
+  }
+  let best = rs[0];
+  for (const r of rs) {
+    if (area(r) > area(best)) {
+      best = r;
+    }
+  }
+  return best;
+}
+
+function sizes(rs: Array<Rect>): Array<number> {
+  return rs.map((r) => area(r)).filter(a => a > 1.0);
+}
+
+function sign(x: number): number {
+  return x > 0.0 ? 1.0 : -1.0;
+}
+
+function check(x: number): number ! Str {
+  if (x < 0.0) {
+    throw "negative";
+  }
+  return x;
+}

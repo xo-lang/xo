@@ -1,0 +1,46 @@
+use std/json
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Item {
+    pub id: i64,
+    pub name: String,
+}
+
+impl Item {
+    pub fn label(&self) -> String {
+        format!("{}: {}", self.id, self.name)
+    }
+
+    pub fn rename(&mut self, n: String) {
+        self.name = n;
+    }
+}
+
+pub fn find<K: Hash + Eq>(items: Vec<Item>, id: i64) -> Option<Item> {
+    for it in items.iter() {
+        if it.id == id {
+            return Some(it.clone());
+        }
+    }
+    None
+}
+
+pub fn total(items: &Vec<Item>) -> i64 {
+    let mut t = 0;
+    for i in 0..items.len() {
+        t += items[i].id;
+    }
+    t
+}
+
+pub fn first_name(items: Vec<Item>) -> String {
+    let it = items.first().unwrap();
+    match it.id {
+        0 => String::from("zero"),
+        _ => it.name.to_string(),
+    }
+}
+
+pub fn encode(it: Item) -> Str {
+    json::encode_str(it)
+}

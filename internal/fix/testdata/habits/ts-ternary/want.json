@@ -2,7 +2,7 @@
   {
     "code": "XO0177",
     "severity": "error",
-    "message": "`c ? a : b` is Go-adjacent C, TypeScript, Kotlin, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)",
+    "message": "`c ? a : b` is C, Java, TypeScript, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)",
     "span": {
       "file": "main.xo",
       "line": 2,

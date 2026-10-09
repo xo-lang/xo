@@ -1,0 +1,49 @@
+import json
+
+# A small inventory.
+struct Item {
+  name: str
+  qty: int
+}
+
+def total(items: list[Item]) -> int {
+  t = 0
+  for it in items {
+    t += it.qty
+  }
+  return t
+}
+
+def names(items: list[Item]) -> list[str] {
+  return [it.name for it in items]
+}
+
+def describe(it: Item) -> str {
+  if it.qty == 0 {
+    return f"{it.name} is out"
+  } elif it.qty < 5 {
+    return f"{it.name} is low"
+  } else {
+    return 'plenty'
+  }
+}
+
+def has(items: list[Item], name: str) -> bool {
+  for it in items {
+    if it.name == name and not (it.qty == 0) {
+      return True
+    }
+  }
+  return False
+}
+
+def squares(n: int) -> list[int] {
+  return list(map(lambda x: x ** 2, range(n)))
+}
+
+def check(x: int) -> int ! Str {
+  if x < 0 {
+    raise "negative"
+  }
+  return x
+}

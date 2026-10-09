@@ -2,7 +2,7 @@
   {
     "code": "XO0177",
     "severity": "error",
-    "message": "`for k, v := range x` is Go syntax; Xo writes `for pattern in x` (core 3.5)",
+    "message": "`for k, v := range m` is Go syntax; Xo writes `for pattern in m` (core 3.5)",
     "span": {
       "file": "main.xo",
       "line": 3,
