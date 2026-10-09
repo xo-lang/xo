@@ -178,3 +178,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [tls-layout-moves-fanout.md](tls-layout-moves-fanout.md): one 8 byte thread local more made arm64 fanout 7 percent faster; measure runtime changes against the parent commit and bisect the runtime apart from the generated code.
 - [go-scope-failure-unused-trace.md](go-scope-failure-unused-trace.md): Go backend: a scope in a failing closure whose tasks cannot fail declared an unused trace (`x_ftrN`); fixed.
 - [unwind-zero-sized-int.md](unwind-zero-sized-int.md): an unwind exit's zero value of a `Rune` result was an `Int` (the verifier rejected it); build constants of the type itself.
+- [runs-dir-breaks-go-dot-dot-dot.md](runs-dir-breaks-go-dot-dot-dot.md): model outputs in `runs/` make `go build ./...` fail; exclude `/runs/` from the package list.
