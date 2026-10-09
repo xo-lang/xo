@@ -147,20 +147,6 @@ __attribute__((noinline)) static xo_heap *heap_slow(void) {
 	return h;
 }
 
-// heap_release hands the calling thread's heap to the next thread that
-// starts (a worker thread that exits; its blocks stay counted).
-static void heap_release(void) {
-	xo_heap *h = tls_heap;
-	if (!h || h == &main_heap) {
-		return;
-	}
-	tls_heap = NULL;
-	pthread_mutex_lock(&heaps_mu);
-	h->spare = spare_heaps;
-	spare_heaps = h;
-	pthread_mutex_unlock(&heaps_mu);
-}
-
 // heap returns the calling thread's heap.
 static inline xo_heap *heap(void) {
 	if (__builtin_expect(!__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED), 1)) {
@@ -1054,16 +1040,6 @@ XO_NORETURN static void fault_at(const char *msg, const char *loc, int64_t n) { 
 // ---------------------------------------------------------------------------
 // Parks, nodes, contexts
 
-typedef struct {
-	pthread_mutex_t mu;
-	pthread_cond_t cv;
-	int signaled;
-	int counted; // its context counts as blocked (dl.blocked)
-	// the fiber parked here (decision 0069): a signal makes it runnable
-	// instead of signaling cv
-	struct xo_fiber *fiber;
-} xo_park;
-
 // Runtime statistics (decision 0077): XO_RTSTATS=1 prints counts of the
 // scheduler's events to stderr at exit (and xo_rt_stats prints them on
 // demand). Each count is one relaxed atomic add, done only when enabled.
@@ -1097,13 +1073,6 @@ void xo_rt_stats(void) {
 	fputc('\n', stderr);
 }
 
-// xo_spin is a lock for short critical sections that many threads take
-// (the deadlock counters, the cancellation tree): a contended pthread
-// mutex sleeps in the kernel, which dominated spawn heavy programs.
-typedef struct {
-	int locked;
-} xo_spin;
-
 static inline void spin_relax(void) {
 #if defined(__aarch64__)
 	__asm__ volatile("yield");
@@ -1112,40 +1081,102 @@ static inline void spin_relax(void) {
 #endif
 }
 
-static void spin_lock(xo_spin *l) {
-	for (int n = 0;; n++) {
-		if (!__atomic_load_n(&l->locked, __ATOMIC_RELAXED) && !__atomic_exchange_n(&l->locked, 1, __ATOMIC_ACQUIRE)) {
+// Futexes (decision 0077): wait while a 32 bit word holds a value, and
+// wake the threads waiting on a word. Darwin has no public futex; its
+// __ulock calls are what libc++ uses for std::atomic::wait. Both are
+// never inlined: they may set errno (Linux), which must not be read
+// across a fiber switch (gotchas/fiber-thread-local-address.md).
+#if defined(__APPLE__)
+extern int __ulock_wait(uint32_t op, void *addr, uint64_t value, uint32_t timeout_us);
+extern int __ulock_wake(uint32_t op, void *addr, uint64_t wake_value);
+#define XO_UL_COMPARE_AND_WAIT 1
+#define XO_ULF_WAKE_ALL 0x100
+#define XO_ULF_NO_ERRNO 0x01000000
+__attribute__((noinline)) static void futex_wait(uint32_t *a, uint32_t v) {
+	__ulock_wait(XO_UL_COMPARE_AND_WAIT | XO_ULF_NO_ERRNO, a, v, 0);
+}
+__attribute__((noinline)) static void futex_wake(uint32_t *a) {
+	__ulock_wake(XO_UL_COMPARE_AND_WAIT | XO_ULF_NO_ERRNO, a, 0);
+}
+#else
+#include <linux/futex.h>
+#include <sys/syscall.h>
+__attribute__((noinline)) static void futex_wait(uint32_t *a, uint32_t v) {
+	int e = errno;
+	syscall(SYS_futex, a, FUTEX_WAIT_PRIVATE, v, NULL, NULL, 0);
+	errno = e;
+}
+__attribute__((noinline)) static void futex_wake(uint32_t *a) {
+	int e = errno;
+	syscall(SYS_futex, a, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+	errno = e;
+}
+#endif
+
+// xo_lock is the lock of the task runtime's objects (decision 0077): a
+// word that is 0 (free), 1 (held), or 2 (held, a thread may sleep on
+// it). A contended lock spins a little, then sleeps on the word; an
+// unlock makes a system call only when someone may sleep. Unlike a
+// pthread mutex it needs no initialization (zero is free) and has no
+// fair share hand off (gotchas/darwin-mutex-fairshare.md).
+typedef struct {
+	uint32_t v;
+} xo_lock;
+
+__attribute__((noinline)) static void lock_slow(xo_lock *l) {
+	STAT(lock_slow);
+	for (int i = 0; i < 100; i++) {
+		spin_relax();
+		uint32_t z = 0;
+		if (__atomic_load_n(&l->v, __ATOMIC_RELAXED) == 0 && __atomic_compare_exchange_n(&l->v, &z, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
 			return;
 		}
-		if (n > 64) {
-			STAT(spin_yield);
-			sched_yield();
-		} else {
-			spin_relax();
-		}
+	}
+	while (__atomic_exchange_n(&l->v, 2, __ATOMIC_ACQUIRE) != 0) {
+		futex_wait(&l->v, 2);
 	}
 }
 
-static void spin_unlock(xo_spin *l) { __atomic_store_n(&l->locked, 0, __ATOMIC_RELEASE); }
+static inline void lk(xo_lock *l) {
+	uint32_t z = 0;
+	if (!__atomic_compare_exchange_n(&l->v, &z, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+		lock_slow(l);
+	}
+}
+
+static inline void unlk(xo_lock *l) {
+	if (__atomic_exchange_n(&l->v, 0, __ATOMIC_RELEASE) == 2) {
+		futex_wake(&l->v);
+	}
+}
 
 // Deadlock detection (core 11.4, fault XO-F001): live counts the
-// contexts that run Xo code (each program root, and each task a worker
-// took from a queue; a task run by a waiting context stands in for it),
-// blocked those waiting in park_wait. A context counts as running again
-// as soon as a waker signals it. With no task queued, every live context
-// blocked means none can ever be woken: the native backends have no
-// timers, I/O, or signals that could.
-static struct {
-	xo_spin mu;
-	int64_t live, blocked;
-} dl;
+// contexts that run Xo code or will (each program root, each task from
+// its spawn until it ends on a fiber, and each queue entry of a task a
+// waiting context ran: decision 0077), blocked those waiting in
+// park_wait. A context counts as running again as soon as a waker
+// signals it. Every live context blocked means none can ever be woken:
+// waits that a timer, a socket, or a signal can end are not counted.
+// Both counts are one word (live in the high half), so every change is
+// one atomic add that also tells whether it completed a deadlock.
+static int64_t dl_state;
+#define DL_LIVE ((int64_t)1 << 32)
 
-static void dl_check_locked(void);
+XO_NORETURN static void deadlock(void);
 
-// mu_init initializes a mutex of the task runtime. On Darwin the
-// default policy hands a contended mutex over in FIFO order through the
-// kernel, which cost a spawn heavy program four times its user time in
-// system time; first fit lets a running thread take it again
+static void dl_add(int64_t d) {
+	int64_t n = __atomic_add_fetch(&dl_state, d, __ATOMIC_ACQ_REL);
+	int64_t live = n >> 32, blocked = n & 0xffffffff;
+	if (live > 0 && blocked == live) {
+		deadlock();
+	}
+}
+
+// mu_init initializes a pthread mutex of the runtime (the event loop's,
+// the network's, the HTTP server's). On Darwin the default policy hands
+// a contended mutex over in FIFO order through the kernel, which cost a
+// spawn heavy program four times its user time in system time; first
+// fit lets a running thread take it again
 // (gotchas/darwin-mutex-fairshare.md).
 static void mu_init(pthread_mutex_t *m) {
 #ifdef __APPLE__
@@ -1159,61 +1190,68 @@ static void mu_init(pthread_mutex_t *m) {
 #endif
 }
 
-static void park_init(xo_park *p) {
-	mu_init(&p->mu);
-	pthread_cond_init(&p->cv, NULL);
-	p->signaled = 0;
-	p->counted = 0;
-	p->fiber = NULL;
-}
+// A park is where one context waits. signaled is also the futex word of
+// a thread (a root context) that sleeps on it; a fiber that waits parks
+// instead (decision 0069). All zero is a fresh park.
+typedef struct {
+	xo_lock mu;
+	uint32_t signaled; // written under mu, read atomically
+	int sleeping;      // a thread sleeps on signaled
+	int counted;       // its context counts as blocked (dl_state)
+	// the fiber parked here (decision 0069): a signal makes it runnable
+	struct xo_fiber *fiber;
+} xo_park;
 
-static void park_destroy(xo_park *p) {
-	pthread_mutex_destroy(&p->mu);
-	pthread_cond_destroy(&p->cv);
-}
+static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
+
+static void park_destroy(xo_park *p) { (void)p; }
 
 static void park_reset(xo_park *p) {
-	pthread_mutex_lock(&p->mu);
-	p->signaled = 0;
-	pthread_mutex_unlock(&p->mu);
+	lk(&p->mu);
+	__atomic_store_n(&p->signaled, 0, __ATOMIC_RELAXED);
+	unlk(&p->mu);
 }
 
 struct xo_fiber;
 static void fiber_wake(struct xo_fiber *f);
 
+// park_signal wakes the context waiting at p. The waiter takes p->mu
+// before it returns, so p stays valid until the unlock here.
 static void park_signal(xo_park *p) {
-	pthread_mutex_lock(&p->mu);
-	p->signaled = 1;
+	lk(&p->mu);
+	__atomic_store_n(&p->signaled, 1, __ATOMIC_RELEASE);
 	if (p->counted) {
 		p->counted = 0;
-		spin_lock(&dl.mu);
-		dl.blocked--;
-		spin_unlock(&dl.mu);
+		dl_add(-1);
 	}
 	struct xo_fiber *f = p->fiber;
 	if (f) {
 		p->fiber = NULL;
 		fiber_wake(f);
-	} else {
+	} else if (p->sleeping) {
 		STAT(thread_wake);
-		pthread_cond_signal(&p->cv);
+		futex_wake(&p->signaled);
 	}
-	pthread_mutex_unlock(&p->mu);
+	unlk(&p->mu);
 }
 
+// The cancellation tree: every node has a lock for its list of children
+// and its waiter. A walk that cancels a subtree holds the locks from the
+// node down to the one it visits, so locks are always taken parent
+// first; linking and unlinking take only the parent's (decision 0077:
+// one lock for the whole tree serialized every spawn and every wait).
 typedef struct xo_node {
 	struct xo_node *parent, *child, *prev, *next;
-	int canceled;    // atomic reads; written under tree_mu
-	xo_park *waiter; // the park of a context blocked at this node (tree_mu)
+	int canceled;    // atomic reads; written under the parent's and its own lock
+	xo_park *waiter; // the park of a context blocked at this node (mu)
+	xo_lock mu;      // child, the children's prev and next, waiter
 } xo_node;
-
-static xo_spin tree_mu;
 
 static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __ATOMIC_ACQUIRE); }
 
 // node_link adds n below parent (canceled at once when parent is).
 static void node_link(xo_node *n, xo_node *parent) {
-	spin_lock(&tree_mu);
+	lk(&parent->mu);
 	n->parent = parent;
 	n->prev = NULL;
 	n->next = parent->child;
@@ -1224,14 +1262,18 @@ static void node_link(xo_node *n, xo_node *parent) {
 	if (parent->canceled) {
 		__atomic_store_n(&n->canceled, 1, __ATOMIC_RELEASE);
 	}
-	spin_unlock(&tree_mu);
+	unlk(&parent->mu);
 }
 
-static void node_unlink_locked(xo_node *n) {
+// node_unlink takes n out of its parent's children. A task's node is not
+// unlinked when the task ends: it goes with its scope's node of tasks
+// (xo_scope_close), and nothing walks up from a node.
+static void node_unlink(xo_node *n) {
 	xo_node *p = n->parent;
 	if (!p) {
 		return;
 	}
+	lk(&p->mu);
 	if (n->prev) {
 		n->prev->next = n->next;
 	} else {
@@ -1241,16 +1283,10 @@ static void node_unlink_locked(xo_node *n) {
 		n->next->prev = n->prev;
 	}
 	n->parent = n->prev = n->next = NULL;
-	// children still linked (they end first: a scope's nodes go before
-	// the body that holds them) keep a stale parent; nothing walks up
+	unlk(&p->mu);
 }
 
-static void node_unlink(xo_node *n) {
-	spin_lock(&tree_mu);
-	node_unlink_locked(n);
-	spin_unlock(&tree_mu);
-}
-
+// cancel_locked cancels n and its subtree (n->mu held).
 static void cancel_locked(xo_node *n) {
 	if (!n->canceled) {
 		__atomic_store_n(&n->canceled, 1, __ATOMIC_RELEASE);
@@ -1260,16 +1296,24 @@ static void cancel_locked(xo_node *n) {
 		park_signal(n->waiter);
 	}
 	for (xo_node *c = n->child; c; c = c->next) {
+		lk(&c->mu);
 		cancel_locked(c);
+		unlk(&c->mu);
 	}
 }
 
 // node_cancel cancels n and its subtree (core 7.2) and wakes every
 // context blocked in it.
 static void node_cancel(xo_node *n) {
-	spin_lock(&tree_mu);
+	lk(&n->mu);
 	cancel_locked(n);
-	spin_unlock(&tree_mu);
+	unlk(&n->mu);
+}
+
+static void node_set_waiter(xo_node *n, xo_park *p) {
+	lk(&n->mu);
+	n->waiter = p;
+	unlk(&n->mu);
 }
 
 typedef struct {
@@ -1334,9 +1378,7 @@ static xo_ctx *ctx(void) {
 	c->node = root;
 	park_init(&c->park);
 	cur_set(c);
-	spin_lock(&dl.mu);
-	dl.live++;
-	spin_unlock(&dl.mu);
+	dl_add(DL_LIVE);
 	return c;
 }
 
@@ -1422,94 +1464,151 @@ static void held_del(xo_ctx *c, void *m) {
 }
 
 // ---------------------------------------------------------------------------
-// The worker pool
-
+// The worker pool (decisions 0068, 0069, 0077)
+//
 // A queue item is a task to start, or a parked fiber to resume (its
-// pointer with the low bit set, decision 0069).
+// pointer with the low bit set, decision 0069). Every worker thread, and
+// every root thread once it spawns or waits, has a record with
+//   - a deque (Chase and Lev): the owner pushes and pops at the bottom
+//     without a lock, others steal from the top with a compare and swap;
+//   - next: one fiber its thread woke (Go's runnext), run before the
+//     deque, so a fiber that wakes another and then waits hands over on
+//     the same thread; others take it only on their last look for work.
+// Items from threads without a record (the poller) go to the inject
+// queue. Idle workers sleep on a futex word of their own. Waking follows
+// Go's spinning rule: a push wakes an idle worker only when no worker is
+// spinning (looking for work), the woken worker spins, and a spinning
+// worker that finds work wakes the next one only if it was the last
+// spinner. So a burst of spawns wakes workers one at a time and a steady
+// stream of hand overs wakes nobody.
+
+typedef struct xo_ring {
+	int64_t mask;
+	struct xo_ring *old; // the ring this one replaced (kept: a thief may read it)
+	void *slot[];
+} xo_ring;
+
 typedef struct {
-	xo_spin mu;
-	void **buf;
-	// a ring: head is the top, head+len-1 the bottom; len is read
-	// without the lock to skip empty deques
-	int64_t head, len, cap;
+	int64_t top, bottom; // atomic
+	xo_ring *ring;       // atomic
 } xo_deque;
 
-static void dq_push(xo_deque *d, void *t) {
-	spin_lock(&d->mu);
-	if (d->len == d->cap) {
-		int64_t nc = d->cap ? d->cap * 2 : 64;
-		void **nb = malloc((size_t)nc * sizeof(*nb));
-		if (!nb) {
-			xo_oom();
-		}
-		for (int64_t i = 0; i < d->len; i++) {
-			nb[i] = d->buf[(d->head + i) % d->cap];
-		}
-		free(d->buf);
-		d->buf = nb;
-		d->head = 0;
-		d->cap = nc;
+static xo_ring *ring_new(int64_t n, xo_ring *old) {
+	xo_ring *r = malloc(sizeof(xo_ring) + (size_t)n * sizeof(void *));
+	if (!r) {
+		xo_oom();
 	}
-	d->buf[(d->head + d->len) % d->cap] = t;
-	__atomic_store_n(&d->len, d->len + 1, __ATOMIC_RELEASE);
-	spin_unlock(&d->mu);
+	r->mask = n - 1;
+	r->old = old;
+	return r;
 }
 
-// dq_take pops from the bottom (the owner, bottom set) or the top.
-static void *dq_take(xo_deque *d, int bottom) {
-	if (__atomic_load_n(&d->len, __ATOMIC_ACQUIRE) == 0) {
+// dq_push adds t at the bottom (the owner).
+static void dq_push(xo_deque *d, void *t) {
+	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_RELAXED);
+	int64_t tp = __atomic_load_n(&d->top, __ATOMIC_ACQUIRE);
+	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_RELAXED);
+	if (!r || b - tp > r->mask) {
+		int64_t n = r ? (r->mask + 1) * 2 : 256;
+		xo_ring *nr = ring_new(n, r);
+		for (int64_t i = tp; i < b; i++) {
+			__atomic_store_n(&nr->slot[i & nr->mask], __atomic_load_n(&r->slot[i & r->mask], __ATOMIC_RELAXED), __ATOMIC_RELAXED);
+		}
+		__atomic_store_n(&d->ring, nr, __ATOMIC_RELEASE);
+		r = nr;
+	}
+	__atomic_store_n(&r->slot[b & r->mask], t, __ATOMIC_RELAXED);
+	// sequentially consistent: ordered before the pusher's later look at
+	// the spinning and idle counts (wakep), as a worker going idle counts
+	// itself idle before it looks at the deques again
+	__atomic_store_n(&d->bottom, b + 1, __ATOMIC_SEQ_CST);
+}
+
+// dq_pop takes from the bottom (the owner).
+static void *dq_pop(xo_deque *d) {
+	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_RELAXED) - 1;
+	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_RELAXED);
+	if (!r) {
 		return NULL;
 	}
-	spin_lock(&d->mu);
-	void *t = NULL;
-	if (d->len > 0) {
-		if (bottom) {
-			t = d->buf[(d->head + d->len - 1) % d->cap];
-		} else {
-			t = d->buf[d->head];
-			d->head = (d->head + 1) % d->cap;
-		}
-		__atomic_store_n(&d->len, d->len - 1, __ATOMIC_RELEASE);
+	__atomic_store_n(&d->bottom, b, __ATOMIC_SEQ_CST);
+	int64_t t = __atomic_load_n(&d->top, __ATOMIC_SEQ_CST);
+	if (t > b) {
+		__atomic_store_n(&d->bottom, b + 1, __ATOMIC_RELAXED);
+		return NULL;
 	}
-	spin_unlock(&d->mu);
-	return t;
+	void *x = __atomic_load_n(&r->slot[b & r->mask], __ATOMIC_RELAXED);
+	if (t == b) {
+		// the last item: race the thieves for it
+		if (!__atomic_compare_exchange_n(&d->top, &t, t + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+			x = NULL;
+		}
+		__atomic_store_n(&d->bottom, b + 1, __ATOMIC_RELAXED);
+	}
+	return x;
+}
+
+// dq_steal takes from the top (a thief): NULL when empty or lost a race.
+static void *dq_steal(xo_deque *d) {
+	int64_t t = __atomic_load_n(&d->top, __ATOMIC_SEQ_CST);
+	int64_t b = __atomic_load_n(&d->bottom, __ATOMIC_SEQ_CST);
+	if (t >= b) {
+		return NULL;
+	}
+	xo_ring *r = __atomic_load_n(&d->ring, __ATOMIC_ACQUIRE);
+	void *x = __atomic_load_n(&r->slot[t & r->mask], __ATOMIC_RELAXED);
+	if (!__atomic_compare_exchange_n(&d->top, &t, t + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+		return NULL;
+	}
+	return x;
+}
+
+static int dq_nonempty(xo_deque *d) {
+	return __atomic_load_n(&d->top, __ATOMIC_SEQ_CST) < __atomic_load_n(&d->bottom, __ATOMIC_SEQ_CST);
 }
 
 #define XO_MAXW 4096
 #define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 #define STORE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
+#define XO_FCACHE 8
 
-typedef struct {
+typedef struct xo_worker {
 	xo_deque dq;
+	void *next; // atomic: a fiber its thread woke
 	int live;
+	int root;       // the record of a root thread that helps while it waits
 	void *sched_sp; // the scheduler's stack pointer while a fiber runs
 	void *tsan;     // the scheduler's ThreadSanitizer fiber
+	uint32_t wakew; // futex word: set to 1 to wake the idle worker
+	struct xo_worker *idle_next;
+	uint64_t rng;
+	struct xo_fiber *fcache[XO_FCACHE]; // stacks to reuse (owner only)
+	int nfcache;
 } xo_worker;
 
 static struct {
 	pthread_once_t once;
-	pthread_mutex_t mu;
-	pthread_cond_t cv;
+	xo_lock mu; // the idle list, starting workers
 	int ncpu;
-	xo_worker *ws[XO_MAXW];
-	// written under mu, read without it too (atomic)
-	int nw;          // worker slots used
-	int alive;       // live workers
-	int idle;        // workers waiting for work
-	int spinning;    // workers looking for work before they sleep
-	int blocked;     // workers blocked in a task
-	int64_t nqueued; // tasks in the queues
-	xo_deque inject;
-} pool = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER};
+	int spin_rounds;
+	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
+	int nw;                 // records used (atomic)
+	int alive;              // worker threads (atomic)
+	int nidle;              // idle worker threads (atomic)
+	int spinning;           // spinning worker threads (atomic)
+	xo_worker *idle;        // the idle list (mu)
+	// the inject queue: items from threads without a record
+	xo_lock imu;
+	void **ibuf;
+	int64_t ihead, ilen, icap; // ilen read atomically to skip it
+} pool = {.once = PTHREAD_ONCE_INIT};
 
 static __thread xo_worker *tls_w;
 
 __attribute__((noinline)) static xo_worker *w_get(void) { return tls_w; }
 __attribute__((noinline)) static void w_set(xo_worker *w) { tls_w = w; }
 
-static void rt_init(void) {
-	mu_init(&pool.mu);
-}
+static void rt_init(void) {}
 
 static void pool_init(void) {
 	xo_rt_threads_begin();
@@ -1525,136 +1624,216 @@ static void pool_init(void) {
 	if (n > 256) {
 		n = 256;
 	}
-	pool.ncpu = (int)n;
+	pool.spin_rounds = 16;
+	e = getenv("XO_SPIN_ROUNDS"); // tuning (decision 0077)
+	if (e && atoi(e) >= 0) {
+		pool.spin_rounds = atoi(e);
+	}
+	__atomic_store_n(&pool.ncpu, (int)n, __ATOMIC_RELEASE);
+}
+
+// register_worker adds w to the records thieves look at (pool.mu held).
+static void register_worker(xo_worker *w) {
+	if (pool.nw >= XO_MAXW) {
+		xo_oom();
+	}
+	w->rng = (uint64_t)(uintptr_t)w * 0x9E3779B97F4A7C15ull | 1;
+	pool.ws[pool.nw] = w;
+	STORE(pool.nw, pool.nw + 1);
 }
 
 static void *worker_main(void *arg);
 
-// start_worker starts a worker thread (pool.mu held).
-static void start_worker(void) {
-	if (pool.alive >= XO_MAXW - 1) {
-		return;
-	}
-	xo_worker *w = NULL;
-	for (int i = 0; i < pool.nw; i++) {
-		if (!pool.ws[i]->live) {
-			w = pool.ws[i];
-			break;
-		}
-	}
+// start_worker starts a worker thread, which starts spinning (pool.mu
+// held, a spinning count already taken for it).
+static int start_worker(void) {
+	xo_worker *w = calloc(1, sizeof(xo_worker));
 	if (!w) {
-		w = calloc(1, sizeof(xo_worker));
-		if (!w) {
-			xo_oom();
-		}
-		pool.ws[pool.nw] = w;
-		STORE(pool.nw, pool.nw + 1);
+		xo_oom();
 	}
 	w->live = 1;
+	register_worker(w);
 	STORE(pool.alive, pool.alive + 1);
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, (size_t)64 << 20);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	pthread_t th;
-	if (pthread_create(&th, &attr, worker_main, w) != 0) {
+	int ok = pthread_create(&th, &attr, worker_main, w) == 0;
+	pthread_attr_destroy(&attr);
+	if (!ok) {
 		w->live = 0;
 		STORE(pool.alive, pool.alive - 1);
 	}
-	pthread_attr_destroy(&attr);
+	return ok;
 }
 
-// wake makes sure queued work has a worker: an idle one is signaled, or
-// a new one starts while fewer than one per CPU can run.
-static void wake(void) {
-	pthread_mutex_lock(&pool.mu);
-	if (pool.idle > 0) {
-		STAT(wake);
-		pthread_cond_signal(&pool.cv);
-	} else if (pool.alive - pool.blocked < pool.ncpu) {
-		start_worker();
-	}
-	pthread_mutex_unlock(&pool.mu);
-}
-
-static void pool_push(void *t) {
-	xo_worker *w = w_get();
-	if (w) {
-		dq_push(&w->dq, t);
-	} else {
-		dq_push(&pool.inject, t);
-	}
-	__atomic_fetch_add(&pool.nqueued, 1, __ATOMIC_SEQ_CST);
-	// a spinning worker will take it (it checks nqueued after it stops
-	// spinning); a worker that goes idle checks nqueued after it counts
-	// itself idle, so it sees this task or is seen here
-	if (LOAD(pool.spinning) > 0) {
+// wakep makes sure queued work gets a worker: unless one is spinning, an
+// idle worker is woken (or a new one started while fewer than one per CPU
+// run) as a spinning worker.
+static void wakep(void) {
+	if (LOAD(pool.spinning) != 0) {
 		return;
 	}
-	if (LOAD(pool.idle) > 0 || LOAD(pool.alive) - LOAD(pool.blocked) < pool.ncpu) {
-		wake();
+	if (LOAD(pool.nidle) == 0 && LOAD(pool.alive) >= pool.ncpu) {
+		return;
+	}
+	int z = 0;
+	if (!__atomic_compare_exchange_n(&pool.spinning, &z, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+		return;
+	}
+	lk(&pool.mu);
+	xo_worker *w = pool.idle;
+	if (w) {
+		pool.idle = w->idle_next;
+		w->idle_next = NULL;
+		__atomic_fetch_sub(&pool.nidle, 1, __ATOMIC_SEQ_CST);
+		unlk(&pool.mu);
+		STAT(wake);
+		__atomic_store_n(&w->wakew, 1, __ATOMIC_RELEASE);
+		futex_wake(&w->wakew);
+		return;
+	}
+	int started = pool.alive < pool.ncpu && start_worker();
+	unlk(&pool.mu);
+	if (!started) {
+		__atomic_fetch_sub(&pool.spinning, 1, __ATOMIC_SEQ_CST);
 	}
 }
 
-static void *pool_pop(xo_worker *w);
+static void inject_push(void *t) {
+	lk(&pool.imu);
+	if (pool.ilen == pool.icap) {
+		int64_t nc = pool.icap ? pool.icap * 2 : 64;
+		void **nb = malloc((size_t)nc * sizeof(*nb));
+		if (!nb) {
+			xo_oom();
+		}
+		for (int64_t i = 0; i < pool.ilen; i++) {
+			nb[i] = pool.ibuf[(pool.ihead + i) % pool.icap];
+		}
+		free(pool.ibuf);
+		pool.ibuf = nb;
+		pool.ihead = 0;
+		pool.icap = nc;
+	}
+	pool.ibuf[(pool.ihead + pool.ilen) % pool.icap] = t;
+	__atomic_store_n(&pool.ilen, pool.ilen + 1, __ATOMIC_SEQ_CST);
+	unlk(&pool.imu);
+}
 
-static inline void cpu_relax(void) { spin_relax(); }
-
-// spin looks for work for a while before the worker sleeps (at most two
-// workers at once): a task spawned meanwhile costs no wake up.
-static void *spin(xo_worker *w) {
-	if (LOAD(pool.spinning) >= 2) {
+static void *inject_pop(void) {
+	if (__atomic_load_n(&pool.ilen, __ATOMIC_SEQ_CST) == 0) {
 		return NULL;
 	}
-	__atomic_fetch_add(&pool.spinning, 1, __ATOMIC_SEQ_CST);
 	void *t = NULL;
-	for (int i = 0; i < 4000 && !t; i++) {
-		STAT(spin_round);
-		if (LOAD(pool.nqueued) > 0) {
-			t = pool_pop(w);
-		} else {
-			cpu_relax();
-		}
+	lk(&pool.imu);
+	if (pool.ilen > 0) {
+		t = pool.ibuf[pool.ihead];
+		pool.ihead = (pool.ihead + 1) % pool.icap;
+		__atomic_store_n(&pool.ilen, pool.ilen - 1, __ATOMIC_RELAXED);
 	}
-	__atomic_fetch_sub(&pool.spinning, 1, __ATOMIC_SEQ_CST);
-	if (t && LOAD(pool.nqueued) > 0 && LOAD(pool.spinning) == 0) {
-		wake(); // more work: another worker looks for it
+	unlk(&pool.imu);
+	if (t) {
+		STAT(inject);
 	}
 	return t;
 }
 
-static void *pool_pop(xo_worker *w) {
+// pool_push queues t: a woken fiber goes to the waking thread's next
+// (the one there before moves to its deque), a new task to its deque,
+// and either from a thread without a record to the inject queue.
+static void pool_push(void *t) {
+	xo_worker *w = w_get();
+	if (!w) {
+		inject_push(t);
+	} else {
+		dq_push(&w->dq, t);
+	}
+	wakep();
+}
+
+// take_local takes w's own work: next, then the bottom of its deque.
+static void *take_local(xo_worker *w) {
 	void *t = NULL;
-	if (w) {
-		t = dq_take(&w->dq, 1);
+	if (__atomic_load_n(&w->next, __ATOMIC_RELAXED)) {
+		t = __atomic_exchange_n(&w->next, NULL, __ATOMIC_ACQ_REL);
 	}
 	if (!t) {
-		t = dq_take(&pool.inject, 0);
-		if (t) {
-			STAT(inject);
+		t = dq_pop(&w->dq);
+	}
+	return t;
+}
+
+// steal_round looks once at every other record, from a random one;
+// next only when last is set.
+static void *steal_round(xo_worker *w, int last) {
+	int n = LOAD(pool.nw);
+	if (n == 0) {
+		return NULL;
+	}
+	w->rng ^= w->rng << 13;
+	w->rng ^= w->rng >> 7;
+	w->rng ^= w->rng << 17;
+	int start = (int)(w->rng % (uint64_t)n);
+	for (int i = 0; i < n; i++) {
+		xo_worker *v = pool.ws[(start + i) % n];
+		if (v == w) {
+			continue;
 		}
-	}
-	if (!t) {
-		int n = LOAD(pool.nw);
-		for (int i = 0; i < n && !t; i++) {
-			xo_worker *v = pool.ws[i];
-			if (v != w) {
-				t = dq_take(&v->dq, 0);
-				if (t) {
-					STAT(steal);
-				}
+		void *t = dq_steal(&v->dq);
+		if (!t && last) {
+			void *x = __atomic_load_n(&v->next, __ATOMIC_ACQUIRE);
+			if (x && __atomic_compare_exchange_n(&v->next, &x, NULL, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+				t = x;
 			}
 		}
-	}
-	if (t) {
-		// a task is live before it leaves the queue, so it is never
-		// missing from both (a resumed fiber is live all along)
-		spin_lock(&dl.mu);
-		if (!((uintptr_t)t & 1)) {
-			dl.live++;
+		if (t) {
+			STAT(steal);
+			return t;
 		}
-		__atomic_fetch_sub(&pool.nqueued, 1, __ATOMIC_SEQ_CST);
-		spin_unlock(&dl.mu);
+	}
+	return NULL;
+}
+
+// any_work reports whether some queue holds an item (a worker about to
+// sleep looks again after it counted itself idle).
+static int any_work(void) {
+	if (__atomic_load_n(&pool.ilen, __ATOMIC_SEQ_CST) > 0) {
+		return 1;
+	}
+	int n = LOAD(pool.nw);
+	for (int i = 0; i < n; i++) {
+		xo_worker *v = pool.ws[i];
+		if (__atomic_load_n(&v->next, __ATOMIC_SEQ_CST) || dq_nonempty(&v->dq)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// find_work looks for an item for w: its own, the inject queue, then, if
+// spinning, steals for a few rounds (the last one also takes next).
+static void *find_work(xo_worker *w, int spinning) {
+	void *t = take_local(w);
+	if (!t) {
+		t = inject_pop();
+	}
+	if (t || !spinning) {
+		return t;
+	}
+	int rounds = pool.spin_rounds;
+	for (int r = 0; r <= rounds && !t; r++) {
+		STAT(spin_round);
+		t = steal_round(w, r == rounds);
+		if (!t) {
+			t = inject_pop();
+		}
+		if (!t && r < rounds) {
+			for (int i = 0; i < 32; i++) {
+				spin_relax();
+			}
+		}
 	}
 	return t;
 }
@@ -1666,96 +1845,105 @@ XO_NORETURN static void deadlock(void) {
 	exit(70);
 }
 
-static void dl_check_locked(void) {
-	if (dl.live > 0 && dl.blocked == dl.live && LOAD(pool.nqueued) == 0) {
-		deadlock();
-	}
-}
-
-// block_begin and block_end bracket a wait of a worker's task: while it
-// is blocked, queued work gets another worker.
-static void block_begin(void) {
-	if (!w_get()) {
-		return;
-	}
-	pthread_mutex_lock(&pool.mu);
-	STORE(pool.blocked, pool.blocked + 1);
-	if (LOAD(pool.nqueued) > 0 && pool.idle == 0 && pool.alive - pool.blocked < pool.ncpu) {
-		start_worker();
-	}
-	pthread_mutex_unlock(&pool.mu);
-}
-
-static void block_end(void) {
-	if (!w_get()) {
-		return;
-	}
-	pthread_mutex_lock(&pool.mu);
-	STORE(pool.blocked, pool.blocked - 1);
-	pthread_mutex_unlock(&pool.mu);
-}
-
 static void fiber_park(struct xo_fiber *f);
 static void fiber_parking(struct xo_fiber *f);
+static void run_item(xo_worker *w, void *it);
+static void tsan_worker(xo_worker *w);
+
+// root_worker returns the record of the calling root thread, made on
+// first use: its spawns go to its deque, and while it waits it runs work
+// (decision 0077).
+__attribute__((unused)) static xo_worker *root_worker(void) {
+	xo_worker *w = w_get();
+	if (w) {
+		return w;
+	}
+	pthread_once(&pool.once, pool_init);
+	w = calloc(1, sizeof(xo_worker));
+	if (!w) {
+		xo_oom();
+	}
+	w->live = 1;
+	w->root = 1;
+	tsan_worker(w);
+	lk(&pool.mu);
+	register_worker(w);
+	unlk(&pool.mu);
+	w_set(w);
+	return w;
+}
 
 // park_wait_n blocks the current context until its park is signaled or,
 // when cancelable, its node is canceled. A task on a fiber parks: its
-// worker runs other work meanwhile (decision 0069). counted tells that
-// the wait counts as blocked for deadlock detection; a wait that a
-// timer, the network, or a signal can end does not.
+// worker runs other work meanwhile (decision 0069). A root thread runs
+// queued work while it waits, and sleeps only when it finds none
+// (decision 0077). counted tells that the wait counts as blocked for
+// deadlock detection; a wait that a timer, the network, or a signal can
+// end does not.
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
 	if (c->shield) {
 		cancelable = 0;
 	}
 	if (cancelable) {
-		spin_lock(&tree_mu);
-		c->node->waiter = &c->park;
-		spin_unlock(&tree_mu);
+		node_set_waiter(c->node, &c->park);
 	}
 	struct xo_fiber *f = fib_get();
-	if (!f) {
-		block_begin();
-	}
-	pthread_mutex_lock(&c->park.mu);
-	if (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
+	// a root thread helps once the pool exists (a program that only
+	// sleeps stays single threaded)
+	xo_worker *rw = NULL;
+	xo_park *p = &c->park;
+	lk(&p->mu);
+	if (!p->signaled && !(cancelable && node_canceled(c->node))) {
 		if (counted) {
-			c->park.counted = 1;
-			spin_lock(&dl.mu);
-			dl.blocked++;
-			dl_check_locked();
-			spin_unlock(&dl.mu);
+			p->counted = 1;
+			dl_add(1);
 		}
-		while (!c->park.signaled && !(cancelable && node_canceled(c->node))) {
+		while (!p->signaled && !(cancelable && node_canceled(c->node))) {
 			if (f) {
-				c->park.fiber = f;
+				p->fiber = f;
 				fiber_parking(f);
-				pthread_mutex_unlock(&c->park.mu);
+				unlk(&p->mu);
 				fiber_park(f);
-				pthread_mutex_lock(&c->park.mu);
-				c->park.fiber = NULL;
-			} else {
-				STAT(thread_wait);
-				pthread_cond_wait(&c->park.cv, &c->park.mu);
+				lk(&p->mu);
+				p->fiber = NULL;
+				continue;
 			}
+			unlk(&p->mu);
+			void *it = NULL;
+			if (rw) {
+				it = find_work(rw, 0);
+				if (!it) {
+					it = steal_round(rw, 0);
+				}
+			}
+			if (it) {
+				run_item(rw, it);
+				cur_set(c);
+				lk(&p->mu);
+				continue;
+			}
+			lk(&p->mu);
+			if (p->signaled || (cancelable && node_canceled(c->node))) {
+				break;
+			}
+			p->sleeping = 1;
+			unlk(&p->mu);
+			STAT(thread_wait);
+			futex_wait(&p->signaled, 0);
+			lk(&p->mu);
+			p->sleeping = 0;
 		}
-		if (c->park.counted) {
+		if (p->counted) {
 			// woken by cancellation
-			c->park.counted = 0;
-			spin_lock(&dl.mu);
-			dl.blocked--;
-			spin_unlock(&dl.mu);
+			p->counted = 0;
+			dl_add(-1);
 		}
 	}
-	c->park.signaled = 0;
-	pthread_mutex_unlock(&c->park.mu);
-	if (!f) {
-		block_end();
-	}
+	__atomic_store_n(&p->signaled, 0, __ATOMIC_RELAXED);
+	unlk(&p->mu);
 	if (cancelable) {
-		spin_lock(&tree_mu);
-		c->node->waiter = NULL;
-		spin_unlock(&tree_mu);
+		node_set_waiter(c->node, NULL);
 	}
 }
 
@@ -1798,15 +1986,15 @@ static void wl_wake(xo_wl *l) {
 	}
 }
 
-// wl_wait waits on list l of an object whose mutex mu is held; mu is
-// held again on return. It reports 0 when the context was canceled.
-static int wl_wait(xo_ctx *c, pthread_mutex_t *mu, xo_wl *l, int cancelable) {
+// wl_wait waits on list l of an object whose lock mu is held; mu is held
+// again on return. It reports 0 when the context was canceled.
+static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) {
 	xo_went e = {.park = &c->park};
 	park_reset(&c->park);
 	wl_add(l, &e);
-	pthread_mutex_unlock(mu);
+	unlk(mu);
 	park_wait(c, cancelable);
-	pthread_mutex_lock(mu);
+	lk(mu);
 	wl_del(l, &e);
 	return !(cancelable && ctx_canceled(c));
 }
@@ -1821,10 +2009,11 @@ typedef struct xo_scope {
 	xo_node **old;        // earlier task nodes, freed with the scope
 	int nold;
 	xo_node *parent_node; // the opening context's node before the scope
-	pthread_mutex_t mu;
-	int64_t running; // tasks not finished
-	int64_t queued;  // queue entries of its tasks not taken yet
-	xo_wl idle;
+	xo_lock mu;           // list, fail, closed, tasks
+	// atomic: two for each task not finished and each queue entry of its
+	// tasks not taken yet, plus 1 while the joiner waits for zero
+	int64_t pending;
+	xo_park *joiner; // the joiner's park (set before it sets bit 0)
 	struct xo_task *list; // every task, each holding a reference, until the scope closes
 	struct xo_task *fail; // the first task that failed (a reference)
 	int closed;
@@ -1852,7 +2041,7 @@ typedef struct xo_task {
 	int unwound;      // the task ended by unwinding (canceled)
 	int background, consumed;
 	int64_t site;
-	pthread_mutex_t mu;
+	xo_lock mu; // waiters
 	xo_wl waiters;
 	struct xo_task *snext;
 } xo_task;
@@ -1869,7 +2058,6 @@ static void scope_free(void *p) {
 		free(s->old[i]);
 	}
 	free(s->old);
-	pthread_mutex_destroy(&s->mu);
 	xo_free(s);
 }
 
@@ -1878,7 +2066,6 @@ xo_scope *xo_scope_open(void) {
 	xo_scope *s = xo_alloc(sizeof(xo_scope));
 	memset(s, 0, sizeof *s);
 	h_init(s, scope_free);
-	mu_init(&s->mu);
 	s->parent_node = c->node;
 	node_link(&s->body, c->node);
 	s->tasks = calloc(1, sizeof(xo_node));
@@ -1903,7 +2090,7 @@ void xo_scope_cancel(xo_scope *s) {
 	if (!fresh) {
 		xo_oom();
 	}
-	pthread_mutex_lock(&s->mu);
+	lk(&s->mu);
 	xo_node *old = s->tasks;
 	s->old = realloc(s->old, (size_t)(s->nold + 1) * sizeof(xo_node *));
 	if (!s->old) {
@@ -1912,7 +2099,7 @@ void xo_scope_cancel(xo_scope *s) {
 	s->old[s->nold++] = old;
 	node_link(fresh, &s->body);
 	s->tasks = fresh;
-	pthread_mutex_unlock(&s->mu);
+	unlk(&s->mu);
 	node_cancel(old);
 }
 
@@ -1921,8 +2108,18 @@ static void task_free(void *p) {
 	if (t->result) {
 		list_release(t->result, t->drop);
 	}
-	pthread_mutex_destroy(&t->mu);
 	xo_free(t);
+}
+
+// scope_unit_done records that one of s's tasks ended or one of its queue
+// entries was taken; the last one wakes the joiner if it waits. It is
+// the caller's last touch of s (decision 0077: the counts were under the
+// scope's mutex, which every worker took twice per task).
+static void scope_unit_done(xo_scope *s) {
+	if (__atomic_sub_fetch(&s->pending, 2, __ATOMIC_ACQ_REL) == 1) {
+		// the joiner waits for this signal, so s is still there
+		park_signal(s->joiner);
+	}
 }
 
 // claim_task reports whether the caller is the one to run t (nobody
@@ -1948,17 +2145,12 @@ static void run_claimed(xo_task *t) {
 	free(c.held);
 	free(c.net_msg);
 	xo_scope *s = t->scope;
-	node_unlink(&t->node);
-	pthread_mutex_lock(&t->mu);
+	lk(&t->mu);
 	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
 	wl_wake(&t->waiters);
-	pthread_mutex_unlock(&t->mu);
+	unlk(&t->mu);
 	// the last touch of t and s: the scope's join may free them after
-	pthread_mutex_lock(&s->mu);
-	if (--s->running == 0 && s->queued == 0) {
-		wl_wake(&s->idle);
-	}
-	pthread_mutex_unlock(&s->mu);
+	scope_unit_done(s);
 }
 
 // run_task runs t on this thread if nobody has started it.
@@ -1971,14 +2163,7 @@ static void run_task(xo_task *t) {
 // dequeued records that a worker took t's queue entry (and ran it, or
 // found it run by a helper). The scope's join waits for this too, so no
 // queue holds a task the scope frees.
-static void dequeued(xo_task *t) {
-	xo_scope *s = t->scope;
-	pthread_mutex_lock(&s->mu);
-	if (--s->queued == 0 && s->running == 0) {
-		wl_wake(&s->idle);
-	}
-	pthread_mutex_unlock(&s->mu);
-}
+static void dequeued(xo_task *t) { scope_unit_done(t->scope); }
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2122,7 +2307,7 @@ static void tsan_worker(xo_worker *w) { (void)w; }
 #define XO_FIBER_CACHE 64
 
 static struct {
-	xo_spin mu;
+	xo_lock mu;
 	xo_fiber *list;
 	int n;
 	size_t stack; // bytes, without the guard page
@@ -2144,15 +2329,19 @@ static void fiber_main(xo_fiber *f);
 
 // fiber_new returns a fiber that starts running t (claimed) when it is
 // first switched to.
-static xo_fiber *fiber_new(xo_task *t) {
+static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 	xo_fiber *f = NULL;
-	spin_lock(&fibers.mu);
-	if (fibers.list) {
-		f = fibers.list;
-		fibers.list = f->next;
-		fibers.n--;
+	if (w->nfcache > 0) {
+		f = w->fcache[--w->nfcache];
+	} else if (__atomic_load_n(&fibers.list, __ATOMIC_RELAXED)) {
+		lk(&fibers.mu);
+		if (fibers.list) {
+			f = fibers.list;
+			__atomic_store_n(&fibers.list, f->next, __ATOMIC_RELAXED);
+			fibers.n--;
+		}
+		unlk(&fibers.mu);
 	}
-	spin_unlock(&fibers.mu);
 	if (!f) {
 		pthread_once(&fibers.once, fibers_init);
 		STAT(fiber_new);
@@ -2193,16 +2382,22 @@ static xo_fiber *fiber_new(xo_task *t) {
 	return f;
 }
 
-static void fiber_free(xo_fiber *f) {
-	spin_lock(&fibers.mu);
-	if (fibers.n < XO_FIBER_CACHE) {
-		f->next = fibers.list;
-		fibers.list = f;
-		fibers.n++;
-		spin_unlock(&fibers.mu);
+// fiber_free keeps f's stack for reuse: in its worker's cache, else the
+// shared one (decision 0077: a shared cache only took a lock per task).
+static void fiber_free(xo_worker *w, xo_fiber *f) {
+	if (w->nfcache < XO_FCACHE) {
+		w->fcache[w->nfcache++] = f;
 		return;
 	}
-	spin_unlock(&fibers.mu);
+	lk(&fibers.mu);
+	if (fibers.n < XO_FIBER_CACHE) {
+		f->next = fibers.list;
+		__atomic_store_n(&fibers.list, f, __ATOMIC_RELAXED);
+		fibers.n++;
+		unlk(&fibers.mu);
+		return;
+	}
+	unlk(&fibers.mu);
 #ifdef XO_TSAN
 	__tsan_destroy_fiber(f->tsan);
 #endif
@@ -2214,10 +2409,7 @@ static void fiber_free(xo_fiber *f) {
 // good.
 static void fiber_main(xo_fiber *f) {
 	run_claimed(f->task);
-	spin_lock(&dl.mu);
-	dl.live--;
-	dl_check_locked();
-	spin_unlock(&dl.mu);
+	dl_add(-DL_LIVE);
 	f->done = 1;
 	xo_worker *w = w_get();
 	TSAN_SWITCH(w->tsan);
@@ -2245,8 +2437,11 @@ static void fiber_wake(xo_fiber *f) {
 	}
 }
 
-// run_fiber runs f on worker w until it parks or ends.
+// run_fiber runs f on worker w until it parks or ends. The thread's
+// current context is restored after (a root thread runs fibers while it
+// waits).
 static void run_fiber(xo_worker *w, xo_fiber *f) {
+	xo_ctx *saved = cur_get();
 	for (;;) {
 		__atomic_store_n(&f->state, F_RUNNING, __ATOMIC_RELAXED);
 		fib_set(f);
@@ -2254,9 +2449,9 @@ static void run_fiber(xo_worker *w, xo_fiber *f) {
 		TSAN_SWITCH(f->tsan);
 		xo_fiber_switch(&w->sched_sp, f->sp);
 		fib_set(NULL);
-		cur_set(NULL);
+		cur_set(saved);
 		if (f->done) {
-			fiber_free(f);
+			fiber_free(w, f);
 			return;
 		}
 		int64_t st = F_PARKING;
@@ -2267,58 +2462,95 @@ static void run_fiber(xo_worker *w, xo_fiber *f) {
 	}
 }
 
+// run_item runs a queue item on w's thread: resumes a fiber, or starts a
+// task on a new fiber unless a helper ran it already.
+static void run_item(xo_worker *w, void *it) {
+	if ((uintptr_t)it & 1) {
+		run_fiber(w, (struct xo_fiber *)((uintptr_t)it & ~(uintptr_t)1));
+		return;
+	}
+	xo_task *t = it;
+	if (!claim_task(t)) {
+		// run by a thread that helped: the entry was live until now
+		dequeued(t);
+		dl_add(-DL_LIVE);
+		return;
+	}
+	// claimed: the scope waits for it to finish, so the queue entry can
+	// be counted taken before it runs
+	dequeued(t);
+	run_fiber(w, fiber_new(w, t));
+}
+
+// go_idle puts w on the idle list and sleeps until wakep takes it off;
+// it returns 0 instead when work showed up meanwhile (w is then off the
+// list again and not spinning).
+static int go_idle(xo_worker *w) {
+	lk(&pool.mu);
+	__atomic_store_n(&w->wakew, 0, __ATOMIC_RELAXED);
+	w->idle_next = pool.idle;
+	pool.idle = w;
+	__atomic_fetch_add(&pool.nidle, 1, __ATOMIC_SEQ_CST);
+	unlk(&pool.mu);
+	// a push before the count went up was not seen by its wakep: look
+	if (any_work()) {
+		lk(&pool.mu);
+		xo_worker **pp = &pool.idle;
+		while (*pp && *pp != w) {
+			pp = &(*pp)->idle_next;
+		}
+		if (*pp) {
+			*pp = w->idle_next;
+			w->idle_next = NULL;
+			__atomic_fetch_sub(&pool.nidle, 1, __ATOMIC_SEQ_CST);
+			unlk(&pool.mu);
+			return 0;
+		}
+		unlk(&pool.mu);
+		// wakep took it off the list and counted it spinning: wait for
+		// its wake up
+	}
+	while (__atomic_load_n(&w->wakew, __ATOMIC_ACQUIRE) == 0) {
+		STAT(idle_sleep);
+		futex_wait(&w->wakew, 0);
+	}
+	return 1;
+}
 
 static void *worker_main(void *arg) {
 	xo_worker *w = arg;
 	w_set(w);
 	tsan_worker(w);
+	int spinning = 1; // wakep started it as a spinning worker
 	for (;;) {
-		void *it = pool_pop(w);
-		if (!it) {
-			it = spin(w);
-		}
+		void *it = find_work(w, spinning);
 		if (it) {
-			if ((uintptr_t)it & 1) {
-				run_fiber(w, (struct xo_fiber *)((uintptr_t)it & ~(uintptr_t)1));
-				continue;
+			if (spinning) {
+				spinning = 0;
+				// the last spinner found work: another one looks for more
+				if (__atomic_sub_fetch(&pool.spinning, 1, __ATOMIC_SEQ_CST) == 0) {
+					wakep();
+				}
 			}
-			xo_task *t = it;
-			if (!claim_task(t)) {
-				// run by a thread that helped
-				dequeued(t);
-				spin_lock(&dl.mu);
-				dl.live--;
-				dl_check_locked();
-				spin_unlock(&dl.mu);
-				continue;
-			}
-			// claimed: the scope waits for it to finish, so the queue
-			// entry can be counted taken before it runs
-			dequeued(t);
-			run_fiber(w, fiber_new(t));
+			run_item(w, it);
 			continue;
 		}
-		pthread_mutex_lock(&pool.mu);
-		if (LOAD(pool.nqueued) > 0) {
-			pthread_mutex_unlock(&pool.mu);
+		if (spinning) {
+			spinning = 0;
+			__atomic_fetch_sub(&pool.spinning, 1, __ATOMIC_SEQ_CST);
+		} else if (2 * LOAD(pool.spinning) < LOAD(pool.alive) - LOAD(pool.nidle)) {
+			// at most half the busy workers spin (Go's rule)
+			__atomic_fetch_add(&pool.spinning, 1, __ATOMIC_SEQ_CST);
+			spinning = 1;
 			continue;
 		}
-		if (pool.alive - pool.blocked > pool.ncpu) {
-			// more workers than CPUs since others came back from waiting
-			w->live = 0;
-			STORE(pool.alive, pool.alive - 1);
-			pthread_mutex_unlock(&pool.mu);
-			break;
+		if (go_idle(w)) {
+			spinning = 1; // wakep counted it spinning
+		} else {
+			__atomic_fetch_add(&pool.spinning, 1, __ATOMIC_SEQ_CST);
+			spinning = 1;
 		}
-		STORE(pool.idle, pool.idle + 1);
-		while (LOAD(pool.nqueued) == 0) {
-			STAT(idle_sleep);
-			pthread_cond_wait(&pool.cv, &pool.mu);
-		}
-		STORE(pool.idle, pool.idle - 1);
-		pthread_mutex_unlock(&pool.mu);
 	}
-	heap_release();
 	return NULL;
 }
 
@@ -2336,25 +2568,27 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	// references: the handle returned, and the scope's list (which keeps
 	// t alive while a queue holds it)
 	t->h.rc = -2;
-	mu_init(&t->mu);
 	t->run = (xo_run_fn)run;
 	t->drop = (xo_ldrop)drop;
 	t->fl = fl;
 	t->background = (int)(flags & 1);
 	t->consumed = (int)((flags >> 1) & 1);
 	t->site = site;
-	pthread_mutex_lock(&s->mu);
+	lk(&s->mu);
 	if (s->closed) {
-		pthread_mutex_unlock(&s->mu);
+		unlk(&s->mu);
 		fault_at("a task was started on a scope that has ended", loc, n);
 	}
 	t->scope = s;
+	// counted before a helper can find it in the list: the task runs and
+	// its queue entry is taken (two units of two), and it is live
+	// (decision 0077)
+	__atomic_fetch_add(&s->pending, 4, __ATOMIC_ACQ_REL);
+	dl_add(DL_LIVE);
 	node_link(&t->node, s->tasks);
 	t->snext = s->list;
 	s->list = t;
-	s->running++;
-	s->queued++;
-	pthread_mutex_unlock(&s->mu);
+	unlk(&s->mu);
 	pool_push(t);
 	return t;
 }
@@ -2368,13 +2602,13 @@ void xo_task_done(xo_task *t, xo_rlist *rl, int64_t failed) {
 		return;
 	}
 	xo_scope *s = t->scope;
-	pthread_mutex_lock(&s->mu);
+	lk(&s->mu);
 	int first = s->fail == NULL;
 	if (first) {
 		h_retain(t);
 		s->fail = t;
 	}
-	pthread_mutex_unlock(&s->mu);
+	unlk(&s->mu);
 	if (first) {
 		// the body and every task (core 7.1, child failure)
 		node_cancel(&s->body);
@@ -2396,15 +2630,15 @@ xo_rlist *xo_task_await(xo_task *t, const char *loc, int64_t n) {
 			return &empty_list;
 		}
 		run_task(t); // not started yet: run it here
-		pthread_mutex_lock(&t->mu);
+		lk(&t->mu);
 		while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != T_DONE) {
 			if (!wl_wait(c, &t->mu, &t->waiters, 1)) {
-				pthread_mutex_unlock(&t->mu);
+				unlk(&t->mu);
 				c->unwinding = 1;
 				return &empty_list;
 			}
 		}
-		pthread_mutex_unlock(&t->mu);
+		unlk(&t->mu);
 	}
 	if (t->unwound) {
 		if (canceled(c)) {
@@ -2443,7 +2677,7 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		free(s->deadline);
 		s->deadline = NULL;
 	}
-	pthread_mutex_lock(&s->mu);
+	lk(&s->mu);
 	if (mode == 0) {
 		for (xo_task *t = s->list; t; t = t->snext) {
 			if (t->background) {
@@ -2453,15 +2687,15 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 	} else {
 		node_cancel(s->tasks);
 	}
-	pthread_mutex_unlock(&s->mu);
+	unlk(&s->mu);
 	// help: run the tasks that have not started on this thread (tasks
 	// spawned meanwhile go to the head of the list: look again until a
 	// pass finds none; a task's link is fixed once it is in the list)
 	for (int found = 1; found;) {
 		found = 0;
-		pthread_mutex_lock(&s->mu);
+		lk(&s->mu);
 		xo_task *t = s->list;
-		pthread_mutex_unlock(&s->mu);
+		unlk(&s->mu);
 		for (; t; t = t->snext) {
 			if (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == T_QUEUED) {
 				run_task(t);
@@ -2469,27 +2703,38 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 			}
 		}
 	}
-	// wait (not a cancellation point: a canceled body still waits)
-	pthread_mutex_lock(&s->mu);
-	while (s->running > 0 || s->queued > 0) {
-		wl_wait(c, &s->mu, &s->idle, 0);
+	// wait (not a cancellation point: a canceled body still waits) until
+	// every task ended and every queue entry was taken: set bit 0 of
+	// pending while it is not zero, and the last unit wakes the park
+	s->joiner = &c->park;
+	for (;;) {
+		park_reset(&c->park);
+		int64_t v = __atomic_load_n(&s->pending, __ATOMIC_ACQUIRE);
+		if (v >> 1 == 0) {
+			break;
+		}
+		if (!(v & 1) && !__atomic_compare_exchange_n(&s->pending, &v, v | 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+			continue;
+		}
+		park_wait(c, 0);
 	}
+	lk(&s->mu);
 	s->closed = 1;
 	xo_task *list = s->list;
 	s->list = NULL;
-	pthread_mutex_unlock(&s->mu);
+	unlk(&s->mu);
+	// the tasks' nodes hang below s->tasks (and the nodes s.cancel()
+	// replaced): unlink those before the tasks go
+	node_unlink(s->tasks);
+	for (int i = 0; i < s->nold; i++) {
+		node_unlink(s->old[i]);
+	}
+	node_unlink(&s->body);
 	while (list) {
 		xo_task *next = list->snext;
 		h_release(list);
 		list = next;
 	}
-	spin_lock(&tree_mu);
-	node_unlink_locked(s->tasks);
-	for (int i = 0; i < s->nold; i++) {
-		node_unlink_locked(s->old[i]);
-	}
-	node_unlink_locked(&s->body);
-	spin_unlock(&tree_mu);
 	c->node = s->parent_node;
 	if (!s->fail) {
 		return 0;
@@ -2566,7 +2811,7 @@ static xo_cent *cq_take(xo_cq *q) {
 
 typedef struct {
 	xo_hdr h;
-	pthread_mutex_t mu;
+	xo_lock mu;
 	int64_t cap, head, len;
 	xo_rlist **buf;
 	int closed;
@@ -2583,7 +2828,6 @@ static void chan_free(void *p) {
 		list_release(c->buf[(c->head + i) % c->cap], c->drop);
 	}
 	free(c->buf);
-	pthread_mutex_destroy(&c->mu);
 	xo_free(c);
 }
 
@@ -2596,7 +2840,6 @@ xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) {
 	xo_chan *c = xo_alloc(sizeof(xo_chan));
 	memset(c, 0, sizeof *c);
 	h_init(c, chan_free);
-	mu_init(&c->mu);
 	c->cap = cap;
 	c->drop = (xo_ldrop)drop;
 	if (cap > 0) {
@@ -2670,41 +2913,41 @@ void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
 		list_release(l, c->drop);
 		return;
 	}
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	if (c->closed) {
-		pthread_mutex_unlock(&c->mu);
+		unlk(&c->mu);
 		fault_at("send on a closed channel", loc, n);
 	}
 	if (try_send_locked(c, l)) {
-		pthread_mutex_unlock(&c->mu);
+		unlk(&c->mu);
 		return;
 	}
 	int64_t fired = 0;
 	xo_cent e = {.park = &x->park, .fired = &fired, .item = l};
 	park_reset(&x->park);
 	cq_push(&c->sendq, &e);
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	for (;;) {
 		park_wait_n(x, 1, !c->ext);
 		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
 			break;
 		}
 		if (ctx_canceled(x)) {
-			pthread_mutex_lock(&c->mu);
+			lk(&c->mu);
 			if (claim(&fired)) {
 				cq_del(&c->sendq, &e);
-				pthread_mutex_unlock(&c->mu);
+				unlk(&c->mu);
 				list_release(l, c->drop);
 				x->unwinding = 1;
 				return;
 			}
-			pthread_mutex_unlock(&c->mu);
+			unlk(&c->mu);
 			break; // taken meanwhile: sent
 		}
 	}
-	pthread_mutex_lock(&c->mu); // the waker's writes
+	lk(&c->mu); // the waker's writes
 	int shut = e.shut;
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	if (shut) {
 		list_release(l, c->drop);
 		fault_at("send on a closed channel", loc, n);
@@ -2720,45 +2963,45 @@ xo_rlist *xo_chan_recv(xo_chan *c) {
 		return &empty_list;
 	}
 	xo_rlist *out;
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	if (try_recv_locked(c, &out)) {
-		pthread_mutex_unlock(&c->mu);
+		unlk(&c->mu);
 		return out ? out : &empty_list;
 	}
 	int64_t fired = 0;
 	xo_cent e = {.park = &x->park, .fired = &fired};
 	park_reset(&x->park);
 	cq_push(&c->recvq, &e);
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	for (;;) {
 		park_wait_n(x, 1, !c->ext);
 		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
 			break;
 		}
 		if (ctx_canceled(x)) {
-			pthread_mutex_lock(&c->mu);
+			lk(&c->mu);
 			if (claim(&fired)) {
 				cq_del(&c->recvq, &e);
-				pthread_mutex_unlock(&c->mu);
+				unlk(&c->mu);
 				x->unwinding = 1;
 				return &empty_list;
 			}
-			pthread_mutex_unlock(&c->mu);
+			unlk(&c->mu);
 			break; // a value came meanwhile: it wins
 		}
 	}
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	out = e.item;
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	return out ? out : &empty_list;
 }
 
 // xo_chan_try_send is `ch.try_send(x)`: false (and x released) when the
 // channel is full or closed.
 int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) {
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	int ok = !c->closed && try_send_locked(c, l);
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	if (!ok) {
 		list_release(l, c->drop);
 	}
@@ -2768,18 +3011,18 @@ int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) {
 // xo_chan_try_recv is `ch.try_recv()`: never blocks.
 xo_rlist *xo_chan_try_recv(xo_chan *c) {
 	xo_rlist *out = NULL;
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	if (!try_recv_locked(c, &out)) {
 		out = NULL;
 	}
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	return out ? out : &empty_list;
 }
 
 // xo_chan_close is `ch.close()`: waiting receivers get None, waiting
 // senders fault. Closing twice has no effect.
 void xo_chan_close(xo_chan *c) {
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	if (!c->closed) {
 		c->closed = 1;
 		xo_cent *e;
@@ -2792,13 +3035,13 @@ void xo_chan_close(xo_chan *c) {
 			hand(e);
 		}
 	}
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 }
 
 int64_t xo_chan_len(xo_chan *c) {
-	pthread_mutex_lock(&c->mu);
+	lk(&c->mu);
 	int64_t n = c->len;
-	pthread_mutex_unlock(&c->mu);
+	unlk(&c->mu);
 	return n;
 }
 
@@ -2899,7 +3142,7 @@ int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
 	s->chosen = -1;
 	park_reset(&x->park);
 	for (int i = 0; i < nc; i++) {
-		pthread_mutex_lock(&cs[i]->mu);
+		lk(&cs[i]->mu);
 	}
 	int done = -1, shut = 0;
 	for (int i = 0; i < s->n && done < 0; i++) {
@@ -2935,7 +3178,7 @@ int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
 		}
 	}
 	for (int i = nc - 1; i >= 0; i--) {
-		pthread_mutex_unlock(&cs[i]->mu);
+		unlk(&cs[i]->mu);
 	}
 	int unwound = 0;
 	if (queued) {
@@ -2962,7 +3205,7 @@ int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
 		// take the arms off every queue; the waker's writes are visible
 		// under the channel locks
 		for (int i = 0; i < nc; i++) {
-			pthread_mutex_lock(&cs[i]->mu);
+			lk(&cs[i]->mu);
 		}
 		for (int i = 0; i < s->n; i++) {
 			xo_sarm *a = &s->arms[i];
@@ -2980,7 +3223,7 @@ int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
 			}
 		}
 		for (int i = nc - 1; i >= 0; i--) {
-			pthread_mutex_unlock(&cs[i]->mu);
+			unlk(&cs[i]->mu);
 		}
 	}
 	free(cs);
@@ -3008,7 +3251,7 @@ xo_rlist *xo_select_take(xo_select *s, int64_t i) {
 
 typedef struct {
 	xo_hdr h;
-	pthread_mutex_t mu;
+	xo_lock mu;
 	int writer;
 	int64_t readers, wwait;
 	xo_rlist *slot;
@@ -3019,7 +3262,6 @@ typedef struct {
 static void mutex_free(void *p) {
 	xo_mutex *m = p;
 	list_release(m->slot, m->drop);
-	pthread_mutex_destroy(&m->mu);
 	xo_free(m);
 }
 
@@ -3027,7 +3269,6 @@ xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) {
 	xo_mutex *m = xo_alloc(sizeof(xo_mutex));
 	memset(m, 0, sizeof *m);
 	h_init(m, mutex_free);
-	mu_init(&m->mu);
 	m->slot = l;
 	m->drop = (xo_ldrop)drop;
 	return m;
@@ -3039,14 +3280,14 @@ xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) {
 xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
 	xo_ctx *c = ctx();
 	held_check(c, m, "with", loc, n);
-	pthread_mutex_lock(&m->mu);
+	lk(&m->mu);
 	if (m->writer || m->readers > 0) {
 		m->wwait++;
 		while (m->writer || m->readers > 0) {
 			if (!wl_wait(c, &m->mu, &m->waiters, 1)) {
 				m->wwait--;
 				wl_wake(&m->waiters); // readers held back by this writer
-				pthread_mutex_unlock(&m->mu);
+				unlk(&m->mu);
 				held_del(c, m);
 				c->unwinding = 1;
 				return &empty_list;
@@ -3057,16 +3298,16 @@ xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
 	m->writer = 1;
 	xo_rlist *l = m->slot;
 	m->slot = NULL;
-	pthread_mutex_unlock(&m->mu);
+	unlk(&m->mu);
 	return l;
 }
 
 void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
-	pthread_mutex_lock(&m->mu);
+	lk(&m->mu);
 	m->slot = l;
 	m->writer = 0;
 	wl_wake(&m->waiters);
-	pthread_mutex_unlock(&m->mu);
+	unlk(&m->mu);
 	held_del(ctx(), m);
 }
 
@@ -3075,10 +3316,10 @@ void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
 xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
 	xo_ctx *c = ctx();
 	held_check(c, m, "with_read", loc, n);
-	pthread_mutex_lock(&m->mu);
+	lk(&m->mu);
 	while (m->writer || m->wwait > 0) {
 		if (!wl_wait(c, &m->mu, &m->waiters, 1)) {
-			pthread_mutex_unlock(&m->mu);
+			unlk(&m->mu);
 			held_del(c, m);
 			c->unwinding = 1;
 			return &empty_list;
@@ -3087,7 +3328,7 @@ xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
 	m->readers++;
 	xo_rlist *l = m->slot;
 	rc_inc(&l->rc);
-	pthread_mutex_unlock(&m->mu);
+	unlk(&m->mu);
 	return l;
 }
 
@@ -3096,11 +3337,11 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 	if (rc_dec(&l->rc)) {
 		list_release(l, m->drop); // not reached: the mutex holds it
 	}
-	pthread_mutex_lock(&m->mu);
+	lk(&m->mu);
 	if (--m->readers == 0) {
 		wl_wake(&m->waiters);
 	}
-	pthread_mutex_unlock(&m->mu);
+	unlk(&m->mu);
 	held_del(ctx(), m);
 }
 
