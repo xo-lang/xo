@@ -735,8 +735,8 @@ const X = g()`,
 }`,
 	},
 	UseOfMovedValue: {
-		Title: "use of a moved Buf or StrBuilder",
-		Detail: "`Buf[T]` and `StrBuilder` are mutable in place and move only. `freeze()`, assigning, passing to a function, sending on a channel, or capturing in a spawned task moves the buffer, and the old name may not be used again (until it is reassigned). " +
+		Title: "use of a moved Buf, StrBuilder, or BytesBuilder",
+		Detail: "`Buf[T]`, `StrBuilder`, and `BytesBuilder` are mutable in place and move only. `freeze()`, assigning, passing to a function, sending on a channel, or capturing in a spawned task moves the buffer, and the old name may not be used again (until it is reassigned). " +
 			"Finish all writes before moving, or start a new buffer. See core 5.3.",
 		Example: `fn f() -> List[Int] {
   var b = Buf[Int].with_capacity(8)

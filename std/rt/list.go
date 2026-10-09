@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // List is the persistent vector `List[T]` (core 2.1, 5.2) with in place
@@ -720,6 +721,47 @@ func (b StrBuilder) M_freeze(*Task) string { return string(b.b) }
 // XoDebug implements Debug.
 func (b StrBuilder) XoDebug(sb *strings.Builder) {
 	sb.WriteString("StrBuilder(")
+	sb.WriteString(quote(string(b.b)))
+	sb.WriteString(")")
+}
+
+// BytesBuilder is the move only byte string builder (core 5.3, decision
+// 0078).
+type BytesBuilder struct{ b []byte }
+
+// BytesBuilder_new is `BytesBuilder.new()`.
+func BytesBuilder_new(*Task) BytesBuilder { return BytesBuilder{} }
+
+// BytesBuilder_with_capacity is `BytesBuilder.with_capacity(n)`: room for
+// n bytes before the first growth (a negative n is no capacity).
+func BytesBuilder_with_capacity(_ *Task, n int64) BytesBuilder {
+	if n <= 0 {
+		return BytesBuilder{}
+	}
+	return BytesBuilder{b: make([]byte, 0, n)}
+}
+
+// M_write is `b.write(data)`.
+func (b *BytesBuilder) M_write(_ *Task, data Bytes) { b.b = append(b.b, data...) }
+
+// M_write_byte is `b.write_byte(x)`.
+func (b *BytesBuilder) M_write_byte(_ *Task, x uint8) { b.b = append(b.b, x) }
+
+// M_write_str is `b.write_str(s)`.
+func (b *BytesBuilder) M_write_str(_ *Task, s string) { b.b = append(b.b, s...) }
+
+// M_write_rune is `b.write_rune(r)`: its UTF-8 encoding.
+func (b *BytesBuilder) M_write_rune(_ *Task, r Rune) { b.b = utf8.AppendRune(b.b, rune(r)) }
+
+// M_len is `b.len()`.
+func (b BytesBuilder) M_len(*Task) int64 { return int64(len(b.b)) }
+
+// M_freeze is `b.freeze()`.
+func (b BytesBuilder) M_freeze(*Task) Bytes { return Bytes(b.b) }
+
+// XoDebug implements Debug.
+func (b BytesBuilder) XoDebug(sb *strings.Builder) {
+	sb.WriteString("BytesBuilder(b")
 	sb.WriteString(quote(string(b.b)))
 	sb.WriteString(")")
 }

@@ -23,6 +23,8 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 - `Mutex.with_read`, shared read only access (5.4, std.md 2.7; decision
   0063). A closure parameter declared `var` where the expected function
   type takes it by value is error `XO0401` (it changed a copy only).
+- `BytesBuilder`, the move only builder of `Bytes` (5.3, std.md 2.7;
+  decision 0078).
 
 ## Changes in 0.6
 
@@ -880,7 +882,8 @@ Because values never alias mutably, data races are impossible except through
 
 ### 5.3 Move only buffers
 
-`Buf[T]` and `StrBuilder` are mutable in place and **move only** (affine):
+`Buf[T]`, `StrBuilder`, and `BytesBuilder` are mutable in place and **move
+only** (affine):
 
 ```
 var b = Buf[Int].with_capacity(1024)

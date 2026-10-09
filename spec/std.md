@@ -95,7 +95,9 @@ as its first fix, the edit to `Float(n)`.
 
 ### 2.2 Str, Rune, Bytes
 
-`Str` is UTF-8. `+` concatenates `Str` and `Bytes`.
+`Str` is UTF-8. `+` concatenates `Str` and `Bytes`. `Bytes` holds any bytes;
+build one piece by piece with `BytesBuilder` (2.7), whose appends are
+amortized O(1) where `out = out + more` copies `out` each time.
 
 ```
 fn (s: Str) len() -> Int                     // bytes
@@ -274,6 +276,13 @@ fn (b: Buf[T]) freeze() -> List[T]           // moves b
 StrBuilder.new() -> StrBuilder
 fn ([var] b: StrBuilder) write(s: Str)
 fn (b: StrBuilder) freeze() -> Str           // moves b
+BytesBuilder.new() -> BytesBuilder           // also with_capacity(n)
+fn ([var] b: BytesBuilder) write(data: Bytes)
+fn ([var] b: BytesBuilder) write_byte(x: UInt8)
+fn ([var] b: BytesBuilder) write_str(s: Str)  // its UTF-8 bytes
+fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
+fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
+fn (b: BytesBuilder) freeze() -> Bytes       // moves b
 
 Secret[T].new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T

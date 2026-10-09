@@ -538,7 +538,7 @@ func (pg *pkgGen) namedType(n *check.Named) string {
 		}
 		r := pg.rt()
 		switch o.Name {
-		case "Rune", "Bytes", "Duration", "Time", "Never", "StrBuilder", "Listener", "Conn":
+		case "Rune", "Bytes", "Duration", "Time", "Never", "StrBuilder", "BytesBuilder", "Listener", "Conn":
 			return r + o.Name
 		case "List", "Map", "Set", "Buf", "Secret", "Range", "Option", "Result":
 			return fmt.Sprintf("%s%s[%s]", r, o.Name, pg.typeList(args))

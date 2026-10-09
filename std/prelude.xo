@@ -62,6 +62,7 @@ struct Map[K, V] {}
 struct Set[T] {}
 struct Buf[T] {}
 struct StrBuilder {}
+struct BytesBuilder {}
 struct Chan[T] {}
 struct Mutex[T] {}
 struct Atomic[T] {}
@@ -369,6 +370,16 @@ fn (var b: StrBuilder) write(s: Str)
 fn (b: StrBuilder) len() -> Int
 /// @moves
 fn (b: StrBuilder) freeze() -> Str
+
+fn (static: BytesBuilder) new() -> BytesBuilder
+fn (static: BytesBuilder) with_capacity(n: Int) -> BytesBuilder
+fn (var b: BytesBuilder) write(data: Bytes)
+fn (var b: BytesBuilder) write_byte(x: UInt8)
+fn (var b: BytesBuilder) write_str(s: Str)
+fn (var b: BytesBuilder) write_rune(r: Rune)
+fn (b: BytesBuilder) len() -> Int
+/// @moves
+fn (b: BytesBuilder) freeze() -> Bytes
 
 fn (static: Secret[T]) new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
