@@ -3,10 +3,19 @@ b0(v0: Os):
   v1: Stdio = cap stdio, v0
   v2: Str = const "fib "
   v3: Int = const 40
-  v4: Int = call fib, v3
-  v5: Str = call str.concat_int, v2, v4
-  v6: () = call Stdio.println, v1, v5
-  ret v6
+  v4: Int = call fib, v3 lands v5
+  v5: Bool = call rt.landing
+  br v5, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  v8: Str = call str.concat_int, v2, v4
+  v9: () = call Stdio.println, v1, v8
+  ret v9
+b3:  ; preds b1
+  v11: () = call rt.fault_continue
+  v12: () = tuple
+  ret v12
 }
 
 func fib(v0: Int) -> Int {
@@ -14,17 +23,46 @@ b0(v0: Int):
   v1: Int = const 2
   v2: Bool = lt v0, v1
   br v2, b2(), b3()
-b1(v4: Int):  ; preds b2, b3
+b1(v4: Int):  ; preds b2, b13
   ret v4
 b2:  ; preds b0
   jump b1(v0)
 b3:  ; preds b0
   v7: Int = const 1
-  v8: Int = sub v0, v7 @ main.xo:3:29
-  v9: Int = call fib, v8
-  v10: Int = const 2
-  v11: Int = sub v0, v10 @ main.xo:3:42
-  v12: Int = call fib, v11
-  v13: Int = add v9, v12 @ main.xo:3:25
-  jump b1(v13)
+  v8: Int = sub v0, v7 @ main.xo:3:29 lands v9
+  v9: Bool = call rt.landing
+  br v9, b10(), b9()
+b4:  ; preds b9
+  jump b6()
+b5:  ; preds b9
+  v12: Int = const 2
+  v13: Int = sub v0, v12 @ main.xo:3:42 lands v14
+  v14: Bool = call rt.landing
+  br v14, b12(), b11()
+b6:  ; preds b4, b7, b10, b12, b14
+  v16: () = call rt.fault_continue
+  v17: Int = const 0
+  ret v17
+b7:  ; preds b11
+  jump b6()
+b8:  ; preds b11
+  v20: Int = add v23, v27 @ main.xo:3:25 lands v21
+  v21: Bool = call rt.landing
+  br v21, b14(), b13()
+b9:  ; preds b3
+  v23: Int = call fib, v8 lands v24
+  v24: Bool = call rt.landing
+  br v24, b4(), b5()
+b10:  ; preds b3
+  jump b6()
+b11:  ; preds b5
+  v27: Int = call fib, v13 lands v28
+  v28: Bool = call rt.landing
+  br v28, b7(), b8()
+b12:  ; preds b5
+  jump b6()
+b13:  ; preds b8
+  jump b1(v20)
+b14:  ; preds b8
+  jump b6()
 }

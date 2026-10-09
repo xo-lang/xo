@@ -67,6 +67,13 @@ func (m *Module) verifyRC(f *Func) []string {
 		errs = append(errs, f.Name+": "+b.Name()+": "+fmt.Sprintf(format, args...))
 	}
 	uniq := r.unique(f)
+	var faults map[*Func]bool
+	if m.FaultUnwind {
+		faults = m.faults
+		if faults == nil {
+			faults = m.mayFault()
+		}
+	}
 	var alive func(st rcState, l leaf) bool
 	alive = func(st rcState, l leaf) bool {
 		switch r.kind(l.root) {
@@ -153,6 +160,20 @@ func (m *Module) verifyRC(f *Func) []string {
 				}
 				st[u.l]--
 			}
+			if faults != nil && v.Pad == nil && !v.Op.IsTerminator() && raises(m, v, faults) {
+				// a fault here leaves the function without cleanup
+				// (decision 0085): nothing may be held
+				for l, n := range st {
+					if n > 0 {
+						bad(b, "%s can fault while %s is held %d times (no landing releases it)", v.Name(), l, n)
+					}
+				}
+				if keepsOperands(v) {
+					for _, l := range consumedLeaves(r, v) {
+						bad(b, "%s can fault before it takes %s (no landing releases it)", v.Name(), l)
+					}
+				}
+			}
 			if isRoot(v) {
 				for _, l := range r.leaves(v) {
 					if st[l] != 0 {
@@ -172,8 +193,26 @@ func (m *Module) verifyRC(f *Func) []string {
 					}
 				}
 			case OpJump, OpBranch:
-				for _, e := range v.Succs {
+				site, landing := landingSite(b)
+				for i, e := range v.Succs {
 					est := st.clone()
+					if i == 0 && landing != nil && v.Op == OpBranch {
+						// the cleanup path of a landing check: the operation
+						// checked produced nothing (decision 0085); a call
+						// inlined since (internal/arm64 inline.go) left its
+						// results as the block's parameters
+						for l := range est {
+							if l.root == site || (site == nil && l.root.Op == OpParam && l.root.Block == b) {
+								delete(est, l)
+							}
+						}
+						if site != nil && keepsOperands(site) {
+							// it faulted before taking its operands
+							for _, l := range consumedLeaves(r, site) {
+								est[l]++
+							}
+						}
+					}
 					for _, l := range r.edgeUses(e) {
 						if est[l] < 1 {
 							bad(b, "edge to %s passes %s, which is not held", e.To.Name(), l)

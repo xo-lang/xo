@@ -271,15 +271,18 @@ b24:  ; preds b19
   v246: Str? = variant 0
   jump b22(v246)
 b25:  ; preds b22
-  fault v235 @ main.xo:64
-b26:  ; preds b22
-  v249: Str = payload 1.0, v234
-  retain v249
   release v234
-  v252: Stdio = cap stdio, v0
-  v253: () = call Stdio.println, v252, v249
-  release v249
-  ret v253
+  v249: Str = const "main.xo:64"
+  v250: () = call rt.fault_raise, v235, v249
+  unreachable
+b26:  ; preds b22
+  v252: Str = payload 1.0, v234
+  retain v252
+  release v234
+  v255: Stdio = cap stdio, v0
+  v256: () = call Stdio.println, v255, v252
+  release v252
+  ret v256
 }
 
 func show(borrow v0: Result[List[Str], AppErr]) -> Str {

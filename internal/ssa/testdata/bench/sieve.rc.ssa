@@ -32,60 +32,106 @@ b0(v0: Int):
   v1: List[Bool] = call list.new
   v2: Int = const 0
   v3: Int = const 1
-  v4: Int = add v0, v3 @ main.xo:4:15
-  jump b1(v2, v1)
-b1(v6: Int, v7: List[Bool]):  ; preds b0, b3
-  v8: Bool = lt v6, v4
-  br v8, b2(), b4()
+  v4: Int = add v0, v3 @ main.xo:4:15 lands v5
+  v5: Bool = call rt.landing
+  br v5, b16(), b15()
+b1(v7: Int, v8: List[Bool]):  ; preds b15, b3
+  v9: Bool = lt v7, v4
+  br v9, b2(), b4()
 b2:  ; preds b1
-  v10: Bool = const true
-  v11: List[Bool] = call list.push, v7, v10
-  v12: () = tuple
+  v11: Bool = const true
+  v12: List[Bool] = call list.push, v8, v11
+  v13: () = tuple
   jump b3()
 b3:  ; preds b2
-  v14: Int = const 1
-  v15: Int = add v6, v14
-  jump b1(v15, v11)
+  v15: Int = const 1
+  v16: Int = add v7, v15
+  jump b1(v16, v12)
 b4:  ; preds b1
-  v17: Int = const 0
-  v18: Int = const 2
-  v19: Int = const 1
-  v20: Int = add v0, v19 @ main.xo:8:15
-  jump b5(v18, v7, v17)
-b5(v22: Int, v23: List[Bool], v24: Int):  ; preds b4, b7
-  v25: Bool = lt v22, v20
-  br v25, b6(), b8()
+  v18: Int = const 0
+  v19: Int = const 2
+  v20: Int = const 1
+  v21: Int = add v0, v20 @ main.xo:8:15 lands v22
+  v22: Bool = call rt.landing
+  br v22, b19(), b18()
+b5(v24: Int, v25: List[Bool], v26: Int):  ; preds b18, b7
+  v27: Bool = lt v24, v21
+  br v27, b6(), b8()
 b6:  ; preds b5
-  v27: Bool = call list.index, v23, v22 @ main.xo:9:8
-  br v27, b10(), b11()
+  v29: Bool = call list.index, v25, v24 @ main.xo:9:8 lands v30
+  v30: Bool = call rt.landing
+  br v30, b21(), b20()
 b7:  ; preds b9
-  v29: Int = const 1
-  v30: Int = add v22, v29
-  jump b5(v30, v34, v35)
+  v32: Int = const 1
+  v33: Int = add v24, v32
+  jump b5(v33, v37, v38)
 b8:  ; preds b5
-  release v23
-  ret v24
-b9(v34: List[Bool], v35: Int):  ; preds b13, b11
-  v36: () = tuple
+  release v25
+  ret v26
+b9(v37: List[Bool], v38: Int):  ; preds b13, b11
+  v39: () = tuple
   jump b7()
-b10:  ; preds b6
-  v38: Int = const 1
-  v39: Int = add v24, v38 @ main.xo:10:7
-  v40: Int = mul v22, v22 @ main.xo:11:15
-  jump b12(v40, v23)
-b11:  ; preds b6
-  v42: () = tuple
-  jump b9(v23, v24)
-b12(v44: Int, v45: List[Bool]):  ; preds b10, b14
-  v46: Bool = le v44, v0
-  br v46, b14(), b13()
+b10:  ; preds b20
+  v41: Int = const 1
+  v42: Int = add v26, v41 @ main.xo:10:7 lands v43
+  v43: Bool = call rt.landing
+  br v43, b23(), b22()
+b11:  ; preds b20
+  v45: () = tuple
+  jump b9(v25, v26)
+b12(v47: Int, v48: List[Bool]):  ; preds b26, b28
+  v49: Bool = le v47, v0
+  br v49, b14(), b13()
 b13:  ; preds b12
-  v48: () = tuple
-  jump b9(v45, v39)
+  v51: () = tuple
+  jump b9(v48, v42)
 b14:  ; preds b12
-  v50: Bool = const false
-  v51: List[Bool] = call list.set, v45, v44, v50 @ main.xo:13:9
-  v52: Int = add v44, v22 @ main.xo:14:9
-  v53: () = tuple
-  jump b12(v52, v51)
+  v53: Bool = const false
+  v54: List[Bool] = call list.set, v48, v47, v53 @ main.xo:13:9 lands v55
+  v55: Bool = call rt.landing
+  br v55, b25(), b24()
+b15:  ; preds b0
+  jump b1(v2, v1)
+b16:  ; preds b0
+  release v1
+  jump b17()
+b17:  ; preds b16, b19, b21, b23, b25, b27, b29
+  v60: () = call rt.fault_continue
+  v61: Int = const 0
+  ret v61
+b18:  ; preds b4
+  jump b5(v19, v8, v18)
+b19:  ; preds b4
+  release v8
+  jump b17()
+b20:  ; preds b6
+  br v29, b10(), b11()
+b21:  ; preds b6
+  release v25
+  jump b17()
+b22:  ; preds b10
+  v69: Int = mul v24, v24 @ main.xo:11:15 lands v70
+  v70: Bool = call rt.landing
+  br v70, b27(), b26()
+b23:  ; preds b10
+  release v25
+  jump b17()
+b24:  ; preds b14
+  v74: Int = add v47, v24 @ main.xo:14:9 lands v75
+  v75: Bool = call rt.landing
+  br v75, b29(), b28()
+b25:  ; preds b14
+  release v48
+  jump b17()
+b26:  ; preds b22
+  jump b12(v69, v25)
+b27:  ; preds b22
+  release v25
+  jump b17()
+b28:  ; preds b24
+  v82: () = tuple
+  jump b12(v74, v54)
+b29:  ; preds b24
+  release v54
+  jump b17()
 }

@@ -289,7 +289,17 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   }
   let route = r.routes[best]
   let h = route.h
-  h(req with {params: bind_params(route, parts, uparts)})
+  let q = req with {params: bind_params(route, parts, uparts)}
+  // a fault in the handler is isolated: 500 (std/rt's isolateHandler,
+  // decision 0085)
+  match task.isolate(fn() -> http.Response ! () { h(q) }) {
+    Ok(resp) => resp
+    Err(task.Isolated.Faulted(info)) => {
+      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
+      json_error(500, "internal error")
+    }
+    Err(_) => json_error(500, "internal error")
+  }
 }
 
 /// A handler's or middleware's error as a response (std.md 4.2).

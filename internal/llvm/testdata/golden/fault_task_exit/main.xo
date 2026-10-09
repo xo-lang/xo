@@ -1,0 +1,37 @@
+// A fault in a task that nothing isolates (core 7.1, 8, decision 0085):
+// the task unwinds (its deferred code runs, its Mutex is unlocked), its
+// scope cancels the other tasks and raises the fault where it closes, so
+// main unwinds too (its deferred code runs) and the process exits with
+// status 70 and the task's fault.
+
+fn work(m: Mutex[Int], gate: Chan[Int], stdio: Stdio) uses stdio {
+  scope s {
+    s.spawn(fn() {
+      defer stdio.println("waiter: deferred")
+      match gate.recv() {
+        Some(v) => stdio.println("waiter got ${v}")
+        None => stdio.println("waiter: closed")
+      }
+    })
+    s.spawn(fn() {
+      defer stdio.println("faulter: deferred")
+      m.with(fn(var n) {
+        n += 1
+        let parts = ["a", "b"]
+        stdio.println("faulter holds the lock, n = ${n}, ${parts[n + 5]}")
+      })
+    })
+  }
+  stdio.println("never")
+}
+
+fn main(os: Os) {
+  defer os.stdio.println("main: deferred")
+  let m = Mutex.new(1)
+  let gate: Chan[Int] = Chan.new(0)
+  {
+    defer os.stdio.println("main block: deferred")
+    work(m, gate, os.stdio)
+  }
+  os.stdio.println("never")
+}

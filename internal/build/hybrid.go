@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/xo-lang/xo/internal/arm64"
-	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/ssa"
@@ -63,7 +62,7 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 }
 
 func hybridGo(res *check.Result, root string, all, noInline bool) (*arm64.GoProgram, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, NoFaultUnwind: true})
 	if err != nil {
 		return nil, err
 	}
@@ -74,30 +73,9 @@ func hybridGo(res *check.Result, root string, all, noInline bool) (*arm64.GoProg
 	if err := m.Verify(); err != nil {
 		return nil, err
 	}
-	opts := arm64.GoOptions{All: all, NoInline: noInline, Exclude: map[string]string{}, Invariant: map[string]bool{}}
-	for _, mod := range res.Info().AllModules() {
-		if !mod.Root {
-			continue
-		}
-		for _, obj := range mod.Scope {
-			switch o := obj.(type) {
-			case *check.FuncObj:
-				if o.Decl == nil {
-					continue
-				}
-				for _, c := range o.Decl.Clauses {
-					if _, ok := c.(*ast.EnsuresClause); ok {
-						opts.Exclude[o.Name] = "an `ensures` clause (checked by the Go backend only)"
-					}
-				}
-			case *check.TypeObj:
-				if o.Invariant != nil {
-					opts.Invariant[o.Name] = true
-				}
-			}
-		}
-	}
-	return arm64.GenerateGo(m, opts)
+	// contracts are checked in SSA as by the Go backend (ensures and
+	// invariants since decision 0085): every function is eligible
+	return arm64.GenerateGo(m, arm64.GoOptions{All: all, NoInline: noInline})
 }
 
 // withTag adds a build tag to go build arguments (to a -tags= there, or

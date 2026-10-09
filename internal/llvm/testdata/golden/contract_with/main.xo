@@ -1,0 +1,19 @@
+// A struct invariant (core 9.1) checked after `with` on the native
+// backends: the last `with` breaks it.
+
+struct Window {
+  start: Int
+  size: Int = 10
+} invariant size > 0 && start >= 0
+
+fn shift(w: Window, by: Int) -> Window { w with {start: w.start + by} }
+
+fn main(os: Os) {
+  let w = Window{start: 3}
+  let v = shift(w, 4)
+  let u = v with {size: 2}
+  os.stdio.println("${w.start} ${w.size} ${v.start} ${u.size}")
+  os.stdio.println("bad with next")
+  let bad = shift(u, -100)
+  os.stdio.println("never ${bad.start}")
+}

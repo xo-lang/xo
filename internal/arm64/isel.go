@@ -48,6 +48,21 @@ type fstate struct {
 	stubs   strings.Builder
 	nstub   int
 	mm      *memo
+	// landing pads (decision 0085): curPad is the pad of the value being
+	// lowered (its calls and fault stubs get it); pads are the SSA blocks
+	// landing pads enter; sites are the call site table entries made at
+	// emission (stubs after the body)
+	curPad    *mblock
+	pads      map[*ssa.Block]bool
+	sites     []callSite
+	stubSites []callSite
+}
+
+// callSite is a call that unwinds to a landing pad: the labels around
+// its `bl` and the pad's block.
+type callSite struct {
+	from, to string
+	pad      *mblock
 }
 
 func (g *gen) function(f *ssa.Func) {
@@ -97,6 +112,9 @@ func (s *fstate) newBlock(cold bool) *mblock {
 }
 
 func (s *fstate) add(in *inst) *inst {
+	if in.kind == iCall && s.curPad != nil {
+		in.pad = s.curPad
+	}
 	s.cur.insts = append(s.cur.insts, in)
 	return in
 }
@@ -129,6 +147,7 @@ func (s *fstate) def1(fp bool, text string, uses ...vreg) vreg {
 func (s *fstate) check(text string, uses []vreg, cond, fn string, args ...src) {
 	in := s.plain(text, nil, uses...)
 	in.fault = &fault{cond: cond, fn: s.g.sym(fn), args: args}
+	in.pad = s.curPad
 	for _, a := range args {
 		if a.kind == sReg && a.v != 0 {
 			in.uses = append(in.uses, a.v)
@@ -152,6 +171,7 @@ func (s *fstate) checked(fp bool, text string, uses []vreg, recover string, cond
 		in.recover = recover
 	}
 	in.fault = &fault{cond: cond, fn: s.g.sym(fn), args: args}
+	in.pad = s.curPad
 	for _, a := range args {
 		if a.kind == sReg && a.v != 0 {
 			in.uses = append(in.uses, a.v)
@@ -394,7 +414,38 @@ func (s *fstate) isel() {
 			}
 		}
 	}
+	// the blocks landing pads enter (decision 0085)
+	s.pads = map[*ssa.Block]bool{}
+	for _, b := range f.Blocks {
+		for _, v := range b.Instrs {
+			if v.Pad != nil && !s.g.goMode {
+				s.pads[v.Pad.Block.Term().Succs[0].To] = true
+			}
+		}
+	}
 	blocks := rpo(f)
+	// what only landing pads reach (the cleanup, the unwind exit) is
+	// laid out with the cold code too
+	cold := map[*ssa.Block]bool{}
+	for b := range s.pads {
+		cold[b] = true
+	}
+	for changed := len(cold) > 0; changed; {
+		changed = false
+		for _, b := range blocks {
+			if cold[b] || len(b.Preds) == 0 {
+				continue
+			}
+			all := true
+			for _, e := range b.Preds {
+				all = all && cold[e.From]
+			}
+			if all {
+				cold[b] = true
+				changed = true
+			}
+		}
+	}
 	idom := dominators(blocks)
 	s.planLSR(blocks, idom)
 	s.computeRanges(blocks)
@@ -415,9 +466,21 @@ func (s *fstate) isel() {
 		mb := s.bmap[b]
 		mb.id = s.nblock
 		s.nblock++
-		s.hot = append(s.hot, mb)
 		s.cur = mb
-		if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
+		if cold[b] {
+			mb.cold = true
+			s.cold = append(s.cold, mb)
+		} else {
+			s.hot = append(s.hot, mb)
+		}
+		if s.pads[b] {
+			// entered by the unwinder after a fault: nothing computed
+			// before it in registers is known to hold (the operation that
+			// faulted did not finish)
+			s.mm = nil
+		}
+		if s.pads[b] {
+		} else if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds
 			s.inherit(s.endMemo[b.Preds[0].From])
 			s.branchFacts(b)
@@ -640,6 +703,11 @@ func (s *fstate) set(v *ssa.Value, ws ...vreg) { s.vals[v] = ws }
 
 func (s *fstate) instr(v *ssa.Value) {
 	g := s.g
+	if v.Pad != nil && !g.goMode {
+		// its calls and fault stubs unwind to the cleanup of its check
+		s.curPad = s.bmap[v.Pad.Block.Term().Succs[0].To]
+		defer func() { s.curPad = nil }()
+	}
 	if g.goMode {
 		switch v.Op {
 		case ssa.OpClosure, ssa.OpCapture, ssa.OpCallValue, ssa.OpBox, ssa.OpUnbox, ssa.OpFuncAddr:
@@ -834,6 +902,13 @@ func (s *fstate) instr(v *ssa.Value) {
 			dsts, srcs := s.edgeMoves(e)
 			s.pmove(dsts, srcs)
 			s.add(&inst{kind: iJump, targets: []*mblock{s.bmap[e.To]}})
+			return
+		}
+		if c.Op == ssa.OpCall && c.Aux == "rt.landing" {
+			// only a fault takes it, through a landing pad (decision 0085):
+			// a jump to the normal successor, the pad a second target only
+			// for liveness and reachability
+			s.add(&inst{kind: iJump, targets: []*mblock{s.edge(v.Succs[1]), s.edge(v.Succs[0])}})
 			return
 		}
 		var in *inst
@@ -1411,6 +1486,12 @@ func (s *fstate) pmoveSrcs(dsts []vreg, srcs []src) {
 func (s *fstate) callOp(v *ssa.Value) {
 	g := s.g
 	name := v.Aux.(string)
+	if name == "rt.landing" {
+		// a check only a fault takes: no code (the branch on it, decision
+		// 0085)
+		s.set(v, 0)
+		return
+	}
 	if callee := g.byName[name]; callee != nil && g.goMode {
 		s.goCall(v, callee)
 		return

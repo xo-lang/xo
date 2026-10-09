@@ -88,7 +88,7 @@ var runtimeModes = map[string][]mode{
 	"list.pop":         {mConsume},
 	// the task runtime (decision 0068) takes the lists of one that carry
 	// values into it
-	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mBorrow},
+	"rt.task_spawn":    {mBorrow, mConsume, mNone, mNone, mNone, mNone, mNone, mBorrow},
 	"rt.task_done":     {mBorrow, mConsume, mNone},
 	"rt.chan_send":     {mBorrow, mConsume, mBorrow},
 	"rt.chan_try_send": {mBorrow, mConsume},
@@ -464,6 +464,10 @@ func (m *Module) InsertRC() {
 		c.insert()
 		c.cancel()
 		c.reuse()
+		if m.FaultUnwind {
+			f.sinkLandings(r)
+			f.pruneLandings()
+		}
 		f.renumber()
 	}
 	m.RC = true
@@ -659,10 +663,16 @@ func (c *rcFunc) walk(b *Block) {
 			}
 		}
 		held := sortedLeaves(live)
+		// on the cleanup path of a landing check, the operation checked
+		// produced nothing (decision 0085, landing.go)
+		site, _ := landingSite(b)
 		for i, e := range term.Succs {
 			code := func(at *Block) []*Value {
 				var out []*Value
 				for _, l := range held {
+					if i == 0 && site != nil && l.root == site {
+						continue
+					}
 					switch n := needs[i].n[l][0]; {
 					case n == 0:
 						out = append(out, c.rc(OpRelease, l, at, 1)...)

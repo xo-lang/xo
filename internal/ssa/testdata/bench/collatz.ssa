@@ -9,31 +9,45 @@ b1(v6: Int, v7: Int, v8: Int):  ; preds b0, b3
   v9: Bool = lt v6, v4
   br v9, b2(), b4()
 b2:  ; preds b1
-  v11: Int = call steps, v6
-  v12: Int = add v7, v11 @ main.xo:22:5
-  v13: Int = call Int.max, v8, v11
-  v14: () = tuple
-  jump b3()
-b3:  ; preds b2
-  v16: Int = const 1
-  v17: Int = add v6, v16
-  jump b1(v17, v12, v13)
+  v11: Int = call steps, v6 lands v12
+  v12: Bool = call rt.landing
+  br v12, b5(), b6()
+b3:  ; preds b8
+  v14: Int = const 1
+  v15: Int = add v6, v14
+  jump b1(v15, v26, v32)
 b4:  ; preds b1
-  v19: Stdio = cap stdio, v0
-  v20: Str = const "collatz "
-  v21: Str = call str.concat_int, v20, v7
-  v22: Str = const " "
-  v23: Str = call str.concat, v21, v22
-  v24: Str = call str.concat_int, v23, v8
-  v25: () = call Stdio.println, v19, v24
-  ret v25
+  v17: Stdio = cap stdio, v0
+  v18: Str = const "collatz "
+  v19: Str = call str.concat_int, v18, v7
+  v20: Str = const " "
+  v21: Str = call str.concat, v19, v20
+  v22: Str = call str.concat_int, v21, v8
+  v23: () = call Stdio.println, v17, v22
+  ret v23
+b5:  ; preds b2
+  jump b7()
+b6:  ; preds b2
+  v26: Int = add v7, v11 @ main.xo:22:5 lands v27
+  v27: Bool = call rt.landing
+  br v27, b9(), b8()
+b7:  ; preds b5, b9
+  v29: () = call rt.fault_continue
+  v30: () = tuple
+  ret v30
+b8:  ; preds b6
+  v32: Int = call Int.max, v8, v11
+  v33: () = tuple
+  jump b3()
+b9:  ; preds b6
+  jump b7()
 }
 
 func steps(v0: Int) -> Int {
 b0(v0: Int):
   v1: Int = const 0
   jump b1(v0, v1)
-b1(v3: Int, v4: Int):  ; preds b0, b4
+b1(v3: Int, v4: Int):  ; preds b0, b10
   v5: Int = const 1
   v6: Bool = ne v3, v5
   br v6, b3(), b2()
@@ -41,26 +55,55 @@ b2:  ; preds b1
   ret v4
 b3:  ; preds b1
   v9: Int = const 2
-  v10: Int = rem v3, v9 @ main.xo:7:8
-  v11: Int = const 0
-  v12: Bool = eq v10, v11
-  br v12, b5(), b6()
-b4(v14: Int):  ; preds b5, b6
-  v15: () = tuple
-  v16: Int = const 1
-  v17: Int = add v4, v16 @ main.xo:12:5
-  v18: () = tuple
-  jump b1(v14, v17)
-b5:  ; preds b3
-  v20: Int = const 2
-  v21: Int = div v3, v20 @ main.xo:8:11
-  v22: () = tuple
-  jump b4(v21)
-b6:  ; preds b3
-  v24: Int = const 3
-  v25: Int = mul v24, v3 @ main.xo:10:11
-  v26: Int = const 1
-  v27: Int = add v25, v26 @ main.xo:10:11
-  v28: () = tuple
-  jump b4(v27)
+  v10: Int = rem v3, v9 @ main.xo:7:8 lands v11
+  v11: Bool = call rt.landing
+  br v11, b8(), b7()
+b4(v13: Int):  ; preds b12, b16
+  v14: () = tuple
+  v15: Int = const 1
+  v16: Int = add v4, v15 @ main.xo:12:5 lands v17
+  v17: Bool = call rt.landing
+  br v17, b11(), b10()
+b5:  ; preds b7
+  v19: Int = const 2
+  v20: Int = div v3, v19 @ main.xo:8:11 lands v21
+  v21: Bool = call rt.landing
+  br v21, b13(), b12()
+b6:  ; preds b7
+  v23: Int = const 3
+  v24: Int = mul v23, v3 @ main.xo:10:11 lands v25
+  v25: Bool = call rt.landing
+  br v25, b15(), b14()
+b7:  ; preds b3
+  v27: Int = const 0
+  v28: Bool = eq v10, v27
+  br v28, b5(), b6()
+b8:  ; preds b3
+  jump b9()
+b9:  ; preds b8, b11, b13, b15, b17
+  v31: () = call rt.fault_continue
+  v32: Int = const 0
+  ret v32
+b10:  ; preds b4
+  v34: () = tuple
+  jump b1(v13, v16)
+b11:  ; preds b4
+  jump b9()
+b12:  ; preds b5
+  v37: () = tuple
+  jump b4(v20)
+b13:  ; preds b5
+  jump b9()
+b14:  ; preds b6
+  v40: Int = const 1
+  v41: Int = add v24, v40 @ main.xo:10:11 lands v42
+  v42: Bool = call rt.landing
+  br v42, b17(), b16()
+b15:  ; preds b6
+  jump b9()
+b16:  ; preds b14
+  v45: () = tuple
+  jump b4(v41)
+b17:  ; preds b14
+  jump b9()
 }

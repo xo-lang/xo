@@ -51,7 +51,13 @@ type TestInfo struct {
 	// Uses lists the effects of `test "x" uses ...` (skipped without
 	// --real).
 	Uses []string
+	// Skip is why the test does not run natively (a contract fuzz test,
+	// decision 0085), or "".
+	Skip string
 }
+
+// fuzzSkip is the report of a contract fuzz test of a native test binary.
+const fuzzSkip = "contract fuzzing is not available without a garbage collector (`--no-gc`) yet (support is planned)"
 
 // testInfos lists the test blocks of a native test build in the order
 // the test binary numbers them (ssa.TestDecls).
@@ -67,8 +73,34 @@ func testInfos(dirs []string, res *check.Result) []TestInfo {
 			}
 		}
 	}
+	// the contract fuzz tests the Go backend runs (core 9.1) are listed
+	// where it lists them, before the test blocks of their file that
+	// follow them, as skipped
+	fuzzAt := map[ast.Node][]TestInfo{}
+	for _, ft := range gen.ContractFuzzTargets(res) {
+		ti := TestInfo{Index: -1, Name: ft.Name, Loc: relLoc(root, ft.Fn.Decl), Module: ft.Fn.Module.Path, Skip: fuzzSkip}
+		ti.Dir, _ = filepath.Abs(ft.Fn.Module.Dir)
+		fuzzAt[ft.Fn.Decl] = append(fuzzAt[ft.Fn.Decl], ti)
+	}
 	var out []TestInfo
+	pending := map[*ast.TestDecl][]TestInfo{}
+	var held []TestInfo // in declaration order, until the next test block
+	for _, m := range res.Modules {
+		for _, f := range m.Files {
+			for _, d := range f.AST.Decls {
+				if fd, ok := d.(*ast.FnDecl); ok {
+					held = append(held, fuzzAt[fd]...)
+				}
+				if td, ok := d.(*ast.TestDecl); ok && len(held) > 0 {
+					pending[td] = held
+					held = nil
+				}
+			}
+		}
+	}
+	tail := held
 	for i, td := range ssa.TestDecls(res) {
+		out = append(out, pending[td]...)
 		ti := TestInfo{Index: i, Name: ssa.TestName(td), Loc: relLoc(root, td)}
 		if m := modOf[td]; m != nil {
 			ti.Module = m.Path
@@ -86,7 +118,7 @@ func testInfos(dirs []string, res *check.Result) []TestInfo {
 		}
 		out = append(out, ti)
 	}
-	return out
+	return append(out, tail...)
 }
 
 // relLoc is `file:line:col` of n with the file relative to root (as the

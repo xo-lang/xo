@@ -358,14 +358,21 @@ func (s *fn) withTimeout(x *ast.CallExpr, fo *check.FuncObj) *Value {
 	fv := s.valueAs(es[2], m.FuncType(nil, rt))
 	h := s.rt("scope_open", m.Handle("Scope"))
 	s.rt("scope_deadline", nil, h, d)
-	r := s.add(OpCallValue, rt, nil, fv)
-	u := s.rt("unwinding", boolT)
+	if s.pending != nil {
+		s.flushLanding()
+	}
+	r := s.cur.Add(OpCallValue, rt, nil, fv)
+	u := s.cur.Add(OpCall, boolT, "rt.unwinding")
+	if b.faultUnwind {
+		// a fault in f closes the scope and goes on (decision 0085)
+		r.Pad = u
+	}
 	join := s.newBlock()
 	res := join.AddParam(nt)
 	ei := nt.VariantIndex("Err")
 	timedT := nt.Variants[ei].Fields[0].Type
 	unw, done := s.branch(u)
-	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, ""})
+	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, "", r})
 	// unwinding: the deadline, or a cancellation from outside
 	s.cur = unw
 	s.rt("scope_close", intT, h, s.cint(2))

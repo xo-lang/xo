@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+cell 9 3
+out of range next
+--- stderr
+fault: requires failed: x >= 0 && x < g.w at main.xo:11:12

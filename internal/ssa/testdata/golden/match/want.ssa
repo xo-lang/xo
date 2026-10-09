@@ -33,29 +33,35 @@ b4:  ; preds b6, b5
   v25: Float = const 1.0
   v26: Shape = variant 0, v25
   v27: Float = call area, v26
-  v28: Str = call str.of_float, v27
-  v29: Str = const " "
-  v30: Str = call str.concat, v28, v29
-  v31: Str = call bucket, v11
-  v32: Str = call str.concat, v30, v31
-  v33: Str = const " "
-  v34: Str = call str.concat, v32, v33
-  v35: Shape = variant 2
-  v36: Float = call area, v35
-  v37: Str = call str.concat_float, v34, v36
-  v38: () = call Stdio.println, v24, v37
-  ret v38
+  jump b7()
 b5:  ; preds b1
-  v40: () = tuple
+  v29: () = tuple
   jump b4()
 b6:  ; preds b1
-  v42: Float = payload 1.0, v14
-  v43: Float = payload 1.1, v14
-  v44: Stdio = cap stdio, v0
-  v45: Str = const "w "
-  v46: Str = call str.concat_float, v45, v42
-  v47: () = call Stdio.println, v44, v46
+  v31: Float = payload 1.0, v14
+  v32: Float = payload 1.1, v14
+  v33: Stdio = cap stdio, v0
+  v34: Str = const "w "
+  v35: Str = call str.concat_float, v34, v31
+  v36: () = call Stdio.println, v33, v35
   jump b4()
+b7:  ; preds b4
+  v38: Str = call str.of_float, v27
+  v39: Str = const " "
+  v40: Str = call str.concat, v38, v39
+  v41: Str = call bucket, v11
+  jump b8()
+b8:  ; preds b7
+  v43: Str = call str.concat, v40, v41
+  v44: Str = const " "
+  v45: Str = call str.concat, v43, v44
+  v46: Shape = variant 2
+  v47: Float = call area, v46
+  jump b9()
+b9:  ; preds b8
+  v49: Str = call str.concat_float, v45, v47
+  v50: () = call Stdio.println, v24, v49
+  ret v50
 }
 
 func area(v0: Shape) -> Float {

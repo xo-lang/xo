@@ -138,6 +138,9 @@ func (v *Value) LongString() string {
 	if v.Pos != "" {
 		b.WriteString(" @ " + v.Pos)
 	}
+	if v.Pad != nil {
+		b.WriteString(" lands " + v.Pad.Name())
+	}
 	return b.String()
 }
 

@@ -4,9 +4,15 @@
 	.p2align 2
 	.type xo_f_main, %function
 xo_f_main:
+.Lf1_begin:
+	.cfi_startproc
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	str x19, [sp, #24]
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+	.cfi_offset w19, -8
 .Lf1_b0:
 	mov x0, #40
 	bl xo_f_fib
@@ -25,14 +31,22 @@ xo_f_main:
 	ldr x19, [sp, #24]
 	ldp x29, x30, [sp], #32
 	ret
+	.cfi_endproc
 
 // func fib
 	.p2align 2
 	.type xo_f_fib, %function
 xo_f_fib:
+.Lf2_begin:
+	.cfi_startproc
 	stp x29, x30, [sp, #-32]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
+	.cfi_def_cfa w29, 32
+	.cfi_offset w29, -32
+	.cfi_offset w30, -24
+	.cfi_offset w20, -16
+	.cfi_offset w19, -8
 .Lf2_b0:
 	mov x19, x0
 	cmp x19, #2
@@ -58,16 +72,22 @@ xo_f_fib:
 	add x3, x3, :lo12:.Lxo_loc0
 	bl xo_fault_overflow
 	brk #1
+	.cfi_endproc
 
 	.p2align 2
 	.globl xo_entry
 	.type xo_entry, %function
 xo_entry:
+	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 	bl xo_f_main
 	ldp x29, x30, [sp], #16
 	ret
+	.cfi_endproc
 
 // drop Str
 	.p2align 2

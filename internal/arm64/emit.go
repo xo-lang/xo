@@ -159,7 +159,15 @@ func (s *fstate) emit() {
 	defer func() { g.text.WriteString(pairLoads(b.String())) }()
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
+	pads := false
+	for _, mb := range s.order {
+		for _, in := range mb.insts {
+			pads = pads || in.pad != nil
+		}
+	}
+	s.cfiStart(b, pads)
 	s.prologue(b, fr)
+	s.cfiFrame(b, fr)
 	// blocks reached once branches skip the blocks that only jump
 	live := map[*mblock]bool{}
 	var walk func(mb *mblock)
@@ -205,7 +213,16 @@ func (s *fstate) emit() {
 	body := alignLoops(b.String(), g.place.Loop, g.place.LoopFall, g.place.LoopOff, loop)
 	b.Reset()
 	b.WriteString(body)
+	if fr.leaf && s.stubs.Len() > 0 {
+		// a leaf function's fault stubs make a frame record before
+		// their call (emitInst), so the unwinder can go past them
+		b.WriteString("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+	}
 	b.WriteString(s.stubs.String())
+	b.WriteString("\t.cfi_endproc\n")
+	if sites := append(s.sites, s.stubSites...); len(sites) > 0 {
+		s.lsda(sites, fr)
+	}
 	b.WriteString("\n")
 }
 
@@ -328,10 +345,20 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 			return
 		}
 		s.parallel(b, s.callMoves(in.srcs, fr, "sp", 0), fr)
+		var csTo string
+		if in.pad != nil {
+			from, to := s.callSiteLabels()
+			fmt.Fprintf(b, "%s:\n", from)
+			s.sites = append(s.sites, callSite{from, to, s.padOf(in)})
+			csTo = to
+		}
 		if in.indirect {
 			b.WriteString("\tblr x0\n")
 		} else {
 			fmt.Fprintf(b, "\tbl %s\n", in.sym)
+		}
+		if csTo != "" {
+			fmt.Fprintf(b, "%s:\n", csTo)
 		}
 		if in.noret {
 			return
@@ -579,10 +606,20 @@ func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
 		l := s.g.local(fmt.Sprintf("f%d_fault%d", s.g.nfunc, s.nstub))
 		fmt.Fprintf(b, "\tb.%s %s\n", in.fault.cond, l)
 		fmt.Fprintf(&s.stubs, "%s:\n", l)
+		if fr.leaf {
+			// a frame record for the unwinder (the call overwrites x30)
+			s.stubs.WriteString("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+		}
 		ms := s.callMoves(in.fault.args, fr, "sp", 0)
 		s.recoverOperand(&s.stubs, in, ms, fr)
 		s.parallel(&s.stubs, ms, fr)
-		fmt.Fprintf(&s.stubs, "\tbl %s\n\tbrk #1\n", in.fault.fn)
+		if in.pad != nil {
+			from, to := s.callSiteLabels()
+			s.stubSites = append(s.stubSites, callSite{from, to, s.padOf(in)})
+			fmt.Fprintf(&s.stubs, "%s:\n\tbl %s\n%s:\n\tbrk #1\n", from, in.fault.fn, to)
+		} else {
+			fmt.Fprintf(&s.stubs, "\tbl %s\n\tbrk #1\n", in.fault.fn)
+		}
 	}
 	for _, st := range stores {
 		b.WriteString(st)
@@ -801,12 +838,121 @@ func (s *fstate) recoverOperand(b *strings.Builder, in *inst, ms []move, fr *fra
 	}
 }
 
+// padOf is the landing pad block of in, past the blocks that only jump
+// (thread() may have dropped them).
+func (s *fstate) padOf(in *inst) *mblock {
+	b := in.pad
+	for i := 0; i < 16; i++ {
+		if len(b.insts) != 1 || b.insts[0].kind != iJump || b.insts[0].targets[0] == b || len(b.insts[0].targets) > 1 {
+			return b
+		}
+		b = b.insts[0].targets[0]
+	}
+	return b
+}
+
+// callSiteLabels returns the labels around the `bl` of a call that
+// unwinds to a landing pad (decision 0085).
+func (s *fstate) callSiteLabels() (string, string) {
+	s.g.ncs++
+	n := s.g.ncs
+	return s.g.local(fmt.Sprintf("f%d_cs%da", s.g.nfunc, n)), s.g.local(fmt.Sprintf("f%d_cs%db", s.g.nfunc, n))
+}
+
+// cfiStart opens the unwind information of the function (decision 0085):
+// its call frame information, and with landing pads the personality
+// routine and the call site table (lsda).
+func (s *fstate) cfiStart(b *strings.Builder, pads bool) {
+	g := s.g
+	fmt.Fprintf(b, "%s:\n", s.funcBegin())
+	b.WriteString("\t.cfi_startproc\n")
+	if !pads {
+		return
+	}
+	if g.os == Darwin {
+		fmt.Fprintf(b, "\t.cfi_personality 155, %s\n\t.cfi_lsda 16, %s\n", g.sym("xo_personality"), s.lsdaLabel())
+	} else {
+		g.personalityRef = true
+		fmt.Fprintf(b, "\t.cfi_personality 155, DW.ref.xo_personality\n\t.cfi_lsda 27, %s\n", s.lsdaLabel())
+	}
+}
+
+func (s *fstate) funcBegin() string { return s.g.local(fmt.Sprintf("f%d_begin", s.g.nfunc)) }
+
+// lsdaLabel names the function's call site table. On Mach-O it is a
+// symbol, not an assembler local: the linker splits sections at symbols
+// and finds each table's start that way (a local label past the first
+// table pointed into code, decision 0085), as clang names them.
+func (s *fstate) lsdaLabel() string {
+	if s.g.os == Darwin {
+		return fmt.Sprintf("GCC_except_table_xo%d", s.g.nfunc)
+	}
+	return s.g.local(fmt.Sprintf("f%d_lsda", s.g.nfunc))
+}
+
+// cfiFrame describes the frame the prologue made: the canonical frame
+// address from x29, and where the frame record and the callee saved
+// registers are.
+func (s *fstate) cfiFrame(b *strings.Builder, fr *frameInfo) {
+	if fr.leaf {
+		return
+	}
+	fmt.Fprintf(b, "\t.cfi_def_cfa w29, %d\n", fr.size-fr.rec)
+	if fr.size-fr.rec == 16 {
+		fmt.Fprintf(b, "\t.cfi_offset w30, %d\n\t.cfi_offset w29, %d\n", fr.rec+8-fr.size, fr.rec-fr.size)
+	} else {
+		// the frame record is not at the top of the frame: the Darwin
+		// assembler's compact unwind encoding (frame mode) ignores the
+		// CFA offset and would assume 16; with the frame pointer's rule
+		// first it keeps the DWARF rules (gotchas/arm64-compact-unwind-cfa.md)
+		fmt.Fprintf(b, "\t.cfi_offset w29, %d\n\t.cfi_offset w30, %d\n", fr.rec-fr.size, fr.rec+8-fr.size)
+	}
+	at := func(r, off int) {
+		name := regName(r, false)
+		if r < fpBase {
+			name = "w" + name[1:]
+		}
+		fmt.Fprintf(b, "\t.cfi_offset %s, %d\n", name, off-fr.size)
+	}
+	// as saves() stores them: a pair puts the higher register first
+	for k := 0; k < len(s.saved); k++ {
+		r, off := s.saved[k], fr.saveBase+8*k
+		if k+1 < len(s.saved) && (s.saved[k+1] >= fpBase) == (r >= fpBase) && off <= 496 {
+			at(s.saved[k+1], off)
+			at(r, off+8)
+			k++
+			continue
+		}
+		at(r, off)
+	}
+}
+
+// lsda emits the call site table of the function: GCC's format for
+// cleanups, offsets from the function's start (decision 0085).
+func (s *fstate) lsda(sites []callSite, fr *frameInfo) {
+	g := s.g
+	b := &g.lsdas
+	if g.os == Darwin {
+		b.WriteString("\t.section __TEXT,__gcc_except_tab\n")
+	} else {
+		b.WriteString("\t.section .gcc_except_table,\"a\",@progbits\n")
+	}
+	fb := s.funcBegin()
+	beg, end := s.g.local(fmt.Sprintf("f%d_cst", g.nfunc)), s.g.local(fmt.Sprintf("f%d_cste", g.nfunc))
+	fmt.Fprintf(b, "\t.p2align 2\n%s:\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 %s-%s\n%s:\n", s.lsdaLabel(), end, beg, beg)
+	for _, c := range sites {
+		pad := s.label(s.fwd(c.pad, fr))
+		fmt.Fprintf(b, "\t.uleb128 %s-%s\n\t.uleb128 %s-%s\n\t.uleb128 %s-%s\n\t.byte 0\n", c.from, fb, c.to, c.from, pad, fb)
+	}
+	fmt.Fprintf(b, "%s:\n", end)
+}
+
 // fwd follows blocks that do nothing but jump (their parallel moves are
 // all between the same locations after allocation).
 func (s *fstate) fwd(b *mblock, fr *frameInfo) *mblock {
 	for i := 0; i < 8; i++ {
 		t := b.term()
-		if t == nil || t.kind != iJump || t.targets[0] == b {
+		if t == nil || t.kind != iJump || t.targets[0] == b || len(t.targets) > 1 {
 			return b
 		}
 		for _, in := range b.insts[:len(b.insts)-1] {

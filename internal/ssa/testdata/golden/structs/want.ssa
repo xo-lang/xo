@@ -12,49 +12,88 @@ b0(v0: Os):
   v8: P = struct v6, v7
   v9: List[P] = call list.push, v5, v8
   v10: Int = const 1
-  v11: ((), List[P]) = call bump, v9, v10
-  v12: List[P] = field 1, v11
-  v13: () = field 0, v11
-  v14: Int = const 0
-  v15: P = call list.index, v12, v14 @ main.xo:15:11
-  v16: Int = const 9
-  v17: P = setfield 1, v15, v16
-  v18: Int = const 4
-  v19: (P, Int) = tuple v17, v18
-  v20: Int = const 5
-  v21: P = field 0, v19
-  v22: P = setfield 0, v21, v20
-  v23: (P, Int) = setfield 0, v19, v22
-  v24: Stdio = cap stdio, v0
-  v25: Int = const 1
-  v26: P = call list.index, v12, v25 @ main.xo:18:23
-  v27: Int = field 0, v26
-  v28: Str = call str.of_int, v27
-  v29: Str = const " "
-  v30: Str = call str.concat, v28, v29
-  v31: Int = field 1, v17
-  v32: Str = call str.concat_int, v30, v31
-  v33: Str = const " "
-  v34: Str = call str.concat, v32, v33
-  v35: P = field 0, v23
-  v36: Int = field 0, v35
-  v37: Str = call str.concat_int, v34, v36
-  v38: Str = const " "
-  v39: Str = call str.concat, v37, v38
-  v40: Int = field 1, v23
-  v41: Str = call str.concat_int, v39, v40
-  v42: () = call Stdio.println, v24, v41
-  ret v42
+  v11: ((), List[P]) = call bump, v9, v10 lands v12
+  v12: Bool = call rt.landing
+  br v12, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  v15: List[P] = field 1, v11
+  v16: () = field 0, v11
+  v17: Int = const 0
+  v18: P = call list.index, v15, v17 @ main.xo:15:11 lands v19
+  v19: Bool = call rt.landing
+  br v19, b5(), b4()
+b3:  ; preds b1, b5, b7
+  v21: () = call rt.fault_continue
+  v22: () = tuple
+  ret v22
+b4:  ; preds b2
+  v24: Int = const 9
+  v25: P = setfield 1, v18, v24
+  v26: Int = const 4
+  v27: (P, Int) = tuple v25, v26
+  v28: Int = const 5
+  v29: P = field 0, v27
+  v30: P = setfield 0, v29, v28
+  v31: (P, Int) = setfield 0, v27, v30
+  v32: Stdio = cap stdio, v0
+  v33: Int = const 1
+  v34: P = call list.index, v15, v33 @ main.xo:18:23 lands v35
+  v35: Bool = call rt.landing
+  br v35, b7(), b6()
+b5:  ; preds b2
+  jump b3()
+b6:  ; preds b4
+  v38: Int = field 0, v34
+  v39: Str = call str.of_int, v38
+  v40: Str = const " "
+  v41: Str = call str.concat, v39, v40
+  v42: Int = field 1, v25
+  v43: Str = call str.concat_int, v41, v42
+  v44: Str = const " "
+  v45: Str = call str.concat, v43, v44
+  v46: P = field 0, v31
+  v47: Int = field 0, v46
+  v48: Str = call str.concat_int, v45, v47
+  v49: Str = const " "
+  v50: Str = call str.concat, v48, v49
+  v51: Int = field 1, v31
+  v52: Str = call str.concat_int, v50, v51
+  v53: () = call Stdio.println, v32, v52
+  ret v53
+b7:  ; preds b4
+  jump b3()
 }
 
 func bump(v0: List[P], v1: Int) -> ((), List[P]) {
 b0(v0: List[P], v1: Int):
-  v2: P = call list.index, v0, v1 @ main.xo:9:3
-  v3: Int = field 0, v2
-  v4: Int = const 1
-  v5: Int = add v3, v4 @ main.xo:9:3
-  v6: P = setfield 0, v2, v5
-  v7: List[P] = call list.set, v0, v1, v6 @ main.xo:9:3
-  v8: () = tuple
-  ret v8, v7
+  v2: P = call list.index, v0, v1 @ main.xo:9:3 lands v3
+  v3: Bool = call rt.landing
+  br v3, b2(), b1()
+b1:  ; preds b0
+  v5: Int = field 0, v2
+  v6: Int = const 1
+  v7: Int = add v5, v6 @ main.xo:9:3 lands v8
+  v8: Bool = call rt.landing
+  br v8, b5(), b4()
+b2:  ; preds b0
+  jump b3()
+b3:  ; preds b2, b5, b7
+  v11: () = call rt.fault_continue
+  v12: () = tuple
+  v13: List[P] = call rt.rl_empty
+  ret v12, v13
+b4:  ; preds b1
+  v15: P = setfield 0, v2, v7
+  v16: List[P] = call list.set, v0, v1, v15 @ main.xo:9:3 lands v17
+  v17: Bool = call rt.landing
+  br v17, b7(), b6()
+b5:  ; preds b1
+  jump b3()
+b6:  ; preds b4
+  v20: () = tuple
+  ret v20, v16
+b7:  ; preds b4
+  jump b3()
 }

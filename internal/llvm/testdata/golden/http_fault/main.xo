@@ -1,0 +1,56 @@
+// A fault in an HTTP handler (std.md 4.2, decision 0085) is isolated:
+// the handler's deferred code runs, the client gets 500 with
+// {"error":"internal error"}, the fault is logged, and the server keeps
+// serving the next requests, on the Go, LLVM, and arm64 backends.
+use std/http
+
+fn routes(stdio: Stdio) -> http.Router uses stdio {
+  var r = http.router()
+  r.handle("GET /ok/{n:Int}", fn(req) { http.text(200, "ok ${req.param_int("n")}") })
+  r.handle("GET /boom/{n:Int}", fn(req) {
+    defer stdio.println("handler: deferred")
+    let parts = ["a", "b", "c"]
+    http.text(200, "part ${parts[req.param_int("n")]}")
+  })
+  r.handle("GET /fault", fn(_req) {
+    let words = ["held", "by", "the", "handler"]
+    if words.len() > 2 {
+      fault("handler gave up after ${words.len()} words")
+    }
+    http.text(200, "never")
+  })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.text() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: client error ${e}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes(os.stdio))
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "ok 1", c.get(base + "/ok/1"))
+        show(os, "boom 1", c.get(base + "/boom/1"))
+        show(os, "boom 9", c.get(base + "/boom/9"))
+        show(os, "ok 2", c.get(base + "/ok/2"))
+        show(os, "fault", c.get(base + "/fault"))
+        show(os, "ok 3", c.get(base + "/ok/3"))
+      }
+      os.stdio.println("server stopped")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

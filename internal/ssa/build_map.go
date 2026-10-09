@@ -655,8 +655,7 @@ func (s *fn) mapCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		msg = s.call("str.concat_int", m.Builtin(KStr), "", msg, s.add(OpField, intT, 4, mv))
 		msg = s.call("str.concat", m.Builtin(KStr), "", msg, s.add(OpConst, m.Builtin(KStr), ": "))
 		msg = s.call("str.concat", m.Builtin(KStr), "", msg, reason)
-		f := s.add(OpFault, nil, nil, msg)
-		f.Pos = b.posLine(x)
+		s.fault(msg, b.posLine(x))
 		s.cur = ok
 		return s.call("list.index", mapVal(t), "", s.add(OpField, t.Fields[1].Type, 1, mv), idx), true
 	case "Map.keys", "Set.to_list":

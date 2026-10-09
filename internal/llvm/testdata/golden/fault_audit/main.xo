@@ -1,0 +1,78 @@
+// The faults the Go backend raises (core 8), each isolated, with the
+// same message and location on the LLVM and arm64 backends (the audit of
+// decision 0085): checked arithmetic, conversions, indexing and slicing,
+// map keys, or_fault on Option and Result, contracts, and explicit
+// faults. The leak check counts every allocation.
+use std/task
+
+enum E {
+  Bad(code: Int)
+} derive Display
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[E]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg} at ${info.location}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn checked(n: Int) -> Int ! E {
+  if n > 9 {
+    return Err(E.Bad(code: n))
+  }
+  n
+}
+
+fn halve(n: Int) -> Int
+  requires n % 2 == 0
+{
+  n / 2
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let big = 9223372036854775807
+  var small = -9223372036854775807
+  small -= 1
+  let zero = big - big
+  show(io, "add", task.isolate(fn() -> Str ! E { "${big + 1}" }))
+  show(io, "sub", task.isolate(fn() -> Str ! E { "${small - 1}" }))
+  show(io, "mul", task.isolate(fn() -> Str ! E { "${big * 2}" }))
+  show(io, "neg", task.isolate(fn() -> Str ! E { "${-small}" }))
+  show(io, "abs", task.isolate(fn() -> Str ! E { "${small.abs()}" }))
+  show(io, "div", task.isolate(fn() -> Str ! E { "${big / zero}" }))
+  show(io, "rem", task.isolate(fn() -> Str ! E { "${big % zero}" }))
+  show(io, "div min", task.isolate(fn() -> Str ! E { "${small / (zero - 1)}" }))
+  show(io, "shl", task.isolate(fn() -> Str ! E { "${big << 2}" }))
+  show(io, "shift", task.isolate(fn() -> Str ! E { "${1 << (zero + 70)}" }))
+  show(io, "float", task.isolate(fn() -> Str ! E { "${Int(1e300)}" }))
+  show(io, "nan", task.isolate(fn() -> Str ! E { "${Int(0.0 / 0.0)}" }))
+  show(io, "int8", task.isolate(fn() -> Str ! E { "${Int8(big)}" }))
+  show(io, "uint8 add", task.isolate(fn() -> Str ! E {
+    let a: UInt8 = 200
+    let b: UInt8 = 100
+    "${a + b}"
+  }))
+  show(io, "rune", task.isolate(fn() -> Str ! E { "${Rune(zero + 55296)}" }))
+  show(io, "index", task.isolate(fn() -> Str ! E { "${[1, 2, 3][zero + 3]}" }))
+  show(io, "set", task.isolate(fn() -> Str ! E {
+    var xs = [1, 2]
+    xs[zero + 5] = 9
+    "${xs.len()}"
+  }))
+  show(io, "bytes", task.isolate(fn() -> Str ! E { "${"abc".bytes()[zero + 4]}" }))
+  show(io, "slice", task.isolate(fn() -> Str ! E { "${"héllo"[0..zero + 2]}" }))
+  show(io, "slice range", task.isolate(fn() -> Str ! E { "${"abc"[zero + 2..1]}" }))
+  show(io, "list slice", task.isolate(fn() -> Str ! E { "${[1, 2, 3][1..zero + 9].len()}" }))
+  show(io, "map", task.isolate(fn() -> Str ! E { "${{"a": 1}.get_or_fault("b", "no b")}" }))
+  show(io, "option", task.isolate(fn() -> Str ! E {
+    let o: Int? = None
+    "${o.or_fault("need a value")}"
+  }))
+  show(io, "result", task.isolate(fn() -> Str ! E { "${checked(zero + 12).or_fault("checked")}" }))
+  show(io, "requires", task.isolate(fn() -> Str ! E { "${halve(zero + 3)}" }))
+  show(io, "explicit", task.isolate(fn() -> Str ! E { fault("stop at ${zero}") }))
+  show(io, "error", task.isolate(fn() -> Str ! E { "${checked(zero + 10)?}" }))
+  show(io, "fine", task.isolate(fn() -> Str ! E { "${checked(zero + 4)?}" }))
+}

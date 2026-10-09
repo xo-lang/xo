@@ -52,6 +52,8 @@ func runNativeTests(res *build.Result, o nativeTestOpts, stdout io.Writer) int {
 		}
 		var out nativeOutcome
 		switch {
+		case t.Skip != "":
+			out = nativeOutcome{status: "skip", msg: t.Skip}
 		case len(t.Uses) > 0 && !o.real:
 			out = nativeOutcome{status: "skip", msg: "uses " + strings.Join(t.Uses, ", ") + ": run with `xo test --real` for real capabilities"}
 		case len(t.Uses) > 0:

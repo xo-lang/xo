@@ -87,234 +87,307 @@ b0(v0: Os):
   v81: Str = const " "
   v82: Str = call str.concat, v79, v81
   v83: Int = const 0
-  v84: Item = call list.index, v63, v83 @ main.xo:26:51
-  v85: Int = const 0
-  v86: Item = call list.index, v73, v85 @ main.xo:26:61
-  retain v86
-  release v73
-  v89: Bool = call same, v84, v86
-  release v86
-  v91: Str = call str.of_bool, v89
-  v92: Str = call str.concat, v82, v91
+  v84: Item = call list.index, v63, v83 @ main.xo:26:51 lands v85
+  v85: Bool = call rt.landing
+  br v85, b13(), b12()
+b1:  ; preds b13, b15, b17, b19, b21, b23, b25
+  v87: () = call rt.fault_continue
+  v88: () = tuple
+  ret v88
+b2(v90: Bool):  ; preds b4, b3
+  v91: Str = call str.of_bool, v90
+  retain v203
+  v93: Str = call str.concat, v203, v91
   release v91
-  v94: Str = const " "
-  v95: Str = call str.concat, v92, v94
-  v96: Int = const 1
-  v97: Item = call list.index, v63, v96 @ main.xo:26:78
-  v98: Str = const "x"
-  v99: Float = const 2.5
-  retain v98
-  v101: Item = variant 1, v98, v99
-  v102: Bool = call same, v97, v101
-  release v101
-  v104: Str = call str.of_bool, v102
-  v105: Str = call str.concat, v95, v104
-  release v104
-  v107: () = call Stdio.println, v74, v105
-  release v105
-  v109: Stdio = cap stdio, v0
-  v110: Str = const "is "
-  v111: Int = const 0
-  v112: Item = call list.index, v63, v111 @ main.xo:27:26
-  v113: Int = tag v112
-  v114: Int = const 0
-  v115: Bool = eq v113, v114
-  br v115, b3(), b2()
-b1(v117: Bool):  ; preds b3, b2
-  v118: Str = call str.of_bool, v117
-  retain v110
-  v120: Str = call str.concat, v110, v118
-  release v118
-  v122: Str = const " "
-  v123: Str = call str.concat, v120, v122
-  v124: Int = const 2
-  v125: Item = call list.index, v63, v124 @ main.xo:27:51
-  v126: Int = tag v125
-  v127: Int = const 1
-  v128: Bool = eq v126, v127
-  br v128, b6(), b5()
-b2:  ; preds b0
-  v130: Bool = const false
-  jump b1(v130)
-b3:  ; preds b0
-  v132: Bool = const true
-  jump b1(v132)
-b4(v134: Bool):  ; preds b6, b5
-  v135: Str = call str.of_bool, v134
-  v136: Str = call str.concat, v123, v135
-  release v135
-  v138: Str = const " "
-  v139: Str = call str.concat, v136, v138
-  v140: Int = const 1
-  v141: Item = call list.index, v63, v140 @ main.xo:27:75
-  retain v141
-  release v63
-  v144: Int = tag v141
-  v145: Int = const 1
-  v146: Bool = eq v144, v145
-  br v146, b9(), b11()
-b5:  ; preds b1
-  v148: Bool = const false
-  jump b4(v148)
-b6:  ; preds b1
-  v150: Bool = const true
-  jump b4(v150)
-b7(v152: Bool):  ; preds b10, b8
-  v153: Str = call str.of_bool, v152
-  v154: Str = call str.concat, v139, v153
-  release v153
-  v156: () = call Stdio.println, v109, v154
+  v95: Str = const " "
+  v96: Str = call str.concat, v93, v95
+  v97: Int = const 2
+  v98: Item = call list.index, v63, v97 @ main.xo:27:51 lands v99
+  v99: Bool = call rt.landing
+  br v99, b19(), b18()
+b3:  ; preds b16
+  v101: Bool = const false
+  jump b2(v101)
+b4:  ; preds b16
+  v103: Bool = const true
+  jump b2(v103)
+b5(v105: Bool):  ; preds b7, b6
+  v106: Str = call str.of_bool, v105
+  v107: Str = call str.concat, v96, v106
+  release v106
+  v109: Str = const " "
+  v110: Str = call str.concat, v107, v109
+  v111: Int = const 1
+  v112: Item = call list.index, v63, v111 @ main.xo:27:75 lands v113
+  v113: Bool = call rt.landing
+  br v113, b21(), b20()
+b6:  ; preds b18
+  v115: Bool = const false
+  jump b5(v115)
+b7:  ; preds b18
+  v117: Bool = const true
+  jump b5(v117)
+b8(v119: Bool):  ; preds b11, b9
+  v120: Str = call str.of_bool, v119
+  v121: Str = call str.concat, v110, v120
+  release v120
+  v123: () = call Stdio.println, v202, v121
+  release v121
+  v125: List[List[Str]] = call list.new
+  v126: List[Str] = call list.new
+  v127: Str = const "a"
+  retain v127
+  v129: List[Str] = call list.push, v126, v127
+  v130: List[List[Str]] = call list.push, v125, v129
+  v131: List[Str] = call list.new
+  v132: Str = const "b"
+  retain v132
+  v134: List[Str] = call list.push, v131, v132
+  v135: Str = const "c"
+  retain v135
+  v137: List[Str] = call list.push, v134, v135
+  v138: List[List[Str]] = call list.push, v130, v137
+  v139: Stdio = cap stdio, v0
+  v140: Str = const "nested "
+  v141: List[List[Str]] = call list.new
+  v142: List[Str] = call list.new
+  v143: Str = const "a"
+  retain v143
+  v145: List[Str] = call list.push, v142, v143
+  v146: List[List[Str]] = call list.push, v141, v145
+  v147: List[Str] = call list.new
+  v148: Str = const "b"
+  retain v148
+  v150: List[Str] = call list.push, v147, v148
+  v151: Str = const "c"
+  retain v151
+  v153: List[Str] = call list.push, v150, v151
+  v154: List[List[Str]] = call list.push, v146, v153
+  v155: Bool = eq v138, v154
   release v154
-  v158: List[List[Str]] = call list.new
-  v159: List[Str] = call list.new
-  v160: Str = const "a"
-  retain v160
-  v162: List[Str] = call list.push, v159, v160
-  v163: List[List[Str]] = call list.push, v158, v162
-  v164: List[Str] = call list.new
-  v165: Str = const "b"
-  retain v165
-  v167: List[Str] = call list.push, v164, v165
-  v168: Str = const "c"
-  retain v168
-  v170: List[Str] = call list.push, v167, v168
-  v171: List[List[Str]] = call list.push, v163, v170
-  v172: Stdio = cap stdio, v0
-  v173: Str = const "nested "
-  v174: List[List[Str]] = call list.new
-  v175: List[Str] = call list.new
-  v176: Str = const "a"
-  retain v176
-  v178: List[Str] = call list.push, v175, v176
-  v179: List[List[Str]] = call list.push, v174, v178
-  v180: List[Str] = call list.new
-  v181: Str = const "b"
-  retain v181
-  v183: List[Str] = call list.push, v180, v181
-  v184: Str = const "c"
-  retain v184
-  v186: List[Str] = call list.push, v183, v184
-  v187: List[List[Str]] = call list.push, v179, v186
-  v188: Bool = eq v171, v187
-  release v187
-  v190: Str = call str.of_bool, v188
-  retain v173
-  v192: Str = call str.concat, v173, v190
-  release v190
-  v194: Str = const " "
-  v195: Str = call str.concat, v192, v194
-  v196: Int = const 1
-  v197: List[Str] = call list.index, v171, v196 @ main.xo:29:62
-  retain v197
-  release v171
-  v200: List[Str] = call list.new
-  v201: Str = const "b"
-  retain v201
-  v203: List[Str] = call list.push, v200, v201
-  v204: Bool = eq v197, v203
+  v157: Str = call str.of_bool, v155
+  retain v140
+  v159: Str = call str.concat, v140, v157
+  release v157
+  v161: Str = const " "
+  v162: Str = call str.concat, v159, v161
+  v163: Int = const 1
+  v164: List[Str] = call list.index, v138, v163 @ main.xo:29:62 lands v165
+  v165: Bool = call rt.landing
+  br v165, b23(), b22()
+b9:  ; preds b26, b10
+  v167: Bool = const false
+  jump b8(v167)
+b10:  ; preds b20
+  v169: Str = payload 1.0, v112
+  retain v169
+  release v112
+  v172: Str = const "x"
+  v173: Bool = call str.eq, v169, v172
+  release v169
+  br v173, b11(), b9()
+b11:  ; preds b10
+  v176: Bool = const true
+  jump b8(v176)
+b12:  ; preds b0
+  retain v84
+  v179: Int = const 0
+  v180: Item = call list.index, v73, v179 @ main.xo:26:61 lands v181
+  v181: Bool = call rt.landing
+  br v181, b25(), b24()
+b13:  ; preds b0
+  v183: List[Int] = field 1, v29
+  release v183
+  release v63
+  release v73
+  release v82
+  jump b1()
+b14:  ; preds b24
+  retain v350
+  v190: Str = const "x"
+  v191: Float = const 2.5
+  retain v190
+  v193: Item = variant 1, v190, v191
+  v194: Bool = call same, v350, v193
+  release v350
+  release v193
+  v197: Str = call str.of_bool, v194
+  v198: Str = call str.concat, v348, v197
   release v197
-  release v203
-  v207: Str = call str.of_bool, v204
-  v208: Str = call str.concat, v195, v207
-  release v207
-  v210: Str = const " "
-  v211: Str = call str.concat, v208, v210
-  v212: Int = const 1
-  v213: Str = const "q"
-  retain v213
-  v215: (Int, Str) = tuple v212, v213
-  v216: Int = const 1
-  v217: Str = const "q"
-  retain v217
-  v219: (Int, Str) = tuple v216, v217
-  v220: Bool = eq v215, v219
-  v221: Str = field 1, v215
-  release v221
-  v223: Str = field 1, v219
-  release v223
-  v225: Str = call str.of_bool, v220
-  v226: Str = call str.concat, v211, v225
+  v200: () = call Stdio.println, v74, v198
+  release v198
+  v202: Stdio = cap stdio, v0
+  v203: Str = const "is "
+  v204: Int = const 0
+  v205: Item = call list.index, v63, v204 @ main.xo:27:26 lands v206
+  v206: Bool = call rt.landing
+  br v206, b17(), b16()
+b15:  ; preds b24
+  v208: List[Int] = field 1, v29
+  release v208
+  release v63
+  release v348
+  jump b1()
+b16:  ; preds b14
+  v213: Int = tag v205
+  v214: Int = const 0
+  v215: Bool = eq v213, v214
+  br v215, b4(), b3()
+b17:  ; preds b14
+  v217: List[Int] = field 1, v29
+  release v217
+  release v63
+  jump b1()
+b18:  ; preds b2
+  v221: Int = tag v98
+  v222: Int = const 1
+  v223: Bool = eq v221, v222
+  br v223, b7(), b6()
+b19:  ; preds b2
+  v225: List[Int] = field 1, v29
   release v225
-  v228: Str = const " "
-  v229: Str = call str.concat, v226, v228
-  v230: Int = const 1
-  v231: Str = const "q"
-  retain v231
-  v233: (Int, Str) = tuple v230, v231
-  v234: Int = const 2
-  v235: Str = const "q"
-  retain v235
-  v237: (Int, Str) = tuple v234, v235
-  v238: Bool = ne v233, v237
-  v239: Str = field 1, v233
-  release v239
-  v241: Str = field 1, v237
-  release v241
-  v243: Str = call str.of_bool, v238
-  v244: Str = call str.concat, v229, v243
-  release v243
-  v246: () = call Stdio.println, v172, v244
-  release v244
-  v248: Str = const "m"
-  retain v248
-  v250: Str? = variant 1, v248
-  v251: Stdio = cap stdio, v0
-  v252: Str = const "option "
-  v253: Str = const "m"
-  retain v253
-  v255: Str? = variant 1, v253
-  v256: Bool = eq v250, v255
-  release v255
-  v258: Str = call str.of_bool, v256
-  retain v252
-  v260: Str = call str.concat, v252, v258
-  release v258
-  v262: Str = const " "
-  v263: Str = call str.concat, v260, v262
-  v264: Str? = variant 0
-  v265: Bool = ne v250, v264
-  release v264
-  v267: Str = call str.of_bool, v265
-  v268: Str = call str.concat, v263, v267
-  release v267
-  v270: Str = const " "
-  v271: Str = call str.concat, v268, v270
-  v272: Str = const "n"
-  retain v272
-  v274: Str? = variant 1, v272
-  v275: Bool = eq v250, v274
+  release v63
+  release v96
+  jump b1()
+b20:  ; preds b5
+  retain v112
+  release v63
+  v232: Int = tag v112
+  v233: Int = const 1
+  v234: Bool = eq v232, v233
+  br v234, b10(), b26()
+b21:  ; preds b5
+  release v63
+  v237: List[Int] = field 1, v29
+  release v237
+  release v110
+  jump b1()
+b22:  ; preds b8
+  retain v164
+  release v138
+  v243: List[Str] = call list.new
+  v244: Str = const "b"
+  retain v244
+  v246: List[Str] = call list.push, v243, v244
+  v247: Bool = eq v164, v246
+  release v164
+  release v246
+  v250: Str = call str.of_bool, v247
+  v251: Str = call str.concat, v162, v250
   release v250
-  release v274
-  v278: Str = call str.of_bool, v275
-  v279: Str = call str.concat, v271, v278
-  release v278
-  v281: Str = const " "
-  v282: Str = call str.concat, v279, v281
-  v283: List[Int] = field 1, v29
-  v284: Int = call list.len, v283
-  v285: List[Int] = field 1, v29
-  release v285
-  v287: Str = call str.concat_int, v282, v284
-  v288: () = call Stdio.println, v251, v287
+  v253: Str = const " "
+  v254: Str = call str.concat, v251, v253
+  v255: Int = const 1
+  v256: Str = const "q"
+  retain v256
+  v258: (Int, Str) = tuple v255, v256
+  v259: Int = const 1
+  v260: Str = const "q"
+  retain v260
+  v262: (Int, Str) = tuple v259, v260
+  v263: Bool = eq v258, v262
+  v264: Str = field 1, v258
+  release v264
+  v266: Str = field 1, v262
+  release v266
+  v268: Str = call str.of_bool, v263
+  v269: Str = call str.concat, v254, v268
+  release v268
+  v271: Str = const " "
+  v272: Str = call str.concat, v269, v271
+  v273: Int = const 1
+  v274: Str = const "q"
+  retain v274
+  v276: (Int, Str) = tuple v273, v274
+  v277: Int = const 2
+  v278: Str = const "q"
+  retain v278
+  v280: (Int, Str) = tuple v277, v278
+  v281: Bool = ne v276, v280
+  v282: Str = field 1, v276
+  release v282
+  v284: Str = field 1, v280
+  release v284
+  v286: Str = call str.of_bool, v281
+  v287: Str = call str.concat, v272, v286
+  release v286
+  v289: () = call Stdio.println, v139, v287
   release v287
-  ret v288
-b8:  ; preds b11, b9
-  v291: Bool = const false
-  jump b7(v291)
-b9:  ; preds b4
-  v293: Str = payload 1.0, v141
-  retain v293
-  release v141
-  v296: Str = const "x"
-  v297: Bool = call str.eq, v293, v296
+  v291: Str = const "m"
+  retain v291
+  v293: Str? = variant 1, v291
+  v294: Stdio = cap stdio, v0
+  v295: Str = const "option "
+  v296: Str = const "m"
+  retain v296
+  v298: Str? = variant 1, v296
+  v299: Bool = eq v293, v298
+  release v298
+  v301: Str = call str.of_bool, v299
+  retain v295
+  v303: Str = call str.concat, v295, v301
+  release v301
+  v305: Str = const " "
+  v306: Str = call str.concat, v303, v305
+  v307: Str? = variant 0
+  v308: Bool = ne v293, v307
+  release v307
+  v310: Str = call str.of_bool, v308
+  v311: Str = call str.concat, v306, v310
+  release v310
+  v313: Str = const " "
+  v314: Str = call str.concat, v311, v313
+  v315: Str = const "n"
+  retain v315
+  v317: Str? = variant 1, v315
+  v318: Bool = eq v293, v317
   release v293
-  br v297, b10(), b8()
-b10:  ; preds b9
-  v300: Bool = const true
-  jump b7(v300)
-b11:  ; preds b4
-  release v141
-  jump b8()
+  release v317
+  v321: Str = call str.of_bool, v318
+  v322: Str = call str.concat, v314, v321
+  release v321
+  v324: Str = const " "
+  v325: Str = call str.concat, v322, v324
+  v326: List[Int] = field 1, v29
+  v327: Int = call list.len, v326
+  v328: List[Int] = field 1, v29
+  release v328
+  v330: Str = call str.concat_int, v325, v327
+  v331: () = call Stdio.println, v294, v330
+  release v330
+  ret v331
+b23:  ; preds b8
+  release v138
+  v335: List[Int] = field 1, v29
+  release v335
+  release v162
+  jump b1()
+b24:  ; preds b12
+  retain v180
+  release v73
+  v341: Bool = call same, v84, v180
+  release v84
+  release v180
+  v344: Str = call str.of_bool, v341
+  v345: Str = call str.concat, v82, v344
+  release v344
+  v347: Str = const " "
+  v348: Str = call str.concat, v345, v347
+  v349: Int = const 1
+  v350: Item = call list.index, v63, v349 @ main.xo:26:78 lands v351
+  v351: Bool = call rt.landing
+  br v351, b15(), b14()
+b25:  ; preds b12
+  release v73
+  v354: List[Int] = field 1, v29
+  release v354
+  release v63
+  release v82
+  release v84
+  jump b1()
+b26:  ; preds b20
+  release v112
+  jump b9()
 }
 
 func same(borrow v0: Item, borrow v1: Item) -> Bool {

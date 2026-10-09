@@ -1,0 +1,22 @@
+// A `requires` clause without `else` faults (core 9.1); a struct
+// literal checks its type's invariant first. The last call breaks the
+// requires clause of a method.
+
+struct Grid {
+  w: Int
+  h: Int
+} invariant w > 0 && h > 0
+
+fn (g: Grid) cell(x: Int, y: Int) -> Int
+  requires x >= 0 && x < g.w
+  requires y >= 0 && y < g.h
+{
+  y * g.w + x
+}
+
+fn main(os: Os) {
+  let g = Grid{w: 4, h: 3}
+  os.stdio.println("cell ${g.cell(1, 2)} ${g.cell(3, 0)}")
+  os.stdio.println("out of range next")
+  os.stdio.println("${g.cell(4, 0)}")
+}

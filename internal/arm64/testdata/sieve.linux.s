@@ -4,9 +4,16 @@
 	.p2align 2
 	.type xo_f_main, %function
 xo_f_main:
+.Lf1_begin:
+	.cfi_startproc
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #24]
+	.cfi_def_cfa w29, 48
+	.cfi_offset w29, -48
+	.cfi_offset w30, -40
+	.cfi_offset w20, -24
+	.cfi_offset w19, -16
 .Lf1_b0:
 	mov x19, #0
 	mov x20, x19
@@ -48,131 +55,197 @@ xo_f_main:
 	add x3, x3, :lo12:.Lxo_loc0
 	bl xo_fault_overflow
 	brk #1
+	.cfi_endproc
 
 // func sieve
 	.p2align 2
 	.type xo_f_sieve, %function
 xo_f_sieve:
+.Lf2_begin:
+	.cfi_startproc
+	.cfi_personality 155, DW.ref.xo_personality
+	.cfi_lsda 27, .Lf2_lsda
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
 	stp x22, x21, [sp, #32]
-	str x23, [sp, #48]
+	stp x24, x23, [sp, #48]
+	.cfi_def_cfa w29, 64
+	.cfi_offset w29, -64
+	.cfi_offset w30, -56
+	.cfi_offset w20, -48
+	.cfi_offset w19, -40
+	.cfi_offset w22, -32
+	.cfi_offset w21, -24
+	.cfi_offset w24, -16
+	.cfi_offset w23, -8
 .Lf2_b0:
-	mov x21, x0
+	mov x22, x0
 	mov x0, #4
 	mov x1, #1
 	bl xo_rl_new
-	adds x23, x21, #1
+	mov x20, x0
+	adds x24, x22, #1
 	b.vs .Lf2_fault1
-	mov x20, #0
-	ldr x19, [x0, #8]
-	mov x22, #1
-.Lf2_b1:
-	cmp x20, x23
-	b.ge .Lf2_b7
 .Lf2_b2:
-	ldr x9, [x0, #16]
+	mov x21, #0
+	ldr x19, [x20, #8]
+	mov x23, #1
+.Lf2_b3:
+	cmp x21, x24
+	b.ge .Lf2_b9
+.Lf2_b4:
+	ldr x9, [x20, #16]
 	cmp x19, x9
-	b.eq .Lf2_b3
-.Lf2_b5:
-	add x9, x0, x19
-	strb w22, [x9, #24]
-	add x19, x19, #1
-	str x19, [x0, #8]
-.Lf2_b6:
-	add x20, x20, #1
-	cmp x20, x23
-	b.lt .Lf2_b2
+	b.eq .Lf2_b5
 .Lf2_b7:
-	adds x12, x21, #1
-	b.vs .Lf2_fault2
-	mov x11, #2
-	mov x20, #0
+	add x9, x20, x19
+	strb w23, [x9, #24]
+	add x19, x19, #1
+	str x19, [x20, #8]
 .Lf2_b8:
-	cmp x11, x12
-	b.ge .Lf2_b17
+	add x21, x21, #1
+	cmp x21, x24
+	b.lt .Lf2_b4
 .Lf2_b9:
+	adds x12, x22, #1
+	b.vs .Lf2_fault2
+.Lf2_b11:
+	mov x11, #2
+	mov x21, #0
+.Lf2_b12:
+	cmp x11, x12
+	b.ge .Lf2_b32
+.Lf2_b13:
 	cmp x11, x19
 	b.hs .Lf2_fault3
-.Lf2_b9_c:
-	add x9, x0, x11
+.Lf2_b13_c:
+	add x9, x20, x11
 	ldrb w9, [x9, #24]
-	cbnz x9, .Lf2_b10
-.Lf2_b16:
+.Lf2_b15:
+	cbnz x9, .Lf2_b16
+.Lf2_b31:
 	add x11, x11, #1
 	cmp x11, x12
-	b.lt .Lf2_b9
-	b .Lf2_b17
-.Lf2_b10:
-	adds x20, x20, #1
+	b.lt .Lf2_b13
+	b .Lf2_b32
+.Lf2_b16:
+	adds x21, x21, #1
 	b.vs .Lf2_fault4
+.Lf2_b18:
 	mul x10, x11, x11
 	smulh x9, x11, x11
 	cmp x9, x10, asr #63
 	b.ne .Lf2_fault5
-.Lf2_b11:
-	cmp x10, x21
-	b.le .Lf2_b12
+.Lf2_b21:
+	cmp x10, x22
+	b.le .Lf2_b22
 	add x11, x11, #1
 	cmp x11, x12
-	b.lt .Lf2_b9
-	b .Lf2_b17
-.Lf2_b12:
+	b.lt .Lf2_b13
+	b .Lf2_b32
+.Lf2_b22:
 	cmp x10, x19
 	b.hs .Lf2_fault6
-.Lf2_b12_c:
-	add x9, x0, x10
+.Lf2_b22_c:
+	add x9, x20, x10
 	strb wzr, [x9, #24]
+.Lf2_b24:
 	adds x10, x10, x11
 	b.vs .Lf2_fault7
-	cmp x10, x21
-	b.le .Lf2_b12
-	b .Lf2_b16
-.Lf2_b17:
-	bl .Lxo_drop2
+	cmp x10, x22
+	b.le .Lf2_b22
+	b .Lf2_b31
+.Lf2_b32:
 	mov x0, x20
+	bl .Lxo_drop2
+	mov x0, x21
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
-	ldr x23, [sp, #48]
+	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
-.Lf2_b3:
+.Lf2_b1:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b5:
+	mov x0, x20
 	mov x1, #1
 	bl xo_rl_grow
-	b .Lf2_b5
+	mov x20, x0
+	b .Lf2_b7
+.Lf2_b10:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b14:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b17:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b19:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b23:
+	mov x0, x20
+	bl .Lxo_drop2
+	b .Lf2_b26
+.Lf2_b25:
+	mov x0, x20
+	bl .Lxo_drop2
+.Lf2_b26:
+	bl xo_fault_continue
+	mov x0, #0
+	ldp x20, x19, [sp, #16]
+	ldp x22, x21, [sp, #32]
+	ldp x24, x23, [sp, #48]
+	ldp x29, x30, [sp], #64
+	ret
 .Lf2_fault1:
-	mov x0, x21
+	mov x0, x22
 	mov x1, #43
 	mov x2, #1
 	adrp x3, .Lxo_loc1
 	add x3, x3, :lo12:.Lxo_loc1
+.Lf2_cs1a:
 	bl xo_fault_overflow
+.Lf2_cs1b:
 	brk #1
 .Lf2_fault2:
-	mov x0, x21
+	mov x0, x22
 	mov x1, #43
 	mov x2, #1
 	adrp x3, .Lxo_loc2
 	add x3, x3, :lo12:.Lxo_loc2
+.Lf2_cs2a:
 	bl xo_fault_overflow
+.Lf2_cs2b:
 	brk #1
 .Lf2_fault3:
 	mov x0, x11
 	mov x1, x19
 	adrp x2, .Lxo_loc3
 	add x2, x2, :lo12:.Lxo_loc3
+.Lf2_cs3a:
 	bl xo_fault_index
+.Lf2_cs3b:
 	brk #1
 .Lf2_fault4:
 	mov x17, #1
-	sub x15, x20, x17
+	sub x15, x21, x17
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
 	adrp x3, .Lxo_loc4
 	add x3, x3, :lo12:.Lxo_loc4
+.Lf2_cs4a:
 	bl xo_fault_overflow
+.Lf2_cs4b:
 	brk #1
 .Lf2_fault5:
 	mov x0, x11
@@ -180,14 +253,18 @@ xo_f_sieve:
 	mov x1, #42
 	adrp x3, .Lxo_loc5
 	add x3, x3, :lo12:.Lxo_loc5
+.Lf2_cs5a:
 	bl xo_fault_overflow
+.Lf2_cs5b:
 	brk #1
 .Lf2_fault6:
 	mov x0, x10
 	mov x1, x19
 	adrp x2, .Lxo_loc6
 	add x2, x2, :lo12:.Lxo_loc6
+.Lf2_cs6a:
 	bl xo_fault_index
+.Lf2_cs6b:
 	brk #1
 .Lf2_fault7:
 	sub x15, x10, x11
@@ -196,18 +273,26 @@ xo_f_sieve:
 	mov x1, #43
 	adrp x3, .Lxo_loc7
 	add x3, x3, :lo12:.Lxo_loc7
+.Lf2_cs7a:
 	bl xo_fault_overflow
+.Lf2_cs7b:
 	brk #1
+	.cfi_endproc
 
 	.p2align 2
 	.globl xo_entry
 	.type xo_entry, %function
 xo_entry:
+	.cfi_startproc
 	stp x29, x30, [sp, #-16]!
 	mov x29, sp
+	.cfi_def_cfa w29, 16
+	.cfi_offset w30, -8
+	.cfi_offset w29, -16
 	bl xo_f_main
 	ldp x29, x30, [sp], #16
 	ret
+	.cfi_endproc
 
 // drop Str
 	.p2align 2
@@ -259,6 +344,51 @@ xo_entry:
 	mov x2, #0
 	b xo_rl_free
 
+	.section .gcc_except_table,"a",@progbits
+	.p2align 2
+.Lf2_lsda:
+	.byte 255
+	.byte 255
+	.byte 1
+	.uleb128 .Lf2_cste-.Lf2_cst
+.Lf2_cst:
+	.uleb128 .Lf2_cs1a-.Lf2_begin
+	.uleb128 .Lf2_cs1b-.Lf2_cs1a
+	.uleb128 .Lf2_b1-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs2a-.Lf2_begin
+	.uleb128 .Lf2_cs2b-.Lf2_cs2a
+	.uleb128 .Lf2_b10-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs3a-.Lf2_begin
+	.uleb128 .Lf2_cs3b-.Lf2_cs3a
+	.uleb128 .Lf2_b14-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs4a-.Lf2_begin
+	.uleb128 .Lf2_cs4b-.Lf2_cs4a
+	.uleb128 .Lf2_b17-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs5a-.Lf2_begin
+	.uleb128 .Lf2_cs5b-.Lf2_cs5a
+	.uleb128 .Lf2_b19-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs6a-.Lf2_begin
+	.uleb128 .Lf2_cs6b-.Lf2_cs6a
+	.uleb128 .Lf2_b23-.Lf2_begin
+	.byte 0
+	.uleb128 .Lf2_cs7a-.Lf2_begin
+	.uleb128 .Lf2_cs7b-.Lf2_cs7a
+	.uleb128 .Lf2_b25-.Lf2_begin
+	.byte 0
+.Lf2_cste:
+	.hidden DW.ref.xo_personality
+	.weak DW.ref.xo_personality
+	.section .data.DW.ref.xo_personality,"awG",@progbits,DW.ref.xo_personality,comdat
+	.p2align 3
+	.type DW.ref.xo_personality, @object
+	.size DW.ref.xo_personality, 8
+DW.ref.xo_personality:
+	.xword xo_personality
 	.section .rodata
 	.p2align 3
 .Lxo_str0:

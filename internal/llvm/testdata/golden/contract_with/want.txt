@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+3 10 7 2
+bad with next
+--- stderr
+fault: invariant of Window failed: size > 0 && start >= 0 at main.xo:9:42

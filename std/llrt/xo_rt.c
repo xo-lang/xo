@@ -53,6 +53,7 @@
 #include <netinet/tcp.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <unwind.h>
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
 
@@ -708,13 +709,16 @@ static int fmt_float(char *buf, double f) {
 // ---------------------------------------------------------------------------
 // Faults (core 8): the same messages as std/rt, exit status 70
 
-XO_NORETURN static void fault_text(const char *msg, const char *loc) {
-	xo_flush();
-	char *buf = malloc(strlen(msg) + strlen(loc) + 32);
-	int n = sprintf(buf, "fault: %s at %s\n", msg, loc);
-	write_all(2, buf, (size_t)n);
-	exit(70);
-}
+// A fault unwinds the task that raised it (decision 0085, "Fault
+// unwinding" below): fault_text records the message in the running
+// context and raises.
+XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc);
+
+XO_NORETURN static void fault_text(const char *msg, const char *loc) { fault_raise_msg(msg, loc); }
+
+// xo_fault_detail sets the line printed under the next fault (the values
+// of a failed contract, core 9.1).
+void xo_fault_detail(const char *p, int64_t n);
 
 XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {
 	char *m = malloc((size_t)n + 1);
@@ -1378,6 +1382,13 @@ typedef struct xo_ctx {
 	// 5 Canceled) and the message of Io
 	int64_t net_status;
 	char *net_msg;
+	// a fault unwinding this context (decision 0085): its message,
+	// location, and the values line of a failed contract (malloc'd)
+	int faulting;
+	char *fault_msg, *fault_loc, *fault_detail;
+	// the frame address the unwinding never passes: the C function that
+	// runs the context's code (0: the end of the stack)
+	uintptr_t boundary;
 } xo_ctx;
 
 static __thread xo_ctx *cur;
@@ -1422,6 +1433,270 @@ static xo_ctx *ctx(void) {
 int64_t xo_unwinding(void) {
 	xo_ctx *c = cur_get();
 	return c ? c->unwinding : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Fault unwinding (core 8, decision 0085)
+//
+// A fault is raised as a forced unwind of the platform unwinder
+// (_Unwind_ForcedUnwind; libunwind on macOS, libgcc on Linux): every
+// frame of generated code has unwind tables, and its landing pads (the
+// cleanup paths of internal/ssa's checks, landing.go) run the deferred
+// code of the blocks the fault leaves, close their scopes, unlock their
+// Mutexes, and release what the frame owns, then hand the fault on
+// (xo_fault_continue raises it again from there). The fault is caught by
+// the entry function of a task (it ends the task as faulted:
+// xo_task_unwound), by `task.isolate` (xo_fault_take), or, past the
+// boundary of the context (the C function running the program's main),
+// reported and the process exits with status 70. The personality routine
+// (xo_personality) reads the call site table of the language specific
+// data area that both backends emit (the GCC format for cleanups).
+
+#define XO_EXC_CLASS 0x584f00004641554cULL // "XO\0\0FAUL"
+
+XO_NORETURN static void fault_exit(xo_ctx *c) {
+	xo_flush();
+	const char *msg = c->fault_msg ? c->fault_msg : "fault";
+	const char *loc = c->fault_loc ? c->fault_loc : "?";
+	const char *d = c->fault_detail ? c->fault_detail : "";
+	char *buf = malloc(strlen(msg) + strlen(loc) + strlen(d) + 32);
+	int n = sprintf(buf, "fault: %s at %s\n%s%s", msg, loc, d, *d ? "\n" : "");
+	write_all(2, buf, (size_t)n);
+	exit(70);
+}
+
+static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
+	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
+	(void)version;
+	(void)cls;
+	(void)e;
+	xo_ctx *c = arg;
+	if (actions & _UA_END_OF_STACK) {
+		fault_exit(c);
+	}
+	if (c->boundary && (uintptr_t)_Unwind_GetCFA(uc) > c->boundary) {
+		// the frames past the boundary are the runtime's: nothing there
+		// catches a fault
+		fault_exit(c);
+	}
+	return _URC_NO_REASON;
+}
+
+static void fault_cleanup(_Unwind_Reason_Code r, struct _Unwind_Exception *e) {
+	(void)r;
+	(void)e;
+}
+
+// fault_raise unwinds the current context with the fault it records. The
+// exception object lives in this frame: only the unwinder's walk uses it
+// (a landing pad never resumes it; xo_fault_continue raises anew).
+XO_NORETURN static void fault_raise(xo_ctx *c) {
+	c->faulting = 1;
+	c->unwinding = 1;
+	struct _Unwind_Exception exc;
+	memset(&exc, 0, sizeof exc);
+	exc.exception_class = XO_EXC_CLASS;
+	exc.exception_cleanup = fault_cleanup;
+	_Unwind_ForcedUnwind(&exc, fault_stop, c);
+	// the unwinder found no way up
+	fault_exit(c);
+}
+
+static char *dup_bytes(const char *p, size_t n) {
+	char *s = malloc(n + 1);
+	if (!s) {
+		xo_oom();
+	}
+	memcpy(s, p, n);
+	s[n] = 0;
+	return s;
+}
+
+// fault_set records a fault in c (a fault raised while one unwinds
+// replaces it, as a panic in Go's deferred code does). The detail line,
+// set just before by xo_fault_detail, stays.
+static void fault_set(xo_ctx *c, const char *msg, const char *loc) {
+	free(c->fault_msg);
+	free(c->fault_loc);
+	c->fault_msg = dup_bytes(msg, strlen(msg));
+	c->fault_loc = dup_bytes(loc, strlen(loc));
+}
+
+static void fault_clear(xo_ctx *c) {
+	c->faulting = 0;
+	if (!c->fault_msg && !c->fault_loc && !c->fault_detail) {
+		return;
+	}
+	free(c->fault_msg);
+	free(c->fault_loc);
+	free(c->fault_detail);
+	c->fault_msg = c->fault_loc = c->fault_detail = NULL;
+	c->faulting = 0;
+}
+
+XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
+	xo_ctx *c = ctx();
+	fault_set(c, msg, loc);
+	fault_raise(c);
+}
+
+void xo_fault_detail(const char *p, int64_t n) {
+	xo_ctx *c = ctx();
+	free(c->fault_detail);
+	c->fault_detail = dup_bytes(p, (size_t)n);
+}
+
+// xo_fault_raise is `fault(msg)` and a failed contract at loc.
+XO_NORETURN void xo_fault_raise(const char *msg, int64_t n, const char *loc, int64_t ln) {
+	xo_ctx *c = ctx();
+	free(c->fault_msg);
+	free(c->fault_loc);
+	c->fault_msg = dup_bytes(msg, (size_t)n);
+	c->fault_loc = dup_bytes(loc, (size_t)ln);
+	fault_raise(c);
+}
+
+// xo_fault_continue runs at the unwind exit of a function: a fault goes
+// on to the caller; otherwise (cancellation) the function returns.
+void xo_fault_continue(void) {
+	xo_ctx *c = cur_get();
+	if (c && c->faulting) {
+		fault_raise(c);
+	}
+}
+
+// xo_landing is never called: generated code branches on it only to
+// mark a check that only a fault takes (internal/ssa landing.go).
+int64_t xo_landing(void) { return 0; }
+
+// xo_fault_take catches the fault unwinding the current context (for
+// `task.isolate`): 1 and the context goes on normally, its message
+// available to xo_fault_msg and xo_fault_loc; 0 when it is not a fault
+// (cancellation, which goes on unwinding).
+int64_t xo_fault_take(void) {
+	xo_ctx *c = ctx();
+	if (!c->faulting) {
+		return 0;
+	}
+	c->faulting = 0;
+	c->unwinding = 0;
+	return 1;
+}
+
+static xo_rstr *rs_of_cstr(const char *s, int64_t *len) {
+	int64_t n = s ? (int64_t)strlen(s) : 0;
+	xo_rstr *r = rs_new(n);
+	if (n) {
+		memcpy(r->data, s, (size_t)n);
+	}
+	*len = n;
+	return r;
+}
+
+// xo_fault_msg is the message of the fault xo_fault_take caught.
+xo_rstr *xo_fault_msg(int64_t *len) { return rs_of_cstr(ctx()->fault_msg, len); }
+
+// xo_fault_loc is its location; the record is cleared after it.
+xo_rstr *xo_fault_loc(int64_t *len) {
+	xo_ctx *c = ctx();
+	xo_rstr *r = rs_of_cstr(c->fault_loc, len);
+	fault_clear(c);
+	return r;
+}
+
+// xo_personality is the personality routine of generated code: every
+// landing pad is a cleanup, entered on the second phase. The language
+// specific data is GCC's: an LPStart and a TType encoding (omitted), the
+// call site encoding, and the call sites (start, length, landing pad,
+// action), offsets from the function's start.
+static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
+	const uint8_t *q = *p;
+	uintptr_t v = 0;
+	switch (enc & 0x0f) {
+	case 0x01: { // uleb128
+		int shift = 0;
+		uint8_t byte;
+		do {
+			byte = *q++;
+			v |= (uintptr_t)(byte & 0x7f) << shift;
+			shift += 7;
+		} while (byte & 0x80);
+		break;
+	}
+	case 0x02: {
+		uint16_t x;
+		memcpy(&x, q, 2);
+		q += 2;
+		v = x;
+		break;
+	}
+	case 0x03:
+	case 0x0b: {
+		uint32_t x;
+		memcpy(&x, q, 4);
+		q += 4;
+		v = (enc & 0x0f) == 0x0b ? (uintptr_t)(intptr_t)(int32_t)x : x;
+		break;
+	}
+	default: { // absptr, udata8, sdata8
+		uint64_t x;
+		memcpy(&x, q, 8);
+		q += 8;
+		v = (uintptr_t)x;
+		break;
+	}
+	}
+	*p = q;
+	return v;
+}
+
+static uintptr_t uleb(const uint8_t **p) { return lsda_read(p, 0x01); }
+
+_Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t cls,
+	struct _Unwind_Exception *e, struct _Unwind_Context *uc) {
+	(void)cls;
+	if (version != 1) {
+		return _URC_FATAL_PHASE1_ERROR;
+	}
+	if (!(actions & _UA_CLEANUP_PHASE)) {
+		return _URC_CONTINUE_UNWIND;
+	}
+	const uint8_t *p = (const uint8_t *)_Unwind_GetLanguageSpecificData(uc);
+	if (!p) {
+		return _URC_CONTINUE_UNWIND;
+	}
+	uintptr_t func = _Unwind_GetRegionStart(uc);
+	uintptr_t ip = _Unwind_GetIP(uc) - 1;
+	uint8_t lpenc = *p++;
+	if (lpenc != 0xff) {
+		lsda_read(&p, lpenc);
+	}
+	uint8_t ttenc = *p++;
+	if (ttenc != 0xff) {
+		uleb(&p);
+	}
+	uint8_t csenc = *p++;
+	uintptr_t cslen = uleb(&p);
+	const uint8_t *end = p + cslen;
+	while (p < end) {
+		uintptr_t start = lsda_read(&p, csenc);
+		uintptr_t len = lsda_read(&p, csenc);
+		uintptr_t lp = lsda_read(&p, csenc);
+		uleb(&p); // action
+		if (ip < func + start) {
+			break;
+		}
+		if (ip < func + start + len) {
+			if (lp == 0) {
+				return _URC_CONTINUE_UNWIND;
+			}
+			_Unwind_SetGR(uc, __builtin_eh_return_data_regno(0), (uintptr_t)e);
+			_Unwind_SetGR(uc, __builtin_eh_return_data_regno(1), 0);
+			_Unwind_SetIP(uc, func + lp);
+			return _URC_INSTALL_CONTEXT;
+		}
+	}
+	return _URC_CONTINUE_UNWIND;
 }
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
@@ -1626,6 +1901,12 @@ typedef struct xo_worker {
 	int nonext; // pool_push puts woken fibers in the ring (mutex_signal)
 	struct xo_fiber *fcache[XO_FCACHE]; // stacks to reuse (owner only)
 	int nfcache;
+	// AddressSanitizer: the scheduler's stack (learned at the first
+	// switch) and its fake stack while a fiber runs (ASAN_START below;
+	// last, so the fields above keep their cache lines)
+	const void *asan_bottom;
+	size_t asan_size;
+	void *asan_fake;
 } xo_worker;
 
 static struct {
@@ -2172,6 +2453,7 @@ typedef struct xo_scope {
 	// and that it fired (atomic)
 	struct xo_timer *deadline;
 	int timed_out;
+	struct xo_task *fault; // the first task that faulted (a reference, decision 0085)
 } xo_scope;
 
 static void timer_del(struct xo_timer *t);
@@ -2189,12 +2471,15 @@ typedef struct xo_task {
 	xo_ldrop drop;
 	xo_rlist *fl;     // the closure (a list of one) until the task runs
 	xo_rlist *result; // the result (a shared list of one) when it ran to the end
-	int unwound;      // the task ended by unwinding (canceled)
+	int unwound;      // the task ended by unwinding (canceled, or a fault)
 	int background, consumed;
 	int64_t site;
 	xo_lock mu; // waiters
 	xo_wl waiters;
 	struct xo_task *snext;
+	// the fault that ended it (decision 0085), malloc'd (last: the fields
+	// above keep their places)
+	char *fault_msg, *fault_loc, *fault_detail;
 } xo_task;
 
 enum { T_QUEUED, T_RUNNING, T_DONE };
@@ -2203,6 +2488,9 @@ static void scope_free(void *p) {
 	xo_scope *s = p;
 	if (s->fail) {
 		h_release(s->fail);
+	}
+	if (s->fault) {
+		h_release(s->fault);
 	}
 	free(s->tasks);
 	for (int i = 0; i < s->nold; i++) {
@@ -2259,6 +2547,11 @@ static void task_free(void *p) {
 	if (t->result) {
 		list_release(t->result, t->drop);
 	}
+	if (t->fault_msg) {
+		free(t->fault_msg);
+		free(t->fault_loc);
+		free(t->fault_detail);
+	}
 	xo_free(t);
 }
 
@@ -2286,6 +2579,9 @@ static int claim_task(xo_task *t) {
 static void run_claimed(xo_task *t, int64_t units) {
 	xo_ctx c = {.node = &t->node};
 	park_init(&c.park);
+	// the entry function catches a fault in the task; the unwinding never
+	// goes past this frame (decision 0085)
+	c.boundary = (uintptr_t)__builtin_frame_address(0);
 	xo_ctx *saved = cur_get();
 	cur_set(&c);
 	xo_rlist *fl = t->fl;
@@ -2296,6 +2592,7 @@ static void run_claimed(xo_task *t, int64_t units) {
 	park_destroy(&c.park);
 	free(c.held);
 	free(c.net_msg);
+	fault_clear(&c);
 	xo_scope *s = t->scope;
 	lk(&t->mu);
 	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
@@ -2343,6 +2640,7 @@ typedef struct xo_fiber {
 	int done;
 	void *tsan;
 	struct xo_fiber *next; // the cache
+	void *asan_fake;       // AddressSanitizer: its fake stack while switched out
 } xo_fiber;
 
 // xo_fiber_switch saves the callee saved registers on the current stack,
@@ -2448,6 +2746,28 @@ static void tsan_worker(xo_worker *w) { w->tsan = __tsan_get_current_fiber(); }
 #else
 static void tsan_worker(xo_worker *w) { (void)w; }
 #define TSAN_SWITCH(x) ((void)(x))
+#endif
+
+// AddressSanitizer must know which stack runs (its fiber API): a fault
+// unwinds with __asan_handle_no_return, which unpoisons the current stack
+// up to its top (decision 0085).
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define XO_ASAN 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define XO_ASAN 1
+#endif
+
+#ifdef XO_ASAN
+void __sanitizer_start_switch_fiber(void **fake_stack_save, const void *bottom, size_t size);
+void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_old, size_t *size_old);
+#define ASAN_START(save, bottom, size) __sanitizer_start_switch_fiber((save), (bottom), (size))
+#define ASAN_FINISH(save, bottom, size) __sanitizer_finish_switch_fiber((save), (bottom), (size))
+#else
+#define ASAN_START(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
+#define ASAN_FINISH(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
 #endif
 
 #ifdef MAP_NORESERVE
@@ -2560,11 +2880,18 @@ static void fiber_free(xo_worker *w, xo_fiber *f) {
 // fiber_main runs on the fiber: the task, then back to the scheduler for
 // good.
 static void fiber_main(xo_fiber *f) {
+#ifdef XO_ASAN
+	{
+		xo_worker *w = w_get();
+		ASAN_FINISH(NULL, &w->asan_bottom, &w->asan_size);
+	}
+#endif
 	// the fiber's task came from a queue: its entry and its run end here
 	run_claimed(f->task, 4);
 	f->done = 1;
 	xo_worker *w = w_get();
 	TSAN_SWITCH(w->tsan);
+	ASAN_START(NULL, w->asan_bottom, w->asan_size); // for good
 	xo_fiber_switch(&f->sp, w->sched_sp);
 	__builtin_trap();
 }
@@ -2579,7 +2906,13 @@ static void fiber_park(xo_fiber *f) {
 	f->cur = cur_get();
 	xo_worker *w = w_get();
 	TSAN_SWITCH(w->tsan);
+	ASAN_START(&f->asan_fake, w->asan_bottom, w->asan_size);
 	xo_fiber_switch(&f->sp, w->sched_sp);
+#ifdef XO_ASAN
+	// resumed, maybe by another worker
+	w = w_get();
+	ASAN_FINISH(f->asan_fake, &w->asan_bottom, &w->asan_size);
+#endif
 }
 
 // fiber_wake makes a parked (or parking) fiber run again.
@@ -2599,7 +2932,9 @@ static void run_fiber(xo_worker *w, xo_fiber *f) {
 		fib_set(f);
 		cur_set(f->cur);
 		TSAN_SWITCH(f->tsan);
+		ASAN_START(&w->asan_fake, f->mem + (f->size - fibers.stack), fibers.stack);
 		xo_fiber_switch(&w->sched_sp, f->sp);
+		ASAN_FINISH(w->asan_fake, NULL, NULL);
 		fib_set(NULL);
 		cur_set(saved);
 		if (f->done) {
@@ -2710,8 +3045,10 @@ static void *worker_main(void *arg) {
 // background, bit 1: its handle is bound and awaited, so its error does
 // not fail the scope). fl is the closure in a list of one (consumed);
 // run is the entry function that calls it, drop the one that releases
-// its result list. site tells the scope which spawn failed.
-xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t flags, int64_t site, const char *loc, int64_t n) {
+// its result list, fdrop the one that releases fl (a spawn on a scope
+// that has ended faults and gives it back, decision 0085). site tells the
+// scope which spawn failed.
+xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, const char *loc, int64_t n) {
 	pthread_once(&pool.once, pool_init);
 	STAT(spawn);
 	if (!w_get()) {
@@ -2732,6 +3069,8 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	lk(&s->mu);
 	if (s->closed) {
 		unlk(&s->mu);
+		xo_free(t);
+		list_release(fl, (xo_ldrop)fdrop);
 		fault_at("a task was started on a scope that has ended", loc, n);
 	}
 	t->scope = s;
@@ -2768,10 +3107,46 @@ void xo_task_done(xo_task *t, xo_rlist *rl, int64_t failed) {
 	}
 }
 
-// xo_task_unwound ends the current task that unwound (canceled).
+// xo_task_unwound ends the current task that unwound (canceled), or
+// faulted (decision 0085): its scope then treats it like a failed child
+// (cancels the body and every task) and raises the fault where it closes.
 void xo_task_unwound(xo_task *t) {
-	cur_get()->unwinding = 0;
+	xo_ctx *c = cur_get();
+	c->unwinding = 0;
 	t->unwound = 1;
+	if (!c->faulting) {
+		return;
+	}
+	c->faulting = 0;
+	t->fault_msg = c->fault_msg;
+	t->fault_loc = c->fault_loc;
+	t->fault_detail = c->fault_detail;
+	c->fault_msg = c->fault_loc = c->fault_detail = NULL;
+	xo_scope *s = t->scope;
+	lk(&s->mu);
+	int first = s->fault == NULL;
+	if (first) {
+		h_retain(t);
+		s->fault = t;
+	}
+	unlk(&s->mu);
+	if (first) {
+		node_cancel(&s->body);
+	}
+}
+
+// xo_fault_rethrow raises the fault of a task of s in the context that
+// closed s (status 3 of xo_scope_close).
+XO_NORETURN void xo_fault_rethrow(xo_scope *s) {
+	xo_ctx *c = ctx();
+	xo_task *t = s->fault;
+	fault_clear(c);
+	c->fault_msg = dup_bytes(t->fault_msg, strlen(t->fault_msg));
+	c->fault_loc = dup_bytes(t->fault_loc, strlen(t->fault_loc));
+	if (t->fault_detail) {
+		c->fault_detail = dup_bytes(t->fault_detail, strlen(t->fault_detail));
+	}
+	fault_raise(c);
 }
 
 // xo_task_await is `t.await` (core 7.1): waits for t (a cancellation
@@ -2889,6 +3264,14 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		list = next;
 	}
 	c->node = s->parent_node;
+	if (c->faulting) {
+		// the body's own fault goes on (decision 0085)
+		return 0;
+	}
+	if (s->fault) {
+		// a task faulted: the caller raises its fault here
+		return 3;
+	}
 	if (!s->fail) {
 		return 0;
 	}
@@ -3069,6 +3452,7 @@ void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
 	lk(&c->mu);
 	if (c->closed) {
 		unlk(&c->mu);
+		list_release(l, c->drop); // the fault unwinds the sender (decision 0085)
 		fault_at("send on a closed channel", loc, n);
 	}
 	if (try_send_locked(c, l)) {
@@ -5051,6 +5435,9 @@ static void *run_main(void *arg) {
 	// main's root context: the second shutdown signal cancels it
 	xo_node *none = NULL;
 	__atomic_compare_exchange_n(&stop.root, &none, ctx()->node, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+	// a fault that unwinds main reaches this frame: reported, status 70
+	// (decision 0085)
+	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
 	xo_entry();
 	return NULL;
 }

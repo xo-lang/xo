@@ -14,10 +14,10 @@ b2:  ; preds b1
   v10: Int = const 0
   v11: Int = const 200000
   jump b5(v10, v9)
-b3:  ; preds b10
+b3:  ; preds b21
   v13: Int = const 1
   v14: Int = add v5, v13
-  jump b1(v14, v50)
+  jump b1(v14, v45)
 b4:  ; preds b1
   v16: Stdio = cap stdio, v0
   v17: Str = const "strings "
@@ -30,66 +30,95 @@ b5(v21: Int, v22: List[Str]):  ; preds b2, b7
 b6:  ; preds b5
   v25: Str = const "w"
   v26: Int = const 1000
-  v27: Int = rem v21, v26 @ main.xo:9:22
-  v28: Str = call str.concat_int, v25, v27
-  v29: Str = const "-"
-  v30: Str = call str.concat, v28, v29
-  v31: Str = call str.concat_int, v30, v5
-  v32: List[Str] = call list.push, v22, v31
-  v33: () = tuple
-  jump b7()
-b7:  ; preds b6
-  v35: Int = const 1
-  v36: Int = add v21, v35
-  jump b5(v36, v32)
+  v27: Int = rem v21, v26 @ main.xo:9:22 lands v28
+  v28: Bool = call rt.landing
+  br v28, b19(), b18()
+b7:  ; preds b18
+  v30: Int = const 1
+  v31: Int = add v21, v30
+  jump b5(v31, v82)
 b8:  ; preds b5
-  v38: Str = const ""
-  v39: Int = const 0
-  jump b9(v22, v39, v38, v6)
-b9(v41: List[Str], v42: Int, v43: Str, v44: Int):  ; preds b8, b12
-  v45: Int = call list.len, v41
-  v46: Int = const 0
-  v47: Bool = gt v45, v46
-  br v47, b11(), b10()
+  v33: Str = const ""
+  v34: Int = const 0
+  jump b9(v22, v34, v33, v6)
+b9(v36: List[Str], v37: Int, v38: Str, v39: Int):  ; preds b8, b12
+  v40: Int = call list.len, v36
+  v41: Int = const 0
+  v42: Bool = gt v40, v41
+  br v42, b11(), b10()
 b10:  ; preds b9
-  v49: Int = call Str.len, v43
-  v50: Int = add v44, v49 @ main.xo:22:5
-  v51: () = tuple
-  jump b3()
+  v44: Int = call Str.len, v38
+  v45: Int = add v39, v44 @ main.xo:22:5 lands v46
+  v46: Bool = call rt.landing
+  br v46, b22(), b21()
 b11:  ; preds b9
-  v53: (List[Str], Str?) = call list.pop, v41
-  v54: List[Str] = field 0, v53
-  v55: Str? = field 1, v53
-  v56: Int = tag v55
-  v57: Int = const 1
-  v58: Bool = eq v56, v57
-  br v58, b14(), b13()
-b12(v60: Int, v61: Str, v62: Int):  ; preds b15, b13
-  v63: () = tuple
-  jump b9(v54, v60, v61, v62)
+  v48: (List[Str], Str?) = call list.pop, v36
+  v49: List[Str] = field 0, v48
+  v50: Str? = field 1, v48
+  v51: Int = tag v50
+  v52: Int = const 1
+  v53: Bool = eq v51, v52
+  br v53, b14(), b13()
+b12(v55: Int, v56: Str, v57: Int):  ; preds b27, b13
+  v58: () = tuple
+  jump b9(v49, v55, v56, v57)
 b13:  ; preds b11
-  v65: () = tuple
-  jump b12(v42, v43, v44)
+  v60: () = tuple
+  jump b12(v37, v38, v39)
 b14:  ; preds b11
-  v67: Str = payload 1.0, v55
-  v68: Int = const 10
-  v69: Int = rem v42, v68 @ main.xo:15:12
-  v70: Int = const 0
-  v71: Bool = eq v69, v70
-  br v71, b16(), b17()
-b15(v73: Str):  ; preds b16, b17
+  v62: Str = payload 1.0, v50
+  v63: Int = const 10
+  v64: Int = rem v37, v63 @ main.xo:15:12 lands v65
+  v65: Bool = call rt.landing
+  br v65, b24(), b23()
+b15(v67: Str):  ; preds b16, b17
+  v68: () = tuple
+  v69: Int = const 1
+  v70: Int = add v37, v69 @ main.xo:18:9 lands v71
+  v71: Bool = call rt.landing
+  br v71, b26(), b25()
+b16:  ; preds b23
+  v73: Str = call str.concat, v38, v62
   v74: () = tuple
-  v75: Int = const 1
-  v76: Int = add v42, v75 @ main.xo:18:9
-  v77: Int = call Str.len, v67
-  v78: Int = add v44, v77 @ main.xo:19:9
-  v79: () = tuple
-  jump b12(v76, v73, v78)
-b16:  ; preds b14
-  v81: Str = call str.concat, v43, v67
-  v82: () = tuple
-  jump b15(v81)
-b17:  ; preds b14
-  v84: () = tuple
-  jump b15(v43)
+  jump b15(v73)
+b17:  ; preds b23
+  v76: () = tuple
+  jump b15(v38)
+b18:  ; preds b6
+  v78: Str = call str.concat_int, v25, v27
+  v79: Str = const "-"
+  v80: Str = call str.concat, v78, v79
+  v81: Str = call str.concat_int, v80, v5
+  v82: List[Str] = call list.push, v22, v81
+  v83: () = tuple
+  jump b7()
+b19:  ; preds b6
+  jump b20()
+b20:  ; preds b19, b22, b24, b26, b28
+  v86: () = call rt.fault_continue
+  v87: () = tuple
+  ret v87
+b21:  ; preds b10
+  v89: () = tuple
+  jump b3()
+b22:  ; preds b10
+  jump b20()
+b23:  ; preds b14
+  v92: Int = const 0
+  v93: Bool = eq v64, v92
+  br v93, b16(), b17()
+b24:  ; preds b14
+  jump b20()
+b25:  ; preds b15
+  v96: Int = call Str.len, v62
+  v97: Int = add v39, v96 @ main.xo:19:9 lands v98
+  v98: Bool = call rt.landing
+  br v98, b28(), b27()
+b26:  ; preds b15
+  jump b20()
+b27:  ; preds b25
+  v101: () = tuple
+  jump b12(v70, v67, v97)
+b28:  ; preds b25
+  jump b20()
 }

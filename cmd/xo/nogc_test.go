@@ -98,6 +98,9 @@ func TestNoGCTestLeaks(t *testing.T) {
 			}
 			bin := res.Binaries[build.Host()]
 			for _, ti := range res.Tests {
+				if ti.Skip != "" {
+					continue // not in the binary (a contract fuzz test)
+				}
 				cmd := exec.Command(bin)
 				cmd.Dir = ti.Dir
 				cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(ti.Index), "XO_LEAKCHECK=1")

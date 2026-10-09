@@ -10,6 +10,9 @@ import (
 func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	b := s.b
 	info := b.info
+	if v, ok := s.olds[x]; ok {
+		return v
+	}
 	if vo := info.Ctor(x); vo != nil {
 		return s.ctorCall(vo, x)
 	}
@@ -631,8 +634,7 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 	if fo.Recv == nil {
 		if fo.Name == "fault" && len(x.Args) == 1 {
 			msg := s.valueAs(x.Args[0].Value, m.Builtin(KStr))
-			f := s.add(OpFault, nil, nil, msg)
-			f.Pos = b.pos(x)
+			s.fault(msg, b.pos(x))
 			s.dead()
 			return s.undef(nt)
 		}
@@ -735,10 +737,26 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			msg := s.valueAs(x.Args[0].Value, m.Builtin(KStr))
 			none, some := s.branch(isTag("None"))
 			s.cur = none
-			f := s.add(OpFault, nil, nil, msg)
-			f.Pos = b.posLine(x)
+			s.fault(msg, b.posLine(x))
 			s.cur = some
 			i := o.Type.VariantIndex("Some")
+			return s.add(OpPayload, o.Type.Variants[i].Fields[0].Type, PayloadRef{i, 0}, o)
+		case "Result.or_fault":
+			// `msg: <the error's Display text>` (std/rt option.go)
+			n, ok := check.Resolve(s.natCheck(ci.Recv)).(*check.Named)
+			if !ok || len(n.Args) != 2 {
+				break
+			}
+			st := m.Builtin(KStr)
+			msg := s.valueAs(x.Args[0].Value, st)
+			bad, good := s.branch(isTag("Err"))
+			s.cur = bad
+			ei := o.Type.VariantIndex("Err")
+			e := s.add(OpPayload, o.Type.Variants[ei].Fields[0].Type, PayloadRef{ei, 0}, o)
+			text := s.appendDisplay(s.call("str.concat", st, "", msg, s.add(OpConst, st, ": ")), e, s.apply(n.Args[1]), x)
+			s.fault(text, b.posLine(x))
+			s.cur = good
+			i := o.Type.VariantIndex("Ok")
 			return s.add(OpPayload, o.Type.Variants[i].Fields[0].Type, PayloadRef{i, 0}, o)
 		}
 	case "Int", "Float", "Str":

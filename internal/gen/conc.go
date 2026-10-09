@@ -126,8 +126,10 @@ func (f *fnGen) scopeFailure(sv string, x *ast.ScopeExpr) {
 	fr := f.fr
 	fe, ftr := f.tmp("fe"), f.tmp("ftr")
 	f.line("%s, %s := %s.Failure()", fe, ftr, sv)
+	// unused when no task of the scope can fail with an error (only a
+	// fault fails it)
+	f.line("_ = %s", ftr)
 	if fr.errT == nil || !fr.isResult {
-		f.line("_ = %s", ftr)
 		f.line("panic(%sAsFault(%sDisplay(tk, %s)))", r, r, fe)
 		return
 	}

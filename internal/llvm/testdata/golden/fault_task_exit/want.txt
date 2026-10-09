@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+faulter: deferred
+waiter: deferred
+main block: deferred
+main: deferred
+--- stderr
+fault: index 7 out of range for List of length 2 at main.xo:21:60

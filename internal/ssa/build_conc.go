@@ -60,8 +60,9 @@ type spawnSite struct {
 // function called, or "" for a call that may always unwind.
 type unwindCheck struct {
 	f      *Func
-	u      *Value // the rt.unwinding call
+	u      *Value // the rt.unwinding (or rt.landing) call
 	callee string
+	w      *Value // the call checked (its Pad is u), or nil
 }
 
 // concType lowers the prelude and std/task types of core 7 (nil when obj
@@ -151,32 +152,51 @@ func (s *fn) unwindTarget() *Block {
 }
 
 // check emits the unwinding check after a call (callee: see
-// unwindCheck).
+// unwindCheck). Without unwinding checks (no concurrency) a build whose
+// faults unwind gets a check that only a fault takes (`rt.landing`,
+// landing.go). The call is the check's landing site (Value.Pad).
 func (s *fn) check(callee string) {
-	if !s.b.conc || s.isDead() || s.shield > 0 {
-		return
-	}
-	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
-	yes, no := s.branch(u)
-	s.cur = yes
-	s.unwind()
-	s.cur = no
-	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, callee})
+	s.checkThen(callee, nil)
 }
 
 // checkThen is check with cleanup code run on the unwind path first
-// (unlocking a mutex); it is never removed.
-func (s *fn) checkThen(cleanup func()) {
-	if !s.b.conc || s.isDead() || s.shield > 0 {
+// (unlocking a mutex).
+func (s *fn) checkThen(callee string, cleanup func()) {
+	if s.isDead() || s.shield > 0 || (!s.b.conc && !s.b.faultUnwind) {
 		return
 	}
-	u := s.rt("unwinding", s.b.mod.Builtin(KBool))
+	w := s.lastInstr()
+	if s.pending == w {
+		s.pending = nil
+	}
+	name := "rt.unwinding"
+	if !s.b.conc {
+		name = "rt.landing"
+	}
+	u := s.cur.Add(OpCall, s.b.mod.Builtin(KBool), name)
+	if w != nil && (w.Op == OpCall || w.Op == OpCallValue) && s.b.faultUnwind {
+		w.Pad = u
+	}
 	yes, no := s.branch(u)
+	s.f.markRest(no)
 	s.cur = yes
-	cleanup()
+	if cleanup != nil {
+		cleanup()
+	}
 	s.unwind()
 	s.cur = no
-	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, ""})
+	if cleanup != nil {
+		callee = "" // never removed
+	}
+	s.b.checks = append(s.b.checks, unwindCheck{s.f, u, callee, w})
+}
+
+// lastInstr is the last instruction of the current block, or nil.
+func (s *fn) lastInstr() *Value {
+	if n := len(s.cur.Instrs); n > 0 {
+		return s.cur.Instrs[n-1]
+	}
+	return nil
 }
 
 // finishFn emits the function's unwind block: zero results.
@@ -187,6 +207,11 @@ func (s *fn) finishFn() {
 	saved := s.cur
 	s.seal(s.unwindB)
 	s.cur = s.unwindB
+	s.f.UnwindExit = s.unwindB
+	if s.b.faultUnwind && !s.f.Catches {
+		// a fault goes on to the caller (decision 0085)
+		s.cur.Add(OpCall, s.b.mod.Builtin(KUnit), "rt.fault_continue")
+	}
 	var rs []*Value
 	for _, t := range s.f.Results {
 		rs = append(rs, s.zero(t, map[*Type]bool{}))
@@ -209,7 +234,7 @@ func (s *fn) zero(t *Type, seen map[*Type]bool) *Value {
 	case KUnit:
 		return s.unit()
 	case KInt:
-		return s.cint(0)
+		return s.add(OpConst, t, int64(0)) // t: Int, a sized integer, or Rune
 	case KFloat:
 		return s.add(OpConst, t, 0.0)
 	case KBool:
@@ -311,25 +336,42 @@ func (b *builder) zeroFunc(t *Type) string {
 // unwind: a function may unwind when it has a check after a
 // cancellation point or a function value call, or after a call of a
 // function that may unwind.
+//
+// With fault unwinding (decision 0085) a check after a call of a function
+// that cannot unwind but can fault becomes a check only a fault takes
+// (`rt.landing`); without concurrency every check is one.
 func (b *builder) pruneUnwind() {
 	may := map[*Func]bool{}
-	for _, c := range b.checks {
-		if c.callee == "" {
-			may[c.f] = true
-		}
-	}
-	for changed := true; changed; {
-		changed = false
+	if b.conc {
 		for _, c := range b.checks {
-			if c.callee != "" && !may[c.f] && may[b.mod.Func(c.callee)] {
+			if c.callee == "" {
 				may[c.f] = true
-				changed = true
+			}
+		}
+		for changed := true; changed; {
+			changed = false
+			for _, c := range b.checks {
+				if c.callee != "" && !may[c.f] && may[b.mod.Func(c.callee)] {
+					may[c.f] = true
+					changed = true
+				}
 			}
 		}
 	}
+	var faults map[*Func]bool
+	if b.faultUnwind {
+		faults = b.mod.mayFault()
+	}
 	for _, c := range b.checks {
-		if c.callee == "" || may[b.mod.Func(c.callee)] {
+		if b.conc && (c.callee == "" || may[b.mod.Func(c.callee)]) {
 			continue
+		}
+		if b.faultUnwind && (c.callee == "" || faults[b.mod.Func(c.callee)]) {
+			c.u.Aux = "rt.landing"
+			continue
+		}
+		if c.w != nil && c.w.Pad == c.u {
+			c.w.Pad = nil
 		}
 		bl := c.u.Block
 		br := bl.Term()
@@ -359,10 +401,36 @@ func (b *builder) pruneUnwind() {
 // `break`, `continue`): a failed child sends the exit to the scope's
 // failure block.
 func (s *fn) closeEarly(sc *scopeCtx) {
+	// the scope is closed from here on: a fault raised by its close
+	// unwinds the scopes around it (s.scopes is what unwindTarget sees)
+	saved := s.scopes
+	for i, x := range s.scopes {
+		if x == sc {
+			s.scopes = s.scopes[:i:i]
+			break
+		}
+	}
 	st := s.rt("scope_close", s.b.mod.Builtin(KInt), sc.h, s.cint(1))
+	s.closeStatus(sc, st)
+	s.scopes = saved
+}
+
+// closeStatus acts on the status st of closing sc: 1 (a child failed
+// with an error) goes to the scope's failure block; 3 (a child faulted,
+// decision 0085) raises the child's fault here.
+func (s *fn) closeStatus(sc *scopeCtx, st *Value) {
 	if len(sc.sites) > 0 {
 		s.failIf(sc, st)
 	}
+	if !s.b.faultUnwind {
+		return
+	}
+	c := s.add(OpEq, s.b.mod.Builtin(KBool), nil, st, s.cint(3))
+	yes, no := s.branch(c)
+	s.cur = yes
+	s.rt("fault_rethrow", nil, sc.h)
+	s.add(OpUnreachable, nil, nil)
+	s.cur = no
 }
 
 // failIf goes to sc's failure block when the close status st is 1.
@@ -398,9 +466,7 @@ func (s *fn) scopeExpr(x *ast.ScopeExpr) *Value {
 	s.scopes = s.scopes[:len(s.scopes)-1]
 	if !s.isDead() {
 		st := s.rt("scope_close", b.mod.Builtin(KInt), h, s.cint(0))
-		if len(sc.sites) > 0 {
-			s.failIf(sc, st)
-		}
+		s.closeStatus(sc, st)
 	}
 	s.finishScope(sc, x)
 	return v
@@ -414,9 +480,7 @@ func (s *fn) finishScope(sc *scopeCtx, x *ast.ScopeExpr) {
 		s.seal(sc.unwindB)
 		s.cur = sc.unwindB
 		st := s.rt("scope_close", s.b.mod.Builtin(KInt), sc.h, s.cint(2))
-		if len(sc.sites) > 0 {
-			s.failIf(sc, st)
-		}
+		s.closeStatus(sc, st)
 		s.unwind()
 	}
 	if sc.failB != nil {
@@ -547,7 +611,8 @@ func (s *fn) spawn(x *ast.CallExpr, h *Value, background bool, ret bool) *Value 
 	intT := m.Builtin(KInt)
 	run := s.add(OpFuncAddr, intT, b.runner(ft, tt))
 	drop := s.add(OpFuncAddr, intT, b.dropList(rt))
-	t := s.rt("task_spawn", tt, h, fl, run, drop, s.cint(flags), s.cint(site), s.loc(x))
+	fdrop := s.add(OpFuncAddr, intT, b.dropList(ft))
+	t := s.rt("task_spawn", tt, h, fl, run, drop, fdrop, s.cint(flags), s.cint(site), s.loc(x))
 	if !ret {
 		return s.unit()
 	}
@@ -572,6 +637,11 @@ func (b *builder) runner(ft, tt *Type) string {
 	fv := e.Add(OpCall, ft, "list.index", fl, e.Add(OpConst, intT, int64(0)))
 	r := e.Add(OpCallValue, rt, nil, fv)
 	u := e.Add(OpCall, boolT, "rt.unwinding")
+	if b.faultUnwind {
+		// a fault in the task lands here too: rt.task_unwound records it
+		// for the scope (decision 0085)
+		r.Pad = u
+	}
 	unw, done := f.NewBlock(), f.NewBlock()
 	e.Branch(u, unw, done)
 	unw.Add(OpCall, unit, "rt.task_unwound", t)
@@ -650,6 +720,9 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	if recv == "" {
 		return nil, false
+	}
+	if recv == "task" && fo.Name == "isolate" && b.faultUnwind {
+		return s.isolate(x), true
 	}
 	b.needConc = true
 	if !b.conc {
@@ -811,7 +884,7 @@ func (s *fn) mutexWith(x *ast.CallExpr, h *Value, et *Type, read bool) *Value {
 	}
 	v := s.call("list.index", et, "", l, s.cint(0))
 	r := s.add(OpCallValue, fv.Type.Ret, nil, fv, v)
-	s.checkThen(func() { s.rt(unlockFn, nil, h, l) })
+	s.checkThen("", func() { s.rt(unlockFn, nil, h, l) })
 	if !packed {
 		s.rt(unlockFn, nil, h, l)
 		return r
@@ -977,6 +1050,9 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 	f := b.mod.NewFunc(name, []*Type{t, et}, []*Type{t.Ret})
 	f.Indirect = true
 	f.Captures = capTs
+	// a fault in it hands back the value it was given, like cancellation
+	// (the mutex keeps it); the caller goes on unwinding (decision 0085)
+	f.Catches = true
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, s.apply(ct.Result), errT)
 		c.sub = s.sub

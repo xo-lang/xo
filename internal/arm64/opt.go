@@ -70,7 +70,7 @@ func (s *fstate) thread() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	final := func(b *mblock) *mblock {
 		for i := 0; i < 16; i++ {
-			if len(b.insts) != 1 || b.insts[0].kind != iJump || b.insts[0].targets[0] == b {
+			if len(b.insts) != 1 || b.insts[0].kind != iJump || b.insts[0].targets[0] == b || len(b.insts[0].targets) > 1 {
 				return b
 			}
 			b = b.insts[0].targets[0]
@@ -370,6 +370,9 @@ func (s *fstate) threadConst() {
 			continue
 		}
 		br := j.insts[0]
+		if len(br.uses) == 0 {
+			continue // a landing check (decision 0085)
+		}
 		r := br.uses[0]
 		var k int64
 		if br.cond != "cbnz" {
@@ -429,7 +432,7 @@ func (s *fstate) threadCset() {
 	blocks := append(append([]*mblock(nil), s.hot...), s.cold...)
 	for _, p := range blocks {
 		t := p.term()
-		if t == nil || t.kind != iJump || len(p.insts) < 3 {
+		if t == nil || t.kind != iJump || len(p.insts) < 3 || len(t.targets) > 1 {
 			continue
 		}
 		j := t.targets[0]

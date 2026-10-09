@@ -102,7 +102,12 @@ type gen struct {
 	nhelp   int
 	nfunc   int
 	text    strings.Builder
-	place   Layout
+	// unwinding (decision 0085): the call site tables, call site label
+	// numbers, and whether the ELF personality reference is needed
+	lsdas          strings.Builder
+	ncs            int
+	personalityRef bool
+	place          Layout
 	// Go mode (goasm.go): functions as Go assembler for Go backend builds
 	goMode   bool
 	goFuncs  map[string]*GoFunc // the functions emitted, by name
@@ -152,6 +157,15 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	out.WriteString(g.section("text"))
 	out.WriteString(g.text.String())
 	out.WriteString(g.helpers.String())
+	out.WriteString(g.lsdas.String())
+	if g.personalityRef {
+		// the personality routine through a data word, as ELF compilers
+		// refer to it from the unwind tables
+		out.WriteString("\t.hidden DW.ref.xo_personality\n\t.weak DW.ref.xo_personality\n" +
+			"\t.section .data.DW.ref.xo_personality,\"awG\",@progbits,DW.ref.xo_personality,comdat\n" +
+			"\t.p2align 3\n\t.type DW.ref.xo_personality, @object\n\t.size DW.ref.xo_personality, 8\n" +
+			"DW.ref.xo_personality:\n\t.xword xo_personality\n")
+	}
 	g.data(&out)
 	if g.os == Linux {
 		out.WriteString("\t.section .note.GNU-stack,\"\",@progbits\n")
@@ -332,7 +346,8 @@ func asmBytes(s string) string {
 func (g *gen) entry(main *ssa.Func) {
 	b := &g.text
 	g.funcHeader(b, g.sym("xo_entry"), true)
-	b.WriteString("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+	b.WriteString("\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+	b.WriteString("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
 	var ngp, nfp int
 	for _, p := range main.Params() {
 		for _, fp := range g.layout(p.Type) {
@@ -352,5 +367,5 @@ func (g *gen) entry(main *ssa.Func) {
 	if ngp > 8 || nfp > 8 {
 		fail("main takes too many words")
 	}
-	fmt.Fprintf(b, "\tbl %s\n\tldp x29, x30, [sp], #16\n\tret\n\n", g.fname(main.Name))
+	fmt.Fprintf(b, "\tbl %s\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n\n", g.fname(main.Name))
 }

@@ -81,6 +81,7 @@ var (
 	labelRE  = regexp.MustCompile(`^([.A-Za-z_][A-Za-z0-9_.$]*):$`)
 	branchRE = regexp.MustCompile(`^\t(?:b|b\.[a-z]+|cbn?z [wx][0-9]+|tbn?z [wx][0-9]+, #[0-9]+) ([.A-Za-z_][A-Za-z0-9_.$]*)$`)
 	noFallRE = regexp.MustCompile(`^\t(b |ret$|br |brk )`)
+	csRE     = regexp.MustCompile(`_cs[0-9]+[ab]$`)
 )
 
 // alignLoops aligns the loop tops of a function body (without its out of
@@ -105,7 +106,10 @@ func alignLoops(body string, p int, fall bool, off int, loop map[string]int) str
 	cur := ""
 	for i, ln := range lines {
 		if m := labelRE.FindStringSubmatch(ln); m != nil {
-			cur = strings.TrimSuffix(m[1], "_c")
+			if !csRE.MatchString(m[1]) && !strings.HasSuffix(m[1], "_begin") {
+				// (call site labels are inside a block, decision 0085)
+				cur = strings.TrimSuffix(m[1], "_c")
+			}
 			continue
 		}
 		m := branchRE.FindStringSubmatch(ln)

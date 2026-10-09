@@ -144,6 +144,25 @@ func (s *fstate) regalloc() {
 		}
 	}
 
+	// a landing pad is entered by the unwinder with the callee saved
+	// registers of the faulting point and the others lost (decision
+	// 0085): what it reads lives in callee saved registers or slots. A
+	// call already clobbers the others; a fault stub's call does not
+	// count as one, so the values live into its pad are marked.
+	noCaller := newBitset(n)
+	for _, b := range s.order {
+		for _, in := range b.insts {
+			if in.pad == nil || in.kind == iCall {
+				continue
+			}
+			if k, ok := idx[s.padOf(in)]; ok {
+				for w, x := range liveIn[k] {
+					noCaller[w] |= x
+				}
+			}
+		}
+	}
+
 	// loop depth, for spill weights
 	s.loopDepth()
 
@@ -311,6 +330,9 @@ func (s *fstate) regalloc() {
 		weight[a] += weight[b]
 		fixed[a] = append(fixed[a], fixed[b]...)
 		partners[a] = append(partners[a], partners[b]...)
+		if noCaller.has(b) {
+			noCaller.set(a)
+		}
 	}
 
 	// allocation: greedy first fit in order of weight per length
@@ -379,7 +401,7 @@ func (s *fstate) regalloc() {
 		}
 		chosen := -1
 		for _, r := range cands {
-			if overlaps(occ[r], ranges[v]) {
+			if overlaps(occ[r], ranges[v]) || (noCaller.has(v) && !isCallee(r)) {
 				continue
 			}
 			if !s.g.goMode && isCallee(r) && !usedCallee[r] {

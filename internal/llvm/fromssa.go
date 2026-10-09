@@ -84,11 +84,16 @@ declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
 
-attributes #0 = { noreturn cold nounwind }
-attributes #1 = { nounwind }
+declare i32 @xo_personality(...)
+
+; faults unwind (decision 0085): the fault functions and generated code
+; may unwind, and every generated function has unwind tables
+attributes #0 = { noreturn cold }
+attributes #1 = { uwtable }
 attributes #2 = { nounwind }
 attributes #3 = { nounwind cold noinline }
 attributes #4 = { nounwind alwaysinline }
+attributes #5 = { "xo-raises" }
 
 !0 = !{!"branch_weights", i32 1, i32 4000}
 ; TBAA: list headers, list elements, and reference counts never overlap
@@ -874,6 +879,39 @@ type sfn struct {
 	end     map[*ssa.Block]string
 	text    map[*ssa.Block]*strings.Builder
 	cancel  map[*ssa.Value]bool // releases a retain cancelled (ssa.CancelledRelease)
+	// landing pads (decision 0085): the value being lowered lands on
+	// padTo (an SSA block) when it faults; its calls that can raise are
+	// invokes unwinding to pad (made at the first one)
+	padTo *ssa.Block
+	pad   string
+	pads  strings.Builder
+	npad  int
+}
+
+// raise emits call text c (`T @f(args)`) of a function that can raise a
+// fault: an invoke when the value being lowered has a landing pad.
+// res names the result ("" for none).
+func (s *sfn) raise(res, c string) {
+	if s.padTo == nil {
+		if res == "" {
+			s.emit("call %s", c)
+		} else {
+			s.emit("%s = call %s", res, c)
+		}
+		return
+	}
+	if s.pad == "" {
+		s.npad++
+		s.pad = fmt.Sprintf("%s.lp%d", s.label0, s.npad)
+		fmt.Fprintf(&s.pads, "%s:\n  %%%s.x = landingpad { ptr, i32 } cleanup\n  br label %%%s\n", s.pad, s.pad, s.padTo.Name())
+	}
+	cont := s.newLabel("cont")
+	if res == "" {
+		s.emit("invoke %s to label %%%s unwind label %%%s", c, cont, s.pad)
+	} else {
+		s.emit("%s = invoke %s to label %%%s unwind label %%%s", res, c, cont, s.pad)
+	}
+	s.start(cont)
 }
 
 func (s *sfn) tmp() string {
@@ -954,7 +992,11 @@ func (g *sgen) fn(f *ssa.Func) {
 		}
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, "define internal %s %s(%s) #1 {\nentry:\n%s  br label %%b0\n", g.resLL(f), g.fname(f.Name), strings.Join(ps, ", "), s.allocas.String())
+	pers := ""
+	if s.npad > 0 {
+		pers = " personality ptr @xo_personality"
+	}
+	fmt.Fprintf(&out, "define internal %s %s(%s) #1%s {\nentry:\n%s  br label %%b0\n", g.resLL(f), g.fname(f.Name), strings.Join(ps, ", "), pers, s.allocas.String())
 	for _, b := range f.Blocks {
 		fmt.Fprintf(&out, "%s:\n", b.Name())
 		if b != f.Blocks[0] {
@@ -971,6 +1013,7 @@ func (g *sgen) fn(f *ssa.Func) {
 		}
 		out.WriteString(s.text[b].String())
 	}
+	out.WriteString(s.pads.String())
 	out.WriteString("}\n\n")
 	g.funcs.WriteString(out.String())
 }
@@ -1011,7 +1054,7 @@ func (s *sfn) faultIf(cond, call string, args ...any) {
 	bad, ok := s.newLabel("fault"), s.newLabel("ok")
 	s.emit("br i1 %s, label %%%s, label %%%s, !prof !0", cond, bad, ok)
 	s.start(bad)
-	s.emit("call void "+call, args...)
+	s.raise("", "void "+fmt.Sprintf(call, args...))
 	s.emit("unreachable")
 	s.start(ok)
 }
@@ -1105,6 +1148,11 @@ func (s *sfn) floatOrder(op ssa.Op, a, b string) string {
 }
 
 func (s *sfn) instr(v *ssa.Value) {
+	if v.Pad != nil {
+		// a fault lands on the cleanup of its check (decision 0085)
+		s.padTo, s.pad = v.Pad.Block.Term().Succs[0].To, ""
+		defer func() { s.padTo, s.pad = nil, "" }()
+	}
 	g := s.g
 	a := func(i int) string { return s.op(v.Args[i]) }
 	switch v.Op {
@@ -1328,12 +1376,12 @@ func (s *sfn) instr(v *ssa.Value) {
 		for _, x := range v.Args {
 			args = append(args, s.typed(x))
 		}
-		c := fmt.Sprintf("call %s %s(%s)", g.ll(v.Type), code, strings.Join(args, ", "))
+		c := fmt.Sprintf("%s %s(%s)", g.ll(v.Type), code, strings.Join(args, ", "))
 		if v.Type.Kind == ssa.KUnit {
-			s.emit("%s", c)
+			s.raise("", c)
 			return
 		}
-		s.set(v, "%s", c)
+		s.raise(vname(v), c)
 	case ssa.OpFault:
 		m := a(0)
 		obj := s.def("extractvalue %%xo.str %s, 0", m)
@@ -1432,12 +1480,18 @@ func (s *sfn) call(v *ssa.Value) {
 		for _, x := range v.Args {
 			args = append(args, s.typed(x))
 		}
-		c := fmt.Sprintf("call %s %s(%s)", g.resLL(callee), g.fname(name), strings.Join(args, ", "))
+		c := fmt.Sprintf("%s %s(%s)", g.resLL(callee), g.fname(name), strings.Join(args, ", "))
 		if v.Type.Kind == ssa.KUnit {
-			s.emit("%s", c)
+			s.raise("", c)
 			return
 		}
-		s.set(v, "%s", c)
+		s.raise(vname(v), c)
+		return
+	}
+	if name == "rt.landing" {
+		// a check only a fault takes: never true here; the landing pads
+		// enter its first successor (decision 0085)
+		s.alias(v, "false")
 		return
 	}
 	if strings.HasPrefix(name, "rt.") {
@@ -1718,19 +1772,26 @@ func (s *sfn) rtCall(v *ssa.Value) {
 	}
 	if !g.emitted[sym] && !strings.Contains(ssaRuntimeDecls, " "+sym+"(") {
 		g.emitted[sym] = true
-		fmt.Fprintf(&g.rtDecls, "declare %s %s(%s) #2\n", ret, sym, strings.Join(params, ", "))
+		attr := "#2"
+		if ssa.RuntimeRaises(v.Aux.(string)) {
+			attr = "#5" // it raises faults: not nounwind (decision 0085)
+		}
+		fmt.Fprintf(&g.rtDecls, "declare %s %s(%s) %s\n", ret, sym, strings.Join(params, ", "), attr)
 	}
-	c := fmt.Sprintf("call %s %s(%s)", ret, sym, strings.Join(args, ", "))
+	c := fmt.Sprintf("%s %s(%s)", ret, sym, strings.Join(args, ", "))
 	switch v.Type.Kind {
 	case ssa.KUnit:
-		s.emit("%s", c)
+		s.raise("", c)
 	case ssa.KBool:
-		s.set(v, "icmp ne i64 %s, 0", s.def("%s", c))
+		r := s.tmp()
+		s.raise(r, c)
+		s.set(v, "icmp ne i64 %s, 0", r)
 	case ssa.KStr:
-		o := s.def("%s", c)
+		o := s.tmp()
+		s.raise(o, c)
 		n := s.def("load i64, ptr %s", slot)
 		s.mkStr(v, o, n)
 	default:
-		s.set(v, "%s", c)
+		s.raise(vname(v), c)
 	}
 }

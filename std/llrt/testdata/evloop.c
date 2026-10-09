@@ -154,7 +154,7 @@ static void run_job(xo_rlist *fl, xo_task *t) {
 
 static xo_task *spawn(xo_scope *s, int64_t kind, int64_t arg, void *obj, int64_t flags) {
 	int64_t id = mkjob(kind, arg, obj);
-	return xo_task_spawn(s, one(id), (int64_t)run_job, (int64_t)drop_int_list, flags, 0, LOC);
+	return xo_task_spawn(s, one(id), (int64_t)run_job, (int64_t)drop_int_list, (int64_t)drop_int_list, flags, 0, LOC);
 }
 
 static int64_t await_int(xo_task *t) {
