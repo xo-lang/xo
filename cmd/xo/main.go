@@ -1,7 +1,7 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
 // `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo fix`, `xo vet`,
 // `xo query`, `xo edit`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
-// and `xo serve`.
+// `xo serve`, and `xo version`.
 package main
 
 import (
@@ -134,6 +134,8 @@ commands:
       any source file's modification time or size changes. check and query
       use a running server automatically; XO_NO_SERVE=1 turns that off.
       stop shuts the server down; status prints its cache counters.
+  version
+      Print the toolchain version, the source revision, and the host target.
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -176,6 +178,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "version", "--version":
+		return runVersion(args[1:], stdout, stderr)
 	case "lexdump": // hidden: canonical token dump, compared with selfhost/lexer
 		return runLexDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

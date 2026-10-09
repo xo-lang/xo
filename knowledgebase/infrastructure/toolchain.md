@@ -51,6 +51,14 @@ Last verified: 2026-10-08
   `go test ./std/rt -run 'Argon2|Blake2b'` (RFC 9106 and RFC 7693 vectors,
   plus keys recorded from x/crypto in `std/rt/testdata/argon2id_xcrypto.txt`).
 
+## Versions and releases
+
+`xo version` prints the toolchain version (`cmd/xo/version.go`), the
+git revision, and the host. The toolchain minor equals the spec draft;
+releases are git tags `v0.N.0` with a `CHANGELOG.md` entry, and only the
+owner declares 1.0 (decision 0089). First tag: v0.7.0. Last verified:
+2026-10-09.
+
 ## Commands
 
 Run from the repo root.
