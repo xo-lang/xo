@@ -86,7 +86,7 @@ func TestMapping(t *testing.T) {
 	if err != nil || l == nil || l.Name != "exec" || !l.Standard || len(l.Skipped) == 0 {
 		t.Fatalf("Load = %+v, %v", l, err)
 	}
-	dp := declPath(dir, "os/exec")
+	dp := declPath(dir, "os/exec", nil)
 	os.WriteFile(dp, []byte(strings.Replace(decl, "xo-bind: v"+strconv.Itoa(Version)+" ", "xo-bind: v1 ", 1)), 0o644)
 	if l, _ := Load("os/exec", Options{Dir: dir}); l != nil {
 		t.Error("stale binding loaded")

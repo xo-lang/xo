@@ -47,6 +47,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache growth per program 34 to 2.9 MB, compile memory 286 to 123 MB.
   Binaries carry no DWARF or symbol table (`XO_GO_DWARF=1` keeps them for
   a debugger); programs that do not import std/http do not link net/http.
+- Go calls in record and replay (decision 0093 stage 1): `--record`
+  records `use go` calls whose arguments and results are values (an
+  argument hash and the results) and `xo replay` answers them without
+  calling Go; calls with a Go handle or a callback run again and the
+  replay reports ``re executed foreign call `<name>` ``; pure std
+  packages and xo.mod `replay rerun go <path> [names]` lines are not
+  recorded. Binding format v5; traces gain `"foreign": 1`, and older
+  traces still replay (every Go call runs again).
 
 ## v0.7.0 (2026-10-09)
 

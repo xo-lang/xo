@@ -204,3 +204,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-loadlocation-prefers-host.md](go-loadlocation-prefers-host.md): `time.LoadLocation` reads the host database before `time/tzdata`; std/time embeds TZif data and uses `LoadLocationFromTZData`.
 - [http-date-utc-not-gmt.md](http-date-utc-not-gmt.md): `time.RFC1123` in `utc()` ends in `UTC`; HTTP dates need a literal `GMT`.
 - [spec-xomod-blocks-need-skip.md](spec-xomod-blocks-need-skip.md): a new xo.mod (or other non Xo) block in core.md fails `TestSpecCoreExamples` unless its first line matches a `specSkips` prefix.
+- [replay-go-handle-calls-by-value.md](replay-go-handle-calls-by-value.md): answering a Go handle method (`WaitGroup.wait`) from a trace would skip its side effects; only handle free, callback free Go calls are replayed by value (decision 0093).
+- [fxcodec-unexported-fields.md](fxcodec-unexported-fields.md): the record and replay codec drops unexported fields; `go.Error` has its own case, new runtime types crossing a recorded boundary need one too.

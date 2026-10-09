@@ -45,6 +45,12 @@ import (
 // thread id with run lengths, t<id> timer, g signal, r<k> request, e<l>
 // and x<l> server ends, c<n> a call of Go callback n admitted, gosched.go),
 // and the end (exit status, fault or error).
+//
+// Format changes stay readable both ways: decision 0093 (2026-10-09) added
+// the header field "foreign": 1 and effects with op "go.call" (Go calls,
+// gofx.go), whose optional field "x" marks a call re executed in a replay
+// ("handle", "callback") or a Go panic ("fault"). A trace without
+// "foreign" replays with every Go call run again, as before.
 
 const (
 	fxOff = iota
@@ -83,6 +89,10 @@ type fxEntry struct {
 	A  []any  `json:"a,omitempty"`
 	R  any    `json:"r,omitempty"`
 	At string `json:"at,omitempty"`
+	// X marks a foreign call (op "go.call", gofx.go) that is not answered
+	// by value: "handle" or "callback" (re executed in a replay), "fault"
+	// (R is the fault message of a Go panic).
+	X string `json:"x,omitempty"`
 }
 
 // reqEntry is one HTTP request that reached a server, with its response.
@@ -136,7 +146,12 @@ type recorder struct {
 
 // add logs one effect.
 func (r *recorder) add(tk *Task, op string, args []any, res any) {
-	e := &fxEntry{Op: op, At: xoLocation(2), R: fxEncode(res)}
+	r.addX(tk, op, args, res, "")
+}
+
+// addX logs one effect with a mark (fxEntry.X).
+func (r *recorder) addX(tk *Task, op string, args []any, res any, x string) {
+	e := &fxEntry{Op: op, At: xoLocation(3), R: fxEncode(res), X: x}
 	if tk != nil && tk.th != nil {
 		e.T, e.Q = tk.th.id, tk.th.req
 	}
@@ -275,7 +290,9 @@ func (r *recorder) lines(end map[string]any, complete bool, focus int64) []strin
 	if len(os.Args) > 1 {
 		args = os.Args[1:]
 	}
-	hdr := map[string]any{"xotrace": 1, "mode": mode, "complete": complete, "seed": r.seed, "args": args, "target": runtime.GOOS + "/" + runtime.GOARCH}
+	// foreign: Go calls are recorded (decision 0093); a trace without it
+	// re executes them in a replay
+	hdr := map[string]any{"xotrace": 1, "foreign": 1, "mode": mode, "complete": complete, "seed": r.seed, "args": args, "target": runtime.GOOS + "/" + runtime.GOARCH}
 	if buildInfo != nil {
 		hdr["build"] = buildInfo
 	}
@@ -611,6 +628,8 @@ type replayer struct {
 	full     bool // effects per thread and a scheduler stream; else per request (ring)
 	complete bool // the trace ends where the program ended
 	bundle   bool
+	foreign  bool     // the trace records Go calls (gofx.go)
+	rerun    sync.Map // names of re executed Go calls already reported
 	seed     int64
 	queues   map[int64][]*fxEntry
 	pos      map[int64]int
@@ -741,11 +760,13 @@ func loadReplay(path string) (*replayer, error) {
 				Seed     int64            `json:"seed"`
 				Ring     int              `json:"ring"`
 				Dropped  map[string]int64 `json:"dropped"`
+				Foreign  int              `json:"foreign"`
 			}
 			if err := json.Unmarshal([]byte(l), &h); err != nil {
 				return nil, fmt.Errorf("%s header: %v", path, err)
 			}
 			p.full, p.complete, p.seed = h.Mode == "full", h.Complete, h.Seed
+			p.foreign = h.Foreign > 0
 			for q, n := range h.Dropped {
 				who := "request " + q
 				if q == "0" {

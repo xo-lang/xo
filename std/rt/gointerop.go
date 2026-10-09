@@ -18,6 +18,7 @@ import (
 type Go_Error struct {
 	err error
 	msg string
+	typ string // the Go type of a replayed error (gofx.go); "" otherwise
 }
 
 // GoErr wraps a non nil Go error.
@@ -30,7 +31,14 @@ func (e Go_Error) M_display(*Task) string { return e.msg }
 func (e Go_Error) M_message(*Task) string { return e.msg }
 
 // M_go_type is the Go dynamic type of the error.
-func (e Go_Error) M_go_type(*Task) string { return fmt.Sprintf("%T", e.err) }
+func (e Go_Error) M_go_type(*Task) string { return e.goType() }
+
+func (e Go_Error) goType() string {
+	if e.typ != "" {
+		return e.typ
+	}
+	return fmt.Sprintf("%T", e.err)
+}
 
 // Unwrap returns the Go error.
 func (e Go_Error) Unwrap() error { return e.err }
@@ -45,7 +53,7 @@ func (e Go_Error) XoDebug(b *strings.Builder) {
 // XoEq compares the error texts and dynamic types.
 func (e Go_Error) XoEq(o any) bool {
 	x, ok := o.(Go_Error)
-	return ok && x.msg == e.msg && fmt.Sprintf("%T", x.err) == fmt.Sprintf("%T", e.err)
+	return ok && x.msg == e.msg && x.goType() == e.goType()
 }
 
 // XoHash hashes the error text.

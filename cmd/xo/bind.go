@@ -42,11 +42,12 @@ func runBind(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	pins := gobind.ReadPins(filepath.Join(root, "xo.mod"))
+	reruns := gobind.ReadRerun(filepath.Join(root, "xo.mod"))
 	cache := gobind.CacheDir(root)
 	status := 0
 	var results []bindResult
 	for _, p := range fl.Args() {
-		b, err := gobind.Bind(p, gobind.Options{Dir: cache, Version: gobind.PinFor(pins, p)})
+		b, err := gobind.Bind(p, gobind.Options{Dir: cache, Version: gobind.PinFor(pins, p), Rerun: reruns[p]})
 		if err != nil {
 			status = 1
 			results = append(results, bindResult{Path: p, Error: err.Error()})

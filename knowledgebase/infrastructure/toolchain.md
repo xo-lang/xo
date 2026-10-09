@@ -1636,8 +1636,15 @@ experiment of its work queue item 6. Results and coverage:
   with `cb.Begin()`/`cb.End(ctk)` per call; 4 since 2026-10-08, decision
   0073: callback arguments are converted first and passed as
   `cb.Begin(func() []any {...})`, and `*time.Timer`/`*time.Ticker` are
-  handles, so `time.after_func` binds) or another module version
-  than the pin. Pins: `require go <module> <version>` lines in xo.mod.
+  handles, so `time.after_func` binds; 5 since 2026-10-09, decision 0093:
+  adapters call `rt.GoFxValue`/`rt.GoFxRerun` when `rt.GoFxOn()`, by
+  value calls live in `goCall_<prefix><name>`, declarations carry a
+  `/// Replay:` line) or another module version
+  than the pin, or another `replay rerun go` list (header line
+  `// replay-rerun: <names>`). Pins: `require go <module> <version>`
+  lines in xo.mod. A binding made with a rerun list is cached as
+  `<cache>/<path>.rerun-<8 hex>.xo` and `.go`, beside the plain one.
+  Last verified: 2026-10-09.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and
   `Module.Go` holding the binding. XO1101 when binding fails, XO1102 when
@@ -1668,7 +1675,9 @@ experiment of its work queue item 6. Results and coverage:
   stuck callback is XO-F001, a sleeping one is not), `test_go_callback_task` (`-explore 40`, also under
   -race: a callback on Go's goroutine holds mutexes beside a test task and
   a request), `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`,
-  `std/rt/gocallback_test.go`, `internal/gen/replay_gocallback_test.go`
+  `std/rt/gocallback_test.go`, `internal/gen/replay_gocallback_test.go`,
+  `internal/gen/replay_gocalls_test.go` and `internal/gobind/replay_test.go`
+  (Go calls recorded and replayed, decision 0093)
   (`TestReplayGoCallback`: seeds reproduce foreign callbacks, recordings
   replay them; runs under -short too).
   The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the

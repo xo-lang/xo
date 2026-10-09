@@ -63,6 +63,9 @@ type conv struct {
 	nilable bool
 	// hnd is the handle of a pointer handle conversion.
 	hnd *handle
+	// hpkgs are the Go import paths of the handles the type holds (none:
+	// a boundary value, which record and replay copy, decision 0093).
+	hpkgs []string
 }
 
 func identity(e string) string { return e }
@@ -95,8 +98,13 @@ type gen struct {
 	funcs   []string
 	vars    []string
 	adapt   bytes.Buffer
-	skips   []string // "name: reason" in declaration order
-	stats   Stats
+	// rerun names the functions (`name`, `Type.method`) that an xo.mod
+	// `replay rerun go` line marks; rerunAll marks every one.
+	rerun    map[string]bool
+	rerunAll bool
+	rerunKey string
+	skips    []string // "name: reason" in declaration order
+	stats    Stats
 }
 
 var preludeTypes = func() map[string]bool {
@@ -113,7 +121,7 @@ var preludeTypes = func() map[string]bool {
 }()
 
 func newGen(b *Binding, pkg *types.Package) *gen {
-	g := &gen{b: b, pkg: pkg, imports: map[string]string{}, handles: map[*types.TypeName]*handle{}, scope: map[string]bool{"go": true}}
+	g := &gen{b: b, pkg: pkg, imports: map[string]string{}, handles: map[*types.TypeName]*handle{}, scope: map[string]bool{"go": true}, rerun: map[string]bool{}}
 	g.stats.Reasons = map[string]int{}
 	return g
 }
@@ -293,7 +301,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 					return conv{}, err
 				}
 				if h.byPtr {
-					return conv{xo: h.xo, rt: h.goName, gt: "*" + h.gt, nilable: true, hnd: h,
+					return conv{xo: h.xo, rt: h.goName, gt: "*" + h.gt, nilable: true, hnd: h, hpkgs: h.pkgs(),
 						toXo: func(e string) string { return h.goName + "{P: " + e + "}" },
 						toGo: func(e string) string { return e + ".P" }}, nil
 				}
@@ -330,7 +338,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		if err != nil {
 			return conv{}, err
 		}
-		return conv{xo: "Map[" + kc.xo + ", " + vc.xo + "]", rt: "Map[" + kc.rt + ", " + vc.rt + "]", gt: "map[" + kc.gt + "]" + vc.gt,
+		return conv{xo: "Map[" + kc.xo + ", " + vc.xo + "]", rt: "Map[" + kc.rt + ", " + vc.rt + "]", gt: "map[" + kc.gt + "]" + vc.gt, hpkgs: append(append([]string(nil), kc.hpkgs...), vc.hpkgs...),
 			toXo: func(e string) string {
 				return fmt.Sprintf("GoMapOf(%s, func(k %s) %s { return %s }, func(v %s) %s { return %s })", e, kc.gt, kc.rt, kc.toXo("k"), vc.gt, vc.rt, vc.toXo("v"))
 			},
@@ -373,20 +381,20 @@ func (g *gen) seqConv(x *types.Named, depth int) (conv, *skipErr) {
 	if len(ecs) == 1 {
 		ec := ecs[0]
 		lc := listConv(ec)
-		return conv{xo: lc.xo, rt: lc.rt, gt: g.qual(x), toXo: func(e string) string {
+		return conv{xo: lc.xo, rt: lc.rt, gt: g.qual(x), hpkgs: ec.hpkgs, toXo: func(e string) string {
 			return lc.toXo("GoCollect(" + e + ")")
 		}}, nil
 	}
 	k, v := ecs[0], ecs[1]
 	xo := "List[(" + k.xo + ", " + v.xo + ")]"
 	rt := "Tuple2[" + k.rt + ", " + v.rt + "]"
-	return conv{xo: xo, rt: "List[" + rt + "]", gt: g.qual(x), toXo: func(e string) string {
+	return conv{xo: xo, rt: "List[" + rt + "]", gt: g.qual(x), hpkgs: append(append([]string(nil), k.hpkgs...), v.hpkgs...), toXo: func(e string) string {
 		return fmt.Sprintf("GoCollect2(%s, func(k %s, v %s) %s { return %s{F0: %s, F1: %s} })", e, k.gt, v.gt, rt, rt, k.toXo("k"), v.toXo("v"))
 	}}, nil
 }
 
 func listConv(ec conv) conv {
-	c := conv{xo: "List[" + ec.xo + "]", rt: "List[" + ec.rt + "]", gt: "[]" + ec.gt}
+	c := conv{xo: "List[" + ec.xo + "]", rt: "List[" + ec.rt + "]", gt: "[]" + ec.gt, hpkgs: ec.hpkgs}
 	if ec.id {
 		c.toXo = func(e string) string { return "GoListCopy(" + e + ")" }
 		c.toGo = func(e string) string { return "GoSliceCopy(" + e + ")" }
@@ -404,14 +412,17 @@ func listConv(ec conv) conv {
 // handleValue is the conversion of a handle's Go type used by value.
 func (g *gen) handleValue(h *handle) conv {
 	if h.byPtr {
-		return conv{xo: h.xo, rt: h.goName, gt: h.gt,
+		return conv{xo: h.xo, rt: h.goName, gt: h.gt, hpkgs: h.pkgs(),
 			toXo: func(e string) string { return h.goName + "{P: GoPtrTo(" + e + ")}" },
 			toGo: func(e string) string { return "*" + e + ".P" }}
 	}
-	return conv{xo: h.xo, rt: h.goName, gt: h.gt,
+	return conv{xo: h.xo, rt: h.goName, gt: h.gt, hpkgs: h.pkgs(),
 		toXo: func(e string) string { return h.goName + "{V: " + e + "}" },
 		toGo: func(e string) string { return e + ".V" }}
 }
+
+// pkgs is the import path of the handle's Go type, as conv.hpkgs.
+func (h *handle) pkgs() []string { return []string{h.obj.Pkg().Path()} }
 
 // display is a Go type as the Go documentation writes it.
 func (g *gen) display(t types.Type) string {
@@ -570,7 +581,8 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		}
 		used[recvName] = true
 	}
-	var xps, gps, args []string
+	var xps, gps, args, argNames []string
+	var hpkgs []string // packages of the handles in parameters and results
 	fx := false
 	n := sig.Params().Len()
 	for i := 0; i < n; i++ {
@@ -601,6 +613,8 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		pname := g.paramName(p.Name(), i, used)
 		xps = append(xps, pname+": "+c.xo)
 		an := fmt.Sprintf("a%d", i)
+		hpkgs = append(hpkgs, c.hpkgs...)
+		argNames = append(argNames, an)
 		gps = append(gps, an+" "+c.rt)
 		arg := c.toGo(an)
 		if sig.Variadic() && i == n-1 {
@@ -625,7 +639,9 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			return skipf(err.cat, "result %d: %s", i+1, err.detail)
 		}
 		rcs = append(rcs, c)
+		hpkgs = append(hpkgs, c.hpkgs...)
 	}
+	mode := g.replayMode(s, fx, hpkgs)
 	// result types and the Xo value of the results r0..rn
 	var xoRes, rtRes, val string
 	var checks []string
@@ -634,7 +650,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			return c
 		}
 		h := c.hnd
-		return conv{xo: c.xo + "?", rt: "Option[" + c.rt + "]", toXo: func(e string) string {
+		return conv{xo: c.xo + "?", rt: "Option[" + c.rt + "]", hpkgs: c.hpkgs, toXo: func(e string) string {
 			return "Option[" + h.goName + "]{Some: " + e + " != nil, V: " + h.goName + "{P: " + e + "}}"
 		}}
 	}
@@ -666,6 +682,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	// declaration
 	var d strings.Builder
 	fmt.Fprintf(&d, "/// Go: %s\n", s.goDoc(g))
+	fmt.Fprintf(&d, "/// Replay: %s\n", replayDoc[mode])
 	d.WriteString("fn ")
 	if s.recv != nil {
 		fmt.Fprintf(&d, "(%s: %s) ", recvName, s.recv.xo)
@@ -701,6 +718,31 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	} else {
 		fmt.Fprintf(&a, "func %s%s(%s)%s {\n", g.b.Prefix, s.xoName, params, goRet)
 	}
+	// record and replay (decision 0093, std/rt gofx.go)
+	qual := g.b.Name + "." + s.xoName
+	if s.recv != nil {
+		qual = g.b.Name + "." + s.recv.xo + "." + s.xoName
+	}
+	switch mode {
+	case replayHandle, replayCallback:
+		fmt.Fprintf(&a, "\tif GoFxOn() {\n\t\tGoFxRerun(tk, %q, %q)\n\t}\n", qual, mode)
+	case replayValue:
+		// the Go call moves into a function of its own that the wrapper
+		// calls directly or through GoFxValue
+		inner := "goCall_" + g.b.Prefix + s.xoName
+		callArgs := strings.Join(append([]string{"tk"}, argNames...), ", ")
+		argList := "nil"
+		if len(argNames) > 0 {
+			argList = "[]any{" + strings.Join(argNames, ", ") + "}"
+		}
+		rt := strings.TrimSpace(goRet)
+		if rt == "" {
+			fmt.Fprintf(&a, "\tif GoFxOn() {\n\t\tGoFxValue(tk, %q, %s, func() Unit { %s(%s); return Unit{} })\n\t\treturn\n\t}\n\t%s(%s)\n}\n\n", qual, argList, inner, callArgs, inner, callArgs)
+		} else {
+			fmt.Fprintf(&a, "\tif GoFxOn() {\n\t\treturn GoFxValue(tk, %q, %s, func() %s { return %s(%s) })\n\t}\n\treturn %s(%s)\n}\n\n", qual, argList, rt, inner, callArgs, inner, callArgs)
+		}
+		fmt.Fprintf(&a, "func %s(%s)%s {\n", inner, params, goRet)
+	}
 	fmt.Fprintf(&a, "\tGoEnter(tk)\n\tdefer GoExit(tk, %q)\n", s.display)
 	call := s.goCall + "(" + strings.Join(args, ", ") + ")"
 	var lhs []string
@@ -735,6 +777,63 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		g.funcs = append(g.funcs, d.String())
 	}
 	return nil
+}
+
+// Replay modes of a bound function (decision 0093 stage 1).
+const (
+	replayValue    = "value"    // recorded; a replay returns the recorded results
+	replayHandle   = "handle"   // a handle crosses: re executed and reported
+	replayCallback = "callback" // takes an Xo callback: re executed and reported
+	replayPure     = "pure"     // `replay rerun`: re executed, not recorded
+)
+
+var replayDoc = map[string]string{
+	replayValue:    "recorded; `xo replay` returns the recorded results",
+	replayHandle:   "a Go handle crosses: re executed by `xo replay`",
+	replayCallback: "takes an Xo callback: re executed by `xo replay`",
+	replayPure:     "rerun (pure): re executed by `xo replay`, not recorded",
+}
+
+// purePackages are the std Go packages whose functions are `replay
+// rerun`: they compute from their arguments only (no I/O, clock,
+// randomness, or global state that changes). A function or method stays
+// pure only when every handle it takes or returns is of one of these
+// packages too (a regexp method reading an io.RuneReader is not).
+var purePackages = map[string]bool{
+	"strconv": true, "strings": true, "bytes": true, "unicode": true,
+	"unicode/utf8": true, "unicode/utf16": true, "math": true,
+	"math/bits": true, "regexp": true, "regexp/syntax": true, "path": true,
+	"html": true, "net/url": true, "encoding/hex": true,
+	"encoding/base64": true, "encoding/base32": true,
+}
+
+// replayMode decides how record and replay treat a function or method:
+// fx marks an Xo callback parameter, hpkgs the packages of the handles
+// among its parameters and results.
+func (g *gen) replayMode(s fnSpec, fx bool, hpkgs []string) string {
+	name := s.xoName
+	if s.recv != nil {
+		name = s.recv.xo + "." + s.xoName
+	}
+	if g.rerunAll || g.rerun[name] {
+		return replayPure
+	}
+	if purePackages[g.pkg.Path()] {
+		pure := s.recv == nil || purePackages[s.recv.obj.Pkg().Path()]
+		for _, p := range hpkgs {
+			pure = pure && purePackages[p]
+		}
+		if pure {
+			return replayPure
+		}
+	}
+	switch {
+	case fx:
+		return replayCallback
+	case s.recv != nil || len(hpkgs) > 0:
+		return replayHandle
+	}
+	return replayValue
 }
 
 // goDoc is the Go signature for the doc comment.
@@ -1093,12 +1192,19 @@ func (g *gen) declFile() []byte {
 	if g.b.Module != "" {
 		fmt.Fprintf(&b, "// go-module: %s %s\n", g.b.Module, g.b.ModVersion)
 	}
+	if g.rerunKey != "" {
+		fmt.Fprintf(&b, "// replay-rerun: %s\n", g.rerunKey)
+	}
 	s := g.stats
 	b.WriteString("//\n")
 	fmt.Fprintf(&b, "// Coverage: functions %d/%d, methods %d/%d, fields %d/%d, constants %d/%d,\n", s.FuncsMapped, s.Funcs, s.MethodsMapped, s.Methods, s.FieldsMapped, s.Fields, s.ConstsMapped, s.Consts)
 	fmt.Fprintf(&b, "// variables %d/%d, methods of foreign handles %d/%d.\n", s.VarsMapped, s.Vars, s.ForeignMapped, s.Foreign)
 	b.WriteString("// Every function carries the `go` effect. Handles are opaque and shared:\n")
 	b.WriteString("// a method that mutates the Go value is seen through every copy.\n")
+	b.WriteString("// Replay (decision 0093): `--record` records calls whose arguments and\n")
+	b.WriteString("// results are values and `xo replay` returns the recorded results; calls\n")
+	b.WriteString("// with a handle or a callback run again and are reported; pure functions\n")
+	b.WriteString("// (`replay rerun`) run again and are not recorded.\n")
 	if len(g.skips) > 0 {
 		b.WriteString("//\n// Skipped (signatures that do not map):\n")
 		for _, l := range g.skips {

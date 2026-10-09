@@ -72,6 +72,12 @@ specified in std.md 13 (decision 0094).
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP
   `check` tool takes `fix`.
+- Go calls are recorded (11.3; decision 0093 stage 1), replacing "Go calls
+  are not recorded": calls with boundary values only are answered from
+  the trace by `xo replay`; calls with a handle or a callback run again
+  and are reported (``re executed foreign call `<name>` ``); pure
+  functions are `replay rerun` (std's pure packages, and xo.mod lines
+  `replay rerun go <path> [names]`, 4.4). Old traces still replay.
 
 ## Changes in 0.7
 
@@ -1120,6 +1126,24 @@ fn main(os: Os) ! {
 - Exported names whose signatures cannot be mapped are skipped and listed at
   the top of the generated binding; using one is `XO1102`. A package that
   cannot be bound is `XO1101`.
+- Calls into Go take part in record and replay (11.3, decision 0093): each
+  binding's doc comment says how (`/// Replay: ...`). A pure function can
+  be marked `replay rerun` in xo.mod, so a replay calls it again instead of
+  answering it from the trace and the trace does not record it:
+
+  ```
+  replay rerun go github.com/acme/slug
+  replay rerun go os getpid File.name
+  ```
+
+  The line names a Go import path and optionally the functions (`name`)
+  and methods (`Type.method`) it marks; without names it marks every
+  function of the package. The pure std packages (`strconv`, `strings`,
+  `bytes`, `unicode`, `unicode/utf8`, `unicode/utf16`, `math`,
+  `math/bits`, `regexp`, `regexp/syntax`, `path`, `html`, `net/url`,
+  `encoding/hex`, `encoding/base64`, `encoding/base32`) are marked
+  already, except functions that take or return a handle of another
+  package (`regexp.Regexp.match_reader`).
 
 ---
 
@@ -1999,11 +2023,28 @@ call and its result, plus scheduler decisions.
 - `xo run --record=trace.xotrace` (or `XO_RECORD=trace.xotrace` for any built
   binary) records a full run. Values of type `Secret[T]` are recorded redacted;
   `xo replay` then requires them from the environment and exits with status 3
-  naming the missing one. Calls into Go packages (`use go`) are not recorded
-  and run again in a replay; an Xo callback that Go calls on a goroutine of
-  its own is recorded (where the scheduler admitted it, with its arguments)
-  and replayed at the same point, and a replay diverges when Go calls it
-  with other arguments (decision 0073).
+  naming the missing one.
+- Calls into Go packages (`use go`, 4.4) are recorded at the boundary
+  (decision 0093). A call whose arguments and results are all boundary
+  values (scalars, `Str`, `Bytes`, `Time`, `Duration`, lists and maps of
+  those, `go.Error` with its text and Go type) and that takes no callback
+  is an effect `go.call(<name>, <argument hash>)` with its results; `xo
+  replay` checks the name and the hash (a different argument diverges)
+  and returns the recorded results without calling Go. A Go panic is
+  recorded and raised again as the same fault. A call whose result, an
+  argument, or the receiver is a Go handle, or that takes an Xo callback,
+  runs again in the replay: a handle's Go state exists only if the calls
+  that make and change it run (`sync.WaitGroup.wait` must wait for real).
+  The trace marks such a call (`"x": "handle"` or `"callback"`), the
+  replay checks that it comes at the same point, and `xo replay` reports
+  it once per name: ``re executed foreign call `os.open` ``. Functions
+  marked `replay rerun` (4.4) run again and are not recorded. A trace
+  written before decision 0093 (no `"foreign"` field in its header) runs
+  every Go call again, as before.
+- An Xo callback that Go calls on a goroutine of its own is recorded
+  (where the scheduler admitted it, with its arguments) and replayed at
+  the same point, and a replay diverges when Go calls it with other
+  arguments (decision 0073).
 - In production, a per request ring buffer (`XO_RING=N` requests) is kept and
   attached to crash bundles.
 - `xo replay trace.xotrace` (or a `.xocrash`) re executes the program offline
@@ -2329,6 +2370,6 @@ Tracked in `knowledgebase/decisions/` once decided.
    frames on in every build, captured lazily (not implemented yet).
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
 5. ~~FFI design and record/replay.~~ Decided in 0093: `use go` and
-   native `use c`, foreign calls recorded at the boundary (not
-   implemented yet).
+   native `use c`, foreign calls recorded at the boundary (`use go`
+   recording implemented; `use c` not yet).
 6. ~~Interpolation syntax.~~ Decided in 0021: `${x}`.

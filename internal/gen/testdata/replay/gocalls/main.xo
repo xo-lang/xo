@@ -1,0 +1,26 @@
+// Go calls in record and replay (decision 0093): os.getpid and
+// os.read_file are recorded by value, so a replay prints the recorded pid
+// and file content without the file; strconv and regexp are pure and run
+// again; exec.command returns a Go handle, so a replay runs it again and
+// reports it.
+use go "os" as goos
+use go "os/exec"
+use go "regexp"
+use go "strconv"
+
+fn main(os: Os) -> () ! Error {
+  let pid = goos.getpid()
+  os.stdio.println("pid ${pid}")
+  let text = (goos.read_file("input.txt")?).to_str() ?? "?"
+  let n = strconv.atoi(text.trim())?
+  os.stdio.println("input ${n + 1}")
+  match goos.read_file("missing.txt") {
+    Ok(_) => os.stdio.println("unexpected")
+    Err(e) => os.stdio.println("error: ${e.go_type()}")
+  }
+  let re = regexp.must_compile("[0-9]+")
+  os.stdio.println("match ${re.find_string("abc ${pid} x") == "${pid}"}")
+  if let cmd = exec.command("echo", ["hi"]) {
+    os.stdio.println("command ${cmd.args().len()}")
+  }
+}
