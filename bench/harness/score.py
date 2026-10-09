@@ -186,6 +186,20 @@ def hidden_crud(arm, d):
     return {"passed": len(res) - len(failed), "total": len(res), "failed": failed}
 
 
+def first_snapshot(src, task):
+    """The sources of a cell's first run, or None.
+
+    The adapter keeps them in <cell>/.attempts/run-1; a run made another
+    way (harness path 2b) may keep them in <out>/history/<task>/1, next to
+    <out>/<arm>/<task>.
+    """
+    for p in (os.path.join(src, ".attempts", "run-1"),
+              os.path.join(os.path.dirname(os.path.dirname(src)), "history", task, "1")):
+        if os.path.isdir(p):
+            return p
+    return None
+
+
 def score_cell(arm, task, src, hidden=True):
     rec = {"arm": arm, "task": task, "dir": os.path.relpath(src, c.ROOT) if src.startswith(c.ROOT) else src}
     ext = ARM_EXT[arm]
@@ -197,6 +211,10 @@ def score_cell(arm, task, src, hidden=True):
     elif os.path.exists(os.path.join(src, "BUILD_LOG.md")):
         hist = parse_build_log(os.path.join(src, "BUILD_LOG.md"))
     rec["history"] = hist
+    snap = first_snapshot(src, task)
+    if snap:
+        # first try now, and first try after `xo fix`, with this toolchain
+        rec["first"] = c.first_try(arm, snap)
     with tempfile.TemporaryDirectory() as tmp:
         d = os.path.join(tmp, task)
         c.copy_solution(src, d)
@@ -292,7 +310,15 @@ def solutions_report(args, recs):
         hs = [r["history"] for r in rs if r.get("history")]
         return str(sum(h["runs_to_green"] or h["logged_runs"] for h in hs)) if hs else "n/a"
 
+    def first_now(key):
+        def fn(rs):
+            fs = [r["first"][key] for r in rs if r.get("first") and r["first"].get(key)]
+            return "%d/%d" % (sum(1 for f in fs if f["green"]), len(fs)) if fs else "n/a"
+        return fn
+
     L.append("| First try pass rate | %s |" % col(first_rate))
+    L.append("| First try now (first run sources, current toolchain) | %s |" % col(first_now("plain")))
+    L.append("| First try after `xo fix` (current toolchain) | %s |" % col(first_now("after_fix")))
     L.append("| Runs in total | %s |" % col(total_runs))
     L.append("| Lines (code and tests) | %s |" % col(lambda rs: str(sum(r["lines"] for r in rs))))
     L.append("| Green now (current toolchain) | %s |" % col(lambda rs: "%d/%d" % (sum(1 for r in rs if r["final"]["green"]), len(rs))))
@@ -322,6 +348,28 @@ def solutions_report(args, recs):
         L.append("| %s | %s | %s | %s | %s | %s | %s |" % (r["arm"], r["task"], "yes" if f["green"] else "no",
                                                        f.get("stage", ""), xe, r["diagnostics"], hs))
     L.append("")
+    firsts = [r for r in recs if r.get("first")]
+    if firsts:
+        L.append("## First runs (current toolchain)")
+        L.append("")
+        L.append("The first run's sources rerun as they were, and after `xo fix` (Xo only).")
+        L.append("")
+        L.append("| Arm | Task | Recorded | Now | After `xo fix` |")
+        L.append("|---|---|---|---|---|")
+
+        def cell(f):
+            if not f:
+                return "n/a"
+            s = "pass" if f["green"] else "fail (%s%s)" % (f.get("stage", ""), ": " + ",".join(f["codes"]) if f.get("codes") else "")
+            if f.get("fixes"):
+                s += ", %d fixes" % f["fixes"]
+            return s
+        for r in firsts:
+            h = r.get("history") or {}
+            rec_ = "n/a" if "first_green" not in h else ("pass" if h["first_green"] else "fail")
+            L.append("| %s | %s | %s | %s | %s |" % (r["arm"], r["task"], rec_, cell(r["first"]["plain"]),
+                                                     cell(r["first"]["after_fix"])))
+        L.append("")
     if args.claude:
         L.append("## Against the published numbers")
         L.append("")

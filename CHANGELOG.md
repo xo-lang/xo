@@ -11,6 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
   tidy`, `xo vendor`, `xo mod clean`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). Diagnostics XO1301 to XO1308.
+- Codex r2 first run failures: `XO0175` for several match arms on one
+  line has a split fix and no longer cascades into a false `XO0301`;
+  `.display()` works on every `Display` type (derived, std errors,
+  builtins); a closure that never completes infers `Never` instead of
+  `XO0402`.
 
 ## v0.7.0 (2026-10-09)
 

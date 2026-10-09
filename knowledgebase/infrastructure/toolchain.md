@@ -519,11 +519,15 @@ Last verified: 2026-10-07
   optional `OPENAI_EXTRA_BODY`) through the feedback loop, up to
   `--max-runs` runs; `score.py solutions DIR|--claude` and
   `score.py planted DIR|--claude` rerun every cell in a temporary copy and
-  print the three arm and planted tables. The scorer builds `xo` from the
+  print the three arm and planted tables. When a cell's first run sources
+  exist (`<cell>/.attempts/run-1`, or `<DIR>/history/<task>/1` for a run
+  made another way), `solutions` also reruns them as is and, for Xo, after
+  `xo fix` ("First try now", "First try after `xo fix`", and a "First
+  runs" table; since 2026-10-09). The scorer builds `xo` from the
   checkout into `$TMPDIR/xo-harness/xo` unless `XO_BIN` is set, and finds
   the analyzers through `XO_TOOLS_BIN`, `.tools/bin`, or the main
   checkout's `.tools/bin`. Self test: `python3 bench/harness/test_harness.py`
-  (also `go test ./internal/benchharness`, about 7 s, skipped without
+  (also `go test ./internal/benchharness`, about 7 s before 2026-10-09 and about 35 s since, with the Xo `xo fix` case; skipped without
   python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
   solutions took about 12 minutes, all planted sets about 60 (measured
   2026-10-08).

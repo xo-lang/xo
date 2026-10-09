@@ -64,8 +64,11 @@ type checker struct {
 	safeNavDiag map[*ast.TryExpr]int // index of its XO0205 in c.diags.Items
 
 	// per body information used by the flow checks
-	identObj  map[*ast.Ident]*VarObj
-	exprType  map[ast.Expr]Type
+	identObj map[*ast.Ident]*VarObj
+	exprType map[ast.Expr]Type
+	// neverExpr marks expressions of type Never checked against an
+	// expected type (exprType then holds the expected type).
+	neverExpr map[ast.Expr]bool
 	callInfo  map[*ast.CallExpr]*callInfo
 	ctorCalls map[*ast.CallExpr]bool
 	// rec holds resolutions recorded for code generation (info.go). They
@@ -82,6 +85,10 @@ type checker struct {
 	// typeArgVars are inference variables of explicit type parameters at
 	// calls; unbound ones at the end are XO0402.
 	typeArgVars []typeArgVar
+	// neverResults are the result types of closures whose body never
+	// completes (an infinite `while`, a `fault`): when nothing else
+	// determines one, it is `Never` (core 2.1, 3.2), not XO0402.
+	neverResults []Type
 
 	// current position
 	file *File
@@ -119,6 +126,7 @@ func newChecker() *checker {
 		safeNavs:    map[*ast.TryExpr]bool{},
 		safeNavDiag: map[*ast.TryExpr]int{},
 		exprType:    map[ast.Expr]Type{},
+		neverExpr:   map[ast.Expr]bool{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},
 		splitWarned: map[*ast.CallExpr]bool{},
@@ -634,6 +642,11 @@ type typeArgVar struct {
 // reportAmbiguous reports XO0402 for type parameters that nothing
 // determined: not the arguments, the expected type, or later use.
 func (c *checker) reportAmbiguous() {
+	for _, t := range c.neverResults {
+		if isOpenVar(t) {
+			c.unify(t, c.named("Never"))
+		}
+	}
 	done := map[token.Span]bool{}
 	for _, tv := range c.typeArgVars {
 		if tv.v.Ref != nil || done[tv.span] {

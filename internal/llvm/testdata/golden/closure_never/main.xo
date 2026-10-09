@@ -1,0 +1,23 @@
+// A closure whose body never completes (an infinite `while` without
+// `break`, a `fault`) has result type `Never` when nothing else determines
+// it (core 3.3), so a generic call such as `s.spawn_background` needs no
+// type argument. The r2 Codex rerun hit XO0402 here (task 06, a heartbeat).
+fn describe[T](f: fn() -> T) -> Str { "a closure" }
+
+fn main(os: Os) {
+  let ticks = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() {
+      while {
+        os.clock.sleep(5ms)
+        ticks.add(1)
+      }
+    })
+    while ticks.get() < 3 {
+      os.clock.sleep(5ms)
+    }
+  }
+  os.stdio.println("heartbeat ran at least 3 times: ${ticks.get() >= 3}")
+  os.stdio.println(describe(fn() { fault("never called") }))
+  os.stdio.println(describe(fn() { while {} }))
+}

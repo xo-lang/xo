@@ -1,0 +1,104 @@
+[
+  {
+    "code": "XO0175",
+    "severity": "error",
+    "message": "expected newline after match arm, found identifier `None`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 45,
+      "end_line": 2,
+      "end_col": 49
+    },
+    "notes": [
+      {
+        "message": "each arm goes on its own line; Xo has no separator between arms (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "put the next arm on its own line",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 44,
+              "end_line": 2,
+              "end_col": 45
+            },
+            "replace": "\n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0175",
+    "severity": "error",
+    "message": "expected newline after match arm, found integer literal 1",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 20,
+      "end_line": 3,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "each arm goes on its own line; Xo has no separator between arms (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "put the next arm on its own line",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 19,
+              "end_line": 3,
+              "end_col": 20
+            },
+            "replace": "\n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0175",
+    "severity": "error",
+    "message": "expected newline after match arm, found identifier `_`",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 27,
+      "end_line": 3,
+      "end_col": 28
+    },
+    "notes": [
+      {
+        "message": "each arm goes on its own line; Xo has no separator between arms (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "put the next arm on its own line",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 26,
+              "end_line": 3,
+              "end_col": 27
+            },
+            "replace": "\n"
+          }
+        ]
+      }
+    ]
+  }
+]

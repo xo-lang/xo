@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+heartbeat ran at least 3 times: true
+a closure
+a closure
+--- stderr

@@ -48,8 +48,10 @@ order and NaNs end up last), derived `Ord` on types with Float fields,
 (NaN differs from itself), not this order.
 
 `Int`, the sized integers, `Float`, `Bool`, `Rune`, `Str`, `Duration`, `Time`,
-and every std error type implement `Display`. `Bytes` does not (use
-`to_str()`). `Json` is implemented by `derive Json` and by
+and every std error type implement `Display`, and so does every type with
+`derive Display`: `e.display()` is callable on each of them (the same text
+as `"${e}"`), as well as through a `T: Display` bound or an `Error` value.
+`Bytes` does not (use `to_str()`). `Json` is implemented by `derive Json` and by
 builtin types (section 5). `SqlRow` is implemented only by `derive SqlRow`
 (section 10.4).
 

@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+FsErr: NotFound(path: "a.txt") (same as interpolation: true)
+NetErr: Timeout (same as interpolation: true)
+ClockErr: Canceled (same as interpolation: true)
+EnvErr: Missing(name: "HOME") (same as interpolation: true)
+IoErr: Io(msg: "broken pipe") (same as interpolation: true)
+ProcErr: NotFound(cmd: "git") (same as interpolation: true)
+http.HttpErr: Io(msg: "reset") (same as interpolation: true)
+http.ClientErr: Connect(msg: "refused") (same as interpolation: true)
+http.ClientErr: Timeout (same as interpolation: true)
+http.UrlErr: UrlErr{msg: "no scheme"} (same as interpolation: true)
+json.DecodeErr: at $.user.email: expected string (same as interpolation: true)
+sql.SqlErr: NoRows (same as interpolation: true)
+task.Timed: TimedOut (same as interpolation: true)
+task.Fault: Fault{msg: "boom", location: "main.xo:1", frames: []} (same as interpolation: true)
+DurationErr: invalid duration "soon": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m" (same as interpolation: true)
+AppErr: Missing(id: 7) (same as interpolation: true)
+as Error: Connect(msg: "refused")
+Int: 42
+--- stderr
