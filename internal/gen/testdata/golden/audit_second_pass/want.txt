@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+Circle(radius: 2) area 12
+Square(side: 3) area 9
+Square(side: 4) area 16
+Dot area 0
+<redacted> Login{user: "ann", pass: <redacted>}
+[<redacted>]
+{"k": <redacted>}
+revealed 7 chars
+os family unix known true
+written bytes
+cwd has main.xo true missing false
+case_sensitive agrees true
+run code 3 stdout out stderr err
+missing command: NotFound(cmd: "xo-no-such-command-audit")
+--- stderr
+<time> INFO login user=ann pass=<redacted> login=Login{user: "ann", pass: <redacted>}

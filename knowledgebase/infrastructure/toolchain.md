@@ -1525,12 +1525,25 @@ Last verified: 2026-10-09.
   missing, `git archive refs/tags/<v>` extracted in Go (no symlinks, no
   paths leaving the tree). git runs with `core.hooksPath=/dev/null`,
   `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`. The module must have
-  its xo.mod at the repository root declaring the same path.
+  its xo.mod in its directory declaring the same path. Directories below
+  it that hold an xo.mod (nested modules) are removed after extraction,
+  and `HashDir` skips them (a vendored root module holds its vendored
+  subdirectory modules). Last verified: 2026-10-09.
 - Locations: `github.com/a/b` is `https://github.com/a/b.git` (also
   gitlab.com, bitbucket.org), any other path `https://<path>`.
   `XO_GIT_BASE=<dir or URL>` maps every path to `<base>/<path>`;
   `XO_GIT_REWRITE=<prefix>=<url>,...` rewrites by longest prefix (wins
   over XO_GIT_BASE).
+- Subdirectory modules (`internal/mod/repo.go` `Locate`): on the three
+  known hosts the repository is the first three path elements and the
+  rest (without `/vN`) is the directory; elsewhere `git ls-remote <url>
+  HEAD` is tried for each prefix, longest first (a cached clone of the
+  whole path skips it), memoized per process by git location. Versions
+  are tags `<dir>/vX.Y.Z`; the tree is `git archive
+  refs/tags/<dir>/<v>:<dir>`. `xo publish` finds the directory from `git
+  rev-parse --show-toplevel`, requires the module path (without `/vN`) to
+  end in it, lists `<dir>/v*` tags (ignoring majors above the path's), and
+  prints `git tag <dir>/vX.Y.Z`. Last verified: 2026-10-09.
 - MVS: walk every reachable `path version` from the main module (or every
   workspace module), keep the highest version per path. Every visited
   version is downloaded (its xo.mod is read from the cache tree).
@@ -1599,13 +1612,17 @@ Last verified: 2026-10-09.
   `cmd/xo/mod_test.go` (`TestModules`: the commands end to end; runs the
   built program unless -short), `cmd/xo/release_test.go`
   (`TestEffectCeilings`, `TestPublish`, `TestInit`),
+  `cmd/xo/subdir_test.go` (`TestSubdirModules`: tidy, lock, run, get,
+  vendor, cli/v2, publish in a subdirectory), `internal/mod/repo_test.go`
+  (`TestLocate`: probing on another host, nested module pruning),
   `internal/release/api_test.go`, `internal/serve/serve_test.go`,
   `internal/check/rules_test.go` (XO1306), `internal/check/ceiling_test.go`
   (XO1309). No test touches the network.
 - Not yet: per definition hashes (step 5), a proxy or checksum log,
-  modules in repository subdirectories, major versions in subdirectories
-  (`/v2/` directories of one tag), `xo get --uses` to set a ceiling from
-  the command line.
+  Go's "major subdirectory" layout (`/v2/` directories of one tag; major
+  versions of a subdirectory module use the major branch way, tags
+  `<dir>/v2.x.y`), `go-get` style HTML meta discovery of repository
+  roots, `xo get --uses` to set a ceiling from the command line.
 
 ## Go interop (prototype)
 
@@ -1636,8 +1653,15 @@ experiment of its work queue item 6. Results and coverage:
   with `cb.Begin()`/`cb.End(ctk)` per call; 4 since 2026-10-08, decision
   0073: callback arguments are converted first and passed as
   `cb.Begin(func() []any {...})`, and `*time.Timer`/`*time.Ticker` are
-  handles, so `time.after_func` binds) or another module version
-  than the pin. Pins: `require go <module> <version>` lines in xo.mod.
+  handles, so `time.after_func` binds; 5 since 2026-10-09, decision 0093:
+  adapters call `rt.GoFxValue`/`rt.GoFxRerun` when `rt.GoFxOn()`, by
+  value calls live in `goCall_<prefix><name>`, declarations carry a
+  `/// Replay:` line) or another module version
+  than the pin, or another `replay rerun go` list (header line
+  `// replay-rerun: <names>`). Pins: `require go <module> <version>`
+  lines in xo.mod. A binding made with a rerun list is cached as
+  `<cache>/<path>.rerun-<8 hex>.xo` and `.go`, beside the plain one.
+  Last verified: 2026-10-09.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and
   `Module.Go` holding the binding. XO1101 when binding fails, XO1102 when
@@ -1668,7 +1692,9 @@ experiment of its work queue item 6. Results and coverage:
   stuck callback is XO-F001, a sleeping one is not), `test_go_callback_task` (`-explore 40`, also under
   -race: a callback on Go's goroutine holds mutexes beside a test task and
   a request), `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`,
-  `std/rt/gocallback_test.go`, `internal/gen/replay_gocallback_test.go`
+  `std/rt/gocallback_test.go`, `internal/gen/replay_gocallback_test.go`,
+  `internal/gen/replay_gocalls_test.go` and `internal/gobind/replay_test.go`
+  (Go calls recorded and replayed, decision 0093)
   (`TestReplayGoCallback`: seeds reproduce foreign callbacks, recordings
   replay them; runs under -short too).
   The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the

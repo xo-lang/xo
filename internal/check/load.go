@@ -503,7 +503,7 @@ func (c *checker) loadGoImport(m *Module, f *File, u *ast.UseDecl, imp *Import) 
 			root = c.goBindRoot(r.dir)
 		}
 		pins := gobind.ReadPins(filepath.Join(root, "xo.mod"))
-		opts := gobind.Options{Dir: gobind.CacheDir(root), Version: gobind.PinFor(pins, u.Path)}
+		opts := gobind.Options{Dir: gobind.CacheDir(root), Version: gobind.PinFor(pins, u.Path), Rerun: gobind.ReadRerun(filepath.Join(root, "xo.mod"))[u.Path]}
 		b, err := gobind.LoadOrBind(u.Path, opts)
 		if err != nil {
 			d := c.errorf(diag.GoBindFailed, u.Sp, "cannot bind Go package `%s`: %s", u.Path, gobindMsg(err))

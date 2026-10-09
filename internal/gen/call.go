@@ -69,6 +69,9 @@ func (f *fnGen) callCore(x *ast.CallExpr) (string, callKind) {
 			case "display":
 				// a derived or built in Display (std.md 1)
 				return f.display(f.val(sel.X), f.typeOf(sel.X)), ckValue
+			case "debug":
+				// Debug is implemented for every type (std.md 1)
+				return f.rt() + "Debug(" + f.val(sel.X) + ")", ckValue
 			}
 		}
 		f.g.errorf(x, "unresolved call in code generation")

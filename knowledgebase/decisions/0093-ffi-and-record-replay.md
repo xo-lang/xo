@@ -1,6 +1,9 @@
 # 0093: FFI: `use go` on the Go backend, `use c` on native backends, recorded at the boundary (Appendix B question 5)
 
-Status: Accepted (2026-10-09, by the owner; proposed by the spec audit)
+Status: Accepted (2026-10-09, by the owner; proposed by the spec audit).
+Stage 1 implemented (2026-10-09): `use go` calls are recorded and
+replayed on the Go backend (notes below). Stage 2 (`use c`, `xo bind
+--c`, the `ffi` effect) is not built.
 
 ## Context
 
@@ -92,3 +95,56 @@ Option 2, staged, with these rules for both `go` and `ffi`:
   the owner wants the smallest possible 1.0.
 - Keep not recording Go calls: replays of programs with Go I/O diverge
   silently, contradicting design goal 7.
+
+## Implementation notes, stage 1 (2026-10-09)
+
+- Where: `xo bind` (internal/gobind, binding format version 5) decides a
+  replay mode per function when it writes the adapter, and the adapter
+  calls `rt.GoFxValue` or `rt.GoFxRerun` (std/rt/gofx.go) only when
+  `rt.GoFxOn()` (a recording, ring buffers, or a replay): an ordinary run
+  pays one branch per Go call. Each declaration's doc comment carries a
+  `/// Replay: ...` line saying which mode applies.
+- By value: every parameter and result is a boundary value and there is
+  no callback. The trace effect is `go.call(<Xo name>, <hash>)`, the hash
+  being the first 8 bytes of SHA-256 over the encoded arguments (the
+  arguments are not stored: they may be large or secret). Results go
+  through the effect codec; `go.Error` encodes its text and Go type, and
+  a replayed `go.Error` answers `go_type()` with the recorded type. A Go
+  panic (a fault) is recorded with `"x": "fault"` and raised again. The
+  replay still enters and leaves the Go call in the scheduler
+  (`goEnter`/`goExit`), so scheduling decisions match the recording.
+- Refinement of the rule above: re execution covers not only results that
+  hold a handle but also calls whose receiver or arguments are handles,
+  and calls that take an Xo callback. A handle's Go object exists in the
+  replay because the call that made it ran again; answering a later
+  method call by value would skip its side effects on that object, and
+  some are observable inside Go: `sync.WaitGroup.wait` returns unit, but
+  answering it by value would let main run ahead of the callbacks it
+  waits for (the program of `TestReplayGoCallback`; reasoned, not
+  observed, since the rule was chosen before that run). Such calls record
+  `go.call(<name>)` with `"x": "handle"` or `"callback"` before the call,
+  and the replay checks the point and prints ``xo replay: re executed
+  foreign call `<name>` (...)`` once per name.
+- `replay rerun`: no wrapper, nothing recorded. gobind marks the
+  functions of a fixed list of pure std packages (`strconv`, `strings`,
+  `bytes`, `unicode*`, `math*`, `regexp*`, `path`, `html`, `net/url`,
+  `encoding/hex`, `encoding/base64`, `encoding/base32`), except those
+  taking or returning a handle of another package (`regexp`'s
+  `io.RuneReader` methods). Users mark more with xo.mod lines `replay
+  rerun go <Go path> [name | Type.method ...]` (no names: every
+  function). A binding with such a list is cached under a name of its
+  own (`<path>.rerun-<hash>.xo`) and its header records the list, so a
+  changed line rebinds and projects sharing `$XO_GOBIND_DIR` do not
+  overwrite each other's bindings.
+- Trace format: the header gains `"foreign": 1`, effects gain the
+  optional field `"x"`. A trace without `"foreign"` replays with every Go
+  call run again (the old behavior), and old toolchains ignore both
+  fields. Ring buffers (`XO_RING`) and crash bundles record Go calls the
+  same way.
+- Field getters and setters of Go structs (`GoBoundary`) and Go
+  variables read through a binding are not recorded: they read Go state
+  that the re executed calls rebuilt.
+- Tests: `internal/gen` `TestReplayGoCalls` (os.getpid and os.read_file
+  answered offline, strconv and regexp rerun, exec.command re executed
+  and reported, an old trace, a changed argument, an xo.mod rerun line),
+  `internal/gobind` `TestReplayModes`, `TestReadRerun`.

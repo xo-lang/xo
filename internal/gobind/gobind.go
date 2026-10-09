@@ -26,6 +26,8 @@ package gobind
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,8 +49,11 @@ import (
 // goroutine as a task of its own. 4 (2026-10-08, decision 0073): callback
 // arguments are converted before cb.Begin, which takes them (for the
 // deterministic scheduler and recordings), and *time.Timer and *time.Ticker
-// are handles (time.AfterFunc binds).
-const Version = 4
+// are handles (time.AfterFunc binds). 5 (2026-10-09, decision 0093): Go
+// calls are recorded by `--record` and answered or re executed by `xo
+// replay` (rt.GoFxValue, rt.GoFxRerun); declarations carry a `Replay:`
+// doc line.
+const Version = 5
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -97,6 +102,44 @@ type Options struct {
 	// (`require go <module> <version>` in xo.mod); empty uses the version
 	// already in the binding workspace, or the latest.
 	Version string
+	// Rerun names the functions an xo.mod `replay rerun go <path>
+	// [names]` line marks pure (`name` or `Type.method`; "*" for all):
+	// they run again in a replay and are not recorded (decision 0093).
+	Rerun []string
+}
+
+// ReadRerun reads `replay rerun go <Go import path> [names...]` lines of an
+// xo.mod: Go functions that a replay runs again instead of answering
+// them from the trace (decision 0093). A line without names marks every
+// function of the package ("*").
+func ReadRerun(xoMod string) map[string][]string {
+	data, err := os.ReadFile(xoMod)
+	if err != nil {
+		return nil
+	}
+	out := map[string][]string{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		text, _, _ := strings.Cut(sc.Text(), "//")
+		f := strings.Fields(text)
+		if len(f) < 4 || f[0] != "replay" || f[1] != "rerun" || f[2] != "go" {
+			continue
+		}
+		names := f[4:]
+		if len(names) == 0 {
+			names = []string{"*"}
+		}
+		out[f[3]] = append(out[f[3]], names...)
+	}
+	return out
+}
+
+// rerunKey is the canonical text of a rerun list, as the declaration
+// file's `replay-rerun:` header line records it.
+func rerunKey(names []string) string {
+	s := append([]string(nil), names...)
+	sort.Strings(s)
+	return strings.Join(s, " ")
 }
 
 // CacheDir is the binding cache of the Xo project rooted at root (the
@@ -125,12 +168,25 @@ func ident(p string) string {
 	return b.String()
 }
 
-func declPath(dir, goPath string) string {
-	return filepath.Join(dir, filepath.FromSlash(goPath)+".xo")
+// cacheBase is the cache path of a binding without its extension. A
+// binding made with an xo.mod `replay rerun go` list differs from the plain
+// one, so it gets a name of its own: projects that share a cache
+// ($XO_GOBIND_DIR) do not overwrite each other's.
+func cacheBase(dir, goPath string, rerun []string) string {
+	base := filepath.Join(dir, filepath.FromSlash(goPath))
+	if len(rerun) > 0 {
+		sum := sha256.Sum256([]byte(rerunKey(rerun)))
+		base += ".rerun-" + hex.EncodeToString(sum[:4])
+	}
+	return base
 }
 
-func adapterPath(dir, goPath string) string {
-	return filepath.Join(dir, filepath.FromSlash(goPath)+".go")
+func declPath(dir, goPath string, rerun []string) string {
+	return cacheBase(dir, goPath, rerun) + ".xo"
+}
+
+func adapterPath(dir, goPath string, rerun []string) string {
+	return cacheBase(dir, goPath, rerun) + ".go"
 }
 
 // workDir is the Go module the binder resolves packages in.
@@ -168,17 +224,18 @@ func PinFor(pins map[string]string, goPath string) string {
 // Load returns the cached binding of goPath, or nil when there is none or
 // it is stale (another Version, or another pinned module version).
 func Load(goPath string, opts Options) (*Binding, error) {
-	dp := declPath(opts.Dir, goPath)
+	dp := declPath(opts.Dir, goPath, opts.Rerun)
 	decl, err := os.ReadFile(dp)
 	if err != nil {
 		return nil, nil
 	}
-	adapter, err := os.ReadFile(adapterPath(opts.Dir, goPath))
+	adapter, err := os.ReadFile(adapterPath(opts.Dir, goPath, opts.Rerun))
 	if err != nil {
 		return nil, nil
 	}
 	b := &Binding{GoPath: goPath, Prefix: Prefix(goPath), DeclPath: dp, Decl: decl, Adapter: adapter, Skipped: map[string]string{}}
 	version := -1
+	rerun := ""
 	sc := bufio.NewScanner(bytes.NewReader(decl))
 	for sc.Scan() {
 		l := sc.Text()
@@ -198,12 +255,14 @@ func Load(goPath string, opts Options) (*Binding, error) {
 			if len(f) == 2 {
 				b.Module, b.ModVersion = f[0], f[1]
 			}
+		case strings.HasPrefix(l, "replay-rerun: "):
+			rerun = strings.TrimPrefix(l, "replay-rerun: ")
 		case strings.HasPrefix(l, "skip: "):
 			name, reason, _ := strings.Cut(strings.TrimPrefix(l, "skip: "), ": ")
 			b.Skipped[name] = reason
 		}
 	}
-	if version != Version || b.Name == "" {
+	if version != Version || b.Name == "" || rerun != rerunKey(opts.Rerun) {
 		return nil, nil
 	}
 	if opts.Version != "" && !b.Standard && opts.Version != b.ModVersion {
@@ -417,19 +476,26 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 		b.Module, b.ModVersion = self.Module.Path, self.Module.Version
 	}
 	g := newGen(b, pkg)
+	g.rerunKey = rerunKey(opts.Rerun)
+	for _, n := range opts.Rerun {
+		if n == "*" {
+			g.rerunAll = true
+		}
+		g.rerun[n] = true
+	}
 	g.run()
 	b.Decl = g.declFile()
 	b.Adapter, err = g.adapterFile()
 	if err != nil {
 		return nil, fmt.Errorf("gobind: adapter for %s: %v", goPath, err)
 	}
-	b.DeclPath = declPath(opts.Dir, goPath)
+	b.DeclPath = declPath(opts.Dir, goPath, opts.Rerun)
 	if err := os.MkdirAll(filepath.Dir(b.DeclPath), 0o755); err != nil {
 		return nil, err
 	}
 	// the adapter first and the declaration last, each renamed into place,
 	// so a concurrent Load never sees a partial binding
-	if err := writeAtomic(adapterPath(opts.Dir, goPath), b.Adapter); err != nil {
+	if err := writeAtomic(adapterPath(opts.Dir, goPath, opts.Rerun), b.Adapter); err != nil {
 		return nil, err
 	}
 	if err := writeAtomic(b.DeclPath, b.Decl); err != nil {

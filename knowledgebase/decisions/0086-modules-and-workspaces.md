@@ -9,7 +9,9 @@ XO1301 to XO1308), and so are (3) effect ceilings (`require ... uses`,
 -u`) and (4) `xo publish [--check]` semver checks (`internal/release`,
 XO1310, XO1311), `xo init` gitignoring xo.work, and `/vN` major version
 paths. Step (5) per definition hashes is not built; neither is an
-optional proxy or a checksum log.
+optional proxy or a checksum log. Modules in subdirectories of a
+repository (tags `<dir>/vX.Y.Z`, as Go) are built too (2026-10-09, notes
+below).
 
 ## Context
 
@@ -96,7 +98,8 @@ hashes.
 ## Implementation notes (2026-10-09)
 
 - A module is its repository root; tags `vX.Y.Z` are versions. Modules
-  in subdirectories of a repository are not supported yet. `/vN` major
+  in subdirectories of a repository: see the notes of 2026-10-09 below
+  (this line said "not supported yet" until then). `/vN` major
   suffixes (N >= 2) are, Go's "major branch" way only: all major
   versions share one repository (the suffix is stripped for the git
   location), the tags of major N declare the `/vN` path in xo.mod, and a
@@ -143,3 +146,29 @@ hashes.
 - `xo serve` records, per module root, which xo.work a load would consult
   (`mod.NearestWork`), so a workspace created, removed, or edited above
   the directories makes the cached program stale.
+
+## Implementation notes, modules in repository subdirectories (2026-10-09)
+
+- As Go: the module `github.com/acme/tools/cli` may be the directory
+  `cli/` of the repository `github.com/acme/tools`; its versions are the
+  tags `cli/vX.Y.Z` and a version's tree is `cli/` at that tag (`git
+  archive refs/tags/cli/v1.2.0:cli`). A `/vN` suffix stays out of the
+  directory and the prefix: `github.com/acme/tools/cli/v2` is `cli/` with
+  tags `cli/v2.x.y` (the major branch way; Go's major subdirectory layout
+  is not supported).
+- Finding the repository (`mod.Locate`): on github.com, gitlab.com, and
+  bitbucket.org it is the first three path elements. Elsewhere `git
+  ls-remote` is tried for each prefix of the path, longest first; there is
+  no HTML meta discovery (Go's `?go-get=1`).
+- A module's tree never holds a nested module: directories with their own
+  xo.mod are removed after extraction and skipped by the content hash, so
+  a vendored root module (which holds its vendored subdirectory modules)
+  hashes as the fetched one. A root module's xo.lock hash changes only if
+  its repository has nested xo.mod directories.
+- `xo publish` in a subdirectory: the module path (without `/vN`) must
+  end with the directory (XO1311 otherwise), the previous release is the
+  highest `<dir>/vX.Y.Z` tag whose major the path admits, and the printed
+  command is `git tag <dir>/vX.Y.Z && git push origin <dir>/vX.Y.Z`. The
+  clean tree check covers the module's directory only (`git status
+  --porcelain -- .`).
+- Tests: `cmd/xo` `TestSubdirModules`, `internal/mod` `TestLocate`.

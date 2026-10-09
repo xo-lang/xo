@@ -25,6 +25,13 @@ func HashDir(dir string) (string, error) {
 		if err != nil {
 			return err
 		}
+		if d.IsDir() && p != dir {
+			// a nested module is not part of this one (a vendored
+			// github.com/acme/tools holds vendored .../tools/cli)
+			if _, err := os.Stat(filepath.Join(p, "xo.mod")); err == nil {
+				return filepath.SkipDir
+			}
+		}
 		if d.Type().IsRegular() {
 			rel, err := filepath.Rel(dir, p)
 			if err != nil {

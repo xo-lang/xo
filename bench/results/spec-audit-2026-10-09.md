@@ -398,3 +398,122 @@ every backend; "toolchain" is a command.
 | std 11 | std/crypto | stable | go, llvm, arm64, no-gc | gen:crypto_basic, gen:test_crypto, llvm:native_crypto, llvm TestCryptoDiff |  |
 | std 12 | std/go `go.Error` | stable | go; native: XO1201 impossible | gen:go_strconv, gen:go_url | was undocumented in std.md; section added |
 | std 13 | std/time zones, formatting, parsing | gap | none | none | module empty; Proposed API written into std.md 13 |
+
+## Second pass (2026-10-09, later the same day)
+
+The table above is the first pass and stays as written. This section
+re scores it after the work that followed and records what the second
+pass added. Toolchain: this branch on darwin/arm64, Go 1.26.1.
+
+### What changed the rules
+
+Decision 0089 (owner's 1.0 criteria, after the first pass): the Go
+backend is the 1.0 path and the native backends ship as **preview** at
+1.0, their `XO1201` gaps not blocking it. So a feature is now **stable**
+when the Go backend implements it as specified and a test covers it there;
+a native gap no longer demotes it but stays listed (Backends column
+above, and "Native backend parity" in the gap ranking). Native work was
+out of scope for this pass.
+
+### Summary (second pass)
+
+| Status | First pass | Second pass |
+|---|---:|---:|
+| stable | 131 | 169 |
+| preview | 31 | 2 |
+| gap | 17 | 14 |
+| total | 179 | 185 |
+
+Six rows are new (below), so the total grew from 179 to 185.
+
+### The 31 preview features
+
+Moved to stable because their only open point was a native backend gap
+(decision 0089), each with the Go backend test the table already cites:
+2.1 `Float32` (gen:conversions); 2.4 interfaces (gen:interfaces,
+gen:iface_adapters); 3.5 list patterns (gen:patterns); 5.3 `Buf`,
+`StrBuilder`, `BytesBuilder` (gen:collections, gen:bytes_builder); 6.3 Fs
+attenuation (gen:fs_rooting); 7.1 task groups and `os.tasks`
+(gen:scope_tasks); 7.2 `sleep_or_cancel` and stdin cancellation
+(gen:codex_gaps, gen:test_stdin_stop); 9.2 property tests
+(gen:test_property); 11.4 `dbg` (gen:holes, vet); std 2.1 Int and Float
+methods (gen:int_ops); std 2.2 Bytes and Rune helpers (gen:std06_helpers,
+gen:text_helpers); std 2.3 List (gen:collections); std 2.4 Set
+(gen:collections); std 2.6 Duration and Time (gen:duration_time); std 2.7
+concurrency and builder types (gen:channels, gen:mutex_atomic,
+gen:bytes_builder); std 3.4 Rand (gen:test_fakes); std 4.5 HTTP client
+(gen:http_real; native TLS is not a 1.0 requirement, 0089); std 7
+`map_concurrent`, `Once`, `Semaphore` (gen:task_std, gen:test_once,
+gen:test_map_until); std 8.5 `testing.gen` (gen:test_property); std 9
+`std/path` (gen:std06_path). 20 features.
+
+Moved to stable after a new test or a small fix in this pass:
+
+| Section | Feature | What was missing | Now |
+|---|---|---|---|
+| 2.1 | `Secret[T]` redacted in every output path | only interpolation and replay tested | gen:audit_second_pass: Debug of a struct, a List, a Map, and log fields print `<redacted>`; `derive Json` rejects a `Secret` field (XO0404), so it cannot be encoded |
+| 2.3 | single field variant constructed positionally | negative check test only | gen:audit_second_pass: `Shape.Circle(2)`, inferred `Square(3)`, named and positional patterns |
+| 3.5 | shielded defer over 5 s faults `XO-F005` | no test | std/rt `TestShieldedDeferLimit` (a settable `shieldClock`): 6 s faults with the location, 5 s does not, a test world does not |
+| 9.2 | `test ... uses env` with `--real` | probe only | cmd/xo `TestTestReal`: skipped without `--real`, passes with it, fails when the real environment differs |
+| 12.1 | reproducible byte identical builds | not tested; claim too broad | internal/build `TestReproducibleBuild` (host and linux/amd64, two empty build dirs, equal bytes). Probe: a copy of the source in another directory differs, because the binary records the absolute source directory for crash bundles; spec 12.1 now says "in the same directory" |
+| 12.2 | `target` at run time | check test only | gen:audit_second_pass: a `match target.os` and `target.os == target.os` run |
+| std 3.1 | Fs (`cwd`, `case_sensitive`) | untested | gen:audit_second_pass: `cwd()` sees the golden's files; `case_sensitive()` agrees with looking a file up under another case |
+| std 3.6 | Stdio `write` | no Go golden | gen:audit_second_pass |
+| std 3.7 | Proc (real `run`) | untested | gen:audit_second_pass: exit code, stdout, stderr of `sh -c`; a missing command is `ProcErr.NotFound` |
+
+Fix found by the new golden: std.md 1 says every type implements `Debug`
+(`fn debug(self) -> Str`), but `x.debug()` on a concrete type was
+`XO0601`. It is now callable on every value (`internal/check/call.go`,
+`internal/gen/call.go`, as `.display()` was made callable on Display
+types). Spec "Changes in 0.8" notes it.
+
+Left as preview, with the reason:
+
+| Section | Feature | Why not stable yet |
+|---|---|---|
+| 11.1 | error frames with parameters | decision 0092 (lazy frames) and release builds are being built in parallel; this pass did not touch frames |
+| 11.2 | crash bundles | their content (error frames, fault traces) changes with 0092; re score after that work lands |
+
+### Gaps closed since the first pass (other work, re scored)
+
+| Section | Feature | Status | Tests |
+|---|---|---|---|
+| 2.8 | newtypes: `e.0` and the pattern `Email(p)` (decision 0097) | stable | gen:newtype_value, gen:consts_newtypes; native XO1201 |
+| 4.2 | `require`, MVS, fetch, vendoring, offline, xo.work (0086 steps 1, 2) | stable | cmd/xo `TestModules`, internal/mod tests |
+| 4.3 | `xo.lock` per module version hashes | stable | cmd/xo `TestModules`, internal/mod tests (per definition hashes: new gap row) |
+| std 13 | std/time (decision 0094) | stable | gen:time_civil, gen:time_zones, gen:time_format, gen:time_dynamic_zone, gen:time_layout_fault; native XO1201 |
+
+### New rows
+
+| Section | Feature | Status | Backends | Tests | Notes |
+|---|---|---|---|---|---|
+| 4.2 | effect ceilings per dependency, `xo publish` semver check, `/vN` (0086 steps 3, 4) | stable | toolchain | cmd/xo `TestEffectCeilings`, `TestPublish`, internal/release tests | |
+| 4.2 | modules in repository subdirectories, tags `<dir>/vX.Y.Z` | stable | toolchain | cmd/xo `TestSubdirModules`, internal/mod `TestLocate` | added in this pass |
+| 4.2 | `deny` import direction rules (0095) | stable | checker (all) | check:rules_test (XO1312) | |
+| 4.3 | per definition hashes | gap | none | none | [P3] |
+| 10.1 | `xo check --fix` (0096) | stable | toolchain | cmd/xo `TestCheckFix` | |
+| 11.3 | Go calls recorded at the boundary (0093 stage 1) | stable | go; native: `use go` impossible | gen `TestReplayGoCalls`, gobind `TestReplayModes` | added in this pass; `use c` and the `ffi` effect (6.1) stay a gap |
+
+### Gaps left (14)
+
+1.2 doc comment examples run by `xo test`; 2.9 `OpenApi` and `Proto`
+derives (after 1.0, owner); 4.3 per definition hashes; 5.5 user written
+`arena scope`; 6.1 the `ffi` effect (0093 stage 2, `use c`); 8 release
+builds and `requires(debug)` (in progress elsewhere); 10.1 `xo why`, `xo
+debug`; 11.1 `--error-args` (in progress elsewhere); 11.3 `xo debug
+--replay`; 11.5 `xo debug --json`, `--dap`; 11.6 spans and
+OpenTelemetry; 12.1 SBOM; 12.2 `std/sys/<os>` and `XO1001`; std 10.1
+real `std/sql` drivers.
+
+### Next steps (second pass)
+
+1. After decision 0092 and release builds land, re score 11.1 (frames),
+   11.2 (crash bundles), 8 and 11.1 `--error-args` with their tests.
+2. `0093` stage 2: `xo bind --c` from a C header, `use c` on the native
+   backends with effect `ffi` (start from `internal/gobind`'s mapper; a
+   first fixture: zlib's `crc32`).
+3. SBOM (12.1): write `<bin>.sbom.json` from the build list (`mod.Load`
+   modules, `require go` pins, Go module versions), test in
+   internal/build beside `TestReproducibleBuild`.
+4. Doc comment examples (1.2): extract ```` ``` ```` blocks of `///`
+   comments in `internal/doc` and run them as tests in `xo test`.

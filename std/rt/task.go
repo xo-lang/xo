@@ -235,15 +235,19 @@ func (tk *Task) CheckCancel() {
 	}
 }
 
+// shieldClock is the monotonic clock Shielded measures with (a variable
+// so a test can advance it).
+var shieldClock = monoNow
+
 // Shielded runs deferred code shielded from cancellation (core 3.5). A
 // shielded defer that runs longer than five seconds of real time faults
 // (XO-F005); P1 checks the limit when the deferred code returns.
 func (tk *Task) Shielded(at string, f func()) {
 	tk.shield++
-	start := monoNow()
+	start := shieldClock()
 	defer func() { tk.shield-- }()
 	f()
-	if el := monoNow() - start; el > 5e9 && tk.w == nil {
+	if el := shieldClock() - start; el > 5e9 && tk.w == nil {
 		FaultCode("XO-F005", at, "a shielded defer ran for %s, longer than 5s", Duration(el))
 	}
 }

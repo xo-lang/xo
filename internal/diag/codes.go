@@ -114,7 +114,7 @@ const (
 	WorkspaceRelease   Code = "XO1308" // release build (`xo build --ci`) while an xo.work workspace overrides required modules
 	EffectCeiling      Code = "XO1309" // call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)
 	BreakingRelease    Code = "XO1310" // `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one
-	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)
+	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)
 	ImportDenied       Code = "XO1312" // `use` of a package that a `deny` rule of xo.mod forbids (decision 0095)
 )
 
@@ -201,7 +201,7 @@ var Descriptions = map[Code]string{
 	WorkspaceRelease:   "release build (`xo build --ci`) while an xo.work workspace overrides required modules",
 	EffectCeiling:      "call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)",
 	BreakingRelease:    "`xo publish`: a minor or patch release removes or changes an export, or adds an effect to one",
-	InvalidRelease:     "`xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)",
+	InvalidRelease:     "`xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)",
 	ImportDenied:       "`use` of a package that a `deny` rule of xo.mod forbids (decision 0095)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",

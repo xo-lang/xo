@@ -1145,8 +1145,8 @@ require github.com/acme/billing v1.4.0`,
 	},
 	ModuleFetch: {
 		Title: "module version cannot be fetched",
-		Detail: "A module path is its location: `github.com/acme/billing` is fetched with git from https://github.com/acme/billing.git (XO_GIT_BASE=<dir or URL> or XO_GIT_REWRITE=<prefix>=<url>,... point it elsewhere, for mirrors and tests), and version v1.4.0 is the tree of the tag `v1.4.0`, extracted with `git archive` (no code runs). " +
-			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod at the repository root, or that xo.mod declares a different module path. The message carries git's reason. See core 4.2 and decision 0086.",
+		Detail: "A module path is its location: `github.com/acme/billing` is fetched with git from https://github.com/acme/billing.git (XO_GIT_BASE=<dir or URL> or XO_GIT_REWRITE=<prefix>=<url>,... point it elsewhere, for mirrors and tests), and version v1.4.0 is the tree of the tag `v1.4.0`, extracted with `git archive` (no code runs). A module in a subdirectory of its repository (`github.com/acme/tools/cli` in `cli/`) is that directory's tree at the tag `cli/v1.4.0`. " +
+			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod in the module's directory, or that xo.mod declares a different module path. The message carries git's reason. See core 4.2 and decision 0086.",
 		Example: `// xo.mod
 module example.com/api
 require github.com/acme/billing v1.9.9   // no such tag`,
@@ -1229,7 +1229,7 @@ xo publish --check --version v2.0.0   # module path .../v2`,
 	},
 	InvalidRelease: {
 		Title:   "the release cannot be made",
-		Detail:  "Publishing a module version is creating its git tag; `xo publish` validates first and prints the tag command, it never pushes. It needs the module at the root of a git repository, no uncommitted changes (without --check), a version tag that does not exist yet and is above the last release, a major version that matches the module path (/vN from v2 on), and an xo.mod and xo.lock that load. See decision 0086.",
+		Detail:  "Publishing a module version is creating its git tag; `xo publish` validates first and prints the tag command, it never pushes. It needs the module in a git repository (at its root, or in a subdirectory whose name ends the module path, tagged `<dir>/vX.Y.Z`), no uncommitted changes (without --check), a version tag that does not exist yet and is above the last release, a major version that matches the module path (/vN from v2 on), and an xo.mod and xo.lock that load. See decision 0086.",
 		Example: `xo publish --version v1.4.0   # v1.4.0 is already a tag`,
 		Fix:     `xo publish --version v1.4.1`,
 	},

@@ -74,6 +74,7 @@ var (
 	mapType      = reflect.TypeFor[fxMap]()
 	listenerType = reflect.TypeFor[Listener]()
 	connType     = reflect.TypeFor[Conn]()
+	goErrorType  = reflect.TypeFor[Go_Error]()
 )
 
 func isEnum(t reflect.Type) bool {
@@ -106,6 +107,9 @@ func fxEnc(v reflect.Value) any {
 		return map[string]any{"id": json.Number(strconv.FormatInt(l.id, 10)), "addr": l.addr}
 	case t == connType:
 		return map[string]any{}
+	case t == goErrorType:
+		e := v.Interface().(Go_Error)
+		return map[string]any{"msg": encStr(e.msg), "type": e.goType()}
 	case t.Implements(seqType) && v.CanInterface():
 		s := v.Interface().(fxSeq).fxSlice()
 		out := make([]any, s.Len())
@@ -200,6 +204,12 @@ func fxDec(x any, t reflect.Type) reflect.Value {
 		out.Set(reflect.ValueOf(Listener{id: id, replay: true, addr: addr}))
 		return out
 	case t == connType:
+		return out
+	case t == goErrorType:
+		m := x.(map[string]any)
+		msg := fxDec(m["msg"], reflect.TypeFor[string]()).String()
+		typ, _ := m["type"].(string)
+		out.Set(reflect.ValueOf(Go_Error{err: replayedGoError(msg), msg: msg, typ: typ}))
 		return out
 	case t.Implements(seqType):
 		proto := reflect.Zero(t).Interface().(fxSeq)
