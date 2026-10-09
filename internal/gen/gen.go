@@ -173,6 +173,11 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		}
 		prog.MainModule = mainMod.Path
 		mainSrc, err = g.mainFile(mainMod)
+		if err == nil {
+			var entry []byte
+			entry, err = g.mainEntryFile(mainMod)
+			prog.Files[g.pkgs[mainMod].dir+"/xo_main.go"] = entry
+		}
 	case Test:
 		mainSrc, err = g.testMainFile()
 	}

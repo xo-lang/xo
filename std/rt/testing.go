@@ -73,6 +73,24 @@ type testOutcome struct {
 // test that passes under its seed again under the next N-1 seeds and
 // reports the first failing one.
 func RunTests(args []string, tables ...[]TestCase) int {
+	return runTests(args, tables)
+}
+
+// RunTestTables is RunTests for the generated package main: each table
+// is a module's Tests ([]TestCase) as an any, so that package main names
+// no runtime type (a Go package naming one compiles the method sets of
+// every generic runtime type it reaches); not inlined for the same reason.
+//
+//go:noinline
+func RunTestTables(args []string, tables ...any) int {
+	ts := make([][]TestCase, len(tables))
+	for i, t := range tables {
+		ts[i] = t.([]TestCase)
+	}
+	return runTests(args, ts)
+}
+
+func runTests(args []string, tables [][]TestCase) int {
 	fs := flag.NewFlagSet("xotest", flag.ContinueOnError)
 	seed := fs.Int64("seed", 0, "seed for rand and the scheduler")
 	explore := fs.Int("explore", 0, "run each concurrent test under this many seeds")
