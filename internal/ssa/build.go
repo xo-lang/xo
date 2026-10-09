@@ -293,7 +293,12 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 			}
 		}
-		name := r.String()
+		// a std type with a native implementation is named as the
+		// implementation inside other types' arguments, so
+		// `Result[sql.Db, E]` (a call of the std declaration) and
+		// `Result[native.sql.Db, E]` (the implementation's result) are
+		// one type
+		name := b.implNamed(r).String()
 		if obj.Module != nil && obj.Module.Go != nil {
 			b.impossible(at, "the type `"+name+"` of the Go package `"+obj.Module.Go.GoPath+"` (`use go`)")
 			return m.Builtin(KUnit)
@@ -514,6 +519,25 @@ func (b *builder) declare(fo *check.FuncObj, targs []check.Type, at ast.Node) *F
 		return check.Deep(t)
 	}
 	name, key := b.instKey(fo, sargs)
+	if len(targs) > 0 {
+		// type arguments that lower alike (Time and Int, a std type and
+		// its implementation) still give the instance's parameters
+		// different checker types, so each list of checker types is its
+		// own instance; a second one lowering to the same name gets a
+		// suffix
+		var cs []string
+		for _, t := range targs {
+			cs = append(cs, b.implNamed(t).String())
+		}
+		key += "|" + strings.Join(cs, ", ")
+		if f := b.funcs[key]; f != nil {
+			return f
+		}
+		for n := 2; b.mod.Func(name) != nil; n++ {
+			base, _, _ := strings.Cut(name, "#")
+			name = base + "#" + strconv.Itoa(n)
+		}
+	}
 	if f := b.funcs[key]; f != nil {
 		return f
 	}

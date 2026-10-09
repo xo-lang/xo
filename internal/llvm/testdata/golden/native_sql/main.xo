@@ -1,0 +1,238 @@
+// std/sql's in memory driver on every backend (decision 0083): the
+// statements, results, and error texts of std/rt/sqlmem.go.
+use std/sql
+
+const SCHEMA = "CREATE TABLE users (id SERIAL, name TEXT NOT NULL UNIQUE, age INT, score REAL DEFAULT 1.5, active BOOL DEFAULT true, seen TIMESTAMP); -- people\nCREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY, label VARCHAR(20) NOT NULL); CREATE TABLE IF NOT EXISTS tags (x INT)"
+
+struct User {
+  id: Int
+  name: Str
+  age: Int?
+  score: Float
+  active: Bool
+  seen: Time?
+} derive SqlRow
+
+struct Short {
+  name: Str
+  age: Int
+} derive SqlRow
+
+fn show_rows(os: Os, label: Str, r: Result[List[sql.Row], sql.SqlErr]) uses stdio {
+  match r {
+    Ok(rows) => {
+      var parts: List[Str] = []
+      for row in rows {
+        var cells: List[Str] = []
+        for c in row.columns() {
+          let text = if row.is_null(c).ok() ?? false {
+            "NULL"
+          } else {
+            match row.str(c) {
+              Ok(s) => s.quote()
+              Err(_) => match row.int(c) {
+                Ok(n) => "${n}"
+                Err(_) => match row.bool(c) {
+                  Ok(b) => "${b}"
+                  Err(_) => match row.float(c) {
+                    Ok(f) => "${f}"
+                    Err(_) => match row.time(c) {
+                      Ok(t) => "${t}"
+                      Err(e) => "${e}"
+                    }
+                  }
+                }
+              }
+            }
+          }
+          cells.push("${c}=${text}")
+        }
+        parts.push(cells.join(" "))
+      }
+      os.stdio.println("${label}: ${rows.len()} [${parts.join("; ")}]")
+    }
+    Err(e) => os.stdio.println("${label}: error ${e}")
+  }
+}
+
+fn opt[T: Display](o: T?) -> Str {
+  match o {
+    Some(v) => "Some(${v})"
+    None => "None"
+  }
+}
+
+fn rv[T: Display](r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(v) => "Ok(${v})"
+    Err(e) => "Err(${e})"
+  }
+}
+
+fn ro[T: Display](r: Result[T?, sql.SqlErr]) -> Str {
+  match r {
+    Ok(v) => "Ok(${opt(v)})"
+    Err(e) => "Err(${e})"
+  }
+}
+
+fn show_exec(os: Os, label: Str, r: Result[sql.ExecResult, sql.SqlErr]) uses stdio {
+  match r {
+    Ok(x) => os.stdio.println("${label}: affected ${x.rows_affected} id ${x.last_insert_id}")
+    Err(e) => os.stdio.println("${label}: error ${e}")
+  }
+}
+
+fn main(os: Os) uses (stdio, net.dial) {
+  let db = match sql.memory(SCHEMA) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.println("schema: ${e}")
+      return
+    }
+  }
+  let t0 = Time.from_unix(1700000000)
+  show_exec(os, "insert ada", db.exec("INSERT INTO users (name, age, seen) VALUES ($1, $2, $3)", [sql.str("ada"), sql.int(36), sql.time(t0)]))
+  show_exec(os, "insert two", db.exec("INSERT INTO users (name, age, score, active) VALUES ('bob', NULL, 2, false), ('cy''s', 29, -0.25, true)"))
+  show_exec(os, "insert dup", db.exec("INSERT INTO users (name) VALUES ($1)", [sql.str("ada")]))
+  show_exec(os, "insert null", db.exec("INSERT INTO users (age) VALUES (1)"))
+  show_exec(os, "insert type", db.exec("INSERT INTO users (name, age) VALUES ('x', 'old')"))
+  show_exec(os, "insert params", db.exec("INSERT INTO users (name) VALUES ($2)", [sql.str("a")]))
+  show_exec(os, "insert explicit id", db.exec("INSERT INTO users (id, name) VALUES (10, 'dee')"))
+  show_rows(os, "returning", db.query("INSERT INTO users (name, age) VALUES ('eve', 41) RETURNING id, name, age * 2 AS twice"))
+  show_rows(os, "all", db.query("SELECT * FROM users ORDER BY id"))
+  show_rows(os, "where", db.query("SELECT name, age FROM users WHERE age >= $1 AND active ORDER BY age DESC, name", [sql.int(30)]))
+  show_rows(os, "like in", db.query("SELECT name FROM users WHERE name LIKE '%E' OR id IN (2, 3) ORDER BY name"))
+  show_rows(os, "not like", db.query("SELECT name FROM users WHERE name NOT LIKE '_d%' AND age IS NOT NULL ORDER BY id LIMIT 2 OFFSET 1"))
+  show_rows(os, "nulls first", db.query("SELECT name, age FROM users ORDER BY age, id"))
+  show_rows(os, "count", db.query("SELECT COUNT(*) FROM users WHERE age IS NULL"))
+  show_rows(os, "count alias", db.query("SELECT COUNT(*) AS n, COUNT(*) FROM users"))
+  show_rows(os, "arith", db.query("SELECT id + 1, age / 2, score * 2, 7 / 2.0 AS q, -age FROM users WHERE id = 1"))
+  show_rows(os, "table.col", db.query("SELECT users.name FROM users WHERE users.id = 3"))
+  show_rows(os, "limit big", db.query("SELECT id FROM users LIMIT 100 OFFSET 4"))
+  // errors
+  show_rows(os, "no table", db.query("SELECT * FROM nope"))
+  show_rows(os, "syntax", db.query("SELECT * FROM users WHERE"))
+  show_rows(os, "syntax 2", db.query("SELECT name users"))
+  show_rows(os, "bad char", db.query("SELECT # FROM users"))
+  show_rows(os, "unterminated", db.query("SELECT 'abc FROM users"))
+  show_rows(os, "no column", db.query("SELECT nope FROM users"))
+  show_rows(os, "mixed count", db.query("SELECT COUNT(*), name FROM users"))
+  show_rows(os, "two stmts", db.query("SELECT * FROM users; SELECT * FROM users"))
+  show_rows(os, "query exec", db.query("DELETE FROM users WHERE id = 99"))
+  show_rows(os, "div zero", db.query("SELECT age / 0 FROM users WHERE id = 1"))
+  show_rows(os, "cmp types", db.query("SELECT name FROM users WHERE name = 3"))
+  show_rows(os, "negative limit", db.query("SELECT id FROM users LIMIT -1"))
+  show_exec(os, "exec select", db.exec("SELECT * FROM users"))
+  show_exec(os, "empty", db.exec(" ; "))
+  show_exec(os, "several args", db.exec("DELETE FROM tags; DELETE FROM tags", [sql.int(1)]))
+  show_exec(os, "bad type", db.exec("CREATE TABLE z (a BLOB)"))
+  show_exec(os, "exists", db.exec("CREATE TABLE tags (a INT)"))
+  // rows
+  match db.query_one("SELECT * FROM users WHERE name = $1", [sql.str("bob")]) {
+    Ok(r) => {
+      os.stdio.println("bob cols ${r.columns().join(",")}")
+      os.stdio.println("bob age ${rv(r.int("age"))} ${ro(r.int_opt("age"))} ${rv(r.is_null("age"))} ${rv(r.str("age"))}")
+      os.stdio.println("bob score ${rv(r.float("score"))} ${ro(r.float_opt("score"))} ${rv(r.int("score"))}")
+      os.stdio.println("bob active ${rv(r.bool("active"))} ${ro(r.bool_opt("active"))} ${ro(r.str_opt("nope"))}")
+      os.stdio.println("bob seen ${ro(r.time_opt("seen"))} ${rv(r.time("seen"))}")
+      os.stdio.println("bob id as float ${rv(r.float("id"))}")
+    }
+    Err(e) => os.stdio.println("bob: ${e}")
+  }
+  match db.query_one("SELECT * FROM users WHERE id = 1000") {
+    Ok(_) => os.stdio.println("found")
+    Err(e) => os.stdio.println("none: ${e}")
+  }
+  // decode
+  match db.query_as[User]("SELECT * FROM users ORDER BY id") {
+    Ok(us) => {
+      for u in us {
+        os.stdio.println("user ${u.id} ${u.name} ${opt(u.age)} ${u.score} ${u.active} ${opt(u.seen)}")
+      }
+    }
+    Err(e) => os.stdio.println("query_as: ${e}")
+  }
+  match db.query_as[Short]("SELECT name, age FROM users ORDER BY id") {
+    Ok(us) => os.stdio.println("short ${us.len()}")
+    Err(e) => os.stdio.println("short: ${e}")
+  }
+  match db.query_one_as[Short]("SELECT name FROM users") {
+    Ok(_) => os.stdio.println("short one")
+    Err(e) => os.stdio.println("short one: ${e}")
+  }
+  match db.query_one_as[User]("SELECT * FROM users WHERE id = $1", [sql.int(10)]) {
+    Ok(u) => os.stdio.println("dee ${u.name} ${opt(u.age)}")
+    Err(e) => os.stdio.println("dee: ${e}")
+  }
+  // update and delete
+  show_rows(os, "update returning", db.query("UPDATE users SET age = age + 1, active = NOT active WHERE age < 40 RETURNING name, age, active"))
+  show_exec(os, "update unique", db.exec("UPDATE users SET name = 'ada' WHERE id = 2"))
+  show_exec(os, "update all", db.exec("UPDATE users SET score = score + 1"))
+  show_rows(os, "delete returning", db.query("DELETE FROM users WHERE id > $1 RETURNING *", [sql.int(10)]))
+  show_exec(os, "delete", db.exec("DELETE FROM users WHERE age IS NULL"))
+  show_rows(os, "left", db.query("SELECT id, name, score FROM users ORDER BY id"))
+  // transactions
+  match db.begin() {
+    Ok(tx) => {
+      show_exec(os, "tx insert", tx.exec("INSERT INTO tags (label) VALUES ('a'), ('b')"))
+      show_exec(os, "tx bad", tx.exec("INSERT INTO tags (label) VALUES (NULL)"))
+      show_rows(os, "tx sees", tx.query("SELECT * FROM tags ORDER BY id"))
+      show_rows(os, "db does not", db.query("SELECT * FROM tags"))
+      match tx.commit() {
+        Ok(_) => os.stdio.println("committed")
+        Err(e) => os.stdio.println("commit: ${e}")
+      }
+      match tx.commit() {
+        Ok(_) => os.stdio.println("committed twice")
+        Err(e) => os.stdio.println("commit again: ${e}")
+      }
+      show_exec(os, "tx done", tx.exec("DELETE FROM tags"))
+      match tx.rollback() {
+        Ok(_) => os.stdio.println("rollback after commit ok")
+        Err(e) => os.stdio.println("rollback: ${e}")
+      }
+    }
+    Err(e) => os.stdio.println("begin: ${e}")
+  }
+  show_rows(os, "after commit", db.query("SELECT * FROM tags ORDER BY id"))
+  match db.begin() {
+    Ok(tx) => {
+      show_exec(os, "tx2 delete", tx.exec("DELETE FROM tags"))
+      show_rows(os, "tx2 sees", tx.query("SELECT COUNT(*) FROM tags"))
+      match tx.rollback() {
+        Ok(_) => os.stdio.println("rolled back")
+        Err(e) => os.stdio.println("rollback: ${e}")
+      }
+    }
+    Err(e) => os.stdio.println("begin: ${e}")
+  }
+  show_rows(os, "after rollback", db.query("SELECT label FROM tags ORDER BY label DESC"))
+  show_exec(os, "drop", db.exec("DROP TABLE tags; DROP TABLE IF EXISTS tags"))
+  show_exec(os, "drop again", db.exec("DROP TABLE tags"))
+  match sql.memory("CREATE TABLE t (a INT, PRIMARY KEY (a)); INSERT INTO t VALUES (5); INSERT INTO t VALUES (NULL)") {
+    Ok(d2) => show_rows(os, "pk", d2.query("SELECT a FROM t"))
+    Err(e) => os.stdio.println("pk: ${e}")
+  }
+  match sql.memory("CREATE TABLE t (a INT") {
+    Ok(_) => os.stdio.println("open schema")
+    Err(e) => os.stdio.println("bad schema: ${e}")
+  }
+  match db.close() {
+    Ok(_) => os.stdio.println("closed")
+    Err(e) => os.stdio.println("close: ${e}")
+  }
+  show_rows(os, "after close", db.query("SELECT * FROM users"))
+  match db.ping() {
+    Ok(_) => os.stdio.println("ping")
+    Err(e) => os.stdio.println("ping: ${e}")
+  }
+  match sql.open(os.net, "postgres", "x") {
+    Ok(_) => os.stdio.println("opened")
+    Err(e) => os.stdio.println("open: ${e}")
+  }
+  match sql.open(os.net, "postgres", "x", max_open: 0) {
+    Ok(_) => os.stdio.println("opened")
+    Err(e) => os.stdio.println("open: ${e}")
+  }
+}

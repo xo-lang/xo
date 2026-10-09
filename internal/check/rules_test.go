@@ -256,6 +256,8 @@ func TestMutation(t *testing.T) {
 		{name: "moved buffer", src: "fn f() -> List[Int] {\n  var b = Buf[Int].with_capacity(8)\n  b.push(1)\n  let xs = b.freeze()\n  b.push(2)\n  xs\n}\n", want: []string{"XO0510"}},
 		{name: "buffer ok", src: "fn f() -> List[Int] {\n  var b = Buf[Int].new()\n  b.push(1)\n  b.push(2)\n  b.freeze()\n}\n"},
 		{name: "buffer passed then used", src: "fn take(b: Buf[Int]) -> Int { b.len() }\nfn f() -> Int {\n  let b = Buf[Int].new()\n  let n = take(b)\n  n + b.len()\n}\n", want: []string{"XO0510"}},
+		{name: "builder declared in loop body", src: "fn f(xs: List[Int]) -> Str {\n  var out = \"\"\n  for _x in xs {\n    var b = StrBuilder.new()\n    b.write(\"a\")\n    out = out + b.freeze()\n  }\n  out\n}\n"},
+		{name: "builder let in loop body", src: "fn f(xs: List[Int]) -> Str {\n  var out = \"\"\n  for _x in xs {\n    let b = StrBuilder.new()\n    out = out + b.freeze()\n  }\n  out\n}\n"},
 		{name: "buffer moved in loop", src: "fn take(b: StrBuilder) -> Str { b.freeze() }\nfn f(xs: List[Int]) {\n  let b = StrBuilder.new()\n  for _x in xs {\n    let _s = take(b)\n  }\n}\n", want: []string{"XO0510"}},
 		{name: "bytes builder moved by freeze", src: "fn f() -> Bytes {\n  var b = BytesBuilder.new()\n  b.write_byte(1)\n  let out = b.freeze()\n  b.write(out)\n  out\n}\n", want: []string{"XO0510"}},
 		{name: "buffer reassigned", src: "fn f() -> Str {\n  var b = StrBuilder.new()\n  let s = b.freeze()\n  b = StrBuilder.new()\n  b.write(s)\n  b.freeze()\n}\n"},

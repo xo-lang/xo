@@ -194,8 +194,18 @@ func (w *moveWalker) stmt(s ast.Stmt) {
 		w.expr(x.X, false)
 	case *ast.LetStmt:
 		w.expr(x.Value, true)
+		// a binding declared in a loop body is a new binding each time
+		// round: a move in the last iteration does not carry over
+		if bp, ok := x.Pattern.(*ast.BindPat); ok {
+			if v := w.c.identObj[bp.Name]; v != nil {
+				delete(w.moved, v)
+			}
+		}
 	case *ast.VarStmt:
 		w.expr(x.Value, true)
+		if v := w.c.identObj[x.Name]; v != nil {
+			delete(w.moved, v)
+		}
 	case *ast.AssignStmt:
 		w.expr(x.Value, true)
 		if id, ok := x.Target.(*ast.Ident); ok && x.Op == token.Assign {

@@ -204,10 +204,10 @@ func (g *sgen) checkType(t *ssa.Type, path map[*ssa.Type]bool) {
 		for _, e := range t.Elems {
 			g.checkType(e, path)
 		}
-	case ssa.KList:
-		g.checkType(t.Elems[0], path)
 	}
-	// boxes and function values are on the heap: no recursion by value
+	// boxes, lists, and function values are on the heap: no recursion by
+	// value (an enum holding a List of itself is fine; the element type
+	// is checked when it is lowered itself)
 }
 
 func (g *sgen) fname(n string) string { return "@" + strconv.Quote("x."+n) }

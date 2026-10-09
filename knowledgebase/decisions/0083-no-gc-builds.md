@@ -62,6 +62,27 @@ as stable diagnostics before anything is generated.
      outputs of std/rt/testdata, and mutated hashes, under
      AddressSanitizer and UBSan. `Bytes.from_hex` and `Str.runes` were
      added to the native prelude on the way.
+   - **std/sql with the in memory driver** (`std/native/sql.xo`,
+     `rtsql.xo`, `internal/ssa/build_sql.go`; golden `native_sql`): a
+     port of std/rt/sqlmem.go and sql.go to Xo, statement for statement,
+     with the same results and error texts (Go's `%T` names included).
+     Ported to Xo rather than C: tables, rows, and values are Xo values,
+     so reference counting manages them and a statement's private copy
+     of the tables is shared until written (the Go driver's copy on
+     write by hand); C would have needed a value bridge for every row.
+     The database is a `Mutex`, the single writer permit of
+     transactions a channel holding one token. `derive SqlRow` decoding
+     is the generic intrinsic `sql_decode[T, R]`, lowered to a function
+     per struct that calls the Row accessor of each field's type. Not
+     ported: the `max_open` pool bound (the in memory driver runs one
+     statement at a time, so nothing waits on it), drivers registered
+     from Go (`sql.open` reports an unknown driver, as std/rt does with
+     none registered), and the Debug text of a `Row`. On the way:
+     wrapping, checked, and saturating Int methods in the native
+     prelude; lowered types named after the implementation types and
+     generic instances keyed by checker types
+     (`gotchas/ssa-types-that-lower-alike.md`); LLVM accepts an enum
+     holding a List of itself (`gotchas/llvm-recursion-through-list.md`).
 
 ## Consequences
 - `xo build --backend=llvm` of an unsupported program now fails with

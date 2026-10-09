@@ -1,0 +1,27 @@
+// An enum that holds a List of itself (recursion through the heap, no
+// box): the LLVM lowering once rejected it as recursive by value.
+enum Node {
+  Lit(v: Int)
+  Bin(op: Str, l: Node, r: Node)
+  InList(x: Node, items: List[Node])
+}
+
+fn eval(n: Node) -> Int {
+  match n {
+    Lit(v) => v
+    Bin(op, l, r) => if op == "+" { eval(l) + eval(r) } else { eval(l) * eval(r) }
+    InList(x, items) => {
+      var t = eval(x)
+      for it in items {
+        t += eval(it)
+      }
+      t
+    }
+  }
+}
+
+fn main(os: Os) {
+  let a = Node.Bin(op: "+", l: Node.Lit(v: 1), r: Node.Lit(v: 2))
+  let b = Node.InList(x: a, items: [Node.Lit(v: 10), Node.Bin(op: "*", l: a, r: a), Node.InList(x: Node.Lit(v: 5), items: [])])
+  os.stdio.println("${eval(a)} ${eval(b)} ${a == a} ${b != a}")
+}

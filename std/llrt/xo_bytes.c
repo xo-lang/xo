@@ -421,6 +421,35 @@ xo_rstr *xo_bytes_hex(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+// xo_int_wrap is Int arithmetic that wraps like Go's int64 (op 0 +,
+// 1 -, 2 *): Int.wrapping_add, wrapping_sub, wrapping_mul.
+int64_t xo_int_wrap(int64_t op, int64_t a, int64_t b) {
+	uint64_t x = (uint64_t)a, y = (uint64_t)b;
+	switch (op) {
+	case 0:
+		return (int64_t)(x + y);
+	case 1:
+		return (int64_t)(x - y);
+	}
+	return (int64_t)(x * y);
+}
+
+// xo_int_fits reports whether a op b fits an Int (op 0 +, 1 -, 2 *,
+// 3 /: b is not 0 and not MinInt / -1): the checked_ and saturating_
+// methods.
+int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
+	int64_t r;
+	switch (op) {
+	case 0:
+		return !__builtin_add_overflow(a, b, &r);
+	case 1:
+		return !__builtin_sub_overflow(a, b, &r);
+	case 2:
+		return !__builtin_mul_overflow(a, b, &r);
+	}
+	return b != 0 && !(b == -1 && a == INT64_MIN);
+}
+
 static int n_hex_val(char c) {
 	if (c >= '0' && c <= '9') {
 		return c - '0';

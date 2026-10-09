@@ -87,6 +87,37 @@ func (b *builder) implType(obj *check.TypeObj) *check.TypeObj {
 	return t
 }
 
+// implNamed is t with every std type that has an implementation type
+// (implType) replaced by it, in t's arguments too, for the names of
+// lowered types: a std type and its implementation lower to the same
+// type, so the types built from them must too.
+func (b *builder) implNamed(t check.Type) check.Type {
+	switch r := check.Resolve(check.Deep(t)).(type) {
+	case *check.Named:
+		obj := r.Obj
+		if r.Obj.Kind == check.KStruct {
+			if it := b.implType(r.Obj); it != nil {
+				obj = it
+			}
+		}
+		if obj == r.Obj && len(r.Args) == 0 {
+			return r
+		}
+		args := make([]check.Type, len(r.Args))
+		for i, a := range r.Args {
+			args[i] = b.implNamed(a)
+		}
+		return &check.Named{Obj: obj, Args: args}
+	case *check.Tuple:
+		es := make([]check.Type, len(r.Elems))
+		for i, e := range r.Elems {
+			es[i] = b.implNamed(e)
+		}
+		return &check.Tuple{Elems: es}
+	}
+	return t
+}
+
 // isNeverResult reports whether t is Result[T, Never], which is lowered
 // as T.
 func isNeverResult(t check.Type) bool {
@@ -157,6 +188,9 @@ func (s *fn) genericIntrinsic(x *ast.CallExpr, ci *check.Call, es []ast.Expr) *V
 	fo := ci.Fn
 	nt := s.natOf(x)
 	m := b.mod
+	if v, ok := s.sqlIntrinsic(x, ci, es); ok {
+		return v
+	}
 	if v, ok := s.jsonIntrinsic(x, ci, es); ok {
 		return v
 	}

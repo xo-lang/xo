@@ -65,6 +65,10 @@ fn bytes_decode(b: Bytes, i: Int) -> Int
 fn bytes_rune_count(b: Bytes) -> Int
 /// The lowercase hex of b.
 fn bytes_hex(b: Bytes) -> Str
+/// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *).
+fn int_wrap(op: Int, a: Int, b: Int) -> Int
+/// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
+fn int_fits(op: Int, a: Int, b: Int) -> Bool
 /// Whether s is hexadecimal that hex.DecodeString accepts.
 fn bytes_hex_ok(s: Str) -> Bool
 /// The bytes of hexadecimal that bytes_hex_ok accepted.

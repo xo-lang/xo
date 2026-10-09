@@ -984,7 +984,12 @@ pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 
 Status: draft, implemented with an in memory driver only (2026-10-08). Real
 drivers (Postgres, SQLite, ...) are Go packages bound with `use go` and
-registered with `rt.RegisterSqlDriver`; none ships yet.
+registered with `rt.RegisterSqlDriver`; none ships yet. Native builds
+(`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
+with the same results and error texts; there `sql.open` always reports an
+unknown driver (no Go drivers), `max_open` does not bound the in memory
+driver (it runs one statement at a time), and a `Row`'s Debug text is its
+fields.
 
 ### 10.1 Opening
 

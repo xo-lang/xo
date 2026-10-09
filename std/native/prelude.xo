@@ -118,6 +118,52 @@ fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
   (Rune(p >> 3), p & 7)
 }
 
+fn int_wrapping_add(n: Int, m: Int) -> Int { rt.int_wrap(0, n, m) }
+
+fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
+
+fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
+
+fn checked(op: Int, n: Int, m: Int) -> Int? {
+  if !rt.int_fits(op, n, m) {
+    return None
+  }
+  if op == 3 {
+    return Some(n / m)
+  }
+  Some(rt.int_wrap(op, n, m))
+}
+
+fn int_checked_add(n: Int, m: Int) -> Int? { checked(0, n, m) }
+
+fn int_checked_sub(n: Int, m: Int) -> Int? { checked(1, n, m) }
+
+fn int_checked_mul(n: Int, m: Int) -> Int? { checked(2, n, m) }
+
+fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
+
+/// The bound an overflowing a op b saturates to.
+fn saturated(op: Int, n: Int, m: Int) -> Int {
+  let max = 9223372036854775807
+  let min = -9223372036854775807 - 1
+  if rt.int_fits(op, n, m) {
+    return rt.int_wrap(op, n, m)
+  }
+  if op == 0 {
+    return if m > 0 { max } else { min }
+  }
+  if op == 1 {
+    return if m > 0 { min } else { max }
+  }
+  if (n < 0) != (m < 0) { min } else { max }
+}
+
+fn int_saturating_add(n: Int, m: Int) -> Int { saturated(0, n, m) }
+
+fn int_saturating_sub(n: Int, m: Int) -> Int { saturated(1, n, m) }
+
+fn int_saturating_mul(n: Int, m: Int) -> Int { saturated(2, n, m) }
+
 fn int_parse(s: Str) -> Int? {
   if rt.int_parse_ok(s) {
     return Some(rt.int_parse(s))

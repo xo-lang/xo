@@ -1,0 +1,10 @@
+// Intrinsics of std/sql on the native backends (decision 0083), imported
+// by std/native/sql.xo as `use native/rtsql`. Lowered by internal/ssa
+// (build_sql.go), not by the C runtime.
+use std/sql
+
+/// The row r (of the implementation's Row type R) decoded into the struct
+/// T (`derive SqlRow`, std.md 10.4): each field from the column of its
+/// name through R's accessor of the field's type (`int`, `str_opt`, ...),
+/// in declaration order; the first failure is the result.
+fn sql_decode[T, R](r: R) -> T ! sql.SqlErr

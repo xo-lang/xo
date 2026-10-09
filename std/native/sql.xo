@@ -1,0 +1,1790 @@
+// std/sql on the native backends (decision 0083): the in memory driver of
+// std/rt/sqlmem.go and the Db, Tx, and Row of std/rt/sql.go, ported to Xo
+// with the same statements, results, and error texts. Tables are values:
+// a statement works on a copy of the table map (shared until written, so
+// a copy is cheap) and publishes it only when it succeeds; a transaction
+// is its own copy, published by commit. The database is a Mutex; the
+// single writer permit of transactions is a channel holding one token.
+//
+// Not ported: the pool bound of max_open (the in memory driver runs one
+// statement at a time, so it never waits on it) and drivers registered
+// from Go (`sql.open` reports an unknown driver, as std/rt does when none
+// is registered).
+use std/sql
+use std/task
+use native/rt
+use native/rtsql
+
+// ---------------------------------------------------------------------------
+// Handles
+
+struct Db {
+  st: Mutex[Store]
+  /// One token: the permit of the single open transaction.
+  writer: Chan[Bool]
+  closed: Atomic[Bool]
+}
+
+struct Store {
+  tables: Map[Str, Table]
+}
+
+struct Tx {
+  st: Mutex[TxState]
+  db: Db
+}
+
+struct TxState {
+  tables: Map[Str, Table]
+  done: Bool
+}
+
+struct Row {
+  cols: List[Str]
+  vals: List[sql.SqlValue]
+}
+
+fn null() -> sql.SqlValue { sql.SqlValue.Null }
+
+fn int(n: Int) -> sql.SqlValue { sql.SqlValue.Integer(n: n) }
+
+fn str(s: Str) -> sql.SqlValue { sql.SqlValue.Text(s: s) }
+
+fn float(f: Float) -> sql.SqlValue { sql.SqlValue.Real(f: f) }
+
+fn bool(b: Bool) -> sql.SqlValue { sql.SqlValue.Flag(b: b) }
+
+fn time(t: Time) -> sql.SqlValue { sql.SqlValue.At(t: t) }
+
+fn new_db(tables: Map[Str, Table]) -> Db {
+  let w: Chan[Bool] = Chan.new(cap: 1)
+  w.send(true)
+  Db{st: Mutex.new(Store{tables: tables}), writer: w, closed: Atomic.new(false)}
+}
+
+fn memory(schema: Str = "") -> Db ! sql.SqlErr {
+  var tables: Map[Str, Table] = {}
+  if !schema.trim().is_empty() {
+    mem_exec(tables, schema, [])?
+  }
+  new_db(tables)
+}
+
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if max_open < 1 {
+    return Err(sql.SqlErr.Param(msg: "max_open must be at least 1"))
+  }
+  Err(sql.SqlErr.Driver(msg: "unknown driver ${driver}"))
+}
+
+fn (d: Db) ready() -> () ! sql.SqlErr {
+  if d.closed.get() {
+    return Err(sql.SqlErr.Closed)
+  }
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+}
+
+fn to_rows(cols: List[Str], rows: List[List[sql.SqlValue]]) -> List[Row] {
+  var out: List[Row] = []
+  for r in rows {
+    out.push(Row{cols: cols, vals: r})
+  }
+  out
+}
+
+fn (d: Db) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
+  d.ready()?
+  let res = d.st.with(fn(var st) -> Rows ! sql.SqlErr {
+    var work = st.tables
+    let r = mem_run(work, q, args)?
+    st.tables = work
+    r
+  })?
+  to_rows(res.cols, res.rows)
+}
+
+fn (d: Db) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
+  let rows = d.query(q, args)?
+  if rows.is_empty() {
+    return Err(sql.SqlErr.NoRows)
+  }
+  rows[0]
+}
+
+fn (d: Db) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  d.ready()?
+  d.st.with(fn(var st) -> sql.ExecResult ! sql.SqlErr {
+    var work = st.tables
+    let r = mem_exec(work, q, args)?
+    st.tables = work
+    r
+  })
+}
+
+fn (d: Db) query_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> List[T] ! sql.SqlErr uses net.dial {
+  decode_all(d.query(q, args)?)
+}
+
+fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> T ! sql.SqlErr uses net.dial {
+  d.query_one(q, args)?.decode[T]()
+}
+
+fn decode_all[T: SqlRow](rows: List[Row]) -> List[T] ! sql.SqlErr {
+  var out: List[T] = []
+  for r in rows {
+    out.push(r.decode[T]()?)
+  }
+  out
+}
+
+fn (d: Db) ping() -> () ! sql.SqlErr uses net.dial { d.ready()? }
+
+fn (d: Db) close() -> () ! sql.SqlErr {
+  d.closed.set(true)
+}
+
+fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
+  d.ready()?
+  // the single writer permit; waiting is a cancellation point
+  if d.writer.recv() is None {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let tables = d.st.with_read(fn(st) { st.tables })
+  Tx{st: Mutex.new(TxState{tables: tables, done: false}), db: d}
+}
+
+fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let res = t.st.with(fn(var ts) -> Rows ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    var work = ts.tables
+    let r = mem_run(work, q, args)?
+    ts.tables = work
+    r
+  })?
+  to_rows(res.cols, res.rows)
+}
+
+fn (t: Tx) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr uses net.dial {
+  let rows = t.query(q, args)?
+  if rows.is_empty() {
+    return Err(sql.SqlErr.NoRows)
+  }
+  rows[0]
+}
+
+fn (t: Tx) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    // a failed statement leaves the transaction as it was
+    var work = ts.tables
+    let r = mem_exec(work, q, args)?
+    ts.tables = work
+    r
+  })
+}
+
+fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> List[T] ! sql.SqlErr uses net.dial {
+  decode_all(t.query(q, args)?)
+}
+
+fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> T ! sql.SqlErr uses net.dial {
+  t.query_one(q, args)?.decode[T]()
+}
+
+fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
+  let db = t.db
+  t.st.with(fn(var ts) -> () ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    ts.done = true
+    let tables = ts.tables
+    db.st.with(fn(var st) { st.tables = tables })
+    db.writer.send(true)
+  })
+}
+
+fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
+  let db = t.db
+  t.st.with(fn(var ts) {
+    if !ts.done {
+      ts.done = true
+      db.writer.send(true)
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Row
+
+fn (r: Row) columns() -> List[Str] { r.cols }
+
+fn (r: Row) decode[T: SqlRow]() -> T ! sql.SqlErr { rtsql.sql_decode[T, Row](r) }
+
+fn (r: Row) get(name: Str) -> sql.SqlValue ! sql.SqlErr {
+  for (i, c) in r.cols.indexed() {
+    if c == name {
+      return r.vals[i]
+    }
+  }
+  Err(sql.SqlErr.NoColumn(name: name))
+}
+
+fn type_name(v: sql.SqlValue) -> Str {
+  match v {
+    Integer(_) => "an integer"
+    Text(_) => "text"
+    Real(_) => "a float"
+    Flag(_) => "a boolean"
+    At(_) => "a time"
+    Null => "a value"
+  }
+}
+
+fn mismatch(name: Str, want: Str, v: sql.SqlValue) -> sql.SqlErr {
+  let got = if v is Null { "NULL" } else { type_name(v) }
+  sql.SqlErr.Mismatch(column: name, msg: "expected ${want}, found ${got}")
+}
+
+fn (r: Row) is_null(name: Str) -> Bool ! sql.SqlErr { r.get(name)? is Null }
+
+fn (r: Row) int(name: Str) -> Int ! sql.SqlErr {
+  match r.get(name)? {
+    Integer(n) => n
+    v => Err(mismatch(name, "an integer", v))
+  }
+}
+
+fn (r: Row) str(name: Str) -> Str ! sql.SqlErr {
+  match r.get(name)? {
+    Text(s) => s
+    v => Err(mismatch(name, "text", v))
+  }
+}
+
+fn (r: Row) float(name: Str) -> Float ! sql.SqlErr {
+  match r.get(name)? {
+    Real(f) => f
+    Integer(n) => Float(n)
+    v => Err(mismatch(name, "a float", v))
+  }
+}
+
+fn (r: Row) bool(name: Str) -> Bool ! sql.SqlErr {
+  match r.get(name)? {
+    Flag(b) => b
+    v => Err(mismatch(name, "a boolean", v))
+  }
+}
+
+fn (r: Row) time(name: Str) -> Time ! sql.SqlErr {
+  match r.get(name)? {
+    At(t) => t
+    v => Err(mismatch(name, "a time", v))
+  }
+}
+
+fn (r: Row) int_opt(name: Str) -> Int? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Integer(n) => Some(n)
+    v => Err(mismatch(name, "an integer", v))
+  }
+}
+
+fn (r: Row) str_opt(name: Str) -> Str? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Text(s) => Some(s)
+    v => Err(mismatch(name, "text", v))
+  }
+}
+
+fn (r: Row) float_opt(name: Str) -> Float? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Real(f) => Some(f)
+    Integer(n) => Some(Float(n))
+    v => Err(mismatch(name, "a float", v))
+  }
+}
+
+fn (r: Row) bool_opt(name: Str) -> Bool? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Flag(b) => Some(b)
+    v => Err(mismatch(name, "a boolean", v))
+  }
+}
+
+fn (r: Row) time_opt(name: Str) -> Time? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    At(t) => Some(t)
+    v => Err(mismatch(name, "a time", v))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+
+// Column kinds (std/rt's 'i', 't', 'r', 'b', 'T').
+const KI = 1
+const KT = 2
+const KR = 3
+const KB = 4
+const KTIME = 5
+
+struct Col {
+  name: Str
+  kind: Int
+  not_null: Bool = false
+  unique: Bool = false
+  pk: Bool = false
+  auto: Bool = false
+  def: sql.SqlValue = sql.SqlValue.Null
+}
+
+struct Table {
+  name: Str
+  cols: List[Col]
+  rows: List[List[sql.SqlValue]]
+  next_id: Int
+}
+
+fn (t: Table) index(name: Str) -> Int {
+  for (i, c) in t.cols.indexed() {
+    if c.name == name {
+      return i
+    }
+  }
+  -1
+}
+
+/// The rows of a query.
+struct Rows {
+  cols: List[Str]
+  rows: List[List[sql.SqlValue]]
+}
+
+// ---------------------------------------------------------------------------
+// Lexer
+
+const T_EOF = 0
+const T_IDENT = 1
+const T_INT = 2
+const T_FLOAT = 3
+const T_STR = 4
+const T_PARAM = 5
+const T_SYM = 6
+
+struct Tok {
+  k: Int
+  s: Str = ""
+  i: Int = 0
+  f: Float = 0.0
+}
+
+fn syntax(msg: Str) -> sql.SqlErr { sql.SqlErr.Syntax(msg: msg) }
+
+/// The rune at byte i of b and its size.
+fn rune_at(b: Bytes, i: Int) -> (Rune, Int) {
+  let p = rt.bytes_decode(b, i)
+  (Rune(p >> 3), p & 7)
+}
+
+fn is_ident_rune(c: Rune) -> Bool { c.is_letter() || c.is_digit() || c == '_' }
+
+fn lex(q: Str) -> List[Tok] ! sql.SqlErr {
+  let b = q.bytes()
+  let n = b.len()
+  var out: List[Tok] = []
+  var i = 0
+  while i < n {
+    let (c, size) = rune_at(b, i)
+    if c.is_space() {
+      i += size
+    } else if c == '-' && i + 1 < n && b[i + 1] == 45 {
+      while i < n && b[i] != 10 {
+        i += 1
+      }
+    } else if c.is_letter() || c == '_' {
+      var j = i
+      while j < n {
+        let (d, ds) = rune_at(b, j)
+        if !is_ident_rune(d) {
+          break
+        }
+        j += ds
+      }
+      out.push(Tok{k: T_IDENT, s: q[i..j].to_lower()})
+      i = j
+    } else if c.is_digit() {
+      var j = i
+      var is_f = false
+      while j < n {
+        let (d, ds) = rune_at(b, j)
+        if !(d.is_digit() || (d == '.' && !is_f)) {
+          break
+        }
+        if d == '.' {
+          is_f = true
+        }
+        j += ds
+      }
+      let s = q[i..j]
+      if is_f {
+        match Float.parse(s) {
+          Some(f) => out.push(Tok{k: T_FLOAT, f: f})
+          None => return Err(syntax("bad number ${s.quote()}"))
+        }
+      } else {
+        match Int.parse(s) {
+          Some(v) => out.push(Tok{k: T_INT, i: v})
+          None => return Err(syntax("bad number ${s.quote()}"))
+        }
+      }
+      i = j
+    } else if c == '\'' {
+      var sb = ""
+      var j = i + 1
+      var closed = false
+      var start = j
+      while j < n {
+        if b[j] == 39 {
+          if j + 1 < n && b[j + 1] == 39 {
+            sb = sb + q[start..j + 1]
+            j += 2
+            start = j
+            continue
+          }
+          sb = sb + q[start..j]
+          closed = true
+          j += 1
+          break
+        }
+        j += rune_at(b, j).1
+      }
+      if !closed {
+        return Err(syntax("unterminated string"))
+      }
+      out.push(Tok{k: T_STR, s: sb})
+      i = j
+    } else if c == '$' {
+      var j = i + 1
+      while j < n {
+        let (d, ds) = rune_at(b, j)
+        if !d.is_digit() {
+          break
+        }
+        j += ds
+      }
+      match Int.parse(q[i + 1..j]) {
+        Some(v) => {
+          if v < 1 {
+            return Err(syntax("bad placeholder"))
+          }
+          out.push(Tok{k: T_PARAM, i: v})
+        }
+        None => return Err(syntax("bad placeholder"))
+      }
+      i = j
+    } else {
+      if i + 1 < n {
+        let two = rt.str_slice(q, i, i + 2)
+        if two == "<=" || two == ">=" || two == "<>" || two == "!=" {
+          out.push(Tok{k: T_SYM, s: two})
+          i += 2
+          continue
+        }
+      }
+      let one = q[i..i + size]
+      if "(),*=<>;.+-/".contains(one) {
+        out.push(Tok{k: T_SYM, s: one})
+        i += size
+        continue
+      }
+      return Err(syntax("unexpected character ${one.quote()}"))
+    }
+  }
+  out.push(Tok{k: T_EOF})
+  out
+}
+
+fn split_statements(toks: List[Tok]) -> List[List[Tok]] {
+  var out: List[List[Tok]] = []
+  var cur: List[Tok] = []
+  for t in toks {
+    if t.k == T_EOF {
+      break
+    }
+    if t.k == T_SYM && t.s == ";" {
+      if !cur.is_empty() {
+        cur.push(Tok{k: T_EOF})
+        out.push(cur)
+      }
+      cur = []
+      continue
+    }
+    cur.push(t)
+  }
+  if !cur.is_empty() {
+    cur.push(Tok{k: T_EOF})
+    out.push(cur)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+
+enum Node {
+  Lit(v: sql.SqlValue)
+  Param(n: Int)
+  Col(name: Str)
+  Count
+  Bin(op: Str, l: Node, r: Node)
+  Not(x: Node)
+  IsNull(x: Node, neg: Bool)
+  InList(x: Node, items: List[Node])
+  Like(l: Node, r: Node)
+}
+
+struct Parser {
+  toks: List[Tok]
+  i: Int = 0
+  max_param: Int = 0
+}
+
+fn (p: Parser) peek() -> Tok { p.toks[p.i] }
+
+fn (var p: Parser) next() -> Tok {
+  let t = p.toks[p.i]
+  if t.k != T_EOF {
+    p.i += 1
+  }
+  t
+}
+
+fn (p: Parser) is_kw(kw: Str) -> Bool {
+  let t = p.peek()
+  t.k == T_IDENT && t.s == kw
+}
+
+fn (p: Parser) is_sym(s: Str) -> Bool {
+  let t = p.peek()
+  t.k == T_SYM && t.s == s
+}
+
+fn (var p: Parser) accept_kw(kw: Str) -> Bool {
+  if p.is_kw(kw) {
+    p.i += 1
+    return true
+  }
+  false
+}
+
+fn (var p: Parser) accept_sym(s: Str) -> Bool {
+  if p.is_sym(s) {
+    p.i += 1
+    return true
+  }
+  false
+}
+
+fn (p: Parser) fail(what: Str) -> sql.SqlErr {
+  let t = p.peek()
+  var got = "end of input"
+  if t.k == T_IDENT || t.k == T_SYM {
+    got = t.s.quote()
+  } else if t.k == T_INT || t.k == T_FLOAT || t.k == T_STR || t.k == T_PARAM {
+    got = "a literal"
+  }
+  syntax("expected ${what}, found ${got}")
+}
+
+fn (var p: Parser) expect_kw(kw: Str) -> () ! sql.SqlErr {
+  if !p.accept_kw(kw) {
+    return Err(p.fail(kw.to_upper()))
+  }
+}
+
+fn (var p: Parser) expect_sym(s: Str) -> () ! sql.SqlErr {
+  if !p.accept_sym(s) {
+    return Err(p.fail(s.quote()))
+  }
+}
+
+fn (var p: Parser) ident(what: Str) -> Str ! sql.SqlErr {
+  let t = p.peek()
+  if t.k != T_IDENT {
+    return Err(p.fail(what))
+  }
+  p.i += 1
+  t.s
+}
+
+fn (var p: Parser) expr() -> Node ! sql.SqlErr { p.or_expr() }
+
+fn (var p: Parser) or_expr() -> Node ! sql.SqlErr {
+  var l = p.and_expr()?
+  while p.accept_kw("or") {
+    let r = p.and_expr()?
+    l = Node.Bin(op: "or", l: l, r: r)
+  }
+  l
+}
+
+fn (var p: Parser) and_expr() -> Node ! sql.SqlErr {
+  var l = p.not_expr()?
+  while p.accept_kw("and") {
+    let r = p.not_expr()?
+    l = Node.Bin(op: "and", l: l, r: r)
+  }
+  l
+}
+
+fn (var p: Parser) not_expr() -> Node ! sql.SqlErr {
+  if p.accept_kw("not") {
+    let x = p.not_expr()?
+    return Node.Not(x: x)
+  }
+  p.cmp_expr()
+}
+
+fn (var p: Parser) cmp_expr() -> Node ! sql.SqlErr {
+  let l = p.add_expr()?
+  let t = p.peek()
+  if t.k == T_SYM && (t.s == "=" || t.s == "!=" || t.s == "<>" || t.s == "<" || t.s == "<=" || t.s == ">" || t.s == ">=") {
+    p.i += 1
+    let r = p.add_expr()?
+    let op = if t.s == "<>" { "!=" } else { t.s }
+    return Node.Bin(op: op, l: l, r: r)
+  }
+  if p.accept_kw("is") {
+    let neg = p.accept_kw("not")
+    p.expect_kw("null")?
+    return Node.IsNull(x: l, neg: neg)
+  }
+  var neg = false
+  if p.is_kw("not") && p.i + 1 < p.toks.len() && p.toks[p.i + 1].k == T_IDENT && (p.toks[p.i + 1].s == "in" || p.toks[p.i + 1].s == "like") {
+    p.i += 1
+    neg = true
+  }
+  var n = l
+  if p.accept_kw("in") {
+    p.expect_sym("(")?
+    var items: List[Node] = []
+    while {
+      let x = p.add_expr()?
+      items.push(x)
+      if !p.accept_sym(",") {
+        break
+      }
+    }
+    p.expect_sym(")")?
+    n = Node.InList(x: l, items: items)
+  } else if p.accept_kw("like") {
+    let r = p.add_expr()?
+    n = Node.Like(l: l, r: r)
+  } else {
+    return l
+  }
+  if neg {
+    return Node.Not(x: n)
+  }
+  n
+}
+
+fn (var p: Parser) add_expr() -> Node ! sql.SqlErr {
+  var l = p.mul_expr()?
+  while p.is_sym("+") || p.is_sym("-") {
+    let op = p.next().s
+    let r = p.mul_expr()?
+    l = Node.Bin(op: op, l: l, r: r)
+  }
+  l
+}
+
+fn (var p: Parser) mul_expr() -> Node ! sql.SqlErr {
+  var l = p.primary()?
+  while p.is_sym("*") || p.is_sym("/") {
+    let op = p.next().s
+    let r = p.primary()?
+    l = Node.Bin(op: op, l: l, r: r)
+  }
+  l
+}
+
+fn (var p: Parser) primary() -> Node ! sql.SqlErr {
+  let t = p.next()
+  if t.k == T_INT {
+    return Node.Lit(v: sql.SqlValue.Integer(n: t.i))
+  }
+  if t.k == T_FLOAT {
+    return Node.Lit(v: sql.SqlValue.Real(f: t.f))
+  }
+  if t.k == T_STR {
+    return Node.Lit(v: sql.SqlValue.Text(s: t.s))
+  }
+  if t.k == T_PARAM {
+    if t.i > p.max_param {
+      p.max_param = t.i
+    }
+    return Node.Param(n: t.i)
+  }
+  if t.k == T_SYM {
+    if t.s == "(" {
+      let x = p.expr()?
+      p.expect_sym(")")?
+      return x
+    }
+    if t.s == "-" {
+      let x = p.primary()?
+      return Node.Bin(op: "-", l: Node.Lit(v: sql.SqlValue.Integer(n: 0)), r: x)
+    }
+  }
+  if t.k == T_IDENT {
+    if t.s == "null" {
+      return Node.Lit(v: sql.SqlValue.Null)
+    }
+    if t.s == "true" {
+      return Node.Lit(v: sql.SqlValue.Flag(b: true))
+    }
+    if t.s == "false" {
+      return Node.Lit(v: sql.SqlValue.Flag(b: false))
+    }
+    if p.is_sym("(") && t.s == "count" {
+      p.i += 1
+      p.expect_sym("*")?
+      p.expect_sym(")")?
+      return Node.Count
+    }
+    if p.accept_sym(".") {
+      // table.column: the table is ignored
+      let c = p.ident("a column name")?
+      return Node.Col(name: c)
+    }
+    return Node.Col(name: t.s)
+  }
+  // back one token, also at the end of input (where next did not
+  // advance): the error names the token before, as std/rt's parser does
+  p.i -= 1
+  Err(p.fail("an expression"))
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation
+
+struct EvalEnv {
+  t: Table?
+  row: List[sql.SqlValue]
+  args: List[sql.SqlValue]
+}
+
+/// Go's %T of a value of the Go driver (for error texts).
+fn go_type(v: sql.SqlValue) -> Str {
+  match v {
+    Integer(_) => "int64"
+    Text(_) => "string"
+    Real(_) => "float64"
+    Flag(_) => "bool"
+    At(_) => "rt.Time"
+    Null => "<nil>"
+  }
+}
+
+fn cmp_int(a: Int, b: Int) -> Int {
+  if a < b {
+    -1
+  } else if a > b {
+    1
+  } else {
+    0
+  }
+}
+
+fn cmp_float(x: Float, y: Float) -> Int {
+  if x < y {
+    -1
+  } else if x > y {
+    1
+  } else {
+    0
+  }
+}
+
+/// The order of two values that are not NULL.
+fn sql_cmp(a: sql.SqlValue, b: sql.SqlValue) -> Int ! sql.SqlErr {
+  match (a, b) {
+    (Integer(x), Integer(y)) => return cmp_int(x, y)
+    (Integer(x), Real(y)) => return cmp_float(Float(x), y)
+    (Real(x), Integer(y)) => return cmp_float(x, Float(y))
+    (Real(x), Real(y)) => return cmp_float(x, y)
+    (Text(x), Text(y)) => return cmp_str(x, y)
+    (Flag(x), Flag(y)) => {
+      if x == y {
+        return 0
+      }
+      return if !x { -1 } else { 1 }
+    }
+    (At(x), At(y)) => return if x < y { -1 } else if x > y { 1 } else { 0 }
+    _ => {}
+  }
+  Err(sql.SqlErr.Driver(msg: "cannot compare ${go_type(a)} with ${go_type(b)}"))
+}
+
+/// strings.Compare.
+fn cmp_str(x: Str, y: Str) -> Int {
+  if x < y {
+    -1
+  } else if x > y {
+    1
+  } else {
+    0
+  }
+}
+
+fn like_at(s: List[Rune], p: List[Rune], i0: Int, j0: Int) -> Bool {
+  var i = i0
+  var j = j0
+  while j < p.len() {
+    let c = p[j]
+    if c == '%' {
+      var k = i
+      while k <= s.len() {
+        if like_at(s, p, k, j + 1) {
+          return true
+        }
+        k += 1
+      }
+      return false
+    }
+    if c == '_' {
+      if i >= s.len() {
+        return false
+      }
+    } else if i >= s.len() || s[i].to_lower() != c.to_lower() {
+      return false
+    }
+    i += 1
+    j += 1
+  }
+  i == s.len()
+}
+
+fn sql_like(s: Str, pat: Str) -> Bool { like_at(s.runes(), pat.runes(), 0, 0) }
+
+fn (e: EvalEnv) eval(n: Node) -> sql.SqlValue ! sql.SqlErr {
+  match n {
+    Lit(v) => return v
+    Param(i) => return e.args[i - 1]
+    Col(name) => {
+      if let Some(t) = e.t {
+        let i = t.index(name)
+        if i >= 0 {
+          return e.row[i]
+        }
+      }
+      return Err(syntax("no such column ${name}"))
+    }
+    Count => return Err(syntax("COUNT(*) is only allowed in the select list"))
+    Not(x) => {
+      return match e.eval(x)? {
+        Flag(b) => sql.SqlValue.Flag(b: !b)
+        _ => sql.SqlValue.Null
+      }
+    }
+    IsNull(x, neg) => {
+      let v = e.eval(x)?
+      return sql.SqlValue.Flag(b: (v is Null) != neg)
+    }
+    InList(x, items) => {
+      let v = e.eval(x)?
+      if v is Null {
+        return sql.SqlValue.Null
+      }
+      for it in items {
+        let w = e.eval(it)?
+        if w is Null {
+          continue
+        }
+        if sql_cmp(v, w)? == 0 {
+          return sql.SqlValue.Flag(b: true)
+        }
+      }
+      return sql.SqlValue.Flag(b: false)
+    }
+    Like(l, r) => {
+      let v = e.eval(l)?
+      let pv = e.eval(r)?
+      if v is Null || pv is Null {
+        return sql.SqlValue.Null
+      }
+      return match (v, pv) {
+        (Text(s), Text(pat)) => sql.SqlValue.Flag(b: sql_like(s, pat))
+        _ => Err(sql.SqlErr.Driver(msg: "LIKE needs text"))
+      }
+    }
+    Bin(op, l, r) => return e.binary(op, l, r)
+  }
+}
+
+fn (e: EvalEnv) binary(op: Str, ln: Node, rn: Node) -> sql.SqlValue ! sql.SqlErr {
+  let l = e.eval(ln)?
+  let r = e.eval(rn)?
+  if op == "and" || op == "or" {
+    let lb = match l {
+      Flag(b) => Some(b)
+      _ => None
+    }
+    let rb = match r {
+      Flag(b) => Some(b)
+      _ => None
+    }
+    if op == "and" {
+      if lb == Some(false) || rb == Some(false) {
+        return sql.SqlValue.Flag(b: false)
+      }
+      if lb.is_some() && rb.is_some() {
+        return sql.SqlValue.Flag(b: true)
+      }
+      return sql.SqlValue.Null
+    }
+    if lb == Some(true) || rb == Some(true) {
+      return sql.SqlValue.Flag(b: true)
+    }
+    if lb.is_some() && rb.is_some() {
+      return sql.SqlValue.Flag(b: false)
+    }
+    return sql.SqlValue.Null
+  }
+  if l is Null || r is Null {
+    return sql.SqlValue.Null
+  }
+  if op == "=" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+    let c = sql_cmp(l, r)?
+    let b = match op {
+      "=" => c == 0
+      "!=" => c != 0
+      "<" => c < 0
+      "<=" => c <= 0
+      ">" => c > 0
+      _ => c >= 0
+    }
+    return sql.SqlValue.Flag(b: b)
+  }
+  // arithmetic: Int with Int wraps like Go's int64, else Float
+  match (l, r) {
+    (Integer(a), Integer(b)) => {
+      return match op {
+        "+" => sql.SqlValue.Integer(n: a.wrapping_add(b))
+        "-" => sql.SqlValue.Integer(n: a.wrapping_sub(b))
+        "*" => sql.SqlValue.Integer(n: a.wrapping_mul(b))
+        _ => {
+          if b == 0 {
+            return Err(sql.SqlErr.Driver(msg: "division by zero"))
+          }
+          sql.SqlValue.Integer(n: a.checked_div(b) ?? a)
+        }
+      }
+    }
+    _ => {}
+  }
+  let x = match l {
+    Integer(a) => Float(a)
+    Real(f) => f
+    _ => return Err(sql.SqlErr.Driver(msg: "arithmetic needs numbers"))
+  }
+  let y = match r {
+    Integer(a) => Float(a)
+    Real(f) => f
+    _ => return Err(sql.SqlErr.Driver(msg: "arithmetic needs numbers"))
+  }
+  match op {
+    "+" => sql.SqlValue.Real(f: x + y)
+    "-" => sql.SqlValue.Real(f: x - y)
+    "*" => sql.SqlValue.Real(f: x * y)
+    _ => {
+      if y == 0.0 {
+        return Err(sql.SqlErr.Driver(msg: "division by zero"))
+      }
+      sql.SqlValue.Real(f: x / y)
+    }
+  }
+}
+
+fn (e: EvalEnv) where_ok(w: Node?) -> Bool ! sql.SqlErr {
+  match w {
+    None => true
+    Some(n) => e.eval(n)? == sql.SqlValue.Flag(b: true)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn check_params(p: Parser, args: List[sql.SqlValue]) -> () ! sql.SqlErr {
+  if p.max_param != args.len() {
+    return Err(sql.SqlErr.Param(msg: "statement has ${p.max_param} placeholders but ${args.len()} arguments were given"))
+  }
+}
+
+/// The outcome of an INSERT, UPDATE, or DELETE.
+struct Write {
+  n: Int = 0
+  id: Int = 0
+  returning: Bool = false
+  cols: List[Str] = []
+  rows: List[List[sql.SqlValue]] = []
+}
+
+const QUERY_NEEDS = "query needs a SELECT statement or a write with RETURNING (use exec for other statements)"
+
+/// Runs a statement that returns rows: a SELECT, or a write with
+/// RETURNING, on tables (a private copy).
+fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+  let stmts = split_statements(lex(q)?)
+  if stmts.len() != 1 {
+    return Err(syntax("expected one statement"))
+  }
+  var p = Parser{toks: stmts[0]}
+  var w = Write{}
+  if p.is_kw("select") {
+    return mem_select(tables, p, args)
+  } else if p.is_kw("insert") {
+    w = mem_insert(tables, p, args)?
+  } else if p.is_kw("update") {
+    w = mem_update(tables, p, args)?
+  } else if p.is_kw("delete") {
+    w = mem_delete(tables, p, args)?
+  } else {
+    return Err(syntax(QUERY_NEEDS))
+  }
+  if p.peek().k != T_EOF {
+    return Err(p.fail("end of statement"))
+  }
+  if !w.returning {
+    return Err(syntax(QUERY_NEEDS))
+  }
+  Rows{cols: w.cols, rows: w.rows}
+}
+
+/// Runs write statements on tables (a private copy).
+fn mem_exec(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr {
+  let stmts = split_statements(lex(q)?)
+  if stmts.is_empty() {
+    return Err(syntax("empty statement"))
+  }
+  if stmts.len() > 1 && !args.is_empty() {
+    return Err(sql.SqlErr.Param(msg: "several statements cannot take arguments"))
+  }
+  var total = 0
+  var last_id = 0
+  for st in stmts {
+    var p = Parser{toks: st}
+    var w = Write{}
+    if p.is_kw("create") {
+      mem_create(tables, p)?
+    } else if p.is_kw("drop") {
+      mem_drop(tables, p)?
+    } else if p.is_kw("insert") {
+      w = mem_insert(tables, p, args)?
+    } else if p.is_kw("update") {
+      w = mem_update(tables, p, args)?
+    } else if p.is_kw("delete") {
+      w = mem_delete(tables, p, args)?
+    } else if p.is_kw("select") {
+      return Err(syntax("exec cannot run a SELECT (use query)"))
+    } else {
+      return Err(p.fail("a statement"))
+    }
+    if p.peek().k != T_EOF {
+      return Err(p.fail("end of statement"))
+    }
+    total += w.n
+    if w.id != 0 {
+      last_id = w.id
+    }
+  }
+  sql.ExecResult{rows_affected: total, last_insert_id: last_id}
+}
+
+fn table_for(tables: Map[Str, Table], name: Str) -> Table ! sql.SqlErr {
+  tables.get(name).or_err(sql.SqlErr.NoTable(name: name))
+}
+
+fn mem_create(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
+  p.i += 1
+  p.expect_kw("table")?
+  var if_not = false
+  if p.accept_kw("if") {
+    p.expect_kw("not")?
+    p.expect_kw("exists")?
+    if_not = true
+  }
+  let name = p.ident("a table name")?
+  if tables.contains(name) {
+    if !if_not {
+      return Err(syntax("table ${name} already exists"))
+    }
+    // consume the definition
+    var depth = 0
+    while p.peek().k != T_EOF {
+      if p.is_sym("(") {
+        depth += 1
+      } else if p.is_sym(")") {
+        depth -= 1
+      }
+      p.i += 1
+      if depth == 0 {
+        break
+      }
+    }
+    return Ok(())
+  }
+  p.expect_sym("(")?
+  var t = Table{name: name, cols: [], rows: [], next_id: 1}
+  var pk_cols: List[Str] = []
+  while {
+    if p.accept_kw("primary") {
+      p.expect_kw("key")?
+      p.expect_sym("(")?
+      while {
+        let c = p.ident("a column name")?
+        pk_cols.push(c)
+        if !p.accept_sym(",") {
+          break
+        }
+      }
+      p.expect_sym(")")?
+    } else {
+      let c = col_def(p)?
+      if t.index(c.name) >= 0 {
+        return Err(syntax("duplicate column ${c.name}"))
+      }
+      t.cols.push(c)
+    }
+    if !p.accept_sym(",") {
+      break
+    }
+  }
+  p.expect_sym(")")?
+  for c in pk_cols {
+    let i = t.index(c)
+    if i < 0 {
+      return Err(syntax("no such column ${c}"))
+    }
+    var col = t.cols[i]
+    col.pk = true
+    col.not_null = true
+    if pk_cols.len() == 1 {
+      col.unique = true
+      col.auto = col.kind == KI
+    }
+    t.cols.set(i, col)
+  }
+  if t.cols.is_empty() {
+    return Err(syntax("a table needs a column"))
+  }
+  tables.put(name, t)
+}
+
+fn col_def(var p: Parser) -> Col ! sql.SqlErr {
+  let name = p.ident("a column name")?
+  let ty = p.ident("a column type")?
+  var c = Col{name: name, kind: 0}
+  match ty {
+    "int" | "integer" | "bigint" | "smallint" | "int64" => c.kind = KI
+    "serial" | "bigserial" => {
+      c.kind = KI
+      c.auto = true
+      c.pk = true
+      c.unique = true
+      c.not_null = true
+    }
+    "text" | "varchar" | "char" | "string" | "uuid" => c.kind = KT
+    "real" | "float" | "double" | "numeric" | "decimal" => {
+      c.kind = KR
+      p.accept_kw("precision")
+    }
+    "bool" | "boolean" => c.kind = KB
+    "timestamp" | "timestamptz" | "datetime" | "time" | "date" => c.kind = KTIME
+    _ => return Err(syntax("unknown column type ${ty}"))
+  }
+  if p.accept_sym("(") {
+    while !p.is_sym(")") && p.peek().k != T_EOF {
+      p.i += 1
+    }
+    p.expect_sym(")")?
+  }
+  while {
+    if p.accept_kw("primary") {
+      p.expect_kw("key")?
+      c.pk = true
+      c.unique = true
+      c.not_null = true
+      c.auto = c.kind == KI
+    } else if p.accept_kw("not") {
+      p.expect_kw("null")?
+      c.not_null = true
+    } else if p.accept_kw("null") {
+    } else if p.accept_kw("unique") {
+      c.unique = true
+    } else if p.accept_kw("autoincrement") {
+      c.auto = true
+    } else if p.accept_kw("default") {
+      match p.primary()? {
+        Lit(v) => c.def = v
+        _ => return Err(syntax("DEFAULT must be a literal"))
+      }
+    } else {
+      return c
+    }
+  }
+  c
+}
+
+fn mem_drop(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
+  p.i += 1
+  p.expect_kw("table")?
+  var if_ex = false
+  if p.accept_kw("if") {
+    p.expect_kw("exists")?
+    if_ex = true
+  }
+  let name = p.ident("a table name")?
+  if !tables.contains(name) {
+    if if_ex {
+      return Ok(())
+    }
+    return Err(sql.SqlErr.NoTable(name: name))
+  }
+  tables.remove(name)
+}
+
+fn kind_want(kind: Int) -> Str {
+  match kind {
+    1 => "an integer"
+    2 => "text"
+    3 => "a float"
+    4 => "a boolean"
+    _ => "a time"
+  }
+}
+
+/// v converted to the column's kind.
+fn coerce(c: Col, v: sql.SqlValue) -> sql.SqlValue ! sql.SqlErr {
+  match v {
+    Null => return v
+    Integer(n) => {
+      if c.kind == KI {
+        return v
+      }
+      if c.kind == KR {
+        return sql.SqlValue.Real(f: Float(n))
+      }
+    }
+    Text(_) => {
+      if c.kind == KT {
+        return v
+      }
+    }
+    Real(_) => {
+      if c.kind == KR {
+        return v
+      }
+    }
+    Flag(_) => {
+      if c.kind == KB {
+        return v
+      }
+    }
+    At(_) => {
+      if c.kind == KTIME {
+        return v
+      }
+    }
+  }
+  Err(sql.SqlErr.Constraint(msg: "column ${c.name} expects ${kind_want(c.kind)}, got ${go_type(v)}"))
+}
+
+fn check_row(t: Table, row: List[sql.SqlValue], skip: Int) -> () ! sql.SqlErr {
+  for (i, c) in t.cols.indexed() {
+    if row[i] is Null && c.not_null {
+      return Err(sql.SqlErr.Constraint(msg: "NOT NULL constraint failed: ${t.name}.${c.name}"))
+    }
+    if c.unique && !(row[i] is Null) {
+      for (j, o) in t.rows.indexed() {
+        if j == skip || o[i] is Null {
+          continue
+        }
+        if let Ok(0) = sql_cmp(o[i], row[i]) {
+          return Err(sql.SqlErr.Constraint(msg: "UNIQUE constraint failed: ${t.name}.${c.name}"))
+        }
+      }
+    }
+  }
+}
+
+fn mem_insert(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+  p.i += 1
+  p.expect_kw("into")?
+  let name = p.ident("a table name")?
+  let old = table_for(tables, name)?
+  var cols: List[Int] = []
+  if p.accept_sym("(") {
+    while {
+      let c = p.ident("a column name")?
+      let i = old.index(c)
+      if i < 0 {
+        return Err(syntax("no such column ${c}"))
+      }
+      cols.push(i)
+      if !p.accept_sym(",") {
+        break
+      }
+    }
+    p.expect_sym(")")?
+  } else {
+    for i in 0..old.cols.len() {
+      cols.push(i)
+    }
+  }
+  p.expect_kw("values")?
+  var tuples: List[List[Node]] = []
+  while {
+    p.expect_sym("(")?
+    var tup: List[Node] = []
+    while {
+      let x = p.expr()?
+      tup.push(x)
+      if !p.accept_sym(",") {
+        break
+      }
+    }
+    p.expect_sym(")")?
+    if tup.len() != cols.len() {
+      return Err(syntax("${cols.len()} columns but ${tup.len()} values"))
+    }
+    tuples.push(tup)
+    if !p.accept_sym(",") {
+      break
+    }
+  }
+  let (ret, has_ret) = p.returning()?
+  check_params(p, args)?
+  var t = old
+  let env = EvalEnv{t: None, row: [], args: args}
+  var last_id = 0
+  for tup in tuples {
+    var row: List[sql.SqlValue] = []
+    for c in t.cols {
+      row.push(c.def)
+    }
+    for (k, ci) in cols.indexed() {
+      let v = env.eval(tup[k])?
+      row.set(ci, coerce(t.cols[ci], v)?)
+    }
+    for (i, c) in t.cols.indexed() {
+      if !c.auto {
+        continue
+      }
+      if row[i] is Null {
+        row.set(i, sql.SqlValue.Integer(n: t.next_id))
+      }
+      if let Integer(id) = row[i] {
+        if id >= t.next_id {
+          t.next_id = id + 1
+        }
+        last_id = id
+      }
+    }
+    check_row(t, row, -1)?
+    t.rows.push(row)
+  }
+  tables.put(name, t)
+  written(t, tuples.len(), last_id, ret, has_ret, t.rows[old.rows.len()..t.rows.len()], args)
+}
+
+struct Asg {
+  col: Int
+  e: Node
+}
+
+fn mem_update(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+  p.i += 1
+  let name = p.ident("a table name")?
+  let old = table_for(tables, name)?
+  p.expect_kw("set")?
+  var asgs: List[Asg] = []
+  while {
+    let c = p.ident("a column name")?
+    let i = old.index(c)
+    if i < 0 {
+      return Err(syntax("no such column ${c}"))
+    }
+    p.expect_sym("=")?
+    let e = p.expr()?
+    asgs.push(Asg{col: i, e: e})
+    if !p.accept_sym(",") {
+      break
+    }
+  }
+  var w: Node? = None
+  if p.accept_kw("where") {
+    w = Some(p.expr()?)
+  }
+  let (ret, has_ret) = p.returning()?
+  check_params(p, args)?
+  var t = old
+  var n = 0
+  var changed: List[List[sql.SqlValue]] = []
+  for ri in 0..t.rows.len() {
+    let row = t.rows[ri]
+    let env = EvalEnv{t: Some(t), row: row, args: args}
+    if !env.where_ok(w)? {
+      continue
+    }
+    var nr = row
+    for a in asgs {
+      let v = env.eval(a.e)?
+      nr.set(a.col, coerce(t.cols[a.col], v)?)
+    }
+    check_row(t, nr, ri)?
+    t.rows.set(ri, nr)
+    changed.push(nr)
+    n += 1
+  }
+  tables.put(name, t)
+  written(t, n, 0, ret, has_ret, changed, args)
+}
+
+fn mem_delete(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+  p.i += 1
+  p.expect_kw("from")?
+  let name = p.ident("a table name")?
+  let old = table_for(tables, name)?
+  var w: Node? = None
+  if p.accept_kw("where") {
+    w = Some(p.expr()?)
+  }
+  let (ret, has_ret) = p.returning()?
+  check_params(p, args)?
+  var t = old
+  t.rows = []
+  var n = 0
+  var gone: List[List[sql.SqlValue]] = []
+  for row in old.rows {
+    let env = EvalEnv{t: Some(old), row: row, args: args}
+    if env.where_ok(w)? {
+      gone.push(row)
+      n += 1
+    } else {
+      t.rows.push(row)
+    }
+  }
+  tables.put(name, t)
+  written(old, n, 0, ret, has_ret, gone, args)
+}
+
+/// The outcome of a write that touched rows of t.
+fn written(t: Table, n: Int, id: Int, ret: List[SelItem], has_ret: Bool, rows: List[List[sql.SqlValue]], args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+  if !has_ret {
+    return Write{n: n, id: id}
+  }
+  let out = project(t, ret, rows, args)?
+  Write{n: n, id: id, returning: true, cols: out.cols, rows: out.rows}
+}
+
+/// One item of a SELECT or RETURNING list.
+struct SelItem {
+  star: Bool = false
+  e: Node = Node.Count
+  alias: Str = ""
+}
+
+fn (var p: Parser) returning() -> (List[SelItem], Bool) ! sql.SqlErr {
+  if !p.accept_kw("returning") {
+    return ([], false)
+  }
+  let items = p.sel_items()?
+  for it in items {
+    if !it.star && it.e is Count {
+      return Err(syntax("RETURNING cannot use COUNT(*)"))
+    }
+  }
+  (items, true)
+}
+
+fn (var p: Parser) sel_items() -> List[SelItem] ! sql.SqlErr {
+  var items: List[SelItem] = []
+  while {
+    if p.accept_sym("*") {
+      items.push(SelItem{star: true})
+    } else {
+      let e = p.expr()?
+      var alias = ""
+      if p.accept_kw("as") {
+        alias = p.ident("an alias")?
+      }
+      items.push(SelItem{e: e, alias: alias})
+    }
+    if !p.accept_sym(",") {
+      return items
+    }
+  }
+  items
+}
+
+/// The result column names of items over t, and the count of COUNT(*)
+/// items.
+fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
+  var cols: List[Str] = []
+  var counts = 0
+  for it in items {
+    if it.star {
+      for c in t.cols {
+        cols.push(c.name)
+      }
+    } else if it.alias != "" {
+      cols.push(it.alias)
+      if it.e is Count {
+        counts += 1
+      }
+    } else {
+      match it.e {
+        Col(name) => cols.push(name)
+        Count => {
+          cols.push("count")
+          counts += 1
+        }
+        Lit(_) | Param(_) | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => cols.push("?column?")
+      }
+    }
+  }
+  (cols, counts)
+}
+
+/// items (without COUNT(*)) evaluated on each row of t.
+fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+  let (cols, _) = sel_cols(t, items)
+  var out: List[List[sql.SqlValue]] = []
+  for row in rows {
+    let env = EvalEnv{t: Some(t), row: row, args: args}
+    var r: List[sql.SqlValue] = []
+    for it in items {
+      if it.star {
+        for v in row {
+          r.push(v)
+        }
+        continue
+      }
+      r.push(env.eval(it.e)?)
+    }
+    out.push(r)
+  }
+  Rows{cols: cols, rows: out}
+}
+
+struct OrderKey {
+  e: Node
+  desc: Bool
+}
+
+/// The order of two sort keys of one ORDER BY item (NULL first).
+fn key_cmp(x: sql.SqlValue, y: sql.SqlValue) -> Int {
+  if x is Null && y is Null {
+    return 0
+  }
+  if x is Null {
+    return -1
+  }
+  if y is Null {
+    return 1
+  }
+  sql_cmp(x, y).ok() ?? 0
+}
+
+fn row_less(a: List[sql.SqlValue], b: List[sql.SqlValue], orders: List[OrderKey]) -> Bool {
+  for (k, o) in orders.indexed() {
+    let c = key_cmp(a[k], b[k])
+    if c != 0 {
+      return if o.desc { c > 0 } else { c < 0 }
+    }
+  }
+  false
+}
+
+/// A stable merge sort of the indexes 0..keys.len() by the keys.
+fn sort_idx(idx: List[Int], keys: List[List[sql.SqlValue]], orders: List[OrderKey]) -> List[Int] {
+  if idx.len() <= 1 {
+    return idx
+  }
+  let mid = idx.len() / 2
+  let l = sort_idx(idx[0..mid], keys, orders)
+  let r = sort_idx(idx[mid..idx.len()], keys, orders)
+  var out: List[Int] = []
+  var i = 0
+  var j = 0
+  while i < l.len() && j < r.len() {
+    // take from the right only when it is strictly less (stable)
+    if row_less(keys[r[j]], keys[l[i]], orders) {
+      out.push(r[j])
+      j += 1
+    } else {
+      out.push(l[i])
+      i += 1
+    }
+  }
+  while i < l.len() {
+    out.push(l[i])
+    i += 1
+  }
+  while j < r.len() {
+    out.push(r[j])
+    j += 1
+  }
+  out
+}
+
+fn int_arg(n: Node, args: List[sql.SqlValue]) -> Int ! sql.SqlErr {
+  let bad = syntax("LIMIT and OFFSET need a non negative integer")
+  match (EvalEnv{t: None, row: [], args: args}).eval(n) {
+    Ok(Integer(x)) => {
+      if x < 0 {
+        return Err(bad)
+      }
+      x
+    }
+    _ => Err(bad)
+  }
+}
+
+fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+  p.i += 1
+  let items = p.sel_items()?
+  p.expect_kw("from")?
+  let name = p.ident("a table name")?
+  let t = table_for(tables, name)?
+  var w: Node? = None
+  if p.accept_kw("where") {
+    w = Some(p.expr()?)
+  }
+  var orders: List[OrderKey] = []
+  if p.accept_kw("order") {
+    p.expect_kw("by")?
+    while {
+      let e = p.expr()?
+      var desc = false
+      if p.accept_kw("desc") {
+        desc = true
+      } else {
+        p.accept_kw("asc")
+      }
+      orders.push(OrderKey{e: e, desc: desc})
+      if !p.accept_sym(",") {
+        break
+      }
+    }
+  }
+  var limit: Node? = None
+  var offset: Node? = None
+  if p.accept_kw("limit") {
+    limit = Some(p.primary()?)
+    if p.accept_kw("offset") {
+      offset = Some(p.primary()?)
+    }
+  }
+  if p.peek().k != T_EOF {
+    return Err(p.fail("end of statement"))
+  }
+  check_params(p, args)?
+  // filter
+  var rows: List[List[sql.SqlValue]] = []
+  for row in t.rows {
+    if (EvalEnv{t: Some(t), row: row, args: args}).where_ok(w)? {
+      rows.push(row)
+    }
+  }
+  // order
+  if !orders.is_empty() {
+    var keys: List[List[sql.SqlValue]] = []
+    for row in rows {
+      let env = EvalEnv{t: Some(t), row: row, args: args}
+      var k: List[sql.SqlValue] = []
+      for o in orders {
+        k.push(env.eval(o.e)?)
+      }
+      keys.push(k)
+    }
+    // values that cannot be compared are an error (std/rt reports the
+    // first pair its sort compares; columns hold one type, so in practice
+    // there is none)
+    for (oi, _) in orders.indexed() {
+      var first: sql.SqlValue? = None
+      for k in keys {
+        if k[oi] is Null {
+          continue
+        }
+        match first {
+          None => first = Some(k[oi])
+          Some(f) => {
+            sql_cmp(f, k[oi])?
+          }
+        }
+      }
+    }
+    var idx: List[Int] = []
+    for i in 0..rows.len() {
+      idx.push(i)
+    }
+    var sorted: List[List[sql.SqlValue]] = []
+    for i in sort_idx(idx, keys, orders) {
+      sorted.push(rows[i])
+    }
+    rows = sorted
+  }
+  // offset, limit
+  if let Some(o) = offset {
+    var k = int_arg(o, args)?
+    if k > rows.len() {
+      k = rows.len()
+    }
+    rows = rows[k..rows.len()]
+  }
+  if let Some(l) = limit {
+    let k = int_arg(l, args)?
+    if k < rows.len() {
+      rows = rows[0..k]
+    }
+  }
+  // project
+  let (cols, counts) = sel_cols(t, items)
+  if counts > 0 {
+    if counts != items.len() {
+      return Err(syntax("COUNT(*) cannot be mixed with other columns"))
+    }
+    var out: List[sql.SqlValue] = []
+    for _ in items {
+      out.push(sql.SqlValue.Integer(n: rows.len()))
+    }
+    return Rows{cols: cols, rows: [out]}
+  }
+  project(t, items, rows, args)
+}
