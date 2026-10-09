@@ -96,6 +96,7 @@ XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # 
 go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
+XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
 go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
@@ -118,6 +119,8 @@ MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (d
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo --no-arenas (config xo) vs Xo with arenas (config xo-arenas, the default build; see Benchmark tooling)
 bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
 bench/perf/llvm/native.sh                               # same workloads: Go vs Xo --backend=llvm vs Xo --backend=arm64, time and peak RSS (arm64 host)
+bench/perf/conc/run.sh                                  # concurrency: Go vs Xo (Go backend) vs llvm vs arm64 (and arm64 XO_THREADS=1); medians of wall, CPU, cycles, interleaved (see Benchmark tooling)
+python3 bench/perf/conc/profile.py p.trace 40 ./bin     # summarize an xctrace CPU Profiler trace by function (PROFILE_FUNC=name: hot offsets in one function)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
@@ -503,6 +506,23 @@ Last verified: 2026-10-07
   python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
   solutions took about 12 minutes, all planted sets about 60 (measured
   2026-10-08).
+- `bench/perf/conc/run.sh` (2026-10-09, decision 0077): five concurrency
+  programs (`xo/spawn`: 200 rounds of 1000 discarded tasks; `fanout`: 100
+  rounds of 1000 awaited tasks; `pingpong`: 100,000 round trips over two
+  unbuffered channels; `mutex`: 8 tasks x 25,000 `with`; `pmap`: 20 rounds
+  of 64 Collatz chunks) and idiomatic Go (`go/`, `concperf <name>`).
+  Configurations `go`, `xo-go`, `xo-llvm`, `xo-arm64`, `xo-arm64-1`
+  (`XO_THREADS=1`); `REPS` (7) rounds interleaved; medians of wall
+  (perf_counter), CPU (child rusage, user + sys), and cycles (`/usr/bin/time
+  -l`, Darwin). `WORKLOADS`, `CONFIGS`, `KEEP=dir` (keep binaries), `XO`.
+  Prints `uptime` first: other processes on the host skew wall time most.
+  Profiling: `xcrun xctrace record --template 'CPU Profiler' --output
+  p.trace --launch -- ./bin`, then `xcrun xctrace symbolicate --input
+  p.trace --dsym ./bin --output s.trace` and `bench/perf/conc/profile.py
+  s.trace 40 ./bin` (names the runtime's static functions from `nm`;
+  leaf addresses in the export are the PC plus one). ThreadSanitizer runs
+  of these programs need reduced sizes
+  (`gotchas/tsan-fiber-trace-crash.md`).
 - `bench/perf/run.sh`: builds `bench/perf/xo` (Xo) and `bench/perf/go`
   (hand written Go, its own `go.mod`), runs each workload `REPS` times
   (default 5), and prints a Markdown table of the best times and the
@@ -1134,8 +1154,11 @@ first, AST based prototype, since deleted) and
   trip `'g'`, `.0` appended); `main` runs the program on a thread with a
   1 GiB stack. The C interface passes only scalars and pointers. Tasks
   (decision 0068, section "Tasks" of xo_rt.c): a pool of worker threads
-  (one per CPU, `XO_THREADS=n` overrides), work stealing deques,
-  awaits and scope joins that run tasks nobody started, a cancellation
+  (one per CPU, `XO_THREADS=n` overrides), Go style run queues and
+  spinning workers, root threads that run queued work while they wait
+  (decision 0077; `XO_RTSTATS=1` counts scheduler events,
+  `XO_SPIN_ROUNDS=n` tunes spinning, default 16), futex based locks and
+  parks (`__ulock_wait` on Darwin), awaits and scope joins that run tasks nobody started, a cancellation
   tree, channels, select, Mutex (readers and writer, writers preferred),
   Atomic, and deadlock detection (XO-F001). Since decision 0069 every task
   runs on a fiber (64 MiB reserved stack with a guard page,

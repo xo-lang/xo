@@ -1,7 +1,7 @@
 # 0069: Native tasks run on fibers; an event loop for timers, sockets, and signals
 
 Status: Accepted (2026-10-08). Supersedes point 1 of decision 0068 (a
-blocked task holds a thread) and narrows its point 7 (deadlock detection).
+blocked task holds a thread) and narrows its point 7 (deadlock detection). The scheduler under the fibers is refined by 0077 (2026-10-09).
 Implemented in `std/llrt/xo_rt.c` ("Fibers", "The event loop", "Clock",
 "Network", "Signals and two phase shutdown"), `internal/ssa/build_io.go`,
 `internal/ssa/build_conc.go` (`with_timeout`, `after`, `stopping`).

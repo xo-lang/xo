@@ -25,3 +25,12 @@ contention on the per scope and per task mutexes and parks of awaiting
 contexts; a lock free deque (Chase and Lev) and atomics for a task's
 state transitions are the next steps if spawn heavy code matters.
 Timings are indicative (single runs on a shared host).
+
+Update (2026-10-09, decision 0077): the next steps were taken. The task
+runtime no longer uses pthread mutexes or spin locks on the task path:
+its objects use `xo_lock` (a futex word: spin, then `__ulock_wait`, no
+fair share hand off), queues are Go style run queues, and wake ups follow
+Go's spinning rule. Spawn CPU went from 2.0 s to 0.25 s (arm64, 12
+workers; `bench/results/native-conc-2026-10-08.md`). `mu_init` (first
+fit) stays for the pthread mutexes left: the event loop, sockets, the
+HTTP server.

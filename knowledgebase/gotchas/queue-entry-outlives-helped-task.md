@@ -19,3 +19,10 @@ pops an entry decrements it after it ran the task or found it run
 (`dequeued`), and the join waits until both `running` and `queued` are
 zero. Queue entries hold no reference: the scope's list keeps each task
 alive until the join ends.
+
+Update (2026-10-09, decision 0077): `queued` and `running` are one atomic
+word (`pending`, two per unit, bit 0 while the joiner waits); a task a
+worker takes from a queue releases its entry and its run with one atomic
+at its end, and a helped task's entry is still released by whoever takes
+it (`dequeued`). The scope also unlinks its node of tasks before it frees
+them, since task nodes now stay linked until the scope closes.
