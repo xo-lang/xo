@@ -185,3 +185,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [http-diff-driver-leak.md](http-diff-driver-leak.md): LeakSanitizer (Linux only) caught the http_diff driver never freeing the per connection response buffer; macOS has no LSan.
 - [xo-check-same-module-path.md](xo-check-same-module-path.md): `xo check a b` with two directories declaring the same module path checks only the first, silently; check copies one at a time.
 - [xo-fix-applies-guesses.md](xo-fix-applies-guesses.md): `xo fix` applied did you mean guesses that changed programs (`t` to `it`); guesses are fixes only when clear, habits get their Xo form.
+- [parser-lookahead-past-eof.md](parser-lookahead-past-eof.md): habit lookahead indexed past the last token and panicked under FuzzParse; read tokens with `p.tokAt(i)` or `p.peek(n)`.
