@@ -1,8 +1,5 @@
 fn head(xs: List[Int]) -> Int {
-  match xs {
-    [first, ..] => first
-    [] => 0
-  }
+  dbg(xs.len())
 }
 
 fn main(os: Os) {

@@ -40,7 +40,11 @@ was in the checker only.
   must guard its value (a validated `Email`) is a struct with a non `pub`
   field and a constructor function, as before.
 - **Native backends** (`--no-gc`) keep reporting XO1201 (planned) for
-  newtypes, now including `.0` and newtype patterns.
+  newtypes, now including `.0` and newtype patterns. (Superseded the
+  same day: the native backends lower a newtype as a struct with the one
+  field `0`, so `e.0`, its assignment, `==`, hashing, Map keys, and Debug
+  text `Email("a")` work there too; patterns `Email(p)` match the field.
+  Goldens `internal/llvm/testdata/golden/newtypes` and `newtype_value`.)
 
 No new diagnostic codes.
 

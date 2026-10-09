@@ -430,6 +430,10 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 // typeCall is a numeric conversion `Float(i)`, `Int(f)`.
 func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 	to := s.natOf(x)
+	if obj.Kind == check.KNewtype && len(x.Args) == 1 && to.Kind == KStruct && len(to.Fields) == 1 {
+		// `Email(x)` (decision 0097)
+		return s.add(OpStruct, to, nil, s.valueAs(x.Args[0].Value, to.Fields[0].Type))
+	}
 	if len(x.Args) != 1 || !obj.Module.IsPrelude {
 		s.b.unsupported(x, "the conversion `"+obj.Name+"(...)`")
 		return s.undef(to)

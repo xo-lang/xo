@@ -330,6 +330,12 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 		}
 		sb := check.NewSubst(obj.TParams, n.Args)
 		switch {
+		case t.Kind == KStruct && obj.Kind == check.KNewtype && len(t.Fields) == 1:
+			// `Email("a@b")` (std/rt's Debug of a newtype)
+			a := lit(acc, obj.Name+"(")
+			a = sub(a, s.add(OpField, t.Fields[0].Type, 0, v), sb.Apply(obj.Target))
+			s.retv(lit(a, ")"))
+			return
 		case t.Kind == KStruct && obj.Kind == check.KStruct:
 			if obj.Opaque {
 				s.retv(lit(acc, "<"+lowerName(obj.Name)+">"))

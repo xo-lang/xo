@@ -686,6 +686,17 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			s.pattern(s.add(OpField, v.Type.Elems[i], i, v), el, fail)
 		}
 	case *ast.VariantPat:
+		if nt := b.info.PatNewtype(x); nt != nil && b.info.PatVariant(x) == nil {
+			// `Email(p)` matches p against the underlying value
+			if v.Type.Kind != KStruct || len(v.Type.Fields) != 1 {
+				b.unsupported(x, "this newtype pattern")
+				return
+			}
+			if len(x.Fields) == 1 && x.Fields[0].Pattern != nil {
+				s.pattern(s.unbox(s.add(OpField, v.Type.Fields[0].Type, 0, v)), x.Fields[0].Pattern, fail)
+			}
+			return
+		}
 		vo := b.info.PatVariant(x)
 		if vo != nil && v.Type.Kind != KEnum && isNeverResult(s.apply(b.info.PatType(x))) {
 			// a Result[T, Never] is its T (decision 0074): Ok(p)
@@ -751,10 +762,21 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 	case *ast.OrPat:
 		// each alternative falls through to the next; bindings meet in
 		// block parameters of ok
+		// The checker gives each alternative bindings of its own; the arm
+		// reads the first alternative's, so the others' are copied into
+		// them by name
 		ok := s.newBlock()
-		for _, alt := range x.Alts {
+		first := s.patBindings(x.Alts[0])
+		for i, alt := range x.Alts {
 			next := s.newBlock()
 			s.pattern(v, alt, next)
+			if i > 0 {
+				for name, vo := range s.patBindings(alt) {
+					if fv := first[name]; fv != nil && fv != vo {
+						s.writeVar(fv, s.read(vo))
+					}
+				}
+			}
 			s.jump(ok)
 			s.seal(next)
 			s.cur = next
@@ -763,8 +785,70 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 		s.seal(ok)
 		s.cur = ok
 	case *ast.ListPat:
-		b.unsupported(p, "list patterns")
+		// the length, then each element against its pattern: before the
+		// `..` from the front, after it from the back
+		if v.Type.Kind != KList {
+			b.unsupported(p, "this list pattern")
+			return
+		}
+		et := v.Type.Elems[0]
+		k := len(x.Elems)
+		n := s.call("list.len", intT, "", v)
+		if x.Rest < 0 {
+			s.test(s.add(OpEq, boolT, nil, n, s.cint(int64(k))), fail)
+		} else {
+			s.test(s.add(OpGe, boolT, nil, n, s.cint(int64(k))), fail)
+		}
+		for i, e := range x.Elems {
+			var idx *Value
+			if x.Rest < 0 || i < x.Rest {
+				idx = s.cint(int64(i))
+			} else {
+				idx = s.add(OpSub, intT, nil, n, s.cint(int64(k-i)))
+			}
+			s.pattern(s.call("list.index", et, "", v, idx), e, fail)
+		}
 	default:
 		b.unsupported(p, "this pattern")
 	}
+}
+
+// patBindings returns the bindings of the pattern p by name.
+func (s *fn) patBindings(p ast.Pattern) map[string]*check.VarObj {
+	out := map[string]*check.VarObj{}
+	var walk func(p ast.Pattern)
+	walk = func(p ast.Pattern) {
+		switch x := p.(type) {
+		case *ast.BindPat:
+			if vo := s.b.info.VarOf(x.Name); vo != nil {
+				out[vo.Name] = vo
+			}
+		case *ast.TuplePat:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.ListPat:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.OrPat:
+			if len(x.Alts) > 0 {
+				walk(x.Alts[0])
+			}
+		case *ast.VariantPat:
+			for _, f := range x.Fields {
+				if f.Pattern != nil {
+					walk(f.Pattern)
+				}
+			}
+		case *ast.StructPat:
+			for _, f := range x.Fields {
+				if f.Pattern != nil {
+					walk(f.Pattern)
+				}
+			}
+		}
+	}
+	walk(p)
+	return out
 }

@@ -15,6 +15,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 No meaning changes yet; native support grew (`--no-gc`, 10.1):
 
 - Interface types as values (2.4) build natively (decision 0100).
+- Newtypes (2.8, decision 0097: construction, `e.0`, `Email(p)`, Debug
+  text, equality, Map keys) and list patterns (3.5) build natively.
 
 ## Changes in 0.8
 
@@ -73,7 +75,7 @@ specified in std.md 13 (decision 0094).
 - Newtypes (2.8; decision 0097): `e.0` reads (and on a `var` assigns) the
   underlying value, and the pattern `Email(p)` matches it, irrefutably
   when `p` is (`let Email(s) = e`). Go backend; native builds report
-  `XO1201` as for every newtype.
+  `XO1201` as for every newtype (native support added in 0.9).
 - `xo check --fix` (10.1, 10.2; decision 0096) applies every unambiguous
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP

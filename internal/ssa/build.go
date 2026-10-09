@@ -396,6 +396,16 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			return x
 		case check.KAlias:
 			return b.typ(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), at)
+		case check.KNewtype:
+			// a struct with the one field `0` (decision 0097): `e.0`
+			// and assignments to it are field accesses, `==` and
+			// hashing are the underlying value's
+			x, created := m.Named(name, KStruct)
+			if created {
+				ft := check.NewSubst(obj.TParams, r.Args).Apply(obj.Target)
+				x.Fields = []Field{{"0", b.boxed(ft, b.typ(ft, at), name)}}
+			}
+			return x
 		case check.KInterface:
 			if dynIface(obj) {
 				// its text (build_show.go)

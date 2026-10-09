@@ -10,6 +10,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (decision 0100): dynamic dispatch, adapters for methods that cannot
   fail, error conversion, interface to interface conversion, Display and
   Debug of the dynamic value, and `==`; `x.debug()` on any value.
+- Native backends: newtypes (`Email("x")`, `e.0` read and assigned,
+  `Email(p)` patterns, Debug, `==`, Map keys) and list patterns
+  (`[]`, `[a, .., z]`). Fixed: an or pattern whose alternatives bind the
+  same name (`Leaf(v) | Node(left: v, ..)`) read the first alternative's
+  binding natively, a stale value when another alternative matched.
 
 ## v0.8.0 (2026-10-09)
 
