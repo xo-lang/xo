@@ -104,9 +104,9 @@ XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
 go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical token dump of the Go lexer (or lexing time), same text as selfhost/lexer
 go run ./cmd/xo run selfhost/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
+go run ./cmd/xo build --backend=arm64 -o .tools/xolex selfhost/lexer   # native build of the Xo lexer (also --backend=llvm)
 go run ./cmd/xo test selfhost/lexer                     # the Xo lexer's own tests (20, 6 of them property tests)
-go test ./internal/selfhost                             # Xo lexer vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs
-go test ./internal/selfhost -run TestIsPrintTable -update   # regenerate selfhost/lexer/isprint.xo from strconv.IsPrint (after a Go upgrade)
+go test ./internal/selfhost                             # Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
@@ -682,10 +682,10 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
-internal/selfhost/      Go side of the self hosted components: IsPrintTable generator; tests build selfhost/lexer
-                        and compare its dump with lexer.Dump (decision 0076)
-selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, text.xo (UTF-8, QuoteRune,
-                        TrimSpace stand ins), isprint.xo (generated), dump.xo, main.xo (CLI), lexer_test.xo
+internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer and compare
+                        its dump with lexer.Dump (decision 0076)
+selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
+                        lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
@@ -694,8 +694,9 @@ std/                    std declaration files (prelude.xo, go.xo, http.xo, json.
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_unicode.c, xo_json.c, xo_http.c
-                        (decision 0074); testdata/*.c, C tests and differential drivers (not embedded)
+                        and the files it includes: xo_std.c, xo_unicode.c, xo_bytes.c, xo_json.c,
+                        xo_http.c (decisions 0074, 0081); testdata/*.c, C tests and differential
+                        drivers (not embedded)
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
@@ -1073,7 +1074,17 @@ first, AST based prototype, since deleted) and
   `from_nanos`, `from_secs_int`, `millis`, `nanos`, `seconds`, `abs`) and
   Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
   nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
-  `is_empty`).
+  `is_empty`). Decision 0081 (2026-10-08) adds the sized integers
+  (Int8 to UInt64) and Rune as KInt types in the Int word (checked
+  arithmetic through `rt.int_op`, UInt64 ordered by flipping the sign
+  bit, widening conversions as `iconv`), rune literals as integers,
+  `b[i]` on Bytes (`bytes.index`, inline in both backends), slicing of
+  Str, Bytes, and List, `b"..."` literals, `StrBuilder` and
+  `BytesBuilder` (the text so far, appended in place), the Rune, Str,
+  and Bytes text methods of decision 0079 (std/native/prelude.xo),
+  `os.fs.read`, `os.env.args`, `os.proc.exit`, and constants of
+  collection types built once per run (`rt.const_once`). Enough for
+  `selfhost/lexer`.
   Map and Set (decision 0072) are structs of lists with generated
   operations: literals, get, contains, get_or_fault, put, remove,
   update, keys, values, entries, add, to_list, `m[k] = v`, and `for`
@@ -1145,8 +1156,12 @@ first, AST based prototype, since deleted) and
   string objects and consume the first (appending in place). xo_rt.c
   ends by including `xo_std.c` (the native std intrinsics: strings,
   numbers, durations, times, base64), which includes `xo_unicode.c`
-  (Go's case ranges, generated: `go test ./internal/llvm -run
-  TestUnicodeTables -golden-update`), `xo_json.c`, and `xo_http.c`;
+  (Go's case ranges and the letter, digit, and `strconv.IsPrint` rune
+  ranges, generated: `go test ./internal/llvm -run TestUnicodeTables
+  -golden-update`), `xo_bytes.c` (decision 0081: checked arithmetic and
+  conversions of sized integers, Rune text and quoting, Bytes slicing and
+  decoding, the builders' appends, `fs.read`, `env.args`, and the slots
+  of constants of collection types), `xo_json.c`, and `xo_http.c`;
   builds write every `std/llrt/*.c` next to xo_rt.c and compile only
   xo_rt.c.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
@@ -1474,14 +1489,15 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 
 ## Known gaps (2026-10-08)
 
-- Self hosted lexer (2026-10-08, decision 0076): `selfhost/lexer` builds
-  on the Go backend only (the SSA builder has no `Bytes`, `UInt8`,
-  `UInt64`, or CLI capability methods); it lexes at 2.33x the Go lexer's
-  time. A change to `internal/lexer` or a lexical diagnostic must be
-  ported to `selfhost/lexer` in the same change, or
-  `TestSelfhostDifferential` fails. Ranked language and std gaps with
-  proposed fixes: `bench/results/selfhost-lexer-2026-10-08.md`. Last
-  verified: 2026-10-08.
+- Self hosted lexer (2026-10-08, decisions 0076 and 0081): `selfhost/lexer`
+  builds on the Go, arm64, and LLVM backends, and `TestSelfhostDifferential`
+  compares all three with the Go lexer (the native ones skip without
+  clang, and arm64 off arm64 hosts). The Xo tests of the module
+  (`xo test`) run on the Go backend only: the native backends build
+  programs, not tests. A change to `internal/lexer` or a lexical
+  diagnostic must be ported to `selfhost/lexer` in the same change.
+  Remaining gaps with proposed fixes:
+  `bench/results/selfhost-lexer-2026-10-08.md`. Last verified: 2026-10-08.
 
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of

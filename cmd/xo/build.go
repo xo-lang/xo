@@ -69,6 +69,16 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 2
 	}
+	if *out != "" {
+		// the compilers run in the build directory, where a relative
+		// path would land (gotchas/xo-build-relative-out.md)
+		abs, err := filepath.Abs(*out)
+		if err != nil {
+			fmt.Fprintf(stderr, "xo build: %v\n", err)
+			return 2
+		}
+		*out = abs
+	}
 	if len(ts) > 1 && *out != "" {
 		if err := os.MkdirAll(*out, 0o755); err != nil {
 			fmt.Fprintf(stderr, "xo build: %v\n", err)

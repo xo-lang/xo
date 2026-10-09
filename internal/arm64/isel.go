@@ -702,6 +702,9 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.set(v, s.def1(false, text+"\ncset $d0, "+cond, uses...))
 	case ssa.OpIntToFloat:
 		s.set(v, s.def1(true, "scvtf $d0, $u0", s.word(v.Args[0])))
+	case ssa.OpIntConv:
+		// the same word as another integer type (decision 0081)
+		s.set(v, s.word(v.Args[0]))
 	case ssa.OpFloatToInt:
 		a := s.word(v.Args[0])
 		t := s.def1(true, "frintz $d0, $u0", a)
@@ -1516,6 +1519,15 @@ func (s *fstate) callOp(v *ssa.Value) {
 		s.set(v, s.def1(true, ins+" $d0, $u0", s.word(v.Args[0])))
 	case "Float.is_nan":
 		s.set(v, s.def1(false, "fcmp $u0, $u0\ncset $d0, vs", s.word(v.Args[0])))
+	case "bytes.index":
+		// b[i] on Bytes (decision 0081): the data is 16 bytes into the
+		// string object
+		x, i := a(0), s.word(v.Args[1])
+		if v.Pos != "" {
+			s.check("cmp $u0, $u1", []vreg{i, x[1]}, "hs", "xo_fault_bytes_index", rsrc(i), rsrc(x[1]), symsrc(g.loc(v.Pos)))
+		}
+		d := s.def1(false, "add $d0, $u0, #16", s.real(x[0]))
+		s.set(v, s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i))
 	case "Str.len":
 		s.set(v, a(0)[1])
 	case "Str.is_empty":

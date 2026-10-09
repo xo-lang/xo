@@ -26,6 +26,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	if ci == nil {
 		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max") {
 			a := s.expr(sel.X)
+			if a.Type.Sized() {
+				return s.sizedMinMax(sel.Sel.Name, a, s.valueAs(x.Args[0].Value, a.Type))
+			}
 			if a.Type.Kind == KInt || a.Type.Kind == KFloat {
 				return s.call(a.Type.Name+"."+sel.Sel.Name, a.Type, "", a, s.valueAs(x.Args[0].Value, a.Type))
 			}
@@ -403,15 +406,20 @@ func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 		return s.undef(to)
 	}
 	v := s.expr(x.Args[0].Value)
+	intT := s.b.mod.Builtin(KInt)
 	switch {
 	case v.Type == to:
 		return v
+	case to.Kind == KFloat && v.Type.U64():
+		return s.rt("u64_to_float", to, v)
 	case to.Kind == KFloat && v.Type.Kind == KInt:
 		return s.add(OpIntToFloat, to, nil, v)
 	case to.Kind == KInt && v.Type.Kind == KFloat:
-		r := s.add(OpFloatToInt, to, nil, v)
+		r := s.add(OpFloatToInt, intT, nil, v)
 		r.Pos = s.b.pos(x)
-		return r
+		return s.intConv(r, to, x)
+	case to.Kind == KInt && v.Type.Kind == KInt:
+		return s.intConv(v, to, x)
 	}
 	s.b.unsupported(x, "the conversion `"+obj.Name+"(...)`")
 	return s.undef(to)

@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+'a' true true false false
+'\'' true false false false
+'\\' true false false false
+'"' true false false false
+'\n' false false true false
+'\x7f' false false false false
+' ' true false true false
+'é' true true false false
+'\U000e0001' false false false false
+'�' true false false false
+'\u2028' false false true false
+"tab\there \"q\" é \x00"
+"a\xffé\xe2\x82" 5
+0: 97 1
+1: 65533 1
+2: 233 2
+4: 65533 1
+5: 65533 1
+6: 65533 0
+--- stderr

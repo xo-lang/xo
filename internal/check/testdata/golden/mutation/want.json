@@ -150,7 +150,7 @@
         }
       },
       {
-        "message": "`Buf` and `StrBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)"
+        "message": "`Buf`, `StrBuilder`, and `BytesBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)"
       }
     ],
     "fixes": []

@@ -275,6 +275,10 @@ func (f *fnGen) expr(e ast.Expr) string {
 	case *ast.DurationLit:
 		return fmt.Sprintf("%sDuration(%s)", f.rt(), x.Nanos)
 	case *ast.RuneLit:
+		if t := f.nat(x); f.g.isIntType(t) {
+			// a character as its code point (decision 0079)
+			return f.intLit(strconv.Itoa(int(x.Value)), t)
+		}
 		return fmt.Sprintf("%sRune(%d)", f.rt(), x.Value)
 	case *ast.BytesLit:
 		return fmt.Sprintf("%sBytes(%s)", f.rt(), strconv.Quote(x.Value))

@@ -62,6 +62,7 @@ struct Map[K, V] {}
 struct Set[T] {}
 struct Buf[T] {}
 struct StrBuilder {}
+struct BytesBuilder {}
 struct Chan[T] {}
 struct Mutex[T] {}
 struct Atomic[T] {}
@@ -155,6 +156,9 @@ fn (static: UInt8) try(x: Int) -> UInt8?
 fn (static: UInt16) try(x: Int) -> UInt16?
 fn (static: UInt32) try(x: Int) -> UInt32?
 fn (static: UInt64) try(x: Int) -> UInt64?
+/// The character with code point x, or None when x is not a Unicode
+/// scalar value (a surrogate, negative, or above U+10FFFF).
+fn (static: Rune) try(x: Int) -> Rune?
 
 fn (n: Int) abs() -> Int
 fn (n: Int) pow(e: Int) -> Int
@@ -208,12 +212,18 @@ fn (b: Bytes) to_hex() -> Str
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
 fn (static: Bytes) from_base64(s: Str) -> Bytes?
+fn (b: Bytes) rune_count() -> Int
+fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
+fn (b: Bytes) quote() -> Str
+fn (s: Str) quote() -> Str
 
 fn (r: Rune) is_digit() -> Bool
 fn (r: Rune) is_letter() -> Bool
 fn (r: Rune) is_space() -> Bool
 fn (r: Rune) to_lower() -> Rune
 fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) is_print() -> Bool
+fn (r: Rune) quote() -> Str
 
 // ---------------------------------------------------------------------------
 // List[T] (std.md 2.3). Higher order methods pass through the callback's
@@ -369,6 +379,16 @@ fn (var b: StrBuilder) write(s: Str)
 fn (b: StrBuilder) len() -> Int
 /// @moves
 fn (b: StrBuilder) freeze() -> Str
+
+fn (static: BytesBuilder) new() -> BytesBuilder
+fn (static: BytesBuilder) with_capacity(n: Int) -> BytesBuilder
+fn (var b: BytesBuilder) write(data: Bytes)
+fn (var b: BytesBuilder) write_byte(x: UInt8)
+fn (var b: BytesBuilder) write_str(s: Str)
+fn (var b: BytesBuilder) write_rune(r: Rune)
+fn (b: BytesBuilder) len() -> Int
+/// @moves
+fn (b: BytesBuilder) freeze() -> Bytes
 
 fn (static: Secret[T]) new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T

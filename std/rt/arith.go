@@ -443,3 +443,28 @@ func FloatCmp(a, b float64) int {
 
 // IntToFloat is `Float(i)` for any integer type.
 func IntToFloat[F ~float32 | ~float64, I Integer](x I) F { return F(x) }
+
+// RuneOf is `Rune(n)`: the character with code point n, faulting when n
+// is not a Unicode scalar value (decision 0079).
+func RuneOf[From Integer](n From, at string) Rune {
+	if !validRune(n) {
+		Faultf(at, "%s is not a Unicode scalar value, so it is not a Rune", istr(n))
+	}
+	return Rune(n)
+}
+
+// Rune_try is `Rune.try(n)`.
+func Rune_try(_ *Task, n int64) Option[Rune] {
+	if !validRune(n) {
+		return Option[Rune]{}
+	}
+	return Some(Rune(n))
+}
+
+func validRune[T Integer](n T) bool {
+	if n < 0 {
+		return false
+	}
+	u := uint64(n)
+	return u <= 0x10ffff && (u < 0xd800 || u > 0xdfff)
+}

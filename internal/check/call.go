@@ -1123,13 +1123,40 @@ func (c *checker) typeCall(obj *TypeObj, targs []Type, call *ast.CallExpr, hint 
 			return c.named(obj.Name)
 		}
 		at := c.infer(call.Args[0].Value, nil)
+		if intTypes[obj.Name] && c.isPrelude(at, "Rune") {
+			// a Rune's code point (core 2.1, decision 0079)
+			return c.named(obj.Name)
+		}
 		if !isBad(at) && !c.isNumeric(at) && !isOpenVar(at) {
 			d := c.errorf(diag.BadConversion, call.Args[0].Value.Span(), "cannot convert `%s` to `%s`; numeric conversions take a number", deep(at), obj.Name)
-			if c.isPrelude(at, "Str") {
+			switch {
+			case c.isPrelude(at, "Str"):
 				note(d, token.Span{}, "parse text with `%s.parse(s)`, which returns `%s?` (core 2.1)", obj.Name, obj.Name)
+			case c.isPrelude(at, "Rune"):
+				note(d, token.Span{}, "a Rune converts to an integer type, its code point: `Float(Int(r))` (core 2.1)")
 			}
 		}
 		return c.named(obj.Name)
+	}
+	if obj.Module == c.prelude && obj.Name == "Rune" {
+		// `Rune(n)`: the character with code point n; faults when n is not
+		// a Unicode scalar value (core 2.1, decision 0079)
+		if len(call.Args) != 1 || call.Args[0].Name != nil {
+			c.errorf(diag.BadArguments, call.Sp, "conversion `Rune(n)` takes one positional argument")
+			c.inferArgs(call)
+			return c.named("Rune")
+		}
+		at := c.infer(call.Args[0].Value, nil)
+		if !isBad(at) && !c.isInt(at) && !c.isPrelude(at, "Rune") && !isOpenVar(at) {
+			d := c.errorf(diag.BadConversion, call.Args[0].Value.Span(), "cannot convert `%s` to `Rune`; a Rune is made from an integer code point", deep(at))
+			switch {
+			case c.isPrelude(at, "Str"):
+				note(d, token.Span{}, "the characters of a Str are `s.runes()` (std.md 2.2)")
+			case c.isFloat(at):
+				note(d, token.Span{}, "convert to an integer first: `Rune(Int(x))` (core 2.1)")
+			}
+		}
+		return c.named("Rune")
 	}
 	if obj.Kind == KNewtype {
 		nt, ok := c.instantiate(obj, targs, call.Fun.Span())

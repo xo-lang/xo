@@ -1,0 +1,26 @@
+exit 0
+--- stdout
+255 145 3 35 0 255 255 55 25 220
+-128 100 -33 -2 99 -25
+32767 65535 -2147483648 4294967295 1333333333
+18446744073709551615 9223372036854775807 9223372036854775808 9223372036854775808 615 true true true
+9223372036854775808 true 9223372036854775808 1 5764607523034234880
+200000 56 -2000000000 16000000000000000000 9223372036854775807
+100.0 9.223372036854776e+18 -7 7
+é 233 ê È 233 true B
+'a' true false false true A a
+'Z' true false false true Z z
+'7' false true false true 7 7
+' ' false false true true    
+'\u2028' false false true false    
+'λ' true false false true Λ λ
+'٣' false true false true ٣ ٣
+'\U000e0001' false false false false 󠀁 󠀁
+'\'' false false false true ' '
+'\n' false false true false 
+ 
+
+3 éx\
+letter letter space letter digit space other other space letter other ! space other ! letter other ! 972
+66 98 c true true 200 55
+--- stderr

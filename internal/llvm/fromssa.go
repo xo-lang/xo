@@ -67,6 +67,7 @@ declare void @xo_fault_shift(i64, ptr) #0
 declare void @xo_fault_divzero(i64, i64, ptr) #0
 declare void @xo_fault_neg(i64, ptr) #0
 declare void @xo_fault_index(i64, i64, ptr) #0
+declare void @xo_fault_bytes_index(i64, i64, ptr) #0
 declare void @xo_fault_abs(i64, ptr) #0
 declare void @xo_fault_float_int(double, ptr) #0
 declare i32 @xo_str_eq(ptr, i64, ptr, i64) #2
@@ -1216,6 +1217,8 @@ func (s *sfn) instr(v *ssa.Value) {
 		}
 	case ssa.OpIntToFloat:
 		s.set(v, "sitofp i64 %s to double", a(0))
+	case ssa.OpIntConv:
+		s.alias(v, a(0))
 	case ssa.OpFloatToInt:
 		t := s.def("call double @llvm.trunc.f64(double %s)", a(0))
 		if v.Pos != "" {
@@ -1628,6 +1631,16 @@ func (s *sfn) call(v *ssa.Value) {
 		s.set(v, "call double @llvm.%s.f64(double %s)", intr, a(0))
 	case "Float.is_nan":
 		s.set(v, "fcmp uno double %s, %s", a(0), a(0))
+	case "bytes.index":
+		// b[i] on Bytes (decision 0081)
+		_, d, n := s.strParts(a(0))
+		if v.Pos != "" {
+			bad := s.def("icmp uge i64 %s, %s", a(1), n)
+			s.faultIf(bad, "@xo_fault_bytes_index(i64 %s, i64 %s, ptr %s)", a(1), n, s.loc(v))
+		}
+		p := s.def("getelementptr i8, ptr %s, i64 %s", d, a(1))
+		c := s.def("load i8, ptr %s", p)
+		s.set(v, "zext i8 %s to i64", c)
 	case "Str.len":
 		s.set(v, "extractvalue %%xo.str %s, 1", a(0))
 	case "Str.is_empty":

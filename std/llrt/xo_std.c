@@ -1234,6 +1234,9 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 	return t;
 }
 
+// Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
+#include "xo_bytes.c"
+
 // JSON (std.md 5)
 #include "xo_json.c"
 

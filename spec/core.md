@@ -23,6 +23,13 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 - `Mutex.with_read`, shared read only access (5.4, std.md 2.7; decision
   0063). A closure parameter declared `var` where the expected function
   type takes it by value is error `XO0401` (it changed a copy only).
+- `BytesBuilder`, the move only builder of `Bytes` (5.3, std.md 2.7;
+  decision 0078).
+- Warning `XO0305` is not reported for a `_` arm that hides at least 8
+  variants and more than half of the enum (3.5; decision 0080).
+- A rune literal where an integer type is expected is its code point
+  (1.6); `Int(r)`, `Rune(n)`, and `Rune.try(n)` convert between `Rune` and
+  the integer types (2.1; decision 0079).
 
 ## Changes in 0.6
 
@@ -268,6 +275,13 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   also contain `"`, which makes JSON fixtures easy to write.
 - An integer literal takes the integer type expected in context (`Int32`,
   `UInt8`, ...), defaulting to `Int`. It never becomes a `Float`; write `2.0`.
+- A rune literal is a `Rune`, except where an integer type is expected (an
+  annotation, a parameter, the other operand of an operator, a pattern on
+  an integer, a `const` of an integer type): there it is that type's value
+  of its code point, so byte level code reads `b[i] == '"'` and
+  `match c { 'a'..='z' => ... }` on a `UInt8` (decision 0079). The code
+  point must fit the type; `Int8` and `UInt8` take only ASCII (`'é'` is two
+  bytes in UTF-8, so it is never one byte): error `XO0401` otherwise.
 - Duration literals are an integer followed by `ns`, `us`, `ms`, `s`, `m`,
   or `h`. `1.5s` is not a literal; write `1500ms`.
 - Escapes in `Str` and `Bytes`: `\n \t \r \0 \\ \" \' \$ \xHH \u{...}`.
@@ -310,6 +324,14 @@ There are no implicit numeric conversions. Conversions are calls on the target
 type: `Float(i)`, `Int(f)` (truncates toward zero, faults on NaN or out of
 range), `Int32(x)` (faults out of range), `Int32.try(x) -> Int32?`. Parsing
 text is `Int.parse(s) -> Int?`, `Float.parse(s) -> Float?`.
+
+A `Rune` is not a number, but converts both ways with an integer type
+(decision 0079): `Int(r)` (and every sized integer type, faulting out of
+range: `UInt8('é')` faults) is its code point; `Rune(n)` from any integer
+type is the character with code point `n` and faults when `n` is not a
+Unicode scalar value (negative, a surrogate `0xd800` to `0xdfff`, or above
+`0x10ffff`); `Rune.try(n) -> Rune?` is `None` there instead. A `Rune`
+does not convert to `Float` (`XO0409`, with a note pointing at `Int(r)`).
 
 Float comparison (decision 0053; the same for `Float32`):
 
@@ -706,7 +728,10 @@ Patterns nest: `Some(Ok(v))`, `Err(LoadErr.NotFound(id))`.
 An unguarded `_` (or catch all binding) arm that hides variants of an enum
 declared in the same module is warning `XO0305`: list the variants, so that
 adding one later is a compile error at every `match`. Enums from other modules
-may use `_`, since their owners can add variants.
+may use `_`, since their owners can add variants. A `_` arm that hides at
+least 8 variants and more than half of the enum is a default ("these few are
+special, the rest are not", as on a token kind enum) and is not reported; the
+warning names at most 8 hidden variants, then how many more (decision 0080).
 An `UpperCamel` name in a pattern always refers to a variant; bindings are
 `snake_case` (1.5), so the two never collide.
 `let` requires an irrefutable pattern (`let (a, b) = pair`).
@@ -880,7 +905,8 @@ Because values never alias mutably, data races are impossible except through
 
 ### 5.3 Move only buffers
 
-`Buf[T]` and `StrBuilder` are mutable in place and **move only** (affine):
+`Buf[T]`, `StrBuilder`, and `BytesBuilder` are mutable in place and **move
+only** (affine):
 
 ```
 var b = Buf[Int].with_capacity(1024)

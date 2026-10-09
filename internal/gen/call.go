@@ -745,6 +745,10 @@ func (f *fnGen) typeCall(obj *check.TypeObj, x *ast.CallExpr) string {
 		return v
 	}
 	loc := strconv.Quote(f.g.loc(x))
+	if obj.Module.IsPrelude && obj.Name == "Rune" {
+		// `Rune(n)` faults unless n is a Unicode scalar value (decision 0079)
+		return fmt.Sprintf("%sRuneOf(%s, %s)", f.rt(), v, loc)
+	}
 	toFloat := to == "float64" || to == "float32"
 	fromFloat := from == "float64" || from == "float32"
 	switch {

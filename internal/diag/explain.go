@@ -569,7 +569,8 @@ fn f(e: E) -> Int {
 	WildcardOwnEnum: {
 		Title: "`_` arm hides variants of an enum declared in this module",
 		Detail: "Warning. An unguarded `_` or catch all binding arm on an enum declared in the same module hides the variants it covers, so adding a variant later compiles silently instead of failing at every `match`. " +
-			"List the variants (an or pattern such as `B | C` keeps it short). Enums from other modules, the prelude (`Option`, `Result`), and non enum values may use `_`, since their owners can add variants. See core 3.5.",
+			"List the variants (an or pattern such as `B | C` keeps it short). Enums from other modules, the prelude (`Option`, `Result`), and non enum values may use `_`, since their owners can add variants. " +
+			"A `_` arm that hides at least 8 variants and more than half of the enum is a deliberate default and is not reported (decision 0080). See core 3.5.",
 		Example: `enum E { A, B, C }
 
 fn f(e: E) -> Int {
@@ -735,8 +736,8 @@ const X = g()`,
 }`,
 	},
 	UseOfMovedValue: {
-		Title: "use of a moved Buf or StrBuilder",
-		Detail: "`Buf[T]` and `StrBuilder` are mutable in place and move only. `freeze()`, assigning, passing to a function, sending on a channel, or capturing in a spawned task moves the buffer, and the old name may not be used again (until it is reassigned). " +
+		Title: "use of a moved Buf, StrBuilder, or BytesBuilder",
+		Detail: "`Buf[T]`, `StrBuilder`, and `BytesBuilder` are mutable in place and move only. `freeze()`, assigning, passing to a function, sending on a channel, or capturing in a spawned task moves the buffer, and the old name may not be used again (until it is reassigned). " +
 			"Finish all writes before moving, or start a new buffer. See core 5.3.",
 		Example: `fn f() -> List[Int] {
   var b = Buf[Int].with_capacity(8)

@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+250
+--- stderr
+fault: integer overflow: 200 + 56 does not fit UInt8 at main.xo:6:23

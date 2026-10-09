@@ -36,7 +36,7 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	intT, boolT, strT, floatT := m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr), m.Builtin(KFloat)
 	key := fo.Recv.Name + "." + fo.Name
 	switch fo.Recv.Name {
-	case "Clock", "Net", "Listener", "Conn", "Proc", "Env", "Duration", "Time", "Bytes":
+	case "Clock", "Net", "Listener", "Conn", "Proc", "Env", "Duration", "Time", "Bytes", "Fs", "StrBuilder", "BytesBuilder":
 	case "Str":
 		if fo.Name != "bytes" {
 			return nil, false
@@ -84,12 +84,51 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 			return mul(arg(0, intT), 1e6), true
 		case "Time.UNIX_EPOCH":
 			return s.cint(0), true
+		case "StrBuilder.new", "BytesBuilder.new":
+			return s.add(OpConst, strT, ""), true
+		case "BytesBuilder.with_capacity":
+			return s.rt("rs_with_cap", strT, arg(0, intT)), true
 		}
 		b.unsupported(x, "`"+fo.DisplayName()+"`")
 		return s.undef(nt), true
 	}
+	switch key {
+	case "StrBuilder.write", "BytesBuilder.write", "BytesBuilder.write_str", "BytesBuilder.write_byte", "BytesBuilder.write_rune":
+		// the builder is the text so far; appending to it in place
+		// needs the only reference, which a move only builder has
+		p, ok := s.place(ci.Recv)
+		if !ok {
+			return s.undef(nt), true
+		}
+		cur := p.get()
+		switch fo.Name {
+		case "write_byte":
+			p.set(s.rt("rs_push_byte", strT, cur, arg(0, m.IntType("UInt8"))))
+		case "write_rune":
+			p.set(s.rt("rs_push_rune", strT, cur, arg(0, m.IntType("Rune"))))
+		default:
+			p.set(s.call("str.concat", strT, "", cur, arg(0, strT)))
+		}
+		return s.unit(), true
+	}
 	recv := s.expr(ci.Recv)
 	switch key {
+	case "StrBuilder.len", "BytesBuilder.len":
+		return s.call("Str.len", intT, "", recv), true
+	case "StrBuilder.freeze", "BytesBuilder.freeze":
+		return recv, true
+	case "Fs.read":
+		l := s.rt("fs_read", m.List(strT), arg(0, strT))
+		ok := nt.Variants[nt.VariantIndex("Ok")].Fields[0].Type
+		optT := b.typ(b.preludeType("Option", b.preludeType("Bytes")), x)
+		return s.fsResult(s.popOne(l, optT), ok, nt), true
+	case "Env.args":
+		return s.rt("env_args", m.List(strT)), true
+	case "Proc.exit":
+		s.rt("exit", nil, arg(0, intT))
+		s.add(OpUnreachable, nil, nil)
+		s.dead()
+		return s.undef(nt), true
 	case "Clock.now":
 		return s.rt("clock_now", intT), true
 	case "Clock.since":
@@ -183,6 +222,62 @@ func (s *fn) netResult(ok *Value, rt *Type) *Value {
 	s.seal(join)
 	s.cur = join
 	return res
+}
+
+// fsResult is the Result (type rt) of a file system operation whose
+// value on success is v (an Option of the ok type, from popOne): Ok of
+// its payload when the runtime reports no error, else Err(the FsErr it
+// reports).
+func (s *fn) fsResult(v *Value, ok, rt *Type) *Value {
+	m := s.b.mod
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	st := s.rt("fs_status", intT)
+	join := s.newBlock()
+	res := join.AddParam(rt)
+	yes, no := s.branch(s.add(OpEq, boolT, nil, st, s.cint(0)))
+	s.cur = yes
+	some := v.Type.VariantIndex("Some")
+	s.jump(join, s.add(OpVariant, rt, rt.VariantIndex("Ok"), s.add(OpPayload, ok, PayloadRef{some, 0}, v)))
+	s.cur = no
+	ei := rt.VariantIndex("Err")
+	et := rt.Variants[ei].Fields[0].Type
+	e := s.call(s.b.fsErrFunc(et), et, "", st)
+	s.jump(join, s.add(OpVariant, rt, ei, e))
+	s.seal(join)
+	s.cur = join
+	return res
+}
+
+// fsErrFunc returns the function that makes the FsErr (type et) of a
+// runtime status code: the variant's tag plus one (std/rt's FsErr tags);
+// its path and Io's message come from rt.fs_msg (a list of the path and
+// the message).
+func (b *builder) fsErrFunc(et *Type) string {
+	m := b.mod
+	name := "xo.fserr"
+	if m.Func(name) != nil {
+		return name
+	}
+	intT, boolT, strT := m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr)
+	f := m.NewFunc(name, []*Type{intT}, []*Type{et})
+	cur := f.Blocks[0]
+	st := f.Params()[0]
+	for vi, v := range et.Variants {
+		yes, no := f.NewBlock(), f.NewBlock()
+		c := cur.Add(OpEq, boolT, nil, st, cur.Add(OpConst, intT, int64(vi+1)))
+		cur.Branch(c, yes, no)
+		var fs []*Value
+		if len(v.Fields) > 0 {
+			l := yes.Add(OpCall, m.List(strT), "rt.fs_msg")
+			for i := range v.Fields {
+				fs = append(fs, yes.Add(OpCall, strT, "list.index", l, yes.Add(OpConst, intT, int64(i))))
+			}
+		}
+		yes.Add(OpReturn, nil, nil, yes.Add(OpVariant, et, vi, fs...))
+		cur = no
+	}
+	cur.Add(OpUnreachable, nil, nil)
+	return name
 }
 
 // netErrFunc returns the function that makes the NetErr (type et) of a

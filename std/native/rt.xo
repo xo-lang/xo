@@ -45,6 +45,28 @@ fn rs_append_duration(s: Str, d: Int) -> Str
 fn eprintln(s: Str)
 
 // ---------------------------------------------------------------------------
+// Runes and Bytes (decisions 0079, 0081; std/llrt/xo_bytes.c)
+
+fn rune_is_letter(r: Rune) -> Bool
+fn rune_is_digit(r: Rune) -> Bool
+fn rune_is_space(r: Rune) -> Bool
+/// strconv.IsPrint.
+fn rune_is_print(r: Rune) -> Bool
+/// unicode.ToLower (lower) or unicode.ToUpper.
+fn rune_to_case(r: Rune, lower: Bool) -> Rune
+/// strconv.QuoteRune.
+fn rune_quote(r: Rune) -> Str
+/// strconv.Quote.
+fn strconv_quote(s: Str) -> Str
+fn bytes_quote(b: Bytes) -> Str
+/// utf8.DecodeRune of b from i: the rune times 8 plus its size.
+fn bytes_decode(b: Bytes, i: Int) -> Int
+/// utf8.RuneCount.
+fn bytes_rune_count(b: Bytes) -> Int
+/// The lowercase hex of b.
+fn bytes_hex(b: Bytes) -> Str
+
+// ---------------------------------------------------------------------------
 // Generic intrinsics (lowered by internal/ssa, build_native.go)
 
 /// A value of any type, which remembers its type (a request value).

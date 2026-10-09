@@ -538,7 +538,7 @@ func (pg *pkgGen) namedType(n *check.Named) string {
 		}
 		r := pg.rt()
 		switch o.Name {
-		case "Rune", "Bytes", "Duration", "Time", "Never", "StrBuilder", "Listener", "Conn":
+		case "Rune", "Bytes", "Duration", "Time", "Never", "StrBuilder", "BytesBuilder", "Listener", "Conn":
 			return r + o.Name
 		case "List", "Map", "Set", "Buf", "Secret", "Range", "Option", "Result":
 			return fmt.Sprintf("%s%s[%s]", r, o.Name, pg.typeList(args))
@@ -574,6 +574,19 @@ func (g *gen) isScalar(t check.Type) bool {
 	switch n.Obj.Name {
 	case "Int", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64",
 		"Float", "Float32", "Str", "Rune", "Bytes", "Duration", "Time", "Bool":
+		return true
+	}
+	return false
+}
+
+// isIntType reports whether t is one of the integer types.
+func (g *gen) isIntType(t check.Type) bool {
+	n := g.named(t)
+	if n == nil || !n.Obj.Module.IsPrelude {
+		return false
+	}
+	switch n.Obj.Name {
+	case "Int", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64":
 		return true
 	}
 	return false

@@ -1,0 +1,6 @@
+fn main(os: Os) {
+  let b = b"abc"
+  os.stdio.println("${b[0]} ${b[2]} ${b[1..].len()}")
+  let i = b.len()
+  os.stdio.println("${b[i]}")
+}
