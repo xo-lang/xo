@@ -110,4 +110,6 @@ with the current toolchain and prints the tables of the three arm and
 planted results. A full run is about 0.9M input and 0.4M output tokens.
 See [harness/README.md](harness/README.md).
 
+Results: [2026-10-09 Codex](results/codex-2026-10-09.md): Xo still prevents or catches 22 to 27 of 30 planted safety bugs (strict Go 17, plain Go 12); Codex needed 20 Xo runs vs 10 Go, all first try failures at the checker from other-language habits.
+
 - [2026-10-08 harness validation](results/harness-validation-2026-10-08.md): scoring the stored Claude outputs reproduces every published runs to green, line, and test count and every planted bug result (Go 9 and 13 of 30, Xo 29 and 23 of 30); with today's toolchain Xo 03 fails its contract fuzz (the known `backoff` overflow) and Xo 06 fails XO0410 (a spec 0.6 rule).
