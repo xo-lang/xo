@@ -154,6 +154,11 @@ func TestModules(t *testing.T) {
 	if !strings.Contains(r.out, "github.com/acme/billing") {
 		t.Errorf("XO1308 does not name the overridden module: %s", r.out)
 	}
+	// --release is a release build too (core 8)
+	r = xo(t, "build", "--release", "--json", filepath.Join(app, "main")).want(1)
+	if got := diagCodes(t, r.out); got != "XO1308" {
+		t.Errorf("--release build in a workspace: %s", got)
+	}
 	// a workspace is one program: a rename reaches both modules
 	r = xo(t, "edit", "--dir="+app, "rename", "total", "grand_total").want(0)
 	for _, f := range []string{filepath.Join(ws, "billing", "invoice", "invoice.xo"), filepath.Join(app, "main", "main.xo")} {

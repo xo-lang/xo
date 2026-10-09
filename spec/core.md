@@ -15,7 +15,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 From the spec audit of 2026-10-09 (`bench/results/spec-audit-2026-10-09.md`):
 no meaning changes, the spec now says what is not implemented yet.
 Method syntax stays receivers (decision 0090), `Map` keeps insertion
-order (0091), error frames will be lazy and always on (0092), and foreign
+order (0091), error frames are lazy and always on (0092), and foreign
 calls will be recorded at the boundary (0093); `std/time` is accepted as
 specified in std.md 13 (decision 0094).
 
@@ -26,7 +26,7 @@ specified in std.md 13 (decision 0094).
 - `--json` is accepted by the commands that report results, not by every
   command; `xo test` takes `--cases=N`, not `--fuzz` (10.1).
 - **[later]** markers for what is specified but not built: `xo why`,
-  `xo debug`, release builds and `--error-args`, the task line of error
+  `xo debug`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
   derives.
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
@@ -88,6 +88,18 @@ specified in std.md 13 (decision 0094).
   and are reported (``re executed foreign call `<name>` ``); pure
   functions are `replay rerun` (std's pure packages, and xo.mod lines
   `replay rerun go <path> [names]`, 4.4). Old traces still replay.
+- Release builds (8, decision 0099): `xo build --release` compiles out
+  `requires(debug)` and `ensures(debug)` on every backend and fails while
+  a workspace overrides a required module (`XO1308`, formerly reported
+  only by `--ci`). `--ci` does not imply `--release`; `xo run`, `xo test`,
+  and plain `xo build` are debug builds.
+- Error frames are lazy (11.1, decision 0092, Go backend): a frame keeps
+  copies of the parameter values and formats them, at most 64 bytes'
+  worth, only when the trace is printed; output is unchanged. About 10
+  times cheaper per propagated error with short parameters, 29 times
+  with 90 byte ones, and independent of parameter size. Frames are on in
+  release builds; `--release --error-args=false` drops the parameter
+  values (`(...)`).
 
 ## Changes in 0.7
 
@@ -979,7 +991,8 @@ use ./billing
 - xo.lock is never written with workspace overrides (`xo get`, `xo mod
   tidy`, and `xo vendor` ignore the workspace); builds record the local
   directories in build information only. A release build (`xo build
-  --ci`) fails while a workspace overrides a required module (`XO1308`).
+  --release`, 8) and `xo build --ci` fail while a workspace overrides a
+  required module (`XO1308`).
 - `xo.work` is gitignored by `xo init` in a single module repository;
   a monorepo may commit it.
 
@@ -1607,9 +1620,20 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
 
 There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly
-marked `requires(debug)` or `ensures(debug)`. **[later]** There is no
-release build mode yet: every build checks `requires(debug)` and
-`ensures(debug)` like other contracts.
+marked `requires(debug)` or `ensures(debug)`.
+
+- `xo build --release` is a release build (decision 0099): the clauses
+  marked `(debug)` are compiled out on every backend, `requires(debug) c
+  else E` included (the function no longer returns that error). Every
+  other contract, every invariant, and every fault check stays. A release
+  build fails while an xo.work workspace overrides a required module
+  (`XO1308`, 4.2) and is the only build that accepts
+  `--error-args=false` (11.1). Error frames are recorded in both.
+- Every other build is a debug build: `xo build` without `--release`,
+  `xo run`, `xo test` (whose contract fuzzing checks the debug clauses
+  too), and `xo replay`, which rebuilds in the mode recorded in the
+  program's build information. `--ci` is a gate, not a mode: it does not
+  imply `--release`; a pipeline that ships the binary passes both.
 
 ---
 
@@ -1698,7 +1722,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
@@ -1987,7 +2011,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1305` | error | modules | xo.lock has no hash for a module version the build uses; run `xo mod tidy` |
 | `XO1306` | error | checker | import of a package from a module that xo.mod does not require |
 | `XO1307` | error | modules | vendor/ does not match xo.mod; run `xo vendor` |
-| `XO1308` | error | build | release build (`xo build --ci`) while an xo.work workspace overrides required modules |
+| `XO1308` | error | build | release build (`xo build --release`, or `--ci`) while an xo.work workspace overrides required modules |
 | `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
@@ -2022,10 +2046,21 @@ LoadErr.Db(msg: "timeout")
   truncated to 64 bytes each. `Secret[T]` prints `<redacted>`. Capability
   parameters are left out. Frames are built only when an error
   propagates; the success path records nothing.
+- Frames are recorded in every build, debug and release (decision 0092).
+  A frame keeps a copy of each parameter value and produces its `Debug`
+  text only when the trace is printed (the error report of `main`, a
+  crash bundle, a test failure, a handler's error log), formatting no
+  more of a value than the 64 bytes it shows. The text is what it would
+  have been at the `?`: values are immutable or copied on write, and the
+  few whose `Debug` text can change in place (`Buf`, `Atomic`) are
+  formatted when captured.
+- `xo build --release --error-args=false` records the function and
+  location only and prints `(...)` for the parameters:
+  `at users.fetch_user(...)   users/fetch.xo:18`. It is a usage error
+  without `--release`.
 - **[later]** A last line naming the task and its scope
   (`in task "handler#913" (scope api.serve)`) is planned.
-- Release builds record parameters only with `--error-args` (**[later]**:
-  there is no release build mode yet, see 8; Appendix B question 3).
+- Native backends (`--no-gc`, LLVM, arm64) record no frames yet (10.1).
 
 ### 11.2 Crash bundles
 
@@ -2389,7 +2424,8 @@ Tracked in `knowledgebase/decisions/` once decided.
    0090: receivers.
 2. ~~`Map` iteration order.~~ Decided in 0091: insertion order.
 3. ~~Error frame capture cost in release builds.~~ Decided in 0092:
-   frames on in every build, captured lazily (not implemented yet).
+   frames on in every build, captured lazily (implemented on the Go
+   backend; the native backends record no frames yet).
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
 5. ~~FFI design and record/replay.~~ Decided in 0093: `use go` and
    native `use c`, foreign calls recorded at the boundary (`use go`

@@ -71,7 +71,7 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] <dirs...>   # --fix: apply machine fixes first (decision 0096)
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09)
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
@@ -94,6 +94,7 @@ go run ./cmd/xo mcp                                              # MCP server on
 go run ./cmd/xo serve [--socket=path] [stop|status]              # resident checker; check and query use it when it answers
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
+go test ./internal/gen -run TestGoldenRelease [-golden-update]   # testdata/release/*: want.debug.txt, want.release.txt, want.release_noargs.txt (xo build --release [--error-args=false], decisions 0099, 0092); -golden-update rewrites only the files that exist
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
@@ -128,7 +129,7 @@ scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux co
 bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
-go test ./std/rt -run '^$' -bench 'Order|Frames' -benchmem   # spec audit benchmarks: Map iteration order (decision 0091) and error frame cost (decision 0092); about 75 s (last verified 2026-10-09)
+go test ./std/rt -run '^$' -bench 'Order|Frames' -benchmem   # spec audit benchmarks: Map iteration order (decision 0091) and error frame cost (decision 0092: eager before, impl as emitted now, FramesPrint the cost at print time); about 90 s (last verified 2026-10-09)
 go test ./internal/diag -run 'TestSpecLists'           # core 10.6 lists exactly the codes of internal/diag/codes.go and the XO-F fault codes the runtimes raise
 python3 bench/harness/score.py solutions --claude        # rescore the stored agent benchmark outputs with the current toolchain (bench/harness/README.md)
 python3 bench/harness/run_openai_compatible.py --out runs/<model>   # rerun the agent benchmarks with any OpenAI compatible model
@@ -194,7 +195,7 @@ listings (`std/*.xo`) are formatted in that mode. Tests:
 internal/gen/testdata, and std: each file must parse to the same tree
 without spans, comments are kept, a second format is a no op, and each of
 110 programs must type check with the same diagnostics, code, severity,
-and message, before and after). `xo build --ci` does not exist yet.
+and message, before and after). (`xo build --ci` exists since 2026-10-09.)
 
 `xo vet` (2026-10-08, `internal/vet`) checks like `xo check` and reports,
 for the root modules, only warnings and notes (exit 0; check errors are
@@ -857,6 +858,17 @@ Parser tests live in `internal/parser`:
 `//line` directives) -> build directory with the runtime -> `go build` with
 `GOOS`/`GOARCH` per target and `CGO_ENABLED=0` -> static binaries. All stages
 are implemented. Last verified: 2026-10-07.
+
+Build modes (decision 0099, 2026-10-09): `build.Options.Release` (only
+in `gen.Build` mode, `Options.release()`) sets `gen.Options.Release`,
+`ssa.Options.Release` (LLVM, arm64, `--hybrid`), the build info field
+`release`, the build id, and a `release` variant of the build directory
+key. `gen.contractOn` and the SSA builder's `contractOn` drop clauses
+with `Debug` set. Tests and `xo run` never pass it.
+`build.Options.NoErrorArgs` (`--error-args=false`, release only) makes
+`internal/gen` emit `rt.Frame0` for every `?` (build info
+`no_error_args`, build directory variant `noargs`). Last verified:
+2026-10-09.
 
 With `--backend=llvm` (2026-10-08): checker -> SSA with reference
 counting (internal/ssa) -> LLVM IR (internal/llvm) ->
@@ -1569,8 +1581,8 @@ Last verified: 2026-10-09.
   override requirements (their requirements join MVS; xo.lock is the
   union of their locks for verification). `query.Load` (check, query,
   mcp), `xo edit`, and `xo test` add every workspace module's directory
-  (`mod.WorkspaceDirs`); `xo doc` uses `query.LoadExact`. `xo build --ci`
-  fails with XO1308 naming the overridden modules. Build info records
+  (`mod.WorkspaceDirs`); `xo doc` uses `query.LoadExact`. `xo build --release`
+  and `xo build --ci` fail with XO1308 naming the overridden modules. Build info records
   `deps` (path to version, or `workspace <dir>`).
 - Checker integration (`internal/check/deps.go`): `loadDirs` calls
   `mod.Load` once per main module and registers each selected module's
@@ -1705,7 +1717,13 @@ experiment of its work queue item 6. Results and coverage:
 
 Last verified: 2026-10-08.
 
-- `core.go` Option/Result/frames/tuples/Box; `arith.go` checked integer
+- `core.go` Option/Result/tuples/Box; `frames.go` error frames (2026-10-09,
+  decision 0092): `Trace` with `Frame0` to `Frame6` (frame and values in
+  one allocation) and `FrameN`, formatted only by `Trace.Lines`;
+  `debugBounded` stops `Debug` formatting at a limit (`debugTo` checks a
+  registry of bounded builders, `boundedActive`; `writeQuoted` quotes
+  long strings only as far as needed); `FrameTextOf` for values formatted
+  at capture; `arith.go` checked integer
   math; `fault.go` faults and contracts; `list.go`, `map.go` value
   semantics collections: List (a header over a backing array whose block
   has a claimed length and a sticky shared flag: append in place when the

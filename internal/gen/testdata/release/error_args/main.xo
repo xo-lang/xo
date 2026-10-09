@@ -1,0 +1,25 @@
+// Error frames are recorded in every build (decision 0092). A release
+// build records parameter values too unless built with
+// `--error-args=false`, which keeps the function and location and shows
+// `(...)` for the parameters.
+
+enum LoadErr {
+  NotFound(id: Int)
+} derive Display
+
+fn load(id: Int) -> Str ! LoadErr {
+  if id > 10 {
+    return Err(LoadErr.NotFound(id: id))
+  }
+  "user${id}"
+}
+
+fn profile(id: Int, name: Str) -> Str ! LoadErr {
+  let u = load(id)?
+  "${name}: ${u}"
+}
+
+fn main(os: Os) ! {
+  os.stdio.println(profile(3, "a")?)
+  os.stdio.println(profile(42, "b")?)
+}

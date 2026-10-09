@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,5 +48,42 @@ func TestBuildCI(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run([]string{"build", "--ci", "-o", filepath.Join(dir, "bin"), filepath.Join(dir, "app")}, &out, &errOut); code != 0 {
 		t.Fatalf("clean program: exit %d\n%s", code, errOut.String())
+	}
+}
+
+// TestBuildRelease checks `xo build --release` (core 8): a contract
+// marked `requires(debug)` is compiled out, while `--ci` alone keeps it
+// (--ci is a gate, not a build mode).
+func TestBuildRelease(t *testing.T) {
+	// --error-args=false belongs to release builds (decision 0092)
+	var o, e bytes.Buffer
+	if code := run([]string{"build", "--error-args=false", t.TempDir()}, &o, &e); code != 2 || !strings.Contains(e.String(), "--error-args=false needs --release") {
+		t.Errorf("--error-args=false without --release: exit %d\n%s", code, e.String())
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	src := "fn half(n: Int) -> Int\n  requires(debug) n % 2 == 0\n{\n  n / 2\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${half(7)}\")\n}\n"
+	dir := writeFiles(t, map[string]string{"app/main.xo": src})
+	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	t.Setenv("XO_CRASH_DIR", dir)
+	app := filepath.Join(dir, "app")
+	for _, c := range []struct {
+		flag, out string
+		exit      int
+	}{
+		{"--release", "3\n", 0},
+		{"--ci", "", 70},
+	} {
+		var out, errOut bytes.Buffer
+		bin := filepath.Join(dir, "bin"+c.flag)
+		if code := run([]string{"build", c.flag, "-o", bin, app}, &out, &errOut); code != 0 {
+			t.Fatalf("%s: exit %d\n%s", c.flag, code, errOut.String())
+		}
+		cmd := exec.Command(bin)
+		got, _ := cmd.Output()
+		if string(got) != c.out || cmd.ProcessState.ExitCode() != c.exit {
+			t.Errorf("%s: printed %q, exit %d; want %q, exit %d", c.flag, got, cmd.ProcessState.ExitCode(), c.out, c.exit)
+		}
 	}
 }

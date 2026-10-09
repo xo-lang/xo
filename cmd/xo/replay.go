@@ -93,7 +93,7 @@ func runReplay(args []string, stdout, stderr io.Writer) int {
 	if *dir != "" {
 		src = *dir
 	}
-	res, err := build.Build([]string{src}, build.Options{Mode: gen.Build, Holes: h.Build.Holes, NoMono: h.Build.NoMono, NoArenas: h.Build.NoArenas, Race: h.Build.Race, TZData: h.Build.TZData})
+	res, err := build.Build([]string{src}, build.Options{Mode: gen.Build, Holes: h.Build.Holes, NoMono: h.Build.NoMono, NoArenas: h.Build.NoArenas, Race: h.Build.Race, TZData: h.Build.TZData, Release: h.Build.Release, NoErrorArgs: h.Build.NoErrorArgs})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo replay: %v\n", err)
 		return 1

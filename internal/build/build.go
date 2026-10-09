@@ -117,6 +117,24 @@ type Options struct {
 	TZData string
 	// tags are the program's Go build tags (gen.Program.Tags).
 	tags []string
+	// Release (`xo build --release`, core 8) is a release build: the
+	// contract clauses marked `requires(debug)` and `ensures(debug)` are
+	// compiled out. It applies to Build mode only; tests are debug builds.
+	Release bool
+	// NoErrorArgs (`--error-args=false`, release builds only, decision
+	// 0092) records error frames without parameter values.
+	NoErrorArgs bool
+}
+
+// release reports whether this is a release build (Release, Build mode).
+func (o Options) release() bool { return o.Release && o.Mode == gen.Build }
+
+// releaseVariant is the build directory variant of a release build.
+func releaseVariant(o Options) string {
+	if o.release() {
+		return "release"
+	}
+	return ""
 }
 
 // Result is the outcome of a build.
@@ -162,6 +180,9 @@ type Info struct {
 	NoArenas bool              `json:"no_arenas,omitempty"`
 	Race     bool              `json:"race,omitempty"`
 	TZData   string            `json:"tzdata,omitempty"`
+	Release  bool              `json:"release,omitempty"`
+	// NoErrorArgs is `--error-args=false` (decision 0092).
+	NoErrorArgs bool `json:"no_error_args,omitempty"`
 	// Deps are the required module versions the program was built with
 	// (decision 0086): "<path>" -> "<version>", or "workspace <dir>" for a
 	// module an xo.work overrides (local paths are recorded here only,
@@ -171,7 +192,7 @@ type Info struct {
 
 // buildInfo computes the build information of a checked program.
 func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Info {
-	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData}
+	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData, Release: opts.release(), NoErrorArgs: opts.release() && opts.NoErrorArgs}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
 	}
@@ -212,6 +233,9 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 	fmt.Fprintf(h, "holes=%v mono=%v arenas=%v race=%v\n", opts.Holes, !opts.NoMono, !opts.NoArenas, opts.Race)
 	if opts.TZData != "" {
 		fmt.Fprintf(h, "tzdata=%s\n", opts.TZData)
+	}
+	if opts.release() {
+		fmt.Fprintf(h, "release error_args=%v\n", !opts.NoErrorArgs)
 	}
 	fs.WalkDir(std.Runtime, "rt", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
@@ -307,7 +331,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if opts.Hybrid && opts.Mode == gen.Build {
 		hyb, out.Hybrid = hybridAsm(dirs, root, opts)
 	}
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs})
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +347,17 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		out.Info = buildInfo(dirs, res, root, opts)
 		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
 	}
-	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas, hyb != nil)
+	var variants []string
+	if hyb != nil {
+		variants = append(variants, "hybrid")
+	}
+	if opts.release() {
+		variants = append(variants, "release")
+		if opts.NoErrorArgs {
+			variants = append(variants, "noargs")
+		}
+	}
+	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas, variants...)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +450,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 
 // buildDir is a stable directory per program and mode under the user
 // cache, so Go's build cache is reused across builds.
-func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, hybrid ...bool) (string, error) {
+func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, variants ...string) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
 	if base == "" {
 		cache, err := os.UserCacheDir()
@@ -440,8 +474,10 @@ func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, hybrid 
 	if arenas {
 		fmt.Fprintf(h, " arenas")
 	}
-	if len(hybrid) > 0 && hybrid[0] {
-		fmt.Fprintf(h, " hybrid")
+	for _, v := range variants {
+		if v != "" {
+			fmt.Fprintf(h, " %s", v)
+		}
 	}
 	// layout 2 (2026-10-08) adds package main's xo_adapt.go; older xo
 	// binaries do not remove it, so they must not share the directory

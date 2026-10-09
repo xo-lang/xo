@@ -321,7 +321,7 @@ every backend; "toolchain" is a command.
 | 7.5 | Two phase shutdown, `stop_requested`, `stopping`, grace | stable | go, llvm, arm64, no-gc | gen TestSignal*, gen:test_shutdown, llvm TestNativeSignal |  |
 | 8 | Faults: overflow, bounds, contracts, conversion, holes, `fault`; exit 70 | stable | go, llvm, arm64, no-gc | gen:index_oob, gen:div_zero, llvm:fault_* |  |
 | 8 | `task.isolate`, HTTP 500 isolation | stable | go, llvm, arm64, no-gc | gen:task_std, llvm:fault_tasks, llvm:http_fault | native: Fault.frames empty (spec says so) |
-| 8 | Release builds and `requires(debug)` / `ensures(debug)` disabling | gap | none | parser tests (syntax only) | no release mode; debug contracts always checked (marked [later]) |
+| 8 | Release builds and `requires(debug)` / `ensures(debug)` disabling | stable | go, llvm, arm64, no-gc | gen:release/debug_contracts, build:TestReleaseNative, cmd/xo:TestBuildRelease | update 2026-10-09: `xo build --release` (decision 0099) |
 | 9.1 | `requires`, `requires ... else`, `ensures` with `old` and `result`, `invariant` | stable | go, llvm, arm64, no-gc | gen:contracts, gen:invariant_*, llvm:contract_* |  |
 | 9.1 | Contract failure prints sub expression values | stable | go, llvm, arm64, no-gc | gen:contracts, llvm:contract_requires |  |
 | 9.1 | Contract fuzzing in `xo test` | stable | go | gen:test_contracts, cmd/xo TestRegressionWritten | native: reported as skipped (spec says so) |
@@ -343,8 +343,8 @@ every backend; "toolchain" is a command.
 | 10.4 | `xo edit` rename, add-field, change-sig | stable | toolchain | edit golden tests, cmd/xo edit_test |  |
 | 10.5 | `xo fmt`, no options | stable | toolchain | format golden tests, TestSpecExamples |  |
 | 10.6 | Diagnostic code registry | stable | toolchain | diag TestSpecListsEveryCode, TestSpecListsEveryFaultCode (added), TestExplanationsComplete | added by this audit; XO1001 reserved |
-| 11.1 | Error frames with parameters (Debug, 64 bytes) | preview | go | gen:error_frames | native records no frames; task line missing ([later]); Appendix B 3 Proposed: decision 0092 |
-| 11.1 | `--error-args` in release builds | gap | none | none | no release mode |
+| 11.1 | Error frames with parameters (Debug, 64 bytes) | preview | go | gen:error_frames, gen:error_frames_capture, gen:error_frames_borrow, gen:arena_frames, rt:TestFrameDebugBounded | native records no frames; task line missing ([later]); update 2026-10-09: lazy frames (decision 0092) |
+| 11.1 | `--error-args` in release builds | stable | go | gen:release/error_args | update 2026-10-09: `--release --error-args=false` (decision 0092) |
 | 11.2 | Crash bundles | preview | go | gen replay_test, cmd/xo replay_test | native writes none (spec says so) |
 | 11.3 | `--record`, `XO_RECORD`, `XO_RING`, `xo replay` | stable | go | gen replay_test, gen replay_gocallback_test, cmd/xo replay_test | [P2] section, implemented on the Go backend |
 | 11.3 | `xo debug --replay`, `xo why` | gap | none | none | [P2] |

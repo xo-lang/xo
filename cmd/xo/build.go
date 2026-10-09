@@ -96,6 +96,8 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	ci := fl.Bool("ci", false, "CI mode: fail before building when a .xo file is not formatted (core 10.5) or `dbg(...)` is left in code (core 11.4)")
+	release := fl.Bool("release", false, "release build (core 8): contracts marked requires(debug) or ensures(debug) are compiled out; fails while an xo.work workspace overrides a required module (XO1308). --ci does not imply it")
+	errorArgs := fl.Bool("error-args", true, "record parameter values in error frames (core 11.1, decision 0092); --error-args=false needs --release")
 	hybrid := fl.Bool("hybrid", false, "compile the hot leaf functions of the main module (loops over scalars and Lists of flat structs, no allocation) to Go assembler with the arm64 backend, keeping the Go runtime (Go backend, decision 0084); the tag xo_pure builds the Go versions")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
@@ -130,11 +132,15 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
+	if !*errorArgs && !*release {
+		fmt.Fprintln(stderr, "xo build: --error-args=false needs --release (debug builds always record parameters)")
+		return 2
+	}
 	if *hybrid && backend != "go" {
 		fmt.Fprintln(stderr, "xo build: --hybrid needs the Go backend")
 		return 2
 	}
-	if *ci {
+	if *ci || *release {
 		if ds := workspaceRelease(dirs); len(ds) > 0 {
 			if *asJSON {
 				encodeJSON(stdout, struct {
@@ -144,15 +150,21 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 				}{false, map[string]string{}, ds})
 			} else {
 				printDiags(ds, stderr)
-				fmt.Fprintln(stderr, "xo build: --ci: nothing built")
+				flag := "--ci"
+				if *release {
+					flag = "--release"
+				}
+				fmt.Fprintf(stderr, "xo build: %s: nothing built\n", flag)
 			}
 			return 1
 		}
+	}
+	if *ci {
 		if code := ciCheck(dirs, *asJSON, stdout, stderr); code != 0 {
 			return code
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid, TZData: *tzdata})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid, TZData: *tzdata, Release: *release, NoErrorArgs: !*errorArgs})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1

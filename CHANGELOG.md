@@ -67,6 +67,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   packages and xo.mod `replay rerun go <path> [names]` lines are not
   recorded. Binding format v5; traces gain `"foreign": 1`, and older
   traces still replay (every Go call runs again).
+- Release builds (decision 0099): `xo build --release` compiles out
+  `requires(debug)` and `ensures(debug)` on every backend and reports
+  XO1308 for workspace overrides; `--ci` does not imply it.
+- Lazy error frames (decision 0092, Go backend): frames keep copies of
+  the parameter values and format them, bounded to 64 bytes, only when a
+  trace is printed. 1,000,000 errors through 5 frames: 0.93 s to 0.10 s
+  with short parameters, 2.78 s to 0.10 s with 90 byte ones; error output
+  unchanged. `xo build --release --error-args=false` drops the values.
 
 ## v0.7.0 (2026-10-09)
 

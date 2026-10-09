@@ -1201,11 +1201,11 @@ xo vendor`,
 	},
 	WorkspaceRelease: {
 		Title: "release build while a workspace overrides modules",
-		Detail: "An xo.work workspace builds the modules it uses from their local directories, overriding the versions xo.mod requires. That is for development only: a release build (`xo build --ci`) must build exactly what xo.mod and xo.lock pin, so it fails while a workspace overrides a required module, naming those modules. " +
+		Detail: "An xo.work workspace builds the modules it uses from their local directories, overriding the versions xo.mod requires. That is for development only: a release build (`xo build --release`, and `xo build --ci`) must build exactly what xo.mod and xo.lock pin, so it fails while a workspace overrides a required module, naming those modules. " +
 			"Build with `--workspace=off` (or XO_WORK=off) to ignore xo.work, or release the overridden modules, require their new versions, and run `xo mod tidy`. See decision 0086.",
 		Example: `# xo.work: use ./api, use ./billing; api requires billing
-xo build --ci ./api`,
-		Fix: `xo build --ci --workspace=off ./api`,
+xo build --release ./api`,
+		Fix: `xo build --release --workspace=off ./api`,
 	},
 	EffectCeiling: {
 		Title: "call into a dependency above its effect ceiling",

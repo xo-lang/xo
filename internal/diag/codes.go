@@ -111,7 +111,7 @@ const (
 	LockMissing        Code = "XO1305" // xo.lock has no hash for a module version the build uses; run `xo mod tidy`
 	ModuleNotRequired  Code = "XO1306" // import of a package from a module that xo.mod does not require
 	VendorInconsistent Code = "XO1307" // vendor/ does not match xo.mod; run `xo vendor`
-	WorkspaceRelease   Code = "XO1308" // release build (`xo build --ci`) while an xo.work workspace overrides required modules
+	WorkspaceRelease   Code = "XO1308" // release build (`xo build --release`, or `--ci`) while an xo.work workspace overrides required modules
 	EffectCeiling      Code = "XO1309" // call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)
 	BreakingRelease    Code = "XO1310" // `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one
 	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)
@@ -198,7 +198,7 @@ var Descriptions = map[Code]string{
 	LockMissing:        "xo.lock has no hash for a module version the build uses; run `xo mod tidy`",
 	ModuleNotRequired:  "import of a package from a module that xo.mod does not require",
 	VendorInconsistent: "vendor/ does not match xo.mod; run `xo vendor`",
-	WorkspaceRelease:   "release build (`xo build --ci`) while an xo.work workspace overrides required modules",
+	WorkspaceRelease:   "release build (`xo build --release`, or `--ci`) while an xo.work workspace overrides required modules",
 	EffectCeiling:      "call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)",
 	BreakingRelease:    "`xo publish`: a minor or patch release removes or changes an export, or adds an effect to one",
 	InvalidRelease:     "`xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)",

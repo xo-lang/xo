@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+checked_half 7: true
+half 7: 3
+grow 1: 2
+--- stderr
+fault: requires failed: n >= 0 at main.xo:10:12

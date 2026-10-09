@@ -721,7 +721,7 @@ func (b StrBuilder) M_freeze(*Task) string { return string(b.b) }
 // XoDebug implements Debug.
 func (b StrBuilder) XoDebug(sb *strings.Builder) {
 	sb.WriteString("StrBuilder(")
-	sb.WriteString(quote(string(b.b)))
+	writeQuoted(sb, string(b.b))
 	sb.WriteString(")")
 }
 
@@ -762,7 +762,7 @@ func (b BytesBuilder) M_freeze(*Task) Bytes { return Bytes(b.b) }
 // XoDebug implements Debug.
 func (b BytesBuilder) XoDebug(sb *strings.Builder) {
 	sb.WriteString("BytesBuilder(b")
-	sb.WriteString(quote(string(b.b)))
+	writeQuoted(sb, string(b.b))
 	sb.WriteString(")")
 }
 

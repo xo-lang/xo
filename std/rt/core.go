@@ -86,51 +86,6 @@ func Err[T, E any](e E) Result[T, E] { return Result[T, E]{E: e} }
 // ErrTr wraps an error that keeps the frames of an earlier Result.
 func ErrTr[T, E any](e E, tr *Trace) Result[T, E] { return Result[T, E]{E: e, Tr: tr} }
 
-// Trace is a persistent list of error frames, newest last.
-type Trace struct {
-	Prev *Trace
-	Fn   string // function name and arguments: `users.fetch_user(id=42)`
-	Loc  string // `users/fetch.xo:18`
-}
-
-// Frame appends a frame for a `?` in function fn at loc.
-func (t *Trace) Frame(fn, loc string) *Trace { return &Trace{Prev: t, Fn: fn, Loc: loc} }
-
-// Lines returns the frames innermost first, formatted as in core 11.1.
-func (t *Trace) Lines() []string {
-	var out []string
-	for f := t; f != nil; f = f.Prev {
-		out = append(out, fmt.Sprintf("  at %-34s %s", f.Fn, f.Loc))
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out
-}
-
-// FrameLabel formats a frame label from a function name and argument pairs
-// (name, value); each value is its Debug text truncated to 64 bytes (core
-// 11.1).
-func FrameLabel(fn string, args ...any) string {
-	var b strings.Builder
-	b.WriteString(fn)
-	b.WriteByte('(')
-	for i := 0; i+1 < len(args); i += 2 {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(args[i].(string))
-		b.WriteByte('=')
-		s := Debug(args[i+1])
-		if len(s) > 64 {
-			s = s[:61] + "..."
-		}
-		b.WriteString(s)
-	}
-	b.WriteByte(')')
-	return b.String()
-}
-
 // Tuple2 to Tuple6 are tuples `(A, B, ...)`.
 type Tuple2[A, B any] struct {
 	F0 A

@@ -237,9 +237,13 @@ func (f *fnGen) funcBody(fd *ast.FnDecl) string {
 		for _, cl := range fd.Clauses {
 			switch c := cl.(type) {
 			case *ast.RequiresClause:
-				f.requires(c)
+				if f.g.contractOn(c.Debug) {
+					f.requires(c)
+				}
 			case *ast.EnsuresClause:
-				ensures = append(ensures, c)
+				if f.g.contractOn(c.Debug) {
+					ensures = append(ensures, c)
+				}
 			}
 		}
 		// a var method of a type with an invariant checks it afterwards

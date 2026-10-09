@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+caller now: n=100 xs=2,99,2 m.k=42 frozen[0]=55 count=9
+--- stderr
+error: Bad(at: 2)
+  at error_frames_capture.step(n=2, xs=[2, 20, 2], m={"k": 2}, note="a long note that is longer than sixty four bytes, so the fra..., key=<redacted>, b=Buf[5, 1], count=Atomic(1)) main.xo:23
+  at error_frames_capture.rethrow(r=Err(Bad(at: 2))) main.xo:28
+  at error_frames_capture.main()        main.xo:49
