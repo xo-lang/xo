@@ -1486,14 +1486,44 @@ static const char *h_sniff(const unsigned char *d, int64_t n) {
 	return "text/plain; charset=utf-8";
 }
 
+// h_itoa writes v in decimal at out (room for 21 bytes and a NUL) and
+// returns its length.
+static int h_itoa(char *out, int64_t v) {
+	char t[24];
+	int n = 0;
+	uint64_t u = v < 0 ? -(uint64_t)v : (uint64_t)v;
+	do {
+		t[n++] = (char)('0' + u % 10);
+		u /= 10;
+	} while (u);
+	int k = 0;
+	if (v < 0) {
+		out[k++] = '-';
+	}
+	while (n) {
+		out[k++] = t[--n];
+	}
+	out[k] = 0;
+	return k;
+}
+
+// h_date writes the Date header value of now (http.TimeFormat), made at
+// most once a second per thread (each response used to format it with
+// gmtime_r and snprintf).
 static void h_date(char *out) {
 	static const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 	static const char *mons[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+	static __thread time_t last = -1;
+	static __thread char text[40];
 	time_t t = time(NULL);
-	struct tm tm;
-	gmtime_r(&t, &tm);
-	snprintf(out, 40, "%s, %02d %s %04d %02d:%02d:%02d GMT", days[tm.tm_wday], tm.tm_mday, mons[tm.tm_mon], tm.tm_year + 1900, tm.tm_hour,
-	         tm.tm_min, tm.tm_sec);
+	if (t != last) {
+		struct tm tm;
+		gmtime_r(&t, &tm);
+		snprintf(text, sizeof text, "%s, %02d %s %04d %02d:%02d:%02d GMT", days[tm.tm_wday], tm.tm_mday, mons[tm.tm_mon], tm.tm_year + 1900,
+		         tm.tm_hour, tm.tm_min, tm.tm_sec);
+		last = t;
+	}
+	memcpy(out, text, sizeof text);
 }
 
 static int h_body_allowed(int64_t st) { return !((st >= 100 && st <= 199) || st == 204 || st == 304); }
@@ -1544,7 +1574,23 @@ static void hw_fields(nbuf *o, hlist *h, const char **excl, int nexcl) {
 static void hw_status_line(nbuf *o, int is11, int64_t code) {
 	char line[96];
 	const char *t = h_status_text(code);
-	if (t[0]) {
+	if (t[0] && code >= 100 && code <= 999) {
+		// "HTTP/1.x NNN text\r\n" (snprintf per response showed in profiles)
+		int k = 0;
+		memcpy(line, is11 ? "HTTP/1.1 " : "HTTP/1.0 ", 9);
+		k = 9;
+		k += h_itoa(line + k, code);
+		line[k++] = ' ';
+		size_t tn = strlen(t);
+		if (tn > sizeof line - (size_t)k - 3) {
+			tn = sizeof line - (size_t)k - 3;
+		}
+		memcpy(line + k, t, tn);
+		k += (int)tn;
+		line[k++] = '\r';
+		line[k++] = '\n';
+		line[k] = 0;
+	} else if (t[0]) {
 		snprintf(line, sizeof line, "HTTP/1.%d %lld %s\r\n", is11, (long long)code, t);
 	} else {
 		snprintf(line, sizeof line, "HTTP/1.%d %03lld status code %lld\r\n", is11, (long long)code, (long long)code);
@@ -1608,7 +1654,7 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 	int hasTE = te[0] != 0;
 	if (done && !hasTE && body_ok && cli < 0 && (!head || plen > 0)) {
 		contentLength = plen;
-		snprintf(set_cl, sizeof set_cl, "%lld", (long long)plen);
+		h_itoa(set_cl, plen);
 	}
 	int64_t conni = hl_find(h, "Connection");
 	const char *connv = conni >= 0 ? h->a[conni].v.p : "";
@@ -2390,7 +2436,7 @@ int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn
 		// std/rt sets Content-Length on a whole body net/http would
 		// otherwise chunk (above its 2048 byte buffer); match it
 		char cl[24];
-		int cn = snprintf(cl, sizeof cl, "%lld", (long long)bn);
+		int cn = h_itoa(cl, bn);
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
 	int keep = hw_response(&o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
