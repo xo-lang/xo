@@ -1149,7 +1149,7 @@ require github.com/acme/billing v1.4.0`,
 			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod at the repository root, or that xo.mod declares a different module path. The message carries git's reason. See core 4.2 and decision 0086.",
 		Example: `// xo.mod
 module example.com/api
-require github.com/acme/billing v9.9.9   // no such tag`,
+require github.com/acme/billing v1.9.9   // no such tag`,
 		Fix: `// pick an existing tag (xo get github.com/acme/billing takes the latest)
 module example.com/api
 require github.com/acme/billing v1.4.0`,
@@ -1206,6 +1206,32 @@ xo vendor`,
 		Example: `# xo.work: use ./api, use ./billing; api requires billing
 xo build --ci ./api`,
 		Fix: `xo build --ci --workspace=off ./api`,
+	},
+	EffectCeiling: {
+		Title: "call into a dependency above its effect ceiling",
+		Detail: "A `uses` clause after a require's version in xo.mod (`require github.com/acme/billing v1.4.0 uses none`) is the effect ceiling of that dependency: every call from this module into it, and every use of one of its functions as a value, may perform only the effects listed (`uses none`: none; `fs` admits `fs.read`). " +
+			"The effects counted are those the dependency's function declares itself, not the effects of callbacks you pass it. A `use <dir> uses ...` line of xo.work sets a ceiling for calls from the other workspace modules. " +
+			"The error sits on the call, so an upgrade whose new version adds an effect fails where it matters. Review why the dependency now needs the effect; then raise the ceiling, or stay on a version within it. See core 4.2 and decision 0086.",
+		Example: `// xo.mod: require github.com/acme/billing v1.5.0 uses none
+fn total(items: List[Item]) -> Int { invoice.total(items) }   // v1.5.0 declares uses net`,
+		Fix: `// after review, in xo.mod:
+require github.com/acme/billing v1.5.0 uses net`,
+	},
+	BreakingRelease: {
+		Title: "breaking change in a minor or patch release",
+		Detail: "`xo publish` compares the exported API and effects of the module (the declarations `xo query api` lists, in every package of the module) with the previous vX.Y.Z tag. A minor or patch release may add exports but must not remove one, change its signature, or add an effect to a function (callers' effect ceilings and `uses` clauses would break). " +
+			"A breaking change needs a new major version, whose module path ends in /vN from v2 on; before v1.0.0 (v0.x.y), a minor bump may break and a patch may not. Each breaking change is listed with the old and new signature. See decision 0086.",
+		Example: `# v1.4.0: pub fn total(items: List[Item]) -> Int
+# now:    pub fn total(items: List[Item]) -> Int uses net
+xo publish --check --version v1.5.0`,
+		Fix: `# keep the old function pure and add a new one, or release a major version:
+xo publish --check --version v2.0.0   # module path .../v2`,
+	},
+	InvalidRelease: {
+		Title:   "the release cannot be made",
+		Detail:  "Publishing a module version is creating its git tag; `xo publish` validates first and prints the tag command, it never pushes. It needs the module at the root of a git repository, no uncommitted changes (without --check), a version tag that does not exist yet and is above the last release, a major version that matches the module path (/vN from v2 on), and an xo.mod and xo.lock that load. See decision 0086.",
+		Example: `xo publish --version v1.4.0   # v1.4.0 is already a tag`,
+		Fix:     `xo publish --version v1.4.1`,
 	},
 }
 

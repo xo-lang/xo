@@ -112,6 +112,9 @@ const (
 	ModuleNotRequired  Code = "XO1306" // import of a package from a module that xo.mod does not require
 	VendorInconsistent Code = "XO1307" // vendor/ does not match xo.mod; run `xo vendor`
 	WorkspaceRelease   Code = "XO1308" // release build (`xo build --ci`) while an xo.work workspace overrides required modules
+	EffectCeiling      Code = "XO1309" // call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)
+	BreakingRelease    Code = "XO1310" // `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one
+	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)
 )
 
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
@@ -189,6 +192,9 @@ var Descriptions = map[Code]string{
 	ModuleNotRequired:  "import of a package from a module that xo.mod does not require",
 	VendorInconsistent: "vendor/ does not match xo.mod; run `xo vendor`",
 	WorkspaceRelease:   "release build (`xo build --ci`) while an xo.work workspace overrides required modules",
+	EffectCeiling:      "call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)",
+	BreakingRelease:    "`xo publish`: a minor or patch release removes or changes an export, or adds an effect to one",
+	InvalidRelease:     "`xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 

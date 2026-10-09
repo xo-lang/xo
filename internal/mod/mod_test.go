@@ -224,7 +224,7 @@ func TestFetchProblems(t *testing.T) {
 	cases := []struct {
 		name, reqs, want string
 	}{
-		{"no tag", "require github.com/acme/money v9.9.9\n", "XO1302"},
+		{"no tag", "require github.com/acme/money v1.9.9\n", "XO1302"},
 		{"no repository", "require github.com/acme/nothing v1.0.0\n", "XO1302"},
 		{"declares another path", "require github.com/acme/wrongpath v1.0.0\n", "XO1302"},
 	}

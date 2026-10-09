@@ -192,7 +192,9 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [module-cache-read-only.md](module-cache-read-only.md): the module cache is read only, so `rm -rf` and `t.TempDir` cleanup fail; use `xo mod clean` or `modtest.MakeWritable`.
 - [mod-tidy-drops-unimported-requires.md](mod-tidy-drops-unimported-requires.md): `xo mod tidy` removed every requirement of a module with no imports; write the imports first.
 - [transitive-module-import.md](transitive-module-import.md): a package of a module required only by a dependency was importable; now XO1306.
-- [serve-new-xo-work-unnoticed.md](serve-new-xo-work-unnoticed.md): `xo serve` may miss an xo.work created above the checked directories; stop it or pass a module flag.
 - [derived-display-had-no-display-method.md](derived-display-had-no-display-method.md): `e.display()` failed with XO0601 on `derive Display` and std error types; now callable.
 - [arms-on-one-line-false-missing-arm.md](arms-on-one-line-false-missing-arm.md): several arms on one line dropped the later arms and gave a false XO0301 with a hole fix; now XO0175 with a split fix.
 - [full-gen-tests-exceed-default-timeout.md](full-gen-tests-exceed-default-timeout.md): full `go test ./...` can time out in internal/gen at 10 min under load; use `-timeout 40m`.
+- [serve-new-xo-work-unnoticed.md](serve-new-xo-work-unnoticed.md): `xo serve` missed an xo.work created above the checked directories; fixed by recording the nearest xo.work per module root.
+- [major-version-needs-vn-path.md](major-version-needs-vn-path.md): a v2+ version of a path without `/vN` is XO1301 at parse time, not a fetch error.
+- [effect-ceiling-scope.md](effect-ceiling-scope.md): a ceiling counts the effects a dependency function declares; callback and caller owned interface effects are the caller's.

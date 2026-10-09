@@ -56,7 +56,7 @@ over that graph costs nothing extra to evaluate at `xo check` time.
    ```
    Paths match a package and, with a trailing `/...`, everything under
    it (`deny example.com/notes/domain -> example.com/notes/...`). A `use`
-   that a rule forbids, directly, is a new error `XO1309` at the `use`
+   that a rule forbids, directly, is a new error `XO1312` at the `use`
    line, naming the rule and its xo.mod line; transitive edges are not
    checked (each direct edge is, so a chain is caught at its first
    forbidden step). Rules apply to the main module's own packages;
@@ -81,7 +81,7 @@ over that graph costs nothing extra to evaluate at `xo check` time.
 ## Recommendation
 
 Option 3, with option 2 as a small companion: `deny` lines in xo.mod
-checked by the checker (`XO1309`, no machine fix: removing a `use` is a
+checked by the checker (`XO1312`, no machine fix: removing a `use` is a
 design change, not a rewrite), and `xo query imports` so an agent can see
 the graph and the rule that blocks an edge. Option 1 is deferred: once
 rules are declarative, a test API adds a second place for the same fact;
@@ -99,7 +99,7 @@ would then point at `deny` the way it points at other spec sections.
   no diagnostic.
 - xo.mod gains a line kind that `xo mod tidy` must keep and `xo fmt`
   (if it ever formats xo.mod) must order stably.
-- A forbidden `use` that is also unused reports `XO1309`, not just the
+- A forbidden `use` that is also unused reports `XO1312`, not just the
   unused import warning, so the rule cannot be hidden by deleting the
   last call.
 

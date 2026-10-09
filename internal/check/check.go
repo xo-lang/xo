@@ -48,6 +48,8 @@ type checker struct {
 	modErr error
 	// deps are the resolved requirements of the main modules (deps.go).
 	deps depState
+	// ceil caches the effect ceilings of dependencies (ceiling.go).
+	ceil ceilingState
 
 	nextVar int
 	trail   []func()
