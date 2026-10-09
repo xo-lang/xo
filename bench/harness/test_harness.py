@@ -225,15 +225,19 @@ class TestAdapter(unittest.TestCase):
 
     def test_first_try_after_xo_fix(self):
         # run 1 has only a habit with a machine fix (XO0162, `}` newline
-        # `else`): it fails as is, and passes after `xo fix`
+        # `else`): it fails as written, and passes after `xo check --fix`,
+        # which the agent loop runs (decision 0096), so the run is green at
+        # once with one fix applied in place
         bad = block("xo.mod", XO_MOD) + block("main.xo", XO_MAIN_ELSE) + block("main_test.xo", XO_TEST)
-        good = block("main.xo", XO_MAIN_ELSE.replace("}\n  else {", "} else {"))
         out = os.path.join(self.tmp, "out")
-        with FakeServer([bad, good]) as srv:
+        with FakeServer([bad]) as srv:
             run_adapter(srv.url, out, "--arms", "xo", "--tasks", "09", "--planted", "none", "--max-runs", "2")
+        self.assertEqual(len(srv.requests), 1)
         d = os.path.join(out, "xo", "09-inventory")
         runs = read_jsonl(os.path.join(d, "runs.jsonl"))
-        self.assertEqual([(r["green"], r["stage"]) for r in runs], [(False, "check"), (True, "none")])
+        self.assertEqual([(r["green"], r["stage"], r["fixes"]) for r in runs], [(True, "none", 1)])
+        with open(os.path.join(d, "main.xo")) as f:
+            self.assertIn("} else {", f.read())
         self.assertEqual(score.first_snapshot(d, "09-inventory"), os.path.join(d, ".attempts", "run-1"))
         rec = score.score_cell("xo", "09-inventory", d, hidden=False)
         self.assertFalse(rec["first"]["plain"]["green"])
@@ -246,8 +250,8 @@ class TestAdapter(unittest.TestCase):
         args = type("A", (), {"claude": False, "dir": out, "tasks": ["09-inventory"]})()
         report = score.solutions_report(args, [rec])
         self.assertIn("| First try now (first run sources, current toolchain) | n/a | n/a | 0/1 |", report)
-        self.assertIn("| First try after `xo fix` (current toolchain) | n/a | n/a | 1/1 |", report)
-        self.assertIn("| xo | 09-inventory | fail | fail (check: XO0162) | pass, 1 fixes |", report)
+        self.assertIn("| First try after `xo check --fix` (current toolchain) | n/a | n/a | 1/1 |", report)
+        self.assertIn("| xo | 09-inventory | pass | fail (check: XO0162) | pass, 1 fixes |", report)
         # a path 2b layout: <out>/history/<task>/1 next to <out>/xo/<task>
         hist = os.path.join(self.tmp, "b", "history", "09-inventory", "1")
         cell = os.path.join(self.tmp, "b", "xo", "09-inventory")

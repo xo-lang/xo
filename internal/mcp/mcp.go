@@ -203,8 +203,8 @@ var dirsProp = map[string]any{
 }
 
 func init() {
-	register("check", "Type check the modules under dirs. Returns {ok, errors, warnings, modules, diagnostics}; each diagnostic has code, severity, message, span, notes, and fixes (machine applicable edits).",
-		map[string]any{"dirs": dirsProp, "no_gc": noGCProp}, nil, toolCheck)
+	register("check", "Type check the modules under dirs. Returns {ok, errors, warnings, modules, diagnostics}; each diagnostic has code, severity, message, span, notes, and fixes (machine applicable edits). With fix=true (`xo check --fix`, decision 0096) every unambiguous machine fix is applied and the changed files reformatted first; the result then also has applied: [{file, line, rule, title}].",
+		map[string]any{"dirs": dirsProp, "no_gc": noGCProp, "fix": map[string]any{"type": "boolean", "description": "apply the unambiguous machine fixes and reformat before reporting (default false: read only)"}}, nil, toolCheck)
 	register("query", "Semantic query: type (arg file:line:col), def (arg name, Type.member, module.name), callers (arg module.fn), effects (arg module.fn, with the call chain per effect), holes (no arg), api (arg module import path or directory).",
 		map[string]any{
 			"kind": map[string]any{"type": "string", "enum": []string{"type", "def", "callers", "effects", "holes", "api"}},
@@ -333,6 +333,13 @@ func toolCheck(s *Server, args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	doFix, err := boolArg(args, "fix")
+	if err != nil {
+		return nil, err
+	}
+	if doFix {
+		cl = append(cl, "--fix")
+	}
 	code, out, stderr := s.exec(append(cl, dirs...)...)
 	if err := usageErr(code, stderr); err != nil {
 		return nil, err
@@ -340,6 +347,7 @@ func toolCheck(s *Server, args map[string]any) (any, error) {
 	var r struct {
 		Modules     []string          `json:"modules"`
 		Diagnostics []json.RawMessage `json:"diagnostics"`
+		Applied     []json.RawMessage `json:"applied"`
 	}
 	if err := json.Unmarshal(out, &r); err != nil {
 		return nil, fmt.Errorf("check output: %v", err)
@@ -356,7 +364,14 @@ func toolCheck(s *Server, args map[string]any) (any, error) {
 			warns++
 		}
 	}
-	return map[string]any{"ok": errs == 0, "errors": errs, "warnings": warns, "modules": r.Modules, "diagnostics": r.Diagnostics}, nil
+	res := map[string]any{"ok": errs == 0, "errors": errs, "warnings": warns, "modules": r.Modules, "diagnostics": r.Diagnostics}
+	if doFix {
+		if r.Applied == nil {
+			r.Applied = []json.RawMessage{}
+		}
+		res["applied"] = r.Applied
+	}
+	return res, nil
 }
 
 func toolQuery(s *Server, args map[string]any) (any, error) {

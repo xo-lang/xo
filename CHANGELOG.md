@@ -27,6 +27,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   data (`--tzdata=system`), civil dates and times with explicit daylight
   saving gaps and overlaps, layouts with named fields checked at compile
   time (XO0420; XO0177 for `{yyyy}`, `%Y`, `2006-01-02` habits).
+- `xo check --fix` (decision 0096): applies the unambiguous machine fixes
+  (as `xo fix`), reformats, then reports what remains plus an `applied`
+  list; the MCP `check` tool takes `fix`, and the bench harness agent
+  loop uses it while still scoring first runs as written and after fix.
 
 ## v0.7.0 (2026-10-09)
 

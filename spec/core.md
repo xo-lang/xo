@@ -58,6 +58,10 @@ specified in std.md 13 (decision 0094).
   compile time: `XO0420` for an unknown field (10.6), `XO0177` for date
   patterns of other languages. Native backends report it as `XO1201`
   (planned).
+- `xo check --fix` (10.1, 10.2; decision 0096) applies every unambiguous
+  machine fix, reformats the changed files, and reports what remains with
+  the list of applied fixes; plain `xo check` stays read only. The MCP
+  `check` tool takes `fix`.
 
 ## Changes in 0.7
 
@@ -1588,10 +1592,10 @@ test "retries after 503" {
 |---|---|
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
 | `xo run` | Build and run for the host |
-| `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
+| `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
-| `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
+| `xo mcp` | Model Context Protocol server over stdio: `check` (with an optional `fix`), `query`, `edit`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=YYYY]` | Apply all machine fixes until none apply; `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
@@ -1609,6 +1613,17 @@ The commands that report diagnostics or results accept `--json`: `parse`,
 JSON), `doc`, `explain`, and `bind`. `run`, `replay`, `dump`, `serve`, and
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
+
+**Check and fix.** `xo check` is read only. `xo check --fix` first
+applies every unambiguous machine fix, the same set `xo fix` applies
+(without `--from`), round after round until none applies, reformats the
+files it changed, and then reports the diagnostics that remain, with the
+exit status of `xo check` on them. Its JSON adds `applied`, the list of
+fixes made (`{file, line, rule, title}`, `rule` being the diagnostic
+code); plain `xo check --json` has no `applied` field. This is the agent
+loop's check: an agent runs `xo check --fix` and then `xo test`, so a
+diagnostic with an exact fix never costs a run (decision 0096). The MCP
+`check` tool takes `fix: true` for the same.
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
@@ -1702,6 +1717,10 @@ where the Go backend fuses a multiply and an add (decision 0084).
 - A suggestion from edit distance (`did you mean`) is a note; it is also a
   fix only when it is clear: a unique closest candidate at most half the
   name's length away, for names of three or more characters.
+- A diagnostic's first fix is the one `xo fix` and `xo check --fix` apply
+  (10.1); fixes whose edits overlap in one round wait for the next round.
+  `xo check --fix --json` adds `"applied": [{"file", "line", "rule",
+  "title"}]` next to `modules` and `diagnostics`.
 
 ### 10.3 Queries
 
