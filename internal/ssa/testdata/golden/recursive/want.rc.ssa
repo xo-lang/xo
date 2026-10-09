@@ -402,9 +402,9 @@ b2:  ; preds b0
   br v9, b5(), b4()
 b3:  ; preds b0
   v11: Str = payload 0.0, v0
+  v12: List[Str] = call list.new
   retain v11
-  v13: List[Str] = call list.new
-  v14: List[Str] = call list.push, v13, v11
+  v14: List[Str] = call list.push, v12, v11
   jump b1(v14)
 b4:  ; preds b2
   unreachable

@@ -403,26 +403,25 @@ b1(v5: Int):  ; preds b0, b3
   br v6, b2(), b4()
 b2:  ; preds b1
   v8: Str = call list.index, v0, v5
-  retain v8
-  v10: Int = call Str.len, v8
-  v11: Bool = gt v10, v1
-  br v11, b6(), b7()
+  v9: Int = call Str.len, v8
+  v10: Bool = gt v9, v1
+  br v10, b6(), b7()
 b3:  ; preds b5
-  v13: Int = const 1
-  v14: Int = add v5, v13
-  jump b1(v14)
+  v12: Int = const 1
+  v13: Int = add v5, v12
+  jump b1(v13)
 b4:  ; preds b1
-  v16: Str = const "none"
-  retain v16
-  ret v16
+  v15: Str = const "none"
+  retain v15
+  ret v15
 b5:  ; preds b7
-  v19: () = tuple
+  v18: () = tuple
   jump b3()
 b6:  ; preds b2
+  retain v8
   ret v8
 b7:  ; preds b2
-  release v8
-  v23: () = tuple
+  v22: () = tuple
   jump b5()
 }
 

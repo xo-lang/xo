@@ -213,13 +213,31 @@ func (r *rcInfo) kind(v *Value) rootKind {
 	case OpConst:
 		return rkBorrowed
 	case OpPayload, OpCapture, OpUnbox:
-		return rkProj
+		return r.projKind(v)
 	case OpCall:
 		if name, _ := v.Aux.(string); projCalls[name] {
-			return rkProj
+			return r.projKind(v)
 		}
 	}
 	return rkOwned
+}
+
+// projKind is the kind of projection v: borrowed when its container is
+// (a borrowed parameter, a constant, or a projection out of one), since
+// that container outlives the call and nothing in it updates the
+// container in place (an update consumes, and a borrowed parameter is
+// never consumed); else rkProj. A borrowed projection needs no retain
+// and release around its uses (a value read out of a map or list
+// parameter inside a loop with calls), only a retain where it is
+// consumed.
+func (r *rcInfo) projKind(v *Value) rootKind {
+	if len(v.Args) == 0 {
+		return rkProj
+	}
+	if r.kind(r.parent(v).root) == rkBorrowed {
+		return rkBorrowed
+	}
+	return rkProj
 }
 
 // parent is the leaf a projection root was taken from.
