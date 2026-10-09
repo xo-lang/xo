@@ -27,6 +27,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   data (`--tzdata=system`), civil dates and times with explicit daylight
   saving gaps and overlaps, layouts with named fields checked at compile
   time (XO0420; XO0177 for `{yyyy}`, `%Y`, `2006-01-02` habits).
+- Release builds (decision 0097): `xo build --release` compiles out
+  `requires(debug)` and `ensures(debug)` on every backend and reports
+  XO1308 for workspace overrides; `--ci` does not imply it.
 
 ## v0.7.0 (2026-10-09)
 

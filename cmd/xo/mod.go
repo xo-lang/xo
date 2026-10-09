@@ -253,8 +253,9 @@ func runVendor(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// workspaceRelease is the release check of `xo build --ci` (decision
-// 0086): no workspace may override a required module.
+// workspaceRelease is the release check of `xo build --release` and
+// `--ci` (decisions 0086, 0097): no workspace may override a required
+// module.
 func workspaceRelease(dirs []string) []diag.Diagnostic {
 	if mod.WorkOff() || len(dirs) == 0 {
 		return nil

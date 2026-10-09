@@ -67,6 +67,16 @@ type Options struct {
 	// Hybrid is the assembly of `xo build --hybrid` (hybrid.go,
 	// decision 0084); nil for a plain build.
 	Hybrid *Hybrid
+	// Release (`xo build --release`, core 8) compiles out the contract
+	// clauses marked `requires(debug)` and `ensures(debug)`. Build mode
+	// only: tests are always debug builds.
+	Release bool
+}
+
+// contractOn reports whether a contract clause marked debug (or not) is
+// checked: debug clauses are compiled out of release builds (core 8).
+func (g *gen) contractOn(debug bool) bool {
+	return !debug || !g.opts.Release || g.opts.Mode != Build
 }
 
 // Program is the generated Go source of one Xo program: file paths

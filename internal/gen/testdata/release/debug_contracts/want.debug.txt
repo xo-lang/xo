@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+checked_half 7: false
+--- stderr
+fault: requires failed: n % 2 == 0 at main.xo:9:19

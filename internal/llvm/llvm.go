@@ -33,6 +33,8 @@ type Options struct {
 	ShareProbes bool
 	// Tests generates a test binary (ssa.Options.Tests).
 	Tests bool
+	// Release compiles out debug contracts (ssa.Options.Release).
+	Release bool
 }
 
 // Program is the generated IR of one Xo program.
@@ -48,7 +50,7 @@ type Program struct {
 // builds SSA, verifies it, inserts reference counting, verifies again
 // (ownership balance included), and lowers to LLVM IR.
 func Generate(res *check.Result, opts Options) (*Program, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, Release: opts.Release})
 	if err != nil {
 		return nil, err
 	}

@@ -320,7 +320,7 @@ every backend; "toolchain" is a command.
 | 7.5 | Two phase shutdown, `stop_requested`, `stopping`, grace | stable | go, llvm, arm64, no-gc | gen TestSignal*, gen:test_shutdown, llvm TestNativeSignal |  |
 | 8 | Faults: overflow, bounds, contracts, conversion, holes, `fault`; exit 70 | stable | go, llvm, arm64, no-gc | gen:index_oob, gen:div_zero, llvm:fault_* |  |
 | 8 | `task.isolate`, HTTP 500 isolation | stable | go, llvm, arm64, no-gc | gen:task_std, llvm:fault_tasks, llvm:http_fault | native: Fault.frames empty (spec says so) |
-| 8 | Release builds and `requires(debug)` / `ensures(debug)` disabling | gap | none | parser tests (syntax only) | no release mode; debug contracts always checked (marked [later]) |
+| 8 | Release builds and `requires(debug)` / `ensures(debug)` disabling | stable | go, llvm, arm64, no-gc | gen:release/debug_contracts, build:TestReleaseNative, cmd/xo:TestBuildRelease | update 2026-10-09: `xo build --release` (decision 0097) |
 | 9.1 | `requires`, `requires ... else`, `ensures` with `old` and `result`, `invariant` | stable | go, llvm, arm64, no-gc | gen:contracts, gen:invariant_*, llvm:contract_* |  |
 | 9.1 | Contract failure prints sub expression values | stable | go, llvm, arm64, no-gc | gen:contracts, llvm:contract_requires |  |
 | 9.1 | Contract fuzzing in `xo test` | stable | go | gen:test_contracts, cmd/xo TestRegressionWritten | native: reported as skipped (spec says so) |

@@ -34,10 +34,10 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 		info.Err = "the native check failed"
 		return nil, info
 	}
-	gp, err := hybridGo(res, root, opts.HybridAll, false)
+	gp, err := hybridGo(res, root, opts.HybridAll, false, opts.release())
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		gp, err = hybridGo(res, root, opts.HybridAll, true)
+		gp, err = hybridGo(res, root, opts.HybridAll, true, opts.release())
 	}
 	if err != nil {
 		info.Err = err.Error()
@@ -61,8 +61,8 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 	return h, info
 }
 
-func hybridGo(res *check.Result, root string, all, noInline bool) (*arm64.GoProgram, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, NoFaultUnwind: true})
+func hybridGo(res *check.Result, root string, all, noInline, release bool) (*arm64.GoProgram, error) {
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, NoFaultUnwind: true, Release: release})
 	if err != nil {
 		return nil, err
 	}

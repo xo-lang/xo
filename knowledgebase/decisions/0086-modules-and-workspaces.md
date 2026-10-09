@@ -112,7 +112,8 @@ hashes.
   modules' locks; `xo get`, `xo mod tidy`, and `xo vendor` always ignore
   the workspace, so locks never record overrides.
 - Release builds are `xo build --ci` until a `--release` mode exists
-  (decision 0092 proposes one).
+  (decision 0092 proposes one). Update 2026-10-09: `xo build --release`
+  exists (decision 0097) and reports XO1308 too; `--ci` keeps it.
 
 ## Implementation notes, steps 3 and 4 (2026-10-09)
 

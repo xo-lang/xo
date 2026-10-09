@@ -26,7 +26,7 @@ specified in std.md 13 (decision 0094).
 - `--json` is accepted by the commands that report results, not by every
   command; `xo test` takes `--cases=N`, not `--fuzz` (10.1).
 - **[later]** markers for what is specified but not built: `xo why`,
-  `xo debug`, release builds and `--error-args`, the task line of error
+  `xo debug`, `--error-args`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
   derives, and reading a newtype's value (2.8).
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
@@ -58,6 +58,11 @@ specified in std.md 13 (decision 0094).
   compile time: `XO0420` for an unknown field (10.6), `XO0177` for date
   patterns of other languages. Native backends report it as `XO1201`
   (planned).
+- Release builds (8, decision 0097): `xo build --release` compiles out
+  `requires(debug)` and `ensures(debug)` on every backend and fails while
+  a workspace overrides a required module (`XO1308`, formerly reported
+  only by `--ci`). `--ci` does not imply `--release`; `xo run`, `xo test`,
+  and plain `xo build` are debug builds.
 
 ## Changes in 0.7
 
@@ -918,7 +923,8 @@ use ./billing
 - xo.lock is never written with workspace overrides (`xo get`, `xo mod
   tidy`, and `xo vendor` ignore the workspace); builds record the local
   directories in build information only. A release build (`xo build
-  --ci`) fails while a workspace overrides a required module (`XO1308`).
+  --release`, 8) and `xo build --ci` fail while a workspace overrides a
+  required module (`XO1308`).
 - `xo.work` is gitignored by `xo init` in a single module repository;
   a monorepo may commit it.
 
@@ -1495,9 +1501,20 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
 
 There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly
-marked `requires(debug)` or `ensures(debug)`. **[later]** There is no
-release build mode yet: every build checks `requires(debug)` and
-`ensures(debug)` like other contracts.
+marked `requires(debug)` or `ensures(debug)`.
+
+- `xo build --release` is a release build (decision 0097): the clauses
+  marked `(debug)` are compiled out on every backend, `requires(debug) c
+  else E` included (the function no longer returns that error). Every
+  other contract, every invariant, and every fault check stays. A release
+  build fails while an xo.work workspace overrides a required module
+  (`XO1308`, 4.2) and is the only build that accepts `--error-args`
+  (11.1).
+- Every other build is a debug build: `xo build` without `--release`,
+  `xo run`, `xo test` (whose contract fuzzing checks the debug clauses
+  too), and `xo replay`, which rebuilds in the mode recorded in the
+  program's build information. `--ci` is a gate, not a mode: it does not
+  imply `--release`; a pipeline that ships the binary passes both.
 
 ---
 
@@ -1586,7 +1603,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
@@ -1851,7 +1868,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1305` | error | modules | xo.lock has no hash for a module version the build uses; run `xo mod tidy` |
 | `XO1306` | error | checker | import of a package from a module that xo.mod does not require |
 | `XO1307` | error | modules | vendor/ does not match xo.mod; run `xo vendor` |
-| `XO1308` | error | build | release build (`xo build --ci`) while an xo.work workspace overrides required modules |
+| `XO1308` | error | build | release build (`xo build --release`, or `--ci`) while an xo.work workspace overrides required modules |
 | `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
@@ -1888,7 +1905,8 @@ LoadErr.Db(msg: "timeout")
 - **[later]** A last line naming the task and its scope
   (`in task "handler#913" (scope api.serve)`) is planned.
 - Release builds record parameters only with `--error-args` (**[later]**:
-  there is no release build mode yet, see 8; Appendix B question 3).
+  release builds (8) record frames like debug builds; decision 0092
+  replaces this rule).
 
 ### 11.2 Crash bundles
 

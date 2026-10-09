@@ -1,0 +1,33 @@
+// Release builds (core 8): `requires(debug)` and `ensures(debug)` are
+// compiled out; every other contract is checked in every build.
+
+enum InputErr {
+  Odd(n: Int)
+} derive Display
+
+fn half(n: Int) -> Int
+  requires(debug) n % 2 == 0
+  requires n >= 0
+{
+  n / 2
+}
+
+fn grow(n: Int) -> Int
+  ensures(debug) result > 100
+  ensures result > n
+{
+  n + 1
+}
+
+fn checked_half(n: Int) -> Int ! InputErr
+  requires(debug) n % 2 == 0 else InputErr.Odd(n: n)
+{
+  n / 2
+}
+
+fn main(os: Os) {
+  os.stdio.println("checked_half 7: ${checked_half(7).is_ok()}")
+  os.stdio.println("half 7: ${half(7)}")
+  os.stdio.println("grow 1: ${grow(1)}")
+  os.stdio.println("half -2: ${half(-2)}")
+}

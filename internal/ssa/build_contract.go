@@ -32,7 +32,7 @@ func (b *builder) contractWrapped(fo *check.FuncObj) (ens []*ast.EnsuresClause, 
 		return nil, false
 	}
 	for _, cl := range fo.Decl.Clauses {
-		if c, ok := cl.(*ast.EnsuresClause); ok {
+		if c, ok := cl.(*ast.EnsuresClause); ok && b.contractOn(c.Debug) {
 			ens = append(ens, c)
 		}
 	}
@@ -57,7 +57,7 @@ func (b *builder) contractBody(fo *check.FuncObj, f *Func, sub *check.Subst, ens
 	s.res, s.errT = s.apply(fo.Result), failErr(s.apply(fo.Err))
 	vars := s.paramBindings(fo, f)
 	for _, cl := range fo.Decl.Clauses {
-		if c, ok := cl.(*ast.RequiresClause); ok {
+		if c, ok := cl.(*ast.RequiresClause); ok && b.contractOn(c.Debug) {
 			s.requires(c)
 		}
 	}

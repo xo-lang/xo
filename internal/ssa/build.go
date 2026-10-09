@@ -119,7 +119,14 @@ type Options struct {
 	// for Go mode assembly (decision 0084), where a fault is a Go panic.
 	// Native builds unwind (decision 0085, landing.go).
 	NoFaultUnwind bool
+	// Release (`xo build --release`, core 8) compiles out the contract
+	// clauses marked `requires(debug)` and `ensures(debug)`.
+	Release bool
 }
+
+// contractOn reports whether a contract clause marked debug (or not) is
+// checked: debug clauses are compiled out of release builds (core 8).
+func (b *builder) contractOn(debug bool) bool { return !debug || !b.opts.Release }
 
 // BuildOpts is Build with options.
 func BuildOpts(res *check.Result, opts Options) (*Module, error) {
@@ -726,7 +733,7 @@ func (b *builder) bodyOf(fo *check.FuncObj, f *Func, sub *check.Subst, requires 
 		return
 	}
 	for _, cl := range fo.Decl.Clauses {
-		if c, ok := cl.(*ast.RequiresClause); ok && requires {
+		if c, ok := cl.(*ast.RequiresClause); ok && requires && b.contractOn(c.Debug) {
 			s.requires(c)
 		}
 	}

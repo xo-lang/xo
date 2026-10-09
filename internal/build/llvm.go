@@ -59,7 +59,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Race || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race or --holes")
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, Release: opts.release()})
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	dir, err := buildDir(dirs, opts.Mode, false, opts.NoRanges, false)
+	dir, err := buildDir(dirs, opts.Mode, false, opts.NoRanges, false, releaseVariant(opts))
 	if err != nil {
 		return nil, err
 	}
