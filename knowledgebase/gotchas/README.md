@@ -82,7 +82,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [record-replay-scheduler-decisions.md](record-replay-scheduler-decisions.md): a seed does not replay a real run; the recording logs every pick and every outside event (timers, signals, requests) at decisions.
 - [ring-replay-other-requests.md](ring-replay-other-requests.md): an `XO_RING` crash bundle replays main's startup and the failing request only; state from other requests needs `--record`.
 - [go-build-cache-growth.md](go-build-cache-growth.md): Xo builds filled Go's build cache; now a separate capped cache.
-- [go-cache-trim-races-builds.md](go-cache-trim-races-builds.md): the capped cache trim deleted entries a concurrent build was linking; keep entries younger than 2 hours and restat before removing.
+- [go-cache-trim-races-builds.md](go-cache-trim-races-builds.md): the capped cache trim deleted entries a concurrent build was linking; builds hold a shared cache lock and the trim takes it exclusively, so it can remove recent entries (the 2 hour guard alone let the cache reach 94 GB).
 - [serve-tests-and-stale-server.md](serve-tests-and-stale-server.md): `xo check` and `xo query` forward to a running `xo serve`, which runs the code it was built from; tests set `XO_NO_SERVE=1`.
 - [unix-socket-path-length.md](unix-socket-path-length.md): unix socket paths over 104 bytes fail on macOS; keep test sockets under a short temp dir.
 - [mcp-stdout-is-the-protocol.md](mcp-stdout-is-the-protocol.md): `xo mcp` runs commands in process, so a direct write to os.Stdout corrupts the JSON-RPC stream.
