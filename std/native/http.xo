@@ -176,18 +176,18 @@ fn literals(rt: Route) -> Int {
   n
 }
 
-/// Whether the route matches the path parts, and its first Int segment
-/// that does not parse ("" when none).
-fn match_parts(route: Route, parts: List[Str]) -> (Bool, Str) {
+/// Whether the route matches the path parts (unescaped, uparts), and its
+/// first Int segment that does not parse ("" when none).
+fn match_parts(route: Route, uparts: List[Str]) -> (Bool, Str) {
   var bad = ""
   for (i, s) in route.segs.indexed() {
     if s.rest {
       return (true, bad)
     }
-    if i >= parts.len() {
+    if i >= uparts.len() {
       return (false, "")
     }
-    let part = rthttp.path_unescape(parts[i])
+    let part = uparts[i]
     if s.param.is_empty() {
       if part != s.lit {
         return (false, "")
@@ -198,13 +198,15 @@ fn match_parts(route: Route, parts: List[Str]) -> (Bool, Str) {
       bad = s.param
     }
   }
-  if parts.len() != route.segs.len() {
+  if uparts.len() != route.segs.len() {
     return (false, "")
   }
   (true, bad)
 }
 
-fn bind_params(route: Route, parts: List[Str]) -> Map[Str, Str] {
+/// The route's parameters: from the unescaped parts, a rest parameter
+/// from the raw parts joined.
+fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, Str] {
   var params: Map[Str, Str] = {}
   for (i, s) in route.segs.indexed() {
     if s.rest {
@@ -221,8 +223,8 @@ fn bind_params(route: Route, parts: List[Str]) -> Map[Str, Str] {
       params.put(s.param, rest)
       return params
     }
-    if !s.param.is_empty() && i < parts.len() {
-      params.put(s.param, rthttp.path_unescape(parts[i]))
+    if !s.param.is_empty() && i < uparts.len() {
+      params.put(s.param, uparts[i])
     }
   }
   params
@@ -230,13 +232,18 @@ fn bind_params(route: Route, parts: List[Str]) -> Map[Str, Str] {
 
 fn dispatch(r: Router, req: Request) -> http.Response {
   let parts = split_path(req.path)
+  // unescaped once for every route (was per route and segment)
+  var uparts: List[Str] = []
+  for p in parts {
+    uparts.push(rthttp.path_unescape(p))
+  }
   let method = req.method.to_upper()
   var best = -1
   var best_lits = 0
   var best_bad = ""
   var mismatch = false
   for (i, route) in r.routes.indexed() {
-    let (ok, bad) = match_parts(route, parts)
+    let (ok, bad) = match_parts(route, uparts)
     if !ok {
       continue
     }
@@ -262,7 +269,7 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   }
   let route = r.routes[best]
   let h = route.h
-  h(req with {params: bind_params(route, parts)})
+  h(req with {params: bind_params(route, parts, uparts)})
 }
 
 /// A handler's or middleware's error as a response (std.md 4.2).
