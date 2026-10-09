@@ -7,59 +7,12 @@
 // literal parts and the raw source of each expression; lex_range lexes
 // those expressions. Diagnostics carry the same codes and messages as the
 // Go lexer, and the dump (dump.xo) prints the same text as `xo lexdump`.
-
-// Byte values. Xo has no byte or character literal that is an Int (a rune
-// literal is a Rune, which does not convert to Int), so they are named.
-const C_TAB = 0x09
-const C_NL = 0x0a
-const C_CR = 0x0d
-const C_SPACE = 0x20
-const C_BANG = 0x21
-const C_QUOTE = 0x22
-const C_HASH = 0x23
-const C_DOLLAR = 0x24
-const C_PERCENT = 0x25
-const C_AMP = 0x26
-const C_APOS = 0x27
-const C_LPAREN = 0x28
-const C_RPAREN = 0x29
-const C_STAR = 0x2a
-const C_PLUS = 0x2b
-const C_COMMA = 0x2c
-const C_MINUS = 0x2d
-const C_DOT = 0x2e
-const C_SLASH = 0x2f
-const C_0 = 0x30
-const C_9 = 0x39
-const C_COLON = 0x3a
-const C_SEMI = 0x3b
-const C_LT = 0x3c
-const C_EQ = 0x3d
-const C_GT = 0x3e
-const C_QUESTION = 0x3f
-const C_LBRACK = 0x5b
-const C_BACKSLASH = 0x5c
-const C_RBRACK = 0x5d
-const C_CARET = 0x5e
-const C_UNDERSCORE = 0x5f
-const C_LOWER_A = 0x61
-const C_LOWER_B = 0x62
-const C_LOWER_E = 0x65
-const C_LOWER_F = 0x66
-const C_LOWER_N = 0x6e
-const C_LOWER_O = 0x6f
-const C_LOWER_R = 0x72
-const C_LOWER_T = 0x74
-const C_LOWER_U = 0x75
-const C_LOWER_X = 0x78
-const C_LOWER_Z = 0x7a
-const C_LBRACE = 0x7b
-const C_PIPE = 0x7c
-const C_RBRACE = 0x7d
-const C_TILDE = 0x7e
+//
+// Source text is Bytes, and a byte is a UInt8: a rune literal where a byte
+// is expected is its code point (`c == '"'`, core 1.6).
 
 /// Marks an interpolation in the flattened text of a triple quoted string.
-const MARKER = 0x01
+const MARKER: UInt8 = 0x01
 
 const MAX_INT = 9223372036854775807
 const MAX_U64: UInt64 = 18446744073709551615
@@ -109,16 +62,21 @@ pub fn lex_range(src: Bytes, start: Pos, end: Int) -> LexResult {
   LexResult{tokens: l.toks, comments: l.comments, diags: l.diags}
 }
 
-fn is_letter(c: Int) -> Bool {
-  c == C_UNDERSCORE || (c >= C_LOWER_A && c <= C_LOWER_Z) || (c >= 0x41 && c <= 0x5a)
+fn is_letter(c: UInt8) -> Bool {
+  c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-fn is_digit(c: Int) -> Bool {
-  c >= C_0 && c <= C_9
+fn is_digit(c: UInt8) -> Bool {
+  c >= '0' && c <= '9'
 }
 
-fn is_hex(c: Int) -> Bool {
-  is_digit(c) || ((c | 0x20) >= C_LOWER_A && (c | 0x20) <= C_LOWER_F)
+fn is_hex(c: UInt8) -> Bool {
+  is_digit(c) || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f')
+}
+
+/// The value of the hex digit c.
+fn hex_value(c: UInt8) -> Int {
+  if is_digit(c) { Int(c - '0') } else { Int((c | 0x20) - 'a') + 10 }
 }
 
 /// Whether a newline after k terminates a statement (core 1.3). `???`
@@ -136,13 +94,13 @@ fn (l: Lexer) span(start: Pos) -> Span {
 }
 
 /// The byte n past the current one, or 0 past the end.
-fn (l: Lexer) peek(n: Int) -> Int {
-  if l.off + n < l.end { Int(l.src[l.off + n]) } else { 0 }
+fn (l: Lexer) peek(n: Int) -> UInt8 {
+  if l.off + n < l.end { l.src[l.off + n] } else { 0 }
 }
 
 /// The current byte; the caller checks l.off < l.end.
-fn (l: Lexer) cur() -> Int {
-  Int(l.src[l.off])
+fn (l: Lexer) cur() -> UInt8 {
+  l.src[l.off]
 }
 
 /// Moves past one byte, tracking lines and columns.
@@ -150,7 +108,7 @@ fn (var l: Lexer) advance() {
   if l.off >= l.end {
     return
   }
-  if Int(l.src[l.off]) == C_NL {
+  if l.src[l.off] == '\n' {
     l.line += 1
     l.col = 1
   } else {
@@ -195,16 +153,16 @@ fn (var l: Lexer) run() {
 fn (var l: Lexer) skip_space_and_comments() {
   while l.off < l.end {
     let c = l.cur()
-    if c == C_SPACE || c == C_TAB || c == C_CR {
+    if c == ' ' || c == '\t' || c == '\r' {
       l.advance()
-    } else if c == C_NL {
+    } else if c == '\n' {
       let start = l.pos()
       l.advance()
       if !l.range_mode && ends_statement(l.last) && !l.continues_line() {
         l.toks.push(Token{kind: Kind.Newline, span: l.span(start), text: b"\n"})
         l.last = Kind.Newline
       }
-    } else if c == C_SLASH && l.peek(1) == C_SLASH {
+    } else if c == '/' && l.peek(1) == '/' {
       l.comment()
     } else {
       return
@@ -217,15 +175,15 @@ fn (var l: Lexer) skip_space_and_comments() {
 fn (l: Lexer) continues_line() -> Bool {
   var i = l.off
   while i < l.end {
-    let c = Int(l.src[i])
-    if c == C_SPACE || c == C_TAB || c == C_CR || c == C_NL {
+    let c = l.src[i]
+    if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
       i += 1
-    } else if c == C_SLASH && i + 1 < l.end && Int(l.src[i + 1]) == C_SLASH {
-      while i < l.end && Int(l.src[i]) != C_NL {
+    } else if c == '/' && i + 1 < l.end && l.src[i + 1] == '/' {
+      while i < l.end && l.src[i] != '\n' {
         i += 1
       }
-    } else if c == C_DOT {
-      return !(i + 1 < l.end && Int(l.src[i + 1]) == C_DOT)
+    } else if c == '.' {
+      return !(i + 1 < l.end && l.src[i + 1] == '.')
     } else {
       return false
     }
@@ -239,7 +197,7 @@ fn slashes(b: Bytes, n: Int) -> Bool {
     return false
   }
   for i in 0..n {
-    if Int(b[i]) != C_SLASH {
+    if b[i] != '/' {
       return false
     }
   }
@@ -248,16 +206,16 @@ fn slashes(b: Bytes, n: Int) -> Bool {
 
 fn (var l: Lexer) comment() {
   let start = l.pos()
-  while l.off < l.end && l.cur() != C_NL {
+  while l.off < l.end && l.cur() != '\n' {
     l.advance()
   }
   let all = l.src[start.offset..l.off]
   let doc = slashes(all, 3) && !slashes(all, 4)
   var text = if doc { all[3..] } else { all[2..] }
-  if text.len() > 0 && Int(text[0]) == C_SPACE {
+  if text.len() > 0 && text[0] == ' ' {
     text = text[1..]
   }
-  if text.len() > 0 && Int(text[text.len() - 1]) == C_CR {
+  if text.len() > 0 && text[text.len() - 1] == '\r' {
     text = text[..text.len() - 1]
   }
   l.comments.push(Comment{span: l.span(start), text: text, doc: doc})
@@ -273,11 +231,11 @@ fn (var l: Lexer) next() {
     return
   }
 
-  if c == C_LOWER_R && (l.peek(1) == C_QUOTE || (l.peek(1) == C_HASH && l.raw_hashes(1) > 0)) {
+  if c == 'r' && (l.peek(1) == '"' || (l.peek(1) == '#' && l.raw_hashes(1) > 0)) {
     l.raw_string(start)
     return
   }
-  if c == C_LOWER_B && l.peek(1) == C_QUOTE {
+  if c == 'b' && l.peek(1) == '"' {
     l.bytes_lit(start)
     return
   }
@@ -293,11 +251,11 @@ fn (var l: Lexer) next() {
     l.number(start)
     return
   }
-  if c == C_QUOTE {
+  if c == '"' {
     l.string_lit(start)
     return
   }
-  if c == C_APOS {
+  if c == '\'' {
     l.rune_lit(start)
     return
   }
@@ -316,9 +274,9 @@ fn (var l: Lexer) next() {
   }
 
   // Invalid character: skip the whole UTF-8 sequence.
-  let (r, size) = decode_rune(l.src, l.off, l.end)
+  let (r, size) = l.src[l.off..l.end].decode_rune(0)
   l.advance_n(size)
-  l.error(INVALID_CHAR, l.span(start), "invalid character ".bytes() + quote_rune(r))
+  l.error(INVALID_CHAR, l.span(start), "invalid character ${r.quote()}".bytes())
   l.emit(Kind.Illegal, start, b"")
 }
 
@@ -326,10 +284,10 @@ fn (var l: Lexer) next() {
 /// count if they are followed by `"`, else 0.
 fn (l: Lexer) raw_hashes(i: Int) -> Int {
   var n = 0
-  while l.peek(i + n) == C_HASH {
+  while l.peek(i + n) == '#' {
     n += 1
   }
-  if l.peek(i + n) == C_QUOTE { n } else { 0 }
+  if l.peek(i + n) == '"' { n } else { 0 }
 }
 
 /// The operator at the current position and its length, or (Illegal, 0).
@@ -337,103 +295,103 @@ fn (l: Lexer) operator() -> (Kind, Int) {
   let c1 = l.peek(1)
   let c2 = l.peek(2)
   match l.peek(0) {
-    0x2b => if c1 == C_EQ { (Kind.PlusAssign, 2) } else { (Kind.Plus, 1) }
-    0x2d => {
-      if c1 == C_EQ {
+    '+' => if c1 == '=' { (Kind.PlusAssign, 2) } else { (Kind.Plus, 1) }
+    '-' => {
+      if c1 == '=' {
         (Kind.MinusAssign, 2)
-      } else if c1 == C_GT {
+      } else if c1 == '>' {
         (Kind.Arrow, 2)
       } else {
         (Kind.Minus, 1)
       }
     }
-    0x2a => if c1 == C_EQ { (Kind.StarAssign, 2) } else { (Kind.Star, 1) }
-    0x2f => if c1 == C_EQ { (Kind.SlashAssign, 2) } else { (Kind.Slash, 1) }
-    0x25 => if c1 == C_EQ { (Kind.PercentAssign, 2) } else { (Kind.Percent, 1) }
-    0x3c => {
-      if c1 == C_LT {
-        if c2 == C_EQ { (Kind.ShlAssign, 3) } else { (Kind.Shl, 2) }
-      } else if c1 == C_EQ {
+    '*' => if c1 == '=' { (Kind.StarAssign, 2) } else { (Kind.Star, 1) }
+    '/' => if c1 == '=' { (Kind.SlashAssign, 2) } else { (Kind.Slash, 1) }
+    '%' => if c1 == '=' { (Kind.PercentAssign, 2) } else { (Kind.Percent, 1) }
+    '<' => {
+      if c1 == '<' {
+        if c2 == '=' { (Kind.ShlAssign, 3) } else { (Kind.Shl, 2) }
+      } else if c1 == '=' {
         (Kind.LtEq, 2)
       } else {
         (Kind.Lt, 1)
       }
     }
-    0x3e => {
-      if c1 == C_GT {
-        if c2 == C_EQ { (Kind.ShrAssign, 3) } else { (Kind.Shr, 2) }
-      } else if c1 == C_EQ {
+    '>' => {
+      if c1 == '>' {
+        if c2 == '=' { (Kind.ShrAssign, 3) } else { (Kind.Shr, 2) }
+      } else if c1 == '=' {
         (Kind.GtEq, 2)
       } else {
         (Kind.Gt, 1)
       }
     }
-    0x26 => {
-      if c1 == C_AMP {
+    '&' => {
+      if c1 == '&' {
         (Kind.AndAnd, 2)
-      } else if c1 == C_EQ {
+      } else if c1 == '=' {
         (Kind.AmpAssign, 2)
       } else {
         (Kind.Amp, 1)
       }
     }
-    0x7c => {
-      if c1 == C_PIPE {
+    '|' => {
+      if c1 == '|' {
         (Kind.OrOr, 2)
-      } else if c1 == C_EQ {
+      } else if c1 == '=' {
         (Kind.PipeAssign, 2)
       } else {
         (Kind.Pipe, 1)
       }
     }
-    0x5e => if c1 == C_EQ { (Kind.CaretAssign, 2) } else { (Kind.Caret, 1) }
-    0x7e => (Kind.Tilde, 1)
-    0x21 => if c1 == C_EQ { (Kind.NotEq, 2) } else { (Kind.Bang, 1) }
-    0x3f => {
-      if c1 == C_QUESTION {
-        if c2 == C_QUESTION { (Kind.Hole, 3) } else { (Kind.Coalesce, 2) }
+    '^' => if c1 == '=' { (Kind.CaretAssign, 2) } else { (Kind.Caret, 1) }
+    '~' => (Kind.Tilde, 1)
+    '!' => if c1 == '=' { (Kind.NotEq, 2) } else { (Kind.Bang, 1) }
+    '?' => {
+      if c1 == '?' {
+        if c2 == '?' { (Kind.Hole, 3) } else { (Kind.Coalesce, 2) }
       } else {
         (Kind.Question, 1)
       }
     }
-    0x3d => {
-      if c1 == C_EQ {
+    '=' => {
+      if c1 == '=' {
         (Kind.Eq, 2)
-      } else if c1 == C_GT {
+      } else if c1 == '>' {
         (Kind.FatArrow, 2)
       } else {
         (Kind.Assign, 1)
       }
     }
-    0x2e => {
-      if c1 == C_DOT {
-        if c2 == C_EQ { (Kind.DotDotEq, 3) } else { (Kind.DotDot, 2) }
+    '.' => {
+      if c1 == '.' {
+        if c2 == '=' { (Kind.DotDotEq, 3) } else { (Kind.DotDot, 2) }
       } else {
         (Kind.Dot, 1)
       }
     }
-    0x2c => (Kind.Comma, 1)
-    0x3a => (Kind.Colon, 1)
-    0x3b => (Kind.Newline, 1)
-    0x28 => (Kind.LParen, 1)
-    0x29 => (Kind.RParen, 1)
-    0x5b => (Kind.LBrack, 1)
-    0x5d => (Kind.RBrack, 1)
-    0x7b => (Kind.LBrace, 1)
-    0x7d => (Kind.RBrace, 1)
-    0x23 => if c1 == C_LBRACE { (Kind.HashLBrace, 2) } else { (Kind.Illegal, 0) }
+    ',' => (Kind.Comma, 1)
+    ':' => (Kind.Colon, 1)
+    ';' => (Kind.Newline, 1)
+    '(' => (Kind.LParen, 1)
+    ')' => (Kind.RParen, 1)
+    '[' => (Kind.LBrack, 1)
+    ']' => (Kind.RBrack, 1)
+    '{' => (Kind.LBrace, 1)
+    '}' => (Kind.RBrace, 1)
+    '#' => if c1 == '{' { (Kind.HashLBrace, 2) } else { (Kind.Illegal, 0) }
     _ => (Kind.Illegal, 0)
   }
 }
 
-fn is_path_char(c: Int) -> Bool {
-  is_letter(c) || is_digit(c) || c == C_MINUS || c == C_DOT || c == C_SLASH
+fn is_path_char(c: UInt8) -> Bool {
+  is_letter(c) || is_digit(c) || c == '-' || c == '.' || c == '/'
 }
 
 /// Whether b holds `//`.
 fn has_double_slash(b: Bytes) -> Bool {
   for i in 1..b.len() {
-    if Int(b[i]) == C_SLASH && Int(b[i - 1]) == C_SLASH {
+    if b[i] == '/' && b[i - 1] == '/' {
       return true
     }
   }
@@ -454,8 +412,8 @@ fn (var l: Lexer) import_path(start: Pos) {
   }
   let text = l.src[start.offset..l.off]
   l.emit(Kind.ImportPath, start, text)
-  if Int(text[0]) == C_SLASH || Int(text[text.len() - 1]) == C_SLASH || has_double_slash(text) {
-    l.error(MALFORMED_IMPORT_PATH, l.span(start), "malformed import path ".bytes() + quote_plain(text))
+  if text[0] == '/' || text[text.len() - 1] == '/' || has_double_slash(text) {
+    l.error(MALFORMED_IMPORT_PATH, l.span(start), "malformed import path ${text.quote()}".bytes())
   }
 }
 
@@ -473,35 +431,39 @@ fn duration_unit(suffix: Bytes) -> Int? {
 }
 
 fn (var l: Lexer) digits() {
-  while l.off < l.end && (is_digit(l.cur()) || l.cur() == C_UNDERSCORE) {
+  while l.off < l.end && (is_digit(l.cur()) || l.cur() == '_') {
     l.advance()
   }
 }
 
-/// b without its `_` bytes.
-fn remove_underscores(b: Bytes) -> Bytes {
-  var out = b""
+/// b without the bytes c, or b itself when it holds none.
+fn without_byte(b: Bytes, c: UInt8) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len())
   var run = 0
   for i in 0..b.len() {
-    if Int(b[i]) == C_UNDERSCORE {
-      out = out + b[run..i]
+    if b[i] == c {
+      out.write(b[run..i])
       run = i + 1
     }
   }
-  if run == 0 { b } else { out + b[run..] }
+  if run == 0 {
+    return b
+  }
+  out.write(b[run..])
+  out.freeze()
 }
 
 /// Whether every `_` in s sits between two digits of the base.
 fn valid_underscores(s: Bytes, base: Int) -> Bool {
   for i in 0..s.len() {
-    if Int(s[i]) != C_UNDERSCORE {
+    if s[i] != '_' {
       continue
     }
     if i == 0 || i == s.len() - 1 {
       return false
     }
-    let prev = Int(s[i - 1])
-    let next = Int(s[i + 1])
+    let prev = s[i - 1]
+    let next = s[i + 1]
     let ok = if base == 16 { is_hex(prev) && is_hex(next) } else { is_digit(prev) && is_digit(next) }
     if !ok {
       return false
@@ -524,11 +486,11 @@ fn parse_uint(s: Bytes, base: Int) -> Parsed {
   let cutoff = MAX_U64 / b + 1
   var n: UInt64 = 0
   for i in 0..s.len() {
-    let c = Int(s[i])
+    let c = s[i]
     let d = if is_digit(c) {
-      c - C_0
-    } else if (c | 0x20) >= C_LOWER_A && (c | 0x20) <= C_LOWER_Z {
-      (c | 0x20) - C_LOWER_A + 10
+      Int(c - '0')
+    } else if (c | 0x20) >= 'a' && (c | 0x20) <= 'z' {
+      Int((c | 0x20) - 'a') + 10
     } else {
       return Parsed.Syntax
     }
@@ -551,24 +513,24 @@ fn parse_uint(s: Bytes, base: Int) -> Parsed {
 /// Validates digits for base and returns the value, or reports why not.
 fn (var l: Lexer) parse_int(body: Bytes, base: Int, sp: Span) -> UInt64? {
   if body.is_empty() {
-    l.error(MALFORMED_NUMBER, sp, "number literal has no digits".bytes())
+    l.error(MALFORMED_NUMBER, sp, b"number literal has no digits")
     return None
   }
   // 0x_ff is allowed, as in Go.
-  let digits = if base != 10 && Int(body[0]) == C_UNDERSCORE { body[1..] } else { body }
+  let digits = if base != 10 && body[0] == '_' { body[1..] } else { body }
   if !valid_underscores(digits, base) {
-    l.error(MALFORMED_NUMBER, sp, "misplaced `_` in number literal".bytes())
+    l.error(MALFORMED_NUMBER, sp, b"misplaced `_` in number literal")
     return None
   }
-  let clean = remove_underscores(digits)
+  let clean = without_byte(digits, '_')
   if clean.is_empty() {
-    l.error(MALFORMED_NUMBER, sp, "number literal has no digits".bytes())
+    l.error(MALFORMED_NUMBER, sp, b"number literal has no digits")
     return None
   }
   match parse_uint(clean, base) {
     Value(n) => Some(n)
     OutOfRange => {
-      l.error(MALFORMED_NUMBER, sp, "integer literal out of range".bytes())
+      l.error(MALFORMED_NUMBER, sp, b"integer literal out of range")
       None
     }
     Syntax => {
@@ -582,10 +544,10 @@ fn (var l: Lexer) number(start: Pos) {
   var kind = Kind.Int
   var base = 10
   let p1 = l.peek(1) | 0x20
-  if l.cur() == C_0 && (p1 == C_LOWER_X || p1 == C_LOWER_O || p1 == C_LOWER_B) {
-    base = if p1 == C_LOWER_X { 16 } else if p1 == C_LOWER_O { 8 } else { 2 }
+  if l.cur() == '0' && (p1 == 'x' || p1 == 'o' || p1 == 'b') {
+    base = if p1 == 'x' { 16 } else if p1 == 'o' { 8 } else { 2 }
     l.advance_n(2)
-    while l.off < l.end && (is_hex(l.cur()) || l.cur() == C_UNDERSCORE) {
+    while l.off < l.end && (is_hex(l.cur()) || l.cur() == '_') {
       l.advance()
     }
   } else if l.last == Kind.Dot {
@@ -594,13 +556,13 @@ fn (var l: Lexer) number(start: Pos) {
     l.digits()
   } else {
     l.digits()
-    if l.peek(0) == C_DOT && is_digit(l.peek(1)) {
+    if l.peek(0) == '.' && is_digit(l.peek(1)) {
       kind = Kind.Float
       l.advance()
       l.digits()
     }
-    let sign = l.peek(1) == C_PLUS || l.peek(1) == C_MINUS
-    if (l.peek(0) | 0x20) == C_LOWER_E && (is_digit(l.peek(1)) || (sign && is_digit(l.peek(2)))) {
+    let sign = l.peek(1) == '+' || l.peek(1) == '-'
+    if (l.peek(0) | 0x20) == 'e' && (is_digit(l.peek(1)) || (sign && is_digit(l.peek(2)))) {
       kind = Kind.Float
       l.advance_n(2)
       l.digits()
@@ -620,16 +582,16 @@ fn (var l: Lexer) number(start: Pos) {
     var value = b""
     if let Some(unit) = duration_unit(suffix) {
       if kind != Kind.Int || base != 10 {
-        l.error(INVALID_DURATION, sp, "duration literal ".bytes() + quote_plain(text) + " must be a decimal integer followed by a unit".bytes())
+        l.error(INVALID_DURATION, sp, "duration literal ${text.quote()} must be a decimal integer followed by a unit".bytes())
       } else if let Some(v) = l.parse_int(digits, 10, sp) {
         if v > UInt64(MAX_INT) || Int(v) > MAX_INT / unit {
-          l.error(MALFORMED_NUMBER, sp, "duration literal ".bytes() + quote_plain(text) + " overflows a 64 bit nanosecond count".bytes())
+          l.error(MALFORMED_NUMBER, sp, "duration literal ${text.quote()} overflows a 64 bit nanosecond count".bytes())
         } else {
-          value = itoa(Int(v) * unit)
+          value = "${Int(v) * unit}".bytes()
         }
       }
     } else {
-      l.error(INVALID_DURATION, sp, "invalid suffix ".bytes() + quote_plain(suffix) + " on number literal; duration units are ns, us, ms, s, m, h".bytes())
+      l.error(INVALID_DURATION, sp, "invalid suffix ${suffix.quote()} on number literal; duration units are ns, us, ms, s, m, h".bytes())
     }
     l.emit(Kind.Duration, start, value)
     return
@@ -637,9 +599,9 @@ fn (var l: Lexer) number(start: Pos) {
 
   if kind == Kind.Float {
     if valid_underscores(digits, 10) {
-      l.emit(kind, start, remove_underscores(digits))
+      l.emit(kind, start, without_byte(digits, '_'))
     } else {
-      l.error(MALFORMED_NUMBER, sp, "misplaced `_` in number literal ".bytes() + quote_plain(digits))
+      l.error(MALFORMED_NUMBER, sp, "misplaced `_` in number literal ${digits.quote()}".bytes())
       l.emit(kind, start, b"")
     }
     return
@@ -654,11 +616,11 @@ fn (var l: Lexer) number(start: Pos) {
 
 /// Whether `"` followed by `hashes` `#` bytes starts at the current position.
 fn (l: Lexer) at_closing(hashes: Int) -> Bool {
-  if l.off + hashes >= l.end || l.cur() != C_QUOTE {
+  if l.off + hashes >= l.end || l.cur() != '"' {
     return false
   }
   for k in 1..=hashes {
-    if Int(l.src[l.off + k]) != C_HASH {
+    if l.src[l.off + k] != '#' {
       return false
     }
   }
@@ -667,23 +629,27 @@ fn (l: Lexer) at_closing(hashes: Int) -> Bool {
 
 /// b with every CR LF replaced by LF.
 fn replace_crlf(b: Bytes) -> Bytes {
-  var out = b""
+  var out = BytesBuilder.with_capacity(b.len())
   var run = 0
   var i = 0
   while i + 1 < b.len() {
-    if Int(b[i]) == C_CR && Int(b[i + 1]) == C_NL {
-      out = out + b[run..i]
+    if b[i] == '\r' && b[i + 1] == '\n' {
+      out.write(b[run..i])
       run = i + 1
     }
     i += 1
   }
-  if run == 0 { b } else { out + b[run..] }
+  if run == 0 {
+    return b
+  }
+  out.write(b[run..])
+  out.freeze()
 }
 
 fn (var l: Lexer) raw_string(start: Pos) {
   l.advance() // r
   var hashes = 0
-  while l.peek(0) == C_HASH {
+  while l.peek(0) == '#' {
     hashes += 1
     l.advance()
   }
@@ -705,16 +671,16 @@ fn (var l: Lexer) raw_string(start: Pos) {
 
 /// Scans the body of a bytes or rune literal up to the closing `quote`, a
 /// newline, or the end. Reports whether it was terminated.
-fn (var l: Lexer) quoted_body(quote: Int) -> Bool {
+fn (var l: Lexer) quoted_body(quote: UInt8) -> Bool {
   while l.off < l.end {
     let c = l.cur()
     if c == quote {
       return true
     }
-    if c == C_NL {
+    if c == '\n' {
       return false
     }
-    if c == C_BACKSLASH && l.off + 1 < l.end {
+    if c == '\\' && l.off + 1 < l.end {
       l.advance_n(2)
     } else {
       l.advance()
@@ -727,14 +693,14 @@ fn (var l: Lexer) bytes_lit(start: Pos) {
   l.advance() // b
   l.advance() // "
   let raw_start = l.pos()
-  let terminated = l.quoted_body(C_QUOTE)
+  let terminated = l.quoted_body('"')
   let raw = l.src[raw_start.offset..l.off]
   if terminated {
     l.advance()
   }
   let sp = l.span(start)
   if !terminated {
-    l.error(UNTERMINATED_STRING, sp, "bytes literal not terminated".bytes())
+    l.error(UNTERMINATED_STRING, sp, b"bytes literal not terminated")
   }
   let value = l.cook(raw, raw_start, true)
   l.emit(Kind.Bytes, start, value)
@@ -743,20 +709,20 @@ fn (var l: Lexer) bytes_lit(start: Pos) {
 fn (var l: Lexer) rune_lit(start: Pos) {
   l.advance() // '
   let raw_start = l.pos()
-  let terminated = l.quoted_body(C_APOS)
+  let terminated = l.quoted_body('\'')
   let raw = l.src[raw_start.offset..l.off]
   if terminated {
     l.advance()
   }
   let sp = l.span(start)
   if !terminated {
-    l.error(INVALID_RUNE, sp, "rune literal not terminated".bytes())
+    l.error(INVALID_RUNE, sp, b"rune literal not terminated")
     l.emit(Kind.Rune, start, b"")
     return
   }
   let v = l.cook(raw, raw_start, false)
-  if rune_count(v) != 1 {
-    l.error(INVALID_RUNE, sp, "rune literal must hold exactly one character".bytes())
+  if v.rune_count() != 1 {
+    l.error(INVALID_RUNE, sp, b"rune literal must hold exactly one character")
     l.emit(Kind.Rune, start, b"")
     return
   }
@@ -768,12 +734,10 @@ fn (var l: Lexer) rune_lit(start: Pos) {
 fn parse_hex32(hex: Bytes) -> Int? {
   var v = 0
   for i in 0..hex.len() {
-    let c = Int(hex[i])
-    if !is_hex(c) {
+    if !is_hex(hex[i]) {
       return None
     }
-    let d = if is_digit(c) { c - C_0 } else { (c | 0x20) - C_LOWER_A + 10 }
-    v = v * 16 + d
+    v = v * 16 + hex_value(hex[i])
     if v > 0xffffffff {
       return None
     }
@@ -784,7 +748,7 @@ fn parse_hex32(hex: Bytes) -> Int? {
 /// The index of the first `}` in b at or after from, relative to from.
 fn index_rbrace(b: Bytes, from: Int) -> Int {
   for i in from..b.len() {
-    if Int(b[i]) == C_RBRACE {
+    if b[i] == '}' {
       return i - from
     }
   }
@@ -796,7 +760,7 @@ fn index_rbrace(b: Bytes, from: Int) -> Int {
 fn (var l: Lexer) cook(raw: Bytes, pos: Pos, bytes: Bool) -> Bytes {
   var has_escape = false
   for i in 0..raw.len() {
-    if Int(raw[i]) == C_BACKSLASH {
+    if raw[i] == '\\' {
       has_escape = true
       break
     }
@@ -804,16 +768,16 @@ fn (var l: Lexer) cook(raw: Bytes, pos: Pos, bytes: Bool) -> Bytes {
   if !has_escape {
     return raw
   }
-  var out = b""
+  var out = BytesBuilder.with_capacity(raw.len())
   var run = 0
   var col = pos.col
   var line = pos.line
   var off = pos.offset
   var i = 0
   while i < raw.len() {
-    let c = Int(raw[i])
-    if c != C_BACKSLASH {
-      if c == C_NL {
+    let c = raw[i]
+    if c != '\\' {
+      if c == '\n' {
         line += 1
         col = 1
       } else {
@@ -823,53 +787,51 @@ fn (var l: Lexer) cook(raw: Bytes, pos: Pos, bytes: Bool) -> Bytes {
       i += 1
       continue
     }
-    out = out + raw[run..i]
+    out.write(raw[run..i])
     let here = Pos{offset: off, line: line, col: col}
     if i + 1 >= raw.len() {
-      l.error(INVALID_ESCAPE, escape_span(here, 1), "incomplete escape sequence".bytes())
+      l.error(INVALID_ESCAPE, escape_span(here, 1), b"incomplete escape sequence")
       run = raw.len()
       break
     }
     var n = 2
-    let e = Int(raw[i + 1])
-    if e == C_LOWER_N {
-      out = out + b"\n"
-    } else if e == C_LOWER_T {
-      out = out + b"\t"
-    } else if e == C_LOWER_R {
-      out = out + b"\r"
-    } else if e == C_0 {
-      out = out + b"\0"
-    } else if e == C_BACKSLASH || e == C_QUOTE || e == C_APOS || e == C_DOLLAR {
-      out = out + raw[i + 1..i + 2]
-    } else if e == C_LOWER_X {
-      if i + 4 <= raw.len() && is_hex(Int(raw[i + 2])) && is_hex(Int(raw[i + 3])) {
-        let v = parse_hex32(raw[i + 2..i + 4]) ?? 0
-        if !bytes && v > 0x7f {
-          l.error(INVALID_ESCAPE, escape_span(here, 4), "\\x escape above \\x7f in a string; use \\u{...}".bytes())
-        }
-        out = out + byte_bytes(v)
-        n = 4
-      } else {
-        l.error(INVALID_ESCAPE, escape_span(here, 2), "\\x escape needs two hex digits".bytes())
-      }
-    } else if e == C_LOWER_U {
-      let end = index_rbrace(raw, i)
-      if i + 2 < raw.len() && Int(raw[i + 2]) == C_LBRACE && end > 3 {
-        let hex = raw[i + 3..i + end]
-        match parse_hex32(hex) {
-          Some(v) if v <= 0x10ffff && !(v >= 0xd800 && v <= 0xdfff) && hex.len() <= 6 => {
-            out = out + encode_rune(v)
+    let e = raw[i + 1]
+    match e {
+      'n' => out.write_byte('\n')
+      't' => out.write_byte('\t')
+      'r' => out.write_byte('\r')
+      '0' => out.write_byte(0)
+      '\\' | '"' | '\'' | '$' => out.write_byte(e)
+      'x' => {
+        if i + 4 <= raw.len() && is_hex(raw[i + 2]) && is_hex(raw[i + 3]) {
+          let v = hex_value(raw[i + 2]) * 16 + hex_value(raw[i + 3])
+          if !bytes && v > 0x7f {
+            l.error(INVALID_ESCAPE, escape_span(here, 4), b"\\x escape above \\x7f in a string; use \\u{...}")
           }
-          _ => l.error(INVALID_ESCAPE, escape_span(here, end + 1), "invalid unicode escape \\u{".bytes() + hex + "}".bytes())
+          out.write_byte(UInt8(v))
+          n = 4
+        } else {
+          l.error(INVALID_ESCAPE, escape_span(here, 2), b"\\x escape needs two hex digits")
         }
-        n = end + 1
-      } else {
-        l.error(INVALID_ESCAPE, escape_span(here, 2), "unicode escape must be written \\u{XXXX}".bytes())
       }
-    } else {
-      // Go's %c of the byte: bytes above 0x7f print as U+0080 to U+00FF.
-      l.error(INVALID_ESCAPE, escape_span(here, 2), "unknown escape sequence \\".bytes() + encode_rune(e))
+      'u' => {
+        let end = index_rbrace(raw, i)
+        if i + 2 < raw.len() && raw[i + 2] == '{' && end > 3 {
+          let hex = raw[i + 3..i + end]
+          let r = if hex.len() <= 6 { Rune.try(parse_hex32(hex) ?? -1) } else { None }
+          match r {
+            Some(v) => out.write_rune(v)
+            None => l.error(INVALID_ESCAPE, escape_span(here, end + 1), b"invalid unicode escape \\u{" + hex + b"}")
+          }
+          n = end + 1
+        } else {
+          l.error(INVALID_ESCAPE, escape_span(here, 2), b"unicode escape must be written \\u{XXXX}")
+        }
+      }
+      _ => {
+        // Go's %c of the byte: bytes above 0x7f print as U+0080 to U+00FF.
+        l.error(INVALID_ESCAPE, escape_span(here, 2), "unknown escape sequence \\${Rune(e)}".bytes())
+      }
     }
     i += n
     col += n
@@ -877,9 +839,9 @@ fn (var l: Lexer) cook(raw: Bytes, pos: Pos, bytes: Bool) -> Bytes {
     run = i
   }
   if run < raw.len() {
-    out = out + raw[run..]
+    out.write(raw[run..])
   }
-  out
+  out.freeze()
 }
 
 /// The span of an n byte escape sequence at p (on one line).
@@ -892,7 +854,7 @@ fn end_pos(p: Pos, text: Bytes) -> Pos {
   var line = p.line
   var col = p.col
   for i in 0..text.len() {
-    if Int(text[i]) == C_NL {
+    if text[i] == '\n' {
       line += 1
       col = 1
     } else {
@@ -902,8 +864,21 @@ fn end_pos(p: Pos, text: Bytes) -> Pos {
   Pos{offset: p.offset + text.len(), line: line, col: col}
 }
 
+/// strings.TrimSpace(b) == "": every rune of b is Unicode white space.
+fn is_blank(b: Bytes) -> Bool {
+  var i = 0
+  while i < b.len() {
+    let (r, size) = b.decode_rune(i)
+    if !r.is_space() {
+      return false
+    }
+    i += size
+  }
+  true
+}
+
 fn (var l: Lexer) string_lit(start: Pos) {
-  let triple = l.peek(1) == C_QUOTE && l.peek(2) == C_QUOTE
+  let triple = l.peek(1) == '"' && l.peek(2) == '"'
   if triple {
     l.advance_n(3)
   } else {
@@ -918,18 +893,18 @@ fn (var l: Lexer) string_lit(start: Pos) {
   var terminated = false
   while l.off < l.end {
     let c = l.cur()
-    if c == C_QUOTE && (!triple || (l.peek(1) == C_QUOTE && l.peek(2) == C_QUOTE)) {
+    if c == '"' && (!triple || (l.peek(1) == '"' && l.peek(2) == '"')) {
       terminated = true
       break
     }
-    if c == C_NL && !triple {
+    if c == '\n' && !triple {
       break
     }
-    if c == C_BACKSLASH && l.off + 1 < l.end && Int(l.src[l.off + 1]) != C_NL {
+    if c == '\\' && l.off + 1 < l.end && l.src[l.off + 1] != '\n' {
       l.advance_n(2)
       continue
     }
-    if c == C_DOLLAR && l.peek(1) == C_LBRACE {
+    if c == '$' && l.peek(1) == '{' {
       // Flush the literal piece.
       let raw = acc + l.src[seg..l.off]
       if !raw.is_empty() {
@@ -942,10 +917,10 @@ fn (var l: Lexer) string_lit(start: Pos) {
       let end = l.scan_interp(l.off, triple)
       if end < 0 {
         // Unterminated: consume to end of line or string.
-        while l.off < l.end && l.cur() != C_NL && l.cur() != C_QUOTE {
+        while l.off < l.end && l.cur() != '\n' && l.cur() != '"' {
           l.advance()
         }
-        l.error(UNTERMINATED_INTERP, l.span(open), "`\${` is not closed by `}`".bytes())
+        l.error(UNTERMINATED_INTERP, l.span(open), b"`\${` is not closed by `}`")
         cur_start = l.pos()
         seg = l.off
         continue
@@ -956,7 +931,7 @@ fn (var l: Lexer) string_lit(start: Pos) {
       let text = l.src[expr_start.offset..end]
       l.advance() // }
       if is_blank(text) {
-        l.error(EMPTY_INTERP, l.span(open), "empty interpolation `\${}`".bytes())
+        l.error(EMPTY_INTERP, l.span(open), b"empty interpolation `\${}`")
       } else {
         pieces.push(Piece{expr: true, raw: text, start: expr_start})
       }
@@ -964,7 +939,7 @@ fn (var l: Lexer) string_lit(start: Pos) {
       seg = l.off
       continue
     }
-    if c == C_CR && l.peek(1) == C_NL {
+    if c == '\r' && l.peek(1) == '\n' {
       acc = acc + l.src[seg..l.off]
       l.advance()
       seg = l.off
@@ -985,7 +960,7 @@ fn (var l: Lexer) string_lit(start: Pos) {
   }
   let sp = l.span(start)
   if !terminated {
-    l.error(UNTERMINATED_STRING, sp, "string literal not terminated".bytes())
+    l.error(UNTERMINATED_STRING, sp, b"string literal not terminated")
   }
   let final_pieces = if triple { strip_indent(pieces) } else { pieces }
   var parts: List[StrPart] = []
@@ -1009,10 +984,10 @@ fn (var l: Lexer) string_lit(start: Pos) {
 fn (l: Lexer) find_closing(from: Int, hashes: Int) -> Int {
   var i = from
   while i + hashes < l.end {
-    if Int(l.src[i]) == C_QUOTE {
+    if l.src[i] == '"' {
       var ok = true
       for k in 1..=hashes {
-        if Int(l.src[i + k]) != C_HASH {
+        if l.src[i + k] != '#' {
           ok = false
           break
         }
@@ -1034,41 +1009,41 @@ fn (l: Lexer) scan_interp(off: Int, multiline: Bool) -> Int {
   var depth = 0
   var i = off
   while i < l.end {
-    let c = Int(l.src[i])
-    if c == C_NL && !multiline {
+    let c = l.src[i]
+    if c == '\n' && !multiline {
       return -1
-    } else if c == C_LBRACE {
+    } else if c == '{' {
       depth += 1
-    } else if c == C_RBRACE {
+    } else if c == '}' {
       if depth == 0 {
         return i
       }
       depth -= 1
-    } else if c == C_LOWER_R && i + 1 < l.end && (Int(l.src[i + 1]) == C_QUOTE || Int(l.src[i + 1]) == C_HASH) && (i == off || !is_letter(Int(l.src[i - 1])) && !is_digit(Int(l.src[i - 1]))) {
+    } else if c == 'r' && i + 1 < l.end && (l.src[i + 1] == '"' || l.src[i + 1] == '#') && (i == off || !is_letter(l.src[i - 1]) && !is_digit(l.src[i - 1])) {
       var j = i + 1
       var h = 0
-      while j < l.end && Int(l.src[j]) == C_HASH {
+      while j < l.end && l.src[j] == '#' {
         h += 1
         j += 1
       }
-      if j < l.end && Int(l.src[j]) == C_QUOTE {
+      if j < l.end && l.src[j] == '"' {
         let k = l.find_closing(j + 1, h)
         if k < 0 {
           return -1
         }
         i = k + h
       }
-    } else if c == C_QUOTE {
+    } else if c == '"' {
       // Nested string; may itself contain interpolations.
       var j = i + 1
-      while j < l.end && Int(l.src[j]) != C_QUOTE {
-        let cj = Int(l.src[j])
-        if cj == C_NL && !multiline {
+      while j < l.end && l.src[j] != '"' {
+        let cj = l.src[j]
+        if cj == '\n' && !multiline {
           return -1
         }
-        if cj == C_BACKSLASH {
+        if cj == '\\' {
           j += 2
-        } else if cj == C_DOLLAR && j + 1 < l.end && Int(l.src[j + 1]) == C_LBRACE {
+        } else if cj == '$' && j + 1 < l.end && l.src[j + 1] == '{' {
           let e = l.scan_interp(j + 2, multiline)
           if e < 0 {
             return -1
@@ -1082,10 +1057,10 @@ fn (l: Lexer) scan_interp(off: Int, multiline: Bool) -> Int {
         return -1
       }
       i = j
-    } else if c == C_APOS {
+    } else if c == '\'' {
       var j = i + 1
-      while j < l.end && Int(l.src[j]) != C_APOS && Int(l.src[j]) != C_NL {
-        if Int(l.src[j]) == C_BACKSLASH {
+      while j < l.end && l.src[j] != '\'' && l.src[j] != '\n' {
+        if l.src[j] == '\\' {
           j += 1
         }
         j += 1
@@ -1100,8 +1075,7 @@ fn (l: Lexer) scan_interp(off: Int, multiline: Bool) -> Int {
 /// Whether every byte of b is a space or a tab.
 fn is_space_tab(b: Bytes) -> Bool {
   for i in 0..b.len() {
-    let c = Int(b[i])
-    if c != C_SPACE && c != C_TAB {
+    if b[i] != ' ' && b[i] != '\t' {
       return false
     }
   }
@@ -1111,35 +1085,23 @@ fn is_space_tab(b: Bytes) -> Bool {
 /// The number of leading spaces and tabs of b.
 fn leading_space_tab(b: Bytes) -> Int {
   var n = 0
-  while n < b.len() && (Int(b[n]) == C_SPACE || Int(b[n]) == C_TAB) {
+  while n < b.len() && (b[n] == ' ' || b[n] == '\t') {
     n += 1
   }
   n
 }
 
 /// Splits b at every byte sep, like strings.Split with a one byte separator.
-fn split_byte(b: Bytes, sep: Int) -> List[Bytes] {
+fn split_byte(b: Bytes, sep: UInt8) -> List[Bytes] {
   var out: List[Bytes] = []
   var run = 0
   for i in 0..b.len() {
-    if Int(b[i]) == sep {
+    if b[i] == sep {
       out.push(b[run..i])
       run = i + 1
     }
   }
   out.push(b[run..])
-  out
-}
-
-/// Joins parts with the byte sep between them.
-fn join_byte(parts: List[Bytes], sep: Bytes) -> Bytes {
-  var out = b""
-  for (i, p) in parts.indexed() {
-    if i > 0 {
-      out = out + sep
-    }
-    out = out + p
-  }
   out
 }
 
@@ -1149,17 +1111,17 @@ fn join_byte(parts: List[Bytes], sep: Bytes) -> Bytes {
 /// remaining non blank lines is removed. Indentation is measured on the raw
 /// source, so an interpolation counts as non blank content.
 fn strip_indent(pieces: List[Piece]) -> List[Piece] {
-  var flat = b""
+  var flat = BytesBuilder.new()
   var exprs: List[Piece] = []
   for p in pieces {
     if p.expr {
-      flat = flat + byte_bytes(MARKER)
+      flat.write_byte(MARKER)
       exprs.push(p)
     } else {
-      flat = flat + p.raw
+      flat.write(p.raw)
     }
   }
-  var lines = split_byte(flat, C_NL)
+  var lines = split_byte(flat.freeze(), '\n')
   var kept_first = true
   if lines.len() > 1 && is_space_tab(lines[0]) {
     lines = lines[1..]
@@ -1185,11 +1147,17 @@ fn strip_indent(pieces: List[Piece]) -> List[Piece] {
   if indent < 0 {
     indent = 0
   }
-  for i in first..lines.len() {
-    let ln = lines[i]
-    lines[i] = if is_space_tab(ln) { b"" } else { ln[indent..] }
+  var joined = BytesBuilder.new()
+  for (i, ln) in lines.indexed() {
+    if i > 0 {
+      joined.write_byte('\n')
+    }
+    if i < first {
+      joined.write(ln)
+    } else if !is_space_tab(ln) {
+      joined.write(ln[indent..])
+    }
   }
-  let joined = join_byte(lines, b"\n")
   // Rebuild pieces. Literal pieces lose their exact source position after
   // stripping; they keep the position of the first original piece, which
   // is only used for escape error locations.
@@ -1198,7 +1166,7 @@ fn strip_indent(pieces: List[Piece]) -> List[Piece] {
   if let Some(p) = pieces.first() {
     lit_start = p.start
   }
-  for (i, s) in split_byte(joined, MARKER).indexed() {
+  for (i, s) in split_byte(joined.freeze(), MARKER).indexed() {
     if !s.is_empty() {
       out.push(Piece{expr: false, raw: s, start: lit_start})
     }

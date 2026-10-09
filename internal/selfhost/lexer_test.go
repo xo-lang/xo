@@ -18,6 +18,15 @@ import (
 	"github.com/xo-lang/xo/internal/lexer"
 )
 
+// repoRoot is the repository root, two levels up from this package.
+func repoRoot(t testing.TB) string {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 // lexerBinary builds selfhost/lexer (the Xo lexer's CLI) once.
 var lexerBinary = sync.OnceValues(func() (string, error) {
 	dir := filepath.Join("..", "..", "selfhost", "lexer")
@@ -186,8 +195,8 @@ func fuzzCorpus(t testing.TB, root, dir string, files []string, n int) []string 
 }
 
 // runeFiles writes every step-th rune (one per line, each an invalid
-// character unless it is ASCII) into files under dir, to check the Xo port
-// of strconv.QuoteRune and its IsPrint table.
+// character unless it is ASCII) into files under dir, to check Rune.quote
+// (strconv.QuoteRune) on every rune.
 func runeFiles(t testing.TB, dir string, step int) []string {
 	var out []string
 	var b strings.Builder

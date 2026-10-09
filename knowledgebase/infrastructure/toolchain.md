@@ -106,7 +106,6 @@ go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical 
 go run ./cmd/xo run selfhost/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
 go run ./cmd/xo test selfhost/lexer                     # the Xo lexer's own tests (20, 6 of them property tests)
 go test ./internal/selfhost                             # Xo lexer vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs
-go test ./internal/selfhost -run TestIsPrintTable -update   # regenerate selfhost/lexer/isprint.xo from strconv.IsPrint (after a Go upgrade)
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
@@ -682,10 +681,10 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
-internal/selfhost/      Go side of the self hosted components: IsPrintTable generator; tests build selfhost/lexer
-                        and compare its dump with lexer.Dump (decision 0076)
-selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, text.xo (UTF-8, QuoteRune,
-                        TrimSpace stand ins), isprint.xo (generated), dump.xo, main.xo (CLI), lexer_test.xo
+internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer and compare
+                        its dump with lexer.Dump (decision 0076)
+selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
+                        lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
