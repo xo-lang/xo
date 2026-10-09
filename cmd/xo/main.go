@@ -168,6 +168,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "lexdump": // hidden: canonical token dump, compared with selfhost/lexer
+		return runLexDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

@@ -1,0 +1,198 @@
+// Tokens of Xo source and their positions: a port of internal/token.
+//
+// Text is held as Bytes, not Str: a Go string may hold any bytes, and the
+// lexer must reproduce comments, strings, and invalid characters of files
+// that are not valid UTF-8 exactly as the Go lexer does.
+
+/// The kind of a token, in the order of internal/token. Variant names are
+/// the Go constant names (EOF is Eof), which the dump prints.
+pub enum Kind {
+  Illegal
+  Eof
+  Newline
+  Ident
+  Int
+  Float
+  Duration
+  Rune
+  String
+  RawString
+  Bytes
+  ImportPath
+  Hole
+  Plus
+  Minus
+  Star
+  Slash
+  Percent
+  Shl
+  Shr
+  Amp
+  Pipe
+  Caret
+  Tilde
+  Bang
+  AndAnd
+  OrOr
+  Coalesce
+  Question
+  Eq
+  NotEq
+  Lt
+  LtEq
+  Gt
+  GtEq
+  Assign
+  PlusAssign
+  MinusAssign
+  StarAssign
+  SlashAssign
+  PercentAssign
+  AmpAssign
+  PipeAssign
+  CaretAssign
+  ShlAssign
+  ShrAssign
+  Arrow
+  FatArrow
+  DotDot
+  DotDotEq
+  Dot
+  Comma
+  Colon
+  LParen
+  RParen
+  LBrack
+  RBrack
+  LBrace
+  RBrace
+  HashLBrace
+  As
+  Break
+  Const
+  Continue
+  Defer
+  Else
+  Ensures
+  Enum
+  Fn
+  For
+  If
+  In
+  Interface
+  Invariant
+  Let
+  Match
+  Pub
+  Requires
+  Return
+  Scope
+  Select
+  Struct
+  Test
+  Type
+  Use
+  Uses
+  Var
+  While
+} derive Display
+
+/// The 28 keywords (core 1.4).
+const KEYWORDS = {
+  "as": Kind.As,
+  "break": Kind.Break,
+  "const": Kind.Const,
+  "continue": Kind.Continue,
+  "defer": Kind.Defer,
+  "else": Kind.Else,
+  "ensures": Kind.Ensures,
+  "enum": Kind.Enum,
+  "fn": Kind.Fn,
+  "for": Kind.For,
+  "if": Kind.If,
+  "in": Kind.In,
+  "interface": Kind.Interface,
+  "invariant": Kind.Invariant,
+  "let": Kind.Let,
+  "match": Kind.Match,
+  "pub": Kind.Pub,
+  "requires": Kind.Requires,
+  "return": Kind.Return,
+  "scope": Kind.Scope,
+  "select": Kind.Select,
+  "struct": Kind.Struct,
+  "test": Kind.Test,
+  "type": Kind.Type,
+  "use": Kind.Use,
+  "uses": Kind.Uses,
+  "var": Kind.Var,
+  "while": Kind.While,
+}
+
+/// Maps an identifier to its keyword kind, or Ident.
+pub fn lookup(word: Str) -> Kind {
+  KEYWORDS.get(word) ?? Kind.Ident
+}
+
+/// The keyword spellings in declaration order.
+pub fn keywords() -> List[Str] {
+  KEYWORDS.keys()
+}
+
+/// A position: 0 based byte offset, 1 based line and column (bytes).
+pub struct Pos {
+  pub offset: Int
+  pub line: Int
+  pub col: Int
+}
+
+/// A half open source range [start, end).
+pub struct Span {
+  pub start: Pos
+  pub end: Pos
+}
+
+/// One piece of a string literal: cooked text, or the raw source of a
+/// `${expr}` (is_expr), which lex_range lexes.
+pub struct StrPart {
+  pub is_expr: Bool
+  pub text: Bytes
+  pub span: Span
+}
+
+/// One lexical token. `value` holds the decoded value of Int (decimal),
+/// Duration (nanoseconds), Float (without `_`), Rune, RawString, Bytes, and
+/// ImportPath tokens; `parts` the parts of a String token.
+pub struct Token {
+  pub kind: Kind
+  pub span: Span
+  pub text: Bytes
+  pub value: Bytes = b""
+  pub parts: List[StrPart] = []
+  pub triple: Bool = false
+}
+
+/// A `//` or `///` comment (doc). Text is without the slashes and one
+/// following space.
+pub struct Comment {
+  pub span: Span
+  pub text: Bytes
+  pub doc: Bool
+}
+
+/// A lexical diagnostic with its stable code (core 10.2).
+pub struct Diag {
+  pub code: Str
+  pub span: Span
+  pub message: Bytes
+}
+
+pub const INVALID_CHAR = "XO0150"
+pub const UNTERMINATED_STRING = "XO0151"
+pub const INVALID_RUNE = "XO0152"
+pub const INVALID_ESCAPE = "XO0153"
+pub const MALFORMED_NUMBER = "XO0154"
+pub const INVALID_DURATION = "XO0155"
+pub const UNTERMINATED_INTERP = "XO0156"
+pub const EMPTY_INTERP = "XO0157"
+pub const MALFORMED_IMPORT_PATH = "XO0158"

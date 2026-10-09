@@ -1,0 +1,337 @@
+// Tests of the self hosted lexer: the cases of internal/lexer's tests, and
+// property tests over generated sources. The byte for byte comparison with
+// the Go lexer is internal/selfhost's TestSelfhostDifferential.
+
+/// Renders tokens like internal/lexer's test helper: "kind:text" (or the
+/// text for operators and keywords), ";" for newlines, values in braces
+/// when they differ from the text, string parts in str[...].
+fn render(toks: List[Token]) -> Str {
+  var out: List[Str] = []
+  for t in toks {
+    let text = t.text.to_str() ?? "<bytes>"
+    let value = t.value.to_str() ?? "<bytes>"
+    if t.kind == Kind.Eof {
+      continue
+    }
+    if t.kind == Kind.Newline {
+      out.push(";")
+    } else if t.kind == Kind.String {
+      let parts = t.parts.map(fn(p) {
+        let s = p.text.to_str() ?? "<bytes>"
+        if p.is_expr { "\${${s}}" } else { "'${s}'" }
+      })
+      out.push("str[${parts.join(" ")}]")
+    } else if short_name(t.kind).is_empty() {
+      out.push(text)
+    } else if !value.is_empty() && value != text {
+      out.push("${short_name(t.kind)}:${text}{${value}}")
+    } else {
+      out.push("${short_name(t.kind)}:${text}")
+    }
+  }
+  out.join(" ")
+}
+
+/// The short kind names of render; empty for operators and keywords.
+/// (A `match` with a `_` arm here is warning XO0305, which asks to list
+/// the other 79 variants of Kind.)
+fn short_name(k: Kind) -> Str {
+  let names = [
+    (Kind.Ident, "id"),
+    (Kind.Int, "int"),
+    (Kind.Float, "float"),
+    (Kind.Duration, "dur"),
+    (Kind.Rune, "rune"),
+    (Kind.RawString, "raw"),
+    (Kind.Bytes, "bytes"),
+    (Kind.ImportPath, "path"),
+    (Kind.Illegal, "illegal"),
+  ]
+  names.find(fn(e) { e.0 == k }).map(fn(e) { e.1 }) ?? ""
+}
+
+fn lex_str(src: Str) -> LexResult {
+  lex(src.bytes())
+}
+
+fn codes(src: Str) -> List[Str] {
+  lex_str(src).diags.map(fn(d) { d.code })
+}
+
+fn messages(src: Str) -> List[Str] {
+  lex_str(src).diags.map(fn(d) { d.message.to_str() ?? "<bytes>" })
+}
+
+/// Bytes made of the low 8 bits of each Int.
+fn bytes_of(xs: List[Int]) -> Bytes {
+  var out = b""
+  for x in xs {
+    out = out + byte_bytes(x & 0xff)
+  }
+  out
+}
+
+test "identifiers, keywords, and contextual words" {
+  expect(render(lex_str("let x = foo").tokens)) == "let id:x = id:foo ;"
+  let kws = keywords().filter(fn(k) { k != "use" }).join(" ")
+  expect(render(lex_str(kws).tokens)) == kws
+  expect(keywords().len()) == 28
+  expect(render(lex_str("derive from with after seed result old").tokens)) == "id:derive id:from id:with id:after id:seed id:result id:old ;"
+  expect(render(lex_str("r b r1 b2").tokens)) == "id:r id:b id:r1 id:b2 ;"
+}
+
+test "numbers" {
+  let cases = [
+    ("42 1_000_000 0xff 0o755 0b1010 0x_FF", "int:42 int:1_000_000{1000000} int:0xff{255} int:0o755{493} int:0b1010{10} int:0x_FF{255} ;"),
+    ("3.14 1e-9 2.5E+3 1_0.5", "float:3.14 float:1e-9 float:2.5E+3 float:1_0.5{10.5} ;"),
+    ("5s 250ms 10us 2m 1h 7ns", "dur:5s{5000000000} dur:250ms{250000000} dur:10us{10000} dur:2m{120000000000} dur:1h{3600000000000} dur:7ns{7} ;"),
+    ("0..10 xs[1..] 0..=9", "int:0 .. int:10 id:xs [ int:1 .. ] int:0 ..= int:9 ;"),
+    ("1.max(2)", "int:1 . id:max ( int:2 ) ;"),
+    ("t.0.1 p.1", "id:t . int:0 . int:1 id:p . int:1 ;"),
+    ("x = 0.5", "id:x = float:0.5 ;"),
+    ("18446744073709551615", "int:18446744073709551615 ;"),
+  ]
+  for (src, want) in cases {
+    let r = lex_str(src)
+    expect(r.diags.len()) == 0
+    expect(render(r.tokens)) == want
+  }
+}
+
+test "operators, holes, and terminators" {
+  expect(render(lex_str("??? a?? b x?").tokens)) == "??? id:a ?? id:b id:x ? ;"
+  let ops = "a += 1 << 2 >>= 3 -> => .. ..= #{ } != == <= >= && || ! ~ ^ % &= |="
+  expect(render(lex_str(ops).tokens)) == "id:a += int:1 << int:2 >>= int:3 -> => .. ..= #{ } != == <= >= && || ! ~ ^ % &= |="
+  expect(render(lex_str("a; b").tokens)) == "id:a ; id:b ;"
+  expect(render(lex_str("use std/http\nuse github.com/acme/rate-limit as rl").tokens)) == "use path:std/http ; use path:github.com/acme/rate-limit as id:rl ;"
+}
+
+test "runes, bytes, and raw strings" {
+  expect(render(lex_str("'a' '\\n' '\\u{1F600}' '\\''").tokens)) == "rune:'a'{a} rune:'\\n'{\n} rune:'\\u{1F600}'{😀} rune:'\\''{'} ;"
+  let b = lex_str("b\"raw\\x00\\xff\"").tokens[0]
+  expect(b.kind) == Kind.Bytes
+  expect(b.value) == b"raw\x00\xff"
+  let cases = [
+    ("r\"raw: no escapes \\d+ \${x}\"", "raw: no escapes \\d+ \${x}"),
+    ("r#\"may contain \"quotes\": {\"a\": 1}\"#", "may contain \"quotes\": {\"a\": 1}"),
+    ("r##\"a \"# b\"##", "a \"# b"),
+    ("r\"a\r\nb\"", "a\nb"),
+  ]
+  for (src, want) in cases {
+    let t = lex_str(src).tokens[0]
+    expect(t.kind) == Kind.RawString
+    expect(t.value) == want.bytes()
+  }
+}
+
+test "strings and interpolation" {
+  let cases = [
+    ("\"hello\"", "str['hello'] ;"),
+    ("\"\"", "str[] ;"),
+    ("\"hello \${name}, you have \${count + 1} items\"", "str['hello ' \${name} ', you have ' \${count + 1} ' items'] ;"),
+    ("\"GET /users/{id}\"", "str['GET /users/{id}'] ;"),
+    ("\"price: \\\${x}\"", "str['price: \${x}'] ;"),
+    ("\"cost \$5 and \$\"", "str['cost \$5 and \$'] ;"),
+    ("\"\${m[\"k\"]} \${f({\"a\": 1})} \${\"in\${x}\"}\"", "str[\${m[\"k\"]} ' ' \${f({\"a\": 1})} ' ' \${\"in\${x}\"}] ;"),
+    ("\"\${env.home()?}/.config\"", "str[\${env.home()?} '/.config'] ;"),
+    ("\"a\\tb\\\\\\u{41}\\x41\"", "str['a\tb\\AA'] ;"),
+    ("\"\"\"\n    multi line\n      indented\n    end\n    \"\"\"", "str['multi line\n  indented\nend'] ;"),
+    ("\"\"\"\n  a \${x}\n  b\n  \"\"\"", "str['a ' \${x} '\nb'] ;"),
+    ("\"\"\"\n  a\n\n  b\n\"\"\"", "str['a\n\nb'] ;"),
+    ("\"\"\"one \"quoted\" line\"\"\"", "str['one \"quoted\" line'] ;"),
+  ]
+  for (src, want) in cases {
+    let r = lex_str(src)
+    expect(r.diags.len()) == 0
+    expect(render(r.tokens)) == want
+  }
+}
+
+test "interpolation spans and lex_range" {
+  let src = "let s = \"a \${b.c} d\"\n".bytes()
+  let str = lex(src).tokens[3]
+  expect(str.kind) == Kind.String
+  expect(str.parts.len()) == 3
+  let p = str.parts[1]
+  expect(src[p.span.start.offset..p.span.end.offset]) == b"b.c"
+  expect(p.span.start.col) == 14
+  let sub = lex_range(src, p.span.start, p.span.end.offset)
+  expect(render(sub.tokens)) == "id:b . id:c"
+  expect(sub.tokens[2].span.start.col) == 16
+}
+
+test "newlines" {
+  let cases = [
+    ("a\nb", "id:a ; id:b ;"),
+    ("a +\nb", "id:a + id:b ;"),
+    ("f(\na,\nb,\n)", "id:f ( id:a , id:b , ) ;"),
+    ("f()\ng()", "id:f ( ) ; id:g ( ) ;"),
+    ("x?\ny", "id:x ? ; id:y ;"),
+    ("return\nbreak\ncontinue\n", "return ; break ; continue ;"),
+    ("1\n'c'\n5s\n???\n", "int:1 ; rune:'c'{c} ; dur:5s{5000000000} ; ??? ;"),
+    ("a\n\n\nb", "id:a ; id:b ;"),
+    ("http.json(429, x)\n  .with_header(\"a\")\n", "id:http . id:json ( int:429 , id:x ) . id:with_header ( str['a'] ) ;"),
+    ("a\n  // note\n  .b()\n", "id:a . id:b ( ) ;"),
+    ("a\n..b", "id:a ; .. id:b ;"),
+    ("a // trailing\nb", "id:a ; id:b ;"),
+    ("}\nelse", "} ; else"),
+    ("x", "id:x ;"),
+  ]
+  for (src, want) in cases {
+    expect(render(lex_str(src).tokens)) == want
+  }
+}
+
+test "comments" {
+  let r = lex_str("// plain\n/// doc one\n/// doc two\n//// not doc\nfn f() {}\n")
+  expect(r.comments.map(fn(c) { c.doc })) == [false, true, true, false]
+  expect(r.comments.map(fn(c) { c.text.to_str() ?? "" })) == ["plain", "doc one", "doc two", "// not doc"]
+}
+
+test "positions count bytes" {
+  let y = lex_str("let x =\n  \"é\" + y").tokens[5]
+  expect(y.text) == b"y"
+  expect(y.span.start) == Pos{offset: 17, line: 2, col: 10}
+  expect(y.span.end.col) == 11
+}
+
+test "error codes" {
+  let cases = [
+    ("a @ b", [INVALID_CHAR]),
+    ("a é", [INVALID_CHAR]),
+    ("#x", [INVALID_CHAR]),
+    ("\"abc\nx", [UNTERMINATED_STRING]),
+    ("r#\"abc\"", [UNTERMINATED_STRING]),
+    ("\"\"\"abc", [UNTERMINATED_STRING]),
+    ("b\"abc", [UNTERMINATED_STRING]),
+    ("''", [INVALID_RUNE]),
+    ("'ab'", [INVALID_RUNE]),
+    ("'a", [INVALID_RUNE]),
+    ("\"\\q\"", [INVALID_ESCAPE]),
+    ("\"\\u{110000}\"", [INVALID_ESCAPE]),
+    ("\"\\xff\"", [INVALID_ESCAPE]),
+    ("0xg", [INVALID_DURATION]),
+    ("0x", [MALFORMED_NUMBER]),
+    ("0b102", [MALFORMED_NUMBER]),
+    ("1__000", [MALFORMED_NUMBER]),
+    ("1000_", [MALFORMED_NUMBER]),
+    ("99999999999999999999999", [MALFORMED_NUMBER]),
+    ("5sec", [INVALID_DURATION]),
+    ("1.5s", [INVALID_DURATION]),
+    ("0x10s", [INVALID_DURATION]),
+    ("\"a \${b\"", [UNTERMINATED_INTERP]),
+    ("\"a \${ }\"", [EMPTY_INTERP]),
+    ("use std//http", [MALFORMED_IMPORT_PATH]),
+    ("a @ \"\\q\" 1__0", [INVALID_CHAR, INVALID_ESCAPE, MALFORMED_NUMBER]),
+  ]
+  for (src, want) in cases {
+    expect(codes(src)) == want
+  }
+}
+
+test "error messages match the Go lexer" {
+  expect(messages("a @")) == ["invalid character '@'"]
+  expect(messages("\\")) == ["invalid character '\\\\'"]
+  expect(messages("\u{a0}")) == ["invalid character '\\u00a0'"]
+  expect(messages("é")) == ["invalid character 'é'"]
+  expect(messages("5sec")) == ["invalid suffix \"sec\" on number literal; duration units are ns, us, ms, s, m, h"]
+  expect(messages("0b102")) == ["invalid digit in base 2 literal"]
+  expect(messages("9223372036854775808ns")) == ["duration literal \"9223372036854775808ns\" overflows a 64 bit nanosecond count"]
+  expect(messages("\"\\u{d800}\"")) == ["invalid unicode escape \\u{d800}"]
+  expect(messages("r#\"x")) == ["raw string literal not terminated; expected \"#"]
+}
+
+test "escape error spans" {
+  let ds = lex_str("x = \"\\q\"").diags
+  expect(ds.len()) == 1
+  expect(ds[0].span.start.col) == 6
+  expect(ds[0].span.end.col) == 8
+}
+
+test "quote_rune follows strconv.QuoteRune" {
+  expect(quote_rune(0x41)) == b"'A'"
+  expect(quote_rune(0x27)) == b"'\\''"
+  expect(quote_rune(0x0a)) == b"'\\n'"
+  expect(quote_rune(0x00)) == b"'\\x00'"
+  expect(quote_rune(0x7f)) == b"'\\x7f'"
+  expect(quote_rune(0x85)) == b"'\\u0085'"
+  expect(quote_rune(0xe9)) == "'é'".bytes()
+  expect(quote_rune(0x1f600)) == "'😀'".bytes()
+  expect(quote_rune(0xe0001)) == b"'\\U000e0001'"
+  expect(quote_rune(0xd800)) == "'\u{fffd}'".bytes()
+}
+
+test "the dump quotes every byte outside printable ASCII" {
+  expect(quote(b"a\"b\\c\n\xff")) == "\"a\\\"b\\\\c\\x0a\\xff\""
+  let d = dump("t.xo", "x\n".bytes())
+  expect(d) == "== t.xo\nIdent 1:1:0-1:2:1 \"x\" \"\"\nNewline 1:2:1-2:1:2 \"\\x0a\" \"\"\nEof 2:1:2-2:1:2 \"\" \"\"\n"
+}
+
+test "decimal integers lex to their value" for n: Int {
+  let v = (n / 2).abs()
+  let t = lex_str("${v}").tokens[0]
+  expect(t.kind) == Kind.Int
+  expect(t.value) == "${v}".bytes()
+}
+
+test "durations lex to nanoseconds" for n: Int {
+  let v = (n % 1_000_000).abs()
+  let t = lex_str("${v}ms").tokens[0]
+  expect(t.kind) == Kind.Duration
+  expect(t.value) == "${v * 1_000_000}".bytes()
+}
+
+test "encode_rune and decode_rune round trip" for n: Int {
+  let r = (n % 0x110000).abs()
+  let b = encode_rune(r)
+  let (got, size) = decode_rune(b, 0, b.len())
+  let want = if r >= 0xd800 && r <= 0xdfff { RUNE_ERROR } else { r }
+  expect(got) == want
+  expect(size) == b.len()
+}
+
+test "plain strings hold their text" for s: Str {
+  // Characters with a meaning inside a string literal are left out.
+  let text = s.replace("\\", "").replace("\"", "").replace("\$", "").replace("\n", "").replace("\r", "")
+  let r = lex_str("\"${text}\"")
+  expect(r.diags.len()) == 0
+  let t = r.tokens[0]
+  expect(t.kind) == Kind.String
+  if text.is_empty() {
+    expect(t.parts.len()) == 0
+  } else {
+    expect(t.parts.len()) == 1
+    expect(t.parts[0].text) == text.bytes()
+  }
+}
+
+test "every token's text is its source span" for xs: List[Int] {
+  let src = bytes_of(xs)
+  let r = lex(src)
+  expect(r.tokens.last().map(fn(t) { t.kind })) == Some(Kind.Eof)
+  var prev = 0
+  for t in r.tokens {
+    expect(t.span.start.offset >= prev)
+    expect(t.span.end.offset <= src.len())
+    expect(t.text) == src[t.span.start.offset..t.span.end.offset]
+    expect(end_pos(t.span.start, t.text)) == t.span.end
+    prev = t.span.end.offset
+  }
+}
+
+test "every token's text is its source span on lexer like input" for words: List[Int] {
+  // Sources built from fragments of real syntax reach far more states than
+  // random bytes.
+  let frags = ["\"", "\${", "}", "{", "\\", "x", "1", "0x", "_", ".", "e", "s", "'", "r#\"", "\"#", "b\"", "\n", " ", "//", "use ", "/", "\u{a0}", "???", "#"]
+  var src = b""
+  for w in words {
+    src = src + frags[(w % frags.len()).abs()].bytes()
+  }
+  let r = lex(src)
+  for t in r.tokens {
+    expect(t.text) == src[t.span.start.offset..t.span.end.offset]
+  }
+  for c in r.comments {
+    expect(c.span.end.offset <= src.len())
+  }
+}
