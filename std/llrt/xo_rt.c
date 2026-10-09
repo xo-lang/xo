@@ -1064,6 +1064,39 @@ typedef struct {
 	struct xo_fiber *fiber;
 } xo_park;
 
+// Runtime statistics (decision 0077): XO_RTSTATS=1 prints counts of the
+// scheduler's events to stderr at exit (and xo_rt_stats prints them on
+// demand). Each count is one relaxed atomic add, done only when enabled.
+static int rtstats = -1; // -1 not read yet
+static struct {
+	int64_t spawn, steal, inject, wake, idle_sleep, spin_round, fiber_park, fiber_new, thread_wait, thread_wake, lock_slow, spin_yield;
+} st;
+static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield"};
+
+static void stats_init(void) {
+	const char *e = getenv("XO_RTSTATS");
+	__atomic_store_n(&rtstats, e && *e && *e != '0', __ATOMIC_RELAXED);
+}
+
+#define STAT(f)                                                                     \
+	do {                                                                            \
+		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0, 0)) { \
+			__atomic_fetch_add(&st.f, 1, __ATOMIC_RELAXED);                         \
+		}                                                                           \
+	} while (0)
+
+void xo_rt_stats(void) {
+	if (__atomic_load_n(&rtstats, __ATOMIC_RELAXED) <= 0) {
+		return;
+	}
+	int64_t *v = (int64_t *)&st;
+	fputs("xo rtstats:", stderr);
+	for (size_t i = 0; i < sizeof st_names / sizeof st_names[0]; i++) {
+		fprintf(stderr, " %s=%lld", st_names[i], (long long)__atomic_load_n(&v[i], __ATOMIC_RELAXED));
+	}
+	fputc('\n', stderr);
+}
+
 // xo_spin is a lock for short critical sections that many threads take
 // (the deadlock counters, the cancellation tree): a contended pthread
 // mutex sleeps in the kernel, which dominated spawn heavy programs.
@@ -1085,6 +1118,7 @@ static void spin_lock(xo_spin *l) {
 			return;
 		}
 		if (n > 64) {
+			STAT(spin_yield);
 			sched_yield();
 		} else {
 			spin_relax();
@@ -1161,6 +1195,7 @@ static void park_signal(xo_park *p) {
 		p->fiber = NULL;
 		fiber_wake(f);
 	} else {
+		STAT(thread_wake);
 		pthread_cond_signal(&p->cv);
 	}
 	pthread_mutex_unlock(&p->mu);
@@ -1478,6 +1513,7 @@ static void rt_init(void) {
 
 static void pool_init(void) {
 	xo_rt_threads_begin();
+	stats_init();
 	long n = sysconf(_SC_NPROCESSORS_ONLN);
 	const char *e = getenv("XO_THREADS");
 	if (e && atoi(e) > 0) {
@@ -1533,6 +1569,7 @@ static void start_worker(void) {
 static void wake(void) {
 	pthread_mutex_lock(&pool.mu);
 	if (pool.idle > 0) {
+		STAT(wake);
 		pthread_cond_signal(&pool.cv);
 	} else if (pool.alive - pool.blocked < pool.ncpu) {
 		start_worker();
@@ -1572,6 +1609,7 @@ static void *spin(xo_worker *w) {
 	__atomic_fetch_add(&pool.spinning, 1, __ATOMIC_SEQ_CST);
 	void *t = NULL;
 	for (int i = 0; i < 4000 && !t; i++) {
+		STAT(spin_round);
 		if (LOAD(pool.nqueued) > 0) {
 			t = pool_pop(w);
 		} else {
@@ -1592,6 +1630,9 @@ static void *pool_pop(xo_worker *w) {
 	}
 	if (!t) {
 		t = dq_take(&pool.inject, 0);
+		if (t) {
+			STAT(inject);
+		}
 	}
 	if (!t) {
 		int n = LOAD(pool.nw);
@@ -1599,6 +1640,9 @@ static void *pool_pop(xo_worker *w) {
 			xo_worker *v = pool.ws[i];
 			if (v != w) {
 				t = dq_take(&v->dq, 0);
+				if (t) {
+					STAT(steal);
+				}
 			}
 		}
 	}
@@ -1691,6 +1735,7 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 				pthread_mutex_lock(&c->park.mu);
 				c->park.fiber = NULL;
 			} else {
+				STAT(thread_wait);
 				pthread_cond_wait(&c->park.cv, &c->park.mu);
 			}
 		}
@@ -2110,6 +2155,7 @@ static xo_fiber *fiber_new(xo_task *t) {
 	spin_unlock(&fibers.mu);
 	if (!f) {
 		pthread_once(&fibers.once, fibers_init);
+		STAT(fiber_new);
 		f = calloc(1, sizeof(xo_fiber));
 		if (!f) {
 			xo_oom();
@@ -2185,6 +2231,7 @@ static void fiber_parking(xo_fiber *f) { __atomic_store_n(&f->state, F_PARKING, 
 // fiber_park switches from f to the scheduler of the worker running it;
 // it returns when a worker resumes f.
 static void fiber_park(xo_fiber *f) {
+	STAT(fiber_park);
 	f->cur = cur_get();
 	xo_worker *w = w_get();
 	TSAN_SWITCH(w->tsan);
@@ -2265,6 +2312,7 @@ static void *worker_main(void *arg) {
 		}
 		STORE(pool.idle, pool.idle + 1);
 		while (LOAD(pool.nqueued) == 0) {
+			STAT(idle_sleep);
 			pthread_cond_wait(&pool.cv, &pool.mu);
 		}
 		STORE(pool.idle, pool.idle - 1);
@@ -2281,6 +2329,7 @@ static void *worker_main(void *arg) {
 // its result list. site tells the scope which spawn failed.
 xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t flags, int64_t site, const char *loc, int64_t n) {
 	pthread_once(&pool.once, pool_init);
+	STAT(spawn);
 	xo_task *t = xo_alloc(sizeof(xo_task));
 	memset(t, 0, sizeof *t);
 	h_init(t, task_free);
@@ -4476,6 +4525,7 @@ int main(int argc, char **argv) {
 		stop.stopping = NULL;
 	}
 	pthread_mutex_unlock(&stop.mu);
+	xo_rt_stats();
 	if (getenv("XO_LEAKCHECK")) {
 		int64_t live, total;
 		xo_rt_live(&live, &total);

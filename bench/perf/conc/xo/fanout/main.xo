@@ -1,0 +1,20 @@
+// Fan out and join: 100 rounds of 1000 tasks returning a value, each
+// handle awaited in order and summed.
+fn main(os: Os) {
+  var total = 0
+  for r in 0..100 {
+    let sum = scope s {
+      var hs: List[Task[Int, Never]] = []
+      for i in 0..1000 {
+        hs.push(s.spawn(fn() { i * 2 + r }))
+      }
+      var acc = 0
+      for h in hs {
+        acc += h.await
+      }
+      acc
+    }
+    total += sum
+  }
+  os.stdio.println("fanout ${total}")
+}

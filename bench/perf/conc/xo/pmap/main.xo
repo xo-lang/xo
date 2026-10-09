@@ -1,0 +1,41 @@
+// A parallel map: 20 rounds of mapping 0..200,000 through a Collatz step
+// count in 64 chunks, one task per chunk, results awaited and summed.
+fn steps(x: Int) -> Int {
+  var n = x
+  var c = 0
+  while n > 1 {
+    if n % 2 == 0 { n = n / 2 } else { n = 3 * n + 1 }
+    c += 1
+  }
+  c
+}
+
+fn main(os: Os) {
+  let size = 200000
+  let chunks = 64
+  var total = 0
+  for r in 0..20 {
+    let sum = scope s {
+      var hs: List[Task[Int, Never]] = []
+      for k in 0..chunks {
+        hs.push(s.spawn(fn() {
+          var acc = 0
+          var i = k * size / chunks
+          let hi = (k + 1) * size / chunks
+          while i < hi {
+            acc += steps(i + r)
+            i += 1
+          }
+          acc
+        }))
+      }
+      var acc = 0
+      for h in hs {
+        acc += h.await
+      }
+      acc
+    }
+    total += sum
+  }
+  os.stdio.println("pmap ${total}")
+}

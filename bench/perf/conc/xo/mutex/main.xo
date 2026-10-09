@@ -1,0 +1,16 @@
+// A contended mutex counter: 8 tasks each add 1 under the lock 25,000
+// times.
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  scope s {
+    for _ in 0..8 {
+      s.spawn(fn() {
+        for _ in 0..25000 {
+          m.with(fn(var c) { c += 1 })
+        }
+      })
+    }
+  }
+  let n = m.with_read(fn(c) { c })
+  os.stdio.println("mutex ${n}")
+}

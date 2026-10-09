@@ -1,0 +1,13 @@
+// Many short tasks in a scope: 200 rounds of 1000 tasks whose handles
+// are discarded, each adding to an Atomic (spawn and join overhead).
+fn main(os: Os) {
+  let count = Atomic[Int].new(0)
+  for _ in 0..200 {
+    scope s {
+      for i in 0..1000 {
+        s.spawn(fn() { count.add(i) })
+      }
+    }
+  }
+  os.stdio.println("spawn ${count.get()}")
+}

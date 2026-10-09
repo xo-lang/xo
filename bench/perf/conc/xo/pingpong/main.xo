@@ -1,0 +1,23 @@
+// Channel ping pong: two tasks pass an Int back and forth over two
+// unbuffered channels 100,000 times (park and wake latency).
+fn main(os: Os) {
+  let ping = Chan[Int].new()
+  let pong = Chan[Int].new()
+  let n = 100000
+  let last = scope s {
+    s.spawn(fn() {
+      for v in ping {
+        pong.send(v + 1)
+      }
+      pong.close()
+    })
+    var v = 0
+    for _ in 0..n {
+      ping.send(v)
+      v = pong.recv() ?? -1
+    }
+    ping.close()
+    v
+  }
+  os.stdio.println("pingpong ${last}")
+}
