@@ -177,6 +177,7 @@ func TestGoParked(t *testing.T) {
 		{"foreign goroutine", "goroutine 12 [sync.Mutex.Lock]:\nsync.(*Mutex).Lock(0x1)\n\tsync/mutex.go:1 +0x1\nmain.worker()\n\tw.go:1 +0x1", false},
 		{"go call sleeping inside Mutex.with", "goroutine 15 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "Go_time_sleep()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f.func1()\n\tmain.xo:5 +0x1\n" + rt + "Mutex_with[...]()\n\tx/rt/sync.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:4 +0x1", false},
 		{"runtime watcher sleeping", "goroutine 16 [syscall]:\nsyscall.Select(0x0)\n\tsyscall/x.go:1 +0x1\n" + rt + "osSleep(0x1)\n\tx/rt/ossleep.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", true},
+		{"scheduler settling", "goroutine 18 [syscall]:\nsyscall.Select(0x0)\n\tsyscall/x.go:1 +0x1\n" + rt + "osSleep(0x1)\n\tx/rt/ossleep.go:1 +0x1\n" + rt + "waitGoSettled()\n\tx/rt/gosched.go:1 +0x1\n" + rt + "(*sched).settleLocked(0x1)\n\tx/rt/gosched.go:1 +0x1", false},
 		{"runtime code in time.Sleep", "goroutine 17 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", false},
 		{"running", "goroutine 13 [runnable]:\n" + rt + "x()\n\tx/rt/a.go:1 +0x1", false},
 		{"signals", "goroutine 14 [syscall]:\nos/signal.signal_recv()\n\truntime/sigqueue.go:149 +0x108\nos/signal.loop()\n\tos/signal/signal_unix.go:23 +0x1c", true},
@@ -250,3 +251,73 @@ func TestSchedGoCallbackSeed(t *testing.T) {
 //
 //go:noinline
 func Go_test_sleep(d time.Duration) { time.Sleep(d) }
+
+// TestSchedGoTimerArrival: a test world task holds a Mutex while a
+// callback waits for it and waits in Go for a WaitGroup that a Go timer's
+// function (an Xo callback, as time.AfterFunc with an Xo function)
+// releases. After the timer fired no timer is pending and its callback
+// call waits for admission while Go's goroutines settle; a settle slowed
+// by load (waitGoSettledHook) once let the deadlock check report XO-F001
+// in that window (decision 0073, update 2026-10-08). go test cannot see
+// Go timers, so goNextTimerHook stands in.
+func TestSchedGoTimerArrival(t *testing.T) {
+	var timerPending atomic.Bool
+	hook := func() (time.Duration, bool, bool) {
+		return 10 * time.Millisecond, timerPending.Load(), true
+	}
+	goNextTimerHook.Store(&hook)
+	defer goNextTimerHook.Store(nil)
+	slow := func() { osSleep(20 * time.Millisecond) }
+	waitGoSettledHook.Store(&slow)
+	defer waitGoSettledHook.Store(nil)
+	for seed := int64(1); seed <= 3; seed++ {
+		w := NewSchedWorld(seed)
+		tk := w.NewTask()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			m := Mutex_new[int64](tk, 0)
+			var wg, release sync.WaitGroup
+			Mutex_with(tk, m, func(tk *Task, _ *int64) Result[Unit, Never] {
+				cb := NewGoCallback(tk)
+				GoEnter(tk)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					ctk := cb.Begin(nil)
+					defer cb.End(ctk)
+					Mutex_with(ctk, m, func(*Task, *int64) Result[Unit, Never] { return Ok[Unit, Never](Unit{}) })
+				}()
+				GoExit(tk, "go")
+				rcb := NewGoCallback(tk)
+				GoEnter(tk)
+				release.Add(1)
+				timerPending.Store(true)
+				time.AfterFunc(100*time.Millisecond, func() {
+					// the runtime takes a timer off its heap before its
+					// function runs
+					timerPending.Store(false)
+					ctk := rcb.Begin(nil)
+					release.Done()
+					rcb.End(ctk)
+				})
+				GoExit(tk, "after")
+				GoEnter(tk)
+				release.Wait()
+				GoExit(tk, "wait")
+				return Ok[Unit, Never](Unit{})
+			})
+			GoEnter(tk)
+			wg.Wait()
+			GoExit(tk, "wait")
+			w.EndTask(tk)
+		}()
+		select {
+		case <-done:
+		case <-w.Stuck():
+			t.Fatalf("seed %d: reported a deadlock:\n%s", seed, w.DeadlockFault().Error())
+		case <-time.After(10 * time.Second):
+			t.Fatalf("seed %d: the task did not end", seed)
+		}
+	}
+}

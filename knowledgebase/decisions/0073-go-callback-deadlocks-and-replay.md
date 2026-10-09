@@ -71,6 +71,40 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   parked) runs twice in a row. gobind now binds `*time.Timer` and
   `*time.Ticker` as handles (pointers to other `time` types stay
   unbound), so Xo code can call `time.AfterFunc` (the goldens use it).
+- **A stable scheduler around the proof (2026-10-08 update, after a
+  false report under suite load).** Under `go test ./...` with other
+  packages running, the `timed` test of `test_go_callback_deadlock`
+  reported XO-F001 at seed 4 (without help it did not reproduce: 0 of
+  110 runs of the built test failed, with 24 CPU burners, with
+  `GOMAXPROCS=1`, and with `GOMAXPROCS=2` and 16 burners).
+  Cause: when the Go timer fired, its function (the Xo callback of
+  `time.AfterFunc`) arrived as a pending callback call and its goroutine
+  ran the decision itself: `pickLocked`, then `settleLocked`, which
+  unlocks and waits for Go's goroutines to settle. A settle slowed by
+  load sleeps in `osSleep`, which the classifier ignored as a watcher.
+  The test world's confirmation, woken just after the timer's deadline,
+  then saw no pending timer, every goroutine parked, no turn handed out,
+  and the old threads (the arrival gets its thread only at admission),
+  and reported. Captured at the false report: `pend 1`, `picking true`,
+  no timer pending, the arrival's goroutine in `osSleep` under
+  `waitGoSettled`. Reproduced every time (20 of 20 runs, seed 1) with a
+  20 ms sleep at the start of `waitGoSettled` (the test hook
+  `waitGoSettledHook`). Now a report also needs:
+  - the scheduler still before and after the proof, under its lock:
+    nothing waiting for admission (`pend`, `pendRet`), no decision
+    (`picking`) or lend (`lending`) in progress, and no turn handed out
+    since the proof began (`stillLocked`, `moves`);
+  - a goroutine with `waitGoSettled` on its stack counts as moving, even
+    when it sleeps in `osSleep`;
+  - a `runtime.Gosched` between the two looks of `goStuckProof`, so a
+    goroutine readied since the first look runs or shows as runnable
+    (runnable, running and preempted goroutines already block the
+    proof).
+
+  With the hook, the golden's timer test then passed 1000 of 1000 runs
+  (10 parallel loops) and the deadlocked test still reports;
+  `std/rt` `TestSchedGoTimerArrival` pins it (fails on the previous
+  code at seed 1).
 - **Report.** The thread in the Go call becomes a wait record of kind
   `Go call` that names the innermost Go function and points at its
   callbacks, so the wait cycle shows the edge:

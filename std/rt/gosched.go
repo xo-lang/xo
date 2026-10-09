@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -203,8 +204,18 @@ func encodeArgs(args []any) string {
 	return fxText(enc)
 }
 
+// waitGoSettledHook, set by tests, runs at the start of waitGoSettled:
+// a delay there stands for a settle slowed by load (a GC worker or
+// another goroutine running), which once let a deadlock check report
+// while a callback call waited for admission (decision 0073, update
+// 2026-10-08).
+var waitGoSettledHook atomic.Pointer[func()]
+
 // waitGoSettled waits until goSettled, at most settleLimit.
 func waitGoSettled() {
+	if h := waitGoSettledHook.Load(); h != nil {
+		(*h)()
+	}
 	start := time.Now()
 	for i := 0; !goSettled(); i++ {
 		if time.Since(start) > settleLimit {
