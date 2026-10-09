@@ -4,9 +4,12 @@ Status: Accepted (2026-10-09, agreed with the user). Partially
 implemented (2026-10-09): steps (1) MVS, git fetch, `xo.lock`, vendoring,
 offline builds and (2) `xo.work` workspaces are built (`internal/mod`,
 `xo get`, `xo mod tidy`, `xo vendor`, `--offline`, `--workspace=off`;
-XO1301 to XO1308). Steps (3) effect ceilings, (4) `xo publish` semver
-checks, and (5) per definition hashes are not; neither is `xo init`
-gitignoring xo.work, an optional proxy, or a checksum log.
+XO1301 to XO1308), and so are (3) effect ceilings (`require ... uses`,
+`use ... uses` in xo.work, XO1309, `xo get` API and effect diffs, `xo get
+-u`) and (4) `xo publish [--check]` semver checks (`internal/release`,
+XO1310, XO1311), `xo init` gitignoring xo.work, and `/vN` major version
+paths. Step (5) per definition hashes is not built; neither is an
+optional proxy or a checksum log.
 
 ## Context
 
@@ -93,8 +96,12 @@ hashes.
 ## Implementation notes (2026-10-09)
 
 - A module is its repository root; tags `vX.Y.Z` are versions. Modules
-  in subdirectories of a repository and `/vN` major suffixes are not
-  supported yet.
+  in subdirectories of a repository are not supported yet. `/vN` major
+  suffixes (N >= 2) are, Go's "major branch" way only: all major
+  versions share one repository (the suffix is stripped for the git
+  location), the tags of major N declare the `/vN` path in xo.mod, and a
+  path without a suffix takes only v0 and v1 tags. The local name of an
+  import skips the suffix.
 - `xo mod tidy` drops a requirement nothing imports unless it raises a
   version the rest of the graph selects (Go keeps such lines as
   `// indirect`; Xo keeps them as plain requires).
@@ -106,3 +113,33 @@ hashes.
   the workspace, so locks never record overrides.
 - Release builds are `xo build --ci` until a `--release` mode exists
   (decision 0092 proposes one).
+
+## Implementation notes, steps 3 and 4 (2026-10-09)
+
+- A ceiling counts the effect labels a dependency's function declares
+  (pub functions and methods always declare theirs), checked at every
+  call (`checkCeiling` in `internal/check/ceiling.go`, from `callFunc`)
+  and every use as a function value. Effect variables are the caller's
+  effects passed through, so `apply[fx](f)` with an effectful callback is
+  within `uses none`. Calls through an interface the dependency does not
+  define are bounded by that interface's declared effects instead.
+- Ceilings from xo.mod and from the workspace's `use` line both apply;
+  the first one exceeded is reported.
+- The API compared by `xo publish` and `xo get` is the syntax level
+  surface of `xo query api` (`query.DeclSurface`) over every package of
+  the module, so old versions need no dependencies fetched. A function's
+  `uses` clause is compared as a set (adding `fs` where `fs.read` was is
+  an added effect); any other signature difference is a change. Changes
+  to struct fields or enum variants count as breaking (conservative:
+  struct literals and exhaustive matches can break).
+- Before v1.0.0 a minor release may break (Cargo's convention); a patch
+  may not. Without `--version` the release is assumed compatible (next
+  minor, or next patch before v1), so breaking changes fail by default.
+- `xo publish` without `--check` also requires a clean git working tree,
+  `mod.Load` without workspace, and `xo check` with `XO_WORK=off`, then
+  prints `git tag vX.Y.Z && git push origin vX.Y.Z`; it runs neither.
+- `xo init` gitignores `/xo.work` unless an xo.work already exists at or
+  above the directory (a monorepo that commits its workspace).
+- `xo serve` records, per module root, which xo.work a load would consult
+  (`mod.NearestWork`), so a workspace created, removed, or edited above
+  the directories makes the cached program stale.

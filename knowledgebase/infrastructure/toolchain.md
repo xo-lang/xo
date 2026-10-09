@@ -1446,7 +1446,7 @@ Last verified: 2026-10-09. Results: `bench/results/ci-aws-2026-10-09.md`.
   (2026-10-09). TSan runs natively on both (unlike amd64 under Rosetta).
 - Needs terraform (1.16.2 used), the AWS CLI, rsync, ssh, python3.
 
-## Modules and workspaces (decision 0086, steps 1 and 2)
+## Modules and workspaces (decision 0086, steps 1 to 4)
 
 Last verified: 2026-10-09.
 
@@ -1510,17 +1510,44 @@ Last verified: 2026-10-09.
   build only because another module requires it. Modules from the cache
   or vendor/ have `Module.Dependency` set; `xo edit` refuses to change
   them. `use go` in a dependency binds into the main module's cache.
-- `xo serve` stamps xo.lock, vendor/modules.txt, and the active xo.work;
-  `serve.Forward` checks in process when XO_OFFLINE, XO_WORK,
-  XO_MODCACHE, XO_GIT_BASE, or XO_GIT_REWRITE is set.
+- `xo serve` stamps xo.lock, vendor/modules.txt, and the nearest xo.work
+  of each module root (used or not) and records which file that is
+  (`mod.NearestWork`), so a new, removed, or edited workspace above the
+  directories is noticed; `serve.Forward` checks in process when
+  XO_OFFLINE, XO_WORK, XO_MODCACHE, XO_GIT_BASE, or XO_GIT_REWRITE is set.
+- Effect ceilings (step 3): `internal/mod/ceiling.go` (`Ceiling`,
+  `ParseCeiling`, `Ceilings(dir)`: xo.mod requires plus the workspace's
+  `use ... uses` lines), `internal/check/ceiling.go` (`checkCeiling`,
+  called from `callFunc` and `funcValue`; XO1309 with a note on the
+  declaring line). `SetRequire` keeps a ceiling when `xo get` or `xo mod
+  tidy` rewrites the version. `mod.EffectLabels` is kept equal to the
+  checker's labels by `TestCeilingLabels`.
+- API diffs and publish (step 4): package `internal/release`
+  (`ModuleAPI`: the syntax level `xo query api` surface of every package
+  via `query.DeclSurface`; `Diff`, `Bump`; `Publish`). `xo get` prints the
+  diff of every changed requirement (JSON `api`), `xo get -u` upgrades
+  every requirement; `xo publish [--check] [--version v] [--json]`
+  (`cmd/xo/publish.go`) reads tags with `mod.LocalTags`, extracts the
+  previous tag with `mod.ExtractTag` into a temp dir, and prints the tag
+  command (never runs git tag or push). `xo init <path>` writes xo.mod and
+  `/xo.work` in .gitignore.
+- Major versions: `internal/mod/major.go` (`MajorSuffix`,
+  `MajorMismatch`); `RepoURL` strips a `/vN` suffix; `Versions` keeps the
+  tags of the path's major; `localName` (`internal/check/load.go`) skips
+  the suffix.
 - Tests: `internal/mod/mod_test.go` (MVS, lock goldens
   `testdata/golden/*.lock`, moved tag, fetch errors, offline, get, tidy,
-  vendor, workspace), `cmd/xo/mod_test.go` (`TestModules`: the commands
-  end to end; runs the built program unless -short),
-  `internal/check/rules_test.go` (XO1306). No test touches the network.
-- Not yet: effect ceilings per dependency (step 3), `xo publish` semver
-  checks (step 4), per definition hashes (step 5), a proxy or checksum
-  log, modules in repository subdirectories, major version suffixes.
+  vendor, workspace), `internal/mod/ceiling_test.go` (ceilings, /vN),
+  `cmd/xo/mod_test.go` (`TestModules`: the commands end to end; runs the
+  built program unless -short), `cmd/xo/release_test.go`
+  (`TestEffectCeilings`, `TestPublish`, `TestInit`),
+  `internal/release/api_test.go`, `internal/serve/serve_test.go`,
+  `internal/check/rules_test.go` (XO1306), `internal/check/ceiling_test.go`
+  (XO1309). No test touches the network.
+- Not yet: per definition hashes (step 5), a proxy or checksum log,
+  modules in repository subdirectories, major versions in subdirectories
+  (`/v2/` directories of one tag), `xo get --uses` to set a ceiling from
+  the command line.
 
 ## Go interop (prototype)
 

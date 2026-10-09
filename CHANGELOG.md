@@ -11,6 +11,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
   tidy`, `xo vendor`, `xo mod clean`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). Diagnostics XO1301 to XO1308.
+- Effect ceilings and checked semver (decision 0086 steps 3 and 4):
+  `require <path> <version> uses none` in xo.mod and `use <dir> uses ...`
+  in xo.work (XO1309 at a call above the ceiling), API and effect diffs
+  from `xo get` (and `xo get -u`), `xo publish [--check]` against the
+  previous tag (XO1310, XO1311; prints the tag command, never pushes),
+  `xo init`, `/vN` major version module paths, and `xo serve` noticing a
+  new or changed xo.work above the directories.
 
 ## v0.7.0 (2026-10-09)
 

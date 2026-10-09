@@ -28,14 +28,24 @@ specified in std.md 13 (decision 0094), not yet implemented.
 - **[later]** markers for what is specified but not built: `xo why`,
   `xo debug`, release builds and `--error-args`, the task line of error
   traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
-  derives, effect ceilings and checked semver of dependencies (decision
-  0086 steps 3 and 4), and reading a newtype's value (2.8).
+  derives, and reading a newtype's value (2.8).
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
   <version>` of Xo modules with minimal version selection, git fetch into
   a read only module cache, `xo.lock` hashes verified by every command,
   `xo get`, `xo mod tidy`, `xo vendor`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). New codes `XO1301` to `XO1308` (10.6).
   An import from a module that is not required is `XO1306`.
+- Effect ceilings and checked semver (4.2; decision 0086 steps 3 and 4):
+  `require <path> <version> uses none` (or `uses net, fs.read`) in xo.mod
+  and `use <dir> uses ...` in xo.work bound what a dependency's functions
+  may declare; a call above the ceiling is `XO1309` at the call site.
+  `xo get` prints the API and effect changes of every version change
+  (`-u` upgrades every requirement). `xo publish [--check]` compares the
+  exports and effects with the previous tag and rejects a breaking minor
+  or patch release (`XO1310`, `XO1311`); it never tags or pushes.
+  `xo init` writes xo.mod and gitignores xo.work. Module paths ending in
+  `/vN` (N >= 2) are major version N of the same repository; the suffix
+  is skipped for the local name (4.1).
 
 ## Changes in 0.7
 
@@ -824,7 +834,9 @@ use github.com/acme/billing/invoice
 ```
 
 - The last path segment is the local name unless `as` is given, with `-`
-  replaced by `_` (`use acme/rate-limit` binds `rate_limit`). If the result is
+  replaced by `_` (`use acme/rate-limit` binds `rate_limit`). A `/vN` major
+  version suffix of a module path is skipped (`use github.com/acme/tick/v2`
+  binds `tick`). If the result is
   still not a valid identifier, or is a keyword, `as` is required (`XO0602`).
 - Imports are explicit. There is no dot import or glob import.
 - Cyclic module imports are an error.
@@ -890,8 +902,62 @@ use ./billing
   tidy`, and `xo vendor` ignore the workspace); builds record the local
   directories in build information only. A release build (`xo build
   --ci`) fails while a workspace overrides a required module (`XO1308`).
-- **[later]** Effect ceilings per dependency (`require ... uses none`)
-  and semver checked at `xo publish` (decision 0086 steps 3 and 4).
+- `xo.work` is gitignored by `xo init` in a single module repository;
+  a monorepo may commit it.
+
+**[P1]** Effect ceilings (decision 0086 step 3): a `uses` clause after
+the version bounds the effects of a dependency.
+
+```
+module github.com/acme/api
+
+require github.com/acme/billing v1.4.0 uses none
+require github.com/acme/geo v2.1.0 uses net.dial, fs.read
+```
+
+- Every call from the requiring module into the dependency (any of its
+  packages), and every use of one of its functions as a value, may
+  perform only effects within the ceiling (`fs` admits `fs.read`; `uses
+  none` admits nothing), else `XO1309` at the call site naming the
+  dependency, the ceiling, and the effect. The effects counted are those
+  the dependency's function declares; effect variables (6.2) carry the
+  caller's own effects and do not count.
+- An upgrade whose new version adds an effect to a function this module
+  calls therefore fails at that call. A require without `uses` has no
+  ceiling. Unknown labels are `XO1301`.
+- In a workspace, `use ./billing uses none` in xo.work sets the ceiling
+  of that module for calls from the other workspace modules; their
+  xo.mod ceilings apply as well.
+- `xo get` prints, for every requirement whose version changes, the
+  exports added, removed, or changed and the effects added or removed,
+  and the exports above the ceiling; `xo get -u` upgrades every
+  requirement to its latest version.
+
+**[P1]** Releases (decision 0086 step 4): a version is a `vX.Y.Z` tag of
+the repository whose root holds the module. `xo publish [--check]
+[--version vX.Y.Z]` compares the exports (the declarations `xo query api`
+lists, in every package of the module) and their effects with the
+previous tag:
+
+- A removed export, a changed signature, or an effect added to a
+  function needs a major version; in a minor or patch release each is
+  `XO1310` (before v1.0.0, a minor release may break and a patch may
+  not). Added exports need a minor version.
+- Without `--version` the release is the next minor version (the next
+  patch before v1.0.0), so a breaking change fails unless a major version
+  is asked for. The JSON result lists every change, the breaking ones,
+  the bump they need, and the smallest version they allow.
+- `XO1311` when the release cannot be made: the module is not at a
+  repository root, the tag exists or is not above the last release, or
+  the major version does not match the module path. Without `--check`,
+  uncommitted changes are `XO1311` and the module must load and check
+  without a workspace.
+- Publishing is tagging: `xo publish` prints `git tag vX.Y.Z && git push
+  origin vX.Y.Z` and runs neither.
+- Major versions 2 and above live at a module path ending in `/vN`
+  (`github.com/acme/billing/v2`), in the same repository: the xo.mod of
+  those tags declares that path, and a require of a path without the
+  suffix takes only v0 and v1 tags (`XO1301` otherwise).
 
 **[P1]** `gc` lines tune the garbage collector of a program whose main
 module this is (decision 0065); they are ignored in imported modules:
@@ -1518,6 +1584,7 @@ test "retries after 503" {
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
 | `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache. Every command takes `--offline` and `--workspace=off` |
+| `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 
 The commands that report diagnostics or results accept `--json`: `parse`,
@@ -1676,7 +1743,7 @@ it: the lexer and parser (`xo parse` and every later command), the checker
 `xo build --ci`), the no GC check (`--no-gc`, 10.1), and module
 resolution (`modules`: every command that loads a program reports these
 on the xo.mod, xo.lock, or xo.work line, and so do `xo get`, `xo mod
-tidy`, and `xo vendor`; 4.2, 4.3). `xo explain
+tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 <code>` prints the long form of each. The registry is
 `internal/diag/codes.go`; a test keeps this table equal to it.
 
