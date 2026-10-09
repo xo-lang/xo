@@ -160,3 +160,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [docker-vm-memory-go-compile-killed.md](docker-vm-memory-go-compile-killed.md): `compile: signal: killed` in the Docker VM is the OOM killer; run with `-p 2`.
 - [llvm-nsw-hash-overflow.md](llvm-nsw-hash-overflow.md): unchecked arithmetic was emitted `nsw`; a wrapping hash became poison and -O2 folded it to 0 (Map removes missed). Mark wrapping SSA arithmetic `ssa.Wrap`; bisect with `-opt-bisect-limit`.
 - [native-mutex-write-copies-value.md](native-mutex-write-copies-value.md): native `Mutex.with` woke every waiter and copied the protected value on each write, `Map.remove` copied values, woken waiters sat in runnext; the four fixes and how to spot them.
+- [ssa-builder-errors-cascade.md](ssa-builder-errors-cascade.md): an unsupported construct gets a unit placeholder, and lowering around it records a second, consequential error; XO1201 drops errors overlapping an earlier one.

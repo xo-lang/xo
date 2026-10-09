@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
+	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/query"
@@ -35,23 +37,29 @@ commands:
       stdout; --ast includes each file's syntax tree; --sig allows function
       declarations without bodies (signature listings). Exit status is 1 when
       any error is reported, 2 on usage errors.
-  check [--json] <dirs...>
+  check [--json] [--no-gc] <dirs...>
       Resolve names and type check the modules under each directory (every
       directory holding .xo files is a module; imports are resolved through
       xo.mod and the embedded std). --json prints {"modules": [...],
-      "diagnostics": [...]} on stdout. Exit status is 1 when any error is
-      reported (warnings such as holes do not count), 2 on usage errors.
-  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-mono] [--no-arenas] [-o out] <dirs...>
+      "diagnostics": [...]} on stdout. --no-gc also runs the check of native
+      builds (XO1201 for what they cannot build yet, or ever; decision 0083).
+      Exit status is 1 when any error is reported (warnings such as holes do
+      not count), 2 on usage errors.
+  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-gc] [--no-mono] [--no-arenas] [-o out] <dirs...>
       Compile to static binaries (default: the host). --backend=llvm uses the
       LLVM prototype (a core subset, needs clang); --backend=arm64 the native
       AArch64 backend (the same subset, needs cc; linux/arm64 is emitted as
-      assembly when it is not the host). Request scoped arenas for HTTP
+      assembly when it is not the host). --no-gc (also on run and test)
+      builds without a garbage collector: arm64 on arm64 hosts, llvm
+      otherwise (--backend may name one); every construct, std API, or
+      effect the native backends do not support is reported as XO1201
+      before code generation (decision 0083). Request scoped arenas for HTTP
       handlers are on by default (decision 0066); --no-arenas (also on run
       and test) turns them off.
-  run [--seed=N] [--backend=go|llvm|arm64] <dir> [-- args]
+  run [--seed=N] [--backend=go|llvm|arm64] [--no-gc] <dir> [-- args]
       Build for the host and run. --seed makes task interleavings
       reproducible. Recording is described under run --record below.
-  test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] <dirs...>
+  test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--no-gc] <dirs...>
       Run test blocks, property tests, and contract fuzzing on the
       deterministic scheduler. Shrunk contract failures are written to the
       module's regressions_test.xo.
@@ -296,8 +304,16 @@ func collect(paths []string) ([]string, error) {
 }
 
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	if code, ok := serve.Forward(append([]string{"check"}, args...), stdout, stderr); ok {
-		return code
+	noGC := false
+	for _, a := range args {
+		if a == "--no-gc" || a == "-no-gc" || a == "--no-gc=true" || a == "-no-gc=true" {
+			noGC = true
+		}
+	}
+	if !noGC {
+		if code, ok := serve.Forward(append([]string{"check"}, args...), stdout, stderr); ok {
+			return code
+		}
 	}
 	return runCheckWith(args, query.Load, stdout, stderr)
 }
@@ -308,6 +324,7 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("check", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	asJSON := fl.Bool("json", false, "print diagnostics as JSON")
+	noGC := fl.Bool("no-gc", false, "also run the no GC check of native builds (XO1201, decision 0083)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -315,18 +332,29 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "xo check: no directories given")
 		return 2
 	}
-	sess, err := load(fl.Args())
-	if err != nil {
-		fmt.Fprintf(stderr, "xo check: %v\n", err)
-		return 2
+	var res *check.Result
+	var ds []diag.Diagnostic
+	if *noGC {
+		r, all, err := build.CheckNoGCDirs(fl.Args(), true)
+		if err != nil {
+			fmt.Fprintf(stderr, "xo check: %v\n", err)
+			return 2
+		}
+		res, ds = r, all
+	} else {
+		sess, err := load(fl.Args())
+		if err != nil {
+			fmt.Fprintf(stderr, "xo check: %v\n", err)
+			return 2
+		}
+		res, ds = sess.Res, sess.Res.Diagnostics
 	}
-	res := sess.Res
 	var mods []string
 	for _, m := range res.Modules {
 		mods = append(mods, m.Path)
 	}
 	errs, warns := 0, 0
-	for _, d := range res.Diagnostics {
+	for _, d := range ds {
 		if d.Severity == diag.Error {
 			errs++
 		} else {
@@ -337,7 +365,7 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 		out := struct {
 			Modules     []string          `json:"modules"`
 			Diagnostics []diag.Diagnostic `json:"diagnostics"`
-		}{mods, res.Diagnostics}
+		}{mods, ds}
 		if out.Modules == nil {
 			out.Modules = []string{}
 		}
@@ -352,7 +380,7 @@ func runCheckWith(args []string, load loader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	} else {
-		for _, d := range res.Diagnostics {
+		for _, d := range ds {
 			fmt.Fprintln(stderr, diag.Human(d))
 		}
 		fmt.Fprintf(stderr, "%d module(s), %d error(s), %d warning(s)\n", len(mods), errs, warns)

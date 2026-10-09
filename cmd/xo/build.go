@@ -44,8 +44,29 @@ func arenaFlags(fl *flag.FlagSet) func() bool {
 
 // backendFlag defines --backend: go (P1, the default) or llvm (the P3
 // prototype: LLVM IR compiled by clang, host only, a core subset).
-func backendFlag(fl *flag.FlagSet) *string {
-	return fl.String("backend", "go", "code generator: go (default), llvm (P3 prototype: a core subset compiled with clang, host only), or arm64 (native AArch64 assembly linked with cc: darwin/arm64, linux/arm64)")
+//
+// It also defines --no-gc (decision 0083): a build without a garbage
+// collector on a native backend, arm64 on arm64 hosts and llvm otherwise
+// unless --backend names one. The returned function, called after
+// parsing, gives the backend and whether --no-gc was set.
+func backendFlag(fl *flag.FlagSet) func() (string, bool) {
+	backend := fl.String("backend", "go", "code generator: go (default), llvm (P3 prototype: a core subset compiled with clang, host only), or arm64 (native AArch64 assembly linked with cc: darwin/arm64, linux/arm64)")
+	noGC := fl.Bool("no-gc", false, "build without a garbage collector on a native backend (arm64 on arm64 hosts, else llvm; --backend may name one); what it cannot build is reported as XO1201 before code generation")
+	return func() (string, bool) {
+		if !*noGC {
+			return *backend, false
+		}
+		set := false
+		fl.Visit(func(f *flag.Flag) {
+			if f.Name == "backend" {
+				set = true
+			}
+		})
+		if !set {
+			return build.NativeBackend(), true
+		}
+		return *backend, true
+	}
 }
 
 func runBuild(args []string, stdout, stderr io.Writer) int {
@@ -56,10 +77,11 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
-	backend := backendFlag(fl)
+	backendOf := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
+	backend, noGC := backendOf()
 	dirs := fl.Args()
 	if len(dirs) == 0 {
 		dirs = []string{"."}
@@ -85,7 +107,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: *backend})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -133,11 +155,12 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	record := fl.String("record", "", "record every effect and scheduling decision into this .xotrace file for xo replay (core 11.3; sets XO_RECORD)")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
-	backend := backendFlag(fl)
+	backendOf := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
-	if *seed != 0 && *backend != "go" {
+	backend, noGC := backendOf()
+	if *seed != 0 && backend != "go" {
 		// native builds run tasks on the real scheduler (decision 0068)
 		fmt.Fprintln(stderr, "xo run: --seed needs the Go backend (native builds use the real scheduler)")
 		return 2
@@ -155,7 +178,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: *backend})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1
@@ -169,7 +192,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		env = append(env, "XO_SEED="+strconv.FormatInt(*seed, 10))
 	}
 	if *record != "" {
-		if *backend != "go" {
+		if backend != "go" {
 			fmt.Fprintln(stderr, "xo run: --record needs the Go backend")
 			return 2
 		}
@@ -228,14 +251,16 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	cases := fl.Int("cases", 0, "cases per property test and contract fuzz (default 100)")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
+	backendOf := backendFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
+	backend, noGC := backendOf()
 	dirs := fl.Args()
 	if len(dirs) == 0 {
 		dirs = []string{"."}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas()})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1

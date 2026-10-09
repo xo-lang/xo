@@ -8,12 +8,20 @@ import (
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/token"
 )
 
 // Error is a construct the builder does not support, with its position.
+// It is also the source of the `--no-gc` check (nogc.go, diagnostic
+// XO1201): Feature names the construct, Span locates it, and Impossible
+// marks what no native backend can ever support (Go code needs Go's
+// runtime), as opposed to what is planned.
 type Error struct {
-	Pos string
-	Msg string
+	Pos        string
+	Msg        string
+	Feature    string
+	Span       token.Span
+	Impossible bool
 }
 
 func (e *Error) Error() string {
@@ -182,14 +190,30 @@ func (b *builder) file(f string) string {
 	return filepath.Base(f)
 }
 
+// unsupported records a construct the native backends do not support
+// yet (support is planned).
 func (b *builder) unsupported(n ast.Node, what string) {
+	b.unsupportedKind(n, what, false)
+}
+
+// impossible records a construct no native backend can support, such
+// as a call into a `use go` package (Go code needs Go's runtime).
+func (b *builder) impossible(n ast.Node, what string) {
+	b.unsupportedKind(n, what, true)
+}
+
+func (b *builder) unsupportedKind(n ast.Node, what string, never bool) {
 	p := b.pos(n)
 	key := p + what
 	if b.seen[key] {
 		return
 	}
 	b.seen[key] = true
-	b.errs = append(b.errs, &Error{Pos: p, Msg: "the SSA builder does not support " + what})
+	e := &Error{Pos: p, Msg: "the SSA builder does not support " + what, Feature: what, Impossible: never}
+	if n != nil {
+		e.Span = n.Span()
+	}
+	b.errs = append(b.errs, e)
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +294,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			}
 		}
 		name := r.String()
+		if obj.Module != nil && obj.Module.Go != nil {
+			b.impossible(at, "the type `"+name+"` of the Go package `"+obj.Module.Go.GoPath+"` (`use go`)")
+			return m.Builtin(KUnit)
+		}
 		switch obj.Kind {
 		case check.KStruct:
 			if x := b.concType(obj, r, at); x != nil {

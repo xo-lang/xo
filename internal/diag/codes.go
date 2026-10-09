@@ -93,6 +93,12 @@ const (
 	GoNameSkipped Code = "XO1102" // Go name exists but its signature does not map to Xo, so the binding skipped it
 )
 
+// Native builds without a garbage collector (12xx group, decision 0083).
+// Emitted by internal/ssa's no GC check for `--no-gc` builds.
+const (
+	NoGCUnavailable Code = "XO1201" // construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible
+)
+
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
 // internal/vet, never by `xo check`: advisory warnings and review notes
 // that never fail a build.
@@ -159,6 +165,8 @@ var Descriptions = map[Code]string{
 
 	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
 	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",
+
+	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

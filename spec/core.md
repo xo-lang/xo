@@ -1370,9 +1370,9 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...]` | Build static binaries |
+| `xo build [--targets=all\|os/arch,...] [--no-gc]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below) |
 | `xo run` | Build and run for the host |
-| `xo check` | Parse and type check all targets, no codegen |
+| `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
 | `xo test [--seed=N] [--explore=N] [--fuzz=10s]` | Tests, examples, contract fuzzing; deterministic scheduling |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
 | `xo mcp` | Model Context Protocol server over stdio: `check`, `query`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
@@ -1388,6 +1388,22 @@ test "retries after 503" {
 
 Every command accepts `--json`. When stdout is not a terminal, `--json` is the
 default for `check`, `build`, `test`, and `query`.
+
+**Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
+`xo test`, and `xo check`) builds on a native backend whose memory is
+reference counted instead of collected: arm64 on darwin/arm64 and
+linux/arm64 hosts, LLVM otherwise; `--backend=llvm` or `--backend=arm64`
+picks one, and `--backend=go` with `--no-gc` is a usage error. After type
+checking and before any code generation, a check reports every construct,
+std API, or effect the native backends do not support as error `XO1201` at
+its site, naming the feature and saying whether support is *planned* (build
+without `--no-gc` until then) or *impossible* (code from a `use go` package
+needs Go's runtime). A program the check accepts builds; the check is
+derived from the native code generator itself, so the two cannot disagree.
+`xo check --no-gc` runs the same check without building (programs only: a
+module without `main` has nothing to lower). The Go backend's deterministic
+scheduler (`--seed`) and recording (`--record`) are not available on native
+builds (decision 0083).
 
 ### 10.2 Diagnostic format
 
@@ -1408,7 +1424,9 @@ default for `check`, `build`, `test`, and `query`.
 - Codes are grouped: `01xx` lexical and naming, `02xx` errors and results,
   `03xx` match, `04xx` types and generics, `05xx` mutation and moves,
   `06xx` resolution, `07xx` effects, `08xx` concurrency, `09xx` holes and
-  contracts, `10xx` platform.
+  contracts, `10xx` platform, `11xx` Go interop, `12xx` native builds
+  without a garbage collector (`XO1201`: not available with `--no-gc`,
+  planned or impossible; 10.1).
 - The compiler reports all errors it can, not just the first, and never
   cascades: a bad expression has type `<error>` and suppresses dependent
   diagnostics.

@@ -94,6 +94,10 @@ type Options struct {
 	// "arm64" (internal/arm64: assembly linked with cc; darwin/arm64 and
 	// linux/arm64).
 	Backend string
+	// NoGC (`--no-gc`, decision 0083) builds without a garbage collector:
+	// on a native backend, NativeBackend() unless Backend names llvm or
+	// arm64 (Backend go is an error).
+	NoGC bool
 	// ShareProbes (LLVM and arm64 backends; tests) marks every heap
 	// value shared between threads as it is defined, so every count
 	// update takes the atomic path (ssa.InsertShareProbes, decision
@@ -219,7 +223,16 @@ func checkOpts(dirs []string, holes, native bool) (*check.Result, bool, error) {
 
 // Build checks and compiles the modules under dirs.
 func Build(dirs []string, opts Options) (*Result, error) {
-	res, ok, err := checkOpts(dirs, opts.Holes, opts.Backend == BackendLLVM || opts.Backend == BackendArm64)
+	if opts.NoGC {
+		switch opts.Backend {
+		case "":
+			opts.Backend = NativeBackend()
+		case BackendGo:
+			return nil, fmt.Errorf("--no-gc needs a native backend (llvm or arm64), not go")
+		}
+	}
+	native := opts.Backend == BackendLLVM || opts.Backend == BackendArm64
+	res, ok, err := checkOpts(dirs, opts.Holes, native)
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +240,16 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if !ok {
 		out.Failed = true
 		return out, nil
+	}
+	if native {
+		// the no GC check (decision 0083): everything the native
+		// backends cannot lower, reported before any code generation
+		if ds := CheckNoGC(dirs, res, opts.Mode); len(ds) > 0 {
+			out.Diagnostics = append(out.Diagnostics, ds...)
+			diag.Sort(out.Diagnostics)
+			out.Failed = true
+			return out, nil
+		}
 	}
 	switch opts.Backend {
 	case "", BackendGo:

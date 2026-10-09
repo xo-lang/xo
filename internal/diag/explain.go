@@ -1083,6 +1083,25 @@ pub fn shout(s: Str) -> Str {
   s.to_upper()
 }`,
 	},
+
+	// ---------------------------------------------------------------
+	// 12xx: native builds without a garbage collector
+
+	NoGCUnavailable: {
+		Title: "not available without a garbage collector",
+		Detail: "`xo build --no-gc` (also `xo run`, `xo test`, and `xo check`) selects a native backend (arm64 on arm64 hosts, LLVM otherwise), whose memory is reference counted instead of collected. " +
+			"Before any code is generated, a check reports every construct, std API, or effect the native backends do not support, at the call site, naming the feature. " +
+			"The message says whether support is planned (the program will build once the native backends grow it; until then build without `--no-gc`) or impossible: code from a `use go` package needs Go's runtime and garbage collector, so it can never run in a native build. " +
+			"The check is derived from what the native code generator supports, so a program it accepts builds. See core 10.1 and decision 0083.",
+		Example: `use go "strings"
+
+fn main(os: Os) uses go {
+  os.stdio.println(strings.to_upper("hi"))
+}`,
+		Fix: `fn main(os: Os) {
+  os.stdio.println("hi".to_upper())
+}`,
+	},
 }
 
 // SeverityOf is the severity a code is reported with.
