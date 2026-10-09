@@ -15,7 +15,9 @@
 #   rps, p50/p99/p99.9 latency (measured window only), GC count, total STW
 #   pause (sum of the two stop the world phases of every GC), peak heap
 #   (largest heap at GC start, MB, from gctrace), GC CPU percent, peak RSS
-#   (MB, sampled every 100 ms), and GCs per 10k requests (whole run).
+#   (MB, sampled every 100 ms), GCs per 10k requests (whole run), and the
+#   server's CPU time (user + system, ps) per request in the measured
+#   window, in microseconds.
 #
 # Environment: REPS (3), DURATION (10s), WARMUP (2s), CONC (32), PRELOAD
 # (64), PORT (18080), CONFIGS ("go xo xo-arenas"; "xo-base" builds the Xo
@@ -83,13 +85,13 @@ runone() { # config rep -> raw line
 	echo "$res" | awk -v cfg="$1" -v gcs="$3" -v pause="$4" -v heap="$5" -v cpu="$6" '{
 		gsub(/[{}"]/, ""); n = split($0, kv, ",")
 		for (i = 1; i <= n; i++) { split(kv[i], p, ":"); v[p[1]] = p[2] }
-		printf "%s %.0f %.0f %.0f %.0f %d %d %.2f %d %s %.1f %.2f\n", cfg, v["rps"], v["p50_us"], v["p99_us"], v["p999_us"], v["errors"], gcs, pause, heap, cpu, v["peak_rss_kb"] / 1024, gcs * 10000 / v["all_requests"]
+		printf "%s %.0f %.0f %.0f %.0f %d %d %.2f %d %s %.1f %.2f %.2f\n", cfg, v["rps"], v["p50_us"], v["p99_us"], v["p999_us"], v["errors"], gcs, pause, heap, cpu, v["peak_rss_kb"] / 1024, gcs * 10000 / v["all_requests"], v["cpu_us_per_req"]
 	}'
 }
 
 raw="$out/raw.txt"
 : >"$raw"
-echo "# config rps p50_us p99_us p999_us errors gcs pause_ms peak_heap_mb gc_cpu_pct peak_rss_mb gcs_per_10k"
+echo "# config rps p50_us p99_us p999_us errors gcs pause_ms peak_heap_mb gc_cpu_pct peak_rss_mb gcs_per_10k cpu_us_req"
 i=1
 while [ "$i" -le "$reps" ]; do
 	for c in $configs; do
@@ -104,12 +106,12 @@ done
 echo
 echo "Medians of $reps runs, $conc workers, ${dur} measured after ${warm} warmup, loopback."
 echo
-echo "| Config | Req/s | p50 us | p99 us | p99.9 us | Errors | GCs | GC pause ms | Peak heap MB | GC CPU % | Peak RSS MB | GCs/10k req |"
-echo "|---|---|---|---|---|---|---|---|---|---|---|---|"
+echo "| Config | Req/s | p50 us | p99 us | p99.9 us | Errors | GCs | GC pause ms | Peak heap MB | GC CPU % | Peak RSS MB | GCs/10k req | CPU us/req |"
+echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 for c in $configs; do
 	row="| $c"
 	col=2
-	while [ "$col" -le 12 ]; do
+	while [ "$col" -le 13 ]; do
 		med=$(awk -v c="$c" -v k="$col" '$1 == c { print $k }' "$raw" | sort -g | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }')
 		row="$row | $med"
 		col=$((col + 1))

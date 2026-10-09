@@ -38,6 +38,7 @@ type result struct {
 	P99us       float64 `json:"p99_us"`
 	P999us      float64 `json:"p999_us"`
 	PeakRSSKB   int64   `json:"peak_rss_kb"`
+	CPUusReq    float64 `json:"cpu_us_per_req"` // server user+sys CPU over the measured window, per request (needs -pid)
 }
 
 func main() {
@@ -130,11 +131,13 @@ func main() {
 	time.Sleep(*warm)
 	measuring.Store(true)
 	before := all.Load()
+	cpu0 := cpuTime(*pid)
 	t0 := time.Now()
 	time.Sleep(*dur)
 	measuring.Store(false)
 	el := time.Since(t0)
 	after := all.Load()
+	cpu1 := cpuTime(*pid)
 	close(stop)
 	wg.Wait()
 	close(stopRSS)
@@ -161,6 +164,9 @@ func main() {
 		P99us:       pct(0.99),
 		P999us:      pct(0.999),
 		PeakRSSKB:   peak.Load(),
+	}
+	if *pid > 0 && after > before {
+		r.CPUusReq = (cpu1 - cpu0).Seconds() * 1e6 / float64(after-before)
 	}
 	out, _ := json.Marshal(r)
 	fmt.Println(string(out))
@@ -284,4 +290,29 @@ func sampleRSS(pid int, peak *atomic.Int64, stop <-chan struct{}) {
 		case <-t.C:
 		}
 	}
+}
+
+// cpuTime is the user plus system CPU time of pid so far (ps -o time=,
+// [[dd-]hh:]mm:ss.cc), or 0 when pid is 0 or ps fails.
+func cpuTime(pid int) time.Duration {
+	if pid <= 0 {
+		return 0
+	}
+	out, err := exec.Command("ps", "-o", "time=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0
+	}
+	f := strings.TrimSpace(string(out))
+	var days int64
+	if d, rest, ok := strings.Cut(f, "-"); ok {
+		days, _ = strconv.ParseInt(d, 10, 64)
+		f = rest
+	}
+	var secs float64
+	for _, part := range strings.Split(f, ":") {
+		v, _ := strconv.ParseFloat(part, 64)
+		secs = secs*60 + v
+	}
+	secs += float64(days) * 86400
+	return time.Duration(secs * float64(time.Second))
 }
