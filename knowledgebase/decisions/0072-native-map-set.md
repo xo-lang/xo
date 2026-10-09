@@ -1,6 +1,6 @@
 # 0072: Map and Set on the native backends as structs of lists
 
-Status: Accepted (2026-10-08). Implemented in `internal/ssa/build_map.go`
+Status: Accepted (2026-10-08); point 3 (removal writes zero values) superseded by 0082 (2026-10-09: removal clears only the live flag). Implemented in `internal/ssa/build_map.go`
 (with `xo_str_hash` and `xo_str_quote` in `std/llrt/xo_rt.c`). Goldens:
 `internal/llvm/testdata/golden/maps`, `map_key_fault`.
 

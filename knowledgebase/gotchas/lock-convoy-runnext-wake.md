@@ -27,3 +27,12 @@ about 71k to 107k req/s (decision 0047). To find this class of stall,
 build the server, run it with `XO_BLOCKPROFILE=<file>` (and
 `XO_CPUPROFILE`), load it, stop it with `kill <its PID>`, and read
 `go tool pprof -top -cum <binary> <file>`.
+
+Update 2026-10-09 (Observed, native backends): the same convoy exists in
+the native scheduler (decision 0077): a fiber woken by a Mutex release
+went to the releasing thread's `next`, which thieves leave alone for 50
+us (XO_NEXT_GRACE_NS), while the releaser finished its HTTP request.
+Fix there: `mutex_signal` puts the woken waiter in the ring, where a
+spinning worker takes it (p99 900 to 800 us on bench/perf/http, decision
+0082). Channel and task wake ups keep `next` (ping pong hands over on one
+thread).

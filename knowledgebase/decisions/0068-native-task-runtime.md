@@ -1,6 +1,6 @@
 # 0068: Structured concurrency on the native backends: a thread pool runtime and explicit unwinding
 
-Status: Accepted (2026-10-08); point 1 (a blocked task holds a thread) superseded by 0069, which also narrows point 7; the scheduler of point 1 and the counting of point 7 refined by 0077 (2026-10-09). Implemented in `std/llrt/xo_rt.c`
+Status: Accepted (2026-10-08); point 1 (a blocked task holds a thread) superseded by 0069, which also narrows point 7; the scheduler of point 1 and the counting of point 7 refined by 0077 (2026-10-09); Mutex waking refined by 0082 (2026-10-09). Implemented in `std/llrt/xo_rt.c`
 ("Tasks"), `internal/ssa/build_conc.go` (lowering), `internal/ssa`
 (`KHandle`, `OpFuncAddr`, `Func.Entry`), `internal/llvm/fromssa.go` and
 `internal/arm64/isel.go` (`rtCall`, handle counts). Tests:

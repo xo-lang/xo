@@ -592,3 +592,159 @@ Next experiments, ranked:
 3. Per request latency from the server side (a histogram of handler
    time in `serve`, behind an env variable like `XO_LOCKSTATS`), to
    separate server time from loadgen and kernel time in the p99.9.
+
+## 2026-10-09: Native backends
+
+Branch `worktree-agent-a66ed99f806695f07`, from main at 8762762. First
+throughput run of the native builds of the same server (decision 0074:
+`--backend=arm64` and `--backend=llvm`, std/http in Xo over the C HTTP
+code of std/llrt), then the top costs fixed one commit at a time.
+
+**Harness.** `bench/perf/http/run.sh` unchanged except one new column
+(commit 4fcb128): the server's CPU time per request in the measured
+window (`ps -o time` of its PID before and after, user plus system).
+Same settings as the tables above: 32 workers, 2 s warmup, 10 s
+measured, 64 preloaded users, loopback, default GC settings (the Go
+backend at its heap goal floor, decision 0065; Go at GOGC=100). Five
+rounds of `REPS=1` run.sh, configs in a rotated order; before each round
+the driver waited for the 1 minute load average to fall under 4 and
+recorded `uptime` (no other agent ran; starts at 2.63 to 3.89 before,
+3.66 to 3.98 after; the runs push it to about 10). Medians of 5.
+
+| Config | Req/s before | Req/s after | p50 us before / after | p99 us before / after | p99.9 us before / after | Peak RSS MB before / after | CPU us/req before / after |
+|---|---|---|---|---|---|---|---|
+| Go | 123,292 | 121,473 | 224 / 225 | 876 / 880 | 1,364 / 1,387 | 22.5 / 22.4 | 40.2 / 40.4 |
+| Xo Go backend | 133,817 | 134,248 | 214 / 213 | 784 / 770 | 1,437 / 1,449 | 46.8 / 48.3 | 39.0 / 38.9 |
+| Xo arm64 | 64,497 | 141,659 | 411 / 202 | 1,788 / 670 | 2,736 / 1,019 | 58.0 / 21.7 | 65.6 / 30.7 |
+| Xo LLVM | 64,552 | 143,349 | 409 / 202 | 1,808 / 641 | 2,771 / 987 | 60.8 / 21.6 | 65.3 / 30.4 |
+
+Ranges (req/s, five rounds, after): Go 119.8k to 127.1k, Go backend
+133.6k to 139.4k, arm64 141.4k to 146.3k, LLVM 142.6k to 146.6k; before:
+arm64 64.0k to 64.8k, LLVM 63.7k to 64.7k. Errors 0 everywhere. The Go
+and Go backend columns did not change (no Go backend code changed); they
+are the same session's controls.
+
+Native now serves 1.17x Go and 1.06x the Go backend with a lower tail
+(p99 670 and 641 against 770 and 880 us, p99.9 about 1,000 against
+1,400), 22 percent less CPU per request than the Go backend, and the
+memory of plain Go (22 MB against 48 MB for the Go backend's heap goal
+floor).
+
+### What the profiles and counters said (before)
+
+Tools: `sample <pid> 5` on the LLVM build under load (Xo function names
+survive), `XO_RTSTATS=1` (scheduler counters, and socket counters new in
+758ac08), per request = counter / requests of the run.
+
+1. **Mutex convoy.** Every release woke every waiter: 12 fiber parks and
+   4 contended runtime locks per request; worker threads slept in the
+   kernel on the mutex's own lock (`wl_wait` > `lock_slow` >
+   `__ulock_wait` under every store method).
+2. **A copy of the store per write.** `with(fn(var st) ...)` gave the
+   closure the value while the mutex's list still held it, so the first
+   change copied all four lists of the map, with an atomic count update
+   per string of every user, and the old copy was freed at unlock
+   (`xo_rl_copy`, `xo.dupp.User`, `xo.drop.State`). The store's delete
+   copied the values even after that fix, because `Map.remove` wrote zero
+   values into them and an `Err` return could follow.
+3. **The email scan under the lock.** `values()` copied every user into
+   a new list (grown by doubling), `to_lower` made two strings per user,
+   and each closure call retained and released the user's strings
+   (atomic: the map is shared between tasks).
+4. **Retain and release of values read out of a borrowed parameter**
+   (the scan's `u.email`, around the call to `same_email`), atomic for
+   shared strings.
+5. **Woken waiters in runnext.** A fiber woken by a release waited in
+   the releaser's `next` slot (not stealable for 50 us) while the
+   releaser finished its request; the lock sat free.
+6. **Allocation in the C HTTP code**: about 20 mallocs per request
+   (header strings, pair arrays, the response buffer); macOS malloc's
+   free path calls `mach_absolute_time`. About 8 to 13 percent of
+   active samples.
+7. **Formatting**: `snprintf` for the Date header, the status line, and
+   Content-Length, and `path_unescape` of every path segment for every
+   route (about 2 percent together).
+
+Smaller or not costs here: parsing (`hp_head`, `h_tchar` about 2
+percent), JSON encode and decode (about 1 percent), task spawn (one task
+per connection: 44 spawns in a whole run). System calls per keep alive
+request are what Go does: 2 reads (the second returns EAGAIN and parks
+the fiber), 1 write, 2 readiness events (read and write, edge
+triggered), 1 waiter woken by the poller thread; after the fixes the
+reads, writes, and futex wake ups are about half of the server's active
+samples.
+
+### Fixes, in commit order
+
+Each measured with one 5 s run per binary, the two binaries alternated 2
+or 3 times (arm64, same loadgen, 32 workers), host load under 10;
+indicative, the table above is the measurement.
+
+| Commit | Change | Req/s | p99 us | CPU us/req |
+|---|---|---|---|---|
+| b1b0c06 | Mutex wakes only who can enter (oldest writer, else readers) | 63.4k to 90.6k | 1,765 to 1,273 | 68.5 to 36.6 |
+| f8ff90e | `a.to_lower() == b.to_lower()` compares in place (`xo_str_eq_lower`); `values()` sized | 91.3k to 101.3k | 1,274 to 1,215 | 36.5 to 35.1 |
+| 0148576 | `with` moves the value into a `var` closure, which hands back the old one on failure | about 100k to 108k | about 1,250 to 1,155 | 35.5 to 35.1 |
+| 2765d14 | `Map.remove` clears only the live flag | 108k to 118.5k | 1,155 to 985 | 35.1 to 32.0; RSS 36 to 15 MB |
+| a1da642 | `m.values().any/all(closure)` inline over the live entries | 114.4k to 125.5k | 1,034 to 887 | 34.1 to 34.2 |
+| 96c228d | Mutex wake ups go to the run ring, not runnext | 125.1k to 129.6k | 923 to 801 | 34.5 to 33.1 |
+| f29346a, 19d8364 | router unescapes once; Date cached per second, no snprintf | 128.8k to 130.2k | 795 to 788 | 32.9 to 32.6 |
+| 46e9454 | RC: a projection out of a borrowed parameter is borrowed | 130.0k to 141.6k | 785 to 673 | 32.7 to 31.9 |
+| 17fb10f | HTTP strings from the runtime allocator, buffers reused | 141.0k to 142.6k | 674 to 656 | 31.9 to 30.8 |
+
+Correctness fixes found on the way (no throughput effect):
+0dc4d7f (LLVM: the Int key hash was emitted `mul nsw`; after inlining,
+-O2 folded it to 0 and Map removes missed,
+`gotchas/llvm-nsw-hash-overflow.md`), 4732077 (a short `go test -fuzz
+FuzzHTTPDiff` found an invalid userinfo the C parser accepted, and a
+quirk of the reference handler; `gotchas/net-http-quirks-to-copy.md`).
+Design changes: decision 0082.
+
+Also measured, not kept: spinning before parking on a held Mutex (up to
+64 rounds of 64 `yield`s): no change in req/s, p99, or parks (the wait
+is longer than a spin). Non blocking socket polls by spinning workers
+(Go's `netpoll(0)` in findrunnable, woken fibers into the poller's ring,
+1 to 32 events per poll): 2 percent more req/s and 3 to 5 percent less
+CPU, but p99 3 to 10 percent worse; the patch is described in decision
+0082's alternatives.
+
+Side effect on bench/perf/conc (7 runs, medians): the `mutex` workload
+(8 tasks x 25,000 `with`) went from 52.5 to 12.2 ms wall and 260 to 20
+ms CPU on LLVM, 59.5 to 10.0 ms wall on arm64 (Go: 24 ms, Go backend:
+115 ms in the earlier table). bench/perf/llvm compute programs: same
+within noise (best of 5 ms, before / after: fib 217.7 / 223.7, sieve
+100.8 / 99.2, nbody 187.8 / 187.9, sort 214.6 / 215.3, interp 65.2 /
+64.7, collatz 479.7 / 487.8, strings 33.4 / 33.6; host load 11 at the
+start).
+
+### Conclusion
+
+Yes: for this service the native backends beat both Go (1.17x req/s)
+and the Xo Go backend (1.06x), with a lower tail (p99 about 650 us
+against 770 and 880), 22 to 24 percent less CPU per request, and 22 MB
+of RSS. Why: the request path is the same system calls in all three
+(two reads, one write, one poller wake up per request), but native has
+no GC (the Go backend still runs 2 GCs per 10k requests at its heap
+floor, Go 22), allocates from per thread free lists, and after the
+fixes updates the store in place under its lock with no count traffic
+for values it only reads, so the lock is held for less time and woken
+waiters run at once. Before the fixes it was the opposite (0.52x Go):
+the cost was not the HTTP code but the shared state path (a convoy and
+a copy of the store per write).
+
+What is left, ranked by likely effect:
+
+1. Wake ups: the poller thread hands every ready socket to the inject
+   queue and wakes an idle worker (about 0.35 futex wake ups per
+   request). Next experiment: Go's netpoll design proper (the last
+   worker to go idle blocks in `kevent` itself instead of a dedicated
+   thread, with a self pipe break), measured with the same five round
+   protocol, watching p99 (the non blocking variant cost tail latency).
+2. The email check scans every user under the write lock (about 96
+   entries per create and patch, `xo_str_eq_lower` per entry); Go keeps
+   an index. A benchmark program change (bench/xo), not a backend one:
+   `by_email: Map[Str, Int]` in `State`, rerun all four configs.
+3. Remaining malloc in the C HTTP code (nbuf of the URL parser and query
+   decoding, the request header list freed per request): reuse the
+   connection's `hreq` lists like the response's (`hl_clear`), then
+   profile `_xzm_*` again.

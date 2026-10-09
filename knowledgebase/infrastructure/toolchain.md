@@ -96,7 +96,8 @@ XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # 
 go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
-XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077)
+XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09)
+sample <pid> 5 -mayDie -file prof.txt                 # native server under load: macOS sampling profiler, no root; read "Sort by top of stack" (idle threads show as __ulock_wait and kevent); the llvm build has Xo function names (x.<fn>), arm64 folds some into xo_entry (last verified 2026-10-09)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
 go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build dir>/arm64/prog-linux.s (linked only on a linux/arm64 host)
@@ -552,13 +553,16 @@ Last verified: 2026-10-07
   `GODEBUG=gctrace=1` and is stopped with `kill` of its own PID. Prints
   raw lines and a Markdown table of medians over `REPS` (3) interleaved
   runs: req/s, p50/p99/p99.9, GC count, total STW pause, peak heap, GC
-  CPU percent, peak RSS, GCs per 10k requests. `CONFIGS` (default `go xo
+  CPU percent, peak RSS, GCs per 10k requests, and (since 2026-10-09) the
+  server's CPU time per request in the measured window (`ps -o time` of
+  its PID before and after, user plus system, microseconds; loadgen's
+  `cpu_us_per_req`). `CONFIGS` (default `go xo
   xo-arenas`; since decision 0066 `xo` builds with `--no-arenas` and
   `xo-arenas` with the default; `xo-base` builds with the binary in
   `XO_BASE` in its own build directory and that binary's default,
   `xo-base-arenas` the same with `--arenas`; `xo-arm64` and `xo-llvm` build
   with `--backend arm64` and `--backend llvm`, the native runtime of
-  decision 0074, verified to build and pass the smoke check on 2026-10-08), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
+  decision 0074; first measured 2026-10-09, results "Native backends"), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
   `bench/results/perf-arenas-2026-10-08.md`,
   `bench/results/perf-throughput-2026-10-08.md`.

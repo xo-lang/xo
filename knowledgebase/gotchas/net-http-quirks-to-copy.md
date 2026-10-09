@@ -55,3 +55,14 @@ merge broke `http_wire` (want.txt) and `TestHTTPParseDiff` on every run.
 Fix: `xo_hc_respond` adds the same Content-Length, and the diff test's Go
 handler mirrors std/rt. Any change to std/rt's response writing must be
 mirrored in `std/llrt/xo_http.c` and in `diffHandler`.
+
+Update 2026-10-09 (Observed, a two minute `go test -fuzz FuzzHTTPDiff`
+run): a CONNECT target `"@` is an authority with userinfo `"`, which
+url.parseAuthority rejects (validUserinfo, then the % escapes of the
+userinfo), so net/http answers 400 before its 505 version check; the C
+parser had skipped the userinfo. `h_valid_userinfo` now checks it. The
+same run found the reference handler, not the server: `strconv.Atoi` of
+an out of range `big=` returns the clamped value with its error, so the
+Go handler wrote 1 MiB where the C handler wrote nothing; diffHandler
+now ignores a value with an error. Both inputs are seeds in
+`internal/llvm/testdata/fuzz/FuzzHTTPDiff`.
