@@ -1,0 +1,40 @@
+// The real signal path of the two phase shutdown (core 7.5) on the native
+// backends, driven by TestNativeSignal* in signal_test.go: internal/gen's
+// testdata/signal without its HTTP mode (and with a plain main). MODE
+// picks the behavior.
+use std/task
+
+fn wait_for_stop(os: Os) {
+  select {
+    _ = task.stopping().recv() => os.stdio.println("stop requested ${task.stop_requested()}")
+  }
+}
+
+fn main(os: Os) {
+  let mode = os.env.get("MODE") ?? "cancel"
+  if mode == "grace" {
+    os.proc.set_grace(300ms)
+  }
+  defer os.stdio.println("cleanup ran")
+  scope s {
+    s.spawn_background(fn() {
+      defer os.stdio.println("background stopped")
+      os.clock.sleep(1h)
+    })
+    // defer is block scoped: it must sit in the scope body itself
+    defer {
+      if mode == "hung" {
+        os.clock.sleep(1h)
+      }
+    }
+    os.stdio.println("ready")
+    wait_for_stop(os)
+    if mode == "drain" {
+      os.clock.sleep(200ms)
+      os.stdio.println("drained")
+      return
+    }
+    os.clock.sleep(1h)
+  }
+  os.stdio.println("not reached")
+}

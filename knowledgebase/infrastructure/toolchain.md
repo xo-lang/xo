@@ -88,6 +88,7 @@ XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary 
 go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
+go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
@@ -996,6 +997,9 @@ first, AST based prototype, since deleted) and
   Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
   nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
   `is_empty`); interpolating a Duration, Time, or Bytes is not lowered.
+  `os.net.listen`/`dial`, `Listener.addr`/`accept`/`close`, and
+  `Conn.read`/`write`/`close` (decision 0071) run on the event loop;
+  SIGINT/SIGTERM give the two phase shutdown of core 7.5.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
