@@ -133,3 +133,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [native-fault-skips-defer.md](native-fault-skips-defer.md): a fault on the LLVM and arm64 backends exits without running deferred code (the Go backend runs it while panicking); shared goldens must not fault with a defer pending.
 - [ssa-exit-stack-aliasing.md](ssa-exit-stack-aliasing.md): lowering deferred code with `s.exits = saved[:i]` let its own blocks overwrite the saved stack through `append`; truncate with `saved[:i:i]`.
 - [fiber-thread-local-address.md](fiber-thread-local-address.md): a fiber may resume on another thread; compilers keep thread local (and errno) addresses across calls, so the runtime uses noinline accessors and syscall wrappers.
+- [native-stdout-buffer-waits.md](native-stdout-buffer-waits.md): native stdout is buffered; every wait flushes it first so lines show before a program waits for a signal or a connection.
