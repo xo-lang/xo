@@ -17,6 +17,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/format"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/query"
 )
@@ -74,6 +75,9 @@ func load(op, target string, opt Options) (*session, error) {
 	if len(opt.Dirs) == 0 {
 		opt.Dirs = []string{"."}
 	}
+	// a workspace is one program: an edit reaches every module of it
+	// (decision 0086)
+	opt.Dirs = mod.WorkspaceDirs(opt.Dirs)
 	q, err := query.Load(opt.Dirs)
 	if err != nil {
 		return nil, err
@@ -145,6 +149,9 @@ func (s *session) apply(edits []textEdit) (*Result, error) {
 		f := s.fileByPath(name)
 		if f == nil {
 			return nil, fmt.Errorf("edit of %s outside the user modules", name)
+		}
+		if f.Module != nil && f.Module.Dependency != "" {
+			return s.reject(fmt.Sprintf("the edit would change %s in the required module %s; change it in its repository, or list its local copy in an xo.work workspace (decision 0086)", name, f.Module.Dependency)), nil
 		}
 		abs, err := filepath.Abs(name)
 		if err != nil {

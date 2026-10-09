@@ -1,6 +1,12 @@
 # 0086: Modules, dependencies, and workspaces
 
-Status: Accepted (2026-10-09, agreed with the user; not yet implemented)
+Status: Accepted (2026-10-09, agreed with the user). Partially
+implemented (2026-10-09): steps (1) MVS, git fetch, `xo.lock`, vendoring,
+offline builds and (2) `xo.work` workspaces are built (`internal/mod`,
+`xo get`, `xo mod tidy`, `xo vendor`, `--offline`, `--workspace=off`;
+XO1301 to XO1308). Steps (3) effect ceilings, (4) `xo publish` semver
+checks, and (5) per definition hashes are not; neither is `xo init`
+gitignoring xo.work, an optional proxy, or a checksum log.
 
 ## Context
 
@@ -83,3 +89,20 @@ hashes.
   one (`xo.work`).
 - Runtime permissions per process (Deno): coarser than per dependency
   effects checked at compile time.
+
+## Implementation notes (2026-10-09)
+
+- A module is its repository root; tags `vX.Y.Z` are versions. Modules
+  in subdirectories of a repository and `/vN` major suffixes are not
+  supported yet.
+- `xo mod tidy` drops a requirement nothing imports unless it raises a
+  version the rest of the graph selects (Go keeps such lines as
+  `// indirect`; Xo keeps them as plain requires).
+- An import of a package from a module that is in the build list only
+  because another module requires it is XO1306: each module requires
+  what it imports.
+- In a workspace, xo.lock verification uses the union of the workspace
+  modules' locks; `xo get`, `xo mod tidy`, and `xo vendor` always ignore
+  the workspace, so locks never record overrides.
+- Release builds are `xo build --ci` until a `--release` mode exists
+  (decision 0092 proposes one).

@@ -121,6 +121,14 @@ func TestResolution(t *testing.T) {
 			"b/b.xo":    "use example.com/app/a\n\npub fn fb() -> Int { 1 }\npub fn g() -> Int { a.fa() }\n",
 			"c/main.xo": "fn main(os: Os) {}\n",
 		}, want: []string{"XO0604"}},
+		{name: "module not required", files: map[string]string{
+			"xo.mod":       "module example.com/app\nedition 2026\n",
+			"main/main.xo": "use github.com/acme/billing/invoice\n\nfn f() -> Int { invoice.total() }\n",
+		}, want: []string{"XO1306"}},
+		{name: "missing package of the main module", files: map[string]string{
+			"xo.mod":       "module example.com/app\nedition 2026\n",
+			"main/main.xo": "use example.com/app/nope\n\nfn f() -> Int { nope.total() }\n",
+		}, want: []string{"XO0601"}},
 		{name: "foreign method", src: "fn (s: Str) shout() -> Str { s }\n", want: []string{"XO0606"}},
 		{name: "break outside loop", src: "fn f() {\n  break\n}\n", want: []string{"XO0607"}},
 		{name: "break in loop", src: "fn f() {\n  while {\n    break\n  }\n}\n"},

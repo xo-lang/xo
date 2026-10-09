@@ -4,6 +4,14 @@ Xo stays on 0.x until the owner declares 1.0 (decision 0089). The toolchain
 minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
+## Unreleased
+
+- Modules (decision 0086 steps 1 and 2): `require <path> <version>` of Xo
+  modules, minimal version selection, git fetch into a read only module
+  cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
+  tidy`, `xo vendor`, `xo mod clean`, `--offline`, and `xo.work`
+  workspaces (`--workspace=off`). Diagnostics XO1301 to XO1308.
+
 ## v0.7.0 (2026-10-09)
 
 First tagged release. Spec draft 0.7.

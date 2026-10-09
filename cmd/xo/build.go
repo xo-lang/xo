@@ -18,6 +18,7 @@ import (
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/format"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/vet"
 )
 
@@ -118,6 +119,19 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *ci {
+		if ds := workspaceRelease(dirs); len(ds) > 0 {
+			if *asJSON {
+				encodeJSON(stdout, struct {
+					Ok          bool              `json:"ok"`
+					Binaries    map[string]string `json:"binaries"`
+					Diagnostics []diag.Diagnostic `json:"diagnostics"`
+				}{false, map[string]string{}, ds})
+			} else {
+				printDiags(ds, stderr)
+				fmt.Fprintln(stderr, "xo build: --ci: nothing built")
+			}
+			return 1
+		}
 		if code := ciCheck(dirs, *asJSON, stdout, stderr); code != 0 {
 			return code
 		}
@@ -343,6 +357,9 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	if len(dirs) == 0 {
 		dirs = []string{"."}
 	}
+	// a workspace is one program: its modules' tests run together
+	// (decision 0086)
+	dirs = mod.WorkspaceDirs(dirs)
 	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)

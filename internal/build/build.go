@@ -152,6 +152,11 @@ type Info struct {
 	NoMono   bool              `json:"no_mono,omitempty"`
 	NoArenas bool              `json:"no_arenas,omitempty"`
 	Race     bool              `json:"race,omitempty"`
+	// Deps are the required module versions the program was built with
+	// (decision 0086): "<path>" -> "<version>", or "workspace <dir>" for a
+	// module an xo.work overrides (local paths are recorded here only,
+	// never in xo.lock).
+	Deps map[string]string `json:"deps,omitempty"`
 }
 
 // buildInfo computes the build information of a checked program.
@@ -159,6 +164,16 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
+	}
+	if bl := res.Deps(); bl != nil && len(bl.Modules) > 0 {
+		info.Deps = map[string]string{}
+		for _, m := range bl.Modules {
+			if m.Workspace {
+				info.Deps[m.Path] = "workspace " + m.Dir
+			} else {
+				info.Deps[m.Path] = m.Version
+			}
+		}
 	}
 	for _, m := range res.Info().AllModules() {
 		if m.IsStd {

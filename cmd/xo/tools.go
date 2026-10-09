@@ -473,7 +473,7 @@ func runDoc(args []string, stdout, stderr io.Writer) int {
 	}
 	var docs []*doc.Module
 	if info, err := os.Stat(target); err == nil && info.IsDir() {
-		s, err := query.Load([]string{target})
+		s, err := query.LoadExact([]string{target})
 		if err != nil {
 			fmt.Fprintf(stderr, "xo doc: %v\n", err)
 			return 2

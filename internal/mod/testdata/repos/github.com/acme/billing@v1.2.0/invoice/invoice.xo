@@ -1,0 +1,3 @@
+use github.com/acme/money
+
+pub fn total() -> Int { money.cents(2) }

@@ -135,6 +135,29 @@ commands:
       any source file's modification time or size changes. check and query
       use a running server automatically; XO_NO_SERVE=1 turns that off.
       stop shuts the server down; status prints its cache counters.
+  get [--dir=<dir>] [--json] <module path>[@version|@latest|@none]...
+      Require a module (decision 0086): the latest vX.Y.Z tag unless a
+      version is given; @none removes the requirement. Fetches with git
+      into the module cache ($XO_MODCACHE or <user cache dir>/xo/mod),
+      resolves the graph by minimal version selection, and rewrites xo.mod
+      and xo.lock. Module paths are git locations; XO_GIT_BASE=<dir or URL>
+      or XO_GIT_REWRITE=<prefix>=<url>,... point them elsewhere.
+  mod tidy [--dir=<dir>] [--json]
+      Require every imported module, drop requirements nothing imports
+      (unless they raise a version the graph selects), and rewrite xo.lock
+      with exactly the hashes the build uses. Ignores xo.work and vendor/.
+  mod clean
+      Remove the module cache (it is read only, so rm -rf fails).
+  vendor [--dir=<dir>] [--json]
+      Copy every selected module version into vendor/ with
+      vendor/modules.txt; builds then use vendor/ only (no cache, no
+      network), verified against xo.lock.
+  Every command accepts --offline (XO_OFFLINE=1: never fetch; a missing
+  module is XO1303) and --workspace=off (XO_WORK=off: ignore xo.work).
+  An xo.work file (xo 2026 / use ./dir lines) builds the modules it uses
+  from their directories, overriding requirements; check, test, query, and
+  edit then take every module of the workspace as one program, and
+  build --ci fails (XO1308) while it overrides a required module.
   version
       Print the toolchain version, the source revision, and the host target.
 `
@@ -144,7 +167,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
+	rest, restore, err := moduleFlags(args[1:])
+	defer restore()
+	if err != nil {
+		fmt.Fprintf(stderr, "xo %s: %v\n", args[0], err)
+		return 2
+	}
+	args = append([]string{args[0]}, rest...)
 	switch args[0] {
+	case "get":
+		return runGet(args[1:], stdout, stderr)
+	case "mod":
+		return runMod(args[1:], stdout, stderr)
+	case "vendor":
+		return runVendor(args[1:], stdout, stderr)
 	case "parse":
 		return runParse(args[1:], stdout, stderr)
 	case "check":

@@ -1126,6 +1126,86 @@ fn main(os: Os) uses go {
   os.stdio.println("hi".to_upper())
 }`,
 	},
+
+	// ---------------------------------------------------------------
+	// 13xx: modules and dependencies (decision 0086)
+
+	ModFileInvalid: {
+		Title: "malformed xo.mod require, xo.lock, or xo.work line",
+		Detail: "A `require` line of xo.mod is `require <module path> <version>`: the module path is its git location (its first element is a host name) and the version a tag `vX.Y.Z`. A module is required once. " +
+			"xo.mod has no `replace`, `exclude`, or `retract`; local code is reached through an xo.work workspace. " +
+			"xo.lock lines are `<module path> <version>[/xo.mod] h1:<hash>` and are written by `xo get` and `xo mod tidy`. xo.work lines are `xo <edition>` and `use <dir>`, each dir holding an xo.mod. See core 4.2, 4.3, and decision 0086.",
+		Example: `// xo.mod
+module example.com/api
+require github.com/acme/billing 1.4`,
+		Fix: `// xo.mod
+module example.com/api
+require github.com/acme/billing v1.4.0`,
+	},
+	ModuleFetch: {
+		Title: "module version cannot be fetched",
+		Detail: "A module path is its location: `github.com/acme/billing` is fetched with git from https://github.com/acme/billing.git (XO_GIT_BASE=<dir or URL> or XO_GIT_REWRITE=<prefix>=<url>,... point it elsewhere, for mirrors and tests), and version v1.4.0 is the tree of the tag `v1.4.0`, extracted with `git archive` (no code runs). " +
+			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod at the repository root, or that xo.mod declares a different module path. The message carries git's reason. See core 4.2 and decision 0086.",
+		Example: `// xo.mod
+module example.com/api
+require github.com/acme/billing v9.9.9   // no such tag`,
+		Fix: `// pick an existing tag (xo get github.com/acme/billing takes the latest)
+module example.com/api
+require github.com/acme/billing v1.4.0`,
+	},
+	ModuleOffline: {
+		Title: "module version not in the cache while offline",
+		Detail: "With XO_OFFLINE=1 or `--offline`, the toolchain never touches the network: every required module version must already be in the module cache ($XO_MODCACHE, default <user cache dir>/xo/mod) or in the main module's vendor/. " +
+			"This version is in neither. Fetch it once while online (`xo mod tidy`, `xo get <path>@<version>`, or any build), or commit a vendor/ directory with `xo vendor`. See core 4.2 and decision 0086.",
+		Example: `XO_OFFLINE=1 xo build .   # billing v1.4.0 was never fetched`,
+		Fix: `xo mod tidy               # online, once
+XO_OFFLINE=1 xo build .   # from the cache from now on`,
+	},
+	ChecksumMismatch: {
+		Title: "module content does not match xo.lock",
+		Detail: "xo.lock records the content hash of every module version the build uses (and of the xo.mod of every version minimal version selection read); every build recomputes them from the cache or vendor/ and compares. " +
+			"A mismatch means the code changed under the same version: a tag was moved or rewritten upstream, or a cached or vendored copy was edited. Nothing is built. " +
+			"If the new content is expected (you control the dependency and retagged it), delete its lines from xo.lock and run `xo mod tidy`; for an edited vendor/, run `xo vendor`. See core 4.3.",
+		Example: `# xo.lock
+github.com/acme/billing v1.4.0 h1:AAAA...   # the tag now has other content`,
+		Fix: `# delete the stale lines, then
+xo mod tidy`,
+	},
+	LockMissing: {
+		Title: "xo.lock has no hash for a module version",
+		Detail: "Every module version the build selects must be recorded in xo.lock, so the content of a build is pinned and checked. A require line was added or changed by hand, or a dependency upgrade raised the version of a module further down the graph. " +
+			"`xo mod tidy` (or `xo get`) records the hashes; commit xo.lock with xo.mod. See core 4.3 and decision 0086.",
+		Example: `// xo.mod edited by hand, xo.lock not updated
+require github.com/acme/billing v1.5.0`,
+		Fix: `xo mod tidy   # writes the v1.5.0 hashes to xo.lock`,
+	},
+	ModuleNotRequired: {
+		Title: "import from a module xo.mod does not require",
+		Detail: "An import path whose first element is a host name (`github.com/acme/billing/invoice`) names a package of another module, and that module must be required in xo.mod so its version is selected and locked. " +
+			"`xo get <module path>` adds the latest version; `xo mod tidy` adds a requirement for every such import. See core 4.1, 4.2, and decision 0086.",
+		Example: `use github.com/acme/billing/invoice   // xo.mod has no require for it
+
+fn total() -> Int { invoice.total() }`,
+		Fix: `// xo get github.com/acme/billing adds to xo.mod:
+require github.com/acme/billing v1.4.0`,
+	},
+	VendorInconsistent: {
+		Title: "vendor/ does not match xo.mod",
+		Detail: "When the main module has vendor/modules.txt, builds use vendor/ only: no module cache, no network. Every requirement of xo.mod must then be vendored at its version (or above, as minimal version selection chose), and vendor/ must be readable. " +
+			"xo.mod changed since the last `xo vendor`; run it again. A vendored tree that was edited is XO1304 instead. See core 4.2 and decision 0086.",
+		Example: `// xo.mod now requires v1.5.0, vendor/modules.txt still lists
+# github.com/acme/billing v1.4.0`,
+		Fix: `xo mod tidy
+xo vendor`,
+	},
+	WorkspaceRelease: {
+		Title: "release build while a workspace overrides modules",
+		Detail: "An xo.work workspace builds the modules it uses from their local directories, overriding the versions xo.mod requires. That is for development only: a release build (`xo build --ci`) must build exactly what xo.mod and xo.lock pin, so it fails while a workspace overrides a required module, naming those modules. " +
+			"Build with `--workspace=off` (or XO_WORK=off) to ignore xo.work, or release the overridden modules, require their new versions, and run `xo mod tidy`. See decision 0086.",
+		Example: `# xo.work: use ./api, use ./billing; api requires billing
+xo build --ci ./api`,
+		Fix: `xo build --ci --workspace=off ./api`,
+	},
 }
 
 // SeverityOf is the severity a code is reported with.

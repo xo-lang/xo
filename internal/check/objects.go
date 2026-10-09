@@ -36,6 +36,11 @@ type Module struct {
 	// GC is the `gc` lines of the module's xo.mod (decision 0065), used
 	// when the module is a program's main module.
 	GC GCConfig
+	// Dependency is "<module path>@<version>" for a module loaded from a
+	// required module version (the module cache or vendor/, decision
+	// 0086); "" for the main module and workspace modules. Its files are
+	// not edited.
+	Dependency string
 
 	state int // 0 new, 1 loading, 2 loaded (cycle detection)
 }

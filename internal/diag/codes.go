@@ -100,6 +100,20 @@ const (
 	NoGCUnavailable Code = "XO1201" // construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible
 )
 
+// Module and dependency codes (13xx group, decision 0086). Emitted by
+// internal/mod through the checker (on the xo.mod, xo.lock, or xo.work
+// line), and by `xo get`, `xo mod tidy`, `xo vendor`, and `xo build`.
+const (
+	ModFileInvalid     Code = "XO1301" // malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3)
+	ModuleFetch        Code = "XO1302" // module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path
+	ModuleOffline      Code = "XO1303" // module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)
+	ChecksumMismatch   Code = "XO1304" // module tree does not match its xo.lock content hash (core 4.3)
+	LockMissing        Code = "XO1305" // xo.lock has no hash for a module version the build uses; run `xo mod tidy`
+	ModuleNotRequired  Code = "XO1306" // import of a package from a module that xo.mod does not require
+	VendorInconsistent Code = "XO1307" // vendor/ does not match xo.mod; run `xo vendor`
+	WorkspaceRelease   Code = "XO1308" // release build (`xo build --ci`) while an xo.work workspace overrides required modules
+)
+
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
 // internal/vet, never by `xo check`: advisory warnings and review notes
 // that never fail a build.
@@ -166,6 +180,15 @@ var Descriptions = map[Code]string{
 
 	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
 	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",
+
+	ModFileInvalid:     "malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3)",
+	ModuleFetch:        "module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path",
+	ModuleOffline:      "module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)",
+	ChecksumMismatch:   "module tree does not match its xo.lock content hash (core 4.3)",
+	LockMissing:        "xo.lock has no hash for a module version the build uses; run `xo mod tidy`",
+	ModuleNotRequired:  "import of a package from a module that xo.mod does not require",
+	VendorInconsistent: "vendor/ does not match xo.mod; run `xo vendor`",
+	WorkspaceRelease:   "release build (`xo build --ci`) while an xo.work workspace overrides required modules",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 
