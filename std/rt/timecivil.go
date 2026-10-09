@@ -243,3 +243,17 @@ func goWeekdayTag(w time.Weekday) int {
 	}
 	return int(w)
 }
+
+// M_display of a CivilErr (std.md 13.2): the problem, or the civil time
+// and why it does not name one instant.
+func (v Time_CivilErr) M_display(*Task) string {
+	switch p := v.P.(type) {
+	case Time_CivilErr_Invalid:
+		return "invalid civil time: " + p.F_msg
+	case Time_CivilErr_Skipped:
+		return p.F_at + " does not exist (skipped by a daylight saving change)"
+	case Time_CivilErr_Repeated:
+		return p.F_at + " happens twice (repeated by a daylight saving change)"
+	}
+	return Debug(v)
+}

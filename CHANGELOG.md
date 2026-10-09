@@ -32,6 +32,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (new code XO1312; a rule naming no package is XO1301), kept by `xo mod
   tidy`; `xo query imports` and `xo query deps` list the `use` lines
   (also in the MCP `query` tool).
+- std/time error text (std.md 13): `ZoneErr` and `CivilErr` display as
+  sentences (`unknown time zone "Mars/Olympus"`, `2026-03-08T02:30:00
+  America/New_York does not exist (skipped by a daylight saving
+  change)`) instead of the derived `Skipped(at: ...)` form, matching
+  `ParseErr` and `LayoutErr`.
 - Newtypes (decision 0097, spec audit gap 4): `e.0` reads the underlying
   value and `Email(s)` destructures it in `let` and `match`.
 - `xo check --fix` (decision 0096): applies the unambiguous machine fixes

@@ -62,6 +62,8 @@ specified in std.md 13 (decision 0094).
   <pkg>, ...` lines in xo.mod, with `/...` patterns; a forbidden `use` is
   the new error `XO1312` at that line, a rule naming no package is
   `XO1301`. `xo query imports` and `xo query deps` list the `use` lines.
+- `std/time` errors display as sentences (std.md 13.5): `ZoneErr` and
+  `CivilErr` no longer derive `Display`.
 - Newtypes (2.8; decision 0097): `e.0` reads (and on a `var` assigns) the
   underlying value, and the pattern `Email(p)` matches it, irrefutably
   when `p` is (`let Email(s) = e`). Go backend; native builds report
