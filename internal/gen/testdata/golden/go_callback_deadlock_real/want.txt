@@ -1,0 +1,9 @@
+exit 70
+--- stdout
+slept: 11
+timer: 112
+--- stderr
+fault: XO-F001: deadlock: a wait cycle of 2 tasks at main.xo:37
+wait cycle:
+main blocked in Go call sync.(*WaitGroup).Wait at main.xo:37 for callback 5
+callback 5 blocked in Mutex.with at main.xo:36 on a mutex made at main.xo:14, held by main since main.xo:35

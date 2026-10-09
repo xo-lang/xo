@@ -299,12 +299,16 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 		done <- out
 	}()
 	var out testOutcome
+	// the time limit is no Go timer: a pending one would keep a deadlock
+	// through a Go call from being reported (gotimers_on.go)
+	stop := make(chan struct{})
+	defer close(stop)
 	select {
 	case out = <-done:
 	case <-w.stuck:
 		f := w.DeadlockFault()
 		out = testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
-	case <-time.After(limit):
+	case <-osAfter(limit, stop):
 		out = testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
 	}
 	out.logs = testLogLines(w)

@@ -44,8 +44,11 @@ import (
 // 0066): callbacks run without the request's arena. 3 (2026-10-08,
 // decision 0067): adapters bracket the Go call with rt.GoEnter/GoExit and
 // callbacks go through rt.GoCallback, which runs a call on another
-// goroutine as a task of its own.
-const Version = 3
+// goroutine as a task of its own. 4 (2026-10-08, decision 0073): callback
+// arguments are converted before cb.Begin, which takes them (for the
+// deterministic scheduler and recordings), and *time.Timer and *time.Ticker
+// are handles (time.AfterFunc binds).
+const Version = 4
 
 // Binding is one bound Go package.
 type Binding struct {

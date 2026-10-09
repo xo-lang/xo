@@ -1,0 +1,41 @@
+// Deadlock detection through a Go call in a real run (decision 0073,
+// fault XO-F001): main holds Mutex `m` while a Go callback that Go runs on
+// a goroutine of its own (sync.WaitGroup.Go) waits for `m`, and waits in
+// Go (sync.WaitGroup.Wait) for that callback. The watchdog sees main
+// blocked in Go code and the callback blocked on an Xo primitive and
+// faults (exit status 70) instead of hanging. Before that, a Go call that
+// sleeps in Go while its callback waits for `m` is not reported: it
+// returns and the callback goes on; neither is a Go call that a pending Go
+// timer (time.AfterFunc) releases while every goroutine is parked.
+use go "sync" as gosync
+use go "time" as gotime
+
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  let wg = gosync.WaitGroup.new()
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 10 }) })
+    gotime.sleep(400ms)
+    n += 1
+  })
+  wg.wait()
+  os.stdio.println("slept: ${m.with(fn(v) { v })}")
+  // every goroutine is parked while main waits in Go, but a pending Go
+  // timer (time.AfterFunc) releases the wait after 200 ms
+  let release = gosync.WaitGroup.new()
+  release.add(1)
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 100 }) })
+    gotime.after_func(200ms, fn() { release.done() })
+    release.wait()
+    n += 1
+  })
+  wg.wait()
+  os.stdio.println("timer: ${m.with(fn(v) { v })}")
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 1 }) })
+    wg.wait()
+    n += 1
+  })
+  os.stdio.println("unreachable")
+}

@@ -361,9 +361,15 @@ func Spawn[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], background,
 	} else if tk.w != nil {
 		tk.w.taskStarted()
 	}
+	labeled := tk.th != nil && tk.th.labeled
 	go func() {
 		if sch := th.sch; sch != nil {
 			<-th.turn
+			if labeled {
+				// a spawner that passed a Go callback labeled its
+				// goroutine (NewGoCallback); this one is not it
+				clearLabels()
+			}
 		} else if tk.w == nil {
 			// drop the profiler label inherited from the spawning
 			// goroutine: this thread sets its own when it first blocks

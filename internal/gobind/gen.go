@@ -287,7 +287,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		return g.handleValue(h), nil
 	case *types.Pointer:
 		if n, ok := types.Unalias(x.Elem()).(*types.Named); ok {
-			if _, basic := n.Underlying().(*types.Basic); !basic && n.Obj().Pkg() != nil && !isContext(n) && n.TypeArgs().Len() == 0 && n.TypeParams().Len() == 0 && !(n.Obj().Pkg().Path() == "time") {
+			if _, basic := n.Underlying().(*types.Basic); !basic && n.Obj().Pkg() != nil && !isContext(n) && n.TypeArgs().Len() == 0 && n.TypeParams().Len() == 0 && !(n.Obj().Pkg().Path() == "time" && !timeHandles[n.Obj().Name()]) {
 				h, err := g.handleFor(n, depth)
 				if err != nil {
 					return conv{}, err
@@ -527,13 +527,24 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	// that passed it (sync.WaitGroup.Go, a timer): rt.GoCallback decides
 	// per call which task it runs with, the passing task (without the
 	// request's arena, decision 0066) or a task of its own (decision 0067).
+	// The arguments are converted before Begin, which hands them to the
+	// deterministic scheduler for a call on another goroutine (decision
+	// 0073: calls are ordered and recorded by them).
 	return conv{xo: xo, rt: rt, gt: gt, toGo: func(e string) string {
 		args := []string{"ctk"}
+		var xs, conv []string
 		for i, pc := range pcs {
-			args = append(args, pc.toXo(fmt.Sprintf("b%d", i)))
+			a := fmt.Sprintf("c%d", i)
+			xs = append(xs, a)
+			conv = append(conv, a+" := "+pc.toXo(fmt.Sprintf("b%d", i))+"; ")
+			args = append(args, a)
 		}
 		call := e + "(" + strings.Join(args, ", ") + ")"
-		const begin = "ctk := cb.Begin(); defer cb.End(ctk); "
+		argf := "nil"
+		if len(xs) > 0 {
+			argf = "func() []any { return []any{" + strings.Join(xs, ", ") + "} }"
+		}
+		begin := strings.Join(conv, "") + "ctk := cb.Begin(" + argf + "); defer cb.End(ctk); "
 		fn := "func(" + strings.Join(gps, ", ") + ") { " + begin + call + " }"
 		if rc != nil {
 			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "return " + rc.toGo(call+".V") + " }"
@@ -1212,3 +1223,8 @@ func (b *Binding) Summary() string {
 	}
 	return w.String()
 }
+
+// timeHandles are the types of package time whose pointers are handles
+// (time.AfterFunc returns a *Timer, decision 0073); pointers to the
+// others (Time, Location) stay unbound.
+var timeHandles = map[string]bool{"Timer": true, "Ticker": true}

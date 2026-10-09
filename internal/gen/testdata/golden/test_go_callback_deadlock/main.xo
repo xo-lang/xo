@@ -1,0 +1,54 @@
+// Deadlock detection through a Go call (decision 0073, fault XO-F001) in
+// test worlds: the test holds Mutex `m` while a Go callback that Go runs
+// on a goroutine of its own (sync.WaitGroup.Go) waits for `m`, and waits
+// in Go (sync.WaitGroup.Wait) for that callback. The test is blocked in
+// Go code and the callback on an Xo primitive: the report shows the Go
+// call edge. A Go call that sleeps in Go while its callback waits is not
+// a deadlock: it returns, and the callback goes on.
+use go "sync" as gosync
+use go "time" as gotime
+
+/// stuck holds `m` and waits in Go for a callback that waits for `m`.
+fn stuck(m: Mutex[Int]) {
+  let wg = gosync.WaitGroup.new()
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 1 }) })
+    wg.wait()
+    n += 1
+  })
+}
+
+/// slow holds `m` while a callback waits for it and sleeps in Go: the Go
+/// call is blocked for a reason outside Xo, so it is not a deadlock.
+fn slow(m: Mutex[Int]) {
+  let wg = gosync.WaitGroup.new()
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 10 }) })
+    gotime.sleep(50ms)
+    n += 1
+  })
+  wg.wait()
+}
+
+/// timed holds `m` while a callback waits for it and waits in Go for a
+/// WaitGroup that a Go timer (time.AfterFunc) releases after 200 ms: every
+/// goroutine is parked meanwhile, but the pending timer can move, so it
+/// is not a deadlock.
+fn timed(m: Mutex[Int]) {
+  let wg = gosync.WaitGroup.new()
+  let release = gosync.WaitGroup.new()
+  release.add(1)
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 100 }) })
+    gotime.after_func(200ms, fn() { release.done() })
+    release.wait()
+    n += 1
+  })
+  wg.wait()
+}
+
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  slow(m)
+  os.stdio.println("${m.with(fn(v) { v })}")
+}

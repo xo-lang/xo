@@ -143,10 +143,15 @@ func (w *World) schedIdleLocked() bool {
 		return true
 	}
 	// a thread lent while in a Go call (gointerop.go) comes back when the
-	// call returns: not a deadlock (a Go call that never returns hangs,
-	// as it always did)
-	if len(w.sch.threads) > 0 && w.sch.lentN == 0 {
-		w.stuckOnce.Do(func() { close(w.stuck) })
+	// call returns: not a deadlock, unless the call waits only for
+	// callbacks that are stuck and the goroutines show it cannot return
+	// (godeadlock.go, decision 0073)
+	if len(w.sch.threads) > 0 {
+		if w.sch.lentN == 0 {
+			w.stuckOnce.Do(func() { close(w.stuck) })
+		} else if w.sch.goStuckLocked() != nil {
+			w.sch.confirmGoLocked()
+		}
 	}
 	return false
 }
@@ -156,8 +161,10 @@ func (w *World) schedIdleLocked() bool {
 func (w *World) DeadlockFault() *FaultErr {
 	w.mu.Lock()
 	var snaps []waitSnap
+	var goDead map[*thread][]*thread
 	if s := w.sch; s != nil {
 		snaps = s.snapsLocked()
+		goDead = s.goDead
 	} else {
 		seen := map[*thread]bool{}
 		for tk := range w.blocked {
@@ -170,6 +177,9 @@ func (w *World) DeadlockFault() *FaultErr {
 		}
 	}
 	w.mu.Unlock()
+	if len(goDead) > 0 {
+		snaps = goWaitSnaps(snaps, goDead, lazyStacks())
+	}
 	sort.Slice(snaps, func(i, j int) bool { return snaps[i].th.id < snaps[j].th.id })
 	return deadlockFault(snaps, "every task is blocked and no timer is pending")
 }

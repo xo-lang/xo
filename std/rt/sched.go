@@ -43,9 +43,10 @@ const (
 	waitAdvance
 	waitAccept
 	waitMutexRead
+	waitGoCall
 )
 
-var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)", "Mutex.with_read"}
+var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)", "Mutex.with_read", "Go call"}
 
 // waitTarget is an object a thread can block on. It describes itself for
 // reports and names the threads that can end the wait, when they are known
@@ -93,6 +94,12 @@ type thread struct {
 	// a Go callback thread (gointerop.go)
 	inGo atomic.Int32
 	lent atomic.Bool
+
+	// Go callbacks on goroutines of Go's (decision 0073): cbOf is the
+	// thread of the task that passed the callback (on a callback's
+	// thread); cbN counts the live callback threads this thread passed
+	cbOf *thread
+	cbN  atomic.Int32
 }
 
 func newRootThread(kind string) *thread {
@@ -110,6 +117,14 @@ func (p *thread) initChild(th *thread, kind string) *thread {
 	if th.sch != nil {
 		th.turn = make(chan struct{}, 1)
 	}
+	return th
+}
+
+// initChildPending is initChild without the id, which the scheduler gives
+// when it admits the thread (gosched.go).
+func (p *thread) initChildPending(th *thread, kind string) *thread {
+	th.kind, th.ids, th.sch, th.mon, th.req = kind, p.ids, p.sch, p.mon, p.req
+	th.turn = make(chan struct{}, 1)
 	return th
 }
 
@@ -149,8 +164,7 @@ func (th *thread) setWait(tk *Task, k waitKind, obj any) {
 	if tk.w != nil || th.sch != nil {
 		n = runtime.Callers(3, pcs[:])
 	} else if !th.labeled {
-		th.labeled = true
-		pprof.SetGoroutineLabels(pprof.WithLabels(context.Background(), pprof.Labels("xo_thread", strconv.FormatInt(th.id, 10))))
+		labelThread(th)
 	}
 	count := th.mon != nil && countedWait(k, obj)
 	th.mu.Lock()
@@ -160,6 +174,13 @@ func (th *thread) setWait(tk *Task, k waitKind, obj any) {
 	if count {
 		th.mon.blockedOne()
 	}
+}
+
+// labelThread labels the calling goroutine, which runs th, with th's id
+// (lazyStacks).
+func labelThread(th *thread) {
+	th.labeled = true
+	pprof.SetGoroutineLabels(pprof.WithLabels(context.Background(), pprof.Labels("xo_thread", strconv.FormatInt(th.id, 10))))
 }
 
 // clearWait records that the thread runs again.
@@ -242,6 +263,9 @@ func (th *thread) snap(locs map[int64]string) (waitSnap, bool) {
 // main.xo:4` and the threads that can end the wait.
 func (w waitSnap) describe() (string, []*thread) {
 	s := "blocked in " + waitOps[w.kind]
+	if g, ok := w.obj.(*goCallWait); ok && g.top != "" {
+		s += " " + g.top
+	}
 	if w.loc != "" {
 		s += " at " + w.loc
 	}
@@ -303,6 +327,28 @@ type sched struct {
 	// both change under mu, cbLive is also read without it
 	cbLive atomic.Int32
 	lentN  int
+
+	// deadlocks through Go calls in test worlds (godeadlock.go): moves
+	// counts the turns handed out; confirming is set while a goroutine
+	// checks a suspected one; goDead holds the threads in Go calls of a
+	// confirmed one, for the report
+	moves      uint64
+	confirming bool
+	goDead     map[*thread][]*thread
+
+	// Go callbacks admitted at decisions (gosched.go): armed once an Xo
+	// function crossed into Go; cbSeq numbers the callbacks; pend holds
+	// callback calls and pendRet Go call returns that arrived from Go's
+	// goroutines, admitted at the next decision once Go's goroutines
+	// settled (goDirty: Go code may have run since the last settle);
+	// lending: a goroutine waits to lend the turn of a thread blocked in
+	// a Go call
+	armed   atomic.Bool
+	cbSeq   atomic.Int64
+	goDirty bool
+	pend    []*cbArrival
+	pendRet []*thread
+	lending bool
 }
 
 func newSched(mu *sync.Mutex, w *World, seed int64) *sched {
@@ -342,8 +388,16 @@ func (s *sched) pickLocked() {
 		if s.rec != nil {
 			s.drainLocked()
 		}
-		if s.rp != nil && s.replayLocked() {
-			return
+		if s.rp != nil {
+			s.admitReturnsLocked()
+			if s.replayLocked() {
+				return
+			}
+		}
+		if s.armed.Load() && (s.rp == nil || s.rp.ti >= len(s.rp.toks)) {
+			// Go callbacks (gosched.go): let Go's goroutines settle, then
+			// admit the callbacks and Go call returns that arrived
+			s.settleLocked()
 		}
 		if n := len(s.ready); n > 0 {
 			i := 0
@@ -356,6 +410,7 @@ func (s *sched) pickLocked() {
 			}
 			s.ready = append(s.ready[:i], s.ready[i+1:]...)
 			th.st = stRunning
+			s.moves++
 			s.cur = th
 			th.turn <- struct{}{}
 			return
@@ -504,29 +559,6 @@ func (s *sched) enter(th *thread) {
 	<-th.turn
 }
 
-// startCallback adds the thread of a Go callback called on a goroutine of
-// Go's and waits for its turn (gointerop.go). A thread that holds the
-// turn while inside a Go call lends it: the Go code may be waiting for
-// this callback.
-func (s *sched) startCallback(th *thread) {
-	s.mu.Lock()
-	s.cbLive.Add(1)
-	if c := s.cur; c != nil && c.inGo.Load() > 0 {
-		s.lendLocked(c)
-	}
-	s.startLocked(th)
-	s.mu.Unlock()
-	<-th.turn
-}
-
-// endCallback removes the thread of a Go callback.
-func (s *sched) endCallback(th *thread) {
-	s.mu.Lock()
-	s.cbLive.Add(-1)
-	s.endLocked(th)
-	s.mu.Unlock()
-}
-
 // lendLocked takes the turn from c, which is inside a Go call: it runs on,
 // off the scheduler, until it leaves the call (goExit). The caller picks
 // the next thread.
@@ -588,6 +620,10 @@ var realSched *sched
 // deadlock is reported only after the counts stayed equal and nothing
 // moved for a quiet period, which covers the instants between a
 // cancellation and the canceled threads resuming.
+//
+// A thread inside a Go call counts as blocked when it waits for foreign
+// Go callbacks that are all blocked, and the goroutines show that nothing
+// else can move (godeadlock.go, decision 0073).
 type monitor struct {
 	live     atomic.Int64
 	blocked  atomic.Int64
@@ -596,6 +632,11 @@ type monitor struct {
 	quiet    time.Duration
 	root     *cnode
 	report   func(*FaultErr)
+
+	// live foreign Go callback threads (gointerop.go)
+	cbMu sync.Mutex
+	cbs  map[*thread]struct{}
+	ncb  atomic.Int32
 }
 
 // runMon is the monitor of the running program (RunMain), nil otherwise.
@@ -623,34 +664,121 @@ func (m *monitor) unblocked() {
 	m.gen.Add(1)
 }
 
+// addCallback and dropCallback track a foreign Go callback thread.
+func (m *monitor) addCallback(th *thread) {
+	m.cbMu.Lock()
+	if m.cbs == nil {
+		m.cbs = map[*thread]struct{}{}
+	}
+	m.cbs[th] = struct{}{}
+	m.cbMu.Unlock()
+	m.ncb.Add(1)
+}
+
+func (m *monitor) dropCallback(th *thread) {
+	m.cbMu.Lock()
+	delete(m.cbs, th)
+	m.cbMu.Unlock()
+	m.ncb.Add(-1)
+}
+
+// goMoved is called when a thread with live foreign callbacks enters or
+// leaves a Go call.
+func (m *monitor) goMoved() {
+	m.gen.Add(1)
+	m.check()
+}
+
+// goWaiters returns the threads inside a Go call that wait only for
+// stuck foreign callbacks (godeadlock.go).
+func (m *monitor) goWaiters() map[*thread][]*thread {
+	m.cbMu.Lock()
+	cbs := make([]*thread, 0, len(m.cbs))
+	for th := range m.cbs {
+		cbs = append(cbs, th)
+	}
+	m.cbMu.Unlock()
+	return goWaitersOf(cbs, func(th *thread) bool {
+		th.mu.Lock()
+		defer th.mu.Unlock()
+		return th.counted
+	})
+}
+
 func (m *monitor) allBlocked() bool {
 	l := m.live.Load()
 	return l > 0 && m.blocked.Load() >= l
 }
 
+// stuck reports whether every live thread is blocked, counting the
+// threads in Go calls that wait only for stuck callbacks (returned) as
+// blocked.
+func (m *monitor) stuck() (bool, map[*thread][]*thread) {
+	l := m.live.Load()
+	if l <= 0 {
+		return false, nil
+	}
+	b := m.blocked.Load()
+	if b >= l {
+		return true, nil
+	}
+	if m.ncb.Load() == 0 {
+		return false, nil
+	}
+	ws := m.goWaiters()
+	return len(ws) > 0 && b+int64(len(ws)) >= l, ws
+}
+
 func (m *monitor) check() {
-	if m.allBlocked() && m.checking.CompareAndSwap(false, true) {
+	if !m.allBlocked() && m.ncb.Load() == 0 {
+		return
+	}
+	if ok, _ := m.stuck(); ok && m.checking.CompareAndSwap(false, true) {
 		go m.watch()
 	}
 }
 
 func (m *monitor) watch() {
+	quiet := m.quiet
+	var ws map[*thread][]*thread
 	for {
 		g := m.gen.Load()
-		time.Sleep(m.quiet)
-		if !m.allBlocked() {
+		osSleep(quiet)
+		if ok, _ := m.stuck(); !ok {
 			m.checking.Store(false)
 			// a block that raced with the reset starts the watch again
-			if m.allBlocked() && m.checking.CompareAndSwap(false, true) {
+			if ok, _ := m.stuck(); ok && m.checking.CompareAndSwap(false, true) {
 				continue
 			}
 			return
 		}
-		if m.gen.Load() == g {
+		if m.gen.Load() != g {
+			continue
+		}
+		if m.allBlocked() {
+			ws = nil
 			break
+		}
+		// threads in Go calls: report only when no Go timer is pending, no
+		// goroutine can move, and nothing changed meanwhile; else look
+		// again, less often, or after the pending Go timer fired
+		_, ws = m.stuck()
+		ok, retry := goStuckProof()
+		if ok {
+			if ok, ws2 := m.stuck(); ok && m.gen.Load() == g && len(ws2) == len(ws) {
+				ws = ws2
+				break
+			}
+		}
+		quiet = min(2*quiet, 2*time.Second)
+		if retry > 0 {
+			quiet = min(max(retry, m.quiet), 2*time.Second)
 		}
 	}
 	snaps := treeSnaps(m.root)
+	if len(ws) > 0 {
+		snaps = goWaitSnaps(snaps, ws, lazyStacks())
+	}
 	m.report(deadlockFault(snaps, "every task is blocked"))
 }
 
@@ -661,13 +789,31 @@ func clearLabels() { pprof.SetGoroutineLabels(context.Background()) }
 // site to the innermost Xo frame of their goroutine, read from the
 // goroutine profile (see setWait).
 func lazyLocs() map[int64]string {
+	out := map[int64]string{}
+	for id, in := range lazyStacks() {
+		out[id] = in.loc
+	}
+	return out
+}
+
+// stackInfo is what the goroutine profile shows of a labeled thread: its
+// innermost Xo frame and, above it, the innermost Go function that is not
+// the Go runtime's or this package's (`sync.(*WaitGroup).Wait` in a Go
+// call).
+type stackInfo struct {
+	loc string
+	top string
+}
+
+// lazyStacks is lazyLocs with the innermost Go function of each thread.
+func lazyStacks() map[int64]stackInfo {
 	var b bytes.Buffer
 	if err := pprof.Lookup("goroutine").WriteTo(&b, 1); err != nil {
 		return nil
 	}
-	out := map[int64]string{}
+	out := map[int64]stackInfo{}
 	for _, rec := range strings.Split(b.String(), "\n\n") {
-		id, loc := int64(-1), ""
+		id, loc, top := int64(-1), "", ""
 		for _, l := range strings.Split(rec, "\n") {
 			if rest, ok := strings.CutPrefix(l, "# labels: "); ok {
 				const key = `"xo_thread":"`
@@ -685,12 +831,23 @@ func lazyLocs() map[int64]string {
 				continue
 			}
 			f := strings.Fields(l[1:])
-			if len(f) >= 3 && strings.Contains(f[len(f)-1], ".xo:") && !isGlue(f[1]) {
+			if len(f) < 3 {
+				continue
+			}
+			if strings.Contains(f[len(f)-1], ".xo:") && !isGlue(f[1]) {
 				loc = f[len(f)-1]
+				continue
+			}
+			fn := f[1]
+			if k := strings.LastIndex(fn, "+0x"); k > 0 {
+				fn = fn[:k]
+			}
+			if top == "" && !strings.HasPrefix(fn, "runtime.") && !strings.HasPrefix(fn, "internal/") && !strings.HasPrefix(fn, "sync.runtime_") && !strings.HasPrefix(fn, rtPrefix) {
+				top = fn
 			}
 		}
 		if id >= 0 && loc != "" {
-			out[id] = loc
+			out[id] = stackInfo{loc: loc, top: top}
 		}
 	}
 	return out
@@ -968,6 +1125,12 @@ func nodeState(n *cnode, kids []*cnode, locs map[int64]string) string {
 		if st == stReady {
 			return "ready"
 		}
+	}
+	if th.inGo.Load() > 0 {
+		if n := th.cbN.Load(); n > 0 {
+			return fmt.Sprintf("in a Go call, with %d callbacks on goroutines of Go's", n)
+		}
+		return "in a Go call"
 	}
 	return "running"
 }

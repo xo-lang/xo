@@ -95,7 +95,7 @@ func TestMapping(t *testing.T) {
 	decl, sb, _ := bindDecl(t, "strings")
 	// a callback never runs with the request's arena (decision 0066), and
 	// a call on another goroutine is a task of its own (decision 0067)
-	for _, want := range []string{"}(NewGoCallback(tk))", "ctk := cb.Begin(); defer cb.End(ctk); ", "\tGoEnter(tk)\n\tdefer GoExit(tk, "} {
+	for _, want := range []string{"}(NewGoCallback(tk))", "ctk := cb.Begin(func() []any { return []any{c0} })", "defer cb.End(ctk)", "\tGoEnter(tk)\n\tdefer GoExit(tk, "} {
 		if !strings.Contains(string(sb.Adapter), want) {
 			t.Errorf("adapter lacks %q", want)
 		}

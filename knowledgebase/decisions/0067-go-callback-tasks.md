@@ -1,6 +1,6 @@
 # 0067: A Go callback called on another goroutine is a task of its own
 
-Status: Accepted (2026-10-08)
+Status: Accepted (2026-10-08). Updated by 0073 (deadlocks through Go calls; seed reproducible and recorded foreign callbacks).
 
 ## Context
 
