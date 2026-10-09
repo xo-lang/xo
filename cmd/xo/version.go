@@ -10,7 +10,7 @@ import (
 // version is the toolchain version (decision 0089). Xo stays on 0.x minor
 // versions until the owner declares 1.0; raise the minor at each milestone
 // and add the matching CHANGELOG.md entry and git tag.
-const version = "0.7.0"
+const version = "0.8.0"
 
 func runVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {

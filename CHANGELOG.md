@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.8.0 (2026-10-09)
+
+Spec draft 0.8.
+
 - Modules (decision 0086 steps 1 and 2): `require <path> <version>` of Xo
   modules, minimal version selection, git fetch into a read only module
   cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
