@@ -13,3 +13,9 @@ meaning silently. To give the declaration an effect, parenthesize the return
 type: `-> (fn(A) -> B) uses clock { ... }`, or write both:
 `-> fn(A) -> B uses clock uses clock`. The spec does not mention this; it is a
 candidate clarification for core 6.2.
+
+`xo fmt` dropped those parentheses (the parser keeps no node for them), so
+formatting changed the meaning; observed on 2026-10-08 with
+`std/native/rt.xo`'s `launder1`. Fixed: the printer parenthesizes a function
+type result followed by the declaration's `uses` clause or `! E`
+(internal/format TestFnTypeResultParens).

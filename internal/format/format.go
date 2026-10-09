@@ -572,7 +572,24 @@ func (p *printer) fnDecl(fd *ast.FnDecl) {
 	if fd.Result != nil {
 		cont(p.find(headerEnd, '-'))
 		p.w("-> ")
+		// a function type result takes a following `! E` or `uses`
+		// (gotchas/fn-type-return-takes-uses.md): parenthesize it when
+		// the declaration's own error or uses clause follows
+		paren := false
+		if ft, ok := fd.Result.(*ast.FnType); ok && len(ft.Uses) == 0 {
+			usesNext := len(fd.Clauses) > 0 && fd.Err == nil
+			if usesNext {
+				_, usesNext = fd.Clauses[0].(*ast.UsesClause)
+			}
+			paren = (fd.Err != nil && ft.Err == nil) || usesNext
+		}
+		if paren {
+			p.w("(")
+		}
 		p.typ(fd.Result)
+		if paren {
+			p.w(")")
+		}
 		headerEnd = endOff(fd.Result)
 		p.done(headerEnd)
 	}
