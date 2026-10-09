@@ -46,7 +46,7 @@ func frameValues() []any {
 func TestFrameDebugBounded(t *testing.T) {
 	m := mapCap[string, string](0)
 	for i := 0; i < 20; i++ {
-		m.M_put(nil, strings.Repeat("k", i), strings.Repeat("v", i))
+		Map_put(nil, &m, strings.Repeat("k", i), strings.Repeat("v", i))
 	}
 	vals := append(frameValues(), m)
 	for i, v := range vals {
