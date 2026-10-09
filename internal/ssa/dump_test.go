@@ -17,7 +17,7 @@ func TestDump(t *testing.T) {
 	if dir == "" {
 		t.Skip("set XO_SSA_DUMP to a program directory")
 	}
-	res, ok, err := build.Check([]string{dir}, false)
+	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil || !ok {
 		if res != nil {
 			for _, d := range res.Diagnostics {

@@ -42,7 +42,7 @@ func native() bool {
 
 func asm(t *testing.T, dir, goos string) string {
 	t.Helper()
-	res, ok, err := build.Check([]string{dir}, false)
+	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil || !ok {
 		var b strings.Builder
 		if res != nil {
@@ -409,7 +409,7 @@ func TestInlineVerifies(t *testing.T) {
 	dirs = append(dirs, runs...)
 	inlined := 0
 	for _, dir := range dirs {
-		res, ok, err := build.Check([]string{dir}, false)
+		res, ok, err := build.CheckNative([]string{dir}, false)
 		if err != nil || !ok {
 			t.Fatalf("%s: check failed: %v", dir, err)
 		}

@@ -16,6 +16,13 @@ type Module struct {
 	Scope     map[string]Object
 	IsStd     bool
 	IsPrelude bool
+	// Native marks an implementation module of the native backends
+	// (std/native/<name>.xo, decision 0074): a module with bodies that
+	// implements std module Implements ("prelude" or a std module path
+	// such as "std/http"). Only native modules may import the intrinsics
+	// module "native/rt".
+	Native     bool
+	Implements string
 	// Go is the binding of a `use go "<path>"` module (decision 0041). Such
 	// a module is also IsStd: its declaration file is a bodiless signature
 	// listing like std/*.xo, and its functions are adapters in package rt.
@@ -97,6 +104,9 @@ func (t *TypeObj) objName() string { return t.Name }
 // QualName is the name used in messages: std types outside the prelude are
 // qualified with their module name.
 func (t *TypeObj) QualName() string {
+	if t.Module != nil && t.Module.Native {
+		return "native." + t.Module.Name + "." + t.Name
+	}
 	if t.Module != nil && t.Module.IsStd && !t.Module.IsPrelude {
 		return t.Module.Name + "." + t.Name
 	}

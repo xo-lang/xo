@@ -3467,31 +3467,44 @@ static void pd_free(xo_pd *pd) {
 	pthread_mutex_unlock(&ev.mu);
 }
 
-enum { PD_READY, PD_CANCELED, PD_CLOSED };
+enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
 
-// pd_wait waits until the socket is ready for reading (or writing), the
-// context is canceled, or the descriptor is closed.
-static int pd_wait(xo_pd *pd, int write, xo_ctx *c) {
+// pd_wait_until waits until the socket is ready for reading (or
+// writing), the context is canceled, the descriptor is closed, or (when
+// is not 0) the monotonic time when passes.
+static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 	xo_park **slot = write ? &pd->wwait : &pd->rwait;
 	int *ready = write ? &pd->wready : &pd->rready;
+	xo_timer t = {.when = when, .idx = -1, .park = &c->park};
+	int timed = 0;
+	int res;
 	for (;;) {
 		if (ctx_canceled(c)) {
-			return PD_CANCELED;
+			res = PD_CANCELED;
+			break;
 		}
 		pthread_mutex_lock(&pd->mu);
 		if (pd->closed) {
 			pthread_mutex_unlock(&pd->mu);
-			return PD_CLOSED;
+			res = PD_CLOSED;
+			break;
 		}
 		if (*ready) {
 			*ready = 0;
 			pthread_mutex_unlock(&pd->mu);
-			return PD_READY;
+			res = PD_READY;
+			break;
 		}
 		park_reset(&c->park);
 		*slot = &c->park;
 		pthread_mutex_unlock(&pd->mu);
-		park_wait_n(c, 1, 0);
+		if (when && !timed) {
+			timed = 1;
+			timer_add(&t);
+		}
+		if (!(when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE))) {
+			park_wait_n(c, 1, 0);
+		}
 		pthread_mutex_lock(&pd->mu);
 		int mine = *slot == &c->park;
 		if (mine) {
@@ -3500,13 +3513,26 @@ static int pd_wait(xo_pd *pd, int write, xo_ctx *c) {
 		int closed = pd->closed;
 		pthread_mutex_unlock(&pd->mu);
 		if (closed) {
-			return PD_CLOSED;
+			res = PD_CLOSED;
+			break;
 		}
 		if (!mine) {
-			return PD_READY; // the poller handed it readiness
+			res = PD_READY; // the poller handed it readiness
+			break;
+		}
+		if (when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE)) {
+			res = PD_TIMEOUT;
+			break;
 		}
 	}
+	if (timed) {
+		timer_del(&t);
+	}
+	return res;
 }
+
+// pd_wait is pd_wait_until without a deadline.
+static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, write, c, 0); }
 
 // The poller thread
 
@@ -3930,8 +3956,16 @@ xo_conn *xo_listener_accept(xo_listener *l) {
 }
 
 // xo_net_dial is `net.dial(addr)` (std.md 3.2): connection refused is
-// NetErr.Refused.
-xo_conn *xo_net_dial(const char *p, int64_t n) {
+// NetErr.Refused; it gives up after 30 s like the Go backend's
+// net.DialTimeout (NetErr.Io "i/o timeout").
+xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d);
+
+xo_conn *xo_net_dial(const char *p, int64_t n) { return xo_net_dial_timeout(p, n, (int64_t)30 * 1000000000); }
+
+// xo_net_dial_timeout is xo_net_dial giving up after d ns (d <= 0: no
+// limit).
+xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
+	int64_t when = d > 0 ? deadline(d) : 0;
 	xo_ctx *c = ctx();
 	if (ctx_canceled(c)) {
 		net_fail(c, 5, "");
@@ -3973,8 +4007,8 @@ xo_conn *xo_net_dial(const char *p, int64_t n) {
 			e = x_connect(fd, a->ai_addr, a->ai_addrlen);
 		}
 		if (e == -EINPROGRESS) {
-			int w = pd_wait(pd, 1, c);
-			e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : -ECONNABORTED;
+			int w = pd_wait_until(pd, 1, c, when);
+			e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
 		}
 		pd_end(pd);
 		if (e == 0) {
@@ -3982,8 +4016,8 @@ xo_conn *xo_net_dial(const char *p, int64_t n) {
 			break;
 		}
 		pd_free(pd);
-		if (e == 1) {
-			break; // canceled
+		if (e == 1 || e == 2) {
+			break; // canceled, or the time is up
 		}
 	}
 	freeaddrinfo(res);
@@ -3993,6 +4027,8 @@ xo_conn *xo_net_dial(const char *p, int64_t n) {
 	}
 	if (e == 1) {
 		net_fail(c, 5, "");
+	} else if (e == 2) {
+		net_fail(c, 4, "dial tcp %s: i/o timeout", addr);
 	} else if (e == -ECONNREFUSED) {
 		net_fail(c, 2, "");
 	} else {
@@ -4448,3 +4484,6 @@ int main(int argc, char **argv) {
 	return 0;
 }
 #endif
+
+// The intrinsics of the native std implementation (decision 0074).
+#include "xo_std.c"

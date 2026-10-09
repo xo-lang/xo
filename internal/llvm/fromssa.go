@@ -939,7 +939,10 @@ func (g *sgen) fn(f *ssa.Func) {
 	for _, p := range f.Params() {
 		ps = append(ps, g.ll(p.Type)+" "+vname(p))
 	}
-	for _, b := range f.Blocks {
+	// lowered in reverse postorder, so a value is lowered (and its alias
+	// known) before every use: a block may come before the blocks that
+	// dominate it in f.Blocks (generated code builds a join first)
+	for _, b := range reversePostorder(f) {
 		s.body = &strings.Builder{}
 		s.text[b] = s.body
 		s.label0 = b.Name()
@@ -968,6 +971,37 @@ func (g *sgen) fn(f *ssa.Func) {
 	}
 	out.WriteString("}\n\n")
 	g.funcs.WriteString(out.String())
+}
+
+// reversePostorder lists the blocks of f reachable from its entry in
+// reverse postorder (a block after the blocks that dominate it).
+func reversePostorder(f *ssa.Func) []*ssa.Block {
+	seen := map[*ssa.Block]bool{}
+	var post []*ssa.Block
+	var walk func(b *ssa.Block)
+	walk = func(b *ssa.Block) {
+		seen[b] = true
+		if t := b.Term(); t != nil {
+			for _, e := range t.Succs {
+				if !seen[e.To] {
+					walk(e.To)
+				}
+			}
+		}
+		post = append(post, b)
+	}
+	walk(f.Blocks[0])
+	out := make([]*ssa.Block, 0, len(post))
+	for i := len(post) - 1; i >= 0; i-- {
+		out = append(out, post[i])
+	}
+	// blocks the walk did not reach keep their place at the end
+	for _, b := range f.Blocks {
+		if !seen[b] {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // faultIf branches to a fault call when cond holds.
@@ -1611,12 +1645,18 @@ func (s *sfn) call(v *ssa.Value) {
 func (s *sfn) rtCall(v *ssa.Value) {
 	g := s.g
 	sym := "@xo_" + strings.TrimPrefix(v.Aux.(string), "rt.")
+	// `rt.rs_*` functions take their Str operands as the string object
+	// (the first is consumed, decision 0074); the others its bytes
+	obj := strings.HasPrefix(v.Aux.(string), "rt.rs_")
 	var params, args []string
 	for _, x := range v.Args {
 		switch x.Type.Kind {
 		case ssa.KInt:
 			params = append(params, "i64")
 			args = append(args, "i64 "+s.op(x))
+		case ssa.KFloat:
+			params = append(params, "double")
+			args = append(args, "double "+s.op(x))
 		case ssa.KBool:
 			params = append(params, "i64")
 			args = append(args, "i64 "+s.def("zext i1 %s to i64", s.op(x)))
@@ -1624,7 +1664,10 @@ func (s *sfn) rtCall(v *ssa.Value) {
 			params = append(params, "ptr")
 			args = append(args, "ptr "+s.op(x))
 		case ssa.KStr:
-			_, d, n := s.strParts(s.op(x))
+			o, d, n := s.strParts(s.op(x))
+			if obj {
+				d = o
+			}
 			params = append(params, "ptr", "i64")
 			args = append(args, "ptr "+d, "i64 "+n)
 		default:
@@ -1632,16 +1675,25 @@ func (s *sfn) rtCall(v *ssa.Value) {
 		}
 	}
 	ret := "void"
+	slot := ""
 	switch v.Type.Kind {
 	case ssa.KUnit:
 	case ssa.KInt, ssa.KBool:
 		ret = "i64"
+	case ssa.KFloat:
+		ret = "double"
 	case ssa.KList, ssa.KHandle:
 		ret = "ptr"
+	case ssa.KStr:
+		// the string object; its length through a pointer
+		ret = "ptr"
+		slot = s.alloca("i64")
+		params = append(params, "ptr")
+		args = append(args, "ptr "+slot)
 	default:
 		fail("the runtime call `%s` returns a `%s`", v.Aux, v.Type.Name)
 	}
-	if !g.emitted[sym] {
+	if !g.emitted[sym] && !strings.Contains(ssaRuntimeDecls, " "+sym+"(") {
 		g.emitted[sym] = true
 		fmt.Fprintf(&g.rtDecls, "declare %s %s(%s) #2\n", ret, sym, strings.Join(params, ", "))
 	}
@@ -1651,6 +1703,10 @@ func (s *sfn) rtCall(v *ssa.Value) {
 		s.emit("%s", c)
 	case ssa.KBool:
 		s.set(v, "icmp ne i64 %s, 0", s.def("%s", c))
+	case ssa.KStr:
+		o := s.def("%s", c)
+		n := s.def("load i64, ptr %s", slot)
+		s.mkStr(v, o, n)
 	default:
 		s.set(v, "%s", c)
 	}

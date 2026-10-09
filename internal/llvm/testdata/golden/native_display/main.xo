@@ -1,0 +1,43 @@
+enum ApiErr {
+  BadRequest(msg: Str)
+  NotFound(id: Int)
+  Gone
+} derive Display
+
+struct User {
+  id: Int
+  name: Str
+  tags: List[Str]
+  nick: Str?
+} derive Display
+
+enum ConfigErr {
+  BadPort(value: Str)
+}
+
+fn (e: ConfigErr) display() -> Str {
+  match e {
+    BadPort(value) => "bad port ${value}"
+  }
+}
+
+fn check(n: Int) -> Int ! ConfigErr
+  requires n > 0 else ConfigErr.BadPort(value: "${n}")
+{
+  n * 2
+}
+
+fn main(os: Os) ! {
+  let d = 1500ms
+  os.stdio.println("d=${d} ${90s} ${3h + 2m} ${0s} ${1500ns} ${2500us}")
+  let t = Time.from_unix(1700000000)
+  os.stdio.println("t=${t}")
+  os.stdio.println("${ApiErr.BadRequest(msg: "x\"y")} ${ApiErr.NotFound(id: 4)} ${ApiErr.Gone}")
+  let u = User{id: 1, name: "ann", tags: ["a", "b"], nick: None}
+  os.stdio.println("${u}")
+  os.stdio.println("${check(3)?}")
+  let m = {"a": 1, "b": 2}
+  let m2 = {"b": 2, "a": 1}
+  os.stdio.println("${m == m2} ${m != m2}")
+  os.stdio.println("${check(-1)?}")
+}

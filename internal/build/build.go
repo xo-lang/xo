@@ -188,7 +188,17 @@ func buildInfoFile(info *Info) []byte {
 // Check runs the checker on dirs and reports whether errors block the
 // build. Holes (XO0900 warnings) block it unless holes is set (core 3.7).
 func Check(dirs []string, holes bool) (*check.Result, bool, error) {
-	res, err := check.Check(dirs)
+	return checkOpts(dirs, holes, false)
+}
+
+// CheckNative is Check for the native backends: it also loads their
+// implementation modules (std/native, decision 0074).
+func CheckNative(dirs []string, holes bool) (*check.Result, bool, error) {
+	return checkOpts(dirs, holes, true)
+}
+
+func checkOpts(dirs []string, holes, native bool) (*check.Result, bool, error) {
+	res, err := check.CheckOpts(dirs, check.Options{Native: native})
 	if err != nil {
 		return nil, false, err
 	}
@@ -206,7 +216,7 @@ func Check(dirs []string, holes bool) (*check.Result, bool, error) {
 
 // Build checks and compiles the modules under dirs.
 func Build(dirs []string, opts Options) (*Result, error) {
-	res, ok, err := Check(dirs, opts.Holes)
+	res, ok, err := checkOpts(dirs, opts.Holes, opts.Backend == BackendLLVM || opts.Backend == BackendArm64)
 	if err != nil {
 		return nil, err
 	}

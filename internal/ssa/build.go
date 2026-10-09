@@ -54,6 +54,10 @@ type builder struct {
 	checks   []unwindCheck
 	sites    map[*ast.CallExpr]int           // spawns that can fail a scope
 	boundTo  map[*ast.CallExpr]*check.VarObj // spawn calls bound with let
+
+	// natives are the implementation modules of the native backends by
+	// the std path they implement (build_native.go)
+	natives map[string]*check.Module
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -122,10 +126,10 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	if mainFo == nil {
 		return b, Errors{{Msg: "no `main` function in the root module"}}
 	}
-	if failErr(mainFo.Err) != nil {
-		b.unsupported(mainFo.Decl, "`main` that returns an error (declare `fn main(os: Os)` and handle errors with match)")
+	mf := b.declare(mainFo, nil, mainFo.Decl)
+	if et := failErr(mainFo.Err); et != nil {
+		b.mainWrapper(mf, et, mainFo.Decl)
 	}
-	b.declare(mainFo, nil, mainFo.Decl)
 	for len(b.queue) > 0 {
 		next := b.queue[0]
 		b.queue = b.queue[1:]
@@ -240,6 +244,13 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return b.mapType(false, b.typ(r.Args[0], at), b.typ(r.Args[1], at))
 			case "Set":
 				return b.mapType(true, b.typ(r.Args[0], at), m.Builtin(KUnit))
+			case "Result":
+				// `Result[T, Never]` is T: what a function of a generic
+				// error type returns when that type is Never (decision
+				// 0074; `T ! Never` is T, see typeOf)
+				if len(r.Args) == 2 && check.IsNever(r.Args[1]) {
+					return b.typ(r.Args[0], at)
+				}
 			}
 		}
 		name := r.String()
@@ -248,7 +259,19 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			if x := b.concType(obj, r, at); x != nil {
 				return x
 			}
-			if obj.Module != nil && obj.Module.IsStd {
+			if it := b.implType(obj); it != nil {
+				// the native implementation's struct (decision 0074)
+				return b.typ(&check.Named{Obj: it, Args: r.Args}, at)
+			}
+			if obj.Module != nil && strings.HasPrefix(obj.Module.Path, "native/") && obj.Opaque {
+				// an object of the native runtime (decision 0074); a
+				// Loc is the `file:line` of a call
+				if obj.Name == "Loc" {
+					return m.Builtin(KStr)
+				}
+				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
+			}
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude) {
 				break
 			}
 			x, created := m.Named(name, KStruct)
@@ -285,6 +308,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 		case check.KAlias:
 			return b.typ(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), at)
 		case check.KInterface:
+			if dynIface(obj) {
+				// its text (build_show.go)
+				return b.dynType()
+			}
 			b.unsupported(at, "interface types (`"+obj.Name+"`)")
 			return m.Builtin(KUnit)
 		}
@@ -586,9 +613,76 @@ func (b *builder) body(fo *check.FuncObj, f *Func, sub *check.Subst) {
 		b.unsupported(fo.Decl, "a function without a body")
 		return
 	}
+	for _, cl := range fo.Decl.Clauses {
+		if c, ok := cl.(*ast.RequiresClause); ok {
+			s.requires(c)
+		}
+	}
 	v := s.block(fo.Decl.Body)
 	s.ret(v, fo.Decl.Body)
 	s.finishFn()
+}
+
+// mainWrapper makes `main` of a main that returns an error (type et):
+// the program's main becomes main.run, and main calls it; an error is
+// printed as `error: <its Display text>` on standard error and the
+// program exits with status 1, as on the Go backend (without the error's
+// frames and crash bundle).
+func (b *builder) mainWrapper(mf *Func, et check.Type, at ast.Node) {
+	m := b.mod
+	mf.Name = "main.run"
+	var params []*Type
+	for _, p := range mf.Params() {
+		params = append(params, p.Type)
+	}
+	unit, intT, boolT, st := m.Builtin(KUnit), m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr)
+	b.genFunc("main", params, []*Type{unit}, func(s *fn, ps []*Value) {
+		rt := mf.Results[0]
+		r := s.call(mf.Name, rt, "", ps...)
+		ei := rt.VariantIndex("Err")
+		s.ifThen(s.add(OpEq, boolT, nil, s.add(OpTag, intT, nil, r), s.cint(int64(ei))), func() {
+			e := s.add(OpPayload, rt.Variants[ei].Fields[0].Type, PayloadRef{ei, 0}, r)
+			msg := s.appendDisplay(s.add(OpConst, st, "error: "), e, et, at)
+			s.rt("eprintln", nil, msg)
+			s.rt("exit", nil, s.cint(1))
+		})
+		s.retv(s.unit())
+	})
+}
+
+// requires lowers a `requires` clause (core 9.1): without `else` a false
+// condition faults, with it the function returns Err(else value).
+func (s *fn) requires(c *ast.RequiresClause) {
+	b := s.b
+	boolT := b.mod.Builtin(KBool)
+	ok := s.valueAs(c.Cond, boolT)
+	fail, good := s.branch(s.add(OpNot, boolT, nil, ok))
+	s.cur = fail
+	if c.Else == nil {
+		f := s.add(OpFault, nil, nil, s.add(OpConst, b.mod.Builtin(KStr), "requires failed: "+b.sourceText(c.Cond)))
+		f.Pos = b.pos(c.Cond)
+	} else if s.errT == nil {
+		b.unsupported(c, "`requires ... else` in a function that cannot fail")
+		s.add(OpUnreachable, nil, nil)
+	} else {
+		ev := s.coerceErr(s.expr(c.Else), s.natCheck(c.Else), s.errT, c.Else)
+		want := s.resultT()
+		s.ret(s.add(OpVariant, want, want.VariantIndex("Err"), ev), c)
+	}
+	s.cur = good
+}
+
+// sourceText is the source text of n.
+func (b *builder) sourceText(n ast.Node) string {
+	sp := n.Span()
+	for _, m := range b.info.AllModules() {
+		for _, f := range m.Files {
+			if f.Path == sp.File && sp.Start.Offset >= 0 && sp.End.Offset <= len(f.Src) && sp.Start.Offset <= sp.End.Offset {
+				return string(f.Src[sp.Start.Offset:sp.End.Offset])
+			}
+		}
+	}
+	return "?"
 }
 
 // ---------------------------------------------------------------------------
@@ -851,6 +945,11 @@ func (s *fn) coerce(v *Value, t *Type, at ast.Node) *Value {
 		if i := t.VariantIndex("Some"); i >= 0 && len(t.Variants[i].Fields) == 1 && t.Variants[i].Fields[0].Type == v.Type {
 			return s.add(OpVariant, t, i, v)
 		}
+		// the success value where the Result is expected (the value of
+		// an `if` without `else` that ends a failing function)
+		if i := t.VariantIndex("Ok"); i >= 0 && t.VariantIndex("Err") >= 0 && len(t.Variants[i].Fields) == 1 && t.Variants[i].Fields[0].Type == v.Type {
+			return s.add(OpVariant, t, i, v)
+		}
 	}
 	if t.Kind == KUnit {
 		return s.unit()
@@ -866,5 +965,19 @@ func (s *fn) value(e ast.Expr) *Value {
 }
 
 func (s *fn) valueAs(e ast.Expr, t *Type) *Value {
-	return s.coerce(s.expr(e), t, e)
+	v := s.expr(e)
+	if isDyn(t) && !isDyn(v.Type) && v.Op != OpUndef {
+		// a concrete value converted to Error, Display, or Debug
+		return s.toDyn(v, s.natCheck(e), s.ifaceName(e), e)
+	}
+	return s.coerce(v, t, e)
+}
+
+// ifaceName is the name of the prelude interface e is converted to in
+// its context ("Debug" for a log field).
+func (s *fn) ifaceName(e ast.Expr) string {
+	if n, ok := check.Resolve(check.Deep(s.checkType(e))).(*check.Named); ok && n.Obj.Kind == check.KInterface {
+		return n.Obj.Name
+	}
+	return "Display"
 }

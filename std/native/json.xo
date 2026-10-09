@@ -1,0 +1,40 @@
+// std/json on the native backends (decision 0074): the codecs are
+// generated per type by internal/ssa (build_json.go) and called through
+// the intrinsics of native/rtjson; std/rt/json.go is the reference.
+use std/json
+use native/rtjson
+
+fn encode[T: Json](v: T) -> Bytes { rtjson.json_enc("", v).bytes() }
+
+fn encode_str[T: Json](v: T) -> Str { rtjson.json_enc("", v) }
+
+fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
+  let tape = rtjson.json_parse(data)
+  if tape.is_empty() {
+    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${rtjson.json_parse_err(data)}"})
+  }
+  match rtjson.json_dec[T](data, tape, 0) {
+    Ok(v) => Ok(v)
+    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+  }
+}
+
+fn decode_str[T: Json](s: Str) -> T ! json.DecodeErr { decode(s.bytes()) }
+
+/// "at $.user.email: expected string" (std.md 5).
+fn decodeerr_display(e: json.DecodeErr) -> Str { "at ${e.path}: ${e.msg}" }
+
+fn patch_apply_to[T](p: json.Patch[T], current: T) -> T {
+  match p {
+    Value(v) => v
+    _ => current
+  }
+}
+
+fn patch_apply_opt[T](p: json.Patch[T], current: T?) -> T? {
+  match p {
+    Absent => current
+    Null => None
+    Value(v) => Some(v)
+  }
+}

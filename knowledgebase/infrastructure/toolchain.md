@@ -89,6 +89,9 @@ go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared c
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
+go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
+XO_HTTP_DIFF_SEED=7 XO_HTTP_DIFF_N=30000 go test ./internal/llvm -run TestHTTPParseDiff   # more random and mutated connections
+go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
@@ -646,8 +649,12 @@ std/                    std declaration files (prelude.xo, go.xo, http.xo, json.
                         path.xo, sql.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
-std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime);
-                        testdata/rc_threads.c, its thread stress test (not embedded)
+std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
+                        and the files it includes: xo_std.c, xo_unicode.c, xo_json.c, xo_http.c
+                        (decision 0074); testdata/*.c, C tests and differential drivers (not embedded)
+std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
+                        implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
+                        (embedded as std.NativeFiles, loaded only for native builds)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
@@ -1022,14 +1029,32 @@ first, AST based prototype, since deleted) and
   `from_nanos`, `from_secs_int`, `millis`, `nanos`, `seconds`, `abs`) and
   Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
   nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
-  `is_empty`); interpolating a Duration, Time, or Bytes is not lowered.
+  `is_empty`).
   Map and Set (decision 0072) are structs of lists with generated
   operations: literals, get, contains, get_or_fault, put, remove,
   update, keys, values, entries, add, to_list, `m[k] = v`, and `for`
-  loops; not `==` on them, Float keys, filter, or Set algebra.
-  `os.net.listen`/`dial`, `Listener.addr`/`accept`/`close`, and
+  loops; `==` on them since decision 0074; not Float keys, filter, or
+  Set algebra.
+  `os.net.listen`/`dial` (dial gives up after 30 s like the Go
+  backend), `Listener.addr`/`accept`/`close`, and
   `Conn.read`/`write`/`close` (decision 0071) run on the event loop;
   SIGINT/SIGTERM give the two phase shutdown of core 7.5.
+  Since decision 0074 (2026-10-08) std is implemented for the native
+  backends in Xo: `std/native/<name>.xo` implements `std/<name>`
+  (`prelude.xo` the prelude: Str methods, Int and Float parse, the List
+  closure methods, sort, Option and Result methods), loaded by the
+  checker only for native builds (`check.Options.Native`,
+  `build.CheckNative`) and lowered in place of the std declarations
+  (`internal/ssa/build_native.go`); `std/native/rt.xo`, `rtjson.xo`,
+  and `rthttp.xo` declare the C intrinsics they call (only native
+  modules can `use native/...`). So std/http (server, client, routing,
+  middleware, request values), std/json (codecs per type,
+  build_json.go), and std/log run natively; also interpolation of any
+  type (Display, Debug of `derive Display`, Duration, Time,
+  build_show.go), `main ! Error` (`error: <text>`, exit 1), `requires`
+  clauses, and values of Error, Display, Debug as their text. The
+  differences from the Go backend are listed in decision 0074 (a fault
+  in a handler exits; no TLS; no `http.stream`).
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
@@ -1070,7 +1095,16 @@ first, AST based prototype, since deleted) and
   (`gotchas/fiber-thread-local-address.md`). Generated code calls it as
   `rt.<name>` SSA calls (C function `xo_<name>`), passing values as
   lists of one; handles (Task, Scope, Chan, Mutex, Atomic, Listener,
-  Conn) are counted objects created shared.
+  Conn) are counted objects created shared. Runtime calls also take and
+  return Floats, return a Str (the object, its length through a last
+  pointer argument), and `rt.rs_*` calls take their Str operands as
+  string objects and consume the first (appending in place). xo_rt.c
+  ends by including `xo_std.c` (the native std intrinsics: strings,
+  numbers, durations, times, base64), which includes `xo_unicode.c`
+  (Go's case ranges, generated: `go test ./internal/llvm -run
+  TestUnicodeTables -golden-update`), `xo_json.c`, and `xo_http.c`;
+  builds write every `std/llrt/*.c` next to xo_rt.c and compile only
+  xo_rt.c.
 - Fault locations are `file:line:col` strings in the binary (no DWARF).
   Fault output has no Go frame lines and no crash bundle; the golden test
   compares fault messages after dropping those lines.

@@ -39,6 +39,26 @@ func CC() (string, error) {
 	return "", ErrNoCC
 }
 
+// writeRuntime writes the C runtime of the native backends (std/llrt:
+// xo_rt.c and the files it includes) into dir and returns the path of
+// xo_rt.c, the one file to compile.
+func writeRuntime(dir string) (string, error) {
+	files, err := fs.Glob(std.LLRuntime, "llrt/*.c")
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		src, err := fs.ReadFile(std.LLRuntime, f)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(dir, filepath.Base(f)), src, 0o644); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, "xo_rt.c"), nil
+}
+
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
@@ -126,12 +146,8 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		if t != Host() {
 			continue
 		}
-		rtSrc, err := fs.ReadFile(std.LLRuntime, "llrt/xo_rt.c")
+		rt, err := writeRuntime(dir)
 		if err != nil {
-			return nil, err
-		}
-		rt := filepath.Join(dir, "xo_rt.c")
-		if err := os.WriteFile(rt, rtSrc, 0o644); err != nil {
 			return nil, err
 		}
 		cc, err := CC()

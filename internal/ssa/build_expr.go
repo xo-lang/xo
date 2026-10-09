@@ -265,10 +265,16 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 			}
 			continue
 		}
-		if isPreludeNamed(s.natCheck(p.Expr), "Duration", "Time", "Bytes") {
-			s.b.unsupported(p.Expr, "interpolating a `Duration`, `Time`, or `Bytes`")
-		}
+		ct := s.natCheck(p.Expr)
 		v := s.expr(p.Expr)
+		if isPreludeNamed(ct, "Duration", "Time", "Bytes") || !isBuiltinKind(v.Type) {
+			// Display text through build_show.go
+			if acc == nil {
+				acc = s.add(OpConst, st, "")
+			}
+			acc = s.appendDisplay(acc, v, ct, p.Expr)
+			continue
+		}
 		switch v.Type.Kind {
 		case KStr:
 		case KInt, KFloat:
@@ -418,9 +424,14 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 			c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
 			return s.add(o, boolT, nil, c, s.cint(0))
 		case KStruct, KTuple, KEnum, KList, KUnit:
-			if holdsColl(l.Type, map[*Type]bool{}) {
-				b.unsupported(x, "comparing values that hold a Map or Set")
-				return s.undef(boolT)
+			if holdsColl(l.Type, map[*Type]bool{}) && (o == OpEq || o == OpNe) {
+				// a Map or Set is equal to another with the same entries
+				// in any order (decision 0074)
+				eq := s.call(b.eqColl(l.Type), boolT, "", l, r)
+				if o == OpNe {
+					return s.add(OpNot, boolT, nil, eq)
+				}
+				return eq
 			}
 			// structural equality; backends generate a helper per type
 			if o == OpEq || o == OpNe {
@@ -576,6 +587,21 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 		}
 	case *ast.VariantPat:
 		vo := b.info.PatVariant(x)
+		if vo != nil && v.Type.Kind != KEnum && isNeverResult(s.apply(b.info.PatType(x))) {
+			// a Result[T, Never] is its T (decision 0074): Ok(p)
+			// matches p against it, Err never matches
+			if vo.Name == "Err" {
+				s.jump(fail)
+				s.dead()
+				return
+			}
+			if vo.Name == "Ok" && len(x.Fields) == 1 {
+				if x.Fields[0].Pattern != nil {
+					s.pattern(v, x.Fields[0].Pattern, fail)
+				}
+				return
+			}
+		}
 		tag := -1
 		if vo != nil && v.Type.Kind == KEnum {
 			tag = v.Type.VariantIndex(vo.Name)

@@ -1,6 +1,6 @@
 # A function type return value takes the `uses` clause
 
-Status: Anticipated (seen in bench/paper/v0.2/05-rate-limiter/limiter.xo)
+Status: Observed (2026-10-08: the native intrinsic `rt.launder1` returned an effectful function type until its result was parenthesized; first seen in bench/paper/v0.2/05-rate-limiter/limiter.xo)
 
 In `pub fn rate_limit(l: Limiter, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses clock {`
 the parser attaches `uses clock` to the returned function type, because a

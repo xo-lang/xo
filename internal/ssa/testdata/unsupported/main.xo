@@ -1,5 +1,10 @@
+fn head(xs: List[Int]) -> Int {
+  match xs {
+    [first, ..] => first
+    [] => 0
+  }
+}
+
 fn main(os: Os) {
-  let m = {"a": 1}
-  let n = {"a": 1}
-  os.stdio.println("${m == n}")
+  os.stdio.println("${head([3])}")
 }

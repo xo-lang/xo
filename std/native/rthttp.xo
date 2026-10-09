@@ -1,0 +1,79 @@
+// HTTP intrinsics of the native backends (decision 0074), like
+// native/rt.xo: imported only by the implementation modules as
+// `use native/rthttp`. std/llrt/xo_http.c implements them.
+use std/task
+
+/// A server's connections and the scope of their tasks (xo_srv).
+struct Srv {}
+/// One server connection (xo_hconn).
+struct HConn {}
+/// A client response or error (xo_cresp).
+struct CResp {}
+
+fn srv_new() -> Srv
+fn srv_group(s: Srv) -> task.Group
+fn srv_stop(s: Srv)
+fn srv_wait(s: Srv)
+fn srv_close(s: Srv)
+
+fn hc_new(s: Srv, c: Conn) -> HConn
+/// The next request is read (its body too); false: close the connection.
+fn hc_read(h: HConn) -> Bool
+fn hc_method(h: HConn) -> Str
+fn hc_path(h: HConn) -> Str
+fn hc_scheme(h: HConn) -> Str
+fn hc_host(h: HConn) -> Str
+/// The port of an absolute request target, or -1.
+fn hc_port(h: HConn) -> Int
+fn hc_nheaders(h: HConn) -> Int
+fn hc_hname(h: HConn, i: Int) -> Str
+fn hc_hval(h: HConn, i: Int) -> Str
+fn hc_nquery(h: HConn) -> Int
+fn hc_qkey(h: HConn, i: Int) -> Str
+fn hc_qval(h: HConn, i: Int) -> Str
+fn hc_body(h: HConn) -> Bytes
+fn hc_remote_ip(h: HConn) -> Str
+/// Sets a field of the response header.
+fn hc_header(h: HConn, name: Str, value: Str)
+/// Writes the response; false: close the connection.
+fn hc_respond(h: HConn, status: Int, body: Bytes) -> Bool
+fn hc_close(h: HConn)
+
+/// textproto.CanonicalMIMEHeaderKey.
+fn canonical_key(s: Str) -> Str
+/// strings.EqualFold (ASCII letters).
+fn equal_fold(a: Str, b: Str) -> Bool
+/// url.PathUnescape, "" when the escapes are invalid.
+fn path_unescape(s: Str) -> Str
+/// url.Parse (or ParseRequestURI when request): [] when it fails, else
+/// [scheme, hostname, port, path, raw query, host].
+fn url_parts(s: Str, request: Bool) -> List[Str]
+/// The error text of url.Parse(s).
+fn url_error(s: Str) -> Str
+/// url.ParseQuery: keys sorted with their first values, [k1, v1, ...].
+fn query_parts(raw: Str) -> List[Str]
+/// url.QueryEscape.
+fn query_escape(s: Str) -> Str
+/// strconv.Quote.
+fn go_quote(s: Str) -> Str
+
+/// Client: a request to url (absolute, http) with a header of names and
+/// values, a body, and a timeout in ns, following redirects as
+/// net/http's Client does.
+fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int) -> CResp
+/// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
+/// 3 Timeout, 4 Protocol, 5 Canceled).
+fn cr_err(r: CResp) -> Int
+fn cr_msg(r: CResp) -> Str
+fn cr_status(r: CResp) -> Int
+fn cr_nheaders(r: CResp) -> Int
+fn cr_hname(r: CResp, i: Int) -> Str
+fn cr_hval(r: CResp, i: Int) -> Str
+fn cr_body(r: CResp) -> Bytes
+
+/// Logging (std.md 6): the level and format of log.configure.
+fn log_level() -> Int
+fn log_json() -> Bool
+fn log_configure(level: Int, json: Bool)
+/// The time now as RFC 3339 (nano: with nanoseconds) in UTC.
+fn log_now(nano: Bool) -> Str

@@ -1,0 +1,17 @@
+// JSON intrinsics of the native backends (decision 0074), like
+// native/rt.xo: imported only by the implementation modules as
+// `use native/rtjson`. The parser and the scalar conversions are C
+// (std/llrt/xo_json.c); json_enc and json_dec are lowered by internal/ssa
+// to codecs it generates per type (build_json.go).
+use std/json
+
+/// The tape of the text (xo_json.c), or the empty list when the text is
+/// not valid JSON.
+fn json_parse(src: Bytes) -> List[Int]
+/// Why the text is not valid JSON (the text after "invalid JSON: ").
+fn json_parse_err(src: Bytes) -> Str
+
+/// acc + the JSON text of v.
+fn json_enc[T](acc: Str, v: T) -> Str
+/// The value of the tape node at i; the error's path is relative to it.
+fn json_dec[T](src: Bytes, tape: List[Int], i: Int) -> T ! json.DecodeErr

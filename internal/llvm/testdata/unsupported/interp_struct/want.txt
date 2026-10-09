@@ -1,1 +1,0 @@
-main.xo:7:28: the SSA builder does not support interpolating a value of type `P`

@@ -17,7 +17,7 @@ var update = flag.Bool("update", false, "rewrite the .ssa golden files")
 // lower checks the program in dir and builds and verifies its SSA.
 func lower(t *testing.T, dir string) *ssa.Module {
 	t.Helper()
-	res, ok, err := build.Check([]string{dir}, false)
+	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil || !ok {
 		var b strings.Builder
 		if res != nil {
@@ -101,13 +101,13 @@ func TestBench(t *testing.T) {
 // TestUnsupported checks that a construct outside the subset is an error
 // naming it and its position.
 func TestUnsupported(t *testing.T) {
-	res, ok, err := build.Check([]string{filepath.Join("testdata", "unsupported")}, false)
+	res, ok, err := build.CheckNative([]string{filepath.Join("testdata", "unsupported")}, false)
 	if err != nil || !ok {
 		t.Fatalf("check failed: %v", err)
 	}
 	_, err = ssa.Build(res)
-	if err == nil || !strings.Contains(err.Error(), "main.xo:") || !strings.Contains(err.Error(), "Map") {
-		t.Fatalf("got %v, want an error about Map with a position", err)
+	if err == nil || !strings.Contains(err.Error(), "main.xo:") || !strings.Contains(err.Error(), "list patterns") {
+		t.Fatalf("got %v, want an error about list patterns with a position", err)
 	}
 }
 

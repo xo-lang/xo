@@ -1,1 +1,0 @@
-main.xo:4:23: the SSA builder does not support comparing values that hold a Map or Set
