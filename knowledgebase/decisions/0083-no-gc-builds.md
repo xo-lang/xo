@@ -150,9 +150,11 @@ as stable diagnostics before anything is generated.
      report identical to the Go backend's (logs and virtual times
      included), and no allocation is live at exit. Built with `--no-gc`
      and served on a socket, it answers a scripted session (health,
-     notes, login, 401 and 400 cases, 20 concurrent creates) like the Go
-     backend's build and stops on SIGTERM with status 0 after logging
-     "stopped" (cmd/xo TestNoGCNotesServer; smoke test 2026-10-09).
+     notes, login, 401 and 400 cases) like the Go backend's build and
+     stops on SIGTERM with status 0 after logging "stopped" (cmd/xo
+     TestNoGCNotesServer); a manual smoke run on 2026-10-09 with curl
+     added 20 concurrent creates (21 notes listed after) on both native
+     backends.
 
 ## Consequences
 - `xo build --backend=llvm` of an unsupported program now fails with
