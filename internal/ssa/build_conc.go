@@ -74,7 +74,7 @@ func (b *builder) concType(obj *check.TypeObj, r *check.Named, at ast.Node) *Typ
 	switch {
 	case obj.Module.IsPrelude:
 		switch obj.Name {
-		case "Chan", "Mutex", "Atomic", "Scope", "Task":
+		case "Chan", "Mutex", "Atomic", "Scope", "Task", "Listener", "Conn":
 			name = obj.Name
 		}
 	case obj.Module.Path == "std/task" && obj.Name == "Group":
@@ -664,9 +664,12 @@ func (s *fn) concCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	switch key {
 	case "task.is_canceled":
 		return s.rt("is_canceled", boolT), true
-	case "task.with_timeout", "task.map_concurrent_until", "task.stop_requested", "task.stopping":
-		b.unsupported(x, "`task."+fo.Name+"` (the native backends have no clock or signals)")
-		return s.undef(nt), true
+	case "task.with_timeout":
+		return s.withTimeout(x, fo), true
+	case "task.stop_requested":
+		return s.rt("stop_requested", boolT), true
+	case "task.stopping":
+		return s.rt("task_stopping", nt, s.add(OpFuncAddr, intT, b.dropList(nt.Elems[0]))), true
 	case "Scope.spawn", "Scope.spawn_background", "Group.spawn", "Group.spawn_background":
 		h := s.expr(ci.Recv)
 		bg := strings.HasSuffix(key, "background")
@@ -969,11 +972,18 @@ func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
 	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
 	sel := s.rt("select_new", m.Handle("Select"))
 	recvs := make([]*Type, len(x.Arms)) // the Option a receive arm binds
+	// the index select_wait returns for each arm: channel arms are
+	// numbered in order, an `after` arm is -2
+	rtIdx := make([]int64, len(x.Arms))
+	n := int64(0)
 	for i, a := range x.Arms {
 		if a.After != nil {
-			b.unsupported(a, "`after` in `select` (the native backends have no clock)")
+			s.rt("select_after", nil, sel, s.valueAs(a.After, intT))
+			rtIdx[i] = -2
 			continue
 		}
+		rtIdx[i] = n
+		n++
 		call, ok := a.Op.(*ast.CallExpr)
 		var se *ast.SelectorExpr
 		if ok {
@@ -1007,7 +1017,7 @@ func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
 		res = join.AddParam(t)
 	}
 	for i, a := range x.Arms {
-		c := s.add(OpEq, boolT, nil, idx, s.cint(int64(i)))
+		c := s.add(OpEq, boolT, nil, idx, s.cint(rtIdx[i]))
 		yes, no := s.branch(c)
 		s.cur = yes
 		if ot := recvs[i]; ot != nil {

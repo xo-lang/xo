@@ -35,6 +35,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		return s.valueCall(x)
 	}
 	if ci.Fn.Module.IsStd {
+		if v, ok := s.ioCall(x, ci); ok {
+			return v
+		}
 		if v, ok := s.concCall(x, ci); ok {
 			return v
 		}

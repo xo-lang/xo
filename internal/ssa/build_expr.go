@@ -39,6 +39,8 @@ func (s *fn) expr(e ast.Expr) *Value {
 		return s.add(OpConst, m.Builtin(KFloat), f)
 	case *ast.StringLit:
 		return s.stringLit(x)
+	case *ast.DurationLit:
+		return s.durationLit(x)
 	case *ast.UnitExpr:
 		return s.unit()
 	case *ast.Ident:
@@ -251,6 +253,9 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 				cat(s.add(OpConst, st, p.Text))
 			}
 			continue
+		}
+		if isPreludeNamed(s.natCheck(p.Expr), "Duration", "Time", "Bytes") {
+			s.b.unsupported(p.Expr, "interpolating a `Duration`, `Time`, or `Bytes`")
 		}
 		v := s.expr(p.Expr)
 		switch v.Type.Kind {

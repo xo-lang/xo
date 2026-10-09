@@ -223,11 +223,15 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KFloat)
 			case "Bool":
 				return m.Builtin(KBool)
-			case "Str":
+			case "Str", "Bytes":
+				// Bytes is an immutable byte string like Str (decision 0069)
 				return m.Builtin(KStr)
+			case "Duration", "Time":
+				// nanoseconds (decision 0069)
+				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio":
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":

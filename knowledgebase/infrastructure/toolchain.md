@@ -985,10 +985,17 @@ first, AST based prototype, since deleted) and
   (decision 0068): `scope`, `spawn`, `spawn_background`, `await`,
   `s.cancel()`, groups from `s.group()`, `task.is_canceled()`, `Chan`
   (send, recv, try_send, try_recv, close, len, `for x in ch`), `select`
-  without `after`, `Mutex` (`with`, `with_read`), and `Atomic`. Not yet:
-  `after`, `task.with_timeout` and the other std/task functions,
-  `Semaphore`, `Once`, `os.tasks`. `defer` since 2026-10-08 (decision
-  0070: inlined at every exit, shielded; a fault does not run it).
+  (with `after` since decision 0069), `Mutex` (`with`, `with_read`), and
+  `Atomic`. Not yet: `map_concurrent(_until)`, `isolate`, `Semaphore`,
+  `Once`, `os.tasks`. `defer` since 2026-10-08 (decision 0070: inlined
+  at every exit, shielded; a fault does not run it). Decision 0069 adds
+  `os.clock` (`now`, `sleep`, `since`), `task.with_timeout`,
+  `task.stop_requested`, `task.stopping`, `os.proc.set_grace`,
+  `os.env.get`, Duration (literals, arithmetic, `from_millis`,
+  `from_nanos`, `from_secs_int`, `millis`, `nanos`, `seconds`, `abs`) and
+  Time (`from_unix`, `from_unix_millis`, `unix`, `unix_millis`) as Int
+  nanoseconds, and Bytes as a Str (`Str.bytes`, `to_str`, `len`,
+  `is_empty`); interpolating a Duration, Time, or Bytes is not lowered.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
