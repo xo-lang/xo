@@ -1585,6 +1585,7 @@ typedef struct xo_worker {
 	uint32_t wakew; // futex word: set to 1 to wake the idle worker
 	struct xo_worker *idle_next;
 	uint64_t rng;
+	int nonext; // pool_push puts woken fibers in the ring (mutex_signal)
 	struct xo_fiber *fcache[XO_FCACHE]; // stacks to reuse (owner only)
 	int nfcache;
 } xo_worker;
@@ -1785,13 +1786,14 @@ static void *inject_pop(xo_worker *w) {
 }
 
 // pool_push queues t: a woken fiber goes to the waking thread's next
-// (the one there before moves to its ring), a new task to its ring, and
-// either from a thread without a record to the inject queue.
+// (the one there before moves to its ring) unless the thread asked for
+// its ring (nonext), a new task to its ring, and either from a thread
+// without a record to the inject queue.
 static void pool_push(void *t) {
 	xo_worker *w = w_get();
 	if (!w) {
 		inject_push(t);
-	} else if ((uintptr_t)t & 1) {
+	} else if (((uintptr_t)t & 1) && !w->nonext) {
 		__atomic_store_n(&w->next_at, mono_ns(), __ATOMIC_RELAXED);
 		void *old = __atomic_exchange_n(&w->next, t, __ATOMIC_SEQ_CST);
 		if (old) {
@@ -3365,6 +3367,23 @@ typedef struct {
 // backends"). A woken waiter checks again and waits again when another
 // context took m first (barging); the context that took it wakes the
 // next one when it releases, so no wake up is lost.
+// mutex_signal wakes a waiter of a Mutex into the waking thread's ring,
+// not its next: the waker still holds the thread for the rest of its
+// request, and a fiber in next waits for that (thieves leave next alone
+// for XO_NEXT_GRACE_NS) while the lock sits free; in the ring a spinning
+// worker takes it at once. Measured on bench/perf/http: p99 900 to 800
+// us (bench/results/perf-throughput-2026-10-08.md, "Native backends").
+static void mutex_signal(xo_park *p) {
+	xo_worker *w = w_get();
+	if (w) {
+		w->nonext = 1;
+	}
+	park_signal(p);
+	if (w) {
+		w->nonext = 0;
+	}
+}
+
 static void mutex_wake(xo_mutex *m) {
 	if (m->writer || !m->waiters.first) {
 		return;
@@ -3375,7 +3394,7 @@ static void mutex_wake(xo_mutex *m) {
 		}
 		for (xo_went *e = m->waiters.first; e; e = e->next) {
 			if (e->writer) {
-				park_signal(e->park);
+				mutex_signal(e->park);
 				return;
 			}
 		}
@@ -3383,7 +3402,7 @@ static void mutex_wake(xo_mutex *m) {
 	}
 	for (xo_went *e = m->waiters.first; e; e = e->next) {
 		if (!e->writer) {
-			park_signal(e->park);
+			mutex_signal(e->park);
 		}
 	}
 }
