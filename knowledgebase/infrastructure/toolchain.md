@@ -263,11 +263,15 @@ spans are half open (`end_col` is one past the last character), which matches
 the insertion fix example in core 10.2.
 
 `xo build` checks (errors and holes block the build), generates Go, and runs
-`go build -trimpath -tags=xo_gotimers -ldflags=-checklinkname=0` with
-`CGO_ENABLED=0` per target (the tag and flag link
-`runtime.timeSleepUntil` into std/rt for deadlock reports through Go
-calls, decision 0073, gotcha `go-runtime-timer-linkname.md`; Last
-verified: 2026-10-08 with Go 1.26.1); it prints one
+`go build -trimpath` with `CGO_ENABLED=0` per target. A program that binds
+a Go package with callback adapters (`NewGoCallback` in an
+`rt/xo_gobind_*.go`) also gets `-tags=xo_gotimers
+-ldflags=-checklinkname=0`, which link `runtime.timeSleepUntil` into std/rt
+for deadlock reports through Go calls (decision 0073); `XO_GOTIMERS=off`
+drops them, and a failed link of that symbol is retried without them with
+one warning line (`xo build: warning: deadlock detection through Go
+callbacks is off ...`; gotcha `go-runtime-timer-linkname.md`; Last
+verified: 2026-10-08 with Go 1.26.1). It prints one
 `os/arch: path` line per binary. `--targets=all` is linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, and
 `wasi/wasm32` (Go's wasip1/wasm). Binaries go to `-o` (a file for one

@@ -59,7 +59,9 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   proof also asks the Go runtime for its earliest pending timer
   (`runtime.timeSleepUntil` through `go:linkname`, `std/rt/gotimers_on.go`,
   built only with the tag `xo_gotimers` and `-ldflags=-checklinkname=0`,
-  which `xo build` passes). While a timer is pending nothing is reported;
+  which `xo build` passes only to programs with Go callback adapters,
+  retrying without them and warning once when the link fails). While a
+  timer is pending nothing is reported;
   the check looks again after its deadline, so a timer that releases the
   wait always fires first. The runtime's own waits that run beside the
   check (the monitor's and the replay's watchers, a test's real time
@@ -145,9 +147,15 @@ recordings printed other orders than the recording while reporting
     reports, possible missed or late ones.
   - Targets other than darwin and linux, and plain `go build`/`go test`
     of `std/rt`, cannot see Go timers and never report a deadlock
-    through a Go call. `xo build` links with `-checklinkname=0` to reach
-    `runtime.timeSleepUntil`; a Go release that renames it breaks every
-    `xo build` link (gotcha `go-runtime-timer-linkname.md`).
+    through a Go call, nor do programs built with `XO_GOTIMERS=off`.
+    `xo build` links with `-checklinkname=0` to reach
+    `runtime.timeSleepUntil` only when the program binds a Go package
+    with callback adapters (`needGoTimers`); a Go release that renames it
+    fails that link, and the build retries without the tag and prints
+    one warning (`build.GoTimersOff`): detection through Go calls is then
+    off (gotcha `go-runtime-timer-linkname.md`; tests
+    `internal/build/gotimers_test.go`, the missing symbol simulated by
+    the tag `xo_gotimers_missing`, `std/rt/gotimers_missing.go`).
   - Tests with real capabilities (`xo test --real`, no scheduler) do not
     detect it.
 - Cost: none on Go calls of threads without live foreign callbacks (one

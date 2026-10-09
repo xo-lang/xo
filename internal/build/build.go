@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -122,6 +123,8 @@ type Result struct {
 	// Go backend): the build id, the source hashes, the main module
 	// directory, and the options, for crash bundles and `xo replay`.
 	Info *Info
+	// Warnings are toolchain warnings printed during the build (GoTimersOff).
+	Warnings []string
 }
 
 // Info identifies a program build (core 11.2): a crash bundle and a trace
@@ -251,10 +254,16 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if len(targets) == 0 {
 		targets = []Target{Host()}
 	}
+	timers := needGoTimers(prog)
 	for _, t := range targets {
 		bin := binPath(dir, opts.Out, name, t, len(targets) > 1)
-		if err := goBuild(dir, bin, t, opts); err != nil {
+		warn, err := goBuildTimers(dir, bin, t, opts, timers)
+		if err != nil {
 			return nil, err
+		}
+		if warn != "" {
+			out.Warnings = append(out.Warnings, warn)
+			timers = false
 		}
 		out.Binaries[t] = bin
 	}
@@ -423,12 +432,64 @@ func (e *BuildError) Error() string {
 	return fmt.Sprintf("go build for %s failed (code generator bug):\n%s", e.Target, e.Output)
 }
 
-func goBuild(dir, bin string, t Target, opts Options) error {
-	// xo_gotimers and -checklinkname=0 let the runtime see pending Go
-	// timers (runtime.timeSleepUntil), so a Go timer that would release a
-	// Go call is never reported as a deadlock (std/rt/gotimers_on.go,
-	// decision 0073)
-	args := []string{"build", "-trimpath", "-tags=xo_gotimers", "-ldflags=-checklinkname=0", "-o", bin}
+// goTimersTags is the build tag list that links the runtime's view of
+// pending Go timers (std/rt/gotimers_on.go); tests add a tag that links a
+// missing symbol.
+var goTimersTags = "xo_gotimers"
+
+// GoTimersOff is the warning printed when a program with Go callbacks
+// links without the runtime's view of Go timers.
+const GoTimersOff = "xo build: warning: deadlock detection through Go callbacks is off: this Go toolchain does not link runtime.timeSleepUntil (decision 0073)"
+
+// needGoTimers reports whether the program binds a Go package with
+// callback adapters, so the runtime may need to see pending Go timers to
+// report a deadlock through a Go call. XO_GOTIMERS=off forces it off.
+func needGoTimers(prog *gen.Program) bool {
+	if os.Getenv("XO_GOTIMERS") == "off" {
+		return false
+	}
+	for p, src := range prog.Files {
+		if strings.HasPrefix(p, "rt/xo_gobind_") && bytes.Contains(src, []byte("NewGoCallback(")) {
+			return true
+		}
+	}
+	return false
+}
+
+// goBuildTimers is goBuild for a program that may need the runtime's
+// view of Go timers: it links runtime.timeSleepUntil through a linkname
+// (the tag and -checklinkname=0), and when that link fails (a Go release
+// without the symbol) builds again without it and warns once. Without
+// it, deadlocks through Go calls are never reported (no false reports).
+func goBuildTimers(dir, bin string, t Target, opts Options, timers bool) (warn string, err error) {
+	if !timers {
+		return "", goBuild(dir, bin, t, opts, nil)
+	}
+	err = goBuild(dir, bin, t, opts, []string{"-tags=" + goTimersTags, "-ldflags=-checklinkname=0"})
+	var be *BuildError
+	if errors.As(err, &be) && linknameFailed(be.Output) {
+		if err := goBuild(dir, bin, t, opts, nil); err != nil {
+			return "", err
+		}
+		fmt.Fprintln(os.Stderr, GoTimersOff)
+		return GoTimersOff, nil
+	}
+	return "", err
+}
+
+// linknameFailed reports whether go build output is a failed link of a
+// runtime symbol pulled by a linkname.
+func linknameFailed(out string) bool {
+	return strings.Contains(out, "relocation target runtime.") || strings.Contains(out, "invalid reference to runtime.") ||
+		(strings.Contains(out, "undefined") && strings.Contains(out, "runtime."))
+}
+
+func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
+	// extra: the tag and -checklinkname=0 that let the runtime see
+	// pending Go timers (goBuildTimers, std/rt/gotimers_on.go, decision
+	// 0073)
+	args := append([]string{"build", "-trimpath"}, extra...)
+	args = append(args, "-o", bin)
 	if opts.Race {
 		args = append(args, "-race")
 	}

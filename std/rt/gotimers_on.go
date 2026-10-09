@@ -15,7 +15,9 @@ import (
 // one: runtime.timeSleepUntil, which sysmon uses, returns its time (or
 // math.MaxInt64 when there is none) on the runtime.nanotime clock.
 // Linking it needs -ldflags=-checklinkname=0 and the build tag
-// xo_gotimers, which `xo build` passes (internal/build goBuild); plain
+// xo_gotimers, which `xo build` passes to programs with Go callback
+// adapters (internal/build goBuildTimers, which falls back without them
+// when the link fails); plain
 // `go build` and `go test` of this package get gotimers_off.go.
 
 //go:linkname runtimeTimeSleepUntil runtime.timeSleepUntil

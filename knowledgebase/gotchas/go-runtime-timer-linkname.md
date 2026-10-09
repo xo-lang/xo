@@ -19,16 +19,21 @@ Fix: `std/rt/gotimers_on.go` links `runtime.timeSleepUntil` (the earliest
 pending timer, as sysmon uses it) with `go:linkname`. The linker refuses
 that pull since Go 1.23 (`invalid reference to runtime.timeSleepUntil`)
 unless the program is linked with `-ldflags=-checklinkname=0`, so `xo
-build` passes it with the tag `xo_gotimers`, and plain `go test` of
+build` passes it with the tag `xo_gotimers`, only to programs that bind a
+Go package with callback adapters (others cannot deadlock through a Go
+call waiting for a callback), and plain `go test` of
 `std/rt` builds `gotimers_off.go` (timers unknown: never report). Nothing
 is reported while a timer is pending. The runtime's own concurrent waits
 moved off Go timers (`osSleep`: `select(2)` with a timeout, darwin and
 linux), or they would hold every check off forever.
 
 Anticipated: a Go release that renames or removes
-`runtime.timeSleepUntil` makes every `xo build` fail to link with
-`relocation target runtime.timeSleepUntil not defined`. Then point the
-linkname at the new name (search `src/runtime/proc.go` for the function
-sysmon calls to find the next timer) or drop the tag in
-`internal/build/build.go` goBuild, which turns deadlock reports through
-Go calls off.
+`runtime.timeSleepUntil` fails that link (`relocation target
+runtime.timeSleepUntil not defined`). `goBuildTimers` then builds again
+without the tag and prints one line, `xo build: warning: deadlock
+detection through Go callbacks is off: ...`; the program works, it just
+never reports deadlocks through Go calls (and never falsely). On that
+warning, point the linkname at the new name (search `src/runtime/proc.go`
+for the function sysmon calls to find the next timer). The fallback is
+tested with the tag `xo_gotimers_missing` (`std/rt/gotimers_missing.go`,
+`internal/build/gotimers_test.go`); `XO_GOTIMERS=off` forces the tag off.
