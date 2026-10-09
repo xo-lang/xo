@@ -87,7 +87,9 @@ static void serve(const char *in, int64_t n, nbuf *out) {
 		}
 		nbuf_str(&d, "\nheaders=");
 		hpair *s = malloc((size_t)(r->hdr.n ? r->hdr.n : 1) * sizeof(hpair));
-		memcpy(s, r->hdr.a, (size_t)r->hdr.n * sizeof(hpair));
+		if (r->hdr.n) {
+			memcpy(s, r->hdr.a, (size_t)r->hdr.n * sizeof(hpair));
+		}
 		qsort(s, (size_t)r->hdr.n, sizeof(hpair), hp_cmp);
 		for (int64_t i = 0; i < r->hdr.n; i++) {
 			if (i > 0) {

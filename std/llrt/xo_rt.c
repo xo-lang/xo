@@ -4141,6 +4141,26 @@ static int split_hostport(const char *a, char *host, size_t hn, char *port, size
 	return 0;
 }
 
+// port_out_of_range reports a numeric port above 65535. Darwin's
+// getaddrinfo rejects one; glibc's truncates it to 16 bits and binds
+// another port (gotchas/glibc-getaddrinfo-port-truncation.md).
+static int port_out_of_range(const char *port) {
+	long v = 0;
+	if (!port[0]) {
+		return 0;
+	}
+	for (const char *q = port; *q; q++) {
+		if (*q < '0' || *q > '9') {
+			return 0;
+		}
+		v = v * 10 + (*q - '0');
+		if (v > 65535) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // fmt_addr formats a socket address as "ip:port" or "[ip]:port"; an
 // unspecified address becomes the loopback address (std.md 3.2).
 static char *fmt_addr(const struct sockaddr *sa) {
@@ -4202,6 +4222,11 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 	char host[256], port[32];
 	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
 		net_fail(c, 4, "listen tcp %s: address %s: missing port in address", addr, addr);
+		free(addr);
+		return xo_h_zero();
+	}
+	if (port_out_of_range(port)) {
+		net_fail(c, 4, "listen tcp %s: address %s: invalid port", addr, port);
 		free(addr);
 		return xo_h_zero();
 	}
@@ -4349,6 +4374,11 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 	char host[256], port[32];
 	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
 		net_fail(c, 4, "dial tcp %s: address %s: missing port in address", addr, addr);
+		free(addr);
+		return xo_h_zero();
+	}
+	if (port_out_of_range(port)) {
+		net_fail(c, 4, "dial tcp %s: address %s: invalid port", addr, port);
 		free(addr);
 		return xo_h_zero();
 	}

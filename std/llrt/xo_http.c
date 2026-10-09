@@ -679,7 +679,9 @@ static void h_parse_query(const char *q, int64_t n, hlist *out) {
 		}
 		hl_add(out, k, v);
 	}
-	qsort(out->a, (size_t)out->n, sizeof(hpair), hp_cmp);
+	if (out->n > 1) {
+		qsort(out->a, (size_t)out->n, sizeof(hpair), hp_cmp);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,7 +1476,9 @@ static void hw_fields(nbuf *o, hlist *h, const char **excl, int nexcl) {
 	if (!s) {
 		xo_oom();
 	}
-	memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
+	if (h->n) {
+		memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
+	}
 	qsort(s, (size_t)h->n, sizeof(hpair), hp_cmp);
 	for (int64_t i = 0; i < h->n; i++) {
 		int skip = s[i].k.n == 0;
@@ -2094,7 +2098,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 			skip = 0;
 		}
 		int64_t used = 0;
-		int r = peek || skip ? HP_NEED : hp_head(hc->buf + hc->off, hc->n - hc->off, hc->eof, &hc->req, &used);
+		int r = peek || skip ? HP_NEED : hp_head(hc->buf ? hc->buf + hc->off : hc->buf, hc->n - hc->off, hc->eof, &hc->req, &used);
 		if (r == HP_NEED) {
 			if (hc->eof) {
 				skip = 0;
@@ -2808,7 +2812,7 @@ static int cl_read_response(ccon *c, const char *method, xo_cresp *r, char *why,
 		// the status line and the header, up to an empty line
 		int64_t end = -1;
 		for (;;) {
-			const char *b = c->buf + c->off;
+			const char *b = c->buf ? c->buf + c->off : c->buf;
 			int64_t n = c->n - c->off;
 			for (int64_t i = 0; i + 1 < n; i++) {
 				if (b[i] == '\n' && (b[i + 1] == '\n' || (b[i + 1] == '\r' && i + 2 < n && b[i + 2] == '\n'))) {
@@ -2832,7 +2836,7 @@ static int cl_read_response(ccon *c, const char *method, xo_cresp *r, char *why,
 				return f;
 			}
 		}
-		const char *b = c->buf + c->off;
+		const char *b = c->buf ? c->buf + c->off : c->buf;
 		// status line: HTTP/x.y code reason
 		const char *nl = memchr(b, '\n', (size_t)end);
 		int64_t ll = nl - b;

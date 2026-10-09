@@ -45,6 +45,9 @@ static void nbuf_grow(nbuf *b, int64_t need) {
 }
 
 static void nbuf_put(nbuf *b, const char *p, int64_t n) {
+	if (n <= 0) {
+		return; // b->p may still be NULL (UBSan: zero offset to null)
+	}
 	nbuf_grow(b, n);
 	memcpy(b->p + b->n, p, (size_t)n);
 	b->n += n;
