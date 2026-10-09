@@ -109,6 +109,7 @@ go run ./cmd/xo build --backend=arm64 -o .tools/xolex selfhost/lexer   # native 
 go run ./cmd/xo test selfhost/lexer                     # the Xo lexer's own tests (20, 6 of them property tests)
 go test ./internal/selfhost                             # Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
+scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
 bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
 go test ./std/rt -run '^$' -bench . -benchmem           # runtime micro benchmarks (Map put/get/update/iter/copy/fork, Set, Eq, Hash)
@@ -1282,10 +1283,43 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   default SDK does not link; on 2026-10-08 the default MacOSX27.0 SDK
   failed with "tapi error: unknown architecture arm64e.x1" and
   `-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`
-  linked). `XO_BUILD_DIR=<dir>` keeps the build directory (and the `.s`)
+  linked). On linux/arm64 the same tests link ELF and run every golden
+  (68 on 2026-10-09, `scripts/linux-test.sh arm64`). `XO_BUILD_DIR=<dir>` keeps the build directory (and the `.s`)
   where you want it. `regalloc` fails with "reads virtual register n
   before it is written" when MIR uses a register no path defines
   (`gotchas/arm64-mir-param-without-moves.md`).
+
+## Linux (containers)
+
+Last verified: 2026-10-09. Results: `bench/results/linux-2026-10-09.md`.
+
+- `scripts/linux-test.sh [arm64|amd64] [go test arguments...]` builds the
+  image `xo-linux-test:<arch>` from `bench/linux/Dockerfile`
+  (`golang:<host Go version>-trixie` plus Debian's clang 19, lld, and the
+  compiler-rt sanitizer runtimes) and runs the tests in a container that
+  is removed afterwards. The repository is mounted read only at `/src`;
+  the Go cache, `HOME` (so the xo build directory), and `TMPDIR` live in
+  the Docker volume `xo-linux-cache-<arch>` (`docker volume rm` it to
+  start cold). `GOFLAGS=-buildvcs=false` because the worktree's `.git`
+  points outside the mount.
+- Default arm64 run: `go vet ./...` then `go test -count=1 -p 2 ./...`
+  (about 6 min on an M series Mac): the Go backend on Linux, the LLVM and
+  arm64 backends' goldens linked as ELF and run (epoll poller, futex
+  parks, fibers, SIGTERM, TCP, HTTP), ThreadSanitizer, AddressSanitizer,
+  and UBSan.
+- Default amd64 run (emulated: Docker Desktop uses Rosetta, `/proc/cpuinfo`
+  says `VirtualApple`): `go test -short -p 2 ./...` then the full
+  `./internal/llvm` (x86-64 LLVM IR, the x86_64 fiber switch, epoll).
+  ThreadSanitizer cannot start there; the TSan tests run their programs
+  without it (`gotchas/tsan-under-x86-emulation.md`). The arm64 backend
+  only emits assembly on amd64.
+- Extra arguments replace the default, for example
+  `scripts/linux-test.sh arm64 -count=1 -p 1 -run 'ASan|HTTP' ./internal/llvm`.
+  Keep `-p` low: the Docker VM (8 GiB on 2026-10-09) runs out of memory
+  with parallel Go builds of the generated runtime
+  (`gotchas/docker-vm-memory-go-compile-killed.md`).
+- Requires Docker; the container gets `SYS_PTRACE` and no seccomp
+  profile (sanitizers). Containers are named `xo-linux-<arch>-<pid>`.
 
 ## Go interop (prototype)
 

@@ -154,3 +154,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-fmt-const-table-one-per-line.md](xo-fmt-const-table-one-per-line.md): `xo fmt` splits a multi line list one element per line; generated tables emit that layout.
 - [native-backends-no-bytes.md](native-backends-no-bytes.md): resolved by 0081: the native backends lower Bytes, sized integers, Rune, builders, slicing, and `fs.read`/`env.args`/`proc.exit`; selfhost/lexer builds natively.
 - [xo-build-relative-out.md](xo-build-relative-out.md): `xo build -o <relative>` wrote into the build cache (the compilers run there); fixed, `-o` is made absolute.
+- [glibc-getaddrinfo-port-truncation.md](glibc-getaddrinfo-port-truncation.md): glibc binds port 99999 as 34463; the native runtime checks the port range itself.
+- [glibc-nonnull-ubsan.md](glibc-nonnull-ubsan.md): UBSan on Linux flags `memcpy(p, NULL, 0)`, `qsort(NULL, 0, ...)`, and `NULL + 0`; guard zero lengths in std/llrt.
+- [tsan-under-x86-emulation.md](tsan-under-x86-emulation.md): TSan exits "memory layout is incompatible" in Rosetta amd64 containers; the tests fall back to plain builds.
+- [docker-vm-memory-go-compile-killed.md](docker-vm-memory-go-compile-killed.md): `compile: signal: killed` in the Docker VM is the OOM killer; run with `-p 2`.

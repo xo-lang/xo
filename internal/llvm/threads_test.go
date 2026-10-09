@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,14 +30,22 @@ import (
 var rtDir = filepath.Join("..", "..", "std", "llrt")
 
 // tsanBuild compiles srcs with ThreadSanitizer and extra flags, or skips
-// the test when the host's clang cannot.
+// the test when the host's clang cannot. Where ThreadSanitizer compiles
+// but cannot run, it compiles without it.
 func tsanBuild(t *testing.T, flags, srcs []string) string {
 	t.Helper()
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
 	bin := filepath.Join(t.TempDir(), "prog")
-	err := build.CompileC(append([]string{"-O1", "-g", "-fsanitize=thread"}, flags...), srcs, bin)
+	san := []string{"-fsanitize=thread"}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		// it compiles but cannot start (x86-64 emulation): still run the
+		// program, without the sanitizer
+		t.Logf("ThreadSanitizer does not run here, testing without it: %s", why)
+		san = nil
+	}
+	err := build.CompileC(append(append([]string{"-O1", "-g"}, san...), flags...), srcs, bin)
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 			t.Skipf("no ThreadSanitizer: %v", err)
@@ -43,6 +53,48 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 		t.Fatal(err)
 	}
 	return bin
+}
+
+var sanProbes sync.Map // sanitizer flag -> *sanProbe
+
+type sanProbe struct {
+	once sync.Once
+	why  string
+}
+
+// sanitizerRuns builds and runs an empty C program with a sanitizer flag
+// and returns why it built but did not run, or "". ThreadSanitizer compiles
+// but cannot start under x86-64 emulation on an arm64 host ("memory
+// layout is incompatible", gotchas/tsan-under-x86-emulation.md); such a
+// host skips the sanitizer tests instead of failing them.
+func sanitizerRuns(flag string) string {
+	v, _ := sanProbes.LoadOrStore(flag, &sanProbe{})
+	p := v.(*sanProbe)
+	p.once.Do(func() {
+		dir, err := os.MkdirTemp("", "xo-san")
+		if err != nil {
+			p.why = err.Error()
+			return
+		}
+		defer os.RemoveAll(dir)
+		src := filepath.Join(dir, "probe.c")
+		bin := filepath.Join(dir, "probe")
+		if err := os.WriteFile(src, []byte("int main(void) { return 0; }\n"), 0o644); err != nil {
+			p.why = err.Error()
+			return
+		}
+		if err := build.CompileC([]string{"-O1", flag}, []string{src}, bin); err != nil {
+			return // no such sanitizer: the real build reports it
+		}
+		if out, err := exec.Command(bin).CombinedOutput(); err != nil {
+			text := strings.TrimSpace(string(out))
+			if i := strings.IndexByte(text, '\n'); i >= 0 {
+				text = text[:i]
+			}
+			p.why = fmt.Sprintf("%v: %s", err, text)
+		}
+	})
+	return p.why
 }
 
 // runTSan runs bin and fails on a nonzero exit or a sanitizer report.

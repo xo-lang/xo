@@ -123,6 +123,9 @@ AArch64 assembly text, assembled and linked by the system C compiler
   on sort and interp.
 - linux/arm64 is not run in CI; the tests assemble its output as ELF with
   clang when available.
+  Update 2026-10-09: linked and run in a linux/arm64 container
+  (`scripts/linux-test.sh arm64`); every golden passes
+  (`bench/results/linux-2026-10-09.md`). Still not in CI.
 - Concurrency (tasks) will need the same atomic or per task counts as the
   LLVM backend.
 

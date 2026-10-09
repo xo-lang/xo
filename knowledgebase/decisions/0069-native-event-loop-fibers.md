@@ -94,6 +94,10 @@ does).
 - The Linux paths (epoll, x86_64 switch) compile in principle but were
   not built or run: no Linux host was available (2026-10-08); the x86_64
   switch assembles for Darwin.
+  Update 2026-10-09: built and run on linux/arm64 (native container,
+  ThreadSanitizer) and linux/amd64 (Rosetta emulation, no TSan): epoll,
+  futex, and the x86_64 switch pass the event loop tests and the goldens
+  (`bench/results/linux-2026-10-09.md`).
 - `dial` has no timeout yet (the Go backend's is 30 s).
 
 ## Alternatives
