@@ -27,6 +27,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   data (`--tzdata=system`), civil dates and times with explicit daylight
   saving gaps and overlaps, layouts with named fields checked at compile
   time (XO0420; XO0177 for `{yyyy}`, `%Y`, `2006-01-02` habits).
+- Import direction rules (decision 0095): `deny <pkg> -> <pkg>, ...`
+  lines in xo.mod with `/...` patterns, checked at every `use` line
+  (new code XO1312; a rule naming no package is XO1301), kept by `xo mod
+  tidy`; `xo query imports` and `xo query deps` list the `use` lines
+  (also in the MCP `query` tool).
 - `xo check --fix` (decision 0096): applies the unambiguous machine fixes
   (as `xo fix`), reformats, then reports what remains plus an `applied`
   list; the MCP `check` tool takes `fix`, and the bench harness agent

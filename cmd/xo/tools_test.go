@@ -208,6 +208,14 @@ func TestQueryCLI(t *testing.T) {
 		t.Errorf("api:\n%s", all)
 	}
 
+	imps := queryJSON(t, dir, "imports", dir)
+	if _, ok := imps["imports"].([]any); !ok || imps["transitive"] != false { // the program has no use lines
+		t.Errorf("imports = %v", imps)
+	}
+	if deps := queryJSON(t, dir, "deps", dir); deps["transitive"] != true {
+		t.Errorf("deps = %v", deps)
+	}
+
 	var out, errOut bytes.Buffer
 	if code := run([]string{"query", "callers", "nosuch", "--dir=" + dir}, &out, &errOut); code != 1 {
 		t.Errorf("unknown name: exit %d", code)

@@ -125,6 +125,29 @@ func TestResolution(t *testing.T) {
 			"xo.mod":       "module example.com/app\nedition 2026\n",
 			"main/main.xo": "use github.com/acme/billing/invoice\n\nfn f() -> Int { invoice.total() }\n",
 		}, want: []string{"XO1306"}},
+		{name: "deny rule forbids a use", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/store\n",
+			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store\n\npub fn f() -> Int { store.one() }\n",
+		}, want: []string{"XO1312"}},
+		{name: "deny pattern forbids a nested use", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/...\n",
+			"store/sql/a.xo": "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store/sql\n\npub fn f() -> Int { sql.one() }\n",
+		}, want: []string{"XO1312"}},
+		{name: "deny rule allows other uses", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/store -> example.com/app/domain\n",
+			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"domain/main.xo": "use example.com/app/store\n\npub fn f() -> Int { store.one() }\n",
+		}},
+		{name: "deny rule names a missing package", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/nope\n",
+			"domain/main.xo": "pub fn f() -> Int { 1 }\n",
+		}, want: []string{"XO1301"}},
+		{name: "malformed deny line", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain example.com/app/nope\n",
+			"domain/main.xo": "pub fn f() -> Int { 1 }\n",
+		}, want: []string{"XO1301"}},
 		{name: "missing package of the main module", files: map[string]string{
 			"xo.mod":       "module example.com/app\nedition 2026\n",
 			"main/main.xo": "use example.com/app/nope\n\nfn f() -> Int { nope.total() }\n",

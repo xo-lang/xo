@@ -395,6 +395,9 @@ func (c *checker) loadImports(m *Module) error {
 			if err != nil {
 				return err
 			}
+			if dep != nil && !m.IsStd {
+				c.checkDeny(m, u)
+			}
 			if dep == nil && c.unrequired(u) {
 				imp.Used = true
 			} else if dep == nil {

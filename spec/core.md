@@ -58,6 +58,10 @@ specified in std.md 13 (decision 0094).
   compile time: `XO0420` for an unknown field (10.6), `XO0177` for date
   patterns of other languages. Native backends report it as `XO1201`
   (planned).
+- Import direction rules (4.2, 10.3; decision 0095): `deny <pkg> ->
+  <pkg>, ...` lines in xo.mod, with `/...` patterns; a forbidden `use` is
+  the new error `XO1312` at that line, a rule naming no package is
+  `XO1301`. `xo query imports` and `xo query deps` list the `use` lines.
 - `xo check --fix` (10.1, 10.2; decision 0096) applies every unambiguous
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP
@@ -980,6 +984,37 @@ previous tag:
   those tags declares that path, and a require of a path without the
   suffix takes only v0 and v1 tags (`XO1301` otherwise).
 
+**[P1]** Import direction rules (decision 0095): `deny` lines state which
+packages of the module may not import which.
+
+```
+module example.com/notes
+
+deny example.com/notes/domain -> example.com/notes/store, example.com/notes/api
+deny example.com/notes/store -> example.com/notes/api/...
+```
+
+- `deny <pattern> -> <pattern>, ...`: a package matching the left pattern
+  may not `use` a package matching any pattern on the right. A pattern is
+  a package import path (of this module, a required module, or std), or
+  such a path ending in `/...`, which matches the path and every package
+  under it (`example.com/notes/...` is the whole module, so "`domain`
+  imports only std" is `deny example.com/notes/domain ->
+  example.com/notes/...`).
+- Every direct `use` line is checked, whether the import is used or not:
+  a forbidden one is error `XO1312` at the `use` line, naming the rule and
+  its xo.mod line; it has no machine fix (removing an import is a design
+  change). Transitive edges are not checked: a chain is caught at its
+  first forbidden step.
+- Rules apply to the packages of the module whose xo.mod holds them
+  (the main module, and each workspace module checked as one);
+  a dependency's rules are checked when it is built as a main module.
+- A malformed `deny` line, or a pattern that names no package, is
+  `XO1301` on its line. `xo mod tidy` and `xo get` keep `deny` lines.
+- `xo test` checks first, so a broken rule fails the tests too.
+  `xo query imports <package>` and `xo query deps <package>` list the
+  `use` lines (10.3).
+
 **[P1]** `gc` lines tune the garbage collector of a program whose main
 module this is (decision 0065); they are ignored in imported modules:
 
@@ -1600,7 +1635,7 @@ test "retries after 503" {
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=YYYY]` | Apply all machine fixes until none apply; `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
-| `xo query <kind> ...` | Semantic queries (10.3) |
+| `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
@@ -1731,7 +1766,16 @@ xo query callers users.fetch_user
 xo query effects api.get_user          // with the call chain per effect
 xo query holes
 xo query api github.com/acme/billing   // exported surface of a module
+xo query imports example.com/notes/domain   // its `use` lines
+xo query deps example.com/notes/server      // the same, transitively
 ```
+
+`imports` and `deps` (decision 0095) answer
+`{package, transitive, imports, packages}`: each entry of `imports` is a
+`use` line `{from, path, pos, std, go, test, missing, denied}`, where
+`denied` is the `XO1312` message when a `deny` rule forbids the line, and
+`packages` lists the distinct paths reached. `deps` follows every
+imported package of the program (not std or Go packages).
 
 ### 10.4 Semantic edits [P1: rename, add-field, change-sig]
 
@@ -1863,7 +1907,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
 | `XO1201` | error | no GC check | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
-| `XO1301` | error | modules | malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3) |
+| `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
 | `XO1304` | error | modules | module tree does not match its xo.lock content hash (core 4.3) |
@@ -1874,6 +1918,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
+| `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

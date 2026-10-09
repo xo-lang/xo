@@ -1,0 +1,9 @@
+use example.com/notes/store
+
+pub struct Note {
+  pub id: Int,
+}
+
+pub fn load(id: Int) -> Note {
+  Note { id: store.get(id) }
+}

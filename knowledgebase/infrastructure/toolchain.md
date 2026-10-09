@@ -85,7 +85,7 @@ go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bin
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
 go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
 go run ./cmd/xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]  # apply check fixes, migrate
-go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api (core 10.3)
+go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api, imports, deps (core 10.3)
 go run ./cmd/xo edit [--dry-run] [--dir=<dir>] <op> <args...>   # rename, add-field, change-sig (core 10.4); JSON summary, exit 1 when rejected
 go test ./internal/edit -run TestGolden -update          # rewrite internal/edit/testdata/*.golden
 go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
@@ -1771,8 +1771,8 @@ result (`isError` true for usage errors):
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `check` | `dirs` | `{ok, errors, warnings, modules, diagnostics}` (diagnostics with notes and fixes, core 10.2) |
-| `query` | `kind` (type, def, callers, effects, holes, api), `arg`, `dir` | the `xo query --json` answer |
+| `check` | `dirs`, `no_gc`, `fix` (decision 0096: apply the machine fixes first) | `{ok, errors, warnings, modules, diagnostics}` (diagnostics with notes and fixes, core 10.2), plus `applied` with `fix` |
+| `query` | `kind` (type, def, callers, effects, holes, api, imports, deps), `arg`, `dir` | the `xo query --json` answer |
 | `edit` | `op` (rename, add-field, change-sig), `args`, `dir`, `dry_run` | the `xo edit` summary `{op, target, ok, written, reason, files, edits, diagnostics, sites}` |
 | `explain` | `code` | `{code, severity, title, summary, detail, example, fix}` |
 | `fmt` | `paths`, `write` (default false: report only) | `{changed, unchanged, written, diagnostics}` |

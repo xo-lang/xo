@@ -1253,6 +1253,20 @@ fn stamp(t: Time) -> Str {
   time.format(t, time.utc(), "{year}-{month}-{day}")
 }`,
 	},
+	ImportDenied: {
+		Title: "import forbidden by a deny rule",
+		Detail: "A `deny <package> -> <package>, ...` line of xo.mod is an import direction rule: a package matching the left side may not `use` a package matching any pattern on the right. A pattern is a package path, or a path ending in `/...` that matches it and every package under it. " +
+			"Each direct `use` is checked, whether or not it is used, so a chain of imports is caught at its first forbidden step. The rules of the main module (and of each workspace module) apply to its own packages. " +
+			"There is no machine fix: removing an import is a design change. Move the code the package needs to a package it may import (often an interface or a plain data type in the lower layer), or change the rule if the architecture changed. `xo query imports <pkg>` lists the imports of a package with the `use` line of each. See core 4.2 and decision 0095.",
+		Example: `// xo.mod: deny example.com/notes/domain -> example.com/notes/store
+// domain/note.xo:
+use example.com/notes/store`,
+		Fix: `// domain declares what it needs; store implements it
+// domain/note.xo:
+pub interface NoteStore {
+  fn get(self, id: Int) -> Note ! NotFound
+}`,
+	},
 }
 
 // SeverityOf is the severity a code is reported with.

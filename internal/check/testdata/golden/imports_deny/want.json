@@ -1,0 +1,164 @@
+[
+  {
+    "code": "XO1312",
+    "severity": "error",
+    "message": "`example.com/notes/domain` may not import `example.com/notes/api`: denied by `deny example.com/notes/domain -\u003e example.com/notes/store, example.com/notes/api` (xo.mod line 3)",
+    "span": {
+      "file": "domain/extra.xo",
+      "line": 2,
+      "col": 1,
+      "end_line": 2,
+      "end_col": 26
+    },
+    "notes": [
+      {
+        "message": "the rule (decision 0095)",
+        "span": {
+          "file": "xo.mod",
+          "line": 3,
+          "col": 1
+        }
+      },
+      {
+        "message": "move what example.com/notes/domain needs into a package it may import, or change the rule; `xo query imports example.com/notes/domain` lists its imports"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0110",
+    "severity": "error",
+    "message": "import `example.com/notes/api` is never used",
+    "span": {
+      "file": "domain/extra.xo",
+      "line": 2,
+      "col": 1,
+      "end_line": 2,
+      "end_col": 26
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove the import",
+        "edits": [
+          {
+            "span": {
+              "file": "domain/extra.xo",
+              "line": 2,
+              "col": 1,
+              "end_line": 2,
+              "end_col": 26
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO1312",
+    "severity": "error",
+    "message": "`example.com/notes/domain` may not import `example.com/notes/store`: denied by `deny example.com/notes/domain -\u003e example.com/notes/store, example.com/notes/api` (xo.mod line 3)",
+    "span": {
+      "file": "domain/note.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 28
+    },
+    "notes": [
+      {
+        "message": "the rule (decision 0095)",
+        "span": {
+          "file": "xo.mod",
+          "line": 3,
+          "col": 1
+        }
+      },
+      {
+        "message": "move what example.com/notes/domain needs into a package it may import, or change the rule; `xo query imports example.com/notes/domain` lists its imports"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1312",
+    "severity": "error",
+    "message": "`example.com/notes/store` may not import `example.com/notes/api/v1`: denied by `deny example.com/notes/store -\u003e example.com/notes/api/...` (xo.mod line 4)",
+    "span": {
+      "file": "store/store.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 29
+    },
+    "notes": [
+      {
+        "message": "the rule; `example.com/notes/api/...` matches `example.com/notes/api/v1` (decision 0095)",
+        "span": {
+          "file": "xo.mod",
+          "line": 4,
+          "col": 1
+        }
+      },
+      {
+        "message": "move what example.com/notes/store needs into a package it may import, or change the rule; `xo query imports example.com/notes/store` lists its imports"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1301",
+    "severity": "error",
+    "message": "deny rule names `example.com/notes/ghost`, which is not a package of this module, of a required module, or of std",
+    "span": {
+      "file": "xo.mod",
+      "line": 5,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 1
+    },
+    "notes": [
+      {
+        "message": "a pattern is a package path, or a path ending in `/...` for every package under it (decision 0095)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1301",
+    "severity": "error",
+    "message": "deny rule names `example.com/notes/nowhere/...`, which is not a package of this module, of a required module, or of std",
+    "span": {
+      "file": "xo.mod",
+      "line": 6,
+      "col": 1,
+      "end_line": 6,
+      "end_col": 1
+    },
+    "notes": [
+      {
+        "message": "a pattern is a package path, or a path ending in `/...` for every package under it (decision 0095)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1301",
+    "severity": "error",
+    "message": "deny rule names `std/nosuch`, which is not a package of this module, of a required module, or of std",
+    "span": {
+      "file": "xo.mod",
+      "line": 6,
+      "col": 1,
+      "end_line": 6,
+      "end_col": 1
+    },
+    "notes": [
+      {
+        "message": "a pattern is a package path, or a path ending in `/...` for every package under it (decision 0095)"
+      }
+    ],
+    "fixes": []
+  }
+]

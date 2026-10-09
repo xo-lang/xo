@@ -29,6 +29,9 @@ type depState struct {
 	lists   []*mod.BuildList
 	// requires caches the Xo requirements of xo.mod directories.
 	requires map[string]map[string]bool
+	// denies holds the deny rules of main modules, by xo.mod directory
+	// (decision 0095).
+	denies map[string]*denyRules
 }
 
 // resolveDeps resolves the requirements of the main module at root and
@@ -54,7 +57,13 @@ func (c *checker) resolveDeps(root modRoot) {
 	for _, m := range bl.Modules {
 		d.depDirs[m.Dir] = m
 		c.findModRoot(m.Dir)
+		if m.Workspace && m.Dir != root.dir {
+			// a workspace module is checked as part of the program:
+			// its own deny rules apply to its packages
+			c.loadDenies(modRoot{dir: m.Dir})
+		}
 	}
+	c.loadDenies(root)
 }
 
 // modProblem reports a module problem as a diagnostic.

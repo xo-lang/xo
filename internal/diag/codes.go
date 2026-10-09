@@ -104,7 +104,7 @@ const (
 // internal/mod through the checker (on the xo.mod, xo.lock, or xo.work
 // line), and by `xo get`, `xo mod tidy`, `xo vendor`, and `xo build`.
 const (
-	ModFileInvalid     Code = "XO1301" // malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3)
+	ModFileInvalid     Code = "XO1301" // malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3)
 	ModuleFetch        Code = "XO1302" // module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path
 	ModuleOffline      Code = "XO1303" // module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)
 	ChecksumMismatch   Code = "XO1304" // module tree does not match its xo.lock content hash (core 4.3)
@@ -115,6 +115,7 @@ const (
 	EffectCeiling      Code = "XO1309" // call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)
 	BreakingRelease    Code = "XO1310" // `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one
 	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)
+	ImportDenied       Code = "XO1312" // `use` of a package that a `deny` rule of xo.mod forbids (decision 0095)
 )
 
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
@@ -190,7 +191,7 @@ var Descriptions = map[Code]string{
 	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
 	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",
 
-	ModFileInvalid:     "malformed xo.mod require, xo.lock, or xo.work line (core 4.2, 4.3)",
+	ModFileInvalid:     "malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3)",
 	ModuleFetch:        "module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path",
 	ModuleOffline:      "module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)",
 	ChecksumMismatch:   "module tree does not match its xo.lock content hash (core 4.3)",
@@ -201,6 +202,7 @@ var Descriptions = map[Code]string{
 	EffectCeiling:      "call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work)",
 	BreakingRelease:    "`xo publish`: a minor or patch release removes or changes an export, or adds an effect to one",
 	InvalidRelease:     "`xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path)",
+	ImportDenied:       "`use` of a package that a `deny` rule of xo.mod forbids (decision 0095)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 

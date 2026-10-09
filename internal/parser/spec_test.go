@@ -75,6 +75,7 @@ func elide(s string) string { return strings.ReplaceAll(s, "{ ... }", "{}") }
 var specSkips = map[string]string{
 	"as        break":        "keyword list (plain text)",
 	"module github.com/acme": "xo.mod file, not xo code",
+	"module example.com/":    "xo.mod file with deny lines, not xo code",
 	"gc min_heap 64MiB":      "xo.mod gc lines, not xo code",
 	"xo 2026":                "xo.work file, not xo code",
 	"ensures failed:":        "contract failure output sample",
