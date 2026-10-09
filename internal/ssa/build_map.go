@@ -17,9 +17,11 @@ import (
 //	                 empty): 0 empty, else an entry's index + 1
 //	n     Int        live entries
 //
-// A removed entry keeps its slot (lookups skip it) and drops its key and
-// value (replaced by zero values); when entries and removed entries would
-// fill three quarters of the table, put rebuilds it from the live entries.
+// A removed entry keeps its slot (lookups skip it), its key, and its
+// value until a rebuild (removing writes only the live flags, so removing
+// from a shared map copies no keys or values); when entries and removed
+// entries would fill three quarters of the table, put rebuilds it from
+// the live entries, which drops the removed ones.
 // The operations are functions generated per type (xo.map.*), and keys
 // hash with generated functions per type (xo.hash[T]). Iteration and
 // keys/values/entries/to_list follow insertion order, as on the Go
@@ -485,8 +487,12 @@ func (b *builder) mapRemove(t *Type, ot *Type, at ast.Node) string {
 			s.retv(s.add(OpTuple, rt, nil, mp, s.add(OpVariant, ot, ot.VariantIndex("None"))))
 		})
 		old := s.call("list.index", V, "", s.add(OpField, t.Fields[1].Type, 1, mp), idx)
-		keys := s.call("list.set", t.Fields[0].Type, "", s.add(OpField, t.Fields[0].Type, 0, mp), idx, s.zero(K, map[*Type]bool{}))
-		vals := s.call("list.set", t.Fields[1].Type, "", s.add(OpField, t.Fields[1].Type, 1, mp), idx, s.zero(V, map[*Type]bool{}))
+		// only the entry's live flag changes: its key and value stay (dead)
+		// until a rebuild drops them, so removing from a shared map copies
+		// the flags, not the keys and values with a count update of each
+		// (Mutex.with keeps the old map while a closure may still fail)
+		keys := s.add(OpField, t.Fields[0].Type, 0, mp)
+		vals := s.add(OpField, t.Fields[1].Type, 1, mp)
 		live := s.call("list.set", t.Fields[2].Type, "", s.add(OpField, t.Fields[2].Type, 2, mp), idx, s.bool(false))
 		n := s.add(OpSub, intT, nil, s.add(OpField, intT, 4, mp), s.cint(1))
 		slots := s.add(OpField, t.Fields[3].Type, 3, mp)
