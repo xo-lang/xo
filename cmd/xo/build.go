@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xo-lang/xo/internal/build"
@@ -76,6 +77,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	targets := fl.String("targets", "", "comma separated os/arch list, or all")
 	out := fl.String("o", "", "output binary (one target) or directory (several targets)")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
+	hybrid := fl.Bool("hybrid", false, "compile the hot leaf functions of the main module (loops over scalars and Lists of flat structs, no allocation) to Go assembler with the arm64 backend, keeping the Go runtime (Go backend, decision 0084); the tag xo_pure builds the Go versions")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
 	backendOf := backendFlag(fl)
@@ -108,10 +110,24 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
+	if *hybrid && backend != "go" {
+		fmt.Fprintln(stderr, "xo build: --hybrid needs the Go backend")
+		return 2
+	}
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
+	}
+	if h := res.Hybrid; h != nil && !*asJSON {
+		switch {
+		case h.Err != "":
+			fmt.Fprintf(stderr, "hybrid: no assembly (%s)\n", h.Err)
+		case len(h.Asm) == 0:
+			fmt.Fprintln(stderr, "hybrid: no function is eligible")
+		default:
+			fmt.Fprintf(stderr, "hybrid: %s in Go assembler\n", strings.Join(h.Asm, ", "))
+		}
 	}
 	if *asJSON {
 		bins := map[string]string{}

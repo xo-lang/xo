@@ -34,6 +34,9 @@ type fstate struct {
 	ranges  map[*ssa.Value]interval // intervals of Int values (ranges.go)
 	offs    map[vreg]offset         // registers that are another plus a constant (lsr.go)
 	dupOK   map[*mblock]bool        // moved latches copied at a branch into them (lsr.go dupLatch)
+	// Go mode (goasm.go): the length register of each List parameter,
+	// and the parameters a reuse makes unique (the Go wrapper does it)
+	goLens map[vreg]vreg
 	// register allocation results
 	loc     []loc
 	order   []*mblock
@@ -49,13 +52,17 @@ type fstate struct {
 
 func (g *gen) function(f *ssa.Func) {
 	s := &fstate{g: g, f: f, fp: []bool{false}, vals: map[*ssa.Value][]vreg{}, bmap: map[*ssa.Block]*mblock{},
-		nuses: map[*ssa.Value]int{}, users: map[*ssa.Value]*ssa.Value{}, lenParam: map[vreg]vreg{}, endMemo: map[*ssa.Block]*memo{}, lazy: map[*ssa.Value]bool{}}
+		nuses: map[*ssa.Value]int{}, users: map[*ssa.Value]*ssa.Value{}, lenParam: map[vreg]vreg{}, endMemo: map[*ssa.Block]*memo{}, lazy: map[*ssa.Value]bool{},
+		goLens: map[vreg]vreg{}}
 	s.isel()
 	s.dce()
 	s.threadConst()
 	s.threadCset()
 	s.thread()
-	s.jumpTables()
+	if !g.goMode {
+		// a jump table's addresses are data in the text section
+		s.jumpTables()
+	}
 	s.dce()
 	s.selectCompares()
 	s.hoistConsts()
@@ -156,6 +163,9 @@ func (s *fstate) checked(fp bool, text string, uses []vreg, recover string, cond
 // call adds a call of symbol sym (already prefixed) and returns the
 // result registers.
 func (s *fstate) call(sym string, args []src, res []bool) []vreg {
+	if s.g.goMode {
+		fail("a call of %s", sym)
+	}
 	defs := s.newVregs(res)
 	in := &inst{kind: iCall, sym: sym, srcs: args, defs: defs}
 	for _, a := range args {
@@ -172,6 +182,9 @@ func (s *fstate) call(sym string, args []src, res []bool) []vreg {
 }
 
 func (s *fstate) rt(name string, args []src, res ...bool) []vreg {
+	if s.g.goMode {
+		fail("runtime call %s", name)
+	}
 	return s.call(s.g.sym(name), args, res)
 }
 
@@ -273,6 +286,9 @@ func (s *fstate) fimm(bits uint64) vreg {
 // symAddr puts the address of a symbol in a register.
 func (s *fstate) symAddr(sym string) vreg {
 	g := s.g
+	if g.goMode {
+		fail("the address of %s", sym)
+	}
 	if g.os == Darwin {
 		return s.konst(s.def1(false, fmt.Sprintf("adrp $d0, %s@PAGE\nadd $d0, $d0, %s@PAGEOFF", sym, sym)))
 	}
@@ -420,7 +436,9 @@ func (s *fstate) isel() {
 			}
 		}
 		s.lsrHeader(b)
-		if i == 0 {
+		if i == 0 && s.g.goMode {
+			s.goEntry(b)
+		} else if i == 0 {
 			var defs []vreg
 			for _, p := range b.Params {
 				ws := s.newVregs(s.g.layout(p.Type))
@@ -622,6 +640,12 @@ func (s *fstate) set(v *ssa.Value, ws ...vreg) { s.vals[v] = ws }
 
 func (s *fstate) instr(v *ssa.Value) {
 	g := s.g
+	if g.goMode {
+		switch v.Op {
+		case ssa.OpClosure, ssa.OpCapture, ssa.OpCallValue, ssa.OpBox, ssa.OpUnbox, ssa.OpFuncAddr:
+			fail("op `%s`", v.Op)
+		}
+	}
 	switch v.Op {
 	case ssa.OpConst, ssa.OpCap:
 		return
@@ -754,26 +778,42 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpUnbox:
 		s.unboxOp(v)
 	case ssa.OpFault:
+		if g.goMode {
+			fail("fault with a message")
+		}
 		ws := s.words(v.Args[0])
 		d := s.def1(false, "add $d0, $u0, #16", ws[0])
 		s.add(&inst{kind: iCall, sym: g.sym("xo_fault"), srcs: []src{rsrc(d), rsrc(ws[1]), symsrc(g.loc(v.Pos))}, uses: []vreg{d, s.real(ws[1])}, noret: true})
 		s.add(&inst{kind: iTrap})
 	case ssa.OpRetain:
 		x := v.Args[0]
+		if g.goMode && x.Type.Heap() {
+			fail("reference counting")
+		}
 		if x.Op == ssa.OpConst || s.cancelRC(v) {
 			return // literals are immortal; see cancelRC
 		}
 		s.retain(x.Type, s.words(x))
 	case ssa.OpRelease:
 		x := v.Args[0]
+		if g.goMode && x.Type.Heap() {
+			fail("reference counting")
+		}
 		if s.cancel[v] {
 			return
 		}
 		s.release(x.Type, s.words(x))
 	case ssa.OpReuse:
+		if g.goMode {
+			s.goReuse(v)
+			return
+		}
 		s.reuse(v)
 	case ssa.OpShare:
 		x := v.Args[0]
+		if g.goMode {
+			fail("share")
+		}
 		if x.Op == ssa.OpConst {
 			return // literals are immortal
 		}
@@ -810,6 +850,10 @@ func (s *fstate) instr(v *ssa.Value) {
 		in.targets = []*mblock{s.edge(v.Succs[0]), s.edge(v.Succs[1])}
 		s.add(in)
 	case ssa.OpReturn:
+		if g.goMode {
+			s.goReturn(v)
+			return
+		}
 		var uses []vreg
 		for _, x := range v.Args {
 			uses = append(uses, s.words(x)...)
@@ -1225,6 +1269,7 @@ func (s *fstate) elemBase1(l, i vreg, es int64) vreg {
 // asInt).
 func (s *fstate) loadElem(base vreg, et *ssa.Type, asInt bool) []vreg {
 	m := s.m()
+	listHdr := s.hdr()
 	if et.Kind == ssa.KBool {
 		d := s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", listHdr), base)
 		m.loaded[d] = memAt{base, listHdr, m.epoch}
@@ -1259,6 +1304,7 @@ func (s *fstate) storeWords(v *ssa.Value) []vreg {
 
 func (s *fstate) storeElem(base vreg, et *ssa.Type, ws []vreg) {
 	m := s.m()
+	listHdr := s.hdr()
 	same := func(w vreg, off int) bool {
 		at, ok := m.loaded[w]
 		return ok && at == memAt{base, off, m.epoch}
@@ -1284,6 +1330,13 @@ func (s *fstate) listLen(l vreg) vreg {
 	m := s.m()
 	if n, ok := m.lens[l]; ok {
 		return n
+	}
+	if s.g.goMode {
+		// a Go slice's length is a parameter word, not in memory
+		if n, ok := s.goLens[l]; ok {
+			return n
+		}
+		fail("the length of a list not passed in")
 	}
 	n := s.def1(false, "ldr $d0, [$u0, #8]", l)
 	m.lens[l] = n
@@ -1358,6 +1411,10 @@ func (s *fstate) pmoveSrcs(dsts []vreg, srcs []src) {
 func (s *fstate) callOp(v *ssa.Value) {
 	g := s.g
 	name := v.Aux.(string)
+	if callee := g.byName[name]; callee != nil && g.goMode {
+		s.goCall(v, callee)
+		return
+	}
 	if callee := g.byName[name]; callee != nil {
 		var args []src
 		for _, x := range v.Args {

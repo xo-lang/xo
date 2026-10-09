@@ -616,7 +616,7 @@ func (pg *pkgGen) genFuncWith(fo *check.FuncObj, sp *specReq) {
 	fr.goRes = pg.goResult(fo)
 	fr.isResult = returnsResult(fo)
 	fg.fr = fr
-	var params []string
+	var params, pnames []string
 	// receiver
 	recv := ""
 	info := pg.g.info
@@ -648,6 +648,7 @@ func (pg *pkgGen) genFuncWith(fo *check.FuncObj, sp *specReq) {
 			pt = "*" + pt
 		}
 		params = append(params, name+" "+pt)
+		pnames = append(pnames, name)
 		fr.params = append(fr.params, paramRef{xo: pv.Name, code: fg.names[pv], t: fo.Params[i].Type})
 	}
 	tps := fo.TParams
@@ -691,10 +692,22 @@ func (pg *pkgGen) genFuncWith(fo *check.FuncObj, sp *specReq) {
 	if fr.goRes != "" {
 		sig += " " + fr.goRes
 	}
-	pg.p("%s", pg.g.lineDirective(fd))
-	pg.p("%s {", sig)
-	pg.out.WriteString(body)
-	pg.p("}\n")
+	wrapped := false
+	if hf, ok := pg.hybridFunc(fo); ok && sp == nil {
+		// a hybrid build (hybrid.go): the Go body goes to xo_pure.go when
+		// the function is wrapped
+		pg.genHybrid(fo, hf, name, pnames, sig)
+		if hf.Wrap {
+			fmt.Fprintf(&pg.hyb.pure, "%s\n%s {\n%s}\n\n", pg.g.lineDirective(fd), sig, body)
+			wrapped = true
+		}
+	}
+	if !wrapped {
+		pg.p("%s", pg.g.lineDirective(fd))
+		pg.p("%s {", sig)
+		pg.out.WriteString(body)
+		pg.p("}\n")
+	}
 	if sp != nil {
 		return // a copy calls the generic default functions
 	}

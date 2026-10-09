@@ -22,7 +22,28 @@ var (
 	fpCallee = []int{fpBase + 8, fpBase + 9, fpBase + 10, fpBase + 11, fpBase + 12, fpBase + 13, fpBase + 14, fpBase + 15}
 )
 
+// Go mode (goasm.go): Go's ABI0 saves no register across a call, and
+// x18 (platform), x26 (closure context), x27 (the assembler's
+// temporary), x28 (g), x29, and x30 are never touched; every other
+// register is allocatable and clobbered by calls.
+var (
+	goGP = []int{9, 10, 11, 12, 13, 14, 8, 7, 6, 5, 4, 3, 2, 1, 0, 19, 20, 21, 22, 23, 24, 25}
+	goFP = []int{fpBase + 16, fpBase + 17, fpBase + 18, fpBase + 19, fpBase + 20, fpBase + 21, fpBase + 22,
+		fpBase + 23, fpBase + 24, fpBase + 25, fpBase + 26, fpBase + 27, fpBase + 28,
+		fpBase + 7, fpBase + 6, fpBase + 5, fpBase + 4, fpBase + 3, fpBase + 2, fpBase + 1, fpBase + 0,
+		fpBase + 8, fpBase + 9, fpBase + 10, fpBase + 11, fpBase + 12, fpBase + 13, fpBase + 14, fpBase + 15}
+)
+
 func isCallee(r int) bool { return (r >= 19 && r <= 28) || (r >= fpBase+8 && r <= fpBase+15) }
+
+// regSets returns the caller saved and callee saved registers of the
+// target convention, in order of preference.
+func (s *fstate) regSets() (gpC, gpE, fpC, fpE []int) {
+	if s.g.goMode {
+		return goGP, nil, goFP, nil
+	}
+	return gpCaller, gpCallee, fpCaller, fpCallee
+}
 
 // loc is where a vreg lives: a physical register, or a spill slot.
 type loc struct {
@@ -132,6 +153,7 @@ func (s *fstate) regalloc() {
 	end := make([]int, n)
 	live := newBitset(n)
 	var calls []int
+	callAt := map[int]*inst{}
 	for k, b := range s.order {
 		live.copyFrom(liveOut[k])
 		for w, x := range live {
@@ -154,6 +176,7 @@ func (s *fstate) regalloc() {
 			at := 4 * (first + j)
 			if in.kind == iCall {
 				calls = append(calls, at+1)
+				callAt[at+1] = in
 			}
 			for _, d := range in.defs {
 				if d == 0 {
@@ -217,6 +240,9 @@ func (s *fstate) regalloc() {
 					}
 				}
 			case iCall:
+				if s.g.goMode {
+					continue // arguments and results go through memory
+				}
 				locs := s.abiLocs(in.srcs)
 				for k, a := range in.srcs {
 					if a.kind == sReg && a.v != 0 && locs[k].reg >= 0 {
@@ -229,12 +255,18 @@ func (s *fstate) regalloc() {
 					}
 				}
 			case iEntry:
+				if s.g.goMode {
+					continue
+				}
 				for k, l := range s.abiLocs(regs(in.defs...)) {
 					if l.reg >= 0 {
 						fixed[in.defs[k]] = append(fixed[in.defs[k]], l.reg)
 					}
 				}
 			case iRet:
+				if s.g.goMode {
+					continue
+				}
 				for k, l := range s.abiLocs(in.srcs) {
 					if a := in.srcs[k]; a.kind == sReg && a.v != 0 && l.reg >= 0 {
 						fixed[a.v] = append(fixed[a.v], l.reg)
@@ -302,12 +334,18 @@ func (s *fstate) regalloc() {
 		}
 		return order[a] < order[b]
 	})
+	gpC, gpE, fpC, fpE := s.regSets()
 	occ := make([][]rng, 64)
 	for _, c := range calls {
-		for _, r := range gpCaller {
+		if s.g.goMode {
+			// no register survives a call: the values live across one
+			// keep their registers and are saved around it (below)
+			break
+		}
+		for _, r := range gpC {
 			occ[r] = append(occ[r], rng{c, c})
 		}
-		for _, r := range fpCaller {
+		for _, r := range fpC {
 			occ[r] = append(occ[r], rng{c, c})
 		}
 	}
@@ -333,18 +371,18 @@ func (s *fstate) regalloc() {
 			}
 		}
 		if fp {
-			cands = append(cands, fpCaller...)
-			cands = append(cands, fpCallee...)
+			cands = append(cands, fpC...)
+			cands = append(cands, fpE...)
 		} else {
-			cands = append(cands, gpCaller...)
-			cands = append(cands, gpCallee...)
+			cands = append(cands, gpC...)
+			cands = append(cands, gpE...)
 		}
 		chosen := -1
 		for _, r := range cands {
 			if overlaps(occ[r], ranges[v]) {
 				continue
 			}
-			if isCallee(r) && !usedCallee[r] {
+			if !s.g.goMode && isCallee(r) && !usedCallee[r] {
 				// a callee saved register already saved before a fresh one
 				for _, r2 := range cands {
 					if isCallee(r2) && usedCallee[r2] && !overlaps(occ[r2], ranges[v]) {
@@ -362,10 +400,37 @@ func (s *fstate) regalloc() {
 			continue
 		}
 		s.loc[v] = loc{reg: chosen}
-		if isCallee(chosen) {
+		if !s.g.goMode && isCallee(chosen) {
 			usedCallee[chosen] = true
 		}
 		occ[chosen] = mergeRanges(append(occ[chosen], ranges[v]...))
+	}
+	if s.g.goMode {
+		// Go saves no register across a call: a value in a register
+		// that lives across one is stored to its own slot before the
+		// call and loaded after it (goEmitCall), so it keeps its
+		// register everywhere else (a whole life spill would put the
+		// loop counters of a recursive function in memory)
+		slot := map[vreg]int{}
+		for _, c := range calls {
+			in := callAt[c]
+			if in.noret {
+				continue
+			}
+			for _, v := range order {
+				if s.loc[v].reg < 0 || !overlaps(ranges[v], []rng{{c, c}}) {
+					continue
+				}
+				k, ok := slot[v]
+				if !ok {
+					k = s.slots
+					s.slots++
+					slot[v] = k
+				}
+				in.saves = append(in.saves, v)
+				in.saveSlots = append(in.saveSlots, k)
+			}
+		}
 	}
 	for v := 1; v < n; v++ {
 		s.loc[v] = s.loc[find(vreg(v))]

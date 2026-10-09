@@ -64,6 +64,9 @@ type Options struct {
 	// requests and responses, and collection temporaries that do not
 	// escape their expression are bump allocated in the request's arena.
 	Arenas bool
+	// Hybrid is the assembly of `xo build --hybrid` (hybrid.go,
+	// decision 0084); nil for a plain build.
+	Hybrid *Hybrid
 }
 
 // Program is the generated Go source of one Xo program: file paths
@@ -145,6 +148,16 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 			continue
 		}
 		prog.Specs += pg.ms.generated
+		if pg.hyb != nil {
+			files, err := pg.hybridFiles(pg.out.Bytes())
+			if err != nil {
+				return nil, err
+			}
+			for p, src := range files {
+				prog.Files[p] = src
+			}
+			continue
+		}
 		src, err := pg.file()
 		if err != nil {
 			return nil, err
@@ -269,6 +282,8 @@ type pkgGen struct {
 	// adapters in package main); noAdapt keeps it from recording types
 	// for the adapter registry (adapt.go).
 	noMono, noAdapt bool
+	// hyb is the hybrid output of the main module (hybrid.go)
+	hyb *hybridPkg
 }
 
 func pkgIdent(path string) string {

@@ -85,6 +85,12 @@ type inst struct {
 	// konst: a plain instruction that makes a constant (no uses but
 	// other constants)
 	konst bool
+	// Go mode (goasm.go): the memory of each definition (iEntry), of each
+	// source (iRet, iCall), and of each result (iCall)
+	gargs, gres []mloc
+	// Go mode: the registers saved around a call, and their slots
+	saves     []vreg
+	saveSlots []int
 }
 
 type mblock struct {

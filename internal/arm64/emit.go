@@ -11,6 +11,10 @@ type mloc struct {
 	reg  int // -1 for memory
 	base string
 	off  int
+	// Go mode (goasm.go): name is the argument's name when base is "FP"
+	// (`name+off(FP)`), and size 1 is a byte (a Bool argument)
+	name string
+	size int
 }
 
 type msrcKind int
@@ -100,6 +104,10 @@ func (s *fstate) vloc(v vreg, fr *frameInfo) (mloc, bool) {
 func (s *fstate) emit() {
 	g := s.g
 	g.nfunc++
+	if g.goMode {
+		s.goEmit()
+		return
+	}
 	fr := &frameInfo{}
 	for _, b := range s.order {
 		for _, in := range b.insts {
@@ -315,6 +323,10 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		s.parallel(b, ms, fr)
 	case iCall:
+		if s.g.goMode {
+			s.goEmitCall(b, in, fr)
+			return
+		}
 		s.parallel(b, s.callMoves(in.srcs, fr, "sp", 0), fr)
 		if in.indirect {
 			b.WriteString("\tblr x0\n")
@@ -338,6 +350,16 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		s.parallel(b, ms, fr)
 	case iEntry:
+		if s.g.goMode {
+			var ms []move
+			for k, d := range in.defs {
+				if dl, ok := s.vloc(d, fr); ok {
+					ms = append(ms, move{dl, msrc{kind: mLoc, l: in.gargs[k]}})
+				}
+			}
+			s.parallel(b, ms, fr)
+			return
+		}
 		var ms []move
 		for k, l := range s.abiLocs(regs(in.defs...)) {
 			src := mloc{reg: l.reg}
@@ -350,6 +372,15 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 		}
 		s.parallel(b, ms, fr)
 	case iRet:
+		if s.g.goMode {
+			var ms []move
+			for k, a := range in.srcs {
+				ms = append(ms, move{in.gargs[k], s.msrcOf(a, fr)})
+			}
+			s.parallel(b, ms, fr)
+			b.WriteString("\tret\n")
+			return
+		}
 		var ms []move
 		for k, l := range s.abiLocs(in.srcs) {
 			dst := mloc{reg: l.reg}
@@ -541,7 +572,9 @@ func (s *fstate) emitPlain(b *strings.Builder, in *inst, fr *frameInfo) {
 	}
 	out.WriteByte('\n')
 	b.WriteString(out.String())
-	if in.fault != nil {
+	if in.fault != nil && s.g.goMode {
+		s.goFaultStub(b, in, fr)
+	} else if in.fault != nil {
 		s.nstub++
 		l := s.g.local(fmt.Sprintf("f%d_fault%d", s.g.nfunc, s.nstub))
 		fmt.Fprintf(b, "\tb.%s %s\n", in.fault.cond, l)
@@ -619,7 +652,12 @@ func (s *fstate) parallel(b *strings.Builder, moves []move, fr *frameInfo) {
 	}
 }
 
-func memRef(l mloc) string { return fmt.Sprintf("[%s, #%d]", l.base, l.off) }
+func memRef(l mloc) string {
+	if l.base == "FP" {
+		return fmt.Sprintf("@%s+%d(FP)", l.name, l.off)
+	}
+	return fmt.Sprintf("[%s, #%d]", l.base, l.off)
+}
 
 func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 	g := s.g
@@ -645,9 +683,21 @@ func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 			fmt.Fprintf(b, "\tadd %s, sp, #%d\n", regName(r, false), fr.outOff)
 		}
 	}
+	if g.goMode && (src.kind == mSym || src.kind == mFrame) {
+		fail("a move of a symbol or frame address")
+	}
 	if src.kind != mLoc {
 		if dst.reg >= 0 {
 			put(dst.reg)
+			return
+		}
+		if dst.size == 1 {
+			if src.kind == mZero {
+				fmt.Fprintf(b, "\tstrb wzr, %s\n", memRef(dst))
+				return
+			}
+			put(scratch1)
+			fmt.Fprintf(b, "\tstrb w17, %s\n", memRef(dst))
 			return
 		}
 		if src.kind == mZero {
@@ -659,6 +709,20 @@ func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 		return
 	}
 	sl := src.l
+	if sl.size == 1 || dst.size == 1 {
+		// a Bool argument or result of Go mode: one byte in memory
+		switch {
+		case dst.reg >= 0 && sl.reg < 0 && dst.reg < fpBase:
+			fmt.Fprintf(b, "\tldrb %s, %s\n", regName(dst.reg, true), memRef(sl))
+		case sl.reg >= 0 && dst.reg < 0 && sl.reg < fpBase:
+			fmt.Fprintf(b, "\tstrb %s, %s\n", regName(sl.reg, true), memRef(dst))
+		case sl.reg < 0 && dst.reg < 0:
+			fmt.Fprintf(b, "\tldrb w17, %s\n\tstrb w17, %s\n", memRef(sl), memRef(dst))
+		default:
+			fail("a byte move between registers of different classes")
+		}
+		return
+	}
 	switch {
 	case dst.reg >= 0 && sl.reg >= 0:
 		dfp, sfp := dst.reg >= fpBase, sl.reg >= fpBase

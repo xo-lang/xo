@@ -103,6 +103,13 @@ type gen struct {
 	nfunc   int
 	text    strings.Builder
 	place   Layout
+	// Go mode (goasm.go): functions as Go assembler for Go backend builds
+	goMode   bool
+	goFuncs  map[string]*GoFunc // the functions emitted, by name
+	goPos    []string           // fault positions, indexed by the stubs
+	goPosIx  map[string]int
+	goSigs   map[string]*goSig
+	goWrites map[string][]int // the `var` List parameters each function writes
 }
 
 // Generate lowers a module (after InsertRC) to AArch64 assembly.
@@ -165,6 +172,9 @@ func (g *gen) sym(name string) string {
 
 // local is an assembler local label.
 func (g *gen) local(name string) string {
+	if g.goMode {
+		return "L" + name
+	}
 	if g.os == Darwin {
 		return "L" + name
 	}
@@ -174,6 +184,9 @@ func (g *gen) local(name string) string {
 // fname is the symbol of Xo function n: letters and digits are kept, `_`
 // is doubled, anything else is `_` and two hex digits.
 func (g *gen) fname(n string) string {
+	if g.goMode {
+		return "·" + goSym(n) + "(SB)"
+	}
 	var b strings.Builder
 	b.WriteString("xo_f_")
 	for i := 0; i < len(n); i++ {
@@ -257,6 +270,16 @@ func (g *gen) strObj(s string) string {
 
 // loc returns the label of the NUL terminated text of a fault position.
 func (g *gen) loc(s string) string {
+	if g.goMode {
+		// an index into the position table of the Go package
+		ix, ok := g.goPosIx[s]
+		if !ok {
+			ix = len(g.goPos)
+			g.goPos = append(g.goPos, s)
+			g.goPosIx[s] = ix
+		}
+		return fmt.Sprintf("@pos:%d", ix)
+	}
 	if l, ok := g.locs[s]; ok {
 		return l
 	}

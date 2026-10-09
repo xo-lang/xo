@@ -103,6 +103,12 @@ type Options struct {
 	// update takes the atomic path (ssa.InsertShareProbes, decision
 	// 0058).
 	ShareProbes bool
+	// Hybrid (`--hybrid`, decision 0084, Go backend programs) compiles
+	// the hot leaf functions of the main module to Go assembler with the
+	// arm64 backend (hybrid.go); HybridAll takes every eligible function
+	// (tests), and HybridPure builds the same directory with the Go
+	// versions (the tag xo_pure: the reference of differential tests).
+	Hybrid, HybridAll, HybridPure bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 }
@@ -132,6 +138,8 @@ type Result struct {
 	// Tests lists the test blocks of a native test binary (Mode Test on
 	// the llvm or arm64 backend, decision 0083), in their index order.
 	Tests []TestInfo
+	// Hybrid reports what a hybrid build compiled to assembly.
+	Hybrid *HybridInfo
 }
 
 // Info identifies a program build (core 11.2): a crash bundle and a trace
@@ -267,7 +275,11 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("unknown backend %q (want go, llvm, or arm64)", opts.Backend)
 	}
 	root := lineRoot(dirs)
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas})
+	var hyb *gen.Hybrid
+	if opts.Hybrid && opts.Mode == gen.Build {
+		hyb, out.Hybrid = hybridAsm(dirs, root, opts)
+	}
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb})
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +288,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		out.Info = buildInfo(dirs, res, root, opts)
 		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
 	}
-	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas)
+	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas, hyb != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +381,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 
 // buildDir is a stable directory per program and mode under the user
 // cache, so Go's build cache is reused across builds.
-func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool) (string, error) {
+func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, hybrid ...bool) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
 	if base == "" {
 		cache, err := os.UserCacheDir()
@@ -392,6 +404,9 @@ func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool) (string
 	}
 	if arenas {
 		fmt.Fprintf(h, " arenas")
+	}
+	if len(hybrid) > 0 && hybrid[0] {
+		fmt.Fprintf(h, " hybrid")
 	}
 	// layout 2 (2026-10-08) adds package main's xo_adapt.go; older xo
 	// binaries do not remove it, so they must not share the directory
@@ -527,6 +542,9 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 	// extra: the tag and -checklinkname=0 that let the runtime see
 	// pending Go timers (goBuildTimers, std/rt/gotimers_on.go, decision
 	// 0073)
+	if opts.HybridPure {
+		extra = withTag(extra, "xo_pure")
+	}
 	args := append([]string{"build", "-trimpath"}, extra...)
 	args = append(args, "-o", bin)
 	if opts.Race {
