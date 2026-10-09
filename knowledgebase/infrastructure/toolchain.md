@@ -63,7 +63,7 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] <dirs...>
-go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir...]
+go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [dir...]
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
@@ -127,6 +127,7 @@ MONO=1 bench/perf/run.sh                                # Xo --no-mono and Xo (d
 bench/perf/http/run.sh                                  # task 01 HTTP load: Go vs Xo --no-arenas (config xo) vs Xo with arenas (config xo-arenas, the default build; see Benchmark tooling)
 bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
 bench/perf/llvm/native.sh                               # same workloads: Go vs Xo --backend=llvm vs Xo --backend=arm64, time and peak RSS (arm64 host)
+bench/perf/hybrid/run.sh                                # Xo (Go backend) vs xo build --hybrid vs --backend=arm64: median wall ms and cycles of 7 interleaved runs (arm64 host, decision 0084)
 bench/perf/conc/run.sh                                  # concurrency: Go vs Xo (Go backend) vs llvm vs arm64 (and arm64 XO_THREADS=1); medians of wall, CPU, cycles, interleaved (see Benchmark tooling)
 python3 bench/perf/conc/profile.py p.trace 40 ./bin     # summarize an xctrace CPU Profiler trace by function (PROFILE_FUNC=name: hot offsets in one function)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
@@ -1300,6 +1301,56 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   where you want it. `regalloc` fails with "reads virtual register n
   before it is written" when MIR uses a register no path defines
   (`gotchas/arm64-mir-param-without-moves.md`).
+
+## Hybrid builds (Go backend with Go assembler)
+
+Last verified: 2026-10-09. Decision 0084; results
+`bench/results/go-asm-hybrid-2026-10-09.md`.
+
+- `xo build --hybrid` (Go backend, Build mode): `internal/build/hybrid.go`
+  runs the native check, SSA with reference counting, and
+  `arm64.GenerateGo` (Go mode, `internal/arm64/goasm.go`); a program
+  outside the SSA subset builds as plain Go (`HybridInfo.Err`). The CLI
+  prints `hybrid: f, g in Go assembler` on stderr. `build.HybridPlan`
+  reports the plan without building; `Options.HybridAll` takes every
+  eligible function (tests), `Options.HybridPure` builds the same
+  directory with tag `xo_pure`.
+- Eligible: free functions of the main module (no methods, generic
+  instances, `ensures` clauses, structs with invariants); parameters and
+  results Int, Float, Bool, structs of Int and Float fields, Lists of
+  those (and of Bool); `var` only on Lists; no allocation, no reference
+  count, no Str; calls only to eligible functions and the inline list
+  and scalar methods (`goMethods`). Selected (wrapped): eligible with a
+  loop. Rejection reasons are in `GoProgram.Rejected`.
+- Generated files in the main module's package: `xo.go` (the rest),
+  `xo_pure.go` (`//go:build !arm64 || xo_pure`, the Go versions),
+  `xo_hybrid.go` (`//go:build arm64 && !xo_pure`: ABI0 declarations
+  `func xoasm_f(p0 []Rec, p1 int64) (r0 int64)`, `//go:noescape` when the
+  function calls no Xo function, wrappers that `Unshared()` written `var`
+  Lists and pass `.Slice()`, `xoHybridFault` and the position table),
+  `xo_hybrid_arm64.s` (`//go:build !xo_pure`). Imports a file does not
+  name are left out of it (`usesIdent`).
+- Go mode differences from the native target: List word is the slice
+  base (`hdr()` 0), lengths are parameter registers (`goLens`); arguments
+  in memory (`name+off(FP)`, outgoing at 8(RSP)); registers x0 to x14,
+  x19 to x25, d0 to d28 all caller saved (x18, x26 to x30 untouched,
+  x15 to x17 and d29 to d31 the emitter's scratch); values live across a
+  call keep their register and are stored and reloaded around it
+  (`inst.saves`); frame `$outArgs+8*slots`, NOSPLIT unless the function
+  calls an Xo function, `NO_LOCAL_POINTERS` when it calls anything; no
+  jump tables; faults `CALL ·xoHybridFault(SB)` with (kind, a, b, c, pos),
+  kinds in `goFaultKind`, raised by `rt.HybridFault`.
+- `gosyntax.go` translates the GNU text line by line; `TestGoSyntaxEncoding`
+  (darwin/arm64 with cc) assembles every emitted form both ways and
+  compares the machine code (Go writes `mov x, #0` as `orr`).
+- Tests: `go test ./internal/gen -run 'TestGoldenHybrid|TestHybridRandom'`
+  (eligible goldens against want.txt, 12 random kernel programs (3 with
+  `-short`) against their `xo_pure` build, all four fault kinds; `go vet
+  -asmdecl` on each build directory). Use `-asmdecl` only: the generated
+  Go has unreachable code that plain `go vet` reports.
+- Profile a hybrid binary with `XO_CPUPROFILE=p.prof ./bin` and
+  `go tool pprof -top p.prof` (assembly functions appear as
+  `xoasm_<name>`).
 
 ## Linux (containers)
 

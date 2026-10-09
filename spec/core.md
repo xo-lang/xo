@@ -30,6 +30,8 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 - A rune literal where an integer type is expected is its code point
   (1.6); `Int(r)`, `Rune(n)`, and `Rune.try(n)` convert between `Rune` and
   the integer types (2.1; decision 0079).
+- `xo build --hybrid` compiles hot leaf loops to native assembly inside Go
+  backend builds (10.1; decision 0084).
 
 ## Changes in 0.6
 
@@ -1409,6 +1411,15 @@ fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network) with the same report as the Go backend; a fault fails only its test.
 Property tests and `--real` are not available there yet (XO1201, skipped),
 and error traces and fault frames are not recorded natively.
+
+**Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
+functions of the main module (a loop over `Int`, `Float`, `Bool`, and
+`List`s of those or of structs of `Int` and `Float` fields, with no
+allocation) to native assembly linked into the Go program; everything
+else, and every program the native backends cannot lower, stays Go.
+Behavior is the Go backend's, faults included, except that fault frames
+omit the assembly functions and `Float` results may differ in the last bit
+where the Go backend fuses a multiply and an add (decision 0084).
 
 ### 10.2 Diagnostic format
 

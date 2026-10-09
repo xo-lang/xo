@@ -48,7 +48,9 @@ import (
 // GoOptions configure GenerateGo.
 type GoOptions struct {
 	// All selects every eligible function, not only the hot ones (those
-	// with a loop or a call of an Xo function): differential tests.
+	// with a loop; a call heavy function without one, such as recursive
+	// fib, is faster as Go: ABI0 passes arguments in memory and every
+	// call runs Go's stack check prologue): differential tests.
 	All bool
 	// NoInline turns off the inlining of small leaf functions.
 	NoInline bool
@@ -565,7 +567,7 @@ func GenerateGo(m *ssa.Module, opts GoOptions) (prog *GoProgram, err error) {
 			if _, bad := prog.Rejected[f.Name]; bad {
 				continue
 			}
-			if opts.All || hasLoop(f) || len(deps[f.Name]) > 0 {
+			if opts.All || hasLoop(f) {
 				g.goFuncs[f.Name] = &GoFunc{Name: f.Name, Sym: GoSym(f.Name), Wrap: true}
 			}
 		}

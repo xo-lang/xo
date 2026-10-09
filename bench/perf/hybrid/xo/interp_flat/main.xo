@@ -1,0 +1,74 @@
+// bench/perf/llvm/xo/interp with the program as (op, operand) Int pairs
+// and the stack and slots allocated by the caller: the dispatch loop
+// reads and writes Lists of Int in place and allocates nothing, so
+// `xo build --hybrid` compiles it to Go assembler (decision 0084). Same
+// program and output as interp. Ops: 0 Push, 1 Load, 2 Store, 3 Add,
+// 4 Sub, 5 Mul, 6 Mod, 7 JumpIfZero, 8 Jump, 9 Halt.
+fn run(code: List[Int], var stack: List[Int], var slots: List[Int], n: Int) -> Int {
+  slots[0] = n
+  var sp = 0
+  var pc = 0
+  var steps = 0
+  while true {
+    steps += 1
+    let op = code[2 * pc]
+    let arg = code[2 * pc + 1]
+    match op {
+      0 => {
+        stack[sp] = arg
+        sp += 1
+      }
+      1 => {
+        stack[sp] = slots[arg]
+        sp += 1
+      }
+      2 => {
+        sp -= 1
+        slots[arg] = stack[sp]
+      }
+      3 => {
+        sp -= 1
+        stack[sp - 1] = stack[sp - 1] + stack[sp]
+      }
+      4 => {
+        sp -= 1
+        stack[sp - 1] = stack[sp - 1] - stack[sp]
+      }
+      5 => {
+        sp -= 1
+        stack[sp - 1] = stack[sp - 1] * stack[sp]
+      }
+      6 => {
+        sp -= 1
+        stack[sp - 1] = stack[sp - 1] % stack[sp]
+      }
+      7 => {
+        sp -= 1
+        if stack[sp] == 0 {
+          pc = arg - 1
+        }
+      }
+      8 => pc = arg - 1
+      _ => break
+    }
+    pc += 1
+  }
+  slots[1] * 1000 + steps % 1000
+}
+
+fn main(os: Os) {
+  // slot0 = n; slot1 = acc; while n != 0 { acc = (acc + n * n) % 1000003; n -= 1 }
+  let code = [
+    1, 0, 7, 19,
+    1, 1, 1, 0, 1, 0, 5, 0, 3, 0, 0, 1000003, 6, 0, 2, 1,
+    1, 0, 0, 1, 4, 0, 2, 0,
+    0, 0, 7, 0,
+    9, 0, 9, 0, 9, 0, 9, 0,
+  ]
+  var stack: List[Int] = []
+  for _ in 0..64 {
+    stack.push(0)
+  }
+  var slots = [0, 0, 0, 0]
+  os.stdio.println("interp ${run(code, stack, slots, 3000000)}")
+}

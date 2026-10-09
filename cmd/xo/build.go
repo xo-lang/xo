@@ -124,7 +124,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		case h.Err != "":
 			fmt.Fprintf(stderr, "hybrid: no assembly (%s)\n", h.Err)
 		case len(h.Asm) == 0:
-			fmt.Fprintln(stderr, "hybrid: no function is eligible")
+			fmt.Fprintln(stderr, "hybrid: no hot function is eligible (a loop over scalars and Lists of flat structs, no allocation)")
 		default:
 			fmt.Fprintf(stderr, "hybrid: %s in Go assembler\n", strings.Join(h.Asm, ", "))
 		}
