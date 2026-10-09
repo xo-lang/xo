@@ -1,6 +1,6 @@
 # Reading goroutine states to prove a deadlock through a Go call
 
-Status: Observed (2026-10-08, decision 0070)
+Status: Observed (2026-10-08, decision 0073)
 
 Symptom: the first version of `goQuiet` (std/rt/godeadlock.go) never
 confirmed the deadlock of `go_callback_deadlock_real`: the program hung

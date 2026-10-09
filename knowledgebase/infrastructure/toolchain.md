@@ -1168,7 +1168,9 @@ experiment of its work queue item 6. Results and coverage:
   stopped carrying the request's arena, decision 0066; 3 since
   2026-10-08, decision 0067: adapters call `GoEnter(tk)` and defer
   `GoExit(tk, name)`, and callbacks go through `rt.NewGoCallback(tk)`
-  with `cb.Begin()`/`cb.End(ctk)` per call) or another module version
+  with `cb.Begin()`/`cb.End(ctk)` per call; 4 since 2026-10-08, decision
+  0073: callback arguments are converted first and passed as
+  `cb.Begin(func() []any {...})`) or another module version
   than the pin. Pins: `require go <module> <version>` lines in xo.mod.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and
@@ -1184,7 +1186,9 @@ experiment of its work queue item 6. Results and coverage:
   goroutine is a child task with its own thread, decision 0067),
   `GoContext`, `GoListOf`/`GoSliceOf`/`GoMapOf`/`GoMapToGo` copies,
   `GoCollect` for iterators), `std/rt/godeadlock.go` (XO-F001 through Go
-  calls waiting for stuck callbacks, decision 0070). `curG` (goroutine identity) is assembly in
+  calls waiting for stuck callbacks, decision 0073), `std/rt/gosched.go`
+  (foreign callbacks admitted at settled decisions and recorded, decision
+  0073). `curG` (goroutine identity) is assembly in
   `std/rt/curg_amd64.s` and `curg_arm64.s` (the g register or TLS) with a
   `runtime.Stack` fallback in `curg_other.go`; `std/embed.go` embeds
   `rt/*.go rt/*.s`, so a new `.s` file in std/rt is copied into build
@@ -1194,11 +1198,13 @@ experiment of its work queue item 6. Results and coverage:
   (`TestGoBindingSignatures`: 20 std packages, every declaration's Go
   signature as gen calls it equals the adapter's), goldens `go_*` and
   `test_go_interop`, `test_go_callback_deadlock` and
-  `go_callback_deadlock_real` (decision 0070: a Go call waiting for a
+  `go_callback_deadlock_real` (decision 0073: a Go call waiting for a
   stuck callback is XO-F001, a sleeping one is not), `test_go_callback_task` (`-explore 40`, also under
   -race: a callback on Go's goroutine holds mutexes beside a test task and
   a request), `cmd/xo/bind_test.go`, `std/rt/gointerop_test.go`,
-  `std/rt/gocallback_test.go`.
+  `std/rt/gocallback_test.go`, `internal/gen/replay_gocallback_test.go`
+  (`TestReplayGoCallback`: seeds reproduce foreign callbacks, recordings
+  replay them; runs under -short too).
   The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the
   network or module cache and is skipped when `go mod download` fails. The
   golden and checker tests set `XO_GOBIND_DIR` to a temporary directory.

@@ -1,4 +1,4 @@
-// Deadlock detection through a Go call in a real run (decision 0070,
+// Deadlock detection through a Go call in a real run (decision 0073,
 // fault XO-F001): main holds Mutex `m` while a Go callback that Go runs on
 // a goroutine of its own (sync.WaitGroup.Go) waits for `m`, and waits in
 // Go (sync.WaitGroup.Wait) for that callback. The watchdog sees main

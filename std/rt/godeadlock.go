@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Deadlocks through Go calls (decision 0070). A task inside a Go call
+// Deadlocks through Go calls (decision 0073). A task inside a Go call
 // (`use go`) is running Go code, which no Xo wait record describes: Go may
 // be reading the network, sleeping, or waiting for an Xo callback that Go
 // runs on a goroutine of its own (sync.WaitGroup.Go then Wait). The last
@@ -164,7 +164,7 @@ func goParked(g string) bool {
 		moving = true
 	}
 	ours := false
-	top := ""
+	top, last := "", ""
 	// frames: a function line, then its file line
 	for i := 1; i < len(lines); i += 2 {
 		l := lines[i]
@@ -179,12 +179,19 @@ func goParked(g string) bool {
 		if k := strings.LastIndexByte(fn, '('); k > 0 && strings.HasSuffix(fn, ")") {
 			fn = fn[:k]
 		}
+		prev := last
+		last = fn
 		switch {
 		case strings.HasPrefix(fn, "os/signal."), strings.HasPrefix(fn, "testing.(*M)."), strings.HasPrefix(fn, "testing.(*T).Run"):
 			// waits for signals (which deadlock detection ignores), the
 			// go test driver
 			return true
 		case strings.HasPrefix(fn, rtPrefix):
+			if prev == "time.Sleep" && !strings.HasPrefix(fn, rtPrefix+"Go_") {
+				// a watcher of the runtime (the replay's, the monitor's)
+				// sleeping between looks; Go_ adapters are Go calls
+				return true
+			}
 			ours = true
 			if top == "" {
 				top = "rt"

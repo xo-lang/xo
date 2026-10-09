@@ -80,6 +80,7 @@ type GoCallback struct {
 	own *Task   // the task that passed the callback
 	tk  *Task   // own, without the request's arena (the synchronous case)
 	g   uintptr // own's goroutine
+	seq int64   // under the deterministic scheduler: its number (gosched.go)
 }
 
 // NewGoCallback is called where an Xo function crosses into Go as a
@@ -90,18 +91,28 @@ func NewGoCallback(tk *Task) *GoCallback {
 		cb.tk = &Task{node: tk.node, shield: tk.shield, held: tk.held, w: tk.w, stop: tk.stop, th: tk.th}
 	}
 	if tk != nil {
-		if th := tk.th; th != nil && !th.labeled && (th.mon != nil || th.sch != nil) {
-			// a deadlock report through a Go call locates the call from
-			// the goroutine profile (decision 0070); once per thread
-			labelThread(th)
+		if th := tk.th; th != nil {
+			if !th.labeled && (th.mon != nil || th.sch != nil) {
+				// a deadlock report through a Go call locates the call
+				// from the goroutine profile (decision 0073); once per
+				// thread
+				labelThread(th)
+			}
+			if s := th.sch; s != nil {
+				// numbered in the order the running thread passes them
+				s.armed.Store(true)
+				cb.seq = s.cbSeq.Add(1)
+			}
 		}
 	}
 	return cb
 }
 
 // Begin starts a call of the callback and returns the task it runs with;
-// the adapter defers End with it.
-func (cb *GoCallback) Begin() *Task {
+// the adapter defers End with it. args returns the call's Xo arguments
+// (nil: none); it is called only for a call on another goroutine under
+// the deterministic scheduler, which orders and records calls by them.
+func (cb *GoCallback) Begin(args func() []any) *Task {
 	o := cb.own
 	if o == nil || o.th == nil || o.node == nil {
 		return cb.tk
@@ -111,19 +122,25 @@ func (cb *GoCallback) Begin() *Task {
 		// Go code the task called calls back: the task leaves the Go call
 		// for the duration (it takes the scheduler's turn back if it lent
 		// it) and enters it again at End
-		goExit(th)
+		goLeave(th, false)
 		return cb.tk
 	}
-	ctk := &Task{w: o.w, stop: o.stop, th: th.newChild("callback")}
+	cth := new(thread)
+	if th.sch != nil {
+		// the scheduler gives the id when it admits the call (gosched.go)
+		th.initChildPending(cth, "callback")
+	} else {
+		th.initChild(cth, "callback")
+	}
+	ctk := &Task{w: o.w, stop: o.stop, th: cth}
 	ctk.node = newNodeOf(o.node, o.w, nodeTask, ctk)
-	cth := ctk.th
 	cth.cbOf = th
 	th.cbN.Add(1)
-	if cth.mon != nil || cth.sch != nil {
-		// Go's goroutine carries the label of the goroutine that started
-		// it: this thread's own replaces it (lazyStacks)
+	// Go's goroutine carries the label of the goroutine that started it:
+	// this thread's own replaces it (lazyStacks)
+	if cth.mon != nil && cth.sch == nil {
 		labelThread(cth)
-	} else if o.w == nil {
+	} else if o.w == nil || cth.sch != nil {
 		clearLabels()
 	}
 	if m := cth.mon; m != nil {
@@ -131,7 +148,13 @@ func (cb *GoCallback) Begin() *Task {
 		m.addCallback(cth)
 	}
 	if s := cth.sch; s != nil {
-		s.startCallback(cth)
+		a := &cbArrival{th: cth, tk: ctk, cb: cb}
+		if args != nil {
+			a.args = args()
+			a.enc = encodeArgs(a.args)
+		}
+		s.startCallback(a)
+		labelThread(cth)
 	} else if o.w != nil {
 		o.w.taskStarted()
 	}
@@ -227,6 +250,9 @@ func goEnter(th *thread) {
 	}
 	s.mu.Lock()
 	th.inGo.Add(1)
+	if s.armed.Load() {
+		s.goDirty = true
+	}
 	if s.cbLive.Load() > 0 && s.cur == th {
 		s.lendLocked(th)
 		s.pickLocked()
@@ -237,9 +263,15 @@ func goEnter(th *thread) {
 	}
 }
 
-// goExit records that th left a Go call; a thread that lent its turn
-// waits to get one again.
-func goExit(th *thread) {
+// goExit records that th's Go call returned.
+func goExit(th *thread) { goLeave(th, true) }
+
+// goLeave records that th left a Go call: it returned (ret), or Go calls
+// back on th's goroutine. A thread that lent its turn waits to be
+// admitted again (gosched.go). Once an Xo function crossed into Go, a
+// return is a scheduling point under the deterministic scheduler: Go's
+// goroutines the call woke settle, and the callbacks they call join.
+func goLeave(th *thread, ret bool) {
 	if th.cbN.Load() > 0 && th.mon != nil {
 		th.mon.gen.Add(1)
 	}
@@ -250,16 +282,26 @@ func goExit(th *thread) {
 	}
 	s.mu.Lock()
 	th.inGo.Add(-1)
-	if !th.lent.Load() {
+	armed := s.armed.Load()
+	if armed {
+		s.goDirty = true
+	}
+	switch {
+	case th.lent.Load():
+		th.lent.Store(false)
+		s.lentN--
+		s.pendRet = append(s.pendRet, th)
+		if s.cur == nil && !s.picking {
+			s.pickLocked()
+		}
+	case ret && armed && s.cur == th:
+		th.st = stReady
+		s.ready = append(s.ready, th)
+		s.cur = nil
+		s.pickLocked()
+	default:
 		s.mu.Unlock()
 		return
-	}
-	th.lent.Store(false)
-	s.lentN--
-	th.st = stReady
-	s.ready = append(s.ready, th)
-	if s.cur == nil && !s.picking {
-		s.pickLocked()
 	}
 	s.mu.Unlock()
 	<-th.turn

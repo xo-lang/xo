@@ -43,7 +43,8 @@ import (
 // The trace file is JSON lines: a header, the secrets, the effects, the
 // HTTP requests, the scheduler stream (`{"s": "1 1*4 2 t3 r1"}`: picks by
 // thread id with run lengths, t<id> timer, g signal, r<k> request, e<l>
-// and x<l> server ends), and the end (exit status, fault or error).
+// and x<l> server ends, c<n> a call of Go callback n admitted, gosched.go),
+// and the end (exit status, fault or error).
 
 const (
 	fxOff = iota
@@ -550,6 +551,20 @@ func (s *sched) replayLocked() bool {
 				return true
 			}
 			return true
+		}
+		if tok[0] == 'c' {
+			// a Go callback call (gosched.go): wait until it arrives
+			seq, err := strconv.ParseInt(tok[1:], 10, 64)
+			if err != nil {
+				p.fail("bad scheduler event " + strconv.Quote(tok))
+			}
+			if !s.replayArrivalLocked(seq) {
+				return true
+			}
+			p.ti++
+			p.runUsed = 0
+			p.decisions.Add(1)
+			continue
 		}
 		p.ti++
 		p.runUsed = 0

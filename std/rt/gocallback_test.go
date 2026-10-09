@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -46,7 +47,7 @@ func TestGoCallbackForeign(t *testing.T) {
 	GoEnter(tk)
 	done := make(chan *Task)
 	go func() {
-		ctk := cb.Begin()
+		ctk := cb.Begin(nil)
 		defer cb.End(ctk)
 		done <- ctk
 	}()
@@ -54,7 +55,7 @@ func TestGoCallbackForeign(t *testing.T) {
 	if ctk == tk || ctk.th == tk.th || ctk.held == tk.held || ctk.node.parent != tk.node {
 		t.Errorf("foreign call shares the task: %p %p", ctk, tk)
 	}
-	if got := cb.Begin(); got != tk {
+	if got := cb.Begin(nil); got != tk {
 		t.Errorf("synchronous call got another task")
 	} else {
 		cb.End(got)
@@ -65,7 +66,7 @@ func TestGoCallbackForeign(t *testing.T) {
 	}
 	// after the Go call, a call on the task's goroutine is not synchronous
 	// (a stored callback called later): it gets a task of its own
-	late := cb.Begin()
+	late := cb.Begin(nil)
 	if late == tk {
 		t.Errorf("call outside a Go call shares the task")
 	}
@@ -75,7 +76,7 @@ func TestGoCallbackForeign(t *testing.T) {
 // TestMonitorGoCallDeadlock: a real run's monitor reports a task blocked
 // in a Go call (sync.WaitGroup.Wait) for a foreign callback that waits
 // for a Mutex the task holds (XO-F001 with the Go call edge), and does
-// not report the same shape when the Go call sleeps (decision 0070).
+// not report the same shape when the Go call sleeps (decision 0073).
 func TestMonitorGoCallDeadlock(t *testing.T) {
 	cases := []struct {
 		name string
@@ -83,7 +84,7 @@ func TestMonitorGoCallDeadlock(t *testing.T) {
 		want bool
 	}{
 		{"wait", func(wg *sync.WaitGroup) { wg.Wait() }, true},
-		{"sleep", func(*sync.WaitGroup) { time.Sleep(400 * time.Millisecond) }, false},
+		{"sleep", func(*sync.WaitGroup) { Go_test_sleep(400 * time.Millisecond) }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,7 +106,7 @@ func TestMonitorGoCallDeadlock(t *testing.T) {
 					defer GoExit(tk, "test")
 					go func() {
 						defer wg.Done()
-						ctk := cb.Begin()
+						ctk := cb.Begin(nil)
 						defer cb.End(ctk)
 						Mutex_with(ctk, m, func(*Task, *int64) Result[Unit, Never] { return Ok[Unit, Never](Unit{}) })
 					}()
@@ -154,6 +155,8 @@ func TestGoParked(t *testing.T) {
 		{"go call reading the network", "goroutine 10 [IO wait]:\ninternal/poll.runtime_pollWait(0x1)\n\truntime/netpoll.go:1 +0x1\nnet.(*conn).Read(0x1)\n\tnet/net.go:1 +0x1\n" + rt + "Go_net_Conn.M_read()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:5 +0x1", false},
 		{"go call sleeping", "goroutine 11 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "Go_time_sleep()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:5 +0x1", false},
 		{"foreign goroutine", "goroutine 12 [sync.Mutex.Lock]:\nsync.(*Mutex).Lock(0x1)\n\tsync/mutex.go:1 +0x1\nmain.worker()\n\tw.go:1 +0x1", false},
+		{"go call sleeping inside Mutex.with", "goroutine 15 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "Go_time_sleep()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f.func1()\n\tmain.xo:5 +0x1\n" + rt + "Mutex_with[...]()\n\tx/rt/sync.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:4 +0x1", false},
+		{"runtime watcher sleeping", "goroutine 16 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", true},
 		{"running", "goroutine 13 [runnable]:\n" + rt + "x()\n\tx/rt/a.go:1 +0x1", false},
 		{"signals", "goroutine 14 [syscall]:\nos/signal.signal_recv()\n\truntime/sigqueue.go:149 +0x108\nos/signal.loop()\n\tos/signal/signal_unix.go:23 +0x1c", true},
 	}
@@ -163,3 +166,66 @@ func TestGoParked(t *testing.T) {
 		}
 	}
 }
+
+// schedCallbackOrder runs a test world task that hands three callbacks to
+// goroutines of its own, as sync.WaitGroup.Go does, and logs beside them
+// at scheduling points; it returns the log.
+func schedCallbackOrder(seed int64) string {
+	w := NewSchedWorld(seed)
+	tk := w.NewTask()
+	var mu sync.Mutex
+	var log []string
+	add := func(s string) {
+		mu.Lock()
+		log = append(log, s)
+		mu.Unlock()
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		cb := NewGoCallback(tk)
+		GoEnter(tk)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctk := cb.Begin(func() []any { return []any{int64(i)} })
+			defer cb.End(ctk)
+			for j := 0; j < 3; j++ {
+				add(fmt.Sprintf("cb%d.%d", i, j))
+				ctk.Yield()
+			}
+		}()
+		GoExit(tk, "go")
+		add(fmt.Sprintf("main%d", i))
+		tk.Yield()
+	}
+	GoEnter(tk)
+	wg.Wait()
+	GoExit(tk, "wait")
+	w.EndTask(tk)
+	return strings.Join(log, " ")
+}
+
+// TestSchedGoCallbackSeed: under the deterministic scheduler, callbacks
+// that Go calls on goroutines of its own interleave with the task as the
+// seed says: the same seed gives the same order every run (decision
+// 0073).
+func TestSchedGoCallbackSeed(t *testing.T) {
+	orders := map[string]bool{}
+	for seed := int64(1); seed <= 4; seed++ {
+		first := schedCallbackOrder(seed)
+		orders[first] = true
+		for i := 0; i < 10; i++ {
+			if got := schedCallbackOrder(seed); got != first {
+				t.Fatalf("seed %d run %d: %s\nfirst: %s", seed, i+2, got, first)
+			}
+		}
+	}
+	if len(orders) < 2 {
+		t.Errorf("4 seeds gave one order: %v", orders)
+	}
+}
+
+// Go_test_sleep stands for a Go adapter (named Go_...) that sleeps in Go.
+//
+//go:noinline
+func Go_test_sleep(d time.Duration) { time.Sleep(d) }

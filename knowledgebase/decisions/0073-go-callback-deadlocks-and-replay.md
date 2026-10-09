@@ -1,4 +1,4 @@
-# 0070: Deadlocks through Go calls, and seed reproducible, recorded Go callbacks
+# 0073: Deadlocks through Go calls, and seed reproducible, recorded Go callbacks
 
 Status: Accepted (2026-10-08). Closes the two gaps decision 0067 left.
 
@@ -65,6 +65,45 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   under the scheduler drop an inherited label. `xo dump` shows a task in
   a Go call as `in a Go call`, with its callback count.
 
+### 2. Foreign callbacks under the deterministic scheduler and in traces
+
+`std/rt/gosched.go`. Once an Xo function crossed into Go under the
+scheduler (`NewGoCallback`, which numbers each callback in the order the
+running thread passes them), the scheduler is armed:
+
+- **Admission at decisions.** A callback call that arrives on a goroutine
+  of Go's does not become ready at once: it waits in a pending list (its
+  goroutine blocked, no thread id yet), as does a thread whose lent Go
+  call returned. At each decision the scheduler first lets Go's
+  goroutines settle (every goroutine but the deciding one parked,
+  sleeping, or in a system call or I/O; at most 200 ms) and then admits
+  what arrived in a fixed order: returning threads by id, then callback
+  calls by callback number and encoded arguments; thread ids are given
+  at admission. So whatever Go code the program's own Go calls set off
+  has arrived before the seeded choice, wherever the Go runtime happened
+  to run it.
+- **Go call returns are scheduling points** once armed: callbacks Go
+  started during the call (`WaitGroup.Go`) join there, so they can
+  interleave with the caller as a spawned task does.
+- **A Go call that blocks for a callback.** A thread holding the turn in
+  a Go call keeps it; when a callback arrives meanwhile, a helper waits
+  until Go's goroutines settle and, if the thread is still in its Go
+  call, lends its turn (decision 0067's lending, now at a settled point
+  instead of the instant of arrival).
+- **Recording and replay.** Each admission is a scheduler stream token
+  `c<callback>` and an effect `go.callback` of the new thread with the
+  callback's Xo arguments (gobind format 4 converts the arguments before
+  `cb.Begin`, which takes them through a closure that runs only for a
+  foreign call under the scheduler). A replay admits, at that token, the
+  pending call of that callback whose encoded arguments match the
+  recorded effect, waiting for it to arrive; returns of Go calls are
+  matched by the picks that name their threads.
+
+Before: the replay program `testdata/replay/gocallback` printed 8
+different orders in 8 runs with `XO_SEED=3`, and replays of its
+recordings printed other orders than the recording while reporting
+`identical run`.
+
 ## Consequences
 
 - `go_callback_deadlock_real` exits 70 with the cycle; it first checks
@@ -88,6 +127,27 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   a real run; the stack read happens only when every task already looks
   blocked.
 
+- Part 2: `internal/gen` `TestReplayGoCallback` (same seed, same order
+  over 6 runs for 4 seeds, at least 2 orders; 4 recordings each with 4
+  `go.callback` entries replay to the same output, also with -race) and
+  `std/rt` `TestSchedGoCallbackSeed` (a test world). A deadlocked
+  recording through a Go call replays to the same XO-F001.
+- Part 2 limits: Go code woken by a Go timer or I/O of its own arrives
+  when it arrives (as timers and I/O always did under `xo run --seed`);
+  a settle gives up after 200 ms when some goroutine keeps running (a
+  busy Go goroutine makes every decision of an armed run that slow and
+  the order unreproducible); calls of one callback with equal arguments
+  on several goroutines are interchangeable; a Go call that never blocks
+  but runs while other threads take turns (lent) returns at the next
+  settled decision. Programs that never pass an Xo function to Go keep
+  their exact interleavings and traces; armed ones get a scheduling
+  point at every Go call return, so their interleavings for a seed
+  differ from before this decision.
+- Cost (part 2, deterministic scheduler only): one goroutine dump per
+  decision while Go code may have run since the last one (a Go call, a
+  callback's end, a lent thread, a pending arrival); nothing on real
+  runs. Real runs pay one closure (on the stack) per callback call.
+
 ## Alternatives
 
 - Treat every thread in a Go call as blocked when its callbacks are:
@@ -97,3 +157,11 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   by the network or a timer may still release it.
 - Record each Go call's site in `GoEnter`: about 200 ns per Go call, paid
   by every `strings` call; the profile label costs once per thread.
+- Admit a callback the instant it arrives (decision 0067): the decision
+  index it joins at depends on Go's goroutine timing.
+- Admit callbacks only when every Xo thread is blocked: reproducible
+  without dumps at Go call returns, but a callback would never run beside
+  ready threads, so `--explore` would miss most of its interleavings.
+- Let a replay call the callback itself from the trace: Go calls run for
+  real in a replay, so Go would call it too, and its other effects on Go
+  state would be missing.

@@ -805,7 +805,8 @@ fn main(os: Os) ! {
   on the calling task's goroutine, runs as the calling task. A call from
   another goroutine (`sync.WaitGroup.go_`, a timer) runs as a task of its own,
   a child of the calling task (canceled with it), with its own held mutexes
-  (decision 0067).
+  (decision 0067); under the deterministic scheduler such a call waits for
+  a turn like a spawned task and is recorded by `--record` (core 7.4, 11.3).
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.
@@ -1160,6 +1161,15 @@ seeds and reports the first failing seed. `xo run --seed=N` (or `XO_SEED=N` for
 any built binary) uses the same scheduler with the real clock; interleavings
 are then reproducible as long as timer and I/O timing does not decide them.
 
+An Xo function that Go calls on a goroutine of its own (`use go`, for
+example `sync.WaitGroup.go_`) runs as a scheduled task: Go's goroutine waits
+until the scheduler admits the call, which happens only at a scheduling
+point after Go's goroutines have settled, in a fixed order (by callback,
+then arguments), so the seed decides how callbacks interleave. Once an Xo
+function has crossed into Go, the return of every Go call is a scheduling
+point. Go code woken by a Go timer or I/O of its own is not reproducible
+(decision 0073).
+
 The deterministic scheduler belongs to the Go backend. Native builds
 (`--backend=llvm` and `--backend=arm64`, decision 0068) run tasks on the real
 scheduler only, on a pool of threads: `xo run --seed` is refused with them and
@@ -1440,7 +1450,11 @@ call and its result, plus scheduler decisions.
 - `xo run --record=trace.xotrace` (or `XO_RECORD=trace.xotrace` for any built
   binary) records a full run. Values of type `Secret[T]` are recorded redacted;
   `xo replay` then requires them from the environment and exits with status 3
-  naming the missing one. Calls into Go packages (`use go`) are not recorded.
+  naming the missing one. Calls into Go packages (`use go`) are not recorded
+  and run again in a replay; an Xo callback that Go calls on a goroutine of
+  its own is recorded (where the scheduler admitted it, with its arguments)
+  and replayed at the same point, and a replay diverges when Go calls it
+  with other arguments (decision 0073).
 - In production, a per request ring buffer (`XO_RING=N` requests) is kept and
   attached to crash bundles.
 - `xo replay trace.xotrace` (or a `.xocrash`) re executes the program offline
@@ -1468,7 +1482,7 @@ call and its result, plus scheduler decisions.
   shows the edge as `blocked in Go call sync.(*WaitGroup).Wait at ... for
   callback 3`. A Go call waiting on a Go channel, select, or timer is never
   reported, and a Go timer that would release the wait is not seen
-  (decision 0070). Native builds (decision 0068), which
+  (decision 0073). Native builds (decision 0068), which
   have no timers, I/O, or signals, report at once when every task is blocked
   and none is queued, with the fault's first line only (no location or list
   of blocked tasks yet).

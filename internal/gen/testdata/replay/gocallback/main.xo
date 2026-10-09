@@ -1,0 +1,28 @@
+// Go callbacks on goroutines of Go's under the deterministic scheduler
+// and record and replay (decision 0073): main hands four callbacks to
+// sync.WaitGroup.Go and logs beside them into a mutex guarded list; each
+// callback logs three entries and reads the clock. The order of the list
+// depends on the interleaving of main and the callbacks, which the seed
+// chooses; a recording logs each callback's entry, and a replay prints
+// the same order.
+use go "sync" as gosync
+
+fn main(os: Os) {
+  let order = Mutex[List[Str]].new([])
+  let wg = gosync.WaitGroup.new()
+  for name in ["a", "b", "c", "d"] {
+    wg.go_(fn() {
+      for i in 0..3 {
+        order.with(fn(var xs) { xs.push("${name}${i}") })
+      }
+      let t = os.clock.now()
+      order.with(fn(var xs) { xs.push("${name}@${t.unix_millis() > 0}") })
+    })
+    order.with(fn(var xs) { xs.push("main ${name}") })
+  }
+  for i in 0..3 {
+    order.with(fn(var xs) { xs.push("main${i}") })
+  }
+  wg.wait()
+  os.stdio.println(order.with(fn(xs) { xs }).join(" "))
+}

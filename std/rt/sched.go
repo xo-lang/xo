@@ -95,7 +95,7 @@ type thread struct {
 	inGo atomic.Int32
 	lent atomic.Bool
 
-	// Go callbacks on goroutines of Go's (decision 0070): cbOf is the
+	// Go callbacks on goroutines of Go's (decision 0073): cbOf is the
 	// thread of the task that passed the callback (on a callback's
 	// thread); cbN counts the live callback threads this thread passed
 	cbOf *thread
@@ -117,6 +117,14 @@ func (p *thread) initChild(th *thread, kind string) *thread {
 	if th.sch != nil {
 		th.turn = make(chan struct{}, 1)
 	}
+	return th
+}
+
+// initChildPending is initChild without the id, which the scheduler gives
+// when it admits the thread (gosched.go).
+func (p *thread) initChildPending(th *thread, kind string) *thread {
+	th.kind, th.ids, th.sch, th.mon, th.req = kind, p.ids, p.sch, p.mon, p.req
+	th.turn = make(chan struct{}, 1)
 	return th
 }
 
@@ -327,6 +335,20 @@ type sched struct {
 	moves      uint64
 	confirming bool
 	goDead     map[*thread][]*thread
+
+	// Go callbacks admitted at decisions (gosched.go): armed once an Xo
+	// function crossed into Go; cbSeq numbers the callbacks; pend holds
+	// callback calls and pendRet Go call returns that arrived from Go's
+	// goroutines, admitted at the next decision once Go's goroutines
+	// settled (goDirty: Go code may have run since the last settle);
+	// lending: a goroutine waits to lend the turn of a thread blocked in
+	// a Go call
+	armed   atomic.Bool
+	cbSeq   atomic.Int64
+	goDirty bool
+	pend    []*cbArrival
+	pendRet []*thread
+	lending bool
 }
 
 func newSched(mu *sync.Mutex, w *World, seed int64) *sched {
@@ -366,8 +388,16 @@ func (s *sched) pickLocked() {
 		if s.rec != nil {
 			s.drainLocked()
 		}
-		if s.rp != nil && s.replayLocked() {
-			return
+		if s.rp != nil {
+			s.admitReturnsLocked()
+			if s.replayLocked() {
+				return
+			}
+		}
+		if s.armed.Load() && (s.rp == nil || s.rp.ti >= len(s.rp.toks)) {
+			// Go callbacks (gosched.go): let Go's goroutines settle, then
+			// admit the callbacks and Go call returns that arrived
+			s.settleLocked()
 		}
 		if n := len(s.ready); n > 0 {
 			i := 0
@@ -529,29 +559,6 @@ func (s *sched) enter(th *thread) {
 	<-th.turn
 }
 
-// startCallback adds the thread of a Go callback called on a goroutine of
-// Go's and waits for its turn (gointerop.go). A thread that holds the
-// turn while inside a Go call lends it: the Go code may be waiting for
-// this callback.
-func (s *sched) startCallback(th *thread) {
-	s.mu.Lock()
-	s.cbLive.Add(1)
-	if c := s.cur; c != nil && c.inGo.Load() > 0 {
-		s.lendLocked(c)
-	}
-	s.startLocked(th)
-	s.mu.Unlock()
-	<-th.turn
-}
-
-// endCallback removes the thread of a Go callback.
-func (s *sched) endCallback(th *thread) {
-	s.mu.Lock()
-	s.cbLive.Add(-1)
-	s.endLocked(th)
-	s.mu.Unlock()
-}
-
 // lendLocked takes the turn from c, which is inside a Go call: it runs on,
 // off the scheduler, until it leaves the call (goExit). The caller picks
 // the next thread.
@@ -616,7 +623,7 @@ var realSched *sched
 //
 // A thread inside a Go call counts as blocked when it waits for foreign
 // Go callbacks that are all blocked, and the goroutines show that nothing
-// else can move (godeadlock.go, decision 0070).
+// else can move (godeadlock.go, decision 0073).
 type monitor struct {
 	live     atomic.Int64
 	blocked  atomic.Int64

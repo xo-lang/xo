@@ -26,5 +26,5 @@ thread, held set, and cancellation node (decision 0067). Older cached
 bindings are regenerated. A Go call that blocks waiting for a callback
 that waits for the caller's Mutex hung rather than being reported as a
 deadlock (the caller is in Go code, which no monitor saw); since decision
-0070 (2026-10-08) it is XO-F001 with the Go call edge when every
+0073 (2026-10-08) it is XO-F001 with the Go call edge when every
 goroutine's stack proves it (`std/rt/godeadlock.go`).

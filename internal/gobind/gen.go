@@ -527,13 +527,24 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	// that passed it (sync.WaitGroup.Go, a timer): rt.GoCallback decides
 	// per call which task it runs with, the passing task (without the
 	// request's arena, decision 0066) or a task of its own (decision 0067).
+	// The arguments are converted before Begin, which hands them to the
+	// deterministic scheduler for a call on another goroutine (decision
+	// 0073: calls are ordered and recorded by them).
 	return conv{xo: xo, rt: rt, gt: gt, toGo: func(e string) string {
 		args := []string{"ctk"}
+		var xs, conv []string
 		for i, pc := range pcs {
-			args = append(args, pc.toXo(fmt.Sprintf("b%d", i)))
+			a := fmt.Sprintf("c%d", i)
+			xs = append(xs, a)
+			conv = append(conv, a+" := "+pc.toXo(fmt.Sprintf("b%d", i))+"; ")
+			args = append(args, a)
 		}
 		call := e + "(" + strings.Join(args, ", ") + ")"
-		const begin = "ctk := cb.Begin(); defer cb.End(ctk); "
+		argf := "nil"
+		if len(xs) > 0 {
+			argf = "func() []any { return []any{" + strings.Join(xs, ", ") + "} }"
+		}
+		begin := strings.Join(conv, "") + "ctk := cb.Begin(" + argf + "); defer cb.End(ctk); "
 		fn := "func(" + strings.Join(gps, ", ") + ") { " + begin + call + " }"
 		if rc != nil {
 			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "return " + rc.toGo(call+".V") + " }"

@@ -145,7 +145,7 @@ func (w *World) schedIdleLocked() bool {
 	// a thread lent while in a Go call (gointerop.go) comes back when the
 	// call returns: not a deadlock, unless the call waits only for
 	// callbacks that are stuck and the goroutines show it cannot return
-	// (godeadlock.go, decision 0070)
+	// (godeadlock.go, decision 0073)
 	if len(w.sch.threads) > 0 {
 		if w.sch.lentN == 0 {
 			w.stuckOnce.Do(func() { close(w.stuck) })
