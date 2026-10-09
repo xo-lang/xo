@@ -85,7 +85,8 @@ a typical backend service need it, and does the spec promise it today.
 5. **`derive OpenApi` and `derive Proto`** (core 2.9). Promised as schema
    and codec generators; the names are accepted but no builtin type
    implements them and nothing is generated. Either build them or drop
-   them from the 1.0 text and keep the names reserved.
+   them from the 1.0 text and keep the names reserved. Decided by the
+   owner (2026-10-09): planned for after 1.0, not a 1.0 blocker.
 6. **FFI and replay of foreign calls** (core 6.1 `ffi`, 11.3; decision
    0093). The `ffi` effect has no meaning; Go calls are re executed in a
    replay, so replays of programs that do I/O through Go diverge.

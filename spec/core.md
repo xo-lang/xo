@@ -658,9 +658,10 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   (`fn (e: ApiErr) display() -> Str`) for user facing text.
 - `Json`, `OpenApi`, and `Proto` derives generate codecs and schemas from the
   same declaration so wire formats and docs cannot drift. JSON rules are in
-  `spec/std.md`. **[later]** `OpenApi` and `Proto` are reserved: the
-  derives are accepted only when every field derives them too (no builtin
-  type implements them yet), and nothing is generated.
+  `spec/std.md`. **[after 1.0]** `OpenApi` and `Proto` are planned for
+  after 1.0 (owner, 2026-10-09; additive, so not a 1.0 blocker): the
+  derives are reserved, accepted only when every field derives them too
+  (no builtin type implements them yet), and nothing is generated.
 - `SqlRow` (structs only) generates a decoder from a std/sql row: each field
   is read from the column of the same name (`spec/std.md` 10.4).
 
