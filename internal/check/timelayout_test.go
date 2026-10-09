@@ -26,3 +26,24 @@ func TestTimeLayoutAgrees(t *testing.T) {
 		}
 	}
 }
+
+// TestTimeLayoutRules: constant std/time layouts (XO0420, XO0177) and the
+// layouts the checker leaves to run time.
+func TestTimeLayoutRules(t *testing.T) {
+	pre := "use std/time\n\nfn f(t: Time, s: Str) -> Str {\n  "
+	runCases(t, []ruleCase{
+		{name: "unknown field", src: pre + "time.format(t, time.utc(), \"{yaer}\")\n}\n", want: []string{"XO0420"}},
+		{name: "bad field form", src: pre + "time.format(t, time.utc(), \"{month:long}\")\n}\n", want: []string{"XO0420"}},
+		{name: "stray brace", src: pre + "time.format(t, time.utc(), \"{year} }\")\n}\n", want: []string{"XO0420"}},
+		{name: "hour12 without ampm", src: pre + "time.format(t, time.utc(), \"{hour12}\")\n}\n", want: []string{"XO0420"}},
+		{name: "bad const layout", src: "use std/time\n\nconst L: Str = \"{dya}\"\n\nfn f(t: Time) -> Str {\n  time.format(t, time.utc(), L)\n}\n", want: []string{"XO0420"}},
+		{name: "check_layout constant", src: pre + "if time.check_layout(\"{frac:0}\").is_ok() { s } else { \"\" }\n}\n", want: []string{"XO0420"}},
+		{name: "letter habit", src: pre + "time.format(t, time.utc(), \"{yyyy}-{MM}\")\n}\n", want: []string{"XO0177"}},
+		{name: "strftime habit", src: pre + "time.format(t, time.utc(), \"%Y-%m-%d\")\n}\n", want: []string{"XO0177"}},
+		{name: "go reference habit", src: pre + "time.format(t, time.utc(), \"2006-01-02\")\n}\n", want: []string{"XO0177"}},
+		{name: "valid layout", src: pre + "time.format(t, time.utc(), \"{year}-{month}-{day} {lbrace}{rbrace}\")\n}\n"},
+		{name: "std constant", src: pre + "time.format(t, time.utc(), time.RFC1123)\n}\n"},
+		{name: "run time layout", src: pre + "time.format(t, time.utc(), \"{\" + s + \"}\")\n}\n"},
+		{name: "plain text layout", src: pre + "time.format(t, time.utc(), \"Date: {year}\")\n}\n"},
+	})
+}
