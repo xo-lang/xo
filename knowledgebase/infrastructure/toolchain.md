@@ -522,7 +522,9 @@ Last verified: 2026-10-07
   xo-arenas`; since decision 0066 `xo` builds with `--no-arenas` and
   `xo-arenas` with the default; `xo-base` builds with the binary in
   `XO_BASE` in its own build directory and that binary's default,
-  `xo-base-arenas` the same with `--arenas`), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
+  `xo-base-arenas` the same with `--arenas`; `xo-arm64` and `xo-llvm` build
+  with `--backend arm64` and `--backend llvm`, the native runtime of
+  decision 0074, verified to build and pass the smoke check on 2026-10-08), `XO`, `PERF_OUT`, `PRELOAD`, `PORT` (18080). The load
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
   `bench/results/perf-arenas-2026-10-08.md`,
   `bench/results/perf-throughput-2026-10-08.md`.
