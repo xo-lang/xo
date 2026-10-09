@@ -2,6 +2,7 @@ exit 0
 --- stdout
 200 hello xo
 200 {"len":6} application/json
+200 3000 3000
 404
 connect error
 invalid url

@@ -694,6 +694,11 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		} else {
 			body = readBody(hr)
 		}
+		// the body is read to its end: closing it tells net/http so, which
+		// otherwise drains it again after the handler (io.CopyN into
+		// io.Discard: a LimitReader and, whenever a GC emptied the pool,
+		// an 8 KiB buffer per request)
+		hr.Body.Close()
 		var h Map[string, string]
 		if a != nil {
 			h = a.strMap()
@@ -745,8 +750,16 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			a.resp = true
 		}
 		resp := s.r.call(reqTask, req)
+		wh := w.Header()
 		for k, v := range resp.F_headers.All() {
-			w.Header().Set(k, v)
+			wh.Set(k, v)
+		}
+		if n := len(resp.F_body); n > chunkingSize && resp.XStream == nil && bodyAllowed(resp.F_status) {
+			// a body net/http cannot hold in its 2 KiB buffer would go
+			// out chunked (a Fprintf per chunk); its length is known
+			if _, ok := wh["Content-Length"]; !ok {
+				wh["Content-Length"] = []string{strconv.Itoa(n)}
+			}
 		}
 		w.WriteHeader(int(resp.F_status))
 		if resp.XStream != nil {
@@ -844,6 +857,15 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		return Ok[Unit, Http_HttpErr](Unit{})
 	}
 }
+
+// chunkingSize is net/http's bufferBeforeChunkingSize: a response body up
+// to this size gets its Content-Length from net/http, a larger one without
+// a Content-Length header goes out chunked.
+const chunkingSize = 2048
+
+// bodyAllowed reports whether a response of this status has a body (RFC
+// 9110: not 1xx, 204, or 304).
+func bodyAllowed(status int64) bool { return status >= 200 && status != 204 && status != 304 }
 
 // serveCtx is what the request handler of serve needs from it, so the
 // handler's locals are not captured by closures (each captured local was

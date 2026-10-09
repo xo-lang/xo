@@ -24,6 +24,7 @@ type modRoot struct {
 	path    string
 	dir     string
 	edition int
+	gc      GCConfig
 }
 
 // localName derives a module's local name from an import path (core 4.1):
@@ -169,12 +170,17 @@ func (c *checker) findModRoot(dir string) (modRoot, bool) {
 	for d := abs; ; {
 		data, err := os.ReadFile(filepath.Join(d, "xo.mod"))
 		if err == nil {
-			r := modRoot{dir: d, edition: CurrentEdition}
+			r := modRoot{dir: d, edition: CurrentEdition, gc: NoGCConfig}
 			sc := bufio.NewScanner(bytes.NewReader(data))
 			for sc.Scan() {
 				fields := strings.Fields(sc.Text())
 				if len(fields) == 2 && fields[0] == "module" && r.path == "" {
 					r.path = fields[1]
+				}
+				if len(fields) >= 1 && fields[0] == "gc" {
+					if err := r.gc.parseGCLine(fields[1:]); err != nil && c.modErr == nil {
+						c.modErr = fmt.Errorf("%s: %v", filepath.Join(d, "xo.mod"), err)
+					}
 				}
 				if len(fields) >= 1 && fields[0] == "edition" {
 					arg := ""
@@ -234,9 +240,10 @@ func (c *checker) loadDir(dir string) (*Module, error) {
 		return m, nil
 	}
 	name, _ := localName(path)
-	m := &Module{Path: path, Name: name, Dir: dir, Scope: map[string]Object{}, Edition: CurrentEdition}
+	m := &Module{Path: path, Name: name, Dir: dir, Scope: map[string]Object{}, Edition: CurrentEdition, GC: NoGCConfig}
 	if r, ok := c.findModRoot(dir); ok {
 		m.Edition = r.edition
+		m.GC = r.gc
 	}
 	c.modules[path] = m
 	entries, err := os.ReadDir(dir)

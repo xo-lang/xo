@@ -636,7 +636,10 @@ enum HttpErr { Io(msg: Str), Canceled }
 `serve` runs until its scope is cancelled, then stops accepting, waits for
 in flight requests, and returns `Ok(())`. Each request runs as an isolated
 task with its own span and request id. Its memory may come from a request
-scoped arena (core 5.5, decision 0066), which no program can observe. To run a server alongside background
+scoped arena (core 5.5, decision 0066), which no program can observe. A
+response with a body (not 1xx, 204, or 304) that is not a stream is sent
+with a `Content-Length` header unless the handler set one; only streamed
+bodies use chunked transfer encoding. To run a server alongside background
 work:
 
 ```

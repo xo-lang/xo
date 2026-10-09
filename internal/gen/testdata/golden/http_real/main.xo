@@ -4,6 +4,7 @@ fn routes() -> http.Router {
   var r = http.router()
   r.handle("GET /hello/{name}", fn(req) { http.text(200, "hello ${req.param("name")}") })
   r.handle("POST /len", fn(req) { http.json(200, {"len": req.body.len()}) })
+  r.handle("GET /big", fn(req) { http.text(200, "x".repeat(3000)) })
   r
 }
 
@@ -17,6 +18,9 @@ fn main(os: Os) ! {
     os.stdio.println("${a.status} ${a.body.to_str() ?? ""}")
     let b = client.post_json("http://127.0.0.1:18732/len", "abcd")?
     os.stdio.println("${b.status} ${b.body.to_str() ?? ""} ${b.header("content-type") ?? ""}")
+    // a body over net/http's 2 KiB buffer still carries its length
+    let big = client.get("http://127.0.0.1:18732/big")?
+    os.stdio.println("${big.status} ${big.body.len()} ${big.header("content-length") ?? "chunked"}")
     let c = client.get("http://127.0.0.1:18732/missing")?
     os.stdio.println("${c.status}")
     match client.get("http://127.0.0.1:1/") {

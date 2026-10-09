@@ -764,6 +764,23 @@ edition 2026
 require github.com/acme/billing v1.4.0
 ```
 
+**[P1]** `gc` lines tune the garbage collector of a program whose main
+module this is (decision 0065); they are ignored in imported modules:
+
+```
+gc min_heap 64MiB      // floor of the heap goal
+gc percent 200         // GOGC: goal growth over the live heap, or `off`
+gc memory_limit 1GiB   // soft memory limit (GOMEMLIMIT)
+```
+
+Sizes take `B`, `KiB`, `MiB`, `GiB`, `TiB` (or `KB`, `MB`, `GB`, `TB`, powers
+of 1000). Without `gc` lines a program's heap goal is the live heap plus 100
+percent of it (as Go's GOGC=100), but never below a floor of 2 MiB per
+processor (`GOMAXPROCS`), at least 16 MiB; there is no memory limit. The
+environment always wins: `GOGC` set turns the floor off and sets the
+percent, `GOMEMLIMIT` replaces `memory_limit`, `XO_GC_MIN_HEAP` replaces
+`min_heap` (0 turns the floor off).
+
 ### 4.3 xo.lock
 
 Written only by the toolchain. Maps every imported definition actually used to

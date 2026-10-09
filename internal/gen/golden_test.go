@@ -111,6 +111,7 @@ func buildAndRunOpts(t *testing.T, dir string, opts build.Options, extra ...stri
 	args = append(args, extra...)
 	cmd := exec.Command(res.Binaries[build.Host()], args...)
 	cmd.Dir = dir
+	cmd.Env = goldenEnv()
 	if data, err := os.ReadFile(filepath.Join(dir, "stdin.txt")); err == nil {
 		cmd.Stdin = bytes.NewReader(data)
 	}
@@ -215,6 +216,19 @@ var (
 	goModOnce sync.Once
 	goModErr  error
 )
+
+// goldenEnv is the environment of a golden program: the host's without
+// the heap goal settings, which gc_config prints (decision 0065).
+func goldenEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "GOGC" && k != "GOMEMLIMIT" && k != "XO_GC_MIN_HEAP" {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
 
 // skipOffline skips a golden program that binds a third party Go module
 // (an xo.mod with `require go` lines) when the module cannot be downloaded

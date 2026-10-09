@@ -520,6 +520,18 @@ Last verified: 2026-10-07
   is closed loop (`gotchas/closed-loop-latency-confound.md`). Results:
   `bench/results/perf-arenas-2026-10-08.md`,
   `bench/results/perf-throughput-2026-10-08.md`.
+- Heap goal of built Xo programs (decision 0065, 2026-10-08): `RunMain`
+  keeps the GC goal at or above a floor (default 2 MiB per P, at least
+  16 MiB) with GOGC=100 growth above it, by setting the GC percent after
+  every cycle (std/rt/gc.go). `gc min_heap|percent|memory_limit` lines in
+  the main module's xo.mod change it; `GOGC` (turns the floor off),
+  `GOMEMLIMIT`, and `XO_GC_MIN_HEAP` (0: no floor) in the environment win.
+  So run.sh at default settings compares Go at GOGC=100 with Xo at its
+  floor; pass `GOGC=` to compare equal settings (both get it). allocs.sh
+  GC counts are taken at the default floor too. Last verified: 2026-10-08.
+- Execution trace (2026-10-08): `XO_TRACE=<file>` writes a `runtime/trace`
+  of the whole run when `RunMain` returns (stop a server with `kill <its
+  PID>`); read with `go tool trace <file>`. Last verified: 2026-10-08.
 - Profiling a built Xo program (2026-10-08): `XO_CPUPROFILE=<file>` writes
   a CPU profile of the whole run and `XO_BLOCKPROFILE=<file>` a block
   profile (where goroutines waited: locks, channels, select) when

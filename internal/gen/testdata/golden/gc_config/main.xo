@@ -1,0 +1,10 @@
+use go "runtime/debug"
+
+// The `gc` lines of xo.mod reach the runtime (decision 0065): a 48 MiB
+// floor is GOGC 1200 while the heap is small (Go's 4 MB minimum scaled
+// by 12), and the memory limit is set.
+fn main(os: Os) {
+  let p = debug.set_gc_percent(100)
+  let l = debug.set_memory_limit(-1)
+  os.stdio.println("percent ${p} limit ${l}")
+}

@@ -493,3 +493,102 @@ costs throughput there. Next experiments, ranked:
 2. Cut bytes per request at default GOGC (the size class and copy items
    listed above, starting with folding header and parameter tables into
    the reqBlock), rerunning this exact table at default GOGC.
+
+## 2026-10-08 (evening): GC frequency cause, heap goal floor, tail latency
+
+Branch `worktree-agent-a47e86d3f16fe8800`. Three changes, measured
+together against the binary of 1215044 (`xo-base`, arenas on):
+request bodies are closed after reading and bodies over 2 KiB carry
+`Content-Length` (3bb2c96, gotcha frequent-gc-empties-pools.md), and
+`RunMain` keeps the heap goal at or above 2 MiB per P, at least 16 MiB,
+with GOGC=100 growth above it (decision 0065; 24 MiB on this 12 P
+laptop).
+
+**Why Xo collected twice as often per byte.** `GODEBUG=gctrace=1,
+gcpacertrace=1` and `runtime/metrics` under the run.sh load: Go and Xo
+both run at the 4 MB minimum goal with the same live heap (1.54 and 1.49
+MB mean, no forced GCs, no finalizers, no `runtime.GC` or
+`FreeOSMemory`, recorder off, arena free list is a channel so arenas
+stay live and slightly raise Xo's goal). So the smaller-goal hypothesis
+is false. Per cycle the pacer's heap grew about 2.3 MB for both, but
+real allocation per cycle was 1.11 MB (Go) and 0.51 MB (Xo
+`--no-arenas`): the pacer counts each P's cached span whole, and that
+slack per cycle grows with GOMAXPROCS (headroom minus real allocation,
+P = 1 to 12: Go 0.37 to 1.35 MB, Xo 0.44 to 2.0 MB). Xo uses more size
+classes per request (54 against 43) and a GC every 1.3 ms empties every
+sync.Pool, which made net/http allocate 8 KiB drain buffers, pool slot
+arrays, and chunk printers per request: bytes per request at 12 P were
+5,295 against 4,137 at 1 P. Details: gotcha small-heap-gc-per-p-spans.md.
+
+**Benchmark.** run.sh unchanged, 32 workers, 2 s warmup, 10 s measured,
+port 18290, five rounds; each round ran run.sh (`REPS=1`) once at
+default settings and once with `GOGC=800` for every server, with the
+four configs in a rotated order. Before each run.sh the driver waited
+for the 1 minute load average to fall under 4, up to 600 s. Another
+agent ran test suites on the host the whole session: round 1 default
+started at load 4.60 (after the 600 s cap) and round 3 default at 48.8,
+and runs inside rounds 3 (default) and 2 (GOGC=800) collapsed (Xo
+38.9k, 32.7k, 71.9k req/s); medians of 5 absorb them, the min..max
+column shows them. Medians:
+
+| Setting | Config | Req/s | Xo/Go | p50 us | p99 us | p99.9 us | GCs/10k | GC CPU % | Peak RSS MB | Req/s min..max |
+|---|---|---|---|---|---|---|---|---|---|---|
+| default | Go (GOGC=100) | 117,830 | 1.00 | 227 | 968 | 1,739 | 22.6 | 3 | 22.6 | 100,256..122,026 |
+| default | Xo arenas (floor 24 MiB) | 134,557 | 1.14 | 212 | 775 | 1,479 | 1.74 | 0 | 47.0 | 38,894..135,309 |
+| default | Xo `--no-arenas` (floor) | 132,982 | 1.13 | 214 | 790 | 1,469 | 2.19 | 0 | 47.5 | 32,744..134,103 |
+| default | Xo 1215044 (arenas, 4 MB) | 107,131 | 0.91 | 244 | 1,024 | 1,571 | 41.3 | 7 | 28.8 | 99,312..111,292 |
+| GOGC=800 | Go | 135,425 | 1.00 | 213 | 672 | 1,479 | 1.03 | 0 | 50.8 | 135,155..136,567 |
+| GOGC=800 | Xo arenas | 135,429 | 1.00 | 214 | 696 | 1,603 | 1.25 | 0 | 54.6 | 71,867..136,790 |
+| GOGC=800 | Xo `--no-arenas` | 135,542 | 1.00 | 212 | 711 | 1,644 | 1.57 | 0 | 56.2 | 104,726..135,829 |
+| GOGC=800 | Xo 1215044 | 133,367 | 0.98 | 214 | 728 | 1,792 | 1.25 | 0 | 55.3 | 100,250..136,401 |
+
+At default settings Xo now leads Go by 14 percent (it trailed by 15
+before, and by 9 percent in this session's 1215044 column), with 24 MB
+more peak RSS (47 against 23 MB) and a thirteenth of the GCs. At equal
+settings (GOGC=800, the floor off) all three are equal in req/s.
+
+**Tail latency.** At default settings Xo's tail is better than Go's
+(p99 775 against 968 us, p99.9 1,479 against 1,739): Go pays for 23
+GCs per 10k requests. At GOGC=800, Xo's p99 is 3 to 6 percent and its
+p99.9 8 to 11 percent above Go's, but the p99.9 of one config spreads
+more than that across rounds (Go 1,466 to 1,665 us in the clean rounds),
+and with GC off (`GOGC=off GOMEMLIMIT=4GiB`, two clean rounds) the order
+flipped between rounds (Xo p99.9 1,521 and 1,440 against Go 1,354 and
+1,650). What was looked at:
+
+- `runtime/trace` of both servers (new `XO_TRACE=<file>`; a TRACE hook in
+  a scratch copy of the Go server), `go tool trace -pprof=sched|sync`:
+  Xo's largest scheduling delay was `runtime.Gosched` in
+  `(*lock).wakeLocked` (2.3 s over 4 s of 12 Ps; gotcha
+  lock-convoy-runnext-wake.md). Under tracing Xo slowed to 50k req/s, so
+  the trace exaggerates it. A/B without that Gosched (an env toggle,
+  three interleaved rounds at GOGC=800): 134.7k/135.3k, 136.5k/135.1k,
+  126.9k/126.8k req/s with p99.9 within noise of each other; not the
+  cause, so the yield stays.
+- Lock statistics (`XO_LOCKSTATS` against the Go server's `HOLDSTATS`,
+  GC off): reads hold the store lock as long as Go (0.21 against 0.17 us
+  p50) but `create` and `update` hold it 12 times longer (2.5 against
+  0.21 us p50, 8 against 0.8 us p99), because the Xo program checks
+  email uniqueness by scanning every user with `to_lower` on both sides,
+  while the Go program keeps a `byEmail` index (and compares case
+  sensitively). A scratch copy of the Xo program with a `by_email` index
+  (passes its tests) was A/B tested in 5 usable rounds at GOGC=800:
+  median p99 834 us and p99.9 1,934 us against 800 and 1,557 for the
+  unchanged program and 759 and 1,465 for Go, all inside the host noise
+  of that hour. So the program difference is real but not visible in the
+  tail here; bench/perf/http/xo is unchanged.
+
+No runtime cause of a worse tail was found at equal settings; the
+remaining differences are within run to run noise on this shared host.
+Next experiments, ranked:
+
+1. Rerun the GOGC=800 and GOGC=off rows when no other agent is running
+   (load average under 2 for the whole run) with `REPS=9`, so p99.9
+   differences under 10 percent can be told from noise: `GOGC=800
+   CONFIGS="go xo-arenas" REPS=9 PORT=18290 sh bench/perf/http/run.sh`.
+2. Make the Xo program's email check an index (the scratch change in
+   store.xo: `by_email: Map[Str, Int]` keyed by `to_lower`), so the two
+   programs do the same work under the lock, then rerun experiment 1.
+3. Per request latency from the server side (a histogram of handler
+   time in `serve`, behind an env variable like `XO_LOCKSTATS`), to
+   separate server time from loadgen and kernel time in the p99.9.
