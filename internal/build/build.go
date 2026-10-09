@@ -424,7 +424,11 @@ func (e *BuildError) Error() string {
 }
 
 func goBuild(dir, bin string, t Target, opts Options) error {
-	args := []string{"build", "-trimpath", "-o", bin}
+	// xo_gotimers and -checklinkname=0 let the runtime see pending Go
+	// timers (runtime.timeSleepUntil), so a Go timer that would release a
+	// Go call is never reported as a deadlock (std/rt/gotimers_on.go,
+	// decision 0073)
+	args := []string{"build", "-trimpath", "-tags=xo_gotimers", "-ldflags=-checklinkname=0", "-o", bin}
 	if opts.Race {
 		args = append(args, "-race")
 	}

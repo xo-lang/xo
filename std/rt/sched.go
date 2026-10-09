@@ -743,7 +743,7 @@ func (m *monitor) watch() {
 	var ws map[*thread][]*thread
 	for {
 		g := m.gen.Load()
-		time.Sleep(quiet)
+		osSleep(quiet)
 		if ok, _ := m.stuck(); !ok {
 			m.checking.Store(false)
 			// a block that raced with the reset starts the watch again
@@ -759,16 +759,21 @@ func (m *monitor) watch() {
 			ws = nil
 			break
 		}
-		// threads in Go calls: report only when no goroutine can move and
-		// nothing changed meanwhile; else look again, less often
+		// threads in Go calls: report only when no Go timer is pending, no
+		// goroutine can move, and nothing changed meanwhile; else look
+		// again, less often, or after the pending Go timer fired
 		_, ws = m.stuck()
-		if goQuiet() {
+		ok, retry := goStuckProof()
+		if ok {
 			if ok, ws2 := m.stuck(); ok && m.gen.Load() == g && len(ws2) == len(ws) {
 				ws = ws2
 				break
 			}
 		}
 		quiet = min(2*quiet, 2*time.Second)
+		if retry > 0 {
+			quiet = min(max(retry, m.quiet), 2*time.Second)
+		}
 	}
 	snaps := treeSnaps(m.root)
 	if len(ws) > 0 {

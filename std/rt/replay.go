@@ -1151,7 +1151,7 @@ func (p *replayer) fail(msg string) {
 func (p *replayer) watch(s *sched) {
 	last, lastUsed, idle := int64(-1), -1, 0
 	for {
-		time.Sleep(250 * time.Millisecond)
+		osSleep(250 * time.Millisecond)
 		d := p.decisions.Load()
 		p.mu.Lock()
 		used := p.used

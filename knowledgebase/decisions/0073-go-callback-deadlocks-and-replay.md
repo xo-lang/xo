@@ -50,6 +50,25 @@ own foreign callbacks and they are stuck (`std/rt/godeadlock.go`):
   driver are ignored. The real run's monitor looks again (backing off to
   2 s) while the counts hold; a test world's scheduler polls (2 ms to
   100 ms) until a thread moves or the check passes.
+- **No pending Go timer (2026-10-08 update, after review).** A Go timer
+  runs no goroutine until it fires, so `time.AfterFunc(d, wg.Done)` that
+  would release the Go call showed in no stack and the first version
+  reported a correct program as deadlocked (the `timed` test of
+  `test_go_callback_deadlock` failed with XO-F001 at seed 3; the
+  stand in showed it in `TestMonitorGoCallDeadlock/timer`). Now the
+  proof also asks the Go runtime for its earliest pending timer
+  (`runtime.timeSleepUntil` through `go:linkname`, `std/rt/gotimers_on.go`,
+  built only with the tag `xo_gotimers` and `-ldflags=-checklinkname=0`,
+  which `xo build` passes). While a timer is pending nothing is reported;
+  the check looks again after its deadline, so a timer that releases the
+  wait always fires first. The runtime's own waits that run beside the
+  check (the monitor's and the replay's watchers, a test's real time
+  limit, the scheduler's settle loop) sleep in a system call (`osSleep`,
+  `select(2)` with a timeout) instead of on Go timers, and the classifier
+  ignores goroutines in `osSleep`. The proof (timers clear, goroutines
+  parked) runs twice in a row. gobind now binds `*time.Timer` and
+  `*time.Ticker` as handles (pointers to other `time` types stay
+  unbound), so Xo code can call `time.AfterFunc` (the goldens use it).
 - **Report.** The thread in the Go call becomes a wait record of kind
   `Go call` that names the innermost Go function and points at its
   callbacks, so the wait cycle shows the edge:
@@ -107,9 +126,11 @@ recordings printed other orders than the recording while reporting
 ## Consequences
 
 - `go_callback_deadlock_real` exits 70 with the cycle; it first checks
-  that a Go call sleeping in Go (`time.Sleep`) while its callback waits
-  is not reported. `test_go_callback_deadlock` fails its deadlocked test
-  with the cycle and passes the sleeping one under `--explore=10`; both
+  that a Go call sleeping in Go (`time.Sleep`) and one released by a Go
+  timer after 200 ms (`time.AfterFunc`) while its callback waits
+  are not reported. `test_go_callback_deadlock` fails its deadlocked test
+  with the cycle and passes the sleeping and the timer ones under
+  `--explore=10`; both
   are also run under -race (TestGoldenRace). `std/rt`
   `TestMonitorGoCallDeadlock` and `TestGoParked` cover the monitor and
   the goroutine classification.
@@ -117,9 +138,16 @@ recordings printed other orders than the recording while reporting
   - A Go call that waits for a callback of another task, or on a Go
     channel, select, or timer, is never reported (it hangs, as any
     blocking Go call did).
-  - Go state that a Go timer would release (`time.AfterFunc` calling
-    `WaitGroup.Done`) is invisible: such a program is reported although
-    the timer would have ended the wait.
+  - While any Go runtime timer is pending nothing is reported (see
+    "No pending Go timer" above): a program whose deadlock coincides with
+    an unrelated long timer (a 1 h `time.AfterFunc`, a Go library's
+    periodic timer) is reported only after it fired, or never. No false
+    reports, possible missed or late ones.
+  - Targets other than darwin and linux, and plain `go build`/`go test`
+    of `std/rt`, cannot see Go timers and never report a deadlock
+    through a Go call. `xo build` links with `-checklinkname=0` to reach
+    `runtime.timeSleepUntil`; a Go release that renames it breaks every
+    `xo build` link (gotcha `go-runtime-timer-linkname.md`).
   - Tests with real capabilities (`xo test --real`, no scheduler) do not
     detect it.
 - Cost: none on Go calls of threads without live foreign callbacks (one

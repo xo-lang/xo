@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,10 +30,16 @@ import (
 //     select inside Go code (which may be a timer), or belongs to Go code
 //     with no Xo frame at all (a library's own goroutine) means something
 //     may still happen, so nothing is reported.
+//  3. No Go runtime timer is pending (gotimers_on.go): a timer runs no
+//     goroutine until it fires, so time.AfterFunc calling WaitGroup.Done
+//     shows in no stack. While one is pending the check waits past its
+//     deadline and looks again. The runtime's own watchers sleep in a
+//     system call (osSleep), not on Go timers, so they never hold it off.
+//     Builds that cannot see Go timers (plain go test, targets other than
+//     darwin and linux) never report a deadlock through a Go call.
 //
-// The limit: Go state released by a Go timer (time.AfterFunc calling
-// WaitGroup.Done) is invisible; such a program is reported once the
-// other conditions hold for the watchdog's quiet period.
+// Steps 2 and 3 run twice in a row (goStuckProof), so a timer made and
+// fired between two looks shows as a moving goroutine.
 
 // goCallWait is what a thread inside a Go call waits for: its foreign
 // callbacks. top is the innermost Go function of the call
@@ -122,6 +129,42 @@ var syncWaits = map[string]bool{
 	"sync.Cond.Wait":      true,
 }
 
+// goNextTimerHook stands in for goNextTimerRuntime in tests.
+var goNextTimerHook atomic.Pointer[func() (time.Duration, bool, bool)]
+
+// goTimersClear reports whether no Go timer is pending; otherwise how long
+// to wait before looking again (past the earliest timer, or a while when
+// timers cannot be seen in this build).
+func goTimersClear() (bool, time.Duration) {
+	d, pending, known := goNextTimerRuntime()
+	if h := goNextTimerHook.Load(); h != nil {
+		d, pending, known = (*h)()
+	}
+	switch {
+	case !known:
+		return false, 2 * time.Second
+	case pending:
+		return false, max(d, 0) + 5*time.Millisecond
+	}
+	return true, 0
+}
+
+// goStuckProof is the proof of the top of the file at one moment: no Go
+// timer pending and every goroutine parked, twice in a row, so a timer
+// made and fired between two looks shows as a moving goroutine. retry
+// is set when a Go timer is pending: look again after it.
+func goStuckProof() (ok bool, retry time.Duration) {
+	for i := 0; i < 2; i++ {
+		if clear, wait := goTimersClear(); !clear {
+			return false, wait
+		}
+		if !goQuiet() {
+			return false, 0
+		}
+	}
+	return true, 0
+}
+
 // goQuiet reports whether every goroutine but the caller is parked where
 // only another goroutine of the program can wake it (see the top of the
 // file). It stops the world briefly to read every stack.
@@ -164,7 +207,7 @@ func goParked(g string) bool {
 		moving = true
 	}
 	ours := false
-	top, last := "", ""
+	top := ""
 	// frames: a function line, then its file line
 	for i := 1; i < len(lines); i += 2 {
 		l := lines[i]
@@ -179,17 +222,15 @@ func goParked(g string) bool {
 		if k := strings.LastIndexByte(fn, '('); k > 0 && strings.HasSuffix(fn, ")") {
 			fn = fn[:k]
 		}
-		prev := last
-		last = fn
 		switch {
 		case strings.HasPrefix(fn, "os/signal."), strings.HasPrefix(fn, "testing.(*M)."), strings.HasPrefix(fn, "testing.(*T).Run"):
 			// waits for signals (which deadlock detection ignores), the
 			// go test driver
 			return true
 		case strings.HasPrefix(fn, rtPrefix):
-			if prev == "time.Sleep" && !strings.HasPrefix(fn, rtPrefix+"Go_") {
-				// a watcher of the runtime (the replay's, the monitor's)
-				// sleeping between looks; Go_ adapters are Go calls
+			if fn == rtPrefix+"osSleep" {
+				// a watcher of the runtime (the replay's, the monitor's,
+				// a test's time limit) sleeping between looks
 				return true
 			}
 			ours = true
@@ -263,8 +304,8 @@ func (s *sched) confirmGoLocked() {
 	go func() {
 		d := 2 * time.Millisecond
 		for {
-			time.Sleep(d)
-			q := goQuiet()
+			osSleep(d)
+			q, retry := goStuckProof()
 			s.mu.Lock()
 			if s.moves != moves || s.cur != nil || len(s.ready) > 0 {
 				s.confirming = false
@@ -287,6 +328,34 @@ func (s *sched) confirmGoLocked() {
 			}
 			s.mu.Unlock()
 			d = min(2*d, 100*time.Millisecond)
+			if retry > 0 {
+				// a Go timer is pending: look again once it fired
+				d = min(retry, 2*time.Second)
+			}
 		}
 	}()
+}
+
+// osAfter returns a channel closed after d, timed with osSleep (no Go
+// timer), unless stop is closed first; the goroutine ends within 50 ms
+// of either.
+func osAfter(d time.Duration, stop <-chan struct{}) <-chan struct{} {
+	c := make(chan struct{})
+	end := time.Now().Add(d)
+	go func() {
+		for {
+			left := time.Until(end)
+			if left <= 0 {
+				close(c)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			osSleep(min(left, 50*time.Millisecond))
+		}
+	}()
+	return c
 }

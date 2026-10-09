@@ -287,7 +287,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		return g.handleValue(h), nil
 	case *types.Pointer:
 		if n, ok := types.Unalias(x.Elem()).(*types.Named); ok {
-			if _, basic := n.Underlying().(*types.Basic); !basic && n.Obj().Pkg() != nil && !isContext(n) && n.TypeArgs().Len() == 0 && n.TypeParams().Len() == 0 && !(n.Obj().Pkg().Path() == "time") {
+			if _, basic := n.Underlying().(*types.Basic); !basic && n.Obj().Pkg() != nil && !isContext(n) && n.TypeArgs().Len() == 0 && n.TypeParams().Len() == 0 && !(n.Obj().Pkg().Path() == "time" && !timeHandles[n.Obj().Name()]) {
 				h, err := g.handleFor(n, depth)
 				if err != nil {
 					return conv{}, err
@@ -1223,3 +1223,8 @@ func (b *Binding) Summary() string {
 	}
 	return w.String()
 }
+
+// timeHandles are the types of package time whose pointers are handles
+// (time.AfterFunc returns a *Timer, decision 0073); pointers to the
+// others (Time, Location) stay unbound.
+var timeHandles = map[string]bool{"Timer": true, "Ticker": true}

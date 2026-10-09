@@ -263,7 +263,11 @@ spans are half open (`end_col` is one past the last character), which matches
 the insertion fix example in core 10.2.
 
 `xo build` checks (errors and holes block the build), generates Go, and runs
-`go build -trimpath` with `CGO_ENABLED=0` per target; it prints one
+`go build -trimpath -tags=xo_gotimers -ldflags=-checklinkname=0` with
+`CGO_ENABLED=0` per target (the tag and flag link
+`runtime.timeSleepUntil` into std/rt for deadlock reports through Go
+calls, decision 0073, gotcha `go-runtime-timer-linkname.md`; Last
+verified: 2026-10-08 with Go 1.26.1); it prints one
 `os/arch: path` line per binary. `--targets=all` is linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, and
 `wasi/wasm32` (Go's wasip1/wasm). Binaries go to `-o` (a file for one
@@ -1170,7 +1174,8 @@ experiment of its work queue item 6. Results and coverage:
   `GoExit(tk, name)`, and callbacks go through `rt.NewGoCallback(tk)`
   with `cb.Begin()`/`cb.End(ctk)` per call; 4 since 2026-10-08, decision
   0073: callback arguments are converted first and passed as
-  `cb.Begin(func() []any {...})`) or another module version
+  `cb.Begin(func() []any {...})`, and `*time.Timer`/`*time.Ticker` are
+  handles, so `time.after_func` binds) or another module version
   than the pin. Pins: `require go <module> <version>` lines in xo.mod.
 - Checker (`internal/check/load.go` `loadGoImport`): binds on demand, loads
   the declaration file as a module `go:<path>` with `IsStd` set and

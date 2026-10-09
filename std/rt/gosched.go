@@ -214,7 +214,7 @@ func waitGoSettled() {
 			runtime.Gosched()
 			continue
 		}
-		time.Sleep(time.Duration(min(1<<(i-8), 1000)) * time.Microsecond)
+		osSleep(time.Duration(min(1<<(i-8), 1000)) * time.Microsecond)
 	}
 }
 

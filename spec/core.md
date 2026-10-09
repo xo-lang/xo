@@ -1481,7 +1481,9 @@ call and its result, plus scheduler decisions.
   a `sync` wait, no goroutine running, sleeping, or in I/O); the report
   shows the edge as `blocked in Go call sync.(*WaitGroup).Wait at ... for
   callback 3`. A Go call waiting on a Go channel, select, or timer is never
-  reported, and a Go timer that would release the wait is not seen
+  reported, and nothing is reported while any Go runtime timer is pending
+  (a `time.AfterFunc` may release the wait; the check looks again after it
+  fires); builds for targets other than darwin and linux never report it
   (decision 0073). Native builds (decision 0068), which
   have no timers, I/O, or signals, report at once when every task is blocked
   and none is queued, with the fault's first line only (no location or list

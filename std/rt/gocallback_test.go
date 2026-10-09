@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -76,8 +77,17 @@ func TestGoCallbackForeign(t *testing.T) {
 // TestMonitorGoCallDeadlock: a real run's monitor reports a task blocked
 // in a Go call (sync.WaitGroup.Wait) for a foreign callback that waits
 // for a Mutex the task holds (XO-F001 with the Go call edge), and does
-// not report the same shape when the Go call sleeps (decision 0073).
+// not report the same shape when the Go call sleeps or waits for what a
+// pending Go timer releases (decision 0073). go test cannot link the
+// runtime's timer query (gotimers_on.go), so goNextTimerHook stands in:
+// no timer, except the AfterFunc of the "timer" case until it fired.
 func TestMonitorGoCallDeadlock(t *testing.T) {
+	var timerPending atomic.Bool
+	hook := func() (time.Duration, bool, bool) {
+		return 10 * time.Millisecond, timerPending.Load(), true
+	}
+	goNextTimerHook.Store(&hook)
+	defer goNextTimerHook.Store(nil)
 	cases := []struct {
 		name string
 		wait func(*sync.WaitGroup)
@@ -85,6 +95,16 @@ func TestMonitorGoCallDeadlock(t *testing.T) {
 	}{
 		{"wait", func(wg *sync.WaitGroup) { wg.Wait() }, true},
 		{"sleep", func(*sync.WaitGroup) { Go_test_sleep(400 * time.Millisecond) }, false},
+		{"timer", func(*sync.WaitGroup) {
+			var release sync.WaitGroup
+			release.Add(1)
+			timerPending.Store(true)
+			time.AfterFunc(400*time.Millisecond, func() {
+				timerPending.Store(false)
+				release.Done()
+			})
+			release.Wait()
+		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,7 +176,8 @@ func TestGoParked(t *testing.T) {
 		{"go call sleeping", "goroutine 11 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "Go_time_sleep()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:5 +0x1", false},
 		{"foreign goroutine", "goroutine 12 [sync.Mutex.Lock]:\nsync.(*Mutex).Lock(0x1)\n\tsync/mutex.go:1 +0x1\nmain.worker()\n\tw.go:1 +0x1", false},
 		{"go call sleeping inside Mutex.with", "goroutine 15 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "Go_time_sleep()\n\tx/rt/b.go:1 +0x1\nxoprog/m.F_f.func1()\n\tmain.xo:5 +0x1\n" + rt + "Mutex_with[...]()\n\tx/rt/sync.go:1 +0x1\nxoprog/m.F_f()\n\tmain.xo:4 +0x1", false},
-		{"runtime watcher sleeping", "goroutine 16 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", true},
+		{"runtime watcher sleeping", "goroutine 16 [syscall]:\nsyscall.Select(0x0)\n\tsyscall/x.go:1 +0x1\n" + rt + "osSleep(0x1)\n\tx/rt/ossleep.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", true},
+		{"runtime code in time.Sleep", "goroutine 17 [sleep]:\ntime.Sleep(0x1)\n\truntime/time.go:1 +0x1\n" + rt + "(*replayer).watch()\n\tx/rt/replay.go:1 +0x1", false},
 		{"running", "goroutine 13 [runnable]:\n" + rt + "x()\n\tx/rt/a.go:1 +0x1", false},
 		{"signals", "goroutine 14 [syscall]:\nos/signal.signal_recv()\n\truntime/sigqueue.go:149 +0x108\nos/signal.loop()\n\tos/signal/signal_unix.go:23 +0x1c", true},
 	}

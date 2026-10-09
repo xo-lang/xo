@@ -30,6 +30,23 @@ fn slow(m: Mutex[Int]) {
   wg.wait()
 }
 
+/// timed holds `m` while a callback waits for it and waits in Go for a
+/// WaitGroup that a Go timer (time.AfterFunc) releases after 200 ms: every
+/// goroutine is parked meanwhile, but the pending timer can move, so it
+/// is not a deadlock.
+fn timed(m: Mutex[Int]) {
+  let wg = gosync.WaitGroup.new()
+  let release = gosync.WaitGroup.new()
+  release.add(1)
+  m.with(fn(var n) {
+    wg.go_(fn() { m.with(fn(var k) { k += 100 }) })
+    gotime.after_func(200ms, fn() { release.done() })
+    release.wait()
+    n += 1
+  })
+  wg.wait()
+}
+
 fn main(os: Os) {
   let m = Mutex[Int].new(0)
   slow(m)
