@@ -1,0 +1,10 @@
+exit 70
+--- stdout
+0 p 50 half
+ok 1 width 1
+widened -1..5
+flip failed: TooWide 6..5
+flip small 1
+shrink past the invariant next
+--- stderr
+fault: invariant of Range failed: lo <= hi at main.xo:25:19

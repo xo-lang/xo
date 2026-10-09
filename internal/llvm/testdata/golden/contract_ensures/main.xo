@@ -1,0 +1,120 @@
+// Contracts (core 9.1) on the native backends: `requires` with and
+// without `else`, `ensures` with `result` and `old(...)`, on plain
+// functions, functions that can fail (checked on success only), `var`
+// parameters, methods, and generic functions. The last call breaks an
+// `ensures` clause.
+
+enum TxErr {
+  Insufficient
+  Invalid(msg: Str)
+} derive Display
+
+struct Account {
+  id: Int
+  balance: Int
+}
+
+fn withdraw(var a: Account, amt: Int) -> () ! TxErr
+  requires amt > 0 else TxErr.Invalid(msg: "amount must be positive")
+  requires a.balance >= amt else TxErr.Insufficient
+  ensures a.balance == old(a.balance) - amt
+{
+  a.balance -= amt
+}
+
+fn transfer(var from: Account, var to: Account, amt: Int) -> () ! TxErr
+  requires amt > 0
+  ensures from.balance + to.balance == old(from.balance + to.balance)
+{
+  withdraw(from, amt)?
+  to.balance += amt
+}
+
+fn sqrt_floor(n: Int) -> Int
+  requires n >= 0
+  ensures result * result <= n
+  ensures (result + 1) * (result + 1) > n
+{
+  var r = 0
+  while (r + 1) * (r + 1) <= n {
+    r += 1
+  }
+  r
+}
+
+// fails before it could break its ensures: the clause is not checked
+fn picky(n: Int) -> Int ! TxErr
+  ensures result > 100
+{
+  if n < 0 {
+    return Err(TxErr.Invalid(msg: "negative"))
+  }
+  n + 101
+}
+
+fn (a: Account) doubled() -> Int
+  ensures result == 2 * a.balance
+{
+  a.balance + a.balance
+}
+
+fn bump(var xs: List[Int])
+  ensures xs.len() == old(xs.len()) + 1
+{
+  xs.push(xs.len())
+}
+
+fn largest[T: Ord](xs: List[T], d: T) -> T
+  ensures xs.is_empty() || result >= xs[0]
+{
+  var best = d
+  for x in xs {
+    if x > best {
+      best = x
+    }
+  }
+  best
+}
+
+fn names(n: Int) -> List[Str]
+  ensures result.len() == n
+{
+  var out: List[Str] = []
+  for i in 0..n {
+    out.push("n${i}")
+  }
+  out
+}
+
+fn buggy(n: Int) -> Int
+  ensures result > n
+{
+  n
+}
+
+fn main(os: Os) {
+  var a = Account{id: 1, balance: 100}
+  var b = Account{id: 2, balance: 5}
+  os.stdio.println("withdraw 30: ${withdraw(a, 30).is_ok()} balance ${a.balance}")
+  match withdraw(a, 500) {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("withdraw 500: ${e}")
+  }
+  match withdraw(a, -1) {
+    Ok(_) => os.stdio.println("?")
+    Err(e) => os.stdio.println("withdraw -1: ${e}")
+  }
+  os.stdio.println("transfer: ${transfer(a, b, 20).is_ok()} ${a.balance} ${b.balance}")
+  os.stdio.println("transfer too much: ${transfer(a, b, 1000).is_err()} ${a.balance} ${b.balance}")
+  os.stdio.println("sqrt ${sqrt_floor(17)} ${sqrt_floor(0)} ${sqrt_floor(1000000)}")
+  os.stdio.println("picky ${picky(5).ok() ?? 0} ${picky(-1).is_err()}")
+  os.stdio.println("doubled ${a.doubled()}")
+  var xs = [1, 2]
+  bump(xs)
+  bump(xs)
+  os.stdio.println("bumped ${xs.len()} ${xs[3]}")
+  os.stdio.println("largest ${largest([3, 9, 4], 0)} ${largest(["b", "a"], "")} ${largest([], 7)}")
+  os.stdio.println("names ${names(3).len()}")
+  os.stdio.println("buggy next")
+  os.stdio.println("${buggy(3)}")
+}

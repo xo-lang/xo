@@ -708,12 +708,25 @@ static int fmt_float(char *buf, double f) {
 // ---------------------------------------------------------------------------
 // Faults (core 8): the same messages as std/rt, exit status 70
 
+// fault_detail_text is the line printed under the next fault: the values
+// of a failed contract (core 9.1), set by xo_fault_detail.
+static __thread char *fault_detail_text;
+
 XO_NORETURN static void fault_text(const char *msg, const char *loc) {
 	xo_flush();
-	char *buf = malloc(strlen(msg) + strlen(loc) + 32);
-	int n = sprintf(buf, "fault: %s at %s\n", msg, loc);
+	const char *d = fault_detail_text ? fault_detail_text : "";
+	char *buf = malloc(strlen(msg) + strlen(loc) + strlen(d) + 32);
+	int n = sprintf(buf, "fault: %s at %s\n%s%s", msg, loc, d, *d ? "\n" : "");
 	write_all(2, buf, (size_t)n);
 	exit(70);
+}
+
+// xo_fault_detail sets the line printed under the next fault.
+void xo_fault_detail(const char *p, int64_t n) {
+	free(fault_detail_text);
+	fault_detail_text = malloc((size_t)n + 1);
+	memcpy(fault_detail_text, p, (size_t)n);
+	fault_detail_text[n] = 0;
 }
 
 XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {

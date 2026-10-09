@@ -655,6 +655,9 @@ type fn struct {
 	// sub maps the type parameters of the instance being built (nil
 	// when the function is not generic).
 	sub *check.Subst
+	// olds are the values of the `old(...)` calls of the ensures clauses
+	// being checked (build_contract.go)
+	olds map[*ast.CallExpr]*Value
 }
 
 // apply resolves a checker type in the instance being built.
@@ -686,29 +689,29 @@ func (b *builder) newFn(f *Func, res, errT check.Type) *fn {
 }
 
 func (b *builder) body(fo *check.FuncObj, f *Func, sub *check.Subst) {
+	if fo.Decl != nil && fo.Decl.Body != nil {
+		if ens, inv := b.contractWrapped(fo); len(ens) > 0 || inv {
+			b.contractBody(fo, f, sub, ens, inv)
+			return
+		}
+	}
+	b.bodyOf(fo, f, sub, true)
+}
+
+// bodyOf builds fo's body into f, checking its `requires` clauses first
+// when requires is set (build_contract.go).
+func (b *builder) bodyOf(fo *check.FuncObj, f *Func, sub *check.Subst, requires bool) {
 	s := b.newFn(f, nil, nil)
 	s.fo = fo
 	s.sub = sub
 	s.res, s.errT = s.apply(fo.Result), failErr(s.apply(fo.Err))
-	var vars []*check.VarObj
-	if fo.Recv != nil {
-		vars = append(vars, b.info.RecvVar(fo))
-	}
-	vars = append(vars, b.info.ParamVars(fo)...)
-	for i, vo := range vars {
-		if vo != nil && i < len(f.Params()) {
-			s.writeVar(vo, f.Params()[i])
-		}
-	}
-	for _, i := range f.VarParams {
-		s.varParams = append(s.varParams, vars[i])
-	}
+	s.paramBindings(fo, f)
 	if fo.Decl == nil || fo.Decl.Body == nil {
 		b.unsupported(fo.Decl, "a function without a body")
 		return
 	}
 	for _, cl := range fo.Decl.Clauses {
-		if c, ok := cl.(*ast.RequiresClause); ok {
+		if c, ok := cl.(*ast.RequiresClause); ok && requires {
 			s.requires(c)
 		}
 	}
@@ -753,6 +756,7 @@ func (s *fn) requires(c *ast.RequiresClause) {
 	fail, good := s.branch(s.add(OpNot, boolT, nil, ok))
 	s.cur = fail
 	if c.Else == nil {
+		s.faultDetail(c.Cond)
 		f := s.add(OpFault, nil, nil, s.add(OpConst, b.mod.Builtin(KStr), "requires failed: "+b.sourceText(c.Cond)))
 		f.Pos = b.pos(c.Cond)
 	} else if s.errT == nil {

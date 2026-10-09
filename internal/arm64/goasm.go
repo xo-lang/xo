@@ -54,12 +54,6 @@ type GoOptions struct {
 	All bool
 	// NoInline turns off the inlining of small leaf functions.
 	NoInline bool
-	// Exclude are functions the Go backend checks more than SSA does
-	// (`ensures` clauses), with the reason; Invariant are the struct
-	// types with an invariant (the Go backend checks it at construction),
-	// which no Go mode function may hold.
-	Exclude   map[string]string
-	Invariant map[string]bool
 }
 
 // GoFunc is one function emitted as Go assembler.
@@ -432,54 +426,6 @@ func (g *gen) goReject(f *ssa.Func) (string, []string) {
 	return "", deps
 }
 
-// goHolds reports whether a value of f has one of the struct types.
-func goHolds(f *ssa.Func, types map[string]bool) bool {
-	if len(types) == 0 {
-		return false
-	}
-	var holds func(t *ssa.Type, seen map[*ssa.Type]bool) bool
-	holds = func(t *ssa.Type, seen map[*ssa.Type]bool) bool {
-		if t == nil || seen[t] {
-			return false
-		}
-		seen[t] = true
-		if t.Kind == ssa.KStruct && types[t.Name] {
-			return true
-		}
-		for _, f := range t.Fields {
-			if holds(f.Type, seen) {
-				return true
-			}
-		}
-		for _, e := range t.Elems {
-			if holds(e, seen) {
-				return true
-			}
-		}
-		for _, v := range t.Variants {
-			for _, f := range v.Fields {
-				if holds(f.Type, seen) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	for _, b := range f.Blocks {
-		for _, p := range b.Params {
-			if holds(p.Type, map[*ssa.Type]bool{}) {
-				return true
-			}
-		}
-		for _, v := range b.Instrs {
-			if holds(v.Type, map[*ssa.Type]bool{}) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // hasLoop reports whether f's control flow has a cycle.
 func hasLoop(f *ssa.Func) bool {
 	state := map[*ssa.Block]int{}
@@ -528,12 +474,6 @@ func GenerateGo(m *ssa.Module, opts GoOptions) (prog *GoProgram, err error) {
 	deps := map[string][]string{}
 	for _, f := range m.Funcs {
 		why, ds := g.goReject(f)
-		if r, ok := opts.Exclude[f.Name]; ok && why == "" {
-			why = r
-		}
-		if why == "" && goHolds(f, opts.Invariant) {
-			why = "a struct with an invariant"
-		}
 		if why != "" {
 			prog.Rejected[f.Name] = why
 			continue

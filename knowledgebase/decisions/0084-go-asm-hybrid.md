@@ -23,7 +23,9 @@ speed where it matters and Go everywhere else.
    parameters and results Int, Float, Bool, structs of Int and Float
    fields, Lists of those (`var` only on Lists); calls only to eligible
    functions and the inline List and scalar methods; no `ensures`
-   clause, no struct with an invariant (the SSA builder checks neither).
+   clause, no struct with an invariant (the SSA builder checks neither;
+   amended 2026-10-09 by decision 0085: it checks both, and the
+   exclusion is gone).
    Anything else, or a program outside the SSA subset, stays Go; the
    build never fails because of `--hybrid`.
 2. **An option, not the default.** Eligible loops run at native speed

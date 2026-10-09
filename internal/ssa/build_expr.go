@@ -88,6 +88,7 @@ func (s *fn) expr(e ast.Expr) *Value {
 			}
 			v = s.add(OpSetField, v.Type, i, v, s.valueAs(fi.Value, ft))
 		}
+		s.checkInvariant(v, s.natCheck(x), x)
 		return v
 	case *ast.UnaryExpr:
 		v := s.expr(x.X)
@@ -371,7 +372,11 @@ func (s *fn) structLit(x *ast.StructLit) *Value {
 		b.unsupported(x, "a struct literal without the field `"+t.Fields[i].Name+"`")
 		vals[i] = s.undef(t.Fields[i].Type)
 	}
-	return s.add(OpStruct, t, nil, vals...)
+	v := s.add(OpStruct, t, nil, vals...)
+	if named != nil {
+		s.checkInvariant(v, named, x)
+	}
+	return v
 }
 
 var arithOps = map[token.Kind]Op{

@@ -10,6 +10,9 @@ import (
 func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	b := s.b
 	info := b.info
+	if v, ok := s.olds[x]; ok {
+		return v
+	}
 	if vo := info.Ctor(x); vo != nil {
 		return s.ctorCall(vo, x)
 	}
