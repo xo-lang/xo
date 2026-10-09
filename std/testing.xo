@@ -52,6 +52,7 @@ fn (n: FakeNet) requests() -> List[http.Request]
 struct FakeClock {}
 fn (c: FakeClock) now() -> Time uses clock
 fn (c: FakeClock) sleep(d: Duration) uses clock
+fn (c: FakeClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock
 fn (c: FakeClock) since(t: Time) -> Duration uses clock
 fn (c: FakeClock) advance(d: Duration)
 fn (c: FakeClock) set(t: Time)

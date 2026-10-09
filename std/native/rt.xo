@@ -58,6 +58,10 @@ fn rune_to_case(r: Rune, lower: Bool) -> Rune
 fn rune_quote(r: Rune) -> Str
 /// strconv.Quote.
 fn strconv_quote(s: Str) -> Str
+/// Whether the text is a duration (std/rt's parseDuration).
+fn duration_parse_ok(s: Str) -> Bool
+/// The duration of the text in nanoseconds (0 when it is not one).
+fn duration_parse(s: Str) -> Int
 fn bytes_quote(b: Bytes) -> Str
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int

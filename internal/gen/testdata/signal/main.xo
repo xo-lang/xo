@@ -23,10 +23,45 @@ fn serve(os: Os) ! {
   os.stdio.println("serve returned")
 }
 
+// read_lines counts lines until the end of input or an error: a stop
+// request or cancellation ends a blocked read_line with Canceled
+// (decision 0088).
+fn read_lines(os: Os) -> Str {
+  var n = 0
+  while {
+    match os.stdio.read_line() {
+      Ok(Some(_)) => n += 1
+      Ok(None) => return "end of input after ${n} lines"
+      Err(e) => return "read_line: ${e} after ${n} lines"
+    }
+  }
+  "not reached"
+}
+
+fn read_stdin(os: Os, mode: Str) {
+  if mode == "stdin" {
+    os.stdio.println("ready")
+    os.stdio.println(read_lines(os))
+    return
+  }
+  // stdin_cancel: the scope cancels a reader blocked in read_line
+  scope s {
+    let t = s.spawn(fn() -> Str { read_lines(os) })
+    os.stdio.println("ready")
+    os.clock.sleep(300ms)
+    s.cancel()
+    os.stdio.println(t.await)
+  }
+}
+
 fn main(os: Os) ! {
   let mode = os.env.get("MODE") ?? "cancel"
   if mode == "http" {
     serve(os)?
+    return
+  }
+  if mode == "stdin" || mode == "stdin_cancel" {
+    read_stdin(os, mode)
     return
   }
   if mode == "grace" {

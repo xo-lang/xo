@@ -255,12 +255,15 @@ Duration.from_secs(s: Float) -> Duration      // rounds to the nearest nanosecon
 Duration.from_secs_int(s: Int) -> Duration    // the same as `1s * s`; faults on overflow
 Duration.from_millis(ms: Int) -> Duration
 Duration.from_nanos(ns: Int) -> Duration
+Duration.parse(s: Str) -> Duration ! DurationErr
 fn (d: Duration) seconds() -> Float
 fn (d: Duration) millis() -> Int             // truncated
 fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration // rounds to the nearest nanosecond
 fn (d: Duration) ceil_seconds() -> Int
 fn (d: Duration) abs() -> Duration           // durations may be negative
+
+struct DurationErr { input: Str }  // displays as `invalid duration "1x": expected numbers with units ...`
 
 Time.UNIX_EPOCH: Time
 Time.from_unix(secs: Int) -> Time
@@ -270,6 +273,16 @@ fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
 fn (t: Time) format_rfc3339() -> Str
 ```
+
+`Duration.parse` accepts Go's `time.ParseDuration` syntax after trimming
+white space: an optional sign, then one or more decimal numbers (with an
+optional fraction) each followed by a unit `ns`, `us` (or `µs`), `ms`,
+`s`, `m`, `h`: `"1.5s"`, `"-2h45m"`, `"300ms"`. `"0"` alone is zero. A
+number without a unit, an unknown unit, or a value past about 292 years
+is `Err(DurationErr{input: s})`. It is the form JSON decoding of a
+`Duration` accepts, and it reads back what `Duration` displays (decision
+0088). Unlike `Int.parse`, it returns a `Result`: the error says what a
+duration looks like.
 
 ### 2.7 Concurrency and state types
 
@@ -452,8 +465,24 @@ Most code uses `std/http` instead of raw connections.
 
 ```
 fn (c: Clock) now() -> Time
+enum ClockErr { Canceled }
+
 fn (c: Clock) sleep(d: Duration)             // cancellation point; unwinds when cancelled
+fn (c: Clock) sleep_or_cancel(d: Duration) -> () ! ClockErr
+    // like sleep, but cancellation is Err(Canceled) instead of an unwind
 fn (c: Clock) since(t: Time) -> Duration
+```
+
+`sleep_or_cancel` lets a function return cancellation as its own error
+(core 7.2, decision 0088):
+
+```
+fn backoff(clock: Clock, d: Duration) -> () ! FetchErr uses clock {
+  match clock.sleep_or_cancel(d) {
+    Ok(_) => Ok(())
+    Err(Canceled) => Err(FetchErr.Cancelled)
+  }
+}
 ```
 
 ### 3.4 Rand (`uses rand`)
@@ -499,6 +528,12 @@ fn (s: Stdio) read_line() -> Str? ! IoErr    // None at end of input
 fn (s: Stdio) read_all() -> Str ! IoErr
 fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
 ```
+
+The reads of standard input are cancellation points while they wait: a
+cancelled task, and every reader once a stop is requested (core 7.5), gets
+`Err(IoErr.Canceled)` at once. Input read after a reader gave up is kept
+for the next read (decision 0088). The native backends do not read
+standard input yet (XO1201, planned).
 
 ### 3.7 Proc (`uses proc`)
 
@@ -752,7 +787,9 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Map[Str, V]` | object |
 | enum unit variant | string `"Variant"` |
 | enum variant with fields | object `{"Variant": {fields}}` |
-| `Duration` | string `"1.5s"` |
+| tuple `(A, B, ...)` | array `[a, b, ...]`; decodes only from an array of exactly that length (decision 0088) |
+| `()` | `null` |
+| `Duration` | string `"1.5s"` (any `Duration.parse` form decodes) |
 | `Time` | RFC 3339 string |
 | `Bytes` | base64 string |
 
@@ -901,6 +938,7 @@ woken tasks run before returning.
 fn (c: FakeClock) advance(d: Duration)
 fn (c: FakeClock) set(t: Time)
 fn (c: FakeClock) sleeps() -> List[Duration]          // every sleep requested, in order
+// FakeClock also has sleep_or_cancel (3.3), on virtual time
 ```
 
 ### 8.3 MemFs

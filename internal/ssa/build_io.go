@@ -72,7 +72,7 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	// operations that wait: the program needs unwinding checks
 	switch key {
-	case "Clock.sleep", "Net.listen", "Net.dial", "Listener.accept", "Conn.read", "Conn.write":
+	case "Clock.sleep", "Clock.sleep_or_cancel", "Net.listen", "Net.dial", "Listener.accept", "Conn.read", "Conn.write":
 		b.needConc = true
 		if !b.conc {
 			return s.undef(nt), true
@@ -162,6 +162,21 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		s.rt("clock_sleep", nil, arg(0, intT))
 		s.check("")
 		return s.unit(), true
+	case "Clock.sleep_or_cancel":
+		// Ok(()) or Err(ClockErr.Canceled), never an unwind (decision 0088)
+		c := s.rt("clock_sleep_or_cancel", intT, arg(0, intT))
+		join := s.newBlock()
+		res := join.AddParam(nt)
+		yes, no := s.branch(s.add(OpEq, boolT, nil, c, s.cint(0)))
+		s.cur = yes
+		s.jump(join, s.add(OpVariant, nt, nt.VariantIndex("Ok"), s.unit()))
+		s.cur = no
+		ei := nt.VariantIndex("Err")
+		et := nt.Variants[ei].Fields[0].Type
+		s.jump(join, s.add(OpVariant, nt, ei, s.add(OpVariant, et, et.VariantIndex("Canceled"))))
+		s.seal(join)
+		s.cur = join
+		return res, true
 	case "Proc.set_grace":
 		s.rt("set_grace", nil, arg(0, intT))
 		return s.unit(), true

@@ -347,7 +347,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
 			}
-			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude) {
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr") {
 				break
 			}
 			x, created := m.Named(name, KStruct)

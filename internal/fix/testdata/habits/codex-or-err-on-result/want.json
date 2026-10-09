@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Result[Duration, DurationErr]` has no field or method `or_err`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 31,
+      "end_line": 2,
+      "end_col": 37
+    },
+    "notes": [
+      {
+        "message": "`.or_err(e)` turns an optional value into a Result; this is already a Result, so replace its error with `.map_err(fn(_) { e })` (spec/std.md 2.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.map_err(fn(_) { ... })`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 31,
+              "end_line": 2,
+              "end_col": 54
+            },
+            "replace": "map_err(fn(_) { \"invalid flush\" })"
+          }
+        ]
+      }
+    ]
+  }
+]

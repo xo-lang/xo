@@ -1,0 +1,21 @@
+// A stop request ends reading standard input: read_line returns
+// IoErr.Canceled once the stop is requested, so a reader can stop and
+// the program can drain and exit (core 7.5, decision 0088).
+fn main(os: Os) ! {
+  var n = 0
+  while {
+    match os.stdio.read_line() {
+      Ok(Some(_)) => {
+        n += 1
+        os.clock.sleep(1s)
+      }
+      Ok(None) => break
+      Err(Canceled) => {
+        os.stdio.println("stopped after ${n} lines")
+        return
+      }
+      Err(e) => fault("read_line: ${e}")
+    }
+  }
+  os.stdio.println("read ${n} lines")
+}

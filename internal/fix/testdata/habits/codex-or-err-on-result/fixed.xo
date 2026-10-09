@@ -1,0 +1,4 @@
+fn flush(arg: Str) -> Duration ! Error {
+  let d = Duration.parse(arg).map_err(fn(_) { "invalid flush" })?
+  Ok(d)
+}

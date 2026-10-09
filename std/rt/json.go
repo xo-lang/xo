@@ -670,3 +670,144 @@ func JsonVariant(x any, path string) (string, any, bool, *Json_DecodeErr) {
 	}
 	return "", nil, false, JsonErr(path, "expected a variant name or an object with one variant key")
 }
+
+// Tuples (decision 0088): a tuple is a JSON array with one element per
+// position, decoded only from an array of exactly that length.
+
+// jsonTupleDec decodes the array x into the tuple positions, one decoder
+// each.
+func jsonTupleDec(x any, path string, fs ...func(any, string) *Json_DecodeErr) *Json_DecodeErr {
+	arr, ok := x.([]any)
+	if !ok {
+		return JsonErr(path, "expected array")
+	}
+	if len(arr) != len(fs) {
+		return JsonErr(path, fmt.Sprintf("expected array of %d elements, got %d", len(fs), len(arr)))
+	}
+	for i, f := range fs {
+		if err := f(arr[i], fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// XoJsonEnc encodes a tuple as an array.
+func (t Tuple2[A, B]) XoJsonEnc(tk *Task, w *JsonW) {
+	w.ArrStart()
+	w.Elem()
+	JsonEncP(tk, w, &t.F0)
+	w.Elem()
+	JsonEncP(tk, w, &t.F1)
+	w.ArrEnd()
+}
+
+// XoJsonDec decodes an array of 2 elements.
+func (t *Tuple2[A, B]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return jsonTupleDec(x, path,
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+	)
+}
+
+// XoJsonEnc encodes a tuple as an array.
+func (t Tuple3[A, B, C]) XoJsonEnc(tk *Task, w *JsonW) {
+	w.ArrStart()
+	w.Elem()
+	JsonEncP(tk, w, &t.F0)
+	w.Elem()
+	JsonEncP(tk, w, &t.F1)
+	w.Elem()
+	JsonEncP(tk, w, &t.F2)
+	w.ArrEnd()
+}
+
+// XoJsonDec decodes an array of 3 elements.
+func (t *Tuple3[A, B, C]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return jsonTupleDec(x, path,
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+	)
+}
+
+// XoJsonEnc encodes a tuple as an array.
+func (t Tuple4[A, B, C, D]) XoJsonEnc(tk *Task, w *JsonW) {
+	w.ArrStart()
+	w.Elem()
+	JsonEncP(tk, w, &t.F0)
+	w.Elem()
+	JsonEncP(tk, w, &t.F1)
+	w.Elem()
+	JsonEncP(tk, w, &t.F2)
+	w.Elem()
+	JsonEncP(tk, w, &t.F3)
+	w.ArrEnd()
+}
+
+// XoJsonDec decodes an array of 4 elements.
+func (t *Tuple4[A, B, C, D]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return jsonTupleDec(x, path,
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+	)
+}
+
+// XoJsonEnc encodes a tuple as an array.
+func (t Tuple5[A, B, C, D, E]) XoJsonEnc(tk *Task, w *JsonW) {
+	w.ArrStart()
+	w.Elem()
+	JsonEncP(tk, w, &t.F0)
+	w.Elem()
+	JsonEncP(tk, w, &t.F1)
+	w.Elem()
+	JsonEncP(tk, w, &t.F2)
+	w.Elem()
+	JsonEncP(tk, w, &t.F3)
+	w.Elem()
+	JsonEncP(tk, w, &t.F4)
+	w.ArrEnd()
+}
+
+// XoJsonDec decodes an array of 5 elements.
+func (t *Tuple5[A, B, C, D, E]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return jsonTupleDec(x, path,
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
+	)
+}
+
+// XoJsonEnc encodes a tuple as an array.
+func (t Tuple6[A, B, C, D, E, F]) XoJsonEnc(tk *Task, w *JsonW) {
+	w.ArrStart()
+	w.Elem()
+	JsonEncP(tk, w, &t.F0)
+	w.Elem()
+	JsonEncP(tk, w, &t.F1)
+	w.Elem()
+	JsonEncP(tk, w, &t.F2)
+	w.Elem()
+	JsonEncP(tk, w, &t.F3)
+	w.Elem()
+	JsonEncP(tk, w, &t.F4)
+	w.Elem()
+	JsonEncP(tk, w, &t.F5)
+	w.ArrEnd()
+}
+
+// XoJsonDec decodes an array of 6 elements.
+func (t *Tuple6[A, B, C, D, E, F]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return jsonTupleDec(x, path,
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F0, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F1, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F2, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F3, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F4, e, p) },
+		func(e any, p string) *Json_DecodeErr { return JsonDec(tk, &t.F5, e, p) },
+	)
+}

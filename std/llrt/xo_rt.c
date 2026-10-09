@@ -4540,19 +4540,19 @@ int64_t xo_clock_now(void) {
 	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
 
-// xo_clock_sleep is `clock.sleep(d)`: a cancellation point that unwinds
-// (core 7.2), also while it waits.
-void xo_clock_sleep(int64_t d) {
-	xo_ctx *c = ctx();
-	if (canceled(c)) {
-		return;
+// clock_wait sleeps d unless the task is or becomes canceled; it returns
+// 1 when cancellation ended (or prevented) the sleep, without starting
+// an unwind.
+static int clock_wait(xo_ctx *c, int64_t d) {
+	if (ctx_canceled(c)) {
+		return 1;
 	}
 	if (tw.on) {
 		// FakeClock.sleeps() lists every sleep asked for
 		tw_sleep_record(d);
 	}
 	if (d <= 0) {
-		return;
+		return 0;
 	}
 	xo_timer t = {.when = deadline(d), .idx = -1, .park = &c->park};
 	park_reset(&c->park);
@@ -4561,9 +4561,23 @@ void xo_clock_sleep(int64_t d) {
 		park_wait_n(c, 1, 0);
 	}
 	timer_del(&t);
-	if (!__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE)) {
+	return !__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE) && ctx_canceled(c);
+}
+
+// xo_clock_sleep is `clock.sleep(d)`: a cancellation point that unwinds
+// (core 7.2), also while it waits.
+void xo_clock_sleep(int64_t d) {
+	xo_ctx *c = ctx();
+	if (clock_wait(c, d)) {
 		canceled(c);
 	}
+}
+
+// xo_clock_sleep_or_cancel is `clock.sleep_or_cancel(d)` (decision 0088):
+// 1 when the task was canceled before or during the sleep, which the
+// caller returns as ClockErr.Canceled instead of unwinding.
+int64_t xo_clock_sleep_or_cancel(int64_t d) {
+	return clock_wait(ctx(), d);
 }
 
 // xo_select_after adds the `after d` arm to select s: when no other arm

@@ -55,6 +55,21 @@ func Duration_from_millis(_ *Task, ms int64) Duration { return Duration(MulS(ms,
 // Duration_from_nanos is `Duration.from_nanos(ns)`.
 func Duration_from_nanos(_ *Task, ns int64) Duration { return Duration(ns) }
 
+// Duration_parse is `Duration.parse(s)` (std.md 2.6): time.ParseDuration
+// of the text with surrounding white space removed, the form JSON
+// decoding of a Duration accepts.
+func Duration_parse(_ *Task, s string) Result[Duration, DurationErr] {
+	if d, ok := parseDuration(s); ok {
+		return Ok[Duration, DurationErr](d)
+	}
+	return Err[Duration](DurationErr{F_input: s})
+}
+
+// M_display is the text of a DurationErr (the same on every backend).
+func (e DurationErr) M_display(*Task) string {
+	return "invalid duration " + strconv.Quote(e.F_input) + `: expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"`
+}
+
 // Duration_seconds is `d.seconds()`.
 func Duration_seconds(_ *Task, d Duration) float64 { return float64(d) / 1e9 }
 

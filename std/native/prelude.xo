@@ -381,3 +381,17 @@ fn result_ignore_err[T, E](r: Result[T, E], reason: Str) -> T? {
     Err(_) => None
   }
 }
+
+// ---------------------------------------------------------------------------
+// Duration (std.md 2.6)
+
+fn duration_parse(s: Str) -> Duration ! DurationErr {
+  if !rt.duration_parse_ok(s) {
+    return Err(DurationErr{input: s})
+  }
+  Ok(Duration.from_nanos(rt.duration_parse(s)))
+}
+
+fn durationerr_display(e: DurationErr) -> Str {
+  "invalid duration ${rt.strconv_quote(e.input)}: expected numbers with units ns, us, ms, s, m, h, such as \"1.5s\" or \"1h30m\""
+}
