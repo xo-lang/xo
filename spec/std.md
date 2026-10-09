@@ -1311,10 +1311,10 @@ not build `use go` code at all (`XO1201`, impossible).
 
 ---
 
-## 13. std/time (Proposed, not implemented)
+## 13. std/time (Accepted, not implemented)
 
-Status: **Proposed** draft for the owner (2026-10-09 spec audit,
-`bench/results/spec-audit-2026-10-09.md`). Nothing here is implemented:
+Status: **Accepted** (decision 0094, 2026-10-09; drafted by the spec
+audit, `bench/results/spec-audit-2026-10-09.md`). Nothing here is implemented:
 `std/time` resolves but declares nothing (every name in it is `XO0601`).
 Until this is decided, the prelude (2.6) is the whole time API: instants,
 durations, Unix seconds and milliseconds, and RFC 3339 in UTC.
@@ -1324,14 +1324,21 @@ Principles:
 - `Time` stays an instant with no zone. A zone is a separate value, and a
   civil (wall clock) reading is a separate type, so code never compares a
   zoned and an unzoned value by accident.
-- Zone data is embedded in the toolchain (the IANA database, as Go's
-  `time/tzdata`, about 450 KB), so loading a zone by name is pure, needs no
-  capability, and gives the same answer on every OS and in tests. Only the
-  machine's own zone needs authority: `local` takes `Env` (`TZ`, then the
-  system setting), so a function that depends on where it runs says so.
-- Layouts are written with named fields, not Go's reference date and not
-  C's `%` codes, because both are easy to get wrong without looking them
-  up: `"{yyyy}-{MM}-{dd} {HH}:{mm}:{ss}"`. Common formats are constants.
+- Zone data comes with the program, embedded per use, so loading a zone
+  by name is pure, needs no capability, and gives the same answer on every
+  OS and in tests. `utc()` and `fixed` need no data; a zone name that is a
+  constant embeds only that zone (about 1 to 3 KB); a name known only at
+  run time embeds the whole IANA database (about 400 KB compressed) and
+  `xo build` prints a note naming the call that caused it.
+  `--tzdata=system` reads the host's database instead (smaller binaries,
+  host dependent answers). Only the machine's own zone needs authority:
+  `local` takes `Env` (`TZ`, then the system setting), so a function that
+  depends on where it runs says so.
+- Layouts are written with named, lowercase fields, not Go's reference
+  date, not C's `%` codes, and not the letter patterns of Java, C#, and
+  Swift, where `MM` (month) and `mm` (minute) differ only in case:
+  `"{year}-{month}-{day} {hour}:{minute}:{second}"`. Common formats are
+  constants.
 - Parsing returns a `Result` whose error names the position and the field
   expected, like `json.DecodeErr`.
 - Daylight saving gaps and overlaps are explicit: converting a civil time
@@ -1386,35 +1393,41 @@ offset before or after the change gives). Arithmetic on `Time` stays exact
 ### 13.3 Formatting and parsing
 
 ```
-const RFC3339: Str = "{yyyy}-{MM}-{dd}T{HH}:{mm}:{ss}{.f}{Z}"
-const RFC1123: Str = "{EEE}, {dd} {MMM} {yyyy} {HH}:{mm}:{ss} {zzz}"   // HTTP dates
-const DATE: Str = "{yyyy}-{MM}-{dd}"
-const TIME: Str = "{HH}:{mm}:{ss}"
+const RFC3339: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}"
+const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"   // HTTP dates
+const DATE: Str = "{year}-{month}-{day}"
+const TIME: Str = "{hour}:{minute}:{second}"
 
 struct ParseErr { input: Str, layout: Str, at: Int, msg: Str }   // "at byte 5 of \"2026-1x-09\": expected 2 digit month"
 struct LayoutErr { layout: Str, msg: Str }
 
-pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked by xo vet)
+pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked at compile time)
 pub fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr   // z applies when the text has no offset
 pub fn check_layout(layout: Str) -> () ! LayoutErr
 ```
 
-Fields: `{yyyy}` year, `{MM}` month 01 to 12, `{M}` month without padding,
-`{MMM}` `Jan`, `{MMMM}` `January`, `{dd}` day, `{d}`, `{EEE}` `Mon`,
-`{EEEE}` `Monday`, `{HH}` hour 00 to 23, `{hh}` 01 to 12 with `{a}` AM or
-PM, `{mm}` minute, `{ss}` second, `{.f}` a fraction with as many digits as
-needed (none when zero), `{.fff}` exactly three, `{Z}` `Z` or `+02:00`,
-`{ZZ}` `+0200`, `{zzz}` the zone abbreviation. A literal brace is written `{lbrace}` or `{rbrace}`.
+Fields, one spelling each: `{year}`; `{month}` 01 to 12, `{month:1}`
+without padding, `{month:short}` `Jan`, `{month:name}` `January`; `{day}`
+01 to 31, `{day:1}`; `{weekday:short}` `Mon`, `{weekday:name}` `Monday`;
+`{hour}` 00 to 23, `{hour12}` 01 to 12 with `{ampm}` AM or PM; `{minute}`;
+`{second}`; `{frac}` a fraction with as many digits as needed (none when
+zero), `{frac:3}` exactly three (1 to 9); `{offset}` `Z` or `+02:00`,
+`{offset:compact}` `+0200`; `{zone}` the zone abbreviation. A literal
+brace is written `{lbrace}` or `{rbrace}`. A layout that is a constant is
+checked at compile time: an unknown field is an error with a did you mean
+fix. Letter patterns and `%` codes from other languages (`{yyyy}`,
+`{MM}`, `%Y`) are the habit error `XO0177` with a machine fix to the named
+form (decision 0087).
 Names are English only; locales are out of scope. Parsing accepts exactly
 the layout (no guessing between formats); a two digit year is not offered.
 
-### 13.4 Open points for the owner
+### 13.4 Decided points
 
-- Embedding tzdata costs about 450 KB per binary on every backend; the
-  alternative is reading the system database through the `fs` capability
-  (smaller binaries, but zone results then depend on the host and need
-  authority).
-- Whether `format` with a bad dynamic layout faults (proposed, like a bad
-  index) or returns a `Result`.
-- Native backends need the same embedded data in C; the Go backend can use
-  Go's `time` package directly.
+- Zone data is embedded per use (above), with `--tzdata=system` as the
+  opt in alternative.
+- `format` with a bad layout built at run time faults, like a bad index;
+  `check_layout` returns a `Result` for code that builds layouts from
+  input.
+- Native backends carry the same embedded data in C; the Go backend uses
+  Go's `time` package with the per use data. Implementation order: Go
+  backend, checker rules, native runtime, cross backend diff tests.

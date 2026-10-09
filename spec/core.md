@@ -14,6 +14,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 From the spec audit of 2026-10-09 (`bench/results/spec-audit-2026-10-09.md`):
 no meaning changes, the spec now says what is not implemented yet.
+Method syntax stays receivers (decision 0090); `std/time` is accepted as
+specified in std.md 13 (decision 0094), not yet implemented.
 
 - `xo build --ci` exists: it fails before building on an unformatted file
   or a `dbg` left in code (10.1, 10.5, 11.4).
@@ -2137,8 +2139,8 @@ test "missing user is 404" {
 
 Tracked in `knowledgebase/decisions/` once decided.
 
-1. Method syntax: Go style receivers (current) or `impl` blocks.
-   Proposed in 0090: keep receivers.
+1. ~~Method syntax: Go style receivers or `impl` blocks.~~ Decided in
+   0090: receivers.
 2. Whether `Map` iteration order should be insertion ordered (current) or
    sorted, given the cost on the Go backend. Proposed in 0091: keep
    insertion order (measured: no cost on the Go backend).
