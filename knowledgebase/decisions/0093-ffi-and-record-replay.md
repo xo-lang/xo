@@ -1,6 +1,6 @@
 # 0093: FFI: `use go` on the Go backend, `use c` on native backends, recorded at the boundary (Appendix B question 5)
 
-Status: Proposed (2026-10-09, spec audit; awaiting the owner)
+Status: Accepted (2026-10-09, by the owner; proposed by the spec audit)
 
 ## Context
 

@@ -28,6 +28,11 @@ possible and decide personally when it is 1.0.
   every feature into stable, preview, or gap, which is the input for the
   owner's 1.0 decision.
 
+## Owner's 1.0 criteria (2026-10-09)
+
+- Native TLS is required for 1.0: native builds must serve and call
+  HTTPS, so the native backends are not reduced to a preview for 1.0.
+
 ## Consequences
 
 - Agents and users can name exactly which toolchain built a program.

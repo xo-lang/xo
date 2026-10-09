@@ -1,6 +1,6 @@
 # 0091: Map and Set iteration order: keep insertion order (Appendix B question 2)
 
-Status: Proposed (2026-10-09, spec audit; awaiting the owner)
+Status: Accepted (2026-10-09, by the owner; proposed by the spec audit)
 
 ## Context
 

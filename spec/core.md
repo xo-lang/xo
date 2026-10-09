@@ -14,7 +14,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 From the spec audit of 2026-10-09 (`bench/results/spec-audit-2026-10-09.md`):
 no meaning changes, the spec now says what is not implemented yet.
-Method syntax stays receivers (decision 0090); `std/time` is accepted as
+Method syntax stays receivers (decision 0090), `Map` keeps insertion
+order (0091), error frames will be lazy and always on (0092), and foreign
+calls will be recorded at the boundary (0093); `std/time` is accepted as
 specified in std.md 13 (decision 0094), not yet implemented.
 
 - `xo build --ci` exists: it fails before building on an unformatted file
@@ -2141,13 +2143,11 @@ Tracked in `knowledgebase/decisions/` once decided.
 
 1. ~~Method syntax: Go style receivers or `impl` blocks.~~ Decided in
    0090: receivers.
-2. Whether `Map` iteration order should be insertion ordered (current) or
-   sorted, given the cost on the Go backend. Proposed in 0091: keep
-   insertion order (measured: no cost on the Go backend).
-3. Error frame capture cost in release builds. Proposed in 0092: frames
-   always on, captured lazily.
+2. ~~`Map` iteration order.~~ Decided in 0091: insertion order.
+3. ~~Error frame capture cost in release builds.~~ Decided in 0092:
+   frames on in every build, captured lazily (not implemented yet).
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
-5. FFI design and how `ffi` interacts with record/replay. Proposed in
-   0093: `use go` and native `use c`, foreign calls recorded at the
-   boundary.
+5. ~~FFI design and record/replay.~~ Decided in 0093: `use go` and
+   native `use c`, foreign calls recorded at the boundary (not
+   implemented yet).
 6. ~~Interpolation syntax.~~ Decided in 0021: `${x}`.
