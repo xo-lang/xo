@@ -72,6 +72,12 @@ specified in std.md 13 (decision 0094).
   machine fix, reformats the changed files, and reports what remains with
   the list of applied fixes; plain `xo check` stays read only. The MCP
   `check` tool takes `fix`.
+- Modules in repository subdirectories (4.2; decision 0086): the module
+  `github.com/acme/tools/cli` in `cli/` with tags `cli/vX.Y.Z`; fetch,
+  version selection, xo.lock, vendoring, `xo get`, and `xo publish`
+  handle the prefix. Nested modules are left out of the module around
+  them. `XO1311` now also reports a subdirectory module whose path does
+  not end with its directory.
 - Go calls are recorded (11.3; decision 0093 stage 1), replacing "Go calls
   are not recorded": calls with boundary values only are answered from
   the trace by `xo replay`; calls with a handle or a callback run again
@@ -918,6 +924,14 @@ require github.com/acme/billing v1.4.0
   and its xo.mod declares the same path); the version is a tag `vX.Y.Z`
   (`-prerelease` allowed). A module is required once. `require go
   <module> <version>` pins a Go module for `use go` instead (4.4).
+- A module may live in a subdirectory of its repository, as in Go:
+  `github.com/acme/tools/cli` is the directory `cli/` of the repository
+  `github.com/acme/tools`, its versions are the tags `cli/vX.Y.Z`, and a
+  version is that directory's tree at the tag. On github.com, gitlab.com,
+  and bitbucket.org the repository is the first three path elements; on
+  other hosts the longest prefix of the path that git answers for is the
+  repository. A directory holding its own xo.mod is never part of the
+  module around it (it is not fetched, hashed, or vendored with it).
 - There is no `replace`, `exclude`, or `retract` (`XO1301`); local copies
   are reached only through a workspace (below).
 - Minimal version selection: the build uses, for each module, the highest
@@ -994,7 +1008,8 @@ require github.com/acme/geo v2.1.0 uses net.dial, fs.read
   requirement to its latest version.
 
 **[P1]** Releases (decision 0086 step 4): a version is a `vX.Y.Z` tag of
-the repository whose root holds the module. `xo publish [--check]
+the repository whose root holds the module, or a `<dir>/vX.Y.Z` tag for a
+module in the directory `<dir>`. `xo publish [--check]
 [--version vX.Y.Z]` compares the exports (the declarations `xo query api`
 lists, in every package of the module) and their effects with the
 previous tag:
@@ -1007,13 +1022,14 @@ previous tag:
   patch before v1.0.0), so a breaking change fails unless a major version
   is asked for. The JSON result lists every change, the breaking ones,
   the bump they need, and the smallest version they allow.
-- `XO1311` when the release cannot be made: the module is not at a
-  repository root, the tag exists or is not above the last release, or
+- `XO1311` when the release cannot be made: the module is not in a git
+  repository, a module in a subdirectory has a path that does not end
+  with that directory, the tag exists or is not above the last release, or
   the major version does not match the module path. Without `--check`,
   uncommitted changes are `XO1311` and the module must load and check
   without a workspace.
 - Publishing is tagging: `xo publish` prints `git tag vX.Y.Z && git push
-  origin vX.Y.Z` and runs neither.
+  origin vX.Y.Z` (`git tag cli/vX.Y.Z ...` in `cli/`) and runs neither.
 - Major versions 2 and above live at a module path ending in `/vN`
   (`github.com/acme/billing/v2`), in the same repository: the xo.mod of
   those tags declares that path, and a require of a path without the
@@ -1970,7 +1986,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1308` | error | build | release build (`xo build --ci`) while an xo.work workspace overrides required modules |
 | `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
-| `XO1311` | error | publish | `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
+| `XO1311` | error | publish | `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is

@@ -13,16 +13,18 @@ func Git(dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// LocalTags lists the vX.Y.Z tags of the git repository at dir, lowest
-// first.
-func LocalTags(dir string) ([]string, error) {
-	out, err := git(dir, "tag", "--list", "v*")
+// LocalTags lists the versions tagged in the git repository at dir,
+// lowest first: the tags prefix+vX.Y.Z with the prefix removed (prefix
+// is "" for a module at the repository root, "cli/" for one in cli/).
+func LocalTags(dir, prefix string) ([]string, error) {
+	out, err := git(dir, "tag", "--list", prefix+"v*")
 	if err != nil {
 		return nil, err
 	}
 	var vs []string
 	for _, t := range strings.Fields(string(out)) {
-		if ValidVersion(t) {
+		t, ok := strings.CutPrefix(t, prefix)
+		if ok && ValidVersion(t) {
 			vs = append(vs, t)
 		}
 	}
@@ -30,12 +32,20 @@ func LocalTags(dir string) ([]string, error) {
 	return vs, nil
 }
 
-// ExtractTag writes the tree of tag in the git repository at dir into dst
-// (`git archive`, as fetching does: nothing in it runs).
-func ExtractTag(dir, tag, dst string) error {
-	data, err := git(dir, "archive", "--format=tar", "refs/tags/"+tag)
+// ExtractTag writes the tree of directory subdir ("" for the root) at tag
+// in the git repository at dir into dst (`git archive`, as fetching does:
+// nothing in it runs), without nested modules.
+func ExtractTag(dir, tag, subdir, dst string) error {
+	treeish := "refs/tags/" + tag
+	if subdir != "" {
+		treeish += ":" + subdir
+	}
+	data, err := git(dir, "archive", "--format=tar", treeish)
 	if err != nil {
 		return err
 	}
-	return untar(data, dst)
+	if err := untar(data, dst); err != nil {
+		return err
+	}
+	return pruneNested(dst)
 }

@@ -118,11 +118,26 @@ func Publish(dir string, opts Options) *Result {
 	}
 	r.Module = f.Path
 	top, err := mod.Git(root, "rev-parse", "--show-toplevel")
-	if err != nil || !sameDir(strings.TrimSpace(top), root) {
-		r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("module %s is not the root of a git repository: a version is a tag of the repository holding the module at its root", f.Path))
+	if err != nil {
+		r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("module %s is not in a git repository: a version is a tag of the repository holding the module", f.Path))
 		return r
 	}
-	tags, err := mod.LocalTags(root)
+	top = strings.TrimSpace(top)
+	// a module in a subdirectory of its repository (decision 0086): its
+	// path ends with the directory and its tags carry it as a prefix
+	sub := subdirOf(top, root)
+	if sub != "" {
+		base, _ := mod.MajorSuffix(f.Path)
+		if !strings.HasSuffix(base, "/"+sub) {
+			r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("module %s is in the directory %s/ of its git repository, so its path must end in /%s", f.Path, sub, sub), "a module in a subdirectory is the repository's path plus the directory (github.com/acme/tools/cli in cli/), and its versions are tags "+sub+"/vX.Y.Z")
+			return r
+		}
+	}
+	prefix := ""
+	if sub != "" {
+		prefix = sub + "/"
+	}
+	tags, err := mod.LocalTags(top, prefix)
 	if err != nil {
 		r.fail(diag.InvalidRelease, modFile, 0, "cannot list the git tags: "+err.Error())
 		return r
@@ -132,8 +147,14 @@ func Publish(dir string, opts Options) *Result {
 		return r
 	}
 	// the previous release: the highest tag below the version (the
-	// highest tag when no version is given)
+	// highest tag when no version is given). Tags of a higher major
+	// version belong to another module path (/vN), which shares the
+	// repository and, in a subdirectory, the tag prefix.
+	_, pathMajor := mod.MajorSuffix(f.Path)
 	for _, t := range tags {
+		if mod.Major(t) > max(pathMajor, 1) {
+			continue
+		}
 		if opts.Version == "" || mod.Compare(t, opts.Version) < 0 {
 			r.Previous = t
 		}
@@ -145,8 +166,8 @@ func Publish(dir string, opts Options) *Result {
 			return r
 		}
 		defer os.RemoveAll(tmp)
-		if err := mod.ExtractTag(root, r.Previous, tmp); err != nil {
-			r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("cannot read %s: %v", r.Previous, err))
+		if err := mod.ExtractTag(top, prefix+r.Previous, sub, tmp); err != nil {
+			r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("cannot read %s: %v", prefix+r.Previous, err))
 			return r
 		}
 		oldPath := f.Path
@@ -207,7 +228,7 @@ func Publish(dir string, opts Options) *Result {
 	// the version itself
 	for _, t := range tags {
 		if t == r.Version {
-			r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("%s is already a tag of %s", r.Version, f.Path), "a published version never changes; release "+r.Suggested+" instead")
+			r.fail(diag.InvalidRelease, modFile, 0, fmt.Sprintf("%s is already a tag of %s", prefix+r.Version, f.Path), "a published version never changes; release "+r.Suggested+" instead")
 		}
 	}
 	if r.Previous != "" && mod.Compare(r.Version, r.Previous) <= 0 {
@@ -242,7 +263,7 @@ func Publish(dir string, opts Options) *Result {
 		r.fail(diag.BreakingRelease, relTo(file), line, fmt.Sprintf("%s in %s, a %s release after %s", c.Describe(), r.Version, kindOf(r.Previous, r.Version), r.Previous), notes...)
 	}
 	if !opts.Check {
-		out, err := mod.Git(root, "status", "--porcelain")
+		out, err := mod.Git(root, "status", "--porcelain", "--", ".")
 		if err != nil {
 			r.fail(diag.InvalidRelease, modFile, 0, "git status: "+err.Error())
 		} else if s := strings.TrimSpace(out); s != "" {
@@ -266,9 +287,27 @@ func Publish(dir string, opts Options) *Result {
 	}
 	r.Ok = len(r.Diags) == 0
 	if r.Ok {
-		r.Tag = "git tag " + r.Version + " && git push origin " + r.Version
+		r.Tag = "git tag " + prefix + r.Version + " && git push origin " + prefix + r.Version
 	}
 	return r
+}
+
+// subdirOf is the slash path of dir below the repository root top, ""
+// when dir is the root.
+func subdirOf(top, dir string) string {
+	if sameDir(top, dir) {
+		return ""
+	}
+	a, err1 := filepath.EvalSymlinks(top)
+	b, err2 := filepath.EvalSymlinks(dir)
+	if err1 != nil || err2 != nil {
+		a, b = filepath.Clean(top), filepath.Clean(dir)
+	}
+	rel, err := filepath.Rel(a, b)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 func kindOf(prev, v string) string {

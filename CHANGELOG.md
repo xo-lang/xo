@@ -47,6 +47,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache growth per program 34 to 2.9 MB, compile memory 286 to 123 MB.
   Binaries carry no DWARF or symbol table (`XO_GO_DWARF=1` keeps them for
   a debugger); programs that do not import std/http do not link net/http.
+- Modules in repository subdirectories (decision 0086): a module path
+  `github.com/acme/tools/cli` is the directory `cli/` of the repository
+  `github.com/acme/tools`, versioned by tags `cli/vX.Y.Z` (as Go);
+  fetch, MVS, xo.lock, `xo vendor`, `xo get`, and `xo publish [--check]`
+  (prefixed tag command) handle it; nested modules are left out of a
+  module's tree and hash.
 - Go calls in record and replay (decision 0093 stage 1): `--record`
   records `use go` calls whose arguments and results are values (an
   argument hash and the results) and `xo replay` answers them without

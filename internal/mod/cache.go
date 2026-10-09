@@ -3,8 +3,6 @@ package mod
 import (
 	"archive/tar"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -118,12 +116,12 @@ func git(dir string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// repoDir is the bare clone of a module's repository in the cache,
-// created or refreshed (tags fetched) when refresh is set.
-func repoDir(path string, refresh bool) (string, error) {
-	url := RepoURL(path)
-	sum := sha256.Sum256([]byte(url))
-	dir := filepath.Join(CacheDir(), "cache", "vcs", hex.EncodeToString(sum[:16]))
+// repoDir is the bare clone of the repository at module path repo (a
+// Location's Repo) in the cache, created or refreshed (tags fetched) when
+// refresh is set.
+func repoDir(repo string, refresh bool) (string, error) {
+	url := RepoURL(repo)
+	dir := vcsDir(repo)
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
 		if refresh {
 			if _, err := git(dir, "fetch", "--quiet", "--force", "--prune", url, "+refs/tags/*:refs/tags/*"); err != nil {
@@ -154,8 +152,10 @@ func repoDir(path string, refresh bool) (string, error) {
 	return dir, nil
 }
 
-// Versions lists the vX.Y.Z tags of a module's repository, lowest first.
-// Offline, it lists the versions in the module cache.
+// Versions lists the versions of a module, lowest first: the vX.Y.Z tags
+// of its repository, or the <dir>/vX.Y.Z tags for a module in directory
+// <dir> of the repository. Offline, it lists the versions in the module
+// cache.
 func Versions(path string) ([]string, error) {
 	var vs []string
 	if Offline() {
@@ -170,16 +170,18 @@ func Versions(path string) ([]string, error) {
 			}
 		}
 	} else {
-		dir, err := repoDir(path, true)
+		loc := Locate(path)
+		dir, err := repoDir(loc.Repo, true)
 		if err != nil {
 			return nil, err
 		}
-		out, err := git(dir, "tag", "--list", "v*")
+		out, err := git(dir, "tag", "--list", loc.TagPrefix()+"v*")
 		if err != nil {
 			return nil, err
 		}
 		for _, t := range strings.Fields(string(out)) {
-			if ValidVersion(t) && MajorMismatch(path, t) == "" {
+			t, ok := strings.CutPrefix(t, loc.TagPrefix())
+			if ok && ValidVersion(t) && MajorMismatch(path, t) == "" {
 				vs = append(vs, t)
 			}
 		}
@@ -205,14 +207,17 @@ func Latest(path string) (string, error) {
 		best = vs[len(vs)-1]
 	}
 	if best == "" {
-		return "", fmt.Errorf("no vX.Y.Z tags in %s", RepoURL(path))
+		loc := Locate(path)
+		return "", fmt.Errorf("no %svX.Y.Z tags in %s", loc.TagPrefix(), RepoURL(loc.Repo))
 	}
 	return best, nil
 }
 
 // Download makes sure a module version is in the cache and returns its
 // directory. It fetches the tag from git unless offline (XO1303 then).
-// The tree is `git archive` of the tag: nothing in it runs. The
+// The tree is `git archive` of the tag (of the module's directory at the
+// tag `<dir>/vX.Y.Z` for a module in a subdirectory): nothing in it runs.
+// Nested modules (directories with an xo.mod) are left out. The
 // extracted tree is checked to declare the requested module path and made
 // read only.
 func Download(path, version string) (string, *Problem) {
@@ -224,26 +229,39 @@ func Download(path, version string) (string, *Problem) {
 		return "", &Problem{Code: diag.ModuleOffline, Module: path, Msg: fmt.Sprintf("%s %s is not in the module cache and the build is offline", path, version),
 			Notes: []string{"fetch it once without XO_OFFLINE / --offline (`xo mod tidy` or `xo get " + path + "@" + version + "`), or vendor it with `xo vendor`", "module cache: " + CacheDir()}}
 	}
+	loc := Locate(path)
+	tag := loc.Tag(version)
 	fetchErr := func(err error) *Problem {
+		where := "the module path is its git location: " + RepoURL(loc.Repo)
+		if loc.Subdir != "" {
+			where = "the module is the directory " + loc.Subdir + "/ of the repository " + RepoURL(loc.Repo) + ", versions are tags " + loc.TagPrefix() + "vX.Y.Z"
+		}
 		return &Problem{Code: diag.ModuleFetch, Module: path, Msg: fmt.Sprintf("cannot fetch %s %s: %v", path, version, err),
-			Notes: []string{"the module path is its git location: " + RepoURL(path) + " (XO_GIT_BASE or XO_GIT_REWRITE change it)"}}
+			Notes: []string{where + " (XO_GIT_BASE or XO_GIT_REWRITE change it)"}}
 	}
-	repo, err := repoDir(path, false)
+	repo, err := repoDir(loc.Repo, false)
 	if err == nil {
-		if _, err := git(repo, "rev-parse", "--verify", "--quiet", "refs/tags/"+version+"^{commit}"); err != nil {
-			repo, err = repoDir(path, true)
+		if _, err := git(repo, "rev-parse", "--verify", "--quiet", "refs/tags/"+tag+"^{commit}"); err != nil {
+			repo, err = repoDir(loc.Repo, true)
 		}
 	} else {
-		repo, err = repoDir(path, true)
+		repo, err = repoDir(loc.Repo, true)
 	}
 	if err != nil {
 		return "", fetchErr(err)
 	}
-	if _, err := git(repo, "rev-parse", "--verify", "--quiet", "refs/tags/"+version+"^{commit}"); err != nil {
-		return "", fetchErr(fmt.Errorf("no tag %s", version))
+	if _, err := git(repo, "rev-parse", "--verify", "--quiet", "refs/tags/"+tag+"^{commit}"); err != nil {
+		return "", fetchErr(fmt.Errorf("no tag %s", tag))
 	}
-	data, err := git(repo, "archive", "--format=tar", "refs/tags/"+version)
+	treeish := "refs/tags/" + tag
+	if loc.Subdir != "" {
+		treeish += ":" + loc.Subdir
+	}
+	data, err := git(repo, "archive", "--format=tar", treeish)
 	if err != nil {
+		if loc.Subdir != "" {
+			err = fmt.Errorf("the tag %s has no directory %s/", tag, loc.Subdir)
+		}
 		return "", fetchErr(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
@@ -258,10 +276,18 @@ func Download(path, version string) (string, *Problem) {
 		cleanup()
 		return "", fetchErr(err)
 	}
+	if err := pruneNested(tmp); err != nil {
+		cleanup()
+		return "", fetchErr(err)
+	}
 	mf, probs := ReadFile(tmp)
 	if len(probs) > 0 && (mf == nil || mf.Path == "") {
 		cleanup()
-		return "", fetchErr(fmt.Errorf("the tag has no valid xo.mod at the repository root"))
+		where := "at the repository root"
+		if loc.Subdir != "" {
+			where = "in " + loc.Subdir + "/"
+		}
+		return "", fetchErr(fmt.Errorf("the tag has no valid xo.mod %s", where))
 	}
 	if mf.Path != path {
 		cleanup()
