@@ -431,6 +431,8 @@ func TestErrorRecovery(t *testing.T) {
 		{"interface method body", "interface I {\n  fn f(self) -> Int { 1 }\n}\n", "XO0160@2"},
 		{"tuple field with prefix", "fn f() {\n  let a = t.0x1\n}\n", "XO0160@2"},
 		{"statement at top level", "let x = 1\nfn f() {}\nx = 2\n", "XO0168@1 XO0168@3"},
+		{"arms on one line keep parsing", "fn f() {\n  match x { A => 1 B => 2 C => 3 }\n  let = 1\n}\n", "XO0175@2 XO0175@2 XO0165@3"},
+		{"stray token after arm is not an arm", "fn f() {\n  match x {\n    A => 1 b\n    B => 2\n  }\n}\n", "XO0175@3"},
 		{"comma between arms", "fn f() {\n  match x {\n    A => 1,\n    B => 2\n  }\n}\n", "XO0169@3"},
 		{"fn type effects need parens in alias", "type H = fn() uses a, b\n", "XO0170@1"},
 		{"fn type effects need parens in params", "fn f(g: fn() uses net, clock, n: Int) {}\n", "XO0170@1"},

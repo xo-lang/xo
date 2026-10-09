@@ -1,0 +1,59 @@
+// Every std error type implements Display (std.md 1), so `.display()` is
+// callable on it directly, through a Display bound, and as an Error. The
+// r2 Codex rerun hit XO0601 on `http.ClientErr.display()` (task 03).
+use std/http
+use std/json
+use std/sql
+use std/task
+
+enum AppErr { Missing(id: Int), Closed } derive Display
+
+fn via_bound[T: Display](v: T) -> Str { v.display() }
+
+fn via_error(e: Error) -> Str { e.display() }
+
+fn show(stdio: Stdio, name: Str, direct: Str, interp: Str, bound: Str) {
+  let same = direct == interp && direct == bound
+  stdio.println("${name}: ${direct} (same as interpolation: ${same})")
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let fs_err = FsErr.NotFound(path: "a.txt")
+  show(io, "FsErr", fs_err.display(), "${fs_err}", via_bound(fs_err))
+  let net_err = NetErr.Timeout
+  show(io, "NetErr", net_err.display(), "${net_err}", via_bound(net_err))
+  let clock_err = ClockErr.Canceled
+  show(io, "ClockErr", clock_err.display(), "${clock_err}", via_bound(clock_err))
+  let env_err = EnvErr.Missing(name: "HOME")
+  show(io, "EnvErr", env_err.display(), "${env_err}", via_bound(env_err))
+  let io_err = IoErr.Io(msg: "broken pipe")
+  show(io, "IoErr", io_err.display(), "${io_err}", via_bound(io_err))
+  let proc_err = ProcErr.NotFound(cmd: "git")
+  show(io, "ProcErr", proc_err.display(), "${proc_err}", via_bound(proc_err))
+  let http_err = http.HttpErr.Io(msg: "reset")
+  show(io, "http.HttpErr", http_err.display(), "${http_err}", via_bound(http_err))
+  let client_err = http.ClientErr.Connect(msg: "refused")
+  show(io, "http.ClientErr", client_err.display(), "${client_err}", via_bound(client_err))
+  let timeout = http.ClientErr.Timeout
+  show(io, "http.ClientErr", timeout.display(), "${timeout}", via_bound(timeout))
+  let url_err = http.UrlErr{msg: "no scheme"}
+  show(io, "http.UrlErr", url_err.display(), "${url_err}", via_bound(url_err))
+  let decode_err = json.DecodeErr{path: "$.user.email", msg: "expected string"}
+  show(io, "json.DecodeErr", decode_err.display(), "${decode_err}", via_bound(decode_err))
+  let sql_err = sql.SqlErr.NoRows
+  show(io, "sql.SqlErr", sql_err.display(), "${sql_err}", via_bound(sql_err))
+  let timed: task.Timed[AppErr] = task.Timed.TimedOut
+  show(io, "task.Timed", timed.display(), "${timed}", via_bound(timed))
+  let fault = task.Fault{msg: "boom", location: "main.xo:1", frames: []}
+  show(io, "task.Fault", fault.display(), "${fault}", via_bound(fault))
+  match Duration.parse("soon") {
+    Ok(_) => io.println("unexpected")
+    Err(e) => show(io, "DurationErr", e.display(), "${e}", via_bound(e))
+  }
+  let app = AppErr.Missing(id: 7)
+  show(io, "AppErr", app.display(), "${app}", via_bound(app))
+  io.println("as Error: ${via_error(client_err)}")
+  let n = 42
+  io.println("Int: ${n.display()}")
+}

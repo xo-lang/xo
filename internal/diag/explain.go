@@ -358,7 +358,8 @@ fn (p: P) norm(scale: Int) -> Int { p.x * scale }`,
 	ExpectedNewline: {
 		Title: "two statements or arms on one line",
 		Detail: "Newlines terminate statements and separate declarations and `match` arms, and Xo has no semicolons in source (core 1.3). " +
-			"Two statements, declarations, or arms on one line are rejected. Put each on its own line.",
+			"Two statements, declarations, or arms on one line are rejected. Put each on its own line. " +
+			"Several `match` or `select` arms on one line (`match r { Ok(v) => v Err(_) => 0 }`) get a machine fix that puts each arm on its own line (`xo fix`), and the parser keeps every arm, so no false missing arm error (XO0301) follows.",
 		Example: `fn a() {}
 fn b() {}
 

@@ -34,6 +34,11 @@ specified in std.md 13 (decision 0094), not yet implemented.
   `xo get`, `xo mod tidy`, `xo vendor`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). New codes `XO1301` to `XO1308` (10.6).
   An import from a module that is not required is `XO1306`.
+- From the Codex r2 rerun (`bench/results/codex-xo-r2-2026-10-09.md`): a
+  closure whose body never completes has result type `Never` when nothing
+  else determines it (3.3); `x.display()` is callable on every `Display`
+  type, derived and std errors included (std.md 1); several `match` arms
+  on one line keep parsing, with a fix that splits them (`XO0175`).
 
 ## Changes in 0.7
 
@@ -688,6 +693,11 @@ let load = fn(id: Int) -> User ! LoadErr uses net { store.get(id)? }
 - Creating a closure performs no effects; calling it does.
 - `return` inside a closure returns from the closure.
 - Effects of a closure are inferred from its body unless declared.
+- A closure whose body never completes normally (it ends in `while { ... }`
+  without `break`, `fault(...)`, or another `Never` expression) and whose
+  result type nothing else determines has result type `Never`, so
+  `s.spawn_background(fn() { while { ... } })` needs no type argument
+  (`Task[Never, E]`).
 
 ### 3.4 Methods
 

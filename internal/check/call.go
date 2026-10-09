@@ -807,6 +807,12 @@ func (c *checker) callMethod(bt Type, sel *ast.SelectorExpr, targs []Type, x *as
 			}
 			return r
 		}
+		if name == "display" && len(x.Args) == 0 && len(targs) == 0 && c.implementsName(r, "Display", sel.Sp) {
+			// a derived or built in Display: the interface's method is
+			// callable on the value (std.md 1: every std error type
+			// implements Display)
+			return c.named("Str")
+		}
 		if (name == "spawn" || name == "spawn_background") && !c.isPrelude(r, "Scope") {
 			c.errorf(diag.SpawnWithoutScope, sel.Sel.Sp, "`%s` is called on `%s`, not on a scope handle; tasks are started with `s.spawn(f)` inside `scope s { ... }` (core 7.1)", name, deep(r))
 			c.inferArgs(x)

@@ -66,6 +66,9 @@ func (f *fnGen) callCore(x *ast.CallExpr) (string, callKind) {
 			switch sel.Sel.Name {
 			case "min", "max", "clamp":
 				return f.ordCall(sel, x), ckValue
+			case "display":
+				// a derived or built in Display (std.md 1)
+				return f.display(f.val(sel.X), f.typeOf(sel.X)), ckValue
 			}
 		}
 		f.g.errorf(x, "unresolved call in code generation")

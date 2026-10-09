@@ -39,6 +39,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 				return s.call(a.Type.Name+"."+sel.Sel.Name, a.Type, "", a, s.valueAs(x.Args[0].Value, a.Type))
 			}
 		}
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 0 && sel.Sel.Name == "display" {
+			// a derived or built in Display (std.md 1): the text of `${x}`
+			ct := s.natCheck(sel.X)
+			v := s.expr(sel.X)
+			return s.appendDisplay(s.add(OpConst, b.mod.Builtin(KStr), ""), v, ct, sel.X)
+		}
 		b.unsupported(x, "this call")
 		return s.undef(s.natOf(x))
 	}

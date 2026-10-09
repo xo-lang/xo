@@ -1965,6 +1965,10 @@ func (p *parser) parseArms(what string, arm func()) {
 				p.armComma(what)
 				continue
 			}
+			if p.armOnSameLine() {
+				p.splitArm(what)
+				continue
+			}
 			p.errorf(diag.ExpectedNewline, p.tok.Span, "expected newline after %s, found %s", what, describe(p.tok))
 		}
 		p.syncStmt()

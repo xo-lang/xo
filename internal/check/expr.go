@@ -43,6 +43,9 @@ func (c *checker) check0(e ast.Expr, want Type) Type {
 		return c.coerceTo(t, discard, e.Span(), e)
 	}
 	t := c.infer(e, want)
+	if c.isNever(t) {
+		c.neverExpr[e] = true
+	}
 	return c.coerceTo(t, want, e.Span(), e)
 }
 
@@ -1564,6 +1567,9 @@ func (c *checker) fnLit(x *ast.FnLit, hint Type) Type {
 			want = ctx.result
 		}
 		c.block(x.Body, want)
+		if isOpenVar(ctx.result) && c.blockNever(x.Body) {
+			c.neverResults = append(c.neverResults, ctx.result)
+		}
 		c.finishGroups(ctx)
 		c.popScope()
 	})

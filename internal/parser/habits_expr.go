@@ -1125,3 +1125,40 @@ func (p *parser) armComma(what string) {
 	}
 	p.next()
 }
+
+// armOnSameLine reports whether the current token starts another arm on the
+// line of the arm just parsed: an operand start followed, before the end
+// of the line, by a `=>` outside brackets.
+func (p *parser) armOnSameLine() bool {
+	if !startsExpr(p.tok.Kind) || p.tok.Kind == token.LBrace {
+		return false
+	}
+	depth := 0
+	for i := 0; ; i++ {
+		t := p.peek(i)
+		switch t.Kind {
+		case token.Newline, token.EOF:
+			return false
+		case token.LParen, token.LBrack, token.LBrace, token.HashLBrace:
+			depth++
+		case token.RParen, token.RBrack, token.RBrace:
+			depth--
+			if depth < 0 {
+				return false
+			}
+		case token.FatArrow:
+			if depth == 0 {
+				return i > 0
+			}
+		}
+	}
+}
+
+// splitArm reports another arm on the line of the previous one (XO0175)
+// with a fix that moves it to its own line, and lets the caller parse it as
+// an arm, so the match keeps all its arms and no false XO0301 follows.
+func (p *parser) splitArm(what string) {
+	d := p.softErrorf(diag.ExpectedNewline, p.tok.Span, "expected newline after %s, found %s", what, describe(p.tok))
+	addNote(d, "each arm goes on its own line; Xo has no separator between arms (core 3.5)")
+	addFix(d, "put the next arm on its own line", p.replaceRange(p.prevEnd(), p.tok.Span.Start, "\n"))
+}

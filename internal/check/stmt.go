@@ -554,6 +554,25 @@ func (c *checker) block(b *ast.Block, want Type) Type {
 	return c.coerceTo(t, want, end, b)
 }
 
+// blockNever reports whether a block never completes normally: its last
+// statement is an infinite loop without `break`, a jump, or an expression
+// of type `Never`.
+func (c *checker) blockNever(b *ast.Block) bool {
+	n := len(b.Stmts)
+	if n == 0 {
+		return false
+	}
+	if es, ok := b.Stmts[n-1].(*ast.ExprStmt); ok {
+		if w, ok := es.X.(*ast.WhileExpr); ok {
+			return !hasBreak(w.Body, "", 0)
+		}
+		if c.neverExpr[es.X] {
+			return true
+		}
+	}
+	return c.stmtNever(b.Stmts[n-1])
+}
+
 // stmtNever reports whether a statement never completes.
 func (c *checker) stmtNever(s ast.Stmt) bool {
 	switch x := s.(type) {
