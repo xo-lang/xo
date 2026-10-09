@@ -1,0 +1,23 @@
+[
+  {
+    "code": "XO0205",
+    "severity": "error",
+    "message": "`?` on an optional value needs a function that returns an optional, but `nick` returns `Str`",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 5
+    },
+    "notes": [
+      {
+        "message": "use `??` to supply a default, `if let`, or `match` (core 2.5)"
+      },
+      {
+        "message": "`x?.f` is optional chaining in TypeScript, Kotlin, and Swift; Xo's postfix `?` instead returns early from the function. To keep the value optional, write `x.map(fn(v) { v.f })`, then `?? default` (spec/std.md 2)"
+      }
+    ],
+    "fixes": []
+  }
+]

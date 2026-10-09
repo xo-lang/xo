@@ -1,0 +1,128 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `list` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`list(x)` is Python; Xo calls the method on the value, `x.to_list()` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove `list(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 39
+            },
+            "replace": "map(lambda x: x * x, range(n))"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `map` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 8,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`map(f, xs)` is Python; Xo calls the method on the collection, `xs.map(f)` (spec/std.md 2)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`lambda x: body` is Python syntax; Xo writes `fn(x) { body }` (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 12,
+      "end_line": 2,
+      "end_col": 18
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fn(...) { ... }`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 12,
+              "end_line": 2,
+              "end_col": 22
+            },
+            "replace": "fn(x) { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 27,
+              "end_line": 2,
+              "end_col": 27
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `range` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 29,
+      "end_line": 2,
+      "end_col": 34
+    },
+    "notes": [
+      {
+        "message": "`range(n)` is Python; Xo writes the range itself, `0..n`, which excludes the upper bound as `range` does (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `0..n`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 29,
+              "end_line": 2,
+              "end_col": 37
+            },
+            "replace": "0..n"
+          }
+        ]
+      }
+    ]
+  }
+]

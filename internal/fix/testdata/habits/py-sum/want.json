@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `sum` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "`sum(xs)` is Python; Xo folds the list, `xs.fold(0, fn(a, b) { a + b })` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.fold(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 10
+            },
+            "replace": "xs.fold(0, fn(a, b) { a + b })"
+          }
+        ]
+      }
+    ]
+  }
+]

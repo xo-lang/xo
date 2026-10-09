@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `t` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`t = v` declares a variable in Python; Xo declares a name before assigning it: `var t = v`, or `let t = v` when it never changes (core 3.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare with `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 3
+            },
+            "replace": "var "
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -114,6 +114,9 @@ func (c *checker) reportUnused() {
 			continue
 		}
 		d := c.errorf(diag.UnusedBinding, v.Span, "`%s` is never used", v.Name)
+		if d != nil && c.dollarHabit(d, v) {
+			continue
+		}
 		if d != nil {
 			note(d, token.Span{}, "prefix the name with `_` or write `_` to discard it (core 3.1)")
 			fix(d, fmt.Sprintf("rename to `_%s`", v.Name), replaceEdit(v.Span, "_"+v.Name))
@@ -914,6 +917,9 @@ func (c *checker) requireMutable(e ast.Expr, code diag.Code, what string) {
 }
 
 func (c *checker) assign(x *ast.AssignStmt) {
+	if c.habitAssignDecl(x) {
+		return
+	}
 	if ix, ok := unparen(x.Target).(*ast.IndexExpr); ok && x.Op == token.Assign {
 		c.mapStore = ix
 	}

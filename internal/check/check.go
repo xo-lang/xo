@@ -57,6 +57,8 @@ type checker struct {
 	// renames are XO0101 fixes of local names whose uses are added once
 	// the bodies are checked (decision 0087).
 	renames []pendingRename
+	// safeNavs are `x?.f` optional chains reported as XO0205.
+	safeNavs map[*ast.TryExpr]bool
 
 	// per body information used by the flow checks
 	identObj  map[*ast.Ident]*VarObj
@@ -111,6 +113,7 @@ func newChecker() *checker {
 		seen:        map[string]bool{},
 		modules:     map[string]*Module{},
 		identObj:    map[*ast.Ident]*VarObj{},
+		safeNavs:    map[*ast.TryExpr]bool{},
 		exprType:    map[ast.Expr]Type{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},
@@ -575,6 +578,25 @@ func nearest(name string, cands []string) []string {
 	return out
 }
 
+// confidentGuess reports whether the best edit distance suggestion for name
+// is safe to apply as a machine fix: a case only difference, or a unique
+// closest candidate at most half the name's length away, for names of
+// three or more characters.
+func confidentGuess(name string, sugg []string) bool {
+	best := sugg[0]
+	if strings.EqualFold(best, name) {
+		return true
+	}
+	d := editDistance(strings.ToLower(name), strings.ToLower(best))
+	if len(name) < 3 || d*2 > len(name) {
+		return false
+	}
+	if len(sugg) > 1 && editDistance(strings.ToLower(name), strings.ToLower(sugg[1])) == d {
+		return false
+	}
+	return true
+}
+
 // unresolved reports XO0601 for name at id with suggestions from cands.
 func (c *checker) unresolved(sp token.Span, what, name string, cands []string) *diag.Diagnostic {
 	msg := fmt.Sprintf("%s `%s` not found", what, name)
@@ -588,7 +610,12 @@ func (c *checker) unresolved(sp token.Span, what, name string, cands []string) *
 	sugg := nearest(name, cands)
 	if len(sugg) > 0 {
 		note(d, token.Span{}, "did you mean `%s`?", strings.Join(sugg, "`, `"))
-		fix(d, fmt.Sprintf("replace with `%s`", sugg[0]), replaceEdit(sp, sugg[0]))
+		// `xo fix` applies the first fix blindly, so a guess becomes a fix
+		// only when it is clear: one closest candidate, and an edit small
+		// next to the name (`t` is not `it`, `map` is not `has`).
+		if confidentGuess(name, sugg) {
+			fix(d, fmt.Sprintf("replace with `%s`", sugg[0]), replaceEdit(sp, sugg[0]))
+		}
 	}
 	return d
 }

@@ -32,35 +32,5 @@
         ]
       }
     ]
-  },
-  {
-    "code": "XO0177",
-    "severity": "error",
-    "message": "`::` is Rust and C++ path syntax; Xo writes `.`: `String.from` (core 2.3, 4.1)",
-    "span": {
-      "file": "main.xo",
-      "line": 2,
-      "col": 9,
-      "end_line": 2,
-      "end_col": 11
-    },
-    "notes": [],
-    "fixes": [
-      {
-        "title": "write `.`",
-        "edits": [
-          {
-            "span": {
-              "file": "main.xo",
-              "line": 2,
-              "col": 9,
-              "end_line": 2,
-              "end_col": 11
-            },
-            "replace": "."
-          }
-        ]
-      }
-    ]
   }
 ]

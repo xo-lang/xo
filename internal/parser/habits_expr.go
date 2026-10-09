@@ -387,6 +387,88 @@ func (p *parser) singleQuoted() ast.Expr {
 	return strLit(cooked.String(), t.Span)
 }
 
+// comprehension is Python's `[elem for pat in iter if cond]`.
+type comprehension struct {
+	elem ast.Expr
+	pat  ast.Pattern
+	iter ast.Expr
+	cond ast.Expr
+	kw   token.Token
+}
+
+// parseComprehension parses `for pat in iter [if cond]` after the element.
+func (p *parser) parseComprehension(elem ast.Expr) *comprehension {
+	c := &comprehension{elem: elem, kw: p.tok}
+	p.next() // for
+	c.pat = p.parsePattern()
+	p.expect(token.In, "`in` in a comprehension")
+	c.iter = p.parseBinary(2)
+	if p.got(token.If) {
+		c.cond = p.parseExpr()
+	}
+	return c
+}
+
+// finishComprehension reports the comprehension and recovers it as
+// `iter.filter(fn(x) { cond }).map(fn(x) { elem })`.
+func (p *parser) finishComprehension(c *comprehension, sp token.Span) ast.Expr {
+	d := p.foreign(c.kw.Span, "`[x for x in xs]` is a Python comprehension; Xo calls the list methods, `xs.filter(fn(x) { cond }).map(fn(x) { f(x) })` (spec/std.md 2)")
+	bp, ok := c.pat.(*ast.BindPat)
+	if !ok {
+		return &ast.ListLit{Base: ast.Base{Sp: sp}, Elems: []ast.Expr{c.elem}}
+	}
+	name := bp.Name.Name
+	param := func() []*ast.Param {
+		return []*ast.Param{{Base: ast.Base{Sp: bp.Sp}, Name: ident(name, bp.Sp)}}
+	}
+	text := p.operandText(c.iter)
+	var x ast.Expr = c.iter
+	if c.cond != nil {
+		text += ".filter(fn(" + name + ") { " + p.spanText(c.cond.Span()) + " })"
+		x = methodCall(x, "filter", sp, &ast.FnLit{Base: ast.Base{Sp: c.cond.Span()}, Params: param(), Body: exprBlock(c.cond)})
+	}
+	if id, ok := c.elem.(*ast.Ident); !ok || id.Name != name {
+		text += ".map(fn(" + name + ") { " + p.spanText(c.elem.Span()) + " })"
+		x = methodCall(x, "map", sp, &ast.FnLit{Base: ast.Base{Sp: c.elem.Span()}, Params: param(), Body: exprBlock(c.elem)})
+	}
+	addFix(d, "write `.filter(...).map(...)`", p.replaceSpan(sp, text))
+	return x
+}
+
+// startsExprOrStmt reports whether k can start the body of a braceless
+// `if (c) body`.
+func startsExprOrStmt(k token.Kind) bool {
+	return startsExpr(k) || k == token.Return || k == token.Break || k == token.Continue
+}
+
+// bracelessIf parses Kotlin, Java, and C's `if (c) a else b` (no braces)
+// after the parenthesized condition.
+func (p *parser) bracelessIf(e *ast.IfExpr, start token.Pos) ast.Expr {
+	var edits []diag.Edit
+	body := func() *ast.Block {
+		s := p.parseSimpleStmt()
+		edits = append(edits, p.insertAt(s.Span().Start, "{ "), p.insertAt(s.Span().End, " }"))
+		return &ast.Block{Base: ast.Base{Sp: s.Span()}, Stmts: []ast.Stmt{s}}
+	}
+	thenStart := p.tok
+	e.Then = body()
+	if p.at(token.Else) {
+		p.next()
+		switch {
+		case p.at(token.If):
+			e.Else = p.parseIf()
+		case p.at(token.LBrace):
+			e.Else = p.parseBlock()
+		default:
+			e.Else = body()
+		}
+	}
+	e.Sp = p.spanFrom(start)
+	d := p.foreign(thenStart.Span, "`if (c) a else b` without braces is Kotlin, Java, and C syntax; every Xo `if` and `else` body is a block: `if c { a } else { b }` (core 3.5)")
+	addFix(d, "add braces", edits...)
+	return e
+}
+
 // rustClosure parses `|a, b| body` and `|| body`.
 func (p *parser) rustClosure() ast.Expr {
 	open := p.tok
@@ -825,8 +907,11 @@ func (p *parser) foreignPostfix(x ast.Expr) (y ast.Expr, ok, stop bool) {
 		if next.Kind != token.Colon || !adjacent(t, next) || p.peek(2).Kind != token.Ident || !adjacent(next, p.peek(2)) || !isPath(x) {
 			return x, false, false
 		}
-		d := p.foreign(t.Span.To(next.Span), "`::` is Rust and C++ path syntax; Xo writes `.`: `%s.%s` (core 2.3, 4.1)", p.spanText(x.Span()), p.peek(2).Text)
-		addFix(d, "write `.`", p.replaceSpan(t.Span.To(next.Span), "."))
+		if id, ok := x.(*ast.Ident); !ok || id.Name != "String" {
+			// `String::from(s)` is reported whole by the checker.
+			d := p.foreign(t.Span.To(next.Span), "`::` is Rust and C++ path syntax; Xo writes `.`: `%s.%s` (core 2.3, 4.1)", p.spanText(x.Span()), p.peek(2).Text)
+			addFix(d, "write `.`", p.replaceSpan(t.Span.To(next.Span), "."))
+		}
 		p.next()
 		p.next()
 		sel := p.expectIdent("a name after `::`")

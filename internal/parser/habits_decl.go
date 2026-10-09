@@ -115,7 +115,7 @@ func (p *parser) foreignTopLevel(f *ast.File, doc *ast.Doc, pub bool, pubTok tok
 		p.lineDone = true
 		return nil, true
 	case "import", "from":
-		return p.foreignImport(), true
+		return p.foreignImport(f), true
 	case "impl":
 		return p.parseImpl(doc, start), true
 	case "trait", "protocol":
@@ -181,7 +181,7 @@ var goImports = map[string]string{
 
 // foreignImport reports Go, Python, and TypeScript import statements and
 // consumes them.
-func (p *parser) foreignImport() ast.Decl {
+func (p *parser) foreignImport(f *ast.File) ast.Decl {
 	t := p.tok
 	startLine := t.Span.Start
 	// Go: import "x" or import ( "x" "y" ); Python: import x, from x import y;
@@ -242,6 +242,10 @@ func (p *parser) foreignImport() ast.Decl {
 			repl := ""
 			if len(uses) > 0 {
 				repl = strings.Join(uses, "\n") + "\n"
+			}
+			// Recover the imports, so the names they bind resolve.
+			for _, u := range uses {
+				f.Uses = append(f.Uses, &ast.UseDecl{Base: ast.Base{Sp: sp}, Path: strings.TrimPrefix(u, "use ")})
 			}
 			addFix(d, "replace with `use`", p.replaceRange(startLine, p.nextLineStart(endTok.Span.End), repl))
 		} else {

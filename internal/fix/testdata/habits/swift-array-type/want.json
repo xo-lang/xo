@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`[T]` is Swift's array type; Xo writes `List[T]` (core 2.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 13,
+      "end_line": 1,
+      "end_col": 18
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `List[T]`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 13,
+              "end_line": 1,
+              "end_col": 13
+            },
+            "replace": "List"
+          }
+        ]
+      }
+    ]
+  }
+]

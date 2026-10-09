@@ -1,0 +1,4 @@
+fn greet(name: Str) -> Str {
+  let who = name.trim()
+  "hi $who"
+}

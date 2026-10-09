@@ -1,0 +1,62 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`if (c) a else b` without braces is Kotlin, Java, and C syntax; every Xo `if` and `else` body is a block: `if c { a } else { b }` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 14,
+      "end_line": 2,
+      "end_col": 15
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "add braces",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 14,
+              "end_line": 2,
+              "end_col": 14
+            },
+            "replace": "{ "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 15,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": " }"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 21,
+              "end_line": 2,
+              "end_col": 21
+            },
+            "replace": "{ "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 23,
+              "end_line": 2,
+              "end_col": 23
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  }
+]

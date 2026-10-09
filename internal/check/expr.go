@@ -519,6 +519,11 @@ func (c *checker) try(x *ast.TryExpr) Type {
 		d := c.errorf(diag.TryNeedsFailing, x.Sp, "`?` on an optional value needs a function that returns an optional, but `%s` returns `%s`", ctx.name, deep(ctx.result))
 		if d != nil {
 			note(d, token.Span{}, "use `??` to supply a default, `if let`, or `match` (core 2.5)")
+			if src := c.file.Src; x.Sp.End.Offset < len(src) && src[x.Sp.End.Offset] == '.' {
+				// `x?.f` (decision 0087)
+				c.safeNavs[x] = true
+				note(d, token.Span{}, "`x?.f` is optional chaining in TypeScript, Kotlin, and Swift; Xo's postfix `?` instead returns early from the function. To keep the value optional, write `x.map(fn(v) { v.f })`, then `?? default` (spec/std.md 2)")
+			}
 		}
 		return el
 	}
@@ -1094,7 +1099,7 @@ func (c *checker) binary(x *ast.BinaryExpr, hint Type) Type {
 			// the left side already failed or is reported below; a bad hint
 			// keeps `[]` or `{}` on the right from cascading (core 10.2)
 			c.infer(x.Y, badType)
-			if !isBad(xt) {
+			if !isBad(xt) && !c.safeNav(x.X) {
 				d := c.errorf(diag.BadOperand, x.Sp, "`??` needs an optional value on the left, found `%s`", deep(xt))
 				if _, _, ok := c.resultParts(xt); ok {
 					note(d, token.Span{}, "for a Result, use `.ok() ?? default` or `match`")

@@ -246,8 +246,18 @@ func (p *parser) topLevelStart() bool {
 	case token.Fn, token.Pub, token.Struct, token.Enum, token.Interface, token.Type,
 		token.Const, token.Test, token.Use:
 		return true
+	case token.Ident:
+		// Declarations written with another language's keyword resync too,
+		// so one bad declaration does not hide the habits after it.
+		return foreignDeclWords[p.tok.Text] && p.peek(1).Kind == token.Ident
 	}
 	return false
+}
+
+// foreignDeclWords start a declaration in another language (habits.go).
+var foreignDeclWords = map[string]bool{
+	"func": true, "fun": true, "def": true, "function": true, "impl": true, "trait": true,
+	"protocol": true, "class": true, "export": true, "async": true, "data": true, "public": true,
 }
 
 // syncTop skips to the next line that starts a top level declaration.
@@ -1701,9 +1711,16 @@ func (p *parser) parsePrimary() ast.Expr {
 		return p.parseParenOrTuple()
 	case token.LBrack:
 		var elems []ast.Expr
+		var comp *comprehension
 		lsp := p.parseList(token.LBrack, token.RBrack, "list", func() {
 			elems = append(elems, p.parseExpr())
+			if len(elems) == 1 && p.at(token.For) && !p.bad {
+				comp = p.parseComprehension(elems[0])
+			}
 		})
+		if comp != nil {
+			return p.finishComprehension(comp, lsp)
+		}
 		return &ast.ListLit{Base: ast.Base{Sp: lsp}, Elems: elems}
 	case token.HashLBrace:
 		var elems []ast.Expr
@@ -1859,6 +1876,9 @@ func (p *parser) parseIf() ast.Expr {
 	} else {
 		e.Cond = p.parseExprNoLit()
 		head = e.Cond
+	}
+	if _, paren := head.(*ast.ParenExpr); paren && !p.bad && !p.at(token.LBrace) && !p.at(token.Newline) && startsExprOrStmt(p.tok.Kind) {
+		return p.bracelessIf(e, start)
 	}
 	e.Then = p.parseCondBlock(head)
 	// `}` newline `else` is a common mistake; report it and keep going.

@@ -1,0 +1,3 @@
+fn total(xs: List[Int]) -> Int {
+  sum(xs)
+}

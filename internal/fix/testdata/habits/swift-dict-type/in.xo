@@ -1,0 +1,3 @@
+fn size(m: [Str: Int]) -> Int {
+  m.len()
+}

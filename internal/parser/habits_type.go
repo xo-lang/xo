@@ -83,6 +83,33 @@ func (p *parser) angleTypeParams(elem func()) {
 	addFix(d, "use square brackets", p.replaceSpan(open.Span, "["), p.replaceSpan(closeTok.Span, "]"))
 }
 
+// swiftCollectionType parses Swift's `[T]` (an array) and `[K: V]` (a
+// dictionary) at `[`.
+func (p *parser) swiftCollectionType() (ast.Type, bool) {
+	if !p.startsTypeAt(p.pos + 1) {
+		return nil, false
+	}
+	open := p.tok
+	start := open.Span.Start
+	p.next() // [
+	elem := p.parseType()
+	if p.at(token.Colon) {
+		colon := p.tok
+		p.next()
+		val := p.parseType()
+		closeTok := p.tok
+		p.expect(token.RBrack, "`]`")
+		d := p.foreign(open.Span.To(closeTok.Span), "`[K: V]` is Swift's dictionary type; Xo writes `Map[K, V]` (core 2.1)")
+		addFix(d, "write `Map[K, V]`", p.insertAt(open.Span.Start, "Map"), p.replaceSpan(colon.Span, ","))
+		return &ast.NamedType{Base: ast.Base{Sp: p.spanFrom(start)}, Path: []*ast.Ident{ident("Map", open.Span)}, Args: []ast.Type{elem, val}}, true
+	}
+	closeTok := p.tok
+	p.expect(token.RBrack, "`]`")
+	d := p.foreign(open.Span.To(closeTok.Span), "`[T]` is Swift's array type; Xo writes `List[T]` (core 2.1)")
+	addFix(d, "write `List[T]`", p.insertAt(open.Span.Start, "List"))
+	return &ast.NamedType{Base: ast.Base{Sp: p.spanFrom(start)}, Path: []*ast.Ident{ident("List", open.Span)}, Args: []ast.Type{elem}}, true
+}
+
 // foreignType recognizes types written with another language's syntax at
 // the start of a type. ok is false when none applies.
 func (p *parser) foreignType() (ast.Type, bool) {
@@ -118,7 +145,7 @@ func (p *parser) foreignType() (ast.Type, bool) {
 		return &ast.OptionalType{Base: ast.Base{Sp: p.spanFrom(start)}, Elem: inner}, true
 	case token.LBrack:
 		if p.peek(1).Kind != token.RBrack {
-			return nil, false
+			return p.swiftCollectionType()
 		}
 		// Go slices: `[]T`.
 		closeTok := p.peek(1)

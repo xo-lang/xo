@@ -37,6 +37,123 @@ func (c *checker) operandSrc(e ast.Expr) string {
 	return "(" + t + ")"
 }
 
+// operandAt parenthesizes text, which replaces the source at sp, when a
+// postfix (`.m()`, `[i]`, `?`) or a binary operator follows sp, so the
+// rewrite keeps its grouping.
+func (c *checker) operandAt(sp token.Span, text string) string {
+	if c.file == nil {
+		return text
+	}
+	src := c.file.Src
+	i := sp.End.Offset
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+		i++
+	}
+	if i < len(src) && strings.IndexByte(".[?*/%+-<>=!&|", src[i]) >= 0 {
+		return "(" + text + ")"
+	}
+	return text
+}
+
+// srcFor returns the source of the file at path among the checked
+// modules.
+func (c *checker) srcFor(path string) []byte {
+	for _, m := range c.order {
+		for _, f := range m.Files {
+			if f.Path == path {
+				return f.Src
+			}
+		}
+	}
+	return nil
+}
+
+// dollarHabit explains an unused binding that a Kotlin or shell style
+// `"$name"` template meant to read: in Xo `$` alone is literal text. It
+// adds the note and a fix writing `${name}`, and reports whether it did.
+func (c *checker) dollarHabit(d *diag.Diagnostic, v *VarObj) bool {
+	src := c.srcFor(v.Span.File)
+	if src == nil || v.Name == "" || v.Name[0] == '_' {
+		return false
+	}
+	// Search the rest of the enclosing declaration: up to the next line
+	// that starts a top level declaration.
+	end := len(src)
+	for _, kw := range []string{"\nfn ", "\npub ", "\ntest ", "\nstruct ", "\nenum "} {
+		if i := strings.Index(string(src[v.Span.End.Offset:]), kw); i >= 0 && v.Span.End.Offset+i < end {
+			end = v.Span.End.Offset + i
+		}
+	}
+	text := string(src[v.Span.End.Offset:end])
+	pat := "$" + v.Name
+	var edits []diag.Edit
+	for i := 0; ; {
+		j := strings.Index(text[i:], pat)
+		if j < 0 {
+			break
+		}
+		at := i + j
+		after := at + len(pat)
+		if (after < len(text) && isIdentByte(text[after])) || (at > 0 && text[at-1] == '\\') {
+			i = after
+			continue
+		}
+		off := v.Span.End.Offset + at
+		start := posFrom(src, v.Span.End, off)
+		stop := posFrom(src, v.Span.End, off+len(pat))
+		edits = append(edits, replaceEdit(token.Span{File: v.Span.File, Start: start, End: stop}, "${"+v.Name+"}"))
+		i = after
+	}
+	if len(edits) == 0 {
+		return false
+	}
+	note(d, token.Span{}, "`\"$%s\"` is Kotlin and shell interpolation; in an Xo string `$` alone is literal text, so the value is never read: write `${%s}` (core 1.6)", v.Name, v.Name)
+	fix(d, "write `${"+v.Name+"}`", edits...)
+	return true
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+// posFrom is the position of offset off, counting from pos.
+func posFrom(src []byte, pos token.Pos, off int) token.Pos {
+	for i := pos.Offset; i < off && i < len(src); i++ {
+		if src[i] == '\n' {
+			pos.Line++
+			pos.Col = 1
+		} else {
+			pos.Col++
+		}
+	}
+	pos.Offset = off
+	return pos
+}
+
+// safeNav reports whether e is, or starts with, a TypeScript, Kotlin, or
+// Swift optional chain `x?.f` that was reported as XO0205.
+func (c *checker) safeNav(e ast.Expr) bool {
+	for {
+		switch x := e.(type) {
+		case *ast.TryExpr:
+			if c.safeNavs[x] {
+				return true
+			}
+			e = x.X
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.CallExpr:
+			e = x.Fun
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.ParenExpr:
+			e = x.X
+		default:
+			return false
+		}
+	}
+}
+
 // habitNote attaches the habit note, replacing the edit distance guess
 // that c.unresolved added.
 func habitNote(d *diag.Diagnostic, format string, args ...any) {
@@ -160,7 +277,7 @@ func (c *checker) habitCall(x *ast.CallExpr, id *ast.Ident, hint Type) (Type, bo
 			elems = append(elems, argSrc(i))
 		}
 		d := report("`append(xs, v)` is Go; an Xo list is a value: `xs + [v]` is the longer list, and `xs.push(v)` changes a `var` list in place (spec/std.md 2)")
-		fix(d, "write `xs + [...]`", replaceEdit(x.Sp, c.operandSrc(args[0].Value)+" + ["+strings.Join(elems, ", ")+"]"))
+		fix(d, "write `xs + [...]`", replaceEdit(x.Sp, c.operandAt(x.Sp, c.operandSrc(args[0].Value)+" + ["+strings.Join(elems, ", ")+"]")))
 		t := c.infer(args[0].Value, hint)
 		for i := 1; i < len(args); i++ {
 			c.infer(args[i].Value, c.listElem(t))
@@ -178,7 +295,7 @@ func (c *checker) habitCall(x *ast.CallExpr, id *ast.Ident, hint Type) (Type, bo
 			loE, hiE = args[0].Value, args[1].Value
 		}
 		d := report("`range(n)` is Python; Xo writes the range itself, `%s..%s`, which excludes the upper bound as `range` does (core 3.5)", lo, hi)
-		fix(d, "write `"+lo+".."+hi+"`", replaceEdit(x.Sp, lo+".."+hi))
+		fix(d, "write `"+lo+".."+hi+"`", replaceEdit(x.Sp, c.operandAt(x.Sp, lo+".."+hi)))
 		return c.infer(&ast.RangeExpr{Base: ast.Base{Sp: x.Sp}, Lo: loE, Hi: hiE}, hint), true
 	case "str", "String", "toString":
 		if len(args) != 1 {
@@ -236,6 +353,59 @@ func (c *checker) habitCall(x *ast.CallExpr, id *ast.Ident, hint Type) (Type, bo
 		fix(d, "write `m.remove(k)`", replaceEdit(x.Sp, c.operandSrc(args[0].Value)+".remove("+argSrc(1)+")"))
 		c.inferArgs(x)
 		return unitType, true
+	case "map", "filter":
+		if len(args) != 2 {
+			return nil, false
+		}
+		d := report("`%s(f, xs)` is Python; Xo calls the method on the collection, `xs.%s(f)` (spec/std.md 2)", name, name)
+		recv := c.operandSrc(args[1].Value)
+		var on ast.Expr = args[1].Value
+		if c.isPrelude(c.infer(args[1].Value, nil), "Range") {
+			// A range has no map or filter: make it a list first.
+			recv += ".to_list()"
+			on = &ast.CallExpr{Base: args[1].Base, Fun: &ast.SelectorExpr{Base: id.Base, X: args[1].Value, Sel: &ast.Ident{Base: id.Base, Name: "to_list"}}}
+		}
+		fix(d, "write `xs."+name+"(f)`", replaceEdit(x.Sp, recv+"."+name+"("+argSrc(0)+")"))
+		call := &ast.CallExpr{Base: x.Base, Fun: &ast.SelectorExpr{Base: id.Base, X: on, Sel: &ast.Ident{Base: id.Base, Name: name}}, Args: args[:1]}
+		return c.infer(call, hint), true
+	case "list", "set", "enumerate":
+		if len(args) != 1 {
+			return nil, false
+		}
+		t := c.infer(args[0].Value, nil)
+		r := resolve(t)
+		n, _ := r.(*Named)
+		kind := ""
+		if n != nil && n.Obj.Module == c.prelude {
+			kind = n.Obj.Name
+		}
+		m := map[string]string{"list": "to_list", "set": "to_set", "enumerate": "indexed"}[name]
+		d := report("`%s(x)` is Python; Xo calls the method on the value, `x.%s()` (spec/std.md 2)", name, m)
+		switch {
+		case name == "list" && kind == "List":
+			fix(d, "remove `list(...)`", replaceEdit(x.Sp, argSrc(0)))
+			return t, true
+		case kind == "":
+			return badType, true
+		}
+		fix(d, "write `."+m+"()`", replaceEdit(x.Sp, c.operandSrc(args[0].Value)+"."+m+"()"))
+		call := &ast.CallExpr{Base: x.Base, Fun: &ast.SelectorExpr{Base: id.Base, X: args[0].Value, Sel: &ast.Ident{Base: id.Base, Name: m}}}
+		return c.callMethod(t, call.Fun.(*ast.SelectorExpr), nil, call, hint), true
+	case "sum":
+		if len(args) != 1 {
+			return nil, false
+		}
+		t := c.infer(args[0].Value, nil)
+		zero := "0"
+		if e := c.listElem(t); e != nil && c.isPrelude(e, "Float") {
+			zero = "0.0"
+		}
+		d := report("`sum(xs)` is Python; Xo folds the list, `xs.fold(%s, fn(a, b) { a + b })` (spec/std.md 2)", zero)
+		fix(d, "write `.fold(...)`", replaceEdit(x.Sp, c.operandSrc(args[0].Value)+".fold("+zero+", fn(a, b) { a + b })"))
+		if e := c.listElem(t); e != nil {
+			return e, true
+		}
+		return badType, true
 	case "make", "new":
 		report("`%s(...)` is Go; Xo writes the value itself: `[]` for an empty list, `{}` for an empty map, `Chan[T].new(n)` for a channel, and `T{field: v}` for a struct (core 1.6, 7.3)", name)
 		return badType, true
@@ -770,6 +940,30 @@ func (c *checker) usesClauseSpan(x *ast.FnLit) token.Span {
 	start := token.Pos{Line: line, Col: first.Start.Col - (first.Start.Offset - i), Offset: i}
 	stop := token.Pos{Line: line, Col: last.End.Col + (end - last.End.Offset), Offset: end}
 	return token.Span{File: x.Sp.File, Start: start, End: stop}
+}
+
+// habitAssignDecl handles Python's declaration by assignment, `t = 0` for
+// a name that is not declared: it reports XO0601 with the Xo form and
+// declares the name, so its later uses resolve.
+func (c *checker) habitAssignDecl(x *ast.AssignStmt) bool {
+	id, ok := x.Target.(*ast.Ident)
+	if !ok || x.Op != token.Assign || id.Name == "_" || c.lookupLocal(id.Name) != nil ||
+		c.lookupModuleObj(c.mod, id.Name) != nil || c.file.Imports[id.Name] != nil || c.ctx == nil {
+		return false
+	}
+	switch id.Name {
+	case "true", "false", "target", "self", "os", "expect", "testing":
+		return false
+	}
+	t := c.infer(x.Value, nil)
+	d := c.errorf(diag.UnresolvedName, id.Sp, "name `%s` not found", id.Name)
+	habitNote(d, "`%s = v` declares a variable in Python; Xo declares a name before assigning it: `var %s = v`, or `let %s = v` when it never changes (core 3.1)", id.Name, id.Name, id.Name)
+	fix(d, "declare with `var`", insertEdit(x.Sp.File, x.Sp.Start, "var "))
+	decl := &ast.VarStmt{Base: x.Base, Name: id, Value: x.Value}
+	v := &VarObj{Name: id.Name, Type: t, Mutable: true, Kind: VLocal, Span: id.Sp, isVarStmt: true, decl: decl}
+	c.declareVar(v)
+	c.identObj[id] = v
+	return true
 }
 
 // callMethodQuiet checks a recovered method call whose diagnostic was

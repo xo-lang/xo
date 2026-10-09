@@ -28,23 +28,5 @@
         ]
       }
     ]
-  },
-  {
-    "code": "XO0601",
-    "severity": "error",
-    "message": "name `json` not found",
-    "span": {
-      "file": "main.xo",
-      "line": 4,
-      "col": 3,
-      "end_line": 4,
-      "end_col": 7
-    },
-    "notes": [
-      {
-        "message": "`json` is declared in `std/http`; refer to it as `http.json` (core 2.3, 4.1)"
-      }
-    ],
-    "fixes": []
   }
 ]

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0110",
+    "severity": "error",
+    "message": "`who` is never used",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`\"$who\"` is Kotlin and shell interpolation; in an Xo string `$` alone is literal text, so the value is never read: write `${who}` (core 1.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `${who}`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 7,
+              "end_line": 3,
+              "end_col": 11
+            },
+            "replace": "${who}"
+          }
+        ]
+      }
+    ]
+  }
+]
