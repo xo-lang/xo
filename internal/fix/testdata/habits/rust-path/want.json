@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`::` is Rust and C++ path syntax; Xo writes `.`: `Color.Red` (core 2.3, 4.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 8,
+      "end_line": 7,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `.`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 7,
+              "col": 8,
+              "end_line": 7,
+              "end_col": 10
+            },
+            "replace": "."
+          }
+        ]
+      }
+    ]
+  }
+]

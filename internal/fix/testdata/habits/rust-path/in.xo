@@ -1,0 +1,8 @@
+enum Color {
+  Red
+  Blue
+}
+
+fn pick() -> Color {
+  Color::Red
+}

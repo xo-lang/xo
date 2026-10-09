@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`xs[a:b]` is Go and Python slice syntax; Xo slices with a range, `xs[a..b]` (core 3.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `..`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 7,
+              "end_line": 2,
+              "end_col": 8
+            },
+            "replace": ".."
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0101",
+    "severity": "error",
+    "message": "function name `Double` must be snake_case",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 4,
+      "end_line": 1,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "Go exports a name by capitalizing it; Xo exports with `pub` and spells functions in snake_case (core 1.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "rename to `double`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 4,
+              "end_line": 1,
+              "end_col": 10
+            },
+            "replace": "double"
+          }
+        ]
+      }
+    ]
+  }
+]

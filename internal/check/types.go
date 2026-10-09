@@ -2,6 +2,8 @@ package check
 
 import (
 	"strings"
+
+	"github.com/xo-lang/xo/internal/token"
 )
 
 // Type is an xo type. Types are compared structurally with identical or
@@ -47,6 +49,10 @@ type TParam struct {
 	// argument that was left out (core 6.2): the function may perform it
 	// without naming it in `uses`.
 	Elided bool
+	// ElidedAt is the type, written without its effect arguments, that
+	// created an Elided parameter; ElidedText is its name.
+	ElidedAt   token.Span
+	ElidedText string
 }
 
 // ParamType is a reference to a type parameter inside a generic body or

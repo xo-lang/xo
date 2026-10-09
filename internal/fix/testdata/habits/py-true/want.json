@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `True` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`True` is Python syntax; Xo writes `true` (core 1.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `true`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 7
+            },
+            "replace": "true"
+          }
+        ]
+      }
+    ]
+  }
+]

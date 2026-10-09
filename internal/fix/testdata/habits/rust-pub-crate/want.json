@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`pub(crate)` is Rust syntax; Xo has one visibility: `pub` exports from the module (core 1.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 4,
+      "end_line": 1,
+      "end_col": 11
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `pub`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 4,
+              "end_line": 1,
+              "end_col": 11
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `append` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`append(xs, v)` is Go; an Xo list is a value: `xs + [v]` is the longer list, and `xs.push(v)` changes a `var` list in place (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `xs + [...]`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 19
+            },
+            "replace": "xs + [1, 2]"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for (x in xs)` is TypeScript, Kotlin, and Java syntax; Xo writes `for x in xs` with no parentheses (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 7,
+      "end_line": 3,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove the parentheses",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 7,
+              "end_line": 3,
+              "end_col": 8
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 8,
+              "end_line": 3,
+              "end_col": 14
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 16,
+              "end_line": 3,
+              "end_col": 18
+            },
+            "replace": "in"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 21,
+              "end_line": 3,
+              "end_col": 22
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

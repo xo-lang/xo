@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`): T` is TypeScript, Kotlin, and Python syntax for a result type; Xo writes `-\u003e T` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 18,
+      "end_line": 1,
+      "end_col": 19
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `-\u003e`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 18,
+              "end_line": 1,
+              "end_col": 19
+            },
+            "replace": " -\u003e"
+          }
+        ]
+      }
+    ]
+  }
+]

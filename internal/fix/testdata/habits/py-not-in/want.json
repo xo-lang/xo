@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`x not in xs` is Python syntax; Xo writes `!xs.contains(x)` (spec/std.md 2)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `!xs.contains(x)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 14
+            },
+            "replace": "!xs.contains(x)"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`panic!` is a Rust macro; Xo stops the program on a broken invariant with `fault(\"why\")` (core 8)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 5,
+      "end_line": 3,
+      "end_col": 11
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fault(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 5,
+              "end_line": 3,
+              "end_col": 11
+            },
+            "replace": "fault"
+          }
+        ]
+      }
+    ]
+  }
+]

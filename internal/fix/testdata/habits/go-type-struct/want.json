@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`type Point struct {` is Go syntax; Xo writes `struct Point {` (core 2.2, 2.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 18
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `struct Point`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 5
+            },
+            "replace": "struct"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 11,
+              "end_line": 1,
+              "end_col": 18
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`c ? a : b` is C, Java, TypeScript, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 9,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `if ... else`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 3
+            },
+            "replace": "if "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 8,
+              "end_line": 2,
+              "end_col": 11
+            },
+            "replace": " { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 12,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": " } else { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 17,
+              "end_line": 2,
+              "end_col": 17
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  }
+]

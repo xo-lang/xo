@@ -1,0 +1,46 @@
+protocol Shape {
+  fn area(self) -> Double
+}
+
+struct Circle {
+  r: Double
+}
+
+func describe(_ c: Circle) -> String {
+  return "circle of radius \(c.r)"
+}
+
+func total(_ xs: [Int]) -> Int {
+  var t = 0
+  for i in 0..<xs.count {
+    t += xs[i]
+  }
+  return t
+}
+
+func load(path: String) throws -> String {
+  if path == "" {
+    throw "empty path"
+  }
+  return path
+}
+
+func first(_ xs: [Int]) -> Int {
+  guard let v = xs.first else { return 0 }
+  return v
+}
+
+func use_it() -> String? {
+  return try? load(path: "x")
+}
+
+func label(_ n: Int) -> String {
+  switch n {
+  case 0:
+    return "none"
+  case 1, 2:
+    return "few"
+  default:
+    return "many"
+  }
+}

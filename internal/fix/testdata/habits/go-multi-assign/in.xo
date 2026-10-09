@@ -1,0 +1,8 @@
+fn pair() -> (Int, Str) {
+  (1, "a")
+}
+
+fn use_it() -> Int {
+  n, s := pair()
+  n + s.len()
+}

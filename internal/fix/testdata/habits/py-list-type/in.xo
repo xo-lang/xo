@@ -1,0 +1,3 @@
+fn size(xs: list[Int]) -> Int {
+  xs.len()
+}

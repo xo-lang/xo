@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `println` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`println` prints from anywhere in other languages; Xo prints through the `Stdio` capability, `os.stdio.println(\"${x}\")` in `main` or a `stdio: Stdio` parameter elsewhere, so a function's output is visible in its signature; `dbg(x)` prints a value while debugging (spec/std.md 3, core 6.3, 11.4)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `os.stdio.println(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 16
+            },
+            "replace": "os.stdio.println(\"hi\")"
+          }
+        ]
+      }
+    ]
+  }
+]

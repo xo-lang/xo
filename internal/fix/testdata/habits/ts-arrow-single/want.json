@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`(x) =\u003e body` is a TypeScript arrow function; Xo writes `fn(x) { body }` (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 12,
+      "end_line": 2,
+      "end_col": 14
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fn(...) { ... }`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": "fn(x) { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 20,
+              "end_line": 2,
+              "end_col": 20
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  }
+]

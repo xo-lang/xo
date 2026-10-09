@@ -1,0 +1,3 @@
+fn more(xs: List[Int]) -> List[Int] {
+  append(xs, 1, 2)
+}

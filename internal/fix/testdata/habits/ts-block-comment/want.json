@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`/* ... */` is a block comment in Go, Rust, TypeScript, Kotlin, and Swift; Xo has only line comments: `//`, and `///` for doc comments (core 1.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `//` comments",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 16
+            },
+            "replace": "// Adds one."
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `pass` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`pass` is Python's empty statement; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 7
+            },
+            "replace": "()"
+          }
+        ]
+      }
+    ]
+  }
+]

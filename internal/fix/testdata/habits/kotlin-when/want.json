@@ -1,0 +1,52 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`when (x) { 1 -\u003e ...  else -\u003e ... }` is Kotlin syntax; Xo writes `match x { 1 =\u003e ...  _ =\u003e ... }`: one `pattern =\u003e body` arm per line, `_` for the default, `1 | 2` for several values, no fallthrough, and every case covered (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `match`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 12
+            },
+            "replace": "match x "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 5,
+              "end_line": 3,
+              "end_col": 10
+            },
+            "replace": "1 =\u003e "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 5,
+              "end_line": 4,
+              "end_col": 13
+            },
+            "replace": "_ =\u003e "
+          }
+        ]
+      }
+    ]
+  }
+]

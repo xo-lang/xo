@@ -132,6 +132,8 @@ bench/perf/conc/run.sh                                  # concurrency: Go vs Xo 
 python3 bench/perf/conc/profile.py p.trace 40 ./bin     # summarize an xctrace CPU Profiler trace by function (PROFILE_FUNC=name: hot offsets in one function)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
 go test ./internal/check -run TestGolden -update          # rewrite golden diagnostics after an intended change
+go test ./internal/fix -run TestHabitGolden -update       # rewrite want.json and fixed.xo of the habit cases (internal/fix/testdata/habits, decision 0087); review the diff
+python3 -I bench/habits/measure.py .tools/bin/xo internal/fix/testdata/habits golden   # habit cases: errors, fixes, green after xo fix (also snap and drafts modes; last verified 2026-10-09)
 go test ./internal/check -run TestCorpusV03 -corpus-report # rewrite the generated counts in bench/results/check-corpus-v0.4-spec.md
 go test ./internal/check -run TestCorpusMutations -mutations -v   # slow: plant mutations in the corpus, count detections
 .tools/bin/xo check examples/notes-service && .tools/bin/xo test examples/notes-service && .tools/bin/xo build --targets=all examples/notes-service   # example app; not run by go test (last verified 2026-10-08)

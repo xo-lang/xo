@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `any` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 12,
+      "end_line": 1,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "`any` is the TypeScript and Go top type; Xo has none: make the function generic, `fn f[T](x: T)`, or name an interface with the methods you need (core 2.4, 2.7)"
+      }
+    ],
+    "fixes": []
+  }
+]

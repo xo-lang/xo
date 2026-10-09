@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`x Int` is Go syntax; Xo writes the parameter type after a colon, `x: Int` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 13,
+      "end_line": 1,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "insert `:`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 12,
+              "end_line": 1,
+              "end_col": 13
+            },
+            "replace": ": "
+          }
+        ]
+      }
+    ]
+  }
+]

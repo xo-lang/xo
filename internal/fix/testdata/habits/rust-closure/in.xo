@@ -1,0 +1,3 @@
+fn bump(xs: List[Int]) -> List[Int] {
+  xs.map(|x| x + 1)
+}

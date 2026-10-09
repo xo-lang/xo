@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`inout` is Swift syntax; Xo marks an in out parameter with `var` before its name, `var n: Int`, and callers pass a `var` binding without `\u0026` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 12,
+      "end_line": 1,
+      "end_col": 17
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `var n`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 12,
+              "end_line": 1,
+              "end_col": 18
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 9,
+              "end_line": 1,
+              "end_col": 9
+            },
+            "replace": "var "
+          }
+        ]
+      }
+    ]
+  }
+]

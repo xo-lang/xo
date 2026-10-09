@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -438,7 +440,7 @@ func TestErrorRecovery(t *testing.T) {
 		{"malformed go import path", "use go \"\"\nuse go \"/abs\"\nuse go \"a${b}\"\n", "XO0158@1 XO0158@2 XO0158@3"},
 		{"self outside interface", "fn f(self, x: Int) {}\n", "XO0174@1"},
 		{"pub test", "pub test \"x\" {}\n", "XO0176@1"},
-		{"bad declarations resync at column one", "struct S {\n  a Int\n  b: Str\n}\nfn f( {\n}\nfn g() {}\n", "XO0160@2 XO0160@5"},
+		{"bad declarations resync at column one", "struct S {\n  a Int\n  b: Str\n}\nfn f( {\n}\nfn g() {}\n", "XO0177@2 XO0160@5"},
 		{"lexer and parser errors together", "fn f() {\n  let s = \"\\q\"\n  let t = @\n}\n", "XO0153@2 XO0150@3"},
 		{"error in interpolation", "fn f() {\n  let s = \"${a +}\"\n}\n", "XO0160@2"},
 		{"trailing tokens in interpolation", "fn f() {\n  let s = \"${a b}\"\n}\n", "XO0160@2"},
@@ -512,6 +514,14 @@ func FuzzParse(f *testing.F) {
 	f.Add("fn main(os: Os) ! { let x = \"${y}\" }")
 	f.Add("match x { A(..) | B => 1 }")
 	f.Add("struct S { a: Int } derive Json")
+	// Habit inputs (decision 0087): the recovery code paths.
+	seeds, _ := filepath.Glob("../fix/testdata/habits/*/in.xo")
+	drafts, _ := filepath.Glob("../../bench/habits/drafts/*.xo.txt")
+	for _, p := range append(seeds, drafts...) {
+		if b, err := os.ReadFile(p); err == nil {
+			f.Add(string(b))
+		}
+	}
 	f.Fuzz(func(t *testing.T, src string) {
 		ParseFile("f.xo", []byte(src), 0)
 	})

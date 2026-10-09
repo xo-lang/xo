@@ -1,0 +1,7 @@
+fn total() -> Int {
+  var t = 0
+  for i in 0..=10 {
+    t += i
+  }
+  t
+}

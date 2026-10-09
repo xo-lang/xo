@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`|x| body` is a Rust closure; Xo writes `fn(x) { body }` (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 13
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fn(...) { ... }`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 14
+            },
+            "replace": "fn(x) { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 19,
+              "end_line": 2,
+              "end_col": 19
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  }
+]

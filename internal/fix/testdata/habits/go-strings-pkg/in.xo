@@ -1,0 +1,3 @@
+fn shout(s: Str) -> Str {
+  strings.ToUpper(s)
+}

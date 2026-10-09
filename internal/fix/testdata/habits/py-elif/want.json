@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`elif` is Python syntax; Xo writes `else if` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 18,
+      "end_line": 2,
+      "end_col": 22
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `else if`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 18,
+              "end_line": 2,
+              "end_col": 22
+            },
+            "replace": "else if"
+          }
+        ]
+      }
+    ]
+  }
+]

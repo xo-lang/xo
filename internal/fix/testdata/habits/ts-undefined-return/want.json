@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `undefined` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 19
+    },
+    "notes": [
+      {
+        "message": "`undefined` is TypeScript; Xo has no null: a value that may be absent is `T?`, written `None` when absent and handled with `?`, `??`, `if let`, or `match`; a failure is `Err(e)` in a function declared `-\u003e T ! E` (core 2.5, 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `None`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 19
+            },
+            "replace": "None"
+          }
+        ]
+      }
+    ]
+  }
+]

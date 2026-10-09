@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `make` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`make(...)` is Go; Xo writes the value itself: `[]` for an empty list, `{}` for an empty map, `Chan[T].new(n)` for a channel, and `T{field: v}` for a struct (core 1.6, 7.3)"
+      }
+    ],
+    "fixes": []
+  }
+]

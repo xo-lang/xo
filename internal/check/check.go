@@ -15,6 +15,7 @@ package check
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
@@ -52,6 +53,13 @@ type checker struct {
 	inferredFns []*FuncObj
 	inferred    map[*FuncObj]*flatEff
 	obligations []effObligation
+
+	// renames are XO0101 fixes of local names whose uses are added once
+	// the bodies are checked (decision 0087).
+	renames []pendingRename
+	// safeNavs are `x?.f` optional chains reported as XO0205.
+	safeNavs    map[*ast.TryExpr]bool
+	safeNavDiag map[*ast.TryExpr]int // index of its XO0205 in c.diags.Items
 
 	// per body information used by the flow checks
 	identObj  map[*ast.Ident]*VarObj
@@ -106,6 +114,8 @@ func newChecker() *checker {
 		seen:        map[string]bool{},
 		modules:     map[string]*Module{},
 		identObj:    map[*ast.Ident]*VarObj{},
+		safeNavs:    map[*ast.TryExpr]bool{},
+		safeNavDiag: map[*ast.TryExpr]int{},
 		exprType:    map[ast.Expr]Type{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},
@@ -189,6 +199,7 @@ func (c *checker) run() {
 	}
 	c.reportUnused()
 	c.reportAmbiguous()
+	c.finishRenames()
 	for _, m := range c.order {
 		if m.IsStd {
 			continue
@@ -447,8 +458,66 @@ func (c *checker) checkName(id *ast.Ident, kind string) {
 		conv = "snake_case"
 	}
 	d := c.errorf(diag.NamingConvention, id.Sp, "%s name `%s` must be %s", kind, id.Name, conv)
+	// Name the habit behind the spelling (decision 0087).
+	switch {
+	case conv == "snake_case" && id.Name[0] >= 'A' && id.Name[0] <= 'Z' && (kind == "function" || kind == "method" || kind == "field"):
+		note(d, token.Span{}, "Go exports a name by capitalizing it; Xo exports with `pub` and spells %ss in snake_case (core 1.5)", kind)
+	case conv == "snake_case" && strings.ToLower(id.Name) != id.Name:
+		note(d, token.Span{}, "camelCase is the TypeScript, Java, Kotlin, and Swift convention; Xo spells %ss in snake_case (core 1.5)", kind)
+	case (kind == "type" || kind == "interface") && id.Name[0] >= 'a' && id.Name[0] <= 'z':
+		note(d, token.Span{}, "Go marks an unexported type with a lowercase letter; Xo types are UpperCamel, and only `pub` exports (core 1.5)")
+	}
 	if want != "" && want != id.Name {
 		fix(d, fmt.Sprintf("rename to `%s`", want), replaceEdit(id.Sp, want))
+		switch kind {
+		case "variable", "parameter", "receiver", "constant":
+			if d != nil {
+				c.renames = append(c.renames, pendingRename{decl: id, diag: len(c.diags.Items) - 1, want: want})
+			}
+		}
+	}
+}
+
+// pendingRename is an XO0101 rename of a local name.
+type pendingRename struct {
+	decl *ast.Ident
+	diag int // index in c.diags.Items
+	want string
+}
+
+// finishRenames extends each local rename fix to every use of the name, so
+// the fix keeps the program meaning the same.
+func (c *checker) finishRenames() {
+	for _, r := range c.renames {
+		if r.diag >= len(c.diags.Items) {
+			continue
+		}
+		d := &c.diags.Items[r.diag]
+		if d.Code != string(diag.NamingConvention) || len(d.Fixes) == 0 || d.Span != diag.FromSpan(r.decl.Sp) {
+			continue
+		}
+		v := c.identObj[r.decl]
+		if v == nil {
+			for _, w := range c.identObj {
+				if w.Span == r.decl.Sp {
+					v = w
+					break
+				}
+			}
+		}
+		if v == nil {
+			continue
+		}
+		var uses []*ast.Ident
+		for id, w := range c.identObj {
+			if w == v && id != r.decl && id.Sp != r.decl.Sp && id.Name == r.decl.Name {
+				uses = append(uses, id)
+			}
+		}
+		sort.Slice(uses, func(i, j int) bool { return uses[i].Sp.Start.Offset < uses[j].Sp.Start.Offset })
+		for _, id := range uses {
+			d.Fixes[0].Edits = append(d.Fixes[0].Edits, replaceEdit(id.Sp, r.want))
+		}
 	}
 }
 
@@ -511,6 +580,25 @@ func nearest(name string, cands []string) []string {
 	return out
 }
 
+// confidentGuess reports whether the best edit distance suggestion for name
+// is safe to apply as a machine fix: a case only difference, or a unique
+// closest candidate at most half the name's length away, for names of
+// three or more characters.
+func confidentGuess(name string, sugg []string) bool {
+	best := sugg[0]
+	if strings.EqualFold(best, name) {
+		return true
+	}
+	d := editDistance(strings.ToLower(name), strings.ToLower(best))
+	if len(name) < 3 || d*2 > len(name) {
+		return false
+	}
+	if len(sugg) > 1 && editDistance(strings.ToLower(name), strings.ToLower(sugg[1])) == d {
+		return false
+	}
+	return true
+}
+
 // unresolved reports XO0601 for name at id with suggestions from cands.
 func (c *checker) unresolved(sp token.Span, what, name string, cands []string) *diag.Diagnostic {
 	msg := fmt.Sprintf("%s `%s` not found", what, name)
@@ -524,7 +612,12 @@ func (c *checker) unresolved(sp token.Span, what, name string, cands []string) *
 	sugg := nearest(name, cands)
 	if len(sugg) > 0 {
 		note(d, token.Span{}, "did you mean `%s`?", strings.Join(sugg, "`, `"))
-		fix(d, fmt.Sprintf("replace with `%s`", sugg[0]), replaceEdit(sp, sugg[0]))
+		// `xo fix` applies the first fix blindly, so a guess becomes a fix
+		// only when it is clear: one closest candidate, and an edit small
+		// next to the name (`t` is not `it`, `map` is not `has`).
+		if confidentGuess(name, sugg) {
+			fix(d, fmt.Sprintf("replace with `%s`", sugg[0]), replaceEdit(sp, sugg[0]))
+		}
 	}
 	return d
 }

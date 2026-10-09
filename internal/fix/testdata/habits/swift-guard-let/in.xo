@@ -1,0 +1,4 @@
+fn get(x: Int?) -> Int {
+  guard let v = x else { return 0 }
+  v
+}

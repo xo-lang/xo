@@ -1,0 +1,3 @@
+fn bump(n: inout Int) {
+  n += 1
+}

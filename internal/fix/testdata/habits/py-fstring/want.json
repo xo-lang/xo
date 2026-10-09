@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`f\"...{x}...\"` is a Python f-string; every Xo string interpolates with `${x}`: `\"...${x}...\"` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 15
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `${...}`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": "\"value ${x}\""
+          }
+        ]
+      }
+    ]
+  }
+]

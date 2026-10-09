@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "a Go result type follows the parameters directly; Xo writes `-\u003e T` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 19,
+      "end_line": 1,
+      "end_col": 22
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "insert `-\u003e`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 19,
+              "end_line": 1,
+              "end_col": 19
+            },
+            "replace": "-\u003e "
+          }
+        ]
+      }
+    ]
+  }
+]

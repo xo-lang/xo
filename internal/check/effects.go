@@ -233,6 +233,9 @@ type effObligation struct {
 	// "`fetch` declares `uses clock`".
 	what func(sup string) string
 	pure bool // contract clauses: must be pure regardless of sup
+	// usesClause is the ` uses ...` clause of a closure, which a fix may
+	// remove so the closure's effects are inferred (decision 0087).
+	usesClause token.Span
 }
 
 // solveEffects computes the effects of every inferred function by fixpoint
@@ -302,6 +305,7 @@ func (c *checker) solveEffects() {
 		if d == nil {
 			continue
 		}
+		c.elidedEffectNote(d, sub, sup, ob)
 		key0 := ""
 		if len(missing) > 0 {
 			key0 = missing[0]

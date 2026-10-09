@@ -1,0 +1,6 @@
+fn work() {
+}
+
+fn start() {
+  go work()
+}

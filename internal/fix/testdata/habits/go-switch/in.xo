@@ -1,0 +1,8 @@
+fn label(x: Int) -> Str {
+  switch x {
+  case 1, 2:
+    "small"
+  default:
+    "big"
+  }
+}

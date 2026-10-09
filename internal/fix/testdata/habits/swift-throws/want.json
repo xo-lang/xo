@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`throws` is Swift syntax; an Xo function that can fail declares its error type after `!`: `-\u003e T ! Error` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 10,
+      "end_line": 1,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "move the failure to `! Error`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 9,
+              "end_line": 1,
+              "end_col": 16
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 23,
+              "end_line": 1,
+              "end_col": 23
+            },
+            "replace": " ! Error"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "a template string in backticks is TypeScript syntax; every Xo string interpolates with `${x}`, so write it in double quotes: `\"...${x}...\"` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 4
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write a double quoted string",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": "\"value ${x}\""
+          }
+        ]
+      }
+    ]
+  }
+]

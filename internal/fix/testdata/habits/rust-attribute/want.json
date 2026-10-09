@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0150",
+    "severity": "error",
+    "message": "`#[derive(Debug, Clone, PartialEq)]` is a Rust attribute; Xo has none: write `derive Display, Ord, Json` after a struct or enum body, and `Eq`, `Hash`, and `Debug` are automatic for every type whose fields have them (core 2.9)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 2
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove the attribute",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 2,
+              "end_col": 1
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

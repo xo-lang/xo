@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `error` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 19,
+      "end_line": 1,
+      "end_col": 24
+    },
+    "notes": [
+      {
+        "message": "`error` is the Go name; Xo's is `Error` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Error`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 19,
+              "end_line": 1,
+              "end_col": 24
+            },
+            "replace": "Error"
+          }
+        ]
+      }
+    ]
+  }
+]

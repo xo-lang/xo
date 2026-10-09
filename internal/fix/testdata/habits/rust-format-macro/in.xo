@@ -1,0 +1,3 @@
+fn show(a: Int, b: Int) -> Str {
+  format!("{} and {}", a, b)
+}

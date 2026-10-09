@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for cond { ... }` is Go's while loop; Xo writes `while cond { ... }` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `while`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 6
+            },
+            "replace": "while"
+          }
+        ]
+      }
+    ]
+  }
+]

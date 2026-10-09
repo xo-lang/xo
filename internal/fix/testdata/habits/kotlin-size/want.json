@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`List[Int]` has no field or method `size`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 6,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`.size` is the Kotlin and Java name; Xo's is `.len` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `len`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 6,
+              "end_line": 2,
+              "end_col": 10
+            },
+            "replace": "len"
+          }
+        ]
+      }
+    ]
+  }
+]

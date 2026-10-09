@@ -373,6 +373,30 @@ fn f() {
   b()
 }`,
 	},
+	ForeignSyntax: {
+		Title: "syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)",
+		Detail: "The code uses a form that is correct in Go, Rust, TypeScript, Python, Swift, or Kotlin but not in Xo. The message names the habit and the Xo form, and when the rewrite is unambiguous a machine fix applies it (`xo fix`). " +
+			"The parser then continues as if the Xo form had been written, so one habit gives one diagnostic. Common ones: " +
+			"`func`, `fun`, `def`, `function` are `fn`; `x := v` and Kotlin `val` are `let` (or `var`); Rust `let mut` is `var`; " +
+			"`T: Hash + Eq` is one constraint, `T: Hash` (`Eq` and `Debug` are automatic); `Vec<T>` and `[]T` are `List[T]`, `map[K]V` is `Map[K, V]`; " +
+			"`var x` or `&x` at a call site is just `x` (`var` belongs on the parameter); `*p`, `&T`, and `*T` have no Xo form (no pointers); " +
+			"`c ? a : b` and Python's `a if c else b` are `if c { a } else { b }`; Kotlin `?:` is `??`; `x!!` and `x!` are `x.or_fault(\"why\")`; " +
+			"`switch`/`case` and Kotlin `when` are `match` with `pattern => body` arms; `elif` is `else if`; `and`, `or`, `not` are `&&`, `||`, `!`; `x in xs` is `xs.contains(x)`; " +
+			"`for i := 0; i < n; i++` is `for i in 0..n`; Go `for k, v := range m` is `for (k, v) in m` (the checker names the form for the type); `for cond` is `while cond`; `loop` and `for {}` are `while {}`; " +
+			"`0..<n` is `0..n`, Swift `0...n` is `0..=n`, Kotlin `until` is `..`; `x++` is `x += 1`; `===` is `==`; `**` is `.pow(n)`; `xs[a:b]` is `xs[a..b]`; " +
+			"`throw e` and `raise e` are `return Err(e)`; Swift `try f()` is `f()?` and `throws` is `! Error`; `try`/`catch` has no Xo form (handle the Result); " +
+			"`|x| e`, `(x) => e`, and `lambda x: e` are `fn(x) { e }`; `x as T` is `T(x)`; `A::B` is `A.B`; `impl T { fn m(&self) }` is `fn (self: T) m()` at top level; `trait` is `interface`; " +
+			"`): T` and Go's bare result type are `-> T`; Go `(T, error)` results are `-> T ! Error`, and `return v, nil` is `return v`; `x, err := f()` with `if err != nil { return err }` is `let x = f()?`; " +
+			"backtick templates and Python f-strings are `\"...${x}...\"`; `/* */` is `//`. See decision 0087 for the policy.",
+		Example: `func add(a: Int, b: Int) -> Int {
+  x := a + b
+  x > 0 ? x : -x
+}`,
+		Fix: `fn add(a: Int, b: Int) -> Int {
+  let x = a + b
+  if x > 0 { x } else { -x }
+}`,
+	},
 	MisplacedPub: {
 		Title:  "`pub` before something that cannot be exported",
 		Detail: "`pub` exports a declaration from its module (core 1.5). Imports (`use`) and `test` blocks cannot be exported, so `pub use` and `pub test` are rejected. Remove the `pub`.",

@@ -380,6 +380,10 @@ type ForStmt struct {
 	Pattern Pattern
 	Iter    Expr
 	Body    *Block
+	// GoRange marks a loop written as Go's `for k, v := range x`. The
+	// checker reports it (XO0177, decision 0087) with the Xo form for the
+	// type of x and binds the names the way Go would.
+	GoRange bool
 }
 
 // WhileStmt is `[label:] while [cond] { ... }`. A nil Cond is an infinite

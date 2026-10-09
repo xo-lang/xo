@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `delete` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`delete(m, k)` is Go; Xo calls `m.remove(k)` on a `var` map (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `m.remove(k)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 17
+            },
+            "replace": "n.remove(\"a\")"
+          }
+        ]
+      }
+    ]
+  }
+]

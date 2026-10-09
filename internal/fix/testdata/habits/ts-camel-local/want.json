@@ -1,0 +1,46 @@
+[
+  {
+    "code": "XO0101",
+    "severity": "error",
+    "message": "variable name `myCount` must be snake_case",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "camelCase is the TypeScript, Java, Kotlin, and Swift convention; Xo spells variables in snake_case (core 1.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "rename to `my_count`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 7,
+              "end_line": 2,
+              "end_col": 14
+            },
+            "replace": "my_count"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 10
+            },
+            "replace": "my_count"
+          }
+        ]
+      }
+    ]
+  }
+]

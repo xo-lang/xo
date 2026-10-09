@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`new` is TypeScript, Java, and Kotlin syntax; Xo builds a struct with a literal naming every field, `Point{field: value}` (core 2.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove `new`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 7
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

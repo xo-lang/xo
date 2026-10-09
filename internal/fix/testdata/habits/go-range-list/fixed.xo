@@ -1,0 +1,7 @@
+fn total(xs: List[Int]) -> Int {
+  var t = 0
+  for (i, x) in xs.indexed() {
+    t += i * x
+  }
+  t
+}

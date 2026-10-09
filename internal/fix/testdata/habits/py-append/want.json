@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`List[Int]` has no field or method `append`",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 6,
+      "end_line": 3,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "`.append` is the Python and Swift name; Xo's is `.push` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `push`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 6,
+              "end_line": 3,
+              "end_col": 12
+            },
+            "replace": "push"
+          }
+        ]
+      }
+    ]
+  }
+]

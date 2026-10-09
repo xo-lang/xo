@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0153",
+    "severity": "error",
+    "message": "`\\(x)` is Swift string interpolation; Xo writes `${x}` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 12
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `${...}`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 12
+            },
+            "replace": "${"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 13,
+              "end_line": 2,
+              "end_col": 14
+            },
+            "replace": "}"
+          }
+        ]
+      }
+    ]
+  }
+]

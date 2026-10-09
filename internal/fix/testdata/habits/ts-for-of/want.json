@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 9,
+      "end_line": 3,
+      "end_col": 11
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `in`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 9,
+              "end_line": 3,
+              "end_col": 11
+            },
+            "replace": "in"
+          }
+        ]
+      }
+    ]
+  }
+]

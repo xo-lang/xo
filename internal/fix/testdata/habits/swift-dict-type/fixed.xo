@@ -1,0 +1,3 @@
+fn size(m: Map[Str, Int]) -> Int {
+  m.len()
+}

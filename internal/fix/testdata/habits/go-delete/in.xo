@@ -1,0 +1,5 @@
+fn drop(m: Map[Str, Int]) -> Map[Str, Int] {
+  var n = m
+  delete(n, "a")
+  n
+}

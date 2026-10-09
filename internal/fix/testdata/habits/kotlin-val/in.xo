@@ -1,0 +1,4 @@
+fn total() -> Int {
+  val x = 1
+  x + 1
+}

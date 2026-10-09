@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`await` is TypeScript, Python, Rust, and Swift syntax; an Xo call blocks the calling task until it returns, so there is nothing to await; run work concurrently with `scope s { s.spawn(...) }` (core 7.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove `await`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 9
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

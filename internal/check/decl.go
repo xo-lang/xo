@@ -631,6 +631,9 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 				env.params[name] = p
 				return &ParamType{P: p}
 			}
+			if t, ok := c.habitType(x, env); ok {
+				return t
+			}
 			if !env.quiet {
 				c.unresolved(x.Path[0].Sp, "type", name, c.visibleTypeNames(env))
 			}
@@ -690,6 +693,18 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 		c.resolveTypeObj(obj)
 	}
 	args := c.resolveArgsFor(obj, x.Args, env)
+	for _, a := range args {
+		// Remember where an effect argument was left out, for the XO0701
+		// note on it (decision 0087).
+		if ea, ok := a.(*EffArg); ok && ea.Set != nil {
+			for _, it := range ea.Set.Items {
+				if it.Param != nil && it.Param.Elided && it.Param.ElidedAt.File == "" {
+					it.Param.ElidedAt = x.Sp
+					it.Param.ElidedText = typeText(x)
+				}
+			}
+		}
+	}
 	if obj.Kind == KAlias {
 		if len(args) != len(obj.TParams) {
 			c.errorf(diag.BadArguments, x.Sp, "`%s` takes %d type argument(s), found %d", obj.Name, len(obj.TParams), len(args))

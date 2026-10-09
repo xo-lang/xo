@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`import` is Go, Python, or TypeScript syntax; Xo imports a module with `use`, for example `use std/json` (core 4.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 12
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "replace with `use`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 2,
+              "end_col": 1
+            },
+            "replace": "use std/json\n"
+          }
+        ]
+      }
+    ]
+  }
+]

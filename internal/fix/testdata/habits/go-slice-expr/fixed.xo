@@ -1,0 +1,3 @@
+fn middle(xs: List[Int]) -> List[Int] {
+  xs[1..3]
+}

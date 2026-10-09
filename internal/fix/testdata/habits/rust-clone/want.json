@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`List[Int]` has no field or method `clone`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 6,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`.clone()` is Rust; Xo values are immutable and shared, and collections have their methods directly, so the call is not needed (core 5.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove `.clone()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 5,
+              "end_line": 2,
+              "end_col": 13
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

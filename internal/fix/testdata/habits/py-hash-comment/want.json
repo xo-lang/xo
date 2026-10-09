@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0150",
+    "severity": "error",
+    "message": "`#` starts a comment in Python and shell; Xo comments start with `//` (core 1.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 2
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `//`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 2
+            },
+            "replace": "//"
+          }
+        ]
+      }
+    ]
+  }
+]

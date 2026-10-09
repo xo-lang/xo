@@ -1,0 +1,5 @@
+fn first() -> Int {
+  for {
+    return 1
+  }
+}

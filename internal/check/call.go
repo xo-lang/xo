@@ -156,6 +156,9 @@ func (c *checker) ident(x *ast.Ident, hint Type) Type {
 			return badType
 		}
 	}
+	if t, ok := c.habitName(x, hint); ok {
+		return t
+	}
 	d := c.unresolved(x.Sp, "name", name, c.visibleValueNames())
 	c.qualifiedHint(d, name)
 	return badType
@@ -262,6 +265,7 @@ func (c *checker) selector(x *ast.SelectorExpr, hint Type) Type {
 		return c.typeMember(obj, args, x, hint, nil)
 	}
 	bt := c.infer(x.X, nil)
+	c.safeNavFix(x)
 	return c.fieldOf(bt, x, false)
 }
 
@@ -360,6 +364,15 @@ func (c *checker) typeMember(obj *TypeObj, targs []Type, x *ast.SelectorExpr, hi
 	d := c.unresolved(x.Sel.Sp, what, name, cands)
 	if d != nil && obj.Methods[name] != nil {
 		note(d, token.Span{}, "`%s` is a method; call it on a value of type `%s`", name, obj.Name)
+	}
+	if d != nil && obj.Methods[name] == nil && obj.Module != c.prelude {
+		// Associated functions other languages have (decision 0087).
+		switch name {
+		case "new":
+			habitNote(d, "`%s::new(...)` is a Rust and Swift constructor; Xo builds a struct with a literal naming every field, `%s{field: value}`, or with a plain function such as `new_%s(...)` (core 2.2)", obj.Name, obj.Name, toSnake(obj.Name))
+		case "parse":
+			habitNote(d, "`%s` has no `parse` in the std library (spec/std.md); parse the parts yourself, for example `Int.parse(s)` and `1s * n` for a duration", obj.Name)
+		}
 	}
 	if call != nil {
 		c.numericConversionHint(d, obj, x, call)
@@ -484,6 +497,9 @@ func (c *checker) fieldOf(bt Type, x *ast.SelectorExpr, place bool) Type {
 			ft := subst(m.sig(), fs)
 			return ft
 		}
+	}
+	if t, ok := c.habitField(bt, x, place); ok {
+		return t
 	}
 	c.noMember(r, x.Sel, place)
 	return badType
@@ -668,6 +684,9 @@ func (c *checker) callIdent(x *ast.CallExpr, id *ast.Ident, targs []Type, hint T
 			return badType
 		}
 	}
+	if t, ok := c.habitCall(x, id, hint); ok {
+		return t
+	}
 	c.unresolved(id.Sp, "function", name, c.visibleValueNames())
 	c.inferArgs(x)
 	return badType
@@ -730,6 +749,11 @@ func (c *checker) callSelector(x *ast.CallExpr, sel *ast.SelectorExpr, targs []T
 			return badType
 		}
 	}
+	if id, ok := sel.X.(*ast.Ident); ok && c.lookupLocal(id.Name) == nil && c.file.Imports[id.Name] == nil && c.lookupModuleObj(c.mod, id.Name) == nil {
+		if t, ok := c.habitModuleCall(x, id, sel, hint); ok {
+			return t
+		}
+	}
 	if obj, args, ok := c.typeOfExpr(sel.X); ok {
 		if targs != nil {
 			c.errorf(diag.WrongKind, x.Fun.Span(), "type arguments go on the type: `%s[...].%s(...)`", obj.Name, sel.Sel.Name)
@@ -787,6 +811,9 @@ func (c *checker) callMethod(bt Type, sel *ast.SelectorExpr, targs []Type, x *as
 			c.errorf(diag.SpawnWithoutScope, sel.Sel.Sp, "`%s` is called on `%s`, not on a scope handle; tasks are started with `s.spawn(f)` inside `scope s { ... }` (core 7.1)", name, deep(r))
 			c.inferArgs(x)
 			return badType
+		}
+		if t, ok := c.habitMethod(bt, r, sel, x, hint); ok {
+			return t
 		}
 		c.noMember(r, sel.Sel, false)
 		c.inferArgs(x)
@@ -1032,7 +1059,15 @@ func (c *checker) checkArgs(params []*ParamInfo, call *ast.CallExpr, fname strin
 		}
 	}
 	if len(missing) > 0 && ok {
-		c.errorf(diag.BadArguments, call.Sp, "missing argument(s) `%s` in call to `%s`", strings.Join(missing, "`, `"), fname)
+		d := c.errorf(diag.BadArguments, call.Sp, "missing argument(s) `%s` in call to `%s`", strings.Join(missing, "`, `"), fname)
+		for _, m := range missing {
+			if m == "reason" || m == "msg" {
+				// Rust's `unwrap()` and Kotlin's `!!` take no reason; Xo's
+				// failure points do (decision 0087).
+				note(d, token.Span{}, "Xo asks for a reason wherever a program may stop or drop an error, so the message names the invariant: `%s(..., \"why this cannot fail\")` (core 2.6, 3.6)", fname)
+				break
+			}
+		}
 	}
 	for pass := 0; pass < 2; pass++ {
 		for i, e := range assigned {

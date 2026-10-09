@@ -1,0 +1,4 @@
+fn total() -> Int {
+  let x = 1
+  x + 1
+}

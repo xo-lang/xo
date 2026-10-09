@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`===` is TypeScript strict equality; Xo has one equality, `==`, and it never converts types (core 2.10)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `==`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 7,
+              "end_line": 2,
+              "end_col": 8
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

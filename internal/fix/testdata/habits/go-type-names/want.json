@@ -1,0 +1,70 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `int` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 12,
+      "end_line": 1,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "`int` is the Go, Python, and C name; Xo's is `Int` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Int`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 12,
+              "end_line": 1,
+              "end_col": 15
+            },
+            "replace": "Int"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `string` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 20,
+      "end_line": 1,
+      "end_col": 26
+    },
+    "notes": [
+      {
+        "message": "`string` is the Go and TypeScript name; Xo's is `Str` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Str`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 20,
+              "end_line": 1,
+              "end_col": 26
+            },
+            "replace": "Str"
+          }
+        ]
+      }
+    ]
+  }
+]

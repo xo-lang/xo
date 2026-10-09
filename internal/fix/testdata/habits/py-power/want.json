@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`**` is Python, TypeScript, and Kotlin syntax for a power; Xo writes `x.pow(n)` (spec/std.md 2)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `.pow(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 9
+            },
+            "replace": "x.pow(2)"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,3 @@
+fn parse(s: Str) -> Int ! Error {
+  return s.len()
+}

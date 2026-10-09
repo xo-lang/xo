@@ -1,0 +1,11 @@
+fn load() -> Int ! Str {
+  1
+}
+
+fn use_it() -> Int {
+  try {
+    load()
+  } catch (e) {
+    0
+  }
+}

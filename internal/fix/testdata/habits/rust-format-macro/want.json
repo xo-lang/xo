@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`format!` is a Rust macro; an Xo string interpolates directly: `\"${a} and ${b}\"` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write an interpolated string",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 29
+            },
+            "replace": "\"${a} and ${b}\""
+          }
+        ]
+      }
+    ]
+  }
+]

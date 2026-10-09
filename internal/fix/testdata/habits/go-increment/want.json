@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`t++` is Go, TypeScript, Kotlin, and Swift syntax; Xo writes `t += 1` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 4,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `+= 1`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 4,
+              "end_line": 3,
+              "end_col": 6
+            },
+            "replace": " += 1"
+          }
+        ]
+      }
+    ]
+  }
+]

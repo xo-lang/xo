@@ -1,0 +1,3 @@
+fn squares(n: Int) -> List[Int] {
+  (0..n).to_list().map(fn(x) { x * x })
+}

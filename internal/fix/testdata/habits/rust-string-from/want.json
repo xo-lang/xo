@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `String` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`String::from(s)` is Rust; a string literal already is a `Str`, and other values interpolate, `\"${x}\"` (core 1.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove `String::from`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 21
+            },
+            "replace": "\"xo\""
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`nick?: T` is TypeScript syntax for an optional field; Xo writes the option on the type, `nick: T?` (core 2.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `nick: Str?`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 7,
+              "end_line": 2,
+              "end_col": 8
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 13,
+              "end_line": 2,
+              "end_col": 13
+            },
+            "replace": "?"
+          }
+        ]
+      }
+    ]
+  }
+]

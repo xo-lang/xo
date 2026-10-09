@@ -1,0 +1,3 @@
+fn csv(xs: List[Str]) -> Str {
+  ",".join(xs)
+}

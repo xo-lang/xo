@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for i, x := range xs` is Go syntax; Xo writes `for pattern in xs` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "for this `List[Int]`, write `for (i, x) in xs.indexed()`"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `for (i, x) in xs.indexed()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 24
+            },
+            "replace": "for (i, x) in xs.indexed() "
+          }
+        ]
+      }
+    ]
+  }
+]

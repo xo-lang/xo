@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0408",
+    "severity": "error",
+    "message": "`const x` is initialized with a value computed at run time",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 13,
+      "end_line": 6,
+      "end_col": 19
+    },
+    "notes": [
+      {
+        "message": "a TypeScript and JavaScript `const` binding is Xo's `let`; an Xo `const` is a compile time UPPER_SNAKE constant (core 3.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `let`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 8
+            },
+            "replace": "let"
+          }
+        ]
+      }
+    ]
+  }
+]

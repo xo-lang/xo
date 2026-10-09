@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`trait` is Rust syntax; Xo declares an `interface`, and types satisfy it implicitly by having its methods (core 2.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `interface`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 6
+            },
+            "replace": "interface"
+          }
+        ]
+      }
+    ]
+  }
+]

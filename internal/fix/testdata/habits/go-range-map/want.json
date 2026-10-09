@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for k, v := range m` is Go syntax; Xo writes `for pattern in m` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "for this `Map[Str, Int]`, write `for (k, v) in m`"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `for (k, v) in m`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 23
+            },
+            "replace": "for (k, v) in m "
+          }
+        ]
+      }
+    ]
+  }
+]
