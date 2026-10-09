@@ -45,7 +45,7 @@ commands:
       builds (XO1201 for what they cannot build yet, or ever; decision 0083).
       Exit status is 1 when any error is reported (warnings such as holes do
       not count), 2 on usage errors.
-  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-gc] [--no-mono] [--no-arenas] [-o out] <dirs...>
+  build [--targets=all|os/arch,...] [--backend=go|llvm|arm64] [--no-gc] [--no-mono] [--no-arenas] [--ci] [-o out] <dirs...>
       Compile to static binaries (default: the host). --backend=llvm uses the
       LLVM prototype (a core subset, needs clang); --backend=arm64 the native
       AArch64 backend (the same subset, needs cc; linux/arm64 is emitted as
@@ -55,7 +55,8 @@ commands:
       effect the native backends do not support is reported as XO1201
       before code generation (decision 0083). Request scoped arenas for HTTP
       handlers are on by default (decision 0066); --no-arenas (also on run
-      and test) turns them off.
+      and test) turns them off. --ci fails before building when a .xo file
+      is not formatted (core 10.5) or dbg(...) is left in code (core 11.4).
   run [--seed=N] [--backend=go|llvm|arm64] [--no-gc] <dir> [-- args]
       Build for the host and run. --seed makes task interleavings
       reproducible. Recording is described under run --record below.

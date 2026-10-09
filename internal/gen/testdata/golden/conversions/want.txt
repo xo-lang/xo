@@ -5,6 +5,7 @@ trunc: 3 -3
 try: 255 0 -5
 int32: 1000 1001
 parse: 42 0 2.5
+float32: 7.5 7.5 7 true
 convert 300 to UInt8
 --- stderr
-fault: 300 is out of range for UInt8 at main.xo:10:11
+fault: 300 is out of range for UInt8 at main.xo:12:11
