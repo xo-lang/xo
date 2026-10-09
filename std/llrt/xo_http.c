@@ -55,11 +55,12 @@ typedef struct {
 	int64_t n, cap;
 } hlist;
 
+// The strings and pair arrays of requests and responses come from the
+// runtime's allocator (xo_alloc: per thread free lists), not malloc: a
+// request made about twenty of them, and macOS malloc's free path showed
+// in server profiles (with mach_absolute_time under it).
 static hstr hs_dup(const char *p, int64_t n) {
-	hstr s = {malloc((size_t)n + 1), n};
-	if (!s.p) {
-		xo_oom();
-	}
+	hstr s = {xo_alloc(n + 1), n};
 	if (n) {
 		memcpy(s.p, p, (size_t)n);
 	}
@@ -68,7 +69,9 @@ static hstr hs_dup(const char *p, int64_t n) {
 }
 
 static void hs_free(hstr *s) {
-	free(s->p);
+	if (s->p) {
+		xo_free(s->p);
+	}
 	s->p = NULL;
 	s->n = 0;
 }
@@ -77,23 +80,30 @@ static int hs_eq(hstr a, const char *b) { return a.n == (int64_t)strlen(b) && me
 
 static void hl_add(hlist *l, hstr k, hstr v) {
 	if (l->n == l->cap) {
+		int64_t old = l->cap;
 		l->cap = l->cap ? l->cap * 2 : 8;
-		l->a = realloc(l->a, (size_t)l->cap * sizeof(hpair));
-		if (!l->a) {
-			xo_oom();
-		}
+		int64_t sz = l->cap * (int64_t)sizeof(hpair);
+		l->a = l->a ? xo_resize(l->a, old * (int64_t)sizeof(hpair), sz) : xo_alloc(sz);
 	}
 	l->a[l->n].k = k;
 	l->a[l->n].v = v;
 	l->n++;
 }
 
-static void hl_free(hlist *l) {
+// hl_clear empties l and keeps its array for reuse.
+static void hl_clear(hlist *l) {
 	for (int64_t i = 0; i < l->n; i++) {
 		hs_free(&l->a[i].k);
 		hs_free(&l->a[i].v);
 	}
-	free(l->a);
+	l->n = 0;
+}
+
+static void hl_free(hlist *l) {
+	hl_clear(l);
+	if (l->a) {
+		xo_free(l->a);
+	}
 	l->a = NULL;
 	l->n = l->cap = 0;
 }
@@ -1108,15 +1118,12 @@ static int hp_head(const char *b, int64_t n, int eof, hreq *r, int64_t *used) {
 			}
 			if (e >= 0) {
 				hstr *ov = &r->hdr.a[e].v;
-				char *nv = malloc((size_t)(ov->n + 2 + raw[k].vn + 1));
-				if (!nv) {
-					xo_oom();
-				}
+				char *nv = xo_alloc(ov->n + 2 + raw[k].vn + 1);
 				memcpy(nv, ov->p, (size_t)ov->n);
 				memcpy(nv + ov->n, ", ", 2);
 				memcpy(nv + ov->n + 2, raw[k].v, (size_t)raw[k].vn);
 				nv[ov->n + 2 + raw[k].vn] = 0;
-				free(ov->p);
+				xo_free(ov->p);
 				ov->p = nv;
 				ov->n += 2 + raw[k].vn;
 			} else {
@@ -1861,6 +1868,7 @@ typedef struct xo_hconn {
 	int too_big;
 	int expect_unread;
 	hlist resp;
+	nbuf out; // the response being written (reused)
 	char ip[INET6_ADDRSTRLEN];
 	// tests (http_diff.c): no socket, no server; the input is in buf
 	// and the output goes to sink
@@ -1898,6 +1906,7 @@ static void hconn_free(void *p) {
 		hr_free(&hc->req);
 	}
 	free(hc->body.p);
+	free(hc->out.p);
 	hl_free(&hc->resp);
 	xo_free(hc);
 }
@@ -2151,7 +2160,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 	hc->body_bad = 0;
 	hc->too_big = 0;
 	hc->expect_unread = 0;
-	hl_free(&hc->resp);
+	hl_clear(&hc->resp);
 	// after a POST, up to 4 CR or LF bytes before the next request
 	// (conn.readRequest's tolerance for old clients)
 	int skip = hc->last_post;
@@ -2431,7 +2440,8 @@ void xo_hc_header(xo_hconn *hc, const char *k, int64_t kn, const char *v, int64_
 // xo_hc_respond writes the response: 1 when the connection stays open
 // for another request.
 int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn) {
-	nbuf o = {0};
+	nbuf *o = &hc->out;
+	o->n = 0;
 	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
 		// std/rt sets Content-Length on a whole body net/http would
 		// otherwise chunk (above its 2048 byte buffer); match it
@@ -2439,10 +2449,14 @@ int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn
 		int cn = h_itoa(cl, bn);
 		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
 	}
-	int keep = hw_response(&o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
-	int ok = hc_send(hc, o.p, o.n);
-	free(o.p);
-	hl_free(&hc->resp);
+	int keep = hw_response(o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
+	int ok = hc_send(hc, o->p, o->n);
+	if (o->cap > (64 << 10)) {
+		// a large body: do not keep its buffer for the connection's life
+		free(o->p);
+		*o = (nbuf){0};
+	}
+	hl_clear(&hc->resp);
 	hc->served = 1;
 	if (!ok || !keep) {
 		return 0;
