@@ -1,0 +1,165 @@
+// An HTTP server and its client in one program (std.md 4, decision 0074):
+// a server on 127.0.0.1:0 in a background task, driven by the client of
+// std/http, printing the same on the Go, LLVM, and arm64 backends.
+// Routing with typed and rest parameters, 404/405/400, middleware that
+// fails or wraps (`wrap`, `mount`), request values, JSON bodies through
+// `derive Json`, query parameters, headers, and the error mapping of
+// section 4.2. The server stops when its scope ends.
+use std/http
+
+struct Note {
+  id: Int
+  title: Str
+  tags: List[Str] = []
+  done: Bool = false
+} derive Json
+
+struct NewNote {
+  title: Str
+  tags: List[Str] = []
+} derive Json
+
+struct User {
+  name: Str
+} derive Json
+
+enum ApiErr {
+  NotFound(id: Int)
+  Invalid(msg: Str)
+  Unauthorized
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    NotFound(..) => 404
+    Invalid(..) => 422
+    Unauthorized => 401
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    NotFound(id) => "note ${id} not found"
+    Invalid(msg) => msg
+    Unauthorized => "who are you?"
+  }
+}
+
+/// An error without a status: the client sees 500.
+enum Broken {
+  Oops
+} derive Display
+
+fn user_key() -> http.Key[User] { http.key("user") }
+
+fn api() -> http.Router {
+  var api = http.router()
+  api.wrap(fn(req, next) -> http.Response ! ApiErr {
+    match req.header("x-user") {
+      Some(name) => next(req.with_value(user_key(), User{name: name}))
+      None => Err(ApiErr.Unauthorized)
+    }
+  })
+  api.handle("GET /me", fn(req) {
+    match req.value(user_key()) {
+      Some(u) => http.json(200, u)
+      None => http.text(500, "no user")
+    }
+  })
+  api.handle("POST /notes", fn(req) -> http.Response ! ApiErr {
+    let n = req.json[NewNote]().map_err(fn(e) { ApiErr.Invalid(msg: "bad note: ${e}") })?
+    if n.title.is_empty() {
+      return Err(ApiErr.Invalid(msg: "title is empty"))
+    }
+    http.json(201, Note{id: 7, title: n.title, tags: n.tags})
+  })
+  api
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.wrap(fn(req, next) {
+    let resp = next(req)
+    resp.with_header("x-served-by", "xo")
+  })
+  r.handle("GET /hello/{name}", fn(req) { http.text(200, "hello ${req.param("name")}") })
+  r.handle("GET /notes/{id:Int}", fn(req) -> http.Response ! ApiErr {
+    let id = req.param_int("id")
+    if id != 7 {
+      return Err(ApiErr.NotFound(id: id))
+    }
+    http.json(200, Note{id: 7, title: "seven", tags: ["a", "b"], done: true})
+  })
+  r.handle("GET /files/{path...}", fn(req) { http.text(200, "file ${req.param("path")}") })
+  r.handle("GET /search", fn(req) {
+    let q = req.query("q") ?? "-"
+    let page = req.query("page") ?? "1"
+    http.json(200, {"q": q, "page": page})
+  })
+  r.handle("GET /broken", fn(_req) -> http.Response ! Broken { Err(Broken.Oops) })
+  r.handle("DELETE /notes/{id:Int}", fn(_req) { http.empty(204) })
+  r.handle("POST /echo", fn(req) {
+    let ct = req.header("content-type") ?? "none"
+    http.text(200, "${req.method} ${req.path} ${ct} ${req.body.to_str() ?? "?"}")
+  })
+  r.mount("/api", api())
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => {
+      let ct = resp.header("Content-Type") ?? "-"
+      let by = resp.header("X-Served-By") ?? "-"
+      os.stdio.println("${label}: ${resp.status} [${ct}] [${by}] ${resp.text() ?? "?"}")
+    }
+    Err(e) => os.stdio.println("${label}: client error ${e}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "hello", c.get(base + "/hello/ada"))
+        show(os, "hello escaped", c.get(base + "/hello/a%20b"))
+        show(os, "note", c.get(base + "/notes/7"))
+        show(os, "note missing", c.get(base + "/notes/8"))
+        show(os, "note not int", c.get(base + "/notes/x"))
+        show(os, "files", c.get(base + "/files/a/b/c.txt"))
+        show(os, "search", c.get(base + "/search?q=xo+lang&page=2"))
+        show(os, "search empty", c.get(base + "/search"))
+        show(os, "unknown", c.get(base + "/nope"))
+        show(os, "wrong method", c.send(http.new_request("PUT", base + "/hello/x")))
+        show(os, "broken", c.get(base + "/broken"))
+        show(os, "delete", c.send(http.new_request("DELETE", base + "/notes/7")))
+        show(os, "echo", c.send(http.new_request("POST", base + "/echo", {"Content-Type": "text/plain"}, "body text".bytes())))
+        show(os, "me anonymous", c.get(base + "/api/me"))
+        show(os, "me", c.send(http.new_request("GET", base + "/api/me", {"X-User": "ada"})))
+        show(os, "create", c.send(http.new_request("POST", base + "/api/notes", {"X-User": "ada"}, r#"{"title": "buy milk", "tags": ["home"]}"#.bytes())))
+        show(os, "create empty", c.send(http.new_request("POST", base + "/api/notes", {"X-User": "ada"}, r#"{"title": ""}"#.bytes())))
+        show(os, "create bad", c.send(http.new_request("POST", base + "/api/notes", {"X-User": "ada"}, r#"{"title": 3}"#.bytes())))
+        show(os, "create anonymous", c.post_json(base + "/api/notes", NewNote{title: "x"}))
+        show(os, "api unknown", c.send(http.new_request("GET", base + "/api/nope", {"X-User": "ada"})))
+        // in process dispatch reaches the same routes
+        let local = routes().call(http.new_request("GET", "/notes/7"))
+        os.stdio.println("call: ${local.status} ${local.text() ?? "?"}")
+        match local.decode_json[Note]() {
+          Ok(n) => os.stdio.println("decoded: ${n.title} ${n.tags.len()} ${n.done}")
+          Err(e) => os.stdio.println("decode failed: ${e}")
+        }
+      }
+      os.stdio.println("server stopped")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

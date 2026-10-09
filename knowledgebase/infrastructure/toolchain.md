@@ -91,6 +91,9 @@ go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets 
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
 XO_HTTP_DIFF_SEED=7 XO_HTTP_DIFF_N=30000 go test ./internal/llvm -run TestHTTPParseDiff   # more random and mutated connections
+go test ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s -parallel 6   # Go's fuzzer on the same comparison (more workers than about 6 starved it on 2026-10-08: "context deadline exceeded")
+XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # std/llrt/testdata/http_fuzz.c: mutated HTTP and JSON under AddressSanitizer and UBSan (5 s by default, 1 s with -short)
+go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
@@ -1192,7 +1195,7 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   `tbz`/`tbnz` tests `inst.bit`.
 - Tests: `go test ./internal/arm64` (golden assembly; on an arm64 host
   it builds and runs every golden of internal/llvm against its want.txt
-  (47 on 2026-10-08), the bench programs, and `testdata/run/*` against the Go
+  (62 on 2026-10-08, with the native_* and http_* goldens of decision 0074), the bench programs, and `testdata/run/*` against the Go
   backend, all with the leak check; TestGoldenRunShared runs the goldens
   with share probes and assembles their Linux output as ELF). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with

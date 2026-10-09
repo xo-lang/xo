@@ -4,10 +4,14 @@ Status: Accepted (2026-10-08). Implemented in `std/native/*.xo`
 (implementation modules), `std/llrt/xo_std.c`, `xo_json.c`, `xo_http.c`,
 `xo_unicode.c` (C intrinsics), `internal/check/load.go` (`loadNative`),
 `internal/ssa/build_native.go`, `build_show.go`, `build_json.go`. Tests:
-`internal/check/native_test.go`, the `native_*` and `http_*` goldens of
-`internal/llvm/testdata/golden` (Go, LLVM, and arm64 must agree),
-`internal/llvm/json_diff_test.go`, `internal/llvm/http_diff_test.go`,
-`internal/llvm/unicode_test.go`.
+`internal/check/native_test.go`; the `native_*` and `http_*` goldens of
+`internal/llvm/testdata/golden` (Go, LLVM, and arm64 must agree, no
+allocation live at exit, also with share probes and under
+ThreadSanitizer with 1, 2, and per CPU workers in TestGoldenTasks, and
+under AddressSanitizer and UBSan in TestGoldenASan); `json_diff_test.go`
+(TestJSONParseDiff); `http_diff_test.go` (TestHTTPParseDiff, FuzzHTTPDiff
+for `go test -fuzz`, TestHTTPFuzz running `std/llrt/testdata/http_fuzz.c`
+under AddressSanitizer and UBSan); `unicode_test.go`.
 
 ## Context
 The native backends (decisions 0046, 0049, 0068 to 0072) had tasks,
@@ -104,7 +108,25 @@ type of every value (decision 0046 rejects layouts in the runtime).
 
 ## Consequences
 - bench/perf/http/xo builds with `--backend=arm64` and `--backend=llvm`
-  and answers like the Go backend build.
+  and answers like the Go backend build. Smoke check (2026-10-08, no
+  timing): each native build answered about 360 sequential requests
+  (create, get, patch, list, duplicate, bad JSON, delete, get after
+  delete) with 303 of 303 checks right, then 8 concurrent clients made
+  200 users with 200 distinct ids, and SIGTERM ended the server with exit
+  status 0. `bench/perf/http/run.sh` has configs `xo-arm64` and `xo-llvm`
+  for the throughput comparison, to be run on a quiet machine.
+- Fuzzing (2026-10-08): http_fuzz.c ran about 60 million mutated inputs
+  through the server's and client's parsers and the JSON parser under
+  AddressSanitizer and UBSan (three seeds, 60 s each) after the fix of one
+  overflow it found (a 16 digit chunk size); TestHTTPParseDiff agreed with
+  net/http on 30000 random connections for each of 16 seeds after the
+  quirks in `gotchas/net-http-quirks-to-copy.md` were copied; FuzzHTTPDiff
+  found two more differences (net.SplitHostPort's checks of brackets,
+  requestTooLarge when 256 KiB of a body never came), fixed and kept as
+  seeds in `internal/llvm/testdata/fuzz`.
+- Not tuned yet: a request allocates per header field, per path segment
+  and route while dispatching, and per response field; the throughput
+  comparison will show where it matters.
 - Differences from the Go backend, all documented here: a fault in a
   handler exits the process (decision 0070: no unwinding of faults), not a
   500; a request body longer than 64 MiB (XO_HTTP_MAX_BODY) is cut short

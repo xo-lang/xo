@@ -23,10 +23,20 @@ obvious from the RFCs:
   its last read (body.readLocked returns io.EOF with the last bytes), so
   it closes the connection only when the body came short.
 - **A short Content-Length body** (the client stopped) does not close the
-  connection; a chunked body that fails does (the chunked reader's error is
-  sticky).
+  connection when less than 256 KiB of it is missing (the rest is
+  "discarded" at once); from 256 KiB missing it is `requestTooLarge`: the
+  connection closes with `Connection: close`, also for HTTP/1.0. A
+  chunked body that fails closes it without that header (the chunked
+  reader's error is sticky).
 - **`OPTIONS *`** never reaches the handler: net/http answers 200 with
-  `Content-Length: 0` (globalOptionsHandler).
+  `Content-Length: 0` (globalOptionsHandler), reading at most 4 KiB of a
+  body (more: `Connection: close` among the handler's fields).
+- **A request line of 4096 bytes** (or a multiple) cut by the end of the
+  stream gets no answer: it fills bufio's buffer, the next read finds
+  nothing, and the line reads as io.EOF (a quiet close); one byte more or
+  less is a 400.
+- **net.SplitHostPort** (Request.url.host) rejects a `[` after the
+  bracketed host and a `]` after its end, so `[[]:` stays whole.
 - **HTTP/0.0** is HTTP/1.1 to readTransfer (Transfer-Encoding checks run,
   501 comes before 505).
 - **Trailers** end at the first empty line, a bare LF too, but only once a

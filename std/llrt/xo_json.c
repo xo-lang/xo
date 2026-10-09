@@ -702,17 +702,25 @@ int64_t xo_json_find(const char *src, int64_t sn, xo_rlist *t, int64_t i, const 
 
 // xo_json_members lists the members of the object at i as std/rt's
 // jsonObj has them: each key once, at its first position, with its last
-// value: (key node, value node) pairs of tape indexes.
+// value: (key node, value node) pairs of tape indexes. Keys are found
+// again through a hash table of the keys seen (linear time).
 xo_rlist *xo_json_members(const char *src, int64_t sn, xo_rlist *t, int64_t i) {
 	(void)sn;
 	int64_t m = tape_at(t, i + 1), j = i + 3;
 	xo_rlist *l = xo_rl_new(m * 2 < 4 ? 4 : m * 2, 8);
 	int64_t *o = (int64_t *)rl_data(l);
 	int64_t cnt = 0;
+	int64_t slots = 16;
+	while (slots < m * 2) {
+		slots *= 2;
+	}
+	int64_t *tab = malloc((size_t)slots * sizeof(int64_t)); // entry + 1, 0 empty
+	if (!tab) {
+		xo_oom();
+	}
+	memset(tab, 0, (size_t)slots * sizeof(int64_t));
 	for (int64_t k = 0; k < m; k++) {
 		int64_t v = j + 3;
-		// an earlier member with the same key takes this value
-		int64_t dup = -1;
 		const unsigned char *ks = (const unsigned char *)src + tape_at(t, j + 1);
 		int64_t kl = tape_at(t, j + 2);
 		nbuf kb = {0};
@@ -720,13 +728,19 @@ xo_rlist *xo_json_members(const char *src, int64_t sn, xo_rlist *t, int64_t i) {
 		int64_t kn = kl;
 		if (!j_plain(ks, kl)) {
 			j_unquote(&kb, ks, kl);
-			kp = kb.p;
+			kp = kb.p ? kb.p : "";
 			kn = kb.n;
 		}
-		for (int64_t e = 0; e < cnt && dup < 0; e++) {
+		uint64_t h = (uint64_t)xo_str_hash(kp, kn);
+		int64_t s = (int64_t)(h & (uint64_t)(slots - 1));
+		int64_t dup = -1;
+		while (tab[s]) {
+			int64_t e = tab[s] - 1;
 			if (j_key_eq(src, t, o[2 * e], kp, kn)) {
 				dup = e;
+				break;
 			}
+			s = (s + 1) & (slots - 1);
 		}
 		free(kb.p);
 		if (dup >= 0) {
@@ -734,10 +748,12 @@ xo_rlist *xo_json_members(const char *src, int64_t sn, xo_rlist *t, int64_t i) {
 		} else {
 			o[2 * cnt] = j;
 			o[2 * cnt + 1] = v;
+			tab[s] = cnt + 1;
 			cnt++;
 		}
 		j = j_next(t, v);
 	}
+	free(tab);
 	l->len = cnt * 2;
 	return l;
 }

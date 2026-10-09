@@ -158,7 +158,7 @@ func diffHandler(w http.ResponseWriter, hr *http.Request) {
 	}
 	if big, ok := q["big"]; ok {
 		if n, _ := strconv.Atoi(big); n > 0 {
-			b.WriteString(strings.Repeat("x", n))
+			b.WriteString(strings.Repeat("x", min(n, 1<<20)))
 		}
 	}
 	text := b.String()
@@ -415,7 +415,13 @@ func TestHTTPParseDiff(t *testing.T) {
 	// a header just under and just over net/http's limit (1 MiB + 4096)
 	inputs = append(inputs,
 		"GET / HTTP/1.1\r\nHost: x\r\nX-Big: "+strings.Repeat("a", 1<<20)+"\r\n\r\n",
-		"GET / HTTP/1.1\r\nHost: x\r\nX-Big: "+strings.Repeat("a", 1<<20+8192)+"\r\n\r\n")
+		"GET / HTTP/1.1\r\nHost: x\r\nX-Big: "+strings.Repeat("a", 1<<20+8192)+"\r\n\r\n",
+		// OPTIONS * reads at most 4 KiB of its body
+		"OPTIONS * HTTP/1.1\r\nHost: x\r\nContent-Length: 5000\r\n\r\n"+strings.Repeat("a", 5000),
+		// a body declared much longer than what came (net/http's
+		// requestTooLarge from 256 KiB unread)
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\nshort",
+		"POST /p HTTP/1.0\r\nConnection: keep-alive\r\nContent-Length: 1000000\r\n\r\nshort")
 	seed := int64(1)
 	if v, err := strconv.ParseInt(os.Getenv("XO_HTTP_DIFF_SEED"), 10, 64); err == nil {
 		seed = v
@@ -449,4 +455,149 @@ func TestHTTPParseDiff(t *testing.T) {
 	if bad > 0 {
 		t.Errorf("%d of %d inputs differ", bad, len(inputs))
 	}
+}
+
+// diffDriver is one http_diff.c process answering inputs one at a time
+// (FuzzHTTPDiff), with a net/http server for the same inputs.
+var diffDriver struct {
+	once sync.Once
+	err  error
+	mu   sync.Mutex
+	in   io.WriteCloser
+	out  *bufio.Reader
+	srv  *fakeListener
+}
+
+func startDiffDriver(t *testing.T) {
+	diffDriver.once.Do(func() {
+		if _, err := build.Clang(); err != nil {
+			diffDriver.err = err
+			return
+		}
+		src := filepath.Join(rtDir, "testdata", "http_diff.c")
+		dir, err := os.MkdirTemp("", "xo-http-diff-")
+		if err != nil {
+			diffDriver.err = err
+			return
+		}
+		bin := filepath.Join(dir, "http_diff")
+		if err := build.CompileC([]string{"-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"}, []string{src}, bin); err != nil {
+			if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err != nil {
+				diffDriver.err = err
+				return
+			}
+		}
+		cmd := exec.Command(bin)
+		cmd.Env = append(os.Environ(), "FLUSH=1")
+		in, err := cmd.StdinPipe()
+		if err != nil {
+			diffDriver.err = err
+			return
+		}
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			diffDriver.err = err
+			return
+		}
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			diffDriver.err = err
+			return
+		}
+		diffDriver.in, diffDriver.out = in, bufio.NewReader(out)
+		l := &fakeListener{ch: make(chan net.Conn), closed: make(chan struct{})}
+		srv := &http.Server{Handler: http.HandlerFunc(diffHandler), ErrorLog: log.New(io.Discard, "", 0)}
+		go srv.Serve(l)
+		diffDriver.srv = l
+	})
+	if diffDriver.err != nil {
+		t.Skip(diffDriver.err)
+	}
+}
+
+// diffOne answers input with the native code and with net/http.
+func diffOne(t *testing.T, input []byte) (native, goAns string) {
+	diffDriver.mu.Lock()
+	var lb [8]byte
+	binary.LittleEndian.PutUint64(lb[:], uint64(len(input)))
+	diffDriver.in.Write(lb[:])
+	diffDriver.in.Write(input)
+	if _, err := io.ReadFull(diffDriver.out, lb[:]); err != nil {
+		diffDriver.mu.Unlock()
+		t.Fatalf("http_diff died on %q: %v", input, err)
+	}
+	b := make([]byte, binary.LittleEndian.Uint64(lb[:]))
+	if _, err := io.ReadFull(diffDriver.out, b); err != nil {
+		diffDriver.mu.Unlock()
+		t.Fatalf("http_diff died on %q: %v", input, err)
+	}
+	diffDriver.mu.Unlock()
+	c := &fakeConn{in: bytes.NewReader(input), done: make(chan struct{})}
+	diffDriver.srv.ch <- c
+	select {
+	case <-c.done:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("net/http did not close the connection for %q", input)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(b), c.out.String()
+}
+
+// FuzzHTTPDiff is TestHTTPParseDiff under Go's fuzzer: `go test
+// ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s`. Inputs
+// whose head passes 64 KiB are skipped (net/http waits half a second
+// before it answers 431).
+func FuzzHTTPDiff(f *testing.F) {
+	for _, s := range httpCorpus {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, input []byte) {
+		if len(input) > 64<<10 {
+			t.Skip()
+		}
+		startDiffDriver(t)
+		native, goAns := diffOne(t, input)
+		if normDate(native) != normDate(goAns) {
+			t.Errorf("input %q:\n--- native\n%s\n--- net/http\n%s", input, native, goAns)
+		}
+	})
+}
+
+// TestHTTPFuzz runs http_fuzz.c, a mutation fuzzer of the native HTTP
+// server's and client's parsers and of the JSON parser, with
+// AddressSanitizer and UndefinedBehaviorSanitizer for a few seconds (1 s
+// with -short; XO_FUZZ_SECONDS overrides): no crash, no report, no leak.
+func TestHTTPFuzz(t *testing.T) {
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	src := filepath.Join(rtDir, "testdata", "http_fuzz.c")
+	bin := filepath.Join(t.TempDir(), "http_fuzz")
+	sanitized := true
+	if err := build.CompileC([]string{"-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"}, []string{src}, bin); err != nil {
+		sanitized = false
+		if err := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secs := "5"
+	if testing.Short() {
+		secs = "1"
+	}
+	if v := os.Getenv("XO_FUZZ_SECONDS"); v != "" {
+		secs = v
+	}
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "FUZZ_SECONDS="+secs, "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := cmd.Run(); err != nil {
+		text := stderr.String()
+		if len(text) > 6000 {
+			text = text[:6000]
+		}
+		t.Fatalf("http_fuzz: %v\n%s", err, text)
+	}
+	t.Logf("%s (sanitizers: %v)", strings.TrimSpace(out.String()), sanitized)
 }

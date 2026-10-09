@@ -1,0 +1,52 @@
+exit 0
+--- stdout
+get: 200
+GET /inspect body=
+  Accept-Encoding: gzip
+  User-Agent: Go-http-client/1.1
+post json: 200
+POST /inspect body={"x":1,"y":2}
+  Accept-Encoding: gzip
+  Content-Length: 13
+  Content-Type: application/json
+  User-Agent: Go-http-client/1.1
+custom header: 200
+PUT /inspect body=data
+  Accept-Encoding: gzip
+  Content-Length: 4
+  User-Agent: xo-test
+  X-Trace: abc
+empty post: 200
+POST /inspect body=
+  Accept-Encoding: gzip
+  Content-Length: 0
+  User-Agent: Go-http-client/1.1
+query: 200
+GET /inspect body=
+  Accept-Encoding: gzip
+  User-Agent: Go-http-client/1.1
+moved: 200
+GET /inspect body=
+  Accept-Encoding: gzip
+  Referer: moved
+  User-Agent: Go-http-client/1.1
+see other: 200
+GET /inspect body=
+  Accept-Encoding: gzip
+  Referer: see-other
+  User-Agent: Go-http-client/1.1
+temporary: 200
+POST /inspect body={"x":5,"y":6}
+  Accept-Encoding: gzip
+  Content-Length: 13
+  Content-Type: application/json
+  Referer: temporary
+  User-Agent: Go-http-client/1.1
+loop: Protocol
+length: 5 text/plain; charset=utf-8
+slow: Timeout
+relative: InvalidUrl(absolute URL required: /inspect)
+not a url: InvalidUrl(absolute URL required: not a url)
+refused: Connect
+done
+--- stderr

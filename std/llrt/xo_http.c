@@ -763,6 +763,13 @@ static int hp_head(const char *b, int64_t n, int eof, hreq *r, int64_t *used) {
 	if (!h_line(b, 0, n, eof, &le, &next)) {
 		return n > HTTP_MAX_HEAD ? HP_TOO_LARGE : HP_NEED;
 	}
+	if (eof && next == n && le == n && n % 4096 == 0) {
+		// a request line cut by the end of the stream that fills
+		// net/http's 4096 byte reader exactly: its last read finds no
+		// byte, so the line reads as io.EOF and the connection closes
+		// quietly
+		return HP_EOF;
+	}
 	if (next > HTTP_MAX_HEAD) {
 		return HP_TOO_LARGE;
 	}
@@ -1311,7 +1318,7 @@ static int hb_chunked(const char *b, int64_t n, int eof, nbuf *out, int64_t *use
 			*used = i + tu - 16;
 			return HB_OK;
 		}
-		if ((uint64_t)(n - i) < size + 2) {
+		if (size > (uint64_t)(n - i) || (uint64_t)(n - i) - size < 2) {
 			// copy what is there: an error later still delivers it
 			int64_t have = n - i < (int64_t)size ? n - i : (int64_t)size;
 			nbuf_put(out, b + i, have);
@@ -1516,8 +1523,11 @@ static void hw_status_line(nbuf *o, int is11, int64_t code) {
 // header and writes the whole body at once (std/rt's serve), and reports
 // whether the connection stays open. expect_unread: the request expected
 // 100-continue and its body was not read to the end (net/http then
-// closes). body_bad: reading the request body failed.
-static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad) {
+// closes). body_bad: reading the request body failed (the chunked
+// reader's error is sticky, so discarding the rest fails too); too_big:
+// 256 KiB or more of a Content-Length body were never sent (net/http's
+// requestTooLarge).
+static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big) {
 	int is11 = r->major > 1 || (r->major == 1 && r->minor >= 1);
 	int head = hs_eq(r->method, "HEAD");
 	if (status < 100 || status > 999) {
@@ -1586,9 +1596,15 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 	if (expect_unread) {
 		close = 1;
 	}
-	if (body_bad) {
-		// discarding the rest of the body failed
-		close = 1;
+	int too_large = 0;
+	if (r->clen != 0 && !close) {
+		// what remains of the request body is discarded
+		if (body_bad) {
+			close = 1;
+		} else if (too_big) {
+			close = 1;
+			too_large = 1;
+		}
 	}
 	if (body_ok) {
 		int64_t cti = hl_find(h, "Content-Type");
@@ -1639,6 +1655,10 @@ static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *b
 	// isProtocolSwitchResponse: 101 with Upgrade and Connection: upgrade
 	int64_t upi = hl_find(h, "Upgrade");
 	int proto_switch = status == 101 && upi >= 0 && h->a[upi].v.n > 0 && conni >= 0 && h_has_token(connv, connn, "upgrade");
+	if (too_large) {
+		excl[nexcl++] = "Connection";
+		set_conn = "close";
+	}
 	if (close && !h_server_token(connv, connn, "close") && !proto_switch) {
 		excl[nexcl++] = "Connection";
 		if (is11) {
@@ -1758,6 +1778,7 @@ typedef struct xo_hconn {
 	int have_req;
 	nbuf body;
 	int body_bad;
+	int too_big;
 	int expect_unread;
 	hlist resp;
 	char ip[INET6_ADDRSTRLEN];
@@ -2049,6 +2070,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 	}
 	hc->body.n = 0;
 	hc->body_bad = 0;
+	hc->too_big = 0;
 	hc->expect_unread = 0;
 	hl_free(&hc->resp);
 	// after a POST, up to 4 CR or LF bytes before the next request
@@ -2130,7 +2152,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 		hlist h = {0};
 		hl_add(&h, hs_dup("Connection", 10), hs_dup("close", 5));
 		nbuf o = {0};
-		hw_response(&o, q, &h, 417, "", 0, 0, 0);
+		hw_response(&o, q, &h, 417, "", 0, 0, 0, 0);
 		hl_free(&h);
 		hc_send(hc, o.p, o.n);
 		free(o.p);
@@ -2164,7 +2186,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 					nbuf_put(&hc->body, hc->buf + hc->off, want);
 					hc->off += want;
 					if (q->clen > max) {
-						hc->body_bad = 1;
+						hc->too_big = 1;
 					}
 					break;
 				}
@@ -2174,6 +2196,7 @@ static int64_t hc_read_one(xo_hconn *hc) {
 					nbuf_put(&hc->body, hc->buf + hc->off, have);
 					hc->off = hc->n;
 					short_body = 1;
+					hc->too_big = q->clen - have >= 256 << 10;
 					break;
 				}
 			}
@@ -2194,8 +2217,12 @@ static int64_t hc_read_one(xo_hconn *hc) {
 		// most 4 KiB of its body
 		hlist h = {0};
 		hl_add(&h, hs_dup("Content-Length", 14), hs_dup("0", 1));
+		if (hc->body.n > 4096) {
+			// MaxBytesReader: requestTooLarge sets the handler's header
+			hl_add(&h, hs_dup("Connection", 10), hs_dup("close", 5));
+		}
 		nbuf o = {0};
-		int keep = hw_response(&o, q, &h, 200, "", 0, hc->expect_unread, hc->body_bad || hc->body.n > 4096);
+		int keep = hw_response(&o, q, &h, 200, "", 0, hc->expect_unread, hc->body_bad, hc->too_big);
 		hl_free(&h);
 		int ok = hc_send(hc, o.p, o.n);
 		free(o.p);
@@ -2244,6 +2271,7 @@ xo_rstr *xo_hc_host(xo_hconn *hc, int64_t *len) {
 		const char *hp = p;
 		int64_t hn = colon - p;
 		int ok = 1;
+		int64_t j = 0, k = 0; // no '[' from j, no ']' from k
 		if (n > 0 && p[0] == '[') {
 			const char *end = memchr(p, ']', (size_t)n);
 			if (!end || end + 1 != colon) {
@@ -2251,8 +2279,13 @@ xo_rstr *xo_hc_host(xo_hconn *hc, int64_t *len) {
 			} else {
 				hp = p + 1;
 				hn = end - p - 1;
+				j = 1;
+				k = end - p + 1;
 			}
-		} else if (memchr(p, ':', (size_t)hn) || memchr(p, '[', (size_t)n) || memchr(p, ']', (size_t)n)) {
+		} else if (memchr(p, ':', (size_t)hn)) {
+			ok = 0;
+		}
+		if (ok && (memchr(p + j, '[', (size_t)(n - j)) || memchr(p + k, ']', (size_t)(n - k)))) {
 			ok = 0;
 		}
 		if (ok) {
@@ -2320,7 +2353,7 @@ void xo_hc_header(xo_hconn *hc, const char *k, int64_t kn, const char *v, int64_
 // for another request.
 int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn) {
 	nbuf o = {0};
-	int keep = hw_response(&o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad);
+	int keep = hw_response(&o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
 	int ok = hc_send(hc, o.p, o.n);
 	free(o.p);
 	hl_free(&hc->resp);
@@ -2671,6 +2704,11 @@ typedef struct {
 enum { CC_OK, CC_EOF, CC_TIMEOUT, CC_CANCELED, CC_ERR };
 
 static int cc_fill(ccon *c) {
+	if (c->fd < 0) {
+		// tests (http_fuzz.c): the whole response is in buf
+		c->eof = 1;
+		return CC_EOF;
+	}
 	xo_ctx *x = ctx();
 	if (c->cap - c->n < 4096) {
 		if (c->off > 0) {
@@ -3075,7 +3113,9 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 		free(raw);
 		return r;
 	}
-	hlist hdr = {0};
+	// the initial request's header (Header.Set: canonical names, the last
+	// value of a name)
+	hlist ihdr = {0};
 	for (int64_t i = 0; i < names->len && i < values->len; i++) {
 		xo_rstr *k = ((xo_rstr **)rl_data(names))[2 * i];
 		int64_t kn = ((int64_t *)rl_data(names))[2 * i + 1];
@@ -3084,17 +3124,17 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 		hstr key = hs_dup(k->data, kn);
 		h_canon(key.p, kn);
 		int64_t at = -1;
-		for (int64_t q = 0; q < hdr.n; q++) {
-			if (hdr.a[q].k.n == kn && memcmp(hdr.a[q].k.p, key.p, (size_t)kn) == 0) {
+		for (int64_t q = 0; q < ihdr.n; q++) {
+			if (ihdr.a[q].k.n == kn && memcmp(ihdr.a[q].k.p, key.p, (size_t)kn) == 0) {
 				at = q;
 			}
 		}
 		if (at >= 0) {
 			hs_free(&key);
-			hs_free(&hdr.a[at].v);
-			hdr.a[at].v = hs_dup(v->data, vn);
+			hs_free(&ihdr.a[at].v);
+			ihdr.a[at].v = hs_dup(v->data, vn);
 		} else {
-			hl_add(&hdr, key, hs_dup(v->data, vn));
+			hl_add(&ihdr, key, hs_dup(v->data, vn));
 		}
 	}
 	int64_t when = timeout > 0 ? deadline(timeout) : 0;
@@ -3102,6 +3142,10 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 	url_op(op, m, mn);
 	const char *body = b;
 	int64_t blen = bn;
+	int include_body = 1, strip_sensitive = 0;
+	char *ihost = NULL;     // the initial request's host
+	char *referer = NULL;   // the URL of the previous request
+	char *last_loc = NULL;  // the Location being followed
 	for (int redirects = 0;; redirects++) {
 		hurl u;
 		char err[200];
@@ -3118,10 +3162,10 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 			free(q.p);
 			break;
 		}
+		nbuf q = {0};
+		h_go_quote(&q, raw, (int64_t)strlen(raw));
+		nbuf_byte(&q, 0);
 		if (!hs_eq(u.scheme, "http")) {
-			nbuf q = {0};
-			h_go_quote(&q, raw, (int64_t)strlen(raw));
-			nbuf_byte(&q, 0);
 			if (hs_eq(u.scheme, "https")) {
 				cr_fail(r, 4, "%s %s: https is not supported by the native backends", op, q.p);
 			} else {
@@ -3136,17 +3180,37 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 			break;
 		}
 		if (u.host.n == 0) {
-			nbuf q = {0};
-			h_go_quote(&q, raw, (int64_t)strlen(raw));
-			nbuf_byte(&q, 0);
 			cr_fail(r, 4, "%s %s: http: no Host in request URL", op, q.p);
 			free(q.p);
 			hu_free(&u);
 			break;
 		}
+		free(q.p);
+		if (!ihost) {
+			ihost = cstr_of(u.host.p, u.host.n);
+		} else if (strcmp(ihost, u.host.p) != 0) {
+			// another host: Authorization and cookies are not sent there
+			strip_sensitive = 1;
+		}
+		// this hop's header: the initial one, less what a redirect drops
+		hlist hdr = {0};
+		for (int64_t i = 0; i < ihdr.n; i++) {
+			hstr k = ihdr.a[i].k;
+			int sensitive = hs_eq(k, "Authorization") || hs_eq(k, "Www-Authenticate") || hs_eq(k, "Cookie") || hs_eq(k, "Cookie2") ||
+			                hs_eq(k, "Proxy-Authorization") || hs_eq(k, "Proxy-Authenticate");
+			int bodyh = hs_eq(k, "Content-Encoding") || hs_eq(k, "Content-Language") || hs_eq(k, "Content-Location") || hs_eq(k, "Content-Type");
+			if (redirects > 0 && ((sensitive && strip_sensitive) || (bodyh && !include_body))) {
+				continue;
+			}
+			hl_add(&hdr, hs_dup(k.p, k.n), hs_dup(ihdr.a[i].v.p, ihdr.a[i].v.n));
+		}
+		if (redirects > 0 && referer && hl_find(&hdr, "Referer") < 0) {
+			hl_add(&hdr, hs_dup("Referer", 7), hs_dup(referer, (int64_t)strlen(referer)));
+		}
 		hstr host = hs_dup(u.host.p, u.host.n);
 		int s = cl_once(method, &u, host, &hdr, body, blen, when, raw, r);
 		hs_free(&host);
+		hl_free(&hdr);
 		if (s != CC_OK) {
 			hu_free(&u);
 			break;
@@ -3154,22 +3218,40 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 		// redirects (Client.Do's redirectBehavior)
 		int64_t st = r->status;
 		int64_t li = hl_find(&r->hdr, "Location");
-		int follow = (st == 301 || st == 302 || st == 303 || st == 307 || st == 308) && li >= 0;
+		int follow = (st == 301 || st == 302 || st == 303 || st == 307 || st == 308) && li >= 0 && r->hdr.a[li].v.n > 0;
 		if (!follow) {
 			hu_free(&u);
 			break;
 		}
+		free(last_loc);
+		last_loc = cstr_of(r->hdr.a[li].v.p, r->hdr.a[li].v.n);
 		if (redirects == 9) {
-			nbuf q = {0};
-			h_go_quote(&q, raw, (int64_t)strlen(raw));
-			nbuf_byte(&q, 0);
-			cr_fail(r, 4, "%s %s: stopped after 10 redirects", op, q.p);
-			free(q.p);
+			// defaultCheckRedirect: the error names the Location
+			nbuf lq = {0};
+			h_go_quote(&lq, last_loc, (int64_t)strlen(last_loc));
+			nbuf_byte(&lq, 0);
+			char op0[32];
+			url_op(op0, m, mn);
+			cr_fail(r, 4, "%s %s: stopped after 10 redirects", op0, lq.p);
+			free(lq.p);
 			hu_free(&u);
 			break;
 		}
+		// the Referer: this request's URL (url.URL.String)
+		nbuf ref = {0};
+		nbuf_put(&ref, u.scheme.p, u.scheme.n);
+		nbuf_str(&ref, "://");
+		nbuf_put(&ref, u.host.p, u.host.n);
+		h_escape_path(&ref, u.path.p, u.path.n);
+		if (u.rawquery.n > 0) {
+			nbuf_byte(&ref, '?');
+			nbuf_put(&ref, u.rawquery.p, u.rawquery.n);
+		}
+		nbuf_byte(&ref, 0);
+		free(referer);
+		referer = ref.p;
 		// the new URL: the Location resolved against this one
-		hstr loc = hs_dup(r->hdr.a[li].v.p, r->hdr.a[li].v.n);
+		hstr loc = hs_dup(last_loc, (int64_t)strlen(last_loc));
 		nbuf next = {0};
 		if (memchr(loc.p, ':', (size_t)loc.n) && !(loc.n > 0 && loc.p[0] == '/')) {
 			nbuf_put(&next, loc.p, loc.n);
@@ -3208,15 +3290,22 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 				free(method);
 				method = strdup("GET");
 			}
+			// once a hop drops the body, it is never sent again
+			include_body = 0;
+		}
+		if (!include_body) {
 			body = "";
 			blen = 0;
 		}
 		hl_free(&r->hdr);
 		r->body.n = 0;
 	}
-	hl_free(&hdr);
+	hl_free(&ihdr);
 	free(method);
 	free(raw);
+	free(ihost);
+	free(referer);
+	free(last_loc);
 	return r;
 }
 

@@ -114,6 +114,9 @@ static void serve(const char *in, int64_t n, nbuf *out) {
 			if (!n_parse_int(big->p, big->n, &k)) {
 				k = 0;
 			}
+			if (k > (1 << 20)) {
+				k = 1 << 20; // as the Go handler caps it
+			}
 			for (int64_t i = 0; i < k; i++) {
 				nbuf_byte(&d, 'x');
 			}
@@ -165,6 +168,10 @@ int main(void) {
 		}
 		fwrite(ob, 1, 8, stdout);
 		fwrite(out.p ? out.p : "", 1, (size_t)out.n, stdout);
+		if (getenv("FLUSH")) {
+			// one record at a time (FuzzHTTPDiff)
+			fflush(stdout);
+		}
 		free(out.p);
 		free(in);
 	}

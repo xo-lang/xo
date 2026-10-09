@@ -1,0 +1,95 @@
+// The std/http client (std.md 4.5, decision 0074) against an std/http
+// server on 127.0.0.1:0: what the server sees of the client's requests,
+// response headers, redirects (302 and 303 turn into GET, 307 keeps the
+// method and body, a loop stops after 10), a timeout, a refused
+// connection, and URLs that are not absolute.
+use std/http
+
+struct Point {
+  x: Int
+  y: Int
+} derive Json
+
+fn describe(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg) => "InvalidUrl(${msg})"
+    http.ClientErr.Connect(_) => "Connect"
+    http.ClientErr.Timeout => "Timeout"
+    http.ClientErr.Protocol(_) => "Protocol"
+    http.ClientErr.Canceled => "Canceled"
+  }
+}
+
+fn routes(os: Os) -> http.Router uses clock {
+  var r = http.router()
+  r.handle("/inspect", fn(req) {
+    // the request as the handler sees it, header names sorted
+    var names = req.headers.keys().sort()
+    var lines: List[Str] = ["${req.method} ${req.path} body=${req.body.to_str() ?? "?"}"]
+    for n in names {
+      if n == "Referer" {
+        // the URL of the redirecting request (its port varies)
+        lines.push("  Referer: ${(req.headers.get(n) ?? "").split("/").last() ?? ""}")
+      } else {
+        lines.push("  ${n}: ${req.headers.get(n) ?? ""}")
+      }
+    }
+    http.text(200, lines.join("\n"))
+  })
+  r.handle("GET /moved", fn(_req) { http.empty(302).with_header("Location", "/inspect") })
+  r.handle("POST /see-other", fn(_req) { http.empty(303).with_header("location", "/inspect?from=303") })
+  r.handle("POST /temporary", fn(_req) { http.empty(307).with_header("Location", "/inspect") })
+  r.handle("GET /loop", fn(_req) { http.empty(302).with_header("Location", "/loop") })
+  r.handle("GET /slow", fn(_req) {
+    os.clock.sleep(1s)
+    http.text(200, "late")
+  })
+  r.handle("GET /length", fn(_req) { http.text(200, "12345") })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status}\n${resp.text() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: ${describe(e)}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes(os))
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "get", c.get(base + "/inspect"))
+        show(os, "post json", c.post_json(base + "/inspect", Point{x: 1, y: 2}))
+        show(os, "custom header", c.send(http.new_request("PUT", base + "/inspect", {"x-trace": "abc", "user-agent": "xo-test"}, "data".bytes())))
+        show(os, "empty post", c.send(http.new_request("POST", base + "/inspect")))
+        show(os, "query", c.get(base + "/inspect?b=2&a=1"))
+        show(os, "moved", c.get(base + "/moved"))
+        show(os, "see other", c.post_json(base + "/see-other", Point{x: 3, y: 4}))
+        show(os, "temporary", c.post_json(base + "/temporary", Point{x: 5, y: 6}))
+        show(os, "loop", c.get(base + "/loop"))
+        match c.get(base + "/length") {
+          Ok(resp) => os.stdio.println("length: ${resp.header("content-length") ?? "-"} ${resp.header("Content-Type") ?? "-"}")
+          Err(e) => os.stdio.println("length: ${describe(e)}")
+        }
+        let quick = http.client(os.net, timeout: 200ms)
+        show(os, "slow", quick.get(base + "/slow"))
+        show(os, "relative", c.get("/inspect"))
+        show(os, "not a url", c.get("not a url"))
+      }
+      // a refused connection: the listener is closed now
+      show(os, "refused", c.get(base + "/inspect"))
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
