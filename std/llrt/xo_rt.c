@@ -2031,19 +2031,23 @@ static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1)
 typedef struct xo_went {
 	xo_park *park;
 	struct xo_went *prev, *next;
+	int writer; // a Mutex waiter that wants the lock exclusively
 } xo_went;
 
 typedef struct {
-	xo_went *first;
+	xo_went *first, *last;
 } xo_wl;
 
+// wl_add adds e at the end of l (the oldest waiter is first).
 static void wl_add(xo_wl *l, xo_went *e) {
-	e->prev = NULL;
-	e->next = l->first;
-	if (l->first) {
-		l->first->prev = e;
+	e->next = NULL;
+	e->prev = l->last;
+	if (l->last) {
+		l->last->next = e;
+	} else {
+		l->first = e;
 	}
-	l->first = e;
+	l->last = e;
 }
 
 static void wl_del(xo_wl *l, xo_went *e) {
@@ -2054,6 +2058,8 @@ static void wl_del(xo_wl *l, xo_went *e) {
 	}
 	if (e->next) {
 		e->next->prev = e->prev;
+	} else {
+		l->last = e->prev;
 	}
 }
 
@@ -2063,10 +2069,11 @@ static void wl_wake(xo_wl *l) {
 	}
 }
 
-// wl_wait waits on list l of an object whose lock mu is held; mu is held
-// again on return. It reports 0 when the context was canceled.
-static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) {
-	xo_went e = {.park = &c->park};
+// wl_wait_as waits on list l of an object whose lock mu is held; mu is
+// held again on return. It reports 0 when the context was canceled.
+// writer marks a Mutex waiter that wants the lock exclusively.
+static int wl_wait_as(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable, int writer) {
+	xo_went e = {.park = &c->park, .writer = writer};
 	park_reset(&c->park);
 	wl_add(l, &e);
 	unlk(mu);
@@ -2075,6 +2082,8 @@ static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) {
 	wl_del(l, &e);
 	return !(cancelable && ctx_canceled(c));
 }
+
+static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) { return wl_wait_as(c, mu, l, cancelable, 0); }
 
 // ---------------------------------------------------------------------------
 // Scopes and tasks
@@ -3340,6 +3349,37 @@ typedef struct {
 	xo_wl waiters;
 } xo_mutex;
 
+// mutex_wake wakes the waiters that can take m now (m->mu held), writers
+// first: the oldest waiting writer when m is free, else (no writer
+// waits) every waiting reader. Waking every waiter at each release made
+// 32 contending request tasks park about 12 times per request and
+// convoy on m->mu (bench/results/perf-throughput-2026-10-08.md, "Native
+// backends"). A woken waiter checks again and waits again when another
+// context took m first (barging); the context that took it wakes the
+// next one when it releases, so no wake up is lost.
+static void mutex_wake(xo_mutex *m) {
+	if (m->writer || !m->waiters.first) {
+		return;
+	}
+	if (m->wwait > 0) {
+		if (m->readers > 0) {
+			return;
+		}
+		for (xo_went *e = m->waiters.first; e; e = e->next) {
+			if (e->writer) {
+				park_signal(e->park);
+				return;
+			}
+		}
+		return;
+	}
+	for (xo_went *e = m->waiters.first; e; e = e->next) {
+		if (!e->writer) {
+			park_signal(e->park);
+		}
+	}
+}
+
 static void mutex_free(void *p) {
 	xo_mutex *m = p;
 	list_release(m->slot, m->drop);
@@ -3365,9 +3405,9 @@ xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
 	if (m->writer || m->readers > 0) {
 		m->wwait++;
 		while (m->writer || m->readers > 0) {
-			if (!wl_wait(c, &m->mu, &m->waiters, 1)) {
+			if (!wl_wait_as(c, &m->mu, &m->waiters, 1, 1)) {
 				m->wwait--;
-				wl_wake(&m->waiters); // readers held back by this writer
+				mutex_wake(m); // readers held back by this writer, or the next writer
 				unlk(&m->mu);
 				held_del(c, m);
 				c->unwinding = 1;
@@ -3387,7 +3427,7 @@ void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
 	lk(&m->mu);
 	m->slot = l;
 	m->writer = 0;
-	wl_wake(&m->waiters);
+	mutex_wake(m);
 	unlk(&m->mu);
 	held_del(ctx(), m);
 }
@@ -3420,7 +3460,7 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 	}
 	lk(&m->mu);
 	if (--m->readers == 0) {
-		wl_wake(&m->waiters);
+		mutex_wake(m);
 	}
 	unlk(&m->mu);
 	held_del(ctx(), m);
