@@ -95,6 +95,7 @@ Stage 3 runs:
 - [2026-10-08 stage 3, tasks 09 and 10](results/stage3-2026-10-08.md): first run success Xo 2/2, plain Go 1/2, strict Go 0/2; Xo about 55% of Go lines; graceful drain gap found.
 - [2026-10-08 Go library interop prototype](results/go-interop-2026-10-08.md): `use go` and `xo bind` (decision 0041); crypto/sha256, encoding/hex, regexp, strings, strconv, net/url bind 123/125 functions and 92/95 methods with goldens for each; github.com/google/uuid binds and runs (29/31 functions, 20/28 methods); gaps: interface conversion between handles, methods of named basic types, `any` parameters.
 - [2026-10-08 real application: notes-service](results/real-app-2026-10-08.md): HTTP, std/sql, bearer auth, purge job, and two phase shutdown in `examples/notes-service/`; check, test (9/9), and all targets pass with no compiler change; top gaps: no request scoped values, global non failing middleware, `Listener` has no `addr()`, no std crypto, test logs go to real stderr.
+- [2026-10-08 self hosted lexer](results/selfhost-lexer-2026-10-08.md): `selfhost/lexer`, the lexer ported to Xo, matches internal/lexer byte for byte (tokens, positions, values, diagnostics) on all 416 repo `.xo` files, 93 spec blocks, every rune, and 93,000 mutated inputs; 1394 Xo vs 1170 Go code lines; 2.33x slower than Go on the Go backend, native backends cannot build it; top gaps: no byte string builder, no numeric character literals, no Bytes in the SSA builder.
 
 ## Other models: `bench/harness/`
 

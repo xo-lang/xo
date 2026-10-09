@@ -96,6 +96,11 @@ go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build di
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
+go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical token dump of the Go lexer (or lexing time), same text as selfhost/lexer
+go run ./cmd/xo run selfhost/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
+go run ./cmd/xo test selfhost/lexer                     # the Xo lexer's own tests (20, 6 of them property tests)
+go test ./internal/selfhost                             # Xo lexer vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs
+go test ./internal/selfhost -run TestIsPrintTable -update   # regenerate selfhost/lexer/isprint.xo from strconv.IsPrint (after a Go upgrade)
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 bench/nightly.sh                                        # full suite with XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet; log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
@@ -644,11 +649,11 @@ Last verified: 2026-10-07
 ```
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
-                        `xo mcp`, `xo serve` (agent.go)
+                        `xo mcp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go)
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
-                        doc comments
+                        doc comments; dump.go: the canonical token dump shared with selfhost/lexer
 internal/ast/           syntax tree for the whole 0.4 grammar; JSON dump (ast.ToJSON/Dump)
 internal/parser/        recursive descent parser with error recovery; SignatureMode
 internal/diag/          diagnostics (core 10.2 JSON), codes.go is the registry of all codes
@@ -669,6 +674,10 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
+internal/selfhost/      Go side of the self hosted components: IsPrintTable generator; tests build selfhost/lexer
+                        and compare its dump with lexer.Dump (decision 0076)
+selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, text.xo (UTF-8, QuoteRune,
+                        TrimSpace stand ins), isprint.xo (generated), dump.xo, main.xo (CLI), lexer_test.xo
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
@@ -1425,6 +1434,15 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 "cached", "error", "stats"}`.
 
 ## Known gaps (2026-10-08)
+
+- Self hosted lexer (2026-10-08, decision 0076): `selfhost/lexer` builds
+  on the Go backend only (the SSA builder has no `Bytes`, `UInt8`,
+  `UInt64`, or CLI capability methods); it lexes at 2.33x the Go lexer's
+  time. A change to `internal/lexer` or a lexical diagnostic must be
+  ported to `selfhost/lexer` in the same change, or
+  `TestSelfhostDifferential` fails. Ranked language and std gaps with
+  proposed fixes: `bench/results/selfhost-lexer-2026-10-08.md`. Last
+  verified: 2026-10-08.
 
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
