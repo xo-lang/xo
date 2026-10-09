@@ -119,6 +119,9 @@ type Options struct {
 	// contract clauses marked `requires(debug)` and `ensures(debug)` are
 	// compiled out. It applies to Build mode only; tests are debug builds.
 	Release bool
+	// NoErrorArgs (`--error-args=false`, release builds only, decision
+	// 0092) records error frames without parameter values.
+	NoErrorArgs bool
 }
 
 // release reports whether this is a release build (Release, Build mode).
@@ -176,6 +179,8 @@ type Info struct {
 	Race     bool              `json:"race,omitempty"`
 	TZData   string            `json:"tzdata,omitempty"`
 	Release  bool              `json:"release,omitempty"`
+	// NoErrorArgs is `--error-args=false` (decision 0092).
+	NoErrorArgs bool `json:"no_error_args,omitempty"`
 	// Deps are the required module versions the program was built with
 	// (decision 0086): "<path>" -> "<version>", or "workspace <dir>" for a
 	// module an xo.work overrides (local paths are recorded here only,
@@ -185,7 +190,7 @@ type Info struct {
 
 // buildInfo computes the build information of a checked program.
 func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Info {
-	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData, Release: opts.release()}
+	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData, Release: opts.release(), NoErrorArgs: opts.release() && opts.NoErrorArgs}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
 	}
@@ -228,7 +233,7 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 		fmt.Fprintf(h, "tzdata=%s\n", opts.TZData)
 	}
 	if opts.release() {
-		fmt.Fprintf(h, "release\n")
+		fmt.Fprintf(h, "release error_args=%v\n", !opts.NoErrorArgs)
 	}
 	fs.WalkDir(std.Runtime, "rt", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
@@ -324,7 +329,7 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	if opts.Hybrid && opts.Mode == gen.Build {
 		hyb, out.Hybrid = hybridAsm(dirs, root, opts)
 	}
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release()})
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs})
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +350,9 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	}
 	if opts.release() {
 		variants = append(variants, "release")
+		if opts.NoErrorArgs {
+			variants = append(variants, "noargs")
+		}
 	}
 	dir, err := buildDir(dirs, opts.Mode, !opts.NoMono, opts.NoRanges, !opts.NoArenas, variants...)
 	if err != nil {

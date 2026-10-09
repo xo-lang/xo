@@ -296,11 +296,12 @@ func Debug(v any) string {
 func DebugT[T any](v T) string { return Debug(any(v)) }
 
 func debugTo(b *strings.Builder, v any) {
+	checkBound(b)
 	switch x := v.(type) {
 	case nil:
 		b.WriteString("<nil>")
 	case string:
-		b.WriteString(quote(x))
+		writeQuoted(b, x)
 	case int64:
 		b.WriteString(strconv.FormatInt(x, 10))
 	case bool:
@@ -312,7 +313,8 @@ func debugTo(b *strings.Builder, v any) {
 	case Rune:
 		b.WriteString(quoteRune(int32(x)))
 	case Bytes:
-		b.WriteString("b" + quote(string(x)))
+		b.WriteByte('b')
+		writeQuoted(b, string(x))
 	case Duration:
 		b.WriteString(x.String())
 	case Time:

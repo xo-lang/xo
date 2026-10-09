@@ -1,0 +1,7 @@
+exit 1
+--- stdout
+a: user3
+--- stderr
+error: NotFound(id: 42)
+  at error_args.profile(id=42, name="b") main.xo:18
+  at error_args.main()                  main.xo:24

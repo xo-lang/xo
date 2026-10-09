@@ -38,7 +38,7 @@ func (e Go_Error) Unwrap() error { return e.err }
 // XoDebug implements Debug.
 func (e Go_Error) XoDebug(b *strings.Builder) {
 	b.WriteString("go.Error(")
-	b.WriteString(quote(e.msg))
+	writeQuoted(b, e.msg)
 	b.WriteByte(')')
 }
 

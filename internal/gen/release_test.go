@@ -11,9 +11,11 @@ import (
 
 // TestGoldenRelease builds every program under testdata/release twice,
 // as a debug build (want.debug.txt) and as a release build, `xo build
-// --release` (want.release.txt), and compares like TestGolden. The pair
-// of files shows what a release build changes (core 8): contracts marked
-// `requires(debug)` or `ensures(debug)` are compiled out.
+// --release` (want.release.txt), and compares like TestGolden; with
+// want.release_noargs.txt also as `xo build --release --error-args=false`.
+// The files show what a release build changes (core 8): contracts marked
+// `requires(debug)` or `ensures(debug)` are compiled out, and error frames
+// drop parameter values only on request (decision 0092).
 func TestGoldenRelease(t *testing.T) {
 	dirs, err := filepath.Glob(filepath.Join("testdata", "release", "*"))
 	if err != nil {
@@ -28,6 +30,7 @@ func TestGoldenRelease(t *testing.T) {
 	}{
 		{"want.debug.txt", build.Options{Mode: gen.Build}},
 		{"want.release.txt", build.Options{Mode: gen.Build, Release: true}},
+		{"want.release_noargs.txt", build.Options{Mode: gen.Build, Release: true, NoErrorArgs: true}},
 	}
 	for _, dir := range dirs {
 		dir := dir
@@ -36,7 +39,8 @@ func TestGoldenRelease(t *testing.T) {
 			for _, v := range variants {
 				wantPath := filepath.Join(dir, v.want)
 				want, err := os.ReadFile(wantPath)
-				if os.IsNotExist(err) && !*updateGolden {
+				if os.IsNotExist(err) {
+					// -golden-update rewrites existing files only
 					continue
 				}
 				got, _ := buildAndRunOpts(t, dir, v.opts)

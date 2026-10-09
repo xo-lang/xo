@@ -167,7 +167,7 @@ func (f *fnGen) scopeFailure(sv string, x *ast.ScopeExpr) {
 	ev := f.tmp("e")
 	sp := x.Span()
 	loc := fmt.Sprintf("%s:%d", f.g.linePath(sp.File), sp.Start.Line)
-	tr := fmt.Sprintf("%s.Frame(%s, %q)", ftr, f.frameLabel(), loc)
+	tr := f.frameCode(ftr, loc)
 	f.line("switch %s := %s.(type) {", ev, fe)
 	for _, k := range keys {
 		f.line("case %s:", k)

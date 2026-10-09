@@ -71,6 +71,78 @@ type Options struct {
 	// clauses marked `requires(debug)` and `ensures(debug)`. Build mode
 	// only: tests are always debug builds.
 	Release bool
+	// NoErrorArgs (`xo build --release --error-args=false`, core 11.1,
+	// decision 0092) records error frames without parameter values.
+	// Release builds only.
+	NoErrorArgs bool
+}
+
+// noErrorArgs reports whether error frames leave out parameter values.
+func (g *gen) noErrorArgs() bool {
+	return g.opts.NoErrorArgs && g.opts.Release && g.opts.Mode == Build
+}
+
+// frameEager reports whether an error frame formats a parameter of type t
+// when it is captured instead of when it is printed (decision 0092): its
+// Debug text may change after capture. A Buf turns into an unshared List
+// by `freeze` (written in place later), an Atomic's Debug text is its
+// current value; a type parameter may be either. Map, Set, Box, and enum
+// payload contents are never written in place, and Lists are marked
+// shared before capture (frameValue).
+func (g *gen) frameEager(t check.Type) bool {
+	return g.frameEager1(t, map[*check.TypeObj]bool{})
+}
+
+func (g *gen) frameEager1(t check.Type, seen map[*check.TypeObj]bool) bool {
+	switch x := check.Resolve(t).(type) {
+	case *check.ParamType:
+		return true
+	case *check.Tuple:
+		for _, e := range x.Elems {
+			if g.frameEager1(e, seen) {
+				return true
+			}
+		}
+	case *check.Named:
+		o := x.Obj
+		if o.Module.IsPrelude && (o.Name == "Buf" || o.Name == "Atomic") {
+			return true
+		}
+		if seen[o] {
+			return false
+		}
+		seen[o] = true
+		defer delete(seen, o)
+		if o.Module.IsStd {
+			// std types: their type arguments (List[Buf[Int]], Option[T])
+			for _, a := range x.Args {
+				if g.frameEager1(a, seen) {
+					return true
+				}
+			}
+			return false
+		}
+		s := check.NewSubst(o.TParams, x.Args)
+		switch o.Kind {
+		case check.KStruct:
+			for _, fo := range o.Fields {
+				if g.frameEager1(s.Apply(fo.Type), seen) {
+					return true
+				}
+			}
+		case check.KNewtype:
+			return g.frameEager1(s.Apply(o.Target), seen)
+		case check.KEnum:
+			for _, v := range o.Variants {
+				for _, fo := range v.Fields {
+					if g.frameEager1(s.Apply(fo.Type), seen) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // contractOn reports whether a contract clause marked debug (or not) is

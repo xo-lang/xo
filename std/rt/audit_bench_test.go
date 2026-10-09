@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -184,9 +185,32 @@ func framesNone(d int, id int64, name string) Result[int64, frameErr] {
 	return Ok[int64, frameErr](r.V + 1)
 }
 
-// framesEager is what the Go backend emits for `?` today (core 11.1):
-// a frame with the function, location, and the Debug text of every
-// parameter, built when the error propagates.
+// eagerLabel is the frame label the Go backend built for every `?` until
+// decision 0092 was implemented (2026-10-09): each value's full Debug
+// text, cut to 64 bytes after formatting.
+func eagerLabel(fn string, args ...any) string {
+	var b strings.Builder
+	b.WriteString(fn)
+	b.WriteByte('(')
+	for i := 0; i+1 < len(args); i += 2 {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(args[i].(string))
+		b.WriteByte('=')
+		s := Debug(args[i+1])
+		if len(s) > 64 {
+			s = s[:61] + "..."
+		}
+		b.WriteString(s)
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
+// framesEager is what the Go backend emitted for `?` before decision 0092
+// (core 11.1): a frame with the function, location, and the Debug text of
+// every parameter, built when the error propagates.
 //
 //go:noinline
 func framesEager(d int, id int64, name string) Result[int64, frameErr] {
@@ -198,13 +222,13 @@ func framesEager(d int, id int64, name string) Result[int64, frameErr] {
 	}
 	r := framesEager(d-1, id, name)
 	if !r.Ok {
-		return ErrTr[int64](r.E, r.Tr.Frame(FrameLabel("users.fetch_user", "id", id, "name", name), "users/fetch.xo:18"))
+		return ErrTr[int64](r.E, Frame0(r.Tr, eagerLabel("users.fetch_user", "id", id, "name", name), "users/fetch.xo:18", ""))
 	}
 	return Ok[int64, frameErr](r.V + 1)
 }
 
 // framesLocOnly records the function and location only (a release build
-// without --error-args).
+// with --error-args=false).
 //
 //go:noinline
 func framesLocOnly(d int, id int64, name string) Result[int64, frameErr] {
@@ -216,13 +240,32 @@ func framesLocOnly(d int, id int64, name string) Result[int64, frameErr] {
 	}
 	r := framesLocOnly(d-1, id, name)
 	if !r.Ok {
-		return ErrTr[int64](r.E, r.Tr.Frame("users.fetch_user", "users/fetch.xo:18"))
+		return ErrTr[int64](r.E, Frame0(r.Tr, "users.fetch_user", "users/fetch.xo:18", "id name"))
+	}
+	return Ok[int64, frameErr](r.V + 1)
+}
+
+// framesImpl is what the Go backend emits for `?` since decision 0092 was
+// implemented: one allocation holding the frame and the parameter values,
+// formatted only when the trace is printed.
+//
+//go:noinline
+func framesImpl(d int, id int64, name string) Result[int64, frameErr] {
+	if d == 0 {
+		if id >= 0 {
+			return Err[int64](frameErr{code: 404, msg: "not found"})
+		}
+		return Ok[int64, frameErr](id)
+	}
+	r := framesImpl(d-1, id, name)
+	if !r.Ok {
+		return ErrTr[int64](r.E, Frame2(r.Tr, "users.fetch_user", "users/fetch.xo:18", "id name", id, name))
 	}
 	return Ok[int64, frameErr](r.V + 1)
 }
 
 // lazyTrace keeps the parameter values and formats them only when the
-// trace is printed.
+// trace is printed (the audit's prototype of decision 0092).
 type lazyTrace struct {
 	prev *lazyTrace
 	fn   string
@@ -284,6 +327,31 @@ func BenchmarkFramesError(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if framesLazy(frameDepth, int64(i&1023), name).ok {
 					b.Fatal("want an error")
+				}
+			}
+		})
+		b.Run("impl/"+nm, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if framesImpl(frameDepth, int64(i&1023), name).Ok {
+					b.Fatal("want an error")
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkFramesPrint is the cost moved to printing: the 5 frames of
+// framesImpl formatted (Lines), with a short, a 90 byte, and a 1 MB Str
+// parameter. Formatting stops after 65 bytes per value, so the 1 MB value
+// costs what the 90 byte one does.
+func BenchmarkFramesPrint(b *testing.B) {
+	names := map[string]string{"short": frameNames["short"], "long": frameNames["long"], "1MB": strings.Repeat("x", 1<<20)}
+	for _, nm := range []string{"short", "long", "1MB"} {
+		tr := framesImpl(frameDepth, 7, names[nm]).Tr
+		b.Run(nm, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if len(tr.Lines()) != frameDepth {
+					b.Fatal("want 5 lines")
 				}
 			}
 		})

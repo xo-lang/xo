@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+caller now: ys[0]=9 len 4
+--- stderr
+error: Bad(at: 4)
+  at error_frames_borrow.pair(a=1, xs=[1, 2, 3]) main.xo:16
+  at error_frames_borrow.rethrow(r=Err(Bad(at: 4))) main.xo:21
+  at error_frames_borrow.main()         main.xo:31

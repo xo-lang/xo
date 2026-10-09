@@ -342,8 +342,8 @@ every backend; "toolchain" is a command.
 | 10.4 | `xo edit` rename, add-field, change-sig | stable | toolchain | edit golden tests, cmd/xo edit_test |  |
 | 10.5 | `xo fmt`, no options | stable | toolchain | format golden tests, TestSpecExamples |  |
 | 10.6 | Diagnostic code registry | stable | toolchain | diag TestSpecListsEveryCode, TestSpecListsEveryFaultCode (added), TestExplanationsComplete | added by this audit; XO1001 reserved |
-| 11.1 | Error frames with parameters (Debug, 64 bytes) | preview | go | gen:error_frames | native records no frames; task line missing ([later]); Appendix B 3 Proposed: decision 0092 |
-| 11.1 | `--error-args` in release builds | gap | none | none | no release mode |
+| 11.1 | Error frames with parameters (Debug, 64 bytes) | preview | go | gen:error_frames, gen:error_frames_capture, gen:error_frames_borrow, gen:arena_frames, rt:TestFrameDebugBounded | native records no frames; task line missing ([later]); update 2026-10-09: lazy frames (decision 0092) |
+| 11.1 | `--error-args` in release builds | stable | go | gen:release/error_args | update 2026-10-09: `--release --error-args=false` (decision 0092) |
 | 11.2 | Crash bundles | preview | go | gen replay_test, cmd/xo replay_test | native writes none (spec says so) |
 | 11.3 | `--record`, `XO_RECORD`, `XO_RING`, `xo replay` | stable | go | gen replay_test, gen replay_gocallback_test, cmd/xo replay_test | [P2] section, implemented on the Go backend |
 | 11.3 | `xo debug --replay`, `xo why` | gap | none | none | [P2] |

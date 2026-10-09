@@ -1,0 +1,32 @@
+// A List passed to a parameter that is not `var` is lent, not copied
+// (internal/gen/own.go): the caller may write it in place once the call
+// returns. An error frame that captured the parameter must still show the
+// List as it was at the `?` (decision 0092), so the frame marks it shared
+// and the caller's write copies first.
+
+enum PairErr {
+  Bad(at: Int)
+} derive Display
+
+fn fail(at: Int) -> Int ! PairErr {
+  Err(PairErr.Bad(at: at))
+}
+
+fn pair(a: Int, xs: List[Int]) -> Int ! PairErr {
+  let v = fail(a + xs.len())?
+  v
+}
+
+fn rethrow(r: Result[Int, PairErr]) -> Int ! PairErr {
+  let v = r?
+  v
+}
+
+fn main(os: Os) ! {
+  var ys = [1, 2, 3]
+  let p = pair(1, ys)
+  ys[0] = 9
+  ys.push(4)
+  os.stdio.println("caller now: ys[0]=${ys[0]} len ${ys.len()}")
+  os.stdio.println("${rethrow(p)?}")
+}

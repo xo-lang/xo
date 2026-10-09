@@ -55,6 +55,11 @@ func TestBuildCI(t *testing.T) {
 // marked `requires(debug)` is compiled out, while `--ci` alone keeps it
 // (--ci is a gate, not a build mode).
 func TestBuildRelease(t *testing.T) {
+	// --error-args=false belongs to release builds (decision 0092)
+	var o, e bytes.Buffer
+	if code := run([]string{"build", "--error-args=false", t.TempDir()}, &o, &e); code != 2 || !strings.Contains(e.String(), "--error-args=false needs --release") {
+		t.Errorf("--error-args=false without --release: exit %d\n%s", code, e.String())
+	}
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}

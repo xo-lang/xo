@@ -201,3 +201,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-methods-are-go-methods.md](std-methods-are-go-methods.md): a method declared on a std struct or enum is called as a Go method `M_<name>` of its rt type, not as `<Prefix><Type>_<name>`.
 - [go-loadlocation-prefers-host.md](go-loadlocation-prefers-host.md): `time.LoadLocation` reads the host database before `time/tzdata`; std/time embeds TZif data and uses `LoadLocationFromTZData`.
 - [http-date-utc-not-gmt.md](http-date-utc-not-gmt.md): `time.RFC1123` in `utc()` ends in `UTC`; HTTP dates need a literal `GMT`.
+- [lazy-frame-values-change.md](lazy-frame-values-change.md): a lazily formatted error frame showed values the caller changed after the `?` (lent or `var` Lists, `Buf.freeze`, `Atomic`); frames mark Lists shared and format Buf and Atomic at capture.

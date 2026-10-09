@@ -1,0 +1,87 @@
+// Error frames and request scoped arenas (decisions 0066, 0092): a frame
+// keeps its parameter values until the trace is printed, so a value a
+// frame captured inside a request must not live in that request's arena.
+// The confined handler below (its request is arena memory) passes values
+// read from the request to functions that fail with `?`; the Results,
+// frames included, are kept in a Mutex past the request while later
+// requests reuse the arena. main prints the first error's frames last:
+// every captured value must still read back intact.
+use std/http
+use std/json
+
+enum CheckErr {
+  Rejected(id: Int)
+} derive Display
+
+struct Item {
+  name: Str
+  tags: List[Str]
+} derive Json
+
+const PORT = 18736
+const N = 60
+
+fn name_of(i: Int) -> Str {
+  "item-${i}-" + "x".repeat(i % 23)
+}
+
+fn check(id: Int, name: Str, it: Item) -> Int ! CheckErr {
+  if id % 3 == 0 {
+    return Err(CheckErr.Rejected(id: id))
+  }
+  id + name.len() + it.tags.len()
+}
+
+fn accept(id: Int, it: Item) -> Int ! CheckErr {
+  let v = check(id, it.name, it)?
+  v
+}
+
+fn routes(kept: Mutex[List[Result[Int, CheckErr]]]) -> http.Router {
+  var r = http.router()
+  // confined: the request is read only through json and param_int
+  r.handle("POST /items/{id:Int}", fn(req) -> http.Response {
+    let it = match req.json[Item]() {
+      Ok(v) => v
+      Err(_) => return http.text(400, "bad json")
+    }
+    let res = accept(req.param_int("id"), it)
+    kept.with(fn(var k) { k.push(res) })
+    http.text(200, "ok")
+  })
+  r
+}
+
+fn rethrow(r: Result[Int, CheckErr]) -> Int ! CheckErr {
+  let v = r?
+  v
+}
+
+fn main(os: Os) ! {
+  let kept = Mutex.new([])
+  let client = http.client(os.net, timeout: 5s)
+  let srv = http.server(os.net.listen("127.0.0.1:${PORT}")?, routes(kept))
+  var bad = 0
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    os.clock.sleep(100ms)
+    for i in 1..=N {
+      let it = Item{name: name_of(i), tags: ["t${i}", "u".repeat(i % 7)]}
+      let url = "http://127.0.0.1:${PORT}/items/${i}"
+      let resp = client.send(http.new_request("POST", url, body: json.encode_str(it).bytes()))?
+      if resp.status != 200 {
+        bad += 1
+      }
+    }
+  }
+  let k = kept.with(fn(k) { k })
+  var errs = 0
+  for r in k {
+    if r.is_err() {
+      errs += 1
+    }
+  }
+  os.stdio.println("requests ${N} bad ${bad} kept ${k.len()} errors ${errs}")
+  let first = k.find(fn(r) { r.is_err() }) ?? Ok(0)
+  os.stdio.println("${rethrow(first)?}")
+}

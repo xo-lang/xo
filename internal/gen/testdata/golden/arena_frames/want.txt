@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+requests 60 bad 0 kept 60 errors 20
+--- stderr
+error: Rejected(id: 3)
+  at arena_frames.accept(id=3, it=Item{name: "item-3-xxx", tags: ["t3", "uuu"]}) main.xo:36
+  at arena_frames.rethrow(r=Err(Rejected(id: 3))) main.xo:56
+  at arena_frames.main()                main.xo:86

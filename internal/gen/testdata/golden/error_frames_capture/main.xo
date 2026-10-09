@@ -1,0 +1,50 @@
+// Error frames keep parameter values and format them only when the trace
+// is printed (decision 0092). A frame must still show each value as it
+// was when the `?` captured it: here the caller changes every argument
+// (var parameters included, a List written in place, a Map, a Buf frozen
+// and its List written, an Atomic set) before the stored error is
+// propagated and printed. Long values are cut to 64 bytes; secrets stay
+// redacted.
+
+enum StepErr {
+  Bad(at: Int)
+} derive Display
+
+fn fail(at: Int) -> Int ! StepErr {
+  Err(StepErr.Bad(at: at))
+}
+
+fn step(var n: Int, var xs: List[Int], var m: Map[Str, Int], note: Str, key: Secret[Str], var b: Buf[Int], count: Atomic[Int]) -> Int ! StepErr {
+  n += 1
+  xs[0] = n
+  xs.push(n)
+  m.put("k", n)
+  b.push(count.get())
+  let v = fail(n)?
+  v + key.reveal().len() + note.len()
+}
+
+fn rethrow(r: Result[Int, StepErr]) -> Int ! StepErr {
+  let v = r?
+  v
+}
+
+fn main(os: Os) ! {
+  var n = 1
+  var xs = [10, 20]
+  var m: Map[Str, Int] = {"k": 0}
+  var b = Buf[Int].new()
+  b.push(5)
+  let count = Atomic[Int].new(1)
+  let note = "a long note that is longer than sixty four bytes, so the frame cuts it"
+  let r = step(n, xs, m, note, Secret[Str].new("hunter2"), b, count)
+  n = 100
+  xs[1] = 99
+  xs.push(7)
+  m.put("k", 42)
+  count.set(9)
+  var frozen = b.freeze()
+  frozen[0] = 55
+  os.stdio.println("caller now: n=${n} xs=${xs[0]},${xs[1]},${xs[2]} m.k=${m.get("k") ?? 0} frozen[0]=${frozen[0]} count=${count.get()}")
+  os.stdio.println("${rethrow(r)?}")
+}

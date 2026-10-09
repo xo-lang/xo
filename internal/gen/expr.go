@@ -1118,29 +1118,50 @@ func (f *fnGen) try(x *ast.TryExpr) string {
 func (f *fnGen) propagate(errCode, trCode string, et check.Type, at ast.Node) {
 	fr := f.fr
 	conv := f.coerceErr(errCode, et, fr.errT)
-	label := f.frameLabel()
 	sp := at.Span()
 	loc := fmt.Sprintf("%s:%d", f.g.linePath(sp.File), sp.Start.Line)
-	tr := fmt.Sprintf("%s.Frame(%s, %q)", trCode, label, loc)
 	if !fr.isResult {
 		f.line("panic(%sAsFault(%q))", f.rt(), "error propagated out of a function that cannot fail")
 		return
 	}
-	f.emitReturnValue(fmt.Sprintf("%sErrTr[%s](%s, %s)", f.rt(), f.goType(fr.resT), conv, tr))
+	f.emitReturnValue(fmt.Sprintf("%sErrTr[%s](%s, %s)", f.rt(), f.goType(fr.resT), conv, f.frameCode(trCode, loc)))
 }
 
-// frameLabel is the code of the current frame's label (core 11.1):
-// function name and the Debug text of its parameters. Capabilities are
-// left out; they carry no information.
-func (f *fnGen) frameLabel() string {
-	var args []string
+// frameCode is the code of a new error frame on the trace trCode at loc
+// (core 11.1, decision 0092): the current function's name and its
+// parameter values, captured by value and formatted only when the trace
+// is printed (std/rt/frames.go). Capabilities are left out; they carry no
+// information. A release build with `--error-args=false` keeps the names
+// only.
+func (f *fnGen) frameCode(trCode, loc string) string {
+	var names, vals []string
 	for _, p := range f.fr.params {
 		if f.g.isCapability(p.t) {
 			continue
 		}
-		args = append(args, strconv.Quote(p.xo), p.code)
+		names = append(names, p.xo)
+		vals = append(vals, f.frameValue(p))
 	}
-	return fmt.Sprintf("%sFrameLabel(%q%s)", f.rt(), f.fr.name, prefixComma(args))
+	head := fmt.Sprintf("%s, %q, %q, %q", trCode, f.fr.name, loc, strings.Join(names, " "))
+	switch {
+	case len(vals) == 0 || f.g.noErrorArgs():
+		return fmt.Sprintf("%sFrame0(%s)", f.rt(), head)
+	case len(vals) <= 6:
+		return fmt.Sprintf("%sFrame%d(%s, %s)", f.rt(), len(vals), head, strings.Join(vals, ", "))
+	}
+	return fmt.Sprintf("%sFrameN(%s, %s)", f.rt(), head, strings.Join(vals, ", "))
+}
+
+// frameValue is the code of parameter p's value as a frame keeps it: a
+// copy whose lists are marked shared (so a later write in place through
+// the parameter or the caller's binding copies first, and the frame still
+// shows the value at capture time), or, for the types whose Debug text can
+// change in place (frameEager), its bounded Debug text now.
+func (f *fnGen) frameValue(p paramRef) string {
+	if f.g.frameEager(f.pg.monoType(p.t)) {
+		return fmt.Sprintf("%sFrameTextOf(%s)", f.rt(), p.code)
+	}
+	return f.ownCode(p.code, p.t)
 }
 
 // ---------------------------------------------------------------------------
