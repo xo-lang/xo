@@ -49,7 +49,7 @@ type fnGen struct {
 	borrowed map[ast.Expr]bool
 	// unit is the expression whose Go code is being generated as one
 	// statement or condition (nil when unknown): a read in place of a
-	// List element's field (List.RefM) is used only when unit cannot write
+	// List element's field (rt.List_RefM) is used only when unit cannot write
 	// the list, since Go may load the field after a later call in the same
 	// expression.
 	unit ast.Node
@@ -1321,7 +1321,7 @@ func (f *fnGen) resolveAddrPlace(e ast.Expr) *placeRef {
 }
 
 // placeAddr emits the steps of a listPath place (uniqueList, then
-// List.PtrM, per element) and returns an addressable Go expression for
+// rt.List_PtrM, per element) and returns an addressable Go expression for
 // it; each list on the way becomes the unique owner of its array
 // (rt/list.go).
 func (f *fnGen) placeAddr(p *placeRef) string {

@@ -579,7 +579,8 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 		// no DWARF in the cached objects (a third of each) or in the
 		// binary, and no symbol table: Xo's stack traces, faults, crash
 		// bundles, and `xo dump` read the pclntab through the Go runtime,
-		// which -s -w keep (knowledgebase/infrastructure/build-output.md)
+		// which -s -w keep (knowledgebase/infrastructure/toolchain.md,
+		// `xo build`)
 		args = append(args, "-gcflags=all=-dwarf=false")
 		ld = append(ld, "-s", "-w")
 	}

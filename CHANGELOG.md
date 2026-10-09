@@ -11,6 +11,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
   tidy`, `xo vendor`, `xo mod clean`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). Diagnostics XO1301 to XO1308.
+- Go backend output (decision 0095): hello world 7.9 to 3.6 MB, Go build
+  cache growth per program 34 to 2.9 MB, compile memory 286 to 123 MB.
+  Binaries carry no DWARF or symbol table (`XO_GO_DWARF=1` keeps them for
+  a debugger); programs that do not import std/http do not link net/http.
 
 ## v0.7.0 (2026-10-09)
 

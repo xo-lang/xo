@@ -3,7 +3,7 @@
 package rt
 
 // The parts of std/http that use Go's net/http: the real server and
-// client. A program that does not load std/http is built with the tag
+// client. A program that does not import std/http is built with the tag
 // xo_nohttp (internal/build), which replaces them with http_nonet.go, so
 // its binary does not link net/http and what it imports (crypto/tls,
 // x509, mime, compress/gzip, idna; about 1.3 MB).

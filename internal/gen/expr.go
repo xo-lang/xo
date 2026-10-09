@@ -596,7 +596,7 @@ func (f *fnGen) selector(x *ast.SelectorExpr) string {
 		return code
 	}
 	// the base is only read for the field: a borrow; a List element is
-	// read in place (List.RefM)
+	// read in place (rt.List_RefM)
 	var base string
 	if ix, ok := unparenExpr(x.X).(*ast.IndexExpr); ok && f.pg.monoOn() && f.g.isPrelude(f.typeOf(ix.X), "List") &&
 		f.unit != nil && !f.mutates(f.unit, f.rootVar(ix.X)) {
@@ -1068,7 +1068,7 @@ func (f *fnGen) index(x *ast.IndexExpr) string {
 	return fmt.Sprintf("%s%s_At(%s, %s, %s)", f.rt(), n.Obj.Name, codes[0], codes[1], loc)
 }
 
-// indexRef is the address of List element x (`xs.RefM(i)`), for reading
+// indexRef is the address of List element x (`rt.List_RefM(xs, i)`), for reading
 // a field of it in place: a borrow of the element.
 func (f *fnGen) indexRef(x *ast.IndexExpr) string {
 	loc := strconv.Quote(f.g.loc(x))

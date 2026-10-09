@@ -29,7 +29,7 @@ package gen
 //     gets its own copy (`<name>__<types>_lit`) that inlines the literal
 //     where the copy calls the parameter (lambda specialization).
 //   - Int arithmetic and List indexing use typed, inlinable runtime
-//     helpers (rt.AddI and friends, List.AtM in std/rt/mono.go), unless
+//     helpers (rt.AddI and friends, rt.List_AtM in std/rt/mono.go), unless
 //     the range analysis (ranges.go) proved them safe.
 //
 // Go forms (whether a function returns rt.Result, takes `.V`, and so on)

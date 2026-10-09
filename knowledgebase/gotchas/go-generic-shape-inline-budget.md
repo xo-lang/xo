@@ -20,3 +20,8 @@ xs = xs.PushFast(x) } else { xs = xs.PushSlow(x) }`. Faults are panics of
 `*arithFault` as in `AtM`. Check with `go build -gcflags=-m=2` in std/rt
 (`can inline (*List[go.shape.bool]).PutM with cost 28`). Sieve went from
 0.36 s to 0.15 s.
+
+Update (2026-10-09): these helpers are now package level functions with
+the same bodies (`rt.List_Mine(xs)`, `rt.List_PutM(xs, i, x, at)`,
+`rt.List_PushFast(xs, x)`, ...), for `go-generic-method-sets-per-package.md`;
+the inlining costs are unchanged.

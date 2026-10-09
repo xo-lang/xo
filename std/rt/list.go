@@ -246,14 +246,14 @@ func List_SetAt[T any](l *List[T], i int64, x T, at string) {
 // Inline write forms. Generated code writes element i of a list place p
 // as
 //
-//	if !p.Mine() { p = p.Unshared() }
-//	p.PutM(i, x, at)        // or p.PtrM(i, at) for a write below i
+//	if !List_Mine(p) { p = List_Unshared(p) }
+//	List_PutM(p, i, x, at)        // or List_PtrM(p, i, at) for a write below i
 //
 // and pushes as
 //
-//	if p.CanPush() { p = p.PushFast(x) } else { p = p.PushSlow(x) }
+//	if List_CanPush(p) { p = List_PushFast(p, x) } else { p = List_PushSlow(p, x) }
 //
-// Each method inlines, and none takes the address of p, so a local list
+// Each function inlines, and none takes the address of p, so a local list
 // stays in registers (SetAt and M_push are over Go's inlining budget for
 // generic shapes, and their pointer receivers keep the binding in memory).
 
@@ -356,7 +356,7 @@ func List_push[T any](_ *Task, l *List[T], x T) {
 
 // List_Push1 appends x in place when l is the unique owner and has room, and
 // reports whether it did. Generated code pushes as
-// `if !xs.Push1(x) { xs.M_push(tk, x) }`, which inlines the fast path.
+// `if !List_Push1(&xs, x) { List_push(tk, &xs, x) }`, which inlines the fast path.
 func List_Push1[T any](l *List[T], x T) bool {
 	b := l.b
 	n := len(l.s)
