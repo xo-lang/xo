@@ -30,32 +30,14 @@ possible and decide personally when it is 1.0.
 
 ## Owner's 1.0 criteria (2026-10-09)
 
-Native backends are not a preview at 1.0, but parity is scoped
-("A-scoped"): native builds must cover everything a typical HTTP service
-uses; anything else is documented as unsupported on native (a precise
-`XO1201`) rather than blocking 1.0.
-
-Required natively for 1.0 (from the native gaps in
-`bench/results/spec-audit-2026-10-09.md`):
-- Every core language construct: interface types (dynamic dispatch), list
-  patterns, newtypes, `Float32`, `Secret[T]` in every output path, `Buf`
-  and `StrBuilder`, calls with defaulted arguments, all `?` error
-  conversions, `get_or_fault` for every key type.
-- HTTP: serving and calling HTTPS (native TLS) in addition to plain HTTP,
-  which stays first class for TLS terminated at a proxy or load balancer.
-- Files: every `Fs` method and attenuation (`sub`, `read_only`,
-  `write_only`), and `std/path`.
-- `std/time` (decision 0094), `os.tasks`, `Once`, `Semaphore`,
-  `map_concurrent`, standard input with cancellation (decision 0088).
-- `xo test --no-gc` with the test fakes (`MemFs`, `set_input`,
-  `FakeProc.run`).
-- Targets: darwin and linux on arm64 and x86-64 (x86-64 through the LLVM
-  backend; a dedicated x86-64 native backend is not required).
-
-Documented as unsupported on native at 1.0: `use go` (impossible by
-design; `use c` is the native FFI, decision 0093), `gc` lines, and the
-deterministic scheduler and record and replay where the Go backend still
-leads (preview on native).
+- The Go backend is the supported 1.0 path. The native backends (arm64,
+  LLVM, `--no-gc`) ship as **preview** at 1.0: what they cannot build yet
+  is a precise `XO1201`, and their gaps (listed in
+  `bench/results/spec-audit-2026-10-09.md`) do not block 1.0.
+- Native TLS is therefore not a 1.0 requirement. Plain HTTP stays first
+  class on every backend (TLS terminated at a proxy or load balancer),
+  and the Go backend serves and calls HTTPS. Native TLS stays in the
+  queue and is revisited once it lands.
 
 ## Consequences
 
