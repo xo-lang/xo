@@ -246,6 +246,39 @@ def loop_xo(d):
     return res
 
 
+def xo_fix(d):
+    """Runs `xo fix` on d in place; returns (exit code, number of changes, output)."""
+    rc, out = run([xo_bin(), "fix", d], cwd=d)
+    m = re.search(r"(\d+) change\(s\)", out)
+    return rc, int(m.group(1)) if m else 0, out.replace(d + os.sep, "").replace(d, ".")
+
+
+def first_try(arm, snap):
+    """Reruns a first run snapshot through the arm's loop with the current
+    toolchain, as is ("plain") and, for Xo, after `xo fix` ("after_fix").
+
+    The snapshot is copied to a temporary directory and never changed.
+    Returns {"plain": {...}, "after_fix": {...} or None}; each holds green,
+    stage, and for Xo the error codes (and the number of fixes applied).
+    """
+    keep = ("green", "stage", "errors", "codes", "tests_passed", "tests_failed")
+    res = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        d = os.path.join(tmp, "plain")
+        copy_solution(snap, d)
+        fb = feedback(arm, d)
+        res["plain"] = {k: v for k, v in fb.items() if k in keep}
+        res["after_fix"] = None
+        if arm == "xo":
+            d = os.path.join(tmp, "fixed")
+            copy_solution(snap, d)
+            _, n, _ = xo_fix(d)
+            fb = feedback(arm, d)
+            res["after_fix"] = {k: v for k, v in fb.items() if k in keep}
+            res["after_fix"]["fixes"] = n
+    return res
+
+
 def loop_go_plain(d):
     log = []
     for stage, cmd in [("build", ["go", "build", "./..."]), ("vet", ["go", "vet", "./..."]),

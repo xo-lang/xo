@@ -25,6 +25,10 @@ GO_MAIN = "package main\n\nfunc Add(a, b int) int { return a + b }\n\nfunc main(
 GO_TEST_BAD = ('package main\n\nimport "testing"\n\n'
                'func TestAdd(t *testing.T) {\n\tif Add(1, 2) != 4 {\n\t\tt.Fatal("want 4")\n\t}\n}\n')
 GO_TEST_GOOD = GO_TEST_BAD.replace("!= 4", "!= 3").replace("want 4", "want 3")
+XO_MOD = "module example.com/inventory\n"
+XO_MAIN_ELSE = ("fn sign(x: Int) -> Int {\n  if x < 0 {\n    -1\n  }\n  else {\n    1\n  }\n}\n\n"
+                "fn main(os: Os) {\n  os.stdio.println(\"${sign(2)}\")\n}\n")
+XO_TEST = "test \"sign\" {\n  expect(sign(-3) == -1)\n  expect(sign(4) == 1)\n}\n"
 
 
 def read_json(path):
@@ -218,6 +222,38 @@ class TestAdapter(unittest.TestCase):
         self.assertFalse(rec["history"]["first_green"])
         self.assertTrue(rec["final"]["green"])
         self.assertEqual(rec["tests"], 1)
+
+    def test_first_try_after_xo_fix(self):
+        # run 1 has only a habit with a machine fix (XO0162, `}` newline
+        # `else`): it fails as is, and passes after `xo fix`
+        bad = block("xo.mod", XO_MOD) + block("main.xo", XO_MAIN_ELSE) + block("main_test.xo", XO_TEST)
+        good = block("main.xo", XO_MAIN_ELSE.replace("}\n  else {", "} else {"))
+        out = os.path.join(self.tmp, "out")
+        with FakeServer([bad, good]) as srv:
+            run_adapter(srv.url, out, "--arms", "xo", "--tasks", "09", "--planted", "none", "--max-runs", "2")
+        d = os.path.join(out, "xo", "09-inventory")
+        runs = read_jsonl(os.path.join(d, "runs.jsonl"))
+        self.assertEqual([(r["green"], r["stage"]) for r in runs], [(False, "check"), (True, "none")])
+        self.assertEqual(score.first_snapshot(d, "09-inventory"), os.path.join(d, ".attempts", "run-1"))
+        rec = score.score_cell("xo", "09-inventory", d, hidden=False)
+        self.assertFalse(rec["first"]["plain"]["green"])
+        self.assertEqual(rec["first"]["plain"]["codes"], ["XO0162"])
+        self.assertTrue(rec["first"]["after_fix"]["green"])
+        self.assertEqual(rec["first"]["after_fix"]["fixes"], 1)
+        # the snapshot itself is not changed by the fix
+        with open(os.path.join(d, ".attempts", "run-1", "main.xo")) as f:
+            self.assertIn("}\n  else {", f.read())
+        args = type("A", (), {"claude": False, "dir": out, "tasks": ["09-inventory"]})()
+        report = score.solutions_report(args, [rec])
+        self.assertIn("| First try now (first run sources, current toolchain) | n/a | n/a | 0/1 |", report)
+        self.assertIn("| First try after `xo fix` (current toolchain) | n/a | n/a | 1/1 |", report)
+        self.assertIn("| xo | 09-inventory | fail | fail (check: XO0162) | pass, 1 fixes |", report)
+        # a path 2b layout: <out>/history/<task>/1 next to <out>/xo/<task>
+        hist = os.path.join(self.tmp, "b", "history", "09-inventory", "1")
+        cell = os.path.join(self.tmp, "b", "xo", "09-inventory")
+        os.makedirs(hist)
+        os.makedirs(cell)
+        self.assertEqual(score.first_snapshot(cell, "09-inventory"), hist)
 
     def test_stops_after_max_runs(self):
         bad = block("go.mod", GO_MOD) + block("main.go", "package main\n\nfunc main() { undefined() }\n")
