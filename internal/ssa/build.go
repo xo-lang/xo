@@ -560,7 +560,10 @@ type fn struct {
 	// packVar: the function returns its result and its `var` parameters
 	// as one tuple (a closure given to Mutex.with, build_conc.go)
 	packVar bool
-	scopes  []*scopeCtx // the scopes open around the current code
+	// packOrig is the value a packed closure was given: what it hands
+	// back when it fails or unwinds (packedValue)
+	packOrig *Value
+	scopes   []*scopeCtx // the scopes open around the current code
 	unwindB *Block      // the function's unwind block (lazy)
 	// exits are the blocks and scopes open around the current code, the
 	// innermost last: leaving them runs each block's pending `defer`
@@ -875,11 +878,47 @@ func (s *fn) ret(v *Value, at ast.Node) {
 		args = append(args, s.read(vo))
 	}
 	if s.packVar {
+		if s.packOrig != nil && len(args) == 2 && s.errT != nil {
+			args[1] = s.packedValue(v, args[1])
+		}
 		args = []*Value{s.add(OpTuple, s.f.Results[0], nil, args...)}
 	}
 	s.exitTo(0)
 	s.add(OpReturn, nil, nil, args...)
 	s.dead()
+}
+
+// packedValue is the value a packed closure (Mutex.with) hands back with
+// its result r: the updated value cur when r is a success, the value it
+// was given (packOrig) when r is an error, since the mutex then keeps
+// the old value (core 5.4). The caller moves the value out of the mutex
+// and always stores what comes back, so a closure that cannot fail
+// after it changed the value updates it in place: only when the given
+// value is still live after a change (an error may follow) does the RC
+// pass keep a reference, and the change copies.
+func (s *fn) packedValue(r, cur *Value) *Value {
+	errI := r.Type.VariantIndex("Err")
+	if cur == s.packOrig || errI < 0 {
+		return cur
+	}
+	if r.Op == OpVariant {
+		if r.Aux.(int) == errI {
+			return s.packOrig
+		}
+		return cur
+	}
+	m := s.b.mod
+	join := s.newBlock()
+	res := join.AddParam(cur.Type)
+	isErr := s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, m.Builtin(KInt), nil, r), s.cint(int64(errI)))
+	yes, no := s.branch(isErr)
+	s.cur = yes
+	s.jump(join, s.packOrig)
+	s.cur = no
+	s.jump(join, cur)
+	s.seal(join)
+	s.cur = join
+	return res
 }
 
 // resultT is the type the function's body returns (its result; for a

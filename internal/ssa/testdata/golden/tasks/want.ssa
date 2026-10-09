@@ -1,3 +1,4 @@
+type List[Int]? = enum { None | Some(v: List[Int]) }
 type Result[Int, E] = enum { Ok(v: Int) | Err(e: E) }
 type E = enum { Bad }
 type Int? = enum { None | Some(v: Int) }
@@ -18,24 +19,24 @@ b0(v0: Os):
 b1:  ; preds b0
   jump b3()
 b2:  ; preds b0
-  v13: Int = const 0
-  v14: List[Int] = call list.index, v9, v13
-  v15: ((), List[Int]) = callv v7, v14
-  v16: Bool = call rt.unwinding
-  br v16, b4(), b5()
+  v13: (List[List[Int]], List[Int]?) = call list.pop, v9
+  v14: List[List[Int]] = field 0, v13
+  v15: List[Int]? = field 1, v13
+  v16: List[Int] = payload 1.0, v15
+  v17: ((), List[Int]) = callv v7, v16
+  v18: () = field 0, v17
+  v19: List[Int] = field 1, v17
+  v20: List[List[Int]] = call list.push, v14, v19
+  share v20
+  v22: () = call rt.mutex_unlock, v6, v20
+  v23: Bool = call rt.unwinding
+  br v23, b4(), b5()
 b3:  ; preds b1, b4, b6
-  v18: () = tuple
-  ret v18
+  v25: () = tuple
+  ret v25
 b4:  ; preds b2
-  v20: () = call rt.mutex_unlock, v6, v9
   jump b3()
 b5:  ; preds b2
-  v22: () = field 0, v15
-  v23: List[Int] = field 1, v15
-  v24: Int = const 0
-  v25: List[List[Int]] = call list.set, v9, v24, v23
-  share v25
-  v27: () = call rt.mutex_unlock, v6, v25
   v28: Int = funcaddr xo.droplist[Int]
   v29: Int = const 1
   v30: Str = const "main.xo:35"

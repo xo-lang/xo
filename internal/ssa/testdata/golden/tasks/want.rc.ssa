@@ -1,3 +1,4 @@
+type List[Int]? = enum { None | Some(v: List[Int]) }
 type Result[Int, E] = enum { Ok(v: Int) | Err(e: E) }
 type E = enum { Bad }
 type Int? = enum { None | Some(v: Int) }
@@ -21,67 +22,66 @@ b1:  ; preds b0
   release v9
   jump b3()
 b2:  ; preds b0
-  v16: Int = const 0
-  v17: List[Int] = call list.index, v9, v16
-  retain v17
-  v19: ((), List[Int]) = callv v7, v17
+  v16: List[List[Int]] = reuse v9
+  v17: (List[List[Int]], List[Int]?) = call list.pop, v16
+  v18: List[List[Int]] = field 0, v17
+  v19: List[Int]? = field 1, v17
+  v20: List[Int] = payload 1.0, v19
+  retain v20
+  v22: List[Int]? = field 1, v17
+  release v22
+  v24: ((), List[Int]) = callv v7, v20
   release v7
-  v21: Bool = call rt.unwinding
-  br v21, b4(), b5()
-b3:  ; preds b1, b4, b6
-  v23: () = tuple
-  ret v23
-b4:  ; preds b2
-  v25: List[Int] = field 1, v19
-  release v25
-  v27: () = call rt.mutex_unlock, v6, v9
+  v26: List[Int] = field 1, v24
+  v27: List[List[Int]] = call list.push, v18, v26
+  share v27
+  v29: () = call rt.mutex_unlock, v6, v27
   release v6
+  v31: Bool = call rt.unwinding
+  br v31, b4(), b5()
+b3:  ; preds b1, b4, b6
+  v33: () = tuple
+  ret v33
+b4:  ; preds b2
   jump b3()
 b5:  ; preds b2
-  v30: List[Int] = field 1, v19
-  v31: Int = const 0
-  v32: List[List[Int]] = reuse v9
-  v33: List[List[Int]] = call list.set, v32, v31, v30
-  share v33
-  v35: () = call rt.mutex_unlock, v6, v33
-  release v6
-  v37: Int = funcaddr xo.droplist[Int]
-  v38: Int = const 1
-  v39: Str = const "main.xo:35"
-  v40: Chan[Int] = call rt.chan_new, v38, v37, v39
-  v41: () = call rt.chan_close, v40
-  v42: Result[Int, E] = call run, v40
-  v43: Bool = call rt.unwinding
-  br v43, b6(), b7()
+  v36: Int = funcaddr xo.droplist[Int]
+  v37: Int = const 1
+  v38: Str = const "main.xo:35"
+  v39: Chan[Int] = call rt.chan_new, v37, v36, v38
+  v40: () = call rt.chan_close, v39
+  v41: Result[Int, E] = call run, v39
+  v42: Bool = call rt.unwinding
+  br v42, b6(), b7()
 b6:  ; preds b5
   jump b3()
 b7:  ; preds b5
-  v46: Int = tag v42
-  v47: Int = const 0
-  v48: Bool = eq v46, v47
-  br v48, b10(), b9()
+  v45: Int = tag v41
+  v46: Int = const 0
+  v47: Bool = eq v45, v46
+  br v47, b10(), b9()
 b8:  ; preds b10, b12
-  v50: () = tuple
-  ret v50
+  v49: () = tuple
+  ret v49
 b9:  ; preds b7
-  v52: Int = tag v42
-  v53: Int = const 1
-  v54: Bool = eq v52, v53
-  br v54, b12(), b11()
+  v51: Int = tag v41
+  v52: Int = const 1
+  v53: Bool = eq v51, v52
+  br v53, b12(), b11()
 b10:  ; preds b7
-  v56: Int = payload 0.0, v42
-  v57: Stdio = cap stdio, v0
-  v58: Str = call str.of_int, v56
-  v59: () = call Stdio.println, v57, v58
-  release v58
+  v55: Int = payload 0.0, v41
+  v56: Stdio = cap stdio, v0
+  v57: Str = call str.of_int, v55
+  v58: () = call Stdio.println, v56, v57
+  release v57
   jump b8()
 b11:  ; preds b9
   unreachable
 b12:  ; preds b9
-  v63: E = payload 1.0, v42
-  v64: Stdio = cap stdio, v0
-  v65: Str = const "failed"
-  v66: () = call Stdio.println, v64, v65
+  v62: E = payload 1.0, v41
+  v63: Stdio = cap stdio, v0
+  v64: Str = const "failed"
+  v65: () = call Stdio.println, v63, v64
   jump b8()
 }
 

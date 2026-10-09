@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+try true kept 2
+tail err true kept 2
+tail ok 4 written 4
+loop true kept 4
+map true kept 2 has 1 true
+map ok true now 2
+canceled kept 4 last 9
+--- stderr

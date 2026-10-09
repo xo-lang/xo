@@ -191,6 +191,12 @@ func (s *fn) finishFn() {
 	for _, t := range s.f.Results {
 		rs = append(rs, s.zero(t, map[*Type]bool{}))
 	}
+	if s.packOrig != nil {
+		// a packed closure hands back the value it was given (the mutex
+		// keeps it, packedValue)
+		pt := s.f.Results[0]
+		rs = []*Value{s.add(OpTuple, pt, nil, s.zero(pt.Elems[0], map[*Type]bool{}), s.packOrig)}
+	}
 	s.add(OpReturn, nil, nil, rs...)
 	s.cur = saved
 }
@@ -769,6 +775,40 @@ func (s *fn) mutexWith(x *ast.CallExpr, h *Value, et *Type, read bool) *Value {
 	}
 	l := s.rt(lockFn, m.List(et), h, s.loc(x))
 	s.check("")
+	if packed {
+		// the value moves out of the mutex's list into the closure, which
+		// hands back what the mutex keeps (packedValue): the old value
+		// when it fails or unwinds, else the new one. A closure that does
+		// not fail after a change updates the value in place.
+		var ect check.Type
+		if ci := b.info.CallOf(x); ci != nil && ci.Recv != nil {
+			if n, ok := check.Resolve(s.natCheck(ci.Recv)).(*check.Named); ok && len(n.Args) == 1 {
+				ect = s.apply(n.Args[0])
+			}
+		}
+		if ect == nil {
+			b.unsupported(x, "this `with`")
+			return s.undef(nt)
+		}
+		ot := b.typ(b.preludeType("Option", ect), x)
+		if ot.Kind != KEnum || ot.VariantIndex("Some") < 0 || ot.Variants[ot.VariantIndex("Some")].Fields[0].Type != et {
+			b.unsupported(x, "this `with`")
+			return s.undef(nt)
+		}
+		pr := s.call("list.pop", m.Tuple(l.Type, ot), "", l)
+		l1 := s.add(OpField, l.Type, 0, pr)
+		o := s.add(OpField, ot, 1, pr)
+		some := o.Type.VariantIndex("Some")
+		v := s.add(OpPayload, et, PayloadRef{some, 0}, o)
+		r := s.add(OpCallValue, fv.Type.Ret, nil, fv, v)
+		res := s.add(OpField, r.Type.Elems[0], 0, r)
+		nv := s.add(OpField, et, 1, r)
+		l2 := s.call("list.push", l.Type, "", l1, nv)
+		s.add(OpShare, nil, nil, l2)
+		s.rt(unlockFn, nil, h, l2)
+		s.check("")
+		return res
+	}
 	v := s.call("list.index", et, "", l, s.cint(0))
 	r := s.add(OpCallValue, fv.Type.Ret, nil, fv, v)
 	s.checkThen(func() { s.rt(unlockFn, nil, h, l) })
@@ -945,6 +985,7 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 		for i, vo := range caps {
 			c.writeVar(vo, c.add(OpCapture, capTs[i], i, env))
 		}
+		c.packOrig = f.Params()[1]
 		if ps := b.info.ClosureParams(x); len(ps) == 1 && ps[0] != nil {
 			c.writeVar(ps[0], f.Params()[1])
 			c.varParams = []*check.VarObj{ps[0]}

@@ -1,0 +1,87 @@
+// Mutex.with keeps the old value when the closure fails or unwinds after
+// it changed its `var` parameter (core 5.4). The native backends move
+// the value into the closure, which hands back the value it was given on
+// those paths: an explicit Err, `?`, a Result tail decided at run time,
+// a change in a loop, and cancellation at a point inside the closure.
+enum E {
+  Stop
+}
+
+fn small(n: Int) -> () ! E {
+  if n > 2 {
+    return Err(E.Stop)
+  }
+}
+
+fn verdict(n: Int) -> Int ! E {
+  if n % 2 == 0 {
+    return Ok(n)
+  }
+  Err(E.Stop)
+}
+
+fn main(os: Os) {
+  let m = Mutex[List[Int]].new([1, 2])
+  let a = m.with(fn(var l) -> Int ! E {
+    l.push(3)
+    small(l.len())?
+    l.len()
+  })
+  os.stdio.println("try ${a.is_err()} kept ${m.with(fn(l) { l.len() })}")
+
+  let b = m.with(fn(var l) -> Int ! E {
+    l.push(7)
+    verdict(l.len())
+  })
+  os.stdio.println("tail err ${b.is_err()} kept ${m.with(fn(l) { l.len() })}")
+  let c = m.with(fn(var l) -> Int ! E {
+    l.push(8)
+    l.push(9)
+    verdict(l.len())
+  })
+  os.stdio.println("tail ok ${c.ok() ?? 0} written ${m.with(fn(l) { l.len() })}")
+
+  let d = m.with(fn(var l) -> Int ! E {
+    for i in 0..5 {
+      l.push(i)
+      if l.len() > 6 {
+        return Err(E.Stop)
+      }
+    }
+    l.len()
+  })
+  os.stdio.println("loop ${d.is_err()} kept ${m.with(fn(l) { l.len() })}")
+
+  let users = Mutex[Map[Int, Str]].new({1: "a", 2: "b"})
+  let e = users.with(fn(var u) -> () ! E {
+    u.put(3, "c")
+    if u.remove(1) is Some(_) {
+      return Err(E.Stop)
+    }
+  })
+  os.stdio.println("map ${e.is_err()} kept ${users.with_read(fn(u) { u.len() })} has 1 ${users.with_read(fn(u) -> Bool { u.contains(1) })}")
+  users.with(fn(var u) { u.put(4, "d") })
+  let removed = users.with(fn(var u) -> Bool ! E {
+    if u.remove(2) is None {
+      return Err(E.Stop)
+    }
+    true
+  })
+  os.stdio.println("map ok ${removed.ok() ?? false} now ${users.with_read(fn(u) { u.len() })}")
+
+  // canceled inside the closure after a change: the value stays
+  let gate = Chan[Int].new(0)
+  scope s {
+    s.spawn(fn() {
+      m.with(fn(var l) {
+        l.push(100)
+        let _ = gate.recv()
+        l.push(101)
+      })
+    })
+    s.spawn(fn() {
+      s.cancel()
+    })
+  }
+  os.stdio.println("canceled kept ${m.with(fn(l) { l.len() })} last ${m.with(fn(l) { l.last() ?? 0 })}")
+}
