@@ -301,6 +301,20 @@ xo_rstr *xo_str_trim(const char *p, int64_t n, int64_t mode, int64_t *len) {
 	return nstr(p + lo, hi - lo, len);
 }
 
+// n_case_into appends strings.ToLower (lower) or ToUpper of the n bytes
+// at p to b (strings.Map: an invalid byte becomes U+FFFD).
+static void n_case_into(nbuf *b, const char *p, int64_t n, int lower) {
+	const unsigned char *s = (const unsigned char *)p;
+	for (int64_t i = 0; i < n;) {
+		int size;
+		int32_t r = n_utf8_decode(s + i, n - i, &size);
+		char t[4];
+		int k = n_utf8_encode(t, n_to_case(r, lower));
+		nbuf_put(b, t, k);
+		i += size;
+	}
+}
+
 // map_case is strings.ToLower or strings.ToUpper.
 static xo_rstr *n_map_case(const char *p, int64_t n, int lower, int64_t *len) {
 	int ascii = 1;
@@ -322,18 +336,42 @@ static xo_rstr *n_map_case(const char *p, int64_t n, int lower, int64_t *len) {
 		}
 		return s;
 	}
-	// strings.Map: an invalid byte becomes U+FFFD
 	nbuf b = {0};
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n;) {
-		int size;
-		int32_t r = n_utf8_decode(s + i, n - i, &size);
-		char t[4];
-		int k = n_utf8_encode(t, n_to_case(r, lower));
-		nbuf_put(&b, t, k);
-		i += size;
-	}
+	n_case_into(&b, p, n, lower);
 	return nbuf_take(&b, len);
+}
+
+// xo_str_eq_lower is `a.to_lower() == b.to_lower()` without making the
+// lowered strings: ASCII bytes compare lowered in place; from the first
+// non-ASCII byte of either (a rune boundary of both, since everything
+// before is ASCII) the rests are lowered and compared (std/rt's
+// Str_eq_lower on the Go backend).
+int64_t xo_str_eq_lower(const char *p, int64_t n, const char *q, int64_t m) {
+	int64_t i = 0;
+	for (; i < n && i < m; i++) {
+		unsigned a = (unsigned char)p[i], c = (unsigned char)q[i];
+		if (a >= 0x80 || c >= 0x80) {
+			break;
+		}
+		a += (a >= 'A' && a <= 'Z') ? 32 : 0;
+		c += (c >= 'A' && c <= 'Z') ? 32 : 0;
+		if (a != c) {
+			return 0;
+		}
+	}
+	if (i == n && i == m) {
+		return 1;
+	}
+	if (i == n || i == m) {
+		return 0; // a nonempty rest never lowers to nothing
+	}
+	nbuf x = {0}, y = {0};
+	n_case_into(&x, p + i, n - i, 1);
+	n_case_into(&y, q + i, m - i, 1);
+	int64_t eq = x.n == y.n && (x.n == 0 || memcmp(x.p, y.p, (size_t)x.n) == 0);
+	free(x.p);
+	free(y.p);
+	return eq;
 }
 
 xo_rstr *xo_str_lower(const char *p, int64_t n, int64_t *len) { return n_map_case(p, n, 1, len); }

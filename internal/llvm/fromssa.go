@@ -52,6 +52,7 @@ declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2
 declare ptr @xo_rs_of_int(i64, ptr) #2
 declare ptr @xo_rs_of_float(double, ptr) #2
 declare ptr @xo_rl_new(i64, i64) #2
+declare ptr @xo_rl_new_n(i64, i64) #2
 declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3
 declare void @xo_rl_share(ptr, i64, ptr) #2
 declare ptr @xo_rl_grow(ptr, i64) #3
@@ -1442,6 +1443,11 @@ func (s *sfn) call(v *ssa.Value) {
 	switch name {
 	case "list.new":
 		et := v.Type.Elems[0]
+		if len(v.Args) == 1 {
+			// with room for a number of elements
+			s.set(v, "call ptr @xo_rl_new_n(i64 %s, i64 %d)", a(0), g.size(et))
+			break
+		}
 		s.set(v, "call ptr @xo_rl_new(i64 4, i64 %d)", g.size(et))
 	case "list.len":
 		s.alias(v, s.listLen(a(0)))

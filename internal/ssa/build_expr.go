@@ -431,6 +431,19 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 		s.cur = join
 		return res
 	}
+	if x.Op == token.Eq || x.Op == token.NotEq {
+		if lr, rr := s.toLowerRecv(x.X), s.toLowerRecv(x.Y); lr != nil && rr != nil {
+			// `a.to_lower() == b.to_lower()` compares without making the
+			// lowered strings (xo_str_eq_lower; the Go backend's
+			// rt.Str_eq_lower)
+			strT := m.Builtin(KStr)
+			eq := s.rt("str_eq_lower", boolT, s.valueAs(lr, strT), s.valueAs(rr, strT))
+			if x.Op == token.NotEq {
+				return s.add(OpNot, boolT, nil, eq)
+			}
+			return eq
+		}
+	}
 	l := s.expr(x.X)
 	var r *Value
 	if x.Op == token.Shl || x.Op == token.Shr {
@@ -471,6 +484,27 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 		return s.undef(boolT)
 	}
 	return s.arith(x.Op, l, r, x)
+}
+
+// toLowerRecv returns the receiver of a call `s.to_lower()` of the
+// prelude's Str, or nil.
+func (s *fn) toLowerRecv(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		e = p.X
+	}
+	c, ok := e.(*ast.CallExpr)
+	if !ok || len(c.Args) != 0 {
+		return nil
+	}
+	ci := s.b.info.CallOf(c)
+	if ci == nil || ci.Recv == nil || ci.Fn == nil || ci.Fn.Recv == nil || ci.Fn.Name != "to_lower" || ci.Fn.Recv.Name != "Str" || ci.Fn.Recv.Module == nil || !ci.Fn.Recv.Module.IsPrelude {
+		return nil
+	}
+	return ci.Recv
 }
 
 // ifExpr lowers `if` and `if let`, joining the branch values in a block

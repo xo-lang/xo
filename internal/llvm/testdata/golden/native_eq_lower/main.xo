@@ -1,0 +1,33 @@
+// `a.to_lower() == b.to_lower()` lowers to xo_str_eq_lower on the native
+// backends (no lowered strings are made): it must agree with comparing
+// the lowered strings, for ASCII, Unicode that lowers to ASCII or changes
+// length, and invalid UTF-8.
+fn main(os: Os) {
+  let base = ["", "a", "A", "k", "K", "\u{212A}", "ab", "aB", "Ab@X.io", "ab@x.io", "\u{130}", "i\u{307}", "i", "\u{df}", "SS", "ss", "\u{3a3}", "\u{3c3}", "\u{3c2}", "\u{e9}", "\u{c9}", "e\u{301}", "w1@x.io", "W1@X.IO", "w1@x.io ", "[", "{", "@", "`"]
+  var all: List[Str] = []
+  for a in base {
+    for b in base {
+      all.push(a + b)
+    }
+  }
+  var eq = 0
+  var ne = 0
+  var bad = 0
+  for a in all {
+    for b in all {
+      let la = a.to_lower()
+      let lb = b.to_lower()
+      let want = la == lb
+      if (a.to_lower() == b.to_lower()) != want {
+        bad += 1
+      }
+      if a.to_lower() != b.to_lower() {
+        ne += 1
+      } else {
+        eq += 1
+      }
+    }
+  }
+  os.stdio.println("pairs ${all.len() * all.len()} equal ${eq} different ${ne} mismatches ${bad}")
+  os.stdio.println("${"Ada@Example.COM".to_lower() == "ada@example.com".to_lower()} ${"K".to_lower() == "\u{212A}".to_lower()} ${"x".to_lower() != "X".to_lower()}")
+}

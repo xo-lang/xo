@@ -1377,6 +1377,11 @@ func (s *fstate) callOp(v *ssa.Value) {
 	}
 	switch name {
 	case "list.new":
+		if len(v.Args) == 1 {
+			// with room for a number of elements
+			s.set(v, s.rt("xo_rl_new_n", []src{rsrc(s.word(v.Args[0])), isrc(g.esize(v.Type.Elems[0]))}, false)...)
+			break
+		}
 		s.set(v, s.rt("xo_rl_new", []src{isrc(4), isrc(g.esize(v.Type.Elems[0]))}, false)...)
 	case "list.len":
 		s.set(v, s.listLen(s.word(v.Args[0])))

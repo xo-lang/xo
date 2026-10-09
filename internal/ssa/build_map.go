@@ -510,7 +510,8 @@ func (b *builder) mapList(t *Type, what int) string {
 		vals := s.add(OpField, t.Fields[1].Type, 1, mp)
 		live := s.add(OpField, t.Fields[2].Type, 2, mp)
 		out := local("out")
-		s.writeVar(out, s.call("list.new", lt, ""))
+		// sized to the live entries: no regrowth while copying
+		s.writeVar(out, s.call("list.new", lt, "", s.add(OpField, intT, 4, mp)))
 		s.forUpTo(s.call("list.len", intT, "", keys), func(i *Value) {
 			s.ifThen(s.call("list.index", boolT, "", live, i), func() {
 				var e *Value

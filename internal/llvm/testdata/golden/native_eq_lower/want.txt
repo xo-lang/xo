@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+pairs 707281 equal 2701 different 704580 mismatches 0
+true true false
+--- stderr

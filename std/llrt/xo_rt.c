@@ -881,6 +881,10 @@ xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
 	return l;
 }
 
+// xo_rl_new_n is an empty list with room for n elements (at least 4):
+// `list.new` with a size, for results whose length is known.
+xo_rlist *xo_rl_new_n(int64_t n, int64_t esize) { return xo_rl_new(n < 4 ? 4 : n, esize); }
+
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
 
 // xo_rl_copy is the slow path of `reuse`: l's count is not 1. A shared
