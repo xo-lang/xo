@@ -135,13 +135,27 @@ commands:
       any source file's modification time or size changes. check and query
       use a running server automatically; XO_NO_SERVE=1 turns that off.
       stop shuts the server down; status prints its cache counters.
-  get [--dir=<dir>] [--json] <module path>[@version|@latest|@none]...
+  init [--dir=<dir>] <module path>
+      Write xo.mod for a new module and add xo.work to .gitignore (unless a
+      workspace above already covers the directory).
+  get [--dir=<dir>] [--json] [-u] <module path>[@version|@latest|@none]...
       Require a module (decision 0086): the latest vX.Y.Z tag unless a
-      version is given; @none removes the requirement. Fetches with git
-      into the module cache ($XO_MODCACHE or <user cache dir>/xo/mod),
-      resolves the graph by minimal version selection, and rewrites xo.mod
-      and xo.lock. Module paths are git locations; XO_GIT_BASE=<dir or URL>
-      or XO_GIT_REWRITE=<prefix>=<url>,... point them elsewhere.
+      version is given; @none removes the requirement; -u alone upgrades
+      every requirement. Fetches with git into the module cache
+      ($XO_MODCACHE or <user cache dir>/xo/mod), resolves the graph by
+      minimal version selection, rewrites xo.mod and xo.lock, and prints
+      the API and effect changes of every version change (and exports
+      above an effect ceiling). Module paths are git locations;
+      XO_GIT_BASE=<dir or URL> or XO_GIT_REWRITE=<prefix>=<url>,... point
+      them elsewhere. A /vN suffix (N >= 2) names major version N of the
+      same repository. "require <path> <version> uses none" (or uses net,
+      fs.read) sets an effect ceiling: calls above it are XO1309.
+  publish [--dir=<dir>] [--check] [--version=vX.Y.Z] [--json]
+      Compare the exports and effects with the previous vX.Y.Z tag and
+      reject a minor or patch release that removes or changes an export
+      or adds an effect to one (XO1310). Without --check it also needs a
+      clean working tree and a module that checks without a workspace,
+      then prints the git tag command to run; it never tags or pushes.
   mod tidy [--dir=<dir>] [--json]
       Require every imported module, drop requirements nothing imports
       (unless they raise a version the graph selects), and rewrite xo.lock
@@ -181,6 +195,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMod(args[1:], stdout, stderr)
 	case "vendor":
 		return runVendor(args[1:], stdout, stderr)
+	case "publish":
+		return runPublish(args[1:], stdout, stderr)
+	case "init":
+		return runInit(args[1:], stdout, stderr)
 	case "parse":
 		return runParse(args[1:], stdout, stderr)
 	case "check":

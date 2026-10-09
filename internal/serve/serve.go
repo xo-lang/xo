@@ -88,6 +88,10 @@ type entry struct {
 	sess  *query.Session
 	files map[string]fileStamp // absolute path -> stamp
 	dirs  []string             // absolute directories walked
+	// works maps each module root to the xo.work file a load would
+	// consult for it ("" for none): a workspace created, removed, or
+	// moved above the directories makes the entry stale.
+	works map[string]string
 }
 
 // maxEntries bounds the cache; the least recently used entry is dropped.
@@ -192,9 +196,16 @@ func (e *entry) snapshot(sess *query.Session) map[string]fileStamp {
 					}
 				}
 				if root := mod.ModRoot(m.Dir); root != "" {
-					if w, _ := mod.FindWork(root); w != nil {
-						if st, err := os.Stat(w.File); err == nil {
-							out[w.File] = fileStamp{st.ModTime(), st.Size()}
+					// the nearest xo.work, used by this module or not:
+					// an edit can add the module to it
+					w := mod.NearestWork(root)
+					if e.works == nil {
+						e.works = map[string]string{}
+					}
+					e.works[root] = w
+					if w != "" {
+						if st, err := os.Stat(w); err == nil {
+							out[w] = fileStamp{st.ModTime(), st.Size()}
 						}
 					}
 				}
@@ -241,6 +252,11 @@ func (e *entry) fresh() bool {
 	}
 	for p := range e.walk() {
 		if _, ok := e.files[p]; !ok {
+			return false
+		}
+	}
+	for root, w := range e.works {
+		if mod.NearestWork(root) != w {
 			return false
 		}
 	}

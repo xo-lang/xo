@@ -1767,6 +1767,9 @@ tidy`, and `xo vendor`; 4.2, 4.3). `xo explain
 | `XO1306` | error | checker | import of a package from a module that xo.mod does not require |
 | `XO1307` | error | modules | vendor/ does not match xo.mod; run `xo vendor` |
 | `XO1308` | error | build | release build (`xo build --ci`) while an xo.work workspace overrides required modules |
+| `XO1309` | error | checker | call into a dependency performs an effect above its ceiling (`require ... uses ...` in xo.mod, `use ... uses ...` in xo.work) |
+| `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
+| `XO1311` | error | publish | `xo publish`: the release cannot be made (not a git repository root, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

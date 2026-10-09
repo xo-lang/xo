@@ -190,6 +190,7 @@ func (c *checker) funcValue(fo *FuncObj, targs []Type, sp token.Span) Type {
 	if !fo.sigDone {
 		return badType
 	}
+	c.checkCeiling(fo, sp)
 	sm := c.freshSubst(fo, nil, targs, sp)
 	ft := subst(fo.sig(), sm).(*Func)
 	if ft.Err != nil && c.isNever(ft.Err) {
@@ -990,6 +991,7 @@ func (c *checker) callFunc(fo *FuncObj, pre *substMap, targs []Type, call *ast.C
 		}
 	}
 	// effects
+	c.checkCeiling(fo, call.Sp)
 	if fo.Declared != nil {
 		c.perform(fo.Declared.subst(sm).performed(call.Sp, fo.DisplayName()))
 	} else {

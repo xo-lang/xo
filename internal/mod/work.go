@@ -18,6 +18,39 @@ type Work struct {
 	File    string
 	Dir     string
 	Modules []*File // the used modules, in file order
+	// Ceilings and Lines are parallel to Modules: the effect ceiling of
+	// a `use <dir> uses ...` line (nil without one), which applies to
+	// calls from the other workspace modules, and the line number.
+	Ceilings []*Ceiling
+	Lines    []int
+}
+
+// NearestWork is the xo.work file that would be consulted for the module
+// in dir: the file named by XO_WORK, or the nearest xo.work at or above
+// dir, whether or not it uses the module. "" when there is none or
+// workspaces are off.
+func NearestWork(dir string) string {
+	if WorkOff() {
+		return ""
+	}
+	if env := os.Getenv("XO_WORK"); env != "" {
+		name, _ := filepath.Abs(env)
+		return name
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for d := abs; ; {
+		if _, err := os.Stat(filepath.Join(d, "xo.work")); err == nil {
+			return filepath.Join(d, "xo.work")
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return ""
+		}
+		d = parent
+	}
 }
 
 // WorkOff reports whether workspaces are turned off: XO_WORK=off (set by
@@ -36,21 +69,9 @@ func FindWork(dir string) (*Work, []*Problem) {
 	if err != nil {
 		return nil, nil
 	}
-	name := ""
-	if env := os.Getenv("XO_WORK"); env != "" {
-		name, _ = filepath.Abs(env)
-	} else {
-		for d := abs; ; {
-			if _, err := os.Stat(filepath.Join(d, "xo.work")); err == nil {
-				name = filepath.Join(d, "xo.work")
-				break
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				return nil, nil
-			}
-			d = parent
-		}
+	name := NearestWork(abs)
+	if name == "" {
+		return nil, nil
 	}
 	w, probs := ReadWork(name)
 	if w == nil {
@@ -91,7 +112,16 @@ func ReadWork(name string) (*Work, []*Problem) {
 		}
 		switch {
 		case f[0] == "xo" && len(f) == 2:
-		case f[0] == "use" && len(f) == 2:
+		case f[0] == "use" && len(f) >= 2:
+			var ceiling *Ceiling
+			if len(f) > 2 {
+				c, err := ParseCeiling(f[2:])
+				if err != nil {
+					probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("malformed effect ceiling on `use %s`: %v", f[1], err), Notes: []string{"`use <dir> uses none` or `use <dir> uses net, fs.read` (decision 0086)"}})
+					continue
+				}
+				ceiling = c
+			}
 			dir := filepath.Clean(filepath.Join(w.Dir, filepath.FromSlash(f[1])))
 			if filepath.IsAbs(f[1]) {
 				dir = filepath.Clean(f[1])
@@ -108,8 +138,10 @@ func ReadWork(name string) (*Work, []*Problem) {
 			}
 			seen[mf.Path] = line
 			w.Modules = append(w.Modules, mf)
+			w.Ceilings = append(w.Ceilings, ceiling)
+			w.Lines = append(w.Lines, line)
 		default:
-			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: "malformed xo.work line: want `xo <edition>` or `use <dir>`"})
+			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: "malformed xo.work line: want `xo <edition>` or `use <dir> [uses <effects|none>]`"})
 		}
 	}
 	return w, probs

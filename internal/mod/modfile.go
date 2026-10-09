@@ -21,11 +21,15 @@ import (
 	"github.com/xo-lang/xo/internal/diag"
 )
 
-// Require is one `require <module path> <version>` line of an xo.mod.
+// Require is one `require <module path> <version> [uses <effects|none>]`
+// line of an xo.mod.
 type Require struct {
 	Path    string
 	Version string
 	Line    int // 1 based line in xo.mod
+	// Ceiling is the effect ceiling of the dependency; nil without a
+	// `uses` clause (no ceiling).
+	Ceiling *Ceiling
 }
 
 // File is the module part of a parsed xo.mod: its path and the Xo
@@ -206,11 +210,20 @@ func Parse(name string, data []byte) (*File, []*Problem) {
 			if len(fields) >= 2 && fields[1] == "go" {
 				continue // `require go <module> <version>` (core 4.4)
 			}
-			if len(fields) != 3 {
-				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: "malformed require: want `require <module path> <version>`"})
+			if len(fields) < 3 {
+				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: "malformed require: want `require <module path> <version> [uses <effects|none>]`"})
 				continue
 			}
 			p, v := fields[1], fields[2]
+			var ceiling *Ceiling
+			if len(fields) > 3 {
+				c, err := ParseCeiling(fields[3:])
+				if err != nil {
+					probs = append(probs, &Problem{Code: diag.ModFileInvalid, Module: p, File: name, Line: line, Msg: fmt.Sprintf("malformed effect ceiling for %s: %v", p, err), Notes: []string{"an effect ceiling is `uses none` or `uses net, fs.read` after the version (decision 0086)"}})
+					continue
+				}
+				ceiling = c
+			}
 			if !ValidPath(p) {
 				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("invalid module path %q in require", p), Notes: []string{"a module path is its location, such as github.com/acme/billing (core 4.2)"}})
 				continue
@@ -219,12 +232,16 @@ func Parse(name string, data []byte) (*File, []*Problem) {
 				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("invalid version %q for %s: want a tag vX.Y.Z", v, p)})
 				continue
 			}
+			if msg := MajorMismatch(p, v); msg != "" {
+				probs = append(probs, &Problem{Code: diag.ModFileInvalid, Module: p, File: name, Line: line, Msg: msg, Notes: []string{"major versions 2 and above live at a module path ending in /vN, such as github.com/acme/billing/v2 (core 4.2)"}})
+				continue
+			}
 			if prev, ok := seen[p]; ok {
 				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("%s is required twice (first on line %d)", p, prev)})
 				continue
 			}
 			seen[p] = line
-			f.Requires = append(f.Requires, Require{Path: p, Version: v, Line: line})
+			f.Requires = append(f.Requires, Require{Path: p, Version: v, Line: line, Ceiling: ceiling})
 		case "replace", "exclude", "retract":
 			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("xo.mod has no `%s` directive", fields[0]), Notes: []string{"point a dependency at local code with an xo.work workspace (decision 0086)"}})
 		}
@@ -249,7 +266,13 @@ func SetRequire(data []byte, path, version string) []byte {
 				if version == "" {
 					lines = append(lines[:i], lines[i+1:]...)
 				} else {
+					// keep an effect ceiling after the version
+					text, _, _ := strings.Cut(l, "//")
+					rest := strings.Fields(text)
 					lines[i] = "require " + path + " " + version
+					if len(rest) > 3 {
+						lines[i] += " " + strings.Join(rest[3:], " ")
+					}
 				}
 				return []byte(strings.Join(lines, "\n"))
 			}

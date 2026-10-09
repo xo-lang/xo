@@ -14,6 +14,7 @@ import (
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gobind"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/parser"
 	"github.com/xo-lang/xo/internal/token"
 	"github.com/xo-lang/xo/std"
@@ -29,8 +30,13 @@ type modRoot struct {
 
 // localName derives a module's local name from an import path (core 4.1):
 // the last segment with `-` replaced by `_`. ok is false when the result is
-// not a valid identifier or is a keyword (XO0602).
+// not a valid identifier or is a keyword (XO0602). A /vN major version
+// suffix of a module path is skipped (`use github.com/acme/billing/v2`
+// binds `billing`).
 func localName(path string) (string, bool) {
+	if mod.IsRemote(path) {
+		path, _ = mod.MajorSuffix(path)
+	}
 	seg := path
 	if i := strings.LastIndexByte(path, '/'); i >= 0 {
 		seg = path[i+1:]

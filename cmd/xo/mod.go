@@ -116,20 +116,31 @@ func runGet(args []string, stdout, stderr io.Writer) int {
 	fl.SetOutput(stderr)
 	dir := fl.String("dir", ".", "a directory of the main module")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
+	update := fl.Bool("u", false, "upgrade to the latest versions (every requirement when no path is given)")
 	if err := fl.Parse(args); err != nil {
-		return 2
-	}
-	if fl.NArg() == 0 {
-		fmt.Fprintln(stderr, "xo get: no module path given (xo get <path>[@version])")
 		return 2
 	}
 	root, ok := modRootOf(*dir, "get", stderr)
 	if !ok {
 		return 2
 	}
+	targets := fl.Args()
+	if len(targets) == 0 && *update {
+		f, probs := mod.ReadFile(root)
+		if len(probs) > 0 {
+			return reportChanges("get", nil, probs, *asJSON, stdout, stderr)
+		}
+		for _, r := range f.Requires {
+			targets = append(targets, r.Path+"@latest")
+		}
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(stderr, "xo get: no module path given (xo get <path>[@version], or xo get -u)")
+		return 2
+	}
 	var changes []mod.Change
 	var probs []*mod.Problem
-	for _, a := range fl.Args() {
+	for _, a := range targets {
 		cs, ps := mod.Get(root, a)
 		changes = append(changes, cs...)
 		probs = append(probs, ps...)
@@ -137,10 +148,12 @@ func runGet(args []string, stdout, stderr io.Writer) int {
 			break
 		}
 	}
-	return reportChanges("get", changes, probs, *asJSON, stdout, stderr)
+	return reportChanges("get", changes, probs, *asJSON, stdout, stderr, upgradeDiffs(root, changes)...)
 }
 
-func reportChanges(cmd string, changes []mod.Change, probs []*mod.Problem, asJSON bool, stdout, stderr io.Writer) int {
+// reportChanges prints requirement changes; diffs are the API and effect
+// changes of upgraded or downgraded modules (xo get).
+func reportChanges(cmd string, changes []mod.Change, probs []*mod.Problem, asJSON bool, stdout, stderr io.Writer, diffs ...apiChanges) int {
 	if changes == nil {
 		changes = []mod.Change{}
 	}
@@ -148,9 +161,11 @@ func reportChanges(cmd string, changes []mod.Change, probs []*mod.Problem, asJSO
 		encodeJSON(stdout, struct {
 			Ok          bool              `json:"ok"`
 			Changes     []mod.Change      `json:"changes"`
+			API         []apiChanges      `json:"api,omitempty"`
 			Diagnostics []diag.Diagnostic `json:"diagnostics"`
-		}{len(probs) == 0, changes, problemDiags(probs)})
+		}{len(probs) == 0, changes, diffs, problemDiags(probs)})
 	} else {
+		defer printAPIChanges(diffs, stdout)
 		printProblems(probs, false, stdout, stderr)
 		for _, c := range changes {
 			switch {

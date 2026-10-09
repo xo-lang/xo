@@ -653,15 +653,34 @@ func (s *Session) Surface(m *check.Module, all bool) []Def {
 }
 
 func (s *Session) surfaceDef(m *check.Module, f *check.File, d ast.Decl, all bool) (Def, bool) {
+	if x, ok := d.(*ast.FnDecl); ok && (x.Pub || all) {
+		if fo := s.Info.FuncOf(m, x); fo != nil {
+			return s.fnDef(fo), true
+		}
+	}
+	return DeclSurface(m.Path, f.Src, d, all)
+}
+
+// DeclSurface is the `xo query api` entry of one parsed declaration of
+// module path, from the syntax tree alone (no type checking): pub ones
+// only unless all is set. Methods are named `Type.name`. `xo publish`
+// and `xo get` compare module versions with it.
+func DeclSurface(path string, src []byte, d ast.Decl, all bool) (Def, bool) {
+	m := struct{ Path string }{path}
+	f := struct{ Src []byte }{src}
 	switch x := d.(type) {
 	case *ast.FnDecl:
 		if !x.Pub && !all {
 			return Def{}, false
 		}
-		if fo := s.Info.FuncOf(m, x); fo != nil {
-			return s.fnDef(fo), true
+		name, kind := x.Name.Name, "fn"
+		if x.Recv != nil {
+			kind = "method"
+			if nt, ok := x.Recv.Type.(*ast.NamedType); ok && len(nt.Path) > 0 {
+				name = nt.Path[len(nt.Path)-1].Name + "." + name
+			}
 		}
-		return Def{Kind: "fn", Name: x.Name.Name, Module: m.Path, Pos: posOf(x.Name.Sp), Signature: format.Decl(x, f.Src, true), Doc: docText(x.Doc)}, true
+		return Def{Kind: kind, Name: name, Module: m.Path, Pos: posOf(x.Name.Sp), Signature: format.Decl(x, f.Src, true), Doc: docText(x.Doc)}, true
 	case *ast.ConstDecl:
 		if !x.Pub && !all {
 			return Def{}, false

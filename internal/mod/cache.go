@@ -67,8 +67,10 @@ func VersionDir(path, version string) string {
 // XO_GIT_BASE is set (a directory or a URL prefix; tests and mirrors), a
 // matching rewrite of XO_GIT_REWRITE ("prefix=url,prefix=url"), or
 // https://<path> (https://<path>.git for github.com, gitlab.com, and
-// bitbucket.org).
+// bitbucket.org). A /vN major suffix is not part of the location: every
+// major version of a module lives in one repository.
 func RepoURL(path string) string {
+	path = repoPath(path)
 	if rw := os.Getenv("XO_GIT_REWRITE"); rw != "" {
 		best, url := "", ""
 		for _, part := range strings.Split(rw, ",") {
@@ -177,7 +179,7 @@ func Versions(path string) ([]string, error) {
 			return nil, err
 		}
 		for _, t := range strings.Fields(string(out)) {
-			if ValidVersion(t) {
+			if ValidVersion(t) && MajorMismatch(path, t) == "" {
 				vs = append(vs, t)
 			}
 		}
