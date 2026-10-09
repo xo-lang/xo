@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+visit 1
+visit 3
+visit 4
+any true
+miss false
+all true
+visit 1
+visit 3
+visit 4
+all stops false
+empty false true
+nested false
+early true
+strs true true
+--- stderr

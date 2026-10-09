@@ -1,0 +1,52 @@
+// `m.values().any(f)` and `.all(f)` with a closure literal run the body
+// inline over the map's live entries on the native backends (no list of
+// the values, no closure call): insertion order, early exit, removed
+// entries skipped, captured bindings, and bodies that do not qualify.
+struct User {
+  id: Int
+  email: Str
+  tags: List[Str]
+}
+
+fn seen(stdio: Stdio, u: User) -> Bool {
+  stdio.println("visit ${u.id}")
+  true
+}
+
+fn main(os: Os) {
+  var users: Map[Int, User] = {}
+  for i in 1..8 {
+    users.put(i, User{id: i, email: "U${i}@X.io", tags: ["t${i}"]})
+  }
+  let _ = users.remove(2)
+  let _ = users.remove(5)
+  users.put(9, User{id: 9, email: "late@x.io", tags: []})
+  let want = "u4@x.io"
+  let stdio = os.stdio
+  let hit = users.values().any(fn(u) { seen(stdio, u) && u.email.to_lower() == want })
+  stdio.println("any ${hit}")
+  let miss = users.values().any(fn(u) { u.email == "nobody" })
+  stdio.println("miss ${miss}")
+  let every = users.values().all(fn(u) { u.id > 0 && !u.tags.is_empty() || u.id == 9 })
+  stdio.println("all ${every}")
+  let stop = users.values().all(fn(u) { seen(stdio, u) && u.id < 4 })
+  stdio.println("all stops ${stop}")
+  let empty: Map[Int, User] = {}
+  stdio.println("empty ${empty.values().any(fn(u) { u.id > 0 })} ${empty.values().all(fn(u) { u.id > 0 })}")
+  let limit = 3
+  let nested = users.values().any(fn(u) {
+    let n = u.tags.map(fn(t) { t.len() }).fold(0, fn(a, b) { a + b })
+    n > limit
+  })
+  stdio.println("nested ${nested}")
+  // not inline (returns early): same answers
+  let early = users.values().any(fn(u) -> Bool {
+    if u.id == 7 {
+      return true
+    }
+    false
+  })
+  stdio.println("early ${early}")
+  let words: Map[Str, Str] = {"a": "x", "b": "y"}
+  stdio.println("strs ${words.values().any(fn(w) { w == "y" })} ${words.values().all(fn(w) { w.len() == 1 })}")
+}

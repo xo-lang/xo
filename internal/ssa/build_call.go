@@ -47,6 +47,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		if strings.HasPrefix(ci.Fn.Module.Path, "native/") {
 			return s.intrinsic(x, ci)
 		}
+		if v, ok := s.mapValuesHof(x, ci); ok {
+			return v
+		}
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
