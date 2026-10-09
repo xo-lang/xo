@@ -62,22 +62,22 @@ func writeRuntime(dir string) (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
-	return arm64AsmOpts(res, root, goos, false)
+	return arm64AsmOpts(res, root, goos, false, false)
 }
 
 // arm64AsmOpts is Arm64Asm, with every heap value marked shared as it is
 // defined when probes is set (Options.ShareProbes).
-func arm64AsmOpts(res *check.Result, root, goos string, probes bool) ([]byte, error) {
-	asm, err := arm64Asm(res, root, goos, false, probes)
+func arm64AsmOpts(res *check.Result, root, goos string, probes, tests bool) ([]byte, error) {
+	asm, err := arm64Asm(res, root, goos, false, probes, tests)
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		return arm64Asm(res, root, goos, true, probes)
+		return arm64Asm(res, root, goos, true, probes, tests)
 	}
 	return asm, err
 }
 
-func arm64Asm(res *check.Result, root, goos string, noInline, probes bool) ([]byte, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root})
+func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests bool) ([]byte, error) {
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests})
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +106,8 @@ func arm64Asm(res *check.Result, root, goos string, noInline, probes bool) ([]by
 // assembled and linked with cc and the C runtime (std/llrt), other
 // arm64 targets are written as assembly only.
 func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*Result, error) {
-	if opts.Mode != gen.Build {
-		return nil, fmt.Errorf("the arm64 backend builds programs only (not tests)")
+	if opts.Mode != gen.Build && opts.Mode != gen.Test {
+		return nil, fmt.Errorf("the arm64 backend builds programs and tests only")
 	}
 	if opts.Race || opts.Holes {
 		return nil, fmt.Errorf("the arm64 backend does not support --race or --holes")
@@ -135,10 +135,13 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	out.Dir = dir
 	out.Asm = map[Target]string{}
 	name := progName(dirs)
+	if opts.Mode == gen.Test {
+		name += ".test"
+	}
 	out.Name = name
 	root := lineRoot(dirs)
 	for _, t := range ts {
-		asm, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes)
+		asm, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes, opts.Mode == gen.Test)
 		if err != nil {
 			return nil, err
 		}

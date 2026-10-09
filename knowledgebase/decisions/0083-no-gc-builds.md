@@ -42,8 +42,9 @@ as stable diagnostics before anything is generated.
    written as a literal in a std/http client call (`get`, `post_json`,
    `new_request`) is XO1201 (TLS, planned; HTTP/2 needs TLS too). A URL
    computed at run time still fails with `ClientErr.Protocol` (std.md
-   4.5). A test build reports each test block until native test builds
-   exist.
+   4.5). In a test build the check is off: a test's requests go to its
+   fake network in process. A test build is checked as the test binary
+   (point 7): every test block and what it reaches.
 5. `xo check --no-gc` checks programs only (the builder starts at
    `main`); a library is not checked by it.
 6. **Native std parity**, one feature at a time, each with a golden
@@ -83,6 +84,43 @@ as stable diagnostics before anything is generated.
      generic instances keyed by checker types
      (`gotchas/ssa-types-that-lower-alike.md`); LLVM accepts an enum
      holding a List of itself (`gotchas/llvm-recursion-through-list.md`).
+7. **Native test binaries** (`xo test --no-gc`; `internal/ssa/
+   build_testmode.go`, `std/llrt/xo_testing.c`, `std/native/testing.xo`,
+   `rttest.xo`, `cmd/xo/nativetest.go`; tests `cmd/xo` TestNoGCTests and
+   TestNoGCTestLeaks):
+   - **One process per test.** The builder makes a function per test
+     block and a main that runs the one XO_TEST names; the harness runs
+     the binary once per test with XO_TEST and XO_TEST_SEED and prints
+     the report std/rt's RunTests prints (`-v`, `-json`, `-run`,
+     `--seed`). A fault fails its test only, with no unwinding: natively
+     faults exit (decision 0070). A failed `expect` writes XO-TEST-FAIL
+     and its message (left and right as Debug text) and exits 1, which
+     works anywhere (helpers, closures, tasks).
+   - **The fakes are the capabilities.** TestOs, FakeNet, MemFs,
+     FakeClock, FakeEnv, FakeStdio, and FakeProc lower to Os, Net, Fs,
+     Clock, Env, Stdio, and Proc; the C runtime runs a test binary in
+     its test world: a virtual clock from 2026-01-01T00:00:00Z whose
+     timers sit on the event loop's heap with no poller, every wait
+     counted, so the deadlock check moves the clock to the next timer
+     when every context waits (a deadlock when none is left); Rand
+     seeded with Go's PCG and std/rt's seeds (the values match the Go
+     backend's); an empty environment and file system; captured standard
+     streams and log records (echoed to the harness as XO-TEST-LOG);
+     FakeNet.listen gives in memory listeners that http.server serves by
+     registering its router, reached in process by the client, and
+     FakeNet.handle, fail, fail_next, requests keep their values as
+     `rt.Any`. testing.run_main runs main below a node of its own that
+     the (reset) stop state cancels, with FakeProc.signal_after as
+     virtual timers.
+   - **Not available yet** (XO1201 or a skip, planned): property tests,
+     `--real` capabilities (`uses` tests are skipped as without
+     `--real`), `--explore`, MemFs writes, stdin, `os.proc.exit` inside
+     run_main (outside it ends the test, as on the Go backend), `os.tasks`.
+     Error traces, fault frames, and the deadlock's list of blocked tasks
+     are not recorded natively, so those reports are shorter.
+   - examples/notes-service passes its 16 tests on arm64 and LLVM with a
+     report identical to the Go backend's (logs and virtual times
+     included), and no allocation is live at exit.
 
 ## Consequences
 - `xo build --backend=llvm` of an unsupported program now fails with

@@ -1,0 +1,47 @@
+// Intrinsics of the test world of native test binaries (decision 0083),
+// implemented in std/llrt/xo_testing.c; imported by std/native/testing.xo,
+// log.xo, and http.xo as `use native/rttest`.
+use native/rt
+
+/// The program runs in the test world (a test binary).
+fn test_on() -> Bool
+
+/// Keeps a log record for testing.logs() and echoes its text line.
+fn test_log(level: Int, msg: Str, keys: List[Str], vals: List[Str], line: Str)
+fn test_log_count() -> Int
+fn test_log_level(i: Int) -> Int
+fn test_log_msg(i: Int) -> Str
+fn test_log_nfields(i: Int) -> Int
+fn test_log_key(i: Int, j: Int) -> Str
+fn test_log_val(i: Int, j: Int) -> Str
+
+/// l is an in memory listener (FakeNet.listen).
+fn test_mem_listener(l: Listener) -> Bool
+/// Serves l with the router r (an Any of http.Router).
+fn test_mem_serve(l: Listener, r: rt.Any)
+fn test_mem_unserve(l: Listener)
+/// Waits until no request runs on l.
+fn test_mem_drain(l: Listener)
+/// Starts a request to host:port: the router serving it, or none.
+fn test_mem_begin(hostport: Str) -> List[rt.Any]
+fn test_mem_end(hostport: Str)
+
+/// FakeNet.handle: method ("" any), URL prefix ("" any), path pattern,
+/// handler (an Any of fn(http.Request) -> http.Response).
+fn test_fake_handle(method: Str, prefix: Str, path: Str, h: rt.Any)
+/// FakeNet.fail and fail_next (once) with the error (an Any of
+/// http.ClientErr).
+fn test_fake_fail(method: Str, prefix: Str, path: Str, err: rt.Any, once: Bool)
+fn test_fake_clear()
+/// The number of handlers (kind 0) or failures (1).
+fn test_fake_count(kind: Int) -> Int
+/// The method (what 0), prefix (1), or path pattern (2) of entry i.
+fn test_fake_text(kind: Int, i: Int, what: Int) -> Str
+/// The handler or the error of entry i.
+fn test_fake_value(kind: Int, i: Int) -> rt.Any
+/// Failure i matched (one of fail_next goes).
+fn test_fake_used(i: Int)
+/// Keeps a request (an Any of http.Request) for FakeNet.requests().
+fn test_record(req: rt.Any)
+fn test_req_count() -> Int
+fn test_req_get(i: Int) -> rt.Any

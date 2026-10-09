@@ -1,0 +1,91 @@
+// std/testing on the native backends (decision 0083). The fakes of a test
+// are the capabilities themselves, run in the C runtime's test world
+// (std/llrt/xo_testing.c); internal/ssa lowers their control methods
+// (build_testmode.go) and testing.run_main. What needs Xo values is here:
+// the captured log records, FakeNet's handlers, failures, and requests.
+use std/http
+use std/log
+use std/sql
+use std/testing
+use native/rt
+use native/rttest
+
+/// The records logged so far in this test, oldest first (std.md 8.6).
+fn logs() -> List[log.Record] {
+  var out: List[log.Record] = []
+  for i in 0..rttest.test_log_count() {
+    var fields: Map[Str, Str] = {}
+    for j in 0..rttest.test_log_nfields(i) {
+      fields.put(rttest.test_log_key(i, j), rttest.test_log_val(i, j))
+    }
+    let level = match rttest.test_log_level(i) {
+      1 => log.Level.Debug
+      2 => log.Level.Info
+      3 => log.Level.Warn
+      _ => log.Level.Error
+    }
+    out.push(log.Record{level: level, msg: rttest.test_log_msg(i), fields: fields})
+  }
+  out
+}
+
+/// An in memory database (std.md 10.6), as sql.memory.
+fn fake_db(schema: Str) -> sql.Db ! sql.SqlErr { sql.memory(schema) }
+
+/// "[METHOD ]scheme://host[:port]/path" split into the method (upper
+/// case, "" for any), the prefix ("" for any), and the path pattern
+/// (std/rt's parseFakePattern).
+fn split_fake(pattern: Str) -> (Str, Str, Str) {
+  var method = ""
+  var p = pattern
+  if let Some(i) = pattern.find(" ") {
+    let head = rt.str_slice(pattern, 0, i)
+    if i > 0 && !head.contains("/") {
+      method = head.to_upper()
+      p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+    }
+  }
+  var prefix = ""
+  var rest = p
+  if let Some(i) = p.find("://") {
+    let after = rt.str_slice(p, i + 3, p.len())
+    match after.find("/") {
+      Some(j) => {
+        prefix = rt.str_slice(p, 0, i + 3 + j)
+        rest = rt.str_slice(p, i + 3 + j, p.len())
+      }
+      None => {
+        prefix = p
+        rest = "/"
+      }
+    }
+  }
+  (method, prefix, rest)
+}
+
+fn fakenet_handle(n: testing.FakeNet, pattern: Str, h: fn(http.Request) -> http.Response) {
+  let (method, prefix, path) = split_fake(pattern)
+  rttest.test_fake_handle(method, prefix, path, rt.any_of(h))
+}
+
+fn fakenet_fail(n: testing.FakeNet, pattern: Str, err: http.ClientErr) {
+  let (method, prefix, path) = split_fake(pattern)
+  rttest.test_fake_fail(method, prefix, path, rt.any_of(err), false)
+}
+
+fn fakenet_fail_next(n: testing.FakeNet, pattern: Str, err: http.ClientErr) {
+  let (method, prefix, path) = split_fake(pattern)
+  rttest.test_fake_fail(method, prefix, path, rt.any_of(err), true)
+}
+
+fn fakenet_clear_failures(n: testing.FakeNet) { rttest.test_fake_clear() }
+
+fn fakenet_requests(n: testing.FakeNet) -> List[http.Request] {
+  var out: List[http.Request] = []
+  for i in 0..rttest.test_req_count() {
+    if let Some(r) = rt.any_get[http.Request](rttest.test_req_get(i)) {
+      out.push(r)
+    }
+  }
+  out
+}

@@ -1,0 +1,9 @@
+--- FAIL: error returned (main.xo:24:1, seed 1)
+    error: Bad(msg: "negative -3")
+--- FAIL: fault (main.xo:29:1, seed 1)
+    fault: index 3 out of range for List of length 0 at main.xo:31:10
+--- FAIL: deadlock (main.xo:34:1, seed 1)
+    fault: XO-F001: deadlock: every task is blocked and no timer is pending
+--- PASS: exit ends the test
+--- PASS: run_main
+FAIL: 2 passed, 3 failed, 0 skipped

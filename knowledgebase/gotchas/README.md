@@ -164,3 +164,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-types-that-lower-alike.md](ssa-types-that-lower-alike.md): `Result[sql.Db, E]` and `Result[native.sql.Db, E]`, or `f[Time]` and `f[Int]`, lowered to distinct or merged SSA types; name lowered types from implementation substituted checker types and key instances by checker types.
 - [llvm-recursion-through-list.md](llvm-recursion-through-list.md): an enum holding a `List` of itself failed only on the LLVM backend (checkType walked into list elements); lists break by-value cycles.
 - [move-check-loop-local-builder.md](move-check-loop-local-builder.md): XO0510 on a StrBuilder declared and frozen inside a loop body; `let` and `var` now reset the binding's moved state.
+- [llrt-new-field-uninitialized.md](llrt-new-field-uninitialized.md): a field added to `xo_listener` was garbage on the socket path (`xo_alloc` does not zero); set new fields at every allocation site and run TestGoldenASan.
+- [native-debug-option-field-names.md](native-debug-option-field-names.md): native Debug printed `Some(v: 2)` where the Go backend prints `Some(2)`; prelude Option and Result print without field names.

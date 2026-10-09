@@ -361,7 +361,8 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 						if fi > 0 {
 							sep = ", "
 						}
-						if !f.From && f.Name != "" {
+						// Option and Result print as Some(x), Ok(x), Err(e) (std/rt option.go)
+						if !f.From && f.Name != "" && !isPreludeNamed(ct, "Option", "Result") {
 							sep += f.Name + ": "
 						}
 						if sep != "" {

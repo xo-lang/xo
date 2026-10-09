@@ -63,6 +63,11 @@ func (s *fn) expr(e ast.Expr) *Value {
 	case *ast.ListLit:
 		t := s.typeOf(x)
 		if t.Kind != KList {
+			// the success value of a failing function's tail (the
+			// context type is the Result)
+			t = s.natOf(x)
+		}
+		if t.Kind != KList {
 			b.unsupported(x, "this list literal")
 			return s.undef(t)
 		}
@@ -388,6 +393,9 @@ func (s *fn) arith(op token.Kind, l, r *Value, at ast.Node) *Value {
 }
 
 func (s *fn) binary(x *ast.BinaryExpr) *Value {
+	if s.isExpectCompare(x) {
+		return s.expectCompare(x)
+	}
 	b := s.b
 	m := b.mod
 	boolT := m.Builtin(KBool)
@@ -451,39 +459,48 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 	} else {
 		r = s.valueAs(x.Y, l.Type)
 	}
-	if o, ok := cmpOps[x.Op]; ok {
-		switch l.Type.Kind {
-		case KInt, KFloat, KBool:
-			return s.compare(o, l, r)
-		case KStr:
-			if o == OpEq || o == OpNe {
-				eq := s.call("str.eq", boolT, "", l, r)
-				if o == OpNe {
-					return s.add(OpNot, boolT, nil, eq)
-				}
-				return eq
-			}
-			c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
-			return s.add(o, boolT, nil, c, s.cint(0))
-		case KStruct, KTuple, KEnum, KList, KUnit:
-			if holdsColl(l.Type, map[*Type]bool{}) && (o == OpEq || o == OpNe) {
-				// a Map or Set is equal to another with the same entries
-				// in any order (decision 0074)
-				eq := s.call(b.eqColl(l.Type), boolT, "", l, r)
-				if o == OpNe {
-					return s.add(OpNot, boolT, nil, eq)
-				}
-				return eq
-			}
-			// structural equality; backends generate a helper per type
-			if o == OpEq || o == OpNe {
-				return s.add(o, boolT, nil, l, r)
-			}
-		}
-		b.unsupported(x, "comparing values of type `"+l.Type.Name+"`")
-		return s.undef(boolT)
+	if _, ok := cmpOps[x.Op]; ok {
+		return s.compareValues(x.Op, l, r, x)
 	}
 	return s.arith(x.Op, l, r, x)
+}
+
+// compareValues lowers the comparison `l op r` of two values of one type.
+func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
+	b := s.b
+	m := b.mod
+	boolT := m.Builtin(KBool)
+	o := cmpOps[op]
+	switch l.Type.Kind {
+	case KInt, KFloat, KBool:
+		return s.compare(o, l, r)
+	case KStr:
+		if o == OpEq || o == OpNe {
+			eq := s.call("str.eq", boolT, "", l, r)
+			if o == OpNe {
+				return s.add(OpNot, boolT, nil, eq)
+			}
+			return eq
+		}
+		c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
+		return s.add(o, boolT, nil, c, s.cint(0))
+	case KStruct, KTuple, KEnum, KList, KUnit:
+		if holdsColl(l.Type, map[*Type]bool{}) && (o == OpEq || o == OpNe) {
+			// a Map or Set is equal to another with the same entries
+			// in any order (decision 0074)
+			eq := s.call(b.eqColl(l.Type), boolT, "", l, r)
+			if o == OpNe {
+				return s.add(OpNot, boolT, nil, eq)
+			}
+			return eq
+		}
+		// structural equality; backends generate a helper per type
+		if o == OpEq || o == OpNe {
+			return s.add(o, boolT, nil, l, r)
+		}
+	}
+	b.unsupported(x, "comparing values of type `"+l.Type.Name+"`")
+	return s.undef(boolT)
 }
 
 // toLowerRecv returns the receiver of a call `s.to_lower()` of the

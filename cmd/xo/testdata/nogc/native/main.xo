@@ -1,0 +1,50 @@
+// Tests whose native report differs from the Go backend's only by what
+// the native backends do not record (error traces, fault frames, the
+// deadlock's blocked list; decision 0083): want.txt is the native report.
+
+enum E {
+  Bad(msg: Str)
+} derive Display
+
+fn may_fail(n: Int) -> Int ! E {
+  if n < 0 {
+    return Err(E.Bad(msg: "negative ${n}"))
+  }
+  n
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  os.stdio.println("args ${args.len()} ${os.env.get("NAME") ?? "none"}")
+  if args.len() > 1 {
+    let _ = may_fail(-1)?
+  }
+}
+
+test "error returned" {
+  let n = may_fail(-3)?
+  expect(n) == 0
+}
+
+test "fault" {
+  let xs: List[Int] = []
+  expect(xs[3]) == 1
+}
+
+test "deadlock" {
+  let ch: Chan[Int] = Chan.new()
+  let v = ch.recv()
+  expect(v) == Some(1)
+}
+
+test "exit ends the test" {
+  os.proc.exit(3)
+}
+
+test "run_main" {
+  os.env.set("NAME", "ada")
+  expect(testing.run_main(main, os, args: ["x"])) == 0
+  expect(testing.run_main(main, os, args: ["x", "y"])) == 1
+  expect(os.stdio.output()) == "args 1 ada\nargs 2 ada\n"
+  expect(os.stdio.errors().starts_with("error: Bad(msg: \"negative -1\")\n"))
+}

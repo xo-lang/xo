@@ -498,12 +498,18 @@ static __thread char *n_fs_path, *n_fs_err;
 // empty list with the status set (std/rt's mapFsErr).
 xo_rlist *xo_fs_read(const char *p, int64_t n) {
 	char *path = cstr_of(p, n);
-	FILE *f = fopen(n == 0 ? "." : path, "rb");
+	FILE *f = NULL;
 	int err = 0;
-	nbuf b = {0};
-	if (!f) {
-		err = errno;
+	if (tw.on) {
+		// a test's MemFs starts empty (std.md 8.3)
+		err = ENOENT;
 	} else {
+		f = fopen(n == 0 ? "." : path, "rb");
+	}
+	nbuf b = {0};
+	if (!f && err == 0) {
+		err = errno;
+	} else if (f) {
 		char t[65536];
 		size_t k;
 		while ((k = fread(t, 1, sizeof t, f)) > 0) {
@@ -566,7 +572,12 @@ xo_rlist *xo_fs_msg(void) {
 }
 
 // xo_env_args is `env.args()`: the arguments after the program name.
+static xo_rlist *tw_env_args(void);
+
 xo_rlist *xo_env_args(void) {
+	if (tw.on) {
+		return tw_env_args();
+	}
 	xo_rlist *l = n_str_list_new(xo_argc);
 	for (int i = 1; i < xo_argc; i++) {
 		l = n_str_list_add(l, xo_argv[i], (int64_t)strlen(xo_argv[i]));

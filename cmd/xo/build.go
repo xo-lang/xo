@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
@@ -268,6 +269,14 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	printDiags(res.Diagnostics, stderr)
 	if res.Failed {
 		return 1
+	}
+	if backend != "go" && backend != "" {
+		// a native test binary: one process per test (decision 0083)
+		if *explore > 0 {
+			fmt.Fprintln(stderr, "xo test: --explore needs the Go backend (native builds use the real scheduler)")
+			return 2
+		}
+		return runNativeTests(res, nativeTestOpts{seed: *seed, run: *run, asJSON: *asJSON, verbose: *verbose, real: *real, timeout: 60 * time.Second}, stdout)
 	}
 	var targs []string
 	if *seed != 0 {

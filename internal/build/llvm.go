@@ -48,8 +48,8 @@ var LLVMOptLevel = "-O2"
 // buildLLVM generates LLVM IR for a checked program and compiles it with
 // clang and the C runtime (std/llrt) into a host binary.
 func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Result, error) {
-	if opts.Mode != gen.Build {
-		return nil, fmt.Errorf("the LLVM backend builds programs only (not tests)")
+	if opts.Mode != gen.Build && opts.Mode != gen.Test {
+		return nil, fmt.Errorf("the LLVM backend builds programs and tests only")
 	}
 	for _, t := range opts.Targets {
 		if t != Host() {
@@ -59,7 +59,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Race || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race or --holes")
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test})
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +88,9 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 		return nil, err
 	}
 	name := progName(dirs)
+	if opts.Mode == gen.Test {
+		name += ".test"
+	}
 	out.Name = name
 	bin := binPath(dir, opts.Out, name, Host(), false)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {

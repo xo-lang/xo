@@ -1,7 +1,11 @@
 package build
 
 import (
+	"fmt"
+	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
@@ -28,23 +32,74 @@ func nativeBackendFor(goos, goarch string) string {
 // XO1201 diagnostics of every construct, std API, or effect of the
 // checked program res that the native backends cannot lower, derived
 // from internal/ssa's builder (ssa.CheckNoGC). res must come from
-// CheckNative. A test build reports each test block, since the native
-// backends build programs only so far.
+// CheckNative. A test build checks the test binary: every test block
+// (and what it reaches) instead of main.
 func CheckNoGC(dirs []string, res *check.Result, mode gen.Mode) []diag.Diagnostic {
-	if mode == gen.Test {
-		var out []diag.Diagnostic
-		for _, m := range res.Modules {
-			for _, f := range m.Files {
-				for _, d := range f.AST.Decls {
-					if td, ok := d.(*ast.TestDecl); ok {
-						out = append(out, ssa.NoGCDiagnostic(&ssa.Error{Feature: "a test block (`xo test`)", Span: td.Span()}))
-					}
+	return ssa.CheckNoGC(res, ssa.Options{LineRoot: lineRoot(dirs), Tests: mode == gen.Test})
+}
+
+// TestInfo describes a test block of a native test binary (the harness
+// runs it with XO_TEST set to Index).
+type TestInfo struct {
+	Index  int
+	Name   string
+	Module string
+	Dir    string // the module's directory: where the test runs
+	Loc    string // file:line:col, relative to the line root
+	// Seed is the pinned seed (`test "x" seed N`), or 0.
+	Seed int64
+	// Uses lists the effects of `test "x" uses ...` (skipped without
+	// --real).
+	Uses []string
+}
+
+// testInfos lists the test blocks of a native test build in the order
+// the test binary numbers them (ssa.TestDecls).
+func testInfos(dirs []string, res *check.Result) []TestInfo {
+	root := lineRoot(dirs)
+	modOf := map[*ast.TestDecl]*check.Module{}
+	for _, m := range res.Modules {
+		for _, f := range m.Files {
+			for _, d := range f.AST.Decls {
+				if td, ok := d.(*ast.TestDecl); ok {
+					modOf[td] = m
 				}
 			}
 		}
-		return out
 	}
-	return ssa.CheckNoGC(res, ssa.Options{LineRoot: lineRoot(dirs)})
+	var out []TestInfo
+	for i, td := range ssa.TestDecls(res) {
+		ti := TestInfo{Index: i, Name: ssa.TestName(td), Loc: relLoc(root, td)}
+		if m := modOf[td]; m != nil {
+			ti.Module = m.Path
+			ti.Dir, _ = filepath.Abs(m.Dir)
+		}
+		if td.Seed != nil {
+			ti.Seed, _ = strconv.ParseInt(td.Seed.Value, 10, 64)
+		}
+		for _, e := range td.Uses {
+			u := e.Name.Name
+			if e.Sub != nil {
+				u += "." + e.Sub.Name
+			}
+			ti.Uses = append(ti.Uses, u)
+		}
+		out = append(out, ti)
+	}
+	return out
+}
+
+// relLoc is `file:line:col` of n with the file relative to root (as the
+// Go backend's test locations).
+func relLoc(root string, n ast.Node) string {
+	sp := n.Span()
+	f := sp.File
+	if abs, err := filepath.Abs(f); err == nil && root != "" {
+		if rel, err := filepath.Rel(root, abs); err == nil && !strings.HasPrefix(rel, "..") {
+			f = rel
+		}
+	}
+	return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(f), sp.Start.Line, sp.Start.Col)
 }
 
 // CheckNoGCDirs checks the modules under dirs as `xo check --no-gc`

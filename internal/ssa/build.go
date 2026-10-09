@@ -109,6 +109,10 @@ type Options struct {
 	// internal/llvm prints them). Empty: positions use the file's base
 	// name.
 	LineRoot string
+	// Tests builds a test binary (decision 0083, build_testmode.go): a
+	// function per test block of the root modules (in TestDecls order)
+	// and a main that runs the one XO_TEST names.
+	Tests bool
 }
 
 // BuildOpts is Build with options.
@@ -132,19 +136,24 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	info := res.Info()
 	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{},
 		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{}}
-	var mainFo *check.FuncObj
-	for _, m := range res.Modules {
-		if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
-			mainFo, b.main = fo, m
-			break
+	if opts.Tests {
+		// a test binary (build_testmode.go): its main runs one test
+		b.buildTests(res)
+	} else {
+		var mainFo *check.FuncObj
+		for _, m := range res.Modules {
+			if fo, ok := m.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
+				mainFo, b.main = fo, m
+				break
+			}
 		}
-	}
-	if mainFo == nil {
-		return b, Errors{{Msg: "no `main` function in the root module"}}
-	}
-	mf := b.declare(mainFo, nil, mainFo.Decl)
-	if et := failErr(mainFo.Err); et != nil {
-		b.mainWrapper(mf, et, mainFo.Decl)
+		if mainFo == nil {
+			return b, Errors{{Msg: "no `main` function in the root module"}}
+		}
+		mf := b.declare(mainFo, nil, mainFo.Decl)
+		if et := failErr(mainFo.Err); et != nil {
+			b.mainWrapper(mf, et, mainFo.Decl)
+		}
 	}
 	for len(b.queue) > 0 {
 		next := b.queue[0]
@@ -291,6 +300,15 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				if len(r.Args) == 2 && check.IsNever(r.Args[1]) {
 					return b.typ(r.Args[0], at)
 				}
+			}
+		}
+		if obj.Module != nil && obj.Module.Path == "std/testing" {
+			if c, ok := testCaps[obj.Name]; ok {
+				// a test's fakes are the capabilities themselves: the C
+				// runtime runs a test binary in its test world
+				// (build_testmode.go)
+				x, _ := m.Named(c, KCap)
+				return x
 			}
 		}
 		// a std type with a native implementation is named as the
@@ -458,6 +476,11 @@ func (b *builder) funcName(fo *check.FuncObj) string {
 	n := fo.DisplayName()
 	if fo.Module != nil && fo.Module != b.main {
 		n = fo.Module.Name + "." + n
+	}
+	if b.opts.Tests && n == "main" {
+		// a test binary's main is the test entry; the program's main is
+		// an ordinary function (testing.run_main calls it)
+		n = "main.main"
 	}
 	return n
 }

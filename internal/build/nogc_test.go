@@ -1,6 +1,7 @@
 package build
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -93,24 +94,26 @@ func TestNoGCCheckAgrees(t *testing.T) {
 	}
 }
 
-// TestNoGCTestBlocks: a test build on a native backend reports each test
-// block (the native backends build programs only so far).
-func TestNoGCTestBlocks(t *testing.T) {
-	res, err := Build([]string{"../../examples/notes-service"}, Options{Mode: gen.Test, NoGC: true})
-	if err != nil {
+// TestNoGCTestCheck: the no GC check of a test build checks the test
+// blocks (a property test is XO1201), and the test list a native test
+// build reports is the test blocks in order.
+func TestNoGCTestCheck(t *testing.T) {
+	dir := t.TempDir()
+	src := "fn twice(n: Int) -> Int { n * 2 }\n\ntest \"plain\" {\n  expect(twice(2)) == 4\n}\n\ntest \"property\" for n: Int {\n  expect(twice(n) % 2) == 0\n}\n\ntest \"pinned\" seed 7 uses clock {\n  expect(true)\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "lib_test.xo"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !res.Failed {
-		t.Fatal("test build on a native backend did not fail")
+	res, ok, err := CheckNative([]string{dir}, false)
+	if err != nil || !ok {
+		t.Fatalf("check: %v %v", err, res.Diagnostics)
 	}
-	n := 0
-	for _, d := range res.Diagnostics {
-		if d.Code == string(diag.NoGCUnavailable) && strings.Contains(d.Message, "test block") {
-			n++
-		}
+	ds := CheckNoGC([]string{dir}, res, gen.Test)
+	if len(ds) != 1 || !strings.Contains(ds[0].Message, "property test") || ds[0].Span.Line != 7 {
+		t.Errorf("want one XO1201 for the property test: %v", ds)
 	}
-	if n == 0 {
-		t.Errorf("no XO1201 for test blocks: %v", res.Diagnostics)
+	tis := testInfos([]string{dir}, res)
+	if len(tis) != 3 || tis[0].Name != "plain" || tis[2].Seed != 7 || len(tis[2].Uses) != 1 || tis[2].Uses[0] != "clock" || tis[1].Loc != "lib_test.xo:7:1" {
+		t.Errorf("tests: %+v", tis)
 	}
 }
 

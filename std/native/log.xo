@@ -5,6 +5,7 @@ use std/log
 use native/rt
 use native/rtjson
 use native/rthttp
+use native/rttest
 
 fn debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, fields) }
 
@@ -35,6 +36,19 @@ fn level_name(level: Int) -> Str {
 
 fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
   if level < rthttp.log_level() {
+    return
+  }
+  if rttest.test_on() {
+    // a test keeps its records (testing.logs, decision 0083)
+    var keys: List[Str] = []
+    var vals: List[Str] = []
+    var line = "${rthttp.log_now(false)} ${level_name(level)} ${msg}"
+    for (k, v) in fields {
+      keys.push(k)
+      vals.push(rt.dyn_text(v))
+      line = line + " ${k}=${rt.dyn_text(v)}"
+    }
+    rttest.test_log(level, msg, keys, vals, line)
     return
   }
   if rthttp.log_json() {

@@ -904,7 +904,12 @@ xo_rstr *xo_rs_append_quote(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 
 // xo_exit flushes standard output and exits with status code (main
 // returned an error: status 1, after "error: <text>" on standard error).
+static void tw_exit(int64_t code);
+
 void xo_exit(int64_t code) {
+	if (tw.on) {
+		tw_exit(code);
+	}
 	xo_flush();
 	exit((int)code);
 }
@@ -1286,3 +1291,6 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // std/crypto and the Rand capability (decision 0083)
 #include "xo_crypto.c"
+
+// the test world of test binaries (decision 0083)
+#include "xo_testing.c"

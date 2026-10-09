@@ -446,6 +446,22 @@ int xo_rc_mark(int64_t *p) {
 }
 
 // ---------------------------------------------------------------------------
+// The test world (decision 0083, xo_testing.c): a test binary run with
+// XO_TEST set runs one test against fakes. tw.on switches the clock,
+// timers, standard streams, environment, network listeners, and random
+// numbers of this file to the test world; the rest of it is in
+// xo_testing.c (included at the end).
+
+static struct {
+	int on;
+	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
+	int vpending;    // every context is blocked: advance the clock (atomic)
+	int in_main;     // testing.run_main is running main
+} tw;
+
+static void tw_write(int err, const char *p, int64_t n);
+
+// ---------------------------------------------------------------------------
 // Output
 
 static char obuf[1 << 16];
@@ -521,12 +537,21 @@ static void flush_pending(void) {
 }
 
 void xo_print(const char *p, int64_t n) {
+	if (tw.on) {
+		tw_write(0, p, n);
+		return;
+	}
 	int l = out_lock();
 	print_locked(p, n);
 	out_unlock(l);
 }
 
 void xo_println(const char *p, int64_t n) {
+	if (tw.on) {
+		tw_write(0, p, n);
+		tw_write(0, "\n", 1);
+		return;
+	}
 	int l = out_lock();
 	print_locked(p, n);
 	print_locked("\n", 1);
@@ -534,6 +559,10 @@ void xo_println(const char *p, int64_t n) {
 }
 
 void xo_eprint(const char *p, int64_t n) {
+	if (tw.on) {
+		tw_write(1, p, n);
+		return;
+	}
 	int l = out_lock();
 	flush_locked();
 	write_all(2, p, (size_t)n);
@@ -541,6 +570,11 @@ void xo_eprint(const char *p, int64_t n) {
 }
 
 void xo_eprintln(const char *p, int64_t n) {
+	if (tw.on) {
+		tw_write(1, p, n);
+		tw_write(1, "\n", 1);
+		return;
+	}
 	int l = out_lock();
 	flush_locked();
 	write_all(2, p, (size_t)n);
@@ -1398,6 +1432,10 @@ static int64_t mono_ns(void) {
 	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
 
+// tnow is the time of timers: monotonic ns, or the virtual clock in the
+// test world.
+static int64_t tnow(void) { return tw.on ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
+
 // xo_shield_begin starts deferred code (core 3.5, decision 0022): it is
 // shielded from cancellation, and on the unwind path the unwinding flag
 // is clear while it runs. The result is the token xo_shield_end takes:
@@ -1918,9 +1956,17 @@ static void dl_check_locked(void) {
 	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
 	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
 	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
+		if (tw.on) {
+			// the test world's clock jumps to the next timer
+			// (tw_kick, after pool.mu is released), or it deadlocked
+			__atomic_store_n(&tw.vpending, 1, __ATOMIC_RELEASE);
+			return;
+		}
 		deadlock();
 	}
 }
+
+static void tw_kick(void);
 
 static void fiber_park(struct xo_fiber *f);
 static void fiber_parking(struct xo_fiber *f);
@@ -1959,6 +2005,11 @@ static xo_worker *root_worker(void) {
 // end does not.
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
+	if (tw.on) {
+		// in the test world nothing outside the program ends a wait:
+		// timers are virtual and fire only when every context waits
+		counted = 1;
+	}
 	if (c->shield) {
 		cancelable = 0;
 	}
@@ -2012,6 +2063,7 @@ static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 				__atomic_fetch_add(&dlk.blocked, 1, __ATOMIC_SEQ_CST);
 				dl_check_locked();
 				unlk(&pool.mu);
+				tw_kick();
 			}
 			STAT(thread_wait);
 			futex_wait(&p->signaled, 0);
@@ -2591,6 +2643,7 @@ static int go_idle(xo_worker *w) {
 	__atomic_fetch_add(&pool.nidle, 1, __ATOMIC_SEQ_CST);
 	dl_check_locked();
 	unlk(&pool.mu);
+	tw_kick();
 	// a push before the count went up was not seen by its wakep: look
 	if (any_work()) {
 		lk(&pool.mu);
@@ -3768,7 +3821,11 @@ static void th_remove(xo_timer *t) {
 
 // timer_add arms t (when, and park or fn, set).
 static void timer_add(xo_timer *t) {
-	ev_start();
+	if (!tw.on) {
+		// the test world has no poller: its timers fire when the
+		// virtual clock moves (tw_kick)
+		ev_start();
+	}
 	pthread_mutex_lock(&ev.mu);
 	if (ev.n == ev.cap) {
 		ev.cap = ev.cap ? ev.cap * 2 : 64;
@@ -3782,7 +3839,7 @@ static void timer_add(xo_timer *t) {
 	th_up(t->idx);
 	int first = t->idx == 0;
 	pthread_mutex_unlock(&ev.mu);
-	if (first) {
+	if (first && !tw.on) {
 		ev_poke();
 	}
 }
@@ -3798,7 +3855,7 @@ static void timer_del(xo_timer *t) {
 
 // deadline is the monotonic time d from now (saturating).
 static int64_t deadline(int64_t d) {
-	int64_t now = mono_ns(), w;
+	int64_t now = tnow(), w;
 	if (__builtin_add_overflow(now, d, &w)) {
 		w = INT64_MAX;
 	}
@@ -4081,7 +4138,12 @@ static void *poller_main(void *arg) {
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
 // ns (the Go backend's representation)
 
+static void tw_sleep_record(int64_t d);
+
 int64_t xo_clock_now(void) {
+	if (tw.on) {
+		return __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE);
+	}
 	struct timespec ts;
 	clock_gettime(CLOCK_REALTIME, &ts);
 	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
@@ -4091,7 +4153,14 @@ int64_t xo_clock_now(void) {
 // (core 7.2), also while it waits.
 void xo_clock_sleep(int64_t d) {
 	xo_ctx *c = ctx();
-	if (canceled(c) || d <= 0) {
+	if (canceled(c)) {
+		return;
+	}
+	if (tw.on) {
+		// FakeClock.sleeps() lists every sleep asked for
+		tw_sleep_record(d);
+	}
+	if (d <= 0) {
 		return;
 	}
 	xo_timer t = {.when = deadline(d), .idx = -1, .park = &c->park};
@@ -4167,6 +4236,7 @@ typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 	char *addr;
+	void *mem; // the test world's in memory listener (xo_testing.c), or NULL
 } xo_listener;
 
 typedef struct {
@@ -4213,9 +4283,18 @@ static void conn_free(void *p) {
 	xo_free(cn);
 }
 
+static void tw_listener_free(xo_listener *l);
+static xo_listener *tw_listen(xo_ctx *c, const char *addr);
+static void tw_listener_close(xo_listener *l);
+static xo_conn *tw_listener_accept(xo_ctx *c, xo_listener *l);
+
 static void listener_free(void *p) {
 	xo_listener *l = p;
-	pd_free(l->pd);
+	if (l->mem) {
+		tw_listener_free(l);
+	} else {
+		pd_free(l->pd);
+	}
 	free(l->addr);
 	xo_free(l);
 }
@@ -4319,6 +4398,12 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 		return xo_h_zero();
 	}
 	char *addr = cstr_of(p, n);
+	if (tw.on) {
+		// FakeNet.listen: an in memory listener (std/rt's memListener)
+		xo_listener *ml = tw_listen(c, addr);
+		free(addr);
+		return ml;
+	}
 	char host[256], port[32];
 	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
 		net_fail(c, 4, "listen tcp %s: address %s: missing port in address", addr, addr);
@@ -4379,6 +4464,7 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 	xo_listener *l = xo_alloc(sizeof(xo_listener));
 	h_init(l, listener_free);
 	l->pd = pd;
+	l->mem = NULL;
 	l->addr = fmt_addr((struct sockaddr *)&ss);
 	net_ok(c);
 	return l;
@@ -4387,7 +4473,13 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 // xo_listener_addr is `l.addr()`, in a list of one.
 xo_rlist *xo_listener_addr(xo_listener *l) { return str_list(l->addr, (int64_t)strlen(l->addr)); }
 
-void xo_listener_close(xo_listener *l) { pd_close(l->pd); }
+void xo_listener_close(xo_listener *l) {
+	if (l->mem) {
+		tw_listener_close(l);
+		return;
+	}
+	pd_close(l->pd);
+}
 
 // conn_new makes a connection handle of a connected socket.
 static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd) {
@@ -4419,6 +4511,9 @@ xo_conn *xo_listener_accept(xo_listener *l) {
 	if (ctx_canceled(c)) {
 		net_fail(c, 5, "");
 		return xo_h_zero();
+	}
+	if (l->mem) {
+		return tw_listener_accept(c, l);
 	}
 	xo_pd *pd = l->pd;
 	if (!pd_begin(pd)) {
@@ -4468,6 +4563,11 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 	xo_ctx *c = ctx();
 	if (ctx_canceled(c)) {
 		net_fail(c, 5, "");
+		return xo_h_zero();
+	}
+	if (tw.on) {
+		// FakeNet.dial: raw connections are not faked (Refused)
+		net_fail(c, 2, "");
 		return xo_h_zero();
 	}
 	char *addr = cstr_of(p, n);
@@ -4773,7 +4873,12 @@ int64_t xo_floor_div(int64_t a, int64_t b) {
 
 // xo_env_get is `env.get(name)`: the value in a list of one, or the empty
 // list when it is not set.
+static xo_rlist *tw_env_get(const char *p, int64_t n);
+
 xo_rlist *xo_env_get(const char *p, int64_t n) {
+	if (tw.on) {
+		return tw_env_get(p, n);
+	}
 	char *name = cstr_of(p, n);
 	const char *v = getenv(name);
 	free(name);
@@ -4818,7 +4923,7 @@ static void arm_grace(void) {
 	if (__atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE)) {
 		return;
 	}
-	int64_t left = stop.grace - (mono_ns() - stop.stop_at);
+	int64_t left = stop.grace - (tnow() - stop.stop_at);
 	if (left <= 0) {
 		stop_cancel();
 		return;
@@ -4835,7 +4940,7 @@ static void stop_signal(void) {
 	stop.signals++;
 	switch (stop.signals) {
 	case 1:
-		stop.stop_at = mono_ns();
+		stop.stop_at = tnow();
 		__atomic_store_n(&stop.requested, 1, __ATOMIC_RELEASE);
 		if (stop.stopping) {
 			xo_chan_close(stop.stopping);
@@ -4950,10 +5055,18 @@ static void *run_main(void *arg) {
 	return NULL;
 }
 
+static void tw_init(void);
+static void tw_cleanup(void);
+
 int main(int argc, char **argv) {
 	xo_argc = argc;
 	xo_argv = argv;
-	xo_signals_init();
+	if (getenv("XO_TEST")) {
+		// a test binary runs one test in the test world (xo_testing.c)
+		tw_init();
+	} else {
+		xo_signals_init();
+	}
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 #ifdef XO_RT_TEST_THREADS
@@ -4988,6 +5101,9 @@ int main(int argc, char **argv) {
 	}
 	pthread_mutex_unlock(&stop.mu);
 	xo_rt_stats();
+	if (tw.on) {
+		tw_cleanup();
+	}
 	if (getenv("XO_LEAKCHECK")) {
 		xo_consts_free();
 		int64_t live, total;

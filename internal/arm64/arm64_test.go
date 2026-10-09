@@ -371,7 +371,6 @@ func TestBuildErrors(t *testing.T) {
 		opts build.Options
 		want string
 	}{
-		{build.Options{Mode: gen.Test, Backend: build.BackendArm64}, "programs only"},
 		{build.Options{Mode: gen.Build, Backend: build.BackendArm64, Targets: []build.Target{{OS: "linux", Arch: "amd64"}}}, "darwin/arm64 and linux/arm64"},
 	}
 	for _, c := range cases {

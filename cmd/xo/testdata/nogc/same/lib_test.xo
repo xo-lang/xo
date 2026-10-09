@@ -1,0 +1,132 @@
+// Tests whose report is the same on the Go backend and on a native test
+// binary (`xo test --no-gc`, decision 0083): expect failures, the virtual
+// clock, the fake environment and streams, seeded Rand, log capture, and
+// the fake network.
+use std/http
+use std/log
+
+fn add(a: Int, b: Int) -> Int { a + b }
+
+test "passes" {
+  expect(add(1, 2)) == 3
+  expect(add(1, 2) > 2)
+}
+
+test "expect compare fails" {
+  expect(add(1, 2)) == 4
+}
+
+test "expect cond fails" {
+  let xs = [1, 2]
+  expect(xs.len() == 3)
+}
+
+test "option compare" {
+  let m: Map[Str, Int] = {"a": 1}
+  expect(m.get("a")) == Some(1)
+  expect(m.get("b")) == Some(2)
+}
+
+test "struct compare" {
+  let r = http.text(201, "x")
+  expect(r.status) == 201
+  expect(r.header("content-type")) == Some("text/plain; charset=utf-8")
+  expect(r.text()) == Some("y")
+}
+
+test "virtual clock" {
+  let t0 = os.clock.now()
+  os.clock.sleep(90s)
+  os.clock.sleep(10ms)
+  expect(os.clock.since(t0)) == 90010ms
+  expect(os.clock.sleeps()) == [90s, 10ms]
+  expect(t0.unix()) == 1767225600
+  os.clock.advance(1h)
+  expect(os.clock.since(t0)) == 3690010ms
+}
+
+test "env and stdio" {
+  expect(os.env.get("HOME")) == None
+  os.env.set("X", "1")
+  expect(os.env.get("X")) == Some("1")
+  expect(os.env.args().len()) == 0
+  os.stdio.println("hello")
+  os.stdio.eprint("err")
+  expect(os.stdio.output()) == "hello\n"
+  expect(os.stdio.errors()) == "err"
+}
+
+test "seeded rand" {
+  let a = os.rand.int(0, 1000000)
+  let b = os.rand.int(0, 1000000)
+  let bs = os.rand.bytes(4)
+  log.info("rand", {"a": a, "b": b, "bytes": bs.to_hex(), "f": os.rand.float() < 1.0})
+  log.debug("not kept")
+  expect(a != b)
+}
+
+test "log capture" {
+  log.warn("careful", {"n": 3})
+  let recs = testing.logs()
+  expect(recs.len()) == 1
+  expect(recs[0].level) == log.Level.Warn
+  expect(recs[0].fields.get("n")) == Some("3")
+  expect(recs[0].msg) == "careful!"
+}
+
+test "fake net handle and fail" {
+  os.net.handle("GET https://api.test/users/{id:Int}", fn(req) { http.text(200, "user ${req.param("id")}") })
+  os.net.handle("https://api.test/users/me", fn(_req) { http.text(200, "me") })
+  os.net.fail_next("GET https://api.test/down", http.ClientErr.Timeout)
+  let c = http.client(os.net)
+  match c.get("https://api.test/users/7") {
+    Ok(resp) => expect(resp.text()) == Some("user 7")
+    Err(e) => expect("${e}") == "ok"
+  }
+  match c.get("https://api.test/users/me") {
+    Ok(resp) => expect(resp.text()) == Some("me")
+    Err(e) => expect("${e}") == "ok"
+  }
+  match c.get("https://api.test/down") {
+    Ok(_) => expect(false)
+    Err(e) => expect("${e}") == "Timeout"
+  }
+  match c.get("https://api.test/down") {
+    Ok(_) => expect(false)
+    Err(e) => expect("${e}") == "Connect(msg: \"no fake handler for GET https://api.test/down\")"
+  }
+  expect(os.net.requests().len()) == 4
+  expect(os.net.requests()[1].path) == "/users/me"
+}
+
+test "select after and tasks on virtual time" {
+  let ch: Chan[Int] = Chan.new()
+  scope s {
+    s.spawn_background(fn() {
+      os.clock.sleep(5s)
+      ch.send(9)
+    })
+    let got = select {
+      v = ch.recv() => v ?? 0
+      after 1s => -1
+    }
+    expect(got) == -1
+    expect(ch.recv()) == Some(9)
+  }
+}
+
+test "a served listener" {
+  let l = os.net.listen(":0")?
+  expect(l.addr()) == "127.0.0.1:49152"
+  var r = http.router()
+  r.handle("GET /hi/{name}", fn(req) { http.text(200, "hi ${req.param("name")}") })
+  let srv = http.server(l, r)
+  let c = http.client(os.net)
+  scope s {
+    s.spawn_background(fn() { srv.serve() })
+    let resp = c.get("http://localhost:49152/hi/ada")?
+    expect(resp.text()) == Some("hi ada")
+    expect(c.get("http://127.0.0.1:49152/nope")?.status) == 404
+  }
+  expect(c.get("http://127.0.0.1:49152/hi/x") is Err(_))
+}

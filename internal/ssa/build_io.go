@@ -29,13 +29,27 @@ var statusTags = map[string]int64{"InvalidAddr": 1, "Refused": 2, "Timeout": 3, 
 func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	b := s.b
 	fo := ci.Fn
-	if fo.Module == nil || !fo.Module.IsPrelude || fo.Recv == nil {
+	if fo.Module == nil || fo.Recv == nil {
+		return nil, false
+	}
+	recvName := fo.Recv.Name
+	if fo.Module.Path == "std/testing" {
+		// a fake of a test is its capability (build_testmode.go)
+		c, ok := testCaps[recvName]
+		if !ok {
+			return nil, false
+		}
+		recvName = c
+	} else if !fo.Module.IsPrelude {
 		return nil, false
 	}
 	m := b.mod
 	intT, boolT, strT, floatT := m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr), m.Builtin(KFloat)
-	key := fo.Recv.Name + "." + fo.Name
-	switch fo.Recv.Name {
+	key := recvName + "." + fo.Name
+	if v, ok := s.testCapCall(x, ci, key); ok {
+		return v, true
+	}
+	switch recvName {
 	case "Clock", "Net", "Listener", "Conn", "Proc", "Env", "Duration", "Time", "Bytes", "Fs", "StrBuilder", "BytesBuilder", "Rand":
 	case "Str":
 		if fo.Name != "bytes" {

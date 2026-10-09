@@ -67,6 +67,9 @@ go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] 
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
+go run ./cmd/xo test --no-gc [-v] [--backend=llvm|arm64] examples/notes-service   # a native test binary, one process per test (XO_TEST=i, XO_TEST_SEED=s) in the C test world; same report as the Go backend
+XO_TEST=3 XO_TEST_SEED=1 <build dir>/arm64/bin/<module>.test   # run one test of a native test binary by hand: exit 0 passes, XO-TEST-FAIL on stdout and exit 1 fails, XO-TEST-LOG lines are its log records
+go test ./cmd/xo -run 'TestNoGCTests|TestNoGCTestLeaks'   # native test reports vs the Go backend (cmd/xo/testdata/nogc, examples/notes-service) and no live allocation at exit (about 30 s)
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
 go run ./cmd/xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N] [--json] [-v] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir...]
 go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of a running Xo program (core 11.4)

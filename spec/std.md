@@ -844,6 +844,14 @@ a `match` (core 2.3).
 `os`, `expect`, and `testing` are predeclared in test blocks; `expect` and
 `testing` are also available anywhere in `_test.xo` files (core 9.2).
 
+Native test binaries (`xo test --no-gc`, decision 0083) give the same fakes:
+the same virtual clock (from 2026-01-01T00:00:00Z), the same seeded `Rand`
+values, in memory listeners on ports from 49152, FakeNet handlers and
+failures, captured streams and log records. Not there yet (XO1201, planned):
+MemFs beyond an empty file system, `set_input` and reading standard input,
+FakeProc's `run` and `on_run`, `os.tasks`, `testing.gen` and property tests;
+`os.proc.exit` ends the test (it passes) except inside `run_main`.
+
 ```
 struct TestOs {
   net: FakeNet

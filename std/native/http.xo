@@ -7,6 +7,7 @@ use std/log
 use std/task
 use native/rt
 use native/rthttp
+use native/rttest
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -432,6 +433,10 @@ fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r} }
 fn (s: Server) addr() -> Str { s.l.addr() }
 
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
+  if rttest.test_mem_listener(s.l) {
+    serve_mem(s.l, s.r)
+    return Ok(())
+  }
   let srv = rthttp.srv_new()
   defer rthttp.srv_close(srv)
   let conns = rthttp.srv_group(srv)
@@ -466,6 +471,19 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   rthttp.srv_wait(srv)
   if !failed.is_empty() {
     return Err(http.HttpErr.Io(msg: failed))
+  }
+}
+
+/// Serves an in memory listener of a test (decision 0083, std/rt's
+/// memListener.serve): requests reach r in process until a stop is
+/// requested (then the requests in flight finish) or the task is
+/// canceled.
+fn serve_mem(l: Listener, r: Router) {
+  rttest.test_mem_serve(l, rt.any_of(r))
+  defer rttest.test_mem_unserve(l)
+  if task.stopping().recv() is None {
+    rttest.test_mem_unserve(l)
+    rttest.test_mem_drain(l)
   }
 }
 
@@ -551,6 +569,9 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
   }
+  if rttest.test_on() {
+    return send_mem(req, raw)
+  }
   var names: List[Str] = []
   var values: List[Str] = []
   for (k, v) in req.headers {
@@ -571,4 +592,79 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     h.put(rthttp.cr_hname(r, i), rthttp.cr_hval(r, i))
   }
   http.Response{status: rthttp.cr_status(r), headers: h, body: rthttp.cr_body(r)}
+}
+
+// ---------------------------------------------------------------------------
+// The fake network of tests (decision 0083, std/rt's fakeNet.dispatch)
+
+/// A client request in a test: the failures of FakeNet.fail and fail_next
+/// first, then the FakeNet.handle handler whose route has the most
+/// literal segments, then the router serving the in memory listener of
+/// the URL's host and port.
+fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
+  rttest.test_record(rt.any_of(req))
+  for i in 0..rttest.test_fake_count(1) {
+    if fake_match(1, i, req, raw) is Some(_) {
+      let e = rt.any_get[http.ClientErr](rttest.test_fake_value(1, i))
+      rttest.test_fake_used(i)
+      if let Some(err) = e {
+        return Err(err)
+      }
+    }
+  }
+  var best = -1
+  var best_lits = -1
+  var best_params: Map[Str, Str] = {}
+  for i in 0..rttest.test_fake_count(0) {
+    if let Some((lits, params)) = fake_match(0, i, req, raw) {
+      if best < 0 || lits > best_lits {
+        best = i
+        best_lits = lits
+        best_params = params
+      }
+    }
+  }
+  if best >= 0 {
+    if let Some(h) = rt.any_get[fn(Request) -> http.Response](rttest.test_fake_value(0, best)) {
+      return h(req with {params: best_params})
+    }
+  }
+  var hp = req.url.host
+  if let Some(p) = req.url.port {
+    hp = hp + ":${p}"
+  }
+  let found = rttest.test_mem_begin(hp)
+  if found.is_empty() {
+    return Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
+  }
+  defer rttest.test_mem_end(hp)
+  match rt.any_get[Router](found[0]) {
+    Some(r) => r.call(req)
+    None => Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
+  }
+}
+
+/// Whether handler (kind 0) or failure (1) i matches the request: the
+/// number of literal segments of its route and the route's parameters.
+fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])? {
+  let method = rttest.test_fake_text(kind, i, 0)
+  if !method.is_empty() && method != req.method.to_upper() {
+    return None
+  }
+  let prefix = rttest.test_fake_text(kind, i, 1)
+  if !prefix.is_empty() && !raw.starts_with(prefix) {
+    return None
+  }
+  let (_, segs) = parse_pattern(rttest.test_fake_text(kind, i, 2))
+  let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
+  let parts = split_path(req.path)
+  var uparts: List[Str] = []
+  for p in parts {
+    uparts.push(rthttp.path_unescape(p))
+  }
+  let (ok, _) = match_parts(route, uparts)
+  if !ok {
+    return None
+  }
+  Some((literals(route), bind_params(route, parts, uparts)))
 }

@@ -371,9 +371,10 @@ func (c *checker) loadImports(m *Module) error {
 			dep, err := c.resolveImport(u.Path)
 			if strings.HasPrefix(u.Path, "native/") {
 				// the intrinsics of the native backends: only their
-				// implementation modules see them (decision 0074)
+				// implementation modules see them (decision 0074), and
+				// other intrinsics modules (an Any of native/rt)
 				dep, err = nil, nil
-				if m.Native {
+				if m.Native || (m.IsStd && strings.HasPrefix(m.Path, "native/")) {
 					dep, err = c.loadNativeRT(u.Path)
 				}
 			}

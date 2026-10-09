@@ -1402,8 +1402,13 @@ needs Go's runtime). A program the check accepts builds; the check is
 derived from the native code generator itself, so the two cannot disagree.
 `xo check --no-gc` runs the same check without building (programs only: a
 module without `main` has nothing to lower). The Go backend's deterministic
-scheduler (`--seed`) and recording (`--record`) are not available on native
-builds (decision 0083).
+scheduler (`--seed` of `xo run`, `--explore`) and recording (`--record`) are
+not available on native builds (decision 0083). `xo test --no-gc` builds a
+native test binary and runs each test in a process of its own against the
+fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
+network) with the same report as the Go backend; a fault fails only its test.
+Property tests and `--real` are not available there yet (XO1201, skipped),
+and error traces and fault frames are not recorded natively.
 
 ### 10.2 Diagnostic format
 

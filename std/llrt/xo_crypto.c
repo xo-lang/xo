@@ -43,7 +43,13 @@ static void cr_entropy(uint8_t *p, int64_t n) {
 	}
 }
 
+static uint64_t tw_rand_u64(void);
+
 static uint64_t cr_rand_u64(void) {
+	if (tw.on) {
+		// a test's Rand is seeded (std/rt's seededRand)
+		return tw_rand_u64();
+	}
 	uint8_t b[8];
 	cr_entropy(b, 8);
 	uint64_t v = 0;
@@ -59,7 +65,14 @@ xo_rstr *xo_rand_bytes(int64_t n, int64_t *len) {
 		n = 0;
 	}
 	xo_rstr *s = rs_new(n);
-	cr_entropy((uint8_t *)s->data, n);
+	if (tw.on) {
+		// seeded: one draw per byte, as std/rt's seededRand.M_bytes
+		for (int64_t i = 0; i < n; i++) {
+			s->data[i] = (char)(uint8_t)tw_rand_u64();
+		}
+	} else {
+		cr_entropy((uint8_t *)s->data, n);
+	}
 	*len = n;
 	return s;
 }

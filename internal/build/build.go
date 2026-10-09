@@ -129,6 +129,9 @@ type Result struct {
 	Info *Info
 	// Warnings are toolchain warnings printed during the build (GoTimersOff).
 	Warnings []string
+	// Tests lists the test blocks of a native test binary (Mode Test on
+	// the llvm or arm64 backend, decision 0083), in their index order.
+	Tests []TestInfo
 }
 
 // Info identifies a program build (core 11.2): a crash bundle and a trace
@@ -250,6 +253,9 @@ func Build(dirs []string, opts Options) (*Result, error) {
 			out.Failed = true
 			return out, nil
 		}
+	}
+	if native && opts.Mode == gen.Test {
+		out.Tests = testInfos(dirs, res)
 	}
 	switch opts.Backend {
 	case "", BackendGo:

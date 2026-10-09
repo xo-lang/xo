@@ -31,6 +31,8 @@ type Options struct {
 	// ShareProbes marks every heap value shared as it is defined
 	// (ssa.InsertShareProbes; a test of the atomic count paths).
 	ShareProbes bool
+	// Tests generates a test binary (ssa.Options.Tests).
+	Tests bool
 }
 
 // Program is the generated IR of one Xo program.
@@ -46,7 +48,7 @@ type Program struct {
 // builds SSA, verifies it, inserts reference counting, verifies again
 // (ownership balance included), and lowers to LLVM IR.
 func Generate(res *check.Result, opts Options) (*Program, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests})
 	if err != nil {
 		return nil, err
 	}

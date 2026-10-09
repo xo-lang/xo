@@ -255,7 +255,6 @@ func TestBuildErrors(t *testing.T) {
 		opts build.Options
 		want string
 	}{
-		{build.Options{Mode: gen.Test, Backend: build.BackendLLVM}, "programs only"},
 		{build.Options{Mode: gen.Build, Backend: build.BackendLLVM, Targets: []build.Target{{OS: "plan9", Arch: "amd64"}}}, "host"},
 		{build.Options{Mode: gen.Build, Backend: "wasm"}, "unknown backend"},
 	}

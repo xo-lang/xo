@@ -22,6 +22,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	if obj := info.TypeCall(x); obj != nil {
 		return s.typeCall(obj, x)
 	}
+	if s.isExpect(x) {
+		return s.expectCall(x)
+	}
 	ci := info.CallOf(x)
 	if ci == nil {
 		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max") {
@@ -55,6 +58,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			return v
 		}
 		s.tlsCheck(x, ci)
+		if v, ok := s.testCall(x, ci); ok {
+			return v
+		}
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
@@ -442,7 +448,8 @@ func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 // still fails there (std.md 4.5).
 func (s *fn) tlsCheck(x *ast.CallExpr, ci *check.Call) {
 	fo := ci.Fn
-	if fo.Module == nil || fo.Module.Path != "std/http" {
+	if fo.Module == nil || fo.Module.Path != "std/http" || s.b.opts.Tests {
+		// a test's requests go to its fake network, in process
 		return
 	}
 	idx := -1
