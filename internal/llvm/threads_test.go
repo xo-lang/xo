@@ -115,6 +115,33 @@ func TestRuntimeTasks(t *testing.T) {
 	runTSan(t, opt, ".")
 }
 
+// TestRuntimeEventLoop runs the C test of fibers and the event loop
+// (decision 0069): thousands of sleepers on few workers, an echo of more
+// data than the socket buffers hold, close and cancellation waking parked
+// socket operations, a refused dial, and select's `after`. Under
+// ThreadSanitizer with one worker and with three, then optimized; every
+// allocation must be freed.
+func TestRuntimeEventLoop(t *testing.T) {
+	src := filepath.Join(rtDir, "testdata", "evloop.c")
+	bin := tsanBuild(t, nil, []string{src})
+	for _, threads := range []string{"1", "3"} {
+		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
+		for _, name := range []string{"timers", "echo", "wakeups"} {
+			if !strings.Contains(out, name+": ok") {
+				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
+			}
+		}
+	}
+	if testing.Short() {
+		return
+	}
+	opt := filepath.Join(t.TempDir(), "opt")
+	if err := build.CompileC([]string{"-O2"}, []string{src}, opt); err != nil {
+		t.Fatal(err)
+	}
+	runTSan(t, opt, ".")
+}
+
 // deepRecursion lists golden programs that recurse hundreds of thousands
 // of calls deep: ThreadSanitizer crashes on them even on one thread (its
 // own limit, checked 2026-10-08), so they run on four threads without it.
