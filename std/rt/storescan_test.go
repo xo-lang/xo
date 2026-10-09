@@ -23,7 +23,7 @@ func churnedUsers(b *testing.B) Map[int64, scanUser] {
 	id := int64(1)
 	put := func() int64 {
 		u := scanUser{id: id, name: "Worker", email: fmt.Sprintf("w%d@x.io", id)}
-		m.M_put(nil, id, u)
+		Map_put(nil, &m, id, u)
 		id++
 		return u.id
 	}
@@ -33,12 +33,12 @@ func churnedUsers(b *testing.B) Map[int64, scanUser] {
 	var live []int64
 	for i := range 2000 {
 		k := put()
-		u := m.M_get(nil, k).V
+		u := Map_get(nil, m, k).V
 		u.nick = Some("nick")
-		m.M_put(nil, k, u)
+		Map_put(nil, &m, k, u)
 		live = append(live, k)
 		if len(live) > 32 || i%3 == 0 {
-			m.M_remove(nil, live[0])
+			Map_remove(nil, &m, live[0])
 			live = live[1:]
 		}
 	}
@@ -77,7 +77,7 @@ func BenchmarkStoreScanValues(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		found := false
-		for _, u := range m.M_values(nil).Items() {
+		for _, u := range List_Items(Map_values(nil, m)) {
 			if u.id != 0 && sameEmail(u.email, "nobody@x.io") {
 				found = true
 				break
@@ -94,7 +94,7 @@ func BenchmarkStoreScanAll(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		found := false
-		for _, u := range m.All() {
+		for _, u := range Map_All(m) {
 			if u.id != 0 && sameEmail(u.email, "nobody@x.io") {
 				found = true
 				break
@@ -145,14 +145,14 @@ func BenchmarkStoreScanChurn(b *testing.B) {
 		if found {
 			b.Fatal("found")
 		}
-		m.M_put(nil, id, scanUser{id: id, name: "Worker", email: "w@x.io"})
-		u := m.M_get(nil, id).V
+		Map_put(nil, &m, id, scanUser{id: id, name: "Worker", email: "w@x.io"})
+		u := Map_get(nil, m, id).V
 		u.nick = Some("nick")
-		m.M_put(nil, id, u)
+		Map_put(nil, &m, id, u)
 		live = append(live, id)
 		id++
 		if len(live) > 32 {
-			m.M_remove(nil, live[0])
+			Map_remove(nil, &m, live[0])
 			live = live[1:]
 		}
 	}
@@ -162,6 +162,6 @@ func BenchmarkStoreScanEachOnly(b *testing.B) {
 	m := churnedUsers(b)
 	for b.Loop() {
 		n := 0
-		m.each(func(_ *mentry[int64, scanUser], _ scanUser) bool { n++; return true })
+		Map_each(&m, func(_ *mentry[int64, scanUser], _ scanUser) bool { n++; return true })
 	}
 }

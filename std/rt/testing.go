@@ -628,7 +628,7 @@ func (f Testing_FakeEnv) M_get(tk *Task, name string) Option[string] {
 	}
 	f.e.mu.Lock()
 	defer f.e.mu.Unlock()
-	return f.e.vars.M_get(nil, name)
+	return Map_get(nil, f.e.vars, name)
 }
 
 func (f Testing_FakeEnv) M_vars(tk *Task) Map[string, string] {
@@ -658,7 +658,7 @@ func (f Testing_FakeEnv) M_home(tk *Task) Result[string, EnvErr] {
 // M_set is `env.set(name, value)`.
 func (f Testing_FakeEnv) M_set(_ *Task, name, value string) {
 	f.e.mu.Lock()
-	f.e.vars.M_put(nil, name, value)
+	Map_put(nil, &f.e.vars, name, value)
 	f.e.mu.Unlock()
 }
 
@@ -1710,7 +1710,7 @@ func (f Testing_MemFs) M_files(*Task) Map[string, Bytes] {
 	var m Map[string, Bytes]
 	for _, name := range names {
 		if rel := f.v.rel(name); f.v.root == "" || strings.HasPrefix(name, f.v.root+"/") {
-			m.M_put(nil, rel, byName[name].data)
+			Map_put(nil, &m, rel, byName[name].data)
 		}
 	}
 	return m

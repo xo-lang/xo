@@ -46,8 +46,8 @@ func Chan_new[T any](_ *Task, capacity int64) *Chan[T] {
 // XoDebug implements Debug.
 func (c *Chan[T]) XoDebug(b *strings.Builder) { b.WriteString("<chan>") }
 
-// takeRecv pops the first unclaimed waiting receiver. Caller holds c.mu.
-func (c *Chan[T]) takeRecv() *recvEnt[T] {
+// Chan_takeRecv pops the first unclaimed waiting receiver. Caller holds c.mu.
+func Chan_takeRecv[T any](c *Chan[T]) *recvEnt[T] {
 	for len(c.recvq) > 0 {
 		r := c.recvq[0]
 		c.recvq = c.recvq[1:]
@@ -58,8 +58,8 @@ func (c *Chan[T]) takeRecv() *recvEnt[T] {
 	return nil
 }
 
-// takeSend pops the first unclaimed waiting sender. Caller holds c.mu.
-func (c *Chan[T]) takeSend() *sendEnt[T] {
+// Chan_takeSend pops the first unclaimed waiting sender. Caller holds c.mu.
+func Chan_takeSend[T any](c *Chan[T]) *sendEnt[T] {
 	for len(c.sendq) > 0 {
 		s := c.sendq[0]
 		c.sendq = c.sendq[1:]
@@ -70,10 +70,10 @@ func (c *Chan[T]) takeSend() *sendEnt[T] {
 	return nil
 }
 
-// trySendLocked sends without blocking; caller holds c.mu and has checked
+// Chan_trySendLocked sends without blocking; caller holds c.mu and has checked
 // that the channel is open.
-func (c *Chan[T]) trySendLocked(x T) bool {
-	if r := c.takeRecv(); r != nil {
+func Chan_trySendLocked[T any](c *Chan[T], x T) bool {
+	if r := Chan_takeRecv(c); r != nil {
 		r.set(x, true)
 		r.w.idx = r.idx
 		r.w.signal()
@@ -86,21 +86,21 @@ func (c *Chan[T]) trySendLocked(x T) bool {
 	return false
 }
 
-// tryRecvLocked receives without blocking; caller holds c.mu.
-func (c *Chan[T]) tryRecvLocked() (T, bool, bool) {
+// Chan_tryRecvLocked receives without blocking; caller holds c.mu.
+func Chan_tryRecvLocked[T any](c *Chan[T]) (T, bool, bool) {
 	if len(c.buf) > 0 {
 		v := c.buf[0]
 		var zero T
 		c.buf[0] = zero
 		c.buf = c.buf[1:]
-		if s := c.takeSend(); s != nil {
+		if s := Chan_takeSend(c); s != nil {
 			c.buf = append(c.buf, s.v)
 			s.w.idx = s.idx
 			s.w.signal()
 		}
 		return v, true, true
 	}
-	if s := c.takeSend(); s != nil {
+	if s := Chan_takeSend(c); s != nil {
 		s.w.idx = s.idx
 		s.w.signal()
 		return s.v, true, true
@@ -113,9 +113,9 @@ func (c *Chan[T]) tryRecvLocked() (T, bool, bool) {
 	return zero, false, false
 }
 
-// M_send is `ch.send(x)`: blocks when full; a cancellation point that
+// Chan_send is `ch.send(x)`: blocks when full; a cancellation point that
 // unwinds. Sending on a closed channel faults.
-func (c *Chan[T]) M_send(tk *Task, x T) {
+func Chan_send[T any](tk *Task, c *Chan[T], x T) {
 	tk.Yield()
 	tk.CheckCancel()
 	c.mu.Lock()
@@ -123,7 +123,7 @@ func (c *Chan[T]) M_send(tk *Task, x T) {
 		c.mu.Unlock()
 		FaultHere("send on a closed channel")
 	}
-	if c.trySendLocked(x) {
+	if Chan_trySendLocked(c, x) {
 		c.mu.Unlock()
 		return
 	}
@@ -139,13 +139,13 @@ func (c *Chan[T]) M_send(tk *Task, x T) {
 	}
 }
 
-// M_recv is `ch.recv()`: None when closed and drained; a cancellation
+// Chan_recv is `ch.recv()`: None when closed and drained; a cancellation
 // point that unwinds.
-func (c *Chan[T]) M_recv(tk *Task) Option[T] {
+func Chan_recv[T any](tk *Task, c *Chan[T]) Option[T] {
 	tk.Yield()
 	tk.CheckCancel()
 	c.mu.Lock()
-	if v, ok, done := c.tryRecvLocked(); done {
+	if v, ok, done := Chan_tryRecvLocked(c); done {
 		c.mu.Unlock()
 		return Option[T]{Some: ok, V: v}
 	}
@@ -160,28 +160,28 @@ func (c *Chan[T]) M_recv(tk *Task) Option[T] {
 	return res
 }
 
-// M_try_send is `ch.try_send(x)`: false if full or closed; never blocks.
-func (c *Chan[T]) M_try_send(tk *Task, x T) bool {
+// Chan_try_send is `ch.try_send(x)`: false if full or closed; never blocks.
+func Chan_try_send[T any](tk *Task, c *Chan[T], x T) bool {
 	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return false
 	}
-	return c.trySendLocked(x)
+	return Chan_trySendLocked(c, x)
 }
 
-// M_try_recv is `ch.try_recv()`: None if empty; never blocks.
-func (c *Chan[T]) M_try_recv(tk *Task) Option[T] {
+// Chan_try_recv is `ch.try_recv()`: None if empty; never blocks.
+func Chan_try_recv[T any](tk *Task, c *Chan[T]) Option[T] {
 	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	v, ok, _ := c.tryRecvLocked()
+	v, ok, _ := Chan_tryRecvLocked(c)
 	return Option[T]{Some: ok, V: v}
 }
 
-// M_close is `ch.close()`. Closing twice has no effect.
-func (c *Chan[T]) M_close(tk *Task) {
+// Chan_close is `ch.close()`. Closing twice has no effect.
+func Chan_close[T any](tk *Task, c *Chan[T]) {
 	tk.Yield()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -190,7 +190,7 @@ func (c *Chan[T]) M_close(tk *Task) {
 	}
 	c.closed = true
 	for {
-		r := c.takeRecv()
+		r := Chan_takeRecv(c)
 		if r == nil {
 			break
 		}
@@ -200,7 +200,7 @@ func (c *Chan[T]) M_close(tk *Task) {
 		r.w.signal()
 	}
 	for {
-		s := c.takeSend()
+		s := Chan_takeSend(c)
 		if s == nil {
 			break
 		}
@@ -210,14 +210,14 @@ func (c *Chan[T]) M_close(tk *Task) {
 	}
 }
 
-// M_len is `ch.len()`: the number of buffered values.
-func (c *Chan[T]) M_len(*Task) int64 {
+// Chan_len is `ch.len()`: the number of buffered values.
+func Chan_len[T any](_ *Task, c *Chan[T]) int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return int64(len(c.buf))
 }
 
-func (c *Chan[T]) hasLiveRecv() bool {
+func Chan_hasLiveRecv[T any](c *Chan[T]) bool {
 	for _, r := range c.recvq {
 		if !r.w.fired.Load() {
 			return true
@@ -226,7 +226,7 @@ func (c *Chan[T]) hasLiveRecv() bool {
 	return false
 }
 
-func (c *Chan[T]) hasLiveSend() bool {
+func Chan_hasLiveSend[T any](c *Chan[T]) bool {
 	for _, s := range c.sendq {
 		if !s.w.fired.Load() {
 			return true
@@ -288,7 +288,7 @@ func SelRecv[T any](s *Select, c *Chan[T]) *Option[T] {
 		try: func() bool {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			v, ok, done := c.tryRecvLocked()
+			v, ok, done := Chan_tryRecvLocked(c)
 			if done {
 				*slot = Option[T]{Some: ok, V: v}
 			}
@@ -297,11 +297,11 @@ func SelRecv[T any](s *Select, c *Chan[T]) *Option[T] {
 		enqueue: func(w *waiter, idx int) bool {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if len(c.buf) > 0 || c.closed || c.hasLiveSend() {
+			if len(c.buf) > 0 || c.closed || Chan_hasLiveSend(c) {
 				if !w.claim() {
 					return true
 				}
-				v, ok, d := c.tryRecvLocked()
+				v, ok, d := Chan_tryRecvLocked(c)
 				if !d {
 					w.fired.Store(false)
 					c.recvq = append(c.recvq, &recvEnt[T]{w: w, idx: idx, set: func(v T, ok bool) { *slot = Option[T]{Some: ok, V: v} }})
@@ -333,18 +333,18 @@ func SelSend[T any](s *Select, c *Chan[T], v T) {
 			if c.closed {
 				FaultHere("send on a closed channel")
 			}
-			return c.trySendLocked(v)
+			return Chan_trySendLocked(c, v)
 		},
 		enqueue: func(w *waiter, idx int) bool {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if c.closed || len(c.buf) < c.cap || c.hasLiveRecv() {
+			if c.closed || len(c.buf) < c.cap || Chan_hasLiveRecv(c) {
 				if !w.claim() {
 					return true
 				}
 				if c.closed {
 					w.shut = true
-				} else if !c.trySendLocked(v) {
+				} else if !Chan_trySendLocked(c, v) {
 					// the receivers in the queue were stale: wait after all
 					w.fired.Store(false)
 					c.sendq = append(c.sendq, &sendEnt[T]{w: w, idx: idx, v: v})

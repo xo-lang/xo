@@ -5,19 +5,19 @@ import "testing"
 func BenchmarkMapPutInt(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < b.N; i++ {
-		m.M_put(nil, int64(i%50000), int64(i))
+		Map_put(nil, &m, int64(i%50000), int64(i))
 	}
 }
 
 func BenchmarkMapGetInt(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
-		s += m.M_get(nil, int64(i%50000)).V
+		s += Map_get(nil, m, int64(i%50000)).V
 	}
 	_ = s
 }
@@ -29,7 +29,7 @@ func BenchmarkMapPutStr(b *testing.B) {
 	}
 	var m Map[string, int64]
 	for i := 0; i < b.N; i++ {
-		m.M_put(nil, keys[i%1000], int64(i))
+		Map_put(nil, &m, keys[i%1000], int64(i))
 	}
 }
 
@@ -62,12 +62,12 @@ func BenchmarkMapUpdate(b *testing.B) {
 func BenchmarkMapIter(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
-		for k, v := range m.All() {
+		for k, v := range Map_All(m) {
 			s += k + v
 		}
 	}
@@ -77,16 +77,16 @@ func BenchmarkMapIter(b *testing.B) {
 func BenchmarkMapCopyMutate(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
 		c := m
 		for k := int64(0); k < 1000; k++ {
-			c.M_put(nil, k, -k)
+			Map_put(nil, &c, k, -k)
 		}
-		s += m.M_get(nil, 7).V + c.M_get(nil, 7).V
+		s += Map_get(nil, m, 7).V + Map_get(nil, c, 7).V
 	}
 	_ = s
 }
@@ -96,16 +96,16 @@ func BenchmarkMapCopyMutate(b *testing.B) {
 func BenchmarkMapGetStale(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	c := m
 	for i := 0; i < 50000; i++ {
-		c.M_put(nil, int64(i), -1)
+		Map_put(nil, &c, int64(i), -1)
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
-		s += m.M_get(nil, int64(i%50000)).V
+		s += Map_get(nil, m, int64(i%50000)).V
 	}
 	_ = s
 }
@@ -115,17 +115,17 @@ func BenchmarkMapGetStale(b *testing.B) {
 func BenchmarkMapGetFork(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	c := m
-	c.M_put(nil, 0, 0)
+	Map_put(nil, &c, 0, 0)
 	for i := 0; i < 50000; i += 2 {
-		m.M_put(nil, int64(i), -1)
+		Map_put(nil, &m, int64(i), -1)
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
-		s += m.M_get(nil, int64(i%50000)).V
+		s += Map_get(nil, m, int64(i%50000)).V
 	}
 	_ = s
 }
@@ -134,7 +134,7 @@ func BenchmarkMapGetFork(b *testing.B) {
 func BenchmarkMapCopy(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	out := make([]Map[int64, int64], 1024)
 	b.ResetTimer()
@@ -147,14 +147,14 @@ func BenchmarkMapCopy(b *testing.B) {
 func BenchmarkMapBranch(b *testing.B) {
 	var m Map[int64, int64]
 	for i := 0; i < 50000; i++ {
-		m.M_put(nil, int64(i), int64(i))
+		Map_put(nil, &m, int64(i), int64(i))
 	}
 	b.ResetTimer()
 	var s int64
 	for i := 0; i < b.N; i++ {
 		c := m
-		c.M_put(nil, int64(50000+i), 1)
-		s += c.M_len(nil)
+		Map_put(nil, &c, int64(50000+i), 1)
+		s += Map_len(nil, c)
 	}
 	_ = s
 }
@@ -162,6 +162,6 @@ func BenchmarkMapBranch(b *testing.B) {
 func BenchmarkSetAdd(b *testing.B) {
 	var s Set[int64]
 	for i := 0; i < b.N; i++ {
-		s.M_add(nil, int64(i%50000))
+		Set_add(nil, &s, int64(i%50000))
 	}
 }

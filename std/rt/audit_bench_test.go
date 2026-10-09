@@ -34,16 +34,16 @@ func orderMap(churn bool) Map[string, int64] {
 	var m Map[string, int64]
 	keys := orderKeys()
 	for i, k := range keys {
-		m.M_put(nil, k, int64(i))
+		Map_put(nil, &m, k, int64(i))
 	}
 	if churn {
 		// overwrites and removals leave the log with garbage, so
 		// iteration takes the slower path that restores insertion order
 		for i := 0; i < orderN; i += 2 {
-			m.M_put(nil, keys[i], int64(-i))
+			Map_put(nil, &m, keys[i], int64(-i))
 		}
 		for i := 1; i < orderN; i += 10 {
-			m.M_remove(nil, keys[i])
+			Map_remove(nil, &m, keys[i])
 		}
 	}
 	return m
@@ -55,7 +55,7 @@ func BenchmarkOrderPutInsertionMap(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var m Map[string, int64]
 		for j, k := range keys {
-			m.M_put(nil, k, int64(j))
+			Map_put(nil, &m, k, int64(j))
 		}
 	}
 }
@@ -77,7 +77,7 @@ func BenchmarkOrderIterInsertion(b *testing.B) {
 		b.Run(fmt.Sprintf("churn=%v", churn), func(b *testing.B) {
 			var s int64
 			for i := 0; i < b.N; i++ {
-				for _, v := range m.All() {
+				for _, v := range Map_All(m) {
 					s += v
 				}
 			}
@@ -94,13 +94,13 @@ func BenchmarkOrderIterSorted(b *testing.B) {
 		b.Run(fmt.Sprintf("churn=%v", churn), func(b *testing.B) {
 			var s int64
 			for i := 0; i < b.N; i++ {
-				keys := make([]string, 0, m.Len())
-				for k := range m.All() {
+				keys := make([]string, 0, Map_Len(m))
+				for k := range Map_All(m) {
 					keys = append(keys, k)
 				}
 				sort.Strings(keys)
 				for _, k := range keys {
-					s += m.M_get(nil, k).V
+					s += Map_get(nil, m, k).V
 				}
 			}
 			_ = s

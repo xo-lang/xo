@@ -48,7 +48,7 @@ func (pg *pkgGen) genJSONStruct(t *check.TypeObj) {
 		pg.p("\tw.ObjStart()")
 		for _, f := range t.Fields {
 			if pg.g.isPatch(f.Type) {
-				pg.p("\tif !v.%s.PatchAbsent() {", goField(f.Name))
+				pg.p("\tif !%sJson_Patch_PatchAbsent(v.%s) {", rt, goField(f.Name))
 				pg.p("\t\tw.Field(%q)\n\t\t%s\n\t}", f.Name, pg.jsonEncValue(t, f, "v."+goField(f.Name)))
 				continue
 			}

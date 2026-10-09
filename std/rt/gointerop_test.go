@@ -10,7 +10,7 @@ import (
 func TestGoMapConversions(t *testing.T) {
 	m := GoMapOf(map[string]int{"b": 2, "a": 1, "c": 3}, func(k string) string { return k }, func(v int) int64 { return int64(v) })
 	var keys []string
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		keys = append(keys, k)
 		if v != map[string]int64{"a": 1, "b": 2, "c": 3}[k] {
 			t.Errorf("value of %s = %d", k, v)
@@ -29,16 +29,16 @@ func TestGoListCopies(t *testing.T) {
 	s := []string{"x", "y"}
 	l := GoListCopy(s)
 	s[0] = "changed"
-	if l.Slice()[0] != "x" {
+	if List_Slice(l)[0] != "x" {
 		t.Error("List shares the Go slice")
 	}
 	out := GoSliceCopy(l)
 	out[1] = "changed"
-	if l.Slice()[1] != "y" {
+	if List_Slice(l)[1] != "y" {
 		t.Error("Go slice shares the List")
 	}
-	if n := GoListOf([]int{1, 2}, func(x int) int64 { return int64(x) * 10 }); n.Slice()[1] != 20 {
-		t.Errorf("GoListOf = %v", n.Slice())
+	if n := GoListOf([]int{1, 2}, func(x int) int64 { return int64(x) * 10 }); List_Slice(n)[1] != 20 {
+		t.Errorf("GoListOf = %v", List_Slice(n))
 	}
 }
 

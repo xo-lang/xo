@@ -4,14 +4,14 @@ import "strings"
 
 // Prelude methods of Option and Result (std.md 2.5).
 
-// M_is_some is `o.is_some()`.
-func (o Option[T]) M_is_some(*Task) bool { return o.Some }
+// Option_is_some is `o.is_some()`.
+func Option_is_some[T any](_ *Task, o Option[T]) bool { return o.Some }
 
-// M_is_none is `o.is_none()`.
-func (o Option[T]) M_is_none(*Task) bool { return !o.Some }
+// Option_is_none is `o.is_none()`.
+func Option_is_none[T any](_ *Task, o Option[T]) bool { return !o.Some }
 
-// M_or_fault is `o.or_fault(msg)`.
-func (o Option[T]) M_or_fault(_ *Task, msg string) T {
+// Option_or_fault is `o.or_fault(msg)`.
+func Option_or_fault[T any](_ *Task, o Option[T], msg string) T {
 	if !o.Some {
 		orFault(msg)
 	}
@@ -42,39 +42,39 @@ func Option_and_then[T, U any](tk *Task, o Option[T], f func(*Task, T) Result[Op
 	return f(tk, o.V).V
 }
 
-// M_is_ok is `r.is_ok()`.
-func (r Result[T, E]) M_is_ok(*Task) bool { return r.Ok }
+// Result_is_ok is `r.is_ok()`.
+func Result_is_ok[T, E any](_ *Task, r Result[T, E]) bool { return r.Ok }
 
-// M_is_err is `r.is_err()`.
-func (r Result[T, E]) M_is_err(*Task) bool { return !r.Ok }
+// Result_is_err is `r.is_err()`.
+func Result_is_err[T, E any](_ *Task, r Result[T, E]) bool { return !r.Ok }
 
-// M_ok is `r.ok()`.
-func (r Result[T, E]) M_ok(*Task) Option[T] {
+// Result_ok is `r.ok()`.
+func Result_ok[T, E any](_ *Task, r Result[T, E]) Option[T] {
 	if r.Ok {
 		return Some(r.V)
 	}
 	return Option[T]{}
 }
 
-// M_err is `r.err()`.
-func (r Result[T, E]) M_err(*Task) Option[E] {
+// Result_err is `r.err()`.
+func Result_err[T, E any](_ *Task, r Result[T, E]) Option[E] {
 	if r.Ok {
 		return Option[E]{}
 	}
 	return Some(r.E)
 }
 
-// M_or_fault is `r.or_fault(msg)`: the message includes the error.
-func (r Result[T, E]) M_or_fault(tk *Task, msg string) T {
+// Result_or_fault is `r.or_fault(msg)`: the message includes the error.
+func Result_or_fault[T, E any](tk *Task, r Result[T, E], msg string) T {
 	if !r.Ok {
 		orFault(msg + ": " + Display(tk, any(r.E)))
 	}
 	return r.V
 }
 
-// M_ignore_err is `r.ignore_err(reason)` (core 2.6): the success value or
+// Result_ignore_err is `r.ignore_err(reason)` (core 2.6): the success value or
 // None; the error and the reason are logged at debug level.
-func (r Result[T, E]) M_ignore_err(tk *Task, reason string) Option[T] {
+func Result_ignore_err[T, E any](tk *Task, r Result[T, E], reason string) Option[T] {
 	if r.Ok {
 		return Some(r.V)
 	}

@@ -54,12 +54,12 @@ func TestArenaReuseAfterRelease(t *testing.T) {
 	a := getArena()
 	m := a.strMap()
 	for i := 0; i < 20; i++ {
-		m.M_put(nil, strings.Repeat("k", i+1), "v")
+		Map_put(nil, &m, strings.Repeat("k", i+1), "v")
 	}
 	tab := m.t
 	vals := Map_values_arena(&Task{arena: a}, m)
-	if vals.M_len(nil) != 20 {
-		t.Fatalf("values len %d", vals.M_len(nil))
+	if List_len(nil, vals) != 20 {
+		t.Fatalf("values len %d", List_len(nil, vals))
 	}
 	a.release()
 	b := getArena()
@@ -70,12 +70,12 @@ func TestArenaReuseAfterRelease(t *testing.T) {
 	if m2.t != tab {
 		t.Fatal("table was not reused")
 	}
-	if m2.M_len(nil) != 0 || m2.M_get(nil, "k").Some {
+	if Map_len(nil, m2) != 0 || Map_get(nil, m2, "k").Some {
 		t.Fatal("reused table is not empty")
 	}
-	m2.M_put(nil, "a", "1")
-	m2.M_put(nil, "b", "2")
-	if got := m2.M_get(nil, "b"); !got.Some || got.V != "2" {
+	Map_put(nil, &m2, "a", "1")
+	Map_put(nil, &m2, "b", "2")
+	if got := Map_get(nil, m2, "b"); !got.Some || got.V != "2" {
 		t.Fatalf("get b = %v", got)
 	}
 	if arr := m2.t.arr.Load(); arr != nil {
@@ -93,11 +93,11 @@ func TestArenaReuseAfterRelease(t *testing.T) {
 func TestArenaHeapCopy(t *testing.T) {
 	a := &Arena{slabs: map[any]arenaSlab{}}
 	h := a.strMap()
-	h.M_put(nil, "X-A", "1")
+	Map_put(nil, &h, "X-A", "1")
 	body := a.readBody(strings.NewReader("hello body"))
 	req := Http_Request{F_headers: h, F_body: body}
 	req.XParams = a.strMap()
-	req.XParams.M_put(nil, "id", "7")
+	Map_put(nil, &req.XParams, "id", "7")
 	cp := req.heapCopy()
 	if cp.F_headers.t == h.t || cp.XParams.t == req.XParams.t {
 		t.Fatal("heap copy shares a table with the arena")
@@ -107,7 +107,7 @@ func TestArenaHeapCopy(t *testing.T) {
 	}
 	a.release()
 	a.readBody(strings.NewReader("XXXXXXXXXX"))
-	if cp.F_body != "hello body" || cp.F_headers.M_get(nil, "X-A").V != "1" || cp.XParams.M_get(nil, "id").V != "7" {
+	if cp.F_body != "hello body" || Map_get(nil, cp.F_headers, "X-A").V != "1" || Map_get(nil, cp.XParams, "id").V != "7" {
 		t.Fatalf("heap copy changed after the arena was reused: %+v", cp)
 	}
 }

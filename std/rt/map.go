@@ -113,7 +113,7 @@ type mtable[K, V any] struct {
 }
 
 // setArr publishes a as t's newest log array. Only the owner calls it.
-func (t *mtable[K, V]) setArr(a []mentry[K, V]) {
+func mtable_setArr[K, V any](t *mtable[K, V], a []mentry[K, V]) {
 	if t.a0 == nil {
 		t.a0 = a
 		t.arr.Store(&t.a0)
@@ -127,7 +127,7 @@ func (t *mtable[K, V]) setArr(a []mentry[K, V]) {
 
 // newIdx is newIndex, using the table's own slots the first time when
 // they are large enough. The caller publishes it.
-func (t *mtable[K, V]) newIdx(keys int) *mindex {
+func mtable_newIdx[K, V any](t *mtable[K, V], keys int) *mindex {
 	if t.ix0.slots == nil && 2*keys <= len(t.slots0) {
 		t.ix0 = mindex{slots: t.slots0[:], shift: 64 - 3}
 		return &t.ix0
@@ -156,7 +156,7 @@ func (ix *mindex) home(h uint64) uint64 { return (h * 0x9e3779b97f4a7c15) >> ix.
 
 // at is the entry at position j of t; es is the viewing header's own
 // entries when t is its table (nil for a parent level).
-func (t *mtable[K, V]) at(es []mentry[K, V], j int) *mentry[K, V] {
+func mtable_at[K, V any](t *mtable[K, V], es []mentry[K, V], j int) *mentry[K, V] {
 	i := j - t.base
 	if i < len(es) {
 		return &es[i]
@@ -166,7 +166,7 @@ func (t *mtable[K, V]) at(es []mentry[K, V], j int) *mentry[K, V] {
 
 // probe returns the slot of k in ix and the position of k's newest own
 // entry, or the empty slot where k would go and -1.
-func (t *mtable[K, V]) probe(es []mentry[K, V], ix *mindex, h uint64, k K) (uint64, int) {
+func mtable_probe[K, V any](t *mtable[K, V], es []mentry[K, V], ix *mindex, h uint64, k K) (uint64, int) {
 	mask := uint64(len(ix.slots) - 1)
 	for p := ix.home(h); ; p = (p + 1) & mask {
 		v := ix.slots[p].Load()
@@ -174,7 +174,7 @@ func (t *mtable[K, V]) probe(es []mentry[K, V], ix *mindex, h uint64, k K) (uint
 			return p, -1
 		}
 		j := t.base + int(v) - 1
-		if e := t.at(es, j); e.h == h && Eq(e.k, k) {
+		if e := mtable_at(t, es, j); e.h == h && Eq(e.k, k) {
 			return p, j
 		}
 	}
@@ -185,12 +185,12 @@ func (t *mtable[K, V]) probe(es []mentry[K, V], ix *mindex, h uint64, k K) (uint
 func mfind[K, V any](t *mtable[K, V], es []mentry[K, V], L int, h uint64, k K) *mentry[K, V] {
 	for t != nil {
 		if L > t.base {
-			_, j := t.probe(es, t.idx.Load(), h, k)
+			_, j := mtable_probe(t, es, t.idx.Load(), h, k)
 			for j >= L {
-				j = int(t.at(es, j).prev)
+				j = int(mtable_at(t, es, j).prev)
 			}
 			if j >= 0 {
-				if e := t.at(es, j); e.org >= 0 {
+				if e := mtable_at(t, es, j); e.org >= 0 {
 					return e
 				}
 				return nil
@@ -201,16 +201,16 @@ func mfind[K, V any](t *mtable[K, V], es []mentry[K, V], L int, h uint64, k K) *
 	return nil
 }
 
-func (m *Map[K, V]) find(h uint64, k K) *mentry[K, V] {
+func Map_find[K, V any](m *Map[K, V], h uint64, k K) *mentry[K, V] {
 	if m.t == nil {
 		return nil
 	}
 	return mfind(m.t, m.es, m.t.base+len(m.es), h, k)
 }
 
-// claim makes m the owner of the next log position of its table: it wins
+// Map_claim makes m the owner of the next log position of its table: it wins
 // the compare and swap, or forks (or flattens) into a table only m has.
-func (m *Map[K, V]) claim() {
+func Map_claim[K, V any](m *Map[K, V]) {
 	t := m.t
 	if t == nil {
 		m.t, m.es = &mtable[K, V]{}, nil
@@ -225,35 +225,35 @@ func (m *Map[K, V]) claim() {
 		return
 	}
 	if t.depth >= maxForkDepth {
-		m.flatten(8)
+		Map_flatten(m, 8)
 	} else {
 		m.t, m.es = &mtable[K, V]{parent: t, base: int(L), depth: t.depth + 1}, nil
 	}
 	m.t.used.Store(int64(m.t.base+len(m.es)) + 1)
 }
 
-// record appends an entry for k (a tombstone when del) at the position m
+// Map_record appends an entry for k (a tombstone when del) at the position m
 // claimed. Only the owner calls it.
-func (m *Map[K, V]) record(h uint64, k K, v V, del bool) {
+func Map_record[K, V any](m *Map[K, V], h uint64, k K, v V, del bool) {
 	t := m.t
 	ix := t.idx.Load()
 	if ix == nil {
-		ix = t.newIdx(4)
+		ix = mtable_newIdx(t, 4)
 		t.idx.Store(ix)
 	}
-	pos, j := t.probe(m.es, ix, h, k)
-	m.write(ix, pos, j, h, k, v, del)
+	pos, j := mtable_probe(t, m.es, ix, h, k)
+	Map_write(m, ix, pos, j, h, k, v, del)
 }
 
-// write is record after the probe: (pos, j) is the result of probing ix,
+// Map_write is record after the probe: (pos, j) is the result of probing ix,
 // t's current index, for k.
-func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del bool) {
+func Map_write[K, V any](m *Map[K, V], ix *mindex, pos uint64, j int, h uint64, k K, v V, del bool) {
 	t := m.t
 	L := t.base + len(m.es)
 	var org int32
 	switch {
 	case j >= 0:
-		org = t.at(m.es, j).org
+		org = mtable_at(t, m.es, j).org
 	case t.parent != nil:
 		if e := mfind(t.parent, nil, t.base, h, k); e != nil {
 			org = e.org
@@ -265,8 +265,8 @@ func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del
 	}
 	if j < 0 {
 		if 2*(t.keys+1) > len(ix.slots) {
-			ix = t.grow(m.es, ix)
-			pos, _ = t.probe(m.es, ix, h, k)
+			ix = mtable_grow(t, m.es, ix)
+			pos, _ = mtable_probe(t, m.es, ix, h, k)
 		}
 		t.keys++
 	}
@@ -289,19 +289,19 @@ func (m *Map[K, V]) write(ix *mindex, pos uint64, j int, h uint64, k K, v V, del
 		a := make([]mentry[K, V], max(4, 2*cap(m.es)))
 		copy(a, m.es)
 		a[i] = e
-		t.setArr(a)
+		mtable_setArr(t, a)
 		m.es = a[:i+1]
 	}
 	ix.slots[pos].Store(int32(i + 1))
 	if t.parent == nil && L+1 > 2*m.n+32 || t.parent != nil && i+1 > m.n+32 {
-		m.flatten(m.n + 32)
+		Map_flatten(m, m.n+32)
 	}
 }
 
 // grow doubles the index, publishing the new one; old readers keep the old
 // index, which still names every key of their views.
-func (t *mtable[K, V]) grow(es []mentry[K, V], ix *mindex) *mindex {
-	nx := t.newIdx(len(ix.slots))
+func mtable_grow[K, V any](t *mtable[K, V], es []mentry[K, V], ix *mindex) *mindex {
+	nx := mtable_newIdx(t, len(ix.slots))
 	mask := uint64(len(nx.slots) - 1)
 	for i := range ix.slots {
 		v := ix.slots[i].Load()
@@ -318,19 +318,19 @@ func (t *mtable[K, V]) grow(es []mentry[K, V], ix *mindex) *mindex {
 	return nx
 }
 
-// flatten replaces m's table with a fresh one holding only its live
+// Map_flatten replaces m's table with a fresh one holding only its live
 // entries, with room for extra more.
-func (m *Map[K, V]) flatten(extra int) {
+func Map_flatten[K, V any](m *Map[K, V], extra int) {
 	if m.t.parent == nil && int64(len(m.es)) == m.t.used.Load() {
-		m.flattenOwned(extra)
+		Map_flattenOwned(m, extra)
 		return
 	}
 	t := &mtable[K, V]{}
 	a := make([]mentry[K, V], m.n+extra+8)
-	ix := t.newIdx(m.n + 1)
+	ix := mtable_newIdx(t, m.n+1)
 	mask := uint64(len(ix.slots) - 1)
 	i := 0
-	m.each(func(e *mentry[K, V], v V) bool {
+	Map_each(m, func(e *mentry[K, V], v V) bool {
 		a[i] = mentry[K, V]{h: e.h, prev: -1, org: int32(i), k: e.k, v: v}
 		p := ix.home(e.h)
 		for ix.slots[p].Load() != 0 {
@@ -341,16 +341,16 @@ func (m *Map[K, V]) flatten(extra int) {
 		return true
 	})
 	t.keys = i
-	t.setArr(a)
+	mtable_setArr(t, a)
 	t.idx.Store(ix)
 	t.used.Store(int64(i))
 	m.t, m.es = t, a[:i]
 }
 
-// flattenOwned is flatten for the owner of a root table: the index names
+// Map_flattenOwned is flatten for the owner of a root table: the index names
 // the newest entry of every key, so no lookups are needed; live entries
 // are placed by their origin.
-func (m *Map[K, V]) flattenOwned(extra int) {
+func Map_flattenOwned[K, V any](m *Map[K, V], extra int) {
 	ix := m.t.idx.Load()
 	byOrg := make([]int32, len(m.es))
 	for i := range ix.slots {
@@ -362,7 +362,7 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 	}
 	t := &mtable[K, V]{}
 	a := make([]mentry[K, V], m.n+extra+8)
-	nx := t.newIdx(m.n + 1)
+	nx := mtable_newIdx(t, m.n+1)
 	mask := uint64(len(nx.slots) - 1)
 	i := 0
 	for _, v := range byOrg {
@@ -379,13 +379,13 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 		i++
 	}
 	t.keys = i
-	t.setArr(a)
+	mtable_setArr(t, a)
 	t.idx.Store(nx)
 	t.used.Store(int64(i))
 	m.t, m.es = t, a[:i]
 }
 
-// eachRoot is each for a view of a root table (no parent) whose log holds
+// Map_eachRoot is each for a view of a root table (no parent) whose log holds
 // overwritten entries or tombstones, without a hash lookup per entry
 // (each did one per origin entry: most of a scan of a churned map). An
 // entry is current when no later entry in the view links to it with prev
@@ -393,7 +393,7 @@ func (m *Map[K, V]) flattenOwned(extra int) {
 // marks the superseded entries, a second places the current live entries
 // by origin, and a third calls f in insertion order. The work arrays are
 // on the stack for logs up to rootStack entries.
-func (m *Map[K, V]) eachRoot(f func(e *mentry[K, V], v V) bool) {
+func Map_eachRoot[K, V any](m *Map[K, V], f func(e *mentry[K, V], v V) bool) {
 	const rootStack = 512
 	es := m.es
 	L := len(es)
@@ -427,9 +427,9 @@ func (m *Map[K, V]) eachRoot(f func(e *mentry[K, V], v V) bool) {
 	}
 }
 
-// each calls f with the origin entry and current value of every live key,
+// Map_each calls f with the origin entry and current value of every live key,
 // in insertion order, until f returns false.
-func (m *Map[K, V]) each(f func(e *mentry[K, V], v V) bool) {
+func Map_each[K, V any](m *Map[K, V], f func(e *mentry[K, V], v V) bool) {
 	t := m.t
 	if t == nil {
 		return
@@ -445,7 +445,7 @@ func (m *Map[K, V]) each(f func(e *mentry[K, V], v V) bool) {
 		return
 	}
 	if t.parent == nil {
-		m.eachRoot(f)
+		Map_eachRoot(m, f)
 		return
 	}
 	var levels [maxForkDepth + 1][]mentry[K, V]
@@ -484,7 +484,7 @@ func mapCap[K, V any](n int) Map[K, V] {
 	}
 	t := &mtable[K, V]{}
 	a := make([]mentry[K, V], n)
-	t.setArr(a)
+	mtable_setArr(t, a)
 	return Map[K, V]{t: t, es: a[:0]}
 }
 
@@ -492,84 +492,86 @@ func mapCap[K, V any](n int) Map[K, V] {
 func MapOf[K, V any](entries ...Tuple2[K, V]) Map[K, V] {
 	var m Map[K, V]
 	for _, e := range entries {
-		m.M_put(nil, e.F0, e.F1)
+		Map_put(nil, &m, e.F0, e.F1)
 	}
 	return m
 }
 
-// M_len is `m.len()`.
-func (m Map[K, V]) M_len(*Task) int64 { return int64(m.n) }
+// Map_len is `m.len()`.
+func Map_len[K, V any](_ *Task, m Map[K, V]) int64 { return int64(m.n) }
 
-// M_is_empty is `m.is_empty()`.
-func (m Map[K, V]) M_is_empty(*Task) bool { return m.n == 0 }
+// Map_is_empty is `m.is_empty()`.
+func Map_is_empty[K, V any](_ *Task, m Map[K, V]) bool { return m.n == 0 }
 
-// M_get is `m.get(k)`.
-func (m Map[K, V]) M_get(_ *Task, k K) Option[V] {
-	if e := m.find(Hash(k), k); e != nil {
+// Map_get is `m.get(k)`.
+func Map_get[K, V any](_ *Task, m Map[K, V], k K) Option[V] {
+	if e := Map_find(&m, Hash(k), k); e != nil {
 		return Some(e.v)
 	}
 	return Option[V]{}
 }
 
-// At is `m[k]`: faults when the key is missing (core 3.6).
-func (m Map[K, V]) At(k K, at string) V {
-	if e := m.find(Hash(k), k); e != nil {
+// Map_At is `m[k]`: faults when the key is missing (core 3.6).
+func Map_At[K, V any](m Map[K, V], k K, at string) V {
+	if e := Map_find(&m, Hash(k), k); e != nil {
 		return e.v
 	}
 	Faultf(at, "key %s not found in Map of length %d", Debug(k), m.n)
 	panic("unreachable")
 }
 
-// M_get_or_fault is `m.get_or_fault(k, reason)`: the value, or a fault naming
+// Map_get_or_fault is `m.get_or_fault(k, reason)`: the value, or a fault naming
 // the key and the reason it was expected to exist (core 3.6).
-func (m Map[K, V]) M_get_or_fault(_ *Task, k K, reason string) V {
-	if e := m.find(Hash(k), k); e != nil {
+func Map_get_or_fault[K, V any](_ *Task, m Map[K, V], k K, reason string) V {
+	if e := Map_find(&m, Hash(k), k); e != nil {
 		return e.v
 	}
 	orFault(fmt.Sprintf("key %s not found in Map of length %d: %s", Debug(k), m.n, reason))
 	panic("unreachable")
 }
 
-// M_contains is `m.contains(k)`.
-func (m Map[K, V]) M_contains(_ *Task, k K) bool { return m.find(Hash(k), k) != nil }
-
-// M_put is `m.put(k, v)` and `m[k] = v` on a `var` map.
-func (m *Map[K, V]) M_put(_ *Task, k K, v V) {
-	h := Hash(k)
-	m.claim()
-	m.record(h, k, v, false)
+// Map_contains is `m.contains(k)`.
+func Map_contains[K, V any](_ *Task, m Map[K, V], k K) bool {
+	return Map_find(&m, Hash(k), k) != nil
 }
 
-// With returns a copy with k set to v.
-func (m Map[K, V]) With(k K, v V) Map[K, V] {
-	m.M_put(nil, k, v)
+// Map_put is `m.put(k, v)` and `m[k] = v` on a `var` map.
+func Map_put[K, V any](_ *Task, m *Map[K, V], k K, v V) {
+	h := Hash(k)
+	Map_claim(m)
+	Map_record(m, h, k, v, false)
+}
+
+// Map_With returns a copy with k set to v.
+func Map_With[K, V any](m Map[K, V], k K, v V) Map[K, V] {
+	Map_put(nil, &m, k, v)
 	return m
 }
 
-// M_remove is `m.remove(k)`.
-func (m *Map[K, V]) M_remove(_ *Task, k K) Option[V] {
+// Map_remove is `m.remove(k)`.
+func Map_remove[K, V any](_ *Task, m *Map[K, V], k K) Option[V] {
 	h := Hash(k)
-	e := m.find(h, k)
+	e := Map_find(m, h, k)
 	if e == nil {
 		return Option[V]{}
 	}
 	v := e.v
-	m.claim()
-	m.record(h, k, v, true)
+	Map_claim(m)
+	Map_record(m, h, k, v, true)
 	return Some(v)
 }
 
-// All iterates the entries in insertion order.
-func (m Map[K, V]) All() iter.Seq2[K, V] {
+// Map_All iterates the entries in insertion order.
+func Map_All[K, V any](m Map[K, V]) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
-		m.each(func(e *mentry[K, V], v V) bool { return yield(e.k, v) })
+		Map_each(&m, func(e *mentry[K, V], v V) bool { return yield(e.k, v) })
 	}
 }
 
-// Pairs iterates the entries as tuples (for `for (k, v) in m`).
-func (m Map[K, V]) Pairs() iter.Seq[Tuple2[K, V]] {
+// Map_Pairs iterates the entries as tuples (for `for (k, v) in m`).
+func Map_Pairs[K, V any](m Map[K, V]) iter.Seq[Tuple2[K, V]] {
 	return func(yield func(Tuple2[K, V]) bool) {
-		for k, v := range m.All() {
+		for k, v := range Map_All(m) {
 			if !yield(Tuple2[K, V]{k, v}) {
 				return
 			}
@@ -577,10 +579,10 @@ func (m Map[K, V]) Pairs() iter.Seq[Tuple2[K, V]] {
 	}
 }
 
-// M_keys is `m.keys()`.
-func (m Map[K, V]) M_keys(*Task) List[K] {
+// Map_keys is `m.keys()`.
+func Map_keys[K, V any](_ *Task, m Map[K, V]) List[K] {
 	out := make([]K, 0, m.n)
-	for k := range m.All() {
+	for k := range Map_All(m) {
 		out = append(out, k)
 	}
 	// the elements stay in the map too (see List)
@@ -588,8 +590,8 @@ func (m Map[K, V]) M_keys(*Task) List[K] {
 	return ListOf(out...)
 }
 
-// Len is the number of keys, for generated code.
-func (m Map[K, V]) Len() int { return m.n }
+// Map_Len is the number of keys, for generated code.
+func Map_Len[K, V any](m Map[K, V]) int { return m.n }
 
 // Map_values_seq iterates `m.values()` in place: the generated code uses
 // it for a loop over `m.values()` (an inlined any, all, find, fold, map,
@@ -602,26 +604,26 @@ func (m Map[K, V]) Len() int { return m.n }
 // it had (with and without marking) were not inlined and cost two
 // allocations per loop.
 func Map_values_seq[K, V any](m Map[K, V]) iter.Seq[V] {
-	return func(yield func(V) bool) { m.eachValue(yield) }
+	return func(yield func(V) bool) { Map_eachValue(&m, yield) }
 }
 
-func (m *Map[K, V]) eachValue(yield func(V) bool) {
-	m.each(func(_ *mentry[K, V], v V) bool { return yield(Own(v)) })
+func Map_eachValue[K, V any](m *Map[K, V], yield func(V) bool) {
+	Map_each(m, func(_ *mentry[K, V], v V) bool { return yield(Own(v)) })
 }
 
 // Map_keys_seq is Map_values_seq for `m.keys()`.
 func Map_keys_seq[K, V any](m Map[K, V]) iter.Seq[K] {
-	return func(yield func(K) bool) { m.eachKey(yield) }
+	return func(yield func(K) bool) { Map_eachKey(&m, yield) }
 }
 
-func (m *Map[K, V]) eachKey(yield func(K) bool) {
-	m.each(func(e *mentry[K, V], _ V) bool { return yield(Own(e.k)) })
+func Map_eachKey[K, V any](m *Map[K, V], yield func(K) bool) {
+	Map_each(m, func(e *mentry[K, V], _ V) bool { return yield(Own(e.k)) })
 }
 
-// M_values is `m.values()`.
-func (m Map[K, V]) M_values(*Task) List[V] {
+// Map_values is `m.values()`.
+func Map_values[K, V any](_ *Task, m Map[K, V]) List[V] {
 	out := make([]V, 0, m.n)
-	for _, v := range m.All() {
+	for _, v := range Map_All(m) {
 		out = append(out, v)
 	}
 	// the elements stay in the map too (see List)
@@ -632,7 +634,7 @@ func (m Map[K, V]) M_values(*Task) List[V] {
 // Map_entries is `m.entries()`.
 func Map_entries[K, V any](_ *Task, m Map[K, V]) List[Tuple2[K, V]] {
 	out := make([]Tuple2[K, V], 0, m.n)
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		out = append(out, Tuple2[K, V]{k, v})
 	}
 	// the elements stay in the map too (see List)
@@ -643,13 +645,13 @@ func Map_entries[K, V any](_ *Task, m Map[K, V]) List[Tuple2[K, V]] {
 // Map_filter is `m.filter(f)`.
 func Map_filter[K, V, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[bool, E]) Result[Map[K, V], E] {
 	var out Map[K, V]
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		r := f(tk, k, v)
 		if !r.Ok {
 			return ErrTr[Map[K, V]](r.E, r.Tr)
 		}
 		if r.V {
-			out.M_put(tk, k, v)
+			Map_put(tk, &out, k, v)
 		}
 	}
 	return Ok[Map[K, V], E](out)
@@ -674,7 +676,7 @@ func Map_update[K, V, R, E any](tk *Task, m *Map[K, V], k K, init V, f func(*Tas
 		// claim below succeeds.
 		L := len(m.es)
 		if ix := t.idx.Load(); ix != nil && t.used.Load() == int64(L) {
-			pos, j := t.probe(m.es, ix, h, k)
+			pos, j := mtable_probe(t, m.es, ix, h, k)
 			v := init
 			if j >= 0 && m.es[j].org >= 0 {
 				v = m.es[j].v
@@ -684,24 +686,24 @@ func Map_update[K, V, R, E any](tk *Task, m *Map[K, V], k K, init V, f func(*Tas
 			r := f(tk, &v)
 			if r.Ok {
 				if m.t == t && len(m.es) == L && t.idx.Load() == ix && t.used.CompareAndSwap(int64(L), int64(L+1)) {
-					m.write(ix, pos, j, h, k, v, false)
+					Map_write(m, ix, pos, j, h, k, v, false)
 				} else {
-					m.claim()
-					m.record(h, k, v, false)
+					Map_claim(m)
+					Map_record(m, h, k, v, false)
 				}
 			}
 			return r
 		}
 	}
 	v := init
-	if s := m.find(h, k); s != nil {
+	if s := Map_find(m, h, k); s != nil {
 		v = s.v
 	}
 	MarkP(&v)
 	r := f(tk, &v)
 	if r.Ok {
-		m.claim()
-		m.record(h, k, v, false)
+		Map_claim(m)
+		Map_record(m, h, k, v, false)
 	}
 	return r
 }
@@ -712,8 +714,8 @@ func (m Map[K, V]) XoEq(o any) bool {
 	if !ok || m.n != p.n {
 		return false
 	}
-	for k, v := range m.All() {
-		s := p.find(Hash(k), k)
+	for k, v := range Map_All(m) {
+		s := Map_find(&p, Hash(k), k)
 		if s == nil || !Eq(v, s.v) {
 			return false
 		}
@@ -724,7 +726,7 @@ func (m Map[K, V]) XoEq(o any) bool {
 // XoHash implements Hash, independent of order.
 func (m Map[K, V]) XoHash() uint64 {
 	h := uint64(0x6d6170)
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		h += mix(Hash(k), Hash(v))
 	}
 	return h
@@ -734,7 +736,7 @@ func (m Map[K, V]) XoHash() uint64 {
 func (m Map[K, V]) XoDebug(b *strings.Builder) {
 	b.WriteByte('{')
 	i := 0
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -755,34 +757,34 @@ type Set[T any] struct {
 func SetOf[T any](xs ...T) Set[T] {
 	var s Set[T]
 	for _, x := range xs {
-		s.M_add(nil, x)
+		Set_add(nil, &s, x)
 	}
 	return s
 }
 
 // Len is `s.len()`.
-func (s Set[T]) M_len(tk *Task) int64 { return s.m.M_len(tk) }
+func Set_len[T any](tk *Task, s Set[T]) int64 { return Map_len(tk, s.m) }
 
 // IsEmpty is `s.is_empty()`.
-func (s Set[T]) M_is_empty(*Task) bool { return s.m.n == 0 }
+func Set_is_empty[T any](_ *Task, s Set[T]) bool { return s.m.n == 0 }
 
 // Contains is `s.contains(x)`.
-func (s Set[T]) M_contains(tk *Task, x T) bool { return s.m.M_contains(tk, x) }
+func Set_contains[T any](tk *Task, s Set[T], x T) bool { return Map_contains(tk, s.m, x) }
 
 // Add is `s.add(x)`.
-func (s *Set[T]) M_add(_ *Task, x T) {
-	if !s.m.M_contains(nil, x) {
-		s.m.M_put(nil, x, Unit{})
+func Set_add[T any](_ *Task, s *Set[T], x T) {
+	if !Map_contains(nil, s.m, x) {
+		Map_put(nil, &s.m, x, Unit{})
 	}
 }
 
 // Remove is `s.remove(x)`.
-func (s *Set[T]) M_remove(tk *Task, x T) bool { return s.m.M_remove(tk, x).Some }
+func Set_remove[T any](tk *Task, s *Set[T], x T) bool { return Map_remove(tk, &s.m, x).Some }
 
-// All iterates the elements in insertion order.
-func (s Set[T]) All() iter.Seq[T] {
+// Set_All iterates the elements in insertion order.
+func Set_All[T any](s Set[T]) iter.Seq[T] {
 	return func(yield func(T) bool) {
-		for k := range s.m.All() {
+		for k := range Map_All(s.m) {
 			if !yield(k) {
 				return
 			}
@@ -791,34 +793,34 @@ func (s Set[T]) All() iter.Seq[T] {
 }
 
 // ToList is `s.to_list()`.
-func (s Set[T]) M_to_list(tk *Task) List[T] { return s.m.M_keys(tk) }
+func Set_to_list[T any](tk *Task, s Set[T]) List[T] { return Map_keys(tk, s.m) }
 
 // Union is `s.union(o)`.
-func (s Set[T]) M_union(_ *Task, o Set[T]) Set[T] {
+func Set_union[T any](_ *Task, s Set[T], o Set[T]) Set[T] {
 	r := s
-	for x := range o.All() {
-		r.M_add(nil, x)
+	for x := range Set_All(o) {
+		Set_add(nil, &r, x)
 	}
 	return r
 }
 
 // Intersect is `s.intersect(o)`.
-func (s Set[T]) M_intersect(_ *Task, o Set[T]) Set[T] {
+func Set_intersect[T any](_ *Task, s Set[T], o Set[T]) Set[T] {
 	var r Set[T]
-	for x := range s.All() {
-		if o.M_contains(nil, x) {
-			r.M_add(nil, x)
+	for x := range Set_All(s) {
+		if Set_contains(nil, o, x) {
+			Set_add(nil, &r, x)
 		}
 	}
 	return r
 }
 
 // Difference is `s.difference(o)`.
-func (s Set[T]) M_difference(_ *Task, o Set[T]) Set[T] {
+func Set_difference[T any](_ *Task, s Set[T], o Set[T]) Set[T] {
 	var r Set[T]
-	for x := range s.All() {
-		if !o.M_contains(nil, x) {
-			r.M_add(nil, x)
+	for x := range Set_All(s) {
+		if !Set_contains(nil, o, x) {
+			Set_add(nil, &r, x)
 		}
 	}
 	return r
@@ -826,30 +828,30 @@ func (s Set[T]) M_difference(_ *Task, o Set[T]) Set[T] {
 
 // SetAny is `s.any(f)`.
 func Set_any[T, E any](tk *Task, s Set[T], f func(*Task, T) Result[bool, E]) Result[bool, E] {
-	return List_any(tk, s.M_to_list(tk), f)
+	return List_any(tk, Set_to_list(tk, s), f)
 }
 
 // SetAll is `s.all(f)`.
 func Set_all[T, E any](tk *Task, s Set[T], f func(*Task, T) Result[bool, E]) Result[bool, E] {
-	return List_all(tk, s.M_to_list(tk), f)
+	return List_all(tk, Set_to_list(tk, s), f)
 }
 
 // SetFilter is `s.filter(f)`.
 func Set_filter[T, E any](tk *Task, s Set[T], f func(*Task, T) Result[bool, E]) Result[Set[T], E] {
-	r := List_filter(tk, s.M_to_list(tk), f)
+	r := List_filter(tk, Set_to_list(tk, s), f)
 	if !r.Ok {
 		return ErrTr[Set[T]](r.E, r.Tr)
 	}
-	return Ok[Set[T], E](r.V.M_to_set(tk))
+	return Ok[Set[T], E](List_to_set(tk, r.V))
 }
 
 // SetMap is `s.map(f)`.
 func Set_map[T, U, E any](tk *Task, s Set[T], f func(*Task, T) Result[U, E]) Result[Set[U], E] {
-	r := List_map(tk, s.M_to_list(tk), f)
+	r := List_map(tk, Set_to_list(tk, s), f)
 	if !r.Ok {
 		return ErrTr[Set[U]](r.E, r.Tr)
 	}
-	return Ok[Set[U], E](r.V.M_to_set(tk))
+	return Ok[Set[U], E](List_to_set(tk, r.V))
 }
 
 // XoEq implements Eq: the same elements, in any order.
@@ -865,7 +867,7 @@ func (s Set[T]) XoHash() uint64 { return s.m.XoHash() ^ 0x736574 }
 func (s Set[T]) XoDebug(b *strings.Builder) {
 	b.WriteString("#{")
 	i := 0
-	for x := range s.All() {
+	for x := range Set_All(s) {
 		if i > 0 {
 			b.WriteString(", ")
 		}

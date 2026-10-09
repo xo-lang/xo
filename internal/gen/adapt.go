@@ -14,6 +14,8 @@ package gen
 //     concrete instantiation of it seen in the program), and
 //   - every concrete user type that appears in generated code (a value
 //     reaching generic code has a concrete type that some code names),
+//     and every instantiation of a std type whose methods are runtime
+//     functions (List, Map, ...: rtFuncMethods), which has no Go methods,
 //
 // and generates, into package main, an adapter and an rt.RegAdapter call
 // for every pair that type checks and needs one. rt.Iface consults the
@@ -55,14 +57,16 @@ func (g *gen) initAdapt() {
 	}
 }
 
-// noteType records a concrete user type named in generated code.
+// noteType records a concrete user type named in generated code, or a std
+// type whose methods are runtime functions (rtFuncMethods): it has no Go
+// methods, so it satisfies an Xo interface only through an adapter.
 func (pg *pkgGen) noteType(n *check.Named) {
 	ad := &pg.g.ad
 	if pg.noAdapt || ad.kp == nil || ad.seen[n] {
 		return
 	}
 	ad.seen[n] = true
-	if n.Obj.Module == nil || n.Obj.Module.IsStd {
+	if n.Obj.Module == nil || n.Obj.Module.IsStd && !rtFuncMethods(n.Obj) {
 		return
 	}
 	var t check.Type = n

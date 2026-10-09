@@ -202,7 +202,7 @@ func (List[T]) XoGenAny(g *GenRand) any {
 // XoGenAny generates a set.
 func (Set[T]) XoGenAny(g *GenRand) any {
 	l := List[T]{}.XoGenAny(g).(List[T])
-	return l.M_to_set(nil)
+	return List_to_set(nil, l)
 }
 
 // XoGenAny generates a map.
@@ -211,7 +211,7 @@ func (Map[K, V]) XoGenAny(g *GenRand) any {
 	defer g.Leave()
 	var m Map[K, V]
 	for i, n := 0, g.size(); i < n; i++ {
-		m.M_put(nil, Gen[K](g), Gen[V](g))
+		Map_put(nil, &m, Gen[K](g), Gen[V](g))
 	}
 	return m
 }

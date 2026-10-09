@@ -64,7 +64,7 @@ func sqlDecodeAll[T any](tk *Task, rows Result[List[Sql_Row], Sql_SqlErr]) Resul
 	if !rows.Ok {
 		return Err[List[T]](rows.E)
 	}
-	xs := rows.V.Slice()
+	xs := List_Slice(rows.V)
 	out := make([]T, len(xs))
 	for i, r := range xs {
 		v := sqlDecode[T](tk, r)

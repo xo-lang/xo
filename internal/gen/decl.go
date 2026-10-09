@@ -466,6 +466,27 @@ func (pg *pkgGen) sigTail(fo *check.FuncObj) string {
 // methodStyle tells how a method is lowered: as a Go method on the
 // receiver type, or as a top level function `<Type>_M_<name>` (user) /
 // `<Type>_<name>` (std) taking the receiver first.
+// rtFuncMethods reports whether the std generic type o keeps its methods
+// as package level functions in the runtime (`rt.List_len[T](tk, xs)`):
+// every Go package that names an instantiation of a generic type compiles
+// all of the type's methods, so these types carry only the protocol
+// methods that runtime code reaches through interfaces (XoEq, XoHash,
+// XoDebug, XoJsonEnc, ...). See
+// knowledgebase/gotchas/go-generic-method-sets-per-package.md.
+func rtFuncMethods(o *check.TypeObj) bool {
+	if o == nil || o.Module == nil || !o.Module.IsStd {
+		return false
+	}
+	if o.Module.IsPrelude {
+		switch o.Name {
+		case "List", "Map", "Set", "Option", "Result", "Chan", "Secret":
+			return true
+		}
+		return false
+	}
+	return o.Module.Path == "std/json" && o.Name == "Patch"
+}
+
 func methodIsGoMethod(fo *check.FuncObj) bool {
 	if fo.Iface {
 		return len(typeParams(ownTParams(fo))) == 0
@@ -474,6 +495,9 @@ func methodIsGoMethod(fo *check.FuncObj) bool {
 		return false
 	}
 	if len(typeParams(ownTParams(fo))) > 0 {
+		return false
+	}
+	if fo.Module.IsStd && rtFuncMethods(fo.Recv) && fo.Name != "display" && fo.Name != "debug" {
 		return false
 	}
 	if fo.Module.IsStd && fo.Recv.Module.IsPrelude {

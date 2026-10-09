@@ -823,7 +823,7 @@ func (realEnv) vars() Map[string, string] {
 	sort.Strings(env)
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
-		m.M_put(nil, k, v)
+		Map_put(nil, &m, k, v)
 	}
 	return m
 }

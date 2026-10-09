@@ -217,7 +217,7 @@ func Sql_bool(_ *Task, b bool) Sql_SqlValue {
 func Sql_time(_ *Task, t Time) Sql_SqlValue { return Sql_SqlValue{Tag: 6, P: Sql_SqlValue_At{F_t: t}} }
 
 func sqlArgs(args List[Sql_SqlValue]) []any {
-	xs := args.Slice()
+	xs := List_Slice(args)
 	out := make([]any, len(xs))
 	for i, x := range xs {
 		switch x.Tag {

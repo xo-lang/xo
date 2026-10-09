@@ -130,7 +130,7 @@ func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, str
 				params = mapCap[string, string](r.params())
 			}
 		}
-		params.M_put(nil, k, v)
+		Map_put(nil, &params, k, v)
 	}
 	badInt := ""
 	for i, s := range r.segs {
@@ -199,7 +199,7 @@ func Http_Router_handle[E any](_ *Task, r *Http_Router, pattern string, h func(*
 		}
 		return errorResponse(tk, any(res.E), res.Tr)
 	}
-	r.routes.M_push(nil, rt)
+	List_push(nil, &r.routes, rt)
 }
 
 // errorResponse maps a handler error (std.md 4.2).
@@ -222,7 +222,7 @@ func errorResponse(tk *Task, e any, tr *Trace) Http_Response {
 
 func jsonError(tk *Task, status int64, msg string) Http_Response {
 	m := mapCap[string, string](1)
-	m.M_put(tk, "error", msg)
+	Map_put(tk, &m, "error", msg)
 	return Http_json(tk, status, m)
 }
 
@@ -231,7 +231,7 @@ func jsonError(tk *Task, status int64, msg string) Http_Response {
 // response like a handler's (std.md 4.2); the middleware registered
 // before it see that response.
 func Http_Router_wrap[E any](_ *Task, r *Http_Router, m func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, E]) {
-	r.mws.M_push(nil, func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+	List_push(nil, &r.mws, func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
 		res := m(tk, req, next)
 		if res.Ok {
 			return Ok[Http_Response, Never](res.V)
@@ -254,7 +254,7 @@ func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
 			// the middleware sees the handler's response and may keep it
 			nr.h = noArenaResp(chain(mws, sr.h))
 		}
-		r.routes.M_push(nil, nr)
+		List_push(nil, &r.routes, nr)
 	}
 }
 
@@ -367,7 +367,7 @@ func isolateHandler(tk *Task, f func(*Task) Http_Response) (resp Http_Response) 
 
 // M_param is `req.param(name)`: faults if the pattern has no such segment.
 func (r Http_Request) M_param(_ *Task, name string) string {
-	v := r.XParams.M_get(nil, name)
+	v := Map_get(nil, r.XParams, name)
 	if !v.Some {
 		FaultHere("request has no path parameter `%s`", name)
 	}
@@ -386,7 +386,7 @@ func (r Http_Request) M_param_int(tk *Task, name string) int64 {
 
 // M_query is `req.query(name)`.
 func (r Http_Request) M_query(_ *Task, name string) Option[string] {
-	return r.F_url.F_query.M_get(nil, name)
+	return Map_get(nil, r.F_url.F_query, name)
 }
 
 // M_header is `req.header(name)`, case insensitive.
@@ -395,10 +395,10 @@ func (r Http_Request) M_header(_ *Task, name string) Option[string] {
 }
 
 func headerGet(h Map[string, string], name string) Option[string] {
-	if v := h.M_get(nil, textproto.CanonicalMIMEHeaderKey(name)); v.Some {
+	if v := Map_get(nil, h, textproto.CanonicalMIMEHeaderKey(name)); v.Some {
 		return v
 	}
-	for k, v := range h.All() {
+	for k, v := range Map_All(h) {
 		if strings.EqualFold(k, name) {
 			return Some(v)
 		}
@@ -409,7 +409,7 @@ func headerGet(h Map[string, string], name string) Option[string] {
 // M_with_header is `req.with_header(name, value)`: a copy of the request
 // with the header set (canonical key).
 func (r Http_Request) M_with_header(tk *Task, name, value string) Http_Request {
-	r.F_headers.M_put(tk, textproto.CanonicalMIMEHeaderKey(name), value)
+	Map_put(tk, &r.F_headers, textproto.CanonicalMIMEHeaderKey(name), value)
 	return r
 }
 
@@ -471,8 +471,8 @@ func Http_Request_json[T any](tk *Task, r Http_Request) Result[T, Json_DecodeErr
 func Http_new_request(tk *Task, method, rawURL string, headers Map[string, string], body Bytes) Http_Request {
 	u := parseURLLoose(rawURL)
 	var h Map[string, string]
-	for k, v := range headers.All() {
-		h.M_put(tk, textproto.CanonicalMIMEHeaderKey(k), v)
+	for k, v := range Map_All(headers) {
+		Map_put(tk, &h, textproto.CanonicalMIMEHeaderKey(k), v)
 	}
 	return Http_Request{F_method: strings.ToUpper(method), F_path: u.F_path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1"}
 }
@@ -516,7 +516,7 @@ func urlOf(a *Arena, pu *url.URL) Http_Url {
 		u.F_query = a.strMap()
 	}
 	for _, k := range keys {
-		u.F_query.M_put(nil, k, q.Get(k))
+		Map_put(nil, &u.F_query, k, q.Get(k))
 	}
 	return u
 }
@@ -540,14 +540,14 @@ func Http_parse_url(_ *Task, s string) Result[Http_Url, Http_UrlErr] {
 // Http_json is `http.json(status, v)`.
 func Http_json[T any](tk *Task, status int64, v T) Http_Response {
 	h := mapCap[string, string](1)
-	h.M_put(tk, "Content-Type", "application/json")
+	Map_put(tk, &h, "Content-Type", "application/json")
 	return Http_Response{F_status: status, F_headers: h, F_body: Json_encode(tk, v)}
 }
 
 // Http_text is `http.text(status, s)`.
 func Http_text(tk *Task, status int64, s string) Http_Response {
 	h := mapCap[string, string](1)
-	h.M_put(tk, "Content-Type", "text/plain; charset=utf-8")
+	Map_put(tk, &h, "Content-Type", "text/plain; charset=utf-8")
 	return Http_Response{F_status: status, F_headers: h, F_body: Bytes(s)}
 }
 
@@ -562,7 +562,7 @@ func Http_stream(_ *Task, status int64, f func(*Task, Http_BodyWriter) Result[Un
 
 // M_with_header is `resp.with_header(name, value)`.
 func (r Http_Response) M_with_header(tk *Task, name, value string) Http_Response {
-	r.F_headers.M_put(tk, textproto.CanonicalMIMEHeaderKey(name), value)
+	Map_put(tk, &r.F_headers, textproto.CanonicalMIMEHeaderKey(name), value)
 	return r
 }
 
@@ -706,7 +706,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			h = mapCap[string, string](len(hr.Header))
 		}
 		for k, vs := range hr.Header {
-			h.M_put(nil, k, strings.Join(vs, ", "))
+			Map_put(nil, &h, k, strings.Join(vs, ", "))
 		}
 		u := urlOf(a, hr.URL)
 		u.F_host = hr.Host
@@ -751,7 +751,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}
 		resp := s.r.call(reqTask, req)
 		wh := w.Header()
-		for k, v := range resp.F_headers.All() {
+		for k, v := range Map_All(resp.F_headers) {
 			wh.Set(k, v)
 		}
 		if n := len(resp.F_body); n > chunkingSize && resp.XStream == nil && bodyAllowed(resp.F_status) {
@@ -982,7 +982,7 @@ func (c Http_Client) M_get(tk *Task, rawURL string) Result[Http_Response, Http_C
 // Http_Client_post_json is `c.post_json(url, v)`.
 func Http_Client_post_json[T any](tk *Task, c Http_Client, rawURL string, v T) Result[Http_Response, Http_ClientErr] {
 	h := mapCap[string, string](1)
-	h.M_put(tk, "Content-Type", "application/json")
+	Map_put(tk, &h, "Content-Type", "application/json")
 	return c.M_send(tk, Http_new_request(tk, "POST", rawURL, h, Json_encode(tk, v)))
 }
 
@@ -1027,7 +1027,7 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	if err != nil {
 		return Err[Http_Response](clientErr(1, err.Error()))
 	}
-	for k, v := range req.F_headers.All() {
+	for k, v := range Map_All(req.F_headers) {
 		hr.Header.Set(k, v)
 	}
 	hc := &http.Client{Timeout: time.Duration(c.timeout)}
@@ -1058,7 +1058,7 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	}
 	var h Map[string, string]
 	for k, vs := range resp.Header {
-		h.M_put(tk, k, strings.Join(vs, ", "))
+		Map_put(tk, &h, k, strings.Join(vs, ", "))
 	}
 	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body)})
 }
@@ -1075,7 +1075,7 @@ func urlString(u Http_Url) string {
 	}
 	b.WriteString(u.F_path)
 	first := true
-	for k, v := range u.F_query.All() {
+	for k, v := range Map_All(u.F_query) {
 		if first {
 			b.WriteByte('?')
 			first = false

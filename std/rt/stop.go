@@ -111,7 +111,7 @@ func (st *stopState) requestLocked() {
 	}
 	st.stopAt = st.now()
 	st.requested.Store(true)
-	st.ch.M_close(nil)
+	Chan_close(nil, st.ch)
 	st.ev.fire()
 	st.armGraceLocked()
 }

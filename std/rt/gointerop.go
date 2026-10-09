@@ -351,7 +351,7 @@ func GoListCopy[T any](xs []T) List[T] {
 
 // GoSliceOf copies a List into a new Go slice, converting each element.
 func GoSliceOf[X, T any](l List[X], f func(X) T) []T {
-	s := l.Slice()
+	s := List_Slice(l)
 	out := make([]T, len(s))
 	for i, x := range s {
 		out[i] = f(x)
@@ -360,7 +360,7 @@ func GoSliceOf[X, T any](l List[X], f func(X) T) []T {
 }
 
 // GoSliceCopy copies a List into a new Go slice.
-func GoSliceCopy[T any](l List[T]) []T { return slices.Clone(l.Slice()) }
+func GoSliceCopy[T any](l List[T]) []T { return slices.Clone(List_Slice(l)) }
 
 // GoMapOf copies a Go map into a Map, converting keys and values. Entries
 // are inserted in key order so iteration is deterministic.
@@ -376,7 +376,7 @@ func GoMapOf[K comparable, V, XK, XV any](m map[K]V, fk func(K) XK, fv func(V) X
 	slices.SortFunc(es, func(a, b kv) int { return Cmp(a.k, b.k) })
 	var out Map[XK, XV]
 	for _, e := range es {
-		out.M_put(nil, e.k, e.v)
+		Map_put(nil, &out, e.k, e.v)
 	}
 	return out
 }
@@ -384,7 +384,7 @@ func GoMapOf[K comparable, V, XK, XV any](m map[K]V, fk func(K) XK, fv func(V) X
 // GoMapToGo copies a Map into a new Go map, converting keys and values.
 func GoMapToGo[XK, XV any, K comparable, V any](m Map[XK, XV], fk func(XK) K, fv func(XV) V) map[K]V {
 	out := make(map[K]V, m.n)
-	for k, v := range m.All() {
+	for k, v := range Map_All(m) {
 		out[fk(k)] = fv(v)
 	}
 	return out

@@ -132,7 +132,7 @@ fn main(os: Os) {
 			t.Errorf("generated code lacks %q\n%s", w, src)
 		}
 	}
-	if n := strings.Count(src, ".M_values(tk)"); n != 1 {
-		t.Errorf("M_values calls = %d, want 1 (kept)\n%s", n, src)
+	if n := strings.Count(src, "rt.Map_values["); n != 1 {
+		t.Errorf("Map_values calls = %d, want 1 (kept)\n%s", n, src)
 	}
 }

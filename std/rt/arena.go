@@ -235,8 +235,8 @@ func (a *Arena) readBody(r io.Reader) Bytes {
 // copyMap copies a map into fresh heap tables.
 func copyMap(m Map[string, string]) Map[string, string] {
 	var out Map[string, string]
-	for k, v := range m.All() {
-		out.M_put(nil, k, v)
+	for k, v := range Map_All(m) {
+		Map_put(nil, &out, k, v)
 	}
 	return out
 }
@@ -302,7 +302,7 @@ func Http_json_arena[T any](tk *Task, status int64, v T) Http_Response {
 	JsonEnc(tk, &w, v)
 	a.jbuf, a.jcount = w.b[:0], w.count[:0]
 	h := a.strMap()
-	h.M_put(tk, "Content-Type", "application/json")
+	Map_put(tk, &h, "Content-Type", "application/json")
 	var body Bytes
 	if len(w.b) > 0 {
 		body = Bytes(unsafe.String(&w.b[0], len(w.b)))
@@ -319,7 +319,7 @@ func Http_text_arena(tk *Task, status int64, s string) Http_Response {
 	}
 	a.respUsed = true
 	h := a.strMap()
-	h.M_put(tk, "Content-Type", "text/plain; charset=utf-8")
+	Map_put(tk, &h, "Content-Type", "text/plain; charset=utf-8")
 	return Http_Response{F_status: status, F_headers: h, F_body: Bytes(s)}
 }
 
@@ -382,14 +382,14 @@ func tempArena(tk *Task) *Arena {
 func Map_values_arena[K, V any](tk *Task, m Map[K, V]) List[V] {
 	a := tempArena(tk)
 	if a == nil {
-		return m.M_values(tk)
+		return Map_values(tk, m)
 	}
 	out := arenaSlice[V](a, m.n)
 	if out == nil {
-		return m.M_values(tk)
+		return Map_values(tk, m)
 	}
 	i := 0
-	m.each(func(_ *mentry[K, V], v V) bool {
+	Map_each(&m, func(_ *mentry[K, V], v V) bool {
 		out[i] = v
 		i++
 		return true
@@ -401,14 +401,14 @@ func Map_values_arena[K, V any](tk *Task, m Map[K, V]) List[V] {
 func Map_keys_arena[K, V any](tk *Task, m Map[K, V]) List[K] {
 	a := tempArena(tk)
 	if a == nil {
-		return m.M_keys(tk)
+		return Map_keys(tk, m)
 	}
 	out := arenaSlice[K](a, m.n)
 	if out == nil {
-		return m.M_keys(tk)
+		return Map_keys(tk, m)
 	}
 	i := 0
-	m.each(func(e *mentry[K, V], _ V) bool {
+	Map_each(&m, func(e *mentry[K, V], _ V) bool {
 		out[i] = e.k
 		i++
 		return true
@@ -427,7 +427,7 @@ func Map_entries_arena[K, V any](tk *Task, m Map[K, V]) List[Tuple2[K, V]] {
 		return Map_entries(tk, m)
 	}
 	i := 0
-	m.each(func(e *mentry[K, V], v V) bool {
+	Map_each(&m, func(e *mentry[K, V], v V) bool {
 		out[i] = Tuple2[K, V]{e.k, v}
 		i++
 		return true

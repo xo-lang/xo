@@ -169,32 +169,32 @@ func RemI(a, b int64, at string) int64 {
 	return a % b
 }
 
-// AtU is `xs[i]` where the generator's range analysis proved i in range
+// List_AtU is `xs[i]` where the generator's range analysis proved i in range
 // (internal/gen/ranges.go). Go's own bounds check stays: if the analysis
 // were wrong the program would stop with an internal fault, never read
 // out of range.
-func (l List[T]) AtU(i int64) T { return l.s[i] }
+func List_AtU[T any](l List[T], i int64) T { return l.s[i] }
 
-// AtM is `xs[i]`, emitted by default: At with an inline panic as the
+// List_AtM is `xs[i]`, emitted by default: At with an inline panic as the
 // fault, so it inlines.
-func (l List[T]) AtM(i int64, at string) T {
+func List_AtM[T any](l List[T], i int64, at string) T {
 	if uint64(i) >= uint64(len(l.s)) {
 		panic(&arithFault{i, int64(len(l.s)), 'i', at})
 	}
 	return l.s[i]
 }
 
-// RefM is the address of element i for reading one field of it in place
+// List_RefM is the address of element i for reading one field of it in place
 // (`xs[i].f`, emitted by default): the generated code reads through it at
 // once, so it never sees a later write. Copying a struct of more than
 // four fields out of the list (AtM) would cost a memory copy, since Go
 // keeps only small structs in registers.
-func (l List[T]) RefM(i int64, at string) *T {
+func List_RefM[T any](l List[T], i int64, at string) *T {
 	if uint64(i) >= uint64(len(l.s)) {
 		panic(&arithFault{i, int64(len(l.s)), 'i', at})
 	}
 	return &l.s[i]
 }
 
-// RefU is RefM where the range analysis proved i in range.
-func (l List[T]) RefU(i int64) *T { return &l.s[i] }
+// List_RefU is RefM where the range analysis proved i in range.
+func List_RefU[T any](l List[T], i int64) *T { return &l.s[i] }
