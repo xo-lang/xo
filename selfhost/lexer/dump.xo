@@ -1,0 +1,75 @@
+// The canonical token dump, the same text as `xo lexdump` (internal/lexer
+// Dump). See internal/lexer/dump.go for the format.
+
+/// Lexes src and prints its tokens, comments, and diagnostics.
+pub fn dump(file: Str, src: Bytes) -> Str {
+  let r = lex(src)
+  var out = StrBuilder.new()
+  out.write("== ${file}\n")
+  var diags = r.diags
+  dump_tokens(out, src, r.tokens, "", diags)
+  for c in r.comments {
+    let kind = if c.doc { "doc" } else { "line" }
+    out.write("comment ${span_text(c.span)} ${kind} ${quote(c.text)}\n")
+  }
+  for d in diags {
+    let sp = d.span
+    out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${quote(d.message)}\n")
+  }
+  out.freeze()
+}
+
+fn dump_tokens(var out: StrBuilder, src: Bytes, toks: List[Token], indent: Str, var diags: List[Diag]) {
+  for t in toks {
+    out.write("${indent}${t.kind} ${span_text(t.span)} ${quote(t.text)} ${quote(t.value)}")
+    if t.triple {
+      out.write(" triple")
+    }
+    out.write("\n")
+    for p in t.parts {
+      if !p.is_expr {
+        out.write("${indent}  lit ${span_text(p.span)} ${quote(p.text)}\n")
+        continue
+      }
+      out.write("${indent}  expr ${span_text(p.span)} ${quote(p.text)}\n")
+      let sub = lex_range(src, p.span.start, p.span.end.offset)
+      for d in sub.diags {
+        diags.push(d)
+      }
+      dump_tokens(out, src, sub.tokens, indent + "    ", diags)
+    }
+  }
+}
+
+fn span_text(s: Span) -> Str {
+  "${s.start.line}:${s.start.col}:${s.start.offset}-${s.end.line}:${s.end.col}:${s.end.offset}"
+}
+
+/// Quotes b byte by byte: printable ASCII stays, `"` and `\` are escaped,
+/// every other byte is \xHH.
+pub fn quote(b: Bytes) -> Str {
+  var out = StrBuilder.new()
+  out.write("\"")
+  var run = 0
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    if c >= 0x20 && c < 0x7f && c != 0x22 && c != 0x5c {
+      continue
+    }
+    if run < i {
+      out.write(b[run..i].to_str().or_fault("printable ASCII"))
+    }
+    if c == 0x22 || c == 0x5c {
+      out.write("\\")
+      out.write(b[i..i + 1].to_str().or_fault("ASCII"))
+    } else {
+      out.write("\\x${hex2(c)}")
+    }
+    run = i + 1
+  }
+  if run < b.len() {
+    out.write(b[run..].to_str().or_fault("printable ASCII"))
+  }
+  out.write("\"")
+  out.freeze()
+}

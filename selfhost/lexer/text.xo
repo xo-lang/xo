@@ -1,0 +1,211 @@
+// Byte and rune helpers the Go lexer gets from the Go standard library:
+// unicode/utf8 decoding and encoding, strconv.QuoteRune (what `%q` prints
+// for a rune), strings.TrimSpace's notion of white space, and quoting of
+// plain ASCII text.
+
+/// utf8.RuneError.
+pub const RUNE_ERROR = 0xfffd
+
+const HEX_DIGITS = "0123456789abcdef"
+
+/// The byte at i as an Int.
+fn byte_at(b: Bytes, i: Int) -> Int {
+  Int(b[i])
+}
+
+fn is_cont(c: Int) -> Bool {
+  c >= 0x80 && c <= 0xbf
+}
+
+/// Decodes the UTF-8 sequence at b[i..end] like utf8.DecodeRune: the rune
+/// and its size, or (RUNE_ERROR, 1) for an invalid or short sequence and
+/// (RUNE_ERROR, 0) when i >= end.
+pub fn decode_rune(b: Bytes, i: Int, end: Int) -> (Int, Int) {
+  if i >= end {
+    return (RUNE_ERROR, 0)
+  }
+  let c0 = byte_at(b, i)
+  if c0 < 0x80 {
+    return (c0, 1)
+  }
+  // The valid range of the second byte, and the sequence length.
+  let (lo, hi, size) = if c0 >= 0xc2 && c0 <= 0xdf {
+    (0x80, 0xbf, 2)
+  } else if c0 == 0xe0 {
+    (0xa0, 0xbf, 3)
+  } else if c0 == 0xed {
+    (0x80, 0x9f, 3)
+  } else if c0 >= 0xe1 && c0 <= 0xef {
+    (0x80, 0xbf, 3)
+  } else if c0 == 0xf0 {
+    (0x90, 0xbf, 4)
+  } else if c0 == 0xf4 {
+    (0x80, 0x8f, 4)
+  } else if c0 >= 0xf1 && c0 <= 0xf3 {
+    (0x80, 0xbf, 4)
+  } else {
+    return (RUNE_ERROR, 1)
+  }
+  if i + size > end {
+    // Go reports a short sequence as one invalid byte too.
+    return (RUNE_ERROR, 1)
+  }
+  let c1 = byte_at(b, i + 1)
+  if c1 < lo || c1 > hi {
+    return (RUNE_ERROR, 1)
+  }
+  if size == 2 {
+    return ((c0 & 0x1f) << 6 | (c1 & 0x3f), 2)
+  }
+  let c2 = byte_at(b, i + 2)
+  if !is_cont(c2) {
+    return (RUNE_ERROR, 1)
+  }
+  if size == 3 {
+    return ((c0 & 0x0f) << 12 | (c1 & 0x3f) << 6 | (c2 & 0x3f), 3)
+  }
+  let c3 = byte_at(b, i + 3)
+  if !is_cont(c3) {
+    return (RUNE_ERROR, 1)
+  }
+  ((c0 & 0x07) << 18 | (c1 & 0x3f) << 12 | (c2 & 0x3f) << 6 | (c3 & 0x3f), 4)
+}
+
+/// utf8.RuneCount: invalid bytes count as one rune each.
+pub fn rune_count(b: Bytes) -> Int {
+  var i = 0
+  var n = 0
+  while i < b.len() {
+    let (_, size) = decode_rune(b, i, b.len())
+    i += size
+    n += 1
+  }
+  n
+}
+
+/// Two lowercase hex digits of the byte c.
+fn hex2(c: Int) -> Str {
+  HEX_DIGITS[(c >> 4)..(c >> 4) + 1] + HEX_DIGITS[(c & 15)..(c & 15) + 1]
+}
+
+/// `width` lowercase hex digits of n.
+fn hex_width(n: Int, width: Int) -> Str {
+  var out = ""
+  var i = width - 1
+  while i >= 0 {
+    let d = (n >> (i * 4)) & 15
+    out = out + HEX_DIGITS[d..d + 1]
+    i -= 1
+  }
+  out
+}
+
+/// The bytes whose lowercase hex spelling is `hex` (an even number of hex
+/// digits). Xo has no way to make a Bytes value from Int byte values, so
+/// this goes through Bytes.from_hex.
+fn from_hex(hex: Str) -> Bytes {
+  Bytes.from_hex(hex).or_fault("from_hex is given only hex digits")
+}
+
+/// The byte c as a one byte Bytes.
+pub fn byte_bytes(c: Int) -> Bytes {
+  from_hex(hex2(c))
+}
+
+/// utf8.AppendRune: the UTF-8 encoding of r, or of U+FFFD when r is not a
+/// valid scalar value.
+pub fn encode_rune(r: Int) -> Bytes {
+  let v = if r < 0 || r > 0x10ffff || (r >= 0xd800 && r <= 0xdfff) { RUNE_ERROR } else { r }
+  if v < 0x80 {
+    return byte_bytes(v)
+  }
+  if v < 0x800 {
+    return from_hex(hex2(0xc0 | (v >> 6)) + hex2(0x80 | (v & 0x3f)))
+  }
+  if v < 0x10000 {
+    return from_hex(hex2(0xe0 | (v >> 12)) + hex2(0x80 | ((v >> 6) & 0x3f)) + hex2(0x80 | (v & 0x3f)))
+  }
+  from_hex(hex2(0xf0 | (v >> 18)) + hex2(0x80 | ((v >> 12) & 0x3f)) + hex2(0x80 | ((v >> 6) & 0x3f)) + hex2(0x80 | (v & 0x3f)))
+}
+
+/// strconv.IsPrint.
+pub fn is_print(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 0x20 && r < 0x7f
+  }
+  // PRINT_RANGES holds sorted inclusive [lo, hi] pairs (isprint.xo).
+  var lo = 0
+  var hi = PRINT_RANGES.len() / 2
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if PRINT_RANGES[2 * mid + 1] < r {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo < PRINT_RANGES.len() / 2 && PRINT_RANGES[2 * lo] <= r
+}
+
+/// strconv.QuoteRune, which is what `%q` prints for a rune.
+pub fn quote_rune(rune: Int) -> Bytes {
+  let r = if rune < 0 || rune > 0x10ffff || (rune >= 0xd800 && rune <= 0xdfff) { RUNE_ERROR } else { rune }
+  let body = if r == 0x27 {
+    "\\'".bytes()
+  } else if r == 0x5c {
+    "\\\\".bytes()
+  } else if is_print(r) {
+    encode_rune(r)
+  } else {
+    match r {
+      0x07 => "\\a".bytes()
+      0x08 => "\\b".bytes()
+      0x0c => "\\f".bytes()
+      0x0a => "\\n".bytes()
+      0x0d => "\\r".bytes()
+      0x09 => "\\t".bytes()
+      0x0b => "\\v".bytes()
+      _ => {
+        if r < 0x20 || r == 0x7f {
+          "\\x${hex2(r)}".bytes()
+        } else if r < 0x10000 {
+          "\\u${hex_width(r, 4)}".bytes()
+        } else {
+          "\\U${hex_width(r, 8)}".bytes()
+        }
+      }
+    }
+  }
+  "'".bytes() + body + "'".bytes()
+}
+
+/// unicode.IsSpace.
+fn is_unicode_space(r: Int) -> Bool {
+  match r {
+    0x09..=0x0d | 0x20 | 0x85 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 => true
+    _ => false
+  }
+}
+
+/// strings.TrimSpace(s) == "": every rune of s is white space.
+pub fn is_blank(s: Bytes) -> Bool {
+  var i = 0
+  while i < s.len() {
+    let (r, size) = decode_rune(s, i, s.len())
+    if !is_unicode_space(r) || (r == RUNE_ERROR && size == 1) {
+      return false
+    }
+    i += size
+  }
+  true
+}
+
+/// `%q` of text known to be printable ASCII without `"` or `\`.
+pub fn quote_plain(s: Bytes) -> Bytes {
+  "\"".bytes() + s + "\"".bytes()
+}
+
+/// The decimal spelling of n as Bytes.
+pub fn itoa(n: Int) -> Bytes {
+  "${n}".bytes()
+}

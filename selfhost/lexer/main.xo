@@ -1,0 +1,43 @@
+// xolex: the self hosted lexer's command line.
+//
+//   lexer <files...>                  print each file's canonical token dump
+//   lexer --bench=N <files...>        lex every file N times, print the time
+//
+// The dump is byte for byte the output of `xo lexdump` (the Go lexer).
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var files: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else {
+      files.push(a)
+    }
+  }
+  if files.is_empty() {
+    os.stdio.eprintln("usage: lexer [--bench=N] <files...>")
+    os.proc.exit(2)
+  }
+  var srcs: List[(Str, Bytes)] = []
+  for f in files {
+    srcs.push((f, os.fs.read(f)?))
+  }
+  if repeat > 0 {
+    let t0 = os.clock.now()
+    var toks = 0
+    for _ in 0..repeat {
+      for (_, src) in srcs {
+        toks += lex(src).tokens.len()
+      }
+    }
+    let elapsed = os.clock.now() - t0
+    os.stdio.println("lexed ${srcs.len()} files x ${repeat}: ${toks} tokens in ${elapsed.nanos() / 1_000_000} ms")
+    return
+  }
+  var out = StrBuilder.new()
+  for (f, src) in srcs {
+    out.write(dump(f, src))
+  }
+  os.stdio.print(out.freeze())
+}

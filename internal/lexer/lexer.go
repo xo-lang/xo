@@ -6,6 +6,11 @@
 // literals with `${expr}` interpolation are returned as one token holding the
 // literal parts and the raw source of each expression; the parser lexes and
 // parses those expressions with LexRange.
+//
+// selfhost/lexer is a faithful port of this package to Xo (decision 0076).
+// internal/selfhost's TestSelfhostDifferential requires both to print the
+// same Dump on every .xo file of the repository and a fuzz corpus, so a
+// change here (a token, a value, a message) is made there too.
 package lexer
 
 import (

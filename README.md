@@ -109,6 +109,7 @@ The module path is `github.com/xo-lang/xo` (local name; see
 | `internal/llvm`, `std/llrt` | LLVM backend prototype and its C runtime |
 | `internal/gobind` | Go package bindings |
 | `std/*.xo`, `std/rt` | Standard library declarations and the Go runtime |
+| `selfhost/` | Compiler components written in Xo (`selfhost/lexer`), checked against the Go ones by `internal/selfhost` |
 | `bench/` | Benchmarks: tasks, Go and Xo solutions, planted bugs, results |
 | `examples/` | Realistic programs; `notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown |
 | `knowledgebase/` | Decisions (ADRs), gotchas, infrastructure notes |
