@@ -146,7 +146,7 @@ func (c *checker) splitCriticalSections(body *ast.Block) {
 
 func (c *checker) isMoveOnly(t Type) bool {
 	n, ok := resolve(t).(*Named)
-	return ok && n.Obj.Module == c.prelude && (n.Obj.Name == "Buf" || n.Obj.Name == "StrBuilder")
+	return ok && n.Obj.Module == c.prelude && (n.Obj.Name == "Buf" || n.Obj.Name == "StrBuilder" || n.Obj.Name == "BytesBuilder")
 }
 
 type moveWalker struct {
@@ -245,7 +245,7 @@ func (w *moveWalker) expr(e ast.Expr, move bool) {
 		if at, ok := w.moved[v]; ok {
 			d := w.c.errorf(diag.UseOfMovedValue, x.Sp, "use of moved value `%s`", x.Name)
 			note(d, at, "`%s` was moved here", x.Name)
-			note(d, token.Span{}, "`Buf` and `StrBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)")
+			note(d, token.Span{}, "`Buf`, `StrBuilder`, and `BytesBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)")
 			return
 		}
 		if move {

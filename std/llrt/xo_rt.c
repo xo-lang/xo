@@ -4801,6 +4801,13 @@ static void select_untimer(struct xo_timer *t) {
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata
 // include this file and bring their own main)
 
+// the program's arguments, for env.args (std.md 3.5)
+static int xo_argc;
+static char **xo_argv;
+
+// constants of collection types (xo_bytes.c)
+void xo_consts_free(void);
+
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
@@ -4814,8 +4821,8 @@ static void *run_main(void *arg) {
 }
 
 int main(int argc, char **argv) {
-	(void)argc;
-	(void)argv;
+	xo_argc = argc;
+	xo_argv = argv;
 	xo_signals_init();
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
@@ -4852,6 +4859,7 @@ int main(int argc, char **argv) {
 	pthread_mutex_unlock(&stop.mu);
 	xo_rt_stats();
 	if (getenv("XO_LEAKCHECK")) {
+		xo_consts_free();
 		int64_t live, total;
 		xo_rt_live(&live, &total);
 		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);

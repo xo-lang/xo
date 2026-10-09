@@ -1,0 +1,7 @@
+fn main(os: Os) {
+  let a: UInt8 = 200
+  var b: UInt8 = 50
+  os.stdio.println("${a + b}")
+  b += 6
+  os.stdio.println("${a + b}")
+}

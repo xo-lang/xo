@@ -27,6 +27,27 @@ is reported while a timer is pending. The runtime's own concurrent waits
 moved off Go timers (`osSleep`: `select(2)` with a timeout, darwin and
 linux), or they would hold every check off forever.
 
+Second symptom (Observed 2026-10-08): under full suite load (`go test
+./...`), the same golden test reported XO-F001 at seed 4 although the
+timer check was in place; alone it passed.
+
+Cause: the window after the timer fired. Its function, an Xo callback,
+arrived as a pending callback call (no thread yet) and its goroutine ran
+the scheduler's decision, which unlocks while it waits for Go's
+goroutines to settle and, under load, sleeps in `osSleep`. The
+confirmation saw no timer pending, that goroutine "sleeping like a
+watcher", every other goroutine parked, and only the old threads, so it
+reported. At the false report: `pend 1`, `picking true`, no timer.
+
+Fix: `confirmGoLocked` reports only when the scheduler is still before
+and after the proof (`stillLocked`: nothing in `pend` or `pendRet`, not
+`picking` or `lending`, no turn handed out in between); `goParked` treats
+a goroutine with `waitGoSettled` on its stack as moving; `goStuckProof`
+yields between its two looks. To reproduce such windows, slow the settle
+with `waitGoSettledHook` (a 20 ms `osSleep` made the golden fail 20 of 20
+runs before the fix, 0 of 1000 after; `TestSchedGoTimerArrival`). CPU
+burners and `GOMAXPROCS` alone did not reproduce it (0 of 110 runs).
+
 Anticipated: a Go release that renames or removes
 `runtime.timeSleepUntil` fails that link (`relocation target
 runtime.timeSleepUntil not defined`). `goBuildTimers` then builds again

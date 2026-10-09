@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -18,18 +19,53 @@ import (
 	"github.com/xo-lang/xo/internal/lexer"
 )
 
-// lexerBinary builds selfhost/lexer (the Xo lexer's CLI) once.
-var lexerBinary = sync.OnceValues(func() (string, error) {
+// repoRoot is the repository root, two levels up from this package.
+func repoRoot(t testing.TB) string {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// lexerBinaries holds selfhost/lexer (the Xo lexer's CLI) built once per
+// backend.
+var (
+	lexerMu       sync.Mutex
+	lexerBinaries = map[string]string{}
+)
+
+// lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
+// "llvm"; decision 0081) once.
+func lexerBinary(backend string) (string, error) {
+	lexerMu.Lock()
+	defer lexerMu.Unlock()
+	if bin, ok := lexerBinaries[backend]; ok {
+		return bin, nil
+	}
 	dir := filepath.Join("..", "..", "selfhost", "lexer")
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
 	if err != nil {
 		return "", err
 	}
 	if res.Failed {
 		return "", fmt.Errorf("check failed: %+v", res.Diagnostics)
 	}
-	return res.Binaries[build.Host()], nil
-})
+	bin := res.Binaries[build.Host()]
+	lexerBinaries[backend] = bin
+	return bin, nil
+}
+
+// nativeSkip is why a native backend cannot build on this host, or "".
+func nativeSkip(backend string) string {
+	if _, err := build.Clang(); err != nil {
+		return err.Error()
+	}
+	if backend == "arm64" && (runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux")) {
+		return "the arm64 backend builds on darwin/arm64 and linux/arm64 hosts"
+	}
+	return ""
+}
 
 // repoXoFiles lists every .xo file under root, relative to it, skipping
 // dot directories (.git, .tools, .xo, .claude).
@@ -186,8 +222,8 @@ func fuzzCorpus(t testing.TB, root, dir string, files []string, n int) []string 
 }
 
 // runeFiles writes every step-th rune (one per line, each an invalid
-// character unless it is ASCII) into files under dir, to check the Xo port
-// of strconv.QuoteRune and its IsPrint table.
+// character unless it is ASCII) into files under dir, to check Rune.quote
+// (strconv.QuoteRune) on every rune.
 func runeFiles(t testing.TB, dir string, step int) []string {
 	var out []string
 	var b strings.Builder
@@ -277,15 +313,31 @@ func compare(t *testing.T, bin, root string, paths []string) {
 	}
 }
 
-// TestSelfhostDifferential runs the Xo lexer (selfhost/lexer) and the Go
-// lexer on every .xo file of the repository, the spec's code blocks, and a
-// seeded corpus of mutated inputs, and requires byte identical dumps,
-// diagnostics included. -short uses a smaller fuzz corpus.
+// TestSelfhostDifferential runs the Xo lexer (selfhost/lexer), built with
+// each backend (Go, and the native arm64 and LLVM backends where the host
+// has them, decision 0081), and the Go lexer on every .xo file of the
+// repository, the spec's code blocks, runes, and a seeded corpus of
+// mutated inputs, and requires byte identical dumps, diagnostics included.
+// -short uses a smaller fuzz corpus.
 func TestSelfhostDifferential(t *testing.T) {
-	bin, err := lexerBinary()
-	if err != nil {
-		t.Fatal(err)
+	for _, backend := range []string{"go", "arm64", "llvm"} {
+		t.Run(backend, func(t *testing.T) {
+			if backend != "go" {
+				if why := nativeSkip(backend); why != "" {
+					t.Skip(why)
+				}
+			}
+			bin, err := lexerBinary(backend)
+			if err != nil {
+				t.Fatal(err)
+			}
+			differential(t, bin)
+		})
 	}
+}
+
+// differential is TestSelfhostDifferential for the lexer binary bin.
+func differential(t *testing.T, bin string) {
 	root := repoRoot(t)
 	files := repoXoFiles(t, root)
 	if len(files) < 100 {

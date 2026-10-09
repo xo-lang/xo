@@ -58,6 +58,46 @@ fn str_repeat(s: Str, n: Int) -> Str { rt.str_repeat(s, n) }
 
 fn list_join(xs: List[Str], sep: Str) -> Str { rt.str_join(xs, sep) }
 
+fn str_quote(s: Str) -> Str { rt.strconv_quote(s) }
+
+// ---------------------------------------------------------------------------
+// Rune and Bytes (std.md 2.2, decisions 0079 and 0081)
+
+fn rune_is_letter(r: Rune) -> Bool { rt.rune_is_letter(r) }
+
+fn rune_is_digit(r: Rune) -> Bool { rt.rune_is_digit(r) }
+
+fn rune_is_space(r: Rune) -> Bool { rt.rune_is_space(r) }
+
+fn rune_is_print(r: Rune) -> Bool { rt.rune_is_print(r) }
+
+fn rune_to_lower(r: Rune) -> Rune { rt.rune_to_case(r, true) }
+
+fn rune_to_upper(r: Rune) -> Rune { rt.rune_to_case(r, false) }
+
+fn rune_quote(r: Rune) -> Str { rt.rune_quote(r) }
+
+fn rune_try(x: Int) -> Rune? {
+  if x < 0 || x > 0x10ffff || (x >= 0xd800 && x <= 0xdfff) {
+    return None
+  }
+  Some(Rune(x))
+}
+
+fn bytes_quote(b: Bytes) -> Str { rt.bytes_quote(b) }
+
+fn bytes_rune_count(b: Bytes) -> Int { rt.bytes_rune_count(b) }
+
+fn bytes_to_hex(b: Bytes) -> Str { rt.bytes_hex(b) }
+
+fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
+  if i < 0 || i > b.len() {
+    rt.fault_at("index ${i} out of range for decode_rune on Bytes of length ${b.len()}", at)
+  }
+  let p = rt.bytes_decode(b, i)
+  (Rune(p >> 3), p & 7)
+}
+
 fn int_parse(s: Str) -> Int? {
   if rt.int_parse_ok(s) {
     return Some(rt.int_parse(s))

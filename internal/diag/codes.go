@@ -15,7 +15,7 @@ const (
 	NonExhaustiveMatch Code = "XO0301" // match does not cover every case (core 2.3)
 	AmbiguousTypeArgs  Code = "XO0402" // type arguments cannot be inferred (core 2.7)
 	VarReceiverNeedVar Code = "XO0501" // var method called on a non var binding (core 3.4)
-	UseOfMovedValue    Code = "XO0510" // use of a moved Buf or StrBuilder (core 5.3)
+	UseOfMovedValue    Code = "XO0510" // use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3)
 	LostUpdate         Code = "XO0520" // mutation of a copied or stored collection element is never written back (core 5.2)
 	UnresolvedName     Code = "XO0601" // name does not resolve (core 4.3)
 	ImportNeedsAlias   Code = "XO0602" // import path does not yield a valid local name (core 4.1)
@@ -118,7 +118,7 @@ var Descriptions = map[Code]string{
 	NonExhaustiveMatch:   "match does not cover every case (core 2.3)",
 	AmbiguousTypeArgs:    "type arguments cannot be inferred (core 2.7)",
 	VarReceiverNeedVar:   "var method called on a non var binding (core 3.4)",
-	UseOfMovedValue:      "use of a moved Buf or StrBuilder (core 5.3)",
+	UseOfMovedValue:      "use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3)",
 	LostUpdate:           "mutation of a copied or stored collection element is never written back (core 5.2)",
 	UnresolvedName:       "name does not resolve (core 4.3)",
 	ImportNeedsAlias:     "import path does not yield a valid local name (core 4.1)",

@@ -152,6 +152,10 @@ func (c *checker) litPattern(v ast.Expr, t Type, sp token.Span) *ipat {
 		text = strconv.Quote(text)
 	case *ast.RuneLit:
 		text = x.Raw
+		if c.isInt(lt) {
+			// the same arm as the integer literal of its code point
+			text = strconv.Itoa(int(x.Value))
+		}
 	case *ast.FloatLit:
 		text = x.Raw
 	case *ast.UnaryExpr:
@@ -867,12 +871,36 @@ func (c *checker) warnWildcardOwnEnum(x *ast.MatchExpr, st Type) {
 				hidden = append(hidden, v.Name)
 			}
 		}
-		if len(hidden) > 0 {
-			d := c.warnf(diag.WildcardOwnEnum, arm.Pattern.Span(), "this arm hides `%s` of `%s`, declared in this module", strings.Join(hidden, "`, `"), n.Obj.Name)
-			if d != nil {
-				note(d, token.Span{}, "list the variants so that adding one later is a compile error (core 3.5)")
-			}
+		if len(hidden) == 0 || defaultArm(len(hidden), len(n.Obj.Variants)) {
+			return
+		}
+		shown := hidden
+		more := ""
+		if len(shown) > wildcardListMax {
+			shown = shown[:wildcardListMax]
+			more = fmt.Sprintf(" and %d more", len(hidden)-wildcardListMax)
+		}
+		d := c.warnf(diag.WildcardOwnEnum, arm.Pattern.Span(), "this arm hides `%s`%s of `%s`, declared in this module", strings.Join(shown, "`, `"), more, n.Obj.Name)
+		if d != nil {
+			note(d, token.Span{}, "list the variants so that adding one later is a compile error (core 3.5)")
 		}
 		return
 	}
+}
+
+// wildcardDefaultMin is the number of hidden variants from which a `_` arm
+// that hides most of an enum is a default rather than a shortcut, and
+// wildcardListMax the most variant names XO0305 prints (decision 0080).
+const (
+	wildcardDefaultMin = 8
+	wildcardListMax    = 8
+)
+
+// defaultArm reports whether a `_` arm hiding hidden of total variants is
+// a deliberate default ("these few are special, the rest are not"), which
+// XO0305 does not report: it hides at least wildcardDefaultMin variants and
+// more than half of them, so listing them would be the noise (decision
+// 0080).
+func defaultArm(hidden, total int) bool {
+	return hidden >= wildcardDefaultMin && 2*hidden > total
 }

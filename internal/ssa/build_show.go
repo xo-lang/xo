@@ -158,6 +158,10 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 		return s.rt("rs_append_time", st, acc, v)
 	case isPreludeNamed(ct, "Bytes"):
 		return s.appendDebug(acc, v, ct, at)
+	case isPreludeNamed(ct, "UInt64"):
+		return s.rt("rs_append_u64", st, acc, v)
+	case isPreludeNamed(ct, "Rune"):
+		return s.rt("rs_append_rune", st, acc, v)
 	}
 	switch v.Type.Kind {
 	case KStr:
@@ -222,6 +226,12 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			return
 		case isPreludeNamed(ct, "Bytes"):
 			s.retv(s.rt("rs_append_quote", st, lit(acc, "b"), v))
+			return
+		case isPreludeNamed(ct, "UInt64"):
+			s.retv(s.rt("rs_append_u64", st, acc, v))
+			return
+		case isPreludeNamed(ct, "Rune"):
+			s.retv(s.rt("rs_append_rune_quote", st, acc, v))
 			return
 		}
 		switch t.Kind {

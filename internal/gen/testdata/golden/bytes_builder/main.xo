@@ -1,0 +1,13 @@
+fn main(os: Os) {
+  var b = BytesBuilder.with_capacity(4)
+  b.write(b"ab")
+  b.write_byte(0x63)
+  b.write_str("dé")
+  b.write_rune('€')
+  let n = b.len()
+  let out = b.freeze()
+  os.stdio.println("${n} ${out.to_hex()} ${out.to_str() ?? "?"}")
+  var c = BytesBuilder.new()
+  c.write_byte(0xff)
+  os.stdio.println(c.freeze().to_hex())
+}

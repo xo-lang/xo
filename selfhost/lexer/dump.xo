@@ -52,18 +52,18 @@ pub fn quote(b: Bytes) -> Str {
   out.write("\"")
   var run = 0
   for i in 0..b.len() {
-    let c = Int(b[i])
-    if c >= 0x20 && c < 0x7f && c != 0x22 && c != 0x5c {
+    let c = b[i]
+    if c >= ' ' && c < 0x7f && c != '"' && c != '\\' {
       continue
     }
     if run < i {
       out.write(b[run..i].to_str().or_fault("printable ASCII"))
     }
-    if c == 0x22 || c == 0x5c {
+    if c == '"' || c == '\\' {
       out.write("\\")
       out.write(b[i..i + 1].to_str().or_fault("ASCII"))
     } else {
-      out.write("\\x${hex2(c)}")
+      out.write("\\x${b[i..i + 1].to_hex()}")
     }
     run = i + 1
   }

@@ -1,0 +1,5 @@
+fn main(os: Os) {
+  let s = "héllo"
+  os.stdio.println("${s[0..1]} ${s[3..]}")
+  os.stdio.println("${s[0..2]}")
+}

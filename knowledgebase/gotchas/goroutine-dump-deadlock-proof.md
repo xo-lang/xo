@@ -30,3 +30,10 @@ under the scheduler clears a label inherited from a labeled spawner.
 Wait reasons in `runtime.Stack` headers are specific since Go 1.21
 (`[sync.WaitGroup.Wait]`, `[sync.Mutex.Lock]`, `[sync.Cond.Wait]`);
 `TestGoParked` pins the classification on canned dumps.
+
+Update (Observed 2026-10-08): ignoring every goroutine in `osSleep` was
+too broad. The scheduler's settle loop (`waitGoSettled`) also sleeps
+there, while a callback call that a fired Go timer started waits to be
+admitted, and a test world reported a correct program as deadlocked.
+A goroutine with `waitGoSettled` on its stack now counts as moving, and
+the report also needs a still scheduler (see `go-runtime-timer-linkname.md`).

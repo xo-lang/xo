@@ -58,6 +58,10 @@ type builder struct {
 	// natives are the implementation modules of the native backends by
 	// the std path they implement (build_native.go)
 	natives map[string]*check.Module
+
+	// consts are the ids of the constants of heap types read so far
+	// (build_int.go constValue)
+	consts map[*check.ConstObj]int
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -82,7 +86,11 @@ type builder struct {
 // (decision 0048), and generics (monomorphized: one Func per list of
 // type arguments), and recursive types (recursive fields are boxed), and
 // structured concurrency (decision 0068, build_conc.go): scopes, tasks,
-// channels, select without `after`, Mutex, and Atomic.
+// channels, select without `after`, Mutex, and Atomic, and (decision
+// 0081, build_int.go) the sized integers and Rune, rune literals as
+// integers, Bytes indexing, slicing of Str, Bytes, and List, StrBuilder
+// and BytesBuilder, `os.fs.read`, `os.env.args`, `os.proc.exit`, and
+// constants of collection types built once.
 func Build(res *check.Result) (*Module, error) {
 	return BuildOpts(res, Options{})
 }
@@ -230,12 +238,20 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			case "Str", "Bytes":
 				// Bytes is an immutable byte string like Str (decision 0069)
 				return m.Builtin(KStr)
+			case "StrBuilder", "BytesBuilder":
+				// the text built so far: `write` appends in place while
+				// the builder, move only, owns the only reference
+				// (decision 0081)
+				return m.Builtin(KStr)
+			case "Int8", "Int16", "Int32", "UInt8", "UInt16", "UInt32", "UInt64", "Rune":
+				// sized integers in the Int word (decision 0081)
+				return m.IntType(obj.Name)
 			case "Duration", "Time":
 				// nanoseconds (decision 0069)
 				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio", "Clock", "Net", "Proc", "Env":
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Fs":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
@@ -932,6 +948,10 @@ func (s *fn) isNever(e ast.Expr) bool {
 
 // coerce converts v to t: the implicit `T` to `Option[T]`.
 func (s *fn) coerce(v *Value, t *Type, at ast.Node) *Value {
+	if v.Type != t && s.isDead() {
+		// the value of code after a `return` (an `if` arm that returns)
+		return s.undef(t)
+	}
 	if v.Type == t || v.Op == OpUndef {
 		if v.Op == OpUndef && v.Type != t {
 			return s.undef(t)

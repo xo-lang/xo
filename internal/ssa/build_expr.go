@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -26,11 +27,18 @@ func (s *fn) expr(e ast.Expr) *Value {
 			f, _ := strconv.ParseFloat(x.Value, 64)
 			return s.add(OpConst, t, f)
 		}
-		n, err := strconv.ParseInt(x.Value, 10, 64)
-		if err != nil {
-			b.unsupported(x, "this Int literal")
+		if t.Kind != KInt {
+			t = m.Builtin(KInt)
 		}
-		return s.add(OpConst, m.Builtin(KInt), n)
+		return s.intLit(x, t)
+	case *ast.RuneLit:
+		// a Rune, or the code point where an integer is expected
+		// (decision 0079)
+		if t := s.natOf(x); t.Kind == KInt {
+			return s.add(OpConst, t, int64(x.Value))
+		}
+	case *ast.BytesLit:
+		return s.add(OpConst, m.Builtin(KStr), x.Value)
 	case *ast.FloatLit:
 		f, err := strconv.ParseFloat(strings.ReplaceAll(x.Raw, "_", ""), 64)
 		if err != nil {
@@ -80,12 +88,18 @@ func (s *fn) expr(e ast.Expr) *Value {
 		v := s.expr(x.X)
 		switch x.Op {
 		case token.Minus:
+			if v.Type.Sized() {
+				return s.sizedNeg(v, x)
+			}
 			r := s.add(OpNeg, v.Type, nil, v)
 			if v.Type.Kind == KInt {
 				r.Pos = b.pos(x)
 			}
 			return r
 		case token.Bang, token.Tilde:
+			if v.Type.Sized() {
+				return s.sizedNot(v)
+			}
 			return s.add(OpNot, v.Type, nil, v)
 		}
 	case *ast.BinaryExpr:
@@ -93,7 +107,14 @@ func (s *fn) expr(e ast.Expr) *Value {
 	case *ast.SelectorExpr:
 		return s.selector(x)
 	case *ast.IndexExpr:
+		if r, ok := x.Index.(*ast.RangeExpr); ok {
+			return s.slice(x, r)
+		}
 		l := s.expr(x.X)
+		if l.Type.Kind == KStr && isPreludeNamed(s.natCheck(x.X), "Bytes") {
+			i := s.valueAs(x.Index, m.Builtin(KInt))
+			return s.call("bytes.index", m.IntType("UInt8"), b.pos(x), l, i)
+		}
 		if l.Type.Kind != KList {
 			break
 		}
@@ -181,7 +202,7 @@ func unsupportedExpr(e ast.Expr) string {
 	case *ast.RangeExpr:
 		return "a range outside `for`"
 	}
-	return "this expression"
+	return "this expression (" + strings.TrimPrefix(fmt.Sprintf("%T", e), "*ast.") + ")"
 }
 
 func (s *fn) ident(x *ast.Ident) *Value {
@@ -197,7 +218,7 @@ func (s *fn) ident(x *ast.Ident) *Value {
 		return s.bool(x.Name == "true")
 	}
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
-		return s.valueAs(c.Decl.Value, s.natOf(x))
+		return s.constValue(c, s.natOf(x))
 	}
 	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok {
 		return s.funcValue(fo, x)
@@ -212,7 +233,7 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 		return s.variant(s.natOf(x), vo.Name, nil, x)
 	}
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
-		return s.valueAs(c.Decl.Value, s.natOf(x))
+		return s.constValue(c, s.natOf(x))
 	}
 	if x.Sel.Name == "await" {
 		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
@@ -267,7 +288,7 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 		}
 		ct := s.natCheck(p.Expr)
 		v := s.expr(p.Expr)
-		if isPreludeNamed(ct, "Duration", "Time", "Bytes") || !isBuiltinKind(v.Type) {
+		if isPreludeNamed(ct, "Duration", "Time", "Bytes", "UInt64", "Rune") || !isBuiltinKind(v.Type) {
 			// Display text through build_show.go
 			if acc == nil {
 				acc = s.add(OpConst, st, "")
@@ -280,7 +301,7 @@ func (s *fn) stringLit(x *ast.StringLit) *Value {
 		case KInt, KFloat:
 			if acc != nil {
 				// append the number's text without a temporary string
-				acc = s.call("str.concat_"+strings.ToLower(v.Type.Name), st, "", acc, v)
+				acc = s.call("str.concat_"+lowerKind(v.Type), st, "", acc, v)
 				continue
 			}
 			if v.Type.Kind == KInt {
@@ -348,6 +369,9 @@ func (s *fn) arith(op token.Kind, l, r *Value, at ast.Node) *Value {
 	if l.Type.Kind == KStr && op == token.Plus {
 		return s.call("str.concat", l.Type, "", l, r)
 	}
+	if l.Type.Sized() {
+		return s.sizedArith(op, l, r, at)
+	}
 	o, ok := arithOps[op]
 	if !ok || (l.Type.Kind != KInt && l.Type.Kind != KFloat && l.Type.Kind != KBool) {
 		s.b.unsupported(at, "this operator")
@@ -408,11 +432,16 @@ func (s *fn) binary(x *ast.BinaryExpr) *Value {
 		return res
 	}
 	l := s.expr(x.X)
-	r := s.valueAs(x.Y, l.Type)
+	var r *Value
+	if x.Op == token.Shl || x.Op == token.Shr {
+		r = s.shiftCount(x.Y, l.Type)
+	} else {
+		r = s.valueAs(x.Y, l.Type)
+	}
 	if o, ok := cmpOps[x.Op]; ok {
 		switch l.Type.Kind {
 		case KInt, KFloat, KBool:
-			return s.add(o, boolT, nil, l, r)
+			return s.compare(o, l, r)
 		case KStr:
 			if o == OpEq || o == OpNe {
 				eq := s.call("str.eq", boolT, "", l, r)
@@ -570,12 +599,12 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 		s.test(c, fail)
 	case *ast.RangePat:
 		lo := s.valueAs(x.Lo, v.Type)
-		s.test(s.add(OpGe, boolT, nil, v, lo), fail)
+		s.test(s.compare(OpGe, v, lo), fail)
 		hi := s.valueAs(x.Hi, v.Type)
 		if x.Inclusive {
-			s.test(s.add(OpLe, boolT, nil, v, hi), fail)
+			s.test(s.compare(OpLe, v, hi), fail)
 		} else {
-			s.test(s.add(OpLt, boolT, nil, v, hi), fail)
+			s.test(s.compare(OpLt, v, hi), fail)
 		}
 	case *ast.TuplePat:
 		if v.Type.Kind != KTuple || len(x.Elems) != len(v.Type.Elems) {

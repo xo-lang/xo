@@ -250,6 +250,10 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		if nargs(1) != "" || arg(0).Kind != KFloat || v.Type.Kind != KInt {
 			return "ftoi takes Float to Int"
 		}
+	case OpIntConv:
+		if nargs(1) != "" || arg(0).Kind != KInt || v.Type.Kind != KInt {
+			return "iconv takes an integer to an integer type"
+		}
 	case OpStruct:
 		if v.Type.Kind != KStruct || len(v.Args) != len(v.Type.Fields) {
 			return "struct operands do not match the fields"

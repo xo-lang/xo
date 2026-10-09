@@ -232,6 +232,11 @@ func (c *checker) infer0(e ast.Expr, hint Type) Type {
 	case *ast.DurationLit:
 		return c.named("Duration")
 	case *ast.RuneLit:
+		if hint != nil && c.isInt(hint) {
+			// a character as its code point (core 1.6, decision 0079)
+			c.runeFits(x, resolve(hint))
+			return resolve(hint)
+		}
 		return c.named("Rune")
 	case *ast.BytesLit:
 		return c.named("Bytes")
@@ -971,18 +976,49 @@ func (c *checker) selectExpr(x *ast.SelectExpr, want Type) Type {
 // ---------------------------------------------------------------------------
 // Operators
 
-// isLiteral reports whether e is a numeric literal (possibly negated), whose
-// type adapts to its context.
+// isLiteral reports whether e is a numeric literal (possibly negated) or a
+// rune literal, whose type adapts to its context.
 func isLiteral(e ast.Expr) bool {
 	switch x := e.(type) {
-	case *ast.IntLit, *ast.FloatLit:
+	case *ast.IntLit, *ast.FloatLit, *ast.RuneLit:
 		return true
 	case *ast.UnaryExpr:
-		return x.Op == token.Minus && isLiteral(x.X)
+		return x.Op == token.Minus && isNumLiteral(x.X)
 	case *ast.ParenExpr:
 		return isLiteral(x.X)
 	}
 	return false
+}
+
+// isNumLiteral is isLiteral without rune literals.
+func isNumLiteral(e ast.Expr) bool {
+	if p, ok := e.(*ast.ParenExpr); ok {
+		return isNumLiteral(p.X)
+	}
+	if _, ok := e.(*ast.RuneLit); ok {
+		return false
+	}
+	return isLiteral(e)
+}
+
+// runeFits reports a rune literal x used as a value of the integer type t
+// (decision 0079) whose code point t cannot hold. An 8 bit type takes only
+// ASCII: any other character is several bytes in UTF-8, so comparing a
+// byte with it is a mistake even where the code point would fit.
+func (c *checker) runeFits(x *ast.RuneLit, t Type) {
+	n, ok := t.(*Named)
+	if !ok {
+		return
+	}
+	limit := map[string]rune{"Int8": 0x7f, "UInt8": 0x7f, "Int16": 0x7fff, "UInt16": 0xffff}
+	max, sized := limit[n.Obj.Name]
+	if !sized || x.Value <= max {
+		return
+	}
+	d := c.errorf(diag.TypeMismatch, x.Sp, "the rune literal %s (U+%04X) does not fit `%s`", x.Raw, x.Value, n.Obj.Name)
+	if d != nil && max == 0x7f {
+		note(d, token.Span{}, "a byte type takes only ASCII characters: any other character is two or more bytes in UTF-8 (compare with its bytes, `\\xHH`, or decode the runes)")
+	}
 }
 
 func (c *checker) unary(x *ast.UnaryExpr, hint Type) Type {
@@ -1124,6 +1160,13 @@ func (c *checker) binaryType(op token.Kind, xt, yt Type, sp token.Span, xe, ye a
 		d := c.errorf(diag.BadOperand, sp, "operator `%s` is not defined for `%s` and `%s`", op, dx, dy)
 		if d != nil && c.isNumeric(dx) && c.isNumeric(dy) {
 			note(d, token.Span{}, "there are no implicit numeric conversions; convert one side explicitly, for example `%s(x)` (core 2.1)", dx)
+		}
+		if d != nil && (c.isInt(dx) && c.isPrelude(dy, "Rune") || c.isPrelude(dx, "Rune") && c.isInt(dy)) {
+			it := dx
+			if !c.isInt(it) {
+				it = dy
+			}
+			note(d, token.Span{}, "a Rune converts to its code point with `%s(r)`; a rune literal such as 'a' is already one where an integer is expected (core 2.1)", it)
 		}
 		if d != nil && (c.isPrelude(dx, "Duration") || c.isPrelude(dy, "Duration") || c.isPrelude(dx, "Time")) {
 			note(d, token.Span{}, "Duration and Time support d1 + d2, d1 - d2, d * n, n * d, d / n, d1 / d2, t + d, t - d, t1 - t2, and comparisons (core 2.1)")

@@ -171,14 +171,99 @@ property tests over `List[Int]` turned into byte strings.
   the case, the input, and the fault location at once
   (`gotchas/property-int-min-abs.md`).
 
+## Follow up: gaps 1 to 5 closed (2026-10-08, later the same day)
+
+Decisions 0078 to 0081 closed the five top ranked gaps, and the lexer
+was rewritten to use them. The differential test still passes on the
+whole repository (436 files), the spec blocks, every Unicode scalar
+value (`XO_SELFHOST_RUNE_STEP=1`), and 30,000 mutated inputs (seeds 2
+and 3), now for the lexer built with each of the three backends.
+
+| Gap | Fix |
+|---|---|
+| 1. No byte builder | `BytesBuilder` (`new`, `with_capacity`, `write`, `write_byte`, `write_str`, `write_rune`, `len`, `freeze`), move only (0078) |
+| 2. Characters are not numbers | a rune literal where an integer is expected is its code point (`b[i] == '"'`, `match c { 'a'..='z' => ...}`; 8 bit types take only ASCII); `Int(r)`, `Rune(n)`, `Rune.try(n)`; notes on XO0409 and XO0406 (0079) |
+| 3. No native build | sized integers, Rune, Bytes indexing and slicing, builders, `fs.read`, `env.args`, `proc.exit`, constants built once, on arm64 and LLVM (0081) |
+| 4. No Unicode and quoting in std | `Rune.is_print`, `Rune.quote`, `Str.quote`, `Bytes.quote`, `Bytes.rune_count`, `Bytes.decode_rune`, with Go's exact rules (0079) |
+| 5. XO0305 on a large enum | not reported for a `_` arm hiding 8 or more variants and over half of the enum; the message lists at most 8 names (0080) |
+
+### Size
+
+| Part | Go | Xo before | Xo now |
+|---|---|---|---|
+| Lexer (`lexer.go` / `lexer.xo`) | 923 (1025) | 1060 (1212) | 1026 (1180) |
+| Tokens (`token.go` / `token.xo`) | 247 (301) | 167 (198) | 167 (198) |
+| Library stand ins (`text.xo`) | 0 | 167 (211) | deleted (prelude) |
+| Generated IsPrint table (`isprint.xo`) | 0 | 1422 | deleted (prelude) |
+| **Lexer total** | **1170** | **1394 (1.19x)** | **1193 (1.02x)** |
+| Dump printer | 99 | 66 | 66 |
+| Tests (`lexer_test.xo`) | 274 | 298 | 295 |
+
+Code lines (non blank, non comment), physical lines in parentheses. The 50
+named byte constants are gone (`c == '"'` reads as in Go), so are 40 of
+the 45 `Int(b[i])` widenings, the hex string detour that made a byte
+(`Bytes.from_hex(hex2(c))`), the quadratic `out = out + raw[a..b]` in
+`cook`, and the lookup list that dodged XO0305 (`short_name` is a `match`
+with a `_` arm again).
+
+### Speed
+
+Same measurement as above (lexing only, the repository 5 times, best of 3
+interleaved runs on the shared M4 host, small and indicative): 436 files,
+1.10 MB.
+
+| Lexer | Time (5 x 1.10 MB) | Throughput | vs Go |
+|---|---|---|---|
+| Go (`xo lexdump --bench=5`) | 98 ms | 56 MB/s | 1.00x |
+| Xo, Go backend | 191 ms | 29 MB/s | 1.95x slower (was 2.33x) |
+| Xo, native arm64 | 80 ms | 69 MB/s | 0.82x (faster) |
+| Xo, LLVM | 75 ms | 73 MB/s | 0.77x (faster) |
+
+The first native build ran at 5x the Go lexer's time: a `const` Map was
+rebuilt at every read, and `lookup` reads `KEYWORDS` once per identifier
+(60 percent of the samples were Map rebuilds and hashing). Decision 0081
+builds such constants once per run, which made the native lexer faster
+than the Go one. Byte reads (`b[i]`) are inline loads with a bounds
+check; byte comparisons are plain compares; the remaining costs are the
+copies of slices (each token's text is a new string) and the checked
+UInt8 arithmetic, which is a runtime call (rare in the lexer).
+
+### Remaining gaps, re-ranked
+
+1. **Bytes lacks the Str methods** (was 6): `find`, `starts_with`,
+   `split`, `replace`, `trim`, `index_of` on `Bytes`; the lexer still
+   carries `has_double_slash`, `index_rbrace`, `replace_crlf`,
+   `without_byte`, `split_byte`, `is_space_tab`, `leading_space_tab`.
+2. **No local helper that mutates enclosing state** (was 7): `cook` and
+   `string_lit` still reset `acc`, `seg`, `cur_start` by hand.
+3. **Go backend speed** (was 8): 1.95x of Go; value receivers of the
+   10 field `Lexer` are copied per call, and widening conversions are
+   generic checked calls.
+4. **No native `xo test`**: the native backends build programs only, so
+   the lexer's 20 Xo tests run on the Go backend; the differential test
+   is what checks the native builds.
+5. **`xo fmt` tables** (was 9) and **no library/CLI module boundary**
+   (was 10), unchanged.
+6. **Native slices copy**: `b[a..b]` on Bytes and Str allocates a copy; a
+   view (object, offset, length) would make token text free. Next
+   experiment: count allocations with `XO_LEAKCHECK=1 ./xolex <file>`
+   (total allocations) before and after giving `xo_rstr` slices a parent
+   pointer.
+
+Things that worked well: the differential test caught nothing new in the
+rewrite (it passed first time on all three backends), and the native
+build needed no change to the lexer itself.
+
 ## How to reproduce
 
 ```
 go test ./internal/selfhost                                       # differential (repo, spec, runes, 3000 fuzz) and xo test selfhost/lexer
 XO_SELFHOST_SEED=2 XO_SELFHOST_FUZZ=30000 go test ./internal/selfhost -run TestSelfhostDifferential
-XO_SELFHOST_RUNE_STEP=1 go test ./internal/selfhost -run TestSelfhostDifferential/runes
+XO_SELFHOST_RUNE_STEP=1 go test ./internal/selfhost -run TestSelfhostDifferential/go/runes
 go run ./cmd/xo lexdump file.xo                                   # Go lexer dump
 go run ./cmd/xo run selfhost/lexer -- file.xo                     # Xo lexer dump (same text)
 go run ./cmd/xo lexdump --bench=5 $(find . -name '*.xo' -not -path './.*')
 go run ./cmd/xo build -o /tmp/xolex selfhost/lexer && /tmp/xolex --bench=5 $(find . -name '*.xo' -not -path './.*')
+go run ./cmd/xo build --backend=arm64 -o /tmp/xolex-arm selfhost/lexer   # also --backend=llvm
+go test ./internal/selfhost -run 'TestSelfhostDifferential/arm64'     # one backend
 ```

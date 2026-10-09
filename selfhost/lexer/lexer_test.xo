@@ -33,21 +33,19 @@ fn render(toks: List[Token]) -> Str {
 }
 
 /// The short kind names of render; empty for operators and keywords.
-/// (A `match` with a `_` arm here is warning XO0305, which asks to list
-/// the other 79 variants of Kind.)
 fn short_name(k: Kind) -> Str {
-  let names = [
-    (Kind.Ident, "id"),
-    (Kind.Int, "int"),
-    (Kind.Float, "float"),
-    (Kind.Duration, "dur"),
-    (Kind.Rune, "rune"),
-    (Kind.RawString, "raw"),
-    (Kind.Bytes, "bytes"),
-    (Kind.ImportPath, "path"),
-    (Kind.Illegal, "illegal"),
-  ]
-  names.find(fn(e) { e.0 == k }).map(fn(e) { e.1 }) ?? ""
+  match k {
+    Ident => "id"
+    Int => "int"
+    Float => "float"
+    Duration => "dur"
+    Rune => "rune"
+    RawString => "raw"
+    Bytes => "bytes"
+    ImportPath => "path"
+    Illegal => "illegal"
+    _ => ""
+  }
 }
 
 fn lex_str(src: Str) -> LexResult {
@@ -64,11 +62,11 @@ fn messages(src: Str) -> List[Str] {
 
 /// Bytes made of the low 8 bits of each Int.
 fn bytes_of(xs: List[Int]) -> Bytes {
-  var out = b""
+  var out = BytesBuilder.with_capacity(xs.len())
   for x in xs {
-    out = out + byte_bytes(x & 0xff)
+    out.write_byte(UInt8(x & 0xff))
   }
-  out
+  out.freeze()
 }
 
 test "identifiers, keywords, and contextual words" {
@@ -248,17 +246,12 @@ test "escape error spans" {
   expect(ds[0].span.end.col) == 8
 }
 
-test "quote_rune follows strconv.QuoteRune" {
-  expect(quote_rune(0x41)) == b"'A'"
-  expect(quote_rune(0x27)) == b"'\\''"
-  expect(quote_rune(0x0a)) == b"'\\n'"
-  expect(quote_rune(0x00)) == b"'\\x00'"
-  expect(quote_rune(0x7f)) == b"'\\x7f'"
-  expect(quote_rune(0x85)) == b"'\\u0085'"
-  expect(quote_rune(0xe9)) == "'é'".bytes()
-  expect(quote_rune(0x1f600)) == "'😀'".bytes()
-  expect(quote_rune(0xe0001)) == b"'\\U000e0001'"
-  expect(quote_rune(0xd800)) == "'\u{fffd}'".bytes()
+test "invalid characters are quoted like strconv.QuoteRune" {
+  expect(messages("\u{85}")) == ["invalid character '\\u0085'"]
+  expect(messages("\u{e0001}")) == ["invalid character '\\U000e0001'"]
+  expect(messages("\u{1f600}")) == ["invalid character '😀'"]
+  expect(lex(b"\x7f").diags[0].message) == b"invalid character '\\x7f'"
+  expect(lex(b"\xff").diags[0].message) == "invalid character '\u{fffd}'".bytes()
 }
 
 test "the dump quotes every byte outside printable ASCII" {
@@ -281,13 +274,14 @@ test "durations lex to nanoseconds" for n: Int {
   expect(t.value) == "${v * 1_000_000}".bytes()
 }
 
-test "encode_rune and decode_rune round trip" for n: Int {
-  let r = (n % 0x110000).abs()
-  let b = encode_rune(r)
-  let (got, size) = decode_rune(b, 0, b.len())
-  let want = if r >= 0xd800 && r <= 0xdfff { RUNE_ERROR } else { r }
-  expect(got) == want
-  expect(size) == b.len()
+test "write_rune and decode_rune round trip" for n: Int {
+  let r = Rune.try((n % 0x110000).abs()) ?? '\u{fffd}'
+  var b = BytesBuilder.new()
+  b.write_rune(r)
+  let enc = b.freeze()
+  let (got, size) = enc.decode_rune(0)
+  expect(got) == r
+  expect(size) == enc.len()
 }
 
 test "plain strings hold their text" for s: Str {
@@ -323,10 +317,11 @@ test "every token's text is its source span on lexer like input" for words: List
   // Sources built from fragments of real syntax reach far more states than
   // random bytes.
   let frags = ["\"", "\${", "}", "{", "\\", "x", "1", "0x", "_", ".", "e", "s", "'", "r#\"", "\"#", "b\"", "\n", " ", "//", "use ", "/", "\u{a0}", "???", "#"]
-  var src = b""
+  var b = BytesBuilder.new()
   for w in words {
-    src = src + frags[(w % frags.len()).abs()].bytes()
+    b.write_str(frags[(w % frags.len()).abs()])
   }
+  let src = b.freeze()
   let r = lex(src)
   for t in r.tokens {
     expect(t.text) == src[t.span.start.offset..t.span.end.offset]

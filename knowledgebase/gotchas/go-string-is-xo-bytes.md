@@ -15,7 +15,7 @@ byte strings.
 Fix: hold source and every derived text as `Bytes` (`os.fs.read`, `b[i]`,
 `b[a..b]`, `+`), and convert to `Str` only for text known to be ASCII
 (identifiers, with `to_str().or_fault(...)`) or output already escaped to
-ASCII (the dump quotes every byte outside printable ASCII as `\xHH`). Bytes
-has no builder, so build with `+` of whole slices (`cook` in `lexer.xo`
-appends runs, not single bytes). Proposed fix: gaps 1 and 6 of
-`bench/results/selfhost-lexer-2026-10-08.md`.
+ASCII (the dump quotes every byte outside printable ASCII as `\xHH`). Build
+`Bytes` with `BytesBuilder` (decision 0078, std.md 2.7), not with `out =
+out + more`, which copies `out` each time. Bytes still lacks the `Str`
+search methods (gap 6 of `bench/results/selfhost-lexer-2026-10-08.md`).

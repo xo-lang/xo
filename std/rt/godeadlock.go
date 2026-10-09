@@ -38,8 +38,17 @@ import (
 //     Builds that cannot see Go timers (plain go test, targets other than
 //     darwin and linux) never report a deadlock through a Go call.
 //
-// Steps 2 and 3 run twice in a row (goStuckProof), so a timer made and
-// fired between two looks shows as a moving goroutine.
+// Steps 2 and 3 run twice in a row with a yield between them
+// (goStuckProof), so a timer made and fired between two looks shows as a
+// moving goroutine. Under the deterministic scheduler, the proof also
+// needs the scheduler to be still around it: no callback call or Go call
+// return waiting for admission, no decision or lending in progress, no
+// turn handed out (confirmGoLocked). A Go timer that fired runs its
+// function on a goroutine that becomes an arrival, and the arrival
+// waits for Go's goroutines to settle (sleeping in osSleep, which the
+// classifier otherwise ignores) before it is admitted; a proof taken in
+// that window saw no timer, parked goroutines, and the old threads, and
+// reported a correct program (update 2026-10-08).
 
 // goCallWait is what a thread inside a Go call waits for: its foreign
 // callbacks. top is the innermost Go function of the call
@@ -155,6 +164,11 @@ func goTimersClear() (bool, time.Duration) {
 // is set when a Go timer is pending: look again after it.
 func goStuckProof() (ok bool, retry time.Duration) {
 	for i := 0; i < 2; i++ {
+		if i > 0 {
+			// let a goroutine readied since the first look run, or show
+			// as runnable
+			runtime.Gosched()
+		}
 		if clear, wait := goTimersClear(); !clear {
 			return false, wait
 		}
@@ -200,6 +214,12 @@ func goParked(g string) bool {
 		if j := strings.IndexAny(state, ",]"); j >= 0 {
 			state = state[:j]
 		}
+	}
+	if strings.Contains(g, rtPrefix+"waitGoSettled(") {
+		// a decision or a lend of the deterministic scheduler waiting
+		// for Go's goroutines to settle, often in osSleep: it is about
+		// to admit what arrived
+		return false
 	}
 	moving := false
 	switch state {
@@ -305,6 +325,9 @@ func (s *sched) confirmGoLocked() {
 		d := 2 * time.Millisecond
 		for {
 			osSleep(d)
+			s.mu.Lock()
+			still := s.stillLocked()
+			s.mu.Unlock()
 			q, retry := goStuckProof()
 			s.mu.Lock()
 			if s.moves != moves || s.cur != nil || len(s.ready) > 0 {
@@ -318,7 +341,9 @@ func (s *sched) confirmGoLocked() {
 				s.mu.Unlock()
 				return
 			}
-			if q {
+			// the scheduler must have been still before and after the
+			// proof, with no turn handed out in between
+			if q && still && s.stillLocked() && s.moves == moves {
 				s.goDead = ws
 				s.confirming = false
 				w := s.w
@@ -334,6 +359,14 @@ func (s *sched) confirmGoLocked() {
 			}
 		}
 	}()
+}
+
+// stillLocked reports whether nothing waits for admission and no
+// decision or lend is in progress: a callback call that arrived (a Go
+// timer's function, say) is not a thread yet, so goStuckLocked cannot
+// see it, but it will run.
+func (s *sched) stillLocked() bool {
+	return !s.picking && !s.lending && len(s.pend) == 0 && len(s.pendRet) == 0
 }
 
 // osAfter returns a channel closed after d, timed with osSleep (no Go

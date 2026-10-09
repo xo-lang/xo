@@ -20,7 +20,7 @@ var protectedNames = map[string]bool{
 	"UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true, "Float": true, "Float32": true,
 	"Rune": true, "Str": true, "Bytes": true, "Duration": true, "Time": true, "List": true,
 	"Map": true, "Set": true, "Buf": true, "Chan": true, "Mutex": true, "Atomic": true,
-	"Secret": true, "Option": true, "Result": true, "Never": true, "StrBuilder": true,
+	"Secret": true, "Option": true, "Result": true, "Never": true, "StrBuilder": true, "BytesBuilder": true,
 	"Display": true, "Error": true, "Debug": true, "Eq": true, "Hash": true, "Ord": true,
 	"Json": true, "OpenApi": true, "Proto": true, "SqlRow": true,
 	"Os": true, "Net": true, "Fs": true, "Clock": true, "Rand": true, "Env": true, "Proc": true, "Stdio": true,
