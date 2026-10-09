@@ -579,6 +579,7 @@ func (f *fnGen) selector(x *ast.SelectorExpr) string {
 			if o.Recv != nil && !o.Static && f.info.TypeOf(x.X) != nil {
 				return f.methodValue(x, o)
 			}
+			f.noteZoneValue(o, x)
 			return f.funcValue(o, f.nat(x), nil)
 		}
 	}

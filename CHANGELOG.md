@@ -11,6 +11,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cache, `xo.lock` hashes verified on every build, `xo get`, `xo mod
   tidy`, `xo vendor`, `xo mod clean`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). Diagnostics XO1301 to XO1308.
+- `std/time` (decision 0094, Go backend): zones with per use embedded
+  data (`--tzdata=system`), civil dates and times with explicit daylight
+  saving gaps and overlaps, layouts with named fields checked at compile
+  time (XO0420; XO0177 for `{yyyy}`, `%Y`, `2006-01-02` habits).
 
 ## v0.7.0 (2026-10-09)
 

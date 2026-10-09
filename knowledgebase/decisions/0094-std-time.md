@@ -1,6 +1,8 @@
 # 0094: std/time: per use zone data and named layout fields
 
-Status: Accepted (2026-10-09, by the owner; not yet implemented)
+Status: Accepted (2026-10-09, by the owner). Go backend and checker
+rules implemented 2026-10-09 (see Implementation); native runtime and
+cross backend diff tests not yet.
 
 ## Context
 
@@ -50,3 +52,23 @@ of habit agents carry over.
 - Letter patterns or `%` codes: case and memory traps.
 - `format` returning a `Result` for every call: noise for constant
   layouts that cannot fail.
+
+## Implementation (2026-10-09)
+
+- Go backend: `std/time.xo`, `std/rt/timezone.go`, `timecivil.go`,
+  `timefmt.go`. Zone data comes from the building Go toolchain's
+  `lib/time/zoneinfo.zip`: `internal/gen/timezone.go` records constant
+  names and run time calls of `time.zone`, `internal/build/tzdata.go`
+  writes `xo_tzdata.go` (TZif per constant zone, or the whole zip with
+  go:embed plus a note per call), `--tzdata=system` on build, run, and
+  test. Measured on darwin/arm64: UTC only +0, one zone +848 bytes, run
+  time name +414 KB (std.md 13.5).
+- Checker: `internal/check/timelayout.go`, new code `XO0420` for a bad
+  constant layout, `XO0177` for `{yyyy}`, `yyyy-MM-dd`, `%Y`, and
+  `2006-01-02` forms.
+- Points the API left open were settled without changing it (std.md
+  13.5): `{frac}` includes the dot, `Civil.zone` is the zone name, gap
+  `Earlier` uses the offset before the change, `{hour12}` needs
+  `{ampm}`, parsing a gap or overlap without an offset is an error.
+- Native backends: every function is `XO1201` (planned); types and
+  constants build.

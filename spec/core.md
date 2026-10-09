@@ -17,7 +17,7 @@ no meaning changes, the spec now says what is not implemented yet.
 Method syntax stays receivers (decision 0090), `Map` keeps insertion
 order (0091), error frames will be lazy and always on (0092), and foreign
 calls will be recorded at the boundary (0093); `std/time` is accepted as
-specified in std.md 13 (decision 0094), not yet implemented.
+specified in std.md 13 (decision 0094).
 
 - `xo build --ci` exists: it fails before building on an unformatted file
   or a `dbg` left in code (10.1, 10.5, 11.4).
@@ -36,6 +36,13 @@ specified in std.md 13 (decision 0094), not yet implemented.
   `xo get`, `xo mod tidy`, `xo vendor`, `--offline`, and `xo.work`
   workspaces (`--workspace=off`). New codes `XO1301` to `XO1308` (10.6).
   An import from a module that is not required is `XO1306`.
+- `std/time` (std.md 13, decision 0094) is implemented on the Go backend:
+  zones with per use embedded data (`--tzdata=system` reads the host
+  database), civil dates and times with explicit daylight saving gaps and
+  overlaps, and layouts with named fields. A constant layout is checked at
+  compile time: `XO0420` for an unknown field (10.6), `XO0177` for date
+  patterns of other languages. Native backends report it as `XO1201`
+  (planned).
 
 ## Changes in 0.7
 
@@ -1503,7 +1510,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci]` | Build static binaries; `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4) |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
@@ -1734,6 +1741,7 @@ tidy`, and `xo vendor`; 4.2, 4.3). `xo explain
 | `XO0408` | error | checker | const initializer is not a compile time value (core 3.1) |
 | `XO0409` | error | checker | invalid explicit conversion (core 2.1) |
 | `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
+| `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0510` | error | checker | use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3) |
@@ -1945,7 +1953,7 @@ specified in `spec/std.md`. Modules:
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
 | `std/log` | Structured, ambient logging bound to spans |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
-| `std/time` | Time zones and formatting (arithmetic is in the prelude). **[later]** The module is empty; std.md 13 is a Proposed API |
+| `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13). Go backend only so far |
 | `std/testing` | Fake capability types, generators, captured logs |
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |

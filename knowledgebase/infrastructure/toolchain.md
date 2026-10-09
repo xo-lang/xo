@@ -344,7 +344,13 @@ empty), and (build mode, since 2026-10-08) `xo_buildinfo.go` (package
 main: `rt.SetBuildInfo` with the build id, source hashes, main module
 directory, and options, `build.Info`). Last verified: 2026-10-08. Crash bundles go to
 `$XO_CRASH_DIR` or the system temporary directory. `XO_GO` overrides the go
-command (default: `go` on PATH).
+command (default: `go` on PATH). A program that calls `time.zone` also
+gets `xo_tzdata.go` (package main: `rt.TZEmbed` per constant zone name,
+or `rt.TZFull` over `xo_zoneinfo.zip` embedded with go:embed when a name
+is known only at run time, or `rt.TZUseSystem` with `--tzdata=system`).
+The zone data is `$(go env GOROOT)/lib/time/zoneinfo.zip` of the go
+command the build uses; `XO_ZONEINFO=<file>` names another zip. Last
+verified: 2026-10-09.
 
 ## Deterministic scheduling and live inspection
 
@@ -1046,6 +1052,22 @@ Last verified: 2026-10-08. Rules and choices; details in
   `std/rt/xcrypto_test.go` (`TestArgon2RFC9106`, `TestBlake2bRFC7693`,
   `TestArgon2idMatchesXCrypto`, `TestCryptoArgon2idHash`) and
   `BenchmarkArgon2idDefault` (about 19 ms per hash on Apple M, 2026-10-08).
+- std/time (2026-10-09, decision 0094, std.md 13): `std/time.xo`;
+  `std/rt/timezone.go` (Zone handle, zone registry, a stored zip reader
+  so rt does not link archive/zip, `local`), `timecivil.go` (dates by
+  day number, `instant` with gap and overlap detection over the offsets
+  two days either side), `timefmt.go` (layout parser shared in spirit
+  with `internal/check/timelayout.go`, kept equal by
+  `TestTimeLayoutAgrees`; format, strict parse). Per use zone data:
+  `internal/gen/timezone.go` records `time.zone` calls (constant names
+  through `check.ConstString`), `internal/build/tzdata.go` writes the
+  data and the notes (`build.Result.Notes`, printed by `xo build`).
+  Goldens `time_zones`, `time_civil`, `time_format`, `time_layout_fault`,
+  `time_dynamic_zone`; `TestZoneDataPerUse` (what each kind of use
+  embeds, `--tzdata=system`); checker golden `time_layout`; habit cases
+  `internal/fix/testdata/habits/time-layout-*`. Sizes on darwin/arm64:
+  UTC only 7,968,146 bytes, one constant zone 7,968,994, a run time
+  name 8,382,498 (std.md 13.5).
 - Test log capture (2026-10-08, decision 0057): `runOneTest` gives each
   test world `newTestLogSink()` (std/rt/log.go); `logRecord` appends a
   `Log_Record` and, with no configured output, the text line to the

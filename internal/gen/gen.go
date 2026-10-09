@@ -77,6 +77,8 @@ type Program struct {
 	MainModule string
 	// Specs counts the specialized copies of generic functions.
 	Specs int
+	// TZ is what the program needs of the zone database (timezone.go).
+	TZ TZUse
 }
 
 // Error is a generation failure: a construct the P1 generator does not
@@ -107,6 +109,7 @@ type gen struct {
 	prelude *check.Module
 	boxed   map[*check.FieldObj]bool
 	ad      adaptState // interface adapters for generic code (adapt.go)
+	tz      tzState    // zones time.zone is asked for (timezone.go)
 }
 
 // Generate lowers the modules of a check result. roots are the modules
@@ -180,6 +183,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		return nil, err
 	}
 	prog.Files["main.go"] = mainSrc
+	prog.TZ = g.tzUse()
 	adaptSrc, err := g.adaptFile()
 	if err != nil {
 		return nil, err

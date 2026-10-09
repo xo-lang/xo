@@ -1,0 +1,203 @@
+[
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{yaer}-{month}-{day}\": unknown field {yaer}",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 20,
+      "end_line": 6,
+      "end_col": 42
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      },
+      {
+        "message": "did you mean {year}?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write \"{year}-{month}-{day}\"",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 20,
+              "end_line": 6,
+              "end_col": 42
+            },
+            "replace": "\"{year}-{month}-{day}\""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{year}-{mnth}-{day}\": unknown field {mnth}",
+    "span": {
+      "file": "main.xo",
+      "line": 24,
+      "col": 29,
+      "end_line": 24,
+      "end_col": 50
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      },
+      {
+        "message": "did you mean {month}?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write \"{year}-{month}-{day}\"",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 24,
+              "col": 29,
+              "end_line": 24,
+              "end_col": 50
+            },
+            "replace": "\"{year}-{month}-{day}\""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{hour12}:{minute}\": {hour12} needs {ampm} (or use {hour}, 00 to 23)",
+    "span": {
+      "file": "main.xo",
+      "line": 25,
+      "col": 29,
+      "end_line": 25,
+      "end_col": 48
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{month:long} {day}\": {month:long}: the forms are {month}, {month:1}, {month:short}, {month:name}",
+    "span": {
+      "file": "main.xo",
+      "line": 26,
+      "col": 29,
+      "end_line": 26,
+      "end_col": 49
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{year} }\": unmatched } (a literal brace is written {rbrace})",
+    "span": {
+      "file": "main.xo",
+      "line": 27,
+      "col": 29,
+      "end_line": 27,
+      "end_col": 39
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{year\": unclosed { (a literal brace is written {lbrace})",
+    "span": {
+      "file": "main.xo",
+      "line": 28,
+      "col": 29,
+      "end_line": 28,
+      "end_col": 36
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{dayy}\": unknown field {dayy}",
+    "span": {
+      "file": "main.xo",
+      "line": 34,
+      "col": 35,
+      "end_line": 34,
+      "end_col": 43
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      },
+      {
+        "message": "did you mean {day}?"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write \"{day}\"",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 34,
+              "col": 35,
+              "end_line": 34,
+              "end_col": 43
+            },
+            "replace": "\"{day}\""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0420",
+    "severity": "error",
+    "message": "bad time layout \"{frac:0}\": {frac:0}: the forms are {frac}, {frac:1} to {frac:9}",
+    "span": {
+      "file": "main.xo",
+      "line": 35,
+      "col": 35,
+      "end_line": 35,
+      "end_col": 45
+    },
+    "notes": [
+      {
+        "message": "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME"
+      }
+    ],
+    "fixes": []
+  }
+]

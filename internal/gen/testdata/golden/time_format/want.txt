@@ -1,0 +1,49 @@
+exit 0
+--- stdout
+UTC: 2026-10-09T08:05:03.12Z | Fri, 09 Oct 2026 08:05:03 UTC | 2026-10-09 | 08:05:03
+America/New_York: 2026-10-09T04:05:03.12-04:00 | Fri, 09 Oct 2026 04:05:03 EDT | 2026-10-09 | 04:05:03
+Europe/Berlin: 2026-10-09T10:05:03.12+02:00 | Fri, 09 Oct 2026 10:05:03 CEST | 2026-10-09 | 10:05:03
+2026 10 10 Oct October 09 9 Fri Friday
+04 04 AM 05 03 [.12] [.1] [.120] [.120000000] -04:00 -0400 EDT {literal}
+12PM [] Z +0000
+12AM Thursday
+2024-03-01T00:59:59+01:00
+round trips done
+parse 2026-10-09 -> 2026-10-09T00:00:00Z
+parse 2026-10-09 -> 2026-10-09T04:00:00Z
+parse 2026-10-09 14:30 -> 2026-10-09T12:30:00Z
+parse 12:00:00 -> 1970-01-01T12:00:00Z
+parse 2026-10-09T10:00:00+02:00 -> 2026-10-09T08:00:00Z
+parse 2026-10-09T10:00:00.5Z -> 2026-10-09T10:00:00.5Z
+parse Fri, 09 Oct 2026 08:05:03 GMT -> 2026-10-09T08:05:03Z
+parse Fri, 09 Oct 2026 04:05:03 EDT -> 2026-10-09T08:05:03Z
+parse 9/10/2026 07:05:03 PM -> 2026-10-09T19:05:03Z
+parse 9/10/2026 7:05:03 PM -> at byte 10 of "9/10/2026 7:05:03 PM": expected 2 digit hour
+parse 12:30 AM -> 1970-01-01T00:30:00Z
+parse 2026-11-01 01:30 EDT -> 2026-11-01T05:30:00Z
+parse 2026-11-01 01:30 EST -> 2026-11-01T06:30:00Z
+parse 2026-11-01 01:30 -> at byte 0 of "2026-11-01 01:30": 2026-11-01T01:30:00 happens twice in America/New_York (repeated by a daylight saving change); the layout needs {offset} or {zone}
+parse 2026-03-08 02:30 -> at byte 0 of "2026-03-08 02:30": 2026-03-08T02:30:00 does not exist in America/New_York (skipped by a daylight saving change); the layout needs {offset}
+parse 2026-1x-09 -> at byte 5 of "2026-1x-09": expected 2 digit month
+parse 2026-13-09 -> at byte 5 of "2026-13-09": month 13 out of range 1 to 12
+parse 2026-02-30 -> at byte 8 of "2026-02-30": day 30 out of range 1 to 28 for 2026-02
+parse 2026-10-9 -> at byte 8 of "2026-10-9": expected 2 digit day
+parse 26-10-09 -> at byte 0 of "26-10-09": expected 4 digit year
+parse 2026/10/09 -> at byte 4 of "2026/10/09": expected "-"
+parse 2026-10-09  -> at byte 10 of "2026-10-09 ": extra text after the layout: " "
+parse Thu, 09 Oct 2026 08:05:03 GMT -> at byte 0 of "Thu, 09 Oct 2026 08:05:03 GMT": weekday Thursday does not match 2026-10-09, a Friday
+parse Fri, 09 Okt 2026 08:05:03 GMT -> at byte 8 of "Fri, 09 Okt 2026 08:05:03 GMT": expected a month name such as "Jan"
+parse Fri, 09 Oct 2026 08:05:03 CET -> at byte 26 of "Fri, 09 Oct 2026 08:05:03 CET": zone abbreviation "CET" is not used by America/New_York at 2026-10-09T08:05:03
+parse 2026-10-09T10:00:00 -> at byte 19 of "2026-10-09T10:00:00": expected an offset: Z or +hh:mm
+parse 2026-10-09T10:00:00.Z -> at byte 20 of "2026-10-09T10:00:00.Z": expected 1 to 9 digit fraction
+parse 2026-10-09T25:00:00Z -> at byte 11 of "2026-10-09T25:00:00Z": hour 25 out of range 0 to 23
+parse 10:00:00.12 -> at byte 9 of "10:00:00.12": expected 3 digit fraction
+parse 13:00 PM -> at byte 0 of "13:00 PM": hour 13 out of range 1 to 12
+layout {year}-{month} ok
+bad layout "{yaer}": unknown field {yaer}
+bad layout "{month:long}": {month:long}: the forms are {month}, {month:1}, {month:short}, {month:name}
+bad layout "{hour12}": {hour12} needs {ampm} (or use {hour}, 00 to 23)
+bad layout "{year": unclosed { (a literal brace is written {lbrace})
+bad layout "}": unmatched } (a literal brace is written {rbrace})
+layout {lbrace}{rbrace} ok
+--- stderr

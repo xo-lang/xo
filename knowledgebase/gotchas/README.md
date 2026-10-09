@@ -193,3 +193,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [mod-tidy-drops-unimported-requires.md](mod-tidy-drops-unimported-requires.md): `xo mod tidy` removed every requirement of a module with no imports; write the imports first.
 - [transitive-module-import.md](transitive-module-import.md): a package of a module required only by a dependency was importable; now XO1306.
 - [serve-new-xo-work-unnoticed.md](serve-new-xo-work-unnoticed.md): `xo serve` may miss an xo.work created above the checked directories; stop it or pass a module flag.
+- [std-methods-are-go-methods.md](std-methods-are-go-methods.md): a method declared on a std struct or enum is called as a Go method `M_<name>` of its rt type, not as `<Prefix><Type>_<name>`.
+- [go-loadlocation-prefers-host.md](go-loadlocation-prefers-host.md): `time.LoadLocation` reads the host database before `time/tzdata`; std/time embeds TZif data and uses `LoadLocationFromTZData`.
+- [http-date-utc-not-gmt.md](http-date-utc-not-gmt.md): `time.RFC1123` in `utc()` ends in `UTC`; HTTP dates need a literal `GMT`.

@@ -1,0 +1,37 @@
+use std/time
+
+// std/time layouts (std.md 13.3, decision 0094): constant layouts are
+// checked at compile time (XO0420); layouts built at run time are not.
+
+const STAMP: Str = "{yaer}-{month}-{day}"
+const GOOD: Str = "{weekday:name}, {day:1} {month:name} {year}"
+const JOINED: Str = time.DATE + " {hour}:{minute}"
+
+pub fn valid(t: Time, z: time.Zone, user: Str) -> List[Str] {
+  [
+    time.format(t, z, time.RFC3339),
+    time.format(t, z, time.RFC1123),
+    time.format(t, z, GOOD),
+    time.format(t, z, JOINED),
+    time.format(t, z, "{hour12}:{minute} {ampm} {offset:compact} {zone} {frac:3} {lbrace}x{rbrace}"),
+    time.format(t, z, user),
+    time.format(t, z, "{" + user + "}"),
+  ]
+}
+
+pub fn invalid(t: Time, z: time.Zone) -> Str {
+  let a = time.format(t, z, STAMP)
+  let b = time.format(t, z, "{year}-{mnth}-{day}")
+  let c = time.format(t, z, "{hour12}:{minute}")
+  let d = time.format(t, z, "{month:long} {day}")
+  let e = time.format(t, z, "{year} }")
+  let f = time.format(t, z, "{year")
+  "${a}${b}${c}${d}${e}${f}"
+}
+
+pub fn parsing(s: Str, z: time.Zone) -> Bool {
+  let ok = time.parse(s, time.DATE, z).is_ok()
+  let bad = time.parse(s, layout: "{dayy}", z: z).is_ok()
+  let checked = time.check_layout("{frac:0}").is_ok()
+  ok && bad && checked
+}

@@ -125,6 +125,12 @@ const (
 	GoUsageReport      Code = "XO1103" // note: per module report of `use go` packages and the functions that perform `go` (decision 0041)
 )
 
+// std/time layout code (decision 0094). Emitted by internal/check for a
+// constant layout passed to time.format, time.parse, or time.check_layout.
+const (
+	TimeLayout Code = "XO0420" // constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3)
+)
+
 // Descriptions maps every code to its one line description. Kept in sync
 // with the constants above by TestCodesDocumented.
 var Descriptions = map[Code]string{
@@ -219,4 +225,5 @@ var Descriptions = map[Code]string{
 	ExpectedNewline:      "two statements or arms on one line",
 	MisplacedPub:         "`pub` before something that cannot be exported",
 	ForeignSyntax:        "syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)",
+	TimeLayout:           "constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3)",
 }

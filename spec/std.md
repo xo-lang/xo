@@ -1311,13 +1311,18 @@ not build `use go` code at all (`XO1201`, impossible).
 
 ---
 
-## 13. std/time (Accepted, not implemented)
+## 13. std/time
 
 Status: **Accepted** (decision 0094, 2026-10-09; drafted by the spec
-audit, `bench/results/spec-audit-2026-10-09.md`). Nothing here is implemented:
-`std/time` resolves but declares nothing (every name in it is `XO0601`).
-Until this is decided, the prelude (2.6) is the whole time API: instants,
-durations, Unix seconds and milliseconds, and RFC 3339 in UTC.
+audit, `bench/results/spec-audit-2026-10-09.md`). Implemented on the Go
+backend (2026-10-09): `std/time.xo`, `std/rt/timezone.go`,
+`timecivil.go`, `timefmt.go`; the compile time layout check is
+`internal/check/timelayout.go`. The native backends report every
+`std/time` function as `XO1201` (support planned; decision 0089 makes
+native a preview at 1.0); its types and constants build there. Points
+the API text below leaves open are settled in 13.5. Instants,
+durations, Unix seconds and milliseconds, and RFC 3339 in UTC stay in
+the prelude (2.6).
 
 Principles:
 
@@ -1431,3 +1436,57 @@ the layout (no guessing between formats); a two digit year is not offered.
 - Native backends carry the same embedded data in C; the Go backend uses
   Go's `time` package with the per use data. Implementation order: Go
   backend, checker rules, native runtime, cross backend diff tests.
+
+### 13.5 Implementation notes (2026-10-09)
+
+Settled while implementing; examples are in the goldens
+`internal/gen/testdata/golden/time_*` and
+`internal/check/testdata/golden/time_layout`.
+
+- **Zone data.** The zone data is the `lib/time/zoneinfo.zip` of the Go
+  toolchain that builds the program (`XO_ZONEINFO` names another file).
+  `time.zone("UTC")` needs no data. A constant name is a string literal,
+  a `const`, or a `+` of them; a constant name the database does not have
+  gets a build note and returns `ZoneErr.Unknown` at run time. `time.zone`
+  used as a function value counts as a name known only at run time.
+  Names are case sensitive. Measured on darwin/arm64 (2026-10-09): a
+  program using only `utc()` is 7,968,146 bytes, one constant zone
+  (Europe/Berlin) 7,968,994 (+848), a run time name 8,382,498 (+414 KB,
+  the database), the same with `--tzdata=system` 7,969,666.
+- **`local(env)`.** `TZ` from the `Env` (a leading `:` is dropped; empty
+  or `UTC` is `utc()`); a name that is not embedded is looked up in the
+  host database, since `local` is host dependent by nature. Without
+  `TZ`, a fake `Env` gives `utc()` and the real one the system zone,
+  named by the `/etc/localtime` link when there is one (`Local`
+  otherwise).
+- **Civil time.** `Civil.zone` is the zone's name (`Europe/Berlin`), not
+  the abbreviation (`abbreviation_at` gives that). `date` accepts years 1
+  to 9999; `Time` covers about 1678 to 2262, and `instant` outside it is
+  `CivilErr.Invalid`. Date methods on a `Date` built with a struct
+  literal and out of range fields normalize it (month 13 is January of the
+  next year). For a gap, `Earlier` uses the offset before the change and
+  `Later` the one after: 02:30 on 2026-03-08 in New York is 03:30 EDT
+  with `Earlier` and 01:30 EST with `Later` (Python's `fold=0` and `1`).
+  `ZoneErr` and `CivilErr` display in the derived form
+  (`Skipped(at: "2026-03-08T02:30:00 America/New_York")`).
+- **Layouts.** `{frac}` and `{frac:N}` include the leading `.` (so
+  `{frac}` prints nothing for a whole second). `{offset}` prints `Z` for
+  a zero offset, `{offset:compact}` prints `+0000`. `{hour12}` needs
+  `{ampm}` in the same layout (a layout error otherwise). `{weekday}`
+  alone is not a field. `LayoutErr` displays as
+  `bad layout "{yaer}": unknown field {yaer}`. A constant layout error is
+  `XO0420` (did you mean fix for a misspelled field); a layout written
+  with Java, C#, or Swift letters (`{yyyy}`, `yyyy-MM-dd`), strftime
+  codes (`%Y-%m-%d`), or Go's reference date (`2006-01-02`) is `XO0177`
+  with a fix to the named fields when every piece has one (`%y`, a two
+  digit year, has none).
+- **Parsing.** Numeric fields have exactly their width (`{day:1}` and
+  `{month:1}` take one or two digits). Fields missing from the layout
+  default to 1970-01-01 and 00:00:00. A parsed weekday must match the
+  date. Without `{offset}`, `{zone}` picks the instant whose abbreviation
+  in `z` matches (`UTC` and `GMT` also mean +00:00), and a civil time in a
+  gap or overlap with neither is a `ParseErr` (no silent choice).
+- **HTTP dates.** `RFC1123` formatted in `utc()` ends in `UTC`, while
+  HTTP requires `GMT`: write the zone literally,
+  `"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT"`
+  with `utc()`. Parsing with `RFC1123` accepts `GMT`.

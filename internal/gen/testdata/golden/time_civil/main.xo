@@ -1,0 +1,69 @@
+// std/time civil time (std.md 13.2, decision 0094): dates, leap years,
+// month arithmetic that clamps the day, and instants in daylight saving
+// gaps and overlaps.
+use std/time
+
+fn d(y: Int, m: Int, day: Int) -> time.Date {
+  time.date(y, m, day).or_fault("valid date")
+}
+
+fn clock(h: Int, m: Int) -> time.ClockTime {
+  time.ClockTime{hour: h, minute: m, second: 0, nanos: 0}
+}
+
+fn at(os: Os, date: time.Date, c: time.ClockTime, z: time.Zone, a: time.Ambiguity) {
+  match time.instant(date, c, z, a) {
+    Ok(t) => os.stdio.println("  ${date} ${c.hour}:${c.minute} -> ${t} (${time.format(t, z, "{hour}:{minute} {zone}")})")
+    Err(e) => os.stdio.println("  ${date} ${c.hour}:${c.minute} -> ${e}")
+  }
+}
+
+fn main(os: Os) {
+  // validation and leap years
+  for (y, m, day) in [(2024, 2, 29), (2023, 2, 29), (1900, 2, 29), (2000, 2, 29), (2026, 13, 1), (2026, 4, 31), (0, 1, 1), (10000, 1, 1)] {
+    match time.date(y, m, day) {
+      Ok(x) => os.stdio.println("date ${x} ${x.weekday()}")
+      Err(e) => os.stdio.println("date ${y}-${m}-${day}: ${e}")
+    }
+  }
+  // add_months clamps the day
+  let jan31 = d(2024, 1, 31)
+  os.stdio.println("clamp ${jan31.add_months(1)} ${d(2023, 1, 31).add_months(1)} ${jan31.add_months(2)} ${jan31.add_months(3)} ${jan31.add_months(-2)} ${jan31.add_months(13)} ${d(2024, 2, 29).add_months(12)} ${d(2024, 2, 29).add_months(48)}")
+  // add_days and days_until across months, years, and leap days
+  os.stdio.println("days ${jan31.add_days(30)} ${jan31.add_days(-31)} ${d(2023, 12, 31).add_days(1)} ${d(2024, 2, 28).add_days(1)} ${d(2023, 2, 28).add_days(1)} ${d(2026, 10, 9).add_days(-20000)}")
+  os.stdio.println("until ${d(2024, 1, 1).days_until(d(2025, 1, 1))} ${d(2023, 1, 1).days_until(d(2024, 1, 1))} ${d(2026, 10, 9).days_until(d(1970, 1, 1))} ${d(2000, 3, 1).days_until(d(2000, 2, 28))}")
+  // weekdays and their order
+  os.stdio.println("weekday ${d(1970, 1, 1).weekday()} ${d(2026, 10, 9).weekday()} ${d(2000, 1, 1).weekday()} ${d(1, 1, 1).weekday()} ${time.Weekday.Monday < time.Weekday.Sunday}")
+  os.stdio.println("order ${d(2026, 1, 2) < d(2026, 2, 1)} ${clock(9, 30) < clock(10, 0)} ${d(2026, 1, 2) == d(2026, 1, 2)}")
+  // the gap: 02:30 does not exist in New York on 2026-03-08
+  let ny = time.zone("America/New_York").or_fault("ny")
+  let berlin = time.zone("Europe/Berlin").or_fault("berlin")
+  os.stdio.println("gap New York")
+  for a in [time.Ambiguity.Reject, time.Ambiguity.Earlier, time.Ambiguity.Later] {
+    at(os, d(2026, 3, 8), clock(2, 30), ny, a)
+  }
+  // the overlap: 01:30 happens twice in New York on 2026-11-01
+  os.stdio.println("overlap New York")
+  for a in [time.Ambiguity.Reject, time.Ambiguity.Earlier, time.Ambiguity.Later] {
+    at(os, d(2026, 11, 1), clock(1, 30), ny, a)
+  }
+  os.stdio.println("gap and overlap Berlin")
+  at(os, d(2026, 3, 29), clock(2, 15), berlin, time.Ambiguity.Reject)
+  at(os, d(2026, 3, 29), clock(2, 15), berlin, time.Ambiguity.Earlier)
+  at(os, d(2026, 10, 25), clock(2, 15), berlin, time.Ambiguity.Reject)
+  at(os, d(2026, 10, 25), clock(2, 15), berlin, time.Ambiguity.Later)
+  // ordinary times are unique, so the rule does not matter
+  os.stdio.println("unique")
+  at(os, d(2026, 7, 4), clock(12, 0), ny, time.Ambiguity.Reject)
+  at(os, d(2026, 7, 4), clock(12, 0), berlin, time.Ambiguity.Later)
+  // invalid fields and the range of Time
+  os.stdio.println("invalid")
+  at(os, d(2026, 7, 4), clock(24, 0), ny, time.Ambiguity.Reject)
+  at(os, time.Date{year: 2026, month: 2, day: 30}, clock(0, 0), ny, time.Ambiguity.Reject)
+  at(os, d(2263, 1, 1), clock(0, 0), time.utc(), time.Ambiguity.Reject)
+  // civil readings round trip through instant
+  let t = Time.parse_rfc3339("2026-10-09T12:34:56.789Z").or_fault("rfc3339")
+  let c = time.civil(t, berlin)
+  let back = time.instant(c.date, c.time, berlin).or_fault("unique")
+  os.stdio.println("round trip ${c.date} ${c.time.hour}:${c.time.minute}:${c.time.second}.${c.time.nanos} ${back == t}")
+}

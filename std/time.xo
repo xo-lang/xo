@@ -1,4 +1,132 @@
-// std/time (core 14): time zones and formatting. Arithmetic and RFC 3339
-// are in the prelude (std.md 2.6). spec/std.md 13 is a Proposed API that is
-// not decided or implemented yet, so the file is empty: `use std/time`
-// resolves, and every name in it is reported as unresolved (XO0601).
+// std/time (spec/std.md 13, decision 0094). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Instants, durations, and
+// RFC 3339 in UTC are in the prelude (std.md 2.6); this module adds zones,
+// civil (wall clock) time, and layouts with named fields.
+//
+// Zone data is embedded per use (std.md 13): `utc` and `fixed` need none, a
+// constant name passed to `zone` embeds only that zone, and a name known
+// only at run time embeds the whole database (`xo build` prints a note
+// naming the call). `--tzdata=system` reads the host database instead.
+
+/// A time zone: a handle to its rules. Equal when the names (and, for
+/// `fixed`, the offsets) are equal; displays as its name.
+struct Zone {}
+
+fn (z: Zone) display() -> Str
+
+enum ZoneErr {
+  /// No zone with this IANA name is embedded or known.
+  Unknown(name: Str)
+  /// The machine's own zone could not be determined.
+  NoLocal(msg: Str)
+} derive Display
+
+/// `utc()` needs no zone data.
+fn utc() -> Zone
+/// An IANA name: "Europe/Berlin". Pure: the data is embedded in the program.
+fn zone(name: Str) -> Zone ! ZoneErr
+/// A zone with one offset forever ("UTC+2" style names); faults past 24h.
+fn fixed(name: Str, offset: Duration) -> Zone
+/// The machine's zone: `TZ`, then the system setting. A fake `Env` without
+/// `TZ` gives `utc()`.
+fn local(env: Env) -> Zone ! ZoneErr uses env
+
+fn (z: Zone) name() -> Str
+/// The offset from UTC at that instant.
+fn (z: Zone) offset_at(t: Time) -> Duration
+/// "CET", "CEST".
+fn (z: Zone) abbreviation_at(t: Time) -> Str
+
+/// A calendar date in the proleptic Gregorian calendar.
+struct Date {
+  year: Int
+  month: Int
+  day: Int
+} derive Ord, Json
+
+/// A wall clock time of day.
+struct ClockTime {
+  hour: Int
+  minute: Int
+  second: Int
+  nanos: Int
+} derive Ord, Json
+
+/// A wall clock reading in a zone: what `civil(t, z)` returns.
+struct Civil {
+  date: Date
+  time: ClockTime
+  offset: Duration
+  zone: Str
+} derive Json
+
+enum Weekday {
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+  Saturday
+  Sunday
+} derive Display, Ord, Json
+
+/// What `instant` does with a civil time that falls in a daylight saving
+/// gap (does not exist) or overlap (exists twice).
+enum Ambiguity {
+  Earlier
+  Later
+  Reject
+}
+
+enum CivilErr {
+  /// A field out of range (month 13, February 30, hour 24) or a year
+  /// outside the range of `Time`.
+  Invalid(msg: Str)
+  /// The civil time is inside a spring forward gap.
+  Skipped(at: Str)
+  /// The civil time is inside a fall back overlap.
+  Repeated(at: Str)
+} derive Display
+
+fn civil(t: Time, z: Zone) -> Civil
+fn instant(date: Date, time: ClockTime, z: Zone, ambiguity: Ambiguity = Ambiguity.Reject) -> Time ! CivilErr
+fn date(year: Int, month: Int, day: Int) -> Date ! CivilErr
+
+fn (d: Date) weekday() -> Weekday
+fn (d: Date) add_days(n: Int) -> Date
+/// Clamps the day: Jan 31 + 1 month is Feb 28 or 29.
+fn (d: Date) add_months(n: Int) -> Date
+fn (d: Date) days_until(o: Date) -> Int
+/// "2026-10-09".
+fn (d: Date) display() -> Str
+
+const RFC3339: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}"
+/// HTTP dates.
+const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"
+const DATE: Str = "{year}-{month}-{day}"
+const TIME: Str = "{hour}:{minute}:{second}"
+
+/// Displays as `at byte 5 of "2026-1x-09": expected 2 digit month`.
+struct ParseErr {
+  input: Str
+  layout: Str
+  at: Int
+  msg: Str
+}
+
+fn (e: ParseErr) display() -> Str
+
+/// Displays as `bad layout "{yr}": unknown field {yr}`.
+struct LayoutErr {
+  layout: Str
+  msg: Str
+}
+
+fn (e: LayoutErr) display() -> Str
+
+/// Faults on a bad layout (a constant layout is checked at compile time).
+fn format(t: Time, z: Zone, layout: Str) -> Str
+/// Strict: accepts exactly the layout. `z` applies when the text has no
+/// offset.
+fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr
+fn check_layout(layout: Str) -> () ! LayoutErr

@@ -47,6 +47,21 @@ func arenaFlags(fl *flag.FlagSet) func() bool {
 	return func() bool { return *no || !*on }
 }
 
+// tzdataFlag defines --tzdata (decision 0094): embedded (the default:
+// the zones the program uses are embedded) or system (the host's zone
+// database at run time).
+func tzdataFlag(fl *flag.FlagSet) *string {
+	return fl.String("tzdata", "embedded", "where std/time finds zone data: embedded (the zones the program names, or the whole database for a name known only at run time) or system (the host's database)")
+}
+
+// printNotes prints build notes (such as the embedding of the whole zone
+// database) on stderr.
+func printNotes(notes []string, stderr io.Writer) {
+	for _, n := range notes {
+		fmt.Fprintln(stderr, n)
+	}
+}
+
 // backendFlag defines --backend: go (P1, the default) or llvm (the P3
 // prototype: LLVM IR compiled by clang, host only, a core subset).
 //
@@ -85,6 +100,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
 	backendOf := backendFlag(fl)
+	tzdata := tzdataFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -136,10 +152,13 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return code
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid, TZData: *tzdata})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
+	}
+	if !*asJSON {
+		printNotes(res.Notes, stderr)
 	}
 	if h := res.Hybrid; h != nil && !*asJSON {
 		switch {
@@ -253,6 +272,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
 	backendOf := backendFlag(fl)
+	tzdata := tzdataFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -275,7 +295,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1
@@ -349,6 +369,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
 	backendOf := backendFlag(fl)
+	tzdata := tzdataFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -360,7 +381,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	// a workspace is one program: its modules' tests run together
 	// (decision 0086)
 	dirs = mod.WorkspaceDirs(dirs)
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1
