@@ -109,14 +109,6 @@ func (p *parser) foreignStmt() (ast.Stmt, bool) {
 		d := p.foreign(t.Span, "`loop` is Rust syntax; Xo writes an infinite loop as `while { ... }` (core 3.5)")
 		addFix(d, "write `while`", p.replaceSpan(t.Span, "while"))
 		return p.parseWhile(nil, start), true
-	case "pass":
-		if next.Kind != token.Newline && next.Kind != token.RBrace && next.Kind != token.EOF {
-			return nil, false
-		}
-		d := p.foreign(t.Span, "`pass` is Python syntax; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)")
-		addFix(d, "write `()`", p.replaceSpan(t.Span, "()"))
-		p.next()
-		return &ast.ExprStmt{Base: ast.Base{Sp: t.Span}, X: &ast.UnitExpr{Base: ast.Base{Sp: t.Span}}}, true
 	}
 	return nil, false
 }

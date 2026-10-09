@@ -35,6 +35,10 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 - The native backends check `ensures` and struct invariants and unwind
   faults (deferred code, scopes, Mutexes, `task.isolate`, a 500 from an
   HTTP handler) as the Go backend does (3.5, 8, 9.1; decision 0085).
+- Habit diagnostics: error `XO0177` (syntax from another language), and
+  habit notes and fixes on existing codes, for Go, Rust, TypeScript,
+  Python, Swift, and Kotlin forms (10.2; decision 0087). No program that
+  was accepted is rejected.
 
 ## Changes in 0.6
 
@@ -1453,6 +1457,40 @@ where the Go backend fuses a multiply and an add (decision 0084).
 - The compiler reports all errors it can, not just the first, and never
   cascades: a bad expression has type `<error>` and suppresses dependent
   diagnostics.
+- **Habits from other languages** (decision 0087). Code written with the
+  syntax or library names of Go, Rust, TypeScript, Python, Swift, or
+  Kotlin gets one diagnostic per habit that names the habit and the Xo
+  form, with a machine fix when the rewrite is unambiguous, and checking
+  continues as if the Xo form had been written:
+  - Syntax that the grammar would otherwise reject with a generic code
+    (`XO0160`, `XO0168`, `XO0172`, `XO0175`) is error `XO0177` (syntax
+    from another language): for example `func`, `x := v`, `let mut`,
+    `T: Hash + Eq`, `Vec<T>`, `[]T`, `var x` or `&x` at a call site,
+    `c ? a : b`, `switch`/`case`, `when`, `elif`, `and`/`or`/`not`,
+    `for i := 0; i < n; i++`, Go `for k, v := range m` (reported by the
+    checker, which picks the Xo form for the type of `m`), `x++`, `throw`,
+    `try f()`, `|x| e`, `(x) => e`, `lambda`, `x as T`, `A::B`, `impl`,
+    `trait`, `): T` and Go's bare result types, `(T, error)` results,
+    backtick templates, f-strings, and `/* */` comments. `xo explain
+    XO0177` lists them.
+  - When a specific code already describes the error, it keeps that code
+    and gains the habit in a note and the fix: `XO0601` for names from
+    other languages (`nil`, `null`, `this`, `len(x)`, `append`, `print`,
+    `String`, `Vec`, `int`, `.unwrap()`, `.length`, camelCase methods,
+    Python's `t = 0` declaring by assignment), `XO0169` (commas between
+    match arms), `XO0173` (`use` after declarations), `XO0701` (an effect
+    argument left out of a parameter type, which stays an abstract effect
+    variable), `XO0408` (TypeScript's `const x = f()`), `XO0110` (Kotlin's
+    `"$name"`, literal text in Xo), `XO0101`, `XO0502`, and the lexical
+    codes `XO0150` (`#` comments, `#[derive]`), `XO0152` (`'text'`), and
+    `XO0153` (Swift's `\(x)`).
+  - A habit gets a fix only when one rewrite keeps the meaning; where the
+    Xo form needs a decision (`x!!` needs a reason, `try`/`catch` needs a
+    Result handling choice, `print` needs a capability in scope) the
+    diagnostic names the form and has no fix.
+- A suggestion from edit distance (`did you mean`) is a note; it is also a
+  fix only when it is clear: a unique closest candidate at most half the
+  name's length away, for names of three or more characters.
 
 ### 10.3 Queries
 

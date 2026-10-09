@@ -108,7 +108,7 @@ fn direct(c: Cache[Int, Str]) -> Str uses clock {
 		{name: "single quotes", src: "fn f() -> Str { 'abc' }\n", want: []string{"XO0152"}},
 		{name: "hash comment", src: "# adds one\nfn f(x: Int) -> Int { x + 1 }\n", want: []string{"XO0150"}},
 		{name: "raise", src: "fn f(x: Int) -> Int ! Str {\n  if x < 0 {\n    raise \"neg\"\n  }\n  x\n}\n", want: []string{"XO0177"}},
-		{name: "pass", src: "fn f() {\n  pass\n}\n", want: []string{"XO0177"}},
+		{name: "pass", src: "fn f() {\n  pass\n}\n", want: []string{"XO0601"}},
 		{name: "power", src: "fn f(x: Int) -> Int { x ** 2 }\n", want: []string{"XO0177"}},
 		{name: "self in method", src: "struct P { x: Int }\nfn (p: P) get() -> Int { self.x }\n", want: []string{"XO0601"}},
 		{name: "python cond", src: "fn f(x: Int) -> Int { 1 if x > 0 else 2 }\n", want: []string{"XO0177"}},
@@ -218,6 +218,8 @@ pub fn f(a: Int)
 `},
 		{name: "map literal value", src: "fn f(x: Int) -> Map[Str, Int] { {\"a\": x, \"b\": 2} }\n"},
 		{name: "struct literal in if", src: "struct P { x: Int }\nfn f(p: P) -> Bool { if (p == P{x: 0}) { true } else { false } }\n"},
+		{name: "names that are habits elsewhere", src: "fn f() -> Int {\n  let pass = 1\n  let not = 2\n  let await = 3\n  pass + (not - 1) + await\n}\n"},
+		{name: "try then minus in a map", src: "fn f(x: Int?) -> Map[Str, Int]? {\n  Some({\"a\": x? - 1, \"b\": 2})\n}\n"},
 		{name: "ensures", src: "fn f(a: Int) -> Int\n  ensures result > a\n{\n  a + 1\n}\n"},
 	})
 }

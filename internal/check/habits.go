@@ -227,6 +227,12 @@ func (c *checker) habitName(x *ast.Ident, hint Type) (Type, bool) {
 		}
 		habitNote(d, "`%s` is the %s receiver; Xo methods name their receiver, `fn (p: P) name()`, and plain functions have none (core 3.4)", name, lang)
 		return badType, true
+	case "pass":
+		// Python's empty statement; a variable named `pass` resolves first.
+		d := c.errorf(diag.UnresolvedName, x.Sp, "name `%s` not found", name)
+		habitNote(d, "`pass` is Python's empty statement; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)")
+		fix(d, "write `()`", replaceEdit(x.Sp, "()"))
+		return unitType, true
 	case "True", "False":
 		d := c.errorf(diag.UnresolvedName, x.Sp, "name `%s` not found", name)
 		habitNote(d, "`%s` is Python syntax; Xo writes `%s` (core 1.6)", name, strings.ToLower(name))

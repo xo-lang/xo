@@ -1,8 +1,8 @@
 [
   {
-    "code": "XO0177",
+    "code": "XO0601",
     "severity": "error",
-    "message": "`pass` is Python syntax; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)",
+    "message": "name `pass` not found",
     "span": {
       "file": "main.xo",
       "line": 2,
@@ -10,7 +10,11 @@
       "end_line": 2,
       "end_col": 7
     },
-    "notes": [],
+    "notes": [
+      {
+        "message": "`pass` is Python's empty statement; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)"
+      }
+    ],
     "fixes": [
       {
         "title": "write `()`",

@@ -156,6 +156,11 @@ func (p *parser) ternaryAhead() bool {
 			if depth < 0 {
 				return false
 			}
+		case token.Comma, token.FatArrow, token.Assign:
+			// `{"a": x? - 1, "b": 2}`: the colon belongs to the next entry.
+			if depth == 0 {
+				return false
+			}
 		case token.Colon:
 			if depth == 0 {
 				return true
@@ -258,13 +263,13 @@ func (p *parser) foreignUnary() (ast.Expr, bool) {
 		addFix(d, "remove `*`", p.replaceSpan(t.Span, ""))
 		p.next()
 		return p.parseUnary(), true
-	case t.Kind == token.Ident && t.Text == "not" && startsExpr(next.Kind) && next.Kind != token.LParen || (t.Kind == token.Ident && t.Text == "not" && next.Kind == token.LParen && !adjacent(t, next)):
+	case t.Kind == token.Ident && t.Text == "not" && next.Kind != token.Minus && next.Kind != token.LBrace && startsExpr(next.Kind) && next.Kind != token.LParen || (t.Kind == token.Ident && t.Text == "not" && next.Kind == token.LParen && !adjacent(t, next)):
 		d := p.foreign(t.Span, "`not` is Python syntax; Xo writes `!` (core 15 operators)")
 		addFix(d, "write `!`", p.replaceRange(t.Span.Start, next.Span.Start, "!"))
 		p.next()
 		x := p.parseUnary()
 		return &ast.UnaryExpr{Base: ast.Base{Sp: p.spanFrom(t.Span.Start)}, Op: token.Bang, X: x}, true
-	case t.Kind == token.Ident && t.Text == "await" && startsExpr(next.Kind) && next.Span.Start.Line == t.Span.Start.Line:
+	case t.Kind == token.Ident && t.Text == "await" && startsExpr(next.Kind) && next.Kind != token.Minus && next.Kind != token.LBrace && next.Span.Start.Line == t.Span.Start.Line:
 		d := p.foreign(t.Span, "`await` is TypeScript, Python, Rust, and Swift syntax; an Xo call blocks the calling task until it returns, so there is nothing to await; run work concurrently with `scope s { s.spawn(...) }` (core 7.1)")
 		addFix(d, "remove `await`", p.deleteToken(t))
 		p.next()
