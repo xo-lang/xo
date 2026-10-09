@@ -563,7 +563,10 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 	cmd.Env = env
 	var outb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &outb, &outb
-	if err := cmd.Run(); err != nil {
+	lock := lockCacheShared()
+	err := cmd.Run()
+	lock.unlock()
+	if err != nil {
 		return &BuildError{Target: t, Output: outb.String()}
 	}
 	return nil

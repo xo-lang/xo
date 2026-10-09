@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -44,18 +45,25 @@ func cacheMax() int64 {
 }
 
 // trimGoCache removes the least recently used cache files once the cache
-// exceeds its cap, down to three quarters of it. It runs at most every ten
-// minutes (a stamp file records the last run) so builds stay fast. Go
-// refreshes the modification time of an entry it uses only when the entry
-// is over an hour old, so mtime order is usage order at one hour
-// granularity. Entries touched within keepRecent are never removed, and each
-// file is restated just before removal: a concurrent build (another test
-// package, another worktree) may be linking it right now
-// (gotchas/go-cache-trim-races-builds.md). A removed entry is simply rebuilt.
+// exceeds its cap, down to three quarters of it. It runs at most once a
+// minute (a stamp file records the last run) so builds stay fast. A
+// single test run writes far more than the cap within an hour (each
+// generated program adds about 30 MB: every package instantiates the
+// runtime's generics again), so the trim must be able to remove recent
+// entries: it takes the cache lock exclusively (gocache_lock_unix.go),
+// which waits for running Xo builds and holds new ones off, and then
+// removes any entry. It tries the lock without waiting, and waits for it
+// only once the cache is over twice its cap. Without the lock (another
+// build is running, or no flock) it removes only entries older than
+// keepRecent, restating each file first: Go refreshes an entry's mtime
+// only when it is over an hour old, so a build in flight that holds no
+// lock (an older xo binary) may be using anything newer
+// (gotchas/go-cache-trim-races-builds.md). A removed entry is simply
+// rebuilt.
 func trimGoCache() {
 	dir := GoCacheDir()
 	stamp := filepath.Join(dir, "xo-trim-stamp")
-	if fi, err := os.Stat(stamp); err == nil && time.Since(fi.ModTime()) < 10*time.Minute {
+	if fi, err := os.Stat(stamp); err == nil && time.Since(fi.ModTime()) < time.Minute {
 		return
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -70,7 +78,7 @@ func trimGoCache() {
 	var files []entry
 	var total int64
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || p == stamp {
+		if err != nil || d.IsDir() || filepath.Dir(p) == dir && strings.HasPrefix(d.Name(), "xo-") {
 			return nil
 		}
 		info, err := d.Info()
@@ -85,7 +93,12 @@ func trimGoCache() {
 	if total <= limit {
 		return
 	}
+	lock := lockCacheExclusive(total > 2*limit)
+	defer lock.unlock()
 	cutoff := time.Now().Add(-keepRecent)
+	if lock != nil {
+		cutoff = time.Now().Add(time.Hour) // no build is running: anything may go
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
 	target := limit / 4 * 3
 	for _, f := range files {
