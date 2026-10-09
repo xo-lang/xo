@@ -544,6 +544,7 @@ func (s *sched) replayLocked() bool {
 				p.decisions.Add(1)
 				s.ready = append(s.ready[:i], s.ready[i+1:]...)
 				th.st = stRunning
+				s.moves++
 				s.cur = th
 				th.turn <- struct{}{}
 				return true

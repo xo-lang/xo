@@ -1460,7 +1460,15 @@ call and its result, plus scheduler decisions.
   counts as blocked when it waits on another task (channel, mutex, semaphore,
   `await`, scope end, `Once`); waits on timers, `after`, `task.stopping()`,
   signals, and I/O do not. In test worlds the report is immediate; real runs
-  report after 200 ms with no progress. Native builds (decision 0068), which
+  report after 200 ms with no progress. A task inside a Go call (`use go`)
+  counts as blocked only while it waits for its own Go callbacks running on
+  goroutines of Go's, those callbacks are blocked in turn, and every
+  goroutine's stack shows that nothing else can move (the Go call parked in
+  a `sync` wait, no goroutine running, sleeping, or in I/O); the report
+  shows the edge as `blocked in Go call sync.(*WaitGroup).Wait at ... for
+  callback 3`. A Go call waiting on a Go channel, select, or timer is never
+  reported, and a Go timer that would release the wait is not seen
+  (decision 0070). Native builds (decision 0068), which
   have no timers, I/O, or signals, report at once when every task is blocked
   and none is queued, with the fault's first line only (no location or list
   of blocked tasks yet).

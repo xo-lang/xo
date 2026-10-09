@@ -89,6 +89,13 @@ func NewGoCallback(tk *Task) *GoCallback {
 	if tk != nil && tk.arena != nil {
 		cb.tk = &Task{node: tk.node, shield: tk.shield, held: tk.held, w: tk.w, stop: tk.stop, th: tk.th}
 	}
+	if tk != nil {
+		if th := tk.th; th != nil && !th.labeled && (th.mon != nil || th.sch != nil) {
+			// a deadlock report through a Go call locates the call from
+			// the goroutine profile (decision 0070); once per thread
+			labelThread(th)
+		}
+	}
 	return cb
 }
 
@@ -110,17 +117,23 @@ func (cb *GoCallback) Begin() *Task {
 	ctk := &Task{w: o.w, stop: o.stop, th: th.newChild("callback")}
 	ctk.node = newNodeOf(o.node, o.w, nodeTask, ctk)
 	cth := ctk.th
-	if cth.mon != nil {
-		cth.mon.started()
+	cth.cbOf = th
+	th.cbN.Add(1)
+	if cth.mon != nil || cth.sch != nil {
+		// Go's goroutine carries the label of the goroutine that started
+		// it: this thread's own replaces it (lazyStacks)
+		labelThread(cth)
+	} else if o.w == nil {
+		clearLabels()
+	}
+	if m := cth.mon; m != nil {
+		m.started()
+		m.addCallback(cth)
 	}
 	if s := cth.sch; s != nil {
 		s.startCallback(cth)
 	} else if o.w != nil {
 		o.w.taskStarted()
-	} else {
-		// drop the profiler label of the goroutine that started Go's
-		// goroutine: this thread sets its own when it first blocks
-		clearLabels()
 	}
 	return ctk
 }
@@ -143,8 +156,10 @@ func (cb *GoCallback) End(ctk *Task) {
 	th.mu.Lock()
 	th.done = true
 	th.mu.Unlock()
-	if th.mon != nil {
-		th.mon.ended()
+	th.cbOf.cbN.Add(-1)
+	if m := th.mon; m != nil {
+		m.dropCallback(th)
+		m.ended()
 	}
 	if s := th.sch; s != nil {
 		s.endCallback(th)
@@ -205,6 +220,9 @@ func goEnter(th *thread) {
 	s := th.sch
 	if s == nil {
 		th.inGo.Add(1)
+		if th.cbN.Load() > 0 && th.mon != nil {
+			th.mon.goMoved()
+		}
 		return
 	}
 	s.mu.Lock()
@@ -214,11 +232,17 @@ func goEnter(th *thread) {
 		s.pickLocked()
 	}
 	s.mu.Unlock()
+	if th.cbN.Load() > 0 && th.mon != nil {
+		th.mon.goMoved()
+	}
 }
 
 // goExit records that th left a Go call; a thread that lent its turn
 // waits to get one again.
 func goExit(th *thread) {
+	if th.cbN.Load() > 0 && th.mon != nil {
+		th.mon.gen.Add(1)
+	}
 	s := th.sch
 	if s == nil {
 		th.inGo.Add(-1)

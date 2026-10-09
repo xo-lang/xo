@@ -26,7 +26,7 @@ import (
 // concurrentGolden are the golden programs that start tasks; they are also
 // run with the Go race detector.
 // Directories named test_* are built in test mode.
-var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "list_value_semantics", "arena_escape", "arena_holes", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until", "test_explore", "test_deadlock", "deadlock_real", "mutex_read", "test_mutex_read", "test_go_callback_task"}
+var concurrentGolden = []string{"scope_tasks", "scope_failure", "channels", "mutex_atomic", "task_std", "cancellation", "map_value_semantics", "list_value_semantics", "arena_escape", "arena_holes", "test_shutdown", "test_signal_after", "chan_loops", "test_once", "test_map_until", "test_explore", "test_deadlock", "deadlock_real", "mutex_read", "test_mutex_read", "test_go_callback_task", "test_go_callback_deadlock", "go_callback_deadlock_real"}
 
 // arenaRaceGolden are the golden programs also run with -race and
 // `--no-arenas` (TestGoldenRaceNoArenas); TestGoldenRace builds with

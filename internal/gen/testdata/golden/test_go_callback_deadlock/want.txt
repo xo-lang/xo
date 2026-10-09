@@ -1,0 +1,9 @@
+exit 1
+--- stdout
+--- FAIL: a Go call waits for a callback that waits for the test's Mutex (main_test.xo:1:1, seed 1)
+    fault: XO-F001: deadlock: a wait cycle of 2 tasks at main.xo:16
+    wait cycle:
+    test blocked in Go call sync.(*WaitGroup).Wait at main.xo:16 for callback 2
+    callback 2 blocked in Mutex.with at main.xo:15 on a mutex made at main_test.xo:2, held by test since main.xo:14
+FAIL: 1 passed, 1 failed, 0 skipped
+--- stderr

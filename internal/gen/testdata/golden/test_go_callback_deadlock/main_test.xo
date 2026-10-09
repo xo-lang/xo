@@ -1,0 +1,10 @@
+test "a Go call waits for a callback that waits for the test's Mutex" {
+  let m = Mutex[Int].new(0)
+  stuck(m)
+}
+
+test "a Go call that sleeps in Go while its callback waits" {
+  let m = Mutex[Int].new(0)
+  slow(m)
+  expect(m.with(fn(v) { v })) == 11
+}

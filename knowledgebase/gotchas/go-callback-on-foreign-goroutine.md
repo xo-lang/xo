@@ -23,6 +23,8 @@ in `rt.NewGoCallback(tk)`, and each call in `cb.Begin()`/`cb.End(ctk)`. A
 call on the caller's goroutine during a Go call of the caller runs as the
 caller (without the arena); any other call is a child task with its own
 thread, held set, and cancellation node (decision 0067). Older cached
-bindings are regenerated. Remaining: a Go call that blocks waiting for a
-callback that waits for the caller's Mutex hangs rather than being
-reported as a deadlock (the caller is in Go code, which no monitor sees).
+bindings are regenerated. A Go call that blocks waiting for a callback
+that waits for the caller's Mutex hung rather than being reported as a
+deadlock (the caller is in Go code, which no monitor saw); since decision
+0070 (2026-10-08) it is XO-F001 with the Go call edge when every
+goroutine's stack proves it (`std/rt/godeadlock.go`).
