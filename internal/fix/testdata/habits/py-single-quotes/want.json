@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0152",
+    "severity": "error",
+    "message": "`'...'` holding text is a Python and TypeScript string; an Xo string uses double quotes, `\"...\"`, and single quotes hold one `Rune` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "use double quotes",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 10
+            },
+            "replace": "\"hello\""
+          }
+        ]
+      }
+    ]
+  }
+]

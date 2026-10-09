@@ -1,0 +1,3 @@
+fn size(m: Map<Str, List<Int>>) -> Int {
+  m.len()
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`[]Int` is Go syntax for a slice; Xo writes `List[Int]` (core 2.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 13,
+      "end_line": 1,
+      "end_col": 15
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `List[...]`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 13,
+              "end_line": 1,
+              "end_col": 15
+            },
+            "replace": "List["
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 18,
+              "end_line": 1,
+              "end_col": 18
+            },
+            "replace": "]"
+          }
+        ]
+      }
+    ]
+  }
+]

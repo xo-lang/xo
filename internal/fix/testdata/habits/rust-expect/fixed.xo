@@ -1,0 +1,3 @@
+fn get(x: Int?) -> Int {
+  x.or_fault("configured at startup")
+}

@@ -1,0 +1,9 @@
+fn bump(var n: Int) {
+  n += 1
+}
+
+fn count() -> Int {
+  var x = 1
+  bump(var x)
+  x
+}

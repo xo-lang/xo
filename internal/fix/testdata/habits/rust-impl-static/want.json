@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`impl` blocks are Rust syntax; Xo declares each method at top level with a receiver, `fn (self: Point) name() -\u003e T`, and a type satisfies an interface implicitly by having its methods (core 3.4, 2.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 5
+    },
+    "notes": [
+      {
+        "message": "functions without `self` become plain functions: call them as `name(...)`, not `Point::name(...)`"
+      }
+    ],
+    "fixes": []
+  }
+]

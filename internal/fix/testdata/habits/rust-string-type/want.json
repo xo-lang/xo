@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `String` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 12,
+      "end_line": 1,
+      "end_col": 18
+    },
+    "notes": [
+      {
+        "message": "`String` is the Rust, Kotlin, Swift, and Java name; Xo's is `Str` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Str`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 12,
+              "end_line": 1,
+              "end_col": 18
+            },
+            "replace": "Str"
+          }
+        ]
+      }
+    ]
+  }
+]

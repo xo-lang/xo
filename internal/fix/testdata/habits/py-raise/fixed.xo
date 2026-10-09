@@ -1,0 +1,6 @@
+fn check(x: Int) -> Int ! Str {
+  if x < 0 {
+    return Err("negative")
+  }
+  x
+}

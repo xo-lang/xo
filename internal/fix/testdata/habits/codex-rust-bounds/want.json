@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`K: Hash + Eq` is a Rust or Swift bound list; Xo takes one interface per type parameter, and `Eq` and `Debug` are automatic (core 2.7, 2.9): write `K: Hash`",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 17,
+      "end_line": 1,
+      "end_col": 26
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `K: Hash`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 17,
+              "end_line": 1,
+              "end_col": 26
+            },
+            "replace": "Hash"
+          }
+        ]
+      }
+    ]
+  }
+]

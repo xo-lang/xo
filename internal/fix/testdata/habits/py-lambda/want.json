@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`lambda x: body` is Python syntax; Xo writes `fn(x) { body }` (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fn(...) { ... }`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 20
+            },
+            "replace": "fn(x) { "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 25,
+              "end_line": 2,
+              "end_col": 25
+            },
+            "replace": " }"
+          }
+        ]
+      }
+    ]
+  }
+]

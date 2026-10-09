@@ -1,0 +1,16 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`go f()` is Go syntax; Xo starts a task inside a scope so it cannot outlive its caller: `scope s { s.spawn(fn() { f() }) }` (core 7.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 3,
+      "end_line": 5,
+      "end_col": 5
+    },
+    "notes": [],
+    "fixes": []
+  }
+]

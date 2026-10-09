@@ -1,0 +1,4 @@
+# Adds one.
+fn inc(x: Int) -> Int {
+  x + 1
+}

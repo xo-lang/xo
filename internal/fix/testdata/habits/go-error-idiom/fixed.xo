@@ -1,0 +1,8 @@
+fn load() -> Int ! Str {
+  1
+}
+
+fn use_it() -> Int ! Str {
+  let x = load()?
+  x + 1
+}

@@ -1,0 +1,3 @@
+fn square(x: Int) -> Int {
+  x.pow(2)
+}

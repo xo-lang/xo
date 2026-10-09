@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `Box` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 13
+    },
+    "notes": [
+      {
+        "message": "`Box[T]` is a Rust pointer type; Xo values need no box: every value is shared or copied as is, so write `T` (core 5.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write the inner type",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 10,
+              "end_line": 2,
+              "end_col": 18
+            },
+            "replace": "Int"
+          }
+        ]
+      }
+    ]
+  }
+]

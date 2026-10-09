@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Str` has no field or method `startsWith`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "`startsWith` is a camelCase name from TypeScript, Kotlin, Java, or Swift; Xo methods are snake_case: `starts_with` (core 1.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `starts_with`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 5,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": "starts_with"
+          }
+        ]
+      }
+    ]
+  }
+]

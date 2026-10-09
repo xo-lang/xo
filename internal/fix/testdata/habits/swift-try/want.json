@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`try f()` is Swift and Zig syntax; Xo propagates a failure with a postfix `?`: `f()?` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 11,
+      "end_line": 6,
+      "end_col": 14
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `?`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 11,
+              "end_line": 6,
+              "end_col": 15
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 21,
+              "end_line": 6,
+              "end_col": 21
+            },
+            "replace": "?"
+          }
+        ]
+      }
+    ]
+  }
+]

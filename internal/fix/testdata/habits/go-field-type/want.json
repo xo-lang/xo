@@ -1,0 +1,62 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`x Int` is Go syntax; Xo writes the field type after a colon, `x: Int` (core 2.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "insert `:`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 4,
+              "end_line": 2,
+              "end_col": 5
+            },
+            "replace": ": "
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`y Int` is Go syntax; Xo writes the field type after a colon, `y: Int` (core 2.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 5,
+      "end_line": 3,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "insert `:`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 4,
+              "end_line": 3,
+              "end_col": 5
+            },
+            "replace": ": "
+          }
+        ]
+      }
+    ]
+  }
+]

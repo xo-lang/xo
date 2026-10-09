@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`and` is Python syntax; Xo writes `\u0026\u0026` (core 15 operators)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `\u0026\u0026`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 5,
+              "end_line": 2,
+              "end_col": 8
+            },
+            "replace": "\u0026\u0026"
+          }
+        ]
+      }
+    ]
+  }
+]

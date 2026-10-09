@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `range` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 12,
+      "end_line": 3,
+      "end_col": 17
+    },
+    "notes": [
+      {
+        "message": "`range(n)` is Python; Xo writes the range itself, `0..10`, which excludes the upper bound as `range` does (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `0..10`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 12,
+              "end_line": 3,
+              "end_col": 21
+            },
+            "replace": "0..10"
+          }
+        ]
+      }
+    ]
+  }
+]

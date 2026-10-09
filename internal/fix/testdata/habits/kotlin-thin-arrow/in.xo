@@ -1,0 +1,6 @@
+fn label(x: Int) -> Str {
+  match x {
+    1 -> "one"
+    _ -> "many"
+  }
+}

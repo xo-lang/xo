@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `str` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "`str(x)` converts to text in Python and Kotlin; Xo interpolates any `Display` value: `\"${x}\"` (core 1.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `\"${...}\"`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 9
+            },
+            "replace": "\"${x}\""
+          }
+        ]
+      }
+    ]
+  }
+]

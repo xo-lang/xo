@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "type `Vec` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 13,
+      "end_line": 1,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "`Vec` is the Rust name; Xo's is `List` (core 2.1)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `List`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 13,
+              "end_line": 1,
+              "end_col": 16
+            },
+            "replace": "List"
+          }
+        ]
+      }
+    ]
+  }
+]

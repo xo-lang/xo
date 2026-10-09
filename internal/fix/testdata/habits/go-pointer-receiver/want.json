@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "a pointer receiver `*Point` is Go syntax; an Xo receiver is a value, `(p: Point)`, and `(var p: Point)` lets the method change the caller's value (core 3.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 7,
+      "end_line": 5,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `: Point`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 5,
+              "col": 6,
+              "end_line": 5,
+              "end_col": 8
+            },
+            "replace": ": "
+          }
+        ]
+      }
+    ]
+  }
+]

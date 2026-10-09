@@ -1,0 +1,16 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`try { ... } catch` is TypeScript, Kotlin, Python, and Swift syntax; Xo has no exceptions: a call that can fail returns a Result, so propagate it with `f()?` or handle it with `match f() { Ok(v) =\u003e ...  Err(e) =\u003e ... }` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": []
+  }
+]

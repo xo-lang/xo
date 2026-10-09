@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`x := v` is Go syntax; Xo binds with `let x = v`, or `var x = v` when it is reassigned later (core 3.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 7
+            },
+            "replace": "var x ="
+          }
+        ]
+      }
+    ]
+  }
+]

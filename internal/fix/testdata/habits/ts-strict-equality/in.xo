@@ -1,0 +1,3 @@
+fn is_one(x: Int) -> Bool {
+  x === 1
+}

@@ -1,0 +1,70 @@
+[
+  {
+    "code": "XO0169",
+    "severity": "error",
+    "message": "match arms are separated by newlines, not `,`",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 15,
+      "end_line": 3,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "Rust and Kotlin separate arms with `,`; an Xo arm ends at its newline (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "put the next arm on its own line",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 15,
+              "end_line": 4,
+              "end_col": 5
+            },
+            "replace": "\n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0169",
+    "severity": "error",
+    "message": "match arms are separated by newlines, not `,`",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 16,
+      "end_line": 4,
+      "end_col": 17
+    },
+    "notes": [
+      {
+        "message": "Rust and Kotlin separate arms with `,`; an Xo arm ends at its newline (core 3.5)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove `,`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 16,
+              "end_line": 4,
+              "end_col": 17
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

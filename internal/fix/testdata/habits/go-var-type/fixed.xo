@@ -1,0 +1,5 @@
+fn total() -> Int {
+  var x: Int = 1
+  x += 1
+  x
+}

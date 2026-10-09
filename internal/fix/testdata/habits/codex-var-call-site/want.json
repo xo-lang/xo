@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 8,
+      "end_line": 7,
+      "end_col": 11
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 7,
+              "col": 8,
+              "end_line": 7,
+              "end_col": 12
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

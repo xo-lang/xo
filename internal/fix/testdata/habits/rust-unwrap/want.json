@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Int?` has no field or method `unwrap`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`.unwrap()` panics on a missing value in Rust, Java, and Kotlin; Xo says why the value cannot be missing, `x.or_fault(\"why\")`, or handles the case with `?`, `??`, `if let`, or `match` (core 2.5, spec/std.md 2)"
+      }
+    ],
+    "fixes": []
+  }
+]

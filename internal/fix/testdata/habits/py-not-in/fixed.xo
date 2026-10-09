@@ -1,0 +1,3 @@
+fn lacks(x: Int, xs: List[Int]) -> Bool {
+  !xs.contains(x)
+}

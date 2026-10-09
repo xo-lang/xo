@@ -1,0 +1,6 @@
+fn first() -> Int {
+  loop {
+    break
+  }
+  1
+}

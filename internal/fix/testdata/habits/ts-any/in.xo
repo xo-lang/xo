@@ -1,0 +1,3 @@
+fn keep(x: any) -> Int {
+  1
+}

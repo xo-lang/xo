@@ -1,0 +1,3 @@
+fn get(x: Int?) -> Int {
+  x.expect("configured at startup")
+}

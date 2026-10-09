@@ -33,6 +33,7 @@ func ParseFile(name string, src []byte, mode Mode) (*ast.File, []diag.Diagnostic
 	lx := lexer.Lex(name, src, &diags)
 	p := &parser{file: name, src: src, toks: lx.Tokens, diags: &diags, mode: mode}
 	p.collectDocs(lx.Comments)
+	p.lexHabits()
 	p.tok = p.toks[0]
 	f := p.parseFile()
 	diag.Sort(diags.Items)
@@ -62,6 +63,15 @@ type parser struct {
 	fnTypeTop bool
 
 	docs map[int]*ast.Doc // doc comments keyed by their last line
+
+	// Habit recovery state (habits.go, decision 0087).
+	firstDecl token.Pos // start of the first declaration (or its doc comment)
+	lineDone  bool      // a foreign top level line was consumed whole
+	noArrowFn bool      // `(x) =>` and `x =>` are not arrow functions here (select ops, match guards)
+	inImpl    bool      // parsing the methods of a Rust `impl` block
+	angle     *angleState
+	// pendingDecls are further methods recovered from a Rust `impl` block.
+	pendingDecls []*ast.FnDecl
 }
 
 // ---------------------------------------------------------------------------
@@ -312,16 +322,56 @@ func (p *parser) parseFile() *ast.File {
 			pub, pubTok = true, p.tok
 			p.next()
 		}
-		var d ast.Decl
+		d := p.parseTopDecl(f, doc, pub, pubTok, declStart, seenDecl)
+		if d != nil {
+			f.Decls = append(f.Decls, d)
+			if !seenDecl {
+				p.firstDecl = declStart
+				if doc != nil {
+					p.firstDecl = doc.Sp.Start
+				}
+			}
+			seenDecl = true
+		}
+		for _, pd := range p.pendingDecls {
+			f.Decls = append(f.Decls, pd)
+		}
+		p.pendingDecls = nil
+		if p.bad {
+			p.syncTop()
+			continue
+		}
+		if p.lineDone {
+			p.lineDone = false
+			continue
+		}
+		if !p.at(token.EOF) && !p.got(token.Newline) {
+			p.errorf(diag.ExpectedNewline, p.tok.Span, "expected newline after declaration, found %s", describe(p.tok))
+			p.syncTop()
+		}
+	}
+	f.Sp = token.Span{File: p.file, Start: start, End: p.tok.Span.End}
+	return f
+}
+
+// parseTopDecl parses one top level item after an optional `pub`. It
+// returns nil for a `use` (appended to f.Uses) and for skipped foreign
+// lines.
+func (p *parser) parseTopDecl(f *ast.File, doc *ast.Doc, pub bool, pubTok token.Token, declStart token.Pos, seenDecl bool) ast.Decl {
+	var d ast.Decl
+	{
 		switch p.tok.Kind {
 		case token.Use:
 			if pub {
 				p.softErrorf(diag.MisplacedPub, pubTok.Span, "`use` cannot be `pub`")
 			}
+			useTok := p.tok
+			u := p.parseUse()
 			if seenDecl {
-				p.softErrorf(diag.UseAfterDecl, p.tok.Span, "`use` must come before all declarations")
+				d := p.softErrorf(diag.UseAfterDecl, useTok.Span, "`use` must come before all declarations")
+				p.moveUseFix(d, f, u)
 			}
-			f.Uses = append(f.Uses, p.parseUse())
+			f.Uses = append(f.Uses, u)
 		case token.Fn:
 			d = p.parseFnDecl(doc, pub, declStart, false)
 		case token.Struct:
@@ -340,6 +390,9 @@ func (p *parser) parseFile() *ast.File {
 			}
 			d = p.parseTest(doc, declStart)
 		default:
+			if fd, ok := p.foreignTopLevel(f, doc, pub, pubTok, declStart, seenDecl); ok {
+				return fd
+			}
 			if pub {
 				p.errorf(diag.UnexpectedToken, p.tok.Span, "expected a declaration after `pub`, found %s", describe(p.tok))
 			} else {
@@ -347,21 +400,8 @@ func (p *parser) parseFile() *ast.File {
 			}
 			d = &ast.BadDecl{Base: ast.Base{Sp: p.tok.Span}}
 		}
-		if d != nil {
-			f.Decls = append(f.Decls, d)
-			seenDecl = true
-		}
-		if p.bad {
-			p.syncTop()
-			continue
-		}
-		if !p.at(token.EOF) && !p.got(token.Newline) {
-			p.errorf(diag.ExpectedNewline, p.tok.Span, "expected newline after declaration, found %s", describe(p.tok))
-			p.syncTop()
-		}
 	}
-	f.Sp = token.Span{File: p.file, Start: start, End: p.tok.Span.End}
-	return f
+	return d
 }
 
 func (p *parser) topLevelStmtError() {
@@ -424,17 +464,29 @@ func (p *parser) parseFnDecl(doc *ast.Doc, pub bool, start token.Pos, inInterfac
 	if p.at(token.LBrack) {
 		fn.TypeParams = p.parseTypeParams()
 	}
-	fn.Params = p.parseParams(paramDecl, inInterface)
+	fn.Params = p.parseParams(paramDecl, inInterface || p.inImpl)
+	var throwsTok *token.Token
+	if !p.bad && p.atIdent("throws") {
+		t := p.tok
+		throwsTok = &t
+		p.next()
+	}
+	if !p.bad {
+		p.foreignResult(fn)
+	}
 	if !p.bad && p.at(token.Newline) && p.peekPastNewlines().Kind == token.Arrow {
 		// A result type on the next line continues the declaration: a line
 		// cannot otherwise start with `->` (std.md 7 writes signatures so).
 		p.skipNewlines()
 	}
-	if p.got(token.Arrow) {
+	if fn.Result == nil && p.got(token.Arrow) {
 		fn.Result = p.parseTypeTop()
 	}
 	if p.at(token.Bang) {
 		fn.Err = p.parseErrSpec()
+	}
+	if throwsTok != nil {
+		p.foreignThrows(fn, *throwsTok)
 	}
 	fn.Clauses = p.parseClauses()
 	if p.peekPastNewlines().Kind == token.LBrace {
@@ -456,6 +508,22 @@ func (p *parser) parseReceiver() *ast.Receiver {
 	r := &ast.Receiver{}
 	r.Var = p.got(token.Var)
 	r.Name = p.expectIdent("a receiver name")
+	if !p.bad && (p.at(token.Star) || p.at(token.Ident)) {
+		// Go receivers: `(p *P)` and `(p P)`.
+		t := p.tok
+		if t.Kind == token.Star {
+			d := p.foreign(t.Span, "a pointer receiver `*%s` is Go syntax; an Xo receiver is a value, `(%s: %s)`, and `(var %s: %s)` lets the method change the caller's value (core 3.4)", p.peek(1).Text, r.Name.Name, p.peek(1).Text, r.Name.Name, p.peek(1).Text)
+			addFix(d, "write `: "+p.peek(1).Text+"`", p.replaceRange(r.Name.Sp.End, p.peek(1).Span.Start, ": "))
+			p.next()
+		} else {
+			d := p.foreign(t.Span, "`(%s %s)` is Go syntax; Xo writes the receiver type after a colon, `(%s: %s)` (core 3.4)", r.Name.Name, t.Text, r.Name.Name, t.Text)
+			addFix(d, "insert `:`", p.replaceRange(r.Name.Sp.End, t.Span.Start, ": "))
+		}
+		r.Type = p.parseType()
+		p.expect(token.RParen, "`)` after the receiver")
+		r.Sp = p.spanFrom(start)
+		return r
+	}
 	p.expect(token.Colon, "`:` after the receiver name")
 	r.Type = p.parseType()
 	p.expect(token.RParen, "`)` after the receiver")
@@ -468,8 +536,18 @@ func (p *parser) parseTypeParams() []*ast.TypeParam {
 	p.parseList(token.LBrack, token.RBrack, "type parameter", func() {
 		start := p.tok.Span.Start
 		tp := &ast.TypeParam{Name: p.expectIdent("a type parameter name")}
+		if p.atIdent("extends") && p.peek(1).Kind == token.Ident {
+			// TypeScript and Kotlin `T extends Bound`.
+			d := p.foreign(p.tok.Span, "`%s extends %s` is TypeScript syntax; Xo writes a constraint after a colon, `%s: %s` (core 2.7)", tp.Name.Name, p.peek(1).Text, tp.Name.Name, p.peek(1).Text)
+			addFix(d, "write `:`", p.replaceRange(tp.Name.Sp.End, p.peek(1).Span.Start, ": "))
+			p.next()
+			tp.Constraint = p.parseBounds(tp.Name, p.parseType())
+			tp.Sp = p.spanFrom(start)
+			out = append(out, tp)
+			return
+		}
 		if p.got(token.Colon) {
-			t := p.parseType()
+			t := p.parseBounds(tp.Name, p.parseType())
 			if nt, ok := t.(*ast.NamedType); ok && len(nt.Path) == 1 && nt.Path[0].Name == "Effects" && len(nt.Args) == 0 {
 				tp.Effects = true
 			} else {
@@ -534,8 +612,44 @@ func (p *parser) unparenthesizedEffect(prev *ast.Param) bool {
 func (p *parser) parseParam(kind paramKind, allowSelf bool) *ast.Param {
 	start := p.tok.Span.Start
 	prm := &ast.Param{}
+	if p.foreignSelfParam(prm, allowSelf) {
+		prm.Sp = p.spanFrom(start)
+		return prm
+	}
 	prm.Var = p.got(token.Var)
+	if kind == paramDecl && p.at(token.Ident) && p.peek(1).Kind == token.Ident && p.peek(2).Kind == token.Colon {
+		// Swift argument labels: `_ x: Int`, `from x: Int`.
+		lbl := p.tok
+		d := p.foreign(lbl.Span, "`%s %s:` is a Swift argument label; Xo has none: callers use the parameter name, `f(%s: v)`, or pass the argument by position (core 3.2)", lbl.Text, p.peek(1).Text, p.peek(1).Text)
+		addFix(d, "remove the label", p.deleteToken(lbl))
+		p.next()
+	}
 	prm.Name = p.expectIdent("a parameter name")
+	if kind == paramDecl && !p.bad && !p.at(token.Colon) && (p.at(token.Star) || p.at(token.LBrack) || (p.at(token.Ident) && p.tok.Span.Start.Line == prm.Name.Sp.Start.Line)) {
+		// Go parameters: `x int`, `p *Point`, `xs []int`.
+		t := p.tok
+		d := p.foreign(t.Span, "`%s %s` is Go syntax; Xo writes the parameter type after a colon, `%s: %s` (core 3.2)", prm.Name.Name, t.Text, prm.Name.Name, t.Text)
+		addFix(d, "insert `:`", p.replaceRange(prm.Name.Sp.End, t.Span.Start, ": "))
+		prm.Type = p.parseType()
+		prm.Sp = p.spanFrom(start)
+		return prm
+	}
+	if kind == paramDecl && p.at(token.Colon) && p.peek(1).Kind == token.Ident && p.peek(1).Text == "inout" && p.peek(2).Kind == token.Ident {
+		// Swift `x: inout Int`.
+		io := p.peek(1)
+		d := p.foreign(io.Span, "`inout` is Swift syntax; Xo marks an in out parameter with `var` before its name, `var %s: %s`, and callers pass a `var` binding without `&` (core 3.2)", prm.Name.Name, p.peek(2).Text)
+		edits := []diag.Edit{p.deleteToken(io)}
+		if !prm.Var {
+			edits = append(edits, p.insertAt(prm.Name.Sp.Start, "var "))
+		}
+		addFix(d, "write `var "+prm.Name.Name+"`", edits...)
+		prm.Var = true
+		p.next() // :
+		p.next() // inout
+		prm.Type = p.parseType()
+		prm.Sp = p.spanFrom(start)
+		return prm
+	}
 	if prm.Name.Name == "self" && !prm.Var && !p.at(token.Colon) && kind == paramDecl {
 		if !allowSelf {
 			p.softErrorf(diag.MisplacedSelf, prm.Name.Sp, "a bare `self` parameter is only allowed first in an interface method signature")
@@ -663,13 +777,25 @@ func (p *parser) parseStruct(doc *ast.Doc, pub bool, start token.Pos) *ast.Struc
 	if p.at(token.LBrack) {
 		s.TypeParams = p.parseTypeParams()
 	}
+	return p.parseStructBody(s, start)
+}
+
+// parseStructBody parses the fields, invariant, and derive list of a struct
+// whose name and type parameters are already parsed.
+func (p *parser) parseStructBody(s *ast.StructDecl, start token.Pos) *ast.StructDecl {
 	p.parseMembers("struct field", func() {
 		fstart := p.tok.Span.Start
 		f := &ast.Field{Doc: p.docFor(fstart.Line)}
 		f.Pub = p.got(token.Pub)
 		f.Name = p.expectIdent("a field name")
-		p.expect(token.Colon, "`:` after the field name")
-		f.Type = p.parseType()
+		optional := p.foreignField(f)
+		if f.Type == nil {
+			p.expect(token.Colon, "`:` after the field name")
+			f.Type = p.parseType()
+		}
+		if optional {
+			f.Type = &ast.OptionalType{Base: ast.Base{Sp: f.Type.Span()}, Elem: f.Type}
+		}
 		if p.got(token.Assign) {
 			f.Default = p.parseExpr()
 		}
@@ -790,6 +916,12 @@ func (p *parser) parseInterface(doc *ast.Doc, pub bool, start token.Pos) *ast.In
 	if p.at(token.LBrack) {
 		d.TypeParams = p.parseTypeParams()
 	}
+	return p.parseInterfaceBody(d, start)
+}
+
+// parseInterfaceBody parses the method signatures of an interface whose
+// name and type parameters are already parsed.
+func (p *parser) parseInterfaceBody(d *ast.InterfaceDecl, start token.Pos) *ast.InterfaceDecl {
 	p.parseMembers("method signature", func() {
 		mstart := p.tok.Span.Start
 		mdoc := p.docFor(mstart.Line)
@@ -803,12 +935,24 @@ func (p *parser) parseInterface(doc *ast.Doc, pub bool, start token.Pos) *ast.In
 	return d
 }
 
-func (p *parser) parseTypeDecl(doc *ast.Doc, pub bool, start token.Pos) *ast.TypeDecl {
+func (p *parser) parseTypeDecl(doc *ast.Doc, pub bool, start token.Pos) ast.Decl {
 	d := &ast.TypeDecl{Doc: doc, Pub: pub}
+	typeTok := p.tok
 	p.next() // type
 	d.Name = p.expectIdent("a type name")
 	if p.at(token.LBrack) {
 		d.TypeParams = p.parseTypeParams()
+	}
+	if !p.bad && (p.at(token.Struct) || p.at(token.Interface)) && p.peek(1).Kind == token.LBrace {
+		// Go: `type P struct {` and `type I interface {`.
+		kw := p.tok
+		dg := p.foreign(typeTok.Span.To(kw.Span), "`type %s %s {` is Go syntax; Xo writes `%s %s {` (core 2.2, 2.4)", d.Name.Name, kw.Kind, kw.Kind, d.Name.Name)
+		addFix(dg, "write `"+kw.Kind.String()+" "+d.Name.Name+"`", p.replaceSpan(typeTok.Span, kw.Kind.String()), p.replaceRange(p.beforeBlanks(kw.Span.Start), kw.Span.End, ""))
+		p.next()
+		if kw.Kind == token.Struct {
+			return p.parseStructBody(&ast.StructDecl{Doc: doc, Pub: pub, Name: d.Name, TypeParams: d.TypeParams}, start)
+		}
+		return p.parseInterfaceBody(&ast.InterfaceDecl{Doc: doc, Pub: pub, Name: d.Name, TypeParams: d.TypeParams}, start)
 	}
 	switch {
 	case p.got(token.Assign):
@@ -939,6 +1083,9 @@ func (p *parser) parseTypeTop() ast.Type {
 func (p *parser) parseType() ast.Type {
 	start := p.tok.Span.Start
 	var t ast.Type
+	if ft, ok := p.foreignType(); ok {
+		return ft
+	}
 	switch p.tok.Kind {
 	case token.Ident:
 		nt := &ast.NamedType{Path: []*ast.Ident{p.expectIdent("a type name")}}
@@ -946,7 +1093,9 @@ func (p *parser) parseType() ast.Type {
 			p.next()
 			nt.Path = append(nt.Path, p.expectIdent("a type name"))
 		}
-		if p.at(token.LBrack) {
+		if p.at(token.Lt) && adjacent(p.toks[p.pos-1], p.tok) {
+			p.angleArgs(nt)
+		} else if p.at(token.LBrack) {
 			saved := p.fnTypeTop
 			p.fnTypeTop = false
 			p.parseList(token.LBrack, token.RBrack, "type argument", func() {
@@ -1085,6 +1234,9 @@ func (p *parser) parseBlock() *ast.Block {
 
 func (p *parser) parseStmt() ast.Stmt {
 	start := p.tok.Span.Start
+	if s, ok := p.foreignStmt(); ok {
+		return s
+	}
 	switch p.tok.Kind {
 	case token.Let:
 		p.next()
@@ -1179,10 +1331,14 @@ func (p *parser) parseSimpleStmt() ast.Stmt {
 	start := p.tok.Span.Start
 	switch p.tok.Kind {
 	case token.Return:
+		retTok := p.tok
 		p.next()
 		s := &ast.ReturnStmt{}
 		if !p.atStmtEnd() {
 			s.Value = p.parseExpr()
+			if p.at(token.Comma) && !p.bad {
+				s.Value = p.foreignReturnList(s.Value, retTok)
+			}
 		}
 		s.Sp = p.spanFrom(start)
 		return s
@@ -1199,6 +1355,9 @@ func (p *parser) parseSimpleStmt() ast.Stmt {
 		return &ast.ContinueStmt{Base: ast.Base{Sp: p.spanFrom(start)}, Label: label}
 	}
 	x := p.parseExpr()
+	if st, ok := p.foreignIncDec(x, start); ok {
+		return st
+	}
 	if p.tok.Kind.IsAssign() {
 		op := p.tok.Kind
 		if !isAssignOp(op) {
@@ -1233,9 +1392,18 @@ func (p *parser) atStmtEnd() bool {
 }
 
 func (p *parser) parseFor(label *ast.Ident, start token.Pos) ast.Stmt {
+	if fs, ok := p.foreignFor(label, start); ok {
+		return fs
+	}
 	p.next() // for
 	s := &ast.ForStmt{Label: label, Pattern: p.parsePattern()}
-	p.expect(token.In, "`in` in a for loop")
+	if p.atIdent("of") && !p.bad {
+		d := p.foreign(p.tok.Span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+		addFix(d, "write `in`", p.replaceSpan(p.tok.Span, "in"))
+		p.next()
+	} else {
+		p.expect(token.In, "`in` in a for loop")
+	}
 	s.Iter = p.parseExprNoLit()
 	s.Body = p.parseCondBlock(s.Iter)
 	s.Sp = p.spanFrom(start)
@@ -1342,7 +1510,16 @@ func (p *parser) parseExprNoLit() ast.Expr {
 	return e
 }
 
-func (p *parser) parseExpr() ast.Expr { return p.parseBinary(1) }
+func (p *parser) parseExpr() ast.Expr {
+	x := p.parseBinary(1)
+	if !p.bad && p.at(token.Question) && p.ternaryAhead() {
+		return p.ternary(x)
+	}
+	if !p.bad && p.pyCondAhead() {
+		return p.pyCond(x)
+	}
+	return x
+}
 
 // Binary operator precedence, lowest first (core 15).
 func precedence(k token.Kind) int {
@@ -1378,14 +1555,22 @@ func (p *parser) parseBinary(minPrec int) ast.Expr {
 			x = p.parseIs(x)
 			continue
 		}
+		if y, ok := p.foreignBinary(x, minPrec); ok {
+			x = y
+			continue
+		}
 		op := p.tok.Kind
 		prec := precedence(op)
-		if prec == 0 || prec < minPrec || p.bad {
+		if prec == 0 || prec < minPrec || p.bad || p.incDecAhead() {
 			return x
 		}
+		opTok := p.tok
 		p.next()
 		if prec == rangePrec {
 			r := &ast.RangeExpr{Lo: x, Inclusive: op == token.DotDotEq}
+			if op == token.DotDot && adjacent(opTok, p.tok) && (p.at(token.Lt) || p.at(token.Dot)) {
+				r.Inclusive = p.foreignRange(opTok)
+			}
 			if !(p.openRange && p.at(token.RBrack)) {
 				r.Hi = p.parseBinary(prec + 1)
 			}
@@ -1456,6 +1641,9 @@ func inspectPattern(pat ast.Pattern, f func(ast.Pattern)) {
 }
 
 func (p *parser) parseUnary() ast.Expr {
+	if x, ok := p.foreignUnary(); ok {
+		return x
+	}
 	switch p.tok.Kind {
 	case token.Minus, token.Bang, token.Tilde:
 		start := p.tok.Span.Start
@@ -1468,6 +1656,9 @@ func (p *parser) parseUnary() ast.Expr {
 }
 
 func (p *parser) parsePrimary() ast.Expr {
+	if x, ok := p.foreignPrimary(); ok {
+		return x
+	}
 	t := p.tok
 	sp := ast.Base{Sp: t.Span}
 	switch t.Kind {
@@ -1672,7 +1863,9 @@ func (p *parser) parseIf() ast.Expr {
 		}
 		p.skipNewlines()
 	}
-	if p.got(token.Else) {
+	if !p.bad && p.foreignElif() {
+		e.Else = p.parseIf()
+	} else if p.got(token.Else) {
 		switch {
 		case p.at(token.If):
 			e.Else = p.parseIf()
@@ -1695,9 +1888,18 @@ func (p *parser) parseMatch() ast.Expr {
 		astart := p.tok.Span.Start
 		arm := &ast.MatchArm{Pattern: p.parsePattern()}
 		if p.got(token.If) {
+			saved := p.noArrowFn
+			p.noArrowFn = true
 			arm.Guard = p.parseExpr()
+			p.noArrowFn = saved
 		}
-		p.expect(token.FatArrow, "`=>` after the match pattern")
+		if p.at(token.Arrow) && !p.bad {
+			d := p.foreign(p.tok.Span, "`->` after a pattern is Kotlin and Scala syntax; an Xo match arm is `pattern => body` (core 3.5)")
+			addFix(d, "write `=>`", p.replaceSpan(p.tok.Span, "=>"))
+			p.next()
+		} else {
+			p.expect(token.FatArrow, "`=>` after the match pattern")
+		}
 		if !p.bad {
 			arm.Body = p.parseSimpleStmt()
 		}
@@ -1729,8 +1931,7 @@ func (p *parser) parseArms(what string, arm func()) {
 				continue
 			}
 			if p.at(token.Comma) {
-				p.softErrorf(diag.MatchArmSeparator, p.tok.Span, "%ss are separated by newlines, not `,`", what)
-				p.next()
+				p.armComma(what)
 				continue
 			}
 			p.errorf(diag.ExpectedNewline, p.tok.Span, "expected newline after %s, found %s", what, describe(p.tok))
@@ -1751,6 +1952,8 @@ func (p *parser) parseSelect() ast.Expr {
 	p.parseArms("select arm", func() {
 		astart := p.tok.Span.Start
 		arm := &ast.SelectArm{}
+		savedArrow := p.noArrowFn
+		p.noArrowFn = true
 		switch {
 		case p.atIdent("after") && !isArmOpFollower(p.peek(1).Kind):
 			p.next()
@@ -1762,6 +1965,7 @@ func (p *parser) parseSelect() ast.Expr {
 		default:
 			arm.Op = p.parseExpr()
 		}
+		p.noArrowFn = savedArrow
 		p.expect(token.FatArrow, "`=>` after the select operation")
 		if !p.bad {
 			arm.Body = p.parseSimpleStmt()
@@ -1805,6 +2009,12 @@ func (p *parser) parseFnLit() ast.Expr {
 func (p *parser) parsePostfix(x ast.Expr) ast.Expr {
 	for !p.bad {
 		start := x.Span().Start
+		if y, ok, stop := p.foreignPostfix(x); stop {
+			return x
+		} else if ok {
+			x = y
+			continue
+		}
 		switch p.tok.Kind {
 		case token.Dot:
 			p.next()
@@ -1828,6 +2038,13 @@ func (p *parser) parsePostfix(x ast.Expr) ast.Expr {
 				a := &ast.Arg{}
 				if p.at(token.Ident) && p.peek(1).Kind == token.Colon {
 					a.Name = p.expectIdent("an argument name")
+					p.next()
+				}
+				if p.at(token.Var) && !p.bad && startsExpr(p.peek(1).Kind) {
+					// Swift `inout` call sites and C# `ref` read like this.
+					vt := p.tok
+					d := p.foreign(vt.Span, "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)")
+					addFix(d, "remove `var`", p.deleteToken(vt))
 					p.next()
 				}
 				a.Value = p.parseExpr()
@@ -1883,11 +2100,16 @@ func (p *parser) parseIndex(x ast.Expr) ast.Expr {
 		}
 		r.Sp = p.spanFrom(rstart)
 		idx = r
+	} else if p.at(token.Colon) {
+		idx = p.foreignSlice(nil)
 	} else if p.at(token.RBrack) {
 		p.errorExpected("an index or range")
 		idx = &ast.BadExpr{Base: ast.Base{Sp: p.tok.Span}}
 	} else {
 		idx = p.parseExpr()
+		if p.at(token.Colon) && !p.bad {
+			idx = p.foreignSlice(idx)
+		}
 	}
 	p.noLit, p.openRange = savedLit, savedRange
 	p.expect(token.RBrack, "`]`")

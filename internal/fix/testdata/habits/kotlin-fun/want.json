@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`fun` is Kotlin syntax; Xo declares functions with `fn` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 4
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `fn`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 4
+            },
+            "replace": "fn"
+          }
+        ]
+      }
+    ]
+  }
+]

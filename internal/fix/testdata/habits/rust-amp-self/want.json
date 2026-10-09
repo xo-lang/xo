@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`\u0026self` is Rust syntax; an Xo interface method takes a bare `self`, and a method declares its receiver before the name, `fn (var p: P) name()` (core 2.4, 3.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 11,
+      "end_line": 2,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `self`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 11,
+              "end_line": 2,
+              "end_col": 12
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

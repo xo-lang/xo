@@ -1,0 +1,41 @@
+[
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "the closure declares `uses clock`, but performs `Cache.fx`",
+    "span": {
+      "file": "main.xo",
+      "line": 10,
+      "col": 11,
+      "end_line": 15,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`Cache.fx` is the effect argument left out of `Cache[Int, Str]` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `Cache[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 16
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove the closure's `uses` clause so its effects are inferred",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 10,
+              "col": 28,
+              "end_line": 10,
+              "end_col": 39
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

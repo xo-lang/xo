@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`try? f()` is Swift syntax; Xo turns a failure into `None` with `f().ok()` (spec/std.md 2)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `.ok()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 8
+            },
+            "replace": ""
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 14,
+              "end_line": 6,
+              "end_col": 14
+            },
+            "replace": ".ok()"
+          }
+        ]
+      }
+    ]
+  }
+]

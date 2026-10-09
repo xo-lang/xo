@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`List[Int]` has no field `length`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 6,
+      "end_line": 2,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "`.length` is a property in TypeScript, Swift, and Kotlin; in Xo it is a method call, `.len()` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.len()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 6,
+              "end_line": 2,
+              "end_col": 12
+            },
+            "replace": "len()"
+          }
+        ]
+      }
+    ]
+  }
+]

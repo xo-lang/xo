@@ -1,0 +1,3 @@
+fn one() -> Int ! error {
+  1
+}

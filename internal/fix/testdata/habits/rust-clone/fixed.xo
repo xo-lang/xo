@@ -1,0 +1,3 @@
+fn copy(xs: List[Int]) -> List[Int] {
+  xs
+}

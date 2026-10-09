@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`export` is TypeScript syntax; Xo exports a declaration with `pub` (core 1.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `pub`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 7
+            },
+            "replace": "pub"
+          }
+        ]
+      }
+    ]
+  }
+]

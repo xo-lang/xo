@@ -1,0 +1,3 @@
+fn size(xs: Vec[Int]) -> Int {
+  xs.len()
+}

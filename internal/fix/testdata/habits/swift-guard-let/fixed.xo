@@ -1,0 +1,4 @@
+fn get(x: Int?) -> Int {
+  let v = if let Some(v) = x { v } else { return 0 }
+  v
+}

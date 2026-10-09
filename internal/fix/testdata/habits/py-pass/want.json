@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`pass` is Python syntax; an empty Xo block is `{}`, and the unit value is `()` (core 3.2)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `()`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 7
+            },
+            "replace": "()"
+          }
+        ]
+      }
+    ]
+  }
+]

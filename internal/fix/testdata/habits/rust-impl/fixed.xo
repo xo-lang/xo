@@ -1,0 +1,11 @@
+struct Point {
+  x: Int
+}
+
+fn (self: Point) get() -> Int {
+  self.x
+}
+
+fn (var self: Point) set(v: Int) {
+  self.x = v
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`a, b := f()` is Go syntax; Xo destructures a tuple with `let (a, b) = f()` (core 3.1, 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `let (...) =`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 10
+            },
+            "replace": "let (n, s) ="
+          }
+        ]
+      }
+    ]
+  }
+]

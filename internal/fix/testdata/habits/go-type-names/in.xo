@@ -1,0 +1,3 @@
+fn show(x: int) -> string {
+  "${x}"
+}

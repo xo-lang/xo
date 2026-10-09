@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `self` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "`self` is the Python, Rust, and Swift receiver; an Xo method names its receiver, here `p` (core 3.4)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `p`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 7
+            },
+            "replace": "p"
+          }
+        ]
+      }
+    ]
+  }
+]

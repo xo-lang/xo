@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Str` has no field or method `join`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`sep.join(xs)` is Python; Xo joins from the list, `xs.join(sep)` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `xs.join(sep)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 15
+            },
+            "replace": "xs.join(\",\")"
+          }
+        ]
+      }
+    ]
+  }
+]

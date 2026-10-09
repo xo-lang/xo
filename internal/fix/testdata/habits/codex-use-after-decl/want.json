@@ -1,0 +1,46 @@
+[
+  {
+    "code": "XO0173",
+    "severity": "error",
+    "message": "`use` must come before all declarations",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "Python and TypeScript allow imports anywhere; an Xo file lists every `use` first (core 15: File)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "move the `use` above the declarations",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 1,
+              "end_col": 1
+            },
+            "replace": "use std/json\n\n"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 5,
+              "col": 1,
+              "end_line": 6,
+              "end_col": 1
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

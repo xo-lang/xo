@@ -1,0 +1,17 @@
+struct Cache[K, V, fx: Effects] {
+  load: fn(K) -> V ! Str uses fx
+}
+
+fn (c: Cache[K, V, fx]) get(key: K) -> V ! Str uses fx {
+  c.load(key)
+}
+
+fn describe(c: Cache[Int, Str]) -> Str uses clock {
+  let f = fn(k: Int) -> Str {
+    match c.get(k) {
+      Ok(s) => s
+      Err(e) => e
+    }
+  }
+  f(1)
+}

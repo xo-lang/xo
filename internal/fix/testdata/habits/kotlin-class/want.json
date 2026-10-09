@@ -1,0 +1,16 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`class` is Kotlin, Swift, TypeScript, or Python syntax; Xo has no classes: declare a `struct` for the fields and methods at top level with a receiver, `fn (p: P) name() -\u003e T` (core 2.2, 3.4)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": []
+  }
+]

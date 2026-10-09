@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for { ... }` is Go's infinite loop; Xo writes `while { ... }` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `while`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 6
+            },
+            "replace": "while"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "a Go result list ending in `error` is written `-\u003e T ! Error` in Xo: the function returns `T` or fails with an error, and callers propagate it with `?` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 18,
+      "end_line": 1,
+      "end_col": 30
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `-\u003e Int ! Error`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 18,
+              "end_line": 1,
+              "end_col": 30
+            },
+            "replace": "-\u003e Int ! Error"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`return v, nil` is Go's success return; an Xo function declared `-\u003e T ! E` returns just the value: `return s.len()` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 10,
+      "end_line": 2,
+      "end_col": 22
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "return the value",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 17,
+              "end_line": 2,
+              "end_col": 22
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

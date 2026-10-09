@@ -1,0 +1,52 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`guard let` is Swift syntax; Xo writes `let v = if let Some(v) = x { v } else { ... }`, or `let v = x ?? default` (core 2.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `let ... = if let Some(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 13
+            },
+            "replace": "let "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 14,
+              "end_line": 2,
+              "end_col": 17
+            },
+            "replace": " = if let Some(v) = "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 18,
+              "end_line": 2,
+              "end_col": 23
+            },
+            "replace": " { v } else"
+          }
+        ]
+      }
+    ]
+  }
+]

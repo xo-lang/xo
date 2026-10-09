@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "a C style `for init; cond; step` loop is Go, TypeScript, and Java syntax; Xo counts with a range, `for i in a..b` (`a..=b` includes `b`), or loops with `while cond` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `for i in ...`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 32
+            },
+            "replace": "for i in 0..10 "
+          }
+        ]
+      }
+    ]
+  }
+]

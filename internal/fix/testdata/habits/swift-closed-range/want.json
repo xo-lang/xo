@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`a...b` is Swift's closed range; Xo writes `a..=b` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 13,
+      "end_line": 3,
+      "end_col": 16
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `..=`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 13,
+              "end_line": 3,
+              "end_col": 16
+            },
+            "replace": "..="
+          }
+        ]
+      }
+    ]
+  }
+]

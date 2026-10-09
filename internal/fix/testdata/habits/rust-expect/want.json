@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Int?` has no field or method `expect`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`.expect(msg)` is Rust; Xo writes `.or_fault(msg)` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.or_fault`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 5,
+              "end_line": 2,
+              "end_col": 11
+            },
+            "replace": "or_fault"
+          }
+        ]
+      }
+    ]
+  }
+]

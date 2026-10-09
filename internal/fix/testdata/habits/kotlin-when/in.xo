@@ -1,0 +1,6 @@
+fn label(x: Int) -> Str {
+  when (x) {
+    1 -> "one"
+    else -> "many"
+  }
+}

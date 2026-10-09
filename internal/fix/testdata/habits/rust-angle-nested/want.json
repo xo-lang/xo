@@ -1,0 +1,52 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`Map\u003c...\u003e` is Rust, TypeScript, Kotlin, and Swift syntax for type arguments; Xo writes them in square brackets, `Map[...]` (core 2.7)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 15,
+      "end_line": 1,
+      "end_col": 31
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "use square brackets",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 15,
+              "end_line": 1,
+              "end_col": 16
+            },
+            "replace": "["
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 25,
+              "end_line": 1,
+              "end_col": 26
+            },
+            "replace": "["
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 29,
+              "end_line": 1,
+              "end_col": 31
+            },
+            "replace": "]]"
+          }
+        ]
+      }
+    ]
+  }
+]

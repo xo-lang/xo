@@ -1,0 +1,3 @@
+fn value(p: Int) -> Int {
+  p
+}

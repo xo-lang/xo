@@ -1,0 +1,3 @@
+fn missing(x: Int?) -> Bool {
+  x == nil
+}

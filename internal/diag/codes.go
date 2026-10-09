@@ -54,6 +54,7 @@ const (
 	MisplacedSelf        Code = "XO0174" // bare `self` parameter outside an interface method signature
 	ExpectedNewline      Code = "XO0175" // two statements or arms on one line
 	MisplacedPub         Code = "XO0176" // `pub` before something that cannot be exported
+	ForeignSyntax        Code = "XO0177" // syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)
 )
 
 // Checker codes (internal/check), chosen inside the spec's groups (core 10.2).
@@ -194,4 +195,5 @@ var Descriptions = map[Code]string{
 	MisplacedSelf:        "bare `self` parameter outside an interface method signature",
 	ExpectedNewline:      "two statements or arms on one line",
 	MisplacedPub:         "`pub` before something that cannot be exported",
+	ForeignSyntax:        "syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)",
 }

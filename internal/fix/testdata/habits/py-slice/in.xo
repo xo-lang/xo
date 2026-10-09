@@ -1,0 +1,3 @@
+fn tail(xs: List[Int]) -> List[Int] {
+  xs[1:]
+}

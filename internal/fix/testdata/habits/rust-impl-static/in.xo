@@ -1,0 +1,9 @@
+struct Point {
+  x: Int
+}
+
+impl Point {
+  fn origin() -> Point {
+    Point{x: 0}
+  }
+}

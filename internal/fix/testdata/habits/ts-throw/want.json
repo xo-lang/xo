@@ -1,0 +1,42 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`throw` is TypeScript, Kotlin, and Swift syntax; Xo has no exceptions: a function declared `-\u003e T ! E` fails by returning `Err(e)`, and callers propagate with `?` (core 2.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 5,
+      "end_line": 3,
+      "end_col": 10
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `return Err(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 5,
+              "end_line": 3,
+              "end_col": 11
+            },
+            "replace": "return Err("
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 21,
+              "end_line": 3,
+              "end_col": 21
+            },
+            "replace": ")"
+          }
+        ]
+      }
+    ]
+  }
+]

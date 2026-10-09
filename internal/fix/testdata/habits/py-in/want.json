@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`x in xs` as a test is Python, TypeScript, and Kotlin syntax; Xo writes `xs.contains(x)`, and `in` appears only in `for` (spec/std.md 2)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `xs.contains(x)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 10
+            },
+            "replace": "xs.contains(x)"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,3 @@
+fn parse(s: Str) (Int, error) {
+  return s.len(), nil
+}

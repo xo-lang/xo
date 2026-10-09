@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `strings` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`strings.ToUpper` is Go's library; Xo calls the method on the value: `s.to_upper()` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.to_upper(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 21
+            },
+            "replace": "s.to_upper()"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,13 @@
+struct Point {
+  x: Int
+}
+
+impl Point {
+  fn get(&self) -> Int {
+    self.x
+  }
+
+  fn set(&mut self, v: Int) {
+    self.x = v
+  }
+}

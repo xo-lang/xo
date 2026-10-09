@@ -1,0 +1,3 @@
+fn has(x: Int, xs: List[Int]) -> Bool {
+  x in xs
+}

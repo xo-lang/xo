@@ -1,0 +1,3 @@
+fn empty() -> Map[Str, Int] {
+  make(Map[Str, Int])
+}

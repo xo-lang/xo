@@ -1,0 +1,7 @@
+fn total(m: Map[Str, Int]) -> Int {
+  var t = 0
+  for (k, v) in m {
+    t += v + k.len()
+  }
+  t
+}

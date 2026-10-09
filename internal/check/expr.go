@@ -1581,7 +1581,7 @@ func (c *checker) fnLit(x *ast.FnLit, hint Type) Type {
 	}
 	eff := ctx.eff
 	if declared != nil {
-		c.obligations = append(c.obligations, effObligation{sub: ctx.eff, sup: declared, span: x.Sp, what: func(s string) string {
+		c.obligations = append(c.obligations, effObligation{sub: ctx.eff, sup: declared, span: x.Sp, usesClause: c.usesClauseSpan(x), what: func(s string) string {
 			if s == "" {
 				return "the closure declares no effects"
 			}

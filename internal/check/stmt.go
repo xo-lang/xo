@@ -687,7 +687,12 @@ func (c *checker) jump(label *ast.Ident, sp token.Span, isBreak bool) {
 
 func (c *checker) forStmt(x *ast.ForStmt) {
 	it := c.infer(x.Iter, nil)
-	elem := c.iterElem(it, x.Iter)
+	var elem Type
+	if x.GoRange {
+		elem = c.goRange(x, it)
+	} else {
+		elem = c.iterElem(it, x.Iter)
+	}
 	c.loopBody(labelName(x.Label), false, x.Body, func() {
 		ip := c.pattern(x.Pattern, elem, false)
 		c.requireIrrefutable(ip, elem, x.Pattern, "a `for` pattern")
@@ -761,7 +766,20 @@ func (c *checker) localConst(x *ast.ConstDecl) {
 	} else {
 		t = c.infer(x.Value, nil)
 	}
+	before := len(c.diags.Items)
 	c.checkConstExpr(x.Value)
+	if len(c.diags.Items) > before && strings.ToUpper(x.Name.Name) != x.Name.Name {
+		// TypeScript's `const x = f()` is a run time binding: Xo's `let`
+		// (decision 0087). One diagnostic instead of XO0408 and XO0101.
+		c.diags.Items = c.diags.Items[:before]
+		d := c.errorf(diag.ConstNotConstant, x.Value.Span(), "`const %s` is initialized with a value computed at run time", x.Name.Name)
+		note(d, token.Span{}, "a TypeScript and JavaScript `const` binding is Xo's `let`; an Xo `const` is a compile time UPPER_SNAKE constant (core 3.1)")
+		fix(d, "write `let`", replaceEdit(token.Span{File: x.Sp.File, Start: x.Sp.Start, End: token.Pos{Line: x.Sp.Start.Line, Col: x.Sp.Start.Col + 5, Offset: x.Sp.Start.Offset + 5}}, "let"))
+		v := &VarObj{Name: x.Name.Name, Type: t, Kind: VLocal, Span: x.Name.Sp, decl: x}
+		c.declareVar(v)
+		c.identObj[x.Name] = v
+		return
+	}
 	c.checkName(x.Name, "constant")
 	v := &VarObj{Name: x.Name.Name, Type: t, Kind: VLocal, Span: x.Name.Sp, decl: x, isConst: true}
 	c.declareVar(v)
@@ -990,7 +1008,10 @@ func (c *checker) checkDerives(t *TypeObj, ids []*ast.Ident) {
 				continue
 			}
 			if !c.implements(ft, iface, token.Span{}) {
-				c.errorf(diag.NotImplemented, id.Sp, "`derive %s` needs every field to implement `%s`, but `%s` has type `%s`", id.Name, id.Name, names[i], deep(ft))
+				d := c.errorf(diag.NotImplemented, id.Sp, "`derive %s` needs every field to implement `%s`, but `%s` has type `%s`", id.Name, id.Name, names[i], deep(ft))
+				if id.Name == "Json" && strings.Contains(deep(ft).String(), "(") {
+					note(d, token.Span{}, "tuples have no JSON form (Python and TypeScript encode them as arrays); declare a struct with named fields and `derive Json` (spec/std.md 5)")
+				}
 			}
 		}
 	}

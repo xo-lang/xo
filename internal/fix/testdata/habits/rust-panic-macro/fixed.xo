@@ -1,0 +1,6 @@
+fn check(x: Int) -> Int {
+  if x < 0 {
+    fault("negative")
+  }
+  x
+}

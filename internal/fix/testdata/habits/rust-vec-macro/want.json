@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`vec![...]` is a Rust macro; an Xo list literal is `[...]` (core 1.6)",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 7
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "remove `vec!`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 7
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]
