@@ -157,7 +157,9 @@ func diffHandler(w http.ResponseWriter, hr *http.Request) {
 		}
 	}
 	if big, ok := q["big"]; ok {
-		if n, _ := strconv.Atoi(big); n > 0 {
+		// out of range: no body, as the C handler (Atoi returns the
+		// clamped value with its error)
+		if n, err := strconv.Atoi(big); err == nil && n > 0 {
 			b.WriteString(strings.Repeat("x", min(n, 1<<20)))
 		}
 	}

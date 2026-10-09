@@ -451,6 +451,32 @@ static int h_parse_host(const char *h, int64_t n, hstr *out) {
 	return 1;
 }
 
+// h_valid_userinfo is the userinfo check of url.parseAuthority (after
+// the host parsed): validUserinfo's bytes, then unescape's check of the
+// % escapes. 0 with Go's reason in err when it fails.
+static int h_valid_userinfo(const char *s, int64_t n, char *err, size_t en) {
+	for (int64_t i = 0; i < n; i++) {
+		unsigned c = (unsigned char)s[i];
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (c != 0 && strchr("-._:~!$&'()*+,;=%@", (int)c))) {
+			continue;
+		}
+		snprintf(err, en, "net/url: invalid userinfo");
+		return 0;
+	}
+	for (int64_t i = 0; i < n; i++) {
+		if (s[i] != '%') {
+			continue;
+		}
+		int64_t left = n - i;
+		if (left < 3 || !h_ishex((unsigned char)s[i + 1]) || !h_ishex((unsigned char)s[i + 2])) {
+			snprintf(err, en, "invalid URL escape \"%.*s\"", (int)(left < 3 ? left : 3), s + i);
+			return 0;
+		}
+		i += 2;
+	}
+	return 1;
+}
+
 // h_url_parse is net/url's parse: ParseRequestURI when via_request,
 // else Parse after the fragment is cut. 0 when it fails, with Go's
 // reason in err (without the `parse "url": ` prefix).
@@ -572,6 +598,10 @@ static int h_url_parse(const char *s, int64_t sn, int via_request, hurl *u, char
 			char hq[160];
 			snprintf(hq, sizeof hq, "%.*s", (int)(hn < 120 ? hn : 120), hp);
 			snprintf(err, en, "invalid host \"%s\"", hq);
+			return 0;
+		}
+		if (at >= 0 && !h_valid_userinfo(auth, at, err, en)) {
+			hu_free(u);
 			return 0;
 		}
 	} else {
