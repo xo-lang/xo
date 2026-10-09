@@ -1,6 +1,9 @@
 package check
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Rules from the planted bug replant (spec draft 0.6): Map index reads
 // (XO0410), wildcard arms on own enums (XO0305), split critical sections
@@ -25,7 +28,33 @@ func TestWildcardOwnEnum(t *testing.T) {
 		{name: "or pattern lists the rest", src: "enum E { A\n  B\n  C }\nfn f(e: E) -> Int {\n  match e {\n    A => 1\n    B | C => 2\n  }\n}\n"},
 		{name: "wildcard on a prelude enum is fine", src: "fn f(o: Int?) -> Int {\n  match o {\n    Some(v) => v\n    _ => 0\n  }\n}\n"},
 		{name: "wildcard on a non enum is fine", src: "fn f(n: Int) -> Int {\n  match n {\n    0 => 1\n    _ => 2\n  }\n}\n"},
+		// decision 0080: a `_` hiding at least 8 variants and more than
+		// half of the enum is a default
+		{name: "default arm on a large enum", src: bigEnum(20) + "fn f(e: E) -> Int {\n  match e {\n    V0 => 1\n    V1 | V2 => 2\n    _ => 0\n  }\n}\n"},
+		{name: "default arm hiding exactly half", src: bigEnum(16) + "fn f(e: E) -> Int {\n  match e {\n    V0 | V1 | V2 | V3 | V4 | V5 | V6 | V7 => 1\n    _ => 0\n  }\n}\n", want: []string{"XO0305"}},
+		{name: "few hidden on a large enum", src: bigEnum(20) + "fn f(e: E) -> Int {\n  match e {\n    V0 | V1 | V2 | V3 | V4 | V5 | V6 | V7 | V8 | V9 | V10 | V11 | V12 | V13 | V14 | V15 => 1\n    _ => 0\n  }\n}\n", want: []string{"XO0305"}},
+		{name: "most hidden on a small enum", src: bigEnum(9) + "fn f(e: E) -> Int {\n  match e {\n    V0 | V1 => 1\n    _ => 0\n  }\n}\n", want: []string{"XO0305"}},
 	})
+}
+
+// bigEnum declares `enum E` with variants V0 to V(n-1).
+func bigEnum(n int) string {
+	s := "enum E {\n"
+	for i := 0; i < n; i++ {
+		s += fmt.Sprintf("  V%d\n", i)
+	}
+	return s + "}\n"
+}
+
+func TestWildcardOwnEnumMessage(t *testing.T) {
+	ds := checkSrc(t, bigEnum(30)+"fn f(e: E) -> Int {\n  match e {\n    V0 | V1 | V2 | V3 | V4 | V5 | V6 | V7 | V8 | V9 | V10 | V11 | V12 | V13 | V14 | V15 | V16 | V17 | V18 => 1\n    _ => 0\n  }\n}\n")
+	if len(ds) != 1 {
+		t.Fatalf("want one diagnostic, got %s", humanAll(ds))
+	}
+	want := "this arm hides `V19`, `V20`, `V21`, `V22`, `V23`, `V24`, `V25`, `V26` and 3 more of `E`, declared in this module"
+	if ds[0].Message != want {
+		t.Errorf("message = %q, want %q", ds[0].Message, want)
+	}
 }
 
 func TestSplitCriticalSection(t *testing.T) {

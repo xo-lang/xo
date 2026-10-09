@@ -147,7 +147,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [net-http-quirks-to-copy.md](net-http-quirks-to-copy.md): what TestHTTPParseDiff and FuzzHTTPDiff found net/http doing (two token matchers, Peek(4) between requests, the invalid Content-Length copy, 100-continue and short bodies, requestTooLarge, OPTIONS *, HTTP/0.0, trailers, 101, SplitHostPort).
 - [rune-is-not-a-number.md](rune-is-not-a-number.md): resolved by 0079: a rune literal is its code point where an integer is expected (`b[i] == '"'`); `Int(r)`, `Rune(n)`, `Rune.try(n)`; 8 bit types take only ASCII literals.
 - [go-string-is-xo-bytes.md](go-string-is-xo-bytes.md): Go strings hold any bytes, Xo `Str` must be UTF-8; port byte level text to `Bytes` and convert only ASCII to `Str`.
-- [xo0305-large-enum-default-arm.md](xo0305-large-enum-default-arm.md): a `_` arm on an 88 variant enum warns and lists 79 names; use `k is A | B` or a lookup list.
+- [xo0305-large-enum-default-arm.md](xo0305-large-enum-default-arm.md): resolved by 0080: a `_` arm hiding 8 or more variants and over half of a local enum is a default, not XO0305; the message lists at most 8 names.
 - [property-int-min-abs.md](property-int-min-abs.md): Int property tests generate `Int.MIN`, whose `abs()` faults; reduce with `%` or `/` first.
 - [dollar-brace-in-message-text.md](dollar-brace-in-message-text.md): text mentioning `${` (ported Go messages) interpolates unless written `\${`.
 - [xo-fmt-const-table-one-per-line.md](xo-fmt-const-table-one-per-line.md): `xo fmt` splits a multi line list one element per line; generated tables emit that layout.

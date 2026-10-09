@@ -25,6 +25,8 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
   type takes it by value is error `XO0401` (it changed a copy only).
 - `BytesBuilder`, the move only builder of `Bytes` (5.3, std.md 2.7;
   decision 0078).
+- Warning `XO0305` is not reported for a `_` arm that hides at least 8
+  variants and more than half of the enum (3.5; decision 0080).
 - A rune literal where an integer type is expected is its code point
   (1.6); `Int(r)`, `Rune(n)`, and `Rune.try(n)` convert between `Rune` and
   the integer types (2.1; decision 0079).
@@ -726,7 +728,10 @@ Patterns nest: `Some(Ok(v))`, `Err(LoadErr.NotFound(id))`.
 An unguarded `_` (or catch all binding) arm that hides variants of an enum
 declared in the same module is warning `XO0305`: list the variants, so that
 adding one later is a compile error at every `match`. Enums from other modules
-may use `_`, since their owners can add variants.
+may use `_`, since their owners can add variants. A `_` arm that hides at
+least 8 variants and more than half of the enum is a default ("these few are
+special, the rest are not", as on a token kind enum) and is not reported; the
+warning names at most 8 hidden variants, then how many more (decision 0080).
 An `UpperCamel` name in a pattern always refers to a variant; bindings are
 `snake_case` (1.5), so the two never collide.
 `let` requires an irrefutable pattern (`let (a, b) = pair`).
