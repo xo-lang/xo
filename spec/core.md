@@ -39,6 +39,9 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
   habit notes and fixes on existing codes, for Go, Rust, TypeScript,
   Python, Swift, and Kotlin forms (10.2; decision 0087). No program that
   was accepted is rejected.
+- `clock.sleep_or_cancel(d)` returns cancellation as `ClockErr.Canceled`
+  instead of unwinding; reading standard input is a cancellation point,
+  and a stop request ends it too (7.2, 7.5; decision 0088).
 
 ## Changes in 0.6
 
@@ -1173,6 +1176,17 @@ let page = scope s {
 - A blocking operation that cannot fail (`clock.sleep`, `ch.send`, `ch.recv`,
   `t.await` in a cancelled task) unwinds the task immediately, running
   `defer` blocks.
+- `clock.sleep_or_cancel(d) -> () ! ClockErr` is the sleep that reports
+  cancellation as a value: when the task is cancelled before or during the
+  sleep it returns `Err(ClockErr.Canceled)` instead of unwinding, so code
+  that must return its own error (a retry loop's `FetchErr.Cancelled`)
+  can. Cancellation stays sticky: the task's next cancellation point
+  reports it again. Inside deferred code it sleeps in full, like `sleep`
+  (decision 0088).
+- Reading standard input (`stdio.read_line`, `read_all`, `lines`) is a
+  cancellation point also while it waits for input: a cancelled reader
+  gets `Err(IoErr.Canceled)` at once, and no input is lost (a line that
+  arrives later goes to the next read).
 - `task.is_canceled() -> Bool` reports the current task's state without
   blocking.
 - `defer` blocks run shielded (3.5).
@@ -1240,7 +1254,9 @@ sticky cancellation:
    the program's stop state: `task.stop_requested()` returns `true` and the
    channel `task.stopping()` is closed, so loops can `select` on it. Servers
    started with `serve` stop accepting new connections and finish in flight
-   requests. Readers stop reading; workers drain what is queued.
+   requests. Readers stop reading: a read of standard input that is
+   blocked, or starts later, returns `Err(IoErr.Canceled)` (decision 0088).
+   Workers drain what is queued.
 2. **Cancel.** When `main`'s body has not returned after the grace period
    (default 30s, set with `os.proc.set_grace(d)`), or on a second signal,
    `main`'s root scope is cancelled as in 7.2: blocking calls unwind and
@@ -1250,14 +1266,17 @@ A program that ignores phase 1 behaves as before, only 30 seconds later; a
 program that wants the old behavior calls `os.proc.set_grace(0s)`.
 
 ```
-fn reader(os: Os, queue: Chan[Str]) {
+fn reader(os: Os, queue: Chan[Str]) -> () ! IoErr {
+  defer queue.close()              // workers drain the queue, then exit
   while {
-    select {
-      line = read_line(os) => queue.send(line)
-      _ = task.stopping().recv() => break
+    match os.stdio.read_line() {
+      Ok(Some(line)) => queue.send(line)
+      Ok(None) => return Ok(())      // end of input
+      Err(Canceled) => return Ok(()) // stop requested (or cancelled)
+      Err(e) => return Err(e)
     }
   }
-  queue.close()                    // workers drain the queue, then exit
+  Ok(())
 }
 ```
 

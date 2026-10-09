@@ -120,6 +120,18 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 			s.retv(sub(acc, v, ct))
 			return
 		}
+		if tu, isTup := check.Resolve(ct).(*check.Tuple); isTup && t.Kind == KTuple && len(tu.Elems) == len(t.Elems) {
+			// an array, one element per position (decision 0088)
+			a := lit(acc, "[")
+			for k, et := range tu.Elems {
+				if k > 0 {
+					a = lit(a, ",")
+				}
+				a = sub(a, s.add(OpField, t.Elems[k], k, v), et)
+			}
+			s.retv(lit(a, "]"))
+			return
+		}
 		n, ok := check.Resolve(ct).(*check.Named)
 		if !ok {
 			b.unsupported(at, "JSON for `"+ct.String()+"`")
@@ -363,6 +375,27 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 		case KUnit:
 			need(jkNull, "expected null")
 			ok(s.unit())
+			return
+		}
+		if tu, isTup := check.Resolve(ct).(*check.Tuple); isTup && t.Kind == KTuple && len(tu.Elems) == len(t.Elems) {
+			// an array of exactly as many elements as positions
+			// (decision 0088)
+			need(jkArr, "expected array")
+			cnt := at3(i, 1)
+			s.ifThen(s.add(OpNe, boolT, nil, cnt, s.cint(int64(len(tu.Elems)))), func() {
+				msg := s.call("str.concat_int", st, "", str("expected array of "+itoa(len(tu.Elems))+" elements, got "), cnt)
+				s.retv(mkErr(str(""), msg))
+			})
+			j := s.add(OpAdd, intT, nil, i, s.cint(3))
+			var vals []*Value
+			for k, et := range tu.Elems {
+				if k > 0 {
+					j = next(j)
+				}
+				e := child(et, j, str("["+itoa(k)+"]"))
+				vals = append(vals, s.coerce(e, t.Elems[k], at))
+			}
+			ok(s.add(OpTuple, t, nil, vals...))
 			return
 		}
 		n, isNamed := check.Resolve(ct).(*check.Named)

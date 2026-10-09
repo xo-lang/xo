@@ -709,6 +709,29 @@ func (realClock) M_sleep(tk *Task, d Duration) {
 	}
 }
 
+// M_sleep_or_cancel is `clock.sleep_or_cancel(d)`: sleep, with
+// cancellation returned as ClockErr.Canceled instead of unwinding
+// (decision 0088).
+func (c realClock) M_sleep_or_cancel(tk *Task, d Duration) Result[Unit, ClockErr] {
+	return sleepOrCancel(tk, func() { c.M_sleep(tk, d) })
+}
+
+// sleepOrCancel runs a sleep that unwinds on cancellation and turns the
+// unwind into Err(ClockErr.Canceled). Cancellation stays sticky: the
+// next cancellation point of the task reports it again.
+func sleepOrCancel(tk *Task, sleep func()) (r Result[Unit, ClockErr]) {
+	defer func() {
+		if x := recover(); x != nil {
+			if !IsUnwind(x) {
+				panic(x)
+			}
+			r = Err[Unit](ClockErr{Tag: 1})
+		}
+	}()
+	sleep()
+	return Ok[Unit, ClockErr](Unit{})
+}
+
 func (c realClock) M_since(tk *Task, t Time) Duration { return Duration(c.M_now(tk) - t) }
 
 func (realClock) XoDebug(b *strings.Builder) { b.WriteString("<clock>") }
@@ -871,41 +894,39 @@ func (realStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 }
 
 func (s realStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
-	if tk.Canceled() {
+	if stdinStopped(tk) {
 		return Err[Option[string]](IoErr{Tag: 3})
 	}
 	return fx(tk, "stdio.read_line", true, nil, func() Result[Option[string], IoErr] { return s.readLine(tk) })
 }
 
+// readLine is a cancellation point, and a stop request ends it too
+// (core 7.5): both return IoErr.Canceled (stdin.go).
 func (realStdio) readLine(tk *Task) Result[Option[string], IoErr] {
-	tk.leave()
-	line, err := stdin().ReadString('\n')
-	tk.enter()
-	if err == io.EOF && line == "" {
-		return Ok[Option[string], IoErr](Option[string]{})
+	line, ok, r := stdinRead(tk, false)
+	if !r.Ok {
+		return Err[Option[string]](r.E)
 	}
-	if err != nil && err != io.EOF {
-		return Err[Option[string]](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+	if !ok {
+		return Ok[Option[string], IoErr](Option[string]{})
 	}
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 	return Ok[Option[string], IoErr](Some(line))
 }
 
 func (s realStdio) M_read_all(tk *Task) Result[string, IoErr] {
-	if tk.Canceled() {
+	if stdinStopped(tk) {
 		return Err[string](IoErr{Tag: 3})
 	}
 	return fx(tk, "stdio.read_all", true, nil, func() Result[string, IoErr] { return s.readAll(tk) })
 }
 
 func (realStdio) readAll(tk *Task) Result[string, IoErr] {
-	tk.leave()
-	data, err := io.ReadAll(stdin())
-	tk.enter()
-	if err != nil {
-		return Err[string](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+	data, _, r := stdinRead(tk, true)
+	if !r.Ok {
+		return Err[string](r.E)
 	}
-	return Ok[string, IoErr](string(data))
+	return Ok[string, IoErr](data)
 }
 
 func (s realStdio) M_lines(tk *Task) Result[List[string], IoErr] {

@@ -1015,10 +1015,7 @@ func (c *checker) checkDerives(t *TypeObj, ids []*ast.Ident) {
 				continue
 			}
 			if !c.implements(ft, iface, token.Span{}) {
-				d := c.errorf(diag.NotImplemented, id.Sp, "`derive %s` needs every field to implement `%s`, but `%s` has type `%s`", id.Name, id.Name, names[i], deep(ft))
-				if id.Name == "Json" && strings.Contains(deep(ft).String(), "(") {
-					note(d, token.Span{}, "tuples have no JSON form (Python and TypeScript encode them as arrays); declare a struct with named fields and `derive Json` (spec/std.md 5)")
-				}
+				c.errorf(diag.NotImplemented, id.Sp, "`derive %s` needs every field to implement `%s`, but `%s` has type `%s`", id.Name, id.Name, names[i], deep(ft))
 			}
 		}
 	}

@@ -1,0 +1,23 @@
+test "a stop request ends read_line" {
+  os.stdio.set_input("a\nb\nc\nd\ne\n")
+  os.proc.signal_after(2500ms)
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "stopped after 3 lines\n"
+}
+
+test "without a stop every line is read" {
+  os.stdio.set_input("a\nb\n")
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "read 2 lines\n"
+}
+
+test "sleep_or_cancel returns cancellation on the fake clock" {
+  scope s {
+    let t = s.spawn(fn() -> Bool { os.clock.sleep_or_cancel(1h) is Err(Canceled) })
+    os.clock.sleep(1s)
+    s.cancel()
+    expect(t.await) == true
+  }
+  expect(os.clock.sleep_or_cancel(2s) is Ok(_)) == true
+  expect(os.clock.sleeps().contains(1h)) == true
+}

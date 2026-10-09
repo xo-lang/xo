@@ -186,3 +186,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-check-same-module-path.md](xo-check-same-module-path.md): `xo check a b` with two directories declaring the same module path checks only the first, silently; check copies one at a time.
 - [xo-fix-applies-guesses.md](xo-fix-applies-guesses.md): `xo fix` applied did you mean guesses that changed programs (`t` to `it`); guesses are fixes only when clear, habits get their Xo form.
 - [parser-lookahead-past-eof.md](parser-lookahead-past-eof.md): habit lookahead indexed past the last token and panicked under FuzzParse; read tokens with `p.tokAt(i)` or `p.peek(n)`.
+- [stdin-read-not-interruptible.md](stdin-read-not-interruptible.md): a blocked `read_line` ignored cancellation and SIGTERM (os.Stdin reads cannot be interrupted); one reader goroutine plus a select on cancellation and stop, keeping leftover input.
+- [or-err-guess-to-is-err.md](or-err-guess-to-is-err.md): `Duration.parse(s).or_err(...)` got a did you mean fix to `is_err` that made two errors from one; `or_err` on a Result now has its own habit fix to `map_err`.

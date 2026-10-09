@@ -1,0 +1,29 @@
+exit 0
+--- stdout
+parse "1.5s": 1.5s
+parse "-2h45m": -2h45m0s
+parse "300ms": 300ms
+parse " 1m ": 1m0s
+parse "0": 0s
+parse "1us": 1µs
+parse "+5ns": 5ns
+parse "1x": invalid duration "1x": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "": invalid duration "": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "1.5": invalid duration "1.5": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "s": invalid duration "s": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+parse "9999999999h": invalid duration "9999999999h": expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"
+{"top":[["timeout",3],["refused",1]],"span":["1m30s",true]}
+round trip equal: true
+pair: 7 seven
+[[1,"a",true],[2,"b",false]]
+decode [1]: at $: expected array of 2 elements, got 1
+decode [1, "x", 3]: at $: expected array of 2 elements, got 3
+decode {}: at $: expected array
+decode ["x", 1]: at $[0]: expected integer
+decode [1, 2]: at $[1]: expected string
+retry succeeded after 3 attempts
+shielded sleep finished
+retry returned Cancelled
+first sleep: true
+sticky: the next sleep unwinds
+--- stderr

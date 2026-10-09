@@ -570,7 +570,17 @@ func (c *checker) isSerializable(t Type, name string) bool {
 			}
 		}
 	case *Tuple:
-		return len(x.Elems) == 0
+		// a tuple is a JSON array of its elements (decision 0088); `()`
+		// is null
+		if name != "Json" {
+			return len(x.Elems) == 0
+		}
+		for _, e := range x.Elems {
+			if !c.isSerializable(e, name) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

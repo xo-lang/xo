@@ -760,6 +760,18 @@ func (c *checker) habitMethod(bt Type, r Type, sel *ast.SelectorExpr, x *ast.Cal
 		fix(d, "write `.or_fault`", replaceEdit(sel.Sel.Sp, "or_fault"))
 		c.check(x.Args[0].Value, c.named("Str"))
 		return elem, true
+	case "or_err":
+		// Option's `or_err` on what is already a Result (a parse that
+		// reports why, such as Duration.parse): replace the error
+		t, _, ok := c.resultParts(r)
+		if !ok || len(x.Args) != 1 || x.Args[0].Name != nil {
+			break
+		}
+		d := report()
+		habitNote(d, "`.or_err(e)` turns an optional value into a Result; this is already a Result, so replace its error with `.map_err(fn(_) { e })` (spec/std.md 2.5)")
+		arg := c.srcOf(x.Args[0].Value.Span())
+		fix(d, "write `.map_err(fn(_) { ... })`", replaceEdit(token.Span{File: x.Sp.File, Start: sel.Sel.Sp.Start, End: x.Sp.End}, "map_err(fn(_) { "+arg+" })"))
+		return c.resultOf(t, c.infer(x.Args[0].Value, nil)), true
 	case "to_string", "toString", "ToString", "description":
 		if len(x.Args) != 0 {
 			break

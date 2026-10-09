@@ -110,8 +110,8 @@ report has the class tables of `planted-and-harder-2026-10-07.md` (Go) and
 | Green now | the final code through its arm's loop with the current toolchain |
 | Diagnostics | Xo: `xo check` errors plus warnings. Go (both arms): strict analyzer findings, one per reported position plus each data race; for plain Go this is the "escaped findings" measure |
 | Hidden checks | task 01 only: build the root, serve on `PORT`, 17 black box HTTP checks of behavior the task states |
-| Planted, Go | caught by the plain loop (build, vet, test) or by a strict tool finding the base does not have |
-| Planted, Xo | inexpressible (manifest), caught by `xo check` (any error), caught by `xo test --race`, escaped with a new warning, escaped |
+| Planted, Go | caught by the plain loop (build, vet, a test failing that passes on the base) or by a strict tool finding the base does not have |
+| Planted, Xo | inexpressible (manifest), caught by `xo check` (any error), caught by `xo test --race` (only tests that pass on the unplanted base count; names compared without their `(file:line, seed)` suffix; since 2026-10-09), escaped with a new warning, escaped |
 
 ## Protocol and differences from the original runs
 

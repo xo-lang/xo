@@ -21,7 +21,8 @@ checks (bench/harness/hidden/crud_api.py) unless --no-hidden.
 Planted: each variant overlays its files on the base (Go:
 bench/planted/<task>/base; Xo: bench/xo/v0.4/<task>) and runs the same
 detection as bench/planted/run_detection.py and
-bench/planted-xo/run_detection_xo.py.
+bench/planted-xo/run_detection_xo.py, except that a test failure counts
+as a catch only for a test that passes on the unplanted base.
 """
 import argparse
 import json
@@ -375,10 +376,43 @@ def go_strict_findings(root):
     return res
 
 
-def go_plain_caught(root):
-    for step, cmd in [("build", ["go", "build", "./..."]), ("vet", ["go", "vet", "./..."]),
-                      ("test", ["go", "test", "-count=1", "-timeout", "180s", "./..."])]:
-        rc, _ = c.run(cmd, cwd=root, timeout=c.T_TEST)
+GO_TEST = ["go", "test", "-count=1", "-timeout", "180s", "./..."]
+
+
+def failed_tests(out):
+    """The names of the failing tests in `go test` or `xo test` output,
+    without the location and seed suffix `(file:line:col, seed N)`, which
+    moves when a variant edits the file."""
+    return {re.sub(r"\s*\([^()]*\)\s*$", "", x).strip() for x in re.findall(r"--- FAIL: (.*)", out)}
+
+
+def new_test_failures(rc, out, base):
+    """Whether a test run (rc, out) catches a planted bug, and the failing
+    tests that count. base is (rc, failed test names) of the unplanted
+    code: tests that already fail there do not count, so a variant is
+    caught by tests only when a test fails that passes on the base (or
+    the base passes and the variant fails). A failing run without test
+    names over a failing base is not counted."""
+    if rc == 0:
+        return False, []
+    names = failed_tests(out)
+    brc, bnames = base
+    if brc == 0:
+        return True, sorted(names)
+    new = sorted(names - bnames)
+    return bool(new), new
+
+
+def test_base(rc, out):
+    """(rc, failed test names) of a run on the unplanted code."""
+    return rc, failed_tests(out) if rc != 0 else set()
+
+
+def go_plain_caught(root, base_tests=(0, set())):
+    for step, cmd in [("build", ["go", "build", "./..."]), ("vet", ["go", "vet", "./..."]), ("test", GO_TEST)]:
+        rc, out = c.run(cmd, cwd=root, timeout=c.T_TEST)
+        if step == "test":
+            return "test" if new_test_failures(rc, out, base_tests)[0] else "none"
         if rc != 0:
             return step
     return "none"
@@ -403,6 +437,7 @@ def planted_go(tdir, task):
         w = os.path.join(tmp, task)  # same name as the variants: nilaway traces print it
         overlay(base_dir, None, w)
         base = go_strict_findings(w)
+        base_tests = test_base(*c.run(GO_TEST, cwd=w, timeout=c.T_TEST))
     for vid in sorted(man):
         vdir = os.path.join(tdir, "variants", vid)
         rec = {"set": "go", "task": task, "bug": vid, "class": vid[:2]}
@@ -413,7 +448,7 @@ def planted_go(tdir, task):
         with tempfile.TemporaryDirectory() as tmp:
             w = os.path.join(tmp, task)
             overlay(base_dir, vdir, w)
-            rec["plain_caught_by"] = go_plain_caught(w)
+            rec["plain_caught_by"] = go_plain_caught(w, base_tests)
             caught = []
             for name, (rc, found) in go_strict_findings(w).items():
                 brc, bfound = base[name]
@@ -433,6 +468,9 @@ def planted_xo(tdir, task, set_name):
         overlay(base_dir, None, w)
         _, bw, _ = c.xo_check(w)
         base_warn = {(x.get("code"), x.get("message")) for x in bw}
+        base_tests = test_base(*c.xo_test(w))
+    if base_tests[0] != 0:
+        log("%s %s: the base already fails %d tests; they do not count as catches" % (set_name, task, len(base_tests[1])))
     recs = []
     for vid in sorted(man):
         b = man[vid]
@@ -454,9 +492,12 @@ def planted_xo(tdir, task, set_name):
                     rec["caught_by"], rec["codes"] = "check", sorted({x.get("code") for x in errs})
                 else:
                     rc, out = c.xo_test(w)
-                    rec["caught_by"] = "test" if rc != 0 else "none"
+                    caught, new = new_test_failures(rc, out, base_tests)
+                    rec["caught_by"] = "test" if caught else "none"
                     if rc != 0:
-                        rec["failed"] = re.findall(r"--- FAIL: (.*)", out)[:3]
+                        rec["failed"] = new[:3]
+                    if rc != 0 and not caught:
+                        rec["base_failures_only"] = True
         log(json.dumps(rec))
         recs.append(rec)
     return recs
@@ -529,6 +570,9 @@ def planted_report(args, recs):
                 L.append("")
                 L.append("%s: prevented or caught **%d/%d**, caught or warned %d/%d." % (
                     k, t[0] + t[1] + t[2], n, t[0] + t[1] + t[2] + t[3], n))
+        L.append("")
+        L.append("Caught by `xo test` counts only tests that pass on the unplanted base: tests "
+                 "that already fail there are subtracted.")
         L.append("")
         L.append("Published: %s." % PUBLISHED_PLANTED[set_name])
         L.append("")

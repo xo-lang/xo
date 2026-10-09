@@ -2,7 +2,9 @@
 """Run Xo planted bug variants through `xo check`, then `xo test`.
 
 Base solutions come from bench/xo/v0.4/<task>; each variant overlays its
-changed files. Writes bench/planted-xo/results.jsonl.
+changed files. A test failure counts as a catch only for a test that
+passes on the unplanted base (bench/harness/score.py new_test_failures).
+Writes bench/planted-xo/results.jsonl.
 Usage: run_detection_xo.py [task ...]
 """
 import json, os, re, shutil, subprocess, sys, tempfile
@@ -26,6 +28,19 @@ def base_warnings(task):
         _base[task] = set(re.findall(r"warning (XO\d+: .*)", txt.replace(d, "")))
     return _base[task]
 
+_base_tests = {}
+
+def failed_tests(txt):
+    # failing test names without the "(file:line:col, seed N)" suffix
+    return {re.sub(r"\s*\([^()]*\)\s*$", "", x).strip() for x in re.findall(r"--- FAIL: (.*)", txt)}
+
+def base_tests(task):
+    # (rc, failing tests) of the unmodified solution; those do not count
+    if task not in _base_tests:
+        rc, txt = run([XO, "test", "--race", os.path.join(BASES, task)])
+        _base_tests[task] = (rc, failed_tests(txt) if rc != 0 else set())
+    return _base_tests[task]
+
 def main():
     tasks = sys.argv[1:] or sorted(d for d in os.listdir(HERE) if d[:2].isdigit())
     out = open(os.path.join(HERE, "results.jsonl"), "a")
@@ -48,9 +63,12 @@ def main():
                         rec["caught_by"], rec["codes"] = "check", codes
                     else:
                         rc, txt = run([XO, "test", "--race", dst])
-                        rec["caught_by"] = "test" if rc != 0 else "none"
+                        brc, bnames = base_tests(task)
+                        new = sorted(failed_tests(txt) - bnames) if rc != 0 else []
+                        caught = rc != 0 and (brc == 0 or bool(new))
+                        rec["caught_by"] = "test" if caught else "none"
                         if rc != 0:
-                            rec["failed"] = re.findall(r"--- FAIL: (.*)", txt)[:3]
+                            rec["failed"] = (new if brc != 0 else sorted(failed_tests(txt)))[:3]
             out.write(json.dumps(rec) + "\n"); out.flush()
             print(json.dumps(rec), flush=True)
 

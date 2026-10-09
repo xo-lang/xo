@@ -565,6 +565,11 @@ func (c Testing_FakeClock) M_sleep(tk *Task, d Duration) {
 	c.w.Sleep(tk, d)
 }
 
+// M_sleep_or_cancel is `clock.sleep_or_cancel(d)` (decision 0088).
+func (c Testing_FakeClock) M_sleep_or_cancel(tk *Task, d Duration) Result[Unit, ClockErr] {
+	return sleepOrCancel(tk, func() { c.M_sleep(tk, d) })
+}
+
 // M_since is `clock.since(t)`.
 func (c Testing_FakeClock) M_since(tk *Task, t Time) Duration { return Duration(c.M_now(tk) - t) }
 
@@ -689,7 +694,7 @@ func (f Testing_FakeStdio) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 }
 
 func (f Testing_FakeStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
-	if tk.Canceled() {
+	if stdinStopped(tk) {
 		return Err[Option[string]](IoErr{Tag: 3})
 	}
 	f.s.mu.Lock()
@@ -709,7 +714,7 @@ func (f Testing_FakeStdio) M_read_line(tk *Task) Result[Option[string], IoErr] {
 }
 
 func (f Testing_FakeStdio) M_read_all(tk *Task) Result[string, IoErr] {
-	if tk.Canceled() {
+	if stdinStopped(tk) {
 		return Err[string](IoErr{Tag: 3})
 	}
 	f.s.mu.Lock()

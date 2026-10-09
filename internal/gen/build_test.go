@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -152,6 +153,7 @@ type signalChild struct {
 	lines chan string
 	out   strings.Builder
 	done  chan struct{}
+	stdin io.WriteCloser // with STDIN=pipe
 }
 
 func startSignalChild(t *testing.T, env ...string) *signalChild {
@@ -159,12 +161,22 @@ func startSignalChild(t *testing.T, env ...string) *signalChild {
 	if runtime.GOOS == "windows" {
 		t.Skip("no SIGTERM on windows")
 	}
+	var stdinW io.WriteCloser
 	bin, err := signalBinary()
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), env...)
+	if slices.Contains(env, "STDIN=pipe") {
+		// standard input stays open, so read_line blocks
+		w, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { w.Close() })
+		stdinW = w
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +184,7 @@ func startSignalChild(t *testing.T, env ...string) *signalChild {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	c := &signalChild{t: t, cmd: cmd, lines: make(chan string, 100), done: make(chan struct{})}
+	c := &signalChild{t: t, cmd: cmd, lines: make(chan string, 100), done: make(chan struct{}), stdin: stdinW}
 	go func() {
 		defer close(c.lines)
 		r := bufio.NewReader(stdout)
@@ -324,6 +336,32 @@ func TestSignalThirdExits(t *testing.T) {
 	code, rest := c.wait()
 	if code != 130 {
 		t.Fatalf("exit %d, want 130 (output %q)", code, rest)
+	}
+}
+
+// TestSignalStopsReadLine: a stop request ends a read_line blocked on
+// standard input with IoErr.Canceled (core 7.5, decision 0088); the
+// lines before it are read.
+func TestSignalStopsReadLine(t *testing.T) {
+	c := startSignalChild(t, "MODE=stdin", "STDIN=pipe")
+	c.expect("ready")
+	io.WriteString(c.stdin, "a\nb\n")
+	time.Sleep(300 * time.Millisecond)
+	c.signal()
+	c.expect("read_line: Canceled after 2 lines")
+	if code, rest := c.wait(); code != 0 {
+		t.Fatalf("exit %d (output %q)", code, rest)
+	}
+}
+
+// TestCancelStopsReadLine: cancelling the scope of a task blocked in
+// read_line ends it with IoErr.Canceled (core 7.2, decision 0088).
+func TestCancelStopsReadLine(t *testing.T) {
+	c := startSignalChild(t, "MODE=stdin_cancel", "STDIN=pipe")
+	c.expect("ready")
+	c.expect("read_line: Canceled after 0 lines")
+	if code, rest := c.wait(); code != 0 {
+		t.Fatalf("exit %d (output %q)", code, rest)
 	}
 }
 

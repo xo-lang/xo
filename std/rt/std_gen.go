@@ -662,6 +662,37 @@ func (v Target) XoDebug(b *strings.Builder) {
 
 func (v Target) M_debug(*Task) string { return Debug(v) }
 
+type DurationErr struct {
+	F_input string
+}
+
+func (v DurationErr) XoEq(x any) bool {
+	o, ok := x.(DurationErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_input, o.F_input) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v DurationErr) XoHash() uint64 {
+	h := uint64(4645768933494125213)
+	h = MixHash(h, Hash(v.F_input))
+	return h
+}
+
+func (v DurationErr) XoDebug(b *strings.Builder) {
+	b.WriteString("DurationErr{")
+	b.WriteString("input: ")
+	DebugTo(b, v.F_input)
+	b.WriteString("}")
+}
+
+func (v DurationErr) M_debug(*Task) string { return Debug(v) }
+
 type Os struct {
 	F_net   Net
 	F_fs    Fs
@@ -1048,6 +1079,7 @@ type Net interface {
 type Clock interface {
 	M_now(tk *Task) Time
 	M_sleep(tk *Task, p0 Duration)
+	M_sleep_or_cancel(tk *Task, p0 Duration) Result[Unit, ClockErr]
 	M_since(tk *Task, p0 Time) Duration
 }
 
@@ -1057,6 +1089,39 @@ type Rand interface {
 	M_bool(tk *Task) bool
 	M_bytes(tk *Task, p0 int64) Bytes
 }
+
+type ClockErr struct {
+	Tag int
+	P   any
+}
+
+func (v ClockErr) XoEq(x any) bool {
+	o, ok := x.(ClockErr)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v ClockErr) XoHash() uint64 {
+	h := MixHash(uint64(8133229481681152261), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v ClockErr) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Canceled")
+	}
+}
+
+func (v ClockErr) M_debug(*Task) string { return Debug(v) }
+
+func (v ClockErr) M_display(*Task) string { return Debug(v) }
 
 type EnvErr struct {
 	Tag int

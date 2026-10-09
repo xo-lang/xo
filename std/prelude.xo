@@ -315,12 +315,22 @@ fn (static: Duration) from_secs(s: Float) -> Duration
 fn (static: Duration) from_secs_int(s: Int) -> Duration
 fn (static: Duration) from_millis(ms: Int) -> Duration
 fn (static: Duration) from_nanos(ns: Int) -> Duration
+/// Go's time.ParseDuration syntax after trimming white space: a signed
+/// sequence of decimal numbers with units ns, us (or µs), ms, s, m, h,
+/// such as "1.5s", "-2h45m", "300ms"; "0" alone is zero (std.md 2.6).
+fn (static: Duration) parse(s: Str) -> Duration ! DurationErr
 fn (d: Duration) seconds() -> Float
 fn (d: Duration) millis() -> Int
 fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration
 fn (d: Duration) ceil_seconds() -> Int
 fn (d: Duration) abs() -> Duration
+
+/// The error of `Duration.parse`: the text that is not a duration.
+struct DurationErr {
+  input: Str
+}
+fn (e: DurationErr) display() -> Str
 
 fn (static: Time) UNIX_EPOCH() -> Time
 fn (static: Time) from_unix(secs: Int) -> Time
@@ -480,6 +490,9 @@ interface Net {
 interface Clock {
   fn now(self) -> Time uses clock
   fn sleep(self, d: Duration) uses clock
+  /// Like sleep, but cancellation is an error instead of an unwind
+  /// (core 7.2, decision 0088).
+  fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses clock
   fn since(self, t: Time) -> Duration uses clock
 }
 
@@ -490,6 +503,11 @@ interface Rand {
   fn bytes(self, n: Int) -> Bytes uses rand
   fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
 }
+
+/// The error of `Clock.sleep_or_cancel` (decision 0088).
+enum ClockErr {
+  Canceled
+} derive Display
 
 enum EnvErr {
   Missing(name: Str)

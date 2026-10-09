@@ -1,0 +1,98 @@
+// The std gaps OpenAI Codex hit writing the benchmark tasks (decision
+// 0088): Duration.parse, JSON for tuples, and Clock.sleep_or_cancel, which
+// returns cancellation as an error a retry API can return. The same
+// program is a native golden (internal/llvm/testdata/golden/codex_gaps).
+use std/json
+
+enum FetchErr { Cancelled, Failed(msg: Str) } derive Display
+
+struct Frequencies { top: List[(Str, Int)], span: (Duration, Bool) } derive Json
+
+// backoff waits before the next attempt of a retry loop; cancellation
+// becomes the retry API's own error.
+fn backoff(clock: Clock, d: Duration) -> () ! FetchErr uses clock {
+  match clock.sleep_or_cancel(d) {
+    Ok(_) => Ok(())
+    Err(Canceled) => Err(FetchErr.Cancelled)
+  }
+}
+
+// retry succeeds at attempt ok_at (never when it is 0).
+fn retry(clock: Clock, attempts: Int, ok_at: Int) -> Int ! FetchErr uses clock {
+  for i in 0..attempts {
+    backoff(clock, 1ms)?
+    if i + 1 == ok_at {
+      return Ok(i + 1)
+    }
+  }
+  Err(FetchErr.Failed("gave up"))
+}
+
+fn durations(os: Os) {
+  for s in ["1.5s", "-2h45m", "300ms", " 1m ", "0", "1us", "+5ns", "1x", "", "1.5", "s", "9999999999h"] {
+    match Duration.parse(s) {
+      Ok(d) => os.stdio.println("parse ${s.quote()}: ${d}")
+      Err(e) => os.stdio.println("parse ${s.quote()}: ${e}")
+    }
+  }
+}
+
+fn tuples(os: Os) -> () ! Error {
+  let f = Frequencies{top: [("timeout", 3), ("refused", 1)], span: (90s, true)}
+  let text = json.encode_str(f)
+  os.stdio.println(text)
+  let back = json.decode_str[Frequencies](text)?
+  os.stdio.println("round trip equal: ${back == f}")
+  let pair = json.decode_str[(Int, Str)]("[7, \"seven\"]")?
+  os.stdio.println("pair: ${pair.0} ${pair.1}")
+  os.stdio.println(json.encode_str([(1, "a", true), (2, "b", false)]))
+  for bad in ["[1]", "[1, \"x\", 3]", "{}", "[\"x\", 1]", "[1, 2]"] {
+    match json.decode_str[(Int, Str)](bad) {
+      Ok(v) => os.stdio.println("decoded ${v.0}")
+      Err(e) => os.stdio.println("decode ${bad}: ${e}")
+    }
+  }
+}
+
+fn sleeps(os: Os) {
+  match retry(os.clock, 5, 3) {
+    Ok(n) => os.stdio.println("retry succeeded after ${n} attempts")
+    Err(e) => os.stdio.println("retry: ${e}")
+  }
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      defer {
+        // deferred code is shielded: no cancellation is reported here
+        match os.clock.sleep_or_cancel(1ms) {
+          Ok(_) => os.stdio.println("shielded sleep finished")
+          Err(_) => os.stdio.println("shielded sleep canceled")
+        }
+      }
+      match retry(os.clock, 1000000, 0) {
+        Ok(_) => "not canceled"
+        Err(e) => "retry returned ${e}"
+      }
+    })
+    os.clock.sleep(50ms)
+    s.cancel()
+    os.stdio.println(t.await)
+  }
+  scope s {
+    let u = s.spawn(fn() -> Str {
+      defer os.stdio.println("sticky: the next sleep unwinds")
+      let first = os.clock.sleep_or_cancel(1h)
+      os.stdio.println("first sleep: ${first is Err(Canceled)}")
+      os.clock.sleep(1h)
+      "not reached"
+    })
+    os.clock.sleep(50ms)
+    s.cancel()
+    let _ = u
+  }
+}
+
+fn main(os: Os) -> () ! Error {
+  durations(os)
+  tuples(os)?
+  sleeps(os)
+}
