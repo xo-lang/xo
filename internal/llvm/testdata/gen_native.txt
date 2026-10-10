@@ -76,3 +76,5 @@ task_std
 std06_path
 fs_rooting
 cancellation
+std06_helpers
+audit_second_pass

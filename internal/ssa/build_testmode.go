@@ -257,6 +257,18 @@ func (s *fn) testCapCall(x *ast.CallExpr, ci *check.Call, key string) (*Value, b
 		return s.unit(), true
 	case "Proc.exit_code":
 		return s.popOne(s.rt("test_exit_code", m.List(intT)), nt), true
+	case "Proc.on_run":
+		// the outputs a later run of the command gives (std/llrt/xo_proc.c)
+		s.expr(ci.Recv)
+		cmd := arg(0, strT)
+		out := s.expr(es[1])
+		if out.Type.Kind != KStruct || len(out.Type.Fields) != 3 {
+			b.unsupported(x, "this `on_run`")
+			return s.undef(nt), true
+		}
+		f := func(i int) *Value { return s.add(OpField, out.Type.Fields[i].Type, i, out) }
+		s.rt("proc_on_run", nil, cmd, f(0), f(1), f(2))
+		return s.unit(), true
 	}
 	return nil, false
 }

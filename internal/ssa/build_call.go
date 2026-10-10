@@ -81,6 +81,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			return v
 		}
 		b.noteZoneCall(x, ci.Fn)
+		if v, ok := s.procRun(x, ci); ok {
+			return v
+		}
+		if v, ok := s.memFsCall(x, ci); ok {
+			return v
+		}
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
@@ -699,6 +705,29 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		return s.undef(nt)
 	}
 	switch fo.Recv.Name {
+	case "Range":
+		// `(lo..hi).to_list()`: the native prelude's int_range_list
+		recv := ci.Recv
+		for {
+			p, ok := recv.(*ast.ParenExpr)
+			if !ok {
+				break
+			}
+			recv = p.X
+		}
+		if rg, ok := recv.(*ast.RangeExpr); ok && fo.Name == "to_list" && rg.Lo != nil && rg.Hi != nil {
+			if nm := b.nativeMod("std/prelude"); nm != nil {
+				if impl, ok := nm.Scope["int_range_list"].(*check.FuncObj); ok {
+					lo := s.valueAs(rg.Lo, intT)
+					hi := s.valueAs(rg.Hi, intT)
+					if rg.Inclusive {
+						hi = s.add(OpAdd, intT, nil, hi, s.cint(1))
+					}
+					f := b.declare(impl, nil, x)
+					return s.call(f.Name, f.Results[0], "", lo, hi)
+				}
+			}
+		}
 	case "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Rune":
 		if fo.Static && fo.Name == "try" && len(x.Args) == 1 && nt.Kind == KEnum {
 			// `Int32.try(x)`: Some when x is in range (std/rt's Try)

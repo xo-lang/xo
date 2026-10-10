@@ -131,6 +131,9 @@ type Options struct {
 	// Release (`xo build --release`, core 8) compiles out the contract
 	// clauses marked `requires(debug)` and `ensures(debug)`.
 	Release bool
+	// GOOS and GOARCH are the target of the build (`target`, core 12.2):
+	// empty is the host's.
+	GOOS, GOARCH string
 }
 
 // contractOn reports whether a contract clause marked debug (or not) is
@@ -385,7 +388,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
 			}
-			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput") {
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput" && obj.Name != "Target") {
 				break
 			}
 			x, created := m.Named(name, KStruct)

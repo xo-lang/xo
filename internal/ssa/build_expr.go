@@ -235,6 +235,11 @@ func (s *fn) ident(x *ast.Ident) *Value {
 	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok {
 		return s.funcValue(fo, x)
 	}
+	if x.Name == "target" {
+		if v := s.target(x); v != nil {
+			return v
+		}
+	}
 	b.unsupported(x, "the name `"+x.Name+"` here")
 	return s.undef(s.natOf(x))
 }

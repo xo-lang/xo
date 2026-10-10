@@ -73,6 +73,12 @@ fn bytes_hex(b: Bytes) -> Str
 fn int_wrap(op: Int, a: Int, b: Int) -> Int
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
+/// The standard base64 of b, padded.
+fn b64_encode(b: Bytes) -> Str
+/// Whether s is standard base64 that base64.StdEncoding accepts.
+fn b64_ok(s: Str) -> Bool
+/// The bytes of base64 that b64_ok accepted.
+fn b64_decode(s: Str) -> Bytes
 /// Whether s is hexadecimal that hex.DecodeString accepts.
 fn bytes_hex_ok(s: Str) -> Bool
 /// The bytes of hexadecimal that bytes_hex_ok accepted.
@@ -151,6 +157,16 @@ fn fs_canceled() -> Bool
 /// A Time of Unix nanoseconds, and back (both lowered as Int).
 fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int
+
+// ---------------------------------------------------------------------------
+// Processes (decision 0107)
+
+/// Runs cmd with args: the status ("0" ran, "1" not found, "2" an error,
+/// "3" canceled), the exit code in decimal or the error's message, and
+/// when it ran standard output and error.
+fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
+/// FakeProc.on_run: a later run of cmd in the test gives these outputs.
+fn proc_on_run(cmd: Str, code: Int, stdout: Bytes, stderr: Bytes)
 
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)

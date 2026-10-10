@@ -943,6 +943,25 @@ xo_rstr *xo_rs_append_b64_quoted(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn,
 	return r;
 }
 
+// xo_b64_encode is the standard base64 of the bytes, padded
+// (Bytes.to_base64, base64.StdEncoding.EncodeToString).
+xo_rstr *xo_b64_encode(const char *p, int64_t n, int64_t *len) {
+	nbuf o = {0};
+	const unsigned char *s = (const unsigned char *)p;
+	for (int64_t i = 0; i < n; i += 3) {
+		unsigned v = (unsigned)s[i] << 16;
+		if (i + 1 < n) {
+			v |= (unsigned)s[i + 1] << 8;
+		}
+		if (i + 2 < n) {
+			v |= s[i + 2];
+		}
+		char q[4] = {b64_alpha[v >> 18 & 63], b64_alpha[v >> 12 & 63], i + 1 < n ? b64_alpha[v >> 6 & 63] : '=', i + 2 < n ? b64_alpha[v & 63] : '='};
+		nbuf_put(&o, q, 4);
+	}
+	return nbuf_take(&o, len);
+}
+
 static int b64_val(unsigned c) {
 	if (c >= 'A' && c <= 'Z') {
 		return (int)(c - 'A');
@@ -1305,6 +1324,12 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // the test world of test binaries (decision 0083)
 #include "xo_testing.c"
+
+// Proc.run and FakeProc.on_run (decision 0107), compiled only into
+// programs that call them (XO_PROC)
+#ifdef XO_PROC
+#include "xo_proc.c"
+#endif
 
 // std/time zones (decision 0094): only in programs that use std/time,
 // which the build compiles with XO_TIME and their zone data (xo_tzdata.h)
