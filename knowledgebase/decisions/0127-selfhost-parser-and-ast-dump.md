@@ -61,11 +61,26 @@ diffs well when they disagree, and that cannot hide a wrong position.
   files (300 / 2000: delete, duplicate, swap a token, or insert a
   fragment from a list of brackets, operators, keywords, and habits).
 
+- **Habits and soft errors, compared exactly (2026-10-10, decision
+  0141).** The habit checks of decision 0087 are ported whole
+  (selfhost/parser/habits*.xo): messages, spans, and the recovery to the
+  Xo form, so XO0177 and the other soft errors (XO0161, XO0162 after `}`,
+  XO0165 after `is`, XO0169, XO0170 in a parameter list, XO0173, XO0174,
+  XO0175 between arms, XO0176, XO0178, and the lexer errors a habit
+  renames or drops) no longer stop the Xo parser. A hard error still
+  does, and the Xo dump then prints only the diagnostics. The test now
+  requires, besides agreement on acceptance: every file the Xo parser
+  parses to the end (it prints a tree) has a byte identical dump, tree
+  and diagnostics included, and every file whose Go diagnostics are all
+  habits (`habitOnly`) is parsed to the end. Fixes and notes are not
+  ported (stage 7 of decision 0141).
+
 ## Consequences
 - A change to internal/parser or internal/ast must be made in
   selfhost/parser in the same change, or `go test -short ./...` fails.
-- Diagnostics of the Xo parser are a later step: codes and messages of
-  the Go parser, recovery, and the habit fixes.
+- Diagnostics of the Xo parser: since 2026-10-10 the soft errors and
+  habits with their recovery; the fixes, notes, and the resynchronization
+  after a hard error remain.
 - Writing the parser found two arm64 backend limits (decision 0128).
 
 ## Alternatives

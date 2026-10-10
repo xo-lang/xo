@@ -35,3 +35,12 @@ backend is reusing spill slots whose values are not live at the same
 time (an interval coloring over the slots in `internal/arm64`, with
 `habit_call` before the split as the test case), which would also shrink
 the 9 to 20 KiB frames of the parsers.
+
+Observed a third time (2026-10-10, selfhost/check stage 5): adding a
+`Map[Int, Bool]` field to the `Checker` struct (to keep the read flag of
+locals beside the objects) made `frame of Checker.resolve_named_type too
+large (29072 bytes)`; the same commit without the field built. The flag
+went back into `Obj` (`used`). A field of `Checker` grows the frame of
+every long method that copies or spills it, so a change to `Checker` must
+be built with `--backend=arm64` before it is committed
+(`TestSelfhostChecker` builds all three backends without `-short`).

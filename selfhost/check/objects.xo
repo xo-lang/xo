@@ -136,6 +136,9 @@ pub struct Obj {
   pub sig_done: Bool = false
   /// The effects its body performs (an effect set), -1 until checked.
   pub body_eff: Int = -1
+  /// A function whose doc comment says `@moves`: its receiver is moved
+  /// by the call (core 5.3).
+  pub moves: Bool = false
   /// Declared `uses realtime` (core 6.5), and where.
   pub realtime: Bool = false
   pub realtime_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
@@ -159,6 +162,9 @@ pub struct Obj {
   pub group_frame: Int = -1
   /// Local: a task handle awaited somewhere.
   pub awaited: Bool = false
+  /// Local: read somewhere (stmt.go VarObj.Used): a `let` or `var`
+  /// binding never read is XO0110.
+  pub used: Bool = false
 
   // Type parameters.
   pub constraint: Int = -1
@@ -265,4 +271,26 @@ pub struct TypeArgVar {
   pub fn_name: Str
   pub file: Str
   pub span: Span
+}
+
+/// A call of a declared function or a function value (check.go
+/// callInfo): the callee (-1 for a function value), the receiver
+/// expression of a method call (zero or one), and each argument with
+/// whether its parameter is `var`.
+pub struct CallInfo {
+  pub fn_obj: Int = -1
+  pub recv: List[parser.Expr] = []
+  pub params: List[ArgParam] = []
+}
+
+/// An argument and whether its parameter is `var` (check.go argParam).
+pub struct ArgParam {
+  pub arg: parser.Expr
+  pub is_var: Bool
+}
+
+/// A checked body for the flow checks (check.go bodyInfo).
+pub struct BodyRef {
+  pub file: Int
+  pub body: parser.Block
 }

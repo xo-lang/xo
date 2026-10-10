@@ -163,6 +163,7 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   c.check_clauses(fd, fo)
   if let Some(b) = fd.body {
     c.block(b, c.body_want(cx))
+    c.bodies.push(BodyRef{file: c.cur_file, body: b})
   }
   c.finish_groups(cx)
   c.ctx = saved
@@ -274,6 +275,7 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
   }
   if let Some(b) = td.body {
     c.block(b, c.body_want(cx))
+    c.bodies.push(BodyRef{file: c.cur_file, body: b})
   }
   c.finish_groups(cx)
   c.ctx = saved
@@ -797,7 +799,8 @@ fn (var c: Checker) loop_body(label: Bytes, infinite: Bool, body: Block, pat: Li
     if refutable {
       c.refutable_pattern(pat[0], pat_ty)
     } else {
-      c.pattern(pat[0], pat_ty, false)
+      let ip = c.pattern(pat[0], pat_ty, false)
+      c.require_irrefutable(ip, pat_ty, pat[0], "a `for` pattern")
     }
   }
   c.block(body, discard())
@@ -881,7 +884,8 @@ fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Ex
       c.error("XO0206", span, "`let _ =` discards a Result, so its error is ignored without a reason")
     }
   }
-  c.pattern(pattern, t, false)
+  let ip = c.pattern(pattern, t, false)
+  c.require_irrefutable(ip, t, pattern, "a `let` pattern")
   if let BindPat(name: name, ..) = pattern {
     let v = c.lookup_local(name.name)
     if v >= 0 {
@@ -971,6 +975,7 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
   }
   let tt = c.place_type(target)
   c.map_store = -1
+  c.require_mutable(target, "XO0502", "assignment")
   if op == parser.Kind.Assign {
     c.check_ty(value, tt)
     return

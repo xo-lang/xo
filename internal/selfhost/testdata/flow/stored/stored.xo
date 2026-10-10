@@ -1,0 +1,56 @@
+// Values mutated after being stored into a collection (decision 0034).
+
+struct Row {
+  id: Int
+  name: Str
+}
+
+fn pushed() -> List[Row] {
+  var xs: List[Row] = []
+  var r = Row{id: 1, name: "a"}
+  xs.push(r)
+  r.name = "b"
+  xs
+}
+
+fn stored_again() -> List[Row] {
+  var xs: List[Row] = []
+  var r = Row{id: 1, name: "a"}
+  xs.push(r)
+  r.name = "b"
+  xs.push(r)
+  xs
+}
+
+fn reset_between() -> List[Row] {
+  var xs: List[Row] = []
+  var r = Row{id: 1, name: "a"}
+  xs.push(r)
+  r = Row{id: 2, name: "c"}
+  r.name = "d"
+  xs
+}
+
+fn in_map(var m: Map[Int, Row]) {
+  var r = Row{id: 1, name: "a"}
+  m[1] = r
+  r.id = 2
+}
+
+fn looped(n: Int) -> List[Row] {
+  var xs: List[Row] = []
+  var r = Row{id: 0, name: ""}
+  for i in 0..n {
+    r.id = i
+    xs.push(r)
+  }
+  xs
+}
+
+fn set_put() -> Set[Int] {
+  var s: Set[Int] = #{}
+  var x = 1
+  s.add(x)
+  x += 1
+  s
+}

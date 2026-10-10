@@ -253,7 +253,25 @@ fn (var c: Checker) push_scope() {
   c.scopes.push({})
 }
 
+/// Marks local v read.
+fn (var c: Checker) mark_used(v: Int) {
+  c.objs[v].used = true
+}
+
+/// Closes the innermost scope and collects its `let` and `var` bindings
+/// never read, reported after the flow checks (stmt.go popScope, XO0110).
 fn (var c: Checker) pop_scope() {
+  let n = c.scopes.len() - 1
+  for (_, v) in c.scopes[n].entries() {
+    let o = c.objs[v]
+    if !(o.local is "let" | "var") || o.used {
+      continue
+    }
+    if o.name.len() > 0 && o.name[0] == '_' && !c.is_result(o.ty) {
+      continue
+    }
+    c.unused.push(v)
+  }
   c.scopes.pop()
 }
 
@@ -276,7 +294,8 @@ fn (var c: Checker) declare_var(o: Int) {
   }
   c.objs[o].vctx = c.ctx
   let n = c.scopes.len() - 1
-  if c.scopes[n].contains(name) {
+  if let Some(prev) = c.scopes[n].get(name) {
+    c.mark_used(prev)
     c.report(c.path, "XO0603", Span{start: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}, end: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col + name.len()}}, "`${text(name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
   }
   c.scopes[n][name] = o
@@ -285,12 +304,14 @@ fn (var c: Checker) declare_var(o: Int) {
 /// Declares a local binding named by id.
 fn (var c: Checker) declare_local(id: Ident, ty: Int, local: Str) -> Int {
   let o = c.new_local(id, ty, local)
+  c.decl_at[c.name_key(id.span.start.offset)] = o
   if id.name == b"_" {
     return o
   }
   c.objs[o].vctx = c.ctx
   let n = c.scopes.len() - 1
-  if c.scopes[n].contains(id.name) {
+  if let Some(prev) = c.scopes[n].get(id.name) {
+    c.mark_used(prev)
     c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
   }
   c.scopes[n][id.name] = o

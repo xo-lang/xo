@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -69,8 +70,8 @@ func parserDifferential(t *testing.T, bin string) {
 		}
 	}
 	t.Run("repo", func(t *testing.T) {
-		acc, rej := compareParsers(t, bin, root, files, false)
-		t.Logf("%d repository files: %d accepted, %d rejected by both parsers", len(files), acc, rej)
+		acc, rej, rec := compareParsers(t, bin, root, files, false)
+		t.Logf("%d repository files: %d accepted, %d rejected by both parsers (%d of them with identical trees and habit diagnostics)", len(files), acc, rej, rec)
 		// Every program of the repository parses except the habit and
 		// error fixtures under testdata.
 		if acc < 600 {
@@ -78,15 +79,15 @@ func parserDifferential(t *testing.T, bin string) {
 		}
 	})
 	t.Run("std", func(t *testing.T) {
-		acc, _ := compareParsers(t, bin, root, std, true)
+		acc, _, _ := compareParsers(t, bin, root, std, true)
 		if acc != len(std) {
 			t.Fatalf("%d of %d std files accepted", acc, len(std))
 		}
 	})
 	t.Run("spec", func(t *testing.T) {
 		spec := specExamples(t, root, tmp)
-		acc, rej := compareParsers(t, bin, root, spec, false)
-		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers", len(spec), acc, rej)
+		acc, rej, rec := compareParsers(t, bin, root, spec, false)
+		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers (%d recovered)", len(spec), acc, rej, rec)
 	})
 	progs := 150
 	fuzz := 2000
@@ -108,26 +109,78 @@ func parserDifferential(t *testing.T, bin string) {
 			}
 			paths = append(paths, p)
 		}
-		acc, _ := compareParsers(t, bin, root, paths, false)
+		acc, _, _ := compareParsers(t, bin, root, paths, false)
 		if acc != len(paths) {
 			t.Fatalf("%d of %d generated programs accepted", acc, len(paths))
 		}
 	})
 	t.Run("fuzz", func(t *testing.T) {
-		acc, rej := compareParsers(t, bin, root, tokenFuzzCorpus(t, root, tmp, files, fuzz), false)
-		t.Logf("%d mutated inputs: %d accepted, %d rejected by both parsers", fuzz, acc, rej)
+		acc, rej, rec := compareParsers(t, bin, root, tokenFuzzCorpus(t, root, tmp, files, fuzz), false)
+		t.Logf("%d mutated inputs: %d accepted, %d rejected by both parsers (%d recovered)", fuzz, acc, rej, rec)
+	})
+	t.Run("habits", func(t *testing.T) {
+		n := fuzz / 4
+		acc, rej, rec := compareParsers(t, bin, root, habitCorpus(t, root, tmp, files, n), false)
+		t.Logf("%d inputs with habits of other languages: %d accepted, %d rejected by both parsers (%d recovered)", n, acc, rej, rec)
+		if rec < n/4 {
+			t.Fatalf("only %d of %d habit inputs recovered", rec, n)
+		}
 	})
 }
 
+// habitCorpus writes n inputs under dir, each a repository file with one
+// to three habit edits (habitEdits of the checker mutations: Go, Rust,
+// Python, TypeScript, Kotlin, and Swift syntax the parser recovers from),
+// seeded so failures reproduce.
+func habitCorpus(t *testing.T, root, dir string, files []string, n int) []string {
+	seed := int64(20261011)
+	if v := os.Getenv("XO_SELFHOST_SEED"); v != "" {
+		fmt.Sscan(v, &seed)
+	}
+	rng := rand.New(rand.NewSource(seed))
+	var srcs [][]byte
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) < 16<<10 {
+			srcs = append(srcs, data)
+		}
+	}
+	var out []string
+	for i := range n {
+		src := srcs[rng.Intn(len(srcs))]
+		for range 1 + rng.Intn(3) {
+			src = mutateHabits(rng, src)
+		}
+		p := filepath.Join(dir, fmt.Sprintf("phabit-%05d.xo", i))
+		if err := os.WriteFile(p, src, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // compareParsers parses paths with both parsers in batches and fails on
-// the first disagreement. It returns how many files both accepted and
-// both rejected.
-func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (accepted, rejected int) {
+// a disagreement. It returns how many files both accepted, both rejected,
+// and, of those rejected, how many the Xo parser parsed to the end with
+// only lexer and soft diagnostics (habits of other languages, decision
+// 0087), whose trees and diagnostics must be identical.
+//
+// The Xo parser stops at its first hard error and then prints only its
+// diagnostics; a file it parses to the end prints its tree, which must
+// equal the Go parser's dump byte for byte, diagnostics included. A file
+// whose Go diagnostics are all habits (habitOnly) must be parsed to the
+// end.
+func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (accepted, rejected, recovered int) {
 	t.Helper()
 	mode := parser.Mode(0)
 	if sig {
 		mode = parser.SignatureMode
 	}
+	var fails []string
 	const batch = 100
 	for i := 0; i < len(paths); i += batch {
 		chunk := paths[i:min(i+batch, len(paths))]
@@ -147,21 +200,63 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 			}
 			want := parser.Dump(p, src, mode)
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
+			xoTree := xoPrintsTree(got[j])
 			switch {
-			case goRejects && xoRejects:
-				rejected++
+			case goRejects && !xoRejects:
+				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
+			case xoRejects && !goRejects:
+				fails = append(fails, fmt.Sprintf("%s: the Xo parser rejects it, the Go parser accepts it:\n%s", p, diagLines(got[j])))
+			case xoTree && got[j] != want:
+				fails = append(fails, fmt.Sprintf("%s: Xo and Go parsers differ: %s", p, firstDiff(got[j], want)))
+			case goRejects && !xoTree && habitOnly(want):
+				fails = append(fails, fmt.Sprintf("%s: the Go parser reports only habits, the Xo parser stops:\n  Go:\n%s\n  Xo:\n%s", p, diagLines(want), diagLines(got[j])))
 			case goRejects:
-				t.Fatalf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want))
-			case xoRejects:
-				t.Fatalf("%s: the Xo parser rejects it, the Go parser accepts it:\n%s", p, diagLines(got[j]))
-			case got[j] != want:
-				t.Fatalf("Xo and Go parsers differ: %s", firstDiff(got[j], want))
+				rejected++
+				if xoTree {
+					recovered++
+				}
 			default:
 				accepted++
 			}
 		}
 	}
-	return accepted, rejected
+	if len(fails) > 0 {
+		n := len(fails)
+		if n > 10 {
+			fails = append(fails[:10], fmt.Sprintf("... and %d more", n-10))
+		}
+		t.Fatalf("%d of %d files differ:\n%s", n, len(paths), strings.Join(fails, "\n"))
+	}
+	return accepted, rejected, recovered
+}
+
+// xoPrintsTree reports whether an Xo parser dump holds a tree: the Xo
+// parser prints none after a hard error.
+func xoPrintsTree(dump string) bool {
+	_, rest, _ := strings.Cut(dump, "\n")
+	return strings.HasPrefix(rest, "File ")
+}
+
+// habitCodeRE matches the diagnostics of the habits of other languages
+// the Go parser recovers from (decision 0087): XO0177 (but `class`, a hard
+// error that the Xo parser also resynchronizes from), XO0178 (a line that
+// starts with a binary operator), XO0169 (`,` after an arm), XO0173 (`use`
+// after a declaration), and the lexer errors a habit renames.
+var habitCodeRE = regexp.MustCompile(`^diag (XO0177|XO0178|XO0169|XO0173) |^diag XO015[0-9] .*(is a Rust attribute|starts a comment in Python|annotation; Xo has none|is Swift string interpolation|holding text is a Python)`)
+
+// habitOnly reports whether every diagnostic of a Go parser dump is a
+// habit the parser recovers from.
+func habitOnly(dump string) bool {
+	n := 0
+	for _, l := range strings.Split(dump, "\n") {
+		if strings.HasPrefix(l, "diag ") {
+			n++
+			if !habitCodeRE.MatchString(l) {
+				return false
+			}
+		}
+	}
+	return n > 0
 }
 
 // splitDumps cuts the output of the Xo parser into one dump per path.

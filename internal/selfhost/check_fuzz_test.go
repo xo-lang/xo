@@ -17,14 +17,20 @@ import (
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
 // 0141) on mutations of the single directory modules of the repository
-// that the Go checker accepts and that import only std. A quarter each
+// that the Go checker accepts and that import only std. A seventh each
 // are name mutations (one identifier renamed, to an unresolved name or
 // one that now resolves elsewhere, a `use` line removed, or a top level
 // declaration duplicated), type mutations (a literal replaced by one of
 // another type, a `?` removed, or a field or method name replaced by
 // another one of the file), generics mutations (a type argument removed,
 // a constraint dropped), and effects mutations (a `uses` clause removed,
-// or one added: an effect, or `realtime` for the rules of core 6.5). The
+// or one added: an effect, or `realtime` for the rules of core 6.5), and
+// habit mutations (syntax of Go, Rust, Python, TypeScript, Kotlin, or
+// Swift that the parser reports and recovers from, decision 0087), and
+// value semantics mutations (a `var` removed from a binding, parameter,
+// or receiver, a binding added that is never read, a store back into a
+// collection dropped, or a builder frozen twice), and pattern mutations
+// (a one line match arm removed, or its pattern replaced by `_`). The
 // rules of TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
@@ -79,15 +85,21 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				switch rng.Intn(4) {
+				switch rng.Intn(7) {
 				case 0:
 					data = mutateNames(rng, data)
 				case 1:
 					data = mutateTypes(rng, data)
 				case 2:
 					data = mutateGenerics(rng, data)
-				default:
+				case 3:
 					data = mutateEffects(rng, data)
+				case 4:
+					data = mutateHabits(rng, data)
+				case 5:
+					data = mutateValues(rng, data)
+				default:
+					data = mutatePatterns(rng, data)
 				}
 			}
 			if err := os.WriteFile(filepath.Join(tmp, dir, name), data, 0o644); err != nil {
@@ -113,9 +125,11 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	var st checkStats
 	var fails []string
 	codes := map[string]int{}
+	others := map[string]int{}
 	for _, d := range dirs {
 		want := goCheck(d)
 		before := st.stagedOK
+		otherBefore := st.otherRejected
 		if msg := compareRun(d, want, got[d], &st); msg != "" {
 			src, _ := os.ReadFile(filepath.Join(tmp, d, firstXo(t, filepath.Join(tmp, d))))
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
@@ -125,10 +139,19 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
 			}
 		}
+		if st.otherRejected > otherBefore {
+			for _, code := range want.other {
+				others[code]++
+			}
+			if len(want.other) == 0 {
+				others["unsupported parse error"]++
+			}
+		}
 	}
 	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
 	t.Logf("diagnostics of the matching rejected mutations: %v", codes)
+	t.Logf("the other errors of the mutations rejected otherwise: %v", others)
 	if len(fails) > 0 {
 		if len(fails) > 5 {
 			fails = append(fails[:5], fmt.Sprintf("... and %d more", len(fails)-5))
@@ -509,5 +532,138 @@ func mutateEffects(rng *rand.Rand, src []byte) []byte {
 	b.Write(src[:e.from])
 	b.WriteString(e.with)
 	b.Write(src[e.to:])
+	return b.Bytes()
+}
+
+// habitEdits are line level rewrites of Xo into the syntax of another
+// language that the parser reports as a habit (decision 0087) and
+// recovers from: a pattern to find and the replacement.
+var habitEdits = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`(?m)^(\s+)let ([a-z_][a-z0-9_]*) = `), "${1}${2} := "},                          // Go short declaration
+	{regexp.MustCompile(`(?m)^(\s+)let ([a-z_][a-z0-9_]*) = `), "${1}val ${2} = "},                       // Kotlin
+	{regexp.MustCompile(`(?m)^(\s+)var ([a-z_][a-z0-9_]*) = `), "${1}let mut ${2} = "},                   // Rust
+	{regexp.MustCompile(`(?m)^(pub )?fn `), "${1}func "},                                                 // Go
+	{regexp.MustCompile(`(?m)^(pub )?fn `), "${1}def "},                                                  // Python
+	{regexp.MustCompile(`(?m)^(pub )?fn `), "${1}function "},                                             // TypeScript
+	{regexp.MustCompile(` && `), " and "},                                                                // Python
+	{regexp.MustCompile(` \|\| `), " or "},                                                               // Python
+	{regexp.MustCompile(`([a-z_][a-z0-9_.]*) \+= 1$`), "${1}++"},                                         // Go
+	{regexp.MustCompile(`(?m)([a-z_][a-z0-9_.]*) \+= 1\n`), "${1}++\n"},                                  // Go
+	{regexp.MustCompile(` \?\? `), " ?: "},                                                               // Kotlin elvis
+	{regexp.MustCompile(`\.\.=`), "..."},                                                                 // Swift closed range
+	{regexp.MustCompile(`\} else if `), "} elif "},                                                       // Python
+	{regexp.MustCompile(`(?m)^(\s+)while \{`), "${1}loop {"},                                             // Rust
+	{regexp.MustCompile(`(?m)^(\s+)return Err\(([^()\n]*)\)$`), "${1}throw ${2}"},                        // TypeScript
+	{regexp.MustCompile(`(?m)^(\s+)// `), "${1}# "},                                                      // Python comment
+	{regexp.MustCompile(`(?m)^(pub )?fn ([a-z_][a-z0-9_]*)\(([a-z_][a-z0-9_]*): `), "${1}fn ${2}(${3} "}, // Go parameter
+	{regexp.MustCompile(`(?m)^(pub )?fn ([^\n]*)\) -> ([A-Z][A-Za-z0-9]*) \{$`), "${1}fn ${2}): ${3} {"}, // TypeScript result
+	{regexp.MustCompile(` == `), " === "},                                                                // TypeScript
+	{regexp.MustCompile(`: List\[([A-Z][A-Za-z0-9]*)\]`), ": []${1}"},                                    // Go slice type
+	{regexp.MustCompile(`: Map\[([A-Z][A-Za-z0-9]*), ([A-Z][A-Za-z0-9]*)\]`), ": map[${1}]${2}"},         // Go map type
+	{regexp.MustCompile(`: List\[([A-Z][A-Za-z0-9]*)\]`), ": List<${1}>"},                                // angle brackets
+}
+
+// mutateHabits rewrites one place of src into the syntax of another
+// language (habitEdits), or falls back to a name mutation.
+func mutateHabits(rng *rand.Rand, src []byte) []byte {
+	type cand struct {
+		e     int
+		match []int
+	}
+	var cands []cand
+	for i, e := range habitEdits {
+		for _, m := range e.re.FindAllSubmatchIndex(src, -1) {
+			cands = append(cands, cand{i, m})
+		}
+	}
+	if len(cands) == 0 {
+		return mutateNames(rng, src)
+	}
+	c := cands[rng.Intn(len(cands))]
+	e := habitEdits[c.e]
+	var b bytes.Buffer
+	b.Write(src[:c.match[0]])
+	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))
+	b.Write(src[c.match[1]:])
+	return b.Bytes()
+}
+
+// valueEdits are rewrites for the value semantics rules (stage 5): a
+// `var` binding, parameter, or receiver made immutable, or a copy of a
+// binding that is never read.
+var valueEdits = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`(?m)^(\s+)var ([a-z_][a-z0-9_]*)`), "${1}let ${2}"},
+	{regexp.MustCompile(`\(var ([a-z_][a-z0-9_]*): `), "(${1}: "},
+	{regexp.MustCompile(`, var ([a-z_][a-z0-9_]*): `), ", ${1}: "},
+	{regexp.MustCompile(`(?m)^(\s+)let ([a-z][a-z0-9_]*) = ([^\n]*)\n`), "${1}let ${2} = ${3}\n${1}let ${2}_copy = ${2}\n"},
+	// a store back into a collection dropped (XO0520)
+	{regexp.MustCompile(`(?m)^\s+[a-z_][a-z0-9_.]*\.(put|push|insert|set)\([^\n]*\)\n`), ""},
+	// a builder frozen twice (XO0510)
+	{regexp.MustCompile(`(?m)^(\s+)(let|var) ([a-z_][a-z0-9_]*) = ([a-z_][a-z0-9_]*)\.freeze\(\)`), "${1}let ${3}_first = ${4}.freeze()\n${1}${2} ${3} = ${4}.freeze()"},
+}
+
+// mutateValues applies one valueEdits rewrite at a random place of src,
+// or falls back to a name mutation.
+func mutateValues(rng *rand.Rand, src []byte) []byte {
+	type cand struct {
+		e     int
+		match []int
+	}
+	var cands []cand
+	for i, e := range valueEdits {
+		for _, m := range e.re.FindAllSubmatchIndex(src, -1) {
+			cands = append(cands, cand{i, m})
+		}
+	}
+	if len(cands) == 0 {
+		return mutateNames(rng, src)
+	}
+	c := cands[rng.Intn(len(cands))]
+	e := valueEdits[c.e]
+	var b bytes.Buffer
+	b.Write(src[:c.match[0]])
+	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))
+	b.Write(src[c.match[1]:])
+	return b.Bytes()
+}
+
+// patternEdits are rewrites for exhaustiveness (stage 6): a one line
+// match arm removed, or its pattern replaced by a wildcard.
+var patternEdits = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`(?m)^[ \t]+[^\n{}=]*[^\n{}=>] => [^\n{}]*\n`), ""},
+	{regexp.MustCompile(`(?m)^([ \t]+)[A-Z][A-Za-z0-9_.]*(\([^\n{}=]*\))? => `), "${1}_ => "},
+}
+
+// mutatePatterns applies one patternEdits rewrite at a random place of
+// src, or falls back to a value mutation.
+func mutatePatterns(rng *rand.Rand, src []byte) []byte {
+	type cand struct {
+		e     int
+		match []int
+	}
+	var cands []cand
+	for i, e := range patternEdits {
+		for _, m := range e.re.FindAllSubmatchIndex(src, -1) {
+			cands = append(cands, cand{i, m})
+		}
+	}
+	if len(cands) == 0 {
+		return mutateValues(rng, src)
+	}
+	c := cands[rng.Intn(len(cands))]
+	e := patternEdits[c.e]
+	var b bytes.Buffer
+	b.Write(src[:c.match[0]])
+	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))
+	b.Write(src[c.match[1]:])
 	return b.Bytes()
 }

@@ -70,6 +70,10 @@ pub struct FnDecl {
   pub err: ErrSpec? = None
   pub clauses: List[Clause] = []
   pub body: Block? = None
+  /// params is empty but not nil in Go (a method recovered from a Rust
+  /// `impl` block whose only parameter was `self`): the dump prints
+  /// `params: []`.
+  pub params_list: Bool = false
 }
 
 /// `(var name: Type)` before a method name.

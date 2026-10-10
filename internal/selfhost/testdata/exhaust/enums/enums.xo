@@ -1,0 +1,77 @@
+// Exhaustiveness over enums, options, results, and nested patterns
+// (XO0301, core 2.3).
+
+enum Shape {
+  Circle(r: Int)
+  Rect(w: Int, h: Int)
+  Point
+}
+
+enum Tree {
+  Leaf(v: Int)
+  Node(l: Shape, r: Shape)
+}
+
+enum Never2 {
+  Live(n: Int)
+  Dead(x: Never)
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => r * r * 3
+    Rect(w, h) => w * h
+  }
+}
+
+fn nested(t: Tree) -> Int {
+  match t {
+    Leaf(v) => v
+    Node(Circle(_), _) => 1
+    Node(Rect(..), Point) => 2
+  }
+}
+
+fn options(o: Int?, r: Result[Int, Str]) -> Int {
+  let a = match o {
+    Some(0) => 0
+    None => 1
+  }
+  let b = match r {
+    Ok(v) => v
+  }
+  a + b
+}
+
+fn guarded(o: Int?) -> Int {
+  match o {
+    Some(v) if v > 0 => v
+    None => 0
+  }
+}
+
+fn uninhabited(n: Never2) -> Int {
+  match n {
+    Live(k) => k
+  }
+}
+
+fn ors(s: Shape) -> Int {
+  match s {
+    Circle(_) | Point => 1
+  }
+}
+
+fn complete(s: Shape) -> Int {
+  match s {
+    Circle(_) => 1
+    Rect(..) => 2
+    Point => 3
+  }
+}
+
+fn many(t: Tree) -> Int {
+  match t {
+    Node(Point, Point) => 1
+  }
+}

@@ -1,0 +1,73 @@
+// Exhaustiveness over Bool, tuples, lists, structs, newtypes, and
+// numbers, and refutable `let` and `for` patterns (XO0301, XO0303).
+
+struct Pt {
+  x: Int
+  y: Bool
+}
+
+type Email struct(Str)
+
+type Flag struct(Bool)
+
+fn bools(a: Bool, b: Bool) -> Int {
+  match (a, b) {
+    (true, true) => 1
+    (false, _) => 2
+  }
+}
+
+fn lists(xs: List[Int]) -> Int {
+  let n = match xs {
+    [] => 0
+    [a] => a
+  }
+  let m = match xs {
+    [] => 0
+    [a, ..] => a
+  }
+  let k = match xs {
+    [a, .., b] => a + b
+    [_] => 1
+  }
+  n + m + k
+}
+
+fn structs(p: Pt) -> Int {
+  match p {
+    Pt{x: 0, y: true} => 1
+    Pt{y: false, ..} => 2
+  }
+}
+
+fn numbers(n: Int, s: Str) -> Int {
+  let a = match n {
+    0 => 0
+    1..5 => 1
+  }
+  let b = match s {
+    "a" => 1
+  }
+  a + b
+}
+
+fn newtypes(f: Flag, e: Email) -> Int {
+  let a = match f {
+    Flag(true) => 1
+  }
+  let b = match e {
+    Email(s) => s.len()
+  }
+  a + b
+}
+
+fn refutable(o: Int?, xs: List[(Int, Bool)]) -> Int {
+  let Some(v) = o
+  let (a, true) = (1, true)
+  var n = v + a
+  for (k, false) in xs {
+    n += k
+  }
+  let Pt{x, y: true} = Pt{x: 1, y: true}
+  n + x
+}

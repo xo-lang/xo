@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker checks matches for exhaustiveness (stage 6 of
+  decision 0141): XO0301 with the same missing patterns, refutable `let`
+  and `for` patterns (XO0303), and the XO0305 warning, as internal/check
+  does on every repository module (go, arm64, and LLVM backends).
+- The self hosted checker applies the value semantics rules (stage 5 of
+  decision 0141): `var` places (XO0501, XO0502), overlapping `var`
+  arguments (XO0503), moves (XO0510), lost and stored updates (XO0520),
+  split critical sections (XO0804), and unused bindings (XO0110,
+  XO0201), with the same diagnostics as internal/check on every
+  repository module (go, arm64, and LLVM backends).
+- The self hosted parser reports the habits of other languages
+  (decision 0087) and the other soft errors as internal/parser does,
+  with the same messages and spans, and recovers the same tree, so the
+  self hosted checker now checks programs written with Go, Rust,
+  Python, TypeScript, Kotlin, or Swift habits and gives the same
+  diagnostics (the 107 habit fixtures of internal/fix among them).
 - The self hosted checker checks generics, effects, and real-time
   functions (`selfhost/check`, stages 3 and 4 of decision 0141): it
   prints the sigs section of `xo typedump` (type parameters, constraints,

@@ -1,10 +1,13 @@
 # 0141: The self hosted checker, compared through `xo typedump` in stages
 
 Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
-inference), stage 3 (generics), and stage 4 (effects and real-time, but
-dependency ceilings) implemented in `selfhost/check/` (Xo: decl.xo,
-types.xo, infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo,
-habits.xo, comparable.xo, realtime.xo, the sigs section in dump.xo),
+inference), stage 3 (generics), stage 4 (effects and real-time, but
+dependency ceilings), the parse habits (pulled ahead of stage 8, in
+selfhost/parser), stage 5 (value semantics), and stage 6 (patterns and
+exhaustiveness) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
+comparable.xo, realtime.xo, flow.xo, exhaust.xo, the sigs section in
+dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -157,6 +160,60 @@ and `XO_SELFHOST_BACKEND` runs them on a native build. The test also
 logs, without failing, how many runs rejected for other reasons still
 get exactly the staged part of Go's diagnostics.
 
+**Comparison rules of the parse habits** (2026-10-10, pulled ahead of
+stage 8 because they were the only errors of 99 of the 143 runs not
+compared; they extend stage 4's): the Xo parser reports the habits and
+soft errors of the Go parser with the same messages and spans and
+recovers the same tree (decision 0127), and the Xo checker checks that
+tree: a hard parse error makes the run unsupported, and the parser's
+diagnostics join the run's. A diagnostic of a run is staged when it is
+one of the stage 1 to 4 list or one the Go parser gives for its file
+(`parseDiag` in check_test.go parses the file again and compares the
+diagnostic line), so a run whose errors are habits and diagnostics of
+stages 1 to 4 must give exactly those diagnostics. The habits the Go
+checker reports (`for k, v := range x`, `String::from`, time layouts,
+`len(x)`: internal/check habits.go) stay in stage 8. The mutations add
+habit edits (habitEdits in check_fuzz_test.go: `x := v`, `val`, `let
+mut`, `func`/`def`/`function`, `and`/`or`, `x++`, `?:`, `...`, `elif`,
+`loop`, `throw`, `#` comments, Go parameters, `): T`, `===`, `[]T`,
+`map[K]V`, `List<T>`).
+
+**Comparison rules of stage 5** (2026-10-10, value semantics; they
+extend the rules above): the staged diagnostics add XO0501, every
+XO0502 (not only on assignment targets), XO0503, XO0510, XO0520, the
+XO0804 warning (split critical sections, ported with flow.go), and every
+XO0110 and XO0201 (unused bindings and Results bound and never read).
+Since a run the Go checker accepts may hold a staged warning, its
+diagnostics must equal the staged part of Go's (empty but for XO0804).
+selfhost/check/flow.xo ports flow.go and the mutability rules of stmt.go
+and call.go: the call information of check.go (callee, receiver, and
+`var` arguments) is a table keyed by the call's expression key, and
+check.go identObj is the name records (uses) plus `decl_at` (the names a
+pattern or `var` declares); identifiers, calls, and loops are keyed by
+offset where Go keys by node pointer. internal/selfhost/testdata/flow
+holds one module per rule (moves, lost and stored updates, mutability
+and aliases, unused bindings, split sections), compared like every
+other run. The mutations add value semantics edits (valueEdits: a `var`
+removed from a binding, parameter, or receiver, an added binding never
+read, a store back into a collection dropped, a builder frozen twice).
+
+**Comparison rules of stage 6** (2026-10-10, patterns and
+exhaustiveness; they extend stage 5's): the staged diagnostics add
+XO0301 (a match that is not exhaustive, with up to five missing
+patterns), XO0303 (a refutable `let` or `for` pattern), and the XO0305
+warning (a `_` or catch all arm hiding variants of an enum of the
+module). selfhost/check/exhaust.xo ports the usefulness algorithm of
+pattern.go with its witnesses; pattern.xo returns the pattern forms
+(`IPat`, pattern.go ipat) that the algorithm reads.
+internal/selfhost/testdata/exhaust holds modules for enums (nested,
+guarded, or patterns, uninhabited variants), Bool, tuples, lists with
+`..`, structs, newtypes, numbers and strings, refutable `let` and `for`
+patterns, and the XO0305 rule with its default arm threshold. The
+mutations add pattern edits (patternEdits: a one line match arm
+removed, or its pattern replaced by `_`). A run the Xo checker cannot
+parse is now checked too: the Go parser must report a hard error in the
+same file (`habitOnly` false), or the run fails.
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;
@@ -199,6 +256,18 @@ by its file, span, and kind (the Go checker uses node pointers).
   comparability, effects, or the real-time rules in internal/check must
   be made in selfhost/check in the same change. Effect ceilings
   (XO1309) remain to port, with the loading of dependencies.
+- The parse habits and stages 5 and 6 (2026-10-10) matched on the
+  first full run of each: 580 of 608 repository runs are compared and
+  identical on the three backends (350 accepted, 230 rejected with the
+  same diagnostics); the 28 not compared are 16 `use go`/`use c` runs, 2
+  with hard parse errors (the Xo parser stops where the Go parser
+  resynchronizes), 6 with import deny or dependency rules (XO1301,
+  XO1302, XO1312), and 4 with stage 8 diagnostics (naming XO0101, time
+  layouts XO0420 and their XO0177). One self hosted parser bug was found
+  (diagnostic quoting, gotchas/parser-dump-message-quoting.md). A change
+  to a habit, a soft parse error, the value semantics rules, or
+  exhaustiveness in internal/parser or internal/check must be made in
+  selfhost/parser or selfhost/check in the same change.
 
 ## Alternatives
 

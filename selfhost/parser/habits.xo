@@ -1,0 +1,646 @@
+// Habit diagnostics (decision 0087), a port of internal/parser habits.go,
+// habits_lex.go, and leading_op.go: syntax that is correct in Go, Rust,
+// TypeScript, Python, Swift, or Kotlin but not in Xo is reported once, as
+// XO0177, naming the habit and the Xo form, and the parser recovers as if
+// the Xo form had been written, so the checker sees the intended program.
+// The machine fixes and notes of the Go parser are not ported (stage 7 of
+// decision 0141); the messages, spans, and recovered trees are the same.
+
+use github.com/xo-lang/xo/selfhost/lexer
+
+// ---------------------------------------------------------------------------
+// Helpers (habits.go)
+
+/// Bytes as text for a message (identifiers and source text, which are
+/// UTF-8 in practice).
+fn txt(b: Bytes) -> Str {
+  b.to_str() ?? "?"
+}
+
+/// The source between a and b.
+fn (p: Parser) src_text(a: Pos, b: Pos) -> Bytes {
+  if a.offset < 0 || b.offset > p.src.len() || a.offset > b.offset {
+    return b""
+  }
+  p.src[a.offset..b.offset]
+}
+
+/// The source of sp, as text.
+fn (p: Parser) span_text(sp: Span) -> Str {
+  txt(p.src_text(sp.start, sp.end))
+}
+
+/// The position just after the newline that ends pos's line (or the end
+/// of the file).
+fn (p: Parser) next_line_start(pos: Pos) -> Pos {
+  var i = pos.offset
+  while i < p.src.len() {
+    if p.src[i] == '\n' {
+      return Pos{offset: i + 1, line: pos.line + 1, col: 1}
+    }
+    i += 1
+  }
+  Pos{offset: p.src.len(), line: pos.line, col: pos.col + (p.src.len() - pos.offset)}
+}
+
+/// The position of offset off, counting from pos.
+fn (p: Parser) pos_at(pos: Pos, off: Int) -> Pos {
+  var line = pos.line
+  var col = pos.col
+  var i = pos.offset
+  while i < off && i < p.src.len() {
+    if p.src[i] == '\n' {
+      line += 1
+      col = 1
+    } else {
+      col += 1
+    }
+    i += 1
+  }
+  Pos{offset: off, line: line, col: col}
+}
+
+/// Advances until the token index is i.
+fn (var p: Parser) skip_to(i: Int) {
+  while p.pos < i && !p.at(Kind.Eof) {
+    p.next()
+  }
+}
+
+/// Consumes tokens up to and including the next newline at bracket depth
+/// zero.
+fn (var p: Parser) skip_line() {
+  var depth = 0
+  while !p.at(Kind.Eof) {
+    match p.tok.kind {
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => depth -= 1
+      Newline => {
+        if depth <= 0 {
+          p.next()
+          return
+        }
+      }
+      _ => {}
+    }
+    p.next()
+  }
+}
+
+/// Wraps an expression in a block, for recovered `if` arms.
+fn expr_block(e: Expr) -> Block {
+  let sp = expr_span(e)
+  Block{span: sp, stmts: [Stmt.ExprStmt(span: sp, x: e)]}
+}
+
+/// `x.name(args)` for recovery.
+fn method_call(x: Expr, name: Bytes, sp: Span, args: List[Expr]) -> Expr {
+  let sel = Expr.SelectorExpr(span: sp, x: x, sel: Ident{span: sp, name: name})
+  var out: List[Arg] = []
+  for a in args {
+    out.push(Arg{span: expr_span(a), name: None, value: a})
+  }
+  Expr.CallExpr(span: sp, fun: sel, args: out)
+}
+
+/// A plain string literal for recovery.
+fn str_lit(s: Bytes, sp: Span) -> Expr {
+  Expr.StringLit(StringLit{span: sp, kind: StringKind.Plain, parts: [StringPart{text: s, expr: None}]})
+}
+
+/// The reason text recovery uses for a force unwrap.
+const OR_FAULT_REASON = "forced unwrap"
+
+/// Whether the token before the current one has kind k.
+fn (p: Parser) prev_is(k: Kind) -> Bool {
+  p.pos > 0 && p.tok_at(p.pos - 1).kind == k
+}
+
+/// The text of a token kind (token.Kind.String).
+fn kind_text(k: Kind) -> Str {
+  match k {
+    Illegal => "illegal"
+    Eof => "end of file"
+    Newline => "newline"
+    Ident => "identifier"
+    Int => "integer literal"
+    Float => "float literal"
+    Duration => "duration literal"
+    Rune => "rune literal"
+    String => "string literal"
+    RawString => "raw string literal"
+    Bytes => "bytes literal"
+    ImportPath => "import path"
+    Hole => "???"
+    Plus => "+"
+    Minus => "-"
+    Star => "*"
+    Slash => "/"
+    Percent => "%"
+    Shl => "<<"
+    Shr => ">>"
+    Amp => "&"
+    Pipe => "|"
+    Caret => "^"
+    Tilde => "~"
+    Bang => "!"
+    AndAnd => "&&"
+    OrOr => "||"
+    Coalesce => "??"
+    Question => "?"
+    Eq => "=="
+    NotEq => "!="
+    Lt => "<"
+    LtEq => "<="
+    Gt => ">"
+    GtEq => ">="
+    Assign => "="
+    PlusAssign => "+="
+    MinusAssign => "-="
+    StarAssign => "*="
+    SlashAssign => "/="
+    PercentAssign => "%="
+    AmpAssign => "&="
+    PipeAssign => "|="
+    CaretAssign => "^="
+    ShlAssign => "<<="
+    ShrAssign => ">>="
+    Arrow => "->"
+    FatArrow => "=>"
+    DotDot => ".."
+    DotDotEq => "..="
+    Dot => "."
+    Comma => ","
+    Colon => ":"
+    LParen => "("
+    RParen => ")"
+    LBrack => "["
+    RBrack => "]"
+    LBrace => "{"
+    RBrace => "}"
+    HashLBrace => "#{"
+    _ => "${k}".to_lower()
+  }
+}
+
+/// Whether k is one of the 28 keywords.
+fn is_keyword(k: Kind) -> Bool {
+  k is As | Break | Const | Continue | Defer | Else | Ensures | Enum | Fn | For | If | In | Interface | Invariant | Let | Match | Pub | Requires | Return | Scope | Select | Struct | Test | Type | Use | Uses | Var | While
+}
+
+/// The Go parser's description of a token in messages (describe).
+fn describe_go(t: Token) -> Str {
+  match t.kind {
+    Ident => "identifier `${txt(t.text)}`"
+    Newline => if t.text == b";" { "`;`" } else { "newline" }
+    Eof => "end of file"
+    Int | Float | Duration | Rune | String | RawString | Bytes => {
+      var text = t.text
+      if text.len() > 20 {
+        text = text[0..17] + b"..."
+      }
+      "${kind_text(t.kind)} ${txt(text)}"
+    }
+    _ => {
+      if is_keyword(t.kind) {
+        return "keyword `${kind_text(t.kind)}`"
+      }
+      "`${kind_text(t.kind)}`"
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lexical habits (habits_lex.go, leading_op.go): `#` and `/* */`
+// comments, `#[...]` attributes, `@Annotations`, template strings in
+// backticks, Swift's `\(x)`, a line starting with a binary operator, and
+// the newline after `x++`, handled on the token stream before parsing.
+
+/// Rewrites p.toks in place.
+fn (var p: Parser) lex_habits() {
+  var out: List[Token] = []
+  var i = 0
+  while i < p.toks.len() {
+    var t = p.tok_at(i)
+    if t.kind == Kind.Illegal && t.text == b"#" {
+      let j = p.hash_habit(i)
+      if j >= 0 {
+        out = p.drop_range(out, i, j)
+        i = j
+        continue
+      }
+    } else if t.kind == Kind.Illegal && t.text == b"@" && i + 1 < p.toks.len() && p.tok_at(i + 1).kind == Kind.Ident && adjacent(t, p.tok_at(i + 1)) {
+      var j = i + 2
+      if p.tok_at(j).kind == Kind.LParen && adjacent(p.tok_at(j - 1), p.tok_at(j)) {
+        let c = p.match_close(j)
+        if c > 0 {
+          j = c + 1
+        }
+      }
+      let name = p.tok_at(i + 1).text
+      let d = p.lex_diag(t.span.start)
+      if d >= 0 {
+        p.diags[d].message = ("`@" + txt(name) + "` is a Kotlin, Swift, TypeScript, or Python annotation; Xo has none: tests are `test \"name\" { ... }` blocks (core 9.2), and derived behavior is `derive Json` after a type body (core 2.9)").bytes()
+      }
+      out = p.drop_range(out, i, j)
+      i = j
+      continue
+    } else if t.kind == Kind.Illegal && t.text == b"`" {
+      let (j, nt) = p.template_habit(i)
+      if j >= 0 {
+        out.push(nt)
+        i = j
+        continue
+      }
+    } else if t.kind == Kind.Slash && i + 1 < p.toks.len() && p.tok_at(i + 1).kind == Kind.Star && adjacent(t, p.tok_at(i + 1)) {
+      let j = p.block_comment(i)
+      if j >= 0 {
+        out = p.drop_range(out, i, j)
+        i = j
+        continue
+      }
+    } else if t.kind == Kind.String {
+      t = p.swift_interp(t)
+    } else if t.kind == Kind.Newline && p.leading_operator(i) {
+      // `a\n|| b`: read as `a || b` (XO0178)
+      i += 1
+      continue
+    } else if (t.kind == Kind.Plus || t.kind == Kind.Minus) && i + 2 < p.toks.len() && p.tok_at(i + 1).kind == t.kind && adjacent(t, p.tok_at(i + 1)) && p.tok_at(i + 2).kind != Kind.Newline && p.tok_at(i + 2).span.start.line > t.span.start.line {
+      // `x++` at the end of a line: the lexer inserts no newline after an
+      // operator, so add the one the Xo form `x += 1` would get.
+      out.push(t)
+      out.push(p.tok_at(i + 1))
+      let end = p.tok_at(i + 1).span.end
+      out.push(Token{kind: Kind.Newline, span: Span{start: end, end: end}, text: b"\n"})
+      i += 2
+      continue
+    }
+    out.push(t)
+    i += 1
+  }
+  p.toks = out
+}
+
+/// Skips tokens [i, j) and keeps a statement ending newline when the
+/// removed text separated two lines.
+fn (p: Parser) drop_range(out0: List[Token], i: Int, j0: Int) -> List[Token] {
+  var out = out0
+  var j = j0
+  if j >= p.toks.len() {
+    j = p.toks.len() - 1
+  }
+  if out.is_empty() {
+    return out
+  }
+  let prev = out[out.len() - 1]
+  let next = p.tok_at(j)
+  if prev.kind != Kind.Newline && next.kind != Kind.Newline && next.kind != Kind.Eof && next.span.start.line > prev.span.end.line && ends_stmt(prev.kind) {
+    out.push(Token{kind: Kind.Newline, span: Span{start: prev.span.end, end: prev.span.end}, text: b"\n"})
+  }
+  out
+}
+
+/// The lexer's newline rule (core 1.3).
+fn ends_stmt(k: Kind) -> Bool {
+  k is Ident | Int | Float | Duration | Rune | String | RawString | Bytes | ImportPath | Hole | RParen | RBrack | RBrace | Question | Return | Break | Continue
+}
+
+/// The index of the lexer diagnostic (XO015x) that starts at pos, or -1.
+fn (p: Parser) lex_diag(pos: Pos) -> Int {
+  for (k, d) in p.diags.indexed() {
+    if d.span.start.line == pos.line && d.span.start.col == pos.col && d.code.starts_with("XO015") {
+      return k
+    }
+  }
+  -1
+}
+
+fn before_pos(l1: Int, c1: Int, l2: Int, c2: Int) -> Bool {
+  l1 < l2 || (l1 == l2 && c1 < c2)
+}
+
+/// Removes the lexer diagnostics that start in [a, b), except the first
+/// one starting exactly at a, whose index it returns (-1 if none).
+fn (var p: Parser) drop_lex_diags(a: Pos, b: Pos) -> Int {
+  var items: List[Diag] = []
+  var kept = -1
+  for d in p.diags {
+    if d.code.starts_with("XO015") {
+      if kept < 0 && d.span.start.line == a.line && d.span.start.col == a.col {
+        kept = items.len()
+        items.push(d)
+        continue
+      }
+      if !before_pos(d.span.start.line, d.span.start.col, a.line, a.col) && before_pos(d.span.start.line, d.span.start.col, b.line, b.col) {
+        continue
+      }
+    }
+    items.push(d)
+  }
+  p.diags = items
+  kept
+}
+
+/// `# comment` (Python, shell), `#!` lines, and Rust's `#[attribute]`.
+/// Returns the index of the first token to keep, or -1.
+fn (var p: Parser) hash_habit(i: Int) -> Int {
+  let t = p.tok_at(i)
+  let off = t.span.start.offset
+  var c: UInt8 = 0
+  if off + 1 < p.src.len() {
+    c = p.src[off + 1]
+  }
+  if c == '[' || (c == '!' && off + 2 < p.src.len() && p.src[off + 2] == '[') {
+    // Rust attribute: up to the matching `]` on this line.
+    var k = i + 1
+    while k < p.toks.len() && p.tok_at(k).kind != Kind.LBrack {
+      k += 1
+    }
+    let e = p.match_close(k)
+    if e < 0 || p.tok_at(e).span.start.line != t.span.start.line {
+      return -1
+    }
+    let text = p.src_text(t.span.start, p.tok_at(e).span.end)
+    let d = p.drop_lex_diags(t.span.start, p.tok_at(e).span.end)
+    if d >= 0 {
+      p.diags[d].message = ("`" + txt(text) + "` is a Rust attribute; Xo has none: write `derive Display, Ord, Json` after a struct or enum body, and `Eq`, `Hash`, and `Debug` are automatic for every type whose fields have them (core 2.9)").bytes()
+    }
+    return e + 1
+  }
+  if c == ' ' || c == '\t' || c == '!' || c == '#' || c == '\n' || c == '\r' || off + 1 >= p.src.len() {
+    // A comment to the end of the line.
+    let end = p.next_line_start(t.span.start)
+    var line_end = end
+    if line_end.offset > 0 && line_end.offset <= p.src.len() && p.src[line_end.offset - 1] == '\n' {
+      line_end = Pos{offset: line_end.offset - 1, line: t.span.start.line, col: t.span.start.col + (line_end.offset - 1 - off)}
+    }
+    let d = p.drop_lex_diags(t.span.start, line_end)
+    if d >= 0 {
+      p.diags[d].message = "`#` starts a comment in Python and shell; Xo comments start with `//` (core 1.2)".bytes()
+    }
+    var j = i + 1
+    while j < p.toks.len() && p.tok_at(j).kind != Kind.Eof && p.tok_at(j).span.start.offset < line_end.offset {
+      j += 1
+    }
+    return j
+  }
+  -1
+}
+
+/// Index of the first occurrence of pat in b at or after from, or -1.
+fn find_bytes(b: Bytes, pat: Bytes, from: Int) -> Int {
+  var i = from
+  while i + pat.len() <= b.len() {
+    var ok = true
+    for k in 0..pat.len() {
+      if b[i + k] != pat[k] {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// `/* ... */` (and `/** ... */`). Returns the index of the first token
+/// after the comment, or -1.
+fn (var p: Parser) block_comment(i: Int) -> Int {
+  let t = p.tok_at(i)
+  let off = t.span.start.offset
+  let k = find_bytes(p.src, b"*/", off + 2)
+  if k < 0 {
+    return -1
+  }
+  let end_off = k + 2
+  let end = p.pos_at(t.span.start, end_off)
+  p.drop_lex_diags(t.span.start, end)
+  p.diags.push(Diag{code: FOREIGN_SYNTAX, span: Span{start: t.span.start, end: end}, message: "`/* ... */` is a block comment in Go, Rust, TypeScript, Kotlin, and Swift; Xo has only line comments: `//`, and `///` for doc comments (core 1.2)".bytes()})
+  var j = i
+  while j < p.toks.len() && p.tok_at(j).kind != Kind.Eof && p.tok_at(j).span.start.offset < end_off {
+    j += 1
+  }
+  j
+}
+
+/// TypeScript template strings `...${x}...` in backticks: the String token
+/// the Xo form would have produced, and the index after it (-1: none).
+fn (var p: Parser) template_habit(i: Int) -> (Int, Token) {
+  let t = p.tok_at(i)
+  let off = t.span.start.offset
+  // Find the closing backtick, skipping `${...}` and escapes.
+  var k = off + 1
+  var depth = 0
+  var close_off = -1
+  while k < p.src.len() {
+    let c = p.src[k]
+    if c == '\\' {
+      k += 2
+      continue
+    }
+    if c == '$' && k + 1 < p.src.len() && p.src[k + 1] == '{' {
+      depth += 1
+      k += 2
+      continue
+    }
+    if c == '}' && depth > 0 {
+      depth -= 1
+    } else if c == '`' && depth == 0 {
+      close_off = k
+      break
+    }
+    k += 1
+  }
+  if close_off < 0 {
+    return (-1, t)
+  }
+  let end_off = close_off + 1
+  let end = p.pos_at(t.span.start, end_off)
+  let d = p.drop_lex_diags(t.span.start, end)
+  let inner = p.src[off + 1..close_off]
+  if d >= 0 {
+    p.diags[d].code = FOREIGN_SYNTAX
+    p.diags[d].message = "a template string in backticks is TypeScript syntax; every Xo string interpolates with `\${x}`, so write it in double quotes: `\"...\${x}...\"` (core 1.6)".bytes()
+  }
+  // The String token: literal parts and `${...}` expressions.
+  var nt = Token{kind: Kind.String, span: Span{start: t.span.start, end: end}, text: p.src[off..end_off]}
+  var lit = BytesBuilder.new()
+  var n = 0
+  while n < inner.len() {
+    if inner[n] == '$' && n + 1 < inner.len() && inner[n + 1] == '{' {
+      if lit.len() > 0 {
+        nt.parts.push(lexer.StrPart{is_expr: false, text: lit.freeze(), span: Span{start: t.span.start, end: t.span.start}})
+        lit = BytesBuilder.new()
+      }
+      let e = find_bytes(inner, b"}", n)
+      if e < 0 {
+        break
+      }
+      let rel = e - n
+      let expr_off = off + 1 + n + 2
+      let es = p.pos_at(t.span.start, expr_off)
+      let ee = p.pos_at(t.span.start, expr_off + rel - 2)
+      nt.parts.push(lexer.StrPart{is_expr: true, text: inner[n + 2..e], span: Span{start: es, end: ee}})
+      n = e + 1
+      continue
+    }
+    if inner[n] == '\\' && n + 1 < inner.len() {
+      lit.write_byte(inner[n + 1])
+      n += 2
+      continue
+    }
+    lit.write_byte(inner[n])
+    n += 1
+  }
+  if lit.len() > 0 {
+    nt.parts.push(lexer.StrPart{is_expr: false, text: lit.freeze(), span: Span{start: t.span.start, end: t.span.start}})
+  }
+  var j = i
+  while j < p.toks.len() && p.tok_at(j).kind != Kind.Eof && p.tok_at(j).span.start.offset < end_off {
+    j += 1
+  }
+  (j, nt)
+}
+
+/// Swift's `\(x)` inside a string: the lexer reported an unknown escape;
+/// this names the habit and keeps the expressions as interpolated parts
+/// (appended after the literal parts, as the Go parser does), so the names
+/// in them count as used.
+fn (var p: Parser) swift_interp(t0: Token) -> Token {
+  var t = t0
+  if t.triple || find_bytes(t.text, b"\\(", 0) < 0 {
+    return t
+  }
+  let text = t.text
+  var first = -1
+  var merged: List[Int] = []
+  var n = 0
+  while n + 1 < text.len() {
+    if text[n] == '\\' && text[n + 1] != '(' {
+      n += 2
+      continue
+    }
+    if text[n] != '\\' {
+      n += 1
+      continue
+    }
+    var depth = 0
+    var e = -1
+    var k = n + 2
+    while k < text.len() {
+      if text[k] == '(' {
+        depth += 1
+      } else if text[k] == ')' {
+        if depth == 0 {
+          e = k
+          break
+        }
+        depth -= 1
+      }
+      k += 1
+    }
+    if e < 0 {
+      // The Go parser returns before dropping the merged diagnostics,
+      // whose code it has cleared.
+      for m in merged {
+        p.diags[m].code = ""
+      }
+      return t
+    }
+    let at = p.pos_at(t.span.start, t.span.start.offset + n)
+    let d = p.lex_diag(at)
+    if d >= 0 && p.diags[d].code == lexer.INVALID_ESCAPE {
+      p.diags[d].message = "`\\(x)` is Swift string interpolation; Xo writes `\${x}` (core 1.6)".bytes()
+      if first < 0 {
+        first = d
+      } else {
+        merged.push(d)
+      }
+    }
+    let close_at = p.pos_at(t.span.start, t.span.start.offset + e)
+    let es = p.pos_at(t.span.start, t.span.start.offset + n + 2)
+    t.parts.push(lexer.StrPart{is_expr: true, text: text[n + 2..e], span: Span{start: es, end: close_at}})
+    n = e + 1
+  }
+  // Drop the merged diagnostics.
+  if !merged.is_empty() {
+    var items: List[Diag] = []
+    for (k, d) in p.diags.indexed() {
+      if !merged.contains(k) {
+        items.push(d)
+      }
+    }
+    p.diags = items
+  }
+  t
+}
+
+/// A line that starts with a binary operator (XO0178): whether the newline
+/// token at i is followed by one; reports it.
+fn (var p: Parser) leading_operator(i: Int) -> Bool {
+  if i == 0 || i + 1 >= p.toks.len() {
+    return false
+  }
+  let prev = p.tok_at(i - 1)
+  let op = p.tok_at(i + 1)
+  let next = p.tok_at(i + 2)
+  if !binary_only(op, next) || op.span.start.line <= prev.span.end.line {
+    return false
+  }
+  if prev.kind is Return | Break | Continue {
+    // `return` ends its statement; the operator does not continue it
+    return false
+  }
+  if p.line_has_arrow(i + 2) {
+    // `* => 3`: a match arm with a bad pattern, not a continuation
+    return false
+  }
+  p.diags.push(Diag{code: LEADING_OPERATOR, span: op.span, message: "a line cannot start with the binary operator `${kind_text(op.kind)}`; end the previous line with it (core 1.3)".bytes()})
+  true
+}
+
+/// Whether op, followed by next, can only be a binary operator.
+fn binary_only(op: Token, next: Token) -> Bool {
+  match op.kind {
+    OrOr | AndAnd | Coalesce | Pipe | Caret | Slash | Percent | Shl | Shr | Eq | NotEq | Lt | LtEq | Gt | GtEq => true
+    Plus => !(next.kind == Kind.Plus && adjacent(op, next))
+    Star | Amp => !adjacent(op, next)
+    _ => false
+  }
+}
+
+/// Whether a `=>` outside brackets follows token j on its line.
+fn (p: Parser) line_has_arrow(j0: Int) -> Bool {
+  var depth = 0
+  var j = j0
+  while j < p.toks.len() {
+    match p.tok_at(j).kind {
+      Newline | Eof => {
+        if depth == 0 {
+          return false
+        }
+      }
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => {
+        if depth == 0 {
+          return false
+        }
+        depth -= 1
+      }
+      FatArrow => {
+        if depth == 0 {
+          return true
+        }
+      }
+      _ => {}
+    }
+    if p.tok_at(j).kind == Kind.Eof {
+      return false
+    }
+    j += 1
+  }
+  false
+}

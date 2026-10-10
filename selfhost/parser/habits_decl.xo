@@ -1,0 +1,475 @@
+// Top level and declaration habits (decision 0087), a port of
+// internal/parser habits_decl.go.
+
+/// The languages a foreign function keyword comes from, or "".
+fn fn_keyword_langs(w: Bytes) -> Str {
+  if w == b"func" {
+    return "Go and Swift"
+  }
+  if w == b"fun" {
+    return "Kotlin"
+  }
+  if w == b"def" {
+    return "Python"
+  }
+  if w == b"function" {
+    return "TypeScript"
+  }
+  ""
+}
+
+/// Declarations written in another language at top level. The Bool is
+/// false when the token is not a known habit.
+fn (var p: Parser) foreign_top_level(var imports: List[UseDecl], doc: Doc?, is_pub: Bool, pub_tok: Token, start: Pos, seen_decl: Bool) -> (Decl?, Bool) {
+  let t = p.tok
+  if t.kind != Kind.Ident {
+    if t.kind == Kind.LParen && is_pub && p.peek(1).kind == Kind.Ident && p.peek(2).kind == Kind.RParen {
+      let w = p.peek(1).text
+      if w == b"crate" || w == b"super" || w == b"self" {
+        // pub(crate): Rust visibility scopes.
+        let end = p.peek(2)
+        p.foreign(span_to(t.span, end.span), "`pub(${txt(w)})` is Rust syntax; Xo has one visibility: `pub` exports from the module (core 1.5)")
+        p.next()
+        p.next()
+        p.next()
+        return (p.parse_top_decl(imports, doc, is_pub, pub_tok, start, seen_decl), true)
+      }
+    }
+    return (None, false)
+  }
+  let next = p.peek(1)
+  let w = t.text
+  if w == b"func" || w == b"fun" || w == b"def" || w == b"function" {
+    if next.kind != Kind.Ident && next.kind != Kind.LParen {
+      return (None, false)
+    }
+    p.foreign(t.span, "`${txt(w)}` is ${fn_keyword_langs(w)} syntax; Xo declares functions with `fn` (core 3.2)")
+    return (Some(Decl.FnDecl(p.parse_fn_decl(doc, is_pub, start, false))), true)
+  }
+  if w == b"async" {
+    if next.kind == Kind.Fn || (next.kind == Kind.Ident && fn_keyword_langs(next.text) != "") {
+      p.foreign(t.span, "`async` is TypeScript, Python, and Rust syntax; Xo calls block the calling task, so functions need no `async` (core 7.1)")
+      p.next()
+      return (p.parse_top_decl(imports, doc, is_pub, pub_tok, start, seen_decl), true)
+    }
+    return (None, false)
+  }
+  if w == b"export" || w == b"public" {
+    if !starts_top_decl(next) {
+      return (None, false)
+    }
+    let lang = if w == b"public" { "Kotlin and Swift" } else { "TypeScript" }
+    p.foreign(t.span, "`${txt(w)}` is ${lang} syntax; Xo exports a declaration with `pub` (core 1.5)")
+    p.next()
+    return (p.parse_top_decl(imports, doc, true, t, start, seen_decl), true)
+  }
+  if w == b"private" || w == b"internal" || w == b"fileprivate" {
+    if !starts_top_decl(next) {
+      return (None, false)
+    }
+    p.foreign(t.span, "`${txt(w)}` is Kotlin and Swift syntax; Xo declarations are private to their module unless marked `pub` (core 1.5)")
+    p.next()
+    return (p.parse_top_decl(imports, doc, is_pub, pub_tok, start, seen_decl), true)
+  }
+  if w == b"package" {
+    if next.kind != Kind.Ident || t.span.start.col != 1 {
+      return (None, false)
+    }
+    p.foreign(t.span, "`package ${txt(next.text)}` is Go syntax; an Xo module is its directory and has no package clause (core 1.1)")
+    p.skip_line()
+    p.line_done = true
+    return (None, true)
+  }
+  if w == b"import" || w == b"from" {
+    p.foreign_import(imports)
+    return (None, true)
+  }
+  if w == b"impl" {
+    return (Some(p.parse_impl(start)), true)
+  }
+  if w == b"trait" || w == b"protocol" {
+    if next.kind != Kind.Ident {
+      return (None, false)
+    }
+    let lang = if w == b"protocol" { "Swift" } else { "Rust" }
+    p.foreign(t.span, "`${txt(w)}` is ${lang} syntax; Xo declares an `interface`, and types satisfy it implicitly by having its methods (core 2.4)")
+    return (Some(Decl.InterfaceDecl(p.parse_interface(doc, is_pub, start))), true)
+  }
+  if w == b"class" || w == b"data" || w == b"object" || w == b"extension" {
+    if w == b"data" && !is_word(next, b"class") {
+      return (None, false)
+    }
+    if next.kind != Kind.Ident {
+      return (None, false)
+    }
+    // A hard error in the Go parser, which resynchronizes at the next
+    // top level declaration (parseFile's syncTop).
+    p.diags.push(Diag{code: FOREIGN_SYNTAX, span: t.span, message: "`${txt(w)}` is Kotlin, Swift, TypeScript, or Python syntax; Xo has no classes: declare a `struct` for the fields and methods at top level with a receiver, `fn (p: P) name() -> T` (core 2.2, 3.4)".bytes()})
+    p.top_bad = true
+    return (Some(Decl.BadDecl(t.span)), true)
+  }
+  (None, false)
+}
+
+/// Whether t can begin a declaration after a visibility word.
+fn starts_top_decl(t: Token) -> Bool {
+  match t.kind {
+    Fn | Struct | Enum | Interface | Type | Const => true
+    Ident => {
+      let w = t.text
+      w == b"func" || w == b"fun" || w == b"function" || w == b"def" || w == b"async" || w == b"class" || w == b"trait" || w == b"protocol" || w == b"data"
+    }
+    _ => false
+  }
+}
+
+/// The Xo module of an import of another language: Some("") when the
+/// package has no Xo import, None when there is no direct equivalent.
+fn go_import(path: Bytes) -> Bytes? {
+  if path == b"encoding/json" || path == b"json" {
+    return Some(b"std/json")
+  }
+  if path == b"net/http" || path == b"http" {
+    return Some(b"std/http")
+  }
+  for x in ["strings", "strconv", "errors", "math", "sort", "unicode/utf8", "fmt", "os", "time", "sync", "context", "log"] {
+    if path == x.bytes() {
+      return Some(b"")
+    }
+  }
+  None
+}
+
+/// The literal text of a plain string token.
+fn str_tok_text(t: Token) -> Bytes {
+  var b = BytesBuilder.new()
+  for part in t.parts {
+    if !part.is_expr {
+      b.write(part.text)
+    }
+  }
+  b.freeze()
+}
+
+/// Go, Python, and TypeScript import statements: reported and consumed;
+/// the imports with a known Xo module are recovered as `use` lines.
+fn (var p: Parser) foreign_import(var imports: List[UseDecl]) {
+  let t = p.tok
+  let start_line = t.span.start
+  var paths: List[Bytes] = []
+  var end_idx = -1
+  let i = p.pos + 1
+  if p.tok_at(i).kind == Kind.LParen && t.text == b"import" {
+    end_idx = p.match_close(i)
+    var j = i + 1
+    while end_idx > 0 && j < end_idx {
+      if p.tok_at(j).kind == Kind.String {
+        paths.push(str_tok_text(p.tok_at(j)))
+      }
+      j += 1
+    }
+  } else {
+    var j = i
+    while j < p.toks.len() && p.tok_at(j).kind != Kind.Newline && p.tok_at(j).kind != Kind.Eof {
+      end_idx = j
+      j += 1
+    }
+    if end_idx >= i {
+      let first = p.tok_at(i)
+      let last = p.tok_at(end_idx)
+      if first.kind == Kind.String {
+        // Go: import "encoding/json"
+        paths.push(str_tok_text(first))
+      } else if first.kind == Kind.Ident && t.text == b"import" && end_idx == i {
+        // Python: import json
+        paths.push(first.text)
+      } else if first.kind == Kind.Star && last.kind == Kind.String {
+        // TypeScript: import * as json from "json"
+        paths.push(str_tok_text(last))
+      }
+    }
+  }
+  if end_idx < 0 {
+    end_idx = p.pos
+  }
+  let end_tok = p.tok_at(end_idx)
+  let sp = span_to(t.span, end_tok.span)
+  p.foreign(sp, "`${txt(t.text)}` is Go, Python, or TypeScript syntax; Xo imports a module with `use`, for example `use std/json` (core 4.1)")
+  if !paths.is_empty() && start_line.col == 1 {
+    var use_paths: List[Bytes] = []
+    var known = true
+    for path0 in paths {
+      var path = path0
+      if !path.is_empty() && path[0] == '"' {
+        path = trim_quotes(path)
+      }
+      if let Some(x) = go_import(path) {
+        if !x.is_empty() {
+          use_paths.push(x)
+        }
+      } else {
+        known = false
+        break
+      }
+    }
+    if known {
+      // Recover the imports, so the names they bind resolve.
+      for u in use_paths {
+        imports.push(UseDecl{span: sp, path: u})
+      }
+    }
+  }
+  p.skip_to(end_idx + 1)
+  p.skip_line()
+  p.line_done = true
+}
+
+/// strings.Trim(path, "\"").
+fn trim_quotes(b: Bytes) -> Bytes {
+  var a = 0
+  var e = b.len()
+  while a < e && b[a] == '"' {
+    a += 1
+  }
+  while e > a && b[e - 1] == '"' {
+    e -= 1
+  }
+  b[a..e]
+}
+
+/// A Rust `impl Type { fn m(&self) ... }` block, recovered as top level
+/// methods with a receiver named `self`: the first is returned, the rest
+/// go to pending_decls.
+fn (var p: Parser) parse_impl(start: Pos) -> Decl {
+  let impl_tok = p.tok
+  p.next() // impl
+  if p.at(Kind.LBrack) {
+    p.parse_type_params()
+  }
+  var typ = p.parse_type()
+  if p.at(Kind.For) {
+    p.next()
+    typ = p.parse_type()
+  }
+  p.foreign(impl_tok.span, "`impl` blocks are Rust syntax; Xo declares each method at top level with a receiver, `fn (self: ${p.span_text(type_span(typ))}) name() -> T`, and a type satisfies an interface implicitly by having its methods (core 3.4, 2.4)")
+  if !p.at(Kind.LBrace) {
+    p.error_expected("`{`")
+    return Decl.BadDecl(impl_tok.span)
+  }
+  var decls: List[FnDecl] = []
+  let saved = p.in_impl
+  p.in_impl = true
+  if p.members_open() {
+    while p.members_more() {
+      let mstart = p.tok.span.start
+      let mdoc = p.doc_for(mstart.line)
+      let mpub = p.got(Kind.Pub)
+      if !p.at(Kind.Fn) {
+        p.error_expected("a method starting with `fn`")
+        break
+      }
+      var f = p.parse_fn_decl(mdoc, mpub, mstart, false)
+      if f.params.is_empty() || !f.params[0].is_self {
+        decls.push(f)
+      } else {
+        let self_prm = f.params[0]
+        f.recv = Some(Receiver{span: self_prm.span, is_var: self_prm.is_var, name: Ident{span: self_prm.name.span, name: b"self"}, typ: typ})
+        f.params = f.params[1..]
+        f.params_list = true
+        decls.push(f)
+      }
+      p.member_end("method")
+    }
+    p.close_brace()
+  }
+  p.in_impl = saved
+  if decls.is_empty() {
+    return Decl.BadDecl(impl_tok.span)
+  }
+  for k in 1..decls.len() {
+    p.pending_decls.push(decls[k])
+  }
+  Decl.FnDecl(decls[0])
+}
+
+/// A result type written without `->` right after the parameter list:
+/// `fn f(): Int` (TypeScript, Kotlin, Python annotations), `fn f() Int`
+/// and `fn f() (Int, error)` (Go).
+fn (var p: Parser) foreign_result(var f: FnDecl) {
+  let t = p.tok
+  if t.kind == Kind.Colon && p.starts_type_at(p.pos + 1) {
+    p.foreign(t.span, "`): T` is TypeScript, Kotlin, and Python syntax for a result type; Xo writes `-> T` (core 3.2)")
+    p.next()
+    f.result = Some(p.parse_type_top())
+    return
+  }
+  if t.kind == Kind.LParen && p.prev_is(Kind.RParen) {
+    // Go multiple results.
+    let typ = p.parse_type_top()
+    if let TupleType(tsp, elems) = typ {
+      if elems.len() >= 2 && is_error_type(elems[elems.len() - 1]) {
+        let rest = elems[0..elems.len() - 1]
+        p.foreign(tsp, "a Go result list ending in `error` is written `-> T ! Error` in Xo: the function returns `T` or fails with an error, and callers propagate it with `?` (core 2.6)")
+        if rest.len() == 1 {
+          f.result = Some(rest[0])
+        } else {
+          f.result = Some(Type.TupleType(span: tsp, elems: rest))
+        }
+        f.err = Some(ErrSpec{span: type_span(elems[elems.len() - 1])})
+        return
+      }
+    }
+    p.foreign(type_span(typ), "a Go result type follows the parameters directly; Xo writes `-> T` (core 3.2)")
+    f.result = Some(typ)
+    return
+  }
+  if (t.kind == Kind.Ident && !p.at_ident(b"throws") && !p.at_ident(b"where")) || t.kind == Kind.Star || t.kind == Kind.LBrack {
+    p.foreign(t.span, "a Go result type follows the parameters directly; Xo writes `-> T` (core 3.2)")
+    f.result = Some(p.parse_type_top())
+  }
+}
+
+/// Whether t is Go's `error` (or Xo's `Error`).
+fn is_error_type(t: Type) -> Bool {
+  if let NamedType(_, path, args) = t {
+    return path.len() == 1 && args.is_empty() && (path[0].name == b"error" || path[0].name == b"Error")
+  }
+  false
+}
+
+/// Interfaces every type with suitable fields already has (core 2.9), so
+/// a bound list may drop them; Rust's names for them are included.
+fn automatic_bound(text: Bytes) -> Bool {
+  for x in ["Eq", "Debug", "PartialEq", "Clone", "Copy", "Sized", "Send", "Sync", "Equatable"] {
+    if text == x.bytes() {
+      return true
+    }
+  }
+  false
+}
+
+/// Rust and Swift bound names that map to an Xo interface.
+fn bound_rename(text: Bytes) -> Bytes? {
+  if text == b"Hashable" {
+    return Some(b"Hash")
+  }
+  if text == b"Comparable" || text == b"PartialOrd" {
+    return Some(b"Ord")
+  }
+  if text == b"Codable" || text == b"Serialize" {
+    return Some(b"Json")
+  }
+  None
+}
+
+/// A Rust or Swift bound list `T: A + B` after the first bound. Xo takes
+/// one interface per type parameter.
+fn (var p: Parser) parse_bounds(name: Ident, first: Type) -> Type? {
+  if !p.at(Kind.Plus) || p.hard {
+    return Some(first)
+  }
+  var bounds = [first]
+  while p.got(Kind.Plus) {
+    bounds.push(p.parse_type())
+  }
+  if p.hard {
+    return Some(first)
+  }
+  let sp = span_to(type_span(first), type_span(bounds[bounds.len() - 1]))
+  var keep: List[Bytes] = []
+  for b in bounds {
+    var text = p.src_text(type_span(b).start, type_span(b).end)
+    if let NamedType(_, path, args) = b {
+      if path.len() == 1 && args.is_empty() {
+        if automatic_bound(text) {
+          continue
+        }
+        if let Some(r) = bound_rename(text) {
+          text = r
+        }
+      }
+    }
+    if !keep.contains(text) {
+      keep.push(text)
+    }
+  }
+  let all = p.span_text(sp)
+  let n = txt(name.name)
+  if keep.is_empty() {
+    p.foreign(sp, "`${n}: ${all}` is a Rust or Swift bound list; Xo takes one interface per type parameter, and `${all}` are automatic for every type whose fields have them (core 2.7, 2.9): write `${n}` with no constraint")
+    return None
+  }
+  if keep.len() == 1 {
+    p.foreign(sp, "`${n}: ${all}` is a Rust or Swift bound list; Xo takes one interface per type parameter, and `Eq` and `Debug` are automatic (core 2.7, 2.9): write `${n}: ${txt(keep[0])}`")
+    for b in bounds {
+      if p.src_text(type_span(b).start, type_span(b).end) == keep[0] {
+        return Some(b)
+      }
+    }
+    return Some(Type.NamedType(span: sp, path: [Ident{span: sp, name: keep[0]}], args: []))
+  }
+  p.foreign(sp, "`${n}: ${all}` is a Rust or Swift bound list; Xo takes one interface per type parameter (core 2.7): declare an interface holding the methods the function needs and use it as the constraint")
+  Some(first)
+}
+
+/// Rust receivers `&self`, `&mut self`, and `mut self` in a parameter
+/// list: the parameter, or None. Inside a recovered `impl` block they are
+/// taken silently (the `impl` diagnostic covers them).
+fn (var p: Parser) foreign_self_param(start: Pos) -> Param? {
+  let first = p.tok
+  var i = p.pos
+  var is_mut = false
+  if p.tok_at(i).kind == Kind.Amp {
+    i += 1
+  }
+  if is_word(p.tok_at(i), b"mut") {
+    is_mut = true
+    i += 1
+  }
+  if i == p.pos || !is_word(p.tok_at(i), b"self") {
+    return None
+  }
+  let self_tok = p.tok_at(i)
+  if !p.in_impl {
+    let sp = span_to(first.span, self_tok.span)
+    p.foreign(sp, "`${p.span_text(sp)}` is Rust syntax; an Xo interface method takes a bare `self`, and a method declares its receiver before the name, `fn (var p: P) name()` (core 2.4, 3.4)")
+  }
+  p.skip_to(i + 1)
+  Some(Param{span: p.span_from(start), is_var: is_mut, is_self: true, name: Ident{span: self_tok.span, name: b"self"}})
+}
+
+/// Go fields without a colon (`x int`) and TypeScript optional fields
+/// (`x?: T`): the field type when the habit parsed it.
+fn (var p: Parser) foreign_field(name: Ident) -> Type? {
+  if p.hard {
+    return None
+  }
+  let t = p.tok
+  let n = txt(name.name)
+  if t.kind == Kind.Question && p.peek(1).kind == Kind.Colon {
+    p.next()
+    p.next()
+    let typ = p.parse_type()
+    p.foreign(t.span, "`${n}?: T` is TypeScript syntax for an optional field; Xo writes the option on the type, `${n}: T?` (core 2.5)")
+    return Some(Type.OptionalType(span: type_span(typ), elem: typ))
+  }
+  if (t.kind is Ident | Star | LBrack) && t.span.start.line == name.span.start.line {
+    p.foreign(t.span, "`${n} ${txt(t.text)}` is Go syntax; Xo writes the field type after a colon, `${n}: ${txt(t.text)}` (core 2.2)")
+    let typ = p.parse_type()
+    if p.at(Kind.String) || p.at(Kind.RawString) {
+      // Go struct tags: `json:"name"`.
+      p.next()
+    }
+    return Some(typ)
+  }
+  None
+}
+
+/// Swift's `throws` after the parameters.
+fn (var p: Parser) foreign_throws(var f: FnDecl, t: Token) {
+  p.foreign(t.span, "`throws` is Swift syntax; an Xo function that can fail declares its error type after `!`: `-> T ! Error` (core 2.6)")
+  if f.err.is_some() {
+    return
+  }
+  f.err = Some(ErrSpec{span: t.span})
+}

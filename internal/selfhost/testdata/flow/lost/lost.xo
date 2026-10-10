@@ -1,0 +1,61 @@
+// Lost updates (core 5.2): a copy out of a collection changed and never
+// written back.
+
+struct Item {
+  n: Int
+  tags: List[Str]
+}
+
+fn (var it: Item) bump() {
+  it.n += 1
+}
+
+fn never_back(m: Map[Str, Item], k: Str) -> Int {
+  var it = m.get(k) ?? Item{n: 0, tags: []}
+  it.n += 1
+  it.n
+}
+
+fn written_back(var m: Map[Str, Item], k: Str) {
+  var it = m.get(k) ?? Item{n: 0, tags: []}
+  it.bump()
+  m.put(k, it)
+}
+
+fn read_after_only(xs: List[Item]) -> Int {
+  var it = xs[0]
+  it.tags.push("x")
+  it.tags.len()
+}
+
+fn in_loop(var m: Map[Str, Item], keys: List[Str]) {
+  for k in keys {
+    var it = m.get(k) ?? Item{n: 0, tags: []}
+    it.n += 1
+  }
+  var last = m.get("last") ?? Item{n: 0, tags: []}
+  for k in keys {
+    m.put(k, last)
+    last.n += 1
+  }
+}
+
+fn deferred(var m: Map[Str, Item]) {
+  var it = m.get("a") ?? Item{n: 0, tags: []}
+  defer {
+    m.put("a", it)
+  }
+  it.n = 5
+}
+
+fn first_of(xs: List[Item]) -> Int {
+  var it = xs.first() ?? Item{n: 0, tags: []}
+  it.n = 3
+  0
+}
+
+fn ranged(xs: List[Int]) -> Int {
+  var ys = xs[0..1]
+  ys.push(2)
+  ys.len()
+}

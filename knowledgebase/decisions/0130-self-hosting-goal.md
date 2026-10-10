@@ -57,6 +57,16 @@ passes the full suite on the backends it targets.
   ported yet. The LLVM build takes 1.28 times the Go checker on the
   selfhost input and 0.97 times over all repository runs. Next: stage 5,
   value semantics (bench/results/selfhost-checker-2026-10-10.md).
+- 2026-10-10: the parser's habits of other languages (decision 0087)
+  with their recovery, pulled ahead of stage 8, and checker stages 5
+  (value semantics: XO0501, XO0502, XO0503, XO0510, XO0520, XO0804,
+  unused bindings) and 6 (exhaustiveness: XO0301, XO0303, XO0305) of 8
+  (decision 0141): 580 of 608 repository runs compared and identical
+  (350 accepted, 230 rejected with the same diagnostics), three
+  backends, plus habit, value semantics, and pattern mutations; one
+  self hosted parser bug fixed (diagnostic quoting). The LLVM build
+  takes 1.9 times the Go checker on the selfhost input and 1.34 times
+  over all repository runs. Next: stage 7, notes and fixes.
 
 ## Alternatives
 

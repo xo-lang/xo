@@ -1,0 +1,150 @@
+// Type habits (decision 0087), a port of internal/parser habits_type.go:
+// `Vec<T>`, `[]T`, `map[K]V`, `*T`, `&T`, `?T`, `[T]`, `[K: V]`,
+// `interface{}`.
+
+/// `Name<A, B>` type arguments; nested lists give one diagnostic, for the
+/// outermost.
+fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
+  let outer = !p.angle_active
+  if outer {
+    p.angle_active = true
+    p.angle_pending_gt = false
+  }
+  let open = p.tok
+  p.next() // <
+  var args: List[Type] = []
+  while !p.hard {
+    args.push(p.parse_type())
+    if p.hard || p.angle_pending_gt {
+      break
+    }
+    if !p.got(Kind.Comma) {
+      break
+    }
+  }
+  var end = p.tok.span.end
+  if p.hard {
+    // reported
+  } else if p.angle_pending_gt {
+    p.angle_pending_gt = false
+    end = p.tok_at(p.pos - 1).span.end
+  } else if p.at(Kind.Gt) {
+    p.next()
+  } else if p.at(Kind.Shr) && !outer {
+    p.angle_pending_gt = true
+    p.next()
+  } else {
+    p.error_expected("`>` to close the type arguments")
+  }
+  if !outer {
+    return args
+  }
+  p.angle_active = false
+  let name = p.span_text(path[path.len() - 1].span)
+  p.foreign(Span{start: open.span.start, end: end}, "`${name}<...>` is Rust, TypeScript, Kotlin, and Swift syntax for type arguments; Xo writes them in square brackets, `${name}[...]` (core 2.7)")
+  args
+}
+
+/// Swift's `[T]` (an array) and `[K: V]` (a dictionary) at `[`.
+fn (var p: Parser) swift_collection_type() -> Type? {
+  if !p.starts_type_at(p.pos + 1) {
+    return None
+  }
+  let open = p.tok
+  let start = open.span.start
+  p.next() // [
+  let elem = p.parse_type()
+  if p.at(Kind.Colon) {
+    p.next()
+    let val = p.parse_type()
+    let close = p.tok
+    p.expect(Kind.RBrack, "`]`")
+    p.foreign(span_to(open.span, close.span), "`[K: V]` is Swift's dictionary type; Xo writes `Map[K, V]` (core 2.1)")
+    return Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: open.span, name: b"Map"}], args: [elem, val]))
+  }
+  let close = p.tok
+  p.expect(Kind.RBrack, "`]`")
+  p.foreign(span_to(open.span, close.span), "`[T]` is Swift's array type; Xo writes `List[T]` (core 2.1)")
+  Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: open.span, name: b"List"}], args: [elem]))
+}
+
+/// Types written with another language's syntax at the start of a type,
+/// or None.
+fn (var p: Parser) foreign_type() -> Type? {
+  let t = p.tok
+  let start = t.span.start
+  match t.kind {
+    Star | Amp | AndAnd => {
+      // Go `*T`, Rust `&T`, `&mut T`.
+      var end = p.pos + 1
+      if is_word(p.tok_at(end), b"mut") && p.tok_at(end + 1).kind != Kind.Comma && p.tok_at(end + 1).kind != Kind.RParen {
+        end += 1
+      }
+      if !p.starts_type_at(end) {
+        return None
+      }
+      var what = "a pointer type"
+      var lang = "Go"
+      if t.kind != Kind.Star {
+        what = "a reference type"
+        lang = "Rust"
+      }
+      p.foreign(t.span, "`${txt(p.src_text(t.span.start, p.tok_at(end).span.start))}` is ${what}, ${lang} syntax; Xo has no pointers or references: values are passed and stored as is, and a `var` parameter changes the caller's binding (core 5.1, 3.2)")
+      p.skip_to(end)
+      Some(p.parse_type())
+    }
+    Question => {
+      if !p.starts_type_at(p.pos + 1) {
+        return None
+      }
+      p.next()
+      let inner = p.parse_type()
+      p.foreign(t.span, "`?T` puts the option mark first; Xo writes it after the type, `${p.span_text(type_span(inner))}?` (core 2.5)")
+      Some(Type.OptionalType(span: p.span_from(start), elem: inner))
+    }
+    LBrack => {
+      if p.peek(1).kind != Kind.RBrack {
+        return p.swift_collection_type()
+      }
+      // Go slices: `[]T`.
+      let close = p.peek(1)
+      p.next()
+      p.next()
+      let elem = p.parse_type()
+      let et = p.span_text(type_span(elem))
+      p.foreign(span_to(t.span, close.span), "`[]${et}` is Go syntax for a slice; Xo writes `List[${et}]` (core 2.1)")
+      Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: t.span, name: b"List"}], args: [elem]))
+    }
+    Ident => {
+      if t.text != b"map" || p.peek(1).kind != Kind.LBrack || !adjacent(t, p.peek(1)) {
+        return None
+      }
+      // Go maps: `map[K]V`.
+      p.next()
+      p.next()
+      let key = p.parse_type()
+      if !p.at(Kind.RBrack) || !p.starts_type_at(p.pos + 1) {
+        p.error_expected("`]` after the map key type")
+        return Some(Type.BadType(t.span))
+      }
+      p.next()
+      let val = p.parse_type()
+      let kt = p.span_text(type_span(key))
+      let vt = p.span_text(type_span(val))
+      p.foreign(span_to(t.span, type_span(val)), "`map[${kt}]${vt}` is Go syntax; Xo writes `Map[${kt}, ${vt}]` (core 2.1)")
+      Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: t.span, name: b"Map"}], args: [key, val]))
+    }
+    Interface => {
+      if p.peek(1).kind != Kind.LBrace || p.peek(2).kind != Kind.RBrace {
+        return None
+      }
+      let end = p.peek(2)
+      p.foreign(span_to(t.span, end.span), "`interface{}` is Go's empty interface; Xo has no top type: make the function generic, `fn f[T](x: T)`, or name an interface with the methods you need (core 2.4, 2.7)")
+      p.next()
+      p.next()
+      p.next()
+      Some(Type.BadType(span_to(t.span, end.span)))
+    }
+    _ => None
+  }
+}

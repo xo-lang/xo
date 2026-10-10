@@ -15,6 +15,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/parser"
 )
 
 // TestSelfhostChecker runs the Xo checker (selfhost/check), built with
@@ -144,8 +145,10 @@ func goCheck(dir string) *goRun {
 	}
 	r := &goRun{dump: res.Dump(check.Sections{Names: true, Types: true, Sigs: true}), accepted: true, onlyStaged: true}
 	var staged []diag.Diagnostic
+	parsed := map[string]map[string]bool{}
 	for _, d := range res.Diagnostics {
-		isStaged := stageDiag(check.DiagLines([]diag.Diagnostic{d})[0])
+		line := check.DiagLines([]diag.Diagnostic{d})[0]
+		isStaged := stageDiag(line) || parseDiag(parsed, d.Span.File, line)
 		if d.Severity == diag.Error {
 			r.accepted = false
 			r.onlyStaged = r.onlyStaged && isStaged
@@ -159,6 +162,26 @@ func goCheck(dir string) *goRun {
 	}
 	r.staged = check.DiagLines(staged)
 	return r
+}
+
+// parseDiag reports whether line is a diagnostic the Go parser gives file:
+// the lexer's and the parser's soft errors (the habits of other languages,
+// decision 0087), which the Xo parser reproduces with the tree the Go
+// parser recovers. A run with a hard parse error is unsupported by the Xo
+// checker. parsed caches the parser diagnostics of each file.
+func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
+	set, ok := parsed[file]
+	if !ok {
+		set = map[string]bool{}
+		if src, err := os.ReadFile(file); err == nil && !strings.HasPrefix(file, "std/") {
+			_, ds := parser.ParseFile(file, src, 0)
+			for _, l := range check.DiagLines(ds) {
+				set[l] = true
+			}
+		}
+		parsed[file] = set
+	}
+	return set[line]
 }
 
 // moduleDirs lists every directory under root that holds .xo files,
@@ -229,9 +252,16 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		st.errors++
 		return ""
 	case strings.HasPrefix(got, "== unsupported parse error"):
-		// the Xo parser stops at a file the Go parser rejects too
+		// the Xo parser stops at a hard error of a file the Go parser
+		// rejects with a hard error too
 		if want.accepted {
 			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports %s", dir, firstLine(got))
+		}
+		file := strings.TrimPrefix(firstLine(got), "== unsupported parse error in ")
+		if src, err := os.ReadFile(file); err == nil {
+			if dump := parser.Dump(file, src, 0); !strings.Contains(dump, "\ndiag ") || habitOnly(dump) {
+				return fmt.Sprintf("%s: the Go parser recovers from every error of %s, the Xo parser stops:\n%s", dir, file, diagLines(dump))
+			}
 		}
 		st.otherRejected++
 		return ""
@@ -249,8 +279,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		if gotDump != wantDump {
 			return fmt.Sprintf("%s: dumps differ: %s", dir, firstDiff(gotDump, wantDump))
 		}
-		if len(gotDiags) > 0 {
-			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports:\n%s", dir, strings.Join(gotDiags, "\n"))
+		// an accepted run may hold staged warnings (XO0804)
+		if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
+			return fmt.Sprintf("%s: the Go checker accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, strings.Join(want.staged, "\n"), strings.Join(gotDiags, "\n"))
 		}
 		st.acceptedOK++
 		return ""
@@ -317,19 +348,23 @@ func splitDiags(dump string) (string, []string) {
 // patterns that do not fit, loop labels, constants, unknown effects, and
 // the task failure rules that decide error types), and generics of
 // stage 3 (XO0402, XO0404 on constraints, comparability, keys, and
-// derives). Left to later stages: unused bindings (XO0110 on locals,
-// XO0201 on bindings), value semantics (XO0501 to XO0520),
-// exhaustiveness (XO0301, XO0303), naming (XO0101), and the habits of
-// other languages that are not name or type errors (XO0177).
+// derives), effects of stage 4 (XO0701, real-time XO1401 to XO1405),
+// and value semantics of stage 5 (XO0501, XO0502, XO0503, XO0510,
+// XO0520, the XO0804 warning, unused bindings XO0110 and XO0201), and
+// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning). Left
+// to later stages: naming (XO0101), and the habits of other languages
+// the checker reports (XO0177; the parser's are staged through
+// parseDiag).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
-	`XO0110","[^}]*"message":"import ` + "`" + `[^` + "`" + `]+` + "`" + ` is never used"`,
-	`XO0201","[^}]*"message":"result of [^"]*is not handled"`,
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
 	`(XO0402|XO0404)",.*`,
 	// stage 4: effects and real-time functions
 	`(XO0701|XO1401|XO1402|XO1403|XO1404|XO1405)",.*`,
-	`XO0502","[^}]*"message":"cannot assign to this expression[^"]*"`,
+	// stage 5: value semantics and unused bindings
+	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
+	// stage 6: exhaustiveness
+	`(XO0301|XO0303|XO0305)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

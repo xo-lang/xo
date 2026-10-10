@@ -1,0 +1,41 @@
+// Split critical sections (XO0804, core 5.4): a value read in one `with`
+// and acted on in a later one.
+
+struct Account {
+  balance: Int
+}
+
+fn check_then_act(m: Mutex[Account], amount: Int) -> Bool {
+  let bal = m.with(fn(var a) { a.balance })
+  if bal >= amount {
+    m.with(fn(var a) {
+      a.balance -= amount
+    })
+    return true
+  }
+  false
+}
+
+fn stale_write(m: Mutex[Account]) {
+  let bal = m.with_read(fn(a) { a.balance })
+  let next = bal + 1
+  m.with(fn(var a) {
+    a.balance = next
+  })
+}
+
+fn fine(m: Mutex[Account]) {
+  m.with(fn(var a) {
+    if a.balance > 0 {
+      a.balance -= 1
+    }
+  })
+}
+
+fn var_taint(m: Mutex[Account]) {
+  var seen = m.with(fn(var a) { a.balance })
+  seen += 1
+  m.with(fn(var a) {
+    a.balance = seen
+  })
+}

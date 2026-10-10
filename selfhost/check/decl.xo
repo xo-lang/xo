@@ -76,6 +76,7 @@ fn (var c: Checker) declare(m: Int) {
             o = c.new_obj(ObjKind.Func, fd.name)
             c.objs[o].is_pub = fd.is_pub || c.mods[m].is_std
             c.objs[o].fn_decl = [fd]
+            c.objs[o].moves = doc_moves(fd.doc)
             c.objs[o].decl_file = f
             c.objs[o].decl_idx = i
             c.define(fd.name, o)
@@ -316,6 +317,7 @@ fn (var c: Checker) resolve_sigs(m: Int) {
         fo = c.new_obj(ObjKind.Func, fd.name)
         c.objs[fo].is_pub = fd.is_pub || c.mods[m].is_std
         c.objs[fo].fn_decl = [fd]
+        c.objs[fo].moves = doc_moves(fd.doc)
       }
       var env = TypeEnv{file: f, mod: m}
       if fd.recv != None {
@@ -806,4 +808,12 @@ fn (var c: Checker) effect_arg(a: Type, var env: TypeEnv, var items: List[EffIte
     _ => {}
   }
   c.error("XO0702", parser.type_span(a), "an effect argument must be an effect label, an effect variable, or a parenthesized list of them")
+}
+
+/// Whether a doc comment marks a function `@moves` (decl.go Moves).
+fn doc_moves(doc: parser.Doc?) -> Bool {
+  if let Some(d) = doc {
+    return (text(d.text)).contains("@moves")
+  }
+  false
 }

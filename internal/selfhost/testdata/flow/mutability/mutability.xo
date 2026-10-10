@@ -1,0 +1,71 @@
+// `var` places (XO0501, XO0502) and overlapping `var` arguments
+// (XO0503, decision 0111).
+
+struct Pair {
+  a: List[Int]
+  b: List[Int]
+}
+
+struct Counter {
+  n: Int
+}
+
+fn (var c: Counter) inc() {
+  c.n += 1
+}
+
+fn (c: Counter) get() -> Int {
+  c.n
+}
+
+fn (c: Counter) bad() {
+  c.n = 1
+  c.inc()
+}
+
+fn two(var x: List[Int], var y: List[Int]) {
+  x.push(1)
+  y.push(2)
+}
+
+fn overlap() -> Int {
+  var p = Pair{a: [], b: []}
+  two(p.a, p.b)
+  two(p.a, p.a)
+  var xs = [[1], [2]]
+  two(xs[0], xs[1])
+  two(xs[0], xs[0])
+  var i = 0
+  i += 1
+  two(xs[i], xs[0])
+  p.a.len()
+}
+
+fn immutables(xs: List[Int]) -> Int {
+  let c = Counter{n: 0}
+  c.inc()
+  xs.push(1)
+  let n = 3
+  n += 1
+  Counter{n: 1}.inc()
+  n
+}
+
+fn captured() -> Int {
+  var total = 0
+  var c = Counter{n: 0}
+  let f = fn() {
+    total = 1
+    c.inc()
+  }
+  f()
+  total + c.get()
+}
+
+fn passing(xs: List[Int]) {
+  two(xs, [1])
+}
+
+fn temp() {
+  two([1], [2])
+}
