@@ -71,7 +71,10 @@ fn print_name(name: Str) -> Bool {
   name is "println" | "print" | "printf" | "puts" | "echo" | "fmt.Println" | "fmt.Print" | "fmt.Printf" | "fmt.Sprintf" | "console.log" | "console.error" | "System.out.println" | "eprintln"
 }
 
-/// A call of an unresolved function name (habits.go habitCall).
+/// A call of an unresolved function name (habits.go habitCall). Each
+/// habit is a function of its own: one function of all of them has a
+/// frame over the arm64 backend's 28 KiB limit (gotcha
+/// arm64-large-frame).
 fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) {
   let (span, _, args) = call_parts(call)
   let name = text(id.name)
@@ -79,156 +82,183 @@ fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) 
     return (c.habit_print(args, name, id.span), true)
   }
   let n = args.len()
-  let report = "function `${name}` not found"
   match name {
     "len" | "count" | "size" => {
       if n != 1 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      c.infer(args[0].value, -1)
-      return (c.named("Int"), true)
+      return (c.habit_infer_one(args, id, c.named("Int")), true)
     }
     "append" => {
       if n < 2 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      let t = c.infer(args[0].value, hint)
-      for i in 1..n {
-        c.infer(args[i].value, c.list_elem(t))
-      }
-      return (t, true)
+      return (c.habit_append(args, id, hint), true)
     }
     "range" => {
       if n < 1 || n > 2 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      var lo = Expr.IntLit(span: span, raw: b"0", value: b"0")
-      var hi = args[0].value
-      if n == 2 {
-        lo = args[0].value
-        hi = args[1].value
-      }
-      return (c.infer(Expr.RangeExpr(span: span, lo: Some(lo), hi: Some(hi), inclusive: false), hint), true)
+      return (c.habit_range(span, args, id, hint), true)
     }
     "str" | "String" | "toString" => {
       if n != 1 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      c.infer(args[0].value, -1)
-      return (c.named("Str"), true)
+      return (c.habit_infer_one(args, id, c.named("Str")), true)
     }
     "int" | "float" => {
       if n != 1 {
         return (-1, false)
       }
-      let xo = if name == "int" { "Int" } else { "Float" }
-      c.infer(args[0].value, -1)
-      c.error("XO0601", id.span, report)
-      return (c.named(xo), true)
+      return (c.habit_infer_one(args, id, c.named(if name == "int" { "Int" } else { "Float" })), true)
     }
     "sorted" | "reversed" | "abs" => {
       if n != 1 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
+      c.error("XO0601", id.span, "function `${name}` not found")
       return (c.infer(args[0].value, hint), true)
     }
     "min" | "max" => {
       if n != 2 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      let t = c.infer(args[0].value, hint)
-      c.check_ty(args[1].value, t)
-      return (t, true)
+      return (c.habit_min_max(args, id, hint), true)
     }
     "panic" => {
       if n != 1 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      c.infer(args[0].value, -1)
-      return (c.named("Never"), true)
+      return (c.habit_infer_one(args, id, c.named("Never")), true)
     }
     "delete" => {
       if n != 2 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      c.infer_args(args)
-      return (c.unit_ty, true)
+      return (c.habit_infer_all(args, id, c.unit_ty), true)
     }
     "map" | "filter" => {
       if n != 2 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, report)
-      var on = args[1].value
-      if c.is_prelude(c.infer(args[1].value, -1), "Range") {
-        on = Expr.CallExpr(span: args[1].span, fun: Expr.SelectorExpr(span: id.span, x: args[1].value, sel: Ident{span: id.span, name: b"to_list"}), args: [])
-      }
-      let m = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: on, sel: Ident{span: id.span, name: id.name}), args: [args[0]])
-      return (c.infer(m, hint), true)
+      return (c.habit_map(span, args, id, hint), true)
     }
     "list" | "set" | "enumerate" => {
       if n != 1 {
         return (-1, false)
       }
-      let t = c.infer(args[0].value, -1)
-      let r = c.resolve(t)
-      var kind = ""
-      if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
-        kind = text(c.objs[c.tys[r].obj].name)
-      }
-      let m = match name {
-        "list" => "to_list"
-        "set" => "to_set"
-        _ => "indexed"
-      }
-      c.error("XO0601", id.span, report)
-      if name == "list" && kind == "List" {
-        return (t, true)
-      }
-      if kind.is_empty() {
-        return (c.bad_ty, true)
-      }
-      let msel = Ident{span: id.span, name: m.bytes()}
-      let mcall = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: args[0].value, sel: msel), args: [])
-      return (c.call_method(t, id.span, args[0].value, msel, [], false, mcall, hint), true)
+      return (c.habit_list(span, args, id, hint), true)
     }
     "sum" => {
       if n != 1 {
         return (-1, false)
       }
-      let t = c.infer(args[0].value, -1)
-      c.error("XO0601", id.span, report)
-      let e = c.list_elem(t)
-      if e >= 0 {
-        return (e, true)
-      }
-      return (c.bad_ty, true)
+      return (c.habit_sum(args, id), true)
     }
     "make" | "new" => {
-      c.error("XO0601", id.span, report)
+      c.error("XO0601", id.span, "function `${name}` not found")
       return (c.bad_ty, true)
     }
-    "assert" => {
-      c.error("XO0601", id.span, report)
-      c.infer_args(args)
-      return (c.unit_ty, true)
-    }
-    "typeof" | "type" | "isinstance" => {
-      c.error("XO0601", id.span, report)
-      c.infer_args(args)
-      return (c.bad_ty, true)
-    }
+    "assert" => return (c.habit_infer_all(args, id, c.unit_ty), true)
+    "typeof" | "type" | "isinstance" => return (c.habit_infer_all(args, id, c.bad_ty), true)
     _ => {}
   }
   (-1, false)
+}
+
+/// XO0601 for the call's name, its one argument inferred; t.
+fn (var c: Checker) habit_infer_one(args: List[Arg], id: Ident, t: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  c.infer(args[0].value, -1)
+  t
+}
+
+/// XO0601 for the call's name, its arguments inferred; t.
+fn (var c: Checker) habit_infer_all(args: List[Arg], id: Ident, t: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  c.infer_args(args)
+  t
+}
+
+/// Go's `append(xs, v...)`: the list's type.
+fn (var c: Checker) habit_append(args: List[Arg], id: Ident, hint: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  let t = c.infer(args[0].value, hint)
+  for i in 1..args.len() {
+    c.infer(args[i].value, c.list_elem(t))
+  }
+  t
+}
+
+/// Python's `range(n)` and `range(a, b)`: the range `0..n` or `a..b`.
+fn (var c: Checker) habit_range(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  var lo = Expr.IntLit(span: span, raw: b"0", value: b"0")
+  var hi = args[0].value
+  if args.len() == 2 {
+    lo = args[0].value
+    hi = args[1].value
+  }
+  c.infer(Expr.RangeExpr(span: span, lo: Some(lo), hi: Some(hi), inclusive: false), hint)
+}
+
+/// `min(a, b)` and `max(a, b)`: a's type.
+fn (var c: Checker) habit_min_max(args: List[Arg], id: Ident, hint: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  let t = c.infer(args[0].value, hint)
+  c.check_ty(args[1].value, t)
+  t
+}
+
+/// Python's `map(f, xs)` and `filter(f, xs)`: the method call
+/// `xs.map(f)` (a range becomes a list first).
+fn (var c: Checker) habit_map(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  var on = args[1].value
+  if c.is_prelude(c.infer(args[1].value, -1), "Range") {
+    on = Expr.CallExpr(span: args[1].span, fun: Expr.SelectorExpr(span: id.span, x: args[1].value, sel: Ident{span: id.span, name: b"to_list"}), args: [])
+  }
+  let m = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: on, sel: Ident{span: id.span, name: id.name}), args: [args[0]])
+  c.infer(m, hint)
+}
+
+/// Python's `list(x)`, `set(x)`, `enumerate(x)`: the method call
+/// `x.to_list()`, `x.to_set()`, `x.indexed()`.
+fn (var c: Checker) habit_list(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
+  let name = text(id.name)
+  let t = c.infer(args[0].value, -1)
+  let r = c.resolve(t)
+  var kind = ""
+  if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
+    kind = text(c.objs[c.tys[r].obj].name)
+  }
+  let m = match name {
+    "list" => "to_list"
+    "set" => "to_set"
+    _ => "indexed"
+  }
+  c.error("XO0601", id.span, "function `${name}` not found")
+  if name == "list" && kind == "List" {
+    return t
+  }
+  if kind.is_empty() {
+    return c.bad_ty
+  }
+  let msel = Ident{span: id.span, name: m.bytes()}
+  let mcall = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: args[0].value, sel: msel), args: [])
+  c.call_method(t, id.span, args[0].value, msel, [], false, mcall, hint)
+}
+
+/// Python's `sum(xs)`: the list's element type.
+fn (var c: Checker) habit_sum(args: List[Arg], id: Ident) -> Int {
+  let t = c.infer(args[0].value, -1)
+  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  let e = c.list_elem(t)
+  if e >= 0 {
+    return e
+  }
+  c.bad_ty
 }
 
 /// A print function of another language (habits.go habitPrint): XO0601
