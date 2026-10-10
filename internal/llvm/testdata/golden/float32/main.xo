@@ -1,0 +1,35 @@
+// Float32 natively: float32 rounding of literals, conversions, and
+// arithmetic; text as the Go backend prints it (the float32 value's
+// double text).
+
+struct Sample {
+  w: Float32
+  tag: Str
+}
+
+fn mean(xs: List[Float32]) -> Float32 {
+  var t: Float32 = 0.0
+  for x in xs {
+    t = t + x
+  }
+  t / Float32(xs.len())
+}
+
+fn main(os: Os) {
+  let a: Float32 = 0.1
+  let b = Float32(0.2)
+  os.stdio.println("${a} ${b} ${a + b} ${a * b} ${a - b} ${a / b} ${-a}")
+  os.stdio.println("${Float(a)} ${Float(a + b) == 0.1 + 0.2} ${a + b == Float32(0.3)}")
+  let huge = 1.0e40
+  let big = Float32(16777217)
+  os.stdio.println("${big} ${Int(big)} ${Float32(huge)} ${Float32(-huge)} ${Float32(1.0 / huge)}")
+  let xs: List[Float32] = [1.5, 2.25, 3.125, 0.1]
+  os.stdio.println("${mean(xs)} ${xs.debug()} ${xs[0] < xs[1]} ${xs[3] >= a}")
+  let s = Sample{w: 1.0 / 3.0, tag: "t"}
+  os.stdio.println("${s.debug()} ${s == Sample{w: Float32(1.0) / Float32(3.0), tag: "t"}}")
+  var acc: Float32 = 1.0
+  for _ in 0..30 {
+    acc = acc * Float32(1.1)
+  }
+  os.stdio.println("${acc} ${Int(acc)} ${Float32(7) / Float32(2)} ${Float32(UInt64.try(9007199254740993) ?? UInt64(0))} ${Int8.try(-129) ?? Int8(0)} ${UInt16.try(65535) ?? UInt16(0)} ${Rune.try(55296) ?? (Rune(65))}")
+}

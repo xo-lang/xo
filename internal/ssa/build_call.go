@@ -30,13 +30,18 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	}
 	ci := info.CallOf(x)
 	if ci == nil {
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max") {
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && ((len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max")) || (len(x.Args) == 2 && sel.Sel.Name == "clamp")) {
+			// `min`, `max`, `clamp` on an Ord type (std/rt's Min, Max,
+			// Clamp: min(max(a, lo), hi))
 			a := s.expr(sel.X)
-			if a.Type.Sized() {
-				return s.sizedMinMax(sel.Sel.Name, a, s.valueAs(x.Args[0].Value, a.Type))
-			}
-			if a.Type.Kind == KInt || a.Type.Kind == KFloat {
-				return s.call(a.Type.Name+"."+sel.Sel.Name, a.Type, "", a, s.valueAs(x.Args[0].Value, a.Type))
+			if sel.Sel.Name == "clamp" {
+				lo := s.valueAs(x.Args[0].Value, a.Type)
+				hi := s.valueAs(x.Args[1].Value, a.Type)
+				if r := s.ordMinMax("max", a, lo); r != nil {
+					return s.ordMinMax("min", r, hi)
+				}
+			} else if r := s.ordMinMax(sel.Sel.Name, a, s.valueAs(x.Args[0].Value, a.Type)); r != nil {
+				return r
 			}
 		}
 		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 0 && sel.Sel.Name == "display" {
@@ -44,6 +49,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			ct := s.natCheck(sel.X)
 			v := s.expr(sel.X)
 			return s.appendDisplay(s.add(OpConst, b.mod.Builtin(KStr), ""), v, ct, sel.X)
+		}
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 0 && sel.Sel.Name == "debug" {
+			// the derived Debug text (core 2.9)
+			ct := s.natCheck(sel.X)
+			v := s.expr(sel.X)
+			return s.appendDebug(s.add(OpConst, b.mod.Builtin(KStr), ""), v, ct, sel.X)
 		}
 		b.unsupported(x, "this call")
 		return s.undef(s.natOf(x))
@@ -70,6 +81,7 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		if v, ok := s.testCall(x, ci); ok {
 			return v
 		}
+		b.noteZoneCall(x, ci.Fn)
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
@@ -129,6 +141,16 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 		}
 		return true
 	})
+	if fo := s.frameOwner(); fo != nil && hasTry(x.Body) {
+		// a `?` in the closure records the enclosing function's frame,
+		// with its parameters (decision 0104)
+		for _, vo := range b.frameVars(fo) {
+			if _, outer := s.varType[vo]; outer && !seen[vo] {
+				seen[vo] = true
+				caps = append(caps, vo)
+			}
+		}
+	}
 	var vals []*Value
 	var capTs []*Type
 	for _, vo := range caps {
@@ -142,8 +164,10 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 	f.Indirect = true
 	f.Captures = capTs
 	errT := failErr(ct.Err)
+	owner := s.frameOwner()
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, ct.Result, errT)
+		c.frameFo = owner
 		c.sub = s.sub
 		env := f.Params()[0]
 		for i, vo := range caps {
@@ -165,6 +189,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 // environment over a wrapper that calls it.
 func (s *fn) funcValue(fo *check.FuncObj, at ast.Node) *Value {
 	b := s.b
+	b.noteZoneValue(fo, at)
 	t := s.natOf(at.(ast.Expr))
 	if t.Kind != KFunc || fo.Recv != nil {
 		b.unsupported(at, "the function `"+fo.DisplayName()+"` as a value")
@@ -264,7 +289,7 @@ func (s *fn) ctorCall(vo *check.VariantObj, x *ast.CallExpr) *Value {
 		s.b.unsupported(x, "constructing `"+vo.Name+"` here")
 		return s.undef(t)
 	}
-	fs := t.Variants[tag].Fields
+	fs := userFields(t.Variants[tag])
 	vals := make([]*Value, len(fs))
 	pos := 0
 	for _, a := range x.Args {
@@ -407,7 +432,15 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 			b.unsupported(x, "`?` on a Result in a function that cannot fail")
 		} else {
 			ev := s.add(OpPayload, v.Type.Variants[failTag].Fields[0].Type, PayloadRef{failTag, 0}, v)
-			s.ret(s.add(OpVariant, want, want.VariantIndex("Err"), s.coerceErr(ev, et, s.errT, x)), x)
+			ce := s.coerceErr(ev, et, s.errT, x)
+			wi := want.VariantIndex("Err")
+			if fs := want.Variants[wi].Fields; len(fs) == 2 && fs[1].Name == traceField {
+				// the error's frames go on, with this `?`'s (decision 0104)
+				tr := s.pushFrame(s.errTrace(v, failTag), x)
+				s.ret(s.add(OpVariant, want, wi, ce, tr), x)
+			} else {
+				s.ret(s.add(OpVariant, want, wi, ce), x)
+			}
 		}
 	} else {
 		rt := b.typ(s.res, x)
@@ -424,6 +457,10 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 // typeCall is a numeric conversion `Float(i)`, `Int(f)`.
 func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 	to := s.natOf(x)
+	if obj.Kind == check.KNewtype && len(x.Args) == 1 && to.Kind == KStruct && len(to.Fields) == 1 {
+		// `Email(x)` (decision 0097)
+		return s.add(OpStruct, to, nil, s.valueAs(x.Args[0].Value, to.Fields[0].Type))
+	}
 	if len(x.Args) != 1 || !obj.Module.IsPrelude {
 		s.b.unsupported(x, "the conversion `"+obj.Name+"(...)`")
 		return s.undef(to)
@@ -433,6 +470,13 @@ func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 	switch {
 	case v.Type == to:
 		return v
+	case to.F32() && v.Type.U64():
+		return s.rt("f32_round", to, s.rt("u64_to_float", s.b.mod.Builtin(KFloat), v))
+	case to.F32() && v.Type.Kind == KInt:
+		return s.rt("i64_to_f32", to, v)
+	case to.Kind == KFloat && v.Type.Kind == KFloat:
+		// Float to Float32 rounds; Float32 to Float is the same double
+		return s.rt("f32_round", to, v)
 	case to.Kind == KFloat && v.Type.U64():
 		return s.rt("u64_to_float", to, v)
 	case to.Kind == KFloat && v.Type.Kind == KInt:
@@ -584,6 +628,11 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 				if i < len(implParams) {
 					d = implParams[i].Default
 				}
+				if d == nil {
+					// the std declaration's default (its expression was
+					// checked in the std module)
+					d = p.Default
+				}
 			}
 			if d == nil {
 				b.unsupported(x, "a call with a missing argument")
@@ -612,6 +661,43 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 		p.set(s.add(OpField, t.Elems[i+1], i+1, r))
 	}
 	return s.callResult(s.add(OpField, t.Elems[0], 0, r), x)
+}
+
+// ordMinMax is a.min(b) or a.max(b) on Int, Float, the sized integers,
+// and Str; nil for another type.
+func (s *fn) ordMinMax(name string, a, b *Value) *Value {
+	t := a.Type
+	switch {
+	case t.Sized():
+		return s.sizedMinMax(name, a, b)
+	case t.Kind == KInt || t.Kind == KFloat:
+		base := "Int"
+		if t.Kind == KFloat {
+			base = "Float"
+		}
+		return s.call(base+"."+name, t, "", a, b)
+	case t.Kind == KStr:
+		m := s.b.mod
+		boolT := m.Builtin(KBool)
+		c := s.call("str.cmp", m.Builtin(KInt), "", b, a)
+		var pick *Value
+		if name == "min" {
+			pick = s.add(OpLt, boolT, nil, c, s.cint(0))
+		} else {
+			pick = s.add(OpGt, boolT, nil, c, s.cint(0))
+		}
+		join := s.newBlock()
+		res := join.AddParam(t)
+		yes, no := s.branch(pick)
+		s.cur = yes
+		s.jump(join, b)
+		s.cur = no
+		s.jump(join, a)
+		s.seal(join)
+		s.cur = join
+		return res
+	}
+	return nil
 }
 
 // callResult ends the block after a call of a function that never
@@ -648,6 +734,63 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		return s.undef(nt)
 	}
 	switch fo.Recv.Name {
+	case "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Rune":
+		if fo.Static && fo.Name == "try" && len(x.Args) == 1 && nt.Kind == KEnum {
+			// `Int32.try(x)`: Some when x is in range (std/rt's Try)
+			v := s.valueAs(x.Args[0].Value, intT)
+			some := nt.VariantIndex("Some")
+			to := nt.Variants[some].Fields[0].Type
+			var ok *Value
+			if to.Name == "Rune" {
+				ok = s.rt("rune_valid", boolT, v)
+			} else {
+				ok = s.rt("int_in_range", boolT, append([]*Value{v}, s.sizeArgs(to)...)...)
+			}
+			join := s.newBlock()
+			res := join.AddParam(nt)
+			yes, no := s.branch(ok)
+			s.cur = yes
+			var w *Value = v
+			if to != intT {
+				w = s.add(OpIntConv, to, nil, v)
+			}
+			s.jump(join, s.add(OpVariant, nt, some, w))
+			s.cur = no
+			s.jump(join, s.variant(nt, "None", nil, x))
+			s.seal(join)
+			s.cur = join
+			return res
+		}
+	case "Buf":
+		switch {
+		case fo.Static && (fo.Name == "new" || fo.Name == "with_capacity") && nt.Kind == KList:
+			for _, a := range x.Args {
+				s.valueAs(a.Value, intT)
+			}
+			return s.call("list.new", nt, "")
+		case fo.RecvVar && fo.Name == "push" && len(x.Args) == 1:
+			p, ok := s.place(ci.Recv)
+			if !ok || p.t.Kind != KList {
+				break
+			}
+			l := p.get()
+			p.set(s.call("list.push", p.t, "", l, s.valueAs(x.Args[0].Value, p.t.Elems[0])))
+			return s.unit()
+		case !fo.Static && fo.Name == "len":
+			return s.call("list.len", intT, "", s.expr(ci.Recv))
+		case !fo.Static && fo.Name == "freeze":
+			return s.expr(ci.Recv)
+		}
+	case "Secret":
+		switch {
+		case fo.Static && fo.Name == "new" && len(x.Args) == 1 && nt.Kind == KStruct && len(nt.Fields) == 1:
+			return s.add(OpStruct, nt, nil, s.valueAs(x.Args[0].Value, nt.Fields[0].Type))
+		case !fo.Static && fo.Name == "reveal" && len(x.Args) == 0:
+			sv := s.expr(ci.Recv)
+			if sv.Type.Kind == KStruct && len(sv.Type.Fields) == 1 {
+				return s.add(OpField, sv.Type.Fields[0].Type, 0, sv)
+			}
+		}
 	case "Map", "Set":
 		if v, ok := s.mapCall(x, ci); ok {
 			return v
@@ -657,6 +800,20 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		case "print", "println", "eprint", "eprintln":
 			r := s.expr(ci.Recv)
 			return s.call("Stdio."+fo.Name, m.Builtin(KUnit), "", r, s.valueAs(x.Args[0].Value, m.Builtin(KStr)))
+		case "write", "read_line", "read_all", "lines":
+			// std/native/prelude.xo (decision 0102); reads wait on the
+			// event loop
+			if fo.Name != "write" {
+				b.needConc = true
+				if !b.conc {
+					return s.undef(nt)
+				}
+			}
+			if nm := b.nativeMod("std/prelude"); nm != nil {
+				if impl, ok := nm.Scope["stdio_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+					return s.callAs(x, ci, impl)
+				}
+			}
 		}
 	case "List":
 		if fo.RecvVar {
@@ -784,4 +941,16 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 	}
 	b.unsupported(x, "the method `"+fo.DisplayName()+"`")
 	return s.undef(nt)
+}
+
+// hasTry reports whether n contains a `?`.
+func hasTry(n ast.Node) bool {
+	found := false
+	check.Inspect(n, func(n ast.Node) bool {
+		if _, ok := n.(*ast.TryExpr); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
 }

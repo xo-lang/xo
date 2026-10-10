@@ -1,0 +1,77 @@
+// Every Fs method natively (decision 0102) against the Go backend: sub
+// capabilities and escapes, read_only, write_only, a denied sub, errors
+// (NotFound, NotDir, IsDir, NotEmpty, Denied), read_dir order, walk
+// order, set_modified and stat, create_temp, rename, remove_all.
+
+fn show(r: Result[(), FsErr]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-native-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d/e")?
+  let root = base.sub(name)
+  os.stdio.println("case ${root.case_sensitive() == os.fs.case_sensitive()}")
+  root.write("b.txt", b"bee")?
+  root.write("a.txt", b"alpha")?
+  root.write("d/z.txt", b"zz")?
+  root.write("d/e/y.txt", b"y")?
+  os.stdio.println("read ${root.read_text("a.txt")?} ${root.read("b.txt")?.len()}")
+  for fi in root.read_dir("")? {
+    os.stdio.println("dir ${fi.name} ${fi.path} ${fi.is_dir} ${if fi.is_dir { 0 } else { fi.size }}")
+  }
+  for fi in root.walk(".")? {
+    os.stdio.println("walk ${fi.name} ${fi.path} ${fi.is_dir}")
+  }
+  for fi in root.walk("d")? {
+    os.stdio.println("walk d ${fi.path}")
+  }
+  let d = root.sub("d")
+  os.stdio.println("sub ${d.read_text("z.txt")?} ${d.read_text("/e/y.txt")?} ${d.sub("e").read_text("y.txt")?}")
+  os.stdio.println("escape ${show(d.write("../x.txt", b"x"))} ${show(d.write("e/../../x.txt", b"x"))} ${show(d.write("e/../ok.txt", b"k"))}")
+  os.stdio.println("missing ${show(root.write("nope/f.txt", b"x"))} ${root.exists("nope")?} ${root.stat("nope")?.is_none()}")
+  os.stdio.println("notdir ${show(root.write("a.txt/f", b"x"))} ${show(root.create_dir_all("a.txt/q"))}")
+  os.stdio.println("isdir ${show(root.write("d", b"x"))}")
+  match root.read("d") {
+    Ok(_) => os.stdio.println("read dir ok?")
+    Err(e) => os.stdio.println("read dir ${e}")
+  }
+  os.stdio.println("notempty ${show(root.remove("d"))}")
+  let ro = root.read_only()
+  os.stdio.println("ro ${ro.read_text("a.txt")?} ${show(ro.write("a.txt", b"no"))} ${show(ro.sub("d").remove("z.txt"))}")
+  let wo = root.write_only()
+  match wo.read("a.txt") {
+    Ok(_) => os.stdio.println("wo read ok?")
+    Err(e) => os.stdio.println("wo ${e} ${show(wo.write("w.txt", b"w"))}")
+  }
+  let denied = root.sub("../..")
+  os.stdio.println("denied ${show(denied.write("x", b"x"))}")
+  match denied.read("x") {
+    Ok(_) => os.stdio.println("denied read ok?")
+    Err(e) => os.stdio.println("denied read ${e}")
+  }
+  let t = Time.from_unix(1700000000)
+  root.set_modified("a.txt", t)?
+  match root.stat("a.txt")? {
+    Some(fi) => os.stdio.println("stat ${fi.name} ${fi.path} ${fi.size} ${fi.modified.unix()} ${fi.is_dir}")
+    None => os.stdio.println("stat none")
+  }
+  match root.stat("")? {
+    Some(fi) => os.stdio.println("stat root path=[${fi.path}] ${fi.is_dir}")
+    None => os.stdio.println("stat root none")
+  }
+  let tmp = root.create_temp("d", "tmp-")?
+  os.stdio.println("temp ${tmp.starts_with("d/tmp-")} ${root.exists(tmp)?}")
+  root.rename(tmp, "d/renamed.txt")?
+  os.stdio.println("renamed ${root.exists("d/renamed.txt")?} ${root.exists(tmp)?} ${show(root.rename("nope", "x"))}")
+  root.remove("d/renamed.txt")?
+  os.stdio.println("removed ${root.exists("d/renamed.txt")?} ${show(root.remove("d/renamed.txt"))}")
+  os.stdio.println("remove_all ${show(root.remove_all("d"))} ${root.exists("d")?} ${show(root.remove_all("d"))}")
+  os.stdio.println("debug ${root.debug()}")
+  base.remove_all(name)?
+  os.stdio.println("cleaned ${base.exists(name)?}")
+}

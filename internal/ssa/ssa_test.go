@@ -106,8 +106,8 @@ func TestUnsupported(t *testing.T) {
 		t.Fatalf("check failed: %v", err)
 	}
 	_, err = ssa.Build(res)
-	if err == nil || !strings.Contains(err.Error(), "main.xo:") || !strings.Contains(err.Error(), "list patterns") {
-		t.Fatalf("got %v, want an error about list patterns with a position", err)
+	if err == nil || !strings.Contains(err.Error(), "main.xo:") || !strings.Contains(err.Error(), "`dbg`") {
+		t.Fatalf("got %v, want an error about `dbg` with a position", err)
 	}
 }
 

@@ -291,6 +291,14 @@ const (
 	// entry function (Func.Entry) handed to the runtime, which calls it.
 	OpFuncAddr
 
+	// OpRebind is a function value with the code of the Indirect function
+	// named Aux and the environment of the function value Args[0]
+	// (consumed: the environment moves into the result). The two
+	// functions' Captures must be the same types: the builder emits it
+	// only for the method functions of an interface value, which share
+	// one environment holding the concrete value (build_iface.go).
+	OpRebind
+
 	// Calls. Aux is the callee name (string). A user function is called
 	// by its Func.Name; runtime and prelude operations (list ops, string
 	// building, printing, math) use dotted names such as `list.get`,
@@ -343,7 +351,7 @@ var opNames = [...]string{
 	OpIntToFloat: "itof", OpFloatToInt: "ftoi", OpIntConv: "iconv",
 	OpStruct: "struct", OpTuple: "tuple", OpVariant: "variant", OpField: "field",
 	OpSetField: "setfield", OpTag: "tag", OpPayload: "payload", OpCap: "cap", OpUndef: "undef",
-	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr",
+	OpCall: "call", OpFault: "fault", OpClosure: "closure", OpCapture: "capture", OpCallValue: "callv", OpBox: "box", OpUnbox: "unbox", OpFuncAddr: "funcaddr", OpRebind: "rebind",
 	OpRetain: "retain", OpRelease: "release", OpDrop: "drop", OpReuse: "reuse", OpShare: "share",
 	OpJump: "jump", OpBranch: "br", OpReturn: "ret", OpUnreachable: "unreachable",
 }
@@ -482,9 +490,11 @@ type Module struct {
 	// faults are raised by `rt.fault_raise`, and the values that can
 	// fault carry their landing (Value.Pad).
 	FaultUnwind bool
-	faults      map[*Func]bool // mayFault while Verify runs
-	types       map[string]*Type
-	order       []*Type // named struct and enum types, in creation order
+	// TZ is the zone data std/time needs (build_time.go).
+	TZ     TZUse
+	faults map[*Func]bool // mayFault while Verify runs
+	types  map[string]*Type
+	order  []*Type // named struct and enum types, in creation order
 }
 
 // NewModule returns an empty module with the builtin types.
@@ -502,6 +512,24 @@ func (m *Module) Builtin(k Kind) *Type {
 	m.types[name] = t
 	return t
 }
+
+// Float32 returns the interned type Float32: a KFloat whose values are
+// doubles holding float32 values (Bits 32). Arithmetic is the double
+// operation rounded to float32 (`rt.f32_round`), which is the correctly
+// rounded float32 result for + - * / (a double has more than twice the
+// precision); text and comparisons are the double's, as on the Go
+// backend (std/rt's FloatStr(float64(x))).
+func (m *Module) Float32() *Type {
+	if t := m.types["Float32"]; t != nil {
+		return t
+	}
+	t := &Type{Kind: KFloat, Name: "Float32", Bits: 32}
+	m.types["Float32"] = t
+	return t
+}
+
+// F32 reports whether t is Float32.
+func (t *Type) F32() bool { return t.Kind == KFloat && t.Bits == 32 }
 
 // sizedInts are the sized integer types: bits and signedness.
 var sizedInts = map[string]struct {

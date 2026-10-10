@@ -1235,9 +1235,42 @@ first, AST based prototype, since deleted) and
   build_json.go), and std/log run natively; also interpolation of any
   type (Display, Debug of `derive Display`, Duration, Time,
   build_show.go), `main ! Error` (`error: <text>`, exit 1), `requires`
-  clauses, and values of Error, Display, Debug as their text. The
+  clauses, and values of Error, Display, Debug as their text. Values of
+  other interface types (decision 0100, 2026-10-09,
+  `internal/ssa/build_iface.go`) are `xo.iface[I]` structs of closures
+  sharing one environment (`OpRebind`), with hidden `xo.eq`, `xo.tid`,
+  `xo.show` fields; goldens `iface_*`. Decision 0101 adds Float32 (a
+  double rounded through `rt.f32_round`), `Secret[T]`, `Buf[T]`,
+  `xo.cmp[T]` order helpers, and more std value methods.
+- TestGenGoldensNative (`internal/llvm/gen_native_test.go`, 2026-10-09)
+  builds every internal/gen golden named in
+  `internal/llvm/testdata/gen_native.txt` with Go, LLVM, and (on arm64
+  hosts) arm64, and requires the same output and no live allocation; add
+  a golden there when a gap closes.
+- std/native/path.xo (std/path) and std/native/task.xo (Semaphore over a
+  channel of permits, Once over a Mutex holding the result,
+  map_concurrent over a scope) are native implementations in Xo
+  (2026-10-09); goldens `std_path`, `task_native`.
+- Fs natively (decision 0102, 2026-10-09): `xo.Fs {root, mode}`, methods
+  `fs_*` in std/native/prelude.xo over `std/llrt/xo_fs.c`; standard input
+  in `std/llrt/xo_stdin.c` (descriptor 0 on the poller); TestStdinNative
+  pipes input into Go and native builds and compares.
+- Error frames natively (decision 0104, 2026-10-09): Err carries a hidden
+  `xo.tr` trace (internal/ssa build_frames.go); TestErrorTracesNative
+  compares whole standard error, frame lines included. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no TLS; no `http.stream`).
+- std/time natively (2026-10-09, decision 0094 "Native implementation"):
+  std/native/time.xo (civil time, layouts, format, parse) over
+  std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
+  rttime.xo). xo_std.c includes xo_time.c only with `-DXO_TIME`, which
+  `timeFlags` (internal/build/tzdata.go) passes only for programs that
+  load std/time, together with the generated `xo_tzdata.h` in the build
+  directory (per use zone data: mode 0 TZif per constant name, 1 the
+  whole zoneinfo.zip, 2 `--tzdata=system`). Tests: TestTimeDiff
+  (`XO_TIMEDIFF_OUT=<prefix>` keeps the program and its output),
+  TestZoneDataPerUseNative, and the time goldens in gen_native.txt.
+  Last verified: 2026-10-09.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated

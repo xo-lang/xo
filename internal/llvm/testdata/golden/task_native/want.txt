@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+once 42 42
+shared 1 same true n 6
+failed shared Err(Down(n: 1)) Err(Down(n: 1))
+semaphore peak 2
+map_concurrent [Ok(3), Err("odd 5"), Ok(2), Err("odd 3"), Ok(1), Err("odd 1"), Ok(0)]
+big limit [Ok(10), Ok(20)] empty 0
+results [Err("odd 1"), Ok(1), Err("odd 3"), Ok(2)]
+fault a semaphore needs at least one permit, got 0
+--- stderr

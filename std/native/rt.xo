@@ -111,3 +111,54 @@ fn fault_at(msg: Str, at: Loc) -> Never
 fn dyn_raw(v: Debug) -> Bool
 /// The text of a log field value (its Display text, else its Debug text).
 fn dyn_text(v: Debug) -> Str
+
+// ---------------------------------------------------------------------------
+// Fs (decision 0102): an Fs value is its root and mode bits (1 a sub
+// capability, 2 read only, 4 write only); the operations take OS paths
+// prelude.xo resolved, and an Xo path for the error. internal/ssa lowers
+// fs_root, fs_mode, and fs_new itself.
+
+/// The root of f ("" for os.fs).
+fn fs_root(f: Fs) -> Str
+/// The mode bits of f.
+fn fs_mode(f: Fs) -> Int
+/// The Fs value with root and mode.
+fn fs_new(root: Str, mode: Int) -> Fs
+/// The contents of the file in a list of one, or empty with the status set.
+fn fs_read(path: Str) -> List[Bytes]
+/// 0, or FsErr's tag plus one of the last operation's error.
+fn fs_status() -> Int
+/// The path and the message of the last error.
+fn fs_msg() -> List[Str]
+/// Stats p (following a symbolic link when follow) for fs_info.
+fn fs_stat(p: Str, follow: Bool, x: Str) -> Int
+/// 0 is_dir (0 or 1), 1 size, 2 modified (Unix nanoseconds).
+fn fs_info(which: Int) -> Int
+/// The entries of directory p, in no order.
+fn fs_names(p: Str, x: Str) -> List[Str]
+fn fs_write(p: Str, data: Bytes, x: Str) -> Int
+fn fs_rename(a: Str, b: Str, x: Str) -> Int
+fn fs_remove(p: Str, x: Str) -> Int
+fn fs_remove_all(p: Str, x: Str) -> Int
+fn fs_mkdir_all(p: Str, x: Str) -> Int
+fn fs_chtimes(p: Str, t: Int, x: Str) -> Int
+/// The base name of a new empty file in dir, "" with the status set.
+fn fs_create_temp(dir: Str, prefix: Str, x: Str) -> Str
+fn fs_cwd() -> Str
+fn fs_case_sensitive() -> Bool
+/// Whether an Fs operation reports Canceled (not in deferred code).
+fn fs_canceled() -> Bool
+/// A Time of Unix nanoseconds, and back (both lowered as Int).
+fn time_of(ns: Int) -> Time
+fn time_ns(t: Time) -> Int
+
+// ---------------------------------------------------------------------------
+// Standard streams (decision 0102)
+
+/// Writes b to standard output (buffered with print and println).
+fn print(b: Bytes)
+/// A line (all false) or the rest of standard input; stdin_status tells
+/// 0 the text, 1 the end of input, 2 an error (stdin_msg), 3 canceled.
+fn stdin_read(all: Bool) -> Str
+fn stdin_status() -> Int
+fn stdin_msg() -> Str

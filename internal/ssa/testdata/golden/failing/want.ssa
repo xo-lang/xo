@@ -1,8 +1,9 @@
-type Result[List[Str], AppErr] = enum { Ok(v: List[Str]) | Err(e: AppErr) }
+type Result[List[Str], AppErr] = enum { Ok(v: List[Str]) | Err(e: AppErr, xo.tr: xo.trace) }
 type AppErr = enum { Parse(0: ParseErr) | Limit(what: Str, n: Int) }
 type ParseErr = enum { Empty | Bad(text: Str) }
+type xo.trace = struct { frames: List[(Str, Str, fn() -> Str)] }
 type Str? = enum { None | Some(v: Str) }
-type Result[Str, ParseErr] = enum { Ok(v: Str) | Err(e: ParseErr) }
+type Result[Str, ParseErr] = enum { Ok(v: Str) | Err(e: ParseErr, xo.tr: xo.trace) }
 type ParseErr? = enum { None | Some(v: ParseErr) }
 
 func main(v0: Os) -> () {
@@ -343,7 +344,7 @@ b2:  ; preds b1
 b3:  ; preds b8
   v14: Int = const 1
   v15: Int = add v6, v14
-  jump b1(v15, v28, v30)
+  jump b1(v15, v36, v38)
 b4:  ; preds b1
   v17: Result[List[Str], AppErr] = variant 0, v8
   ret v17, v7
@@ -355,29 +356,39 @@ b5:  ; preds b2
 b6:  ; preds b5
   v23: ParseErr = payload 1.0, v12
   v24: AppErr = variant 0, v23
-  v25: Result[List[Str], AppErr] = variant 1, v24
-  ret v25, v7
+  v25: xo.trace = payload 1.1, v12
+  v26: fn() -> Str = closure xo.frameargs(xs: List[Str], log: List[Str]), v0, v7
+  v27: Str = const "failing.words"
+  v28: Str = const "main.xo:29"
+  v29: (Str, Str, fn() -> Str) = tuple v27, v28, v26
+  v30: List[(Str, Str, fn() -> Str)] = field 0, v25
+  v31: List[(Str, Str, fn() -> Str)] = call list.push, v30, v29
+  v32: xo.trace = struct v31
+  v33: Result[List[Str], AppErr] = variant 1, v24, v32
+  ret v33, v7
 b7:  ; preds b5
-  v27: Str = payload 0.0, v12
-  v28: List[Str] = call list.push, v7, v27
-  v29: () = tuple
-  v30: List[Str] = call list.push, v8, v27
-  v31: () = tuple
-  v32: Int = call list.len, v30
-  v33: Int = const 2
-  v34: Bool = gt v32, v33
-  br v34, b9(), b10()
+  v35: Str = payload 0.0, v12
+  v36: List[Str] = call list.push, v7, v35
+  v37: () = tuple
+  v38: List[Str] = call list.push, v8, v35
+  v39: () = tuple
+  v40: Int = call list.len, v38
+  v41: Int = const 2
+  v42: Bool = gt v40, v41
+  br v42, b9(), b10()
 b8:  ; preds b10
-  v36: () = tuple
+  v44: () = tuple
   jump b3()
 b9:  ; preds b7
-  v38: Str = const "words"
-  v39: Int = call list.len, v30
-  v40: AppErr = variant 1, v38, v39
-  v41: Result[List[Str], AppErr] = variant 1, v40
-  ret v41, v28
+  v46: Str = const "words"
+  v47: Int = call list.len, v38
+  v48: AppErr = variant 1, v46, v47
+  v49: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
+  v50: xo.trace = struct v49
+  v51: Result[List[Str], AppErr] = variant 1, v48, v50
+  ret v51, v36
 b10:  ; preds b7
-  v43: () = tuple
+  v53: () = tuple
   jump b8()
 }
 
@@ -425,24 +436,112 @@ b1:  ; preds b3
   br v7, b5(), b6()
 b2:  ; preds b0
   v9: ParseErr = variant 0
-  v10: Result[Str, ParseErr] = variant 1, v9
-  ret v10
+  v10: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
+  v11: xo.trace = struct v10
+  v12: Result[Str, ParseErr] = variant 1, v9, v11
+  ret v12
 b3:  ; preds b0
-  v12: () = tuple
+  v14: () = tuple
   jump b1()
 b4:  ; preds b6
-  v14: () = tuple
-  v15: Str = const "!"
-  v16: Str = call str.concat, v0, v15
-  v17: Result[Str, ParseErr] = variant 0, v16
-  ret v17
+  v16: () = tuple
+  v17: Str = const "!"
+  v18: Str = call str.concat, v0, v17
+  v19: Result[Str, ParseErr] = variant 0, v18
+  ret v19
 b5:  ; preds b1
-  v19: Str = const "got "
-  v20: Str = call str.concat, v19, v0
-  v21: ParseErr = variant 1, v20
-  v22: Result[Str, ParseErr] = variant 1, v21
-  ret v22
+  v21: Str = const "got "
+  v22: Str = call str.concat, v21, v0
+  v23: ParseErr = variant 1, v22
+  v24: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
+  v25: xo.trace = struct v24
+  v26: Result[Str, ParseErr] = variant 1, v23, v25
+  ret v26
 b6:  ; preds b1
-  v24: () = tuple
+  v28: () = tuple
   jump b4()
+}
+
+func xo.frameargs(xs: List[Str], log: List[Str])(v0: fn() -> Str) -> Str captures (List[Str], List[Str]) {
+b0(v0: fn() -> Str):
+  v1: Str = const ""
+  v2: Str = const "xs="
+  v3: Str = call str.concat, v1, v2
+  v4: List[Str] = capture 0, v0
+  v5: Str = const ""
+  v6: Str = call xo.debug[List[Str]], v5, v4
+  v7: Int = call Str.len, v6
+  v8: Int = const 64
+  v9: Bool = gt v7, v8
+  br v9, b1(), b2()
+b1:  ; preds b0
+  v11: Int = const 0
+  v12: Int = const 61
+  v13: Str = call rt.str_slice, v6, v11, v12
+  v14: Str = const "..."
+  v15: Str = call str.concat, v13, v14
+  jump b3(v15)
+b2:  ; preds b0
+  jump b3(v6)
+b3(v18: Str):  ; preds b1, b2
+  v19: Str = call str.concat, v3, v18
+  v20: Str = const ", log="
+  v21: Str = call str.concat, v19, v20
+  v22: List[Str] = capture 1, v0
+  v23: Str = const ""
+  v24: Str = call xo.debug[List[Str]], v23, v22
+  v25: Int = call Str.len, v24
+  v26: Int = const 64
+  v27: Bool = gt v25, v26
+  br v27, b4(), b5()
+b4:  ; preds b3
+  v29: Int = const 0
+  v30: Int = const 61
+  v31: Str = call rt.str_slice, v24, v29, v30
+  v32: Str = const "..."
+  v33: Str = call str.concat, v31, v32
+  jump b6(v33)
+b5:  ; preds b3
+  jump b6(v24)
+b6(v36: Str):  ; preds b4, b5
+  v37: Str = call str.concat, v21, v36
+  ret v37
+}
+
+func xo.debug[List[Str]](v0: Str, v1: List[Str]) -> Str {
+b0(v0: Str, v1: List[Str]):
+  v2: Str = const "["
+  v3: Str = call str.concat, v0, v2
+  v4: Int = call list.len, v1
+  v5: Int = const 0
+  jump b1(v5, v3)
+b1(v7: Int, v8: Str):  ; preds b0, b6
+  v9: Bool = lt v7, v4
+  br v9, b2(), b3()
+b2:  ; preds b1
+  v11: Int = const 0
+  v12: Bool = gt v7, v11
+  br v12, b4(), b5()
+b3:  ; preds b1
+  v14: Str = const "]"
+  v15: Str = call str.concat, v8, v14
+  ret v15
+b4:  ; preds b2
+  v17: Str = const ", "
+  v18: Str = call str.concat, v8, v17
+  jump b6(v18)
+b5:  ; preds b2
+  jump b6(v8)
+b6(v21: Str):  ; preds b4, b5
+  v22: Str = call list.index, v1, v7
+  v23: Str = call xo.debug[Str], v21, v22
+  v24: Int = const 1
+  v25: Int = add v7, v24
+  jump b1(v25, v23)
+}
+
+func xo.debug[Str](v0: Str, v1: Str) -> Str {
+b0(v0: Str, v1: Str):
+  v2: Str = call rt.rs_append_quote, v0, v1
+  ret v2
 }

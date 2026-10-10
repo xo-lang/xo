@@ -147,11 +147,27 @@ __attribute__((unused)) static void tw_exit(int64_t code) {
 
 // tw_kick runs after a deadlock check found every context blocked: the
 // clock moves to the earliest timer and every timer due then fires; with
-// none the program is deadlocked.
+// none the program is deadlocked. When the timers that fired woke no
+// context (a FakeProc.signal_after signal whose stop wakes nobody), every
+// context still waits and none would check again: the check runs again
+// here, and the clock moves on.
+static int tw_kick_once(void);
+
 static void tw_kick(void) {
-	if (!tw.on || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
-		return;
+	while (tw_kick_once()) {
+		lk(&pool.mu);
+		dl_check_locked();
+		unlk(&pool.mu);
 	}
+}
+
+// tw_kick_once is one move of the clock; 1 when only callback timers
+// fired (no park was signaled by the clock itself).
+static int tw_kick_once(void) {
+	if (!tw.on || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
+		return 0;
+	}
+	int parks = 0;
 	pthread_mutex_lock(&ev.mu);
 	if (ev.n == 0) {
 		pthread_mutex_unlock(&ev.mu);
@@ -170,11 +186,13 @@ static void tw_kick(void) {
 		__atomic_store_n(&t->fired, 1, __ATOMIC_RELEASE);
 		if (t->park) {
 			park_signal(t->park);
+			parks++;
 		} else {
 			t->fn(t);
 		}
 	}
 	pthread_mutex_unlock(&ev.mu);
+	return parks == 0;
 }
 
 __attribute__((unused)) static void tw_sleep_record(int64_t d) {

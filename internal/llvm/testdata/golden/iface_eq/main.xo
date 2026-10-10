@@ -1,0 +1,90 @@
+// Interface values natively (decision 0100): capability arguments,
+// faults unwinding through a method called through an interface, and
+// `==` on interface values (same type and equal value).
+
+use std/task
+
+interface Sink {
+  fn put(self, out: Stdio, line: Str) uses stdio
+  fn limit(self) -> Int
+}
+
+struct Plain {
+  prefix: Str
+}
+
+fn (p: Plain) put(out: Stdio, line: Str) uses stdio { out.println(p.prefix + line) }
+
+fn (p: Plain) limit() -> Int { 3 }
+
+struct Strict {
+  max: Int
+}
+
+fn (s: Strict) put(out: Stdio, line: Str) uses stdio {
+  if line.len() > s.max {
+    fault("line too long: ${line.len()}")
+  }
+  out.println("strict " + line)
+}
+
+fn (s: Strict) limit() -> Int { s.max }
+
+struct Tagged {
+  tags: Map[Str, Int]
+}
+
+fn (t: Tagged) put(out: Stdio, line: Str) uses stdio { out.println("tagged ${t.tags.len()} " + line) }
+
+fn (t: Tagged) limit() -> Int { t.tags.len() }
+
+struct WithFn {
+  f: fn(Int) -> Int
+}
+
+fn (w: WithFn) put(out: Stdio, line: Str) uses stdio { out.println("fn ${(w.f)(1)} " + line) }
+
+fn (w: WithFn) limit() -> Int { (w.f)(2) }
+
+interface Limited {
+  fn limit(self) -> Int
+}
+
+struct Pair {
+  a: Sink
+  b: Sink?
+}
+
+fn emit(out: Stdio, k: Sink, lines: List[Str]) uses stdio {
+  for l in lines {
+    k.put(out, l)
+  }
+}
+
+fn main(os: Os) {
+  let sinks: List[Sink] = [Plain{prefix: "> "}, Strict{max: 4}, Tagged{tags: {"a": 1, "b": 2}}, WithFn{f: fn(x) { x * 7 }}]
+  for k in sinks {
+    let r = task.isolate(fn() { emit(os.stdio, k, ["ab", "abcdef"]) })
+    match r {
+      Ok(_) => os.stdio.println("done ${k.limit()}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("isolated ${k.limit()}: ${info.msg}")
+      Err(_) => os.stdio.println("other")
+    }
+  }
+  let p1: Sink = Plain{prefix: "x"}
+  let p2: Sink = Plain{prefix: "x"}
+  let p3: Sink = Plain{prefix: "y"}
+  let s4: Sink = Strict{max: 3}
+  os.stdio.println("eq ${p1 == p2} ${p1 == p3} ${p1 != p3} ${p1 == s4} ${sinks[0] == sinks[0]}")
+  let t1: Sink = Tagged{tags: {"a": 1, "b": 2}}
+  let t2: Sink = Tagged{tags: {"b": 2, "a": 1}}
+  os.stdio.println("maps ${t1 == t2} ${t1 == sinks[2]} ${sinks[3] == sinks[3]}")
+  let l1: Limited = p1
+  let l2: Limited = s4
+  let l3: Limited = Strict{max: 3}
+  os.stdio.println("narrowed ${l1 == l2} ${l2 == l3} ${l1.limit() + l2.limit()}")
+  let q1 = Pair{a: p1, b: Some(s4)}
+  let q2 = Pair{a: p2, b: Some(Strict{max: 3})}
+  let q3 = Pair{a: p2, b: None}
+  os.stdio.println("pairs ${q1 == q2} ${q1 == q3} ${[p1, s4] == [p2, s4]}")
+}

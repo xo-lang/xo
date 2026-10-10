@@ -1,0 +1,36 @@
+exit 0
+--- stdout
+case true
+read alpha 3
+dir a.txt a.txt false 5
+dir b.txt b.txt false 3
+dir d d true 0
+walk a.txt a.txt false
+walk b.txt b.txt false
+walk d d true
+walk e d/e true
+walk y.txt d/e/y.txt false
+walk z.txt d/z.txt false
+walk d d/e
+walk d d/e/y.txt
+walk d d/z.txt
+sub zz y y
+escape Denied(path: "../x.txt") Denied(path: "e/../../x.txt") ok
+missing NotFound(path: "nope/f.txt") false true
+notdir NotDir(path: "a.txt/f") NotDir(path: "a.txt/q")
+isdir IsDir(path: "d")
+read dir IsDir(path: "d")
+notempty NotEmpty(path: "d")
+ro alpha Denied(path: "a.txt") Denied(path: "z.txt")
+wo Denied(path: "a.txt") ok
+denied Denied(path: "x")
+denied read Denied(path: "x")
+stat a.txt a.txt 5 1700000000 false
+stat root path=[] true
+temp true true
+renamed true false NotFound(path: "nope")
+removed false NotFound(path: "d/renamed.txt")
+remove_all ok false ok
+debug <fs>
+cleaned false
+--- stderr

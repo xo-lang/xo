@@ -43,11 +43,11 @@ func TestBuildRunLLVM(t *testing.T) {
 		t.Fatalf("run: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
 	// constructs outside the subset are build errors naming them
-	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn head(xs: List[Int]) -> Int {\n  match xs {\n    [first, ..] => first\n    [] => 0\n  }\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn head(xs: List[Int]) -> Int {\n  dbg(xs.len())\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	errOut.Reset()
-	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:3:5: error XO1201: not available without a garbage collector (`--no-gc`) yet: list patterns (support is planned)") {
+	if code := run([]string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:3: error XO1201: not available without a garbage collector (`--no-gc`) yet: the prelude function `dbg` (support is planned)") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 	// the deterministic scheduler is the Go backend's (decision 0068)
@@ -86,7 +86,7 @@ func TestNoGC(t *testing.T) {
 	if code := run([]string{"run", "--no-gc", src}, &out, &errOut); code != 0 || out.String() != "3\n" {
 		t.Fatalf("run --no-gc: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
-	write("fn head(xs: List[Int]) -> Int {\n  match xs {\n    [first, ..] => first\n    _ => 0\n  }\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n")
+	write("fn head(xs: List[Int]) -> Int {\n  dbg(xs.len())\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n")
 	out.Reset()
 	errOut.Reset()
 	if code := run([]string{"build", "--no-gc", "--json", src}, &out, &errOut); code != 1 {
@@ -103,7 +103,7 @@ func TestNoGC(t *testing.T) {
 		t.Fatalf("want one diagnostic: %s", out.String())
 	}
 	d := got.Diagnostics[0]
-	if d.Code != "XO1201" || d.Span.Line != 3 || d.Span.Col != 5 || !strings.Contains(d.Message, "list patterns") || !strings.Contains(d.Message, "planned") {
+	if d.Code != "XO1201" || d.Span.Line != 2 || d.Span.Col != 3 || !strings.Contains(d.Message, "`dbg`") || !strings.Contains(d.Message, "planned") {
 		t.Errorf("diagnostic: %+v", d)
 	}
 	out.Reset()

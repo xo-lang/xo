@@ -395,6 +395,17 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		if nargs(1) != "" || arg(0).Kind != KBox || v.Type != arg(0).Elems[0] {
 			return "unbox takes Box[T] to T"
 		}
+	case OpRebind:
+		name, _ := v.Aux.(string)
+		callee := m.Func(name)
+		t := v.Type
+		if callee == nil || !callee.Indirect || t == nil || t.Kind != KFunc || nargs(1) != "" || arg(0).Kind != KFunc {
+			return "rebind of a function that is not Indirect, or not of function types"
+		}
+		ps := callee.Params()
+		if len(ps) != len(t.Elems)+1 || ps[0].Type != t || len(callee.Results) != 1 || callee.Results[0] != t.Ret {
+			return "rebind type does not match its function"
+		}
 	case OpFuncAddr:
 		name, _ := v.Aux.(string)
 		if callee := m.Func(name); callee == nil || !callee.Entry || len(v.Args) != 0 || v.Type == nil || v.Type.Kind != KInt {
@@ -402,7 +413,10 @@ func (m *Module) checkTypes(f *Func, v *Value) string {
 		}
 	case OpCapture:
 		i, ok := v.Aux.(int)
-		if !ok || nargs(1) != "" || !f.Indirect || v.Args[0] != f.Params()[0] || i < 0 || i >= len(f.Captures) || v.Type != f.Captures[i] {
+		// Args[0] is the function's own closure, or (the xo.eq function
+		// of an interface value, build_iface.go) another closure whose
+		// environment has the same layout
+		if !ok || nargs(1) != "" || !f.Indirect || (v.Args[0] != f.Params()[0] && arg(0).Kind != KFunc) || i < 0 || i >= len(f.Captures) || v.Type != f.Captures[i] {
 			return "capture must read the environment of its own function"
 		}
 	case OpCallValue:

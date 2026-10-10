@@ -2,7 +2,8 @@
 
 Status: Accepted (2026-10-09, by the owner). Go backend and checker
 rules implemented 2026-10-09 (see Implementation); native runtime and
-cross backend diff tests not yet.
+cross backend diff tests implemented 2026-10-09 (see Native
+implementation).
 
 ## Context
 
@@ -70,8 +71,8 @@ of habit agents carry over.
   13.5): `{frac}` includes the dot, `Civil.zone` is the zone name, gap
   `Earlier` uses the offset before the change, `{hour12}` needs
   `{ampm}`, parsing a gap or overlap without an offset is an error.
-- Native backends: every function is `XO1201` (planned); types and
-  constants build.
+- Native backends: every function was `XO1201` (planned) at first;
+  see Native implementation below.
 
 ## Note (2026-10-09): error display text
 
@@ -81,3 +82,61 @@ declare `display()` with sentences in the style of `ParseErr` and
 `LayoutErr` (std.md 13.5 lists all four); the variants and fields are
 unchanged. Pinned by `std/rt/timedisplay_test.go` and the
 `time_civil`, `time_zones`, and `time_dynamic_zone` goldens.
+
+## Native implementation (2026-10-09)
+
+All of std/time builds on the LLVM and arm64 backends (`--no-gc`) with
+output byte identical to the Go backend's; nothing is left `XO1201`.
+
+- `std/native/time.xo` implements the module in Xo (decision 0074):
+  `Zone` is a struct (name, fixed flag, fixed offset in seconds, and the
+  C runtime's zone id, 0 for UTC; a name always gets the same id, so
+  `==` compares what std/rt compares), civil dates, `instant` with the
+  same gap and overlap search, the layout parser, `format`, strict
+  `parse`, `check_layout`, the four error texts, and `zone_debug`
+  (`Zone(UTC)`). A bad layout faults through `rt.fault_at` at the
+  caller's line with std/rt's text.
+- Zone rules are C: `std/llrt/xo_time.c` ports Go's
+  `LoadLocationFromTZData`, `Location.lookup` (the first zone rule for
+  times before the first transition, binary search, the POSIX TZ footer
+  through `tzset`, and the cache of the zone in effect when the zone is
+  loaded, which Go consults first), and `LoadLocation`'s host
+  directories, with a stored zip reader for the database. Intrinsics in
+  `std/native/rttime.xo`: `tz_load`, `tz_load_host`, `tz_local_name`,
+  `tz_offset`, `tz_abbr`. Writing the lookup in C kept one copy of Go's
+  rules and a process wide zone table; everything else is Xo.
+- Zone data per use, as on the Go backend: the SSA builder records
+  `time.zone` calls and values (`internal/ssa/build_time.go`,
+  `Module.TZ`); `internal/build/tzdata.go` (`tzSelect`, shared with the
+  Go backend's `tzFiles`) writes `xo_tzdata.h` next to xo_rt.c: the TZif
+  data of each constant name (mode 0), the whole zoneinfo.zip (mode 1,
+  with the same build note), or nothing and the host database (mode 2,
+  `--tzdata=system`). xo_std.c includes xo_time.c only under `XO_TIME`,
+  which the build defines only for programs that load std/time, so other
+  programs do not grow: hello world stays 310,392 bytes (arm64) and
+  88,264 bytes (LLVM) on darwin/arm64, as before. A UTC only std/time
+  program is 345,424 / 139,584 bytes, one constant zone 362,048 /
+  156,928, a name known at run time 758,400 / 569,840.
+- Prelude pieces the goldens need are native too (std/native/prelude.xo):
+  `Duration.from_secs`, `scale`, `ceil_seconds`, `Time.parse_rfc3339`
+  (the union of Go's fast path and its general parser for RFC3339Nano:
+  one digit hours, a comma before the fraction, offsets up to +24:60,
+  UnixNano wrapping for years outside Time), `Time.format_rfc3339`, and
+  `Time.UNIX_EPOCH` read as a value. A std function with a native
+  implementation and no `rt.Loc` parameter can be a function value
+  (`let load = time.zone`).
+- `time.local`: `TZ` (the program's zone data, then the host database),
+  else the `/etc/localtime` link, else `/etc/localtime` itself as
+  `Local`. A native test binary's Env is fake, so without `TZ` it gives
+  `utc()` there (std/rt checks for the real Env instead).
+- Tests: the goldens `time_civil`, `time_zones`, `time_format`,
+  `time_dynamic_zone` (its `args.txt` is now passed natively too),
+  `time_layout_fault`, and `duration_time` in
+  `internal/llvm/testdata/gen_native.txt`; `TestTimeDiff`
+  (`internal/llvm/time_diff_test.go`: about 70,000 lines of zone
+  equality and Debug, transitions of 19 zones with odd rules, random
+  instants over the whole range, gaps and overlaps, mutated parse texts,
+  random layouts, Date arithmetic with negative years, compared Go
+  against LLVM and arm64 with the leak check;
+  `XO_TIMEDIFF_OUT=<prefix>` keeps the program and its output);
+  `TestZoneDataPerUseNative`.

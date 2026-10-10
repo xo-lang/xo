@@ -1,0 +1,85 @@
+// Newtypes and list patterns natively (decision 0097): construction,
+// `e.0` reads and writes, newtype patterns, Debug, equality, Map keys.
+
+type Email struct(Str)
+type Wrap[T] struct(T)
+type Pair struct((Int, Str))
+type Ids struct(List[Int])
+type Score struct(Int)
+
+fn (e: Email) domain() -> Str {
+  let Email(s) = e
+  let parts = s.split("@")
+  parts.last() ?? ""
+}
+
+fn (s: Score) display() -> Str { "score ${s.0}" }
+
+struct User {
+  email: Email
+  ids: Ids
+}
+
+fn head(xs: List[Int]) -> Int {
+  match xs {
+    [] => -1
+    [only] => only * 100
+    [first, ..] => first
+  }
+}
+
+fn ends(xs: List[Str]) -> Str {
+  match xs {
+    [] => "none"
+    [a] => "one ${a}"
+    [a, .., z] => "${a}..${z}"
+  }
+}
+
+fn shape(xs: List[(Int, Str)]) -> Str {
+  match xs {
+    [(0, _), ..] => "zero first"
+    [.., (n, s)] if n > 5 => "big last ${s}"
+    [_, _] => "pair"
+    _ => "other ${xs.len()}"
+  }
+}
+
+fn kind(e: Email) -> Int {
+  match e {
+    Email("") => 0
+    Email(s) if s.len() > 5 => 2
+    Email(..) => 1
+  }
+}
+
+fn main(os: Os) {
+  var e = Email("ada@example.com")
+  os.stdio.println("${e.0} ${e.domain()} ${kind(e)} ${kind(Email(""))} ${kind(Email("a@b"))}")
+  e.0 = "x@y"
+  os.stdio.println("${e.0} ${e.debug()} ${e == Email("x@y")} ${e != Email("x@z")}")
+  let w = Wrap([1, 2])
+  let Wrap(inner) = w
+  os.stdio.println("${inner.len()} ${w.debug()} ${Pair((3, "c")).debug()}")
+  let sc = Score(7)
+  os.stdio.println("${sc} ${sc.debug()}")
+  var seen: Map[Email, Int] = {}
+  seen[Email("a")] = 1
+  seen[Email("b")] = 2
+  seen[Email("a")] = 3
+  os.stdio.println("${seen.get(Email("a")) ?? 0} ${seen.len()} ${seen.debug()}")
+  let u = User{email: Email("u@v"), ids: Ids([4, 5])}
+  os.stdio.println("${u.debug()} ${u == User{email: Email("u@v"), ids: Ids([4, 5])}} ${u.ids.0.len()}")
+  os.stdio.println("${head([])} ${head([4])} ${head([7, 8, 9])}")
+  os.stdio.println("${ends([])} ${ends(["a"])} ${ends(["a", "b", "c"])}")
+  os.stdio.println("${shape([(0, "a"), (9, "b")])} ${shape([(1, "a"), (9, "b")])} ${shape([(1, "a"), (2, "b")])} ${shape([])}")
+  var total = 0
+  for xs in [[1, 2, 3], [4], []] {
+    total += match xs {
+      [a, b, ..] => a + b
+      [a] => a
+      [] => 0
+    }
+  }
+  os.stdio.println("${total}")
+}

@@ -72,6 +72,15 @@ type builder struct {
 	// consts are the ids of the constants of heap types read so far
 	// (build_int.go constValue)
 	consts map[*check.ConstObj]int
+
+	// ifaces are the interface types lowered as xo.iface[I]
+	// (build_iface.go), by their SSA type
+	ifaces map[*Type]*check.Named
+	// tids number the concrete types held by interface values
+	tids map[string]int
+
+	// the zone data std/time needs (build_time.go)
+	tzNames, tzDynamic map[string]bool
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -185,6 +194,7 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	for _, f := range b.mod.Funcs {
 		f.cleanup()
 	}
+	b.mod.TZ = b.tzUse()
 	return b, nil
 }
 
@@ -282,6 +292,16 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KInt)
 			case "Float":
 				return m.Builtin(KFloat)
+			case "Float32":
+				return m.Float32()
+			case "Secret":
+				// the value in a struct of its own: every output path
+				// writes `<redacted>` (build_show.go)
+				x, created := m.Named(b.implNamed(r).String(), KStruct)
+				if created && len(r.Args) == 1 {
+					x.Fields = []Field{{"v", b.typ(r.Args[0], at)}}
+				}
+				return x
 			case "Bool":
 				return m.Builtin(KBool)
 			case "Str", "Bytes":
@@ -300,10 +320,18 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Fs", "Rand":
+			case "Fs":
+				// its root and mode (decision 0102, build_io.go fsCall)
+				return b.fsType()
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
+				return m.List(b.typ(r.Args[0], at))
+			case "Buf":
+				// the List so far, pushed in place while the buffer, move
+				// only, holds the only reference (core 5.3); `freeze` is
+				// the List itself
 				return m.List(b.typ(r.Args[0], at))
 			case "Map":
 				return b.mapType(false, b.typ(r.Args[0], at), b.typ(r.Args[1], at))
@@ -323,6 +351,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				// a test's fakes are the capabilities themselves: the C
 				// runtime runs a test binary in its test world
 				// (build_testmode.go)
+				if c == "Fs" {
+					return b.fsType()
+				}
 				x, _ := m.Named(c, KCap)
 				return x
 			}
@@ -354,7 +385,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
 			}
-			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr") {
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput") {
 				break
 			}
 			x, created := m.Named(name, KStruct)
@@ -384,19 +415,33 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 						}
 						nv.Fields = append(nv.Fields, Field{fn, ft})
 					}
+					if obj.Module != nil && obj.Module.IsPrelude && obj.Name == "Result" && v.Name == "Err" {
+						// the error's frames (decision 0104, build_frames.go)
+						nv.Fields = append(nv.Fields, Field{traceField, b.traceType()})
+					}
 					x.Variants = append(x.Variants, nv)
 				}
 			}
 			return x
 		case check.KAlias:
 			return b.typ(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), at)
+		case check.KNewtype:
+			// a struct with the one field `0` (decision 0097): `e.0`
+			// and assignments to it are field accesses, `==` and
+			// hashing are the underlying value's
+			x, created := m.Named(name, KStruct)
+			if created {
+				ft := check.NewSubst(obj.TParams, r.Args).Apply(obj.Target)
+				x.Fields = []Field{{"0", b.boxed(ft, b.typ(ft, at), name)}}
+			}
+			return x
 		case check.KInterface:
 			if dynIface(obj) {
 				// its text (build_show.go)
 				return b.dynType()
 			}
-			b.unsupported(at, "interface types (`"+obj.Name+"`)")
-			return m.Builtin(KUnit)
+			// function values over the concrete value (build_iface.go)
+			return b.ifaceType(r, at)
 		}
 	}
 	b.unsupported(at, "the type `"+t.String()+"`")
@@ -636,10 +681,13 @@ func (b *builder) resultOf(res, err check.Type) check.Type {
 // Efficient Construction of Static Single Assignment Form" (CC 2013),
 // with block parameters as phis.
 type fn struct {
-	b   *builder
-	fo  *check.FuncObj
-	f   *Func
-	cur *Block
+	b  *builder
+	fo *check.FuncObj
+	// frameFo is the function whose frame a `?` in this closure records
+	// (the enclosing named function, decision 0104)
+	frameFo *check.FuncObj
+	f       *Func
+	cur     *Block
 
 	defs       map[*check.VarObj]map[*Block]*Value
 	varType    map[*check.VarObj]*Type
@@ -763,6 +811,7 @@ func (b *builder) mainWrapper(mf *Func, et check.Type, at ast.Node) {
 			e := s.add(OpPayload, rt.Variants[ei].Fields[0].Type, PayloadRef{ei, 0}, r)
 			msg := s.appendDisplay(s.add(OpConst, st, "error: "), e, et, at)
 			s.rt("eprintln", nil, msg)
+			s.printTrace(s.errTrace(r, ei))
 			s.rt("exit", nil, s.cint(1))
 		})
 		s.retv(s.unit())
@@ -912,6 +961,12 @@ func (s *fn) read(vo *check.VarObj) *Value { return s.readVar(vo, s.cur) }
 func (s *fn) add(op Op, t *Type, aux any, args ...*Value) *Value {
 	if s.pending != nil {
 		s.flushLanding()
+	}
+	if op == OpVariant && t != nil && t.Kind == KEnum {
+		if tag, ok := aux.(int); ok && tag < len(t.Variants) && len(args)+1 == len(t.Variants[tag].Fields) && t.Variants[tag].Fields[len(args)].Name == traceField {
+			// a new error has no frames yet
+			args = append(args, s.emptyTrace())
+		}
 	}
 	v := s.cur.Add(op, t, aux, args...)
 	if s.b.faultUnwind && s.shield == 0 && mayRaise(v) && s.lexicalCleanup() {
@@ -1145,8 +1200,52 @@ func (s *fn) coerce(v *Value, t *Type, at ast.Node) *Value {
 	if t.Kind == KUnit {
 		return s.unit()
 	}
+	if e, ok := at.(ast.Expr); ok && v.Op != OpUndef {
+		// a value converted to an interface (core 2.10), or wrapped in
+		// Some as one
+		ct := s.valueCheck(e)
+		if ct == nil {
+			s.b.unsupported(at, "converting `"+v.Type.Name+"` to `"+t.Name+"` here")
+			return s.undef(t)
+		}
+		if isIface(t) {
+			return s.toIface(v, ct, t, at)
+		}
+		if isDyn(t) && !isDyn(v.Type) {
+			return s.toDyn(v, ct, s.ifaceName(e), e)
+		}
+		if t.Kind == KEnum {
+			if i := t.VariantIndex("Some"); i >= 0 && len(t.Variants[i].Fields) == 1 && isIface(t.Variants[i].Fields[0].Type) {
+				return s.add(OpVariant, t, i, s.toIface(v, ct, t.Variants[i].Fields[0].Type, at))
+			}
+		}
+	}
 	s.b.unsupported(at, "converting `"+v.Type.Name+"` to `"+t.Name+"`")
 	return s.undef(t)
+}
+
+// valueCheck is the checker type of the value e evaluates to before
+// implicit conversion: of a block, its last expression's.
+func (s *fn) valueCheck(e ast.Expr) check.Type {
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+			continue
+		case *ast.Block:
+			if len(x.Stmts) > 0 {
+				if es, ok := x.Stmts[len(x.Stmts)-1].(*ast.ExprStmt); ok {
+					e = es.X
+					continue
+				}
+			}
+			return nil
+		}
+		if s.b.info.NaturalType(e) == nil && s.b.info.TypeOf(e) == nil {
+			return nil
+		}
+		return s.natCheck(e)
+	}
 }
 
 // value evaluates e in its context type.

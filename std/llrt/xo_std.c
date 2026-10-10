@@ -1292,5 +1292,22 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 // std/crypto and the Rand capability (decision 0083)
 #include "xo_crypto.c"
 
+// the Fs operations besides read (decision 0102), compiled only into
+// programs that call them (XO_FS, internal/build ioFlags)
+#ifdef XO_FS
+#include "xo_fs.c"
+#endif
+
+// standard input reads (decisions 0088, 0102), likewise (XO_STDIN)
+#ifdef XO_STDIN
+#include "xo_stdin.c"
+#endif
+
 // the test world of test binaries (decision 0083)
 #include "xo_testing.c"
+
+// std/time zones (decision 0094): only in programs that use std/time,
+// which the build compiles with XO_TIME and their zone data (xo_tzdata.h)
+#ifdef XO_TIME
+#include "xo_time.c"
+#endif

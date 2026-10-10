@@ -10,6 +10,57 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   value no longer generates Go that fails to compile; the "propagate with
   ?" fix is offered only where `?` can propagate; help notes for XO0205
   in closures and for passing `TestOs` where `Os` is expected.
+- Native backends (`--no-gc`, LLVM and arm64): interface types as values
+  (decision 0100): dynamic dispatch, adapters for methods that cannot
+  fail, error conversion, interface to interface conversion, Display and
+  Debug of the dynamic value, and `==`; `x.debug()` on any value.
+- Native backends: newtypes (`Email("x")`, `e.0` read and assigned,
+  `Email(p)` patterns, Debug, `==`, Map keys) and list patterns
+  (`[]`, `[a, .., z]`). Fixed: an or pattern whose alternatives bind the
+  same name (`Leaf(v) | Node(left: v, ..)`) read the first alternative's
+  binding natively, a stale value when another alternative matched.
+- Native backends (decision 0101): Float32, `Secret[T]` redacted in every
+  output path, `Buf[T]`, `<` on `derive Ord` types, `Int32.try` and the
+  other sized `try`s, `Int.pow`, `clamp`, `min`/`max` on Str, Set union,
+  intersect, difference, `Map.filter`, `List.insert`, `remove_at`,
+  `indexed()`, `xs + ys`, std defaults (`crypto.token(r)`,
+  `Chan.new()`), `get_or_fault` on any key type, builtin collections
+  through interfaces, shorthand field patterns. `==` on a value holding
+  a function or runtime handle outside an interface is now XO1201
+  natively (it failed in code generation). New test
+  TestGenGoldensNative runs 66 internal/gen goldens on Go, LLVM, and
+  arm64 and compares them.
+- Native backends: `std/path` (std/native/path.xo), `task.semaphore`,
+  `task.once` (a fault in its function is not stored natively: the next
+  caller runs it again), and `task.map_concurrent`
+  (std/native/task.xo); Debug text of `Result[T, Never]` values. Fixed:
+  natively, a task whose value is a Result failed its scope when that
+  value was an `Err`; shorthand struct patterns `Bag{items}`.
+- Native backends (decision 0102): every Fs method and attenuation
+  (`sub`, `cwd`, `read_only`, `write_only`, escapes `Denied`),
+  `Stdio.write`, and standard input reads (`read_line`, `read_all`,
+  `lines`) that a cancellation or a stop request ends with
+  `IoErr.Canceled`. Fixed natively: `task.with_timeout` returns
+  `TimedOut` when its closure finishes after the deadline without a
+  cancellation point, as on the Go backend.
+- Native backends: error frames (decision 0104): each `?` records the
+  function, location, and parameters lazily, and main's error report
+  prints `  at ...` lines identical to the Go backend's.
+- Native Fs and standard input code is compiled into a program only when
+  it calls them (XO_FS, XO_STDIN; hello world unchanged). Fixed: hybrid
+  builds (`--hybrid`) declared a Bool result's argument size rounded up
+  (go vet -asmdecl).
+- `xo test --no-gc`: `FakeStdio.set_input` feeds the reads; fixed a hang
+  after `FakeProc.signal_after` fired (the virtual clock stopped moving).
+- Native backends: all of `std/time` (decision 0094; std/native/time.xo
+  and std/llrt/xo_time.c, a port of Go's TZif reader and zone lookup):
+  zones with the same per use embedded data (or `--tzdata=system`), civil
+  time, gaps and overlaps, layouts, strict parsing with the same error
+  texts and faults; also `Duration.from_secs`, `scale`, `ceil_seconds`,
+  `Time.parse_rfc3339`, and `Time.UNIX_EPOCH` as a value. Programs that
+  do not use std/time do not grow. TestTimeDiff compares about 70,000
+  lines with the Go backend. Fixed: the arm64 backend failed to assemble
+  functions over 8192 instructions (`tbz` range).
 
 ## v0.8.0 (2026-10-09)
 

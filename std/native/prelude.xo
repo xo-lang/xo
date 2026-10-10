@@ -118,6 +118,22 @@ fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
   (Rune(p >> 3), p & 7)
 }
 
+fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
+  if e < 0 {
+    rt.fault_at("negative exponent ${e} in pow", at)
+  }
+  var r = 1
+  var i = 0
+  while i < e {
+    if !rt.int_fits(2, r, n) {
+      rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
+    }
+    r = r * n
+    i += 1
+  }
+  r
+}
+
 fn int_wrapping_add(n: Int, m: Int) -> Int { rt.int_wrap(0, n, m) }
 
 fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
@@ -179,7 +195,90 @@ fn float_parse(s: Str) -> Float? {
 }
 
 // ---------------------------------------------------------------------------
+// Map[K, V] and Set[T] (std.md 2.4): std/rt map.go's order, the entries
+// in insertion order
+
+fn map_filter[K, V, E, fx: Effects](m: Map[K, V], f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx {
+  var out: Map[K, V] = {}
+  for (k, v) in m {
+    if f(k, v)? {
+      out[k] = v
+    }
+  }
+  out
+}
+
+fn set_union[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r = s
+  for x in o {
+    r.add(x)
+  }
+  r
+}
+
+fn set_intersect[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r: Set[T] = #{}
+  for x in s {
+    if o.contains(x) {
+      r.add(x)
+    }
+  }
+  r
+}
+
+fn set_difference[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r: Set[T] = #{}
+  for x in s {
+    if !o.contains(x) {
+      r.add(x)
+    }
+  }
+  r
+}
+
+// ---------------------------------------------------------------------------
 // List[T] (std.md 2.3)
+
+fn list_insert[T](var xs: List[T], i: Int, x: T, at: rt.Loc) {
+  let n = xs.len()
+  if i < 0 || i > n {
+    rt.fault_at("index ${i} out of range for insert into List of length ${n}", at)
+  }
+  xs.push(x)
+  var j = n
+  while j > i {
+    xs[j] = xs[j - 1]
+    j -= 1
+  }
+  xs[i] = x
+}
+
+fn list_remove_at[T](var xs: List[T], i: Int, at: rt.Loc) -> T {
+  let n = xs.len()
+  if i < 0 || i >= n {
+    rt.fault_at("index ${i} out of range for List of length ${n}", at)
+  }
+  let x = xs[i]
+  var j = i
+  while j + 1 < n {
+    xs[j] = xs[j + 1]
+    j += 1
+  }
+  match xs.pop() {
+    _ => {}
+  }
+  x
+}
+
+fn list_indexed[T](xs: List[T]) -> List[(Int, T)] {
+  var out: List[(Int, T)] = []
+  var i = 0
+  for x in xs {
+    out.push((i, x))
+    i += 1
+  }
+  out
+}
 
 fn list_contains[T](xs: List[T], x: T) -> Bool {
   for y in xs {
@@ -394,4 +493,508 @@ fn duration_parse(s: Str) -> Duration ! DurationErr {
 
 fn durationerr_display(e: DurationErr) -> Str {
   "invalid duration ${rt.strconv_quote(e.input)}: expected numbers with units ns, us, ms, s, m, h, such as \"1.5s\" or \"1h30m\""
+}
+
+// ---------------------------------------------------------------------------
+// Fs (std.md 3.1, decision 0102): std/rt caps.go's realFs, over the system
+// calls of std/llrt/xo_fs.c. An Fs is its root and mode bits (1 a sub
+// capability, 2 read only, 4 write only).
+
+fn fs_err(st: Int, p: Str) -> FsErr {
+  match st {
+    1 => FsErr.NotFound(path: p)
+    2 => FsErr.Exists(path: p)
+    3 => FsErr.NotEmpty(path: p)
+    4 => FsErr.NotDir(path: p)
+    5 => FsErr.IsDir(path: p)
+    6 => FsErr.Denied(path: p)
+    7 => FsErr.Io(path: p, msg: rt.fs_msg()[1])
+    _ => FsErr.Canceled
+  }
+}
+
+// fs_clean is Go's path.Clean.
+fn fs_clean(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var parts: List[Str] = []
+  for seg in p.split("/") {
+    if seg == "" || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if parts.len() > 0 && parts[parts.len() - 1] != ".." {
+        match parts.pop() {
+          _ => {}
+        }
+      } else if !rooted {
+        parts.push("..")
+      }
+      continue
+    }
+    parts.push(seg)
+  }
+  let body = parts.join("/")
+  if rooted {
+    return "/" + body
+  }
+  if body == "" {
+    return "."
+  }
+  body
+}
+
+// fs_join is Go's path.Join (filepath.Join on Unix) of two elements.
+fn fs_join(a: Str, b: Str) -> Str {
+  if a == "" && b == "" {
+    return ""
+  }
+  if a == "" {
+    return fs_clean(b)
+  }
+  if b == "" {
+    return fs_clean(a)
+  }
+  fs_clean(a + "/" + b)
+}
+
+// fs_base is Go's path.Base.
+fn fs_base(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  var s = p
+  while s.len() > 1 && s.ends_with("/") {
+    s = s[0..s.len() - 1]
+  }
+  if s == "/" {
+    return "/"
+  }
+  let parts = s.split("/")
+  parts[parts.len() - 1]
+}
+
+// fs_abs is filepath.Abs.
+fn fs_abs(p: Str) -> Str {
+  if p.starts_with("/") {
+    return fs_clean(p)
+  }
+  fs_join(rt.fs_cwd(), p)
+}
+
+// fs_resolve maps an Xo path to an OS path: os.fs takes it as it is, a
+// sub capability resolves it against its root and denies (None) a path
+// that escapes it.
+fn fs_resolve(f: Fs, p: Str) -> Str? {
+  if (rt.fs_mode(f) & 1) == 0 {
+    if p == "" {
+      return Some(".")
+    }
+    return Some(p)
+  }
+  let clean = fs_clean("/" + p.replace("\\", "/"))
+  if p.contains("..") {
+    var depth = 0
+    for seg in p.split("/") {
+      if seg == ".." {
+        depth -= 1
+      } else if seg != "" && seg != "." {
+        depth += 1
+      }
+      if depth < 0 {
+        return None
+      }
+    }
+  }
+  Some(fs_join(rt.fs_root(f), clean))
+}
+
+// fs_rel is the path of the OS path op relative to the root (op itself
+// for os.fs).
+fn fs_rel(f: Fs, op: Str, given: Str) -> Str {
+  if (rt.fs_mode(f) & 1) == 0 {
+    return op
+  }
+  let root = fs_clean(rt.fs_root(f))
+  let c = fs_clean(op)
+  if c == root {
+    return ""
+  }
+  if root == "/" {
+    return c[1..]
+  }
+  if c.starts_with(root + "/") {
+    return c[root.len() + 1..]
+  }
+  given
+}
+
+fn fs_check(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let mode = rt.fs_mode(f)
+  if (write && (mode & 2) != 0) || (!write && (mode & 4) != 0) {
+    return Err(FsErr.Denied(path: p))
+  }
+  match fs_resolve(f, p) {
+    Some(op) => op
+    None => Err(FsErr.Denied(path: p))
+  }
+}
+
+// fs_info_of is the FileInfo of the last fs_stat, of OS path op.
+fn fs_info_of(f: Fs, op: Str, given: Str) -> FileInfo {
+  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.time_of(rt.fs_info(2))}
+}
+
+fn fs_sub(f: Fs, dir: Str) -> Fs {
+  match fs_resolve(f, dir) {
+    Some(op) => rt.fs_new(fs_abs(op), 1 | (rt.fs_mode(f) & 6))
+    None => rt.fs_new(fs_join(rt.fs_root(f), "denied"), 7)
+  }
+}
+
+fn fs_cwd(f: Fs) -> Fs { rt.fs_new(rt.fs_cwd(), 1 | (rt.fs_mode(f) & 6)) }
+
+fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
+
+fn fs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }
+
+fn fs_case_sensitive(_f: Fs) -> Bool { rt.fs_case_sensitive() }
+
+fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
+  let op = fs_check(f, p, false)?
+  let st = rt.fs_stat(op, true, p)
+  if st == 1 {
+    return None
+  }
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+  Some(fs_info_of(f, op, p))
+}
+
+fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
+  let fi = fs_stat(f, p)?
+  fi.is_some()
+}
+
+fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
+  let op = fs_check(f, p, false)?
+  let l = rt.fs_read(op)
+  if l.len() == 0 {
+    return Err(fs_err(rt.fs_status(), p))
+  }
+  l[0]
+}
+
+fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
+  let b = fs_read(f, p)?
+  rt.cast[Bytes, Str](b)
+}
+
+fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  let op = fs_check(f, dir, false)?
+  let names = rt.fs_names(op, dir)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, dir))
+  }
+  var out: List[FileInfo] = []
+  for n in names {
+    let child = fs_join(op, n)
+    if rt.fs_stat(child, false, n) == 0 {
+      out.push(fs_info_of(f, child, fs_join(dir, n)))
+    }
+  }
+  out.sort_by(fn(fi) { fi.name })
+}
+
+fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! FsErr {
+  let names = rt.fs_names(osdir, xodir)
+  let st = rt.fs_status()
+  if st != 0 {
+    return Err(fs_err(st, xodir))
+  }
+  for n in names.sort() {
+    let child = fs_join(osdir, n)
+    let xc = fs_join(xodir, n)
+    if rt.fs_stat(child, false, xc) == 0 {
+      let fi = fs_info_of(f, child, xc)
+      out.push(fi)
+      if fi.is_dir {
+        fs_walk_dir(f, child, xc, out)?
+      }
+    }
+  }
+}
+
+fn fs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  let op = fs_check(f, dir, false)?
+  let st = rt.fs_stat(op, true, dir)
+  if st != 0 {
+    return Err(fs_err(st, dir))
+  }
+  var out: List[FileInfo] = []
+  fs_walk_dir(f, op, dir, out)?
+  out
+}
+
+fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  let op = fs_check(f, p, true)?
+  let st = rt.fs_write(op, data, p)
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+}
+
+fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
+  let op = fs_check(f, dir, true)?
+  let name = rt.fs_create_temp(op, prefix, dir)
+  if name == "" {
+    return Err(fs_err(rt.fs_status(), dir))
+  }
+  // os.CreateTemp joins without cleaning
+  var full = op + "/" + name
+  if op.ends_with("/") {
+    full = op + name
+  }
+  fs_rel(f, full, fs_join(dir, name))
+}
+
+fn fs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  let a = fs_check(f, from, true)?
+  let b = fs_check(f, to, true)?
+  let st = rt.fs_rename(a, b, from)
+  if st != 0 {
+    return Err(fs_err(st, from))
+  }
+}
+
+fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
+  let op = fs_check(f, p, true)?
+  let st = rt.fs_remove(op, p)
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+}
+
+fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
+  let op = fs_check(f, p, true)?
+  let st = rt.fs_remove_all(op, p)
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+}
+
+fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
+  let op = fs_check(f, dir, true)?
+  let st = rt.fs_mkdir_all(op, dir)
+  if st != 0 {
+    return Err(fs_err(st, dir))
+  }
+}
+
+fn fs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
+  let op = fs_check(f, p, true)?
+  let st = rt.fs_chtimes(op, rt.time_ns(t), p)
+  if st != 0 {
+    return Err(fs_err(st, p))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stdio (std.md 3.6, decisions 0088 and 0102): std/rt caps.go's realStdio
+
+fn stdio_write(_s: Stdio, data: Bytes) -> () ! IoErr {
+  if rt.fs_canceled() {
+    return Err(IoErr.Canceled)
+  }
+  rt.print(data)
+}
+
+fn stdin_err(st: Int) -> IoErr {
+  if st == 2 {
+    return IoErr.Io(msg: rt.stdin_msg())
+  }
+  IoErr.Canceled
+}
+
+fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
+  let line = rt.stdin_read(false)
+  let st = rt.stdin_status()
+  if st == 0 {
+    return Some(line)
+  }
+  if st == 1 {
+    return None
+  }
+  Err(stdin_err(st))
+}
+
+fn stdio_read_all(_s: Stdio) -> Str ! IoErr {
+  let text = rt.stdin_read(true)
+  let st = rt.stdin_status()
+  if st == 0 {
+    return text
+  }
+  Err(stdin_err(st))
+}
+
+fn stdio_lines(s: Stdio) -> List[Str] ! IoErr {
+  let text = stdio_read_all(s)?
+  text.lines()
+}
+
+/// math.Round(s * 1e9) nanoseconds (std/rt's Duration_from_secs).
+fn duration_from_secs(s: Float) -> Duration { Duration.from_nanos(Int((s * 1000000000.0).round())) }
+
+/// math.Round(d * f) nanoseconds.
+fn duration_scale(d: Duration, f: Float) -> Duration { Duration.from_nanos(Int((Float(d.nanos()) * f).round())) }
+
+fn duration_ceil_seconds(d: Duration) -> Int {
+  let n = d.nanos()
+  if n % 1000000000 > 0 {
+    return n / 1000000000 + 1
+  }
+  n / 1000000000
+}
+
+// ---------------------------------------------------------------------------
+// Time (std.md 2.6)
+
+/// time.Parse(time.RFC3339Nano, s) as the Go backend calls it: the union
+/// of Go's fast path (parseRFC3339) and its general parser for that
+/// layout, which also takes a one digit hour, a comma before the
+/// fraction, and offsets up to +24:60. Times outside the range of Time
+/// wrap like Go's UnixNano.
+fn time_parse_rfc3339(s: Str) -> Time? {
+  let b = s.bytes()
+  let n = b.len()
+  if n < 4 || !rfc_digits(b, 0, 4) {
+    return None
+  }
+  let year = rfc_num(b, 0, 4)
+  if n < 10 || b[4] != 45 || !rfc_digits(b, 5, 2) || b[7] != 45 || !rfc_digits(b, 8, 2) {
+    return None
+  }
+  let month = rfc_num(b, 5, 2)
+  let day = rfc_num(b, 8, 2)
+  if month < 1 || month > 12 || n < 12 || b[10] != 84 || !rfc_digits(b, 11, 1) {
+    return None
+  }
+  // the hour has one or two digits
+  var i = 12
+  var hour = rfc_num(b, 11, 1)
+  if rfc_digits(b, 12, 1) {
+    hour = rfc_num(b, 11, 2)
+    i = 13
+  }
+  if hour > 23 || i + 6 > n || b[i] != 58 || !rfc_digits(b, i + 1, 2) || b[i + 3] != 58 || !rfc_digits(b, i + 4, 2) {
+    return None
+  }
+  let min = rfc_num(b, i + 1, 2)
+  let sec = rfc_num(b, i + 4, 2)
+  if min > 59 || sec > 59 {
+    return None
+  }
+  i += 6
+  var nsec = 0
+  if i + 1 < n && (b[i] == 46 || b[i] == 44) && rfc_digits(b, i + 1, 1) {
+    var j = i + 1
+    while j < n && rfc_digits(b, j, 1) {
+      j += 1
+    }
+    // at most 9 digits count (parseNanoseconds)
+    var k = 0
+    while k < 9 {
+      nsec = nsec * 10
+      if i + 1 + k < j {
+        nsec += Int(b[i + 1 + k]) - 48
+      }
+      k += 1
+    }
+    i = j
+  }
+  var zone = 0
+  if i < n && b[i] == 90 {
+    i += 1
+  } else {
+    if i + 6 > n || b[i + 3] != 58 || !rfc_digits(b, i + 1, 2) || !rfc_digits(b, i + 4, 2) {
+      return None
+    }
+    let hr = rfc_num(b, i + 1, 2)
+    let mm = rfc_num(b, i + 4, 2)
+    if hr > 24 || mm > 60 {
+      return None
+    }
+    zone = (hr * 60 + mm) * 60
+    if b[i] == 45 {
+      zone = -zone
+    } else if b[i] != 43 {
+      return None
+    }
+    i += 6
+  }
+  if i != n || day < 1 || day > rfc_days_in(month, year) {
+    return None
+  }
+  let secs = rfc_days(year, month, day) * 86400 + hour * 3600 + min * 60 + sec - zone
+  Some(Time.UNIX_EPOCH + Duration.from_nanos(rt.int_wrap(0, rt.int_wrap(2, secs, 1000000000), nsec)))
+}
+
+fn rfc_digits(b: Bytes, at: Int, k: Int) -> Bool {
+  if at + k > b.len() {
+    return false
+  }
+  for i in at..at + k {
+    if b[i] < 48 || b[i] > 57 {
+      return false
+    }
+  }
+  true
+}
+
+fn rfc_num(b: Bytes, at: Int, k: Int) -> Int {
+  var v = 0
+  for i in at..at + k {
+    v = v * 10 + Int(b[i]) - 48
+  }
+  v
+}
+
+fn rfc_days_in(m: Int, y: Int) -> Int {
+  if m == 2 {
+    if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  31
+}
+
+/// RFC 3339 in UTC: the Display text of a Time.
+fn time_format_rfc3339(t: Time) -> Str { "${t}" }
+
+/// The days from 1970-01-01 to y-m-d (H. Hinnant's days_from_civil).
+fn rfc_days(year: Int, m: Int, d: Int) -> Int {
+  var y = year
+  if m <= 2 {
+    y -= 1
+  }
+  var era = y / 400
+  if y < 0 && y % 400 != 0 {
+    era -= 1
+  }
+  let yoe = y - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
 }

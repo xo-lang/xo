@@ -96,7 +96,13 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return nil, err
 	}
-	if err := clangBuild(clang, []string{ll, rt}, bin); err != nil {
+	flags, notes, err := timeFlags(dir, res, prog.TZ, opts)
+	if err != nil {
+		return nil, err
+	}
+	flags = append(flags, IOFlags(prog.IR)...)
+	out.Notes = notes
+	if err := clangBuild(clang, []string{ll, rt}, bin, flags...); err != nil {
 		return nil, err
 	}
 	out.Binaries[Host()] = bin
@@ -186,8 +192,8 @@ func CompileC(flags, srcs []string, bin string) error {
 }
 
 // clangBuild compiles and links LLVM IR and C sources into bin.
-func clangBuild(clang string, srcs []string, bin string) error {
-	return ccBuild(clang, []string{LLVMOptLevel, "-flto", "-Wno-override-module"}, srcs, bin)
+func clangBuild(clang string, srcs []string, bin string, flags ...string) error {
+	return ccBuild(clang, append([]string{LLVMOptLevel, "-flto", "-Wno-override-module"}, flags...), srcs, bin)
 }
 
 // ccBuild compiles and links srcs into bin with the C compiler cc and

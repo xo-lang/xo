@@ -21,17 +21,19 @@ import (
 //     `[1, 2]`, `{"a": 1}`, `#{1}`, `(1, "a")`, `Some(1)`, `b"x"`.
 //   - A value of the prelude interfaces Error, Display, or Debug (an
 //     error returned by `main ! Error`, a log field of Map[Str, Debug]) is
-//     its text: the struct xo.dyn {text: Str, raw: Bool}, made where a
-//     concrete value is converted to the interface. raw marks a number
-//     or Bool (a JSON log record writes it bare). Their methods return
-//     the text.
+//     its text: the struct xo.dyn {text: Str, raw: Bool, dbg: Str}, made
+//     where a concrete value is converted to the interface. raw marks a
+//     number or Bool (a JSON log record writes it bare). Their methods
+//     return the text. dbg is the value's Debug text when it differs
+//     from text (a Str is quoted, a type with a `display` method shows
+//     its fields), else empty: the Debug text of the interface value.
 
 // dynType is the SSA type of a value of interface type.
 func (b *builder) dynType() *Type {
 	m := b.mod
 	t, created := m.Named("xo.dyn", KStruct)
 	if created {
-		t.Fields = []Field{{"text", m.Builtin(KStr)}, {"raw", m.Builtin(KBool)}}
+		t.Fields = []Field{{"text", m.Builtin(KStr)}, {"raw", m.Builtin(KBool)}, {"dbg", m.Builtin(KStr)}}
 	}
 	return t
 }
@@ -75,7 +77,29 @@ func (s *fn) toDyn(v *Value, ct check.Type, iface string, at ast.Node) *Value {
 	case KInt, KFloat, KBool:
 		raw = !isPreludeNamed(ct, "Duration", "Time")
 	}
-	return s.add(OpStruct, b.dynType(), nil, acc, s.bool(raw))
+	dbg := s.add(OpConst, st, "")
+	if isPreludeNamed(ct, "Str", "Rune") || isIface(v.Type) || s.methodOf(ct, "display") != nil {
+		dbg = s.appendDebug(dbg, v, ct, at)
+	}
+	return s.add(OpStruct, b.dynType(), nil, acc, s.bool(raw), dbg)
+}
+
+// dynDebug appends the Debug text of the interface value v (xo.dyn) to
+// acc: its dbg text, or its text when dbg is empty.
+func (s *fn) dynDebug(acc, v *Value) *Value {
+	m := s.b.mod
+	st := m.Builtin(KStr)
+	dbg := s.add(OpField, st, 2, v)
+	join := s.newBlock()
+	res := join.AddParam(st)
+	yes, no := s.branch(s.add(OpEq, m.Builtin(KBool), nil, s.call("Str.len", m.Builtin(KInt), "", dbg), s.cint(0)))
+	s.cur = yes
+	s.jump(join, s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v)))
+	s.cur = no
+	s.jump(join, s.call("str.concat", st, "", acc, dbg))
+	s.seal(join)
+	s.cur = join
+	return res
 }
 
 // displayable reports whether values of ct have Display text of their
@@ -151,7 +175,12 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 	if isDyn(v.Type) {
 		return s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v))
 	}
+	if isIface(v.Type) {
+		return s.ifaceShowCall(acc, v, false)
+	}
 	switch {
+	case isPreludeNamed(ct, "Secret"):
+		return s.call("str.concat", st, "", acc, s.add(OpConst, st, "<redacted>"))
 	case isPreludeNamed(ct, "Duration"):
 		return s.rt("rs_append_duration", st, acc, v)
 	case isPreludeNamed(ct, "Time"):
@@ -214,10 +243,32 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			return s.call(b.debugFunc(check.Deep(xt), x.Type, at), st, "", a, x)
 		}
 		if isDyn(t) {
-			s.retv(s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v)))
+			s.retv(s.dynDebug(acc, v))
+			return
+		}
+		if isIface(t) {
+			s.retv(s.ifaceShowCall(acc, v, true))
+			return
+		}
+		if isFs(t) {
+			s.retv(lit(acc, "<fs>"))
+			return
+		}
+		if okT, et, ok := resultParts(ct); ok && check.IsNever(et) {
+			// Result[T, Never] is lowered as its T (decision 0074)
+			s.retv(lit(sub(lit(acc, "Ok("), v, okT), ")"))
 			return
 		}
 		switch {
+		case isPreludeNamed(ct, "Secret"):
+			s.retv(lit(acc, "<redacted>"))
+			return
+		case isPreludeNamed(ct, "Buf"):
+			// `Buf[1, 2]` (std/rt's Buf.XoDebug)
+			if n, ok := check.Resolve(ct).(*check.Named); ok && len(n.Args) == 1 {
+				s.retv(sub(lit(acc, "Buf"), v, b.preludeType("List", n.Args[0])))
+				return
+			}
 		case isPreludeNamed(ct, "Duration"):
 			s.retv(s.rt("rs_append_duration", st, acc, v))
 			return
@@ -254,6 +305,16 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			s.retv(lit(acc, "<"+lowerName(t.Name)+">"))
 			return
 		case KHandle:
+			if n, ok := check.Resolve(ct).(*check.Named); ok && isPreludeNamed(ct, "Atomic") && len(n.Args) == 1 {
+				// `Atomic(1)`: its value now (std/rt's Atomic.XoDebug)
+				et := b.typ(n.Args[0], at)
+				switch et.Kind {
+				case KInt, KBool, KFloat:
+					a := lit(acc, "Atomic(")
+					s.retv(lit(sub(a, s.rt("atomic_get", et, v), n.Args[0]), ")"))
+					return
+				}
+			}
 			s.retv(lit(acc, "<"+lowerName(t.Name)+">"))
 			return
 		case KBox:
@@ -323,8 +384,20 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 		}
 		sb := check.NewSubst(obj.TParams, n.Args)
 		switch {
+		case t.Kind == KStruct && obj.Kind == check.KNewtype && len(t.Fields) == 1:
+			// `Email("a@b")` (std/rt's Debug of a newtype)
+			a := lit(acc, obj.Name+"(")
+			a = sub(a, s.add(OpField, t.Fields[0].Type, 0, v), sb.Apply(obj.Target))
+			s.retv(lit(a, ")"))
+			return
 		case t.Kind == KStruct && obj.Kind == check.KStruct:
 			if obj.Opaque {
+				if dm := s.methodOf(ct, "debug"); dm != nil && dm.Module != nil && dm.Module.Native {
+					// the native implementation's Debug text (std/rt's
+					// XoDebug: `Zone(UTC)`)
+					s.retv(s.call("str.concat", st, "", acc, s.callMethod(dm, ct, v, at)))
+					return
+				}
 				s.retv(lit(acc, "<"+lowerName(obj.Name)+">"))
 				return
 			}
@@ -399,36 +472,75 @@ func lowerName(n string) string {
 	return string(out)
 }
 
-// ifaceCall lowers a call of an interface method (`e.display()` on a
-// value of a type parameter constrained by Error, or on an Error): the
-// method of the concrete type, or the text of an interface value.
+// ifaceCall lowers a call of an interface method: on a value of a type
+// parameter constrained by an interface (the method of the concrete
+// type, adapted to the interface's signature), on an interface value (a
+// call through its function value, build_iface.go), or on a value of
+// Error, Display, or Debug (its text).
 func (s *fn) ifaceCall(x *ast.CallExpr, ci *check.Call) *Value {
 	b := s.b
 	fo := ci.Fn
 	nt := s.natOf(x)
-	if ci.Recv == nil || len(x.Args) != 0 {
+	if ci.Recv == nil {
 		b.unsupported(x, "the interface method `"+fo.DisplayName()+"`")
 		return s.undef(nt)
 	}
 	ct := s.natCheck(ci.Recv)
 	v := s.expr(ci.Recv)
 	st := b.mod.Builtin(KStr)
-	if isDyn(v.Type) {
-		if fo.Name == "display" || fo.Name == "debug" {
+	if isDyn(v.Type) && len(x.Args) == 0 {
+		if fo.Name == "debug" {
+			return s.dynDebug(s.add(OpConst, st, ""), v)
+		}
+		if fo.Name == "display" {
 			return s.add(OpField, st, 0, v)
 		}
 		b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of an interface value")
 		return s.undef(nt)
 	}
-	if m := s.methodOf(ct, fo.Name); m != nil {
-		return s.callMethod(m, ct, v, x)
+	// the arguments, against the interface method's parameters
+	var pts []*Type
+	if isIface(v.Type) {
+		j := v.Type.FieldIndex(fo.Name)
+		if j < 0 {
+			b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of `"+ct.String()+"`")
+			return s.undef(nt)
+		}
+		pts = v.Type.Fields[j].Type.Elems
+	} else {
+		sub := ifaceSubst(ci, fo)
+		for _, p := range fo.Params {
+			pts = append(pts, b.typ(s.apply(sub.Apply(p.Type)), x))
+		}
 	}
-	switch fo.Name {
-	case "display":
-		return s.appendDisplay(s.add(OpConst, st, ""), v, ct, x)
-	case "debug":
-		return s.appendDebug(s.add(OpConst, st, ""), v, ct, x)
+	exprs := argExprs(fo.Params, x)
+	var args []*Value
+	for i, e := range exprs {
+		if e == nil || fo.Params[i].Var || i >= len(pts) {
+			b.unsupported(x, "a call of the interface method `"+fo.DisplayName()+"` with a missing or `var` argument")
+			return s.undef(nt)
+		}
+		args = append(args, s.valueAs(e, pts[i]))
 	}
-	b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of `"+ct.String()+"`")
-	return s.undef(nt)
+	var toErr check.Type
+	if fo.Err != nil {
+		if _, et, ok := resultParts(s.natCheck(x)); ok {
+			toErr = check.Deep(et)
+		}
+	}
+	return s.callResult(s.methodOn(fo.Name, ct, v, args, nt, failErr(toErr), x), x)
+}
+
+// ifaceSubst maps the type parameters of the interface declaring the
+// method fo to the type arguments of the call ci.
+func ifaceSubst(ci *check.Call, fo *check.FuncObj) *check.Subst {
+	var args []check.Type
+	for _, tp := range fo.Recv.TParams {
+		a := ci.Subst.Type(tp)
+		if a == nil {
+			a = &check.ParamType{P: tp}
+		}
+		args = append(args, a)
+	}
+	return check.NewSubst(fo.Recv.TParams, args)
 }

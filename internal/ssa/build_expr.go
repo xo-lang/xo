@@ -24,7 +24,10 @@ func (s *fn) expr(e ast.Expr) *Value {
 	case *ast.IntLit:
 		t := s.natOf(x)
 		if t.Kind == KFloat {
-			f, _ := strconv.ParseFloat(x.Value, 64)
+			f, _ := strconv.ParseFloat(strings.ReplaceAll(x.Value, "_", ""), 64)
+			if t.F32() {
+				f = float64(float32(f))
+			}
 			return s.add(OpConst, t, f)
 		}
 		if t.Kind != KInt {
@@ -43,6 +46,9 @@ func (s *fn) expr(e ast.Expr) *Value {
 		f, err := strconv.ParseFloat(strings.ReplaceAll(x.Raw, "_", ""), 64)
 		if err != nil {
 			b.unsupported(x, "this Float literal")
+		}
+		if t := s.natOf(x); t.F32() {
+			return s.add(OpConst, t, float64(float32(f)))
 		}
 		return s.add(OpConst, m.Builtin(KFloat), f)
 	case *ast.StringLit:
@@ -241,6 +247,23 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
 		return s.constValue(c, s.natOf(x))
 	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Const {
+		// an associated constant (`Time.UNIX_EPOCH`)
+		if fo.Module != nil && fo.Module.IsPrelude && fo.Recv != nil && fo.Recv.Name == "Time" && fo.Name == "UNIX_EPOCH" {
+			return s.cint(0)
+		}
+		b.unsupported(x, "`"+fo.DisplayName()+"`")
+		return s.undef(s.natOf(x))
+	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Recv == nil && fo.Module != nil && fo.Module.IsStd {
+		// a std function with a native implementation as a value
+		// (`time.zone`): the implementation, when it takes the same
+		// parameters (no `rt.Loc`)
+		if impl := b.implOf(fo); impl != nil && len(impl.Params) == len(fo.Params) {
+			b.noteZoneValue(fo, x)
+			return s.funcValue(impl, x)
+		}
+	}
 	if x.Sel.Name == "await" {
 		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
 			return s.await(x)
@@ -255,6 +278,10 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			b.unsupported(x, "`"+x.Sel.Name+"` of a capability")
 			return s.undef(t)
 		}
+		if isFs(t) {
+			// os.fs: the filesystem root, no mode (decision 0102)
+			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""), s.cint(0))
+		}
 		return s.add(OpCap, t, x.Sel.Name, v)
 	}
 	if i, ft := s.fieldIndex(v.Type, x.Sel.Name); i >= 0 {
@@ -267,7 +294,7 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 // variant builds variant name of enum t from field values.
 func (s *fn) variant(t *Type, name string, args []*Value, at ast.Node) *Value {
 	i := t.VariantIndex(name)
-	if t.Kind != KEnum || i < 0 || len(args) != len(t.Variants[i].Fields) {
+	if t.Kind != KEnum || i < 0 || len(args) != len(userFields(t.Variants[i])) {
 		s.b.unsupported(at, "constructing `"+name+"` here")
 		return s.undef(t)
 	}
@@ -394,6 +421,11 @@ func (s *fn) arith(op token.Kind, l, r *Value, at ast.Node) *Value {
 	if l.Type.Kind == KStr && op == token.Plus {
 		return s.call("str.concat", l.Type, "", l, r)
 	}
+	if l.Type.Kind == KList && op == token.Plus && r.Type == l.Type {
+		// `xs + ys`: xs, then each element of ys pushed (in place when
+		// xs is not shared)
+		return s.call(s.b.listConcat(l.Type), l.Type, "", l, r)
+	}
 	if l.Type.Sized() {
 		return s.sizedArith(op, l, r, at)
 	}
@@ -403,6 +435,13 @@ func (s *fn) arith(op token.Kind, l, r *Value, at ast.Node) *Value {
 		return s.undef(l.Type)
 	}
 	v := s.add(o, l.Type, nil, l, r)
+	if l.Type.F32() {
+		switch o {
+		case OpAdd, OpSub, OpMul, OpDiv:
+			// the double result rounded to float32
+			return s.rt("f32_round", l.Type, v)
+		}
+	}
 	if l.Type.Kind == KInt {
 		switch o {
 		case OpAdd, OpSub, OpMul, OpDiv, OpRem, OpShl, OpShr:
@@ -505,6 +544,13 @@ func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
 		c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
 		return s.add(o, boolT, nil, c, s.cint(0))
 	case KStruct, KTuple, KEnum, KList, KUnit:
+		if (o == OpEq || o == OpNe) && !comparable(l.Type, map[*Type]bool{}) {
+			// a function value or a runtime handle (a request value,
+			// a channel) outside an interface value: the backends'
+			// equality helpers do not compare them
+			b.unsupported(x, "`==` on values of type `"+l.Type.Name+"`, which hold functions or runtime handles")
+			return s.undef(boolT)
+		}
 		if holdsColl(l.Type, map[*Type]bool{}) && (o == OpEq || o == OpNe) {
 			// a Map or Set is equal to another with the same entries
 			// in any order (decision 0074)
@@ -517,6 +563,10 @@ func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
 		// structural equality; backends generate a helper per type
 		if o == OpEq || o == OpNe {
 			return s.add(o, boolT, nil, l, r)
+		}
+		// order (`derive Ord`): std/rt's Cmp
+		if name, ok := b.cmpFunc(l.Type); ok {
+			return s.add(o, boolT, nil, s.call(name, m.Builtin(KInt), "", l, r), s.cint(0))
 		}
 	}
 	b.unsupported(x, "comparing values of type `"+l.Type.Name+"`")
@@ -686,6 +736,17 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			s.pattern(s.add(OpField, v.Type.Elems[i], i, v), el, fail)
 		}
 	case *ast.VariantPat:
+		if nt := b.info.PatNewtype(x); nt != nil && b.info.PatVariant(x) == nil {
+			// `Email(p)` matches p against the underlying value
+			if v.Type.Kind != KStruct || len(v.Type.Fields) != 1 {
+				b.unsupported(x, "this newtype pattern")
+				return
+			}
+			if len(x.Fields) == 1 && x.Fields[0].Pattern != nil {
+				s.pattern(s.unbox(s.add(OpField, v.Type.Fields[0].Type, 0, v)), x.Fields[0].Pattern, fail)
+			}
+			return
+		}
 		vo := b.info.PatVariant(x)
 		if vo != nil && v.Type.Kind != KEnum && isNeverResult(s.apply(b.info.PatType(x))) {
 			// a Result[T, Never] is its T (decision 0074): Ok(p)
@@ -728,6 +789,10 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			}
 			sub := pf.Pattern
 			if sub == nil && pf.Name != nil {
+				// `Node(left, ..)`: binds the field's name
+				if vo := b.info.VarOf(pf.Name); vo != nil {
+					s.writeVar(vo, s.unbox(s.add(OpPayload, fs[fi].Type, PayloadRef{tag, fi}, v)))
+				}
 				continue
 			}
 			s.pattern(s.unbox(s.add(OpPayload, fs[fi].Type, PayloadRef{tag, fi}, v)), sub, fail)
@@ -741,8 +806,18 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			i := -1
 			if pf.Name != nil {
 				i = v.Type.FieldIndex(pf.Name.Name)
+			} else if bp, ok := pf.Pattern.(*ast.BindPat); ok {
+				// `Bag{items}`: the field of the binding's name
+				i = v.Type.FieldIndex(bp.Name.Name)
 			}
-			if i < 0 || pf.Pattern == nil {
+			if i >= 0 && pf.Pattern == nil {
+				// `Bag{items}`: binds the field's name
+				if vo := b.info.VarOf(pf.Name); vo != nil {
+					s.writeVar(vo, s.unbox(s.add(OpField, v.Type.Fields[i].Type, i, v)))
+				}
+				continue
+			}
+			if i < 0 {
 				b.unsupported(pf, "this struct pattern field")
 				continue
 			}
@@ -751,10 +826,21 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 	case *ast.OrPat:
 		// each alternative falls through to the next; bindings meet in
 		// block parameters of ok
+		// The checker gives each alternative bindings of its own; the arm
+		// reads the first alternative's, so the others' are copied into
+		// them by name
 		ok := s.newBlock()
-		for _, alt := range x.Alts {
+		first := s.patBindings(x.Alts[0])
+		for i, alt := range x.Alts {
 			next := s.newBlock()
 			s.pattern(v, alt, next)
+			if i > 0 {
+				for name, vo := range s.patBindings(alt) {
+					if fv := first[name]; fv != nil && fv != vo {
+						s.writeVar(fv, s.read(vo))
+					}
+				}
+			}
 			s.jump(ok)
 			s.seal(next)
 			s.cur = next
@@ -763,8 +849,107 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 		s.seal(ok)
 		s.cur = ok
 	case *ast.ListPat:
-		b.unsupported(p, "list patterns")
+		// the length, then each element against its pattern: before the
+		// `..` from the front, after it from the back
+		if v.Type.Kind != KList {
+			b.unsupported(p, "this list pattern")
+			return
+		}
+		et := v.Type.Elems[0]
+		k := len(x.Elems)
+		n := s.call("list.len", intT, "", v)
+		if x.Rest < 0 {
+			s.test(s.add(OpEq, boolT, nil, n, s.cint(int64(k))), fail)
+		} else {
+			s.test(s.add(OpGe, boolT, nil, n, s.cint(int64(k))), fail)
+		}
+		for i, e := range x.Elems {
+			var idx *Value
+			if x.Rest < 0 || i < x.Rest {
+				idx = s.cint(int64(i))
+			} else {
+				idx = s.add(OpSub, intT, nil, n, s.cint(int64(k-i)))
+			}
+			s.pattern(s.call("list.index", et, "", v, idx), e, fail)
+		}
 	default:
 		b.unsupported(p, "this pattern")
 	}
+}
+
+// patBindings returns the bindings of the pattern p by name.
+func (s *fn) patBindings(p ast.Pattern) map[string]*check.VarObj {
+	out := map[string]*check.VarObj{}
+	var walk func(p ast.Pattern)
+	field := func(f *ast.PatField) {
+		if f.Pattern != nil {
+			walk(f.Pattern)
+		} else if f.Name != nil {
+			if vo := s.b.info.VarOf(f.Name); vo != nil {
+				out[vo.Name] = vo
+			}
+		}
+	}
+	walk = func(p ast.Pattern) {
+		switch x := p.(type) {
+		case *ast.BindPat:
+			if vo := s.b.info.VarOf(x.Name); vo != nil {
+				out[vo.Name] = vo
+			}
+		case *ast.TuplePat:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.ListPat:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.OrPat:
+			if len(x.Alts) > 0 {
+				walk(x.Alts[0])
+			}
+		case *ast.VariantPat:
+			for _, f := range x.Fields {
+				field(f)
+			}
+		case *ast.StructPat:
+			for _, f := range x.Fields {
+				field(f)
+			}
+		}
+	}
+	walk(p)
+	return out
+}
+
+// comparable reports whether `==` on values of t lowers: no function
+// value or runtime handle in them, except inside interface values (which
+// compare through their xo.eq function).
+func comparable(t *Type, seen map[*Type]bool) bool {
+	if seen[t] || isIface(t) || isTrace(t) {
+		return true
+	}
+	seen[t] = true
+	switch t.Kind {
+	case KFunc, KHandle:
+		return false
+	}
+	for _, f := range t.Fields {
+		if !comparable(f.Type, seen) {
+			return false
+		}
+	}
+	for _, v := range t.Variants {
+		for _, f := range v.Fields {
+			if !comparable(f.Type, seen) {
+				return false
+			}
+		}
+	}
+	for _, e := range t.Elems {
+		if !comparable(e, seen) {
+			return false
+		}
+	}
+	return true
 }

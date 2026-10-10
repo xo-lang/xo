@@ -1,0 +1,21 @@
+// Intrinsics of std/time on the native backends (decision 0094),
+// implemented in std/llrt/xo_time.c, which only programs that use
+// std/time compile; imported by std/native/time.xo as `use native/rttime`.
+// A zone is an id: 0 is UTC, others index the zones loaded so far (the
+// same name always gets the same id). Instants are seconds since the Unix
+// epoch.
+
+/// The zone with this IANA name from the program's zone data (the TZif
+/// data of each constant name, the whole embedded database, or the host's
+/// with --tzdata=system), or 0 when there is none or the name is not a
+/// zone name.
+fn tz_load(name: Str) -> Int
+/// The zone from the host's database, as time.LoadLocation reads it
+/// ("Local" is /etc/localtime), or 0.
+fn tz_load_host(name: Str) -> Int
+/// The machine's zone name from the /etc/localtime link, or "Local".
+fn tz_local_name() -> Str
+/// The offset from UTC in seconds of the zone at sec.
+fn tz_offset(id: Int, sec: Int) -> Int
+/// The abbreviation of the zone at sec ("CET", "-05").
+fn tz_abbr(id: Int, sec: Int) -> Str

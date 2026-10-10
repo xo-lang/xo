@@ -156,7 +156,7 @@ func (s *fstate) emit() {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
 	b := &strings.Builder{}
-	defer func() { g.text.WriteString(pairLoads(b.String())) }()
+	defer func() { g.text.WriteString(s.farTests(pairLoads(b.String()))) }()
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
 	pads := false
@@ -224,6 +224,47 @@ func (s *fstate) emit() {
 		s.lsda(sites, fr)
 	}
 	b.WriteString("\n")
+}
+
+// farTestLimit is the number of instructions past which a function's
+// tbz and tbnz may not reach their targets (14 bit offsets: 32 KiB, 8192
+// instructions), with a margin for the templates' estimate.
+const farTestLimit = 7000
+
+// farTests rewrites every tbz and tbnz of a function longer than
+// farTestLimit instructions as the opposite test around an
+// unconditional branch, which reaches 128 MiB: `tbnz x9, #63, L`
+// becomes `tbz x9, #63, Lf3_far1; b L; Lf3_far1:`. Huge functions (a
+// main with thousands of list elements) otherwise fail to assemble with
+// "fixup value out of range" (gotchas/arm64-tbz-range.md).
+func (s *fstate) farTests(text string) string {
+	lines := strings.Split(text, "\n")
+	n := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "\t.") {
+			n++
+		}
+	}
+	if n < farTestLimit {
+		return text
+	}
+	var b strings.Builder
+	k := 0
+	for i, l := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		f := strings.Fields(l)
+		if len(f) == 4 && (f[0] == "tbz" || f[0] == "tbnz") && strings.HasPrefix(l, "\t") {
+			k++
+			skip := s.g.local(fmt.Sprintf("f%d_far%d", s.g.nfunc, k))
+			op := map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[f[0]]
+			fmt.Fprintf(&b, "\t%s %s %s %s\n\tb %s\n%s:", op, f[1], f[2], skip, f[3], skip)
+			continue
+		}
+		b.WriteString(l)
+	}
+	return b.String()
 }
 
 func subSP(b *strings.Builder, op string, n int) {

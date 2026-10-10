@@ -1,0 +1,89 @@
+// std/task natively (std/native/task.xo): Once shared by concurrent
+// callers (a failed result too), Semaphore bounding concurrency,
+// map_concurrent keeping input order, and tasks whose value is a Result
+// (not a failure: the scope must not fail).
+use std/task
+
+enum LoadErr {
+  Down(n: Int)
+} derive Display
+
+fn half(n: Int) -> Int ! Str {
+  if n % 2 == 1 {
+    return Err("odd ${n}")
+  }
+  n / 2
+}
+
+fn results(items: List[Int]) -> List[Result[Int, Str]] {
+  scope s {
+    var tasks = []
+    for x in items {
+      tasks.push(s.spawn(fn() -> Result[Int, Str] { half(x) }))
+    }
+    var out: List[Result[Int, Str]] = []
+    for t in tasks {
+      out.push(t.await)
+    }
+    out
+  }
+}
+
+fn main(os: Os) uses (stdio, clock) {
+  let o = task.once[Int, Never]()
+  os.stdio.println("once ${o.get(fn() { 42 })} ${o.get(fn() { 7 })}")
+  let calls = Atomic[Int].new(0)
+  let shared = task.once[Str, LoadErr]()
+  let seen = scope s {
+    var ts = []
+    for i in 0..6 {
+      ts.push(s.spawn(fn() {
+        let r = shared.get(fn() -> Str ! LoadErr {
+          calls.add(1)
+          os.clock.sleep(2ms)
+          "config-${i}"
+        })
+        r.ok() ?? "failed"
+      }))
+    }
+    var all: List[Str] = []
+    for t in ts {
+      all.push(t.await)
+    }
+    all
+  }
+  os.stdio.println("shared ${calls.get()} same ${seen.all(fn(x) { x == seen[0] })} n ${seen.len()}")
+  let bad = task.once[Int, LoadErr]()
+  let first = bad.get(fn() -> Int ! LoadErr { Err(LoadErr.Down(n: 1)) })
+  let second = bad.get(fn() -> Int ! LoadErr { Ok(5) })
+  os.stdio.println("failed shared ${first.debug()} ${second.debug()}")
+  let sem = task.semaphore(2)
+  let inside = Atomic[Int].new(0)
+  let peak = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..8 {
+      s.spawn(fn() {
+        sem.with(fn() {
+          peak.max(inside.add(1))
+          os.clock.sleep(1ms)
+          inside.add(-1)
+        })
+      })
+    }
+  }
+  os.stdio.println("semaphore peak ${peak.get()}")
+  let mapped = task.map_concurrent([6, 5, 4, 3, 2, 1, 0], 3, fn(n) {
+    os.clock.sleep(1ms * n)
+    half(n)
+  })
+  os.stdio.println("map_concurrent ${mapped.debug()}")
+  let one = task.map_concurrent([1, 2], 100, fn(n) { n * 10 })
+  os.stdio.println("big limit ${one.debug()} empty ${task.map_concurrent([], 1, fn(n: Int) { n }).len()}")
+  os.stdio.println("results ${results([1, 2, 3, 4]).debug()}")
+  let r = task.isolate(fn() { task.semaphore(0) })
+  match r {
+    Ok(_) => os.stdio.println("no fault")
+    Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${info.msg}")
+    Err(_) => os.stdio.println("other")
+  }
+}

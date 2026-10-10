@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+ada@example.com example.com 2 0 1
+x@y Email("x@y") true true
+2 Wrap([1, 2]) Pair((3, "c"))
+score 7 Score(7)
+3 2 {Email("a"): 3, Email("b"): 2}
+User{email: Email("u@v"), ids: Ids([4, 5])} true 2
+-1 400 7
+none one a a..c
+zero first big last b pair other 0
+7
+--- stderr

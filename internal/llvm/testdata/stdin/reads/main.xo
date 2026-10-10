@@ -1,0 +1,51 @@
+// Standard input natively (decisions 0088, 0102), driven by
+// TestStdinNative: the first argument picks the case.
+use std/task
+
+fn main(os: Os) ! {
+  let mode = os.env.args().first() ?? "lines"
+  if mode == "lines" {
+    var n = 0
+    while {
+      match os.stdio.read_line()? {
+        Some(l) => {
+          n += 1
+          os.stdio.println("line ${n} [${l}] ${l.len()}")
+        }
+        None => break
+      }
+    }
+    os.stdio.println("eof after ${n}; again ${os.stdio.read_line()?.is_none()} ${os.stdio.read_all()?.len()}")
+  } else if mode == "all" {
+    let first = os.stdio.read_line()? ?? "-"
+    let rest = os.stdio.read_all()?
+    os.stdio.println("first [${first}] rest ${rest.len()} lines ${rest.lines().len()}")
+    os.stdio.write(b"written\n")?
+  } else if mode == "timeout" {
+    // nothing arrives on the open pipe: the deadline cancels the read
+    let r = task.with_timeout(os.clock, 50ms, fn() { os.stdio.read_line() })
+    match r {
+      Ok(_) => os.stdio.println("read finished?")
+      Err(TimedOut) => os.stdio.println("timed out")
+      Err(Failed(e)) => os.stdio.println("failed ${e}")
+    }
+    // the input that arrives later is still there
+    os.stdio.println("then [${os.stdio.read_line()? ?? "-"}]")
+  } else {
+    // a stop request ends the read (SIGTERM from the test)
+    os.stdio.println("ready")
+    var n = 0
+    while {
+      match os.stdio.read_line() {
+        Ok(Some(_)) => n += 1
+        Ok(None) => break
+        Err(Canceled) => {
+          os.stdio.println("stopped after ${n} lines")
+          return
+        }
+        Err(e) => fault("read_line: ${e}")
+      }
+    }
+    os.stdio.println("read ${n} lines")
+  }
+}

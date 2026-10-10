@@ -46,6 +46,27 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	m := b.mod
 	intT, boolT, strT, floatT := m.Builtin(KInt), m.Builtin(KBool), m.Builtin(KStr), m.Builtin(KFloat)
 	key := recvName + "." + fo.Name
+	if recvName == "Fs" {
+		return s.fsCall(x, ci), true
+	}
+	if recvName == "Stdio" && fo.Module.Path == "std/testing" {
+		switch fo.Name {
+		case "write", "read_line", "read_all", "lines":
+			// a test's FakeStdio: the same functions, whose runtime
+			// reads the input set_input gave (std/llrt/xo_stdin.c)
+			if fo.Name != "write" {
+				b.needConc = true
+				if !b.conc {
+					return s.undef(s.natOf(x)), true
+				}
+			}
+			if nm := b.nativeMod("std/prelude"); nm != nil {
+				if impl, ok := nm.Scope["stdio_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+					return s.callAs(x, ci, impl), true
+				}
+			}
+		}
+	}
 	if v, ok := s.testCapCall(x, ci, key); ok {
 		return v, true
 	}
@@ -399,6 +420,13 @@ func (s *fn) withTimeout(x *ast.CallExpr, fo *check.FuncObj) *Value {
 	// f returned
 	s.cur = done
 	s.rt("scope_close", intT, h, s.cint(0))
+	// f finished after the deadline fired (it did not reach a
+	// cancellation point): timed out all the same, as std/rt's
+	// awaitDeadline decides by which came first
+	late, intime := s.branch(s.rt("scope_timed_out", boolT, h))
+	s.cur = late
+	s.jump(join, s.add(OpVariant, nt, ei, s.variant(timedT, "TimedOut", nil, x)))
+	s.cur = intime
 	okI := nt.VariantIndex("Ok")
 	if errT == nil {
 		s.jump(join, s.add(OpVariant, nt, okI, r))
@@ -444,3 +472,37 @@ func isPreludeNamed(t check.Type, names ...string) bool {
 	}
 	return false
 }
+
+// fsType is the lowered Fs (decision 0102): its root ("" for os.fs) and
+// mode bits (1 a sub capability, 2 read only, 4 write only).
+func (b *builder) fsType() *Type {
+	m := b.mod
+	t, created := m.Named("xo.Fs", KStruct)
+	if created {
+		t.Fields = []Field{{"root", m.Builtin(KStr)}, {"mode", m.Builtin(KInt)}}
+	}
+	return t
+}
+
+// fsCall lowers a method of Fs: the function fs_<name> of
+// std/native/prelude.xo, whose first parameter is the Fs (std/rt's
+// realFs, ported to Xo over the system calls of std/llrt/xo_fs.c). A
+// test's MemFs reads only, as before (its writes are XO1201).
+func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
+	b := s.b
+	fo := ci.Fn
+	if b.opts.Tests && fo.Name != "read" {
+		b.unsupported(x, "the method `Fs."+fo.Name+"` of a test's MemFs")
+		return s.undef(s.natOf(x))
+	}
+	if nm := b.nativeMod("std/prelude"); nm != nil {
+		if impl, ok := nm.Scope["fs_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+			return s.callAs(x, ci, impl)
+		}
+	}
+	b.unsupported(x, "the method `Fs."+fo.Name+"`")
+	return s.undef(s.natOf(x))
+}
+
+// isFs reports whether t is the lowered Fs.
+func isFs(t *Type) bool { return t.Kind == KStruct && t.Name == "xo.Fs" }

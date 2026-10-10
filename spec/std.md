@@ -535,8 +535,9 @@ fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
 The reads of standard input are cancellation points while they wait: a
 cancelled task, and every reader once a stop is requested (core 7.5), gets
 `Err(IoErr.Canceled)` at once. Input read after a reader gave up is kept
-for the next read (decision 0088). The native backends do not read
-standard input yet (XO1201, planned).
+for the next read (decision 0088). The native backends read standard
+input the same way (decision 0102); a test binary's standard input is
+empty there.
 
 ### 3.7 Proc (`uses proc`)
 
@@ -1319,9 +1320,11 @@ Status: **Accepted** (decision 0094, 2026-10-09; drafted by the spec
 audit, `bench/results/spec-audit-2026-10-09.md`). Implemented on the Go
 backend (2026-10-09): `std/time.xo`, `std/rt/timezone.go`,
 `timecivil.go`, `timefmt.go`; the compile time layout check is
-`internal/check/timelayout.go`. The native backends report every
-`std/time` function as `XO1201` (support planned; decision 0089 makes
-native a preview at 1.0); its types and constants build there. Points
+`internal/check/timelayout.go`. The native backends build all of it
+(2026-10-09: `std/native/time.xo` over `std/llrt/xo_time.c`, the same
+zone data per use, output identical to the Go backend's; decision 0094
+"Native implementation"; decision 0089 makes native a preview at 1.0).
+Points
 the API text below leaves open are settled in 13.5. Instants,
 durations, Unix seconds and milliseconds, and RFC 3339 in UTC stay in
 the prelude (2.6).

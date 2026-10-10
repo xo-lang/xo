@@ -165,6 +165,18 @@ int64_t xo_int_conv(int64_t v, int64_t fbits, int64_t funs, int64_t tbits, int64
 
 static int n_rune_valid(int64_t r) { return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF); }
 
+// xo_int_in_range reports whether the Int v is a value of the type of bits
+// and uns (`Int32.try`).
+int64_t xo_int_in_range(int64_t v, int64_t bits, int64_t uns) {
+	if (uns && bits == 64) {
+		return v >= 0;
+	}
+	return n_int_fits(v, (int)bits, (int)uns);
+}
+
+// xo_rune_valid reports whether v is a Unicode scalar value (`Rune.try`).
+int64_t xo_rune_valid(int64_t v) { return n_rune_valid(v); }
+
 // xo_rune_of is `Rune(n)` (decision 0079).
 int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_t ln) {
 	if ((uns && bits == 64 && v < 0) || !n_rune_valid(v)) {
@@ -177,6 +189,11 @@ int64_t xo_rune_of(int64_t v, int64_t bits, int64_t uns, const char *loc, int64_
 }
 
 double xo_u64_to_float(int64_t v) { return (double)(uint64_t)v; }
+
+// Float32 values are doubles holding float32 values (internal/ssa
+// Module.Float32): conversions and arithmetic round through float.
+double xo_f32_round(double v) { return (double)(float)v; }
+double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
 
 // xo_rs_append_u64 is s + the text of a UInt64.
 xo_rstr *xo_rs_append_u64(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {

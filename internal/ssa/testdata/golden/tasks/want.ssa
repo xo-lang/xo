@@ -1,6 +1,7 @@
 type List[Int]? = enum { None | Some(v: List[Int]) }
-type Result[Int, E] = enum { Ok(v: Int) | Err(e: E) }
+type Result[Int, E] = enum { Ok(v: Int) | Err(e: E, xo.tr: xo.trace) }
 type E = enum { Bad }
+type xo.trace = struct { frames: List[(Str, Str, fn() -> Str)] }
 type Int? = enum { None | Some(v: Int) }
 
 func main(v0: Os) -> () {
@@ -145,7 +146,7 @@ b4:  ; preds b18
   jump b3()
 b5:  ; preds b18
   v35: Int = const 0
-  v36: Int = call list.index, v76, v35
+  v36: Int = call list.index, v84, v35
   v37: Int = const 0
   v38: Int = call rt.scope_close, v1, v37
   v39: Int = const 1
@@ -192,15 +193,23 @@ b16:  ; preds b8
   v69: Int = const 0
   v70: Result[Int, E] = call list.index, v68, v69
   v71: E = payload 1.0, v70
-  v72: Result[Int, E] = variant 1, v71
-  ret v72
+  v72: xo.trace = payload 1.1, v70
+  v73: fn() -> Str = closure xo.frameargs(ch: Chan[Int]), v0
+  v74: Str = const "tasks.run"
+  v75: Str = const "main.xo:25"
+  v76: (Str, Str, fn() -> Str) = tuple v74, v75, v73
+  v77: List[(Str, Str, fn() -> Str)] = field 0, v72
+  v78: List[(Str, Str, fn() -> Str)] = call list.push, v77, v76
+  v79: xo.trace = struct v78
+  v80: Result[Int, E] = variant 1, v71, v79
+  ret v80
 b17:  ; preds b8
   unreachable
 b18:  ; preds b2
-  v75: Str = const "main.xo:28"
-  v76: List[Int] = call rt.task_await, v26, v75 lands v77
-  v77: Bool = call rt.unwinding
-  br v77, b4(), b5()
+  v83: Str = const "main.xo:28"
+  v84: List[Int] = call rt.task_await, v26, v83 lands v85
+  v85: Bool = call rt.unwinding
+  br v85, b4(), b5()
 b19:  ; preds b2
   jump b15()
 b20:  ; preds b9
@@ -300,6 +309,39 @@ b0(v0: List[fn() -> Int]):
   ret v1
 }
 
+func xo.frameargs(ch: Chan[Int])(v0: fn() -> Str) -> Str captures (Chan[Int]) {
+b0(v0: fn() -> Str):
+  v1: Str = const ""
+  v2: Str = const "ch="
+  v3: Str = call str.concat, v1, v2
+  v4: Chan[Int] = capture 0, v0
+  v5: Str = const ""
+  v6: Str = call xo.debug[Chan[Int]], v5, v4
+  v7: Int = call Str.len, v6
+  v8: Int = const 64
+  v9: Bool = gt v7, v8
+  br v9, b1(), b2()
+b1:  ; preds b0
+  v11: Int = const 0
+  v12: Int = const 61
+  v13: Str = call rt.str_slice, v6, v11, v12
+  v14: Str = const "..."
+  v15: Str = call str.concat, v13, v14
+  jump b3(v15)
+b2:  ; preds b0
+  jump b3(v6)
+b3(v18: Str):  ; preds b1, b2
+  v19: Str = call str.concat, v3, v18
+  ret v19
+}
+
+func xo.debug[Chan[Int]](v0: Str, v1: Chan[Int]) -> Str {
+b0(v0: Str, v1: Chan[Int]):
+  v2: Str = const "<chan>"
+  v3: Str = call str.concat, v0, v2
+  ret v3
+}
+
 func fails(v0: Int) -> Result[Int, E] {
 b0(v0: Int):
   v1: Int = const 1
@@ -311,10 +353,12 @@ b1:  ; preds b3
   ret v5
 b2:  ; preds b0
   v7: E = variant 0
-  v8: Result[Int, E] = variant 1, v7
-  ret v8
+  v8: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
+  v9: xo.trace = struct v8
+  v10: Result[Int, E] = variant 1, v7, v9
+  ret v10
 b3:  ; preds b0
-  v10: () = tuple
+  v12: () = tuple
   jump b1()
 }
 

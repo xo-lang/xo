@@ -67,7 +67,12 @@ func (s *fn) stmt(st ast.Stmt) {
 		} else {
 			v = s.expr(x.Value)
 		}
-		s.ret(v, x)
+		var at ast.Node = x
+		if x.Value != nil {
+			// the returned expression: an implicit conversion reads its type
+			at = x.Value
+		}
+		s.ret(v, at)
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		var label *ast.Ident
 		brk := false
