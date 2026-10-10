@@ -11,7 +11,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   type), definition (into std too), references, rename, document
   symbols, semantic tokens, and formatting. The VS Code extension starts
   it; ```xo fences in Markdown are highlighted.
-- VS Code syntax highlighting (decision 0116): `editors/vscode/` registers
+- VS Code syntax highlighting (decision 0113): `editors/vscode/` registers
   `.xo` files with a TextMate grammar covering spec section 1 (keywords,
   contextual words, interpolation, raw and bytes strings, durations, sets,
   effects in `uses`). Install by symlinking it into `~/.vscode/extensions`.
