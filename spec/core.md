@@ -997,8 +997,11 @@ use github.com/acme/billing/invoice
 - A path is segments of ASCII letters, digits, `_`, `-`, and `.` separated
   by `/` (`PathSeg`, section 15). Only the last segment becomes the local
   name, so dashes elsewhere need nothing (`use github.com/xo-lang/xo/lexer`
-  binds `lexer`). A leading or trailing `/` or an empty segment is
-  `XO0158`.
+  binds `lexer`). A leading or trailing `/`, an empty segment, or a
+  segment that is exactly `.` or `..` is `XO0158`: import paths are
+  absolute, never relative (`use ./lib`), and name each package one way,
+  so `deny` rules (4.2) see every import. A `.` inside a segment is fine
+  (`example.com`, `.github`, `v1.2`).
 - Imports are explicit. There is no dot import or glob import.
 - Cyclic module imports are an error.
 
@@ -2459,7 +2462,7 @@ UseDecl     = "use" ImportPath [ "as" ident ]
               [ "uses" ( "none" | Effect { "," Effect } ) ] .       // 4.5
 ImportPath  = PathSeg { "/" PathSeg } .               // std/http, github.com/acme/x
 PathSeg     = PathChar { PathChar } .                 // xo-lang, rate-limit, v2, example.com
-PathChar    = letter | digit | "_" | "-" | "." .      // ASCII only; no empty segment (XO0158)
+PathChar    = letter | digit | "_" | "-" | "." .      // ASCII only; no empty, `.`, or `..` segment (XO0158)
 TopDecl     = { DocComment } [ "pub" ] ( FnDecl | StructDecl | EnumDecl | IfaceDecl
             | TypeDecl | ConstDecl ) | TestDecl .
 

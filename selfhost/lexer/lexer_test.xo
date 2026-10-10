@@ -220,6 +220,12 @@ test "error codes" {
     ("\"a \${b\"", [UNTERMINATED_INTERP]),
     ("\"a \${ }\"", [EMPTY_INTERP]),
     ("use std//http", [MALFORMED_IMPORT_PATH]),
+    ("use example.com/app/./lib", [MALFORMED_IMPORT_PATH]),
+    ("use example.com/app/x/../lib", [MALFORMED_IMPORT_PATH]),
+    ("use example.com/app/lib/..", [MALFORMED_IMPORT_PATH]),
+    ("use ./lib", [MALFORMED_IMPORT_PATH]),
+    ("use ../app/lib", [MALFORMED_IMPORT_PATH]),
+    ("use example.com/app/.github/v1.2", []),
     ("a @ \"\\q\" 1__0", [INVALID_CHAR, INVALID_ESCAPE, MALFORMED_NUMBER]),
   ]
   for (src, want) in cases {

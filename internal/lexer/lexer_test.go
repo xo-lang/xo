@@ -266,6 +266,12 @@ func TestErrors(t *testing.T) {
 		{"unterminated interpolation", `"a ${b"`, []diag.Code{diag.UnterminatedInterp}},
 		{"empty interpolation", `"a ${ }"`, []diag.Code{diag.EmptyInterp}},
 		{"bad import path", "use std//http", []diag.Code{diag.MalformedImportPath}},
+		{"dot segment", "use example.com/app/./lib", []diag.Code{diag.MalformedImportPath}},
+		{"dot dot segment", "use example.com/app/x/../lib", []diag.Code{diag.MalformedImportPath}},
+		{"trailing dot dot", "use example.com/app/lib/..", []diag.Code{diag.MalformedImportPath}},
+		{"relative path", "use ./lib", []diag.Code{diag.MalformedImportPath}},
+		{"parent path", "use ../app/lib", []diag.Code{diag.MalformedImportPath}},
+		{"dot in a segment is fine", "use example.com/app/.github/v1.2", nil},
 		{"several errors", "a @ \"\\q\" 1__0", []diag.Code{diag.InvalidChar, diag.InvalidEscape, diag.MalformedNumber}},
 	}
 	for _, tt := range tests {

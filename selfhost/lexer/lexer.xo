@@ -389,6 +389,21 @@ fn is_path_char(c: UInt8) -> Bool {
 }
 
 /// Whether b holds `//`.
+/// Whether an import path has a `.` or `..` segment (core 4.1).
+fn has_dot_segment(b: Bytes) -> Bool {
+  var start = 0
+  for i in 0..=b.len() {
+    if i == b.len() || b[i] == '/' {
+      let n = i - start
+      if (n == 1 && b[start] == '.') || (n == 2 && b[start] == '.' && b[start + 1] == '.') {
+        return true
+      }
+      start = i + 1
+    }
+  }
+  false
+}
+
 fn has_double_slash(b: Bytes) -> Bool {
   for i in 1..b.len() {
     if b[i] == '/' && b[i - 1] == '/' {
@@ -414,6 +429,8 @@ fn (var l: Lexer) import_path(start: Pos) {
   l.emit(Kind.ImportPath, start, text)
   if text[0] == '/' || text[text.len() - 1] == '/' || has_double_slash(text) {
     l.error(MALFORMED_IMPORT_PATH, l.span(start), "malformed import path ${text.quote()}".bytes())
+  } else if has_dot_segment(text) {
+    l.error(MALFORMED_IMPORT_PATH, l.span(start), "malformed import path ${text.quote()}: `.` and `..` segments are not allowed; import paths are absolute (core 4.1)".bytes())
   }
 }
 

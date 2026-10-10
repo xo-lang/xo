@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Import paths with a `.` or `..` segment (`use example.com/app/./lib`,
+  `use ./lib`) are `XO0158`. They were accepted, and since `deny` rules
+  compared the path as written while the loader cleaned it, they got
+  past `deny` (decision 0095). The loader and `deny` now both use the
+  cleaned path.
 - Spec: the grammar defines `PathSeg` (ASCII letters, digits, `_`, `-`,
   `.`), matching the lexer; section 4.1 states that dashes outside the
   last segment need nothing (`use github.com/xo-lang/xo/lexer`). No

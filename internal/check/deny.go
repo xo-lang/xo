@@ -3,6 +3,7 @@ package check
 import (
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -121,15 +122,20 @@ func (c *checker) checkDeny(m *Module, u *ast.UseDecl) {
 	if dr == nil {
 		return
 	}
+	// Match the path as loaded: `use a/./b` is `a/b` (core 4.1).
+	p := u.Path
+	if !u.Go && !u.C {
+		p = path.Clean(p)
+	}
 	for _, r := range dr.rules {
-		t := r.Denies(m.Path, u.Path)
+		t := r.Denies(m.Path, p)
 		if t == "" {
 			continue
 		}
-		d := c.errorf(diag.ImportDenied, u.Sp, "`%s` may not import `%s`: denied by `%s` (xo.mod line %d)", m.Path, u.Path, r.String(), r.Line)
+		d := c.errorf(diag.ImportDenied, u.Sp, "`%s` may not import `%s`: denied by `%s` (xo.mod line %d)", m.Path, p, r.String(), r.Line)
 		pos := token.Pos{Line: r.Line, Col: 1}
-		if t != u.Path {
-			note(d, token.Span{File: dr.file, Start: pos, End: pos}, "the rule; `%s` matches `%s` (decision 0095)", t, u.Path)
+		if t != p {
+			note(d, token.Span{File: dr.file, Start: pos, End: pos}, "the rule; `%s` matches `%s` (decision 0095)", t, p)
 		} else {
 			note(d, token.Span{File: dr.file, Start: pos, End: pos}, "the rule (decision 0095)")
 		}

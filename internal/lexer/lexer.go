@@ -403,6 +403,18 @@ func (l *lexer) operator() (token.Kind, int) {
 	return token.Illegal, 0
 }
 
+// hasDotSegment reports whether an import path has a `.` or `..` segment.
+// Such a path names a package under a second spelling, which would slip
+// past `deny` rules that compare paths as written (core 4.1).
+func hasDotSegment(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // importPath lexes the path after `use`: segments of letters, digits, `_`,
 // `-`, and `.` separated by `/`.
 func (l *lexer) importPath(start token.Pos) {
@@ -422,6 +434,8 @@ func (l *lexer) importPath(start token.Pos) {
 	t.Value = t.Text
 	if strings.HasPrefix(t.Text, "/") || strings.HasSuffix(t.Text, "/") || strings.Contains(t.Text, "//") {
 		l.errorf(diag.MalformedImportPath, t.Span, "malformed import path %q", t.Text)
+	} else if hasDotSegment(t.Text) {
+		l.errorf(diag.MalformedImportPath, t.Span, "malformed import path %q: `.` and `..` segments are not allowed; import paths are absolute (core 4.1)", t.Text)
 	}
 }
 

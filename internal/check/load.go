@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -359,6 +360,13 @@ func (c *checker) loadImports(m *Module) error {
 			if u.Path == "" {
 				continue
 			}
+			// p is the path with `.` and `..` segments removed (the lexer
+			// reports them as XO0158): a package is never loaded under a
+			// second spelling that `deny` rules would not match (core 4.1).
+			p := u.Path
+			if !u.Go && !u.C {
+				p = path.Clean(p)
+			}
 			imp := &Import{Decl: u}
 			if u.Go {
 				c.loadGoImport(m, f, u, imp)
@@ -371,10 +379,10 @@ func (c *checker) loadImports(m *Module) error {
 			if u.Alias != nil {
 				imp.Name = u.Alias.Name
 			} else {
-				name, ok := localName(u.Path)
+				name, ok := localName(p)
 				imp.Name = name
 				if !ok {
-					d := c.errorf(diag.ImportNeedsAlias, u.Sp, "import `%s` needs `as`: `%s` is not a valid module name", u.Path, name)
+					d := c.errorf(diag.ImportNeedsAlias, u.Sp, "import `%s` needs `as`: `%s` is not a valid module name", p, name)
 					if d != nil {
 						alt := toSnake(name)
 						if _, ok2 := localName(alt); !ok2 || alt == "" {
@@ -386,14 +394,14 @@ func (c *checker) loadImports(m *Module) error {
 					imp.Name = ""
 				}
 			}
-			dep, err := c.resolveImport(u.Path)
-			if strings.HasPrefix(u.Path, "native/") {
+			dep, err := c.resolveImport(p)
+			if strings.HasPrefix(p, "native/") {
 				// the intrinsics of the native backends: only their
 				// implementation modules see them (decision 0074), and
 				// other intrinsics modules (an Any of native/rt)
 				dep, err = nil, nil
 				if m.Native || (m.IsStd && strings.HasPrefix(m.Path, "native/")) {
-					dep, err = c.loadNativeRT(u.Path)
+					dep, err = c.loadNativeRT(p)
 				}
 			}
 			if err != nil {
@@ -405,8 +413,8 @@ func (c *checker) loadImports(m *Module) error {
 			if dep == nil && c.unrequired(u) {
 				imp.Used = true
 			} else if dep == nil {
-				d := c.errorf(diag.UnresolvedName, u.Sp, "module `%s` not found", u.Path)
-				if strings.HasPrefix(u.Path, "std/") {
+				d := c.errorf(diag.UnresolvedName, u.Sp, "module `%s` not found", p)
+				if strings.HasPrefix(p, "std/") {
 					var cands []string
 					entries, _ := fs.ReadDir(std.Files, ".")
 					for _, e := range entries {
@@ -415,7 +423,7 @@ func (c *checker) loadImports(m *Module) error {
 							cands = append(cands, "std/"+n)
 						}
 					}
-					if s := nearest(u.Path, cands); len(s) > 0 {
+					if s := nearest(p, cands); len(s) > 0 {
 						note(d, token.Span{}, "did you mean `%s`?", strings.Join(s, "`, `"))
 					}
 				}

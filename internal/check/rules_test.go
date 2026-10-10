@@ -135,6 +135,12 @@ func TestResolution(t *testing.T) {
 			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
 			"domain/main.xo": "use example.com/app/store\n\npub fn f() -> Int { store.one() }\n",
 		}, want: []string{"XO1312"}},
+		{name: "dot segments do not get past a deny rule", files: map[string]string{
+			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/store\n",
+			"store/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"x/a.xo":         "pub fn two() -> Int { 2 }\n",
+			"domain/main.xo": "use example.com/app/./store as s1\nuse example.com/app/x/../store as s2\n\npub fn f() -> Int { s1.one() + s2.one() }\n",
+		}, want: []string{"XO0158", "XO0158", "XO1312", "XO1312"}},
 		{name: "deny pattern forbids a nested use", files: map[string]string{
 			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/...\n",
 			"store/sql/a.xo": "pub fn one() -> Int { 1 }\n",
