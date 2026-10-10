@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.9.0 (2026-10-10)
+
+Spec draft 0.9.
+
 - Module proxies (decision 0126): `XO_PROXY` lists proxy URLs, `direct`
   (git), and `off`, with Go's fallback rules (comma after 404/410, pipe
   after any error; default `direct`), and `XO_NOPROXY` patterns go to
