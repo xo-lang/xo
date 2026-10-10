@@ -87,3 +87,8 @@ had no server API to copy.
   breaks the golden comparison that keeps them honest.
 - **Logging handshake failures natively too**: noise on standard error
   that goldens would have to filter; dropped on both sides instead.
+
+## Owner confirmation (2026-10-09)
+
+HTTP/1.1 only on every backend is confirmed until HTTP/2 lands on both
+backends (queued with the native leftovers).
