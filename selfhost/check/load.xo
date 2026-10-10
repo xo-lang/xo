@@ -65,7 +65,11 @@ pub struct Checker {
 
   // Results.
   names: List[NameRec] = []
-  name_at: Map[Str, Int] = {}
+  /// Name records by file and offset (name_key).
+  name_at: Map[Int, Int] = {}
+  /// Whether a Named type without type arguments is comparable, by Type
+  /// object (infer.xo is_eq_type).
+  comparable_at: Map[Int, Bool] = {}
   types: List[TypeRec] = []
   type_at: Map[Int, Int] = {}
   /// Expressions of type Never checked against an expected type, by key.

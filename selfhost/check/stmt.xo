@@ -362,8 +362,7 @@ fn (var c: Checker) check_const_expr(e: Expr) {
       }
     }
     Ident(id) => {
-      let key = "${c.path}:${id.span.start.offset}"
-      if let Some(i) = c.name_at.get(key) {
+      if let Some(i) = c.name_at.get(c.name_key(id.span.start.offset)) {
         let o = c.names[i].obj
         if o >= 0 && c.objs[o].kind == ObjKind.Local && !c.objs[o].is_const {
           c.const_bad(parser.expr_span(e), "a local binding")

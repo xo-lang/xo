@@ -121,8 +121,14 @@ fn (var c: Checker) record_text(id: Ident, what: Str) {
   c.record_rec(id, -1, what)
 }
 
+/// The key of the name record of an identifier at offset of the current
+/// file.
+fn (c: Checker) name_key(offset: Int) -> Int {
+  c.cur_file * 268435456 + offset
+}
+
 fn (var c: Checker) record_rec(id: Ident, obj: Int, what: Str) {
-  let key = "${c.path}:${id.span.start.offset}"
+  let key = c.name_key(id.span.start.offset)
   if let Some(i) = c.name_at.get(key) {
     c.names[i].obj = obj
     c.names[i].what = what

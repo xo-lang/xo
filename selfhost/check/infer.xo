@@ -498,48 +498,68 @@ fn (var c: Checker) comparable(t0: Int, seen: List[Int]) -> Bool {
     }
     Named => {
       let o = x.obj
-      if c.is_handle(o) {
-        return false
-      }
-      if c.objs[o].tkind == "interface" {
-        return true
-      }
-      for a in x.args {
-        if c.tys[a].kind == TyKind.EffArg {
-          continue
+      // A type without type arguments is comparable or not once and for
+      // all: whether a function value or handle is reachable from it. The
+      // answer is computed from the top (no types seen yet) and holds
+      // inside any other exploration too.
+      if x.args.is_empty() {
+        if let Some(b) = c.comparable_at.get(o) {
+          return b
         }
-        if !c.comparable(a, seen) {
-          return false
+        if seen.is_empty() {
+          let b = c.comparable_named(t, seen)
+          c.comparable_at[o] = b
+          return b
         }
       }
-      if seen.contains(o) {
-        return true
-      }
-      var seen2 = seen
-      seen2.push(o)
-      let sm = c.args_subst(c.objs[o].tparams, x.args)
-      let tk = c.objs[o].tkind
-      if tk == "struct" {
-        for f in c.objs[o].fields {
-          if !c.comparable(c.subst(f.ty, sm), seen2) {
-            return false
-          }
-        }
-      } else if tk == "enum" {
-        for v in c.objs[o].variants {
-          for f in v.fields {
-            if !c.comparable(c.subst(f.ty, sm), seen2) {
-              return false
-            }
-          }
-        }
-      } else if tk == "newtype" && c.objs[o].target >= 0 {
-        return c.comparable(c.subst(c.objs[o].target, sm), seen2)
-      }
-      true
+      c.comparable_named(t, seen)
     }
     Param | Var | Bad | EffArg => true
   }
+}
+
+fn (var c: Checker) comparable_named(t: Int, seen: List[Int]) -> Bool {
+  let x = c.tys[t]
+  let o = x.obj
+  if c.is_handle(o) {
+    return false
+  }
+  if c.objs[o].tkind == "interface" {
+    return true
+  }
+  for a in x.args {
+    if c.tys[a].kind == TyKind.EffArg {
+      continue
+    }
+    if !c.comparable(a, seen) {
+      return false
+    }
+  }
+  if seen.contains(o) {
+    return true
+  }
+  var seen2 = seen
+  seen2.push(o)
+  let sm = c.args_subst(c.objs[o].tparams, x.args)
+  let tk = c.objs[o].tkind
+  if tk == "struct" {
+    for f in c.objs[o].fields {
+      if !c.comparable(c.subst(f.ty, sm), seen2) {
+        return false
+      }
+    }
+  } else if tk == "enum" {
+    for v in c.objs[o].variants {
+      for f in v.fields {
+        if !c.comparable(c.subst(f.ty, sm), seen2) {
+          return false
+        }
+      }
+    }
+  } else if tk == "newtype" && c.objs[o].target >= 0 {
+    return c.comparable(c.subst(c.objs[o].target, sm), seen2)
+  }
+  true
 }
 
 fn is_ord_builtin(n: Str) -> Bool {
