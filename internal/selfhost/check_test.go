@@ -264,8 +264,8 @@ func splitDiags(dump string) (string, []string) {
 // variant of the expected enum, so its XO0601 belongs to the types stage.
 var nameDiagRE = regexp.MustCompile("^" + `\{"code":"(XO0601|XO0603|XO0604|XO0605)",.*"message":"(` + strings.Join([]string{
 	"(name|function) `[a-z_][A-Za-z0-9_]*` not found",
-	"(type|module) `[^`]+` not found",
-	"module `[^`]+` has no (member|type) `[^`]+`",
+	"(type|module|enum) `[^`]+` not found",
+	"module `[^`]+` has no (member|type|enum) `[^`]+`",
 	"type path `[^`]+` has too many segments",
 	"derivable interface `[^`]+` not found",
 	"`(result|old)` is only defined inside an `ensures` clause \\(core 9.1\\)",

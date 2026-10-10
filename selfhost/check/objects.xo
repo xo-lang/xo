@@ -49,8 +49,10 @@ pub struct Obj {
   /// Type: the names of its struct fields (for the field and method
   /// conflict check).
   pub fields: List[Bytes] = []
-  /// Type: interface.
-  pub is_iface: Bool = false
+  /// Type: struct, enum, interface, alias, or newtype.
+  pub tkind: Str = ""
+  /// Type (enum): its variant names.
+  pub variants: List[Bytes] = []
   /// Type: methods attached so far, by name (a set).
   pub methods: Map[Bytes, Bool] = {}
 }

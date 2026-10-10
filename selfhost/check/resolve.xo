@@ -206,6 +206,7 @@ fn (var c: Checker) declare(m: Int) {
         }
         StructDecl(d: sd) => {
           o = c.declare_type(sd.name, sd.type_params, sd.is_pub)
+          c.objs[o].tkind = "struct"
           var fields: List[Bytes] = []
           for fl in sd.fields {
             if !fields.contains(fl.name.name) {
@@ -214,12 +215,23 @@ fn (var c: Checker) declare(m: Int) {
           }
           c.objs[o].fields = fields
         }
-        EnumDecl(d: ed) => o = c.declare_type(ed.name, ed.type_params, ed.is_pub)
+        EnumDecl(d: ed) => {
+          o = c.declare_type(ed.name, ed.type_params, ed.is_pub)
+          c.objs[o].tkind = "enum"
+          var vs: List[Bytes] = []
+          for v in ed.variants {
+            vs.push(v.name.name)
+          }
+          c.objs[o].variants = vs
+        }
         InterfaceDecl(d: id) => {
           o = c.declare_type(id.name, id.type_params, id.is_pub)
-          c.objs[o].is_iface = true
+          c.objs[o].tkind = "interface"
         }
-        TypeDecl(d: td) => o = c.declare_type(td.name, td.type_params, td.is_pub)
+        TypeDecl(d: td) => {
+          o = c.declare_type(td.name, td.type_params, td.is_pub)
+          c.objs[o].tkind = if td.newtype { "newtype" } else { "alias" }
+        }
         ConstDecl(d: cd) => {
           o = c.new_obj(ObjKind.Const, cd.name)
           c.objs[o].is_pub = cd.is_pub || c.mods[m].is_std
@@ -425,7 +437,7 @@ fn (var c: Checker) attach_method(fd: parser.FnDecl) -> Bool {
   if t < 0 || c.objs[t].kind != ObjKind.Type {
     return false
   }
-  if c.objs[t].is_iface {
+  if c.objs[t].tkind == "interface" {
     return false
   }
   if c.objs[t].module != c.cur_mod {
@@ -964,7 +976,8 @@ fn (var c: Checker) pattern(p: Pattern) {
         c.pattern(e)
       }
     }
-    VariantPat(fields: fields, ..) => {
+    VariantPat(path: path, fields: fields, ..) => {
+      c.variant_path(path)
       for f in fields {
         c.pattern(f.pattern)
       }
@@ -980,6 +993,48 @@ fn (var c: Checker) pattern(p: Pattern) {
       }
     }
     BadPat(..) => {}
+  }
+}
+
+/// The names of a variant pattern's path (pattern.go variantPattern):
+/// `mod.Enum.Variant` and `Enum.Variant` name their module and enum
+/// without types; a bare `Variant` and the variant itself are deferred.
+fn (var c: Checker) variant_path(path: List[Ident]) {
+  if path.len() == 2 {
+    // `mod.Email(p)`: a newtype pattern (decision 0097)
+    if let Some(imp) = c.files[c.cur_file].imports.get(path[0].name) {
+      if imp.module >= 0 {
+        let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+        if o >= 0 {
+          c.import_of(path[0].name, false)
+          if c.objs[o].kind == ObjKind.Type && (c.objs[o].tkind is "newtype" | "alias") {
+            return
+          }
+        }
+      }
+    }
+    let o = c.lookup_module_obj(c.cur_mod, path[0].name)
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[0].span, "enum `${text(path[0].name)}` not found")
+    }
+    return
+  }
+  if path.len() == 3 {
+    let imp = match c.files[c.cur_file].imports.get(path[0].name) {
+      Some(x) => x
+      None => {
+        c.error("XO0601", path[0].span, "module `${text(path[0].name)}` not found")
+        return
+      }
+    }
+    c.import_of(path[0].name, false)
+    if imp.module < 0 {
+      return
+    }
+    let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[1].span, "module `${text(path[0].name)}` has no enum `${text(path[1].name)}`")
+    }
   }
 }
 
