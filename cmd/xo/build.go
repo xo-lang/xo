@@ -393,7 +393,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	// a workspace is one program: its modules' tests run together
 	// (decision 0086)
 	dirs = mod.WorkspaceDirs(dirs)
-	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Test, Holes: *holes, Race: *race, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata, RealTests: *real})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo test: %v\n", err)
 		return 1

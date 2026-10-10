@@ -58,7 +58,19 @@ func runNativeTests(res *build.Result, o nativeTestOpts, stdout io.Writer) int {
 		case len(t.Uses) > 0 && !o.real:
 			out = nativeOutcome{status: "skip", msg: "uses " + strings.Join(t.Uses, ", ") + ": run with `xo test --real` for real capabilities"}
 		case len(t.Uses) > 0:
-			out = nativeOutcome{status: "skip", msg: "uses " + strings.Join(t.Uses, ", ") + ": real capabilities in tests are not available without a garbage collector (`--no-gc`) yet (support is planned)"}
+			// real capabilities for the declared effects (decision 0120);
+			// what a test with real stdio printed goes where the Go
+			// backend's test binary prints it
+			var pc propCase
+			out, pc = runNativeTestEnv(bin, t, s, o.timeout, "XO_TEST_REAL="+strings.Join(t.Uses, ","))
+			if usesStdio(t.Uses) {
+				for _, l := range pc.out {
+					fmt.Fprintln(stdout, l)
+				}
+				if out.status == "pass" && pc.errOut != "" {
+					fmt.Fprint(os.Stderr, pc.errOut)
+				}
+			}
 		case t.Prop:
 			cases := o.cases
 			if cases <= 0 {
@@ -112,6 +124,16 @@ func runNativeTests(res *build.Result, o nativeTestOpts, stdout io.Writer) int {
 	return 0
 }
 
+// usesStdio reports whether a test declares the stdio effect.
+func usesStdio(uses []string) bool {
+	for _, u := range uses {
+		if u == "stdio" {
+			return true
+		}
+	}
+	return false
+}
+
 func printNativeLogs(w io.Writer, lines []string) {
 	if len(lines) == 0 {
 		return
@@ -131,6 +153,11 @@ type propCase struct {
 	reported   bool
 	input      string
 	notSmaller bool
+	// out and errOut are what the test wrote to the real standard
+	// streams itself (not the harness's lines): a test with real stdio
+	// (`xo test --real`, decision 0120)
+	out    []string
+	errOut string
 }
 
 // runNativeTestEnv runs test t of the test binary bin with seed s and
@@ -168,9 +195,12 @@ func runNativeTestEnv(bin string, t build.TestInfo, s int64, limit time.Duration
 			input.WriteString(strings.TrimPrefix(l, "XO-PROP-INPUT ") + "\n")
 		case l == "XO-PROP-NOT-SMALLER":
 			pc.notSmaller = true
+		case !strings.HasPrefix(l, "XO-"):
+			pc.out = append(pc.out, l)
 		}
 	}
 	pc.input = input.String()
+	pc.errOut = errb.String()
 	if ctx.Err() != nil {
 		return nativeOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit), logs: logs}, pc
 	}

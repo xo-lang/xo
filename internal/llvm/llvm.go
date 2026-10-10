@@ -32,8 +32,10 @@ type Options struct {
 	// ShareProbes marks every heap value shared as it is defined
 	// (ssa.InsertShareProbes; a test of the atomic count paths).
 	ShareProbes bool
-	// Tests generates a test binary (ssa.Options.Tests).
-	Tests bool
+	// Tests generates a test binary (ssa.Options.Tests); RealTests
+	// includes the tests that declare `uses` (`xo test --real`).
+	Tests     bool
+	RealTests bool
 	// Release compiles out debug contracts (ssa.Options.Release).
 	Release bool
 	// TargetAttrs are LLVM function attributes every generated function
@@ -60,7 +62,7 @@ type Program struct {
 // builds SSA, verifies it, inserts reference counting, verifies again
 // (ownership balance included), and lowers to LLVM IR.
 func Generate(res *check.Result, opts Options) (*Program, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, Release: opts.Release})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release})
 	if err != nil {
 		return nil, err
 	}

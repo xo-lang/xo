@@ -99,6 +99,37 @@ static char *tw_strdup(const char *p, int64_t n) { return cstr_of(p, n); }
 __attribute__((unused)) static void tw_init(void) {
 	tw.on = 1;
 	tw.vnow = TW_EPOCH;
+	// `xo test --real` (decision 0120): the effects the test declares are
+	// real; with `clock`, `net`, or `proc` the clock is the real one (a
+	// socket or child process wait is not a virtual wait, and its
+	// deadlines are real time)
+	const char *real = getenv("XO_TEST_REAL");
+	for (const char *e = real; e && *e;) {
+		const char *end = strchr(e, ',');
+		size_t k = end ? (size_t)(end - e) : strlen(e);
+		static const struct {
+			const char *name;
+			int bits;
+		} eff[] = {
+		    {"fs", TW_REAL_FS_READ | TW_REAL_FS_WRITE},
+		    {"fs.read", TW_REAL_FS_READ},
+		    {"fs.write", TW_REAL_FS_WRITE},
+		    {"net", TW_REAL_NET | TW_REAL_CLOCK},
+		    {"net.dial", TW_REAL_NET | TW_REAL_CLOCK},
+		    {"net.listen", TW_REAL_NET | TW_REAL_CLOCK},
+		    {"clock", TW_REAL_CLOCK},
+		    {"env", TW_REAL_ENV},
+		    {"stdio", TW_REAL_STDIO},
+		    {"proc", TW_REAL_PROC | TW_REAL_CLOCK},
+		};
+		for (size_t i = 0; i < sizeof eff / sizeof eff[0]; i++) {
+			if (strlen(eff[i].name) == k && strncmp(eff[i].name, e, k) == 0) {
+				tw.real |= eff[i].bits;
+			}
+		}
+		e = end ? end + 1 : NULL;
+	}
+	tw.virt = !(tw.real & TW_REAL_CLOCK);
 	int64_t seed = 1;
 	const char *s = getenv("XO_TEST_SEED");
 	if (s && *s) {
@@ -117,6 +148,26 @@ int64_t xo_test_index(void) {
 
 // xo_test_on reports whether the program runs in the test world.
 int64_t xo_test_on(void) { return tw.on; }
+
+// xo_test_fake reports whether the effect real (TW_REAL_*) is a fake in
+// this test: the test world without `xo test --real` for it.
+int64_t xo_test_fake(int64_t real) { return tw_is_fake((int)real); }
+
+// xo_test_fs_real is the mode bits of a real Fs in this test (decision
+// 0120): -1 for the MemFs, 0 read and write, 2 read only, 4 write only
+// (std/rt's realCaps).
+int64_t xo_test_fs_real(void) {
+	int r = tw.on ? tw.real & (TW_REAL_FS_READ | TW_REAL_FS_WRITE) : 0;
+	switch (r) {
+	case TW_REAL_FS_READ | TW_REAL_FS_WRITE:
+		return 0;
+	case TW_REAL_FS_READ:
+		return 2;
+	case TW_REAL_FS_WRITE:
+		return 4;
+	}
+	return -1;
+}
 
 // tw_report writes a line for the harness on the real standard output.
 static void tw_report(const char *tag, const char *p, int64_t n) {
@@ -173,7 +224,7 @@ static void tw_kick(void) {
 // tw_kick_once is one move of the clock; 1 when only callback timers
 // fired (no park was signaled by the clock itself).
 static int tw_kick_once(void) {
-	if (!tw.on || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
+	if (!tw.virt || !__atomic_exchange_n(&tw.vpending, 0, __ATOMIC_ACQ_REL)) {
 		return 0;
 	}
 	int parks = 0;

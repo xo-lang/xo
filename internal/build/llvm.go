@@ -124,7 +124,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang)})
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, RealTests: opts.RealTests, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang)})
 	if err != nil {
 		return nil, err
 	}

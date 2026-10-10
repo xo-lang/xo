@@ -73,6 +73,21 @@ func TestNoGCTests(t *testing.T) {
 			}
 		})
 	}
+	t.Run("real", func(t *testing.T) {
+		// `xo test --real` (decision 0120), and the same tests skipped
+		// without it
+		t.Parallel()
+		dir := filepath.Join("testdata", "nogc", "real")
+		for _, args := range [][]string{{"-v", "--real", dir}, {"-v", dir}} {
+			goCode, goOut := xoTest(t, args...)
+			for _, be := range backends {
+				code, out := xoTest(t, append([]string{"--no-gc", "--backend=" + be}, args...)...)
+				if code != goCode || out != goOut {
+					t.Errorf("%v on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", args, be, goCode, code, goOut, be, out)
+				}
+			}
+		}
+	})
 	t.Run("native", func(t *testing.T) {
 		t.Parallel()
 		dir := filepath.Join("testdata", "nogc", "native")

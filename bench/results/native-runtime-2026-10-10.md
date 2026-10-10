@@ -169,3 +169,8 @@ of type): `xo test -v` prints the same report on the Go backend, LLVM,
 and arm64 (TestNoGCTests). Time of the whole module's `xo test` (cached
 builds): Go backend 0.28 s, native 2.9 s (a process per case and per
 shrink try; the shrinks took 2 to 61 steps).
+
+`xo test --real` natively (decision 0120): `cmd/xo/testdata/nogc/real`
+(nine tests, one per effect plus a fake kept next to a real effect and
+real output) prints the Go backend's report on LLVM and arm64, with and
+without `--real` (TestNoGCTests/real).

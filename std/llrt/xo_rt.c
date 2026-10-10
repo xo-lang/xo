@@ -540,7 +540,23 @@ static struct {
 	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
 	int vpending;    // every context is blocked: advance the clock (atomic)
 	int in_main;     // testing.run_main is running main
+	// real capabilities of `xo test --real` (decision 0120): the effects
+	// the test declares (TW_REAL_*, from XO_TEST_REAL); virt: the clock
+	// is virtual (the test world without `clock` or `net`)
+	int real;
+	int virt;
 } tw;
+
+#define TW_REAL_FS_READ 1
+#define TW_REAL_FS_WRITE 2
+#define TW_REAL_NET 4
+#define TW_REAL_CLOCK 8
+#define TW_REAL_ENV 16
+#define TW_REAL_STDIO 32
+#define TW_REAL_PROC 64
+
+// tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
+static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
 
 static void tw_write(int err, const char *p, int64_t n);
 
@@ -620,7 +636,7 @@ static void flush_pending(void) {
 }
 
 void xo_print(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(0, p, n);
 		return;
 	}
@@ -630,7 +646,7 @@ void xo_print(const char *p, int64_t n) {
 }
 
 void xo_println(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(0, p, n);
 		tw_write(0, "\n", 1);
 		return;
@@ -642,7 +658,7 @@ void xo_println(const char *p, int64_t n) {
 }
 
 void xo_eprint(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(1, p, n);
 		return;
 	}
@@ -653,7 +669,7 @@ void xo_eprint(const char *p, int64_t n) {
 }
 
 void xo_eprintln(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(1, p, n);
 		tw_write(1, "\n", 1);
 		return;
@@ -1798,7 +1814,7 @@ static int64_t mono_ns(void) {
 
 // tnow is the time of timers: monotonic ns, or the virtual clock in the
 // test world.
-static int64_t tnow(void) { return tw.on ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
+static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
 
 // xo_shield_begin starts deferred code (core 3.5, decision 0022): it is
 // shielded from cancellation, and on the unwind path the unwinding flag
@@ -2338,7 +2354,7 @@ static void dl_check_locked(void) {
 	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
 	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
 	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
-		if (tw.on) {
+		if (tw.virt) {
 			// the test world's clock jumps to the next timer
 			// (tw_kick, after pool.mu is released), or it deadlocked
 			__atomic_store_n(&tw.vpending, 1, __ATOMIC_RELEASE);
@@ -2387,7 +2403,7 @@ static xo_worker *root_worker(void) {
 // end does not.
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
-	if (tw.on) {
+	if (tw.virt) {
 		// in the test world nothing outside the program ends a wait:
 		// timers are virtual and fire only when every context waits
 		counted = 1;
@@ -4445,7 +4461,7 @@ static void th_remove(xo_timer *t) {
 
 // timer_add arms t (when, and park or fn, set).
 static void timer_add(xo_timer *t) {
-	if (!tw.on) {
+	if (!tw.virt) {
 		// the test world has no poller: its timers fire when the
 		// virtual clock moves (tw_kick)
 		ev_start();
@@ -4463,7 +4479,7 @@ static void timer_add(xo_timer *t) {
 	th_up(t->idx);
 	int first = t->idx == 0;
 	pthread_mutex_unlock(&ev.mu);
-	if (first && !tw.on) {
+	if (first && !tw.virt) {
 		ev_poke();
 	}
 }
@@ -4765,7 +4781,7 @@ static void *poller_main(void *arg) {
 static void tw_sleep_record(int64_t d);
 
 int64_t xo_clock_now(void) {
-	if (tw.on) {
+	if (tw.virt) {
 		return __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE);
 	}
 	struct timespec ts;
@@ -5036,7 +5052,7 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 		return xo_h_zero();
 	}
 	char *addr = cstr_of(p, n);
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_NET)) {
 		// FakeNet.listen: an in memory listener (std/rt's memListener)
 		xo_listener *ml = tw_listen(c, addr);
 		free(addr);
@@ -5203,7 +5219,7 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 		net_fail(c, 5, "");
 		return xo_h_zero();
 	}
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_NET)) {
 		// FakeNet.dial: raw connections are not faked (Refused)
 		net_fail(c, 2, "");
 		return xo_h_zero();
@@ -5514,7 +5530,7 @@ int64_t xo_floor_div(int64_t a, int64_t b) {
 static xo_rlist *tw_env_get(const char *p, int64_t n);
 
 xo_rlist *xo_env_get(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_ENV)) {
 		return tw_env_get(p, n);
 	}
 	char *name = cstr_of(p, n);

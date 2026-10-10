@@ -963,7 +963,9 @@ failures, captured streams and log records, MemFs (decision 0108),
 0109). `os.proc.exit` ends the test (it passes), and inside `run_main`
 unwinds main back to it. `testing.gen` and property tests make the Go
 backend's values for a seed, and a failing property test reports the
-same case and shrunk input (decision 0120).
+same case and shrunk input (decision 0120). With `xo test --real` a test
+gets real capabilities for the effects it declares (with `clock`, `net`,
+or `proc` its clock is the real one).
 
 ```
 struct TestOs {

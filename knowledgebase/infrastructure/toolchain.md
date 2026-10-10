@@ -77,6 +77,7 @@ go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
 go run ./cmd/xo test --no-gc [-v] [--backend=llvm|arm64] examples/notes-service   # a native test binary, one process per test (XO_TEST=i, XO_TEST_SEED=s) in the C test world; same report as the Go backend
 XO_TEST=i XO_TEST_SEED=1 XO_PROP_SEED=1000003 ./prog.test   # one case of native property test i (decision 0120): XO_PROP_SEED is std/rt's seed*1000003+case, XO_PROP_REPLAY=c1,c2,... replays choices; prints XO-PROP-CHOICES and XO-PROP-INPUT lines before the body runs
+XO_TEST=i XO_TEST_REAL=fs.read,env ./prog.test         # a `uses` test of a native test binary built with --real: those effects real (decision 0120)
 XO_TEST=3 XO_TEST_SEED=1 <build dir>/arm64/bin/<module>.test   # run one test of a native test binary by hand: exit 0 passes, XO-TEST-FAIL on stdout and exit 1 fails, XO-TEST-LOG lines are its log records
 go test ./cmd/xo -run 'TestNoGC(Tests|TestLeaks|NotesServer)'   # native test reports vs the Go backend (cmd/xo/testdata/nogc, examples/notes-service), no live allocation at exit, and notes-service served natively on a socket with SIGTERM shutdown (about 40 s)
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)

@@ -536,11 +536,71 @@ func (s *fn) memFsCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	if nm := b.nativeMod("std/testing"); nm != nil {
 		if impl, ok := nm.Scope["memfs_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+			// Fs methods, and the MemFs methods that are Fs methods (a
+			// TestOs's fs is a MemFs); MemFs's own control methods stay
+			if b.opts.RealTests {
+				if pm := b.nativeMod("std/prelude"); pm != nil {
+					if real, ok := pm.Scope["fs_"+fo.Name].(*check.FuncObj); ok && real.Recv == nil {
+						// `xo test --real` (decision 0120): the real Fs
+						// when the test declares fs effects
+						return s.callAsVia(x, ci, impl, func(callee *Func) string {
+							return b.realFsWrapper(callee, b.declare(real, nil, x))
+						}), true
+					}
+				}
+			}
 			return s.callAs(x, ci, impl), true
 		}
 	}
 	b.unsupported(x, "the method `"+fo.Recv.Name+"."+fo.Name+"` of a test's MemFs")
 	return s.undef(s.natOf(x)), true
+}
+
+// realFsWrapper returns xo.testfs[memfs], with the signature of the
+// MemFs implementation memfs: at run time it calls the real Fs
+// implementation real when the test declares fs effects with `xo test
+// --real` (rt.test_fs_real: the mode bits of its view, std/rt's
+// realCaps), else memfs.
+func (b *builder) realFsWrapper(memfs, real *Func) string {
+	m := b.mod
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	var ps []*Type
+	for _, p := range memfs.Params() {
+		ps = append(ps, p.Type)
+	}
+	return b.genFunc("xo.testfs["+memfs.Name+"]", ps, memfs.Results, func(s *fn, args []*Value) {
+		tuple := func(r *Value) {
+			s.add(OpReturn, nil, nil, r)
+			s.dead()
+		}
+		ret := func(name string, f *Func, as []*Value) {
+			if len(f.Results) == 1 {
+				r := s.call(name, f.Results[0], "", as...)
+				s.check(name)
+				s.retv(r)
+				return
+			}
+			t := m.Tuple(f.Results...)
+			r := s.call(name, t, "", as...)
+			s.check(name)
+			var es []*Value
+			for i := range f.Results {
+				es = append(es, s.add(OpField, t.Elems[i], i, r))
+			}
+			tuple(s.add(OpTuple, t, nil, es...))
+		}
+		mode := s.rt("test_fs_real", intT)
+		s.ifThen(s.add(OpGe, boolT, nil, mode, s.cint(0)), func() {
+			as := append([]*Value(nil), args...)
+			if len(as) > 0 && isFs(as[0].Type) {
+				f := as[0]
+				old := s.add(OpField, intT, 1, f)
+				as[0] = s.add(OpSetField, f.Type, 1, f, s.add(OpOr, intT, nil, old, mode))
+			}
+			ret(real.Name, real, as)
+		})
+		ret(memfs.Name, memfs, args)
+	})
 }
 
 // procRun lowers `Proc.run` and a test's `FakeProc.run` (std.md 3.7,

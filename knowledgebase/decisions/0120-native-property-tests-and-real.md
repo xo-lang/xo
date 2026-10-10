@@ -1,7 +1,7 @@
 # 0120: Property tests, testing.gen, and `xo test --real` on the native backends
 
-Status: Implemented (2026-10-10): property tests and `testing.gen`.
-`--real`: see the section at the end. Amends 0083 (native test binaries:
+Status: Implemented (2026-10-10): property tests, `testing.gen`, and
+`--real` (section at the end). Amends 0083 (native test binaries:
 "not available yet"). Code: `std/llrt/xo_testing.c` (`xo_gen_*`,
 `xo_prop_report`), `internal/ssa/build_gen.go`,
 `internal/ssa/build_testmode.go` (`propInputs`, `testingGen`),
@@ -71,3 +71,36 @@ ends the process.
   not copy.
 - **Different values from the Go backend's** (any good generator): the
   reports and pinned seeds would differ between backends.
+
+## `xo test --real` (2026-10-10)
+
+Decision: a native test binary built with `--real` contains the tests
+that declare `uses` (ssa.Options.RealTests, build.Options.RealTests);
+the harness runs each with `XO_TEST_REAL=<its effects>`, and the test
+world makes those effects real and keeps the fakes for the others, as
+std/rt's realCaps does:
+
+- C switches (`tw_is_fake`): standard streams and standard input
+  (`stdio`), the environment and arguments (`env`), listen and dial
+  (`net`; the http client reaches real servers, `rttest.test_fake`),
+  `Proc.run` (`proc`), and the clock (`clock`).
+- Fs: a TestOs's fs is a MemFs; with `--real` every Fs or MemFs method
+  that has a real Fs implementation calls a generated wrapper
+  (`xo.testfs[...]`) that picks the real one at run time when the test
+  declares `fs`, `fs.read`, or `fs.write`, as a read only or write only
+  view for one of the two (`rt.test_fs_real`); MemFs's control methods
+  stay fake.
+- What a test with real `stdio` prints reaches `xo test`'s output as
+  on the Go backend (the harness forwards the lines that are not its
+  own protocol).
+
+Consequence and known difference: natively, a test that declares
+`clock`, `net`, or `proc` runs on the real clock (there is one timer
+heap per process, and a socket or child process wait is not a virtual
+wait), while the Go backend keeps its virtual clock unless the test
+declares `clock`. A `uses net` test that sleeps on `os.clock` therefore
+sleeps for real natively. `os.proc.exit` ends the test as without
+`--real` (it never exits the test process). Test:
+`cmd/xo/testdata/nogc/real` (nine tests: each effect, a fake kept next
+to a real one, real output) in TestNoGCTests, with and without `--real`,
+the same report as the Go backend on LLVM and arm64.
