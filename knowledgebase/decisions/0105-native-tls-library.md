@@ -39,27 +39,30 @@ Candidates fetched as release tarballs and checked by SHA-256: Mbed TLS
 | Build time, all cores | 2 to 3 s (114 files) | 8.4 s (336 files) | not built |
 | Hello TLS client + server (C, stripped) | 639 KB (default config) | 1.91 MB plus libc++ | not built |
 | Added to an Xo std/http program (stripped) | 250 KB (LLVM), 340 KB (arm64), Xo configuration | not built into Xo | not built |
-| Handshakes/s, client and server in one process, ECDSA P-256, TLS 1.3 | 449 (default config, before other load); 575 with Everest X25519 | 665 (same conditions as 449) | not built |
+| Handshakes/s, client and server in one process, ECDSA P-256, TLS 1.3 (medians of 3, load average 12 to 15) | 475 (Xo configuration without Everest), 577 with Everest X25519 | 3080 (with X25519MLKEM768) | not built |
 | API stability, maintenance | LTS branch, maintained to March 2029 | "not intended for general use", no API stability, track main | last release 2018 |
 
-The handshake numbers were taken on a shared machine whose load average
-went from about 5 to over 30 during the session (another agent's test
-suites): under load the same binaries gave 97 to 119 (Mbed TLS) and 428
-to 527 (BoringSSL), so only same run comparisons mean anything.
-BoringSSL's ECC is assembly (P-256, X25519); Mbed TLS's is portable C.
+The machine was shared with another agent's test suites (load average 12
+to 60 during the session); single runs under heavier load gave as little
+as 97 (Mbed TLS) and 428 (BoringSSL), so only interleaved runs are
+compared. BoringSSL's ECC is assembly (P-256, X25519) and does about 5
+times Mbed TLS's handshakes; Mbed TLS's ECC is portable C.
 
 Through the Xo HTTP benchmark (`bench/perf/http/run.sh`, users CRUD, 32
 keep alive workers, 5 s, medians of 3, the same loaded machine):
 
 | Config | HTTP req/s | HTTPS keep alive req/s | HTTPS, a handshake per request: req/s, server CPU us/req |
 |---|---|---|---|
-| xo (Go backend) | 91672 | 99259 | 15172, 225 |
-| xo-llvm | 82952 | 81073 | 6273, 1081 |
-| xo-arm64 | 86600 | 92771 | 7289, 1012 |
+| xo (Go backend) | 91672 | 99259 | 17440, 226 |
+| xo-llvm | 82952 | 81073 | 9821, 811 |
+| xo-arm64 | 86600 | 92771 | 9656, 802 |
 
-Over kept alive connections TLS costs little on any backend (AES-GCM in
-hardware). A full handshake costs the native server about 4.5 times the
-CPU of Go's (Go: assembly P-256 and X25519).
+The first two columns ran at load 25 to 30, the last after Everest
+X25519 and window 6 were turned on at load 11 to 22 (before them: 6273
+and 7289 req/s, about 1000 us per request). Over kept alive connections
+TLS costs little on any backend (AES-GCM in hardware). A full handshake
+costs the native server about 3.6 times the CPU of Go's (Go: assembly
+P-256 and X25519).
 
 ## Decision
 
@@ -97,7 +100,8 @@ CPU of Go's (Go: assembly P-256 and X25519).
   emulation); XO1201 for `https` literals is gone.
 - The first native std/http build on a machine (and per sanitizer flavor)
   takes 2 to 3 s more; the xo binary grows 1.4 MB.
-- Native handshakes cost about 4.5 times Go's CPU. Next steps if that
+- Native handshakes cost about 3.6 times Go's CPU (BoringSSL would be
+  about 5 times faster than Mbed TLS here). Next steps if that
   matters: Mbed TLS's p256-m driver cannot coexist with other curves in
   TLS (config check error, tried), so either P-256 only builds or a
   faster P-256 (BoringSSL's or fiat-crypto's) behind Mbed TLS's PSA
@@ -111,7 +115,7 @@ CPU of Go's (Go: assembly P-256 and X25519).
 
 ## Alternatives
 
-- **BoringSSL**: fastest handshakes and post quantum key exchange, but
+- **BoringSSL**: about 5 times the handshakes and post quantum key exchange, but
   C++ throughout (libc++ in every native binary and C++ exceptions next to
   the runtime's own unwinding, decision 0085), no stable API by design, a
   CMake or Bazel build with per platform assembly the toolchain would
