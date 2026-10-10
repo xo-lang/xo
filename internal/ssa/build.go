@@ -288,6 +288,16 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KInt)
 			case "Float":
 				return m.Builtin(KFloat)
+			case "Float32":
+				return m.Float32()
+			case "Secret":
+				// the value in a struct of its own: every output path
+				// writes `<redacted>` (build_show.go)
+				x, created := m.Named(b.implNamed(r).String(), KStruct)
+				if created && len(r.Args) == 1 {
+					x.Fields = []Field{{"v", b.typ(r.Args[0], at)}}
+				}
+				return x
 			case "Bool":
 				return m.Builtin(KBool)
 			case "Str", "Bytes":
@@ -310,6 +320,11 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
+				return m.List(b.typ(r.Args[0], at))
+			case "Buf":
+				// the List so far, pushed in place while the buffer, move
+				// only, holds the only reference (core 5.3); `freeze` is
+				// the List itself
 				return m.List(b.typ(r.Args[0], at))
 			case "Map":
 				return b.mapType(false, b.typ(r.Args[0], at), b.typ(r.Args[1], at))

@@ -30,13 +30,18 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 	}
 	ci := info.CallOf(x)
 	if ci == nil {
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max") {
+		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && ((len(x.Args) == 1 && (sel.Sel.Name == "min" || sel.Sel.Name == "max")) || (len(x.Args) == 2 && sel.Sel.Name == "clamp")) {
+			// `min`, `max`, `clamp` on an Ord type (std/rt's Min, Max,
+			// Clamp: min(max(a, lo), hi))
 			a := s.expr(sel.X)
-			if a.Type.Sized() {
-				return s.sizedMinMax(sel.Sel.Name, a, s.valueAs(x.Args[0].Value, a.Type))
-			}
-			if a.Type.Kind == KInt || a.Type.Kind == KFloat {
-				return s.call(a.Type.Name+"."+sel.Sel.Name, a.Type, "", a, s.valueAs(x.Args[0].Value, a.Type))
+			if sel.Sel.Name == "clamp" {
+				lo := s.valueAs(x.Args[0].Value, a.Type)
+				hi := s.valueAs(x.Args[1].Value, a.Type)
+				if r := s.ordMinMax("max", a, lo); r != nil {
+					return s.ordMinMax("min", r, hi)
+				}
+			} else if r := s.ordMinMax(sel.Sel.Name, a, s.valueAs(x.Args[0].Value, a.Type)); r != nil {
+				return r
 			}
 		}
 		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) == 0 && sel.Sel.Name == "display" {
@@ -443,6 +448,13 @@ func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 	switch {
 	case v.Type == to:
 		return v
+	case to.F32() && v.Type.U64():
+		return s.rt("f32_round", to, s.rt("u64_to_float", s.b.mod.Builtin(KFloat), v))
+	case to.F32() && v.Type.Kind == KInt:
+		return s.rt("i64_to_f32", to, v)
+	case to.Kind == KFloat && v.Type.Kind == KFloat:
+		// Float to Float32 rounds; Float32 to Float is the same double
+		return s.rt("f32_round", to, v)
 	case to.Kind == KFloat && v.Type.U64():
 		return s.rt("u64_to_float", to, v)
 	case to.Kind == KFloat && v.Type.Kind == KInt:
@@ -594,6 +606,11 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 				if i < len(implParams) {
 					d = implParams[i].Default
 				}
+				if d == nil {
+					// the std declaration's default (its expression was
+					// checked in the std module)
+					d = p.Default
+				}
 			}
 			if d == nil {
 				b.unsupported(x, "a call with a missing argument")
@@ -622,6 +639,43 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 		p.set(s.add(OpField, t.Elems[i+1], i+1, r))
 	}
 	return s.callResult(s.add(OpField, t.Elems[0], 0, r), x)
+}
+
+// ordMinMax is a.min(b) or a.max(b) on Int, Float, the sized integers,
+// and Str; nil for another type.
+func (s *fn) ordMinMax(name string, a, b *Value) *Value {
+	t := a.Type
+	switch {
+	case t.Sized():
+		return s.sizedMinMax(name, a, b)
+	case t.Kind == KInt || t.Kind == KFloat:
+		base := "Int"
+		if t.Kind == KFloat {
+			base = "Float"
+		}
+		return s.call(base+"."+name, t, "", a, b)
+	case t.Kind == KStr:
+		m := s.b.mod
+		boolT := m.Builtin(KBool)
+		c := s.call("str.cmp", m.Builtin(KInt), "", b, a)
+		var pick *Value
+		if name == "min" {
+			pick = s.add(OpLt, boolT, nil, c, s.cint(0))
+		} else {
+			pick = s.add(OpGt, boolT, nil, c, s.cint(0))
+		}
+		join := s.newBlock()
+		res := join.AddParam(t)
+		yes, no := s.branch(pick)
+		s.cur = yes
+		s.jump(join, b)
+		s.cur = no
+		s.jump(join, a)
+		s.seal(join)
+		s.cur = join
+		return res
+	}
+	return nil
 }
 
 // callResult ends the block after a call of a function that never
@@ -658,6 +712,63 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		return s.undef(nt)
 	}
 	switch fo.Recv.Name {
+	case "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Rune":
+		if fo.Static && fo.Name == "try" && len(x.Args) == 1 && nt.Kind == KEnum {
+			// `Int32.try(x)`: Some when x is in range (std/rt's Try)
+			v := s.valueAs(x.Args[0].Value, intT)
+			some := nt.VariantIndex("Some")
+			to := nt.Variants[some].Fields[0].Type
+			var ok *Value
+			if to.Name == "Rune" {
+				ok = s.rt("rune_valid", boolT, v)
+			} else {
+				ok = s.rt("int_in_range", boolT, append([]*Value{v}, s.sizeArgs(to)...)...)
+			}
+			join := s.newBlock()
+			res := join.AddParam(nt)
+			yes, no := s.branch(ok)
+			s.cur = yes
+			var w *Value = v
+			if to != intT {
+				w = s.add(OpIntConv, to, nil, v)
+			}
+			s.jump(join, s.add(OpVariant, nt, some, w))
+			s.cur = no
+			s.jump(join, s.variant(nt, "None", nil, x))
+			s.seal(join)
+			s.cur = join
+			return res
+		}
+	case "Buf":
+		switch {
+		case fo.Static && (fo.Name == "new" || fo.Name == "with_capacity") && nt.Kind == KList:
+			for _, a := range x.Args {
+				s.valueAs(a.Value, intT)
+			}
+			return s.call("list.new", nt, "")
+		case fo.RecvVar && fo.Name == "push" && len(x.Args) == 1:
+			p, ok := s.place(ci.Recv)
+			if !ok || p.t.Kind != KList {
+				break
+			}
+			l := p.get()
+			p.set(s.call("list.push", p.t, "", l, s.valueAs(x.Args[0].Value, p.t.Elems[0])))
+			return s.unit()
+		case !fo.Static && fo.Name == "len":
+			return s.call("list.len", intT, "", s.expr(ci.Recv))
+		case !fo.Static && fo.Name == "freeze":
+			return s.expr(ci.Recv)
+		}
+	case "Secret":
+		switch {
+		case fo.Static && fo.Name == "new" && len(x.Args) == 1 && nt.Kind == KStruct && len(nt.Fields) == 1:
+			return s.add(OpStruct, nt, nil, s.valueAs(x.Args[0].Value, nt.Fields[0].Type))
+		case !fo.Static && fo.Name == "reveal" && len(x.Args) == 0:
+			sv := s.expr(ci.Recv)
+			if sv.Type.Kind == KStruct && len(sv.Type.Fields) == 1 {
+				return s.add(OpField, sv.Type.Fields[0].Type, 0, sv)
+			}
+		}
 	case "Map", "Set":
 		if v, ok := s.mapCall(x, ci); ok {
 			return v

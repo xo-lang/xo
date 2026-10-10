@@ -1,8 +1,0 @@
-exit 0
---- stdout
-a@b a@b 3 0
-c@d.e
-42 s
--1 4
-2 2
---- stderr

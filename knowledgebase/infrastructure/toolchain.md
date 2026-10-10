@@ -1239,7 +1239,14 @@ first, AST based prototype, since deleted) and
   other interface types (decision 0100, 2026-10-09,
   `internal/ssa/build_iface.go`) are `xo.iface[I]` structs of closures
   sharing one environment (`OpRebind`), with hidden `xo.eq`, `xo.tid`,
-  `xo.show` fields; goldens `iface_*`. The
+  `xo.show` fields; goldens `iface_*`. Decision 0101 adds Float32 (a
+  double rounded through `rt.f32_round`), `Secret[T]`, `Buf[T]`,
+  `xo.cmp[T]` order helpers, and more std value methods.
+- TestGenGoldensNative (`internal/llvm/gen_native_test.go`, 2026-10-09)
+  builds every internal/gen golden named in
+  `internal/llvm/testdata/gen_native.txt` with Go, LLVM, and (on arm64
+  hosts) arm64, and requires the same output and no live allocation; add
+  a golden there when a gap closes. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no TLS; no `http.stream`).
 - Counts (decision 0058): positive is thread local (plain updates),

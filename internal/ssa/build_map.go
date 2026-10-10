@@ -644,17 +644,18 @@ func (s *fn) mapCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		idx := find(k)
 		bad, ok := s.branch(s.add(OpLt, boolT, nil, idx, s.cint(0)))
 		s.cur = bad
-		var shown *Value
-		switch mapKey(t).Kind {
-		case KStr:
-			shown = s.call("list.index", m.Builtin(KStr), "", s.rt("str_quote", m.List(m.Builtin(KStr)), k), s.cint(0))
-		case KInt:
-			shown = s.call("str.of_int", m.Builtin(KStr), "", k)
-		default:
-			b.unsupported(x, "`get_or_fault` on a Map whose keys are not Str or Int")
-			shown = s.add(OpConst, m.Builtin(KStr), "?")
+		// the key's Debug text (std/rt map.go)
+		var kt check.Type
+		if n, ok := check.Resolve(s.natCheck(ci.Recv)).(*check.Named); ok && len(n.Args) > 0 {
+			kt = n.Args[0]
 		}
-		msg := s.call("str.concat", m.Builtin(KStr), "", s.add(OpConst, m.Builtin(KStr), "key "), shown)
+		var msg *Value
+		if kt == nil {
+			b.unsupported(x, "`get_or_fault` on this Map")
+			msg = s.add(OpConst, m.Builtin(KStr), "key ?")
+		} else {
+			msg = s.appendDebug(s.add(OpConst, m.Builtin(KStr), "key "), k, kt, x)
+		}
 		msg = s.call("str.concat", m.Builtin(KStr), "", msg, s.add(OpConst, m.Builtin(KStr), " not found in Map of length "))
 		msg = s.call("str.concat_int", m.Builtin(KStr), "", msg, s.add(OpField, intT, 4, mv))
 		msg = s.call("str.concat", m.Builtin(KStr), "", msg, s.add(OpConst, m.Builtin(KStr), ": "))
@@ -763,4 +764,129 @@ func (s *fn) forMap(x *ast.ForStmt, label string, mv *Value) {
 	s.seal(head)
 	s.seal(exit)
 	s.cur = exit
+}
+
+// listConcat returns xo.listcat[T](a, b) -> T: `a + b` on lists.
+func (b *builder) listConcat(t *Type) string {
+	intT := b.mod.Builtin(KInt)
+	return b.genFunc("xo.listcat["+t.Name+"]", []*Type{t, t}, []*Type{t}, func(s *fn, ps []*Value) {
+		acc := local("acc")
+		s.writeVar(acc, ps[0])
+		s.forUpTo(s.call("list.len", intT, "", ps[1]), func(i *Value) {
+			s.writeVar(acc, s.call("list.push", t, "", s.read(acc), s.call("list.index", t.Elems[0], "", ps[1], i)))
+		})
+		s.retv(s.read(acc))
+	})
+}
+
+// cmpFunc returns xo.cmp[T](a, b) -> Int: -1, 0, or 1 as std/rt's Cmp
+// orders two values of t (`<` on a derive Ord type, decision 0100):
+// structs, tuples, and lists field by field (a shorter list first),
+// enums by variant then fields, Floats with NaN after every number,
+// false before true. ok is false for a type without an order here.
+func (b *builder) cmpFunc(t *Type) (string, bool) {
+	if !orderable(t, map[*Type]bool{}) {
+		return "", false
+	}
+	m := b.mod
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	return b.genFunc("xo.cmp["+t.Name+"]", []*Type{t, t}, []*Type{intT}, func(s *fn, ps []*Value) {
+		l, r := ps[0], ps[1]
+		// sub returns the order of x and y when it is not 0
+		sub := func(x, y *Value) {
+			x, y = s.unbox(x), s.unbox(y)
+			name, _ := b.cmpFunc(x.Type)
+			c := s.call(name, intT, "", x, y)
+			s.ifThen(s.add(OpNe, boolT, nil, c, s.cint(0)), func() { s.retv(c) })
+		}
+		lt := func(x, y *Value) {
+			s.ifThen(x, func() { s.retv(s.cint(-1)) })
+			s.ifThen(y, func() { s.retv(s.cint(1)) })
+		}
+		switch t.Kind {
+		case KUnit:
+		case KInt:
+			lt(s.compare(OpLt, l, r), s.compare(OpGt, l, r))
+		case KBool:
+			lt(s.add(OpAnd, boolT, nil, s.add(OpNot, boolT, nil, l), r), s.add(OpAnd, boolT, nil, l, s.add(OpNot, boolT, nil, r)))
+		case KFloat:
+			ln := s.add(OpNe, boolT, nil, l, l)
+			rn := s.add(OpNe, boolT, nil, r, r)
+			s.ifThen(s.add(OpAnd, boolT, nil, ln, rn), func() { s.retv(s.cint(0)) })
+			lt(rn, ln)
+			lt(s.add(OpLt, boolT, nil, l, r), s.add(OpGt, boolT, nil, l, r))
+		case KStr:
+			c := s.call("str.cmp", intT, "", l, r)
+			lt(s.add(OpLt, boolT, nil, c, s.cint(0)), s.add(OpGt, boolT, nil, c, s.cint(0)))
+		case KStruct, KTuple:
+			for i := 0; i < numFields(t); i++ {
+				ft := fieldType(t, i)
+				sub(s.add(OpField, ft, i, l), s.add(OpField, ft, i, r))
+			}
+		case KBox:
+			sub(l, r)
+		case KList:
+			et := t.Elems[0]
+			ln := s.call("list.len", intT, "", l)
+			rn := s.call("list.len", intT, "", r)
+			n := s.call("Int.min", intT, "", ln, rn)
+			s.forUpTo(n, func(i *Value) {
+				sub(s.call("list.index", et, "", l, i), s.call("list.index", et, "", r, i))
+			})
+			lt(s.add(OpLt, boolT, nil, ln, rn), s.add(OpGt, boolT, nil, ln, rn))
+		case KEnum:
+			lt0, rt0 := s.add(OpTag, intT, nil, l), s.add(OpTag, intT, nil, r)
+			lt(s.add(OpLt, boolT, nil, lt0, rt0), s.add(OpGt, boolT, nil, lt0, rt0))
+			for vi, vr := range t.Variants {
+				if len(vr.Fields) == 0 {
+					continue
+				}
+				s.ifThen(s.add(OpEq, boolT, nil, lt0, s.cint(int64(vi))), func() {
+					for fi, fl := range vr.Fields {
+						sub(s.add(OpPayload, fl.Type, PayloadRef{vi, fi}, l), s.add(OpPayload, fl.Type, PayloadRef{vi, fi}, r))
+					}
+				})
+			}
+		}
+		s.retv(s.cint(0))
+	}), true
+}
+
+// orderable reports whether cmpFunc orders values of t.
+func orderable(t *Type, seen map[*Type]bool) bool {
+	if seen[t] {
+		return true
+	}
+	seen[t] = true
+	switch t.Kind {
+	case KUnit, KInt, KBool, KFloat, KStr:
+		return true
+	case KStruct:
+		if t.Coll || isIface(t) {
+			return false
+		}
+		for _, f := range t.Fields {
+			if !orderable(f.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case KEnum:
+		for _, v := range t.Variants {
+			for _, f := range v.Fields {
+				if !orderable(f.Type, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	case KTuple, KList, KBox:
+		for _, e := range t.Elems {
+			if !orderable(e, seen) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

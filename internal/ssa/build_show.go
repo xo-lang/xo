@@ -21,17 +21,19 @@ import (
 //     `[1, 2]`, `{"a": 1}`, `#{1}`, `(1, "a")`, `Some(1)`, `b"x"`.
 //   - A value of the prelude interfaces Error, Display, or Debug (an
 //     error returned by `main ! Error`, a log field of Map[Str, Debug]) is
-//     its text: the struct xo.dyn {text: Str, raw: Bool}, made where a
-//     concrete value is converted to the interface. raw marks a number
-//     or Bool (a JSON log record writes it bare). Their methods return
-//     the text.
+//     its text: the struct xo.dyn {text: Str, raw: Bool, dbg: Str}, made
+//     where a concrete value is converted to the interface. raw marks a
+//     number or Bool (a JSON log record writes it bare). Their methods
+//     return the text. dbg is the value's Debug text when it differs
+//     from text (a Str is quoted, a type with a `display` method shows
+//     its fields), else empty: the Debug text of the interface value.
 
 // dynType is the SSA type of a value of interface type.
 func (b *builder) dynType() *Type {
 	m := b.mod
 	t, created := m.Named("xo.dyn", KStruct)
 	if created {
-		t.Fields = []Field{{"text", m.Builtin(KStr)}, {"raw", m.Builtin(KBool)}}
+		t.Fields = []Field{{"text", m.Builtin(KStr)}, {"raw", m.Builtin(KBool)}, {"dbg", m.Builtin(KStr)}}
 	}
 	return t
 }
@@ -75,7 +77,29 @@ func (s *fn) toDyn(v *Value, ct check.Type, iface string, at ast.Node) *Value {
 	case KInt, KFloat, KBool:
 		raw = !isPreludeNamed(ct, "Duration", "Time")
 	}
-	return s.add(OpStruct, b.dynType(), nil, acc, s.bool(raw))
+	dbg := s.add(OpConst, st, "")
+	if isPreludeNamed(ct, "Str", "Rune") || isIface(v.Type) || s.methodOf(ct, "display") != nil {
+		dbg = s.appendDebug(dbg, v, ct, at)
+	}
+	return s.add(OpStruct, b.dynType(), nil, acc, s.bool(raw), dbg)
+}
+
+// dynDebug appends the Debug text of the interface value v (xo.dyn) to
+// acc: its dbg text, or its text when dbg is empty.
+func (s *fn) dynDebug(acc, v *Value) *Value {
+	m := s.b.mod
+	st := m.Builtin(KStr)
+	dbg := s.add(OpField, st, 2, v)
+	join := s.newBlock()
+	res := join.AddParam(st)
+	yes, no := s.branch(s.add(OpEq, m.Builtin(KBool), nil, s.call("Str.len", m.Builtin(KInt), "", dbg), s.cint(0)))
+	s.cur = yes
+	s.jump(join, s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v)))
+	s.cur = no
+	s.jump(join, s.call("str.concat", st, "", acc, dbg))
+	s.seal(join)
+	s.cur = join
+	return res
 }
 
 // displayable reports whether values of ct have Display text of their
@@ -155,6 +179,8 @@ func (s *fn) appendDisplay(acc, v *Value, ct check.Type, at ast.Node) *Value {
 		return s.ifaceShowCall(acc, v, false)
 	}
 	switch {
+	case isPreludeNamed(ct, "Secret"):
+		return s.call("str.concat", st, "", acc, s.add(OpConst, st, "<redacted>"))
 	case isPreludeNamed(ct, "Duration"):
 		return s.rt("rs_append_duration", st, acc, v)
 	case isPreludeNamed(ct, "Time"):
@@ -217,7 +243,7 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			return s.call(b.debugFunc(check.Deep(xt), x.Type, at), st, "", a, x)
 		}
 		if isDyn(t) {
-			s.retv(s.call("str.concat", st, "", acc, s.add(OpField, st, 0, v)))
+			s.retv(s.dynDebug(acc, v))
 			return
 		}
 		if isIface(t) {
@@ -225,6 +251,15 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			return
 		}
 		switch {
+		case isPreludeNamed(ct, "Secret"):
+			s.retv(lit(acc, "<redacted>"))
+			return
+		case isPreludeNamed(ct, "Buf"):
+			// `Buf[1, 2]` (std/rt's Buf.XoDebug)
+			if n, ok := check.Resolve(ct).(*check.Named); ok && len(n.Args) == 1 {
+				s.retv(sub(lit(acc, "Buf"), v, b.preludeType("List", n.Args[0])))
+				return
+			}
 		case isPreludeNamed(ct, "Duration"):
 			s.retv(s.rt("rs_append_duration", st, acc, v))
 			return
@@ -429,7 +464,10 @@ func (s *fn) ifaceCall(x *ast.CallExpr, ci *check.Call) *Value {
 	v := s.expr(ci.Recv)
 	st := b.mod.Builtin(KStr)
 	if isDyn(v.Type) && len(x.Args) == 0 {
-		if fo.Name == "display" || fo.Name == "debug" {
+		if fo.Name == "debug" {
+			return s.dynDebug(s.add(OpConst, st, ""), v)
+		}
+		if fo.Name == "display" {
 			return s.add(OpField, st, 0, v)
 		}
 		b.unsupported(x, "the interface method `"+fo.DisplayName()+"` of an interface value")

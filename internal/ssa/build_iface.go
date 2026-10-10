@@ -339,6 +339,9 @@ func (s *fn) methodOn(name string, ct check.Type, recv *Value, args []*Value, wa
 		}
 		return s.adaptResult(r, fromErr, want, toErr, at)
 	}
+	if r := s.inlineMethod(name, recv, args); r != nil {
+		return s.adaptResult(r, nil, want, toErr, at)
+	}
 	if len(args) == 0 {
 		switch name {
 		case "display":
@@ -388,4 +391,37 @@ func (s *fn) adaptResult(r *Value, fromErr check.Type, want *Type, toErr check.T
 	s.seal(join)
 	s.cur = join
 	return res
+}
+
+// inlineMethod lowers the prelude methods the builder writes inline
+// (stdCall, mapCall) on a value recv, for calls through an interface or
+// a type parameter: len and is_empty of List, Str, Map, and Set, and
+// contains of Map and Set. It is nil for any other method.
+func (s *fn) inlineMethod(name string, recv *Value, args []*Value) *Value {
+	b := s.b
+	m := b.mod
+	intT, boolT := m.Builtin(KInt), m.Builtin(KBool)
+	t := recv.Type
+	var n *Value
+	switch {
+	case t.Coll:
+		n = s.add(OpField, intT, 4, recv)
+	case t.Kind == KList:
+		n = s.call("list.len", intT, "", recv)
+	case t.Kind == KStr:
+		n = s.call("Str.len", intT, "", recv)
+	default:
+		return nil
+	}
+	switch {
+	case name == "len" && len(args) == 0:
+		return n
+	case name == "is_empty" && len(args) == 0:
+		return s.add(OpEq, boolT, nil, n, s.cint(0))
+	case name == "contains" && len(args) == 1 && t.Coll && args[0].Type == mapKey(t):
+		k := args[0]
+		idx := s.call(b.mapFind(t, nil), intT, "", recv, k, s.call(b.hashFunc(mapKey(t), nil), intT, "", k))
+		return s.add(OpGe, boolT, nil, idx, s.cint(0))
+	}
+	return nil
 }

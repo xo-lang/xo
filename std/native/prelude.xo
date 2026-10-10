@@ -118,6 +118,22 @@ fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
   (Rune(p >> 3), p & 7)
 }
 
+fn int_pow(n: Int, e: Int, at: rt.Loc) -> Int {
+  if e < 0 {
+    rt.fault_at("negative exponent ${e} in pow", at)
+  }
+  var r = 1
+  var i = 0
+  while i < e {
+    if !rt.int_fits(2, r, n) {
+      rt.fault_at("integer overflow: ${r} * ${n} does not fit Int", at)
+    }
+    r = r * n
+    i += 1
+  }
+  r
+}
+
 fn int_wrapping_add(n: Int, m: Int) -> Int { rt.int_wrap(0, n, m) }
 
 fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
@@ -179,7 +195,90 @@ fn float_parse(s: Str) -> Float? {
 }
 
 // ---------------------------------------------------------------------------
+// Map[K, V] and Set[T] (std.md 2.4): std/rt map.go's order, the entries
+// in insertion order
+
+fn map_filter[K, V, E, fx: Effects](m: Map[K, V], f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx {
+  var out: Map[K, V] = {}
+  for (k, v) in m {
+    if f(k, v)? {
+      out[k] = v
+    }
+  }
+  out
+}
+
+fn set_union[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r = s
+  for x in o {
+    r.add(x)
+  }
+  r
+}
+
+fn set_intersect[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r: Set[T] = #{}
+  for x in s {
+    if o.contains(x) {
+      r.add(x)
+    }
+  }
+  r
+}
+
+fn set_difference[T](s: Set[T], o: Set[T]) -> Set[T] {
+  var r: Set[T] = #{}
+  for x in s {
+    if !o.contains(x) {
+      r.add(x)
+    }
+  }
+  r
+}
+
+// ---------------------------------------------------------------------------
 // List[T] (std.md 2.3)
+
+fn list_insert[T](var xs: List[T], i: Int, x: T, at: rt.Loc) {
+  let n = xs.len()
+  if i < 0 || i > n {
+    rt.fault_at("index ${i} out of range for insert into List of length ${n}", at)
+  }
+  xs.push(x)
+  var j = n
+  while j > i {
+    xs[j] = xs[j - 1]
+    j -= 1
+  }
+  xs[i] = x
+}
+
+fn list_remove_at[T](var xs: List[T], i: Int, at: rt.Loc) -> T {
+  let n = xs.len()
+  if i < 0 || i >= n {
+    rt.fault_at("index ${i} out of range for List of length ${n}", at)
+  }
+  let x = xs[i]
+  var j = i
+  while j + 1 < n {
+    xs[j] = xs[j + 1]
+    j += 1
+  }
+  match xs.pop() {
+    _ => {}
+  }
+  x
+}
+
+fn list_indexed[T](xs: List[T]) -> List[(Int, T)] {
+  var out: List[(Int, T)] = []
+  var i = 0
+  for x in xs {
+    out.push((i, x))
+    i += 1
+  }
+  out
+}
 
 fn list_contains[T](xs: List[T], x: T) -> Bool {
   for y in xs {

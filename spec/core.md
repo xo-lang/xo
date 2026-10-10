@@ -17,6 +17,8 @@ No meaning changes yet; native support grew (`--no-gc`, 10.1):
 - Interface types as values (2.4) build natively (decision 0100).
 - Newtypes (2.8, decision 0097: construction, `e.0`, `Email(p)`, Debug
   text, equality, Map keys) and list patterns (3.5) build natively.
+- Float32, `Secret[T]`, `Buf[T]`, order of `derive Ord` types, and the
+  std value methods listed in decision 0101 build natively.
 
 ## Changes in 0.8
 

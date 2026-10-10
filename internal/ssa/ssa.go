@@ -511,6 +511,24 @@ func (m *Module) Builtin(k Kind) *Type {
 	return t
 }
 
+// Float32 returns the interned type Float32: a KFloat whose values are
+// doubles holding float32 values (Bits 32). Arithmetic is the double
+// operation rounded to float32 (`rt.f32_round`), which is the correctly
+// rounded float32 result for + - * / (a double has more than twice the
+// precision); text and comparisons are the double's, as on the Go
+// backend (std/rt's FloatStr(float64(x))).
+func (m *Module) Float32() *Type {
+	if t := m.types["Float32"]; t != nil {
+		return t
+	}
+	t := &Type{Kind: KFloat, Name: "Float32", Bits: 32}
+	m.types["Float32"] = t
+	return t
+}
+
+// F32 reports whether t is Float32.
+func (t *Type) F32() bool { return t.Kind == KFloat && t.Bits == 32 }
+
 // sizedInts are the sized integer types: bits and signedness.
 var sizedInts = map[string]struct {
 	bits     int

@@ -1,0 +1,143 @@
+// Native gaps of the spec audit (decision 0100 follow ups): Secret[T] in
+// every output path, Buf, std defaults, get_or_fault keys, `?`
+// conversions, shorthand patterns, List insert and remove_at, `derive Ord`
+// order, Set algebra, Map.filter, list concatenation, Int.pow, clamp.
+
+use std/crypto
+
+use std/task
+
+struct Login {
+  user: Str
+  pass: Secret[Str]
+}
+
+enum Tree {
+  Leaf(v: Int)
+  Node(left: Int, right: Int)
+}
+
+struct Ver {
+  major: Int
+  minor: Int
+  tag: Str?
+} derive Ord
+
+enum Level {
+  Low
+  Mid(n: Int)
+  High(a: Int, b: Str)
+} derive Ord
+
+enum ParseErr {
+  Empty
+  Bad(text: Str)
+} derive Display
+
+enum AppErr {
+  Parse(from ParseErr)
+  Other(msg: Str)
+} derive Display
+
+fn parse(s: Str) -> Int ! ParseErr {
+  if s == "" {
+    return Err(ParseErr.Empty)
+  }
+  match Int.parse(s) {
+    Some(n) => n
+    None => Err(ParseErr.Bad(text: s))
+  }
+}
+
+fn app(s: Str) -> Int ! AppErr {
+  let n = parse(s)?
+  if n < 0 {
+    return Err(AppErr.Other(msg: "negative"))
+  }
+  n * 2
+}
+
+fn loose(s: Str) -> Int ! Error {
+  let n = app(s)?
+  let m = parse(s)?
+  n + m
+}
+
+fn opt_chain(xs: List[Int]) -> Int? {
+  let a = xs.first()?
+  let b = xs.get(1)?
+  Some(a + b)
+}
+
+fn main(os: Os) uses (stdio, rand) {
+  let l = Login{user: "ann", pass: Secret[Str].new("hunter2")}
+  os.stdio.println("${l.pass} ${l.debug()} ${[l.pass].debug()} ${l.pass.reveal().len()}")
+  let shown: Map[Str, Debug] = {"pass": l.pass, "user": l.user}
+  os.stdio.println("${shown.debug()}")
+  var buf = Buf[Int].with_capacity(4)
+  for i in 0..5 {
+    buf.push(i * i)
+  }
+  os.stdio.println("buf ${buf.len()} ${buf.debug()}")
+  let frozen = buf.freeze()
+  os.stdio.println("frozen ${frozen.debug()} ${frozen.len()}")
+  os.stdio.println("token ${crypto.token(os.rand).len()} ${crypto.token(os.rand, n: 8).len()}")
+  let ch = Chan[Int].new()
+  os.stdio.println("chan ${ch.len()}")
+  for s in ["4", "", "x", "-3"] {
+    match loose(s) {
+      Ok(n) => os.stdio.println("ok ${n}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+  os.stdio.println("${opt_chain([1, 2]) ?? -1} ${opt_chain([1]) ?? -1}")
+  for t in [Tree.Leaf(5), Tree.Node(left: 1, right: 9)] {
+    match t {
+      Leaf(v) => os.stdio.print("leaf ${v} ")
+      Node(left, right) => os.stdio.print("node ${left} ${right} ")
+    }
+  }
+  os.stdio.println("")
+  let v1 = Ver{major: 1, minor: 2, tag: None}
+  let v2 = Ver{major: 1, minor: 2, tag: Some("rc")}
+  let v3 = Ver{major: 1, minor: 10, tag: None}
+  os.stdio.println("ord ${v1 < v2} ${v2 < v3} ${v3 > v1} ${v1 <= v1} ${v2 >= v3}")
+  os.stdio.println("levels ${Level.Low < Level.Mid(n: 0)} ${Level.Mid(n: 3) < Level.Mid(n: 2)} ${Level.High(a: 1, b: "b") > Level.High(a: 1, b: "a")}")
+  os.stdio.println("tuples ${(1, "b") < (1, "c")} ${[1, 2] < [1, 2, 0]} ${[3] > [2, 9]}")
+  let sorted = [v3, v2, v1].sort()
+  os.stdio.println("sorted ${sorted.map(fn(v) { "${v.major}.${v.minor}" }).join(",")}")
+  var xs = [1, 2, 3]
+  xs.insert(0, 9)
+  xs.insert(4, 7)
+  let gone = xs.remove_at(2)
+  os.stdio.println("list ${xs.debug()} ${gone} ${(xs + [5, 6]).debug()} ${xs.indexed().debug()}")
+  let a: Set[Int] = [1, 2, 3].to_set()
+  let b: Set[Int] = [3, 4].to_set()
+  os.stdio.println("sets ${a.union(b).to_list().debug()} ${a.intersect(b).to_list().debug()} ${a.difference(b).to_list().debug()}")
+  let m: Map[Str, Int] = {"a": 1, "b": 2, "c": 3}
+  os.stdio.println("filter ${m.filter(fn(k, v) { v != 2 && k != "z" }).keys().debug()}")
+  os.stdio.println("pow ${3.pow(4)} clamp ${15.clamp(0, 10)} ${"m".clamp("a", "k")} ${2.5.clamp(0.0, 1.0)}")
+  let keyed: Map[(Int, Str), Int] = {(1, "a"): 1}
+  let r = task.isolate(fn() { keyed.get_or_fault((2, "b"), "pair missing") })
+  match r {
+    Ok(n) => os.stdio.println("found ${n}")
+    Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${info.msg}")
+    Err(_) => os.stdio.println("other")
+  }
+  let r2 = task.isolate(fn() { 2.pow(-1) })
+  match r2 {
+    Ok(n) => os.stdio.println("pow ${n}")
+    Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${info.msg}")
+    Err(_) => os.stdio.println("other")
+  }
+  let r3 = task.isolate(fn() {
+    var ys = [1]
+    ys.insert(3, 1)
+    ys.len()
+  })
+  match r3 {
+    Ok(n) => os.stdio.println("insert ${n}")
+    Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${info.msg}")
+    Err(_) => os.stdio.println("other")
+  }
+}

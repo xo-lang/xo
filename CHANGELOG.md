@@ -15,6 +15,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`[]`, `[a, .., z]`). Fixed: an or pattern whose alternatives bind the
   same name (`Leaf(v) | Node(left: v, ..)`) read the first alternative's
   binding natively, a stale value when another alternative matched.
+- Native backends (decision 0101): Float32, `Secret[T]` redacted in every
+  output path, `Buf[T]`, `<` on `derive Ord` types, `Int32.try` and the
+  other sized `try`s, `Int.pow`, `clamp`, `min`/`max` on Str, Set union,
+  intersect, difference, `Map.filter`, `List.insert`, `remove_at`,
+  `indexed()`, `xs + ys`, std defaults (`crypto.token(r)`,
+  `Chan.new()`), `get_or_fault` on any key type, builtin collections
+  through interfaces, shorthand field patterns. `==` on a value holding
+  a function or runtime handle outside an interface is now XO1201
+  natively (it failed in code generation). New test
+  TestGenGoldensNative runs 66 internal/gen goldens on Go, LLVM, and
+  arm64 and compares them.
 
 ## v0.8.0 (2026-10-09)
 
