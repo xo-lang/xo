@@ -256,6 +256,18 @@ by its file, span, and kind (the Go checker uses node pointers).
   comparability, effects, or the real-time rules in internal/check must
   be made in selfhost/check in the same change. Effect ceilings
   (XO1309) remain to port, with the loading of dependencies.
+- The parse habits and stages 5 and 6 (2026-10-10) matched on the
+  first full run of each: 580 of 608 repository runs are compared and
+  identical on the three backends (350 accepted, 230 rejected with the
+  same diagnostics); the 28 not compared are 16 `use go`/`use c` runs, 2
+  with hard parse errors (the Xo parser stops where the Go parser
+  resynchronizes), 6 with import deny or dependency rules (XO1301,
+  XO1302, XO1312), and 4 with stage 8 diagnostics (naming XO0101, time
+  layouts XO0420 and their XO0177). One self hosted parser bug was found
+  (diagnostic quoting, gotchas/parser-dump-message-quoting.md). A change
+  to a habit, a soft parse error, the value semantics rules, or
+  exhaustiveness in internal/parser or internal/check must be made in
+  selfhost/parser or selfhost/check in the same change.
 
 ## Alternatives
 

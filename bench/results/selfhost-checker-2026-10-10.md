@@ -444,3 +444,166 @@ diagnostics ahead of stage 8 would open the most runs to comparison:
 next experiment, list the XO0177 messages of those 99 runs (`xo
 typedump --section=diags`) and check which the Xo parser already
 reports.
+
+# Parse habits, stage 5 (value semantics), stage 6 (exhaustiveness), 2026-10-10
+
+Decision 0141. The Xo parser (`selfhost/parser`, 7,173 lines with its
+tests; habits*.xo are new) reports the habits of other languages and the
+other soft errors of internal/parser and recovers the same tree; the Xo
+checker (`selfhost/check`, 12,021 lines; flow.xo and exhaust.xo are new)
+checks that tree and adds the value semantics rules and exhaustiveness.
+
+## What the three steps cover
+
+1. Parse habits, pulled ahead of stage 8 because they were the only
+   errors of 99 of the 143 runs not compared (the 96 one-habit fixtures
+   of internal/fix/testdata/habits, listed with `xo typedump
+   --section=diags`: one XO0177 each, 86 distinct messages, plus
+   the XO0150, XO0152, XO0153, XO0169, XO0173, XO0175, and XO0178
+   fixtures). A port of habits.go, habits_lex.go, habits_decl.go,
+   habits_stmt.go, habits_expr.go, habits_type.go, and leading_op.go
+   with their messages, spans, and recovery (the Xo form each habit
+   stands for), without the machine fixes and notes (stage 7). The soft
+   errors of the Go parser (XO0161, XO0162 after `}`, XO0165 after `is`,
+   XO0169, XO0170 in a parameter list, XO0173, XO0174, XO0175 between
+   arms, XO0176, XO0178) no longer stop the Xo parser; lexer diagnostics
+   are kept and the parse goes on, as in Go; a hard error still stops
+   it. `class` is a hard error in Go that resynchronizes at the next
+   declaration; the Xo parser does the same for it.
+2. Stage 5, value semantics (flow.xo): `var` places (XO0501 on `var`
+   receivers, XO0502 on assignments, `var` arguments, and captures),
+   overlapping `var` arguments (XO0503, decision 0111), moves of move
+   only values (XO0510), lost updates of copies out of collections and
+   of values stored into them (XO0520), split critical sections (XO0804,
+   a warning), and bindings never read (XO0110, and XO0201 for a Result).
+3. Stage 6, patterns (exhaust.xo): the usefulness algorithm with
+   witnesses, for matches that are not exhaustive (XO0301, up to five
+   missing patterns), refutable `let` and `for` patterns (XO0303), and
+   `_` arms hiding variants of an enum of the module (XO0305, a warning,
+   with the default arm threshold of decision 0080).
+
+## Agreement
+
+`TestSelfhostParserDifferential` (go, arm64, llvm) now compares the
+whole dump, diagnostics included, of every file the Xo parser parses to
+the end, and requires that every file whose Go diagnostics are all
+habits be parsed to the end: 107 of the 109 rejected repository files
+(the other 2 have hard errors), 948 to 981 of 20,000 token mutations per
+seed (seeds 1, 2, 3, and the default), and 9,605 of 10,000 inputs with
+one to three habit edits of repository files (the new `habits` subtest;
+the rest have no habit left after the edit or a hard error), all
+identical.
+
+`TestSelfhostChecker` (go, arm64, and LLVM builds):
+
+| Go checker result | runs | Xo checker matches |
+|---|---|---|
+| accepted: identical names, types, and sigs sections, the same (staged) warnings | 350 | 350 |
+| rejected only with diagnostics of stages 1 to 6 and the parser: the same diagnostics | 230 | 230 |
+| rejected for other reasons | 12 | not compared; 3 get exactly the staged part |
+| `use go` / `use c` | 16 | not compared |
+
+Coverage: 580 of 608 runs compared and identical (440 of 599 at stage
+4). The 230 matching rejections hold, besides the stage 1 to 4 codes,
+101 XO0177, 4 XO0178, 3 XO0175, 2 XO0169, 1 XO0173, 2 XO0150, 1 XO0152,
+1 XO0153 (parser), 86 XO0110, 6 XO0201, 7 XO0501, 12 XO0502, 4 XO0503,
+10 XO0510, 11 XO0520, 1 XO0804 (stage 5), 21 XO0301, 5 XO0303, and 8
+XO0305 (stage 6). internal/selfhost/testdata/flow (moves, lost, stored,
+mutability, unused, sections) and testdata/exhaust (enums, shapes,
+wildcard) are new modules written to exercise each rule.
+
+Runs still not compared, and why:
+
+- 2 bench/paper/v0.1 runs (02-worker-pool, 05-rate-limiter): hard parse
+  errors (XO0160); the Go parser resynchronizes and reports more, the
+  Xo parser stops. Porting the resynchronization (syncStmt, syncTop, the
+  member and arm loops) is the next parser step; the test already checks
+  that such a run has a hard Go parse error.
+- 5 internal/check/testdata/golden/imports_deny runs (XO1301, XO1312)
+  and internal/mod/testdata/.../invoice (XO1302): import deny lists and
+  dependency rules of xo.mod, not ported (they need the module loading
+  that effect ceilings, XO1309, need too).
+- internal/check/testdata/golden/naming and fix/testdata/habits/
+  go-exported-name (XO0101, naming conventions), and golden/time_layout
+  and fix/testdata/habits/time-layout-two-digit-year (XO0420 and a
+  checker XO0177): the checker's habits, stage 8.
+- 16 `use go`/`use c` runs (stage 1's next step applies).
+
+`TestSelfhostCheckerMutations` now draws a seventh each of name, type,
+generics, effects, habit (`x := v`, `val`, `let mut`, `func`/`def`/
+`function`, `and`/`or`, `x++`, `?:`, `...`, `elif`, `loop`, `throw`, `#`
+comments, Go parameters, `): T`, `===`, `[]T`, `map[K]V`, `List<T>`),
+value semantics (a `var` removed from a binding, parameter, or
+receiver, a copy never read, a store back dropped, a builder frozen
+twice), and pattern (a one line arm removed, or its pattern replaced by
+`_`) mutations. Seeds 7, 11, and 13 with 3,000 each (go backend): 1,248
+accepted and 7,605 rejected only with staged diagnostics, all identical;
+seed 19 on LLVM and 23 on arm64 (3,000 each): 826 accepted and 5,089
+staged rejections, identical. They held 418 to 479 XO0177, 400 to 500
+XO0110, 50 to 80 XO0301, 80 to 100 XO0305, 70 to 120 XO0501, 140 to 170
+XO0502, and 20 to 55 XO0804 per seed. The 41 to 55 rejected otherwise
+per seed are mutations with a hard parse error (33 to 47) and naming
+diagnostics (XO0101).
+
+Nothing disagreed on the first full run of each step. The parse habits
+took one fix after the first comparison (two trees differed: Go reads
+`p.tok.Span` after `expectIdent` in one composite literal, and an
+`impl` method left with no parameters keeps an empty non nil list;
+gotchas go-composite-literal-reads-after-call and
+go-empty-list-not-nil-in-tree), and the token mutations found one more
+(diagnostic quoting, below).
+
+## Speed
+
+Apple M4 Pro, 20 repetitions (all directories: once), ms per run, best
+of two. The Go figure is the full Go checker.
+
+| input | Go checker | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 21,045 lines, 3 modules) | 111.9 | 281.8 | 278.5 | 210.2 | 1.88 |
+| selfhost/parser (with the lexer) | 40.5 | 120.6 | 119.1 | 88.4 | 2.18 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 8.5 | 33.9 | 18.8 | 13.9 | 1.64 |
+| 608 directories, each alone, once | 2,139 total | 5,151 | 3,810 | 2,857 | 1.34 |
+
+The stage 4 build of the checker (01ac2fd) takes 143 and 61.5 ms on the
+first two inputs today, so these steps add 47% (it was 1.28 times the Go
+checker then): the habits make the Xo parser 35% slower (the selfhost
+sources: 28.5 ms before, 38.5 ms now with the LLVM build, Go's parser
+35.7 ms), the flow checks cost 9 ms on selfhost/parser and 21 ms on
+selfhost (measured by leaving them out), exhaustiveness 2 and 8 ms. The
+first version of the flow checks walked each body once per candidate
+`var` with a list of child nodes built at every node (3.5 times the Go
+checker); one walk for all candidates, direct recursion, and skipping
+the move walk of bodies with no move only value took that to 1.9. The
+parser's habit checks are guarded by the token kinds they can start with.
+Next experiments: fold the inspect passes of the flow checks (mutating,
+storing, and the kinds of stored updates; split sections) into the one
+flow walk, ordered as walk.go's preorder; and in the parser, time
+`lex_habits` alone (it copies every token, as the old `x++` pass did)
+against a version that rewrites only around the habit tokens.
+
+## Language and compiler gaps
+
+Found and fixed: the Xo parser dump quoted diagnostic messages with the
+token dump's quoting (`\x0a` for a newline) where parser.Dump uses
+strconv.Quote; a habit message holds source text. `Bytes.quote()` is
+strconv.Quote on every backend (gotchas/parser-dump-message-quoting.md).
+
+Recorded: the arm64 28 KiB frame limit recurred a third time. A
+`Map[Int, Bool]` field added to the `Checker` (the read flag of locals
+beside the objects) pushed `resolve_named_type` to 29,072 bytes; the
+flag went back into `Obj` (gotchas/arm64-large-frame.md). The backend's
+next step is unchanged: reuse spill slots of values not live at the same
+time.
+
+No compiler bug was found in these steps; the value semantics and
+pattern code is a direct port, and every backend agreed.
+
+## Next stage
+
+Stage 7 (diagnostics with notes and fixes, a full JSON section): the
+notes and machine fixes of every diagnostic ported so far, the habits'
+fixes first (habits*.go `addFix` and `addNote` are the parts left out of
+the port). In parallel, the parser's resynchronization after a hard
+error, which would let the two bench/paper runs and every rejected
+token mutation be compared whole.
