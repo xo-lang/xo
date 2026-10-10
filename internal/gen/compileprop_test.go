@@ -179,10 +179,10 @@ func numbered(src string) string {
 // feature functions, and a main that calls each of them.
 type pg struct {
 	inline int // > 0: inside `${}`, expressions stay on one line
-	r     *rand.Rand
-	n     int // fresh name counter
-	decls []string
-	calls []string // statements of main
+	r      *rand.Rand
+	n      int // fresh name counter
+	decls  []string
+	calls  []string // statements of main
 }
 
 func genProgram(seed int64) string {
@@ -699,9 +699,9 @@ func (g *pg) fValues() {
 // sctx is what a block may do: fail (`?` on Fail), break and continue
 // (in a loop), and the mutable sink it adds its bindings to.
 type sctx struct {
-	fail bool
-	loop bool
-	sink string
+	fail  bool
+	loop  bool
+	sink  string
 	clock string // the Clock in scope ("" when none)
 }
 
