@@ -1480,8 +1480,9 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
 
 ## Hybrid builds (Go backend with Go assembler)
 
-Last verified: 2026-10-09. Decision 0084; results
-`bench/results/go-asm-hybrid-2026-10-09.md`.
+Last verified: 2026-10-10. Decisions 0084, 0131; results
+`bench/results/go-asm-hybrid-2026-10-09.md`,
+`bench/results/hybrid-preemption-2026-10-10.md`.
 
 - `xo build --hybrid` (Go backend, Build mode): `internal/build/hybrid.go`
   runs the native check, SSA with reference counting, and
@@ -1490,7 +1491,8 @@ Last verified: 2026-10-09. Decision 0084; results
   prints `hybrid: f, g in Go assembler` on stderr. `build.HybridPlan`
   reports the plan without building; `Options.HybridAll` takes every
   eligible function (tests), `Options.HybridPure` builds the same
-  directory with tag `xo_pure`.
+  directory with tag `xo_pure`, `Options.HybridNoPoll` leaves the
+  preemption polls out (tests, measurements; no CLI flag).
 - Eligible: free functions of the main module (no methods, generic
   instances, `ensures` clauses, structs with invariants); parameters and
   results Int, Float, Bool, structs of Int and Float fields, Lists of
@@ -1502,8 +1504,9 @@ Last verified: 2026-10-09. Decision 0084; results
   `xo_pure.go` (`//go:build !arm64 || xo_pure`, the Go versions),
   `xo_hybrid.go` (`//go:build arm64 && !xo_pure`: ABI0 declarations
   `func xoasm_f(p0 []Rec, p1 int64) (r0 int64)`, `//go:noescape` when the
-  function calls no Xo function, wrappers that `Unshared()` written `var`
-  Lists and pass `.Slice()`, `xoHybridFault` and the position table),
+  function calls no Xo function and has no loop, wrappers that `Unshared()` written `var`
+  Lists and pass `.Slice()`, `xoHybridFault` and the position table,
+  `xoHybridYield` (`rt.HybridYield`, `runtime.Gosched`)),
   `xo_hybrid_arm64.s` (`//go:build !xo_pure`). Imports a file does not
   name are left out of it (`usesIdent`).
 - Go mode differences from the native target: List word is the slice
@@ -1516,14 +1519,30 @@ Last verified: 2026-10-09. Decision 0084; results
   calls an Xo function, `NO_LOCAL_POINTERS` when it calls anything; no
   jump tables; faults `CALL ·xoHybridFault(SB)` with (kind, a, b, c, pos),
   kinds in `goFaultKind`, raised by `rt.HybridFault`.
+- Preemption polls (decision 0131, `insertPolls` after `placeLatches`):
+  before the terminator of every block with a back edge, `ldr x16, [x28,
+  #16]; tbnz x16, #63, Lpoll` (x28 is translated to `g`); the stub after
+  the body stores the registers live across it (`inst.saves`), calls
+  `·xoHybridYield(SB)`, reloads, and jumps back. A poll is an `iCall`
+  with `poll` set: it does not make the function lose NOSPLIT, but it
+  does lose `//go:noescape`, and its frame is at least 8 bytes.
 - `gosyntax.go` translates the GNU text line by line; `TestGoSyntaxEncoding`
   (darwin/arm64 with cc) assembles every emitted form both ways and
   compares the machine code (Go writes `mov x, #0` as `orr`).
-- Tests: `go test ./internal/gen -run 'TestGoldenHybrid|TestHybridRandom'`
+- Tests: `go test ./internal/gen -run 'TestGoldenHybrid|TestHybridRandom|TestHybridPreemption'`
   (eligible goldens against want.txt, 12 random kernel programs (3 with
   `-short`) against their `xo_pure` build, all four fault kinds; `go vet
-  -asmdecl` on each build directory). Use `-asmdecl` only: the generated
-  Go has unreachable code that plain `go vet` reports.
+  -asmdecl` on each build directory; TestHybridPreemption runs
+  testdata/hybrid_preempt with GODEBUG=gctrace=1: stop the world under 10
+  ms and a goroutine's gap under 100 ms during a 0.3 s (-short) or 2 s
+  hybrid loop, the race detector and a build without polls as control
+  in the full suite; not parallel, three attempts per bound). Use
+  `-asmdecl` only: the generated Go has unreachable code that plain `go
+  vet` reports.
+- `XO_BASE=<old xo> bench/perf/hybrid/run.sh` adds the old build's hybrid
+  binaries to the interleaved runs (columns "base ms", "hybrid/base").
+  `bench/perf/hybrid/xo/sieve_chunk` (not in the default list; argument:
+  chunk size) is sieve_split called from Go in chunks.
 - Profile a hybrid binary with `XO_CPUPROFILE=p.prof ./bin` and
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).

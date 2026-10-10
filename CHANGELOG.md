@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build --hybrid`: loops in Go assembler poll for preemption at every
+  back edge (decision 0131), so a long hybrid loop no longer holds up the
+  GC's stop the world or other goroutines on its P (11.6 s to 0.058 ms
+  during an 11.5 s loop); the hybrid benchmarks are 0 to 7 percent slower
+  than before (median 2), still 9 to 31 percent faster than the Go
+  backend.
+- `xo build --hybrid` compiles loops of programs that start tasks (was
+  "no assembly": an RC verifier error on the task runner).
+- `bench/perf/hybrid/run.sh` takes `XO_BASE=<xo binary>` to compare two
+  compilers' hybrid builds in the same interleaved runs.
 - The parser written in Xo (`selfhost/parser`, decision 0127): the whole
   grammar, built with the Go, arm64, and LLVM backends; for every file the
   Go parser accepts it prints the same syntax tree dump, and it rejects
