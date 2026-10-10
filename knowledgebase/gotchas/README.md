@@ -224,3 +224,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [fakeclock-advance-woken-tasks.md](fakeclock-advance-woken-tasks.md): native `FakeClock.advance` returned before the tasks woken at the last instant ran; it now waits for the next move of the clock.
 - [xo-test-writes-regressions-into-goldens.md](xo-test-writes-regressions-into-goldens.md): `xo test` by hand on a golden directory writes `regressions_test.xo` into it and breaks TestGolden; delete it, or copy the golden first.
 - [closure-frame-names.md](closure-frame-names.md): native error frames of a `?` in a closure lacked the Go backend's `.closure` suffix, and Mutex.with closures recorded none.
+- [lsp-clean-files-need-empty-diagnostics.md](lsp-clean-files-need-empty-diagnostics.md): `xo lsp` must publish an empty diagnostics list for clean open files and for files whose errors went away, or old errors stay in the editor.
+- [lsp-std-copy-checked-as-user-code.md](lsp-std-copy-checked-as-user-code.md): opening the std copy that `xo lsp` go to definition writes made the server check it as user code (XO0172 on every bodiless fn); std copies are now excluded.

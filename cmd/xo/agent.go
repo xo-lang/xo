@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/xo-lang/xo/internal/lsp"
 	"github.com/xo-lang/xo/internal/mcp"
 	"github.com/xo-lang/xo/internal/query"
 	"github.com/xo-lang/xo/internal/serve"
@@ -27,6 +28,24 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	s := &mcp.Server{Exec: run, Version: "p1"}
 	if err := s.Serve(stdin, stdout); err != nil {
 		fmt.Fprintf(stderr, "xo mcp: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// ---------------------------------------------------------------------------
+// lsp
+
+func runLSP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fl := flag.NewFlagSet("lsp", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	fl.Bool("stdio", true, "serve on stdin/stdout (the only transport; accepted for clients that pass it)")
+	if err := fl.Parse(args); err != nil {
+		return 2
+	}
+	s := &lsp.Server{Version: version}
+	if err := s.Serve(stdin, stdout); err != nil {
+		fmt.Fprintf(stderr, "xo lsp: %v\n", err)
 		return 1
 	}
 	return 0

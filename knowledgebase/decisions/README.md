@@ -116,3 +116,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0110-compile-property-test.md](0110-compile-property-test.md): Accepted: TestCompileProperty generates checker valid programs over the optional syntax, builds them on Go and `--no-gc`, and compares their runs.
 - [0111-no-aliased-var-arguments.md](0111-no-aliased-var-arguments.md): Accepted: passing one variable (or overlapping places) to two `var` parameters of a call is a compile error on every backend, so by reference and copy in/out agree.
 - [0112-handles-not-comparable.md](0112-handles-not-comparable.md): Accepted: types containing handles are not comparable (`==`, Map keys, Set elements, derive Eq/Hash/Ord rejected) on every backend.
+- [0113-editor-support-textmate-first.md](0113-editor-support-textmate-first.md): Accepted: editor support starts with an in repo VS Code extension holding a TextMate grammar; semantic highlighting comes later from an `xo lsp` server.
+- [0114-xo-lsp.md](0114-xo-lsp.md): Accepted: `xo lsp` serves LSP over stdio by rechecking the open documents' modules in full (as a check overlay) on each change; no incremental checker yet.
