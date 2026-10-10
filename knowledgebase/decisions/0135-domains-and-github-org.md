@@ -1,4 +1,8 @@
-# 0133: Domains and GitHub org
+# 0135: Domains and GitHub org
+
+Numbered 0133 until 2026-10-10, when it was renumbered because the
+real-time functions decision also had 0133; commit messages before then
+call it 0133.
 
 Status: Accepted (2026-10-10). Domains bought and org registered by the
 owner on 2026-10-10.

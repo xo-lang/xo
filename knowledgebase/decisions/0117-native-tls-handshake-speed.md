@@ -1,7 +1,7 @@
 # 0117: Faster native TLS handshakes, session tickets on
 
 Status: Implemented (2026-10-10). Amends 0105 (configuration: session
-tickets now on; handshake costs). Amended by 0132 (2026-10-10): the
+tickets now on; handshake costs). Amended by 0134 (2026-10-10): the
 P-256 signer of the consequences is built (fiat-crypto, vendored with
 the approval below; `xo/xo_p256.c` interposes
 `mbedtls_psa_ecdsa_sign_hash` and `mbedtls_psa_ecdsa_verify_hash`),
@@ -106,5 +106,5 @@ resuming: llvm 18346 at 244 us, Go 18843 at 210 us.
 
 Vendoring fiat-crypto's P-256 code (pinned upstream commit, checked
 hash, as for Mbed TLS) for the fast signer described above is approved;
-scheduled at low priority. Done in decision 0132 (commit `f3ecb2c...`,
+scheduled at low priority. Done in decision 0134 (commit `f3ecb2c...`,
 `scripts/vendor-fiat-crypto.sh`).

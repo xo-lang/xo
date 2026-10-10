@@ -3,7 +3,7 @@
 Status: Accepted (2026-10-09). Amended by 0117 (2026-10-10): session
 tickets on, handshakes about twice as fast. Amended by 0121
 (2026-10-10): ALPN offers `h2` first on the server and the client
-(HTTP/2 in `std/llrt/xo_h2.c`). Amended by 0132 (2026-10-10): ECDSA
+(HTTP/2 in `std/llrt/xo_h2.c`). Amended by 0134 (2026-10-10): ECDSA
 P-256 on vendored fiat-crypto (`third_party/fiat-crypto`) in front of
 the library's, a full handshake about 1.1 times Go's CPU. Implemented in `third_party/mbedtls`
 (vendored library, `mbedtls.tgz`, configuration in `xo/`),

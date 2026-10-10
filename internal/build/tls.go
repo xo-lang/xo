@@ -69,7 +69,7 @@ var (
 )
 
 // tlsSourceHash hashes the embedded library (its compressed sources),
-// configuration, and fiat-crypto's files (decision 0132).
+// configuration, and fiat-crypto's files (decision 0134).
 func tlsSourceHash() (string, error) {
 	if tlsHash != "" {
 		return tlsHash, nil

@@ -72,7 +72,7 @@ int main(void) {
 // inverses of third_party/mbedtls/xo/xo_tls_accel.c (decision 0117)
 // against RFC 6979 and RFC 7748 answers and the library's own functions
 // on random inputs, then P-256 signatures verified; and the P-256 signer
-// and verifier of xo_p256.c (decision 0132) against the library's own,
+// and verifier of xo_p256.c (decision 0134) against the library's own,
 // byte for byte, on 800 keys and messages with edge cases.
 func TestTLSAccel(t *testing.T) {
 	if testing.Short() {

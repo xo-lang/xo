@@ -1,5 +1,5 @@
 // xo_p256.c: ECDSA P-256 signing and verification for the TLS library
-// (decision 0132), in front of Mbed TLS's own through the interposition
+// (decision 0134), in front of Mbed TLS's own through the interposition
 // of decision 0117: psa_crypto_ecp.c is compiled with
 // -Dmbedtls_psa_ecdsa_sign_hash=xo_builtin_psa_ecdsa_sign_hash (and the
 // same for verify_hash), and this file defines the original names.
@@ -27,7 +27,7 @@
 // empty asm value barrier), table lookups read every entry, window
 // positions are public. The only data dependent branches are on public
 // values (r == 0, s == 0, the rejection of a drawn k, as in the library).
-// TestTLSAccel checks the outputs; decision 0132 says how the absence of
+// TestTLSAccel checks the outputs; decision 0134 says how the absence of
 // secret dependent branches was reviewed.
 
 #include "tf_psa_crypto_common.h"

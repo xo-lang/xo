@@ -96,7 +96,7 @@ func hexOrDash(b []byte) string {
 	return hex.EncodeToString(b)
 }
 
-// TestP256 checks xo_p256.c (decision 0132) against Go's crypto/ecdsa:
+// TestP256 checks xo_p256.c (decision 0134) against Go's crypto/ecdsa:
 // deterministic signatures (RFC 6979, which Go's Sign makes when its
 // random source is nil) byte for byte with the library's and Go's, over
 // random keys and messages with SHA-256, SHA-384, and SHA-512, and

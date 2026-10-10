@@ -8,7 +8,7 @@
 // files of include/, library/, and the TF-PSA-Crypto directories the
 // library build uses), unmodified; xo/ holds the Xo runtime's
 // configuration and the functions it puts in front of the library's
-// (decisions 0117, 0132; xo_p256.c includes fiat-crypto's files, which
+// (decisions 0117, 0134; xo_p256.c includes fiat-crypto's files, which
 // Tree adds from third_party/fiat-crypto). The package embeds mbedtls.tgz, a compressed copy of
 // src/ made by gen.go, and xo/. The pinned release, its checksum, and the
 // update steps are in knowledgebase/infrastructure/toolchain.md ("TLS
@@ -111,7 +111,7 @@ var Exclude = []string{
 
 // FiatDir is where Tree puts the vendored fiat-crypto files
 // (third_party/fiat-crypto/src), which xo/xo_p256.c includes (decision
-// 0132).
+// 0134).
 const FiatDir = "fiat-crypto/src"
 
 // File is one file of the library tree: its slash separated path

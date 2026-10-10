@@ -1,6 +1,6 @@
 // tls_accel.c: TestTLSAccel's program. Checks the functions
 // third_party/mbedtls/xo/xo_tls_accel.c and xo_p256.c put in front of
-// Mbed TLS's own (decisions 0117, 0132) against known answers (RFC 6979
+// Mbed TLS's own (decisions 0117, 0134) against known answers (RFC 6979
 // A.2.5, RFC 7748 6.1) and against the library's renamed originals on
 // random inputs. "tls_accel N" runs the checks; "tls_accel serve" answers
 // signing and verification requests on stdin for TestP256 (Go's

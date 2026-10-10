@@ -802,7 +802,7 @@ std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (e
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
                         unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration,
                         interposed functions: xo_tls_accel.c, xo_p256.c)
-third_party/fiat-crypto/  fiat-crypto's P-256 field and scalar C (decision 0132): src/ (vendored, unmodified,
+third_party/fiat-crypto/  fiat-crypto's P-256 field and scalar C (decision 0134): src/ (vendored, unmodified,
                         embedded), SHA256SUMS, license files, README.md (commit, how chosen)
 scripts/vendor-mbedtls.sh  downloads, checks, and vendors an Mbed TLS release
 scripts/vendor-fiat-crypto.sh  downloads fiat-crypto's files at the pinned commit and checks their SHA-256
@@ -1551,7 +1551,7 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).
 
-## TLS library (native std/http, decisions 0105, 0106, 0117, 0132)
+## TLS library (native std/http, decisions 0105, 0106, 0117, 0134)
 
 Last verified: 2026-10-10.
 
@@ -1574,8 +1574,8 @@ Last verified: 2026-10-10.
   Fermat, a spinning lock for the library's mutexes); `xo/xo_p256.c`
   replaces ECDSA P-256 signing and verification
   (`mbedtls_psa_ecdsa_sign_hash`, `mbedtls_psa_ecdsa_verify_hash`,
-  decision 0132) with code on fiat-crypto, byte identical signatures.
-- fiat-crypto (decision 0132): `third_party/fiat-crypto/src/p256_64.c`
+  decision 0134) with code on fiat-crypto, byte identical signatures.
+- fiat-crypto (decision 0134): `third_party/fiat-crypto/src/p256_64.c`
   and `p256_scalar_64.c` from github.com/mit-plv/fiat-crypto at commit
   `f3ecb2cf1f771de34771e967193ee7f0ee0b0acf` (2026-10-09), unmodified,
   MIT or Apache-2.0 or BSD-1-Clause; SHA-256 of each file pinned in
@@ -1618,7 +1618,7 @@ Last verified: 2026-10-10.
   bench/perf/http/run.sh` (a full, or with RESUME=1 a resumed, handshake
   per request); profile the server with `sample <pid> 4` (2026-10-10:
   15k full handshakes/s native against 17k on the Go backend; after
-  decision 0132, 251 us of server CPU per full handshake native against
+  decision 0134, 251 us of server CPU per full handshake native against
   227 us on the Go backend, `bench/results/native-runtime-2026-10-10.md`
   sections 1 and 6). `CONFIGS="xo-base-llvm ..." XO_BASE=<old xo>` builds
   the LLVM server with another compiler for before and after runs.

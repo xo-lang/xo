@@ -1,4 +1,8 @@
-# 0132: P-256 ECDSA on fiat-crypto in front of Mbed TLS
+# 0134: P-256 ECDSA on fiat-crypto in front of Mbed TLS
+
+Numbered 0132 until 2026-10-10, when it was renumbered because the
+mascot decision already had 0132; commit messages before then call it
+0132.
 
 Status: Implemented (2026-10-10). Amends 0105 and 0117 (the next step
 0117 planned). Owner approval to vendor fiat-crypto: 0117, "Owner

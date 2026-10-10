@@ -2,7 +2,7 @@
 // (github.com/mit-plv/fiat-crypto): the formally verified 64 bit
 // Montgomery arithmetic modulo P-256's prime and group order, which the
 // native TLS library's P-256 signer (third_party/mbedtls/xo/xo_p256.c,
-// decision 0132) includes. The files are unmodified; the pinned commit,
+// decision 0134) includes. The files are unmodified; the pinned commit,
 // their checksums, and the update steps are in README.md and
 // scripts/vendor-fiat-crypto.sh.
 package fiatcrypto

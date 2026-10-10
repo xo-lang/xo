@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vendor fiat-crypto's P-256 C code into third_party/fiat-crypto (decision 0132).
+# Vendor fiat-crypto's P-256 C code into third_party/fiat-crypto (decision 0134).
 #
 #   scripts/vendor-fiat-crypto.sh
 #

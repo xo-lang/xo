@@ -1,6 +1,6 @@
 # Branches in a constant time review that are not the code's
 
-Status: Observed (2026-10-10, decision 0132).
+Status: Observed (2026-10-10, decision 0134).
 
 ## Symptom
 
@@ -25,7 +25,7 @@ Review the assembly twice: once with `-O2 -fno-inline
 (the helpers must have none; loops may branch on their counters and the
 public window index), and once as built (`-O2`, arm64 and
 `-target x86_64-apple-macos12`) to see that inlining added none. The
-review's results are in decision 0132.
+review's results are in decision 0134.
 
 A related trap from the same tests: a P-256 ECDSA hash longer than 32
 bytes is truncated to its leftmost 32, so changing its last byte does

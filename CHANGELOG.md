@@ -33,7 +33,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 - Native TLS: ECDSA P-256 signing and verification run on fiat-crypto's
   verified field arithmetic (vendored at a pinned commit,
-  `third_party/fiat-crypto`, decision 0132) instead of Mbed TLS's bignum
+  `third_party/fiat-crypto`, decision 0134) instead of Mbed TLS's bignum
   code: signatures byte identical, 4.8 times faster (23 us), a full
   HTTPS handshake on the native server takes 251 us of CPU (was 354; Go
   backend 227).
