@@ -23,8 +23,10 @@
 //     already given to each physical register. Calls clobber the caller
 //     saved registers (a one point range at each call), so values live
 //     across a call land in callee saved registers or are spilled. A
-//     spilled register lives in its own stack slot for its whole life
-//     and is reloaded into a scratch register at each use.
+//     spilled register gets the first stack slot no value live at the
+//     same time holds (decision 0146) and is reloaded into a scratch
+//     register at each use. A frame past the reach of sp relative
+//     offsets is allocated again with x28 kept free to address it.
 //  3. Emission (emit.go): frame (frame pointer kept, 16 byte aligned),
 //     parallel moves resolved with cycle breaking, out of line fault
 //     stubs, reference counting helpers (rc.go), literals.

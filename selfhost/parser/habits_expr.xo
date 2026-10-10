@@ -6,7 +6,7 @@ use github.com/xo-lang/xo/selfhost/lexer
 /// Binary operators of other languages at the current token, after the
 /// left operand x, or None.
 fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
-  if p.hard {
+  if p.bad {
     return None
   }
   let t = p.tok
@@ -23,7 +23,8 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     if prec < min_prec {
       return None
     }
-    p.foreign(t.span, "`${txt(t.text)}` is Python syntax; Xo writes `${sym}` (core 15 operators)")
+    let d = p.foreign(t.span, "`${txt(t.text)}` is Python syntax; Xo writes `${sym}` (core 15 operators)")
+    p.add_fix(d, "write `${sym}`", [replace_span(t.span, sym)])
     p.next()
     let y = p.parse_binary(prec + 1)
     return Some(Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y))
@@ -35,7 +36,8 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     p.next()
     p.next()
     let y = p.parse_binary(IS_PREC + 1)
-    p.foreign(span_to(t.span, next.span), "`x not in xs` is Python syntax; Xo writes `!xs.contains(x)` (spec/std.md 2)")
+    let d = p.foreign(span_to(t.span, next.span), "`x not in xs` is Python syntax; Xo writes `!xs.contains(x)` (spec/std.md 2)")
+    p.add_fix(d, "write `!xs.contains(x)`", [replace_range(expr_span(x).start, expr_span(y).end, "!${p.operand_text(y)}.contains(${p.span_text(expr_span(x))})")])
     let sp = span_to(expr_span(x), expr_span(y))
     return Some(Expr.UnaryExpr(span: sp, op: Kind.Bang, x: method_call(y, b"contains", sp, [x])))
   }
@@ -45,7 +47,8 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     }
     p.next()
     let y = p.parse_binary(IS_PREC + 1)
-    p.foreign(t.span, "`x in xs` as a test is Python, TypeScript, and Kotlin syntax; Xo writes `xs.contains(x)`, and `in` appears only in `for` (spec/std.md 2)")
+    let d = p.foreign(t.span, "`x in xs` as a test is Python, TypeScript, and Kotlin syntax; Xo writes `xs.contains(x)`, and `in` appears only in `for` (spec/std.md 2)")
+    p.add_fix(d, "write `xs.contains(x)`", [replace_range(expr_span(x).start, expr_span(y).end, "${p.operand_text(y)}.contains(${p.span_text(expr_span(x))})")])
     let sp = span_to(expr_span(x), expr_span(y))
     return Some(method_call(y, b"contains", sp, [x]))
   }
@@ -54,7 +57,8 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
       return None
     }
     let k = kind_text(t.kind)
-    p.foreign(span_to(t.span, next.span), "`${k}=` is TypeScript strict equality; Xo has one equality, `${k}`, and it never converts types (core 2.10)")
+    let d = p.foreign(span_to(t.span, next.span), "`${k}=` is TypeScript strict equality; Xo has one equality, `${k}`, and it never converts types (core 2.10)")
+    p.add_fix(d, "write `${k}`", [replace_span(next.span, "")])
     p.next()
     p.next()
     let y = p.parse_binary(5)
@@ -67,14 +71,16 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     p.next()
     p.next()
     let y = p.parse_unary()
-    p.foreign(span_to(t.span, next.span), "`**` is Python, TypeScript, and Kotlin syntax for a power; Xo writes `x.pow(n)` (spec/std.md 2)")
+    let d = p.foreign(span_to(t.span, next.span), "`**` is Python, TypeScript, and Kotlin syntax for a power; Xo writes `x.pow(n)` (spec/std.md 2)")
+    p.add_fix(d, "write `.pow(...)`", [replace_range(expr_span(x).start, expr_span(y).end, "${p.operand_text(x)}.pow(${p.span_text(expr_span(y))})")])
     return Some(method_call(x, b"pow", span_to(expr_span(x), expr_span(y)), [y]))
   }
   if t.kind == Kind.Question && next.kind == Kind.Colon && adjacent(t, next) {
     if 1 < min_prec {
       return None
     }
-    p.foreign(span_to(t.span, next.span), "`?:` is Kotlin's elvis operator; Xo writes `??` (core 2.5)")
+    let d = p.foreign(span_to(t.span, next.span), "`?:` is Kotlin's elvis operator; Xo writes `??` (core 2.5)")
+    p.add_fix(d, "write `??`", [replace_span(span_to(t.span, next.span), "??")])
     p.next()
     p.next()
     let y = p.parse_binary(1)
@@ -84,7 +90,8 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     if RANGE_PREC < min_prec {
       return None
     }
-    p.foreign(t.span, "`a until b` is Kotlin syntax; Xo's `a..b` already excludes `b` (core 3.5)")
+    let d = p.foreign(t.span, "`a until b` is Kotlin syntax; Xo's `a..b` already excludes `b` (core 3.5)")
+    p.add_fix(d, "write `..`", [replace_range(p.before_blanks(t.span.start), p.after_blanks(t.span.end), "..")])
     p.next()
     let y = p.parse_binary(RANGE_PREC + 1)
     return Some(Expr.RangeExpr(span: span_to(expr_span(x), expr_span(y)), lo: Some(x), hi: Some(y), inclusive: false))
@@ -96,11 +103,13 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
 fn (var p: Parser) foreign_range(dots: Token) -> Bool {
   let t = p.tok
   if t.kind == Kind.Lt {
-    p.foreign(span_to(dots.span, t.span), "`..<` is Swift and Kotlin syntax; Xo's `a..b` already excludes `b` (core 3.5)")
+    let d = p.foreign(span_to(dots.span, t.span), "`..<` is Swift and Kotlin syntax; Xo's `a..b` already excludes `b` (core 3.5)")
+    p.add_fix(d, "write `..`", [replace_span(t.span, "")])
     p.next()
     return false
   }
-  p.foreign(span_to(dots.span, t.span), "`a...b` is Swift's closed range; Xo writes `a..=b` (core 3.5)")
+  let d = p.foreign(span_to(dots.span, t.span), "`a...b` is Swift's closed range; Xo writes `a..=b` (core 3.5)")
+  p.add_fix(d, "write `..=`", [replace_span(span_to(dots.span, t.span), "..=")])
   p.next()
   true
 }
@@ -116,7 +125,13 @@ fn (var p: Parser) ternary(c: Expr) -> Expr {
   }
   p.next()
   let b = p.parse_expr()
-  p.foreign(q.span, "`c ? a : b` is C, Java, TypeScript, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
+  let d = p.foreign(q.span, "`c ? a : b` is C, Java, TypeScript, and Swift syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
+  p.add_fix(d, "write `if ... else`", [
+    insert_at(expr_span(c).start, "if "),
+    replace_range(expr_span(c).end, expr_span(a).start, " { "),
+    replace_range(expr_span(a).end, expr_span(b).start, " } else { "),
+    insert_at(expr_span(b).end, " }"),
+  ])
   Expr.IfExpr(IfExpr{span: span_to(expr_span(c), expr_span(b)), cond: Some(c), then: expr_block(a), els: Some(Expr.Block(expr_block(b)))})
 }
 
@@ -125,9 +140,15 @@ fn (var p: Parser) py_cond(a: Expr) -> Expr {
   let if_tok = p.tok
   p.next()
   let c = p.parse_binary(2)
+  let else_tok = p.tok
   p.next() // else
   let b = p.parse_expr()
-  p.foreign(if_tok.span, "`a if c else b` is Python syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
+  let d = p.foreign(if_tok.span, "`a if c else b` is Python syntax; Xo writes `if c { a } else { b }`, which is an expression (core 3.5)")
+  p.add_fix(d, "write `if ... else`", [
+    replace_range(expr_span(a).start, expr_span(c).end, "if ${p.span_text(expr_span(c))} { ${p.span_text(expr_span(a))} }"),
+    replace_range(else_tok.span.end, expr_span(b).start, " { "),
+    insert_at(expr_span(b).end, " }"),
+  ])
   Expr.IfExpr(IfExpr{span: span_to(expr_span(a), expr_span(b)), cond: Some(c), then: expr_block(a), els: Some(Expr.Block(expr_block(b)))})
 }
 
@@ -155,25 +176,29 @@ fn (var p: Parser) foreign_unary() -> Expr? {
       end = p.peek(2)
     }
     let what = txt(trim_space(p.src_text(t.span.start, end.span.start)))
-    p.foreign(t.span, "`${what}x` takes a pointer or reference in Go, Rust, and Swift; Xo has none: pass the value itself, and a `var` parameter changes the caller's `var` binding (core 3.2, 5.1)")
+    let d = p.foreign(t.span, "`${what}x` takes a pointer or reference in Go, Rust, and Swift; Xo has none: pass the value itself, and a `var` parameter changes the caller's `var` binding (core 3.2, 5.1)")
+    p.add_fix(d, "remove `${what}`", [replace_range(t.span.start, end.span.start, "")])
     while p.tok.span.start.offset < end.span.start.offset {
       p.next()
     }
     return Some(p.parse_unary())
   }
   if t.kind == Kind.Star && starts_expr(next.kind) && adjacent(t, next) {
-    p.foreign(t.span, "`*p` dereferences a pointer in Go and Rust; Xo has no pointers: use the value `p` (core 5.1)")
+    let d = p.foreign(t.span, "`*p` dereferences a pointer in Go and Rust; Xo has no pointers: use the value `p` (core 5.1)")
+    p.add_fix(d, "remove `*`", [replace_span(t.span, "")])
     p.next()
     return Some(p.parse_unary())
   }
   if (is_word(t, b"not") && next.kind != Kind.Minus && next.kind != Kind.LBrace && starts_expr(next.kind) && next.kind != Kind.LParen) || (is_word(t, b"not") && next.kind == Kind.LParen && !adjacent(t, next)) {
-    p.foreign(t.span, "`not` is Python syntax; Xo writes `!` (core 15 operators)")
+    let d = p.foreign(t.span, "`not` is Python syntax; Xo writes `!` (core 15 operators)")
+    p.add_fix(d, "write `!`", [replace_range(t.span.start, next.span.start, "!")])
     p.next()
     let x = p.parse_unary()
     return Some(Expr.UnaryExpr(span: p.span_from(t.span.start), op: Kind.Bang, x: x))
   }
   if is_word(t, b"await") && starts_expr(next.kind) && next.kind != Kind.Minus && next.kind != Kind.LBrace && next.span.start.line == t.span.start.line {
-    p.foreign(t.span, "`await` is TypeScript, Python, Rust, and Swift syntax; an Xo call blocks the calling task until it returns, so there is nothing to await; run work concurrently with `scope s { s.spawn(...) }` (core 7.1)")
+    let d = p.foreign(t.span, "`await` is TypeScript, Python, Rust, and Swift syntax; an Xo call blocks the calling task until it returns, so there is nothing to await; run work concurrently with `scope s { s.spawn(...) }` (core 7.1)")
+    p.add_fix(d, "remove `await`", [p.delete_token(t)])
     p.next()
     return Some(p.parse_unary())
   }
@@ -236,11 +261,20 @@ fn (var p: Parser) foreign_primary() -> Expr? {
   if w == b"try" && same_line && starts_expr(next.kind) && next.kind != Kind.LBrace {
     p.next()
     let x = p.parse_unary()
-    p.foreign(t.span, "`try f()` is Swift and Zig syntax; Xo propagates a failure with a postfix `?`: `f()?` (core 2.6)")
+    let d = p.foreign(t.span, "`try f()` is Swift and Zig syntax; Xo propagates a failure with a postfix `?`: `f()?` (core 2.6)")
+    p.add_fix(d, "write `?`", [p.delete_token(t), insert_at(expr_span(x).end, "?")])
     return Some(Expr.TryExpr(span: p.span_from(t.span.start), x: x))
   }
   if w == b"new" && next.kind == Kind.Ident && same_line && is_upper(next.text) {
-    p.foreign(t.span, "`new` is TypeScript, Java, and Kotlin syntax; Xo builds a struct with a literal naming every field, `${txt(next.text)}{field: value}` (core 2.2)")
+    let d = p.foreign(t.span, "`new` is TypeScript, Java, and Kotlin syntax; Xo builds a struct with a literal naming every field, `${txt(next.text)}{field: value}` (core 2.2)")
+    // `new P{...}` drops `new`; `new P(...)` needs field names.
+    var end = p.pos + 2
+    while end + 1 < p.toks.len() && p.tok_at(end).kind == Kind.Dot && p.tok_at(end + 1).kind == Kind.Ident {
+      end += 2
+    }
+    if p.tok_at(end).kind == Kind.LBrace {
+      p.add_fix(d, "remove `new`", [p.delete_token(t)])
+    }
     p.next()
     return Some(p.parse_unary())
   }
@@ -266,12 +300,18 @@ fn (var p: Parser) single_quoted() -> Expr {
   p.next()
   let inner = t.text[1..t.text.len() - 1]
   var cooked = BytesBuilder.new()
+  var fixed = BytesBuilder.new()
   var n = 0
   while n < inner.len() {
     let c = inner[n]
     if c == '\\' && n + 1 < inner.len() {
       let e = inner[n + 1]
       n += 2
+      if e == '\'' {
+        fixed.write_byte('\'')
+        cooked.write_byte('\'')
+        continue
+      }
       if e == 'n' {
         cooked.write_byte('\n')
       } else if e == 't' {
@@ -279,14 +319,25 @@ fn (var p: Parser) single_quoted() -> Expr {
       } else {
         cooked.write_byte(e)
       }
+      fixed.write_byte('\\')
+      fixed.write_byte(e)
       continue
+    }
+    if c == '"' {
+      fixed.write(b"\\\"")
+    } else if c == '$' && n + 1 < inner.len() && inner[n + 1] == '{' {
+      fixed.write(b"\\$")
+    } else {
+      fixed.write_byte(c)
     }
     cooked.write_byte(c)
     n += 1
   }
+  let fixed_text = fixed.freeze()
   for (k, d) in p.diags.indexed() {
     if d.code == lexer.INVALID_RUNE && d.span.start.line == t.span.start.line && d.span.start.col == t.span.start.col {
       p.diags[k].message = "`'...'` holding text is a Python and TypeScript string; an Xo string uses double quotes, `\"...\"`, and single quotes hold one `Rune` (core 1.6)".bytes()
+      p.diags[k].fixes.push(Fix{title: b"use double quotes", edits: [Edit{span: t.span, replace: b"\"" + fixed_text + b"\""}]})
       break
     }
   }
@@ -303,7 +354,7 @@ fn (var p: Parser) rust_closure() -> Expr {
     p.next()
   } else {
     p.next()
-    while !p.at(Kind.Pipe) && !p.at(Kind.Eof) && !p.hard {
+    while !p.at(Kind.Pipe) && !p.at(Kind.Eof) && !p.bad {
       let ps = p.tok.span.start
       let name = p.expect_ident("a closure parameter")
       var typ: Type? = None
@@ -318,12 +369,20 @@ fn (var p: Parser) rust_closure() -> Expr {
     close = p.tok
     p.expect(Kind.Pipe, "`|` after the closure parameters")
   }
-  p.foreign(span_to(open.span, close.span), "`|x| body` is a Rust closure; Xo writes `fn(x) { body }` (core 3.3)")
+  var names: List[Str] = []
+  for prm in params {
+    names.push(p.span_text(prm.span))
+  }
+  let head = "fn(${names.join(", ")})"
+  let d = p.foreign(span_to(open.span, close.span), "`|x| body` is a Rust closure; Xo writes `fn(x) { body }` (core 3.3)")
   var body = Block{span: p.tok.span}
   if p.at(Kind.LBrace) {
     body = p.parse_block()
+    p.add_fix(d, "write `fn(...)`", [replace_span(span_to(open.span, close.span), head)])
   } else {
-    body = expr_block(p.parse_expr())
+    let x = p.parse_expr()
+    body = expr_block(x)
+    p.add_fix(d, "write `fn(...) { ... }`", [replace_range(open.span.start, expr_span(x).start, "${head} { "), insert_at(expr_span(x).end, " }")])
   }
   Expr.FnLit(FnLit{span: p.span_from(start), params: params, body: body})
 }
@@ -341,12 +400,20 @@ fn (var p: Parser) arrow_fn(close: Int) -> Expr {
   }
   let arrow = p.tok
   p.next() // =>
-  p.foreign(arrow.span, "`(x) => body` is a TypeScript arrow function; Xo writes `fn(x) { body }` (core 3.3)")
+  var names: List[Str] = []
+  for prm in params {
+    names.push(p.span_text(prm.span))
+  }
+  let head = "fn(${names.join(", ")})"
+  let d = p.foreign(arrow.span, "`(x) => body` is a TypeScript arrow function; Xo writes `fn(x) { body }` (core 3.3)")
   var body = Block{span: p.tok.span}
   if p.at(Kind.LBrace) && !p.brace_is_map() {
     body = p.parse_block()
+    p.add_fix(d, "write `fn(...)`", [replace_range(start, body.span.start, "${head} ")])
   } else {
-    body = expr_block(p.parse_expr())
+    let x = p.parse_expr()
+    body = expr_block(x)
+    p.add_fix(d, "write `fn(...) { ... }`", [replace_range(start, expr_span(x).start, "${head} { "), insert_at(expr_span(x).end, " }")])
   }
   Expr.FnLit(FnLit{span: p.span_from(start), params: params, body: body})
 }
@@ -366,7 +433,12 @@ fn (var p: Parser) py_lambda() -> Expr {
   }
   p.expect(Kind.Colon, "`:` after the lambda parameters")
   let x = p.parse_expr()
-  p.foreign(t.span, "`lambda x: body` is Python syntax; Xo writes `fn(x) { body }` (core 3.3)")
+  var names: List[Str] = []
+  for prm in params {
+    names.push(txt(prm.name.name))
+  }
+  let d = p.foreign(t.span, "`lambda x: body` is Python syntax; Xo writes `fn(x) { body }` (core 3.3)")
+  p.add_fix(d, "write `fn(...) { ... }`", [replace_range(start, expr_span(x).start, "fn(${names.join(", ")}) { "), insert_at(expr_span(x).end, " }")])
   Expr.FnLit(FnLit{span: p.span_from(start), params: params, body: expr_block(x)})
 }
 
@@ -376,9 +448,10 @@ fn (var p: Parser) f_string() -> Expr {
   p.next()
   let st = p.tok
   let raw = p.src_text(st.span.start, st.span.end)
-  p.foreign(span_to(ft.span, st.span), "`f\"...{x}...\"` is a Python f-string; every Xo string interpolates with `\${x}`: `\"...\${x}...\"` (core 1.6)")
+  let d = p.foreign(span_to(ft.span, st.span), "`f\"...{x}...\"` is a Python f-string; every Xo string interpolates with `\${x}`: `\"...\${x}...\"` (core 1.6)")
   var parts: List[StringPart] = []
   var lit = BytesBuilder.new()
+  var b = BytesBuilder.new()
   var ok = !(raw.len() >= 3 && raw[0] == '"' && raw[1] == '"' && raw[2] == '"')
   let content_start = st.span.start.offset + 1
   let inner = raw[1..raw.len() - 1]
@@ -386,9 +459,11 @@ fn (var p: Parser) f_string() -> Expr {
   while ok && i < inner.len() {
     let c = inner[i]
     if c == '{' && i + 1 < inner.len() && inner[i + 1] == '{' {
+      b.write_byte('{')
       lit.write_byte('{')
       i += 1
     } else if c == '}' && i + 1 < inner.len() && inner[i + 1] == '}' {
+      b.write_byte('}')
       lit.write_byte('}')
       i += 1
     } else if c == '{' {
@@ -400,6 +475,9 @@ fn (var p: Parser) f_string() -> Expr {
         if (find_bytes(expr, b":", 0) >= 0 || find_bytes(expr, b"!", 0) >= 0) && find_bytes(expr, b"::", 0) < 0 {
           ok = false
         } else {
+          b.write(b"\${")
+          b.write(expr)
+          b.write(b"}")
           if lit.len() > 0 {
             parts.push(StringPart{text: lit.freeze(), expr: None})
             lit = BytesBuilder.new()
@@ -413,16 +491,25 @@ fn (var p: Parser) f_string() -> Expr {
         }
       }
     } else if c == '$' {
+      b.write(b"\\$")
       lit.write_byte('$')
     } else if c == '\\' && i + 1 < inner.len() {
+      b.write_byte(c)
+      b.write_byte(inner[i + 1])
       lit.write_byte(inner[i + 1])
       i += 1
     } else {
+      b.write_byte(c)
       lit.write_byte(c)
     }
     i += 1
   }
   p.next()
+  if ok {
+    p.add_fix(d, "write `\${...}`", [Edit{span: span_to(ft.span, st.span), replace: b"\"" + b.freeze() + b"\""}])
+  } else {
+    p.add_note(d, "format specs such as `{x:.2f}` have no Xo form; format the value first")
+  }
   if lit.len() > 0 {
     parts.push(StringPart{text: lit.freeze(), expr: None})
   }
@@ -441,12 +528,18 @@ fn (var p: Parser) rust_macro() -> Expr {
   let w = name.text
   if w == b"vec" {
     let x = p.parse_primary()
-    p.foreign(sp, "`vec![...]` is a Rust macro; an Xo list literal is `[...]` (core 1.6)")
+    let d = p.foreign(sp, "`vec![...]` is a Rust macro; an Xo list literal is `[...]` (core 1.6)")
+    if x is ListLit(..) {
+      p.add_fix(d, "remove `vec!`", [replace_span(sp, "")])
+    }
     return x
   }
   if w == b"panic" || w == b"unreachable" || w == b"todo" || w == b"unimplemented" {
     let args = p.macro_args()
-    p.foreign(sp, "`${txt(w)}!` is a Rust macro; Xo stops the program on a broken invariant with `fault(\"why\")` (core 8)")
+    let d = p.foreign(sp, "`${txt(w)}!` is a Rust macro; Xo stops the program on a broken invariant with `fault(\"why\")` (core 8)")
+    if args.len() == 1 {
+      p.add_fix(d, "write `fault(...)`", [replace_span(sp, "fault")])
+    }
     var call_args: List[Arg] = []
     for a in args {
       call_args.push(Arg{span: expr_span(a), name: None, value: a})
@@ -458,12 +551,22 @@ fn (var p: Parser) rust_macro() -> Expr {
   }
   if w == b"format" {
     let args = p.macro_args()
-    p.foreign(sp, "`format!` is a Rust macro; an Xo string interpolates directly: `\"\${a} and \${b}\"` (core 1.6)")
-    return p.format_string(name, args)
+    let d = p.foreign(sp, "`format!` is a Rust macro; an Xo string interpolates directly: `\"\${a} and \${b}\"` (core 1.6)")
+    return p.format_string(d, name, args)
   }
   if w == b"assert" || w == b"assert_eq" || w == b"assert_ne" {
     let args = p.macro_args()
-    p.foreign(sp, "`${txt(w)}!` is a Rust macro; an Xo test checks with `expect(x) == y` or `expect(cond)`, and a function states conditions with `requires` and `ensures` (core 9.1, 9.2)")
+    let d = p.foreign(sp, "`${txt(w)}!` is a Rust macro; an Xo test checks with `expect(x) == y` or `expect(cond)`, and a function states conditions with `requires` and `ensures` (core 9.1, 9.2)")
+    if txt(p.file).ends_with("_test.xo") {
+      let whole = p.span_from(start)
+      if w == b"assert" && args.len() == 1 {
+        p.add_fix(d, "write `expect(...)`", [replace_span(sp, "expect")])
+      } else if w == b"assert_eq" && args.len() == 2 {
+        p.add_fix(d, "write `expect(a) == b`", [replace_span(whole, "expect(${p.span_text(expr_span(args[0]))}) == ${p.span_text(expr_span(args[1]))}")])
+      } else if w == b"assert_ne" && args.len() == 2 {
+        p.add_fix(d, "write `expect(a) != b`", [replace_span(whole, "expect(${p.span_text(expr_span(args[0]))}) != ${p.span_text(expr_span(args[1]))}")])
+      }
+    }
     return Expr.TupleExpr(span: p.span_from(start), elems: args)
   }
   let args = p.macro_args()
@@ -496,7 +599,7 @@ fn (var p: Parser) macro_args() -> List[Expr] {
 
 /// Rust's `format!("{} {}", a, b)`, recovered as an interpolated string
 /// when every placeholder is a plain `{}` or `{name}`.
-fn (var p: Parser) format_string(name: Token, args: List[Expr]) -> Expr {
+fn (var p: Parser) format_string(d: Int, name: Token, args: List[Expr]) -> Expr {
   let sp = p.span_from(name.span.start)
   if args.is_empty() {
     return str_lit(b"", sp)
@@ -517,14 +620,17 @@ fn (var p: Parser) format_string(name: Token, args: List[Expr]) -> Expr {
   var rest = args[1..]
   var parts: List[StringPart] = []
   var cur = BytesBuilder.new()
+  var out = BytesBuilder.new()
   var fixable = true
   var i = 0
   while i < text.len() {
     let c = text[i]
     if c == '{' && i + 1 < text.len() && text[i + 1] == '{' {
+      out.write_byte('{')
       cur.write_byte('{')
       i += 1
     } else if c == '}' && i + 1 < text.len() && text[i + 1] == '}' {
+      out.write_byte('}')
       cur.write_byte('}')
       i += 1
     } else if c == '{' {
@@ -538,16 +644,33 @@ fn (var p: Parser) format_string(name: Token, args: List[Expr]) -> Expr {
           cur = BytesBuilder.new()
         }
         if inner.is_empty() && !rest.is_empty() {
+          out.write(b"\${")
+          out.write(p.src_text(expr_span(rest[0]).start, expr_span(rest[0]).end))
+          out.write(b"}")
           parts.push(StringPart{text: b"", expr: Some(rest[0])})
           rest = rest[1..]
         } else if !inner.is_empty() && find_bytes(inner, b":", 0) < 0 && find_bytes(inner, b"?", 0) < 0 {
+          out.write(b"\${")
+          out.write(inner)
+          out.write(b"}")
           parts.push(StringPart{text: b"", expr: Some(Expr.Ident(Ident{span: lit_span, name: inner}))})
         } else {
           fixable = false
         }
         i = j
       }
+    } else if c == '"' || c == '\\' || c == '$' {
+      out.write_byte('\\')
+      out.write_byte(c)
+      cur.write_byte(c)
+    } else if c == '\n' {
+      out.write(b"\\n")
+      cur.write_byte(c)
+    } else if c == '\t' {
+      out.write(b"\\t")
+      cur.write_byte(c)
     } else {
+      out.write_byte(c)
       cur.write_byte(c)
     }
     i += 1
@@ -556,6 +679,7 @@ fn (var p: Parser) format_string(name: Token, args: List[Expr]) -> Expr {
     parts.push(StringPart{text: cur.freeze(), expr: None})
   }
   if fixable && rest.is_empty() {
+    p.add_fix(d, "write an interpolated string", [Edit{span: sp, replace: b"\"" + out.freeze() + b"\""}])
     return Expr.StringLit(StringLit{span: sp, kind: StringKind.Plain, parts: parts})
   }
   Expr.TupleExpr(span: sp, elems: args)
@@ -604,7 +728,8 @@ fn (var p: Parser) try_optional() -> Expr {
   p.next()
   let x = p.parse_unary()
   if mark.kind == Kind.Question {
-    p.foreign(span_to(t.span, mark.span), "`try? f()` is Swift syntax; Xo turns a failure into `None` with `f().ok()` (spec/std.md 2)")
+    let d = p.foreign(span_to(t.span, mark.span), "`try? f()` is Swift syntax; Xo turns a failure into `None` with `f().ok()` (spec/std.md 2)")
+    p.add_fix(d, "write `.ok()`", [replace_range(t.span.start, p.after_blanks(mark.span.end), ""), insert_at(expr_span(x).end, ".ok()")])
     return method_call(x, b"ok", p.span_from(start), [])
   }
   p.foreign(span_to(t.span, mark.span), "`try! f()` is Swift syntax; Xo stops on an impossible failure with `f().or_fault(\"why it cannot fail\")` (spec/std.md 2)")
@@ -639,9 +764,11 @@ fn (var p: Parser) foreign_postfix(x: Expr) -> Postfix {
     As => {
       p.next()
       let typ = p.parse_type()
-      p.foreign(t.span, "`x as T` is Rust, TypeScript, and Kotlin syntax; Xo converts with a call on the target type, `T(x)`, and has no unchecked casts (core 2.1)")
+      let d = p.foreign(t.span, "`x as T` is Rust, TypeScript, and Kotlin syntax; Xo converts with a call on the target type, `T(x)`, and has no unchecked casts (core 2.1)")
       if let NamedType(_, path, args) = typ {
         if args.is_empty() {
+          let tt = p.span_text(type_span(typ))
+          p.add_fix(d, "write `${tt}(...)`", [insert_at(expr_span(x).start, "${tt}("), replace_range(expr_span(x).end, type_span(typ).end, ")")])
           var fun = Expr.Ident(path[0])
           for k in 1..path.len() {
             fun = Expr.SelectorExpr(span: span_to(expr_span(fun), path[k].span), x: fun, sel: path[k])
@@ -682,7 +809,8 @@ fn (var p: Parser) foreign_postfix(x: Expr) -> Postfix {
       }
       if !is_string {
         // `String::from(s)` is reported whole by the checker.
-        p.foreign(span_to(t.span, next.span), "`::` is Rust and C++ path syntax; Xo writes `.`: `${p.span_text(expr_span(x))}.${txt(p.peek(2).text)}` (core 2.3, 4.1)")
+        let d = p.foreign(span_to(t.span, next.span), "`::` is Rust and C++ path syntax; Xo writes `.`: `${p.span_text(expr_span(x))}.${txt(p.peek(2).text)}` (core 2.3, 4.1)")
+        p.add_fix(d, "write `.`", [replace_span(span_to(t.span, next.span), ".")])
       }
       p.next()
       p.next()
@@ -712,11 +840,17 @@ fn (var p: Parser) foreign_switch() -> Expr {
     p.error_expected("`{`")
     return Expr.BadExpr(kw.span)
   }
+  let open = p.tok
+  var edits: List[Edit] = []
+  var fixable = subject.is_some()
+  if let Some(s) = subject {
+    edits.push(replace_range(kw.span.start, open.span.start, "match ${p.span_text(expr_span(s))} "))
+  }
   p.next() // {
   var arms: List[MatchArm] = []
   while {
     p.skip_newlines()
-    if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.hard {
+    if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.bad {
       break
     }
     let arm_start = p.tok
@@ -746,7 +880,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       p.error_expected("`case` or `default`")
     }
-    if p.hard {
+    if p.bad {
       break
     }
     let sep = p.tok
@@ -755,7 +889,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       p.expect(Kind.Colon, "`:` after the case")
     }
-    if p.hard {
+    if p.bad {
       break
     }
     var pattern = Pattern.WildcardPat(arm_start.span)
@@ -766,10 +900,20 @@ fn (var p: Parser) foreign_switch() -> Expr {
         pattern = Pattern.OrPat(span: span_to(pattern_span(pats[0]), pattern_span(pats[pats.len() - 1])), alts: pats)
       }
     }
+    // Arm head edit.
+    var head = "_ =>"
+    if !is_default {
+      var texts: List[Str] = []
+      for pt in pats {
+        texts.push(p.span_text(pattern_span(pt)))
+      }
+      head = "${texts.join(" | ")} =>"
+    }
     var stmts: List[Stmt] = []
     if !kotlin {
       p.skip_newlines()
     }
+    let body_start = p.tok.span.start
     if kotlin {
       if p.at(Kind.LBrace) {
         let b = p.parse_block()
@@ -780,8 +924,11 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       while {
         p.skip_newlines()
-        if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.at_ident(b"case") || p.at_ident(b"default") || p.hard {
+        if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.at_ident(b"case") || p.at_ident(b"default") || p.bad {
           break
+        }
+        if p.at_ident(b"fallthrough") || p.at(Kind.Break) {
+          fixable = false
         }
         stmts.push(p.parse_stmt())
         if !p.got(Kind.Newline) && !p.at(Kind.RBrace) {
@@ -790,15 +937,20 @@ fn (var p: Parser) foreign_switch() -> Expr {
       }
     }
     var body = Stmt.ExprStmt(span: sep.span, x: Expr.UnitExpr(sep.span))
-    if stmts.len() == 1 {
+    if stmts.is_empty() {
+      fixable = false
+    } else if stmts.len() == 1 {
       body = stmts[0]
-    } else if stmts.len() > 1 {
+      edits.push(replace_range(arm_start.span.start, body_start, "${head} "))
+    } else {
       let bsp = span_to(stmt_span(stmts[0]), stmt_span(stmts[stmts.len() - 1]))
       body = Stmt.ExprStmt(span: bsp, x: Expr.Block(Block{span: bsp, stmts: stmts}))
+      edits.push(replace_range(arm_start.span.start, body_start, "${head} {\n"))
+      edits.push(insert_at(bsp.end, "\n}"))
     }
     arms.push(MatchArm{span: p.span_from(arm_start.span.start), pattern: pattern, guard: None, body: Some(body)})
   }
-  p.close_brace()
+  p.close_brace(open)
   let msp = p.span_from(start)
   var lang = "Go, Swift, and TypeScript"
   var form = "`switch x { case 1: ... default: ... }`"
@@ -806,7 +958,12 @@ fn (var p: Parser) foreign_switch() -> Expr {
     lang = "Kotlin"
     form = "`when (x) { 1 -> ...  else -> ... }`"
   }
-  p.foreign(kw.span, "${form} is ${lang} syntax; Xo writes `match x { 1 => ...  _ => ... }`: one `pattern => body` arm per line, `_` for the default, `1 | 2` for several values, no fallthrough, and every case covered (core 3.5)")
+  let d = p.foreign(kw.span, "${form} is ${lang} syntax; Xo writes `match x { 1 => ...  _ => ... }`: one `pattern => body` arm per line, `_` for the default, `1 | 2` for several values, no fallthrough, and every case covered (core 3.5)")
+  if fixable {
+    p.add_fix(d, "write `match`", edits)
+  } else if subject.is_none() {
+    p.add_note(d, "a `switch` with no subject is an `if ... else if ...` chain in Xo")
+  }
   if let Some(s) = subject {
     return Expr.MatchExpr(span: msp, subject: s, arms: arms)
   }
@@ -827,7 +984,8 @@ fn (var p: Parser) foreign_slice(lo: Expr?) -> Expr {
     hi = Some(p.parse_binary(RANGE_PREC + 1))
   }
   let r = Expr.RangeExpr(span: p.span_from(start), lo: lo, hi: hi, inclusive: false)
-  p.foreign(colon.span, "`xs[a:b]` is Go and Python slice syntax; Xo slices with a range, `xs[a..b]` (core 3.6)")
+  let d = p.foreign(colon.span, "`xs[a:b]` is Go and Python slice syntax; Xo slices with a range, `xs[a..b]` (core 3.6)")
+  p.add_fix(d, "write `..`", [replace_span(colon.span, "..")])
   r
 }
 
@@ -848,7 +1006,8 @@ fn (var p: Parser) foreign_elif() -> Bool {
   } else {
     return false
   }
-  p.foreign(t.span, "`${txt(t.text)}` is ${lang} syntax; Xo writes `else if` (core 3.5)")
+  let d = p.foreign(t.span, "`${txt(t.text)}` is ${lang} syntax; Xo writes `else if` (core 3.5)")
+  p.add_fix(d, "write `else if`", [replace_span(t.span, "else if")])
   true
 }
 

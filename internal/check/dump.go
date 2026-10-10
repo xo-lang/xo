@@ -18,13 +18,14 @@ type Sections struct {
 	Types bool // the type of every checked expression
 	Sigs  bool // the signature and effects of every function and method
 	Diags bool // the diagnostics: code, span, message
+	Full  bool // the diagnostics as `xo check --json` prints them: severity, notes, fixes
 }
 
 // AllSections selects every section.
-var AllSections = Sections{Names: true, Types: true, Sigs: true, Diags: true}
+var AllSections = Sections{Names: true, Types: true, Sigs: true, Diags: true, Full: true}
 
 // ParseSections reads a comma separated list of section names (names,
-// types, sigs, diags); "" or "all" selects every section.
+// types, sigs, diags, full); "" or "all" selects every section.
 func ParseSections(s string) (Sections, error) {
 	if s == "" || s == "all" {
 		return AllSections, nil
@@ -40,8 +41,10 @@ func ParseSections(s string) (Sections, error) {
 			out.Sigs = true
 		case "diags":
 			out.Diags = true
+		case "full":
+			out.Full = true
 		default:
-			return out, fmt.Errorf("unknown section %q (names, types, sigs, diags)", p)
+			return out, fmt.Errorf("unknown section %q (names, types, sigs, diags, full)", p)
 		}
 	}
 	return out, nil
@@ -61,12 +64,16 @@ func ParseSections(s string) (Sections, error) {
 //	<line>:<col> <Type.name> <signature>[ uses <effects>]
 //	== diags
 //	{"code":...,"file":...,"line":...,"col":...,"end_line":...,"end_col":...,"message":...}
+//	== full
+//	{"code":...,"severity":...,"message":...,"span":{...},"notes":[...],"fixes":[...]}
 //
 // An object is `local <let|var|param|var-param|recv|var-recv|predeclared>
 // <pos>`, `fn|const|type <module> <name> <pos>`, `tparam <name> <pos>`, or
 // `module <path>`; a position is `file:line:col`, or `-` when there is none.
 // Lines are sorted by position. Diagnostics are those of every module, in
-// position order, then by code and message.
+// position order, then by code and message; the full section (stage 7)
+// prints each as diag.Diagnostic JSON, notes and fixes included, in the
+// same order.
 func (r *Result) Dump(sec Sections) string {
 	var b strings.Builder
 	c := r.c
@@ -94,20 +101,19 @@ func (r *Result) Dump(sec Sections) string {
 			b.WriteByte('\n')
 		}
 	}
+	if sec.Full {
+		b.WriteString("== full\n")
+		for _, l := range FullLines(r.Diagnostics) {
+			b.WriteString(l)
+			b.WriteByte('\n')
+		}
+	}
 	return b.String()
 }
 
-// DiagLines are the diagnostic lines of a dump, sorted.
-func DiagLines(ds []diag.Diagnostic) []string {
-	type brief struct {
-		Code    string `json:"code"`
-		File    string `json:"file"`
-		Line    int    `json:"line"`
-		Col     int    `json:"col"`
-		EndLine int    `json:"end_line"`
-		EndCol  int    `json:"end_col"`
-		Message string `json:"message"`
-	}
+// sortDiags orders diagnostics as the dump prints them: by file,
+// position, code, and message, keeping the order of equal ones.
+func sortDiags(ds []diag.Diagnostic) []diag.Diagnostic {
 	sorted := append([]diag.Diagnostic(nil), ds...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := sorted[i], sorted[j]
@@ -125,8 +131,37 @@ func DiagLines(ds []diag.Diagnostic) []string {
 		}
 		return a.Message < b.Message
 	})
+	return sorted
+}
+
+// FullLines are the lines of the full section: each diagnostic as the
+// JSON of `xo check --json` (severity, notes, fixes), sorted as
+// DiagLines.
+func FullLines(ds []diag.Diagnostic) []string {
 	var out []string
-	for _, d := range sorted {
+	for _, d := range sortDiags(ds) {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		enc.Encode(d)
+		out = append(out, strings.TrimSuffix(buf.String(), "\n"))
+	}
+	return out
+}
+
+// DiagLines are the diagnostic lines of a dump, sorted.
+func DiagLines(ds []diag.Diagnostic) []string {
+	type brief struct {
+		Code    string `json:"code"`
+		File    string `json:"file"`
+		Line    int    `json:"line"`
+		Col     int    `json:"col"`
+		EndLine int    `json:"end_line"`
+		EndCol  int    `json:"end_col"`
+		Message string `json:"message"`
+	}
+	var out []string
+	for _, d := range sortDiags(ds) {
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)

@@ -96,19 +96,36 @@ func New(code Code, span token.Span, format string, args ...any) Diagnostic {
 	}
 }
 
-// List collects diagnostics.
+// List collects diagnostics. Items holds pointers so that the pointer
+// Errorf returns stays valid while more diagnostics are added: with a
+// slice of values, an append that grew the slice left the caller's
+// pointer on the old array, and notes and fixes attached through it
+// were lost (gotchas/diag-pointer-after-append.md).
 type List struct {
-	Items []Diagnostic
+	Items []*Diagnostic
 }
 
 // Add appends d.
-func (l *List) Add(d Diagnostic) { l.Items = append(l.Items, d) }
+func (l *List) Add(d Diagnostic) { l.Items = append(l.Items, &d) }
 
 // Errorf adds an error diagnostic and returns a pointer to it so callers can
 // attach notes or fixes.
 func (l *List) Errorf(code Code, span token.Span, format string, args ...any) *Diagnostic {
-	l.Items = append(l.Items, New(code, span, format, args...))
-	return &l.Items[len(l.Items)-1]
+	d := New(code, span, format, args...)
+	l.Items = append(l.Items, &d)
+	return &d
+}
+
+// Values returns copies of the diagnostics, in order.
+func (l *List) Values() []Diagnostic {
+	if l.Items == nil {
+		return nil
+	}
+	out := make([]Diagnostic, len(l.Items))
+	for i, d := range l.Items {
+		out[i] = *d
+	}
+	return out
 }
 
 // HasErrors reports whether any diagnostic has error severity.

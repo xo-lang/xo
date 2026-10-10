@@ -6,20 +6,31 @@
 use github.com/xo-lang/xo/selfhost/lexer
 
 /// Parses src and prints its tree and diagnostics. With sig, function
-/// declarations may omit their body. A file with a hard error prints only
-/// its diagnostics (up to the first hard one): its tree is incomplete.
+/// declarations may omit their body. A file with errors prints the tree
+/// the parser recovered.
 pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
   let r = parse_file(file.bytes(), src, sig)
   var out = StrBuilder.new()
   out.write("== ${file}\n")
-  if !r.hard {
-    dump_file(out, r.file)
-  }
+  dump_file(out, r.file)
   // messages quoted as parser.Dump does (strconv.Quote): a habit's
   // message holds source text, newlines included
   for d in r.diags {
     let sp = d.span
     out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${d.message.quote()}\n")
+    for n in d.notes {
+      var at = "-"
+      if let Some(ns) = n.span {
+        at = "${ns.start.line}:${ns.start.col}-${ns.end.line}:${ns.end.col}"
+      }
+      out.write("  note ${at} ${n.message.quote()}\n")
+    }
+    for f in d.fixes {
+      out.write("  fix ${f.title.quote()}\n")
+      for e in f.edits {
+        out.write("    edit ${e.span.start.line}:${e.span.start.col}-${e.span.end.line}:${e.span.end.col} ${e.replace.quote()}\n")
+      }
+    }
   }
   out.freeze()
 }

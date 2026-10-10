@@ -8,20 +8,21 @@ fn (var p: Parser) parse_block() -> Block {
     b.span = p.span_from(start)
     return b
   }
-  let saved_lit = p.no_lit
-  let saved_range = p.open_range
+  let br = Braces{open: open, bad: p.bad, no_lit: p.no_lit, open_range: p.open_range}
   p.no_lit = false
   p.open_range = false
-  while p.members_more() {
+  var before = 0
+  while p.braces_more(before) {
     b.stmts.push(p.parse_stmt())
-    if p.failed() || p.got(Kind.Newline) || p.at(Kind.RBrace) || p.at(Kind.Eof) {
-      continue
+    if !p.bad {
+      if p.got(Kind.Newline) || p.at(Kind.RBrace) || p.at(Kind.Eof) {
+        continue
+      }
+      p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline or `}` after statement, found ${describe(p.tok)}")
     }
-    p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline or `}` after statement, found ${describe(p.tok)}")
+    p.resync(before)
   }
-  p.no_lit = saved_lit
-  p.open_range = saved_range
-  p.close_brace()
+  p.braces_close(br)
   b.span = p.span_from(start)
   b
 }
@@ -83,13 +84,17 @@ fn (var p: Parser) parse_stmt() -> Stmt {
     }
     Fn => {
       if p.peek(1).kind == Kind.Ident || (p.peek(1).kind == Kind.LParen && p.receiver_ahead()) {
-        p.fail(DECL_IN_BLOCK, p.tok.span, "functions cannot be declared inside a block; use a closure")
+        p.fail(DECL_IN_BLOCK, p.tok.span, "functions cannot be declared inside a block; use a closure: `let name = fn(...) { ... }`")
         return Stmt.BadStmt(p.tok.span)
       }
     }
     Const => return Stmt.ConstDecl(p.parse_const(None, false, start))
     Struct | Enum | Interface | Type | Use | Test | Pub => {
-      p.fail(DECL_IN_BLOCK, p.tok.span, "`${p.tok.kind}` declarations are only allowed at top level")
+      if p.peek(1).kind == Kind.Dot {
+        p.fail(UNEXPECTED_TOKEN, p.tok.span, "`${kind_text(p.tok.kind)}` is a keyword and cannot be used as a name")
+        return Stmt.BadStmt(p.tok.span)
+      }
+      p.fail(DECL_IN_BLOCK, p.tok.span, "`${kind_text(p.tok.kind)}` declarations are only allowed at top level")
       return Stmt.BadStmt(p.tok.span)
     }
     _ => {}
@@ -129,7 +134,7 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
       var value: Expr? = None
       if !(p.tok.kind is Newline | RBrace | Eof | Comma) {
         let v = p.parse_expr()
-        if p.at(Kind.Comma) && !p.hard {
+        if p.at(Kind.Comma) && !p.bad {
           value = Some(p.foreign_return_list(v))
         } else {
           value = Some(v)
@@ -162,7 +167,8 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
     return Stmt.AssignStmt(span: p.span_from(start), op: t.kind, target: x, value: value)
   }
   if t.kind is AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign {
-    p.fail(UNEXPECTED_TOKEN, t.span, "`${t.kind}` is not an assignment operator")
+    p.fail(UNEXPECTED_TOKEN, t.span, "`${kind_text(t.kind)}` is not an assignment operator; the compound assignments are `+= -= *= /= %=` (core 3.5, 15: AssignOp)")
+    return Stmt.BadStmt(p.span_from(start))
   }
   Stmt.ExprStmt(span: expr_span(x), x: x)
 }
@@ -173,8 +179,9 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
   }
   p.next() // for
   let pattern = p.parse_pattern()
-  if p.at_ident(b"of") && !p.hard {
-    p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+  if p.at_ident(b"of") && !p.bad {
+    let d = p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+    p.add_fix(d, "write `in`", [replace_span(p.tok.span, "in")])
     p.next()
   } else {
     p.expect(Kind.In, "`in` in a for loop")
@@ -340,8 +347,36 @@ fn (var p: Parser) check_struct_lit_in_cond(cond: Expr?) {
     let t3 = p.peek(3)
     let field_start = t1.kind == Kind.Ident && t2.kind == Kind.Colon && !(t3.kind is For | While)
     let empty_lit = t1.kind == Kind.RBrace && t2.kind == Kind.LBrace
-    if field_start || empty_lit {
-      p.fail(STRUCT_LIT_IN_CONDITION, expr_span(c), "a struct literal in a condition must be parenthesized")
+    if !field_start && !empty_lit {
+      return
+    }
+    // the end of the literal
+    var depth = 0
+    var end = p.pos
+    var i = p.pos
+    while i < p.toks.len() {
+      let k = p.toks[i].kind
+      if k is LBrace | HashLBrace {
+        depth += 1
+      } else if k == Kind.RBrace {
+        depth -= 1
+        if depth == 0 {
+          end = i
+          break
+        }
+      }
+      i += 1
+    }
+    var what = "literal"
+    if let IsExpr(..) = rightmost(c) {
+      what = "pattern"
+    }
+    let d = p.fail(STRUCT_LIT_IN_CONDITION, span_to(expr_span(c), p.toks[end].span), "a struct ${what} in a condition must be parenthesized")
+    if d >= 0 {
+      p.diags[d].fixes.push(Fix{title: b"parenthesize the condition", edits: [insert_at(expr_span(c).start, "("), insert_at(p.toks[end].span.end, ")")]})
+    }
+    while p.pos <= end && !p.at(Kind.Eof) {
+      p.next()
     }
   }
 }

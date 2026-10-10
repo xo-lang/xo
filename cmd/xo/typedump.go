@@ -16,7 +16,8 @@ import (
 // the checker resolved in the canonical text form of check.Result.Dump
 // (decision 0141), the form the self hosted checker (selfhost/check)
 // prints, so the two can be compared a section at a time. --section is a
-// comma separated list of names, types, sigs, and diags (default all).
+// comma separated list of names, types, sigs, diags, and full (default
+// all).
 // --each checks every dir as a run of its own, each preceded by
 // `=== check <dir>`. --bench=N checks N times and prints the time instead.
 func runTypeDump(args []string, stdout, stderr io.Writer) int {
@@ -47,7 +48,7 @@ func runTypeDump(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintln(stderr, "usage: xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>")
+		fmt.Fprintln(stderr, "usage: xo typedump [--section=names,types,sigs,diags,full] [--each] [--bench=N] <dirs...>")
 		return 2
 	}
 	runs := [][]string{dirs}

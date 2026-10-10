@@ -54,11 +54,35 @@ type paramRef struct {
 	span token.Span
 }
 
-// name records that id names obj.
+// name records that id names obj. A nil object, typed or not (the
+// Module of an import that did not resolve), records nothing.
 func (r *records) name(id *ast.Ident, obj any) {
-	if id != nil && obj != nil {
+	if id != nil && !nilObj(obj) {
 		r.names[id] = nameRef{obj: obj}
 	}
+}
+
+// nilObj reports whether obj is nil or a nil pointer to an object.
+func nilObj(obj any) bool {
+	switch x := obj.(type) {
+	case nil:
+		return true
+	case *Module:
+		return x == nil
+	case *VarObj:
+		return x == nil
+	case *FuncObj:
+		return x == nil
+	case *VariantObj:
+		return x == nil
+	case *ConstObj:
+		return x == nil
+	case *TypeObj:
+		return x == nil
+	case *TParam:
+		return x == nil
+	}
+	return false
 }
 
 // field records that id names field f of struct t.

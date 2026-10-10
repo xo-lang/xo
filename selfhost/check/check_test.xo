@@ -45,7 +45,7 @@ fn check_files(os: testing.TestOs, dir: Str, files: List[(Str, Str)]) -> Str ! F
   if !c.unsupported.is_empty() {
     return Ok("unsupported ${c.unsupported}")
   }
-  Ok(c.dump(true, true, false, true))
+  Ok(c.dump(true, true, false, true, false))
 }
 
 /// The lines of a dump after its module header, without the file headers.
@@ -159,7 +159,32 @@ test "a value of the wrong type is XO0401" {
   expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
 }
 
-test "a file with a parse error is not checked" {
-  let out = check_files(os, "p", [("p/main.xo", "fn f( {")])?
-  expect(out.starts_with("unsupported parse error")) == true
+test "a file with a parse error is checked past it, as the Go checker does" {
+  let out = check_files(os, "p", [("p/main.xo", "fn f() {\n  let = 1\n}\n\nfn g() -> Int {\n  \"s\"\n}\n")])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("\"XO0165\"") && l.contains("expected a pattern, found `=`") })) == true
+  expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Int`, found `Str`") })) == true
+}
+
+test "time layouts parse as the runtime does" {
+  expect(time_layout_parse("{year}-{month}-{day}")) == ""
+  expect(time_layout_parse("{hour12}:{minute}")) == "{hour12} needs {ampm} (or use {hour}, 00 to 23)"
+  expect(time_layout_parse("{yera}")) == "unknown field {yera}"
+  expect(time_layout_parse("{month:long}")) == "{month:long}: the forms are {month}, {month:1}, {month:short}, {month:name}"
+  expect(time_layout_parse("a}")) == "unmatched } (a literal brace is written {rbrace})"
+  expect(time_layout_parse("{year")) == "unclosed { (a literal brace is written {lbrace})"
+  expect(xo_quote("a\"$\n")) == "\"a\\\"\\$\\n\""
+}
+
+test "a name against its convention is XO0101" {
+  let out = check_files(os, "n", [("n/main.xo", """
+    fn GetName(userId: Int) -> Int {
+      let maxCount = userId
+      maxCount
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("function name `GetName` must be snake_case") })) == true
+  expect(ls.any(fn(l) { l.contains("parameter name `userId` must be snake_case") })) == true
+  expect(ls.any(fn(l) { l.contains("variable name `maxCount` must be snake_case") })) == true
 }

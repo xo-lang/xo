@@ -165,6 +165,11 @@ pub struct Obj {
   /// Local: read somewhere (stmt.go VarObj.Used): a `let` or `var`
   /// binding never read is XO0110.
   pub used: Bool = false
+  /// Local: bound by a `let` of a single name (stmt.go VarObj.decl): the
+  /// statement's span and value (zero or one element), for the fixes of
+  /// XO0201 and XO0502.
+  pub let_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  pub let_value: List[parser.Expr] = []
 
   // Type parameters.
   pub constraint: Int = -1
@@ -172,6 +177,11 @@ pub struct Obj {
   /// An implicit effect parameter for an effect argument left out (core
   /// 6.2): the function may perform it.
   pub elided: Bool = false
+  /// Elided: the type written without its effect arguments that created
+  /// it (file "" for none) and its text, for the XO0701 note.
+  pub elided_file: Str = ""
+  pub elided_at: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  pub elided_text: Str = ""
 }
 
 /// A module: a directory of .xo files, or a std declaration file.
@@ -226,8 +236,8 @@ pub struct ModRoot {
   pub dir: Str
 }
 
-/// A diagnostic: code, span, and message (notes and fixes are a later
-/// stage, decision 0141).
+/// A diagnostic: code, span, message, severity, notes, and machine fixes
+/// (diag.Diagnostic; decision 0141, stage 7).
 pub struct Diag {
   pub code: Str
   pub file: Str
@@ -236,6 +246,37 @@ pub struct Diag {
   pub end_line: Int
   pub end_col: Int
   pub message: Str
+  pub warning: Bool = false
+  pub notes: List[DNote] = []
+  pub fixes: List[DFix] = []
+}
+
+/// A source span as diagnostics print it (diag.Span): end_line and
+/// end_col 0 are left out (a note's point location).
+pub struct JSpan {
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub end_line: Int = 0
+  pub end_col: Int = 0
+}
+
+/// A note of a diagnostic (diag.NoteItem).
+pub struct DNote {
+  pub message: Str
+  pub span: JSpan? = None
+}
+
+/// A machine fix (diag.Fix): its edits replace the text of their spans.
+pub struct DFix {
+  pub title: Str
+  pub edits: List[DEdit]
+}
+
+/// One edit of a fix (diag.Edit).
+pub struct DEdit {
+  pub span: JSpan
+  pub replace: Str
 }
 
 /// What an identifier resolved to: an object, or (obj -1) the text of a

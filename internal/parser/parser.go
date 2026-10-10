@@ -36,8 +36,9 @@ func ParseFile(name string, src []byte, mode Mode) (*ast.File, []diag.Diagnostic
 	p.lexHabits()
 	p.tok = p.toks[0]
 	f := p.parseFile()
-	diag.Sort(diags.Items)
-	return f, diags.Items
+	ds := diags.Values()
+	diag.Sort(ds)
+	return f, ds
 }
 
 type parser struct {

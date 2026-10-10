@@ -173,12 +173,20 @@ test "habits of other languages are soft errors with the Xo form recovered" {
   let many = parse("func f(a int) {\n  let b = a and true\n  b++\n}\n")
   expect(many.hard) == false
   expect(many.diags.map(fn(d) { d.code })) == ["XO0177", "XO0177", "XO0177", "XO0177"]
-  // `class` resynchronizes at the next declaration, like the Go parser.
+  // `class` is a hard error that resynchronizes at the next
+  // declaration, like the Go parser.
   let cls = parse("class P {\n  x: Int\n}\n\nfn g() {\n}\n")
-  expect(cls.hard) == false
+  expect(cls.hard) == true
   expect(cls.file.decls.len()) == 2
-  // A hard error still stops the parse.
-  expect(parse("fn f() {\n  let = 1\n}\n").hard) == true
+}
+
+test "after a hard error the parser resynchronizes at the next statement" {
+  let r = parse("fn f() {\n  let = 1\n  let x = 2\n  let = 3\n}\n\nfn g() {\n}\n")
+  expect(r.hard) == true
+  expect(r.diags.len()) == 2
+  expect(r.file.decls.len()) == 2
+  let text = dump("t.xo", b"fn f() {\n  let = 1\n  let x = 2\n}\n", false)
+  expect(text.contains("name=\"x\"")) == true
 }
 
 test "doc comments attach to declarations, fields, and variants" {

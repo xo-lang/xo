@@ -49,7 +49,23 @@
         "message": "`map(f, xs)` is Python; Xo calls the method on the collection, `xs.map(f)` (spec/std.md 2)"
       }
     ],
-    "fixes": []
+    "fixes": [
+      {
+        "title": "write `xs.map(f)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 8,
+              "end_line": 2,
+              "end_col": 38
+            },
+            "replace": "range(n).to_list().map(lambda x: x * x)"
+          }
+        ]
+      }
+    ]
   },
   {
     "code": "XO0177",

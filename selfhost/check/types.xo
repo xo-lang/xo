@@ -156,8 +156,13 @@ fn (c: Checker) kind_of(t: Int) -> TyKind {
   c.tys[c.resolve(t)].kind
 }
 
-/// The Type object of a Named type (after resolving), or -1.
+/// The Type object of a Named type (after resolving), or -1 (also for no
+/// type: an expression of a body never checked, such as a duplicate
+/// function's, which the real-time pass still walks).
 fn (c: Checker) named_obj(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
   let r = c.resolve(t)
   if c.tys[r].kind == TyKind.Named {
     return c.tys[r].obj

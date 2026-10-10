@@ -3,6 +3,7 @@ package arm64_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -58,4 +59,46 @@ func linuxAsm(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestFarFrame requires the function `huge` of testdata/run/huge_frame
+// to get a frame past the 32 KiB reach of an sp relative ldr and str
+// (it failed with "frame too large" past 28 KiB before) whose far slots
+// are addressed through x28, which holds nothing else there (decision
+// 0146). TestRun runs the program, on the main stack and on a fiber.
+func TestFarFrame(t *testing.T) {
+	if testing.Short() {
+		t.Skip("lowers a function of 4500 statements (about 10 s)")
+	}
+	asm := linuxAsm(t, "huge_frame")
+	start := strings.Index(asm, "// func huge\n")
+	if start < 0 {
+		t.Fatal("no function huge in the assembly")
+	}
+	body := asm[start:]
+	if end := strings.Index(body[1:], "// func "); end > 0 {
+		body = body[:end+1]
+	}
+	if !strings.Contains(body, "\tstr xzr, [sp]\n") {
+		t.Fatalf("huge does not probe its frame:\n%.600s", body)
+	}
+	if !strings.Contains(body, "\tadd x28, sp, #") {
+		t.Fatalf("huge addresses no slot through x28:\n%.600s", body)
+	}
+	for _, l := range strings.Split(body, "\n") {
+		f := strings.Fields(strings.ReplaceAll(l, ",", " "))
+		if len(f) < 2 || strings.HasPrefix(f[0], ".") {
+			continue
+		}
+		// x28 is an address, or saved and restored: never a value
+		if f[1] == "x28" && f[0] != "add" && f[0] != "str" && f[0] != "ldr" && f[0] != "stp" && f[0] != "ldp" {
+			t.Fatalf("huge uses x28 as a value: %q", l)
+		}
+		if (f[0] == "str" || f[0] == "ldr") && f[1] == "x28" && !strings.Contains(l, "[sp, #") {
+			t.Fatalf("huge loads or stores x28 other than its save: %q", l)
+		}
+	}
+	if !regexp.MustCompile(`\tst(r|p) [^\n]*x28[^\n]*\[sp, #`).MatchString(body) {
+		t.Fatal("huge does not save x28")
+	}
 }

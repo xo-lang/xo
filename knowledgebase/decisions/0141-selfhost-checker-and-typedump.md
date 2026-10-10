@@ -3,11 +3,13 @@
 Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
 inference), stage 3 (generics), stage 4 (effects and real-time, but
 dependency ceilings), the parse habits (pulled ahead of stage 8, in
-selfhost/parser), stage 5 (value semantics), and stage 6 (patterns and
-exhaustiveness) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+selfhost/parser), stage 5 (value semantics), stage 6 (patterns and
+exhaustiveness), stage 7 (notes and fixes, the full section;
+2026-10-10), and stage 8 (naming, time layouts, the checker's habits;
+2026-10-10) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
 infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
-comparable.xo, realtime.xo, flow.xo, exhaust.xo, the sigs section in
-dump.xo),
+comparable.xo, realtime.xo, flow.xo, exhaust.xo, notes.xo, naming.xo,
+timelayout.xo, the sigs and full sections in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -214,6 +216,43 @@ removed, or its pattern replaced by `_`). A run the Xo checker cannot
 parse is now checked too: the Go parser must report a hard error in the
 same file (`habitOnly` false), or the run fails.
 
+**Comparison rules of stage 7** (2026-10-10, notes and fixes; they
+extend stage 6's): `xo typedump` gains a `full` section, each
+diagnostic as `xo check --json` prints it (`check.FullLines`:
+diag.Diagnostic JSON with severity, notes, and fixes, sorted as the
+diags section with equal ones in report order; json.Marshal's escaping
+of `<`, `>`, `&` included). The Xo checker prints the same section, and
+every compared run (accepted with staged warnings, or rejected only
+with staged diagnostics) must give identical full lines too; the parser
+dump (`xo astdump`) prints each diagnostic's notes and fixes after it,
+so the parser differential compares them on every file and token
+mutation. The ported notes and fixes cover the parser (habits*.go,
+parser.go), the checker's diagnostics of stages 1 to 6 (the edit
+distance suggestions of `unresolved`, previous declarations, the effect
+call chain of XO0701 with the places items are performed, comparability
+notes, conversion and Result fixes, missing arms and fields as holes,
+lost updates, moves, real-time notes and `bound N` fixes, `if` without
+`else`), and the checker's habits (habits.go: names, calls, module
+calls, print functions, types, methods, fields, `x = v`, `for ... :=
+range`).
+
+**Comparison rules of stage 8** (2026-10-10, the remaining habits):
+naming (XO0101 with its habit note and rename fix, extended to every
+use of a local at the end as check.go `finishRenames` does), time
+layouts (XO0420, and XO0177 for a layout in the date pattern syntax of
+another language; selfhost/check/timelayout.xo), and the checker's
+XO0177 (`for ... := range`) are staged diagnostics: a run rejected with
+them is compared whole, full section included. Every diagnostic the
+repository runs and the mutations produce is now ported except the
+dependency rules (XO1301, XO1302, XO1309, XO1312) and those of `use go`
+and `use c` runs.
+
+**Parser resynchronization** (2026-10-10): the Xo parser goes on after a
+hard error as internal/parser does (decision 0127), so a run with hard
+parse errors is checked like any other: the parser's diagnostics, hard
+ones included, are staged (`parseDiag`), and the rest of the run must
+match. The Xo checker no longer marks such a run unsupported.
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;
@@ -268,6 +307,14 @@ by its file, span, and kind (the Go checker uses node pointers).
   to a habit, a soft parse error, the value semantics rules, or
   exhaustiveness in internal/parser or internal/check must be made in
   selfhost/parser or selfhost/check in the same change.
+- Stages 7 and 8 and the parser's resynchronization (2026-10-10): 587
+  of 609 repository runs are compared, full JSON sections included,
+  and identical on the three backends (351 accepted, 236 rejected); the
+  22 not compared are 16 `use go`/`use c` runs (unsupported) and 6
+  rejected by dependency rules (imports_deny and acme/billing: XO1301,
+  XO1302, XO1312; 2 of them give the same staged diagnostics). A
+  change to a note, a fix, naming, or the time layout rules in
+  internal/check must be made in selfhost/check in the same change.
 
 ## Alternatives
 

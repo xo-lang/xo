@@ -1,6 +1,6 @@
 # 0128: arm64 frames up to 28 KiB with stack probes; helper frame records past stp reach
 
-Status: Accepted (2026-10-10). Implemented in `internal/arm64/emit.go`
+Status: Accepted (2026-10-10); its 28 KiB limit superseded by 0146 (spill slot reuse, frames past 28 KiB through x28). Implemented in `internal/arm64/emit.go`
 (`maxFrame`, `probeSP`, prologue), `rc.go` and `closures.go`
 (`recordAt`). Tests: run programs `internal/arm64/testdata/run/big_frame`
 and `wide_values` (TestRun), `TestBigFrameProbes`,

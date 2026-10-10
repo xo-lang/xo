@@ -34,6 +34,7 @@ fn (var c: Checker) check_derives_comparable(m: Int) {
         continue
       }
       var decided = false
+      var why = ""
       for id in ids {
         if id.name != b"Eq" && id.name != b"Hash" {
           continue
@@ -44,14 +45,113 @@ fn (var c: Checker) check_derives_comparable(m: Int) {
           for p in c.objs[t].tparams {
             args.push(c.mk_param(p))
           }
-          if c.comparable(c.mk_named(t, args), []) {
+          let nt = c.mk_named(t, args)
+          if c.comparable(nt, []) {
             break
           }
+          why = c.incomparable(nt)
         }
-        c.error("XO0404", id.span, "`${text(c.objs[t].name)}` cannot derive `${text(id.name)}`")
+        let d = c.error("XO0404", id.span, "`${text(c.objs[t].name)}` cannot derive `${text(id.name)}`")
+        c.note_incomparable(d, why)
       }
     }
   }
+}
+
+/// Why values of t cannot be compared ("" when they can): the path to the
+/// first function value or handle inside t (comparable.go incomparable).
+fn (var c: Checker) incomparable(t: Int) -> Str {
+  c.incomparable_in(t, "", [])
+}
+
+fn (var c: Checker) incomparable_in(t0: Int, at: Str, seen: List[Int]) -> Str {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Func => return where_at(at, "a function value (`${c.show(t)}`)")
+    Tuple => {
+      for (i, e) in x.args.indexed() {
+        let r = c.incomparable_in(e, field_path(at, "${i}"), seen)
+        if !r.is_empty() {
+          return r
+        }
+      }
+    }
+    Named => {
+      let o = x.obj
+      if c.is_handle(o) {
+        return where_at(at, "the handle `${c.show(t)}`")
+      }
+      if c.objs[o].tkind == "interface" {
+        return ""
+      }
+      for a in x.args {
+        if c.tys[a].kind == TyKind.EffArg {
+          continue
+        }
+        let r = c.incomparable_in(a, at, seen)
+        if !r.is_empty() {
+          return r
+        }
+      }
+      if seen.contains(o) {
+        return ""
+      }
+      var seen2 = seen
+      seen2.push(o)
+      let sm = c.args_subst(c.objs[o].tparams, x.args)
+      let tk = c.objs[o].tkind
+      if tk == "struct" {
+        for f in c.objs[o].fields {
+          let r = c.incomparable_in(c.subst(f.ty, sm), field_path(at, text(f.name)), seen2)
+          if !r.is_empty() {
+            return r
+          }
+        }
+      } else if tk == "enum" {
+        for v in c.objs[o].variants {
+          for (i, f) in v.fields.indexed() {
+            var n = text(f.name)
+            if n.is_empty() {
+              n = "${i}"
+            }
+            let r = c.incomparable_in(c.subst(f.ty, sm), field_path(at, "${text(v.name)}.${n}"), seen2)
+            if !r.is_empty() {
+              return r
+            }
+          }
+        }
+      } else if tk == "newtype" && c.objs[o].target >= 0 {
+        return c.incomparable_in(c.subst(c.objs[o].target, sm), field_path(at, "0"), seen2)
+      }
+    }
+    Param | Var | Bad | EffArg => {}
+  }
+  ""
+}
+
+fn where_at(at: Str, what: Str) -> Str {
+  if at.is_empty() {
+    return what
+  }
+  "${at} holds ${what}"
+}
+
+fn field_path(at: Str, f: Str) -> Str {
+  if at.is_empty() {
+    return "field `${f}`"
+  }
+  "${at.trim_suffix("`")}.${f}`"
+}
+
+/// Decision 0112's notes on d: why the type is not comparable and what to
+/// compare instead (comparable.go noteIncomparable).
+fn (var c: Checker) note_incomparable(d: Int, why: Str) {
+  if d < 0 {
+    return
+  }
+  c.note(d, "it is not comparable: ${why}; handles and function values have no equality (decision 0112)")
+  c.note(d, "compare or key by an identifying field instead, such as an `id: Int` or `name: Str` kept next to the handle")
 }
 
 /// A Map or Set type inside the type of a checked expression.
@@ -106,7 +206,8 @@ fn (var c: Checker) check_key_type(t: Int, path: Str, sp: Span) {
     return
   }
   c.key_reported[key] = true
-  c.report(path, "XO0404", sp, "`${c.show(k0)}` cannot be ${what}")
+  let d = c.report(path, "XO0404", sp, "`${c.show(k0)}` cannot be ${what}")
+  c.note_incomparable(d, c.incomparable(k0))
 }
 
 /// Appends every Named type inside t (resolved), outermost first.

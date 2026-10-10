@@ -74,13 +74,24 @@ diffs well when they disagree, and that cannot hide a wrong position.
   and diagnostics included, and every file whose Go diagnostics are all
   habits (`habitOnly`) is parsed to the end. Fixes and notes are not
   ported (stage 7 of decision 0141).
+- **Resynchronization, every dump compared (2026-10-10, decision
+  0141).** A hard error no longer stops the Xo parser: like
+  internal/parser it sets `bad` (further errors of the statement,
+  member, arm, or declaration are suppressed), goes on, and
+  resynchronizes where that ends (`sync_stmt` in blocks, member lists,
+  and arms; `sync_top` between declarations), with the Go parser's
+  messages and spans for every hard error. The dump always prints the
+  recovered tree, and the test compares every file's dump byte for byte,
+  accepted or rejected.
 
 ## Consequences
 - A change to internal/parser or internal/ast must be made in
   selfhost/parser in the same change, or `go test -short ./...` fails.
 - Diagnostics of the Xo parser: since 2026-10-10 the soft errors and
-  habits with their recovery; the fixes, notes, and the resynchronization
-  after a hard error remain.
+  habits with their recovery, and every hard error with the Go parser's
+  resynchronization (identical dumps on 20,000 token mutations per seed,
+  seeds 1 to 3 and the default); the fixes and notes remain (stage 7 of
+  decision 0141).
 - Writing the parser found two arm64 backend limits (decision 0128).
 
 ## Alternatives

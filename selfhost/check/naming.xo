@@ -1,0 +1,99 @@
+// Naming conventions (core 1.5, check.go checkName and finishRenames;
+// decision 0141, stage 8): XO0101 with the habit behind the spelling
+// and a rename fix that, for a local name, renames every use too.
+
+/// A rename fix of a local name, extended to its uses at the end
+/// (check.go pendingRename).
+struct Rename {
+  /// The diagnostic's index in diags.
+  d: Int
+  file: Int
+  offset: Int
+  line: Int
+  col: Int
+  name: Bytes
+  want: Str
+}
+
+/// XO0101 when id breaks the convention of kind (check.go checkName).
+fn (var c: Checker) check_name(id: Ident, kind: Str) {
+  let name = id.name
+  if name.is_empty() || name == b"_" || c.cur_mod < 0 || c.mods[c.cur_mod].is_std {
+    return
+  }
+  var ok = false
+  var want = ""
+  var conv = "snake_case"
+  if kind is "type" | "variant" | "interface" | "type parameter" {
+    ok = is_upper_camel(name)
+    want = to_upper_camel(name)
+    conv = "UpperCamel"
+  } else if kind == "constant" {
+    ok = is_upper_snake(name)
+    want = to_snake(name).to_upper()
+    conv = "UPPER_SNAKE"
+  } else {
+    ok = is_snake(name)
+    want = to_snake(name)
+    if name[0] == '_' {
+      want = "_${want}"
+    }
+  }
+  if ok {
+    return
+  }
+  let n = text(name)
+  let d = c.error("XO0101", id.span, "${kind} name `${n}` must be ${conv}")
+  // Name the habit behind the spelling (decision 0087).
+  if conv == "snake_case" && name[0] >= 'A' && name[0] <= 'Z' && (kind is "function" | "method" | "field") {
+    c.note(d, "Go exports a name by capitalizing it; Xo exports with `pub` and spells ${kind}s in snake_case (core 1.5)")
+  } else if conv == "snake_case" && n.to_lower() != n {
+    c.note(d, "camelCase is the TypeScript, Java, Kotlin, and Swift convention; Xo spells ${kind}s in snake_case (core 1.5)")
+  } else if (kind is "type" | "interface") && name[0] >= 'a' && name[0] <= 'z' {
+    c.note(d, "Go marks an unexported type with a lowercase letter; Xo types are UpperCamel, and only `pub` exports (core 1.5)")
+  }
+  if !want.is_empty() && want != n {
+    c.fix(d, "rename to `${want}`", [c.replace_edit(id.span, want)])
+    if (kind is "variable" | "parameter" | "receiver" | "constant") && d >= 0 {
+      c.renames.push(Rename{d: d, file: c.cur_file, offset: id.span.start.offset, line: id.span.start.line, col: id.span.start.col, name: name, want: want})
+    }
+  }
+}
+
+/// Extends each local rename fix to every use of the name, so the fix
+/// keeps the program meaning the same (check.go finishRenames).
+fn (var c: Checker) finish_renames() {
+  for r in c.renames {
+    if r.d >= c.diags.len() {
+      continue
+    }
+    let d = c.diags[r.d]
+    if d.code != "XO0101" || d.fixes.is_empty() || d.line != r.line || d.col != r.col {
+      continue
+    }
+    let path = c.files[r.file].path
+    // the local declared at the name (the last one: a later pass
+    // declares it again)
+    var v = -1
+    for (i, o) in c.objs.indexed() {
+      if o.kind == ObjKind.Local && o.file == path && o.line == r.line && o.col == r.col && o.name == r.name {
+        v = i
+      }
+    }
+    if v < 0 {
+      continue
+    }
+    var keys: List[Str] = []
+    var spans: List[NameRec] = []
+    for rec in c.names {
+      if rec.obj == v && rec.file == path && rec.offset != r.offset && rec.name == r.name {
+        keys.push("${pad(rec.offset)}\t${spans.len()}")
+        spans.push(rec)
+      }
+    }
+    for u in keys.sort() {
+      let rec = spans[Int.parse(after_tab(u)) ?? 0]
+      c.diags[r.d].fixes[0].edits.push(DEdit{span: JSpan{file: path, line: rec.line, col: rec.col, end_line: rec.line, end_col: rec.col + rec.name.len()}, replace: r.want})
+    }
+  }
+}

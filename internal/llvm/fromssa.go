@@ -130,6 +130,61 @@ type sgen struct {
 	locs    map[string]string
 	emitted map[string]bool
 	byName  map[string]*ssa.Func
+	// byRef marks, per function, the parameters passed by reference
+	// (decision 0145); addrTaken the functions used as values, which keep
+	// the plain convention
+	byRef     map[*ssa.Func][]bool
+	addrTaken map[string]bool
+}
+
+// byRefMin is the size from which a struct parameter of a direct call
+// is passed by reference (decision 0145): a pointer to memory that holds
+// the value, written back for a `var` parameter, instead of every field
+// as an argument and every field again in the result.
+const byRefMin = 256
+
+// byRefOf returns which parameters of f are passed by reference, or nil.
+func (g *sgen) byRefOf(f *ssa.Func) []bool {
+	if br, ok := g.byRef[f]; ok {
+		return br
+	}
+	var br []bool
+	if !f.Indirect && !f.Entry && !g.addrTaken[f.Name] && f.Name != "main" {
+		for i, p := range f.Params() {
+			if p.Type.Kind == ssa.KStruct && g.size(p.Type) >= byRefMin {
+				if br == nil {
+					br = make([]bool, len(f.Params()))
+				}
+				br[i] = true
+			}
+		}
+	}
+	g.byRef[f] = br
+	return br
+}
+
+// isVarParam reports whether parameter i of f is `var`.
+func isVarParam(f *ssa.Func, i int) bool {
+	for _, j := range f.VarParams {
+		if j == i {
+			return true
+		}
+	}
+	return false
+}
+
+// keptResults are the indexes of the results of f its LLVM function
+// returns: all but those of `var` parameters passed by reference.
+func (g *sgen) keptResults(f *ssa.Func) []int {
+	br := g.byRefOf(f)
+	var out []int
+	for k := range f.Results {
+		if k > 0 && br != nil && br[f.VarParams[k-1]] {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
 }
 
 // GenerateSSA lowers a module (after InsertRC) to LLVM IR.
@@ -147,9 +202,20 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 		return nil, &errSSA{"the module has no reference counting (run InsertRC)"}
 	}
 	g := &sgen{m: m, named: map[*ssa.Type]bool{}, strs: map[string]string{}, locs: map[string]string{},
-		emitted: map[string]bool{}, byName: map[string]*ssa.Func{}}
+		emitted: map[string]bool{}, byName: map[string]*ssa.Func{},
+		byRef: map[*ssa.Func][]bool{}, addrTaken: map[string]bool{}}
 	for _, f := range m.Funcs {
 		g.byName[f.Name] = f
+		for _, b := range f.Blocks {
+			for _, v := range b.Instrs {
+				switch v.Op {
+				case ssa.OpClosure, ssa.OpFuncAddr, ssa.OpRebind:
+					if n, ok := v.Aux.(string); ok {
+						g.addrTaken[n] = true
+					}
+				}
+			}
+		}
 	}
 	for _, f := range m.Funcs {
 		for _, p := range f.Params() {
@@ -340,8 +406,21 @@ func (g *sgen) size(t *ssa.Type) int64 {
 	return s
 }
 
-// resLL is the LLVM return type of f.
+// resLL is the LLVM return type of f: its kept results (keptResults).
 func (g *sgen) resLL(f *ssa.Func) string {
+	kept := g.keptResults(f)
+	if len(kept) == 1 {
+		return g.ll(f.Results[kept[0]])
+	}
+	var es []string
+	for _, k := range kept {
+		es = append(es, g.ll(f.Results[k]))
+	}
+	return "{ " + strings.Join(es, ", ") + " }"
+}
+
+// fullResLL is the type of all the results of f, as the SSA call has.
+func (g *sgen) fullResLL(f *ssa.Func) string {
 	if len(f.Results) == 1 {
 		return g.ll(f.Results[0])
 	}
@@ -886,6 +965,43 @@ type sfn struct {
 	pad   string
 	pads  strings.Builder
 	npad  int
+	// home is, per LLVM struct type, the memory that carries a value of
+	// it passed by reference: the function's own `var` parameter of the
+	// type, or an alloca (decision 0145); spare are more allocas for a
+	// call that passes several
+	home  map[string]string
+	spare map[string][]string
+}
+
+// loadRef reads a value of type t from memory p (decision 0145). One
+// aggregate load: a load field by field measured no faster (the unwind
+// paths still use every field of the value loaded at entry).
+func (s *sfn) loadRef(t *ssa.Type, p string) string {
+	return s.def("load %s, ptr %s", s.g.ll(t), p)
+}
+
+// storeRef writes value x of type t to memory p (loadRef).
+func (s *sfn) storeRef(t *ssa.Type, x, p string) {
+	s.emit("store %s %s, ptr %s", s.g.ll(t), x, p)
+}
+
+// slot returns memory for an argument of LLVM type lt passed by
+// reference; used counts the slots of the type the call already took.
+func (s *sfn) slot(lt string, used map[string]int) string {
+	n := used[lt]
+	used[lt]++
+	if n == 0 {
+		if h, ok := s.home[lt]; ok {
+			return h
+		}
+		h := s.alloca(lt)
+		s.home[lt] = h
+		return h
+	}
+	for len(s.spare[lt]) < n {
+		s.spare[lt] = append(s.spare[lt], s.alloca(lt))
+	}
+	return s.spare[lt][n-1]
 }
 
 // raise emits call text c (`T @f(args)`) of a function that can raise a
@@ -974,9 +1090,27 @@ func (s *sfn) op(v *ssa.Value) string {
 func (s *sfn) typed(v *ssa.Value) string { return s.g.ll(v.Type) + " " + s.op(v) }
 
 func (g *sgen) fn(f *ssa.Func) {
-	s := &sfn{g: g, f: f, end: map[*ssa.Block]string{}, text: map[*ssa.Block]*strings.Builder{}, names: map[*ssa.Value]string{}}
+	s := &sfn{g: g, f: f, end: map[*ssa.Block]string{}, text: map[*ssa.Block]*strings.Builder{}, names: map[*ssa.Value]string{},
+		home: map[string]string{}, spare: map[string][]string{}}
 	var ps []string
-	for _, p := range f.Params() {
+	var loads strings.Builder
+	s.body = &loads
+	br := g.byRefOf(f)
+	for i, p := range f.Params() {
+		if br != nil && br[i] {
+			lt := g.ll(p.Type)
+			ptr := fmt.Sprintf("%%p%d", p.ID)
+			if isVarParam(f, i) {
+				ps = append(ps, "ptr noalias "+ptr)
+				if _, ok := s.home[lt]; !ok {
+					s.home[lt] = ptr
+				}
+			} else {
+				ps = append(ps, "ptr noalias readonly "+ptr)
+			}
+			s.alias(p, s.loadRef(p.Type, ptr))
+			continue
+		}
 		ps = append(ps, g.ll(p.Type)+" "+vname(p))
 	}
 	// lowered in reverse postorder, so a value is lowered (and its alias
@@ -996,7 +1130,7 @@ func (g *sgen) fn(f *ssa.Func) {
 	if s.npad > 0 {
 		pers = " personality ptr @xo_personality"
 	}
-	fmt.Fprintf(&out, "define internal %s %s(%s) #1%s {\nentry:\n%s  br label %%b0\n", g.resLL(f), g.fname(f.Name), strings.Join(ps, ", "), pers, s.allocas.String())
+	fmt.Fprintf(&out, "define internal %s %s(%s) #1%s {\nentry:\n%s%s  br label %%b0\n", g.resLL(f), g.fname(f.Name), strings.Join(ps, ", "), pers, s.allocas.String(), loads.String())
 	for _, b := range f.Blocks {
 		fmt.Fprintf(&out, "%s:\n", b.Name())
 		if b != f.Blocks[0] {
@@ -1444,13 +1578,23 @@ func (s *sfn) instr(v *ssa.Value) {
 		s.end[v.Block] = s.label
 	case ssa.OpReturn:
 		rt := g.resLL(s.f)
-		if len(v.Args) == 1 {
-			s.emit("ret %s", s.typed(v.Args[0]))
+		// the `var` parameters passed by reference are written back
+		if br := g.byRefOf(s.f); br != nil {
+			params := s.f.Params()
+			for j, vi := range s.f.VarParams {
+				if br[vi] {
+					s.storeRef(params[vi].Type, s.op(v.Args[1+j]), fmt.Sprintf("%%p%d", params[vi].ID))
+				}
+			}
+		}
+		kept := g.keptResults(s.f)
+		if len(kept) == 1 {
+			s.emit("ret %s", s.typed(v.Args[kept[0]]))
 			return
 		}
 		cur := "undef"
-		for i, x := range v.Args {
-			cur = s.def("insertvalue %s %s, %s, %d", rt, cur, s.typed(x), i)
+		for i, k := range kept {
+			cur = s.def("insertvalue %s %s, %s, %d", rt, cur, s.typed(v.Args[k]), i)
 		}
 		s.emit("ret %s %s", rt, cur)
 	case ssa.OpUnreachable:
@@ -1478,16 +1622,55 @@ func (s *sfn) call(v *ssa.Value) {
 	name := v.Aux.(string)
 	a := func(i int) string { return s.op(v.Args[i]) }
 	if callee := g.byName[name]; callee != nil {
+		br := g.byRefOf(callee)
 		var args []string
-		for _, x := range v.Args {
+		slots := make([]string, len(v.Args))
+		used := map[string]int{}
+		for i, x := range v.Args {
+			if br != nil && br[i] {
+				lt := g.ll(x.Type)
+				slots[i] = s.slot(lt, used)
+				s.storeRef(x.Type, s.op(x), slots[i])
+				args = append(args, "ptr "+slots[i])
+				continue
+			}
 			args = append(args, s.typed(x))
 		}
 		c := fmt.Sprintf("%s %s(%s)", g.resLL(callee), g.fname(name), strings.Join(args, ", "))
-		if v.Type.Kind == ssa.KUnit {
-			s.raise("", c)
+		kept := g.keptResults(callee)
+		if len(kept) == len(callee.Results) {
+			if v.Type.Kind == ssa.KUnit {
+				s.raise("", c)
+				return
+			}
+			s.raise(vname(v), c)
 			return
 		}
-		s.raise(vname(v), c)
+		// rebuild the results the SSA call has: the `var` parameters
+		// passed by reference are read back from their memory
+		r := s.tmp()
+		s.raise(r, c)
+		full := g.fullResLL(callee)
+		cur := "undef"
+		ki := 0
+		for k, rt := range callee.Results {
+			var x string
+			if k > 0 && br[callee.VarParams[k-1]] {
+				x = s.loadRef(rt, slots[callee.VarParams[k-1]])
+			} else {
+				switch {
+				case rt.Kind == ssa.KUnit || rt.Kind == ssa.KCap:
+					x = "zeroinitializer"
+				case len(kept) == 1:
+					x = r
+				default:
+					x = s.def("extractvalue %s %s, %d", g.resLL(callee), r, ki)
+				}
+				ki++
+			}
+			cur = s.def("insertvalue %s %s, %s %s, %d", full, cur, g.ll(rt), x, k)
+		}
+		s.alias(v, cur)
 		return
 	}
 	if name == "rt.landing" {

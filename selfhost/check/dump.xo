@@ -28,6 +28,7 @@ fn (var c: Checker) run() {
   c.solve_effects()
   c.check_realtime()
   c.flow_bodies()
+  c.check_time_layouts()
   c.report_unused()
   // check.go reportAmbiguous: a closure result that nothing determined
   // and whose body never completes is Never
@@ -44,8 +45,10 @@ fn (var c: Checker) run() {
       continue
     }
     done.push(key)
-    c.report(tv.file, "XO0402", tv.span, "cannot infer type argument `${tv.param}` of `${tv.fn_name}`")
+    let d = c.report(tv.file, "XO0402", tv.span, "cannot infer type argument `${tv.param}` of `${tv.fn_name}`")
+    c.note(d, "write it explicitly: `${tv.fn_name}[T](...)`, or give the result an expected type (core 2.7)")
   }
+  c.finish_renames()
   for m in c.order {
     if !c.mods[m].is_std {
       c.check_unused_imports(m)
@@ -61,7 +64,8 @@ fn (var c: Checker) check_unused_imports(m: Int) {
         if imp.used || imp.span != u.span {
           continue
         }
-        c.error_at(f, "XO0110", u.span, "import `${text(u.path)}` is never used")
+        let d = c.error_at(f, "XO0110", u.span, "import `${text(u.path)}` is never used")
+        c.fix(d, "remove the import", [DEdit{span: JSpan{file: c.files[f].path, line: u.span.start.line, col: u.span.start.col, end_line: u.span.end.line, end_col: u.span.end.col}, replace: ""}])
       }
     }
   }
@@ -69,7 +73,7 @@ fn (var c: Checker) check_unused_imports(m: Int) {
 
 /// The dump of the root modules: names, types, and diagnostics as
 /// selected.
-pub fn (c: Checker) dump(names: Bool, types: Bool, sigs: Bool, diags: Bool) -> Str {
+pub fn (c: Checker) dump(names: Bool, types: Bool, sigs: Bool, diags: Bool, full: Bool) -> Str {
   var out = StrBuilder.new()
   for m in c.root_mods {
     out.write("== module ${c.mods[m].path} ${c.mods[m].dir}\n")
@@ -116,7 +120,62 @@ pub fn (c: Checker) dump(names: Bool, types: Bool, sigs: Bool, diags: Bool) -> S
       out.write("\n")
     }
   }
+  if full {
+    out.write("== full\n")
+    for l in full_lines(c.diags) {
+      out.write(l)
+      out.write("\n")
+    }
+  }
   out.freeze()
+}
+
+/// The lines of the full section: each diagnostic as `xo check --json`
+/// prints it (diag.Diagnostic: severity, notes, fixes), sorted as
+/// diag_lines with equal ones in report order (dump.go FullLines).
+pub fn full_lines(ds: List[Diag]) -> List[Str] {
+  var keyed: List[Str] = []
+  for (i, d) in ds.indexed() {
+    keyed.push("${d.file}\x00${pad(d.line)}${pad(d.col)}${d.code}\x00${d.message}\x00${pad(i)}\t${full_json(d)}")
+  }
+  var out: List[Str] = []
+  for k in keyed.sort() {
+    out.push(after_tab(k))
+  }
+  out
+}
+
+fn jspan_json(s: JSpan) -> Str {
+  var out = "{\"file\":${json_html(s.file)},\"line\":${s.line},\"col\":${s.col}"
+  if s.end_line != 0 {
+    out = out + ",\"end_line\":${s.end_line}"
+  }
+  if s.end_col != 0 {
+    out = out + ",\"end_col\":${s.end_col}"
+  }
+  out + "}"
+}
+
+fn full_json(d: Diag) -> Str {
+  let sev = if d.warning { "warning" } else { "error" }
+  var notes: List[Str] = []
+  for n in d.notes {
+    var s = "{\"message\":${json_html(n.message)}"
+    if let Some(sp) = n.span {
+      s = s + ",\"span\":${jspan_json(sp)}"
+    }
+    notes.push(s + "}")
+  }
+  var fixes: List[Str] = []
+  for f in d.fixes {
+    var edits: List[Str] = []
+    for e in f.edits {
+      edits.push("{\"span\":${jspan_json(e.span)},\"replace\":${json_html(e.replace)}}")
+    }
+    fixes.push("{\"title\":${json_html(f.title)},\"edits\":[${edits.join(",")}]}")
+  }
+  let span = JSpan{file: d.file, line: d.line, col: d.col, end_line: d.end_line, end_col: d.end_col}
+  "{\"code\":${json_html(d.code)},\"severity\":\"${sev}\",\"message\":${json_html(d.message)},\"span\":${jspan_json(span)},\"notes\":[${notes.join(",")}],\"fixes\":[${fixes.join(",")}]}"
 }
 
 /// The diagnostic lines, sorted by position, code, and message.
@@ -270,6 +329,16 @@ fn after_tab(s: Str) -> Str {
 
 /// A JSON string as Go's encoding/json writes it without HTML escaping.
 fn json_str(s: Str) -> Str {
+  json_quote(s, false)
+}
+
+/// s as a JSON string as json.Marshal writes it: `<`, `>`, and `&` escaped
+/// (the full section: diag.Diagnostic marshals itself with json.Marshal).
+fn json_html(s: Str) -> Str {
+  json_quote(s, true)
+}
+
+fn json_quote(s: Str, html: Bool) -> Str {
   let b = s.bytes()
   var out = StrBuilder.new()
   out.write("\"")
@@ -289,7 +358,7 @@ fn json_str(s: Str) -> Str {
       esc = "\\r"
     } else if ch == '\t' {
       esc = "\\t"
-    } else if ch < 0x20 {
+    } else if ch < 0x20 || (html && (ch == '<' || ch == '>' || ch == '&')) {
       esc = "\\u00${b[i..i + 1].to_hex()}"
     } else if ch == 0xe2 && i + 2 < b.len() && b[i + 1] == 0x80 && (b[i + 2] == 0xa8 || b[i + 2] == 0xa9) {
       esc = if b[i + 2] == 0xa8 { "\\u2028" } else { "\\u2029" }

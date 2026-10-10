@@ -3,12 +3,12 @@
 //   check [--section=S] [--std=DIR] [--each] <dirs...>   print the dump
 //   check [--std=DIR] [--each] --bench=N <dirs...>        check N times, print the time
 //
-// The dump is the names, types, sigs, and diags sections of `xo typedump` (the
-// Go checker) for the same directories: --section takes a comma
-// separated list of them (default all four). --each checks every directory as a run of
+// The dump is the names, types, sigs, diags, and full sections of `xo
+// typedump` (the Go checker) for the same directories: --section takes a
+// comma separated list of them (default all five). --each checks every directory as a run of
 // its own, each preceded by `=== check <dir>`. Std declarations are read
-// from DIR (default std). A run that cannot be checked here (`use go`, a
-// parse error) prints `== unsupported <why>`.
+// from DIR (default std). A run that cannot be checked here (`use go`,
+// `use c`) prints `== unsupported <why>`.
 
 fn main(os: Os) ! {
   var repeat = 0
@@ -17,6 +17,7 @@ fn main(os: Os) ! {
   var types = true
   var sigs = true
   var diags = true
+  var full = true
   var std_dir = "std"
   var dirs: List[Str] = []
   for a in os.env.args() {
@@ -28,6 +29,7 @@ fn main(os: Os) ! {
       types = s.contains("types") || s == "all"
       sigs = s.contains("sigs") || s == "all"
       diags = s.contains("diags") || s == "all"
+      full = s.contains("full") || s == "all"
     } else if a.starts_with("--std=") {
       std_dir = a.trim_prefix("--std=")
     } else if a == "--each" {
@@ -37,7 +39,7 @@ fn main(os: Os) ! {
     }
   }
   if dirs.is_empty() {
-    os.stdio.eprintln("usage: check [--section=names,types,sigs,diags] [--std=DIR] [--each] [--bench=N] <dirs...>")
+    os.stdio.eprintln("usage: check [--section=names,types,sigs,diags,full] [--std=DIR] [--each] [--bench=N] <dirs...>")
     os.proc.exit(2)
   }
   var runs: List[List[Str]] = [dirs]
@@ -72,7 +74,7 @@ fn main(os: Os) ! {
     match c.check_dirs(r) {
       Ok(_) => {
         if c.unsupported.is_empty() {
-          out.write(c.dump(names, types, sigs, diags))
+          out.write(c.dump(names, types, sigs, diags, full))
         } else {
           out.write("== unsupported ${c.unsupported}\n")
         }

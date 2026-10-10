@@ -26,10 +26,10 @@ import (
 // 0110), and token level mutations of repository files, and requires
 // (decision 0127):
 //
-//   - every file the Go parser accepts (no diagnostics) has a byte
-//     identical tree dump (`xo astdump`, parser.Dump);
-//   - every file the Go parser rejects is rejected by the Xo parser too
-//     (its diagnostics are simpler and are not compared).
+//   - every file, accepted or rejected, has a byte identical dump (`xo
+//     astdump`, parser.Dump): the tree, recovered after errors, and the
+//     diagnostics; after a hard error both parsers resynchronize at the
+//     end of the statement, member, arm, or declaration.
 //
 // -short uses fewer generated and mutated inputs. XO_SELFHOST_SEED,
 // XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_PROGS=N, and XO_SELFHOST_KEEP=dir
@@ -71,7 +71,7 @@ func parserDifferential(t *testing.T, bin string) {
 	}
 	t.Run("repo", func(t *testing.T) {
 		acc, rej, rec := compareParsers(t, bin, root, files, false)
-		t.Logf("%d repository files: %d accepted, %d rejected by both parsers (%d of them with identical trees and habit diagnostics)", len(files), acc, rej, rec)
+		t.Logf("%d repository files: %d accepted, %d rejected by both parsers (%d with hard errors), all identical", len(files), acc, rej, rec)
 		// Every program of the repository parses except the habit and
 		// error fixtures under testdata.
 		if acc < 600 {
@@ -87,7 +87,7 @@ func parserDifferential(t *testing.T, bin string) {
 	t.Run("spec", func(t *testing.T) {
 		spec := specExamples(t, root, tmp)
 		acc, rej, rec := compareParsers(t, bin, root, spec, false)
-		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers (%d recovered)", len(spec), acc, rej, rec)
+		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers (%d with hard errors)", len(spec), acc, rej, rec)
 	})
 	progs := 150
 	fuzz := 2000
@@ -116,14 +116,14 @@ func parserDifferential(t *testing.T, bin string) {
 	})
 	t.Run("fuzz", func(t *testing.T) {
 		acc, rej, rec := compareParsers(t, bin, root, tokenFuzzCorpus(t, root, tmp, files, fuzz), false)
-		t.Logf("%d mutated inputs: %d accepted, %d rejected by both parsers (%d recovered)", fuzz, acc, rej, rec)
+		t.Logf("%d mutated inputs: %d accepted, %d rejected by both parsers (%d with hard errors)", fuzz, acc, rej, rec)
 	})
 	t.Run("habits", func(t *testing.T) {
 		n := fuzz / 4
 		acc, rej, rec := compareParsers(t, bin, root, habitCorpus(t, root, tmp, files, n), false)
-		t.Logf("%d inputs with habits of other languages: %d accepted, %d rejected by both parsers (%d recovered)", n, acc, rej, rec)
-		if rec < n/4 {
-			t.Fatalf("only %d of %d habit inputs recovered", rec, n)
+		t.Logf("%d inputs with habits of other languages: %d accepted, %d rejected by both parsers (%d with hard errors)", n, acc, rej, rec)
+		if rej-rec < n/4 {
+			t.Fatalf("only %d of %d habit inputs have only habit diagnostics", rej-rec, n)
 		}
 	})
 }
@@ -164,17 +164,12 @@ func habitCorpus(t *testing.T, root, dir string, files []string, n int) []string
 }
 
 // compareParsers parses paths with both parsers in batches and fails on
-// a disagreement. It returns how many files both accepted, both rejected,
-// and, of those rejected, how many the Xo parser parsed to the end with
-// only lexer and soft diagnostics (habits of other languages, decision
-// 0087), whose trees and diagnostics must be identical.
-//
-// The Xo parser stops at its first hard error and then prints only its
-// diagnostics; a file it parses to the end prints its tree, which must
-// equal the Go parser's dump byte for byte, diagnostics included. A file
-// whose Go diagnostics are all habits (habitOnly) must be parsed to the
-// end.
-func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (accepted, rejected, recovered int) {
+// a disagreement: the Xo parser's dump must equal the Go parser's byte
+// for byte, the tree recovered after errors and the diagnostics
+// included. It returns how many files both accepted, both rejected, and,
+// of those rejected, how many have a hard error (not only habits of
+// other languages, decision 0087, and other soft errors).
+func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (accepted, rejected, hard int) {
 	t.Helper()
 	mode := parser.Mode(0)
 	if sig {
@@ -200,20 +195,17 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 			}
 			want := parser.Dump(p, src, mode)
 			goRejects, xoRejects := strings.Contains(want, "\ndiag "), strings.Contains(got[j], "\ndiag ")
-			xoTree := xoPrintsTree(got[j])
 			switch {
 			case goRejects && !xoRejects:
 				fails = append(fails, fmt.Sprintf("%s: the Go parser rejects it, the Xo parser accepts it:\n%s", p, diagLines(want)))
 			case xoRejects && !goRejects:
 				fails = append(fails, fmt.Sprintf("%s: the Xo parser rejects it, the Go parser accepts it:\n%s", p, diagLines(got[j])))
-			case xoTree && got[j] != want:
+			case got[j] != want:
 				fails = append(fails, fmt.Sprintf("%s: Xo and Go parsers differ: %s", p, firstDiff(got[j], want)))
-			case goRejects && !xoTree && habitOnly(want):
-				fails = append(fails, fmt.Sprintf("%s: the Go parser reports only habits, the Xo parser stops:\n  Go:\n%s\n  Xo:\n%s", p, diagLines(want), diagLines(got[j])))
 			case goRejects:
 				rejected++
-				if xoTree {
-					recovered++
+				if !habitOnly(want) {
+					hard++
 				}
 			default:
 				accepted++
@@ -221,20 +213,16 @@ func compareParsers(t *testing.T, bin, root string, paths []string, sig bool) (a
 		}
 	}
 	if len(fails) > 0 {
-		n := len(fails)
-		if n > 10 {
-			fails = append(fails[:10], fmt.Sprintf("... and %d more", n-10))
+		n, show := len(fails), 10
+		if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
+			fmt.Sscan(v, &show)
+		}
+		if n > show {
+			fails = append(fails[:show], fmt.Sprintf("... and %d more", n-show))
 		}
 		t.Fatalf("%d of %d files differ:\n%s", n, len(paths), strings.Join(fails, "\n"))
 	}
-	return accepted, rejected, recovered
-}
-
-// xoPrintsTree reports whether an Xo parser dump holds a tree: the Xo
-// parser prints none after a hard error.
-func xoPrintsTree(dump string) bool {
-	_, rest, _ := strings.Cut(dump, "\n")
-	return strings.HasPrefix(rest, "File ")
+	return accepted, rejected, hard
 }
 
 // habitCodeRE matches the diagnostics of the habits of other languages

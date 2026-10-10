@@ -197,7 +197,7 @@ func CheckOpts(dirs []string, opts Options) (*Result, error) {
 	}
 	c.run()
 	res := &Result{Modules: roots, c: c}
-	res.Diagnostics = c.diags.Items
+	res.Diagnostics = c.diags.Values()
 	diag.Sort(res.Diagnostics)
 	return res, nil
 }
@@ -525,7 +525,7 @@ func (c *checker) finishRenames() {
 		if r.diag >= len(c.diags.Items) {
 			continue
 		}
-		d := &c.diags.Items[r.diag]
+		d := c.diags.Items[r.diag]
 		if d.Code != string(diag.NamingConvention) || len(d.Fixes) == 0 || d.Span != diag.FromSpan(r.decl.Sp) {
 			continue
 		}

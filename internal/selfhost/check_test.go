@@ -31,7 +31,7 @@ import (
 //     stages done (stageDiag: names, types, Option and Result rules,
 //     generics) gets exactly those diagnostics from the Xo checker.
 //
-// Runs the Xo checker cannot load (`use go`, `use c`, a parse error) and
+// Runs the Xo checker cannot load (`use go`, `use c`) and
 // runs rejected for other reasons are counted, not compared. The coverage
 // (runs matching / runs) is logged. -short uses the go backend only.
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
@@ -95,8 +95,12 @@ func TestSelfhostChecker(t *testing.T) {
 				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.otherSame, st.unsupported, st.errors)
 			t.Logf("diagnostics of the matching rejected runs: %v", codes)
 			if len(fails) > 0 {
-				if len(fails) > 10 {
-					fails = append(fails[:10], fmt.Sprintf("... and %d more", len(fails)-10))
+				show := 10
+				if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
+					fmt.Sscan(v, &show)
+				}
+				if len(fails) > show {
+					fails = append(fails[:show], fmt.Sprintf("... and %d more", len(fails)-show))
 				}
 				t.Fatalf("%d of %d runs differ:\n%s", len(fails), len(dirs), strings.Join(fails, "\n"))
 			}
@@ -134,6 +138,7 @@ type goRun struct {
 	// accepted: no errors; onlyStaged: every error is a stageDiag.
 	accepted, onlyStaged bool
 	staged               []string // the stageDiag lines
+	full                 []string // the staged diagnostics as full lines (notes, fixes)
 	other                []string // the codes of the other errors
 }
 
@@ -161,14 +166,15 @@ func goCheck(dir string) *goRun {
 		}
 	}
 	r.staged = check.DiagLines(staged)
+	r.full = check.FullLines(staged)
 	return r
 }
 
 // parseDiag reports whether line is a diagnostic the Go parser gives file:
-// the lexer's and the parser's soft errors (the habits of other languages,
-// decision 0087), which the Xo parser reproduces with the tree the Go
-// parser recovers. A run with a hard parse error is unsupported by the Xo
-// checker. parsed caches the parser diagnostics of each file.
+// the lexer's, the parser's soft errors (the habits of other languages,
+// decision 0087), and its hard errors, which the Xo parser reproduces with
+// the tree the Go parser recovers. parsed caches the parser diagnostics of
+// each file.
 func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
 	set, ok := parsed[file]
 	if !ok {
@@ -251,25 +257,11 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	case want.err != nil:
 		st.errors++
 		return ""
-	case strings.HasPrefix(got, "== unsupported parse error"):
-		// the Xo parser stops at a hard error of a file the Go parser
-		// rejects with a hard error too
-		if want.accepted {
-			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports %s", dir, firstLine(got))
-		}
-		file := strings.TrimPrefix(firstLine(got), "== unsupported parse error in ")
-		if src, err := os.ReadFile(file); err == nil {
-			if dump := parser.Dump(file, src, 0); !strings.Contains(dump, "\ndiag ") || habitOnly(dump) {
-				return fmt.Sprintf("%s: the Go parser recovers from every error of %s, the Xo parser stops:\n%s", dir, file, diagLines(dump))
-			}
-		}
-		st.otherRejected++
-		return ""
 	case strings.HasPrefix(got, "== unsupported "):
 		st.unsupported++
 		return ""
 	}
-	gotDump, gotDiags := splitDiags(got)
+	gotDump, gotDiags, gotFull := splitDiags(got)
 	if want.accepted {
 		st.accepted++
 		wantDump := want.dump
@@ -282,6 +274,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		// an accepted run may hold staged warnings (XO0804)
 		if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
 			return fmt.Sprintf("%s: the Go checker accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, strings.Join(want.staged, "\n"), strings.Join(gotDiags, "\n"))
+		}
+		if msg := compareFullLines(dir, gotFull, want.full); msg != "" {
+			return msg
 		}
 		st.acceptedOK++
 		return ""
@@ -299,6 +294,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	st.staged++
 	if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
 		return fmt.Sprintf("%s: diagnostics differ:\n  Go:\n    %s\n  Xo:\n    %s", dir, strings.Join(want.staged, "\n    "), strings.Join(gotDiags, "\n    "))
+	}
+	if msg := compareFullLines(dir, gotFull, want.full); msg != "" {
+		return msg
 	}
 	st.stagedOK++
 	return ""
@@ -328,17 +326,35 @@ func stripSigEffects(dump string) string {
 	return strings.Join(lines, "\n")
 }
 
-// splitDiags cuts a dump into its names, types, and sigs part and its
-// diagnostic lines.
-func splitDiags(dump string) (string, []string) {
+// compareFull compares the full section (stage 7: severity, notes, and
+// fixes of every compared diagnostic).
+var compareFull = true
+
+// compareFullLines compares the full lines of a run and returns a
+// description of the first difference, or "".
+func compareFullLines(dir string, got, want []string) string {
+	if !compareFull || strings.Join(got, "\n") == strings.Join(want, "\n") {
+		return ""
+	}
+	return fmt.Sprintf("%s: notes or fixes differ: %s", dir, firstDiff(strings.Join(got, "\n"), strings.Join(want, "\n")))
+}
+
+// splitDiags cuts a dump into its names, types, and sigs part, its
+// diagnostic lines, and its full lines.
+func splitDiags(dump string) (string, []string, []string) {
 	names, diags, _ := strings.Cut(dump, "== diags\n")
+	diags, full, _ := strings.Cut(diags, "== full\n")
+	return names, nonEmptyLines(diags), nonEmptyLines(full)
+}
+
+func nonEmptyLines(s string) []string {
 	var lines []string
-	for _, l := range strings.Split(diags, "\n") {
+	for _, l := range strings.Split(s, "\n") {
 		if l != "" {
 			lines = append(lines, l)
 		}
 	}
-	return names, lines
+	return lines
 }
 
 // stageDiagRE matches the diagnostics the stages done reproduce
@@ -351,10 +367,9 @@ func splitDiags(dump string) (string, []string) {
 // derives), effects of stage 4 (XO0701, real-time XO1401 to XO1405),
 // and value semantics of stage 5 (XO0501, XO0502, XO0503, XO0510,
 // XO0520, the XO0804 warning, unused bindings XO0110 and XO0201), and
-// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning). Left
-// to later stages: naming (XO0101), and the habits of other languages
-// the checker reports (XO0177; the parser's are staged through
-// parseDiag).
+// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning), and
+// the habits of stage 8 (naming XO0101, the habits of other languages
+// XO0177 of the checker and the parser, time layouts XO0420).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
@@ -365,6 +380,8 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
 	// stage 6: exhaustiveness
 	`(XO0301|XO0303|XO0305)",.*`,
+	// stage 8: naming, habits, time layouts
+	`(XO0101|XO0177|XO0420)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

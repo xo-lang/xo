@@ -73,6 +73,9 @@ pub struct Checker {
   frames: List[ScopeFrame] = []
   /// `x?.f` optional chains reported as XO0205, by key of the `x?`.
   safe_navs: Map[Int, Bool] = {}
+  /// The index in diags of the XO0205 of each optional chain, by key
+  /// (habits.go safeNavDiag).
+  safe_nav_diag: Map[Int, Int] = {}
   /// Calls of declared functions (by key) and their function; calls
   /// that construct a variant or newtype (for XO0408).
   fn_calls: Map[Int, Int] = {}
@@ -86,6 +89,8 @@ pub struct Checker {
   /// The local each binding name declares, by name_key of the name (the
   /// declaring half of check.go identObj; uses are name records).
   decl_at: Map[Int, Int] = {}
+  /// XO0101 renames of local names, extended to their uses at the end.
+  renames: List[Rename] = []
   /// Bodies checked, for the flow checks: closures before the body
   /// holding them (check.go bodies).
   bodies: List[BodyRef] = []
@@ -222,17 +227,29 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 }
 
 /// Parses a file into module m. The parser's diagnostics join the run's;
-/// a hard parse error makes the run unsupported: the Xo parser stops at it
-/// where the Go parser resynchronizes (decisions 0127, 0141). Soft errors
-/// (the habits of other languages, decision 0087) leave the tree the Go
-/// parser recovers, which is checked as usual.
+/// after errors the tree is the one the Go parser recovers (soft errors,
+/// decision 0087, and resynchronization after hard ones), which is
+/// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let r = parser.parse_file(path.bytes(), src, sig)
-  if r.hard && c.unsupported.is_empty() {
-    c.unsupported = "parse error in ${path}"
-  }
   for d in r.diags {
-    c.diags.push(Diag{code: d.code, file: path, line: d.span.start.line, col: d.span.start.col, end_line: d.span.end.line, end_col: d.span.end.col, message: lossy_str(d.message)})
+    var notes: List[DNote] = []
+    for n in d.notes {
+      var nsp: JSpan? = None
+      if let Some(s) = n.span {
+        nsp = Some(JSpan{file: path, line: s.start.line, col: s.start.col, end_line: s.end.line, end_col: s.end.col})
+      }
+      notes.push(DNote{message: lossy_str(n.message), span: nsp})
+    }
+    var fixes: List[DFix] = []
+    for f in d.fixes {
+      var edits: List[DEdit] = []
+      for e in f.edits {
+        edits.push(DEdit{span: JSpan{file: path, line: e.span.start.line, col: e.span.start.col, end_line: e.span.end.line, end_col: e.span.end.col}, replace: lossy_str(e.replace)})
+      }
+      fixes.push(DFix{title: lossy_str(f.title), edits: edits})
+    }
+    c.diags.push(Diag{code: d.code, file: path, line: d.span.start.line, col: d.span.start.col, end_line: d.span.end.line, end_col: d.span.end.col, message: lossy_str(d.message), notes: notes, fixes: fixes})
   }
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
@@ -353,7 +370,16 @@ fn (var c: Checker) load_imports(m: Int) {
         let (name, ok) = local_name(p)
         imp_name = name
         if !ok {
-          c.error_at(f, "XO0602", u.span, "import `${p}` needs `as`: `${name}` is not a valid module name")
+          let d = c.error_at(f, "XO0602", u.span, "import `${p}` needs `as`: `${name}` is not a valid module name")
+          if d >= 0 {
+            var alt = to_snake(name.bytes())
+            let (_, ok2) = local_name(alt)
+            if !ok2 || alt.is_empty() {
+              alt = "m_${trim_underscores(to_snake(name.bytes()))}"
+            }
+            c.note(d, "the local name is the last path segment with `-` replaced by `_` (core 4.1)")
+            c.fix(d, "add `as ${alt}`", [DEdit{span: JSpan{file: c.files[f].path, line: u.span.end.line, col: u.span.end.col, end_line: u.span.end.line, end_col: u.span.end.col}, replace: " as ${alt}"}])
+          }
           imp_name = ""
         }
       }
@@ -380,7 +406,20 @@ fn (var c: Checker) load_imports(m: Int) {
       } else if dep < 0 && is_remote(p) && c.owner_root(p) == None {
         c.error_at(f, "XO1306", u.span, "module of `${p}` is not required by xo.mod")
       } else if dep < 0 {
-        c.error_at(f, "XO0601", u.span, "module `${p}` not found")
+        let d = c.error_at(f, "XO0601", u.span, "module `${p}` not found")
+        if p.starts_with("std/") {
+          var cands: List[Str] = []
+          let entries = c.fs.read_dir(c.std_dir).ok() ?? []
+          for e in entries {
+            if e.name.ends_with(".xo") && e.name != "prelude.xo" {
+              cands.push("std/${e.name.trim_suffix(".xo")}")
+            }
+          }
+          let s = nearest(p, cands.sort())
+          if !s.is_empty() {
+            c.note(d, "did you mean `${s.join("`, `")}`?")
+          }
+        }
       } else if c.mods[dep].state == 1 {
         c.error_at(f, "XO0604", u.span, "import cycle: `${c.mods[m].path}` imports `${c.mods[dep].path}`, which imports it back")
         dep = -1
@@ -398,6 +437,18 @@ fn (var c: Checker) load_imports(m: Int) {
       c.files[f].imports[key] = Import{module: dep, path: u.path, used: dep < 0, span: u.span}
     }
   }
+}
+
+/// strings.Trim(s, "_").
+fn trim_underscores(s: Str) -> Str {
+  var t = s
+  while t.starts_with("_") {
+    t = t.trim_prefix("_")
+  }
+  while t.ends_with("_") {
+    t = t.trim_suffix("_")
+  }
+  t
 }
 
 /// The xo.mod whose module path is the longest prefix of path.

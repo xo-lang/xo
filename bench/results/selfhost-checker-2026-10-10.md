@@ -607,3 +607,169 @@ fixes first (habits*.go `addFix` and `addNote` are the parts left out of
 the port). In parallel, the parser's resynchronization after a hard
 error, which would let the two bench/paper runs and every rejected
 token mutation be compared whole.
+
+# Parser resynchronization, arm64 frames, stages 7 and 8, 2026-10-10
+
+Decisions 0141, 0127, 0146.
+
+## arm64 frames (decision 0146)
+
+The 28 KiB frame limit that blocked the checker three times is gone.
+Spill slots are shared by values whose live ranges do not overlap: the
+largest frame of the checker went from 28,176 bytes
+(`resolve_named_type`) to 6,448 (`check0`), the sum of its 809 frames
+from 2.28 MB to 1.10 MB, and the arm64 build is about 4% faster on the
+selfhost input (5,547 to 5,349 ms for 20 runs). A frame past 28 KiB
+keeps x28 free and addresses its far slots through it
+(`internal/arm64/testdata/run/huge_frame`, 36 KiB, runs on a fiber too).
+The split `habit_*` functions and the `used` flag in `Obj` stay: both
+read well and neither is needed any more.
+
+## Parser resynchronization
+
+The Xo parser now goes on after a hard error as internal/parser does
+(`bad`, `sync_stmt`, `sync_top`) and prints the recovered tree;
+`TestSelfhostParserDifferential` compares every file's dump, rejected
+ones included. The first comparison found the error paths the port had
+simplified while nothing after a hard error was compared (messages,
+`while` conditions as expressions, `..` patterns, `derive` after a
+failed body, struct literals in conditions;
+gotchas/selfhost-parser-error-paths.md). After the fixes: the 879
+repository files (109 rejected, 3 with hard errors), the spec blocks
+(75 rejected, all with hard errors), and 20,000 token mutations per seed
+(seeds 1, 2, 3, and the default: about 19,800 rejected per seed, 19,700
+of them with hard errors) give byte identical dumps.
+
+The checker then checks runs with hard parse errors like the Go checker
+(it no longer marks them unsupported): the two bench/paper/v0.1 runs
+(02-worker-pool, 05-rate-limiter) are compared and identical, and the
+mutations with a hard parse error (21 XO0160, 11 XO0172, 7 XO0165 of
+seed 7 with 3,000) match too. One Go checker bug was found on the way:
+`xo typedump` panicked on a use of an unresolved import (a typed nil
+`*Module` in a name record; gotchas/go-typed-nil-name-record.md,
+`TestDumpUnresolvedImport`).
+
+## Stage 7: notes and fixes, the full JSON section
+
+`xo typedump --section=full` prints each diagnostic as `xo check --json`
+does (severity, notes, fixes); the Xo checker prints the same section
+and `TestSelfhostChecker` and `TestSelfhostCheckerMutations` compare it
+on every compared run. `xo astdump` prints the notes and fixes of each
+parser diagnostic, so the parser differential compares them on every
+file and mutation.
+
+Ported: every note and fix of internal/parser (parser.go, habits*.go,
+leading_op.go), the checker's notes and fixes of the stage 1 to 6
+diagnostics (edit distance suggestions with `nearest` and
+`confidentGuess` for every XO0601 and named argument, previous
+declarations, comparability, numeric conversions, Result and optional
+fixes, missing match arms and struct fields as holes, `if` without
+`else`, moves and lost updates, real-time notes and `bound N` fixes, the
+XO0701 call chain, which needed the places where effects are performed:
+effect items now carry a file, span, and callee), and the checker's
+habits (habits.go). Selfhost/check/notes.xo is new.
+
+Agreement (go, arm64, LLVM builds): the 351 accepted and 232 rejected
+compared repository runs give identical full sections; 3,000 mutations
+of seed 7 (2,588 rejected with staged diagnostics, 243 of them XO0701)
+too; the parser differential (repository, spec blocks, 20,000 token
+mutations of seeds 1 and the default) gives identical notes and fixes.
+
+Found on the way, a Go bug: `diag.List.Errorf` returned a pointer into a
+slice of values, so a note or fix attached after more diagnostics were
+reported (a parsed closure body, a checked argument) was lost whenever
+the slice had grown; `Items` holds pointers now
+(gotchas/diag-pointer-after-append.md). One golden of internal/fix
+(py-map-builtin) gained the fix it had lost. And json.Marshal's HTML
+escaping inside `Diagnostic.MarshalJSON` (gotchas/json-marshaler-escapes-html.md).
+
+## Stage 8: naming, time layouts, the checker's habits
+
+Ported: check.go `checkName` at the 25 places internal/check calls it,
+in the same order (selfhost/check/naming.xo: XO0101, the habit note of
+Go's capitalized exports, camelCase, or a lowercase type, and the
+rename fix, which `finish_renames` extends to every use of a local
+after the other passes, as check.go `finishRenames` does), and
+timelayout.go (selfhost/check/timelayout.xo: constant layouts of
+`time.format`, `time.parse`, and `time.check_layout`, XO0420 with its
+did you mean fix, and the XO0177 habit of Java, strftime, and Go
+reference date patterns with the rewrite to named fields). XO0101,
+XO0420, and the checker's XO0177 are staged diagnostics now.
+
+Coverage (go, arm64, and LLVM builds): of 609 repository runs, 351 are
+accepted and 236 rejected only with staged diagnostics, all 587 with
+identical names, types, sigs, diags, and full sections. The 4 runs
+stage 8 opened match: internal/check/testdata/golden/naming,
+golden/time_layout, internal/fix/testdata/habits/go-exported-name, and
+habits/time-layout-two-digit-year. The mutations gained an eighth kind,
+naming (a declared name and every use the lexer sees respelled against
+its convention): seed 8 with 3,000 mutations (263 with XO0101), seed 9
+with 1,500 on the LLVM build, and seed 10 with 1,500 on arm64 give 0
+differences.
+
+Runs not compared, and why:
+
+| runs | why |
+|---|---|
+| 16 (`examples/realtime-control`, 15 internal/gen goldens and replays) | `use go` or `use c`: the Xo loader has no Go or C interop and marks them unsupported |
+| 5 (`internal/check/testdata/golden/imports_deny/*`) | import deny rules of xo.mod (XO1301, XO1312), not ported |
+| 1 (`internal/mod/testdata/repos/github.com/acme/billing@v1.2.0/invoice`) | dependency rule XO1302, not ported |
+
+Two of the 6 dependency rule runs give the same staged diagnostics; the
+rest of their output is not compared.
+
+Found on the way: a mutation that duplicates a real-time function
+(`process` declared twice) made the Xo checker fault. The real-time
+pass walks the duplicate's body, which is never type checked, and
+`named_obj` indexed the type table with -1 (the Go checker's nil type
+falls through). `named_obj` returns -1 for no type now.
+
+Speed (Apple M4 Pro, 20 runs, best of two, ms per run; the machine
+was slower today than for the stage 6 table: the Go checker's figure
+went from 111.9 to 136.8 ms on selfhost, which also grew by 3,600
+lines):
+
+| input | Go checker | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 24,646 lines, 3 modules) | 136.8 | 339.1 | 349.5 | 270.7 | 1.98 |
+| selfhost/parser (with the lexer) | 46.6 | 137.7 | 139.1 | 107.0 | 2.30 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 8.6 | 36.5 | 19.9 | 15.1 | 1.76 |
+
+## The LLVM build's profile (decision 0145)
+
+`sample` on the LLVM build checking selfhost 60 times (8 s, 5,900
+samples on the main thread): bodies (`check_module`) 57%, loading and
+parsing 20%, the flow checks 11%; by self time no function above 4%
+(`set_type` 237 samples, `infer0` 233, `check0` 187), reference
+counting about 10% (`xo_rl_free`, `xo.drop.*`, `xo.dup.*`). The
+disassembly explained the spread: `Checker` (53 fields, about 1 KB) was
+an aggregate argument and result of every `var` method, so each call
+moved every field through the stack in the caller and again in the
+callee's prologue and return (`set_type` was 9,689 instructions).
+
+The fix, decision 0145: the LLVM backend passes a struct parameter of
+256 bytes or more by reference, a `var` one written back through the
+pointer, and a function forwards its own `var` parameter's memory to
+the calls it makes. 20 runs of selfhost: 5,348 to 4,549 ms (15%), the
+checker's output unchanged on every repository run and mutation.
+Measured and not kept: loads and stores field by field (4,603 ms: the
+unwind paths still keep every field loaded at entry live) and enums by
+reference too (4,707 ms: `Expr` is 352 bytes, `Stmt` 1,336, but a
+payload read stores the enum into an alloca first).
+
+Next experiments, by expected gain:
+
+1. Payload reads straight from a by reference enum (a `getelementptr`
+   into the parameter's memory instead of the store to an alloca in
+   `sfn.payload`), then enums by reference again: `check`, `infer`,
+   and every `match` on `Expr` and `Stmt` pass 352 to 1,336 bytes by
+   value today.
+2. Lazy field loads of a by reference struct: lower `OpField` of a
+   parameter to a load at the use, and the unwind exit's drops to
+   loads from the reference, using the SSA's liveness to prove the
+   memory still holds the value; this removes the copy of every field
+   at entry that remains (`set_type` is still about 9,000 instructions,
+   most of them the unwind path).
+3. Reference counting: `xo_rl_free` and the `dup`/`drop` of `Expr` are
+   the largest runtime entries; a borrow of match payloads would skip
+   most of them.

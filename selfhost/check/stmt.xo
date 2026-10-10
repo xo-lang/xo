@@ -183,6 +183,18 @@ fn (var c: Checker) check_default(e: Expr, t: Int) {
   c.scopes = saved_scopes
 }
 
+/// The end of a function declaration's header: its result type, last
+/// parameter, or name (stmt.go fdHeaderEnd).
+fn fd_header_end(fd: parser.FnDecl) -> parser.Pos {
+  if let Some(r) = fd.result {
+    return parser.type_span(r).end
+  }
+  if !fd.params.is_empty() {
+    return fd.params[fd.params.len() - 1].span.end
+  }
+  fd.name.span.end
+}
+
 fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
   for cl in fd.clauses {
     match cl {
@@ -192,7 +204,8 @@ fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
         c.pure_end(p, parser.expr_span(cond))
         if let Some(e) = els {
           if c.objs[fo].err < 0 {
-            c.error("XO0205", parser.expr_span(e), "`requires ... else` returns an error, but `${c.display_name(fo)}` cannot fail")
+            let d = c.error("XO0205", parser.expr_span(e), "`requires ... else` returns an error, but `${c.display_name(fo)}` cannot fail")
+            c.fix(d, "declare an error type: `! E`", [c.insert_edit(fd_header_end(fd), " ! Error")])
             continue
           }
           let p2 = c.pure_start()
@@ -263,6 +276,7 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
   c.scopes[0][b"os"] = os
   var env = TypeEnv{file: c.cur_file, mod: c.cur_mod}
   for p in td.params {
+    c.check_name(p.name, "parameter")
     var pt = c.bad_ty
     if let Some(t) = p.typ {
       pt = c.resolve_type(t, env)
@@ -477,7 +491,8 @@ fn (var c: Checker) check_sql_row_derive(t: Int, id: Ident) {
   }
   for f in c.objs[t].fields {
     if !c.is_sql_column(f.ty) {
-      c.error("XO0404", id.span, "`derive SqlRow` needs every field to be a column type, but `${text(f.name)}` has type `${c.show(f.ty)}`")
+      let d = c.error("XO0404", id.span, "`derive SqlRow` needs every field to be a column type, but `${text(f.name)}` has type `${c.show(f.ty)}`")
+      c.note(d, "column types are Int, Float, Str, Bool, and Time, and an Option of one for a column that may be NULL (std.md 10.4)")
     }
   }
 }
@@ -767,7 +782,9 @@ fn (var c: Checker) stmt(s: Stmt) {
     ForStmt(label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: go_range, ..) => {
       let it = c.infer(iter, -1)
       var elem = c.bad_ty
-      if !go_range {
+      if go_range {
+        elem = c.go_range(s, it)
+      } else {
         elem = c.iter_elem(it, iter)
       }
       c.check_loop_bound(bound, [iter])
@@ -827,6 +844,7 @@ fn (var c: Checker) jump(label: Ident?, sp: Span, is_break: Bool) {
     }
     Some(id) => id
   }
+  var names: List[Str] = []
   var i = n - 1
   while i >= 0 {
     if c.ctxs[c.ctx].loops[i].label == l.name {
@@ -835,9 +853,16 @@ fn (var c: Checker) jump(label: Ident?, sp: Span, is_break: Bool) {
       }
       return
     }
+    if !c.ctxs[c.ctx].loops[i].label.is_empty() {
+      names.push(text(c.ctxs[c.ctx].loops[i].label))
+    }
     i -= 1
   }
-  c.error("XO0607", l.span, "loop label `${text(l.name)}` not found")
+  let d = c.error("XO0607", l.span, "loop label `${text(l.name)}` not found")
+  let s = nearest(text(l.name), names)
+  if !s.is_empty() {
+    c.note(d, "did you mean `${s[0]}`?")
+  }
 }
 
 /// The element type of an iterable (List, Set, Map, Range, Chan, Buf,
@@ -881,18 +906,39 @@ fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Ex
   }
   if pattern is WildcardPat(..) {
     if c.is_result(t) {
-      c.error("XO0206", span, "`let _ =` discards a Result, so its error is ignored without a reason")
+      // stmt.go discardNeedsReason
+      let d = c.error("XO0206", span, "`let _ =` discards a Result, so its error is ignored without a reason")
+      if d >= 0 {
+        c.note(d, "the value can fail with `${c.show(c.result_e(t))}`; propagate with `?`, match on it, or discard it with `.ignore_err(\"reason\")`, which yields an optional and records the reason (core 2.6)")
+        c.fix(d, "discard with a reason", c.ignore_err_edits(value))
+      }
     }
+  }
+  if let BindPat(name: bname, ..) = pattern {
+    c.check_name(bname, "variable")
   }
   let ip = c.pattern(pattern, t, false)
   c.require_irrefutable(ip, t, pattern, "a `let` pattern")
   if let BindPat(name: name, ..) = pattern {
     let v = c.lookup_local(name.name)
     if v >= 0 {
+      c.objs[v].let_span = span
+      c.objs[v].let_value = [value]
       c.note_spawn_binding(value, v)
       c.note_group_binding(value, v)
     }
   }
+}
+
+/// Edits appending `.ignore_err("TODO: reason")` to e, parenthesized when
+/// it is not a simple operand (stmt.go ignoreErrEdits).
+fn (c: Checker) ignore_err_edits(e: Expr) -> List[DEdit] {
+  let sp = parser.expr_span(e)
+  let call = ".ignore_err(\"TODO: reason\")"
+  if e is Ident(..) | CallExpr(..) | SelectorExpr(..) | IndexExpr(..) | TryExpr(..) | ParenExpr(..) | TypeArgsExpr(..) {
+    return [c.insert_edit(sp.end, call)]
+  }
+  [c.insert_edit(sp.start, "("), c.insert_edit(sp.end, ")${call}")]
 }
 
 /// A block `const` (core 3.1): an immutable binding whose initializer is
@@ -916,11 +962,15 @@ fn (var c: Checker) local_const(cd: parser.ConstDecl) {
     while c.diags.len() > before {
       c.diags.pop()
     }
-    c.error("XO0408", parser.expr_span(cd.value), "`const ${name}` is initialized with a value computed at run time")
+    let d = c.error("XO0408", parser.expr_span(cd.value), "`const ${name}` is initialized with a value computed at run time")
+    c.note(d, "a TypeScript and JavaScript `const` binding is Xo's `let`; an Xo `const` is a compile time UPPER_SNAKE constant (core 3.1)")
+    let cs = cd.span.start
+    c.fix(d, "write `let`", [c.replace_edit(Span{start: cs, end: parser.Pos{offset: cs.offset + 5, line: cs.line, col: cs.col + 5}}, "let")])
     let v = c.declare_local(cd.name, t, "let")
     c.objs[v].vctx = c.ctx
     return
   }
+  c.check_name(cd.name, "constant")
   let v = c.declare_local(cd.name, t, "let")
   c.objs[v].is_const = true
   c.objs[v].const_val = [cd.value]
@@ -939,6 +989,7 @@ fn (var c: Checker) var_stmt(name: Ident, typ: Type?, value: Expr) {
   } else {
     t = c.infer(value, -1)
   }
+  c.check_name(name, "variable")
   let v = c.declare_local(name, t, "var")
   c.objs[v].vctx = c.ctx
   c.note_spawn_binding(value, v)
@@ -1002,7 +1053,10 @@ fn (var c: Checker) assign_decl_habit(op: parser.Kind, target: Expr, value: Expr
     return false
   }
   let t = c.infer(value, -1)
-  c.error("XO0601", id.span, "name `${text(id.name)}` not found")
+  let n = text(id.name)
+  let d = c.error("XO0601", id.span, "name `${n}` not found")
+  c.habit_note(d, "`${n} = v` declares a variable in Python; Xo declares a name before assigning it: `var ${n} = v`, or `let ${n} = v` when it never changes (core 3.1)")
+  c.fix(d, "declare with `var`", [c.insert_edit(id.span.start, "var ")])
   let v = c.declare_local(id, t, "var")
   c.objs[v].vctx = c.ctx
   true
@@ -1031,7 +1085,8 @@ fn (var c: Checker) place_type(e: Expr) -> Int {
       let t = c.index_type(bt, span, index)
       c.set_type(e, t)
       if c.is_prelude(bt, "Map") && c.map_store != c.expr_key(e) {
-        c.error("XO0410", span, "changing a Map element in place faults when the key is missing")
+        let d = c.error("XO0410", span, "changing a Map element in place faults when the key is missing")
+        c.note(d, "use `m.update(k, init, fn(var v) { ... })`, or assign the whole value with `m[k] = v` (core 3.6)")
       }
       t
     }
@@ -1220,6 +1275,7 @@ fn (var c: Checker) finish_groups(x: Int) {
     if c.is_bad(e) || c.is_never(e) || c.is_open_var(e) {
       continue
     }
-    c.error("XO0801", sp.span, "a task started on a task group from outside this function can fail with `${c.show(e)}`; handle the error inside the task, or bind its handle and await it")
+    let d = c.error("XO0801", sp.span, "a task started on a task group from outside this function can fail with `${c.show(e)}`; handle the error inside the task, or bind its handle and await it")
+    c.note(d, "a failing group task fails the scope that created the group, which this function cannot see (core 7.1)")
   }
 }

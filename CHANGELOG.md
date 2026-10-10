@@ -11,6 +11,36 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `-tags xo_playground`, which leaves the runtime, native, and LLVM runtime
   sources out of the binary. `build.Generate` is the code generation step
   of `xo build` without a build directory or the Go toolchain.
+- LLVM backend: struct parameters of 256 bytes or more are passed by
+  reference in direct calls, `var` ones written back through the
+  pointer, instead of field by field (decision 0145); the self hosted
+  checker's LLVM build is about 15% faster.
+- The self hosted checker reports naming (XO0101, with the rename fix
+  that covers every use of a local), time layouts (XO0420, and the
+  XO0177 habit of a date pattern from another language), and the
+  checker's other XO0177 habits as internal/check does (stage 8 of
+  decision 0141): 587 of 609 repository runs are compared whole and
+  identical on the go, arm64, and LLVM builds; the 22 left use `use go`
+  or `use c` (16) or break dependency rules the port does not have (6).
+- The self hosted checker gives every diagnostic the notes and machine
+  fixes of internal/check and internal/parser (stage 7 of decision
+  0141): edit distance suggestions, habit notes and fixes, effect call
+  chains, previous declarations, missing arms and fields as holes;
+  `xo typedump` has a `full` section (the `xo check --json` form), and
+  every compared run and mutation gives identical JSON on the go, arm64,
+  and LLVM builds. `xo astdump` prints notes and fixes too.
+- Notes and fixes attached after more diagnostics were reported are no
+  longer lost (`xo check --json`, `xo fix`).
+- The self hosted parser resynchronizes after a hard error as the Go
+  parser does and reports the same errors with the same recovered tree
+  (every file and token mutation compared); the self hosted checker now
+  checks runs with parse errors too. `xo typedump` no longer panics on a
+  use of an unresolved import.
+- arm64 backend: spilled values share stack slots when their live
+  ranges do not overlap (frames of long functions shrink up to 8 times;
+  the self hosted checker's largest went from 28 KiB to 6.4 KiB), and a
+  frame past 28 KiB no longer fails to build: such a function addresses
+  its far slots through x28 (decision 0146).
 - The self hosted checker checks matches for exhaustiveness (stage 6 of
   decision 0141): XO0301 with the same missing patterns, refutable `let`
   and `for` patterns (XO0303), and the XO0305 warning, as internal/check
