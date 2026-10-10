@@ -68,6 +68,28 @@ func TestRealtimeNative(t *testing.T) {
 			if sections < 20 || deferred < 3 || overflow != 0 {
 				t.Errorf("rt_section=%d rt_defer=%d rt_overflow=%d: want at least 20 sections, 3 deferred frees, no overflow", sections, deferred, overflow)
 			}
+
+			// the demo (bench/results/realtime-2026-10-10.md), each tick
+			// version briefly, every allocation freed
+			dir = filepath.Join("..", "..", "examples", "realtime-control")
+			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build the demo: %v %v", err, res.Diagnostics)
+			}
+			for _, mode := range []string{"rt", "plain", "alloc"} {
+				cmd := exec.Command(res.Binaries[build.Host()], mode, "3000", "500")
+				cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+				var out bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &out, &out
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("demo %s: %v\n%s", mode, err, out.String())
+				}
+				for _, want := range []string{mode + " iterations 3000 swaps 8 checksum ", "swap output min ", "xo leakcheck: 0 live"} {
+					if !strings.Contains(out.String(), want) {
+						t.Errorf("demo %s: no %q in\n%s", mode, want, out.String())
+					}
+				}
+			}
 		})
 	}
 }

@@ -9,8 +9,10 @@ entry and exit), `std/llrt/xo_rt.c` (`xo_realtime_enter`,
 `xo_realtime_exit`, the deferred free queue). Tests: the
 `internal/check/testdata/golden/realtime_*` goldens, the
 `internal/llvm/testdata/golden/realtime_*` goldens (Go, LLVM, and arm64
-agree), `std/llrt/testdata/realtime.c` (TestRuntimeRealtime). Demo:
-`examples/realtime-control`. Numbers:
+agree), `internal/gen/testdata/golden/test_loop_bound` (fuzzing),
+`internal/llvm/realtime_test.go` (TestRealtimeNative: XO-F007 cases,
+deferral counts, the demo), `std/llrt/testdata/realtime.c`
+(TestRuntimeRealtime). Demo: `examples/realtime-control`. Numbers:
 `bench/results/realtime-2026-10-10.md`.
 
 ## Context
@@ -121,10 +123,15 @@ checked transitively at compile time, backed by a run time check.
 - The rules are syntactic and conservative: a call of a helper that is
   not marked is rejected even when it would not allocate; mark the
   helper. Prelude methods are on the bounded list or not, by name.
-- Measured (bench/results/realtime-2026-10-10.md): the mode itself adds
-  two runtime calls per section; the latency gain comes from what the
-  rules forbid (allocation per iteration) and from frees moved after the
-  section.
+- Measured (bench/results/realtime-2026-10-10.md, examples/realtime-control,
+  M4 Pro): on the ticks that drop a 20,001 object schedule, the output
+  latency is 166 to 209 ns real-time against 30 to 114 us without the
+  mark (the frees move to the section's exit, which costs the same or a
+  little more); the worst output latency over 200,000 ticks is 1.2 to
+  7.8 us against 39 to 114 us (one OS deschedule of 1.3 ms aside). The
+  same controller written without the rules has a 60 times slower median
+  tick (2.6 us against 42 ns). The section's own cost is below the
+  clock's 42 ns resolution.
 - Left for later: bounds inferred from `requires`; real-time function
   types and interface methods (so a callback can be called); real-time
   std functions beyond the prelude (std/math, std/time arithmetic);

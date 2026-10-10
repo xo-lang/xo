@@ -6,6 +6,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Real-time functions (spec 6.5, decision 0133): `uses realtime` on a
+  function makes the checker reject allocation (XO1401), loops without a
+  bound (XO1402), calls of functions that are not real-time, function
+  values, and interface methods (XO1403), recursion (XO1404), and
+  blocking (XO1405). Native builds defer the frees of a real-time
+  section to its end (a 256 entry queue per thread, `XO_RTSTATS=1`
+  counts) and fault with XO-F007 when a section allocated. Demo
+  `examples/realtime-control`: the tick that drops a 20,000 point
+  schedule writes its output in about 0.2 us instead of 30 to 114 us
+  (bench/results/realtime-2026-10-10.md).
+- Loop bounds: `for x in xs bound N { }` and `while c bound N { }` on
+  every backend; a constant range longer than N is XO1402, otherwise
+  iteration N + 1 faults with XO-F006, and `xo test` fuzzes functions
+  with bounded loops.
+
 - Native TLS: ECDSA P-256 signing and verification run on fiat-crypto's
   verified field arithmetic (vendored at a pinned commit,
   `third_party/fiat-crypto`, decision 0132) instead of Mbed TLS's bignum

@@ -1,0 +1,243 @@
+// A fixed-rate control loop checked real-time (core 6.5, decision 0133):
+// each tick filters a sensor sample (a 32 tap FIR over a preallocated
+// ring), runs a PID controller, drives a simulated first-order plant, and
+// writes the actuator value into a preallocated output ring. A supervisor
+// outside the real-time part replaces the setpoint schedule now and then;
+// the tick that swaps it in drops the last reference to the old one
+// (20,000 points with a Str label each).
+//
+// Three versions of the tick, chosen by the first argument:
+//
+//   rt     `uses realtime`: checked by the compiler; natively the old
+//          schedule is freed after the tick's output is ready
+//   plain  the same code without the mark: the old schedule is freed
+//          inside the tick
+//   alloc  the same controller written without the real-time rules
+//          (a growing history sliced each tick, a status line per tick)
+//
+// It prints the latency of each tick (call to return) and of its output
+// (call to the actuator write), in nanoseconds, over the measured
+// iterations. Native only (`use c`): `xo run --no-gc examples/realtime-control rt`.
+// Numbers: bench/results/realtime-2026-10-10.md.
+use c "rtclock.h" link "rtclock.c" uses none
+
+const TAPS = 32
+const OUT = 4096
+const SCHED = 20000
+const DT = 0.001
+const KP = 1.2
+const KI = 0.4
+const KD = 0.01
+
+struct Point {
+  label: Str,
+  value: Float,
+}
+
+struct Ctl {
+  taps: List[Float],
+  window: List[Float],
+  wpos: Int,
+  out: List[Float],
+  opos: Int,
+  integral: Float,
+  prev_err: Float,
+  plant: Float,
+  schedule: List[Point],
+  pending: List[Point],
+  empty: List[Point],
+  swap: Bool,
+  done_ns: Int,
+  history: List[Float],
+  log: List[Str],
+}
+
+fn schedule(seed: Int) -> List[Point] {
+  (0..SCHED).to_list().map(fn(i) {
+    Point{label: "sp-${seed}-${i}", value: Float((i + seed) % 200) * 0.01}
+  })
+}
+
+fn new_ctl() -> Ctl {
+  Ctl{
+    taps: (0..TAPS).to_list().map(fn(_) { 1.0 / Float(TAPS) }),
+    window: (0..TAPS).to_list().map(fn(_) { 0.0 }),
+    wpos: 0,
+    out: (0..OUT).to_list().map(fn(_) { 0.0 }),
+    opos: 0,
+    integral: 0.0,
+    prev_err: 0.0,
+    plant: 0.0,
+    schedule: schedule(0),
+    pending: [],
+    empty: [],
+    swap: false,
+    done_ns: 0,
+    history: [],
+    log: [],
+  }
+}
+
+fn clamp(x: Float, lo: Float, hi: Float) -> Float uses realtime {
+  if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+/// One tick, checked real-time.
+fn (var c: Ctl) step_rt(t: Int) -> Float uses realtime {
+  if c.swap {
+    c.schedule = c.pending
+    c.pending = c.empty
+    c.swap = false
+  }
+  let sp = c.schedule[t % c.schedule.len()].value
+  let noise = Float((t * 7919) % 101 - 50) * 0.001
+  c.window[c.wpos] = c.plant + noise
+  c.wpos = (c.wpos + 1) % TAPS
+  var y = 0.0
+  for i in 0..TAPS {
+    y += c.taps[i] * c.window[(c.wpos + i) % TAPS]
+  }
+  let err = sp - y
+  c.integral = clamp(c.integral + err * DT, -10.0, 10.0)
+  let deriv = (err - c.prev_err) / DT
+  c.prev_err = err
+  let u = clamp(KP * err + KI * c.integral + KD * deriv, -5.0, 5.0)
+  c.out[c.opos] = u
+  c.opos = (c.opos + 1) % OUT
+  c.plant += (u - c.plant) * 0.05
+  c.done_ns = rtclock.rt_now_ns()
+  u
+}
+
+fn clamp_plain(x: Float, lo: Float, hi: Float) -> Float {
+  if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+/// The same tick without the mark.
+fn (var c: Ctl) step_plain(t: Int) -> Float {
+  if c.swap {
+    c.schedule = c.pending
+    c.pending = c.empty
+    c.swap = false
+  }
+  let sp = c.schedule[t % c.schedule.len()].value
+  let noise = Float((t * 7919) % 101 - 50) * 0.001
+  c.window[c.wpos] = c.plant + noise
+  c.wpos = (c.wpos + 1) % TAPS
+  var y = 0.0
+  for i in 0..TAPS {
+    y += c.taps[i] * c.window[(c.wpos + i) % TAPS]
+  }
+  let err = sp - y
+  c.integral = clamp_plain(c.integral + err * DT, -10.0, 10.0)
+  let deriv = (err - c.prev_err) / DT
+  c.prev_err = err
+  let u = clamp_plain(KP * err + KI * c.integral + KD * deriv, -5.0, 5.0)
+  c.out[c.opos] = u
+  c.opos = (c.opos + 1) % OUT
+  c.plant += (u - c.plant) * 0.05
+  c.done_ns = rtclock.rt_now_ns()
+  u
+}
+
+/// The controller as it would be written without the rules: a history
+/// that grows and is sliced, a status line per tick, a log cleared every
+/// 1,000 lines.
+fn (var c: Ctl) step_alloc(t: Int) -> Float {
+  if c.swap {
+    c.schedule = c.pending
+    c.pending = []
+    c.swap = false
+  }
+  let sp = c.schedule[t % c.schedule.len()].value
+  let noise = Float((t * 7919) % 101 - 50) * 0.001
+  c.history.push(c.plant + noise)
+  if c.history.len() > TAPS {
+    c.history = c.history[c.history.len() - TAPS..]
+  }
+  var y = 0.0
+  for (i, x) in c.history.indexed() {
+    y += c.taps[i] * x
+  }
+  let err = sp - y
+  c.integral = clamp_plain(c.integral + err * DT, -10.0, 10.0)
+  let deriv = (err - c.prev_err) / DT
+  c.prev_err = err
+  let u = clamp_plain(KP * err + KI * c.integral + KD * deriv, -5.0, 5.0)
+  c.out[c.opos] = u
+  c.opos = (c.opos + 1) % OUT
+  c.plant += (u - c.plant) * 0.05
+  c.log.push("t=${t} sp=${sp} u=${u}")
+  if c.log.len() >= 1000 {
+    c.log = []
+  }
+  c.done_ns = rtclock.rt_now_ns()
+  u
+}
+
+struct Stats {
+  min: Int,
+  p50: Int,
+  p99: Int,
+  p999: Int,
+  max: Int,
+}
+
+fn stats(xs: List[Int]) -> Stats {
+  let s = xs.sort()
+  let n = s.len()
+  Stats{min: s[0], p50: s[n / 2], p99: s[n * 99 / 100], p999: s[n * 999 / 1000], max: s[n - 1]}
+}
+
+fn show(name: Str, s: Stats) -> Str {
+  "${name} min ${s.min} p50 ${s.p50} p99 ${s.p99} p99.9 ${s.p999} max ${s.max} jitter ${s.max - s.min}"
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let mode = args.get(0) ?? "rt"
+  let iters = Int.parse(args.get(1) ?? "200000") ?? 200000
+  let swap_every = Int.parse(args.get(2) ?? "5000") ?? 5000
+  let warm = 1000
+  var c = new_ctl()
+  // preallocated measurements: every tick, and the ticks that swap
+  var call = (0..iters).to_list()
+  var output = (0..iters).to_list()
+  let nswaps = (iters + warm) / swap_every
+  var swap_call = (0..nswaps).to_list()
+  var swap_output = (0..nswaps).to_list()
+  var k = 0
+  var sum = 0.0
+  for i in 0..iters + warm {
+    let swapping = i % swap_every == swap_every - 1
+    if swapping {
+      // the supervisor: a new schedule, built outside the tick
+      c.pending = schedule(i)
+      c.swap = true
+    }
+    let t0 = rtclock.rt_now_ns()
+    let u = if mode == "rt" {
+      c.step_rt(i)
+    } else if mode == "plain" {
+      c.step_plain(i)
+    } else {
+      c.step_alloc(i)
+    }
+    let t1 = rtclock.rt_now_ns()
+    sum += u
+    if i >= warm {
+      call[i - warm] = t1 - t0
+      output[i - warm] = c.done_ns - t0
+    }
+    if swapping && k < nswaps {
+      swap_call[k] = t1 - t0
+      swap_output[k] = c.done_ns - t0
+      k += 1
+    }
+  }
+  os.stdio.println("${mode} iterations ${iters} swaps ${k} checksum ${(sum * 1000.0).round()}")
+  os.stdio.println(show("call       ", stats(call)))
+  os.stdio.println(show("output     ", stats(output)))
+  os.stdio.println(show("swap call  ", stats(swap_call)))
+  os.stdio.println(show("swap output", stats(swap_output)))
+}

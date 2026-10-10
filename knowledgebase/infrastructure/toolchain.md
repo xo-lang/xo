@@ -117,7 +117,7 @@ XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # 
 go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
-XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09)
+XO_RTSTATS=1 ./prog                                   # native: scheduler counters on stderr at exit (spawns, steals, wake ups, idle sleeps, spin rounds, fiber parks, thread waits, slow locks; decision 0077) and socket counters (net_read, net_write, net_again = EAGAIN results, poll_return, poll_event, poll_wake; 2026-10-09) and real-time sections (rt_section, rt_defer, rt_overflow; decision 0133)
 sample <pid> 5 -mayDie -file prof.txt                 # native server under load: macOS sampling profiler, no root; read "Sort by top of stack" (idle threads show as __ulock_wait and kevent); the llvm build has Xo function names (x.<fn>), arm64 folds some into xo_entry (last verified 2026-10-09)
 clang -O1 -g -fsanitize=thread std/llrt/testdata/rc_threads.c -o /tmp/rct && /tmp/rct   # the C stress test by hand (add -isysroot <SDK> when the default SDK does not link)
 go test ./internal/arm64 -run TestGoldenAsm -update     # rewrite the golden assembly internal/arm64/testdata/{fib,sieve}.{darwin,linux}.s
@@ -1993,6 +1993,44 @@ spec core 4.5.
   `TestUseC`, cmd/xo `TestBindC`, internal/llvm `TestUseC` (archive
   built in the test with clang and ar, and C source; arm64 and LLVM,
   leak check) and `TestUseCZlib` (skips without zlib.h).
+
+## Real-time mode (`uses realtime`, decision 0133)
+
+Last verified: 2026-10-10. Spec core 6.5 and 3.5 (`bound N`).
+
+- Checker: `internal/check/realtime.go` (`checkRealtime` after
+  `solveEffects`; `rtBounded` and `rtBlocking` name the prelude methods
+  allowed and blocking; `constInt` evaluates loop bounds;
+  `Info.LoopBound` for the backends). `resolveSig` removes `realtime`
+  from the uses clause and sets `FuncObj.Realtime`. Codes XO1401 to
+  XO1405. Goldens `internal/check/testdata/golden/realtime_*`, rule
+  table `rules14_test.go` (TestRealtimeRules).
+- `bound N`: `ast.ForStmt.Bound`, `ast.WhileStmt.Bound` (parser,
+  formatter, selfhost/parser where it is a `List[Expr]` of zero or one,
+  see gotchas/arm64-rc-helper-frame.md). Lowered as an iteration counter
+  checked at the start of each iteration: `internal/gen/fn.go`
+  `loopBound` (calls `rt.LoopBound`, XO-F006) and
+  `internal/ssa/build_stmt.go` `loopBound` (OpFault). `xo test` fuzzes a
+  function with a bounded loop (`internal/gen/fuzz.go` `fuzzable`;
+  golden `internal/gen/testdata/golden/test_loop_bound`).
+- Sections: `internal/ssa/build_call.go` `callAsVia` brackets a call of a
+  real-time function from code that is not with `rt.realtime_enter` and
+  `rt.realtime_exit` (in `faultingRT`: it raises XO-F007). Runtime in
+  `std/llrt/xo_rt.c` ("Real-time sections"): per-heap `rt_depth`,
+  `rt_allocs` (counted in `alloc_in`), and a 256 entry `rt_q` filled by
+  `xo_rc_free`, `xo_rl_free`, `xo_rc_defer`, `xo_h_free`; drained at the
+  outermost exit and by `fault_raise`.
+- Tests: internal/llvm `TestRealtimeNative` (LLVM and arm64:
+  `testdata/realtime/alloc` XO-F007 cases caught by task.isolate, the
+  `realtime_section` golden's XO_RTSTATS counts, the demo's three modes
+  with the leak check) and `TestRuntimeRealtime`
+  (`std/llrt/testdata/realtime.c` under ThreadSanitizer, then -O2);
+  native goldens `realtime_section`, `realtime_bound_fault`.
+- Demo: `examples/realtime-control` (native only: `use c "rtclock.h"`
+  for a nanosecond clock): `xo build --backend=arm64
+  examples/realtime-control`, then `./realtime-control rt|plain|alloc
+  [iterations] [swap every]`. Numbers in
+  `bench/results/realtime-2026-10-10.md`.
 
 ## Runtime (std/rt)
 

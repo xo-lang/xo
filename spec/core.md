@@ -1683,7 +1683,7 @@ native runtime:
   holds); the queue is freed when the section ends. A full queue frees
   at once (counted in `XO_RTSTATS=1` output as `rt_overflow`).
 - counts allocations; a section that allocated faults when it ends with
-  `XO-F007` (`real-time function f allocated n times`), which catches
+  `XO-F007` (``real-time function `f` allocated n times``), which catches
   what the rules cannot see: a shared List copied on write, the box of a
   recursive enum, a defaulted field.
 
