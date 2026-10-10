@@ -249,3 +249,13 @@ pub struct TypeRec {
   pub kind: Str
   pub ty: Int
 }
+
+/// The inference variable of a type parameter at a call (XO0402 when
+/// nothing binds it).
+pub struct TypeArgVar {
+  pub v: Int
+  pub param: Str
+  pub fn_name: Str
+  pub file: Str
+  pub span: Span
+}

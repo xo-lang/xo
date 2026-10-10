@@ -20,14 +20,15 @@ import (
 // TestSelfhostChecker runs the Xo checker (selfhost/check), built with
 // each backend, and the Go checker (internal/check) on every directory of
 // the repository that holds .xo files, each checked as a run of its own
-// like `xo check <dir>`, and compares the names and types sections of `xo
-// typedump` (decision 0141, stages 1 and 2):
+// like `xo check <dir>`, and compares the names, types, and sigs sections
+// of `xo typedump` (decision 0141, stages 1 to 3):
 //
-//   - every run the Go checker accepts (no errors) has identical names
-//     and types sections, and the Xo checker reports nothing;
-//   - every run the Go checker rejects only with diagnostics of stages 1
-//     and 2 (stageDiag: names, types, Option and Result rules) gets
-//     exactly those diagnostics from the Xo checker.
+//   - every run the Go checker accepts (no errors) has identical names,
+//     types, and sigs sections (the effects of signatures only when
+//     compareSigEffects is set), and the Xo checker reports nothing;
+//   - every run the Go checker rejects only with diagnostics of the
+//     stages done (stageDiag: names, types, Option and Result rules,
+//     generics) gets exactly those diagnostics from the Xo checker.
 //
 // Runs the Xo checker cannot load (`use go`, `use c`, a parse error) and
 // runs rejected for other reasons are counted, not compared. The coverage
@@ -83,7 +84,7 @@ func TestSelfhostChecker(t *testing.T) {
 				os.MkdirAll(keep, 0o755)
 				os.WriteFile(filepath.Join(keep, "check-"+b+".txt"), []byte(report.String()), 0o644)
 			}
-			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only for names and types (%d match), %d rejected otherwise, %d unsupported by the Xo checker, %d not loadable",
+			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported by the Xo checker, %d not loadable",
 				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported, st.errors)
 			if len(fails) > 0 {
 				if len(fails) > 10 {
@@ -121,7 +122,7 @@ func (s checkStats) class(before checkStats) string {
 // goRun is the Go checker's result for one run.
 type goRun struct {
 	err  error
-	dump string // the names and types sections
+	dump string // the names, types, and sigs sections
 	// accepted: no errors; onlyStaged: every error is a stageDiag.
 	accepted, onlyStaged bool
 	staged               []string // the stageDiag lines
@@ -134,7 +135,7 @@ func goCheck(dir string) *goRun {
 	if err != nil {
 		return &goRun{err: err}
 	}
-	r := &goRun{dump: res.Dump(check.Sections{Names: true, Types: true}), accepted: true, onlyStaged: true}
+	r := &goRun{dump: res.Dump(check.Sections{Names: true, Types: true, Sigs: true}), accepted: true, onlyStaged: true}
 	var staged []diag.Diagnostic
 	for _, d := range res.Diagnostics {
 		isStaged := stageDiag(check.DiagLines([]diag.Diagnostic{d})[0])
@@ -234,8 +235,12 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	gotDump, gotDiags := splitDiags(got)
 	if want.accepted {
 		st.accepted++
-		if gotDump != want.dump {
-			return fmt.Sprintf("%s: dumps differ: %s", dir, firstDiff(gotDump, want.dump))
+		wantDump := want.dump
+		if !compareSigEffects {
+			gotDump, wantDump = stripSigEffects(gotDump), stripSigEffects(wantDump)
+		}
+		if gotDump != wantDump {
+			return fmt.Sprintf("%s: dumps differ: %s", dir, firstDiff(gotDump, wantDump))
 		}
 		if len(gotDiags) > 0 {
 			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports:\n%s", dir, strings.Join(gotDiags, "\n"))
@@ -255,7 +260,31 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	return ""
 }
 
-// splitDiags cuts a dump into its names and types part and its
+// compareSigEffects compares the effects of the sigs section (stage 4);
+// stage 3 compares the signatures without them.
+var compareSigEffects = false
+
+// stripSigEffects drops the effects (` uses ...`, the last one of a
+// line) of the lines of every sigs section of dump.
+func stripSigEffects(dump string) string {
+	lines := strings.Split(dump, "\n")
+	in := false
+	for i, l := range lines {
+		switch {
+		case l == "-- sigs":
+			in = true
+		case strings.HasPrefix(l, "--") || strings.HasPrefix(l, "=="):
+			in = false
+		case in:
+			if j := strings.LastIndex(l, " uses "); j >= 0 {
+				lines[i] = l[:j]
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// splitDiags cuts a dump into its names, types, and sigs part and its
 // diagnostic lines.
 func splitDiags(dump string) (string, []string) {
 	names, diags, _ := strings.Cut(dump, "== diags\n")
@@ -268,22 +297,23 @@ func splitDiags(dump string) (string, []string) {
 	return names, lines
 }
 
-// stageDiagRE matches the diagnostics the names and types stages
-// reproduce (decision 0141): name resolution (XO0601 to XO0606, unused
-// imports), and the type diagnostics of stage 2 (core 2, 3: mismatches,
-// arguments, operands, conversions, inference, the Option and Result
-// rules, patterns that do not fit, loop labels, constants, unknown
-// effects, and the task failure rules that decide error types). Left to
-// later stages: unused bindings (XO0110 on locals, XO0201 on bindings),
-// generics (XO0402), effects (XO0701), value semantics (XO0501 to
-// XO0520), exhaustiveness (XO0301, XO0303), comparability (XO0404 on keys
-// and derives), naming (XO0101), and the habits of other languages that
-// are not name or type errors (XO0177).
+// stageDiagRE matches the diagnostics the stages done reproduce
+// (decision 0141): name resolution (XO0601 to XO0606, unused imports),
+// the type diagnostics of stage 2 (core 2, 3: mismatches, arguments,
+// operands, conversions, inference, the Option and Result rules,
+// patterns that do not fit, loop labels, constants, unknown effects, and
+// the task failure rules that decide error types), and generics of
+// stage 3 (XO0402, XO0404 on constraints, comparability, keys, and
+// derives). Left to later stages: unused bindings (XO0110 on locals,
+// XO0201 on bindings), value semantics (XO0501 to XO0520),
+// exhaustiveness (XO0301, XO0303), naming (XO0101), and the habits of
+// other languages that are not name or type errors (XO0177).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`XO0110","[^}]*"message":"import ` + "`" + `[^` + "`" + `]+` + "`" + ` is never used"`,
 	`XO0201","[^}]*"message":"result of [^"]*is not handled"`,
-	`XO0404","[^}]*"message":"` + "`" + `[^"]*(does not implement|derive [A-Za-z]+` + "`" + ` needs every field)[^"]*"`,
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
+	// stage 3: generics
+	`(XO0402|XO0404)",.*`,
 	`XO0502","[^}]*"message":"cannot assign to this expression[^"]*"`,
 }, "|") + `)\}$`)
 

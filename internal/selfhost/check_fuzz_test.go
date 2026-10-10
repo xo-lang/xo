@@ -17,14 +17,16 @@ import (
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
 // 0141) on mutations of the single directory modules of the repository
-// that the Go checker accepts and that import only std. Half are name
-// mutations: one identifier renamed (an unresolved name, or one that now
-// resolves elsewhere), a `use` line removed, or a top level declaration
-// duplicated. Half are type mutations: a literal replaced by one of
+// that the Go checker accepts and that import only std. A quarter each
+// are name mutations (one identifier renamed, to an unresolved name or
+// one that now resolves elsewhere, a `use` line removed, or a top level
+// declaration duplicated), type mutations (a literal replaced by one of
 // another type, a `?` removed, or a field or method name replaced by
-// another one of the file. The rules of TestSelfhostChecker apply: an
-// accepted mutation has the same names and types sections, one rejected
-// only for names and types the same diagnostics. -short makes 150
+// another one of the file), generics mutations (a type argument removed,
+// a constraint dropped), and effects mutations (a `uses` clause removed
+// or added). The rules of TestSelfhostChecker apply: an accepted mutation
+// has the same names, types, and sigs sections, one rejected only with
+// diagnostics of the stages done the same diagnostics. -short makes 150
 // mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
 // override.
 func TestSelfhostCheckerMutations(t *testing.T) {
@@ -71,10 +73,15 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				if rng.Intn(2) == 0 {
+				switch rng.Intn(4) {
+				case 0:
 					data = mutateNames(rng, data)
-				} else {
+				case 1:
 					data = mutateTypes(rng, data)
+				case 2:
+					data = mutateGenerics(rng, data)
+				default:
+					data = mutateEffects(rng, data)
 				}
 			}
 			if err := os.WriteFile(filepath.Join(tmp, dir, name), data, 0o644); err != nil {
@@ -113,7 +120,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only for names and types (%d match), %d rejected otherwise, %d unsupported",
+	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
 	t.Logf("diagnostics of the matching rejected mutations: %v", codes)
 	if len(fails) > 0 {
@@ -123,7 +130,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		t.Fatalf("%d of %d mutations differ:\n%s", len(fails), len(dirs), strings.Join(fails, "\n"))
 	}
 	if st.stagedOK < len(dirs)/10 {
-		t.Fatalf("only %d of %d mutations were rejected only for names and types", st.stagedOK, len(dirs))
+		t.Fatalf("only %d of %d mutations were rejected only with diagnostics of the stages done", st.stagedOK, len(dirs))
 	}
 }
 
@@ -342,4 +349,158 @@ func mutateTypes(rng *rand.Rand, src []byte) []byte {
 		}
 	}
 	return mutateNames(rng, src)
+}
+
+// mutateGenerics applies one generics edit to src: a type argument
+// removed from a written list (`Map[Str, Int]` becomes `Map[Str]`,
+// `parse[Int](s)` becomes `parse(s)`), or a constraint dropped from a
+// type parameter (`[T: Ord]` becomes `[T]`).
+func mutateGenerics(rng *rand.Rand, src []byte) []byte {
+	var ds diag.List
+	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	upper := func(tk token.Token) bool {
+		return tk.Kind == token.Ident && tk.Text != "" && tk.Text[0] >= 'A' && tk.Text[0] <= 'Z'
+	}
+	// closing finds the token ending the element that starts at i of a
+	// bracketed list: a Comma or the RBrack at depth 0.
+	closing := func(i int) int {
+		depth := 0
+		for ; i < len(toks); i++ {
+			switch toks[i].Kind {
+			case token.LBrack, token.LParen, token.LBrace:
+				depth++
+			case token.RParen, token.RBrace:
+				depth--
+			case token.RBrack:
+				if depth == 0 {
+					return i
+				}
+				depth--
+			case token.Comma:
+				if depth == 0 {
+					return i
+				}
+			case token.Newline, token.EOF:
+				return -1
+			}
+		}
+		return -1
+	}
+	type edit struct{ from, to int }
+	var args, constraints []edit
+	for i := 1; i+1 < len(toks); i++ {
+		tk := toks[i]
+		switch {
+		case tk.Kind == token.LBrack && toks[i-1].Kind == token.Ident && toks[i-1].Span.End.Offset == tk.Span.Start.Offset && upper(toks[i+1]):
+			// the arguments of a type or call: remove one, or the list
+			var elems []int // start token of each element
+			j := i + 1
+			for {
+				elems = append(elems, j)
+				k := closing(j)
+				if k < 0 {
+					elems = nil
+					break
+				}
+				if toks[k].Kind == token.RBrack {
+					if len(elems) == 1 {
+						args = append(args, edit{tk.Span.Start.Offset, toks[k].Span.End.Offset})
+						elems = nil
+					} else {
+						elems = append(elems, k)
+					}
+					break
+				}
+				j = k + 1
+			}
+			for e := 0; e+1 < len(elems); e++ {
+				// element e runs from elems[e] to the token before elems[e+1]
+				// (a Comma, or the RBrack for the last); drop it with one comma
+				from := toks[elems[e]].Span.Start.Offset
+				to := toks[elems[e+1]].Span.Start.Offset
+				if e == len(elems)-2 {
+					from = toks[elems[e]-1].Span.Start.Offset // the comma before the last
+					to = toks[elems[e+1]].Span.Start.Offset
+				}
+				args = append(args, edit{from, to})
+			}
+		case tk.Kind == token.Colon && upper(toks[i-1]) && i >= 2 && (toks[i-2].Kind == token.LBrack || toks[i-2].Kind == token.Comma):
+			if k := closing(i + 1); k >= 0 {
+				constraints = append(constraints, edit{tk.Span.Start.Offset, toks[k].Span.Start.Offset})
+			}
+		}
+	}
+	var pick []edit
+	switch {
+	case len(args) > 0 && (len(constraints) == 0 || rng.Intn(2) == 0):
+		pick = args
+	case len(constraints) > 0:
+		pick = constraints
+	default:
+		return mutateTypes(rng, src)
+	}
+	e := pick[rng.Intn(len(pick))]
+	var b bytes.Buffer
+	b.Write(src[:e.from])
+	b.Write(src[e.to:])
+	return b.Bytes()
+}
+
+// mutateEffects applies one effects edit to src: a `uses` clause
+// removed, or one added to a function declaration that has none.
+func mutateEffects(rng *rand.Rand, src []byte) []byte {
+	var ds diag.List
+	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	type edit struct {
+		from, to int
+		with     string
+	}
+	var edits []edit
+	for i := 1; i < len(toks); i++ {
+		if toks[i].Kind != token.Uses {
+			continue
+		}
+		j := i + 1
+		depth := 0
+	clause:
+		for ; j < len(toks); j++ {
+			switch toks[j].Kind {
+			case token.Ident, token.Dot, token.Comma:
+			case token.LParen:
+				if j != i+1 {
+					break clause
+				}
+				depth++
+			case token.RParen:
+				if depth == 0 {
+					break clause
+				}
+				depth--
+			default:
+				break clause
+			}
+		}
+		if j < len(toks) {
+			edits = append(edits, edit{toks[i-1].Span.End.Offset, toks[j].Span.Start.Offset, ""})
+		}
+	}
+	labels := []string{"net", "clock", "fs.read", "stdio", "rand", "env"}
+	off := 0
+	for _, l := range bytes.SplitAfter(src, []byte("\n")) {
+		t := bytes.TrimRight(l, "\n")
+		if (bytes.HasPrefix(t, []byte("fn ")) || bytes.HasPrefix(t, []byte("pub fn "))) && bytes.HasSuffix(t, []byte(" {")) && !bytes.Contains(t, []byte(" uses ")) {
+			at := off + len(t) - 2
+			edits = append(edits, edit{at, at, " uses " + labels[rng.Intn(len(labels))]})
+		}
+		off += len(l)
+	}
+	if len(edits) == 0 {
+		return mutateTypes(rng, src)
+	}
+	e := edits[rng.Intn(len(edits))]
+	var b bytes.Buffer
+	b.Write(src[:e.from])
+	b.WriteString(e.with)
+	b.Write(src[e.to:])
+	return b.Bytes()
 }

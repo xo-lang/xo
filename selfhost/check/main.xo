@@ -3,9 +3,9 @@
 //   check [--section=S] [--std=DIR] [--each] <dirs...>   print the dump
 //   check [--std=DIR] [--each] --bench=N <dirs...>        check N times, print the time
 //
-// The dump is the names, types, and diags sections of `xo typedump` (the
+// The dump is the names, types, sigs, and diags sections of `xo typedump` (the
 // Go checker) for the same directories: --section takes a comma
-// separated list of them (default all three). --each checks every directory as a run of
+// separated list of them (default all four). --each checks every directory as a run of
 // its own, each preceded by `=== check <dir>`. Std declarations are read
 // from DIR (default std). A run that cannot be checked here (`use go`, a
 // parse error) prints `== unsupported <why>`.
@@ -15,6 +15,7 @@ fn main(os: Os) ! {
   var each = false
   var names = true
   var types = true
+  var sigs = true
   var diags = true
   var std_dir = "std"
   var dirs: List[Str] = []
@@ -25,6 +26,7 @@ fn main(os: Os) ! {
       let s = a.trim_prefix("--section=")
       names = s.contains("names") || s == "all"
       types = s.contains("types") || s == "all"
+      sigs = s.contains("sigs") || s == "all"
       diags = s.contains("diags") || s == "all"
     } else if a.starts_with("--std=") {
       std_dir = a.trim_prefix("--std=")
@@ -35,7 +37,7 @@ fn main(os: Os) ! {
     }
   }
   if dirs.is_empty() {
-    os.stdio.eprintln("usage: check [--section=names,types,diags] [--std=DIR] [--each] [--bench=N] <dirs...>")
+    os.stdio.eprintln("usage: check [--section=names,types,sigs,diags] [--std=DIR] [--each] [--bench=N] <dirs...>")
     os.proc.exit(2)
   }
   var runs: List[List[Str]] = [dirs]
@@ -70,7 +72,7 @@ fn main(os: Os) ! {
     match c.check_dirs(r) {
       Ok(_) => {
         if c.unsupported.is_empty() {
-          out.write(c.dump(names, types, diags))
+          out.write(c.dump(names, types, sigs, diags))
         } else {
           out.write("== unsupported ${c.unsupported}\n")
         }

@@ -677,7 +677,11 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
       return c.bad_ty
     }
   }
-  c.mk_named(obj, targs)
+  let n = c.mk_named(obj, targs)
+  if env.mod >= 0 && !c.mods[env.mod].is_std && c.objs[obj].module == c.prelude && (c.objs[obj].name == b"Map" || c.objs[obj].name == b"Set") {
+    c.check_key_type(n, c.path, span)
+  }
+  n
 }
 
 /// The type arguments written for obj; when every effect argument is

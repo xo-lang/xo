@@ -16,15 +16,31 @@ fn (var c: Checker) run() {
   }
   for m in c.order {
     if !c.mods[m].is_std {
+      c.check_derives_comparable(m)
+    }
+  }
+  for m in c.order {
+    if !c.mods[m].is_std {
       c.check_module(m)
     }
   }
+  c.check_key_types()
   // check.go reportAmbiguous: a closure result that nothing determined
   // and whose body never completes is Never
   for t in c.never_results {
     if c.is_open_var(t) {
       c.unify(t, c.named("Never"))
     }
+  }
+  // XO0402: type parameters that nothing determined
+  var done: List[Str] = []
+  for tv in c.type_arg_vars {
+    let key = "${tv.file}:${tv.span.start.offset}:${tv.span.end.offset}"
+    if c.tys[tv.v].ref >= 0 || done.contains(key) {
+      continue
+    }
+    done.push(key)
+    c.report(tv.file, "XO0402", tv.span, "cannot infer type argument `${tv.param}` of `${tv.fn_name}`")
   }
   for m in c.order {
     if !c.mods[m].is_std {
@@ -49,7 +65,7 @@ fn (var c: Checker) check_unused_imports(m: Int) {
 
 /// The dump of the root modules: names, types, and diagnostics as
 /// selected.
-pub fn (c: Checker) dump(names: Bool, types: Bool, diags: Bool) -> Str {
+pub fn (c: Checker) dump(names: Bool, types: Bool, sigs: Bool, diags: Bool) -> Str {
   var out = StrBuilder.new()
   for m in c.root_mods {
     out.write("== module ${c.mods[m].path} ${c.mods[m].dir}\n")
@@ -84,6 +100,10 @@ pub fn (c: Checker) dump(names: Bool, types: Bool, diags: Bool) -> Str {
         }
       }
     }
+    if sigs {
+      out.write("-- sigs\n")
+      c.dump_sigs(out, m)
+    }
   }
   if diags {
     out.write("== diags\n")
@@ -107,6 +127,108 @@ pub fn diag_lines(ds: List[Diag]) -> List[Str] {
     out.push(after_tab(k))
   }
   out
+}
+
+/// The signature and effects of every function and method declared in
+/// module m (dump.go dumpSigs), sorted by file and position.
+fn (c: Checker) dump_sigs(var out: StrBuilder, m: Int) {
+  var fns: List[Int] = []
+  for (_, o) in c.mods[m].members.entries() {
+    let x = c.objs[o]
+    if x.kind == ObjKind.Func {
+      fns.push(o)
+    } else if x.kind == ObjKind.Type {
+      for (_, f) in x.methods.entries() {
+        fns.push(f)
+      }
+      for (_, f) in x.statics.entries() {
+        fns.push(f)
+      }
+      for f in x.iface_meths {
+        fns.push(f)
+      }
+    }
+  }
+  var lines: List[Str] = []
+  for f in fns {
+    let x = c.objs[f]
+    if !x.sig_done {
+      continue
+    }
+    var line = "${pos_text(x.file, x.line, x.col)} ${c.display_name(f)} ${c.sig_text(f)}"
+    let eff = c.fn_effects_text(f)
+    if !eff.is_empty() {
+      line = "${line} uses ${eff}"
+    }
+    lines.push("${x.file}\x00${pad(x.line)}${pad(x.col)}\t${line}")
+  }
+  for l in lines.sort() {
+    out.write(after_tab(l))
+    out.write("\n")
+  }
+}
+
+/// The declared or inferred effects of function f as the sigs section
+/// prints them.
+fn (c: Checker) fn_effects_text(f: Int) -> Str {
+  if c.objs[f].declared >= 0 {
+    return c.eff_text(c.objs[f].declared)
+  }
+  ""
+}
+
+/// A signature without its effects: type parameters, receiver,
+/// parameters, result, and error type (dump.go sigText).
+fn (c: Checker) sig_text(f: Int) -> Str {
+  let x = c.objs[f]
+  var b = StrBuilder.new()
+  if !x.tparams.is_empty() {
+    b.write("[")
+    for (i, p) in x.tparams.indexed() {
+      if i > 0 {
+        b.write(", ")
+      }
+      if c.objs[p].implicit {
+        b.write("implicit ")
+      }
+      b.write(text(c.objs[p].name))
+      if c.objs[p].effect {
+        b.write(": Effects")
+      } else if c.objs[p].constraint >= 0 {
+        b.write(": ")
+        b.write(c.show(c.objs[p].constraint))
+      }
+    }
+    b.write("]")
+  }
+  b.write("(")
+  if x.recv_ty >= 0 {
+    if x.recv_var {
+      b.write("var ")
+    }
+    b.write("self: ")
+    b.write(c.show(x.recv_ty))
+    if !x.params.is_empty() {
+      b.write(", ")
+    }
+  }
+  for (i, p) in x.params.indexed() {
+    if i > 0 {
+      b.write(", ")
+    }
+    if p.is_var {
+      b.write("var ")
+    }
+    b.write("${text(p.name)}: ${c.show(p.ty)}")
+  }
+  b.write(")")
+  if x.result >= 0 && !c.is_unit(x.result) {
+    b.write(" -> ${c.show(x.result)}")
+  }
+  if x.err >= 0 {
+    b.write(" ! ${c.show(x.err)}")
+  }
+  b.freeze()
 }
 
 fn (c: Checker) obj_text(o: Int) -> Str {

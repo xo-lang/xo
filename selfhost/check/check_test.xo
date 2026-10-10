@@ -45,7 +45,7 @@ fn check_files(os: testing.TestOs, dir: Str, files: List[(Str, Str)]) -> Str ! F
   if !c.unsupported.is_empty() {
     return Ok("unsupported ${c.unsupported}")
   }
-  Ok(c.dump(true, true, true))
+  Ok(c.dump(true, true, false, true))
 }
 
 /// The lines of a dump after its module header, without the file headers.

@@ -982,6 +982,15 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
       c.error("XO0404", span, "`${c.show(at)}` does not implement `${c.show_raw(cn)}`, required by `${text(c.objs[p].name)}` of `${c.display_name(fo)}`")
     }
   }
+  for p in c.objs[fo].tparams {
+    if c.objs[p].effect || c.objs[p].implicit {
+      continue
+    }
+    let v = sm.get(p) ?? -1
+    if v >= 0 && c.tys[v].kind == TyKind.Var && c.tys[v].ref < 0 && (c.objs[fo].err < 0 || !c.mentions(c.objs[fo].err, p)) {
+      c.type_arg_vars.push(TypeArgVar{v: v, param: text(c.objs[p].name), fn_name: c.display_name(fo), file: c.path, span: parser.expr_span(fun)})
+    }
+  }
   // an error type that nothing determined: the call cannot fail
   if err_t >= 0 {
     let ev = c.resolve(err_t)

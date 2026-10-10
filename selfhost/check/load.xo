@@ -52,6 +52,12 @@ pub struct Checker {
   /// Result types of closures whose body never completes: Never when
   /// nothing else determines them (check.go reportAmbiguous).
   never_results: List[Int] = []
+  /// Inference variables of explicit type parameters at calls; unbound
+  /// ones at the end are XO0402 (check.go typeArgVars).
+  type_arg_vars: List[TypeArgVar] = []
+  /// Map and Set types reported for their keys, by file and type
+  /// (comparable.go keyReported).
+  key_reported: Map[Str, Bool] = {}
   /// The target of a plain `m[k] = v` (stmt.xo assign), by key.
   map_store: Int = -1
   /// Scope and group frames of spawned tasks (stmt.xo).

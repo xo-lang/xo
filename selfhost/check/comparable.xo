@@ -1,0 +1,140 @@
+// Comparability rules reported around the body checks (decision 0112,
+// internal/check/comparable.go): `derive Eq` or `Hash` on a type holding
+// a handle or a function value, and Map keys and Set elements that are
+// not comparable (XO0404).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Rejects `derive Eq` or `Hash` on a type of module m that holds a
+/// handle or a function value (comparable.go checkDerivesComparable).
+fn (var c: Checker) check_derives_comparable(m: Int) {
+  c.cur_mod = m
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      var ids: List[Ident] = []
+      var name = b""
+      match d {
+        StructDecl(d: sd) => {
+          ids = sd.derive
+          name = sd.name.name
+        }
+        EnumDecl(d: ed) => {
+          ids = ed.derive
+          name = ed.name.name
+        }
+        _ => continue
+      }
+      if ids.is_empty() || !c.is_scope_entry(f, i, name) {
+        continue
+      }
+      let t = c.files[f].decl_objs[i]
+      if t < 0 || c.objs[t].module != m {
+        continue
+      }
+      var decided = false
+      for id in ids {
+        if id.name != b"Eq" && id.name != b"Hash" {
+          continue
+        }
+        if !decided {
+          decided = true
+          var args: List[Int] = []
+          for p in c.objs[t].tparams {
+            args.push(c.mk_param(p))
+          }
+          if c.comparable(c.mk_named(t, args), []) {
+            break
+          }
+        }
+        c.error("XO0404", id.span, "`${text(c.objs[t].name)}` cannot derive `${text(id.name)}`")
+      }
+    }
+  }
+}
+
+/// A Map or Set type inside the type of a checked expression.
+struct KeyCand {
+  t: Int
+  file: Int
+  rec: Int
+}
+
+/// Looks at the type of every checked expression for Map and Set types
+/// whose keys are not comparable, and reports each at its first
+/// expression in a file (comparable.go checkKeyTypes).
+fn (var c: Checker) check_key_types() {
+  var cands: List[Str] = []
+  var found: List[KeyCand] = []
+  for (ri, r) in c.types.indexed() {
+    if r.ty < 0 || c.mods[c.files[r.file].module].is_std {
+      continue
+    }
+    var named: List[Int] = []
+    c.walk_named(r.ty, named, 0)
+    for n in named {
+      let o = c.tys[n].obj
+      if c.objs[o].module == c.prelude && (c.objs[o].name == b"Map" || c.objs[o].name == b"Set") {
+        cands.push("${c.files[r.file].path}\x00${pad(r.start)}${pad(r.end)}${pad(found.len())}\t${found.len()}")
+        found.push(KeyCand{t: n, file: r.file, rec: ri})
+      }
+    }
+  }
+  for k in cands.sort() {
+    let x = found[Int.parse(after_tab(k)) ?? 0]
+    let r = c.types[x.rec]
+    let sp = Span{start: parser.Pos{offset: r.start, line: r.sline, col: r.scol}, end: parser.Pos{offset: r.end, line: r.eline, col: r.ecol}}
+    c.check_key_type(x.t, c.files[x.file].path, sp)
+  }
+}
+
+/// Reports a Map whose key type, or a Set whose element type, is not
+/// comparable, once per type and file (comparable.go checkKeyType).
+fn (var c: Checker) check_key_type(t: Int, path: Str, sp: Span) {
+  let n = c.tys[c.resolve(t)]
+  if n.kind != TyKind.Named || c.objs[n.obj].module != c.prelude || n.args.is_empty() {
+    return
+  }
+  let what = if c.objs[n.obj].name == b"Map" { "a Map key" } else { "a Set element" }
+  let k0 = n.args[0]
+  if c.has_open_vars(k0) || c.comparable(k0, []) {
+    return
+  }
+  let key = "${path}\x00${c.show(t)}"
+  if c.key_reported.contains(key) {
+    return
+  }
+  c.key_reported[key] = true
+  c.report(path, "XO0404", sp, "`${c.show(k0)}` cannot be ${what}")
+}
+
+/// Appends every Named type inside t (resolved), outermost first.
+fn (c: Checker) walk_named(t0: Int, var out: List[Int], depth: Int) {
+  if t0 < 0 || depth > 100 {
+    return
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      out.push(t)
+      for a in x.args {
+        c.walk_named(a, out, depth + 1)
+      }
+    }
+    Tuple => {
+      for a in x.args {
+        c.walk_named(a, out, depth + 1)
+      }
+    }
+    Func => {
+      for a in x.args {
+        c.walk_named(a, out, depth + 1)
+      }
+      c.walk_named(x.result, out, depth + 1)
+      c.walk_named(x.err, out, depth + 1)
+    }
+    Param | Var | Bad | EffArg => {}
+  }
+}
