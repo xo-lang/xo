@@ -225,12 +225,12 @@ func (w *rtWalker) node(n ast.Node) {
 	case *ast.WhileExpr:
 		w.report(diag.RealtimeLoop, x.Sp, "an infinite loop in a real-time function; loops need `bound N`")
 	case *ast.WhileStmt:
-		if x.Bound == nil && x.Cond == nil {
+		if x.Bound == nil && x.Cond == nil && x.Value == nil {
 			w.report(diag.RealtimeLoop, loopHead(x.Sp), "an infinite `while` loop in a real-time function; write `while cond bound N`")
 		} else if x.Bound == nil {
 			d := w.report(diag.RealtimeLoop, loopHead(x.Sp), "`while` loop without a bound in a real-time function")
-			if d != nil && x.Cond != nil {
-				fix(d, "add `bound N` (choose N)", insertEdit(x.Sp.File, x.Cond.Span().End, " bound N"))
+			if head := whileHead(x); d != nil && head != nil {
+				fix(d, "add `bound N` (choose N)", insertEdit(x.Sp.File, head.Span().End, " bound N"))
 			}
 		}
 	case *ast.ForStmt:

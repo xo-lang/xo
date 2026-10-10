@@ -228,6 +228,9 @@ func (w *moveWalker) stmt(s ast.Stmt) {
 		if x.Cond != nil {
 			w.expr(x.Cond, false)
 		}
+		if x.Value != nil {
+			w.expr(x.Value, false)
+		}
 		w.loop(x.Body)
 	}
 }

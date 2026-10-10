@@ -398,13 +398,17 @@ type ForStmt struct {
 	GoRange bool
 }
 
-// WhileStmt is `[label:] while [cond] { ... }`. A nil Cond is an infinite
-// loop. In statement position every while loop is a WhileStmt; WhileExpr
-// only appears where an expression is required.
+// WhileStmt is `[label:] while [cond] { ... }` or
+// `[label:] while let pattern = value { ... }` (decision 0134). A nil Cond
+// and a nil Pattern is an infinite loop. In statement position every while
+// loop is a WhileStmt; WhileExpr only appears where an expression is
+// required.
 type WhileStmt struct {
 	Base
-	Label *Ident
-	Cond  Expr
+	Label   *Ident
+	Cond    Expr    // nil for while let
+	Pattern Pattern // while let
+	Value   Expr    // while let
 	// Bound is the `bound N` clause (core 3.5, decision 0133), or nil.
 	Bound Expr
 	Body  *Block

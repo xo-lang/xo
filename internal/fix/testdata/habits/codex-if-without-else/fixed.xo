@@ -1,0 +1,16 @@
+fn tally(statuses: List[Int]) -> (Int, Int) {
+  let created = Atomic[Int].new(0)
+  let conflicts = Atomic[Int].new(0)
+  scope s {
+    for status in statuses {
+      s.spawn(fn() {
+        if status == 201 {
+          let _ = created.add(1)
+        } else if status == 409 {
+          let _ = conflicts.add(1)
+        }
+      })
+    }
+  }
+  (created.get(), conflicts.get())
+}

@@ -389,19 +389,29 @@ fn (var p: Parser) go_range_for(label: Ident?, start: Pos) -> Stmt {
 fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {
   p.next() // while
   var cond: Expr? = None
-  if !p.at(Kind.LBrace) {
+  var pattern: List[Pattern] = []
+  var value: List[Expr] = []
+  var last: Expr? = None
+  if p.got(Kind.Let) {
+    // `while let p = v` (decision 0134), like `if let`
+    pattern.push(p.parse_pattern())
+    p.expect(Kind.Assign, "`=` in `while let`")
+    let vx = p.parse_expr_no_lit()
+    value.push(vx)
+    last = Some(vx)
+  } else if !p.at(Kind.LBrace) {
     cond = Some(p.parse_expr_no_lit())
+    last = cond
   }
   var bound: List[Expr] = []
-  var last = cond
-  if cond.is_some() && p.at_ident(b"bound") {
+  if last.is_some() && p.at_ident(b"bound") {
     p.next()
     let bx = p.parse_expr_no_lit()
     bound.push(bx)
     last = Some(bx)
   }
   let body = p.parse_cond_block(last)
-  Stmt.WhileStmt(span: p.span_from(start), label: label, cond: cond, bound: bound, body: body)
+  Stmt.WhileStmt(span: p.span_from(start), label: label, cond: cond, pattern: pattern, value: value, bound: bound, body: body)
 }
 
 /// The block after a condition, after rejecting an unparenthesized struct

@@ -28,6 +28,8 @@ pub fn run[T](
 {
   outer: for (i, x) in xs.indexed() {
     while i < 10 { break outer }
+    inner:   while let   Some( (a,b) ) =   q.pop()   bound 4 {   continue inner }
+    while let v=cur { cur = v.next }
     continue
   }
   defer { cleanup() }

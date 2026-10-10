@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0401",
+    "severity": "error",
+    "message": "expected `Int`, found `()`",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 10,
+      "end_line": 6,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "this `if` has no `else`, so it is a statement of type `()` (core 3.5), but a value of type `Int` is expected here; add an `else` branch with a value of that type"
+      }
+    ],
+    "fixes": []
+  }
+]

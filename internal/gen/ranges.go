@@ -1340,6 +1340,12 @@ func (a *rangeAn) stmt(s ast.Stmt) (ival, bool) {
 		}
 		a.env = deadEnv()
 	case *ast.WhileStmt:
+		if x.Pattern != nil {
+			// `while let` (decision 0134): not analyzed; its arithmetic
+			// keeps its checks and what it assigns is forgotten
+			a.havoc(x)
+			return fullRange, false
+		}
 		a.loop(labelName(x.Label), x.Cond, x.Body, false, nil, fullRange)
 	case *ast.ForStmt:
 		a.forStmt(x)

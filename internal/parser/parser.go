@@ -1493,11 +1493,18 @@ func (p *parser) parseFor(label *ast.Ident, start token.Pos) ast.Stmt {
 func (p *parser) parseWhile(label *ast.Ident, start token.Pos) ast.Stmt {
 	p.next() // while
 	s := &ast.WhileStmt{Label: label}
-	if !p.at(token.LBrace) {
+	var last ast.Expr
+	if p.got(token.Let) {
+		// `while let p = v` (decision 0134), like `if let`
+		s.Pattern = p.parsePattern()
+		p.expect(token.Assign, "`=` in `while let`")
+		s.Value = p.parseExprNoLit()
+		last = s.Value
+	} else if !p.at(token.LBrace) {
 		s.Cond = p.parseExprNoLit()
+		last = s.Cond
 	}
-	last := s.Cond
-	if s.Cond != nil && p.atIdent("bound") {
+	if last != nil && p.atIdent("bound") {
 		p.next()
 		s.Bound = p.parseExprNoLit()
 		last = s.Bound

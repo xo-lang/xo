@@ -1,0 +1,20 @@
+struct Job {
+  priority: Int
+  sequence: Int
+}
+
+fn pick(jobs: List[Job]) -> Job? {
+  var chosen: Job? = None
+  for job in jobs {
+    match chosen {
+      None => chosen = Some(job)
+      Some(best) => {
+        if job.priority > best.priority
+          || (job.priority == best.priority && job.sequence < best.sequence) {
+          chosen = Some(job)
+        }
+      }
+    }
+  }
+  chosen
+}

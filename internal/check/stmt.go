@@ -579,7 +579,7 @@ func (c *checker) stmtNever(s ast.Stmt) bool {
 	case *ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt:
 		return true
 	case *ast.WhileStmt:
-		return x.Cond == nil && !hasBreak(x.Body, labelName(x.Label), 0)
+		return x.Cond == nil && x.Pattern == nil && !hasBreak(x.Body, labelName(x.Label), 0)
 	case *ast.ExprStmt:
 		if t, ok := c.exprType[x.X]; ok {
 			return c.isNever(t)
@@ -653,6 +653,10 @@ func (c *checker) stmt(s ast.Stmt) {
 	case *ast.ForStmt:
 		c.forStmt(x)
 	case *ast.WhileStmt:
+		if x.Pattern != nil {
+			c.whileLet(x)
+			return
+		}
 		if x.Cond != nil {
 			c.check(x.Cond, c.named("Bool"))
 		}
@@ -735,6 +739,9 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		switch n.Obj.Name {
 		case "List", "Set", "Range", "Buf", "Chan":
 			return n.Args[0]
+		case "Bytes":
+			// each byte (decision 0135)
+			return c.named("UInt8")
 		case "Map":
 			return &Tuple{Elems: []Type{n.Args[0], n.Args[1]}}
 		}
@@ -743,7 +750,7 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		c.errorf(diag.CannotInfer, e.Span(), "the type of the iterated value must be known here")
 		return badType
 	}
-	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, Chan, and ranges", deep(t))
+	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, Chan, Bytes, and ranges", deep(t))
 	return badType
 }
 

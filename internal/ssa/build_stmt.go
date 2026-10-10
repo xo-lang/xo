@@ -105,6 +105,10 @@ func (s *fn) stmt(st ast.Stmt) {
 		if x.Label != nil {
 			label = x.Label.Name
 		}
+		if x.Pattern != nil {
+			s.whileLet(label, x)
+			return
+		}
 		s.while(label, x.Cond, x.Bound, x.Body)
 	case *ast.ForStmt:
 		s.forStmt(x)
@@ -177,7 +181,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		label = x.Label.Name
 	}
 	idx := &check.VarObj{Name: "$i"}
-	var hi, list *Value
+	var hi, list, bytes *Value
 	var pairT *Type // `xs.indexed()`: the (Int, T) element type
 	inclusive := false
 	if recv := s.indexedRecv(x.Iter); recv != nil {
@@ -199,6 +203,11 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	} else if lt.Coll {
 		s.forMap(x, label, s.value(x.Iter))
 		return
+	} else if lt.Kind == KStr && isPreludeNamed(s.natCheck(x.Iter), "Bytes") {
+		// `for b in bytes` yields each byte as a UInt8 (decision 0135)
+		bytes = s.value(x.Iter)
+		hi = s.call("Str.len", intT, "", bytes)
+		s.writeVar(idx, s.cint(0))
 	} else if lt.Kind == KList {
 		list = s.value(x.Iter)
 		hi = s.call("list.len", intT, "", list)
@@ -229,6 +238,9 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		if pairT != nil {
 			elem = s.add(OpTuple, pairT, nil, i, elem)
 		}
+	} else if bytes != nil {
+		// 0 <= i < len: no bounds check
+		elem = s.call("bytes.index", b.mod.IntType("UInt8"), "", bytes, s.read(idx))
 	} else {
 		elem = s.read(idx)
 	}

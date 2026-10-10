@@ -234,7 +234,7 @@ func (s *snapshot) resolve(f *check.File, site identSite) target {
 			return s.typeName(f, x.Path, "")
 		}
 		return s.typeOrImport(f, x.Path, site.index)
-	case *ast.Effect, *ast.ForStmt:
+	case *ast.Effect, *ast.ForStmt, *ast.WhileStmt:
 		if site.field == "Label" || site.field == "Name" || site.field == "Sub" {
 			return target{}
 		}

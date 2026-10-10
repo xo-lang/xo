@@ -1,0 +1,46 @@
+[
+  {
+    "code": "XO0178",
+    "severity": "error",
+    "message": "a line cannot start with the binary operator `||`; end the previous line with it (core 1.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 13,
+      "col": 11,
+      "end_line": 13,
+      "end_col": 13
+    },
+    "notes": [
+      {
+        "message": "a newline after an identifier, literal, `)`, `]`, `}`, or `?` ends the statement, so `||` here would begin a new one"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "move `||` to the end of the previous line",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 12,
+              "col": 40,
+              "end_line": 12,
+              "end_col": 40
+            },
+            "replace": " ||"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 13,
+              "col": 11,
+              "end_line": 13,
+              "end_col": 14
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

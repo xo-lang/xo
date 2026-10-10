@@ -1,0 +1,9 @@
+fn score(a: Int, b: Int, c: Int?) -> Int {
+  let base = a * 10 +
+    b
+  let ok = base > 0 &&
+    a != b
+  let n = c ??
+    0
+  if ok { base + n } else { 0 }
+}

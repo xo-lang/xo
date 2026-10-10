@@ -123,6 +123,9 @@ test "expressions: literals, postfix, closures, control flow" {
         while k > 0 {
           break outer
         }
+        while let Some((a, _)) = q.pop() bound 8 {
+          continue
+        }
       }
       defer { close() }
       x.0 += 1

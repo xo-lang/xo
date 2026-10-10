@@ -1,0 +1,59 @@
+// `for b in bytes` yields each byte as a UInt8 (core 3.5, decision 0135).
+
+fn safe_id(id: Str) -> Bool {
+  for c in id.bytes() {
+    if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+      return false
+    }
+  }
+  true
+}
+
+fn checksum(data: Bytes) -> Int {
+  var sum = 0
+  for b in data {
+    sum = (sum * 31 + Int(b)) % 65521
+  }
+  sum
+}
+
+fn main(os: Os) {
+  os.stdio.println("safe ${safe_id("ab12")} ${safe_id("xyz")} ${safe_id("")}")
+  let data = b"\x00\x01\x7f\x80\xff"
+  var total = 0
+  var high = 0
+  for b in data {
+    total += Int(b)
+    if b >= 128 {
+      high += 1
+    }
+  }
+  os.stdio.println("total ${total}, high ${high}, checksum ${checksum("hello, world".bytes())}")
+
+  // a slice, break, continue, and a label
+  var seen: List[Int] = []
+  outer: for row in ["abc", "d.e", "fgh"] {
+    for c in row.bytes()[1..] {
+      if c == '.' {
+        continue outer
+      }
+      if c == 'h' {
+        break outer
+      }
+      seen.push(Int(c))
+    }
+  }
+  os.stdio.println("seen ${seen.len()} first ${seen[0]} last ${seen[seen.len() - 1]}")
+
+  // an empty value, a bound, and a byte as a UInt8 in arithmetic
+  var n = 0
+  for _ in b"" {
+    n += 1
+  }
+  var lower = 0
+  for b in "AZ".bytes() bound 4 {
+    let l: UInt8 = b + 32
+    lower = lower * 1000 + Int(l)
+  }
+  os.stdio.println("empty ${n}, lower ${lower}")
+}

@@ -398,6 +398,22 @@ fn f() {
   if x > 0 { x } else { -x }
 }`,
 	},
+	LeadingOperator: {
+		Title: "a line starts with a binary operator; end the previous line with it",
+		Detail: "A newline ends a statement when the line's last token is an identifier, literal, `)`, `]`, `}`, `?`, or `return`, `break`, `continue` (core 1.3, Go's rule). " +
+			"So an expression continued on the next line must leave its operator at the end of the first line: a line that starts with `||`, `&&`, `+`, `==`, `??`, or another binary operator would begin a new statement. " +
+			"Rust, Swift, Kotlin, and some Go style guides put the operator first; Xo cannot, because `-x`, `!x`, and `..n` start expressions and a leading `||` reads as a closure. " +
+			"The machine fix moves the operator to the end of the previous line, and the parser reads the expression as continued, so no other error follows. " +
+			"A line starting with `.` continues a method chain and is allowed. See decision 0136.",
+		Example: `fn ready(a: Int, b: Int) -> Bool {
+  a > 0
+    || b > 0
+}`,
+		Fix: `fn ready(a: Int, b: Int) -> Bool {
+  a > 0 ||
+    b > 0
+}`,
+	},
 	MisplacedPub: {
 		Title:  "`pub` before something that cannot be exported",
 		Detail: "`pub` exports a declaration from its module (core 1.5). Imports (`use`) and `test` blocks cannot be exported, so `pub use` and `pub test` are rejected. Remove the `pub`.",
@@ -679,7 +695,7 @@ fn f(p: P) -> Str { "${p}" }`,
 	},
 	BadOperand: {
 		Title: "operator, index, slice, or iteration not defined for the type",
-		Detail: "The operation does not exist for this type: arithmetic between `Duration` and a plain integer literal, `Time + Time`, indexing a `Str` by position, slicing something other than `List`, `Bytes`, or `Str`, `for` over a value that is not a List, Set, Map, Chan, or range, `??` on a non optional, or `expect(x)` without a comparison. " +
+		Detail: "The operation does not exist for this type: arithmetic between `Duration` and a plain integer literal, `Time + Time`, indexing a `Str` by position, slicing something other than `List`, `Bytes`, or `Str`, `for` over a value that is not a List, Set, Map, Chan, Bytes, or range, `??` on a non optional, or `expect(x)` without a comparison. " +
 			"Durations need units (`5s`), and a `Str` is read with `runes()` or by slicing. See core 2.1, 3.5, and 3.6.",
 		Example: `fn f(d: Duration) -> Duration { d + 5 }`,
 		Fix:     `fn f(d: Duration) -> Duration { d + 5s }`,

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`for _, b := range data` is Go syntax; Xo writes `for pattern in data` (core 3.5)",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "for this `Bytes`, write `for b in data`"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `for b in data`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 26
+            },
+            "replace": "for b in data "
+          }
+        ]
+      }
+    ]
+  }
+]

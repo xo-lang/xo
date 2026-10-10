@@ -275,6 +275,9 @@ func sexpr(n any) string {
 		if x.Label != nil {
 			l = x.Label.Name + ": "
 		}
+		if x.Pattern != nil {
+			return fmt.Sprintf("(%swhilelet %s %s %s)", l, sexpr(x.Pattern), sexpr(x.Value), sexpr(x.Body))
+		}
 		return fmt.Sprintf("(%swhile %s %s)", l, opt(x.Cond), sexpr(x.Body))
 	case *ast.ExprStmt:
 		return sexpr(x.X)

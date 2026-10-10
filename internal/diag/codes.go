@@ -55,6 +55,7 @@ const (
 	ExpectedNewline      Code = "XO0175" // two statements or arms on one line
 	MisplacedPub         Code = "XO0176" // `pub` before something that cannot be exported
 	ForeignSyntax        Code = "XO0177" // syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)
+	LeadingOperator      Code = "XO0178" // a line starts with a binary operator; end the previous line with it (core 1.3, decision 0136)
 )
 
 // Checker codes (internal/check), chosen inside the spec's groups (core 10.2).
@@ -265,5 +266,6 @@ var Descriptions = map[Code]string{
 	ExpectedNewline:      "two statements or arms on one line",
 	MisplacedPub:         "`pub` before something that cannot be exported",
 	ForeignSyntax:        "syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087)",
+	LeadingOperator:      "a line starts with a binary operator (`||`, `&&`, `+`, `==`, ...); end the previous line with it (core 1.3, decision 0136)",
 	TimeLayout:           "constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3)",
 }

@@ -57,6 +57,9 @@ func (p *parser) lexHabits() {
 			}
 		case t.Kind == token.String:
 			p.swiftInterp(&t)
+		case t.Kind == token.Newline && p.leadingOperator(i):
+			// `a\n|| b`: read as `a || b` (XO0178)
+			continue
 		case (t.Kind == token.Plus || t.Kind == token.Minus) && i+2 < len(p.toks) && p.tokAt(i+1).Kind == t.Kind && adjacent(t, p.tokAt(i+1)) &&
 			p.tokAt(i+2).Kind != token.Newline && p.tokAt(i+2).Span.Start.Line > t.Span.Start.Line:
 			// `x++` at the end of a line: the lexer inserts no newline after

@@ -12,6 +12,11 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`for b in bytes`** (3.5, decision 0135): `Bytes` is iterable and
+  yields each byte as a `UInt8`.
+- **`while let`** (3.5, decision 0134): `while let Some(v) = expr { }`
+  loops while a refutable pattern matches, and `while let v = opt` is
+  the Option shorthand, as for `if let`.
 - **Real-time functions** (6.5, decision 0133): `uses realtime` on a
   function declaration forbids allocation (`XO1401`), loops without a
   bound (`XO1402`), calls of functions that are not real-time, function
@@ -374,6 +379,14 @@ A line whose first token is a declaration clause (`uses`, `requires`,
 `ensures`, `invariant`, `derive`), the `->` of a result type, `else` after a
 `requires`, or the `{` that opens a function body, also continues the
 declaration above it.
+
+A line cannot start with a binary operator: after `a > 0` at the end of a
+line, `|| b > 0` on the next would begin a new statement. End the first
+line with the operator instead (`a > 0 ||`, then `b > 0`). A line
+starting with `||`, `&&`, `??`, `|`, `^`, `+`, `/`, `%`, `<<`, `>>`, a
+comparison, or a spaced `*` or `&` is error `XO0178`, whose fix moves the
+operator up (decision 0136). `-`, `!`, `~`, and `..` start expressions,
+so a line starting with them is a new statement.
 
 Consequences: `} else {` and `} else if` must be on the same line as the
 closing brace. A list that spans lines needs a trailing comma after the last
@@ -886,9 +899,11 @@ for x in xs { ... }
 for (i, x) in xs.indexed() { ... }
 for (k, v) in m { ... }
 for job in jobs_chan { ... }  // receives until the channel is closed and drained
+for b in data { ... }         // each byte of a Bytes, as a UInt8
 for i in 0..10 { ... }        // half open range, 0..=10 is inclusive
 for _ in 0..3 { ... }
 while cond { ... }
+while let Some(job) = queue.pop() { ... }  // until the pattern fails
 while { ... }                 // infinite loop
 for x in xs bound 64 { ... }  // a loop bound: a contract (below, 6.5)
 while cond bound 1000 { ... }
@@ -901,6 +916,20 @@ match code {
 ```
 
 - `if` without `else` has type `()`.
+- `for` iterates over a List, Buf, Set, Map (as `(k, v)` tuples), Chan, Range,
+  or Bytes. Over `Bytes` it yields each byte as a `UInt8`, in order
+  (decision 0135); a byte compares with an ASCII rune literal
+  (`b >= 'a'`) and converts with `Int(b)`. Index pairs come from
+  `xs.indexed()` on a List; for Bytes, loop over `0..data.len()` and
+  read `data[i]`. A `Str` is not iterable: choose `.runes()` or
+  `.bytes()`.
+- `while let pattern = value { ... }` computes `value` before each
+  iteration and runs the body while it matches the pattern, with the
+  pattern's names bound in the body; the loop ends at the first value
+  that does not match (decision 0134). Any refutable pattern works
+  (`while let Tok.Num(n) = next()`), and `while let v = opt` is
+  shorthand for `while let Some(v) = opt`, as with `if let` (2.5).
+  `bound N` follows the value: `while let Some(x) = q.pop() bound 64`.
 - `x is Pattern` is a `Bool` expression that tests a pattern without binding
   names: `expect(r is Err(Timeout))`, `if resp is Ok(_) && retries < 3`.
   `is` is a contextual word in operator position (precedence of `==`), so it
@@ -942,7 +971,7 @@ match code {
   reported). The task is no longer shielded afterwards. Every backend
   behaves this way (decision 0085, amended 2026-10-10).
 
-**Patterns** are used in `match`, `let`, `if let`, and `for`:
+**Patterns** are used in `match`, `let`, `if let`, `while let`, and `for`:
 
 | Pattern | Matches |
 |---|---|
@@ -2250,6 +2279,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO0175` | error | parser | two statements or arms on one line |
 | `XO0176` | error | parser | `pub` before something that cannot be exported |
 | `XO0177` | error | parser | syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087) |
+| `XO0178` | error | parser | a line starts with a binary operator (`\|\|`, `&&`, `+`, `==`, ...); end the previous line with it (core 1.3, decision 0136) |
 | `XO0201` | error | checker | Result value is never used (core 2.6) |
 | `XO0202` | error | checker | error type does not convert to the enclosing error type (core 2.6) |
 | `XO0203` | error | checker | success of a Result typed T must be written Ok(x) (core 2.6) |
@@ -2614,7 +2644,7 @@ Stmt        = "let" Pattern [ ":" Type ] "=" Expr
 AssignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" .
 Place       = ident { "." ident | "." int | "[" Expr "]" } .
 ForStmt     = [ ident ":" ] "for" Pattern "in" Expr [ "bound" Expr ] Block .
-WhileStmt   = [ ident ":" ] "while" [ Expr [ "bound" Expr ] ] Block .
+WhileStmt   = [ ident ":" ] "while" [ ( Expr | "let" Pattern "=" Expr ) [ "bound" Expr ] ] Block .
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary
             | "while" Block | "???" .      // infinite loop as an expression, type Never

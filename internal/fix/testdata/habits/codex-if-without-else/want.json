@@ -1,0 +1,49 @@
+[
+  {
+    "code": "XO0401",
+    "severity": "error",
+    "message": "expected `Int`, found `()`",
+    "span": {
+      "file": "main.xo",
+      "line": 9,
+      "col": 16,
+      "end_line": 11,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "this `if` has no `else`, so it is a statement of type `()` (core 3.5), but a value of type `Int` is expected here; add an `else` branch with a value of that type"
+      },
+      {
+        "message": "the expected type comes from the first branch; if the `if` is a statement, discard the branch values with `let _ =` (core 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "discard the branch values with `let _ =`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 8,
+              "col": 11,
+              "end_line": 8,
+              "end_col": 11
+            },
+            "replace": "let _ = "
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 10,
+              "col": 11,
+              "end_line": 10,
+              "end_col": 11
+            },
+            "replace": "let _ = "
+          }
+        ]
+      }
+    ]
+  }
+]

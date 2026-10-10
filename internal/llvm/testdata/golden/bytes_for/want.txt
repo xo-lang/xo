@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+safe true false true
+total 511, high 2, checksum 27737
+seen 3 first 98 last 103
+empty 0, lower 97122
+--- stderr

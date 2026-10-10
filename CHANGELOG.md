@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO0401` on an `if` without `else` where a value is expected now has
+  a note naming the missing `else`; when the expected type came from a
+  sibling branch (a closure ending with `if a { n.add(1) } else if b
+  { ... }`), a fix discards the branch values with `let _ =`.
+- New error `XO0178` (decision 0136): a line that starts with a binary
+  operator (`|| b`, `&& c`, `+ d` continuing the line above) gets one
+  diagnostic and a fix that moves the operator to the end of the
+  previous line. Before, a leading `||` was taken for a Rust closure
+  (a wrong XO0177 fix) and cascaded into XO0160 and XO0175.
+- `for b in data` over `Bytes` (spec 3.5, decision 0135) yields each
+  byte as a `UInt8`; it was `XO0406`. Go's `for _, b := range data`
+  gets the fix `for b in data`.
+- `while let` (spec 3.5, decision 0134): `while let Some(v) = q.pop() { }`
+  loops while a refutable pattern matches; `while let v = opt` is the
+  Option shorthand, as for `if let`. Labels, `continue`, and `bound N`
+  work; every backend and the self hosted parser.
 - Import paths with a `.` or `..` segment (`use example.com/app/./lib`,
   `use ./lib`) are `XO0158`. They were accepted, and since `deny` rules
   compared the path as written while the loader cleaned it, they got

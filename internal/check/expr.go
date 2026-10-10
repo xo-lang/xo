@@ -676,12 +676,17 @@ func (c *checker) ifExpr(x *ast.IfExpr, want Type) Type {
 		case nil, discardWant:
 			return t
 		}
-		return c.coerceTo(t, want, x.Sp, x)
+		n := len(c.diags.Items)
+		r := c.coerceTo(t, want, x.Sp, x)
+		c.missingElseNote(x, want, n)
+		return r
 	}
 	if want != nil {
+		open, n := isOpenVar(valueWant(want)), len(c.diags.Items)
 		c.block(x.Then, want)
 		c.popScope()
 		c.check(x.Else, want)
+		c.missingElseFix(x, open, n)
 		if w, ok := want.(*retWant); ok {
 			return c.resultOf(w.T, w.E)
 		}

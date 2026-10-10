@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+popped cba, left 0
+path n0 -> n2 -> n1
+stopped at 3, sum 4, words 1
+firsts 3 4 1, empties 1
+seen x,x, left 2
+never 0
+--- stderr
