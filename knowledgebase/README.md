@@ -9,5 +9,7 @@ line per entry.
 | [decisions/](decisions/README.md) | Architecture and language design decisions (ADRs): context, decision, consequences, alternatives rejected. |
 | [gotchas/](gotchas/README.md) | Surprises and traps: things that broke, behaved unexpectedly, or are easy to get wrong, plus how to avoid them. |
 
+[positioning.md](positioning.md): why Xo, its measured advantages over and alongside Go, honest costs, and precedents for languages on Go and self-hosting.
+
 The language itself is specified in [../spec/core.md](../spec/core.md). The
 spec says *what* Xo is; decisions say *why*.
