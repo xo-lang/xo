@@ -1,4 +1,4 @@
-# 0134: `while let`
+# 0137: `while let`
 
 Status: Accepted, implemented (2026-10-10). Spec: core 3.5, grammar
 (`WhileStmt`). Code: `internal/parser` (parseWhile),

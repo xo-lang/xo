@@ -204,7 +204,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		s.forMap(x, label, s.value(x.Iter))
 		return
 	} else if lt.Kind == KStr && isPreludeNamed(s.natCheck(x.Iter), "Bytes") {
-		// `for b in bytes` yields each byte as a UInt8 (decision 0135)
+		// `for b in bytes` yields each byte as a UInt8 (decision 0138)
 		bytes = s.value(x.Iter)
 		hi = s.call("Str.len", intT, "", bytes)
 		s.writeVar(idx, s.cint(0))

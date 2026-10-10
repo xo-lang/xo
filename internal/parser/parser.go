@@ -1495,7 +1495,7 @@ func (p *parser) parseWhile(label *ast.Ident, start token.Pos) ast.Stmt {
 	s := &ast.WhileStmt{Label: label}
 	var last ast.Expr
 	if p.got(token.Let) {
-		// `while let p = v` (decision 0134), like `if let`
+		// `while let p = v` (decision 0137), like `if let`
 		s.Pattern = p.parsePattern()
 		p.expect(token.Assign, "`=` in `while let`")
 		s.Value = p.parseExprNoLit()

@@ -399,7 +399,7 @@ type ForStmt struct {
 }
 
 // WhileStmt is `[label:] while [cond] { ... }` or
-// `[label:] while let pattern = value { ... }` (decision 0134). A nil Cond
+// `[label:] while let pattern = value { ... }` (decision 0137). A nil Cond
 // and a nil Pattern is an infinite loop. In statement position every while
 // loop is a WhileStmt; WhileExpr only appears where an expression is
 // required.

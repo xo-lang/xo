@@ -740,7 +740,7 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		case "List", "Set", "Range", "Buf", "Chan":
 			return n.Args[0]
 		case "Bytes":
-			// each byte (decision 0135)
+			// each byte (decision 0138)
 			return c.named("UInt8")
 		case "Map":
 			return &Tuple{Elems: []Type{n.Args[0], n.Args[1]}}

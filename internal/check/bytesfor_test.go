@@ -2,7 +2,7 @@ package check
 
 import "testing"
 
-// TestBytesFor covers `for b in bytes` (core 3.5, decision 0135).
+// TestBytesFor covers `for b in bytes` (core 3.5, decision 0138).
 func TestBytesFor(t *testing.T) {
 	runCases(t, []ruleCase{
 		{name: "yields UInt8", src: "fn f(data: Bytes) -> UInt8 {\n  var last: UInt8 = 0\n  for b in data {\n    last = b\n  }\n  last\n}\n"},

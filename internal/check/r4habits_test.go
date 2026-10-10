@@ -31,7 +31,7 @@ func TestR4HabitsNotReported(t *testing.T) {
 		{name: "method chain continues", src: "fn f(s: Str) -> Int {\n  s\n    .trim()\n    .len()\n}\n"},
 		{name: "or patterns on one line", src: "fn f(x: Int) -> Int {\n  match x {\n    1 | 2 => 1\n    _ => 0\n  }\n}\n"},
 		{name: "if without else as a statement", src: "fn f(a: Atomic[Int], c: Bool) {\n  if c {\n    let _ = a.add(1)\n  }\n  let g = fn() {\n    if c {\n      a.add(1)\n    }\n  }\n  g()\n}\n"},
-		// decision 0134 and 0135: the r4 forms are now Xo
+		// decisions 0137 and 0138: the r4 forms are now Xo
 		{name: "while let", src: "fn f(var xs: List[Int]) -> Int {\n  var t = 0\n  while let Some(v) = xs.pop() {\n    t += v\n  }\n  t\n}\n"},
 		{name: "for over bytes", src: "fn f(s: Str) -> Bool {\n  for c in s.bytes() {\n    if !(c >= 'a' && c <= 'z') && c != '-' {\n      return false\n    }\n  }\n  true\n}\n"},
 	})

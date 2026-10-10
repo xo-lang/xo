@@ -1,4 +1,4 @@
-# 0135: `for b in bytes` yields UInt8
+# 0138: `for b in bytes` yields UInt8
 
 Status: Accepted, implemented (2026-10-10). Spec: core 3.5, std 2.2.
 Code: `internal/check/stmt.go` (iterElem), `internal/gen/fn.go`

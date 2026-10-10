@@ -1341,7 +1341,7 @@ func (a *rangeAn) stmt(s ast.Stmt) (ival, bool) {
 		a.env = deadEnv()
 	case *ast.WhileStmt:
 		if x.Pattern != nil {
-			// `while let` (decision 0134): not analyzed; its arithmetic
+			// `while let` (decision 0137): not analyzed; its arithmetic
 			// keeps its checks and what it assigns is forgotten
 			a.havoc(x)
 			return fullRange, false

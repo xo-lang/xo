@@ -2,7 +2,7 @@ package check
 
 import "testing"
 
-// TestWhileLet covers `while let` (core 3.5, decision 0134).
+// TestWhileLet covers `while let` (core 3.5, decision 0137).
 func TestWhileLet(t *testing.T) {
 	runCases(t, []ruleCase{
 		{name: "some", src: "fn f(var xs: List[Int]) -> Int {\n  var t = 0\n  while let Some(x) = xs.pop() {\n    t += x\n  }\n  t\n}\n"},

@@ -2,7 +2,7 @@ package ssa
 
 import "github.com/xo-lang/xo/internal/ast"
 
-// whileLet lowers `while let p = v { body }` (decision 0134): each
+// whileLet lowers `while let p = v { body }` (decision 0137): each
 // iteration computes v and tests p, as `if let` does; the loop exits when
 // the pattern does not match. `while let e = opt` reads e as `Some(e)`.
 func (s *fn) whileLet(label string, x *ast.WhileStmt) {

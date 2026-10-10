@@ -1,4 +1,4 @@
-// `while let` (core 3.5, decision 0134): the loop runs while the pattern
+// `while let` (core 3.5, decision 0137): the loop runs while the pattern
 // matches the value, computed again before each iteration.
 
 enum Tok {

@@ -5,7 +5,7 @@ import (
 )
 
 // whileLet checks `while let pattern = value { ... }` (core 3.5, decision
-// 0134): the value is computed before each iteration, the pattern may be
+// 0137): the value is computed before each iteration, the pattern may be
 // refutable, and the loop ends when it does not match. `while let e = opt`
 // is shorthand for `while let Some(e) = opt`, as with `if let` (core 2.5).
 func (c *checker) whileLet(x *ast.WhileStmt) {

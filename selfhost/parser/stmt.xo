@@ -393,7 +393,7 @@ fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {
   var value: List[Expr] = []
   var last: Expr? = None
   if p.got(Kind.Let) {
-    // `while let p = v` (decision 0134), like `if let`
+    // `while let p = v` (decision 0137), like `if let`
     pattern.push(p.parse_pattern())
     p.expect(Kind.Assign, "`=` in `while let`")
     let vx = p.parse_expr_no_lit()

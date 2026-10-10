@@ -1,4 +1,4 @@
-// `for b in bytes` yields each byte as a UInt8 (core 3.5, decision 0135).
+// `for b in bytes` yields each byte as a UInt8 (core 3.5, decision 0138).
 
 fn safe_id(id: Str) -> Bool {
   for c in id.bytes() {

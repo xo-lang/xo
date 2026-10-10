@@ -1076,7 +1076,7 @@ func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at a
 		}
 		var m *match
 		if w, ok := at.(*ast.WhileStmt); ok && w.Pattern != nil {
-			// `while let p = v` (decision 0134): match each iteration,
+			// `while let p = v` (decision 0137): match each iteration,
 			// leave the loop when the pattern fails
 			vt := f.nat(w.Value)
 			v := f.tmp("l")
@@ -1148,7 +1148,7 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 		elem = f.tmp("e")
 		header = fmt.Sprintf("_, %s := range %s.Items()", elem, itv)
 	case "Bytes":
-		// each byte as a UInt8 (decision 0135); Bytes is a Go string
+		// each byte as a UInt8 (decision 0138); Bytes is a Go string
 		bi := f.tmp("bi")
 		elem = fmt.Sprintf("%s[%s]", itv, bi)
 		header = fmt.Sprintf("%s := 0; %s < len(%s); %s++", bi, bi, itv, bi)
