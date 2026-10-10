@@ -63,7 +63,14 @@ Update the knowledgebase in the same change as the work, not later:
 
 - Prototype code: Go, standard library preferred, `gofmt`, table driven and
   golden file tests under `testdata/`.
-- Tests: `go test -short ./...` (about 10s) for each commit; full `go test ./...` once before a merge or push.
+- Tests (owner, 2026-10-09: run the minimum, fix forward):
+  - each commit: `go test -short` over the repo (exclude `runs/`), about 10s;
+  - before a merge or push: `-short` plus the full tests of only the
+    packages the change touched (and `go vet` on them);
+  - the full suite (`go test ./...` without `-short`) only before tagging a
+    release, after a large merge (a new backend feature across packages),
+    or from `bench/nightly.sh`; a failure it finds is fixed forward with a
+    regression test, not by reverting.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.
