@@ -9,6 +9,8 @@ connection scope). Tests: the `conc_rwlock_handoff` golden (TestGolden,
 TestGoldenTasks under ThreadSanitizer with 1, 2, and per CPU workers,
 arm64 TestGoldenRunShared), the other `conc_*` and `http_*` goldens.
 Numbers: `bench/results/native-runtime-2026-10-10.md`, section 2.
+Since 2026-10-10 also std/llrt/testdata/tasks.c `handoff`, `prune`, and
+`magazines` (TestRuntimeTasks; `xo_chunks` counts carved chunks).
 
 ## Context
 

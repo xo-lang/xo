@@ -35,6 +35,10 @@ backend and on LLVM and compares both with want.txt, but it is skipped
 under `-short`, so the per commit test run does not check this golden.
 `go test ./internal/llvm -run 'TestGolden$/fault_defer_chain'` does.
 
+**Fixed (63755b4, 2026-10-10):** `TestGolden` runs `fault_defer_chain`
+(and the new `request_eq`) under `-short` too (`shortGoldens`, about a
+second each with a cold build directory).
+
 ## CHANGELOG items since v0.7.0
 
 ### v0.9.0
@@ -48,8 +52,8 @@ under `-short`, so the per commit test run does not check this golden.
 | Native test binaries: property tests, `testing.gen`, `Set[Int8]`, `--real` (0120) | stable (already) | yes | cmd/xo `TestNoGCTests` (testdata/nogc/prop, nogc/real), `TestNoGCTestLeaks` |
 | Deferred code that faults runs the rest of cleanup; `task.isolate` sees cancellation again (0085 amendment) | stable (already) | yes | llvm:fault_defer_chain (`TestGolden`, full mode only) |
 | LLVM CPU features (LSE, outline atomics) (0119) | n/a | yes | internal/build `TestParseTargetAttrs`, `TestLLVMTargetAttrs` |
-| Native `Mutex` handoff to readers, scopes drop finished tasks, cross thread frees (0118) | n/a | yes | partial: std/llrt/testdata/tasks.c (`TestRuntimeTasks`) exercises rlock and lock; **no test** for reader handoff, finished task release, or flat server memory (bench only: `bench/perf/conc` rwmutex, 28 MB vs 295 MB figure) |
-| Native HTTPS speed, session tickets and resumption (0117) | n/a | yes | internal/llvm `TestTLSDiff`, `TestTLSLeaks`, internal/build `TestTLSAccel`; **no test** for session tickets or resumption (only `bench/perf/http` `RESUME=1`) |
+| Native `Mutex` handoff to readers, scopes drop finished tasks, cross thread frees (0118) | n/a | yes | std/llrt/testdata/tasks.c (`TestRuntimeTasks`): `handoff`, `prune`, `magazines` (6e65cc5; each fails with its mechanism disabled) |
+| Native HTTPS speed, session tickets and resumption (0117) | n/a | yes | internal/llvm `TestTLSDiff` (resumption on TLS 1.3 and 1.2 by `DidResume`, 6e65cc5), `TestTLSLeaks`, internal/build `TestTLSAccel` |
 | `xo lsp` (0114) | stable | n/a | internal/lsp `TestDiagnosticsAndQuickFix`, `TestHover`, `TestDefinition`, `TestReferencesAndRename`, `TestFormatAndSymbols`, `TestSemanticTokens`, `TestCorpus`, `TestStdCopy` |
 | VS Code grammar (0113) | n/a (not in the spec) | n/a | editors/vscode `TestKeywordsMatchLexer`, `TestManifestPointsAtGrammar` |
 | `use c`, `xo bind --c`, `ffi` effect (0093 stage 2, 0116) | XO1201 by design | yes, calls not recorded | internal/llvm `TestUseC`, `TestUseCZlib`; cmd/xo `TestBindC`; internal/check `TestUseC` |
@@ -74,7 +78,7 @@ under `-short`, so the per commit test run does not check this golden.
 | `ZoneErr`, `CivilErr` display text | stable | yes | gen:time_civil want.txt ("does not exist (skipped") |
 | Newtypes `e.0`, `Email(s)` (0097) | stable | yes | gen:newtype_value, llvm:newtypes |
 | `xo check --fix` (0096) | stable | n/a | cmd/xo `TestCheckFix` |
-| Go backend output size, no DWARF, net/http only when used (0098) | stable | n/a | internal/build gocache tests cover cache trimming; **no test** that binaries carry no DWARF or that programs without std/http do not link net/http |
+| Go backend output size, no DWARF, net/http only when used (0098) | stable | n/a | internal/build gocache tests (cache trimming), `TestGoBinaryTrimming` (no DWARF unless `XO_GO_DWARF=1`, no net/http without std/http; 153f721) |
 | Codex r2: XO0175 split fix, `.display()` on every Display type, closure that never completes infers `Never` | stable | n/a | internal/parser parser_test (XO0175); internal/check rules_test |
 | `x.debug()` on every value; second pass audit tests | stable | yes | gen:audit_second_pass |
 | Go calls in record and replay (0093 stage 1) | stable | `use go` impossible | internal/gen `TestReplayGoCalls`; gobind `TestReplayModes` |
@@ -83,18 +87,23 @@ under `-short`, so the per commit test run does not check this golden.
 
 ### Items with no test traced
 
-1. Native session tickets and TLS resumption (0117): only the benchmark's
-   `RESUME=1`. Next: a `TestTLSDiff` case that connects twice with a Go
-   `tls.Config{ClientSessionCache: ...}` and asserts `DidResume`.
-2. Native reader handoff, finished task release in long lived scopes,
-   cross thread frees (0118): bench only. Next: a case in
-   std/llrt/testdata/tasks.c counting reader wakeups per writer release,
-   and a `TestNoGCNotesServer` style test asserting RSS stays under a
-   bound after N connections.
-3. Go backend binary trimming (0098): no DWARF unless `XO_GO_DWARF=1`, no
-   net/http without std/http. Next: an internal/build test that runs
-   `go tool nm` on hello world and asserts no `net/http.` symbols and no
-   `__debug_info` section.
+1. **Fixed (6e65cc5).** Native session tickets and TLS resumption
+   (0117): `TestTLSDiff` dials twice with a `ClientSessionCache` on TLS
+   1.3 and 1.2 and prints `DidResume` (`resumed=false resumed=true` on
+   every backend).
+2. **Fixed (6e65cc5).** 0118 in std/llrt/testdata/tasks.c: `handoff`
+   (readers queued behind a writer read before a writer queued after
+   them), `prune` (a scope that starts 16N tasks keeps a list of about
+   64), `magazines` (40 rounds of 50,000 blocks allocated on one thread
+   and freed on another carve 1 chunk after warm up, 31 without
+   magazines; counted by the new `xo_chunks`). Each check was seen to
+   fail with its mechanism disabled. RSS of a real server is still
+   bench only.
+3. **Fixed (153f721).** 0098: internal/build `TestGoBinaryTrimming`
+   builds hello world (no DWARF section, no `net/http.` name in the
+   binary, whose pclntab keeps function names), an std/http program
+   (the probe finds `net/http.`), and hello world with `XO_GO_DWARF=1`
+   (DWARF present).
 4. Codex r3 fixes were not traced to a test name in this pass (time box);
    grep `internal/gen/testdata/golden` and `internal/fix` for the select
    arm without a binding to confirm.
@@ -141,13 +150,26 @@ Preview left (1): 6.1 `use c` (native only).
 Native check over the Go backend goldens (`xo check --no-gc` on all 115
 internal/gen goldens; was 99): 13 report XO1201. 12 are `use go`
 (impossible by design; three also hit the planned `go.Error.go_type`).
-One is planned: **http_scoped**, `==` on `http.Request` (`with ==
+One was planned: **http_scoped**, `==` on `http.Request` (`with ==
 plain`, line 100), because the native `Request` carries request values
-the equality helpers do not compare. Note it is legal on the Go backend:
-`Request` is not a handle under decision 0112.
+the equality helpers do not compare. **Fixed (63755b4):** `Request` holds
+no handle, so under decision 0112 it stays comparable on every backend
+(the Go backend and the golden were right); the native lowering compares
+its six spec fields and ignores the typed values, as std/rt's `XoEq`.
+`http_scoped` now runs with `--no-gc` (same output but the log
+timestamps); internal/llvm golden `request_eq` covers `==`, `!=`, and
+`contains`. So 12 goldens report XO1201, all `use go`.
 
-Native test binaries (`xo test --no-gc`) still differ from the Go backend
-on three internal/gen goldens (the fourth pass's leftovers, unchanged):
+Native test binaries (`xo test --no-gc`) differed from the Go backend
+on three internal/gen goldens (the fourth pass's leftovers). **Fixed
+(e9b0f00):** all three are byte identical on llvm and arm64 with `-v`
+and in `TestNoGCTests`. Causes: the native `Once` did not store a fault
+(f now runs under `task.isolate`, the fault is raised again with
+`rt.fault_raise`); a configured log output in a test still went to the
+test's buffer (now to the fake standard error, records still kept);
+`set_grace` before `run_main` set the grace of nothing, and a third
+signal called `_exit(130)` in the test binary (now `run_main` returns
+130 and `exit_code()` is `Some(130)`, as std/rt). Before:
 
 ```
 xo test --no-gc internal/gen/testdata/golden/test_logs      # 2 failed, Go 1: "configured output still captures records"
@@ -195,36 +217,38 @@ does a user meet it in ordinary backend work, then size.
 Open decisions: Appendix B has no open question left (1 to 6 decided;
 0090 to 0093). The only Proposed ADR is 0040 (performance path), which
 does not affect the language surface. The test coverage holes above
-(session tickets, 0118 runtime behaviour, 0098 binary trimming) are not
-1.0 blockers but should get tests before a freeze.
+(session tickets, 0118 runtime behaviour, 0098 binary trimming) have
+tests since 6e65cc5 and 153f721.
 
 ### What native lacks to leave preview
 
-1. **Native test binaries match the Go backend's reports**: test_logs (a
-   configured log output does not reach the captured standard error),
-   test_once (a fault in a `Once`'s function is not stored), test_shutdown
-   (grace period before `run_main`, third signal's status 130). Commands
-   above.
+1. ~~**Native test binaries match the Go backend's reports**~~ (fixed,
+   e9b0f00): test_logs, test_once, test_shutdown.
 2. **Error frames outside main's report**: test failure reports, handler
    logs (spec 11.1 says so explicitly), and fault frames.
 3. **Crash bundles (11.2)** are not written natively.
 4. **Record and replay** (`--record`, `xo replay`) do not exist natively,
    so `use c` calls are not recorded either (Appendix B 5 note).
-5. **`==` on `http.Request`** (gen:http_scoped XO1201).
-6. **`TestGolden`, `TestGenGoldensNative`, `TestNoGCTests` run only in
-   full mode**: native parity is checked only before a merge, not per
-   commit. Next: a short subset (5 goldens) under `-short`.
+5. ~~**`==` on `http.Request`**~~ (fixed, 63755b4).
+6. **`TestGenGoldensNative`, `TestNoGCTests` run only in full mode**;
+   `TestGolden` runs two goldens under `-short` since 63755b4. Next: a
+   short subset of `TestNoGCTests` (test_once is about 0.3 s warm).
 7. `use go` stays impossible natively by design (Go code needs Go's
    runtime); it is a documented XO1201, not a preview blocker.
 
 Next steps, ranked by likelihood of closing a native preview item fast:
-fix test_once (store the fault in the native `Once`, std/native/task.xo),
-then test_logs (route the configured log output through the captured
-standard error in std/llrt/xo_testing.c), then test_shutdown, then error
-frames in native test reports (reuse decision 0104's frame list in
-xo_testing.c's failure printer).
+error frames in native test reports (reuse decision 0104's frame list in
+xo_testing.c's failure printer), then a `-short` subset of
+`TestNoGCTests`, then crash bundles (11.2) natively.
 
 ## Test status
+
+Fixes pass (2026-10-10, after 153f721): `go test -short ./...` and the
+full runs of the changed packages (cmd/xo, internal/build, internal/llvm,
+internal/ssa), `go vet` of them, and the std/llrt C tests under
+ThreadSanitizer (`TestRuntimeTasks`, the other threads_test.go tests).
+
+Original pass:
 
 `go test -short ./...` at this commit: all 30 packages with tests pass
 (2026-10-10). No Go package changed in this pass (documents only), so no

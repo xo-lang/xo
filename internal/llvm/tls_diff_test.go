@@ -418,6 +418,29 @@ func probeTLSServer(t *testing.T, out *strings.Builder, addr string, p *testPKI)
 	dial("tls 1.3", &tls.Config{MinVersion: tls.VersionTLS13})
 	dial("tls 1.1", &tls.Config{MinVersion: tls.VersionTLS10, MaxVersion: tls.VersionTLS11})
 	dial("p-256 only", &tls.Config{CurvePreferences: []tls.CurveID{tls.CurveP256}})
+	// session tickets (decision 0117): a second connection with the
+	// client's session cache resumes, on TLS 1.3 and 1.2
+	resume := func(label string, version uint16) {
+		cfg := &tls.Config{RootCAs: p.roots, MinVersion: version, MaxVersion: version, ClientSessionCache: tls.NewLRUClientSessionCache(4)}
+		var got []string
+		for range 2 {
+			c, err := tls.Dial("tcp", addr, cfg)
+			if err != nil {
+				fmt.Fprintf(out, "%s: %v\n", label, err)
+				return
+			}
+			// a request and its response: a TLS 1.3 ticket comes after
+			// the handshake, and the client reads it with the response
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+			fmt.Fprintf(c, "GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+			io.ReadAll(c)
+			got = append(got, fmt.Sprintf("resumed=%v", c.ConnectionState().DidResume))
+			c.Close()
+		}
+		fmt.Fprintf(out, "%s: %s\n", label, strings.Join(got, " "))
+	}
+	resume("resume tls 1.3", tls.VersionTLS13)
+	resume("resume tls 1.2", tls.VersionTLS12)
 	// requests over one kept alive connection
 	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p.roots}, MaxConnsPerHost: 1}
 	defer tr.CloseIdleConnections()

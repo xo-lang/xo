@@ -1,0 +1,18 @@
+// `==` on http.Request (std.md 4, decisions 0055, 0112): a Request holds
+// no handle, so it is comparable on every backend; its typed values (and
+// the route parameters of the implementation) take no part.
+use std/http
+
+fn main(os: Os) {
+  let a = http.new_request("GET", "/x", headers: {"X-A": "1"})
+  let k: http.Key[Int] = http.key("n")
+  let v = a.with_value(k, 1)
+  os.stdio.println("same ${a == http.new_request("GET", "/x", headers: {"X-A": "1"})}")
+  os.stdio.println("values ignored ${a == v} ${a != v}")
+  os.stdio.println("method ${a == http.new_request("POST", "/x", headers: {"X-A": "1"})}")
+  os.stdio.println("path ${a == http.new_request("GET", "/y", headers: {"X-A": "1"})}")
+  os.stdio.println("header ${a == a.with_header("X-B", "2")} ${a != a.with_header("X-A", "2")}")
+  os.stdio.println("body ${a == http.new_request("GET", "/x", headers: {"X-A": "1"}, body: "b".bytes())}")
+  let reqs = [a, v, a.with_header("X-A", "2")]
+  os.stdio.println("contains ${reqs.contains(http.new_request("GET", "/x", headers: {"X-A": "2"}))}")
+}

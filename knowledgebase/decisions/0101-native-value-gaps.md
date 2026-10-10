@@ -48,7 +48,9 @@ constraint.
    interface value is XO1201: the backends' equality helpers do not
    compare them, and the check used to accept such programs (the
    internal/gen golden `http_scoped` compares two requests holding
-   request values and failed in the LLVM lowering).
+   request values and failed in the LLVM lowering). Since 2026-10-10
+   `http.Request` compares its six spec fields natively (decision 0112's
+   note), so `http_scoped` builds with `--no-gc`.
 7. The rest are native prelude functions in Xo (`map_filter`,
    `set_union`, `set_intersect`, `set_difference`, `list_insert`,
    `list_remove_at`, `list_indexed`, `int_pow`, with std/rt's fault

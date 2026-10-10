@@ -96,3 +96,9 @@ Not scheduled; recorded so the 3 MB hello world target has a known path.
    replay and crash bundle tests. First measurement: `go tool nm -size`
    on the hello binary, summing `encoding/json` symbols (it shares
    `reflect` with the rest of the runtime, so the gain is uncertain).
+
+## Tests (2026-10-10)
+
+internal/build `TestGoBinaryTrimming`: hello world has no DWARF and no
+`net/http.` name, an std/http program has net/http, and `XO_GO_DWARF=1`
+keeps DWARF.

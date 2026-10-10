@@ -560,13 +560,36 @@ func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
 		c := s.call("str.cmp", m.Builtin(KInt), "", l, r)
 		return s.add(o, boolT, nil, c, s.cint(0))
 	case KStruct, KTuple, KEnum, KList, KUnit:
+		if (o == OpEq || o == OpNe) && isNativeRequest(l.Type) {
+			// http.Request: its six fields; the route parameters and
+			// typed values of the implementation take no part in `==`
+			// (std.md 4, decision 0055), as std/rt's XoEq
+			var eq *Value
+			for i, name := range requestFields {
+				ft := fieldType(l.Type, i)
+				if l.Type.Fields[i].Name != name {
+					b.unsupported(x, "`==` on `http.Request`: its implementation's field "+strconv.Itoa(i)+" is not `"+name+"`")
+					return s.undef(boolT)
+				}
+				e := s.compareValues(token.Eq, s.add(OpField, ft, i, l), s.add(OpField, ft, i, r), x)
+				if eq == nil {
+					eq = e
+				} else {
+					eq = s.add(OpAnd, boolT, nil, eq, e)
+				}
+			}
+			if o == OpNe {
+				return s.add(OpNot, boolT, nil, eq)
+			}
+			return eq
+		}
 		if (o == OpEq || o == OpNe) && !comparable(l.Type, map[*Type]bool{}) {
 			// a function value or a runtime handle outside an
 			// interface value: the backends' equality helpers do not
 			// compare them. The checker rejects `==` on user types
 			// that hold one (XO0404, decision 0112), so only a std
-			// type whose native implementation holds one (a request's
-			// typed values) gets here
+			// type whose native implementation holds one would get
+			// here (http.Request is compared above)
 			b.unsupported(x, "`==` on values of type `"+l.Type.Name+"`, which hold functions or runtime handles")
 			return s.undef(boolT)
 		}
@@ -590,6 +613,16 @@ func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
 	}
 	b.unsupported(x, "comparing values of type `"+l.Type.Name+"`")
 	return s.undef(boolT)
+}
+
+// requestFields are the fields of http.Request (std.md 4), the first
+// ones of its native implementation (std/native/http.xo).
+var requestFields = []string{"method", "path", "url", "headers", "body", "remote_ip"}
+
+// isNativeRequest reports whether t is the native implementation of
+// http.Request.
+func isNativeRequest(t *Type) bool {
+	return t.Kind == KStruct && t.Name == "native.http.Request" && len(t.Fields) >= len(requestFields)
 }
 
 // toLowerRecv returns the receiver of a call `s.to_lower()` of the

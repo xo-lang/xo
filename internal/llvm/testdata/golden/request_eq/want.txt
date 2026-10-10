@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+same true
+values ignored true false
+method false
+path false
+header false true
+body false
+contains true
+--- stderr

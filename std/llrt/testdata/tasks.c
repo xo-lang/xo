@@ -373,6 +373,123 @@ static void test_mutex(void) {
 	fputs("mutex: ok\n", stderr);
 }
 
+// test_handoff checks decision 0118's phase fair handoff: readers queued
+// behind a writer get the lock when it releases, before a writer that
+// queued after them (with writers simply preferred they read its write).
+static void test_handoff(void) {
+	xo_rlist *v = one(0);
+	xo_rc_mark(&v->rc);
+	xo_mutex *m = xo_mutex_new(v, (int64_t)drop_int_list);
+	xo_scope *s = xo_scope_open();
+	xo_rlist *held = xo_mutex_lock(m, LOC);
+	enum { R = 8 };
+	xo_task *rs[R];
+	for (int i = 0; i < R; i++) {
+		rs[i] = spawn(s, J_READ, 1, m, 2);
+	}
+	for (int queued = 0; !queued;) {
+		lk(&m->mu);
+		queued = m->rwait == R;
+		unlk(&m->mu);
+	}
+	xo_task *w = spawn(s, J_LOCK, 1, m, 2);
+	for (int queued = 0; !queued;) {
+		lk(&m->mu);
+		queued = m->wwait == 1;
+		unlk(&m->mu);
+	}
+	*(int64_t *)rl_data(held) = 1;
+	xo_mutex_unlock(m, held);
+	for (int i = 0; i < R; i++) {
+		xo_rlist *r = xo_task_await(rs[i], LOC);
+		CHECK(first(r) == 1); // not 2: the queued writer waited for them
+		drop_int_list(r);
+		release(rs[i]);
+	}
+	drop_int_list(xo_task_await(w, LOC));
+	release(w);
+	CHECK(xo_scope_close(s, 0) == 0);
+	release(s);
+	xo_rlist *l = xo_mutex_rlock(m, LOC);
+	CHECK(first(l) == 2);
+	xo_mutex_runlock(m, l);
+	release(m);
+	fputs("handoff: ok\n", stderr);
+}
+
+// test_prune checks that a long lived scope drops the tasks that are over
+// and unreferenced (decision 0118, scope_prune): its list stays bounded
+// however many tasks it starts.
+static void test_prune(void) {
+	enum { BATCH = 64 };
+	int64_t total = 16 * (int64_t)N;
+	xo_scope *s = xo_scope_open();
+	xo_task *ts[BATCH];
+	int64_t maxlist = 0;
+	int64_t id = mkjob(J_SQUARE, 3, NULL); // one job for all (jobs is bounded)
+	for (int64_t done = 0; done < total; done += BATCH) {
+		for (int i = 0; i < BATCH; i++) {
+			ts[i] = xo_task_spawn(s, one(id), (int64_t)run_job, (int64_t)drop_int_list, (int64_t)drop_int_list, 2, 0, LOC);
+		}
+		for (int i = 0; i < BATCH; i++) {
+			drop_int_list(xo_task_await(ts[i], LOC));
+			release(ts[i]);
+		}
+		lk(&s->mu);
+		if (s->nlist > maxlist) {
+			maxlist = s->nlist;
+		}
+		unlk(&s->mu);
+	}
+	// without pruning the list holds every task started (total)
+	CHECK(maxlist < total / 4);
+	if (maxlist >= total / 4) {
+		fprintf(stderr, "prune: the scope's list reached %lld of %lld tasks\n", (long long)maxlist, (long long)total);
+	}
+	CHECK(xo_scope_close(s, 0) == 0);
+	release(s);
+	fputs("prune: ok\n", stderr);
+}
+
+// test_magazines checks that blocks one thread allocates and another
+// frees come back to the allocating thread (decision 0118's magazines)
+// instead of it carving new chunks every round.
+enum { MAG_BLOCKS = 50000 };
+static void *mag_blocks[MAG_BLOCKS];
+
+static void *mag_free_all(void *arg) {
+	(void)arg;
+	for (int i = 0; i < MAG_BLOCKS; i++) {
+		xo_free(mag_blocks[i]);
+	}
+	return NULL;
+}
+
+static void test_magazines(void) {
+	enum { ROUNDS = 40, WARM = 4 };
+	int64_t before = 0;
+	for (int round = 0; round < ROUNDS; round++) {
+		if (round == WARM) {
+			before = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED);
+		}
+		for (int i = 0; i < MAG_BLOCKS; i++) {
+			mag_blocks[i] = xo_alloc(56);
+		}
+		pthread_t th;
+		CHECK(pthread_create(&th, NULL, mag_free_all, NULL) == 0);
+		pthread_join(th, NULL);
+	}
+	// each round allocates 3.2 MB: without magazines about one chunk a
+	// round (36 here); a freeing thread keeps less than two magazines
+	// (128 KB) in the heap it leaves behind
+	int64_t grew = __atomic_load_n(&xo_chunks, __ATOMIC_RELAXED) - before;
+	CHECK(grew <= 6);
+	if (grew > 6) {
+		fprintf(stderr, "magazines: %lld chunks carved in %d rounds\n", (long long)grew, ROUNDS - WARM);
+	}
+	fputs("magazines: ok\n", stderr);
+}
+
 // leaks checks that every allocation of the test just run was freed.
 static void leaks(const char *name) {
 	int64_t live, total;
@@ -396,5 +513,11 @@ int main(void) {
 	leaks("failure");
 	test_mutex();
 	leaks("mutex");
+	test_handoff();
+	leaks("handoff");
+	test_prune();
+	leaks("prune");
+	test_magazines();
+	leaks("magazines");
 	return failures != 0;
 }

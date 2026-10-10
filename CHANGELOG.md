@@ -6,7 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-Nothing yet.
+- Native test binaries now report test_once, test_logs, and
+  test_shutdown byte for byte as the Go backend (`TestNoGCTests` runs
+  them): a fault in a `task.once` function is stored and raised again
+  in every caller; `log.configure(os.stdio, ...)` in a test writes
+  records to the fake standard error (still kept for `testing.logs()`);
+  `os.proc.set_grace` before `testing.run_main` sets that run's grace
+  period, and a third signal makes `run_main` return 130 (with
+  `exit_code()` `Some(130)`) instead of ending the test binary.
+- `==` on `http.Request` works on the native backends (was XO1201): it
+  compares the six spec fields and ignores typed request values, as on
+  the Go backend (decision 0112 note; internal/llvm golden `request_eq`).
+- internal/llvm `TestGolden` runs `fault_defer_chain` and `request_eq`
+  under `-short` too.
+- Tests for items that had none: native TLS session resumption
+  (`TestTLSDiff`, TLS 1.3 and 1.2), decision 0118's reader handoff,
+  scope pruning, and magazines (std/llrt/testdata/tasks.c), and decision
+  0098's binary trimming (internal/build `TestGoBinaryTrimming`).
 
 ## v0.9.0 (2026-10-10)
 

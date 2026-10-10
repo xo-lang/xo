@@ -167,7 +167,7 @@ func TestRuntimeTasks(t *testing.T) {
 	bin := tsanBuild(t, nil, []string{src})
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex"} {
+		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"} {
 			if !strings.Contains(out, name+": ok") {
 				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
 			}

@@ -65,3 +65,17 @@ rejected. Automatic `Debug` is unaffected.
   reached only by std types whose native implementation holds one
   (`http.Request` with typed values: `==` on requests is still XO1201
   natively, planned).
+
+## Native `http.Request` equality (2026-10-10)
+
+`http.Request` holds no handle (its fields are strings, a `Url`, a
+header map, and bytes), so it stays comparable on every backend; the Go
+backend's acceptance was right and the internal/gen golden `http_scoped`
+keeps `with == plain`. The native implementation's hidden route
+parameters and typed values (an `rt.Any` list) take no part in `==`
+(std.md 4, decision 0055), so internal/ssa (`compareValues`,
+`isNativeRequest`) compares the six spec fields of
+`native.http.Request` field by field, as std/rt's generated `XoEq`. The
+XO1201 guard stays for any other std type whose native implementation
+holds a function or handle. Test: internal/llvm golden `request_eq`
+(also under `-short`).
