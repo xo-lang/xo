@@ -634,8 +634,16 @@ struct tls_conn {
 	const char *host; // the URL's host name (no brackets)
 	int host_ip;
 	uint32_t upper; // flags of the chain above the leaf
+	int apple;      // macOS, the system's roots: apple_verify decides
+	char *alert;    // a fatal alert received after the handshake
 	char *vmsg;     // Go's x509 error text
 };
+
+static void alert_msg(tls_conn *t, char *m, size_t mn);
+
+// tls_alert is the text of a fatal alert the peer sent after the
+// handshake (Go: a net.OpError "remote error: tls: ..."), or NULL.
+static const char *tls_alert(tls_conn *t) { return t ? t->alert : NULL; }
 
 static int bio_send(void *p, const unsigned char *buf, size_t len) {
 	tls_conn *t = p;
@@ -724,6 +732,7 @@ static void tls_conn_free(tls_conn *t) {
 	}
 	mbedtls_ssl_free(&t->ssl);
 	free(t->vmsg);
+	free(t->alert);
 	free(t);
 }
 
@@ -743,6 +752,11 @@ static int64_t tls_read(tls_conn *t, char *p, int64_t n) {
 		}
 		if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET || r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) {
 			continue;
+		}
+		if (r == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE && !t->alert) {
+			char m[120];
+			alert_msg(t, m, sizeof m);
+			t->alert = strdup(m);
 		}
 		if (!t->status) {
 			t->status = CC_ERR;
@@ -1126,18 +1140,167 @@ static time_t x509_time(const mbedtls_x509_time *t) {
 	return timegm(&tm);
 }
 
+// hostname_msg checks host against the leaf crt as
+// x509.Certificate.VerifyHostname: 0 when it matches, else 1 and the
+// text of x509.HostnameError in msg.
+static int hostname_msg(const mbedtls_x509_crt *crt, const char *host, char *msg, size_t mn) {
+	cert_names nm;
+	names_load(crt, &nm);
+	if (host_ok(&nm, host)) {
+		names_free(&nm);
+		return 0;
+	}
+	char cn[256] = "";
+	for (const mbedtls_x509_name *n = &crt->subject; n; n = n->next) {
+		if (MBEDTLS_OID_CMP(MBEDTLS_OID_AT_CN, &n->oid) == 0 && n->val.len < sizeof cn) {
+			memcpy(cn, n->val.p, n->val.len);
+			cn[n->val.len] = 0;
+		}
+	}
+	unsigned char ipb[16];
+	nbuf o = {0};
+	if (!nm.has_san && dns_match(cn, strlen(cn), host)) {
+		nbuf_str(&o, "x509: certificate relies on legacy Common Name field, use SANs instead");
+	} else if (ip_parse(host, ipb)) {
+		if (nm.nip == 0) {
+			nbuf_str(&o, "x509: cannot validate certificate for ");
+			nbuf_str(&o, host);
+			nbuf_str(&o, " because it doesn't contain any IP SANs");
+		} else {
+			nbuf_str(&o, "x509: certificate is valid for ");
+			for (int i = 0; i < nm.nip; i++) {
+				char ips[64];
+				ip_string(nm.ip[i], nm.iplen[i], ips, sizeof ips);
+				if (i > 0) {
+					nbuf_str(&o, ", ");
+				}
+				nbuf_str(&o, ips);
+			}
+			nbuf_str(&o, ", not ");
+			nbuf_str(&o, host);
+		}
+	} else if (nm.ndns == 0) {
+		nbuf_str(&o, "x509: certificate is not valid for any names, but wanted to match ");
+		nbuf_str(&o, host);
+	} else {
+		nbuf_str(&o, "x509: certificate is valid for ");
+		for (int i = 0; i < nm.ndns; i++) {
+			if (i > 0) {
+				nbuf_str(&o, ", ");
+			}
+			nbuf_str(&o, nm.dns[i]);
+		}
+		nbuf_str(&o, ", not ");
+		nbuf_str(&o, host);
+	}
+	nbuf_byte(&o, 0);
+	snprintf(msg, mn, "%s", o.p);
+	free(o.p);
+	names_free(&nm);
+	return 1;
+}
+
+#ifdef __APPLE__
+// apple_verify is crypto/x509's systemVerify (root_darwin.go), the
+// verification of a chain against the system's roots on macOS: the
+// Security framework evaluates the presented chain for an SSL server
+// with the host name, then Go checks the host name itself. 0 when the
+// chain is trusted, else 1 and Go's text in msg.
+static int apple_verify(const mbedtls_x509_crt *crt, const char *host, char *msg, size_t mn) {
+	CFMutableArrayRef certs = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+	for (const mbedtls_x509_crt *c = crt; c && c->raw.p; c = c->next) {
+		CFDataRef d = CFDataCreate(NULL, c->raw.p, (CFIndex)c->raw.len);
+		SecCertificateRef sc = d ? SecCertificateCreateWithData(NULL, d) : NULL;
+		if (d) {
+			CFRelease(d);
+		}
+		if (!sc) {
+			CFRelease(certs);
+			snprintf(msg, mn, c == crt ? "invalid leaf certificate" : "x509: malformed certificate");
+			return 1;
+		}
+		CFArrayAppendValue(certs, sc);
+		CFRelease(sc);
+	}
+	CFStringRef name = host[0] ? CFStringCreateWithCString(NULL, host, kCFStringEncodingUTF8) : NULL;
+	SecPolicyRef pol = SecPolicyCreateSSL(true, name);
+	if (name) {
+		CFRelease(name);
+	}
+	SecTrustRef trust = NULL;
+	OSStatus st = SecTrustCreateWithCertificates(certs, pol, &trust);
+	CFRelease(certs);
+	if (pol) {
+		CFRelease(pol);
+	}
+	if (st != errSecSuccess || !trust) {
+		snprintf(msg, mn, "SecTrustCreateWithCertificates error: %d", (int)st);
+		return 1;
+	}
+	CFErrorRef err = NULL;
+	int bad = 0;
+	if (!SecTrustEvaluateWithError(trust, &err)) {
+		bad = 1;
+		CFIndex code = err ? CFErrorGetCode(err) : 0;
+		char desc[600] = "";
+		if (err) {
+			CFStringRef ds = CFErrorCopyDescription(err);
+			if (ds) {
+				CFStringGetCString(ds, desc, sizeof desc, kCFStringEncodingUTF8);
+				CFRelease(ds);
+			}
+			CFRelease(err);
+		}
+		if (code == errSecCertificateExpired) {
+			snprintf(msg, mn, "x509: certificate has expired or is not yet valid: %s", desc);
+		} else if (code == errSecHostNameMismatch) {
+			if (!hostname_msg(crt, host, msg, mn)) {
+				snprintf(msg, mn, "x509: certificate is valid for %s", host);
+			}
+		} else if (code == errSecNotTrusted) {
+			snprintf(msg, mn, "x509: certificate signed by unknown authority");
+		} else {
+			snprintf(msg, mn, "x509: %s", desc);
+		}
+	}
+	CFRelease(trust);
+	if (!bad && host[0] && hostname_msg(crt, host, msg, mn)) {
+		bad = 1;
+	}
+	return bad;
+}
+#endif
+
 // cli_verify is the client's verification callback: at the leaf (depth
 // 0, called last) it decides in the order of x509.Certificate.Verify
 // (the leaf's validity period, then the host name, then the chain) and
-// keeps Go's text of the first failure.
+// keeps Go's text of the first failure. On macOS with the system's roots
+// the Security framework decides instead (apple_verify), as Go's
+// verifier does there.
 static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
 	tls_conn *t = p;
+	char msg[1024] = "";
+#ifdef __APPLE__
+	if (t->apple) {
+		if (depth > 0) {
+			*flags = 0;
+			return 0;
+		}
+		if (apple_verify(crt, t->host ? t->host : "", msg, sizeof msg)) {
+			free(t->vmsg);
+			t->vmsg = strdup(msg);
+			*flags = MBEDTLS_X509_BADCERT_OTHER;
+		} else {
+			*flags = 0;
+		}
+		return 0;
+	}
+#endif
 	if (depth > 0) {
 		t->upper |= *flags;
 		return 0;
 	}
 	uint32_t f = *flags & ~(uint32_t)MBEDTLS_X509_BADCERT_CN_MISMATCH;
-	char msg[1024] = "";
 	if (f & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) {
 		char now[40], lim[40];
 		rfc3339(time(NULL), 1, now, sizeof now);
@@ -1150,59 +1313,7 @@ static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags
 		}
 	}
 	if (!msg[0] && t->host) {
-		cert_names nm;
-		names_load(crt, &nm);
-		if (!host_ok(&nm, t->host)) {
-			// x509.HostnameError.Error
-			char cn[256] = "";
-			for (const mbedtls_x509_name *n = &crt->subject; n; n = n->next) {
-				if (MBEDTLS_OID_CMP(MBEDTLS_OID_AT_CN, &n->oid) == 0 && n->val.len < sizeof cn) {
-					memcpy(cn, n->val.p, n->val.len);
-					cn[n->val.len] = 0;
-				}
-			}
-			unsigned char ipb[16];
-			if (!nm.has_san && dns_match(cn, strlen(cn), t->host)) {
-				snprintf(msg, sizeof msg, "x509: certificate relies on legacy Common Name field, use SANs instead");
-			} else if (ip_parse(t->host, ipb)) {
-				if (nm.nip == 0) {
-					snprintf(msg, sizeof msg, "x509: cannot validate certificate for %s because it doesn't contain any IP SANs", t->host);
-				} else {
-					nbuf o = {0};
-					nbuf_str(&o, "x509: certificate is valid for ");
-					for (int i = 0; i < nm.nip; i++) {
-						char s[64];
-						ip_string(nm.ip[i], nm.iplen[i], s, sizeof s);
-						if (i > 0) {
-							nbuf_str(&o, ", ");
-						}
-						nbuf_str(&o, s);
-					}
-					nbuf_str(&o, ", not ");
-					nbuf_str(&o, t->host);
-					nbuf_byte(&o, 0);
-					snprintf(msg, sizeof msg, "%s", o.p);
-					free(o.p);
-				}
-			} else if (nm.ndns == 0) {
-				snprintf(msg, sizeof msg, "x509: certificate is not valid for any names, but wanted to match %s", t->host);
-			} else {
-				nbuf o = {0};
-				nbuf_str(&o, "x509: certificate is valid for ");
-				for (int i = 0; i < nm.ndns; i++) {
-					if (i > 0) {
-						nbuf_str(&o, ", ");
-					}
-					nbuf_str(&o, nm.dns[i]);
-				}
-				nbuf_str(&o, ", not ");
-				nbuf_str(&o, t->host);
-				nbuf_byte(&o, 0);
-				snprintf(msg, sizeof msg, "%s", o.p);
-				free(o.p);
-			}
-		}
-		names_free(&nm);
+		hostname_msg(crt, t->host, msg, sizeof msg);
 	}
 	uint32_t chain = f | t->upper;
 	if (!msg[0] && (chain & (MBEDTLS_X509_BADCERT_EXT_KEY_USAGE | MBEDTLS_X509_BADCERT_KEY_USAGE)) &&
@@ -1266,12 +1377,27 @@ static const char *alert_text(int a) {
 	return NULL;
 }
 
+// alert_msg is Go's text of the fatal alert t received:
+// "remote error: tls: <alertText>".
+static void alert_msg(tls_conn *t, char *m, size_t mn) {
+	int a = mbedtls_ssl_get_fatal_alert(&t->ssl);
+	const char *txt = alert_text(a);
+	if (txt) {
+		snprintf(m, mn, "remote error: tls: %s", txt);
+	} else {
+		snprintf(m, mn, "remote error: tls: alert(%d)", a);
+	}
+}
+
 // tls_client_start runs the client's handshake on pd for host (the
 // URL's host name) with roots, within when (and http.DefaultTransport's
 // 10 s TLSHandshakeTimeout): CC_OK and the connection in *out, or why it
-// failed with Go's error text in msg (CC_ERR: a Protocol error).
-static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn) {
+// failed with Go's error text in msg (CC_ERR: the ClientErr tag in *kind,
+// 2 Connect for an alert, which Go reports as a net.OpError, else 4
+// Protocol).
+static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn, int *kind) {
 	*out = NULL;
+	*kind = 4;
 	if (roots == &sys_roots) {
 		pthread_once(&sys_once, sys_roots_load);
 	}
@@ -1291,6 +1417,9 @@ static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64
 	unsigned char ipb[16];
 	t->host = name;
 	t->host_ip = ip_parse(name, ipb);
+#ifdef __APPLE__
+	t->apple = roots == &sys_roots;
+#endif
 	// SNI for a host name (Go's hostnameInSNI: not for an IP address,
 	// without a trailing dot); the name itself is checked by cli_verify
 	if (t->host_ip) {
@@ -1325,12 +1454,8 @@ static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64
 	} else if (r == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED || t->vmsg) {
 		snprintf(msg, mn, "tls: failed to verify certificate: %s", t->vmsg ? t->vmsg : "x509: certificate signed by unknown authority");
 	} else if (r == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) {
-		const char *a = alert_text(mbedtls_ssl_get_fatal_alert(&t->ssl));
-		if (a) {
-			snprintf(msg, mn, "remote error: tls: %s", a);
-		} else {
-			snprintf(msg, mn, "remote error: tls: alert(%d)", mbedtls_ssl_get_fatal_alert(&t->ssl));
-		}
+		alert_msg(t, msg, mn);
+		*kind = 2;
 	} else if (r == MBEDTLS_ERR_SSL_CONN_EOF || (t->status == 0 && r == TLS_ERR_RECV)) {
 		snprintf(msg, mn, "EOF");
 	} else if (t->nfirst >= 1 && t->first[0] != 0x15 && t->first[0] != 0x16) {
@@ -1374,9 +1499,14 @@ static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n) {
 	(void)t, (void)p, (void)n;
 	return -1;
 }
-static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn) {
+static const char *tls_alert(tls_conn *t) {
+	(void)t;
+	return NULL;
+}
+static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn, int *kind) {
 	(void)pd, (void)host, (void)roots, (void)when;
 	*out = NULL;
+	*kind = 4;
 	snprintf(msg, mn, "https is not supported: the program was built without TLS");
 	return CC_ERR;
 }

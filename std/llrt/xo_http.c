@@ -52,7 +52,8 @@ static void tls_close_notify(tls_conn *t);
 static void tls_srv_free(tls_srv *s);
 static tls_conn *tls_server_conn(tls_srv *s, xo_pd *pd);
 static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n);
-static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn);
+static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn, int *kind);
+static const char *tls_alert(tls_conn *t);
 
 // ---------------------------------------------------------------------------
 // Strings and tables
@@ -3403,7 +3404,8 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 		// the TLS handshake (xo_tls.c): its failures are Protocol errors
 		// with crypto/tls's texts, or Timeout and Canceled
 		char tmsg[1200] = "";
-		int ts = tls_client_start(cn->pd, tls_host, roots, when, &c.tls, tmsg, sizeof tmsg);
+		int kind = 4;
+		int ts = tls_client_start(cn->pd, tls_host, roots, when, &c.tls, tmsg, sizeof tmsg, &kind);
 		free(tls_host);
 		if (ts != CC_OK) {
 			pd_close(c.pd);
@@ -3412,6 +3414,8 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 				cr_fail(r, 3, "");
 			} else if (ts == CC_CANCELED) {
 				cr_fail(r, 5, "");
+			} else if (kind == 2) {
+				cr_fail(r, 2, "%s", tmsg);
 			} else {
 				cr_fail(r, 4, "%s %s: %s", op, qraw.p, tmsg);
 			}
@@ -3464,6 +3468,9 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	if (s == CC_OK) {
 		s = cl_read_response(&c, method, r, why, sizeof why);
 	}
+	// an alert of the server after the handshake (a TLS 1.3 server that
+	// wanted a client certificate): Go's net.OpError, a Connect error
+	char *alert = tls_alert(c.tls) && s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED ? strdup(tls_alert(c.tls)) : NULL;
 	tls_conn_free(c.tls);
 	pd_close(c.pd);
 	h_release(cn);
@@ -3478,8 +3485,13 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 		cr_fail(r, 5, "");
 		break;
 	default:
-		cr_fail(r, 4, "%s %s: %s", op, qraw.p, why[0] ? why : "EOF");
+		if (alert) {
+			cr_fail(r, 2, "%s", alert);
+		} else {
+			cr_fail(r, 4, "%s %s: %s", op, qraw.p, why[0] ? why : "EOF");
+		}
 	}
+	free(alert);
 	free(qraw.p);
 	return s;
 }
