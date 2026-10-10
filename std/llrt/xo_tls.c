@@ -9,7 +9,8 @@
 //     tls.X509KeyPair does, with its error texts;
 //   - the server: ALPN "http/1.1" (no HTTP/2), the first certificate
 //     unless SNI names another one's DNS name (getCertificate), no client
-//     certificates, no session tickets; a client that sends plain HTTP gets
+//     certificates, session tickets (TLS 1.3 psk_dhe_ke and TLS 1.2,
+//     decision 0117); a client that sends plain HTTP gets
 //     net/http's "400 Client sent an HTTP request to an HTTPS server";
 //     handshake failures are not logged (std/rt drops net/http's log line
 //     too);
@@ -33,6 +34,7 @@
 
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/ssl.h"
+#include "mbedtls/ssl_ticket.h"
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/oid.h"
@@ -51,12 +53,23 @@
 static pthread_once_t tls_once = PTHREAD_ONCE_INIT;
 static int tls_ready;
 
+// third_party/mbedtls/xo/xo_tls_accel.c (decision 0117)
+void xo_tls_threading_init(void);
+
 static void tls_init_once(void) {
+	xo_tls_threading_init();
 	tls_ready = psa_crypto_init() == PSA_SUCCESS;
 	// mbedtls_ssl_config_defaults fills a global list of cipher suites the
 	// first time without a lock (ThreadSanitizer found the race): fill it
 	// here, once
 	(void)mbedtls_ssl_list_ciphersuites();
+	// SHA-256 and SHA-512 check once whether the CPU has the ARMv8
+	// instructions (decision 0117) and keep the answer in statics without
+	// a lock: hash once here so every later hash only reads them
+	unsigned char h[64];
+	size_t hn;
+	(void)psa_hash_compute(PSA_ALG_SHA_256, (const uint8_t *)"", 0, h, sizeof h, &hn);
+	(void)psa_hash_compute(PSA_ALG_SHA_512, (const uint8_t *)"", 0, h, sizeof h, &hn);
 }
 
 static int tls_init(void) {
@@ -822,6 +835,7 @@ static void tls_close_notify(tls_conn *t) {
 
 struct tls_srv {
 	mbedtls_ssl_config conf;
+	mbedtls_ssl_ticket_context ticket; // session tickets (decision 0117)
 	xo_tcert **certs;
 	int n;
 };
@@ -1042,6 +1056,7 @@ static void tls_srv_free(tls_srv *s) {
 		return;
 	}
 	mbedtls_ssl_config_free(&s->conf);
+	mbedtls_ssl_ticket_free(&s->ticket);
 	for (int i = 0; i < s->n; i++) {
 		h_release(s->certs[i]);
 	}
@@ -1069,6 +1084,18 @@ void xo_srv_tls(xo_srv *srv, xo_tcert *c) {
 		mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
 		mbedtls_ssl_conf_alpn_protocols(&s->conf, tls_alpn);
 		mbedtls_ssl_conf_sni(&s->conf, sni_cb, s);
+		// Session tickets, as Go's server sends them by default
+		// (decision 0117): a returning client resumes without the
+		// certificate and its signature, in TLS 1.3 still with a fresh
+		// ECDHE (psk_dhe_ke; Go offers no psk_ke either). The ticket keys
+		// are random per server, AES-256-GCM, and rotate every 24 hours
+		// (Go: every 24 hours); a ticket is good for 24 hours (Go: 7 days).
+		mbedtls_ssl_ticket_init(&s->ticket);
+		if (mbedtls_ssl_ticket_setup(&s->ticket, PSA_ALG_GCM, PSA_KEY_TYPE_AES, 256, 24 * 3600) != 0) {
+			xo_oom();
+		}
+		mbedtls_ssl_conf_session_tickets_cb(&s->conf, mbedtls_ssl_ticket_write, mbedtls_ssl_ticket_parse, &s->ticket);
+		mbedtls_ssl_conf_tls13_key_exchange_modes(&s->conf, MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL | MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL);
 		srv->tls = s;
 	}
 	h_retain(c);

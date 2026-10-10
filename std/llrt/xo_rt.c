@@ -75,6 +75,13 @@
 // another thread than the one that allocated it: it goes on the freeing
 // thread's list (the size class is in its prefix), and the leak check
 // sums the counters of all heaps. Heaps are never freed.
+//
+// Central lists (decision 0118): a thread that frees what others
+// allocate (a server's connection tasks free what its accept loop made)
+// would keep those blocks for good while the allocating thread carves new
+// chunks, so memory grew with every connection. With more than one
+// thread, free lists move between threads as magazines through a central
+// list per class (alloc_mt, free_mt); one thread alone never touches it.
 
 #define XO_CHUNK (4 << 20)
 #define XO_SMALL_MAX 1024
@@ -95,6 +102,8 @@ typedef struct xo_heap {
 	char *bump_cur;
 	char *bump_end;
 	void *free_lists[XO_NCLASS + 1];
+	int64_t nfree[XO_NCLASS + 1]; // blocks on each free list (about: a magazine taken counts as full)
+	void *mag[XO_NCLASS + 1];     // a full magazine per class (threaded: free_mt)
 	// the worklist of xo_rc_defer
 	xo_deferred *defer_q;
 	int64_t defer_n, defer_cap;
@@ -230,6 +239,7 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	void *p = h->free_lists[c];
 	if (p) {
 		h->free_lists[c] = *(void **)p;
+		h->nfree[c]--;
 		return p;
 	}
 	int64_t need = size + 8;
@@ -251,13 +261,85 @@ static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
 	}
 	*(void **)p = h->free_lists[b[0]];
 	h->free_lists[b[0]] = p;
+	h->nfree[b[0]]++;
+}
+
+// The central lists: per class, a stack of magazines (free lists of
+// about central_batch(c) blocks) linked by their first block's second
+// word (every block has at least 16 bytes).
+static void *central[XO_NCLASS + 1];
+static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
+
+// central_batch is the size of a magazine of class c: 64 KiB of blocks,
+// at least 8.
+static inline int64_t central_batch(int64_t c) {
+	int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
+	int64_t n = (64 << 10) / size;
+	return n < 8 ? 8 : n;
+}
+
+// central_put pushes magazine m of class c.
+__attribute__((noinline)) static void central_put(int64_t c, void *m) {
+	pthread_mutex_lock(&central_mu);
+	((void **)m)[1] = central[c];
+	__atomic_store_n(&central[c], m, __ATOMIC_RELAXED); // read unlocked by central_take
+	pthread_mutex_unlock(&central_mu);
+}
+
+// central_take pops a magazine of class c, or returns null.
+__attribute__((noinline)) static void *central_take(int64_t c) {
+	if (!__atomic_load_n(&central[c], __ATOMIC_RELAXED)) {
+		return NULL;
+	}
+	pthread_mutex_lock(&central_mu);
+	void *m = central[c];
+	if (m) {
+		__atomic_store_n(&central[c], ((void **)m)[1], __ATOMIC_RELAXED);
+	}
+	pthread_mutex_unlock(&central_mu);
+	return m;
 }
 
 // The threaded paths of xo_alloc and xo_free are tail calls, so the
-// single threaded paths stay leaf functions without a frame.
-__attribute__((noinline)) static void *alloc_mt(int64_t n) { return alloc_in(heap_slow(), n); }
+// single threaded paths stay leaf functions without a frame. With
+// threads, a class keeps its free list (nfree long) and at most one full
+// spare magazine: an empty list takes the spare, else one from the
+// central list; a list that reaches a magazine's size becomes the spare,
+// and the spare it replaces goes to the central list. Nothing walks a
+// list, so moving blocks between threads costs O(1) per magazine.
+__attribute__((noinline)) static void *alloc_mt(int64_t n) {
+	xo_heap *h = heap_slow();
+	if (n <= XO_MID_MAX) {
+		int64_t size;
+		int64_t c = size_class(n, &size);
+		if (!h->free_lists[c]) {
+			void *m = h->mag[c];
+			h->mag[c] = NULL;
+			if (!m) {
+				m = central_take(c);
+			}
+			if (m) {
+				h->free_lists[c] = m;
+				h->nfree[c] = central_batch(c);
+			}
+		}
+	}
+	return alloc_in(h, n);
+}
 
-__attribute__((noinline)) static void free_mt(void *p) { free_in(heap_slow(), p); }
+__attribute__((noinline)) static void free_mt(void *p) {
+	xo_heap *h = heap_slow();
+	int64_t c = ((int64_t *)p)[-1]; // before free_in: a large block is gone after
+	free_in(h, p);
+	if (c > 0 && h->nfree[c] >= central_batch(c)) {
+		if (h->mag[c]) {
+			central_put(c, h->mag[c]);
+		}
+		h->mag[c] = h->free_lists[c];
+		h->free_lists[c] = NULL;
+		h->nfree[c] = 0;
+	}
+}
 
 void *xo_alloc(int64_t n) {
 	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
@@ -458,7 +540,23 @@ static struct {
 	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
 	int vpending;    // every context is blocked: advance the clock (atomic)
 	int in_main;     // testing.run_main is running main
+	// real capabilities of `xo test --real` (decision 0120): the effects
+	// the test declares (TW_REAL_*, from XO_TEST_REAL); virt: the clock
+	// is virtual (the test world without `clock` or `net`)
+	int real;
+	int virt;
 } tw;
+
+#define TW_REAL_FS_READ 1
+#define TW_REAL_FS_WRITE 2
+#define TW_REAL_NET 4
+#define TW_REAL_CLOCK 8
+#define TW_REAL_ENV 16
+#define TW_REAL_STDIO 32
+#define TW_REAL_PROC 64
+
+// tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
+static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
 
 static void tw_write(int err, const char *p, int64_t n);
 
@@ -538,7 +636,7 @@ static void flush_pending(void) {
 }
 
 void xo_print(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(0, p, n);
 		return;
 	}
@@ -548,7 +646,7 @@ void xo_print(const char *p, int64_t n) {
 }
 
 void xo_println(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(0, p, n);
 		tw_write(0, "\n", 1);
 		return;
@@ -560,7 +658,7 @@ void xo_println(const char *p, int64_t n) {
 }
 
 void xo_eprint(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(1, p, n);
 		return;
 	}
@@ -571,7 +669,7 @@ void xo_eprint(const char *p, int64_t n) {
 }
 
 void xo_eprintln(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		tw_write(1, p, n);
 		tw_write(1, "\n", 1);
 		return;
@@ -1716,7 +1814,7 @@ static int64_t mono_ns(void) {
 
 // tnow is the time of timers: monotonic ns, or the virtual clock in the
 // test world.
-static int64_t tnow(void) { return tw.on ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
+static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
 
 // xo_shield_begin starts deferred code (core 3.5, decision 0022): it is
 // shielded from cancellation, and on the unwind path the unwinding flag
@@ -1743,6 +1841,18 @@ void xo_shield_end(int64_t tok, const char *loc, int64_t n) {
 		snprintf(msg, sizeof msg, "XO-F005: a shielded defer ran for %.3gs, longer than 5s", (double)el / 1e9);
 		fault_at(msg, loc, n);
 	}
+}
+
+// xo_shield_abort ends deferred code started with token tok that faulted
+// (decision 0085): the shield ends and the flag is set again as
+// xo_shield_end does, without its time check; the rest of the cleanup
+// runs on (internal/ssa faultCont). Without it the context stayed
+// shielded, and a task that caught the fault (task.isolate) never saw
+// cancellation again.
+void xo_shield_abort(int64_t tok) {
+	xo_ctx *c = ctx();
+	c->shield--;
+	c->unwinding = (int)(tok & 1);
 }
 
 // ctx_canceled reports whether c is canceled and not shielded.
@@ -2244,7 +2354,7 @@ static void dl_check_locked(void) {
 	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
 	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
 	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
-		if (tw.on) {
+		if (tw.virt) {
 			// the test world's clock jumps to the next timer
 			// (tw_kick, after pool.mu is released), or it deadlocked
 			__atomic_store_n(&tw.vpending, 1, __ATOMIC_RELEASE);
@@ -2293,7 +2403,7 @@ static xo_worker *root_worker(void) {
 // end does not.
 static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
 	flush_pending();
-	if (tw.on) {
+	if (tw.virt) {
 		// in the test world nothing outside the program ends a wait:
 		// timers are virtual and fire only when every context waits
 		counted = 1;
@@ -2381,7 +2491,8 @@ static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1)
 typedef struct xo_went {
 	xo_park *park;
 	struct xo_went *prev, *next;
-	int writer; // a Mutex waiter that wants the lock exclusively
+	int writer;  // a Mutex waiter that wants the lock exclusively
+	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
 } xo_went;
 
 typedef struct {
@@ -2461,6 +2572,10 @@ typedef struct xo_scope {
 	struct xo_timer *deadline;
 	int timed_out;
 	struct xo_task *fault; // the first task that faulted (a reference, decision 0085)
+	// list's length, and the length at which a spawn prunes it next
+	// (scope_prune); closing: the join started, the list stays as it is
+	int64_t nlist, prune_at;
+	int closing;
 } xo_scope;
 
 static void timer_del(struct xo_timer *t);
@@ -2484,6 +2599,7 @@ typedef struct xo_task {
 	xo_lock mu; // waiters
 	xo_wl waiters;
 	struct xo_task *snext;
+	int gone; // atomic: 2 when its run and its queue entry are over (scope_prune)
 	// the fault that ended it (decision 0085), malloc'd (last: the fields
 	// above keep their places)
 	char *fault_msg, *fault_loc, *fault_detail;
@@ -2512,6 +2628,7 @@ xo_scope *xo_scope_open(void) {
 	xo_scope *s = xo_alloc(sizeof(xo_scope));
 	memset(s, 0, sizeof *s);
 	h_init(s, scope_free);
+	s->prune_at = 64;
 	s->parent_node = c->node;
 	node_link(&s->body, c->node);
 	s->tasks = calloc(1, sizeof(xo_node));
@@ -2635,7 +2752,9 @@ static void run_claimed(xo_task *t, int64_t units) {
 	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
 	wl_wake(&t->waiters);
 	unlk(&t->mu);
-	// the last touch of t and s: the scope's join may free them after
+	// the last touch of t: a spawn may prune it after (scope_prune)
+	__atomic_fetch_add(&t->gone, (int)(units / 2), __ATOMIC_RELEASE);
+	// the last touch of s: the scope's join may free it after
 	scope_units_done(s, units);
 }
 
@@ -2649,7 +2768,50 @@ static void run_task(xo_task *t) {
 // dequeued records that a worker took t's queue entry (and ran it, or
 // found it run by a helper). The scope's join waits for this too, so no
 // queue holds a task the scope frees.
-static void dequeued(xo_task *t) { scope_units_done(t->scope, 2); }
+static void dequeued(xo_task *t) {
+	xo_scope *s = t->scope;
+	__atomic_fetch_add(&t->gone, 1, __ATOMIC_RELEASE); // the last touch of t
+	scope_units_done(s, 2);
+}
+
+// scope_prune takes the tasks that are over and that only s's list
+// holds out of the list (s->mu held) and returns them, linked by snext,
+// for scope_drop_pruned. A scope that lives long and starts many tasks
+// whose handles are dropped (a server's connections, decision 0118) kept
+// every one, with its result, until it closed: about 1 KB per connection.
+// A task is over when its run ended and its queue entry was taken
+// (gone == 2: nothing touches it after either); with a count of one
+// (shared: -1) nobody else has it, and nobody can get it again. The
+// close never prunes (its helpers walk the list without the lock), and a
+// spawn prunes only when the list doubled since the last time.
+static xo_task *scope_prune(xo_scope *s) {
+	xo_task *dead = NULL;
+	xo_task **pp = &s->list;
+	while (*pp) {
+		xo_task *u = *pp;
+		if (__atomic_load_n(&u->gone, __ATOMIC_ACQUIRE) == 2 && __atomic_load_n(&u->h.rc, __ATOMIC_ACQUIRE) == -1) {
+			*pp = u->snext;
+			u->snext = dead;
+			dead = u;
+			s->nlist--;
+		} else {
+			pp = &u->snext;
+		}
+	}
+	s->prune_at = s->nlist * 2 > 64 ? s->nlist * 2 : 64;
+	return dead;
+}
+
+// scope_drop_pruned unlinks the pruned tasks' nodes and drops the list's
+// references (without s->mu: a task's result may run drop code).
+static void scope_drop_pruned(xo_task *dead) {
+	while (dead) {
+		xo_task *next = dead->snext;
+		node_unlink(&dead->node);
+		h_release(dead);
+		dead = next;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -3117,8 +3279,14 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	node_link(&t->node, s->tasks);
 	t->snext = s->list;
 	s->list = t;
+	s->nlist++;
+	xo_task *dead = NULL;
+	if (s->nlist >= s->prune_at && !s->closing) {
+		dead = scope_prune(s);
+	}
 	unlk(&s->mu);
 	pool_push(t);
+	scope_drop_pruned(dead);
 	return t;
 }
 
@@ -3243,6 +3411,7 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		s->deadline = NULL;
 	}
 	lk(&s->mu);
+	s->closing = 1; // no pruning from here: the helpers below walk the list unlocked
 	if (mode == 0) {
 		for (xo_task *t = s->list; t; t = t->snext) {
 			if (t->background) {
@@ -3823,24 +3992,31 @@ xo_rlist *xo_select_take(xo_select *s, int64_t i) {
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
 // writers preferred, holding its value in a shared list of one.
 
+
 typedef struct {
 	xo_hdr h;
 	xo_lock mu;
 	int writer;
-	int64_t readers, wwait;
+	int64_t readers, wwait, rwait; // rwait: readers in waiters
 	xo_rlist *slot;
 	xo_ldrop drop;
 	xo_wl waiters;
 } xo_mutex;
 
-// mutex_wake wakes the waiters that can take m now (m->mu held), writers
-// first: the oldest waiting writer when m is free, else (no writer
-// waits) every waiting reader. Waking every waiter at each release made
-// 32 contending request tasks park about 12 times per request and
-// convoy on m->mu (bench/results/perf-throughput-2026-10-08.md, "Native
-// backends"). A woken waiter checks again and waits again when another
-// context took m first (barging); the context that took it wakes the
-// next one when it releases, so no wake up is lost.
+// mutex_wake wakes the waiters that can take m now (m->mu held). Phase
+// fair, as Go's RWMutex: after a writer's release the readers waiting
+// then get the lock together (handed over: mutex_grant_readers), and the
+// next writer waits for them; after the last reader's release (or when
+// no reader waits) the oldest waiting writer is woken. Waking every
+// waiter at each release made 32 contending request tasks park about 12
+// times per request and convoy on m->mu
+// (bench/results/perf-throughput-2026-10-08.md, "Native backends");
+// waking readers that then checked again parked them again whenever a
+// writer had queued meanwhile, 3.6 parks per access with 64 tasks
+// (bench/results/native-runtime-2026-10-10.md, decision 0118). A woken
+// writer checks again and waits again when another writer took m first
+// (barging); whoever holds m wakes the next one when it releases, so no
+// wake up is lost.
 // mutex_signal wakes a waiter of a Mutex into the waking thread's ring,
 // not its next: the waker still holds the thread for the rest of its
 // request, and a fiber in next waits for that (thieves leave next alone
@@ -3858,25 +4034,42 @@ static void mutex_signal(xo_park *p) {
 	}
 }
 
-static void mutex_wake(xo_mutex *m) {
+// mutex_grant_readers hands m to every waiting reader (m->mu held, no
+// writer holds m): each is counted in m->readers, taken off the list, and
+// marked granted before it is woken, so it runs without taking m->mu or
+// checking again. Its list entry lives on its stack: nothing here
+// touches it after the wake up.
+static void mutex_grant_readers(xo_mutex *m) {
+	xo_went *e = m->waiters.first;
+	while (e) {
+		xo_went *next = e->next;
+		if (!e->writer) {
+			xo_park *p = e->park;
+			wl_del(&m->waiters, e);
+			m->readers++;
+			m->rwait--;
+			__atomic_store_n(&e->granted, 1, __ATOMIC_RELEASE);
+			mutex_signal(p);
+		}
+		e = next;
+	}
+}
+
+// after_writer: a writer just released m (readers go first).
+static void mutex_wake(xo_mutex *m, int after_writer) {
 	if (m->writer || !m->waiters.first) {
 		return;
 	}
-	if (m->wwait > 0) {
-		if (m->readers > 0) {
-			return;
-		}
+	if (m->rwait > 0 && (after_writer || m->wwait == 0)) {
+		mutex_grant_readers(m);
+		return;
+	}
+	if (m->wwait > 0 && m->readers == 0) {
 		for (xo_went *e = m->waiters.first; e; e = e->next) {
 			if (e->writer) {
 				mutex_signal(e->park);
 				return;
 			}
-		}
-		return;
-	}
-	for (xo_went *e = m->waiters.first; e; e = e->next) {
-		if (!e->writer) {
-			mutex_signal(e->park);
 		}
 	}
 }
@@ -3908,7 +4101,7 @@ xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
 		while (m->writer || m->readers > 0) {
 			if (!wl_wait_as(c, &m->mu, &m->waiters, 1, 1)) {
 				m->wwait--;
-				mutex_wake(m); // readers held back by this writer, or the next writer
+				mutex_wake(m, 0); // readers held back by this writer, or the next writer
 				unlk(&m->mu);
 				held_del(c, m);
 				c->unwinding = 1;
@@ -3928,7 +4121,7 @@ void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
 	lk(&m->mu);
 	m->slot = l;
 	m->writer = 0;
-	mutex_wake(m);
+	mutex_wake(m, 1);
 	unlk(&m->mu);
 	held_del(ctx(), m);
 }
@@ -3939,15 +4132,41 @@ xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
 	xo_ctx *c = ctx();
 	held_check(c, m, "with_read", loc, n);
 	lk(&m->mu);
-	while (m->writer || m->wwait > 0) {
-		if (!wl_wait(c, &m->mu, &m->waiters, 1)) {
+	if (m->writer || m->wwait > 0) {
+		// wait until a writer's release hands m over (mutex_grant_readers);
+		// a cancellation unwinds unless m was handed over first
+		xo_went e = {.park = &c->park};
+		park_reset(&c->park);
+		wl_add(&m->waiters, &e);
+		m->rwait++;
+		unlk(&m->mu);
+		for (;;) {
+			park_wait(c, 1);
+			if (__atomic_load_n(&e.granted, __ATOMIC_ACQUIRE)) {
+				// the last writer set m->slot under m->mu before the
+				// grant, and none can change it while this share is held
+				xo_rlist *l = m->slot;
+				rc_inc(&l->rc);
+				return l;
+			}
+			lk(&m->mu);
+			if (e.granted) {
+				break;
+			}
+			if (ctx_canceled(c)) {
+				wl_del(&m->waiters, &e);
+				m->rwait--;
+				unlk(&m->mu);
+				held_del(c, m);
+				c->unwinding = 1;
+				return &empty_list;
+			}
+			park_reset(&c->park);
 			unlk(&m->mu);
-			held_del(c, m);
-			c->unwinding = 1;
-			return &empty_list;
 		}
+	} else {
+		m->readers++;
 	}
-	m->readers++;
 	xo_rlist *l = m->slot;
 	rc_inc(&l->rc);
 	unlk(&m->mu);
@@ -3961,7 +4180,7 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 	}
 	lk(&m->mu);
 	if (--m->readers == 0) {
-		mutex_wake(m);
+		mutex_wake(m, 0);
 	}
 	unlk(&m->mu);
 	held_del(ctx(), m);
@@ -4242,7 +4461,7 @@ static void th_remove(xo_timer *t) {
 
 // timer_add arms t (when, and park or fn, set).
 static void timer_add(xo_timer *t) {
-	if (!tw.on) {
+	if (!tw.virt) {
 		// the test world has no poller: its timers fire when the
 		// virtual clock moves (tw_kick)
 		ev_start();
@@ -4260,7 +4479,7 @@ static void timer_add(xo_timer *t) {
 	th_up(t->idx);
 	int first = t->idx == 0;
 	pthread_mutex_unlock(&ev.mu);
-	if (first && !tw.on) {
+	if (first && !tw.virt) {
 		ev_poke();
 	}
 }
@@ -4562,7 +4781,7 @@ static void *poller_main(void *arg) {
 static void tw_sleep_record(int64_t d);
 
 int64_t xo_clock_now(void) {
-	if (tw.on) {
+	if (tw.virt) {
 		return __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE);
 	}
 	struct timespec ts;
@@ -4833,7 +5052,7 @@ xo_listener *xo_net_listen(const char *p, int64_t n) {
 		return xo_h_zero();
 	}
 	char *addr = cstr_of(p, n);
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_NET)) {
 		// FakeNet.listen: an in memory listener (std/rt's memListener)
 		xo_listener *ml = tw_listen(c, addr);
 		free(addr);
@@ -5000,7 +5219,7 @@ xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
 		net_fail(c, 5, "");
 		return xo_h_zero();
 	}
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_NET)) {
 		// FakeNet.dial: raw connections are not faked (Refused)
 		net_fail(c, 2, "");
 		return xo_h_zero();
@@ -5311,7 +5530,7 @@ int64_t xo_floor_div(int64_t a, int64_t b) {
 static xo_rlist *tw_env_get(const char *p, int64_t n);
 
 xo_rlist *xo_env_get(const char *p, int64_t n) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_ENV)) {
 		return tw_env_get(p, n);
 	}
 	char *name = cstr_of(p, n);

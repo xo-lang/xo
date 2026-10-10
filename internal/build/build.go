@@ -98,6 +98,10 @@ type Options struct {
 	// on a native backend, NativeBackend() unless Backend names llvm or
 	// arm64 (Backend go is an error).
 	NoGC bool
+	// RealTests (`xo test --real`, core 9.2) builds a native test binary
+	// with the tests that declare `uses` (decision 0120); the harness
+	// runs them with real capabilities for those effects.
+	RealTests bool
 	// ShareProbes (LLVM and arm64 backends; tests) marks every heap
 	// value shared between threads as it is defined, so every count
 	// update takes the atomic path (ssa.InsertShareProbes, decision

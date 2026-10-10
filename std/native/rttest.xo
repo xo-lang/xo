@@ -6,6 +6,11 @@ use native/rt
 /// The program runs in the test world (a test binary).
 fn test_on() -> Bool
 
+/// The effect `real` (xo_testing.c's TW_REAL_*: 4 net, 16 env) is a fake
+/// in this test: not declared with `uses` and run with `xo test --real`
+/// (decision 0120).
+fn test_fake(real: Int) -> Bool
+
 /// Keeps a log record for testing.logs() and echoes its text line.
 fn test_log(level: Int, msg: Str, keys: List[Str], vals: List[Str], line: Str)
 fn test_log_count() -> Int

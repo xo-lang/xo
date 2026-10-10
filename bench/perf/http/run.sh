@@ -30,7 +30,9 @@
 # servers. SCHEME=https serves the Xo configs over TLS (decision 0105) with
 # a fresh self signed certificate (loadgen -gencert; the go config stays
 # plain HTTP), and NEWCONN=1 opens a connection per request (with https: a
-# full TLS handshake per request).
+# full TLS handshake per request), and RESUME=1 with them keeps the
+# client's TLS sessions so new connections resume (session tickets,
+# decision 0117).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -50,6 +52,9 @@ scheme=${SCHEME:-http}
 newconn=""
 if [ "${NEWCONN:-0}" = 1 ]; then
 	newconn="-newconn"
+fi
+if [ "${RESUME:-0}" = 1 ]; then
+	newconn="$newconn -resume"
 fi
 if [ "$scheme" = https ]; then
 	"$out/loadgen" -gencert "$out"

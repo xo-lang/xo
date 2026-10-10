@@ -1,0 +1,163 @@
+// Deferred code that faults while it runs (core 3.5, 8; decision 0085,
+// amended 2026-10-10): as on the Go backend, the deferred code
+// registered before it still runs, then the blocks around it, and the
+// new fault replaces the one being unwound; afterwards the task is no
+// longer shielded from cancellation. The leak check counts every
+// allocation.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: fault ${info.msg} at ${info.location}")
+    Err(_) => stdio.println("${label}: failed")
+  }
+}
+
+fn boom(label: Str) -> Int {
+  let parts = [label, "boom"]
+  if parts.len() > 1 {
+    fault("${label} faulted")
+  }
+  0
+}
+
+// the body faults, then a deferred block faults again
+fn body_then_defer(io: Stdio) -> Int uses stdio {
+  let held = ["outer", "list"]
+  defer io.println("  1: first defer runs (${held.len()})")
+  defer {
+    let tmp = ["tmp"]
+    io.println("  1: second defer starts ${tmp.len()}")
+    boom("second defer")
+  }
+  defer io.println("  1: third defer runs")
+  boom("body")
+}
+
+// no fault in the body: a deferred statement faults on the normal way out
+fn defer_only(io: Stdio) -> Int uses stdio {
+  let held = ["kept"]
+  defer io.println("  2: first defer runs (${held.len()})")
+  defer boom("defer on normal exit")
+  defer io.println("  2: third defer runs")
+  io.println("  2: body done")
+  5
+}
+
+// the inner block's deferred code faults: the outer block's still runs
+fn nested(io: Stdio) -> Int uses stdio {
+  defer io.println("  3: outer defer runs")
+  var n = 0
+  {
+    let inner = ["inner"]
+    defer io.println("  3: inner first defer runs (${inner.len()})")
+    defer boom("inner defer")
+    n = 1
+  }
+  io.println("  3: not reached ${n}")
+  n
+}
+
+// two deferred statements fault: the last fault is reported
+fn two(io: Stdio) -> Int uses stdio {
+  defer io.println("  4: first defer runs")
+  defer boom("first of two")
+  defer boom("second of two")
+  io.println("  4: body done")
+  1
+}
+
+// a callee's deferred code faults while the caller's waits
+fn callee(io: Stdio) -> Int uses stdio {
+  defer boom("callee defer")
+  io.println("  5: callee body")
+  2
+}
+
+fn caller(io: Stdio) -> Int uses stdio {
+  let mine = ["caller"]
+  defer io.println("  5: caller defer runs (${mine.len()})")
+  callee(io) + 1
+}
+
+// an index out of range in a loop inside deferred code
+fn loop_in_defer(io: Stdio) -> Int uses stdio {
+  let xs = [1, 2, 3]
+  defer io.println("  6: earlier defer runs")
+  defer {
+    var sum = 0
+    for i in 0..5 {
+      sum += xs[i]
+    }
+    io.println("  6: not reached ${sum}")
+  }
+  xs.len()
+}
+
+// deferred code with deferred code of its own
+fn nested_defer(io: Stdio) -> Int uses stdio {
+  defer io.println("  7: outer defer runs")
+  defer {
+    defer io.println("  7: inner defer of the deferred block runs")
+    boom("nested")
+  }
+  7
+}
+
+fn defer_faults(io: Stdio) -> Int uses stdio {
+  defer io.println("  8: earlier defer runs")
+  defer boom("8 defer")
+  3
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  show(io, "1", task.isolate(fn() -> Int ! () { body_then_defer(io) }))
+  show(io, "2", task.isolate(fn() -> Int ! () { defer_only(io) }))
+  show(io, "3", task.isolate(fn() -> Int ! () { nested(io) }))
+  show(io, "4", task.isolate(fn() -> Int ! () { two(io) }))
+  show(io, "5", task.isolate(fn() -> Int ! () { caller(io) }))
+  show(io, "6", task.isolate(fn() -> Int ! () { loop_in_defer(io) }))
+  show(io, "7", task.isolate(fn() -> Int ! () { nested_defer(io) }))
+
+  // after a fault in deferred code is caught, the task still sees
+  // cancellation: the waiter unwinds when its sibling faults
+  let gate: Chan[Int] = Chan.new(0)
+  let ready = Atomic[Int].new(0)
+  show(io, "8", task.isolate(fn() -> Int ! () {
+    scope s {
+      s.spawn(fn() {
+        show(io, "  8 caught", task.isolate(fn() -> Int ! () { defer_faults(io) }))
+        ready.add(1)
+        match gate.recv() {
+          Some(v) => io.println("  8: got ${v}")
+          None => io.println("  8: closed")
+        }
+      })
+      s.spawn(fn() {
+        while ready.get() == 0 {
+          let _x = 1
+        }
+        let parts = ["x"]
+        if parts.len() > 0 {
+          fault("8 sibling")
+        }
+      })
+    }
+    8
+  }))
+
+  // a canceled background task's deferred code faults
+  show(io, "9", task.isolate(fn() -> Int ! () {
+    scope s {
+      s.spawn_background(fn() {
+        defer io.println("  9: first defer of the canceled task runs")
+        defer boom("canceled task defer")
+        let never: Chan[Int] = Chan.new(0)
+        let _ = never.recv()
+      })
+    }
+    9
+  }))
+}

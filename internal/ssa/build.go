@@ -124,6 +124,10 @@ type Options struct {
 	// function per test block of the root modules (in TestDecls order)
 	// and a main that runs the one XO_TEST names.
 	Tests bool
+	// RealTests includes the tests that declare `uses` (core 9.2, `xo
+	// test --real`, decision 0120); without it they are left out (the
+	// harness reports them skipped).
+	RealTests bool
 	// NoFaultUnwind keeps faults as program exits (OpFault, no landings):
 	// for Go mode assembly (decision 0084), where a fault is a Go panic.
 	// Native builds unwind (decision 0085, landing.go).
@@ -748,6 +752,13 @@ type fn struct {
 	pending     *Value
 	pendingAt   pendingAt
 	pendingDefs map[*check.VarObj]*Value // definitions in its block it replaced since
+	// pendingDefer is the deferred statement the pending operation is in
+	// when its fault continues there (build_defer.go faultCont)
+	pendingDefer *deferLanding
+	// deferLand is the top level deferred statement being lowered, conts
+	// the fault continuations made so far (build_defer.go)
+	deferLand *deferLanding
+	conts     []*Block
 }
 
 // apply resolves a checker type in the instance being built.
@@ -995,6 +1006,13 @@ func (s *fn) add(op Op, t *Type, aux any, args ...*Value) *Value {
 		s.pending = v
 		s.pendingAt = s.snapshot()
 		s.pendingDefs = nil
+		s.pendingDefer = nil
+	} else if s.b.faultUnwind && mayRaise(v) && s.deferLandingHere() {
+		// in deferred code: a fault goes on with the cleanup after it
+		s.pending = v
+		s.pendingAt = s.snapshot()
+		s.pendingDefs = nil
+		s.pendingDefer = s.deferLand
 	}
 	return v
 }

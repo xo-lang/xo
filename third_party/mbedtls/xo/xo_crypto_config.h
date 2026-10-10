@@ -66,3 +66,12 @@
 // the widest window of point multiplication (P-256 ECDSA: about 5 percent
 // faster than the default 4, for 32 points of memory per operation)
 #define MBEDTLS_ECP_WINDOW_SIZE 6
+
+// SHA-256 and SHA-512 with the ARMv8 crypto extension when the CPU has it
+// (checked once at run time, the portable C otherwise; nothing changes on
+// x86-64, where the library has no SHA instructions path). AES already
+// uses AES-NI and the ARMv8 extension (MBEDTLS_AESNI_C, MBEDTLS_AESCE_C
+// are on by default), as do the precomputed tables of the curves'
+// generators (MBEDTLS_ECP_FIXED_POINT_OPTIM). Decision 0117.
+#define MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT
+#define MBEDTLS_SHA512_USE_A64_CRYPTO_IF_PRESENT

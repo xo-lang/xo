@@ -199,8 +199,8 @@ func (s *fn) snapshot() pendingAt {
 func (s *fn) flushLanding() {
 	w := s.pending
 	s.pending = nil
-	at, defs := s.pendingAt, s.pendingDefs
-	s.pendingDefs = nil
+	at, defs, dl := s.pendingAt, s.pendingDefs, s.pendingDefer
+	s.pendingDefs, s.pendingDefer = nil, nil
 	if w.Block != s.cur || s.cur.Term() != nil || s.isDead() || w.Pad != nil {
 		return
 	}
@@ -222,7 +222,9 @@ func (s *fn) flushLanding() {
 	s.f.markRest(no)
 	s.cur = yes
 	savedExits, savedScopes := s.exits, s.scopes
-	s.exits, s.scopes = at.exits, at.scopes
+	if dl == nil {
+		s.exits, s.scopes = at.exits, at.scopes
+	}
 	// the cleanup reads the variables as they were before w: put back
 	// the definitions made in its block since
 	now := map[*check.VarObj]*Value{}
@@ -234,7 +236,28 @@ func (s *fn) flushLanding() {
 			s.defs[vo][w.Block] = old
 		}
 	}
-	s.unwind()
+	if dl != nil {
+		// a fault in deferred code: its shield ends, the rest of the
+		// cleanup runs (build_defer.go faultCont)
+		land := s.deferLand
+		s.deferLand = nil
+		// the blocks opened inside the statement run their deferred code
+		// first, innermost first
+		for i := len(at.exits) - 1; i >= dl.base && !s.isDead(); i-- {
+			s.exits = at.exits[:i:i]
+			s.runDefers(at.exits[i].defers)
+		}
+		s.exits = savedExits
+		if !s.isDead() {
+			if dl.tok != nil {
+				s.rt("shield_abort", nil, dl.tok)
+			}
+			s.jump(s.faultCont(dl.fr, dl.j))
+		}
+		s.deferLand = land
+	} else {
+		s.unwind()
+	}
 	for vo, v := range now {
 		s.defs[vo][w.Block] = v
 	}

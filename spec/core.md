@@ -901,6 +901,11 @@ match code {
   deferred code returns, and not in test worlds, whose clock is virtual.
 - The native backends (`--backend=llvm`, `--backend=arm64`) run deferred
   code on every way out alike, faults included (decisions 0070, 0085).
+- Deferred code that faults ends there; the deferred code registered
+  before it and that of the blocks around it still runs, and the new
+  fault replaces the one being unwound, if any (the last fault is
+  reported). The task is no longer shielded afterwards. Every backend
+  behaves this way (decision 0085, amended 2026-10-10).
 
 **Patterns** are used in `match`, `let`, `if let`, and `for`:
 
@@ -1897,8 +1902,11 @@ native test binary and runs each test in a process of its own against the
 fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network, MemFs, FakeProc, `os.tasks`) with the same report as the Go
 backend; a fault fails only its test.
-Property tests and `--real` are not available there yet (XO1201, skipped),
-contract fuzzing (9.1) is reported as skipped (decision 0085), and error
+Property tests run there with the Go backend's cases and shrunk inputs
+(one process per case, decision 0120), `--real` gives real capabilities
+for the declared effects (a test declaring `clock`, `net`, or `proc` runs
+on the real clock there), contract fuzzing (9.1) is reported as skipped
+(decision 0085), and error
 traces are recorded natively but printed only in main's error report
 (decision 0104), and fault frames are not recorded natively.
 

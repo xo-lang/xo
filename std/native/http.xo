@@ -692,7 +692,8 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
   }
-  if rttest.test_on() {
+  if rttest.test_fake(4) {
+    // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(req, raw)
   }
   var names: List[Str] = []

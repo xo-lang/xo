@@ -1966,6 +1966,7 @@ xo_srv *xo_srv_new(void) {
 	xo_scope *sc = xo_alloc(sizeof(xo_scope));
 	memset(sc, 0, sizeof *sc);
 	h_init(sc, scope_free);
+	sc->prune_at = 64; // finished connections leave the list (scope_prune)
 	sc->parent_node = c->node;
 	xo_node *root = __atomic_load_n(&stop.root, __ATOMIC_ACQUIRE);
 	node_link(&sc->body, root ? root : c->node);

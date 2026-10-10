@@ -1,0 +1,34 @@
+// A contended readers and writer lock: 64 tasks each make 4,000
+// accesses, one in four a write that holds the lock for a Collatz step
+// count (about 111 steps), the others reads. Waiters park, so this
+// measures waking (decisions 0082, 0118), not just the uncontended path.
+fn steps(x: Int) -> Int {
+  var n = x
+  var c = 0
+  while n > 1 {
+    if n % 2 == 0 { n = n / 2 } else { n = 3 * n + 1 }
+    c += 1
+  }
+  c
+}
+
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  let odd = Atomic[Int].new(0)
+  scope s {
+    for t in 0..64 {
+      s.spawn(fn() {
+        for i in 0..4000 {
+          if (i + t) % 4 == 0 {
+            m.with(fn(var c) { c += 1 + steps(27 + c % 2) / 1000 })
+          } else {
+            let v = m.with_read(fn(c) { c })
+            if v < 0 { odd.add(1) }
+          }
+        }
+      })
+    }
+  }
+  let n = m.with_read(fn(c) { c })
+  os.stdio.println("rwmutex ${n} ${odd.get()}")
+}

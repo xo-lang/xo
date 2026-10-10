@@ -76,6 +76,8 @@ go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [-
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
 go run ./cmd/xo test --no-gc [-v] [--backend=llvm|arm64] examples/notes-service   # a native test binary, one process per test (XO_TEST=i, XO_TEST_SEED=s) in the C test world; same report as the Go backend
+XO_TEST=i XO_TEST_SEED=1 XO_PROP_SEED=1000003 ./prog.test   # one case of native property test i (decision 0120): XO_PROP_SEED is std/rt's seed*1000003+case, XO_PROP_REPLAY=c1,c2,... replays choices; prints XO-PROP-CHOICES and XO-PROP-INPUT lines before the body runs
+XO_TEST=i XO_TEST_REAL=fs.read,env ./prog.test         # a `uses` test of a native test binary built with --real: those effects real (decision 0120)
 XO_TEST=3 XO_TEST_SEED=1 <build dir>/arm64/bin/<module>.test   # run one test of a native test binary by hand: exit 0 passes, XO-TEST-FAIL on stdout and exit 1 fails, XO-TEST-LOG lines are its log records
 go test ./cmd/xo -run 'TestNoGC(Tests|TestLeaks|NotesServer)'   # native test reports vs the Go backend (cmd/xo/testdata/nogc, examples/notes-service), no live allocation at exit, and notes-service served natively on a socket with SIGTERM shutdown (about 40 s)
 go run ./cmd/xo replay [--dir=<module dir>] <trace.xotrace | crash.xocrash>   # rebuild and rerun offline from the trace (core 11.3)
@@ -557,10 +559,13 @@ Last verified: 2026-10-07
   python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
   solutions took about 12 minutes, all planted sets about 60 (measured
   2026-10-08).
-- `bench/perf/conc/run.sh` (2026-10-09, decision 0077): five concurrency
+- `bench/perf/conc/run.sh` (2026-10-09, decision 0077; `rwmutex` added
+  2026-10-10, decision 0118): six concurrency
   programs (`xo/spawn`: 200 rounds of 1000 discarded tasks; `fanout`: 100
   rounds of 1000 awaited tasks; `pingpong`: 100,000 round trips over two
-  unbuffered channels; `mutex`: 8 tasks x 25,000 `with`; `pmap`: 20 rounds
+  unbuffered channels; `mutex`: 8 tasks x 25,000 `with`; `rwmutex`: 64
+  tasks x 4,000 accesses, a quarter `with` holding the lock for a Collatz
+  count, the rest `with_read`, so waiters park; `pmap`: 20 rounds
   of 64 Collatz chunks) and idiomatic Go (`go/`, `concperf <name>`).
   Configurations `go`, `xo-go`, `xo-llvm`, `xo-arm64`, `xo-arm64-1`
   (`XO_THREADS=1`); `REPS` (7) rounds interleaved; medians of wall
@@ -1178,6 +1183,13 @@ first, AST based prototype, since deleted) and
   helpers. A construct outside the SSA builder's subset is a build error
   naming it and its position ("the SSA builder does not support ...").
   The AST path (bump allocator, never freed) was deleted on 2026-10-08.
+- Target (decision 0119, 2026-10-10): `build.ClangTargetAttrs` reads
+  clang's default `-target-cpu` and `-target-feature`s (`clang -### -c
+  -x c /dev/null`, once per compiler) and the IR's function attribute
+  groups `#1` and `#4` carry them (`llvm.Options.TargetAttrs`):
+  darwin/arm64 `apple-m1` (LSE atomics inline), Linux arm64 `generic`
+  with `+outline-atomics` (Debian clang 19), Linux amd64 `x86-64`.
+  Check with `otool -tv bin | grep -c ldaxr` (0 on darwin/arm64).
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
   constants with the immortal count INT64_MIN, never written), List a
@@ -1501,9 +1513,9 @@ Last verified: 2026-10-09. Decision 0084; results
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).
 
-## TLS library (native std/http, decisions 0105 and 0106)
+## TLS library (native std/http, decisions 0105, 0106, 0117)
 
-Last verified: 2026-10-09.
+Last verified: 2026-10-10.
 
 - Library: Mbed TLS 4.1.1 (LTS, maintained until March 2029), with
   TF-PSA-Crypto, Apache-2.0. Pinned release tarball
@@ -1514,8 +1526,14 @@ Last verified: 2026-10-09.
   compiles, unmodified (the tarball ships the generated sources, so no
   Perl or Python is needed); `xo/xo_tls_config.h` and
   `xo/xo_crypto_config.h` are the Xo configuration (TLS 1.2 and 1.3,
-  ECDHE, no DTLS, PSK, tickets, renegotiation, debug, or file I/O;
-  threading on). `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
+  ECDHE, server session tickets, no DTLS, PSK, session cache,
+  renegotiation, debug, or file I/O; threading on; SHA-256 and SHA-512
+  instructions when the CPU has them). `xo/xo_tls_accel.c` is compiled
+  into the archive and replaces library functions without patching them
+  (decision 0117): `mbedtls.FileDefines` gives single library files extra
+  flags, `-D<fn>=xo_builtin_<fn>` renames the original, and the Xo file
+  defines the name (X25519 public keys through HACL*, P-256 inverses by
+  Fermat, a spinning lock for the library's mutexes). `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
   binary embeds it instead of the 6.5 MB of sources), made by
   `go generate ./third_party/mbedtls`; TestArchive fails when it does
   not match `src/`.
@@ -1542,12 +1560,20 @@ Last verified: 2026-10-09.
   the TLS tests. Nothing in it is architecture specific beyond what
   Mbed TLS detects itself (AES-NI on x86-64, the ARMv8 crypto extension
   on arm64).
+- Handshake load: `SCHEME=https NEWCONN=1 [RESUME=1] CONFIGS="xo xo-llvm"
+  bench/perf/http/run.sh` (a full, or with RESUME=1 a resumed, handshake
+  per request); profile the server with `sample <pid> 4` (2026-10-10:
+  15k full handshakes/s native against 17k on the Go backend,
+  `bench/results/native-runtime-2026-10-10.md`).
 - Sizes (stripped, darwin/arm64, 2026-10-09): a std/http program grows
   by about 250 KB with the LLVM backend (336 to 582 KB) and 340 KB with
   the arm64 backend (375 to 711 KB); an HTTPS server and client program is
   599 KB (LLVM) and 711 KB (arm64), against 7.8 MB on the Go backend.
 - Tests: `go test ./internal/build -run TestTLSLibrary` (builds the
   archive into a temporary cache and links a C program with it);
+  `go test ./internal/build -run TestTLSAccel` (testdata/tls_accel.c:
+  xo_tls_accel.c against RFC 6979 and RFC 7748 answers and against the
+  renamed library functions on random inputs);
   `go test ./internal/llvm -run TestTLSDiff` (about 15 s: an HTTPS program
   with the Go, LLVM, and arm64 backends against Go peers, certificates made
   in `t.TempDir()`); `TestTLSLeaks` (Linux only: the `http_tls` golden

@@ -6,6 +6,39 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native test binaries (`xo test --no-gc`, decision 0120): property tests
+  and `testing.gen` work, with the Go backend's generated values for a
+  seed, the same failing case, and the same shrunk input in the report.
+  A `Set` or `Map` keyed by a sized integer (`Set[Int8]`) now builds
+  natively. `xo test --real` gives native tests real capabilities for
+  the effects they declare (`fs`, `fs.read`, `fs.write`, `net`, `clock`,
+  `env`, `stdio`, `proc`), as on the Go backend.
+- Native backends: deferred code that faults no longer skips the rest
+  of the cleanup. The deferred code registered before it and that of
+  the blocks around it runs, the last fault is reported, as on the Go
+  backend (core 3.5, decision 0085 amendment), and a task that caught
+  such a fault with `task.isolate` sees cancellation again (it could
+  deadlock before).
+- LLVM backend (decision 0119): generated code is compiled for the same
+  CPU and features as the C runtime (clang's defaults): LSE atomics for
+  shared reference counts on darwin/arm64, outline atomics (LSE when the
+  CPU has it) on Linux arm64. HTTP benchmark +3.5 percent.
+- Native `Mutex` (decision 0118): a writer's release hands the lock to
+  the readers waiting, so they no longer wake only to park again: a
+  contended readers and writer load (`bench/perf/conc` `rwmutex`, new)
+  went from 967 to 131 ms and from 6.3 to 0.25 s of CPU. Long lived
+  scopes (the native HTTP server's connections) no longer keep every
+  finished task until they close, and the native allocator moves freed
+  blocks between threads, so a server's memory stays flat (28 MB instead
+  of 295 MB after 300k TLS connections).
+- Native HTTPS (decision 0117): full TLS handshakes about 1.6 times as
+  fast and at half the CPU (9.7k to 15k per second in the HTTP benchmark,
+  Go backend 17k): X25519 key shares through HACL*, faster P-256
+  inverses, a spinning lock for Mbed TLS's key store, SHA instructions.
+  The native server now sends session tickets as Go's does (TLS 1.3
+  resumption with ECDHE, TLS 1.2 tickets; keys rotate daily), so
+  returning clients skip the certificate signature. `bench/perf/http`'s
+  loadgen has `-resume` (`RESUME=1` in run.sh).
 - `xo lsp` (decision 0114): a Language Server Protocol server with
   diagnostics and their fixes as quick fixes, hover (signature, doc, or
   type), definition (into std too), references, rename, document

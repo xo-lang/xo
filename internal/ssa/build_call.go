@@ -537,6 +537,12 @@ func (s *fn) declCall(x *ast.CallExpr, ci *check.Call) *Value {
 // method, decision 0074) a free function whose first parameter is the
 // receiver. A missing argument takes impl's default.
 func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value {
+	return s.callAsVia(x, ci, impl, nil)
+}
+
+// callAsVia is callAs that calls via(callee) instead of the declared
+// implementation (a function of the same signature) when via is set.
+func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via func(callee *Func) string) *Value {
 	b := s.b
 	fo := ci.Fn
 	var targs []check.Type
@@ -624,14 +630,18 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 	if impl != fo {
 		args = append(args, s.locArgs(x, implParams, len(fo.Params))...)
 	}
+	name := callee.Name
+	if via != nil {
+		name = via(callee)
+	}
 	if len(callee.Results) == 1 {
-		r := s.call(callee.Name, callee.Results[0], "", args...)
-		s.check(callee.Name)
+		r := s.call(name, callee.Results[0], "", args...)
+		s.check(name)
 		return s.callResult(r, x)
 	}
 	t := b.mod.Tuple(callee.Results...)
-	r := s.call(callee.Name, t, "", args...)
-	s.check(callee.Name)
+	r := s.call(name, t, "", args...)
+	s.check(name)
 	for i, p := range places {
 		p.set(s.add(OpField, t.Elems[i+1], i+1, r))
 	}

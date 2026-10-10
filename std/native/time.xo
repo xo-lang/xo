@@ -80,7 +80,7 @@ fn local(env: Env) -> Zone ! time.ZoneErr uses env {
       Ok(Zone{label: name, fixed: false, secs: 0, id: id})
     }
     None => {
-      if rttest.test_on() {
+      if rttest.test_fake(16) {
         // a test's Env is a fake one: without TZ it gives UTC
         return Ok(utc())
       }

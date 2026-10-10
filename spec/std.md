@@ -961,8 +961,11 @@ failures, captured streams and log records, MemFs (decision 0108),
 `set_input` and reading standard input, FakeProc's `run` and `on_run`
 (decision 0107), and `os.tasks` (canceled when the test ends, decision
 0109). `os.proc.exit` ends the test (it passes), and inside `run_main`
-unwinds main back to it. Not there yet (XO1201, planned): `testing.gen`
-and property tests.
+unwinds main back to it. `testing.gen` and property tests make the Go
+backend's values for a seed, and a failing property test reports the
+same case and shrunk input (decision 0120). With `xo test --real` a test
+gets real capabilities for the effects it declares (with `clock`, `net`,
+or `proc` its clock is the real one).
 
 ```
 struct TestOs {

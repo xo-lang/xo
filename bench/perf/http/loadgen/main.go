@@ -66,6 +66,7 @@ func main() {
 	route := flag.String("route", "", "allocation mode: send -n requests of one route on one connection and exit (get, list, patch, createdel, cycle)")
 	n := flag.Int("n", 1000, "requests (create and delete pairs, cycles) in -route mode")
 	newConn := flag.Bool("newconn", false, "a new connection (and TLS handshake) per request")
+	resume := flag.Bool("resume", false, "with https: keep TLS sessions (a client session cache), so new connections resume")
 	gencert := flag.String("gencert", "", "write cert.pem and key.pem for 127.0.0.1 into this directory and exit")
 	flag.Parse()
 	if *gencert != "" {
@@ -88,7 +89,7 @@ func main() {
 		MaxIdleConnsPerHost: *conc * 2,
 		DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
 		// a loopback test certificate; HTTP/1.1 as the Xo servers speak
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, ClientSessionCache: sessionCache(*resume, *conc)},
 		DisableKeepAlives: *newConn,
 	}
 	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
@@ -377,4 +378,13 @@ func genCert(dir string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}), 0o600)
+}
+
+// sessionCache is the client's TLS session cache with -resume, else none
+// (net/http's default: every handshake is a full one).
+func sessionCache(resume bool, conc int) tls.ClientSessionCache {
+	if !resume {
+		return nil
+	}
+	return tls.NewLRUClientSessionCache(conc * 2)
 }

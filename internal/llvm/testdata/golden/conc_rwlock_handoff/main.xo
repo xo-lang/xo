@@ -1,0 +1,75 @@
+// Mutex readers and writers under contention (decision 0118): readers
+// queued behind a writer get the lock together when it releases, readers
+// canceled while they wait (their scope ends) unwind even when a release
+// hands them the lock at the same time, and a mixed load keeps every
+// write.
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  let inside = Atomic[Int].new(0)
+  let seen = Atomic[Int].new(0)
+  let gate = Chan[Int].new()
+  scope s {
+    s.spawn(fn() {
+      m.with(fn(var v) {
+        inside.add(1)
+        let _ = gate.recv()
+        v += 1
+      })
+    })
+    while inside.get() < 1 {
+      let _x = 1
+    }
+    for _ in 0..8 {
+      s.spawn(fn() {
+        let v = m.with_read(fn(x) { x })
+        seen.add(v)
+      })
+    }
+    gate.send(1)
+  }
+  os.stdio.println("queued readers saw ${seen.get()} of 8")
+
+  let never = Chan[Int].new()
+  let waiting = Atomic[Int].new(0)
+  scope s {
+    s.spawn_background(fn() {
+      m.with(fn(var v) {
+        inside.add(1)
+        let _ = never.recv()
+        v += 100
+      })
+    })
+    while inside.get() < 2 {
+      let _x = 1
+    }
+    for _ in 0..6 {
+      s.spawn_background(fn() {
+        waiting.add(1)
+        m.with_read(fn(x) { x })
+      })
+    }
+    while waiting.get() < 6 {
+      let _x = 1
+    }
+  }
+  os.stdio.println("canceled readers left the value at ${m.with_read(fn(x) { x })}")
+
+  let reads = Atomic[Int].new(0)
+  scope s {
+    for t in 0..16 {
+      s.spawn(fn() {
+        for i in 0..500 {
+          if (i + t) % 4 == 0 {
+            m.with(fn(var v) { v += 1 })
+          } else {
+            let v = m.with_read(fn(x) { x })
+            if v >= 1 {
+              reads.add(1)
+            }
+          }
+        }
+      })
+    }
+  }
+  os.stdio.println("mixed: value ${m.with_read(fn(x) { x })}, reads ${reads.get()}")
+}

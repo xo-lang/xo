@@ -166,7 +166,7 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 		return pr_fail('3', "");
 	}
 	char *cmd = cstr_of(c, cn);
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_PROC)) {
 		lk(&pr_fakes.mu);
 		for (int i = 0; i < pr_fakes.n; i++) {
 			pr_fake *f = &pr_fakes.v[i];

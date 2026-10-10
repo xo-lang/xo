@@ -67,6 +67,38 @@ int main(void) {
 	}
 }
 
+// TestTLSAccel runs testdata/tls_accel.c against the TLS library of the
+// user cache (built if missing): the faster X25519 public keys and P-256
+// inverses of third_party/mbedtls/xo/xo_tls_accel.c (decision 0117)
+// against RFC 6979 and RFC 7748 answers and the library's own functions
+// on random inputs, then P-256 signatures verified.
+func TestTLSAccel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("may compile the TLS library (a few seconds)")
+	}
+	clang, err := Clang()
+	if err != nil {
+		t.Skip("clang not found")
+	}
+	root := sysrootFor(t, clang)
+	compile, link, err := tlsArgs(clang, []string{"-O1"}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "accel")
+	args := append(append(append([]string{"-O1", "-o", bin}, compile...), filepath.Join("testdata", "tls_accel.c")), link...)
+	if root != "" {
+		args = append(args, "-isysroot", root)
+	}
+	if out, err := exec.Command(clang, args...).CombinedOutput(); err != nil {
+		t.Fatalf("link: %v\n%s", err, out)
+	}
+	out, err := exec.Command(bin, "400").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+}
+
 // sysrootFor is the macOS SDK ccBuild chose (a link of nothing forces
 // the choice).
 func sysrootFor(t *testing.T, clang string) string {

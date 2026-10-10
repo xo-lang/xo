@@ -62,7 +62,7 @@ func writeRuntime(dir string) (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
-	asm, _, err := arm64AsmOpts(res, root, goos, "", false, false, false)
+	asm, _, err := arm64AsmOpts(res, root, goos, "", false, false, false, false)
 	return asm, err
 }
 
@@ -70,18 +70,18 @@ func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
 // defined when probes is set (Options.ShareProbes), debug contracts
 // compiled out when release is set. It also returns the zone data
 // std/time needs.
-func arm64AsmOpts(res *check.Result, root, goos, layout string, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
-	asm, tz, err := arm64Asm(res, root, goos, layout, false, probes, tests, release)
+func arm64AsmOpts(res *check.Result, root, goos, layout string, probes, tests, realTests, release bool) ([]byte, ssa.TZUse, error) {
+	asm, tz, err := arm64Asm(res, root, goos, layout, false, probes, tests, realTests, release)
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		return arm64Asm(res, root, goos, layout, true, probes, tests, release)
+		return arm64Asm(res, root, goos, layout, true, probes, tests, realTests, release)
 	}
 	return asm, tz, err
 }
 
-func arm64Asm(res *check.Result, root, goos, layout string, noInline, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
+func arm64Asm(res *check.Result, root, goos, layout string, noInline, probes, tests, realTests, release bool) ([]byte, ssa.TZUse, error) {
 	var tz ssa.TZUse
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, Release: release, GOOS: goos, GOARCH: "arm64"})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, RealTests: realTests, Release: release, GOOS: goos, GOARCH: "arm64"})
 	if err != nil {
 		return nil, tz, err
 	}
@@ -153,7 +153,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	out.Name = name
 	root := lineRoot(dirs)
 	for _, t := range ts {
-		asm, tz, err := arm64AsmOpts(res, root, t.OS, opts.ARM64Layout, opts.ShareProbes, opts.Mode == gen.Test, opts.release())
+		asm, tz, err := arm64AsmOpts(res, root, t.OS, opts.ARM64Layout, opts.ShareProbes, opts.Mode == gen.Test, opts.RealTests, opts.release())
 		if err != nil {
 			return nil, err
 		}

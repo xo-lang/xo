@@ -517,7 +517,7 @@ xo_rlist *xo_fs_read(const char *p, int64_t n) {
 	char *path = cstr_of(p, n);
 	FILE *f = NULL;
 	int err = 0;
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_FS_READ)) {
 		// a test's MemFs starts empty (std.md 8.3)
 		err = ENOENT;
 	} else {
@@ -592,7 +592,7 @@ xo_rlist *xo_fs_msg(void) {
 static xo_rlist *tw_env_args(void);
 
 xo_rlist *xo_env_args(void) {
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_ENV)) {
 		return tw_env_args();
 	}
 	xo_rlist *l = n_str_list_new(xo_argc);

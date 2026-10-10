@@ -156,7 +156,7 @@ xo_rstr *xo_stdin_read(int64_t all, int64_t *len) {
 	if (sin_stopped(c)) {
 		return rs_new(0);
 	}
-	if (tw.on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
 		return tw_stdin_read(all, len);
 	}
 	// take the turn

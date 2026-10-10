@@ -25,6 +25,13 @@ import (
 // its exit status and standard output: 0 passed; `test_fail` writes
 // XO-TEST-FAIL and the message and exits 1 (a failed `expect`, an error
 // returned by the body); a fault exits 70 as in programs.
+//
+// A property test (`test "x" for v: T`, decision 0120) runs one case per
+// process: main makes its inputs from the generator of the case
+// (rt.gen_prop: the case's seed, or choices to replay while shrinking,
+// from the environment), reports their choices and Debug text
+// (rt.prop_report), and calls the test with them; the harness runs the
+// cases and shrinks a failure (cmd/xo nativetest.go).
 
 // testCaps maps the fakes of std/testing to the capabilities they stand
 // for.
@@ -75,25 +82,30 @@ func (b *builder) buildTests(res *check.Result) {
 	errT := b.preludeType("Error")
 	rt := b.typ(b.resultOf(unit, errT), nil)
 	type entry struct {
-		i    int
-		name string
+		i      int
+		name   string
+		params []*check.VarObj // a property test's inputs
 	}
 	var tests []entry
 	for i, td := range TestDecls(res) {
-		if len(td.For) > 0 {
-			b.unsupported(td, "a property test (`test ... for`)")
+		params := b.info.TestParams(td)
+		if len(params) != len(td.For) {
+			b.unsupported(td, "a property test (`test ... for`) whose inputs are not checked")
 			continue
 		}
-		if len(td.Uses) > 0 {
-			// skipped without --real; real capabilities are the Go
-			// backend's (cmd/xo reports them as skipped)
+		if len(td.Uses) > 0 && !b.opts.RealTests {
+			// skipped without --real (cmd/xo reports them as skipped)
 			continue
 		}
 		name := fmt.Sprintf("test.%d", i)
-		f := m.NewFunc(name, []*Type{osT}, []*Type{rt})
+		ps := []*Type{osT}
+		for _, vo := range params {
+			ps = append(ps, b.typ(vo.Type, td))
+		}
+		f := m.NewFunc(name, ps, []*Type{rt})
 		td := td
 		b.queue = append(b.queue, func() { b.testBody(td, f, errT) })
-		tests = append(tests, entry{i, name})
+		tests = append(tests, entry{i, name, params})
 	}
 	intT, st := m.Builtin(KInt), m.Builtin(KStr)
 	tasks := b.usesOsTasks()
@@ -105,22 +117,26 @@ func (b *builder) buildTests(res *check.Result) {
 		idx := s.rt("test_index", intT)
 		for _, t := range tests {
 			t := t
+			td := decls[t.i]
 			s.ifThen(s.add(OpEq, m.Builtin(KBool), nil, idx, s.cint(int64(t.i))), func() {
+				args := []*Value{s.zero(osT, map[*Type]bool{})}
+				if len(t.params) > 0 {
+					args = append(args, s.propInputs(t.params, td)...)
+				}
 				var r *Value
 				if tasks && b.conc {
 					// the test runs in the scope of its os.tasks
 					// (build_tasks.go): its tasks are canceled when
 					// it ends, as std/rt's runInWorld
-					td := decls[t.i]
 					s.rootScope(b.failingSpawns(s, td.Body), td, 1, func() {
-						r = s.call(t.name, rt, "", s.zero(osT, map[*Type]bool{}))
+						r = s.call(t.name, rt, "", args...)
 						s.check(t.name)
 					}, func(msg *Value) { s.testFail(msg) })
 					if s.isDead() {
 						return
 					}
 				} else {
-					r = s.call(t.name, rt, "", s.zero(osT, map[*Type]bool{}))
+					r = s.call(t.name, rt, "", args...)
 				}
 				if ei := rt.VariantIndex("Err"); ei >= 0 {
 					s.ifThen(s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, intT, nil, r), s.cint(int64(ei))), func() {
@@ -146,6 +162,9 @@ func (b *builder) testBody(td *ast.TestDecl, f *Func, errT check.Type) {
 	s := b.newFn(f, &check.Tuple{}, errT)
 	if osv := b.info.TestOs(td); osv != nil {
 		s.writeVar(osv, f.Params()[0])
+	}
+	for k, vo := range b.info.TestParams(td) {
+		s.writeVar(vo, f.Params()[1+k])
 	}
 	v := s.block(td.Body)
 	s.ret(v, td.Body)
@@ -294,14 +313,58 @@ func (s *fn) testCapCall(x *ast.CallExpr, ci *check.Call, key string) (*Value, b
 }
 
 // testCall lowers the functions of std/testing that need the builder:
-// run_main. ok is false for the others (std/native/testing.xo implements
-// them, or they are not available).
+// run_main and gen. ok is false for the others (std/native/testing.xo
+// implements them, or they are not available).
 func (s *fn) testCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	fo := ci.Fn
-	if fo.Module == nil || fo.Module.Path != "std/testing" || fo.Recv != nil || fo.Name != "run_main" {
+	if fo.Module == nil || fo.Module.Path != "std/testing" || fo.Recv != nil {
 		return nil, false
 	}
-	return s.runMain(x, ci), true
+	switch fo.Name {
+	case "run_main":
+		return s.runMain(x, ci), true
+	case "gen":
+		return s.testingGen(x, ci), true
+	}
+	return nil, false
+}
+
+// testingGen lowers `testing.gen[T](seed)` (std.md 8.5): a value of T from
+// a generator seeded with seed, as std/rt's Testing_gen (decision 0120).
+func (s *fn) testingGen(x *ast.CallExpr, ci *check.Call) *Value {
+	b := s.b
+	intT := b.mod.Builtin(KInt)
+	t := s.natOf(x)
+	es := argExprs(ci.Fn.Params, x)
+	if es[0] == nil {
+		b.unsupported(x, "a call with a missing argument")
+		return s.undef(t)
+	}
+	g := s.rt("gen_new", intT, s.valueAs(es[0], intT))
+	v := s.call(b.genValueFunc(s.natCheck(x), x), t, "", g)
+	s.rt("gen_free", nil, g)
+	return v
+}
+
+// propInputs makes the inputs of a property test's case (decision 0120):
+// each from the case's generator in order, as std/rt's Prop functions,
+// then reports their choices and `name = Debug` lines to the harness.
+func (s *fn) propInputs(params []*check.VarObj, td *ast.TestDecl) []*Value {
+	b := s.b
+	st, intT := b.mod.Builtin(KStr), b.mod.Builtin(KInt)
+	g := s.rt("gen_prop", intT)
+	var vals []*Value
+	for _, vo := range params {
+		vals = append(vals, s.call(b.genValueFunc(vo.Type, td), b.typ(vo.Type, td), "", g))
+	}
+	text := s.add(OpConst, st, "")
+	for k, vo := range params {
+		text = s.call("str.concat", st, "", text, s.add(OpConst, st, vo.Name+" = "))
+		text = s.appendDebug(text, vals[k], vo.Type, td)
+		text = s.call("str.concat", st, "", text, s.add(OpConst, st, "\n"))
+	}
+	s.rt("prop_report", nil, g, text)
+	return vals
 }
 
 // runMain lowers `testing.run_main(main, os, args)` (std.md 8.4): main

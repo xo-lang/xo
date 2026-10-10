@@ -1,0 +1,32 @@
+// Types for the property tests of prop_test.xo (decision 0120).
+pub struct Point {
+  x: Int
+  y: Int
+}
+
+pub struct Range {
+  lo: Int
+  hi: Int
+} invariant lo <= hi
+
+pub enum Shape {
+  Dot
+  Circle(r: Float)
+  Rect(w: Int, h: Int)
+  Empty
+}
+
+pub type Email struct(Str)
+
+pub enum Tree {
+  Leaf
+  Node(left: Tree, value: Int, right: Tree)
+}
+
+pub fn sum(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x % 1000
+  }
+  t
+}

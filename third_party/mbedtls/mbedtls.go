@@ -77,6 +77,23 @@ var SourceDirs = []string{
 	"src/tf-psa-crypto/drivers/everest/library",
 	"src/tf-psa-crypto/drivers/p256-m",
 	"src/tf-psa-crypto/drivers/p256-m/p256-m",
+	"xo",
+}
+
+// FileDefines are extra compile flags of single library files, so the
+// vendored files stay unmodified (decision 0117): a rename of a library
+// function that xo/xo_tls_accel.c defines in front of it, and the macOS
+// feature macro sha512.c's run time check of the SHA-512 instructions
+// needs (it includes <sys/sysctl.h>, which does not compile under the
+// library's _POSIX_C_SOURCE alone; nothing on Linux).
+var FileDefines = map[string][]string{
+	"src/tf-psa-crypto/drivers/builtin/src/sha512.c": {"-D_DARWIN_C_SOURCE"},
+	"src/tf-psa-crypto/drivers/builtin/src/bignum.c": {
+		"-Dmbedtls_mpi_gcd_modinv_odd=xo_builtin_mpi_gcd_modinv_odd",
+	},
+	"src/tf-psa-crypto/drivers/builtin/src/psa_crypto_ecp.c": {
+		"-Dmbedtls_psa_ecp_export_public_key=xo_builtin_ecp_export_public_key",
+	},
 }
 
 // Exclude lists files of SourceDirs that are not compiled on their own

@@ -1,0 +1,57 @@
+// `xo test --real` (core 9.2, decision 0120): tests that declare `uses`
+// get real capabilities for those effects and fakes for the others; the
+// report is the same on the Go backend and on a native test binary
+// (TestNoGCTests). Files are written only under the temporary directory.
+use std/http
+
+test "fakes without uses" {
+  expect(os.fs.read_text("data.txt").is_err())
+  expect(os.env.get("PATH")) == None
+}
+
+test "real env" uses env {
+  expect(os.env.get("PATH").is_some())
+}
+
+test "real fs read" uses fs.read {
+  expect(os.fs.read_text("data.txt")?) == "hello file\n"
+  expect(os.fs.write("never.txt", b"x").is_err())
+}
+
+test "real fs" uses fs, env {
+  let dir = os.env.get("TMPDIR") ?? "/tmp"
+  let p = os.fs.create_temp(dir, "xo-real-")?
+  os.fs.write(p, b"scratch")?
+  expect(os.fs.read_text(p)?) == "scratch"
+  os.fs.remove(p)?
+  expect(os.fs.exists(p)?) == false
+}
+
+test "real clock" uses clock {
+  let t0 = os.clock.now()
+  os.clock.sleep(20ms)
+  expect(os.clock.since(t0) >= 20ms)
+}
+
+test "real net" uses net {
+  let c = http.client(os.net, timeout: 2s)
+  match c.get("http://127.0.0.1:1/") {
+    Ok(_) => expect(false)
+    Err(http.ClientErr.Connect(_)) => expect(true)
+    Err(e) => expect("${e}") == "a connect error"
+  }
+}
+
+test "real proc" uses proc {
+  let r = os.proc.run("echo", ["hi"])?
+  expect(r.stdout) == b"hi\n"
+}
+
+test "other effects stay fakes" uses env {
+  expect(os.fs.read_text("data.txt").is_err())
+}
+
+test "real stdio" uses stdio {
+  os.stdio.println("printed for real")
+  expect(true)
+}

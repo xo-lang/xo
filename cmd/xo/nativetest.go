@@ -27,6 +27,7 @@ type nativeTestOpts struct {
 	asJSON  bool
 	verbose bool
 	real    bool
+	cases   int // per property test (0: 100)
 	timeout time.Duration
 }
 
@@ -57,9 +58,27 @@ func runNativeTests(res *build.Result, o nativeTestOpts, stdout io.Writer) int {
 		case len(t.Uses) > 0 && !o.real:
 			out = nativeOutcome{status: "skip", msg: "uses " + strings.Join(t.Uses, ", ") + ": run with `xo test --real` for real capabilities"}
 		case len(t.Uses) > 0:
-			out = nativeOutcome{status: "skip", msg: "uses " + strings.Join(t.Uses, ", ") + ": real capabilities in tests are not available without a garbage collector (`--no-gc`) yet (support is planned)"}
+			// real capabilities for the declared effects (decision 0120);
+			// what a test with real stdio printed goes where the Go
+			// backend's test binary prints it
+			var pc propCase
+			out, pc = runNativeTestEnv(bin, t, s, o.timeout, "XO_TEST_REAL="+strings.Join(t.Uses, ","))
+			if usesStdio(t.Uses) {
+				for _, l := range pc.out {
+					fmt.Fprintln(stdout, l)
+				}
+				if out.status == "pass" && pc.errOut != "" {
+					fmt.Fprint(os.Stderr, pc.errOut)
+				}
+			}
+		case t.Prop:
+			cases := o.cases
+			if cases <= 0 {
+				cases = 100
+			}
+			out = runNativeProperty(bin, t, s, cases, o.timeout)
 		default:
-			out = runNativeTest(bin, t, s, o.timeout)
+			out, _ = runNativeTestEnv(bin, t, s, o.timeout)
 		}
 		switch out.status {
 		case "pass":
@@ -105,6 +124,16 @@ func runNativeTests(res *build.Result, o nativeTestOpts, stdout io.Writer) int {
 	return 0
 }
 
+// usesStdio reports whether a test declares the stdio effect.
+func usesStdio(uses []string) bool {
+	for _, u := range uses {
+		if u == "stdio" {
+			return true
+		}
+	}
+	return false
+}
+
 func printNativeLogs(w io.Writer, lines []string) {
 	if len(lines) == 0 {
 		return
@@ -115,18 +144,37 @@ func printNativeLogs(w io.Writer, lines []string) {
 	}
 }
 
-// runNativeTest runs test t of the test binary bin with seed s.
-func runNativeTest(bin string, t build.TestInfo, s int64, limit time.Duration) nativeOutcome {
+// propCase is what a property test's case reported before its body ran
+// (decision 0120): the generator's choices and the inputs' `name = value`
+// lines; notSmaller is a shrinking try whose choices were not smaller
+// than the best so far (not run).
+type propCase struct {
+	choices    []uint64
+	reported   bool
+	input      string
+	notSmaller bool
+	// out and errOut are what the test wrote to the real standard
+	// streams itself (not the harness's lines): a test with real stdio
+	// (`xo test --real`, decision 0120)
+	out    []string
+	errOut string
+}
+
+// runNativeTestEnv runs test t of the test binary bin with seed s and
+// the extra environment env.
+func runNativeTestEnv(bin string, t build.TestInfo, s int64, limit time.Duration, env ...string) (nativeOutcome, propCase) {
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin)
 	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(t.Index), "XO_TEST_SEED="+strconv.FormatInt(s, 10))
+	cmd.Env = append(append(os.Environ(), "XO_TEST="+strconv.Itoa(t.Index), "XO_TEST_SEED="+strconv.FormatInt(s, 10)), env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
 	var logs []string
 	var failMsg []string
+	var pc propCase
+	var input strings.Builder
 	failing := false
 	for _, l := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 		switch {
@@ -136,27 +184,128 @@ func runNativeTest(bin string, t build.TestInfo, s int64, limit time.Duration) n
 			failing = true
 		case strings.HasPrefix(l, "XO-TEST-LOG "):
 			logs = append(logs, strings.TrimPrefix(l, "XO-TEST-LOG "))
+		case strings.HasPrefix(l, "XO-PROP-CHOICES"):
+			pc.reported = true
+			for _, f := range strings.Split(strings.TrimSpace(strings.TrimPrefix(l, "XO-PROP-CHOICES")), ",") {
+				if v, err := strconv.ParseUint(f, 10, 64); err == nil {
+					pc.choices = append(pc.choices, v)
+				}
+			}
+		case strings.HasPrefix(l, "XO-PROP-INPUT "):
+			input.WriteString(strings.TrimPrefix(l, "XO-PROP-INPUT ") + "\n")
+		case l == "XO-PROP-NOT-SMALLER":
+			pc.notSmaller = true
+		case !strings.HasPrefix(l, "XO-"):
+			pc.out = append(pc.out, l)
 		}
 	}
+	pc.input = input.String()
+	pc.errOut = errb.String()
 	if ctx.Err() != nil {
-		return nativeOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit), logs: logs}
+		return nativeOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit), logs: logs}, pc
 	}
 	code := 0
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	} else if err != nil {
-		return nativeOutcome{status: "fail", msg: err.Error(), logs: logs}
+		return nativeOutcome{status: "fail", msg: err.Error(), logs: logs}, pc
 	}
 	switch {
 	case code == 0:
-		return nativeOutcome{status: "pass", logs: logs}
+		return nativeOutcome{status: "pass", logs: logs}, pc
+	case code == 3 && pc.notSmaller:
+		return nativeOutcome{status: "skip"}, pc
 	case failing:
-		return nativeOutcome{status: "fail", msg: strings.Join(failMsg, "\n"), logs: logs}
+		return nativeOutcome{status: "fail", msg: strings.Join(failMsg, "\n"), logs: logs}, pc
 	}
 	msg := strings.TrimRight(errb.String(), "\n")
 	if msg == "" {
 		msg = fmt.Sprintf("the test exited with status %d", code)
 	}
-	return nativeOutcome{status: "fail", msg: msg, logs: logs}
+	return nativeOutcome{status: "fail", msg: msg, logs: logs}, pc
+}
+
+// runNativeProperty runs the cases of property test t, each in a process
+// of its own, and reports the first failing input, shrunk: std/rt's
+// runProperty (same case seeds, so the same inputs and report).
+func runNativeProperty(bin string, t build.TestInfo, seed int64, cases int, limit time.Duration) nativeOutcome {
+	for i := 0; i < cases; i++ {
+		caseSeed := uint64(seed)*1000003 + uint64(i)
+		out, pc := runNativeTestEnv(bin, t, seed, limit, "XO_PROP_SEED="+strconv.FormatUint(caseSeed, 10))
+		if out.status != "fail" {
+			continue
+		}
+		if pc.reported {
+			if sIn, sOut, steps := shrinkNative(bin, t, seed, limit, pc.choices); steps > 0 {
+				return nativeOutcome{status: "fail", msg: fmt.Sprintf("property failed on case %d; shrunk in %d steps to\n%s%s", i+1, steps, sIn, sOut.msg), logs: sOut.logs}
+			}
+		}
+		out.msg = fmt.Sprintf("property failed on case %d with\n%s%s", i+1, pc.input, out.msg)
+		return out
+	}
+	return nativeOutcome{status: "pass"}
+}
+
+func joinChoices(cs []uint64) string {
+	parts := make([]string, len(cs))
+	for i, c := range cs {
+		parts[i] = strconv.FormatUint(c, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
+// shrinkNative is std/rt's shrinkProperty: it edits the failing case's
+// choices (deleting runs, then lowering each by binary search) and keeps
+// every edit that still fails with smaller choices (the test binary
+// replays them, XO_PROP_REPLAY, and skips a try that is not smaller than
+// XO_PROP_BEST), within 2000 tries.
+func shrinkNative(bin string, t build.TestInfo, seed int64, limit time.Duration, failing []uint64) (string, nativeOutcome, int) {
+	best := append([]uint64{}, failing...)
+	var bestIn string
+	var bestOut nativeOutcome
+	steps, budget := 0, 2000
+	try := func(cand []uint64) bool {
+		if budget <= 0 {
+			return false
+		}
+		budget--
+		out, pc := runNativeTestEnv(bin, t, seed, limit, "XO_PROP_REPLAY="+joinChoices(cand), "XO_PROP_BEST="+joinChoices(best))
+		if pc.notSmaller || !pc.reported || out.status != "fail" {
+			return false
+		}
+		best, bestIn, bestOut = append([]uint64{}, pc.choices...), pc.input, out
+		steps++
+		return true
+	}
+	for improved := true; improved && budget > 0; {
+		improved = false
+		for k := 8; k >= 1 && !improved; k /= 2 {
+			for i := 0; i+k <= len(best) && !improved; i++ {
+				cand := append(append([]uint64{}, best[:i]...), best[i+k:]...)
+				improved = try(cand)
+			}
+		}
+		for i := 0; i < len(best) && !improved; i++ {
+			if best[i] == 0 {
+				continue
+			}
+			lo, hi := uint64(0), best[i]
+			for lo < hi && budget > 0 {
+				mid := lo + (hi-lo)/2
+				cand := append([]uint64{}, best...)
+				if i >= len(cand) {
+					break
+				}
+				cand[i] = mid
+				if try(cand) {
+					hi = mid
+					improved = true
+				} else {
+					lo = mid + 1
+				}
+			}
+		}
+	}
+	return bestIn, bestOut, steps
 }

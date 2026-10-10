@@ -79,6 +79,39 @@ func mutex() {
 	fmt.Printf("mutex %d\n", c)
 }
 
+// rwmutex: 64 goroutines, 4,000 accesses each, one in four a write that
+// holds the lock for a Collatz step count, the others reads.
+func rwmutex() {
+	var mu sync.RWMutex
+	c, odd := 0, 0
+	var oddMu sync.Mutex
+	var wg sync.WaitGroup
+	for t := 0; t < 64; t++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 4000; i++ {
+				if (i+t)%4 == 0 {
+					mu.Lock()
+					c += 1 + steps(27+c%2)/1000
+					mu.Unlock()
+				} else {
+					mu.RLock()
+					v := c
+					mu.RUnlock()
+					if v < 0 {
+						oddMu.Lock()
+						odd++
+						oddMu.Unlock()
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	fmt.Printf("rwmutex %d %d\n", c, odd)
+}
+
 func steps(x int) int {
 	n, c := x, 0
 	for n > 1 {
@@ -118,9 +151,9 @@ func pmap() {
 }
 
 func main() {
-	runs := map[string]func(){"spawn": spawn, "fanout": fanout, "pingpong": pingpong, "mutex": mutex, "pmap": pmap}
+	runs := map[string]func(){"spawn": spawn, "fanout": fanout, "pingpong": pingpong, "mutex": mutex, "rwmutex": rwmutex, "pmap": pmap}
 	if len(os.Args) != 2 || runs[os.Args[1]] == nil {
-		fmt.Fprintln(os.Stderr, "usage: concperf spawn|fanout|pingpong|mutex|pmap")
+		fmt.Fprintln(os.Stderr, "usage: concperf spawn|fanout|pingpong|mutex|rwmutex|pmap")
 		os.Exit(2)
 	}
 	runs[os.Args[1]]()

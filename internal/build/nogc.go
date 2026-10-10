@@ -54,6 +54,9 @@ type TestInfo struct {
 	// Skip is why the test does not run natively (a contract fuzz test,
 	// decision 0085), or "".
 	Skip string
+	// Prop marks a property test (`test "x" for v: T`, decision 0120):
+	// the harness runs its cases and shrinks a failure.
+	Prop bool
 }
 
 // fuzzSkip is the report of a contract fuzz test of a native test binary.
@@ -101,7 +104,7 @@ func testInfos(dirs []string, res *check.Result) []TestInfo {
 	tail := held
 	for i, td := range ssa.TestDecls(res) {
 		out = append(out, pending[td]...)
-		ti := TestInfo{Index: i, Name: ssa.TestName(td), Loc: relLoc(root, td)}
+		ti := TestInfo{Index: i, Name: ssa.TestName(td), Loc: relLoc(root, td), Prop: len(td.For) > 0}
 		if m := modOf[td]; m != nil {
 			ti.Module = m.Path
 			ti.Dir, _ = filepath.Abs(m.Dir)
