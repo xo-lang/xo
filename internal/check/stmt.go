@@ -739,6 +739,9 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		switch n.Obj.Name {
 		case "List", "Set", "Range", "Buf", "Chan":
 			return n.Args[0]
+		case "Bytes":
+			// each byte (decision 0135)
+			return c.named("UInt8")
 		case "Map":
 			return &Tuple{Elems: []Type{n.Args[0], n.Args[1]}}
 		}
@@ -747,7 +750,7 @@ func (c *checker) iterElem(t Type, e ast.Expr) Type {
 		c.errorf(diag.CannotInfer, e.Span(), "the type of the iterated value must be known here")
 		return badType
 	}
-	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, Chan, and ranges", deep(t))
+	c.errorf(diag.BadOperand, e.Span(), "cannot iterate over `%s`; `for` works on List, Set, Map, Chan, Bytes, and ranges", deep(t))
 	return badType
 }
 

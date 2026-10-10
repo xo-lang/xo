@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `for b in data` over `Bytes` (spec 3.5, decision 0135) yields each
+  byte as a `UInt8`; it was `XO0406`. Go's `for _, b := range data`
+  gets the fix `for b in data`.
 - `while let` (spec 3.5, decision 0134): `while let Some(v) = q.pop() { }`
   loops while a refutable pattern matches; `while let v = opt` is the
   Option shorthand, as for `if let`. Labels, `continue`, and `bound N`

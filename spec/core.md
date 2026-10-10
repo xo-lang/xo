@@ -12,6 +12,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`for b in bytes`** (3.5, decision 0135): `Bytes` is iterable and
+  yields each byte as a `UInt8`.
 - **`while let`** (3.5, decision 0134): `while let Some(v) = expr { }`
   loops while a refutable pattern matches, and `while let v = opt` is
   the Option shorthand, as for `if let`.
@@ -889,6 +891,7 @@ for x in xs { ... }
 for (i, x) in xs.indexed() { ... }
 for (k, v) in m { ... }
 for job in jobs_chan { ... }  // receives until the channel is closed and drained
+for b in data { ... }         // each byte of a Bytes, as a UInt8
 for i in 0..10 { ... }        // half open range, 0..=10 is inclusive
 for _ in 0..3 { ... }
 while cond { ... }
@@ -905,6 +908,13 @@ match code {
 ```
 
 - `if` without `else` has type `()`.
+- `for` iterates over a List, Buf, Set, Map (as `(k, v)` tuples), Chan, Range,
+  or Bytes. Over `Bytes` it yields each byte as a `UInt8`, in order
+  (decision 0135); a byte compares with an ASCII rune literal
+  (`b >= 'a'`) and converts with `Int(b)`. Index pairs come from
+  `xs.indexed()` on a List; for Bytes, loop over `0..data.len()` and
+  read `data[i]`. A `Str` is not iterable: choose `.runes()` or
+  `.bytes()`.
 - `while let pattern = value { ... }` computes `value` before each
   iteration and runs the body while it matches the pattern, with the
   pattern's names bound in the body; the loop ends at the first value

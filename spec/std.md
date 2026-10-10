@@ -124,8 +124,8 @@ fn (s: Str) repeat(n: Int) -> Str
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
 
-fn (b: Bytes) len() -> Int
-fn (b: Bytes) is_empty() -> Bool
+fn (b: Bytes) len() -> Int                   // b[i] is the byte at i, a UInt8
+fn (b: Bytes) is_empty() -> Bool             // `for x in b` yields each byte (core 3.5)
 fn (b: Bytes) to_str() -> Str?               // None if not valid UTF-8
 fn (b: Bytes) to_hex() -> Str                // lowercase
 fn (b: Bytes) to_base64() -> Str             // standard encoding, padded

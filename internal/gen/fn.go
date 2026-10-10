@@ -1147,6 +1147,11 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	case "Buf":
 		elem = f.tmp("e")
 		header = fmt.Sprintf("_, %s := range %s.Items()", elem, itv)
+	case "Bytes":
+		// each byte as a UInt8 (decision 0135); Bytes is a Go string
+		bi := f.tmp("bi")
+		elem = fmt.Sprintf("%s[%s]", itv, bi)
+		header = fmt.Sprintf("%s := 0; %s < len(%s); %s++", bi, bi, itv, bi)
 	case "Set":
 		elem = f.tmp("e")
 		header = fmt.Sprintf("%s := range %sSet_All(%s)", elem, f.rt(), itv)

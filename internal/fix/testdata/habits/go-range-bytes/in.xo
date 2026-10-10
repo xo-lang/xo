@@ -1,0 +1,7 @@
+fn total(data: Bytes) -> Int {
+  var t = 0
+  for _, b := range data {
+    t += Int(b)
+  }
+  t
+}

@@ -911,6 +911,8 @@ func (c *checker) goRange(x *ast.ForStmt, it Type) Type {
 		form, elem = "for "+first+" in "+iter, n.Args[0]
 	case kind == "Int" && !two:
 		form, elem = "for "+first+" in 0.."+iter, intT
+	case kind == "Bytes" && two && first == "_":
+		form, elem = "for "+second+" in "+iter, &Tuple{Elems: []Type{intT, c.named("UInt8")}}
 	case kind == "Str" && two && first == "_":
 		form, elem = "for "+second+" in "+iter+".runes()", &Tuple{Elems: []Type{intT, c.named("Rune")}}
 	}
