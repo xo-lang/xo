@@ -1902,8 +1902,10 @@ native test binary and runs each test in a process of its own against the
 fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network, MemFs, FakeProc, `os.tasks`) with the same report as the Go
 backend; a fault fails only its test.
-Property tests and `--real` are not available there yet (XO1201, skipped),
-contract fuzzing (9.1) is reported as skipped (decision 0085), and error
+Property tests run there with the Go backend's cases and shrunk inputs
+(one process per case, decision 0120), `--real` is not available yet (the
+tests are skipped), contract fuzzing (9.1) is reported as skipped
+(decision 0085), and error
 traces are recorded natively but printed only in main's error report
 (decision 0104), and fault frames are not recorded natively.
 

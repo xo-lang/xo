@@ -95,11 +95,12 @@ func TestNoGCCheckAgrees(t *testing.T) {
 }
 
 // TestNoGCTestCheck: the no GC check of a test build checks the test
-// blocks (a property test is XO1201), and the test list a native test
-// build reports is the test blocks in order.
+// blocks (a property test runs natively, decision 0120, but values of a
+// function type cannot be generated: XO1201), and the test list a native
+// test build reports is the test blocks in order.
 func TestNoGCTestCheck(t *testing.T) {
 	dir := t.TempDir()
-	src := "fn twice(n: Int) -> Int { n * 2 }\n\ntest \"plain\" {\n  expect(twice(2)) == 4\n}\n\ntest \"property\" for n: Int {\n  expect(twice(n) % 2) == 0\n}\n\ntest \"pinned\" seed 7 uses clock {\n  expect(true)\n}\n"
+	src := "fn twice(n: Int) -> Int { n * 2 }\n\ntest \"plain\" {\n  expect(twice(2)) == 4\n}\n\ntest \"property\" for n: Int {\n  expect(twice(n) % 2) == 0\n}\n\ntest \"pinned\" seed 7 uses clock {\n  expect(true)\n}\n\ntest \"functions\" for f: fn(Int) -> Int {\n  expect(f(1)) == f(1)\n}\n"
 	if err := os.WriteFile(filepath.Join(dir, "lib_test.xo"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +109,11 @@ func TestNoGCTestCheck(t *testing.T) {
 		t.Fatalf("check: %v %v", err, res.Diagnostics)
 	}
 	ds := CheckNoGC([]string{dir}, res, gen.Test)
-	if len(ds) != 1 || !strings.Contains(ds[0].Message, "property test") || ds[0].Span.Line != 7 {
-		t.Errorf("want one XO1201 for the property test: %v", ds)
+	if len(ds) != 1 || !strings.Contains(ds[0].Message, "generated values of `fn(Int) -> Int`") || ds[0].Span.Line != 15 {
+		t.Errorf("want one XO1201 for the generated function values: %v", ds)
 	}
 	tis := testInfos([]string{dir}, res)
-	if len(tis) != 3 || tis[0].Name != "plain" || tis[2].Seed != 7 || len(tis[2].Uses) != 1 || tis[2].Uses[0] != "clock" || tis[1].Loc != "lib_test.xo:7:1" {
+	if len(tis) != 4 || tis[0].Name != "plain" || tis[2].Seed != 7 || len(tis[2].Uses) != 1 || tis[2].Uses[0] != "clock" || tis[1].Loc != "lib_test.xo:7:1" || !tis[1].Prop || tis[0].Prop {
 		t.Errorf("tests: %+v", tis)
 	}
 }

@@ -61,7 +61,7 @@ func TestNoGCTests(t *testing.T) {
 	// program; t.Setenv is not allowed in parallel tests)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			goCode, goOut := xoTest(t, "-v", dir)
@@ -99,7 +99,7 @@ func TestNoGCTestLeaks(t *testing.T) {
 	}
 	backends := nativeBackends(t)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("..", "..", "examples", "notes-service")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service")} {
 		for _, be := range backends {
 			res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test, NoGC: true, Backend: be})
 			if err != nil || res.Failed {

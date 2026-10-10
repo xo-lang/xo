@@ -276,6 +276,328 @@ __attribute__((unused)) static uint64_t tw_rand_u64(void) {
 	return hi;
 }
 
+// ---------------------------------------------------------------------------
+// Generated values: property tests (`test "x" for v: T`, core 9.2) and
+// testing.gen (std.md 8.5), decision 0120. The same choices as std/rt's
+// GenRand (gen.go): Go's math/rand/v2 PCG seeded (seed, seed ^
+// 0x2545f4914f6cdd1d), every choice recorded, so a test binary makes the
+// Go backend's values for a seed, and a failing case can be shrunk by
+// replaying edited choices (cmd/xo nativetest.go). internal/ssa generates
+// the values of compound types (build_gen.go) on these primitives.
+
+typedef struct {
+	uint64_t hi, lo;
+	int depth;
+	int small; // contract fuzzing's small numbers (std/rt's Small)
+	uint64_t *rec;
+	int64_t nrec, crec;
+	uint64_t *replay;
+	int64_t nreplay, pos;
+	int replaying;
+} xo_gen;
+
+static uint64_t gen_pcg(xo_gen *g) {
+	const uint64_t mulHi = 2549297995355413924ULL, mulLo = 4865540595714422341ULL;
+	const uint64_t incHi = 6364136223846793005ULL, incLo = 1442695040888963407ULL;
+	unsigned __int128 m = (unsigned __int128)g->lo * mulLo;
+	uint64_t hi = (uint64_t)(m >> 64), lo = (uint64_t)m;
+	hi += g->hi * mulLo + g->lo * mulHi;
+	uint64_t lo2 = lo + incLo;
+	uint64_t c = lo2 < lo;
+	hi = hi + incHi + c;
+	g->lo = lo2;
+	g->hi = hi;
+	const uint64_t cheapMul = 0xda942042e4dd58b5ULL;
+	hi ^= hi >> 32;
+	hi *= cheapMul;
+	hi ^= hi >> 48;
+	hi *= (lo2 | 1);
+	return hi;
+}
+
+// gen_u64n is Go's (*rand.Rand).Uint64N: a mask for powers of two, else
+// Lemire's multiply with rejection.
+static uint64_t gen_u64n(xo_gen *g, uint64_t n) {
+	if ((n & (n - 1)) == 0) {
+		return gen_pcg(g) & (n - 1);
+	}
+	unsigned __int128 p = (unsigned __int128)gen_pcg(g) * n;
+	uint64_t hi = (uint64_t)(p >> 64), lo = (uint64_t)p;
+	if (lo < n) {
+		uint64_t thresh = (0 - n) % n;
+		while (lo < thresh) {
+			p = (unsigned __int128)gen_pcg(g) * n;
+			hi = (uint64_t)(p >> 64);
+			lo = (uint64_t)p;
+		}
+	}
+	return hi;
+}
+
+// gen_draw is a choice in [0, n), or any 64 bit value when n is 0.
+static uint64_t gen_draw(xo_gen *g, uint64_t n) {
+	uint64_t v;
+	if (g->replaying) {
+		v = g->pos < g->nreplay ? g->replay[g->pos] : 0;
+		g->pos++;
+		if (n > 0) {
+			v %= n;
+		}
+	} else if (n == 0) {
+		v = gen_pcg(g);
+	} else {
+		v = gen_u64n(g, n);
+	}
+	if (g->nrec == g->crec) {
+		g->crec = g->crec ? 2 * g->crec : 64;
+		g->rec = realloc(g->rec, (size_t)g->crec * sizeof(uint64_t));
+		if (!g->rec) {
+			xo_oom();
+		}
+	}
+	g->rec[g->nrec++] = v;
+	return v;
+}
+
+static xo_gen *gen_of(int64_t h) { return (xo_gen *)(uintptr_t)h; }
+
+static xo_gen *gen_alloc(void) {
+	xo_gen *g = calloc(1, sizeof(xo_gen));
+	if (!g) {
+		xo_oom();
+	}
+	return g;
+}
+
+// xo_gen_new is a generator seeded with seed (testing.gen, std/rt's
+// NewGenRand).
+int64_t xo_gen_new(int64_t seed) {
+	xo_gen *g = gen_alloc();
+	g->hi = (uint64_t)seed;
+	g->lo = (uint64_t)seed ^ 0x2545f4914f6cdd1dULL;
+	return (int64_t)(uintptr_t)g;
+}
+
+// xo_gen_free frees generator h.
+void xo_gen_free(int64_t h) {
+	xo_gen *g = gen_of(h);
+	free(g->rec);
+	free(g->replay);
+	free(g);
+}
+
+// gen_choices parses "c1,c2,..." (decimal) into a new array.
+static uint64_t *gen_choices(const char *s, int64_t *n) {
+	int64_t cap = 16, k = 0;
+	uint64_t *out = malloc((size_t)cap * sizeof(uint64_t));
+	if (!out) {
+		xo_oom();
+	}
+	while (s && *s) {
+		char *end;
+		uint64_t v = strtoull(s, &end, 10);
+		if (end == s) {
+			break;
+		}
+		if (k == cap) {
+			cap *= 2;
+			out = realloc(out, (size_t)cap * sizeof(uint64_t));
+			if (!out) {
+				xo_oom();
+			}
+		}
+		out[k++] = v;
+		s = *end == ',' ? end + 1 : end;
+	}
+	*n = k;
+	return out;
+}
+
+// xo_gen_prop is the generator of a property test's case: the harness
+// sets XO_PROP_REPLAY (choices to replay, shrinking) or XO_PROP_SEED (the
+// case's seed: std/rt's seed*1000003 + case).
+int64_t xo_gen_prop(void) {
+	xo_gen *g = gen_alloc();
+	const char *r = getenv("XO_PROP_REPLAY");
+	if (r) {
+		g->replaying = 1;
+		g->replay = gen_choices(r, &g->nreplay);
+		return (int64_t)(uintptr_t)g;
+	}
+	const char *s = getenv("XO_PROP_SEED");
+	uint64_t seed = s ? strtoull(s, NULL, 10) : 0;
+	g->hi = seed;
+	g->lo = seed ^ 0x2545f4914f6cdd1dULL;
+	return (int64_t)(uintptr_t)g;
+}
+
+// gen_shorter is std/rt's shortlexLess(a, b).
+static int gen_shorter(const uint64_t *a, int64_t an, const uint64_t *b, int64_t bn) {
+	if (an != bn) {
+		return an < bn;
+	}
+	for (int64_t i = 0; i < an; i++) {
+		if (a[i] != b[i]) {
+			return a[i] < b[i];
+		}
+	}
+	return 0;
+}
+
+// xo_prop_report hands a case's choices and input text (`name = value`
+// lines) to the harness before the body runs. While shrinking, the
+// harness passes the best choices so far (XO_PROP_BEST): a case whose
+// choices are not smaller is not run (exit 3), as std/rt skips it.
+void xo_prop_report(int64_t h, const char *in, int64_t inn) {
+	xo_gen *g = gen_of(h);
+	nbuf o = {0};
+	nbuf_str(&o, "XO-PROP-CHOICES ");
+	for (int64_t i = 0; i < g->nrec; i++) {
+		char num[32];
+		snprintf(num, sizeof num, i ? ",%llu" : "%llu", (unsigned long long)g->rec[i]);
+		nbuf_str(&o, num);
+	}
+	nbuf_byte(&o, '\n');
+	int64_t start = 0;
+	for (int64_t i = 0; i <= inn; i++) {
+		if (i == inn || in[i] == '\n') {
+			if (i > start || i < inn) {
+				nbuf_str(&o, "XO-PROP-INPUT ");
+				nbuf_put(&o, in + start, i - start);
+				nbuf_byte(&o, '\n');
+			}
+			start = i + 1;
+		}
+	}
+	write_all(1, o.p, (size_t)o.n);
+	free(o.p);
+	const char *best = getenv("XO_PROP_BEST");
+	if (best) {
+		int64_t bn;
+		uint64_t *b = gen_choices(best, &bn);
+		int smaller = gen_shorter(g->rec, g->nrec, b, bn);
+		free(b);
+		if (!smaller) {
+			write_all(1, "XO-PROP-NOT-SMALLER\n", 20);
+			_exit(3);
+		}
+	}
+}
+
+// xo_gen_intn is GenRand.Intn: a choice in [0, n), no choice for n <= 1.
+int64_t xo_gen_intn(int64_t h, int64_t n) {
+	if (n <= 1) {
+		return 0;
+	}
+	return (int64_t)gen_draw(gen_of(h), (uint64_t)n);
+}
+
+// xo_gen_enter and xo_gen_leave bracket a nested value; xo_gen_deep
+// tells when nested values stop growing (GenRand.Deep).
+void xo_gen_enter(int64_t h) { gen_of(h)->depth++; }
+
+void xo_gen_leave(int64_t h) { gen_of(h)->depth--; }
+
+int64_t xo_gen_deep(int64_t h) { return gen_of(h)->depth >= 4; }
+
+// xo_gen_size is a collection's length: small, shrinking with depth.
+int64_t xo_gen_size(int64_t h) {
+	xo_gen *g = gen_of(h);
+	if (g->depth >= 4) {
+		return 0;
+	}
+	return xo_gen_intn(h, 6 - g->depth);
+}
+
+static int64_t gen_zigzag(uint64_t v) { return (int64_t)(v >> 1) ^ -(int64_t)(v & 1); }
+
+// xo_gen_int is std/rt's genInt: small values and edges preferred.
+int64_t xo_gen_int(int64_t h) {
+	xo_gen *g = gen_of(h);
+	if (g->small) {
+		if (gen_draw(g, 5) < 4) {
+			return gen_zigzag(gen_draw(g, 2001));
+		}
+		static const int64_t e[] = {0, 1, -1};
+		return e[xo_gen_intn(h, 3)];
+	}
+	uint64_t c = gen_draw(g, 10);
+	if (c < 7) {
+		return gen_zigzag(gen_draw(g, 201));
+	}
+	if (c == 7) {
+		static const int64_t e[] = {0, 1, -1, INT64_MAX, INT64_MIN};
+		return e[xo_gen_intn(h, 5)];
+	}
+	return gen_zigzag(gen_draw(g, 0));
+}
+
+static int64_t gen_abs(int64_t n) { return n < 0 ? (n == INT64_MIN ? INT64_MAX : -n) : n; }
+
+// xo_gen_sized is a sized integer (std/rt's Gen): kind 1 Int32, 2 Int16,
+// 3 Int8, 4 UInt64, 5 UInt32, 6 UInt16, 7 UInt8, in the Int word.
+int64_t xo_gen_sized(int64_t h, int64_t kind) {
+	int64_t v = xo_gen_int(h);
+	switch (kind) {
+	case 1:
+		return (int32_t)(v % ((int64_t)1 << 31));
+	case 2:
+		return (int16_t)(v % ((int64_t)1 << 15));
+	case 3:
+		return (int8_t)(v % ((int64_t)1 << 7));
+	case 4:
+		return gen_abs(v);
+	case 5:
+		return (int64_t)(uint32_t)gen_abs(v);
+	case 6:
+		return (int64_t)(uint16_t)gen_abs(v);
+	default:
+		return (int64_t)(uint8_t)gen_abs(v);
+	}
+}
+
+// xo_gen_float is std/rt's genFloat: small values preferred.
+double xo_gen_float(int64_t h) {
+	xo_gen *g = gen_of(h);
+	uint64_t c = gen_draw(g, 8);
+	if (c < 6) {
+		return (double)gen_zigzag(gen_draw(g, 2001)) / 8;
+	}
+	if (c == 6) {
+		static const double e[] = {0, -0.5, 1, 1e300, -1e-300};
+		return e[xo_gen_intn(h, 5)];
+	}
+	return ((double)gen_draw(g, (uint64_t)1 << 53) / (double)((uint64_t)1 << 53) - 0.5) * 1000;
+}
+
+// the runes of generated strings (std/rt's alphabet)
+static const int32_t gen_alpha[] = {'a', 'b', 'c', 'x', 'y', 'z', 'A', 'B', 'C', '0', '1', '9', ' ', '_', '-', 0xe9, 0x3bb, 0x1f600};
+#define GEN_NALPHA ((int64_t)(sizeof gen_alpha / sizeof gen_alpha[0]))
+
+// xo_gen_rune is a rune of the alphabet.
+int64_t xo_gen_rune(int64_t h) { return gen_alpha[xo_gen_intn(h, GEN_NALPHA)]; }
+
+// xo_gen_str is std/rt's genStr: up to 8 runes of the alphabet (Bytes
+// are its UTF-8).
+xo_rstr *xo_gen_str(int64_t h, int64_t *len) {
+	int64_t n = xo_gen_intn(h, 9);
+	nbuf o = {0};
+	for (int64_t i = 0; i < n; i++) {
+		char u[4];
+		int k = n_utf8_encode(u, gen_alpha[xo_gen_intn(h, GEN_NALPHA)]);
+		nbuf_put(&o, u, k);
+	}
+	xo_rstr *s = nstr(o.p ? o.p : "", o.n, len);
+	free(o.p);
+	return s;
+}
+
+// xo_gen_duration and xo_gen_time are std/rt's: milliseconds of genInt,
+// seconds of genInt from 2026-01-01 (wrapping as Go's int64 does).
+int64_t xo_gen_duration(int64_t h) { return (int64_t)((uint64_t)xo_gen_int(h) * 1000000ULL); }
+
+int64_t xo_gen_time(int64_t h) { return (int64_t)(1767225600000000000ULL + (uint64_t)xo_gen_int(h) * 1000000000ULL); }
+
 // Standard streams and the environment
 
 static void tw_write(int err, const char *p, int64_t n) {

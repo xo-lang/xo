@@ -1,0 +1,87 @@
+// Property tests and testing.gen whose report is the same on the Go
+// backend and on a native test binary (decision 0120): the same cases,
+// the same shrunk inputs, the same generated values of every kind of
+// type. TestNoGCTests compares the two.
+
+test "reverse twice" for xs: List[Int] {
+  expect(xs.reverse().reverse()) == xs
+}
+
+test "sum of two lists" for a: List[Int], b: List[Int] {
+  expect(sum(a + b)) == sum(a) + sum(b)
+}
+
+test "short lists" for xs: List[Int] {
+  expect(xs.len()) < 3
+}
+
+test "small ints" for n: Int, m: Int {
+  expect(n % 1000 + m % 1000) < 150
+}
+
+test "short strings" for s: Str {
+  expect(s.len()) < 6
+}
+
+test "ranges hold" for r: Range {
+  expect(r.lo) <= r.hi
+}
+
+test "no big rects" for s: Shape {
+  match s {
+    Shape.Rect(w, h) => expect(w % 100 * (h % 100)) < 10
+    Shape.Dot | Shape.Circle(_) | Shape.Empty => expect(true)
+  }
+}
+
+test "small maps" for m: Map[Str, Int], o: Option[Int] {
+  expect(m.len()) < 3
+}
+
+test "pinned seed" for xs: List[Str] seed 42 {
+  expect(xs.len()) < 2
+}
+
+test "every kind" for a: (Bool, Float, Rune, Bytes), b: Set[Int8], c: Result[UInt16, Str], d: Email, e: Duration, f: Time, g: Point, h: Float32, i: UInt64, t: Tree {
+  expect(false)
+}
+
+test "gen list" {
+  expect(testing.gen[List[Int]](7)) == testing.gen[List[Int]](8)
+}
+
+test "gen map" {
+  expect(testing.gen[Map[Str, Int]](3)) == testing.gen[Map[Str, Int]](4)
+}
+
+test "gen tree" {
+  expect(testing.gen[Tree](11)) == testing.gen[Tree](12)
+}
+
+test "gen tuple" {
+  expect(testing.gen[(Shape, Point, Option[Str], Range)](5)) == testing.gen[(Shape, Point, Option[Str], Range)](6)
+}
+
+test "gen scalars" {
+  expect(testing.gen[(Bool, Float, Rune, Bytes)](9)) == testing.gen[(Bool, Float, Rune, Bytes)](10)
+}
+
+test "gen scalars 2" {
+  expect(testing.gen[(Float32, UInt64, Int32, UInt8)](9)) == testing.gen[(Float32, UInt64, Int32, UInt8)](10)
+}
+
+test "gen times" {
+  expect(testing.gen[(Duration, Time)](13)) == testing.gen[(Duration, Time)](14)
+}
+
+test "gen sets" {
+  expect(testing.gen[(Set[Int8], Result[UInt16, Str], Email, Secret[Int])](21)) == testing.gen[(Set[Int8], Result[UInt16, Str], Email, Secret[Int])](22)
+}
+
+test "gen ints" {
+  expect(testing.gen[(Int16, UInt32)](8)) == testing.gen[(Int16, UInt32)](9)
+}
+
+test "gen deep" {
+  expect(testing.gen[List[List[Option[Tree]]]](4)) == testing.gen[List[List[Option[Tree]]]](5)
+}

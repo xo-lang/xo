@@ -160,3 +160,12 @@ deadlocked (XO-F001: the caught fault left the task shielded); after,
 all three backends print the same, leak check 0. bench/perf/http kept
 alive (2 interleaved rounds, before / after): llvm 116261, 116262 /
 115880, 116083 req/s; arm64 113231, 113256 / 112515, 113226.
+
+## 5. Property tests and testing.gen natively (decision 0120)
+
+Not a performance item. `cmd/xo/testdata/nogc/prop` (ten property tests,
+seven failing and shrunk, ten `testing.gen` comparisons over every kind
+of type): `xo test -v` prints the same report on the Go backend, LLVM,
+and arm64 (TestNoGCTests). Time of the whole module's `xo test` (cached
+builds): Go backend 0.28 s, native 2.9 s (a process per case and per
+shrink try; the shrinks took 2 to 61 steps).

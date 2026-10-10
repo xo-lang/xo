@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native test binaries (`xo test --no-gc`, decision 0120): property tests
+  and `testing.gen` work, with the Go backend's generated values for a
+  seed, the same failing case, and the same shrunk input in the report.
+  A `Set` or `Map` keyed by a sized integer (`Set[Int8]`) now builds
+  natively.
 - Native backends: deferred code that faults no longer skips the rest
   of the cleanup. The deferred code registered before it and that of
   the blocks around it runs, the last fault is reported, as on the Go

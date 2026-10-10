@@ -124,6 +124,10 @@ type Options struct {
 	// function per test block of the root modules (in TestDecls order)
 	// and a main that runs the one XO_TEST names.
 	Tests bool
+	// RealTests includes the tests that declare `uses` (core 9.2, `xo
+	// test --real`, decision 0120); without it they are left out (the
+	// harness reports them skipped).
+	RealTests bool
 	// NoFaultUnwind keeps faults as program exits (OpFault, no landings):
 	// for Go mode assembly (decision 0084), where a fault is a Go panic.
 	// Native builds unwind (decision 0085, landing.go).

@@ -268,8 +268,13 @@ func (b *builder) hashFunc(t *Type, at ast.Node) string {
 	}
 	switch t.Kind {
 	case KInt:
-		// a multiplicative mix, then the high bits folded down
-		x := s.add(OpMul, intT, Wrap, v, s.cint(-7046029254386353131))
+		// a multiplicative mix, then the high bits folded down (a sized
+		// integer's word as an Int: Set[Int8] did not build, 2026-10-10)
+		iv := v
+		if v.Type != intT {
+			iv = s.add(OpIntConv, intT, nil, v)
+		}
+		x := s.add(OpMul, intT, Wrap, iv, s.cint(-7046029254386353131))
 		h = s.add(OpXor, intT, nil, x, s.add(OpShr, intT, nil, x, s.cint(29)))
 	case KBool:
 		hv := local("h")

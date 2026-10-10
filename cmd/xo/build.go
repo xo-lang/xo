@@ -408,7 +408,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "xo test: --explore needs the Go backend (native builds use the real scheduler)")
 			return 2
 		}
-		return runNativeTests(res, nativeTestOpts{seed: *seed, run: *run, asJSON: *asJSON, verbose: *verbose, real: *real, timeout: 60 * time.Second}, stdout)
+		return runNativeTests(res, nativeTestOpts{seed: *seed, run: *run, asJSON: *asJSON, verbose: *verbose, real: *real, cases: *cases, timeout: 60 * time.Second}, stdout)
 	}
 	var targs []string
 	if *seed != 0 {
