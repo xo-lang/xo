@@ -655,6 +655,7 @@ fn f() -> P { P{x: 1, y: 0} }`,
 	NotImplemented: {
 		Title: "type does not implement a required interface or constraint",
 		Detail: "The value is used in a way that needs an interface its type does not implement: interpolation needs `Display`, `==` needs `Eq`, `<` needs `Ord`, `json.encode` needs `Json`, a generic call needs its constraint (`T: Ord`), and `derive X` needs every field to implement `X`. " +
+			"A value that holds a handle (`Mutex`, `Atomic`, `Chan`, `Task`, `Conn`, ...) or a function value is never `Eq` or `Hash`: it cannot be compared, be a Map key or Set element, or derive `Eq`, `Hash`, or `Ord` (decision 0112); compare an identifying field instead. " +
 			"Add `derive` to the type, implement the interface's methods, or convert the value first. See core 2.4 and 2.9.",
 		Example: `struct P { x: Int }
 

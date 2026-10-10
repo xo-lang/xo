@@ -1,0 +1,26 @@
+// Decision 0112: values that hold handles are not comparable.
+
+struct Worker {
+  id: Int
+  inbox: Chan[Str]
+}
+
+struct Pool {
+  lock: Mutex[Int]
+} derive Eq
+
+fn same(a: Worker, b: Worker) -> Bool {
+  a == b
+}
+
+fn same_id(a: Worker, b: Worker) -> Bool {
+  a.id == b.id
+}
+
+fn index(ws: List[Worker]) -> Map[Worker, Int] {
+  var m: Map[Worker, Int] = {}
+  for w in ws {
+    m.put(w, w.id)
+  }
+  m
+}

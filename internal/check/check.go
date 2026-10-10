@@ -68,6 +68,9 @@ type checker struct {
 	// per body information used by the flow checks
 	identObj map[*ast.Ident]*VarObj
 	exprType map[ast.Expr]Type
+	// keyReported dedupes Map and Set key reports (decision 0112), by
+	// file and type.
+	keyReported map[string]bool
 	// neverExpr marks expressions of type Never checked against an
 	// expected type (exprType then holds the expected type).
 	neverExpr map[ast.Expr]bool
@@ -131,6 +134,7 @@ func newChecker() *checker {
 		safeNavs:    map[*ast.TryExpr]bool{},
 		safeNavDiag: map[*ast.TryExpr]int{},
 		exprType:    map[ast.Expr]Type{},
+		keyReported: map[string]bool{},
 		neverExpr:   map[ast.Expr]bool{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},
@@ -203,11 +207,17 @@ func (c *checker) run() {
 		c.resolveSigs(m)
 	}
 	for _, m := range c.order {
+		if !m.IsStd && m.Go == nil {
+			c.checkDerivesComparable(m)
+		}
+	}
+	for _, m := range c.order {
 		if !m.IsStd {
 			c.checkModule(m)
 			c.runEditionRules(m)
 		}
 	}
+	c.checkKeyTypes()
 	c.solveEffects()
 	for _, b := range c.bodies {
 		c.flowBody(b)

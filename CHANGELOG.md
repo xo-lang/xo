@@ -11,6 +11,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   literals, a `var` receiver and an argument naming it), to two `var`
   parameters of one call is `XO0503` on every backend; the native
   backends no longer report XO1201 for it.
+- Decision 0112: a value that holds a handle (`Mutex`, `Atomic`, `Chan`,
+  `Task`, `Scope`, `Listener`, `Conn`, `task.Group`, the std/http and
+  std/sql handles, the test fakes) or a function value is not
+  comparable: `==`/`!=`, Map keys, Set elements, `derive Eq`/`Hash`, and
+  `T: Eq`/`Hash` arguments are `XO0404` with a note naming the field
+  that holds it; `derive Ord` already was. The checker now looks into
+  struct fields and enum payloads for `Eq` (it looked only at type
+  arguments).
 - Native backends (decisions 0107 to 0109): `Proc.run`, `os.tasks` (a
   scope around main and around each test), method values
   (`let f = x.method`), `map_concurrent_until`, base64,

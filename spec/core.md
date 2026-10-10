@@ -15,7 +15,12 @@ programs for any OS with fast, structured, unambiguous feedback.
 Meaning changes: std/http over TLS speaks HTTP/1.1 only (below), and
 one variable passed to two `var` parameters of a call is an error
 (`XO0503`, 5.2, decision 0111; the Go backend shared it, the native
-backends reported XO1201). Native support grew (`--no-gc`, 10.1):
+backends reported XO1201). A value that holds a handle (`Mutex`,
+`Chan`, `Task`, `Conn`, ...) or a function value is not comparable: `==`,
+`Map` keys, `Set` elements, and `derive Eq`/`Hash` on it are `XO0404`
+on every backend (2.9, decision 0112; the Go backend compared the
+handles, the native backends reported XO1201). Native support grew
+(`--no-gc`, 10.1):
 
 - Interface types as values (2.4) build natively (decision 0100).
 - Newtypes (2.8, decision 0097: construction, `e.0`, `Email(p)`, Debug
@@ -704,6 +709,22 @@ Every type automatically implements:
 
 - `Debug`: structural printing used by the debugger, error frames, and `dbg()`.
 - `Eq` and `Hash` when all fields do.
+
+A type is *comparable* when it implements `Eq`: every field, enum payload,
+tuple element, and element or type argument is comparable. Function values
+and handles are not (decision 0112): `Chan`, `Mutex`, `Atomic`, `Scope`,
+`Task`, `Listener`, `Conn`, `task.Group`, `task.Semaphore`, `task.Once`,
+`http.Router`, `http.Server`, `http.Client`, `http.BodyWriter`,
+`http.TlsCert`, `sql.Db`, `sql.Tx`, and the std/testing fakes
+(`FakeNet`, `FakeClock`, `MemFs`, `FakeEnv`, `FakeStdio`, `FakeProc`).
+A value that holds one, directly or in a field, payload, tuple, or
+collection, cannot be compared with `==` or `!=`, cannot be a `Map` key
+or `Set` element, and its type cannot `derive Eq`, `Hash`, or `Ord`
+(`XO0404`, with a note naming the field that holds the handle). Compare
+an identifying field instead (`a.id == b.id`). Interface values compare
+through their dynamic value and stay comparable; the opaque Go values of
+`use go` bindings keep Go's equality (4.4). Automatic `Debug` is
+unaffected.
 
 Opt in with `derive` on the declaration:
 

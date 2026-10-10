@@ -36,7 +36,9 @@ interface Debug   { fn debug(self) -> Str }     // implemented for every type
 ```
 
 `Eq`, `Hash`, and `Ord` are builtin interfaces with no user written methods.
-`Eq` and `Hash` are automatic when all fields implement them; `Ord` comes from
+`Eq` and `Hash` are automatic when all fields implement them (handles and
+function values never do, so a value holding one is not comparable: core
+2.9, decision 0112); `Ord` comes from
 `derive Ord` (field order, then variant order). Builtin scalar types, `Str`,
 `Duration`, and `Time` are `Ord`. `Float` is `Ord` with a total order in which
 NaN sorts after every other value (all NaNs are equal in the order) and

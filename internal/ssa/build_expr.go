@@ -561,9 +561,12 @@ func (s *fn) compareValues(op token.Kind, l, r *Value, x ast.Node) *Value {
 		return s.add(o, boolT, nil, c, s.cint(0))
 	case KStruct, KTuple, KEnum, KList, KUnit:
 		if (o == OpEq || o == OpNe) && !comparable(l.Type, map[*Type]bool{}) {
-			// a function value or a runtime handle (a request value,
-			// a channel) outside an interface value: the backends'
-			// equality helpers do not compare them
+			// a function value or a runtime handle outside an
+			// interface value: the backends' equality helpers do not
+			// compare them. The checker rejects `==` on user types
+			// that hold one (XO0404, decision 0112), so only a std
+			// type whose native implementation holds one (a request's
+			// typed values) gets here
 			b.unsupported(x, "`==` on values of type `"+l.Type.Name+"`, which hold functions or runtime handles")
 			return s.undef(boolT)
 		}

@@ -492,23 +492,9 @@ func (c *checker) isEqType(t Type, name string) bool {
 	if name == "Debug" {
 		return true
 	}
-	switch x := resolve(t).(type) {
-	case *Func:
-		return false
-	case *Tuple:
-		for _, e := range x.Elems {
-			if !c.isEqType(e, name) {
-				return false
-			}
-		}
-	case *Named:
-		for _, a := range x.Args {
-			if !c.isEqType(a, name) {
-				return false
-			}
-		}
-	}
-	return true
+	// Eq and Hash: every field, payload, element, and type argument is
+	// comparable (decision 0112)
+	return c.incomparable(t) == ""
 }
 
 var ordBuiltins = map[string]bool{"Int": true, "Int8": true, "Int16": true, "Int32": true, "Int64": true, "UInt8": true, "UInt16": true, "UInt32": true, "UInt64": true, "Float": true, "Float32": true, "Rune": true, "Str": true, "Duration": true, "Time": true, "Bool": true, "Bytes": true}
