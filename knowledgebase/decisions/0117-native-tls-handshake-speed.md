@@ -97,3 +97,9 @@ resuming: llvm 18346 at 244 us, Go 18843 at 210 us.
   of the pthread configuration suffices.
 - **Fewer worker threads for TLS**: hides the contention instead of
   removing it.
+
+## Owner approval (2026-10-10)
+
+Vendoring fiat-crypto's P-256 code (pinned upstream commit, checked
+hash, as for Mbed TLS) for the fast signer described above is approved;
+scheduled at low priority.
