@@ -490,9 +490,11 @@ type Module struct {
 	// faults are raised by `rt.fault_raise`, and the values that can
 	// fault carry their landing (Value.Pad).
 	FaultUnwind bool
-	faults      map[*Func]bool // mayFault while Verify runs
-	types       map[string]*Type
-	order       []*Type // named struct and enum types, in creation order
+	// TZ is the zone data std/time needs (build_time.go).
+	TZ     TZUse
+	faults map[*Func]bool // mayFault while Verify runs
+	types  map[string]*Type
+	order  []*Type // named struct and enum types, in creation order
 }
 
 // NewModule returns an empty module with the builtin types.

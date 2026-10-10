@@ -19,6 +19,7 @@ conversions
 crypto_basic
 defer_blocks
 div_zero
+duration_time
 enums
 error_conversion
 error_frames
@@ -62,6 +63,11 @@ std_iface_methods
 strings
 structs
 text_helpers
+time_civil
+time_dynamic_zone
+time_format
+time_layout_fault
+time_zones
 tricky_mix
 unit_discard
 value_semantics

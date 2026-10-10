@@ -1260,6 +1260,17 @@ first, AST based prototype, since deleted) and
   compares whole standard error, frame lines included. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no TLS; no `http.stream`).
+- std/time natively (2026-10-09, decision 0094 "Native implementation"):
+  std/native/time.xo (civil time, layouts, format, parse) over
+  std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
+  rttime.xo). xo_std.c includes xo_time.c only with `-DXO_TIME`, which
+  `timeFlags` (internal/build/tzdata.go) passes only for programs that
+  load std/time, together with the generated `xo_tzdata.h` in the build
+  directory (per use zone data: mode 0 TZif per constant name, 1 the
+  whole zoneinfo.zip, 2 `--tzdata=system`). Tests: TestTimeDiff
+  (`XO_TIMEDIFF_OUT=<prefix>` keeps the program and its output),
+  TestZoneDataPerUseNative, and the time goldens in gen_native.txt.
+  Last verified: 2026-10-09.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated

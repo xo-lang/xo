@@ -247,10 +247,21 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
 		return s.constValue(c, s.natOf(x))
 	}
-	if id, ok := x.X.(*ast.Ident); ok && x.Sel.Name == "UNIX_EPOCH" {
-		if id.Name == "Time" && b.info.VarOf(id) == nil && isPreludeNamed(s.natCheck(x), "Time") {
-			// Time.UNIX_EPOCH: Unix nanoseconds 0 (decision 0069)
-			return s.add(OpConst, s.natOf(x), int64(0))
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Const {
+		// an associated constant (`Time.UNIX_EPOCH`)
+		if fo.Module != nil && fo.Module.IsPrelude && fo.Recv != nil && fo.Recv.Name == "Time" && fo.Name == "UNIX_EPOCH" {
+			return s.cint(0)
+		}
+		b.unsupported(x, "`"+fo.DisplayName()+"`")
+		return s.undef(s.natOf(x))
+	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Recv == nil && fo.Module != nil && fo.Module.IsStd {
+		// a std function with a native implementation as a value
+		// (`time.zone`): the implementation, when it takes the same
+		// parameters (no `rt.Loc`)
+		if impl := b.implOf(fo); impl != nil && len(impl.Params) == len(fo.Params) {
+			b.noteZoneValue(fo, x)
+			return s.funcValue(impl, x)
 		}
 	}
 	if x.Sel.Name == "await" {

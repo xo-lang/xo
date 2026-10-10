@@ -44,6 +44,8 @@ type Program struct {
 	MainModule string
 	// Funcs counts the functions emitted.
 	Funcs int
+	// TZ is the zone data std/time needs (internal/build embeds it).
+	TZ ssa.TZUse
 }
 
 // Generate lowers the program whose roots are the modules of res: it
@@ -68,6 +70,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	prog.TZ = m.TZ
 	for _, mod := range res.Modules {
 		if fo, ok := mod.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
 			prog.MainModule = mod.Path

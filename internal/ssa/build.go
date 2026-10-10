@@ -78,6 +78,9 @@ type builder struct {
 	ifaces map[*Type]*check.Named
 	// tids number the concrete types held by interface values
 	tids map[string]int
+
+	// the zone data std/time needs (build_time.go)
+	tzNames, tzDynamic map[string]bool
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -191,6 +194,7 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 	for _, f := range b.mod.Funcs {
 		f.cleanup()
 	}
+	b.mod.TZ = b.tzUse()
 	return b, nil
 }
 

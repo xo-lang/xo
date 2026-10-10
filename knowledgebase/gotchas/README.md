@@ -212,3 +212,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [native-or-pattern-bindings.md](native-or-pattern-bindings.md): an or pattern's later alternatives bound their names to variables the arm never read on the native backends; the builder now copies them into the first alternative's bindings.
 - [native-task-result-value.md](native-task-result-value.md): a task returning a Result value (not failing) failed its scope natively because the runner read the SSA result shape; it now uses the checker's error type.
 - [native-test-clock-stuck-after-signal.md](native-test-clock-stuck-after-signal.md): a native test hung after `signal_after` fired, because a callback timer woke nobody and the virtual clock moves only on a deadlock check; `tw_kick` now checks again.
+- [arm64-tbz-range.md](arm64-tbz-range.md): a function over 8192 instructions failed to assemble ("fixup value out of range") because tbz/tbnz reach 32 KiB; long functions now get the opposite test over a `b`.
+- [coalesce-binds-looser-than-range.md](coalesce-binds-looser-than-range.md): `xs[0..f() ?? 9]` parses as `(0..f()) ?? 9`; bind the bound first or parenthesize it.

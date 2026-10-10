@@ -81,6 +81,7 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		if v, ok := s.testCall(x, ci); ok {
 			return v
 		}
+		b.noteZoneCall(x, ci.Fn)
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
@@ -188,6 +189,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 // environment over a wrapper that calls it.
 func (s *fn) funcValue(fo *check.FuncObj, at ast.Node) *Value {
 	b := s.b
+	b.noteZoneValue(fo, at)
 	t := s.natOf(at.(ast.Expr))
 	if t.Kind != KFunc || fo.Recv != nil {
 		b.unsupported(at, "the function `"+fo.DisplayName()+"` as a value")

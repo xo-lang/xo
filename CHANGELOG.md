@@ -44,6 +44,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   prints `  at ...` lines identical to the Go backend's.
 - `xo test --no-gc`: `FakeStdio.set_input` feeds the reads; fixed a hang
   after `FakeProc.signal_after` fired (the virtual clock stopped moving).
+- Native backends: all of `std/time` (decision 0094; std/native/time.xo
+  and std/llrt/xo_time.c, a port of Go's TZif reader and zone lookup):
+  zones with the same per use embedded data (or `--tzdata=system`), civil
+  time, gaps and overlaps, layouts, strict parsing with the same error
+  texts and faults; also `Duration.from_secs`, `scale`, `ceil_seconds`,
+  `Time.parse_rfc3339`, and `Time.UNIX_EPOCH` as a value. Programs that
+  do not use std/time do not grow. TestTimeDiff compares about 70,000
+  lines with the Go backend. Fixed: the arm64 backend failed to assemble
+  functions over 8192 instructions (`tbz` range).
 
 ## v0.8.0 (2026-10-09)
 

@@ -1,0 +1,996 @@
+// std/time on the native backends (decisions 0074 and 0094). std/rt's
+// timezone.go, timecivil.go, and timefmt.go are the reference: the same
+// rules, texts, and faults. Zone rules (TZif data and its POSIX TZ
+// footer) are looked up by the C runtime (std/llrt/xo_time.c, intrinsics
+// in rttime.xo) as Go's time package does; civil time, layouts,
+// formatting, and parsing are here.
+use std/time
+use native/rt
+use native/rttime
+use native/rttest
+
+// ---------------------------------------------------------------------------
+// Zones (std.md 13.1)
+
+/// time.Zone: a named zone is the C runtime's zone `id` (0 is UTC); a
+/// fixed zone has `fixed` set and its offset in seconds. A name always
+/// gets the same id, so `==` compares what the Go backend compares: the
+/// name, whether the zone is fixed, and the fixed offset.
+struct Zone {
+  label: Str
+  fixed: Bool
+  secs: Int
+  id: Int
+}
+
+fn (z: Zone) display() -> Str { z.label }
+
+fn (z: Zone) name() -> Str { z.label }
+
+/// The Debug text: `Zone(Europe/Berlin)` (std/rt's XoDebug).
+fn zone_debug(z: Zone) -> Str { "Zone(${z.label})" }
+
+fn (z: Zone) offset_at(t: Time) -> Duration { Duration.from_secs_int(offset_secs(z, unix_secs(t))) }
+
+fn (z: Zone) abbreviation_at(t: Time) -> Str { abbr_at(z, unix_secs(t)) }
+
+fn zoneerr_display(e: time.ZoneErr) -> Str {
+  match e {
+    time.ZoneErr.Unknown(name) => "unknown time zone ${name.quote()}"
+    time.ZoneErr.NoLocal(msg) => "cannot determine the local time zone: ${msg}"
+  }
+}
+
+fn utc() -> Zone { Zone{label: "UTC", fixed: false, secs: 0, id: 0} }
+
+fn zone(name: Str) -> Zone ! time.ZoneErr {
+  if name == "UTC" {
+    return Ok(utc())
+  }
+  let id = rttime.tz_load(name)
+  if id == 0 {
+    return Err(time.ZoneErr.Unknown(name: name))
+  }
+  Ok(Zone{label: name, fixed: false, secs: 0, id: id})
+}
+
+fn fixed(name: Str, offset: Duration, at: rt.Loc) -> Zone {
+  if offset > 24h || offset < -24h {
+    rt.fault_at("time.fixed: offset ${offset} is past 24h", at)
+  }
+  Zone{label: name, fixed: true, secs: offset.nanos() / 1000000000, id: 0}
+}
+
+fn local(env: Env) -> Zone ! time.ZoneErr uses env {
+  match env.get("TZ") {
+    Some(tz) => {
+      let name = tz.trim_prefix(":")
+      if name == "" || name == "UTC" {
+        return Ok(utc())
+      }
+      var id = rttime.tz_load(name)
+      if id == 0 {
+        // the machine's own zone is host dependent anyway: the host
+        // database is the fallback
+        id = rttime.tz_load_host(name)
+      }
+      if id == 0 {
+        return Err(time.ZoneErr.Unknown(name: name))
+      }
+      Ok(Zone{label: name, fixed: false, secs: 0, id: id})
+    }
+    None => {
+      if rttest.test_on() {
+        // a test's Env is a fake one: without TZ it gives UTC
+        return Ok(utc())
+      }
+      let name = rttime.tz_local_name()
+      if name != "Local" {
+        var id = rttime.tz_load(name)
+        if id == 0 {
+          id = rttime.tz_load_host(name)
+        }
+        if id != 0 {
+          return Ok(Zone{label: name, fixed: false, secs: 0, id: id})
+        }
+      }
+      // Go's time.Local: /etc/localtime, else UTC
+      Ok(Zone{label: name, fixed: false, secs: 0, id: rttime.tz_load_host("Local")})
+    }
+  }
+}
+
+/// The nanoseconds of t since the epoch.
+fn ns_of(t: Time) -> Int { (t - Time.UNIX_EPOCH).nanos() }
+
+fn time_of(ns: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos(ns) }
+
+fn floor_div(a: Int, b: Int) -> Int {
+  let q = a / b
+  if a % b != 0 && ((a < 0) != (b < 0)) {
+    return q - 1
+  }
+  q
+}
+
+/// The seconds of t since the epoch, rounded down (time.Unix(0, ns)).
+fn unix_secs(t: Time) -> Int { floor_div(ns_of(t), 1000000000) }
+
+fn offset_secs(z: Zone, sec: Int) -> Int {
+  if z.fixed {
+    return z.secs
+  }
+  if z.id == 0 {
+    return 0
+  }
+  rttime.tz_offset(z.id, sec)
+}
+
+fn abbr_at(z: Zone, sec: Int) -> Str {
+  if z.fixed {
+    return z.label
+  }
+  if z.id == 0 {
+    return "UTC"
+  }
+  rttime.tz_abbr(z.id, sec)
+}
+
+// ---------------------------------------------------------------------------
+// Civil time (std.md 13.2)
+
+/// The days from 1970-01-01 to y-m-d (H. Hinnant's algorithm).
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  var y = year
+  if m <= 2 {
+    y -= 1
+  }
+  let era = floor_div(y, 400)
+  let yoe = y - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+fn date_of(days: Int) -> time.Date {
+  let z = days + 719468
+  let era = floor_div(z, 146097)
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  var y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  var m = mp - 9
+  if mp < 10 {
+    m = mp + 3
+  }
+  if m <= 2 {
+    y += 1
+  }
+  time.Date{year: y, month: m, day: d}
+}
+
+fn is_leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in(y: Int, m: Int) -> Int {
+  if m == 2 {
+    if is_leap(y) {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  31
+}
+
+/// (year, month) with the month normalized into 1 to 12.
+fn norm_month(y: Int, m: Int) -> (Int, Int) {
+  let t = y * 12 + (m - 1)
+  (floor_div(t, 12), t - floor_div(t, 12) * 12 + 1)
+}
+
+/// The day number of d, with the month normalized and the day counted
+/// from the first of the month (a struct literal may hold any fields).
+fn date_days(d: time.Date) -> Int {
+  let (y, m) = norm_month(d.year, d.month)
+  days_from_civil(y, m, 1) + d.day - 1
+}
+
+/// n in decimal, at least w digits (fmt's %0*d).
+fn pad(n: Int, w: Int) -> Str {
+  if n < 0 {
+    return "-" + pad(-n, w - 1)
+  }
+  var s = "${n}"
+  while s.len() < w {
+    s = "0" + s
+  }
+  s
+}
+
+fn valid_date(y: Int, m: Int, d: Int) -> Str {
+  if y < 1 || y > 9999 {
+    return "year ${y} out of range 1 to 9999"
+  }
+  if m < 1 || m > 12 {
+    return "month ${m} out of range 1 to 12"
+  }
+  if d < 1 || d > days_in(y, m) {
+    return "day ${d} out of range 1 to ${days_in(y, m)} for ${pad(y, 4)}-${pad(m, 2)}"
+  }
+  ""
+}
+
+fn valid_clock(c: time.ClockTime) -> Str {
+  if c.hour < 0 || c.hour > 23 {
+    return "hour ${c.hour} out of range 0 to 23"
+  }
+  if c.minute < 0 || c.minute > 59 {
+    return "minute ${c.minute} out of range 0 to 59"
+  }
+  if c.second < 0 || c.second > 59 {
+    return "second ${c.second} out of range 0 to 59"
+  }
+  if c.nanos < 0 || c.nanos > 999999999 {
+    return "nanos ${c.nanos} out of range 0 to 999999999"
+  }
+  ""
+}
+
+fn date(year: Int, month: Int, day: Int) -> time.Date ! time.CivilErr {
+  let msg = valid_date(year, month, day)
+  if msg != "" {
+    return Err(time.CivilErr.Invalid(msg: msg))
+  }
+  Ok(time.Date{year: year, month: month, day: day})
+}
+
+fn civil(t: Time, z: Zone) -> time.Civil {
+  let ns = ns_of(t)
+  let sec = floor_div(ns, 1000000000)
+  var nanos = ns % 1000000000
+  if nanos < 0 {
+    nanos += 1000000000
+  }
+  let off = offset_secs(z, sec)
+  let local = sec + off
+  let days = floor_div(local, 86400)
+  let rem = local - days * 86400
+  time.Civil{
+    date: date_of(days),
+    time: time.ClockTime{hour: rem / 3600, minute: rem / 60 % 60, second: rem % 60, nanos: nanos},
+    offset: Duration.from_secs_int(off),
+    zone: z.label,
+  }
+}
+
+/// Time ranges over Int nanoseconds: about 1677-09-21 to 2262-04-11.
+const MIN_TIME_SECS: Int = -9223372035
+const MAX_TIME_SECS: Int = 9223372035
+
+fn clamp_secs(s: Int) -> Int {
+  if s < MIN_TIME_SECS {
+    return MIN_TIME_SECS
+  }
+  if s > MAX_TIME_SECS {
+    return MAX_TIME_SECS
+  }
+  s
+}
+
+/// The instants of local seconds (the civil time read as if in UTC) in z:
+/// (early, late, kind), kind 0 for one instant, 2 for a gap (none), 3 for
+/// an overlap (two).
+fn civil_instant(local: Int, z: Zone) -> (Int, Int, Int) {
+  let span = 2 * 86400
+  let before = offset_secs(z, clamp_secs(local - span))
+  let after = offset_secs(z, clamp_secs(local + span))
+  let tb = local - before
+  let ta = local - after
+  let ok_b = offset_secs(z, clamp_secs(tb)) == before
+  let ok_a = offset_secs(z, clamp_secs(ta)) == after
+  if before == after {
+    if ok_b {
+      return (tb, tb, 0)
+    }
+    // a transition and its reversal within the window: the offset at the
+    // naive instant
+    let off = offset_secs(z, clamp_secs(local))
+    return (local - off, local - off, 0)
+  }
+  if ok_b && ok_a {
+    if tb < ta {
+      return (tb, ta, 3)
+    }
+    return (ta, tb, 3)
+  }
+  if ok_b {
+    return (tb, tb, 0)
+  }
+  if ok_a {
+    return (ta, ta, 0)
+  }
+  // a gap: Earlier uses the offset before the change, Later the one after
+  (tb, ta, 2)
+}
+
+fn instant(d: time.Date, c: time.ClockTime, z: Zone, ambiguity: time.Ambiguity = time.Ambiguity.Reject) -> Time ! time.CivilErr {
+  let bad_date = valid_date(d.year, d.month, d.day)
+  if bad_date != "" {
+    return Err(time.CivilErr.Invalid(msg: bad_date))
+  }
+  let bad_clock = valid_clock(c)
+  if bad_clock != "" {
+    return Err(time.CivilErr.Invalid(msg: bad_clock))
+  }
+  let local = days_from_civil(d.year, d.month, d.day) * 86400 + c.hour * 3600 + c.minute * 60 + c.second
+  let (early, late, kind) = civil_instant(local, z)
+  let at = "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}T${pad(c.hour, 2)}:${pad(c.minute, 2)}:${pad(c.second, 2)} ${z.label}"
+  var secs = early
+  if kind != 0 {
+    match ambiguity {
+      time.Ambiguity.Reject => {
+        if kind == 2 {
+          return Err(time.CivilErr.Skipped(at: at))
+        }
+        return Err(time.CivilErr.Repeated(at: at))
+      }
+      time.Ambiguity.Later => {
+        secs = late
+      }
+      time.Ambiguity.Earlier => {}
+    }
+  }
+  if secs < MIN_TIME_SECS || secs > MAX_TIME_SECS {
+    return Err(time.CivilErr.Invalid(msg: "${at} is outside the range of Time (1678 to 2262)"))
+  }
+  Ok(time_of(secs * 1000000000 + c.nanos))
+}
+
+fn civilerr_display(e: time.CivilErr) -> Str {
+  match e {
+    time.CivilErr.Invalid(msg) => "invalid civil time: ${msg}"
+    time.CivilErr.Skipped(at) => "${at} does not exist (skipped by a daylight saving change)"
+    time.CivilErr.Repeated(at) => "${at} happens twice (repeated by a daylight saving change)"
+  }
+}
+
+/// Monday is 0.
+fn weekday_index(days: Int) -> Int {
+  let w = days + 3
+  w - floor_div(w, 7) * 7
+}
+
+fn weekday_of(i: Int) -> time.Weekday {
+  match i {
+    0 => time.Weekday.Monday
+    1 => time.Weekday.Tuesday
+    2 => time.Weekday.Wednesday
+    3 => time.Weekday.Thursday
+    4 => time.Weekday.Friday
+    5 => time.Weekday.Saturday
+    _ => time.Weekday.Sunday
+  }
+}
+
+fn date_weekday(d: time.Date) -> time.Weekday { weekday_of(weekday_index(date_days(d))) }
+
+fn date_add_days(d: time.Date, n: Int) -> time.Date { date_of(date_days(d) + n) }
+
+fn date_add_months(d: time.Date, n: Int) -> time.Date {
+  let (y, m) = norm_month(d.year, d.month + n)
+  var day = d.day
+  if day < 1 {
+    day = 1
+  }
+  if day > days_in(y, m) {
+    day = days_in(y, m)
+  }
+  time.Date{year: y, month: m, day: day}
+}
+
+fn date_days_until(d: time.Date, o: time.Date) -> Int { date_days(o) - date_days(d) }
+
+fn date_display(d: time.Date) -> Str {
+  if d.year < 0 {
+    return "-${pad(-d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}"
+  }
+  "${pad(d.year, 4)}-${pad(d.month, 2)}-${pad(d.day, 2)}"
+}
+
+// ---------------------------------------------------------------------------
+// Layouts (std.md 13.3): named fields, as std/rt's TimeLayoutParse
+
+/// A piece of a layout: literal text (field "") or a field and its
+/// argument.
+struct Item {
+  lit: Str
+  field: Str
+  arg: Str
+}
+
+/// The arguments field takes ("" is the field without one), or None for
+/// an unknown field.
+fn field_args(name: Str) -> List[Str]? {
+  match name {
+    "year" => Some([""])
+    "month" => Some(["", "1", "short", "name"])
+    "day" => Some(["", "1"])
+    "weekday" => Some(["short", "name"])
+    "hour" => Some([""])
+    "hour12" => Some([""])
+    "ampm" => Some([""])
+    "minute" => Some([""])
+    "second" => Some([""])
+    "frac" => Some(["", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+    "offset" => Some(["", "compact"])
+    "zone" => Some([""])
+    "lbrace" => Some([""])
+    "rbrace" => Some([""])
+    _ => None
+  }
+}
+
+fn args_text(name: Str, args: List[Str]) -> Str {
+  if name == "frac" {
+    return "the forms are {frac}, {frac:1} to {frac:9}"
+  }
+  var forms: List[Str] = []
+  for a in args {
+    if a == "" {
+      forms.push("{${name}}")
+    } else {
+      forms.push("{${name}:${a}}")
+    }
+  }
+  "the forms are ${forms.join(", ")}"
+}
+
+/// The items of a layout, or the reason it is bad.
+fn layout_items(layout: Str) -> List[Item] ! Str {
+  let b = layout.bytes()
+  let n = b.len()
+  var items: List[Item] = []
+  var lit = ""
+  var start = 0
+  var hour12 = false
+  var ampm = false
+  var i = 0
+  while i < n {
+    if b[i] == 125 {
+      return Err("unmatched } (a literal brace is written {rbrace})")
+    }
+    if b[i] != 123 {
+      i += 1
+      continue
+    }
+    lit = lit + layout[start..i]
+    var j = i + 1
+    while j < n && b[j] != 123 && b[j] != 125 {
+      j += 1
+    }
+    if j >= n || b[j] == 123 {
+      return Err("unclosed { (a literal brace is written {lbrace})")
+    }
+    let body = layout[i + 1..j]
+    var name = body
+    var arg = ""
+    var has_arg = false
+    match body.find(":") {
+      Some(k) => {
+        name = body[0..k]
+        arg = body[k + 1..]
+        has_arg = true
+      }
+      None => {}
+    }
+    match field_args(name) {
+      None => return Err("unknown field {${body}}")
+      Some(args) => {
+        if has_arg && arg == "" || !has_arg && !args.contains("") || has_arg && !args.contains(arg) {
+          return Err("{${body}}: ${args_text(name, args)}")
+        }
+      }
+    }
+    if name == "lbrace" {
+      lit = lit + "{"
+    } else if name == "rbrace" {
+      lit = lit + "}"
+    } else {
+      if lit != "" {
+        items.push(Item{lit: lit, field: "", arg: ""})
+        lit = ""
+      }
+      items.push(Item{lit: "", field: name, arg: arg})
+      if name == "hour12" {
+        hour12 = true
+      }
+      if name == "ampm" {
+        ampm = true
+      }
+    }
+    i = j + 1
+    start = i
+  }
+  lit = lit + layout[start..n]
+  if lit != "" {
+    items.push(Item{lit: lit, field: "", arg: ""})
+  }
+  if hour12 && !ampm {
+    return Err("{hour12} needs {ampm} (or use {hour}, 00 to 23)")
+  }
+  Ok(items)
+}
+
+/// The items of a layout; a bad one faults (a bug, like a bad index).
+fn layout_or_fault(fname: Str, layout: Str, at: rt.Loc) -> List[Item] {
+  match layout_items(layout) {
+    Ok(items) => items
+    Err(msg) => rt.fault_at("time.${fname}: bad layout ${layout.quote()}: ${msg} (check layouts built at run time with time.check_layout)", at)
+  }
+}
+
+fn check_layout(layout: Str) -> () ! time.LayoutErr {
+  match layout_items(layout) {
+    Ok(_) => Ok(())
+    Err(msg) => Err(time.LayoutErr{layout: layout, msg: msg})
+  }
+}
+
+fn layouterr_display(e: time.LayoutErr) -> Str { "bad layout ${e.layout.quote()}: ${e.msg}" }
+
+fn parseerr_display(e: time.ParseErr) -> Str { "at byte ${e.at} of ${e.input.quote()}: ${e.msg}" }
+
+fn month_short() -> List[Str] { ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] }
+
+fn month_name() -> List[Str] { ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] }
+
+fn weekday_short() -> List[Str] { ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+
+fn weekday_name() -> List[Str] { ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] }
+
+fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
+  let items = layout_or_fault("format", layout, at)
+  let ns = ns_of(t)
+  let sec = floor_div(ns, 1000000000)
+  var nanos = ns % 1000000000
+  if nanos < 0 {
+    nanos += 1000000000
+  }
+  let off = offset_secs(z, sec)
+  let local = sec + off
+  let days = floor_div(local, 86400)
+  let rem = local - days * 86400
+  let d = date_of(days)
+  let hour = rem / 3600
+  var out = ""
+  for it in items {
+    match it.field {
+      "" => {
+        out = out + it.lit
+      }
+      "year" => {
+        out = out + pad(d.year, 4)
+      }
+      "month" => {
+        if it.arg == "" {
+          out = out + pad(d.month % 100, 2)
+        } else if it.arg == "1" {
+          out = out + "${d.month}"
+        } else if it.arg == "short" {
+          out = out + month_short()[d.month - 1]
+        } else {
+          out = out + month_name()[d.month - 1]
+        }
+      }
+      "day" => {
+        if it.arg == "1" {
+          out = out + "${d.day}"
+        } else {
+          out = out + pad(d.day % 100, 2)
+        }
+      }
+      "weekday" => {
+        let w = weekday_index(days)
+        if it.arg == "short" {
+          out = out + weekday_short()[w]
+        } else {
+          out = out + weekday_name()[w]
+        }
+      }
+      "hour" => {
+        out = out + pad(hour, 2)
+      }
+      "hour12" => {
+        var h = hour % 12
+        if h == 0 {
+          h = 12
+        }
+        out = out + pad(h, 2)
+      }
+      "ampm" => {
+        if hour < 12 {
+          out = out + "AM"
+        } else {
+          out = out + "PM"
+        }
+      }
+      "minute" => {
+        out = out + pad(rem / 60 % 60, 2)
+      }
+      "second" => {
+        out = out + pad(rem % 60, 2)
+      }
+      "frac" => {
+        var digits = pad(nanos, 9)
+        if it.arg == "" {
+          while digits.ends_with("0") {
+            digits = digits[0..digits.len() - 1]
+          }
+        } else {
+          let k = Int.parse(it.arg) ?? 9
+          digits = digits[0..k]
+        }
+        if digits != "" {
+          out = out + "." + digits
+        }
+      }
+      "offset" => {
+        if off == 0 && it.arg == "" {
+          out = out + "Z"
+        } else {
+          var o = off
+          var sign = "+"
+          if o < 0 {
+            sign = "-"
+            o = -o
+          }
+          out = out + sign + pad(o / 3600 % 100, 2)
+          if it.arg == "" {
+            out = out + ":"
+          }
+          out = out + pad(o / 60 % 60, 2)
+        }
+      }
+      _ => {
+        out = out + abbr_at(z, sec)
+      }
+    }
+  }
+  out
+}
+
+/// The digits of b at pos, at most hi: (value, count).
+fn read_digits(b: Bytes, pos: Int, hi: Int) -> (Int, Int) {
+  var n = 0
+  var v = 0
+  while n < hi && pos + n < b.len() && b[pos + n] >= 48 && b[pos + n] <= 57 {
+    v = v * 10 + Int(b[pos + n]) - 48
+    n += 1
+  }
+  (v, n)
+}
+
+/// The longest of names at pos of s: (index, length), or (-1, 0).
+fn read_word(s: Str, pos: Int, names: List[Str]) -> (Int, Int) {
+  let rest = s[pos..]
+  var best = -1
+  var len = 0
+  for (i, nm) in names.indexed() {
+    if rest.starts_with(nm) && (best < 0 || nm.len() > len) {
+      best = i
+      len = nm.len()
+    }
+  }
+  (best, len)
+}
+
+fn digit_text(lo: Int, hi: Int) -> Str {
+  if lo == hi {
+    return "${lo} digit"
+  }
+  if hi == lo + 1 {
+    return "${lo} or ${hi} digit"
+  }
+  "${lo} to ${hi} digit"
+}
+
+fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
+  let items = layout_or_fault("parse", layout, at)
+  let b = s.bytes()
+  let n = b.len()
+  var pos = 0
+  var year = 1970
+  var month = 1
+  var day = 1
+  var hour = 0
+  var minute = 0
+  var second = 0
+  var nanos = 0
+  var hour12 = 0
+  var off = 0
+  var has_off = false
+  var has12 = false
+  var pm = false
+  var weekday = -1
+  var weekday_at = 0
+  var abbr = ""
+  var abbr_at_pos = -1
+  var day_at = 0
+  for it in items {
+    let start = pos
+    if it.field == "" {
+      if !s[pos..].starts_with(it.lit) {
+        return perr(s, layout, start, "expected ${it.lit.quote()}")
+      }
+      pos += it.lit.len()
+      continue
+    }
+    // a number field: what, digits lo to hi, range min to max
+    var what = ""
+    var lo = 2
+    var hi = 2
+    var min = 0
+    var max = 0
+    match it.field {
+      "year" => {
+        what = "year"
+        lo = 4
+        hi = 4
+        min = 1
+        max = 9999
+      }
+      "month" => {
+        if it.arg == "" || it.arg == "1" {
+          what = "month"
+          if it.arg == "1" {
+            lo = 1
+          }
+          min = 1
+          max = 12
+        } else {
+          var names = month_short()
+          if it.arg == "name" {
+            names = month_name()
+          }
+          let (i, len) = read_word(s, pos, names)
+          if i < 0 {
+            return perr(s, layout, start, "expected a month name such as ${names[0].quote()}")
+          }
+          month = i + 1
+          pos += len
+        }
+      }
+      "day" => {
+        day_at = start
+        what = "day"
+        if it.arg == "1" {
+          lo = 1
+        }
+        min = 1
+        max = 31
+      }
+      "weekday" => {
+        var names = weekday_short()
+        if it.arg == "name" {
+          names = weekday_name()
+        }
+        let (i, len) = read_word(s, pos, names)
+        if i < 0 {
+          return perr(s, layout, start, "expected a weekday name such as ${names[0].quote()}")
+        }
+        weekday = i
+        weekday_at = start
+        pos += len
+      }
+      "hour" => {
+        what = "hour"
+        max = 23
+      }
+      "hour12" => {
+        what = "hour12"
+        min = 1
+        max = 12
+      }
+      "ampm" => {
+        let rest = s[pos..]
+        if rest.starts_with("PM") {
+          pm = true
+        } else if !rest.starts_with("AM") {
+          return perr(s, layout, start, "expected AM or PM")
+        }
+        pos += 2
+      }
+      "minute" => {
+        what = "minute"
+        max = 59
+      }
+      "second" => {
+        what = "second"
+        max = 59
+      }
+      "frac" => {
+        var k = 0
+        if it.arg != "" {
+          k = Int.parse(it.arg) ?? 0
+        }
+        if pos >= n || b[pos] != 46 {
+          if k > 0 {
+            return perr(s, layout, start, "expected \".\" and ${k} digit fraction")
+          }
+        } else {
+          pos += 1
+          let fstart = pos
+          var flo = 1
+          var fhi = 9
+          if k > 0 {
+            flo = k
+            fhi = k
+          }
+          let (v, cnt) = read_digits(b, pos, fhi)
+          if cnt < flo {
+            return perr(s, layout, fstart, "expected ${digit_text(flo, fhi)} fraction")
+          }
+          pos += cnt
+          var f = v
+          var c = cnt
+          while c < 9 {
+            f = f * 10
+            c += 1
+          }
+          nanos = f
+        }
+      }
+      "offset" => {
+        var bad = "expected an offset: +hhmm"
+        if it.arg == "" {
+          bad = "expected an offset: Z or +hh:mm"
+        }
+        if it.arg == "" && pos < n && b[pos] == 90 {
+          pos += 1
+          has_off = true
+          off = 0
+        } else {
+          if pos >= n || (b[pos] != 43 && b[pos] != 45) {
+            return perr(s, layout, start, bad)
+          }
+          let neg = b[pos] == 45
+          pos += 1
+          let (h, hn) = read_digits(b, pos, 2)
+          if hn < 2 {
+            return perr(s, layout, start, bad)
+          }
+          pos += 2
+          if it.arg == "" {
+            if pos >= n || b[pos] != 58 {
+              return perr(s, layout, start, bad)
+            }
+            pos += 1
+          }
+          let (m, mn) = read_digits(b, pos, 2)
+          if mn < 2 || h > 23 || m > 59 {
+            return perr(s, layout, start, bad)
+          }
+          pos += 2
+          off = h * 3600 + m * 60
+          if neg {
+            off = -off
+          }
+          has_off = true
+        }
+      }
+      _ => {
+        // zone
+        var k = 0
+        while pos + k < n && zone_char(b[pos + k]) {
+          k += 1
+        }
+        if k == 0 {
+          return perr(s, layout, start, "expected a zone abbreviation such as \"UTC\"")
+        }
+        abbr = s[pos..pos + k]
+        abbr_at_pos = start
+        pos += k
+      }
+    }
+    if what != "" {
+      let (v, cnt) = read_digits(b, pos, hi)
+      var name = what
+      if what == "hour12" {
+        name = "hour"
+      }
+      if cnt < lo {
+        return perr(s, layout, start, "expected ${digit_text(lo, hi)} ${name}")
+      }
+      if v < min || v > max {
+        return perr(s, layout, start, "${name} ${v} out of range ${min} to ${max}")
+      }
+      pos += cnt
+      match what {
+        "year" => {
+          year = v
+        }
+        "month" => {
+          month = v
+        }
+        "day" => {
+          day = v
+        }
+        "hour" => {
+          hour = v
+        }
+        "hour12" => {
+          hour12 = v
+          has12 = true
+        }
+        "minute" => {
+          minute = v
+        }
+        _ => {
+          second = v
+        }
+      }
+    }
+  }
+  if pos < n {
+    return perr(s, layout, pos, "extra text after the layout: ${s[pos..].quote()}")
+  }
+  if day > days_in(year, month) {
+    return perr(s, layout, day_at, "day ${day} out of range 1 to ${days_in(year, month)} for ${pad(year, 4)}-${pad(month, 2)}")
+  }
+  if has12 {
+    hour = hour12 % 12
+    if pm {
+      hour += 12
+    }
+  }
+  let days = days_from_civil(year, month, day)
+  if weekday >= 0 {
+    let want = weekday_index(days)
+    if want != weekday {
+      return perr(s, layout, weekday_at, "weekday ${weekday_name()[weekday]} does not match ${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}, a ${weekday_name()[want]}")
+    }
+  }
+  let local = days * 86400 + hour * 3600 + minute * 60 + second
+  let when = "${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}"
+  var secs = local
+  if has_off {
+    secs = local - off
+  } else if abbr != "" {
+    let (early, late, _) = civil_instant(local, z)
+    var found = false
+    for c in [early, late] {
+      if !found && c > MIN_TIME_SECS && c < MAX_TIME_SECS && abbr_at(z, c) == abbr {
+        secs = c
+        found = true
+      }
+    }
+    if !found {
+      if abbr != "UTC" && abbr != "GMT" {
+        return perr(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when}")
+      }
+      secs = local
+    }
+  } else {
+    let (early, _, kind) = civil_instant(local, z)
+    if kind == 2 {
+      return perr(s, layout, 0, "${when} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
+    }
+    if kind == 3 {
+      return perr(s, layout, 0, "${when} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
+    }
+    secs = early
+  }
+  if secs <= MIN_TIME_SECS || secs >= MAX_TIME_SECS {
+    return perr(s, layout, 0, "${when} is outside the range of Time (1678 to 2262)")
+  }
+  Ok(time_of(secs * 1000000000 + nanos))
+}
+
+fn perr(s: Str, layout: Str, at: Int, msg: Str) -> Time ! time.ParseErr { Err(time.ParseErr{input: s, layout: layout, at: at, msg: msg}) }
+
+fn zone_char(c: UInt8) -> Bool { c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 48 && c <= 57 || c == 43 || c == 45 }

@@ -1300,3 +1300,9 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 
 // the test world of test binaries (decision 0083)
 #include "xo_testing.c"
+
+// std/time zones (decision 0094): only in programs that use std/time,
+// which the build compiles with XO_TIME and their zone data (xo_tzdata.h)
+#ifdef XO_TIME
+#include "xo_time.c"
+#endif

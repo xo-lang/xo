@@ -62,45 +62,49 @@ func writeRuntime(dir string) (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
-	return arm64AsmOpts(res, root, goos, false, false, false)
+	asm, _, err := arm64AsmOpts(res, root, goos, false, false, false)
+	return asm, err
 }
 
 // arm64AsmOpts is Arm64Asm, with every heap value marked shared as it is
 // defined when probes is set (Options.ShareProbes), debug contracts
-// compiled out when release is set.
-func arm64AsmOpts(res *check.Result, root, goos string, probes, tests, release bool) ([]byte, error) {
-	asm, err := arm64Asm(res, root, goos, false, probes, tests, release)
+// compiled out when release is set. It also returns the zone data
+// std/time needs.
+func arm64AsmOpts(res *check.Result, root, goos string, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
+	asm, tz, err := arm64Asm(res, root, goos, false, probes, tests, release)
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
 		return arm64Asm(res, root, goos, true, probes, tests, release)
 	}
-	return asm, err
+	return asm, tz, err
 }
 
-func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests, release bool) ([]byte, error) {
+func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
+	var tz ssa.TZUse
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, Release: release})
 	if err != nil {
-		return nil, err
+		return nil, tz, err
 	}
+	tz = m.TZ
 	if err := m.Verify(); err != nil {
-		return nil, err
+		return nil, tz, err
 	}
 	if probes {
 		m.InsertShareProbes()
 	}
 	m.InsertRC()
 	if err := m.Verify(); err != nil {
-		return nil, err
+		return nil, tz, err
 	}
 	place, err := arm64.ParseLayout(os.Getenv("XO_ARM64_LAYOUT"))
 	if err != nil {
-		return nil, fmt.Errorf("XO_ARM64_LAYOUT: %v", err)
+		return nil, tz, fmt.Errorf("XO_ARM64_LAYOUT: %v", err)
 	}
 	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline, Layout: place})
 	if err != nil {
-		return nil, err
+		return nil, tz, err
 	}
-	return prog.Asm, nil
+	return prog.Asm, tz, nil
 }
 
 // buildArm64 generates assembly for each target; the host target is
@@ -142,7 +146,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	out.Name = name
 	root := lineRoot(dirs)
 	for _, t := range ts {
-		asm, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes, opts.Mode == gen.Test, opts.release())
+		asm, tz, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes, opts.Mode == gen.Test, opts.release())
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +170,12 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 			return nil, err
 		}
-		if err := ccBuild(cc, []string{"-O2"}, []string{s, rt}, bin); err != nil {
+		flags, notes, err := timeFlags(dir, res, tz, opts)
+		if err != nil {
+			return nil, err
+		}
+		out.Notes = notes
+		if err := ccBuild(cc, append([]string{"-O2"}, flags...), []string{s, rt}, bin); err != nil {
 			return nil, err
 		}
 		out.Binaries[t] = bin

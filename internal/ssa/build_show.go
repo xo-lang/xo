@@ -392,6 +392,12 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			return
 		case t.Kind == KStruct && obj.Kind == check.KStruct:
 			if obj.Opaque {
+				if dm := s.methodOf(ct, "debug"); dm != nil && dm.Module != nil && dm.Module.Native {
+					// the native implementation's Debug text (std/rt's
+					// XoDebug: `Zone(UTC)`)
+					s.retv(s.call("str.concat", st, "", acc, s.callMethod(dm, ct, v, at)))
+					return
+				}
 				s.retv(lit(acc, "<"+lowerName(obj.Name)+">"))
 				return
 			}

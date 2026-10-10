@@ -26,6 +26,10 @@ No meaning changes yet; native support grew (`--no-gc`, 10.1):
   natively (decision 0102).
 - Error frames (11.1) are recorded natively and printed in main's error
   report (decision 0104).
+- `std/time` builds natively (std.md 13, decision 0094), with the same
+  per use zone data and output as the Go backend; so do
+  `Duration.from_secs`, `scale`, `ceil_seconds`, and
+  `Time.parse_rfc3339` (2.6).
 
 ## Changes in 0.8
 

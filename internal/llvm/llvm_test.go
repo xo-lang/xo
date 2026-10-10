@@ -89,7 +89,7 @@ func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.R
 		}
 		t.Fatalf("check failed:\n%s", b.String())
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -108,7 +108,7 @@ func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.R
 // freed at exit.
 func leakCheck(t *testing.T, bin, dir string) string {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, progArgs(dir)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 	var stderr bytes.Buffer
@@ -124,6 +124,16 @@ func leakCheck(t *testing.T, bin, dir string) string {
 		t.Errorf("%s allocations still live at exit (of %s)", m[1], m[2])
 	}
 	return m[0]
+}
+
+// progArgs are the command line arguments of the program in dir: the
+// fields of its args.txt, as internal/gen's golden test passes them.
+func progArgs(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "args.txt"))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
 }
 
 var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
