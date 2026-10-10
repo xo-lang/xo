@@ -380,6 +380,14 @@ A line whose first token is a declaration clause (`uses`, `requires`,
 `requires`, or the `{` that opens a function body, also continues the
 declaration above it.
 
+A line cannot start with a binary operator: after `a > 0` at the end of a
+line, `|| b > 0` on the next would begin a new statement. End the first
+line with the operator instead (`a > 0 ||`, then `b > 0`). A line
+starting with `||`, `&&`, `??`, `|`, `^`, `+`, `/`, `%`, `<<`, `>>`, a
+comparison, or a spaced `*` or `&` is error `XO0178`, whose fix moves the
+operator up (decision 0136). `-`, `!`, `~`, and `..` start expressions,
+so a line starting with them is a new statement.
+
 Consequences: `} else {` and `} else if` must be on the same line as the
 closing brace. A list that spans lines needs a trailing comma after the last
 element. Trailing commas are allowed in every comma separated list.
@@ -2271,6 +2279,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO0175` | error | parser | two statements or arms on one line |
 | `XO0176` | error | parser | `pub` before something that cannot be exported |
 | `XO0177` | error | parser | syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087) |
+| `XO0178` | error | parser | a line starts with a binary operator (`\|\|`, `&&`, `+`, `==`, ...); end the previous line with it (core 1.3, decision 0136) |
 | `XO0201` | error | checker | Result value is never used (core 2.6) |
 | `XO0202` | error | checker | error type does not convert to the enclosing error type (core 2.6) |
 | `XO0203` | error | checker | success of a Result typed T must be written Ok(x) (core 2.6) |
