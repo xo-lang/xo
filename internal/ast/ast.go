@@ -389,7 +389,9 @@ type ForStmt struct {
 	Label   *Ident
 	Pattern Pattern
 	Iter    Expr
-	Body    *Block
+	// Bound is the `bound N` clause (core 3.5, decision 0133), or nil.
+	Bound Expr
+	Body  *Block
 	// GoRange marks a loop written as Go's `for k, v := range x`. The
 	// checker reports it (XO0177, decision 0087) with the Xo form for the
 	// type of x and binds the names the way Go would.
@@ -403,6 +405,8 @@ type WhileStmt struct {
 	Base
 	Label *Ident
 	Cond  Expr
+	// Bound is the `bound N` clause (core 3.5, decision 0133), or nil.
+	Bound Expr
 	Body  *Block
 }
 

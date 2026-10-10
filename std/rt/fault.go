@@ -166,6 +166,12 @@ func AsFault(r any) *FaultErr {
 	return &FaultErr{Msg: fmt.Sprint(r), Loc: xoLocation(3), Stack: stack(3)}
 }
 
+// LoopBound faults for a loop that starts iteration bound + 1 (core 3.5,
+// decision 0133): fault XO-F006.
+func LoopBound(bound int64, loc string) {
+	panic(newFault("XO-F006", loc, fmt.Sprintf("loop ran past its bound of %d iterations", bound)))
+}
+
 // Require checks a `requires` contract (core 9.1).
 func Require(ok bool, text, loc string, vals ...any) {
 	if !ok {

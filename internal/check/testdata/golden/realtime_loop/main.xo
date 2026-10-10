@@ -1,0 +1,28 @@
+// XO1402: loops without a provable bound, and bad bounds.
+const N = 4
+
+fn run(xs: List[Int], n: Int) -> Int uses realtime {
+  var t = 0
+  for x in xs { t += x }
+  for i in 0..n { t += i }
+  var i = 0
+  while i < n { i += 1 }
+  while {
+    break
+  }
+  for j in 0..10 bound N { t += j }
+  for x in xs bound n { t += x }
+  for k in 0..=N bound N + 1 { t += k }
+  t
+}
+
+fn plain(xs: List[Int]) -> Int {
+  var t = 0
+  for k in 0..100 bound 10 { t += k }
+  for x in xs bound -1 { t += x }
+  t
+}
+
+fn main(os: Os) {
+  os.stdio.println("${run([1], 2)} ${plain([1])}")
+}

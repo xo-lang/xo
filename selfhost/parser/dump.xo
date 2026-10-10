@@ -427,20 +427,22 @@ fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
     }
-    ForStmt(span, lbl, pattern, iter, body, go_range) => {
+    ForStmt(span, lbl, pattern, iter, bound, body, go_range) => {
       head(out, depth, label, "ForStmt", span)
       flag(out, "go_range", go_range)
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
       dump_pattern(out, d, "pattern", pattern)
       dump_expr(out, d, "iter", iter)
+      dump_expr_opt(out, d, "bound", bound.first())
       dump_block(out, d, "body", body)
     }
-    WhileStmt(span, lbl, cond, body) => {
+    WhileStmt(span, lbl, cond, bound, body) => {
       head(out, depth, label, "WhileStmt", span)
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
       dump_expr_opt(out, d, "cond", cond)
+      dump_expr_opt(out, d, "bound", bound.first())
       dump_block(out, d, "body", body)
     }
     ExprStmt(span, x) => {

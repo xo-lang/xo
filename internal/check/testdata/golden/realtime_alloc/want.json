@@ -1,0 +1,278 @@
+[
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "`List.push` may allocate or run for a time its operands do not bound; it is not allowed in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 10,
+      "col": 3,
+      "end_line": 10,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "string interpolation allocates in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 11,
+      "col": 15,
+      "end_line": 11,
+      "end_col": 23
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "`+` on `Str` allocates in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 12,
+      "col": 13,
+      "end_line": 12,
+      "end_col": 26
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "`+=` on `Str` allocates in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 13,
+      "col": 3,
+      "end_line": 13,
+      "end_col": 17
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a List literal allocates in a real-time function; build the List during initialization and write it by index",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 14,
+      "end_line": 14,
+      "end_col": 20
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a Map literal allocates in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 15,
+      "col": 11,
+      "end_line": 15,
+      "end_col": 19
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a Set literal allocates in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 16,
+      "col": 11,
+      "end_line": 16,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "storing into a Map may grow it in a real-time function; use a List indexed by a small Int",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 3,
+      "end_line": 17,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "slicing allocates in a real-time function; pass the List and the bounds",
+    "span": {
+      "file": "main.xo",
+      "line": 18,
+      "col": 25,
+      "end_line": 18,
+      "end_col": 29
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a closure allocates its environment in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 19,
+      "col": 11,
+      "end_line": 19,
+      "end_col": 38
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "`List.sort` may allocate or run for a time its operands do not bound; it is not allowed in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 20,
+      "col": 16,
+      "end_line": 20,
+      "end_col": 31
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1403",
+    "severity": "error",
+    "message": "call of a function value in a real-time function; its callee is not known to be real-time",
+    "span": {
+      "file": "main.xo",
+      "line": 21,
+      "col": 75,
+      "end_line": 21,
+      "end_col": 76
+    },
+    "notes": [
+      {
+        "message": "`tick` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 9,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -1,0 +1,227 @@
+[
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "a real-time function may not perform `clock`; the only effect it may declare is `ffi`",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 74,
+      "end_line": 3,
+      "end_col": 79
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 64
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "`Chan.send` blocks or synchronizes with other tasks; real-time functions may not block",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 3,
+      "end_line": 4,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "`Mutex.with` blocks or synchronizes with other tasks; real-time functions may not block",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 11,
+      "end_line": 5,
+      "end_col": 17
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a closure allocates its environment in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 18,
+      "end_line": 8,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "a `for` over a channel waits for values; real-time functions may not block",
+    "span": {
+      "file": "main.xo",
+      "line": 9,
+      "col": 12,
+      "end_line": 9,
+      "end_col": 13
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "`scope` waits for its tasks; real-time functions may not block",
+    "span": {
+      "file": "main.xo",
+      "line": 10,
+      "col": 11,
+      "end_line": 12,
+      "end_col": 4
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "`Scope.spawn` blocks or synchronizes with other tasks; real-time functions may not block",
+    "span": {
+      "file": "main.xo",
+      "line": 11,
+      "col": 5,
+      "end_line": 11,
+      "end_col": 12
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1401",
+    "severity": "error",
+    "message": "a closure allocates its environment in a real-time function",
+    "span": {
+      "file": "main.xo",
+      "line": 11,
+      "col": 13,
+      "end_line": 11,
+      "end_col": 23
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1405",
+    "severity": "error",
+    "message": "`Clock.now` is a capability call; real-time functions perform no effects except `ffi`",
+    "span": {
+      "file": "main.xo",
+      "line": 13,
+      "col": 11,
+      "end_line": 13,
+      "end_col": 20
+    },
+    "notes": [
+      {
+        "message": "`wait` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0702",
+    "severity": "error",
+    "message": "`realtime` marks a function declaration; it cannot appear here",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 36,
+      "end_line": 17,
+      "end_col": 44
+    },
+    "notes": [
+      {
+        "message": "write `uses realtime` on a `fn` declaration; closures, function types, and tests cannot be real-time (core 6.5)"
+      }
+    ],
+    "fixes": []
+  }
+]

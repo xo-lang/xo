@@ -1,0 +1,102 @@
+[
+  {
+    "code": "XO1403",
+    "severity": "error",
+    "message": "call of interface method `Sensor.read` in a real-time function; its implementation is not known",
+    "span": {
+      "file": "main.xo",
+      "line": 13,
+      "col": 3,
+      "end_line": 13,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`sample` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 12,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1403",
+    "severity": "error",
+    "message": "`helper` is not real-time; a real-time function may call only real-time functions",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 3,
+      "end_line": 17,
+      "end_col": 9
+    },
+    "notes": [
+      {
+        "message": "`run` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 16,
+          "col": 4
+        }
+      },
+      {
+        "message": "mark `helper` with `uses realtime` if it follows the rules",
+        "span": {
+          "file": "main.xo",
+          "line": 10,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1403",
+    "severity": "error",
+    "message": "call of a function value in a real-time function; its callee is not known to be real-time",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 15,
+      "end_line": 17,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "`run` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 16,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1403",
+    "severity": "error",
+    "message": "call of interface method `Sensor.read` in a real-time function; its implementation is not known",
+    "span": {
+      "file": "main.xo",
+      "line": 17,
+      "col": 22,
+      "end_line": 17,
+      "end_col": 28
+    },
+    "notes": [
+      {
+        "message": "`run` is real-time (`uses realtime`, core 6.5)",
+        "span": {
+          "file": "main.xo",
+          "line": 16,
+          "col": 4
+        }
+      }
+    ],
+    "fixes": []
+  }
+]

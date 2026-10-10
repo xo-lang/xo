@@ -181,7 +181,7 @@ func (s *fn) expr(e ast.Expr) *Value {
 	case *ast.MatchExpr:
 		return s.match(x)
 	case *ast.WhileExpr:
-		s.while("", nil, x.Body)
+		s.while("", nil, nil, x.Body)
 		return s.unit()
 	case *ast.ScopeExpr:
 		return s.scopeExpr(x)

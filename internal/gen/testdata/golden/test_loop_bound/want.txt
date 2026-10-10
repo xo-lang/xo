@@ -1,0 +1,10 @@
+exit 1
+--- stdout
+--- FAIL: contract fuzz: test_loop_bound.positives (main.xo:3:1, seed 1)
+    property failed on case 7; shrunk in 1 steps to
+    xs = [0, 0, 0, 0]
+    fault: XO-F006: loop ran past its bound of 3 iterations at main.xo:5:21
+      x_testdata_golden_test_loop_bound.F_positives
+          main.xo:5
+FAIL: 2 passed, 1 failed, 0 skipped
+--- stderr

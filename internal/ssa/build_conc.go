@@ -967,6 +967,7 @@ func (s *fn) forChan(x *ast.ForStmt, label string) {
 	}
 	et := h.Type.Elems[0]
 	ot := b.typ(b.preludeType("Option", s.elemCheck(x.Iter)), x)
+	tick := s.loopBound(x.Bound)
 	head, body, exit := s.newBlock(), s.newBlock(), s.newBlock()
 	s.jump(head)
 	s.cur = head
@@ -978,6 +979,7 @@ func (s *fn) forChan(x *ast.ForStmt, label string) {
 	s.cur.Branch(c, body, exit)
 	s.seal(body)
 	s.cur = body
+	tick()
 	elem := s.add(OpPayload, et, PayloadRef{some, 0}, o)
 	fail := s.newBlock()
 	s.pattern(elem, x.Pattern, fail)

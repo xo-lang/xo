@@ -656,6 +656,7 @@ func (c *checker) stmt(s ast.Stmt) {
 		if x.Cond != nil {
 			c.check(x.Cond, c.named("Bool"))
 		}
+		c.checkLoopBound(x.Bound, nil)
 		c.loopBody(labelName(x.Label), x.Cond == nil, x.Body, nil)
 	case *ast.BadStmt:
 	}
@@ -715,6 +716,7 @@ func (c *checker) forStmt(x *ast.ForStmt) {
 	} else {
 		elem = c.iterElem(it, x.Iter)
 	}
+	c.checkLoopBound(x.Bound, x.Iter)
 	c.loopBody(labelName(x.Label), false, x.Body, func() {
 		ip := c.pattern(x.Pattern, elem, false)
 		c.requireIrrefutable(ip, elem, x.Pattern, "a `for` pattern")

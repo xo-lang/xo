@@ -149,6 +149,20 @@ func (pg *pkgGen) fuzzable(fo *check.FuncObj) bool {
 			hasContract = true
 		}
 	}
+	if !hasContract && fo.Decl.Body != nil {
+		// a loop bound is a contract too (core 3.5, decision 0133)
+		inspectNode(fo.Decl.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.ForStmt:
+				hasContract = hasContract || x.Bound != nil
+			case *ast.WhileStmt:
+				hasContract = hasContract || x.Bound != nil
+			case *ast.FnLit:
+				return false
+			}
+			return !hasContract
+		})
+	}
 	if !hasContract || len(typeParams(fo.TParams)) > 0 || fo.Static {
 		return false
 	}

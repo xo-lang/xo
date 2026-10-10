@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+unique 2
+shared: Faulted(info: Fault{msg: "XO-F007: real-time function `bump` allocated 1 time", location: "main.xo:36", frames: []})
+box: Faulted(info: Fault{msg: "XO-F007: real-time function `grow` allocated 2 times", location: "main.xo:42", frames: []})
+default: Faulted(info: Fault{msg: "XO-F007: real-time function `cfg` allocated 1 time", location: "main.xo:46", frames: []})
+keep 2 xs 2
+--- stderr

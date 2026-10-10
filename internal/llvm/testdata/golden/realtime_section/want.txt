@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+total 1184 current beta words 0 depth 0 hits 20
+count 6
+checked 42
+isolated fault
+after 2
+--- stderr

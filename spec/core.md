@@ -12,7 +12,16 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
-None yet.
+- **Real-time functions** (6.5, decision 0133): `uses realtime` on a
+  function declaration forbids allocation (`XO1401`), loops without a
+  bound (`XO1402`), calls of functions that are not real-time, function
+  values, and interface methods (`XO1403`), recursion (`XO1404`), and
+  blocking (`XO1405`). Native builds defer the frees of a real-time
+  section to its end and fault with `XO-F007` when it allocated.
+- **Loop bounds** (3.5): `for x in xs bound N { }` and
+  `while cond bound N { }`, a contract on any loop: a constant range
+  longer than N is `XO1402`; otherwise starting iteration N + 1 faults
+  with `XO-F006`. `bound` is a contextual word.
 
 ## Changes in 0.9
 
@@ -391,7 +400,8 @@ Contextual words (meaningful only in one position, usable as identifiers
 elsewhere): `derive` (after a type body), `from` (in an enum variant),
 `with` (postfix struct update), `after` (in a `select` arm), `seed` (after a
 test name), `result` and `old` (inside `ensures`), `is` (binary operator
-position).
+position), `bound` (after a loop header's expression, 3.5), `realtime` (in
+a declaration's uses clause, 6.5).
 
 To keep parsing unambiguous, an unparenthesized struct literal may not appear
 in an `if`, `while`, `for`, `match`, `requires`, or `ensures` expression (the
@@ -880,6 +890,8 @@ for i in 0..10 { ... }        // half open range, 0..=10 is inclusive
 for _ in 0..3 { ... }
 while cond { ... }
 while { ... }                 // infinite loop
+for x in xs bound 64 { ... }  // a loop bound: a contract (below, 6.5)
+while cond bound 1000 { ... }
 
 match code {
   200..=299 => "ok"
@@ -903,6 +915,17 @@ match code {
   an expression, a block, or a single statement such as an assignment (type
   `()`): `Timeout => last = Some(AttemptErr.Timeout)`.
 - Labeled loops: `outer: for ... { break outer }`.
+- **Loop bounds** (decision 0133). `bound N` after the iterated value of a
+  `for` or the condition of a `while` states that the loop runs at most N
+  iterations; N is a constant Int expression (literals, `const` names,
+  `+ - * / %`), not negative, else `XO1402`. A `for` over a range with
+  constant ends that is longer than N is `XO1402`. Otherwise the bound is
+  checked at run time on every backend: starting iteration N + 1 faults
+  with `XO-F006` (`loop ran past its bound of N iterations`). Like a
+  `requires` clause it is a contract (9.1): `xo test` fuzzes a function
+  with a bounded loop. Real-time functions (6.5) need a bound on every
+  loop whose count is not constant. `while { }` takes no bound; write
+  `while true bound N { }`.
 - `defer stmt` or `defer { ... }` runs when the enclosing **block** exits (not
   the function, unlike Go), in reverse order, including on errors, faults, and
   cancellation. Values are read when the deferred code runs.
@@ -1603,6 +1626,77 @@ dependency's reach is visible in its signatures.
 
 See section 9.2: every test block receives `os: TestOs` with fake capabilities.
 
+### 6.5 Real-time functions [native enforcement]
+
+```
+const TAPS = 32
+
+struct Filter { coeffs: List[Float], window: List[Float], pos: Int }
+
+fn (var f: Filter) step(x: Float) -> Float uses realtime {
+  f.window[f.pos] = x
+  f.pos = (f.pos + 1) % TAPS
+  var acc = 0.0
+  for i in 0..TAPS {
+    acc += f.coeffs[i] * f.window[(f.pos + i) % TAPS]
+  }
+  acc
+}
+```
+
+`uses realtime` on a function or method declaration marks it
+**real-time** (decision 0133). `realtime` is written in the uses clause but
+is a discipline, not an effect: it is not part of the effect set and
+plays no part in subsumption. A real-time function has a declared effect
+set like any function with a uses clause; the only effect it may declare
+is `ffi`. `realtime` in a closure, a function type, an interface method,
+or a test is `XO0702`. In a real-time function, including its contract
+clauses:
+
+- **No allocation** (`XO1401`): no List, Map, or Set literal, string
+  interpolation, `+` or `+=` on Str, List, or Bytes, slicing, closure,
+  store into a Map, or prelude method outside the bounded set: scalar
+  methods of Int, the sized integers, Float, Rune, Duration, and Time;
+  `len`, `is_empty`, `get`, `first`, `last`, `contains`, `index_of`, and
+  `set` (also `xs[i] = v`) on List; `len`, `is_empty`, `get`, `contains`,
+  `get_or_fault` on Map and Set; `is_some`, `is_none`, `ok`, `err`,
+  `or_fault` on Option and Result; the Atomic operations; `len` on Str,
+  Bytes, Chan, Buf, and the builders; `contains`, `starts_with`,
+  `ends_with`, `find` on Str. The arguments of `fault(...)` are exempt.
+- **Bounded loops** (`XO1402`): every loop is a `for` over a range with
+  constant ends or has `bound N` (3.5). `for (i, x) in xs.indexed()`
+  does not build the pairs and is allowed with a bound.
+- **Known callees** (`XO1403`): calls go only to real-time functions, the
+  bounded prelude methods, and functions of a `use c` module, never to a
+  function value or an interface method.
+- **No recursion** (`XO1404`): the calls among real-time functions form
+  no cycle, so the stack depth is bounded.
+- **No blocking** (`XO1405`): no channel operation (or `for` over a
+  channel), Mutex, `scope`, `select`, task, `dbg`, capability call, or
+  declared effect other than `ffi`.
+
+Faults stay allowed (they are bounded checks); a fault ends the section.
+
+**Initialization** is all code that is not real-time: it allocates
+freely and prepares what real-time code writes in place, typically
+Lists of a fixed length written by index (`List.set` is in place on a
+List nothing else references, decision 0046).
+
+**Real-time sections** [native builds]. A call from code that is not
+real-time to a real-time function is a real-time section. Inside it the
+native runtime:
+
+- defers frees: a reference count that reaches zero puts the value on a
+  per-thread queue of 256 entries instead of freeing it (and what it
+  holds); the queue is freed when the section ends. A full queue frees
+  at once (counted in `XO_RTSTATS=1` output as `rt_overflow`).
+- counts allocations; a section that allocated faults when it ends with
+  `XO-F007` (``real-time function `f` allocated n times``), which catches
+  what the rules cannot see: a shared List copied on write, the box of a
+  recursive enum, a defaulted field.
+
+The Go backend checks the rules and the loop bounds; it has no sections.
+
 ---
 
 ## 7. Concurrency [P1 basic, P2 deterministic]
@@ -2222,6 +2316,11 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
+| `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
+| `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
+| `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |
+| `XO1404` | error | checker | recursion among real-time functions |
+| `XO1405` | error | checker | blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -2233,6 +2332,8 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F001` | deadlock: every task is blocked on another task (11.4) |
 | `XO-F004` | `Mutex.with` or `with_read` called re entrantly on a mutex the task holds (5.4) |
 | `XO-F005` | a shielded `defer` ran longer than 5 seconds (3.5) |
+| `XO-F006` | a loop started more iterations than its `bound N` (3.5) |
+| `XO-F007` | a real-time section allocated (6.5, native builds) |
 
 ---
 
@@ -2512,8 +2613,8 @@ Stmt        = "let" Pattern [ ":" Type ] "=" Expr
             | ForStmt | WhileStmt | Expr .
 AssignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" .
 Place       = ident { "." ident | "." int | "[" Expr "]" } .
-ForStmt     = [ ident ":" ] "for" Pattern "in" Expr Block .
-WhileStmt   = [ ident ":" ] "while" [ Expr ] Block .
+ForStmt     = [ ident ":" ] "for" Pattern "in" Expr [ "bound" Expr ] Block .
+WhileStmt   = [ ident ":" ] "while" [ Expr [ "bound" Expr ] ] Block .
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary
             | "while" Block | "???" .      // infinite loop as an expression, type Never

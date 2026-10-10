@@ -56,6 +56,8 @@ var faultingRT = map[string]bool{
 	"rt.task_spawn": true, "rt.task_await": true,
 	"rt.chan_new": true, "rt.chan_send": true, "rt.select_wait": true,
 	"rt.atomic_add": true,
+	// the end of a real-time section that allocated (XO-F007, decision 0133)
+	"rt.realtime_exit": true,
 }
 
 // RuntimeRaises reports whether the runtime call name (`rt.*`) can raise

@@ -260,8 +260,11 @@ pub enum Stmt {
   ContinueStmt(span: Span, label: Ident?)
   /// go_range marks Go's `for k, v := range x`, which the checker
   /// reports (XO0177, decision 0087).
-  ForStmt(span: Span, label: Ident?, pattern: Pattern, iter: Expr, body: Block, go_range: Bool)
-  WhileStmt(span: Span, label: Ident?, cond: Expr?, body: Block)
+  /// `bound` holds the `bound N` clause or nothing: a List (one word), not
+  /// an `Expr?`, which would push MatchArm past the arm64 backend's 4 KiB
+  /// reference counting helper frame (gotchas/arm64-rc-helper-frame.md).
+  ForStmt(span: Span, label: Ident?, pattern: Pattern, iter: Expr, bound: List[Expr], body: Block, go_range: Bool)
+  WhileStmt(span: Span, label: Ident?, cond: Expr?, bound: List[Expr], body: Block)
   ExprStmt(span: Span, x: Expr)
   BadStmt(span: Span)
   ConstDecl(d: ConstDecl)

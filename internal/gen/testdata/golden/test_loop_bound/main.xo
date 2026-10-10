@@ -1,0 +1,27 @@
+// A loop bound is a contract (core 3.5, decision 0133): `xo test` fuzzes
+// a function with a bounded loop and shrinks an input that runs past it.
+fn positives(xs: List[Int]) -> Int uses realtime {
+  var n = 0
+  for x in xs bound 3 {
+    if x > 0 { n += 1 }
+  }
+  n
+}
+
+fn halvings(n: Int) -> Int {
+  var x = n
+  var steps = 0
+  while x > 1 bound 64 {
+    x = x / 2
+    steps += 1
+  }
+  steps
+}
+
+fn main(os: Os) {
+  os.stdio.println("${positives([1, -2])} ${halvings(1000)}")
+}
+
+test "positives" {
+  expect(positives([1, -1, 2])) == 2
+}

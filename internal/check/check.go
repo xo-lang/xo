@@ -81,10 +81,12 @@ type checker struct {
 	ctorCalls map[*ast.CallExpr]bool
 	// rec holds resolutions recorded for code generation (info.go). They
 	// never influence what the checker accepts.
-	rec      *records
-	bodies   []*bodyInfo
-	unused   []*VarObj
-	lostVars map[*VarObj]bool
+	rec *records
+	// realtimeFns are the functions declared `uses realtime` (core 6.5)
+	realtimeFns []*FuncObj
+	bodies      []*bodyInfo
+	unused      []*VarObj
+	lostVars    map[*VarObj]bool
 	// splitWarned dedupes XO0804 across nested bodies.
 	splitWarned map[*ast.CallExpr]bool
 	// mvLits are the closure literals standing for method values
@@ -223,6 +225,7 @@ func (c *checker) run() {
 	}
 	c.checkKeyTypes()
 	c.solveEffects()
+	c.checkRealtime()
 	for _, b := range c.bodies {
 		c.flowBody(b)
 	}

@@ -1,0 +1,28 @@
+// XO1401: allocation in a real-time function.
+struct State {
+  log: List[Str],
+  name: Str,
+  counts: Map[Str, Int],
+  samples: List[Int],
+}
+
+fn tick(var st: State, x: Int) -> Str uses realtime {
+  st.log.push("tick")
+  let label = "x=${x}"
+  st.name = st.name + "!"
+  st.name += "?"
+  let pair = [x, x]
+  let m = {"a": 1}
+  let s = #{1}
+  st.counts["a"] = x
+  let head = st.samples[0..2]
+  let f = fn(y: Int) -> Int { y + x }
+  let sorted = st.samples.sort()
+  let total = label.len() + pair.len() + m.len() + s.len() + head.len() + f(1) + sorted.len()
+  fault("bad ${x} ${total}")
+}
+
+fn main(os: Os) {
+  var st = State{log: [], name: "", counts: {}, samples: [1, 2, 3]}
+  os.stdio.println(tick(st, 1))
+}

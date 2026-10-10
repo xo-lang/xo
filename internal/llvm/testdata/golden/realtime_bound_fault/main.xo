@@ -1,0 +1,27 @@
+// A loop bound is a contract (core 3.5, decision 0133): starting
+// iteration N + 1 faults with XO-F006 on every backend.
+const MAX = 4
+
+fn count(xs: List[Int], limit: Int) -> Int uses realtime {
+  var n = 0
+  for x in xs bound MAX {
+    if x > limit { n += 1 }
+  }
+  n
+}
+
+fn halve(n: Int) -> Int {
+  var x = n
+  var steps = 0
+  while x > 1 bound 5 {
+    x = x / 2
+    steps += 1
+  }
+  steps
+}
+
+fn main(os: Os) {
+  os.stdio.println("halve ${halve(32)}")
+  os.stdio.println("count ${count([1, 5, 9, 4], 2)}")
+  os.stdio.println("count ${count([1, 5, 9, 4, 7], 2)}")
+}

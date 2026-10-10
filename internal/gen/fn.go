@@ -1034,7 +1034,35 @@ func (f *fnGen) emitLoop(l *loopInfo, header, body string) {
 	f.line("}")
 }
 
+// loopBound declares the iteration counter of a loop with `bound N`
+// (core 3.5, decision 0133) before the loop; tick checks it at the start
+// of each iteration. Without a bound both do nothing.
+func (f *fnGen) loopBound(bound ast.Expr) (tick func()) {
+	if bound == nil {
+		return func() {}
+	}
+	n, ok := f.info.LoopBound(bound)
+	if !ok {
+		f.g.errorf(bound, "loop bound is not a constant")
+		return func() {}
+	}
+	cnt := f.tmp("bound")
+	f.line("var %s int64", cnt)
+	loc := f.g.loc(bound)
+	return func() {
+		f.line("%s++", cnt)
+		f.line("if %s > %d {", cnt, n)
+		f.line("\t%sLoopBound(%d, %q)", f.rt(), n, loc)
+		f.line("}")
+	}
+}
+
 func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at ast.Node) {
+	var bound ast.Expr
+	if w, ok := at.(*ast.WhileStmt); ok {
+		bound = w.Bound
+	}
+	tick := f.loopBound(bound)
 	l := f.pushLoop(label)
 	text := f.capture(func() {
 		f.ind++
@@ -1046,6 +1074,7 @@ func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at a
 			f.line("\tbreak")
 			f.line("}")
 		}
+		tick()
 		f.block(body, dest{kind: dDiscard})
 		f.ind--
 	})
@@ -1077,6 +1106,7 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	itT := f.typeOf(x.Iter)
 	itv := f.tmp("it")
 	f.line("%s := %s", itv, it)
+	tick := f.loopBound(x.Bound)
 	l := f.pushLoop(x.Label)
 	n := f.g.named(itT)
 	kind := ""
@@ -1110,6 +1140,7 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 			elem = ""
 			body := f.capture(func() {
 				f.ind++
+				tick()
 				f.line("_, _ = %s, %s", k, v)
 				m1 := f.pattern(tp.Elems[0], k, n.Args[0])
 				m2 := f.pattern(tp.Elems[1], v, n.Args[1])
@@ -1133,6 +1164,7 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 			f.line("if !%s.Some {", rv)
 			f.line("\tbreak")
 			f.line("}")
+			tick()
 			ev := f.tmp("el")
 			f.line("%s := %s", ev, elem)
 			f.line("_ = %s", ev)
@@ -1167,6 +1199,7 @@ func (f *fnGen) forStmt(x *ast.ForStmt) {
 	}
 	body := f.capture(func() {
 		f.ind++
+		tick()
 		ev := f.tmp("el")
 		f.line("%s := %s", ev, elem)
 		f.line("_ = %s", ev)

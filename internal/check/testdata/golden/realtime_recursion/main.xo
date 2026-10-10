@@ -1,0 +1,16 @@
+// XO1404: recursion among real-time functions.
+fn fact(n: Int) -> Int uses realtime {
+  if n <= 1 { 1 } else { n * fact(n - 1) }
+}
+
+fn ping(n: Int) -> Int uses realtime {
+  if n == 0 { 0 } else { pong(n - 1) }
+}
+
+fn pong(n: Int) -> Int uses realtime {
+  if n == 0 { 1 } else { ping(n - 1) }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${fact(5)} ${ping(4)}")
+}

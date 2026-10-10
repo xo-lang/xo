@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+halve 5
+count 3
+--- stderr
+fault: XO-F006: loop ran past its bound of 4 iterations at main.xo:7:21
