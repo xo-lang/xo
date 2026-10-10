@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO0401` on an `if` without `else` where a value is expected now has
+  a note naming the missing `else`; when the expected type came from a
+  sibling branch (a closure ending with `if a { n.add(1) } else if b
+  { ... }`), a fix discards the branch values with `let _ =`.
 - New error `XO0178` (decision 0136): a line that starts with a binary
   operator (`|| b`, `&& c`, `+ d` continuing the line above) gets one
   diagnostic and a fix that moves the operator to the end of the
