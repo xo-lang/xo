@@ -797,8 +797,24 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   gets `400` with the body `Client sent an HTTP request to an HTTPS
   server.` and the connection closes. Failed handshakes are not logged.
   Client certificates are not requested.
-- Both sides speak HTTP/1.1 only, over TLS too (ALPN `http/1.1`; decision
-  0106).
+- HTTP/2 (decision 0121): over TLS a server offers `h2` and `http/1.1`
+  by ALPN and prefers `h2`, and the client offers both; plain `http` is
+  always HTTP/1.1 (no h2c). Nothing in the API changes, and every backend
+  behaves as net/http's HTTP/2 does: a request from Go's client (or Xo's)
+  carries `User-Agent: Go-http-client/2.0` and no `Connection` field,
+  several `Cookie` fields arrive joined with `; `, and a response's
+  `Connection` field is not sent (`close` ends the connection after its
+  streams). Each request runs as a task of its own, many at once on a
+  connection. Limits per connection: 250 concurrent streams, a header
+  list of 1048896 bytes counting 32 per field (a larger one is answered
+  `431`), 1 MiB flow control windows and frames; a client that resets
+  streams faster than their handlers end is disconnected. A fault in a
+  streamed body resets its stream, so the client gets
+  `Protocol("stream error: stream ID 3; INTERNAL_ERROR; received from
+  peer")` (a failure while a response body is read has no method and
+  URL in its text, as on Go). When `serve` stops, streams in flight
+  finish. The client keeps an HTTP/2 connection for later requests to
+  the same host, as Go's Transport does (stream ids go up on it).
 - The client verifies an `https` server's certificate chain and its host
   name (an IP address against the certificate's IP addresses) against the
   system's roots: macOS's trust settings, the CA bundle and directories of

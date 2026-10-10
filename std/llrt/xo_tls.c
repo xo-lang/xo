@@ -7,14 +7,15 @@
 //
 //   - certificates: http.tls_cert checks a PEM chain and key as
 //     tls.X509KeyPair does, with its error texts;
-//   - the server: ALPN "http/1.1" (no HTTP/2), the first certificate
+//   - the server: ALPN "h2" or "http/1.1" (HTTP/2, xo_h2.c, decision
+//     0121, preferred as net/http's server prefers it), the first certificate
 //     unless SNI names another one's DNS name (getCertificate), no client
 //     certificates, session tickets (TLS 1.3 psk_dhe_ke and TLS 1.2,
 //     decision 0117); a client that sends plain HTTP gets
 //     net/http's "400 Client sent an HTTP request to an HTTPS server";
 //     handshake failures are not logged (std/rt drops net/http's log line
 //     too);
-//   - the client: SNI with the URL's host name (not for IP addresses),
+//   - the client: ALPN "h2" and "http/1.1", SNI with the URL's host name (not for IP addresses),
 //     verification against the system's roots (Linux: Go's bundle files and
 //     directories, SSL_CERT_FILE and SSL_CERT_DIR; macOS: the Security
 //     framework's anchors) or the PEM of Client.with_roots, the host name
@@ -105,7 +106,9 @@ static const uint16_t tls_groups[] = {
 	MBEDTLS_SSL_IANA_TLS_GROUP_NONE,
 };
 
-static const char *tls_alpn[] = {"http/1.1", NULL};
+// ALPN: HTTP/2 first, as net/http's server and client offer it (decision
+// 0121)
+static const char *tls_alpn[] = {"h2", "http/1.1", NULL};
 
 static void tls_conf_common(mbedtls_ssl_config *conf) {
 	mbedtls_ssl_conf_min_tls_version(conf, MBEDTLS_SSL_VERSION_TLS1_2);
@@ -440,6 +443,7 @@ static void roots_conf(xo_troots *r) {
 	}
 	tls_conf_common(&r->conf);
 	mbedtls_ssl_conf_authmode(&r->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+	mbedtls_ssl_conf_alpn_protocols(&r->conf, tls_alpn);
 	if (r->n > 0) {
 		mbedtls_ssl_conf_ca_chain(&r->conf, &r->crt, NULL);
 	}
@@ -651,6 +655,7 @@ struct tls_conn {
 	char *alert;    // a fatal alert received after the handshake
 	int probed;     // tls_alert read once more
 	char *vmsg;     // Go's x509 error text
+	int nb;         // reads do not wait (tls_nb_read)
 };
 
 static void alert_msg(tls_conn *t, char *m, size_t mn);
@@ -733,6 +738,11 @@ static int bio_recv(void *p, unsigned char *buf, size_t len) {
 		if (r == -EINTR) {
 			continue;
 		}
+		if ((r == -EAGAIN || r == -EWOULDBLOCK) && t->nb) {
+			// the HTTP/2 connection's fiber waits itself (h2_wait)
+			pd_end(t->pd);
+			return MBEDTLS_ERR_SSL_WANT_READ;
+		}
 		if (r == -EAGAIN || r == -EWOULDBLOCK) {
 			int w = pd_wait_until(t->pd, 0, c, t->when);
 			if (w == PD_READY) {
@@ -798,6 +808,69 @@ static int64_t tls_read(tls_conn *t, char *p, int64_t n) {
 		}
 		return -(int64_t)t->status;
 	}
+}
+
+// tls_nb_read is tls_read without waiting for the socket: the bytes
+// read, 0 at the end of the stream, -1 when it failed, -2 when no record
+// is complete yet.
+static int64_t tls_nb_read(tls_conn *t, char *p, int64_t n) {
+	if (n > INT32_MAX) {
+		n = INT32_MAX;
+	}
+	for (;;) {
+		t->nb = 1;
+		int r = mbedtls_ssl_read(&t->ssl, (unsigned char *)p, (size_t)n);
+		t->nb = 0;
+		if (r > 0) {
+			return r;
+		}
+		if (r == 0 || r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || r == MBEDTLS_ERR_SSL_CONN_EOF) {
+			return 0;
+		}
+		if (r == MBEDTLS_ERR_SSL_WANT_READ) {
+			return -2;
+		}
+		if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET || r == MBEDTLS_ERR_SSL_WANT_WRITE) {
+			continue;
+		}
+		return -1;
+	}
+}
+
+// tls_set_when sets the deadline of t's socket waits (a request on a
+// kept HTTP/2 connection has its own).
+static void tls_set_when(tls_conn *t, int64_t when) {
+	if (t) {
+		t->when = when;
+		t->status = 0;
+	}
+}
+
+// tls_alpn_h2 tells whether ALPN agreed on HTTP/2.
+static int tls_alpn_h2(tls_conn *t) {
+	const char *p = t ? mbedtls_ssl_get_alpn_protocol(&t->ssl) : NULL;
+	return p && strcmp(p, "h2") == 0;
+}
+
+// tls_h2_bad_cipher tells whether the connection's cipher suite is one
+// HTTP/2 prohibits (RFC 9113 Appendix A: TLS 1.2 without an AEAD; Go's
+// isBadCipher), with net/http's GOAWAY text.
+static int tls_h2_bad_cipher(tls_conn *t, char *why, size_t wn) {
+	if (mbedtls_ssl_get_version_number(&t->ssl) != MBEDTLS_SSL_VERSION_TLS1_2) {
+		return 0;
+	}
+	int id = mbedtls_ssl_get_ciphersuite_id_from_ssl(&t->ssl);
+	switch (id) {
+	case MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+	case MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+	case MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+	case MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+	case MBEDTLS_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
+	case MBEDTLS_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:
+		return 0;
+	}
+	snprintf(why, wn, "Prohibited TLS 1.2 Cipher Suite: %x", (unsigned)id);
+	return 1;
 }
 
 // tls_write writes all of p: CC_OK or why it failed.
@@ -1552,6 +1625,23 @@ static tls_conn *tls_server_conn(tls_srv *s, xo_pd *pd) {
 static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n) {
 	(void)t, (void)p, (void)n;
 	return -1;
+}
+static int tls_server_handshake(tls_conn *t) {
+	(void)t;
+	return 0;
+}
+static int64_t tls_nb_read(tls_conn *t, char *p, int64_t n) {
+	(void)t, (void)p, (void)n;
+	return -1;
+}
+static int tls_alpn_h2(tls_conn *t) {
+	(void)t;
+	return 0;
+}
+static void tls_set_when(tls_conn *t, int64_t when) { (void)t, (void)when; }
+static int tls_h2_bad_cipher(tls_conn *t, char *why, size_t wn) {
+	(void)t, (void)why, (void)wn;
+	return 0;
 }
 static const char *tls_alert(tls_conn *t) {
 	(void)t;

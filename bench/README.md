@@ -101,6 +101,7 @@ Stage 3 runs:
 - [2026-10-09 hybrid builds](results/go-asm-hybrid-2026-10-09.md): `xo build --hybrid` emits eligible loops (no allocation, scalars and Lists of flat structs) as Go assembler from the arm64 backend inside Go backend builds; nbody 0.69x, collatz 0.74x, interp_flat 0.78x, sort 0.85x of the Go backend, within 3 to 8 percent of native; nothing in the HTTP benchmark qualifies, recursive fib is 1.49x slower; kept as an option (decision 0084).
 - [2026-10-09 binary size and build cache](results/binary-size-2026-10-09.md): hello world on the Go backend 7.9 to 3.6 MB, Go cache growth per program 34 to 2.9 MB (notes-service 54 to 6.9 MB), compile RSS 286 to 123 MB; Go compiled every method of every runtime generic instantiation in each package; runtime generics now keep protocol methods only, binaries drop DWARF, net/http only with std/http (decision 0098); `bench/size/measure.sh`.
 - [2026-10-10 native runtime](results/native-runtime-2026-10-10.md): native HTTPS full handshakes 9.7k to 15k req/s (Go backend 17k), CPU per request 763 to 389 us, resumed 18.3k (Go 18.8k) with server session tickets (decision 0117); P-256 signing is the remaining gap.
+- [2026-10-10 HTTP/2](results/http2-2026-10-10.md): HTTP/2 over TLS on every backend (decision 0121), 32 workers as streams of one connection: native 87.8k req/s at 37 us CPU each, Go backend 58.2k at 51 us; over HTTP/1.1 with 32 TLS connections the same session measured 108k native and 133k Go.
 
 ## Other models: `bench/harness/`
 

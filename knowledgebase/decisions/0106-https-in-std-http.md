@@ -1,6 +1,7 @@
 # 0106: HTTPS in std/http: tls_cert, Server.with_tls, Client.with_roots
 
-Status: Accepted (2026-10-09). Implemented on the Go backend
+Status: Accepted (2026-10-09); point 2 (HTTP/1.1 only) superseded by
+0121 (2026-10-10: HTTP/2 over TLS on every backend). Implemented on the Go backend
 (`std/rt/http.go`, `http_net.go`) and the native backends
 (`std/native/http.xo`, `std/llrt/xo_tls.c`, decision 0105). Spec: std.md
 4.6. Tests: the `http_tls` golden (`internal/llvm/testdata/golden`, run
@@ -92,3 +93,8 @@ had no server API to copy.
 
 HTTP/1.1 only on every backend is confirmed until HTTP/2 lands on both
 backends (queued with the native leftovers).
+
+Note (2026-10-10): HTTP/2 landed on both backends (decision 0121): with
+TLS, servers and clients negotiate `h2` by ALPN on every backend, and
+cleartext stays HTTP/1.1. The rest of this decision (the API, Go's error
+texts, quiet handshake failures, in process tests) holds.

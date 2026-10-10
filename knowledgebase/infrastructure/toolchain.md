@@ -108,10 +108,12 @@ go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets 
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
 go test ./internal/llvm -run TestTLSDiff           # native HTTPS vs the Go backend: client errors, SNI, ALPN, versions, plain HTTP on the TLS port, SIGTERM (decisions 0105, 0106; about 15 s)
+go test ./internal/llvm -run TestH2Diff -count=3    # HTTP/2 (decision 0121): Go vs LLVM vs arm64 backends as client and server, net/http's client with 400 streams at once, 70 raw frame cases h2spec style; repeat to catch racing cases (about 6 s each)
+go test ./internal/llvm -run TestH2Sanitizers      # the TestH2Diff program (LLVM) under ThreadSanitizer and under AddressSanitizer with UBSan (about 10 s)
 go test ./internal/llvm -run TestCryptoDiff        # native std/crypto (std/llrt/xo_crypto.c) vs Go's crypto, RFC 9106 vectors, x/crypto Argon2id outputs, std/rt's verify_password on mutated hashes (decision 0083; AddressSanitizer and UBSan; about 3 s)
 XO_HTTP_DIFF_SEED=7 XO_HTTP_DIFF_N=30000 go test ./internal/llvm -run TestHTTPParseDiff   # more random and mutated connections
 go test ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s -parallel 6   # Go's fuzzer on the same comparison (more workers than about 6 starved it on 2026-10-08: "context deadline exceeded")
-XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # std/llrt/testdata/http_fuzz.c: mutated HTTP and JSON under AddressSanitizer and UBSan (5 s by default, 1 s with -short)
+XO_FUZZ_SECONDS=60 FUZZ_SEED=3 go test ./internal/llvm -run TestHTTPFuzz -v   # std/llrt/testdata/http_fuzz.c: mutated HTTP/1.1, HTTP/2 frames (server and client), and JSON under AddressSanitizer and UBSan (5 s by default, 1 s with -short; prints the HTTP/2 requests answered)
 go test ./internal/llvm -run 'TestGoldenASan'         # net_echo and the http_* goldens with AddressSanitizer and UBSan, 1 and per CPU workers
 go test ./internal/check -run TestNativeModules       # std/native implementation modules check without diagnostics
 XO_THREADS=1 ./prog                                   # a native binary with one worker thread (default: one per CPU)
@@ -785,7 +787,8 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_unicode.c, xo_bytes.c, xo_json.c,
-                        xo_http.c (decisions 0074, 0081), xo_tls.c (TLS on Mbed TLS, decision 0105);
+                        xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
+                        xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
                         unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration)
@@ -1283,7 +1286,10 @@ first, AST based prototype, since deleted) and
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no `http.stream`). HTTPS (std.md 4.6) is
   std/llrt/xo_tls.c on Mbed TLS since 2026-10-09 (decisions 0105, 0106;
-  see "TLS library").
+  see "TLS library"), with HTTP/2 over it in std/llrt/xo_h2.c since
+  2026-10-10 (decision 0121): serve_conn asks `hc_h2` after the
+  handshake, then runs each stream's request as a task of a scope of the
+  connection's task (`h2_next`, `h2_take`, `h2_end`).
 - std/time natively (2026-10-09, decision 0094 "Native implementation"):
   std/native/time.xo (civil time, layouts, format, parse) over
   std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
@@ -1565,6 +1571,16 @@ Last verified: 2026-10-10.
   per request); profile the server with `sample <pid> 4` (2026-10-10:
   15k full handshakes/s native against 17k on the Go backend,
   `bench/results/native-runtime-2026-10-10.md`).
+- HTTP/2 (decision 0121, `std/llrt/xo_h2.c`): ALPN offers `h2` then
+  `http/1.1` on the server and the client (`tls_alpn`); the server's
+  connection fiber reads TLS without waiting (`tls_nb_read`: the bio's
+  `nb` flag turns EAGAIN into `MBEDTLS_ERR_SSL_WANT_READ`) and parks on
+  the socket and its streams at once (`h2_wait`); TLS 1.2 with a CBC
+  suite gets GOAWAY INADEQUATE_SECURITY (`tls_h2_bad_cipher`). Load:
+  `SCHEME=https H2=1 CONFIGS="xo xo-llvm xo-arm64" bench/perf/http/run.sh`
+  (loadgen `-h2`: the workers' requests are streams of one connection;
+  2026-10-10: 87.8k req/s native, 58.2k on the Go backend,
+  `bench/results/http2-2026-10-10.md`). Last verified: 2026-10-10.
 - Sizes (stripped, darwin/arm64, 2026-10-09): a std/http program grows
   by about 250 KB with the LLVM backend (336 to 582 KB) and 340 KB with
   the arm64 backend (375 to 711 KB); an HTTPS server and client program is

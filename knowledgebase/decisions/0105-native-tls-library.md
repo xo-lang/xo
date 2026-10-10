@@ -1,7 +1,9 @@
 # 0105: Native TLS on Mbed TLS 4.1 (not BoringSSL)
 
 Status: Accepted (2026-10-09). Amended by 0117 (2026-10-10): session
-tickets on, handshakes about twice as fast. Implemented in `third_party/mbedtls`
+tickets on, handshakes about twice as fast. Amended by 0121
+(2026-10-10): ALPN offers `h2` first on the server and the client
+(HTTP/2 in `std/llrt/xo_h2.c`). Implemented in `third_party/mbedtls`
 (vendored library, `mbedtls.tgz`, configuration in `xo/`),
 `internal/build/tls.go` (archive cache, link flags), `std/llrt/xo_tls.c`
 (certificates, roots, server and client connections, Go's error texts),

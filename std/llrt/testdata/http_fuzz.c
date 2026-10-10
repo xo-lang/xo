@@ -7,6 +7,10 @@
 //     connection without a socket): request line, header, target and
 //     query, Content-Length and chunked bodies, trailers, responses;
 //   - the client's response reader (cl_read_response);
+//   - HTTP/2 (xo_h2.c, decision 0121): mutated frame sequences through the
+//     server's frame code (preface, frames, HPACK, streams, the handlers'
+//     whole and streamed responses and resets, the sending of it all)
+//     and the client's (h2cc_process);
 //   - the JSON parser and the tape readers (xo_json_parse, members,
 //     strings, numbers).
 //
@@ -190,6 +194,163 @@ static void run_json(const char *in, int64_t n) {
 	xo_free(t);
 }
 
+
+// HTTP/2 (decision 0121): frame sequences for the server's frame code
+// (h2_input, the handlers' responses, h2_schedule) and the client's
+// (h2cc_process), without sockets.
+
+static void fz_frame(nbuf *b, int type, int flags, uint32_t sid, const char *p, int64_t n) {
+	h2_fh(b, (uint32_t)n, type, flags, sid);
+	nbuf_put(b, p, n);
+}
+
+// h2_seed makes HTTP/2 input number k: a client's frames after its
+// preface (k even) or a server's (k odd).
+static void h2_seed(nbuf *b, int k) {
+	// :method GET, :path /, :scheme https, :authority www.example.com
+	// (Huffman, RFC 7541 C.4.1)
+	static const char get[] = "\x82\x84\x87\x41\x8c\xf1\xe3\xc2\xe5\xf2\x3a\x6b\xa0\xab\x90\xf4\xff";
+	// :method POST, :path /echo, :scheme https, then a field indexed
+	// dynamically, a never indexed one, and a table size update first
+	static const char post[] = "\x3f\xe1\x1f\x83\x04\x05/echo\x87\x40\x01x\x01y\xbe\x10\x01z\x02zz";
+	static const char settings[] = "\x00\x04\x00\x00\x40\x00\x00\x01\x00\x00\x10\x00";
+	switch (k % 6) {
+	case 0:
+		fz_frame(b, H2_SETTINGS, 0, 0, settings, 12);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS | H2F_END_STREAM, 1, get, sizeof get - 1);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS | H2F_END_STREAM, 3, "\x82\x84\x87\xbe", 4);
+		break;
+	case 2:
+		fz_frame(b, H2_SETTINGS, 0, 0, "", 0);
+		fz_frame(b, H2_HEADERS, 0, 1, post, 10);
+		fz_frame(b, H2_CONT, H2F_END_HEADERS, 1, post + 10, sizeof post - 11);
+		fz_frame(b, H2_DATA, 0, 1, "hello", 5);
+		fz_frame(b, H2_DATA, H2F_PADDED, 1, "\x02 world\x00\x00", 9);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS | H2F_END_STREAM, 1, "\x40\x01t\x01v", 5);
+		fz_frame(b, H2_PING, 0, 0, "12345678", 8);
+		fz_frame(b, H2_WINUP, 0, 0, "\x00\x00\x10\x00", 4);
+		break;
+	case 4:
+		fz_frame(b, H2_SETTINGS, 0, 0, settings, 6);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS | H2F_PRIORITY, 1, "\x00\x00\x00\x00\x10\x83\x84\x87\x41\x01h", 11);
+		fz_frame(b, H2_PRIORITY, 0, 3, "\x00\x00\x00\x01\x10", 5);
+		fz_frame(b, H2_RST, 0, 1, "\x00\x00\x00\x08", 4);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS | H2F_END_STREAM, 5, get, sizeof get - 1);
+		fz_frame(b, H2_SETTINGS, H2F_ACK, 0, "", 0);
+		fz_frame(b, H2_GOAWAY, 0, 0, "\x00\x00\x00\x05\x00\x00\x00\x00", 8);
+		break;
+	case 1:
+		fz_frame(b, H2_SETTINGS, 0, 0, settings, 12);
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS, 1, "\x88\x5f\x87\x49\x7c\xa5\x8a\xe8\x19\xaa", 10);
+		fz_frame(b, H2_DATA, 0, 1, "body", 4);
+		fz_frame(b, H2_DATA, H2F_END_STREAM, 1, "", 0);
+		break;
+	case 3:
+		fz_frame(b, H2_HEADERS, H2F_END_HEADERS, 1, "\x08\x03" "100", 5);
+		fz_frame(b, H2_HEADERS, 0, 1, "\x48\x03" "404", 5);
+		fz_frame(b, H2_CONT, H2F_END_HEADERS, 1, "\x40\x01" "a\x01" "b", 5);
+		fz_frame(b, H2_WINUP, 0, 1, "\x00\x00\x00\x10", 4);
+		fz_frame(b, H2_DATA, H2F_PADDED | H2F_END_STREAM, 1, "\x01xy\x00", 4);
+		break;
+	default:
+		fz_frame(b, H2_PING, 0, 0, "12345678", 8);
+		fz_frame(b, H2_GOAWAY, 0, 0, "\x00\x00\x00\x00\x00\x00\x00\x02why", 11);
+		fz_frame(b, H2_RST, 0, 1, "\x00\x00\x00\x02", 4);
+		break;
+	}
+}
+
+static int64_t h2_answered; // requests that reached a handler
+
+// run_h2_server feeds input to a server connection, answers the requests
+// it completes (whole and streamed bodies, faults), and sends.
+static void run_h2_server(const char *in, int64_t n) {
+	xo_hconn hc;
+	memset(&hc, 0, sizeof hc);
+	h2c *c = h2c_new(&hc);
+	int64_t off = 0;
+	pthread_mutex_lock(&c->mu);
+	(void)h2_input(c, in, n, &off);
+	for (int k = 0; k < 64; k++) {
+		xo_hconn *t = h2_take_locked(c);
+		if (!t) {
+			break;
+		}
+		pthread_mutex_unlock(&c->mu);
+		h2_answered++;
+		int64_t l;
+		xo_rstr *s = xo_hc_host(t, &l);
+		xo_free(s);
+		(void)xo_hc_port(t);
+		for (int64_t i = 0; i < t->req.hdr.n; i++) {
+			xo_hc_header(t, t->req.hdr.a[i].k.p, t->req.hdr.a[i].k.n, t->req.hdr.a[i].v.p, t->req.hdr.a[i].v.n);
+		}
+		int64_t status = 100 + (int64_t)(rnd() % 500);
+		switch (rnd() % 3) {
+		case 0:
+			(void)xo_hc_respond(t, status, t->body.p ? t->body.p : "", t->body.n);
+			break;
+		case 1: {
+			xo_sink *sk = xo_sink_conn(t, status);
+			(void)xo_sink_write(sk, "streamed ", 9);
+			(void)xo_sink_flush(sk);
+			(void)xo_sink_write(sk, t->body.p ? t->body.p : "", t->body.n);
+			(void)xo_sink_end(sk);
+			h_release(sk);
+			break;
+		}
+		default:
+			break; // a fault: the stream is reset
+		}
+		xo_h2_end(t);
+		h_release(t);
+		pthread_mutex_lock(&c->mu);
+	}
+	h2_schedule(c);
+	pthread_mutex_unlock(&c->mu);
+	h2c_free(c);
+}
+
+// run_h2_client feeds a server's frames to the client's frame code.
+static void run_h2_client(const char *in, int64_t n) {
+	h2cc pc;
+	memset(&pc, 0, sizeof pc);
+	hp_dec_init(&pc.dec, H2_TABLE);
+	hp_enc_init(&pc.enc);
+	pc.peer_frame = 16384;
+	pc.peer_win = pc.win = 65535;
+	pc.in.avail = (int64_t)1 << 30;
+	pc.c = (ccon){.fd = -1};
+	pc.c.buf = malloc((size_t)n + 1);
+	memcpy(pc.c.buf, in, (size_t)n);
+	pc.c.n = pc.c.cap = n;
+	pc.c.eof = 1;
+	h2rq q;
+	memset(&q, 0, sizeof q);
+	q.id = 1;
+	q.swin = 65535;
+	q.sin.avail = (int64_t)4 << 20;
+	xo_cresp r;
+	memset(&r, 0, sizeof r);
+	char why[300];
+	const char *method = rnd() % 4 == 0 ? "HEAD" : "GET";
+	for (;;) {
+		const uint8_t *h;
+		if (h2cc_frame(&pc.c, &h) != CC_OK || !h2cc_process(&pc, &q, h, &r, method, why, sizeof why) || q.ended) {
+			break;
+		}
+	}
+	free(pc.c.buf);
+	hp_dec_free(&pc.dec);
+	hp_tab_free(&pc.enc.t);
+	free(pc.out.p);
+	free(pc.goaway_debug);
+	hl_free(&q.fields);
+	free(q.hb.p);
+	hl_free(&r.hdr);
+	free(r.body.p);
+}
+
 int main(void) {
 	const char *sec = getenv("FUZZ_SECONDS");
 	const char *seed = getenv("FUZZ_SEED");
@@ -214,6 +375,25 @@ int main(void) {
 			run_client(b.p ? b.p : "", b.n);
 			run_json(b.p ? b.p : "", b.n);
 			free(b.p);
+			// HTTP/2 frames
+			nbuf h = {0};
+			int hk = (int)(rnd() % 6);
+			h2_seed(&h, hk);
+			rounds = 1 + (int)(rnd() % 4);
+			for (int j = 0; j < rounds; j++) {
+				mutate(&h);
+			}
+			if (hk % 2 == 1) {
+				run_h2_client(h.p ? h.p : "", h.n);
+			} else {
+				// the client preface stays whole (mostly)
+				nbuf in = {0};
+				nbuf_str(&in, rnd() % 16 == 0 ? "PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n" : H2_PREFACE);
+				nbuf_put(&in, h.p, h.n);
+				run_h2_server(in.p, in.n);
+				free(in.p);
+			}
+			free(h.p);
 			runs++;
 		}
 		int64_t live, total;
@@ -223,6 +403,6 @@ int main(void) {
 			return 1;
 		}
 	}
-	printf("runs %lld\n", (long long)runs);
+	printf("runs %lld, HTTP/2 requests answered %lld\n", (long long)runs, (long long)h2_answered);
 	return 0;
 }

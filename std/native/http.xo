@@ -590,29 +590,51 @@ fn serve_mem(l: Listener, r: Router) {
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router) {
   defer rthttp.hc_close(hc)
+  if rthttp.hc_h2(hc) {
+    // HTTP/2 (decision 0121): each request is a task of its own, as
+    // net/http runs a handler per stream; the scope ends when the
+    // connection does
+    scope s {
+      while rthttp.h2_next(hc) {
+        let st = rthttp.h2_take(hc)
+        s.spawn(fn() { serve_stream(st, r) })
+      }
+    }
+    return
+  }
   while rthttp.hc_read(hc) {
-    let resp = rt.cast[http.Response, Response](call_raw(r, conn_request(hc)))
-    for (k, v) in resp.headers {
-      rthttp.hc_header(hc, k, v)
-    }
-    if resp.stream != 0 {
-      // a streamed body goes out as f makes it (std/rt's serve)
-      let s = rthttp.sink_conn(hc, resp.status)
-      let fs = rthttp.stream_get(resp.stream, true)
-      if !fs.is_empty() {
-        if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
-          f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
-        }
-      }
-      if !rthttp.sink_end(s) {
-        break
-      }
-      continue
-    }
-    if !rthttp.hc_respond(hc, resp.status, resp.body) {
+    if !respond(hc, r) {
       break
     }
   }
+}
+
+/// Serves one HTTP/2 stream. A fault in a streamed body resets the
+/// stream (h2_end), as net/http resets it after a handler's panic; the
+/// connection's other streams go on.
+fn serve_stream(st: rthttp.HConn, r: Router) {
+  defer rthttp.h2_end(st)
+  task.isolate(fn() -> Bool ! () { respond(st, r) }).ignore_err("a fault resets the stream (h2_end)")
+}
+
+/// Answers the request read on hc: whether the connection stays open.
+fn respond(hc: rthttp.HConn, r: Router) -> Bool {
+  let resp = rt.cast[http.Response, Response](call_raw(r, conn_request(hc)))
+  for (k, v) in resp.headers {
+    rthttp.hc_header(hc, k, v)
+  }
+  if resp.stream != 0 {
+    // a streamed body goes out as f makes it (std/rt's serve)
+    let s = rthttp.sink_conn(hc, resp.status)
+    let fs = rthttp.stream_get(resp.stream, true)
+    if !fs.is_empty() {
+      if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+        f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
+      }
+    }
+    return rthttp.sink_end(s)
+  }
+  rthttp.hc_respond(hc, resp.status, resp.body)
 }
 
 /// The request read from the connection (std/rt's serve).

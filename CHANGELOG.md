@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/http speaks HTTP/2 over TLS on every backend (decision 0121):
+  `with_tls` servers and `https` clients agree on `h2` by ALPN, plain
+  `http` stays HTTP/1.1, and nothing in the API changes. Requests of a
+  connection run at once, each as a task; a fault in a streamed body
+  resets only its stream. The native backends implement it in C (frames,
+  HPACK, flow control) with net/http's limits (250 streams, the header
+  list limit with 431, the rapid reset limit) and its error texts, and
+  their client keeps HTTP/2 connections for later requests as Go's does.
+  Over one connection the native server does 87.8k requests per second
+  in the HTTP benchmark, the Go backend 58.2k
+  (`bench/results/http2-2026-10-10.md`).
 - Native test binaries (`xo test --no-gc`, decision 0120): property tests
   and `testing.gen` work, with the Go backend's generated values for a
   seed, the same failing case, and the same shrunk input in the report.
