@@ -441,9 +441,13 @@ static void test_prune(void) {
 		}
 		unlk(&s->mu);
 	}
-	// without pruning the list holds every task started (total)
-	CHECK(maxlist < total / 4);
-	if (maxlist >= total / 4) {
+	// without pruning the list holds every task started (total). The bound
+	// is half, not tighter: under load more finished tasks still have their
+	// queue entry pending (gone < 2) when a prune runs, they survive it, and
+	// the next prune waits for the list to double from the survivors
+	// (seen: 11303 of 32000 during a parallel test run; under 1/10 idle).
+	CHECK(maxlist < total / 2);
+	if (maxlist >= total / 2) {
 		fprintf(stderr, "prune: the scope's list reached %lld of %lld tasks\n", (long long)maxlist, (long long)total);
 	}
 	CHECK(xo_scope_close(s, 0) == 0);
