@@ -695,7 +695,7 @@ fn f(p: P) -> Str { "${p}" }`,
 	},
 	BadOperand: {
 		Title: "operator, index, slice, or iteration not defined for the type",
-		Detail: "The operation does not exist for this type: arithmetic between `Duration` and a plain integer literal, `Time + Time`, indexing a `Str` by position, slicing something other than `List`, `Bytes`, or `Str`, `for` over a value that is not a List, Set, Map, Chan, or range, `??` on a non optional, or `expect(x)` without a comparison. " +
+		Detail: "The operation does not exist for this type: arithmetic between `Duration` and a plain integer literal, `Time + Time`, indexing a `Str` by position, slicing something other than `List`, `Bytes`, or `Str`, `for` over a value that is not a List, Set, Map, Chan, Bytes, or range, `??` on a non optional, or `expect(x)` without a comparison. " +
 			"Durations need units (`5s`), and a `Str` is read with `runes()` or by slicing. See core 2.1, 3.5, and 3.6.",
 		Example: `fn f(d: Duration) -> Duration { d + 5 }`,
 		Fix:     `fn f(d: Duration) -> Duration { d + 5s }`,
