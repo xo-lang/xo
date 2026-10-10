@@ -270,3 +270,24 @@ func timeFlags(dir string, res *check.Result, tz ssa.TZUse, opts Options) ([]str
 	}
 	return []string{"-DXO_TIME"}, notes, nil
 }
+
+// IOFlags returns the C compiler flags that compile the runtime's Fs
+// operations (std/llrt/xo_fs.c, XO_FS) and standard input reads
+// (xo_stdin.c, XO_STDIN) into a native program whose code calls them
+// (decision 0102), so programs without them do not grow.
+func IOFlags(code []byte) []string {
+	var out []string
+	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns"} {
+		if bytes.Contains(code, []byte(sym)) {
+			out = append(out, "-DXO_FS")
+			break
+		}
+	}
+	for _, sym := range []string{"xo_stdin_", "xo_tw_set_input"} {
+		if bytes.Contains(code, []byte(sym)) {
+			out = append(out, "-DXO_STDIN")
+			break
+		}
+	}
+	return out
+}

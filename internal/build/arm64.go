@@ -174,6 +174,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		if err != nil {
 			return nil, err
 		}
+		flags = append(flags, IOFlags(asm)...)
 		out.Notes = notes
 		if err := ccBuild(cc, append([]string{"-O2"}, flags...), []string{s, rt}, bin); err != nil {
 			return nil, err

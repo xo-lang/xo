@@ -100,6 +100,7 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err != nil {
 		return nil, err
 	}
+	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
 	if err := clangBuild(clang, []string{ll, rt}, bin, flags...); err != nil {
 		return nil, err

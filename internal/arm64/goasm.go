@@ -214,7 +214,9 @@ func (g *gen) goSigOf(f *ssa.Func) (*goSig, error) {
 		}
 		off += size
 	}
-	sig.size = alignUp(off, 8)
+	// Go's argument size is not rounded up after a Bool result (go vet
+	// -asmdecl: `func f(n int64) bool` is $...-9)
+	sig.size = off
 	return sig, nil
 }
 

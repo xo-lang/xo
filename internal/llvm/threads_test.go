@@ -240,7 +240,7 @@ func TestGoldenThreads(t *testing.T) {
 			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			flags := []string{"-DXO_RT_TEST_THREADS=4", "-Wno-override-module"}
+			flags := append([]string{"-DXO_RT_TEST_THREADS=4", "-Wno-override-module"}, build.IOFlags(prog.IR)...)
 			var bin string
 			if deepRecursion[filepath.Base(dir)] {
 				bin = filepath.Join(t.TempDir(), "prog")
@@ -316,7 +316,7 @@ func TestGoldenTasks(t *testing.T) {
 			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll, rt})
+			bin := tsanBuild(t, append([]string{"-Wno-override-module"}, build.IOFlags(prog.IR)...), []string{ll, rt})
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir

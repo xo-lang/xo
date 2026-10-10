@@ -42,6 +42,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Native backends: error frames (decision 0104): each `?` records the
   function, location, and parameters lazily, and main's error report
   prints `  at ...` lines identical to the Go backend's.
+- Native Fs and standard input code is compiled into a program only when
+  it calls them (XO_FS, XO_STDIN; hello world unchanged). Fixed: hybrid
+  builds (`--hybrid`) declared a Bool result's argument size rounded up
+  (go vet -asmdecl).
 - `xo test --no-gc`: `FakeStdio.set_input` feeds the reads; fixed a hang
   after `FakeProc.signal_after` fired (the virtual clock stopped moving).
 - Native backends: all of `std/time` (decision 0094; std/native/time.xo

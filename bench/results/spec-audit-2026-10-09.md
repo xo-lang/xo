@@ -517,3 +517,53 @@ real `std/sql` drivers.
    internal/build beside `TestReproducibleBuild`.
 4. Doc comment examples (1.2): extract ```` ``` ```` blocks of `///`
    comments in `internal/doc` and run them as tests in `xo test`.
+
+## Native gaps closed (2026-10-09, third pass)
+
+Native rows re scored after decisions 0100 to 0104 and the native std/time
+(decision 0094). "native: yes" means LLVM and arm64 with `--no-gc`, output
+byte identical to the Go backend (TestGenGoldensNative runs 73 internal/gen
+goldens on all three backends with the leak check; TestErrorTracesNative
+compares whole standard error; TestStdinNative pipes standard input;
+TestTimeDiff about 70,000 lines over 19 zones).
+
+| Row | Feature | Native now | Evidence |
+|---|---|---|---|
+| 2.1 | Float32 | yes (a double rounded through float, decision 0101) | llvm:float32, gen:conversions |
+| 2.1 | `Int32.try` and the other sized `try`s | yes | gen:conversions, llvm:float32 |
+| 2.1 | `Secret[T]` in every output path | yes (interpolation, Debug, log fields) | gen:interpolation, llvm:native_gaps |
+| 2.4 | Interfaces as values, dynamic dispatch, adapters, `==` | yes (decision 0100) | gen:interfaces, gen:iface_adapters, gen:std_iface_methods, llvm:iface_values, llvm:iface_eq |
+| 2.6 | `?` conversions | yes | gen:error_conversion |
+| 2.8 | Newtypes, `e.0`, `Email(p)` | yes | gen:newtype_value, gen:consts_newtypes, llvm:newtypes |
+| 2.9 | `derive Ord` order (`<` on structs, enums, tuples, lists) | yes | gen:enums, gen:float_order, gen:mono_generics |
+| 3.2 | Calls with std defaults | yes | llvm:native_gaps |
+| 3.5 | List patterns, shorthand field patterns | yes (also fixed: or pattern bindings) | gen:patterns, llvm:newtypes |
+| 5.3 | `Buf` | yes | gen:collections |
+| 6.3 | Fs attenuation, `Denied` | yes (decision 0102) | gen:fs_rooting, llvm:fs_native |
+| 6.3, 7.1 | `os.tasks` | XO1201 planned: needs a program root scope around main | gen:arena_escape |
+| 6.4 | MemFs writes, FakeProc.run under `xo test --no-gc` | XO1201 planned | |
+| 6.4 | `FakeStdio.set_input` | yes | gen:test_stdin_stop (cmd/xo TestNoGCTests) |
+| 7.2 | stdin reads as cancellation points, stop requests | yes (decision 0102) | TestStdinNative, gen:test_stdin_stop |
+| 11.1 | Error frames | yes in main's report (decision 0104); not in test reports, handler logs | TestErrorTracesNative |
+| 11.2 | Crash bundles, fault frames | not natively | |
+| std 2.1 | `Int.pow`, `clamp`, `min`/`max` on Str | yes | gen:int_ops |
+| std 2.2 | base64 | XO1201 planned | gen:std06_helpers |
+| std 2.3 | `insert`, `remove_at`, `indexed()`, `xs + ys` | yes; `Range.to_list`, method values (`xs.get` as a value) XO1201 | gen:value_semantics, gen:list_value_semantics |
+| std 2.4 | `Map.filter`, Set union, intersect, difference, `get_or_fault` any key | yes | gen:collections, llvm:native_gaps |
+| std 2.6 | `Duration.from_secs`, `scale`, `ceil_seconds`, `parse_rfc3339` | yes | gen:duration_time |
+| std 3.1 | Every Fs method | yes (MemFs in tests: read only) | llvm:fs_native |
+| std 3.6 | `Stdio.write`, `read_line`, `read_all`, `lines` | yes | TestStdinNative |
+| std 3.7 | `Proc.run` | XO1201 planned | gen:audit_second_pass |
+| std 7 | `Once`, `Semaphore`, `map_concurrent` | yes (a fault in a Once's function is not stored natively) | gen:task_std, llvm:task_native |
+| std 7 | `map_concurrent_until` | XO1201 planned | |
+| std 9 | std/path | yes | gen:std06_path, llvm:std_path |
+| std 13 | std/time | yes, same per use zone data | gen:time_* , TestTimeDiff |
+| 12.2 | `target` | XO1201 planned | gen:audit_second_pass |
+
+Also found and fixed on the way: a task whose value is a Result failed its
+scope natively; `with_timeout` returned the closure's result when it
+finished after the deadline; the test world's virtual clock stopped after
+`signal_after`; `==` on values holding functions or handles passed the
+check and failed in code generation (now XO1201); the arm64 backend could
+not assemble functions over 8192 instructions; hybrid builds declared a
+Bool result's argument size rounded up.

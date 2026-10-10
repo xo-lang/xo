@@ -7,6 +7,7 @@
 // directly: they do not block for long.
 
 #include <poll.h>
+#include <sys/stat.h>
 
 static struct {
 	int busy;    // a reader holds the turn
