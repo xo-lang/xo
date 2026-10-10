@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	fiatcrypto "github.com/xo-lang/xo/third_party/fiat-crypto"
 	"github.com/xo-lang/xo/third_party/mbedtls"
 )
 
@@ -67,27 +68,29 @@ var (
 	ccVers   = map[string]string{} // C compiler -> its --version output
 )
 
-// tlsSourceHash hashes the embedded library (its compressed sources) and
-// configuration.
+// tlsSourceHash hashes the embedded library (its compressed sources),
+// configuration, and fiat-crypto's files (decision 0132).
 func tlsSourceHash() (string, error) {
 	if tlsHash != "" {
 		return tlsHash, nil
 	}
 	h := sha256.New()
-	err := fs.WalkDir(mbedtls.Files, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := fs.ReadFile(mbedtls.Files, p)
+	for _, fsys := range []fs.FS{mbedtls.Files, fiatcrypto.Files} {
+		err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(h, "%s %d\n", p, len(data))
+			h.Write(data)
+			return nil
+		})
 		if err != nil {
-			return err
+			return "", err
 		}
-		fmt.Fprintf(h, "%s %d\n", p, len(data))
-		h.Write(data)
-		return nil
-	})
-	if err != nil {
-		return "", err
 	}
 	tlsHash = hex.EncodeToString(h.Sum(nil))
 	return tlsHash, nil
