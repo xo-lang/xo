@@ -1111,6 +1111,125 @@ func (c *checker) checkArgs(params []*ParamInfo, call *ast.CallExpr, fname strin
 			}
 		}
 	}
+	var varArgs []ast.Expr
+	if ci != nil && ci.fn != nil && ci.fn.RecvVar && !ci.fn.Static && ci.recvExpr != nil {
+		varArgs = append(varArgs, ci.recvExpr)
+	}
+	for i, e := range assigned {
+		if e != nil && params[i].Var {
+			varArgs = append(varArgs, e)
+		}
+	}
+	c.checkVarAliases(varArgs)
+}
+
+// placeSeg is one step of a place path: a field (`.name`), or an index
+// whose constant text is key (known) or unknown.
+type placeSeg struct {
+	field string
+	key   string
+	known bool
+}
+
+// placePath splits a place expression into its root binding and the
+// fields and indexes below it (false when e is not a place).
+func (c *checker) placePath(e ast.Expr) (*ast.Ident, []placeSeg, bool) {
+	var segs []placeSeg
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+			continue
+		case *ast.SelectorExpr:
+			segs = append([]placeSeg{{field: x.Sel.Name}}, segs...)
+			e = x.X
+			continue
+		case *ast.IndexExpr:
+			k, ok := constKey(x.Index)
+			segs = append([]placeSeg{{key: k, known: ok}}, segs...)
+			e = x.X
+			continue
+		case *ast.Ident:
+			return x, segs, true
+		}
+		return nil, nil, false
+	}
+}
+
+// constKey is the text of an index that is a literal integer or a
+// string literal without interpolation: two different ones name
+// different elements.
+func constKey(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return constKey(x.X)
+	case *ast.IntLit:
+		return "i" + x.Value, true
+	case *ast.StringLit:
+		var b strings.Builder
+		for _, p := range x.Parts {
+			if p.Expr != nil {
+				return "", false
+			}
+			b.WriteString(p.Text)
+		}
+		return "s" + b.String(), true
+	}
+	return "", false
+}
+
+// checkVarAliases reports two `var` arguments of one call that name
+// overlapping places (decision 0111): the same binding where one path of
+// fields and indexes is a prefix of the other, unless a step differs
+// for certain (two field names, or two constant indexes).
+func (c *checker) checkVarAliases(es []ast.Expr) {
+	if len(es) < 2 {
+		return
+	}
+	type path struct {
+		e    ast.Expr
+		root *VarObj
+		name string
+		segs []placeSeg
+	}
+	var ps []path
+	for _, e := range es {
+		id, segs, ok := c.placePath(e)
+		if !ok {
+			continue
+		}
+		ps = append(ps, path{e, c.lookupLocal(id.Name), id.Name, segs})
+	}
+	for j := 1; j < len(ps); j++ {
+		for i := 0; i < j; i++ {
+			a, b := ps[i], ps[j]
+			if a.name != b.name || a.root != b.root {
+				continue
+			}
+			distinct := false
+			for k := 0; k < min(len(a.segs), len(b.segs)); k++ {
+				x, y := a.segs[k], b.segs[k]
+				if x.field != y.field || x.field == "" && x.known && y.known && x.key != y.key {
+					distinct = true
+					break
+				}
+			}
+			if distinct {
+				continue
+			}
+			at, bt := c.srcOf(a.e.Span()), c.srcOf(b.e.Span())
+			var d *diag.Diagnostic
+			if at == bt {
+				d = c.errorf(diag.VarArgsOverlap, b.e.Span(), "`%s` is passed to two `var` parameters of one call (decision 0111)", bt)
+				note(d, a.e.Span(), "first passed here")
+			} else {
+				d = c.errorf(diag.VarArgsOverlap, b.e.Span(), "`%s` overlaps `%s`, and both are passed to `var` parameters of one call (decision 0111)", bt, at)
+				note(d, a.e.Span(), "`%s` is passed to a `var` parameter here", at)
+			}
+			note(d, token.Span{}, "copy one of them into a temporary (`var tmp = %s`), pass that, and store it back after the call; or take one `var` parameter of a struct that holds both", bt)
+			break
+		}
+	}
 }
 
 // callValue calls a value of function type.

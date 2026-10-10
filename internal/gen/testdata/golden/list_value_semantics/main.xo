@@ -305,17 +305,19 @@ fn main(os: Os) {
   whole.push(6)
   os.stdio.println("slices: whole ${show(whole)} part ${show(part)} joined ${show(joined)} ${show(joined2)} ${show(joined3)}")
 
-  // 9. var parameters: aliasing, and a by value argument of the same
+  // 9. var parameters: two copies of one list (passing one binding to
+  // both is XO0503, decision 0111), and a by value argument of the same
   // binding.
   var al = [1, 2, 3]
-  both(al, al)
+  var al2 = al
+  both(al, al2)
   var mx = [1, 2]
   let seen = mixed(mx, mx)
   var fx = fresh()
   let fx2 = fx
   set0(fx, 42)
   let gr = grown(fx)
-  os.stdio.println("params: al ${show(al)} mx ${show(mx)} seen ${seen} fx ${show(fx)} fx2 ${show(fx2)} gr ${show(gr)}")
+  os.stdio.println("params: al ${show(al)} al2 ${show(al2)} mx ${show(mx)} seen ${seen} fx ${show(fx)} fx2 ${show(fx2)} gr ${show(gr)}")
 
   // 10. Results of std methods that copy elements out of a list.
   var src = [[3], [1], [2]]

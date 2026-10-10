@@ -220,7 +220,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [native-listener-closed-at-last-use.md](native-listener-closed-at-last-use.md): a native `Listener` is freed, and closed, at its last use; a port meant to stay open needs a later use (`l.close()`).
 - [tls13-alert-after-handshake.md](tls13-alert-after-handshake.md): a TLS 1.3 server's alert (client certificate required) arrives after the client's handshake; the native client reads once more after a failed exchange and reports it as Go does (`Connect`).
 - [native-select-take-index.md](native-select-take-index.md): a native `select` took a receive arm's value by its position among all arms, losing it after an `after` arm; the runtime numbers channel arms only.
-- [var-args-one-binding-twice.md](var-args-one-binding-twice.md): `both(al, al)` with two `var` parameters is one value on the Go backend and two copies natively; natively XO1201 until an ADR decides.
+- [var-args-one-binding-twice.md](var-args-one-binding-twice.md): `both(al, al)` with two `var` parameters was one value on the Go backend and two copies natively; resolved by decision 0111 (`XO0503` on every backend).
 - [fakeclock-advance-woken-tasks.md](fakeclock-advance-woken-tasks.md): native `FakeClock.advance` returned before the tasks woken at the last instant ran; it now waits for the next move of the clock.
 - [xo-test-writes-regressions-into-goldens.md](xo-test-writes-regressions-into-goldens.md): `xo test` by hand on a golden directory writes `regressions_test.xo` into it and breaks TestGolden; delete it, or copy the golden first.
 - [closure-frame-names.md](closure-frame-names.md): native error frames of a `?` in a closure lacked the Go backend's `.closure` suffix, and Mutex.with closures recorded none.

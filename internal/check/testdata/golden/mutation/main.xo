@@ -36,3 +36,14 @@ fn moved() -> List[Int] {
   b.push(2)
   xs
 }
+
+fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn aliased() -> Int {
+  var xs = [0]
+  both(xs, xs)
+  xs.len()
+}

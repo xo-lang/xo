@@ -760,6 +760,33 @@ const X = g()`,
   x
 }`,
 	},
+	VarArgsOverlap: {
+		Title: "one variable or overlapping places passed to two `var` parameters of one call",
+		Detail: "A call may not pass the same variable, or two places that overlap (`x` and `x.f`, `xs[i]` and `xs[j]` unless both indexes are different literals, a `var` receiver and an argument naming it), to two `var` parameters. " +
+			"The Go backend passes `var` arguments by reference and the native backends copy them in and out, so aliased writes would differ; with aliasing ruled out both conventions give one result. " +
+			"Copy one of the places into a temporary, pass the temporary, and store it back after the call, or take a single `var` parameter of a struct that holds both values. See core 5.2 and decision 0111.",
+		Example: `fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn f() -> Int {
+  var xs = [0]
+  both(xs, xs)
+  xs.len()
+}`,
+		Fix: `fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn f() -> Int {
+  var xs = [0]
+  var ys = xs
+  both(xs, ys)
+  xs.len() + ys.len()
+}`,
+	},
 	UseOfMovedValue: {
 		Title: "use of a moved Buf, StrBuilder, or BytesBuilder",
 		Detail: "`Buf[T]`, `StrBuilder`, and `BytesBuilder` are mutable in place and move only. `freeze()`, assigning, passing to a function, sending on a channel, or capturing in a spawned task moves the buffer, and the old name may not be used again (until it is reassigned). " +

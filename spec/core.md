@@ -12,8 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.9
 
-One meaning change (std/http over TLS speaks HTTP/1.1 only, below); native
-support grew (`--no-gc`, 10.1):
+Meaning changes: std/http over TLS speaks HTTP/1.1 only (below), and
+one variable passed to two `var` parameters of a call is an error
+(`XO0503`, 5.2, decision 0111; the Go backend shared it, the native
+backends reported XO1201). Native support grew (`--no-gc`, 10.1):
 
 - Interface types as values (2.4) build natively (decision 0100).
 - Newtypes (2.8, decision 0097: construction, `e.0`, `Email(p)`, Debug
@@ -1249,6 +1251,16 @@ Because values never alias mutably, data races are impossible except through
   stored again, since the stored copy does not see the change. Reads inside
   `defer` count. Parameters, including `var` closure parameters, are never
   checked.
+- **No aliased `var` arguments** (decision 0111). One call may not pass
+  the same variable, or two overlapping places, to two `var` parameters
+  (a `var` receiver counts as one): `both(xs, xs)`, `one(p, p.x)`,
+  `p.add(p.y)` with a `var` receiver, and `both(g[i], g[j])` are
+  `XO0503`. Places overlap when they start at the same binding and one
+  path of fields and indexes is a prefix of the other; two different
+  field names, or two indexes that are different integer or string
+  literals (`g[0]`, `g[1]`), keep them apart. Copy one into a temporary
+  first. With aliasing ruled out, passing by reference (the Go backend)
+  and copying in and out (the native backends) give one result.
 
 ### 5.3 Move only buffers
 
@@ -1807,11 +1819,7 @@ backend; a fault fails only its test.
 Property tests and `--real` are not available there yet (XO1201, skipped),
 contract fuzzing (9.1) is reported as skipped (decision 0085), and error
 traces are recorded natively but printed only in main's error report
-(decision 0104), and fault frames are not recorded natively. A call that
-passes one binding to two `var` parameters (`both(xs, xs)`) is XO1201
-natively for now: the Go backend passes `var` arguments by reference,
-the native backends copy them in and out
-(gotchas/var-args-one-binding-twice.md).
+(decision 0104), and fault frames are not recorded natively.
 
 **Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
 functions of the main module (a loop over `Int`, `Float`, `Bool`, and
@@ -2015,6 +2023,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
+| `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
 | `XO0510` | error | checker | use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3) |
 | `XO0520` | error | checker | mutation of a copied or stored collection element is never written back (core 5.2) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |

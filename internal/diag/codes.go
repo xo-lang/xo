@@ -76,6 +76,7 @@ const (
 	BadConversion        Code = "XO0409" // invalid explicit conversion (core 2.1)
 	MapIndexRead         Code = "XO0410" // reading a Map by index; use `get` or `get_or_fault` (core 3.6)
 	AssignImmutable      Code = "XO0502" // assignment to an immutable binding or to a captured variable (core 5.2, 3.3)
+	VarArgsOverlap       Code = "XO0503" // one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111)
 	Duplicate            Code = "XO0603" // name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4)
 	ImportCycle          Code = "XO0604" // cyclic module imports (core 4.1)
 	NotVisible           Code = "XO0605" // name is not `pub` in its module, or the std type is an opaque handle (core 1.5)
@@ -173,6 +174,7 @@ var Descriptions = map[Code]string{
 	ConstNotConstant:    "const initializer is not a compile time value (core 3.1)",
 	BadConversion:       "invalid explicit conversion (core 2.1)",
 	AssignImmutable:     "assignment to an immutable binding or to a captured variable (core 5.2, 3.3)",
+	VarArgsOverlap:      "one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111)",
 	Duplicate:           "name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4)",
 	ImportCycle:         "cyclic module imports (core 4.1)",
 	NotVisible:          "name is not `pub` in its module, or the std type is an opaque handle (core 1.5)",

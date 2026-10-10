@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Decision 0111: passing one variable, or overlapping places (`x` and
+  `x.f`, `xs[i]` and `xs[j]` unless both indexes are different
+  literals, a `var` receiver and an argument naming it), to two `var`
+  parameters of one call is `XO0503` on every backend; the native
+  backends no longer report XO1201 for it.
 - Native backends (decisions 0107 to 0109): `Proc.run`, `os.tasks` (a
   scope around main and around each test), method values
   (`let f = x.method`), `map_concurrent_until`, base64,
