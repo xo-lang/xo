@@ -239,3 +239,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [testos-fs-is-memfs.md](testos-fs-is-memfs.md): a test's `os.fs` is a MemFs, whose methods come from std/testing, so dispatching only `Fs` methods to the real file system left `--real` tests on the in memory one (and passing).
 - [base64-keys-contain-plus.md](base64-keys-contain-plus.md): checksum log keys are '+' separated with a base64 tail, and base64 has '+' digits; split with a field limit.
 - [in-process-servers-share-env.md](in-process-servers-share-env.md): httptest proxies and checksum logs run in the test process and read the client's XO_GIT_BASE and cache settings; give them their own cache root and fill them before cutting the client off.
+- [tasks-c-job-table.md](tasks-c-job-table.md): tasks.c records a job per spawn in a 65,536 entry table; the optimized run (N=20000) overflows it where the TSan runs do not; reuse one job.
