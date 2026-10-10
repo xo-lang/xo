@@ -236,8 +236,16 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
   }
   p.expect(Kind.In, "`in` in a for loop")
   let iter = p.parse_expr_no_lit()
-  let body = p.parse_cond_block(Some(iter))
-  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, body: body, go_range: false)
+  var bound: List[Expr] = []
+  var last = iter
+  if p.at_ident(b"bound") {
+    p.next()
+    let bx = p.parse_expr_no_lit()
+    bound.push(bx)
+    last = bx
+  }
+  let body = p.parse_cond_block(Some(last))
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: false)
 }
 
 /// `for (x in xs) {`, `for (const x of xs) {`, `for (init; cond; step) {`.
@@ -375,7 +383,7 @@ fn (var p: Parser) go_range_for(label: Ident?, start: Pos) -> Stmt {
   }
   let iter = p.parse_expr_no_lit()
   let body = p.parse_cond_block(Some(iter))
-  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, body: body, go_range: true)
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: [], body: body, go_range: true)
 }
 
 fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {
@@ -384,8 +392,16 @@ fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {
   if !p.at(Kind.LBrace) {
     cond = Some(p.parse_expr_no_lit())
   }
-  let body = p.parse_cond_block(cond)
-  Stmt.WhileStmt(span: p.span_from(start), label: label, cond: cond, body: body)
+  var bound: List[Expr] = []
+  var last = cond
+  if cond.is_some() && p.at_ident(b"bound") {
+    p.next()
+    let bx = p.parse_expr_no_lit()
+    bound.push(bx)
+    last = Some(bx)
+  }
+  let body = p.parse_cond_block(last)
+  Stmt.WhileStmt(span: p.span_from(start), label: label, cond: cond, bound: bound, body: body)
 }
 
 /// The block after a condition, after rejecting an unparenthesized struct

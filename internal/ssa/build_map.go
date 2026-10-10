@@ -744,6 +744,7 @@ func (s *fn) forMap(x *ast.ForStmt, label string, mv *Value) {
 	n := s.call("list.len", intT, "", keys)
 	idx := local("i")
 	s.writeVar(idx, s.cint(0))
+	tick := s.loopBound(x.Bound)
 	head, test, body, latch, exit := s.newBlock(), s.newBlock(), s.newBlock(), s.newBlock(), s.newBlock()
 	s.jump(head)
 	s.cur = head
@@ -754,6 +755,7 @@ func (s *fn) forMap(x *ast.ForStmt, label string, mv *Value) {
 	s.cur.Branch(s.call("list.index", boolT, "", live, i), body, latch)
 	s.seal(body)
 	s.cur = body
+	tick()
 	var elem *Value
 	k := s.call("list.index", mapKey(t), "", keys, i)
 	if set {

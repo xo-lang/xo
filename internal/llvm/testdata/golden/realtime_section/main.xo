@@ -1,0 +1,94 @@
+// Real-time sections (core 6.5, decision 0133): preallocated Lists
+// written in place, frees deferred to the end of the section (an old Str,
+// a replaced List of Strs, a Box of a recursive enum), nested real-time
+// calls, bounded loops of every kind, and a fault inside a section caught
+// by task.isolate.
+use std/task
+
+const N = 8
+const MAX = 16
+
+enum Tree {
+  Leaf
+  Node(left: Tree, right: Tree)
+}
+
+struct State {
+  buf: List[Int],
+  names: List[Str],
+  current: Str,
+  words: List[Str],
+  spare: List[Str],
+  tree: Tree,
+  pos: Int,
+  hits: Atomic[Int],
+}
+
+fn sum8(xs: List[Int]) -> Int uses realtime {
+  var s = 0
+  for i in 0..N {
+    s += xs[i]
+  }
+  s
+}
+
+fn (var st: State) tick(x: Int) -> Int uses realtime {
+  st.buf[st.pos] = x
+  st.pos = (st.pos + 1) % N
+  // drops the last reference to the old Str: freed after the section
+  st.current = st.names[x % st.names.len()]
+  if x == 5 {
+    // a List of Strs and a recursive enum, freed after the section
+    st.words = st.spare
+    st.tree = Tree.Leaf
+  }
+  st.hits.add(1)
+  sum8(st.buf)
+}
+
+fn count_over(xs: List[Int], limit: Int) -> Int uses realtime {
+  var n = 0
+  for (i, x) in xs.indexed() bound MAX {
+    if x > limit && i >= 0 { n += 1 }
+  }
+  var j = 0
+  while j < 3 bound 3 { j += 1 }
+  n + j
+}
+
+fn checked(x: Int) -> Int uses realtime {
+  if x > 100 { fault("too large: ${x}") }
+  x * 2
+}
+
+fn depth(t: Tree) -> Int {
+  match t {
+    Tree.Leaf => 0
+    Tree.Node(l, r) => 1 + depth(l).max(depth(r))
+  }
+}
+
+fn main(os: Os) {
+  var st = State{
+    buf: (0..N).to_list(),
+    names: ["alpha", "beta", "gamma"],
+    current: "start".repeat(3),
+    words: ["one", "two", "three"].map(fn(w) { w.repeat(2) }),
+    spare: [],
+    tree: Tree.Node(left: Tree.Node(left: Tree.Leaf, right: Tree.Leaf), right: Tree.Leaf),
+    pos: 0,
+    hits: Atomic[Int].new(0),
+  }
+  var total = 0
+  for i in 0..20 {
+    total += st.tick(i)
+  }
+  os.stdio.println("total ${total} current ${st.current} words ${st.words.len()} depth ${depth(st.tree)} hits ${st.hits.get()}")
+  os.stdio.println("count ${count_over([1, 5, 9, 4, 7], 4)}")
+  os.stdio.println("checked ${checked(21)}")
+  match task.isolate(fn() { checked(500) }) {
+    Ok(v) => os.stdio.println("isolated ok ${v}")
+    Err(_) => os.stdio.println("isolated fault")
+  }
+  os.stdio.println("after ${checked(1)}")
+}

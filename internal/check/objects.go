@@ -201,6 +201,10 @@ type FuncObj struct {
 	Result   Type
 	Err      Type    // nil: cannot fail
 	Declared *EffSet // declared effects; nil when inferred (non pub)
+	// Realtime marks a function declared with `uses realtime` (core 6.5,
+	// decision 0133); RealtimeSpan is the word.
+	Realtime     bool
+	RealtimeSpan token.Span
 
 	sigDone bool
 	// effects performed by the body (filled while checking it)

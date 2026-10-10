@@ -1,0 +1,23 @@
+// XO1403: calls of what is not known to be real-time.
+interface Sensor {
+  fn read(self) -> Int
+}
+
+struct Fixed { v: Int }
+
+fn (f: Fixed) read() -> Int { f.v }
+
+fn helper(x: Int) -> Int { x * 2 }
+
+fn sample[T: Sensor](s: T) -> Int uses realtime {
+  s.read()
+}
+
+fn run(s: Sensor, f: fn(Int) -> Int, x: Int) -> Int uses realtime {
+  helper(x) + f(x) + s.read()
+}
+
+fn main(os: Os) {
+  let fx = Fixed{v: 3}
+  os.stdio.println("${run(fx, helper, 1)} ${sample(fx)}")
+}

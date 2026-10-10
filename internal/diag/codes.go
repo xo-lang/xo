@@ -108,6 +108,16 @@ const (
 	NoGCUnavailable Code = "XO1201" // construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible
 )
 
+// Real-time functions (14xx group, decision 0133). Emitted by the checker
+// for functions declared `uses realtime` (core 6.5) and for loop bounds.
+const (
+	RealtimeAlloc     Code = "XO1401" // allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method)
+	RealtimeLoop      Code = "XO1402" // loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range
+	RealtimeCall      Code = "XO1403" // call in a real-time function of a function that is not real-time, a function value, or an interface method
+	RealtimeRecursion Code = "XO1404" // recursion among real-time functions
+	RealtimeBlocking  Code = "XO1405" // blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function
+)
+
 // Module and dependency codes (13xx group, decision 0086). Emitted by
 // internal/mod through the checker (on the xo.mod, xo.lock, or xo.work
 // line), and by `xo get`, `xo mod tidy`, `xo vendor`, and `xo build`.
@@ -221,6 +231,12 @@ var Descriptions = map[Code]string{
 	FetchSettings:      "the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
+
+	RealtimeAlloc:     "allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method)",
+	RealtimeLoop:      "loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range",
+	RealtimeCall:      "call in a real-time function of a function that is not real-time, a function value, or an interface method",
+	RealtimeRecursion: "recursion among real-time functions",
+	RealtimeBlocking:  "blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

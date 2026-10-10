@@ -1,0 +1,51 @@
+// Allocations the rules of core 6.5 cannot see: native builds count them
+// and fault with XO-F007 when the real-time section ends (decision 0133).
+// The Go backend prints "ok" four times; this program is native only
+// (internal/llvm TestRealtimeNative).
+use std/task
+
+enum Tree {
+  Leaf
+  Node(left: Tree, right: Tree)
+}
+
+struct Cfg {
+  gain: Int = 1,
+  tags: List[Int] = [],
+}
+
+fn bump(var xs: List[Int], i: Int) uses realtime {
+  xs[i] = xs[i] + 1
+}
+
+fn grow(t: Tree) -> Tree uses realtime {
+  Tree.Node(left: t, right: Tree.Leaf)
+}
+
+fn cfg() -> Int uses realtime {
+  Cfg{gain: 2}.gain
+}
+
+fn main(os: Os) {
+  var xs = [1, 2, 3]
+  bump(xs, 0)
+  os.stdio.println("unique ${xs[0]}")
+  let keep = xs
+  match task.isolate(fn() {
+    var ys = keep
+    bump(ys, 1)
+    ys[1]
+  }) {
+    Ok(v) => os.stdio.println("shared ok ${v}")
+    Err(f) => os.stdio.println("shared: ${f}")
+  }
+  match task.isolate(fn() { grow(Tree.Leaf) }) {
+    Ok(_) => os.stdio.println("box ok")
+    Err(f) => os.stdio.println("box: ${f}")
+  }
+  match task.isolate(fn() { cfg() }) {
+    Ok(v) => os.stdio.println("default ok ${v}")
+    Err(f) => os.stdio.println("default: ${f}")
+  }
+  os.stdio.println("keep ${keep[1]} xs ${xs[1]}")
+}

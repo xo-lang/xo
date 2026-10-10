@@ -453,11 +453,34 @@ func (c *checker) resolveSig(fo *FuncObj, env *typeEnv, iface bool) {
 	hasUses := false
 	for _, cl := range fd.Clauses {
 		if u, ok := cl.(*ast.UsesClause); ok {
-			uses = append(uses, u.Effects...)
+			for _, e := range u.Effects {
+				if e.Sub == nil && e.Name.Name == realtimeLabel && !iface {
+					// a discipline, not an effect (core 6.5)
+					fo.Realtime = true
+					fo.RealtimeSpan = e.Sp
+					continue
+				}
+				uses = append(uses, e)
+			}
 			hasUses = true
 		}
 	}
 	set := c.resolveEffects(uses, env)
+	if fo.Realtime {
+		c.realtimeFns = append(c.realtimeFns, fo)
+		for _, e := range uses {
+			name := e.Name.Name
+			if e.Sub != nil {
+				name += "." + e.Sub.Name
+			}
+			if effectLabels[name] && name != "ffi" {
+				d := c.errorf(diag.RealtimeBlocking, e.Sp, "a real-time function may not perform `%s`; the only effect it may declare is `ffi`", name)
+				if d != nil {
+					note(d, fo.RealtimeSpan, "`%s` is real-time (core 6.5)", fo.DisplayName())
+				}
+			}
+		}
+	}
 	// Effect arguments omitted in the signature are implicit effect
 	// variables of the function, which it may perform (core 6.2).
 	fo.TParams = append(fo.TParams, elided...)
@@ -498,6 +521,10 @@ func (c *checker) resolveEffects(effs []*ast.Effect, env *typeEnv) *EffSet {
 		}
 		if effectLabels[name] {
 			set.add(EffItem{Label: name})
+			continue
+		}
+		if name == realtimeLabel {
+			rtLabelError(c, e)
 			continue
 		}
 		if e.Sub == nil {

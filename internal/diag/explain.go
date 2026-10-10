@@ -1187,6 +1187,85 @@ fn main(os: Os) uses go {
 	},
 
 	// ---------------------------------------------------------------
+	// 14xx: real-time functions (decision 0133)
+
+	RealtimeAlloc: {
+		Title: "allocation in a real-time function",
+		Detail: "A function declared `uses realtime` (core 6.5) may not allocate: list, map, and set literals, string interpolation, `+` and `+=` on Str, List, or Bytes, slicing, closures, storing into a Map, and every prelude method that builds a new collection or Str or grows one (`push`, `put`, `insert`, `sort`, `map`, ...). " +
+			"Allocate during initialization instead (in code that is not real-time), and write preallocated Lists by index: `xs[i] = v` is in place when the List is unique. The message of `fault(...)` is exempt, since a fault ends the real-time section. " +
+			"Native builds also count allocations at run time and fault with XO-F007 when a section allocated (a shared List copied on write). See decision 0133.",
+		Example: `fn tick(var st: State, x: Float) uses realtime {
+  st.history.push(x)
+}`,
+		Fix: `fn tick(var st: State, x: Float) uses realtime {
+  st.history[st.pos] = x
+  st.pos = (st.pos + 1) % st.history.len()
+}`,
+	},
+	RealtimeLoop: {
+		Title: "loop without a provable bound",
+		Detail: "Every loop of a real-time function (core 6.5) needs a bound known at compile time: a `for` over a range whose ends are constants is bounded by its length; any other `for` and every `while` needs a `bound N` clause after the iterated value or the condition, N a constant Int. " +
+			"A bound is a contract (core 3.5): when the iteration count is not constant, the loop faults with XO-F006 when it would start iteration N + 1, and `xo test` fuzzes the function. " +
+			"This code is also reported in any function when a bound is not a constant, is negative, or is smaller than a constant range it bounds.",
+		Example: `fn sum(xs: List[Int]) -> Int uses realtime {
+  var t = 0
+  for x in xs { t += x }
+  t
+}`,
+		Fix: `const MAX = 64
+
+fn sum(xs: List[Int]) -> Int uses realtime {
+  var t = 0
+  for x in xs bound MAX { t += x }
+  t
+}`,
+	},
+	RealtimeCall: {
+		Title: "call of a function not known to be real-time",
+		Detail: "A real-time function (core 6.5) may call only other real-time functions (declared `uses realtime`), the bounded prelude methods (scalar arithmetic, `len`, `get`, `contains`, `List.set`, Atomic operations), and C functions of a `use c` module. " +
+			"A call of a function value or of an interface method (a capability, or a method of a type parameter's constraint) is rejected: its callee is not known, so neither its allocation nor its recursion can be checked. " +
+			"Mark the helper `uses realtime` when it follows the rules, or move the call out of the real-time function.",
+		Example: `fn scale(x: Float) -> Float { x * 0.5 }
+
+fn tick(x: Float) -> Float uses realtime {
+  scale(x)
+}`,
+		Fix: `fn scale(x: Float) -> Float uses realtime { x * 0.5 }
+
+fn tick(x: Float) -> Float uses realtime {
+  scale(x)
+}`,
+	},
+	RealtimeRecursion: {
+		Title: "recursion among real-time functions",
+		Detail: "The call graph of real-time functions (core 6.5) must be acyclic, so that their stack depth is bounded. A function that calls itself, directly or through other real-time functions, is reported at the call that closes the cycle. " +
+			"Since real-time functions cannot call function values or interface methods, recursion through them is ruled out too. Rewrite the recursion as a loop with `bound N` and an explicit stack in a preallocated List.",
+		Example: `fn depth(n: Int) -> Int uses realtime {
+  if n == 0 { 0 } else { 1 + depth(n - 1) }
+}`,
+		Fix: `fn depth(n: Int) -> Int uses realtime {
+  var d = 0
+  var i = n
+  while i > 0 bound 1000 {
+    d += 1
+    i -= 1
+  }
+  d
+}`,
+	},
+	RealtimeBlocking: {
+		Title: "blocking operation in a real-time function",
+		Detail: "A real-time function (core 6.5) may not wait for other tasks or the operating system: channel operations, `for` over a channel, `Mutex.with` and `with_read`, `scope`, `select`, spawning and awaiting tasks, `dbg`, and capability calls are rejected. " +
+			"It may declare no effect besides `ffi`. Atomic operations do not block and are allowed: share state with the rest of the program through Atomic values, or pass the data in and out as arguments.",
+		Example: `fn tick(c: Chan[Float], x: Float) uses realtime {
+  c.send(x)
+}`,
+		Fix: `fn tick(level: Atomic[Int], x: Float) uses realtime {
+  level.set(Int(x * 1000.0))
+}`,
+	},
+
+	// ---------------------------------------------------------------
 	// 13xx: modules and dependencies (decision 0086)
 
 	ModFileInvalid: {

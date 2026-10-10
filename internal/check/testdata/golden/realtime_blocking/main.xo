@@ -1,0 +1,23 @@
+// XO1405: blocking operations and effects; XO0702 for `realtime` where
+// it cannot appear.
+fn wait(c: Chan[Int], m: Mutex[Int], clock: Clock) -> Int uses realtime, clock {
+  c.send(1)
+  var n = m.with(fn(var v) -> Int {
+    v += 1
+    v
+  })
+  for x in c bound 4 { n += x }
+  let r = scope s {
+    s.spawn(fn() { 1 }).await
+  }
+  let t = clock.now()
+  n + r + t.unix()
+}
+
+fn callback(f: fn(Int) -> Int uses realtime) -> Int { f(1) }
+
+fn main(os: Os) {
+  let c = Chan[Int].new(1)
+  let m = Mutex[Int].new(0)
+  os.stdio.println("${wait(c, m, os.clock)} ${callback(fn(x) { x })}")
+}

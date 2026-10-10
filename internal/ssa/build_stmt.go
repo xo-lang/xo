@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/ast"
@@ -104,7 +105,7 @@ func (s *fn) stmt(st ast.Stmt) {
 		if x.Label != nil {
 			label = x.Label.Name
 		}
-		s.while(label, x.Cond, x.Body)
+		s.while(label, x.Cond, x.Bound, x.Body)
 	case *ast.ForStmt:
 		s.forStmt(x)
 	case *ast.DeferStmt:
@@ -114,8 +115,39 @@ func (s *fn) stmt(st ast.Stmt) {
 	}
 }
 
+// loopBound starts the iteration counter of a loop with `bound N` (core
+// 3.5, decision 0133); the function it returns, called at the start of
+// each iteration, counts and faults with XO-F006 past N. Without a bound
+// both do nothing.
+func (s *fn) loopBound(bound ast.Expr) func() {
+	if bound == nil {
+		return func() {}
+	}
+	b := s.b
+	n, ok := b.info.LoopBound(bound)
+	if !ok {
+		b.unsupported(bound, "this loop bound")
+		return func() {}
+	}
+	intT, boolT := b.mod.Builtin(KInt), b.mod.Builtin(KBool)
+	cnt := &check.VarObj{Name: "$bound"}
+	s.writeVar(cnt, s.cint(0))
+	pos := b.pos(bound)
+	msg := fmt.Sprintf("XO-F006: loop ran past its bound of %d iterations", n)
+	return func() {
+		// at most n + 1 iterations start, so the increment cannot overflow
+		v := s.add(OpAdd, intT, nil, s.read(cnt), s.cint(1))
+		s.writeVar(cnt, v)
+		over, ok := s.branch(s.add(OpGt, boolT, nil, v, s.cint(n)))
+		s.cur = over
+		s.fault(s.add(OpConst, b.mod.Builtin(KStr), msg), pos)
+		s.cur = ok
+	}
+}
+
 // while lowers `while cond { body }` (cond nil: forever).
-func (s *fn) while(label string, cond ast.Expr, body *ast.Block) {
+func (s *fn) while(label string, cond, bound ast.Expr, body *ast.Block) {
+	tick := s.loopBound(bound)
 	head, exit := s.newBlock(), s.newBlock()
 	s.jump(head)
 	s.cur = head
@@ -126,6 +158,7 @@ func (s *fn) while(label string, cond ast.Expr, body *ast.Block) {
 		s.seal(in)
 		s.cur = in
 	}
+	tick()
 	s.loops = append(s.loops, &loopCtx{label: label, brk: exit, cont: head, scopes: len(s.scopes), exits: len(s.exits)})
 	s.block(body)
 	s.loops = s.loops[:len(s.loops)-1]
@@ -174,6 +207,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 		b.unsupported(x.Iter, "this `for` iteration")
 		return
 	}
+	tick := s.loopBound(x.Bound)
 	head, body, latch, exit := s.newBlock(), s.newBlock(), s.newBlock(), s.newBlock()
 	s.jump(head)
 	s.cur = head
@@ -187,6 +221,7 @@ func (s *fn) forStmt(x *ast.ForStmt) {
 	s.cur.Branch(c, body, exit)
 	s.seal(body)
 	s.cur = body
+	tick()
 	var elem *Value
 	if list != nil {
 		i := s.read(idx)

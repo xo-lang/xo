@@ -1479,7 +1479,13 @@ func (p *parser) parseFor(label *ast.Ident, start token.Pos) ast.Stmt {
 		p.expect(token.In, "`in` in a for loop")
 	}
 	s.Iter = p.parseExprNoLit()
-	s.Body = p.parseCondBlock(s.Iter)
+	last := s.Iter
+	if p.atIdent("bound") {
+		p.next()
+		s.Bound = p.parseExprNoLit()
+		last = s.Bound
+	}
+	s.Body = p.parseCondBlock(last)
 	s.Sp = p.spanFrom(start)
 	return s
 }
@@ -1490,7 +1496,13 @@ func (p *parser) parseWhile(label *ast.Ident, start token.Pos) ast.Stmt {
 	if !p.at(token.LBrace) {
 		s.Cond = p.parseExprNoLit()
 	}
-	s.Body = p.parseCondBlock(s.Cond)
+	last := s.Cond
+	if s.Cond != nil && p.atIdent("bound") {
+		p.next()
+		s.Bound = p.parseExprNoLit()
+		last = s.Bound
+	}
+	s.Body = p.parseCondBlock(last)
 	s.Sp = p.spanFrom(start)
 	return s
 }

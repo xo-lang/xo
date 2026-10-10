@@ -634,14 +634,30 @@ func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via
 	if via != nil {
 		name = via(callee)
 	}
+	// a call of a real-time function from code that is not real-time is
+	// a real-time section (core 6.5, decision 0133): the runtime defers
+	// frees until it ends and faults (XO-F007) when it allocated
+	section := impl.Realtime && (s.fo == nil || !s.fo.Realtime)
+	if section {
+		s.rt("realtime_enter", nil)
+	}
+	leave := func() {
+		if section && !s.isDead() {
+			strT := b.mod.Builtin(KStr)
+			s.rt("realtime_exit", nil, s.add(OpConst, strT, impl.DisplayName()), s.loc(x))
+			s.check("")
+		}
+	}
 	if len(callee.Results) == 1 {
 		r := s.call(name, callee.Results[0], "", args...)
 		s.check(name)
+		leave()
 		return s.callResult(r, x)
 	}
 	t := b.mod.Tuple(callee.Results...)
 	r := s.call(name, t, "", args...)
 	s.check(name)
+	leave()
 	for i, p := range places {
 		p.set(s.add(OpField, t.Elems[i+1], i+1, r))
 	}

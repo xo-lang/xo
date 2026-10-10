@@ -1,0 +1,46 @@
+[
+  {
+    "code": "XO1404",
+    "severity": "error",
+    "message": "real-time function `fact` calls itself",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 30,
+      "end_line": 3,
+      "end_col": 34
+    },
+    "notes": [
+      {
+        "message": "real-time code may not recurse, so its stack depth is bounded; rewrite the recursion as a loop with `bound N` (core 6.5)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1404",
+    "severity": "error",
+    "message": "recursion among real-time functions: `ping` calls `pong` calls `ping`",
+    "span": {
+      "file": "main.xo",
+      "line": 11,
+      "col": 26,
+      "end_line": 11,
+      "end_col": 30
+    },
+    "notes": [
+      {
+        "message": "`pong` is called here",
+        "span": {
+          "file": "main.xo",
+          "line": 7,
+          "col": 26
+        }
+      },
+      {
+        "message": "real-time code may not recurse, so its stack depth is bounded; rewrite the recursion as a loop with `bound N` (core 6.5)"
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -1047,6 +1047,10 @@ func (p *printer) stmt(s ast.Stmt) {
 		p.pattern(x.Pattern)
 		p.w(" in ")
 		p.expr(x.Iter)
+		if x.Bound != nil {
+			p.w(" bound ")
+			p.expr(x.Bound)
+		}
 		p.w(" ")
 		p.block(x.Body)
 	case *ast.WhileStmt:
@@ -1054,6 +1058,11 @@ func (p *printer) stmt(s ast.Stmt) {
 		p.w("while ")
 		if x.Cond != nil {
 			p.expr(x.Cond)
+			p.w(" ")
+		}
+		if x.Bound != nil {
+			p.w("bound ")
+			p.expr(x.Bound)
 			p.w(" ")
 		}
 		p.block(x.Body)

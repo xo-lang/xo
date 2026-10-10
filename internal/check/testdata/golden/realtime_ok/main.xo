@@ -1,0 +1,49 @@
+// A real-time function that follows every rule of core 6.5: no
+// diagnostics.
+const TAPS = 4
+const MAX_SAMPLES = 256
+
+struct Filter {
+  coeffs: List[Float],
+  window: List[Float],
+  pos: Int,
+}
+
+fn new_filter() -> Filter {
+  Filter{coeffs: [0.25, 0.25, 0.25, 0.25], window: [0.0, 0.0, 0.0, 0.0], pos: 0}
+}
+
+fn clamp(x: Float, lo: Float, hi: Float) -> Float uses realtime {
+  if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+fn (var f: Filter) step(x: Float) -> Float uses realtime {
+  f.window[f.pos] = x
+  f.pos = (f.pos + 1) % TAPS
+  var acc = 0.0
+  for i in 0..TAPS {
+    acc += f.coeffs[i] * f.window[(f.pos + i) % TAPS]
+  }
+  clamp(acc, -1.0, 1.0)
+}
+
+fn process(var f: Filter, var out: List[Float], input: List[Float]) -> Int uses realtime
+  requires input.len() <= out.len()
+{
+  var n = 0
+  for (i, x) in input.indexed() bound MAX_SAMPLES {
+    out[i] = f.step(x)
+    n += 1
+  }
+  var spins = 0
+  while spins < 3 bound 3 { spins += 1 }
+  if n > MAX_SAMPLES { fault("too many samples: ${n}") }
+  n
+}
+
+fn main(os: Os) {
+  var f = new_filter()
+  var out = (0..8).to_list().map(fn(_) { 0.0 })
+  let n = process(f, out, [1.0, 0.5, -0.5, 2.0])
+  os.stdio.println("${n} ${out[3]}")
+}

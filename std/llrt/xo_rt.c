@@ -94,6 +94,16 @@ typedef struct {
 	xo_drop_fn drop;
 } xo_deferred;
 
+// A free deferred by a real-time section (decision 0133, "Real-time
+// sections" below): what reached a count of zero and how to free it.
+#define XO_RTQ 256
+typedef struct {
+	int kind; // RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
+	void *obj;
+	int64_t esize;
+	void *fn;
+} xo_rtdef;
+
 typedef struct xo_heap {
 	// blocks allocated, and blocks freed, by this heap's thread (the
 	// leak check reports the difference): one counter per call
@@ -110,6 +120,14 @@ typedef struct xo_heap {
 	int defer_busy;
 	struct xo_heap *next;  // all heaps, for the leak check
 	struct xo_heap *spare; // the list of heaps of exited threads
+	// real-time sections (decision 0133): calls of real-time functions
+	// entered and not left on this thread, allocations since the
+	// outermost one began, and the frees it deferred (a fixed queue, so
+	// deferring never allocates)
+	int64_t rt_depth;
+	int64_t rt_allocs;
+	int64_t rt_n;
+	xo_rtdef rt_q[XO_RTQ];
 } xo_heap;
 
 static xo_heap main_heap;
@@ -236,6 +254,9 @@ __attribute__((noinline)) static void xo_refill(xo_heap *h, int64_t need) {
 
 static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
 	h->allocs++;
+	if (__builtin_expect(h->rt_depth != 0, 0)) {
+		h->rt_allocs++; // a real-time section allocated: XO-F007 when it ends
+	}
 	if (n > XO_MID_MAX) {
 		return xo_alloc_large(n);
 	}
@@ -389,7 +410,20 @@ static void *xo_resize(void *p, int64_t old, int64_t n) {
 
 void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 
-void xo_rc_free(void *p) { xo_free(p); }
+// rt_defer queues a free in the calling thread's real-time section; it
+// returns 0 when no section runs or the queue is full (the caller frees
+// at once).
+static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn);
+
+enum { RT_STR = 1, RT_LIST, RT_DEFER, RT_HANDLE };
+
+void xo_rc_free(void *p) {
+	xo_heap *h = heap();
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p, 0, NULL)) {
+		return;
+	}
+	xo_free(p);
+}
 
 // xo_rc_defer runs drop(obj) for an object whose count reached zero
 // (a closure environment or a box). drop releases the object's children
@@ -401,6 +435,9 @@ void xo_rc_free(void *p) { xo_free(p); }
 // calling thread's.
 void xo_rc_defer(void *obj, xo_drop_fn drop) {
 	xo_heap *h = heap();
+	if (__builtin_expect(h->rt_depth != 0, 0) && !h->defer_busy && rt_defer(h, RT_DEFER, obj, 0, (void *)drop)) {
+		return;
+	}
 	if (h->defer_busy) {
 		if (h->defer_n == h->defer_cap) {
 			h->defer_cap = h->defer_cap < 64 ? 64 : h->defer_cap * 2;
@@ -1074,6 +1111,10 @@ __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) {
 // xo_rl_free frees a list whose count reached zero, releasing its
 // elements first.
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
+	xo_heap *h = heap();
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_LIST, l, esize, (void *)drop)) {
+		return;
+	}
 	if (drop) {
 		for (int64_t i = 0; i < l->len; i++) {
 			drop(rl_data(l) + i * esize);
@@ -1136,7 +1177,13 @@ typedef struct {
 } xo_hdr;
 
 // xo_h_free frees a handle whose count reached zero.
-void xo_h_free(void *p) { ((xo_hdr *)p)->free(p); }
+void xo_h_free(void *p) {
+	xo_heap *h = heap();
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p, 0, NULL)) {
+		return;
+	}
+	((xo_hdr *)p)->free(p);
+}
 
 static void h_init(void *p, xo_free_fn f) {
 	xo_hdr *h = p;
@@ -1191,9 +1238,13 @@ static struct {
 	// sockets: read and write system calls, those that would block
 	// (EAGAIN), poller returns, readiness events, and waiters they woke
 	int64_t net_read, net_write, net_again, poll_return, poll_event, poll_wake;
+	// real-time sections (decision 0133): sections run, frees deferred,
+	// frees done at once because the queue was full
+	int64_t rt_section, rt_defer, rt_overflow;
 } st;
 static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield",
-                                       "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake"};
+                                       "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake",
+                                       "rt_section", "rt_defer", "rt_overflow"};
 
 static void stats_init(void) {
 	const char *e = getenv("XO_RTSTATS");
@@ -1217,6 +1268,92 @@ void xo_rt_stats(void) {
 		fprintf(stderr, " %s=%lld", st_names[i], (long long)__atomic_load_n(&v[i], __ATOMIC_RELAXED));
 	}
 	fputc('\n', stderr);
+}
+
+// ---------------------------------------------------------------------------
+// Real-time sections (core 6.5, decision 0133)
+//
+// A call from code that is not real-time to a function declared `uses
+// realtime` is bracketed by xo_realtime_enter and xo_realtime_exit. While
+// the thread's depth is above zero, an object whose count reaches zero is
+// queued instead of freed (with what it holds: a list's elements, a
+// closure's captures), so the section does work bounded by its own code;
+// the outermost exit frees the queue. A full queue frees at once and
+// counts rt_overflow. An allocation inside a section is counted, and the
+// outermost exit faults with XO-F007 when there was one. A fault leaves
+// every section of the thread (a real-time function cannot catch it).
+
+static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn) {
+	if (h->rt_n == XO_RTQ) {
+		STAT(rt_overflow);
+		return 0;
+	}
+	xo_rtdef *e = &h->rt_q[h->rt_n++];
+	e->kind = kind;
+	e->obj = obj;
+	e->esize = esize;
+	e->fn = fn;
+	STAT(rt_defer);
+	return 1;
+}
+
+// rt_drain frees what the section deferred; the depth is zero, so what
+// those frees release is freed at once.
+static void rt_drain(xo_heap *h) {
+	for (int64_t i = 0; i < h->rt_n; i++) {
+		xo_rtdef e = h->rt_q[i];
+		switch (e.kind) {
+		case RT_STR:
+			xo_free(e.obj);
+			break;
+		case RT_LIST:
+			xo_rl_free(e.obj, e.esize, (xo_elem_fn)e.fn);
+			break;
+		case RT_DEFER:
+			xo_rc_defer(e.obj, (xo_drop_fn)e.fn);
+			break;
+		case RT_HANDLE:
+			((xo_hdr *)e.obj)->free(e.obj);
+			break;
+		}
+	}
+	h->rt_n = 0;
+}
+
+void xo_realtime_enter(void) {
+	xo_heap *h = heap();
+	if (h->rt_depth++ == 0) {
+		h->rt_allocs = 0;
+		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) < 0, 0)) {
+			stats_init();
+		}
+		STAT(rt_section);
+	}
+}
+
+void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) {
+	xo_heap *h = heap();
+	if (--h->rt_depth > 0) {
+		return;
+	}
+	rt_drain(h);
+	if (h->rt_allocs != 0) {
+		char m[256];
+		snprintf(m, sizeof m, "XO-F007: real-time function `%.*s` allocated %lld time%s", (int)(n < 128 ? n : 128), name, (long long)h->rt_allocs, h->rt_allocs == 1 ? "" : "s");
+		h->rt_allocs = 0;
+		fault_at(m, loc, ln);
+	}
+}
+
+// rt_fault_leave ends the thread's real-time sections when a fault
+// unwinds out of them.
+static void rt_fault_leave(void) {
+	xo_heap *h = heap();
+	if (h->rt_depth != 0) {
+		h->rt_depth = 0;
+		h->rt_allocs = 0;
+		rt_drain(h);
+	}
 }
 
 static inline void spin_relax(void) {
@@ -1601,6 +1738,7 @@ static void fault_cleanup(_Unwind_Reason_Code r, struct _Unwind_Exception *e) {
 // it (xo_fault_continue raises anew, reusing it), but a sanitizer's
 // cleanup in a C frame does, after the frame of this call is gone.
 XO_NORETURN static void fault_raise(xo_ctx *c) {
+	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
 	struct _Unwind_Exception *exc = &c->fault_exc;
