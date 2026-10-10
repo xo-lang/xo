@@ -165,3 +165,26 @@ test "a file with a parse error is checked past it, as the Go checker does" {
   expect(ls.any(fn(l) { l.contains("\"XO0165\"") && l.contains("expected a pattern, found `=`") })) == true
   expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Int`, found `Str`") })) == true
 }
+
+test "time layouts parse as the runtime does" {
+  expect(time_layout_parse("{year}-{month}-{day}")) == ""
+  expect(time_layout_parse("{hour12}:{minute}")) == "{hour12} needs {ampm} (or use {hour}, 00 to 23)"
+  expect(time_layout_parse("{yera}")) == "unknown field {yera}"
+  expect(time_layout_parse("{month:long}")) == "{month:long}: the forms are {month}, {month:1}, {month:short}, {month:name}"
+  expect(time_layout_parse("a}")) == "unmatched } (a literal brace is written {rbrace})"
+  expect(time_layout_parse("{year")) == "unclosed { (a literal brace is written {lbrace})"
+  expect(xo_quote("a\"$\n")) == "\"a\\\"\\$\\n\""
+}
+
+test "a name against its convention is XO0101" {
+  let out = check_files(os, "n", [("n/main.xo", """
+    fn GetName(userId: Int) -> Int {
+      let maxCount = userId
+      maxCount
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("function name `GetName` must be snake_case") })) == true
+  expect(ls.any(fn(l) { l.contains("parameter name `userId` must be snake_case") })) == true
+  expect(ls.any(fn(l) { l.contains("variable name `maxCount` must be snake_case") })) == true
+}

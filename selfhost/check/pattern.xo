@@ -74,8 +74,9 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
 
 /// `if let x = opt` and `while let x = opt` read as `Some(x)` (core 2.5).
 fn (var c: Checker) refutable_pattern(pat: Pattern, vt: Int) {
-  if let BindPat(span: span, ..) = pat {
+  if let BindPat(span: span, name: bname) = pat {
     if c.option_elem(vt) >= 0 {
+      c.check_name(bname, "variable")
       let some = Pattern.VariantPat(span: span, path: [Ident{span: span, name: b"Some"}], parens: true, fields: [parser.PatField{span: span, name: None, pattern: pat}], rest: false)
       let _ = c.pattern(some, vt, true)
       return

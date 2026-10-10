@@ -39,6 +39,7 @@ fn (var c: Checker) new_tparams(tps: List[parser.TypeParam]) -> List[Int] {
   for tp in tps {
     let p = c.new_tparam(tp.name.name, c.path, tp.name.span.start.line, tp.name.span.start.col)
     c.objs[p].effect = tp.effects
+    c.check_name(tp.name, if tp.effects { "effect variable" } else { "type parameter" })
     out.push(p)
   }
   out
@@ -68,6 +69,11 @@ fn (var c: Checker) define(id: Ident, o: Int) {
 fn (var c: Checker) declare(m: Int) {
   for f in c.mods[m].files {
     c.set_file(f)
+    for u in c.files[f].ast.imports {
+      if let Some(a) = u.alias {
+        c.check_name(a, "module")
+      }
+    }
     let decls = c.files[f].ast.decls
     for (i, d) in decls.indexed() {
       var o = -1
@@ -80,6 +86,7 @@ fn (var c: Checker) declare(m: Int) {
             c.objs[o].moves = doc_moves(fd.doc)
             c.objs[o].decl_file = f
             c.objs[o].decl_idx = i
+            c.check_name(fd.name, "function")
             c.define(fd.name, o)
           }
         }
@@ -95,6 +102,7 @@ fn (var c: Checker) declare(m: Int) {
           c.objs[o].is_pub = cd.is_pub || c.mods[m].is_std
           c.objs[o].decl_file = f
           c.objs[o].decl_idx = i
+          c.check_name(cd.name, "constant")
           c.define(cd.name, o)
         }
         _ => {}
@@ -111,6 +119,7 @@ fn (var c: Checker) declare_type(name: Ident, tps: List[parser.TypeParam], is_pu
   c.objs[o].tkind = tkind
   c.objs[o].decl_file = f
   c.objs[o].decl_idx = i
+  c.check_name(name, if tkind == "interface" { "interface" } else { "type" })
   c.define(name, o)
   o
 }
@@ -159,6 +168,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       var seen: List[Bytes] = []
       var fields: List[FieldInfo] = []
       for fl in sd.fields {
+        c.check_name(fl.name, "field")
         if seen.contains(fl.name.name) {
           c.error("XO0603", fl.name.span, "field `${text(fl.name.name)}` is declared twice")
           continue
@@ -179,6 +189,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       var seen: List[Bytes] = []
       var vs: List[VariantInfo] = []
       for (i, v) in ed.variants.indexed() {
+        c.check_name(v.name, "variant")
         if seen.contains(v.name.name) {
           c.error("XO0603", v.name.span, "variant `${text(v.name.name)}` is declared twice")
           continue
@@ -193,6 +204,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
             fo.name = n.name
             fo.line = n.span.start.line
             fo.col = n.span.start.col
+            c.check_name(n, "field")
             if fseen.contains(n.name) {
               c.error("XO0603", n.span, "field `${text(n.name)}` is declared twice")
             }
@@ -220,6 +232,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
         c.objs[fo].fn_decl = [md]
         c.objs[fo].iface = true
         c.objs[fo].recv = t
+        c.check_name(md.name, "method")
         if seen.contains(md.name.name) {
           c.error("XO0603", md.name.span, "method `${text(md.name.name)}` is declared twice")
           continue
@@ -358,6 +371,10 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
     c.error("XO0606", fd.name.span, "method `${text(fd.name.name)}` is declared on `${c.qual_name(t)}` from another module; methods may be declared only in the module that declares the type (core 3.4)")
     return false
   }
+  if !c.objs[fo].is_static {
+    c.check_name(recv.name, "receiver")
+  }
+  c.check_name(fd.name, "method")
   c.objs[fo].recv = t
   c.objs[fo].recv_ty = rt
   for p in renv.implicit_list {
@@ -411,6 +428,9 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
   for p in fd.params {
     if p.is_self {
       continue
+    }
+    if !iface {
+      c.check_name(p.name, "parameter")
     }
     if seen.contains(p.name.name) && p.name.name != b"_" {
       c.error("XO0603", p.name.span, "parameter `${text(p.name.name)}` is declared twice")

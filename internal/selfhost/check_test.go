@@ -367,10 +367,9 @@ func nonEmptyLines(s string) []string {
 // derives), effects of stage 4 (XO0701, real-time XO1401 to XO1405),
 // and value semantics of stage 5 (XO0501, XO0502, XO0503, XO0510,
 // XO0520, the XO0804 warning, unused bindings XO0110 and XO0201), and
-// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning). Left
-// to later stages: naming (XO0101), and the habits of other languages
-// the checker reports (XO0177; the parser's are staged through
-// parseDiag).
+// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning), and
+// the habits of stage 8 (naming XO0101, the habits of other languages
+// XO0177 of the checker and the parser, time layouts XO0420).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
@@ -381,6 +380,8 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
 	// stage 6: exhaustiveness
 	`(XO0301|XO0303|XO0305)",.*`,
+	// stage 8: naming, habits, time layouts
+	`(XO0101|XO0177|XO0420)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

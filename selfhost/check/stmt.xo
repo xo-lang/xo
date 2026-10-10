@@ -276,6 +276,7 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
   c.scopes[0][b"os"] = os
   var env = TypeEnv{file: c.cur_file, mod: c.cur_mod}
   for p in td.params {
+    c.check_name(p.name, "parameter")
     var pt = c.bad_ty
     if let Some(t) = p.typ {
       pt = c.resolve_type(t, env)
@@ -913,6 +914,9 @@ fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Ex
       }
     }
   }
+  if let BindPat(name: bname, ..) = pattern {
+    c.check_name(bname, "variable")
+  }
   let ip = c.pattern(pattern, t, false)
   c.require_irrefutable(ip, t, pattern, "a `let` pattern")
   if let BindPat(name: name, ..) = pattern {
@@ -966,6 +970,7 @@ fn (var c: Checker) local_const(cd: parser.ConstDecl) {
     c.objs[v].vctx = c.ctx
     return
   }
+  c.check_name(cd.name, "constant")
   let v = c.declare_local(cd.name, t, "let")
   c.objs[v].is_const = true
   c.objs[v].const_val = [cd.value]
@@ -984,6 +989,7 @@ fn (var c: Checker) var_stmt(name: Ident, typ: Type?, value: Expr) {
   } else {
     t = c.infer(value, -1)
   }
+  c.check_name(name, "variable")
   let v = c.declare_local(name, t, "var")
   c.objs[v].vctx = c.ctx
   c.note_spawn_binding(value, v)

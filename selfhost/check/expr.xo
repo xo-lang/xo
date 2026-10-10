@@ -937,6 +937,7 @@ fn (var c: Checker) scope_expr(span: Span, name: Ident, body: Block, w: Want) ->
   c.push_scope()
   let frame = c.frames.len()
   c.frames.push(ScopeFrame{ctx: c.ctx})
+  c.check_name(name, "scope name")
   let h = c.declare_local(name, c.named("Scope"), "let")
   c.objs[h].frame = frame
   c.mark_used(h)
@@ -966,6 +967,7 @@ fn (var c: Checker) select_expr(arms: List[parser.SelectArm], w: Want) -> Int {
     } else if let Some(b) = arm.bind {
       let op = arm.op ?? fault("a bound select arm has an operation")
       let t = c.infer(op, -1)
+      c.check_name(b, "variable")
       c.declare_local(b, t, "let")
     } else if let Some(op) = arm.op {
       c.check(op, discard())
@@ -1647,6 +1649,7 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
     }
     params.push(pt)
     pvars.push((ft >= 0 && c.tys[ft].vars[i]) || (ft < 0 && p.is_var))
+    c.check_name(p.name, "parameter")
     vars.push(c.new_local(p.name, pt, if p.is_var { "var-param" } else { "param" }))
   }
   if let Some(rt) = x.result {

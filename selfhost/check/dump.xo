@@ -28,6 +28,7 @@ fn (var c: Checker) run() {
   c.solve_effects()
   c.check_realtime()
   c.flow_bodies()
+  c.check_time_layouts()
   c.report_unused()
   // check.go reportAmbiguous: a closure result that nothing determined
   // and whose body never completes is Never
@@ -47,6 +48,7 @@ fn (var c: Checker) run() {
     let d = c.report(tv.file, "XO0402", tv.span, "cannot infer type argument `${tv.param}` of `${tv.fn_name}`")
     c.note(d, "write it explicitly: `${tv.fn_name}[T](...)`, or give the result an expected type (core 2.7)")
   }
+  c.finish_renames()
   for m in c.order {
     if !c.mods[m].is_std {
       c.check_unused_imports(m)

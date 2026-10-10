@@ -30,7 +30,9 @@ import (
 // value semantics mutations (a `var` removed from a binding, parameter,
 // or receiver, a binding added that is never read, a store back into a
 // collection dropped, or a builder frozen twice), and pattern mutations
-// (a one line match arm removed, or its pattern replaced by `_`). The
+// (a one line match arm removed, or its pattern replaced by `_`), and
+// naming mutations (a declared name and its uses respelled against the
+// convention, stage 8). The
 // rules of TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
@@ -85,7 +87,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				switch rng.Intn(7) {
+				switch rng.Intn(8) {
 				case 0:
 					data = mutateNames(rng, data)
 				case 1:
@@ -98,6 +100,8 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 					data = mutateHabits(rng, data)
 				case 5:
 					data = mutateValues(rng, data)
+				case 6:
+					data = mutateNaming(rng, data)
 				default:
 					data = mutatePatterns(rng, data)
 				}
@@ -324,6 +328,71 @@ func mutateNames(rng *rand.Rand, src []byte) []byte {
 	out = append(out, lines[i])
 	out = append(out, lines[i+1:]...)
 	return bytes.Join(out, []byte("\n"))
+}
+
+// mutateNaming respells one declared name against its convention (core
+// 1.5), at the declaration and every use the lexer sees: snake_case to
+// camelCase or Capitalized, UpperCamel to lowerCamel, UPPER_SNAKE to
+// camelCase. The Go checker reports XO0101 with a rename fix that, for a
+// local, covers the uses too.
+func mutateNaming(rng *rand.Rand, src []byte) []byte {
+	var ds diag.List
+	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	decl := map[string]bool{"let": true, "var": true, "fn": true, "const": true, "struct": true, "enum": true, "type": true, "interface": true, "for": true}
+	var names []string
+	for i := 1; i < len(toks); i++ {
+		if toks[i].Kind == token.Ident && decl[toks[i-1].Text] && toks[i].Text != "_" {
+			names = append(names, toks[i].Text)
+		}
+	}
+	if len(names) == 0 {
+		return mutateNames(rng, src)
+	}
+	name := names[rng.Intn(len(names))]
+	bad := misspell(name)
+	if bad == name {
+		return mutateNames(rng, src)
+	}
+	var b bytes.Buffer
+	last := 0
+	for _, tk := range toks {
+		if tk.Kind == token.Ident && tk.Text == name {
+			b.Write(src[last:tk.Span.Start.Offset])
+			b.WriteString(bad)
+			last = tk.Span.End.Offset
+		}
+	}
+	b.Write(src[last:])
+	return b.Bytes()
+}
+
+// misspell is name in the convention of another language.
+func misspell(name string) string {
+	if name == "" {
+		return name
+	}
+	switch {
+	case strings.ToUpper(name) == name && strings.Contains(name, "_"):
+		// UPPER_SNAKE to camelCase
+		parts := strings.Split(strings.ToLower(name), "_")
+		for i := 1; i < len(parts); i++ {
+			if parts[i] != "" {
+				parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+			}
+		}
+		return strings.Join(parts, "")
+	case name[0] >= 'A' && name[0] <= 'Z':
+		return strings.ToLower(name[:1]) + name[1:]
+	case strings.Contains(strings.Trim(name, "_"), "_"):
+		parts := strings.Split(name, "_")
+		for i := 1; i < len(parts); i++ {
+			if parts[i] != "" {
+				parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 // mutateTypes applies one type level edit to src: an integer literal

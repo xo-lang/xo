@@ -89,6 +89,8 @@ pub struct Checker {
   /// The local each binding name declares, by name_key of the name (the
   /// declaring half of check.go identObj; uses are name records).
   decl_at: Map[Int, Int] = {}
+  /// XO0101 renames of local names, extended to their uses at the end.
+  renames: List[Rename] = []
   /// Bodies checked, for the flow checks: closures before the body
   /// holding them (check.go bodies).
   bodies: List[BodyRef] = []

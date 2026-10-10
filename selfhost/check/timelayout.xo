@@ -1,0 +1,686 @@
+// Compile time checks of std/time layouts (internal/check/timelayout.go,
+// std.md 13.3, decisions 0094 and 0141 stage 8): a constant layout passed
+// to time.format, time.parse, or time.check_layout written in another
+// language's date pattern syntax is the habit XO0177, and any other bad
+// layout is XO0420, each with its note and machine fix.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The module constant an identifier of file f names, or -1.
+fn (c: Checker) const_obj_at(f: Int, id: Ident) -> Int {
+  let i = c.name_at.get(f * 268435456 + id.span.start.offset) ?? -1
+  if i < 0 {
+    return -1
+  }
+  let o = c.names[i].obj
+  if o < 0 || c.objs[o].kind != ObjKind.Const || c.objs[o].decl_file < 0 {
+    return -1
+  }
+  o
+}
+
+/// The value of e of file f when it is a compile time string: a literal
+/// without interpolation, a module constant, or a `+` of them
+/// (timelayout.go constStr).
+fn (c: Checker) const_str(f: Int, e: Expr, depth: Int) -> Str? {
+  if depth > 32 {
+    return None
+  }
+  match e {
+    ParenExpr(x: x, ..) => c.const_str(f, x, depth + 1)
+    StringLit(s) => {
+      var b = StrBuilder.new()
+      for p in s.parts {
+        if let Some(_) = p.expr {
+          return None
+        }
+        b.write(text(p.text))
+      }
+      Some(b.freeze())
+    }
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      if op != parser.Kind.Plus {
+        return None
+      }
+      let a = c.const_str(f, x, depth + 1)?
+      let b = c.const_str(f, y, depth + 1)?
+      Some(a + b)
+    }
+    Ident(id) => c.const_str_ref(f, id, depth)
+    SelectorExpr(sel: sel, ..) => c.const_str_ref(f, sel, depth)
+    _ => None
+  }
+}
+
+fn (c: Checker) const_str_ref(f: Int, id: Ident, depth: Int) -> Str? {
+  let o = c.const_obj_at(f, id)
+  if o < 0 {
+    return None
+  }
+  if let ConstDecl(d: cd) = c.files[c.objs[o].decl_file].ast.decls[c.objs[o].decl_idx] {
+    return c.const_str(c.objs[o].decl_file, cd.value, depth + 1)
+  }
+  None
+}
+
+/// The index of the layout parameter of a std/time function, or -1.
+fn time_layout_param(name: Bytes) -> Int {
+  if name == b"format" {
+    return 2
+  }
+  if name == b"parse" {
+    return 1
+  }
+  if name == b"check_layout" {
+    return 0
+  }
+  -1
+}
+
+/// Checks every constant layout passed to std/time
+/// (timelayout.go checkTimeLayouts).
+fn (var c: Checker) check_time_layouts() {
+  let tm = c.mod_index.get("std/time") ?? -1
+  if tm < 0 {
+    return
+  }
+  for m in c.order {
+    if c.mods[m].is_std {
+      continue
+    }
+    for f in c.mods[m].files {
+      c.set_file(f)
+      var nodes: List[Node] = []
+      for d in c.files[f].ast.decls {
+        match d {
+          FnDecl(d: fd) => {
+            for cl in fd.clauses {
+              match cl {
+                RequiresClause(cond: cond, els: els, ..) => {
+                  pre_expr(cond, false, nodes)
+                  if let Some(x) = els {
+                    pre_expr(x, false, nodes)
+                  }
+                }
+                EnsuresClause(cond: cond, ..) => pre_expr(cond, false, nodes)
+                _ => {}
+              }
+            }
+            if let Some(b) = fd.body {
+              pre_block(b, false, nodes)
+            }
+          }
+          TestDecl(d: td) => {
+            if let Some(b) = td.body {
+              pre_block(b, false, nodes)
+            }
+          }
+          ConstDecl(d: cd) => pre_expr(cd.value, false, nodes)
+          _ => {}
+        }
+      }
+      for n in nodes {
+        let call = match n {
+          NExpr(e) => e
+          NStmt(_) | NBlock(_) => continue
+        }
+        let args = match call {
+          CallExpr(args: args, ..) => args
+          _ => continue
+        }
+        let ci = match c.call_infos.get(c.expr_key(call)) {
+          Some(ci) => ci
+          None => continue
+        }
+        let fo = ci.fn_obj
+        if fo < 0 || c.objs[fo].module != tm || c.objs[fo].recv >= 0 {
+          continue
+        }
+        let idx = time_layout_param(c.objs[fo].name)
+        if idx < 0 {
+          continue
+        }
+        if let Some(arg) = call_arg(args, idx, b"layout") {
+          c.check_time_layout(arg)
+        }
+      }
+    }
+  }
+}
+
+/// The argument of parameter idx (named name) of a call
+/// (timelayout.go callArg).
+fn call_arg(args: List[parser.Arg], idx: Int, name: Bytes) -> Expr? {
+  var pos = 0
+  for a in args {
+    if let Some(n) = a.name {
+      if n.name == name {
+        return Some(a.value)
+      }
+      continue
+    }
+    if pos == idx {
+      return Some(a.value)
+    }
+    pos += 1
+  }
+  None
+}
+
+/// Reports a constant layout that is bad, at the string literal that
+/// holds it (timelayout.go checkTimeLayout).
+fn (var c: Checker) check_time_layout(arg: Expr) {
+  let layout = match c.const_str(c.cur_file, arg, 0) {
+    Some(s) => s
+    None => return
+  }
+  var sp = parser.expr_span(arg)
+  var lit: List[Span] = []
+  let saved = c.cur_file
+  let u = unparen(arg)
+  match u {
+    StringLit(s) => lit.push(s.span)
+    Ident(_) | SelectorExpr(..) => {
+      let id = if let SelectorExpr(sel: sel, ..) = u { sel } else if let Ident(x) = u { x } else { return }
+      let o = c.const_obj_at(c.cur_file, id)
+      if o < 0 || c.mods[c.objs[o].module].is_std {
+        return
+      }
+      if let ConstDecl(d: cd) = c.files[c.objs[o].decl_file].ast.decls[c.objs[o].decl_idx] {
+        if let StringLit(s) = unparen(cd.value) {
+          if c.objs[o].decl_file != c.cur_file {
+            c.set_file(c.objs[o].decl_file)
+          }
+          lit.push(s.span)
+          sp = s.span
+        }
+      }
+    }
+    _ => {}
+  }
+  c.time_layout_report(layout, sp, lit)
+  if c.cur_file != saved {
+    c.set_file(saved)
+  }
+}
+
+fn (var c: Checker) time_layout_report(layout: Str, sp: Span, lit: List[Span]) {
+  if c.time_layout_habit(layout, sp, lit) {
+    return
+  }
+  let msg = time_layout_parse(layout)
+  if msg.is_empty() {
+    return
+  }
+  let d = c.error("XO0420", sp, "bad time layout ${xo_quote(layout)}: ${msg}")
+  if d < 0 {
+    return
+  }
+  c.note(d, "layout fields are named and lowercase: {year}-{month}-{day} {hour}:{minute}:{second}; see std.md 13.3, or the constants time.RFC3339, time.RFC1123, time.DATE, time.TIME")
+  // did you mean: every unknown field with one close name
+  var fixed = layout
+  var changed = false
+  for f in layout_fields(layout) {
+    if tl_field_args(f.name).len() > 0 {
+      continue
+    }
+    let sugg = nearest(f.name, tl_field_names())
+    if sugg.is_empty() || !confident_guess(f.name, sugg) {
+      changed = false
+      break
+    }
+    var repl = "{${sugg[0]}"
+    if !f.arg.is_empty() {
+      repl = "${repl}:${f.arg}"
+    }
+    repl = "${repl}}"
+    c.note(d, "did you mean ${repl}?")
+    fixed = replace_first(fixed, f.text, repl)
+    changed = true
+  }
+  if changed && !lit.is_empty() && time_layout_parse(fixed).is_empty() {
+    c.fix(d, "write ${xo_quote(fixed)}", [c.replace_edit(lit[0], xo_quote(fixed))])
+  }
+}
+
+/// s with the first old replaced by new.
+fn replace_first(s: Str, old: Str, new: Str) -> Str {
+  match s.find(old) {
+    Some(i) => {
+      let b = s.bytes()
+      text(b[0..i]) + new + text(b[i + old.len()..b.len()])
+    }
+    None => s
+  }
+}
+
+/// The forms of field name ([""] for the bare form), or [] when the field
+/// is unknown (timelayout.go tlFieldArgs).
+fn tl_field_args(name: Str) -> List[Str] {
+  match name {
+    "year" | "hour" | "hour12" | "ampm" | "minute" | "second" | "zone" | "lbrace" | "rbrace" => [""]
+    "month" => ["", "1", "short", "name"]
+    "day" => ["", "1"]
+    "weekday" => ["short", "name"]
+    "frac" => ["", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    "offset" => ["", "compact"]
+    _ => []
+  }
+}
+
+fn tl_field_names() -> List[Str] {
+  ["year", "month", "day", "weekday", "hour", "hour12", "ampm", "minute", "second", "frac", "offset", "zone", "lbrace", "rbrace"]
+}
+
+/// One `{name:arg}` of a layout, as written.
+struct LayoutField {
+  text: Str
+  name: Str
+  arg: Str
+}
+
+/// The index of the first `{` or `}` of b at or after from, or -1.
+fn brace_at(b: Bytes, from: Int) -> Int {
+  var k = from
+  while k < b.len() {
+    if b[k] == '{' || b[k] == '}' {
+      return k
+    }
+    k += 1
+  }
+  -1
+}
+
+/// name and arg of a field body `name:arg`, and whether it has the colon.
+fn cut_colon(body: Str) -> (Str, Str, Bool) {
+  match body.find(":") {
+    Some(i) => {
+      let b = body.bytes()
+      (text(b[0..i]), text(b[i + 1..b.len()]), true)
+    }
+    None => (body, "", false)
+  }
+}
+
+fn layout_fields(layout: Str) -> List[LayoutField] {
+  let b = layout.bytes()
+  var out: List[LayoutField] = []
+  var i = 0
+  while i < b.len() {
+    if b[i] != '{' {
+      i += 1
+      continue
+    }
+    let k = brace_at(b, i + 1)
+    if k < 0 || b[k] == '{' {
+      i += 1
+      continue
+    }
+    let body = text(b[i + 1..k])
+    let (name, arg, _) = cut_colon(body)
+    out.push(LayoutField{text: "{${body}}", name: name, arg: arg})
+    i = k + 1
+  }
+  out
+}
+
+/// s as an Xo string literal (timelayout.go xoQuote).
+fn xo_quote(s: Str) -> Str {
+  let b = s.bytes()
+  var out = StrBuilder.new()
+  out.write("\"")
+  var run = 0
+  var i = 0
+  while i < b.len() {
+    let ch = b[i]
+    var esc = ""
+    if ch == '"' {
+      esc = "\\\""
+    } else if ch == '\\' {
+      esc = "\\\\"
+    } else if ch == '$' {
+      esc = "\\$"
+    } else if ch == '\n' {
+      esc = "\\n"
+    } else if ch == '\t' {
+      esc = "\\t"
+    } else if ch == '\r' {
+      esc = "\\r"
+    }
+    if esc.is_empty() {
+      i += 1
+      continue
+    }
+    if run < i {
+      out.write(text(b[run..i]))
+    }
+    out.write(esc)
+    i += 1
+    run = i
+  }
+  if run < b.len() {
+    out.write(text(b[run..b.len()]))
+  }
+  out.write("\"")
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Habits (XO0177)
+
+/// The named field of a date pattern letter run of Java, C#, Swift, and
+/// moment.js: Some("") when there is no one rewrite, None when the run is
+/// not a pattern (timelayout.go letterFields).
+fn letter_field(run: Str) -> Str? {
+  match run {
+    "yyyy" | "YYYY" | "uuuu" => Some("{year}")
+    "yy" | "YY" | "DD" | "D" | "H" | "h" | "m" | "s" | "xxx" | "zzz" => Some("")
+    "MMMM" => Some("{month:name}")
+    "MMM" => Some("{month:short}")
+    "MM" => Some("{month}")
+    "M" => Some("{month:1}")
+    "dd" => Some("{day}")
+    "d" => Some("{day:1}")
+    "dddd" | "EEEE" => Some("{weekday:name}")
+    "ddd" | "EEE" => Some("{weekday:short}")
+    "HH" => Some("{hour}")
+    "hh" => Some("{hour12}")
+    "mm" => Some("{minute}")
+    "ss" => Some("{second}")
+    "SSS" | "fff" => Some("{frac:3}")
+    "SSSSSS" | "ffffff" => Some("{frac:6}")
+    "SSSSSSSSS" => Some("{frac:9}")
+    "a" | "tt" | "A" => Some("{ampm}")
+    "XXX" => Some("{offset}")
+    "Z" | "ZZ" => Some("{offset:compact}")
+    "z" => Some("{zone}")
+    _ => None
+  }
+}
+
+/// The letter runs that mark an unbraced layout as a letter pattern.
+fn strong_letters(run: Str) -> Bool {
+  run is "yyyy" | "YYYY" | "MM" | "dd" | "HH" | "mm" | "ss"
+}
+
+/// The named field of a strftime code (timelayout.go percentFields).
+fn percent_field(code: Str) -> Str? {
+  match code {
+    "Y" => Some("{year}")
+    "m" => Some("{month}")
+    "d" => Some("{day}")
+    "H" => Some("{hour}")
+    "M" => Some("{minute}")
+    "S" => Some("{second}")
+    "b" | "h" => Some("{month:short}")
+    "B" => Some("{month:name}")
+    "a" => Some("{weekday:short}")
+    "A" => Some("{weekday:name}")
+    "p" => Some("{ampm}")
+    "I" => Some("{hour12}")
+    "z" => Some("{offset:compact}")
+    "Z" => Some("{zone}")
+    "F" => Some("{year}-{month}-{day}")
+    "T" => Some("{hour}:{minute}:{second}")
+    "R" => Some("{hour}:{minute}")
+    "y" | "e" | "j" | "f" | "c" | "x" | "X" | "D" | "u" | "w" | "s" | "n" | "t" => Some("")
+    _ => None
+  }
+}
+
+/// The pieces of Go's reference date, longest first.
+fn go_ref_tokens() -> List[(Str, Str)] {
+  [("Z07:00", "{offset}"), (".000000000", "{frac:9}"), (".999999999", "{frac}"), (".000000", "{frac:6}"), (".000", "{frac:3}"), ("January", "{month:name}"), ("Monday", "{weekday:name}"), ("-07:00", ""), ("-0700", "{offset:compact}"), ("2006", "{year}"), ("Jan", "{month:short}"), ("Mon", "{weekday:short}"), ("MST", "{zone}"), ("01", "{month}"), ("02", "{day}"), ("15", "{hour}"), ("03", "{hour12}"), ("04", "{minute}"), ("05", "{second}"), ("PM", "{ampm}"), ("_2", ""), (".999", ""), (".999999", ""), ("06", "")]
+}
+
+/// Whether b has pat at i.
+fn has_at(b: Bytes, i: Int, pat: Str) -> Bool {
+  let p = pat.bytes()
+  if i + p.len() > b.len() {
+    return false
+  }
+  for k in 0..p.len() {
+    if b[i + k] != p[k] {
+      return false
+    }
+  }
+  true
+}
+
+/// The rewrite of a layout written with another language's date pattern
+/// syntax, as the habit pass builds it.
+struct TlHabit {
+  out: List[Str] = []
+  seen: List[Str] = []
+  fixable: Bool = true
+  found: Bool = false
+}
+
+fn tl_add(var h: TlHabit, src: Str, field: Str) {
+  h.found = true
+  if field.is_empty() {
+    h.fixable = false
+  }
+  if h.seen.len() < 4 && !h.seen.contains(src) {
+    h.seen.push(src)
+  }
+  h.out.push(field)
+}
+
+/// Drops a trailing `.` of what was written so far.
+fn tl_drop_dot(var h: TlHabit) -> Bool {
+  let s = h.out.join("")
+  if !s.ends_with(".") {
+    return false
+  }
+  h.out = [text(s.bytes()[0..s.len() - 1])]
+  true
+}
+
+/// Reports a layout written in another language's date pattern syntax,
+/// and whether it did (timelayout.go timeLayoutHabit).
+fn (var c: Checker) time_layout_habit(layout: Str, sp: Span, lit: List[Span]) -> Bool {
+  let b = layout.bytes()
+  var h = TlHabit{}
+  var from = ""
+  if layout.contains("{") {
+    // braced letter patterns: {yyyy}-{MM}-{dd}
+    var i = 0
+    while i < b.len() {
+      if b[i] == '{' {
+        let k = brace_at(b, i + 1)
+        if k >= 0 && b[k] == '}' {
+          let body = text(b[i + 1..k])
+          let (name, _, _) = cut_colon(body)
+          if tl_field_args(name).is_empty() {
+            if let Some(f) = letter_field(body) {
+              tl_add(h, "{${body}}", f)
+              i = k + 1
+              continue
+            }
+          }
+          h.out.push(text(b[i..k + 1]))
+          i = k + 1
+          continue
+        }
+      }
+      h.out.push(text(b[i..i + 1]))
+      i += 1
+    }
+    from = "the date patterns of Java, C#, and Swift"
+  } else if layout.contains("%") {
+    var i = 0
+    while i < b.len() {
+      if b[i] == '%' && i + 1 < b.len() {
+        let nx = text(b[i + 1..i + 2])
+        if nx == "%" {
+          h.out.push("%")
+          i += 2
+          continue
+        }
+        if let Some(f) = percent_field(nx) {
+          if nx == "f" && tl_drop_dot(h) {
+            // `.%f` is a fraction of 6 digits
+            tl_add(h, "%f", "{frac:6}")
+          } else {
+            tl_add(h, text(b[i..i + 2]), f)
+          }
+          i += 2
+          continue
+        }
+      }
+      h.out.push(text(b[i..i + 1]))
+      i += 1
+    }
+    from = "the strftime codes of C, Python, Ruby, and PHP"
+  } else if layout.contains("2006") || layout.contains("15:04") {
+    let toks = go_ref_tokens()
+    var i = 0
+    while i < b.len() {
+      var matched = false
+      for t in toks {
+        if has_at(b, i, t.0) {
+          tl_add(h, t.0, t.1)
+          i += t.0.len()
+          matched = true
+          break
+        }
+      }
+      if !matched {
+        h.out.push(text(b[i..i + 1]))
+        i += 1
+      }
+    }
+    from = "Go's reference date"
+  } else {
+    // unbraced letter patterns: yyyy-MM-dd HH:mm:ss
+    var strong = false
+    var i = 0
+    while i < b.len() {
+      let ch = b[i]
+      if ch == '\'' {
+        // a quoted literal: 'T'
+        var q = i + 1
+        while q < b.len() && b[q] != '\'' {
+          q += 1
+        }
+        if q < b.len() {
+          h.out.push(text(b[i + 1..q]))
+          i = q + 1
+          continue
+        }
+      }
+      if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+        h.out.push(text(b[i..i + 1]))
+        i += 1
+        continue
+      }
+      var j = i
+      while j < b.len() && b[j] == ch {
+        j += 1
+      }
+      let run = text(b[i..j])
+      if strong_letters(run) {
+        strong = true
+      }
+      if let Some(f0) = letter_field(run) {
+        var f = f0
+        if (run is "SSS" | "fff" | "SSSSSS" | "ffffff" | "SSSSSSSSS") && tl_drop_dot(h) {
+          // the fraction keeps its field
+        } else if f.starts_with("{frac") {
+          f = ""
+        }
+        tl_add(h, run, f)
+      } else {
+        tl_add(h, run, "")
+      }
+      i = j
+    }
+    if !strong {
+      return false
+    }
+    from = "the date patterns of Java, C#, and Swift"
+  }
+  if !h.found {
+    return false
+  }
+  var quoted: List[Str] = []
+  for s in h.seen {
+    quoted.push("`${s}`")
+  }
+  let d = c.error("XO0177", sp, "time layout written with ${from} (${quoted.join(", ")}); Xo layouts use named, lowercase fields such as {year}-{month}-{day} (std.md 13.3)")
+  if d < 0 {
+    return true
+  }
+  let fixed = h.out.join("")
+  let fixable = h.fixable && time_layout_parse(fixed).is_empty()
+  if fixable {
+    c.note(d, "write ${xo_quote(fixed)}")
+    if !lit.is_empty() {
+      c.fix(d, "write ${xo_quote(fixed)}", [c.replace_edit(lit[0], xo_quote(fixed))])
+    }
+  } else {
+    c.note(d, "fields: {year} {month} {month:1} {month:short} {month:name} {day} {day:1} {weekday:short} {weekday:name} {hour} {hour12} {ampm} {minute} {second} {frac} {frac:3} {offset} {offset:compact} {zone}; a two digit year is not offered")
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// The layout parser of the runtime, reduced to validation
+// (timelayout.go timeLayoutParse).
+
+/// The error message of a bad layout, or "".
+fn time_layout_parse(layout: Str) -> Str {
+  let b = layout.bytes()
+  var hour12 = false
+  var ampm = false
+  var i = 0
+  while i < b.len() {
+    if b[i] == '}' {
+      return "unmatched } (a literal brace is written {rbrace})"
+    }
+    if b[i] != '{' {
+      i += 1
+      continue
+    }
+    let k = brace_at(b, i + 1)
+    if k < 0 || b[k] == '{' {
+      return "unclosed { (a literal brace is written {lbrace})"
+    }
+    let body = text(b[i + 1..k])
+    let (name, arg, has_arg) = cut_colon(body)
+    let args = tl_field_args(name)
+    if args.is_empty() {
+      return "unknown field {${body}}"
+    }
+    if (has_arg && arg.is_empty()) || (!has_arg && !args.contains("")) || (has_arg && !args.contains(arg)) {
+      return "{${body}}: ${tl_args_text(name, args)}"
+    }
+    if name == "hour12" {
+      hour12 = true
+    }
+    if name == "ampm" {
+      ampm = true
+    }
+    i = k + 1
+  }
+  if hour12 && !ampm {
+    return "{hour12} needs {ampm} (or use {hour}, 00 to 23)"
+  }
+  ""
+}
+
+fn tl_args_text(name: Str, args: List[Str]) -> Str {
+  var forms: List[Str] = []
+  for a in args {
+    if a.is_empty() {
+      forms.push("{${name}}")
+    } else {
+      forms.push("{${name}:${a}}")
+    }
+  }
+  if name == "frac" {
+    forms = ["{frac}", "{frac:1} to {frac:9}"]
+  }
+  "the forms are ${forms.join(", ")}"
+}

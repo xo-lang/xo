@@ -682,3 +682,55 @@ the slice had grown; `Items` holds pointers now
 (gotchas/diag-pointer-after-append.md). One golden of internal/fix
 (py-map-builtin) gained the fix it had lost. And json.Marshal's HTML
 escaping inside `Diagnostic.MarshalJSON` (gotchas/json-marshaler-escapes-html.md).
+
+## Stage 8: naming, time layouts, the checker's habits
+
+Ported: check.go `checkName` at the 25 places internal/check calls it,
+in the same order (selfhost/check/naming.xo: XO0101, the habit note of
+Go's capitalized exports, camelCase, or a lowercase type, and the
+rename fix, which `finish_renames` extends to every use of a local
+after the other passes, as check.go `finishRenames` does), and
+timelayout.go (selfhost/check/timelayout.xo: constant layouts of
+`time.format`, `time.parse`, and `time.check_layout`, XO0420 with its
+did you mean fix, and the XO0177 habit of Java, strftime, and Go
+reference date patterns with the rewrite to named fields). XO0101,
+XO0420, and the checker's XO0177 are staged diagnostics now.
+
+Coverage (go, arm64, and LLVM builds): of 609 repository runs, 351 are
+accepted and 236 rejected only with staged diagnostics, all 587 with
+identical names, types, sigs, diags, and full sections. The 4 runs
+stage 8 opened match: internal/check/testdata/golden/naming,
+golden/time_layout, internal/fix/testdata/habits/go-exported-name, and
+habits/time-layout-two-digit-year. The mutations gained an eighth kind,
+naming (a declared name and every use the lexer sees respelled against
+its convention): seed 8 with 3,000 mutations (263 with XO0101), seed 9
+with 1,500 on the LLVM build, and seed 10 with 1,500 on arm64 give 0
+differences.
+
+Runs not compared, and why:
+
+| runs | why |
+|---|---|
+| 16 (`examples/realtime-control`, 15 internal/gen goldens and replays) | `use go` or `use c`: the Xo loader has no Go or C interop and marks them unsupported |
+| 5 (`internal/check/testdata/golden/imports_deny/*`) | import deny rules of xo.mod (XO1301, XO1312), not ported |
+| 1 (`internal/mod/testdata/repos/github.com/acme/billing@v1.2.0/invoice`) | dependency rule XO1302, not ported |
+
+Two of the 6 dependency rule runs give the same staged diagnostics; the
+rest of their output is not compared.
+
+Found on the way: a mutation that duplicates a real-time function
+(`process` declared twice) made the Xo checker fault. The real-time
+pass walks the duplicate's body, which is never type checked, and
+`named_obj` indexed the type table with -1 (the Go checker's nil type
+falls through). `named_obj` returns -1 for no type now.
+
+Speed (Apple M4 Pro, 20 runs, best of two, ms per run; the machine
+was slower today than for the stage 6 table: the Go checker's figure
+went from 111.9 to 136.8 ms on selfhost, which also grew by 3,600
+lines):
+
+| input | Go checker | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 24,646 lines, 3 modules) | 136.8 | 339.1 | 349.5 | 270.7 | 1.98 |
+| selfhost/parser (with the lexer) | 46.6 | 137.7 | 139.1 | 107.0 | 2.30 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 8.6 | 36.5 | 19.9 | 15.1 | 1.76 |

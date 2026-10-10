@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker reports naming (XO0101, with the rename fix
+  that covers every use of a local), time layouts (XO0420, and the
+  XO0177 habit of a date pattern from another language), and the
+  checker's other XO0177 habits as internal/check does (stage 8 of
+  decision 0141): 587 of 609 repository runs are compared whole and
+  identical on the go, arm64, and LLVM builds; the 22 left use `use go`
+  or `use c` (16) or break dependency rules the port does not have (6).
 - The self hosted checker gives every diagnostic the notes and machine
   fixes of internal/check and internal/parser (stage 7 of decision
   0141): edit distance suggestions, habit notes and fixes, effect call

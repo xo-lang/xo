@@ -4,11 +4,12 @@ Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
 inference), stage 3 (generics), stage 4 (effects and real-time, but
 dependency ceilings), the parse habits (pulled ahead of stage 8, in
 selfhost/parser), stage 5 (value semantics), stage 6 (patterns and
-exhaustiveness), and stage 7 (notes and fixes, the full section;
+exhaustiveness), stage 7 (notes and fixes, the full section;
+2026-10-10), and stage 8 (naming, time layouts, the checker's habits;
 2026-10-10) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
 infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
-comparable.xo, realtime.xo, flow.xo, exhaust.xo, notes.xo, the sigs and
-full sections in dump.xo),
+comparable.xo, realtime.xo, flow.xo, exhaust.xo, notes.xo, naming.xo,
+timelayout.xo, the sigs and full sections in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -233,9 +234,18 @@ notes, conversion and Result fixes, missing arms and fields as holes,
 lost updates, moves, real-time notes and `bound N` fixes, `if` without
 `else`), and the checker's habits (habits.go: names, calls, module
 calls, print functions, types, methods, fields, `x = v`, `for ... :=
-range`). Not compared yet: the checker's habits that are diagnostics of
-their own (XO0177 of `range`, naming XO0101, time layouts XO0420; stage
-8).
+range`).
+
+**Comparison rules of stage 8** (2026-10-10, the remaining habits):
+naming (XO0101 with its habit note and rename fix, extended to every
+use of a local at the end as check.go `finishRenames` does), time
+layouts (XO0420, and XO0177 for a layout in the date pattern syntax of
+another language; selfhost/check/timelayout.xo), and the checker's
+XO0177 (`for ... := range`) are staged diagnostics: a run rejected with
+them is compared whole, full section included. Every diagnostic the
+repository runs and the mutations produce is now ported except the
+dependency rules (XO1301, XO1302, XO1309, XO1312) and those of `use go`
+and `use c` runs.
 
 **Parser resynchronization** (2026-10-10): the Xo parser goes on after a
 hard error as internal/parser does (decision 0127), so a run with hard
@@ -297,6 +307,14 @@ by its file, span, and kind (the Go checker uses node pointers).
   to a habit, a soft parse error, the value semantics rules, or
   exhaustiveness in internal/parser or internal/check must be made in
   selfhost/parser or selfhost/check in the same change.
+- Stages 7 and 8 and the parser's resynchronization (2026-10-10): 587
+  of 609 repository runs are compared, full JSON sections included,
+  and identical on the three backends (351 accepted, 236 rejected); the
+  22 not compared are 16 `use go`/`use c` runs (unsupported) and 6
+  rejected by dependency rules (imports_deny and acme/billing: XO1301,
+  XO1302, XO1312; 2 of them give the same staged diagnostics). A
+  change to a note, a fix, naming, or the time layout rules in
+  internal/check must be made in selfhost/check in the same change.
 
 ## Alternatives
 
