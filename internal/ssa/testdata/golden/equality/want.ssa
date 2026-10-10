@@ -22,9 +22,9 @@ b0(v0: Os):
   v16: Int = const 3
   v17: List[Int] = call list.push, v15, v16
   v18: Tag = struct v10, v17
-  v19: List[Int] = field 1, v18
-  v20: Int = const 4
-  v21: List[Int] = call list.push, v19, v20
+  v19: Int = const 4
+  v20: List[Int] = field 1, v18
+  v21: List[Int] = call list.push, v20, v19
   v22: Tag = setfield 1, v18, v21
   v23: () = tuple
   v24: Stdio = cap stdio, v0

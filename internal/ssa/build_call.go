@@ -563,6 +563,10 @@ func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via
 	}
 	var args []*Value
 	var places []place
+	// A `var` receiver or argument is a place: its indexes are evaluated
+	// in order, but its value is read after every argument is computed,
+	// so changes the arguments make to it are kept (decision 0142).
+	var recvPlace *place
 	if fo.Recv != nil && !fo.Static {
 		if ci.Recv == nil {
 			b.unsupported(x, "this method call")
@@ -574,7 +578,8 @@ func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via
 				return s.undef(callee.Results[0])
 			}
 			places = append(places, p)
-			args = append(args, p.get())
+			recvPlace = &p
+			args = append(args, nil)
 		} else {
 			args = append(args, s.valueAs(ci.Recv, ps[0].Type))
 		}
@@ -583,26 +588,27 @@ func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via
 	exprs := argExprs(fo.Params, x)
 	// evaluate in source order
 	vals := make([]*Value, len(fo.Params))
+	done := make([]bool, len(fo.Params))
 	argPlaces := make([]*place, len(fo.Params))
 	for _, a := range x.Args {
 		for i, e := range exprs {
-			if e != a.Value || vals[i] != nil {
+			if e != a.Value || done[i] {
 				continue
 			}
+			done[i] = true
 			if fo.Params[i].Var {
 				p, ok := s.place(e)
 				if !ok {
 					return s.undef(callee.Results[0])
 				}
 				argPlaces[i] = &p
-				vals[i] = p.get()
 			} else {
 				vals[i] = s.valueAs(e, ps[off+i].Type)
 			}
 		}
 	}
 	for i, p := range fo.Params {
-		if vals[i] == nil {
+		if !done[i] {
 			d := p.Default
 			if impl != fo {
 				d = nil
@@ -624,6 +630,14 @@ func (s *fn) callAsVia(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj, via
 		}
 		if argPlaces[i] != nil {
 			places = append(places, *argPlaces[i])
+		}
+	}
+	if recvPlace != nil {
+		args[0] = recvPlace.get()
+	}
+	for i, p := range argPlaces {
+		if p != nil {
+			vals[i] = p.get()
 		}
 	}
 	args = append(args, vals...)
@@ -797,8 +811,9 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			if !ok || p.t.Kind != KList {
 				break
 			}
+			v := s.valueAs(x.Args[0].Value, p.t.Elems[0])
 			l := p.get()
-			p.set(s.call("list.push", p.t, "", l, s.valueAs(x.Args[0].Value, p.t.Elems[0])))
+			p.set(s.call("list.push", p.t, "", l, v))
 			return s.unit()
 		case !fo.Static && fo.Name == "len":
 			return s.call("list.len", intT, "", s.expr(ci.Recv))
@@ -849,13 +864,14 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			et := lt.Elems[0]
 			switch fo.Name {
 			case "push":
+				v := s.valueAs(x.Args[0].Value, et)
 				l := p.get()
-				p.set(s.call("list.push", lt, "", l, s.valueAs(x.Args[0].Value, et)))
+				p.set(s.call("list.push", lt, "", l, v))
 				return s.unit()
 			case "set":
-				l := p.get()
 				i := s.valueAs(x.Args[0].Value, intT)
 				v := s.valueAs(x.Args[1].Value, et)
+				l := p.get()
 				p.set(s.call("list.set", lt, b.posLine(x), l, i, v))
 				return s.unit()
 			case "pop":

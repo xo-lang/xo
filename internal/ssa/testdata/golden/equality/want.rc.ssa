@@ -24,12 +24,12 @@ b0(v0: Os):
   v18: List[Int] = call list.push, v16, v17
   retain v11
   v20: Tag = struct v11, v18
-  v21: List[Int] = field 1, v20
-  v22: Int = const 4
+  v21: Int = const 4
+  v22: List[Int] = field 1, v20
   v23: List[Int] = field 1, v20
   retain v23
-  v25: List[Int] = reuse v21
-  v26: List[Int] = call list.push, v25, v22
+  v25: List[Int] = reuse v22
+  v26: List[Int] = call list.push, v25, v21
   v27: Str = field 0, v20
   retain v27
   v29: Tag = setfield 1, v20, v26

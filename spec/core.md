@@ -1434,6 +1434,10 @@ Because values never alias mutably, data races are impossible except through
   stores into the target (decision 0140): changes the value makes to the
   target's binding are kept, so `t.objs[o].kids = t.add_kids()` keeps the
   objects `add_kids` pushed onto `t.objs`.
+- A call evaluates the place of a `var` receiver or `var` argument, then
+  every argument in order, then reads those places (decision 0142):
+  `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
+  `xs.push(f())` keeps what `f` pushed onto `xs`.
 - To change a value stored in a collection, use `update`, which reads, mutates,
   and writes back in one call:
   ```

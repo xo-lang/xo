@@ -1,0 +1,66 @@
+// A `var` receiver or `var` argument whose binding the other arguments
+// change: the arguments are computed first and the method sees their
+// changes (decision 0142). The native backends read the receiver before
+// the arguments and dropped the pushes the arguments made (found by the
+// self hosted checker: `c.implements(t, c.named("Display"))`, where
+// `named` pushes onto the type table `implements` then reads).
+
+struct Table {
+  items: List[Int] = []
+}
+
+fn (var t: Table) add(v: Int) -> Int {
+  t.items.push(v)
+  t.items.len() - 1
+}
+
+fn (var t: Table) get(i: Int) -> Int {
+  t.items[i]
+}
+
+fn (var t: Table) put(i: Int, v: Int) {
+  t.items[i] = v
+}
+
+fn bump(var t: Table, i: Int) {
+  t.items[i] += 1
+}
+
+fn main(os: Os) {
+  var t = Table{}
+  let a = t.get(t.add(7))
+  os.stdio.println("${a} ${t.items.len()}")
+  t.put(t.add(1), t.add(2) * 10)
+  os.stdio.println(show(t.items))
+  bump(t, t.add(5))
+  os.stdio.println(show(t.items))
+  var xs = [1]
+  xs.push({
+    xs.push(2)
+    3
+  })
+  os.stdio.println(show(xs))
+  var r = Reg{}
+  let n = r.m.update(r.key(), 0, fn(var v) {
+    v += 1
+    v
+  })
+  os.stdio.println("${n} ${r.m.len()} ${r.m.get("z") ?? 0}")
+}
+
+struct Reg {
+  m: Map[Str, Int] = {}
+}
+
+fn (var r: Reg) key() -> Str {
+  r.m["z"] = 9
+  "k"
+}
+
+fn show(xs: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for x in xs {
+    parts.push("${x}")
+  }
+  parts.join(" ")
+}
