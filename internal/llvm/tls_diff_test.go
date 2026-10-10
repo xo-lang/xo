@@ -29,6 +29,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/llvm"
 )
 
 // TestTLSDiff runs the same HTTPS program (std.md 4.6, decision 0105)
@@ -438,4 +439,58 @@ func probeTLSServer(t *testing.T, out *strings.Builder, addr string, p *testPKI)
 	raw, _ := io.ReadAll(c)
 	c.Close()
 	fmt.Fprintf(out, "plain http: %q\n", raw)
+}
+
+// TestTLSLeaks builds the http_tls golden with AddressSanitizer and runs
+// it with LeakSanitizer on (Linux: macOS's AddressSanitizer has no leak
+// detection): Mbed TLS's own allocations (contexts, certificates, roots,
+// configurations) must be freed or reachable at exit, which the runtime's
+// XO_LEAKCHECK count does not cover.
+func TestTLSLeaks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a golden with AddressSanitizer")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("LeakSanitizer runs on Linux only")
+	}
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	dir := filepath.Join("testdata", "golden", "http_tls")
+	res, ok, err := build.CheckNative([]string{dir}, false)
+	if err != nil || !ok {
+		t.Fatalf("check: %v", err)
+	}
+	abs, _ := filepath.Abs(dir)
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: abs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "prog")
+	flags := []string{"-O1", "-g", "-fsanitize=address", "-Wno-override-module"}
+	if err := build.CompileC(flags, []string{ll, filepath.Join(rtDir, "xo_rt.c")}, bin); err != nil {
+		if strings.Contains(err.Error(), "sanitizer") {
+			t.Skipf("no AddressSanitizer: %v", err)
+		}
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	if text := stderr.String(); err != nil || strings.Contains(text, "Sanitizer") {
+		if len(text) > 6000 {
+			text = text[:6000]
+		}
+		t.Fatalf("run: %v\n%s", err, text)
+	}
+	if !strings.Contains(stdout.String(), "done") {
+		t.Fatalf("incomplete output:\n%s", stdout.String())
+	}
 }

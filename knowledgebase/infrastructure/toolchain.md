@@ -1511,7 +1511,9 @@ Last verified: 2026-10-09.
   archive into a temporary cache and links a C program with it);
   `go test ./internal/llvm -run TestTLSDiff` (about 15 s: an HTTPS program
   with the Go, LLVM, and arm64 backends against Go peers, certificates made
-  in `t.TempDir()`); the `http_tls` golden (committed test only
+  in `t.TempDir()`); `TestTLSLeaks` (Linux only: the `http_tls` golden
+  under AddressSanitizer with LeakSanitizer on, passes on linux/arm64
+  2026-10-09); the `http_tls` golden (committed test only
   certificates valid to 2120, plus an expired and a not yet valid one).
 
 ## Linux (containers)
