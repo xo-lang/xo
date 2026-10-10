@@ -81,7 +81,7 @@ func arm64AsmOpts(res *check.Result, root, goos string, probes, tests, release b
 
 func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
 	var tz ssa.TZUse
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, Release: release})
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, Release: release, GOOS: goos, GOARCH: "arm64"})
 	if err != nil {
 		return nil, tz, err
 	}

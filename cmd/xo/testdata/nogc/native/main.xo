@@ -57,3 +57,10 @@ test "run_main" {
   expect(os.stdio.output()) == "args 1 ada\nargs 2 ada\n"
   expect(os.stdio.errors().starts_with("error: Bad(msg: \"negative -1\")\n"))
 }
+
+test "a failing os.tasks task" {
+  os.tasks.spawn(fn() ! {
+    let _v = may_fail(-5)?
+  })
+  os.clock.sleep(1h)
+}

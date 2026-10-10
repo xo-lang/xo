@@ -1,0 +1,85 @@
+// Native gaps closed by decisions 0107 to 0109: method values (`x.m` as a
+// value, the receiver evaluated once when the value is made), base64,
+// Range.to_list, and `target`.
+
+interface Shape {
+  fn area(self) -> Int
+}
+
+struct Rect {
+  w: Int
+  h: Int
+}
+
+fn (r: Rect) area() -> Int { r.w * r.h }
+
+fn (r: Rect) scaled(k: Int) -> Rect { Rect{w: r.w * k, h: r.h * k} }
+
+fn (r: Rect) checked(limit: Int) -> Int ! Str {
+  if r.area() > limit {
+    return Err("too big: ${r.area()}")
+  }
+  r.area()
+}
+
+struct Box[T] {
+  items: List[T]
+}
+
+fn (b: Box[T]) at(i: Int) -> T? { b.items.get(i) }
+
+fn apply(f: fn(Int) -> Rect, x: Int) -> Int { f(x).area() }
+
+fn main(os: Os) {
+  var r = Rect{w: 2, h: 3}
+  let area = r.area
+  let scale = r.scaled
+  r.w = 100
+  os.stdio.println("area ${area()} scaled ${scale(10).area()} now ${r.area()}")
+  let check = r.checked
+  match check(1000) {
+    Ok(a) => os.stdio.println("ok ${a}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  os.stdio.println("checked ${check(10).debug()}")
+  let s: Shape = Rect{w: 4, h: 5}
+  let sa = s.area
+  os.stdio.println("iface ${sa()}")
+  let b = Box[Str]{items: ["a", "b"]}
+  let at = b.at
+  os.stdio.println("generic ${at(1) ?? "-"} ${at(5) ?? "-"}")
+  let xs = [10, 20, 30]
+  let get = xs.get
+  os.stdio.println("list ${get(0) ?? 0} ${get(9) ?? -1}")
+  let has = "hello".contains
+  os.stdio.println("str ${has("ell")} ${has("xyz")}")
+  let rs = [Rect{w: 1, h: 1}, Rect{w: 2, h: 2}]
+  os.stdio.println("mapped ${rs.map(fn(q) { apply(q.scaled, 3) }).debug()}")
+  let tail = xs.get
+  os.stdio.println("as arg ${[0, 2].map(fn(i) { tail(i) ?? 0 }).debug()}")
+
+  // base64 (standard, padded)
+  for t in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
+    let enc = t.bytes().to_base64()
+    let dec = Bytes.from_base64(enc) ?? b"?"
+    os.stdio.println("b64 [${enc}] ${dec == t.bytes()}")
+  }
+  for bad in ["Zm9v=", "Zm9", "Zg=x", "Zm9v\nYmFy", "@@@@", "Zg=="] {
+    match Bytes.from_base64(bad) {
+      Some(d) => os.stdio.println("decoded ${d.len()}")
+      None => os.stdio.println("bad ${bad.len()}")
+    }
+  }
+
+  // Range.to_list
+  os.stdio.println("range ${(0..5).to_list().debug()} ${(2..=4).to_list().debug()} ${(3..1).to_list().debug()}")
+
+  // target: one arm per OS, chosen for this build
+  let family = match target.os {
+    Linux => "unix"
+    Darwin => "unix"
+    Windows => "windows"
+    Wasi => "wasi"
+  }
+  os.stdio.println("target ${family} ${target.os == target.os}")
+}

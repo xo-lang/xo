@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (decisions 0107 to 0109): `Proc.run`, `os.tasks` (a
+  scope around main and around each test), method values
+  (`let f = x.method`), `map_concurrent_until`, base64,
+  `Range.to_list`, `Rand.shuffle`, `target` (a compile time constant),
+  and in native test binaries MemFs (every method, `fail_next`, case
+  sensitivity, `files`), FakeProc `run` and `on_run`, `os.proc.exit`
+  inside `testing.run_main`, and `run_main` of a main that cannot fail.
+  Fixed natively: a receive arm after an `after` arm lost its value; a
+  `?` in a closure printed the function's frame name without
+  `.closure`, and one in a `Mutex.with` closure none;
+  `FakeClock.advance` returned before the tasks it woke ran; the
+  success type of `Err(e)?` was XO1201. One binding passed to two `var`
+  parameters is now XO1201 natively (the Go backend shares it, the
+  native backends copied it).
+- TestCompileProperty (decision 0110): random checker valid programs over
+  the optional syntax must build on the Go backend and with `--no-gc`,
+  and run alike.
 - Fixes from Codex r3: a `select` arm that receives without binding the
   value no longer generates Go that fails to compile; the "propagate with
   ?" fix is offered only where `?` can propagate; help notes for XO0205

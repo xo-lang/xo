@@ -1,0 +1,27 @@
+exit 0
+--- stdout
+area 6 scaled 600 now 300
+ok 300
+checked Err("too big: 300")
+iface 20
+generic b -
+list 10 -1
+str true false
+mapped [9, 36]
+as arg [10, 30]
+b64 [] true
+b64 [Zg==] true
+b64 [Zm8=] true
+b64 [Zm9v] true
+b64 [Zm9vYg==] true
+b64 [Zm9vYmE=] true
+b64 [Zm9vYmFy] true
+bad 5
+bad 3
+bad 4
+decoded 6
+bad 4
+decoded 1
+range [0, 1, 2, 3, 4] [2, 3, 4] []
+target unix true
+--- stderr

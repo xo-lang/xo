@@ -80,6 +80,7 @@ static struct {
 	xo_node *main_node;
 	int64_t exit_code;
 	int has_exit;
+	int exiting; // os.proc.exit unwinds main to testing.run_main
 } tws;
 
 static void *tw_grow(void *p, int n, size_t size) {
@@ -131,15 +132,23 @@ XO_NORETURN void xo_test_fail(const char *p, int64_t n) {
 	_exit(1);
 }
 
-// tw_exit is os.proc.exit in a test: the test ends (and passes, as on
-// the Go backend) unless main runs under testing.run_main, which would
-// need main to unwind to run_main.
+// tw_exit is os.proc.exit in a test (std.md 8.4): the code is recorded
+// (FakeProc.exit_code). Outside testing.run_main the test ends and
+// passes, as on the Go backend. Inside it, main unwinds back to run_main
+// (decision 0108): its root is canceled and this context unwinds from
+// here (generated code checks after the call), and xo_test_main_end
+// gives the code as main's status.
 __attribute__((unused)) static void tw_exit(int64_t code) {
-	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
-		static const char m[] = "os.proc.exit inside testing.run_main is not available without a garbage collector (`--no-gc`) yet (support is planned)";
-		xo_test_fail(m, (int64_t)sizeof m - 1);
+	lk(&tws.mu);
+	tws.exit_code = code;
+	tws.has_exit = 1;
+	unlk(&tws.mu);
+	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE) && tws.main_node) {
+		__atomic_store_n(&tws.exiting, 1, __ATOMIC_RELEASE);
+		node_cancel(tws.main_node);
+		ctx()->unwinding = 1;
+		return;
 	}
-	(void)code;
 	_exit(0);
 }
 
@@ -228,6 +237,17 @@ void xo_test_advance(int64_t d) {
 		park_wait_n(c, 0, 1);
 	}
 	timer_del(&t);
+	// the contexts woken at the last instant (with this one) run until
+	// every one waits again before advance returns, as std/rt's
+	// World.Advance: a timer due now fires at the next move of the clock,
+	// which comes only when every context waits
+	xo_timer q = {.when = deadline(0), .idx = -1, .park = &c->park};
+	park_reset(&c->park);
+	timer_add(&q);
+	while (!__atomic_load_n(&q.fired, __ATOMIC_ACQUIRE)) {
+		park_wait_n(c, 0, 1);
+	}
+	timer_del(&q);
 }
 
 // xo_test_clock_set is FakeClock.set(t).
@@ -338,9 +358,18 @@ __attribute__((unused)) static xo_rlist *tw_env_args(void) {
 	return l;
 }
 
-// xo_test_exit_code is FakeProc.exit_code() (always none: os.proc.exit
-// ends the test process).
-xo_rlist *xo_test_exit_code(void) { return xo_rl_new(4, 8); }
+// xo_test_exit_code is FakeProc.exit_code(): the code os.proc.exit
+// recorded, in a list of one, or the empty list.
+xo_rlist *xo_test_exit_code(void) {
+	xo_rlist *l = xo_rl_new(4, 8);
+	lk(&tws.mu);
+	if (tws.has_exit) {
+		((int64_t *)rl_data(l))[0] = tws.exit_code;
+		l->len = 1;
+	}
+	unlk(&tws.mu);
+	return l;
+}
 
 // Log records (testing.logs, std.md 8.6)
 
@@ -735,11 +764,250 @@ xo_any *xo_test_req_get(int64_t i) {
 	return v ? v : xo_h_zero();
 }
 
+// MemFs (std.md 8.3, decision 0108): std/native/testing.xo keeps the file
+// system as an Xo value (testing.MemState) here between operations. An
+// operation takes it (locking the store), works on it without waiting,
+// and puts it back (unlocking): operations are atomic, as the Go
+// backend's under its mutex.
+static struct {
+	pthread_mutex_t mu;
+	xo_any *st;
+} tw_memfs = {.mu = PTHREAD_MUTEX_INITIALIZER};
+
+// xo_test_memfs_take locks the store and moves the state out (a list of
+// one, or empty before the first operation).
+xo_rlist *xo_test_memfs_take(void) {
+	pthread_mutex_lock(&tw_memfs.mu);
+	xo_rlist *l = xo_rl_new(4, 8);
+	if (tw_memfs.st) {
+		((xo_any **)rl_data(l))[0] = tw_memfs.st;
+		l->len = 1;
+		tw_memfs.st = NULL;
+	}
+	return l;
+}
+
+// xo_test_memfs_put stores the state and unlocks the store.
+void xo_test_memfs_put(xo_any *st) {
+	h_retain(st);
+	tw_memfs.st = st;
+	pthread_mutex_unlock(&tw_memfs.mu);
+}
+
+// xo_test_now is the virtual clock's now (MemFs modified times).
+int64_t xo_test_now(void) { return xo_clock_now(); }
+
+// Go's path.Match, for MemFs.fail_next patterns: a bad pattern matches
+// nothing (std/rt's globMatch).
+
+typedef struct {
+	const unsigned char *p;
+	int64_t n;
+} tw_sv;
+
+static int32_t tw_rune(tw_sv *s) {
+	int size;
+	int32_t r = n_utf8_decode(s->p, s->n, &size);
+	s->p += size;
+	s->n -= size;
+	return r;
+}
+
+// tw_get_esc is path.getEsc: 0 on a bad pattern.
+static int tw_get_esc(tw_sv *c, int32_t *r) {
+	if (c->n == 0 || c->p[0] == '-' || c->p[0] == ']') {
+		return 0;
+	}
+	if (c->p[0] == '\\') {
+		c->p++;
+		c->n--;
+		if (c->n == 0) {
+			return 0;
+		}
+	}
+	int size;
+	*r = n_utf8_decode(c->p, c->n, &size);
+	if (*r == 0xFFFD && size == 1) {
+		return 0;
+	}
+	c->p += size;
+	c->n -= size;
+	return c->n != 0;
+}
+
+// tw_match_chunk is path.matchChunk: 1 matched (rest set), 0 not, -1 a
+// bad pattern.
+static int tw_match_chunk(tw_sv chunk, tw_sv s, tw_sv *rest) {
+	int failed = 0;
+	while (chunk.n > 0) {
+		if (!failed && s.n == 0) {
+			failed = 1;
+		}
+		switch (chunk.p[0]) {
+		case '[': {
+			int32_t r = 0;
+			if (!failed) {
+				r = tw_rune(&s);
+			}
+			chunk.p++;
+			chunk.n--;
+			int negated = 0;
+			if (chunk.n > 0 && chunk.p[0] == '^') {
+				negated = 1;
+				chunk.p++;
+				chunk.n--;
+			}
+			int match = 0, nrange = 0;
+			for (;;) {
+				if (chunk.n > 0 && chunk.p[0] == ']' && nrange > 0) {
+					chunk.p++;
+					chunk.n--;
+					break;
+				}
+				int32_t lo, hi;
+				if (!tw_get_esc(&chunk, &lo)) {
+					return -1;
+				}
+				hi = lo;
+				if (chunk.p[0] == '-') {
+					chunk.p++;
+					chunk.n--;
+					if (!tw_get_esc(&chunk, &hi)) {
+						return -1;
+					}
+				}
+				if (lo <= r && r <= hi) {
+					match = 1;
+				}
+				nrange++;
+			}
+			if (match == negated) {
+				failed = 1;
+			}
+			break;
+		}
+		case '?':
+			if (!failed) {
+				if (s.p[0] == '/') {
+					failed = 1;
+				}
+				tw_rune(&s);
+			}
+			chunk.p++;
+			chunk.n--;
+			break;
+		case '\\':
+			chunk.p++;
+			chunk.n--;
+			if (chunk.n == 0) {
+				return -1;
+			}
+			// fallthrough
+		default:
+			if (!failed) {
+				if (chunk.p[0] != s.p[0]) {
+					failed = 1;
+				}
+				s.p++;
+				s.n--;
+			}
+			chunk.p++;
+			chunk.n--;
+		}
+	}
+	if (failed) {
+		return 0;
+	}
+	*rest = s;
+	return 1;
+}
+
+// tw_scan_chunk is path.scanChunk.
+static int tw_scan_chunk(tw_sv *pat, tw_sv *chunk) {
+	int star = 0;
+	while (pat->n > 0 && pat->p[0] == '*') {
+		pat->p++;
+		pat->n--;
+		star = 1;
+	}
+	int inrange = 0;
+	int64_t i;
+	for (i = 0; i < pat->n; i++) {
+		unsigned char c = pat->p[i];
+		if (c == '\\') {
+			if (i + 1 < pat->n) {
+				i++;
+			}
+		} else if (c == '[') {
+			inrange = 1;
+		} else if (c == ']') {
+			inrange = 0;
+		} else if (c == '*' && !inrange) {
+			break;
+		}
+	}
+	chunk->p = pat->p;
+	chunk->n = i;
+	pat->p += i;
+	pat->n -= i;
+	return star;
+}
+
+// xo_test_glob is path.Match(pattern, name) without its error.
+int64_t xo_test_glob(const char *pp, int64_t pn, const char *np, int64_t nn) {
+	tw_sv pat = {(const unsigned char *)pp, pn}, name = {(const unsigned char *)np, nn};
+	while (pat.n > 0) {
+		tw_sv chunk, t;
+		int star = tw_scan_chunk(&pat, &chunk);
+		if (star && chunk.n == 0) {
+			return memchr(name.p, '/', (size_t)name.n) == NULL;
+		}
+		int ok = tw_match_chunk(chunk, name, &t);
+		if (ok == 1 && (t.n == 0 || pat.n > 0)) {
+			name = t;
+			continue;
+		}
+		if (ok < 0) {
+			return 0;
+		}
+		int next = 0;
+		if (star) {
+			for (int64_t i = 0; i < name.n && name.p[i] != '/'; i++) {
+				tw_sv from = {name.p + i + 1, name.n - i - 1};
+				int k = tw_match_chunk(chunk, from, &t);
+				if (k == 1) {
+					if (pat.n == 0 && t.n > 0) {
+						continue;
+					}
+					name = t;
+					next = 1;
+					break;
+				}
+				if (k < 0) {
+					return 0;
+				}
+			}
+		}
+		if (next) {
+			continue;
+		}
+		return 0;
+	}
+	return name.n == 0;
+}
+
 // tw_cleanup releases the values the test world keeps (handlers,
-// failures, requests, served routers) when the test ends, for the leak
-// check.
+// failures, requests, served routers, the MemFs) when the test ends, for
+// the leak check.
 __attribute__((unused)) static void tw_cleanup(void) {
 	xo_test_fake_clear();
+	pthread_mutex_lock(&tw_memfs.mu);
+	xo_any *mst = tw_memfs.st;
+	tw_memfs.st = NULL;
+	pthread_mutex_unlock(&tw_memfs.mu);
+	if (mst) {
+		h_release(mst);
+	}
 	lk(&tws.mu);
 	int nh = tws.nhandlers, nr = tws.nreqs;
 	tw_fake *hs = tws.handlers;
@@ -866,6 +1134,14 @@ int64_t xo_test_main_end(int64_t code) {
 		node_unlink(n);
 		free(n);
 		tws.main_node = NULL;
+	}
+	if (__atomic_exchange_n(&tws.exiting, 0, __ATOMIC_ACQ_REL) && !node_canceled(c->node)) {
+		// os.proc.exit unwound main (tw_exit): its code is the status
+		c->unwinding = 0;
+		lk(&tws.mu);
+		int64_t ec = tws.exit_code;
+		unlk(&tws.mu);
+		return ec;
 	}
 	if (c->unwinding && __atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE) && !node_canceled(c->node)) {
 		c->unwinding = 0;

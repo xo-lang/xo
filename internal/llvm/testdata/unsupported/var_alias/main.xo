@@ -1,0 +1,12 @@
+// One binding passed to two var parameters: the Go backend shares it, the
+// native backends would copy it twice (gotchas/var-args-one-binding-twice.md).
+fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn main(os: Os) {
+  var xs = [0]
+  both(xs, xs)
+  os.stdio.println("${xs.len()}")
+}

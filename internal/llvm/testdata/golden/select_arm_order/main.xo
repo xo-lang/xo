@@ -1,0 +1,42 @@
+// A receive arm after an `after` arm (found by TestCompileProperty,
+// decision 0110): the native backends took the received value by the
+// arm's position among all arms instead of among the channel arms, so it
+// was lost (gotchas/native-select-take-index.md).
+
+fn a(k: Int) -> Int {
+  let ch = Chan[Int].new(1)
+  let out = Chan[Int].new(1)
+  ch.send(k)
+  var got = 0
+  select {
+    v = ch.recv() => got = v ?? -1
+    out.send(5) => got = 3
+  }
+  got
+}
+
+fn b(clock: Clock, k: Int) -> Int {
+  let ch = Chan[Int].new(1)
+  ch.send(k)
+  var got = 0
+  select {
+    after 1ms => got = 4
+    v = ch.recv() => got = v ?? -1
+  }
+  let _c = clock.now()
+  got
+}
+
+fn c(k: Int) -> Int {
+  let ch = Chan[Int].new(1)
+  ch.send(k)
+  var got = 0
+  select {
+    v = ch.recv() => got = v ?? -1
+  }
+  got
+}
+
+fn main(os: Os) {
+  os.stdio.println("a ${a(1)} b ${b(os.clock, 1)} c ${c(1)}")
+}

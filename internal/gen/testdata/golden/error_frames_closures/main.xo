@@ -1,0 +1,36 @@
+// Error frames recorded by `?` inside closures (core 11.1, decisions 0092
+// and 0104): the frame is the enclosing function's, named
+// `<function>.closure` once per closure level, with its parameters; a
+// closure given to Mutex.with records one too.
+
+fn work(n: Int) -> Int ! Str {
+  if n > 2 {
+    return Err("too big ${n}")
+  }
+  n * 10
+}
+
+fn nested(k: Int) -> Int ! Str {
+  let outer = fn(x: Int) -> Int ! Str {
+    let inner = fn(y: Int) -> Int ! Str { work(y + k)? }
+    inner(x)?
+  }
+  outer(1)?
+}
+
+fn locked(m: Mutex[Int], k: Int) -> Int ! Str {
+  m.with(fn(var v) -> Int ! Str {
+    v = work(v + k)?
+    v
+  })
+}
+
+fn main(os: Os) ! {
+  match nested(5) {
+    Ok(v) => os.stdio.println("nested ok ${v}")
+    Err(e) => os.stdio.println("nested err ${e}")
+  }
+  let m = Mutex[Int].new(1)
+  os.stdio.println("locked ${locked(m, 0)?}")
+  let _v = locked(m, 7)?
+}

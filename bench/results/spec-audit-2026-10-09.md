@@ -567,3 +567,49 @@ finished after the deadline; the test world's virtual clock stopped after
 check and failed in code generation (now XO1201); the arm64 backend could
 not assemble functions over 8192 instructions; hybrid builds declared a
 Bool result's argument size rounded up.
+
+## Native gaps closed (2026-10-09, fourth pass)
+
+The XO1201 rows the third pass left planned, after decisions 0107 to 0109.
+"yes" means LLVM and arm64 with `--no-gc`, output identical to the Go
+backend, no allocation live at exit (TestGenGoldensNative now lists 78
+internal/gen goldens; TestNoGCTests compares native test reports with the
+Go backend's on testdata/nogc/same, notes-service, test_stdin_stop,
+test_signal_after, test_fakes, test_map_until, test_run_main_void).
+
+| Row | Feature | Native now | Evidence |
+|---|---|---|---|
+| 6.3, 7.1 | `os.tasks` | yes: main runs in a root scope whose group it is; a test's is canceled when the test ends | gen:os_tasks, gen:arena_escape, gen:test_fakes, nogc/same, nogc/native |
+| 6.4 | MemFs writes and every MemFs method, `fail_next`, `set_case_sensitive`, `files` | yes (decision 0108) | gen:test_fakes, nogc/same fakes_test.xo |
+| 6.4 | `FakeProc.run`, `on_run`, `exit_code`; `os.proc.exit` inside `run_main` | yes | gen:test_fakes, nogc/same |
+| 3.2, std 2.3 | method values (`xs.get`, `r.area`, interface and generic methods) | yes (decision 0109) | llvm:method_values |
+| std 2.2 | base64 | yes | gen:std06_helpers, llvm:method_values |
+| std 2.3 | `Range.to_list` | yes (of a range literal) | gen:std06_helpers, llvm:method_values |
+| std 3.4 | `Rand.shuffle` | yes, seeded alike in tests | gen:test_fakes |
+| std 3.7 | `Proc.run` | yes (decision 0107) | gen:audit_second_pass |
+| std 7 | `map_concurrent_until` | yes | llvm:map_until, gen:test_map_until |
+| 12.2 | `target` | yes, a compile time constant | gen:audit_second_pass, llvm:method_values |
+| 11.1 | Error frames of `?` in closures and `Mutex.with` closures | yes (were wrong or missing) | gen:error_frames_closures (TestErrorTracesNative) |
+
+Still XO1201 or different natively, and why:
+
+- one binding passed to two `var` parameters (`both(al, al)`, the golden
+  list_value_semantics): the Go backend passes `var` arguments by
+  reference, the native backends copy them in and out; which is meant
+  needs an ADR (gotchas/var-args-one-binding-twice.md). Planned.
+- `==` on values holding functions or handles outside an interface
+  (http_scoped): the native equality helpers do not compare them
+  (decision 0101). Planned.
+- `use go` packages: impossible (Go code needs Go's runtime).
+- In test binaries: property tests and `testing.gen`, contract fuzzing
+  (skipped), `--real`, error frames in failure reports, fault frames,
+  the deadlock's blocked list. Found by running the test_* goldens
+  natively and not fixed here: test_logs (a configured log output does
+  not reach the captured standard error), test_once (a fault in a Once's
+  function is not shared, decision 0101's note), test_shutdown (the
+  grace period set before `run_main`, the third signal's status 130).
+- Fault frames and crash bundles (11.2).
+
+The compile property test (decision 0110) found one native bug in over
+1,000 programs: a receive arm after an `after` arm lost its value
+(llvm:select_arm_order).

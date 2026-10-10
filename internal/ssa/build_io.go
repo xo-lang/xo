@@ -146,6 +146,15 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		}
 		return s.unit(), true
 	}
+	if key == "Rand.shuffle" {
+		// the native prelude's rand_shuffle (a capability's method has
+		// no implementation lookup of its own)
+		if nm := b.nativeMod("std/prelude"); nm != nil {
+			if impl, ok := nm.Scope["rand_shuffle"].(*check.FuncObj); ok {
+				return s.callAs(x, ci, impl), true
+			}
+		}
+	}
 	recv := s.expr(ci.Recv)
 	switch key {
 	case "StrBuilder.len", "BytesBuilder.len":
@@ -161,6 +170,11 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.rt("env_args", m.List(strT)), true
 	case "Proc.exit":
 		s.rt("exit", nil, arg(0, intT))
+		if b.opts.Tests {
+			// in testing.run_main the exit unwinds main back to it
+			// (decision 0108): the runtime returns unwinding
+			s.check("")
+		}
 		s.add(OpUnreachable, nil, nil)
 		s.dead()
 		return s.undef(nt), true
@@ -486,14 +500,13 @@ func (b *builder) fsType() *Type {
 
 // fsCall lowers a method of Fs: the function fs_<name> of
 // std/native/prelude.xo, whose first parameter is the Fs (std/rt's
-// realFs, ported to Xo over the system calls of std/llrt/xo_fs.c). A
-// test's MemFs reads only, as before (its writes are XO1201).
+// realFs, ported to Xo over the system calls of std/llrt/xo_fs.c). In a
+// test binary every Fs is a view of the test's MemFs (memFsCall).
 func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
 	b := s.b
 	fo := ci.Fn
-	if b.opts.Tests && fo.Name != "read" {
-		b.unsupported(x, "the method `Fs."+fo.Name+"` of a test's MemFs")
-		return s.undef(s.natOf(x))
+	if v, ok := s.memFsCall(x, ci); ok {
+		return v
 	}
 	if nm := b.nativeMod("std/prelude"); nm != nil {
 		if impl, ok := nm.Scope["fs_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
@@ -506,3 +519,51 @@ func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
 
 // isFs reports whether t is the lowered Fs.
 func isFs(t *Type) bool { return t.Kind == KStruct && t.Name == "xo.Fs" }
+
+// memFsCall lowers a method of Fs or MemFs in a test binary (decision
+// 0108): the function memfs_<name> of std/native/testing.xo, whose first
+// parameter is the Fs (a view of the test's in memory file system,
+// std/rt's memFs ported to Xo). ok is false outside test binaries and
+// for anything else.
+func (s *fn) memFsCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
+	b := s.b
+	fo := ci.Fn
+	if !b.opts.Tests || fo.Recv == nil || fo.Static || fo.Module == nil {
+		return nil, false
+	}
+	if !(fo.Module.IsPrelude && fo.Recv.Name == "Fs") && !(fo.Module.Path == "std/testing" && fo.Recv.Name == "MemFs") {
+		return nil, false
+	}
+	if nm := b.nativeMod("std/testing"); nm != nil {
+		if impl, ok := nm.Scope["memfs_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+			return s.callAs(x, ci, impl), true
+		}
+	}
+	b.unsupported(x, "the method `"+fo.Recv.Name+"."+fo.Name+"` of a test's MemFs")
+	return s.undef(s.natOf(x)), true
+}
+
+// procRun lowers `Proc.run` and a test's `FakeProc.run` (std.md 3.7,
+// decision 0107): the native prelude's proc_run, which waits on the
+// event loop (the program needs unwinding checks). ok is false for any
+// other call.
+func (s *fn) procRun(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
+	b := s.b
+	fo := ci.Fn
+	if fo.Recv == nil || fo.Static || fo.Name != "run" || fo.Module == nil {
+		return nil, false
+	}
+	if !(fo.Module.IsPrelude && fo.Recv.Name == "Proc") && !(fo.Module.Path == "std/testing" && fo.Recv.Name == "FakeProc") {
+		return nil, false
+	}
+	b.needConc = true
+	if !b.conc {
+		return s.undef(s.natOf(x)), true
+	}
+	if nm := b.nativeMod("std/prelude"); nm != nil {
+		if impl, ok := nm.Scope["proc_run"].(*check.FuncObj); ok && impl.Recv == nil {
+			return s.callAs(x, ci, impl), true
+		}
+	}
+	return nil, false
+}

@@ -81,6 +81,9 @@ type checker struct {
 	lostVars map[*VarObj]bool
 	// splitWarned dedupes XO0804 across nested bodies.
 	splitWarned map[*ast.CallExpr]bool
+	// mvLits are the closure literals standing for method values
+	// (methodvalue.go), made for code generators after checking.
+	mvLits map[*ast.SelectorExpr]*mvLit
 	// mapStore is the target of a plain `m[k] = v`, the only Map index
 	// use that cannot fault (core 3.6).
 	mapStore *ast.IndexExpr

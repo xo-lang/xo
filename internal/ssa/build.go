@@ -131,6 +131,9 @@ type Options struct {
 	// Release (`xo build --release`, core 8) compiles out the contract
 	// clauses marked `requires(debug)` and `ensures(debug)`.
 	Release bool
+	// GOOS and GOARCH are the target of the build (`target`, core 12.2):
+	// empty is the host's.
+	GOOS, GOARCH string
 }
 
 // contractOn reports whether a contract clause marked debug (or not) is
@@ -175,7 +178,13 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 			return b, Errors{{Msg: "no `main` function in the root module"}}
 		}
 		mf := b.declare(mainFo, nil, mainFo.Decl)
-		if et := failErr(mainFo.Err); et != nil {
+		if b.usesOsTasks() {
+			// main runs in the scope of os.tasks (build_tasks.go)
+			b.needConc = true
+			if b.conc {
+				b.tasksMain(mf, failErr(mainFo.Err), mainFo)
+			}
+		} else if et := failErr(mainFo.Err); et != nil {
 			b.mainWrapper(mf, et, mainFo.Decl)
 		}
 	}
@@ -284,6 +293,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 		case "int":
 			return m.Builtin(KInt)
 		}
+		// a type nothing determined (the success type of `Err(e)?`):
+		// no value of it is ever made
+		return m.Builtin(KUnit)
 	case *check.Named:
 		obj := r.Obj
 		if obj.Module != nil && obj.Module.IsPrelude {
@@ -385,7 +397,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
 			}
-			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput") {
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput" && obj.Name != "Target") {
 				break
 			}
 			x, created := m.Named(name, KStruct)
@@ -686,8 +698,11 @@ type fn struct {
 	// frameFo is the function whose frame a `?` in this closure records
 	// (the enclosing named function, decision 0104)
 	frameFo *check.FuncObj
-	f       *Func
-	cur     *Block
+	// closures is how deep in closures this code is: a frame's name gets
+	// `.closure` once per level, as the Go backend's
+	closures int
+	f        *Func
+	cur      *Block
 
 	defs       map[*check.VarObj]map[*Block]*Value
 	varType    map[*check.VarObj]*Type

@@ -81,6 +81,12 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 			return v
 		}
 		b.noteZoneCall(x, ci.Fn)
+		if v, ok := s.procRun(x, ci); ok {
+			return v
+		}
+		if v, ok := s.memFsCall(x, ci); ok {
+			return v
+		}
 		if impl := b.implOf(ci.Fn); impl != nil {
 			return s.callAs(x, ci, impl)
 		}
@@ -167,6 +173,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, ct.Result, errT)
 		c.frameFo = owner
+		c.closures = s.closures + 1
 		c.sub = s.sub
 		env := f.Params()[0]
 		for i, vo := range caps {
@@ -547,6 +554,22 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 	}
 	var args []*Value
 	var places []place
+	var varArgs []ast.Expr
+	if fo.Recv != nil && !fo.Static && fo.RecvVar && ci.Recv != nil {
+		varArgs = append(varArgs, ci.Recv)
+	}
+	for i, e := range argExprs(fo.Params, x) {
+		if fo.Params[i].Var && e != nil {
+			varArgs = append(varArgs, e)
+		}
+	}
+	if s.varArgsOverlap(varArgs) {
+		// the Go backend passes `var` arguments by reference, so one
+		// binding passed twice is one value seen through both
+		// parameters; the native backends copy in and out
+		b.unsupported(x, "one binding passed to two `var` parameters")
+		return s.undef(callee.Results[0])
+	}
 	if fo.Recv != nil && !fo.Static {
 		if ci.Recv == nil {
 			b.unsupported(x, "this method call")
@@ -699,6 +722,29 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		return s.undef(nt)
 	}
 	switch fo.Recv.Name {
+	case "Range":
+		// `(lo..hi).to_list()`: the native prelude's int_range_list
+		recv := ci.Recv
+		for {
+			p, ok := recv.(*ast.ParenExpr)
+			if !ok {
+				break
+			}
+			recv = p.X
+		}
+		if rg, ok := recv.(*ast.RangeExpr); ok && fo.Name == "to_list" && rg.Lo != nil && rg.Hi != nil {
+			if nm := b.nativeMod("std/prelude"); nm != nil {
+				if impl, ok := nm.Scope["int_range_list"].(*check.FuncObj); ok {
+					lo := s.valueAs(rg.Lo, intT)
+					hi := s.valueAs(rg.Hi, intT)
+					if rg.Inclusive {
+						hi = s.add(OpAdd, intT, nil, hi, s.cint(1))
+					}
+					f := b.declare(impl, nil, x)
+					return s.call(f.Name, f.Results[0], "", lo, hi)
+				}
+			}
+		}
 	case "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Rune":
 		if fo.Static && fo.Name == "try" && len(x.Args) == 1 && nt.Kind == KEnum {
 			// `Int32.try(x)`: Some when x is in range (std/rt's Try)
@@ -918,4 +964,65 @@ func hasTry(n ast.Node) bool {
 		return !found
 	})
 	return found
+}
+
+// varArgsOverlap reports whether two of the places es (the `var`
+// arguments of one call) may be one value: the same binding with one
+// path of fields and indexes a prefix of the other (an index matches
+// any index).
+func (s *fn) varArgsOverlap(es []ast.Expr) bool {
+	if len(es) < 2 {
+		return false
+	}
+	type path struct {
+		root *check.VarObj
+		segs []string
+	}
+	var ps []path
+	for _, e := range es {
+		var segs []string
+		for {
+			switch x := e.(type) {
+			case *ast.ParenExpr:
+				e = x.X
+				continue
+			case *ast.SelectorExpr:
+				segs = append([]string{"." + x.Sel.Name}, segs...)
+				e = x.X
+				continue
+			case *ast.IndexExpr:
+				segs = append([]string{"[]"}, segs...)
+				e = x.X
+				continue
+			}
+			break
+		}
+		id, ok := e.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if vo := s.b.info.VarOf(id); vo != nil {
+			ps = append(ps, path{vo, segs})
+		}
+	}
+	for i := range ps {
+		for j := i + 1; j < len(ps); j++ {
+			a, c := ps[i], ps[j]
+			if a.root != c.root {
+				continue
+			}
+			n := min(len(a.segs), len(c.segs))
+			same := true
+			for k := 0; k < n; k++ {
+				if a.segs[k] != c.segs[k] {
+					same = false
+					break
+				}
+			}
+			if same {
+				return true
+			}
+		}
+	}
+	return false
 }

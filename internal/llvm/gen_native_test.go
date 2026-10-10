@@ -95,7 +95,7 @@ func TestErrorTracesNative(t *testing.T) {
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
 		backends = append(backends, build.BackendArm64)
 	}
-	for _, name := range []string{"error_conversion", "error_frames", "error_frames_borrow", "error_frames_capture", "main_custom_err", "scope_failure", "arena_frames"} {
+	for _, name := range []string{"error_conversion", "error_frames", "error_frames_borrow", "error_frames_capture", "main_custom_err", "scope_failure", "arena_frames", "error_frames_closures", "os_tasks"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

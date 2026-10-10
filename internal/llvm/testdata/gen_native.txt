@@ -76,3 +76,8 @@ task_std
 std06_path
 fs_rooting
 cancellation
+std06_helpers
+audit_second_pass
+error_frames_closures
+os_tasks
+arena_escape

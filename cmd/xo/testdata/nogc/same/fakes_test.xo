@@ -1,0 +1,101 @@
+// MemFs, FakeProc, and os.tasks in native test binaries (decisions 0107,
+// 0108, 0109): the report is the Go backend's, line for line.
+
+fn save(fs: Fs, name: Str, text: Str) -> () ! FsErr uses fs.write {
+  fs.write("data/${name}", text.bytes())
+}
+
+test "memfs writes, reads, lists" {
+  os.fs.write("a/b/c.txt", b"hi")?
+  expect(os.fs.read_text("a/b/c.txt")?) == "hi"
+  expect(os.fs.exists("a/b")?)
+  expect(os.fs.exists("a/zz")?) == false
+  let sub = os.fs.sub("a")
+  expect(sub.read_text("b/c.txt")?) == "hi"
+  expect(sub.read("../x")) == Err(FsErr.Denied(path: "../x"))
+  os.fs.fail_next(testing.FsOp.Write, "a/*.txt", FsErr.Io(path: "a", msg: "disk full"))
+  expect(os.fs.write("a/x.txt", b"1")) == Err(FsErr.Io(path: "a", msg: "disk full"))
+  os.fs.write("a/x.txt", b"1")?
+  expect(os.fs.files().keys()) == ["a/b/c.txt", "a/x.txt"]
+  os.fs.rename("a/x.txt", "a/y.txt")?
+  expect(os.fs.read_dir("a")?.map(fn(f) { f.name })) == ["b", "y.txt"]
+  expect(os.fs.walk("")?.map(fn(f) { "${f.path} ${f.is_dir} ${f.size}" })) == ["a true 0", "a/b true 0", "a/b/c.txt false 2", "a/y.txt false 1"]
+  expect(os.fs.remove("a")) == Err(FsErr.NotEmpty(path: "a"))
+  expect(os.fs.remove("nope")) == Err(FsErr.NotFound(path: "nope"))
+  os.fs.remove_all("a")?
+  expect(os.fs.files().is_empty())
+  expect(os.fs.stat("missing")?) == None
+}
+
+test "memfs errors and views" {
+  os.fs.write("f", b"x")?
+  expect(os.fs.write("f/g", b"y")) == Err(FsErr.NotDir(path: "f"))
+  expect(os.fs.read_dir("f")) == Err(FsErr.NotDir(path: "f"))
+  expect(os.fs.read("")) == Err(FsErr.IsDir(path: ""))
+  expect(os.fs.read_only().write("z", b"1")) == Err(FsErr.Denied(path: "z"))
+  expect(os.fs.write_only().read("f")) == Err(FsErr.Denied(path: "f"))
+  os.fs.create_dir_all("d/e")?
+  let t = os.fs.create_temp("d", "tmp")?
+  expect(t) == "d/tmp000001"
+  expect(os.fs.create_temp("nope", "x")) == Err(FsErr.NotFound(path: "nope"))
+  os.fs.rename("d", "moved")?
+  expect(os.fs.files().keys()) == ["f", "moved/tmp000001"]
+  let st = os.fs.stat("moved/e")?
+  expect(st.map(fn(i) { "${i.name} ${i.path} ${i.is_dir}" })) == Some("e moved/e true")
+  os.fs.set_modified("f", Time.from_unix(5))?
+  expect((os.fs.stat("f")?).map(fn(i) { i.modified.unix() })) == Some(5)
+  save(os.fs, "one.txt", "1")?
+  expect(os.fs.read_text("data/one.txt")?) == "1"
+  expect(os.fs.case_sensitive())
+  os.fs.set_case_sensitive(false)
+  expect(os.fs.read_text("DATA/ONE.TXT")?) == "1"
+  os.fs.fail_next(testing.FsOp.Read, "data/one.txt", FsErr.Canceled)
+  expect(os.fs.read("data/one.txt")) == Err(FsErr.Canceled)
+  let denied = os.fs.sub("d2").sub("../..")
+  expect(denied.read("x")) == Err(FsErr.Denied(path: "x"))
+}
+
+test "memfs modified time is the virtual clock" {
+  os.clock.sleep(3s)
+  os.fs.write("t.txt", b"")?
+  let info = os.fs.stat("t.txt")?
+  expect(info.map(fn(i) { "${i.modified}" })) == Some("2026-01-01T00:00:03Z")
+}
+
+test "fake proc run" {
+  os.proc.on_run("git", ProcOutput{code: 0, stdout: b"abc\n", stderr: b""})
+  let out = os.proc.run("git", ["rev-parse", "HEAD"])?
+  expect(out.stdout) == b"abc\n"
+  expect(out.code) == 0
+  expect(os.proc.run("make", [])) == Err(ProcErr.NotFound(cmd: "make"))
+  os.proc.on_run("git", ProcOutput{code: 2, stdout: b"", stderr: b"bad"})
+  expect((os.proc.run("git", [])?).code) == 2
+}
+
+fn num(s: Str) -> Int ! Str {
+  match Int.parse(s) {
+    Some(n) => n
+    None => Err("not a number: ${s}")
+  }
+}
+
+test "os.tasks ends with the test" {
+  os.tasks.spawn_background(fn() {
+    os.clock.sleep(1h)
+  })
+  let h = os.tasks.spawn(fn() { 4 })
+  expect(h.await) == 4
+  let ch = Chan[Int].new(1)
+  os.tasks.spawn(fn() ! {
+    ch.send(num("6")?)
+  })
+  expect(ch.recv()) == Some(6)
+}
+
+test "a failing os.tasks task fails the test" {
+  os.tasks.spawn(fn() ! {
+    os.clock.sleep(1s)
+    let _n = num("x")?
+  })
+  expect(true)
+}

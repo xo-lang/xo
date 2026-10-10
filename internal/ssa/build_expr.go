@@ -235,6 +235,11 @@ func (s *fn) ident(x *ast.Ident) *Value {
 	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok {
 		return s.funcValue(fo, x)
 	}
+	if x.Name == "target" {
+		if v := s.target(x); v != nil {
+			return v
+		}
+	}
 	b.unsupported(x, "the name `"+x.Name+"` here")
 	return s.undef(s.natOf(x))
 }
@@ -264,6 +269,14 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			return s.funcValue(impl, x)
 		}
 	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Recv != nil && !fo.Static && b.info.TypeOf(x.X) != nil {
+		// a method value: a closure over the receiver's value now
+		// (decision 0109)
+		if lit, rv := b.info.MethodValueLit(x); lit != nil {
+			s.writeVar(rv, s.expr(x.X))
+			return s.closure(lit)
+		}
+	}
 	if x.Sel.Name == "await" {
 		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
 			return s.await(x)
@@ -273,10 +286,13 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	if v.Type.Kind == KCap {
 		t := s.natOf(x)
 		if t.Kind == KHandle {
-			// os.tasks (core 7.1): the native backends have no program
-			// wide group yet
-			b.unsupported(x, "`"+x.Sel.Name+"` of a capability")
-			return s.undef(t)
+			// os.tasks (core 7.1, decision 0109): the group of the scope
+			// around main (tasksMain) or around the test
+			b.needConc = true
+			if !b.conc {
+				return s.undef(t)
+			}
+			return s.rt("prog_group", t)
 		}
 		if isFs(t) {
 			// os.fs: the filesystem root, no mode (decision 0102)

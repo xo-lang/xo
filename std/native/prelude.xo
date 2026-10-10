@@ -97,6 +97,15 @@ fn bytes_from_hex(s: Str) -> Bytes? {
   Some(rt.bytes_from_hex(s))
 }
 
+fn bytes_to_base64(b: Bytes) -> Str { rt.b64_encode(b) }
+
+fn bytes_from_base64(s: Str) -> Bytes? {
+  if !rt.b64_ok(s) {
+    return None
+  }
+  Some(rt.b64_decode(s))
+}
+
 /// []rune(s): an invalid byte is U+FFFD.
 fn str_runes(s: Str) -> List[Rune] {
   let b = s.bytes()
@@ -268,6 +277,17 @@ fn list_remove_at[T](var xs: List[T], i: Int, at: rt.Loc) -> T {
     _ => {}
   }
   x
+}
+
+/// The Ints from lo up to hi, hi excluded (`Range.to_list`).
+fn int_range_list(lo: Int, hi: Int) -> List[Int] {
+  var out: List[Int] = []
+  var i = lo
+  while i < hi {
+    out.push(i)
+    i += 1
+  }
+  out
 }
 
 fn list_indexed[T](xs: List[T]) -> List[(Int, T)] {
@@ -821,6 +841,42 @@ fn stdin_err(st: Int) -> IoErr {
     return IoErr.Io(msg: rt.stdin_msg())
   }
   IoErr.Canceled
+}
+
+// ---------------------------------------------------------------------------
+// Rand.shuffle (std.md 3.4): Fisher-Yates from the end, one `int` per
+// step, as std/rt's Rand_shuffle (the same seeded order in tests)
+
+fn rand_shuffle[T](r: Rand, xs: List[T]) -> List[T] {
+  var out = xs
+  var i = out.len() - 1
+  while i > 0 {
+    let j = r.int(0, i + 1)
+    let a = out[i]
+    out[i] = out[j]
+    out[j] = a
+    i -= 1
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Proc (std.md 3.7, decision 0107)
+
+fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+  let r = rt.proc_run(cmd, args)
+  let st = r.get(0) ?? "2"
+  let detail = r.get(1) ?? ""
+  if st == "1" {
+    return Err(ProcErr.NotFound(cmd))
+  }
+  if st == "2" {
+    return Err(ProcErr.Io(detail))
+  }
+  if st == "3" {
+    return Err(ProcErr.Canceled)
+  }
+  ProcOutput { code: rt.int_parse(detail), stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
 }
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {

@@ -2,9 +2,11 @@
 // are the capabilities themselves, run in the C runtime's test world
 // (std/llrt/xo_testing.c); internal/ssa lowers their control methods
 // (build_testmode.go) and testing.run_main. What needs Xo values is here:
-// the captured log records, FakeNet's handlers, failures, and requests.
+// the captured log records, FakeNet's handlers, failures, and requests,
+// and MemFs.
 use std/http
 use std/log
+use std/path
 use std/sql
 use std/testing
 use native/rt
@@ -85,6 +87,574 @@ fn fakenet_requests(n: testing.FakeNet) -> List[http.Request] {
   for i in 0..rttest.test_req_count() {
     if let Some(r) = rt.any_get[http.Request](rttest.test_req_get(i)) {
       out.push(r)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// MemFs (std.md 8.3, decision 0108): std/rt's memFs and memView, ported.
+// The state is an Xo value the test world keeps between operations
+// (test_memfs_take locks it, memfs_store gives it back), so an operation
+// is atomic. A view is the Fs value itself: its root relative to the file
+// system's root ("" for os.fs) and its mode bits (1 a sub capability, 2
+// read only, 4 write only), as for the real Fs (decision 0102).
+
+struct MemNode {
+  dir: Bool
+  data: Bytes
+  modified: Time
+  name: Str
+}
+
+struct MemFail {
+  op: Int
+  pattern: Str
+  err: FsErr
+}
+
+struct MemState {
+  nodes: Map[Str, MemNode]
+  case_sensitive: Bool
+  fails: List[MemFail]
+  temp_seq: Int
+}
+
+fn memfs_load() -> MemState {
+  let l = rttest.test_memfs_take()
+  if let Some(a) = l.get(0) {
+    if let Some(st) = rt.any_get[MemState](a) {
+      return st
+    }
+  }
+  var nodes: Map[Str, MemNode] = {}
+  nodes.put("", MemNode{dir: true, data: b"", modified: rt.time_of(0), name: ""})
+  MemState{nodes: nodes, case_sensitive: true, fails: [], temp_seq: 0}
+}
+
+fn memfs_store(st: MemState) { rttest.test_memfs_put(rt.any_of(st)) }
+
+fn memfs_key(st: MemState, p: Str) -> Str {
+  if st.case_sensitive {
+    return p
+  }
+  p.to_lower()
+}
+
+// memfs_trim is strings.Trim(s, "/").
+fn memfs_trim(s: Str) -> Str {
+  var t = s
+  while t.starts_with("/") {
+    t = t[1..]
+  }
+  while t.ends_with("/") {
+    t = t[0..t.len() - 1]
+  }
+  t
+}
+
+// memfs_resolve maps a path given to the view to a path relative to the
+// file system's root; None when a sub view's path escapes it.
+fn memfs_resolve(f: Fs, given: Str) -> Str? {
+  let p = given.replace("\\", "/")
+  if (rt.fs_mode(f) & 1) != 0 {
+    var depth = 0
+    for seg in p.split("/") {
+      if seg == ".." {
+        depth -= 1
+      } else if seg != "" && seg != "." {
+        depth += 1
+      }
+      if depth < 0 {
+        return None
+      }
+    }
+  }
+  let clean = path.clean("/" + p).trim_prefix("/")
+  let full = memfs_trim(path.join(rt.fs_root(f), clean))
+  if full == "." {
+    return Some("")
+  }
+  Some(full)
+}
+
+// memfs_rel shows a path relative to the file system's root relative to
+// the view's root.
+fn memfs_rel(f: Fs, full: Str) -> Str {
+  let root = rt.fs_root(f)
+  if root == "" {
+    return full
+  }
+  full.trim_prefix(root).trim_prefix("/")
+}
+
+fn memfs_err(tag: Int, p: Str) -> FsErr {
+  match tag {
+    1 => FsErr.NotFound(path: p)
+    2 => FsErr.Exists(path: p)
+    3 => FsErr.NotEmpty(path: p)
+    4 => FsErr.NotDir(path: p)
+    5 => FsErr.IsDir(path: p)
+    _ => FsErr.Denied(path: p)
+  }
+}
+
+// memfs_begin checks cancellation and access and resolves p.
+fn memfs_begin(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let mode = rt.fs_mode(f)
+  if (write && (mode & 2) != 0) || (!write && (mode & 4) != 0) {
+    return Err(memfs_err(6, p))
+  }
+  match memfs_resolve(f, p) {
+    Some(full) => full
+    None => Err(memfs_err(6, p))
+  }
+}
+
+// memfs_failed consumes a matching fail_next: the error to give.
+fn memfs_failed(var st: MemState, op: Int, paths: List[Str]) -> FsErr? {
+  var i = 0
+  while i < st.fails.len() {
+    let fl = st.fails[i]
+    if fl.op == op {
+      for p in paths {
+        if rttest.test_glob(memfs_key(st, fl.pattern), memfs_key(st, p)) {
+          let _gone = st.fails.remove_at(i)
+          return Some(fl.err)
+        }
+      }
+    }
+    i += 1
+  }
+  None
+}
+
+fn memfs_get(st: MemState, full: Str) -> MemNode? { st.nodes.get(memfs_key(st, full)) }
+
+fn memfs_put(var st: MemState, full: Str, n: MemNode) {
+  st.nodes.put(memfs_key(st, full), n with { name: full })
+}
+
+fn memfs_dir_node(now: Time) -> MemNode { MemNode{dir: true, data: b"", modified: now, name: ""} }
+
+// memfs_mkdirs creates the directories on the way to full (full too when
+// self); the first prefix that is a file, if any.
+fn memfs_mkdirs(var st: MemState, full: Str, self_too: Bool) -> Str? {
+  if full == "" {
+    return None
+  }
+  let segs = full.split("/")
+  var end = segs.len() - 1
+  if self_too {
+    end = segs.len()
+  }
+  for i in 1..end + 1 {
+    let p = segs[0..i].join("/")
+    match memfs_get(st, p) {
+      None => memfs_put(st, p, memfs_dir_node(rttest.test_now()))
+      Some(n) => {
+        if !n.dir {
+          return Some(p)
+        }
+      }
+    }
+  }
+  None
+}
+
+// memfs_children are the direct children of a directory, by name.
+fn memfs_children(st: MemState, full: Str) -> List[MemNode] {
+  var prefix = memfs_key(st, full)
+  if prefix != "" {
+    prefix = prefix + "/"
+  }
+  var out: List[MemNode] = []
+  for (k, n) in st.nodes {
+    if k == "" || !k.starts_with(prefix) {
+      continue
+    }
+    if k[prefix.len()..].contains("/") {
+      continue
+    }
+    out.push(n)
+  }
+  out.sort_by(fn(n) { path.base(n.name) })
+}
+
+fn memfs_info(f: Fs, n: MemNode) -> FileInfo {
+  FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: n.data.len(), modified: n.modified}
+}
+
+fn memfs_op_tag(op: testing.FsOp) -> Int {
+  match op {
+    Read => 1
+    Write => 2
+    Rename => 3
+    Remove => 4
+    CreateDir => 5
+    ReadDir => 6
+  }
+}
+
+fn memfs_sub(f: Fs, dir: Str) -> Fs {
+  match memfs_resolve(f, dir) {
+    Some(full) => rt.fs_new(full, 1 | (rt.fs_mode(f) & 6))
+    None => rt.fs_new("\u{0}denied", 7)
+  }
+}
+
+fn memfs_cwd(f: Fs) -> Fs { f }
+
+fn memfs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
+
+fn memfs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }
+
+fn memfs_case_sensitive(_f: Fs) -> Bool {
+  let st = memfs_load()
+  let on = st.case_sensitive
+  memfs_store(st)
+  on
+}
+
+fn memfs_stat_in(var st: MemState, f: Fs, full: Str) -> FileInfo? ! FsErr {
+  if let Some(e) = memfs_failed(st, 1, [full]) {
+    return Err(e)
+  }
+  match memfs_get(st, full) {
+    None => None
+    Some(n) => Some(memfs_info(f, n))
+  }
+}
+
+fn memfs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
+  let full = memfs_begin(f, p, false)?
+  var st = memfs_load()
+  let r = memfs_stat_in(st, f, full)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_exists(f: Fs, p: Str) -> Bool ! FsErr {
+  let fi = memfs_stat(f, p)?
+  fi.is_some()
+}
+
+fn memfs_read_in(var st: MemState, full: Str, p: Str) -> Bytes ! FsErr {
+  if let Some(e) = memfs_failed(st, 1, [full]) {
+    return Err(e)
+  }
+  match memfs_get(st, full) {
+    None => Err(memfs_err(1, p))
+    Some(n) => {
+      if n.dir {
+        return Err(memfs_err(5, p))
+      }
+      n.data
+    }
+  }
+}
+
+fn memfs_read(f: Fs, p: Str) -> Bytes ! FsErr {
+  let full = memfs_begin(f, p, false)?
+  var st = memfs_load()
+  let r = memfs_read_in(st, full, p)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_read_text(f: Fs, p: Str) -> Str ! FsErr {
+  let b = memfs_read(f, p)?
+  rt.cast[Bytes, Str](b)
+}
+
+fn memfs_list_in(var st: MemState, f: Fs, full: Str, dir: Str, all: Bool) -> List[FileInfo] ! FsErr {
+  if let Some(e) = memfs_failed(st, 6, [full]) {
+    return Err(e)
+  }
+  match memfs_get(st, full) {
+    None => return Err(memfs_err(1, dir))
+    Some(n) => {
+      if !n.dir {
+        return Err(memfs_err(4, dir))
+      }
+    }
+  }
+  var out: List[FileInfo] = []
+  memfs_walk_into(st, f, full, all, out)
+  out
+}
+
+fn memfs_walk_into(st: MemState, f: Fs, full: Str, all: Bool, var out: List[FileInfo]) {
+  for c in memfs_children(st, full) {
+    out.push(memfs_info(f, c))
+    if all && c.dir {
+      memfs_walk_into(st, f, c.name, all, out)
+    }
+  }
+}
+
+fn memfs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  let full = memfs_begin(f, dir, false)?
+  var st = memfs_load()
+  let r = memfs_list_in(st, f, full, dir, false)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  let full = memfs_begin(f, dir, false)?
+  var st = memfs_load()
+  let r = memfs_list_in(st, f, full, dir, true)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_write_in(var st: MemState, f: Fs, full: Str, p: Str, data: Bytes) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 2, [full]) {
+    return Err(e)
+  }
+  if full == "" {
+    return Err(memfs_err(5, p))
+  }
+  if let Some(bad) = memfs_mkdirs(st, full, false) {
+    return Err(memfs_err(4, memfs_rel(f, bad)))
+  }
+  if let Some(n) = memfs_get(st, full) {
+    if n.dir {
+      return Err(memfs_err(5, p))
+    }
+  }
+  memfs_put(st, full, MemNode{dir: false, data: data, modified: rttest.test_now(), name: ""})
+}
+
+fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_write_in(st, f, full, p, data)
+  memfs_store(st)
+  r?
+}
+
+// memfs_seq is fmt.Sprintf("%06d", n).
+fn memfs_seq(n: Int) -> Str {
+  var s = "${n}"
+  while s.len() < 6 {
+    s = "0" + s
+  }
+  s
+}
+
+fn memfs_create_temp_in(var st: MemState, f: Fs, full: Str, dir: Str, prefix: Str) -> Str ! FsErr {
+  st.temp_seq += 1
+  let file = memfs_trim(path.join(full, prefix + memfs_seq(st.temp_seq)))
+  if let Some(e) = memfs_failed(st, 2, [full, file]) {
+    return Err(e)
+  }
+  match memfs_get(st, full) {
+    None => return Err(memfs_err(1, dir))
+    Some(n) => {
+      if !n.dir {
+        return Err(memfs_err(4, dir))
+      }
+    }
+  }
+  memfs_put(st, file, MemNode{dir: false, data: b"", modified: rttest.test_now(), name: ""})
+  memfs_rel(f, file)
+}
+
+fn memfs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
+  let full = memfs_begin(f, dir, true)?
+  var st = memfs_load()
+  let r = memfs_create_temp_in(st, f, full, dir, prefix)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_rename_in(var st: MemState, src: Str, dst: Str, from: Str, to: Str) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 3, [src, dst]) {
+    return Err(e)
+  }
+  let n = match memfs_get(st, src) {
+    None => return Err(memfs_err(1, from))
+    Some(n) => n
+  }
+  let parent = path.dir(dst)
+  if parent != "." {
+    let ok = match memfs_get(st, parent) {
+      None => false
+      Some(pn) => pn.dir
+    }
+    if !ok {
+      return Err(memfs_err(1, to))
+    }
+  }
+  if let Some(d) = memfs_get(st, dst) {
+    if d.dir && !n.dir {
+      return Err(memfs_err(5, to))
+    }
+  }
+  if !n.dir {
+    let _old = st.nodes.remove(memfs_key(st, src))
+    memfs_put(st, dst, n)
+    return
+  }
+  let prefix = memfs_key(st, src)
+  var moved: List[MemNode] = []
+  for (k, c) in st.nodes {
+    if k == prefix || k.starts_with(prefix + "/") {
+      moved.push(c)
+    }
+  }
+  for c in moved {
+    let _old = st.nodes.remove(memfs_key(st, c.name))
+  }
+  for c in moved {
+    memfs_put(st, dst + c.name.trim_prefix(src), c)
+  }
+}
+
+fn memfs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  let src = memfs_begin(f, from, true)?
+  let dst = match memfs_resolve(f, to) {
+    Some(d) => d
+    None => return Err(memfs_err(6, to))
+  }
+  var st = memfs_load()
+  let r = memfs_rename_in(st, src, dst, from, to)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_remove_in(var st: MemState, full: Str, p: Str) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 4, [full]) {
+    return Err(e)
+  }
+  let n = match memfs_get(st, full) {
+    None => return Err(memfs_err(1, p))
+    Some(n) => n
+  }
+  if full == "" {
+    return Err(memfs_err(1, p))
+  }
+  if n.dir && memfs_children(st, full).len() > 0 {
+    return Err(memfs_err(3, p))
+  }
+  let _old = st.nodes.remove(memfs_key(st, full))
+}
+
+fn memfs_remove(f: Fs, p: Str) -> () ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_remove_in(st, full, p)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_remove_all_in(var st: MemState, full: Str) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 4, [full]) {
+    return Err(e)
+  }
+  let prefix = memfs_key(st, full)
+  var gone: List[Str] = []
+  for (k, _n) in st.nodes {
+    if k == "" {
+      continue
+    }
+    if prefix == "" || k == prefix || k.starts_with(prefix + "/") {
+      gone.push(k)
+    }
+  }
+  for k in gone {
+    let _old = st.nodes.remove(k)
+  }
+}
+
+fn memfs_remove_all(f: Fs, p: Str) -> () ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_remove_all_in(st, full)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_create_dir_all_in(var st: MemState, f: Fs, full: Str) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 5, [full]) {
+    return Err(e)
+  }
+  if let Some(bad) = memfs_mkdirs(st, full, true) {
+    return Err(memfs_err(4, memfs_rel(f, bad)))
+  }
+}
+
+fn memfs_create_dir_all(f: Fs, p: Str) -> () ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_create_dir_all_in(st, f, full)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_set_modified_in(var st: MemState, full: Str, p: Str, t: Time) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 2, [full]) {
+    return Err(e)
+  }
+  let n = match memfs_get(st, full) {
+    None => return Err(memfs_err(1, p))
+    Some(n) => n
+  }
+  st.nodes.put(memfs_key(st, full), n with { modified: t })
+}
+
+fn memfs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_set_modified_in(st, full, p, t)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_fail_next(f: Fs, op: testing.FsOp, p: Str, err: FsErr) {
+  var full = memfs_resolve(f, p) ?? ""
+  if p.contains("*") {
+    full = memfs_trim(path.join(rt.fs_root(f), p.trim_prefix("/")))
+  }
+  var st = memfs_load()
+  st.fails.push(MemFail{op: memfs_op_tag(op), pattern: full, err: err})
+  memfs_store(st)
+}
+
+fn memfs_set_case_sensitive(_f: Fs, on: Bool) {
+  var st = memfs_load()
+  if st.case_sensitive != on {
+    let old = st.nodes
+    st.case_sensitive = on
+    st.nodes = {}
+    for (_k, n) in old {
+      st.nodes.put(memfs_key(st, n.name), n)
+    }
+  }
+  memfs_store(st)
+}
+
+fn memfs_files(f: Fs) -> Map[Str, Bytes] {
+  let st = memfs_load()
+  var names: List[Str] = []
+  var by_name: Map[Str, Bytes] = {}
+  for (_k, n) in st.nodes {
+    if !n.dir {
+      names.push(n.name)
+      by_name.put(n.name, n.data)
+    }
+  }
+  memfs_store(st)
+  let root = rt.fs_root(f)
+  var out: Map[Str, Bytes] = {}
+  for name in names.sort() {
+    if root == "" || name.starts_with(root + "/") {
+      out.put(memfs_rel(f, name), by_name.get(name) ?? b"")
     }
   }
   out

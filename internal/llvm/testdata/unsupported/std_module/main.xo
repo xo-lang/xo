@@ -1,6 +1,0 @@
-use std/task
-
-fn main(os: Os) uses (clock, stdio) {
-  let rs = task.map_concurrent_until(os.clock, 1s, [1, 2], 1, fn(n) { n })
-  os.stdio.println("${rs.len()}")
-}

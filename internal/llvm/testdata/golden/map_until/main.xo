@@ -1,0 +1,35 @@
+// task.map_concurrent_until natively (decision 0109): finished results
+// are kept in input order, failures are Failed, and items still running
+// at the deadline are cancelled and give TimedOut.
+use std/task
+
+enum FetchErr {
+  NotFound(id: Int)
+} derive Display
+
+fn fetch(clock: Clock, id: Int) -> Str ! FetchErr uses clock {
+  clock.sleep(1ms * id)
+  if id == 3 {
+    return Err(FetchErr.NotFound(id))
+  }
+  "item${id}"
+}
+
+fn show(rs: List[Result[Str, task.Timed[FetchErr]]]) -> Str {
+  rs.map(fn(r) {
+    match r {
+      Ok(v) => v
+      Err(TimedOut) => "timeout"
+      Err(Failed(e)) => "failed(${e})"
+    }
+  }).join(",")
+}
+
+fn main(os: Os) {
+  let rs = task.map_concurrent_until(os.clock, 300ms, [1, 2, 3, 100000, 4], 2, fn(id) { fetch(os.clock, id) })
+  os.stdio.println(show(rs))
+  let all = task.map_concurrent_until(os.clock, 5s, ["a", "bb", "ccc"], 8, fn(s) { s.len() })
+  os.stdio.println("${all.map(fn(r) { r.ok() ?? -1 }).debug()}")
+  let none = task.map_concurrent_until(os.clock, 1s, [], 1, fn(x: Int) { x })
+  os.stdio.println("empty ${none.len()}")
+}

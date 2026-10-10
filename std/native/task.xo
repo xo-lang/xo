@@ -5,6 +5,7 @@
 // (build_conc.go). Semantics and fault texts are std/rt's (sync.go,
 // once.go), with one difference: a fault in a Once's function is not
 // stored, so the next caller runs the function again.
+use std/task
 use native/rt
 
 /// A channel holding the free permits: `with` takes one (a cancellation
@@ -80,4 +81,44 @@ fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> 
     }
     out
   }
+}
+
+/// map_concurrent under a deadline: map_concurrent of f, each result
+/// stored by index as it finishes, inside with_timeout; an item without
+/// a result when the deadline cancels the rest is Err(TimedOut) (std/rt's
+/// Task_map_concurrent_until). The scope with_timeout opens joins every
+/// task before it returns, so the results are complete then.
+fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: List[T], limit: Int, f: fn(T) -> R ! E uses fx, at: rt.Loc) -> List[Result[R, task.Timed[E]]] uses (clock, fx) {
+  if limit <= 0 {
+    rt.fault_at("map_concurrent_until needs a positive limit, got ${limit}", at)
+  }
+  var empty: List[Result[R, E]?] = []
+  for _ in items {
+    empty.push(None)
+  }
+  let done = Mutex[List[Result[R, E]?]].new(empty)
+  let indexed = items.indexed()
+  match task.with_timeout(clock, d, fn() {
+    let _all = map_concurrent(indexed, limit, fn(p: (Int, T)) {
+      if task.is_canceled() {
+        // started after the deadline (a permit freed by a canceled
+        // item): it does not run, as std/rt's mapConcurrent
+        return
+      }
+      let r = f(p.1)
+      done.with(fn(var rs) { rs.set(p.0, Some(r)) })
+    }, at)
+  }) {
+    _ => {}
+  }
+  let rs = done.with(fn(rs) { rs })
+  var out: List[Result[R, task.Timed[E]]] = []
+  for r in rs {
+    match r {
+      None => out.push(Err(task.Timed.TimedOut))
+      Some(Ok(v)) => out.push(Ok(v))
+      Some(Err(e)) => out.push(Err(task.Timed.Failed(e)))
+    }
+  }
+  out
 }

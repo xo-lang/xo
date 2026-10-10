@@ -45,3 +45,13 @@ fn test_fake_used(i: Int)
 fn test_record(req: rt.Any)
 fn test_req_count() -> Int
 fn test_req_get(i: Int) -> rt.Any
+
+/// MemFs (decision 0108): the file system's state, an Any of
+/// testing.MemState, in a list of one (empty before the first write).
+/// The store stays locked until test_memfs_put gives the state back.
+fn test_memfs_take() -> List[rt.Any]
+fn test_memfs_put(st: rt.Any)
+/// The test world's virtual now.
+fn test_now() -> Time
+/// Go's path.Match(pattern, name); a bad pattern matches nothing.
+fn test_glob(pattern: Str, name: Str) -> Bool

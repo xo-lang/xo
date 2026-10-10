@@ -96,12 +96,32 @@ func (b *builder) buildTests(res *check.Result) {
 		tests = append(tests, entry{i, name})
 	}
 	intT, st := m.Builtin(KInt), m.Builtin(KStr)
+	tasks := b.usesOsTasks()
+	if tasks {
+		b.needConc = true
+	}
+	decls := TestDecls(res)
 	b.genFunc("main", nil, []*Type{m.Builtin(KUnit)}, func(s *fn, ps []*Value) {
 		idx := s.rt("test_index", intT)
 		for _, t := range tests {
 			t := t
 			s.ifThen(s.add(OpEq, m.Builtin(KBool), nil, idx, s.cint(int64(t.i))), func() {
-				r := s.call(t.name, rt, "", s.zero(osT, map[*Type]bool{}))
+				var r *Value
+				if tasks && b.conc {
+					// the test runs in the scope of its os.tasks
+					// (build_tasks.go): its tasks are canceled when
+					// it ends, as std/rt's runInWorld
+					td := decls[t.i]
+					s.rootScope(b.failingSpawns(s, td.Body), td, 1, func() {
+						r = s.call(t.name, rt, "", s.zero(osT, map[*Type]bool{}))
+						s.check(t.name)
+					}, func(msg *Value) { s.testFail(msg) })
+					if s.isDead() {
+						return
+					}
+				} else {
+					r = s.call(t.name, rt, "", s.zero(osT, map[*Type]bool{}))
+				}
 				if ei := rt.VariantIndex("Err"); ei >= 0 {
 					s.ifThen(s.add(OpEq, m.Builtin(KBool), nil, s.add(OpTag, intT, nil, r), s.cint(int64(ei))), func() {
 						e := s.add(OpPayload, rt.Variants[ei].Fields[0].Type, PayloadRef{ei, 0}, r)
@@ -257,6 +277,18 @@ func (s *fn) testCapCall(x *ast.CallExpr, ci *check.Call, key string) (*Value, b
 		return s.unit(), true
 	case "Proc.exit_code":
 		return s.popOne(s.rt("test_exit_code", m.List(intT)), nt), true
+	case "Proc.on_run":
+		// the outputs a later run of the command gives (std/llrt/xo_proc.c)
+		s.expr(ci.Recv)
+		cmd := arg(0, strT)
+		out := s.expr(es[1])
+		if out.Type.Kind != KStruct || len(out.Type.Fields) != 3 {
+			b.unsupported(x, "this `on_run`")
+			return s.undef(nt), true
+		}
+		f := func(i int) *Value { return s.add(OpField, out.Type.Fields[i].Type, i, out) }
+		s.rt("proc_on_run", nil, cmd, f(0), f(1), f(2))
+		return s.unit(), true
 	}
 	return nil, false
 }
@@ -293,7 +325,14 @@ func (s *fn) runMain(x *ast.CallExpr, ci *check.Call) *Value {
 	}
 	ft := b.typ(s.apply(fo.Params[0].Type), x)
 	osT, _ := m.Named("Os", KCap)
-	mainV := s.valueAs(es[0], ft)
+	var mainV *Value
+	if nt := s.natOf(es[0]); nt.Kind == KFunc && len(nt.Elems) == 1 && ft.Kind == KFunc && nt.Ret != ft.Ret {
+		// a main that cannot fail (`fn(Os)`): called as it is, status 0
+		ft = nt
+		mainV = s.expr(es[0])
+	} else {
+		mainV = s.valueAs(es[0], ft)
+	}
 	osV := s.valueAs(es[1], osT)
 	var args *Value
 	if len(es) > 2 && es[2] != nil {

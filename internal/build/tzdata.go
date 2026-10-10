@@ -273,7 +273,8 @@ func timeFlags(dir string, res *check.Result, tz ssa.TZUse, opts Options) ([]str
 
 // IOFlags returns the C compiler flags that compile the runtime's Fs
 // operations (std/llrt/xo_fs.c, XO_FS) and standard input reads
-// (xo_stdin.c, XO_STDIN) into a native program whose code calls them
+// (xo_stdin.c, XO_STDIN), and Proc.run (xo_proc.c, XO_PROC) into a
+// native program whose code calls them
 // (decision 0102), so programs without them do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
@@ -288,6 +289,10 @@ func IOFlags(code []byte) []string {
 			out = append(out, "-DXO_STDIN")
 			break
 		}
+	}
+	if bytes.Contains(code, []byte("xo_proc_")) {
+		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
+		out = append(out, "-DXO_PROC")
 	}
 	return out
 }
