@@ -58,10 +58,10 @@ fn query_escape(s: Str) -> Str
 /// strconv.Quote.
 fn go_quote(s: Str) -> Str
 
-/// Client: a request to url (absolute, http) with a header of names and
-/// values, a body, and a timeout in ns, following redirects as
-/// net/http's Client does.
-fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int) -> CResp
+/// Client: a request to url (absolute, http or https) with a header of
+/// names and values, a body, a timeout in ns, and the roots https
+/// verifies against, following redirects as net/http's Client does.
+fn cl_do(method: Str, url: Str, names: List[Str], values: List[Str], body: Bytes, timeout: Int, roots: Roots) -> CResp
 /// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
 /// 3 Timeout, 4 Protocol, 5 Canceled).
 fn cr_err(r: CResp) -> Int
@@ -95,3 +95,18 @@ fn log_json() -> Bool
 fn log_configure(level: Int, json: Bool)
 /// The time now as RFC 3339 (nano: with nanoseconds) in UTC.
 fn log_now(nano: Bool) -> Str
+
+/// TLS (decision 0105, std/llrt/xo_tls.c): a certificate chain with its
+/// private key (xo_tcert) and the roots a client trusts (xo_troots).
+struct TCert {}
+struct Roots {}
+/// tls.X509KeyPair; tls_cert_err is its error, "" when it succeeded.
+fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TCert
+fn tls_cert_err(c: TCert) -> Str
+/// The certificates of pem; tls_roots_err is "" when there is one.
+fn tls_roots(pem: Bytes) -> Roots
+fn tls_roots_err(r: Roots) -> Str
+/// The system's roots (loaded at the first https request).
+fn tls_roots_system() -> Roots
+/// Adds a certificate to the server; the first turns TLS on.
+fn srv_tls(s: Srv, c: TCert)

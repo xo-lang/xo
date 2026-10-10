@@ -1,9 +1,0 @@
-use std/http
-
-fn main(os: Os) uses (net.dial, stdio) {
-  let c = http.client(os.net)
-  match c.get("https://example.com/") {
-    Ok(r) => os.stdio.println("${r.status}")
-    Err(e) => os.stdio.println("${e}")
-  }
-}

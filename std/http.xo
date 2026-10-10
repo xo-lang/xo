@@ -72,6 +72,18 @@ struct Server {}
 fn server(l: Listener, r: Router) -> Server
 fn (s: Server) serve() -> () ! HttpErr uses net.listen
 fn (s: Server) addr() -> Str
+/// The server with HTTPS (std.md 4.6): certs[0] unless SNI names another
+/// certificate's host.
+fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
+
+/// A certificate chain with its private key (std.md 4.6); a handle.
+struct TlsCert {}
+/// Parses a PEM certificate chain and its PEM private key (std.md 4.6).
+fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
+
+struct TlsErr {
+  msg: Str
+} derive Display
 
 enum HttpErr {
   Io(msg: Str)
@@ -83,6 +95,9 @@ fn client(net: Net, timeout: Duration = 30s) -> Client
 fn (c: Client) get(url: Str) -> Response ! ClientErr uses net.dial
 fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
+/// The client trusting the certificates of pem instead of the system's
+/// roots for https (std.md 4.6).
+fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
 
 enum ClientErr {
   InvalidUrl(msg: Str)

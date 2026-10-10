@@ -66,7 +66,6 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		if v, ok := s.mapValuesHof(x, ci); ok {
 			return v
 		}
-		s.tlsCheck(x, ci)
 		if v, ok := s.testCall(x, ci); ok {
 			return v
 		}
@@ -450,40 +449,6 @@ func (s *fn) typeCall(obj *check.TypeObj, x *ast.CallExpr) *Value {
 
 // argExprs matches call arguments to parameters (positional, then
 // named); missing ones are nil.
-// tlsCheck records an `https` URL written as a literal (or an
-// interpolated string starting with one) in a call of the std/http
-// client: the native backends have no TLS yet (decision 0083), so such a
-// request could only fail with `Protocol`. A URL computed at run time
-// still fails there (std.md 4.5).
-func (s *fn) tlsCheck(x *ast.CallExpr, ci *check.Call) {
-	fo := ci.Fn
-	if fo.Module == nil || fo.Module.Path != "std/http" || s.b.opts.Tests {
-		// a test's requests go to its fake network, in process
-		return
-	}
-	idx := -1
-	switch {
-	case fo.Recv != nil && fo.Recv.Name == "Client" && (fo.Name == "get" || fo.Name == "post_json"):
-		idx = 0
-	case fo.Recv == nil && fo.Name == "new_request":
-		idx = 1
-	}
-	if idx < 0 {
-		return
-	}
-	es := argExprs(fo.Params, x)
-	if idx >= len(es) {
-		return
-	}
-	lit, ok := es[idx].(*ast.StringLit)
-	if !ok || len(lit.Parts) == 0 || lit.Parts[0].Expr != nil {
-		return
-	}
-	if strings.HasPrefix(strings.ToLower(lit.Parts[0].Text), "https://") {
-		s.b.unsupported(lit, "TLS (an `https` URL; HTTP/2 needs it too)")
-	}
-}
-
 func argExprs(params []*check.ParamInfo, x *ast.CallExpr) []ast.Expr {
 	out := make([]ast.Expr, len(params))
 	pos := 0

@@ -11,11 +11,15 @@ package rt
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +32,9 @@ import (
 func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.l.l == nil {
 		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: "no listener"}})
+	}
+	if s.tlsOn && len(s.tls) == 0 {
+		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: errNoTLSCert}})
 	}
 	// request scoped arenas (arena.go): not with middleware, which sees
 	// the request and the response
@@ -180,8 +187,22 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			}
 		}})
 	}
+	// HTTP/1.1 only, also over TLS (decision 0106: the native backends
+	// have no HTTP/2 yet); TLS handshake failures are not logged
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	srv.ErrorLog = log.New(handshakeLogFilter{}, "", log.LstdFlags)
 	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(s.l.l) }()
+	if s.tlsOn {
+		cfg := &tls.Config{}
+		for _, c := range s.tls {
+			cfg.Certificates = append(cfg.Certificates, *c.c.(*tls.Certificate))
+		}
+		srv.TLSConfig = cfg
+		go func() { errc <- srv.ServeTLS(s.l.l, "", "") }()
+	} else {
+		go func() { errc <- srv.Serve(s.l.l) }()
+	}
 	tk.leave()
 	defer tk.enter()
 	select {
@@ -257,7 +278,11 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	for k, v := range Map_All(req.F_headers) {
 		hr.Header.Set(k, v)
 	}
-	hc := &http.Client{Timeout: time.Duration(c.timeout)}
+	tr := sharedTransport
+	if c.tr != nil {
+		tr = c.tr.(*http.Transport)
+	}
+	hc := &http.Client{Timeout: time.Duration(c.timeout), Transport: tr}
 	tk.leave()
 	resp, err := hc.Do(hr)
 	tk.enter()
@@ -288,4 +313,51 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		Map_put(tk, &h, k, strings.Join(vs, ", "))
 	}
 	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body)})
+}
+
+// handshakeLogFilter is the ErrorLog of serve: net/http's log lines on
+// standard error, less "http: TLS handshake error" (a client's failed
+// handshake; the native server does not log it either, decision 0106).
+type handshakeLogFilter struct{}
+
+func (handshakeLogFilter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("http: TLS handshake error from ")) {
+		return len(p), nil
+	}
+	return os.Stderr.Write(p)
+}
+
+// sharedTransport is the transport of clients without with_roots:
+// http.DefaultTransport's settings (proxies from the environment, the
+// 10 s TLS handshake timeout, pooled connections) with HTTP/1.1 only, as
+// the native client speaks (decision 0106).
+var sharedTransport = newTransport(nil)
+
+func newTransport(roots *x509.CertPool) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Protocols = new(http.Protocols)
+	t.Protocols.SetHTTP1(true)
+	if roots != nil {
+		t.TLSClientConfig = &tls.Config{RootCAs: roots}
+	}
+	return t
+}
+
+// tlsKeyPair is http.tls_cert: a *tls.Certificate.
+func tlsKeyPair(certPEM, keyPEM []byte) (any, error) {
+	c, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// rootsTransport is Client.with_roots: a transport trusting the
+// certificates of pem only.
+func rootsTransport(pem []byte) (any, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("tls: no certificates found in PEM input")
+	}
+	return newTransport(pool), nil
 }

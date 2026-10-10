@@ -38,6 +38,22 @@
 // Go has no limit; XO_HTTP_MAX_BODY overrides (bytes).
 #define HTTP_MAX_BODY ((int64_t)64 << 20)
 
+// The results of socket operations of the client (and of TLS ones)
+enum { CC_OK, CC_EOF, CC_TIMEOUT, CC_CANCELED, CC_ERR };
+
+// TLS (xo_tls.c, included at the end of this file; decision 0105)
+typedef struct tls_conn tls_conn;
+typedef struct tls_srv tls_srv;
+typedef struct xo_troots xo_troots;
+static int64_t tls_read(tls_conn *t, char *p, int64_t n);
+static int tls_write(tls_conn *t, const char *p, int64_t n);
+static void tls_conn_free(tls_conn *t);
+static void tls_close_notify(tls_conn *t);
+static void tls_srv_free(tls_srv *s);
+static tls_conn *tls_server_conn(tls_srv *s, xo_pd *pd);
+static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n);
+static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn);
+
 // ---------------------------------------------------------------------------
 // Strings and tables
 
@@ -1860,6 +1876,7 @@ typedef struct xo_srv {
 	xo_wl idle; // waiting for nconns == 0
 	xo_scope *scope;
 	int closed;
+	tls_srv *tls; // Server.with_tls (xo_tls.c), NULL: plain HTTP
 } xo_srv;
 
 typedef struct xo_hconn {
@@ -1886,6 +1903,7 @@ typedef struct xo_hconn {
 	// tests (http_diff.c): no socket, no server; the input is in buf
 	// and the output goes to sink
 	nbuf *sink;
+	tls_conn *tls; // a connection of a TLS server (xo_tls.c)
 } xo_hconn;
 
 static void srv_unregister(xo_hconn *hc) {
@@ -1921,6 +1939,7 @@ static void hconn_free(void *p) {
 	free(hc->body.p);
 	free(hc->out.p);
 	hl_free(&hc->resp);
+	tls_conn_free(hc->tls);
 	xo_free(hc);
 }
 
@@ -1931,6 +1950,7 @@ static void srv_free(void *p) {
 		// server, so none is left
 		h_release(s->scope);
 	}
+	tls_srv_free(s->tls);
 	pthread_mutex_destroy(&s->mu);
 	xo_free(s);
 }
@@ -2061,6 +2081,9 @@ xo_hconn *xo_hc_new(xo_srv *s, xo_conn *cn) {
 	s->conns = hc;
 	s->nconns++;
 	hc->registered = 1;
+	if (s->tls) {
+		hc->tls = tls_server_conn(s->tls, cn->pd);
+	}
 	if (s->stopping) {
 		pd_close(cn->pd);
 	}
@@ -2093,6 +2116,17 @@ static int64_t hc_fill(xo_hconn *hc) {
 			}
 		}
 	}
+	if (hc->tls) {
+		// the handshake first, then decrypted bytes (xo_tls.c)
+		if (ctx_canceled(c)) {
+			return -1;
+		}
+		int64_t r = tls_hc_read(hc->tls, hc->buf + hc->n, hc->cap - hc->n);
+		if (r > 0) {
+			hc->n += r;
+		}
+		return r;
+	}
 	if (ctx_canceled(c) || !pd_begin(pd)) {
 		return -1;
 	}
@@ -2121,6 +2155,9 @@ static int hc_send(xo_hconn *hc, const char *p, int64_t n) {
 	if (hc->sink) {
 		nbuf_put(hc->sink, p, n);
 		return 1;
+	}
+	if (hc->tls) {
+		return tls_write(hc->tls, p, n) == CC_OK;
 	}
 	xo_ctx *c = ctx();
 	xo_pd *pd = hc->conn->pd;
@@ -2695,6 +2732,7 @@ __attribute__((unused)) static void xo_streams_free(void) {
 
 // xo_hc_close closes the connection and ends its registration.
 void xo_hc_close(xo_hconn *hc) {
+	tls_close_notify(hc->tls);
 	pd_close(hc->conn->pd);
 	srv_unregister(hc);
 }
@@ -3022,9 +3060,8 @@ typedef struct {
 	char *buf;
 	int64_t n, cap, off;
 	int eof;
+	tls_conn *tls; // an https connection (xo_tls.c)
 } ccon;
-
-enum { CC_OK, CC_EOF, CC_TIMEOUT, CC_CANCELED, CC_ERR };
 
 static int cc_fill(ccon *c) {
 	if (c->fd < 0) {
@@ -3046,6 +3083,21 @@ static int cc_fill(ccon *c) {
 				xo_oom();
 			}
 		}
+	}
+	if (c->tls) {
+		if (ctx_canceled(x)) {
+			return CC_CANCELED;
+		}
+		int64_t r = tls_read(c->tls, c->buf + c->n, c->cap - c->n);
+		if (r > 0) {
+			c->n += r;
+			return CC_OK;
+		}
+		if (r == 0) {
+			c->eof = 1;
+			return CC_EOF;
+		}
+		return (int)-r;
 	}
 	for (;;) {
 		if (ctx_canceled(x)) {
@@ -3075,6 +3127,9 @@ static int cc_fill(ccon *c) {
 }
 
 static int cc_send(ccon *c, const char *p, int64_t n) {
+	if (c->tls) {
+		return tls_write(c->tls, p, n);
+	}
 	xo_ctx *x = ctx();
 	int64_t off = 0;
 	while (off < n) {
@@ -3299,22 +3354,25 @@ static int cl_read_response(ccon *c, const char *method, xo_cresp *r, char *why,
 
 // cl_once makes one request on a new connection: CC_OK and the response
 // in r, or the failure (r's error set).
-static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when, const char *raw, xo_cresp *r) {
+static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when, const char *raw, xo_troots *roots, xo_cresp *r) {
 	xo_ctx *x = ctx();
 	char op[32];
 	url_op(op, method, (int64_t)strlen(method));
 	nbuf qraw = {0};
 	h_go_quote(&qraw, raw, (int64_t)strlen(raw));
 	nbuf_byte(&qraw, 0);
-	// the address: host:port, 80 by default
+	// the address: host:port, 80 (http) or 443 (https) by default
+	int https = hs_eq(u->scheme, "https");
+	const char *dport = https ? "443" : "80";
 	hstr name, port;
 	h_split_hostport(u->host, &name, &port);
 	char addr[600];
 	if (strchr(name.p, ':')) {
-		snprintf(addr, sizeof addr, "[%s]:%s", name.p, port.n ? port.p : "80");
+		snprintf(addr, sizeof addr, "[%s]:%s", name.p, port.n ? port.p : dport);
 	} else {
-		snprintf(addr, sizeof addr, "%s:%s", name.p, port.n ? port.p : "80");
+		snprintf(addr, sizeof addr, "%s:%s", name.p, port.n ? port.p : dport);
 	}
+	char *tls_host = https ? cstr_of(name.p, name.n) : NULL;
 	hs_free(&name);
 	hs_free(&port);
 	int64_t d = when ? when - mono_ns() : 0;
@@ -3337,9 +3395,30 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 			cr_fail(r, 2, "%s", m);
 		}
 		free(qraw.p);
+		free(tls_host);
 		return CC_ERR;
 	}
 	ccon c = {.pd = cn->pd, .fd = cn->pd->fd, .when = when};
+	if (https) {
+		// the TLS handshake (xo_tls.c): its failures are Protocol errors
+		// with crypto/tls's texts, or Timeout and Canceled
+		char tmsg[1200] = "";
+		int ts = tls_client_start(cn->pd, tls_host, roots, when, &c.tls, tmsg, sizeof tmsg);
+		free(tls_host);
+		if (ts != CC_OK) {
+			pd_close(c.pd);
+			h_release(cn);
+			if (ts == CC_TIMEOUT) {
+				cr_fail(r, 3, "");
+			} else if (ts == CC_CANCELED) {
+				cr_fail(r, 5, "");
+			} else {
+				cr_fail(r, 4, "%s %s: %s", op, qraw.p, tmsg);
+			}
+			free(qraw.p);
+			return ts;
+		}
+	}
 	// the request (net/http Request.write with Transport's additions)
 	nbuf o = {0};
 	nbuf_str(&o, method);
@@ -3385,6 +3464,7 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	if (s == CC_OK) {
 		s = cl_read_response(&c, method, r, why, sizeof why);
 	}
+	tls_conn_free(c.tls);
 	pd_close(c.pd);
 	h_release(cn);
 	free(c.buf);
@@ -3420,7 +3500,7 @@ static int valid_method(const char *m, int64_t n) {
 // text of the request's Url), with the header of names and values, the
 // body, and the client's timeout (ns, 0: none).
 xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rlist *names, xo_rlist *values, const char *b,
-                   int64_t bn, int64_t timeout) {
+                   int64_t bn, int64_t timeout, xo_troots *roots) {
 	xo_cresp *r = xo_alloc(sizeof(xo_cresp));
 	memset(r, 0, sizeof *r);
 	h_init(r, cresp_free);
@@ -3488,16 +3568,12 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 		nbuf q = {0};
 		h_go_quote(&q, raw, (int64_t)strlen(raw));
 		nbuf_byte(&q, 0);
-		if (!hs_eq(u.scheme, "http")) {
-			if (hs_eq(u.scheme, "https")) {
-				cr_fail(r, 4, "%s %s: https is not supported by the native backends", op, q.p);
-			} else {
-				nbuf s = {0};
-				h_go_quote(&s, u.scheme.p, u.scheme.n);
-				nbuf_byte(&s, 0);
-				cr_fail(r, 4, "%s %s: unsupported protocol scheme %s", op, q.p, s.p);
-				free(s.p);
-			}
+		if (!hs_eq(u.scheme, "http") && !hs_eq(u.scheme, "https")) {
+			nbuf s = {0};
+			h_go_quote(&s, u.scheme.p, u.scheme.n);
+			nbuf_byte(&s, 0);
+			cr_fail(r, 4, "%s %s: unsupported protocol scheme %s", op, q.p, s.p);
+			free(s.p);
 			free(q.p);
 			hu_free(&u);
 			break;
@@ -3527,11 +3603,16 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 			}
 			hl_add(&hdr, hs_dup(k.p, k.n), hs_dup(ihdr.a[i].v.p, ihdr.a[i].v.n));
 		}
+		// refererForURL: no Referer from an https URL to an http one
+		if (redirects > 0 && referer && strncmp(referer, "https://", 8) == 0 && hs_eq(u.scheme, "http")) {
+			free(referer);
+			referer = NULL;
+		}
 		if (redirects > 0 && referer && hl_find(&hdr, "Referer") < 0) {
 			hl_add(&hdr, hs_dup("Referer", 7), hs_dup(referer, (int64_t)strlen(referer)));
 		}
 		hstr host = hs_dup(u.host.p, u.host.n);
-		int s = cl_once(method, &u, host, &hdr, body, blen, when, raw, r);
+		int s = cl_once(method, &u, host, &hdr, body, blen, when, raw, roots, r);
 		hs_free(&host);
 		hl_free(&hdr);
 		if (s != CC_OK) {
@@ -3579,10 +3660,12 @@ xo_cresp *xo_cl_do(const char *m, int64_t mn, const char *up, int64_t un, xo_rli
 		if (memchr(loc.p, ':', (size_t)loc.n) && !(loc.n > 0 && loc.p[0] == '/')) {
 			nbuf_put(&next, loc.p, loc.n);
 		} else if (loc.n >= 2 && loc.p[0] == '/' && loc.p[1] == '/') {
-			nbuf_str(&next, "http:");
+			nbuf_put(&next, u.scheme.p, u.scheme.n);
+			nbuf_byte(&next, ':');
 			nbuf_put(&next, loc.p, loc.n);
 		} else {
-			nbuf_str(&next, "http://");
+			nbuf_put(&next, u.scheme.p, u.scheme.n);
+			nbuf_str(&next, "://");
 			nbuf_put(&next, u.host.p, u.host.n);
 			if (loc.n > 0 && loc.p[0] == '/') {
 				nbuf_put(&next, loc.p, loc.n);
@@ -3645,3 +3728,6 @@ xo_rstr *xo_cr_hname(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->
 xo_rstr *xo_cr_hval(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->hdr.a[i].v, len); }
 
 xo_rstr *xo_cr_body(xo_cresp *r, int64_t *len) { return nstr(r->body.p ? r->body.p : "", r->body.n, len); }
+
+// TLS (decision 0105)
+#include "xo_tls.c"
