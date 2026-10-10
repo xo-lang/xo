@@ -46,8 +46,17 @@ passes the full suite on the backends it targets.
   and types, three backends, plus name and type mutations; found a
   native backend bug (decision 0142) and a parser trap (decision 0143),
   fixed. The Xo checker (LLVM build) takes 1.2 times the Go checker's
-  full check. Next: stage 3, generics
-  (bench/results/selfhost-checker-2026-10-10.md).
+  full check.
+- 2026-10-10: checker stages 3 (generics) and 4 (effects and real-time)
+  of 8 (decision 0141): the sigs section (type parameters, constraints,
+  implicit parameters, declared and inferred effects) identical on all
+  349 accepted repository runs, XO0402, comparability (XO0404), XO0701,
+  and XO1401 to XO1405 the same on the 91 runs rejected only for stages
+  1 to 4, three backends, plus generics and effects mutations; no
+  compiler bug found. Effect ceilings of dependencies (XO1309) are not
+  ported yet. The LLVM build takes 1.28 times the Go checker on the
+  selfhost input and 0.97 times over all repository runs. Next: stage 5,
+  value semantics (bench/results/selfhost-checker-2026-10-10.md).
 
 ## Alternatives
 

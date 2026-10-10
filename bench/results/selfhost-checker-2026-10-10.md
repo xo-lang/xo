@@ -299,3 +299,148 @@ Stage 3 (generics): the sigs section (type parameters, implicit receiver
 parameters, constraints), XO0402 for type arguments nothing determined,
 and generic declarations' bodies compared through the types of their
 expressions, which already print with type parameters.
+
+# Stages 3 (generics) and 4 (effects and real-time), 2026-10-10
+
+Decision 0141, stages 3 and 4. The Xo checker (`selfhost/check`, 9,749
+lines of Xo with its CLI, dump, and 165 lines of tests; 8,694 at stage
+2) now prints the sigs section of `xo typedump` and reports the
+generics, effects, and real-time diagnostics.
+
+## What stages 3 and 4 cover
+
+Stage 3 (generics; dump.xo, comparable.xo, call.xo):
+
+- The sigs section: every function, method, static, and interface
+  method of a module, sorted by position, with its type parameters
+  (implicit receiver parameters and elided effect parameters marked
+  `implicit`, constraints, `: Effects`), receiver, parameters, result,
+  error type, and declared or inferred effects (dump.go sigText).
+- XO0402 for the type parameters of a call that nothing determined
+  (check.go typeArgVars, reported after the bodies, once per callee
+  span, after the closures whose body never completes get `Never`).
+- XO0404 on comparability (decision 0112): `derive Eq` or `Hash` on a
+  type that holds a handle or a function value (before the bodies), and
+  Map keys and Set elements that are not comparable, at the type
+  expression that writes them (decl.go resolveType) and at the first
+  expression of a file whose type holds them (comparable.go
+  checkKeyTypes), once per file and type. Constraint checks at calls
+  were already part of stage 2.
+- Generic bodies were already compared through the types section (their
+  expressions print with type parameters); stage 3 adds nothing there.
+
+Stage 4 (effects and real-time; effects.xo, realtime.xo):
+
+- Effect items that stand for the inferred effects of a function that
+  is not pub (a call, or the function used as a value), each with the
+  substitution of its effect parameters at the call, so the effect
+  arguments of the call (`fx` bound to a closure's effects) reach the
+  caller.
+- Inference of non pub effects: a fixpoint over the bodies of every
+  function without `uses` that is not pub (effects.go solveEffects),
+  printed in the sigs section.
+- XO0701 obligations: function declarations with `uses` (or pub without
+  it), closures with `uses`, function values passed where a function type
+  is expected (subsumption), methods implementing an interface method,
+  and contract clauses and struct invariants (pure). Assignability and
+  interface satisfaction now take the span that records an obligation,
+  as in Go (`assignable(src, dst, sp)`).
+- Real-time functions (core 6.5, decision 0133): XO1401 to XO1405 by a
+  walk of each `uses realtime` function after the bodies are checked,
+  on the recorded expression types and calls (a call of a function value
+  is recorded for XO1403), cycles among real-time functions (XO1404),
+  effects a real-time function declares (XO1405), and loop bounds
+  (`bound N`: constant, not negative, not below a constant range's
+  length; XO1402).
+
+Not ported: effect ceilings of dependencies (XO1309). No repository run
+requires a dependency, so typedump has nothing to compare, and the Xo
+checker does not load modules from the module cache. Next step: load
+`require` lines and module cache directories in load.xo (as
+internal/check/deps.go does), then port ceiling.go and compare on a
+testdata workspace with a ceiling (internal/mod/testdata has repos to
+start from). Notes (the call chain of XO0701, elided effect notes) are
+stage 7.
+
+## Agreement
+
+`TestSelfhostChecker` (go, arm64, and LLVM builds) compares the names,
+types, and sigs sections (effects included) and the diagnostics of
+stages 1 to 4:
+
+| Go checker result | runs | Xo checker matches |
+|---|---|---|
+| accepted: identical names, types, and sigs sections, no Xo diagnostic | 349 | 349 |
+| rejected only with stage 1 to 4 diagnostics: the same diagnostics | 91 | 91 |
+| rejected for other reasons (parse habits XO0177, unused bindings, value semantics, exhaustiveness, xo.mod, time layouts) | 143 | not compared; 14 still get exactly the staged part of Go's diagnostics |
+| `use go` / `use c` | 16 | not compared |
+
+Stage 3 alone (sigs without effects, stage 1 to 3 diagnostics) matched
+349 accepted and 85 rejected runs on the three backends. With stage 4,
+six more runs are compared (the realtime and effects goldens of
+internal/check, `codex-elided-effect` of internal/fix). The 91 matching
+rejections hold 17 XO0402, 7 XO0404, 2 XO0701, 13 XO1401, 8 XO1402, 5
+XO1403, 2 XO1404, and 7 XO1405 next to the names and types diagnostics.
+Every accepted run's sigs section matches, inferred effects included.
+
+`TestSelfhostCheckerMutations` now draws a quarter each of name, type,
+generics (a type argument removed, a constraint dropped), and effects (a
+`uses` clause removed, or one added: an effect, or `realtime`, which
+turns on the rules of core 6.5 for any function) mutations. 1,000
+mutations (the default seed): 228 accepted and 728 rejected only with
+staged diagnostics, all identical (before `realtime` was among the
+additions). Seeds 7 and 11 with 3,000 each (with `realtime`): 1,151
+accepted and 4,476 staged rejections, all identical; they held 803
+XO0701, 2,611 XO1401, 181 XO1402, 2,424 XO1403, 18 XO1404, 1,774
+XO1405, 201 XO0402, and 54 XO0404. Seed 13 with 3,000 on the LLVM and
+arm64 builds (`XO_SELFHOST_BACKEND`): 601 accepted and 2,210 staged
+rejections, identical on both.
+
+Nothing new disagreed: the port matched on the first full run of each
+stage; the work was in reading internal/check closely (two places check
+Map keys; obligations are recorded inside assignability and interface
+satisfaction, and survive a later failure of the same check; the
+function items of a closure's set get the substitution of the call that
+passes it).
+
+## Speed
+
+Apple M4 Pro, 20 repetitions (all directories: once), ms per run, best
+of two. The Go figure is the full Go checker (flow, exhaustiveness,
+habits included).
+
+| input | Go checker (all phases) | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 15,930 lines, 3 modules) | 82.9 | 165.1 | 142.5 | 106.0 | 1.28 |
+| selfhost/parser (with the lexer) | 28.7 | 62.2 | 53.3 | 39.6 | 1.38 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 8.5 | 27.5 | 14.2 | 10.2 | 1.20 |
+| 599 directories, each alone, once | 2,097 total | 3,646 | 2,721 | 2,029 | 0.97 |
+
+At stage 2 the LLVM build took 34.3 ms on selfhost/parser and 9.1 on the
+notes service; stages 3 and 4 add about 5 and 1 ms. The new passes run
+over every recorded expression type (Map and Set keys) and every body's
+effects (the fixpoint), as Go's do. Next experiment: time
+check_key_types and solve_effects alone in `--bench` mode (os.clock
+around each pass, printed with the total) on the selfhost input, and
+replace the `List.contains` sets of `Flat` with `Map[Str, Bool]` if the
+fixpoint dominates.
+
+## Language and compiler gaps
+
+None found in these stages. The arm64 28 KiB frame limit (stage 2) did
+not recur: the new functions are small, and `rt_expr`, the largest
+`match`, compiles on arm64.
+
+## Next stage
+
+Stage 5 (value semantics, diags): mutation of immutable bindings and
+`var` receivers (XO0501, XO0502 beyond assignment targets), aliasing of
+`var` arguments (XO0503), moves (XO0510), and lost updates (XO0520),
+ported from flow.go; with unused bindings (XO0110 and XO0201 on
+bindings, in 15 of the 143 runs not compared). The parse habits
+(XO0177, stage 8) are the only other errors of 99 of them (the bench
+corpora of other languages' habits), so porting the parser's habit
+diagnostics ahead of stage 8 would open the most runs to comparison:
+next experiment, list the XO0177 messages of those 99 runs (`xo
+typedump --section=diags`) and check which the Xo parser already
+reports.

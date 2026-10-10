@@ -1,8 +1,10 @@
 # 0141: The self hosted checker, compared through `xo typedump` in stages
 
-Status: Accepted (2026-10-10). Stage 1 (names) and stage 2 (types and
-inference) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
-infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo),
+Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
+inference), stage 3 (generics), and stage 4 (effects and real-time, but
+dependency ceilings) implemented in `selfhost/check/` (Xo: decl.xo,
+types.xo, infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo,
+habits.xo, comparable.xo, realtime.xo, the sigs section in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -131,6 +133,30 @@ and the parse habits (XO0177). `TestSelfhostCheckerMutations` adds type
 mutations (a literal of another type, a `?` removed, a field or method
 name replaced) to the name mutations.
 
+**Comparison rules of stage 3** (2026-10-10; `TestSelfhostChecker`, the
+same runs and backends; they replace stage 2's): a run the Go checker
+accepts must give identical names, types, and sigs sections, the sigs
+compared without their effects (`compareSigEffects` false: the last `
+uses ...` of each sigs line is dropped on both sides), and no Xo
+diagnostic; a run whose errors are all diagnostics of stages 1 to 3
+must give exactly those diagnostics. Stage 3 adds XO0402 and every
+XO0404 (comparability of keys, set elements, and `derive Eq` or `Hash`
+included) to the stage 2 list. The mutations add generics edits (a type
+argument removed from a written list, a constraint dropped from a type
+parameter).
+
+**Comparison rules of stage 4** (2026-10-10; they replace stage 3's):
+the sigs section is compared with its effects (`compareSigEffects`
+true), declared and inferred, and the staged diagnostics add XO0701 and
+XO1401 to XO1405. XO1309 (effect ceilings of dependencies) is not
+staged: no repository run requires a dependency, and the Xo checker
+does not load the module cache. The mutations add effects edits (a
+`uses` clause removed, or one added to a function declaration: an
+effect label, or `realtime`, which applies core 6.5 to arbitrary code),
+and `XO_SELFHOST_BACKEND` runs them on a native build. The test also
+logs, without failing, how many runs rejected for other reasons still
+get exactly the staged part of Go's diagnostics.
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;
@@ -165,6 +191,14 @@ by its file, span, and kind (the Go checker uses node pointers).
 - A change to type checking in internal/check (a rule, a diagnostic of
   the stage 2 list, a name record) must be made in selfhost/check in the
   same change, or `go test -short ./...` fails.
+- Stages 3 and 4 (2026-10-10) found no compiler bug and matched on the
+  first full run: all 349 accepted repository runs have identical names,
+  types, and sigs sections (inferred effects included) on the three
+  backends, and the 91 runs rejected only with stage 1 to 4 diagnostics
+  get the same diagnostics. A change to signatures, generics,
+  comparability, effects, or the real-time rules in internal/check must
+  be made in selfhost/check in the same change. Effect ceilings
+  (XO1309) remain to port, with the loading of dependencies.
 
 ## Alternatives
 

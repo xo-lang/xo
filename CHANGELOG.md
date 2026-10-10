@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker checks generics, effects, and real-time
+  functions (`selfhost/check`, stages 3 and 4 of decision 0141): it
+  prints the sigs section of `xo typedump` (type parameters, constraints,
+  implicit parameters, declared and inferred effects) and reports XO0402,
+  comparability (XO0404), XO0701, and XO1401 to XO1405 as internal/check
+  does, on every repository module (go, arm64, and LLVM backends). Effect
+  ceilings of dependencies (XO1309) are not ported yet.
 - The self hosted checker types every expression (`selfhost/check`,
   stage 2 of decision 0141): inference, literals, operators, expected
   types and implicit conversions, calls with named arguments, fields,
