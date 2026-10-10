@@ -370,6 +370,11 @@ func (c *checker) variantPattern(x *ast.VariantPat, t Type, refutable bool) *ipa
 	v, ok := c.resolveVariantPath(x, t)
 	if ok {
 		c.rec.patVariant[x] = v
+		// `if let x = opt` reads as `Some(x)` with a made up `Some` at
+		// x (ifExpr): nothing names the variant there
+		if id := x.Path[len(x.Path)-1]; !(x.Parens && id.Sp == x.Sp) {
+			c.rec.name(id, v)
+		}
 	}
 	typeFields := func(ft []Type) {
 		for _, f := range x.Fields {
@@ -445,6 +450,7 @@ func (c *checker) variantPattern(x *ast.VariantPat, t Type, refutable bool) *ipa
 				c.pattern(f.Pattern, badType, refutable)
 				continue
 			}
+			c.rec.vfield(f.Name, v, v.Fields[idx])
 			if used[idx] {
 				c.errorf(diag.PatternTypeMismatch, f.Name.Sp, "field `%s` appears twice", f.Name.Name)
 			}
@@ -533,6 +539,9 @@ func (c *checker) structPattern(x *ast.StructPat, t Type, refutable bool) *ipat 
 			continue
 		}
 		used[name] = true
+		if f.Name != nil {
+			c.rec.field(f.Name, obj, obj.Fields[idx])
+		}
 		if !obj.Fields[idx].Pub && obj.Module != c.mod {
 			c.errorf(diag.NotVisible, f.Sp, "field `%s` of `%s` is not `pub`", name, obj.Name)
 		}

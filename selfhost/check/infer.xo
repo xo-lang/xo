@@ -1,0 +1,650 @@
+// Inference and the type relations (internal/check/infer.go,
+// comparable.go): unification over the variables of the type table,
+// assignability with the implicit conversions of core 2.10, error
+// conversion, and interface satisfaction.
+
+/// Binds variable v to t, on the trail.
+fn (var c: Checker) bind(v: Int, t: Int) {
+  c.tys[v].ref = t
+  c.trail.push(v)
+}
+
+fn (c: Checker) mark() -> Int {
+  c.trail.len()
+}
+
+/// Undoes every binding since mark m.
+fn (var c: Checker) undo(m: Int) {
+  var i = c.trail.len() - 1
+  while i >= m {
+    let v = c.trail[i]
+    if v < 0 {
+      c.evars[-v - 1] = -1
+    } else {
+      c.tys[v].ref = -1
+    }
+    i -= 1
+  }
+  while c.trail.len() > m {
+    c.trail.pop()
+  }
+}
+
+/// Unifies a and b, undoing every binding if it fails.
+fn (var c: Checker) try_unify(a: Int, b: Int) -> Bool {
+  let m = c.mark()
+  if c.unify(a, b) {
+    return true
+  }
+  c.undo(m)
+  false
+}
+
+/// Makes a and b identical by binding inference variables.
+fn (var c: Checker) unify(a0: Int, b0: Int) -> Bool {
+  let a = c.resolve(a0)
+  let b = c.resolve(b0)
+  if a == b {
+    return true
+  }
+  let ka = c.tys[a].kind
+  let kb = c.tys[b].kind
+  if ka == TyKind.Bad || kb == TyKind.Bad {
+    return true
+  }
+  if ka == TyKind.Var {
+    return c.bind_var(a, b)
+  }
+  if kb == TyKind.Var {
+    return c.bind_var(b, a)
+  }
+  let x = c.tys[a]
+  let y = c.tys[b]
+  match ka {
+    Named => {
+      if kb != TyKind.Named || x.obj != y.obj || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if !c.unify(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      true
+    }
+    Tuple => {
+      if kb != TyKind.Tuple || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if !c.unify(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      true
+    }
+    Func => {
+      if kb != TyKind.Func || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if !c.unify(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      if !c.unify(x.result, y.result) {
+        return false
+      }
+      if x.err < 0 && y.err < 0 {
+        // both cannot fail
+      } else if x.err < 0 {
+        if !c.unify(y.err, c.named("Never")) {
+          return false
+        }
+      } else if y.err < 0 {
+        if !c.unify(x.err, c.named("Never")) {
+          return false
+        }
+      } else if !c.unify(x.err, y.err) {
+        return false
+      }
+      c.unify_eff(x.eff, y.eff)
+      true
+    }
+    Param => kb == TyKind.Param && x.obj == y.obj
+    EffArg => {
+      if kb == TyKind.EffArg {
+        c.unify_eff(x.eff, y.eff)
+        return true
+      }
+      false
+    }
+    Var | Bad => false
+  }
+}
+
+fn (var c: Checker) bind_var(v: Int, t: Int) -> Bool {
+  if c.tys[t].kind == TyKind.Var {
+    if t == v {
+      return true
+    }
+    c.bind(v, t)
+    return true
+  }
+  if c.occurs(v, t) {
+    return false
+  }
+  c.bind(v, t)
+  true
+}
+
+/// Whether a value of type src may be used where dst is expected:
+/// identical types after inference, Never, and the implicit conversions
+/// of core 2.10 (Some wrapping and interface conversion).
+fn (var c: Checker) assignable(src0: Int, dst0: Int) -> Bool {
+  let src = c.resolve(src0)
+  let dst = c.resolve(dst0)
+  if c.is_bad(src) || c.is_bad(dst) || c.is_never(src) {
+    return true
+  }
+  if c.tys[src].kind == TyKind.Func && c.tys[dst].kind == TyKind.Func {
+    return c.func_assignable(src, dst)
+  }
+  if c.try_unify(src, dst) {
+    return true
+  }
+  if c.tys[dst].kind == TyKind.Var {
+    return false
+  }
+  let elem = c.option_elem(dst)
+  if elem >= 0 && c.option_elem(src) < 0 {
+    if c.tys[src].kind != TyKind.Var && c.assignable(src, elem) {
+      return true
+    }
+  }
+  if c.is_interface(dst) {
+    if c.tys[src].kind == TyKind.Var {
+      return false
+    }
+    if c.implements(src, dst) {
+      return true
+    }
+  }
+  false
+}
+
+/// Subsumption of function values (core 6.2): the same parameters, an
+/// assignable result, and an error that converts (or none).
+fn (var c: Checker) func_assignable(sf: Int, df: Int) -> Bool {
+  let s = c.tys[sf]
+  let d = c.tys[df]
+  if s.args.len() != d.args.len() {
+    return false
+  }
+  let m = c.mark()
+  for i in 0..s.args.len() {
+    if !c.unify(s.args[i], d.args[i]) {
+      c.undo(m)
+      return false
+    }
+  }
+  if !c.unify(s.result, d.result) && !c.is_never(s.result) {
+    c.undo(m)
+    return false
+  }
+  if s.err < 0 {
+    if d.err >= 0 && c.is_open_var(d.err) {
+      c.unify(d.err, c.named("Never"))
+    }
+  } else if d.err < 0 {
+    if c.is_open_var(s.err) {
+      c.unify(s.err, c.named("Never"))
+    } else if !c.is_never(s.err) {
+      c.undo(m)
+      return false
+    }
+  } else if !c.unify(s.err, d.err) && !c.err_converts(s.err, d.err) {
+    c.undo(m)
+    return false
+  }
+  let v = c.open_evar(d.eff)
+  if v >= 0 {
+    if s.eff >= 0 {
+      c.bind_eff(v, s.eff)
+    } else {
+      c.bind_eff(v, c.new_eset([]))
+    }
+  }
+  true
+}
+
+/// The error conversion at a `?` site (core 2.6): the same type, any
+/// Display type to Error, or a `from` variant of the target enum.
+fn (var c: Checker) err_converts(from0: Int, to0: Int) -> Bool {
+  let from = c.resolve(from0)
+  let to = c.resolve(to0)
+  if c.is_bad(from) || c.is_bad(to) || c.is_never(from) {
+    return true
+  }
+  if c.identical(from, to) {
+    return true
+  }
+  if c.is_prelude(to, "Error") {
+    return c.implements_name(from, "Display")
+  }
+  c.from_variant(to, from) >= 0
+}
+
+/// The index of the `from` variant of enum `to` that wraps `from`, or -1.
+fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
+  let r = c.resolve(to)
+  if c.tys[r].kind != TyKind.Named {
+    return -1
+  }
+  let o = c.tys[r].obj
+  if c.objs[o].tkind != "enum" {
+    return -1
+  }
+  let s = c.args_subst(c.objs[o].tparams, c.tys[r].args)
+  for v in c.objs[o].variants {
+    if v.fields.len() == 1 && v.fields[0].from {
+      if c.identical(c.subst(v.fields[0].ty, s), from) {
+        return v.index
+      }
+    }
+  }
+  -1
+}
+
+fn (var c: Checker) implements_name(t: Int, iface: Str) -> Bool {
+  c.implements(t, c.named(iface))
+}
+
+fn (c: Checker) is_display_like(o: Int) -> Bool {
+  c.objs[o].module == c.prelude && (c.objs[o].name == b"Display" || c.objs[o].name == b"Error")
+}
+
+fn (c: Checker) derives(o: Int, name: Str) -> Bool {
+  c.objs[o].derives.contains(name)
+}
+
+/// Whether t satisfies interface iface (a Named interface type).
+fn (var c: Checker) implements(t0: Int, iface: Int) -> Bool {
+  let t = c.resolve(t0)
+  if c.is_bad(t) || c.is_never(t) {
+    return true
+  }
+  if c.tys[t].kind == TyKind.Var {
+    return true
+  }
+  let io = c.tys[iface].obj
+  if c.objs[io].module == c.prelude {
+    let n = text(c.objs[io].name)
+    if n is "Debug" | "Eq" | "Hash" {
+      return c.is_eq_type(t, n)
+    }
+    if n == "Ord" {
+      return c.is_ord(t)
+    }
+    if n is "Json" | "OpenApi" | "Proto" {
+      return c.is_serializable(t, n)
+    }
+    if n == "SqlRow" {
+      return c.is_sql_row(t)
+    }
+    if n is "Display" | "Error" {
+      if c.is_display_builtin(t) {
+        return true
+      }
+    }
+  }
+  let x = c.tys[t]
+  match x.kind {
+    Param => {
+      let ct = c.objs[x.obj].constraint
+      if ct >= 0 {
+        let cr = c.resolve(ct)
+        if c.tys[cr].kind == TyKind.Named {
+          let co = c.tys[cr].obj
+          if co == io || (c.is_display_like(io) && c.is_display_like(co)) {
+            return true
+          }
+          return c.structural(t, iface)
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if o == io {
+        return true
+      }
+      if c.objs[o].tkind == "interface" && c.is_display_like(io) && c.is_display_like(o) {
+        return true
+      }
+      if c.objs[io].module == c.prelude && c.derives(o, text(c.objs[io].name)) {
+        return true
+      }
+      if c.objs[io].module == c.prelude && (c.objs[io].name == b"Display" || c.objs[io].name == b"Error") && c.derives(o, "Display") {
+        return true
+      }
+      c.structural(t, iface)
+    }
+    Tuple | Func | Var | Bad | EffArg => false
+  }
+}
+
+/// Whether t has every method of iface with a matching signature.
+fn (var c: Checker) structural(t: Int, iface: Int) -> Bool {
+  let io = c.tys[iface].obj
+  let is = c.args_subst(c.objs[io].tparams, c.tys[iface].args)
+  for im in c.objs[io].iface_meths {
+    let (m, ms) = c.find_method(t, text(c.objs[im].name))
+    if m < 0 || c.objs[m].is_static {
+      return false
+    }
+    if c.objs[m].params.len() != c.objs[im].params.len() {
+      return false
+    }
+    let mtps = c.objs[m].tparams
+    let itps = c.objs[im].tparams
+    let own_n = c.objs[m].own_tparams
+    let iown_n = c.objs[im].own_tparams
+    if own_n != iown_n {
+      return false
+    }
+    var ms2 = ms
+    for i in 0..own_n {
+      ms2[mtps[mtps.len() - own_n + i]] = c.mk_param(itps[itps.len() - iown_n + i])
+    }
+    let mps = c.objs[m].params
+    let ips = c.objs[im].params
+    for (i, p) in mps.indexed() {
+      if p.is_var != ips[i].is_var || !c.identical(c.subst(p.ty, ms2), c.subst(ips[i].ty, is)) {
+        return false
+      }
+    }
+    if !c.identical(c.subst(c.objs[m].result, ms2), c.subst(c.objs[im].result, is)) {
+      return false
+    }
+    if c.objs[m].err >= 0 {
+      let me = c.subst(c.objs[m].err, ms2)
+      if c.objs[im].err < 0 {
+        return false
+      }
+      let ie = c.subst(c.objs[im].err, is)
+      if !(c.identical(me, ie) || c.err_converts(me, ie)) {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// Method name on t (any visibility) and the substitution of its
+/// receiver type parameters; -1 when there is none.
+fn (var c: Checker) find_method(t0: Int, name: Str) -> (Int, Subst) {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      let o = x.obj
+      if c.objs[o].tkind == "interface" {
+        for m in c.objs[o].iface_meths {
+          if c.objs[m].name == name.bytes() {
+            return (m, c.args_subst(c.objs[o].tparams, x.args))
+          }
+        }
+        return (-1, {})
+      }
+      let m = c.objs[o].methods.get(name.bytes()) ?? -1
+      if m < 0 {
+        return (-1, {})
+      }
+      let (s, ok) = c.match_recv(m, t)
+      if !ok {
+        return (-1, {})
+      }
+      (m, s)
+    }
+    Param => {
+      let ct = c.objs[x.obj].constraint
+      if ct >= 0 {
+        return c.find_method(ct, name)
+      }
+      (-1, {})
+    }
+    Tuple | Func | Var | Bad | EffArg => (-1, {})
+  }
+}
+
+/// Binds the implicit receiver parameters of method m against the
+/// receiver type t (a Named) without inference variables.
+fn (var c: Checker) match_recv(m: Int, t: Int) -> (Subst, Bool) {
+  var s: Subst = {}
+  let rt = c.objs[m].recv_ty
+  if rt < 0 || c.tys[rt].kind != TyKind.Named {
+    return (s, true)
+  }
+  let rargs = c.tys[rt].args
+  let targs = c.tys[t].args
+  if rargs.len() != targs.len() {
+    return (s, true)
+  }
+  for (i, a) in rargs.indexed() {
+    let ax = c.tys[a]
+    if ax.kind == TyKind.Param && c.objs[ax.obj].implicit {
+      s[ax.obj] = targs[i]
+      continue
+    }
+    if ax.kind == TyKind.EffArg {
+      let tx = c.tys[targs[i]]
+      if tx.kind == TyKind.EffArg && ax.eff >= 0 && c.esets[ax.eff].len() == 1 && c.esets[ax.eff][0].param >= 0 {
+        s[c.esets[ax.eff][0].param] = targs[i]
+      }
+      continue
+    }
+    if !c.identical(a, targs[i]) && !c.is_open_var(targs[i]) {
+      return ({}, false)
+    }
+  }
+  (s, true)
+}
+
+/// Eq, Hash, and Debug: every type is Debug; Eq and Hash need every
+/// field, payload, element, and type argument comparable (decision 0112).
+fn (var c: Checker) is_eq_type(t: Int, name: Str) -> Bool {
+  if name == "Debug" {
+    return true
+  }
+  c.comparable(t, [])
+}
+
+/// Whether o is a std handle type (no equality).
+fn (c: Checker) is_handle(o: Int) -> Bool {
+  let m = c.objs[o].module
+  if m < 0 || c.objs[o].tkind != "struct" {
+    return false
+  }
+  let n = text(c.objs[o].name)
+  if c.mods[m].is_prelude {
+    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn"
+  }
+  if !c.mods[m].is_std {
+    return false
+  }
+  match c.mods[m].path {
+    "std/task" => n is "Group" | "Semaphore" | "Once"
+    "std/http" => n is "Router" | "Server" | "Client" | "BodyWriter" | "TlsCert"
+    "std/sql" => n is "Db" | "Tx"
+    "std/testing" => n is "FakeNet" | "FakeClock" | "MemFs" | "FakeEnv" | "FakeStdio" | "FakeProc"
+    _ => false
+  }
+}
+
+/// Whether values of t can be compared (comparable.go incomparable).
+fn (var c: Checker) comparable(t0: Int, seen: List[Int]) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Func => false
+    Tuple => {
+      for e in x.args {
+        if !c.comparable(e, seen) {
+          return false
+        }
+      }
+      true
+    }
+    Named => {
+      let o = x.obj
+      if c.is_handle(o) {
+        return false
+      }
+      if c.objs[o].tkind == "interface" {
+        return true
+      }
+      for a in x.args {
+        if c.tys[a].kind == TyKind.EffArg {
+          continue
+        }
+        if !c.comparable(a, seen) {
+          return false
+        }
+      }
+      if seen.contains(o) {
+        return true
+      }
+      var seen2 = seen
+      seen2.push(o)
+      let sm = c.args_subst(c.objs[o].tparams, x.args)
+      let tk = c.objs[o].tkind
+      if tk == "struct" {
+        for f in c.objs[o].fields {
+          if !c.comparable(c.subst(f.ty, sm), seen2) {
+            return false
+          }
+        }
+      } else if tk == "enum" {
+        for v in c.objs[o].variants {
+          for f in v.fields {
+            if !c.comparable(c.subst(f.ty, sm), seen2) {
+              return false
+            }
+          }
+        }
+      } else if tk == "newtype" && c.objs[o].target >= 0 {
+        return c.comparable(c.subst(c.objs[o].target, sm), seen2)
+      }
+      true
+    }
+    Param | Var | Bad | EffArg => true
+  }
+}
+
+fn is_ord_builtin(n: Str) -> Bool {
+  n is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Rune" | "Str" | "Duration" | "Time" | "Bool" | "Bytes"
+}
+
+fn (c: Checker) constraint_is(t: Int, name: Str) -> Bool {
+  let ct = c.objs[c.tys[t].obj].constraint
+  if ct < 0 {
+    return false
+  }
+  let o = c.named_obj(ct)
+  o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == name.bytes()
+}
+
+fn (c: Checker) is_ord(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      let o = x.obj
+      let n = text(c.objs[o].name)
+      if c.objs[o].module == c.prelude && is_ord_builtin(n) {
+        return true
+      }
+      if c.derives(o, "Ord") {
+        return true
+      }
+      if c.objs[o].module == c.prelude && (n == "Option" || n == "List") {
+        return c.is_ord(x.args[0])
+      }
+      false
+    }
+    Tuple => {
+      for e in x.args {
+        if !c.is_ord(e) {
+          return false
+        }
+      }
+      true
+    }
+    Param => c.constraint_is(t, "Ord")
+    Func | Var | Bad | EffArg => false
+  }
+}
+
+fn is_json_builtin(n: Str) -> Bool {
+  n is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Bool" | "Str" | "Duration" | "Time" | "Bytes"
+}
+
+/// Json (std.md 5), OpenApi, and Proto (derive only).
+fn (c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      let o = x.obj
+      if c.derives(o, name) {
+        return true
+      }
+      if name != "Json" || c.objs[o].module != c.prelude {
+        return false
+      }
+      let n = text(c.objs[o].name)
+      if is_json_builtin(n) {
+        return true
+      }
+      if n is "List" | "Set" | "Option" {
+        return c.is_serializable(x.args[0], name)
+      }
+      if n == "Map" {
+        return c.is_prelude(x.args[0], "Str") && c.is_serializable(x.args[1], name)
+      }
+      false
+    }
+    Param => c.constraint_is(t, name)
+    Tuple => {
+      if name != "Json" {
+        return x.args.is_empty()
+      }
+      for e in x.args {
+        if !c.is_serializable(e, name) {
+          return false
+        }
+      }
+      true
+    }
+    Func | Var | Bad | EffArg => false
+  }
+}
+
+fn (c: Checker) is_sql_row(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => c.derives(x.obj, "SqlRow")
+    Param => c.constraint_is(t, "SqlRow")
+    Tuple | Func | Var | Bad | EffArg => false
+  }
+}
+
+fn (c: Checker) is_display_builtin(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  if o < 0 || c.objs[o].module != c.prelude {
+    return false
+  }
+  (text(c.objs[o].name)) is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Bool" | "Rune" | "Str" | "Duration" | "Time" | "Secret"
+}

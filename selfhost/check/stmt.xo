@@ -1,0 +1,1213 @@
+// Modules, bodies, and statements (internal/check/stmt.go, groups.go):
+// function contexts, blocks, `let`, `var`, assignment, loops, returns,
+// constants, contracts, tests, and the task failure rules of scopes and
+// groups (core 7.1), which decide the error types of closures.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A loop being checked.
+struct LoopFrame {
+  label: Bytes
+  has_break: Bool = false
+}
+
+/// The function, closure, or test whose body is being checked
+/// (stmt.go fnCtx).
+struct Ctx {
+  parent: Int = -1
+  /// The declared function, -1 for closures, tests, and initializers.
+  fn_obj: Int = -1
+  name: Str
+  result: Int
+  /// The declared error type, -1 when it cannot fail.
+  err: Int = -1
+  /// The inferred error type of a closure (a variable), -1 for none.
+  err_var: Int = -1
+  is_test: Bool = false
+  closure: Bool = false
+  loops: List[LoopFrame] = []
+  /// Checking an ensures clause (`result`, `old`).
+  in_ensures: Bool = false
+  /// The effects performed by the body (an effect set).
+  eff: Int = -1
+  /// The frame of the tasks started on `os.tasks`, and of the tasks
+  /// started on groups whose origin is not visible; -1 until used.
+  groups: Int = -1
+  ext: Int = -1
+}
+
+/// The tasks spawned on one `scope s` handle or group (core 7.1).
+struct ScopeFrame {
+  ctx: Int
+  spawns: List[Spawn] = []
+}
+
+/// A spawned task: the call, its error type, and the local its handle
+/// is bound to (-1 for none).
+struct Spawn {
+  span: Span
+  call: Int
+  err: Int
+  bound: Int = -1
+}
+
+fn (var c: Checker) push_ctx(x0: Ctx) -> Int {
+  let saved = c.ctx
+  var x = x0
+  if x.eff < 0 {
+    x.eff = c.new_eset([])
+  }
+  c.ctxs.push(x)
+  c.ctx = c.ctxs.len() - 1
+  saved
+}
+
+/// The context of initializers (defaults, constants, invariants).
+fn (var c: Checker) sink_ctx() -> Ctx {
+  Ctx{name: "initializer", result: c.unit_ty}
+}
+
+/// The type parameters of the enclosing functions as a type environment.
+fn (c: Checker) local_env() -> TypeEnv {
+  var env = TypeEnv{file: c.cur_file, mod: c.cur_mod}
+  var x = c.ctx
+  while x >= 0 {
+    let fo = c.ctxs[x].fn_obj
+    if fo >= 0 {
+      for p in c.objs[fo].tparams {
+        env.params[c.objs[p].name] = p
+      }
+    }
+    x = c.ctxs[x].parent
+  }
+  env
+}
+
+/// The expected type of a function body.
+fn (c: Checker) body_want(x: Int) -> Want {
+  let cx = c.ctxs[x]
+  if cx.err >= 0 {
+    return ret_want(cx.result, cx.err)
+  }
+  if c.is_unit(cx.result) {
+    return discard()
+  }
+  want(cx.result)
+}
+
+// ---------------------------------------------------------------------------
+// Modules and bodies
+
+fn (var c: Checker) check_module(m: Int) {
+  c.cur_mod = m
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      match d {
+        FnDecl(d: fd) => {
+          let fo = c.files[f].decl_objs[i]
+          if fo >= 0 && (fd.recv != None || c.is_scope_entry(f, i, fd.name.name)) {
+            c.check_fn_decl(fd, fo)
+          }
+        }
+        TestDecl(d: td) => c.check_test(td)
+        ConstDecl(d: cd) => {
+          if c.is_scope_entry(f, i, cd.name.name) {
+            c.const_type(c.files[f].decl_objs[i])
+          }
+        }
+        StructDecl(d: sd) => {
+          if c.is_scope_entry(f, i, sd.name.name) {
+            let t = c.files[f].decl_objs[i]
+            c.check_struct_extras(t, sd)
+            c.check_derives(t, sd.derive)
+          }
+        }
+        EnumDecl(d: ed) => {
+          if c.is_scope_entry(f, i, ed.name.name) {
+            c.check_derives(c.files[f].decl_objs[i], ed.derive)
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+}
+
+fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
+  if !c.objs[fo].sig_done {
+    return
+  }
+  let saved_scopes = c.scopes
+  let saved = c.push_ctx(Ctx{fn_obj: fo, name: c.display_name(fo), result: c.objs[fo].result, err: c.objs[fo].err})
+  let cx = c.ctx
+  c.scopes = []
+  c.push_scope()
+  if let Some(r) = fd.recv {
+    if !c.objs[fo].is_static {
+      let rv = c.declare_local(r.name, c.objs[fo].recv_ty, if r.is_var { "var-recv" } else { "recv" })
+      c.objs[rv].vctx = cx
+    }
+  }
+  for p in c.objs[fo].params {
+    let pv = c.objs.len()
+    c.objs.push(Obj{kind: ObjKind.Local, name: p.name, file: c.path, line: p.line, col: p.col, local: if p.is_var { "var-param" } else { "param" }, ty: p.ty, mutable: p.is_var, vctx: cx})
+    c.declare_var(pv)
+    if !p.default.is_empty() {
+      c.check_default(p.default[0], p.ty)
+    }
+  }
+  c.check_clauses(fd, fo)
+  if let Some(b) = fd.body {
+    c.block(b, c.body_want(cx))
+  }
+  c.finish_groups(cx)
+  c.ctx = saved
+  c.scopes = saved_scopes
+}
+
+fn (var c: Checker) check_default(e: Expr, t: Int) {
+  let saved_scopes = c.scopes
+  let saved = c.push_ctx(c.sink_ctx())
+  c.scopes = []
+  c.push_scope()
+  c.check_ty(e, t)
+  c.ctx = saved
+  c.scopes = saved_scopes
+}
+
+fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(cond: cond, els: els, ..) => {
+        c.check_ty(cond, c.named("Bool"))
+        if let Some(e) = els {
+          if c.objs[fo].err < 0 {
+            c.error("XO0205", parser.expr_span(e), "`requires ... else` returns an error, but `${c.display_name(fo)}` cannot fail")
+            continue
+          }
+          c.check_ty(e, c.objs[fo].err)
+        }
+      }
+      EnsuresClause(span: span, cond: cond, ..) => {
+        c.push_scope()
+        let rv = c.objs.len()
+        c.objs.push(Obj{kind: ObjKind.Local, name: b"result", file: c.path, line: span.start.line, col: span.start.col, local: "predeclared", ty: c.objs[fo].result, vctx: c.ctx})
+        c.declare_var(rv)
+        let saved = c.ctxs[c.ctx].in_ensures
+        c.ctxs[c.ctx].in_ensures = true
+        c.check_ty(cond, c.named("Bool"))
+        c.ctxs[c.ctx].in_ensures = saved
+        c.pop_scope()
+      }
+      _ => {}
+    }
+  }
+}
+
+fn (var c: Checker) check_struct_extras(t: Int, sd: parser.StructDecl) {
+  for f in c.objs[t].fields {
+    if !f.default.is_empty() {
+      c.check_default(f.default[0], f.ty)
+    }
+  }
+  let inv = match sd.inv {
+    Some(x) => x
+    None => return
+  }
+  let saved_scopes = c.scopes
+  let saved = c.push_ctx(c.sink_ctx())
+  c.scopes = []
+  c.push_scope()
+  for f in c.objs[t].fields {
+    let fv = c.objs.len()
+    c.objs.push(Obj{kind: ObjKind.Local, name: f.name, file: c.path, line: f.line, col: f.col, local: "param", ty: f.ty, vctx: c.ctx})
+    c.declare_var(fv)
+  }
+  c.check_ty(inv, c.named("Bool"))
+  c.ctx = saved
+  c.scopes = saved_scopes
+}
+
+fn (var c: Checker) check_test(td: parser.TestDecl) {
+  let saved_scopes = c.scopes
+  let saved = c.push_ctx(Ctx{name: "test", result: c.unit_ty, err: c.named("Error"), is_test: true})
+  let cx = c.ctx
+  c.scopes = []
+  c.push_scope()
+  let tm = c.testing_mod()
+  var os_ty = c.bad_ty
+  if tm >= 0 {
+    let o = c.mods[tm].members.get(b"TestOs") ?? -1
+    if o >= 0 {
+      os_ty = c.mk_named(o, [])
+    }
+  }
+  let os = c.objs.len()
+  c.objs.push(Obj{kind: ObjKind.Local, name: b"os", local: "predeclared", ty: os_ty, vctx: cx})
+  c.scopes[0][b"os"] = os
+  var env = TypeEnv{file: c.cur_file, mod: c.cur_mod}
+  for p in td.params {
+    var pt = c.bad_ty
+    if let Some(t) = p.typ {
+      pt = c.resolve_type(t, env)
+    }
+    let pv = c.declare_local(p.name, pt, "param")
+    c.objs[pv].vctx = cx
+  }
+  if !td.effects.is_empty() {
+    c.resolve_effects(td.effects, env)
+  }
+  if let Some(b) = td.body {
+    c.block(b, c.body_want(cx))
+  }
+  c.finish_groups(cx)
+  c.ctx = saved
+  c.scopes = saved_scopes
+}
+
+/// The type of a constant, checking its initializer on first use.
+fn (var c: Checker) const_type(co: Int) -> Int {
+  if c.objs[co].done {
+    return c.objs[co].ty
+  }
+  let f = c.objs[co].decl_file
+  let cd = match c.files[f].ast.decls[c.objs[co].decl_idx] {
+    ConstDecl(d: x) => x
+    _ => fault("a constant's declaration")
+  }
+  if c.objs[co].checking {
+    c.error_at(f, "XO0407", cd.name.span, "constant `${text(cd.name.name)}` refers to itself")
+    c.objs[co].ty = c.bad_ty
+    return c.bad_ty
+  }
+  c.objs[co].checking = true
+  let saved_mod = c.cur_mod
+  let saved_file = c.cur_file
+  let saved_path = c.path
+  c.set_file(f)
+  var w = -1
+  if let Some(tt) = cd.typ {
+    var env = TypeEnv{file: f, mod: c.objs[co].module}
+    w = c.resolve_type(tt, env)
+  }
+  let saved_scopes = c.scopes
+  let saved = c.push_ctx(c.sink_ctx())
+  c.scopes = []
+  c.push_scope()
+  var t = -1
+  if w >= 0 {
+    t = c.check_ty(cd.value, w)
+  } else {
+    t = c.infer(cd.value, -1)
+  }
+  c.ctx = saved
+  c.scopes = saved_scopes
+  if !c.mods[c.objs[co].module].is_std {
+    c.check_const_expr(cd.value)
+  }
+  c.cur_mod = saved_mod
+  c.cur_file = saved_file
+  c.path = saved_path
+  c.objs[co].ty = c.deep_copy(t)
+  c.objs[co].done = true
+  c.objs[co].checking = false
+  c.objs[co].ty
+}
+
+/// t with every bound variable replaced (types.go deep).
+fn (var c: Checker) deep_copy(t0: Int) -> Int {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named | Tuple => {
+      if x.args.is_empty() {
+        return t
+      }
+      var args: List[Int] = []
+      for a in x.args {
+        args.push(c.deep_copy(a))
+      }
+      c.new_ty(Ty{kind: x.kind, obj: x.obj, args: args})
+    }
+    Func => {
+      var args: List[Int] = []
+      for a in x.args {
+        args.push(c.deep_copy(a))
+      }
+      var e = -1
+      if x.err >= 0 {
+        e = c.deep_copy(x.err)
+        if c.is_never(e) {
+          e = -1
+        }
+      }
+      c.new_ty(Ty{kind: TyKind.Func, args: args, vars: x.vars, result: c.deep_copy(x.result), err: e})
+    }
+    Param | Var | Bad | EffArg => t
+  }
+}
+
+/// XO0408 for initializer parts that are not compile time values (core
+/// 3.1).
+fn (var c: Checker) check_const_expr(e: Expr) {
+  match e {
+    IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | UnitExpr(..) | BadExpr(..) => {}
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          c.check_const_expr(x)
+        }
+      }
+    }
+    Ident(id) => {
+      let key = "${c.path}:${id.span.start.offset}"
+      if let Some(i) = c.name_at.get(key) {
+        let o = c.names[i].obj
+        if o >= 0 && c.objs[o].kind == ObjKind.Local && !c.objs[o].is_const {
+          c.const_bad(parser.expr_span(e), "a local binding")
+        }
+      }
+    }
+    SelectorExpr(x: x, ..) => c.check_const_expr(x)
+    ParenExpr(x: x, ..) => c.check_const_expr(x)
+    UnaryExpr(x: x, ..) => c.check_const_expr(x)
+    BinaryExpr(x: x, y: y, ..) => {
+      c.check_const_expr(x)
+      c.check_const_expr(y)
+    }
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+      for x in els {
+        c.check_const_expr(x)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        c.check_const_expr(en.key)
+        c.check_const_expr(en.value)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        c.check_const_expr(f.value)
+      }
+    }
+    CallExpr(args: args, ..) => {
+      let key = c.expr_key(e)
+      if let Some(fo) = c.fn_calls.get(key) {
+        c.const_bad(parser.expr_span(e), "the call to `${c.display_name(fo)}`")
+        return
+      }
+      if c.ctor_calls.contains(key) {
+        for a in args {
+          c.check_const_expr(a.value)
+        }
+        return
+      }
+      c.const_bad(parser.expr_span(e), "a call")
+    }
+    _ => c.const_bad(parser.expr_span(e), "this expression")
+  }
+}
+
+fn (var c: Checker) const_bad(sp: Span, what: Str) {
+  c.error("XO0408", sp, "${what} is not a compile time value; a const initializer may use literals, other constants, struct and enum construction, and collection literals of those (core 3.1)")
+}
+
+// ---------------------------------------------------------------------------
+// Derives (stmt.go checkDerives)
+
+fn (var c: Checker) check_derives(t: Int, ids: List[Ident]) {
+  for id in ids {
+    let n = text(id.name)
+    if n == "SqlRow" {
+      c.check_sql_row_derive(t, id)
+      continue
+    }
+    if !(n is "Json" | "OpenApi" | "Proto" | "Ord") {
+      continue
+    }
+    let iface = c.named(n)
+    var fts: List[Int] = []
+    var names: List[Str] = []
+    for f in c.objs[t].fields {
+      fts.push(f.ty)
+      names.push(text(f.name))
+    }
+    for v in c.objs[t].variants {
+      for f in v.fields {
+        fts.push(f.ty)
+        names.push("${text(v.name)}.${if f.from { "from" } else { text(f.name) }}")
+      }
+    }
+    for (i, ft) in fts.indexed() {
+      if c.mentions_param(ft) {
+        continue
+      }
+      if !c.implements(ft, iface) {
+        c.error("XO0404", id.span, "`derive ${n}` needs every field to implement `${n}`, but `${names[i]}` has type `${c.show(ft)}`")
+      }
+    }
+  }
+}
+
+fn (var c: Checker) check_sql_row_derive(t: Int, id: Ident) {
+  if c.objs[t].tkind != "struct" {
+    c.error("XO0407", id.span, "`derive SqlRow` applies only to structs; `${text(c.objs[t].name)}` is not one")
+    return
+  }
+  if !c.objs[t].tparams.is_empty() {
+    c.error("XO0407", id.span, "`derive SqlRow` needs a struct without type parameters; `${text(c.objs[t].name)}` has some")
+    return
+  }
+  for f in c.objs[t].fields {
+    if !c.is_sql_column(f.ty) {
+      c.error("XO0404", id.span, "`derive SqlRow` needs every field to be a column type, but `${text(f.name)}` has type `${c.show(f.ty)}`")
+    }
+  }
+}
+
+fn is_sql_column_name(n: Bytes) -> Bool {
+  (text(n)) is "Int" | "Float" | "Str" | "Bool" | "Time"
+}
+
+fn (c: Checker) is_sql_column(t: Int) -> Bool {
+  let r = c.resolve(t)
+  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].module != c.prelude {
+    return false
+  }
+  let o = c.tys[r].obj
+  if c.objs[o].name == b"Option" && c.tys[r].args.len() == 1 {
+    let e = c.named_obj(c.tys[r].args[0])
+    return e >= 0 && c.objs[e].module == c.prelude && is_sql_column_name(c.objs[e].name)
+  }
+  is_sql_column_name(c.objs[o].name)
+}
+
+// ---------------------------------------------------------------------------
+// Blocks and statements
+
+/// Checks a block against w and returns its type.
+fn (var c: Checker) block(b: Block, w: Want) -> Int {
+  c.push_scope()
+  let n = b.stmts.len()
+  for (i, s) in b.stmts.indexed() {
+    if i == n - 1 {
+      if let ExprStmt(x: x, ..) = s {
+        let t = if w.kind == 0 { c.infer(x, -1) } else { c.check(x, w) }
+        c.pop_scope()
+        return t
+      }
+    }
+    c.stmt(s)
+  }
+  var t = c.unit_ty
+  if n > 0 && c.stmt_never(b.stmts[n - 1]) {
+    t = c.named("Never")
+  }
+  c.pop_scope()
+  if w.kind == 0 {
+    return t
+  }
+  var end = b.span
+  end.start = b.span.end
+  if end.start.col > 1 {
+    end.start.col -= 1
+    end.start.offset -= 1
+  }
+  c.coerce_to(t, w, end, [])
+}
+
+/// Whether a block never completes normally.
+fn (c: Checker) block_never(b: Block) -> Bool {
+  let n = b.stmts.len()
+  if n == 0 {
+    return false
+  }
+  if let ExprStmt(x: x, ..) = b.stmts[n - 1] {
+    if let WhileExpr(body: body, ..) = x {
+      return !has_break_block(body, b"", 0)
+    }
+    if c.never_expr.contains(c.expr_key(x)) {
+      return true
+    }
+  }
+  c.stmt_never(b.stmts[n - 1])
+}
+
+/// Whether a statement never completes.
+fn (c: Checker) stmt_never(s: Stmt) -> Bool {
+  match s {
+    ReturnStmt(..) | BreakStmt(..) | ContinueStmt(..) => true
+    WhileStmt(label: label, cond: cond, pattern: pattern, body: body, ..) => {
+      let l = match label {
+        Some(id) => id.name
+        None => b""
+      }
+      cond == None && pattern.is_empty() && !has_break_block(body, l, 0)
+    }
+    ExprStmt(x: x, ..) => {
+      let t = c.type_of(x)
+      t >= 0 && c.is_never(t)
+    }
+    _ => false
+  }
+}
+
+/// Whether body contains a break that exits the loop with the given
+/// label (depth counts the loops nested inside it).
+fn has_break_block(b: Block, label: Bytes, depth: Int) -> Bool {
+  for s in b.stmts {
+    if has_break_stmt(s, label, depth) {
+      return true
+    }
+  }
+  false
+}
+
+fn has_break_stmt(s: Stmt, label: Bytes, depth: Int) -> Bool {
+  match s {
+    BreakStmt(label: l, ..) => {
+      match l {
+        None => depth == 0
+        Some(id) => !label.is_empty() && id.name == label
+      }
+    }
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      has_break_expr(iter, label, depth) || has_break_exprs(bound, label, depth) || has_break_block(body, label, depth + 1)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      if let Some(x) = cond {
+        if has_break_expr(x, label, depth) {
+          return true
+        }
+      }
+      has_break_exprs(value, label, depth) || has_break_exprs(bound, label, depth) || has_break_block(body, label, depth + 1)
+    }
+    ExprStmt(x: x, ..) => has_break_expr(x, label, depth)
+    LetStmt(value: value, ..) => has_break_expr(value, label, depth)
+    VarStmt(value: value, ..) => has_break_expr(value, label, depth)
+    ConstDecl(d: cd) => has_break_expr(cd.value, label, depth)
+    AssignStmt(target: target, value: value, ..) => has_break_expr(target, label, depth) || has_break_expr(value, label, depth)
+    DeferStmt(body: body, ..) => has_break_stmt(body, label, depth)
+    ReturnStmt(value: value, ..) => {
+      match value {
+        Some(x) => has_break_expr(x, label, depth)
+        None => false
+      }
+    }
+    _ => false
+  }
+}
+
+fn has_break_exprs(es: List[Expr], label: Bytes, depth: Int) -> Bool {
+  for e in es {
+    if has_break_expr(e, label, depth) {
+      return true
+    }
+  }
+  false
+}
+
+fn has_break_opt(e: Expr?, label: Bytes, depth: Int) -> Bool {
+  match e {
+    Some(x) => has_break_expr(x, label, depth)
+    None => false
+  }
+}
+
+fn has_break_expr(e: Expr, label: Bytes, depth: Int) -> Bool {
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        if has_break_opt(p.expr, label, depth) {
+          return true
+        }
+      }
+      false
+    }
+    ParenExpr(x: x, ..) => has_break_expr(x, label, depth)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => has_break_exprs(els, label, depth)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        if has_break_expr(en.key, label, depth) || has_break_expr(en.value, label, depth) {
+          return true
+        }
+      }
+      false
+    }
+    StructLit(typ: typ, fields: fields, ..) => {
+      if has_break_expr(typ, label, depth) {
+        return true
+      }
+      for f in fields {
+        if has_break_expr(f.value, label, depth) {
+          return true
+        }
+      }
+      false
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      if has_break_expr(x, label, depth) {
+        return true
+      }
+      for f in fields {
+        if has_break_expr(f.value, label, depth) {
+          return true
+        }
+      }
+      false
+    }
+    UnaryExpr(x: x, ..) => has_break_expr(x, label, depth)
+    BinaryExpr(x: x, y: y, ..) => has_break_expr(x, label, depth) || has_break_expr(y, label, depth)
+    IsExpr(x: x, ..) => has_break_expr(x, label, depth)
+    RangeExpr(lo: lo, hi: hi, ..) => has_break_opt(lo, label, depth) || has_break_opt(hi, label, depth)
+    SelectorExpr(x: x, ..) => has_break_expr(x, label, depth)
+    CallExpr(fun: fun, args: args, ..) => {
+      if has_break_expr(fun, label, depth) {
+        return true
+      }
+      for a in args {
+        if has_break_expr(a.value, label, depth) {
+          return true
+        }
+      }
+      false
+    }
+    TypeArgsExpr(x: x, ..) => has_break_expr(x, label, depth)
+    IndexExpr(x: x, index: index, ..) => has_break_expr(x, label, depth) || has_break_expr(index, label, depth)
+    TryExpr(x: x, ..) => has_break_expr(x, label, depth)
+    IfExpr(e: x) => {
+      if has_break_opt(x.cond, label, depth) || has_break_opt(x.value, label, depth) || has_break_block(x.then, label, depth) {
+        return true
+      }
+      has_break_opt(x.els, label, depth)
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      if has_break_expr(subject, label, depth) {
+        return true
+      }
+      for arm in arms {
+        if has_break_opt(arm.guard, label, depth) {
+          return true
+        }
+        if let Some(b) = arm.body {
+          if has_break_stmt(b, label, depth) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    ScopeExpr(body: body, ..) => has_break_block(body, label, depth)
+    SelectExpr(arms: arms, ..) => {
+      for arm in arms {
+        if has_break_opt(arm.op, label, depth) || has_break_opt(arm.after, label, depth) {
+          return true
+        }
+        if let Some(b) = arm.body {
+          if has_break_stmt(b, label, depth) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    Block(b) => has_break_block(b, label, depth)
+    WhileExpr(body: body, ..) => has_break_block(body, label, depth + 1)
+    _ => false
+  }
+}
+
+fn label_name(l: Ident?) -> Bytes {
+  match l {
+    Some(id) => id.name
+    None => b""
+  }
+}
+
+fn (var c: Checker) stmt(s: Stmt) {
+  match s {
+    ExprStmt(x: x, ..) => {
+      c.check(x, discard())
+    }
+    LetStmt(span: span, pattern: pattern, typ: typ, value: value) => c.let_stmt(span, pattern, typ, value)
+    VarStmt(name: name, typ: typ, value: value, ..) => c.var_stmt(name, typ, value)
+    ConstDecl(d: cd) => c.local_const(cd)
+    AssignStmt(span: span, op: op, target: target, value: value) => c.assign(span, op, target, value)
+    DeferStmt(body: body, ..) => c.stmt(body)
+    ReturnStmt(span: span, value: value) => {
+      let w = c.body_want(c.ctx)
+      match value {
+        None => {
+          c.coerce_to(c.unit_ty, w, span, [])
+        }
+        Some(v) => {
+          c.check(v, w)
+        }
+      }
+    }
+    BreakStmt(span: span, label: label) => c.jump(label, span, true)
+    ContinueStmt(span: span, label: label) => c.jump(label, span, false)
+    ForStmt(label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: go_range, ..) => {
+      let it = c.infer(iter, -1)
+      var elem = c.bad_ty
+      if !go_range {
+        elem = c.iter_elem(it, iter)
+      }
+      for b in bound {
+        c.check_ty(b, c.named("Int"))
+      }
+      c.loop_body(label_name(label), false, body, [pattern], elem, false)
+    }
+    WhileStmt(label: label, cond: cond, pattern: pattern, value: value, bound: bound, body: body, ..) => {
+      if !pattern.is_empty() {
+        let vt = c.infer(value[0], -1)
+        for b in bound {
+          c.check_ty(b, c.named("Int"))
+        }
+        c.loop_body(label_name(label), false, body, pattern, vt, true)
+        return
+      }
+      if let Some(x) = cond {
+        c.check_ty(x, c.named("Bool"))
+      }
+      for b in bound {
+        c.check_ty(b, c.named("Int"))
+      }
+      c.loop_body(label_name(label), cond == None, body, [], -1, false)
+    }
+    BadStmt(..) => {}
+  }
+}
+
+/// Checks a loop body, binding pat (zero or one) against pat_ty first;
+/// whether a `break` left the loop.
+fn (var c: Checker) loop_body(label: Bytes, infinite: Bool, body: Block, pat: List[Pattern], pat_ty: Int, refutable: Bool) -> Bool {
+  c.ctxs[c.ctx].loops.push(LoopFrame{label: label})
+  c.push_scope()
+  if !pat.is_empty() {
+    if refutable {
+      c.refutable_pattern(pat[0], pat_ty)
+    } else {
+      c.pattern(pat[0], pat_ty, false)
+    }
+  }
+  c.block(body, discard())
+  c.pop_scope()
+  let n = c.ctxs[c.ctx].loops.len()
+  let lf = c.ctxs[c.ctx].loops[n - 1]
+  c.ctxs[c.ctx].loops.pop()
+  lf.has_break
+}
+
+fn (var c: Checker) jump(label: Ident?, sp: Span, is_break: Bool) {
+  let kw = if is_break { "break" } else { "continue" }
+  let n = c.ctxs[c.ctx].loops.len()
+  if n == 0 {
+    c.error("XO0607", sp, "`${kw}` outside a loop")
+    return
+  }
+  let l = match label {
+    None => {
+      if is_break {
+        c.ctxs[c.ctx].loops[n - 1].has_break = true
+      }
+      return
+    }
+    Some(id) => id
+  }
+  var i = n - 1
+  while i >= 0 {
+    if c.ctxs[c.ctx].loops[i].label == l.name {
+      if is_break {
+        c.ctxs[c.ctx].loops[i].has_break = true
+      }
+      return
+    }
+    i -= 1
+  }
+  c.error("XO0607", l.span, "loop label `${text(l.name)}` not found")
+}
+
+/// The element type of an iterable (List, Set, Map, Range, Chan, Buf,
+/// Bytes).
+fn (var c: Checker) iter_elem(t: Int, e: Expr) -> Int {
+  let r = c.resolve(t)
+  if c.is_bad(r) {
+    return c.bad_ty
+  }
+  if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
+    let n = text(c.objs[c.tys[r].obj].name)
+    if n is "List" | "Set" | "Range" | "Buf" | "Chan" {
+      return c.tys[r].args[0]
+    }
+    if n == "Bytes" {
+      return c.named("UInt8")
+    }
+    if n == "Map" {
+      return c.mk_tuple([c.tys[r].args[0], c.tys[r].args[1]])
+    }
+  }
+  if c.tys[r].kind == TyKind.Var {
+    c.error("XO0405", parser.expr_span(e), "the type of the iterated value must be known here")
+    return c.bad_ty
+  }
+  c.error("XO0406", parser.expr_span(e), "cannot iterate over `${c.show(t)}`; `for` works on List, Set, Map, Chan, Bytes, and ranges")
+  c.bad_ty
+}
+
+fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Expr) {
+  var t = -1
+  if let Some(tt) = typ {
+    var env = c.local_env()
+    let w = c.resolve_type(tt, env)
+    t = c.check_ty(value, w)
+    if c.is_bad(t) {
+      t = w
+    }
+  } else {
+    t = c.infer(value, -1)
+  }
+  if pattern is WildcardPat(..) {
+    if c.is_result(t) {
+      c.error("XO0206", span, "`let _ =` discards a Result, so its error is ignored without a reason")
+    }
+  }
+  c.pattern(pattern, t, false)
+  if let BindPat(name: name, ..) = pattern {
+    let v = c.lookup_local(name.name)
+    if v >= 0 {
+      c.note_spawn_binding(value, v)
+      c.note_group_binding(value, v)
+    }
+  }
+}
+
+/// A block `const` (core 3.1): an immutable binding whose initializer is
+/// a compile time value.
+fn (var c: Checker) local_const(cd: parser.ConstDecl) {
+  var t = -1
+  if let Some(tt) = cd.typ {
+    var env = c.local_env()
+    let w = c.resolve_type(tt, env)
+    t = c.check_ty(cd.value, w)
+    if c.is_bad(t) {
+      t = w
+    }
+  } else {
+    t = c.infer(cd.value, -1)
+  }
+  let before = c.diags.len()
+  c.check_const_expr(cd.value)
+  let name = text(cd.name.name)
+  if c.diags.len() > before && name.to_upper() != name {
+    while c.diags.len() > before {
+      c.diags.pop()
+    }
+    c.error("XO0408", parser.expr_span(cd.value), "`const ${name}` is initialized with a value computed at run time")
+    let v = c.declare_local(cd.name, t, "let")
+    c.objs[v].vctx = c.ctx
+    return
+  }
+  let v = c.declare_local(cd.name, t, "let")
+  c.objs[v].is_const = true
+  c.objs[v].vctx = c.ctx
+}
+
+fn (var c: Checker) var_stmt(name: Ident, typ: Type?, value: Expr) {
+  var t = -1
+  if let Some(tt) = typ {
+    var env = c.local_env()
+    let w = c.resolve_type(tt, env)
+    t = c.check_ty(value, w)
+    if c.is_bad(t) {
+      t = w
+    }
+  } else {
+    t = c.infer(value, -1)
+  }
+  let v = c.declare_local(name, t, "var")
+  c.objs[v].vctx = c.ctx
+  c.note_spawn_binding(value, v)
+  c.note_group_binding(value, v)
+}
+
+// ---------------------------------------------------------------------------
+// Assignment (core 5.2, 3.4)
+
+fn compound_op(k: parser.Kind) -> parser.Kind {
+  match k {
+    PlusAssign => parser.Kind.Plus
+    MinusAssign => parser.Kind.Minus
+    StarAssign => parser.Kind.Star
+    SlashAssign => parser.Kind.Slash
+    PercentAssign => parser.Kind.Percent
+    AmpAssign => parser.Kind.Amp
+    PipeAssign => parser.Kind.Pipe
+    CaretAssign => parser.Kind.Caret
+    ShlAssign => parser.Kind.Shl
+    ShrAssign => parser.Kind.Shr
+    _ => parser.Kind.Illegal
+  }
+}
+
+fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Expr) {
+  if c.assign_decl_habit(op, target, value) {
+    return
+  }
+  if op == parser.Kind.Assign {
+    if let IndexExpr(..) = unparen(target) {
+      c.map_store = c.expr_key(unparen(target))
+    }
+  }
+  let tt = c.place_type(target)
+  c.map_store = -1
+  if op == parser.Kind.Assign {
+    c.check_ty(value, tt)
+    return
+  }
+  let bop = compound_op(op)
+  let yt = c.infer(value, c.operand_hint(bop, tt))
+  let rt = c.binary_type(bop, tt, yt, span)
+  if !c.is_bad(rt) && !c.assignable(rt, tt) {
+    c.error("XO0401", span, "`${op_text(op)}` produces `${c.show(rt)}`, which cannot be stored in `${c.show(tt)}`")
+  }
+}
+
+/// Python's `x = v` for an undeclared x: XO0601, and x is declared from
+/// then on (habits.go habitAssignDecl).
+fn (var c: Checker) assign_decl_habit(op: parser.Kind, target: Expr, value: Expr) -> Bool {
+  let id = match target {
+    Ident(id) => id
+    _ => return false
+  }
+  if op != parser.Kind.Assign || id.name == b"_" || c.lookup_local(id.name) >= 0 || c.lookup_module_obj(c.cur_mod, id.name) >= 0 || c.file_import(id.name) != None || c.ctx < 0 {
+    return false
+  }
+  if (text(id.name)) is "true" | "false" | "target" | "self" | "os" | "expect" | "testing" {
+    return false
+  }
+  let t = c.infer(value, -1)
+  c.error("XO0601", id.span, "name `${text(id.name)}` not found")
+  let v = c.declare_local(id, t, "var")
+  c.objs[v].vctx = c.ctx
+  true
+}
+
+/// The type of an assignment target, not counted as a read.
+fn (var c: Checker) place_type(e: Expr) -> Int {
+  match e {
+    Ident(id) => {
+      let v = c.lookup_local(id.name)
+      if v < 0 {
+        return c.infer(e, -1)
+      }
+      c.record(id, v)
+      c.set_type(e, c.objs[v].ty)
+      c.objs[v].ty
+    }
+    SelectorExpr(span: span, x: x, sel: sel) => {
+      let bt = c.place_type(x)
+      let t = c.field_of(bt, span, x, sel, true)
+      c.set_type(e, t)
+      t
+    }
+    IndexExpr(span: span, x: x, index: index) => {
+      let bt = c.place_type(x)
+      let t = c.index_type(bt, span, index)
+      c.set_type(e, t)
+      if c.is_prelude(bt, "Map") && c.map_store != c.expr_key(e) {
+        c.error("XO0410", span, "changing a Map element in place faults when the key is missing")
+      }
+      t
+    }
+    ParenExpr(x: x, ..) => c.place_type(x)
+    _ => {
+      c.infer(e, -1)
+      c.error("XO0502", parser.expr_span(e), "cannot assign to this expression; only bindings, fields, and elements of `var` bindings can be assigned")
+      c.bad_ty
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tasks: scopes and groups (core 7.1)
+
+/// Records that a spawned task's handle is bound to v.
+fn (var c: Checker) note_spawn_binding(e: Expr, v: Int) {
+  if !(e is CallExpr(..)) {
+    return
+  }
+  let key = c.expr_key(e)
+  for sc in c.scopes {
+    for (_, o) in sc.entries() {
+      let f = c.objs[o].frame
+      if f >= 0 {
+        c.bind_spawn(f, key, v)
+      }
+    }
+  }
+  var x = c.ctx
+  while x >= 0 {
+    if c.ctxs[x].groups >= 0 {
+      c.bind_spawn(c.ctxs[x].groups, key, v)
+    }
+    if c.ctxs[x].ext >= 0 {
+      c.bind_spawn(c.ctxs[x].ext, key, v)
+    }
+    x = c.ctxs[x].parent
+  }
+}
+
+fn (var c: Checker) bind_spawn(f: Int, key: Int, v: Int) {
+  for (i, sp) in c.frames[f].spawns.indexed() {
+    if sp.call == key {
+      c.frames[f].spawns[i].bound = v
+    }
+  }
+}
+
+/// The frame of `h.group()` when e is one, else -1.
+fn (c: Checker) group_call_frame(e: Expr) -> Int {
+  if let CallExpr(fun: fun, args: args, ..) = e {
+    if let SelectorExpr(x: x, sel: sel, ..) = fun {
+      if sel.name == b"group" && args.is_empty() {
+        if let Ident(id) = x {
+          let v = c.lookup_local(id.name)
+          if v >= 0 {
+            return c.objs[v].frame
+          }
+        }
+      }
+    }
+  }
+  -1
+}
+
+/// Records that v holds the group created by `h.group()`.
+fn (var c: Checker) note_group_binding(e: Expr, v: Int) {
+  let x = unparen(e)
+  let f = c.group_call_frame(x)
+  if f >= 0 {
+    c.objs[v].group_frame = f
+    return
+  }
+  if let Ident(id) = x {
+    let o = c.lookup_local(id.name)
+    if o >= 0 && o != v && c.objs[o].group_frame >= 0 {
+      c.objs[v].group_frame = c.objs[o].group_frame
+    }
+  }
+}
+
+/// The frame that owns the tasks of group recv, or -1 when its origin
+/// is not visible here.
+fn (var c: Checker) group_frame_of(recv: Expr) -> Int {
+  let f = c.group_call_frame(recv)
+  if f >= 0 {
+    return f
+  }
+  match recv {
+    ParenExpr(x: x, ..) => c.group_frame_of(x)
+    Ident(id) => {
+      let v = c.lookup_local(id.name)
+      if v >= 0 {
+        return c.objs[v].group_frame
+      }
+      -1
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      // `os.tasks` of main or of a test: the root scope of that body
+      let id = match x {
+        Ident(i) => i
+        _ => return -1
+      }
+      if sel.name != b"tasks" {
+        return -1
+      }
+      let v = c.lookup_local(id.name)
+      if v < 0 || c.objs[v].vctx < 0 || !c.is_os_value(v) {
+        return -1
+      }
+      let vx = c.objs[v].vctx
+      if c.ctxs[vx].groups < 0 {
+        c.ctxs[vx].groups = c.frames.len()
+        c.frames.push(ScopeFrame{ctx: vx})
+      }
+      c.ctxs[vx].groups
+    }
+    _ => -1
+  }
+}
+
+/// Whether v is the `os` of a test or the `os: Os` parameter of `main`.
+fn (c: Checker) is_os_value(v: Int) -> Bool {
+  if c.objs[v].local == "predeclared" && c.objs[v].name == b"os" {
+    return true
+  }
+  if !(c.objs[v].local is "param" | "var-param") || !c.is_prelude(c.objs[v].ty, "Os") {
+    return false
+  }
+  let fo = c.ctxs[c.objs[v].vctx].fn_obj
+  fo >= 0 && c.objs[fo].recv < 0 && c.objs[fo].name == b"main"
+}
+
+/// Notes a task started on a group for the failure rule.
+fn (var c: Checker) record_group_spawn(recv: Expr, call: Expr) {
+  let (span, _, args) = call_parts(call)
+  if args.len() != 1 {
+    return
+  }
+  let at = c.type_of(args[0].value)
+  if at < 0 {
+    return
+  }
+  let r = c.resolve(at)
+  if c.tys[r].kind != TyKind.Func || c.tys[r].err < 0 {
+    return
+  }
+  let site = Spawn{span: span, call: c.expr_key(call), err: c.tys[r].err}
+  let f = c.group_frame_of(recv)
+  if f >= 0 {
+    c.frames[f].spawns.push(site)
+    return
+  }
+  if c.ctxs[c.ctx].ext < 0 {
+    c.ctxs[c.ctx].ext = c.frames.len()
+    c.frames.push(ScopeFrame{ctx: c.ctx})
+  }
+  let e = c.ctxs[c.ctx].ext
+  c.frames[e].spawns.push(site)
+}
+
+/// Applies the failure rule to the group tasks of a finished body.
+fn (var c: Checker) finish_groups(x: Int) {
+  let g = c.ctxs[x].groups
+  if g >= 0 {
+    for sp in c.frames[g].spawns {
+      if sp.bound >= 0 && c.objs[sp.bound].awaited {
+        continue
+      }
+      let saved = c.ctx
+      c.ctx = x
+      c.propagate(sp.err, sp.span, "XO0801", "this task")
+      c.ctx = saved
+    }
+  }
+  let ext = c.ctxs[x].ext
+  if ext < 0 {
+    return
+  }
+  for sp in c.frames[ext].spawns {
+    if sp.bound >= 0 && c.objs[sp.bound].awaited {
+      continue
+    }
+    let e = c.resolve(sp.err)
+    if c.is_bad(e) || c.is_never(e) || c.is_open_var(e) {
+      continue
+    }
+    c.error("XO0801", sp.span, "a task started on a task group from outside this function can fail with `${c.show(e)}`; handle the error inside the task, or bind its handle and await it")
+  }
+}

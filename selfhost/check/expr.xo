@@ -1,0 +1,1498 @@
+// Expressions (internal/check/expr.go): checking against an expected
+// type, inference, literals, operators, control flow expressions, struct
+// literals, `with`, and closures.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// An expected type (expr.go check's want): none, a type, a value in
+/// return position of a function declared `-> T ! E`, or a discarded
+/// value.
+struct Want {
+  /// 0 none, 1 a type, 2 return position, 3 discarded.
+  kind: Int
+  t: Int = -1
+  e: Int = -1
+}
+
+/// The span of a statement.
+fn stmt_span(s: Stmt) -> Span {
+  match s {
+    LetStmt(span, ..) => span
+    VarStmt(span, ..) => span
+    AssignStmt(span, ..) => span
+    DeferStmt(span, ..) => span
+    ReturnStmt(span, ..) => span
+    BreakStmt(span, ..) => span
+    ContinueStmt(span, ..) => span
+    ForStmt(span, ..) => span
+    WhileStmt(span, ..) => span
+    ExprStmt(span, ..) => span
+    BadStmt(span) => span
+    ConstDecl(d) => d.span
+  }
+}
+
+fn no_want() -> Want {
+  Want{kind: 0}
+}
+
+fn want(t: Int) -> Want {
+  if t < 0 {
+    return Want{kind: 0}
+  }
+  Want{kind: 1, t: t}
+}
+
+fn ret_want(t: Int, e: Int) -> Want {
+  Want{kind: 2, t: t, e: e}
+}
+
+fn discard() -> Want {
+  Want{kind: 3}
+}
+
+/// The value type a want asks for: T of `T ! E`.
+fn value_want(w: Want) -> Int {
+  w.t
+}
+
+// ---------------------------------------------------------------------------
+// Records
+
+const KIND_NAMES = ["Ident", "IntLit", "FloatLit", "DurationLit", "RuneLit", "StringLit", "BytesLit", "HoleExpr", "UnitExpr", "ParenExpr", "TupleExpr", "ListLit", "MapLit", "SetLit", "StructLit", "UnaryExpr", "BinaryExpr", "IsExpr", "RangeExpr", "SelectorExpr", "CallExpr", "TypeArgsExpr", "IndexExpr", "TryExpr", "WithExpr", "IfExpr", "MatchExpr", "ScopeExpr", "SelectExpr", "Block", "FnLit", "WhileExpr", "BadExpr"]
+
+fn kind_name(k: Int) -> Str {
+  let names = KIND_NAMES
+  names[k]
+}
+
+fn expr_kind(e: Expr) -> Int {
+  match e {
+    Ident(..) => 0
+    IntLit(..) => 1
+    FloatLit(..) => 2
+    DurationLit(..) => 3
+    RuneLit(..) => 4
+    StringLit(..) => 5
+    BytesLit(..) => 6
+    HoleExpr(..) => 7
+    UnitExpr(..) => 8
+    ParenExpr(..) => 9
+    TupleExpr(..) => 10
+    ListLit(..) => 11
+    MapLit(..) => 12
+    SetLit(..) => 13
+    StructLit(..) => 14
+    UnaryExpr(..) => 15
+    BinaryExpr(..) => 16
+    IsExpr(..) => 17
+    RangeExpr(..) => 18
+    SelectorExpr(..) => 19
+    CallExpr(..) => 20
+    TypeArgsExpr(..) => 21
+    IndexExpr(..) => 22
+    TryExpr(..) => 23
+    WithExpr(..) => 24
+    IfExpr(..) => 25
+    MatchExpr(..) => 26
+    ScopeExpr(..) => 27
+    SelectExpr(..) => 28
+    Block(..) => 29
+    FnLit(..) => 30
+    WhileExpr(..) => 31
+    BadExpr(..) => 32
+  }
+}
+
+/// The identity of an expression node: its file, span, and kind.
+fn (c: Checker) key_of(sp: Span, kind: Int) -> Int {
+  ((c.cur_file * 1048576 + sp.start.offset) * 1048576 + sp.end.offset) * 64 + kind
+}
+
+fn (c: Checker) expr_key(e: Expr) -> Int {
+  c.key_of(parser.expr_span(e), expr_kind(e))
+}
+
+/// Records t as the type of e (expr.go exprType).
+fn (var c: Checker) set_type(e: Expr, t: Int) {
+  let sp = parser.expr_span(e)
+  let k = expr_kind(e)
+  let key = c.key_of(sp, k)
+  if let Some(i) = c.type_at.get(key) {
+    c.types[i].ty = t
+    return
+  }
+  c.type_at[key] = c.types.len()
+  c.types.push(TypeRec{file: c.cur_file, start: sp.start.offset, end: sp.end.offset, sline: sp.start.line, scol: sp.start.col, eline: sp.end.line, ecol: sp.end.col, kind: kind_name(k), ty: t})
+}
+
+/// The recorded type of e, or -1.
+fn (c: Checker) type_of(e: Expr) -> Int {
+  match c.type_at.get(c.expr_key(e)) {
+    Some(i) => c.types[i].ty
+    None => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Checking against an expected type
+
+/// Checks e against w and returns the resulting type.
+fn (var c: Checker) check(e: Expr, w: Want) -> Int {
+  let t = c.check0(e, w)
+  c.set_type(e, t)
+  t
+}
+
+/// Checks e against the type t.
+fn (var c: Checker) check_ty(e: Expr, t: Int) -> Int {
+  c.check(e, want(t))
+}
+
+fn (var c: Checker) check0(e: Expr, w: Want) -> Int {
+  if w.kind == 0 {
+    return c.infer(e, -1)
+  }
+  match e {
+    ParenExpr(x: x, ..) => return c.check(x, w)
+    Block(b) => return c.block(b, w)
+    IfExpr(e: x) => return c.if_expr(x, w)
+    MatchExpr(span: span, subject: subject, arms: arms) => return c.match_expr(span, subject, arms, w)
+    ScopeExpr(span: span, name: name, body: body) => return c.scope_expr(span, name, body, w)
+    SelectExpr(arms: arms, ..) => return c.select_expr(arms, w)
+    _ => {}
+  }
+  if w.kind == 2 {
+    return c.check_ret(e, w)
+  }
+  if w.kind == 3 {
+    let t = c.infer(e, -1)
+    return c.coerce_to(t, w, parser.expr_span(e), [e])
+  }
+  let t = c.infer(e, w.t)
+  if c.is_never(t) {
+    c.never_expr[c.expr_key(e)] = true
+  }
+  c.coerce_to(t, w, parser.expr_span(e), [e])
+}
+
+/// Checks a computed type t against w, reporting a mismatch at sp; the
+/// type of the value after implicit conversion. e is the expression
+/// (zero or one element).
+fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
+  if w.kind == 0 {
+    return t
+  }
+  if w.kind == 3 {
+    if c.is_result(t) {
+      c.unhandled(e, sp)
+    }
+    return t
+  }
+  if w.kind == 2 {
+    return c.coerce_ret(t, w, sp, e)
+  }
+  if c.is_bad(t) {
+    return w.t
+  }
+  if c.assignable(t, w.t) {
+    return w.t
+  }
+  c.mismatch(sp, w.t, t)
+  c.bad_ty
+}
+
+fn (var c: Checker) mismatch(sp: Span, w: Int, g: Int) {
+  if c.contains_bad(w) || c.contains_bad(g) {
+    return
+  }
+  c.error("XO0401", sp, "expected `${c.show(w)}`, found `${c.show(g)}`")
+}
+
+/// XO0201 for a discarded Result (core 2.6).
+fn (var c: Checker) unhandled(e: List[Expr], sp: Span) {
+  var what = "this expression"
+  if !e.is_empty() {
+    if let CallExpr(fun: fun, ..) = e[0] {
+      let n = callee_name(fun)
+      if !n.is_empty() {
+        what = "`${n}`"
+      }
+    }
+  }
+  c.error("XO0201", sp, "result of ${what} is not handled")
+}
+
+fn callee_name(e: Expr) -> Str {
+  match e {
+    Ident(id) => text(id.name)
+    SelectorExpr(x: x, sel: sel, ..) => {
+      let b = callee_name(x)
+      if !b.is_empty() {
+        return "${b}.${text(sel.name)}"
+      }
+      text(sel.name)
+    }
+    TypeArgsExpr(x: x, ..) => callee_name(x)
+    _ => ""
+  }
+}
+
+/// A value in return position of `-> T ! E` (core 2.6): `Err(e)` with e:
+/// E, `Ok(x)` with x: T, a T, or a Result[T, E].
+fn (var c: Checker) check_ret(e: Expr, w: Want) -> Int {
+  if let CallExpr(fun: fun, args: args, ..) = e {
+    if let Ident(id) = fun {
+      if (id.name == b"Err" || id.name == b"Ok") && c.lookup_local(id.name) < 0 && !c.mods[c.cur_mod].members.contains(id.name) {
+        if args.len() == 1 && args[0].name == None {
+          let res = c.result_of(w.t, w.e)
+          c.set_type(fun, res)
+          let r = c.prelude_obj("Result")
+          c.record_text(id, c.variant_text(r, c.variant_pos(r, id.name)))
+          if id.name == b"Err" {
+            c.check_ty(args[0].value, w.e)
+          } else {
+            c.check_ty(args[0].value, w.t)
+          }
+          return res
+        }
+      }
+    }
+  }
+  let t = c.infer(e, w.t)
+  c.coerce_ret(t, w, parser.expr_span(e), [e])
+}
+
+fn (var c: Checker) coerce_ret(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
+  let res = c.result_of(w.t, w.e)
+  if c.is_bad(t) || c.is_never(t) {
+    return res
+  }
+  if c.is_result(t) && !c.is_result(w.t) {
+    let tt = c.result_t(t)
+    let te = c.result_e(t)
+    let m = c.mark()
+    if c.unify(te, w.e) && c.unify(tt, w.t) {
+      return res
+    }
+    c.undo(m)
+    if c.unify(tt, w.t) && !c.is_open_var(te) {
+      c.error("XO0401", sp, "expected `${c.show(w.t)} ! ${c.show(w.e)}`, found `${c.show(t)}`; a returned Result must have the declared error type")
+      return res
+    }
+    c.undo(m)
+  }
+  if c.is_result(w.t) && c.is_result(t) && c.try_unify(t, w.t) {
+    c.error("XO0203", sp, "the success value of `${c.show(w.t)} ! ${c.show(w.e)}` is itself a Result; write `Ok(...)` explicitly")
+    return res
+  }
+  if c.is_unit(w.t) {
+    // a `-> () ! E` body may end in a discarded non Result value
+    if !c.is_result(t) {
+      return res
+    }
+  }
+  if c.assignable(t, w.t) {
+    return res
+  }
+  c.mismatch(sp, w.t, t)
+  res
+}
+
+// ---------------------------------------------------------------------------
+// Inference
+
+/// Computes the type of e, using hint (-1 for none) for inference only.
+fn (var c: Checker) infer(e: Expr, hint: Int) -> Int {
+  var t = c.infer0(e, hint)
+  if t < 0 {
+    t = c.bad_ty
+  }
+  c.set_type(e, t)
+  t
+}
+
+fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
+  match e {
+    BadExpr(..) => c.bad_ty
+    IntLit(..) => {
+      if hint >= 0 && c.is_int(hint) {
+        return c.resolve(hint)
+      }
+      c.named("Int")
+    }
+    FloatLit(..) => {
+      if hint >= 0 && c.is_prelude(hint, "Float32") {
+        return c.resolve(hint)
+      }
+      c.named("Float")
+    }
+    DurationLit(..) => c.named("Duration")
+    RuneLit(span: span, raw: raw, value: value) => {
+      if hint >= 0 && c.is_int(hint) {
+        c.rune_fits(span, raw, value, c.resolve(hint))
+        return c.resolve(hint)
+      }
+      c.named("Rune")
+    }
+    BytesLit(..) => c.named("Bytes")
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          let t = c.infer(x, -1)
+          if !c.implements_name(t, "Display") {
+            c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Display`, so it cannot be interpolated")
+          }
+        }
+      }
+      c.named("Str")
+    }
+    HoleExpr(..) => {
+      if hint >= 0 {
+        return hint
+      }
+      c.new_var()
+    }
+    UnitExpr(..) => c.unit_ty
+    ParenExpr(x: x, ..) => c.infer(x, hint)
+    TupleExpr(elems: elems, ..) => {
+      var hs: List[Int] = []
+      if hint >= 0 {
+        let h = c.resolve(hint)
+        if c.tys[h].kind == TyKind.Tuple && c.tys[h].args.len() == elems.len() {
+          hs = c.tys[h].args
+        }
+      }
+      var el: List[Int] = []
+      for (i, x) in elems.indexed() {
+        if !hs.is_empty() {
+          el.push(c.check_ty(x, hs[i]))
+        } else {
+          el.push(c.infer(x, -1))
+        }
+      }
+      c.mk_tuple(el)
+    }
+    ListLit(elems: elems, ..) => c.collection_lit("List", elems, hint)
+    SetLit(elems: elems, ..) => c.collection_lit("Set", elems, hint)
+    MapLit(entries: entries, ..) => c.map_lit(entries, hint)
+    StructLit(span: span, typ: typ, fields: fields) => c.struct_lit(span, typ, fields, hint)
+    WithExpr(span: span, x: x, fields: fields) => c.with_expr(span, x, fields, hint)
+    UnaryExpr(span: span, op: op, x: x) => c.unary(span, op, x, hint)
+    BinaryExpr(span: span, op: op, x: x, y: y) => c.binary(span, op, x, y, hint)
+    IsExpr(x: x, pattern: pattern, ..) => c.is_expr(x, pattern)
+    RangeExpr(span: span, lo: lo, hi: hi, ..) => c.range_expr(span, lo, hi)
+    Ident(id) => c.ident(id, hint)
+    SelectorExpr(span: span, x: x, sel: sel) => c.selector(span, x, sel, hint)
+    CallExpr(span: span, fun: fun, args: args) => c.call(e, span, fun, args, hint)
+    TypeArgsExpr(span: span, x: x, types: types) => c.type_args_value(span, x, types, hint)
+    IndexExpr(span: span, x: x, index: index) => {
+      let bt = c.infer(x, -1)
+      let t = c.index_type(bt, span, index)
+      if c.is_prelude(bt, "Map") {
+        c.error("XO0410", span, "reading a Map by index faults when the key is missing")
+      }
+      t
+    }
+    TryExpr(span: span, x: x) => c.try_expr(span, x)
+    IfExpr(e: x) => c.if_expr(x, no_want())
+    MatchExpr(span: span, subject: subject, arms: arms) => c.match_expr(span, subject, arms, no_want())
+    Block(b) => c.block(b, no_want())
+    ScopeExpr(span: span, name: name, body: body) => c.scope_expr(span, name, body, no_want())
+    SelectExpr(arms: arms, ..) => c.select_expr(arms, no_want())
+    FnLit(f) => c.fn_lit(f, hint)
+    WhileExpr(body: body, ..) => {
+      let has_break = c.loop_body(b"", true, body, [], -1, false)
+      if has_break {
+        return c.unit_ty
+      }
+      c.named("Never")
+    }
+  }
+}
+
+fn (var c: Checker) collection_lit(kind: Str, elems: List[Expr], hint: Int) -> Int {
+  var et = -1
+  if hint >= 0 {
+    let h = c.resolve(hint)
+    if c.tys[h].kind == TyKind.Named && c.is_prelude(h, kind) {
+      et = c.tys[h].args[0]
+    }
+  }
+  if et < 0 {
+    if elems.is_empty() {
+      return c.named1(kind, c.new_var())
+    }
+    et = c.infer(elems[0], -1)
+    if c.is_never(et) {
+      et = c.new_var()
+    }
+    for i in 1..elems.len() {
+      c.check_ty(elems[i], et)
+    }
+    return c.named1(kind, et)
+  }
+  for x in elems {
+    c.check_ty(x, et)
+  }
+  c.named1(kind, et)
+}
+
+fn (var c: Checker) map_lit(entries: List[parser.MapEntry], hint: Int) -> Int {
+  var kt = -1
+  var vt = -1
+  if hint >= 0 {
+    let h = c.resolve(hint)
+    if c.tys[h].kind == TyKind.Named && c.is_prelude(h, "Map") {
+      kt = c.tys[h].args[0]
+      vt = c.tys[h].args[1]
+    }
+  }
+  if kt < 0 {
+    kt = c.new_var()
+    vt = c.new_var()
+  }
+  for en in entries {
+    c.check_ty(en.key, kt)
+    c.check_ty(en.value, vt)
+  }
+  c.mk_named(c.prelude_obj("Map"), [kt, vt])
+}
+
+fn (var c: Checker) range_expr(span: Span, lo: Expr?, hi: Expr?) -> Int {
+  var et = -1
+  if let Some(x) = lo {
+    et = c.infer(x, -1)
+  }
+  if let Some(x) = hi {
+    if et < 0 {
+      et = c.infer(x, -1)
+    } else {
+      c.check_ty(x, et)
+    }
+  }
+  if et < 0 {
+    et = c.named("Int")
+  }
+  if !c.is_bad(et) && !c.is_int(et) && !c.is_prelude(et, "Rune") {
+    c.error("XO0406", span, "a range needs integer or Rune bounds, found `${c.show(et)}`")
+    return c.bad_ty
+  }
+  c.named1("Range", et)
+}
+
+/// The type of `x[i]` and `x[a..b]` (core 3.6).
+fn (var c: Checker) index_type(bt: Int, span: Span, index: Expr) -> Int {
+  let r = c.resolve(bt)
+  if c.is_bad(r) {
+    c.infer(index, -1)
+    return c.bad_ty
+  }
+  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].module != c.prelude {
+    c.infer(index, -1)
+    c.error("XO0406", span, "`${c.show(bt)}` cannot be indexed")
+    return c.bad_ty
+  }
+  let name = text(c.objs[c.tys[r].obj].name)
+  if let RangeExpr(lo: lo, hi: hi, ..) = index {
+    if name is "List" | "Bytes" | "Str" {
+      if let Some(x) = lo {
+        c.check_ty(x, c.named("Int"))
+      }
+      if let Some(x) = hi {
+        c.check_ty(x, c.named("Int"))
+      }
+      c.set_type(index, c.named1("Range", c.named("Int")))
+      return r
+    }
+    c.error("XO0406", span, "`${c.show(bt)}` cannot be sliced; slicing works on List, Bytes, and Str (core 3.6)")
+    return c.bad_ty
+  }
+  if name == "List" {
+    c.check_ty(index, c.named("Int"))
+    return c.tys[r].args[0]
+  }
+  if name == "Bytes" {
+    c.check_ty(index, c.named("Int"))
+    return c.named("UInt8")
+  }
+  if name == "Map" {
+    c.check_ty(index, c.tys[r].args[0])
+    return c.tys[r].args[1]
+  }
+  c.infer(index, -1)
+  c.error("XO0406", span, "`${c.show(bt)}` cannot be indexed; indexing works on List, Bytes, and Map (core 3.6)")
+  c.bad_ty
+}
+
+/// `x?` (core 2.5, 2.6).
+fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
+  let t = c.infer(x, -1)
+  let r = c.resolve(t)
+  if c.is_bad(r) {
+    return c.bad_ty
+  }
+  if c.is_result(r) {
+    c.propagate(c.result_e(r), span, "XO0202", "`?`")
+    return c.result_t(r)
+  }
+  let el = c.option_elem(r)
+  if el >= 0 {
+    let ctx = c.ctxs[c.ctx]
+    if (ctx.err >= 0 && !c.is_open_var(ctx.err)) || (ctx.err_var >= 0 && c.tys[ctx.err_var].ref >= 0) {
+      c.error("XO0204", span, "`?` on an optional value in a function that returns a Result")
+      return el
+    }
+    if c.option_elem(ctx.result) >= 0 {
+      return el
+    }
+    if c.is_open_var(ctx.result) && ctx.closure {
+      c.unify(ctx.result, c.option_of(c.new_var()))
+      return el
+    }
+    c.error("XO0205", span, "`?` on an optional value needs a function that returns an optional, but `${ctx.name}` returns `${c.show(ctx.result)}`")
+    let src = c.files[c.cur_file].src
+    if span.end.offset < src.len() && src[span.end.offset] == '.' {
+      c.safe_navs[c.key_of(span, 23)] = true
+    }
+    return el
+  }
+  if c.tys[r].kind == TyKind.Var {
+    c.error("XO0405", parser.expr_span(x), "the type of this value must be known before `?`")
+    return c.bad_ty
+  }
+  c.error("XO0401", span, "`?` needs a Result or an optional value, found `${c.show(t)}`")
+  c.bad_ty
+}
+
+/// Checks that an error of type et can leave the current function (by
+/// `?` or a failed child task), reporting code otherwise.
+fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
+  let ctx = c.ctxs[c.ctx]
+  let et = c.resolve(et0)
+  if c.is_bad(et) || c.is_never(et) {
+    return
+  }
+  if ctx.err < 0 {
+    if ctx.err_var >= 0 {
+      let ref = c.tys[ctx.err_var].ref
+      if ref < 0 {
+        c.bind(ctx.err_var, et)
+        return
+      }
+      if !c.err_converts(et, ref) {
+        c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ref)}`, the error type of this closure")
+      }
+      return
+    }
+    if code == "XO0801" {
+      c.error(code, sp, "a task here can fail with `${c.show(et)}`, which propagates out of the scope, but `${ctx.name}` cannot fail")
+      return
+    }
+    c.error("XO0205", sp, "${how} propagates `${c.show(et)}`, but `${ctx.name}` cannot fail")
+    return
+  }
+  if c.is_open_var(ctx.err) {
+    c.unify(ctx.err, et)
+    return
+  }
+  if c.err_converts(et, ctx.err) {
+    return
+  }
+  c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ctx.err)}`, the error type of `${ctx.name}`")
+}
+
+/// Whether e is, or starts with, an optional chain `x?.f` reported as
+/// XO0205 (habits.go safeNav).
+fn (c: Checker) safe_nav(e: Expr) -> Bool {
+  match e {
+    TryExpr(span: span, x: x) => {
+      if c.safe_navs.contains(c.key_of(span, 23)) {
+        return true
+      }
+      c.safe_nav(x)
+    }
+    SelectorExpr(x: x, ..) => c.safe_nav(x)
+    CallExpr(fun: fun, ..) => c.safe_nav(fun)
+    IndexExpr(x: x, ..) => c.safe_nav(x)
+    ParenExpr(x: x, ..) => c.safe_nav(x)
+    _ => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Control flow
+
+/// The type of branches with no expected type: they must agree exactly.
+fn (var c: Checker) join(ts: List[Int], spans: List[Span]) -> Int {
+  var base = -1
+  for (i, t) in ts.indexed() {
+    if c.is_bad(t) {
+      return c.bad_ty
+    }
+    if c.is_never(t) {
+      continue
+    }
+    if base < 0 {
+      base = t
+      continue
+    }
+    if c.try_unify(t, base) {
+      continue
+    }
+    c.error("XO0401", spans[i], "branches have different types: `${c.show(base)}` and `${c.show(t)}`")
+    return c.bad_ty
+  }
+  if base < 0 {
+    return c.named("Never")
+  }
+  base
+}
+
+fn (var c: Checker) if_expr(x: parser.IfExpr, w: Want) -> Int {
+  c.push_scope()
+  if let Some(cond) = x.cond {
+    c.check_ty(cond, c.named("Bool"))
+  } else {
+    let value = x.value ?? fault("if let has a value")
+    let vt = c.infer(value, -1)
+    let pat = x.pattern ?? fault("if let has a pattern")
+    c.refutable_pattern(pat, vt)
+  }
+  let els = match x.els {
+    Some(e) => e
+    None => {
+      c.block(x.then, discard())
+      c.pop_scope()
+      let t = c.unit_ty
+      if w.kind == 0 || w.kind == 3 {
+        return t
+      }
+      return c.coerce_to(t, w, x.span, [])
+    }
+  }
+  if w.kind != 0 {
+    c.block(x.then, w)
+    c.pop_scope()
+    c.check(els, w)
+    if w.kind == 2 {
+      return c.result_of(w.t, w.e)
+    }
+    if w.kind == 3 {
+      return c.unit_ty
+    }
+    return w.t
+  }
+  let t1 = c.block(x.then, no_want())
+  c.pop_scope()
+  let t2 = c.infer(els, -1)
+  c.join([t1, t2], [x.then.span, parser.expr_span(els)])
+}
+
+fn (var c: Checker) match_expr(span: Span, subject: Expr, arms: List[parser.MatchArm], w: Want) -> Int {
+  var st = c.infer(subject, -1)
+  if c.is_open_var(st) {
+    c.error("XO0405", parser.expr_span(subject), "the type of the matched value must be known here")
+    st = c.bad_ty
+  }
+  var ts: List[Int] = []
+  var spans: List[Span] = []
+  for arm in arms {
+    c.push_scope()
+    c.pattern(arm.pattern, st, true)
+    if let Some(g) = arm.guard {
+      c.check_ty(g, c.named("Bool"))
+    }
+    if let Some(b) = arm.body {
+      ts.push(c.arm_body(b, w))
+      spans.push(stmt_span(b))
+    }
+    c.pop_scope()
+  }
+  if w.kind == 0 {
+    return c.join(ts, spans)
+  }
+  if w.kind == 2 {
+    return c.result_of(w.t, w.e)
+  }
+  if w.kind == 3 {
+    return c.unit_ty
+  }
+  w.t
+}
+
+/// A match or select arm body: an expression, a block, or a statement
+/// (`()`, or Never for return, break, continue).
+fn (var c: Checker) arm_body(s: Stmt, w: Want) -> Int {
+  if let ExprStmt(x: x, ..) = s {
+    if w.kind == 0 {
+      return c.infer(x, -1)
+    }
+    return c.check(x, w)
+  }
+  c.stmt(s)
+  var t = c.unit_ty
+  if c.stmt_never(s) {
+    t = c.named("Never")
+  }
+  if w.kind == 0 {
+    return t
+  }
+  c.coerce_to(t, w, stmt_span(s), [])
+}
+
+fn (var c: Checker) scope_expr(span: Span, name: Ident, body: Block, w: Want) -> Int {
+  c.push_scope()
+  let frame = c.frames.len()
+  c.frames.push(ScopeFrame{ctx: c.ctx})
+  let h = c.declare_local(name, c.named("Scope"), "let")
+  c.objs[h].frame = frame
+  let t = c.block(body, w)
+  c.pop_scope()
+  // child failure propagates out of the scope (core 7.1)
+  let saved = c.ctx
+  c.ctx = c.frames[frame].ctx
+  for sp in c.frames[frame].spawns {
+    if sp.bound >= 0 && c.objs[sp.bound].awaited {
+      continue
+    }
+    c.propagate(sp.err, sp.span, "XO0801", "this task")
+  }
+  c.ctx = saved
+  t
+}
+
+fn (var c: Checker) select_expr(arms: List[parser.SelectArm], w: Want) -> Int {
+  var ts: List[Int] = []
+  var spans: List[Span] = []
+  for arm in arms {
+    c.push_scope()
+    if let Some(a) = arm.after {
+      c.check_ty(a, c.named("Duration"))
+      c.perform(c.new_eset([EffItem{label: "clock"}]))
+    } else if let Some(b) = arm.bind {
+      let op = arm.op ?? fault("a bound select arm has an operation")
+      let t = c.infer(op, -1)
+      c.declare_local(b, t, "let")
+    } else if let Some(op) = arm.op {
+      c.check(op, discard())
+    }
+    if let Some(body) = arm.body {
+      ts.push(c.arm_body(body, w))
+      spans.push(stmt_span(body))
+    }
+    c.pop_scope()
+  }
+  if w.kind == 0 {
+    return c.join(ts, spans)
+  }
+  if w.kind == 2 {
+    return c.result_of(w.t, w.e)
+  }
+  if w.kind == 3 {
+    return c.unit_ty
+  }
+  w.t
+}
+
+// ---------------------------------------------------------------------------
+// Operators
+
+/// A numeric literal (possibly negated) or a rune literal, whose type
+/// adapts to its context.
+fn is_literal(e: Expr) -> Bool {
+  match e {
+    IntLit(..) | FloatLit(..) | RuneLit(..) => true
+    UnaryExpr(op: op, x: x, ..) => op == parser.Kind.Minus && is_num_literal(x)
+    ParenExpr(x: x, ..) => is_literal(x)
+    _ => false
+  }
+}
+
+fn is_num_literal(e: Expr) -> Bool {
+  match e {
+    ParenExpr(x: x, ..) => is_num_literal(x)
+    RuneLit(..) => false
+    _ => is_literal(e)
+  }
+}
+
+/// A rune literal used as a value of integer type t must fit it
+/// (decision 0079); an 8 bit type takes only ASCII.
+fn (var c: Checker) rune_fits(span: Span, raw: Bytes, value: Int, t: Int) {
+  if c.tys[t].kind != TyKind.Named {
+    return
+  }
+  let n = text(c.objs[c.tys[t].obj].name)
+  let max = match n {
+    "Int8" | "UInt8" => 0x7f
+    "Int16" => 0x7fff
+    "UInt16" => 0xffff
+    _ => return
+  }
+  if value <= max {
+    return
+  }
+  c.error("XO0401", span, "the rune literal ${text(raw)} (U+${hex4(value)}) does not fit `${n}`")
+}
+
+/// n in upper case hex, at least 4 digits (Go's %04X).
+fn hex4(n: Int) -> Str {
+  let digits = "0123456789ABCDEF".bytes()
+  var out: List[Bytes] = []
+  var v = n
+  while v > 0 {
+    out.push(digits[v % 16..v % 16 + 1])
+    v = v / 16
+  }
+  while out.len() < 4 {
+    out.push(b"0")
+  }
+  var b = StrBuilder.new()
+  var i = out.len() - 1
+  while i >= 0 {
+    b.write(text(out[i]))
+    i -= 1
+  }
+  b.freeze()
+}
+
+fn op_text(k: parser.Kind) -> Str {
+  match k {
+    Plus => "+"
+    Minus => "-"
+    Star => "*"
+    Slash => "/"
+    Percent => "%"
+    Shl => "<<"
+    Shr => ">>"
+    Amp => "&"
+    Pipe => "|"
+    Caret => "^"
+    Tilde => "~"
+    Bang => "!"
+    AndAnd => "&&"
+    OrOr => "||"
+    Coalesce => "??"
+    Eq => "=="
+    NotEq => "!="
+    Lt => "<"
+    LtEq => "<="
+    Gt => ">"
+    GtEq => ">="
+    Assign => "="
+    PlusAssign => "+="
+    MinusAssign => "-="
+    StarAssign => "*="
+    SlashAssign => "/="
+    PercentAssign => "%="
+    AmpAssign => "&="
+    PipeAssign => "|="
+    CaretAssign => "^="
+    ShlAssign => "<<="
+    ShrAssign => ">>="
+    _ => "?"
+  }
+}
+
+fn (var c: Checker) unary(span: Span, op: parser.Kind, x: Expr, hint: Int) -> Int {
+  match op {
+    Bang => {
+      c.check_ty(x, c.named("Bool"))
+      c.named("Bool")
+    }
+    Minus => {
+      let t = c.infer(x, hint)
+      if c.is_bad(t) {
+        return c.bad_ty
+      }
+      if c.is_numeric(t) || c.is_prelude(t, "Duration") {
+        return t
+      }
+      c.error("XO0406", span, "unary `-` is not defined for `${c.show(t)}`")
+      c.bad_ty
+    }
+    Tilde => {
+      let t = c.infer(x, hint)
+      if c.is_bad(t) || c.is_int(t) {
+        return t
+      }
+      c.error("XO0406", span, "`~` is not defined for `${c.show(t)}`")
+      c.bad_ty
+    }
+    _ => c.bad_ty
+  }
+}
+
+/// The expected type of the right operand given the left (-1 none).
+fn (var c: Checker) operand_hint(op: parser.Kind, xt: Int) -> Int {
+  match op {
+    AndAnd | OrOr => return c.named("Bool")
+    Coalesce => return c.option_elem(xt)
+    Star | Slash => {
+      if c.is_prelude(xt, "Duration") {
+        if op == parser.Kind.Star {
+          return c.named("Int")
+        }
+        return -1
+      }
+    }
+    Minus | Plus => {
+      if c.is_prelude(xt, "Time") {
+        if op == parser.Kind.Plus {
+          return c.named("Duration")
+        }
+        return -1
+      }
+    }
+    Shl | Shr => return -1
+    _ => {}
+  }
+  if c.is_open_var(xt) {
+    return -1
+  }
+  xt
+}
+
+fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: Int) -> Int {
+  if let CallExpr(span: cspan, fun: fun, args: args) = x {
+    if c.is_expect_call(fun) {
+      return c.expect_compare(span, op, x, cspan, args, y)
+    }
+  }
+  if op == parser.Kind.AndAnd || op == parser.Kind.OrOr {
+    c.check_ty(x, c.named("Bool"))
+    c.check_ty(y, c.named("Bool"))
+    return c.named("Bool")
+  }
+  if op == parser.Kind.Coalesce {
+    let xt = c.infer(x, if hint >= 0 { c.option_of(hint) } else { -1 })
+    let el = c.option_elem(xt)
+    if el < 0 {
+      c.infer(y, c.bad_ty)
+      if !c.is_bad(xt) && !c.safe_nav(x) {
+        c.error("XO0406", span, "`??` needs an optional value on the left, found `${c.show(xt)}`")
+      }
+      return c.bad_ty
+    }
+    let yt = c.infer(y, el)
+    if c.option_elem(yt) >= 0 && c.try_unify(yt, xt) {
+      return xt
+    }
+    if c.assignable(yt, el) {
+      return el
+    }
+    c.mismatch(parser.expr_span(y), el, yt)
+    return c.bad_ty
+  }
+  var xt = -1
+  var yt = -1
+  if is_literal(x) && !is_literal(y) {
+    yt = c.infer(y, -1)
+    xt = c.infer(x, c.operand_hint(op, yt))
+  } else {
+    var h = -1
+    if is_literal(x) && is_literal(y) {
+      h = hint
+    }
+    xt = c.infer(x, h)
+    yt = c.infer(y, c.operand_hint(op, xt))
+  }
+  c.binary_type(op, xt, yt, span)
+}
+
+/// `x is Pattern` (core 3.5): a Bool test that binds nothing.
+fn (var c: Checker) is_expr(x: Expr, pattern: Pattern) -> Int {
+  var t = c.infer(x, -1)
+  if c.is_open_var(t) {
+    c.error("XO0405", parser.expr_span(x), "the type of the tested value must be known here")
+    t = c.bad_ty
+  }
+  c.push_scope()
+  c.pattern(pattern, t, true)
+  c.pop_scope()
+  c.named("Bool")
+}
+
+fn (var c: Checker) op_fail(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int {
+  c.error("XO0406", sp, "operator `${op_text(op)}` is not defined for `${c.show(xt)}` and `${c.show(yt)}`")
+  c.bad_ty
+}
+
+/// The result type of `x op y` (core 2.1, 15).
+fn (var c: Checker) binary_type(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int {
+  if c.is_bad(xt) || c.is_bad(yt) {
+    return c.bad_ty
+  }
+  let bool_t = c.named("Bool")
+  match op {
+    Eq | NotEq => {
+      if c.try_unify(xt, yt) || c.assignable(yt, xt) || c.assignable(xt, yt) {
+        if !c.is_eq_type(xt, "Eq") {
+          c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Eq`, so it cannot be compared with `${op_text(op)}`")
+        }
+        return bool_t
+      }
+      return c.op_fail(op, xt, yt, sp)
+    }
+    Lt | LtEq | Gt | GtEq => {
+      if !c.try_unify(xt, yt) {
+        return c.op_fail(op, xt, yt, sp)
+      }
+      if !c.is_ord(xt) && !c.is_open_var(xt) {
+        c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Ord`, so it cannot be compared with `${op_text(op)}`")
+      }
+      return bool_t
+    }
+    _ => {}
+  }
+  let dur = c.is_prelude(xt, "Duration")
+  let tim = c.is_prelude(xt, "Time")
+  let ydur = c.is_prelude(yt, "Duration")
+  let ytim = c.is_prelude(yt, "Time")
+  match op {
+    Plus => {
+      if (dur && ydur) || (tim && ydur) {
+        return xt
+      }
+      if c.is_numeric(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      if (c.is_prelude(xt, "Str") || c.is_prelude(xt, "Bytes") || c.is_prelude(xt, "List")) && c.try_unify(xt, yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Minus => {
+      if (dur && ydur) || (tim && ydur) {
+        return xt
+      }
+      if tim && ytim {
+        return c.named("Duration")
+      }
+      if c.is_numeric(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Star => {
+      if dur && c.is_prelude(yt, "Int") {
+        return xt
+      }
+      if ydur && c.is_prelude(xt, "Int") {
+        return yt
+      }
+      if c.is_numeric(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Slash => {
+      if dur && c.is_prelude(yt, "Int") {
+        return xt
+      }
+      if dur && ydur {
+        return c.named("Int")
+      }
+      if c.is_numeric(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Percent => {
+      if c.is_numeric(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Amp | Pipe | Caret => {
+      if c.is_int(xt) && c.try_unify(xt, yt) {
+        return xt
+      }
+      if c.is_prelude(xt, "Bool") && c.try_unify(xt, yt) && op != parser.Kind.Caret {
+        return c.op_fail(op, xt, yt, sp)
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    Shl | Shr => {
+      if c.is_int(xt) && c.is_int(yt) {
+        return xt
+      }
+      c.op_fail(op, xt, yt, sp)
+    }
+    _ => c.op_fail(op, xt, yt, sp)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Struct literals and updates
+
+/// A type named by an expression (expr.go typeOfExpr): `User`,
+/// `http.Response`, `Job[Str]`. Its Type object (-1 when e names no
+/// type) and the type arguments written (has_args false when none).
+struct TypeRef {
+  obj: Int
+  args: List[Int] = []
+  has_args: Bool = false
+}
+
+fn (var c: Checker) type_of_expr(e: Expr) -> TypeRef {
+  match e {
+    Ident(id) => {
+      if c.lookup_local(id.name) >= 0 {
+        return TypeRef{obj: -1}
+      }
+      let o = c.lookup_module_obj(c.cur_mod, id.name)
+      if o >= 0 && c.objs[o].kind == ObjKind.Type {
+        if c.local_env().params.contains(id.name) {
+          return TypeRef{obj: -1}
+        }
+        c.record(id, o)
+        return TypeRef{obj: o}
+      }
+      TypeRef{obj: -1}
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      let id = match x {
+        Ident(i) => i
+        _ => return TypeRef{obj: -1}
+      }
+      if c.lookup_local(id.name) >= 0 {
+        return TypeRef{obj: -1}
+      }
+      var m = -1
+      var is_file_imp = false
+      if let Some(imp) = c.file_import(id.name) {
+        m = imp.module
+        is_file_imp = true
+      } else if id.name == b"testing" && c.in_test_context() {
+        m = c.testing_mod()
+      } else {
+        return TypeRef{obj: -1}
+      }
+      if m < 0 {
+        return TypeRef{obj: -1}
+      }
+      let o = c.mods[m].members.get(sel.name) ?? -1
+      if o < 0 || c.objs[o].kind != ObjKind.Type {
+        return TypeRef{obj: -1}
+      }
+      if is_file_imp {
+        c.use_import(id.name)
+      }
+      c.record(id, c.mods[m].obj)
+      c.record(sel, o)
+      if !c.objs[o].is_pub && m != c.cur_mod {
+        c.error("XO0605", sel.span, "type `${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+      }
+      TypeRef{obj: o}
+    }
+    TypeArgsExpr(x: x, types: types, ..) => {
+      let r = c.type_of_expr(x)
+      if r.obj < 0 {
+        return r
+      }
+      if !c.objs[r.obj].resolving {
+        c.resolve_type_obj(r.obj)
+      }
+      var env = c.local_env()
+      let args = c.resolve_args_for(r.obj, types, env)
+      TypeRef{obj: r.obj, args: args, has_args: true}
+    }
+    _ => TypeRef{obj: -1}
+  }
+}
+
+/// obj applied to explicit args or fresh variables (-1 on a wrong count).
+fn (var c: Checker) instantiate(obj: Int, args: List[Int], has_args: Bool, sp: Span) -> Int {
+  let tps = c.objs[obj].tparams
+  if has_args {
+    if args.len() != tps.len() {
+      c.error("XO0403", sp, "`${c.qual_name(obj)}` takes ${tps.len()} type argument(s), found ${args.len()}")
+      return -1
+    }
+    return c.mk_named(obj, args)
+  }
+  var out: List[Int] = []
+  for p in tps {
+    out.push(c.fresh_arg(p))
+  }
+  c.mk_named(obj, out)
+}
+
+/// A fresh inference argument for type parameter p.
+fn (var c: Checker) fresh_arg(p: Int) -> Int {
+  if c.objs[p].effect {
+    return c.fresh_effarg()
+  }
+  c.new_var()
+}
+
+/// Resolves an alias object to its target named type: the Type object
+/// (-1 when the target is not named) and its arguments.
+fn (var c: Checker) alias_named(obj0: Int, args0: List[Int], has_args0: Bool, sp: Span) -> TypeRef {
+  var obj = obj0
+  var args = args0
+  var has_args = has_args0
+  var i = 0
+  while obj >= 0 && c.objs[obj].tkind == "alias" && i < 10 {
+    var t = c.alias_target(obj, sp)
+    if has_args {
+      t = c.subst(t, c.args_subst(c.objs[obj].tparams, args))
+    } else if !c.objs[obj].tparams.is_empty() {
+      var vs: List[Int] = []
+      for p in c.objs[obj].tparams {
+        vs.push(c.fresh_arg(p))
+      }
+      t = c.subst(t, c.args_subst(c.objs[obj].tparams, vs))
+    }
+    let r = c.resolve(t)
+    if c.tys[r].kind != TyKind.Named {
+      return TypeRef{obj: -1}
+    }
+    obj = c.tys[r].obj
+    args = c.tys[r].args
+    has_args = true
+    i += 1
+  }
+  TypeRef{obj: obj, args: args, has_args: has_args}
+}
+
+/// The index of field name in struct obj, or -1.
+fn (c: Checker) field_index(obj: Int, name: Bytes) -> Int {
+  for (i, f) in c.objs[obj].fields.indexed() {
+    if f.name == name {
+      return i
+    }
+  }
+  -1
+}
+
+/// The position of variant name in enum obj's variant list, or -1.
+fn (c: Checker) variant_pos(obj: Int, name: Bytes) -> Int {
+  for (i, v) in c.objs[obj].variants.indexed() {
+    if v.name == name {
+      return i
+    }
+  }
+  -1
+}
+
+fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldInit], hint: Int) -> Int {
+  var r = c.type_of_expr(typ)
+  if r.obj < 0 {
+    c.infer(typ, -1)
+    for f in fields {
+      c.infer(f.value, -1)
+    }
+    return c.bad_ty
+  }
+  let tsp = parser.expr_span(typ)
+  if c.objs[r.obj].tkind == "alias" {
+    r = c.alias_named(r.obj, r.args, r.has_args, tsp)
+    if r.obj < 0 {
+      return c.bad_ty
+    }
+  }
+  let obj = r.obj
+  if c.objs[obj].tkind != "struct" {
+    c.error("XO0407", tsp, "`${c.qual_name(obj)}` is not a struct, so it has no struct literal")
+    for f in fields {
+      c.infer(f.value, -1)
+    }
+    return c.bad_ty
+  }
+  if c.objs[obj].opaque {
+    c.error("XO0605", tsp, "`${c.qual_name(obj)}` is an opaque handle and cannot be built with a struct literal; use its constructor function")
+    return c.bad_ty
+  }
+  let nt = c.instantiate(obj, r.args, r.has_args, tsp)
+  if nt < 0 {
+    return c.bad_ty
+  }
+  if hint >= 0 {
+    c.try_unify(nt, hint)
+  }
+  let s = c.args_subst(c.objs[obj].tparams, c.tys[nt].args)
+  var seen: List[Bytes] = []
+  for f in fields {
+    let fi = c.field_index(obj, f.name.name)
+    if fi < 0 {
+      c.error("XO0601", f.name.span, "`${text(c.objs[obj].name)}` has no field `${text(f.name.name)}`")
+      c.infer(f.value, -1)
+      continue
+    }
+    let fo = c.objs[obj].fields[fi]
+    c.record_text(f.name, c.field_text(obj, fo))
+    if seen.contains(fo.name) {
+      c.error("XO0403", f.name.span, "field `${text(fo.name)}` is given twice")
+    }
+    seen.push(fo.name)
+    if !fo.is_pub && c.objs[obj].module != c.cur_mod {
+      c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`")
+    }
+    c.check_ty(f.value, c.subst(fo.ty, s))
+  }
+  var missing: List[Str] = []
+  for fo in c.objs[obj].fields {
+    if !seen.contains(fo.name) && fo.default.is_empty() {
+      missing.push(text(fo.name))
+    }
+  }
+  if !missing.is_empty() {
+    c.error("XO0403", tsp, "missing field(s) `${missing.join("`, `")}` in `${text(c.objs[obj].name)}` literal")
+  }
+  nt
+}
+
+fn (var c: Checker) with_expr(span: Span, x: Expr, fields: List[parser.FieldInit], hint: Int) -> Int {
+  let t = c.infer(x, hint)
+  let r = c.resolve(t)
+  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].tkind != "struct" || c.objs[c.tys[r].obj].opaque {
+    for f in fields {
+      c.infer(f.value, -1)
+    }
+    if !c.is_bad(t) {
+      c.error("XO0406", span, "`with` needs a struct value, found `${c.show(t)}`")
+    }
+    return c.bad_ty
+  }
+  let obj = c.tys[r].obj
+  let s = c.args_subst(c.objs[obj].tparams, c.tys[r].args)
+  for f in fields {
+    let fi = c.field_index(obj, f.name.name)
+    if fi < 0 {
+      c.error("XO0601", f.name.span, "`${text(c.objs[obj].name)}` has no field `${text(f.name.name)}`")
+      c.infer(f.value, -1)
+      continue
+    }
+    let fo = c.objs[obj].fields[fi]
+    c.record_text(f.name, c.field_text(obj, fo))
+    if !fo.is_pub && c.objs[obj].module != c.cur_mod {
+      c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`")
+    }
+    c.check_ty(f.value, c.subst(fo.ty, s))
+  }
+  t
+}
+
+// ---------------------------------------------------------------------------
+// Closures (core 3.3)
+
+fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
+  var ft = -1
+  if hint >= 0 {
+    let h = c.resolve(hint)
+    if c.tys[h].kind == TyKind.Func {
+      ft = h
+    }
+  }
+  if ft >= 0 && c.tys[ft].args.len() != x.params.len() {
+    c.error("XO0401", x.span, "expected a function with ${c.tys[ft].args.len()} parameter(s), found a closure with ${x.params.len()}")
+    ft = -1
+  }
+  var env = c.local_env()
+  var cx = Ctx{parent: c.ctx, name: "closure", result: -1, closure: true, is_test: c.ctx >= 0 && c.ctxs[c.ctx].is_test}
+  var params: List[Int] = []
+  var pvars: List[Bool] = []
+  var vars: List[Int] = []
+  for (i, p) in x.params.indexed() {
+    var pt = c.bad_ty
+    if let Some(t) = p.typ {
+      pt = c.resolve_type(t, env)
+      if ft >= 0 {
+        c.unify(c.tys[ft].args[i], pt)
+      }
+    } else if ft >= 0 {
+      pt = c.tys[ft].args[i]
+    } else if hint < 0 {
+      c.error("XO0405", p.name.span, "cannot infer the type of parameter `${text(p.name.name)}`; annotate it: `${text(p.name.name)}: T`")
+    }
+    if p.is_var && ft >= 0 && !c.tys[ft].vars[i] {
+      c.error("XO0401", p.name.span, "parameter `${text(p.name.name)}` cannot be `var`: the expected function type passes it read only")
+    }
+    params.push(pt)
+    pvars.push((ft >= 0 && c.tys[ft].vars[i]) || (ft < 0 && p.is_var))
+    vars.push(c.new_local(p.name, pt, if p.is_var { "var-param" } else { "param" }))
+  }
+  if let Some(rt) = x.result {
+    cx.result = c.resolve_type(rt, env)
+    if ft >= 0 {
+      c.unify(c.tys[ft].result, cx.result)
+    }
+  } else if ft >= 0 {
+    cx.result = c.tys[ft].result
+  } else {
+    cx.result = c.new_var()
+  }
+  if let Some(es) = x.err {
+    cx.err = c.resolve_err_spec(Some(es), env)
+    if ft >= 0 && c.tys[ft].err >= 0 && cx.err >= 0 && c.is_open_var(c.tys[ft].err) {
+      c.unify(c.tys[ft].err, cx.err)
+    }
+  } else if x.result != None {
+    // an explicit signature without `!` cannot fail
+    cx.err = -1
+    if ft >= 0 && c.tys[ft].err >= 0 && c.is_open_var(c.tys[ft].err) {
+      c.unify(c.tys[ft].err, c.named("Never"))
+    }
+  } else if ft >= 0 && c.tys[ft].err >= 0 {
+    cx.err = c.tys[ft].err
+  } else if ft >= 0 {
+    cx.err = -1
+  } else {
+    cx.err_var = c.new_var()
+  }
+  var declared = -1
+  if !x.effects.is_empty() {
+    declared = c.resolve_effects(x.effects, env)
+  }
+  cx.eff = c.new_eset([])
+  let saved_ctx = c.ctx
+  let saved_scopes = c.scopes.len()
+  c.ctxs.push(cx)
+  c.ctx = c.ctxs.len() - 1
+  c.push_scope()
+  for v in vars {
+    c.declare_var(v)
+  }
+  var w = c.body_want(c.ctx)
+  if cx.err_var >= 0 {
+    w = ret_want(cx.result, cx.err_var)
+  }
+  if c.is_open_var(cx.result) && cx.err < 0 && cx.err_var < 0 {
+    w = want(cx.result)
+  }
+  c.block(x.body, w)
+  if c.is_open_var(cx.result) && c.block_never(x.body) {
+    c.never_results.push(cx.result)
+  }
+  c.finish_groups(c.ctx)
+  c.pop_scope()
+  c.ctx = saved_ctx
+  while c.scopes.len() > saved_scopes {
+    c.scopes.pop()
+  }
+  var err_t = -1
+  if cx.err >= 0 {
+    err_t = cx.err
+    if c.is_open_var(err_t) {
+      // an inferred error type of a generic callback: none was
+      // propagated, so the closure cannot fail
+      c.unify(err_t, c.named("Never"))
+      err_t = -1
+    }
+  } else if cx.err_var >= 0 {
+    if c.tys[cx.err_var].ref >= 0 {
+      err_t = c.tys[cx.err_var].ref
+    }
+  }
+  if err_t >= 0 && c.is_never(err_t) {
+    err_t = -1
+  }
+  var eff = cx.eff
+  if declared >= 0 {
+    eff = declared
+  }
+  c.mk_func(params, pvars, cx.result, err_t, eff)
+}

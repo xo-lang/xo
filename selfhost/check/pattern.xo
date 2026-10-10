@@ -1,0 +1,455 @@
+// Patterns (internal/check/pattern.go): typing a pattern against the
+// type of the matched value and binding its names. Exhaustiveness is
+// stage 6 (decision 0141).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Types p against t and declares its bindings in the current scope.
+fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) {
+  match p {
+    WildcardPat(..) | BadPat(..) => {}
+    BindPat(name: name, ..) => {
+      c.declare_local(name, t, "let")
+    }
+    LitPat(span: span, value: value) => c.lit_pattern(value, t, span)
+    RangePat(span: span, lo: lo, hi: hi, ..) => {
+      let lt = c.infer(lo, t)
+      c.check_ty(hi, lt)
+      if !c.is_bad(t) && !c.is_bad(lt) {
+        if !c.is_numeric(t) && !c.is_prelude(t, "Rune") {
+          c.error("XO0302", span, "a range pattern needs a number or Rune, but the value is `${c.show(t)}`")
+        } else if !c.try_unify(lt, t) {
+          c.error("XO0302", span, "range of `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+        }
+      }
+    }
+    OrPat(alts: alts, ..) => c.or_pattern(alts, t, refutable)
+    TuplePat(span: span, elems: elems) => {
+      let r = c.resolve(t)
+      if c.tys[r].kind != TyKind.Tuple || c.tys[r].args.len() != elems.len() {
+        if !c.is_bad(r) {
+          c.error("XO0302", span, "tuple pattern with ${elems.len()} element(s) does not fit a value of type `${c.show(t)}`")
+        }
+        for e in elems {
+          c.pattern(e, c.bad_ty, refutable)
+        }
+        return
+      }
+      let ts = c.tys[r].args
+      for (i, e) in elems.indexed() {
+        c.pattern(e, ts[i], refutable)
+      }
+    }
+    VariantPat(span: span, path: path, parens: parens, fields: fields, rest: rest) => c.variant_pattern(span, path, parens, fields, rest, t, refutable)
+    StructPat(span: span, path: path, fields: fields, rest: rest) => c.struct_pattern(span, path, fields, rest, t, refutable)
+    ListPat(span: span, elems: elems, ..) => {
+      let r = c.resolve(t)
+      var et = c.bad_ty
+      if c.is_prelude(r, "List") {
+        et = c.tys[r].args[0]
+      } else if !c.is_bad(r) {
+        c.error("XO0302", span, "list pattern does not fit a value of type `${c.show(t)}`")
+      }
+      for e in elems {
+        c.pattern(e, et, refutable)
+      }
+    }
+  }
+}
+
+/// `if let x = opt` and `while let x = opt` read as `Some(x)` (core 2.5).
+fn (var c: Checker) refutable_pattern(pat: Pattern, vt: Int) {
+  if let BindPat(span: span, ..) = pat {
+    if c.option_elem(vt) >= 0 {
+      let some = Pattern.VariantPat(span: span, path: [Ident{span: span, name: b"Some"}], parens: true, fields: [parser.PatField{span: span, name: None, pattern: pat}], rest: false)
+      c.pattern(some, vt, true)
+      return
+    }
+  }
+  c.pattern(pat, vt, true)
+}
+
+fn (var c: Checker) lit_pattern(v: Expr, t: Int, sp: Span) {
+  if let Ident(id) = v {
+    if id.name == b"true" || id.name == b"false" {
+      if !c.is_bad(t) && !c.is_prelude(t, "Bool") {
+        c.error("XO0302", sp, "`${text(id.name)}` does not fit a value of type `${c.show(t)}`")
+        return
+      }
+      c.set_type(v, c.named("Bool"))
+      return
+    }
+  }
+  let lt = c.infer(v, t)
+  if !c.is_bad(t) && !c.is_bad(lt) && !c.try_unify(lt, t) {
+    c.error("XO0302", sp, "literal of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+  }
+}
+
+fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) {
+  let before = c.objs.len()
+  c.pattern(alts[0], t, refutable)
+  let n = c.scopes.len() - 1
+  var first: Map[Bytes, Int] = {}
+  for (name, o) in c.scopes[n].entries() {
+    if o >= before {
+      first[name] = o
+    }
+  }
+  for i in 1..alts.len() {
+    let alt = alts[i]
+    c.push_scope()
+    c.pattern(alt, t, refutable)
+    let got = c.scopes[c.scopes.len() - 1]
+    c.pop_scope()
+    var diff: List[Str] = []
+    for (name, v) in got.entries() {
+      let fv = first.get(name) ?? -1
+      if fv < 0 || !c.identical(c.objs[fv].ty, c.objs[v].ty) {
+        diff.push(text(name))
+      }
+    }
+    for (name, _) in first.entries() {
+      if !got.contains(name) {
+        diff.push(text(name))
+      }
+    }
+    if !diff.is_empty() {
+      c.error("XO0304", parser.pattern_span(alt), "every alternative of an or pattern must bind the same names with the same types; `${diff.sort().join("`, `")}` differs")
+    }
+  }
+}
+
+/// The variant a pattern path names: (enum, position), or (-1, -1).
+fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) -> (Int, Int) {
+  let last = path[path.len() - 1]
+  let name = last.name
+  let r = c.resolve(t)
+  let n = if c.tys[r].kind == TyKind.Named { c.tys[r].obj } else { -1 }
+  var en = -1
+  if path.len() == 1 {
+    if n >= 0 && c.objs[n].tkind == "enum" {
+      let v = c.variant_pos(n, name)
+      if v >= 0 {
+        return (n, v)
+      }
+    }
+    let (pe, pv) = c.prelude_variant(name)
+    if pe >= 0 {
+      return (pe, pv)
+    }
+    if c.is_bad(r) {
+      return (-1, -1)
+    }
+    if n >= 0 && c.objs[n].tkind == "enum" {
+      c.error("XO0601", path[0].span, "`${c.qual_name(n)}` has no variant `${text(name)}`")
+      return (-1, -1)
+    }
+    c.error("XO0302", span, "variant pattern `${text(name)}` does not fit a value of type `${c.show(t)}`")
+    return (-1, -1)
+  } else if path.len() == 2 {
+    let o = c.lookup_module_obj(c.cur_mod, path[0].name)
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[0].span, "enum `${text(path[0].name)}` not found")
+      return (-1, -1)
+    }
+    en = o
+  } else if path.len() == 3 {
+    let imp = match c.file_import(path[0].name) {
+      Some(x) => x
+      None => {
+        c.error("XO0601", path[0].span, "module `${text(path[0].name)}` not found")
+        return (-1, -1)
+      }
+    }
+    c.use_import(path[0].name)
+    if imp.module < 0 {
+      return (-1, -1)
+    }
+    let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[1].span, "module `${text(path[0].name)}` has no enum `${text(path[1].name)}`")
+      return (-1, -1)
+    }
+    en = o
+  } else {
+    c.error("XO0302", span, "pattern path has too many segments")
+    return (-1, -1)
+  }
+  if c.objs[en].tkind == "alias" {
+    let a = c.alias_named(en, [], false, span)
+    if a.obj >= 0 {
+      en = a.obj
+    }
+  }
+  if c.objs[en].tkind != "enum" {
+    c.error("XO0302", span, "`${text(c.objs[en].name)}` is not an enum")
+    return (-1, -1)
+  }
+  let v = c.variant_pos(en, name)
+  if v < 0 {
+    c.error("XO0601", last.span, "`${c.qual_name(en)}` has no variant `${text(name)}`")
+    return (-1, -1)
+  }
+  (en, v)
+}
+
+/// The newtype a pattern path `Email` or `mod.Email` names, unless the
+/// value is an enum with a variant of that name; -1 for none.
+fn (var c: Checker) newtype_of_pattern(path: List[Ident], t: Int) -> Int {
+  var o = -1
+  if path.len() == 1 {
+    let name = path[0].name
+    let r = c.resolve(t)
+    if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].tkind == "enum" && c.variant_pos(c.tys[r].obj, name) >= 0 {
+      return -1
+    }
+    let (pe, _) = c.prelude_variant(name)
+    if pe >= 0 {
+      return -1
+    }
+    o = c.lookup_module_obj(c.cur_mod, name)
+  } else if path.len() == 2 {
+    let imp = match c.file_import(path[0].name) {
+      Some(x) => x
+      None => return -1
+    }
+    if imp.module < 0 {
+      return -1
+    }
+    o = c.mods[imp.module].members.get(path[1].name) ?? -1
+    if o >= 0 {
+      c.use_import(path[0].name)
+    }
+  }
+  if o < 0 || c.objs[o].kind != ObjKind.Type {
+    return -1
+  }
+  if c.objs[o].tkind == "alias" {
+    let a = c.alias_named(o, [], false, path[0].span)
+    if a.obj >= 0 {
+      o = a.obj
+    }
+  }
+  if c.objs[o].tkind != "newtype" {
+    return -1
+  }
+  o
+}
+
+/// `Email(p)`: p matches the newtype's underlying value (decision 0097).
+fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+  let r = c.resolve(t)
+  var inner = c.bad_ty
+  if c.tys[r].kind == TyKind.Named && c.tys[r].obj == obj {
+    inner = c.subst(c.objs[obj].target, c.args_subst(c.objs[obj].tparams, c.tys[r].args))
+  } else if !c.is_bad(r) {
+    c.error("XO0302", span, "newtype pattern `${text(c.objs[obj].name)}(..)` does not fit a value of type `${c.show(t)}`")
+  }
+  if !parens || fields.len() > 1 || (fields.len() == 1 && fields[0].name != None) || (fields.is_empty() && !rest) {
+    c.error("XO0302", span, "a newtype pattern has one positional pattern: `${text(c.objs[obj].name)}(p)`")
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  if fields.len() == 1 {
+    c.pattern(fields[0].pattern, inner, refutable)
+  }
+}
+
+fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+  let nt = c.newtype_of_pattern(path, t)
+  if nt >= 0 {
+    c.newtype_pattern(span, nt, parens, fields, rest, t, refutable)
+    return
+  }
+  let (en, v) = c.resolve_variant_path(span, path, t)
+  if en < 0 {
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  let last = path[path.len() - 1]
+  if !(parens && last.span == span) {
+    c.record_text(last, c.variant_text(en, v))
+  }
+  let r = c.resolve(t)
+  let is_named = c.tys[r].kind == TyKind.Named
+  let vi = c.objs[en].variants[v]
+  if !c.is_bad(r) && (!is_named || c.tys[r].obj != en) {
+    c.error("XO0302", span, "`${text(vi.name)}` is a variant of `${c.qual_name(en)}`, but the value is `${c.show(t)}`")
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  let typed = is_named && c.tys[r].obj == en
+  var s: Subst = {}
+  if typed {
+    s = c.args_subst(c.objs[en].tparams, c.tys[r].args)
+  }
+  if !parens {
+    if !vi.fields.is_empty() {
+      c.error("XO0302", span, "variant `${text(vi.name)}` has fields; write `${text(vi.name)}(..)` to match any of them")
+    }
+    return
+  }
+  if vi.fields.is_empty() {
+    if !fields.is_empty() || !rest {
+      c.error("XO0302", span, "variant `${text(vi.name)}` has no fields; write it without parentheses")
+    }
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  var used: List[Bool] = []
+  for _ in vi.fields {
+    used.push(false)
+  }
+  var pos = 0
+  for f in fields {
+    var idx = -1
+    match f.name {
+      None => {
+        while pos < vi.fields.len() && used[pos] {
+          pos += 1
+        }
+        if pos >= vi.fields.len() {
+          c.error("XO0302", f.span, "too many fields in pattern: `${text(vi.name)}` has ${vi.fields.len()}")
+          c.pattern(f.pattern, c.bad_ty, refutable)
+          continue
+        }
+        idx = pos
+        pos += 1
+      }
+      Some(fname) => {
+        for (i, vf) in vi.fields.indexed() {
+          if vf.name == fname.name {
+            idx = i
+          }
+        }
+        if idx < 0 {
+          c.error("XO0601", fname.span, "`${text(vi.name)}` has no field `${text(fname.name)}`")
+          c.pattern(f.pattern, c.bad_ty, refutable)
+          continue
+        }
+        c.record_text(fname, c.vfield_text(en, v, vi.fields[idx]))
+        if used[idx] {
+          c.error("XO0302", fname.span, "field `${text(fname.name)}` appears twice")
+        }
+      }
+    }
+    used[idx] = true
+    let ft = if typed { c.subst(vi.fields[idx].ty, s) } else { c.bad_ty }
+    c.pattern(f.pattern, ft, refutable)
+  }
+  if !rest {
+    var missing: List[Str] = []
+    for (i, u) in used.indexed() {
+      if !u {
+        missing.push(text(vi.fields[i].name))
+      }
+    }
+    if !missing.is_empty() {
+      c.error("XO0302", span, "pattern for `${text(vi.name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
+    }
+  }
+}
+
+fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+  var obj = -1
+  if path.len() == 1 {
+    let o = c.lookup_module_obj(c.cur_mod, path[0].name)
+    if o >= 0 && c.objs[o].kind == ObjKind.Type {
+      obj = o
+    }
+  } else if path.len() == 2 {
+    if let Some(imp) = c.file_import(path[0].name) {
+      if imp.module >= 0 {
+        c.use_import(path[0].name)
+        let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+        if o >= 0 && c.objs[o].kind == ObjKind.Type {
+          obj = o
+        }
+      }
+    }
+  }
+  if obj >= 0 && c.objs[obj].tkind == "alias" {
+    obj = c.alias_named(obj, [], false, span).obj
+  }
+  let r = c.resolve(t)
+  let is_named = c.tys[r].kind == TyKind.Named
+  if obj < 0 || c.objs[obj].tkind != "struct" {
+    c.error("XO0302", span, "`${text(path[path.len() - 1].name)}` is not a struct type")
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  if !c.is_bad(r) && (!is_named || c.tys[r].obj != obj) {
+    c.error("XO0302", span, "struct pattern `${text(c.objs[obj].name)}` does not fit a value of type `${c.show(t)}`")
+    for f in fields {
+      c.pattern(f.pattern, c.bad_ty, refutable)
+    }
+    return
+  }
+  var s: Subst = {}
+  let typed = is_named || c.objs[obj].tparams.is_empty()
+  if is_named {
+    s = c.args_subst(c.objs[obj].tparams, c.tys[r].args)
+  }
+  var used: List[Bytes] = []
+  for f in fields {
+    var name = b""
+    match f.name {
+      Some(n) => name = n.name
+      None => {
+        if let BindPat(name: bn, ..) = f.pattern {
+          name = bn.name
+        }
+      }
+    }
+    var idx = -1
+    for (i, fo) in c.objs[obj].fields.indexed() {
+      if fo.name == name {
+        idx = i
+      }
+    }
+    if idx < 0 {
+      let sp = match f.name {
+        Some(n) => n.span
+        None => f.span
+      }
+      c.error("XO0601", sp, "`${text(c.objs[obj].name)}` has no field `${text(name)}`")
+      c.pattern(f.pattern, c.bad_ty, refutable)
+      continue
+    }
+    used.push(name)
+    let fo = c.objs[obj].fields[idx]
+    if let Some(n) = f.name {
+      c.record_text(n, c.field_text(obj, fo))
+    }
+    if !fo.is_pub && c.objs[obj].module != c.cur_mod {
+      c.error("XO0605", f.span, "field `${text(name)}` of `${text(c.objs[obj].name)}` is not `pub`")
+    }
+    var ft = c.bad_ty
+    if typed {
+      ft = c.subst(fo.ty, s)
+    }
+    c.pattern(f.pattern, ft, refutable)
+  }
+  if !rest {
+    var missing: List[Str] = []
+    for fo in c.objs[obj].fields {
+      if !used.contains(fo.name) {
+        missing.push(text(fo.name))
+      }
+    }
+    if !missing.is_empty() {
+      c.error("XO0302", span, "pattern for `${text(c.objs[obj].name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
+    }
+  }
+}

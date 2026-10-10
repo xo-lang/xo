@@ -251,6 +251,7 @@ func (c *checker) resolveTypeObj(t *TypeObj) {
 				fo := &VFieldObj{From: vf.From, Type: c.resolveType(vf.Type, env)}
 				if vf.Name != nil {
 					fo.Name = vf.Name.Name
+					fo.Span = vf.Name.Sp
 					c.checkName(vf.Name, "field")
 					if fseen[fo.Name] {
 						c.errorf(diag.Duplicate, vf.Name.Sp, "field `%s` is declared twice", fo.Name)

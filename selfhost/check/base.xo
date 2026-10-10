@@ -1,0 +1,292 @@
+// Helpers shared by the passes: names, diagnostics, records, lookups,
+// and scopes (internal/check check.go, call.go, stmt.go).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type Type = parser.Type
+type Pattern = parser.Pattern
+type Block = parser.Block
+type Decl = parser.Decl
+
+/// Names that cannot be declared at top level (core 1.4).
+fn is_protected(name: Bytes) -> Bool {
+  let s = name.to_str() ?? ""
+  match s {
+    "true" | "false" | "self" | "target" | "fault" | "dbg" | "Ok" | "Err" | "Some" | "None" => true
+    "Bool" | "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" => true
+    "Rune" | "Str" | "Bytes" | "Duration" | "Time" | "List" | "Map" | "Set" | "Buf" | "Chan" | "Mutex" | "Atomic" => true
+    "Secret" | "Option" | "Result" | "Never" | "StrBuilder" | "BytesBuilder" => true
+    "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" => true
+    "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" => true
+    _ => false
+  }
+}
+
+fn is_derivable(name: Bytes) -> Bool {
+  let s = name.to_str() ?? ""
+  s is "Display" | "Ord" | "Json" | "OpenApi" | "Proto" | "Debug" | "Eq" | "Hash" | "SqlRow"
+}
+
+/// UpperCamel: an upper case letter, then letters and digits.
+fn is_upper_camel(s: Bytes) -> Bool {
+  if s.is_empty() || s[0] < 'A' || s[0] > 'Z' {
+    return false
+  }
+  for i in 1..s.len() {
+    let ch = s[i]
+    if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+      return false
+    }
+  }
+  true
+}
+
+/// UPPER_SNAKE: an upper case letter, then upper case letters, digits,
+/// and underscores.
+fn is_upper_snake(s: Bytes) -> Bool {
+  if s.is_empty() || s[0] < 'A' || s[0] > 'Z' {
+    return false
+  }
+  for i in 1..s.len() {
+    let ch = s[i]
+    if !((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+      return false
+    }
+  }
+  true
+}
+
+/// snake_case, leading underscores allowed.
+fn is_snake(s0: Bytes) -> Bool {
+  var i = 0
+  while i < s0.len() && s0[i] == '_' {
+    i += 1
+  }
+  if i == s0.len() {
+    return true
+  }
+  if s0[i] < 'a' || s0[i] > 'z' {
+    return false
+  }
+  for j in i + 1..s0.len() {
+    let ch = s0[j]
+    if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+      return false
+    }
+  }
+  true
+}
+
+fn text(b: Bytes) -> Str {
+  b.to_str() ?? "?"
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics and records
+
+/// Reports a diagnostic in the current file, dropping exact duplicates.
+fn (var c: Checker) error(code: Str, sp: Span, msg: Str) {
+  c.report(c.path, code, sp, msg)
+}
+
+fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) {
+  c.report(c.files[f].path, code, sp, msg)
+}
+
+fn (var c: Checker) report(file: Str, code: Str, sp: Span, msg: Str) {
+  let key = "${code}|${file}|${sp.start.line}:${sp.start.col}|${msg}"
+  if c.seen.contains(key) {
+    return
+  }
+  c.seen[key] = true
+  c.diags.push(Diag{code: code, file: file, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col, message: msg})
+}
+
+/// Records that the identifier id of the current file names obj.
+fn (var c: Checker) record(id: Ident, obj: Int) {
+  if obj < 0 {
+    return
+  }
+  c.record_rec(id, obj, "")
+}
+
+/// Records that id names a field, variant, or parameter, described by
+/// what (the object text of the names section).
+fn (var c: Checker) record_text(id: Ident, what: Str) {
+  if what.is_empty() {
+    return
+  }
+  c.record_rec(id, -1, what)
+}
+
+fn (var c: Checker) record_rec(id: Ident, obj: Int, what: Str) {
+  let key = "${c.path}:${id.span.start.offset}"
+  if let Some(i) = c.name_at.get(key) {
+    c.names[i].obj = obj
+    c.names[i].what = what
+    return
+  }
+  c.name_at[key] = c.names.len()
+  c.names.push(NameRec{file: c.path, offset: id.span.start.offset, line: id.span.start.line, col: id.span.start.col, name: id.name, obj: obj, what: what})
+}
+
+fn pos_text(file: Str, line: Int, col: Int) -> Str {
+  if file.is_empty() {
+    return "-"
+  }
+  "${file}:${line}:${col}"
+}
+
+/// The record text of field f of struct t.
+fn (c: Checker) field_text(t: Int, f: FieldInfo) -> Str {
+  "field ${c.mods[c.objs[t].module].path} ${text(c.objs[t].name)}.${text(f.name)} ${pos_text(c.objs[t].file, f.line, f.col)}"
+}
+
+/// The record text of variant v of enum e.
+fn (c: Checker) variant_text(e: Int, v: Int) -> Str {
+  let vi = c.objs[e].variants[v]
+  "variant ${c.mods[c.objs[e].module].path} ${text(c.objs[e].name)}.${text(vi.name)} ${pos_text(c.objs[e].file, vi.line, vi.col)}"
+}
+
+/// The record text of field f of variant v of enum e.
+fn (c: Checker) vfield_text(e: Int, v: Int, f: VFieldInfo) -> Str {
+  let vi = c.objs[e].variants[v]
+  let pos = if f.line == 0 { "-" } else { pos_text(c.objs[e].file, f.line, f.col) }
+  "field ${c.mods[c.objs[e].module].path} ${text(c.objs[e].name)}.${text(vi.name)}.${text(f.name)} ${pos}"
+}
+
+/// The record text of parameter p of function fo.
+fn (c: Checker) param_text(fo: Int, p: ParamInfo) -> Str {
+  "param ${c.mods[c.objs[fo].module].path} ${c.display_name(fo)}.${text(p.name)} ${pos_text(c.objs[fo].file, p.line, p.col)}"
+}
+
+/// `Type.name` for methods, `name` otherwise.
+fn (c: Checker) display_name(fo: Int) -> Str {
+  let r = c.objs[fo].recv
+  if r >= 0 {
+    return "${text(c.objs[r].name)}.${text(c.objs[fo].name)}"
+  }
+  text(c.objs[fo].name)
+}
+
+fn (var c: Checker) set_file(f: Int) {
+  c.cur_file = f
+  c.cur_mod = c.files[f].module
+  c.path = c.files[f].path
+}
+
+fn (var c: Checker) new_obj(kind: ObjKind, id: Ident) -> Int {
+  let o = c.objs.len()
+  c.objs.push(Obj{kind: kind, name: id.name, module: c.cur_mod, file: c.path, line: id.span.start.line, col: id.span.start.col})
+  o
+}
+
+/// A type parameter object.
+fn (var c: Checker) new_tparam(name: Bytes, file: Str, line: Int, col: Int) -> Int {
+  let o = c.objs.len()
+  c.objs.push(Obj{kind: ObjKind.TParam, name: name, file: file, line: line, col: col})
+  o
+}
+
+// ---------------------------------------------------------------------------
+// Lookups
+
+fn (c: Checker) lookup_local(name: Bytes) -> Int {
+  var i = c.scopes.len() - 1
+  while i >= 0 {
+    if let Some(v) = c.scopes[i].get(name) {
+      return v
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// A top level name of module m, then of the prelude.
+fn (c: Checker) lookup_module_obj(m: Int, name: Bytes) -> Int {
+  if let Some(o) = c.mods[m].members.get(name) {
+    return o
+  }
+  if c.prelude >= 0 {
+    if let Some(o) = c.mods[c.prelude].members.get(name) {
+      return o
+    }
+  }
+  -1
+}
+
+/// The import named name in the current file (no `testing`), or None.
+fn (c: Checker) file_import(name: Bytes) -> Import? {
+  if c.cur_file < 0 {
+    return None
+  }
+  c.files[c.cur_file].imports.get(name)
+}
+
+/// Marks the import named name of the current file used.
+fn (var c: Checker) use_import(name: Bytes) {
+  if let Some(imp) = c.files[c.cur_file].imports.get(name) {
+    if !imp.used {
+      var u = imp
+      u.used = true
+      c.files[c.cur_file].imports[name] = u
+    }
+  }
+}
+
+fn (c: Checker) testing_mod() -> Int {
+  c.mod_index.get("std/testing") ?? -1
+}
+
+// ---------------------------------------------------------------------------
+// Scopes
+
+fn (var c: Checker) push_scope() {
+  c.scopes.push({})
+}
+
+fn (var c: Checker) pop_scope() {
+  c.scopes.pop()
+}
+
+/// A local binding object.
+fn (var c: Checker) new_local(id: Ident, ty: Int, local: Str) -> Int {
+  var o = c.new_obj(ObjKind.Local, id)
+  c.objs[o].local = local
+  c.objs[o].module = -1
+  c.objs[o].ty = ty
+  c.objs[o].mutable = local is "var" | "var-param" | "var-recv"
+  o
+}
+
+/// Declares local o in the innermost scope; shadowing in the same block
+/// is an error (core 3.1). `_` binds nothing.
+fn (var c: Checker) declare_var(o: Int) {
+  let name = c.objs[o].name
+  if name == b"_" {
+    return
+  }
+  c.objs[o].vctx = c.ctx
+  let n = c.scopes.len() - 1
+  if c.scopes[n].contains(name) {
+    c.report(c.path, "XO0603", Span{start: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}, end: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col + name.len()}}, "`${text(name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+  }
+  c.scopes[n][name] = o
+}
+
+/// Declares a local binding named by id.
+fn (var c: Checker) declare_local(id: Ident, ty: Int, local: Str) -> Int {
+  let o = c.new_local(id, ty, local)
+  if id.name == b"_" {
+    return o
+  }
+  c.objs[o].vctx = c.ctx
+  let n = c.scopes.len() - 1
+  if c.scopes[n].contains(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+  }
+  c.scopes[n][id.name] = o
+  o
+}

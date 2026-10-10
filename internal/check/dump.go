@@ -165,7 +165,13 @@ func objText(o any) string {
 		}
 		return "local " + kind + " " + posText(x.Span)
 	case *FuncObj:
-		return fmt.Sprintf("fn %s %s %s", x.Module.Path, x.Name, posText(x.Span))
+		return fmt.Sprintf("fn %s %s %s", x.Module.Path, x.DisplayName(), posText(x.Span))
+	case *VariantObj:
+		return fmt.Sprintf("variant %s %s.%s %s", x.Enum.Module.Path, x.Enum.Name, x.Name, posText(x.Span))
+	case fieldRef:
+		return fmt.Sprintf("field %s %s.%s %s", x.mod.Path, x.owner, x.name, posText(x.span))
+	case paramRef:
+		return fmt.Sprintf("param %s %s.%s %s", x.fn.Module.Path, x.fn.DisplayName(), x.name, posText(x.span))
 	case *ConstObj:
 		sp := token.Span{}
 		if x.Decl != nil {
@@ -192,14 +198,6 @@ func (c *checker) dumpNames(b *strings.Builder, f *File) {
 	for id, r := range c.rec.names {
 		if id.Sp.File != f.Path {
 			continue
-		}
-		if r.call {
-			// `Int(x)` may be a variant of the expected enum instead: the
-			// names section leaves prelude types called by name to the
-			// types stage (decision 0141).
-			if t, ok := r.obj.(*TypeObj); ok && t.Module == c.prelude {
-				continue
-			}
 		}
 		lines = append(lines, line{id.Sp.Start.Offset, fmt.Sprintf("%d:%d %s %s", id.Sp.Start.Line, id.Sp.Start.Col, id.Name, objText(r.obj))})
 	}

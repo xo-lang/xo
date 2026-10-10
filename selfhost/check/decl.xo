@@ -1,0 +1,787 @@
+// Declarations, type declarations, signatures, and type expressions
+// (internal/check/decl.go).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The context of a type expression (decl.go typeEnv).
+struct TypeEnv {
+  file: Int = -1
+  mod: Int = -1
+  /// Type parameters in scope by name (TParam objects).
+  params: Map[Bytes, Int] = {}
+  /// Collect implicit receiver parameters (std encoding rule 5) into
+  /// implicit_list.
+  implicit: Bool = false
+  implicit_list: List[Int] = []
+  quiet: Bool = false
+  /// The type parameter whose argument is being resolved.
+  arg_param: Int = -1
+  /// Collect the effect parameters of left out effect arguments.
+  elided: Bool = false
+  elided_list: List[Int] = []
+}
+
+/// e with the parameters ps added and no collection.
+fn (c: Checker) env_with(e: TypeEnv, ps: List[Int]) -> TypeEnv {
+  var n = e
+  for p in ps {
+    n.params[c.objs[p].name] = p
+  }
+  n.implicit = false
+  n.implicit_list = []
+  n.elided = false
+  n.elided_list = []
+  n
+}
+
+fn (var c: Checker) new_tparams(tps: List[parser.TypeParam]) -> List[Int] {
+  var out: List[Int] = []
+  for tp in tps {
+    let p = c.new_tparam(tp.name.name, c.path, tp.name.span.start.line, tp.name.span.start.col)
+    c.objs[p].effect = tp.effects
+    out.push(p)
+  }
+  out
+}
+
+fn (var c: Checker) define(id: Ident, o: Int) {
+  if id.name.is_empty() {
+    return
+  }
+  let m = c.cur_mod
+  if !c.mods[m].is_std && is_protected(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is predeclared and cannot be redefined at top level (core 1.4)")
+    return
+  }
+  if c.mods[m].members.contains(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this module")
+    return
+  }
+  c.mods[m].members[id.name] = o
+}
+
+// ---------------------------------------------------------------------------
+// Declarations (decl.go declare)
+
+/// Creates objects for the top level declarations of module m.
+fn (var c: Checker) declare(m: Int) {
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      var o = -1
+      match d {
+        FnDecl(d: fd) => {
+          if fd.recv == None {
+            o = c.new_obj(ObjKind.Func, fd.name)
+            c.objs[o].is_pub = fd.is_pub || c.mods[m].is_std
+            c.objs[o].fn_decl = [fd]
+            c.objs[o].decl_file = f
+            c.objs[o].decl_idx = i
+            c.define(fd.name, o)
+          }
+        }
+        StructDecl(d: sd) => {
+          o = c.declare_type(sd.name, sd.type_params, sd.is_pub, "struct", f, i)
+          c.objs[o].opaque = c.mods[m].is_std && sd.fields.is_empty()
+        }
+        EnumDecl(d: ed) => o = c.declare_type(ed.name, ed.type_params, ed.is_pub, "enum", f, i)
+        InterfaceDecl(d: id) => o = c.declare_type(id.name, id.type_params, id.is_pub, "interface", f, i)
+        TypeDecl(d: td) => o = c.declare_type(td.name, td.type_params, td.is_pub, if td.newtype { "newtype" } else { "alias" }, f, i)
+        ConstDecl(d: cd) => {
+          o = c.new_obj(ObjKind.Const, cd.name)
+          c.objs[o].is_pub = cd.is_pub || c.mods[m].is_std
+          c.objs[o].decl_file = f
+          c.objs[o].decl_idx = i
+          c.define(cd.name, o)
+        }
+        _ => {}
+      }
+      c.files[f].decl_objs.push(o)
+    }
+  }
+}
+
+fn (var c: Checker) declare_type(name: Ident, tps: List[parser.TypeParam], is_pub: Bool, tkind: Str, f: Int, i: Int) -> Int {
+  let o = c.new_obj(ObjKind.Type, name)
+  c.objs[o].is_pub = is_pub || c.mods[c.cur_mod].is_std
+  c.objs[o].tparams = c.new_tparams(tps)
+  c.objs[o].tkind = tkind
+  c.objs[o].decl_file = f
+  c.objs[o].decl_idx = i
+  c.define(name, o)
+  o
+}
+
+/// Whether declaration i of file f is the declaration its name resolves
+/// to (not a duplicate).
+fn (c: Checker) is_scope_entry(f: Int, i: Int, name: Bytes) -> Bool {
+  let o = c.files[f].decl_objs[i]
+  o >= 0 && (c.mods[c.files[f].module].members.get(name) ?? -1) == o
+}
+
+// ---------------------------------------------------------------------------
+// Type declarations (decl.go resolveTypes)
+
+/// Resolves the type declarations of m, by name.
+fn (var c: Checker) resolve_types(m: Int) {
+  c.cur_mod = m
+  var names: List[Bytes] = []
+  for (n, o) in c.mods[m].members.entries() {
+    if c.objs[o].kind == ObjKind.Type {
+      names.push(n)
+    }
+  }
+  for n in names.sort() {
+    let o = c.mods[m].members.get(n) ?? -1
+    c.resolve_type_obj(o)
+  }
+}
+
+fn (var c: Checker) resolve_type_obj(t: Int) {
+  if c.objs[t].resolved || c.objs[t].resolving || c.objs[t].decl_file < 0 {
+    return
+  }
+  c.objs[t].resolving = true
+  let saved_mod = c.cur_mod
+  let saved_file = c.cur_file
+  let saved_path = c.path
+  let f = c.objs[t].decl_file
+  c.set_file(f)
+  var env = c.env_with(TypeEnv{file: f, mod: c.objs[t].module}, c.objs[t].tparams)
+  env.elided = true
+  let d = c.files[f].ast.decls[c.objs[t].decl_idx]
+  match d {
+    StructDecl(d: sd) => {
+      c.resolve_constraints(sd.type_params, c.objs[t].tparams, env)
+      var seen: List[Bytes] = []
+      var fields: List[FieldInfo] = []
+      for fl in sd.fields {
+        if seen.contains(fl.name.name) {
+          c.error("XO0603", fl.name.span, "field `${text(fl.name.name)}` is declared twice")
+          continue
+        }
+        seen.push(fl.name.name)
+        let ft = c.resolve_type(fl.typ, env)
+        var dflt: List[Expr] = []
+        if let Some(e) = fl.default {
+          dflt.push(e)
+        }
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col})
+      }
+      c.objs[t].fields = fields
+      c.objs[t].derives = c.derives_of(sd.derive)
+    }
+    EnumDecl(d: ed) => {
+      c.resolve_constraints(ed.type_params, c.objs[t].tparams, env)
+      var seen: List[Bytes] = []
+      var vs: List[VariantInfo] = []
+      for (i, v) in ed.variants.indexed() {
+        if seen.contains(v.name.name) {
+          c.error("XO0603", v.name.span, "variant `${text(v.name.name)}` is declared twice")
+          continue
+        }
+        seen.push(v.name.name)
+        var vi = VariantInfo{name: v.name.name, index: i, unit: v.fields == None, line: v.name.span.start.line, col: v.name.span.start.col}
+        let vfs = v.fields ?? []
+        var fseen: List[Bytes] = []
+        for vf in vfs {
+          var fo = VFieldInfo{name: b"", from: vf.from, ty: c.resolve_type(vf.typ, env)}
+          if let Some(n) = vf.name {
+            fo.name = n.name
+            fo.line = n.span.start.line
+            fo.col = n.span.start.col
+            if fseen.contains(n.name) {
+              c.error("XO0603", n.span, "field `${text(n.name)}` is declared twice")
+            }
+            fseen.push(n.name)
+          }
+          if vf.from && vfs.len() != 1 {
+            c.error("XO0403", vf.span, "a `from` variant has exactly one field (core 2.6)")
+          }
+          vi.fields.push(fo)
+        }
+        vs.push(vi)
+      }
+      // variant indexes are declaration positions (duplicates skipped
+      // keep their index)
+      c.objs[t].variants = vs
+      c.objs[t].derives = c.derives_of(ed.derive)
+    }
+    InterfaceDecl(d: id) => {
+      c.resolve_constraints(id.type_params, c.objs[t].tparams, env)
+      var seen: List[Bytes] = []
+      for md in id.methods {
+        let fo = c.new_obj(ObjKind.Func, md.name)
+        c.objs[fo].module = c.objs[t].module
+        c.objs[fo].is_pub = true
+        c.objs[fo].fn_decl = [md]
+        c.objs[fo].iface = true
+        c.objs[fo].recv = t
+        if seen.contains(md.name.name) {
+          c.error("XO0603", md.name.span, "method `${text(md.name.name)}` is declared twice")
+          continue
+        }
+        seen.push(md.name.name)
+        if md.params.is_empty() || !md.params[0].is_self {
+          if !c.mods[c.objs[t].module].is_std {
+            c.error("XO0403", md.name.span, "interface method `${text(md.name.name)}` must take `self` first (core 2.4)")
+          }
+        }
+        c.resolve_sig(fo, env, true)
+        c.objs[t].iface_meths.push(fo)
+      }
+    }
+    TypeDecl(d: td) => {
+      c.resolve_constraints(td.type_params, c.objs[t].tparams, env)
+      c.objs[t].target = match td.typ {
+        Some(x) => c.resolve_type(x, env)
+        None => c.bad_ty
+      }
+    }
+    _ => {}
+  }
+  for p in env.elided_list {
+    c.objs[t].tparams.push(p)
+  }
+  c.objs[t].resolving = false
+  c.objs[t].resolved = true
+  c.cur_mod = saved_mod
+  c.cur_file = saved_file
+  c.path = saved_path
+}
+
+fn (var c: Checker) resolve_constraints(tps: List[parser.TypeParam], ps: List[Int], var env: TypeEnv) {
+  for (i, tp) in tps.indexed() {
+    if let Some(ct0) = tp.constraint {
+      if i < ps.len() {
+        var ct = c.resolve_type(ct0, env)
+        if !c.is_bad(ct) && !c.is_interface(ct) {
+          c.error("XO0407", parser.type_span(ct0), "constraint `${c.show_raw(ct)}` is not an interface (core 2.7)")
+          ct = -1
+        }
+        c.objs[ps[i]].constraint = ct
+      }
+    }
+  }
+}
+
+fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
+  var out: List[Str] = []
+  for id in ids {
+    if !is_derivable(id.name) {
+      c.error("XO0601", id.span, "derivable interface `${text(id.name)}` not found")
+      continue
+    }
+    out.push(text(id.name))
+  }
+  out
+}
+
+/// The resolved target of alias t, guarding cycles.
+fn (var c: Checker) alias_target(t: Int, sp: Span) -> Int {
+  if c.objs[t].resolving {
+    c.error("XO0407", sp, "type alias `${text(c.objs[t].name)}` refers to itself")
+    return c.bad_ty
+  }
+  c.resolve_type_obj(t)
+  if c.objs[t].target < 0 {
+    return c.bad_ty
+  }
+  c.objs[t].target
+}
+
+// ---------------------------------------------------------------------------
+// Signatures (decl.go resolveSigs)
+
+fn (var c: Checker) resolve_sigs(m: Int) {
+  c.cur_mod = m
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      let fd = match d {
+        FnDecl(d: x) => x
+        _ => continue
+      }
+      var fo = -1
+      if fd.recv == None {
+        fo = c.files[f].decl_objs[i]
+        if !c.is_scope_entry(f, i, fd.name.name) {
+          fo = c.new_obj(ObjKind.Func, fd.name)
+          c.objs[fo].is_pub = fd.is_pub || c.mods[m].is_std
+          c.objs[fo].fn_decl = [fd]
+        }
+      } else {
+        fo = c.new_obj(ObjKind.Func, fd.name)
+        c.objs[fo].is_pub = fd.is_pub || c.mods[m].is_std
+        c.objs[fo].fn_decl = [fd]
+      }
+      var env = TypeEnv{file: f, mod: m}
+      if fd.recv != None {
+        if !c.attach_method(fo, fd, env) {
+          continue
+        }
+        c.files[f].decl_objs[i] = fo
+      }
+      c.resolve_sig(fo, env, false)
+    }
+  }
+}
+
+/// Attaches method fo to its receiver type (decl.go attachMethod); the
+/// implicit receiver parameters go into env.
+fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) -> Bool {
+  let recv = fd.recv ?? fault("a method has a receiver")
+  var renv = env
+  renv.implicit = true
+  renv.implicit_list = []
+  let rt = c.resolve_type(recv.typ, renv)
+  c.objs[fo].recv_var = recv.is_var
+  c.objs[fo].is_static = recv.name.name == b"static" && c.mods[c.cur_mod].is_std
+  let r = c.resolve(rt)
+  if c.tys[r].kind != TyKind.Named {
+    if !c.is_bad(rt) {
+      c.error("XO0407", parser.type_span(recv.typ), "a method receiver must be a named type, found `${c.show_raw(rt)}`")
+    }
+    return false
+  }
+  let t = c.tys[r].obj
+  if c.objs[t].tkind == "interface" {
+    c.error("XO0407", parser.type_span(recv.typ), "methods cannot be declared on interface `${text(c.objs[t].name)}`")
+    return false
+  }
+  if c.objs[t].module != c.cur_mod {
+    c.error("XO0606", fd.name.span, "method `${text(fd.name.name)}` is declared on `${c.qual_name(t)}` from another module; methods may be declared only in the module that declares the type (core 3.4)")
+    return false
+  }
+  c.objs[fo].recv = t
+  c.objs[fo].recv_ty = rt
+  for p in renv.implicit_list {
+    c.objs[fo].tparams.push(p)
+    env.params[c.objs[p].name] = p
+  }
+  let name = fd.name.name
+  if c.objs[fo].is_static {
+    c.objs[fo].static_const = fd.params.is_empty() && is_upper_snake(name)
+    if c.objs[t].statics.contains(name) {
+      c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+      return false
+    }
+  } else if c.objs[t].methods.contains(name) {
+    c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+    return false
+  }
+  var is_field = false
+  for fl in c.objs[t].fields {
+    if fl.name == name {
+      is_field = true
+    }
+  }
+  if is_field && !c.mods[c.cur_mod].is_std {
+    c.error("XO0603", fd.name.span, "`${text(name)}` is both a field and a method of `${text(c.objs[t].name)}`")
+  }
+  if c.objs[fo].is_static {
+    c.objs[t].statics[name] = fo
+  } else {
+    c.objs[t].methods[name] = fo
+  }
+  true
+}
+
+/// Fills the parameters, result, and error type of fo from its
+/// declaration (decl.go resolveSig).
+fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
+  let fd = c.objs[fo].fn_decl[0]
+  let own = c.new_tparams(fd.type_params)
+  for p in own {
+    c.objs[fo].tparams.push(p)
+  }
+  c.objs[fo].own_tparams = own.len()
+  var env = c.env_with(env0, c.objs[fo].tparams)
+  env.elided = true
+  c.resolve_constraints(fd.type_params, own, env)
+  var seen: List[Bytes] = []
+  var params: List[ParamInfo] = []
+  for p in fd.params {
+    if p.is_self {
+      continue
+    }
+    if seen.contains(p.name.name) && p.name.name != b"_" {
+      c.error("XO0603", p.name.span, "parameter `${text(p.name.name)}` is declared twice")
+    }
+    seen.push(p.name.name)
+    var pt = c.bad_ty
+    if let Some(t) = p.typ {
+      pt = c.resolve_type(t, env)
+    }
+    var dflt: List[Expr] = []
+    if let Some(e) = p.default {
+      dflt.push(e)
+    }
+    params.push(ParamInfo{name: p.name.name, ty: pt, is_var: p.is_var, default: dflt, line: p.name.span.start.line, col: p.name.span.start.col})
+  }
+  c.objs[fo].params = params
+  var renv = env
+  renv.elided = false
+  c.objs[fo].result = c.unit_ty
+  if let Some(t) = fd.result {
+    c.objs[fo].result = c.resolve_type(t, renv)
+  }
+  c.objs[fo].err = c.resolve_err_spec(fd.err, renv)
+  var use_list: List[parser.Effect] = []
+  var has_uses = false
+  for cl in fd.clauses {
+    if let UsesClause(effects: es, ..) = cl {
+      has_uses = true
+      for e in es {
+        if e.sub == None && e.name.name == b"realtime" && !iface {
+          continue
+        }
+        use_list.push(e)
+      }
+    }
+  }
+  var set = c.resolve_effects(use_list, env)
+  for p in env.elided_list {
+    c.objs[fo].tparams.push(p)
+  }
+  for p in c.objs[fo].tparams {
+    if c.objs[p].elided {
+      c.esets[set].push(EffItem{param: p})
+    }
+  }
+  if c.objs[fo].is_pub || iface || c.mods[c.objs[fo].module].is_std || has_uses {
+    c.objs[fo].declared = set
+  }
+  c.objs[fo].sig_done = true
+}
+
+fn (var c: Checker) resolve_err_spec(es: parser.ErrSpec?, var env: TypeEnv) -> Int {
+  let e = match es {
+    Some(x) => x
+    None => return -1
+  }
+  let t = match e.typ {
+    Some(x) => c.resolve_type(x, env)
+    None => return c.named("Error")
+  }
+  if c.is_never(t) {
+    return -1
+  }
+  t
+}
+
+fn is_effect_label(name: Str) -> Bool {
+  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "go"
+}
+
+/// The effect set of effect labels and variables (decl.go
+/// resolveEffects).
+fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> Int {
+  var items: List[EffItem] = []
+  for e in effs {
+    var name = text(e.name.name)
+    if let Some(s) = e.sub {
+      name = "${name}.${text(s.name)}"
+    }
+    if is_effect_label(name) {
+      items.push(EffItem{label: name})
+      continue
+    }
+    if name == "realtime" {
+      c.error("XO0702", e.span, "`realtime` marks a function declaration; it cannot appear here")
+      continue
+    }
+    if e.sub == None {
+      if let Some(p) = env.params.get(e.name.name) {
+        if c.objs[p].effect {
+          items.push(EffItem{param: p})
+          continue
+        }
+      }
+    }
+    c.error("XO0702", e.span, "unknown effect `${name}`")
+  }
+  c.new_eset(items)
+}
+
+// ---------------------------------------------------------------------------
+// Type expressions (decl.go resolveType)
+
+/// Resolves a type expression, recording its names.
+fn (var c: Checker) resolve_type(t: Type, var env: TypeEnv) -> Int {
+  match t {
+    NamedType(span, path, args) => c.resolve_named_type(span, path, args, env)
+    OptionalType(elem: e, ..) => c.option_of(c.resolve_type(e, env))
+    TupleType(elems: es, ..) => {
+      if es.is_empty() {
+        return c.unit_ty
+      }
+      var el: List[Int] = []
+      for e in es {
+        el.push(c.resolve_type(e, env))
+      }
+      c.mk_tuple(el)
+    }
+    FnType(t: ft) => {
+      var ps: List[Int] = []
+      var vs: List[Bool] = []
+      for p in ft.params {
+        ps.push(c.resolve_type(p.typ, env))
+        vs.push(p.is_var)
+      }
+      var r = c.unit_ty
+      if let Some(x) = ft.result {
+        r = c.resolve_type(x, env)
+      }
+      let e = c.resolve_err_spec(ft.err, env)
+      var eff = -1
+      if !ft.effects.is_empty() {
+        eff = c.resolve_effects(ft.effects, env)
+      }
+      c.mk_func(ps, vs, r, e, eff)
+    }
+    BadType(..) => c.bad_ty
+  }
+}
+
+fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List[Type], var env: TypeEnv) -> Int {
+  let last = path[path.len() - 1]
+  var obj = -1
+  if path.len() == 1 {
+    let id = path[0]
+    let name = id.name
+    if let Some(p) = env.params.get(name) {
+      if c.objs[p].effect {
+        c.error("XO0407", span, "`${text(name)}` is an effect variable, not a type")
+        return c.bad_ty
+      }
+      if !args.is_empty() {
+        c.error("XO0403", span, "type parameter `${text(name)}` takes no type arguments")
+      }
+      c.record(id, p)
+      return c.mk_param(p)
+    }
+    if name == b"Effects" {
+      c.error("XO0407", span, "`Effects` is only valid as the kind of an effect variable: `fx: Effects` (core 6.2)")
+      return c.bad_ty
+    }
+    let o = if env.mod >= 0 { c.lookup_module_obj(env.mod, name) } else { -1 }
+    if o < 0 {
+      if env.implicit && args.is_empty() && is_upper_camel(name) {
+        let p = c.new_tparam(name, c.path, id.span.start.line, id.span.start.col)
+        c.objs[p].implicit = true
+        if env.arg_param >= 0 {
+          c.objs[p].constraint = c.objs[env.arg_param].constraint
+        }
+        env.implicit_list.push(p)
+        env.params[name] = p
+        c.record(id, p)
+        return c.mk_param(p)
+      }
+      let (ht, hok) = c.habit_type(span, path, args, env)
+      if hok {
+        return ht
+      }
+      if !env.quiet {
+        c.error("XO0601", id.span, "type `${text(name)}` not found")
+      }
+      return c.bad_ty
+    }
+    if c.objs[o].kind != ObjKind.Type {
+      c.error("XO0407", span, "`${text(name)}` is not a type")
+      return c.bad_ty
+    }
+    c.record(id, o)
+    obj = o
+  } else if path.len() == 2 {
+    let mid = path[0]
+    var imp: Import? = None
+    if env.file >= 0 {
+      imp = c.files[env.file].imports.get(mid.name)
+      if imp == None && mid.name == b"testing" && c.files[env.file].is_test {
+        imp = Some(Import{module: c.testing_mod(), path: b"std/testing"})
+      }
+    }
+    let im = match imp {
+      Some(x) => x
+      None => {
+        c.error("XO0601", mid.span, "module `${text(mid.name)}` not found")
+        return c.bad_ty
+      }
+    }
+    if env.file >= 0 && c.files[env.file].imports.contains(mid.name) && !im.used {
+      var u = im
+      u.used = true
+      c.files[env.file].imports[mid.name] = u
+    }
+    let m = im.module
+    if m < 0 {
+      return c.bad_ty
+    }
+    c.record(mid, c.mods[m].obj)
+    let o = c.mods[m].members.get(last.name) ?? -1
+    if o < 0 {
+      c.error("XO0601", last.span, "module `${text(mid.name)}` has no type `${text(last.name)}`")
+      return c.bad_ty
+    }
+    if c.objs[o].kind != ObjKind.Type {
+      c.error("XO0407", span, "`${text(mid.name)}.${text(last.name)}` is not a type")
+      return c.bad_ty
+    }
+    if !c.objs[o].is_pub && m != env.mod {
+      c.error("XO0605", last.span, "type `${text(last.name)}` is not `pub` in module `${c.mods[m].path}`")
+    }
+    c.record(last, o)
+    obj = o
+  } else {
+    var parts: List[Str] = []
+    for p in path {
+      parts.push(text(p.name))
+    }
+    c.error("XO0601", span, "type path `${parts.join(".")}` has too many segments")
+    return c.bad_ty
+  }
+  if !c.objs[obj].resolving {
+    c.resolve_type_obj(obj)
+  }
+  var targs = c.resolve_args_for(obj, args, env)
+  let ntp = c.objs[obj].tparams.len()
+  if c.objs[obj].tkind == "alias" {
+    if targs.len() != ntp {
+      c.error("XO0403", span, "`${text(c.objs[obj].name)}` takes ${ntp} type argument(s), found ${targs.len()}")
+      return c.bad_ty
+    }
+    let target = c.alias_target(obj, span)
+    return c.subst(target, c.args_subst(c.objs[obj].tparams, targs))
+  }
+  if targs.len() != ntp {
+    if env.implicit && targs.is_empty() {
+      // a receiver `List` without arguments: fully generic
+      for p in c.objs[obj].tparams {
+        let ip = c.new_tparam(c.objs[p].name, "", 0, 0)
+        c.objs[ip].implicit = true
+        c.objs[ip].effect = c.objs[p].effect
+        c.objs[ip].elided = c.objs[p].effect
+        c.objs[ip].constraint = c.objs[p].constraint
+        env.implicit_list.push(ip)
+        if c.objs[p].effect {
+          targs.push(c.effarg(c.new_eset([EffItem{param: ip}])))
+        } else {
+          targs.push(c.mk_param(ip))
+        }
+      }
+    } else {
+      c.error("XO0403", span, "`${c.qual_name(obj)}` takes ${ntp} type argument(s), found ${targs.len()}")
+      return c.bad_ty
+    }
+  }
+  c.mk_named(obj, targs)
+}
+
+/// The type arguments written for obj; when every effect argument is
+/// left out, each effect parameter gets an elided argument.
+fn (var c: Checker) resolve_args_for(obj: Int, wr: List[Type], var env: TypeEnv) -> List[Int] {
+  let tps = c.objs[obj].tparams
+  var non_eff = 0
+  for p in tps {
+    if !c.objs[p].effect {
+      non_eff += 1
+    }
+  }
+  var out: List[Int] = []
+  if wr.len() == tps.len() || wr.len() != non_eff || (wr.is_empty() && env.implicit) {
+    for (i, a) in wr.indexed() {
+      let tp = if i < tps.len() { tps[i] } else { -1 }
+      out.push(c.resolve_type_arg(a, tp, env))
+    }
+    return out
+  }
+  var i = 0
+  for tp in tps {
+    if c.objs[tp].effect {
+      out.push(c.elided_effect(obj, tp, env))
+      continue
+    }
+    out.push(c.resolve_type_arg(wr[i], tp, env))
+    i += 1
+  }
+  out
+}
+
+/// The argument of effect parameter tp of obj left out: an implicit
+/// effect parameter of what is being declared, or an open effect set.
+fn (var c: Checker) elided_effect(obj: Int, tp: Int, var env: TypeEnv) -> Int {
+  if !env.implicit && !env.elided {
+    return c.fresh_effarg()
+  }
+  let p = c.new_tparam("${text(c.objs[obj].name)}.${text(c.objs[tp].name)}".bytes(), "", 0, 0)
+  c.objs[p].implicit = true
+  c.objs[p].effect = true
+  c.objs[p].elided = true
+  if env.implicit {
+    env.implicit_list.push(p)
+  } else {
+    env.elided_list.push(p)
+  }
+  c.effarg(c.new_eset([EffItem{param: p}]))
+}
+
+fn (var c: Checker) resolve_type_arg(a: Type, tp: Int, var env: TypeEnv) -> Int {
+  if tp >= 0 && c.objs[tp].effect {
+    var items: List[EffItem] = []
+    c.effect_arg(a, env, items)
+    return c.effarg(c.new_eset(items))
+  }
+  let saved = env.arg_param
+  env.arg_param = tp
+  let t = c.resolve_type(a, env)
+  env.arg_param = saved
+  t
+}
+
+/// Checks an effect set written as a type argument.
+fn (var c: Checker) effect_arg(a: Type, var env: TypeEnv, var items: List[EffItem]) {
+  match a {
+    TupleType(elems: es, ..) => {
+      for e in es {
+        c.effect_arg(e, env, items)
+      }
+      return
+    }
+    NamedType(span: span, path: path, args: args) => {
+      if args.is_empty() && path.len() <= 2 {
+        var name = text(path[0].name)
+        if path.len() == 2 {
+          name = "${name}.${text(path[1].name)}"
+        }
+        if is_effect_label(name) {
+          items.push(EffItem{label: name})
+          return
+        }
+        if path.len() == 1 {
+          if let Some(p) = env.params.get(path[0].name) {
+            if c.objs[p].effect {
+              items.push(EffItem{param: p})
+              return
+            }
+          }
+          if env.implicit && is_snake(path[0].name) {
+            let p = c.new_tparam(path[0].name, "", 0, 0)
+            c.objs[p].implicit = true
+            c.objs[p].effect = true
+            env.implicit_list.push(p)
+            env.params[path[0].name] = p
+            items.push(EffItem{param: p})
+            return
+          }
+        }
+        c.error("XO0702", span, "unknown effect `${name}` in an effect argument")
+        return
+      }
+    }
+    _ => {}
+  }
+  c.error("XO0702", parser.type_span(a), "an effect argument must be an effect label, an effect variable, or a parenthesized list of them")
+}

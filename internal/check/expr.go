@@ -150,6 +150,7 @@ func (c *checker) checkRet(e ast.Expr, w *retWant) Type {
 			if len(call.Args) == 1 && call.Args[0].Name == nil {
 				res := c.resultOf(w.T, w.E)
 				c.exprType[id] = res
+				c.rec.name(id, c.preludeVariant(id.Name))
 				if id.Name == "Err" {
 					c.check(call.Args[0].Value, w.E)
 				} else {
@@ -1435,6 +1436,7 @@ func (c *checker) structLit(x *ast.StructLit, hint Type) Type {
 			c.infer(f.Value, nil)
 			continue
 		}
+		c.rec.field(f.Name, obj, fo)
 		if seen[fo.Name] {
 			c.errorf(diag.BadArguments, f.Name.Sp, "field `%s` is given twice", fo.Name)
 		}
@@ -1495,6 +1497,7 @@ func (c *checker) withExpr(x *ast.WithExpr, hint Type) Type {
 			c.infer(f.Value, nil)
 			continue
 		}
+		c.rec.field(f.Name, n.Obj, fo)
 		if !fo.Pub && n.Obj.Module != c.mod {
 			c.errorf(diag.NotVisible, f.Name.Sp, "field `%s` of `%s` is not `pub`", fo.Name, n.Obj.Name)
 		}

@@ -344,6 +344,7 @@ func (c *checker) typeMember(obj *TypeObj, targs []Type, x *ast.SelectorExpr, hi
 	}
 	if fo := obj.Statics[name]; fo != nil {
 		c.rec.ref[x] = fo
+		c.rec.name(x.Sel, fo)
 		if fo.Const {
 			if call != nil {
 				c.errorf(diag.WrongKind, call.Sp, "`%s.%s` is a constant, not a function", obj.Name, name)
@@ -494,6 +495,7 @@ func (c *checker) fieldOf(bt Type, x *ast.SelectorExpr, place bool) Type {
 		}
 		if n.Obj.Kind == KStruct && !n.Obj.Opaque {
 			if f := n.Obj.field(name); f != nil {
+				c.rec.field(x.Sel, n.Obj, f)
 				if !f.Pub && n.Obj.Module != c.mod {
 					c.errorf(diag.NotVisible, x.Sel.Sp, "field `%s` of `%s` is not `pub`", name, n.Obj.Name)
 				}
@@ -503,6 +505,7 @@ func (c *checker) fieldOf(bt Type, x *ast.SelectorExpr, place bool) Type {
 	}
 	if !place {
 		if m, sm := c.findMethod(r, name); m != nil {
+			c.rec.name(x.Sel, m)
 			if m.RecvVar {
 				c.errorf(diag.WrongKind, x.Sp, "method `%s` mutates its receiver and cannot be used as a value", name)
 				return badType
@@ -682,7 +685,7 @@ func (c *checker) callIdent(x *ast.CallExpr, id *ast.Ident, targs []Type, hint T
 		c.rec.name(id, o)
 		return c.callFunc(o, nil, targs, x, hint, nil)
 	case *TypeObj:
-		c.rec.names[id] = nameRef{obj: o, call: true}
+		c.rec.name(id, o)
 		return c.typeCall(o, targs, x, hint)
 	case *ConstObj:
 		c.rec.name(id, o)
@@ -856,6 +859,7 @@ func (c *checker) callMethod(bt Type, sel *ast.SelectorExpr, targs []Type, x *as
 		c.inferArgs(x)
 		return badType
 	}
+	c.rec.name(sel.Sel, m)
 	if m.Static {
 		c.errorf(diag.WrongKind, sel.Sel.Sp, "`%s` is an associated function; call it on the type: `%s.%s(...)`", name, m.Recv.Name, name)
 		c.inferArgs(x)
@@ -980,7 +984,7 @@ func (c *checker) callFunc(fo *FuncObj, pre *substMap, targs []Type, call *ast.C
 	}
 	params := make([]*ParamInfo, len(fo.Params))
 	for i, p := range fo.Params {
-		params[i] = &ParamInfo{Name: p.Name, Type: subst(p.Type, sm), Var: p.Var, Default: p.Default, Span: p.Span}
+		params[i] = &ParamInfo{Name: p.Name, Type: subst(p.Type, sm), Var: p.Var, Default: p.Default, Span: p.Span, ref: paramRef{fn: fo, name: p.Name, span: p.Span}}
 	}
 	ci := &callInfo{fn: fo, recvExpr: recv, sm: sm}
 	c.callInfo[call] = ci
@@ -1090,6 +1094,9 @@ func (c *checker) checkArgs(params []*ParamInfo, call *ast.CallExpr, fname strin
 			c.infer(a.Value, nil)
 			ok = false
 			continue
+		}
+		if params[idx].ref != nil {
+			c.rec.names[a.Name] = nameRef{obj: params[idx].ref}
 		}
 		assigned[idx] = a.Value
 	}
@@ -1401,6 +1408,7 @@ func (c *checker) construct(v *VariantObj, targs []Type, call *ast.CallExpr, hin
 	enum := v.Enum
 	if e != nil {
 		c.rec.ctor[e] = v
+		c.rec.name(calleeIdent(e), v)
 	}
 	nt, ok := c.instantiate(enum, targs, sp)
 	if !ok {
@@ -1440,7 +1448,7 @@ func (c *checker) construct(v *VariantObj, targs []Type, call *ast.CallExpr, hin
 		if f.From {
 			name = ""
 		}
-		params[i] = &ParamInfo{Name: name, Type: subst(f.Type, s)}
+		params[i] = &ParamInfo{Name: name, Type: subst(f.Type, s), ref: fieldRef{mod: enum.Module, owner: enum.Name + "." + v.Name, name: f.Name, span: f.Span}}
 	}
 	if len(v.Fields) > 1 {
 		for _, a := range call.Args {
@@ -1491,6 +1499,22 @@ func (c *checker) expectCompare(x *ast.BinaryExpr, call *ast.CallExpr) Type {
 	}
 	c.binaryType(x.Op, at, yt, x.Sp, call.Args[0].Value, x.Y)
 	return unitType
+}
+
+// calleeIdent is the identifier that names what e constructs or calls:
+// `Red`, `Color.Red`, `Circle(r)`, `Shape.Circle[T](r)`.
+func calleeIdent(e ast.Expr) *ast.Ident {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x
+	case *ast.SelectorExpr:
+		return x.Sel
+	case *ast.TypeArgsExpr:
+		return calleeIdent(x.X)
+	case *ast.CallExpr:
+		return calleeIdent(x.Fun)
+	}
+	return nil
 }
 
 // mentions reports whether type t refers to type parameter p.

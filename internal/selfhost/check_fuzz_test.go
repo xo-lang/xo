@@ -15,16 +15,19 @@ import (
 	"github.com/xo-lang/xo/internal/token"
 )
 
-// TestSelfhostCheckerNamesMutations compares the Xo and Go checkers
-// (decision 0141) on mutations of the single directory modules of the
-// repository that the Go checker accepts and that import only std: one
-// identifier renamed (an unresolved name, or one that now resolves
-// elsewhere), a `use` line removed, or a top level declaration
-// duplicated. The rules of TestSelfhostCheckerNames apply: an accepted
-// mutation has the same names section, one rejected only for names the
-// same diagnostics. -short makes 150 mutations, else 1000;
-// XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N override.
-func TestSelfhostCheckerNamesMutations(t *testing.T) {
+// TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
+// 0141) on mutations of the single directory modules of the repository
+// that the Go checker accepts and that import only std. Half are name
+// mutations: one identifier renamed (an unresolved name, or one that now
+// resolves elsewhere), a `use` line removed, or a top level declaration
+// duplicated. Half are type mutations: a literal replaced by one of
+// another type, a `?` removed, or a field or method name replaced by
+// another one of the file. The rules of TestSelfhostChecker apply: an
+// accepted mutation has the same names and types sections, one rejected
+// only for names and types the same diagnostics. -short makes 150
+// mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
+// override.
+func TestSelfhostCheckerMutations(t *testing.T) {
 	n := 1000
 	if testing.Short() {
 		n = 150
@@ -68,7 +71,11 @@ func TestSelfhostCheckerNamesMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				data = mutateNames(rng, data)
+				if rng.Intn(2) == 0 {
+					data = mutateNames(rng, data)
+				} else {
+					data = mutateTypes(rng, data)
+				}
 			}
 			if err := os.WriteFile(filepath.Join(tmp, dir, name), data, 0o644); err != nil {
 				t.Fatal(err)
@@ -98,16 +105,16 @@ func TestSelfhostCheckerNamesMutations(t *testing.T) {
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
 		}
 	}
-	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only for names (%d match), %d rejected otherwise, %d unsupported",
-		len(dirs), st.accepted, st.acceptedOK, st.nameRejected, st.nameRejectedOK, st.otherRejected, st.unsupported)
+	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only for names and types (%d match), %d rejected otherwise, %d unsupported",
+		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
 	if len(fails) > 0 {
 		if len(fails) > 5 {
 			fails = append(fails[:5], fmt.Sprintf("... and %d more", len(fails)-5))
 		}
 		t.Fatalf("%d of %d mutations differ:\n%s", len(fails), len(dirs), strings.Join(fails, "\n"))
 	}
-	if st.nameRejectedOK < len(dirs)/10 {
-		t.Fatalf("only %d of %d mutations were rejected only for names", st.nameRejectedOK, len(dirs))
+	if st.stagedOK < len(dirs)/10 {
+		t.Fatalf("only %d of %d mutations were rejected only for names and types", st.stagedOK, len(dirs))
 	}
 }
 
@@ -272,4 +279,58 @@ func mutateNames(rng *rand.Rand, src []byte) []byte {
 	out = append(out, lines[i])
 	out = append(out, lines[i+1:]...)
 	return bytes.Join(out, []byte("\n"))
+}
+
+// mutateTypes applies one type level edit to src: an integer literal
+// becomes a string, float, or Bool literal, a string literal an integer,
+// a postfix `?` is removed, or the name after a `.` becomes another
+// such name of the file (another field or method).
+func mutateTypes(rng *rand.Rand, src []byte) []byte {
+	var ds diag.List
+	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	var lits, strs, quests, sels []token.Token
+	for i, tk := range toks {
+		switch tk.Kind {
+		case token.Int:
+			lits = append(lits, tk)
+		case token.String:
+			strs = append(strs, tk)
+		case token.Question:
+			if i > 0 && toks[i-1].Span.End.Offset == tk.Span.Start.Offset {
+				quests = append(quests, tk)
+			}
+		case token.Ident:
+			if i > 0 && toks[i-1].Kind == token.Dot {
+				sels = append(sels, tk)
+			}
+		}
+	}
+	replace := func(tk token.Token, with string) []byte {
+		var b bytes.Buffer
+		b.Write(src[:tk.Span.Start.Offset])
+		b.WriteString(with)
+		b.Write(src[tk.Span.End.Offset:])
+		return b.Bytes()
+	}
+	for range 4 {
+		switch rng.Intn(4) {
+		case 0:
+			if len(lits) > 0 {
+				return replace(lits[rng.Intn(len(lits))], []string{`"s"`, "1.5", "true", "'a'"}[rng.Intn(4)])
+			}
+		case 1:
+			if len(strs) > 0 {
+				return replace(strs[rng.Intn(len(strs))], "0")
+			}
+		case 2:
+			if len(quests) > 0 {
+				return replace(quests[rng.Intn(len(quests))], "")
+			}
+		case 3:
+			if len(sels) > 1 {
+				return replace(sels[rng.Intn(len(sels))], sels[rng.Intn(len(sels))].Text)
+			}
+		}
+	}
+	return mutateNames(rng, src)
 }

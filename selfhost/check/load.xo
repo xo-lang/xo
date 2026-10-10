@@ -27,34 +27,65 @@ pub struct Checker {
   unsupported: Str = ""
 
   // The walk: the current module and file, local scopes (innermost
-  // last), the type parameters in scope, and the context.
+  // last), the function context, and what it records.
   cur_mod: Int = -1
   cur_file: Int = -1
   path: Str = ""
   scopes: List[Map[Bytes, Int]] = []
-  env: Map[Bytes, Int] = {}
-  in_test: Bool = false
-  in_ensures: Bool = false
-  /// Collects implicit receiver type parameters (attach_method).
-  implicit: Bool = false
-  implicit_params: List[Int] = []
+  /// Function contexts (stmt.xo); ctx is the current one, -1 outside
+  /// bodies.
+  ctxs: List[Ctx] = []
+  ctx: Int = -1
+
+  // Types (types.xo, infer.xo).
+  tys: List[Ty] = []
+  /// Variables bound since the start (unify), for undo.
+  trail: List[Int] = []
+  unit_ty: Int = -1
+  bad_ty: Int = -1
+  /// Named types without arguments, by Type object.
+  named0: Map[Int, Int] = {}
+  /// Effect sets and effect variables (effects.xo): a variable holds
+  /// the set it is bound to, -1 while open.
+  esets: List[List[EffItem]] = []
+  evars: List[Int] = []
+  /// Result types of closures whose body never completes: Never when
+  /// nothing else determines them (check.go reportAmbiguous).
+  never_results: List[Int] = []
+  /// The target of a plain `m[k] = v` (stmt.xo assign), by key.
+  map_store: Int = -1
+  /// Scope and group frames of spawned tasks (stmt.xo).
+  frames: List[ScopeFrame] = []
+  /// `x?.f` optional chains reported as XO0205, by key of the `x?`.
+  safe_navs: Map[Int, Bool] = {}
+  /// Calls of declared functions (by key) and their function; calls
+  /// that construct a variant or newtype (for XO0408).
+  fn_calls: Map[Int, Int] = {}
+  ctor_calls: Map[Int, Bool] = {}
 
   // Results.
   names: List[NameRec] = []
   name_at: Map[Str, Int] = {}
+  types: List[TypeRec] = []
+  type_at: Map[Int, Int] = {}
+  /// Expressions of type Never checked against an expected type, by key.
+  never_expr: Map[Int, Bool] = {}
   diags: List[Diag] = []
   seen: Map[Str, Bool] = {}
 }
 
 /// A fresh checker reading std declarations from std_dir.
 pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
-  Checker{fs: fs, std_dir: std_dir}
+  var c = Checker{fs: fs, std_dir: std_dir}
+  c.unit_ty = c.new_ty(Ty{kind: TyKind.Tuple})
+  c.bad_ty = c.new_ty(Ty{kind: TyKind.Bad})
+  c
 }
 
 /// Loads the modules under dirs and the std modules they need, then
 /// resolves every user module. Errors are I/O failures of the named
 /// directories, as in check.Check.
-fn (var c: Checker) check(dirs: List[Str]) -> () ! Str {
+fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str {
   c.load_prelude()
   for d in dirs {
     let st = c.fs.stat(d).ok() ?? None
@@ -162,7 +193,7 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
     c.unsupported = "parse error in ${path}"
   }
   let f = c.files.len()
-  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo")})
+  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
 }
 
