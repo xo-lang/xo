@@ -1,0 +1,48 @@
+// xoparse: the self hosted parser's command line.
+//
+//   parser [--sig] <files...>              print each file's canonical tree dump
+//   parser [--sig] --bench=N <files...>    parse every file N times, print the time
+//
+// The dump of every file the Go parser accepts is byte for byte the output
+// of `xo astdump` (internal/parser); --sig parses in signature mode (std
+// declaration files).
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var sig = false
+  var files: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else if a == "--sig" {
+      sig = true
+    } else {
+      files.push(a)
+    }
+  }
+  if files.is_empty() {
+    os.stdio.eprintln("usage: parser [--sig] [--bench=N] <files...>")
+    os.proc.exit(2)
+  }
+  var srcs: List[(Str, Bytes)] = []
+  for f in files {
+    srcs.push((f, os.fs.read(f)?))
+  }
+  if repeat > 0 {
+    let t0 = os.clock.now()
+    var decls = 0
+    for _ in 0..repeat {
+      for (f, src) in srcs {
+        decls += parse_file(f.bytes(), src, sig).file.decls.len()
+      }
+    }
+    let elapsed = os.clock.now() - t0
+    os.stdio.println("parsed ${srcs.len()} files x ${repeat}: ${decls} decls in ${elapsed.nanos() / 1_000_000} ms")
+    return
+  }
+  var out = StrBuilder.new()
+  for (f, src) in srcs {
+    out.write(dump(f, src, sig))
+  }
+  os.stdio.print(out.freeze())
+}

@@ -1,0 +1,996 @@
+// Expressions (core 3, 15: Expr), with the precedence of core 15.
+
+use github.com/xo-lang/xo/selfhost/lexer
+
+fn (var p: Parser) parse_expr_no_lit() -> Expr {
+  let saved = p.no_lit
+  p.no_lit = true
+  let e = p.parse_expr()
+  p.no_lit = saved
+  e
+}
+
+fn (var p: Parser) parse_expr() -> Expr {
+  let x = p.parse_binary(1)
+  if p.at(Kind.Question) && p.ternary_ahead() {
+    p.foreign(p.tok.span, "`c ? a : b` is C syntax; Xo writes `if c { a } else { b }`")
+  }
+  if p.py_cond_ahead() {
+    p.foreign(p.tok.span, "`a if c else b` is Python syntax")
+  }
+  x
+}
+
+/// Binary operator precedence, lowest first (core 15); 0 is not an
+/// operator.
+fn precedence(k: Kind) -> Int {
+  match k {
+    Coalesce => 1
+    OrOr => 2
+    AndAnd => 3
+    Eq | NotEq | Lt | LtEq | Gt | GtEq => 4
+    DotDot | DotDotEq => 5
+    Plus | Minus | Pipe | Caret => 6
+    Star | Slash | Percent | Shl | Shr | Amp => 7
+    _ => 0
+  }
+}
+
+const RANGE_PREC = 5
+
+/// The precedence of the contextual `is`: that of `==` (core 3.5).
+const IS_PREC = 4
+
+fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
+  var x = p.parse_unary()
+  while {
+    if p.at_ident(b"is") && IS_PREC >= min_prec && !p.failed() {
+      x = p.parse_is(x)
+      continue
+    }
+    p.foreign_binary(min_prec)
+    let op = p.tok.kind
+    let prec = precedence(op)
+    if prec == 0 || prec < min_prec || p.failed() || p.inc_dec_ahead() {
+      return x
+    }
+    let op_tok = p.tok
+    p.next()
+    if prec == RANGE_PREC {
+      if op == Kind.DotDot && adjacent(op_tok, p.tok) && (p.at(Kind.Lt) || p.at(Kind.Dot)) {
+        p.foreign(p.tok.span, "`..<` and `...` are Swift ranges")
+      }
+      var hi: Expr? = None
+      if !(p.open_range && p.at(Kind.RBrack)) {
+        hi = Some(p.parse_binary(prec + 1))
+      }
+      x = Expr.RangeExpr(span: p.span_from(expr_span(x).start), lo: Some(x), hi: hi, inclusive: op == Kind.DotDotEq)
+      continue
+    }
+    let y = if op == Kind.Coalesce { p.parse_binary(prec) } else { p.parse_binary(prec + 1) }
+    x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
+  }
+  x
+}
+
+/// Binary operators of other languages after an operand
+/// (internal/parser foreignBinary), each at its own precedence.
+fn (var p: Parser) foreign_binary(min_prec: Int) {
+  let t = p.tok
+  let next = p.peek(1)
+  let hit = (is_word(t, b"and") && starts_expr(next.kind) && 3 >= min_prec) || (is_word(t, b"or") && starts_expr(next.kind) && 2 >= min_prec) || (is_word(t, b"not") && next.kind == Kind.In && IS_PREC >= min_prec) || (t.kind == Kind.In && IS_PREC >= min_prec) || ((t.kind == Kind.Eq || t.kind == Kind.NotEq) && next.kind == Kind.Assign && adjacent(t, next) && 4 >= min_prec) || (t.kind == Kind.Star && next.kind == Kind.Star && adjacent(t, next) && 7 >= min_prec) || (t.kind == Kind.Question && next.kind == Kind.Colon && adjacent(t, next) && 1 >= min_prec) || (is_word(t, b"until") && starts_expr(next.kind) && RANGE_PREC >= min_prec)
+  if hit {
+    p.foreign(t.span, "an operator from another language")
+  }
+}
+
+/// `++` or `--` ending a statement, which the operator loop leaves alone.
+fn (p: Parser) inc_dec_ahead() -> Bool {
+  let t = p.tok
+  if (t.kind != Kind.Plus && t.kind != Kind.Minus) || p.peek(1).kind != t.kind || !adjacent(t, p.peek(1)) {
+    return false
+  }
+  p.peek(2).kind is Newline | RBrace | Eof
+}
+
+/// Whether the `?` here starts `c ? a : b` rather than a postfix `?`.
+fn (p: Parser) ternary_ahead() -> Bool {
+  let n = p.peek(1)
+  match n.kind {
+    Ident => {
+      if n.text == b"is" || n.text == b"with" {
+        return false
+      }
+    }
+    Int | Float | Duration | Rune | String | RawString | Bytes | Bang | Hole => {}
+    LParen | LBrack | Minus => {
+      if adjacent(p.tok, n) {
+        return false
+      }
+    }
+    _ => return false
+  }
+  var depth = 0
+  var i = p.pos + 1
+  while i < p.toks.len() {
+    match p.tok_at(i).kind {
+      Newline | Eof => return false
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => {
+        depth -= 1
+        if depth < 0 {
+          return false
+        }
+      }
+      Comma | FatArrow | Assign => {
+        if depth == 0 {
+          return false
+        }
+      }
+      Colon => {
+        if depth == 0 {
+          return true
+        }
+      }
+      _ => {}
+    }
+    i += 1
+  }
+  false
+}
+
+/// Whether `if` after an expression starts Python's `a if c else b`.
+fn (p: Parser) py_cond_ahead() -> Bool {
+  if !p.at(Kind.If) || p.no_lit {
+    return false
+  }
+  var depth = 0
+  var i = p.pos + 1
+  while i < p.toks.len() {
+    match p.tok_at(i).kind {
+      Newline | Eof => return false
+      LBrace => {
+        if depth == 0 {
+          return false
+        }
+        depth += 1
+      }
+      LParen | LBrack | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => {
+        depth -= 1
+        if depth < 0 {
+          return false
+        }
+      }
+      Else => {
+        if depth == 0 {
+          return true
+        }
+      }
+      _ => {}
+    }
+    i += 1
+  }
+  false
+}
+
+/// `x is Pattern` after x (core 3.5); the pattern binds no names.
+fn (var p: Parser) parse_is(x: Expr) -> Expr {
+  p.next() // is
+  let pat = p.parse_pattern()
+  let e = Expr.IsExpr(span: span_to(expr_span(x), pattern_span(pat)), x: x, pattern: pat)
+  if !p.failed() && binds_names(pat) {
+    p.fail(INVALID_PATTERN, pattern_span(pat), "a pattern after `is` cannot bind names")
+  }
+  e
+}
+
+/// Whether pat or a pattern nested in it binds a name.
+fn binds_names(pat: Pattern) -> Bool {
+  match pat {
+    BindPat(..) => true
+    OrPat(_, alts) => alts.any(binds_names)
+    TuplePat(_, elems) => elems.any(binds_names)
+    ListPat(_, elems, _) => elems.any(binds_names)
+    VariantPat(_, _, _, fields, _) => fields.any(fn(f) { binds_names(f.pattern) })
+    StructPat(_, _, fields, _) => fields.any(fn(f) { binds_names(f.pattern) })
+    WildcardPat(_) | LitPat(..) | RangePat(..) | BadPat(_) => false
+  }
+}
+
+/// Whether k can start an expression operand.
+fn starts_expr(k: Kind) -> Bool {
+  k is Ident | Int | Float | Duration | Rune | String | RawString | Bytes | Hole | LParen | LBrack | LBrace | HashLBrace | Minus | Bang | Tilde | Fn | If | Match
+}
+
+fn (var p: Parser) parse_unary() -> Expr {
+  // Prefix operators of other languages: `&x`, `*p`, `not x`, `await x`.
+  let t = p.tok
+  let next = p.peek(1)
+  if (t.kind == Kind.Amp && starts_expr(next.kind)) || (t.kind == Kind.Star && starts_expr(next.kind) && adjacent(t, next)) || (is_word(t, b"not") && ((!(next.kind is Minus | LBrace | LParen) && starts_expr(next.kind)) || (next.kind == Kind.LParen && !adjacent(t, next)))) || (is_word(t, b"await") && starts_expr(next.kind) && !(next.kind is Minus | LBrace) && next.span.start.line == t.span.start.line) {
+    p.foreign(t.span, "a prefix operator from another language")
+  }
+  if t.kind is Minus | Bang | Tilde {
+    let start = t.span.start
+    p.next()
+    let x = p.parse_unary()
+    return Expr.UnaryExpr(span: p.span_from(start), op: t.kind, x: x)
+  }
+  let x = p.parse_primary()
+  p.parse_postfix(x)
+}
+
+/// Operands written in another language's syntax
+/// (internal/parser foreignPrimary).
+fn (var p: Parser) foreign_primary() {
+  let t = p.tok
+  let next = p.peek(1)
+  let same_line = next.span.start.line == t.span.start.line && next.kind != Kind.Newline
+  match t.kind {
+    Pipe | OrOr => p.foreign(t.span, "a Rust closure")
+    LParen => {
+      if !p.no_arrow_fn {
+        let end = p.match_close(p.pos)
+        if end >= 0 && p.tok_at(end + 1).kind == Kind.FatArrow {
+          p.foreign(t.span, "an arrow function")
+        }
+      }
+    }
+    Ident => {
+      let w = t.text
+      let hit = ((w == b"switch" || w == b"when") && same_line && p.rest_of_line_has(Kind.LBrace) && next.kind != Kind.Assign && next.kind != Kind.Dot) || ((w == b"try" || w == b"do") && next.kind == Kind.LBrace) || (w == b"try" && same_line && (next.kind is Question | Bang) && adjacent(t, next)) || (w == b"try" && same_line && starts_expr(next.kind) && next.kind != Kind.LBrace) || (w == b"new" && next.kind == Kind.Ident && same_line && is_upper(next.text)) || (w == b"lambda" && (next.kind is Ident | Colon)) || (next.kind == Kind.FatArrow && !p.no_arrow_fn && same_line) || ((w == b"f" || w == b"F") && next.kind == Kind.String && adjacent(t, next) && next.text.len() >= 2 && next.text[next.text.len() - 1] == '"' && !next.triple) || (next.kind == Kind.Bang && adjacent(t, next) && (p.peek(2).kind is LParen | LBrack) && adjacent(next, p.peek(2)))
+      if hit {
+        p.foreign(t.span, "an expression from another language")
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Whether a token of kind follows on the current line at bracket depth
+/// zero (internal/parser restOfLineHas).
+fn (p: Parser) rest_of_line_has(kind: Kind) -> Bool {
+  var depth = 0
+  var i = p.pos
+  while i < p.toks.len() {
+    let k = p.tok_at(i).kind
+    match k {
+      Newline | Eof => return false
+      LParen | LBrack | HashLBrace => depth += 1
+      RParen | RBrack => {
+        depth -= 1
+        if depth < 0 {
+          return false
+        }
+      }
+      LBrace => {
+        if depth == 0 && kind == Kind.LBrace {
+          return true
+        }
+        depth += 1
+      }
+      RBrace => {
+        depth -= 1
+        if depth < 0 {
+          return false
+        }
+      }
+      _ => {}
+    }
+    if depth == 0 && k == kind && i > p.pos {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+/// The index of the token closing the bracket at index i, or -1.
+fn (p: Parser) match_close(i: Int) -> Int {
+  let open = p.tok_at(i).kind
+  let close = match open {
+    LParen => Kind.RParen
+    LBrack => Kind.RBrack
+    LBrace | HashLBrace => Kind.RBrace
+    _ => return -1
+  }
+  var depth = 0
+  var j = i
+  while j < p.toks.len() {
+    let k = p.tok_at(j).kind
+    if k == open || (close == Kind.RBrace && (k == Kind.LBrace || k == Kind.HashLBrace)) {
+      depth += 1
+    } else if k == close {
+      depth -= 1
+      if depth == 0 {
+        return j
+      }
+    } else if k == Kind.Eof {
+      return -1
+    }
+    j += 1
+  }
+  -1
+}
+
+fn (var p: Parser) parse_primary() -> Expr {
+  p.foreign_primary()
+  let t = p.tok
+  let sp = t.span
+  match t.kind {
+    Ident => {
+      p.next()
+      return Expr.Ident(Ident{span: sp, name: t.text})
+    }
+    Int => {
+      p.next()
+      return Expr.IntLit(span: sp, raw: t.text, value: t.value)
+    }
+    Float => {
+      p.next()
+      return Expr.FloatLit(span: sp, raw: t.text)
+    }
+    Duration => {
+      p.next()
+      return Expr.DurationLit(span: sp, raw: t.text, nanos: t.value)
+    }
+    Rune => {
+      p.next()
+      return Expr.RuneLit(span: sp, raw: t.text, value: first_rune(t.value))
+    }
+    String | RawString => return Expr.StringLit(p.parse_string())
+    Bytes => {
+      p.next()
+      return Expr.BytesLit(span: sp, value: t.value)
+    }
+    Hole => {
+      p.next()
+      return Expr.HoleExpr(sp)
+    }
+    LParen => return p.parse_paren_or_tuple()
+    LBrack => {
+      var elems: List[Expr] = []
+      let st = p.list_open(Kind.LBrack)
+      while p.list_more(Kind.RBrack) {
+        let before = p.pos
+        elems.push(p.parse_expr())
+        if elems.len() == 1 && p.at(Kind.For) {
+          p.foreign(p.tok.span, "a Python comprehension")
+        }
+        if !p.list_sep(before, Kind.RBrack, "list") {
+          break
+        }
+      }
+      let lsp = p.list_close(st, Kind.RBrack)
+      return Expr.ListLit(span: lsp, elems: elems)
+    }
+    HashLBrace => {
+      var elems: List[Expr] = []
+      let st = p.list_open(Kind.HashLBrace)
+      while p.list_more(Kind.RBrace) {
+        let before = p.pos
+        elems.push(p.parse_expr())
+        if !p.list_sep(before, Kind.RBrace, "set") {
+          break
+        }
+      }
+      let ssp = p.list_close(st, Kind.RBrace)
+      return Expr.SetLit(span: ssp, elems: elems)
+    }
+    LBrace => {
+      if p.brace_is_map() {
+        return p.parse_map_lit()
+      }
+      return Expr.Block(p.parse_block())
+    }
+    If => return p.parse_if()
+    Match => return p.parse_match()
+    Scope => {
+      p.next()
+      let name = p.expect_ident("a scope name")
+      let body = p.parse_block()
+      return Expr.ScopeExpr(span: p.span_from(sp.start), name: name, body: body)
+    }
+    Select => return p.parse_select()
+    Fn => return p.parse_fn_lit()
+    While => {
+      p.next()
+      if !p.at(Kind.LBrace) {
+        p.fail(WHILE_COND_AS_EXPR, sp, "a `while` loop with a condition is a statement, not an expression")
+      }
+      let body = p.parse_block()
+      return Expr.WhileExpr(span: p.span_from(sp.start), body: body)
+    }
+    Return | Break | Continue => {
+      p.fail(UNEXPECTED_TOKEN, sp, "`${t.kind}` is a statement and cannot be used as a value here")
+      return Expr.BadExpr(sp)
+    }
+    _ => {}
+  }
+  p.error_expected("an expression")
+  Expr.BadExpr(Span{start: sp.start, end: sp.start})
+}
+
+/// The first code point of a rune token's value (Go's range over a
+/// string: U+FFFD for an invalid byte, 0 when empty).
+fn first_rune(v: Bytes) -> Int {
+  if v.is_empty() {
+    return 0
+  }
+  let (r, _) = v.decode_rune(0)
+  Int(r)
+}
+
+fn (var p: Parser) parse_paren_or_tuple() -> Expr {
+  let start = p.tok.span.start
+  if p.peek(1).kind == Kind.RParen {
+    p.next()
+    p.next()
+    return Expr.UnitExpr(p.span_from(start))
+  }
+  var elems: List[Expr] = []
+  var trailing = false
+  let st = p.list_open(Kind.LParen)
+  while p.list_more(Kind.RParen) {
+    let before = p.pos
+    elems.push(p.parse_expr())
+    trailing = p.at(Kind.Comma)
+    if !p.list_sep(before, Kind.RParen, "tuple") {
+      break
+    }
+  }
+  let sp = p.list_close(st, Kind.RParen)
+  if elems.len() == 1 && !trailing {
+    return Expr.ParenExpr(span: sp, x: elems[0])
+  }
+  Expr.TupleExpr(span: sp, elems: elems)
+}
+
+/// Whether `{` in expression position starts a map literal rather than a
+/// block: `{}` is an empty map, and a map has a `:` at depth zero before
+/// the first newline (core 15).
+fn (p: Parser) brace_is_map() -> Bool {
+  var i = p.pos + 1
+  while p.tok_at(i).kind == Kind.Newline {
+    i += 1
+  }
+  match p.tok_at(i).kind {
+    RBrace => return true
+    Let | Var | Return | Break | Continue | Defer | For | While => return false
+    Ident => {
+      if p.tok_at(i + 1).kind == Kind.Colon && (p.tok_at(i + 2).kind is For | While) {
+        return false
+      }
+    }
+    _ => {}
+  }
+  var depth = 0
+  while i < p.toks.len() {
+    match p.toks[i].kind {
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack => depth -= 1
+      RBrace => {
+        if depth == 0 {
+          return false
+        }
+        depth -= 1
+      }
+      Newline => {
+        if depth == 0 {
+          return false
+        }
+      }
+      Colon => {
+        if depth == 0 {
+          return true
+        }
+      }
+      Eof => return false
+      _ => {}
+    }
+    i += 1
+  }
+  false
+}
+
+fn (var p: Parser) parse_map_lit() -> Expr {
+  var entries: List[MapEntry] = []
+  let st = p.list_open(Kind.LBrace)
+  while p.list_more(Kind.RBrace) {
+    let before = p.pos
+    let start = p.tok.span.start
+    let key = p.parse_expr()
+    p.expect(Kind.Colon, "`:` between map key and value")
+    let value = p.parse_expr()
+    entries.push(MapEntry{span: p.span_from(start), key: key, value: value})
+    if !p.list_sep(before, Kind.RBrace, "map") {
+      break
+    }
+  }
+  let sp = p.list_close(st, Kind.RBrace)
+  Expr.MapLit(span: sp, entries: entries)
+}
+
+fn (var p: Parser) parse_field_inits() -> List[FieldInit] {
+  var out: List[FieldInit] = []
+  let st = p.list_open(Kind.LBrace)
+  while p.list_more(Kind.RBrace) {
+    let before = p.pos
+    let start = p.tok.span.start
+    let name = p.expect_ident("a field name")
+    p.expect(Kind.Colon, "`:` after the field name")
+    let value = p.parse_expr()
+    out.push(FieldInit{span: p.span_from(start), name: name, value: value})
+    if !p.list_sep(before, Kind.RBrace, "field") {
+      break
+    }
+  }
+  p.list_close(st, Kind.RBrace)
+  out
+}
+
+fn (var p: Parser) parse_if() -> Expr {
+  let start = p.tok.span.start
+  p.next() // if
+  var cond: Expr? = None
+  var pattern: Pattern? = None
+  var value: Expr? = None
+  var head: Expr = Expr.BadExpr(p.tok.span)
+  if p.got(Kind.Let) {
+    let pat = p.parse_pattern()
+    pattern = Some(pat)
+    p.expect(Kind.Assign, "`=` in `if let`")
+    head = p.parse_expr_no_lit()
+    value = Some(head)
+  } else {
+    head = p.parse_expr_no_lit()
+    cond = Some(head)
+  }
+  if let ParenExpr(..) = head {
+    if !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
+      p.foreign(p.tok.span, "a braceless `if (c) x`")
+    }
+  }
+  let then = p.parse_cond_block(Some(head))
+  if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Else {
+    p.fail(ELSE_ON_NEW_LINE, p.peek_past_newlines().span, "`else` must be on the same line as the closing `}` (core 1.3)")
+  }
+  if p.tok.kind == Kind.Ident && (p.tok.text == b"elif" || p.tok.text == b"elsif" || p.tok.text == b"elseif") {
+    p.foreign(p.tok.span, "`elif` is not Xo; write `else if`")
+  }
+  var els: Expr? = None
+  if p.got(Kind.Else) {
+    if p.at(Kind.If) {
+      els = Some(p.parse_if())
+    } else if p.at(Kind.LBrace) {
+      els = Some(Expr.Block(p.parse_block()))
+    } else {
+      p.error_expected("`if` or `{` after `else`")
+    }
+  }
+  Expr.IfExpr(IfExpr{span: p.span_from(start), cond: cond, pattern: pattern, value: value, then: then, els: els})
+}
+
+/// `{` of match or select arms; struct literals and open ranges are
+/// allowed again inside. Returns false when the brace is missing.
+fn (var p: Parser) arms_open() -> Bool {
+  p.expect(Kind.LBrace, "`{`").kind == Kind.LBrace
+}
+
+/// After an arm: a newline or the closing `}`. A `,` (Rust, Kotlin) or a
+/// second arm on the line is an error.
+fn (var p: Parser) arm_end(what: Str) {
+  if p.failed() || p.got(Kind.Newline) || p.at(Kind.RBrace) {
+    return
+  }
+  if p.at(Kind.Comma) {
+    p.fail(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
+    return
+  }
+  p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe(p.tok)}")
+}
+
+fn (var p: Parser) parse_match() -> Expr {
+  let start = p.tok.span.start
+  p.next() // match
+  let subject = p.parse_expr_no_lit()
+  p.check_struct_lit_in_cond(Some(subject))
+  var arms: List[MatchArm] = []
+  if p.arms_open() {
+    let saved_lit = p.no_lit
+    let saved_range = p.open_range
+    p.no_lit = false
+    p.open_range = false
+    while p.members_more() {
+      let astart = p.tok.span.start
+      let pattern = p.parse_pattern()
+      var guard: Expr? = None
+      if p.got(Kind.If) {
+        let saved = p.no_arrow_fn
+        p.no_arrow_fn = true
+        guard = Some(p.parse_expr())
+        p.no_arrow_fn = saved
+      }
+      if p.at(Kind.Arrow) {
+        p.foreign(p.tok.span, "`->` after a pattern is Kotlin syntax; write `=>`")
+      }
+      p.expect(Kind.FatArrow, "`=>` after the match pattern")
+      var body: Stmt? = None
+      if !p.failed() {
+        body = Some(p.parse_simple_stmt())
+      }
+      arms.push(MatchArm{span: p.span_from(astart), pattern: pattern, guard: guard, body: body})
+      p.arm_end("match arm")
+    }
+    p.no_lit = saved_lit
+    p.open_range = saved_range
+    p.close_brace()
+  }
+  Expr.MatchExpr(span: p.span_from(start), subject: subject, arms: arms)
+}
+
+fn (var p: Parser) parse_select() -> Expr {
+  let start = p.tok.span.start
+  p.next() // select
+  var arms: List[SelectArm] = []
+  if p.arms_open() {
+    let saved_lit = p.no_lit
+    let saved_range = p.open_range
+    p.no_lit = false
+    p.open_range = false
+    while p.members_more() {
+      let astart = p.tok.span.start
+      var arm = SelectArm{span: p.tok.span}
+      let saved = p.no_arrow_fn
+      p.no_arrow_fn = true
+      if p.at_ident(b"after") && !(p.peek(1).kind is Assign | FatArrow | Dot | LParen | LBrack | Question) {
+        p.next()
+        arm.after = Some(p.parse_expr())
+      } else if p.at(Kind.Ident) && p.peek(1).kind == Kind.Assign {
+        arm.bind = Some(p.expect_ident("a name"))
+        p.next() // =
+        arm.op = Some(p.parse_expr())
+      } else {
+        arm.op = Some(p.parse_expr())
+      }
+      p.no_arrow_fn = saved
+      p.expect(Kind.FatArrow, "`=>` after the select operation")
+      if !p.failed() {
+        arm.body = Some(p.parse_simple_stmt())
+      }
+      arm.span = p.span_from(astart)
+      arms.push(arm)
+      p.arm_end("select arm")
+    }
+    p.no_lit = saved_lit
+    p.open_range = saved_range
+    p.close_brace()
+  }
+  Expr.SelectExpr(span: p.span_from(start), arms: arms)
+}
+
+fn (var p: Parser) parse_fn_lit() -> Expr {
+  let start = p.tok.span.start
+  p.next() // fn
+  let params = p.parse_params(true, false)
+  var result: Type? = None
+  if p.got(Kind.Arrow) {
+    result = Some(p.parse_type())
+  }
+  var err: ErrSpec? = None
+  if p.at(Kind.Bang) {
+    err = Some(p.parse_err_spec())
+  }
+  var effects: List[Effect] = []
+  if p.got(Kind.Uses) {
+    let (effs, _) = p.parse_effect_clause()
+    effects = effs
+  }
+  let body = p.parse_block()
+  Expr.FnLit(FnLit{span: p.span_from(start), params: params, result: result, err: err, effects: effects, body: body})
+}
+
+fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
+  var x = x0
+  while !p.failed() {
+    let start = expr_span(x).start
+    let t = p.tok
+    let next = p.peek(1)
+    match t.kind {
+      Question => {
+        if (next.kind == Kind.Colon && adjacent(t, next)) || p.ternary_ahead() {
+          p.foreign(t.span, "`?:` or `c ? a : b` is not Xo")
+          return x
+        }
+        p.next()
+        x = Expr.TryExpr(span: p.span_from(start), x: x)
+      }
+      As => {
+        p.foreign(t.span, "`x as T` is not Xo; convert with `T(x)`")
+        return x
+      }
+      Bang => {
+        if !adjacent(p.tok_at(p.pos - 1), t) {
+          return x
+        }
+        let double = next.kind == Kind.Bang && adjacent(t, next)
+        if !double && starts_expr(next.kind) && next.kind != Kind.LParen && next.kind != Kind.LBrack {
+          return x
+        }
+        p.foreign(t.span, "a force unwrap is not Xo")
+        return x
+      }
+      Colon => {
+        if next.kind != Kind.Colon || !adjacent(t, next) || p.peek(2).kind != Kind.Ident || !adjacent(next, p.peek(2)) || !is_path(x) {
+          return x
+        }
+        // `String::from(s)` is reported whole by the checker; any other
+        // `::` is Rust path syntax.
+        var is_string = false
+        if let Ident(id) = x {
+          is_string = id.name == b"String"
+        }
+        if !is_string {
+          p.foreign(t.span, "`::` is Rust path syntax; Xo writes `.`")
+        }
+        p.next()
+        p.next()
+        let sel = p.expect_ident("a name after `::`")
+        x = Expr.SelectorExpr(span: span_to(expr_span(x), sel.span), x: x, sel: sel)
+      }
+      Dot => {
+        p.next()
+        if p.at(Kind.Int) {
+          // tuple field `t.0` (core 3.5)
+          let it = p.tok
+          p.next()
+          if it.value != it.text {
+            p.fail(UNEXPECTED_TOKEN, it.span, "a tuple field is a plain decimal index such as `.0`")
+          }
+          x = Expr.SelectorExpr(span: p.span_from(start), x: x, sel: Ident{span: it.span, name: it.text})
+          continue
+        }
+        let sel = p.expect_ident("a field or method name after `.`")
+        x = Expr.SelectorExpr(span: p.span_from(start), x: x, sel: sel)
+      }
+      LParen => {
+        var args: List[Arg] = []
+        let st = p.list_open(Kind.LParen)
+        while p.list_more(Kind.RParen) {
+          let before = p.pos
+          let astart = p.tok.span.start
+          var name: Ident? = None
+          if p.at(Kind.Ident) && p.peek(1).kind == Kind.Colon {
+            name = Some(p.expect_ident("an argument name"))
+            p.next()
+          }
+          if p.at(Kind.Var) && starts_expr(p.peek(1).kind) {
+            p.foreign(p.tok.span, "`var` at a call site is not Xo")
+          }
+          let value = p.parse_expr()
+          args.push(Arg{span: p.span_from(astart), name: name, value: value})
+          if !p.list_sep(before, Kind.RParen, "argument") {
+            break
+          }
+        }
+        p.list_close(st, Kind.RParen)
+        x = Expr.CallExpr(span: p.span_from(start), fun: x, args: args)
+      }
+      LBrack => {
+        if p.type_args_ahead(x) {
+          var types: List[Type] = []
+          let st = p.list_open(Kind.LBrack)
+          while p.list_more(Kind.RBrack) {
+            let before = p.pos
+            types.push(p.parse_type())
+            if !p.list_sep(before, Kind.RBrack, "type argument") {
+              break
+            }
+          }
+          p.list_close(st, Kind.RBrack)
+          x = Expr.TypeArgsExpr(span: p.span_from(start), x: x, types: types)
+        } else {
+          x = p.parse_index(x)
+        }
+      }
+      Ident => {
+        if t.text != b"with" || next.kind != Kind.LBrace {
+          return x
+        }
+        p.next()
+        let fields = p.parse_field_inits()
+        x = Expr.WithExpr(span: p.span_from(start), x: x, fields: fields)
+      }
+      LBrace => {
+        if p.no_lit || !is_type_name(x) {
+          return x
+        }
+        let fields = p.parse_field_inits()
+        x = Expr.StructLit(span: p.span_from(start), typ: x, fields: fields)
+      }
+      _ => return x
+    }
+  }
+  x
+}
+
+fn (var p: Parser) parse_index(x: Expr) -> Expr {
+  let start = expr_span(x).start
+  p.next() // [
+  let saved_lit = p.no_lit
+  let saved_range = p.open_range
+  p.no_lit = false
+  p.open_range = true
+  var idx: Expr = Expr.BadExpr(p.tok.span)
+  if p.at(Kind.DotDot) || p.at(Kind.DotDotEq) {
+    let rstart = p.tok.span.start
+    let inclusive = p.at(Kind.DotDotEq)
+    p.next()
+    var hi: Expr? = None
+    if !p.at(Kind.RBrack) {
+      hi = Some(p.parse_binary(RANGE_PREC + 1))
+    }
+    idx = Expr.RangeExpr(span: p.span_from(rstart), lo: None, hi: hi, inclusive: inclusive)
+  } else if p.at(Kind.Colon) {
+    p.foreign(p.tok.span, "a Go or Python slice")
+  } else if p.at(Kind.RBrack) {
+    p.error_expected("an index or range")
+  } else {
+    idx = p.parse_expr()
+    if p.at(Kind.Colon) {
+      p.foreign(p.tok.span, "a Go or Python slice")
+    }
+  }
+  p.no_lit = saved_lit
+  p.open_range = saved_range
+  p.expect(Kind.RBrack, "`]`")
+  Expr.IndexExpr(span: p.span_from(start), x: x, index: idx)
+}
+
+/// Whether e names a type: an UpperCamel identifier, a selector ending in
+/// one, or either with type arguments.
+fn is_type_name(e: Expr) -> Bool {
+  match e {
+    Ident(id) => is_upper(id.name)
+    SelectorExpr(_, x, sel) => is_upper(sel.name) && is_path(x)
+    TypeArgsExpr(_, x, _) => is_type_name(x)
+    _ => false
+  }
+}
+
+fn is_path(e: Expr) -> Bool {
+  match e {
+    Ident(_) => true
+    SelectorExpr(_, x, _) => is_path(x)
+    _ => false
+  }
+}
+
+fn is_upper(s: Bytes) -> Bool {
+  !s.is_empty() && s[0] >= 'A' && s[0] <= 'Z'
+}
+
+/// Whether the `[` here starts explicit type arguments rather than an
+/// index (core 15, "Type arguments vs. indexing").
+fn (p: Parser) type_args_ahead(base: Expr) -> Bool {
+  var depth = 0
+  var end = -1
+  var elem_starts = [p.pos + 1]
+  var i = p.pos
+  while i < p.toks.len() && end < 0 {
+    let k = p.toks[i].kind
+    match k {
+      LBrack | LParen => depth += 1
+      RBrack | RParen => {
+        depth -= 1
+        if depth == 0 {
+          if k != Kind.RBrack {
+            return false
+          }
+          end = i
+        }
+      }
+      Comma => {
+        if depth == 1 {
+          elem_starts.push(i + 1)
+        }
+      }
+      Ident | Dot | Question | Arrow | Bang | Fn | Uses | Var => {}
+      _ => return false
+    }
+    i += 1
+  }
+  if end <= p.pos + 1 {
+    return false
+  }
+  var any_type = false
+  for s in elem_starts {
+    if s >= end {
+      continue // trailing comma
+    }
+    if p.type_start_at(s) {
+      any_type = true
+    } else if !p.effect_arg_at(s) {
+      return false
+    }
+  }
+  if is_type_name(base) {
+    return true
+  }
+  any_type && p.tok_at(end + 1).kind == Kind.LParen
+}
+
+/// Whether the tokens at i are a whole effect argument: `name` or
+/// `name.sub` followed by `,` or `]`.
+fn (p: Parser) effect_arg_at(i: Int) -> Bool {
+  if i >= p.toks.len() || p.toks[i].kind != Kind.Ident || is_upper(p.toks[i].text) {
+    return false
+  }
+  var j = i + 1
+  if j + 1 < p.toks.len() && p.toks[j].kind == Kind.Dot && p.toks[j + 1].kind == Kind.Ident {
+    j += 2
+  }
+  j < p.toks.len() && (p.toks[j].kind is Comma | RBrack)
+}
+
+/// Whether the tokens at i start something that looks like a type.
+fn (p: Parser) type_start_at(i0: Int) -> Bool {
+  let t = p.tok_at(i0)
+  match t.kind {
+    LParen | Fn => return true
+    Ident => {
+      if is_upper(t.text) {
+        return true
+      }
+      // module qualified: mod.Type
+      var i = i0
+      while i + 2 < p.toks.len() && p.toks[i + 1].kind == Kind.Dot && p.toks[i + 2].kind == Kind.Ident {
+        i += 2
+        if is_upper(p.toks[i].text) {
+          return true
+        }
+      }
+    }
+    _ => {}
+  }
+  false
+}
+
+/// A string literal, parsing interpolated expressions.
+fn (var p: Parser) parse_string() -> StringLit {
+  let t = p.tok
+  p.next()
+  if t.kind == Kind.RawString {
+    return StringLit{span: t.span, kind: StringKind.Raw, parts: [StringPart{text: t.value, expr: None}]}
+  }
+  var s = StringLit{span: t.span, kind: if t.triple { StringKind.Triple } else { StringKind.Plain }}
+  for part in t.parts {
+    if !part.is_expr {
+      s.parts.push(StringPart{text: part.text, expr: None})
+      continue
+    }
+    let e = p.parse_interp(part.span)
+    s.parts.push(StringPart{text: b"", expr: Some(e)})
+  }
+  s
+}
+
+/// Lexes and parses the source of one `${...}`.
+fn (var p: Parser) parse_interp(sp: Span) -> Expr {
+  let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
+  if !r.diags.is_empty() {
+    let d = r.diags[0]
+    p.fail(d.code, d.span, d.message.to_str() ?? "lexical error")
+    return Expr.BadExpr(sp)
+  }
+  var sub = Parser{src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig}
+  let e = sub.parse_expr()
+  if !sub.failed() && !sub.at(Kind.Eof) {
+    sub.fail(UNEXPECTED_TOKEN, sub.tok.span, "unexpected ${describe(sub.tok)} in interpolation; expected `}`")
+  }
+  if sub.failed() {
+    let d = sub.diags[0]
+    p.fail(d.code, d.span, d.message.to_str() ?? "error")
+  }
+  e
+}

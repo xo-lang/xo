@@ -1,0 +1,1179 @@
+// The Xo parser, written in Xo: a port of internal/parser (core 15) on top
+// of the self hosted lexer (decision 0127).
+//
+// It builds the same tree as the Go parser for every file the Go parser
+// accepts, so the canonical dumps (dump.xo, `xo astdump`) are byte for
+// byte equal; internal/selfhost checks that on every .xo file of the
+// repository and on mutated inputs.
+//
+// Errors are simpler than the Go parser's: the first error is recorded and
+// parsing stops (the current token becomes the final Eof, so every loop
+// ends). A file is rejected exactly when the Go parser reports a
+// diagnostic: the habit checks of internal/parser (decision 0087), which
+// turn syntax from other languages into XO0177 errors, are ported as
+// rejection conditions without their recovery, so a program the Go parser
+// rejects through a habit is rejected here too.
+
+use github.com/xo-lang/xo/selfhost/lexer
+
+pub type Diag = lexer.Diag
+pub type Comment = lexer.Comment
+
+const UNEXPECTED_TOKEN = "XO0160"
+const MISSING_COMMA = "XO0161"
+const ELSE_ON_NEW_LINE = "XO0162"
+const STRUCT_LIT_IN_CONDITION = "XO0163"
+const UNCLOSED_DELIMITER = "XO0164"
+const INVALID_PATTERN = "XO0165"
+const WHILE_COND_AS_EXPR = "XO0166"
+const DECL_IN_BLOCK = "XO0167"
+const STMT_AT_TOP_LEVEL = "XO0168"
+const MATCH_ARM_SEPARATOR = "XO0169"
+const FN_TYPE_EFFECTS_PARENS = "XO0170"
+const MISPLACED_REST = "XO0171"
+const MISSING_BODY = "XO0172"
+const USE_AFTER_DECL = "XO0173"
+const MISPLACED_SELF = "XO0174"
+const EXPECTED_NEWLINE = "XO0175"
+const MISPLACED_PUB = "XO0176"
+const FOREIGN_SYNTAX = "XO0177"
+const MALFORMED_IMPORT_PATH = "XO0158"
+
+/// The tree of one file and its diagnostics: the lexer's, or the first
+/// parse error. A file with no diagnostics is accepted.
+pub struct ParseResult {
+  pub file: File
+  pub diags: List[Diag]
+}
+
+struct Parser {
+  src: Bytes
+  toks: List[Token]
+  pos: Int = 0
+  tok: Token
+  /// Signature mode: function declarations may omit their body (std
+  /// declaration files).
+  sig: Bool = false
+  /// No struct literals: the head of if, while, for, match, requires,
+  /// ensures (core 1.4).
+  no_lit: Bool = false
+  /// `a..` with no upper bound is allowed (inside an index).
+  open_range: Bool = false
+  /// Parsing a type where no comma may follow (return types, aliases).
+  fn_type_top: Bool = false
+  /// `(x) =>` and `x =>` are not arrow functions here (select operations,
+  /// match guards).
+  no_arrow_fn: Bool = false
+  /// Doc comments keyed by their last line.
+  docs: Map[Int, Doc] = {}
+  /// The first error; parsing stops at it.
+  diags: List[Diag] = []
+}
+
+/// Parses one file. With sig, function declarations may omit their body.
+pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult {
+  let lx = lexer.lex(src)
+  let toks = inc_dec_newlines(lx.tokens)
+  var p = Parser{src: src, toks: toks, tok: toks[0], sig: sig}
+  if !lx.diags.is_empty() {
+    return ParseResult{file: File{span: toks[0].span, name: name}, diags: lx.diags}
+  }
+  p.collect_docs(lx.comments)
+  let f = p.parse_file(name)
+  ParseResult{file: f, diags: p.diags}
+}
+
+/// Inserts the newline the Go parser adds after `x++` or `x--` at the end
+/// of a line (internal/parser lexHabits): the lexer adds none after an
+/// operator, and without it `a --` newline `b` would read as `a - -b`.
+fn inc_dec_newlines(toks: List[Token]) -> List[Token] {
+  var out: List[Token] = []
+  var i = 0
+  while i < toks.len() {
+    let t = toks[i]
+    if (t.kind == Kind.Plus || t.kind == Kind.Minus) && i + 2 < toks.len() && toks[i + 1].kind == t.kind && adjacent(t, toks[i + 1]) && toks[i + 2].kind != Kind.Newline && toks[i + 2].span.start.line > t.span.start.line {
+      out.push(t)
+      out.push(toks[i + 1])
+      let end = toks[i + 1].span.end
+      out.push(Token{kind: Kind.Newline, span: Span{start: end, end: end}, text: b"\n"})
+      i += 2
+      continue
+    }
+    out.push(t)
+    i += 1
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Token helpers
+
+fn (var p: Parser) next() {
+  if p.pos < p.toks.len() - 1 {
+    p.pos += 1
+  }
+  p.tok = p.toks[p.pos]
+}
+
+fn (p: Parser) at(k: Kind) -> Bool {
+  p.tok.kind == k
+}
+
+/// The token n past the current one, or the final Eof.
+fn (p: Parser) peek(n: Int) -> Token {
+  p.tok_at(p.pos + n)
+}
+
+/// The token at index i, clamped to the token list.
+fn (p: Parser) tok_at(i: Int) -> Token {
+  if i < 0 {
+    return p.toks[0]
+  }
+  if i >= p.toks.len() {
+    return p.toks[p.toks.len() - 1]
+  }
+  p.toks[i]
+}
+
+fn (p: Parser) at_ident(name: Bytes) -> Bool {
+  p.tok.kind == Kind.Ident && p.tok.text == name
+}
+
+fn is_word(t: Token, name: Bytes) -> Bool {
+  t.kind == Kind.Ident && t.text == name
+}
+
+fn (var p: Parser) got(k: Kind) -> Bool {
+  if p.tok.kind == k {
+    p.next()
+    return true
+  }
+  false
+}
+
+fn (var p: Parser) skip_newlines() {
+  while p.tok.kind == Kind.Newline {
+    p.next()
+  }
+}
+
+/// The first token at or after the current one that is not a newline.
+fn (p: Parser) peek_past_newlines() -> Token {
+  var i = p.pos
+  while i < p.toks.len() - 1 && p.toks[i].kind == Kind.Newline {
+    i += 1
+  }
+  p.toks[i]
+}
+
+fn (p: Parser) prev_end() -> Pos {
+  if p.pos == 0 {
+    return p.tok.span.start
+  }
+  p.toks[p.pos - 1].span.end
+}
+
+/// The span from start to the end of the previous token.
+fn (p: Parser) span_from(start: Pos) -> Span {
+  var end = p.prev_end()
+  if end.offset < start.offset {
+    end = start
+  }
+  Span{start: start, end: end}
+}
+
+/// Whether b starts exactly where a ends.
+fn adjacent(a: Token, b: Token) -> Bool {
+  a.span.end.offset == b.span.start.offset
+}
+
+fn describe(t: Token) -> Str {
+  match t.kind {
+    Ident => "identifier `${t.text.to_str() ?? "?"}`"
+    Newline => if t.text == b";" { "`;`" } else { "newline" }
+    Eof => "end of file"
+    _ => "${t.kind} ${lexer.quote(t.text)}"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+
+/// Records the first error and stops the parse: the current token becomes
+/// the final Eof.
+fn (var p: Parser) fail(code: Str, sp: Span, message: Str) {
+  if p.diags.is_empty() {
+    p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+  }
+  p.pos = p.toks.len() - 1
+  p.tok = p.toks[p.pos]
+}
+
+fn (p: Parser) failed() -> Bool {
+  !p.diags.is_empty()
+}
+
+/// A habit of another language (decision 0087) at sp: the Go parser
+/// reports XO0177 and recovers; this parser rejects the file.
+fn (var p: Parser) foreign(sp: Span, what: Str) {
+  p.fail(FOREIGN_SYNTAX, sp, what)
+}
+
+fn (var p: Parser) error_expected(what: Str) {
+  p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected ${what}, found ${describe(p.tok)}")
+}
+
+/// Consumes a token of kind k, or fails.
+fn (var p: Parser) expect(k: Kind, what: Str) -> Token {
+  let t = p.tok
+  if t.kind != k {
+    p.error_expected(what)
+    return Token{kind: Kind.Illegal, span: Span{start: t.span.start, end: t.span.start}, text: b""}
+  }
+  p.next()
+  t
+}
+
+fn (var p: Parser) expect_ident(what: Str) -> Ident {
+  if p.tok.kind == Kind.Ident {
+    let id = Ident{span: p.tok.span, name: p.tok.text}
+    p.next()
+    return id
+  }
+  p.error_expected(what)
+  Ident{span: Span{start: p.tok.span.start, end: p.tok.span.start}, name: b""}
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+
+/// The parser state a bracketed list saves and restores.
+struct ListState {
+  start: Pos
+  no_lit: Bool
+  open_range: Bool
+}
+
+/// Opens `open elem, elem, ... close` (internal/parser parseList): struct
+/// literals and open ranges are allowed again inside the brackets.
+fn (var p: Parser) list_open(open: Kind) -> ListState {
+  let st = ListState{start: p.tok.span.start, no_lit: p.no_lit, open_range: p.open_range}
+  p.expect(open, "`${open}`")
+  p.no_lit = false
+  p.open_range = false
+  st
+}
+
+fn (p: Parser) list_more(close: Kind) -> Bool {
+  !p.at(close) && !p.at(Kind.Eof)
+}
+
+/// After an element: consumes a `,` and reports whether another element
+/// may follow. A newline where a comma belongs is an error (core 1.3).
+fn (var p: Parser) list_sep(before: Int, close: Kind, what: Str) -> Bool {
+  if p.failed() || p.pos == before {
+    return false
+  }
+  if p.got(Kind.Comma) {
+    return true
+  }
+  if p.at(Kind.Newline) {
+    p.fail(MISSING_COMMA, p.tok.span, "missing `,` before newline in ${what} list")
+    return false
+  }
+  if !p.at(close) {
+    p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected `,` or `${close}` in ${what} list, found ${describe(p.tok)}")
+  }
+  false
+}
+
+/// Closes a list and returns its span, from the opening bracket to the
+/// end of the closing one.
+fn (var p: Parser) list_close(st: ListState, close: Kind) -> Span {
+  let end = p.tok.span.end
+  p.expect(close, "`${close}`")
+  p.no_lit = st.no_lit
+  p.open_range = st.open_range
+  Span{start: st.start, end: end}
+}
+
+/// `{` of a member list (struct fields, variants, interface methods).
+fn (var p: Parser) members_open() -> Bool {
+  p.expect(Kind.LBrace, "`{`").kind == Kind.LBrace
+}
+
+/// After a member: a `,`, a newline, or the closing `}`.
+fn (var p: Parser) member_end(what: Str) {
+  if p.failed() || p.got(Kind.Comma) || p.got(Kind.Newline) || p.at(Kind.RBrace) {
+    return
+  }
+  p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected newline, `,`, or `}` after ${what}, found ${describe(p.tok)}")
+}
+
+/// Whether another member or statement follows inside braces.
+fn (var p: Parser) members_more() -> Bool {
+  p.skip_newlines()
+  !p.at(Kind.RBrace) && !p.at(Kind.Eof)
+}
+
+fn (var p: Parser) close_brace() {
+  if p.at(Kind.Eof) {
+    p.fail(UNCLOSED_DELIMITER, p.tok.span, "`{` is never closed")
+    return
+  }
+  p.expect(Kind.RBrace, "`}`")
+}
+
+// ---------------------------------------------------------------------------
+// Doc comments
+
+fn (var p: Parser) collect_docs(comments: List[Comment]) {
+  var cur: Doc? = None
+  var last = -10
+  for c in comments {
+    if !c.doc || !p.own_line(c.span.start) {
+      cur = None
+      last = -10
+      continue
+    }
+    let line = c.span.start.line
+    var d = Doc{span: c.span, text: c.text}
+    if let Some(prev) = cur {
+      if line == last + 1 {
+        p.docs.remove(last)
+        d = Doc{span: Span{start: prev.span.start, end: c.span.end}, text: prev.text + b"\n" + c.text}
+      }
+    }
+    cur = Some(d)
+    p.docs[line] = d
+    last = line
+  }
+}
+
+/// Whether only blanks precede pos on its line.
+fn (p: Parser) own_line(pos: Pos) -> Bool {
+  var i = pos.offset - 1
+  while i >= 0 {
+    let c = p.src[i]
+    if c == '\n' {
+      return true
+    }
+    if c != ' ' && c != '\t' {
+      return false
+    }
+    i -= 1
+  }
+  true
+}
+
+/// The doc comment ending on the line before line.
+fn (p: Parser) doc_for(line: Int) -> Doc? {
+  p.docs.get(line - 1)
+}
+
+// ---------------------------------------------------------------------------
+// File and declarations
+
+fn (var p: Parser) parse_file(name: Bytes) -> File {
+  let start = p.tok.span.start
+  var imports: List[UseDecl] = []
+  var decls: List[Decl] = []
+  var seen_decl = false
+  while {
+    p.skip_newlines()
+    if p.at(Kind.Eof) {
+      break
+    }
+    let doc = p.doc_for(p.tok.span.start.line)
+    let decl_start = p.tok.span.start
+    let pub_tok = p.tok
+    let is_pub = p.got(Kind.Pub)
+    match p.tok.kind {
+      Use => {
+        if is_pub {
+          p.fail(MISPLACED_PUB, pub_tok.span, "`use` cannot be `pub`")
+        }
+        let use_tok = p.tok
+        let u = p.parse_use()
+        if seen_decl {
+          p.fail(USE_AFTER_DECL, use_tok.span, "`use` must come before all declarations")
+        }
+        imports.push(u)
+      }
+      Fn => decls.push(Decl.FnDecl(p.parse_fn_decl(doc, is_pub, decl_start, false)))
+      Struct => decls.push(Decl.StructDecl(p.parse_struct(doc, is_pub, decl_start)))
+      Enum => decls.push(Decl.EnumDecl(p.parse_enum(doc, is_pub, decl_start)))
+      Interface => decls.push(Decl.InterfaceDecl(p.parse_interface(doc, is_pub, decl_start)))
+      Type => decls.push(p.parse_type_decl(doc, is_pub, decl_start))
+      Const => decls.push(Decl.ConstDecl(p.parse_const(doc, is_pub, decl_start)))
+      Test => {
+        if is_pub {
+          p.fail(MISPLACED_PUB, pub_tok.span, "a test cannot be `pub`")
+        }
+        decls.push(Decl.TestDecl(p.parse_test(doc, decl_start)))
+      }
+      _ => {
+        if is_pub {
+          p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected a declaration after `pub`, found ${describe(p.tok)}")
+        } else {
+          p.top_level_stmt_error()
+        }
+      }
+    }
+    if !decls.is_empty() {
+      seen_decl = true
+    }
+    if p.failed() {
+      break
+    }
+    if !p.at(Kind.Eof) && !p.got(Kind.Newline) {
+      p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after declaration, found ${describe(p.tok)}")
+    }
+  }
+  File{span: Span{start: start, end: p.tok.span.end}, name: name, imports: imports, decls: decls}
+}
+
+fn (var p: Parser) top_level_stmt_error() {
+  match p.tok.kind {
+    Let | Var | Return | For | While | If | Match | Defer | Break | Continue | Scope | Select | Ident | Int | String | LParen | LBrack | LBrace => p.fail(STMT_AT_TOP_LEVEL, p.tok.span, "statements are only allowed inside a function or test body, found ${describe(p.tok)}")
+    _ => p.error_expected("a declaration")
+  }
+}
+
+/// Whether b holds any byte of set.
+fn has_any(b: Bytes, set: Bytes) -> Bool {
+  for i in 0..b.len() {
+    for j in 0..set.len() {
+      if b[i] == set[j] {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn (var p: Parser) parse_use() -> UseDecl {
+  let start = p.tok.span.start
+  p.next() // use
+  var u = UseDecl{span: p.tok.span}
+  if p.at(Kind.ImportPath) {
+    u.path = p.tok.value
+    p.next()
+    if u.path == b"go" && (p.at(Kind.String) || p.at(Kind.RawString)) {
+      // `use go "<Go import path>"` (decision 0041)
+      u.go = true
+      let t = p.tok
+      var interp = false
+      u.path = t.value
+      if t.kind == Kind.String {
+        var b = BytesBuilder.new()
+        for part in t.parts {
+          if part.is_expr {
+            interp = true
+          }
+          b.write(part.text)
+        }
+        u.path = b.freeze()
+      }
+      p.next()
+      let path = u.path
+      if interp || path.is_empty() || has_any(path, b" \t\n\\") || path[0] == '/' || path[0] == '.' || path[path.len() - 1] == '/' {
+        p.fail(MALFORMED_IMPORT_PATH, t.span, "malformed Go import path")
+      }
+    } else if u.path == b"c" && (p.at(Kind.String) || p.at(Kind.RawString)) {
+      // `use c "<header>" [link "<lib>"]...` (decision 0116)
+      u.c = true
+      let (h, sp, ok) = p.plain_string()
+      u.path = h
+      if !ok || h.is_empty() || has_any(h, b"\t\n\\\"") || h[h.len() - 1] == '/' {
+        p.fail(MALFORMED_IMPORT_PATH, sp, "malformed C header path")
+      }
+      while p.at_ident(b"link") {
+        p.next()
+        if !p.at(Kind.String) && !p.at(Kind.RawString) {
+          p.fail(MALFORMED_IMPORT_PATH, p.tok.span, "expected a library after `link`, found ${describe(p.tok)}")
+          break
+        }
+        let (l, lsp, lok) = p.plain_string()
+        if !lok || l.is_empty() || has_any(l, b" \t\n\\") {
+          p.fail(MALFORMED_IMPORT_PATH, lsp, "malformed `link` library")
+        }
+        u.links.push(l)
+      }
+    }
+  } else {
+    p.fail(MALFORMED_IMPORT_PATH, p.tok.span, "expected an import path after `use`, found ${describe(p.tok)}")
+  }
+  if p.got(Kind.As) {
+    u.alias = Some(p.expect_ident("a name after `as`"))
+  }
+  if u.c && p.at(Kind.Uses) {
+    p.next()
+    var effs: List[Effect] = []
+    if p.at_ident(b"none") {
+      p.next()
+    } else {
+      while {
+        effs.push(p.parse_effect())
+        if !p.got(Kind.Comma) {
+          break
+        }
+      }
+    }
+    u.effects = Some(effs)
+  }
+  u.span = p.span_from(start)
+  u
+}
+
+/// Consumes a string literal; its text, span, and false when it
+/// interpolates.
+fn (var p: Parser) plain_string() -> (Bytes, Span, Bool) {
+  let t = p.tok
+  p.next()
+  if t.kind != Kind.String {
+    return (t.value, t.span, true)
+  }
+  var b = BytesBuilder.new()
+  var ok = true
+  for part in t.parts {
+    if part.is_expr {
+      ok = false
+    }
+    b.write(part.text)
+  }
+  (b.freeze(), t.span, ok)
+}
+
+fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interface: Bool) -> FnDecl {
+  p.next() // fn
+  var recv: Receiver? = None
+  if p.at(Kind.LParen) {
+    recv = Some(p.parse_receiver())
+  }
+  let name = p.expect_ident("a function name")
+  var fn_decl = FnDecl{span: p.tok.span, doc: doc, is_pub: is_pub, recv: recv, name: name}
+  if p.at_type_params() {
+    fn_decl.type_params = p.parse_type_params()
+  }
+  fn_decl.params = p.parse_params(false, in_interface)
+  if p.at_ident(b"throws") {
+    p.foreign(p.tok.span, "`throws` is Swift syntax")
+  }
+  p.foreign_result()
+  if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Arrow {
+    // A result type on the next line continues the declaration.
+    p.skip_newlines()
+  }
+  if p.got(Kind.Arrow) {
+    fn_decl.result = Some(p.parse_type_top())
+  }
+  if p.at(Kind.Bang) {
+    fn_decl.err = Some(p.parse_err_spec())
+  }
+  fn_decl.clauses = p.parse_clauses()
+  if p.peek_past_newlines().kind == Kind.LBrace {
+    p.skip_newlines()
+    if in_interface {
+      p.fail(UNEXPECTED_TOKEN, p.tok.span, "interface method cannot have a body (core 15: FnSig)")
+    }
+    fn_decl.body = Some(p.parse_block())
+  } else if !in_interface && !p.sig {
+    p.fail(MISSING_BODY, p.tok.span, "expected `{` to start the function body, found ${describe(p.tok)}")
+  }
+  fn_decl.span = p.span_from(start)
+  fn_decl
+}
+
+/// A result type written without `->` (TypeScript `): T`, Go `() T`).
+fn (var p: Parser) foreign_result() {
+  let t = p.tok
+  if (t.kind == Kind.Colon && p.starts_type_at(p.pos + 1)) || (t.kind == Kind.LParen && p.tok_at(p.pos - 1).kind == Kind.RParen) || (t.kind == Kind.Ident && !p.at_ident(b"throws") && !p.at_ident(b"where")) || t.kind == Kind.Star || t.kind == Kind.LBrack {
+    p.foreign(t.span, "a result type is written `-> T`")
+  }
+}
+
+/// Whether the token at index i can start a type (habit checks).
+fn (p: Parser) starts_type_at(i: Int) -> Bool {
+  if i >= p.toks.len() {
+    return false
+  }
+  p.tok_at(i).kind is Ident | LParen | Fn | LBrack | Star | Amp
+}
+
+fn (var p: Parser) parse_receiver() -> Receiver {
+  let start = p.tok.span.start
+  p.next() // (
+  let is_var = p.got(Kind.Var)
+  let name = p.expect_ident("a receiver name")
+  if p.at(Kind.Star) || p.at(Kind.Ident) {
+    p.foreign(p.tok.span, "a Go receiver; Xo writes `(name: Type)`")
+  }
+  p.expect(Kind.Colon, "`:` after the receiver name")
+  let typ = p.parse_type()
+  p.expect(Kind.RParen, "`)` after the receiver")
+  Receiver{span: p.span_from(start), is_var: is_var, name: name, typ: typ}
+}
+
+/// Whether a type parameter list starts here; `<` right after the name
+/// is the angle bracket habit.
+fn (var p: Parser) at_type_params() -> Bool {
+  if p.at(Kind.Lt) && p.pos > 0 && p.toks[p.pos - 1].kind == Kind.Ident && adjacent(p.toks[p.pos - 1], p.tok) {
+    p.foreign(p.tok.span, "`<T>` type parameters; Xo writes `[T]`")
+  }
+  p.at(Kind.LBrack)
+}
+
+fn (var p: Parser) parse_type_params() -> List[TypeParam] {
+  var out: List[TypeParam] = []
+  let st = p.list_open(Kind.LBrack)
+  while p.list_more(Kind.RBrack) {
+    let before = p.pos
+    let start = p.tok.span.start
+    let name = p.expect_ident("a type parameter name")
+    if p.at_ident(b"extends") && p.peek(1).kind == Kind.Ident {
+      p.foreign(p.tok.span, "`T extends Bound` is TypeScript syntax")
+    }
+    var tp = TypeParam{span: p.tok.span, name: name}
+    if p.got(Kind.Colon) {
+      let t = p.parse_type()
+      if p.at(Kind.Plus) {
+        p.foreign(p.tok.span, "a Rust or Swift bound list")
+      }
+      if is_effects_kind(t) {
+        tp.effects = true
+      } else {
+        tp.constraint = Some(t)
+      }
+    }
+    tp.span = p.span_from(start)
+    out.push(tp)
+    if !p.list_sep(before, Kind.RBrack, "type parameter") {
+      break
+    }
+  }
+  p.list_close(st, Kind.RBrack)
+  out
+}
+
+/// Whether t is the bare name `Effects` (an effect variable, core 6.2).
+fn is_effects_kind(t: Type) -> Bool {
+  match t {
+    NamedType(_, path, args) => path.len() == 1 && path[0].name == b"Effects" && args.is_empty()
+    OptionalType(..) | TupleType(..) | FnType(_) | BadType(_) => false
+  }
+}
+
+/// Parses a parameter list; closure parameters (closure) may omit their
+/// types and take no defaults.
+fn (var p: Parser) parse_params(closure: Bool, allow_self: Bool) -> List[Param] {
+  var out: List[Param] = []
+  if !p.at(Kind.LParen) {
+    p.error_expected("`(` to start the parameter list")
+    return out
+  }
+  let st = p.list_open(Kind.LParen)
+  while p.list_more(Kind.RParen) {
+    let before = p.pos
+    if let Some(prev) = out.last() {
+      p.unparenthesized_effect(prev)
+    }
+    out.push(p.parse_param(closure, allow_self && out.is_empty()))
+    if !p.list_sep(before, Kind.RParen, "parameter") {
+      break
+    }
+  }
+  p.list_close(st, Kind.RParen)
+  out
+}
+
+/// `f: fn() uses a, b, c: T`: a name followed by `,`, `)`, or `.` after a
+/// parameter whose function type has one unparenthesized effect is a
+/// second effect (XO0170).
+fn (var p: Parser) unparenthesized_effect(prev: Param) {
+  if let Some(FnType(ft)) = prev.typ {
+    if ft.effects.is_empty() || ft.uses_parens || !p.at(Kind.Ident) {
+      return
+    }
+    if p.peek(1).kind is Comma | RParen | Dot {
+      p.fail(FN_TYPE_EFFECTS_PARENS, p.tok.span, "several effects in a function type must be parenthesized")
+    }
+  }
+}
+
+fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
+  let start = p.tok.span.start
+  // Rust receivers: `&self`, `&mut self`, `mut self`.
+  var i = p.pos
+  if p.tok_at(i).kind == Kind.Amp {
+    i += 1
+  }
+  if is_word(p.tok_at(i), b"mut") {
+    i += 1
+  }
+  if i != p.pos && is_word(p.tok_at(i), b"self") {
+    p.foreign(p.tok.span, "a Rust receiver; Xo takes a bare `self` in interfaces")
+  }
+  let is_var = p.got(Kind.Var)
+  if !closure && p.at(Kind.Ident) && p.peek(1).kind == Kind.Ident && p.peek(2).kind == Kind.Colon {
+    p.foreign(p.tok.span, "a Swift argument label")
+  }
+  let name = p.expect_ident("a parameter name")
+  if !closure && !p.at(Kind.Colon) && (p.at(Kind.Star) || p.at(Kind.LBrack) || (p.at(Kind.Ident) && p.tok.span.start.line == name.span.start.line)) {
+    p.foreign(p.tok.span, "a Go parameter; Xo writes `name: Type`")
+  }
+  if !closure && p.at(Kind.Colon) && is_word(p.peek(1), b"inout") && p.peek(2).kind == Kind.Ident {
+    p.foreign(p.peek(1).span, "`inout` is Swift syntax")
+  }
+  if name.name == b"self" && !is_var && !p.at(Kind.Colon) && !closure {
+    if !allow_self {
+      p.fail(MISPLACED_SELF, name.span, "a bare `self` parameter is only allowed first in an interface method signature")
+    }
+    return Param{span: p.span_from(start), is_self: true, name: name}
+  }
+  var prm = Param{span: p.tok.span, is_var: is_var, name: name}
+  if p.got(Kind.Colon) {
+    prm.typ = Some(p.parse_type())
+  } else if !closure {
+    p.error_expected("`:` and a type after the parameter name")
+  }
+  if !closure && p.got(Kind.Assign) {
+    prm.default = Some(p.parse_expr())
+  }
+  prm.span = p.span_from(start)
+  prm
+}
+
+fn (var p: Parser) parse_err_spec() -> ErrSpec {
+  let start = p.tok.span.start
+  p.next() // !
+  var e = ErrSpec{span: p.tok.span}
+  if p.tok.kind is Ident | LParen | Fn {
+    e.typ = Some(p.parse_type())
+  }
+  e.span = p.span_from(start)
+  e
+}
+
+/// `uses`, `requires`, and `ensures` clauses, each possibly on a new line.
+fn (var p: Parser) parse_clauses() -> List[Clause] {
+  var out: List[Clause] = []
+  while {
+    if !(p.peek_past_newlines().kind is Uses | Requires | Ensures) {
+      return out
+    }
+    p.skip_newlines()
+    let start = p.tok.span.start
+    match p.tok.kind {
+      Uses => {
+        p.next()
+        let (effs, parens) = p.parse_effect_clause()
+        out.push(Clause.UsesClause(span: p.span_from(start), effects: effs, parens: parens))
+      }
+      Requires => {
+        p.next()
+        let debug = p.parse_debug_flag()
+        let cond = p.parse_expr_no_lit()
+        var els: Expr? = None
+        if p.peek_past_newlines().kind == Kind.Else {
+          p.skip_newlines()
+          p.next()
+          els = Some(p.parse_expr_no_lit())
+        }
+        out.push(Clause.RequiresClause(span: p.span_from(start), debug: debug, cond: cond, els: els))
+      }
+      _ => {
+        p.next()
+        let debug = p.parse_debug_flag()
+        let cond = p.parse_expr_no_lit()
+        out.push(Clause.EnsuresClause(span: p.span_from(start), debug: debug, cond: cond))
+      }
+    }
+    if p.failed() {
+      return out
+    }
+  }
+  out
+}
+
+/// `(debug)` right after requires or ensures.
+fn (var p: Parser) parse_debug_flag() -> Bool {
+  if p.at(Kind.LParen) && is_word(p.peek(1), b"debug") && p.peek(2).kind == Kind.RParen {
+    p.next()
+    p.next()
+    p.next()
+    return true
+  }
+  false
+}
+
+/// The effects after `uses` in a declaration or closure: a comma separated
+/// list, optionally parenthesized.
+fn (var p: Parser) parse_effect_clause() -> (List[Effect], Bool) {
+  var out: List[Effect] = []
+  if p.at(Kind.LParen) {
+    let st = p.list_open(Kind.LParen)
+    while p.list_more(Kind.RParen) {
+      let before = p.pos
+      out.push(p.parse_effect())
+      if !p.list_sep(before, Kind.RParen, "effect") {
+        break
+      }
+    }
+    p.list_close(st, Kind.RParen)
+    return (out, true)
+  }
+  out.push(p.parse_effect())
+  while p.at(Kind.Comma) && p.peek(1).kind == Kind.Ident {
+    p.next()
+    out.push(p.parse_effect())
+  }
+  (out, false)
+}
+
+fn (var p: Parser) parse_effect() -> Effect {
+  let start = p.tok.span.start
+  let name = p.expect_ident("an effect name")
+  var sub: Ident? = None
+  if p.at(Kind.Dot) && p.peek(1).kind == Kind.Ident {
+    p.next()
+    sub = Some(p.expect_ident("a sub effect name"))
+  }
+  Effect{span: p.span_from(start), name: name, sub: sub}
+}
+
+fn (var p: Parser) parse_struct(doc: Doc?, is_pub: Bool, start: Pos) -> StructDecl {
+  p.next() // struct
+  let name = p.expect_ident("a struct name")
+  var tps: List[TypeParam] = []
+  if p.at_type_params() {
+    tps = p.parse_type_params()
+  }
+  var s = StructDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  if p.members_open() {
+    while p.members_more() {
+      let fstart = p.tok.span.start
+      let fdoc = p.doc_for(fstart.line)
+      let fpub = p.got(Kind.Pub)
+      let fname = p.expect_ident("a field name")
+      let t = p.tok
+      if (t.kind == Kind.Question && p.peek(1).kind == Kind.Colon) || ((t.kind is Ident | Star | LBrack) && t.span.start.line == fname.span.start.line) {
+        p.foreign(t.span, "a TypeScript optional field or a Go field")
+      }
+      p.expect(Kind.Colon, "`:` after the field name")
+      let typ = p.parse_type()
+      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ}
+      if p.got(Kind.Assign) {
+        f.default = Some(p.parse_expr())
+      }
+      f.span = p.span_from(fstart)
+      s.fields.push(f)
+      p.member_end("struct field")
+    }
+    p.close_brace()
+  }
+  if p.peek_past_newlines().kind == Kind.Invariant {
+    p.skip_newlines()
+    p.next()
+    s.inv = Some(p.parse_expr())
+  }
+  s.derive = p.parse_derive()
+  s.span = p.span_from(start)
+  s
+}
+
+/// An optional `derive A, B` after a type body.
+fn (var p: Parser) parse_derive() -> List[Ident] {
+  var out: List[Ident] = []
+  if !is_word(p.peek_past_newlines(), b"derive") {
+    return out
+  }
+  p.skip_newlines()
+  p.next()
+  out.push(p.expect_ident("a derivable interface name"))
+  while p.got(Kind.Comma) {
+    out.push(p.expect_ident("a derivable interface name"))
+  }
+  out
+}
+
+fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
+  p.next() // enum
+  let name = p.expect_ident("an enum name")
+  var tps: List[TypeParam] = []
+  if p.at_type_params() {
+    tps = p.parse_type_params()
+  }
+  var e = EnumDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  if p.members_open() {
+    while p.members_more() {
+      let vstart = p.tok.span.start
+      let vdoc = p.doc_for(vstart.line)
+      let vname = p.expect_ident("a variant name")
+      var fields: List[VariantField]? = None
+      if p.at(Kind.LParen) {
+        var fs: List[VariantField] = []
+        let st = p.list_open(Kind.LParen)
+        while p.list_more(Kind.RParen) {
+          let before = p.pos
+          let fstart = p.tok.span.start
+          var fname: Ident? = None
+          var from = false
+          if p.at_ident(b"from") && p.peek(1).kind != Kind.Colon {
+            p.next()
+            from = true
+          } else {
+            fname = Some(p.expect_ident("a field name or `from`"))
+            p.expect(Kind.Colon, "`:` after the variant field name")
+          }
+          let typ = p.parse_type()
+          fs.push(VariantField{span: p.span_from(fstart), name: fname, from: from, typ: typ})
+          if !p.list_sep(before, Kind.RParen, "variant field") {
+            break
+          }
+        }
+        p.list_close(st, Kind.RParen)
+        fields = Some(fs)
+      }
+      e.variants.push(Variant{span: p.span_from(vstart), doc: vdoc, name: vname, fields: fields})
+      p.member_end("enum variant")
+    }
+    p.close_brace()
+  }
+  e.derive = p.parse_derive()
+  e.span = p.span_from(start)
+  e
+}
+
+fn (var p: Parser) parse_interface(doc: Doc?, is_pub: Bool, start: Pos) -> InterfaceDecl {
+  p.next() // interface
+  let name = p.expect_ident("an interface name")
+  var tps: List[TypeParam] = []
+  if p.at_type_params() {
+    tps = p.parse_type_params()
+  }
+  var d = InterfaceDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  if p.members_open() {
+    while p.members_more() {
+      let mstart = p.tok.span.start
+      let mdoc = p.doc_for(mstart.line)
+      if !p.at(Kind.Fn) {
+        p.error_expected("a method signature starting with `fn`")
+        break
+      }
+      d.methods.push(p.parse_fn_decl(mdoc, false, mstart, true))
+      p.member_end("method signature")
+    }
+    p.close_brace()
+  }
+  d.span = p.span_from(start)
+  d
+}
+
+fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl {
+  p.next() // type
+  let name = p.expect_ident("a type name")
+  var tps: List[TypeParam] = []
+  if p.at_type_params() {
+    tps = p.parse_type_params()
+  }
+  if (p.at(Kind.Struct) || p.at(Kind.Interface)) && p.peek(1).kind == Kind.LBrace {
+    p.foreign(p.tok.span, "`type T struct {` is Go syntax")
+  }
+  var d = TypeDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  if p.got(Kind.Assign) {
+    d.typ = Some(p.parse_type_top())
+  } else if p.got(Kind.Struct) {
+    d.newtype = true
+    p.expect(Kind.LParen, "`(` after `struct` in a newtype")
+    d.typ = Some(p.parse_type())
+    p.expect(Kind.RParen, "`)`")
+  } else {
+    p.error_expected("`=` or `struct(` in a type declaration")
+  }
+  d.span = p.span_from(start)
+  Decl.TypeDecl(d)
+}
+
+fn (var p: Parser) parse_const(doc: Doc?, is_pub: Bool, start: Pos) -> ConstDecl {
+  p.next() // const
+  let name = p.expect_ident("a constant name")
+  var typ: Type? = None
+  if p.got(Kind.Colon) {
+    typ = Some(p.parse_type())
+  }
+  p.expect(Kind.Assign, "`=` in a constant declaration")
+  let value = p.parse_expr()
+  ConstDecl{span: p.span_from(start), doc: doc, is_pub: is_pub, name: name, typ: typ, value: value}
+}
+
+fn (var p: Parser) parse_test(doc: Doc?, start: Pos) -> TestDecl {
+  p.next() // test
+  var t = TestDecl{span: p.tok.span, doc: doc}
+  if p.at(Kind.String) || p.at(Kind.RawString) {
+    t.name = Some(p.parse_string())
+  } else {
+    p.error_expected("a test name string")
+  }
+  if p.got(Kind.For) {
+    t.params.push(p.parse_param(false, false))
+    while p.got(Kind.Comma) {
+      t.params.push(p.parse_param(false, false))
+    }
+  }
+  if p.at_ident(b"seed") {
+    p.next()
+    if p.at(Kind.Int) {
+      t.seed = Some(Expr.IntLit(span: p.tok.span, raw: p.tok.text, value: p.tok.value))
+      p.next()
+    } else {
+      p.error_expected("an integer seed")
+    }
+  }
+  if p.peek_past_newlines().kind == Kind.Uses {
+    p.skip_newlines()
+    p.next()
+    let (effs, _) = p.parse_effect_clause()
+    t.effects = effs
+  }
+  if p.peek_past_newlines().kind == Kind.LBrace {
+    p.skip_newlines()
+    t.body = Some(p.parse_block())
+  } else {
+    p.error_expected("`{` to start the test body")
+  }
+  t.span = p.span_from(start)
+  t
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+/// A type where no comma may follow (return types and alias targets).
+fn (var p: Parser) parse_type_top() -> Type {
+  let saved = p.fn_type_top
+  p.fn_type_top = true
+  let t = p.parse_type()
+  p.fn_type_top = saved
+  t
+}
+
+fn (var p: Parser) parse_type() -> Type {
+  let start = p.tok.span.start
+  if is_word(p.tok, b"map") && p.peek(1).kind == Kind.LBrack && adjacent(p.tok, p.peek(1)) {
+    p.foreign(p.tok.span, "`map[K]V` is Go syntax; Xo writes `Map[K, V]`")
+  }
+  var t: Type = Type.BadType(p.tok.span)
+  match p.tok.kind {
+    Ident => {
+      var path = [p.expect_ident("a type name")]
+      while p.at(Kind.Dot) && p.peek(1).kind == Kind.Ident {
+        p.next()
+        path.push(p.expect_ident("a type name"))
+      }
+      var args: List[Type] = []
+      if p.at(Kind.Lt) && adjacent(p.toks[p.pos - 1], p.tok) {
+        p.foreign(p.tok.span, "`Name<...>` type arguments; Xo writes `Name[...]`")
+      } else if p.at(Kind.LBrack) {
+        let saved = p.fn_type_top
+        p.fn_type_top = false
+        let st = p.list_open(Kind.LBrack)
+        while p.list_more(Kind.RBrack) {
+          let before = p.pos
+          args.push(p.parse_type())
+          if !p.list_sep(before, Kind.RBrack, "type argument") {
+            break
+          }
+        }
+        p.list_close(st, Kind.RBrack)
+        p.fn_type_top = saved
+      }
+      t = Type.NamedType(span: p.span_from(start), path: path, args: args)
+    }
+    LParen => {
+      var elems: List[Type] = []
+      var trailing = false
+      let saved = p.fn_type_top
+      p.fn_type_top = false
+      let st = p.list_open(Kind.LParen)
+      while p.list_more(Kind.RParen) {
+        let before = p.pos
+        elems.push(p.parse_type())
+        trailing = p.at(Kind.Comma)
+        if !p.list_sep(before, Kind.RParen, "tuple type") {
+          break
+        }
+      }
+      p.list_close(st, Kind.RParen)
+      p.fn_type_top = saved
+      if elems.len() == 1 && !trailing {
+        t = elems[0]
+      } else {
+        t = Type.TupleType(span: p.span_from(start), elems: elems)
+      }
+    }
+    Fn => t = p.parse_fn_type()
+    _ => {
+      p.error_expected("a type")
+      return t
+    }
+  }
+  while p.at(Kind.Question) {
+    p.next()
+    t = Type.OptionalType(span: p.span_from(start), elem: t)
+  }
+  t
+}
+
+fn (var p: Parser) parse_fn_type() -> Type {
+  let start = p.tok.span.start
+  let top = p.fn_type_top
+  p.fn_type_top = false
+  p.next() // fn
+  if !p.at(Kind.LParen) {
+    p.error_expected("`(` in a function type")
+    p.fn_type_top = top
+    return Type.BadType(p.span_from(start))
+  }
+  var ft = FnType{span: p.tok.span}
+  let st = p.list_open(Kind.LParen)
+  while p.list_more(Kind.RParen) {
+    let before = p.pos
+    let pstart = p.tok.span.start
+    let is_var = p.got(Kind.Var)
+    let typ = p.parse_type()
+    ft.params.push(FnTypeParam{span: p.span_from(pstart), is_var: is_var, typ: typ})
+    if !p.list_sep(before, Kind.RParen, "parameter type") {
+      break
+    }
+  }
+  p.list_close(st, Kind.RParen)
+  if p.got(Kind.Arrow) {
+    ft.result = Some(p.parse_type())
+  }
+  if p.at(Kind.Bang) {
+    ft.err = Some(p.parse_err_spec())
+  }
+  if p.got(Kind.Uses) {
+    if p.at(Kind.LParen) {
+      ft.uses_parens = true
+      let est = p.list_open(Kind.LParen)
+      while p.list_more(Kind.RParen) {
+        let before = p.pos
+        ft.effects.push(p.parse_effect())
+        if !p.list_sep(before, Kind.RParen, "effect") {
+          break
+        }
+      }
+      p.list_close(est, Kind.RParen)
+    } else {
+      ft.effects.push(p.parse_effect())
+      if top && p.at(Kind.Comma) && p.peek(1).kind == Kind.Ident {
+        p.fail(FN_TYPE_EFFECTS_PARENS, p.tok.span, "several effects in a function type must be parenthesized")
+      }
+    }
+  }
+  p.fn_type_top = top
+  ft.span = p.span_from(start)
+  Type.FnType(ft)
+}

@@ -1,0 +1,789 @@
+// The canonical syntax tree dump, the same text as `xo astdump`
+// (internal/parser Dump, internal/ast Text): one node per line, children
+// indented two spaces, `label: Kind span attrs`. See internal/ast/text.go
+// for the format.
+
+use github.com/xo-lang/xo/selfhost/lexer
+
+/// Parses src and prints its tree and diagnostics. With sig, function
+/// declarations may omit their body. A rejected file prints only its
+/// first diagnostic: the tree of a file with errors is not compared.
+pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
+  let r = parse_file(file.bytes(), src, sig)
+  var out = StrBuilder.new()
+  out.write("== ${file}\n")
+  if r.diags.is_empty() {
+    dump_file(out, r.file)
+  }
+  for d in r.diags {
+    let sp = d.span
+    out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${lexer.quote(d.message)}\n")
+  }
+  out.freeze()
+}
+
+fn span_text(s: Span) -> Str {
+  "${s.start.line}:${s.start.col}:${s.start.offset}-${s.end.line}:${s.end.col}:${s.end.offset}"
+}
+
+/// Starts a node line: indentation, label, kind, and span.
+fn head(var out: StrBuilder, depth: Int, label: Str, kind: Str, sp: Span) {
+  for _ in 0..depth {
+    out.write("  ")
+  }
+  if !label.is_empty() {
+    out.write(label)
+    out.write(": ")
+  }
+  out.write(kind)
+  out.write(" ")
+  out.write(span_text(sp))
+}
+
+fn flag(var out: StrBuilder, name: Str, on: Bool) {
+  if on {
+    out.write(" ${name}")
+  }
+}
+
+fn attr(var out: StrBuilder, name: Str, value: Bytes) {
+  out.write(" ${name}=${lexer.quote(value)}")
+}
+
+/// An empty list that Go keeps non nil.
+fn empty_list(var out: StrBuilder, depth: Int, label: Str) {
+  for _ in 0..depth {
+    out.write("  ")
+  }
+  out.write("${label}: []\n")
+}
+
+fn dump_file(var out: StrBuilder, f: File) {
+  head(out, 0, "", "File", f.span)
+  attr(out, "name", f.name)
+  out.write("\n")
+  for (i, u) in f.imports.indexed() {
+    dump_use(out, 1, "uses[${i}]", u)
+  }
+  for (i, d) in f.decls.indexed() {
+    dump_decl(out, 1, "decls[${i}]", d)
+  }
+}
+
+fn dump_ident(var out: StrBuilder, depth: Int, label: Str, id: Ident) {
+  head(out, depth, label, "Ident", id.span)
+  attr(out, "name", id.name)
+  out.write("\n")
+}
+
+fn dump_ident_opt(var out: StrBuilder, depth: Int, label: Str, id: Ident?) {
+  if let Some(x) = id {
+    dump_ident(out, depth, label, x)
+  }
+}
+
+fn dump_idents(var out: StrBuilder, depth: Int, label: Str, ids: List[Ident]) {
+  for (i, id) in ids.indexed() {
+    dump_ident(out, depth, "${label}[${i}]", id)
+  }
+}
+
+fn dump_doc(var out: StrBuilder, depth: Int, doc: Doc?) {
+  if let Some(d) = doc {
+    head(out, depth, "doc", "Doc", d.span)
+    attr(out, "text", d.text)
+    out.write("\n")
+  }
+}
+
+fn dump_use(var out: StrBuilder, depth: Int, label: Str, u: UseDecl) {
+  head(out, depth, label, "UseDecl", u.span)
+  attr(out, "path", u.path)
+  flag(out, "go", u.go)
+  flag(out, "c", u.c)
+  if !u.links.is_empty() {
+    out.write(" links=[")
+    for (i, l) in u.links.indexed() {
+      if i > 0 {
+        out.write(",")
+      }
+      out.write(lexer.quote(l))
+    }
+    out.write("]")
+  }
+  out.write("\n")
+  dump_ident_opt(out, depth + 1, "alias", u.alias)
+  if let Some(effs) = u.effects {
+    if effs.is_empty() {
+      empty_list(out, depth + 1, "uses")
+    }
+    dump_effects(out, depth + 1, "uses", effs)
+  }
+}
+
+fn dump_effects(var out: StrBuilder, depth: Int, label: Str, effs: List[Effect]) {
+  for (i, e) in effs.indexed() {
+    head(out, depth, "${label}[${i}]", "Effect", e.span)
+    out.write("\n")
+    dump_ident(out, depth + 1, "name", e.name)
+    dump_ident_opt(out, depth + 1, "sub", e.sub)
+  }
+}
+
+fn dump_type_params(var out: StrBuilder, depth: Int, tps: List[TypeParam]) {
+  for (i, tp) in tps.indexed() {
+    head(out, depth, "type_params[${i}]", "TypeParam", tp.span)
+    flag(out, "effects", tp.effects)
+    out.write("\n")
+    dump_ident(out, depth + 1, "name", tp.name)
+    dump_type_opt(out, depth + 1, "constraint", tp.constraint)
+  }
+}
+
+fn dump_params(var out: StrBuilder, depth: Int, label: Str, params: List[Param]) {
+  for (i, prm) in params.indexed() {
+    head(out, depth, "${label}[${i}]", "Param", prm.span)
+    flag(out, "var", prm.is_var)
+    flag(out, "self", prm.is_self)
+    out.write("\n")
+    dump_ident(out, depth + 1, "name", prm.name)
+    dump_type_opt(out, depth + 1, "type", prm.typ)
+    dump_expr_opt(out, depth + 1, "default", prm.default)
+  }
+}
+
+fn dump_err_spec(var out: StrBuilder, depth: Int, e: ErrSpec?) {
+  if let Some(es) = e {
+    head(out, depth, "err", "ErrSpec", es.span)
+    out.write("\n")
+    dump_type_opt(out, depth + 1, "type", es.typ)
+  }
+}
+
+fn dump_fn_decl(var out: StrBuilder, depth: Int, label: Str, f: FnDecl) {
+  head(out, depth, label, "FnDecl", f.span)
+  flag(out, "pub", f.is_pub)
+  out.write("\n")
+  let d = depth + 1
+  dump_doc(out, d, f.doc)
+  if let Some(r) = f.recv {
+    head(out, d, "recv", "Receiver", r.span)
+    flag(out, "var", r.is_var)
+    out.write("\n")
+    dump_ident(out, d + 1, "name", r.name)
+    dump_type(out, d + 1, "type", r.typ)
+  }
+  dump_ident(out, d, "name", f.name)
+  dump_type_params(out, d, f.type_params)
+  dump_params(out, d, "params", f.params)
+  dump_type_opt(out, d, "result", f.result)
+  dump_err_spec(out, d, f.err)
+  for (i, c) in f.clauses.indexed() {
+    let label = "clauses[${i}]"
+    match c {
+      UsesClause(span, effects, parens) => {
+        head(out, d, label, "UsesClause", span)
+        flag(out, "parens", parens)
+        out.write("\n")
+        dump_effects(out, d + 1, "effects", effects)
+      }
+      RequiresClause(span, debug, cond, els) => {
+        head(out, d, label, "RequiresClause", span)
+        flag(out, "debug", debug)
+        out.write("\n")
+        dump_expr(out, d + 1, "cond", cond)
+        dump_expr_opt(out, d + 1, "else", els)
+      }
+      EnsuresClause(span, debug, cond) => {
+        head(out, d, label, "EnsuresClause", span)
+        flag(out, "debug", debug)
+        out.write("\n")
+        dump_expr(out, d + 1, "cond", cond)
+      }
+    }
+  }
+  dump_block_opt(out, d, "body", f.body)
+}
+
+fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
+  let d = depth + 1
+  match decl {
+    FnDecl(f) => dump_fn_decl(out, depth, label, f)
+    StructDecl(s) => {
+      head(out, depth, label, "StructDecl", s.span)
+      flag(out, "pub", s.is_pub)
+      out.write("\n")
+      dump_doc(out, d, s.doc)
+      dump_ident(out, d, "name", s.name)
+      dump_type_params(out, d, s.type_params)
+      for (i, f) in s.fields.indexed() {
+        head(out, d, "fields[${i}]", "Field", f.span)
+        flag(out, "pub", f.is_pub)
+        out.write("\n")
+        dump_doc(out, d + 1, f.doc)
+        dump_ident(out, d + 1, "name", f.name)
+        dump_type(out, d + 1, "type", f.typ)
+        dump_expr_opt(out, d + 1, "default", f.default)
+      }
+      dump_expr_opt(out, d, "invariant", s.inv)
+      dump_idents(out, d, "derive", s.derive)
+    }
+    EnumDecl(e) => {
+      head(out, depth, label, "EnumDecl", e.span)
+      flag(out, "pub", e.is_pub)
+      out.write("\n")
+      dump_doc(out, d, e.doc)
+      dump_ident(out, d, "name", e.name)
+      dump_type_params(out, d, e.type_params)
+      for (i, v) in e.variants.indexed() {
+        head(out, d, "variants[${i}]", "Variant", v.span)
+        out.write("\n")
+        dump_doc(out, d + 1, v.doc)
+        dump_ident(out, d + 1, "name", v.name)
+        if let Some(fields) = v.fields {
+          if fields.is_empty() {
+            empty_list(out, d + 1, "fields")
+          }
+          for (j, vf) in fields.indexed() {
+            head(out, d + 1, "fields[${j}]", "VariantField", vf.span)
+            flag(out, "from", vf.from)
+            out.write("\n")
+            dump_ident_opt(out, d + 2, "name", vf.name)
+            dump_type(out, d + 2, "type", vf.typ)
+          }
+        }
+      }
+      dump_idents(out, d, "derive", e.derive)
+    }
+    InterfaceDecl(it) => {
+      head(out, depth, label, "InterfaceDecl", it.span)
+      flag(out, "pub", it.is_pub)
+      out.write("\n")
+      dump_doc(out, d, it.doc)
+      dump_ident(out, d, "name", it.name)
+      dump_type_params(out, d, it.type_params)
+      for (i, m) in it.methods.indexed() {
+        dump_fn_decl(out, d, "methods[${i}]", m)
+      }
+    }
+    TypeDecl(t) => {
+      head(out, depth, label, "TypeDecl", t.span)
+      flag(out, "pub", t.is_pub)
+      flag(out, "newtype", t.newtype)
+      out.write("\n")
+      dump_doc(out, d, t.doc)
+      dump_ident(out, d, "name", t.name)
+      dump_type_params(out, d, t.type_params)
+      dump_type_opt(out, d, "type", t.typ)
+    }
+    ConstDecl(c) => dump_const(out, depth, label, c)
+    TestDecl(t) => {
+      head(out, depth, label, "TestDecl", t.span)
+      out.write("\n")
+      dump_doc(out, d, t.doc)
+      if let Some(n) = t.name {
+        dump_string_lit(out, d, "name", n)
+      }
+      dump_params(out, d, "for", t.params)
+      dump_expr_opt(out, d, "seed", t.seed)
+      dump_effects(out, d, "uses", t.effects)
+      dump_block_opt(out, d, "body", t.body)
+    }
+    BadDecl(span) => {
+      head(out, depth, label, "BadDecl", span)
+      out.write("\n")
+    }
+  }
+}
+
+fn dump_const(var out: StrBuilder, depth: Int, label: Str, c: ConstDecl) {
+  head(out, depth, label, "ConstDecl", c.span)
+  flag(out, "pub", c.is_pub)
+  out.write("\n")
+  dump_doc(out, depth + 1, c.doc)
+  dump_ident(out, depth + 1, "name", c.name)
+  dump_type_opt(out, depth + 1, "type", c.typ)
+  dump_expr(out, depth + 1, "value", c.value)
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+fn dump_type_opt(var out: StrBuilder, depth: Int, label: Str, t: Type?) {
+  if let Some(x) = t {
+    dump_type(out, depth, label, x)
+  }
+}
+
+fn dump_types(var out: StrBuilder, depth: Int, label: Str, ts: List[Type]) {
+  for (i, t) in ts.indexed() {
+    dump_type(out, depth, "${label}[${i}]", t)
+  }
+}
+
+fn dump_type(var out: StrBuilder, depth: Int, label: Str, t: Type) {
+  let d = depth + 1
+  match t {
+    NamedType(span, path, args) => {
+      head(out, depth, label, "NamedType", span)
+      out.write("\n")
+      dump_idents(out, d, "path", path)
+      dump_types(out, d, "args", args)
+    }
+    OptionalType(span, elem) => {
+      head(out, depth, label, "OptionalType", span)
+      out.write("\n")
+      dump_type(out, d, "elem", elem)
+    }
+    TupleType(span, elems) => {
+      head(out, depth, label, "TupleType", span)
+      out.write("\n")
+      dump_types(out, d, "elems", elems)
+    }
+    FnType(ft) => {
+      head(out, depth, label, "FnType", ft.span)
+      flag(out, "uses_parens", ft.uses_parens)
+      out.write("\n")
+      for (i, fp) in ft.params.indexed() {
+        head(out, d, "params[${i}]", "FnTypeParam", fp.span)
+        flag(out, "var", fp.is_var)
+        out.write("\n")
+        dump_type(out, d + 1, "type", fp.typ)
+      }
+      dump_type_opt(out, d, "result", ft.result)
+      dump_err_spec(out, d, ft.err)
+      dump_effects(out, d, "uses", ft.effects)
+    }
+    BadType(span) => {
+      head(out, depth, label, "BadType", span)
+      out.write("\n")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn dump_block_opt(var out: StrBuilder, depth: Int, label: Str, b: Block?) {
+  if let Some(x) = b {
+    dump_block(out, depth, label, x)
+  }
+}
+
+fn dump_block(var out: StrBuilder, depth: Int, label: Str, b: Block) {
+  head(out, depth, label, "Block", b.span)
+  out.write("\n")
+  for (i, s) in b.stmts.indexed() {
+    dump_stmt(out, depth + 1, "stmts[${i}]", s)
+  }
+}
+
+fn dump_stmt_opt(var out: StrBuilder, depth: Int, label: Str, s: Stmt?) {
+  if let Some(x) = s {
+    dump_stmt(out, depth, label, x)
+  }
+}
+
+fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
+  let d = depth + 1
+  match s {
+    LetStmt(span, pattern, typ, value) => {
+      head(out, depth, label, "LetStmt", span)
+      out.write("\n")
+      dump_pattern(out, d, "pattern", pattern)
+      dump_type_opt(out, d, "type", typ)
+      dump_expr(out, d, "value", value)
+    }
+    VarStmt(span, name, typ, value) => {
+      head(out, depth, label, "VarStmt", span)
+      out.write("\n")
+      dump_ident(out, d, "name", name)
+      dump_type_opt(out, d, "type", typ)
+      dump_expr(out, d, "value", value)
+    }
+    AssignStmt(span, op, target, value) => {
+      head(out, depth, label, "AssignStmt", span)
+      out.write(" op=${op}\n")
+      dump_expr(out, d, "target", target)
+      dump_expr(out, d, "value", value)
+    }
+    DeferStmt(span, body) => {
+      head(out, depth, label, "DeferStmt", span)
+      out.write("\n")
+      dump_stmt(out, d, "body", body)
+    }
+    ReturnStmt(span, value) => {
+      head(out, depth, label, "ReturnStmt", span)
+      out.write("\n")
+      dump_expr_opt(out, d, "value", value)
+    }
+    BreakStmt(span, lbl) => {
+      head(out, depth, label, "BreakStmt", span)
+      out.write("\n")
+      dump_ident_opt(out, d, "label", lbl)
+    }
+    ContinueStmt(span, lbl) => {
+      head(out, depth, label, "ContinueStmt", span)
+      out.write("\n")
+      dump_ident_opt(out, d, "label", lbl)
+    }
+    ForStmt(span, lbl, pattern, iter, body, go_range) => {
+      head(out, depth, label, "ForStmt", span)
+      flag(out, "go_range", go_range)
+      out.write("\n")
+      dump_ident_opt(out, d, "label", lbl)
+      dump_pattern(out, d, "pattern", pattern)
+      dump_expr(out, d, "iter", iter)
+      dump_block(out, d, "body", body)
+    }
+    WhileStmt(span, lbl, cond, body) => {
+      head(out, depth, label, "WhileStmt", span)
+      out.write("\n")
+      dump_ident_opt(out, d, "label", lbl)
+      dump_expr_opt(out, d, "cond", cond)
+      dump_block(out, d, "body", body)
+    }
+    ExprStmt(span, x) => {
+      head(out, depth, label, "ExprStmt", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+    }
+    BadStmt(span) => {
+      head(out, depth, label, "BadStmt", span)
+      out.write("\n")
+    }
+    ConstDecl(c) => dump_const(out, depth, label, c)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+fn dump_expr_opt(var out: StrBuilder, depth: Int, label: Str, e: Expr?) {
+  if let Some(x) = e {
+    dump_expr(out, depth, label, x)
+  }
+}
+
+fn dump_exprs(var out: StrBuilder, depth: Int, label: Str, es: List[Expr]) {
+  for (i, e) in es.indexed() {
+    dump_expr(out, depth, "${label}[${i}]", e)
+  }
+}
+
+fn dump_field_inits(var out: StrBuilder, depth: Int, fields: List[FieldInit]) {
+  for (i, f) in fields.indexed() {
+    head(out, depth, "fields[${i}]", "FieldInit", f.span)
+    out.write("\n")
+    dump_ident(out, depth + 1, "name", f.name)
+    dump_expr(out, depth + 1, "value", f.value)
+  }
+}
+
+fn dump_string_lit(var out: StrBuilder, depth: Int, label: Str, s: StringLit) {
+  head(out, depth, label, "StringLit", s.span)
+  let kind = match s.kind {
+    Plain => "plain"
+    Triple => "triple"
+    Raw => "raw"
+  }
+  out.write(" kind=${kind}\n")
+  for (i, part) in s.parts.indexed() {
+    for _ in 0..depth + 1 {
+      out.write("  ")
+    }
+    out.write("parts[${i}]: StringPart")
+    attr(out, "text", part.text)
+    out.write("\n")
+    dump_expr_opt(out, depth + 2, "expr", part.expr)
+  }
+}
+
+fn dump_expr(var out: StrBuilder, depth: Int, label: Str, e: Expr) {
+  let d = depth + 1
+  match e {
+    Ident(id) => dump_ident(out, depth, label, id)
+    IntLit(span, raw, value) => {
+      head(out, depth, label, "IntLit", span)
+      attr(out, "raw", raw)
+      attr(out, "value", value)
+      out.write("\n")
+    }
+    FloatLit(span, raw) => {
+      head(out, depth, label, "FloatLit", span)
+      attr(out, "raw", raw)
+      out.write("\n")
+    }
+    DurationLit(span, raw, nanos) => {
+      head(out, depth, label, "DurationLit", span)
+      attr(out, "raw", raw)
+      attr(out, "nanos", nanos)
+      out.write("\n")
+    }
+    RuneLit(span, raw, value) => {
+      head(out, depth, label, "RuneLit", span)
+      attr(out, "raw", raw)
+      out.write(" value=${value}\n")
+    }
+    StringLit(s) => dump_string_lit(out, depth, label, s)
+    BytesLit(span, value) => {
+      head(out, depth, label, "BytesLit", span)
+      attr(out, "value", value)
+      out.write("\n")
+    }
+    HoleExpr(span) => {
+      head(out, depth, label, "HoleExpr", span)
+      out.write("\n")
+    }
+    UnitExpr(span) => {
+      head(out, depth, label, "UnitExpr", span)
+      out.write("\n")
+    }
+    ParenExpr(span, x) => {
+      head(out, depth, label, "ParenExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+    }
+    TupleExpr(span, elems) => {
+      head(out, depth, label, "TupleExpr", span)
+      out.write("\n")
+      dump_exprs(out, d, "elems", elems)
+    }
+    ListLit(span, elems) => {
+      head(out, depth, label, "ListLit", span)
+      out.write("\n")
+      dump_exprs(out, d, "elems", elems)
+    }
+    MapLit(span, entries) => {
+      head(out, depth, label, "MapLit", span)
+      out.write("\n")
+      for (i, me) in entries.indexed() {
+        head(out, d, "entries[${i}]", "MapEntry", me.span)
+        out.write("\n")
+        dump_expr(out, d + 1, "key", me.key)
+        dump_expr(out, d + 1, "value", me.value)
+      }
+    }
+    SetLit(span, elems) => {
+      head(out, depth, label, "SetLit", span)
+      out.write("\n")
+      dump_exprs(out, d, "elems", elems)
+    }
+    StructLit(span, typ, fields) => {
+      head(out, depth, label, "StructLit", span)
+      out.write("\n")
+      dump_expr(out, d, "type", typ)
+      dump_field_inits(out, d, fields)
+    }
+    UnaryExpr(span, op, x) => {
+      head(out, depth, label, "UnaryExpr", span)
+      out.write(" op=${op}\n")
+      dump_expr(out, d, "x", x)
+    }
+    BinaryExpr(span, op, x, y) => {
+      head(out, depth, label, "BinaryExpr", span)
+      out.write(" op=${op}\n")
+      dump_expr(out, d, "x", x)
+      dump_expr(out, d, "y", y)
+    }
+    IsExpr(span, x, pattern) => {
+      head(out, depth, label, "IsExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+      dump_pattern(out, d, "pattern", pattern)
+    }
+    RangeExpr(span, lo, hi, inclusive) => {
+      head(out, depth, label, "RangeExpr", span)
+      flag(out, "inclusive", inclusive)
+      out.write("\n")
+      dump_expr_opt(out, d, "lo", lo)
+      dump_expr_opt(out, d, "hi", hi)
+    }
+    SelectorExpr(span, x, sel) => {
+      head(out, depth, label, "SelectorExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+      dump_ident(out, d, "sel", sel)
+    }
+    CallExpr(span, fun, args) => {
+      head(out, depth, label, "CallExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "fun", fun)
+      for (i, a) in args.indexed() {
+        head(out, d, "args[${i}]", "Arg", a.span)
+        out.write("\n")
+        dump_ident_opt(out, d + 1, "name", a.name)
+        dump_expr(out, d + 1, "value", a.value)
+      }
+    }
+    TypeArgsExpr(span, x, types) => {
+      head(out, depth, label, "TypeArgsExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+      dump_types(out, d, "types", types)
+    }
+    IndexExpr(span, x, index) => {
+      head(out, depth, label, "IndexExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+      dump_expr(out, d, "index", index)
+    }
+    TryExpr(span, x) => {
+      head(out, depth, label, "TryExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+    }
+    WithExpr(span, x, fields) => {
+      head(out, depth, label, "WithExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "x", x)
+      dump_field_inits(out, d, fields)
+    }
+    IfExpr(ie) => {
+      head(out, depth, label, "IfExpr", ie.span)
+      out.write("\n")
+      dump_expr_opt(out, d, "cond", ie.cond)
+      dump_pattern_opt(out, d, "pattern", ie.pattern)
+      dump_expr_opt(out, d, "value", ie.value)
+      dump_block(out, d, "then", ie.then)
+      dump_expr_opt(out, d, "else", ie.els)
+    }
+    MatchExpr(span, subject, arms) => {
+      head(out, depth, label, "MatchExpr", span)
+      out.write("\n")
+      dump_expr(out, d, "subject", subject)
+      for (i, arm) in arms.indexed() {
+        head(out, d, "arms[${i}]", "MatchArm", arm.span)
+        out.write("\n")
+        dump_pattern(out, d + 1, "pattern", arm.pattern)
+        dump_expr_opt(out, d + 1, "guard", arm.guard)
+        dump_stmt_opt(out, d + 1, "body", arm.body)
+      }
+    }
+    ScopeExpr(span, name, body) => {
+      head(out, depth, label, "ScopeExpr", span)
+      out.write("\n")
+      dump_ident(out, d, "name", name)
+      dump_block(out, d, "body", body)
+    }
+    SelectExpr(span, arms) => {
+      head(out, depth, label, "SelectExpr", span)
+      out.write("\n")
+      for (i, arm) in arms.indexed() {
+        head(out, d, "arms[${i}]", "SelectArm", arm.span)
+        out.write("\n")
+        dump_ident_opt(out, d + 1, "bind", arm.bind)
+        dump_expr_opt(out, d + 1, "op", arm.op)
+        dump_expr_opt(out, d + 1, "after", arm.after)
+        dump_stmt_opt(out, d + 1, "body", arm.body)
+      }
+    }
+    Block(b) => dump_block(out, depth, label, b)
+    FnLit(f) => {
+      head(out, depth, label, "FnLit", f.span)
+      out.write("\n")
+      dump_params(out, d, "params", f.params)
+      dump_type_opt(out, d, "result", f.result)
+      dump_err_spec(out, d, f.err)
+      dump_effects(out, d, "uses", f.effects)
+      dump_block(out, d, "body", f.body)
+    }
+    WhileExpr(span, body) => {
+      head(out, depth, label, "WhileExpr", span)
+      out.write("\n")
+      dump_block(out, d, "body", body)
+    }
+    BadExpr(span) => {
+      head(out, depth, label, "BadExpr", span)
+      out.write("\n")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+fn dump_pattern_opt(var out: StrBuilder, depth: Int, label: Str, p: Pattern?) {
+  if let Some(x) = p {
+    dump_pattern(out, depth, label, x)
+  }
+}
+
+fn dump_patterns(var out: StrBuilder, depth: Int, label: Str, ps: List[Pattern]) {
+  for (i, p) in ps.indexed() {
+    dump_pattern(out, depth, "${label}[${i}]", p)
+  }
+}
+
+fn dump_pat_fields(var out: StrBuilder, depth: Int, fields: List[PatField], keep_empty: Bool) {
+  if keep_empty && fields.is_empty() {
+    empty_list(out, depth, "fields")
+  }
+  for (i, f) in fields.indexed() {
+    head(out, depth, "fields[${i}]", "PatField", f.span)
+    out.write("\n")
+    dump_ident_opt(out, depth + 1, "name", f.name)
+    dump_pattern(out, depth + 1, "pattern", f.pattern)
+  }
+}
+
+fn dump_pattern(var out: StrBuilder, depth: Int, label: Str, pat: Pattern) {
+  let d = depth + 1
+  match pat {
+    WildcardPat(span) => {
+      head(out, depth, label, "WildcardPat", span)
+      out.write("\n")
+    }
+    BindPat(span, name) => {
+      head(out, depth, label, "BindPat", span)
+      out.write("\n")
+      dump_ident(out, d, "name", name)
+    }
+    LitPat(span, value) => {
+      head(out, depth, label, "LitPat", span)
+      out.write("\n")
+      dump_expr(out, d, "value", value)
+    }
+    RangePat(span, lo, hi, inclusive) => {
+      head(out, depth, label, "RangePat", span)
+      flag(out, "inclusive", inclusive)
+      out.write("\n")
+      dump_expr(out, d, "lo", lo)
+      dump_expr(out, d, "hi", hi)
+    }
+    OrPat(span, alts) => {
+      head(out, depth, label, "OrPat", span)
+      out.write("\n")
+      dump_patterns(out, d, "alts", alts)
+    }
+    TuplePat(span, elems) => {
+      head(out, depth, label, "TuplePat", span)
+      out.write("\n")
+      dump_patterns(out, d, "elems", elems)
+    }
+    VariantPat(span, path, parens, fields, rest) => {
+      head(out, depth, label, "VariantPat", span)
+      flag(out, "parens", parens)
+      flag(out, "rest", rest)
+      out.write("\n")
+      dump_idents(out, d, "path", path)
+      dump_pat_fields(out, d, fields, parens)
+    }
+    StructPat(span, path, fields, rest) => {
+      head(out, depth, label, "StructPat", span)
+      flag(out, "rest", rest)
+      out.write("\n")
+      dump_idents(out, d, "path", path)
+      dump_pat_fields(out, d, fields, true)
+    }
+    ListPat(span, elems, rest) => {
+      head(out, depth, label, "ListPat", span)
+      out.write(" rest=${rest}\n")
+      dump_patterns(out, d, "elems", elems)
+    }
+    BadPat(span) => {
+      head(out, depth, label, "BadPat", span)
+      out.write("\n")
+    }
+  }
+}
