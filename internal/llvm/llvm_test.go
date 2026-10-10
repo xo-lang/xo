@@ -145,12 +145,14 @@ var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 // stdout, and fault messages, which must also match want.txt. Programs
 // that exit normally run again with XO_LEAKCHECK=1 and must free every
 // allocation.
+// shortGoldens are the golden programs TestGolden runs under -short too
+// (about a second each): native parity checked on every commit for the
+// cases with no Go backend golden of their own.
+var shortGoldens = map[string]bool{"fault_defer_chain": true, "request_eq": true}
+
 func TestGolden(t *testing.T) {
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
-	}
-	if testing.Short() {
-		t.Skip("builds every golden program twice")
 	}
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil || len(dirs) == 0 {
@@ -159,6 +161,9 @@ func TestGolden(t *testing.T) {
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			if testing.Short() && !shortGoldens[filepath.Base(dir)] {
+				t.Skip("builds every golden program twice: -short runs shortGoldens")
+			}
 			t.Parallel()
 			goRes := buildAndRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendGo})
 			llRes, b := buildRun(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendLLVM})

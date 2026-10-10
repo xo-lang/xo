@@ -14,6 +14,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `os.proc.set_grace` before `testing.run_main` sets that run's grace
   period, and a third signal makes `run_main` return 130 (with
   `exit_code()` `Some(130)`) instead of ending the test binary.
+- `==` on `http.Request` works on the native backends (was XO1201): it
+  compares the six spec fields and ignores typed request values, as on
+  the Go backend (decision 0112 note; internal/llvm golden `request_eq`).
+- internal/llvm `TestGolden` runs `fault_defer_chain` and `request_eq`
+  under `-short` too.
 
 ## v0.9.0 (2026-10-10)
 
