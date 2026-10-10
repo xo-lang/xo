@@ -14,13 +14,14 @@
 #undef MBEDTLS_KEY_EXCHANGE_ECDHE_PSK_ENABLED
 #undef MBEDTLS_KEY_EXCHANGE_PSK_ENABLED
 
-// no session resumption: the client makes one connection per request and
-// the server sends no tickets (the client still accepts and drops the
-// tickets a Go server sends, MBEDTLS_SSL_SESSION_TICKETS)
+// Session resumption as Go's crypto/tls does it by default (decision
+// 0117): the server sends session tickets (MBEDTLS_SSL_TICKET_C, TLS 1.3
+// resumption with a fresh ECDHE only, PSK_EPHEMERAL), keeps no session ID
+// cache, and never takes pure PSK (psk_ke) or early data. The client
+// keeps no sessions (net/http's default Transport has no
+// ClientSessionCache) and drops the tickets servers send.
 #undef MBEDTLS_SSL_CACHE_C
-#undef MBEDTLS_SSL_TICKET_C
 #undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_ENABLED
-#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #undef MBEDTLS_SSL_CONTEXT_SERIALIZATION
 #undef MBEDTLS_SSL_RENEGOTIATION
 #undef MBEDTLS_SSL_KEYING_MATERIAL_EXPORT

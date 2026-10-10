@@ -62,7 +62,7 @@ func usesTLS(srcs []string) bool {
 
 var (
 	tlsMu    sync.Mutex
-	tlsBuilt = map[string]string{} // key -> library directory
+	tlsBuilt = map[string]bool{}   // library directories built or found
 	tlsHash  string                // of the embedded sources
 	ccVers   = map[string]string{} // C compiler -> its --version output
 )
@@ -143,11 +143,8 @@ func tlsLibrary(cc string, flavor []string, sysroot string) (string, error) {
 		ccVers[cc] = ver
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\n%s\n%s\n%s\n%s/%s\n%s\n", src, cc, ver, sysroot, runtime.GOOS, runtime.GOARCH, strings.Join(flavor, " "))
+	fmt.Fprintf(h, "%s\n%s\n%s\n%s\n%s/%s\n%s\n%v\n", src, cc, ver, sysroot, runtime.GOOS, runtime.GOARCH, strings.Join(flavor, " "), mbedtls.FileDefines)
 	key := hex.EncodeToString(h.Sum(nil))[:20]
-	if d, ok := tlsBuilt[key]; ok {
-		return d, nil
-	}
 	base, err := os.UserCacheDir()
 	if err != nil {
 		base = os.TempDir()
@@ -157,8 +154,13 @@ func tlsLibrary(cc string, flavor []string, sysroot string) (string, error) {
 		root = d
 	}
 	dir := filepath.Join(root, mbedtls.Version+"-"+key)
+	// memoized by directory: $XO_TLS_CACHE may change between builds of
+	// one process (the tests' temporary caches)
+	if tlsBuilt[dir] {
+		return dir, nil
+	}
 	if _, err := os.Stat(filepath.Join(dir, "libxotls.a")); err == nil {
-		tlsBuilt[key] = dir
+		tlsBuilt[dir] = true
 		return dir, nil
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -177,7 +179,7 @@ func tlsLibrary(cc string, flavor []string, sysroot string) (string, error) {
 			return "", err
 		}
 	}
-	tlsBuilt[key] = dir
+	tlsBuilt[dir] = true
 	return dir, nil
 }
 
@@ -232,7 +234,8 @@ func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
 			defer wg.Done()
 			for i := range work {
 				obj := filepath.Join(objDir, strings.ReplaceAll(strings.TrimSuffix(srcs[i], ".c"), "/", "_")+".o")
-				a := append(append([]string(nil), args...), "-o", obj, filepath.Join(dir, filepath.FromSlash(srcs[i])))
+				a := append(append([]string(nil), args...), mbedtls.FileDefines[srcs[i]]...)
+				a = append(a, "-o", obj, filepath.Join(dir, filepath.FromSlash(srcs[i])))
 				out, err := exec.Command(cc, a...).CombinedOutput()
 				if err != nil {
 					errs[i] = fmt.Errorf("compiling the TLS library (%s): %v\n%s", srcs[i], err, out)

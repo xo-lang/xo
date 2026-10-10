@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native HTTPS (decision 0117): full TLS handshakes about 1.6 times as
+  fast and at half the CPU (9.7k to 15k per second in the HTTP benchmark,
+  Go backend 17k): X25519 key shares through HACL*, faster P-256
+  inverses, a spinning lock for Mbed TLS's key store, SHA instructions.
+  The native server now sends session tickets as Go's does (TLS 1.3
+  resumption with ECDHE, TLS 1.2 tickets; keys rotate daily), so
+  returning clients skip the certificate signature. `bench/perf/http`'s
+  loadgen has `-resume` (`RESUME=1` in run.sh).
 - `xo lsp` (decision 0114): a Language Server Protocol server with
   diagnostics and their fixes as quick fixes, hover (signature, doc, or
   type), definition (into std too), references, rename, document

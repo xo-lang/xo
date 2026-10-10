@@ -1,6 +1,7 @@
 # 0105: Native TLS on Mbed TLS 4.1 (not BoringSSL)
 
-Status: Accepted (2026-10-09). Implemented in `third_party/mbedtls`
+Status: Accepted (2026-10-09). Amended by 0117 (2026-10-10): session
+tickets on, handshakes about twice as fast. Implemented in `third_party/mbedtls`
 (vendored library, `mbedtls.tgz`, configuration in `xo/`),
 `internal/build/tls.go` (archive cache, link flags), `std/llrt/xo_tls.c`
 (certificates, roots, server and client connections, Go's error texts),
