@@ -200,7 +200,7 @@ func withBinCache(key, bin string, link func() error) error {
 		return err
 	}
 	storeBin(entry, bin)
-	trimBinCache(dir)
+	trimCacheDir(dir, binCacheMax())
 	return nil
 }
 
@@ -276,11 +276,11 @@ func binCacheMax() int64 {
 	return binCacheMaxDefault
 }
 
-// trimBinCache removes the least recently used entries once the cache is
+// trimCacheDir removes the least recently used entries once a cache is
 // over its cap, down to three quarters of it, at most once a minute (a
 // stamp file). Removing an entry another process is linking or copying
 // is safe: the link fails (the build runs) or the open copy completes.
-func trimBinCache(dir string) {
+func trimCacheDir(dir string, limit int64) {
 	stamp := filepath.Join(dir, "trim-stamp")
 	if fi, err := os.Stat(stamp); err == nil && time.Since(fi.ModTime()) < time.Minute {
 		return
@@ -312,7 +312,7 @@ func trimBinCache(dir string) {
 		total += info.Size()
 		return nil
 	})
-	limit := binCacheMax()
+
 	if total <= limit {
 		return
 	}

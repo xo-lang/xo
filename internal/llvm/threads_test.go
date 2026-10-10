@@ -55,63 +55,6 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 	return bin
 }
 
-// tsanBuildIR is tsanBuild for the LLVM IR file ll linked with the C
-// runtime (std/llrt/xo_rt.c), which is compiled once per process and set
-// of flags instead of once per program: the runtime is most of the
-// compile time. A program that needs TLS links as tsanBuild does.
-func tsanBuildIR(t *testing.T, flags []string, ll string) string {
-	t.Helper()
-	rt := filepath.Join(rtDir, "xo_rt.c")
-	ir, err := os.ReadFile(ll)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if build.NeedsTLS(ir) || testDir == "" {
-		return tsanBuild(t, flags, []string{ll, rt})
-	}
-	if _, err := build.Clang(); err != nil {
-		t.Skip("clang not found")
-	}
-	san := []string{"-fsanitize=thread"}
-	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
-		t.Logf("ThreadSanitizer does not run here, testing without it: %s", why)
-		san = nil
-	}
-	all := append(append([]string{"-O1", "-g"}, san...), flags...)
-	key := strings.Join(all, " ")
-	v, _ := rtObjects.LoadOrStore(key, &rtObject{})
-	o := v.(*rtObject)
-	o.once.Do(func() {
-		dir, err := os.MkdirTemp(testDir, "rt")
-		if err != nil {
-			o.err = err
-			return
-		}
-		o.path = filepath.Join(dir, "xo_rt.o")
-		o.err = build.CompileC(append([]string{"-c"}, all...), []string{rt}, o.path)
-	})
-	if o.err != nil {
-		if strings.Contains(o.err.Error(), "unsupported option") || strings.Contains(o.err.Error(), "sanitizer") {
-			t.Skipf("no ThreadSanitizer: %v", o.err)
-		}
-		t.Fatal(o.err)
-	}
-	bin := filepath.Join(t.TempDir(), "prog")
-	if err := build.CompileC(all, []string{ll, o.path}, bin); err != nil {
-		t.Fatal(err)
-	}
-	return bin
-}
-
-// rtObjects holds the runtime objects of tsanBuildIR: flags -> *rtObject.
-var rtObjects sync.Map
-
-type rtObject struct {
-	once sync.Once
-	path string
-	err  error
-}
-
 var sanProbes sync.Map // sanitizer flag -> *sanProbe
 
 type sanProbe struct {
@@ -323,7 +266,7 @@ func TestGoldenThreads(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				bin = tsanBuildIR(t, flags, ll)
+				bin = tsanBuild(t, flags, []string{ll, rt})
 			}
 			out := runTSan(t, bin, dir, "XO_LEAKCHECK=1")
 			if m := leakRE.FindStringSubmatch(out); m == nil || m[1] != "0" {
@@ -365,6 +308,7 @@ func TestGoldenTasks(t *testing.T) {
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no golden programs: %v", err)
 	}
+	rt := filepath.Join(rtDir, "xo_rt.c")
 	ran := 0
 	for _, dir := range dirs {
 		if !usesTasks(t, dir) {
@@ -391,7 +335,7 @@ func TestGoldenTasks(t *testing.T) {
 			if err := os.WriteFile(ll, prog.IR, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := tsanBuildIR(t, append([]string{"-Wno-override-module"}, build.IOFlags(prog.IR)...), ll)
+			bin := tsanBuild(t, append([]string{"-Wno-override-module"}, build.IOFlags(prog.IR)...), []string{ll, rt})
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir

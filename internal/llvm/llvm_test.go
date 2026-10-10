@@ -30,7 +30,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	testDir = dir
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
@@ -38,9 +37,6 @@ func TestMain(m *testing.M) {
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
-
-// testDir is the temporary directory of the test process (TestMain).
-var testDir string
 
 // runResult is the observable behavior of a program run.
 type runResult struct {
