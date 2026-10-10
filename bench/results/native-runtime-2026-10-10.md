@@ -52,7 +52,8 @@ X25519 agreement 153. After the X25519 change: ECDSA signing 1079 of
 us exponentiation); p256-m (the vendored alternative driver) 635 us;
 X25519 key generation and export 29 us.
 
-Open: P-256 signing is now about 45 percent of a native full handshake
+Open (done later on 2026-10-10, section 6 and decision 0132: 23 us per
+signature, 251 us of CPU per handshake): P-256 signing is now about 45 percent of a native full handshake
 (112 us against roughly 10 to 15 us for Go's assembly). A fast constant
 time P-256 (fiat-crypto's formally verified field arithmetic with Go's
 complete formulas and a precomputed generator table) behind the same
@@ -174,3 +175,34 @@ shrink try; the shrinks took 2 to 61 steps).
 (nine tests, one per effect plus a fake kept next to a real effect and
 real output) prints the Go backend's report on LLVM and arm64, with and
 without `--real` (TestNoGCTests/real).
+
+## 6. P-256 signing on fiat-crypto (decision 0132)
+
+Microbenchmark (one core, M4 Pro, load average about 15;
+`XO_P256_BENCH=2000 go test ./internal/build -run TestP256Bench`, a
+fixed key, deterministic ECDSA with SHA-256, 2000 operations each):
+
+| Operation | Mbed TLS 4.1.1 (with 0117's Fermat inverses) | xo_p256.c (fiat-crypto) |
+|---|---|---|
+| sign (driver entry) | 110.1 us | 23.0 us |
+| sign through `psa_sign_hash` (key store, lock, dispatch) | | 24.8 us |
+| verify (public key) | 377.1 us | 94.1 us |
+| first signature (builds the 43 x 32 generator table) | | 667 us once |
+
+Full handshake per request, section 1's harness (`SCHEME=https
+NEWCONN=1 DURATION=5s WARMUP=1s`, medians of 3, interleaved, load
+average 15 to 18); "xo-base-llvm" is main at 5913971 (decision 0117's
+state) built with `XO_BASE`:
+
+| Config | Req/s | CPU us/req | p99 us |
+|---|---|---|---|
+| xo (Go backend) | 15598 | 227 | 5832 |
+| xo-base-llvm (before) | 13522 | 354 | 6231 |
+| xo-llvm (after) | 15351 | 251 | 4889 |
+| xo-arm64 (after) | 15854 | 251 | 4781 |
+
+A native full handshake now costs 1.10 times the Go backend's CPU (1.56
+before in the same runs). Signatures are byte identical to the
+library's (TestTLSAccel, 800 keys and messages), to Go's RFC 6979
+signatures (TestP256, 300), and the verifier agrees with the library on
+Wycheproof's 594 P-256 P1363 vectors.

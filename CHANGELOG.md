@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS: ECDSA P-256 signing and verification run on fiat-crypto's
+  verified field arithmetic (vendored at a pinned commit,
+  `third_party/fiat-crypto`, decision 0132) instead of Mbed TLS's bignum
+  code: signatures byte identical, 4.8 times faster (23 us), a full
+  HTTPS handshake on the native server takes 251 us of CPU (was 354; Go
+  backend 227).
+- `bench/perf/http/run.sh` takes `CONFIGS=xo-base-llvm` with
+  `XO_BASE=<xo binary>` for before and after runs of the LLVM backend.
 - `xo build --hybrid`: loops in Go assembler poll for preemption at every
   back edge (decision 0131), so a long hybrid loop no longer holds up the
   GC's stop the world or other goroutines on its P (11.6 s to 0.058 ms

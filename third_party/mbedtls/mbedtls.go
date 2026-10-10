@@ -7,7 +7,9 @@
 // src/ is a subset of the mbedtls-4.1.1 release tarball (the .c and .h
 // files of include/, library/, and the TF-PSA-Crypto directories the
 // library build uses), unmodified; xo/ holds the Xo runtime's
-// configuration. The package embeds mbedtls.tgz, a compressed copy of
+// configuration and the functions it puts in front of the library's
+// (decisions 0117, 0132; xo_p256.c includes fiat-crypto's files, which
+// Tree adds from third_party/fiat-crypto). The package embeds mbedtls.tgz, a compressed copy of
 // src/ made by gen.go, and xo/. The pinned release, its checksum, and the
 // update steps are in knowledgebase/infrastructure/toolchain.md ("TLS
 // library") and scripts/vendor-mbedtls.sh.
