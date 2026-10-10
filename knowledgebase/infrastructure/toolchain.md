@@ -135,7 +135,7 @@ go run ./cmd/xo run selfhost/parser -- [--sig] [--bench=N] <files...>   # the se
 go run ./cmd/xo build --backend=llvm --no-gc -o .tools/xoparse selfhost/parser   # native build of the Xo parser (also --backend=arm64)
 go run ./cmd/xo test selfhost/parser                    # the Xo parser's own tests (8)
 go test ./internal/selfhost -run TestSelfhostParser     # Xo parser (go, arm64, llvm backends) vs Go parser: identical dumps for every accepted file, same rejections: repo .xo, std/*.xo (--sig), spec blocks, progen programs (24/150), token mutations (300/2000); XO_SELFHOST_PROGS=N, XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP (last verified: 2026-10-10)
-go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0139): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
+go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0141): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
 go run ./cmd/xo run selfhost/check -- [--section=names,diags] [--std=DIR] [--each] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stage 1: the names and diags sections of xo typedump, or timing; std read from DIR (default std)
 go run ./cmd/xo build --backend=llvm -o .tools/xocheck selfhost/check   # native build of the Xo checker (also --backend=arm64)
 go run ./cmd/xo test selfhost/check                     # the Xo checker's own tests (7: paths, JSON, small modules in the test file system)
@@ -784,14 +784,14 @@ internal/ssa/           shared typed SSA IR for native backends (decision 0045):
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
 internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer,
                         selfhost/parser, and selfhost/check and compare their dumps with lexer.Dump,
-                        parser.Dump, and check.Result.Dump (decisions 0076, 0127, 0139)
+                        parser.Dump, and check.Result.Dump (decisions 0076, 0127, 0141)
 internal/progen/        the random program generator of decision 0110 (TestCompileProperty, the parser differential)
 selfhost/xo.mod         selfhost/ is one Xo module, github.com/xo-lang/xo/selfhost (the parser imports the lexer)
 selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
                         lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
 selfhost/parser/        the parser in Xo (decision 0127): ast.xo, parser.xo (tokens, lists, docs, declarations,
                         types), stmt.xo, expr.xo, pattern.xo, dump.xo, main.xo (CLI), parser_test.xo
-selfhost/check/         the checker in Xo, stage 1 names (decision 0139): objects.xo (tables: objects, modules,
+selfhost/check/         the checker in Xo, stage 1 names (decision 0141): objects.xo (tables: objects, modules,
                         files, records), load.xo (directories, xo.mod, std, imports), resolve.xo (declarations,
                         scopes, the walk), dump.xo (passes, names and diags sections), main.xo (CLI), check_test.xo
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile

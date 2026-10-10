@@ -12,7 +12,7 @@ import (
 	"github.com/xo-lang/xo/internal/token"
 )
 
-// Sections selects the parts of a Dump (decision 0139).
+// Sections selects the parts of a Dump (decision 0141).
 type Sections struct {
 	Names bool // what each identifier resolves to by name lookup
 	Types bool // the type of every checked expression
@@ -48,7 +48,7 @@ func ParseSections(s string) (Sections, error) {
 }
 
 // Dump prints what the checker resolved for the root modules of a run in
-// the canonical text form of `xo typedump` (decision 0139), the form the
+// the canonical text form of `xo typedump` (decision 0141), the form the
 // self hosted checker prints, so the two can be compared line by line, a
 // section at a time:
 //
@@ -196,7 +196,7 @@ func (c *checker) dumpNames(b *strings.Builder, f *File) {
 		if r.call {
 			// `Int(x)` may be a variant of the expected enum instead: the
 			// names section leaves prelude types called by name to the
-			// types stage (decision 0139).
+			// types stage (decision 0141).
 			if t, ok := r.obj.(*TypeObj); ok && t.Module == c.prelude {
 				continue
 			}

@@ -14,7 +14,7 @@ import (
 // runTypeDump is the hidden `xo typedump [--section=S] [--each]
 // [--bench=N] <dirs...>`: it checks the modules under dirs and prints what
 // the checker resolved in the canonical text form of check.Result.Dump
-// (decision 0139), the form the self hosted checker (selfhost/check)
+// (decision 0141), the form the self hosted checker (selfhost/check)
 // prints, so the two can be compared a section at a time. --section is a
 // comma separated list of names, types, sigs, and diags (default all).
 // --each checks every dir as a run of its own, each preceded by

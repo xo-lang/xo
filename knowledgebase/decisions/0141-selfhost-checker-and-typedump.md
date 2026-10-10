@@ -1,4 +1,4 @@
-# 0139: The self hosted checker, compared through `xo typedump` in stages
+# 0141: The self hosted checker, compared through `xo typedump` in stages
 
 Status: Accepted (2026-10-10). Stage 1 (names) implemented in
 `selfhost/check/` (Xo), `internal/check/dump.go` (`Result.Dump`,

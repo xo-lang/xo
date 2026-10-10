@@ -1,5 +1,5 @@
 // The canonical dump, the names and diags sections of `xo typedump`
-// (internal/check/dump.go, decision 0139).
+// (internal/check/dump.go, decision 0141).
 
 /// Runs the checker's passes over the loaded modules (check.go run):
 /// declarations, then type declarations, signatures, and bodies of the

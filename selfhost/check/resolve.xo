@@ -1,6 +1,6 @@
 // Name resolution: declarations, scopes, and the walk over every body, as
 // internal/check does it (decl.go, stmt.go, expr.go, call.go, pattern.go)
-// for the names it can resolve without types (decision 0139).
+// for the names it can resolve without types (decision 0141).
 //
 // Deferred to the types stage, and not recorded: struct fields, methods,
 // and named arguments (they need the type of a value), enum variants

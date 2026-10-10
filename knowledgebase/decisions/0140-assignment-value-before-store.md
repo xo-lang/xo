@@ -4,7 +4,7 @@ Status: Accepted, implemented (2026-10-10). Spec: core 5.2. Code:
 `internal/ssa/build_stmt.go` (`place`: the list of an index place is read
 when first used). Test: `internal/gen/testdata/golden/assign_rhs_mutates`
 (Go backend, and listed in `internal/llvm/testdata/gen_native.txt` for
-LLVM and arm64). Found by the self hosted checker (decision 0139).
+LLVM and arm64). Found by the self hosted checker (decision 0141).
 
 ## Context
 

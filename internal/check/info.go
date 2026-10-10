@@ -25,7 +25,7 @@ type records struct {
 	invVars    map[*TypeObj][]*VarObj
 	closureVar map[*ast.FnLit][]*VarObj
 	// names is what each identifier resolved to by name lookup, for the
-	// names section of `xo typedump` (dump.go, decision 0139).
+	// names section of `xo typedump` (dump.go, decision 0141).
 	names map[*ast.Ident]nameRef
 }
 

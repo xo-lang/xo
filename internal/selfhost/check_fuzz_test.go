@@ -16,7 +16,7 @@ import (
 )
 
 // TestSelfhostCheckerNamesMutations compares the Xo and Go checkers
-// (decision 0139) on mutations of the single directory modules of the
+// (decision 0141) on mutations of the single directory modules of the
 // repository that the Go checker accepts and that import only std: one
 // identifier renamed (an unresolved name, or one that now resolves
 // elsewhere), a `use` line removed, or a top level declaration

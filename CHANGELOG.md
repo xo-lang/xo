@@ -7,7 +7,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - The type checker's name resolution written in Xo (`selfhost/check`,
-  decision 0139), the first stage of the self hosted checker: the same
+  decision 0141), the first stage of the self hosted checker: the same
   resolution of every identifier as internal/check on every repository
   module the Go checker accepts (on the go, arm64, and LLVM backends),
   and the same diagnostics on modules rejected only for names. Hidden

@@ -1,5 +1,5 @@
 // Tests of the self hosted checker. The comparison with the Go checker is
-// internal/selfhost's TestSelfhostCheckerNames (decision 0139).
+// internal/selfhost's TestSelfhostCheckerNames (decision 0141).
 
 /// A small prelude for checks in the test's in memory file system.
 const PRELUDE = """

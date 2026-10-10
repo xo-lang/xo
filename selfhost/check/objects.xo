@@ -1,5 +1,5 @@
 // The checker's tables: objects, modules, files, and what it records
-// (decision 0139). The data is graph shaped (a scope maps names to
+// (decision 0141). The data is graph shaped (a scope maps names to
 // objects, an object belongs to a module, a module has files that import
 // other modules), and Xo values have no identity, so every node lives in
 // a table of the Checker and refers to others by index: an object is an
@@ -112,7 +112,7 @@ pub struct ModRoot {
 }
 
 /// A diagnostic: code, span, and message (notes and fixes are a later
-/// stage, decision 0139).
+/// stage, decision 0141).
 pub struct Diag {
   pub code: Str
   pub file: Str

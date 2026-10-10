@@ -1,4 +1,4 @@
-// xocheck: the self hosted checker's command line (decision 0139).
+// xocheck: the self hosted checker's command line (decision 0141).
 //
 //   check [--section=S] [--std=DIR] [--each] <dirs...>   print the dump
 //   check [--std=DIR] [--each] --bench=N <dirs...>        check N times, print the time

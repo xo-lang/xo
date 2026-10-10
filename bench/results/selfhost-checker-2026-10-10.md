@@ -1,6 +1,6 @@
 # Self hosted checker, stage 1 (names), 2026-10-10
 
-Decision 0139. The Xo checker (`selfhost/check`, 2,491 lines of Xo with
+Decision 0141. The Xo checker (`selfhost/check`, 2,491 lines of Xo with
 its CLI, dump, and 123 lines of tests) against internal/check (Go),
 compared through the names and diags sections of `xo typedump`.
 
@@ -32,7 +32,7 @@ Deferred to later stages, with no line on either side: fields, methods,
 statics, variants and every bare UpperCamel value or callee not declared
 in the module (`Red`, `Some(x)`, `Int(x)`: a variant of the expected
 enum wins), named arguments, effects, loop labels. The record of what
-is deferred is the list in decision 0139.
+is deferred is the list in decision 0141.
 
 ## Agreement
 

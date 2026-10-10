@@ -21,7 +21,7 @@ import (
 // with each backend, and the Go checker (internal/check) on every
 // directory of the repository that holds .xo files, each checked as a run
 // of its own like `xo check <dir>`, and compares the names section of
-// `xo typedump` (decision 0139):
+// `xo typedump` (decision 0141):
 //
 //   - every run the Go checker accepts (no errors) has an identical names
 //     section, and the Xo checker reports nothing;
@@ -267,7 +267,7 @@ func splitDiags(dump string) (string, []string) {
 }
 
 // nameDiagRE matches the diagnostics of name resolution that the names
-// stage reproduces (decision 0139). A bare UpperCamel name may be a
+// stage reproduces (decision 0141). A bare UpperCamel name may be a
 // variant of the expected enum, so its XO0601 belongs to the types stage.
 var nameDiagRE = regexp.MustCompile("^" + `\{"code":"(XO0110|XO0601|XO0603|XO0604|XO0605)",.*"message":"(` + strings.Join([]string{
 	"(name|function) `[a-z_][A-Za-z0-9_]*` not found",
