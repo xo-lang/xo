@@ -778,6 +778,20 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		case "print", "println", "eprint", "eprintln":
 			r := s.expr(ci.Recv)
 			return s.call("Stdio."+fo.Name, m.Builtin(KUnit), "", r, s.valueAs(x.Args[0].Value, m.Builtin(KStr)))
+		case "write", "read_line", "read_all", "lines":
+			// std/native/prelude.xo (decision 0102); reads wait on the
+			// event loop
+			if fo.Name != "write" {
+				b.needConc = true
+				if !b.conc {
+					return s.undef(nt)
+				}
+			}
+			if nm := b.nativeMod("std/prelude"); nm != nil {
+				if impl, ok := nm.Scope["stdio_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
+					return s.callAs(x, ci, impl)
+				}
+			}
 		}
 	case "List":
 		if fo.RecvVar {

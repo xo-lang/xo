@@ -316,7 +316,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				return m.Builtin(KInt)
 			case "Never":
 				return m.Builtin(KUnit)
-			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Fs", "Rand":
+			case "Fs":
+				// its root and mode (decision 0102, build_io.go fsCall)
+				return b.fsType()
+			case "Os", "Stdio", "Clock", "Net", "Proc", "Env", "Rand":
 				x, _ := m.Named(obj.Name, KCap)
 				return x
 			case "List":
@@ -344,6 +347,9 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				// a test's fakes are the capabilities themselves: the C
 				// runtime runs a test binary in its test world
 				// (build_testmode.go)
+				if c == "Fs" {
+					return b.fsType()
+				}
 				x, _ := m.Named(c, KCap)
 				return x
 			}
@@ -375,7 +381,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 				}
 				return m.Handle(strings.ReplaceAll(obj.Module.Path, "/", ".") + "." + obj.Name)
 			}
-			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr") {
+			if obj.Module != nil && obj.Module.IsStd && (obj.Opaque || obj.Module.IsPrelude && obj.Name != "DurationErr" && obj.Name != "FileInfo" && obj.Name != "ProcOutput") {
 				break
 			}
 			x, created := m.Named(name, KStruct)

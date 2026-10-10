@@ -1292,5 +1292,11 @@ int64_t xo_time_parse(const char *p, int64_t n) {
 // std/crypto and the Rand capability (decision 0083)
 #include "xo_crypto.c"
 
+// the Fs operations besides read (decision 0102)
+#include "xo_fs.c"
+
+// standard input reads (decisions 0088, 0102)
+#include "xo_stdin.c"
+
 // the test world of test binaries (decision 0083)
 #include "xo_testing.c"

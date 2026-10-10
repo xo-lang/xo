@@ -32,6 +32,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (std/native/task.xo); Debug text of `Result[T, Never]` values. Fixed:
   natively, a task whose value is a Result failed its scope when that
   value was an `Err`; shorthand struct patterns `Bag{items}`.
+- Native backends (decision 0102): every Fs method and attenuation
+  (`sub`, `cwd`, `read_only`, `write_only`, escapes `Denied`),
+  `Stdio.write`, and standard input reads (`read_line`, `read_all`,
+  `lines`) that a cancellation or a stop request ends with
+  `IoErr.Canceled`. Fixed natively: `task.with_timeout` returns
+  `TimedOut` when its closure finishes after the deadline without a
+  cancellation point, as on the Go backend.
+- `xo test --no-gc`: `FakeStdio.set_input` feeds the reads; fixed a hang
+  after `FakeProc.signal_after` fired (the virtual clock stopped moving).
 
 ## v0.8.0 (2026-10-09)
 

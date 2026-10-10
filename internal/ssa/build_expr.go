@@ -247,6 +247,12 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	if c, ok := b.info.Ref(x).(*check.ConstObj); ok && c.Decl != nil {
 		return s.constValue(c, s.natOf(x))
 	}
+	if id, ok := x.X.(*ast.Ident); ok && x.Sel.Name == "UNIX_EPOCH" {
+		if id.Name == "Time" && b.info.VarOf(id) == nil && isPreludeNamed(s.natCheck(x), "Time") {
+			// Time.UNIX_EPOCH: Unix nanoseconds 0 (decision 0069)
+			return s.add(OpConst, s.natOf(x), int64(0))
+		}
+	}
 	if x.Sel.Name == "await" {
 		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
 			return s.await(x)
@@ -260,6 +266,10 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			// wide group yet
 			b.unsupported(x, "`"+x.Sel.Name+"` of a capability")
 			return s.undef(t)
+		}
+		if isFs(t) {
+			// os.fs: the filesystem root, no mode (decision 0102)
+			return s.add(OpStruct, t, nil, s.add(OpConst, b.mod.Builtin(KStr), ""), s.cint(0))
 		}
 		return s.add(OpCap, t, x.Sel.Name, v)
 	}

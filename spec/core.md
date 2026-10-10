@@ -21,6 +21,9 @@ No meaning changes yet; native support grew (`--no-gc`, 10.1):
   std value methods listed in decision 0101 build natively.
 - `std/path`, `task.semaphore`, `task.once`, and `task.map_concurrent`
   build natively (std.md 7, 9).
+- Every Fs method and attenuation, `Stdio.write`, and standard input
+  reads (7.2, 7.5: canceled by a cancellation or a stop request) build
+  natively (decision 0102).
 
 ## Changes in 0.8
 

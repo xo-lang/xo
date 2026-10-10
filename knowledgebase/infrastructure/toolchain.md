@@ -1250,7 +1250,11 @@ first, AST based prototype, since deleted) and
 - std/native/path.xo (std/path) and std/native/task.xo (Semaphore over a
   channel of permits, Once over a Mutex holding the result,
   map_concurrent over a scope) are native implementations in Xo
-  (2026-10-09); goldens `std_path`, `task_native`. The
+  (2026-10-09); goldens `std_path`, `task_native`.
+- Fs natively (decision 0102, 2026-10-09): `xo.Fs {root, mode}`, methods
+  `fs_*` in std/native/prelude.xo over `std/llrt/xo_fs.c`; standard input
+  in `std/llrt/xo_stdin.c` (descriptor 0 on the poller); TestStdinNative
+  pipes input into Go and native builds and compares. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no TLS; no `http.stream`).
 - Counts (decision 0058): positive is thread local (plain updates),

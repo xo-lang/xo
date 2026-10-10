@@ -535,8 +535,9 @@ fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
 The reads of standard input are cancellation points while they wait: a
 cancelled task, and every reader once a stop is requested (core 7.5), gets
 `Err(IoErr.Canceled)` at once. Input read after a reader gave up is kept
-for the next read (decision 0088). The native backends do not read
-standard input yet (XO1201, planned).
+for the next read (decision 0088). The native backends read standard
+input the same way (decision 0102); a test binary's standard input is
+empty there.
 
 ### 3.7 Proc (`uses proc`)
 

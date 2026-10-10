@@ -223,6 +223,11 @@ func (s *fn) testCapCall(x *ast.CallExpr, ci *check.Call, key string) (*Value, b
 	case "Stdio.print", "Stdio.println", "Stdio.eprint", "Stdio.eprintln":
 		r := s.expr(ci.Recv)
 		return s.call(key, m.Builtin(KUnit), "", r, arg(0, strT)), true
+	case "Stdio.set_input":
+		// reads take the text (std/llrt/xo_stdin.c)
+		s.expr(ci.Recv)
+		s.rt("tw_set_input", nil, arg(0, strT))
+		return s.unit(), true
 	case "Stdio.output":
 		return s.rt("test_output", strT, s.cint(1)), true
 	case "Stdio.errors":
