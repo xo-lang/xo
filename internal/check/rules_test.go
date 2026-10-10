@@ -100,6 +100,11 @@ func TestResolution(t *testing.T) {
 			"rate-limit/a.xo": "pub fn one() -> Int { 1 }\n",
 			"main/main.xo":    "use example.com/app/rate-limit\n\nfn f() -> Int { rate_limit.one() }\n",
 		}},
+		{name: "dash in a middle segment", files: map[string]string{
+			"xo.mod":       "module github.com/xo-lang/app\nedition 2026\n",
+			"util/a.xo":    "pub fn one() -> Int { 1 }\n",
+			"main/main.xo": "use github.com/xo-lang/app/util\n\nfn f() -> Int { util.one() }\n",
+		}},
 		{name: "not pub", files: map[string]string{
 			"xo.mod":       "module example.com/app\nedition 2026\n",
 			"lib/a.xo":     "fn hidden() -> Int { 1 }\npub fn shown() -> Int { hidden() }\n",

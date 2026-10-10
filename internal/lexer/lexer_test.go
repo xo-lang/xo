@@ -101,6 +101,7 @@ func TestTokens(t *testing.T) {
 			"id:a += int:1 << int:2 >>= int:3 -> => .. ..= #{ } != == <= >= && || ! ~ ^ % &= |="},
 		{"semicolon is a terminator", "a; b", "id:a ; id:b ;"},
 		{"import path", "use std/http\nuse github.com/acme/rate-limit as rl", "use path:std/http ; use path:github.com/acme/rate-limit as id:rl ;"},
+		{"import path with dashed segments", "use github.com/xo-lang/xo-tools/v2_x.y", "use path:github.com/xo-lang/xo-tools/v2_x.y ;"},
 		{"bytes", `b"raw bytes\x00\xff"`, `bytes:b"raw bytes\x00\xff"{"raw bytes\x00\xff"} ;`},
 		{"raw string", `r"raw: no escapes \d+ ${x}"`, `raw:r"raw: no escapes \d+ ${x}"{"raw: no escapes \\d+ ${x}"} ;`},
 		{"raw hash string", `r#"may contain "quotes": {"a": 1}"#`, `raw:r#"may contain "quotes": {"a": 1}"#{"may contain \"quotes\": {\"a\": 1}"} ;`},

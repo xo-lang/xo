@@ -994,6 +994,11 @@ use github.com/acme/billing/invoice
   version suffix of a module path is skipped (`use github.com/acme/tick/v2`
   binds `tick`). If the result is
   still not a valid identifier, or is a keyword, `as` is required (`XO0602`).
+- A path is segments of ASCII letters, digits, `_`, `-`, and `.` separated
+  by `/` (`PathSeg`, section 15). Only the last segment becomes the local
+  name, so dashes elsewhere need nothing (`use github.com/xo-lang/xo/lexer`
+  binds `lexer`). A leading or trailing `/` or an empty segment is
+  `XO0158`.
 - Imports are explicit. There is no dot import or glob import.
 - Cyclic module imports are an error.
 
@@ -2453,6 +2458,8 @@ UseDecl     = "use" ImportPath [ "as" ident ]
             | "use" "c" string { "link" string } [ "as" ident ]
               [ "uses" ( "none" | Effect { "," Effect } ) ] .       // 4.5
 ImportPath  = PathSeg { "/" PathSeg } .               // std/http, github.com/acme/x
+PathSeg     = PathChar { PathChar } .                 // xo-lang, rate-limit, v2, example.com
+PathChar    = letter | digit | "_" | "-" | "." .      // ASCII only; no empty segment (XO0158)
 TopDecl     = { DocComment } [ "pub" ] ( FnDecl | StructDecl | EnumDecl | IfaceDecl
             | TypeDecl | ConstDecl ) | TestDecl .
 

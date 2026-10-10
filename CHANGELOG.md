@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Spec: the grammar defines `PathSeg` (ASCII letters, digits, `_`, `-`,
+  `.`), matching the lexer; section 4.1 states that dashes outside the
+  last segment need nothing (`use github.com/xo-lang/xo/lexer`). No
+  behavior change.
 - Native TLS: ECDSA P-256 signing and verification run on fiat-crypto's
   verified field arithmetic (vendored at a pinned commit,
   `third_party/fiat-crypto`, decision 0132) instead of Mbed TLS's bignum
