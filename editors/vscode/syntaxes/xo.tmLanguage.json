@@ -1,0 +1,394 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Xo",
+  "scopeName": "source.xo",
+  "fileTypes": ["xo"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#use" },
+    { "include": "#strings" },
+    { "include": "#runes" },
+    { "include": "#numbers" },
+    { "include": "#declarations" },
+    { "include": "#uses-clause" },
+    { "include": "#keywords" },
+    { "include": "#contextual" },
+    { "include": "#predeclared" },
+    { "include": "#names" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.xo",
+          "begin": "///",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.xo" } },
+          "end": "$"
+        },
+        {
+          "name": "comment.line.double-slash.xo",
+          "begin": "//",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.xo" } },
+          "end": "$"
+        }
+      ]
+    },
+    "use": {
+      "comment": "use std/http, use github.com/a/b as c (core 1.4, 8)",
+      "match": "^\\s*(use)\\s+([A-Za-z0-9_.\\-/]+)(?:\\s+(as)\\s+([a-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": { "name": "keyword.other.use.xo" },
+        "2": { "name": "string.unquoted.import-path.xo" },
+        "3": { "name": "keyword.other.as.xo" },
+        "4": { "name": "entity.name.namespace.xo" }
+      }
+    },
+    "strings": {
+      "patterns": [
+        { "include": "#string-triple" },
+        { "include": "#string-raw" },
+        { "include": "#string-bytes" },
+        { "include": "#string-plain" }
+      ]
+    },
+    "string-triple": {
+      "name": "string.quoted.triple.xo",
+      "begin": "\"\"\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.xo" } },
+      "end": "\"\"\"",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xo" } },
+      "patterns": [
+        { "include": "#string-escapes" },
+        { "include": "#interpolation" }
+      ]
+    },
+    "string-raw": {
+      "comment": "r\"...\" and r#\"...\"# with any number of hashes; no escapes, no interpolation",
+      "name": "string.quoted.raw.xo",
+      "begin": "\\b(r)(#*)\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.xo" },
+        "1": { "name": "storage.type.string.xo" }
+      },
+      "end": "\"\\2",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xo" } }
+    },
+    "string-bytes": {
+      "name": "string.quoted.double.bytes.xo",
+      "begin": "\\b(b)\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.xo" },
+        "1": { "name": "storage.type.string.xo" }
+      },
+      "end": "\"",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xo" } },
+      "patterns": [{ "include": "#string-escapes" }]
+    },
+    "string-plain": {
+      "name": "string.quoted.double.xo",
+      "begin": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.xo" } },
+      "end": "\"",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xo" } },
+      "patterns": [
+        { "include": "#string-escapes" },
+        { "include": "#interpolation" }
+      ]
+    },
+    "string-escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.xo",
+          "match": "\\\\(?:[ntr0\\\\\"'$]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})"
+        },
+        {
+          "name": "invalid.illegal.escape.xo",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.xo",
+      "begin": "\\$\\{",
+      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.xo" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.xo" } },
+      "contentName": "source.xo.embedded",
+      "patterns": [
+        { "include": "#braces" },
+        { "include": "$self" }
+      ]
+    },
+    "braces": {
+      "begin": "\\{",
+      "beginCaptures": { "0": { "name": "punctuation.section.braces.begin.xo" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.braces.end.xo" } },
+      "patterns": [
+        { "include": "#braces" },
+        { "include": "$self" }
+      ]
+    },
+    "runes": {
+      "name": "string.quoted.single.rune.xo",
+      "match": "'(?:\\\\(?:[ntr0\\\\\"'$]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})|[^\\\\'\\n])'",
+      "captures": {
+        "0": {
+          "patterns": [{ "include": "#string-escapes" }]
+        }
+      }
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "Duration literal: integer followed by ns, us, ms, s, m, h (core 1.6)",
+          "name": "constant.numeric.duration.xo",
+          "match": "\\b[0-9][0-9_]*(?:ns|us|ms|s|m|h)\\b"
+        },
+        {
+          "name": "constant.numeric.hex.xo",
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.xo",
+          "match": "\\b0[oO][0-7_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.xo",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.xo",
+          "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*(?:[eE][+-]?[0-9_]+)?|[eE][+-]?[0-9_]+)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.xo",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "fn name, fn name[T]",
+          "match": "\\b(fn)\\s+([a-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.xo" },
+            "2": { "name": "entity.name.function.xo" }
+          }
+        },
+        {
+          "comment": "method: fn (recv: T) name",
+          "begin": "\\b(fn)\\s*(\\()(?=[^)]*\\)\\s*(?!uses\\b)[a-z_])",
+          "beginCaptures": {
+            "1": { "name": "storage.type.function.xo" },
+            "2": { "name": "punctuation.section.parens.begin.xo" }
+          },
+          "end": "(\\))\\s*([a-z_][A-Za-z0-9_]*)",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.parens.end.xo" },
+            "2": { "name": "entity.name.function.method.xo" }
+          },
+          "patterns": [{ "include": "$self" }]
+        },
+        {
+          "match": "\\b(struct|enum|interface|type)\\s+([A-Z][A-Za-z0-9]*)",
+          "captures": {
+            "1": { "name": "storage.type.$1.xo" },
+            "2": { "name": "entity.name.type.xo" }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.const.xo" },
+            "2": { "name": "variable.other.constant.xo" }
+          }
+        },
+        {
+          "match": "\\b(let|var)\\s+([a-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.$1.xo" },
+            "2": { "name": "variable.other.declaration.xo" }
+          }
+        },
+        {
+          "comment": "test \"name\" seed 42",
+          "match": "\\b(test)\\b(?=\\s*\")",
+          "captures": { "1": { "name": "keyword.other.test.xo" } }
+        }
+      ]
+    },
+    "uses-clause": {
+      "comment": "uses net, fs.read, fx: effect labels and effect variables (core 6)",
+      "begin": "\\b(uses)\\b",
+      "beginCaptures": { "1": { "name": "keyword.other.uses.xo" } },
+      "end": "(?=[{}()\\[\\]=;]|->|$|\\b(?:requires|ensures|invariant)\\b)",
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#effects" },
+        {
+          "name": "variable.parameter.effect.xo",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        },
+        { "include": "#punctuation" }
+      ]
+    },
+    "effects": {
+      "name": "support.constant.effect.xo",
+      "match": "\\b(?:net(?:\\.(?:dial|listen))?|fs(?:\\.(?:read|write))?|clock|rand|env|proc|stdio|ffi)\\b"
+    },
+    "keywords": {
+      "comment": "The 28 keywords of core 1.4. editors/vscode/grammar_test.go checks this set against internal/token.",
+      "patterns": [
+        {
+          "name": "keyword.control.xo",
+          "match": "\\b(?:break|continue|defer|else|for|if|in|match|return|scope|select|while)\\b"
+        },
+        {
+          "name": "keyword.other.contract.xo",
+          "match": "\\b(?:requires|ensures|invariant)\\b"
+        },
+        {
+          "name": "keyword.other.xo",
+          "match": "\\b(?:as|test|use|uses)\\b"
+        },
+        {
+          "name": "storage.modifier.pub.xo",
+          "match": "\\bpub\\b"
+        },
+        {
+          "name": "storage.type.xo",
+          "match": "\\b(?:const|enum|fn|interface|let|struct|type|var)\\b"
+        }
+      ]
+    },
+    "contextual": {
+      "comment": "Contextual words (core 1.4), highlighted only in the position that gives them meaning.",
+      "patterns": [
+        {
+          "match": "(?<=\\})\\s*(derive)\\b",
+          "captures": { "1": { "name": "keyword.other.derive.xo" } }
+        },
+        {
+          "match": "\\b(with)\\s*(?=\\{)",
+          "captures": { "1": { "name": "keyword.other.with.xo" } }
+        },
+        {
+          "match": "(?<=\\()\\s*(from)\\s+(?=[A-Za-z_])",
+          "captures": { "1": { "name": "keyword.other.from.xo" } }
+        },
+        {
+          "match": "(?<=\")\\s+(seed)\\b",
+          "captures": { "1": { "name": "keyword.other.seed.xo" } }
+        },
+        {
+          "match": "^\\s*(after)\\b(?=\\s+[^\\s=:,)])",
+          "captures": { "1": { "name": "keyword.control.after.xo" } }
+        },
+        {
+          "match": "(?<=[\\w)\\]])\\s+(is)\\s+(?=[A-Z])",
+          "captures": { "1": { "name": "keyword.operator.is.xo" } }
+        },
+        {
+          "match": "\\b(old)\\s*(?=\\()",
+          "captures": { "1": { "name": "support.function.builtin.old.xo" } }
+        }
+      ]
+    },
+    "predeclared": {
+      "comment": "Predeclared names (core 1.4) and builtin types (core 2.1); kept in step with protectedNames in internal/check/decl.go.",
+      "patterns": [
+        {
+          "name": "constant.language.boolean.xo",
+          "match": "\\b(?:true|false)\\b"
+        },
+        {
+          "name": "constant.language.none.xo",
+          "match": "\\bNone\\b"
+        },
+        {
+          "name": "support.function.variant.xo",
+          "match": "\\b(?:Some|Ok|Err)\\b"
+        },
+        {
+          "name": "variable.language.self.xo",
+          "match": "\\bself\\b"
+        },
+        {
+          "name": "variable.language.target.xo",
+          "match": "\\btarget\\b"
+        },
+        {
+          "name": "support.function.builtin.xo",
+          "match": "\\b(?:fault|dbg|expect)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "keyword.other.hole.xo",
+          "match": "\\?\\?\\?"
+        },
+        {
+          "name": "support.type.builtin.xo",
+          "match": "\\b(?:Bool|Int|Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Float|Float32|Rune|Str|Bytes|Duration|Time|List|Map|Set|Buf|Chan|Mutex|Atomic|Secret|Option|Result|Never|StrBuilder|BytesBuilder)\\b"
+        },
+        {
+          "name": "support.type.interface.xo",
+          "match": "\\b(?:Display|Error|Debug|Eq|Hash|Ord|Json|OpenApi|Proto|SqlRow|Os|Net|Fs|Clock|Rand|Env|Proc|Stdio)\\b"
+        }
+      ]
+    },
+    "names": {
+      "patterns": [
+        {
+          "comment": "UPPER_SNAKE constants (core 1.5); two or more characters so a type parameter T stays a type",
+          "name": "variable.other.constant.xo",
+          "match": "\\b[A-Z][A-Z0-9_]*[A-Z0-9_]\\b(?![a-z])"
+        },
+        {
+          "name": "entity.name.type.xo",
+          "match": "\\b[A-Z][A-Za-z0-9]*\\b"
+        },
+        {
+          "comment": "call: name(...) or name[T](...)",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\(|\\[[^\\]\\n]*\\]\\s*\\()",
+          "captures": { "1": { "name": "entity.name.function.call.xo" } }
+        },
+        {
+          "comment": "named argument or struct field label: name: (not :: or a type annotation after let)",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=:(?!:))",
+          "captures": { "1": { "name": "variable.other.property.xo" } }
+        },
+        {
+          "name": "variable.other.xo",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.xo", "match": "->|=>" },
+        { "name": "keyword.operator.range.xo", "match": "\\.\\.=?" },
+        { "name": "keyword.operator.coalesce.xo", "match": "\\?\\?" },
+        { "name": "keyword.operator.try.xo", "match": "\\?" },
+        { "name": "keyword.operator.assignment.compound.xo", "match": "(?:<<|>>|[-+*/%&|^])=" },
+        { "name": "keyword.operator.comparison.xo", "match": "==|!=|<=|>=" },
+        { "name": "keyword.operator.logical.xo", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.bitwise.xo", "match": "<<|>>|[&|^~]" },
+        { "name": "keyword.operator.comparison.xo", "match": "[<>]" },
+        { "name": "keyword.operator.assignment.xo", "match": "=" },
+        { "name": "keyword.operator.arithmetic.xo", "match": "[-+*/%]" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.definition.set.begin.xo", "match": "#\\{" },
+        { "name": "punctuation.separator.comma.xo", "match": "," },
+        { "name": "punctuation.separator.colon.xo", "match": ":" },
+        { "name": "punctuation.accessor.dot.xo", "match": "\\." },
+        { "name": "punctuation.terminator.xo", "match": ";" }
+      ]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 // Command xo is the xo toolchain. P1 implements `xo parse`, `xo check`,
 // `xo build`, `xo run`, `xo test`, `xo bind`, `xo fmt`, `xo fix`, `xo vet`,
 // `xo query`, `xo edit`, `xo doc`, `xo explain`, `xo dump`, `xo replay`, `xo mcp`,
-// `xo serve`, and `xo version`.
+// `xo lsp`, `xo serve`, and `xo version`.
 package main
 
 import (
@@ -133,6 +133,11 @@ commands:
       Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one
       message per line) with the tools check, query, edit, explain, fmt, test,
       and build, each returning compact JSON.
+  lsp
+      Language Server Protocol server on stdin/stdout (LSP 3.17) for
+      editors: diagnostics with quick fixes, hover, definition, references,
+      rename, document symbols, semantic tokens, and formatting. The
+      VS Code extension in editors/vscode starts it.
   serve [--socket=path] [stop|status]
       Keep checked programs in memory and answer xo check and xo query over
       a unix socket (default $XO_SERVE_SOCKET or <user cache dir>/xo/
@@ -236,6 +241,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runReplay(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCP(args[1:], os.Stdin, stdout, stderr)
+	case "lsp":
+		return runLSP(args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "version", "--version":

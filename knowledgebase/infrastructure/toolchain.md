@@ -91,6 +91,7 @@ go test ./internal/edit -run TestGolden -update          # rewrite internal/edit
 go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs from doc comments
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
 go run ./cmd/xo mcp                                              # MCP server on stdio for agents (see "Agent interfaces")
+go run ./cmd/xo lsp                                              # LSP server on stdio for editors (see editors.md)
 go run ./cmd/xo serve [--socket=path] [stop|status]              # resident checker; check and query use it when it answers
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
@@ -735,8 +736,9 @@ Last verified: 2026-10-07
 ```
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
-                        `xo mcp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go)
+                        `xo mcp`, `xo lsp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go)
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
+editors/vscode/          VS Code extension (TextMate grammar, Markdown injection, xo lsp client); see editors.md
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments; dump.go: the canonical token dump shared with selfhost/lexer
@@ -750,6 +752,7 @@ internal/fix/           `xo fix`: the check fix loop and the migration rewriter 
 internal/query/         `xo query` over a check run; Surface is shared with internal/doc
 internal/edit/          `xo edit`: rename, add-field, change-sig through resolved symbols
 internal/mcp/           `xo mcp`: MCP (JSON-RPC 2.0 over stdio) tools check, query, explain, fmt, test, build
+internal/lsp/           `xo lsp`: LSP 3.17 over stdio; rechecks open documents as a check overlay (editors.md)
 internal/serve/         `xo serve`: unix socket server, cache of checked sessions keyed by file mtimes
 internal/doc/           `xo doc` Markdown and JSON documentation
 internal/gen/           Go code generation with //line directives (see "Code generation")

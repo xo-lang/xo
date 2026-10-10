@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo lsp` (decision 0114): a Language Server Protocol server with
+  diagnostics and their fixes as quick fixes, hover (signature, doc, or
+  type), definition (into std too), references, rename, document
+  symbols, semantic tokens, and formatting. The VS Code extension starts
+  it; ```xo fences in Markdown are highlighted.
+- VS Code syntax highlighting (decision 0113): `editors/vscode/` registers
+  `.xo` files with a TextMate grammar covering spec section 1 (keywords,
+  contextual words, interpolation, raw and bytes strings, durations, sets,
+  effects in `uses`). Install by symlinking it into `~/.vscode/extensions`.
 - Native backends (decisions 0107 to 0109): `Proc.run`, `os.tasks` (a
   scope around main and around each test), method values
   (`let f = x.method`), `map_concurrent_until`, base64,

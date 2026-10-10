@@ -1,0 +1,84 @@
+{
+  "name": "xo",
+  "displayName": "Xo",
+  "description": "Xo language support: syntax highlighting and the xo lsp language server.",
+  "version": "0.0.1",
+  "publisher": "xo-lang",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:xo"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "xo",
+        "aliases": [
+          "Xo",
+          "xo"
+        ],
+        "extensions": [
+          ".xo"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "xo",
+        "scopeName": "source.xo",
+        "path": "./syntaxes/xo.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.xo.codeblock",
+        "path": "./syntaxes/xo.markdown.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.xo": "xo"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Xo",
+      "properties": {
+        "xo.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the xo binary. Empty: .tools/bin/xo in a workspace folder, else xo on PATH."
+        },
+        "xo.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start xo lsp for diagnostics, hover, definition, references, rename, semantic highlighting, and formatting."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "xo.restartServer",
+        "title": "Xo: Restart Language Server"
+      }
+    ],
+    "configurationDefaults": {
+      "[xo]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    }
+  },
+  "scripts": {
+    "test": "vscode-tmgrammar-test -g syntaxes/xo.tmLanguage.json 'test/*.xo'"
+  },
+  "devDependencies": {
+    "vscode-tmgrammar-test": "0.1.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  }
+}

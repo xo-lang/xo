@@ -1,0 +1,101 @@
+// SYNTAX TEST "source.xo" "Xo lexical structure (spec/core.md section 1)"
+use std/http
+// <--- keyword.other.use.xo
+//  ^^^^^^^^ string.unquoted.import-path.xo
+
+/// Doc comment
+// <--- comment.line.documentation.xo
+
+const PURGE_EVERY = 1m
+// <----- storage.type.const.xo
+//    ^^^^^^^^^^^ variable.other.constant.xo
+//                  ^^ constant.numeric.duration.xo
+
+pub struct User {
+// <--- storage.modifier.pub.xo
+//  ^^^^^^ storage.type.struct.xo
+//         ^^^^ entity.name.type.xo
+  id: Int
+//^^ variable.other.property.xo
+//    ^^^ support.type.builtin.xo
+} derive Json, SqlRow
+//^^^^^^ keyword.other.derive.xo
+//       ^^^^ support.type.interface.xo
+
+enum ApiErr {
+  Db(from sql.SqlErr)
+//   ^^^^ keyword.other.from.xo
+}
+
+fn (e: ApiErr) status() -> Int {
+// <-- storage.type.function.xo
+//             ^^^^^^ entity.name.function.method.xo
+//                      ^^ keyword.operator.arrow.xo
+  match e {
+//^^^^^ keyword.control.xo
+    Unauthorized => 401
+//               ^^ keyword.operator.arrow.xo
+//                  ^^^ constant.numeric.integer.xo
+  }
+}
+
+fn serve(f: fn(Int) -> Str uses net) -> Int ! ApiErr uses net, fs.read, fx {
+// <-- storage.type.function.xo
+// ^^^^^ entity.name.function.xo
+//          ^^ storage.type.xo
+//                         ^^^^ keyword.other.uses.xo
+//                              ^^^ support.constant.effect.xo
+//                                                   ^^^^ keyword.other.uses.xo
+//                                                        ^^^ support.constant.effect.xo
+//                                                             ^^^^^^^ support.constant.effect.xo
+//                                                                      ^^ variable.parameter.effect.xo
+  let clock = 1
+//    ^^^^^ variable.other.declaration.xo
+  let s = "hi ${name + "!"} \$5 {id}"
+//        ^^^^ string.quoted.double.xo
+//            ^^ punctuation.section.interpolation.begin.xo
+//              ^^^^ variable.other.xo
+//                     ^^^ string.quoted.double.xo
+//                        ^ punctuation.section.interpolation.end.xo
+//                          ^^ constant.character.escape.xo
+//                             ^^^^ string.quoted.double.xo
+  let m = "${ {"a": 1}["a"] }"
+//                          ^ punctuation.section.interpolation.end.xo
+//                           ^ string.quoted.double.xo punctuation.definition.string.end.xo
+  let r = r#"raw "quoted" ${no}"#
+//        ^^^^^^^^^^^^^^^^^^^^^^^ string.quoted.raw.xo
+  let b = b"\x00"
+//        ^ storage.type.string.xo
+//          ^^^^ constant.character.escape.xo
+  let c = '\n'
+//        ^^^^ string.quoted.single.rune.xo
+  let set = #{1, 0xff, 1_000, 3.14, 1e-9}
+//          ^^ punctuation.definition.set.begin.xo
+//               ^^^^ constant.numeric.hex.xo
+//                     ^^^^^ constant.numeric.integer.xo
+//                            ^^^^ constant.numeric.float.xo
+//                                  ^^^^ constant.numeric.float.xo
+  let u = user with {name: "b"}
+//             ^^^^ keyword.other.with.xo
+  let v = x ?? Some(1)?
+//          ^^ keyword.operator.coalesce.xo
+//             ^^^^ support.function.variant.xo
+//                    ^ keyword.operator.try.xo
+  for i in 0..=9 {
+//^^^ keyword.control.xo
+//      ^^ keyword.control.xo
+//          ^^^ keyword.operator.range.xo
+    ???
+//  ^^^ keyword.other.hole.xo
+  }
+  None
+//^^^^ constant.language.none.xo
+}
+
+test "health needs no token" seed 42 {
+// <---- keyword.other.test.xo
+//                           ^^^^ keyword.other.seed.xo
+  expect(resp.status) == 200
+//^^^^^^ support.function.builtin.xo
+//                    ^^ keyword.operator.comparison.xo
+}
