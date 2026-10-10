@@ -979,6 +979,7 @@ func (c *checker) placeType(e ast.Expr) Type {
 			return c.infer(x, nil)
 		}
 		c.identObj[x] = v
+		c.rec.name(x, v)
 		c.exprType[x] = v.Type
 		return v.Type
 	case *ast.SelectorExpr:

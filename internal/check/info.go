@@ -24,6 +24,25 @@ type records struct {
 	paramVars  map[*FuncObj][]*VarObj
 	invVars    map[*TypeObj][]*VarObj
 	closureVar map[*ast.FnLit][]*VarObj
+	// names is what each identifier resolved to by name lookup, for the
+	// names section of `xo typedump` (dump.go, decision 0139).
+	names map[*ast.Ident]nameRef
+}
+
+// nameRef is the object an identifier names: *VarObj, *FuncObj,
+// *ConstObj, *TypeObj, *TParam, or *Module (an import).
+type nameRef struct {
+	obj any
+	// call marks the callee of a call `T(...)`, where a prelude type
+	// name may instead have been a variant of the expected enum.
+	call bool
+}
+
+// name records that id names obj.
+func (r *records) name(id *ast.Ident, obj any) {
+	if id != nil && obj != nil {
+		r.names[id] = nameRef{obj: obj}
+	}
 }
 
 func newRecords() *records {
@@ -43,6 +62,7 @@ func newRecords() *records {
 		paramVars:  map[*FuncObj][]*VarObj{},
 		invVars:    map[*TypeObj][]*VarObj{},
 		closureVar: map[*ast.FnLit][]*VarObj{},
+		names:      map[*ast.Ident]nameRef{},
 	}
 }
 

@@ -267,6 +267,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runLexDump(args[1:], stdout, stderr)
 	case "astdump": // hidden: canonical syntax tree dump, compared with selfhost/parser
 		return runASTDump(args[1:], stdout, stderr)
+	case "typedump": // hidden: canonical checker dump, compared with selfhost/check
+		return runTypeDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

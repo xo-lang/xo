@@ -46,6 +46,7 @@ func (c *checker) visibleValueNames() []string {
 func (c *checker) useVar(id *ast.Ident, v *VarObj) Type {
 	v.Used = true
 	c.identObj[id] = v
+	c.rec.name(id, v)
 	return v.Type
 }
 
@@ -122,9 +123,11 @@ func (c *checker) ident(x *ast.Ident, hint Type) Type {
 	switch o := c.lookupModuleObj(c.mod, name).(type) {
 	case *FuncObj:
 		c.rec.ref[x] = o
+		c.rec.name(x, o)
 		return c.funcValue(o, nil, x.Sp)
 	case *ConstObj:
 		c.rec.ref[x] = o
+		c.rec.name(x, o)
 		return c.constType(o)
 	case *TypeObj:
 		d := c.errorf(diag.WrongKind, x.Sp, "`%s` is a type, not a value", name)
@@ -256,9 +259,11 @@ func (c *checker) selector(x *ast.SelectorExpr, hint Type) Type {
 	if id, ok := x.X.(*ast.Ident); ok && c.lookupLocal(id.Name) == nil {
 		if imp := c.file.Imports[id.Name]; imp != nil {
 			imp.Used = true
+			c.rec.name(id, imp.Module)
 			return c.moduleMember(imp, x, nil, hint)
 		}
 		if id.Name == "testing" && c.inTestContext() {
+			c.rec.name(id, c.modules["std/testing"])
 			return c.moduleMember(&Import{Name: "testing", Module: c.modules["std/testing"]}, x, nil, hint)
 		}
 	}
@@ -294,9 +299,11 @@ func (c *checker) moduleMember(imp *Import, x *ast.SelectorExpr, targs []Type, h
 	switch ob := o.(type) {
 	case *FuncObj:
 		c.rec.ref[x] = ob
+		c.rec.name(x.Sel, ob)
 		return c.funcValue(ob, targs, x.Sp)
 	case *ConstObj:
 		c.rec.ref[x] = ob
+		c.rec.name(x.Sel, ob)
 		return c.constType(ob)
 	case *TypeObj:
 		c.errorf(diag.WrongKind, x.Sp, "`%s.%s` is a type, not a value", imp.Name, name)
@@ -577,12 +584,14 @@ func (c *checker) typeArgsValue(x *ast.TypeArgsExpr, hint Type) Type {
 	switch f := x.X.(type) {
 	case *ast.Ident:
 		if fo, ok := c.lookupModuleObj(c.mod, f.Name).(*FuncObj); ok && c.lookupLocal(f.Name) == nil {
+			c.rec.name(f, fo)
 			return c.funcValue(fo, targs, x.Sp)
 		}
 	case *ast.SelectorExpr:
 		if id, ok := f.X.(*ast.Ident); ok && c.lookupLocal(id.Name) == nil {
 			if imp := c.file.Imports[id.Name]; imp != nil {
 				imp.Used = true
+				c.rec.name(id, imp.Module)
 				return c.moduleMember(imp, f, targs, hint)
 			}
 		}
@@ -670,10 +679,13 @@ func (c *checker) callIdent(x *ast.CallExpr, id *ast.Ident, targs []Type, hint T
 	}
 	switch o := c.lookupModuleObj(c.mod, name).(type) {
 	case *FuncObj:
+		c.rec.name(id, o)
 		return c.callFunc(o, nil, targs, x, hint, nil)
 	case *TypeObj:
+		c.rec.names[id] = nameRef{obj: o, call: true}
 		return c.typeCall(o, targs, x, hint)
 	case *ConstObj:
+		c.rec.name(id, o)
 		return c.callValue(c.constType(o), x, hint, name)
 	}
 	if name == "spawn" || name == "spawn_background" || name == "go" {
@@ -729,6 +741,7 @@ func (c *checker) callSelector(x *ast.CallExpr, sel *ast.SelectorExpr, targs []T
 				c.inferArgs(x)
 				return badType
 			}
+			c.rec.name(id, imp.Module)
 			o := imp.Module.Scope[sel.Sel.Name]
 			if o == nil {
 				if c.goSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) || c.cSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) {
@@ -747,6 +760,7 @@ func (c *checker) callSelector(x *ast.CallExpr, sel *ast.SelectorExpr, targs []T
 			if !c.pubIn(o, imp.Module) {
 				c.errorf(diag.NotVisible, sel.Sel.Sp, "`%s` is not `pub` in module `%s`", sel.Sel.Name, imp.Module.Path)
 			}
+			c.rec.name(sel.Sel, o)
 			switch ob := o.(type) {
 			case *FuncObj:
 				return c.callFunc(ob, nil, targs, x, hint, nil)
