@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -84,6 +85,33 @@ type frameInfo struct {
 	leaf                                            bool
 }
 
+// outArgBytes is the size of the stack argument area of the calls: the
+// stack arguments, and the result words past the registers, which the
+// callee stores in the same area.
+func (s *fstate) outArgBytes() int {
+	out := 0
+	for _, b := range s.order {
+		for _, in := range b.insts {
+			if in.kind == iCall {
+				n := 0
+				for _, l := range append(s.abiLocs(in.srcs), s.abiLocs(regs(in.defs...))...) {
+					if l.reg < 0 {
+						n = max(n, l.slot+1)
+					}
+				}
+				out = max(out, 8*n)
+			}
+		}
+	}
+	return out
+}
+
+// frameBound is an upper bound of the frame emit lays out with saved
+// callee saved registers.
+func (s *fstate) frameBound(saved int) int {
+	return s.outArgBytes() + 16 + 8 + 8*s.slots + 8*saved + 16
+}
+
 func align16(n int) int { return (n + 15) &^ 15 }
 
 func (s *fstate) label(b *mblock) string {
@@ -108,24 +136,7 @@ func (s *fstate) emit() {
 		s.goEmit()
 		return
 	}
-	fr := &frameInfo{}
-	for _, b := range s.order {
-		for _, in := range b.insts {
-			if in.kind == iCall {
-				n := 0
-				// stack arguments, and the result words past the
-				// registers, which the callee stores in the same area
-				for _, l := range append(s.abiLocs(in.srcs), s.abiLocs(regs(in.defs...))...) {
-					if l.reg < 0 {
-						n = max(n, l.slot+1)
-					}
-				}
-				if 8*n > fr.outArgs {
-					fr.outArgs = 8 * n
-				}
-			}
-		}
-	}
+	fr := &frameInfo{outArgs: s.outArgBytes()}
 	calls := false
 	for _, b := range s.order {
 		for _, in := range b.insts {
@@ -149,14 +160,27 @@ func (s *fstate) emit() {
 		fr.rec = align16(fr.saveBase + 8*len(s.saved))
 		fr.size = fr.rec + 16
 	}
+	if s.base != 0 {
+		// a far frame: the saved registers and the frame record below
+		// the spill slots, within reach of sp; the slots past it are
+		// addressed through x28 (farSlots)
+		fr.outOff = fr.outArgs
+		fr.saveBase = fr.outOff
+		if s.out {
+			fr.saveBase += 8
+		}
+		fr.rec = align16(fr.saveBase + 8*len(s.saved))
+		fr.spillBase = fr.rec + 16
+		fr.size = align16(fr.spillBase + 8*s.slots)
+	}
 	if fr.leaf {
 		fr.size = 0
 	}
-	if fr.size > maxFrame {
+	if fr.size > maxFrame && s.base == 0 || fr.size >= maxFarFrame || fr.rec+16 > maxFrame {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
 	b := &strings.Builder{}
-	defer func() { g.text.WriteString(s.farTests(pairLoads(b.String()))) }()
+	defer func() { g.text.WriteString(s.farTests(s.farSlots(pairLoads(b.String())))) }()
 	fmt.Fprintf(b, "// func %s\n", s.f.Name)
 	g.funcHeader(b, g.fname(s.f.Name), false)
 	pads := false
@@ -267,21 +291,107 @@ func (s *fstate) farTests(text string) string {
 	return b.String()
 }
 
-// maxFrame is the largest frame a function may have: every spill slot
-// and saved register, and 4 KiB of incoming stack arguments past them,
-// is then within reach of a scaled 12 bit `ldr`/`str`
-// offset from sp (32760 bytes). Frames past one page are probed
+// maxFrame is the largest frame whose every spill slot and saved
+// register, and 4 KiB of incoming stack arguments past them, is within
+// reach of a scaled 12 bit `ldr`/`str` offset from sp (32760 bytes).
+// A larger frame keeps x28 free (regalloc) and addresses what is past
+// that reach through it (farSlots). Frames past one page are probed
 // (probeSP).
 const maxFrame = 28672
+
+// farBase is the register of the addresses of a far frame's slots.
+const farBase = 28
+
+// maxFarFrame bounds a frame by what `add x28, sp, #hi, lsl #12` and
+// `add x28, x28, #lo` reach (16 MiB); the default stack is 8 MiB.
+const maxFarFrame = 1 << 24
+
+// farSlots rewrites the sp relative loads and stores of a far frame
+// whose offset is past the instruction's reach (spill slots, incoming
+// stack arguments) to go through x28: `ldr x9, [sp, #40968]` is `add
+// x28, sp, #10, lsl #12` and `ldr x9, [x28, #8]`. x28 holds nothing
+// else in such a function (regalloc keeps it free and the prologue
+// saves it); its own save is within reach.
+func (s *fstate) farSlots(text string) string {
+	if s.base == 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	var b strings.Builder
+	for i, l := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		m := spRefRE.FindStringSubmatch(l)
+		if m == nil {
+			b.WriteString(l)
+			continue
+		}
+		off, _ := strconv.Atoi(m[3])
+		scale, pair := memScale(m[1], m[2])
+		reach := 4095 * scale
+		if pair {
+			reach = 63 * scale
+		}
+		if off <= reach && off%scale == 0 {
+			b.WriteString(l)
+			continue
+		}
+		hi, lo := off&^4095, off&4095
+		fmt.Fprintf(&b, "\tadd x28, sp, #%d, lsl #12\n", hi>>12)
+		if lo > reach || lo%scale != 0 {
+			fmt.Fprintf(&b, "\tadd x28, x28, #%d\n", lo)
+			lo = 0
+		}
+		fmt.Fprintf(&b, "\t%s %s, [x28, #%d]", m[1], m[2], lo)
+	}
+	return b.String()
+}
+
+var spRefRE = regexp.MustCompile(`^\t(ldr|str|ldp|stp|ldrb|strb|ldrh|strh|ldrsw|ldrsb|ldrsh) ([^\[]+), \[sp, #([0-9]+)\]$`)
+
+// memScale returns the access size of a load or store of regs (the
+// scale of its offset), and whether it is a pair.
+func memScale(op, regs string) (int, bool) {
+	switch op {
+	case "ldrb", "strb", "ldrsb":
+		return 1, false
+	case "ldrh", "strh", "ldrsh":
+		return 2, false
+	case "ldrsw":
+		return 4, false
+	}
+	size := 8
+	switch regs[0] {
+	case 'w', 's':
+		size = 4
+	case 'q':
+		size = 16
+	case 'h':
+		size = 2
+	case 'b':
+		size = 1
+	}
+	return size, op == "ldp" || op == "stp"
+}
 
 // probePage is the stride of the stack probes: the smallest guard page
 // (4 KiB on Linux; a fiber stack has one guard page, std/llrt xo_rt.c).
 const probePage = 4096
 
+// probeUnroll is the most pages probeSP probes without a loop.
+const probeUnroll = 8
+
 // probeSP lowers sp by n, touching every page on the way when n is more
 // than one page, so a large frame cannot step over the guard page below
 // a fiber stack into another allocation (gotchas/arm64-large-frame.md).
-func probeSP(b *strings.Builder, n int) {
+// Past probeUnroll pages the probes are a loop counting in x16 (free in
+// a prologue), with loop the label of its head.
+func probeSP(b *strings.Builder, n int, loop string) {
+	if pages := (n - 1) / probePage; pages > probeUnroll {
+		fmt.Fprintf(b, "\tmov x16, #%d\n%s:\n\tsub sp, sp, #%d, lsl #12\n\tstr xzr, [sp]\n\tsubs x16, x16, #1\n\tb.ne %s\n", pages, loop, probePage>>12, loop)
+		n -= pages * probePage
+	}
 	for n > probePage {
 		fmt.Fprintf(b, "\tsub sp, sp, #%d, lsl #12\n\tstr xzr, [sp]\n", probePage>>12)
 		n -= probePage
@@ -306,7 +416,7 @@ func (s *fstate) prologue(b *strings.Builder, fr *frameInfo) {
 	if fr.rec == 0 && fr.size <= 504 {
 		fmt.Fprintf(b, "\tstp x29, x30, [sp, #-%d]!\n\tmov x29, sp\n", fr.size)
 	} else {
-		probeSP(b, fr.size)
+		probeSP(b, fr.size, s.g.local(fmt.Sprintf("f%d_probe", s.g.nfunc)))
 		if fr.rec <= 504 {
 			fmt.Fprintf(b, "\tstp x29, x30, [sp, #%d]\n", fr.rec)
 		} else {

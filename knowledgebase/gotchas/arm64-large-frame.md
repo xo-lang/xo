@@ -1,6 +1,6 @@
 # arm64: a frame over 4000 bytes or a wide value's helper failed to build
 
-Status: Observed (2026-10-10, selfhost/parser on `--backend=arm64`)
+Status: Observed (2026-10-10, selfhost/parser on `--backend=arm64`); fixed 2026-10-10 (decision 0144)
 
 Symptom: `xo build --backend=arm64 selfhost/parser` failed first with
 `arm64 backend: frame of Parser.parse_file too large (5120 bytes)`, then,
@@ -44,3 +44,16 @@ went back into `Obj` (`used`). A field of `Checker` grows the frame of
 every long method that copies or spills it, so a change to `Checker` must
 be built with `--backend=arm64` before it is committed
 (`TestSelfhostChecker` builds all three backends without `-short`).
+
+Fixed (2026-10-10, decision 0144): spilled values share a slot when
+their live ranges do not overlap, which took the largest frame of the
+self hosted checker from 28,176 to 6,448 bytes, and a frame past 28 KiB
+no longer fails: the function is allocated again with x28 kept free and
+every sp relative access past its reach goes through `add x28, sp, #hi,
+lsl #12` (test program `internal/arm64/testdata/run/huge_frame`, about
+36 KiB, `TestFarFrame`). The split `habit_*` functions and the `used`
+flag in `Obj` stay as they are: both read well, and neither is needed
+for the build any more. Building a change to `Checker` with
+`--backend=arm64` before committing is no longer required for frame
+size. Any new sp relative load or store form must be listed in
+`spRefRE` (emit.go) so a far frame rewrites it.

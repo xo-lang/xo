@@ -357,75 +357,105 @@ func (s *fstate) regalloc() {
 		return order[a] < order[b]
 	})
 	gpC, gpE, fpC, fpE := s.regSets()
-	occ := make([][]rng, 64)
-	for _, c := range calls {
-		if s.g.goMode {
-			// no register survives a call: the values live across one
-			// keep their registers and are saved around it (below)
-			break
+	var usedCallee map[int]bool
+	for {
+		occ := make([][]rng, 64)
+		if s.base != 0 {
+			// the base register of the frame's far slots (emit.go farSlots)
+			occ[s.base] = []rng{{0, 4*s.ninst + 3}}
 		}
-		for _, r := range gpC {
-			occ[r] = append(occ[r], rng{c, c})
-		}
-		for _, r := range fpC {
-			occ[r] = append(occ[r], rng{c, c})
-		}
-	}
-	for r := range occ {
-		occ[r] = mergeRanges(occ[r])
-	}
-	s.loc = make([]loc, n)
-	for v := range s.loc {
-		s.loc[v] = loc{reg: -1, slot: -1}
-	}
-	usedCallee := map[int]bool{}
-	for _, v := range order {
-		fp := s.fp[v]
-		var cands []int
-		for _, r := range fixed[v] {
-			if (r >= fpBase) == fp {
-				cands = append(cands, r)
+		for _, c := range calls {
+			if s.g.goMode {
+				// no register survives a call: the values live across one
+				// keep their registers and are saved around it (below)
+				break
+			}
+			for _, r := range gpC {
+				occ[r] = append(occ[r], rng{c, c})
+			}
+			for _, r := range fpC {
+				occ[r] = append(occ[r], rng{c, c})
 			}
 		}
-		for _, p := range partners[v] {
-			if r := s.loc[find(p)].reg; r >= 0 {
-				cands = append(cands, r)
-			}
+		for r := range occ {
+			occ[r] = mergeRanges(occ[r])
 		}
-		if fp {
-			cands = append(cands, fpC...)
-			cands = append(cands, fpE...)
-		} else {
-			cands = append(cands, gpC...)
-			cands = append(cands, gpE...)
+		s.loc = make([]loc, n)
+		for v := range s.loc {
+			s.loc[v] = loc{reg: -1, slot: -1}
 		}
-		chosen := -1
-		for _, r := range cands {
-			if overlaps(occ[r], ranges[v]) || (noCaller.has(v) && !isCallee(r)) {
-				continue
-			}
-			if !s.g.goMode && isCallee(r) && !usedCallee[r] {
-				// a callee saved register already saved before a fresh one
-				for _, r2 := range cands {
-					if isCallee(r2) && usedCallee[r2] && !overlaps(occ[r2], ranges[v]) {
-						r = r2
-						break
-					}
+		usedCallee = map[int]bool{}
+		s.slots = 0
+		var slotOcc [][]rng // the ranges each spill slot holds
+		for _, v := range order {
+			fp := s.fp[v]
+			var cands []int
+			for _, r := range fixed[v] {
+				if (r >= fpBase) == fp {
+					cands = append(cands, r)
 				}
 			}
-			chosen = r
+			for _, p := range partners[v] {
+				if r := s.loc[find(p)].reg; r >= 0 {
+					cands = append(cands, r)
+				}
+			}
+			if fp {
+				cands = append(cands, fpC...)
+				cands = append(cands, fpE...)
+			} else {
+				cands = append(cands, gpC...)
+				cands = append(cands, gpE...)
+			}
+			chosen := -1
+			for _, r := range cands {
+				if overlaps(occ[r], ranges[v]) || (noCaller.has(v) && !isCallee(r)) {
+					continue
+				}
+				if !s.g.goMode && isCallee(r) && !usedCallee[r] {
+					// a callee saved register already saved before a fresh one
+					for _, r2 := range cands {
+						if isCallee(r2) && usedCallee[r2] && !overlaps(occ[r2], ranges[v]) {
+							r = r2
+							break
+						}
+					}
+				}
+				chosen = r
+				break
+			}
+			if chosen < 0 {
+				// a spill slot no value live at the same time holds (first
+				// fit, like the registers): one slot per spilled value made
+				// long functions' frames grow with their length
+				// (gotchas/arm64-large-frame.md)
+				k := 0
+				for k < len(slotOcc) && overlaps(slotOcc[k], ranges[v]) {
+					k++
+				}
+				if k == len(slotOcc) {
+					slotOcc = append(slotOcc, nil)
+					s.slots++
+				}
+				slotOcc[k] = mergeRanges(append(slotOcc[k], ranges[v]...))
+				s.loc[v] = loc{reg: -1, slot: k}
+				continue
+			}
+			s.loc[v] = loc{reg: chosen}
+			if !s.g.goMode && isCallee(chosen) {
+				usedCallee[chosen] = true
+			}
+			occ[chosen] = mergeRanges(append(occ[chosen], ranges[v]...))
+		}
+		// a frame past the reach of an sp relative ldr or str: allocate
+		// again with x28 kept free, for the addresses of the far slots
+		if s.g.goMode || s.base != 0 || s.frameBound(len(usedCallee)) <= maxFrame {
 			break
 		}
-		if chosen < 0 {
-			s.loc[v] = loc{reg: -1, slot: s.slots}
-			s.slots++
-			continue
-		}
-		s.loc[v] = loc{reg: chosen}
-		if !s.g.goMode && isCallee(chosen) {
-			usedCallee[chosen] = true
-		}
-		occ[chosen] = mergeRanges(append(occ[chosen], ranges[v]...))
+		s.base = farBase
+	}
+	if s.base != 0 {
+		usedCallee[s.base] = true
 	}
 	if s.g.goMode {
 		// Go saves no register across a call: a value in a register

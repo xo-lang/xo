@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: spilled values share stack slots when their live
+  ranges do not overlap (frames of long functions shrink up to 8 times;
+  the self hosted checker's largest went from 28 KiB to 6.4 KiB), and a
+  frame past 28 KiB no longer fails to build: such a function addresses
+  its far slots through x28 (decision 0144).
 - The self hosted checker checks matches for exhaustiveness (stage 6 of
   decision 0141): XO0301 with the same missing patterns, refutable `let`
   and `for` patterns (XO0303), and the XO0305 warning, as internal/check

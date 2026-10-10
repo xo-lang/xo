@@ -42,6 +42,7 @@ type fstate struct {
 	order   []*mblock
 	ninst   int
 	slots   int
+	base    int // farBase when the frame is past maxFrame, or 0
 	saved   []int
 	outArgs int
 	frame   int
