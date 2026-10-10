@@ -23,6 +23,11 @@ fn (var c: Checker) run() {
       c.check_module(m)
     }
   }
+  for m in c.order {
+    if !c.mods[m].is_std {
+      c.check_unused_imports(m)
+    }
+  }
 }
 
 /// The dump of the root modules: names (if names) and diagnostics (if

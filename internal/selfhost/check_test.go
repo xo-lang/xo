@@ -73,7 +73,7 @@ func TestSelfhostCheckerNames(t *testing.T) {
 				if msg != "" {
 					fails = append(fails, msg)
 				}
-				fmt.Fprintf(&report, "%s %s %s\n", st.class(before), d, firstLine(got[d]))
+				fmt.Fprintf(&report, "%s %s %s %s\n", st.class(before), d, strings.Join(want[d].other, ","), firstLine(got[d]))
 			}
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
@@ -121,6 +121,7 @@ type goRun struct {
 	// accepted: no errors; onlyNames: every error is a nameDiag.
 	accepted, onlyNames bool
 	named               []string // the nameDiag lines
+	other               []string // the codes of the other errors
 }
 
 // goCheck checks dir with the Go checker.
@@ -136,6 +137,9 @@ func goCheck(dir string) *goRun {
 		if d.Severity == diag.Error {
 			r.accepted = false
 			r.onlyNames = r.onlyNames && isName
+			if !isName {
+				r.other = append(r.other, d.Code)
+			}
 		}
 		if isName {
 			named = append(named, d)
@@ -262,8 +266,9 @@ func splitDiags(dump string) (string, []string) {
 // nameDiagRE matches the diagnostics of name resolution that the names
 // stage reproduces (decision 0139). A bare UpperCamel name may be a
 // variant of the expected enum, so its XO0601 belongs to the types stage.
-var nameDiagRE = regexp.MustCompile("^" + `\{"code":"(XO0601|XO0603|XO0604|XO0605)",.*"message":"(` + strings.Join([]string{
+var nameDiagRE = regexp.MustCompile("^" + `\{"code":"(XO0110|XO0601|XO0603|XO0604|XO0605)",.*"message":"(` + strings.Join([]string{
 	"(name|function) `[a-z_][A-Za-z0-9_]*` not found",
+	"import `[^`]+` is never used",
 	"(type|module|enum) `[^`]+` not found",
 	"module `[^`]+` has no (member|type|enum) `[^`]+`",
 	"type path `[^`]+` has too many segments",

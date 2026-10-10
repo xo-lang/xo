@@ -82,6 +82,8 @@ pub struct Import {
   pub module: Int
   pub path: Bytes
   pub used: Bool = false
+  /// The `use` declaration (for the unused import check).
+  pub span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
 }
 
 /// One parsed source file.

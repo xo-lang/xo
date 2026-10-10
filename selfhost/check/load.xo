@@ -304,7 +304,9 @@ fn (var c: Checker) load_imports(m: Int) {
         c.error_at(f, "XO0603", u.span, "`${imp_name}` is already imported by `use ${prev.path.to_str() ?? ""}`")
         continue
       }
-      c.files[f].imports[key] = Import{module: dep, path: u.path}
+      // an import that did not resolve was reported (or explained) and
+      // counts as used
+      c.files[f].imports[key] = Import{module: dep, path: u.path, used: dep < 0, span: u.span}
     }
   }
 }
