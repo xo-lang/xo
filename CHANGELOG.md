@@ -11,7 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   contended readers and writer load (`bench/perf/conc` `rwmutex`, new)
   went from 967 to 131 ms and from 6.3 to 0.25 s of CPU. Long lived
   scopes (the native HTTP server's connections) no longer keep every
-  finished task until they close.
+  finished task until they close, and the native allocator moves freed
+  blocks between threads, so a server's memory stays flat (28 MB instead
+  of 295 MB after 300k TLS connections).
 - Native HTTPS (decision 0117): full TLS handshakes about 1.6 times as
   fast and at half the CPU (9.7k to 15k per second in the HTTP benchmark,
   Go backend 17k): X25519 key shares through HACL*, faster P-256

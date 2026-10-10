@@ -75,6 +75,13 @@
 // another thread than the one that allocated it: it goes on the freeing
 // thread's list (the size class is in its prefix), and the leak check
 // sums the counters of all heaps. Heaps are never freed.
+//
+// Central lists (decision 0118): a thread that frees what others
+// allocate (a server's connection tasks free what its accept loop made)
+// would keep those blocks for good while the allocating thread carves new
+// chunks, so memory grew with every connection. With more than one
+// thread, free lists move between threads as magazines through a central
+// list per class (alloc_mt, free_mt); one thread alone never touches it.
 
 #define XO_CHUNK (4 << 20)
 #define XO_SMALL_MAX 1024
@@ -95,6 +102,8 @@ typedef struct xo_heap {
 	char *bump_cur;
 	char *bump_end;
 	void *free_lists[XO_NCLASS + 1];
+	int64_t nfree[XO_NCLASS + 1]; // blocks on each free list (about: a magazine taken counts as full)
+	void *mag[XO_NCLASS + 1];     // a full magazine per class (threaded: free_mt)
 	// the worklist of xo_rc_defer
 	xo_deferred *defer_q;
 	int64_t defer_n, defer_cap;
@@ -230,6 +239,7 @@ static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t 
 	void *p = h->free_lists[c];
 	if (p) {
 		h->free_lists[c] = *(void **)p;
+		h->nfree[c]--;
 		return p;
 	}
 	int64_t need = size + 8;
@@ -251,13 +261,85 @@ static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
 	}
 	*(void **)p = h->free_lists[b[0]];
 	h->free_lists[b[0]] = p;
+	h->nfree[b[0]]++;
+}
+
+// The central lists: per class, a stack of magazines (free lists of
+// about central_batch(c) blocks) linked by their first block's second
+// word (every block has at least 16 bytes).
+static void *central[XO_NCLASS + 1];
+static pthread_mutex_t central_mu = PTHREAD_MUTEX_INITIALIZER;
+
+// central_batch is the size of a magazine of class c: 64 KiB of blocks,
+// at least 8.
+static inline int64_t central_batch(int64_t c) {
+	int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
+	int64_t n = (64 << 10) / size;
+	return n < 8 ? 8 : n;
+}
+
+// central_put pushes magazine m of class c.
+__attribute__((noinline)) static void central_put(int64_t c, void *m) {
+	pthread_mutex_lock(&central_mu);
+	((void **)m)[1] = central[c];
+	__atomic_store_n(&central[c], m, __ATOMIC_RELAXED); // read unlocked by central_take
+	pthread_mutex_unlock(&central_mu);
+}
+
+// central_take pops a magazine of class c, or returns null.
+__attribute__((noinline)) static void *central_take(int64_t c) {
+	if (!__atomic_load_n(&central[c], __ATOMIC_RELAXED)) {
+		return NULL;
+	}
+	pthread_mutex_lock(&central_mu);
+	void *m = central[c];
+	if (m) {
+		__atomic_store_n(&central[c], ((void **)m)[1], __ATOMIC_RELAXED);
+	}
+	pthread_mutex_unlock(&central_mu);
+	return m;
 }
 
 // The threaded paths of xo_alloc and xo_free are tail calls, so the
-// single threaded paths stay leaf functions without a frame.
-__attribute__((noinline)) static void *alloc_mt(int64_t n) { return alloc_in(heap_slow(), n); }
+// single threaded paths stay leaf functions without a frame. With
+// threads, a class keeps its free list (nfree long) and at most one full
+// spare magazine: an empty list takes the spare, else one from the
+// central list; a list that reaches a magazine's size becomes the spare,
+// and the spare it replaces goes to the central list. Nothing walks a
+// list, so moving blocks between threads costs O(1) per magazine.
+__attribute__((noinline)) static void *alloc_mt(int64_t n) {
+	xo_heap *h = heap_slow();
+	if (n <= XO_MID_MAX) {
+		int64_t size;
+		int64_t c = size_class(n, &size);
+		if (!h->free_lists[c]) {
+			void *m = h->mag[c];
+			h->mag[c] = NULL;
+			if (!m) {
+				m = central_take(c);
+			}
+			if (m) {
+				h->free_lists[c] = m;
+				h->nfree[c] = central_batch(c);
+			}
+		}
+	}
+	return alloc_in(h, n);
+}
 
-__attribute__((noinline)) static void free_mt(void *p) { free_in(heap_slow(), p); }
+__attribute__((noinline)) static void free_mt(void *p) {
+	xo_heap *h = heap_slow();
+	int64_t c = ((int64_t *)p)[-1]; // before free_in: a large block is gone after
+	free_in(h, p);
+	if (c > 0 && h->nfree[c] >= central_batch(c)) {
+		if (h->mag[c]) {
+			central_put(c, h->mag[c]);
+		}
+		h->mag[c] = h->free_lists[c];
+		h->free_lists[c] = NULL;
+		h->nfree[c] = 0;
+	}
+}
 
 void *xo_alloc(int64_t n) {
 	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);

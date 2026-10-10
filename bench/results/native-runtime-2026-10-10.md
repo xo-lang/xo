@@ -104,3 +104,15 @@ environment drops.
 Finished tasks: peak RSS of the TLS server after 20 s of a handshake
 per request (section 1 harness, one run each): 295 MB without pruning,
 223 MB with it.
+
+Allocator magazines (decision 0118 point 4). Interleaved A/B, 9 rounds,
+llvm, HEAD (pruning, no magazines) against magazines, wall / CPU ms:
+spawn 60.5 / 241.8 against 69.6 / 268.7, fanout 23.6 / 84.2 against
+29.3 / 105.9, pmap 60.2 / 611.4 against 60.0 / 618.4. Peak RSS: spawn 45
+to 5 MB, fanout 24 to 5 MB, pmap 2 to 2 MB. The first version (moving
+half a list to the central list when it passed two batches, walking it)
+cost spawn 30 and fanout 43 percent. TLS server, 20 s of a handshake per
+request: 220 MB without magazines, 28 MB with, 15019 and 15056 req/s.
+bench/perf/http kept alive (2 interleaved rounds): 112804 and 113347
+req/s at 30.3 us before, 113013 and 113072 at 30.3 us after; RSS 30 to
+21 MB.
