@@ -42,7 +42,7 @@ func isIface(t *Type) bool { return t.Kind == KStruct && strings.HasPrefix(t.Nam
 func (b *builder) ifaceType(r *check.Named, at ast.Node) *Type {
 	m := b.mod
 	obj := r.Obj
-	t, created := m.Named("xo.iface["+b.implNamed(r).String()+"]", KStruct)
+	t, created := m.Named("xo.iface["+b.typeName(b.implNamed(r))+"]", KStruct)
 	if !created {
 		return t
 	}

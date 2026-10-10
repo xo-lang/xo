@@ -1,0 +1,1531 @@
+// Name resolution: declarations, scopes, and the walk over every body, as
+// internal/check does it (decl.go, stmt.go, expr.go, call.go, pattern.go)
+// for the names it can resolve without types (decision 0139).
+//
+// Deferred to the types stage, and not recorded: struct fields, methods,
+// and named arguments (they need the type of a value), enum variants
+// (`Red`, `Circle(r)`, `Color.Red`, pattern paths: a bare variant name
+// depends on the expected type), statics (`T.new()`), an UpperCamel name
+// called or used as a value that is not declared in the module (it may
+// be a variant of the expected enum: `Int(x)`), effects in `uses`
+// clauses and effect arguments, and loop labels.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type Type = parser.Type
+type Pattern = parser.Pattern
+type Block = parser.Block
+type Decl = parser.Decl
+
+/// Names that cannot be declared at top level (core 1.4).
+fn is_protected(name: Bytes) -> Bool {
+  let s = name.to_str() ?? ""
+  match s {
+    "true" | "false" | "self" | "target" | "fault" | "dbg" | "Ok" | "Err" | "Some" | "None" => true
+    "Bool" | "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" => true
+    "Rune" | "Str" | "Bytes" | "Duration" | "Time" | "List" | "Map" | "Set" | "Buf" | "Chan" | "Mutex" | "Atomic" => true
+    "Secret" | "Option" | "Result" | "Never" | "StrBuilder" | "BytesBuilder" => true
+    "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" => true
+    "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" => true
+    _ => false
+  }
+}
+
+fn is_derivable(name: Bytes) -> Bool {
+  let s = name.to_str() ?? ""
+  s is "Display" | "Ord" | "Json" | "OpenApi" | "Proto" | "Debug" | "Eq" | "Hash" | "SqlRow"
+}
+
+/// UpperCamel: an upper case letter, then letters and digits.
+fn is_upper_camel(s: Bytes) -> Bool {
+  if s.is_empty() || s[0] < 'A' || s[0] > 'Z' {
+    return false
+  }
+  for i in 1..s.len() {
+    let ch = s[i]
+    if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+      return false
+    }
+  }
+  true
+}
+
+fn text(b: Bytes) -> Str {
+  b.to_str() ?? "?"
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics and records
+
+/// Reports a diagnostic in the current file, dropping exact duplicates.
+fn (var c: Checker) error(code: Str, sp: Span, msg: Str) {
+  c.report(c.path, code, sp, msg)
+}
+
+fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) {
+  c.report(c.files[f].path, code, sp, msg)
+}
+
+fn (var c: Checker) report(file: Str, code: Str, sp: Span, msg: Str) {
+  let key = "${code}|${file}|${sp.start.line}:${sp.start.col}|${msg}"
+  if c.seen.contains(key) {
+    return
+  }
+  c.seen[key] = true
+  c.diags.push(Diag{code: code, file: file, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col, message: msg})
+}
+
+/// Records that the identifier id of the current file names obj.
+fn (var c: Checker) record(id: Ident, obj: Int) {
+  if obj < 0 {
+    return
+  }
+  let key = "${c.path}:${id.span.start.offset}"
+  if let Some(i) = c.name_at.get(key) {
+    c.names[i].obj = obj
+    return
+  }
+  c.name_at[key] = c.names.len()
+  c.names.push(NameRec{file: c.path, offset: id.span.start.offset, line: id.span.start.line, col: id.span.start.col, name: id.name, obj: obj})
+}
+
+fn (var c: Checker) set_file(f: Int) {
+  c.cur_file = f
+  c.cur_mod = c.files[f].module
+  c.path = c.files[f].path
+}
+
+fn (var c: Checker) new_obj(kind: ObjKind, id: Ident) -> Int {
+  let o = c.objs.len()
+  c.objs.push(Obj{kind: kind, name: id.name, module: c.cur_mod, file: c.path, line: id.span.start.line, col: id.span.start.col})
+  o
+}
+
+// ---------------------------------------------------------------------------
+// Lookups
+
+fn (c: Checker) lookup_local(name: Bytes) -> Int {
+  var i = c.scopes.len() - 1
+  while i >= 0 {
+    if let Some(v) = c.scopes[i].get(name) {
+      return v
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// A top level name of module m, then of the prelude.
+fn (c: Checker) lookup_module_obj(m: Int, name: Bytes) -> Int {
+  if let Some(o) = c.mods[m].members.get(name) {
+    return o
+  }
+  if c.prelude >= 0 {
+    if let Some(o) = c.mods[c.prelude].members.get(name) {
+      return o
+    }
+  }
+  -1
+}
+
+fn (c: Checker) in_test_context() -> Bool {
+  c.in_test || c.files[c.cur_file].is_test
+}
+
+/// The import named name in the current file, with `testing` predeclared
+/// in test code; module -1 when it did not resolve; None when there is
+/// no such import.
+fn (var c: Checker) import_of(name: Bytes, testing_ok: Bool) -> Import? {
+  if let Some(imp) = c.files[c.cur_file].imports.get(name) {
+    var used = imp
+    used.used = true
+    c.files[c.cur_file].imports[name] = used
+    return Some(imp)
+  }
+  if testing_ok && name == b"testing" {
+    let m = c.mod_index.get("std/testing") ?? -1
+    return Some(Import{module: m, path: b"std/testing"})
+  }
+  None
+}
+
+fn (c: Checker) prelude_type(name: Bytes) -> Int {
+  if c.prelude < 0 {
+    return -1
+  }
+  c.mods[c.prelude].members.get(name) ?? -1
+}
+
+// ---------------------------------------------------------------------------
+// Scopes
+
+fn (var c: Checker) push_scope() {
+  c.scopes.push({})
+}
+
+fn (var c: Checker) pop_scope() {
+  c.scopes.pop()
+}
+
+/// Declares a local binding in the innermost scope; shadowing in the
+/// same block is an error (core 3.1). `_` binds nothing.
+fn (var c: Checker) declare_var(id: Ident, local: Str) -> Int {
+  var o = c.new_obj(ObjKind.Local, id)
+  c.objs[o].local = local
+  c.objs[o].module = -1
+  if id.name == b"_" {
+    return o
+  }
+  let n = c.scopes.len() - 1
+  if c.scopes[n].contains(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+  }
+  c.scopes[n][id.name] = o
+  o
+}
+
+// ---------------------------------------------------------------------------
+// Declarations (decl.go declare)
+
+/// Creates objects for the top level declarations of module m.
+fn (var c: Checker) declare(m: Int) {
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for d in decls {
+      var o = -1
+      match d {
+        FnDecl(d: fd) => {
+          if fd.recv == None {
+            o = c.new_obj(ObjKind.Func, fd.name)
+            c.objs[o].is_pub = fd.is_pub || c.mods[m].is_std
+            c.define(fd.name, o)
+          }
+        }
+        StructDecl(d: sd) => {
+          o = c.declare_type(sd.name, sd.type_params, sd.is_pub)
+          c.objs[o].tkind = "struct"
+          var fields: List[Bytes] = []
+          for fl in sd.fields {
+            if !fields.contains(fl.name.name) {
+              fields.push(fl.name.name)
+            }
+          }
+          c.objs[o].fields = fields
+        }
+        EnumDecl(d: ed) => {
+          o = c.declare_type(ed.name, ed.type_params, ed.is_pub)
+          c.objs[o].tkind = "enum"
+          var vs: List[Bytes] = []
+          for v in ed.variants {
+            vs.push(v.name.name)
+          }
+          c.objs[o].variants = vs
+        }
+        InterfaceDecl(d: id) => {
+          o = c.declare_type(id.name, id.type_params, id.is_pub)
+          c.objs[o].tkind = "interface"
+        }
+        TypeDecl(d: td) => {
+          o = c.declare_type(td.name, td.type_params, td.is_pub)
+          c.objs[o].tkind = if td.newtype { "newtype" } else { "alias" }
+        }
+        ConstDecl(d: cd) => {
+          o = c.new_obj(ObjKind.Const, cd.name)
+          c.objs[o].is_pub = cd.is_pub || c.mods[m].is_std
+          c.define(cd.name, o)
+        }
+        _ => {}
+      }
+      c.files[f].decl_objs.push(o)
+      c.files[f].decl_ok.push(false)
+      c.files[f].decl_tparams.push([])
+    }
+  }
+}
+
+fn (var c: Checker) declare_type(name: Ident, tps: List[parser.TypeParam], is_pub: Bool) -> Int {
+  let o = c.new_obj(ObjKind.Type, name)
+  c.objs[o].is_pub = is_pub || c.mods[c.cur_mod].is_std
+  c.objs[o].tparams = c.new_tparams(tps)
+  c.define(name, o)
+  o
+}
+
+fn (var c: Checker) new_tparams(tps: List[parser.TypeParam]) -> List[Int] {
+  var out: List[Int] = []
+  for tp in tps {
+    let p = c.new_obj(ObjKind.TParam, tp.name)
+    c.objs[p].effect = tp.effects
+    c.objs[p].module = -1
+    out.push(p)
+  }
+  out
+}
+
+fn (var c: Checker) define(id: Ident, o: Int) {
+  if id.name.is_empty() {
+    return
+  }
+  let m = c.cur_mod
+  if !c.mods[m].is_std && is_protected(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is predeclared and cannot be redefined at top level (core 1.4)")
+    return
+  }
+  if c.mods[m].members.contains(id.name) {
+    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this module")
+    return
+  }
+  c.mods[m].members[id.name] = o
+}
+
+/// Whether declaration i of file f is the declaration its name resolves
+/// to (not a duplicate).
+fn (c: Checker) is_scope_entry(f: Int, i: Int, name: Bytes) -> Bool {
+  let o = c.files[f].decl_objs[i]
+  o >= 0 && (c.mods[c.files[f].module].members.get(name) ?? -1) == o
+}
+
+/// The type parameters of a list as an environment.
+fn (c: Checker) with_params(env: Map[Bytes, Int], ps: List[Int]) -> Map[Bytes, Int] {
+  var out = env
+  for p in ps {
+    out[c.objs[p].name] = p
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Type declarations (decl.go resolveTypes)
+
+fn (var c: Checker) resolve_types(m: Int) {
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      match d {
+        StructDecl(d: sd) => {
+          if c.is_scope_entry(f, i, sd.name.name) {
+            c.env = c.with_params({}, c.objs[c.files[f].decl_objs[i]].tparams)
+            c.constraints(sd.type_params)
+            var seen: List[Bytes] = []
+            for fl in sd.fields {
+              if seen.contains(fl.name.name) {
+                c.error("XO0603", fl.name.span, "field `${text(fl.name.name)}` is declared twice")
+                continue
+              }
+              seen.push(fl.name.name)
+              c.typ(fl.typ)
+            }
+            c.derives(sd.derive)
+          }
+        }
+        EnumDecl(d: ed) => {
+          if c.is_scope_entry(f, i, ed.name.name) {
+            c.env = c.with_params({}, c.objs[c.files[f].decl_objs[i]].tparams)
+            c.constraints(ed.type_params)
+            var seen: List[Bytes] = []
+            for v in ed.variants {
+              if seen.contains(v.name.name) {
+                c.error("XO0603", v.name.span, "variant `${text(v.name.name)}` is declared twice")
+                continue
+              }
+              seen.push(v.name.name)
+              var fseen: List[Bytes] = []
+              for vf in v.fields ?? [] {
+                c.typ(vf.typ)
+                if let Some(n) = vf.name {
+                  if fseen.contains(n.name) {
+                    c.error("XO0603", n.span, "field `${text(n.name)}` is declared twice")
+                  }
+                  fseen.push(n.name)
+                }
+              }
+            }
+            c.derives(ed.derive)
+          }
+        }
+        InterfaceDecl(d: id) => {
+          if c.is_scope_entry(f, i, id.name.name) {
+            let env = c.with_params({}, c.objs[c.files[f].decl_objs[i]].tparams)
+            c.env = env
+            c.constraints(id.type_params)
+            var seen: List[Bytes] = []
+            for md in id.methods {
+              if seen.contains(md.name.name) {
+                c.error("XO0603", md.name.span, "method `${text(md.name.name)}` is declared twice")
+                continue
+              }
+              seen.push(md.name.name)
+              c.resolve_sig(md, env, [])
+            }
+          }
+        }
+        TypeDecl(d: td) => {
+          if c.is_scope_entry(f, i, td.name.name) {
+            c.env = c.with_params({}, c.objs[c.files[f].decl_objs[i]].tparams)
+            c.constraints(td.type_params)
+            if let Some(t) = td.typ {
+              c.typ(t)
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  c.env = {}
+}
+
+fn (var c: Checker) constraints(tps: List[parser.TypeParam]) {
+  for tp in tps {
+    if let Some(t) = tp.constraint {
+      c.typ(t)
+    }
+  }
+}
+
+fn (var c: Checker) derives(ids: List[Ident]) {
+  for id in ids {
+    if !is_derivable(id.name) {
+      c.error("XO0601", id.span, "derivable interface `${text(id.name)}` not found")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signatures (decl.go resolveSigs)
+
+fn (var c: Checker) resolve_sigs(m: Int) {
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      match d {
+        FnDecl(d: fd) => {
+          if fd.recv == None {
+            let tps = c.resolve_sig(fd, {}, [])
+            c.files[f].decl_tparams[i] = tps
+            c.files[f].decl_ok[i] = c.is_scope_entry(f, i, fd.name.name)
+          } else {
+            c.implicit = true
+            c.implicit_params = []
+            c.env = {}
+            let ok = c.attach_method(fd)
+            c.implicit = false
+            if ok {
+              let env = c.with_params({}, c.implicit_params)
+              let tps = c.resolve_sig(fd, env, c.implicit_params)
+              c.files[f].decl_tparams[i] = tps
+              c.files[f].decl_ok[i] = true
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  c.env = {}
+}
+
+/// Attaches a method to its receiver type (decl.go attachMethod).
+fn (var c: Checker) attach_method(fd: parser.FnDecl) -> Bool {
+  let recv = fd.recv ?? fault("a method has a receiver")
+  let t = c.typ(recv.typ)
+  if t < 0 || c.objs[t].kind != ObjKind.Type {
+    return false
+  }
+  if c.objs[t].tkind == "interface" {
+    return false
+  }
+  if c.objs[t].module != c.cur_mod {
+    return false
+  }
+  if c.objs[t].methods.contains(fd.name.name) {
+    c.error("XO0603", fd.name.span, "method `${text(fd.name.name)}` is already declared on `${text(c.objs[t].name)}`")
+    return false
+  }
+  if c.objs[t].fields.contains(fd.name.name) && !c.mods[c.cur_mod].is_std {
+    c.error("XO0603", fd.name.span, "`${text(fd.name.name)}` is both a field and a method of `${text(c.objs[t].name)}`")
+  }
+  c.objs[t].methods[fd.name.name] = true
+  true
+}
+
+/// Resolves the types of a signature in env plus its own type
+/// parameters, which follow implicit; returns all of them.
+fn (var c: Checker) resolve_sig(fd: parser.FnDecl, env: Map[Bytes, Int], implicit: List[Int]) -> List[Int] {
+  let own = c.new_tparams(fd.type_params)
+  var tps = implicit
+  for p in own {
+    tps.push(p)
+  }
+  c.env = c.with_params(env, tps)
+  c.constraints(fd.type_params)
+  var seen: List[Bytes] = []
+  for p in fd.params {
+    if p.is_self {
+      continue
+    }
+    if seen.contains(p.name.name) && p.name.name != b"_" {
+      c.error("XO0603", p.name.span, "parameter `${text(p.name.name)}` is declared twice")
+    }
+    seen.push(p.name.name)
+    if let Some(t) = p.typ {
+      c.typ(t)
+    }
+  }
+  if let Some(t) = fd.result {
+    c.typ(t)
+  }
+  c.err_spec(fd.err)
+  tps
+}
+
+fn (var c: Checker) err_spec(es: parser.ErrSpec?) {
+  if let Some(e) = es {
+    if let Some(t) = e.typ {
+      c.typ(t)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Type expressions (decl.go resolveType)
+
+/// Resolves a type expression in the current environment, recording its
+/// names; returns the declared type it names at the top (Type object, or
+/// the prelude Option for `T?`), or -1.
+fn (var c: Checker) typ(t: Type) -> Int {
+  match t {
+    NamedType(span, path, args) => c.named_type(span, path, args)
+    OptionalType(elem: e, ..) => {
+      c.typ(e)
+      c.prelude_type(b"Option")
+    }
+    TupleType(elems: es, ..) => {
+      for e in es {
+        c.typ(e)
+      }
+      -1
+    }
+    FnType(t: ft) => {
+      for p in ft.params {
+        c.typ(p.typ)
+      }
+      if let Some(r) = ft.result {
+        c.typ(r)
+      }
+      c.err_spec(ft.err)
+      -1
+    }
+    BadType(..) => -1
+  }
+}
+
+fn (var c: Checker) named_type(span: Span, path: List[Ident], args: List[Type]) -> Int {
+  let last = path[path.len() - 1]
+  var obj = -1
+  if path.len() == 1 {
+    let id = path[0]
+    if let Some(p) = c.env.get(id.name) {
+      if !c.objs[p].effect {
+        c.record(id, p)
+      }
+      return -1
+    }
+    if id.name == b"Effects" {
+      return -1
+    }
+    let o = c.lookup_module_obj(c.cur_mod, id.name)
+    if o < 0 {
+      if c.implicit && args.is_empty() && is_upper_camel(id.name) {
+        let p = c.new_obj(ObjKind.TParam, id)
+        c.objs[p].module = -1
+        c.implicit_params.push(p)
+        c.env[id.name] = p
+        c.record(id, p)
+        return -1
+      }
+      c.error("XO0601", id.span, "type `${text(id.name)}` not found")
+      return -1
+    }
+    if c.objs[o].kind != ObjKind.Type {
+      return -1
+    }
+    c.record(id, o)
+    obj = o
+  } else if path.len() == 2 {
+    let mid = path[0]
+    let imp = c.import_of(mid.name, c.files[c.cur_file].is_test)
+    let m = match imp {
+      Some(x) => x.module
+      None => {
+        c.error("XO0601", mid.span, "module `${text(mid.name)}` not found")
+        return -1
+      }
+    }
+    if m < 0 {
+      return -1
+    }
+    c.record(mid, c.mods[m].obj)
+    let o = c.mods[m].members.get(last.name) ?? -1
+    if o < 0 {
+      c.error("XO0601", last.span, "module `${text(mid.name)}` has no type `${text(last.name)}`")
+      return -1
+    }
+    if c.objs[o].kind != ObjKind.Type {
+      return -1
+    }
+    if !c.objs[o].is_pub && m != c.cur_mod {
+      c.error("XO0605", last.span, "type `${text(last.name)}` is not `pub` in module `${c.mods[m].path}`")
+    }
+    c.record(last, o)
+    obj = o
+  } else {
+    var parts: List[Str] = []
+    for p in path {
+      parts.push(text(p.name))
+    }
+    c.error("XO0601", span, "type path `${parts.join(".")}` has too many segments")
+    return -1
+  }
+  c.type_args(obj, args)
+  if c.implicit && args.is_empty() && !c.objs[obj].tparams.is_empty() {
+    // a receiver `List` without arguments: fully generic, with implicit
+    // parameters named after the type's
+    for tp in c.objs[obj].tparams {
+      let p = c.objs.len()
+      c.objs.push(Obj{kind: ObjKind.TParam, name: c.objs[tp].name, effect: c.objs[tp].effect})
+      c.implicit_params.push(p)
+      c.env[c.objs[tp].name] = p
+    }
+  }
+  obj
+}
+
+/// Resolves the type arguments written for type obj: arguments of effect
+/// parameters are effect sets, deferred (decl.go resolveArgsFor).
+fn (var c: Checker) type_args(obj: Int, args: List[Type]) {
+  let tps = c.objs[obj].tparams
+  var non_eff = 0
+  for p in tps {
+    if !c.objs[p].effect {
+      non_eff += 1
+    }
+  }
+  if args.len() == tps.len() || args.len() != non_eff {
+    for (i, a) in args.indexed() {
+      if i < tps.len() && c.objs[tps[i]].effect {
+        continue
+      }
+      c.typ(a)
+    }
+    return
+  }
+  for a in args {
+    c.typ(a)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Unused imports (load.go checkUnusedImports)
+
+/// Reports XO0110 for the imports of module m never referenced.
+fn (var c: Checker) check_unused_imports(m: Int) {
+  for f in c.mods[m].files {
+    for u in c.files[f].ast.imports {
+      for (_, imp) in c.files[f].imports.entries() {
+        if imp.used || imp.span != u.span {
+          continue
+        }
+        c.error_at(f, "XO0110", u.span, "import `${text(u.path)}` is never used")
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bodies (stmt.go checkModule)
+
+fn (var c: Checker) check_module(m: Int) {
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      match d {
+        FnDecl(d: fd) => {
+          if c.files[f].decl_ok[i] {
+            c.check_fn(fd, c.files[f].decl_tparams[i])
+          }
+        }
+        TestDecl(d: td) => c.check_test(td)
+        ConstDecl(d: cd) => {
+          if c.is_scope_entry(f, i, cd.name.name) {
+            c.check_const(cd)
+          }
+        }
+        StructDecl(d: sd) => {
+          if c.is_scope_entry(f, i, sd.name.name) {
+            c.check_struct_extras(sd)
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+}
+
+/// The parts of the walk state a body replaces.
+struct Saved {
+  scopes: List[Map[Bytes, Int]]
+  env: Map[Bytes, Int]
+  in_test: Bool
+  in_ensures: Bool
+}
+
+fn (c: Checker) save() -> Saved {
+  Saved{scopes: c.scopes, env: c.env, in_test: c.in_test, in_ensures: c.in_ensures}
+}
+
+fn (var c: Checker) restore(s: Saved) {
+  c.scopes = s.scopes
+  c.env = s.env
+  c.in_test = s.in_test
+  c.in_ensures = s.in_ensures
+}
+
+/// Enters an initializer context (a default, a constant, an invariant):
+/// no locals, no type parameters, not a test (stmt.go sinkCtx).
+fn (var c: Checker) enter_sink() -> Saved {
+  let s = c.save()
+  c.scopes = []
+  c.env = {}
+  c.in_test = false
+  c.in_ensures = false
+  c.push_scope()
+  s
+}
+
+fn (var c: Checker) check_default(e: Expr) {
+  let s = c.enter_sink()
+  c.expr(e)
+  c.restore(s)
+}
+
+fn (var c: Checker) check_fn(fd: parser.FnDecl, tps: List[Int]) {
+  let s = c.save()
+  c.scopes = []
+  c.env = c.with_params({}, tps)
+  c.in_test = false
+  c.in_ensures = false
+  c.push_scope()
+  if let Some(r) = fd.recv {
+    if !(r.name.name == b"static" && c.mods[c.cur_mod].is_std) {
+      c.declare_var(r.name, if r.is_var { "var-recv" } else { "recv" })
+    }
+  }
+  for p in fd.params {
+    if p.is_self {
+      continue
+    }
+    c.declare_var(p.name, if p.is_var { "var-param" } else { "param" })
+    if let Some(d) = p.default {
+      c.check_default(d)
+    }
+  }
+  let can_fail = can_fail(fd.err)
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(cond: cond, els: els, ..) => {
+        c.expr(cond)
+        if let Some(e) = els {
+          if can_fail {
+            c.expr(e)
+          }
+        }
+      }
+      EnsuresClause(span: span, cond: cond, ..) => {
+        c.push_scope()
+        let r = c.objs.len()
+        c.objs.push(Obj{kind: ObjKind.Local, name: b"result", file: c.path, line: span.start.line, col: span.start.col, local: "predeclared"})
+        let n = c.scopes.len() - 1
+        c.scopes[n][b"result"] = r
+        c.in_ensures = true
+        c.expr(cond)
+        c.in_ensures = false
+        c.pop_scope()
+      }
+      _ => {}
+    }
+  }
+  if let Some(b) = fd.body {
+    c.block(b)
+  }
+  c.restore(s)
+}
+
+/// Whether a function declared with es can fail: an error type other
+/// than Never.
+fn can_fail(es: parser.ErrSpec?) -> Bool {
+  match es {
+    None => false
+    Some(e) => match e.typ {
+      Some(NamedType(path: path, args: args, ..)) => !(path.len() == 1 && path[0].name == b"Never" && args.is_empty())
+      _ => true
+    }
+  }
+}
+
+fn (var c: Checker) check_test(td: parser.TestDecl) {
+  let s = c.save()
+  c.scopes = []
+  c.env = {}
+  c.in_test = true
+  c.in_ensures = false
+  c.push_scope()
+  let os = c.objs.len()
+  c.objs.push(Obj{kind: ObjKind.Local, name: b"os", local: "predeclared"})
+  c.scopes[0][b"os"] = os
+  for p in td.params {
+    if let Some(t) = p.typ {
+      c.typ(t)
+    }
+    c.declare_var(p.name, "param")
+  }
+  if let Some(b) = td.body {
+    c.block(b)
+  }
+  c.restore(s)
+}
+
+fn (var c: Checker) check_const(cd: parser.ConstDecl) {
+  let s = c.enter_sink()
+  if let Some(t) = cd.typ {
+    c.typ(t)
+  }
+  c.expr(cd.value)
+  c.restore(s)
+}
+
+fn (var c: Checker) check_struct_extras(sd: parser.StructDecl) {
+  var seen: List[Bytes] = []
+  var fields: List[Ident] = []
+  for fl in sd.fields {
+    if seen.contains(fl.name.name) {
+      continue
+    }
+    seen.push(fl.name.name)
+    fields.push(fl.name)
+    if let Some(d) = fl.default {
+      c.check_default(d)
+    }
+  }
+  if let Some(inv) = sd.inv {
+    let s = c.enter_sink()
+    for id in fields {
+      c.declare_var(id, "param")
+    }
+    c.expr(inv)
+    c.restore(s)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+fn (var c: Checker) block(b: Block) {
+  c.push_scope()
+  for s in b.stmts {
+    c.stmt(s)
+  }
+  c.pop_scope()
+}
+
+fn (var c: Checker) stmt(s: Stmt) {
+  match s {
+    ExprStmt(x: x, ..) => c.expr(x)
+    LetStmt(pattern: pattern, typ: typ, value: value, ..) => {
+      if let Some(t) = typ {
+        c.typ(t)
+      }
+      c.expr(value)
+      c.pattern(pattern)
+    }
+    VarStmt(name: name, typ: typ, value: value, ..) => {
+      if let Some(t) = typ {
+        c.typ(t)
+      }
+      c.expr(value)
+      c.declare_var(name, "var")
+    }
+    ConstDecl(d: cd) => {
+      if let Some(t) = cd.typ {
+        c.typ(t)
+      }
+      c.expr(cd.value)
+      c.declare_var(cd.name, "let")
+    }
+    AssignStmt(op: op, target: target, value: value, ..) => c.assign(op, target, value)
+    DeferStmt(body: body, ..) => c.stmt(body)
+    ReturnStmt(value: value, ..) => {
+      if let Some(v) = value {
+        c.expr(v)
+      }
+    }
+    BreakStmt(..) => {}
+    ContinueStmt(..) => {}
+    ForStmt(pattern: pattern, iter: iter, bound: bound, body: body, ..) => {
+      c.expr(iter)
+      for e in bound {
+        c.expr(e)
+      }
+      c.push_scope()
+      c.pattern(pattern)
+      c.block(body)
+      c.pop_scope()
+    }
+    WhileStmt(cond: cond, pattern: pattern, value: value, bound: bound, body: body, ..) => {
+      for v in value {
+        c.expr(v)
+      }
+      if let Some(e) = cond {
+        c.expr(e)
+      }
+      for e in bound {
+        c.expr(e)
+      }
+      c.push_scope()
+      for p in pattern {
+        c.pattern(p)
+      }
+      c.block(body)
+      c.pop_scope()
+    }
+    BadStmt(..) => {}
+  }
+}
+
+/// An assignment (stmt.go assign): the target is a place, not a read.
+fn (var c: Checker) assign(op: parser.Kind, target: Expr, value: Expr) {
+  if c.assign_decl_habit(op, target, value) {
+    return
+  }
+  c.place(target)
+  c.expr(value)
+}
+
+/// Python's `x = v` for an undeclared x: XO0601, and x is declared from
+/// then on (habits.go habitAssignDecl).
+fn (var c: Checker) assign_decl_habit(op: parser.Kind, target: Expr, value: Expr) -> Bool {
+  let id = match target {
+    Ident(id) => id
+    _ => return false
+  }
+  if op != parser.Kind.Assign || id.name == b"_" || c.lookup_local(id.name) >= 0 || c.lookup_module_obj(c.cur_mod, id.name) >= 0 || c.files[c.cur_file].imports.contains(id.name) {
+    return false
+  }
+  if (text(id.name)) is "true" | "false" | "target" | "self" | "os" | "expect" | "testing" {
+    return false
+  }
+  c.expr(value)
+  c.error("XO0601", id.span, "name `${text(id.name)}` not found")
+  c.declare_var(id, "var")
+  true
+}
+
+fn (var c: Checker) place(e: Expr) {
+  match e {
+    Ident(id) => {
+      let v = c.lookup_local(id.name)
+      if v < 0 {
+        c.ident(id)
+        return
+      }
+      c.record(id, v)
+    }
+    SelectorExpr(x: x, ..) => c.place(x)
+    IndexExpr(x: x, index: index, ..) => {
+      c.place(x)
+      c.expr(index)
+    }
+    ParenExpr(x: x, ..) => c.place(x)
+    _ => c.expr(e)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+fn (var c: Checker) pattern(p: Pattern) {
+  match p {
+    WildcardPat(..) => {}
+    BindPat(name: name, ..) => {
+      c.declare_var(name, "let")
+    }
+    LitPat(value: value, ..) => {
+      if let Ident(id) = value {
+        if id.name == b"true" || id.name == b"false" {
+          return
+        }
+      }
+      c.expr(value)
+    }
+    RangePat(lo: lo, hi: hi, ..) => {
+      c.expr(lo)
+      c.expr(hi)
+    }
+    OrPat(alts: alts, ..) => {
+      for (i, a) in alts.indexed() {
+        if i == 0 {
+          c.pattern(a)
+          continue
+        }
+        c.push_scope()
+        c.pattern(a)
+        c.pop_scope()
+      }
+    }
+    TuplePat(elems: elems, ..) => {
+      for e in elems {
+        c.pattern(e)
+      }
+    }
+    VariantPat(path: path, fields: fields, ..) => {
+      c.variant_path(path)
+      for f in fields {
+        c.pattern(f.pattern)
+      }
+    }
+    StructPat(path: path, fields: fields, ..) => {
+      if path.len() == 2 {
+        if let Some(imp) = c.files[c.cur_file].imports.get(path[0].name) {
+          if imp.module >= 0 {
+            c.import_of(path[0].name, false)
+          }
+        }
+      }
+      for f in fields {
+        c.pattern(f.pattern)
+      }
+    }
+    ListPat(elems: elems, ..) => {
+      for e in elems {
+        c.pattern(e)
+      }
+    }
+    BadPat(..) => {}
+  }
+}
+
+/// The names of a variant pattern's path (pattern.go variantPattern):
+/// `mod.Enum.Variant` and `Enum.Variant` name their module and enum
+/// without types; a bare `Variant` and the variant itself are deferred.
+fn (var c: Checker) variant_path(path: List[Ident]) {
+  if path.len() == 2 {
+    // `mod.Email(p)`: a newtype pattern (decision 0097)
+    if let Some(imp) = c.files[c.cur_file].imports.get(path[0].name) {
+      if imp.module >= 0 {
+        let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+        if o >= 0 {
+          c.import_of(path[0].name, false)
+          if c.objs[o].kind == ObjKind.Type && (c.objs[o].tkind is "newtype" | "alias") {
+            return
+          }
+        }
+      }
+    }
+    let o = c.lookup_module_obj(c.cur_mod, path[0].name)
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[0].span, "enum `${text(path[0].name)}` not found")
+    }
+    return
+  }
+  if path.len() == 3 {
+    let imp = match c.files[c.cur_file].imports.get(path[0].name) {
+      Some(x) => x
+      None => {
+        c.error("XO0601", path[0].span, "module `${text(path[0].name)}` not found")
+        return
+      }
+    }
+    c.import_of(path[0].name, false)
+    if imp.module < 0 {
+      return
+    }
+    let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+    if o < 0 || c.objs[o].kind != ObjKind.Type {
+      c.error("XO0601", path[1].span, "module `${text(path[0].name)}` has no enum `${text(path[1].name)}`")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+fn (var c: Checker) expr(e: Expr) {
+  match e {
+    Ident(id) => c.ident(id)
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          c.expr(x)
+        }
+      }
+    }
+    ParenExpr(x: x, ..) => c.expr(x)
+    TupleExpr(elems: elems, ..) => c.exprs(elems)
+    ListLit(elems: elems, ..) => c.exprs(elems)
+    SetLit(elems: elems, ..) => c.exprs(elems)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        c.expr(en.key)
+        c.expr(en.value)
+      }
+    }
+    StructLit(typ: typ, fields: fields, ..) => {
+      if !c.type_of_expr(typ) {
+        c.expr(typ)
+      }
+      for f in fields {
+        c.expr(f.value)
+      }
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      c.expr(x)
+      for f in fields {
+        c.expr(f.value)
+      }
+    }
+    UnaryExpr(x: x, ..) => c.expr(x)
+    BinaryExpr(x: x, y: y, ..) => {
+      c.expr(x)
+      c.expr(y)
+    }
+    IsExpr(x: x, pattern: pattern, ..) => {
+      c.expr(x)
+      c.push_scope()
+      c.pattern(pattern)
+      c.pop_scope()
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        c.expr(x)
+      }
+      if let Some(x) = hi {
+        c.expr(x)
+      }
+    }
+    SelectorExpr(x: x, sel: sel, ..) => c.selector(x, sel)
+    CallExpr(fun: fun, args: args, ..) => c.call(fun, args)
+    TypeArgsExpr(x: x, types: types, ..) => c.type_args_value(x, types)
+    IndexExpr(x: x, index: index, ..) => {
+      c.expr(x)
+      c.expr(index)
+    }
+    TryExpr(x: x, ..) => c.expr(x)
+    IfExpr(e: ie) => c.if_expr(ie)
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      c.expr(subject)
+      for arm in arms {
+        c.push_scope()
+        c.pattern(arm.pattern)
+        if let Some(g) = arm.guard {
+          c.expr(g)
+        }
+        if let Some(b) = arm.body {
+          c.stmt(b)
+        }
+        c.pop_scope()
+      }
+    }
+    ScopeExpr(name: name, body: body, ..) => {
+      c.push_scope()
+      c.declare_var(name, "let")
+      c.block(body)
+      c.pop_scope()
+    }
+    SelectExpr(arms: arms, ..) => {
+      for arm in arms {
+        c.push_scope()
+        if let Some(a) = arm.after {
+          c.expr(a)
+        } else if let Some(b) = arm.bind {
+          if let Some(op) = arm.op {
+            c.expr(op)
+          }
+          c.declare_var(b, "let")
+        } else if let Some(op) = arm.op {
+          c.expr(op)
+        }
+        if let Some(body) = arm.body {
+          c.stmt(body)
+        }
+        c.pop_scope()
+      }
+    }
+    Block(b) => c.block(b)
+    FnLit(f) => c.closure(f)
+    WhileExpr(body: body, ..) => {
+      c.push_scope()
+      c.block(body)
+      c.pop_scope()
+    }
+    _ => {}
+  }
+}
+
+fn (var c: Checker) exprs(es: List[Expr]) {
+  for e in es {
+    c.expr(e)
+  }
+}
+
+fn (var c: Checker) if_expr(x: parser.IfExpr) {
+  c.push_scope()
+  if let Some(cond) = x.cond {
+    c.expr(cond)
+  } else {
+    if let Some(v) = x.value {
+      c.expr(v)
+    }
+    if let Some(p) = x.pattern {
+      c.pattern(p)
+    }
+  }
+  c.block(x.then)
+  c.pop_scope()
+  if let Some(e) = x.els {
+    c.expr(e)
+  }
+}
+
+fn (var c: Checker) closure(f: parser.FnLit) {
+  for p in f.params {
+    if let Some(t) = p.typ {
+      c.typ(t)
+    }
+  }
+  if let Some(t) = f.result {
+    c.typ(t)
+  }
+  c.err_spec(f.err)
+  let saved = c.in_ensures
+  c.in_ensures = false
+  c.push_scope()
+  for p in f.params {
+    c.declare_var(p.name, if p.is_var { "var-param" } else { "param" })
+  }
+  c.block(f.body)
+  c.pop_scope()
+  c.in_ensures = saved
+}
+
+/// An identifier used as a value (call.go ident).
+fn (var c: Checker) ident(id: Ident) {
+  let name = id.name
+  let v = c.lookup_local(name)
+  if v >= 0 {
+    c.record(id, v)
+    return
+  }
+  if name == b"true" || name == b"false" || name == b"target" {
+    return
+  }
+  if is_upper_camel(name) {
+    // a variant of the expected enum, Some, None, Ok, Err: deferred; a
+    // module constant is resolved
+    let o = c.lookup_module_obj(c.cur_mod, name)
+    if o >= 0 && (c.objs[o].kind is Func | Const) {
+      c.record(id, o)
+    }
+    return
+  }
+  if c.in_test_context() && name == b"testing" {
+    return
+  }
+  if c.files[c.cur_file].imports.contains(name) {
+    c.import_of(name, false)
+    return
+  }
+  let o = c.lookup_module_obj(c.cur_mod, name)
+  if o >= 0 {
+    if c.objs[o].kind is Func | Const {
+      c.record(id, o)
+    }
+    return
+  }
+  if name == b"result" || name == b"old" {
+    c.error("XO0601", id.span, "`${text(name)}` is only defined inside an `ensures` clause (core 9.1)")
+    return
+  }
+  if c.in_test_context() && name == b"expect" {
+    return
+  }
+  c.error("XO0601", id.span, "name `${text(name)}` not found")
+}
+
+/// `x.sel` (call.go selector): a member of an imported module, else the
+/// selector is a field, method, variant, or static: deferred.
+fn (var c: Checker) selector(x: Expr, sel: Ident) {
+  if let Ident(id) = x {
+    if c.lookup_local(id.name) < 0 {
+      if let Some(imp) = c.import_of(id.name, c.in_test_context()) {
+        if imp.module >= 0 {
+          c.record(id, c.mods[imp.module].obj)
+          c.module_member(imp, id, sel)
+        }
+        return
+      }
+    }
+  }
+  if c.type_of_expr(x) {
+    return
+  }
+  c.expr(x)
+}
+
+/// A member of an imported module used as a value or called.
+fn (var c: Checker) module_member(imp: Import, mid: Ident, sel: Ident) {
+  let m = imp.module
+  let o = c.mods[m].members.get(sel.name) ?? -1
+  if o < 0 {
+    c.error("XO0601", sel.span, "module `${text(mid.name)}` has no member `${text(sel.name)}`")
+    return
+  }
+  if m != c.cur_mod && !c.mods[m].is_std && !c.objs[o].is_pub {
+    c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+  }
+  c.record(sel, o)
+}
+
+/// Whether e names a type (expr.go typeOfExpr): `T`, `mod.T`, `T[A]`;
+/// records its names.
+fn (var c: Checker) type_of_expr(e: Expr) -> Bool {
+  match e {
+    Ident(id) => {
+      if c.lookup_local(id.name) >= 0 {
+        return false
+      }
+      let o = c.lookup_module_obj(c.cur_mod, id.name)
+      if o >= 0 && c.objs[o].kind == ObjKind.Type {
+        if c.env.contains(id.name) {
+          return false
+        }
+        c.record(id, o)
+        return true
+      }
+      false
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      let id = match x {
+        Ident(i) => i
+        _ => return false
+      }
+      if c.lookup_local(id.name) >= 0 {
+        return false
+      }
+      let m = match c.peek_import(id.name) {
+        Some(x) => x
+        None => return false
+      }
+      let o = c.mods[m].members.get(sel.name) ?? -1
+      if o < 0 || c.objs[o].kind != ObjKind.Type {
+        return false
+      }
+      c.import_of(id.name, c.in_test_context())
+      if !c.objs[o].is_pub && m != c.cur_mod {
+        c.error("XO0605", sel.span, "type `${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+      }
+      c.record(id, c.mods[m].obj)
+      c.record(sel, o)
+      true
+    }
+    TypeArgsExpr(x: x, types: types, ..) => {
+      let t = c.type_obj_of(x)
+      if !c.type_of_expr(x) {
+        return false
+      }
+      c.type_args(t, types)
+      true
+    }
+    _ => false
+  }
+}
+
+/// The module of an import named name (with `testing` in test code)
+/// without marking it used, or None.
+fn (c: Checker) peek_import(name: Bytes) -> Int? {
+  if let Some(imp) = c.files[c.cur_file].imports.get(name) {
+    if imp.module < 0 {
+      return None
+    }
+    return Some(imp.module)
+  }
+  if name == b"testing" && c.in_test_context() {
+    return c.mod_index.get("std/testing")
+  }
+  None
+}
+
+/// The Type object e names, as type_of_expr finds it, without recording.
+fn (c: Checker) type_obj_of(e: Expr) -> Int {
+  match e {
+    Ident(id) => {
+      let o = c.lookup_module_obj(c.cur_mod, id.name)
+      if o >= 0 && c.objs[o].kind == ObjKind.Type {
+        return o
+      }
+      -1
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      if let Ident(id) = x {
+        if let Some(m) = c.peek_import(id.name) {
+          return c.mods[m].members.get(sel.name) ?? -1
+        }
+      }
+      -1
+    }
+    TypeArgsExpr(x: x, ..) => c.type_obj_of(x)
+    _ => -1
+  }
+}
+
+/// `f[T]` outside a call (call.go typeArgsValue).
+fn (var c: Checker) type_args_value(x: Expr, types: List[Type]) {
+  for t in types {
+    c.typ(t)
+  }
+  match x {
+    Ident(id) => {
+      let o = c.lookup_module_obj(c.cur_mod, id.name)
+      if o >= 0 && c.objs[o].kind == ObjKind.Func && c.lookup_local(id.name) < 0 {
+        c.record(id, o)
+        return
+      }
+    }
+    SelectorExpr(x: inner, sel: sel, ..) => {
+      if let Ident(id) = inner {
+        if c.lookup_local(id.name) < 0 && c.files[c.cur_file].imports.contains(id.name) {
+          let imp = c.import_of(id.name, false) ?? fault("checked")
+          if imp.module >= 0 {
+            c.record(id, c.mods[imp.module].obj)
+            c.module_member(imp, id, sel)
+          }
+          return
+        }
+      }
+    }
+    _ => {}
+  }
+  if c.type_of_expr(Expr.TypeArgsExpr(span: parser.expr_span(x), x: x, types: types)) {
+    return
+  }
+  c.expr(x)
+}
+
+fn (var c: Checker) args(args: List[parser.Arg]) {
+  for a in args {
+    c.expr(a.value)
+  }
+}
+
+/// A call (call.go call).
+fn (var c: Checker) call(fun: Expr, args: List[parser.Arg]) {
+  match fun {
+    Ident(id) => c.call_ident(id, args)
+    SelectorExpr(x: x, sel: sel, ..) => c.call_selector(x, sel, args)
+    TypeArgsExpr(x: x, types: types, ..) => {
+      for t in types {
+        c.typ(t)
+      }
+      match x {
+        Ident(id) => c.call_ident(id, args)
+        SelectorExpr(x: inner, sel: sel, ..) => c.call_selector(inner, sel, args)
+        _ => {
+          c.expr(fun)
+          c.args(args)
+        }
+      }
+    }
+    _ => {
+      c.expr(fun)
+      c.args(args)
+    }
+  }
+}
+
+fn (var c: Checker) call_ident(id: Ident, args: List[parser.Arg]) {
+  let name = id.name
+  let v = c.lookup_local(name)
+  if v >= 0 {
+    c.record(id, v)
+    c.args(args)
+    return
+  }
+  if name == b"expect" && c.in_test_context() && !c.mods[c.cur_mod].members.contains(name) {
+    c.args(args)
+    return
+  }
+  if name == b"old" && c.in_ensures {
+    if args.len() == 1 {
+      c.expr(args[0].value)
+    }
+    return
+  }
+  if is_upper_camel(name) && !c.mods[c.cur_mod].members.contains(name) {
+    // a variant or a prelude type: deferred
+    c.args(args)
+    return
+  }
+  if c.files[c.cur_file].imports.contains(name) {
+    c.import_of(name, false)
+    c.args(args)
+    return
+  }
+  let o = c.lookup_module_obj(c.cur_mod, name)
+  if o >= 0 {
+    c.record(id, o)
+    c.args(args)
+    return
+  }
+  if name == b"spawn" || name == b"spawn_background" || name == b"go" {
+    c.args(args)
+    return
+  }
+  c.error("XO0601", id.span, "function `${text(name)}` not found")
+  c.args(args)
+}
+
+fn (var c: Checker) call_selector(x: Expr, sel: Ident, args: List[parser.Arg]) {
+  if let Ident(id) = x {
+    if c.lookup_local(id.name) < 0 {
+      if let Some(imp) = c.import_of(id.name, c.in_test_context()) {
+        if imp.module < 0 {
+          c.args(args)
+          return
+        }
+        c.record(id, c.mods[imp.module].obj)
+        let m = imp.module
+        let o = c.mods[m].members.get(sel.name) ?? -1
+        if o < 0 {
+          c.error("XO0601", sel.span, "module `${text(id.name)}` has no member `${text(sel.name)}`")
+          c.args(args)
+          return
+        }
+        if m != c.cur_mod && !c.mods[m].is_std && !c.objs[o].is_pub {
+          c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+        }
+        c.record(sel, o)
+        c.args(args)
+        return
+      }
+    }
+  }
+  if !c.type_of_expr(x) {
+    c.expr(x)
+  }
+  c.args(args)
+}

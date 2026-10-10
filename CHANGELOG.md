@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The type checker's name resolution written in Xo (`selfhost/check`,
+  decision 0139), the first stage of the self hosted checker: the same
+  resolution of every identifier as internal/check on every repository
+  module the Go checker accepts (on the go, arm64, and LLVM backends),
+  and the same diagnostics on modules rejected only for names. Hidden
+  `xo typedump [--section=names,types,sigs,diags] [--each] <dirs>`
+  prints what the Go checker resolved, a section at a time
+  (bench/results/selfhost-checker-2026-10-10.md).
+- An assignment computes its value before it reads the binding it
+  stores into (spec 5.2, decision 0140). On the native backends
+  `t.objs[o].kids = t.add_kids()` dropped what `add_kids` pushed onto
+  `t.objs`.
+- Native backends: two modules may declare types of the same name; they
+  were one type (a field of one was "not available without a garbage
+  collector", or the wrong layout was used).
+- Go backend: `??` on a nested optional (`opt.ok() ?? None` where `opt`
+  is a `T? ! E`) generated Go that did not compile.
 - `XO0401` on an `if` without `else` where a value is expected now has
   a note naming the missing `else`; when the expected type came from a
   sibling branch (a closure ending with `if a { n.add(1) } else if b

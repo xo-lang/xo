@@ -1,0 +1,80 @@
+// xocheck: the self hosted checker's command line (decision 0139).
+//
+//   check [--section=S] [--std=DIR] [--each] <dirs...>   print the dump
+//   check [--std=DIR] [--each] --bench=N <dirs...>        check N times, print the time
+//
+// The dump is the names and diags sections of `xo typedump` (the Go
+// checker) for the same directories: --section=names, diags, or
+// names,diags (the default). --each checks every directory as a run of
+// its own, each preceded by `=== check <dir>`. Std declarations are read
+// from DIR (default std). A run that cannot be checked here (`use go`, a
+// parse error) prints `== unsupported <why>`.
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var each = false
+  var names = true
+  var diags = true
+  var std_dir = "std"
+  var dirs: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else if a.starts_with("--section=") {
+      let s = a.trim_prefix("--section=")
+      names = s.contains("names") || s == "all"
+      diags = s.contains("diags") || s == "all"
+    } else if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a == "--each" {
+      each = true
+    } else {
+      dirs.push(a)
+    }
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: check [--section=names,diags] [--std=DIR] [--each] [--bench=N] <dirs...>")
+    os.proc.exit(2)
+  }
+  var runs: List[List[Str]] = [dirs]
+  if each {
+    runs = []
+    for d in dirs {
+      runs.push([d])
+    }
+  }
+  if repeat > 0 {
+    let t0 = os.clock.now()
+    var mods = 0
+    for _ in 0..repeat {
+      for r in runs {
+        var c = new_checker(os.fs, std_dir)
+        match c.check(r) {
+          Ok(_) => mods += c.root_mods.len()
+          Err(e) => fault("check: ${e}")
+        }
+      }
+    }
+    let elapsed = os.clock.now() - t0
+    os.stdio.println("checked ${runs.len()} runs x ${repeat}: ${mods} modules in ${elapsed.nanos() / 1_000_000} ms")
+    return
+  }
+  var out = StrBuilder.new()
+  for r in runs {
+    if each {
+      out.write("=== check ${r[0]}\n")
+    }
+    var c = new_checker(os.fs, std_dir)
+    match c.check(r) {
+      Ok(_) => {
+        if c.unsupported.is_empty() {
+          out.write(c.dump(names, diags))
+        } else {
+          out.write("== unsupported ${c.unsupported}\n")
+        }
+      }
+      Err(e) => out.write("== error ${e}\n")
+    }
+  }
+  os.stdio.print(out.freeze())
+}

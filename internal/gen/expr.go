@@ -982,7 +982,9 @@ func (f *fnGen) coalesce(x *ast.BinaryExpr) string {
 	v := f.tmp("c")
 	f.line("var %s %s", v, f.goType(rt))
 	f.line("if %s.Some {", l)
-	if f.g.optionElem(rt) != nil {
+	if f.goType(lt) == f.goType(rt) {
+		// `a ?? b` with b optional keeps the whole optional a; a nested
+		// optional (`T?? ?? None`) unwraps one level like any other.
 		f.line("\t%s = %s", v, l)
 	} else {
 		f.line("\t%s = %s.V", v, l)

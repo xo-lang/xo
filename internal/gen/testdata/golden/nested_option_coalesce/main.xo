@@ -1,0 +1,25 @@
+// `??` on a nested optional unwraps one level (found by the self hosted
+// checker: `fs.stat(p).ok() ?? None` is a `FileInfo??` made `FileInfo?`).
+// The Go backend kept the whole `T??` when the result was optional.
+
+fn find(n: Int) -> Option[Int?] {
+  if n == 0 {
+    return None
+  }
+  if n == 1 {
+    return Some(None)
+  }
+  Some(Some(n * 10))
+}
+
+fn main(os: Os) {
+  for n in 0..3 {
+    let x: Int? = find(n) ?? None
+    let y = find(n) ?? Some(-2)
+    os.stdio.println("${n}: ${x ?? -1} ${y ?? -3}")
+  }
+  // optional ?? optional keeps the left optional
+  let a: Int? = None
+  let b: Int? = Some(5)
+  os.stdio.println("${(a ?? b) ?? 0} ${(b ?? a) ?? 0}")
+}

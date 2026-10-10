@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Assignment order** (5.2, decision 0140): an assignment computes its
+  value before it reads the binding it stores into, so changes the value
+  makes to that binding are kept (the native backends dropped them).
 - **`for b in bytes`** (3.5, decision 0138): `Bytes` is iterable and
   yields each byte as a `UInt8`.
 - **`while let`** (3.5, decision 0137): `while let Some(v) = expr { }`
@@ -1427,6 +1430,10 @@ Because values never alias mutably, data races are impossible except through
   collection method (`put`, `remove`, `update`, `pop`, `add`).
 - Field assignment `u.name = "b"` on a `var u` rebinds `u` to a modified copy.
   Nested paths work: `st.users.put(k, v)`, `st.config.port = 9090`.
+- An assignment evaluates the indexes of its target, then the value, then
+  stores into the target (decision 0140): changes the value makes to the
+  target's binding are kept, so `t.objs[o].kids = t.add_kids()` keeps the
+  objects `add_kids` pushed onto `t.objs`.
 - To change a value stored in a collection, use `update`, which reads, mutates,
   and writes back in one call:
   ```

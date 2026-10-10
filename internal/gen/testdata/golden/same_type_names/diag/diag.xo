@@ -1,0 +1,28 @@
+// A module declaring types whose names the main module declares too.
+
+pub struct Diag {
+  pub span: Int
+  pub text: Str
+}
+
+pub enum Level {
+  Low
+  High(n: Int)
+}
+
+pub struct Pair[T] {
+  pub a: T
+  pub b: T
+}
+
+pub fn make(n: Int) -> Diag {
+  Diag{span: n, text: "diag ${n}"}
+}
+
+pub fn level(n: Int) -> Level {
+  if n > 1 { Level.High(n: n) } else { Level.Low }
+}
+
+pub fn pair(n: Int) -> Pair[Diag] {
+  Pair{a: make(n), b: make(n + 1)}
+}

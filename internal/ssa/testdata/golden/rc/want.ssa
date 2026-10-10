@@ -269,15 +269,15 @@ b49:  ; preds b43
 b50:  ; preds b46
   v228: () = tuple
   v229: Int = const 3
-  v230: List[Int] = call list.index, v219, v229 @ main.xo:70:3 lands v231
-  v231: Bool = call rt.landing
-  br v231, b53(), b52()
+  v230: Int = const 0
+  v231: Int = const 7
+  v232: List[Int] = call list.index, v219, v229 @ main.xo:70:3 lands v233
+  v233: Bool = call rt.landing
+  br v233, b53(), b52()
 b51:  ; preds b46
   jump b3()
 b52:  ; preds b50
-  v234: Int = const 0
-  v235: Int = const 7
-  v236: List[Int] = call list.set, v230, v234, v235 @ main.xo:70:3 lands v237
+  v236: List[Int] = call list.set, v232, v230, v231 @ main.xo:70:3 lands v237
   v237: Bool = call rt.landing
   br v237, b55(), b54()
 b53:  ; preds b50

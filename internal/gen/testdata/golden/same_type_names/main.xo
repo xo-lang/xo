@@ -1,0 +1,53 @@
+// Two modules may declare types of the same name: the native backends
+// interned named types by their printed name, so `diag.Diag` and this
+// module's `Diag` were one type with the fields of the first (found by
+// the self hosted checker, whose `Diag` met the lexer's).
+
+use example.com/samenames/diag
+
+struct Diag {
+  file: Str
+  line: Int
+  col: Int
+}
+
+enum Level {
+  Info(msg: Str)
+  Warn
+}
+
+struct Pair[T] {
+  first: T
+  second: T
+  count: Int
+}
+
+fn show(l: Level) -> Str {
+  match l {
+    Info(msg) => "info ${msg}"
+    Warn => "warn"
+  }
+}
+
+fn show_theirs(l: diag.Level) -> Str {
+  match l {
+    Low => "low"
+    High(n) => "high ${n}"
+  }
+}
+
+fn main(os: Os) {
+  let theirs = diag.make(3)
+  let ours = Diag{file: "main.xo", line: theirs.span, col: 7}
+  os.stdio.println("${theirs.text} ${theirs.span}")
+  os.stdio.println("${ours.file}:${ours.line}:${ours.col}")
+  os.stdio.println("${show(Level.Info(msg: "x"))} ${show(Level.Warn)} ${show_theirs(diag.level(1))} ${show_theirs(diag.level(5))}")
+  let p = diag.pair(10)
+  let q = Pair{first: ours, second: ours, count: 2}
+  os.stdio.println("${p.a.span} ${p.b.text} ${q.first.file} ${q.count}")
+  var ds: List[Diag] = [ours]
+  ds.push(Diag{file: "b.xo", line: 2, col: 1})
+  var theirs_list: List[diag.Diag] = [theirs]
+  theirs_list.push(diag.make(4))
+  os.stdio.println("${ds.len()} ${ds[1].file} ${theirs_list[1].text}")
+}

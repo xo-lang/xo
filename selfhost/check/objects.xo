@@ -1,0 +1,134 @@
+// The checker's tables: objects, modules, files, and what it records
+// (decision 0139). The data is graph shaped (a scope maps names to
+// objects, an object belongs to a module, a module has files that import
+// other modules), and Xo values have no identity, so every node lives in
+// a table of the Checker and refers to others by index: an object is an
+// Int into `objs`, a module an Int into `mods`, a file an Int into
+// `files`. -1 stands for "none".
+
+use github.com/xo-lang/xo/selfhost/parser
+
+pub type Span = parser.Span
+pub type Ident = parser.Ident
+
+/// What an object is.
+pub enum ObjKind {
+  /// A top level function.
+  Func
+  /// A top level constant.
+  Const
+  /// A declared type: struct, enum, interface, alias, or newtype.
+  Type
+  /// A type parameter, declared or implicit.
+  TParam
+  /// A local binding: let, var, parameter, receiver, or predeclared.
+  Local
+  /// A module, the target of an import.
+  Module
+}
+
+/// A named entity. Positions are those of the declaring name.
+pub struct Obj {
+  pub kind: ObjKind
+  pub name: Bytes
+  /// The declaring module (Func, Const, Type), or the module a Module
+  /// object stands for; -1 otherwise.
+  pub module: Int = -1
+  /// The declaring file, "" when there is none (the `os` of a test).
+  pub file: Str = ""
+  pub line: Int = 0
+  pub col: Int = 0
+  /// Local: let, var, param, var-param, recv, var-recv, or predeclared.
+  pub local: Str = ""
+  /// TParam: an effect variable (`fx: Effects`).
+  pub effect: Bool = false
+  /// Type: its declared type parameters (TParam objects).
+  pub tparams: List[Int] = []
+  /// Func, Const, Type: declared `pub` (everything in std is).
+  pub is_pub: Bool = false
+  /// Type: the names of its struct fields (for the field and method
+  /// conflict check).
+  pub fields: List[Bytes] = []
+  /// Type: struct, enum, interface, alias, or newtype.
+  pub tkind: Str = ""
+  /// Type (enum): its variant names.
+  pub variants: List[Bytes] = []
+  /// Type: methods attached so far, by name (a set).
+  pub methods: Map[Bytes, Bool] = {}
+}
+
+/// A module: a directory of .xo files, or a std declaration file.
+pub struct Module {
+  pub path: Str
+  /// The default local name (core 4.1).
+  pub name: Str
+  pub dir: Str
+  pub files: List[Int] = []
+  /// Top level names to objects.
+  pub members: Map[Bytes, Int] = {}
+  pub is_std: Bool = false
+  pub is_prelude: Bool = false
+  /// Named on the command line (or found under a named directory).
+  pub root: Bool = false
+  /// 0 new, 1 loading its imports, 2 loaded (cycle detection).
+  pub state: Int = 0
+  /// The Module object that names it in records.
+  pub obj: Int = -1
+}
+
+/// An import of a file: the module it names, -1 when the path did not
+/// resolve (nothing more is reported about it).
+pub struct Import {
+  pub module: Int
+  pub path: Bytes
+  pub used: Bool = false
+  /// The `use` declaration (for the unused import check).
+  pub span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+}
+
+/// One parsed source file.
+pub struct SrcFile {
+  pub path: Str
+  pub module: Int
+  pub ast: parser.File
+  /// Local import names to imports.
+  pub imports: Map[Bytes, Import] = {}
+  /// The name ends in _test.xo.
+  pub is_test: Bool = false
+  /// Per declaration: its object, -1 for none (tests, methods).
+  pub decl_objs: List[Int] = []
+  /// Per declaration: a function whose body is checked (a top level
+  /// function that is its name's declaration, or an attached method).
+  pub decl_ok: List[Bool] = []
+  /// Per declaration: a function's type parameters (implicit, then
+  /// declared), the type environment of its body.
+  pub decl_tparams: List[List[Int]] = []
+}
+
+/// An xo.mod: the module path it declares and its directory.
+pub struct ModRoot {
+  pub path: Str
+  pub dir: Str
+}
+
+/// A diagnostic: code, span, and message (notes and fixes are a later
+/// stage, decision 0139).
+pub struct Diag {
+  pub code: Str
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub end_line: Int
+  pub end_col: Int
+  pub message: Str
+}
+
+/// What an identifier resolved to.
+pub struct NameRec {
+  pub file: Str
+  pub offset: Int
+  pub line: Int
+  pub col: Int
+  pub name: Bytes
+  pub obj: Int
+}

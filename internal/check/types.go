@@ -53,6 +53,9 @@ type TParam struct {
 	// created an Elided parameter; ElidedText is its name.
 	ElidedAt   token.Span
 	ElidedText string
+	// Span is the declaring name: the type parameter list entry, or the
+	// first use that bound an implicit parameter.
+	Span token.Span
 }
 
 // ParamType is a reference to a type parameter inside a generic body or

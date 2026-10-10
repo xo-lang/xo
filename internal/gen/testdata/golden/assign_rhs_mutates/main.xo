@@ -1,0 +1,46 @@
+// An assignment whose value changes the list being assigned into: the
+// value is computed first and the store keeps its changes. The native
+// backends read the list before the value and stored into that stale
+// copy, dropping the pushes (found by the self hosted checker:
+// `c.objs[o].tparams = c.new_tparams(tps)` lost the new objects).
+
+struct Obj {
+  name: Str
+  kids: List[Int] = []
+}
+
+struct Table {
+  objs: List[Obj] = []
+}
+
+fn (var t: Table) add(name: Str) -> Int {
+  t.objs.push(Obj{name: name})
+  t.objs.len() - 1
+}
+
+fn (var t: Table) add_kids(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..n {
+    out.push(t.add("kid ${i}"))
+  }
+  out
+}
+
+fn main(os: Os) {
+  var t = Table{}
+  let o = t.add("parent")
+  t.objs[o].kids = t.add_kids(2)
+  os.stdio.println("${t.objs.len()} ${t.objs[o].kids.len()} ${t.objs[2].name}")
+  var xs = [1, 2]
+  xs[0] = {
+    xs.push(3)
+    xs.len()
+  }
+  os.stdio.println("${xs.len()} ${xs[0]} ${xs[2]}")
+  var grid = [[1], [2]]
+  grid[1] = {
+    grid.push([9])
+    [grid.len()]
+  }
+  os.stdio.println("${grid.len()} ${grid[1][0]} ${grid[2][0]}")
+}

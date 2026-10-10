@@ -1310,6 +1310,7 @@ func (c *checker) typeOfExpr(e ast.Expr) (*TypeObj, []Type, bool) {
 			if p := c.localEnv().params[x.Name]; p != nil {
 				return nil, nil, false
 			}
+			c.rec.name(x, t)
 			return t, nil, true
 		}
 	case *ast.SelectorExpr:
@@ -1326,6 +1327,8 @@ func (c *checker) typeOfExpr(e ast.Expr) (*TypeObj, []Type, bool) {
 		}
 		if t, ok := imp.Module.Scope[x.Sel.Name].(*TypeObj); ok {
 			imp.Used = true
+			c.rec.name(id, imp.Module)
+			c.rec.name(x.Sel, t)
 			if !t.Pub && imp.Module != c.mod {
 				c.errorf(diag.NotVisible, x.Sel.Sp, "type `%s` is not `pub` in module `%s`", t.Name, imp.Module.Path)
 			}

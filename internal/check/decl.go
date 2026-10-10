@@ -95,7 +95,7 @@ func objSpan(o Object) token.Span {
 func (c *checker) newTParams(tps []*ast.TypeParam) []*TParam {
 	var out []*TParam
 	for _, tp := range tps {
-		p := &TParam{Name: tp.Name.Name, IsEffect: tp.Effects}
+		p := &TParam{Name: tp.Name.Name, IsEffect: tp.Effects, Span: tp.Name.Sp}
 		if tp.Effects {
 			c.checkName(tp.Name, "effect variable")
 		} else {
@@ -640,6 +640,7 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 			if len(x.Args) > 0 {
 				c.errorf(diag.BadArguments, x.Sp, "type parameter `%s` takes no type arguments", name)
 			}
+			c.rec.name(x.Path[0], p)
 			return &ParamType{P: p}
 		}
 		if name == "Effects" {
@@ -649,13 +650,14 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 		o := c.lookupModuleObj(env.mod, name)
 		if o == nil {
 			if env.implicit != nil && len(x.Args) == 0 && isUpperCamel(name) {
-				p := &TParam{Name: name, Implicit: true}
+				p := &TParam{Name: name, Implicit: true, Span: x.Path[0].Sp}
 				if env.argParam != nil {
 					p.Constraint = env.argParam.Constraint
 				}
 				*env.implicit = append(*env.implicit, p)
 				env.params = copyParams(env.params)
 				env.params[name] = p
+				c.rec.name(x.Path[0], p)
 				return &ParamType{P: p}
 			}
 			if t, ok := c.habitType(x, env); ok {
@@ -671,6 +673,7 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 			c.errorf(diag.WrongKind, x.Sp, "`%s` is not a type", name)
 			return badType
 		}
+		c.rec.name(x.Path[0], to)
 		obj = to
 	case 2:
 		modName := x.Path[0].Name
@@ -691,6 +694,7 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 		if imp.Module == nil {
 			return badType
 		}
+		c.rec.name(x.Path[0], imp.Module)
 		o := imp.Module.Scope[last.Name]
 		if o == nil {
 			var cands []string
@@ -711,6 +715,7 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 		if !to.Pub && imp.Module != env.mod {
 			c.errorf(diag.NotVisible, last.Sp, "type `%s` is not `pub` in module `%s`", last.Name, imp.Module.Path)
 		}
+		c.rec.name(last, to)
 		obj = to
 	default:
 		c.errorf(diag.UnresolvedName, x.Sp, "type path `%s` has too many segments", typePathString(x))
