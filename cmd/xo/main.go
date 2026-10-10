@@ -265,6 +265,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runVersion(args[1:], stdout, stderr)
 	case "lexdump": // hidden: canonical token dump, compared with selfhost/lexer
 		return runLexDump(args[1:], stdout, stderr)
+	case "astdump": // hidden: canonical syntax tree dump, compared with selfhost/parser
+		return runASTDump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
