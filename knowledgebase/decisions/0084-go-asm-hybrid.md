@@ -1,6 +1,8 @@
 # 0084: Hybrid builds: hot leaf functions as Go assembler, an option
 
-Status: Accepted (2026-10-09). Extends decisions 0040 (performance path),
+Status: Accepted (2026-10-09); amended 2026-10-10 by decision 0131
+(loops poll for preemption: the "cannot be preempted" items below are
+resolved). Extends decisions 0040 (performance path),
 0049 (arm64 backend), 0054, 0060, 0075. Implemented in
 `internal/arm64/goasm.go` (Go mode), `internal/arm64/gosyntax.go`,
 `internal/gen/hybrid.go`, `internal/build/hybrid.go`, `std/rt/hybrid.go`,
@@ -33,7 +35,8 @@ speed where it matters and Go everywhere else.
    percent of `--backend=arm64`), but few functions qualify (none in the
    HTTP benchmark, 4 of 77 golden programs), call heavy recursion is
    slower (fib 1.49x), and the runtime cannot preempt assembly, so a long
-   loop delays GC stop the world.
+   loop delays GC stop the world (resolved by decision 0131: back edge
+   polls, 0 to 7 percent).
 3. **The Go versions stay** in `xo_pure.go` under tag `xo_pure` (and on
    targets other than arm64): the fallback and the reference of the
    differential tests, which run on every eligible golden and on random
@@ -57,8 +60,9 @@ speed where it matters and Go everywhere else.
 
 ## Alternatives
 - **Make it the default for eligible functions**: rejected until loops
-  in assembly poll for preemption (gotchas/go-asm-not-preemptible.md)
-  and the selection is proven never slower on more programs.
+  in assembly poll for preemption (gotchas/go-asm-not-preemptible.md;
+  done 2026-10-10, decision 0131) and the selection is proven never
+  slower on more programs (still open).
 - **Drop it**: rejected; the speedups on numeric kernels are real and the
   cost is an opt-in flag.
 - **ABIInternal assembly** (arguments in registers): only the Go runtime

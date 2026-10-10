@@ -82,6 +82,10 @@ type inst struct {
 	// iCall: through the code word of a closure, in x0 (`blr x0`; sym
 	// is empty)
 	indirect bool
+	// iCall, Go mode: a preemption poll at a loop's back edge (goasm.go
+	// insertPolls): the call of sym runs only when the goroutine's
+	// stack guard holds Go's preemption request
+	poll bool
 	// konst: a plain instruction that makes a constant (no uses but
 	// other constants)
 	konst bool

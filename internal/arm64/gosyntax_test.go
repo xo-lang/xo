@@ -36,6 +36,8 @@ var gnuForms = []string{
 	"b.eq Lt", "b.ne Lt", "b.lt Lt", "b.ge Lt", "b.gt Lt", "b.le Lt", "b.lo Lt", "b.hs Lt", "b.hi Lt", "b.ls Lt",
 	"b.mi Lt", "b.pl Lt", "b.vs Lt", "b.vc Lt", "b Lt", "cbz x3, Lt", "cbnz x3, Lt", "cbz w3, Lt",
 	"tbz x3, #63, Lt", "tbnz x3, #0, Lt", "ret",
+	// preemption polls (decision 0131)
+	"ldr x16, [x28, #16]", "tbnz x16, #63, Lt",
 }
 
 // TestGoSyntaxEncoding assembles every form with the system assembler
@@ -101,6 +103,10 @@ func TestGoSyntaxEncoding(t *testing.T) {
 			}
 		}
 		got = append(got, w)
+	}
+	// the function's text is padded with zero words to 16 bytes
+	for len(got) > len(gnuForms) && got[len(got)-1] == 0 {
+		got = got[:len(got)-1]
 	}
 	if len(got) != len(want) {
 		t.Fatalf("%d instructions from Go's assembler, %d from cc\n%s", len(got), len(want), out)

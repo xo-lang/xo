@@ -1,6 +1,9 @@
 package rt
 
-import "math"
+import (
+	"math"
+	"runtime"
+)
 
 // HybridFault raises the fault of a function that `xo build --hybrid`
 // compiled to Go assembler (internal/arm64 Go mode, decision 0084): the
@@ -27,4 +30,13 @@ func HybridFault(kind, a, b, c int64, at string) {
 		Faultf(at, "integer overflow: abs(%d) does not fit Int", a)
 	}
 	Faultf(at, "internal: unknown fault %d of a hybrid function", kind)
+}
+
+// HybridYield is called by an assembly loop of a hybrid build when its
+// preemption poll sees Go's preemption request in g.stackguard0
+// (decision 0131): the goroutine yields to the scheduler, where a stop
+// the world, a stack scan, or another goroutine gets its turn, and the
+// loop resumes where it was.
+func HybridYield() {
+	runtime.Gosched()
 }

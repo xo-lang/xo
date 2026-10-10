@@ -1971,7 +1971,9 @@ allocation) to native assembly linked into the Go program; everything
 else, and every program the native backends cannot lower, stays Go.
 Behavior is the Go backend's, faults included, except that fault frames
 omit the assembly functions and `Float` results may differ in the last bit
-where the Go backend fuses a multiply and an add (decision 0084).
+where the Go backend fuses a multiply and an add (decision 0084). Loops
+in assembly yield to the scheduler and the garbage collector as Go code
+does (decision 0131).
 
 ### 10.2 Diagnostic format
 

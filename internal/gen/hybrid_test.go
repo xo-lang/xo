@@ -1,11 +1,13 @@
 package gen_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -125,6 +127,117 @@ func TestHybridRandom(t *testing.T) {
 			vetHybrid(t, res.Dir)
 		})
 	}
+}
+
+// TestHybridPreemption checks that a long loop in Go assembler polls for
+// preemption (decision 0131): testdata/hybrid_preempt runs `spin` (in
+// assembly) in a task while main allocates and sleeps until spin is
+// done. With GOMAXPROCS=4 no stop the world of the GC (gctrace) may wait
+// for the loop past 10 ms and main never stalls past 100 ms; with
+// GOMAXPROCS=1 main still gets the P back (sysmon preempts after 10 ms).
+// Without the polls both wait for the whole loop (0.9 s for 6M rounds on
+// 2026-10-10). The full suite runs about 2 s of loop, also under the
+// race detector; -short about 0.3 s.
+func TestHybridPreemption(t *testing.T) {
+	// not parallel: the other tests of the package would load the host
+	needArm64(t)
+	rounds := "12000000"
+	if testing.Short() {
+		rounds = "2000000"
+	}
+	type run struct {
+		procs string
+		stw   float64 // bound on the longest stop the world (ms)
+		gap   int     // bound on main's longest gap (ms)
+		race  bool
+	}
+	runs := []run{{procs: "4", stw: 10, gap: 100}, {procs: "1", gap: 100}}
+	if !testing.Short() {
+		runs = append(runs, run{procs: "4", stw: 10, gap: 250, race: true})
+	}
+	dir := filepath.Join("testdata", "hybrid_preempt")
+	bins := map[bool]string{}
+	for _, race := range []bool{false, true} {
+		if race && testing.Short() {
+			continue
+		}
+		out := filepath.Join(t.TempDir(), "preempt")
+		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Hybrid: true, Race: race, Out: out})
+		if err != nil || res.Failed {
+			t.Fatalf("build (race %v): %v %+v", race, err, res)
+		}
+		if res.Hybrid == nil || strings.Join(res.Hybrid.Asm, " ") != "spin" {
+			t.Fatalf("want spin in assembly: %+v", res.Hybrid)
+		}
+		bins[race] = res.Binaries[build.Host()]
+	}
+	for _, r := range runs {
+		// a loaded host (the rest of the suite) can delay a stop the
+		// world by itself: a bound missed three times fails (without the
+		// polls every run misses it by the whole loop)
+		var errs []string
+		for attempt := 0; attempt < 3; attempt++ {
+			errs = preemptRun(t, bins[r.race], rounds, r.procs, r.race, r.stw, r.gap)
+			if len(errs) == 0 {
+				break
+			}
+			t.Logf("attempt %d: %s", attempt+1, strings.Join(errs, "; "))
+		}
+		for _, e := range errs {
+			t.Error(e)
+		}
+	}
+	if testing.Short() {
+		return
+	}
+	// the control: without the polls the same run misses both bounds
+	out := filepath.Join(t.TempDir(), "nopoll")
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Hybrid: true, HybridNoPoll: true, Out: out})
+	if err != nil || res.Failed {
+		t.Fatalf("build (no polls): %v %+v", err, res)
+	}
+	if errs := preemptRun(t, res.Binaries[build.Host()], rounds, "4", false, 10, 100); len(errs) < 2 {
+		t.Errorf("without polls: want the stop the world and main's gap past their bounds, got %v", errs)
+	}
+}
+
+// preemptRun runs the preemption program once and returns the bounds it
+// missed.
+func preemptRun(t *testing.T, bin, rounds, procs string, race bool, stwBound float64, gapBound int) []string {
+	t.Helper()
+	cmd := exec.Command(bin, rounds)
+	cmd.Env = append(goldenEnv(), "GOMAXPROCS="+procs, "GODEBUG=gctrace=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run: %v\n%s", err, stderr.String())
+	}
+	var total, worst, iters, kept, ms int
+	if _, err := fmt.Sscanf(stdout.String(), "spin %d worst_ms %d iters %d kept %d total_ms %d", &total, &worst, &iters, &kept, &ms); err != nil {
+		t.Fatalf("output %q: %v", stdout.String(), err)
+	}
+	gcRE := regexp.MustCompile(`gc \d+ @\S+ \S+: ([\d.]+)\+[\d.]+\+([\d.]+) ms clock`)
+	stw, gcs := 0.0, 0
+	for _, m := range gcRE.FindAllStringSubmatch(stderr.String(), -1) {
+		gcs++
+		for _, x := range m[1:] {
+			v, _ := strconv.ParseFloat(x, 64)
+			stw = max(stw, v)
+		}
+	}
+	t.Logf("GOMAXPROCS=%s race=%v: spin %d ms, main's worst gap %d ms over %d iterations, %d GCs, longest stop the world %.3f ms",
+		procs, race, ms, worst, iters, gcs, stw)
+	var errs []string
+	if worst > gapBound {
+		errs = append(errs, fmt.Sprintf("GOMAXPROCS=%s race=%v: main stalled %d ms (bound %d) while the hybrid loop ran %d ms", procs, race, worst, gapBound, ms))
+	}
+	if stwBound > 0 && gcs == 0 {
+		errs = append(errs, fmt.Sprintf("GOMAXPROCS=%s race=%v: no GC ran during the loop", procs, race))
+	}
+	if stwBound > 0 && stw > stwBound {
+		errs = append(errs, fmt.Sprintf("GOMAXPROCS=%s race=%v: a stop the world took %.3f ms (bound %.0f)", procs, race, stw, stwBound))
+	}
+	return errs
 }
 
 // randomKernels writes a program that runs eligible kernels over random

@@ -47,6 +47,7 @@ type fstate struct {
 	frame   int
 	stubs   strings.Builder
 	nstub   int
+	npoll   int // Go mode: polls emitted (goEmitPoll labels)
 	mm      *memo
 	// landing pads (decision 0085): curPad is the pad of the value being
 	// lowered (its calls and fault stubs get it); pads are the SSA blocks
@@ -83,6 +84,9 @@ func (g *gen) function(f *ssa.Func) {
 	s.hoistConsts()
 	s.reuseFlags()
 	s.placeLatches()
+	if g.goMode {
+		s.insertPolls()
+	}
 	s.regalloc()
 	s.emit()
 }

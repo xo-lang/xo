@@ -54,6 +54,9 @@ type GoOptions struct {
 	All bool
 	// NoInline turns off the inlining of small leaf functions.
 	NoInline bool
+	// NoPoll leaves the preemption polls out of loops (decision 0131):
+	// measurements of their cost only.
+	NoPoll bool
 }
 
 // GoFunc is one function emitted as Go assembler.
@@ -63,9 +66,13 @@ type GoFunc struct {
 	// Wrap: selected, so the Go backend's function calls the assembly
 	// one; otherwise it is emitted only for other assembly functions.
 	Wrap bool
-	// NoEscape: the function calls no Xo function (it never yields with
-	// a List's address in a register), so //go:noescape is right.
+	// NoEscape: the function calls no Xo function and has no loop (it
+	// never yields with a List's address in a register: the stack may
+	// move then), so //go:noescape is right.
 	NoEscape bool
+	// Polls: the function polls for preemption in its loops (decision
+	// 0131) and calls the package's xoHybridYield.
+	Polls bool
 	// Unshare lists the `var` List parameters the function writes: the
 	// wrapper makes each the unique owner of its elements first.
 	Unshare []int
@@ -467,7 +474,7 @@ func GenerateGo(m *ssa.Module, opts GoOptions) (prog *GoProgram, err error) {
 	}
 	g := &gen{m: m, os: Linux, byName: map[string]*ssa.Func{}, layouts: map[*ssa.Type][]bool{},
 		strs: map[string]string{}, locs: map[string]string{}, helped: map[string]string{},
-		goMode: true, goFuncs: map[string]*GoFunc{}, goPosIx: map[string]int{}, goSigs: map[string]*goSig{},
+		goMode: true, noPoll: opts.NoPoll, goFuncs: map[string]*GoFunc{}, goPosIx: map[string]int{}, goSigs: map[string]*goSig{},
 		goWrites: map[string][]int{}}
 	for _, f := range m.Funcs {
 		g.byName[f.Name] = f
@@ -695,7 +702,95 @@ func (s *fstate) goCall(v *ssa.Value, callee *ssa.Func) {
 	s.set(v, out...)
 }
 
+// Preemption polls (decision 0131). The Go runtime never preempts
+// assembly asynchronously (it has no register maps), so a loop in a
+// hybrid function would hold its goroutine's P until it returns: a stop
+// the world (GC) or another goroutine on that P would wait for it. Each
+// back edge of a loop therefore polls Go's preemption request (Go's own
+// loops without calls rely on asynchronous preemption instead): the
+// runtime writes stackPreempt (-1314) into g.stackguard0 (16(g), g is
+// R28) whenever it wants the goroutine to stop (sysmon after 10 ms, a
+// stop the world, a stack scan). A stack bound is a user space address
+// (bit 63 clear), while stackPreempt and Go's other poison (stackFork,
+// -1234) have bit 63 set, so the hot path is two instructions that leave
+// the flags alone:
+//
+//	ldr x16, [x28, #16]
+//	tbnz x16, #63, poll
+//
+// (comparing with -1314 exactly, `add x16, x16, #1314; cbz`, cost 24
+// percent on a Collatz loop of seven instructions, tbnz 1 percent:
+// bench/results/hybrid-preemption-2026-10-10.md). The cold path stores the registers live across it to their slots,
+// calls the package's xoHybridYield (runtime.Gosched, which reaches the
+// scheduler, where the stop happens), reloads them, and jumps back. A
+// function that polls must not be //go:noescape: its Lists' arrays then
+// live in the heap, which does not move, while the goroutine's stack may
+// be moved during the yield.
+
+// goYield is the Go function a poll calls (generated per package).
+const goYield = "·xoHybridYield(SB)"
+
+// insertPolls puts a poll before the terminator of every block with a
+// back edge (found by depth first search from the entry). Instructions
+// between the poll and the terminator are none, so the poll is on the
+// edge: it runs once per iteration of each loop.
+func (s *fstate) insertPolls() {
+	if s.g.noPoll {
+		return
+	}
+	state := map[*mblock]int{}
+	latch := map[*mblock]bool{}
+	var dfs func(b *mblock)
+	dfs = func(b *mblock) {
+		state[b] = 1
+		if t := b.term(); t != nil && (t.kind == iJump || t.kind == iCondBr || t.kind == iSwitch) {
+			for _, x := range t.targets {
+				switch state[x] {
+				case 0:
+					dfs(x)
+				case 1:
+					latch[b] = true
+				}
+			}
+		}
+		state[b] = 2
+	}
+	if len(s.hot) > 0 {
+		dfs(s.hot[0])
+	}
+	for _, b := range append(append([]*mblock(nil), s.hot...), s.cold...) {
+		if !latch[b] {
+			continue
+		}
+		n := len(b.insts) - 1
+		p := &inst{kind: iCall, sym: goYield, poll: true}
+		b.insts = append(b.insts[:n:n], p, b.insts[n])
+	}
+}
+
+// goEmitPoll emits a poll (insertPolls): the check here, the call in a
+// stub after the body.
+func (s *fstate) goEmitPoll(b *strings.Builder, in *inst, fr *frameInfo) {
+	g := s.g
+	s.npoll++
+	l := g.local(fmt.Sprintf("f%d_poll%d", g.nfunc, s.npoll))
+	fmt.Fprintf(b, "\tldr x16, [x28, #16]\n\ttbnz x16, #63, %s\n%s_r:\n", l, l)
+	fmt.Fprintf(&s.stubs, "%s:\n", l)
+	for k, v := range in.saves {
+		fmt.Fprintf(&s.stubs, "\tstr %s, [sp, #%d]\n", regName(s.loc[v].reg, false), fr.spillBase+8*in.saveSlots[k])
+	}
+	fmt.Fprintf(&s.stubs, "\tbl %s\n", in.sym)
+	for k, v := range in.saves {
+		fmt.Fprintf(&s.stubs, "\tldr %s, [sp, #%d]\n", regName(s.loc[v].reg, false), fr.spillBase+8*in.saveSlots[k])
+	}
+	fmt.Fprintf(&s.stubs, "\tb %s_r\n", l)
+}
+
 func (s *fstate) goEmitCall(b *strings.Builder, in *inst, fr *frameInfo) {
+	if in.poll {
+		s.goEmitPoll(b, in, fr)
+		return
+	}
 	var ms []move
 	for k, a := range in.srcs {
 		ms = append(ms, move{in.gargs[k], s.msrcOf(a, fr)})
@@ -771,13 +866,14 @@ func (s *fstate) goEmit() {
 		fail("a frame slot of the native convention")
 	}
 	fr := &frameInfo{}
-	out, calls, xcalls := 0, false, false
+	out, calls, xcalls, polls := 0, false, false, false
 	for _, b := range s.order {
 		for _, in := range b.insts {
 			switch in.kind {
 			case iCall:
 				calls = true
-				xcalls = xcalls || !in.noret
+				polls = polls || in.poll
+				xcalls = xcalls || (!in.noret && !in.poll)
 				for _, l := range append(append([]mloc(nil), in.gargs...), in.gres...) {
 					out = max(out, l.off-8+8)
 				}
@@ -789,6 +885,11 @@ func (s *fstate) goEmit() {
 				out = max(out, 40)
 			}
 		}
+	}
+	if polls {
+		// a frame of 0 would make Go's assembler treat the function as
+		// a leaf that keeps its link register in x30
+		out = max(out, 8)
 	}
 	fr.outArgs = alignUp(out, 8)
 	fr.outOff = 8 + fr.outArgs
@@ -847,7 +948,8 @@ func (s *fstate) goEmit() {
 	}
 	g.text.WriteString(body)
 	g.text.WriteString("\n")
-	gf.NoSplit, gf.Frame, gf.ArgSize, gf.NoEscape = nosplit, frame, sig.size, !xcalls
+	gf.NoSplit, gf.Frame, gf.ArgSize, gf.NoEscape = nosplit, frame, sig.size, !xcalls && !polls
+	gf.Polls = polls
 	seen := map[int]bool{}
 	gf.Unshare = nil
 	for _, i := range g.goWrites[s.f.Name] {

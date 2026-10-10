@@ -200,9 +200,12 @@ func (m *Module) verifyRC(f *Func) []string {
 						// the cleanup path of a landing check: the operation
 						// checked produced nothing (decision 0085); a call
 						// inlined since (internal/arm64 inline.go) left its
-						// results as the block's parameters
+						// results as the block's parameters (not the entry
+						// block's: those are the function's, and a check
+						// of rt.unwinding without a landing, as in a task
+						// runner built without fault unwinding, keeps them)
 						for l := range est {
-							if l.root == site || (site == nil && l.root.Op == OpParam && l.root.Block == b) {
+							if l.root == site || (site == nil && l.root.Op == OpParam && l.root.Block == b && b != f.Blocks[0]) {
 								delete(est, l)
 							}
 						}

@@ -112,7 +112,9 @@ type Options struct {
 	// arm64 backend (hybrid.go); HybridAll takes every eligible function
 	// (tests), and HybridPure builds the same directory with the Go
 	// versions (the tag xo_pure: the reference of differential tests).
-	Hybrid, HybridAll, HybridPure bool
+	// HybridNoPoll leaves the preemption polls out of the assembly's
+	// loops (decision 0131; tests and measurements only).
+	Hybrid, HybridAll, HybridPure, HybridNoPoll bool
 	// Stderr receives compiler output.
 	Stderr *bytes.Buffer
 	// TZData is where std/time finds zone data (decision 0094): "" or

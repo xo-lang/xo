@@ -1,0 +1,48 @@
+// Preemption of a hybrid loop (decision 0131): `spin` (Collatz step
+// counts, in Go assembler under `xo build --hybrid`) runs in a task for
+// `rounds` rounds while main allocates Lists and sleeps until it is done,
+// recording the longest gap between two of its iterations. Without a
+// poll in the assembly the gap is as long as a stop the world waits for
+// spin (or, with GOMAXPROCS=1, as long as spin runs).
+fn spin(rounds: Int) -> Int {
+  var total = 0
+  for r in 0..rounds {
+    var n = r + 27
+    while n != 1 {
+      if n % 2 == 0 {
+        n = n / 2
+      } else {
+        n = 3 * n + 1
+      }
+      total += 1
+    }
+  }
+  total
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let rounds = Int.parse(args[0]) ?? 1000
+  let clock = os.clock
+  let start = clock.now()
+  let done: Chan[Int] = Chan.new(cap: 1)
+  os.tasks.spawn_background(fn() { done.send(spin(rounds)) })
+  var worst = 0
+  var iters = 0
+  var kept = 0
+  var last = clock.now()
+  while done.len() == 0 {
+    var xs: List[Int] = []
+    for i in 0..2000 {
+      xs.push(i)
+    }
+    kept += xs.len()
+    clock.sleep(100us)
+    let now = clock.now()
+    worst = worst.max((now - last).millis())
+    last = now
+    iters += 1
+  }
+  let total = done.recv() ?? -1
+  os.stdio.println("spin ${total} worst_ms ${worst} iters ${iters} kept ${kept} total_ms ${(clock.now() - start).millis()}")
+}

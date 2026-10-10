@@ -1,0 +1,45 @@
+// sieve_split with the marking loop called from Go in chunks of `k`
+// values of i (the first argument, default 4096): the "chunking from Go"
+// alternative to preemption polls in the assembly (decision 0131,
+// bench/results/hybrid-preemption-2026-10-10.md). Between two calls of
+// `mark_range` the goroutine runs Go code, which the runtime preempts
+// asynchronously. Same output as sieve_split.
+fn mark_range(var flags: List[Bool], n: Int, lo: Int, hi: Int) -> Int {
+  var count = 0
+  for i in lo..hi {
+    if flags[i] {
+      count += 1
+      var j = i * i
+      while j <= n {
+        flags[j] = false
+        j += i
+      }
+    }
+  }
+  count
+}
+
+fn sieve(n: Int, k: Int) -> Int {
+  var flags: List[Bool] = []
+  for _ in 0..n + 1 {
+    flags.push(true)
+  }
+  var count = 0
+  var lo = 2
+  while lo <= n {
+    let hi = (lo + k).min(n + 1)
+    count += mark_range(flags, n, lo, hi)
+    lo = hi
+  }
+  count
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let k = if args.len() > 0 { Int.parse(args[0]) ?? 4096 } else { 4096 }
+  var total = 0
+  for _ in 0..5 {
+    total += sieve(10000000, k)
+  }
+  os.stdio.println("sieve ${total}")
+}
