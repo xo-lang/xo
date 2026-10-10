@@ -2,9 +2,18 @@
 
 Last verified: 2026-10-10
 
-The site is a separate repo (decision 0139), locally at
-`~/godev/claude-space/xolang/website`; not yet pushed (target
-`github.com/xo-lang/xolang.dev`). Its `README.md` has the full layout.
+The site is a separate repo (decision 0139),
+[github.com/xo-lang/xolang.dev](https://github.com/xo-lang/xolang.dev),
+locally at `~/godev/claude-space/xolang/website`. Its `README.md` has the
+full layout.
+
+Live at https://xolang.dev since 2026-10-10: GitHub Pages from Actions,
+custom domain `xolang.dev`, HTTPS enforced (certificate approved, expires
+2027-01-08, renewed by GitHub). DNS at Namecheap: A records on `@` to
+185.199.108.153, .109, .110, .111.153 and `www` CNAME `xo-lang.github.io.`;
+`http://` and `www` redirect 301 to `https://xolang.dev/`. The other four
+domains (decision 0135) still show Namecheap's default 302 to `www`; their
+301 redirects to `https://xolang.dev` are pending.
 
 | Task | Command (in the site repo) |
 |---|---|
