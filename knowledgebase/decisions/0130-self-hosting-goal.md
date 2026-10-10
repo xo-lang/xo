@@ -39,8 +39,15 @@ passes the full suite on the backends it targets.
   `selfhost/check` resolves every identifier like internal/check on all
   347 accepted repository runs and gives the same diagnostics on the 56
   rejected only for names, three backends, plus mutations; found three
-  compiler bugs, fixed (decision 0140 among them). Next: stage 2, types
-  and inference (bench/results/selfhost-checker-2026-10-10.md).
+  compiler bugs, fixed (decision 0140 among them).
+- 2026-10-10: checker stage 2 of 8, types and inference (decision
+  0141): identical names and types sections on all 348 accepted
+  repository runs, the same diagnostics on the 76 rejected only for names
+  and types, three backends, plus name and type mutations; found a
+  native backend bug (decision 0142) and a parser trap (decision 0143),
+  fixed. The Xo checker (LLVM build) takes 1.2 times the Go checker's
+  full check. Next: stage 3, generics
+  (bench/results/selfhost-checker-2026-10-10.md).
 
 ## Alternatives
 

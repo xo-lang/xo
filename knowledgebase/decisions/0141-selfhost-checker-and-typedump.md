@@ -1,13 +1,16 @@
 # 0141: The self hosted checker, compared through `xo typedump` in stages
 
-Status: Accepted (2026-10-10). Stage 1 (names) implemented in
-`selfhost/check/` (Xo), `internal/check/dump.go` (`Result.Dump`,
-`DiagLines`), name records in `internal/check/info.go` (`records.names`,
-written next to each resolution in decl.go, call.go, expr.go, stmt.go),
-`TParam.Span` (types.go), `cmd/xo/typedump.go` (hidden `xo typedump`),
-`internal/selfhost/check_test.go` (`TestSelfhostCheckerNames`,
+Status: Accepted (2026-10-10). Stage 1 (names) and stage 2 (types and
+inference) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo),
+`internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
+`internal/check/info.go` (`records.names`, `records.field`,
+`records.vfield`, written next to each resolution in decl.go, call.go,
+expr.go, stmt.go, pattern.go), `TParam.Span` (types.go),
+`VFieldObj.Span` (objects.go), `cmd/xo/typedump.go` (hidden `xo
+typedump`), `internal/selfhost/check_test.go` (`TestSelfhostChecker`,
 `TestSelfhostCheckerXoTests`), `internal/selfhost/check_fuzz_test.go`
-(`TestSelfhostCheckerNamesMutations`). Evidence:
+(`TestSelfhostCheckerMutations`). Evidence:
 `bench/results/selfhost-checker-2026-10-10.md`. Third step of decision
 0130, after the lexer (0076) and the parser (0127).
 
@@ -42,13 +45,20 @@ the root modules, in sections a test can cut apart:
 ```
 
 - An object is `local <let|var|param|var-param|recv|var-recv|predeclared>
-  <pos>`, `fn|const|type <module path> <name> <pos>`, `tparam <name>
-  <pos>`, or `module <path>`; a position is `file:line:col` of the
-  declaring name, `-` when there is none (the `os` of a test). Lines are
-  sorted by offset (names), by span (types), by declaration (sigs).
-- names: what each identifier resolves to by name lookup, recorded by
-  the Go checker where it resolves it (never inferred from the tree), so
-  a resolution the checker skips has no line.
+  <pos>`, `fn|const|type <module path> <name> <pos>` (a method, static,
+  or interface method is `fn <module path> <Type>.<name> <pos>`),
+  `tparam <name> <pos>`, `module <path>`, `field <module path>
+  <Type>.<field> <pos>` (a variant's field: `<Enum>.<Variant>.<field>`),
+  `variant <module path> <Enum>.<Variant> <pos>`, or `param <module path>
+  <fn>.<param> <pos>` (the parameter a named argument names); a position
+  is `file:line:col` of the declaring name, `-` when there is none (the
+  `os` of a test). Lines are sorted by offset (names), by span (types),
+  by declaration (sigs).
+- names: what each identifier resolves to by name lookup and, from stage
+  2, the field, method, static, variant, or parameter a selector, struct
+  literal or `with` field, call, pattern, or named argument names,
+  recorded by the Go checker where it resolves it (never inferred from
+  the tree), so a resolution the checker skips has no line.
 - types: `Info.TypeOf` of every checked expression, printed with
   `Type.String` after `Deep`.
 - sigs: every function and method of the module: type parameters
@@ -75,7 +85,13 @@ the next starts, through the sections named:
    effects and effect arguments, loop labels.
 2. **Types and inference** (types): expression types, unification,
    literals, expected types, conversions, Option and Result rules;
-   fields, methods, variants, and named arguments resolve here.
+   fields, methods, variants, and named arguments resolve here. The
+   instantiation of generic functions and types at calls, constraint
+   checks (XO0404), and the effect sets that function types print (`fn()
+   uses net`) and effect arguments (`Cache[K, V, E, net.dial]`) are
+   needed for the types of non generic code and are part of this stage;
+   XO0402, the sigs section, and checking effects belong to stages 3 and
+   4.
 3. **Generics** (types, sigs): type parameters, constraints, implicit
    receiver parameters, instantiation, XO0402.
 4. **Effects and capabilities** (sigs, diags): `uses`, effect variables
@@ -99,10 +115,35 @@ packages or C headers); a parse error counts as a rejection. Mutations
 of the repository's modules (a renamed identifier, a removed `use`, a
 duplicated declaration) are compared the same way.
 
+**Comparison rules of stage 2** (`TestSelfhostChecker`, the same runs
+and backends; they replace stage 1's): a run the Go checker accepts must
+give identical names and types sections and no Xo diagnostic; a run
+whose errors are all diagnostics of stages 1 and 2 must give exactly
+those diagnostics. The stage 2 diagnostics (`stageDiag` in check_test.go)
+are XO0202 to XO0206, XO0302, XO0304, XO0401, XO0403, XO0405 to XO0410,
+XO0601 to XO0607, XO0702, XO0801, XO0803, XO0110 on imports, XO0201 on
+discarded expressions, XO0404 for a value or type argument that does not
+implement an interface and for the fields of a derive, and XO0502 on
+assignment targets. Left to later stages:
+XO0110 and XO0201 on bindings (unused), XO0402, XO0701, XO0501 to XO0520
+but XO0502 on targets, XO0301, XO0303, XO0404 on comparability, XO0101,
+and the parse habits (XO0177). `TestSelfhostCheckerMutations` adds type
+mutations (a literal of another type, a `?` removed, a field or method
+name replaced) to the name mutations.
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;
-the name records are a List with a map from `file:offset` to its entry.
+the name records are a List with a map from file and offset to its
+entry. A type is an Int into the type table `tys`; an inference variable
+is an entry whose `ref` is written in place when unification binds it,
+and every binding is pushed on a trail so a failed tentative unification
+is undone (infer.go's `mark` and `undo`). A substitution is a `Map[Int,
+Int]` from type parameter objects to types (an effect parameter maps to
+an effect argument type). Effect sets are Lists of items (labels,
+effect parameters, effect variables) in a table of their own, with
+effect variables bound like type variables. An expression is identified
+by its file, span, and kind (the Go checker uses node pointers).
 
 ## Consequences
 
@@ -114,6 +155,16 @@ the name records are a List with a map from `file:offset` to its entry.
   optional `??` on the Go backend; same named types of two modules and
   the evaluation order of an assignment on the native backends,
   decision 0140).
+- Stage 2 (2026-10-10) found a native backend bug (a `var` receiver read
+  before the call's arguments, decision 0142) and a parser trap
+  (`KIND_NAMES[k]` read as type arguments, decision 0143), both fixed
+  with goldens, and an arm64 frame over the 28 KiB limit (gotcha
+  arm64-large-frame, worked around). Every accepted repository run (348)
+  has identical names and types sections on the three backends, and the
+  76 runs rejected only for names and types get the same diagnostics.
+- A change to type checking in internal/check (a rule, a diagnostic of
+  the stage 2 list, a name record) must be made in selfhost/check in the
+  same change, or `go test -short ./...` fails.
 
 ## Alternatives
 

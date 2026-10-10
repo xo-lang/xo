@@ -99,14 +99,23 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	}
 	var st checkStats
 	var fails []string
+	codes := map[string]int{}
 	for _, d := range dirs {
-		if msg := compareRun(d, goCheck(d), got[d], &st); msg != "" {
+		want := goCheck(d)
+		before := st.stagedOK
+		if msg := compareRun(d, want, got[d], &st); msg != "" {
 			src, _ := os.ReadFile(filepath.Join(tmp, d, firstXo(t, filepath.Join(tmp, d))))
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
+		}
+		if st.stagedOK > before {
+			for _, l := range want.staged {
+				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
+			}
 		}
 	}
 	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only for names and types (%d match), %d rejected otherwise, %d unsupported",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
+	t.Logf("diagnostics of the matching rejected mutations: %v", codes)
 	if len(fails) > 0 {
 		if len(fails) > 5 {
 			fails = append(fails[:5], fmt.Sprintf("... and %d more", len(fails)-5))

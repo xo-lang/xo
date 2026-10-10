@@ -136,10 +136,10 @@ go run ./cmd/xo build --backend=llvm --no-gc -o .tools/xoparse selfhost/parser  
 go run ./cmd/xo test selfhost/parser                    # the Xo parser's own tests (8)
 go test ./internal/selfhost -run TestSelfhostParser     # Xo parser (go, arm64, llvm backends) vs Go parser: identical dumps for every accepted file, same rejections: repo .xo, std/*.xo (--sig), spec blocks, progen programs (24/150), token mutations (300/2000); XO_SELFHOST_PROGS=N, XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP (last verified: 2026-10-10)
 go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0141): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
-go run ./cmd/xo run selfhost/check -- [--section=names,diags] [--std=DIR] [--each] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stage 1: the names and diags sections of xo typedump, or timing; std read from DIR (default std)
+go run ./cmd/xo run selfhost/check -- [--section=names,types,diags] [--std=DIR] [--each] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stage 2: the names, types, and diags sections of xo typedump (default all three), or timing; std read from DIR (default std)
 go run ./cmd/xo build --backend=llvm -o .tools/xocheck selfhost/check   # native build of the Xo checker (also --backend=arm64)
-go run ./cmd/xo test selfhost/check                     # the Xo checker's own tests (7: paths, JSON, small modules in the test file system)
-go test ./internal/selfhost -run TestSelfhostChecker    # Xo checker (go, arm64, llvm; go only with -short) vs Go checker: identical names sections on every accepted repository run, same name diagnostics on runs rejected only for names, 1000 name mutations (150 with -short); XO_SELFHOST_CHECK_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes check-<backend>.txt, the class of every run; last verified: 2026-10-10)
+go run ./cmd/xo test selfhost/check                     # the Xo checker's own tests (9: paths, JSON, names and types of small modules in the test file system)
+go test ./internal/selfhost -run TestSelfhostChecker    # Xo checker (go, arm64, llvm; go only with -short) vs Go checker: identical names and types sections on every accepted repository run, the same diagnostics on runs rejected only for names and types (stageDiag), 1000 name and type mutations (150 with -short, go backend); XO_SELFHOST_CHECK_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes check-<backend>.txt, the class of every run; last verified: 2026-10-10)
 go test ./internal/selfhost                             # Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
@@ -791,9 +791,13 @@ selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dum
                         lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
 selfhost/parser/        the parser in Xo (decision 0127): ast.xo, parser.xo (tokens, lists, docs, declarations,
                         types), stmt.xo, expr.xo, pattern.xo, dump.xo, main.xo (CLI), parser_test.xo
-selfhost/check/         the checker in Xo, stage 1 names (decision 0141): objects.xo (tables: objects, modules,
-                        files, records), load.xo (directories, xo.mod, std, imports), resolve.xo (declarations,
-                        scopes, the walk), dump.xo (passes, names and diags sections), main.xo (CLI), check_test.xo
+selfhost/check/         the checker in Xo, stages 1 and 2, names and types (decision 0141): objects.xo (tables:
+                        objects, modules, files, records), load.xo (directories, xo.mod, std, imports), base.xo
+                        (diagnostics, records, lookups, scopes), decl.xo (declarations, type declarations,
+                        signatures, type expressions), types.xo (the type table, substitution, text), infer.xo
+                        (unification, assignability, interfaces), effects.xo (effect sets of function types),
+                        expr.xo, call.xo, stmt.xo, pattern.xo (the typed walk), habits.xo (habits that recover a
+                        type), dump.xo (passes, names, types, and diags sections), main.xo (CLI), check_test.xo
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
                         (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
@@ -2233,6 +2237,18 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
   `selfhost/parser` in the same change. Numbers and gaps:
   `bench/results/selfhost-parser-2026-10-10.md`. Last verified:
   2026-10-10.
+
+- Self hosted checker (2026-10-10, decision 0141): `selfhost/check`
+  builds on all three backends and is compared stage by stage through
+  the sections of the hidden `xo typedump`. Stages 1 and 2 (names, types
+  and inference) are in: `TestSelfhostChecker` requires identical names
+  and types sections on every repository run the Go checker accepts and
+  the same diagnostics on runs rejected only for names and types. A
+  change to name resolution or type checking in internal/check (or a new
+  name record) must be ported to `selfhost/check` in the same change.
+  Runs with `use go` or `use c` are skipped (the Xo checker binds
+  neither). Numbers and gaps: `bench/results/selfhost-checker-2026-10-10.md`.
+  Last verified: 2026-10-10.
 
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
