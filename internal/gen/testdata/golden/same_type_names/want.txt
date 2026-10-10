@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+diag 3 3
+main.xo:3:7
+info x warn low high 5
+10 diag 11 main.xo 2
+2 b.xo diag 4
+--- stderr

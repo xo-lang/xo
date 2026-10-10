@@ -73,6 +73,10 @@ type builder struct {
 	// (build_int.go constValue)
 	consts map[*check.ConstObj]int
 
+	// ambiguous are the names of types that two loaded user modules
+	// both declare (typeName)
+	ambiguous map[string]bool
+
 	// ifaces are the interface types lowered as xo.iface[I]
 	// (build_iface.go), by their SSA type
 	ifaces map[*Type]*check.Named
@@ -167,6 +171,7 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{},
 		faultUnwind: !opts.NoFaultUnwind}
 	b.mod.FaultUnwind = b.faultUnwind
+	b.ambiguous = ambiguousTypeNames(info.AllModules())
 	if opts.Tests {
 		// a test binary (build_testmode.go): its main runs one test
 		b.buildTests(res)
@@ -313,7 +318,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			case "Secret":
 				// the value in a struct of its own: every output path
 				// writes `<redacted>` (build_show.go)
-				x, created := m.Named(b.implNamed(r).String(), KStruct)
+				x, created := m.Named(b.typeName(b.implNamed(r)), KStruct)
 				if created && len(r.Args) == 1 {
 					x.Fields = []Field{{"v", b.typ(r.Args[0], at)}}
 				}
@@ -379,7 +384,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 		// `Result[sql.Db, E]` (a call of the std declaration) and
 		// `Result[native.sql.Db, E]` (the implementation's result) are
 		// one type
-		name := b.implNamed(r).String()
+		name := b.typeName(b.implNamed(r))
 		if obj.Module != nil && obj.Module.Go != nil {
 			b.impossible(at, "the type `"+name+"` of the Go package `"+obj.Module.Go.GoPath+"` (`use go`)")
 			return m.Builtin(KUnit)
@@ -1308,4 +1313,73 @@ func (s *fn) ifaceName(e ast.Expr) string {
 		return n.Obj.Name
 	}
 	return "Display"
+}
+
+// ambiguousTypeNames are the names of the types declared by more than
+// one user module.
+func ambiguousTypeNames(mods []*check.Module) map[string]bool {
+	owner := map[string]*check.Module{}
+	out := map[string]bool{}
+	for _, m := range mods {
+		if m.IsStd || m.Native {
+			continue
+		}
+		for name, o := range m.Scope {
+			if _, ok := o.(*check.TypeObj); !ok {
+				continue
+			}
+			if prev, ok := owner[name]; ok && prev != m {
+				out[name] = true
+			}
+			owner[name] = m
+		}
+	}
+	return out
+}
+
+// typeName is the name a lowered named type is interned under: its
+// printed form, except that a user type whose name another loaded module
+// also declares is qualified by its module path, so the two modules'
+// `Diag` structs are two types (a selfhost/check finding).
+func (b *builder) typeName(t check.Type) string {
+	if len(b.ambiguous) == 0 {
+		return t.String()
+	}
+	return b.typeText(t)
+}
+
+func (b *builder) typeText(t check.Type) string {
+	switch r := check.Resolve(t).(type) {
+	case *check.Named:
+		obj := r.Obj
+		if obj.Module != nil && obj.Module.IsPrelude && obj.Name == "Option" && len(r.Args) == 1 {
+			s := b.typeText(r.Args[0])
+			if _, ok := check.Resolve(r.Args[0]).(*check.Func); ok {
+				s = "(" + s + ")"
+			}
+			return s + "?"
+		}
+		name := obj.QualName()
+		if b.ambiguous[obj.Name] && obj.Module != nil && !obj.Module.IsStd && !obj.Module.Native {
+			name = obj.Module.Path + "." + obj.Name
+		}
+		if len(r.Args) == 0 {
+			return name
+		}
+		var args []string
+		for _, a := range r.Args {
+			args = append(args, b.typeText(a))
+		}
+		return name + "[" + strings.Join(args, ", ") + "]"
+	case *check.Tuple:
+		var es []string
+		for _, e := range r.Elems {
+			es = append(es, b.typeText(e))
+		}
+		if len(es) == 1 {
+			return "(" + es[0] + ",)"
+		}
+		return "(" + strings.Join(es, ", ") + ")"
+	}
+	return t.String()
 }

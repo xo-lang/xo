@@ -49,11 +49,13 @@ map_view_loops
 mono_generics
 mutex_atomic
 mutex_read
+nested_option_coalesce
 newtype_value
 option_result
 patterns
 places_boxes
 rune_numbers
+same_type_names
 scope_failure
 scope_tasks
 sql_basic
