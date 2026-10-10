@@ -40,6 +40,20 @@ fn hc_header(h: HConn, name: Str, value: Str)
 fn hc_respond(h: HConn, status: Int, body: Bytes) -> Bool
 fn hc_close(h: HConn)
 
+/// HTTP/2 (decision 0121, std/llrt/xo_h2.c): finishes the TLS handshake
+/// of a server connection; true when ALPN chose h2, so its requests come
+/// from h2_next instead of hc_read.
+fn hc_h2(h: HConn) -> Bool
+/// Runs the HTTP/2 connection until a request is ready for a handler
+/// (true) or the connection is done (false).
+fn h2_next(h: HConn) -> Bool
+/// The request h2_next found: a stream, answered as a connection is
+/// (hc_header, hc_respond, sink_conn).
+fn h2_take(h: HConn) -> HConn
+/// The stream's handler is done; a response it did not finish resets
+/// the stream.
+fn h2_end(h: HConn)
+
 /// textproto.CanonicalMIMEHeaderKey.
 fn canonical_key(s: Str) -> Str
 /// strings.EqualFold (ASCII letters).

@@ -187,16 +187,17 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			}
 		}})
 	}
-	// TLS handshake failures are not logged (decision 0106)
+	// TLS handshake failures and HTTP/2 protocol errors of clients are
+	// not logged (decisions 0106, 0121)
 	srv.ErrorLog = log.New(handshakeLogFilter{}, "", log.LstdFlags)
 	errc := make(chan error, 1)
 	if s.tlsOn {
-		// HTTP/1.1 only, also over TLS (decision 0106: the native
-		// backends have no HTTP/2 yet). A plain listener speaks HTTP/1
-		// anyway (no h2c, TestServeNoH2C); a TLS listener made outside
-		// with_tls (TestArenaHTTP2) still gets net/http's HTTP/2.
+		// HTTP/2 when ALPN agrees on h2, else HTTP/1.1 (decision 0121,
+		// as the native backends' xo_h2.c). A plain listener speaks
+		// HTTP/1 only (no h2c, TestServeNoH2C).
 		srv.Protocols = new(http.Protocols)
 		srv.Protocols.SetHTTP1(true)
+		srv.Protocols.SetHTTP2(true)
 		cfg := &tls.Config{}
 		for _, c := range s.tls {
 			cfg.Certificates = append(cfg.Certificates, *c.c.(*tls.Certificate))
@@ -320,11 +321,15 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 
 // handshakeLogFilter is the ErrorLog of serve: net/http's log lines on
 // standard error, less "http: TLS handshake error" (a client's failed
-// handshake; the native server does not log it either, decision 0106).
+// handshake; the native server does not log it either, decision 0106)
+// and the HTTP/2 server's lines about a client's frames (protocol
+// errors, a bad preface, a missing SETTINGS frame, a GOAWAY received, a
+// stream handler's panic, which reset the stream; decision 0121).
 type handshakeLogFilter struct{}
 
 func (handshakeLogFilter) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("http: TLS handshake error from ")) {
+	if bytes.Contains(p, []byte("http: TLS handshake error from ")) || bytes.Contains(p, []byte(" http2: ")) ||
+		bytes.Contains(p, []byte(" timeout waiting for SETTINGS frames from ")) {
 		return len(p), nil
 	}
 	return os.Stderr.Write(p)
@@ -332,14 +337,16 @@ func (handshakeLogFilter) Write(p []byte) (int, error) {
 
 // sharedTransport is the transport of clients without with_roots:
 // http.DefaultTransport's settings (proxies from the environment, the
-// 10 s TLS handshake timeout, pooled connections) with HTTP/1.1 only, as
-// the native client speaks (decision 0106).
+// 10 s TLS handshake timeout, pooled connections), HTTP/2 over TLS when
+// the server offers it and HTTP/1.1 otherwise, as the native client
+// speaks (decision 0121).
 var sharedTransport = newTransport(nil)
 
 func newTransport(roots *x509.CertPool) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
+	t.Protocols.SetHTTP2(true)
 	if roots != nil {
 		t.TLSClientConfig = &tls.Config{RootCAs: roots}
 	}

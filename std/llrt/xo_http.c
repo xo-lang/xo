@@ -54,6 +54,11 @@ static tls_conn *tls_server_conn(tls_srv *s, xo_pd *pd);
 static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n);
 static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn, int *kind);
 static const char *tls_alert(tls_conn *t);
+static int tls_server_handshake(tls_conn *t);
+static int64_t tls_nb_read(tls_conn *t, char *p, int64_t n);
+static int tls_alpn_h2(tls_conn *t);
+static int tls_h2_bad_cipher(tls_conn *t, char *why, size_t wn);
+static void tls_set_when(tls_conn *t, int64_t when);
 
 // ---------------------------------------------------------------------------
 // Strings and tables
@@ -1905,7 +1910,22 @@ typedef struct xo_hconn {
 	// and the output goes to sink
 	nbuf *sink;
 	tls_conn *tls; // a connection of a TLS server (xo_tls.c)
+	// HTTP/2 (xo_h2.c): a connection whose ALPN chose h2 has h2; a
+	// stream's request (h2_take) has h2s and holds its connection in
+	// h2owner
+	struct h2c *h2;
+	struct h2s *h2s;
+	struct xo_hconn *h2owner;
 } xo_hconn;
+
+// HTTP/2 (xo_h2.c, included at the end of this file)
+static void h2c_free(struct h2c *c);
+static void h2_stop(struct h2c *c);
+static struct xo_hconn *h2_untake(struct h2c *c);
+static void h2_stream_release(xo_hconn *hc);
+static int64_t h2_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn);
+static int h2_sink_emit(xo_hconn *hc, int64_t status, int *started, const char *p, int64_t n);
+static int h2_sink_finish(xo_hconn *hc, const char *p, int64_t n);
 
 static void srv_unregister(xo_hconn *hc) {
 	xo_srv *s = hc->srv;
@@ -1929,7 +1949,24 @@ static void srv_unregister(xo_hconn *hc) {
 
 static void hconn_free(void *p) {
 	xo_hconn *hc = p;
+	if (hc->h2owner) {
+		// an HTTP/2 stream's request
+		if (hc->h2s) {
+			h2_stream_release(hc);
+		}
+		if (hc->have_req) {
+			hr_free(&hc->req);
+		}
+		free(hc->body.p);
+		free(hc->out.p);
+		hl_free(&hc->resp);
+		xo_hconn *owner = hc->h2owner;
+		xo_free(hc);
+		h_release(owner);
+		return;
+	}
 	srv_unregister(hc);
+	h2c_free(hc->h2);
 	pd_close(hc->conn->pd);
 	h_release(hc->conn);
 	h_release(hc->srv);
@@ -1988,7 +2025,10 @@ void xo_srv_stop(xo_srv *s) {
 	pthread_mutex_lock(&s->mu);
 	s->stopping = 1;
 	for (xo_hconn *hc = s->conns; hc; hc = hc->next) {
-		if (hc->idle) {
+		if (hc->h2) {
+			// GOAWAY, then the streams in flight finish
+			h2_stop(hc->h2);
+		} else if (hc->idle) {
 			pd_close(hc->conn->pd);
 		}
 	}
@@ -2492,6 +2532,9 @@ void xo_hc_header(xo_hconn *hc, const char *k, int64_t kn, const char *v, int64_
 // xo_hc_respond writes the response: 1 when the connection stays open
 // for another request.
 int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn) {
+	if (hc->h2s) {
+		return h2_respond(hc, status, body, bn);
+	}
 	nbuf *o = &hc->out;
 	o->n = 0;
 	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
@@ -2580,6 +2623,12 @@ static void sink_emit(xo_sink *s, const char *p, int64_t n) {
 		return;
 	}
 	xo_hconn *hc = s->hc;
+	if (hc->h2s) {
+		if (!h2_sink_emit(hc, s->status, &s->started, p, n)) {
+			s->failed = 1;
+		}
+		return;
+	}
 	nbuf *o = &hc->out;
 	o->n = 0;
 	if (!s->started) {
@@ -2611,9 +2660,11 @@ int64_t xo_sink_write(xo_sink *s, const char *p, int64_t n) {
 		return 1;
 	}
 	// bufio.Writer.WriteString (std/rt writes strings): no write goes
-	// around the buffer, since chunkWriter has no WriteString
-	while (n > 2048 - s->buf.n) {
-		int64_t k = 2048 - s->buf.n;
+	// around the buffer, since chunkWriter has no WriteString; HTTP/2's
+	// buffer is 4 KiB (handlerChunkWriteSize)
+	int64_t size = s->hc->h2s ? 4096 : 2048;
+	while (n > size - s->buf.n) {
+		int64_t k = size - s->buf.n;
 		nbuf_put(&s->buf, p, k);
 		p += k;
 		n -= k;
@@ -2647,6 +2698,12 @@ int64_t xo_sink_end(xo_sink *s) {
 	xo_hconn *hc = s->hc;
 	if (!s->started) {
 		return xo_hc_respond(hc, s->status, s->buf.p ? s->buf.p : "", s->buf.n);
+	}
+	if (hc->h2s) {
+		// the rest with the end of the stream
+		(void)h2_sink_finish(hc, s->buf.p ? s->buf.p : "", s->buf.n);
+		s->buf.n = 0;
+		return 0;
 	}
 	if (s->buf.n > 0) {
 		sink_emit(s, s->buf.p, s->buf.n);
@@ -2721,6 +2778,8 @@ xo_rlist *xo_stream_get(int64_t id, int64_t take) {
 	return l;
 }
 
+static void h2_pool_free(void);
+
 __attribute__((unused)) static void xo_streams_free(void) {
 	pthread_mutex_lock(&streams.mu);
 	for (int64_t i = 0; i < streams.n; i++) {
@@ -2730,6 +2789,8 @@ __attribute__((unused)) static void xo_streams_free(void) {
 		}
 	}
 	pthread_mutex_unlock(&streams.mu);
+	// the client's idle HTTP/2 connections (xo_h2.c)
+	h2_pool_free();
 }
 
 // xo_hc_close closes the connection and ends its registration.
@@ -2737,6 +2798,14 @@ void xo_hc_close(xo_hconn *hc) {
 	tls_close_notify(hc->tls);
 	pd_close(hc->conn->pd);
 	srv_unregister(hc);
+	if (hc->h2) {
+		// a request h2_next found that no task took (the serving task
+		// was canceled): it holds the connection
+		xo_hconn *t = h2_untake(hc->h2);
+		if (t) {
+			h_release(t);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -3354,8 +3423,18 @@ static int cl_read_response(ccon *c, const char *method, xo_cresp *r, char *why,
 	}
 }
 
-// cl_once makes one request on a new connection: CC_OK and the response
-// in r, or the failure (r's error set).
+// HTTP/2 (xo_h2.c)
+typedef struct h2cc h2cc;
+static int h2_cl_pooled(xo_troots *roots, const char *key, const char *method, hurl *u, hstr host, hlist *hdr, const char *body,
+                        int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, int *done);
+static int h2_cl_fresh(xo_conn *cn, ccon *c, xo_troots *roots, const char *key, const char *method, hurl *u, hstr host, hlist *hdr,
+                       const char *body, int64_t bn, int64_t when, xo_cresp *r, char *why, size_t wn, char **alert);
+
+// cl_once makes one request: CC_OK and the response in r, or the
+// failure (r's error set). An https server whose ALPN chose h2 gets the
+// request over HTTP/2 (xo_h2.c), on a connection kept for the next
+// request as net/http's Transport keeps it; HTTP/1.1 requests have a
+// connection each.
 static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const char *body, int64_t bn, int64_t when, const char *raw, xo_troots *roots, xo_cresp *r) {
 	xo_ctx *x = ctx();
 	char op[32];
@@ -3377,10 +3456,31 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	char *tls_host = https ? cstr_of(name.p, name.n) : NULL;
 	hs_free(&name);
 	hs_free(&port);
+	char why[400] = "";
+	char *alert = NULL;
+	char *key = NULL;
+	int s;
+	if (https) {
+		// an idle HTTP/2 connection to the same address, server name, and
+		// roots
+		nbuf k = {0};
+		nbuf_str(&k, addr);
+		nbuf_byte(&k, '|');
+		nbuf_str(&k, tls_host);
+		nbuf_byte(&k, 0);
+		key = k.p;
+		int done = 0;
+		s = h2_cl_pooled(roots, key, method, u, host, hdr, body, bn, when, r, why, sizeof why, &done);
+		if (done) {
+			goto finish;
+		}
+	}
 	int64_t d = when ? when - mono_ns() : 0;
 	if (when && d <= 0) {
 		cr_fail(r, 3, "");
 		free(qraw.p);
+		free(tls_host);
+		free(key);
 		return CC_TIMEOUT;
 	}
 	xo_conn *cn = xo_net_dial_timeout(addr, (int64_t)strlen(addr), when ? d : 0);
@@ -3398,6 +3498,7 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 		}
 		free(qraw.p);
 		free(tls_host);
+		free(key);
 		return CC_ERR;
 	}
 	ccon c = {.pd = cn->pd, .fd = cn->pd->fd, .when = when};
@@ -3407,7 +3508,6 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 		char tmsg[1200] = "";
 		int kind = 4;
 		int ts = tls_client_start(cn->pd, tls_host, roots, when, &c.tls, tmsg, sizeof tmsg, &kind);
-		free(tls_host);
 		if (ts != CC_OK) {
 			pd_close(c.pd);
 			h_release(cn);
@@ -3421,8 +3521,14 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 				cr_fail(r, 4, "%s %s: %s", op, qraw.p, tmsg);
 			}
 			free(qraw.p);
+			free(tls_host);
+			free(key);
 			return ts;
 		}
+	}
+	if (c.tls && tls_alpn_h2(c.tls)) {
+		s = h2_cl_fresh(cn, &c, roots, key, method, u, host, hdr, body, bn, when, r, why, sizeof why, &alert);
+		goto finish;
 	}
 	// the request (net/http Request.write with Transport's additions)
 	nbuf o = {0};
@@ -3463,20 +3569,23 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	}
 	nbuf_str(&o, "\r\n");
 	nbuf_put(&o, body, bn);
-	int s = cc_send(&c, o.p, o.n);
+	s = cc_send(&c, o.p, o.n);
 	free(o.p);
-	char why[300] = "";
 	if (s == CC_OK) {
 		s = cl_read_response(&c, method, r, why, sizeof why);
 	}
-	// an alert of the server after the handshake (a TLS 1.3 server that
-	// wanted a client certificate): Go's net.OpError, a Connect error
-	const char *ta = s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0] ? tls_alert(c.tls) : NULL;
-	char *alert = ta ? strdup(ta) : NULL;
+	{
+		// an alert of the server after the handshake (a TLS 1.3 server
+		// that wanted a client certificate): Go's net.OpError, a Connect
+		// error
+		const char *ta = s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0] ? tls_alert(c.tls) : NULL;
+		alert = ta ? strdup(ta) : NULL;
+	}
 	tls_conn_free(c.tls);
 	pd_close(c.pd);
 	h_release(cn);
 	free(c.buf);
+finish:
 	switch (s) {
 	case CC_OK:
 		break;
@@ -3489,12 +3598,18 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	default:
 		if (alert) {
 			cr_fail(r, 2, "%s", alert);
+		} else if (why[0] == '\1') {
+			// a failure reading an HTTP/2 body: net/http's body Read
+			// error, without the request
+			cr_fail(r, 4, "%s", why + 1);
 		} else {
 			cr_fail(r, 4, "%s %s: %s", op, qraw.p, why[0] ? why : "EOF");
 		}
 	}
 	free(alert);
 	free(qraw.p);
+	free(tls_host);
+	free(key);
 	return s;
 }
 
@@ -3742,6 +3857,9 @@ xo_rstr *xo_cr_hname(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->
 xo_rstr *xo_cr_hval(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->hdr.a[i].v, len); }
 
 xo_rstr *xo_cr_body(xo_cresp *r, int64_t *len) { return nstr(r->body.p ? r->body.p : "", r->body.n, len); }
+
+// HTTP/2 (decision 0121)
+#include "xo_h2.c"
 
 // TLS (decision 0105)
 #include "xo_tls.c"
