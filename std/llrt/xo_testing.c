@@ -746,7 +746,8 @@ xo_rlist *xo_test_exit_code(void) {
 
 // Log records (testing.logs, std.md 8.6)
 
-// xo_test_log keeps a record and echoes its text line to the harness.
+// xo_test_log keeps a record and echoes its text line to the harness (an
+// empty line is not echoed: a configured log output got the record).
 void xo_test_log(int64_t level, const char *m, int64_t mn, xo_rlist *keys, xo_rlist *vals, const char *line, int64_t ln) {
 	tw_rec r = {.level = level, .msg = tw_strdup(m, mn), .nf = (int)keys->len};
 	r.keys = calloc((size_t)r.nf + 1, sizeof(char *));
@@ -763,7 +764,9 @@ void xo_test_log(int64_t level, const char *m, int64_t mn, xo_rlist *keys, xo_rl
 	lk(&tws.mu);
 	tws.recs = tw_grow(tws.recs, tws.nrec, sizeof(tw_rec));
 	tws.recs[tws.nrec++] = r;
-	tw_report("XO-TEST-LOG ", line, ln);
+	if (ln > 0) {
+		tw_report("XO-TEST-LOG ", line, ln);
+	}
 	unlk(&tws.mu);
 }
 
@@ -1467,7 +1470,8 @@ void xo_test_main_begin(xo_rlist *args) {
 	stop.signals = 0;
 	__atomic_store_n(&stop.requested, 0, __ATOMIC_RELEASE);
 	__atomic_store_n(&stop.canceled, 0, __ATOMIC_RELEASE);
-	stop.grace = XO_DEFAULT_GRACE;
+	stop.exited = 0;
+	stop.grace = stop.has_next_grace ? stop.next_grace : XO_DEFAULT_GRACE;
 	stop.root = n;
 	xo_chan *old = stop.stopping;
 	stop.stopping = NULL;
@@ -1488,11 +1492,11 @@ void xo_test_main_begin(xo_rlist *args) {
 	free(sigs);
 }
 
-// xo_test_main_end ends testing.run_main with main's status: the test's
+// tw_main_status ends testing.run_main with main's status: the test's
 // node is current again; when main unwound because the stop state
 // canceled its root (and not because the test is canceled), the
 // unwinding ends here and the status is 0.
-int64_t xo_test_main_end(int64_t code) {
+static int64_t tw_main_status(int64_t code, int *exited) {
 	xo_ctx *c = ctx();
 	__atomic_store_n(&tw.in_main, 0, __ATOMIC_RELEASE);
 	xo_node *n = tws.main_node;
@@ -1501,6 +1505,8 @@ int64_t xo_test_main_end(int64_t code) {
 	if (stop.root == n) {
 		stop.root = NULL;
 	}
+	*exited = stop.exited;
+	stop.exited = 0;
 	timer_del(&stop.grace_t);
 	pthread_mutex_unlock(&stop.mu);
 	if (n) {
@@ -1521,4 +1527,20 @@ int64_t xo_test_main_end(int64_t code) {
 		return 0;
 	}
 	return code;
+}
+
+// xo_test_main_end is tw_main_status, except that after a third signal
+// the status is 130 however main ended, and FakeProc.exit_code is
+// Some(130) (std/rt's Testing_run_main).
+int64_t xo_test_main_end(int64_t code) {
+	int exited = 0;
+	int64_t r = tw_main_status(code, &exited);
+	if (exited) {
+		lk(&tws.mu);
+		tws.exit_code = 130;
+		tws.has_exit = 1;
+		unlk(&tws.mu);
+		r = 130;
+	}
+	return r;
 }

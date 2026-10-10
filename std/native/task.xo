@@ -3,8 +3,7 @@
 // and scopes. The rest of std/task (isolate, with_timeout, is_canceled,
 // stop_requested, stopping, Group) is lowered by internal/ssa
 // (build_conc.go). Semantics and fault texts are std/rt's (sync.go,
-// once.go), with one difference: a fault in a Once's function is not
-// stored, so the next caller runs the function again.
+// once.go).
 use std/task
 use native/rt
 
@@ -38,25 +37,33 @@ fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E use
 }
 
 /// The result once a caller's f finished; the mutex is held while f runs,
-/// so later callers wait for it and share it (a failed result too).
+/// so later callers wait for it and share it (a failed result and a fault
+/// too: f runs under task.isolate, and a stored fault is raised again in
+/// every caller, as std/rt's once.go). Cancellation unwinds through
+/// isolate, so a canceled runner leaves the Once unset.
 struct Once[T, E] {
-  st: Mutex[Option[Result[T, E]]]
+  st: Mutex[Option[Result[T, task.Isolated[E]]]]
 }
 
-fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, E]]].new(None)} }
+fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, task.Isolated[E]]]].new(None)} }
 
 fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
-  let r = o.st.with(fn(var st) -> Result[T, E] {
+  let r = o.st.with(fn(var st) -> Result[T, task.Isolated[E]] {
     match st {
       Some(done) => done
       None => {
-        let fresh = f()
+        let fresh = task.isolate(f)
         st = Some(fresh)
         fresh
       }
     }
   })
-  r?
+  let out: Result[T, E] = match r {
+    Ok(v) => Ok(v)
+    Err(task.Isolated.Failed(e)) => Err(e)
+    Err(task.Isolated.Faulted(info)) => rt.fault_raise(info.msg, info.location)
+  }
+  out?
 }
 
 fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx, at: rt.Loc) -> List[Result[R, E]] uses fx {

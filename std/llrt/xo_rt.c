@@ -5552,7 +5552,12 @@ static struct {
 	int signals;
 	int requested; // atomic
 	int canceled;  // atomic
+	int exited;    // a third signal in the test world: run_main gives 130
 	int64_t stop_at, grace;
+	// the test world: set_grace before testing.run_main sets the grace of
+	// the next run (std/rt's FakeProc.set_grace)
+	int has_next_grace;
+	int64_t next_grace;
 	xo_timer grace_t;
 	xo_chan *stopping; // task.stopping(), made on first use
 	xo_node *root;     // main's root context
@@ -5605,6 +5610,13 @@ static void stop_signal(void) {
 		stop_cancel();
 		break;
 	default:
+		if (tw_is_fake(TW_REAL_PROC)) {
+			// a test's run_main returns 130 once main has unwound
+			// (std/rt's stopState.exited), FakeProc.exit_code is Some(130)
+			stop.exited = 1;
+			stop_cancel();
+			break;
+		}
 		pthread_mutex_unlock(&stop.mu);
 		stop_cancel();
 		xo_flush();
@@ -5660,6 +5672,13 @@ xo_chan *xo_task_stopping(int64_t drop) {
 // moves to the stop time plus d.
 void xo_set_grace(int64_t d) {
 	pthread_mutex_lock(&stop.mu);
+	if (tw_is_fake(TW_REAL_PROC) && !__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
+		// before testing.run_main: the grace period of the next run
+		stop.has_next_grace = 1;
+		stop.next_grace = d < 0 ? 0 : d;
+		pthread_mutex_unlock(&stop.mu);
+		return;
+	}
 	stop.grace = d < 0 ? 0 : d;
 	if (__atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE)) {
 		arm_grace();

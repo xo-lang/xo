@@ -3077,6 +3077,8 @@ xo_rlist *xo_query_parts(const char *p, int64_t n) {
 static struct {
 	int level; // 0: not configured (Info)
 	int json;
+	int out; // log.configure was called: records go to standard error
+	         // (the fake one in a test) instead of the test's buffer
 } xlog;
 
 int64_t xo_log_level(void) {
@@ -3086,7 +3088,10 @@ int64_t xo_log_level(void) {
 
 int64_t xo_log_json(void) { return __atomic_load_n(&xlog.json, __ATOMIC_ACQUIRE); }
 
+int64_t xo_log_configured(void) { return __atomic_load_n(&xlog.out, __ATOMIC_ACQUIRE); }
+
 void xo_log_configure(int64_t level, int64_t json) {
+	__atomic_store_n(&xlog.out, 1, __ATOMIC_RELEASE);
 	__atomic_store_n(&xlog.json, (int)json, __ATOMIC_RELEASE);
 	__atomic_store_n(&xlog.level, (int)level, __ATOMIC_RELEASE);
 }

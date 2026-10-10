@@ -38,19 +38,29 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
   if level < rthttp.log_level() {
     return
   }
+  let line = format(level, msg, fields)
   if rttest.test_on() {
-    // a test keeps its records (testing.logs, decision 0083)
+    // a test keeps its records (testing.logs, decision 0083); without a
+    // configured output the line goes to the test's buffer (printed when
+    // the test fails), with one to the fake standard error (std/rt's
+    // logRecord)
     var keys: List[Str] = []
     var vals: List[Str] = []
-    var line = "${rthttp.log_now(false)} ${level_name(level)} ${msg}"
     for (k, v) in fields {
       keys.push(k)
       vals.push(rt.dyn_text(v))
-      line = line + " ${k}=${rt.dyn_text(v)}"
     }
-    rttest.test_log(level, msg, keys, vals, line)
-    return
+    if !rthttp.log_configured() {
+      rttest.test_log(level, msg, keys, vals, line)
+      return
+    }
+    rttest.test_log(level, msg, keys, vals, "")
   }
+  rt.eprintln(line)
+}
+
+/// The text of a record: JSON when configured so, else text.
+fn format(level: Int, msg: Str, fields: Map[Str, Debug]) -> Str {
   if rthttp.log_json() {
     // encoding/json of a map: keys sorted
     var keys: List[Str] = ["time", "level", "msg"]
@@ -85,12 +95,11 @@ fn record(level: Int, msg: Str, fields: Map[Str, Debug]) {
       }
       line = rtjson.json_enc(line, keys[i]) + ":" + vals[i]
     }
-    rt.eprintln(line + "}")
-    return
+    return line + "}"
   }
   var line = "${rthttp.log_now(false)} ${level_name(level)} ${msg}"
   for (k, v) in fields {
     line = line + " ${k}=${rt.dyn_text(v)}"
   }
-  rt.eprintln(line)
+  line
 }

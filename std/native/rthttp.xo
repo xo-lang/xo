@@ -106,6 +106,9 @@ fn stream_get(id: Int, take: Bool) -> List[rt.Any]
 /// Logging (std.md 6): the level and format of log.configure.
 fn log_level() -> Int
 fn log_json() -> Bool
+/// log.configure was called (records go to standard error, the fake one
+/// in a test, as std/rt's configured logSink.out).
+fn log_configured() -> Bool
 fn log_configure(level: Int, json: Bool)
 /// The time now as RFC 3339 (nano: with nanoseconds) in UTC.
 fn log_now(nano: Bool) -> Str

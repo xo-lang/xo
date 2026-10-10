@@ -111,6 +111,9 @@ fn launder2[A, B, R, fx: Effects](f: fn(A, B) -> R uses fx) -> (fn(A, B) -> R) u
 struct Loc {}
 /// Faults with msg at loc.
 fn fault_at(msg: Str, at: Loc) -> Never
+/// Faults with msg at loc, a `file:line` text (a stored fault raised
+/// again, as std/rt re-panics a stored FaultErr).
+fn fault_raise(msg: Str, loc: Str) -> Never
 
 /// Whether a log field value is a number or a Bool (written bare in a
 /// JSON record).
