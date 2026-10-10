@@ -160,5 +160,31 @@
       }
     ],
     "fixes": []
+  },
+  {
+    "code": "XO0503",
+    "severity": "error",
+    "message": "`xs` is passed to two `var` parameters of one call (decision 0111)",
+    "span": {
+      "file": "main.xo",
+      "line": 47,
+      "col": 12,
+      "end_line": 47,
+      "end_col": 14
+    },
+    "notes": [
+      {
+        "message": "first passed here",
+        "span": {
+          "file": "main.xo",
+          "line": 47,
+          "col": 8
+        }
+      },
+      {
+        "message": "copy one of them into a temporary (`var tmp = xs`), pass that, and store it back after the call; or take one `var` parameter of a struct that holds both"
+      }
+    ],
+    "fixes": []
   }
 ]

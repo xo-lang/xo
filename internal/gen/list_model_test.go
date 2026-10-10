@@ -18,7 +18,8 @@ import (
 // lists through every path the generator lowers (bindings, fields,
 // elements of lists of lists and of structs, Map values, Option and
 // tuple payloads, closures, channels, Mutex.with, spawned tasks, `var`
-// parameters that alias each other or a by value argument, loops over a
+// parameters next to a by value argument of the same binding (two `var`
+// parameters never share one, decision 0111), loops over a
 // list the body writes) and compares the output with a model in which
 // every assignment is a deep copy. Lists write in place when they own
 // their array (std/rt/list.go), so any missed ownership mark shows up as
@@ -332,9 +333,10 @@ func (s *lm) op() {
 			t += e
 		}
 		s.lists[x][i] = t
-	case 12: // two var parameters, maybe the same binding
+	case 12: // two var parameters of two bindings (one binding twice is
+		// XO0503, decision 0111)
 		x, y := s.listVar(false), s.listVar(true)
-		if y == "" {
+		if y == "" || y == x {
 			return
 		}
 		v := s.val()

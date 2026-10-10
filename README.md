@@ -95,6 +95,7 @@ The module path is `github.com/xo-lang/xo` (local name; see
 | `xo edit <rename\|add-field\|change-sig>` | Semantic edits through resolved symbols, rechecked before writing |
 | `xo doc`, `xo explain <code>` | Documentation and diagnostic explanations |
 | `xo bind <go package>` | Bindings for `use go "<package>"` |
+| `xo bind --c <header>` | Bindings for `use c "<header>"` (native builds, `--no-gc`) |
 | `xo dump <pid>` | Task tree of a running program |
 
 ## Project layout

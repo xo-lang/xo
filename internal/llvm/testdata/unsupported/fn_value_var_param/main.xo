@@ -1,0 +1,16 @@
+// A function value with a `var` parameter (planned natively). The old
+// program here, one binding passed to two `var` parameters, is XO0503 in
+// the checker since decision 0111.
+fn add(var xs: List[Int]) {
+  xs.push(1)
+}
+
+fn apply(f: fn(var List[Int]), var xs: List[Int]) {
+  f(xs)
+}
+
+fn main(os: Os) {
+  var xs = [0]
+  apply(add, xs)
+  os.stdio.println("${xs.len()}")
+}

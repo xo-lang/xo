@@ -38,6 +38,7 @@ invariant_construct
 invariant_fault
 json_codec
 json_fast
+list_value_semantics
 logging
 loops
 main_custom_err

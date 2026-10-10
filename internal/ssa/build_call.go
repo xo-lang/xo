@@ -70,6 +70,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		b.impossible(x, "`"+ci.Fn.Module.Name+"."+ci.Fn.DisplayName()+"` of the Go package `"+ci.Fn.Module.Go.GoPath+"` (`use go`)")
 		return s.undef(s.natOf(x))
 	}
+	if ci.Fn.Module != nil && ci.Fn.Module.C != nil {
+		return s.cCall(x, ci)
+	}
 	if ci.Fn.Module.IsStd {
 		if strings.HasPrefix(ci.Fn.Module.Path, "native/") {
 			return s.intrinsic(x, ci)
@@ -554,22 +557,6 @@ func (s *fn) callAs(x *ast.CallExpr, ci *check.Call, impl *check.FuncObj) *Value
 	}
 	var args []*Value
 	var places []place
-	var varArgs []ast.Expr
-	if fo.Recv != nil && !fo.Static && fo.RecvVar && ci.Recv != nil {
-		varArgs = append(varArgs, ci.Recv)
-	}
-	for i, e := range argExprs(fo.Params, x) {
-		if fo.Params[i].Var && e != nil {
-			varArgs = append(varArgs, e)
-		}
-	}
-	if s.varArgsOverlap(varArgs) {
-		// the Go backend passes `var` arguments by reference, so one
-		// binding passed twice is one value seen through both
-		// parameters; the native backends copy in and out
-		b.unsupported(x, "one binding passed to two `var` parameters")
-		return s.undef(callee.Results[0])
-	}
 	if fo.Recv != nil && !fo.Static {
 		if ci.Recv == nil {
 			b.unsupported(x, "this method call")
@@ -964,65 +951,4 @@ func hasTry(n ast.Node) bool {
 		return !found
 	})
 	return found
-}
-
-// varArgsOverlap reports whether two of the places es (the `var`
-// arguments of one call) may be one value: the same binding with one
-// path of fields and indexes a prefix of the other (an index matches
-// any index).
-func (s *fn) varArgsOverlap(es []ast.Expr) bool {
-	if len(es) < 2 {
-		return false
-	}
-	type path struct {
-		root *check.VarObj
-		segs []string
-	}
-	var ps []path
-	for _, e := range es {
-		var segs []string
-		for {
-			switch x := e.(type) {
-			case *ast.ParenExpr:
-				e = x.X
-				continue
-			case *ast.SelectorExpr:
-				segs = append([]string{"." + x.Sel.Name}, segs...)
-				e = x.X
-				continue
-			case *ast.IndexExpr:
-				segs = append([]string{"[]"}, segs...)
-				e = x.X
-				continue
-			}
-			break
-		}
-		id, ok := e.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		if vo := s.b.info.VarOf(id); vo != nil {
-			ps = append(ps, path{vo, segs})
-		}
-	}
-	for i := range ps {
-		for j := i + 1; j < len(ps); j++ {
-			a, c := ps[i], ps[j]
-			if a.root != c.root {
-				continue
-			}
-			n := min(len(a.segs), len(c.segs))
-			same := true
-			for k := 0; k < n; k++ {
-				if a.segs[k] != c.segs[k] {
-					same = false
-					break
-				}
-			}
-			if same {
-				return true
-			}
-		}
-	}
-	return false
 }

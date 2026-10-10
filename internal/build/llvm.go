@@ -103,6 +103,12 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
 	srcs := []string{ll, rt}
+	csrcs, cflags, err := cInputs(res, dir)
+	if err != nil {
+		return nil, err
+	}
+	srcs = append(srcs, csrcs...)
+	flags = append(flags, cflags...)
 	key := nativeBinKey(dir, clang, append([]string{"llvm", LLVMOptLevel}, flags...), srcs)
 	if err := withBinCache(key, bin, func() error { return clangBuild(clang, srcs, bin, flags...) }); err != nil {
 		return nil, err
@@ -202,6 +208,8 @@ func clangBuild(clang string, srcs []string, bin string, flags ...string) error 
 // flags, finding a working macOS SDK on the first build of the process.
 func ccBuild(clang string, flags, srcs []string, bin string) error {
 	tls := usesTLS(srcs)
+	// libraries of `use c` (decision 0116) go after the objects
+	flags, libs := splitLibs(flags)
 	try := func(root string) (string, error) {
 		// the C runtime raises faults through the frames of generated
 		// code and its own (decision 0085): its functions may unwind, and
@@ -233,6 +241,7 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		}
 		args = append(args, srcs...)
 		args = append(args, tlsLink...)
+		args = append(args, libs...)
 		args = append(args, "-lm", "-lpthread")
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer

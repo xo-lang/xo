@@ -1203,7 +1203,8 @@ func (c *checker) binaryType(op token.Kind, xt, yt Type, sp token.Span, xe, ye a
 	case token.Eq, token.NotEq:
 		if c.tryUnify(xt, yt) || c.assignable(yt, xt, sp) || c.assignable(xt, yt, sp) {
 			if !c.isEqType(xt, "Eq") {
-				c.errorf(diag.NotImplemented, sp, "`%s` does not implement `Eq`", deep(xt))
+				d := c.errorf(diag.NotImplemented, sp, "`%s` does not implement `Eq`, so it cannot be compared with `%s`", deep(xt), op)
+				noteIncomparable(d, c.incomparable(xt))
 			}
 			return boolT
 		}

@@ -41,6 +41,9 @@ type checker struct {
 	// goFailed holds `go:<path>` keys of Go packages that could not be
 	// bound (XO1101 reported once per run).
 	goFailed map[string]bool
+	// native is Options.Native: `use c` is XO1201 without it (decision
+	// 0116).
+	native bool
 	// overlay maps absolute .xo paths to contents that replace the files
 	// on disk (CheckOverlay).
 	overlay map[string][]byte
@@ -68,6 +71,9 @@ type checker struct {
 	// per body information used by the flow checks
 	identObj map[*ast.Ident]*VarObj
 	exprType map[ast.Expr]Type
+	// keyReported dedupes Map and Set key reports (decision 0112), by
+	// file and type.
+	keyReported map[string]bool
 	// neverExpr marks expressions of type Never checked against an
 	// expected type (exprType then holds the expected type).
 	neverExpr map[ast.Expr]bool
@@ -131,6 +137,7 @@ func newChecker() *checker {
 		safeNavs:    map[*ast.TryExpr]bool{},
 		safeNavDiag: map[*ast.TryExpr]int{},
 		exprType:    map[ast.Expr]Type{},
+		keyReported: map[string]bool{},
 		neverExpr:   map[ast.Expr]bool{},
 		callInfo:    map[*ast.CallExpr]*callInfo{},
 		lostVars:    map[*VarObj]bool{},
@@ -170,6 +177,7 @@ type Options struct {
 func CheckOpts(dirs []string, opts Options) (*Result, error) {
 	c := newChecker()
 	c.overlay = opts.Overlay
+	c.native = opts.Native
 	if err := c.loadPrelude(); err != nil {
 		return nil, err
 	}
@@ -203,11 +211,17 @@ func (c *checker) run() {
 		c.resolveSigs(m)
 	}
 	for _, m := range c.order {
+		if !m.IsStd && m.Go == nil {
+			c.checkDerivesComparable(m)
+		}
+	}
+	for _, m := range c.order {
 		if !m.IsStd {
 			c.checkModule(m)
 			c.runEditionRules(m)
 		}
 	}
+	c.checkKeyTypes()
 	c.solveEffects()
 	for _, b := range c.bodies {
 		c.flowBody(b)

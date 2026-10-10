@@ -20,6 +20,7 @@ type ImportEdge struct {
 	Pos  Pos    `json:"pos"`  // the `use` line
 	Std  bool   `json:"std,omitempty"`
 	Go   bool   `json:"go,omitempty"`   // `use go "..."` (decision 0041)
+	C    bool   `json:"c,omitempty"`    // `use c "<header>"` (decision 0116)
 	Test bool   `json:"test,omitempty"` // in a _test.xo file
 	// Missing is set when the path resolves to no package.
 	Missing bool `json:"missing,omitempty"`
@@ -67,11 +68,11 @@ func (s *Session) Imports(path string, transitive bool) (*ImportsResult, error) 
 				if u.Path == "" {
 					continue
 				}
-				e := ImportEdge{From: cur.Path, Path: u.Path, Pos: posOf(u.Sp), Go: u.Go, Test: f.IsTest,
-					Std: !u.Go && strings.HasPrefix(u.Path, "std/")}
+				e := ImportEdge{From: cur.Path, Path: u.Path, Pos: posOf(u.Sp), Go: u.Go, C: u.C, Test: f.IsTest,
+					Std: !u.Go && !u.C && strings.HasPrefix(u.Path, "std/")}
 				e.Denied = denied[e.Pos.String()]
 				var dep *check.Module
-				if !u.Go {
+				if !u.Go && !u.C {
 					dep = s.Info.Module(u.Path)
 					e.Missing = dep == nil
 				}

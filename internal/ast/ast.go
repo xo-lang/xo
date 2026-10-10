@@ -70,13 +70,23 @@ type File struct {
 	Decls []Decl
 }
 
-// UseDecl is `use path [as name]`, or `use go "<Go import path>" [as
-// name]` (Go is set; decision 0041).
+// UseDecl is `use path [as name]`, `use go "<Go import path>" [as
+// name]` (Go is set; decision 0041), or `use c "<header>" [link "<lib>"]...
+// [as name] [uses effects | uses none]` (C is set; decision 0116).
 type UseDecl struct {
 	Base
 	Path  string
 	Alias *Ident
 	Go    bool
+	C     bool
+	// Links are the `link` clauses of `use c`: a C source, object, or
+	// archive path relative to the module directory, or a library name
+	// (`z` links -lz).
+	Links []string
+	// Uses is the effect ceiling a `use c` declares for every call into
+	// the header (`uses none`: Uses non nil and empty); nil means the
+	// default effect `ffi`.
+	Uses []*Effect
 }
 
 // FnDecl is a function or method declaration. In interface bodies and in

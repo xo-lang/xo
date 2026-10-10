@@ -1,6 +1,7 @@
 # 0111: One variable cannot be passed to two `var` parameters
 
-Status: Accepted (2026-10-09, by the owner; not yet implemented)
+Status: Accepted (2026-10-09, by the owner). Implemented 2026-10-09:
+`XO0503` in internal/check (`checkVarAliases`), core 5.2.
 
 ## Context
 
@@ -33,3 +34,18 @@ calling convention.
   cost.
 - By reference everywhere: native must pass pointers, and the result of
   aliasing writes stays order dependent and surprising.
+
+## Implementation notes (2026-10-09)
+
+- The checker compares the `var` arguments of every call (a `var`
+  receiver included) after the arguments are matched to parameters, so
+  named arguments count. A place is a binding followed by fields and
+  indexes; two places overlap when they share the binding and one path
+  is a prefix of the other, unless a step differs for certain: two field
+  names, or two indexes that are different integer or plain string
+  literals. Any other index (a variable, an expression, a constant
+  name) may be equal, so `both(g[i], g[j])` is rejected; `i != j` is not
+  proved from conditions.
+- The SSA builder's XO1201 for this case is gone; the internal/gen
+  golden `list_value_semantics` passes two copies and is in
+  `internal/llvm/testdata/gen_native.txt`.

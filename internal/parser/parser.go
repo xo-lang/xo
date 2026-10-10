@@ -453,6 +453,26 @@ func (p *parser) parseUse() *ast.UseDecl {
 			if interp || u.Path == "" || strings.ContainsAny(u.Path, " \t\n\\") || strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, ".") || strings.HasSuffix(u.Path, "/") {
 				p.errorf(diag.MalformedImportPath, sp, "malformed Go import path %q", u.Path)
 			}
+		} else if u.Path == "c" && (p.at(token.String) || p.at(token.RawString)) {
+			// `use c "<header>" [link "<lib>"]...` (decision 0116)
+			u.C = true
+			h, sp, ok := p.plainString()
+			u.Path = h
+			if !ok || h == "" || strings.ContainsAny(h, "\t\n\\\"") || strings.HasSuffix(h, "/") {
+				p.errorf(diag.MalformedImportPath, sp, "malformed C header path %q", h)
+			}
+			for p.at(token.Ident) && p.tok.Text == "link" {
+				p.next()
+				if !p.at(token.String) && !p.at(token.RawString) {
+					p.errorf(diag.MalformedImportPath, p.tok.Span, "expected a library after `link`, found %s", describe(p.tok))
+					break
+				}
+				l, lsp, ok := p.plainString()
+				if !ok || l == "" || strings.ContainsAny(l, " \t\n\\") {
+					p.errorf(diag.MalformedImportPath, lsp, "malformed `link` library %q", l)
+				}
+				u.Links = append(u.Links, l)
+			}
 		}
 	} else {
 		p.errorf(diag.MalformedImportPath, p.tok.Span, "expected an import path after `use`, found %s", describe(p.tok))
@@ -460,8 +480,41 @@ func (p *parser) parseUse() *ast.UseDecl {
 	if p.got(token.As) {
 		u.Alias = p.expectIdent("a name after `as`")
 	}
+	if u.C && p.at(token.Uses) {
+		p.next()
+		u.Uses = []*ast.Effect{}
+		if p.at(token.Ident) && p.tok.Text == "none" {
+			p.next()
+		} else {
+			for {
+				u.Uses = append(u.Uses, p.parseEffect())
+				if !p.got(token.Comma) {
+					break
+				}
+			}
+		}
+	}
 	u.Sp = p.spanFrom(start)
 	return u
+}
+
+// plainString consumes a string literal without interpolation and
+// returns its text, its span, and false when it interpolates.
+func (p *parser) plainString() (string, token.Span, bool) {
+	t := p.tok
+	p.next()
+	if t.Kind != token.String {
+		return t.Value, t.Span, true
+	}
+	var b strings.Builder
+	ok := true
+	for _, part := range t.Parts {
+		if part.IsExpr {
+			ok = false
+		}
+		b.WriteString(part.Text)
+	}
+	return b.String(), t.Span, ok
 }
 
 func (p *parser) parseFnDecl(doc *ast.Doc, pub bool, start token.Pos, inInterface bool) *ast.FnDecl {

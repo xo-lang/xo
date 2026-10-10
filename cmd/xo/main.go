@@ -76,6 +76,11 @@ commands:
       package mapped. check, build, and test bind missing packages on their
       own. Third party versions are pinned with a line
       "require go <module> <version>" in xo.mod.
+  bind --c [--dir=<module dir>] [--link=<lib>]... [--uses=none|<effects>] [--json] <headers...>
+      Bind C headers for use c "<header>" on native builds (decision 0116):
+      read each header with clang and write the Xo declaration file and the
+      C adapter into $XO_CBIND_DIR or <xo.mod dir>/.xo/cbind, printing how
+      many functions mapped. check --no-gc, build, and test bind on their own.
   fmt [--check] [--json] [files or dirs...]
       Rewrite .xo files in the one canonical layout (core 10.5; no options)
       and print the names of the files changed. --check changes nothing,

@@ -2,6 +2,7 @@ package check
 
 import (
 	"github.com/xo-lang/xo/internal/ast"
+	"github.com/xo-lang/xo/internal/cbind"
 	"github.com/xo-lang/xo/internal/gobind"
 	"github.com/xo-lang/xo/internal/token"
 )
@@ -27,6 +28,9 @@ type Module struct {
 	// a module is also IsStd: its declaration file is a bodiless signature
 	// listing like std/*.xo, and its functions are adapters in package rt.
 	Go *gobind.Binding
+	// C is the binding of a `use c "<header>"` module (decision 0116),
+	// also IsStd: its functions are adapters of the native runtime.
+	C *cbind.Binding
 	// Root is true for modules named on the command line (diagnostics are
 	// reported for them and for user modules they import).
 	Root bool

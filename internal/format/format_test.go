@@ -111,6 +111,8 @@ func TestLayout(t *testing.T) {
 		{"semicolons", "fn f() { let a = 1; let b = 2 }\n",
 			"fn f() {\n  let a = 1\n  let b = 2\n}\n"},
 		{"one line block kept", "fn f() -> Int { 1 }\n", "fn f() -> Int { 1 }\n"},
+		{"use c", "use  c   \"zlib.h\"  link \"z\" as zl   uses   none\nuse c \"t.h\" link \"t.c\" link \"u.a\" uses fs.read,clock\n\nfn f() {}\n",
+			"use c \"zlib.h\" link \"z\" as zl uses none\nuse c \"t.h\" link \"t.c\" link \"u.a\" uses fs.read, clock\n\nfn f() {}\n"},
 		{"blank lines collapse", "use std/http\n\n\n\nfn f() {\n\n  let a = 1\n\n\n  a\n\n}\n",
 			"use std/http\n\nfn f() {\n  let a = 1\n\n  a\n}\n"},
 		{"broken list gets trailing comma", "fn f() {\n  g(\n    1, 2,\n  )\n}\n",

@@ -1,6 +1,7 @@
 # 0112: Values that contain handles are not comparable with `==`
 
-Status: Accepted (2026-10-09, by the owner; not yet implemented)
+Status: Accepted (2026-10-09, by the owner). Implemented 2026-10-09:
+`XO0404` in internal/check (`comparable.go`), core 2.9.
 
 ## Context
 
@@ -32,3 +33,35 @@ rejected. Automatic `Debug` is unaffected.
 
 - Identity comparison of handles on every backend: legal but surprising
   next to value equality of the other fields.
+
+## Implementation notes (2026-10-09)
+
+- Code: the existing `XO0404` ("type does not implement a required
+  interface or constraint"), which `==` on a function value already
+  reported as "does not implement `Eq`"; no new code. Each report
+  carries a note naming the path to the handle (``field `inbox` holds
+  the handle `Chan[Str]` ``) and one suggesting an identifying field.
+- Handle types (internal/check `handleTypes`): prelude `Chan`, `Mutex`,
+  `Atomic`, `Scope`, `Task`, `Listener`, `Conn`; std/task `Group`,
+  `Semaphore`, `Once`; std/http `Router`, `Server`, `Client`,
+  `BodyWriter`, `TlsCert`; std/sql `Db`, `Tx`; std/testing `FakeNet`,
+  `FakeClock`, `MemFs`, `FakeEnv`, `FakeStdio`, `FakeProc`; and opaque
+  objects of the native implementation modules. Values such as
+  `sql.Row`, `time.Zone`, `http.Key[T]`, `http.Request`, and capability
+  interfaces are not handles.
+- `use go` opaque values are excluded: they exist only on the Go backend,
+  so there is no cross backend difference, and some are Go values that
+  compare by value on purpose (`uuid.UUID`, a [16]byte; the go_uuid
+  golden compares them).
+- `Eq` and `Hash` (`isEqType`) now look into struct fields, enum
+  payloads, and newtype targets, not only type arguments, so a struct
+  with a function field is not `Eq` either.
+- Map and Set keys are checked on type annotations (signatures, fields,
+  `let` types) and on the type of every expression after the bodies are
+  checked (literals, `to_set`, generic results), once per type and file.
+- `derive Ord` keeps its own field check (handles are not `Ord`), so
+  only `derive Eq` and `Hash` go through the new check.
+- The SSA builder keeps its guard for `==` and hashing of handles, now
+  reached only by std types whose native implementation holds one
+  (`http.Request` with typed values: `==` on requests is still XO1201
+  natively, planned).

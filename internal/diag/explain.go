@@ -655,6 +655,7 @@ fn f() -> P { P{x: 1, y: 0} }`,
 	NotImplemented: {
 		Title: "type does not implement a required interface or constraint",
 		Detail: "The value is used in a way that needs an interface its type does not implement: interpolation needs `Display`, `==` needs `Eq`, `<` needs `Ord`, `json.encode` needs `Json`, a generic call needs its constraint (`T: Ord`), and `derive X` needs every field to implement `X`. " +
+			"A value that holds a handle (`Mutex`, `Atomic`, `Chan`, `Task`, `Conn`, ...) or a function value is never `Eq` or `Hash`: it cannot be compared, be a Map key or Set element, or derive `Eq`, `Hash`, or `Ord` (decision 0112); compare an identifying field instead. " +
 			"Add `derive` to the type, implement the interface's methods, or convert the value first. See core 2.4 and 2.9.",
 		Example: `struct P { x: Int }
 
@@ -758,6 +759,33 @@ const X = g()`,
   var x = 1
   x = 2
   x
+}`,
+	},
+	VarArgsOverlap: {
+		Title: "one variable or overlapping places passed to two `var` parameters of one call",
+		Detail: "A call may not pass the same variable, or two places that overlap (`x` and `x.f`, `xs[i]` and `xs[j]` unless both indexes are different literals, a `var` receiver and an argument naming it), to two `var` parameters. " +
+			"The Go backend passes `var` arguments by reference and the native backends copy them in and out, so aliased writes would differ; with aliasing ruled out both conventions give one result. " +
+			"Copy one of the places into a temporary, pass the temporary, and store it back after the call, or take a single `var` parameter of a struct that holds both values. See core 5.2 and decision 0111.",
+		Example: `fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn f() -> Int {
+  var xs = [0]
+  both(xs, xs)
+  xs.len()
+}`,
+		Fix: `fn both(var a: List[Int], var b: List[Int]) {
+  a.push(1)
+  b.push(2)
+}
+
+fn f() -> Int {
+  var xs = [0]
+  var ys = xs
+  both(xs, ys)
+  xs.len() + ys.len()
 }`,
 	},
 	UseOfMovedValue: {
@@ -1092,6 +1120,36 @@ fn f() {
 
 fn f(s: Str) -> Float ! Error {
   strconv.parse_float(s, 64)?
+}`,
+	},
+	CBindFailed: {
+		Title: "C header cannot be bound",
+		Detail: "`use c \"header.h\"` reads the header with clang's AST dump and generates an Xo declaration file and a C adapter (into `.xo/cbind/` or `$XO_CBIND_DIR`). This failed: the header is neither a file relative to the module directory nor on the C include path, clang reported an error in it, a `link` file does not exist, or the line's `uses` names an unknown effect. " +
+			"The message carries the reason. `link \"x.c\"` (or `.a`, `.o`) is a path relative to the module directory; `link \"z\"` (no extension or `/`) links the library -lz. `xo bind --c <header>` runs the binding step alone. See core 4.4 and decision 0116.",
+		Example: `use c "missing.h" link "missing.c"
+
+fn main(os: Os) uses ffi {
+  os.stdio.println("hi")
+}`,
+		Fix: `use c "zlib.h" link "z"
+
+fn main(os: Os) uses ffi {
+  os.stdio.println(zlib.zlib_version())
+}`,
+	},
+	CNameSkipped: {
+		Title: "C function exists in the header but its signature does not map to Xo",
+		Detail: "The header declares this function, but a parameter or the result is a type the boundary does not carry (decision 0093): an output pointer, a mutable buffer, a `char *` result whose owner is unknown, a pointer to a struct the header defines, a function pointer, an array, or a variadic list. " +
+			"The binding maps scalars, `const char *` (Str), a const byte pointer followed by an integer length (Str or Bytes), flat structs of scalars (copied), and pointers to structs the header leaves undefined (opaque handles). Skipped names and their reasons are listed at the top of the generated binding. Write a small C wrapper with a mappable signature, declare it in a header of your module, and bind that header. See core 4.4 and decision 0116.",
+		Example: `use c "zlib.h" link "z"
+
+fn f() -> Int32 uses ffi {
+  zlib.deflate_end()
+}`,
+		Fix: `use c "zlib.h" link "z"
+
+fn f(data: Bytes) -> UInt64 uses ffi {
+  zlib.crc32(0, data)
 }`,
 	},
 	GoUsageReport: {

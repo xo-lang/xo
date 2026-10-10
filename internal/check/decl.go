@@ -730,7 +730,11 @@ func (c *checker) resolveNamedType(x *ast.NamedType, env *typeEnv) Type {
 			return badType
 		}
 	}
-	return &Named{Obj: obj, Args: args}
+	n := &Named{Obj: obj, Args: args}
+	if env.mod != nil && !env.mod.IsStd && obj.Module == c.prelude && (obj.Name == "Map" || obj.Name == "Set") {
+		c.checkKeyType(n, x.Sp)
+	}
+	return n
 }
 
 func copyParams(m map[string]*TParam) map[string]*TParam {

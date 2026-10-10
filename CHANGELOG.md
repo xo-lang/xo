@@ -11,10 +11,30 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   type), definition (into std too), references, rename, document
   symbols, semantic tokens, and formatting. The VS Code extension starts
   it; ```xo fences in Markdown are highlighted.
-- VS Code syntax highlighting (decision 0113): `editors/vscode/` registers
+- VS Code syntax highlighting (decision 0116): `editors/vscode/` registers
   `.xo` files with a TextMate grammar covering spec section 1 (keywords,
   contextual words, interpolation, raw and bytes strings, durations, sets,
   effects in `uses`). Install by symlinking it into `~/.vscode/extensions`.
+- `use c "<header>" [link "<lib>"]... [as name] [uses ...]` on the
+  native backends (decisions 0093 stage 2 and 0116): bindings generated
+  from the header with clang (`xo bind --c`), scalars, Str, Bytes with a
+  length, flat structs, and opaque handles at the boundary, the `ffi`
+  effect unless the line narrows it, XO1104/XO1105 for headers and names
+  that do not bind, XO1201 on the Go backend. Calls are not recorded
+  yet (native builds do not record).
+- Decision 0111: passing one variable, or overlapping places (`x` and
+  `x.f`, `xs[i]` and `xs[j]` unless both indexes are different
+  literals, a `var` receiver and an argument naming it), to two `var`
+  parameters of one call is `XO0503` on every backend; the native
+  backends no longer report XO1201 for it.
+- Decision 0112: a value that holds a handle (`Mutex`, `Atomic`, `Chan`,
+  `Task`, `Scope`, `Listener`, `Conn`, `task.Group`, the std/http and
+  std/sql handles, the test fakes) or a function value is not
+  comparable: `==`/`!=`, Map keys, Set elements, `derive Eq`/`Hash`, and
+  `T: Eq`/`Hash` arguments are `XO0404` with a note naming the field
+  that holds it; `derive Ord` already was. The checker now looks into
+  struct fields and enum payloads for `Eq` (it looked only at type
+  arguments).
 - Native backends (decisions 0107 to 0109): `Proc.run`, `os.tasks` (a
   scope around main and around each test), method values
   (`let f = x.method`), `map_concurrent_until`, base64,
