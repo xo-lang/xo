@@ -794,8 +794,6 @@ fn (c: Checker) flow_cands(n: Node, copy_out: Bool, var stack: List[Int], var ou
   }
 }
 
-
-
 /// The occurrences of local v in n (flow.go walk): identifiers with
 /// their defer and loop context, an assignment's value walked before its
 /// target. kinds gives each occurrence's kind by name_key, -1 to skip it.
