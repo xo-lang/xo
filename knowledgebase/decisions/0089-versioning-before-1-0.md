@@ -1,6 +1,7 @@
 # 0089: Versioning before 1.0
 
-Status: Accepted (2026-10-09, agreed with the user)
+Status: Accepted (2026-10-09, agreed with the user); native TLS, wanted
+but not required below, landed with 0105 and 0106 (2026-10-09)
 
 ## Context
 

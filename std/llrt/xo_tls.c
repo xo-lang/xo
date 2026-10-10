@@ -1427,6 +1427,11 @@ static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64
 		snprintf(msg, mn, "tls: the TLS library failed to start");
 		return CC_ERR;
 	}
+	if (roots->n == 0) {
+		// x509.SystemRootsError (no bundle file or directory had any)
+		snprintf(msg, mn, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided");
+		return CC_ERR;
+	}
 	tls_conn *t = tls_conn_new(&roots->conf, pd);
 	int64_t hs = deadline((int64_t)10 * 1000000000);
 	t->when = when && when < hs ? when : hs;

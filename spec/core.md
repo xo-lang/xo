@@ -12,7 +12,12 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.9
 
-None yet.
+- std/http serves and calls HTTPS on every backend (std.md 4.6, decisions
+  0105 and 0106): `http.tls_cert`, `Server.with_tls`, `Client.with_roots`,
+  and `TlsErr` are new; the native backends speak TLS with Mbed TLS, so an
+  `https` URL is no longer `XO1201` there. std/http speaks HTTP/1.1 only,
+  also over TLS (the Go backend's client used HTTP/2 with servers that
+  offered it).
 
 ## Changes in 0.8
 

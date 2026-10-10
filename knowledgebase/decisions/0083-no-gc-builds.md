@@ -1,6 +1,7 @@
 # 0083: `--no-gc` builds and the XO1201 check
 
-Status: Accepted (2026-10-09). Implemented in `cmd/xo` (`--no-gc` on
+Status: Accepted (2026-10-09); point 4's `https` check was removed by 0105
+(native TLS, 2026-10-09). Implemented in `cmd/xo` (`--no-gc` on
 build, run, test, check), `internal/build/nogc.go` (`NativeBackend`,
 `CheckNoGC`), `internal/ssa/nogc.go` (`CheckNoGC`, the diagnostics),
 `internal/ssa/build.go` (`unsupported`, `impossible`). Tests:

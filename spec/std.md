@@ -711,6 +711,7 @@ fn me(req: http.Request) -> http.Response ! ApiErr {
 pub fn server(l: Listener, r: Router) -> Server
 fn (s: Server) serve() -> () ! HttpErr uses net.listen
 fn (s: Server) addr() -> Str                       // the listener's addr()
+fn (s: Server) with_tls(certs: List[TlsCert]) -> Server   // HTTPS (4.6)
 enum HttpErr { Io(msg: Str), Canceled }
 ```
 
@@ -737,6 +738,7 @@ pub fn client(net: Net, timeout: Duration = 30s) -> Client
 fn (c: Client) get(url: Str) -> Response ! ClientErr uses net.dial
 fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
+fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 
 enum ClientErr {
   InvalidUrl(msg: Str)
@@ -754,9 +756,68 @@ struct UrlErr { msg: Str }
 Any HTTP status is a successful `Response`; only transport failures are
 `ClientErr`. The client does not retry. It follows up to 10 redirects for
 `GET` and `HEAD`. `parse_url` accepts absolute RFC 3986 URLs with an
-`http` or `https` scheme and a host; anything else is a `UrlErr`. The native
-backends (decision 0074) have no TLS: a request to an `https` URL is
-`Protocol`.
+`http` or `https` scheme and a host; anything else is a `UrlErr`. An
+`https` URL is requested over TLS (4.6).
+
+### 4.6 TLS (HTTPS)
+
+```
+struct TlsCert {}                                  // handle: a certificate chain with its private key
+pub fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
+struct TlsErr { msg: Str }
+fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
+fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+```
+
+```
+fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) {
+  let cert = http.tls_cert(os.fs.read("cert.pem")?, os.fs.read("key.pem")?)?
+  http.server(os.net.listen(":8443")?, r).with_tls([cert]).serve()?
+}
+```
+
+- `tls_cert` takes a PEM certificate chain (leaf first) and the PEM private
+  key of its leaf (PKCS #1, PKCS #8, or SEC 1; RSA or ECDSA), and checks
+  that they match. Its errors are Go's `tls.X509KeyPair` texts, for example
+  `tls: private key does not match public key`. Reading the files is the
+  caller's (with `Fs`), so no capability is hidden in the call.
+- `with_tls` returns the server speaking HTTPS on its listener: TLS 1.2
+  and 1.3 with Go's default cipher suites and ECDHE, `certs[0]` unless the
+  client's server name (SNI) is one of another certificate's DNS names
+  (wildcards in the leftmost label). An empty list makes `serve` fail with
+  `Io("http: with_tls needs a certificate")`. Everything else in 4.4 holds
+  (shutdown, the arena, `Content-Length`); a client that sends plain HTTP
+  gets `400` with the body `Client sent an HTTP request to an HTTPS
+  server.` and the connection closes. Failed handshakes are not logged.
+  Client certificates are not requested.
+- Both sides speak HTTP/1.1 only, over TLS too (ALPN `http/1.1`; decision
+  0106).
+- The client verifies an `https` server's certificate chain and its host
+  name (an IP address against the certificate's IP addresses) against the
+  system's roots: macOS's trust settings, the CA bundle and directories of
+  Linux (`SSL_CERT_FILE` and `SSL_CERT_DIR` override them there).
+  `with_roots` returns a client that trusts the certificates of `pem`
+  instead (for a private CA or a test certificate); `TlsErr("tls: no
+  certificates found in PEM input")` when it has none. The TLS handshake
+  must finish within 10 seconds and within the client's `timeout`, else
+  `Timeout`.
+- TLS failures are `ClientErr`s with Go's texts: a certificate that does
+  not verify is `Protocol("Get \"https://...\": tls: failed to verify
+  certificate: x509: ...")` (`certificate signed by unknown authority`,
+  `certificate is valid for a, b, not c`, `certificate has expired or is
+  not yet valid: ...`), a server answering plain HTTP is `Protocol("...:
+  http: server gave HTTP response to HTTPS client")`, and an alert of the
+  server (no shared cipher suite, a required client certificate) is
+  `Connect("remote error: tls: handshake failure")`.
+- Tests: `FakeNet` (8.1) and in memory listeners serve `https` URLs and
+  `with_tls` servers in process, without TLS.
+- The native backends (`--no-gc`, decision 0105) implement this with
+  Mbed TLS: the same behavior and texts, except that Ed25519 certificate
+  keys are not accepted (`tls_cert` fails, a server presenting one fails
+  verification), the key exchange never uses the post quantum
+  `X25519MLKEM768` group, and on macOS the system's roots are checked by
+  the Security framework through the same calls Go makes, so its texts
+  match there too.
 
 ---
 

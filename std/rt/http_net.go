@@ -187,13 +187,16 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			}
 		}})
 	}
-	// HTTP/1.1 only, also over TLS (decision 0106: the native backends
-	// have no HTTP/2 yet); TLS handshake failures are not logged
-	srv.Protocols = new(http.Protocols)
-	srv.Protocols.SetHTTP1(true)
+	// TLS handshake failures are not logged (decision 0106)
 	srv.ErrorLog = log.New(handshakeLogFilter{}, "", log.LstdFlags)
 	errc := make(chan error, 1)
 	if s.tlsOn {
+		// HTTP/1.1 only, also over TLS (decision 0106: the native
+		// backends have no HTTP/2 yet). A plain listener speaks HTTP/1
+		// anyway (no h2c, TestServeNoH2C); a TLS listener made outside
+		// with_tls (TestArenaHTTP2) still gets net/http's HTTP/2.
+		srv.Protocols = new(http.Protocols)
+		srv.Protocols.SetHTTP1(true)
 		cfg := &tls.Config{}
 		for _, c := range s.tls {
 			cfg.Certificates = append(cfg.Certificates, *c.c.(*tls.Certificate))
