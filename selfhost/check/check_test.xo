@@ -1,0 +1,123 @@
+// Tests of the self hosted checker. The comparison with the Go checker is
+// internal/selfhost's TestSelfhostCheckerNames (decision 0139).
+
+/// A small prelude for checks in the test's in memory file system.
+const PRELUDE = """
+  struct Int {}
+  struct Str {}
+  struct List[T] {}
+  enum Option[T] {
+    None
+    Some(v: T)
+  }
+  struct Os {}
+  fn print(s: Str)
+  """
+
+/// Checks the module in dir after writing files (path, source) and the
+/// small prelude, and returns the names and diags dump.
+fn check_files(os: testing.TestOs, dir: Str, files: List[(Str, Str)]) -> Str ! FsErr {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all(dir)?
+  for (p, src) in files {
+    os.fs.write(p, src.bytes())?
+  }
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check([dir]) {
+    return Ok("error ${e}")
+  }
+  if !c.unsupported.is_empty() {
+    return Ok("unsupported ${c.unsupported}")
+  }
+  Ok(c.dump(true, true))
+}
+
+/// The lines of a dump after its module header, without the file headers.
+fn lines(dump: Str) -> List[Str] {
+  dump.split("\n").filter(fn(l) { !l.is_empty() && !l.starts_with("==") && !l.starts_with("--") })
+}
+
+test "paths clean, join, and relate like Go's path package" {
+  expect(clean("a/./b/../c/")) == "a/c"
+  expect(clean("")) == "."
+  expect(clean("../x/..")) == ".."
+  expect(join(".", "a/b")) == "a/b"
+  expect(join("a", "../b")) == "b"
+  expect(parent("a/b")) == "a"
+  expect(parent("a")) == "."
+  expect(parent(".")) == ".."
+  expect(rel_path("a", "a/b/c")) == "b/c"
+  expect(rel_path("a/b", "a/b")) == "."
+  expect(base("x/y/z")) == "z"
+}
+
+test "an import's local name is its last segment" {
+  expect(local_name("std/http")) == ("http", true)
+  expect(local_name("example.com/rate-limit")) == ("rate_limit", true)
+  expect(local_name("github.com/acme/billing/v2")) == ("billing", true)
+  expect(local_name("example.com/app/v1")) == ("v1", true)
+  expect(local_name("example.com/match")) == ("match", false)
+  expect(local_name("example.com/2fa")) == ("2fa", false)
+}
+
+test "JSON strings are escaped as encoding/json does without HTML escaping" {
+  expect(json_str("a \"b\" \\ <c>")) == "\"a \\\"b\\\" \\\\ <c>\""
+  expect(json_str("tab\there\n")) == "\"tab\\there\\n\""
+  expect(json_str("\x01")) == "\"\\u0001\""
+}
+
+test "locals, parameters, functions, and types resolve" {
+  let out = check_files(os, "m", [("m/main.xo", """
+    fn twice(x: Int) -> Int {
+      let y = x
+      add(y, y)
+    }
+
+    fn add(a: Int, b: Int) -> Int {
+      a
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.contains("1:13 Int type std/prelude Int std/prelude.xo:1:8")) == true
+  expect(ls.contains("2:11 x local param m/main.xo:1:10")) == true
+  expect(ls.contains("3:3 add fn m add m/main.xo:6:4")) == true
+  expect(ls.contains("3:7 y local let m/main.xo:2:7")) == true
+  expect(ls.contains("7:3 a local param m/main.xo:6:8")) == true
+}
+
+test "shadowing in a nested block is allowed, in the same block it is XO0603" {
+  let out = check_files(os, "s", [("s/main.xo", """
+    fn f(x: Int) -> Int {
+      let y = x
+      {
+        let y = 1
+        print(y)
+      }
+      let y = 2
+      y
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.contains("5:11 y local let s/main.xo:4:9")) == true
+  expect(ls.contains("8:3 y local let s/main.xo:7:7")) == true
+  expect(ls.any(fn(l) { l.contains("\"XO0603\"") && l.contains("\"line\":7") })) == true
+}
+
+test "undefined names are XO0601; an UpperCamel name is left to the types stage" {
+  let out = check_files(os, "u", [("u/main.xo", """
+    fn f() -> Int {
+      missing(Red, other)
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("function `missing` not found") })) == true
+  expect(ls.any(fn(l) { l.contains("name `other` not found") })) == true
+  expect(ls.any(fn(l) { l.contains("Red") })) == false
+}
+
+test "a file with a parse error is not checked" {
+  let out = check_files(os, "p", [("p/main.xo", "fn f( {")])?
+  expect(out.starts_with("unsupported parse error")) == true
+}

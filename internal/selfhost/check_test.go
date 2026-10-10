@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/gen"
 )
 
 // TestSelfhostCheckerNames runs the Xo checker (selfhost/check), built
@@ -280,3 +283,29 @@ var nameDiagRE = regexp.MustCompile("^" + `\{"code":"(XO0110|XO0601|XO0603|XO060
 }, "|") + `)"\}$`)
 
 func nameDiag(line string) bool { return nameDiagRE.MatchString(line) }
+
+// TestSelfhostCheckerXoTests runs the Xo tests of selfhost/check (`xo
+// test`): path helpers, JSON escaping, and checks of small modules in the
+// test's in memory file system.
+func TestSelfhostCheckerXoTests(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the Xo test binary")
+	}
+	dir := filepath.Join("..", "..", "selfhost", "check")
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Test})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed {
+		t.Fatalf("check failed: %+v", res.Diagnostics)
+	}
+	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("xo test selfhost/check: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "0 failed") {
+		t.Fatalf("unexpected test output:\n%s", out)
+	}
+}
