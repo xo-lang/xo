@@ -34,10 +34,12 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 		info.Err = "the native check failed"
 		return nil, info
 	}
-	gp, err := hybridGo(res, root, opts.HybridAll, false, opts.release())
+	gopts := arm64.GoOptions{All: opts.HybridAll, NoPoll: opts.HybridNoPoll}
+	gp, err := hybridGo(res, root, gopts, opts.release())
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		gp, err = hybridGo(res, root, opts.HybridAll, true, opts.release())
+		gopts.NoInline = true
+		gp, err = hybridGo(res, root, gopts, opts.release())
 	}
 	if err != nil {
 		info.Err = err.Error()
@@ -61,7 +63,7 @@ func hybridAsm(dirs []string, root string, opts Options) (*gen.Hybrid, *HybridIn
 	return h, info
 }
 
-func hybridGo(res *check.Result, root string, all, noInline, release bool) (*arm64.GoProgram, error) {
+func hybridGo(res *check.Result, root string, gopts arm64.GoOptions, release bool) (*arm64.GoProgram, error) {
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, NoFaultUnwind: true, Release: release})
 	if err != nil {
 		return nil, err
@@ -75,7 +77,7 @@ func hybridGo(res *check.Result, root string, all, noInline, release bool) (*arm
 	}
 	// contracts are checked in SSA as by the Go backend (ensures and
 	// invariants since decision 0085): every function is eligible
-	return arm64.GenerateGo(m, arm64.GoOptions{All: all, NoInline: noInline})
+	return arm64.GenerateGo(m, gopts)
 }
 
 // withTag adds a build tag to go build arguments (to a -tags= there, or

@@ -187,6 +187,18 @@ func TestHybridPreemption(t *testing.T) {
 			t.Error(e)
 		}
 	}
+	if testing.Short() {
+		return
+	}
+	// the control: without the polls the same run misses both bounds
+	out := filepath.Join(t.TempDir(), "nopoll")
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Hybrid: true, HybridNoPoll: true, Out: out})
+	if err != nil || res.Failed {
+		t.Fatalf("build (no polls): %v %+v", err, res)
+	}
+	if errs := preemptRun(t, res.Binaries[build.Host()], rounds, "4", false, 10, 100); len(errs) < 2 {
+		t.Errorf("without polls: want the stop the world and main's gap past their bounds, got %v", errs)
+	}
 }
 
 // preemptRun runs the preemption program once and returns the bounds it
