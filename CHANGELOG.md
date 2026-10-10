@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The parser written in Xo (`selfhost/parser`, decision 0127): the whole
+  grammar, built with the Go, arm64, and LLVM backends; for every file the
+  Go parser accepts it prints the same syntax tree dump, and it rejects
+  every file the Go parser rejects (repository, std, spec blocks,
+  generated programs, token mutations). Its LLVM build parses 1.3x faster
+  than internal/parser (bench/results/selfhost-parser-2026-10-10.md).
+- Hidden `xo astdump [--sig] [--bench=N]`: the canonical syntax tree dump.
+- arm64: functions with frames up to 28 KiB build (probed a page at a
+  time; was a "frame too large" error past 4000 bytes), and values of
+  80 or more words no longer fail to assemble (decision 0128).
+- The program generator of the compile property test is the package
+  internal/progen.
 - Native test binaries now report test_once, test_logs, and
   test_shutdown byte for byte as the Go backend (`TestNoGCTests` runs
   them): a fault in a `task.once` function is stored and raised again

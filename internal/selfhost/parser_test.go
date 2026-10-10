@@ -69,7 +69,8 @@ func parserDifferential(t *testing.T, bin string) {
 		}
 	}
 	t.Run("repo", func(t *testing.T) {
-		acc, _ := compareParsers(t, bin, root, files, false)
+		acc, rej := compareParsers(t, bin, root, files, false)
+		t.Logf("%d repository files: %d accepted, %d rejected by both parsers", len(files), acc, rej)
 		// Every program of the repository parses except the habit and
 		// error fixtures under testdata.
 		if acc < 600 {
@@ -82,7 +83,11 @@ func parserDifferential(t *testing.T, bin string) {
 			t.Fatalf("%d of %d std files accepted", acc, len(std))
 		}
 	})
-	t.Run("spec", func(t *testing.T) { compareParsers(t, bin, root, specExamples(t, root, tmp), false) })
+	t.Run("spec", func(t *testing.T) {
+		spec := specExamples(t, root, tmp)
+		acc, rej := compareParsers(t, bin, root, spec, false)
+		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers", len(spec), acc, rej)
+	})
 	progs := 150
 	fuzz := 2000
 	if testing.Short() {

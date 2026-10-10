@@ -130,6 +130,11 @@ go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical 
 go run ./cmd/xo run selfhost/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
 go run ./cmd/xo build --backend=arm64 -o .tools/xolex selfhost/lexer   # native build of the Xo lexer (also --backend=llvm)
 go run ./cmd/xo test selfhost/lexer                     # the Xo lexer's own tests (20, 6 of them property tests)
+go run ./cmd/xo astdump [--sig] [--bench=N] <files...>     # hidden: canonical syntax tree dump of the Go parser (ast.Text + diag lines) or parse time, same text as selfhost/parser for accepted files (decision 0127)
+go run ./cmd/xo run selfhost/parser -- [--sig] [--bench=N] <files...>   # the self hosted (Xo) parser: same dump (first diagnostic only) or timing
+go run ./cmd/xo build --backend=llvm --no-gc -o .tools/xoparse selfhost/parser   # native build of the Xo parser (also --backend=arm64)
+go run ./cmd/xo test selfhost/parser                    # the Xo parser's own tests (8)
+go test ./internal/selfhost -run TestSelfhostParser     # Xo parser (go, arm64, llvm backends) vs Go parser: identical dumps for every accepted file, same rejections: repo .xo, std/*.xo (--sig), spec blocks, progen programs (24/150), token mutations (300/2000); XO_SELFHOST_PROGS=N, XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP (last verified: 2026-10-10)
 go test ./internal/selfhost                             # Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
@@ -770,10 +775,14 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
-internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer and compare
-                        its dump with lexer.Dump (decision 0076)
+internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer and
+                        selfhost/parser and compare their dumps with lexer.Dump and parser.Dump (decisions 0076, 0127)
+internal/progen/        the random program generator of decision 0110 (TestCompileProperty, the parser differential)
+selfhost/xo.mod         selfhost/ is one Xo module, github.com/xo-lang/xo/selfhost (the parser imports the lexer)
 selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
                         lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
+selfhost/parser/        the parser in Xo (decision 0127): ast.xo, parser.xo (tokens, lists, docs, declarations,
+                        types), stmt.xo, expr.xo, pattern.xo, dump.xo, main.xo (CLI), parser_test.xo
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
                         (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
@@ -2114,6 +2123,17 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
   diagnostic must be ported to `selfhost/lexer` in the same change.
   Remaining gaps with proposed fixes:
   `bench/results/selfhost-lexer-2026-10-08.md`. Last verified: 2026-10-08.
+
+- Self hosted parser (2026-10-10, decision 0127): `selfhost/parser`
+  imports the lexer (`selfhost/` is one module, `selfhost/xo.mod`) and
+  builds on all three backends; `TestSelfhostParserDifferential` requires
+  identical `xo astdump` text for every file the Go parser accepts and a
+  rejection for every file it rejects. It stops at its first error and
+  prints only that diagnostic (no recovery, no habit fixes yet). A change
+  to `internal/parser` or `internal/ast` must be ported to
+  `selfhost/parser` in the same change. Numbers and gaps:
+  `bench/results/selfhost-parser-2026-10-10.md`. Last verified:
+  2026-10-10.
 
 - LLVM backend prototype (2026-10-08): the subset above only (no Map,
   Set, Bytes, Rune, Duration, sized integers, interfaces, Display of
