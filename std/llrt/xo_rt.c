@@ -219,11 +219,16 @@ __attribute__((noinline)) static void *xo_alloc_large(int64_t n) {
 	return b + 1;
 }
 
+// xo_chunks counts the chunks carved (std/llrt/testdata/tasks.c checks
+// that blocks freed on another thread come back instead, decision 0118).
+static int64_t xo_chunks;
+
 __attribute__((noinline)) static void xo_refill(xo_heap *h, int64_t need) {
 	char *c = malloc(XO_CHUNK);
 	if (!c) {
 		xo_oom();
 	}
+	__atomic_fetch_add(&xo_chunks, 1, __ATOMIC_RELAXED);
 	(void)need;
 	h->bump_cur = c;
 	h->bump_end = c + XO_CHUNK;
