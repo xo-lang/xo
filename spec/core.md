@@ -1802,11 +1802,16 @@ scheduler (`--seed` of `xo run`, `--explore`) and recording (`--record`) are
 not available on native builds (decision 0083). `xo test --no-gc` builds a
 native test binary and runs each test in a process of its own against the
 fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
-network) with the same report as the Go backend; a fault fails only its test.
+network, MemFs, FakeProc, `os.tasks`) with the same report as the Go
+backend; a fault fails only its test.
 Property tests and `--real` are not available there yet (XO1201, skipped),
 contract fuzzing (9.1) is reported as skipped (decision 0085), and error
 traces are recorded natively but printed only in main's error report
-(decision 0104), and fault frames are not recorded natively.
+(decision 0104), and fault frames are not recorded natively. A call that
+passes one binding to two `var` parameters (`both(xs, xs)`) is XO1201
+natively for now: the Go backend passes `var` arguments by reference,
+the native backends copy them in and out
+(gotchas/var-args-one-binding-twice.md).
 
 **Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
 functions of the main module (a loop over `Int`, `Float`, `Bool`, and
@@ -2227,7 +2232,8 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
 - Platform specific APIs live in `std/sys/<os>` and can only be referenced from
   inside the matching arm (error `XO1001` otherwise). **[later]** No
   `std/sys/<os>` module exists yet, so `XO1001` is reserved (10.6).
-- The native backends do not build `target` yet (`XO1201`, planned).
+- The native backends build `target` as a constant of the build's target,
+  so only the chosen arm is code generated (decision 0107).
 
 ---
 

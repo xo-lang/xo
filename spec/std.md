@@ -502,8 +502,9 @@ fn (r: Rand) shuffle[T](xs: List[T]) -> List[T]
 ```
 
 Native builds (`--no-gc`, decision 0083) draw from the operating system's
-generator (`getentropy`, `getrandom`); `shuffle` is not available there yet
-(XO1201, planned).
+generator (`getentropy`, `getrandom`); `shuffle` draws one `int` per
+step as on the Go backend, so a test's seeded shuffle is the same
+(decision 0107).
 
 ### 3.5 Env (`uses env`)
 
@@ -549,6 +550,9 @@ fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks 
 fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
 fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
 ```
+
+The native backends run commands with `posix_spawn`, reading the output
+on the event loop; cancelling the task kills the command (decision 0107).
 
 Returning `Err` from `main` prints the error with its frames to standard error
 and exits with status 1. Prefer that over `exit` for failures.
@@ -951,10 +955,12 @@ a `match` (core 2.3).
 Native test binaries (`xo test --no-gc`, decision 0083) give the same fakes:
 the same virtual clock (from 2026-01-01T00:00:00Z), the same seeded `Rand`
 values, in memory listeners on ports from 49152, FakeNet handlers and
-failures, captured streams and log records. Not there yet (XO1201, planned):
-MemFs beyond an empty file system, `set_input` and reading standard input,
-FakeProc's `run` and `on_run`, `os.tasks`, `testing.gen` and property tests;
-`os.proc.exit` ends the test (it passes) except inside `run_main`.
+failures, captured streams and log records, MemFs (decision 0108),
+`set_input` and reading standard input, FakeProc's `run` and `on_run`
+(decision 0107), and `os.tasks` (canceled when the test ends, decision
+0109). `os.proc.exit` ends the test (it passes), and inside `run_main`
+unwinds main back to it. Not there yet (XO1201, planned): `testing.gen`
+and property tests.
 
 ```
 struct TestOs {

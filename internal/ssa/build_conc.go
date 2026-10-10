@@ -1159,7 +1159,7 @@ func (s *fn) selectExpr(x *ast.SelectExpr) *Value {
 		s.cur = yes
 		if ot := recvs[i]; ot != nil {
 			et := ot.Variants[ot.VariantIndex("Some")].Fields[0].Type
-			o := s.popOne(s.rt("select_take", m.List(et), sel, s.cint(int64(i))), ot)
+			o := s.popOne(s.rt("select_take", m.List(et), sel, s.cint(rtIdx[i])), ot)
 			if a.Bind != nil {
 				if vo := b.info.VarOf(a.Bind); vo != nil {
 					s.writeVar(vo, o)
