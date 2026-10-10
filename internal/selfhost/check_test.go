@@ -15,6 +15,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/parser"
 )
 
 // TestSelfhostChecker runs the Xo checker (selfhost/check), built with
@@ -144,8 +145,10 @@ func goCheck(dir string) *goRun {
 	}
 	r := &goRun{dump: res.Dump(check.Sections{Names: true, Types: true, Sigs: true}), accepted: true, onlyStaged: true}
 	var staged []diag.Diagnostic
+	parsed := map[string]map[string]bool{}
 	for _, d := range res.Diagnostics {
-		isStaged := stageDiag(check.DiagLines([]diag.Diagnostic{d})[0])
+		line := check.DiagLines([]diag.Diagnostic{d})[0]
+		isStaged := stageDiag(line) || parseDiag(parsed, d.Span.File, line)
 		if d.Severity == diag.Error {
 			r.accepted = false
 			r.onlyStaged = r.onlyStaged && isStaged
@@ -159,6 +162,26 @@ func goCheck(dir string) *goRun {
 	}
 	r.staged = check.DiagLines(staged)
 	return r
+}
+
+// parseDiag reports whether line is a diagnostic the Go parser gives file:
+// the lexer's and the parser's soft errors (the habits of other languages,
+// decision 0087), which the Xo parser reproduces with the tree the Go
+// parser recovers. A run with a hard parse error is unsupported by the Xo
+// checker. parsed caches the parser diagnostics of each file.
+func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
+	set, ok := parsed[file]
+	if !ok {
+		set = map[string]bool{}
+		if src, err := os.ReadFile(file); err == nil && !strings.HasPrefix(file, "std/") {
+			_, ds := parser.ParseFile(file, src, 0)
+			for _, l := range check.DiagLines(ds) {
+				set[l] = true
+			}
+		}
+		parsed[file] = set
+	}
+	return set[line]
 }
 
 // moduleDirs lists every directory under root that holds .xo files,

@@ -1,0 +1,509 @@
+// Statement habits (decision 0087), a port of internal/parser
+// habits_stmt.go.
+
+/// A statement written in another language at the current token, or None.
+fn (var p: Parser) foreign_stmt() -> Stmt? {
+  let t = p.tok
+  let start = t.span.start
+  let next = p.peek(1)
+  match t.kind {
+    Let => {
+      if is_word(next, b"mut") && p.peek(2).kind == Kind.Ident {
+        p.foreign(span_to(t.span, next.span), "`let mut` is Rust syntax; Xo declares a mutable binding with `var` (core 3.1)")
+        p.next()
+        p.next()
+        return Some(p.finish_var(start))
+      }
+      return None
+    }
+    Var => {
+      if next.kind == Kind.Ident && p.peek(2).span.start.line == next.span.start.line && (p.peek(2).kind is Ident | Star | LBrack) {
+        // Go: `var x int = 1`.
+        p.next()
+        let name = p.expect_ident("a variable name")
+        let ty = p.tok
+        let n = txt(name.name)
+        let tt = txt(ty.text)
+        if p.peek(1).kind is Newline | RBrace | Eof {
+          p.foreign(ty.span, "`var ${n} ${tt}` with no value is Go's zero value declaration; Xo has no zero values: give the binding its first value, `var ${n}: ${tt} = ...` (core 3.1)")
+        } else {
+          p.foreign(ty.span, "`var ${n} ${tt}` is Go syntax; Xo writes the type after a colon, `var ${n}: ${tt}` (core 3.1)")
+        }
+        let typ = p.parse_type()
+        var value = Expr.BadExpr(type_span(typ))
+        if p.got(Kind.Assign) {
+          value = p.parse_expr()
+        }
+        return Some(Stmt.VarStmt(span: p.span_from(start), name: name, typ: Some(typ), value: value))
+      }
+      return None
+    }
+    Ident => {}
+    _ => return None
+  }
+  if let Some(s) = p.short_decl() {
+    return Some(s)
+  }
+  let same_line = next.span.start.line == t.span.start.line && next.kind != Kind.Newline
+  let w = t.text
+  if w == b"val" {
+    if next.kind == Kind.Ident && (p.peek(2).kind is Assign | Colon) {
+      p.foreign(t.span, "`val` is Kotlin syntax; Xo declares an immutable binding with `let` (core 3.1)")
+      p.next()
+      // Go evaluates the BindPat's span after the name is consumed.
+      let name = p.expect_ident("a name")
+      let psp = p.tok.span
+      var typ: Type? = None
+      if p.got(Kind.Colon) {
+        typ = Some(p.parse_type())
+      }
+      p.expect(Kind.Assign, "`=` in `let`")
+      let value = p.parse_expr()
+      return Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: psp, name: name), typ: typ, value: value))
+    }
+    return None
+  }
+  if w == b"throw" || w == b"raise" {
+    if !same_line || !starts_expr(next.kind) {
+      return None
+    }
+    let lang = if w == b"raise" { "Python" } else { "TypeScript, Kotlin, and Swift" }
+    p.next()
+    if p.at_ident(b"new") && p.peek(1).kind == Kind.Ident {
+      p.next()
+    }
+    let x = p.parse_expr()
+    p.foreign(t.span, "`${txt(w)}` is ${lang} syntax; Xo has no exceptions: a function declared `-> T ! E` fails by returning `Err(e)`, and callers propagate with `?` (core 2.6)")
+    let call = Expr.CallExpr(span: expr_span(x), fun: Expr.Ident(Ident{span: t.span, name: b"Err"}), args: [Arg{span: expr_span(x), name: None, value: x}])
+    return Some(Stmt.ReturnStmt(span: p.span_from(start), value: Some(call)))
+  }
+  if w == b"go" {
+    if !same_line || !(next.kind is Ident | Fn) {
+      return None
+    }
+    p.next()
+    let x = p.parse_expr()
+    p.foreign(t.span, "`go f()` is Go syntax; Xo starts a task inside a scope so it cannot outlive its caller: `scope s { s.spawn(fn() { f() }) }` (core 7.1)")
+    return Some(Stmt.ExprStmt(span: p.span_from(start), x: x))
+  }
+  if w == b"guard" {
+    if next.kind != Kind.Let {
+      return None
+    }
+    return Some(p.guard_let())
+  }
+  if w == b"loop" {
+    if next.kind != Kind.LBrace {
+      return None
+    }
+    p.foreign(t.span, "`loop` is Rust syntax; Xo writes an infinite loop as `while { ... }` (core 3.5)")
+    return Some(p.parse_while(None, start))
+  }
+  None
+}
+
+/// The rest of `var name [: T] = value` after `var`.
+fn (var p: Parser) finish_var(start: Pos) -> Stmt {
+  let name = p.expect_ident("a variable name")
+  var typ: Type? = None
+  if p.got(Kind.Colon) {
+    typ = Some(p.parse_type())
+  }
+  p.expect(Kind.Assign, "`=` in `var`")
+  let value = p.parse_expr()
+  Stmt.VarStmt(span: p.span_from(start), name: name, typ: typ, value: value)
+}
+
+fn bind_tok(n: Token) -> Pattern {
+  if n.text == b"_" {
+    return Pattern.WildcardPat(n.span)
+  }
+  Pattern.BindPat(span: n.span, name: Ident{span: n.span, name: n.text})
+}
+
+/// Go's `x := v`, `a, b := f()`, and the error idiom `x, err := f()`
+/// followed by `if err != nil { return ... }`.
+fn (var p: Parser) short_decl() -> Stmt? {
+  var i = p.pos
+  var names: List[Token] = []
+  while {
+    if p.tok_at(i).kind != Kind.Ident {
+      return None
+    }
+    names.push(p.tok_at(i))
+    i += 1
+    if p.tok_at(i).kind == Kind.Comma {
+      i += 1
+      continue
+    }
+    break
+  }
+  let colon = p.tok_at(i)
+  let assign = p.tok_at(i + 1)
+  if colon.kind != Kind.Colon || assign.kind != Kind.Assign || !adjacent(colon, assign) {
+    return None
+  }
+  let start = names[0].span.start
+  p.skip_to(i + 2)
+  let value = p.parse_expr()
+  let head = span_to(names[0].span, assign.span)
+  if names.len() == 1 {
+    let n = txt(names[0].text)
+    p.foreign(head, "`${n} := v` is Go syntax; Xo binds with `let ${n} = v`, or `var ${n} = v` when it is reassigned later (core 3.1)")
+    if p.assigned_later(names[0].text) {
+      return Some(Stmt.VarStmt(span: p.span_from(start), name: Ident{span: names[0].span, name: names[0].text}, typ: None, value: value))
+    }
+    return Some(Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: value))
+  }
+  let last = names[names.len() - 1]
+  if names.len() == 2 && (last.text == b"err" || last.text == b"e") {
+    let a = txt(names[0].text)
+    p.foreign(head, "`${a}, ${txt(last.text)} := f()` is Go's error return; an Xo function that can fail returns a Result: `let ${a} = f()?` propagates the error to the caller, and `match f() { Ok(v) => ... Err(e) => ... }` handles it (core 2.6)")
+    let try = Expr.TryExpr(span: expr_span(value), x: value)
+    var res = Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: try)
+    if names[0].text == b"_" {
+      res = Stmt.ExprStmt(span: p.span_from(start), x: try)
+    }
+    // The idiom: the next statement is `if err != nil { return ... }`,
+    // which has no Xo meaning and is consumed.
+    let block_end = p.err_check_ahead(last.text)
+    if block_end >= 0 {
+      p.skip_newlines()
+      p.skip_to(block_end + 1)
+    }
+    return Some(res)
+  }
+  p.foreign(head, "`a, b := f()` is Go syntax; Xo destructures a tuple with `let (a, b) = f()` (core 3.1, 3.5)")
+  var pats: List[Pattern] = []
+  for n in names {
+    pats.push(bind_tok(n))
+  }
+  Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.TuplePat(span: head, elems: pats), typ: None, value: value))
+}
+
+/// Whether k is `=` or a compound assignment operator (token IsAssign).
+fn is_assign_kind(k: Kind) -> Bool {
+  k is Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign
+}
+
+/// The std methods that need a `var` receiver.
+fn mutating_method(name: Bytes) -> Bool {
+  for m in ["push", "pop", "put", "remove", "insert", "set", "add", "update", "remove_at"] {
+    if name == m.bytes() {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether name is assigned or mutated later in the enclosing block.
+fn (p: Parser) assigned_later(name: Bytes) -> Bool {
+  var depth = 0
+  var stmt_start = true
+  var i = p.pos
+  while i < p.toks.len() {
+    let t = p.tok_at(i)
+    match t.kind {
+      Eof => return false
+      LBrace | LParen | LBrack | HashLBrace => depth += 1
+      RParen | RBrack => depth -= 1
+      RBrace => {
+        depth -= 1
+        if depth < 0 {
+          return false
+        }
+      }
+      _ => {}
+    }
+    if t.kind == Kind.Newline || t.kind == Kind.LBrace {
+      stmt_start = true
+      i += 1
+      continue
+    }
+    if stmt_start && t.kind == Kind.Ident && t.text == name {
+      var j = i + 1
+      while j + 1 < p.toks.len() && p.tok_at(j).kind == Kind.Dot && p.tok_at(j + 1).kind == Kind.Ident {
+        if p.tok_at(j + 2).kind == Kind.LParen && mutating_method(p.tok_at(j + 1).text) {
+          return true
+        }
+        j += 2
+      }
+      let k = p.tok_at(j)
+      if is_assign_kind(k.kind) || ((k.kind == Kind.Plus || k.kind == Kind.Minus) && p.tok_at(j + 1).kind == k.kind) {
+        return true
+      }
+    }
+    stmt_start = false
+    i += 1
+  }
+  false
+}
+
+/// The index of the closing brace when the next statement is Go's
+/// `if err != nil { return ... }` with a single return in its block, or
+/// -1.
+fn (p: Parser) err_check_ahead(name: Bytes) -> Int {
+  var i = p.pos
+  while i < p.toks.len() && p.tok_at(i).kind == Kind.Newline {
+    i += 1
+  }
+  if i == p.pos {
+    return -1
+  }
+  if p.tok_at(i).kind != Kind.If || !is_word(p.tok_at(i + 1), name) || p.tok_at(i + 2).kind != Kind.NotEq || !is_word(p.tok_at(i + 3), b"nil") || p.tok_at(i + 4).kind != Kind.LBrace {
+    return -1
+  }
+  let end = p.match_close(i + 4)
+  if end < 0 {
+    return -1
+  }
+  var stmts = 0
+  var depth = 0
+  var in_stmt = false
+  for j in i + 5..end {
+    let tk = p.tok_at(j).kind
+    if depth == 0 && tk == Kind.Newline {
+      in_stmt = false
+      continue
+    }
+    if !in_stmt {
+      stmts += 1
+      in_stmt = true
+      if stmts == 1 && tk != Kind.Return {
+        return -1
+      }
+    }
+    match tk {
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => depth -= 1
+      _ => {}
+    }
+  }
+  if stmts != 1 {
+    return -1
+  }
+  if !(p.tok_at(end + 1).kind is Newline | RBrace | Eof) {
+    return -1
+  }
+  end
+}
+
+/// Swift's `guard let v = x else { ... }`, recovered as
+/// `let v = if let Some(v) = x { v } else { ... }`.
+fn (var p: Parser) guard_let() -> Stmt {
+  let g = p.tok
+  let start = g.span.start
+  p.next() // guard
+  p.next() // let
+  let name = p.expect_ident("a name")
+  p.expect(Kind.Assign, "`=` in `guard let`")
+  let value = p.parse_expr_no_lit()
+  if !p.at(Kind.Else) {
+    p.error_expected("`else` in `guard let`")
+    return Stmt.BadStmt(g.span)
+  }
+  p.next()
+  let body = p.parse_block()
+  let n = txt(name.name)
+  p.foreign(g.span, "`guard let` is Swift syntax; Xo writes `let ${n} = if let Some(${n}) = x { ${n} } else { ... }`, or `let ${n} = x ?? default` (core 2.5)")
+  let sp = name.span
+  let pat = Pattern.VariantPat(span: sp, path: [Ident{span: sp, name: b"Some"}], parens: true, fields: [PatField{span: sp, name: None, pattern: Pattern.BindPat(span: sp, name: Ident{span: sp, name: name.name})}], rest: false)
+  let ifx = IfExpr{span: p.span_from(start), pattern: Some(pat), value: Some(value), then: expr_block(Expr.Ident(Ident{span: sp, name: name.name})), els: Some(Expr.Block(body))}
+  Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: sp, name: name), typ: None, value: Expr.IfExpr(ifx))
+}
+
+/// `x++` and `x--` after the expression x of a statement, or None.
+fn (var p: Parser) foreign_inc_dec(x: Expr, start: Pos) -> Stmt? {
+  let t = p.tok
+  if (t.kind != Kind.Plus && t.kind != Kind.Minus) || p.peek(1).kind != t.kind || !adjacent(t, p.peek(1)) {
+    return None
+  }
+  let end = p.peek(1)
+  var op = Kind.PlusAssign
+  var repl = " += 1"
+  if t.kind == Kind.Minus {
+    op = Kind.MinusAssign
+    repl = " -= 1"
+  }
+  let xt = p.span_text(expr_span(x))
+  let k = kind_text(t.kind)
+  p.foreign(span_to(t.span, end.span), "`${xt}${k}${k}` is Go, TypeScript, Kotlin, and Swift syntax; Xo writes `${xt}${repl}` (core 3.5)")
+  p.next()
+  p.next()
+  let one = Expr.IntLit(span: end.span, raw: b"1", value: b"1")
+  Some(Stmt.AssignStmt(span: p.span_from(start), op: op, target: x, value: one))
+}
+
+/// Go's `return a, b` after the first value.
+fn (var p: Parser) foreign_return_list(first: Expr) -> Expr {
+  var vals = [first]
+  while p.got(Kind.Comma) {
+    vals.push(p.parse_expr())
+  }
+  let last = vals[vals.len() - 1]
+  let sp = span_to(expr_span(first), expr_span(last))
+  if vals.len() == 2 && is_nil_ident(last) {
+    p.foreign(sp, "`return v, nil` is Go's success return; an Xo function declared `-> T ! E` returns just the value: `return ${p.span_text(expr_span(first))}` (core 2.6)")
+    return first
+  }
+  if vals.len() == 2 && is_zero_expr(first) {
+    p.foreign(sp, "`return zero, err` is Go's failure return; an Xo function declared `-> T ! E` fails with `return Err(${p.span_text(expr_span(last))})` (core 2.6)")
+    return Expr.CallExpr(span: sp, fun: Expr.Ident(Ident{span: expr_span(first), name: b"Err"}), args: [Arg{span: expr_span(last), name: None, value: last}])
+  }
+  p.foreign(sp, "`return a, b` is Go syntax for several results; Xo returns one value, here a tuple: `return (a, b)` (core 2.1)")
+  Expr.TupleExpr(span: sp, elems: vals)
+}
+
+fn is_nil_ident(e: Expr) -> Bool {
+  if let Ident(id) = e {
+    return id.name == b"nil"
+  }
+  false
+}
+
+fn is_zero_expr(e: Expr) -> Bool {
+  match e {
+    Ident(id) => id.name == b"nil" || id.name == b"false"
+    IntLit(_, _, value) => value == b"0"
+    StringLit(s) => s.parts.is_empty() || (s.parts.len() == 1 && s.parts[0].expr.is_none() && s.parts[0].text.is_empty())
+    _ => false
+  }
+}
+
+/// Loops written in another language at `for`, or None.
+fn (var p: Parser) foreign_for(label: Ident?, start: Pos) -> Stmt? {
+  let for_tok = p.tok
+  if p.peek(1).kind == Kind.LBrace {
+    p.foreign(for_tok.span, "`for { ... }` is Go's infinite loop; Xo writes `while { ... }` (core 3.5)")
+    return Some(p.parse_while(label, start))
+  }
+  if p.peek(1).kind == Kind.LParen {
+    return p.paren_for(label, start)
+  }
+  let h = p.scan_for_header()
+  if h.brace_idx < 0 {
+    return None
+  }
+  if h.range_kw {
+    return Some(p.go_range_for(label, start))
+  }
+  if h.short_decl && h.has_semi {
+    return Some(p.c_for(label, start, false))
+  }
+  if !h.has_in && !h.short_decl && !h.has_semi && !h.not_expr {
+    p.foreign(for_tok.span, "`for cond { ... }` is Go's while loop; Xo writes `while cond { ... }` (core 3.5)")
+    return Some(p.parse_while(label, start))
+  }
+  None
+}
+
+/// `for (x in xs)`, `for (const x of xs)`, and `for (let i = 0; i < n;
+/// i++)`.
+fn (var p: Parser) paren_for(label: Ident?, start: Pos) -> Stmt? {
+  let open = p.pos + 1
+  let close = p.match_close(open)
+  if close < 0 || p.tok_at(close + 1).kind != Kind.LBrace {
+    return None
+  }
+  var semi = false
+  var in_idx = -1
+  var of_idx = -1
+  var depth = 0
+  for i in open + 1..close {
+    let t = p.tok_at(i)
+    match t.kind {
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => depth -= 1
+      Newline => {
+        if t.text == b";" && depth == 0 {
+          semi = true
+        }
+      }
+      In => {
+        if depth == 0 && in_idx < 0 {
+          in_idx = i
+        }
+      }
+      Ident => {
+        if depth == 0 && t.text == b"of" && of_idx < 0 {
+          of_idx = i
+        }
+      }
+      _ => {}
+    }
+  }
+  if semi {
+    return Some(p.c_for(label, start, true))
+  }
+  if in_idx < 0 && of_idx < 0 {
+    return None
+  }
+  p.next() // for
+  let lp = p.tok
+  p.next() // (
+  if (p.at(Kind.Let) || p.at(Kind.Var) || p.at(Kind.Const) || p.at_ident(b"val")) && p.peek(1).kind == Kind.Ident {
+    p.next()
+  }
+  let pattern = p.parse_pattern()
+  p.next() // in / of
+  let iter = p.parse_expr()
+  p.expect(Kind.RParen, "`)`")
+  p.foreign(lp.span, "`for (x in xs)` is TypeScript, Kotlin, and Java syntax; Xo writes `for x in xs` with no parentheses (core 3.5)")
+  let body = p.parse_cond_block(Some(iter))
+  Some(Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: [], body: body, go_range: false))
+}
+
+/// A C style counting loop: Go's `for i := 0; i < n; i++ {` or, with
+/// paren, `for (let i = 0; i < n; i++) {`.
+fn (var p: Parser) c_for(label: Ident?, start: Pos, paren: Bool) -> Stmt {
+  let for_tok = p.tok
+  p.next() // for
+  if paren {
+    p.next() // (
+    if p.at(Kind.Let) || p.at(Kind.Var) || p.at(Kind.Const) || (p.at(Kind.Ident) && p.peek(1).kind == Kind.Ident) {
+      p.next() // let, var, or a C type such as int
+    }
+  }
+  let name = p.expect_ident("a loop variable")
+  if p.at(Kind.Colon) {
+    p.next()
+  }
+  p.expect(Kind.Assign, "`=` in the loop initializer")
+  let lo = p.parse_expr()
+  p.expect(Kind.Newline, "`;` after the loop initializer")
+  var cond: Expr? = None
+  if !p.at(Kind.Newline) {
+    cond = Some(p.parse_expr_no_lit())
+  }
+  p.expect(Kind.Newline, "`;` after the loop condition")
+  // The post statement, as text.
+  let close_kind = if paren { Kind.RParen } else { Kind.LBrace }
+  var post = BytesBuilder.new()
+  while !p.at(close_kind) && !p.at(Kind.Eof) && !p.at(Kind.Newline) {
+    post.write(p.tok.text)
+    p.next()
+  }
+  if paren {
+    p.expect(Kind.RParen, "`)`")
+  }
+  let n = name.name
+  let step = post.freeze()
+  let up = step == n + b"++" || step == b"++" + n || step == n + b"+=1" || step == n + b"=" + n + b"+1"
+  var hi: Expr? = None
+  var inclusive = false
+  if let Some(BinaryExpr(_, op, x, y)) = cond {
+    if let Ident(id) = x {
+      if up && id.name == n && (op == Kind.Lt || op == Kind.LtEq) {
+        hi = Some(y)
+        inclusive = op == Kind.LtEq
+      }
+    }
+  }
+  p.foreign(for_tok.span, "a C style `for init; cond; step` loop is Go, TypeScript, and Java syntax; Xo counts with a range, `for ${txt(n)} in a..b` (`a..=b` includes `b`), or loops with `while cond` (core 3.5)")
+  var r = Expr.RangeExpr(span: expr_span(lo), lo: Some(lo), hi: Some(lo), inclusive: false)
+  if let Some(h) = hi {
+    r = Expr.RangeExpr(span: span_to(expr_span(lo), expr_span(h)), lo: Some(lo), hi: Some(h), inclusive: inclusive)
+  }
+  let body = p.parse_block()
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: Pattern.BindPat(span: name.span, name: name), iter: r, bound: [], body: body, go_range: false)
+}

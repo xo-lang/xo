@@ -26,58 +26,11 @@ fn (var p: Parser) parse_block() -> Block {
   b
 }
 
-/// Statements written in another language (internal/parser foreignStmt).
-fn (var p: Parser) foreign_stmt() {
-  let t = p.tok
-  let next = p.peek(1)
-  match t.kind {
-    Let => {
-      if is_word(next, b"mut") && p.peek(2).kind == Kind.Ident {
-        p.foreign(t.span, "`let mut` is Rust syntax")
-      }
-    }
-    Var => {
-      if next.kind == Kind.Ident && p.peek(2).span.start.line == next.span.start.line && (p.peek(2).kind is Ident | Star | LBrack) {
-        p.foreign(t.span, "`var x T` is Go syntax")
-      }
-    }
-    Ident => {
-      if p.short_decl_ahead() {
-        p.foreign(t.span, "`x := v` is Go syntax")
-        return
-      }
-      let same_line = next.span.start.line == t.span.start.line && next.kind != Kind.Newline
-      let w = t.text
-      if (w == b"val" && next.kind == Kind.Ident && (p.peek(2).kind is Assign | Colon)) || ((w == b"throw" || w == b"raise") && same_line && starts_expr(next.kind)) || (w == b"go" && same_line && (next.kind is Ident | Fn)) || (w == b"guard" && next.kind == Kind.Let) || (w == b"loop" && next.kind == Kind.LBrace) {
-        p.foreign(t.span, "a statement from another language")
-      }
-    }
-    _ => {}
-  }
-}
-
-/// Go's `x := v` and `a, b := f()` at the current token.
-fn (p: Parser) short_decl_ahead() -> Bool {
-  var i = p.pos
-  while {
-    if p.tok_at(i).kind != Kind.Ident {
-      return false
-    }
-    i += 1
-    if p.tok_at(i).kind == Kind.Comma {
-      i += 1
-      continue
-    }
-    break
-  }
-  let colon = p.tok_at(i)
-  let assign = p.tok_at(i + 1)
-  colon.kind == Kind.Colon && assign.kind == Kind.Assign && adjacent(colon, assign)
-}
-
 fn (var p: Parser) parse_stmt() -> Stmt {
   let start = p.tok.span.start
-  p.foreign_stmt()
+  if let Some(s) = p.foreign_stmt() {
+    return s
+  }
   match p.tok.kind {
     Let => {
       p.next()
@@ -175,9 +128,11 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
       p.next()
       var value: Expr? = None
       if !(p.tok.kind is Newline | RBrace | Eof | Comma) {
-        value = Some(p.parse_expr())
-        if p.at(Kind.Comma) {
-          p.foreign(p.tok.span, "`return a, b` is Go syntax")
+        let v = p.parse_expr()
+        if p.at(Kind.Comma) && !p.hard {
+          value = Some(p.foreign_return_list(v))
+        } else {
+          value = Some(v)
         }
       }
       return Stmt.ReturnStmt(span: p.span_from(start), value: value)
@@ -197,10 +152,10 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
     _ => {}
   }
   let x = p.parse_expr()
-  let t = p.tok
-  if (t.kind == Kind.Plus || t.kind == Kind.Minus) && p.peek(1).kind == t.kind && adjacent(t, p.peek(1)) {
-    p.foreign(t.span, "`x++` is Go syntax; Xo writes `x += 1`")
+  if let Some(st) = p.foreign_inc_dec(x, start) {
+    return st
   }
+  let t = p.tok
   if t.kind is Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign {
     p.next()
     let value = p.parse_expr()
@@ -213,28 +168,17 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
 }
 
 fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
-  // Loops of other languages (internal/parser foreignFor).
-  if p.peek(1).kind == Kind.LBrace {
-    p.foreign(p.tok.span, "`for { ... }` is Go's infinite loop")
-  } else if p.peek(1).kind == Kind.LParen {
-    p.paren_for()
-  } else {
-    let h = p.scan_for_header()
-    if h.brace_idx >= 0 {
-      if h.range_kw {
-        return p.go_range_for(label, start)
-      }
-      if (h.short_decl && h.has_semi) || (!h.has_in && !h.short_decl && !h.has_semi && !h.not_expr) {
-        p.foreign(p.tok.span, "a Go or C style `for` loop")
-      }
-    }
+  if let Some(fs) = p.foreign_for(label, start) {
+    return fs
   }
   p.next() // for
   let pattern = p.parse_pattern()
-  if p.at_ident(b"of") {
-    p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax")
+  if p.at_ident(b"of") && !p.hard {
+    p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+    p.next()
+  } else {
+    p.expect(Kind.In, "`in` in a for loop")
   }
-  p.expect(Kind.In, "`in` in a for loop")
   let iter = p.parse_expr_no_lit()
   var bound: List[Expr] = []
   var last = iter
@@ -246,43 +190,6 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
   }
   let body = p.parse_cond_block(Some(last))
   Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: false)
-}
-
-/// `for (x in xs) {`, `for (const x of xs) {`, `for (init; cond; step) {`.
-fn (var p: Parser) paren_for() {
-  let open = p.pos + 1
-  let close = p.match_close(open)
-  if close < 0 || p.tok_at(close + 1).kind != Kind.LBrace {
-    return
-  }
-  var depth = 0
-  var hit = false
-  for i in open + 1..close {
-    let t = p.tok_at(i)
-    match t.kind {
-      LParen | LBrack | LBrace | HashLBrace => depth += 1
-      RParen | RBrack | RBrace => depth -= 1
-      Newline => {
-        if t.text == b";" && depth == 0 {
-          hit = true
-        }
-      }
-      In => {
-        if depth == 0 {
-          hit = true
-        }
-      }
-      Ident => {
-        if depth == 0 && t.text == b"of" {
-          hit = true
-        }
-      }
-      _ => {}
-    }
-  }
-  if hit {
-    p.foreign(p.tok_at(open).span, "`for (x in xs)` is TypeScript, Kotlin, and Java syntax")
-  }
 }
 
 /// The tokens between `for` and the `{` of the body on the same line

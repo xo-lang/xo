@@ -6,13 +6,13 @@
 // byte equal; internal/selfhost checks that on every .xo file of the
 // repository and on mutated inputs.
 //
-// Errors are simpler than the Go parser's: the first error is recorded and
-// parsing stops (the current token becomes the final Eof, so every loop
-// ends). A file is rejected exactly when the Go parser reports a
-// diagnostic: the habit checks of internal/parser (decision 0087), which
-// turn syntax from other languages into XO0177 errors, are ported as
-// rejection conditions without their recovery, so a program the Go parser
-// rejects through a habit is rejected here too.
+// Errors: the habit checks of internal/parser (decision 0087), which turn
+// syntax from other languages into XO0177 and the other soft errors, are
+// ported with their messages, spans, and recovery (habits*.xo), so a file
+// the Go parser accepts with only soft errors gives the same tree and the
+// same diagnostics. A hard error stops the parse (the current token
+// becomes the final Eof, so every loop ends): the Go parser resynchronizes
+// and goes on, so after a hard error only the rejection is the same.
 
 use github.com/xo-lang/xo/selfhost/lexer
 
@@ -37,6 +37,7 @@ const MISPLACED_SELF = "XO0174"
 const EXPECTED_NEWLINE = "XO0175"
 const MISPLACED_PUB = "XO0176"
 const FOREIGN_SYNTAX = "XO0177"
+const LEADING_OPERATOR = "XO0178"
 const MALFORMED_IMPORT_PATH = "XO0158"
 
 /// The tree of one file and its diagnostics: the lexer's, or the first
@@ -44,6 +45,10 @@ const MALFORMED_IMPORT_PATH = "XO0158"
 pub struct ParseResult {
   pub file: File
   pub diags: List[Diag]
+  /// A hard error stopped the parse: the tree is incomplete. Without one,
+  /// diags holds only lexer diagnostics and soft errors (habits), and the
+  /// tree is the Go parser's.
+  pub hard: Bool = false
 }
 
 struct Parser {
@@ -66,43 +71,52 @@ struct Parser {
   no_arrow_fn: Bool = false
   /// Doc comments keyed by their last line.
   docs: Map[Int, Doc] = {}
-  /// The first error; parsing stops at it.
+  /// The lexer's diagnostics, the soft errors, and the first hard error.
   diags: List[Diag] = []
+  /// A hard error was reported; parsing stops at it.
+  hard: Bool = false
+  /// A foreign top level line was consumed whole (habits).
+  line_done: Bool = false
+  /// A top level declaration failed in a way the Go parser resynchronizes
+  /// from at the next declaration (`class`, decision 0087).
+  top_bad: Bool = false
+  /// Parsing the methods of a Rust `impl` block.
+  in_impl: Bool = false
+  /// Inside an outermost `Name<...>` type argument list (habits).
+  angle_active: Bool = false
+  /// An inner `<...>` list consumed `>>`, closing the outer one too.
+  angle_pending_gt: Bool = false
+  /// Further methods recovered from a Rust `impl` block.
+  pending_decls: List[FnDecl] = []
 }
 
 /// Parses one file. With sig, function declarations may omit their body.
 pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult {
   let lx = lexer.lex(src)
-  let toks = inc_dec_newlines(lx.tokens)
-  var p = Parser{src: src, toks: toks, tok: toks[0], sig: sig}
-  if !lx.diags.is_empty() {
-    return ParseResult{file: File{span: toks[0].span, name: name}, diags: lx.diags}
-  }
+  var p = Parser{src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, diags: lx.diags}
   p.collect_docs(lx.comments)
+  p.lex_habits()
+  p.tok = p.toks[0]
   let f = p.parse_file(name)
-  ParseResult{file: f, diags: p.diags}
+  ParseResult{file: f, diags: sort_diags(p.diags), hard: p.hard}
 }
 
-/// Inserts the newline the Go parser adds after `x++` or `x--` at the end
-/// of a line (internal/parser lexHabits): the lexer adds none after an
-/// operator, and without it `a --` newline `b` would read as `a - -b`.
-fn inc_dec_newlines(toks: List[Token]) -> List[Token] {
-  var out: List[Token] = []
-  var i = 0
-  while i < toks.len() {
-    let t = toks[i]
-    if (t.kind == Kind.Plus || t.kind == Kind.Minus) && i + 2 < toks.len() && toks[i + 1].kind == t.kind && adjacent(t, toks[i + 1]) && toks[i + 2].kind != Kind.Newline && toks[i + 2].span.start.line > t.span.start.line {
-      out.push(t)
-      out.push(toks[i + 1])
-      let end = toks[i + 1].span.end
-      out.push(Token{kind: Kind.Newline, span: Span{start: end, end: end}, text: b"\n"})
-      i += 2
-      continue
+/// Orders diagnostics by position, keeping the order of equal ones
+/// (diag.Sort, a stable sort by line and column).
+fn sort_diags(ds: List[Diag]) -> List[Diag] {
+  var out: List[Diag] = []
+  for d in ds {
+    var i = out.len()
+    while i > 0 && pos_after(out[i - 1].span.start, d.span.start) {
+      i -= 1
     }
-    out.push(t)
-    i += 1
+    out.insert(i, d)
   }
   out
+}
+
+fn pos_after(a: Pos, b: Pos) -> Bool {
+  a.line > b.line || (a.line == b.line && a.col > b.col)
 }
 
 // ---------------------------------------------------------------------------
@@ -199,24 +213,36 @@ fn describe(t: Token) -> Str {
 // ---------------------------------------------------------------------------
 // Errors
 
-/// Records the first error and stops the parse: the current token becomes
-/// the final Eof.
+/// Records a hard error and stops the parse: the current token becomes the
+/// final Eof. Like the Go parser, an error at an Illegal token the lexer
+/// already reported adds no diagnostic.
 fn (var p: Parser) fail(code: Str, sp: Span, message: Str) {
-  if p.diags.is_empty() {
-    p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+  if !p.hard {
+    p.hard = true
+    if !(p.tok.kind == Kind.Illegal && sp.start.offset == p.tok.span.start.offset) {
+      p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+    }
   }
   p.pos = p.toks.len() - 1
   p.tok = p.toks[p.pos]
 }
 
 fn (p: Parser) failed() -> Bool {
-  !p.diags.is_empty()
+  p.hard
 }
 
-/// A habit of another language (decision 0087) at sp: the Go parser
-/// reports XO0177 and recovers; this parser rejects the file.
-fn (var p: Parser) foreign(sp: Span, what: Str) {
-  p.fail(FOREIGN_SYNTAX, sp, what)
+/// A soft error (internal/parser softErrorf): reported, and the parser
+/// recovers locally.
+fn (var p: Parser) soft(code: Str, sp: Span, message: Str) {
+  if !p.hard {
+    p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+  }
+}
+
+/// A habit of another language (decision 0087) at sp: XO0177, a soft
+/// error; the caller recovers as if the Xo form had been written.
+fn (var p: Parser) foreign(sp: Span, message: Str) {
+  p.soft(FOREIGN_SYNTAX, sp, message)
 }
 
 fn (var p: Parser) error_expected(what: Str) {
@@ -278,8 +304,9 @@ fn (var p: Parser) list_sep(before: Int, close: Kind, what: Str) -> Bool {
     return true
   }
   if p.at(Kind.Newline) {
-    p.fail(MISSING_COMMA, p.tok.span, "missing `,` before newline in ${what} list")
-    return false
+    p.soft(MISSING_COMMA, p.tok.span, "missing `,` before newline in ${what} list")
+    p.skip_newlines()
+    return true
   }
   if !p.at(close) {
     p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected `,` or `${close}` in ${what} list, found ${describe(p.tok)}")
@@ -388,49 +415,100 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
     let decl_start = p.tok.span.start
     let pub_tok = p.tok
     let is_pub = p.got(Kind.Pub)
-    match p.tok.kind {
-      Use => {
-        if is_pub {
-          p.fail(MISPLACED_PUB, pub_tok.span, "`use` cannot be `pub`")
-        }
-        let use_tok = p.tok
-        let u = p.parse_use()
-        if seen_decl {
-          p.fail(USE_AFTER_DECL, use_tok.span, "`use` must come before all declarations")
-        }
-        imports.push(u)
-      }
-      Fn => decls.push(Decl.FnDecl(p.parse_fn_decl(doc, is_pub, decl_start, false)))
-      Struct => decls.push(Decl.StructDecl(p.parse_struct(doc, is_pub, decl_start)))
-      Enum => decls.push(Decl.EnumDecl(p.parse_enum(doc, is_pub, decl_start)))
-      Interface => decls.push(Decl.InterfaceDecl(p.parse_interface(doc, is_pub, decl_start)))
-      Type => decls.push(p.parse_type_decl(doc, is_pub, decl_start))
-      Const => decls.push(Decl.ConstDecl(p.parse_const(doc, is_pub, decl_start)))
-      Test => {
-        if is_pub {
-          p.fail(MISPLACED_PUB, pub_tok.span, "a test cannot be `pub`")
-        }
-        decls.push(Decl.TestDecl(p.parse_test(doc, decl_start)))
-      }
-      _ => {
-        if is_pub {
-          p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected a declaration after `pub`, found ${describe(p.tok)}")
-        } else {
-          p.top_level_stmt_error()
-        }
-      }
-    }
-    if !decls.is_empty() {
+    if let Some(d) = p.parse_top_decl(imports, doc, is_pub, pub_tok, decl_start, seen_decl) {
+      decls.push(d)
       seen_decl = true
     }
+    for pd in p.pending_decls {
+      decls.push(Decl.FnDecl(pd))
+    }
+    p.pending_decls = []
     if p.failed() {
       break
+    }
+    if p.top_bad {
+      p.top_bad = false
+      p.sync_top()
+      continue
+    }
+    if p.line_done {
+      p.line_done = false
+      continue
     }
     if !p.at(Kind.Eof) && !p.got(Kind.Newline) {
       p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after declaration, found ${describe(p.tok)}")
     }
   }
   File{span: Span{start: start, end: p.tok.span.end}, name: name, imports: imports, decls: decls}
+}
+
+/// One top level item after an optional `pub`: None for a `use` (pushed
+/// on imports) and for skipped foreign lines.
+fn (var p: Parser) parse_top_decl(var imports: List[UseDecl], doc: Doc?, is_pub: Bool, pub_tok: Token, decl_start: Pos, seen_decl: Bool) -> Decl? {
+  match p.tok.kind {
+    Use => {
+      if is_pub {
+        p.soft(MISPLACED_PUB, pub_tok.span, "`use` cannot be `pub`")
+      }
+      let use_tok = p.tok
+      let u = p.parse_use()
+      if seen_decl {
+        p.soft(USE_AFTER_DECL, use_tok.span, "`use` must come before all declarations")
+      }
+      imports.push(u)
+      None
+    }
+    Fn => Some(Decl.FnDecl(p.parse_fn_decl(doc, is_pub, decl_start, false)))
+    Struct => Some(Decl.StructDecl(p.parse_struct(doc, is_pub, decl_start)))
+    Enum => Some(Decl.EnumDecl(p.parse_enum(doc, is_pub, decl_start)))
+    Interface => Some(Decl.InterfaceDecl(p.parse_interface(doc, is_pub, decl_start)))
+    Type => Some(p.parse_type_decl(doc, is_pub, decl_start))
+    Const => Some(Decl.ConstDecl(p.parse_const(doc, is_pub, decl_start)))
+    Test => {
+      if is_pub {
+        p.soft(MISPLACED_PUB, pub_tok.span, "a test cannot be `pub`")
+      }
+      Some(Decl.TestDecl(p.parse_test(doc, decl_start)))
+    }
+    _ => {
+      let (fd, ok) = p.foreign_top_level(imports, doc, is_pub, pub_tok, decl_start, seen_decl)
+      if ok {
+        return fd
+      }
+      if is_pub {
+        p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected a declaration after `pub`, found ${describe(p.tok)}")
+      } else {
+        p.top_level_stmt_error()
+      }
+      Some(Decl.BadDecl(p.tok.span))
+    }
+  }
+}
+
+/// Skips to the next line that starts a top level declaration in column
+/// one (internal/parser syncTop).
+fn (var p: Parser) sync_top() {
+  p.next()
+  while !p.at(Kind.Eof) && !p.top_level_start() {
+    p.next()
+  }
+}
+
+/// Whether the current token can start a top level declaration and sits
+/// in column one (internal/parser topLevelStart).
+fn (p: Parser) top_level_start() -> Bool {
+  if p.tok.span.start.col != 1 {
+    return false
+  }
+  match p.tok.kind {
+    Fn | Pub | Struct | Enum | Interface | Type | Const | Test | Use => true
+    Ident => {
+      let w = p.tok.text
+      let foreign = w == b"func" || w == b"fun" || w == b"def" || w == b"function" || w == b"impl" || w == b"trait" || w == b"protocol" || w == b"class" || w == b"export" || w == b"async" || w == b"data" || w == b"public"
+      foreign && p.peek(1).kind == Kind.Ident
+    }
+    _ => false
+  }
 }
 
 fn (var p: Parser) top_level_stmt_error() {
@@ -556,26 +634,33 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
   if p.at_type_params() {
     fn_decl.type_params = p.parse_type_params()
   }
-  fn_decl.params = p.parse_params(false, in_interface)
-  if p.at_ident(b"throws") {
-    p.foreign(p.tok.span, "`throws` is Swift syntax")
+  fn_decl.params = p.parse_params(false, in_interface || p.in_impl)
+  var throws_tok: List[Token] = []
+  if !p.hard && p.at_ident(b"throws") {
+    throws_tok.push(p.tok)
+    p.next()
   }
-  p.foreign_result()
-  if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Arrow {
+  if !p.hard {
+    p.foreign_result(fn_decl)
+  }
+  if !p.hard && p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Arrow {
     // A result type on the next line continues the declaration.
     p.skip_newlines()
   }
-  if p.got(Kind.Arrow) {
+  if fn_decl.result.is_none() && p.got(Kind.Arrow) {
     fn_decl.result = Some(p.parse_type_top())
   }
   if p.at(Kind.Bang) {
     fn_decl.err = Some(p.parse_err_spec())
   }
+  for t in throws_tok {
+    p.foreign_throws(fn_decl, t)
+  }
   fn_decl.clauses = p.parse_clauses()
   if p.peek_past_newlines().kind == Kind.LBrace {
     p.skip_newlines()
-    if in_interface {
-      p.fail(UNEXPECTED_TOKEN, p.tok.span, "interface method cannot have a body (core 15: FnSig)")
+    if in_interface && !p.hard {
+      p.soft(UNEXPECTED_TOKEN, p.tok.span, "interface method `${txt(name.name)}` cannot have a body (core 15: FnSig)")
     }
     fn_decl.body = Some(p.parse_block())
   } else if !in_interface && !p.sig {
@@ -583,14 +668,6 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
   }
   fn_decl.span = p.span_from(start)
   fn_decl
-}
-
-/// A result type written without `->` (TypeScript `): T`, Go `() T`).
-fn (var p: Parser) foreign_result() {
-  let t = p.tok
-  if (t.kind == Kind.Colon && p.starts_type_at(p.pos + 1)) || (t.kind == Kind.LParen && p.tok_at(p.pos - 1).kind == Kind.RParen) || (t.kind == Kind.Ident && !p.at_ident(b"throws") && !p.at_ident(b"where")) || t.kind == Kind.Star || t.kind == Kind.LBrack {
-    p.foreign(t.span, "a result type is written `-> T`")
-  }
 }
 
 /// Whether the token at index i can start a type (habit checks).
@@ -606,8 +683,20 @@ fn (var p: Parser) parse_receiver() -> Receiver {
   p.next() // (
   let is_var = p.got(Kind.Var)
   let name = p.expect_ident("a receiver name")
-  if p.at(Kind.Star) || p.at(Kind.Ident) {
-    p.foreign(p.tok.span, "a Go receiver; Xo writes `(name: Type)`")
+  if !p.hard && (p.at(Kind.Star) || p.at(Kind.Ident)) {
+    // Go receivers: `(p *P)` and `(p P)`.
+    let t = p.tok
+    let n = txt(name.name)
+    if t.kind == Kind.Star {
+      let ty = txt(p.peek(1).text)
+      p.foreign(t.span, "a pointer receiver `*${ty}` is Go syntax; an Xo receiver is a value, `(${n}: ${ty})`, and `(var ${n}: ${ty})` lets the method change the caller's value (core 3.4)")
+      p.next()
+    } else {
+      p.foreign(t.span, "`(${n} ${txt(t.text)})` is Go syntax; Xo writes the receiver type after a colon, `(${n}: ${txt(t.text)})` (core 3.4)")
+    }
+    let typ = p.parse_type()
+    p.expect(Kind.RParen, "`)` after the receiver")
+    return Receiver{span: p.span_from(start), is_var: is_var, name: name, typ: typ}
   }
   p.expect(Kind.Colon, "`:` after the receiver name")
   let typ = p.parse_type()
@@ -615,45 +704,72 @@ fn (var p: Parser) parse_receiver() -> Receiver {
   Receiver{span: p.span_from(start), is_var: is_var, name: name, typ: typ}
 }
 
-/// Whether a type parameter list starts here; `<` right after the name
-/// is the angle bracket habit.
-fn (var p: Parser) at_type_params() -> Bool {
-  if p.at(Kind.Lt) && p.pos > 0 && p.toks[p.pos - 1].kind == Kind.Ident && adjacent(p.toks[p.pos - 1], p.tok) {
-    p.foreign(p.tok.span, "`<T>` type parameters; Xo writes `[T]`")
-  }
-  p.at(Kind.LBrack)
+/// Whether a type parameter list starts here: `[` or, as a habit, `<`
+/// right after the declared name.
+fn (p: Parser) at_type_params() -> Bool {
+  p.at(Kind.LBrack) || (p.at(Kind.Lt) && p.pos > 0 && p.toks[p.pos - 1].kind == Kind.Ident && adjacent(p.toks[p.pos - 1], p.tok))
 }
 
 fn (var p: Parser) parse_type_params() -> List[TypeParam] {
   var out: List[TypeParam] = []
+  if p.at(Kind.Lt) {
+    // `<T>` type parameters (internal/parser angleTypeParams).
+    let open = p.tok
+    p.next() // <
+    while !p.hard && !p.at(Kind.Gt) && !p.at(Kind.Eof) {
+      out.push(p.parse_type_param())
+      if !p.got(Kind.Comma) {
+        break
+      }
+    }
+    let close = p.tok
+    if !p.at(Kind.Gt) {
+      p.error_expected("`>` to close the type parameters")
+      return out
+    }
+    p.next()
+    p.foreign(span_to(open.span, close.span), "`<T>` type parameters are Rust, TypeScript, Kotlin, and Swift syntax; Xo writes them in square brackets, `[T]` (core 2.7)")
+    return out
+  }
   let st = p.list_open(Kind.LBrack)
   while p.list_more(Kind.RBrack) {
     let before = p.pos
-    let start = p.tok.span.start
-    let name = p.expect_ident("a type parameter name")
-    if p.at_ident(b"extends") && p.peek(1).kind == Kind.Ident {
-      p.foreign(p.tok.span, "`T extends Bound` is TypeScript syntax")
-    }
-    var tp = TypeParam{span: p.tok.span, name: name}
-    if p.got(Kind.Colon) {
-      let t = p.parse_type()
-      if p.at(Kind.Plus) {
-        p.foreign(p.tok.span, "a Rust or Swift bound list")
-      }
-      if is_effects_kind(t) {
-        tp.effects = true
-      } else {
-        tp.constraint = Some(t)
-      }
-    }
-    tp.span = p.span_from(start)
-    out.push(tp)
+    out.push(p.parse_type_param())
     if !p.list_sep(before, Kind.RBrack, "type parameter") {
       break
     }
   }
   p.list_close(st, Kind.RBrack)
   out
+}
+
+fn (var p: Parser) parse_type_param() -> TypeParam {
+  let start = p.tok.span.start
+  let name = p.expect_ident("a type parameter name")
+  var tp = TypeParam{span: p.tok.span, name: name}
+  if p.at_ident(b"extends") && p.peek(1).kind == Kind.Ident {
+    // TypeScript and Kotlin `T extends Bound`.
+    let n = txt(name.name)
+    let b = txt(p.peek(1).text)
+    p.foreign(p.tok.span, "`${n} extends ${b}` is TypeScript syntax; Xo writes a constraint after a colon, `${n}: ${b}` (core 2.7)")
+    p.next()
+    let first = p.parse_type()
+    tp.constraint = p.parse_bounds(name, first)
+    tp.span = p.span_from(start)
+    return tp
+  }
+  if p.got(Kind.Colon) {
+    let first = p.parse_type()
+    if let Some(t) = p.parse_bounds(name, first) {
+      if is_effects_kind(t) {
+        tp.effects = true
+      } else {
+        tp.constraint = Some(t)
+      }
+    }
+  }
+  tp.span = p.span_from(start)
+  tp
 }
 
 /// Whether t is the bare name `Effects` (an effect variable, core 6.2).
@@ -675,10 +791,9 @@ fn (var p: Parser) parse_params(closure: Bool, allow_self: Bool) -> List[Param] 
   let st = p.list_open(Kind.LParen)
   while p.list_more(Kind.RParen) {
     let before = p.pos
-    if let Some(prev) = out.last() {
-      p.unparenthesized_effect(prev)
+    if !p.unparenthesized_effect(out) {
+      out.push(p.parse_param(closure, allow_self && out.is_empty()))
     }
-    out.push(p.parse_param(closure, allow_self && out.is_empty()))
     if !p.list_sep(before, Kind.RParen, "parameter") {
       break
     }
@@ -687,47 +802,74 @@ fn (var p: Parser) parse_params(closure: Bool, allow_self: Bool) -> List[Param] 
   out
 }
 
+fn effect_text(e: Effect) -> Str {
+  if let Some(sub) = e.sub {
+    return "${txt(e.name.name)}.${txt(sub.name)}"
+  }
+  txt(e.name.name)
+}
+
 /// `f: fn() uses a, b, c: T`: a name followed by `,`, `)`, or `.` after a
 /// parameter whose function type has one unparenthesized effect is a
-/// second effect (XO0170).
-fn (var p: Parser) unparenthesized_effect(prev: Param) {
-  if let Some(FnType(ft)) = prev.typ {
-    if ft.effects.is_empty() || ft.uses_parens || !p.at(Kind.Ident) {
-      return
-    }
-    if p.peek(1).kind is Comma | RParen | Dot {
-      p.fail(FN_TYPE_EFFECTS_PARENS, p.tok.span, "several effects in a function type must be parenthesized")
-    }
+/// second effect (XO0170, a soft error): consumed into that type.
+fn (var p: Parser) unparenthesized_effect(var out: List[Param]) -> Bool {
+  if out.is_empty() {
+    return false
   }
+  let n = out.len() - 1
+  if let Some(FnType(ft)) = out[n].typ {
+    if ft.effects.is_empty() || ft.uses_parens || !p.at(Kind.Ident) {
+      return false
+    }
+    if !(p.peek(1).kind is Comma | RParen | Dot) {
+      return false
+    }
+    let first = ft.effects[0]
+    let eff = p.parse_effect()
+    p.soft(FN_TYPE_EFFECTS_PARENS, span_to(first.span, eff.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${effect_text(eff)})`")
+    var ft2 = ft
+    ft2.effects.push(eff)
+    ft2.uses_parens = true
+    out[n].typ = Some(Type.FnType(ft2))
+    return true
+  }
+  false
 }
 
 fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
   let start = p.tok.span.start
-  // Rust receivers: `&self`, `&mut self`, `mut self`.
-  var i = p.pos
-  if p.tok_at(i).kind == Kind.Amp {
-    i += 1
-  }
-  if is_word(p.tok_at(i), b"mut") {
-    i += 1
-  }
-  if i != p.pos && is_word(p.tok_at(i), b"self") {
-    p.foreign(p.tok.span, "a Rust receiver; Xo takes a bare `self` in interfaces")
+  if let Some(prm) = p.foreign_self_param(start) {
+    return prm
   }
   let is_var = p.got(Kind.Var)
   if !closure && p.at(Kind.Ident) && p.peek(1).kind == Kind.Ident && p.peek(2).kind == Kind.Colon {
-    p.foreign(p.tok.span, "a Swift argument label")
+    // Swift argument labels: `_ x: Int`, `from x: Int`.
+    let lbl = p.tok
+    let pn = txt(p.peek(1).text)
+    p.foreign(lbl.span, "`${txt(lbl.text)} ${pn}:` is a Swift argument label; Xo has none: callers use the parameter name, `f(${pn}: v)`, or pass the argument by position (core 3.2)")
+    p.next()
   }
   let name = p.expect_ident("a parameter name")
-  if !closure && !p.at(Kind.Colon) && (p.at(Kind.Star) || p.at(Kind.LBrack) || (p.at(Kind.Ident) && p.tok.span.start.line == name.span.start.line)) {
-    p.foreign(p.tok.span, "a Go parameter; Xo writes `name: Type`")
+  if !closure && !p.hard && !p.at(Kind.Colon) && (p.at(Kind.Star) || p.at(Kind.LBrack) || (p.at(Kind.Ident) && p.tok.span.start.line == name.span.start.line)) {
+    // Go parameters: `x int`, `p *Point`, `xs []int`.
+    let t = p.tok
+    let n = txt(name.name)
+    p.foreign(t.span, "`${n} ${txt(t.text)}` is Go syntax; Xo writes the parameter type after a colon, `${n}: ${txt(t.text)}` (core 3.2)")
+    let typ = p.parse_type()
+    return Param{span: p.span_from(start), is_var: is_var, name: name, typ: Some(typ)}
   }
   if !closure && p.at(Kind.Colon) && is_word(p.peek(1), b"inout") && p.peek(2).kind == Kind.Ident {
-    p.foreign(p.peek(1).span, "`inout` is Swift syntax")
+    // Swift `x: inout Int`.
+    let io = p.peek(1)
+    p.foreign(io.span, "`inout` is Swift syntax; Xo marks an in out parameter with `var` before its name, `var ${txt(name.name)}: ${txt(p.peek(2).text)}`, and callers pass a `var` binding without `&` (core 3.2)")
+    p.next() // :
+    p.next() // inout
+    let typ = p.parse_type()
+    return Param{span: p.span_from(start), is_var: true, name: name, typ: Some(typ)}
   }
   if name.name == b"self" && !is_var && !p.at(Kind.Colon) && !closure {
     if !allow_self {
-      p.fail(MISPLACED_SELF, name.span, "a bare `self` parameter is only allowed first in an interface method signature")
+      p.soft(MISPLACED_SELF, name.span, "a bare `self` parameter is only allowed first in an interface method signature")
     }
     return Param{span: p.span_from(start), is_self: true, name: name}
   }
@@ -849,19 +991,26 @@ fn (var p: Parser) parse_struct(doc: Doc?, is_pub: Bool, start: Pos) -> StructDe
   if p.at_type_params() {
     tps = p.parse_type_params()
   }
-  var s = StructDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  p.parse_struct_body(StructDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}, start)
+}
+
+/// The fields, invariant, and derive list of a struct whose name and type
+/// parameters are parsed.
+fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
+  var s = s0
   if p.members_open() {
     while p.members_more() {
       let fstart = p.tok.span.start
       let fdoc = p.doc_for(fstart.line)
       let fpub = p.got(Kind.Pub)
       let fname = p.expect_ident("a field name")
-      let t = p.tok
-      if (t.kind == Kind.Question && p.peek(1).kind == Kind.Colon) || ((t.kind is Ident | Star | LBrack) && t.span.start.line == fname.span.start.line) {
-        p.foreign(t.span, "a TypeScript optional field or a Go field")
+      var typ = Type.BadType(p.tok.span)
+      if let Some(ft) = p.foreign_field(fname) {
+        typ = ft
+      } else {
+        p.expect(Kind.Colon, "`:` after the field name")
+        typ = p.parse_type()
       }
-      p.expect(Kind.Colon, "`:` after the field name")
-      let typ = p.parse_type()
       var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ}
       if p.got(Kind.Assign) {
         f.default = Some(p.parse_expr())
@@ -952,7 +1101,13 @@ fn (var p: Parser) parse_interface(doc: Doc?, is_pub: Bool, start: Pos) -> Inter
   if p.at_type_params() {
     tps = p.parse_type_params()
   }
-  var d = InterfaceDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
+  p.parse_interface_body(InterfaceDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}, start)
+}
+
+/// The method signatures of an interface whose name and type parameters
+/// are parsed.
+fn (var p: Parser) parse_interface_body(d0: InterfaceDecl, start: Pos) -> InterfaceDecl {
+  var d = d0
   if p.members_open() {
     while p.members_more() {
       let mstart = p.tok.span.start
@@ -971,14 +1126,24 @@ fn (var p: Parser) parse_interface(doc: Doc?, is_pub: Bool, start: Pos) -> Inter
 }
 
 fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl {
+  let type_tok = p.tok
   p.next() // type
   let name = p.expect_ident("a type name")
   var tps: List[TypeParam] = []
   if p.at_type_params() {
     tps = p.parse_type_params()
   }
-  if (p.at(Kind.Struct) || p.at(Kind.Interface)) && p.peek(1).kind == Kind.LBrace {
-    p.foreign(p.tok.span, "`type T struct {` is Go syntax")
+  if !p.hard && (p.at(Kind.Struct) || p.at(Kind.Interface)) && p.peek(1).kind == Kind.LBrace {
+    // Go: `type P struct {` and `type I interface {`.
+    let kw = p.tok
+    let k = kind_text(kw.kind)
+    let n = txt(name.name)
+    p.foreign(span_to(type_tok.span, kw.span), "`type ${n} ${k} {` is Go syntax; Xo writes `${k} ${n} {` (core 2.2, 2.4)")
+    p.next()
+    if kw.kind == Kind.Struct {
+      return Decl.StructDecl(p.parse_struct_body(StructDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}, start))
+    }
+    return Decl.InterfaceDecl(p.parse_interface_body(InterfaceDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}, start))
   }
   var d = TypeDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
   if p.got(Kind.Assign) {
@@ -1060,8 +1225,8 @@ fn (var p: Parser) parse_type_top() -> Type {
 
 fn (var p: Parser) parse_type() -> Type {
   let start = p.tok.span.start
-  if is_word(p.tok, b"map") && p.peek(1).kind == Kind.LBrack && adjacent(p.tok, p.peek(1)) {
-    p.foreign(p.tok.span, "`map[K]V` is Go syntax; Xo writes `Map[K, V]`")
+  if let Some(ft) = p.foreign_type() {
+    return ft
   }
   var t: Type = Type.BadType(p.tok.span)
   match p.tok.kind {
@@ -1073,7 +1238,7 @@ fn (var p: Parser) parse_type() -> Type {
       }
       var args: List[Type] = []
       if p.at(Kind.Lt) && adjacent(p.toks[p.pos - 1], p.tok) {
-        p.foreign(p.tok.span, "`Name<...>` type arguments; Xo writes `Name[...]`")
+        args = p.angle_args(path)
       } else if p.at(Kind.LBrack) {
         let saved = p.fn_type_top
         p.fn_type_top = false

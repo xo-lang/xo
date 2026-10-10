@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted parser reports the habits of other languages
+  (decision 0087) and the other soft errors as internal/parser does,
+  with the same messages and spans, and recovers the same tree, so the
+  self hosted checker now checks programs written with Go, Rust,
+  Python, TypeScript, Kotlin, or Swift habits and gives the same
+  diagnostics (the 107 habit fixtures of internal/fix among them).
 - The self hosted checker checks generics, effects, and real-time
   functions (`selfhost/check`, stages 3 and 4 of decision 0141): it
   prints the sigs section of `xo typedump` (type parameters, constraints,

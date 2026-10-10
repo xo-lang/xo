@@ -12,11 +12,11 @@ fn (var p: Parser) parse_expr_no_lit() -> Expr {
 
 fn (var p: Parser) parse_expr() -> Expr {
   let x = p.parse_binary(1)
-  if p.at(Kind.Question) && p.ternary_ahead() {
-    p.foreign(p.tok.span, "`c ? a : b` is C syntax; Xo writes `if c { a } else { b }`")
+  if !p.hard && p.at(Kind.Question) && p.ternary_ahead() {
+    return p.ternary(x)
   }
-  if p.py_cond_ahead() {
-    p.foreign(p.tok.span, "`a if c else b` is Python syntax")
+  if !p.hard && p.py_cond_ahead() {
+    return p.py_cond(x)
   }
   x
 }
@@ -48,7 +48,10 @@ fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
       x = p.parse_is(x)
       continue
     }
-    p.foreign_binary(min_prec)
+    if let Some(y) = p.foreign_binary(x, min_prec) {
+      x = y
+      continue
+    }
     let op = p.tok.kind
     let prec = precedence(op)
     if prec == 0 || prec < min_prec || p.failed() || p.inc_dec_ahead() {
@@ -57,31 +60,21 @@ fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
     let op_tok = p.tok
     p.next()
     if prec == RANGE_PREC {
+      var inclusive = op == Kind.DotDotEq
       if op == Kind.DotDot && adjacent(op_tok, p.tok) && (p.at(Kind.Lt) || p.at(Kind.Dot)) {
-        p.foreign(p.tok.span, "`..<` and `...` are Swift ranges")
+        inclusive = p.foreign_range(op_tok)
       }
       var hi: Expr? = None
       if !(p.open_range && p.at(Kind.RBrack)) {
         hi = Some(p.parse_binary(prec + 1))
       }
-      x = Expr.RangeExpr(span: p.span_from(expr_span(x).start), lo: Some(x), hi: hi, inclusive: op == Kind.DotDotEq)
+      x = Expr.RangeExpr(span: p.span_from(expr_span(x).start), lo: Some(x), hi: hi, inclusive: inclusive)
       continue
     }
     let y = if op == Kind.Coalesce { p.parse_binary(prec) } else { p.parse_binary(prec + 1) }
     x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
   }
   x
-}
-
-/// Binary operators of other languages after an operand
-/// (internal/parser foreignBinary), each at its own precedence.
-fn (var p: Parser) foreign_binary(min_prec: Int) {
-  let t = p.tok
-  let next = p.peek(1)
-  let hit = (is_word(t, b"and") && starts_expr(next.kind) && 3 >= min_prec) || (is_word(t, b"or") && starts_expr(next.kind) && 2 >= min_prec) || (is_word(t, b"not") && next.kind == Kind.In && IS_PREC >= min_prec) || (t.kind == Kind.In && IS_PREC >= min_prec) || ((t.kind == Kind.Eq || t.kind == Kind.NotEq) && next.kind == Kind.Assign && adjacent(t, next) && 4 >= min_prec) || (t.kind == Kind.Star && next.kind == Kind.Star && adjacent(t, next) && 7 >= min_prec) || (t.kind == Kind.Question && next.kind == Kind.Colon && adjacent(t, next) && 1 >= min_prec) || (is_word(t, b"until") && starts_expr(next.kind) && RANGE_PREC >= min_prec)
-  if hit {
-    p.foreign(t.span, "an operator from another language")
-  }
 }
 
 /// `++` or `--` ending a statement, which the operator loop leaves alone.
@@ -179,22 +172,48 @@ fn (var p: Parser) parse_is(x: Expr) -> Expr {
   p.next() // is
   let pat = p.parse_pattern()
   let e = Expr.IsExpr(span: span_to(expr_span(x), pattern_span(pat)), x: x, pattern: pat)
-  if !p.failed() && binds_names(pat) {
-    p.fail(INVALID_PATTERN, pattern_span(pat), "a pattern after `is` cannot bind names")
+  if p.failed() {
+    return e
+  }
+  var binds: List[Ident] = []
+  collect_binds(pat, binds)
+  for b in binds {
+    p.soft(INVALID_PATTERN, b.span, "a pattern after `is` cannot bind names, found `${txt(b.name)}`; write `_`, or bind with `if let` or `match` (core 3.5)")
   }
   e
 }
 
-/// Whether pat or a pattern nested in it binds a name.
-fn binds_names(pat: Pattern) -> Bool {
+/// The names pat and the patterns nested in it bind, in the order of
+/// internal/parser inspectPattern.
+fn collect_binds(pat: Pattern, var out: List[Ident]) {
   match pat {
-    BindPat(..) => true
-    OrPat(_, alts) => alts.any(binds_names)
-    TuplePat(_, elems) => elems.any(binds_names)
-    ListPat(_, elems, _) => elems.any(binds_names)
-    VariantPat(_, _, _, fields, _) => fields.any(fn(f) { binds_names(f.pattern) })
-    StructPat(_, _, fields, _) => fields.any(fn(f) { binds_names(f.pattern) })
-    WildcardPat(_) | LitPat(..) | RangePat(..) | BadPat(_) => false
+    BindPat(_, name) => out.push(name)
+    OrPat(_, alts) => {
+      for a in alts {
+        collect_binds(a, out)
+      }
+    }
+    TuplePat(_, elems) => {
+      for a in elems {
+        collect_binds(a, out)
+      }
+    }
+    ListPat(_, elems, _) => {
+      for a in elems {
+        collect_binds(a, out)
+      }
+    }
+    VariantPat(_, _, _, fields, _) => {
+      for f in fields {
+        collect_binds(f.pattern, out)
+      }
+    }
+    StructPat(_, _, fields, _) => {
+      for f in fields {
+        collect_binds(f.pattern, out)
+      }
+    }
+    WildcardPat(_) | LitPat(..) | RangePat(..) | BadPat(_) => {}
   }
 }
 
@@ -204,12 +223,10 @@ fn starts_expr(k: Kind) -> Bool {
 }
 
 fn (var p: Parser) parse_unary() -> Expr {
-  // Prefix operators of other languages: `&x`, `*p`, `not x`, `await x`.
-  let t = p.tok
-  let next = p.peek(1)
-  if (t.kind == Kind.Amp && starts_expr(next.kind)) || (t.kind == Kind.Star && starts_expr(next.kind) && adjacent(t, next)) || (is_word(t, b"not") && ((!(next.kind is Minus | LBrace | LParen) && starts_expr(next.kind)) || (next.kind == Kind.LParen && !adjacent(t, next)))) || (is_word(t, b"await") && starts_expr(next.kind) && !(next.kind is Minus | LBrace) && next.span.start.line == t.span.start.line) {
-    p.foreign(t.span, "a prefix operator from another language")
+  if let Some(fx) = p.foreign_unary() {
+    return fx
   }
+  let t = p.tok
   if t.kind is Minus | Bang | Tilde {
     let start = t.span.start
     p.next()
@@ -218,33 +235,6 @@ fn (var p: Parser) parse_unary() -> Expr {
   }
   let x = p.parse_primary()
   p.parse_postfix(x)
-}
-
-/// Operands written in another language's syntax
-/// (internal/parser foreignPrimary).
-fn (var p: Parser) foreign_primary() {
-  let t = p.tok
-  let next = p.peek(1)
-  let same_line = next.span.start.line == t.span.start.line && next.kind != Kind.Newline
-  match t.kind {
-    Pipe | OrOr => p.foreign(t.span, "a Rust closure")
-    LParen => {
-      if !p.no_arrow_fn {
-        let end = p.match_close(p.pos)
-        if end >= 0 && p.tok_at(end + 1).kind == Kind.FatArrow {
-          p.foreign(t.span, "an arrow function")
-        }
-      }
-    }
-    Ident => {
-      let w = t.text
-      let hit = ((w == b"switch" || w == b"when") && same_line && p.rest_of_line_has(Kind.LBrace) && next.kind != Kind.Assign && next.kind != Kind.Dot) || ((w == b"try" || w == b"do") && next.kind == Kind.LBrace) || (w == b"try" && same_line && (next.kind is Question | Bang) && adjacent(t, next)) || (w == b"try" && same_line && starts_expr(next.kind) && next.kind != Kind.LBrace) || (w == b"new" && next.kind == Kind.Ident && same_line && is_upper(next.text)) || (w == b"lambda" && (next.kind is Ident | Colon)) || (next.kind == Kind.FatArrow && !p.no_arrow_fn && same_line) || ((w == b"f" || w == b"F") && next.kind == Kind.String && adjacent(t, next) && next.text.len() >= 2 && next.text[next.text.len() - 1] == '"' && !next.triple) || (next.kind == Kind.Bang && adjacent(t, next) && (p.peek(2).kind is LParen | LBrack) && adjacent(next, p.peek(2)))
-      if hit {
-        p.foreign(t.span, "an expression from another language")
-      }
-    }
-    _ => {}
-  }
 }
 
 /// Whether a token of kind follows on the current line at bracket depth
@@ -314,7 +304,9 @@ fn (p: Parser) match_close(i: Int) -> Int {
 }
 
 fn (var p: Parser) parse_primary() -> Expr {
-  p.foreign_primary()
+  if let Some(fx) = p.foreign_primary() {
+    return fx
+  }
   let t = p.tok
   let sp = t.span
   match t.kind {
@@ -350,18 +342,22 @@ fn (var p: Parser) parse_primary() -> Expr {
     LParen => return p.parse_paren_or_tuple()
     LBrack => {
       var elems: List[Expr] = []
+      var comp: List[Comprehension] = []
       let st = p.list_open(Kind.LBrack)
       while p.list_more(Kind.RBrack) {
         let before = p.pos
         elems.push(p.parse_expr())
-        if elems.len() == 1 && p.at(Kind.For) {
-          p.foreign(p.tok.span, "a Python comprehension")
+        if elems.len() == 1 && p.at(Kind.For) && !p.hard {
+          comp.push(p.parse_comprehension(elems[0]))
         }
         if !p.list_sep(before, Kind.RBrack, "list") {
           break
         }
       }
       let lsp = p.list_close(st, Kind.RBrack)
+      if let Some(c) = comp.first() {
+        return p.finish_comprehension(c, lsp)
+      }
       return Expr.ListLit(span: lsp, elems: elems)
     }
     HashLBrace => {
@@ -547,19 +543,20 @@ fn (var p: Parser) parse_if() -> Expr {
     cond = Some(head)
   }
   if let ParenExpr(..) = head {
-    if !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
-      p.foreign(p.tok.span, "a braceless `if (c) x`")
+    if !p.hard && !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
+      return p.braceless_if(cond, pattern, value, start)
     }
   }
   let then = p.parse_cond_block(Some(head))
+  // `}` newline `else` is a common mistake; report it and keep going.
   if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Else {
-    p.fail(ELSE_ON_NEW_LINE, p.peek_past_newlines().span, "`else` must be on the same line as the closing `}` (core 1.3)")
-  }
-  if p.tok.kind == Kind.Ident && (p.tok.text == b"elif" || p.tok.text == b"elsif" || p.tok.text == b"elseif") {
-    p.foreign(p.tok.span, "`elif` is not Xo; write `else if`")
+    p.soft(ELSE_ON_NEW_LINE, p.peek_past_newlines().span, "`else` must be on the same line as the closing `}` (core 1.3)")
+    p.skip_newlines()
   }
   var els: Expr? = None
-  if p.got(Kind.Else) {
+  if !p.hard && p.foreign_elif() {
+    els = Some(p.parse_if())
+  } else if p.got(Kind.Else) {
     if p.at(Kind.If) {
       els = Some(p.parse_if())
     } else if p.at(Kind.LBrace) {
@@ -571,20 +568,52 @@ fn (var p: Parser) parse_if() -> Expr {
   Expr.IfExpr(IfExpr{span: p.span_from(start), cond: cond, pattern: pattern, value: value, then: then, els: els})
 }
 
+/// Kotlin, Java, and C's `if (c) a else b` (no braces), after the
+/// parenthesized condition.
+fn (var p: Parser) braceless_if(cond: Expr?, pattern: Pattern?, value: Expr?, start: Pos) -> Expr {
+  let then_start = p.tok
+  let then = p.braceless_body()
+  var els: Expr? = None
+  if p.at(Kind.Else) {
+    p.next()
+    if p.at(Kind.If) {
+      els = Some(p.parse_if())
+    } else if p.at(Kind.LBrace) {
+      els = Some(Expr.Block(p.parse_block()))
+    } else {
+      els = Some(Expr.Block(p.braceless_body()))
+    }
+  }
+  let sp = p.span_from(start)
+  p.foreign(then_start.span, "`if (c) a else b` without braces is Kotlin, Java, and C syntax; every Xo `if` and `else` body is a block: `if c { a } else { b }` (core 3.5)")
+  Expr.IfExpr(IfExpr{span: sp, cond: cond, pattern: pattern, value: value, then: then, els: els})
+}
+
+fn (var p: Parser) braceless_body() -> Block {
+  let s = p.parse_simple_stmt()
+  Block{span: stmt_span(s), stmts: [s]}
+}
+
 /// `{` of match or select arms; struct literals and open ranges are
 /// allowed again inside. Returns false when the brace is missing.
 fn (var p: Parser) arms_open() -> Bool {
   p.expect(Kind.LBrace, "`{`").kind == Kind.LBrace
 }
 
-/// After an arm: a newline or the closing `}`. A `,` (Rust, Kotlin) or a
-/// second arm on the line is an error.
+/// After an arm: a newline or the closing `}`. A `,` (Rust, Kotlin) and a
+/// second arm on the line are soft errors (XO0169, XO0175): the next arm
+/// is parsed as one.
 fn (var p: Parser) arm_end(what: Str) {
   if p.failed() || p.got(Kind.Newline) || p.at(Kind.RBrace) {
     return
   }
   if p.at(Kind.Comma) {
-    p.fail(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
+    p.soft(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
+    p.next()
+    return
+  }
+  if p.arm_on_same_line() {
+    p.soft(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe_go(p.tok)}")
     return
   }
   p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe(p.tok)}")
@@ -611,10 +640,12 @@ fn (var p: Parser) parse_match() -> Expr {
         guard = Some(p.parse_expr())
         p.no_arrow_fn = saved
       }
-      if p.at(Kind.Arrow) {
-        p.foreign(p.tok.span, "`->` after a pattern is Kotlin syntax; write `=>`")
+      if p.at(Kind.Arrow) && !p.hard {
+        p.foreign(p.tok.span, "`->` after a pattern is Kotlin and Scala syntax; an Xo match arm is `pattern => body` (core 3.5)")
+        p.next()
+      } else {
+        p.expect(Kind.FatArrow, "`=>` after the match pattern")
       }
-      p.expect(Kind.FatArrow, "`=>` after the match pattern")
       var body: Stmt? = None
       if !p.failed() {
         body = Some(p.parse_simple_stmt())
@@ -694,49 +725,20 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
   var x = x0
   while !p.failed() {
     let start = expr_span(x).start
+    match p.foreign_postfix(x) {
+      Stop => return x
+      Habit(y) => {
+        x = y
+        continue
+      }
+      NoHabit => {}
+    }
     let t = p.tok
     let next = p.peek(1)
     match t.kind {
       Question => {
-        if (next.kind == Kind.Colon && adjacent(t, next)) || p.ternary_ahead() {
-          p.foreign(t.span, "`?:` or `c ? a : b` is not Xo")
-          return x
-        }
         p.next()
         x = Expr.TryExpr(span: p.span_from(start), x: x)
-      }
-      As => {
-        p.foreign(t.span, "`x as T` is not Xo; convert with `T(x)`")
-        return x
-      }
-      Bang => {
-        if !adjacent(p.tok_at(p.pos - 1), t) {
-          return x
-        }
-        let double = next.kind == Kind.Bang && adjacent(t, next)
-        if !double && starts_expr(next.kind) && next.kind != Kind.LParen && next.kind != Kind.LBrack {
-          return x
-        }
-        p.foreign(t.span, "a force unwrap is not Xo")
-        return x
-      }
-      Colon => {
-        if next.kind != Kind.Colon || !adjacent(t, next) || p.peek(2).kind != Kind.Ident || !adjacent(next, p.peek(2)) || !is_path(x) {
-          return x
-        }
-        // `String::from(s)` is reported whole by the checker; any other
-        // `::` is Rust path syntax.
-        var is_string = false
-        if let Ident(id) = x {
-          is_string = id.name == b"String"
-        }
-        if !is_string {
-          p.foreign(t.span, "`::` is Rust path syntax; Xo writes `.`")
-        }
-        p.next()
-        p.next()
-        let sel = p.expect_ident("a name after `::`")
-        x = Expr.SelectorExpr(span: span_to(expr_span(x), sel.span), x: x, sel: sel)
       }
       Dot => {
         p.next()
@@ -764,8 +766,10 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
             name = Some(p.expect_ident("an argument name"))
             p.next()
           }
-          if p.at(Kind.Var) && starts_expr(p.peek(1).kind) {
-            p.foreign(p.tok.span, "`var` at a call site is not Xo")
+          if p.at(Kind.Var) && !p.hard && starts_expr(p.peek(1).kind) {
+            // Swift `inout` call sites and C# `ref` read like this.
+            p.foreign(p.tok.span, "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)")
+            p.next()
           }
           let value = p.parse_expr()
           args.push(Arg{span: p.span_from(astart), name: name, value: value})
@@ -832,13 +836,13 @@ fn (var p: Parser) parse_index(x: Expr) -> Expr {
     }
     idx = Expr.RangeExpr(span: p.span_from(rstart), lo: None, hi: hi, inclusive: inclusive)
   } else if p.at(Kind.Colon) {
-    p.foreign(p.tok.span, "a Go or Python slice")
+    idx = p.foreign_slice(None)
   } else if p.at(Kind.RBrack) {
     p.error_expected("an index or range")
   } else {
     idx = p.parse_expr()
-    if p.at(Kind.Colon) {
-      p.foreign(p.tok.span, "a Go or Python slice")
+    if p.at(Kind.Colon) && !p.hard {
+      idx = p.foreign_slice(Some(idx))
     }
   }
   p.no_lit = saved_lit
@@ -995,22 +999,68 @@ fn (var p: Parser) parse_string() -> StringLit {
   s
 }
 
-/// Lexes and parses the source of one `${...}`.
+/// Lexes and parses the source of one `${...}`. Its diagnostics join the
+/// file's; a hard error in it stops the parse.
 fn (var p: Parser) parse_interp(sp: Span) -> Expr {
   let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
-  if !r.diags.is_empty() {
-    let d = r.diags[0]
-    p.fail(d.code, d.span, d.message.to_str() ?? "lexical error")
-    return Expr.BadExpr(sp)
-  }
-  var sub = Parser{src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig}
+  var sub = Parser{src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
   let e = sub.parse_expr()
   if !sub.failed() && !sub.at(Kind.Eof) {
     sub.fail(UNEXPECTED_TOKEN, sub.tok.span, "unexpected ${describe(sub.tok)} in interpolation; expected `}`")
   }
-  if sub.failed() {
-    let d = sub.diags[0]
-    p.fail(d.code, d.span, d.message.to_str() ?? "error")
+  for d in sub.diags {
+    p.diags.push(d)
+  }
+  if sub.hard {
+    p.hard = true
+    p.pos = p.toks.len() - 1
+    p.tok = p.toks[p.pos]
   }
   e
+}
+
+/// Python's `[elem for pat in iter if cond]`.
+struct Comprehension {
+  elem: Expr
+  pat: Pattern
+  iter: Expr
+  cond: Expr?
+  kw: Token
+}
+
+/// `for pat in iter [if cond]` after the element.
+fn (var p: Parser) parse_comprehension(elem: Expr) -> Comprehension {
+  let kw = p.tok
+  p.next() // for
+  let pat = p.parse_pattern()
+  p.expect(Kind.In, "`in` in a comprehension")
+  let iter = p.parse_binary(2)
+  var cond: Expr? = None
+  if p.got(Kind.If) {
+    cond = Some(p.parse_expr())
+  }
+  Comprehension{elem: elem, pat: pat, iter: iter, cond: cond, kw: kw}
+}
+
+/// Reports the comprehension and recovers it as
+/// `iter.filter(fn(x) { cond }).map(fn(x) { elem })`.
+fn (var p: Parser) finish_comprehension(c: Comprehension, sp: Span) -> Expr {
+  p.foreign(c.kw.span, "`[x for x in xs]` is a Python comprehension; Xo calls the list methods, `xs.filter(fn(x) { cond }).map(fn(x) { f(x) })` (spec/std.md 2)")
+  let (bsp, name) = match c.pat {
+    BindPat(span, id) => (span, id.name)
+    _ => return Expr.ListLit(span: sp, elems: [c.elem])
+  }
+  let params = [Param{span: bsp, name: Ident{span: bsp, name: name}}]
+  var x = c.iter
+  if let Some(cond) = c.cond {
+    x = method_call(x, b"filter", sp, [Expr.FnLit(FnLit{span: expr_span(cond), params: params, body: expr_block(cond)})])
+  }
+  var same = false
+  if let Ident(id) = c.elem {
+    same = id.name == name
+  }
+  if !same {
+    x = method_call(x, b"map", sp, [Expr.FnLit(FnLit{span: expr_span(c.elem), params: params, body: expr_block(c.elem)})])
+  }
+  x
 }

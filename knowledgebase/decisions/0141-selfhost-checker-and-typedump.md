@@ -157,6 +157,24 @@ and `XO_SELFHOST_BACKEND` runs them on a native build. The test also
 logs, without failing, how many runs rejected for other reasons still
 get exactly the staged part of Go's diagnostics.
 
+**Comparison rules of the parse habits** (2026-10-10, pulled ahead of
+stage 8 because they were the only errors of 99 of the 143 runs not
+compared; they extend stage 4's): the Xo parser reports the habits and
+soft errors of the Go parser with the same messages and spans and
+recovers the same tree (decision 0127), and the Xo checker checks that
+tree: a hard parse error makes the run unsupported, and the parser's
+diagnostics join the run's. A diagnostic of a run is staged when it is
+one of the stage 1 to 4 list or one the Go parser gives for its file
+(`parseDiag` in check_test.go parses the file again and compares the
+diagnostic line), so a run whose errors are habits and diagnostics of
+stages 1 to 4 must give exactly those diagnostics. The habits the Go
+checker reports (`for k, v := range x`, `String::from`, time layouts,
+`len(x)`: internal/check habits.go) stay in stage 8. The mutations add
+habit edits (habitEdits in check_fuzz_test.go: `x := v`, `val`, `let
+mut`, `func`/`def`/`function`, `and`/`or`, `x++`, `?:`, `...`, `elif`,
+`loop`, `throw`, `#` comments, Go parameters, `): T`, `===`, `[]T`,
+`map[K]V`, `List<T>`).
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;
