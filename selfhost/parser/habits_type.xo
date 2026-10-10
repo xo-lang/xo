@@ -9,9 +9,11 @@ fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
   if outer {
     p.angle_active = true
     p.angle_pending_gt = false
+    p.angle_edits = []
   }
   let open = p.tok
   p.next() // <
+  p.angle_edits.push(replace_span(open.span, "["))
   var args: List[Type] = []
   while !p.bad {
     args.push(p.parse_type())
@@ -29,8 +31,10 @@ fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
     p.angle_pending_gt = false
     end = p.tok_at(p.pos - 1).span.end
   } else if p.at(Kind.Gt) {
+    p.angle_edits.push(replace_span(p.tok.span, "]"))
     p.next()
   } else if p.at(Kind.Shr) && !outer {
+    p.angle_edits.push(replace_span(p.tok.span, "]]"))
     p.angle_pending_gt = true
     p.next()
   } else {
@@ -41,7 +45,10 @@ fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
   }
   p.angle_active = false
   let name = p.span_text(path[path.len() - 1].span)
-  p.foreign(Span{start: open.span.start, end: end}, "`${name}<...>` is Rust, TypeScript, Kotlin, and Swift syntax for type arguments; Xo writes them in square brackets, `${name}[...]` (core 2.7)")
+  let d = p.foreign(Span{start: open.span.start, end: end}, "`${name}<...>` is Rust, TypeScript, Kotlin, and Swift syntax for type arguments; Xo writes them in square brackets, `${name}[...]` (core 2.7)")
+  if !p.bad {
+    p.add_fix(d, "use square brackets", p.angle_edits)
+  }
   args
 }
 
@@ -55,16 +62,19 @@ fn (var p: Parser) swift_collection_type() -> Type? {
   p.next() // [
   let elem = p.parse_type()
   if p.at(Kind.Colon) {
+    let colon = p.tok
     p.next()
     let val = p.parse_type()
     let close = p.tok
     p.expect(Kind.RBrack, "`]`")
-    p.foreign(span_to(open.span, close.span), "`[K: V]` is Swift's dictionary type; Xo writes `Map[K, V]` (core 2.1)")
+    let d = p.foreign(span_to(open.span, close.span), "`[K: V]` is Swift's dictionary type; Xo writes `Map[K, V]` (core 2.1)")
+    p.add_fix(d, "write `Map[K, V]`", [insert_at(open.span.start, "Map"), replace_span(colon.span, ",")])
     return Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: open.span, name: b"Map"}], args: [elem, val]))
   }
   let close = p.tok
   p.expect(Kind.RBrack, "`]`")
-  p.foreign(span_to(open.span, close.span), "`[T]` is Swift's array type; Xo writes `List[T]` (core 2.1)")
+  let d = p.foreign(span_to(open.span, close.span), "`[T]` is Swift's array type; Xo writes `List[T]` (core 2.1)")
+  p.add_fix(d, "write `List[T]`", [insert_at(open.span.start, "List")])
   Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: open.span, name: b"List"}], args: [elem]))
 }
 
@@ -89,7 +99,9 @@ fn (var p: Parser) foreign_type() -> Type? {
         what = "a reference type"
         lang = "Rust"
       }
-      p.foreign(t.span, "`${txt(p.src_text(t.span.start, p.tok_at(end).span.start))}` is ${what}, ${lang} syntax; Xo has no pointers or references: values are passed and stored as is, and a `var` parameter changes the caller's binding (core 5.1, 3.2)")
+      let rm = txt(p.src_text(t.span.start, p.tok_at(end).span.start))
+      let d = p.foreign(t.span, "`${rm}` is ${what}, ${lang} syntax; Xo has no pointers or references: values are passed and stored as is, and a `var` parameter changes the caller's binding (core 5.1, 3.2)")
+      p.add_fix(d, "remove `${rm}`", [replace_range(t.span.start, p.tok_at(end).span.start, "")])
       p.skip_to(end)
       Some(p.parse_type())
     }
@@ -99,7 +111,8 @@ fn (var p: Parser) foreign_type() -> Type? {
       }
       p.next()
       let inner = p.parse_type()
-      p.foreign(t.span, "`?T` puts the option mark first; Xo writes it after the type, `${p.span_text(type_span(inner))}?` (core 2.5)")
+      let d = p.foreign(t.span, "`?T` puts the option mark first; Xo writes it after the type, `${p.span_text(type_span(inner))}?` (core 2.5)")
+      p.add_fix(d, "move `?` after the type", [replace_span(t.span, ""), insert_at(type_span(inner).end, "?")])
       Some(Type.OptionalType(span: p.span_from(start), elem: inner))
     }
     LBrack => {
@@ -112,7 +125,8 @@ fn (var p: Parser) foreign_type() -> Type? {
       p.next()
       let elem = p.parse_type()
       let et = p.span_text(type_span(elem))
-      p.foreign(span_to(t.span, close.span), "`[]${et}` is Go syntax for a slice; Xo writes `List[${et}]` (core 2.1)")
+      let d = p.foreign(span_to(t.span, close.span), "`[]${et}` is Go syntax for a slice; Xo writes `List[${et}]` (core 2.1)")
+      p.add_fix(d, "write `List[...]`", [replace_span(span_to(t.span, close.span), "List["), insert_at(type_span(elem).end, "]")])
       Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: t.span, name: b"List"}], args: [elem]))
     }
     Ident => {
@@ -121,8 +135,10 @@ fn (var p: Parser) foreign_type() -> Type? {
       }
       // Go maps: `map[K]V`.
       p.next()
+      let lb = p.tok
       p.next()
       let key = p.parse_type()
+      let rb = p.tok
       if !p.at(Kind.RBrack) || !p.starts_type_at(p.pos + 1) {
         p.error_expected("`]` after the map key type")
         return Some(Type.BadType(t.span))
@@ -131,7 +147,8 @@ fn (var p: Parser) foreign_type() -> Type? {
       let val = p.parse_type()
       let kt = p.span_text(type_span(key))
       let vt = p.span_text(type_span(val))
-      p.foreign(span_to(t.span, type_span(val)), "`map[${kt}]${vt}` is Go syntax; Xo writes `Map[${kt}, ${vt}]` (core 2.1)")
+      let d = p.foreign(span_to(t.span, type_span(val)), "`map[${kt}]${vt}` is Go syntax; Xo writes `Map[${kt}, ${vt}]` (core 2.1)")
+      p.add_fix(d, "write `Map[K, V]`", [replace_range(t.span.start, lb.span.end, "Map["), replace_range(rb.span.start, type_span(val).start, ", "), insert_at(type_span(val).end, "]")])
       Some(Type.NamedType(span: p.span_from(start), path: [Ident{span: t.span, name: b"Map"}], args: [key, val]))
     }
     Interface => {

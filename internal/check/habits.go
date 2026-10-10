@@ -146,7 +146,7 @@ func (c *checker) safeNavFix(x *ast.SelectorExpr) {
 	if e := x.Sp.End.Offset; e < len(src) && strings.IndexByte(".([?", src[e]) >= 0 {
 		return
 	}
-	d := &c.diags.Items[i]
+	d := c.diags.Items[i]
 	if d.Code != string(diag.TryNeedsFailing) || len(d.Fixes) > 0 {
 		return
 	}

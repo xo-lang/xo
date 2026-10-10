@@ -85,7 +85,7 @@ func (c *checker) missingElseFix(x *ast.IfExpr, wantOpen bool, n int) {
 // mismatchSince returns the XO0401 at sp reported since diagnostic n.
 func (c *checker) mismatchSince(n int, sp token.Span) *diag.Diagnostic {
 	for i := len(c.diags.Items) - 1; i >= n && i >= 0; i-- {
-		d := &c.diags.Items[i]
+		d := c.diags.Items[i]
 		if d.Code == string(diag.TypeMismatch) && d.Span.Line == sp.Start.Line && d.Span.Col == sp.Start.Col {
 			return d
 		}

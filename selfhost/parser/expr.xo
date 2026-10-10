@@ -182,7 +182,10 @@ fn (var p: Parser) parse_is(x: Expr) -> Expr {
   var binds: List[Ident] = []
   collect_binds(pat, binds)
   for b in binds {
-    p.soft(INVALID_PATTERN, b.span, "a pattern after `is` cannot bind names, found `${txt(b.name)}`; write `_`, or bind with `if let` or `match` (core 3.5)")
+    let d = p.soft(INVALID_PATTERN, b.span, "a pattern after `is` cannot bind names, found `${txt(b.name)}`; write `_`, or bind with `if let` or `match` (core 3.5)")
+    if d >= 0 {
+      p.diags[d].fixes.push(Fix{title: b"replace with `_`", edits: [replace_span(b.span, "_")]})
+    }
   }
   e
 }
@@ -559,7 +562,12 @@ fn (var p: Parser) parse_if() -> Expr {
   let then = p.parse_cond_block(Some(head))
   // `}` newline `else` is a common mistake; report it and keep going.
   if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Else {
-    p.soft(ELSE_ON_NEW_LINE, p.peek_past_newlines().span, "`else` must be on the same line as the closing `}` (core 1.3)")
+    let nl = p.tok
+    let else_tok = p.peek_past_newlines()
+    let d = p.soft(ELSE_ON_NEW_LINE, else_tok.span, "`else` must be on the same line as the closing `}` (core 1.3)")
+    if d >= 0 {
+      p.diags[d].fixes.push(Fix{title: b"join `} else`", edits: [replace_range(nl.span.start, else_tok.span.start, " ")]})
+    }
     p.skip_newlines()
   }
   var els: Expr? = None
@@ -582,6 +590,7 @@ fn (var p: Parser) parse_if() -> Expr {
 fn (var p: Parser) braceless_if(cond: Expr?, pattern: Pattern?, value: Expr?, start: Pos) -> Expr {
   let then_start = p.tok
   let then = p.braceless_body()
+  var edits = [insert_at(then.span.start, "{ "), insert_at(then.span.end, " }")]
   var els: Expr? = None
   if p.at(Kind.Else) {
     p.next()
@@ -590,11 +599,15 @@ fn (var p: Parser) braceless_if(cond: Expr?, pattern: Pattern?, value: Expr?, st
     } else if p.at(Kind.LBrace) {
       els = Some(Expr.Block(p.parse_block()))
     } else {
-      els = Some(Expr.Block(p.braceless_body()))
+      let eb = p.braceless_body()
+      edits.push(insert_at(eb.span.start, "{ "))
+      edits.push(insert_at(eb.span.end, " }"))
+      els = Some(Expr.Block(eb))
     }
   }
   let sp = p.span_from(start)
-  p.foreign(then_start.span, "`if (c) a else b` without braces is Kotlin, Java, and C syntax; every Xo `if` and `else` body is a block: `if c { a } else { b }` (core 3.5)")
+  let d = p.foreign(then_start.span, "`if (c) a else b` without braces is Kotlin, Java, and C syntax; every Xo `if` and `else` body is a block: `if c { a } else { b }` (core 3.5)")
+  p.add_fix(d, "add braces", edits)
   Expr.IfExpr(IfExpr{span: sp, cond: cond, pattern: pattern, value: value, then: then, els: els})
 }
 
@@ -613,12 +626,24 @@ fn (var p: Parser) arm_end(what: Str, before: Int) {
       return
     }
     if p.at(Kind.Comma) {
-      p.soft(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
+      // internal/parser armComma
+      let c = p.tok
+      let d = p.soft(MATCH_ARM_SEPARATOR, c.span, "${what}s are separated by newlines, not `,`")
+      p.add_note(d, "Rust and Kotlin separate arms with `,`; an Xo arm ends at its newline (core 3.5)")
+      let next = p.peek(1)
+      if !(next.kind is Newline | RBrace | Eof) && next.span.start.line == c.span.start.line {
+        p.add_fix(d, "put the next arm on its own line", [replace_range(c.span.start, next.span.start, "\n")])
+      } else {
+        p.add_fix(d, "remove `,`", [replace_span(c.span, "")])
+      }
       p.next()
       return
     }
     if p.arm_on_same_line() {
-      p.soft(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe_go(p.tok)}")
+      // internal/parser splitArm
+      let d = p.soft(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe_go(p.tok)}")
+      p.add_note(d, "each arm goes on its own line; Xo has no separator between arms (core 3.5)")
+      p.add_fix(d, "put the next arm on its own line", [replace_range(p.prev_end(), p.tok.span.start, "\n")])
       return
     }
     p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe(p.tok)}")
@@ -645,7 +670,8 @@ fn (var p: Parser) parse_match() -> Expr {
         p.no_arrow_fn = saved
       }
       if p.at(Kind.Arrow) && !p.bad {
-        p.foreign(p.tok.span, "`->` after a pattern is Kotlin and Scala syntax; an Xo match arm is `pattern => body` (core 3.5)")
+        let d = p.foreign(p.tok.span, "`->` after a pattern is Kotlin and Scala syntax; an Xo match arm is `pattern => body` (core 3.5)")
+        p.add_fix(d, "write `=>`", [replace_span(p.tok.span, "=>")])
         p.next()
       } else {
         p.expect(Kind.FatArrow, "`=>` after the match pattern")
@@ -766,7 +792,9 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
           }
           if p.at(Kind.Var) && !p.bad && starts_expr(p.peek(1).kind) {
             // Swift `inout` call sites and C# `ref` read like this.
-            p.foreign(p.tok.span, "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)")
+            let vt = p.tok
+            let d = p.foreign(vt.span, "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)")
+            p.add_fix(d, "remove `var`", [p.delete_token(vt)])
             p.next()
           }
           let value = p.parse_expr()
@@ -1002,7 +1030,7 @@ fn (var p: Parser) parse_string() -> StringLit {
 /// of its own, as in internal/parser parseInterp).
 fn (var p: Parser) parse_interp(sp: Span) -> Expr {
   let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
-  var sub = Parser{src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
+  var sub = Parser{file: p.file, src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
   let e = sub.parse_expr()
   if !sub.failed() && !sub.at(Kind.Eof) {
     sub.fail(UNEXPECTED_TOKEN, sub.tok.span, "unexpected ${describe(sub.tok)} in interpolation; expected `}`")
@@ -1042,14 +1070,16 @@ fn (var p: Parser) parse_comprehension(elem: Expr) -> Comprehension {
 /// Reports the comprehension and recovers it as
 /// `iter.filter(fn(x) { cond }).map(fn(x) { elem })`.
 fn (var p: Parser) finish_comprehension(c: Comprehension, sp: Span) -> Expr {
-  p.foreign(c.kw.span, "`[x for x in xs]` is a Python comprehension; Xo calls the list methods, `xs.filter(fn(x) { cond }).map(fn(x) { f(x) })` (spec/std.md 2)")
+  let d = p.foreign(c.kw.span, "`[x for x in xs]` is a Python comprehension; Xo calls the list methods, `xs.filter(fn(x) { cond }).map(fn(x) { f(x) })` (spec/std.md 2)")
   let (bsp, name) = match c.pat {
     BindPat(span, id) => (span, id.name)
     _ => return Expr.ListLit(span: sp, elems: [c.elem])
   }
   let params = [Param{span: bsp, name: Ident{span: bsp, name: name}}]
+  var text = p.operand_text(c.iter)
   var x = c.iter
   if let Some(cond) = c.cond {
+    text = text + ".filter(fn(${txt(name)}) { ${p.span_text(expr_span(cond))} })"
     x = method_call(x, b"filter", sp, [Expr.FnLit(FnLit{span: expr_span(cond), params: params, body: expr_block(cond)})])
   }
   var same = false
@@ -1057,7 +1087,9 @@ fn (var p: Parser) finish_comprehension(c: Comprehension, sp: Span) -> Expr {
     same = id.name == name
   }
   if !same {
+    text = text + ".map(fn(${txt(name)}) { ${p.span_text(expr_span(c.elem))} })"
     x = method_call(x, b"map", sp, [Expr.FnLit(FnLit{span: expr_span(c.elem), params: params, body: expr_block(c.elem)})])
   }
+  p.add_fix(d, "write `.filter(...).map(...)`", [replace_span(sp, text)])
   x
 }

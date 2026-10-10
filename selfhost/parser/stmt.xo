@@ -180,7 +180,8 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
   p.next() // for
   let pattern = p.parse_pattern()
   if p.at_ident(b"of") && !p.bad {
-    p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+    let d = p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
+    p.add_fix(d, "write `in`", [replace_span(p.tok.span, "in")])
     p.next()
   } else {
     p.expect(Kind.In, "`in` in a for loop")
@@ -370,7 +371,10 @@ fn (var p: Parser) check_struct_lit_in_cond(cond: Expr?) {
     if let IsExpr(..) = rightmost(c) {
       what = "pattern"
     }
-    p.fail(STRUCT_LIT_IN_CONDITION, span_to(expr_span(c), p.toks[end].span), "a struct ${what} in a condition must be parenthesized")
+    let d = p.fail(STRUCT_LIT_IN_CONDITION, span_to(expr_span(c), p.toks[end].span), "a struct ${what} in a condition must be parenthesized")
+    if d >= 0 {
+      p.diags[d].fixes.push(Fix{title: b"parenthesize the condition", edits: [insert_at(expr_span(c).start, "("), insert_at(p.toks[end].span.end, ")")]})
+    }
     while p.pos <= end && !p.at(Kind.Eof) {
       p.next()
     }

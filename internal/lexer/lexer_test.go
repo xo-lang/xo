@@ -78,7 +78,7 @@ func nonUse() []string {
 func lex(src string) (string, []diag.Diagnostic) {
 	var ds diag.List
 	r := Lex("t.xo", []byte(src), &ds)
-	return render(r.Tokens), ds.Items
+	return render(r.Tokens), ds.Values()
 }
 
 func TestTokens(t *testing.T) {

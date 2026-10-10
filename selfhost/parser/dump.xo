@@ -18,6 +18,19 @@ pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
   for d in r.diags {
     let sp = d.span
     out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${d.message.quote()}\n")
+    for n in d.notes {
+      var at = "-"
+      if let Some(ns) = n.span {
+        at = "${ns.start.line}:${ns.start.col}-${ns.end.line}:${ns.end.col}"
+      }
+      out.write("  note ${at} ${n.message.quote()}\n")
+    }
+    for f in d.fixes {
+      out.write("  fix ${f.title.quote()}\n")
+      for e in f.edits {
+        out.write("    edit ${e.span.start.line}:${e.span.start.col}-${e.span.end.line}:${e.span.end.col} ${e.replace.quote()}\n")
+      }
+    }
   }
   out.freeze()
 }

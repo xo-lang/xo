@@ -382,7 +382,7 @@ func (p *parser) singleQuoted() ast.Expr {
 		}
 	}
 	for k := range p.diags.Items {
-		d := &p.diags.Items[k]
+		d := p.diags.Items[k]
 		if d.Code == string(diag.InvalidRune) && d.Span.Line == t.Span.Start.Line && d.Span.Col == t.Span.Start.Col {
 			d.Message = "`'...'` holding text is a Python and TypeScript string; an Xo string uses double quotes, `\"...\"`, and single quotes hold one `Rune` (core 1.6)"
 			d.Fixes = append(d.Fixes, diag.Fix{Title: "use double quotes", Edits: []diag.Edit{p.replaceSpan(t.Span, `"`+fixed.String()+`"`)}})

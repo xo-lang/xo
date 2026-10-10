@@ -180,11 +180,33 @@ pub struct Comment {
   pub doc: Bool
 }
 
-/// A lexical diagnostic with its stable code (core 10.2).
+/// A lexical or syntax diagnostic with its stable code (core 10.2), and
+/// the notes and machine fixes the parser attaches (decision 0141, stage
+/// 7).
 pub struct Diag {
   pub code: Str
   pub span: Span
   pub message: Bytes
+  pub notes: List[Note] = []
+  pub fixes: List[Fix] = []
+}
+
+/// A secondary message of a diagnostic, at a span or none.
+pub struct Note {
+  pub message: Bytes
+  pub span: Span? = None
+}
+
+/// A machine applicable change: its edits replace the text of their spans.
+pub struct Fix {
+  pub title: Bytes
+  pub edits: List[Edit]
+}
+
+/// Replaces the text of span with replace.
+pub struct Edit {
+  pub span: Span
+  pub replace: Bytes
 }
 
 pub const INVALID_CHAR = "XO0150"

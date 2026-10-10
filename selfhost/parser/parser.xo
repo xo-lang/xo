@@ -19,6 +19,9 @@
 use github.com/xo-lang/xo/selfhost/lexer
 
 pub type Diag = lexer.Diag
+pub type Note = lexer.Note
+pub type Fix = lexer.Fix
+pub type Edit = lexer.Edit
 pub type Comment = lexer.Comment
 
 const UNEXPECTED_TOKEN = "XO0160"
@@ -53,6 +56,8 @@ pub struct ParseResult {
 }
 
 struct Parser {
+  /// The file's name, as diagnostics name it.
+  file: Bytes = b""
   src: Bytes
   toks: List[Token]
   pos: Int = 0
@@ -86,8 +91,12 @@ struct Parser {
   in_impl: Bool = false
   /// Inside an outermost `Name<...>` type argument list (habits).
   angle_active: Bool = false
+  /// The edits of the outermost `<...>` list: `[` and `]` for each bracket.
+  angle_edits: List[Edit] = []
   /// An inner `<...>` list consumed `>>`, closing the outer one too.
   angle_pending_gt: Bool = false
+  /// The start of the first declaration (or its doc comment).
+  first_decl: Pos = Pos{offset: 0, line: 1, col: 1}
   /// Further methods recovered from a Rust `impl` block.
   pending_decls: List[FnDecl] = []
 }
@@ -95,7 +104,7 @@ struct Parser {
 /// Parses one file. With sig, function declarations may omit their body.
 pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult {
   let lx = lexer.lex(src)
-  var p = Parser{src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, diags: lx.diags}
+  var p = Parser{file: name, src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, diags: lx.diags}
   p.collect_docs(lx.comments)
   p.lex_habits()
   p.tok = p.toks[0]
@@ -214,17 +223,19 @@ fn describe(t: Token) -> Str {
 /// Records a hard error (internal/parser errorf) unless one is pending
 /// for the current statement or declaration; the parse goes on and
 /// resynchronizes where that ends. Like the Go parser, an error at an
-/// Illegal token the lexer already reported adds no diagnostic.
-fn (var p: Parser) fail(code: Str, sp: Span, message: Str) {
+/// Illegal token the lexer already reported adds no diagnostic. It returns
+/// the index of the diagnostic in p.diags, for notes and fixes, or -1.
+fn (var p: Parser) fail(code: Str, sp: Span, message: Str) -> Int {
   if p.bad {
-    return
+    return -1
   }
   p.bad = true
   p.hard = true
   if p.tok.kind == Kind.Illegal && sp.start.offset == p.tok.span.start.offset {
-    return
+    return -1
   }
   p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+  p.diags.len() - 1
 }
 
 fn (p: Parser) failed() -> Bool {
@@ -233,20 +244,59 @@ fn (p: Parser) failed() -> Bool {
 
 /// A soft error (internal/parser softErrorf): reported, and the parser
 /// recovers locally.
-fn (var p: Parser) soft(code: Str, sp: Span, message: Str) {
-  if !p.bad {
-    p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+/// It returns the index of the diagnostic, or -1 when none was added.
+fn (var p: Parser) soft(code: Str, sp: Span, message: Str) -> Int {
+  if p.bad {
+    return -1
   }
+  p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
+  p.diags.len() - 1
 }
 
 /// A habit of another language (decision 0087) at sp: XO0177, a soft
 /// error; the caller recovers as if the Xo form had been written.
-fn (var p: Parser) foreign(sp: Span, message: Str) {
+fn (var p: Parser) foreign(sp: Span, message: Str) -> Int {
   p.soft(FOREIGN_SYNTAX, sp, message)
 }
 
-fn (var p: Parser) error_expected(what: Str) {
+fn (var p: Parser) error_expected(what: Str) -> Int {
   p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected ${what}, found ${describe(p.tok)}")
+}
+
+// ---------------------------------------------------------------------------
+// Notes and fixes (internal/parser habits.go addNote, addFix; decision
+// 0141, stage 7)
+
+/// Attaches a machine fix to diagnostic d (-1: none); a fix without edits
+/// is dropped.
+fn (var p: Parser) add_fix(d: Int, title: Str, edits: List[Edit]) {
+  if d < 0 || edits.is_empty() {
+    return
+  }
+  p.diags[d].fixes.push(Fix{title: title.bytes(), edits: edits})
+}
+
+/// Attaches a note without a span to diagnostic d (-1: none).
+fn (var p: Parser) add_note(d: Int, message: Str) {
+  if d < 0 {
+    return
+  }
+  p.diags[d].notes.push(Note{message: message.bytes()})
+}
+
+/// Replaces the source between a and b with text.
+fn replace_range(a: Pos, b: Pos, text: Str) -> Edit {
+  Edit{span: Span{start: a, end: b}, replace: text.bytes()}
+}
+
+/// Replaces the source of sp with text.
+fn replace_span(sp: Span, text: Str) -> Edit {
+  replace_range(sp.start, sp.end, text)
+}
+
+/// Inserts text at pos.
+fn insert_at(pos: Pos, text: Str) -> Edit {
+  Edit{span: Span{start: pos, end: pos}, replace: text.bytes()}
 }
 
 /// Consumes a token of kind k, or fails.
@@ -304,7 +354,12 @@ fn (var p: Parser) list_sep(before: Int, close: Kind, what: Str) -> Bool {
     return true
   }
   if p.at(Kind.Newline) {
-    p.soft(MISSING_COMMA, p.tok.span, "missing `,` before newline in ${what} list")
+    let nl = p.tok
+    let d = p.soft(MISSING_COMMA, nl.span, "missing `,` before newline in ${what} list")
+    if d >= 0 {
+      p.diags[d].notes.push(Note{message: b"a list that spans lines needs a comma after every element, including the last (core 1.3)"})
+      p.diags[d].fixes.push(Fix{title: b"insert `,`", edits: [insert_at(nl.span.start, ",")]})
+    }
     p.skip_newlines()
     return true
   }
@@ -426,7 +481,10 @@ fn (var p: Parser) braces_close(st: Braces) {
 
 fn (var p: Parser) close_brace(open: Token) {
   if p.at(Kind.Eof) {
-    p.fail(UNCLOSED_DELIMITER, open.span, "`{` is never closed")
+    let d = p.fail(UNCLOSED_DELIMITER, open.span, "`{` is never closed")
+    if d >= 0 {
+      p.diags[d].notes.push(Note{message: b"reached end of file", span: Some(p.tok.span)})
+    }
     return
   }
   p.expect(Kind.RBrace, "`}`")
@@ -499,6 +557,12 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
     let is_pub = p.got(Kind.Pub)
     if let Some(d) = p.parse_top_decl(imports, doc, is_pub, pub_tok, decl_start, seen_decl) {
       decls.push(d)
+      if !seen_decl {
+        p.first_decl = decl_start
+        if let Some(dc) = doc {
+          p.first_decl = dc.span.start
+        }
+      }
       seen_decl = true
     }
     for pd in p.pending_decls {
@@ -532,7 +596,8 @@ fn (var p: Parser) parse_top_decl(var imports: List[UseDecl], doc: Doc?, is_pub:
       let use_tok = p.tok
       let u = p.parse_use()
       if seen_decl {
-        p.soft(USE_AFTER_DECL, use_tok.span, "`use` must come before all declarations")
+        let d = p.soft(USE_AFTER_DECL, use_tok.span, "`use` must come before all declarations")
+        p.move_use_fix(d, imports, u)
       }
       imports.push(u)
       None
@@ -768,10 +833,12 @@ fn (var p: Parser) parse_receiver() -> Receiver {
     let n = txt(name.name)
     if t.kind == Kind.Star {
       let ty = txt(p.peek(1).text)
-      p.foreign(t.span, "a pointer receiver `*${ty}` is Go syntax; an Xo receiver is a value, `(${n}: ${ty})`, and `(var ${n}: ${ty})` lets the method change the caller's value (core 3.4)")
+      let d = p.foreign(t.span, "a pointer receiver `*${ty}` is Go syntax; an Xo receiver is a value, `(${n}: ${ty})`, and `(var ${n}: ${ty})` lets the method change the caller's value (core 3.4)")
+      p.add_fix(d, "write `: ${ty}`", [replace_range(name.span.end, p.peek(1).span.start, ": ")])
       p.next()
     } else {
-      p.foreign(t.span, "`(${n} ${txt(t.text)})` is Go syntax; Xo writes the receiver type after a colon, `(${n}: ${txt(t.text)})` (core 3.4)")
+      let d = p.foreign(t.span, "`(${n} ${txt(t.text)})` is Go syntax; Xo writes the receiver type after a colon, `(${n}: ${txt(t.text)})` (core 3.4)")
+      p.add_fix(d, "insert `:`", [replace_range(name.span.end, t.span.start, ": ")])
     }
     let typ = p.parse_type()
     p.expect(Kind.RParen, "`)` after the receiver")
@@ -807,7 +874,8 @@ fn (var p: Parser) parse_type_params() -> List[TypeParam] {
       return out
     }
     p.next()
-    p.foreign(span_to(open.span, close.span), "`<T>` type parameters are Rust, TypeScript, Kotlin, and Swift syntax; Xo writes them in square brackets, `[T]` (core 2.7)")
+    let d = p.foreign(span_to(open.span, close.span), "`<T>` type parameters are Rust, TypeScript, Kotlin, and Swift syntax; Xo writes them in square brackets, `[T]` (core 2.7)")
+    p.add_fix(d, "use square brackets", [replace_span(open.span, "["), replace_span(close.span, "]")])
     return out
   }
   let st = p.list_open(Kind.LBrack)
@@ -830,7 +898,8 @@ fn (var p: Parser) parse_type_param() -> TypeParam {
     // TypeScript and Kotlin `T extends Bound`.
     let n = txt(name.name)
     let b = txt(p.peek(1).text)
-    p.foreign(p.tok.span, "`${n} extends ${b}` is TypeScript syntax; Xo writes a constraint after a colon, `${n}: ${b}` (core 2.7)")
+    let d = p.foreign(p.tok.span, "`${n} extends ${b}` is TypeScript syntax; Xo writes a constraint after a colon, `${n}: ${b}` (core 2.7)")
+    p.add_fix(d, "write `:`", [replace_range(name.span.end, p.peek(1).span.start, ": ")])
     p.next()
     let first = p.parse_type()
     tp.constraint = p.parse_bounds(name, first)
@@ -905,7 +974,8 @@ fn (var p: Parser) unparenthesized_effect(var out: List[Param]) -> Bool {
     }
     let first = ft.effects[0]
     let eff = p.parse_effect()
-    p.soft(FN_TYPE_EFFECTS_PARENS, span_to(first.span, eff.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${effect_text(eff)})`")
+    let d = p.soft(FN_TYPE_EFFECTS_PARENS, span_to(first.span, eff.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${effect_text(eff)})`")
+    p.add_fix(d, "parenthesize the effect list", [insert_at(first.span.start, "("), insert_at(eff.span.end, ")")])
     var ft2 = ft
     ft2.effects.push(eff)
     ft2.uses_parens = true
@@ -925,7 +995,8 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
     // Swift argument labels: `_ x: Int`, `from x: Int`.
     let lbl = p.tok
     let pn = txt(p.peek(1).text)
-    p.foreign(lbl.span, "`${txt(lbl.text)} ${pn}:` is a Swift argument label; Xo has none: callers use the parameter name, `f(${pn}: v)`, or pass the argument by position (core 3.2)")
+    let d = p.foreign(lbl.span, "`${txt(lbl.text)} ${pn}:` is a Swift argument label; Xo has none: callers use the parameter name, `f(${pn}: v)`, or pass the argument by position (core 3.2)")
+    p.add_fix(d, "remove the label", [p.delete_token(lbl)])
     p.next()
   }
   let name = p.expect_ident("a parameter name")
@@ -933,14 +1004,20 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
     // Go parameters: `x int`, `p *Point`, `xs []int`.
     let t = p.tok
     let n = txt(name.name)
-    p.foreign(t.span, "`${n} ${txt(t.text)}` is Go syntax; Xo writes the parameter type after a colon, `${n}: ${txt(t.text)}` (core 3.2)")
+    let d = p.foreign(t.span, "`${n} ${txt(t.text)}` is Go syntax; Xo writes the parameter type after a colon, `${n}: ${txt(t.text)}` (core 3.2)")
+    p.add_fix(d, "insert `:`", [replace_range(name.span.end, t.span.start, ": ")])
     let typ = p.parse_type()
     return Param{span: p.span_from(start), is_var: is_var, name: name, typ: Some(typ)}
   }
   if !closure && p.at(Kind.Colon) && is_word(p.peek(1), b"inout") && p.peek(2).kind == Kind.Ident {
     // Swift `x: inout Int`.
     let io = p.peek(1)
-    p.foreign(io.span, "`inout` is Swift syntax; Xo marks an in out parameter with `var` before its name, `var ${txt(name.name)}: ${txt(p.peek(2).text)}`, and callers pass a `var` binding without `&` (core 3.2)")
+    let d = p.foreign(io.span, "`inout` is Swift syntax; Xo marks an in out parameter with `var` before its name, `var ${txt(name.name)}: ${txt(p.peek(2).text)}`, and callers pass a `var` binding without `&` (core 3.2)")
+    var edits = [p.delete_token(io)]
+    if !is_var {
+      edits.push(insert_at(name.span.start, "var "))
+    }
+    p.add_fix(d, "write `var ${txt(name.name)}`", edits)
     p.next() // :
     p.next() // inout
     let typ = p.parse_type()
@@ -1224,7 +1301,8 @@ fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl 
     let kw = p.tok
     let k = kind_text(kw.kind)
     let n = txt(name.name)
-    p.foreign(span_to(type_tok.span, kw.span), "`type ${n} ${k} {` is Go syntax; Xo writes `${k} ${n} {` (core 2.2, 2.4)")
+    let dg = p.foreign(span_to(type_tok.span, kw.span), "`type ${n} ${k} {` is Go syntax; Xo writes `${k} ${n} {` (core 2.2, 2.4)")
+    p.add_fix(dg, "write `${k} ${n}`", [replace_span(type_tok.span, k), replace_range(p.before_blanks(kw.span.start), kw.span.end, "")])
     p.next()
     if kw.kind == Kind.Struct {
       return Decl.StructDecl(p.parse_struct_body(StructDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}, start))
@@ -1424,7 +1502,10 @@ fn (var p: Parser) parse_fn_type() -> Type {
       if top && p.at(Kind.Comma) && p.peek(1).kind == Kind.Ident {
         let first = ft.effects[0]
         let end = p.peek(1)
-        p.fail(FN_TYPE_EFFECTS_PARENS, span_to(first.span, end.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${txt(end.text)})`")
+        let d = p.fail(FN_TYPE_EFFECTS_PARENS, span_to(first.span, end.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${txt(end.text)})`")
+        if d >= 0 {
+          p.diags[d].fixes.push(Fix{title: b"parenthesize the effect list", edits: [insert_at(first.span.start, "("), insert_at(end.span.end, ")")]})
+        }
       }
     }
   }

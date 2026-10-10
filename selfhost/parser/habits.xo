@@ -30,6 +30,53 @@ fn (p: Parser) span_text(sp: Span) -> Str {
   txt(p.src_text(sp.start, sp.end))
 }
 
+/// The position of the first byte of pos's line.
+fn line_start(pos: Pos) -> Pos {
+  Pos{offset: pos.offset - (pos.col - 1), line: pos.line, col: 1}
+}
+
+/// pos moved past the blanks that follow it.
+fn (p: Parser) after_blanks(pos: Pos) -> Pos {
+  var off = pos.offset
+  var col = pos.col
+  while off < p.src.len() && (p.src[off] == ' ' || p.src[off] == '\t') {
+    off += 1
+    col += 1
+  }
+  Pos{offset: off, line: pos.line, col: col}
+}
+
+/// pos moved back over the blanks before it on its line.
+fn (p: Parser) before_blanks(pos: Pos) -> Pos {
+  var off = pos.offset
+  var col = pos.col
+  while off > 0 && (p.src[off - 1] == ' ' || p.src[off - 1] == '\t') {
+    off -= 1
+    col -= 1
+  }
+  Pos{offset: off, line: pos.line, col: col}
+}
+
+/// An edit removing t and the blanks after it.
+fn (p: Parser) delete_token(t: Token) -> Edit {
+  replace_range(t.span.start, p.after_blanks(t.span.end), "")
+}
+
+/// Whether e can take a method call without parentheses: `xs.len()`.
+fn simple_operand(e: Expr) -> Bool {
+  e is Ident(..) | SelectorExpr(..) | CallExpr(..) | IndexExpr(..) | ParenExpr(..) | StringLit(..) | ListLit(..) | MapLit(..) | SetLit(..) | TupleExpr(..) | StructLit(..)
+}
+
+/// The source of e, parenthesized when a method call or a postfix would
+/// otherwise bind to part of it.
+fn (p: Parser) operand_text(e: Expr) -> Str {
+  let t = p.span_text(expr_span(e))
+  if simple_operand(e) {
+    return t
+  }
+  "(${t})"
+}
+
 /// The position just after the newline that ends pos's line (or the end
 /// of the file).
 fn (p: Parser) next_line_start(pos: Pos) -> Pos {
@@ -364,6 +411,29 @@ fn (var p: Parser) hash_habit(i: Int) -> Int {
     let d = p.drop_lex_diags(t.span.start, p.tok_at(e).span.end)
     if d >= 0 {
       p.diags[d].message = ("`" + txt(text) + "` is a Rust attribute; Xo has none: write `derive Display, Ord, Json` after a struct or enum body, and `Eq`, `Hash`, and `Debug` are automatic for every type whose fields have them (core 2.9)").bytes()
+      let names = derive_names(txt(text))
+      if !names.is_empty() {
+        var keep: List[Str] = []
+        for nm in names {
+          if let Some(x) = rust_derive(nm) {
+            if !x.is_empty() {
+              keep.push(x)
+            }
+            continue
+          }
+          keep = []
+          break
+        }
+        var nx = e + 1
+        while nx < p.toks.len() - 1 && p.tok_at(nx).kind == Kind.Newline {
+          nx += 1
+        }
+        if keep.is_empty() && txt(p.src_text(line_start(t.span.start), t.span.start)).trim().is_empty() && p.tok_at(nx).span.start.line != t.span.start.line {
+          p.diags[d].fixes.push(Fix{title: b"remove the attribute", edits: [replace_range(line_start(t.span.start), p.next_line_start(p.tok_at(e).span.end), "")]})
+        } else if !keep.is_empty() {
+          p.diags[d].notes.push(Note{message: "write `derive ${keep.join(", ")}` after the closing `}` of the type".bytes()})
+        }
+      }
     }
     return e + 1
   }
@@ -377,6 +447,7 @@ fn (var p: Parser) hash_habit(i: Int) -> Int {
     let d = p.drop_lex_diags(t.span.start, line_end)
     if d >= 0 {
       p.diags[d].message = "`#` starts a comment in Python and shell; Xo comments start with `//` (core 1.2)".bytes()
+      p.diags[d].fixes.push(Fix{title: b"write `//`", edits: [replace_span(t.span, "//")]})
     }
     var j = i + 1
     while j < p.toks.len() && p.tok_at(j).kind != Kind.Eof && p.tok_at(j).span.start.offset < line_end.offset {
@@ -385,6 +456,55 @@ fn (var p: Parser) hash_habit(i: Int) -> Int {
     return j
   }
   -1
+}
+
+/// The Xo derive a Rust derive name needs ("" when the behavior is
+/// automatic in Xo), or None for a name Xo has no counterpart of
+/// (habits_lex.go rustDerives).
+fn rust_derive(n: Str) -> Str? {
+  match n {
+    "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "Hash" => Some("")
+    "PartialOrd" | "Ord" => Some("Ord")
+    "Serialize" | "Deserialize" => Some("Json")
+    "Display" => Some("Display")
+    _ => None
+  }
+}
+
+/// The names of `#[derive(A, B)]`, each once (habits_lex.go deriveNames).
+fn derive_names(text: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = text.bytes()
+  let i = find_bytes(b, b"derive(", 0)
+  var j = -1
+  for k in 0..b.len() {
+    if b[k] == ')' {
+      j = k
+    }
+  }
+  if i < 0 || j < i {
+    return out
+  }
+  let inner = txt(b[i + 7..j])
+  for part in inner.split(",") {
+    var n = part.trim()
+    let nb = n.bytes()
+    var last = -1
+    var k = 0
+    while k + 1 < nb.len() {
+      if nb[k] == ':' && nb[k + 1] == ':' {
+        last = k
+      }
+      k += 1
+    }
+    if last >= 0 {
+      n = txt(nb[last + 2..])
+    }
+    if !n.is_empty() && !out.contains(n) {
+      out.push(n)
+    }
+  }
+  out
 }
 
 /// Index of the first occurrence of pat in b at or after from, or -1.
@@ -418,7 +538,48 @@ fn (var p: Parser) block_comment(i: Int) -> Int {
   let end_off = k + 2
   let end = p.pos_at(t.span.start, end_off)
   p.drop_lex_diags(t.span.start, end)
-  p.diags.push(Diag{code: FOREIGN_SYNTAX, span: Span{start: t.span.start, end: end}, message: "`/* ... */` is a block comment in Go, Rust, TypeScript, Kotlin, and Swift; Xo has only line comments: `//`, and `///` for doc comments (core 1.2)".bytes()})
+  var d = Diag{code: FOREIGN_SYNTAX, span: Span{start: t.span.start, end: end}, message: "`/* ... */` is a block comment in Go, Rust, TypeScript, Kotlin, and Swift; Xo has only line comments: `//`, and `///` for doc comments (core 1.2)".bytes()}
+  // Fix: one `//` line per comment line when nothing follows `*/`.
+  let after = p.next_line_start(end)
+  var rest = ""
+  if after.offset > end_off {
+    rest = txt(p.src[end_off..after.offset])
+  }
+  let before = txt(p.src_text(line_start(t.span.start), t.span.start))
+  if rest.trim().is_empty() {
+    var inner = txt(p.src[off + 2..end_off - 2])
+    var prefix = "// "
+    if inner.starts_with("*") && !inner.starts_with("*/") {
+      prefix = "/// "
+      inner = inner.trim_prefix("*")
+    }
+    var indent = ""
+    if before.trim().is_empty() {
+      indent = before
+    }
+    var lines: List[Str] = []
+    for ln in inner.split("\n") {
+      lines.push(ln.trim().trim_prefix("*").trim())
+    }
+    while !lines.is_empty() && lines[0].is_empty() {
+      lines = lines[1..]
+    }
+    while !lines.is_empty() && lines[lines.len() - 1].is_empty() {
+      lines = lines[0..lines.len() - 1]
+    }
+    var b = StrBuilder.new()
+    for (n, ln) in lines.indexed() {
+      if n > 0 {
+        b.write("\n${indent}")
+      }
+      b.write("${prefix}${ln}".trim_end())
+    }
+    if lines.is_empty() {
+      b.write("//")
+    }
+    d.fixes.push(Fix{title: b"write `//` comments", edits: [replace_range(t.span.start, end, b.freeze())]})
+  }
+  p.diags.push(d)
   var j = i
   while j < p.toks.len() && p.tok_at(j).kind != Kind.Eof && p.tok_at(j).span.start.offset < end_off {
     j += 1
@@ -464,6 +625,18 @@ fn (var p: Parser) template_habit(i: Int) -> (Int, Token) {
   if d >= 0 {
     p.diags[d].code = FOREIGN_SYNTAX
     p.diags[d].message = "a template string in backticks is TypeScript syntax; every Xo string interpolates with `\${x}`, so write it in double quotes: `\"...\${x}...\"` (core 1.6)".bytes()
+    if find_bytes(inner, b"\n", 0) < 0 {
+      var b = BytesBuilder.new()
+      for n in 0..inner.len() {
+        if inner[n] == '"' {
+          b.write_byte('\\')
+        }
+        b.write_byte(inner[n])
+      }
+      p.diags[d].fixes.push(Fix{title: b"write a double quoted string", edits: [Edit{span: Span{start: t.span.start, end: end}, replace: b"\"" + b.freeze() + b"\""}]})
+    } else {
+      p.diags[d].notes.push(Note{message: "text that spans lines is a triple quoted string, `\"\"\"...\"\"\"` (core 1.6)".bytes()})
+    }
   }
   // The String token: literal parts and `${...}` expressions.
   var nt = Token{kind: Kind.String, span: Span{start: t.span.start, end: end}, text: p.src[off..end_off]}
@@ -516,7 +689,9 @@ fn (var p: Parser) swift_interp(t0: Token) -> Token {
   }
   let text = t.text
   var first = -1
+  var first_span = t.span
   var merged: List[Int] = []
+  var edits: List[Edit] = []
   var n = 0
   while n + 1 < text.len() {
     if text[n] == '\\' && text[n + 1] != '(' {
@@ -556,11 +731,14 @@ fn (var p: Parser) swift_interp(t0: Token) -> Token {
       p.diags[d].message = "`\\(x)` is Swift string interpolation; Xo writes `\${x}` (core 1.6)".bytes()
       if first < 0 {
         first = d
+        first_span = p.diags[d].span
       } else {
         merged.push(d)
       }
     }
+    edits.push(replace_range(at, p.pos_at(t.span.start, t.span.start.offset + n + 2), "\${"))
     let close_at = p.pos_at(t.span.start, t.span.start.offset + e)
+    edits.push(replace_range(close_at, p.pos_at(t.span.start, t.span.start.offset + e + 1), "}"))
     let es = p.pos_at(t.span.start, t.span.start.offset + n + 2)
     t.parts.push(lexer.StrPart{is_expr: true, text: text[n + 2..e], span: Span{start: es, end: close_at}})
     n = e + 1
@@ -574,6 +752,15 @@ fn (var p: Parser) swift_interp(t0: Token) -> Token {
       }
     }
     p.diags = items
+  }
+  if first >= 0 {
+    for k in 0..p.diags.len() {
+      let sp = p.diags[k].span
+      if sp.start.line == first_span.start.line && sp.start.col == first_span.start.col && sp.end.line == first_span.end.line && sp.end.col == first_span.end.col && p.diags[k].code == lexer.INVALID_ESCAPE {
+        p.diags[k].fixes.push(Fix{title: b"write `\${...}`", edits: edits})
+        break
+      }
+    }
   }
   t
 }
@@ -598,7 +785,18 @@ fn (var p: Parser) leading_operator(i: Int) -> Bool {
     // `* => 3`: a match arm with a bad pattern, not a continuation
     return false
   }
-  p.diags.push(Diag{code: LEADING_OPERATOR, span: op.span, message: "a line cannot start with the binary operator `${kind_text(op.kind)}`; end the previous line with it (core 1.3)".bytes()})
+  let text = kind_text(op.kind)
+  var del = replace_span(op.span, "")
+  if !(next.kind is Newline | Eof) && next.span.start.line == op.span.end.line {
+    del = replace_range(op.span.start, next.span.start, "")
+  }
+  p.diags.push(Diag{
+    code: LEADING_OPERATOR,
+    span: op.span,
+    message: "a line cannot start with the binary operator `${text}`; end the previous line with it (core 1.3)".bytes(),
+    notes: [Note{message: "a newline after an identifier, literal, `)`, `]`, `}`, or `?` ends the statement, so `${text}` here would begin a new one".bytes()}],
+    fixes: [Fix{title: "move `${text}` to the end of the previous line".bytes(), edits: [insert_at(prev.span.end, " ${text}"), del]}],
+  })
   true
 }
 

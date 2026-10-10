@@ -67,7 +67,7 @@ func TestJSONShape(t *testing.T) {
 	if !l.HasErrors() {
 		t.Error("HasErrors = false")
 	}
-	if got := Human(l.Items[0]); got != "a.xo:18:3: error XO0160: expected x" {
+	if got := Human(*l.Items[0]); got != "a.xo:18:3: error XO0160: expected x" {
 		t.Errorf("Human = %q", got)
 	}
 }

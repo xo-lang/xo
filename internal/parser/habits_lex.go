@@ -109,7 +109,7 @@ func endsStmt(k token.Kind) bool {
 // lexDiag returns the lexer diagnostic that starts at pos, if any.
 func (p *parser) lexDiag(pos token.Pos) *diag.Diagnostic {
 	for k := range p.diags.Items {
-		d := &p.diags.Items[k]
+		d := p.diags.Items[k]
 		if d.Span.Line == pos.Line && d.Span.Col == pos.Col && strings.HasPrefix(d.Code, "XO015") {
 			return d
 		}
@@ -119,7 +119,6 @@ func (p *parser) lexDiag(pos token.Pos) *diag.Diagnostic {
 
 // dropLexDiags removes the lexer diagnostics that start in [a, b), except
 // the first one starting exactly at a, which it returns (nil if none).
-// Pointers into p.diags.Items taken before the call are invalid after it.
 func (p *parser) dropLexDiags(a, b token.Pos) *diag.Diagnostic {
 	before := func(l1, c1, l2, c2 int) bool { return l1 < l2 || (l1 == l2 && c1 < c2) }
 	items := p.diags.Items[:0]
@@ -141,7 +140,7 @@ func (p *parser) dropLexDiags(a, b token.Pos) *diag.Diagnostic {
 	if kept < 0 {
 		return nil
 	}
-	return &p.diags.Items[kept]
+	return p.diags.Items[kept]
 }
 
 // lineEnd is the index of the first token after i on a later line, or the
