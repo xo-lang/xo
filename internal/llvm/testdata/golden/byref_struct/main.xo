@@ -1,0 +1,115 @@
+// Struct parameters of 256 bytes or more are passed by reference on the
+// LLVM backend (decision 0145): `var` receivers and parameters written
+// back through the caller's memory, read only ones read from it, two of
+// the same type in one call, recursion, loops, and a function used as a
+// value (which keeps the plain convention).
+
+struct Big {
+  name: Str
+  a: Str = "a"
+  b: Str = "b"
+  c: Str = "c"
+  d: Str = "d"
+  e: Str = "e"
+  f: Str = "f"
+  g: Str = "g"
+  h: Str = "h"
+  i: Str = "i"
+  j: Str = "j"
+  k: Str = "k"
+  l: Str = "l"
+  m: Str = "m"
+  n: Str = "n"
+  items: List[Int] = []
+  index: Map[Str, Int] = {}
+  count: Int = 0
+  flag: Bool = false
+}
+
+fn (var b: Big) add(x: Int) {
+  b.items.push(x)
+  b.count += x
+  b.index["k${x}"] = b.items.len()
+}
+
+fn (var b: Big) add_many(n: Int) {
+  for x in 0..n {
+    b.add(x)
+    if x % 3 == 0 {
+      b.touch()
+    }
+  }
+}
+
+fn (var b: Big) touch() {
+  b.flag = !b.flag
+  b.a = b.a + "!"
+}
+
+fn (b: Big) total() -> Int {
+  var s = 0
+  for x in b.items {
+    s += x
+  }
+  s + b.count
+}
+
+fn (b: Big) describe() -> Str {
+  "${b.name}: ${b.items.len()} items, count ${b.count}, flag ${b.flag}, a ${b.a}, index ${b.index.len()}"
+}
+
+fn swap_names(var x: Big, var y: Big) {
+  let t = x.name
+  x.name = y.name
+  y.name = t
+  x.add(100)
+  y.add(200)
+}
+
+fn (var b: Big) countdown(n: Int) -> Int {
+  if n == 0 {
+    return b.count
+  }
+  b.add(n)
+  b.countdown(n - 1)
+}
+
+fn merged(x: Big, y: Big) -> Big {
+  var out = Big{name: "${x.name}+${y.name}"}
+  for v in x.items {
+    out.add(v)
+  }
+  for v in y.items {
+    out.add(v)
+  }
+  out
+}
+
+fn main(os: Os) {
+  var p = Big{name: "p"}
+  var q = Big{name: "q"}
+  p.add_many(10)
+  q.add(7)
+  os.stdio.println(p.describe())
+  os.stdio.println(q.describe())
+  swap_names(p, q)
+  os.stdio.println(p.describe())
+  os.stdio.println(q.describe())
+  let r = q.countdown(5)
+  os.stdio.println("countdown ${r} ${q.total()}")
+  let copy = p
+  p.add(1)
+  os.stdio.println("copy ${copy.count} p ${p.count}")
+  let m = merged(p, q)
+  os.stdio.println(m.describe())
+  let f = merged
+  let m2 = f(q, p)
+  os.stdio.println("${m2.name} ${m2.total()}")
+  var bs = [Big{name: "x"}, Big{name: "y"}]
+  for i in 0..bs.len() {
+    var b = bs[i]
+    b.add(i + 1)
+    bs[i] = b
+  }
+  os.stdio.println("${bs[0].describe()} / ${bs[1].describe()}")
+}

@@ -734,3 +734,42 @@ lines):
 | selfhost (lexer, parser, check: 24,646 lines, 3 modules) | 136.8 | 339.1 | 349.5 | 270.7 | 1.98 |
 | selfhost/parser (with the lexer) | 46.6 | 137.7 | 139.1 | 107.0 | 2.30 |
 | bench/xo/v0.4/08-notes-service (5 modules) | 8.6 | 36.5 | 19.9 | 15.1 | 1.76 |
+
+## The LLVM build's profile (decision 0145)
+
+`sample` on the LLVM build checking selfhost 60 times (8 s, 5,900
+samples on the main thread): bodies (`check_module`) 57%, loading and
+parsing 20%, the flow checks 11%; by self time no function above 4%
+(`set_type` 237 samples, `infer0` 233, `check0` 187), reference
+counting about 10% (`xo_rl_free`, `xo.drop.*`, `xo.dup.*`). The
+disassembly explained the spread: `Checker` (53 fields, about 1 KB) was
+an aggregate argument and result of every `var` method, so each call
+moved every field through the stack in the caller and again in the
+callee's prologue and return (`set_type` was 9,689 instructions).
+
+The fix, decision 0145: the LLVM backend passes a struct parameter of
+256 bytes or more by reference, a `var` one written back through the
+pointer, and a function forwards its own `var` parameter's memory to
+the calls it makes. 20 runs of selfhost: 5,348 to 4,549 ms (15%), the
+checker's output unchanged on every repository run and mutation.
+Measured and not kept: loads and stores field by field (4,603 ms: the
+unwind paths still keep every field loaded at entry live) and enums by
+reference too (4,707 ms: `Expr` is 352 bytes, `Stmt` 1,336, but a
+payload read stores the enum into an alloca first).
+
+Next experiments, by expected gain:
+
+1. Payload reads straight from a by reference enum (a `getelementptr`
+   into the parameter's memory instead of the store to an alloca in
+   `sfn.payload`), then enums by reference again: `check`, `infer`,
+   and every `match` on `Expr` and `Stmt` pass 352 to 1,336 bytes by
+   value today.
+2. Lazy field loads of a by reference struct: lower `OpField` of a
+   parameter to a load at the use, and the unwind exit's drops to
+   loads from the reference, using the SSA's liveness to prove the
+   memory still holds the value; this removes the copy of every field
+   at entry that remains (`set_type` is still about 9,000 instructions,
+   most of them the unwind path).
+3. Reference counting: `xo_rl_free` and the `dup`/`drop` of `Expr` are
+   the largest runtime entries; a borrow of match payloads would skip
+   most of them.

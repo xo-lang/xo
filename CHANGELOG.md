@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend: struct parameters of 256 bytes or more are passed by
+  reference in direct calls, `var` ones written back through the
+  pointer, instead of field by field (decision 0145); the self hosted
+  checker's LLVM build is about 15% faster.
 - The self hosted checker reports naming (XO0101, with the rename fix
   that covers every use of a local), time layouts (XO0420, and the
   XO0177 habit of a date pattern from another language), and the

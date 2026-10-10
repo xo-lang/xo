@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+p: 10 items, count 45, flag false, a a!!!!, index 10
+q: 1 items, count 7, flag false, a a, index 1
+q: 11 items, count 145, flag false, a a!!!!, index 11
+p: 2 items, count 207, flag false, a a, index 2
+countdown 222 444
+copy 145 p 146
+q+p: 19 items, count 368, flag false, a a, index 12
+p+q 736
+x: 1 items, count 1, flag false, a a, index 1 / y: 1 items, count 2, flag false, a a, index 1
+--- stderr
