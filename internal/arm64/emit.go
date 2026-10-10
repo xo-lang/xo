@@ -152,7 +152,7 @@ func (s *fstate) emit() {
 	if fr.leaf {
 		fr.size = 0
 	}
-	if fr.size > 4000 {
+	if fr.size > maxFrame {
 		fail("frame of %s too large (%d bytes)", s.f.Name, fr.size)
 	}
 	b := &strings.Builder{}
@@ -267,6 +267,28 @@ func (s *fstate) farTests(text string) string {
 	return b.String()
 }
 
+// maxFrame is the largest frame a function may have: every spill slot
+// and saved register, and 4 KiB of incoming stack arguments past them,
+// is then within reach of a scaled 12 bit `ldr`/`str`
+// offset from sp (32760 bytes). Frames past one page are probed
+// (probeSP).
+const maxFrame = 28672
+
+// probePage is the stride of the stack probes: the smallest guard page
+// (4 KiB on Linux; a fiber stack has one guard page, std/llrt xo_rt.c).
+const probePage = 4096
+
+// probeSP lowers sp by n, touching every page on the way when n is more
+// than one page, so a large frame cannot step over the guard page below
+// a fiber stack into another allocation (gotchas/arm64-large-frame.md).
+func probeSP(b *strings.Builder, n int) {
+	for n > probePage {
+		fmt.Fprintf(b, "\tsub sp, sp, #%d, lsl #12\n\tstr xzr, [sp]\n", probePage>>12)
+		n -= probePage
+	}
+	subSP(b, "sub", n)
+}
+
 func subSP(b *strings.Builder, op string, n int) {
 	if n >= 4096 {
 		fmt.Fprintf(b, "\t%s sp, sp, #%d, lsl #12\n", op, n>>12)
@@ -284,13 +306,21 @@ func (s *fstate) prologue(b *strings.Builder, fr *frameInfo) {
 	if fr.rec == 0 && fr.size <= 504 {
 		fmt.Fprintf(b, "\tstp x29, x30, [sp, #-%d]!\n\tmov x29, sp\n", fr.size)
 	} else {
-		subSP(b, "sub", fr.size)
+		probeSP(b, fr.size)
 		if fr.rec <= 504 {
 			fmt.Fprintf(b, "\tstp x29, x30, [sp, #%d]\n", fr.rec)
 		} else {
 			fmt.Fprintf(b, "\tstr x29, [sp, #%d]\n\tstr x30, [sp, #%d]\n", fr.rec, fr.rec+8)
 		}
-		fmt.Fprintf(b, "\tadd x29, sp, #%d\n", fr.rec)
+		if fr.rec >= 4096 {
+			// add takes a 12 bit immediate, optionally shifted by 12
+			fmt.Fprintf(b, "\tadd x29, sp, #%d, lsl #12\n", fr.rec>>12)
+			if lo := fr.rec & 4095; lo > 0 {
+				fmt.Fprintf(b, "\tadd x29, x29, #%d\n", lo)
+			}
+		} else {
+			fmt.Fprintf(b, "\tadd x29, sp, #%d\n", fr.rec)
+		}
 	}
 	s.saves(b, fr, "str", "stp")
 }

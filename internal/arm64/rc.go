@@ -183,7 +183,7 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		if out == 0 && frame <= 504 {
 			fmt.Fprintf(&b, "\tstp x29, x30, [sp, #-%d]!\n\tmov x29, sp\n", frame)
 		} else {
-			fmt.Fprintf(&b, "\tsub sp, sp, #%d\n\tstp x29, x30, [sp, #%d]\n\tadd x29, sp, #%d\n", frame, out, out)
+			fmt.Fprintf(&b, "\tsub sp, sp, #%d\n%s\tadd x29, sp, #%d\n", frame, recordAt("stp", out), out)
 		}
 		for k := 0; k < n; k++ {
 			if k < 8 {
@@ -219,7 +219,7 @@ func (g *gen) rcHelper(kind string, t *ssa.Type) string {
 		if out == 0 && frame <= 504 {
 			fmt.Fprintf(&b, "\tldp x29, x30, [sp], #%d\n\tret\n", frame)
 		} else {
-			fmt.Fprintf(&b, "\tldp x29, x30, [sp, #%d]\n\tadd sp, sp, #%d\n\tret\n", out, frame)
+			fmt.Fprintf(&b, "%s\tadd sp, sp, #%d\n\tret\n", recordAt("ldp", out), frame)
 		}
 	}
 	b.WriteString("\n")
@@ -294,14 +294,14 @@ func (g *gen) elemHelper(kind string, t *ssa.Type) string {
 	if n > 8 {
 		// the words past x7 go on the stack: no tail call
 		out := align16(8 * (n - 8))
-		fmt.Fprintf(&b, "\tsub sp, sp, #%d\n\tstp x29, x30, [sp, #%d]\n\tadd x29, sp, #%d\n", out+16, out, out)
+		fmt.Fprintf(&b, "\tsub sp, sp, #%d\n%s\tadd x29, sp, #%d\n", out+16, recordAt("stp", out), out)
 		for k := 8; k < n; k++ {
 			fmt.Fprintf(&b, "\tldr x9, [x0, #%d]\n\tstr x9, [sp, #%d]\n", 8*k, 8*(k-8))
 		}
 		for k := 7; k >= 0; k-- {
 			fmt.Fprintf(&b, "\tldr x%d, [x0, #%d]\n", k, 8*k)
 		}
-		fmt.Fprintf(&b, "\tbl %s\n\tldp x29, x30, [sp, #%d]\n\tadd sp, sp, #%d\n\tret\n\n", inner, out, out+16)
+		fmt.Fprintf(&b, "\tbl %s\n%s\tadd sp, sp, #%d\n\tret\n\n", inner, recordAt("ldp", out), out+16)
 		g.helpers.WriteString(b.String())
 		return sym
 	}
@@ -327,4 +327,19 @@ func (s *fstate) cancelRC(v *ssa.Value) bool {
 	}
 	s.cancel[r] = true
 	return true
+}
+
+// recordAt stores (op "stp") or loads (op "ldp") the frame record (x29,
+// x30) at [sp, #off] of a helper's frame: one pair instruction while off
+// is in its reach (504), two single ones past it, for values so wide that
+// their stack argument words come first (a parser's syntax tree enums).
+func recordAt(op string, off int) string {
+	if off <= 504 {
+		return fmt.Sprintf("\t%s x29, x30, [sp, #%d]\n", op, off)
+	}
+	one := "str"
+	if op == "ldp" {
+		one = "ldr"
+	}
+	return fmt.Sprintf("\t%s x29, [sp, #%d]\n\t%s x30, [sp, #%d]\n", one, off, one, off+8)
 }

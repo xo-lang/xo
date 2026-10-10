@@ -187,11 +187,11 @@ func (g *gen) leavesAndThen(b *strings.Builder, kind string, ls []leaf, hdr int,
 		out = max(out, align16(8*(g.leafWords(l.t)-8)))
 	}
 	frame := out + 32
-	fmt.Fprintf(b, "\tsub sp, sp, #%d\n\tstp x29, x30, [sp, #%d]\n\tadd x29, sp, #%d\n\tstr x19, [sp, #%d]\n\tmov x19, x0\n", frame, out, out, out+16)
+	fmt.Fprintf(b, "\tsub sp, sp, #%d\n%s\tadd x29, sp, #%d\n\tstr x19, [sp, #%d]\n\tmov x19, x0\n", frame, recordAt("stp", out), out, out+16)
 	for _, l := range ls {
 		g.loadCall(b, g.rcHelper(kind, l.t), "x19", hdr+8*l.off, g.leafWords(l.t))
 	}
-	fmt.Fprintf(b, "\tmov x0, x19\n\tldr x19, [sp, #%d]\n\tldp x29, x30, [sp, #%d]\n\tadd sp, sp, #%d\n%s", out+16, out, frame, tail)
+	fmt.Fprintf(b, "\tmov x0, x19\n\tldr x19, [sp, #%d]\n%s\tadd sp, sp, #%d\n%s", out+16, recordAt("ldp", out), frame, tail)
 }
 
 // loadCall calls sym with the n words at [base, #off] as integer
