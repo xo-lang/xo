@@ -22,6 +22,15 @@ var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the go
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// identical builds reuse one binary, within and across runs
+	build.EnableTestBinCache()
+	// a -race program sleeps 1 s at exit by default (the race runtime's
+	// atexit_sleep_ms) so other threads can report; reports during the
+	// run are unaffected, and the replay tests run their -race build 32
+	// times (gotchas/race-binaries-sleep-at-exit.md)
+	if _, ok := os.LookupEnv("GORACE"); !ok {
+		os.Setenv("GORACE", "atexit_sleep_ms=0")
+	}
 	dir, err := os.MkdirTemp("", "xo-gen-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

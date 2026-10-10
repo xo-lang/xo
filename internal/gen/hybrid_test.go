@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,12 +87,22 @@ func TestGoldenHybrid(t *testing.T) {
 // Bool, and struct Lists, `var` writes, recursion, and faults: index,
 // overflow, division by zero, Float to Int) with random data, once with
 // the kernels in assembly and once with tag xo_pure, and compares the
-// runs.
+// runs. The full suite runs seeds 1 to 4 (each kind of kernel mix, with
+// and without a fault), -short 1 to 3; XO_HYBRID_SEEDS=N runs 1 to N
+// (bench/nightly.sh: 24, decision 0111).
 func TestHybridRandom(t *testing.T) {
+	t.Parallel() // temporary directories only
 	needArm64(t)
-	seeds := 12
+	seeds := 4
 	if testing.Short() {
 		seeds = 3
+	}
+	if v := os.Getenv("XO_HYBRID_SEEDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			t.Fatalf("XO_HYBRID_SEEDS=%q: want a positive count", v)
+		}
+		seeds = n
 	}
 	for seed := 1; seed <= seeds; seed++ {
 		seed := seed

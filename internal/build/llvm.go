@@ -102,7 +102,9 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
-	if err := clangBuild(clang, []string{ll, rt}, bin, flags...); err != nil {
+	srcs := []string{ll, rt}
+	key := nativeBinKey(dir, clang, append([]string{"llvm", LLVMOptLevel}, flags...), srcs)
+	if err := withBinCache(key, bin, func() error { return clangBuild(clang, srcs, bin, flags...) }); err != nil {
 		return nil, err
 	}
 	out.Binaries[Host()] = bin
@@ -208,15 +210,26 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}
-		var tlsLink []string
+		var tlsCompile, tlsLink []string
 		if tls {
 			// std/http's TLS (decision 0105)
 			c, l, err := tlsArgs(clang, flags, root)
 			if err != nil {
 				return err.Error(), err
 			}
+			tlsCompile, tlsLink = c, l
 			args = append(args, c...)
-			tlsLink = l
+		}
+		// the C runtime compiled once per flags and sources (rtobj.go)
+		srcs := srcs
+		if i := runtimeSource(srcs, flags); i >= 0 {
+			obj, out, err := runtimeObject(clang, flags, root, tlsCompile, srcs[i])
+			if err != nil {
+				return out, err
+			}
+			if obj != "" {
+				srcs = append(append(append([]string(nil), srcs[:i]...), obj), srcs[i+1:]...)
+			}
 		}
 		args = append(args, srcs...)
 		args = append(args, tlsLink...)

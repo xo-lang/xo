@@ -57,28 +57,36 @@ func TestNoGCTests(t *testing.T) {
 		t.Skip("builds and runs test binaries on every backend")
 	}
 	backends := nativeBackends(t)
+	// one build directory for the parallel subtests (each builds its own
+	// program; t.Setenv is not allowed in parallel tests)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void")} {
-		goCode, goOut := xoTest(t, "-v", dir)
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			goCode, goOut := xoTest(t, "-v", dir)
+			for _, be := range backends {
+				code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
+				if code != goCode || out != goOut {
+					t.Errorf("%s on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", dir, be, goCode, code, goOut, be, out)
+				}
+			}
+		})
+	}
+	t.Run("native", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join("testdata", "nogc", "native")
+		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, be := range backends {
 			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
-			if code != goCode || out != goOut {
-				t.Errorf("%s on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", dir, be, goCode, code, goOut, be, out)
+			if code != 1 || out != string(want) {
+				t.Errorf("%s on %s: exit %d\n--- want\n%s--- got\n%s", dir, be, code, want, out)
 			}
 		}
-	}
-	dir := filepath.Join("testdata", "nogc", "native")
-	want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, be := range backends {
-		code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
-		if code != 1 || out != string(want) {
-			t.Errorf("%s on %s: exit %d\n--- want\n%s--- got\n%s", dir, be, code, want, out)
-		}
-	}
+	})
 }
 
 var leakLine = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
@@ -102,22 +110,27 @@ func TestNoGCTestLeaks(t *testing.T) {
 				if ti.Skip != "" {
 					continue // not in the binary (a contract fuzz test)
 				}
-				cmd := exec.Command(bin)
-				cmd.Dir = ti.Dir
-				cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(ti.Index), "XO_LEAKCHECK=1")
-				var errb bytes.Buffer
-				cmd.Stdout, cmd.Stderr = io.Discard, &errb
-				if cmd.Run() != nil {
-					continue // a failing test exits without the check
-				}
-				m := leakLine.FindStringSubmatch(errb.String())
-				if m == nil {
-					t.Errorf("%s %q on %s: no leak check line:\n%s", dir, ti.Name, be, errb.String())
-					continue
-				}
-				if m[1] != "0" {
-					t.Errorf("%s %q on %s: %s allocations live at exit (of %s)", dir, ti.Name, be, m[1], m[2])
-				}
+				ti := ti
+				// one process per test: they run in parallel
+				t.Run(fmt.Sprintf("%s/%s/%d", filepath.Base(dir), be, ti.Index), func(t *testing.T) {
+					t.Parallel()
+					cmd := exec.Command(bin)
+					cmd.Dir = ti.Dir
+					cmd.Env = append(os.Environ(), "XO_TEST="+strconv.Itoa(ti.Index), "XO_LEAKCHECK=1")
+					var errb bytes.Buffer
+					cmd.Stdout, cmd.Stderr = io.Discard, &errb
+					if cmd.Run() != nil {
+						return // a failing test exits without the check
+					}
+					m := leakLine.FindStringSubmatch(errb.String())
+					if m == nil {
+						t.Errorf("%s %q on %s: no leak check line:\n%s", dir, ti.Name, be, errb.String())
+						return
+					}
+					if m[1] != "0" {
+						t.Errorf("%s %q on %s: %s allocations live at exit (of %s)", dir, ti.Name, be, m[1], m[2])
+					}
+				})
 			}
 		}
 	}

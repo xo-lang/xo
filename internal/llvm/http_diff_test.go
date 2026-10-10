@@ -417,6 +417,7 @@ func cServeErr(bin string, inputs []string) ([]string, string) {
 // TestHTTPParseDiff compares the native server's answers with net/http's
 // on the corpus and on random requests, valid and mutated.
 func TestHTTPParseDiff(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	bin, _ := buildHTTPDiff(t)
 	inputs := append([]string(nil), httpCorpus...)
 	// a header just under and just over net/http's limit (1 MiB + 4096)
@@ -576,6 +577,7 @@ func FuzzHTTPDiff(f *testing.F) {
 // AddressSanitizer and UndefinedBehaviorSanitizer for a few seconds (1 s
 // with -short; XO_FUZZ_SECONDS overrides): no crash, no report, no leak.
 func TestHTTPFuzz(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}

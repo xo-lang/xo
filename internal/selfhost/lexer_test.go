@@ -37,6 +37,13 @@ var (
 
 // lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
 // "llvm"; decision 0081) once.
+// TestMain turns on the binary cache: the lexer is rebuilt only when its
+// generated code or the toolchain changes.
+func TestMain(m *testing.M) {
+	build.EnableTestBinCache()
+	os.Exit(m.Run())
+}
+
 func lexerBinary(backend string) (string, error) {
 	lexerMu.Lock()
 	defer lexerMu.Unlock()
@@ -322,6 +329,7 @@ func compare(t *testing.T, bin, root string, paths []string) {
 func TestSelfhostDifferential(t *testing.T) {
 	for _, backend := range []string{"go", "arm64", "llvm"} {
 		t.Run(backend, func(t *testing.T) {
+			t.Parallel()
 			if backend != "go" {
 				if why := nativeSkip(backend); why != "" {
 					t.Skip(why)
@@ -346,8 +354,9 @@ func differential(t *testing.T, bin string) {
 	t.Run("repo", func(t *testing.T) { compare(t, bin, root, files) })
 	tmp := t.TempDir()
 	if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
-		// Keep the spec blocks and the fuzz corpus for inspection.
-		tmp = keep
+		// Keep the spec blocks and the fuzz corpus for inspection, one
+		// directory per backend (the backends run in parallel).
+		tmp = filepath.Join(keep, filepath.Base(t.Name()))
 		if err := os.MkdirAll(tmp, 0o755); err != nil {
 			t.Fatal(err)
 		}

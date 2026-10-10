@@ -31,6 +31,7 @@ import (
 // std/rt/testdata/argon2id_xcrypto.txt; verify_password on valid and
 // mutated PHC and PBKDF2 strings against std/rt's.
 func TestCryptoDiff(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}

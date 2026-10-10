@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/serve"
 )
 
@@ -20,6 +21,8 @@ import (
 // The serve test turns forwarding back on for its own temporary socket.
 func TestMain(m *testing.M) {
 	os.Setenv(serve.DisableEnv, "1")
+	// identical builds reuse one binary, within and across runs
+	build.EnableTestBinCache()
 	os.Exit(m.Run())
 }
 

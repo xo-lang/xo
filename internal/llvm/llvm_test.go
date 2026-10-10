@@ -23,6 +23,8 @@ var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the go
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// identical builds reuse one binary, within and across runs
+	build.EnableTestBinCache()
 	dir, err := os.MkdirTemp("", "xo-llvm-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

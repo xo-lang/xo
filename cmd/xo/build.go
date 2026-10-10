@@ -433,14 +433,16 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 		targs = append(targs, "-cases", strconv.Itoa(*cases))
 	}
 	// shrunk contract fuzz failures become regression tests (core 9.2)
+	// (in the test binary's environment, not this process's: concurrent
+	// runs in one process, such as cmd/xo's tests, each get their own)
+	var env []string
 	rf, err := os.CreateTemp("", "xo-regressions-*.jsonl")
 	if err == nil {
 		rf.Close()
 		defer os.Remove(rf.Name())
-		os.Setenv("XO_REGRESSION_OUT", rf.Name())
-		defer os.Unsetenv("XO_REGRESSION_OUT")
+		env = append(env, "XO_REGRESSION_OUT="+rf.Name())
 	}
-	code := execBinary(res.Binaries[build.Host()], targs, stdout, stderr)
+	code := execBinary(res.Binaries[build.Host()], targs, stdout, stderr, env...)
 	if err == nil {
 		writeRegressions(rf.Name(), stdout)
 	}

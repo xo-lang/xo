@@ -2,6 +2,7 @@ package llvm_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 // ThreadSanitizer, whose instrumentation adds such a cleanup to every
 // function (the Linux CI failure of 2026-10-09).
 func TestRuntimeFaultResume(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
@@ -28,7 +30,9 @@ func TestRuntimeFaultResume(t *testing.T) {
 	}
 	bins := map[string]string{"plain": plain, "tsan": tsanBuild(t, nil, []string{src})}
 	for name, bin := range bins {
-		out, err := exec.Command(bin).CombinedOutput()
+		cmd := exec.Command(bin)
+		cmd.Env = append(os.Environ(), tsanOptions())
+		out, err := cmd.CombinedOutput()
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) || ee.ExitCode() != 70 {
 			t.Errorf("%s: want exit status 70, got %v:\n%s", name, err, out)

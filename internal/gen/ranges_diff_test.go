@@ -26,6 +26,7 @@ func TestRangeDifferential(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds two programs")
 	}
+	t.Parallel() // temporary directories only
 	seeds := []int64{20261008}
 	if n, err := strconv.Atoi(os.Getenv("XO_RANGE_SEEDS")); err == nil {
 		for i := 1; i <= n; i++ {
@@ -33,7 +34,11 @@ func TestRangeDifferential(t *testing.T) {
 		}
 	}
 	for _, seed := range seeds {
-		t.Run(fmt.Sprint(seed), func(t *testing.T) { rangeDifferential(t, seed) })
+		seed := seed
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			t.Parallel()
+			rangeDifferential(t, seed)
+		})
 	}
 }
 

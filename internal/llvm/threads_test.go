@@ -97,12 +97,26 @@ func sanitizerRuns(flag string) string {
 	return p.why
 }
 
+// tsanOptions is the ThreadSanitizer setting of every run: stop at the
+// first report, and no sleep at exit. ThreadSanitizer sleeps 1 s in
+// atexit by default (atexit_sleep_ms) to catch races of threads still
+// running then; a run took 2.5 s instead of 0.25 s on 2026-10-09
+// (gotchas/race-binaries-sleep-at-exit.md). XO_TSAN_ATEXIT_SLEEP=ms
+// (bench/nightly.sh: 1000) restores the sleep.
+func tsanOptions() string {
+	ms := os.Getenv("XO_TSAN_ATEXIT_SLEEP")
+	if ms == "" {
+		ms = "0"
+	}
+	return "TSAN_OPTIONS=halt_on_error=1:atexit_sleep_ms=" + ms
+}
+
 // runTSan runs bin and fails on a nonzero exit or a sanitizer report.
 func runTSan(t *testing.T, bin, dir string, env ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "TSAN_OPTIONS=halt_on_error=1"), env...)
+	cmd.Env = append(append(os.Environ(), tsanOptions()), env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
@@ -121,6 +135,7 @@ func runTSan(t *testing.T, bin, dir string, env ...string) string {
 // immortal literals: under ThreadSanitizer, then optimized with more
 // iterations.
 func TestRuntimeThreads(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "rc_threads.c")
 	bin := tsanBuild(t, nil, []string{src})
 	out := runTSan(t, bin, ".")
@@ -147,6 +162,7 @@ func TestRuntimeThreads(t *testing.T) {
 // then optimized with ten times the tasks; every allocation must be
 // freed.
 func TestRuntimeTasks(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "tasks.c")
 	bin := tsanBuild(t, nil, []string{src})
 	for _, threads := range []string{"1", "3"} {
@@ -174,6 +190,7 @@ func TestRuntimeTasks(t *testing.T) {
 // ThreadSanitizer with one worker and with three, then optimized; every
 // allocation must be freed.
 func TestRuntimeEventLoop(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "evloop.c")
 	bin := tsanBuild(t, nil, []string{src})
 	for _, threads := range []string{"1", "3"} {
@@ -209,6 +226,7 @@ func TestGoldenThreads(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds golden programs with ThreadSanitizer")
 	}
+	t.Parallel() // builds nothing in the shared build directory
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no golden programs: %v", err)
@@ -285,6 +303,7 @@ func TestGoldenTasks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds golden programs with ThreadSanitizer")
 	}
+	t.Parallel() // builds nothing in the shared build directory
 	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no golden programs: %v", err)
@@ -320,7 +339,7 @@ func TestGoldenTasks(t *testing.T) {
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=1", "XO_LEAKCHECK=1", "XO_THREADS="+threads)
+				cmd.Env = append(os.Environ(), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				err := cmd.Run()

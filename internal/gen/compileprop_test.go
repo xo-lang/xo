@@ -34,9 +34,12 @@ import (
 //
 // -short builds compilePropShort programs from fixed seeds;
 // XO_COMPILE_PROPS=N builds N (seeds 1..N) in the full suite (default
-// compilePropFull). XO_COMPILE_PROP_SEED=S builds only seed S, and
-// XO_COMPILE_PROP_KEEP=dir keeps the programs there.
+// compilePropFull; bench/nightly.sh builds 500, decision 0111).
+// XO_COMPILE_PROP_SEED=S builds only seed S, and XO_COMPILE_PROP_KEEP=dir
+// keeps the programs there. The programs live in temporary directories,
+// so the test runs beside the other top level tests.
 func TestCompileProperty(t *testing.T) {
+	t.Parallel()
 	n := compilePropFull
 	if testing.Short() {
 		n = compilePropShort
@@ -100,7 +103,7 @@ func TestCompileProperty(t *testing.T) {
 
 const (
 	compilePropShort = 24
-	compilePropFull  = 150
+	compilePropFull  = 50
 )
 
 // runProp runs a generated program: its exit status, standard output,

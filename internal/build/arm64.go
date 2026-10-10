@@ -62,7 +62,7 @@ func writeRuntime(dir string) (string, error) {
 // Arm64Asm lowers a checked program to SSA with reference counting and
 // then to AArch64 assembly for goos ("darwin" or "linux").
 func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
-	asm, _, err := arm64AsmOpts(res, root, goos, false, false, false)
+	asm, _, err := arm64AsmOpts(res, root, goos, "", false, false, false)
 	return asm, err
 }
 
@@ -70,16 +70,16 @@ func Arm64Asm(res *check.Result, root, goos string) ([]byte, error) {
 // defined when probes is set (Options.ShareProbes), debug contracts
 // compiled out when release is set. It also returns the zone data
 // std/time needs.
-func arm64AsmOpts(res *check.Result, root, goos string, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
-	asm, tz, err := arm64Asm(res, root, goos, false, probes, tests, release)
+func arm64AsmOpts(res *check.Result, root, goos, layout string, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
+	asm, tz, err := arm64Asm(res, root, goos, layout, false, probes, tests, release)
 	var ie *arm64.InlineError
 	if errors.As(err, &ie) {
-		return arm64Asm(res, root, goos, true, probes, tests, release)
+		return arm64Asm(res, root, goos, layout, true, probes, tests, release)
 	}
 	return asm, tz, err
 }
 
-func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
+func arm64Asm(res *check.Result, root, goos, layout string, noInline, probes, tests, release bool) ([]byte, ssa.TZUse, error) {
 	var tz ssa.TZUse
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: root, Tests: tests, Release: release, GOOS: goos, GOARCH: "arm64"})
 	if err != nil {
@@ -96,7 +96,10 @@ func arm64Asm(res *check.Result, root, goos string, noInline, probes, tests, rel
 	if err := m.Verify(); err != nil {
 		return nil, tz, err
 	}
-	place, err := arm64.ParseLayout(os.Getenv("XO_ARM64_LAYOUT"))
+	if layout == "" {
+		layout = os.Getenv("XO_ARM64_LAYOUT")
+	}
+	place, err := arm64.ParseLayout(layout)
 	if err != nil {
 		return nil, tz, fmt.Errorf("XO_ARM64_LAYOUT: %v", err)
 	}
@@ -126,7 +129,11 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 			return nil, fmt.Errorf("the arm64 backend builds for darwin/arm64 and linux/arm64, not %s", t)
 		}
 	}
-	dir, err := buildDir(dirs, opts.Mode, false, opts.NoRanges, false, releaseVariant(opts))
+	variants := []string{releaseVariant(opts)}
+	if opts.ARM64Layout != "" {
+		variants = append(variants, "layout "+opts.ARM64Layout)
+	}
+	dir, err := buildDir(dirs, opts.Mode, false, opts.NoRanges, false, variants...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +153,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 	out.Name = name
 	root := lineRoot(dirs)
 	for _, t := range ts {
-		asm, tz, err := arm64AsmOpts(res, root, t.OS, opts.ShareProbes, opts.Mode == gen.Test, opts.release())
+		asm, tz, err := arm64AsmOpts(res, root, t.OS, opts.ARM64Layout, opts.ShareProbes, opts.Mode == gen.Test, opts.release())
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +183,9 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		}
 		flags = append(flags, IOFlags(asm)...)
 		out.Notes = notes
-		if err := ccBuild(cc, append([]string{"-O2"}, flags...), []string{s, rt}, bin); err != nil {
+		ccFlags, srcs := append([]string{"-O2"}, flags...), []string{s, rt}
+		key := nativeBinKey(dir, cc, append([]string{"arm64"}, ccFlags...), srcs)
+		if err := withBinCache(key, bin, func() error { return ccBuild(cc, ccFlags, srcs, bin) }); err != nil {
 			return nil, err
 		}
 		out.Binaries[t] = bin

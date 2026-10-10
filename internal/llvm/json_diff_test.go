@@ -221,6 +221,7 @@ func mutate(r *rand.Rand, s []byte) []byte {
 // TestJSONParseDiff runs json_diff.c (with AddressSanitizer when clang
 // has it) on the corpus and on random valid and mutated texts.
 func TestJSONParseDiff(t *testing.T) {
+	t.Parallel() // builds nothing in the shared build directory
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}

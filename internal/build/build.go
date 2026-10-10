@@ -124,6 +124,11 @@ type Options struct {
 	// NoErrorArgs (`--error-args=false`, release builds only, decision
 	// 0092) records error frames without parameter values.
 	NoErrorArgs bool
+	// ARM64Layout is the arm64 backend's code placement in the form of
+	// $XO_ARM64_LAYOUT (decision 0075), which it overrides when set; the
+	// build gets its own directory, so tests build several placements at
+	// once.
+	ARM64Layout string
 }
 
 // release reports whether this is a release build (Release, Build mode).
@@ -640,11 +645,17 @@ func goBuild(dir, bin string, t Target, opts Options, extra []string) error {
 	if len(ld) > 0 {
 		args = append(args, "-ldflags="+strings.Join(ld, " "))
 	}
-	args = append(args, "-o", bin)
 	if opts.Race {
 		args = append(args, "-race")
 	}
 	args = append(args, ".")
+	key := goBinKey(dir, args, t, opts.Race)
+	args = append(args[:len(args)-1:len(args)-1], "-o", bin, ".")
+	return withBinCache(key, bin, func() error { return goBuildRun(dir, t, opts, args) })
+}
+
+// goBuildRun runs go build in dir with args.
+func goBuildRun(dir string, t Target, opts Options, args []string) error {
 	cmd := exec.Command(goTool(), args...)
 	cmd.Dir = dir
 	env := append(os.Environ(), "GOOS="+t.OS, "GOARCH="+t.Arch, "GOWORK=off", "GOFLAGS=", "GOCACHE="+GoCacheDir())
