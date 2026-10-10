@@ -183,6 +183,10 @@ func patternsOf(n ast.Node) []ast.Pattern {
 		if x.Pattern != nil {
 			return []ast.Pattern{x.Pattern}
 		}
+	case *ast.WhileStmt:
+		if x.Pattern != nil {
+			return []ast.Pattern{x.Pattern}
+		}
 	case *ast.MatchExpr:
 		var out []ast.Pattern
 		for _, a := range x.Arms {

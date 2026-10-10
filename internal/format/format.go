@@ -1056,7 +1056,13 @@ func (p *printer) stmt(s ast.Stmt) {
 	case *ast.WhileStmt:
 		p.label(x.Label)
 		p.w("while ")
-		if x.Cond != nil {
+		if x.Pattern != nil {
+			p.w("let ")
+			p.pattern(x.Pattern)
+			p.w(" = ")
+			p.expr(x.Value)
+			p.w(" ")
+		} else if x.Cond != nil {
 			p.expr(x.Cond)
 			p.w(" ")
 		}

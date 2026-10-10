@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`while let`** (3.5, decision 0134): `while let Some(v) = expr { }`
+  loops while a refutable pattern matches, and `while let v = opt` is
+  the Option shorthand, as for `if let`.
 - **Real-time functions** (6.5, decision 0133): `uses realtime` on a
   function declaration forbids allocation (`XO1401`), loops without a
   bound (`XO1402`), calls of functions that are not real-time, function
@@ -889,6 +892,7 @@ for job in jobs_chan { ... }  // receives until the channel is closed and draine
 for i in 0..10 { ... }        // half open range, 0..=10 is inclusive
 for _ in 0..3 { ... }
 while cond { ... }
+while let Some(job) = queue.pop() { ... }  // until the pattern fails
 while { ... }                 // infinite loop
 for x in xs bound 64 { ... }  // a loop bound: a contract (below, 6.5)
 while cond bound 1000 { ... }
@@ -901,6 +905,13 @@ match code {
 ```
 
 - `if` without `else` has type `()`.
+- `while let pattern = value { ... }` computes `value` before each
+  iteration and runs the body while it matches the pattern, with the
+  pattern's names bound in the body; the loop ends at the first value
+  that does not match (decision 0134). Any refutable pattern works
+  (`while let Tok.Num(n) = next()`), and `while let v = opt` is
+  shorthand for `while let Some(v) = opt`, as with `if let` (2.5).
+  `bound N` follows the value: `while let Some(x) = q.pop() bound 64`.
 - `x is Pattern` is a `Bool` expression that tests a pattern without binding
   names: `expect(r is Err(Timeout))`, `if resp is Ok(_) && retries < 3`.
   `is` is a contextual word in operator position (precedence of `==`), so it
@@ -942,7 +953,7 @@ match code {
   reported). The task is no longer shielded afterwards. Every backend
   behaves this way (decision 0085, amended 2026-10-10).
 
-**Patterns** are used in `match`, `let`, `if let`, and `for`:
+**Patterns** are used in `match`, `let`, `if let`, `while let`, and `for`:
 
 | Pattern | Matches |
 |---|---|
@@ -2614,7 +2625,7 @@ Stmt        = "let" Pattern [ ":" Type ] "=" Expr
 AssignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" .
 Place       = ident { "." ident | "." int | "[" Expr "]" } .
 ForStmt     = [ ident ":" ] "for" Pattern "in" Expr [ "bound" Expr ] Block .
-WhileStmt   = [ ident ":" ] "while" [ Expr [ "bound" Expr ] ] Block .
+WhileStmt   = [ ident ":" ] "while" [ ( Expr | "let" Pattern "=" Expr ) [ "bound" Expr ] ] Block .
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary
             | "while" Block | "???" .      // infinite loop as an expression, type Never

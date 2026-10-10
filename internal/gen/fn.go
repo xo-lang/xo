@@ -815,7 +815,7 @@ func (f *fnGen) stmtNever(s ast.Stmt) bool {
 			return !loopHasBreak(w.Body, "")
 		}
 	case *ast.WhileStmt:
-		if x.Cond == nil {
+		if x.Cond == nil && x.Pattern == nil {
 			label := ""
 			if x.Label != nil {
 				label = x.Label.Name
@@ -1074,7 +1074,25 @@ func (f *fnGen) loopWhile(label *ast.Ident, cond ast.Expr, body *ast.Block, at a
 			f.line("\tbreak")
 			f.line("}")
 		}
+		var m *match
+		if w, ok := at.(*ast.WhileStmt); ok && w.Pattern != nil {
+			// `while let p = v` (decision 0134): match each iteration,
+			// leave the loop when the pattern fails
+			vt := f.nat(w.Value)
+			v := f.tmp("l")
+			restore := f.inUnit(w.Value)
+			f.line("%s := %s", v, f.valAs(w.Value, vt))
+			restore()
+			f.line("_ = %s", v)
+			m = f.letPattern(w.Pattern, v, vt)
+			f.line("if !(%s) {", m.condition())
+			f.line("\tbreak")
+			f.line("}")
+		}
 		tick()
+		if m != nil {
+			f.declareBinds(m)
+		}
 		f.block(body, dest{kind: dDiscard})
 		f.ind--
 	})

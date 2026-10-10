@@ -105,6 +105,10 @@ func (s *fn) stmt(st ast.Stmt) {
 		if x.Label != nil {
 			label = x.Label.Name
 		}
+		if x.Pattern != nil {
+			s.whileLet(label, x)
+			return
+		}
 		s.while(label, x.Cond, x.Bound, x.Body)
 	case *ast.ForStmt:
 		s.forStmt(x)

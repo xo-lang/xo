@@ -55,6 +55,7 @@ func inspectNode(n ast.Node, fn func(ast.Node) bool) {
 		walk(x.Body)
 	case *ast.WhileStmt:
 		walkExpr(x.Cond, walk)
+		walkExpr(x.Value, walk)
 		walkExpr(x.Bound, walk)
 		walk(x.Body)
 	case *ast.ParenExpr:

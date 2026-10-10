@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `while let` (spec 3.5, decision 0134): `while let Some(v) = q.pop() { }`
+  loops while a refutable pattern matches; `while let v = opt` is the
+  Option shorthand, as for `if let`. Labels, `continue`, and `bound N`
+  work; every backend and the self hosted parser.
 - Import paths with a `.` or `..` segment (`use example.com/app/./lib`,
   `use ./lib`) are `XO0158`. They were accepted, and since `deny` rules
   compared the path as written while the loader cleaned it, they got

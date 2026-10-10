@@ -385,6 +385,18 @@ func (f *fnGen) armBody(s ast.Stmt, d dest) {
 	}
 }
 
+// letPattern compiles the pattern of an `if let` or `while let` against
+// the Go variable v of type vt; a bare name against an Option is
+// `Some(name)` (core 2.5).
+func (f *fnGen) letPattern(p ast.Pattern, v string, vt check.Type) *match {
+	if bp, ok := p.(*ast.BindPat); ok && f.g.optionElem(vt) != nil {
+		if pt := f.info.PatType(bp); pt != nil && f.goType(pt) != f.goType(vt) {
+			return &match{conds: []string{v + ".Some"}, binds: []bind{{v: f.info.VarOf(bp.Name), code: v + ".V", t: pt}}}
+		}
+	}
+	return f.pattern(p, v, vt)
+}
+
 func (f *fnGen) ifExpr(x *ast.IfExpr, d dest) {
 	if x.Cond != nil {
 		restore := f.inUnit(x.Cond)
@@ -400,16 +412,7 @@ func (f *fnGen) ifExpr(x *ast.IfExpr, d dest) {
 		restore := f.inUnit(x.Value)
 		f.line("%s := %s", v, f.valAs(x.Value, vt))
 		restore()
-		var m *match
-		if bp, ok := x.Pattern.(*ast.BindPat); ok && f.g.optionElem(vt) != nil {
-			if pt := f.info.PatType(bp); pt != nil && f.goType(pt) != f.goType(vt) {
-				// `if let e = opt` is `if let Some(e) = opt` (core 2.5)
-				m = &match{conds: []string{v + ".Some"}, binds: []bind{{v: f.info.VarOf(bp.Name), code: v + ".V", t: pt}}}
-			}
-		}
-		if m == nil {
-			m = f.pattern(x.Pattern, v, vt)
-		}
+		m := f.letPattern(x.Pattern, v, vt)
 		f.line("if %s {", m.condition())
 		f.ind++
 		f.declareBinds(m)

@@ -1,0 +1,94 @@
+// `while let` (core 3.5, decision 0134): the loop runs while the pattern
+// matches the value, computed again before each iteration.
+
+enum Tok {
+  Num(n: Int)
+  Word(w: Str)
+  End
+}
+
+struct Node {
+  name: Str
+  next: Int?
+}
+
+fn tokens() -> List[Tok] {
+  [Tok.Num(1), Tok.Word("two"), Tok.Num(3), Tok.End, Tok.Num(99)]
+}
+
+fn at(toks: List[Tok], i: Int) -> Tok? {
+  if i < toks.len() { Some(toks[i]) } else { None }
+}
+
+fn main(os: Os) {
+  // Some(v) against a pop that empties the list
+  var stack = ["a", "b", "c"]
+  var out = ""
+  while let Some(s) = stack.pop() {
+    out = out + s
+  }
+  os.stdio.println("popped ${out}, left ${stack.len()}")
+
+  // the shorthand: a bare name against an Option
+  let nodes = [Node{name: "n0", next: Some(2)}, Node{name: "n1", next: None}, Node{name: "n2", next: Some(1)}]
+  var cursor: Int? = Some(0)
+  var path: List[Str] = []
+  while let i = cursor {
+    path.push(nodes[i].name)
+    cursor = nodes[i].next
+  }
+  os.stdio.println("path ${path.join(" -> ")}")
+
+  // a nested refutable pattern: stops at the first token that is not a
+  // Num or a Word (Tok.End), not at the end of the list
+  let toks = tokens()
+  var k = 0
+  var sum = 0
+  var words: List[Str] = []
+  while let Some(Tok.Num(_) | Tok.Word(_)) = at(toks, k) {
+    match toks[k] {
+      Tok.Num(n) => sum += n
+      Tok.Word(w) => words.push(w)
+      Tok.End => {}
+    }
+    k += 1
+  }
+  os.stdio.println("stopped at ${k}, sum ${sum}, words ${words.len()}")
+
+  // list patterns, continue, and a bound
+  var queue = [[1, 2], [], [3], [4, 5, 6]]
+  var firsts: List[Int] = []
+  var empties = 0
+  while let Some(xs) = queue.pop() bound 10 {
+    if xs.is_empty() {
+      empties += 1
+      continue
+    }
+    if let [first, ..] = xs {
+      firsts.push(first)
+    }
+  }
+  os.stdio.println("firsts ${firsts.len()} ${firsts[0]} ${firsts[2]}, empties ${empties}")
+
+  // labeled loops, a tuple pattern with a literal, and a nested while let
+  var pairs = [(1, "x"), (0, "stop"), (2, "y")]
+  var seen: List[Str] = []
+  outer: while let Some((1, name)) = pairs.first() {
+    pairs = pairs[1..]
+    var inner = [name, name]
+    while let Some(c) = inner.pop() {
+      seen.push(c)
+      if seen.len() > 5 {
+        break outer
+      }
+    }
+  }
+  os.stdio.println("seen ${seen.join(",")}, left ${pairs.len()}")
+
+  // a pattern that never matches: the body does not run
+  var never = 0
+  while let Some(_) = stack.pop() {
+    never += 1
+  }
+  os.stdio.println("never ${never}")
+}

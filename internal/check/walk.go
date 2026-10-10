@@ -55,7 +55,7 @@ func children(n ast.Node) []ast.Node {
 	case *ast.ForStmt:
 		add(x.Iter, x.Bound, x.Body)
 	case *ast.WhileStmt:
-		add(x.Cond, x.Bound, x.Body)
+		add(x.Cond, x.Value, x.Bound, x.Body)
 	case *ast.StringLit:
 		for _, p := range x.Parts {
 			if p.Expr != nil {

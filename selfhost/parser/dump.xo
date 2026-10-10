@@ -437,11 +437,13 @@ fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
       dump_expr_opt(out, d, "bound", bound.first())
       dump_block(out, d, "body", body)
     }
-    WhileStmt(span, lbl, cond, bound, body) => {
+    WhileStmt(span, lbl, cond, pattern, value, bound, body) => {
       head(out, depth, label, "WhileStmt", span)
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
       dump_expr_opt(out, d, "cond", cond)
+      dump_pattern_opt(out, d, "pattern", pattern.first())
+      dump_expr_opt(out, d, "value", value.first())
       dump_expr_opt(out, d, "bound", bound.first())
       dump_block(out, d, "body", body)
     }
