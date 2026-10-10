@@ -16,6 +16,9 @@ Fix: the lexers (`internal/lexer/lexer.go` `hasDotSegment`,
 `selfhost/lexer/lexer.xo` `has_dot_segment`) report such paths as
 `XO0158`, and both `loadImports` and `checkDeny` use `path.Clean` of the
 path, so a package has one spelling everywhere even if a malformed path
-reaches them. Tests: `TestErrors` (lexer), the selfhost lexer cases,
-`TestResolution` "dot segments do not get past a deny rule". Any new
+reaches them. After the deny check, the loader binds such an import to
+no module, so `XO0158` is the only error about it (no `XO0601` or
+`XO1306` with a wrong `xo get ./lib` hint). Tests: `TestErrors` (lexer), the selfhost lexer cases,
+`TestResolution` "dot segments do not get past a deny rule" and
+"relative import reports only XO0158". Any new
 check that compares import paths should compare cleaned paths.

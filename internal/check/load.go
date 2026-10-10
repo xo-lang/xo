@@ -410,7 +410,13 @@ func (c *checker) loadImports(m *Module) error {
 			if dep != nil && !m.IsStd {
 				c.checkDeny(m, u)
 			}
-			if dep == nil && c.unrequired(u) {
+			if p != u.Path {
+				// XO0158 already explains the path; bind the name to no
+				// module, as for one not found, so nothing else is
+				// reported about it.
+				dep = nil
+				imp.Used = true
+			} else if dep == nil && c.unrequired(u) {
 				imp.Used = true
 			} else if dep == nil {
 				d := c.errorf(diag.UnresolvedName, u.Sp, "module `%s` not found", p)

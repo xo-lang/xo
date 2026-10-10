@@ -141,6 +141,11 @@ func TestResolution(t *testing.T) {
 			"x/a.xo":         "pub fn two() -> Int { 2 }\n",
 			"domain/main.xo": "use example.com/app/./store as s1\nuse example.com/app/x/../store as s2\n\npub fn f() -> Int { s1.one() + s2.one() }\n",
 		}, want: []string{"XO0158", "XO0158", "XO1312", "XO1312"}},
+		{name: "relative import reports only XO0158", files: map[string]string{
+			"xo.mod":       "module example.com/app\nedition 2026\n",
+			"lib/a.xo":     "pub fn one() -> Int { 1 }\n",
+			"main/main.xo": "use ./lib as a\nuse example.com/app/lib/.. as b\nuse example.com/app/../lib as c\n\nfn f() -> Int { a.one() + b.one() + c.one() }\n",
+		}, want: []string{"XO0158", "XO0158", "XO0158"}},
 		{name: "deny pattern forbids a nested use", files: map[string]string{
 			"xo.mod":         "module example.com/app\nedition 2026\n\ndeny example.com/app/domain -> example.com/app/...\n",
 			"store/sql/a.xo": "pub fn one() -> Int { 1 }\n",
