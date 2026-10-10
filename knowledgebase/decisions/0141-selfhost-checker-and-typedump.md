@@ -3,10 +3,11 @@
 Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
 inference), stage 3 (generics), stage 4 (effects and real-time, but
 dependency ceilings), the parse habits (pulled ahead of stage 8, in
-selfhost/parser), and stage 5 (value semantics) implemented in
-`selfhost/check/` (Xo: decl.xo, types.xo, infer.xo, effects.xo, expr.xo,
-call.xo, stmt.xo, pattern.xo, habits.xo, comparable.xo, realtime.xo,
-flow.xo, the sigs section in dump.xo),
+selfhost/parser), stage 5 (value semantics), and stage 6 (patterns and
+exhaustiveness) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
+comparable.xo, realtime.xo, flow.xo, exhaust.xo, the sigs section in
+dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -195,6 +196,23 @@ and aliases, unused bindings, split sections), compared like every
 other run. The mutations add value semantics edits (valueEdits: a `var`
 removed from a binding, parameter, or receiver, an added binding never
 read, a store back into a collection dropped, a builder frozen twice).
+
+**Comparison rules of stage 6** (2026-10-10, patterns and
+exhaustiveness; they extend stage 5's): the staged diagnostics add
+XO0301 (a match that is not exhaustive, with up to five missing
+patterns), XO0303 (a refutable `let` or `for` pattern), and the XO0305
+warning (a `_` or catch all arm hiding variants of an enum of the
+module). selfhost/check/exhaust.xo ports the usefulness algorithm of
+pattern.go with its witnesses; pattern.xo returns the pattern forms
+(`IPat`, pattern.go ipat) that the algorithm reads.
+internal/selfhost/testdata/exhaust holds modules for enums (nested,
+guarded, or patterns, uninhabited variants), Bool, tuples, lists with
+`..`, structs, newtypes, numbers and strings, refutable `let` and `for`
+patterns, and the XO0305 rule with its default arm threshold. The
+mutations add pattern edits (patternEdits: a one line match arm
+removed, or its pattern replaced by `_`). A run the Xo checker cannot
+parse is now checked too: the Go parser must report a hard error in the
+same file (`habitOnly` false), or the run fails.
 
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each

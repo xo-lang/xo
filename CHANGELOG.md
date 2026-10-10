@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker checks matches for exhaustiveness (stage 6 of
+  decision 0141): XO0301 with the same missing patterns, refutable `let`
+  and `for` patterns (XO0303), and the XO0305 warning, as internal/check
+  does on every repository module (go, arm64, and LLVM backends).
 - The self hosted checker applies the value semantics rules (stage 5 of
   decision 0141): `var` places (XO0501, XO0502), overlapping `var`
   arguments (XO0503), moves (XO0510), lost and stored updates (XO0520),

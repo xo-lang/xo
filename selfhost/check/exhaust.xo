@@ -1,0 +1,482 @@
+// Exhaustiveness (stage 6 of decision 0141), a port of the second half of
+// internal/check/pattern.go: the usefulness algorithm with witnesses over
+// the pattern forms pattern.xo builds, for non exhaustive matches
+// (XO0301), refutable `let` and `for` patterns (XO0303), and `_` arms
+// that hide variants of an enum of the module (XO0305, a warning).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The kinds of a pattern form (pattern.go ipKind).
+const IP_WILD = 0
+const IP_CTOR = 1
+const IP_LIT = 2
+const IP_OR = 3
+
+/// A typed pattern in the form of the exhaustiveness check (pattern.go
+/// ipat): a wildcard, a constructor (a variant by index, false or true as
+/// 0 and 1, 0 for tuples, structs, and newtypes, a list by length), a
+/// literal, or alternatives.
+struct IPat {
+  kind: Int
+  key: Int = 0
+  args: List[IPat] = []
+  alts: List[IPat] = []
+  /// A list pattern: an exact length (rest false), or a prefix and suffix
+  /// around `..`.
+  list: Bool = false
+  rest: Bool = false
+  prefix: Int = 0
+}
+
+fn wild_pat() -> IPat {
+  IPat{kind: IP_WILD}
+}
+
+fn wilds(n: Int) -> List[IPat] {
+  var out: List[IPat] = []
+  for _ in 0..n {
+    out.push(wild_pat())
+  }
+  out
+}
+
+/// A constructor of a type (pattern.go ctorInfo).
+struct CtorInfo {
+  key: Int
+  arity: Int = 0
+  arg_types: List[Int] = []
+  list: Bool = false
+}
+
+/// The constructors of t, and whether t is infinite: its values are
+/// covered only by a wildcard (numbers, strings, ...). heads are the
+/// patterns of the column, for list lengths.
+fn (var c: Checker) ctors_of(t: Int, heads: List[IPat]) -> (List[CtorInfo], Bool) {
+  let r = c.resolve(t)
+  let x = c.tys[r]
+  if x.kind == TyKind.Tuple {
+    return ([CtorInfo{key: 0, arity: x.args.len(), arg_types: x.args}], false)
+  }
+  if x.kind != TyKind.Named {
+    return ([], true)
+  }
+  let o = x.obj
+  if c.objs[o].module == c.prelude && c.objs[o].name == b"Bool" {
+    return ([CtorInfo{key: 0}, CtorInfo{key: 1}], false)
+  }
+  if c.objs[o].module == c.prelude && c.objs[o].name == b"List" {
+    var max_len = 0
+    for h in heads {
+      if h.kind == IP_CTOR && h.list && h.args.len() > max_len {
+        max_len = h.args.len()
+      }
+    }
+    var out: List[CtorInfo] = []
+    for n in 0..max_len + 2 {
+      var ts: List[Int] = []
+      for _ in 0..n {
+        ts.push(x.args[0])
+      }
+      out.push(CtorInfo{key: n, arity: n, arg_types: ts, list: true})
+    }
+    return (out, false)
+  }
+  let s = c.args_subst(c.objs[o].tparams, x.args)
+  let tk = c.objs[o].tkind
+  if tk == "enum" {
+    var out: List[CtorInfo] = []
+    for v in c.objs[o].variants {
+      var ci = CtorInfo{key: v.index, arity: v.fields.len()}
+      var uninhabited = false
+      for f in v.fields {
+        let ft = c.subst(f.ty, s)
+        if c.is_never(ft) {
+          uninhabited = true
+        }
+        ci.arg_types.push(ft)
+      }
+      if !uninhabited {
+        out.push(ci)
+      }
+    }
+    return (out, false)
+  }
+  if tk == "newtype" {
+    return ([CtorInfo{key: 0, arity: 1, arg_types: [c.subst(c.objs[o].target, s)]}], false)
+  }
+  if tk == "struct" {
+    if c.objs[o].opaque {
+      return ([], true)
+    }
+    var ci = CtorInfo{key: 0, arity: c.objs[o].fields.len()}
+    for f in c.objs[o].fields {
+      ci.arg_types.push(c.subst(f.ty, s))
+    }
+    return ([ci], false)
+  }
+  ([], true)
+}
+
+/// Rows whose head is an or pattern become one row per alternative.
+fn expand_or(rows: List[List[IPat]]) -> List[List[IPat]] {
+  var out: List[List[IPat]] = []
+  for r in rows {
+    if !r.is_empty() && r[0].kind == IP_OR {
+      for a in r[0].alts {
+        var nr = [a]
+        for k in 1..r.len() {
+          nr.push(r[k])
+        }
+        for x in expand_or([nr]) {
+          out.push(x)
+        }
+      }
+      continue
+    }
+    out.push(r)
+  }
+  out
+}
+
+/// The rows whose head matches constructor ci, the head replaced by its
+/// arguments.
+fn specialize(rows: List[List[IPat]], ci: CtorInfo) -> List[List[IPat]] {
+  var out: List[List[IPat]] = []
+  for r in rows {
+    let h = r[0]
+    var args: List[IPat] = []
+    if h.kind == IP_WILD {
+      args = wilds(ci.arity)
+    } else if h.kind == IP_CTOR && h.list && ci.list {
+      if !h.rest {
+        if h.args.len() != ci.key {
+          continue
+        }
+        args = h.args
+      } else {
+        if ci.key < h.args.len() {
+          continue
+        }
+        for k in 0..h.prefix {
+          args.push(h.args[k])
+        }
+        for w in wilds(ci.key - h.args.len()) {
+          args.push(w)
+        }
+        for k in h.prefix..h.args.len() {
+          args.push(h.args[k])
+        }
+      }
+    } else if h.kind == IP_CTOR && !h.list && h.key == ci.key {
+      args = h.args
+    } else {
+      continue
+    }
+    var nr = args
+    for k in 1..r.len() {
+      nr.push(r[k])
+    }
+    out.push(nr)
+  }
+  out
+}
+
+fn default_rows(rows: List[List[IPat]]) -> List[List[IPat]] {
+  var out: List[List[IPat]] = []
+  for r in rows {
+    if r[0].kind == IP_WILD {
+      out.push(r[1..])
+    }
+  }
+  out
+}
+
+/// A missing value pattern, printable (pattern.go witness): has_ctor is
+/// false for `_`.
+struct Witness {
+  has_ctor: Bool = false
+  ctor: CtorInfo = CtorInfo{key: 0}
+  t: Int
+  args: List[Witness] = []
+}
+
+/// A vector of patterns not covered by rows, or None when rows are
+/// exhaustive.
+fn (var c: Checker) missing(rows0: List[List[IPat]], tys: List[Int], depth: Int) -> List[Witness]? {
+  if tys.is_empty() {
+    if rows0.is_empty() {
+      return Some([])
+    }
+    return None
+  }
+  if depth > 40 {
+    return None
+  }
+  let rows = expand_or(rows0)
+  var heads: List[IPat] = []
+  for r in rows {
+    heads.push(r[0])
+  }
+  let (ctors, infinite) = c.ctors_of(tys[0], heads)
+  if !infinite {
+    var used: List[Int] = []
+    var list_has_rest = false
+    for h in heads {
+      if h.kind == IP_CTOR {
+        if h.list && h.rest {
+          list_has_rest = true
+        }
+        used.push(h.key)
+      }
+    }
+    var complete = true
+    for ci in ctors {
+      if !used.contains(ci.key) && !(ci.list && list_has_rest) {
+        complete = false
+      }
+    }
+    if complete {
+      for ci in ctors {
+        let sub = specialize(rows, ci)
+        var sub_tys = ci.arg_types
+        for k in 1..tys.len() {
+          sub_tys.push(tys[k])
+        }
+        if let Some(w) = c.missing(sub, sub_tys, depth + 1) {
+          var out = [Witness{has_ctor: true, ctor: ci, t: tys[0], args: w[0..ci.arity]}]
+          for k in ci.arity..w.len() {
+            out.push(w[k])
+          }
+          return Some(out)
+        }
+      }
+      return None
+    }
+  }
+  let w = match c.missing(default_rows(rows), tys[1..], depth + 1) {
+    Some(x) => x
+    None => return None
+  }
+  var head = Witness{t: tys[0]}
+  if !infinite {
+    var used: List[Int] = []
+    for h in heads {
+      if h.kind == IP_CTOR {
+        used.push(h.key)
+      }
+    }
+    for ci in ctors {
+      if !used.contains(ci.key) {
+        head = Witness{has_ctor: true, ctor: ci, t: tys[0]}
+        for j in 0..ci.arity {
+          head.args.push(Witness{t: ci.arg_types[j]})
+        }
+        break
+      }
+    }
+  }
+  var out = [head]
+  for x in w {
+    out.push(x)
+  }
+  Some(out)
+}
+
+fn (c: Checker) witness_string(w: Witness) -> Str {
+  if !w.has_ctor {
+    return "_"
+  }
+  var all_wild = true
+  for a in w.args {
+    if a.has_ctor {
+      all_wild = false
+    }
+  }
+  let r = c.resolve(w.t)
+  let x = c.tys[r]
+  if x.kind == TyKind.Tuple {
+    var parts: List[Str] = []
+    for a in w.args {
+      parts.push(c.witness_string(a))
+    }
+    return "(${parts.join(", ")})"
+  }
+  if x.kind != TyKind.Named {
+    return "_"
+  }
+  let o = x.obj
+  if c.objs[o].module == c.prelude && c.objs[o].name == b"Bool" {
+    return if w.ctor.key == 1 { "true" } else { "false" }
+  }
+  if w.ctor.list {
+    var parts: List[Str] = []
+    for a in w.args {
+      parts.push(c.witness_string(a))
+    }
+    if w.ctor.key > 0 {
+      // the last constructor stands for every longer list
+      return "[${parts.join(", ")}]"
+    }
+    return "[]"
+  }
+  let tk = c.objs[o].tkind
+  if tk == "enum" {
+    var vi = -1
+    for (i, v) in c.objs[o].variants.indexed() {
+      if v.index == w.ctor.key {
+        vi = i
+      }
+    }
+    if vi < 0 {
+      return "_"
+    }
+    let v = c.objs[o].variants[vi]
+    let name = text(v.name)
+    if v.fields.is_empty() {
+      return name
+    }
+    if all_wild {
+      if v.fields.len() == 1 {
+        return "${name}(_)"
+      }
+      return "${name}(..)"
+    }
+    var parts: List[Str] = []
+    for a in w.args {
+      parts.push(c.witness_string(a))
+    }
+    return "${name}(${parts.join(", ")})"
+  }
+  if tk == "newtype" && w.args.len() == 1 {
+    return "${text(c.objs[o].name)}(${c.witness_string(w.args[0])})"
+  }
+  if tk == "struct" {
+    if all_wild {
+      return "${text(c.objs[o].name)}{..}"
+    }
+    var parts: List[Str] = []
+    for (i, a) in w.args.indexed() {
+      parts.push("${text(c.objs[o].fields[i].name)}: ${c.witness_string(a)}")
+    }
+    return "${text(c.objs[o].name)}{${parts.join(", ")}}"
+  }
+  "_"
+}
+
+/// A witness back as a pattern row, to find further missing cases.
+fn witness_pat(w: Witness) -> IPat {
+  if !w.has_ctor {
+    return wild_pat()
+  }
+  var ip = IPat{kind: IP_CTOR, key: w.ctor.key, list: w.ctor.list}
+  for a in w.args {
+    ip.args.push(witness_pat(a))
+  }
+  ip
+}
+
+/// XO0301 with the missing patterns of a match (pattern.go
+/// checkExhaustive).
+fn (var c: Checker) check_exhaustive(subject: Expr, rows: List[IPat], st: Int) {
+  if c.contains_bad(st) || c.has_open_vars(st) {
+    return
+  }
+  var matrix: List[List[IPat]] = []
+  for r in rows {
+    matrix.push([r])
+  }
+  var missing_pats: List[Str] = []
+  for _ in 0..5 {
+    let w = match c.missing(matrix, [st], 0) {
+      Some(x) => x
+      None => break
+    }
+    let s = c.witness_string(w[0])
+    missing_pats.push(s)
+    if s == "_" || s.starts_with("[") {
+      break
+    }
+    matrix.push([witness_pat(w[0])])
+  }
+  if missing_pats.is_empty() {
+    return
+  }
+  c.error("XO0301", parser.expr_span(subject), "match on `${c.show(st)}` is not exhaustive: missing `${missing_pats.join("`, `")}`")
+}
+
+/// XO0303 when ip does not cover every value of t (pattern.go
+/// requireIrrefutable).
+fn (var c: Checker) require_irrefutable(ip: IPat, t: Int, p: Pattern, what: Str) {
+  if c.contains_bad(t) || c.has_open_vars(t) {
+    return
+  }
+  if let Some(w) = c.missing([[ip]], [t], 0) {
+    c.error("XO0303", parser.pattern_span(p), "${what} must match every value of `${c.show(t)}`, but `${c.witness_string(w[0])}` is not covered")
+  }
+}
+
+/// The variant names a pattern names, through or patterns.
+fn mention(p: Pattern, var named: List[Bytes]) {
+  match p {
+    VariantPat(path: path, ..) => {
+      if !path.is_empty() {
+        named.push(path[path.len() - 1].name)
+      }
+    }
+    OrPat(alts: alts, ..) => {
+      for a in alts {
+        mention(a, named)
+      }
+    }
+    _ => {}
+  }
+}
+
+/// XO0305 (a warning) when an unguarded `_` or catch all binding arm
+/// hides variants of an enum declared in the current module (pattern.go
+/// warnWildcardOwnEnum).
+fn (var c: Checker) warn_wildcard_own_enum(arms: List[parser.MatchArm], st: Int) {
+  let r = c.resolve(st)
+  if c.tys[r].kind != TyKind.Named {
+    return
+  }
+  let o = c.tys[r].obj
+  if c.cur_mod < 0 || c.objs[o].module != c.cur_mod || c.objs[o].variants.is_empty() {
+    return
+  }
+  var named: List[Bytes] = []
+  for arm in arms {
+    var catch_all = false
+    if arm.pattern is WildcardPat(..) | BindPat(..) {
+      catch_all = arm.guard == None
+    }
+    if !catch_all {
+      mention(arm.pattern, named)
+      continue
+    }
+    var hidden: List[Str] = []
+    for v in c.objs[o].variants {
+      if !named.contains(v.name) {
+        hidden.push(text(v.name))
+      }
+    }
+    let total = c.objs[o].variants.len()
+    if hidden.is_empty() || (hidden.len() >= WILDCARD_DEFAULT_MIN && 2 * hidden.len() > total) {
+      return
+    }
+    var shown = hidden
+    var more = ""
+    if shown.len() > WILDCARD_LIST_MAX {
+      shown = hidden[0..WILDCARD_LIST_MAX]
+      more = " and ${hidden.len() - WILDCARD_LIST_MAX} more"
+    }
+    c.error("XO0305", parser.pattern_span(arm.pattern), "this arm hides `${shown.join("`, `")}`${more} of `${text(c.objs[o].name)}`, declared in this module")
+    return
+  }
+}
+
+/// The number of hidden variants from which a `_` arm that hides most of
+/// an enum is a default (decision 0080), and the most names XO0305
+/// prints.
+const WILDCARD_DEFAULT_MIN = 8
+const WILDCARD_LIST_MAX = 8

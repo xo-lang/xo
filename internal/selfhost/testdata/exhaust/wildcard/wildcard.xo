@@ -1,0 +1,64 @@
+// `_` arms that hide variants of an enum of this module (XO0305, a
+// warning, decision 0080): the program is accepted.
+
+enum Color {
+  Red
+  Green
+  Blue
+}
+
+enum Big {
+  A
+  B
+  C
+  D
+  E
+  F
+  G
+  H
+  I
+  J
+}
+
+fn short(c: Color) -> Int {
+  match c {
+    Red => 1
+    _ => 0
+  }
+}
+
+fn bound(c: Color) -> Int {
+  match c {
+    Green | Blue => 1
+    other => 0
+  }
+}
+
+fn guarded(c: Color, k: Int) -> Int {
+  match c {
+    _ if k > 0 => 1
+    Red => 2
+    _ => 3
+  }
+}
+
+fn default_arm(b: Big) -> Int {
+  match b {
+    A => 1
+    _ => 0
+  }
+}
+
+fn listed(b: Big) -> Int {
+  match b {
+    A | B | C => 1
+    _ => 0
+  }
+}
+
+fn foreign(o: Int?) -> Int {
+  match o {
+    Some(v) => v
+    _ => 0
+  }
+}

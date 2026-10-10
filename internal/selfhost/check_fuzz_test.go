@@ -17,7 +17,7 @@ import (
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
 // 0141) on mutations of the single directory modules of the repository
-// that the Go checker accepts and that import only std. A sixth each
+// that the Go checker accepts and that import only std. A seventh each
 // are name mutations (one identifier renamed, to an unresolved name or
 // one that now resolves elsewhere, a `use` line removed, or a top level
 // declaration duplicated), type mutations (a literal replaced by one of
@@ -29,8 +29,9 @@ import (
 // Swift that the parser reports and recovers from, decision 0087), and
 // value semantics mutations (a `var` removed from a binding, parameter,
 // or receiver, a binding added that is never read, a store back into a
-// collection dropped, or a builder frozen twice). The rules of
-// TestSelfhostChecker apply: an accepted mutation
+// collection dropped, or a builder frozen twice), and pattern mutations
+// (a one line match arm removed, or its pattern replaced by `_`). The
+// rules of TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
 // mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
@@ -84,7 +85,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				switch rng.Intn(6) {
+				switch rng.Intn(7) {
 				case 0:
 					data = mutateNames(rng, data)
 				case 1:
@@ -95,8 +96,10 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 					data = mutateEffects(rng, data)
 				case 4:
 					data = mutateHabits(rng, data)
-				default:
+				case 5:
 					data = mutateValues(rng, data)
+				default:
+					data = mutatePatterns(rng, data)
 				}
 			}
 			if err := os.WriteFile(filepath.Join(tmp, dir, name), data, 0o644); err != nil {
@@ -122,9 +125,11 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 	var st checkStats
 	var fails []string
 	codes := map[string]int{}
+	others := map[string]int{}
 	for _, d := range dirs {
 		want := goCheck(d)
 		before := st.stagedOK
+		otherBefore := st.otherRejected
 		if msg := compareRun(d, want, got[d], &st); msg != "" {
 			src, _ := os.ReadFile(filepath.Join(tmp, d, firstXo(t, filepath.Join(tmp, d))))
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
@@ -134,10 +139,19 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
 			}
 		}
+		if st.otherRejected > otherBefore {
+			for _, code := range want.other {
+				others[code]++
+			}
+			if len(want.other) == 0 {
+				others["unsupported parse error"]++
+			}
+		}
 	}
 	t.Logf("%d mutations: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported",
 		len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported)
 	t.Logf("diagnostics of the matching rejected mutations: %v", codes)
+	t.Logf("the other errors of the mutations rejected otherwise: %v", others)
 	if len(fails) > 0 {
 		if len(fails) > 5 {
 			fails = append(fails[:5], fmt.Sprintf("... and %d more", len(fails)-5))
@@ -612,6 +626,41 @@ func mutateValues(rng *rand.Rand, src []byte) []byte {
 	}
 	c := cands[rng.Intn(len(cands))]
 	e := valueEdits[c.e]
+	var b bytes.Buffer
+	b.Write(src[:c.match[0]])
+	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))
+	b.Write(src[c.match[1]:])
+	return b.Bytes()
+}
+
+// patternEdits are rewrites for exhaustiveness (stage 6): a one line
+// match arm removed, or its pattern replaced by a wildcard.
+var patternEdits = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`(?m)^[ \t]+[^\n{}=]*[^\n{}=>] => [^\n{}]*\n`), ""},
+	{regexp.MustCompile(`(?m)^([ \t]+)[A-Z][A-Za-z0-9_.]*(\([^\n{}=]*\))? => `), "${1}_ => "},
+}
+
+// mutatePatterns applies one patternEdits rewrite at a random place of
+// src, or falls back to a value mutation.
+func mutatePatterns(rng *rand.Rand, src []byte) []byte {
+	type cand struct {
+		e     int
+		match []int
+	}
+	var cands []cand
+	for i, e := range patternEdits {
+		for _, m := range e.re.FindAllSubmatchIndex(src, -1) {
+			cands = append(cands, cand{i, m})
+		}
+	}
+	if len(cands) == 0 {
+		return mutateValues(rng, src)
+	}
+	c := cands[rng.Intn(len(cands))]
+	e := patternEdits[c.e]
 	var b bytes.Buffer
 	b.Write(src[:c.match[0]])
 	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))

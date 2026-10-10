@@ -252,9 +252,16 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		st.errors++
 		return ""
 	case strings.HasPrefix(got, "== unsupported parse error"):
-		// the Xo parser stops at a file the Go parser rejects too
+		// the Xo parser stops at a hard error of a file the Go parser
+		// rejects with a hard error too
 		if want.accepted {
 			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports %s", dir, firstLine(got))
+		}
+		file := strings.TrimPrefix(firstLine(got), "== unsupported parse error in ")
+		if src, err := os.ReadFile(file); err == nil {
+			if dump := parser.Dump(file, src, 0); !strings.Contains(dump, "\ndiag ") || habitOnly(dump) {
+				return fmt.Sprintf("%s: the Go parser recovers from every error of %s, the Xo parser stops:\n%s", dir, file, diagLines(dump))
+			}
 		}
 		st.otherRejected++
 		return ""
@@ -343,10 +350,11 @@ func splitDiags(dump string) (string, []string) {
 // stage 3 (XO0402, XO0404 on constraints, comparability, keys, and
 // derives), effects of stage 4 (XO0701, real-time XO1401 to XO1405),
 // and value semantics of stage 5 (XO0501, XO0502, XO0503, XO0510,
-// XO0520, the XO0804 warning, unused bindings XO0110 and XO0201). Left
-// to later stages: exhaustiveness (XO0301, XO0303, XO0305), naming
-// (XO0101), and the habits of other languages the checker reports
-// (XO0177; the parser's are staged through parseDiag).
+// XO0520, the XO0804 warning, unused bindings XO0110 and XO0201), and
+// exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning). Left
+// to later stages: naming (XO0101), and the habits of other languages
+// the checker reports (XO0177; the parser's are staged through
+// parseDiag).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
@@ -355,6 +363,8 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0701|XO1401|XO1402|XO1403|XO1404|XO1405)",.*`,
 	// stage 5: value semantics and unused bindings
 	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
+	// stage 6: exhaustiveness
+	`(XO0301|XO0303|XO0305)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

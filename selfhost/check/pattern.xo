@@ -1,15 +1,17 @@
 // Patterns (internal/check/pattern.go): typing a pattern against the
-// type of the matched value and binding its names. Exhaustiveness is
-// stage 6 (decision 0141).
+// type of the matched value, binding its names, and its form for the
+// exhaustiveness check (exhaust.xo, stage 6 of decision 0141).
 
 use github.com/xo-lang/xo/selfhost/parser
 
-/// Types p against t and declares its bindings in the current scope.
-fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) {
+/// Types p against t, declares its bindings in the current scope, and
+/// returns its exhaustiveness form.
+fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
   match p {
-    WildcardPat(..) | BadPat(..) => {}
+    WildcardPat(..) | BadPat(..) => wild_pat()
     BindPat(name: name, ..) => {
       c.declare_local(name, t, "let")
+      wild_pat()
     }
     LitPat(span: span, value: value) => c.lit_pattern(value, t, span)
     RangePat(span: span, lo: lo, hi: hi, ..) => {
@@ -22,6 +24,7 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) {
           c.error("XO0302", span, "range of `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
         }
       }
+      IPat{kind: IP_LIT}
     }
     OrPat(alts: alts, ..) => c.or_pattern(alts, t, refutable)
     TuplePat(span: span, elems: elems) => {
@@ -33,16 +36,18 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) {
         for e in elems {
           c.pattern(e, c.bad_ty, refutable)
         }
-        return
+        return wild_pat()
       }
       let ts = c.tys[r].args
+      var ip = IPat{kind: IP_CTOR}
       for (i, e) in elems.indexed() {
-        c.pattern(e, ts[i], refutable)
+        ip.args.push(c.pattern(e, ts[i], refutable))
       }
+      ip
     }
     VariantPat(span: span, path: path, parens: parens, fields: fields, rest: rest) => c.variant_pattern(span, path, parens, fields, rest, t, refutable)
     StructPat(span: span, path: path, fields: fields, rest: rest) => c.struct_pattern(span, path, fields, rest, t, refutable)
-    ListPat(span: span, elems: elems, ..) => {
+    ListPat(span: span, elems: elems, rest: rest) => {
       let r = c.resolve(t)
       var et = c.bad_ty
       if c.is_prelude(r, "List") {
@@ -50,9 +55,19 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) {
       } else if !c.is_bad(r) {
         c.error("XO0302", span, "list pattern does not fit a value of type `${c.show(t)}`")
       }
+      var ip = IPat{kind: IP_CTOR, list: true}
       for e in elems {
-        c.pattern(e, et, refutable)
+        ip.args.push(c.pattern(e, et, refutable))
       }
+      if rest >= 0 {
+        ip.rest = true
+        ip.prefix = rest
+      }
+      ip.key = elems.len()
+      if c.is_bad(et) {
+        return wild_pat()
+      }
+      ip
     }
   }
 }
@@ -62,33 +77,36 @@ fn (var c: Checker) refutable_pattern(pat: Pattern, vt: Int) {
   if let BindPat(span: span, ..) = pat {
     if c.option_elem(vt) >= 0 {
       let some = Pattern.VariantPat(span: span, path: [Ident{span: span, name: b"Some"}], parens: true, fields: [parser.PatField{span: span, name: None, pattern: pat}], rest: false)
-      c.pattern(some, vt, true)
+      let _ = c.pattern(some, vt, true)
       return
     }
   }
-  c.pattern(pat, vt, true)
+  let _ = c.pattern(pat, vt, true)
 }
 
-fn (var c: Checker) lit_pattern(v: Expr, t: Int, sp: Span) {
+fn (var c: Checker) lit_pattern(v: Expr, t: Int, sp: Span) -> IPat {
   if let Ident(id) = v {
     if id.name == b"true" || id.name == b"false" {
       if !c.is_bad(t) && !c.is_prelude(t, "Bool") {
         c.error("XO0302", sp, "`${text(id.name)}` does not fit a value of type `${c.show(t)}`")
-        return
+        return wild_pat()
       }
       c.set_type(v, c.named("Bool"))
-      return
+      return IPat{kind: IP_CTOR, key: if id.name == b"true" { 1 } else { 0 }}
     }
   }
   let lt = c.infer(v, t)
   if !c.is_bad(t) && !c.is_bad(lt) && !c.try_unify(lt, t) {
     c.error("XO0302", sp, "literal of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+    return wild_pat()
   }
+  IPat{kind: IP_LIT}
 }
 
-fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) {
+fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) -> IPat {
+  var ip = IPat{kind: IP_OR}
   let before = c.objs.len()
-  c.pattern(alts[0], t, refutable)
+  ip.alts.push(c.pattern(alts[0], t, refutable))
   let n = c.scopes.len() - 1
   var first: Map[Bytes, Int] = {}
   for (name, o) in c.scopes[n].entries() {
@@ -99,7 +117,7 @@ fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) {
   for i in 1..alts.len() {
     let alt = alts[i]
     c.push_scope()
-    c.pattern(alt, t, refutable)
+    ip.alts.push(c.pattern(alt, t, refutable))
     let got = c.scopes[c.scopes.len() - 1]
     for (_, v) in got.entries() {
       c.objs[v].used = true
@@ -121,6 +139,7 @@ fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) {
       c.error("XO0304", parser.pattern_span(alt), "every alternative of an or pattern must bind the same names with the same types; `${diff.sort().join("`, `")}` differs")
     }
   }
+  ip
 }
 
 /// The variant a pattern path names: (enum, position), or (-1, -1).
@@ -241,7 +260,7 @@ fn (var c: Checker) newtype_of_pattern(path: List[Ident], t: Int) -> Int {
 }
 
 /// `Email(p)`: p matches the newtype's underlying value (decision 0097).
-fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) -> IPat {
   let r = c.resolve(t)
   var inner = c.bad_ty
   if c.tys[r].kind == TyKind.Named && c.tys[r].obj == obj {
@@ -257,15 +276,18 @@ fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: 
     }
     // no unused binding warning on top of the error
     c.mark_used_since(before)
-    return
+    return wild_pat()
   }
+  var sub = wild_pat()
   let before = c.objs.len()
   if fields.len() == 1 {
-    c.pattern(fields[0].pattern, inner, refutable)
+    sub = c.pattern(fields[0].pattern, inner, refutable)
   }
   if c.is_bad(inner) {
     c.mark_used_since(before)
+    return wild_pat()
   }
+  IPat{kind: IP_CTOR, key: 0, args: [sub]}
 }
 
 /// Marks the locals declared since object before as read (pattern.go:
@@ -278,18 +300,17 @@ fn (var c: Checker) mark_used_since(before: Int) {
   }
 }
 
-fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) -> IPat {
   let nt = c.newtype_of_pattern(path, t)
   if nt >= 0 {
-    c.newtype_pattern(span, nt, parens, fields, rest, t, refutable)
-    return
+    return c.newtype_pattern(span, nt, parens, fields, rest, t, refutable)
   }
   let (en, v) = c.resolve_variant_path(span, path, t)
   if en < 0 {
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
     }
-    return
+    return wild_pat()
   }
   let last = path[path.len() - 1]
   if !(parens && last.span == span) {
@@ -303,18 +324,19 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
     }
-    return
+    return wild_pat()
   }
   let typed = is_named && c.tys[r].obj == en
   var s: Subst = {}
   if typed {
     s = c.args_subst(c.objs[en].tparams, c.tys[r].args)
   }
+  var ip = IPat{kind: IP_CTOR, key: vi.index, args: wilds(vi.fields.len())}
   if !parens {
     if !vi.fields.is_empty() {
       c.error("XO0302", span, "variant `${text(vi.name)}` has fields; write `${text(vi.name)}(..)` to match any of them")
     }
-    return
+    return ip
   }
   if vi.fields.is_empty() {
     if !fields.is_empty() || !rest {
@@ -323,7 +345,7 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
     }
-    return
+    return ip
   }
   var used: List[Bool] = []
   for _ in vi.fields {
@@ -364,7 +386,7 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
     }
     used[idx] = true
     let ft = if typed { c.subst(vi.fields[idx].ty, s) } else { c.bad_ty }
-    c.pattern(f.pattern, ft, refutable)
+    ip.args[idx] = c.pattern(f.pattern, ft, refutable)
   }
   if !rest {
     var missing: List[Str] = []
@@ -377,9 +399,10 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
       c.error("XO0302", span, "pattern for `${text(vi.name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
     }
   }
+  ip
 }
 
-fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) {
+fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) -> IPat {
   var obj = -1
   if path.len() == 1 {
     let o = c.lookup_module_obj(c.cur_mod, path[0].name)
@@ -407,15 +430,16 @@ fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[p
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
     }
-    return
+    return wild_pat()
   }
   if !c.is_bad(r) && (!is_named || c.tys[r].obj != obj) {
     c.error("XO0302", span, "struct pattern `${text(c.objs[obj].name)}` does not fit a value of type `${c.show(t)}`")
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
     }
-    return
+    return wild_pat()
   }
+  var ip = IPat{kind: IP_CTOR, args: wilds(c.objs[obj].fields.len())}
   var s: Subst = {}
   let typed = is_named || c.objs[obj].tparams.is_empty()
   if is_named {
@@ -459,7 +483,7 @@ fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[p
     if typed {
       ft = c.subst(fo.ty, s)
     }
-    c.pattern(f.pattern, ft, refutable)
+    ip.args[idx] = c.pattern(f.pattern, ft, refutable)
   }
   if !rest {
     var missing: List[Str] = []
@@ -472,4 +496,5 @@ fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[p
       c.error("XO0302", span, "pattern for `${text(c.objs[obj].name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
     }
   }
+  ip
 }
