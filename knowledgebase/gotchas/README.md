@@ -261,3 +261,6 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-empty-list-not-nil-in-tree.md](go-empty-list-not-nil-in-tree.md): Observed: an empty non nil Go slice prints `name: []` in the tree dump; the Xo FnDecl carries `params_list` for the `impl` recovery that leaves one.
 - [selfhost-keep-dir-inside-repo.md](selfhost-keep-dir-inside-repo.md): Observed: XO_SELFHOST_KEEP inside the repository leaves mutated modules that the next TestSelfhostChecker walk counts as runs; use a dot directory and `-run 'TestSelfhostChecker$'`.
 - [parser-dump-message-quoting.md](parser-dump-message-quoting.md): Observed: the tree dump quotes diagnostic messages with strconv.Quote (`\n`), the token dump with `\xHH`; habit messages hold source text, so the Xo parser uses `Bytes.quote()`.
+- [node-wasi-segfaults-on-go-linker.md](node-wasi-segfaults-on-go-linker.md): Observed: node:wasi segfaults running `cmd/link` built for wasip1; wazero and Chrome run it; test with those.
+- [std-embed-ships-runtime-source.md](std-embed-ships-runtime-source.md): Observed: linking internal/build embeds the std/rt source (tests too); build published binaries with `-tags xo_playground` and scan them.
+- [browser-wasi-shim-debug-on-by-default.md](browser-wasi-shim-debug-on-by-default.md): Observed: browser_wasi_shim logs every call unless `{ debug: false }` is passed.

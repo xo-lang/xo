@@ -23,6 +23,7 @@ domains (decision 0135) still show Namecheap's default 302 to `www`; their
 | Pull spec, release notes, and diagnostic code pages from this repo | `python3 scripts/sync-content.py` (default `../../codelang`, or `$XO_REPO`; builds `cmd/xo` for `xo explain --json` unless `$XO` is set) |
 | Re-verify the tour's programs and record their output | `XO=path/to/xo scripts/check-examples.sh` (each `examples/tour/*` must check, run, and pass `xo test`; each `examples/mistakes/*` must fail `xo check`) |
 | Publish | push to `main`; `.github/workflows/pages.yml` deploys to GitHub Pages |
+| Rebuild the playground's WebAssembly (after compiler, std/rt, or Go changes) | `python3 scripts/build-playground.py` (infrastructure/playground.md) |
 | Change the orange announcement bar | `params.announcement` in `hugo.toml` |
 
 What comes from this repo: `spec/core.md`, `spec/std.md`, each
@@ -35,4 +36,7 @@ The source repo is announced as "not public yet" until
 `params.sourcePublic = true` in `hugo.toml`.
 Keep that heading format, and keep `<...>` code spans on one line in the
 spec (gotcha spec-markdown-html-tag-line-start). Agents can read
-`/llms.txt` and any page as Markdown at `<page>/index.md`.
+`/llms.txt` and any page as Markdown at `<page>/index.md`. Pages also include
+a FAQ (`content/docs/faq.md`), an intro post, and the playground at `/play/`
+(decision 0144). Xo code blocks are highlighted with Chroma's Rust lexer
+(`layouts/_markup/render-codeblock-xo.html`).

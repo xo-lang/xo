@@ -337,26 +337,9 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("unknown backend %q (want go, llvm, or arm64)", opts.Backend)
 	}
-	root := lineRoot(dirs)
-	var hyb *gen.Hybrid
-	if opts.Hybrid && opts.Mode == gen.Build {
-		hyb, out.Hybrid = hybridAsm(dirs, root, opts)
-	}
-	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs})
+	prog, hyb, err := generate(dirs, res, out, &opts)
 	if err != nil {
 		return nil, err
-	}
-	out.Specs = prog.Specs
-	if opts.TZData != "" && opts.TZData != "embedded" && opts.TZData != TZDataSystem {
-		return nil, fmt.Errorf("unknown --tzdata=%s (want embedded or system)", opts.TZData)
-	}
-	if out.Notes, err = tzFiles(prog, opts.TZData); err != nil {
-		return nil, err
-	}
-	opts.tags = prog.Tags
-	if opts.Mode == gen.Build {
-		out.Info = buildInfo(dirs, res, root, opts)
-		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
 	}
 	var variants []string
 	if hyb != nil {
@@ -399,6 +382,55 @@ func Build(dirs []string, opts Options) (*Result, error) {
 		out.Binaries[t] = bin
 	}
 	return out, nil
+}
+
+// Generate checks dirs and lowers them to the Go source of a program,
+// with the files a build adds (the build information, zone data), without
+// writing a build directory or running the Go toolchain. The playground
+// (cmd/xoplay) compiles the result in the browser. Only the Go backend;
+// the Program is nil when the check fails.
+func Generate(dirs []string, opts Options) (*Result, *gen.Program, error) {
+	res, ok, err := checkOpts(dirs, opts.Holes, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}}
+	if !ok {
+		out.Failed = true
+		return out, nil, nil
+	}
+	opts.Hybrid = false
+	prog, _, err := generate(dirs, res, out, &opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, prog, nil
+}
+
+// generate is the code generation step of Build and Generate.
+func generate(dirs []string, res *check.Result, out *Result, opts *Options) (*gen.Program, *gen.Hybrid, error) {
+	root := lineRoot(dirs)
+	var hyb *gen.Hybrid
+	if opts.Hybrid && opts.Mode == gen.Build {
+		hyb, out.Hybrid = hybridAsm(dirs, root, *opts)
+	}
+	prog, err := gen.Generate(res, gen.Options{Mode: opts.Mode, Holes: opts.Holes, LineRoot: root, NoMono: opts.NoMono, NoRanges: opts.NoRanges, Arenas: !opts.NoArenas, Hybrid: hyb, Release: opts.release(), NoErrorArgs: opts.NoErrorArgs})
+	if err != nil {
+		return nil, nil, err
+	}
+	out.Specs = prog.Specs
+	if opts.TZData != "" && opts.TZData != "embedded" && opts.TZData != TZDataSystem {
+		return nil, nil, fmt.Errorf("unknown --tzdata=%s (want embedded or system)", opts.TZData)
+	}
+	if out.Notes, err = tzFiles(prog, opts.TZData); err != nil {
+		return nil, nil, err
+	}
+	opts.tags = prog.Tags
+	if opts.Mode == gen.Build {
+		out.Info = buildInfo(dirs, res, root, *opts)
+		prog.Files["xo_buildinfo.go"] = buildInfoFile(out.Info)
+	}
+	return prog, hyb, nil
 }
 
 // lineRoot is the directory //line paths are relative to: the xo.mod root

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `cmd/xoplay`, the compiler half of the xolang.dev playground (decision
+  0144): `check`, `fmt`, and `gen` as JSON, built for wasip1 with
+  `-tags xo_playground`, which leaves the runtime, native, and LLVM runtime
+  sources out of the binary. `build.Generate` is the code generation step
+  of `xo build` without a build directory or the Go toolchain.
 - The self hosted checker checks matches for exhaustiveness (stage 6 of
   decision 0141): XO0301 with the same missing patterns, refutable `let`
   and `for` patterns (XO0303), and the XO0305 warning, as internal/check

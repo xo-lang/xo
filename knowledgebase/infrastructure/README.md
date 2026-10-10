@@ -4,3 +4,4 @@
 - [namespaces.md](namespaces.md): status of the Xo name across GitHub, Homebrew, npm, crates, file extensions.
 - [editors.md](editors.md): editor support: the VS Code extension in `editors/vscode/` (TextMate grammar), installing it, its tests, and keeping it in step with the lexer.
 - [website.md](website.md): xolang.dev: the separate Hugo site repo, its commands (preview, build, sync spec and release notes, publish), and what it takes from this repo.
+- [playground.md](playground.md): the browser playground at xolang.dev/play: `cmd/xoplay`, `build.Generate`, the `xo_playground` tag, `scripts/build-playground.py`, the workers, sizes, and how it was verified.
