@@ -1191,6 +1191,16 @@ its content hash.
   cache or vendor/ and compares them. A mismatch (a moved tag, an edited
   cache or vendor copy) is `XO1304` and nothing builds; a version with no
   entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
+- **[P1]** Checksum log (decision 0124): with `XO_SUMDB=<name>+<key
+  id>+<public key> [<URL>]` (default `off`), the first fetch of every
+  module version, from git or a proxy, is checked before it enters the
+  module cache: the log's record of the version (its two xo.lock lines)
+  must equal the fetched tree's hashes, the record must be in the log's
+  signed Merkle tree (inclusion proof), and that tree must extend every
+  tree of the log this module cache saw before (consistency proof). A
+  failure is `XO1313` and nothing is cached; a log that cannot be
+  consulted, or malformed settings, is `XO1314`. `XO_NOSUMDB=<patterns>`
+  (as `XO_NOPROXY`, 4.2) names private modules that are never looked up.
 - **[P3]** Hash is per definition: the normalized AST with local names erased
   and referenced definitions replaced by their hashes. Consequences:
   - Two versions of a dependency coexist without conflict. Types from different
