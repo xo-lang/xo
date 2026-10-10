@@ -1026,6 +1026,20 @@ require github.com/acme/billing v1.4.0
 - Fetching runs git and extracts the tag's tree (`git archive`) into a read
   only module cache; no code from a module runs at fetch or build setup
   (no scripts, no hooks). A version that cannot be fetched is `XO1302`.
+- Module proxies (decision 0126): `XO_PROXY` lists where versions come
+  from, in order: proxy URLs (`http://`, `https://`), `direct` (git), and
+  `off` (no fetching); the default is `direct`. After a comma the next
+  source is tried only when a proxy answers 404 or 410, after a pipe on
+  any error. `XO_NOPROXY=<patterns>` (comma separated globs over leading
+  path elements, `github.com/acme/*`) always goes direct. The protocol is
+  read only HTTP: `<path>/@v/list`, `<path>/@v/<version>.mod`, `.zip`
+  (the tree, files under `<path>@<version>/`), and `.lock` (the xo.lock
+  lines), the path and version escaped as in the module cache (`!` before
+  a lower cased capital). A proxy is not trusted: its tree must declare
+  the module path and match xo.lock as a git fetch must. `xo mod proxy
+  serve [--addr=host:port] [--fetch] [<cache dir>]` serves a module cache
+  this way (`--fetch` fills it from git). A malformed `XO_PROXY` is
+  `XO1314`.
 - Offline (`--offline` on any command, or `XO_OFFLINE=1`) nothing is
   fetched: every version must be in the module cache or vendored, else
   `XO1303`.
@@ -2141,7 +2155,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
 | `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
-| `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
+| `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
 | `XO1304` | error | modules | module tree does not match its xo.lock content hash (core 4.3) |
 | `XO1305` | error | modules | xo.lock has no hash for a module version the build uses; run `xo mod tidy` |
@@ -2152,6 +2166,8 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
+| `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
+| `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

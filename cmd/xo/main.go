@@ -177,6 +177,14 @@ commands:
       with exactly the hashes the build uses. Ignores xo.work and vendor/.
   mod clean
       Remove the module cache (it is read only, so rm -rf fails).
+  mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+      Serve a module cache (default $XO_MODCACHE) read only over the module
+      proxy protocol (decision 0126); --fetch fills it from git on a miss
+      (a team's caching proxy). Clients set XO_PROXY=<url>[,direct]
+      (default direct; off forbids fetching; XO_NOPROXY=<patterns> go
+      direct). XO_SUMDB=<name>+<id>+<key> [<url>] checks every first fetch
+      against a checksum log (decision 0124; XO1313, XO1314), except paths
+      matching XO_NOSUMDB=<patterns>.
   vendor [--dir=<dir>] [--json]
       Copy every selected module version into vendor/ with
       vendor/modules.txt; builds then use vendor/ only (no cache, no

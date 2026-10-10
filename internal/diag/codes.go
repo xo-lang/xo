@@ -113,7 +113,7 @@ const (
 // line), and by `xo get`, `xo mod tidy`, `xo vendor`, and `xo build`.
 const (
 	ModFileInvalid     Code = "XO1301" // malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3)
-	ModuleFetch        Code = "XO1302" // module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path
+	ModuleFetch        Code = "XO1302" // module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path
 	ModuleOffline      Code = "XO1303" // module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)
 	ChecksumMismatch   Code = "XO1304" // module tree does not match its xo.lock content hash (core 4.3)
 	LockMissing        Code = "XO1305" // xo.lock has no hash for a module version the build uses; run `xo mod tidy`
@@ -124,6 +124,8 @@ const (
 	BreakingRelease    Code = "XO1310" // `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one
 	InvalidRelease     Code = "XO1311" // `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)
 	ImportDenied       Code = "XO1312" // `use` of a package that a `deny` rule of xo.mod forbids (decision 0095)
+	ChecksumLog        Code = "XO1313" // a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)
+	FetchSettings      Code = "XO1314" // the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)
 )
 
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
@@ -204,7 +206,7 @@ var Descriptions = map[Code]string{
 	CNameSkipped: "C function exists in the header but its signature does not map to Xo, so the binding skipped it",
 
 	ModFileInvalid:     "malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3)",
-	ModuleFetch:        "module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path",
+	ModuleFetch:        "module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path",
 	ModuleOffline:      "module version is not in the module cache and the build is offline (XO_OFFLINE, --offline)",
 	ChecksumMismatch:   "module tree does not match its xo.lock content hash (core 4.3)",
 	LockMissing:        "xo.lock has no hash for a module version the build uses; run `xo mod tidy`",
@@ -215,6 +217,8 @@ var Descriptions = map[Code]string{
 	BreakingRelease:    "`xo publish`: a minor or patch release removes or changes an export, or adds an effect to one",
 	InvalidRelease:     "`xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path)",
 	ImportDenied:       "`use` of a package that a `deny` rule of xo.mod forbids (decision 0095)",
+	ChecksumLog:        "a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)",
+	FetchSettings:      "the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 

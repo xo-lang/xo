@@ -1,0 +1,55 @@
+package main
+
+import (
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+
+	"github.com/xo-lang/xo/internal/mod"
+	"github.com/xo-lang/xo/internal/mod/modtest"
+)
+
+// emptyCache points XO_MODCACHE at a new, empty module cache.
+func emptyCache(t *testing.T) {
+	t.Helper()
+	c := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(c) })
+	t.Setenv("XO_MODCACHE", c)
+}
+
+// TestModProxy: xo mod tidy and xo check fetch through a caching module
+// proxy (decision 0126) on loopback, never from git themselves.
+func TestModProxy(t *testing.T) {
+	modtest.Setup(t, "../../internal/mod/testdata/repos", mod.Compare)
+	ws := t.TempDir()
+	app := filepath.Join(ws, "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\n",
+		"main/main.xo": appMain,
+	})
+	root := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(root) })
+	srv := httptest.NewServer(mod.ProxyHandler(root, true))
+	defer srv.Close()
+
+	emptyCache(t)
+	t.Setenv("XO_PROXY", srv.URL)
+	xo(t, "mod", "tidy", "--dir", app).want(0)
+	xo(t, "check", app).want(0)
+	xo(t, "get", "--dir", app, "github.com/acme/money@v1.3.0").want(0)
+	// a second client with an empty cache, and the repositories out of
+	// reach (the proxy in this process shares XO_GIT_BASE, so it now
+	// serves only what it cached)
+	emptyCache(t)
+	t.Setenv("XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
+	xo(t, "check", app).want(0)
+
+	t.Setenv("XO_PROXY", "nonsense")
+	emptyCache(t)
+	r := xo(t, "check", "--json", app).want(1)
+	if got := diagCodes(t, r.out); got == "" || got[:6] != "XO1314" {
+		t.Errorf("malformed XO_PROXY: %s", got)
+	}
+	xo(t, "mod", "proxy").want(2)
+	xo(t, "mod", "proxy", "serve", "a", "b").want(2)
+}

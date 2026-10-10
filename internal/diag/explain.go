@@ -1204,7 +1204,8 @@ require github.com/acme/billing v1.4.0`,
 	ModuleFetch: {
 		Title: "module version cannot be fetched",
 		Detail: "A module path is its location: `github.com/acme/billing` is fetched with git from https://github.com/acme/billing.git (XO_GIT_BASE=<dir or URL> or XO_GIT_REWRITE=<prefix>=<url>,... point it elsewhere, for mirrors and tests), and version v1.4.0 is the tree of the tag `v1.4.0`, extracted with `git archive` (no code runs). A module in a subdirectory of its repository (`github.com/acme/tools/cli` in `cli/`) is that directory's tree at the tag `cli/v1.4.0`. " +
-			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod in the module's directory, or that xo.mod declares a different module path. The message carries git's reason. See core 4.2 and decision 0086.",
+			"This failed: the repository cannot be reached or cloned, it has no such tag, the tag has no xo.mod in the module's directory, or that xo.mod declares a different module path. The message carries git's reason. " +
+			"With XO_PROXY listing module proxies, the message carries each source's answer: a proxy that does not have the version (404) passes on to the next source after a comma, any error does after a pipe, and `off` forbids fetching. A zip with paths outside the module, or a tree that contradicts the proxy's own .lock answer, also fails here. See core 4.2 and decisions 0086 and 0126.",
 		Example: `// xo.mod
 module example.com/api
 require github.com/acme/billing v1.9.9   // no such tag`,
@@ -1290,6 +1291,24 @@ xo publish --check --version v2.0.0   # module path .../v2`,
 		Detail:  "Publishing a module version is creating its git tag; `xo publish` validates first and prints the tag command, it never pushes. It needs the module in a git repository (at its root, or in a subdirectory whose name ends the module path, tagged `<dir>/vX.Y.Z`), no uncommitted changes (without --check), a version tag that does not exist yet and is above the last release, a major version that matches the module path (/vN from v2 on), and an xo.mod and xo.lock that load. See decision 0086.",
 		Example: `xo publish --version v1.4.0   # v1.4.0 is already a tag`,
 		Fix:     `xo publish --version v1.4.1`,
+	},
+
+	ChecksumLog: {
+		Title: "fetched module version disagrees with the checksum log",
+		Detail: "With XO_SUMDB naming a checksum log (`<name>+<key id>+<public key> [<URL>]`), the first fetch of every module version (from git or a proxy) is checked against the log before it enters the module cache: the log's record of the version must hold the same tree and xo.mod hashes, the record must be in the tree the log signed (an inclusion proof), the tree head must carry a valid signature by the configured key, and the tree must extend every tree this module cache saw from the log before (a consistency proof). " +
+			"Any failure means someone is serving different content for the same version (a moved tag, a tampered proxy or mirror) or the log itself forked or rewrote history. Nothing is cached or built. " +
+			"Find out which source changed before trusting it. A private module that the log can never see belongs in XO_NOSUMDB. See core 4.3 and decision 0124.",
+		Example: `XO_SUMDB="sum.example.com+1a2b3c4d+<key>" xo mod tidy
+# github.com/acme/billing v1.4.0 was retagged after the log recorded it`,
+		Fix: `# investigate the source; for a private module that never reaches the log:
+XO_NOSUMDB=github.com/acme/private xo mod tidy`,
+	},
+	FetchSettings: {
+		Title: "module fetch settings malformed, or the checksum log unreachable",
+		Detail: "XO_PROXY is a list of proxy URLs (http or https), `direct` (git), and `off`, separated by commas (try the next source only after \"not found\") or pipes (after any error); the default is `direct`. XO_NOPROXY and XO_NOSUMDB are comma separated path patterns (`github.com/acme/*`, `*.corp.example.com`). XO_SUMDB is `off` (the default) or a log's verifier key and optional URL. " +
+			"This code is reported when one of them cannot be parsed, or when the checksum log could not be consulted for a first fetch (unreachable, no record of the version, malformed answers): the version is not cached rather than cached unverified. A log that answers but contradicts the fetched content is XO1313 instead. See decisions 0124 and 0126.",
+		Example: `XO_PROXY=ftp://mirror.example.com xo build .`,
+		Fix:     `XO_PROXY=https://mirror.example.com,direct xo build .`,
 	},
 
 	// ---------------------------------------------------------------

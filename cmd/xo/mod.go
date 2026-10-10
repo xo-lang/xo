@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/diag"
@@ -213,9 +216,66 @@ func runMod(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "removed %s\n", mod.CacheDir())
 		return 0
+	case "proxy":
+		return runModProxy(args[1:], stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "xo mod: unknown subcommand %q (want tidy or clean)\n", args[0])
+	fmt.Fprintf(stderr, "xo mod: unknown subcommand %q (want tidy, clean, or proxy)\n", args[0])
 	return 2
+}
+
+// runModProxy is `xo mod proxy serve [--addr=host:port] [--fetch] [dir]`
+// (decision 0126): serve a module cache read only over the module proxy
+// protocol until the process is stopped.
+func runModProxy(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "serve" {
+		fmt.Fprintln(stderr, "xo mod proxy: want `serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]`")
+		return 2
+	}
+	fl := flag.NewFlagSet("mod proxy serve", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	addr := fl.String("addr", "127.0.0.1:7070", "the address to listen on")
+	fetch := fl.Bool("fetch", false, "fetch module versions the cache lacks from git (a caching proxy)")
+	if err := fl.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if fl.NArg() > 1 {
+		fmt.Fprintln(stderr, "xo mod proxy serve: want at most one cache directory")
+		return 2
+	}
+	dir := mod.CacheDir()
+	if fl.NArg() == 1 {
+		abs, err := filepath.Abs(fl.Arg(0))
+		if err != nil {
+			fmt.Fprintf(stderr, "xo mod proxy serve: %v\n", err)
+			return 2
+		}
+		dir = abs
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		if !*fetch {
+			fmt.Fprintf(stderr, "xo mod proxy serve: %s is not a directory\n", dir)
+			return 2
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(stderr, "xo mod proxy serve: %v\n", err)
+			return 1
+		}
+	}
+	l, err := net.Listen("tcp", *addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "xo mod proxy serve: %v\n", err)
+		return 1
+	}
+	mode := "read only"
+	if *fetch {
+		mode = "filling it from git"
+	}
+	fmt.Fprintf(stdout, "serving the module cache %s (%s) at http://%s\nclients: XO_PROXY=http://%s\n", dir, mode, l.Addr(), l.Addr())
+	if err := http.Serve(l, mod.ProxyHandler(dir, *fetch)); err != nil {
+		fmt.Fprintf(stderr, "xo mod proxy serve: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // runVendor is `xo vendor`.

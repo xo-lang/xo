@@ -436,8 +436,10 @@ func Forward(args []string, stdout, stderr io.Writer) (code int, ok bool) {
 	}
 	// module settings of this process (decision 0086) that the server's
 	// environment may not share: check in process
-	if os.Getenv("XO_OFFLINE") != "" || os.Getenv("XO_WORK") != "" || os.Getenv("XO_MODCACHE") != "" || os.Getenv("XO_GIT_BASE") != "" || os.Getenv("XO_GIT_REWRITE") != "" {
-		return 0, false
+	for _, k := range []string{"XO_OFFLINE", "XO_WORK", "XO_MODCACHE", "XO_GIT_BASE", "XO_GIT_REWRITE", "XO_PROXY", "XO_NOPROXY", "XO_SUMDB", "XO_NOSUMDB"} {
+		if os.Getenv(k) != "" {
+			return 0, false
+		}
 	}
 	path, err := SocketPath()
 	if err != nil {

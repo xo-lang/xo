@@ -53,7 +53,10 @@ var locations sync.Map
 // When none answers (or offline) the module is taken to be at the root of
 // the repository named by its whole path, so the fetch error names that
 // location.
-func Locate(path string) Location {
+func Locate(path string) Location { return locateIn(CacheDir(), path) }
+
+// locateIn is Locate with the module cache at root.
+func locateIn(root, path string) Location {
 	p := repoPath(path)
 	elems := strings.Split(p, "/")
 	if knownHosts[elems[0]] {
@@ -69,7 +72,7 @@ func Locate(path string) Location {
 	// a cached clone of the whole path answers without git (a cached
 	// clone of a shorter prefix does not: the path may be a repository
 	// of its own that was never fetched)
-	if _, err := os.Stat(filepath.Join(vcsDir(p), "HEAD")); err == nil {
+	if _, err := os.Stat(filepath.Join(vcsDir(root, p), "HEAD")); err == nil {
 		return Location{Repo: p}
 	}
 	if Offline() {
@@ -87,10 +90,10 @@ func Locate(path string) Location {
 }
 
 // vcsDir is the bare clone of the repository at module path repo in the
-// module cache.
-func vcsDir(repo string) string {
+// module cache at root.
+func vcsDir(root, repo string) string {
 	sum := sha256.Sum256([]byte(RepoURL(repo)))
-	return filepath.Join(CacheDir(), "cache", "vcs", hex.EncodeToString(sum[:16]))
+	return filepath.Join(root, "cache", "vcs", hex.EncodeToString(sum[:16]))
 }
 
 // pruneNested removes every directory below dir that holds an xo.mod: a
