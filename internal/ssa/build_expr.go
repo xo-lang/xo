@@ -283,7 +283,7 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 // variant builds variant name of enum t from field values.
 func (s *fn) variant(t *Type, name string, args []*Value, at ast.Node) *Value {
 	i := t.VariantIndex(name)
-	if t.Kind != KEnum || i < 0 || len(args) != len(t.Variants[i].Fields) {
+	if t.Kind != KEnum || i < 0 || len(args) != len(userFields(t.Variants[i])) {
 		s.b.unsupported(at, "constructing `"+name+"` here")
 		return s.undef(t)
 	}
@@ -915,7 +915,7 @@ func (s *fn) patBindings(p ast.Pattern) map[string]*check.VarObj {
 // value or runtime handle in them, except inside interface values (which
 // compare through their xo.eq function).
 func comparable(t *Type, seen map[*Type]bool) bool {
-	if seen[t] || isIface(t) {
+	if seen[t] || isIface(t) || isTrace(t) {
 		return true
 	}
 	seen[t] = true

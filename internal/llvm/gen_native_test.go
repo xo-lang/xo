@@ -2,7 +2,11 @@ package llvm_test
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -73,4 +77,64 @@ func genNativeList(t *testing.T) []string {
 		}
 	}
 	return out
+}
+
+// TestErrorTracesNative runs the internal/gen goldens whose main fails
+// with error frames on Go, LLVM, and arm64 and requires the same standard
+// error, frame lines included (decisions 0092, 0104; the golden tests drop
+// indented lines): only the crash bundle line, which native builds do not
+// write, is left out.
+func TestErrorTracesNative(t *testing.T) {
+	if _, err := build.Clang(); err != nil {
+		t.Skip("clang not found: the LLVM backend tests need it")
+	}
+	if testing.Short() {
+		t.Skip("builds every listed program three times")
+	}
+	backends := []string{build.BackendLLVM}
+	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+		backends = append(backends, build.BackendArm64)
+	}
+	for _, name := range []string{"error_conversion", "error_frames", "error_frames_borrow", "error_frames_capture", "main_custom_err", "scope_failure", "arena_frames"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join("..", "gen", "testdata", "golden", name)
+			want := fullRun(t, dir, build.BackendGo)
+			for _, be := range backends {
+				if got := fullRun(t, dir, be); got != want {
+					t.Errorf("%s differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, want, be, got)
+				}
+			}
+		})
+	}
+}
+
+// fullRun builds and runs dir on backend be: exit status, stdout, and
+// stderr without crash bundle lines.
+func fullRun(t *testing.T, dir, be string) string {
+	t.Helper()
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+	if err != nil || res.Failed {
+		t.Fatalf("build (%s): %v", be, err)
+	}
+	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	code := 0
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("run: %v", err)
+		}
+		code = ee.ExitCode()
+	}
+	var keep []string
+	for _, l := range strings.Split(stderr.String(), "\n") {
+		if !strings.HasPrefix(l, "crash bundle:") {
+			keep = append(keep, l)
+		}
+	}
+	return fmt.Sprintf("exit %d\n--- stdout\n%s--- stderr\n%s", code, stdout.String(), strings.Join(keep, "\n"))
 }

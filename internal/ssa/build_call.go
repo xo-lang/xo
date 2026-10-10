@@ -140,6 +140,16 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 		}
 		return true
 	})
+	if fo := s.frameOwner(); fo != nil && hasTry(x.Body) {
+		// a `?` in the closure records the enclosing function's frame,
+		// with its parameters (decision 0104)
+		for _, vo := range b.frameVars(fo) {
+			if _, outer := s.varType[vo]; outer && !seen[vo] {
+				seen[vo] = true
+				caps = append(caps, vo)
+			}
+		}
+	}
 	var vals []*Value
 	var capTs []*Type
 	for _, vo := range caps {
@@ -153,8 +163,10 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 	f.Indirect = true
 	f.Captures = capTs
 	errT := failErr(ct.Err)
+	owner := s.frameOwner()
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, ct.Result, errT)
+		c.frameFo = owner
 		c.sub = s.sub
 		env := f.Params()[0]
 		for i, vo := range caps {
@@ -275,7 +287,7 @@ func (s *fn) ctorCall(vo *check.VariantObj, x *ast.CallExpr) *Value {
 		s.b.unsupported(x, "constructing `"+vo.Name+"` here")
 		return s.undef(t)
 	}
-	fs := t.Variants[tag].Fields
+	fs := userFields(t.Variants[tag])
 	vals := make([]*Value, len(fs))
 	pos := 0
 	for _, a := range x.Args {
@@ -418,7 +430,15 @@ func (s *fn) try(x *ast.TryExpr) *Value {
 			b.unsupported(x, "`?` on a Result in a function that cannot fail")
 		} else {
 			ev := s.add(OpPayload, v.Type.Variants[failTag].Fields[0].Type, PayloadRef{failTag, 0}, v)
-			s.ret(s.add(OpVariant, want, want.VariantIndex("Err"), s.coerceErr(ev, et, s.errT, x)), x)
+			ce := s.coerceErr(ev, et, s.errT, x)
+			wi := want.VariantIndex("Err")
+			if fs := want.Variants[wi].Fields; len(fs) == 2 && fs[1].Name == traceField {
+				// the error's frames go on, with this `?`'s (decision 0104)
+				tr := s.pushFrame(s.errTrace(v, failTag), x)
+				s.ret(s.add(OpVariant, want, wi, ce, tr), x)
+			} else {
+				s.ret(s.add(OpVariant, want, wi, ce), x)
+			}
 		}
 	} else {
 		rt := b.typ(s.res, x)
@@ -919,4 +939,16 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 	}
 	b.unsupported(x, "the method `"+fo.DisplayName()+"`")
 	return s.undef(nt)
+}
+
+// hasTry reports whether n contains a `?`.
+func hasTry(n ast.Node) bool {
+	found := false
+	check.Inspect(n, func(n ast.Node) bool {
+		if _, ok := n.(*ast.TryExpr); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
 }

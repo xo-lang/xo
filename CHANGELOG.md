@@ -39,6 +39,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `IoErr.Canceled`. Fixed natively: `task.with_timeout` returns
   `TimedOut` when its closure finishes after the deadline without a
   cancellation point, as on the Go backend.
+- Native backends: error frames (decision 0104): each `?` records the
+  function, location, and parameters lazily, and main's error report
+  prints `  at ...` lines identical to the Go backend's.
 - `xo test --no-gc`: `FakeStdio.set_input` feeds the reads; fixed a hang
   after `FakeProc.signal_after` fired (the virtual clock stopped moving).
 

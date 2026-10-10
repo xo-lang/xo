@@ -1,5 +1,6 @@
 type Handler = struct { name: Str, run: fn(Str) -> Str }
-type Result[Int, Str] = enum { Ok(v: Int) | Err(e: Str) }
+type Result[Int, Str] = enum { Ok(v: Int) | Err(e: Str, xo.tr: xo.trace) }
+type xo.trace = struct { frames: List[(Str, Str, fn() -> Str)] }
 
 func main(v0: Os) -> () {
 b0(v0: Os):
@@ -250,14 +251,16 @@ b4:  ; preds b6
   v14: () = tuple
   v15: Str = const "bad "
   v16: Str = call str.concat, v15, v1
-  v17: Result[Int, Str] = variant 1, v16
-  ret v17
+  v17: List[(Str, Str, fn() -> Str)] = call rt.rl_empty
+  v18: xo.trace = struct v17
+  v19: Result[Int, Str] = variant 1, v16, v18
+  ret v19
 b5:  ; preds b1
-  v19: Int = const 2
-  v20: Result[Int, Str] = variant 0, v19
-  ret v20
+  v21: Int = const 2
+  v22: Result[Int, Str] = variant 0, v21
+  ret v22
 b6:  ; preds b1
-  v22: () = tuple
+  v24: () = tuple
   jump b4()
 }
 
@@ -278,7 +281,7 @@ b2:  ; preds b1
 b3:  ; preds b10
   v14: Int = const 1
   v15: Int = add v6, v14
-  jump b1(v15, v32)
+  jump b1(v15, v40)
 b4:  ; preds b1
   v17: Result[Int, Str] = variant 0, v7
   ret v17
@@ -296,15 +299,23 @@ b7:  ; preds b5, b11
   ret v26
 b8:  ; preds b6
   v28: Str = payload 1.0, v11
-  v29: Result[Int, Str] = variant 1, v28
-  ret v29
+  v29: xo.trace = payload 1.1, v11
+  v30: fn() -> Str = closure xo.frameargs(xs: List[Str], parse: fn(Str) -> Int ! Str), v0, v1
+  v31: Str = const "closures.parse_all"
+  v32: Str = const "main.xo:24"
+  v33: (Str, Str, fn() -> Str) = tuple v31, v32, v30
+  v34: List[(Str, Str, fn() -> Str)] = field 0, v29
+  v35: List[(Str, Str, fn() -> Str)] = call list.push, v34, v33
+  v36: xo.trace = struct v35
+  v37: Result[Int, Str] = variant 1, v28, v36
+  ret v37
 b9:  ; preds b6
-  v31: Int = payload 0.0, v11
-  v32: Int = add v7, v31 @ main.xo:24:5 lands v33
-  v33: Bool = call rt.landing
-  br v33, b11(), b10()
+  v39: Int = payload 0.0, v11
+  v40: Int = add v7, v39 @ main.xo:24:5 lands v41
+  v41: Bool = call rt.landing
+  br v41, b11(), b10()
 b10:  ; preds b9
-  v35: () = tuple
+  v43: () = tuple
   jump b3()
 b11:  ; preds b9
   jump b7()
@@ -359,4 +370,95 @@ b4:  ; preds b2
   jump b3()
 b5:  ; preds b2
   ret v8
+}
+
+func xo.frameargs(xs: List[Str], parse: fn(Str) -> Int ! Str)(v0: fn() -> Str) -> Str captures (List[Str], fn(Str) -> Result[Int, Str]) {
+b0(v0: fn() -> Str):
+  v1: Str = const ""
+  v2: Str = const "xs="
+  v3: Str = call str.concat, v1, v2
+  v4: List[Str] = capture 0, v0
+  v5: Str = const ""
+  v6: Str = call xo.debug[List[Str]], v5, v4
+  v7: Int = call Str.len, v6
+  v8: Int = const 64
+  v9: Bool = gt v7, v8
+  br v9, b1(), b2()
+b1:  ; preds b0
+  v11: Int = const 0
+  v12: Int = const 61
+  v13: Str = call rt.str_slice, v6, v11, v12
+  v14: Str = const "..."
+  v15: Str = call str.concat, v13, v14
+  jump b3(v15)
+b2:  ; preds b0
+  jump b3(v6)
+b3(v18: Str):  ; preds b1, b2
+  v19: Str = call str.concat, v3, v18
+  v20: Str = const ", parse="
+  v21: Str = call str.concat, v19, v20
+  v22: fn(Str) -> Result[Int, Str] = capture 1, v0
+  v23: Str = const ""
+  v24: Str = call xo.debug[fn(Str) -> Int ! Str], v23, v22
+  v25: Int = call Str.len, v24
+  v26: Int = const 64
+  v27: Bool = gt v25, v26
+  br v27, b4(), b5()
+b4:  ; preds b3
+  v29: Int = const 0
+  v30: Int = const 61
+  v31: Str = call rt.str_slice, v24, v29, v30
+  v32: Str = const "..."
+  v33: Str = call str.concat, v31, v32
+  jump b6(v33)
+b5:  ; preds b3
+  jump b6(v24)
+b6(v36: Str):  ; preds b4, b5
+  v37: Str = call str.concat, v21, v36
+  ret v37
+}
+
+func xo.debug[List[Str]](v0: Str, v1: List[Str]) -> Str {
+b0(v0: Str, v1: List[Str]):
+  v2: Str = const "["
+  v3: Str = call str.concat, v0, v2
+  v4: Int = call list.len, v1
+  v5: Int = const 0
+  jump b1(v5, v3)
+b1(v7: Int, v8: Str):  ; preds b0, b6
+  v9: Bool = lt v7, v4
+  br v9, b2(), b3()
+b2:  ; preds b1
+  v11: Int = const 0
+  v12: Bool = gt v7, v11
+  br v12, b4(), b5()
+b3:  ; preds b1
+  v14: Str = const "]"
+  v15: Str = call str.concat, v8, v14
+  ret v15
+b4:  ; preds b2
+  v17: Str = const ", "
+  v18: Str = call str.concat, v8, v17
+  jump b6(v18)
+b5:  ; preds b2
+  jump b6(v8)
+b6(v21: Str):  ; preds b4, b5
+  v22: Str = call list.index, v1, v7
+  v23: Str = call xo.debug[Str], v21, v22
+  v24: Int = const 1
+  v25: Int = add v7, v24
+  jump b1(v25, v23)
+}
+
+func xo.debug[Str](v0: Str, v1: Str) -> Str {
+b0(v0: Str, v1: Str):
+  v2: Str = call rt.rs_append_quote, v0, v1
+  ret v2
+}
+
+func xo.debug[fn(Str) -> Int ! Str](v0: Str, v1: fn(Str) -> Result[Int, Str]) -> Str {
+b0(v0: Str, v1: fn(Str) -> Result[Int, Str]):
+  v2: Str = const "<fn>"
+  v3: Str = call str.concat, v0, v2
+  ret v3
 }

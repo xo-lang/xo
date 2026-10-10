@@ -55,8 +55,9 @@ func holdsColl(t *Type, seen map[*Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	if t.Coll || isIface(t) {
-		// an interface value compares through its xo.eq function
+	if t.Coll || isIface(t) || isTrace(t) {
+		// an interface value compares through its xo.eq function; error
+		// frames are not part of an error's value
 		return true
 	}
 	switch t.Kind {
@@ -155,6 +156,9 @@ func (b *builder) eqColl(t *Type) string {
 			s.ifThen(s.add(OpNot, boolT, nil, c), func() { s.retv(s.bool(false)) })
 		}
 		switch {
+		case isTrace(t):
+			s.retv(s.bool(true))
+			return
 		case isIface(t):
 			s.retv(s.ifaceEqual(l, r))
 			return
@@ -256,6 +260,12 @@ func (b *builder) hashFunc(t *Type, at ast.Node) string {
 		return s.add(OpAdd, intT, Wrap, s.add(OpMul, intT, Wrap, h, s.cint(31)), x)
 	}
 	var h *Value
+	switch {
+	case isTrace(t):
+		// not part of the value
+		s.retv(s.cint(0))
+		return name
+	}
 	switch t.Kind {
 	case KInt:
 		// a multiplicative mix, then the high bits folded down
@@ -805,6 +815,14 @@ func (b *builder) cmpFunc(t *Type) (string, bool) {
 		}
 		switch t.Kind {
 		case KUnit:
+		case KStruct, KTuple:
+			if isTrace(t) {
+				break
+			}
+			for i := 0; i < numFields(t); i++ {
+				ft := fieldType(t, i)
+				sub(s.add(OpField, ft, i, l), s.add(OpField, ft, i, r))
+			}
 		case KInt:
 			lt(s.compare(OpLt, l, r), s.compare(OpGt, l, r))
 		case KBool:
@@ -818,11 +836,6 @@ func (b *builder) cmpFunc(t *Type) (string, bool) {
 		case KStr:
 			c := s.call("str.cmp", intT, "", l, r)
 			lt(s.add(OpLt, boolT, nil, c, s.cint(0)), s.add(OpGt, boolT, nil, c, s.cint(0)))
-		case KStruct, KTuple:
-			for i := 0; i < numFields(t); i++ {
-				ft := fieldType(t, i)
-				sub(s.add(OpField, ft, i, l), s.add(OpField, ft, i, r))
-			}
 		case KBox:
 			sub(l, r)
 		case KList:
@@ -854,7 +867,7 @@ func (b *builder) cmpFunc(t *Type) (string, bool) {
 
 // orderable reports whether cmpFunc orders values of t.
 func orderable(t *Type, seen map[*Type]bool) bool {
-	if seen[t] {
+	if seen[t] || isTrace(t) {
 		return true
 	}
 	seen[t] = true

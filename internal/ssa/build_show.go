@@ -305,6 +305,16 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			s.retv(lit(acc, "<"+lowerName(t.Name)+">"))
 			return
 		case KHandle:
+			if n, ok := check.Resolve(ct).(*check.Named); ok && isPreludeNamed(ct, "Atomic") && len(n.Args) == 1 {
+				// `Atomic(1)`: its value now (std/rt's Atomic.XoDebug)
+				et := b.typ(n.Args[0], at)
+				switch et.Kind {
+				case KInt, KBool, KFloat:
+					a := lit(acc, "Atomic(")
+					s.retv(lit(sub(a, s.rt("atomic_get", et, v), n.Args[0]), ")"))
+					return
+				}
+			}
 			s.retv(lit(acc, "<"+lowerName(t.Name)+">"))
 			return
 		case KBox:

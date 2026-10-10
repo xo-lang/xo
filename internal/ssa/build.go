@@ -411,6 +411,10 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 						}
 						nv.Fields = append(nv.Fields, Field{fn, ft})
 					}
+					if obj.Module != nil && obj.Module.IsPrelude && obj.Name == "Result" && v.Name == "Err" {
+						// the error's frames (decision 0104, build_frames.go)
+						nv.Fields = append(nv.Fields, Field{traceField, b.traceType()})
+					}
 					x.Variants = append(x.Variants, nv)
 				}
 			}
@@ -673,10 +677,13 @@ func (b *builder) resultOf(res, err check.Type) check.Type {
 // Efficient Construction of Static Single Assignment Form" (CC 2013),
 // with block parameters as phis.
 type fn struct {
-	b   *builder
-	fo  *check.FuncObj
-	f   *Func
-	cur *Block
+	b  *builder
+	fo *check.FuncObj
+	// frameFo is the function whose frame a `?` in this closure records
+	// (the enclosing named function, decision 0104)
+	frameFo *check.FuncObj
+	f       *Func
+	cur     *Block
 
 	defs       map[*check.VarObj]map[*Block]*Value
 	varType    map[*check.VarObj]*Type
@@ -800,6 +807,7 @@ func (b *builder) mainWrapper(mf *Func, et check.Type, at ast.Node) {
 			e := s.add(OpPayload, rt.Variants[ei].Fields[0].Type, PayloadRef{ei, 0}, r)
 			msg := s.appendDisplay(s.add(OpConst, st, "error: "), e, et, at)
 			s.rt("eprintln", nil, msg)
+			s.printTrace(s.errTrace(r, ei))
 			s.rt("exit", nil, s.cint(1))
 		})
 		s.retv(s.unit())
@@ -949,6 +957,12 @@ func (s *fn) read(vo *check.VarObj) *Value { return s.readVar(vo, s.cur) }
 func (s *fn) add(op Op, t *Type, aux any, args ...*Value) *Value {
 	if s.pending != nil {
 		s.flushLanding()
+	}
+	if op == OpVariant && t != nil && t.Kind == KEnum {
+		if tag, ok := aux.(int); ok && tag < len(t.Variants) && len(args)+1 == len(t.Variants[tag].Fields) && t.Variants[tag].Fields[len(args)].Name == traceField {
+			// a new error has no frames yet
+			args = append(args, s.emptyTrace())
+		}
 	}
 	v := s.cur.Add(op, t, aux, args...)
 	if s.b.faultUnwind && s.shield == 0 && mayRaise(v) && s.lexicalCleanup() {

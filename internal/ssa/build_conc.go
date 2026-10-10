@@ -515,7 +515,14 @@ func (s *fn) scopeFailure(sc *scopeCtx, x *ast.ScopeExpr) {
 		et := rt.Variants[rt.VariantIndex("Err")].Fields[0].Type
 		e := s.add(OpPayload, et, PayloadRef{rt.VariantIndex("Err"), 0}, r)
 		want := s.resultT()
-		s.ret(s.add(OpVariant, want, want.VariantIndex("Err"), s.coerceErr(e, sp.errT, s.errT, x)), x)
+		wi := want.VariantIndex("Err")
+		ce := s.coerceErr(e, sp.errT, s.errT, x)
+		if fs := want.Variants[wi].Fields; len(fs) == 2 && fs[1].Name == traceField {
+			// the scope's frame, as at a `?` (decision 0104)
+			s.ret(s.add(OpVariant, want, wi, ce, s.pushFrame(s.errTrace(r, rt.VariantIndex("Err")), x)), x)
+		} else {
+			s.ret(s.add(OpVariant, want, wi, ce), x)
+		}
 		s.cur = no
 	}
 	s.add(OpUnreachable, nil, nil)

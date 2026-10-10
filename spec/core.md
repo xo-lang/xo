@@ -24,6 +24,8 @@ No meaning changes yet; native support grew (`--no-gc`, 10.1):
 - Every Fs method and attenuation, `Stdio.write`, and standard input
   reads (7.2, 7.5: canceled by a cancellation or a stop request) build
   natively (decision 0102).
+- Error frames (11.1) are recorded natively and printed in main's error
+  report (decision 0104).
 
 ## Changes in 0.8
 
@@ -1792,7 +1794,8 @@ fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network) with the same report as the Go backend; a fault fails only its test.
 Property tests and `--real` are not available there yet (XO1201, skipped),
 contract fuzzing (9.1) is reported as skipped (decision 0085), and error
-traces and fault frames are not recorded natively.
+traces are recorded natively but printed only in main's error report
+(decision 0104), and fault frames are not recorded natively.
 
 **Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
 functions of the main module (a loop over `Int`, `Float`, `Bool`, and
@@ -2075,7 +2078,9 @@ LoadErr.Db(msg: "timeout")
   without `--release`.
 - **[later]** A last line naming the task and its scope
   (`in task "handler#913" (scope api.serve)`) is planned.
-- Native backends (`--no-gc`, LLVM, arm64) record no frames yet (10.1).
+- Native backends (`--no-gc`, LLVM, arm64) record the same frames
+  (decision 0104) and print them in main's error report; test reports,
+  handler logs, and crash bundles do not show them there yet (10.1).
 
 ### 11.2 Crash bundles
 
@@ -2440,7 +2445,7 @@ Tracked in `knowledgebase/decisions/` once decided.
 2. ~~`Map` iteration order.~~ Decided in 0091: insertion order.
 3. ~~Error frame capture cost in release builds.~~ Decided in 0092:
    frames on in every build, captured lazily (implemented on the Go
-   backend; the native backends record no frames yet).
+   backend; the native backends record them too, decision 0104).
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
 5. ~~FFI design and record/replay.~~ Decided in 0093: `use go` and
    native `use c`, foreign calls recorded at the boundary (`use go`

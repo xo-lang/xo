@@ -3,7 +3,8 @@
 Status: Accepted (2026-10-09, by the owner; proposed by the spec audit).
 Implemented on the Go backend 2026-10-09 (see "Implementation" below);
 the native backends record no frames yet and adopt the same design when
-they do.
+they do. (Done 2026-10-09: decision 0104 records the same lazy frames
+natively.)
 
 ## Context
 
