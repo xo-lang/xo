@@ -69,22 +69,33 @@ func TestTLSDiff(t *testing.T) {
 	if runtime.GOARCH == "arm64" {
 		backends = append(backends, build.BackendArm64)
 	}
-	var want string
-	for _, be := range backends {
-		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
-		if err != nil {
-			t.Fatalf("build (%s): %v", be, err)
+	// the backends build and run in parallel (each build has its own
+	// directory, each run its own server port); the group returns when
+	// all are done
+	outs := make([]string, len(backends))
+	t.Run("run", func(t *testing.T) {
+		for i, be := range backends {
+			i, be := i, be
+			t.Run(be, func(t *testing.T) {
+				t.Parallel()
+				res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: be})
+				if err != nil {
+					t.Fatalf("build (%s): %v", be, err)
+				}
+				if res.Failed {
+					t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
+				}
+				outs[i] = runTLSDiff(t, res.Binaries[build.Host()], pki, be != build.BackendGo)
+			})
 		}
-		if res.Failed {
-			t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
-		}
-		got := runTLSDiff(t, res.Binaries[build.Host()], pki, be != build.BackendGo)
-		if want == "" {
-			want = got
-			t.Logf("go backend:\n%s", got)
-			continue
-		}
-		if got != want {
+	})
+	if t.Failed() {
+		return
+	}
+	want := outs[0]
+	t.Logf("go backend:\n%s", want)
+	for i, be := range backends[1:] {
+		if got := outs[i+1]; got != want {
 			t.Errorf("%s backend differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, want, be, got)
 		}
 	}

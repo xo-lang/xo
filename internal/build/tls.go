@@ -30,6 +30,17 @@ import (
 // calls (internal/ssa's lowering of std/native/http.xo).
 var tlsSymbols = []string{"xo_cl_do", "xo_srv_new", "xo_tls_"}
 
+// NeedsTLS reports whether generated code (LLVM IR or assembly) calls a
+// std/http runtime function, so its link needs the TLS library.
+func NeedsTLS(code []byte) bool {
+	for _, sym := range tlsSymbols {
+		if bytes.Contains(code, []byte(sym)) {
+			return true
+		}
+	}
+	return false
+}
+
 // usesTLS reports whether a link of srcs needs the TLS library: some
 // generated source (LLVM IR or assembly) names a std/http runtime
 // function.
@@ -42,10 +53,8 @@ func usesTLS(srcs []string) bool {
 		if err != nil {
 			continue
 		}
-		for _, sym := range tlsSymbols {
-			if bytes.Contains(data, []byte(sym)) {
-				return true
-			}
+		if NeedsTLS(data) {
+			return true
 		}
 	}
 	return false

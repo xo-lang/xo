@@ -22,6 +22,7 @@ func TestGoldenASan(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds golden programs with AddressSanitizer")
 	}
+	t.Parallel() // builds nothing in the shared build directory
 	if _, err := build.Clang(); err != nil {
 		t.Skip("clang not found")
 	}

@@ -23,7 +23,6 @@ struct Kept {
   keys: Map[Int, List[Str]]
 }
 
-const PORT = 18733
 const N = 40
 const CLIENTS = 4
 
@@ -110,21 +109,21 @@ fn routes(kept: Mutex[Kept], ch: Chan[Str], g: task.Group, clock: Clock) -> http
   r
 }
 
-fn post(client: http.Client, path: Str, body: Str, tag: Str) -> http.Response ! http.ClientErr {
-  let url = "http://127.0.0.1:${PORT}${path}"
+fn post(client: http.Client, base: Str, path: Str, body: Str, tag: Str) -> http.Response ! http.ClientErr {
+  let url = "${base}${path}"
   client.send(http.new_request("POST", url, headers: {"x-tag": tag}, body: body.bytes()))
 }
 
-fn run_client(client: http.Client, c: Int) -> Int ! http.ClientErr {
+fn run_client(client: http.Client, base: Str, c: Int) -> Int ! http.ClientErr {
   var bad = 0
   for j in 0..N {
     let i = c * N + j + 1
     let item = Item{name: body_of(i), tags: ["t${i}", "u${i * 7}"]}
-    let a = post(client, "/items/${i}", json.encode_str(item), "tag${i}")?
+    let a = post(client, base, "/items/${i}", json.encode_str(item), "tag${i}")?
     if a.status != 201 || (a.body.to_str() ?? "") != json.encode_str(item) {
       bad += 1
     }
-    let b = post(client, "/raw/${i}", raw_of(i), "")?
+    let b = post(client, base, "/raw/${i}", raw_of(i), "")?
     if b.status != 200 || (b.body.to_str() ?? "") != raw_of(i) {
       bad += 1
     }
@@ -136,7 +135,11 @@ fn main(os: Os) ! {
   let kept = Mutex.new(Kept{names: {}, headers: {}, params: {}, bodies: {}, late: {}, firsts: {}, keys: {}})
   let ch = Chan[Str].new(cap: 1000)
   let client = http.client(os.net, timeout: 5s)
-  let srv = http.server(os.net.listen("127.0.0.1:${PORT}")?, routes(kept, ch, os.tasks, os.clock))
+  // a port of the system's choice: the golden runs beside other test
+  // processes that run it too
+  let l = os.net.listen("127.0.0.1:0")?
+  let base = "http://${l.addr()}"
+  let srv = http.server(l, routes(kept, ch, os.tasks, os.clock))
   var bad_responses = 0
   var stats = ""
   scope s {
@@ -145,7 +148,7 @@ fn main(os: Os) ! {
     let hs = scope c {
       var handles: List[Task[Int, http.ClientErr]] = []
       for k in 0..CLIENTS {
-        handles.push(c.spawn(fn() { run_client(client, k) }))
+        handles.push(c.spawn(fn() { run_client(client, base, k) }))
       }
       var sum = 0
       for h in handles {
@@ -155,7 +158,7 @@ fn main(os: Os) ! {
     }
     bad_responses = hs
     os.clock.sleep(200ms)
-    let st = client.get("http://127.0.0.1:${PORT}/stats")?
+    let st = client.get("${base}/stats")?
     stats = st.body.to_str() ?? ""
   }
   let total = CLIENTS * N

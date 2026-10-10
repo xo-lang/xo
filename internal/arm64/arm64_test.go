@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/arm64"
@@ -24,6 +25,8 @@ var update = flag.Bool("update", false, "rewrite the golden assembly files")
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// identical builds reuse one binary, within and across runs
+	build.EnableTestBinCache()
 	dir, err := os.MkdirTemp("", "xo-arm64-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -146,7 +149,13 @@ func buildRun(t *testing.T, dir string) (runResult, error) {
 // (build.Options.ShareProbes).
 func buildRunOpts(t *testing.T, dir string, probes bool) (runResult, error) {
 	t.Helper()
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: probes})
+	return buildRunWith(t, dir, build.Options{Mode: gen.Build, Backend: build.BackendArm64, ShareProbes: probes})
+}
+
+// buildRunWith builds dir with opts and runs it with XO_LEAKCHECK=1.
+func buildRunWith(t *testing.T, dir string, opts build.Options) (runResult, error) {
+	t.Helper()
+	res, err := build.Build([]string{dir}, opts)
 	if err != nil {
 		return runResult{}, err
 	}
@@ -409,33 +418,40 @@ func TestInlineVerifies(t *testing.T) {
 	dirs = append(dirs, goldenDirs(t)...)
 	runs, _ := filepath.Glob(filepath.Join("testdata", "run", "*"))
 	dirs = append(dirs, runs...)
-	inlined := 0
-	for _, dir := range dirs {
-		res, ok, err := build.CheckNative([]string{dir}, false)
-		if err != nil || !ok {
-			t.Fatalf("%s: check failed: %v", dir, err)
+	var inlined atomic.Int64
+	// the programs in parallel; the group returns when all are done
+	t.Run("all", func(t *testing.T) {
+		for _, dir := range dirs {
+			dir := dir
+			t.Run(filepath.Base(dir), func(t *testing.T) {
+				t.Parallel()
+				res, ok, err := build.CheckNative([]string{dir}, false)
+				if err != nil || !ok {
+					t.Fatalf("%s: check failed: %v", dir, err)
+				}
+				m, err := ssa.Build(res)
+				if err != nil {
+					t.Fatalf("%s: %v", dir, err)
+				}
+				m.InsertRC()
+				before := len(m.Funcs[0].Blocks)
+				for _, f := range m.Funcs {
+					before += len(f.Blocks)
+				}
+				if _, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin}); err != nil {
+					t.Errorf("%s: %v", dir, err)
+				}
+				after := len(m.Funcs[0].Blocks)
+				for _, f := range m.Funcs {
+					after += len(f.Blocks)
+				}
+				if after != before {
+					inlined.Add(1)
+				}
+			})
 		}
-		m, err := ssa.Build(res)
-		if err != nil {
-			t.Fatalf("%s: %v", dir, err)
-		}
-		m.InsertRC()
-		before := len(m.Funcs[0].Blocks)
-		for _, f := range m.Funcs {
-			before += len(f.Blocks)
-		}
-		if _, err := arm64.Generate(m, arm64.Options{OS: arm64.Darwin}); err != nil {
-			t.Errorf("%s: %v", dir, err)
-		}
-		after := len(m.Funcs[0].Blocks)
-		for _, f := range m.Funcs {
-			after += len(f.Blocks)
-		}
-		if after != before {
-			inlined++
-		}
-	}
-	if inlined == 0 {
+	})
+	if inlined.Load() == 0 {
 		t.Error("nothing was inlined")
 	}
 }
@@ -452,28 +468,38 @@ func TestLayoutRun(t *testing.T) {
 		t.Skip("builds and runs programs")
 	}
 	runs := []string{"lsr", "lsr_fault_neg", "latch", "switch", "ranges", "select", "fault_bounds"}
+	// the Go backend's output of the run programs, once each
+	goWant := map[string]string{}
+	for _, r := range runs {
+		goWant[r] = goRun(t, filepath.Join("testdata", "run", r)).String()
+	}
 	for _, lay := range []string{"func=6,loop=6,pad=3", "func=4,loop=5,fall=1,off=3,outer=1,pad=1"} {
-		t.Run(lay, func(t *testing.T) {
-			t.Setenv("XO_ARM64_LAYOUT", lay)
-			for name, want := range benchWant {
-				got, err := buildRun(t, filepath.Join(benchDir, name))
+		opts := build.Options{Mode: gen.Build, Backend: build.BackendArm64, ARM64Layout: lay}
+		for name, want := range benchWant {
+			name, want := name, want
+			t.Run(lay+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				got, err := buildRunWith(t, filepath.Join(benchDir, name), opts)
 				if err != nil {
 					t.Fatalf("%s: build: %v", name, err)
 				}
 				if got.exit != 0 || got.stdout != want {
 					t.Errorf("%s: got %s\nwant stdout %q", name, got, want)
 				}
-			}
-			for _, r := range runs {
-				dir := filepath.Join("testdata", "run", r)
-				got, err := buildRun(t, dir)
+			})
+		}
+		for _, r := range runs {
+			r := r
+			t.Run(lay+"/"+r, func(t *testing.T) {
+				t.Parallel()
+				got, err := buildRunWith(t, filepath.Join("testdata", "run", r), opts)
 				if err != nil {
 					t.Fatalf("%s: build: %v", r, err)
 				}
-				if want := goRun(t, dir); want.String() != got.String() {
-					t.Errorf("%s: arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", r, want, got)
+				if got.String() != goWant[r] {
+					t.Errorf("%s: arm64 differs from the Go backend\n--- go\n%s\n--- arm64\n%s", r, goWant[r], got)
 				}
-			}
-		})
+			})
+		}
 	}
 }

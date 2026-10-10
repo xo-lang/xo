@@ -17,7 +17,13 @@ start=$(date +%s)
 {
 	echo "xo nightly $day, commit $(git rev-parse --short HEAD)"
 	echo "load: $(uptime)"
+	# what the default full suite leaves out (decision 0111): more random
+	# programs, every build through the toolchain (no binary cache), and
+	# the sanitizers' 1 s sleep at exit
 	XO_RANGE_SEEDS=${XO_RANGE_SEEDS:-25} XO_LIST_SEEDS=${XO_LIST_SEEDS:-40} \
+		XO_COMPILE_PROPS=${XO_COMPILE_PROPS:-500} XO_HYBRID_SEEDS=${XO_HYBRID_SEEDS:-24} \
+		XO_BIN_CACHE=${XO_BIN_CACHE:-off} \
+		GORACE=${GORACE:-atexit_sleep_ms=1000} XO_TSAN_ATEXIT_SLEEP=${XO_TSAN_ATEXIT_SLEEP:-1000} \
 		go test -count=1 -timeout 60m ./...
 	s1=$?
 	go test -count=1 -race -timeout 30m ./std/rt

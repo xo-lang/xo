@@ -29,6 +29,7 @@ func TestListModel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
+	t.Parallel() // temporary directories only
 	seeds := []int64{20261008, 7, 99}
 	race := false
 	if out, err := exec.Command("go", "env", "CGO_ENABLED").Output(); err == nil && strings.TrimSpace(string(out)) == "1" {

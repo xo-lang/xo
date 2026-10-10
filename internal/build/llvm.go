@@ -102,7 +102,9 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
-	if err := clangBuild(clang, []string{ll, rt}, bin, flags...); err != nil {
+	srcs := []string{ll, rt}
+	key := nativeBinKey(dir, clang, append([]string{"llvm", LLVMOptLevel}, flags...), srcs)
+	if err := withBinCache(key, bin, func() error { return clangBuild(clang, srcs, bin, flags...) }); err != nil {
 		return nil, err
 	}
 	out.Binaries[Host()] = bin
