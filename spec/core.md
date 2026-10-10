@@ -143,6 +143,12 @@ specified in std.md 13 (decision 0094).
   with 90 byte ones, and independent of parameter size. Frames are on in
   release builds; `--release --error-args=false` drops the parameter
   values (`(...)`).
+- Module proxies, checksum log, definition hashes (4.2, 4.3, 10.3;
+  decisions 0124 to 0126, completing 0086): `XO_PROXY` and `XO_NOPROXY`
+  with a read only proxy protocol and `xo mod proxy serve`; `XO_SUMDB`
+  and `XO_NOSUMDB` check every first fetch against a signed Merkle log
+  (new `XO1313`, `XO1314`; `XO1302` now also covers proxies); `xo query
+  hash` and the definitions list of `xo publish`.
 
 ## Changes in 0.7
 
@@ -1905,7 +1911,7 @@ test "retries after 503" {
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
-| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache. Every command takes `--offline` and `--workspace=off` |
+| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |

@@ -6,6 +6,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Module proxies (decision 0126): `XO_PROXY` lists proxy URLs, `direct`
+  (git), and `off`, with Go's fallback rules (comma after 404/410, pipe
+  after any error; default `direct`), and `XO_NOPROXY` patterns go to
+  git. The read only protocol serves `@v/list`, `.mod`, `.zip`, and
+  `.lock` per module; `xo mod proxy serve [--fetch] [<cache dir>]`
+  serves a module cache and can fill it from git, as a team cache.
+  Proxied trees are checked against xo.lock exactly as git fetches are.
+- Checksum log (decision 0124): with `XO_SUMDB=<name>+<id>+<key>
+  [<url>]`, the first fetch of every module version must match the
+  log's record, be in its signed Merkle tree, and extend every tree the
+  module cache saw before; otherwise `XO1313` and nothing is cached. An
+  unreachable log or malformed settings is `XO1314`; `XO_NOSUMDB` keeps
+  private modules out. The default stays `off` (no public log yet).
+- Definition hashes (decision 0125, the last step of 0086): `xo query
+  hash <name>` prints a content hash per top level definition that
+  survives renaming locals and changes with what the definition, or one
+  it calls in the module, computes. `xo publish --check` lists the
+  definitions (private ones too) changed since the last tag, including
+  those changed only through a helper, next to the API comparison.
+
 - std/http speaks HTTP/2 over TLS on every backend (decision 0121):
   `with_tls` servers and `https` clients agree on `h2` by ALPN, plain
   `http` stays HTTP/1.1, and nothing in the API changes. Requests of a
