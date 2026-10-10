@@ -30,6 +30,18 @@ passes the full suite on the backends it targets.
 - The order of the remaining stages and the switch-over point get their
   own decisions when reached.
 
+## Progress
+
+- 2026-10-08: lexer (decision 0076), identical token dumps.
+- 2026-10-10: parser (decision 0127), identical tree dumps on every
+  accepted file, three backends.
+- 2026-10-10: checker stage 1 of 8, names (decision 0139):
+  `selfhost/check` resolves every identifier like internal/check on all
+  347 accepted repository runs and gives the same diagnostics on the 56
+  rejected only for names, three backends, plus mutations; found three
+  compiler bugs, fixed (decision 0140 among them). Next: stage 2, types
+  and inference (bench/results/selfhost-checker-2026-10-10.md).
+
 ## Alternatives
 
 - Stop at the parser (differential testing and gap finding only).

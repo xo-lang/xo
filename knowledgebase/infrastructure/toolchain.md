@@ -135,6 +135,11 @@ go run ./cmd/xo run selfhost/parser -- [--sig] [--bench=N] <files...>   # the se
 go run ./cmd/xo build --backend=llvm --no-gc -o .tools/xoparse selfhost/parser   # native build of the Xo parser (also --backend=arm64)
 go run ./cmd/xo test selfhost/parser                    # the Xo parser's own tests (8)
 go test ./internal/selfhost -run TestSelfhostParser     # Xo parser (go, arm64, llvm backends) vs Go parser: identical dumps for every accepted file, same rejections: repo .xo, std/*.xo (--sig), spec blocks, progen programs (24/150), token mutations (300/2000); XO_SELFHOST_PROGS=N, XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP (last verified: 2026-10-10)
+go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0139): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
+go run ./cmd/xo run selfhost/check -- [--section=names,diags] [--std=DIR] [--each] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stage 1: the names and diags sections of xo typedump, or timing; std read from DIR (default std)
+go run ./cmd/xo build --backend=llvm -o .tools/xocheck selfhost/check   # native build of the Xo checker (also --backend=arm64)
+go run ./cmd/xo test selfhost/check                     # the Xo checker's own tests (7: paths, JSON, small modules in the test file system)
+go test ./internal/selfhost -run TestSelfhostChecker    # Xo checker (go, arm64, llvm; go only with -short) vs Go checker: identical names sections on every accepted repository run, same name diagnostics on runs rejected only for names, 1000 name mutations (150 with -short); XO_SELFHOST_CHECK_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes check-<backend>.txt, the class of every run; last verified: 2026-10-10)
 go test ./internal/selfhost                             # Xo lexer (built with the go, arm64, and llvm backends) vs Go lexer byte for byte: repo .xo files, spec blocks, runes, 3000 mutated inputs (300 with -short); XO_SELFHOST_SEED, XO_SELFHOST_FUZZ=N, XO_SELFHOST_RUNE_STEP=1 (all runes), XO_SELFHOST_KEEP=<dir> keeps the inputs; one backend: -run 'TestSelfhostDifferential/arm64'
 go test -short ./...                                    # about 10s: skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging (about 2.5 min)
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
@@ -748,7 +753,8 @@ Last verified: 2026-10-07
 ```
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
-                        `xo mcp`, `xo lsp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go)
+                        `xo mcp`, `xo lsp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go),
+                        `xo astdump` (astdump.go), `xo typedump` (typedump.go)
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
 editors/vscode/          VS Code extension (TextMate grammar, Markdown injection, xo lsp client); see editors.md
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
@@ -757,7 +763,8 @@ internal/lexer/         tokens, newline termination (core 1.3), string interpola
 internal/ast/           syntax tree for the whole 0.4 grammar; JSON dump (ast.ToJSON/Dump)
 internal/parser/        recursive descent parser with error recovery; SignatureMode
 internal/diag/          diagnostics (core 10.2 JSON), codes.go is the registry of all codes
-internal/check/         name resolution and type checking (see below)
+internal/check/         name resolution and type checking (see below); dump.go: the canonical
+                        `xo typedump` sections (names, types, sigs, diags) shared with selfhost/check
 internal/format/        canonical printer for `xo fmt`; format.Decl prints signatures
 internal/vet/           `xo vet` advisory checks (XO0207, XO0208, XO0703, XO0901, XO1103)
 internal/fix/           `xo fix`: the check fix loop and the migration rewriter registry
@@ -775,14 +782,18 @@ internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backe
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
                         checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
-internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer and
-                        selfhost/parser and compare their dumps with lexer.Dump and parser.Dump (decisions 0076, 0127)
+internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer,
+                        selfhost/parser, and selfhost/check and compare their dumps with lexer.Dump,
+                        parser.Dump, and check.Result.Dump (decisions 0076, 0127, 0139)
 internal/progen/        the random program generator of decision 0110 (TestCompileProperty, the parser differential)
 selfhost/xo.mod         selfhost/ is one Xo module, github.com/xo-lang/xo/selfhost (the parser imports the lexer)
 selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
                         lexer_test.xo; Unicode and quoting come from the prelude (decision 0079)
 selfhost/parser/        the parser in Xo (decision 0127): ast.xo, parser.xo (tokens, lists, docs, declarations,
                         types), stmt.xo, expr.xo, pattern.xo, dump.xo, main.xo (CLI), parser_test.xo
+selfhost/check/         the checker in Xo, stage 1 names (decision 0139): objects.xo (tables: objects, modules,
+                        files, records), load.xo (directories, xo.mod, std, imports), resolve.xo (declarations,
+                        scopes, the walk), dump.xo (passes, names and diags sections), main.xo (CLI), check_test.xo
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
                         (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
