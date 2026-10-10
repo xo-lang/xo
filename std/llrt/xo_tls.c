@@ -636,14 +636,36 @@ struct tls_conn {
 	uint32_t upper; // flags of the chain above the leaf
 	int apple;      // macOS, the system's roots: apple_verify decides
 	char *alert;    // a fatal alert received after the handshake
+	int probed;     // tls_alert read once more
 	char *vmsg;     // Go's x509 error text
 };
 
 static void alert_msg(tls_conn *t, char *m, size_t mn);
 
+static int64_t tls_read(tls_conn *t, char *p, int64_t n);
+
 // tls_alert is the text of a fatal alert the peer sent after the
-// handshake (Go: a net.OpError "remote error: tls: ..."), or NULL.
-static const char *tls_alert(tls_conn *t) { return t ? t->alert : NULL; }
+// handshake (Go: a net.OpError "remote error: tls: ..."), or NULL. After
+// a failed exchange it reads once more, for at most 100 ms: a TLS 1.3
+// server that rejects the client's certificate sends its alert after the
+// handshake and closes, and the client's request may fail to go out
+// before the alert is read (seen on Linux under x86-64 emulation).
+static const char *tls_alert(tls_conn *t) {
+	if (!t) {
+		return NULL;
+	}
+	if (!t->alert && !t->probed && t->handshaken == 1) {
+		t->probed = 1;
+		int64_t d = deadline((int64_t)100 * 1000000);
+		if (!t->when || t->when > d) {
+			t->when = d;
+		}
+		t->status = 0;
+		char b[512];
+		(void)tls_read(t, b, sizeof b);
+	}
+	return t->alert;
+}
 
 static int bio_send(void *p, const unsigned char *buf, size_t len) {
 	tls_conn *t = p;

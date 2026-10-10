@@ -1,20 +1,37 @@
 // Package mbedtls embeds the vendored source of Mbed TLS (with
 // TF-PSA-Crypto), the TLS library of the native backends' std/http
-// (decision 0105). internal/build compiles it once per C compiler and
-// flavor into a static archive in the user cache directory and links it
-// into native programs that use std/http.
+// (decision 0105). internal/build compiles it once per C compiler,
+// sysroot, and sanitizer flavor into a static archive in the user cache
+// directory and links it into native programs that use std/http.
 //
-// src/ is a subset of the mbedtls-4.1.1 release (the .c and .h files of
-// include/, library/, and the TF-PSA-Crypto directories the library
-// build uses), unmodified; xo/ holds the Xo runtime's configuration.
-// See README.md for the pinned release and how to update it.
+// src/ is a subset of the mbedtls-4.1.1 release tarball (the .c and .h
+// files of include/, library/, and the TF-PSA-Crypto directories the
+// library build uses), unmodified; xo/ holds the Xo runtime's
+// configuration. The package embeds mbedtls.tgz, a compressed copy of
+// src/ made by gen.go, and xo/. The pinned release, its checksum, and the
+// update steps are in knowledgebase/infrastructure/toolchain.md ("TLS
+// library") and scripts/vendor-mbedtls.sh.
 package mbedtls
 
-import "embed"
+//go:generate go run gen.go
 
-// Files holds src/ and xo/.
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"embed"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Files holds mbedtls.tgz and xo/.
 //
-//go:embed src xo
+//go:embed mbedtls.tgz xo
 var Files embed.FS
 
 // Version is the vendored Mbed TLS release.
@@ -66,4 +83,110 @@ var SourceDirs = []string{
 // (Hacl_Curve25519_joined.c includes Hacl_Curve25519.c).
 var Exclude = []string{
 	"src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519.c",
+}
+
+// File is one file of the library tree: its slash separated path
+// (src/... or xo/...) and contents.
+type File struct {
+	Name string
+	Data []byte
+}
+
+// Tree returns every file of the embedded tree, sorted by name: the
+// files of mbedtls.tgz under src/, and xo/.
+func Tree() ([]File, error) {
+	tgz, err := Files.ReadFile("mbedtls.tgz")
+	if err != nil {
+		return nil, err
+	}
+	out, err := untar(tgz)
+	if err != nil {
+		return nil, err
+	}
+	err = fs.WalkDir(Files, "xo", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := Files.ReadFile(p)
+		out = append(out, File{Name: p, Data: data})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func untar(tgz []byte) ([]File, error) {
+	zr, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, err
+	}
+	tr := tar.NewReader(zr)
+	var out []File
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, File{Name: h.Name, Data: data})
+	}
+}
+
+// Archive makes the deterministic tar.gz of the files under dir (on
+// disk, relative to the working directory), named src/... (gen.go).
+func Archive(dir string) ([]byte, error) {
+	var names []string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		names = append(names, p)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	tw := tar.NewWriter(zw)
+	for _, n := range names {
+		data, err := os.ReadFile(n)
+		if err != nil {
+			return nil, err
+		}
+		rel, _ := filepath.Rel(dir, n)
+		name := path.Join("src", filepath.ToSlash(rel))
+		if strings.Contains(name, "..") {
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg, Format: tar.FormatPAX}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write(data); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

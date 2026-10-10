@@ -8,18 +8,33 @@
 // to do; it stays near preload + concurrency users. Latencies are recorded
 // only after the warmup; requests and errors are counted for the whole run
 // (the server's GC trace covers the whole run too).
+//
+// HTTPS (decision 0105): an https:// URL skips certificate verification
+// (a loopback test certificate); -newconn makes every request open a new
+// connection, so a TLS server does a full handshake per request;
+// -gencert dir writes a self signed ECDSA P-256 certificate for
+// 127.0.0.1 (cert.pem, key.pem) and exits.
 package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,8 +65,21 @@ func main() {
 	pid := flag.Int("pid", 0, "server pid whose RSS is sampled")
 	route := flag.String("route", "", "allocation mode: send -n requests of one route on one connection and exit (get, list, patch, createdel, cycle)")
 	n := flag.Int("n", 1000, "requests (create and delete pairs, cycles) in -route mode")
+	newConn := flag.Bool("newconn", false, "a new connection (and TLS handshake) per request")
+	gencert := flag.String("gencert", "", "write cert.pem and key.pem for 127.0.0.1 into this directory and exit")
 	flag.Parse()
-	if !strings.HasPrefix(*base, "http://127.0.0.1:") && !strings.HasPrefix(*base, "http://localhost:") {
+	if *gencert != "" {
+		if err := genCert(*gencert); err != nil {
+			fmt.Fprintln(os.Stderr, "loadgen:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	loop := false
+	for _, p := range []string{"http://127.0.0.1:", "http://localhost:", "https://127.0.0.1:", "https://localhost:"} {
+		loop = loop || strings.HasPrefix(*base, p)
+	}
+	if !loop {
 		fmt.Fprintln(os.Stderr, "loadgen: loopback URLs only")
 		os.Exit(2)
 	}
@@ -59,6 +87,9 @@ func main() {
 		MaxIdleConns:        *conc * 2,
 		MaxIdleConnsPerHost: *conc * 2,
 		DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		// a loopback test certificate; HTTP/1.1 as the Xo servers speak
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+		DisableKeepAlives: *newConn,
 	}
 	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 	waitReady(client, *base)
@@ -315,4 +346,35 @@ func cpuTime(pid int) time.Duration {
 	}
 	secs += float64(days) * 86400
 	return time.Duration(secs * float64(time.Second))
+}
+
+// genCert writes a self signed ECDSA P-256 certificate for 127.0.0.1
+// and localhost, valid for a week, and its key into dir.
+func genCert(dir string) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "loadgen"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(7 * 24 * time.Hour),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return err
+	}
+	kd, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}), 0o600)
 }

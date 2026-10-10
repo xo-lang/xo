@@ -12,7 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 
@@ -59,33 +58,27 @@ var (
 	ccVers   = map[string]string{} // C compiler -> its --version output
 )
 
-// tlsSourceHash hashes the embedded library and configuration.
+// tlsSourceHash hashes the embedded library (its compressed sources) and
+// configuration.
 func tlsSourceHash() (string, error) {
 	if tlsHash != "" {
 		return tlsHash, nil
 	}
 	h := sha256.New()
-	var names []string
 	err := fs.WalkDir(mbedtls.Files, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(mbedtls.Files, p)
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() {
-			names = append(names, p)
-		}
+		fmt.Fprintf(h, "%s %d\n", p, len(data))
+		h.Write(data)
 		return nil
 	})
 	if err != nil {
 		return "", err
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		data, err := fs.ReadFile(mbedtls.Files, n)
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(h, "%s %d\n", n, len(data))
-		h.Write(data)
 	}
 	tlsHash = hex.EncodeToString(h.Sum(nil))
 	return tlsHash, nil
@@ -191,28 +184,21 @@ func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
 	for _, d := range mbedtls.SourceDirs {
 		inSourceDir[d] = true
 	}
-	err := fs.WalkDir(mbedtls.Files, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := fs.ReadFile(mbedtls.Files, p)
-		if err != nil {
-			return err
-		}
-		out := filepath.Join(dir, filepath.FromSlash(p))
+	tree, err := mbedtls.Tree()
+	if err != nil {
+		return err
+	}
+	for _, f := range tree {
+		out := filepath.Join(dir, filepath.FromSlash(f.Name))
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(out, data, 0o644); err != nil {
+		if err := os.WriteFile(out, f.Data, 0o644); err != nil {
 			return err
 		}
-		if strings.HasSuffix(p, ".c") && inSourceDir[path.Dir(p)] && !excluded[p] {
-			srcs = append(srcs, p)
+		if strings.HasSuffix(f.Name, ".c") && inSourceDir[path.Dir(f.Name)] && !excluded[f.Name] {
+			srcs = append(srcs, f.Name)
 		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 	args := []string{"-c", "-O2", "-w", "-fexceptions", "-funwind-tables"}
 	args = append(args, flavor...)

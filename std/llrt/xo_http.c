@@ -3470,7 +3470,8 @@ static int cl_once(const char *method, hurl *u, hstr host, hlist *hdr, const cha
 	}
 	// an alert of the server after the handshake (a TLS 1.3 server that
 	// wanted a client certificate): Go's net.OpError, a Connect error
-	char *alert = tls_alert(c.tls) && s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED ? strdup(tls_alert(c.tls)) : NULL;
+	const char *ta = s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0] ? tls_alert(c.tls) : NULL;
+	char *alert = ta ? strdup(ta) : NULL;
 	tls_conn_free(c.tls);
 	pd_close(c.pd);
 	h_release(cn);
