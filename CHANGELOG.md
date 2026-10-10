@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend (decision 0119): generated code is compiled for the same
+  CPU and features as the C runtime (clang's defaults): LSE atomics for
+  shared reference counts on darwin/arm64, outline atomics (LSE when the
+  CPU has it) on Linux arm64. HTTP benchmark +3.5 percent.
 - Native `Mutex` (decision 0118): a writer's release hands the lock to
   the readers waiting, so they no longer wake only to park again: a
   contended readers and writer load (`bench/perf/conc` `rwmutex`, new)

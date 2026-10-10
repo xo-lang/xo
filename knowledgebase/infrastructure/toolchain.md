@@ -1181,6 +1181,13 @@ first, AST based prototype, since deleted) and
   helpers. A construct outside the SSA builder's subset is a build error
   naming it and its position ("the SSA builder does not support ...").
   The AST path (bump allocator, never freed) was deleted on 2026-10-08.
+- Target (decision 0119, 2026-10-10): `build.ClangTargetAttrs` reads
+  clang's default `-target-cpu` and `-target-feature`s (`clang -### -c
+  -x c /dev/null`, once per compiler) and the IR's function attribute
+  groups `#1` and `#4` carry them (`llvm.Options.TargetAttrs`):
+  darwin/arm64 `apple-m1` (LSE atomics inline), Linux arm64 `generic`
+  with `+outline-atomics` (Debian clang 19), Linux amd64 `x86-64`.
+  Check with `otool -tv bin | grep -c ldaxr` (0 on darwin/arm64).
 - Layout: Int i64, Bool i1, Float double, `()` and capabilities `{}`, Str
   `{ptr obj, i64 len}` with obj `{i64 rc, i64 cap, bytes}` (literals are
   constants with the immortal count INT64_MIN, never written), List a

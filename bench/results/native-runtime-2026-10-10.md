@@ -95,7 +95,7 @@ the active samples about 13 percent are the release of the captured
 (`xo.envdrop.main.fn1`) and part of `xo_entry` its retain on the
 spawning thread: one cache line written from every core. arm64, which
 uses LSE atomics, spends 10 percent less CPU on this workload than llvm
-(task 3 below). Not changed here: the fix that removes the traffic is a
+(section 3). Not changed here: the fix that removes the traffic is a
 borrowed capture for closures that cannot outlive their scope (no
 retain at spawn, no release at the end, the owner kept alive to the
 join), a change of internal/ssa's RC insertion and of both backends'
@@ -116,3 +116,36 @@ request: 220 MB without magazines, 28 MB with, 15019 and 15056 req/s.
 bench/perf/http kept alive (2 interleaved rounds): 112804 and 113347
 req/s at 30.3 us before, 113013 and 113072 at 30.3 us after; RSS 30 to
 21 MB.
+
+## 3. LSE atomics in LLVM backend code (decision 0119)
+
+The generated functions now carry clang's default target (darwin/arm64:
+`apple-m1`, LSE). `otool -tv` of the llvm `spawn` binary: exclusive
+loads (`ldxr`/`ldaxr`) 20 before, 0 after; LSE instructions 55 (the C
+runtime's) before, 72 after. Interleaved A/B (llvm, before = the commit
+with magazines, wall / CPU ms):
+
+| Workload | before | after |
+|---|---|---|
+| spawn (9 rounds) | 67.9 / 267.3 | 67.0 / 261.8 |
+| fanout | 30.8 / 111.6 | 31.2 / 110.5 |
+| pingpong | 27.4 / 47.0 | 28.4 / 48.8 |
+| mutex | 6.7 / 8.1 | 6.5 / 7.9 |
+| rwmutex | 131.2 / 255.2 | 131.1 / 254.7 |
+| pmap | 60.2 / 624.8 | 58.8 / 608.0 |
+| fib (15 rounds) | 216.6 | 218.3 |
+| sieve (15 rounds) | 97.5 | 99.1 |
+| nbody (7) | 181.6 | 181.2 |
+| sort | 210.5 | 211.0 |
+| interp | 64.6 | 64.9 |
+| collatz | 468.4 | 459.8 |
+| strings | 35.0 | 35.1 |
+
+bench/perf/http kept alive (xo-llvm, 3 interleaved rounds): before
+112716, 112909, 112988 req/s (p99 959, 969, 957 us), after 117012,
+116386, 116824 (p99 924, 932, 914 us); CPU per request 30.1 to 29.6 us.
+
+Linux containers: Debian clang 19 reports `generic` with
+`+outline-atomics` on arm64 (the helpers pick LSE at run time, exclusive
+loops on ARMv8.0) and `x86-64` on amd64; TestLLVMTargetAttrs and the
+LLVM goldens (plus TLS, signals, runtime threads on arm64) pass in both.

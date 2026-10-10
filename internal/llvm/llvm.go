@@ -16,6 +16,7 @@
 package llvm
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,6 +36,13 @@ type Options struct {
 	Tests bool
 	// Release compiles out debug contracts (ssa.Options.Release).
 	Release bool
+	// TargetAttrs are LLVM function attributes every generated function
+	// gets: the C compiler's own target CPU and features
+	// (build.ClangTargetAttrs), so generated code uses the instructions
+	// the runtime's C does (LSE atomics for shared counts on arm64,
+	// outline atomics where the baseline lacks them; decision 0119) and
+	// LTO may inline runtime functions into it. Empty: LLVM's generic CPU.
+	TargetAttrs string
 }
 
 // Program is the generated IR of one Xo program.
@@ -70,6 +78,9 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	if opts.TargetAttrs != "" {
+		prog.IR = withTargetAttrs(prog.IR, opts.TargetAttrs)
+	}
 	prog.TZ = m.TZ
 	for _, mod := range res.Modules {
 		if fo, ok := mod.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
@@ -78,6 +89,19 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		}
 	}
 	return prog, nil
+}
+
+// definedAttrs are the attribute groups of generated function
+// definitions (fromssa.go's ssaRuntimeDecls).
+var definedAttrs = []string{"attributes #1 = { uwtable", "attributes #4 = { nounwind alwaysinline"}
+
+// withTargetAttrs adds attrs to the attribute groups of the generated
+// function definitions in ir.
+func withTargetAttrs(ir []byte, attrs string) []byte {
+	for _, g := range definedAttrs {
+		ir = bytes.Replace(ir, []byte(g+" }"), []byte(g+" "+attrs+" }"), 1)
+	}
+	return ir
 }
 
 // irBytes encodes s as the body of an LLVM c"..." string.

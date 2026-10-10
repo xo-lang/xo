@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -42,6 +43,66 @@ func Clang() (string, error) {
 	return "", ErrNoClang
 }
 
+var (
+	targetMu    sync.Mutex
+	targetAttrs = map[string]string{} // C compiler -> ClangTargetAttrs
+	quotedArg   = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+)
+
+// ClangTargetAttrs returns the LLVM function attributes of the target
+// clang compiles C for by default on this host (its -target-cpu and
+// -target-feature arguments, from `clang -###`), for the generated IR
+// (llvm.Options.TargetAttrs, decision 0119): darwin/arm64 gets apple-m1
+// with LSE atomics, Linux on arm64 the generic CPU with outline atomics
+// when clang's runtime library has them, as the runtime's C does. ""
+// when clang reports neither.
+func ClangTargetAttrs(clang string) string {
+	targetMu.Lock()
+	defer targetMu.Unlock()
+	if a, ok := targetAttrs[clang]; ok {
+		return a
+	}
+	out, err := exec.Command(clang, "-###", "-c", "-x", "c", os.DevNull, "-o", os.DevNull).CombinedOutput()
+	a := ""
+	if err == nil {
+		a = parseTargetAttrs(string(out))
+	}
+	targetAttrs[clang] = a
+	return a
+}
+
+// parseTargetAttrs reads the target CPU and features from the cc1 line
+// of `clang -###` output.
+func parseTargetAttrs(out string) string {
+	var cpu string
+	var feats []string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, `"-cc1"`) {
+			continue
+		}
+		var args []string
+		for _, m := range quotedArg.FindAllStringSubmatch(line, -1) {
+			args = append(args, m[1])
+		}
+		for i := 0; i+1 < len(args); i++ {
+			switch args[i] {
+			case "-target-cpu":
+				cpu = args[i+1]
+			case "-target-feature":
+				feats = append(feats, args[i+1])
+			}
+		}
+	}
+	var parts []string
+	if cpu != "" {
+		parts = append(parts, `"target-cpu"="`+cpu+`"`)
+	}
+	if len(feats) > 0 {
+		parts = append(parts, `"target-features"="`+strings.Join(feats, ",")+`"`)
+	}
+	return strings.Join(parts, " ")
+}
+
 // LLVMOptLevel is the clang optimization flag of LLVM builds.
 var LLVMOptLevel = "-O2"
 
@@ -59,11 +120,11 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if opts.Race || opts.Holes {
 		return nil, fmt.Errorf("the LLVM backend does not support --race or --holes")
 	}
-	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, Release: opts.release()})
+	clang, err := Clang()
 	if err != nil {
 		return nil, err
 	}
-	clang, err := Clang()
+	prog, err := llvm.Generate(res, llvm.Options{LineRoot: lineRoot(dirs), ShareProbes: opts.ShareProbes, Tests: opts.Mode == gen.Test, Release: opts.release(), TargetAttrs: ClangTargetAttrs(clang)})
 	if err != nil {
 		return nil, err
 	}
