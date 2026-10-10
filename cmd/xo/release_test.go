@@ -114,6 +114,10 @@ type publishOut struct {
 	Diagnostics []struct {
 		Code string `json:"code"`
 	} `json:"diagnostics"`
+	Definitions []struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	} `json:"definitions"`
 }
 
 func publish(t *testing.T, want int, args ...string) publishOut {

@@ -229,6 +229,9 @@ kinds:
   api <module path>        exported surface of a module (import path or directory)
   imports <package>        the package's use lines, with any deny rule that forbids one
   deps <package>           imports, transitively (std and Go packages are not followed)
+  hash <name>              content hash of a definition of the module (name, Type.method,
+                           pkg.name, or <package path>.name): local names erased,
+                           referenced definitions by their hashes (core 4.3)
 
 --dir (default .) is the directory checked. JSON is the default when stdout
 is not a terminal.
@@ -306,6 +309,9 @@ func runQueryWith(args []string, load loader, stdout, stderr io.Writer) int {
 		}
 	}
 	switch kind {
+	case "hash":
+		// syntactic: no check run (decision 0125)
+		return queryHash(dir, rest[0], asJSON, stdout, stderr)
 	case "type", "def", "callers", "effects", "holes", "api", "imports", "deps":
 	default:
 		fmt.Fprintf(stderr, "xo query: unknown kind %q\n\n%s", kind, queryUsage)

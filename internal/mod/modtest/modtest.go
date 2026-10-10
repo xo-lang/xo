@@ -54,6 +54,12 @@ func Setup(t testing.TB, src string, compare func(a, b string) int) *Env {
 	t.Setenv("XO_OFFLINE", "")
 	t.Setenv("XO_WORK", "")
 	t.Setenv("XO_NO_SERVE", "1")
+	// fetch from git only, without a checksum log, whatever the
+	// developer's environment says (decisions 0124, 0126)
+	t.Setenv("XO_PROXY", "direct")
+	t.Setenv("XO_NOPROXY", "")
+	t.Setenv("XO_SUMDB", "off")
+	t.Setenv("XO_NOSUMDB", "")
 	versions := map[string][]string{}
 	entries, err := findVersionDirs(src)
 	if err != nil {

@@ -143,6 +143,12 @@ specified in std.md 13 (decision 0094).
   with 90 byte ones, and independent of parameter size. Frames are on in
   release builds; `--release --error-args=false` drops the parameter
   values (`(...)`).
+- Module proxies, checksum log, definition hashes (4.2, 4.3, 10.3;
+  decisions 0124 to 0126, completing 0086): `XO_PROXY` and `XO_NOPROXY`
+  with a read only proxy protocol and `xo mod proxy serve`; `XO_SUMDB`
+  and `XO_NOSUMDB` check every first fetch against a signed Merkle log
+  (new `XO1313`, `XO1314`; `XO1302` now also covers proxies); `xo query
+  hash` and the definitions list of `xo publish`.
 
 ## Changes in 0.7
 
@@ -1026,6 +1032,20 @@ require github.com/acme/billing v1.4.0
 - Fetching runs git and extracts the tag's tree (`git archive`) into a read
   only module cache; no code from a module runs at fetch or build setup
   (no scripts, no hooks). A version that cannot be fetched is `XO1302`.
+- Module proxies (decision 0126): `XO_PROXY` lists where versions come
+  from, in order: proxy URLs (`http://`, `https://`), `direct` (git), and
+  `off` (no fetching); the default is `direct`. After a comma the next
+  source is tried only when a proxy answers 404 or 410, after a pipe on
+  any error. `XO_NOPROXY=<patterns>` (comma separated globs over leading
+  path elements, `github.com/acme/*`) always goes direct. The protocol is
+  read only HTTP: `<path>/@v/list`, `<path>/@v/<version>.mod`, `.zip`
+  (the tree, files under `<path>@<version>/`), and `.lock` (the xo.lock
+  lines), the path and version escaped as in the module cache (`!` before
+  a lower cased capital). A proxy is not trusted: its tree must declare
+  the module path and match xo.lock as a git fetch must. `xo mod proxy
+  serve [--addr=host:port] [--fetch] [<cache dir>]` serves a module cache
+  this way (`--fetch` fills it from git). A malformed `XO_PROXY` is
+  `XO1314`.
 - Offline (`--offline` on any command, or `XO_OFFLINE=1`) nothing is
   fetched: every version must be in the module cache or vendored, else
   `XO1303`.
@@ -1177,6 +1197,34 @@ its content hash.
   cache or vendor/ and compares them. A mismatch (a moved tag, an edited
   cache or vendor copy) is `XO1304` and nothing builds; a version with no
   entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
+- **[P1]** Checksum log (decision 0124): with `XO_SUMDB=<name>+<key
+  id>+<public key> [<URL>]` (default `off`), the first fetch of every
+  module version, from git or a proxy, is checked before it enters the
+  module cache: the log's record of the version (its two xo.lock lines)
+  must equal the fetched tree's hashes, the record must be in the log's
+  signed Merkle tree (inclusion proof), and that tree must extend every
+  tree of the log this module cache saw before (consistency proof). A
+  failure is `XO1313` and nothing is cached; a log that cannot be
+  consulted, or malformed settings, is `XO1314`. `XO_NOSUMDB=<patterns>`
+  (as `XO_NOPROXY`, 4.2) names private modules that are never looked up.
+- **[P1]** Definition hashes (decision 0125, step 5 of decision 0086):
+  every top level definition (function, method, type, constant) has a
+  content hash `d1:<base64 SHA-256>` over its syntax tree with
+  positions, comments, and doc comments dropped, its own name left out
+  (functions and constants; a type's name is part of it), local names
+  erased (numbered by first binding: `let`, `var`, patterns, loops,
+  closure parameters, type parameters, receivers, labels; the
+  parameters of declared functions keep their names, which named
+  arguments use), imports by path rather than by local name, and the
+  definitions of the same module it references replaced by their hashes
+  (mutually recursive ones hashed together). `hash` covers that closure,
+  `own` the definition alone. `xo query hash <name>` prints them (10.3);
+  `xo publish` lists every definition, exported or not, whose hash
+  differs from the previous release (`changed`, or `changed_via` when
+  only a definition it uses changed), next to the API comparison. The
+  hashes are syntactic (no types): a method called on a value and other
+  modules' definitions are referenced by name. xo.lock does not record
+  them; decision 0125 proposes how it would.
 - **[P3]** Hash is per definition: the normalized AST with local names erased
   and referenced definitions replaced by their hashes. Consequences:
   - Two versions of a dependency coexist without conflict. Types from different
@@ -1863,7 +1911,7 @@ test "retries after 503" {
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
-| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache. Every command takes `--offline` and `--workspace=off` |
+| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |
@@ -1998,7 +2046,13 @@ xo query holes
 xo query api github.com/acme/billing   // exported surface of a module
 xo query imports example.com/notes/domain   // its `use` lines
 xo query deps example.com/notes/server      // the same, transitively
+xo query hash users.fetch_user              // content hash of a definition (4.3)
 ```
+
+`hash` (decision 0125) answers `{list}`, one entry per definition the
+name resolves to (a name, `Type.method`, `pkg.name`, or `<package
+path>.name` of the module holding `--dir`): `{id, package, name, kind,
+pub, hash, own, refs, file, line}`. It needs no check run.
 
 `imports` and `deps` (decision 0095) answer
 `{package, transitive, imports, packages}`: each entry of `imports` is a
@@ -2141,7 +2195,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
 | `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
-| `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
+| `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
 | `XO1304` | error | modules | module tree does not match its xo.lock content hash (core 4.3) |
 | `XO1305` | error | modules | xo.lock has no hash for a module version the build uses; run `xo mod tidy` |
@@ -2152,6 +2206,8 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1310` | error | publish | `xo publish`: a minor or patch release removes or changes an export, or adds an effect to one |
 | `XO1311` | error | publish | `xo publish`: the release cannot be made (not in a git repository, a subdirectory module path not ending in its directory, uncommitted changes, tag exists, version not above the last, wrong /vN path) |
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
+| `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
+| `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

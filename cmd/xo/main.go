@@ -101,7 +101,8 @@ commands:
       go per module (XO1103), dbg(...) left in code (XO0901). Default: .
   query <kind> [--json|--text] [--dir=<dir>] <argument>
       Semantic queries (core 10.3): type <file:line:col>, def <name>,
-      callers <module.fn>, effects <module.fn>, holes, api <module path>.
+      callers <module.fn>, effects <module.fn>, holes, api <module path>,
+      imports <package>, deps <package>, hash <name> (definition content hash).
       JSON is the default when stdout is not a terminal.
   edit [--dry-run] [--dir=<dir>] <op> <args...>
       Semantic edits (core 10.4) through the checker's resolved symbols:
@@ -171,12 +172,22 @@ commands:
       or adds an effect to one (XO1310). Without --check it also needs a
       clean working tree and a module that checks without a workspace,
       then prints the git tag command to run; it never tags or pushes.
+      It also lists every definition (exported or not) whose content hash
+      changed since the previous tag (xo query hash; decision 0125).
   mod tidy [--dir=<dir>] [--json]
       Require every imported module, drop requirements nothing imports
       (unless they raise a version the graph selects), and rewrite xo.lock
       with exactly the hashes the build uses. Ignores xo.work and vendor/.
   mod clean
       Remove the module cache (it is read only, so rm -rf fails).
+  mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+      Serve a module cache (default $XO_MODCACHE) read only over the module
+      proxy protocol (decision 0126); --fetch fills it from git on a miss
+      (a team's caching proxy). Clients set XO_PROXY=<url>[,direct]
+      (default direct; off forbids fetching; XO_NOPROXY=<patterns> go
+      direct). XO_SUMDB=<name>+<id>+<key> [<url>] checks every first fetch
+      against a checksum log (decision 0124; XO1313, XO1314), except paths
+      matching XO_NOSUMDB=<patterns>.
   vendor [--dir=<dir>] [--json]
       Copy every selected module version into vendor/ with
       vendor/modules.txt; builds then use vendor/ only (no cache, no

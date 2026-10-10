@@ -8,10 +8,13 @@ XO1301 to XO1308), and so are (3) effect ceilings (`require ... uses`,
 `use ... uses` in xo.work, XO1309, `xo get` API and effect diffs, `xo get
 -u`) and (4) `xo publish [--check]` semver checks (`internal/release`,
 XO1310, XO1311), `xo init` gitignoring xo.work, and `/vN` major version
-paths. Step (5) per definition hashes is not built; neither is an
-optional proxy or a checksum log. Modules in subdirectories of a
-repository (tags `<dir>/vX.Y.Z`, as Go) are built too (2026-10-09, notes
-below).
+paths. Modules in subdirectories of a repository (tags `<dir>/vX.Y.Z`,
+as Go) are built too (2026-10-09, notes below). Update 2026-10-10: step
+(5) per definition hashes is built for `xo query hash` and `xo publish`
+(decision 0125; recording them in xo.lock is proposed there, not
+built), and so are the optional proxy (`XO_PROXY`, `xo mod proxy
+serve`, decision 0126) and checksum log (`XO_SUMDB`, decision 0124;
+XO1313, XO1314). Every step of this decision is now implemented.
 
 ## Context
 

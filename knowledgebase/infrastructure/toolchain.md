@@ -1657,7 +1657,7 @@ Last verified: 2026-10-09. Results: `bench/results/ci-aws-2026-10-09.md`.
   (2026-10-09). TSan runs natively on both (unlike amd64 under Rosetta).
 - Needs terraform (1.16.2 used), the AWS CLI, rsync, ssh, python3.
 
-## Modules and workspaces (decision 0086, steps 1 to 4)
+## Modules and workspaces (decision 0086, steps 1 to 5; proxy 0126, checksum log 0124)
 
 Last verified: 2026-10-09.
 
@@ -1771,11 +1771,49 @@ Last verified: 2026-10-09.
   `internal/release/api_test.go`, `internal/serve/serve_test.go`,
   `internal/check/rules_test.go` (XO1306), `internal/check/ceiling_test.go`
   (XO1309). No test touches the network.
-- Not yet: per definition hashes (step 5), a proxy or checksum log,
-  Go's "major subdirectory" layout (`/v2/` directories of one tag; major
-  versions of a subdirectory module use the major branch way, tags
-  `<dir>/v2.x.y`), `go-get` style HTML meta discovery of repository
-  roots, `xo get --uses` to set a ceiling from the command line.
+- Module proxy (decision 0126, 2026-10-10): `internal/mod/fetch.go`
+  (`ParseProxy`, `MatchPatterns`, `settingsFor`, `Versions`, `Download`,
+  `download(root, ...)` with an explicit cache root, `gitFetch`),
+  `internal/mod/proxy.go` (`proxyList`, `proxyFetch`, `unzipModule`,
+  `ZipModule`, `ProxyHandler`). `XO_PROXY` default `direct`; `,` falls
+  back on 404/410 only, `|` on any error; `XO_NOPROXY` globs go direct.
+  Endpoints `<escaped path>/@v/list|<v>.mod|<v>.zip|<v>.lock`; zip
+  entries under `<path>@<v>/`, 500 MB cap, regular files only. `xo mod
+  proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]`
+  (`cmd/xo/mod.go`) serves a module cache directory; `--fetch` fills it
+  with direct git fetches (never through XO_PROXY). The repository
+  helpers (`repoDir`, `vcsDir`, `locateIn`, `versionDirIn`) take the
+  cache root so a proxy serves its own cache in process. Last verified:
+  2026-10-10.
+- Checksum log (decision 0124, 2026-10-10): package `internal/sumdb`
+  (`tlog.go` RFC 6962 hashing and proofs, `note.go` keys and signed tree
+  heads, `client.go`, `server.go` an in memory log with a lookup hook).
+  `XO_SUMDB=off` (default) or `<name>+<id>+<key> [<url>]`; checked in
+  `download` on every first fetch unless `XO_NOSUMDB` matches; the
+  latest verified head is kept in `<cache>/cache/sumdb/<name>/latest`.
+  `mod.LogRecord(root, path, v)` is what a log server records. There is
+  no CLI to run a log or generate keys yet (`sumdb.GenerateKey`,
+  `sumdb.NewServer` from Go). XO1313 security failure, XO1314
+  unreachable or malformed.
+- Definition hashes (decision 0125, step 5, 2026-10-10): package
+  `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
+  `Nearest`), reflection over `internal/ast` with per field rules
+  (`binders`, paths, `SelectorExpr`, `StructPat`); a new AST field is
+  hashed by default, but a new binding or name field needs a rule.
+  `xo query hash` runs without a check (`cmd/xo/hash.go`, before the
+  query loader); `release.Publish` fills `Result.Definitions`.
+- Tests that stand up servers use `httptest` on loopback in the test
+  process (`internal/mod/proxy_test.go`, `log_test.go`,
+  `cmd/xo/proxy_test.go`, `hash_test.go`); `modtest.Setup` pins
+  XO_PROXY=direct and XO_SUMDB=off.
+- Not yet: Go's "major subdirectory" layout (`/v2/` directories of one
+  tag; major versions of a subdirectory module use the major branch way,
+  tags `<dir>/v2.x.y`), `go-get` style HTML meta discovery of repository
+  roots, `xo get --uses` to set a ceiling from the command line; proxy
+  authentication and `file://` proxies; a log CLI (keygen, serve with
+  persistence), tiles, proxying the log through a module proxy, and
+  head gossip; definition hashes in xo.lock and type based (checked)
+  definition hashes.
 
 ## Go interop (prototype)
 
