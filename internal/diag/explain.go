@@ -1122,6 +1122,36 @@ fn f(s: Str) -> Float ! Error {
   strconv.parse_float(s, 64)?
 }`,
 	},
+	CBindFailed: {
+		Title: "C header cannot be bound",
+		Detail: "`use c \"header.h\"` reads the header with clang's AST dump and generates an Xo declaration file and a C adapter (into `.xo/cbind/` or `$XO_CBIND_DIR`). This failed: the header is neither a file relative to the module directory nor on the C include path, clang reported an error in it, a `link` file does not exist, or the line's `uses` names an unknown effect. " +
+			"The message carries the reason. `link \"x.c\"` (or `.a`, `.o`) is a path relative to the module directory; `link \"z\"` (no extension or `/`) links the library -lz. `xo bind --c <header>` runs the binding step alone. See core 4.4 and decision 0113.",
+		Example: `use c "missing.h" link "missing.c"
+
+fn main(os: Os) uses ffi {
+  os.stdio.println("hi")
+}`,
+		Fix: `use c "zlib.h" link "z"
+
+fn main(os: Os) uses ffi {
+  os.stdio.println(zlib.zlib_version())
+}`,
+	},
+	CNameSkipped: {
+		Title: "C function exists in the header but its signature does not map to Xo",
+		Detail: "The header declares this function, but a parameter or the result is a type the boundary does not carry (decision 0093): an output pointer, a mutable buffer, a `char *` result whose owner is unknown, a pointer to a struct the header defines, a function pointer, an array, or a variadic list. " +
+			"The binding maps scalars, `const char *` (Str), a const byte pointer followed by an integer length (Str or Bytes), flat structs of scalars (copied), and pointers to structs the header leaves undefined (opaque handles). Skipped names and their reasons are listed at the top of the generated binding. Write a small C wrapper with a mappable signature, declare it in a header of your module, and bind that header. See core 4.4 and decision 0113.",
+		Example: `use c "zlib.h" link "z"
+
+fn f() -> Int32 uses ffi {
+  zlib.deflate_end()
+}`,
+		Fix: `use c "zlib.h" link "z"
+
+fn f(data: Bytes) -> UInt64 uses ffi {
+  zlib.crc32(0, data)
+}`,
+	},
 	GoUsageReport: {
 		Title: "per module report of `use go` packages and the functions that perform `go`",
 		Detail: "Reported by `xo vet` as a note, once per module. Go code can reach files and the network without a capability, so every call into Go performs the effect `go`, and agents may reach for Go idioms through the boundary out of habit (decision 0041). " +

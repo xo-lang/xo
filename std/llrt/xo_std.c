@@ -23,6 +23,10 @@ static xo_rstr *nstr(const char *p, int64_t n, int64_t *len) {
 	return s;
 }
 
+// xo_cffi_str copies n bytes at p into a new string: the Str results of
+// the C adapters of `use c` (internal/cbind, decision 0113).
+xo_rstr *xo_cffi_str(const char *p, int64_t n, int64_t *len) { return nstr(p, n, len); }
+
 // A growable byte buffer for building results (malloc'd).
 typedef struct {
 	char *p;

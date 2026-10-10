@@ -53,7 +53,7 @@ func Imports(mainDir, mainPath string) ([]string, error) {
 			return nil
 		}
 		for _, u := range f.Uses {
-			if u.Go || u.Path == "" || !IsRemote(u.Path) || u.Path == mainPath || strings.HasPrefix(u.Path, mainPath+"/") {
+			if u.Go || u.C || u.Path == "" || !IsRemote(u.Path) || u.Path == mainPath || strings.HasPrefix(u.Path, mainPath+"/") {
 				continue
 			}
 			set[u.Path] = true

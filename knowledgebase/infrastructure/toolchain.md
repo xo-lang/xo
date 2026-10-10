@@ -769,6 +769,8 @@ scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), im
 internal/benchharness/  test only: runs the bench/harness Python self test under go test
 internal/gobind/        `use go` bindings: go list + go/importer + go/types -> Xo declaration
                         file and Go adapter (decision 0041 prototype, see "Go interop")
+internal/cbind/         `use c` bindings: clang's JSON AST dump of a header -> Xo declaration
+                        file and C adapter (decision 0113, see "C interop")
 std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
                         path.xo, sql.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
@@ -1806,6 +1808,49 @@ experiment of its work queue item 6. Results and coverage:
   The golden `go_uuid` needs `github.com/google/uuid@v1.6.0` from the
   network or module cache and is skipped when `go mod download` fails. The
   golden and checker tests set `XO_GOBIND_DIR` to a temporary directory.
+
+## C interop (`use c`, native builds)
+
+Last verified: 2026-10-10. Decision 0113 (stage 2 of decision 0093);
+spec core 4.5.
+
+- Syntax: `use c "<header>" { link "<x>" } [as name] [uses none | uses
+  e, ...]` (`ast.UseDecl.C`, `Links`, `Uses`; the lexer reads `c` as an
+  import path like `go`). `xo fmt` keeps the clauses in that order.
+- Binding (`internal/cbind`, `xo bind --c [--dir d] [--link x]...
+  [--uses none|e,...] <header>...`): writes `#include "<abs header>"`
+  (module header) or `#include <h>` (include path) into a temporary
+  file, runs `clang -fsyntax-only -Xclang -ast-dump=json -x c` on it
+  (`$XO_CLANG`, then `clang`; on macOS a failure is retried with
+  `-isysroot $(xcrun --show-sdk-path)`), decodes the dump keeping key
+  order, and binds the functions whose location is in the header.
+  Writes `<cache>/c_<name>_<8 hex>.xo` (declarations, signature mode)
+  and `.c` (the adapter, for reading; builds take it from memory). The
+  hex is of the header path, links, and effects, so two `uses` ceilings
+  of one header are two modules. Within one process a binding is reused
+  while the header's contents are the same.
+- Cache: `$XO_CBIND_DIR`, else `<xo.mod dir or module dir>/.xo/cbind`.
+- Checker (`internal/check/cimport.go` `loadCImport`): XO1201 when the
+  check is not native (`Options.Native` false: `xo check` without
+  `--no-gc`, the Go backend); XO1104 when binding fails or a `uses`
+  label is unknown; XO1105 for a skipped name; the module `c:<...>` is
+  `IsStd` with `Module.C` set. C handles are handles for decision 0112.
+- SSA (`internal/ssa/build_cffi.go`): a call becomes `rt.<prefix><fn>`
+  (the C symbol `xo_<prefix><fn>`); a C handle type lowers to KInt (the
+  pointer, not reference counted); a struct argument is passed field by
+  field; a struct result is read through `<sym>_r<i>` getters; a handle
+  result branches on NULL into `T?`.
+- Build (`internal/build/cffi.go`): adapters go to `<build>/cffi/`, link
+  sources and archives are added by absolute path, `-l` flags go after
+  the objects (`ccBuild` splits them). No `-I` (it would turn off the
+  runtime object cache): adapters include the header by absolute path.
+  A build with module C files is not binary cached.
+- Runtime: `xo_cffi_str` (std/llrt/xo_std.c) makes the Str results.
+- Tests: internal/cbind (tiny.h mapping and skips, zlib.h when present,
+  the adapter compiles with -Wall -Werror), internal/check
+  `TestUseC`, cmd/xo `TestBindC`, internal/llvm `TestUseC` (archive
+  built in the test with clang and ar, and C source; arm64 and LLVM,
+  leak check) and `TestUseCZlib` (skips without zlib.h).
 
 ## Runtime (std/rt)
 

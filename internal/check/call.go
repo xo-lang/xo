@@ -277,7 +277,7 @@ func (c *checker) moduleMember(imp *Import, x *ast.SelectorExpr, targs []Type, h
 	name := x.Sel.Name
 	o := imp.Module.Scope[name]
 	if o == nil {
-		if c.goSkipped(imp.Module, name, x.Sel.Sp) {
+		if c.goSkipped(imp.Module, name, x.Sel.Sp) || c.cSkipped(imp.Module, name, x.Sel.Sp) {
 			return badType
 		}
 		var cands []string
@@ -731,7 +731,7 @@ func (c *checker) callSelector(x *ast.CallExpr, sel *ast.SelectorExpr, targs []T
 			}
 			o := imp.Module.Scope[sel.Sel.Name]
 			if o == nil {
-				if c.goSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) {
+				if c.goSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) || c.cSkipped(imp.Module, sel.Sel.Name, sel.Sel.Sp) {
 					c.inferArgs(x)
 					return badType
 				}

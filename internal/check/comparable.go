@@ -38,6 +38,9 @@ func isHandleObj(o *TypeObj) bool {
 	switch {
 	case m.IsPrelude:
 		return handleTypes[""][o.Name]
+	case m.C != nil:
+		// an opaque C pointer of `use c` (decision 0113)
+		return o.Opaque
 	case m.Native:
 		return o.Opaque && o.Name != "Loc"
 	case m.IsStd:

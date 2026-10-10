@@ -44,6 +44,12 @@ handles, the native backends reported XO1201). Native support grew
   `https` URL is no longer `XO1201` there. std/http speaks HTTP/1.1 only,
   also over TLS (the Go backend's client used HTTP/2 with servers that
   offered it).
+- `use c "<header>" [link "<lib>"]... [as name] [uses ...]` calls C from
+  native builds (4.5, decisions 0093 and 0113): bindings generated from
+  the header (`xo bind --c`), scalars, Str, Bytes, flat structs, and
+  opaque handles at the boundary, the effect `ffi` (6.1) unless the line
+  narrows it, `XO1104` and `XO1105` for headers and names that do not
+  bind, and `XO1201` on the Go backend.
 
 ## Changes in 0.8
 
@@ -1210,6 +1216,7 @@ fn main(os: Os) ! {
 - Exported names whose signatures cannot be mapped are skipped and listed at
   the top of the generated binding; using one is `XO1102`. A package that
   cannot be bound is `XO1101`.
+- C headers are the native backends' counterpart (4.5).
 - Calls into Go take part in record and replay (11.3, decision 0093): each
   binding's doc comment says how (`/// Replay: ...`). A pure function can
   be marked `replay rerun` in xo.mod, so a replay calls it again instead of
@@ -1228,6 +1235,57 @@ fn main(os: Os) ! {
   `encoding/hex`, `encoding/base64`, `encoding/base32`) are marked
   already, except functions that take or return a handle of another
   package (`regexp.Regexp.match_reader`).
+
+### 4.5 C headers [P2, native builds]
+
+Native builds (`--no-gc`, 10.1) call C through bindings generated from a
+header (decisions 0093 and 0113):
+
+```
+use c "tiny.h" link "tiny.c"
+use c "zlib.h" link "z" uses none
+
+fn main(os: Os) {
+  os.stdio.println("${tiny.tiny_add(2, 40)} ${zlib.crc32(0, b"hello")}")
+}
+```
+
+- `use c "<header>"` names a header relative to the module directory, or
+  one on the C compiler's include path (`zlib.h`). `link "<x>"`, repeated
+  as needed, names what to link: a C source, object, or archive relative
+  to the module directory (`tiny.c`, `libtiny.a`), or a library name
+  without `/` or extension (`z` links `-lz`). `as` sets the local name;
+  the default is the header's base name in snake_case.
+- The checker binds the header with clang's AST dump (`xo bind --c
+  <header>` does it explicitly) into `.xo/cbind/` (or `$XO_CBIND_DIR`): an
+  Xo declaration file and a C adapter that the native build compiles and
+  links with the program. Function names become snake_case
+  (`zlibVersion` is `zlib_version`); struct tags become UpperCamel types.
+- Types at the boundary (decision 0093), all copied, none pointing into Xo
+  memory after the call returns: `int` is `Int32`, `unsigned` `UInt32`,
+  `long` and `long long` `Int`, their unsigned forms `UInt64`, `short`,
+  `char`, and their unsigned forms the sized integers, `float` `Float32`,
+  `double` `Float`, `_Bool` `Bool`, an enum `Int32`; a `const char *`
+  parameter is a `Str` (copied and NUL terminated) and a `const char *`
+  result a `Str` (copied; NULL is ""); a const byte pointer followed by an
+  integer length parameter is one `Str` (`const char *`) or `Bytes`
+  parameter; a struct of such scalars passed or returned by value is an Xo
+  struct with the same fields, copied; a pointer to a struct the header
+  declares but does not define is an opaque handle type (a result is
+  `T?`, None for NULL). Handles are not comparable (2.9) and Xo never frees
+  them: call the library's free function. Anything else (output
+  pointers, mutable buffers, `char *` results, pointers to defined
+  structs, function pointers, arrays, variadic functions) is skipped and
+  listed with the reason at the top of the binding; using a skipped name
+  is `XO1105`. A header that cannot be bound is `XO1104`.
+- Every call performs the effect `ffi` (6.1), which `pub` functions
+  declare. A `use c` line may replace it with the effects a human vouches
+  for, `uses none` or `uses fs.read, clock`, as an effect ceiling of
+  decision 0086 does for a dependency.
+- `use c` is impossible on the Go backend: `xo check`, `build`, `run`, and
+  `test` without `--no-gc` report `XO1201` on the line. (`use go` is
+  likewise `XO1201` on the native backends.)
+- A C crash is not recoverable: it ends the process (8).
 
 ---
 
@@ -1378,7 +1436,7 @@ The builtin effects are:
 | `env` | | Environment variables, args |
 | `proc` | | Spawn processes, signals, exit |
 | `stdio` | | Standard input, output, error |
-| `ffi` | | Foreign calls (P3) |
+| `ffi` | | Calls into C through `use c` (4.5, native builds) |
 
 A function with no `uses` clause is **pure**: it performs no capability
 effects. It may still allocate, fault, be cancelled, log, and use
@@ -1800,6 +1858,7 @@ test "retries after 503" {
 | `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache. Every command takes `--offline` and `--workspace=off` |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
+| `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |
 
 The commands that report diagnostics or results accept `--json`: `parse`,
 `check`, `build`, `test`, `fmt`, `fix`, `vet`, `query`, `edit` (always
@@ -2067,7 +2126,9 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
-| `XO1201` | error | no GC check | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
+| `XO1104` | error | checker | C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`) |
+| `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
+| `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
@@ -2162,6 +2223,12 @@ call and its result, plus scheduler decisions.
   marked `replay rerun` (4.4) run again and are not recorded. A trace
   written before decision 0093 (no `"foreign"` field in its header) runs
   every Go call again, as before.
+- Calls into C (`use c`, 4.5) follow the same rule once native builds
+  record (10.1: they do not yet): a call whose arguments and results are
+  boundary values is answered from the trace as `ffi.call(<name>,
+  <argument hash>)`, and one that passes or returns a C handle runs
+  again. Each binding's doc comment already says which applies
+  (`/// Replay: by value` or `/// Replay: a C handle crosses`).
 - An Xo callback that Go calls on a goroutine of its own is recorded
   (where the scheduler admitted it, with its arguments) and replayed at
   the same point, and a replay diverges when Go calls it with other
@@ -2308,7 +2375,10 @@ P1 parser (`internal/parser`) is the reference implementation of this grammar.
 
 ```
 File        = { UseDecl } { TopDecl } .
-UseDecl     = "use" ImportPath [ "as" ident ] .
+UseDecl     = "use" ImportPath [ "as" ident ]
+            | "use" "go" string [ "as" ident ]                      // 4.4
+            | "use" "c" string { "link" string } [ "as" ident ]
+              [ "uses" ( "none" | Effect { "," Effect } ) ] .       // 4.5
 ImportPath  = PathSeg { "/" PathSeg } .               // std/http, github.com/acme/x
 TopDecl     = { DocComment } [ "pub" ] ( FnDecl | StructDecl | EnumDecl | IfaceDecl
             | TypeDecl | ConstDecl ) | TestDecl .
@@ -2496,5 +2566,6 @@ Tracked in `knowledgebase/decisions/` once decided.
 4. ~~How `http` handler errors map to status codes.~~ Decided in 0019.
 5. ~~FFI design and record/replay.~~ Decided in 0093: `use go` and
    native `use c`, foreign calls recorded at the boundary (`use go`
-   recording implemented; `use c` not yet).
+   recording implemented; `use c` is implemented (4.5, decision 0113)
+   without recording, since native builds do not record yet).
 6. ~~Interpolation syntax.~~ Decided in 0021: `${x}`.

@@ -183,7 +183,11 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		}
 		flags = append(flags, IOFlags(asm)...)
 		out.Notes = notes
-		ccFlags, srcs := append([]string{"-O2"}, flags...), []string{s, rt}
+		csrcs, cflags, err := cInputs(res, dir)
+		if err != nil {
+			return nil, err
+		}
+		ccFlags, srcs := append(append([]string{"-O2"}, flags...), cflags...), append([]string{s, rt}, csrcs...)
 		key := nativeBinKey(dir, cc, append([]string{"arm64"}, ccFlags...), srcs)
 		if err := withBinCache(key, bin, func() error { return ccBuild(cc, ccFlags, srcs, bin) }); err != nil {
 			return nil, err

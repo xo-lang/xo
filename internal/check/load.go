@@ -364,6 +364,10 @@ func (c *checker) loadImports(m *Module) error {
 				c.loadGoImport(m, f, u, imp)
 				continue
 			}
+			if u.C {
+				c.loadCImport(m, f, u, imp)
+				continue
+			}
 			if u.Alias != nil {
 				imp.Name = u.Alias.Name
 			} else {

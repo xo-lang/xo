@@ -2,8 +2,10 @@
 
 Status: Accepted (2026-10-09, by the owner; proposed by the spec audit).
 Stage 1 implemented (2026-10-09): `use go` calls are recorded and
-replayed on the Go backend (notes below). Stage 2 (`use c`, `xo bind
---c`, the `ffi` effect) is not built.
+replayed on the Go backend (notes below). Stage 2 implemented
+(2026-10-10): `use c`, `xo bind --c`, and the `ffi` effect on the native
+backends, with the concrete choices in decision 0113; recording of C
+calls waits for native recording.
 
 ## Context
 

@@ -70,6 +70,9 @@ func (s *fn) callExpr(x *ast.CallExpr) *Value {
 		b.impossible(x, "`"+ci.Fn.Module.Name+"."+ci.Fn.DisplayName()+"` of the Go package `"+ci.Fn.Module.Go.GoPath+"` (`use go`)")
 		return s.undef(s.natOf(x))
 	}
+	if ci.Fn.Module != nil && ci.Fn.Module.C != nil {
+		return s.cCall(x, ci)
+	}
 	if ci.Fn.Module.IsStd {
 		if strings.HasPrefix(ci.Fn.Module.Path, "native/") {
 			return s.intrinsic(x, ci)

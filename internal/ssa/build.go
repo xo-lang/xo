@@ -380,6 +380,11 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 			b.impossible(at, "the type `"+name+"` of the Go package `"+obj.Module.Go.GoPath+"` (`use go`)")
 			return m.Builtin(KUnit)
 		}
+		if obj.Module != nil && obj.Module.C != nil && obj.Opaque {
+			// a C handle of `use c`: the pointer in a word, never
+			// reference counted (decision 0113)
+			return m.Builtin(KInt)
+		}
 		switch obj.Kind {
 		case check.KStruct:
 			if x := b.concType(obj, r, at); x != nil {

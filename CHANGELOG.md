@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `use c "<header>" [link "<lib>"]... [as name] [uses ...]` on the
+  native backends (decisions 0093 stage 2 and 0113): bindings generated
+  from the header with clang (`xo bind --c`), scalars, Str, Bytes with a
+  length, flat structs, and opaque handles at the boundary, the `ffi`
+  effect unless the line narrows it, XO1104/XO1105 for headers and names
+  that do not bind, XO1201 on the Go backend. Calls are not recorded
+  yet (native builds do not record).
 - Decision 0111: passing one variable, or overlapping places (`x` and
   `x.f`, `xs[i]` and `xs[j]` unless both indexes are different
   literals, a `var` receiver and an argument naming it), to two `var`

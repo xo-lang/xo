@@ -454,14 +454,35 @@ func (p *printer) file(f *ast.File) {
 
 func (p *printer) useDecl(u *ast.UseDecl) {
 	p.w("use ")
-	if u.Go {
+	switch {
+	case u.Go:
 		p.w("go ")
 		p.w(fmt.Sprintf("%q", u.Path))
-	} else {
+	case u.C:
+		p.w("c ")
+		p.w(fmt.Sprintf("%q", u.Path))
+		for _, l := range u.Links {
+			p.w(fmt.Sprintf(" link %q", l))
+		}
+	default:
 		p.w(u.Path)
 	}
 	if u.Alias != nil {
 		p.w(" as " + u.Alias.Name)
+	}
+	if u.C && u.Uses != nil {
+		var es []string
+		for _, e := range u.Uses {
+			n := e.Name.Name
+			if e.Sub != nil {
+				n += "." + e.Sub.Name
+			}
+			es = append(es, n)
+		}
+		if len(es) == 0 {
+			es = []string{"none"}
+		}
+		p.w(" uses " + strings.Join(es, ", "))
 	}
 }
 

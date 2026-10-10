@@ -41,6 +41,9 @@ type checker struct {
 	// goFailed holds `go:<path>` keys of Go packages that could not be
 	// bound (XO1101 reported once per run).
 	goFailed map[string]bool
+	// native is Options.Native: `use c` is XO1201 without it (decision
+	// 0113).
+	native bool
 	// overlay maps absolute .xo paths to contents that replace the files
 	// on disk (CheckOverlay).
 	overlay map[string][]byte
@@ -174,6 +177,7 @@ type Options struct {
 func CheckOpts(dirs []string, opts Options) (*Result, error) {
 	c := newChecker()
 	c.overlay = opts.Overlay
+	c.native = opts.Native
 	if err := c.loadPrelude(); err != nil {
 		return nil, err
 	}

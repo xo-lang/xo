@@ -224,3 +224,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [fakeclock-advance-woken-tasks.md](fakeclock-advance-woken-tasks.md): native `FakeClock.advance` returned before the tasks woken at the last instant ran; it now waits for the next move of the clock.
 - [xo-test-writes-regressions-into-goldens.md](xo-test-writes-regressions-into-goldens.md): `xo test` by hand on a golden directory writes `regressions_test.xo` into it and breaks TestGolden; delete it, or copy the golden first.
 - [closure-frame-names.md](closure-frame-names.md): native error frames of a `?` in a closure lacked the Go backend's `.closure` suffix, and Mutex.with closures recorded none.
+- [clang-json-ast-file-elision.md](clang-json-ast-file-elision.md): clang's JSON AST dump writes a location's `file` only when it changes, so `use c` bindings decode it in key order to know which header a declaration is in.

@@ -95,6 +95,13 @@ const (
 	GoNameSkipped Code = "XO1102" // Go name exists but its signature does not map to Xo, so the binding skipped it
 )
 
+// C interop codes (decision 0113). Emitted by internal/check for `use c
+// "<header>"` imports.
+const (
+	CBindFailed  Code = "XO1104" // C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`)
+	CNameSkipped Code = "XO1105" // C function exists in the header but its signature does not map to Xo, so the binding skipped it
+)
+
 // Native builds without a garbage collector (12xx group, decision 0083).
 // Emitted by internal/ssa's no GC check for `--no-gc` builds.
 const (
@@ -192,6 +199,9 @@ var Descriptions = map[Code]string{
 
 	GoBindFailed:  "Go package cannot be bound (not found, does not build, main package, or binding error)",
 	GoNameSkipped: "Go name exists but its signature does not map to Xo, so the binding skipped it",
+
+	CBindFailed:  "C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`)",
+	CNameSkipped: "C function exists in the header but its signature does not map to Xo, so the binding skipped it",
 
 	ModFileInvalid:     "malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3)",
 	ModuleFetch:        "module version cannot be fetched from git: repository or tag missing, or its xo.mod declares another path",
