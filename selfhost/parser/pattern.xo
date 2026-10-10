@@ -107,6 +107,7 @@ fn (var p: Parser) parse_pat_alt() -> Pattern {
     }
     DotDot => {
       p.fail(MISPLACED_REST, t.span, "`..` is only allowed inside list, variant, or struct patterns")
+      p.next()
       return Pattern.BadPat(t.span)
     }
     _ => {}

@@ -214,6 +214,12 @@ removed, or its pattern replaced by `_`). A run the Xo checker cannot
 parse is now checked too: the Go parser must report a hard error in the
 same file (`habitOnly` false), or the run fails.
 
+**Parser resynchronization** (2026-10-10): the Xo parser goes on after a
+hard error as internal/parser does (decision 0127), so a run with hard
+parse errors is checked like any other: the parser's diagnostics, hard
+ones included, are staged (`parseDiag`), and the rest of the run must
+match. The Xo checker no longer marks such a run unsupported.
+
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each
 other by index (`-1` for none); scopes are a List of `Map[Bytes, Int]`;

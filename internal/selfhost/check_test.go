@@ -31,7 +31,7 @@ import (
 //     stages done (stageDiag: names, types, Option and Result rules,
 //     generics) gets exactly those diagnostics from the Xo checker.
 //
-// Runs the Xo checker cannot load (`use go`, `use c`, a parse error) and
+// Runs the Xo checker cannot load (`use go`, `use c`) and
 // runs rejected for other reasons are counted, not compared. The coverage
 // (runs matching / runs) is logged. -short uses the go backend only.
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
@@ -165,10 +165,10 @@ func goCheck(dir string) *goRun {
 }
 
 // parseDiag reports whether line is a diagnostic the Go parser gives file:
-// the lexer's and the parser's soft errors (the habits of other languages,
-// decision 0087), which the Xo parser reproduces with the tree the Go
-// parser recovers. A run with a hard parse error is unsupported by the Xo
-// checker. parsed caches the parser diagnostics of each file.
+// the lexer's, the parser's soft errors (the habits of other languages,
+// decision 0087), and its hard errors, which the Xo parser reproduces with
+// the tree the Go parser recovers. parsed caches the parser diagnostics of
+// each file.
 func parseDiag(parsed map[string]map[string]bool, file, line string) bool {
 	set, ok := parsed[file]
 	if !ok {
@@ -250,20 +250,6 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	switch {
 	case want.err != nil:
 		st.errors++
-		return ""
-	case strings.HasPrefix(got, "== unsupported parse error"):
-		// the Xo parser stops at a hard error of a file the Go parser
-		// rejects with a hard error too
-		if want.accepted {
-			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports %s", dir, firstLine(got))
-		}
-		file := strings.TrimPrefix(firstLine(got), "== unsupported parse error in ")
-		if src, err := os.ReadFile(file); err == nil {
-			if dump := parser.Dump(file, src, 0); !strings.Contains(dump, "\ndiag ") || habitOnly(dump) {
-				return fmt.Sprintf("%s: the Go parser recovers from every error of %s, the Xo parser stops:\n%s", dir, file, diagLines(dump))
-			}
-		}
-		st.otherRejected++
 		return ""
 	case strings.HasPrefix(got, "== unsupported "):
 		st.unsupported++

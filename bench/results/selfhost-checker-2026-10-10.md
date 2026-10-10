@@ -607,3 +607,44 @@ fixes first (habits*.go `addFix` and `addNote` are the parts left out of
 the port). In parallel, the parser's resynchronization after a hard
 error, which would let the two bench/paper runs and every rejected
 token mutation be compared whole.
+
+# Parser resynchronization, arm64 frames, stages 7 and 8, 2026-10-10
+
+Decisions 0141, 0127, 0144.
+
+## arm64 frames (decision 0144)
+
+The 28 KiB frame limit that blocked the checker three times is gone.
+Spill slots are shared by values whose live ranges do not overlap: the
+largest frame of the checker went from 28,176 bytes
+(`resolve_named_type`) to 6,448 (`check0`), the sum of its 809 frames
+from 2.28 MB to 1.10 MB, and the arm64 build is about 4% faster on the
+selfhost input (5,547 to 5,349 ms for 20 runs). A frame past 28 KiB
+keeps x28 free and addresses its far slots through it
+(`internal/arm64/testdata/run/huge_frame`, 36 KiB, runs on a fiber too).
+The split `habit_*` functions and the `used` flag in `Obj` stay: both
+read well and neither is needed any more.
+
+## Parser resynchronization
+
+The Xo parser now goes on after a hard error as internal/parser does
+(`bad`, `sync_stmt`, `sync_top`) and prints the recovered tree;
+`TestSelfhostParserDifferential` compares every file's dump, rejected
+ones included. The first comparison found the error paths the port had
+simplified while nothing after a hard error was compared (messages,
+`while` conditions as expressions, `..` patterns, `derive` after a
+failed body, struct literals in conditions;
+gotchas/selfhost-parser-error-paths.md). After the fixes: the 879
+repository files (109 rejected, 3 with hard errors), the spec blocks
+(75 rejected, all with hard errors), and 20,000 token mutations per seed
+(seeds 1, 2, 3, and the default: about 19,800 rejected per seed, 19,700
+of them with hard errors) give byte identical dumps.
+
+The checker then checks runs with hard parse errors like the Go checker
+(it no longer marks them unsupported): the two bench/paper/v0.1 runs
+(02-worker-pool, 05-rate-limiter) are compared and identical, and the
+mutations with a hard parse error (21 XO0160, 11 XO0172, 7 XO0165 of
+seed 7 with 3,000) match too. One Go checker bug was found on the way:
+`xo typedump` panicked on a use of an unresolved import (a typed nil
+`*Module` in a name record; gotchas/go-typed-nil-name-record.md,
+`TestDumpUnresolvedImport`).

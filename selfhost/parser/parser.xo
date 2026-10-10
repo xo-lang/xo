@@ -10,9 +10,11 @@
 // syntax from other languages into XO0177 and the other soft errors, are
 // ported with their messages, spans, and recovery (habits*.xo), so a file
 // the Go parser accepts with only soft errors gives the same tree and the
-// same diagnostics. A hard error stops the parse (the current token
-// becomes the final Eof, so every loop ends): the Go parser resynchronizes
-// and goes on, so after a hard error only the rejection is the same.
+// same diagnostics. After a hard error the parser goes on as the Go
+// parser does: further errors are suppressed until the statement, member,
+// arm, or declaration ends, and it resynchronizes there (sync_stmt,
+// sync_top), so the diagnostics and the recovered tree are the Go
+// parser's for every file.
 
 use github.com/xo-lang/xo/selfhost/lexer
 
@@ -40,14 +42,13 @@ const FOREIGN_SYNTAX = "XO0177"
 const LEADING_OPERATOR = "XO0178"
 const MALFORMED_IMPORT_PATH = "XO0158"
 
-/// The tree of one file and its diagnostics: the lexer's, or the first
-/// parse error. A file with no diagnostics is accepted.
+/// The tree of one file and its diagnostics. A file with no diagnostics
+/// is accepted.
 pub struct ParseResult {
   pub file: File
   pub diags: List[Diag]
-  /// A hard error stopped the parse: the tree is incomplete. Without one,
-  /// diags holds only lexer diagnostics and soft errors (habits), and the
-  /// tree is the Go parser's.
+  /// A hard error was reported (not only lexer diagnostics and soft
+  /// errors): the tree holds Bad nodes where the parser resynchronized.
   pub hard: Bool = false
 }
 
@@ -71,15 +72,16 @@ struct Parser {
   no_arrow_fn: Bool = false
   /// Doc comments keyed by their last line.
   docs: Map[Int, Doc] = {}
-  /// The lexer's diagnostics, the soft errors, and the first hard error.
+  /// The lexer's diagnostics, the soft errors, and the hard errors.
   diags: List[Diag] = []
-  /// A hard error was reported; parsing stops at it.
+  /// A hard error was reported in the current statement, member, arm, or
+  /// declaration: further errors are suppressed until it ends
+  /// (internal/parser p.bad).
+  bad: Bool = false
+  /// A hard error was reported anywhere.
   hard: Bool = false
   /// A foreign top level line was consumed whole (habits).
   line_done: Bool = false
-  /// A top level declaration failed in a way the Go parser resynchronizes
-  /// from at the next declaration (`class`, decision 0087).
-  top_bad: Bool = false
   /// Parsing the methods of a Rust `impl` block.
   in_impl: Bool = false
   /// Inside an outermost `Name<...>` type argument list (habits).
@@ -201,40 +203,38 @@ fn adjacent(a: Token, b: Token) -> Bool {
   a.span.end.offset == b.span.start.offset
 }
 
+/// The Go parser's description of a token in messages (describe).
 fn describe(t: Token) -> Str {
-  match t.kind {
-    Ident => "identifier `${t.text.to_str() ?? "?"}`"
-    Newline => if t.text == b";" { "`;`" } else { "newline" }
-    Eof => "end of file"
-    _ => "${t.kind} ${lexer.quote(t.text)}"
-  }
+  describe_go(t)
 }
 
 // ---------------------------------------------------------------------------
 // Errors
 
-/// Records a hard error and stops the parse: the current token becomes the
-/// final Eof. Like the Go parser, an error at an Illegal token the lexer
-/// already reported adds no diagnostic.
+/// Records a hard error (internal/parser errorf) unless one is pending
+/// for the current statement or declaration; the parse goes on and
+/// resynchronizes where that ends. Like the Go parser, an error at an
+/// Illegal token the lexer already reported adds no diagnostic.
 fn (var p: Parser) fail(code: Str, sp: Span, message: Str) {
-  if !p.hard {
-    p.hard = true
-    if !(p.tok.kind == Kind.Illegal && sp.start.offset == p.tok.span.start.offset) {
-      p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
-    }
+  if p.bad {
+    return
   }
-  p.pos = p.toks.len() - 1
-  p.tok = p.toks[p.pos]
+  p.bad = true
+  p.hard = true
+  if p.tok.kind == Kind.Illegal && sp.start.offset == p.tok.span.start.offset {
+    return
+  }
+  p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
 }
 
 fn (p: Parser) failed() -> Bool {
-  p.hard
+  p.bad
 }
 
 /// A soft error (internal/parser softErrorf): reported, and the parser
 /// recovers locally.
 fn (var p: Parser) soft(code: Str, sp: Span, message: Str) {
-  if !p.hard {
+  if !p.bad {
     p.diags.push(Diag{code: code, span: sp, message: message.bytes()})
   }
 }
@@ -284,7 +284,7 @@ struct ListState {
 /// literals and open ranges are allowed again inside the brackets.
 fn (var p: Parser) list_open(open: Kind) -> ListState {
   let st = ListState{start: p.tok.span.start, no_lit: p.no_lit, open_range: p.open_range}
-  p.expect(open, "`${open}`")
+  p.expect(open, "`${kind_text(open)}`")
   p.no_lit = false
   p.open_range = false
   st
@@ -309,7 +309,7 @@ fn (var p: Parser) list_sep(before: Int, close: Kind, what: Str) -> Bool {
     return true
   }
   if !p.at(close) {
-    p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected `,` or `${close}` in ${what} list, found ${describe(p.tok)}")
+    p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected `,` or `${kind_text(close)}` in ${what} list, found ${describe(p.tok)}")
   }
   false
 }
@@ -318,34 +318,115 @@ fn (var p: Parser) list_sep(before: Int, close: Kind, what: Str) -> Bool {
 /// end of the closing one.
 fn (var p: Parser) list_close(st: ListState, close: Kind) -> Span {
   let end = p.tok.span.end
-  p.expect(close, "`${close}`")
+  p.expect(close, "`${kind_text(close)}`")
   p.no_lit = st.no_lit
   p.open_range = st.open_range
   Span{start: st.start, end: end}
 }
 
-/// `{` of a member list (struct fields, variants, interface methods).
-fn (var p: Parser) members_open() -> Bool {
-  p.expect(Kind.LBrace, "`{`").kind == Kind.LBrace
+/// The state a brace delimited list of members, statements, or arms
+/// saves and restores (internal/parser parseMembers, parseBlock,
+/// parseArms).
+struct Braces {
+  open: Token
+  bad: Bool
+  no_lit: Bool
+  open_range: Bool
 }
 
-/// After a member: a `,`, a newline, or the closing `}`.
-fn (var p: Parser) member_end(what: Str) {
-  if p.failed() || p.got(Kind.Comma) || p.got(Kind.Newline) || p.at(Kind.RBrace) {
-    return
+/// `{` of a member, statement, or arm list: None, with an error, when it
+/// is missing. With clear, struct literals and open ranges are allowed
+/// again inside (blocks and arms).
+fn (var p: Parser) braces_open(clear: Bool) -> Braces? {
+  let open = p.expect(Kind.LBrace, "`{`")
+  if open.kind != Kind.LBrace {
+    return None
   }
-  p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected newline, `,`, or `}` after ${what}, found ${describe(p.tok)}")
+  let st = Braces{open: open, bad: p.bad, no_lit: p.no_lit, open_range: p.open_range}
+  if clear {
+    p.no_lit = false
+    p.open_range = false
+  }
+  Some(st)
 }
 
-/// Whether another member or statement follows inside braces.
-fn (var p: Parser) members_more() -> Bool {
+/// Whether another member, statement, or arm follows inside braces; it
+/// starts one (clears the error state) and returns its first token's
+/// index in before.
+fn (var p: Parser) braces_more(var before: Int) -> Bool {
   p.skip_newlines()
-  !p.at(Kind.RBrace) && !p.at(Kind.Eof)
+  if p.at(Kind.RBrace) || p.at(Kind.Eof) {
+    return false
+  }
+  p.bad = false
+  before = p.pos
+  true
 }
 
-fn (var p: Parser) close_brace() {
+/// After a member: a `,`, a newline, or the closing `}`; after an error,
+/// resynchronizes at the end of the member.
+fn (var p: Parser) member_end(what: Str, before: Int) {
+  if !p.bad {
+    if p.got(Kind.Comma) || p.got(Kind.Newline) || p.at(Kind.RBrace) {
+      return
+    }
+    p.fail(UNEXPECTED_TOKEN, p.tok.span, "expected newline, `,`, or `}` after ${what}, found ${describe(p.tok)}")
+  }
+  p.resync(before)
+}
+
+/// Skips to the end of a statement, member, or arm with an error, at
+/// least one token past before.
+fn (var p: Parser) resync(before: Int) {
+  p.sync_stmt()
+  if p.pos == before {
+    p.next()
+  }
+}
+
+/// Skips to the end of the current statement: a newline at the current
+/// nesting depth (consumed) or a `}` that closes the enclosing block (not
+/// consumed) (internal/parser syncStmt).
+fn (var p: Parser) sync_stmt() {
+  var depth = 0
+  while !p.at(Kind.Eof) {
+    match p.tok.kind {
+      Newline => {
+        if depth == 0 {
+          p.next()
+          return
+        }
+      }
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack => {
+        if depth > 0 {
+          depth -= 1
+        }
+      }
+      RBrace => {
+        if depth == 0 {
+          return
+        }
+        depth -= 1
+      }
+      _ => {}
+    }
+    p.next()
+  }
+}
+
+/// Closes a brace list: restores the state braces_open saved and expects
+/// the `}`.
+fn (var p: Parser) braces_close(st: Braces) {
+  p.bad = st.bad
+  p.no_lit = st.no_lit
+  p.open_range = st.open_range
+  p.close_brace(st.open)
+}
+
+fn (var p: Parser) close_brace(open: Token) {
   if p.at(Kind.Eof) {
-    p.fail(UNCLOSED_DELIMITER, p.tok.span, "`{` is never closed")
+    p.fail(UNCLOSED_DELIMITER, open.span, "`{` is never closed")
     return
   }
   p.expect(Kind.RBrace, "`}`")
@@ -411,6 +492,7 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
     if p.at(Kind.Eof) {
       break
     }
+    p.bad = false
     let doc = p.doc_for(p.tok.span.start.line)
     let decl_start = p.tok.span.start
     let pub_tok = p.tok
@@ -423,11 +505,7 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
       decls.push(Decl.FnDecl(pd))
     }
     p.pending_decls = []
-    if p.failed() {
-      break
-    }
-    if p.top_bad {
-      p.top_bad = false
+    if p.bad {
       p.sync_top()
       continue
     }
@@ -437,6 +515,7 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
     }
     if !p.at(Kind.Eof) && !p.got(Kind.Newline) {
       p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after declaration, found ${describe(p.tok)}")
+      p.sync_top()
     }
   }
   File{span: Span{start: start, end: p.tok.span.end}, name: name, imports: imports, decls: decls}
@@ -556,7 +635,7 @@ fn (var p: Parser) parse_use() -> UseDecl {
       p.next()
       let path = u.path
       if interp || path.is_empty() || has_any(path, b" \t\n\\") || path[0] == '/' || path[0] == '.' || path[path.len() - 1] == '/' {
-        p.fail(MALFORMED_IMPORT_PATH, t.span, "malformed Go import path")
+        p.fail(MALFORMED_IMPORT_PATH, t.span, "malformed Go import path ${path.quote()}")
       }
     } else if u.path == b"c" && (p.at(Kind.String) || p.at(Kind.RawString)) {
       // `use c "<header>" [link "<lib>"]...` (decision 0116)
@@ -564,7 +643,7 @@ fn (var p: Parser) parse_use() -> UseDecl {
       let (h, sp, ok) = p.plain_string()
       u.path = h
       if !ok || h.is_empty() || has_any(h, b"\t\n\\\"") || h[h.len() - 1] == '/' {
-        p.fail(MALFORMED_IMPORT_PATH, sp, "malformed C header path")
+        p.fail(MALFORMED_IMPORT_PATH, sp, "malformed C header path ${h.quote()}")
       }
       while p.at_ident(b"link") {
         p.next()
@@ -574,7 +653,7 @@ fn (var p: Parser) parse_use() -> UseDecl {
         }
         let (l, lsp, lok) = p.plain_string()
         if !lok || l.is_empty() || has_any(l, b" \t\n\\") {
-          p.fail(MALFORMED_IMPORT_PATH, lsp, "malformed `link` library")
+          p.fail(MALFORMED_IMPORT_PATH, lsp, "malformed `link` library ${l.quote()}")
         }
         u.links.push(l)
       }
@@ -636,14 +715,14 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
   }
   fn_decl.params = p.parse_params(false, in_interface || p.in_impl)
   var throws_tok: List[Token] = []
-  if !p.hard && p.at_ident(b"throws") {
+  if !p.bad && p.at_ident(b"throws") {
     throws_tok.push(p.tok)
     p.next()
   }
-  if !p.hard {
+  if !p.bad {
     p.foreign_result(fn_decl)
   }
-  if !p.hard && p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Arrow {
+  if !p.bad && p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Arrow {
     // A result type on the next line continues the declaration.
     p.skip_newlines()
   }
@@ -659,12 +738,12 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
   fn_decl.clauses = p.parse_clauses()
   if p.peek_past_newlines().kind == Kind.LBrace {
     p.skip_newlines()
-    if in_interface && !p.hard {
+    if in_interface && !p.bad {
       p.soft(UNEXPECTED_TOKEN, p.tok.span, "interface method `${txt(name.name)}` cannot have a body (core 15: FnSig)")
     }
     fn_decl.body = Some(p.parse_block())
   } else if !in_interface && !p.sig {
-    p.fail(MISSING_BODY, p.tok.span, "expected `{` to start the function body, found ${describe(p.tok)}")
+    p.fail(MISSING_BODY, p.tok.span, "expected `{` to start the body of `${txt(name.name)}`, found ${describe(p.tok)}")
   }
   fn_decl.span = p.span_from(start)
   fn_decl
@@ -683,7 +762,7 @@ fn (var p: Parser) parse_receiver() -> Receiver {
   p.next() // (
   let is_var = p.got(Kind.Var)
   let name = p.expect_ident("a receiver name")
-  if !p.hard && (p.at(Kind.Star) || p.at(Kind.Ident)) {
+  if !p.bad && (p.at(Kind.Star) || p.at(Kind.Ident)) {
     // Go receivers: `(p *P)` and `(p P)`.
     let t = p.tok
     let n = txt(name.name)
@@ -716,7 +795,7 @@ fn (var p: Parser) parse_type_params() -> List[TypeParam] {
     // `<T>` type parameters (internal/parser angleTypeParams).
     let open = p.tok
     p.next() // <
-    while !p.hard && !p.at(Kind.Gt) && !p.at(Kind.Eof) {
+    while !p.bad && !p.at(Kind.Gt) && !p.at(Kind.Eof) {
       out.push(p.parse_type_param())
       if !p.got(Kind.Comma) {
         break
@@ -850,7 +929,7 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
     p.next()
   }
   let name = p.expect_ident("a parameter name")
-  if !closure && !p.hard && !p.at(Kind.Colon) && (p.at(Kind.Star) || p.at(Kind.LBrack) || (p.at(Kind.Ident) && p.tok.span.start.line == name.span.start.line)) {
+  if !closure && !p.bad && !p.at(Kind.Colon) && (p.at(Kind.Star) || p.at(Kind.LBrack) || (p.at(Kind.Ident) && p.tok.span.start.line == name.span.start.line)) {
     // Go parameters: `x int`, `p *Point`, `xs []int`.
     let t = p.tok
     let n = txt(name.name)
@@ -877,7 +956,7 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
   if p.got(Kind.Colon) {
     prm.typ = Some(p.parse_type())
   } else if !closure {
-    p.error_expected("`:` and a type after the parameter name")
+    p.error_expected("`:` and a type after parameter `${txt(name.name)}`")
   }
   if !closure && p.got(Kind.Assign) {
     prm.default = Some(p.parse_expr())
@@ -998,8 +1077,9 @@ fn (var p: Parser) parse_struct(doc: Doc?, is_pub: Bool, start: Pos) -> StructDe
 /// parameters are parsed.
 fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
   var s = s0
-  if p.members_open() {
-    while p.members_more() {
+  if let Some(br) = p.braces_open(false) {
+    var before = 0
+    while p.braces_more(before) {
       let fstart = p.tok.span.start
       let fdoc = p.doc_for(fstart.line)
       let fpub = p.got(Kind.Pub)
@@ -1017,16 +1097,18 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
       }
       f.span = p.span_from(fstart)
       s.fields.push(f)
-      p.member_end("struct field")
+      p.member_end("struct field", before)
     }
-    p.close_brace()
+    p.braces_close(br)
   }
-  if p.peek_past_newlines().kind == Kind.Invariant {
+  if !p.bad && p.peek_past_newlines().kind == Kind.Invariant {
     p.skip_newlines()
     p.next()
     s.inv = Some(p.parse_expr())
   }
-  s.derive = p.parse_derive()
+  if !p.bad {
+    s.derive = p.parse_derive()
+  }
   s.span = p.span_from(start)
   s
 }
@@ -1054,8 +1136,9 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
     tps = p.parse_type_params()
   }
   var e = EnumDecl{span: p.tok.span, doc: doc, is_pub: is_pub, name: name, type_params: tps}
-  if p.members_open() {
-    while p.members_more() {
+  if let Some(br) = p.braces_open(false) {
+    var before = 0
+    while p.braces_more(before) {
       let vstart = p.tok.span.start
       let vdoc = p.doc_for(vstart.line)
       let vname = p.expect_ident("a variant name")
@@ -1085,11 +1168,13 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
         fields = Some(fs)
       }
       e.variants.push(Variant{span: p.span_from(vstart), doc: vdoc, name: vname, fields: fields})
-      p.member_end("enum variant")
+      p.member_end("enum variant", before)
     }
-    p.close_brace()
+    p.braces_close(br)
   }
-  e.derive = p.parse_derive()
+  if !p.bad {
+    e.derive = p.parse_derive()
+  }
   e.span = p.span_from(start)
   e
 }
@@ -1108,18 +1193,19 @@ fn (var p: Parser) parse_interface(doc: Doc?, is_pub: Bool, start: Pos) -> Inter
 /// are parsed.
 fn (var p: Parser) parse_interface_body(d0: InterfaceDecl, start: Pos) -> InterfaceDecl {
   var d = d0
-  if p.members_open() {
-    while p.members_more() {
+  if let Some(br) = p.braces_open(false) {
+    var before = 0
+    while p.braces_more(before) {
       let mstart = p.tok.span.start
       let mdoc = p.doc_for(mstart.line)
       if !p.at(Kind.Fn) {
         p.error_expected("a method signature starting with `fn`")
-        break
+      } else {
+        d.methods.push(p.parse_fn_decl(mdoc, false, mstart, true))
       }
-      d.methods.push(p.parse_fn_decl(mdoc, false, mstart, true))
-      p.member_end("method signature")
+      p.member_end("method signature", before)
     }
-    p.close_brace()
+    p.braces_close(br)
   }
   d.span = p.span_from(start)
   d
@@ -1133,7 +1219,7 @@ fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl 
   if p.at_type_params() {
     tps = p.parse_type_params()
   }
-  if !p.hard && (p.at(Kind.Struct) || p.at(Kind.Interface)) && p.peek(1).kind == Kind.LBrace {
+  if !p.bad && (p.at(Kind.Struct) || p.at(Kind.Interface)) && p.peek(1).kind == Kind.LBrace {
     // Go: `type P struct {` and `type I interface {`.
     let kw = p.tok
     let k = kind_text(kw.kind)
@@ -1336,7 +1422,9 @@ fn (var p: Parser) parse_fn_type() -> Type {
     } else {
       ft.effects.push(p.parse_effect())
       if top && p.at(Kind.Comma) && p.peek(1).kind == Kind.Ident {
-        p.fail(FN_TYPE_EFFECTS_PARENS, p.tok.span, "several effects in a function type must be parenthesized")
+        let first = ft.effects[0]
+        let end = p.peek(1)
+        p.fail(FN_TYPE_EFFECTS_PARENS, span_to(first.span, end.span), "several effects in a function type must be parenthesized: `uses (${effect_text(first)}, ${txt(end.text)})`")
       }
     }
   }

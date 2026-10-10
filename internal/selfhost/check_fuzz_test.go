@@ -144,7 +144,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 				others[code]++
 			}
 			if len(want.other) == 0 {
-				others["unsupported parse error"]++
+				others["(none)"]++
 			}
 		}
 	}

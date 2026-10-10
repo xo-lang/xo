@@ -222,15 +222,11 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 }
 
 /// Parses a file into module m. The parser's diagnostics join the run's;
-/// a hard parse error makes the run unsupported: the Xo parser stops at it
-/// where the Go parser resynchronizes (decisions 0127, 0141). Soft errors
-/// (the habits of other languages, decision 0087) leave the tree the Go
-/// parser recovers, which is checked as usual.
+/// after errors the tree is the one the Go parser recovers (soft errors,
+/// decision 0087, and resynchronization after hard ones), which is
+/// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let r = parser.parse_file(path.bytes(), src, sig)
-  if r.hard && c.unsupported.is_empty() {
-    c.unsupported = "parse error in ${path}"
-  }
   for d in r.diags {
     c.diags.push(Diag{code: d.code, file: path, line: d.span.start.line, col: d.span.start.col, end_line: d.span.end.line, end_col: d.span.end.col, message: lossy_str(d.message)})
   }

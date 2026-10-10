@@ -159,7 +159,9 @@ test "a value of the wrong type is XO0401" {
   expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
 }
 
-test "a file with a parse error is not checked" {
-  let out = check_files(os, "p", [("p/main.xo", "fn f( {")])?
-  expect(out.starts_with("unsupported parse error")) == true
+test "a file with a parse error is checked past it, as the Go checker does" {
+  let out = check_files(os, "p", [("p/main.xo", "fn f() {\n  let = 1\n}\n\nfn g() -> Int {\n  \"s\"\n}\n")])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("\"XO0165\"") && l.contains("expected a pattern, found `=`") })) == true
+  expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Int`, found `Str`") })) == true
 }

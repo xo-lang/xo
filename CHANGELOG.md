@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted parser resynchronizes after a hard error as the Go
+  parser does and reports the same errors with the same recovered tree
+  (every file and token mutation compared); the self hosted checker now
+  checks runs with parse errors too. `xo typedump` no longer panics on a
+  use of an unresolved import.
 - arm64 backend: spilled values share stack slots when their live
   ranges do not overlap (frames of long functions shrink up to 8 times;
   the self hosted checker's largest went from 28 KiB to 6.4 KiB), and a

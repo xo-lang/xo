@@ -6,15 +6,13 @@
 use github.com/xo-lang/xo/selfhost/lexer
 
 /// Parses src and prints its tree and diagnostics. With sig, function
-/// declarations may omit their body. A file with a hard error prints only
-/// its diagnostics (up to the first hard one): its tree is incomplete.
+/// declarations may omit their body. A file with errors prints the tree
+/// the parser recovered.
 pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
   let r = parse_file(file.bytes(), src, sig)
   var out = StrBuilder.new()
   out.write("== ${file}\n")
-  if !r.hard {
-    dump_file(out, r.file)
-  }
+  dump_file(out, r.file)
   // messages quoted as parser.Dump does (strconv.Quote): a habit's
   // message holds source text, newlines included
   for d in r.diags {

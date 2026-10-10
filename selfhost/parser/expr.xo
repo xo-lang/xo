@@ -12,10 +12,10 @@ fn (var p: Parser) parse_expr_no_lit() -> Expr {
 
 fn (var p: Parser) parse_expr() -> Expr {
   let x = p.parse_binary(1)
-  if !p.hard && p.at(Kind.Question) && p.ternary_ahead() {
+  if !p.bad && p.at(Kind.Question) && p.ternary_ahead() {
     return p.ternary(x)
   }
-  if !p.hard && p.py_cond_ahead() {
+  if !p.bad && p.py_cond_ahead() {
     return p.py_cond(x)
   }
   x
@@ -355,7 +355,7 @@ fn (var p: Parser) parse_primary() -> Expr {
       while p.list_more(Kind.RBrack) {
         let before = p.pos
         elems.push(p.parse_expr())
-        if elems.len() == 1 && p.at(Kind.For) && !p.hard {
+        if elems.len() == 1 && p.at(Kind.For) && !p.bad {
           comp.push(p.parse_comprehension(elems[0]))
         }
         if !p.list_sep(before, Kind.RBrack, "list") {
@@ -400,13 +400,14 @@ fn (var p: Parser) parse_primary() -> Expr {
     While => {
       p.next()
       if !p.at(Kind.LBrace) {
-        p.fail(WHILE_COND_AS_EXPR, sp, "a `while` loop with a condition is a statement, not an expression")
+        p.fail(WHILE_COND_AS_EXPR, sp, "a `while` loop with a condition is a statement, not an expression; only `while { ... }` is an expression")
+        p.parse_expr_no_lit()
       }
       let body = p.parse_block()
       return Expr.WhileExpr(span: p.span_from(sp.start), body: body)
     }
     Return | Break | Continue => {
-      p.fail(UNEXPECTED_TOKEN, sp, "`${t.kind}` is a statement and cannot be used as a value here")
+      p.fail(UNEXPECTED_TOKEN, sp, "`${kind_text(t.kind)}` is a statement and cannot be used as a value here")
       return Expr.BadExpr(sp)
     }
     _ => {}
@@ -551,7 +552,7 @@ fn (var p: Parser) parse_if() -> Expr {
     cond = Some(head)
   }
   if let ParenExpr(..) = head {
-    if !p.hard && !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
+    if !p.bad && !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
       return p.braceless_if(cond, pattern, value, start)
     }
   }
@@ -562,7 +563,7 @@ fn (var p: Parser) parse_if() -> Expr {
     p.skip_newlines()
   }
   var els: Expr? = None
-  if !p.hard && p.foreign_elif() {
+  if !p.bad && p.foreign_elif() {
     els = Some(p.parse_if())
   } else if p.got(Kind.Else) {
     if p.at(Kind.If) {
@@ -602,29 +603,27 @@ fn (var p: Parser) braceless_body() -> Block {
   Block{span: stmt_span(s), stmts: [s]}
 }
 
-/// `{` of match or select arms; struct literals and open ranges are
-/// allowed again inside. Returns false when the brace is missing.
-fn (var p: Parser) arms_open() -> Bool {
-  p.expect(Kind.LBrace, "`{`").kind == Kind.LBrace
-}
-
 /// After an arm: a newline or the closing `}`. A `,` (Rust, Kotlin) and a
 /// second arm on the line are soft errors (XO0169, XO0175): the next arm
-/// is parsed as one.
-fn (var p: Parser) arm_end(what: Str) {
-  if p.failed() || p.got(Kind.Newline) || p.at(Kind.RBrace) {
-    return
+/// is parsed as one. After an error, resynchronizes at the end of the arm
+/// (internal/parser parseArms).
+fn (var p: Parser) arm_end(what: Str, before: Int) {
+  if !p.bad {
+    if p.got(Kind.Newline) || p.at(Kind.RBrace) {
+      return
+    }
+    if p.at(Kind.Comma) {
+      p.soft(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
+      p.next()
+      return
+    }
+    if p.arm_on_same_line() {
+      p.soft(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe_go(p.tok)}")
+      return
+    }
+    p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe(p.tok)}")
   }
-  if p.at(Kind.Comma) {
-    p.soft(MATCH_ARM_SEPARATOR, p.tok.span, "${what}s are separated by newlines, not `,`")
-    p.next()
-    return
-  }
-  if p.arm_on_same_line() {
-    p.soft(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe_go(p.tok)}")
-    return
-  }
-  p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline after ${what}, found ${describe(p.tok)}")
+  p.resync(before)
 }
 
 fn (var p: Parser) parse_match() -> Expr {
@@ -633,12 +632,9 @@ fn (var p: Parser) parse_match() -> Expr {
   let subject = p.parse_expr_no_lit()
   p.check_struct_lit_in_cond(Some(subject))
   var arms: List[MatchArm] = []
-  if p.arms_open() {
-    let saved_lit = p.no_lit
-    let saved_range = p.open_range
-    p.no_lit = false
-    p.open_range = false
-    while p.members_more() {
+  if let Some(br) = p.braces_open(true) {
+    var before = 0
+    while p.braces_more(before) {
       let astart = p.tok.span.start
       let pattern = p.parse_pattern()
       var guard: Expr? = None
@@ -648,7 +644,7 @@ fn (var p: Parser) parse_match() -> Expr {
         guard = Some(p.parse_expr())
         p.no_arrow_fn = saved
       }
-      if p.at(Kind.Arrow) && !p.hard {
+      if p.at(Kind.Arrow) && !p.bad {
         p.foreign(p.tok.span, "`->` after a pattern is Kotlin and Scala syntax; an Xo match arm is `pattern => body` (core 3.5)")
         p.next()
       } else {
@@ -659,11 +655,9 @@ fn (var p: Parser) parse_match() -> Expr {
         body = Some(p.parse_simple_stmt())
       }
       arms.push(MatchArm{span: p.span_from(astart), pattern: pattern, guard: guard, body: body})
-      p.arm_end("match arm")
+      p.arm_end("match arm", before)
     }
-    p.no_lit = saved_lit
-    p.open_range = saved_range
-    p.close_brace()
+    p.braces_close(br)
   }
   Expr.MatchExpr(span: p.span_from(start), subject: subject, arms: arms)
 }
@@ -672,12 +666,9 @@ fn (var p: Parser) parse_select() -> Expr {
   let start = p.tok.span.start
   p.next() // select
   var arms: List[SelectArm] = []
-  if p.arms_open() {
-    let saved_lit = p.no_lit
-    let saved_range = p.open_range
-    p.no_lit = false
-    p.open_range = false
-    while p.members_more() {
+  if let Some(br) = p.braces_open(true) {
+    var before = 0
+    while p.braces_more(before) {
       let astart = p.tok.span.start
       var arm = SelectArm{span: p.tok.span}
       let saved = p.no_arrow_fn
@@ -699,11 +690,9 @@ fn (var p: Parser) parse_select() -> Expr {
       }
       arm.span = p.span_from(astart)
       arms.push(arm)
-      p.arm_end("select arm")
+      p.arm_end("select arm", before)
     }
-    p.no_lit = saved_lit
-    p.open_range = saved_range
-    p.close_brace()
+    p.braces_close(br)
   }
   Expr.SelectExpr(span: p.span_from(start), arms: arms)
 }
@@ -756,7 +745,7 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
           let it = p.tok
           p.next()
           if it.value != it.text {
-            p.fail(UNEXPECTED_TOKEN, it.span, "a tuple field is a plain decimal index such as `.0`")
+            p.fail(UNEXPECTED_TOKEN, it.span, "a tuple field is a plain decimal index such as `.0`, found `${txt(it.text)}`")
           }
           x = Expr.SelectorExpr(span: p.span_from(start), x: x, sel: Ident{span: it.span, name: it.text})
           continue
@@ -775,7 +764,7 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
             name = Some(p.expect_ident("an argument name"))
             p.next()
           }
-          if p.at(Kind.Var) && !p.hard && starts_expr(p.peek(1).kind) {
+          if p.at(Kind.Var) && !p.bad && starts_expr(p.peek(1).kind) {
             // Swift `inout` call sites and C# `ref` read like this.
             p.foreign(p.tok.span, "`var` at a call site is not Xo: `var` belongs only on the parameter, `fn f(var x: T)`, and the caller passes its `var` binding as is, `f(x)` (core 3.2)")
             p.next()
@@ -850,7 +839,7 @@ fn (var p: Parser) parse_index(x: Expr) -> Expr {
     p.error_expected("an index or range")
   } else {
     idx = p.parse_expr()
-    if p.at(Kind.Colon) && !p.hard {
+    if p.at(Kind.Colon) && !p.bad {
       idx = p.foreign_slice(Some(idx))
     }
   }
@@ -1009,7 +998,8 @@ fn (var p: Parser) parse_string() -> StringLit {
 }
 
 /// Lexes and parses the source of one `${...}`. Its diagnostics join the
-/// file's; a hard error in it stops the parse.
+/// file's; its errors do not suppress the enclosing statement's (a parser
+/// of its own, as in internal/parser parseInterp).
 fn (var p: Parser) parse_interp(sp: Span) -> Expr {
   let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
   var sub = Parser{src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
@@ -1022,8 +1012,6 @@ fn (var p: Parser) parse_interp(sp: Span) -> Expr {
   }
   if sub.hard {
     p.hard = true
-    p.pos = p.toks.len() - 1
-    p.tok = p.toks[p.pos]
   }
   e
 }

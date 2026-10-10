@@ -104,8 +104,7 @@ fn (var p: Parser) foreign_top_level(var imports: List[UseDecl], doc: Doc?, is_p
     }
     // A hard error in the Go parser, which resynchronizes at the next
     // top level declaration (parseFile's syncTop).
-    p.diags.push(Diag{code: FOREIGN_SYNTAX, span: t.span, message: "`${txt(w)}` is Kotlin, Swift, TypeScript, or Python syntax; Xo has no classes: declare a `struct` for the fields and methods at top level with a receiver, `fn (p: P) name() -> T` (core 2.2, 3.4)".bytes()})
-    p.top_bad = true
+    p.fail(FOREIGN_SYNTAX, t.span, "`${txt(w)}` is Kotlin, Swift, TypeScript, or Python syntax; Xo has no classes: declare a `struct` for the fields and methods at top level with a receiver, `fn (p: P) name() -> T` (core 2.2, 3.4)")
     return (Some(Decl.BadDecl(t.span)), true)
   }
   (None, false)
@@ -259,28 +258,29 @@ fn (var p: Parser) parse_impl(start: Pos) -> Decl {
   var decls: List[FnDecl] = []
   let saved = p.in_impl
   p.in_impl = true
-  if p.members_open() {
-    while p.members_more() {
+  if let Some(br) = p.braces_open(false) {
+    var before = 0
+    while p.braces_more(before) {
       let mstart = p.tok.span.start
       let mdoc = p.doc_for(mstart.line)
       let mpub = p.got(Kind.Pub)
       if !p.at(Kind.Fn) {
         p.error_expected("a method starting with `fn`")
-        break
-      }
-      var f = p.parse_fn_decl(mdoc, mpub, mstart, false)
-      if f.params.is_empty() || !f.params[0].is_self {
-        decls.push(f)
       } else {
-        let self_prm = f.params[0]
-        f.recv = Some(Receiver{span: self_prm.span, is_var: self_prm.is_var, name: Ident{span: self_prm.name.span, name: b"self"}, typ: typ})
-        f.params = f.params[1..]
-        f.params_list = true
-        decls.push(f)
+        var f = p.parse_fn_decl(mdoc, mpub, mstart, false)
+        if f.params.is_empty() || !f.params[0].is_self {
+          decls.push(f)
+        } else {
+          let self_prm = f.params[0]
+          f.recv = Some(Receiver{span: self_prm.span, is_var: self_prm.is_var, name: Ident{span: self_prm.name.span, name: b"self"}, typ: typ})
+          f.params = f.params[1..]
+          f.params_list = true
+          decls.push(f)
+        }
       }
-      p.member_end("method")
+      p.member_end("method", before)
     }
-    p.close_brace()
+    p.braces_close(br)
   }
   p.in_impl = saved
   if decls.is_empty() {
@@ -365,14 +365,14 @@ fn bound_rename(text: Bytes) -> Bytes? {
 /// A Rust or Swift bound list `T: A + B` after the first bound. Xo takes
 /// one interface per type parameter.
 fn (var p: Parser) parse_bounds(name: Ident, first: Type) -> Type? {
-  if !p.at(Kind.Plus) || p.hard {
+  if !p.at(Kind.Plus) || p.bad {
     return Some(first)
   }
   var bounds = [first]
   while p.got(Kind.Plus) {
     bounds.push(p.parse_type())
   }
-  if p.hard {
+  if p.bad {
     return Some(first)
   }
   let sp = span_to(type_span(first), type_span(bounds[bounds.len() - 1]))
@@ -441,7 +441,7 @@ fn (var p: Parser) foreign_self_param(start: Pos) -> Param? {
 /// Go fields without a colon (`x int`) and TypeScript optional fields
 /// (`x?: T`): the field type when the habit parsed it.
 fn (var p: Parser) foreign_field(name: Ident) -> Type? {
-  if p.hard {
+  if p.bad {
     return None
   }
   let t = p.tok

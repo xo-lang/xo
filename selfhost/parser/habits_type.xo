@@ -13,9 +13,9 @@ fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
   let open = p.tok
   p.next() // <
   var args: List[Type] = []
-  while !p.hard {
+  while !p.bad {
     args.push(p.parse_type())
-    if p.hard || p.angle_pending_gt {
+    if p.bad || p.angle_pending_gt {
       break
     }
     if !p.got(Kind.Comma) {
@@ -23,7 +23,7 @@ fn (var p: Parser) angle_args(path: List[Ident]) -> List[Type] {
     }
   }
   var end = p.tok.span.end
-  if p.hard {
+  if p.bad {
     // reported
   } else if p.angle_pending_gt {
     p.angle_pending_gt = false

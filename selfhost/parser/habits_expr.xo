@@ -6,7 +6,7 @@ use github.com/xo-lang/xo/selfhost/lexer
 /// Binary operators of other languages at the current token, after the
 /// left operand x, or None.
 fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
-  if p.hard {
+  if p.bad {
     return None
   }
   let t = p.tok
@@ -303,7 +303,7 @@ fn (var p: Parser) rust_closure() -> Expr {
     p.next()
   } else {
     p.next()
-    while !p.at(Kind.Pipe) && !p.at(Kind.Eof) && !p.hard {
+    while !p.at(Kind.Pipe) && !p.at(Kind.Eof) && !p.bad {
       let ps = p.tok.span.start
       let name = p.expect_ident("a closure parameter")
       var typ: Type? = None
@@ -712,11 +712,12 @@ fn (var p: Parser) foreign_switch() -> Expr {
     p.error_expected("`{`")
     return Expr.BadExpr(kw.span)
   }
+  let open = p.tok
   p.next() // {
   var arms: List[MatchArm] = []
   while {
     p.skip_newlines()
-    if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.hard {
+    if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.bad {
       break
     }
     let arm_start = p.tok
@@ -746,7 +747,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       p.error_expected("`case` or `default`")
     }
-    if p.hard {
+    if p.bad {
       break
     }
     let sep = p.tok
@@ -755,7 +756,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       p.expect(Kind.Colon, "`:` after the case")
     }
-    if p.hard {
+    if p.bad {
       break
     }
     var pattern = Pattern.WildcardPat(arm_start.span)
@@ -780,7 +781,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     } else {
       while {
         p.skip_newlines()
-        if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.at_ident(b"case") || p.at_ident(b"default") || p.hard {
+        if p.at(Kind.RBrace) || p.at(Kind.Eof) || p.at_ident(b"case") || p.at_ident(b"default") || p.bad {
           break
         }
         stmts.push(p.parse_stmt())
@@ -798,7 +799,7 @@ fn (var p: Parser) foreign_switch() -> Expr {
     }
     arms.push(MatchArm{span: p.span_from(arm_start.span.start), pattern: pattern, guard: None, body: Some(body)})
   }
-  p.close_brace()
+  p.close_brace(open)
   let msp = p.span_from(start)
   var lang = "Go, Swift, and TypeScript"
   var form = "`switch x { case 1: ... default: ... }`"
