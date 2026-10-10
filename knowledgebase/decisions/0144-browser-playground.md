@@ -48,7 +48,7 @@ whatever the site ships must not include it.
   vendored after review (no network, storage, or eval use).
 
 ## Consequences
-- About 31 MB gzipped of toolchain on the first run, cached in Cache
+- About 33 MB gzipped of toolchain on the first run (the page asks first: 7 MB to check, 26 MB more to run), cached in Cache
   Storage under content hashed names. Checking alone loads 7 MB.
 - A build and run of a tour program takes about 2 s in Chrome.
 - The site repo carries the binaries; rebuild them with
