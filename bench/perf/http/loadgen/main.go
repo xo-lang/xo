@@ -14,6 +14,11 @@
 // connection, so a TLS server does a full handshake per request;
 // -gencert dir writes a self signed ECDSA P-256 certificate for
 // 127.0.0.1 (cert.pem, key.pem) and exits.
+//
+// HTTP/2 (decision 0121): -h2 with an https:// URL speaks HTTP/2 only
+// (ALPN h2): the workers' requests share one connection as streams, as
+// net/http's client multiplexes them, and loadgen exits when the server
+// answers with another protocol.
 package main
 
 import (
@@ -68,6 +73,7 @@ func main() {
 	newConn := flag.Bool("newconn", false, "a new connection (and TLS handshake) per request")
 	resume := flag.Bool("resume", false, "with https: keep TLS sessions (a client session cache), so new connections resume")
 	gencert := flag.String("gencert", "", "write cert.pem and key.pem for 127.0.0.1 into this directory and exit")
+	h2 := flag.Bool("h2", false, "with https: HTTP/2 only (the workers' requests are streams of one connection)")
 	flag.Parse()
 	if *gencert != "" {
 		if err := genCert(*gencert); err != nil {
@@ -92,8 +98,21 @@ func main() {
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, ClientSessionCache: sessionCache(*resume, *conc)},
 		DisableKeepAlives: *newConn,
 	}
+	if *h2 {
+		tr.Protocols = new(http.Protocols)
+		tr.Protocols.SetHTTP2(true)
+	}
 	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 	waitReady(client, *base)
+	if *h2 {
+		resp, err := client.Get(*base + "/users/1")
+		if err != nil || resp.ProtoMajor != 2 {
+			fmt.Fprintln(os.Stderr, "loadgen: -h2: the server does not speak HTTP/2:", err)
+			os.Exit(1)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
 	for i := 0; i < *preload; i++ {
 		if _, err := create(client, *base, fmt.Sprintf("seed%d@x.io", i)); err != nil {
 			fmt.Fprintln(os.Stderr, "loadgen: preload:", err)

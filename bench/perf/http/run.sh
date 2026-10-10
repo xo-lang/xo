@@ -32,7 +32,8 @@
 # plain HTTP), and NEWCONN=1 opens a connection per request (with https: a
 # full TLS handshake per request), and RESUME=1 with them keeps the
 # client's TLS sessions so new connections resume (session tickets,
-# decision 0117).
+# decision 0117). H2=1 with SCHEME=https speaks HTTP/2 (decision 0121):
+# the workers' requests are streams of one connection (loadgen -h2).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -55,6 +56,9 @@ if [ "${NEWCONN:-0}" = 1 ]; then
 fi
 if [ "${RESUME:-0}" = 1 ]; then
 	newconn="$newconn -resume"
+fi
+if [ "${H2:-0}" = 1 ]; then
+	newconn="$newconn -h2"
 fi
 if [ "$scheme" = https ]; then
 	"$out/loadgen" -gencert "$out"

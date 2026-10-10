@@ -12,7 +12,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.9
 
-Meaning changes: std/http over TLS speaks HTTP/1.1 only (below), and
+Meaning changes: std/http over TLS speaks HTTP/2 when both sides offer
+it, on every backend (below), and
 one variable passed to two `var` parameters of a call is an error
 (`XO0503`, 5.2, decision 0111; the Go backend shared it, the native
 backends reported XO1201). A value that holds a handle (`Mutex`,
@@ -41,9 +42,10 @@ handles, the native backends reported XO1201). Native support grew
 - std/http serves and calls HTTPS on every backend (std.md 4.6, decisions
   0105 and 0106): `http.tls_cert`, `Server.with_tls`, `Client.with_roots`,
   and `TlsErr` are new; the native backends speak TLS with Mbed TLS, so an
-  `https` URL is no longer `XO1201` there. std/http speaks HTTP/1.1 only,
-  also over TLS (the Go backend's client used HTTP/2 with servers that
-  offered it).
+  `https` URL is no longer `XO1201` there. Over TLS, servers and clients
+  speak HTTP/2 when ALPN agrees on `h2` (decision 0121; the Go backend's
+  server spoke HTTP/1.1 only before, its client already used HTTP/2);
+  plain `http` stays HTTP/1.1.
 - `use c "<header>" [link "<lib>"]... [as name] [uses ...]` calls C from
   native builds (4.5, decisions 0093 and 0116): bindings generated from
   the header (`xo bind --c`), scalars, Str, Bytes, flat structs, and
