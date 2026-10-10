@@ -142,6 +142,11 @@ within 0.3 percent).
 - TestGoldenHybrid (4 golden programs, every eligible function in
   assembly) and TestHybridRandom (random kernels against their `xo_pure`
   builds) pass with the polls; `go vet -asmdecl` passes.
+- linux/arm64 (`scripts/linux-test.sh arm64 -run
+  'TestGoldenHybrid|TestHybridRandom|TestHybridPreemption' ./internal/gen`,
+  full suite): all pass; stop the world 0.083 ms (0.140 ms under the race
+  detector), main's gap 3 ms at GOMAXPROCS=4 and 32 ms at 1, and 1010 ms
+  for the control without polls.
 - TestGoSyntaxEncoding has the two new forms (`ldr x16, [x28, #16]` as
   `MOVD 16(g), R16`, `tbnz x16, #63`).
 - A function that polls is no longer `//go:noescape` (its slices' arrays
