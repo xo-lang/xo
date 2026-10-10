@@ -844,6 +844,23 @@ fn stdin_err(st: Int) -> IoErr {
 }
 
 // ---------------------------------------------------------------------------
+// Rand.shuffle (std.md 3.4): Fisher-Yates from the end, one `int` per
+// step, as std/rt's Rand_shuffle (the same seeded order in tests)
+
+fn rand_shuffle[T](r: Rand, xs: List[T]) -> List[T] {
+  var out = xs
+  var i = out.len() - 1
+  while i > 0 {
+    let j = r.int(0, i + 1)
+    let a = out[i]
+    out[i] = out[j]
+    out[j] = a
+    i -= 1
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
 // Proc (std.md 3.7, decision 0107)
 
 fn proc_run(_p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {

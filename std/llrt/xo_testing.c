@@ -80,6 +80,7 @@ static struct {
 	xo_node *main_node;
 	int64_t exit_code;
 	int has_exit;
+	int exiting; // os.proc.exit unwinds main to testing.run_main
 } tws;
 
 static void *tw_grow(void *p, int n, size_t size) {
@@ -131,15 +132,23 @@ XO_NORETURN void xo_test_fail(const char *p, int64_t n) {
 	_exit(1);
 }
 
-// tw_exit is os.proc.exit in a test: the test ends (and passes, as on
-// the Go backend) unless main runs under testing.run_main, which would
-// need main to unwind to run_main.
+// tw_exit is os.proc.exit in a test (std.md 8.4): the code is recorded
+// (FakeProc.exit_code). Outside testing.run_main the test ends and
+// passes, as on the Go backend. Inside it, main unwinds back to run_main
+// (decision 0108): its root is canceled and this context unwinds from
+// here (generated code checks after the call), and xo_test_main_end
+// gives the code as main's status.
 __attribute__((unused)) static void tw_exit(int64_t code) {
-	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
-		static const char m[] = "os.proc.exit inside testing.run_main is not available without a garbage collector (`--no-gc`) yet (support is planned)";
-		xo_test_fail(m, (int64_t)sizeof m - 1);
+	lk(&tws.mu);
+	tws.exit_code = code;
+	tws.has_exit = 1;
+	unlk(&tws.mu);
+	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE) && tws.main_node) {
+		__atomic_store_n(&tws.exiting, 1, __ATOMIC_RELEASE);
+		node_cancel(tws.main_node);
+		ctx()->unwinding = 1;
+		return;
 	}
-	(void)code;
 	_exit(0);
 }
 
@@ -228,6 +237,17 @@ void xo_test_advance(int64_t d) {
 		park_wait_n(c, 0, 1);
 	}
 	timer_del(&t);
+	// the contexts woken at the last instant (with this one) run until
+	// every one waits again before advance returns, as std/rt's
+	// World.Advance: a timer due now fires at the next move of the clock,
+	// which comes only when every context waits
+	xo_timer q = {.when = deadline(0), .idx = -1, .park = &c->park};
+	park_reset(&c->park);
+	timer_add(&q);
+	while (!__atomic_load_n(&q.fired, __ATOMIC_ACQUIRE)) {
+		park_wait_n(c, 0, 1);
+	}
+	timer_del(&q);
 }
 
 // xo_test_clock_set is FakeClock.set(t).
@@ -338,9 +358,18 @@ __attribute__((unused)) static xo_rlist *tw_env_args(void) {
 	return l;
 }
 
-// xo_test_exit_code is FakeProc.exit_code() (always none: os.proc.exit
-// ends the test process).
-xo_rlist *xo_test_exit_code(void) { return xo_rl_new(4, 8); }
+// xo_test_exit_code is FakeProc.exit_code(): the code os.proc.exit
+// recorded, in a list of one, or the empty list.
+xo_rlist *xo_test_exit_code(void) {
+	xo_rlist *l = xo_rl_new(4, 8);
+	lk(&tws.mu);
+	if (tws.has_exit) {
+		((int64_t *)rl_data(l))[0] = tws.exit_code;
+		l->len = 1;
+	}
+	unlk(&tws.mu);
+	return l;
+}
 
 // Log records (testing.logs, std.md 8.6)
 
@@ -1105,6 +1134,14 @@ int64_t xo_test_main_end(int64_t code) {
 		node_unlink(n);
 		free(n);
 		tws.main_node = NULL;
+	}
+	if (__atomic_exchange_n(&tws.exiting, 0, __ATOMIC_ACQ_REL) && !node_canceled(c->node)) {
+		// os.proc.exit unwound main (tw_exit): its code is the status
+		c->unwinding = 0;
+		lk(&tws.mu);
+		int64_t ec = tws.exit_code;
+		unlk(&tws.mu);
+		return ec;
 	}
 	if (c->unwinding && __atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE) && !node_canceled(c->node)) {
 		c->unwinding = 0;

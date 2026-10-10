@@ -7,4 +7,6 @@
     fault: XO-F001: deadlock: every task is blocked and no timer is pending
 --- PASS: exit ends the test
 --- PASS: run_main
-FAIL: 2 passed, 3 failed, 1 skipped
+--- FAIL: a failing os.tasks task (main.xo:61:1, seed 1)
+    error: Bad(msg: "negative -5")
+FAIL: 2 passed, 4 failed, 1 skipped

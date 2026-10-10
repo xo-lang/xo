@@ -59,7 +59,7 @@ func TestNoGCTests(t *testing.T) {
 	backends := nativeBackends(t)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void")} {
 		goCode, goOut := xoTest(t, "-v", dir)
 		for _, be := range backends {
 			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)

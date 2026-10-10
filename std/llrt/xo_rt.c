@@ -2529,6 +2529,36 @@ xo_scope *xo_scope_group(xo_scope *s) {
 	return s;
 }
 
+// The program's task group, `os.tasks` (core 7.1, decision 0109): the
+// group of the scope generated code opens around main (and around each
+// test), set while it is open.
+static xo_scope *prog_group;
+
+// xo_prog_group_set makes s (NULL: none) the group os.tasks gives.
+void xo_prog_group_set(xo_scope *s) {
+	if (s) {
+		h_retain(s);
+	}
+	xo_scope *old = __atomic_exchange_n(&prog_group, s, __ATOMIC_ACQ_REL);
+	if (old) {
+		h_release(old);
+	}
+}
+
+// xo_prog_group_clear ends the program's group (its scope closed).
+void xo_prog_group_clear(void) { xo_prog_group_set(NULL); }
+
+// xo_prog_group is `os.tasks`: a reference to the program's group.
+xo_scope *xo_prog_group(void) {
+	xo_scope *s = __atomic_load_n(&prog_group, __ATOMIC_ACQUIRE);
+	if (!s) {
+		static const char m[] = "os.tasks is not available here";
+		xo_fault(m, (int64_t)sizeof m - 1, "");
+	}
+	h_retain(s);
+	return s;
+}
+
 // xo_scope_cancel is `s.cancel()`: cancels the scope's tasks, not the
 // body; tasks spawned later start under a fresh node.
 void xo_scope_cancel(xo_scope *s) {

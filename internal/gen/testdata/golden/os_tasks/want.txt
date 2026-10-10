@@ -1,0 +1,9 @@
+exit 1
+--- stdout
+first 42
+awaited 5
+main returns
+hits 7
+--- stderr
+error: not a number: x
+  at os_tasks.main.closure()            main.xo:49

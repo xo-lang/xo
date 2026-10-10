@@ -1,0 +1,8 @@
+exit 1
+--- stdout
+nested err too big 6
+locked 10
+--- stderr
+error: too big 17
+  at error_frames_closures.locked.closure(m=<mutex>, k=7) main.xo:23
+  at error_frames_closures.main()       main.xo:35

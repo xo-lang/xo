@@ -908,7 +908,9 @@ static void tw_exit(int64_t code);
 
 void xo_exit(int64_t code) {
 	if (tw.on) {
+		// returns only inside testing.run_main, to unwind main
 		tw_exit(code);
+		return;
 	}
 	xo_flush();
 	exit((int)code);

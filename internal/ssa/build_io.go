@@ -146,6 +146,15 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		}
 		return s.unit(), true
 	}
+	if key == "Rand.shuffle" {
+		// the native prelude's rand_shuffle (a capability's method has
+		// no implementation lookup of its own)
+		if nm := b.nativeMod("std/prelude"); nm != nil {
+			if impl, ok := nm.Scope["rand_shuffle"].(*check.FuncObj); ok {
+				return s.callAs(x, ci, impl), true
+			}
+		}
+	}
 	recv := s.expr(ci.Recv)
 	switch key {
 	case "StrBuilder.len", "BytesBuilder.len":
@@ -161,6 +170,11 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		return s.rt("env_args", m.List(strT)), true
 	case "Proc.exit":
 		s.rt("exit", nil, arg(0, intT))
+		if b.opts.Tests {
+			// in testing.run_main the exit unwinds main back to it
+			// (decision 0108): the runtime returns unwinding
+			s.check("")
+		}
 		s.add(OpUnreachable, nil, nil)
 		s.dead()
 		return s.undef(nt), true

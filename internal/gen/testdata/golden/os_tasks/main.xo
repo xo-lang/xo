@@ -1,0 +1,52 @@
+// os.tasks (core 7.1, decision 0109): main runs as the body of the
+// program's root scope, whose group os.tasks is. Its tasks may be started
+// anywhere os.tasks is passed; when main returns, background tasks are
+// canceled and the others awaited; a task that fails, started in main
+// where the group's origin is visible, is the program's error.
+use std/task
+
+struct Cache {
+  tasks: task.Group
+  hits: Atomic[Int]
+}
+
+fn (c: Cache) warm(n: Int) {
+  let hits = c.hits
+  c.tasks.spawn(fn() {
+    hits.add(n)
+  })
+}
+
+fn parse(s: Str) -> Int ! Str {
+  match Int.parse(s) {
+    Some(n) => n
+    None => Err("not a number: ${s}")
+  }
+}
+
+fn main(os: Os) ! {
+  let ch = Chan[Int].new(4)
+  os.tasks.spawn(fn() ! {
+    ch.send(parse("21")? * 2)
+  })
+  os.stdio.println("first ${ch.recv() ?? -1}")
+  let c = Cache{tasks: os.tasks, hits: Atomic[Int].new(0)}
+  c.warm(3)
+  c.warm(4)
+  let done = Chan[()].new(1)
+  os.tasks.spawn_background(fn() {
+    os.clock.sleep(1h)
+    done.send(())
+  })
+  let h = os.tasks.spawn(fn() { 5 })
+  os.stdio.println("awaited ${h.await}")
+  scope s {
+    s.spawn(fn() { os.clock.sleep(5ms) })
+  }
+  os.tasks.spawn(fn() ! {
+    os.clock.sleep(20ms)
+    os.stdio.println("hits ${c.hits.get()}")
+    let _n = parse("x")?
+  })
+  os.stdio.println("main returns")
+}

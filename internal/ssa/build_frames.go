@@ -147,7 +147,8 @@ func (s *fn) pushFrame(tr *Value, x ast.Node) *Value {
 		vals = append(vals, v)
 	}
 	args := s.add(OpClosure, ft.Elems[2], b.frameArgsFunc(names, cts, vals, x), vals...)
-	frame := s.add(OpTuple, ft, nil, s.add(OpConst, st, frameName(fo)), s.add(OpConst, st, b.posLine(x)), args)
+	label := frameName(fo) + strings.Repeat(".closure", s.closures)
+	frame := s.add(OpTuple, ft, nil, s.add(OpConst, st, label), s.add(OpConst, st, b.posLine(x)), args)
 	l := s.add(OpField, lt, 0, tr)
 	return s.add(OpStruct, t, nil, s.call("list.push", lt, "", l, frame))
 }

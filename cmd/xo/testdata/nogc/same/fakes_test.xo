@@ -71,3 +71,31 @@ test "fake proc run" {
   os.proc.on_run("git", ProcOutput{code: 2, stdout: b"", stderr: b"bad"})
   expect((os.proc.run("git", [])?).code) == 2
 }
+
+fn num(s: Str) -> Int ! Str {
+  match Int.parse(s) {
+    Some(n) => n
+    None => Err("not a number: ${s}")
+  }
+}
+
+test "os.tasks ends with the test" {
+  os.tasks.spawn_background(fn() {
+    os.clock.sleep(1h)
+  })
+  let h = os.tasks.spawn(fn() { 4 })
+  expect(h.await) == 4
+  let ch = Chan[Int].new(1)
+  os.tasks.spawn(fn() ! {
+    ch.send(num("6")?)
+  })
+  expect(ch.recv()) == Some(6)
+}
+
+test "a failing os.tasks task fails the test" {
+  os.tasks.spawn(fn() ! {
+    os.clock.sleep(1s)
+    let _n = num("x")?
+  })
+  expect(true)
+}

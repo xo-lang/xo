@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+item1,item2,failed(NotFound(id: 3)),timeout,item4
+[1, 2, 3]
+empty 0
+--- stderr

@@ -286,10 +286,13 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 	if v.Type.Kind == KCap {
 		t := s.natOf(x)
 		if t.Kind == KHandle {
-			// os.tasks (core 7.1): the native backends have no program
-			// wide group yet
-			b.unsupported(x, "`"+x.Sel.Name+"` of a capability")
-			return s.undef(t)
+			// os.tasks (core 7.1, decision 0109): the group of the scope
+			// around main (tasksMain) or around the test
+			b.needConc = true
+			if !b.conc {
+				return s.undef(t)
+			}
+			return s.rt("prog_group", t)
 		}
 		if isFs(t) {
 			// os.fs: the filesystem root, no mode (decision 0102)

@@ -1045,6 +1045,17 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 		}
 		return true
 	})
+	owner := s.frameOwner()
+	if owner != nil && hasTry(x.Body) {
+		// a `?` in it records the enclosing function's frame (decision
+		// 0104)
+		for _, vo := range b.frameVars(owner) {
+			if _, outer := s.varType[vo]; outer && !seen[vo] {
+				seen[vo] = true
+				caps = append(caps, vo)
+			}
+		}
+	}
 	var vals []*Value
 	var capTs []*Type
 	for _, vo := range caps {
@@ -1063,6 +1074,8 @@ func (s *fn) closureWith(x *ast.FnLit, ct *check.Func, et *Type) *Value {
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, s.apply(ct.Result), errT)
 		c.sub = s.sub
+		c.frameFo = owner
+		c.closures = s.closures + 1
 		c.packVar = true
 		env := f.Params()[0]
 		for i, vo := range caps {

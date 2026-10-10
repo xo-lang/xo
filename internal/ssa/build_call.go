@@ -173,6 +173,7 @@ func (s *fn) closure(x *ast.FnLit) *Value {
 	b.queue = append(b.queue, func() {
 		c := b.newFn(f, ct.Result, errT)
 		c.frameFo = owner
+		c.closures = s.closures + 1
 		c.sub = s.sub
 		env := f.Params()[0]
 		for i, vo := range caps {
