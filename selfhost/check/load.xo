@@ -1,0 +1,467 @@
+// Loading: the module directories under the named directories, the user
+// modules they import (through xo.mod), and the std declaration files, as
+// internal/check/load.go does. Paths stay relative to the working
+// directory, as the Go checker prints them; an xo.mod above the working
+// directory is not looked for.
+
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The checker: its tables (objects.xo), the state of the walk
+/// (resolve.xo), and what it recorded.
+pub struct Checker {
+  fs: Fs
+  /// Where the std declaration files are read from.
+  std_dir: Str
+  objs: List[Obj] = []
+  mods: List[Module] = []
+  mod_index: Map[Str, Int] = {}
+  files: List[SrcFile] = []
+  /// Modules in dependency order: a module after the modules it imports.
+  order: List[Int] = []
+  prelude: Int = -1
+  roots: List[ModRoot] = []
+  /// The root modules of the run, in the order of their directories.
+  root_mods: List[Int] = []
+  /// Why the run cannot be checked here (`use go`, a parse error), or "".
+  unsupported: Str = ""
+
+  // The walk: the current module and file, local scopes (innermost
+  // last), the type parameters in scope, and the context.
+  cur_mod: Int = -1
+  cur_file: Int = -1
+  path: Str = ""
+  scopes: List[Map[Bytes, Int]] = []
+  env: Map[Bytes, Int] = {}
+  in_test: Bool = false
+  in_ensures: Bool = false
+  /// Collects implicit receiver type parameters (attach_method).
+  implicit: Bool = false
+  implicit_params: List[Int] = []
+
+  // Results.
+  names: List[NameRec] = []
+  name_at: Map[Str, Int] = {}
+  diags: List[Diag] = []
+  seen: Map[Str, Bool] = {}
+}
+
+/// A fresh checker reading std declarations from std_dir.
+pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
+  Checker{fs: fs, std_dir: std_dir}
+}
+
+/// Loads the modules under dirs and the std modules they need, then
+/// resolves every user module. Errors are I/O failures of the named
+/// directories, as in check.Check.
+fn (var c: Checker) check(dirs: List[Str]) -> () ! Str {
+  c.load_prelude()
+  for d in dirs {
+    let st = c.fs.stat(d).ok() ?? None
+    match st {
+      Some(info) => {
+        if !info.is_dir {
+          return Err("${d} is not a directory (a module is a directory, core 1.1)")
+        }
+      }
+      None => return Err("stat ${d}: no such file or directory")
+    }
+  }
+  var module_dirs: List[Str] = []
+  for d in dirs {
+    c.find_module_dirs(clean(d), true, module_dirs)
+  }
+  module_dirs = module_dirs.sort()
+  for dir in module_dirs {
+    c.find_mod_root(dir)
+  }
+  for dir in module_dirs {
+    let m = c.load_dir(dir)
+    c.mods[m].root = true
+    c.root_mods.push(m)
+  }
+  if c.unsupported.is_empty() {
+    c.run()
+  }
+}
+
+/// Appends dir and every directory below it that holds .xo files,
+/// skipping testdata, dot, and vendor directories below the top.
+fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
+  let entries = c.fs.read_dir(dir).ok() ?? []
+  var has_xo = false
+  for e in entries {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      has_xo = true
+    }
+  }
+  if has_xo && !out.contains(dir) {
+    out.push(dir)
+  }
+  for e in entries {
+    if !e.is_dir {
+      continue
+    }
+    let sub = join(dir, e.name)
+    if e.name == "testdata" || e.name.starts_with(".") || c.is_vendor_dir(sub) {
+      continue
+    }
+    c.find_module_dirs(sub, false, out)
+  }
+}
+
+fn (c: Checker) is_vendor_dir(dir: Str) -> Bool {
+  base(dir) == "vendor" && (c.fs.exists(join(dir, "modules.txt")).ok() ?? false)
+}
+
+fn (var c: Checker) load_prelude() {
+  c.prelude = c.load_std("prelude")
+  if c.prelude >= 0 {
+    c.mods[c.prelude].is_prelude = true
+  }
+  // std/testing provides the predeclared `os`, `expect`, and `testing`
+  // of test blocks (core 9.2), so it is always loaded.
+  c.load_std("testing")
+}
+
+/// Loads std/<name>.xo, or returns -1 when there is none.
+fn (var c: Checker) load_std(name: Str) -> Int {
+  let path = "std/${name}"
+  if let Some(m) = c.mod_index.get(path) {
+    return m
+  }
+  let src = c.fs.read("${c.std_dir}/${name}.xo").ok() ?? None
+  let data = match src {
+    Some(b) => b
+    None => return -1
+  }
+  let m = c.new_module(path, name, "std", true)
+  c.parse_into(m, "std/${name}.xo", data, true)
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
+}
+
+fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> Int {
+  let m = c.mods.len()
+  let obj = c.objs.len()
+  c.objs.push(Obj{kind: ObjKind.Module, name: name.bytes(), module: m})
+  c.mods.push(Module{path: path, name: name, dir: dir, is_std: is_std, obj: obj})
+  c.mod_index[path] = m
+  m
+}
+
+/// Parses a file into module m. A parse error makes the run unsupported:
+/// the Xo parser stops at the first error and the Go checker reports
+/// parse errors the Xo parser does not (decision 0127).
+fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
+  let r = parser.parse_file(path.bytes(), src, sig)
+  if !r.diags.is_empty() && c.unsupported.is_empty() {
+    c.unsupported = "parse error in ${path}"
+  }
+  let f = c.files.len()
+  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo")})
+  c.mods[m].files.push(f)
+}
+
+/// Looks for xo.mod in dir or its parents up to the working directory
+/// and registers it.
+fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
+  var d = clean(dir)
+  while {
+    let data = c.fs.read(join(d, "xo.mod")).ok() ?? None
+    if let Some(b) = data {
+      var path = ""
+      for line in (b.to_str() ?? "").lines() {
+        let fields = split_fields(line)
+        if fields.len() == 2 && fields[0] == "module" && path.is_empty() {
+          path = fields[1]
+        }
+      }
+      if path.is_empty() {
+        return None
+      }
+      let r = ModRoot{path: path, dir: d}
+      var known = false
+      for x in c.roots {
+        if x.path == r.path && x.dir == r.dir {
+          known = true
+        }
+      }
+      if !known {
+        c.roots.push(r)
+      }
+      return Some(r)
+    }
+    if d == "." || d == ".." || d.ends_with("/..") {
+      return None
+    }
+    d = parent(d)
+  }
+  None
+}
+
+/// The import path of the module in dir.
+fn (var c: Checker) module_path_for(dir: Str) -> Str {
+  if let Some(r) = c.find_mod_root(dir) {
+    let rel = rel_path(r.dir, dir)
+    if rel == "." {
+      return r.path
+    }
+    return "${r.path}/${rel}"
+  }
+  clean(dir)
+}
+
+fn (var c: Checker) load_dir(dir0: Str) -> Int {
+  let dir = clean(dir0)
+  let path = c.module_path_for(dir)
+  if let Some(m) = c.mod_index.get(path) {
+    return m
+  }
+  let (name, _) = local_name(path)
+  let m = c.new_module(path, name, dir, false)
+  let entries = c.fs.read_dir(dir).ok() ?? []
+  var names: List[Str] = []
+  for e in entries {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      names.push(e.name)
+    }
+  }
+  for n in names.sort() {
+    let p = join(dir, n)
+    let src = c.fs.read(p).ok() ?? b""
+    c.parse_into(m, p, src, false)
+  }
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
+}
+
+/// Resolves each file's `use` declarations, loading modules as needed.
+fn (var c: Checker) load_imports(m: Int) {
+  for f in c.mods[m].files {
+    for u in c.files[f].ast.imports {
+      if u.path.is_empty() {
+        continue
+      }
+      if u.go || u.c {
+        if c.unsupported.is_empty() {
+          c.unsupported = "use go or use c in ${c.files[f].path}"
+        }
+        continue
+      }
+      let upath = u.path.to_str() ?? ""
+      let p = clean(upath)
+      var imp_name = ""
+      if let Some(a) = u.alias {
+        imp_name = a.name.to_str() ?? ""
+      } else {
+        let (name, ok) = local_name(p)
+        imp_name = name
+        if !ok {
+          c.error_at(f, "XO0602", u.span, "import `${p}` needs `as`: `${name}` is not a valid module name")
+          imp_name = ""
+        }
+      }
+      var dep = -1
+      if p.starts_with("std/") {
+        dep = c.load_std(p.trim_prefix("std/"))
+      } else if p.starts_with("native/") {
+        dep = -1
+      } else if let Some(x) = c.mod_index.get(p) {
+        dep = x
+      } else if let Some(r) = c.owner_root(p) {
+        let rel = p.trim_prefix(r.path).trim_prefix("/")
+        let dir = join(r.dir, rel)
+        let st = c.fs.stat(dir).ok() ?? None
+        if let Some(info) = st {
+          if info.is_dir {
+            dep = c.load_dir(dir)
+          }
+        }
+      }
+      if p != upath {
+        // XO0158 already explains the path.
+        dep = -1
+      } else if dep < 0 && is_remote(p) && c.owner_root(p) == None {
+        c.error_at(f, "XO1306", u.span, "module of `${p}` is not required by xo.mod")
+      } else if dep < 0 {
+        c.error_at(f, "XO0601", u.span, "module `${p}` not found")
+      } else if c.mods[dep].state == 1 {
+        c.error_at(f, "XO0604", u.span, "import cycle: `${c.mods[m].path}` imports `${c.mods[dep].path}`, which imports it back")
+        dep = -1
+      }
+      if imp_name.is_empty() {
+        continue
+      }
+      let key = imp_name.bytes()
+      if let Some(prev) = c.files[f].imports.get(key) {
+        c.error_at(f, "XO0603", u.span, "`${imp_name}` is already imported by `use ${prev.path.to_str() ?? ""}`")
+        continue
+      }
+      c.files[f].imports[key] = Import{module: dep, path: u.path}
+    }
+  }
+}
+
+/// The xo.mod whose module path is the longest prefix of path.
+fn (c: Checker) owner_root(path: Str) -> ModRoot? {
+  var best: ModRoot? = None
+  var best_len = -1
+  for r in c.roots {
+    if (path == r.path || path.starts_with("${r.path}/")) && r.path.len() > best_len {
+      best = Some(r)
+      best_len = r.path.len()
+    }
+  }
+  best
+}
+
+// ---------------------------------------------------------------------------
+// Paths
+
+/// A module's local name from its import path (core 4.1): the last
+/// segment with `-` replaced by `_`, skipping a /vN suffix of a remote
+/// path; false when that is not an identifier or is a keyword.
+fn local_name(path0: Str) -> (Str, Bool) {
+  var path = path0
+  if is_remote(path) {
+    path = major_suffix(path)
+  }
+  let name = base(path).replace("-", "_")
+  if name.is_empty() || lexer.lookup(name) != lexer.Kind.Ident {
+    return (name, false)
+  }
+  let b = name.bytes()
+  for i in 0..b.len() {
+    let ch = b[i]
+    if !(ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (i > 0 && ch >= '0' && ch <= '9')) {
+      return (name, false)
+    }
+  }
+  (name, true)
+}
+
+/// A path whose first segment contains a dot names a remote module.
+fn is_remote(path: Str) -> Bool {
+  let first = path.split("/")[0]
+  first.contains(".")
+}
+
+/// Removes a /vN major version suffix (N >= 2).
+fn major_suffix(path: Str) -> Str {
+  let segs = path.split("/")
+  if segs.len() < 2 {
+    return path
+  }
+  let last = segs[segs.len() - 1].bytes()
+  if last.len() < 2 || last[0] != 'v' || last[1] == '0' {
+    return path
+  }
+  for i in 1..last.len() {
+    if last[i] < '0' || last[i] > '9' {
+      return path
+    }
+  }
+  if last.len() == 2 && last[1] == '1' {
+    return path
+  }
+  var out: List[Str] = []
+  for i in 0..segs.len() - 1 {
+    out.push(segs[i])
+  }
+  out.join("/")
+}
+
+/// path.Clean for slash separated relative paths.
+fn clean(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for s in p.split("/") {
+    if s.is_empty() || s == "." {
+      continue
+    }
+    if s == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(s)
+  }
+  let body = out.join("/")
+  if rooted {
+    return "/${body}"
+  }
+  if body.is_empty() {
+    return "."
+  }
+  body
+}
+
+fn join(a: Str, b: Str) -> Str {
+  if a == "." || a.is_empty() {
+    return clean(b)
+  }
+  clean("${a}/${b}")
+}
+
+fn base(p: Str) -> Str {
+  let segs = clean(p).split("/")
+  segs[segs.len() - 1]
+}
+
+fn parent(p: Str) -> Str {
+  let c = clean(p)
+  if c == "." {
+    return ".."
+  }
+  if c == ".." || c.ends_with("/..") {
+    return "${c}/.."
+  }
+  let segs = c.split("/")
+  if segs.len() == 1 {
+    return "."
+  }
+  var out: List[Str] = []
+  for i in 0..segs.len() - 1 {
+    out.push(segs[i])
+  }
+  out.join("/")
+}
+
+/// The path of target relative to dir, where dir is target or one of its
+/// parents.
+fn rel_path(dir: Str, target: Str) -> Str {
+  let d = clean(dir)
+  let t = clean(target)
+  if d == t {
+    return "."
+  }
+  if d == "." {
+    return t
+  }
+  t.trim_prefix("${d}/")
+}
+
+/// Splits a line on spaces and tabs.
+fn split_fields(line: Str) -> List[Str] {
+  var out: List[Str] = []
+  for w in line.replace("\t", " ").split(" ") {
+    if !w.is_empty() {
+      out.push(w)
+    }
+  }
+  out
+}
