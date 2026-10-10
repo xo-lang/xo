@@ -1375,8 +1375,8 @@ fn main(os: Os) {
   to the module directory (`tiny.c`, `libtiny.a`), or a library name
   without `/` or extension (`z` links `-lz`). `as` sets the local name;
   the default is the header's base name in snake_case.
-- The checker binds the header with clang's AST dump (`xo bind --c
-  <header>` does it explicitly) into `.xo/cbind/` (or `$XO_CBIND_DIR`): an
+- The checker binds the header with clang's AST dump
+  (`xo bind --c <header>` does it explicitly) into `.xo/cbind/` (or `$XO_CBIND_DIR`): an
   Xo declaration file and a C adapter that the native build compiles and
   links with the program. Function names become snake_case
   (`zlibVersion` is `zlib_version`); struct tags become UpperCamel types.
@@ -2244,8 +2244,8 @@ it: the lexer and parser (`xo parse` and every later command), the checker
 `xo build --ci`), the no GC check (`--no-gc`, 10.1), and module
 resolution (`modules`: every command that loads a program reports these
 on the xo.mod, xo.lock, or xo.work line, and so do `xo get`, `xo mod
-tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
-<code>` prints the long form of each. The registry is
+tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
+`xo explain <code>` prints the long form of each. The registry is
 `internal/diag/codes.go`; a test keeps this table equal to it.
 
 | Code | Severity | Reported by | Meaning |
@@ -2325,7 +2325,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`). `xo explain
 | `XO0804` | warning | checker | value read in one `Mutex.with` is written back in a later one (core 5.4) |
 | `XO0900` | warning | checker | typed hole report (core 3.7) |
 | `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
-| `XO1001` | error | reserved | std/sys/<os> used outside the matching target arm (core 12.2) |
+| `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
