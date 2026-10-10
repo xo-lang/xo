@@ -78,6 +78,24 @@ pub struct Checker {
   fn_calls: Map[Int, Int] = {}
   ctor_calls: Map[Int, Bool] = {}
 
+  // Value semantics (stage 5, flow.xo).
+  /// The calls of declared functions and function values, by key: the
+  /// callee, the receiver, and the arguments with their `var` flags
+  /// (check.go callInfo).
+  call_infos: Map[Int, CallInfo] = {}
+  /// The local each binding name declares, by name_key of the name (the
+  /// declaring half of check.go identObj; uses are name records).
+  decl_at: Map[Int, Int] = {}
+  /// Bodies checked, for the flow checks: closures before the body
+  /// holding them (check.go bodies).
+  bodies: List[BodyRef] = []
+  /// Locals never read, collected when their scope closes (XO0110).
+  unused: List[Int] = []
+  /// Locals reported as lost updates (XO0520), not also as unused.
+  lost_vars: Map[Int, Bool] = {}
+  /// Calls warned about as split critical sections (XO0804), by key.
+  split_warned: Map[Int, Bool] = {}
+
   // Results.
   names: List[NameRec] = []
   /// Name records by file and offset (name_key).

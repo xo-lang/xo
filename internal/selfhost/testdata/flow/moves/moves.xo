@@ -1,0 +1,83 @@
+// Moves of move only values (core 5.3): the ways a builder moves.
+
+fn twice() -> Str {
+  var b = StrBuilder.new()
+  b.write("a")
+  let s = b.freeze()
+  let t = b.freeze()
+  s + t
+}
+
+fn passed(b: StrBuilder) -> Int {
+  b.len()
+}
+
+fn after_pass() -> Int {
+  var b = StrBuilder.new()
+  let n = passed(b)
+  b.write("x")
+  n
+}
+
+fn in_branch(c: Bool) -> Str {
+  var b = StrBuilder.new()
+  if c {
+    let s = b.freeze()
+    return s
+  } else {
+    b.write("no")
+  }
+  b.freeze()
+}
+
+fn in_loop(xs: List[Int]) -> Int {
+  var n = 0
+  let b = Buf[Int].new()
+  for x in xs {
+    let ys = b.freeze()
+    n += ys.len() + x
+  }
+  n
+}
+
+fn captured() -> Int {
+  var b = StrBuilder.new()
+  let f = fn() { b.len() }
+  b.write("late")
+  f()
+}
+
+fn reassigned() -> Str {
+  var b = StrBuilder.new()
+  let first = b.freeze()
+  b = StrBuilder.new()
+  b.write(first)
+  b.freeze()
+}
+
+fn stored() -> List[StrBuilder] {
+  let b = StrBuilder.new()
+  let xs = [b]
+  let n = b.len()
+  if n > 0 {
+    return []
+  }
+  xs
+}
+
+fn matched(k: Int) -> Str {
+  var b = StrBuilder.new()
+  let s = match k {
+    0 => b.freeze()
+    _ => "other"
+  }
+  b.write(s)
+  b.freeze()
+}
+
+fn tuple() -> (StrBuilder, Int) {
+  let b = StrBuilder.new()
+  let pair = (b, 1)
+  let m = b.len()
+  (pair.0, m)
+}

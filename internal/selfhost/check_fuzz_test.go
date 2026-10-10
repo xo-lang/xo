@@ -17,7 +17,7 @@ import (
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
 // 0141) on mutations of the single directory modules of the repository
-// that the Go checker accepts and that import only std. A fifth each
+// that the Go checker accepts and that import only std. A sixth each
 // are name mutations (one identifier renamed, to an unresolved name or
 // one that now resolves elsewhere, a `use` line removed, or a top level
 // declaration duplicated), type mutations (a literal replaced by one of
@@ -26,8 +26,11 @@ import (
 // a constraint dropped), and effects mutations (a `uses` clause removed,
 // or one added: an effect, or `realtime` for the rules of core 6.5), and
 // habit mutations (syntax of Go, Rust, Python, TypeScript, Kotlin, or
-// Swift that the parser reports and recovers from, decision 0087). The
-// rules of TestSelfhostChecker apply: an accepted mutation
+// Swift that the parser reports and recovers from, decision 0087), and
+// value semantics mutations (a `var` removed from a binding, parameter,
+// or receiver, a binding added that is never read, a store back into a
+// collection dropped, or a builder frozen twice). The rules of
+// TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
 // mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
@@ -81,7 +84,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		for j, name := range src.names {
 			data := src.files[j]
 			if j == f {
-				switch rng.Intn(5) {
+				switch rng.Intn(6) {
 				case 0:
 					data = mutateNames(rng, data)
 				case 1:
@@ -90,8 +93,10 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 					data = mutateGenerics(rng, data)
 				case 3:
 					data = mutateEffects(rng, data)
-				default:
+				case 4:
 					data = mutateHabits(rng, data)
+				default:
+					data = mutateValues(rng, data)
 				}
 			}
 			if err := os.WriteFile(filepath.Join(tmp, dir, name), data, 0o644); err != nil {
@@ -565,6 +570,48 @@ func mutateHabits(rng *rand.Rand, src []byte) []byte {
 	}
 	c := cands[rng.Intn(len(cands))]
 	e := habitEdits[c.e]
+	var b bytes.Buffer
+	b.Write(src[:c.match[0]])
+	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))
+	b.Write(src[c.match[1]:])
+	return b.Bytes()
+}
+
+// valueEdits are rewrites for the value semantics rules (stage 5): a
+// `var` binding, parameter, or receiver made immutable, or a copy of a
+// binding that is never read.
+var valueEdits = []struct {
+	re   *regexp.Regexp
+	with string
+}{
+	{regexp.MustCompile(`(?m)^(\s+)var ([a-z_][a-z0-9_]*)`), "${1}let ${2}"},
+	{regexp.MustCompile(`\(var ([a-z_][a-z0-9_]*): `), "(${1}: "},
+	{regexp.MustCompile(`, var ([a-z_][a-z0-9_]*): `), ", ${1}: "},
+	{regexp.MustCompile(`(?m)^(\s+)let ([a-z][a-z0-9_]*) = ([^\n]*)\n`), "${1}let ${2} = ${3}\n${1}let ${2}_copy = ${2}\n"},
+	// a store back into a collection dropped (XO0520)
+	{regexp.MustCompile(`(?m)^\s+[a-z_][a-z0-9_.]*\.(put|push|insert|set)\([^\n]*\)\n`), ""},
+	// a builder frozen twice (XO0510)
+	{regexp.MustCompile(`(?m)^(\s+)(let|var) ([a-z_][a-z0-9_]*) = ([a-z_][a-z0-9_]*)\.freeze\(\)`), "${1}let ${3}_first = ${4}.freeze()\n${1}${2} ${3} = ${4}.freeze()"},
+}
+
+// mutateValues applies one valueEdits rewrite at a random place of src,
+// or falls back to a name mutation.
+func mutateValues(rng *rand.Rand, src []byte) []byte {
+	type cand struct {
+		e     int
+		match []int
+	}
+	var cands []cand
+	for i, e := range valueEdits {
+		for _, m := range e.re.FindAllSubmatchIndex(src, -1) {
+			cands = append(cands, cand{i, m})
+		}
+	}
+	if len(cands) == 0 {
+		return mutateNames(rng, src)
+	}
+	c := cands[rng.Intn(len(cands))]
+	e := valueEdits[c.e]
 	var b bytes.Buffer
 	b.Write(src[:c.match[0]])
 	b.Write(e.re.Expand(nil, []byte(e.with), src, c.match))

@@ -742,6 +742,7 @@ fn (var c: Checker) scope_expr(span: Span, name: Ident, body: Block, w: Want) ->
   c.frames.push(ScopeFrame{ctx: c.ctx})
   let h = c.declare_local(name, c.named("Scope"), "let")
   c.objs[h].frame = frame
+  c.objs[h].used = true
   let t = c.block(body, w)
   c.pop_scope()
   // child failure propagates out of the scope (core 7.1)
@@ -1005,6 +1006,10 @@ fn (var c: Checker) is_expr(x: Expr, pattern: Pattern) -> Int {
   }
   c.push_scope()
   c.pattern(pattern, t, true)
+  // the parser reports bindings in an `is` pattern
+  for (_, v) in c.scopes[c.scopes.len() - 1].entries() {
+    c.objs[v].used = true
+  }
   c.pop_scope()
   c.named("Bool")
 }
@@ -1468,6 +1473,7 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   while c.scopes.len() > saved_scopes {
     c.scopes.pop()
   }
+  c.bodies.push(BodyRef{file: c.cur_file, body: x.body})
   var err_t = -1
   if cx.err >= 0 {
     err_t = cx.err

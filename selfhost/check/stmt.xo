@@ -163,6 +163,7 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   c.check_clauses(fd, fo)
   if let Some(b) = fd.body {
     c.block(b, c.body_want(cx))
+    c.bodies.push(BodyRef{file: c.cur_file, body: b})
   }
   c.finish_groups(cx)
   c.ctx = saved
@@ -274,6 +275,7 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
   }
   if let Some(b) = td.body {
     c.block(b, c.body_want(cx))
+    c.bodies.push(BodyRef{file: c.cur_file, body: b})
   }
   c.finish_groups(cx)
   c.ctx = saved
@@ -971,6 +973,7 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
   }
   let tt = c.place_type(target)
   c.map_store = -1
+  c.require_mutable(target, "XO0502", "assignment")
   if op == parser.Kind.Assign {
     c.check_ty(value, tt)
     return

@@ -12,6 +12,7 @@ fn (c: Checker) in_test_context() -> Bool {
 
 /// Marks a local as read and records the resolution; its type.
 fn (var c: Checker) use_var(id: Ident, v: Int) -> Int {
+  c.objs[v].used = true
   c.record(id, v)
   c.objs[v].ty
 }
@@ -863,6 +864,9 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
       return c.bad_ty
     }
   }
+  if c.objs[m].recv_var {
+    c.require_mutable(x, "XO0501", "method `${text(name)}`")
+  }
   let t = c.call_func(m, pre, targs, has_targs, call, hint, [x])
   if c.is_prelude(r, "Scope") && (name == b"spawn" || name == b"spawn_background") {
     c.record_spawn(x, call, t)
@@ -963,6 +967,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     params.push(q)
   }
   c.fn_calls[c.expr_key(call)] = fo
+  c.call_infos[c.expr_key(call)] = CallInfo{fn_obj: fo, recv: recv}
   c.check_args(params, call, c.display_name(fo), false, fo, -1, -1)
   // constraints
   for p in c.objs[fo].tparams {
@@ -1028,6 +1033,8 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
 /// ref_enum.
 fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, positional_only: Bool, ref_fo: Int, ref_enum: Int, ref_v: Int) {
   let (span, _, args) = call_parts(call)
+  let ckey = c.expr_key(call)
+  let has_ci = c.call_infos.contains(ckey)
   var assigned: List[Int] = []
   for _ in params {
     assigned.push(-1)
@@ -1102,8 +1109,31 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
         continue
       }
       c.check_ty(e, params[i].ty)
+      if params[i].is_var {
+        c.require_mutable(e, "XO0502", "passing to `var` parameter `${text(params[i].name)}`")
+      }
+      if has_ci {
+        let ap = ArgParam{arg: e, is_var: params[i].is_var}
+        c.call_infos.update(ckey, CallInfo{}, fn(var ci) { ci.params.push(ap) })
+      }
     }
   }
+  var var_args: List[Expr] = []
+  if has_ci {
+    let ci = c.call_infos.get_or_fault(ckey, "has_ci")
+    let fo = ci.fn_obj
+    if fo >= 0 && c.objs[fo].recv_var && !c.objs[fo].is_static {
+      if let Some(r) = ci.recv.first() {
+        var_args.push(r)
+      }
+    }
+  }
+  for (i, ai) in assigned.indexed() {
+    if ai >= 0 && params[i].is_var {
+      var_args.push(args[ai].value)
+    }
+  }
+  c.check_var_aliases(var_args)
 }
 
 /// A call of a value of function type.
@@ -1142,6 +1172,7 @@ fn (var c: Checker) call_value(ft: Int, call: Expr, hint: Int, name0: Str) -> In
   }
   let name = if name0.is_empty() { "function value" } else { name0 }
   c.value_calls[c.expr_key(call)] = true
+  c.call_infos[c.expr_key(call)] = CallInfo{}
   c.check_args(params, call, name, true, -1, -1, -1)
   c.perform(f.eff)
   c.call_result(f.result, f.err)

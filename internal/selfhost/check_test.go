@@ -272,8 +272,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		if gotDump != wantDump {
 			return fmt.Sprintf("%s: dumps differ: %s", dir, firstDiff(gotDump, wantDump))
 		}
-		if len(gotDiags) > 0 {
-			return fmt.Sprintf("%s: the Go checker accepts it, the Xo checker reports:\n%s", dir, strings.Join(gotDiags, "\n"))
+		// an accepted run may hold staged warnings (XO0804)
+		if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
+			return fmt.Sprintf("%s: the Go checker accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, strings.Join(want.staged, "\n"), strings.Join(gotDiags, "\n"))
 		}
 		st.acceptedOK++
 		return ""
@@ -340,19 +341,20 @@ func splitDiags(dump string) (string, []string) {
 // patterns that do not fit, loop labels, constants, unknown effects, and
 // the task failure rules that decide error types), and generics of
 // stage 3 (XO0402, XO0404 on constraints, comparability, keys, and
-// derives). Left to later stages: unused bindings (XO0110 on locals,
-// XO0201 on bindings), value semantics (XO0501 to XO0520),
-// exhaustiveness (XO0301, XO0303), naming (XO0101), and the habits of
-// other languages that are not name or type errors (XO0177).
+// derives), effects of stage 4 (XO0701, real-time XO1401 to XO1405),
+// and value semantics of stage 5 (XO0501, XO0502, XO0503, XO0510,
+// XO0520, the XO0804 warning, unused bindings XO0110 and XO0201). Left
+// to later stages: exhaustiveness (XO0301, XO0303, XO0305), naming
+// (XO0101), and the habits of other languages the checker reports
+// (XO0177; the parser's are staged through parseDiag).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
-	`XO0110","[^}]*"message":"import ` + "`" + `[^` + "`" + `]+` + "`" + ` is never used"`,
-	`XO0201","[^}]*"message":"result of [^"]*is not handled"`,
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
 	`(XO0402|XO0404)",.*`,
 	// stage 4: effects and real-time functions
 	`(XO0701|XO1401|XO1402|XO1403|XO1404|XO1405)",.*`,
-	`XO0502","[^}]*"message":"cannot assign to this expression[^"]*"`,
+	// stage 5: value semantics and unused bindings
+	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

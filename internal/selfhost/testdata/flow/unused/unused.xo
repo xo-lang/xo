@@ -1,0 +1,69 @@
+// Bindings never read (XO0110) and Results bound and never read (XO0201).
+
+fn may_fail(n: Int) -> Int ! Str {
+  if n > 0 {
+    return Err("no")
+  }
+  n
+}
+
+fn unused_let() -> Int {
+  let a = 1
+  let _b = 2
+  let (c, d) = (3, 4)
+  var e = 5
+  e = 6
+  let f = may_fail(1)
+  let _g = may_fail(2)
+  c
+}
+
+fn shadow() -> Int {
+  let x = 1
+  if x > 0 {
+    let x = 2
+  }
+  x
+}
+
+fn patterns(o: Int?) -> Int {
+  match o {
+    Some(v) => 1
+    None => 0
+  }
+}
+
+fn loops(xs: List[Int]) -> Int {
+  var n = 0
+  for x in xs {
+    n += 1
+  }
+  for (i, y) in xs.indexed() {
+    n += y
+  }
+  n
+}
+
+fn closures() -> Int {
+  let unused_fn = fn(a: Int) { a }
+  let k = 1
+  let g = fn() { k }
+  g()
+}
+
+fn consts() -> Int {
+  const LIMIT = 3
+  const UNUSED = 4
+  LIMIT
+}
+
+fn alts(o: (Int, Int)) -> Int {
+  match o {
+    (a, 0) | (0, a) => 1
+    _ => 0
+  }
+}
+
+fn is_test(o: Int?) -> Bool {
+  o is Some(_)
+}

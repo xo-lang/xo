@@ -1,10 +1,12 @@
 # 0141: The self hosted checker, compared through `xo typedump` in stages
 
 Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
-inference), stage 3 (generics), and stage 4 (effects and real-time, but
-dependency ceilings) implemented in `selfhost/check/` (Xo: decl.xo,
-types.xo, infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo,
-habits.xo, comparable.xo, realtime.xo, the sigs section in dump.xo),
+inference), stage 3 (generics), stage 4 (effects and real-time, but
+dependency ceilings), the parse habits (pulled ahead of stage 8, in
+selfhost/parser), and stage 5 (value semantics) implemented in
+`selfhost/check/` (Xo: decl.xo, types.xo, infer.xo, effects.xo, expr.xo,
+call.xo, stmt.xo, pattern.xo, habits.xo, comparable.xo, realtime.xo,
+flow.xo, the sigs section in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -174,6 +176,25 @@ habit edits (habitEdits in check_fuzz_test.go: `x := v`, `val`, `let
 mut`, `func`/`def`/`function`, `and`/`or`, `x++`, `?:`, `...`, `elif`,
 `loop`, `throw`, `#` comments, Go parameters, `): T`, `===`, `[]T`,
 `map[K]V`, `List<T>`).
+
+**Comparison rules of stage 5** (2026-10-10, value semantics; they
+extend the rules above): the staged diagnostics add XO0501, every
+XO0502 (not only on assignment targets), XO0503, XO0510, XO0520, the
+XO0804 warning (split critical sections, ported with flow.go), and every
+XO0110 and XO0201 (unused bindings and Results bound and never read).
+Since a run the Go checker accepts may hold a staged warning, its
+diagnostics must equal the staged part of Go's (empty but for XO0804).
+selfhost/check/flow.xo ports flow.go and the mutability rules of stmt.go
+and call.go: the call information of check.go (callee, receiver, and
+`var` arguments) is a table keyed by the call's expression key, and
+check.go identObj is the name records (uses) plus `decl_at` (the names a
+pattern or `var` declares); identifiers, calls, and loops are keyed by
+offset where Go keys by node pointer. internal/selfhost/testdata/flow
+holds one module per rule (moves, lost and stored updates, mutability
+and aliases, unused bindings, split sections), compared like every
+other run. The mutations add value semantics edits (valueEdits: a `var`
+removed from a binding, parameter, or receiver, an added binding never
+read, a store back into a collection dropped, a builder frozen twice).
 
 **The Xo checker** keeps the graph in tables: objects, modules, and
 files are entries of Lists in one `Checker` value and refer to each

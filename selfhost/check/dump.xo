@@ -27,6 +27,8 @@ fn (var c: Checker) run() {
   c.check_key_types()
   c.solve_effects()
   c.check_realtime()
+  c.flow_bodies()
+  c.report_unused()
   // check.go reportAmbiguous: a closure result that nothing determined
   // and whose body never completes is Never
   for t in c.never_results {
