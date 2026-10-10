@@ -46,7 +46,9 @@ fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
     return
   }
   if c.objs[v].mutable {
-    c.error(code, id.span, "${what} mutates `${text(id.name)}`, which is captured by a closure; closures capture by value (core 3.3)")
+    let d = c.error(code, id.span, "${what} mutates `${text(id.name)}`, which is captured by a closure; closures capture by value (core 3.3)")
+    c.note_obj(d, v, "`${text(id.name)}` is declared here, outside the closure")
+    c.note(d, "to share mutable state with a closure, capture a `Mutex` or `Atomic` handle (core 5.4)")
     return
   }
   let kind = match c.objs[v].local {
@@ -55,7 +57,13 @@ fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
     "predeclared" => "a predeclared name"
     _ => "an immutable binding"
   }
-  c.error(code, id.span, "${what} needs `${text(id.name)}` to be `var`, but it is ${kind}")
+  let d = c.error(code, id.span, "${what} needs `${text(id.name)}` to be `var`, but it is ${kind}")
+  if d >= 0 && c.objs[v].local == "let" && !c.objs[v].let_value.is_empty() && !c.objs[v].file.is_empty() {
+    let ls = c.objs[v].let_span.start
+    c.fix(d, "declare `${text(id.name)}` with `var`", [c.replace_edit(Span{start: ls, end: parser.Pos{offset: ls.offset + 3, line: ls.line, col: ls.col + 3}}, "var")])
+    c.note(d, "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)")
+  }
+  c.note_obj(d, v, "`${text(id.name)}` is declared here")
 }
 
 /// One step of a place path: a field, or an index whose constant text is
@@ -154,11 +162,15 @@ fn (var c: Checker) check_var_aliases(es: List[Expr]) {
       }
       let at = c.src_of(parser.expr_span(a.e))
       let bt = c.src_of(parser.expr_span(b.e))
+      var d = -1
       if at == bt {
-        c.error("XO0503", parser.expr_span(b.e), "`${bt}` is passed to two `var` parameters of one call (decision 0111)")
+        d = c.error("XO0503", parser.expr_span(b.e), "`${bt}` is passed to two `var` parameters of one call (decision 0111)")
+        c.note_here(d, parser.expr_span(a.e), "first passed here")
       } else {
-        c.error("XO0503", parser.expr_span(b.e), "`${bt}` overlaps `${at}`, and both are passed to `var` parameters of one call (decision 0111)")
+        d = c.error("XO0503", parser.expr_span(b.e), "`${bt}` overlaps `${at}`, and both are passed to `var` parameters of one call (decision 0111)")
+        c.note_here(d, parser.expr_span(a.e), "`${at}` is passed to a `var` parameter here")
       }
+      c.note(d, "copy one of them into a temporary (`var tmp = ${bt}`), pass that, and store it back after the call; or take one `var` parameter of a struct that holds both")
       break
     }
   }
@@ -911,8 +923,10 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       if v < 0 || !c.is_move_only(c.objs[v].ty) {
         return
       }
-      if moved.contains(v) {
-        c.error("XO0510", id.span, "use of moved value `${text(id.name)}`")
+      if let Some(at) = moved.get(v) {
+        let d = c.error("XO0510", id.span, "use of moved value `${text(id.name)}`")
+        c.note_here(d, at, "`${text(id.name)}` was moved here")
+        c.note(d, "`Buf`, `StrBuilder`, and `BytesBuilder` are move only: assigning, passing, returning, freezing, or capturing in a closure moves them (core 5.3)")
         return
       }
       if mv {
@@ -1280,7 +1294,12 @@ fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
       continue
     }
     c.lost_vars[cd.v] = true
-    c.error("XO0520", events[lost].id.span, "mutation of `${text(c.objs[cd.v].name)}` is never written back")
+    let vn = text(c.objs[cd.v].name)
+    let d = c.error("XO0520", events[lost].id.span, "mutation of `${vn}` is never written back")
+    if d >= 0 {
+      c.note_here(d, parser.expr_span(cd.value), "`${vn}` is a copy of a collection element taken here; changing it does not change the collection (core 5.2)")
+      c.note(d, "write it back (for example `m.put(k, ${vn})`) or mutate in place with `update` (core 5.2)")
+    }
   }
 }
 
@@ -1374,6 +1393,7 @@ fn (var c: Checker) stored_updates(sites: List[FlowSite], nodes: List[Node]) {
   for cd in cands {
     let events = all_events.get(cd.v) ?? []
     var lost = -1
+    var stored_at = -1
     for (i, ev) in events.indexed() {
       if ev.kind != SU_MUTATE || ev.in_defer {
         continue
@@ -1403,13 +1423,19 @@ fn (var c: Checker) stored_updates(sites: List[FlowSite], nodes: List[Node]) {
       }
       if !again {
         lost = i
+        stored_at = before
       }
     }
     if lost < 0 {
       continue
     }
     c.lost_vars[cd.v] = true
-    c.error("XO0520", events[lost].id.span, "mutation of `${text(c.objs[cd.v].name)}` is never written back")
+    let vn = text(c.objs[cd.v].name)
+    let d = c.error("XO0520", events[lost].id.span, "mutation of `${vn}` is never written back")
+    if d >= 0 {
+      c.note_here(d, events[stored_at].id.span, "`${vn}` was stored into a collection here; the stored copy does not see later changes (core 5.2)")
+      c.note(d, "make the change before storing `${vn}`, or store it again after the change")
+    }
   }
 }
 
@@ -1553,14 +1579,16 @@ fn (var c: Checker) split_critical_sections(nodes: List[Node]) {
             }
             if let Some(id) = decided.get(mu) {
               c.split_warned[key] = true
-              c.error("XO0804", parser.expr_span(call), "this `${mu}.with` acts on a decision about `${text(id.name)}`, which was read in an earlier `${mu}.with`")
+              let d = c.warn("XO0804", parser.expr_span(call), "this `${mu}.with` acts on a decision about `${text(id.name)}`, which was read in an earlier `${mu}.with`")
+              c.note(d, "another task may have changed it since; do the check and the action in one `with` (core 5.4)")
               continue
             }
             if let CallExpr(args: args, ..) = call {
               for a in args {
                 if let Some(id) = c.tainted_ref(a.value, tainted, mu) {
                   c.split_warned[key] = true
-                  c.error("XO0804", id.span, "`${text(id.name)}` was read in an earlier `${mu}.with`; another task may have changed it since")
+                  let d = c.warn("XO0804", id.span, "`${text(id.name)}` was read in an earlier `${mu}.with`; another task may have changed it since")
+                  c.note(d, "do the read and the update in one `with` so the check and the action are atomic (core 5.4)")
                   break
                 }
               }
@@ -1588,9 +1616,31 @@ fn (var c: Checker) report_unused() {
     }
     let o = c.objs[v]
     if c.is_result(o.ty) {
-      c.report(o.file, "XO0201", c.obj_span(v), "result bound to `${text(o.name)}` is never used, so its error is ignored")
+      // A Result bound to a name that is never read is an ignored error,
+      // even when the name starts with `_` (core 2.6).
+      let d = c.report(o.file, "XO0201", c.obj_span(v), "result bound to `${text(o.name)}` is never used, so its error is ignored")
+      if d >= 0 {
+        c.note(d, "the value can fail with `${c.show(c.result_e(o.ty))}`; propagate with `?`, match on it, or discard it with `.ignore_err(\"reason\")` (core 2.6)")
+        if !o.let_value.is_empty() {
+          let saved = c.path
+          c.path = o.file
+          var edits = [c.replace_edit(c.obj_span(v), "_")]
+          for e in c.ignore_err_edits(o.let_value[0]) {
+            edits.push(e)
+          }
+          c.path = saved
+          c.fix(d, "discard with a reason", edits)
+        }
+      }
       continue
     }
-    c.report(o.file, "XO0110", c.obj_span(v), "`${text(o.name)}` is never used")
+    let d = c.report(o.file, "XO0110", c.obj_span(v), "`${text(o.name)}` is never used")
+    if d >= 0 && c.dollar_habit(d, v) {
+      continue
+    }
+    if d >= 0 {
+      c.note(d, "prefix the name with `_` or write `_` to discard it (core 3.1)")
+      c.fix(d, "rename to `_${text(o.name)}`", [DEdit{span: JSpan{file: o.file, line: c.obj_span(v).start.line, col: c.obj_span(v).start.col, end_line: c.obj_span(v).end.line, end_col: c.obj_span(v).end.col}, replace: "_${text(o.name)}"}])
+    }
   }
 }

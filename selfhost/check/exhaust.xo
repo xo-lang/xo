@@ -377,7 +377,7 @@ fn witness_pat(w: Witness) -> IPat {
 
 /// XO0301 with the missing patterns of a match (pattern.go
 /// checkExhaustive).
-fn (var c: Checker) check_exhaustive(subject: Expr, rows: List[IPat], st: Int) {
+fn (var c: Checker) check_exhaustive(mspan: Span, subject: Expr, rows: List[IPat], st: Int) {
   if c.contains_bad(st) || c.has_open_vars(st) {
     return
   }
@@ -401,7 +401,18 @@ fn (var c: Checker) check_exhaustive(subject: Expr, rows: List[IPat], st: Int) {
   if missing_pats.is_empty() {
     return
   }
-  c.error("XO0301", parser.expr_span(subject), "match on `${c.show(st)}` is not exhaustive: missing `${missing_pats.join("`, `")}`")
+  let d = c.error("XO0301", parser.expr_span(subject), "match on `${c.show(st)}` is not exhaustive: missing `${missing_pats.join("`, `")}`")
+  if d < 0 {
+    return
+  }
+  c.note(d, "add an arm for each missing case; matches must be exhaustive (core 2.3)")
+  let end = parser.Pos{offset: mspan.end.offset - 1, line: mspan.end.line, col: mspan.end.col - 1}
+  let indent = " ".repeat(0.max(end.col - 1))
+  var b = StrBuilder.new()
+  for p in missing_pats {
+    b.write("  ${p} => ???\n${indent}")
+  }
+  c.fix(d, "add the missing arms as holes", [c.insert_edit(end, b.freeze())])
 }
 
 /// XO0303 when ip does not cover every value of t (pattern.go
@@ -411,7 +422,8 @@ fn (var c: Checker) require_irrefutable(ip: IPat, t: Int, p: Pattern, what: Str)
     return
   }
   if let Some(w) = c.missing([[ip]], [t], 0) {
-    c.error("XO0303", parser.pattern_span(p), "${what} must match every value of `${c.show(t)}`, but `${c.witness_string(w[0])}` is not covered")
+    let d = c.error("XO0303", parser.pattern_span(p), "${what} must match every value of `${c.show(t)}`, but `${c.witness_string(w[0])}` is not covered")
+    c.note(d, "use `if let` or `match` for patterns that can fail (core 3.5)")
   }
 }
 
@@ -470,7 +482,8 @@ fn (var c: Checker) warn_wildcard_own_enum(arms: List[parser.MatchArm], st: Int)
       shown = hidden[0..WILDCARD_LIST_MAX]
       more = " and ${hidden.len() - WILDCARD_LIST_MAX} more"
     }
-    c.error("XO0305", parser.pattern_span(arm.pattern), "this arm hides `${shown.join("`, `")}`${more} of `${text(c.objs[o].name)}`, declared in this module")
+    let d = c.warn("XO0305", parser.pattern_span(arm.pattern), "this arm hides `${shown.join("`, `")}`${more} of `${text(c.objs[o].name)}`, declared in this module")
+    c.note(d, "list the variants so that adding one later is a compile error (core 3.5)")
     return
   }
 }

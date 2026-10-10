@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker gives every diagnostic the notes and machine
+  fixes of internal/check and internal/parser (stage 7 of decision
+  0141): edit distance suggestions, habit notes and fixes, effect call
+  chains, previous declarations, missing arms and fields as holes;
+  `xo typedump` has a `full` section (the `xo check --json` form), and
+  every compared run and mutation gives identical JSON on the go, arm64,
+  and LLVM builds. `xo astdump` prints notes and fixes too.
+- Notes and fixes attached after more diagnostics were reported are no
+  longer lost (`xo check --json`, `xo fix`).
 - The self hosted parser resynchronizes after a hard error as the Go
   parser does and reports the same errors with the same recovered tree
   (every file and token mutation compared); the self hosted checker now

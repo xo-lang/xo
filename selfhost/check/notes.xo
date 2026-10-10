@@ -1,0 +1,244 @@
+// Suggestions for unresolved names (check.go editDistance, nearest,
+// confidentGuess, unresolved; decision 0141, stage 7): the notes and
+// fixes of XO0601.
+
+/// The Levenshtein distance of a and b, by runes.
+fn edit_distance(a: Str, b: Str) -> Int {
+  let ra = a.runes()
+  let rb = b.runes()
+  var prev: List[Int] = []
+  for j in 0..rb.len() + 1 {
+    prev.push(j)
+  }
+  var cur = prev
+  for i in 1..ra.len() + 1 {
+    cur[0] = i
+    for j in 1..rb.len() + 1 {
+      var cost = 1
+      if ra[i - 1] == rb[j - 1] {
+        cost = 0
+      }
+      cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost)
+    }
+    let t = prev
+    prev = cur
+    cur = t
+  }
+  prev[rb.len()]
+}
+
+/// Up to three candidates close to name, best first (check.go nearest).
+fn nearest(name: Str, cands: List[Str]) -> List[Str] {
+  var best: List[(Str, Int)] = []
+  var seen: Map[Str, Bool] = {}
+  let limit = 1.max(3.min(name.len() / 3 + 1))
+  let lower = name.to_lower()
+  for cnd in cands {
+    if cnd == name || seen.contains(cnd) || cnd.is_empty() {
+      continue
+    }
+    seen[cnd] = true
+    var d = edit_distance(lower, cnd.to_lower())
+    if cnd.to_lower() == lower {
+      d = 0
+    }
+    if d <= limit {
+      best.push((cnd, d))
+    }
+  }
+  // insertion sort by distance, then name (stable as Go's)
+  var i = 1
+  while i < best.len() {
+    var j = i
+    while j > 0 && (best[j].1 < best[j - 1].1 || (best[j].1 == best[j - 1].1 && best[j].0 < best[j - 1].0)) {
+      let t = best[j]
+      best[j] = best[j - 1]
+      best[j - 1] = t
+      j -= 1
+    }
+    i += 1
+  }
+  var out: List[Str] = []
+  var k = 0
+  while k < best.len() && k < 3 {
+    out.push(best[k].0)
+    k += 1
+  }
+  out
+}
+
+/// Whether the best suggestion for name is safe as a machine fix: a case
+/// only difference, or a unique closest candidate at most half the
+/// name's length away, for names of three or more characters
+/// (check.go confidentGuess).
+fn confident_guess(name: Str, sugg: List[Str]) -> Bool {
+  let best = sugg[0]
+  if best.to_lower() == name.to_lower() {
+    return true
+  }
+  let d = edit_distance(name.to_lower(), best.to_lower())
+  if name.len() < 3 || d * 2 > name.len() {
+    return false
+  }
+  if sugg.len() > 1 && edit_distance(name.to_lower(), sugg[1].to_lower()) == d {
+    return false
+  }
+  true
+}
+
+/// XO0601 for name at sp with suggestions from cands (check.go
+/// unresolved): `<what> `name` not found`, or `<owner> has no <kind>
+/// `name`` for a what of the form `<kind> of <owner>`.
+fn (var c: Checker) unresolved(sp: Span, what: Str, name: Str, cands: List[Str]) -> Int {
+  var msg = "${what} `${name}` not found"
+  if let Some(i) = what.find(" of ") {
+    if i > 0 {
+      let b = what.bytes()
+      msg = "${text(b[i + 4..])} has no ${text(b[0..i])} `${name}`"
+    }
+  }
+  let d = c.error("XO0601", sp, msg)
+  if d < 0 {
+    return -1
+  }
+  let sugg = nearest(name, cands)
+  if !sugg.is_empty() {
+    c.note(d, "did you mean `${sugg.join("`, `")}`?")
+    // `xo fix` applies the first fix blindly, so a guess becomes a fix
+    // only when it is clear.
+    if confident_guess(name, sugg) {
+      c.fix(d, "replace with `${sugg[0]}`", [c.replace_edit(sp, sugg[0])])
+    }
+  }
+  d
+}
+
+/// The names a value may resolve to here: locals, the module's top level
+/// names, the prelude's functions, imports, and the predeclared values
+/// (call.go visibleValueNames).
+fn (c: Checker) visible_value_names() -> List[Str] {
+  var out: List[Str] = []
+  for s in c.scopes {
+    for (n, _) in s.entries() {
+      out.push(text(n))
+    }
+  }
+  if c.cur_mod >= 0 {
+    for (n, _) in c.mods[c.cur_mod].members.entries() {
+      out.push(text(n))
+    }
+  }
+  if c.prelude >= 0 {
+    for (n, o) in c.mods[c.prelude].members.entries() {
+      if c.objs[o].kind == ObjKind.Func {
+        out.push(text(n))
+      }
+    }
+  }
+  if c.cur_file >= 0 {
+    for (n, _) in c.files[c.cur_file].imports.entries() {
+      out.push(text(n))
+    }
+  }
+  for x in ["true", "false", "target", "Some", "None", "Ok", "Err"] {
+    out.push(x)
+  }
+  out.sort()
+}
+
+/// The type names visible in env: its type parameters and the types of
+/// its module and the prelude (decl.go visibleTypeNames).
+fn (c: Checker) visible_type_names(env: TypeEnv) -> List[Str] {
+  var out: List[Str] = []
+  for (n, _) in env.params.entries() {
+    out.push(text(n))
+  }
+  for m in [env.mod, c.prelude] {
+    if m < 0 {
+      continue
+    }
+    for (n, o) in c.mods[m].members.entries() {
+      if c.objs[o].kind == ObjKind.Type {
+        out.push(text(n))
+      }
+    }
+  }
+  out.sort()
+}
+
+/// The local names of the imports of file f, sorted (decl.go importNames).
+fn (c: Checker) import_names(f: Int) -> List[Str] {
+  var out: List[Str] = []
+  if f < 0 {
+    return out
+  }
+  for (n, _) in c.files[f].imports.entries() {
+    out.push(text(n))
+  }
+  out.sort()
+}
+
+/// The sorted names of a member map.
+fn sorted_names(m: Map[Bytes, Int]) -> List[Str] {
+  var out: List[Str] = []
+  for (n, _) in m.entries() {
+    out.push(text(n))
+  }
+  out.sort()
+}
+
+/// A note at the declaring name of object o (decl.go objSpan): none for a
+/// type parameter, a module, or an object without a file.
+fn (var c: Checker) note_obj(d: Int, o: Int, msg: Str) {
+  if d < 0 {
+    return
+  }
+  let x = c.objs[o]
+  if x.file.is_empty() || x.kind == ObjKind.TParam || x.kind == ObjKind.Module {
+    c.note(d, msg)
+    return
+  }
+  c.diags[d].notes.push(DNote{message: msg, span: Some(JSpan{file: x.file, line: x.line, col: x.col})})
+}
+
+/// s in UpperCamel (check.go toUpperCamel).
+fn to_upper_camel(s: Bytes) -> Str {
+  var b = StrBuilder.new()
+  for w in words(s) {
+    if w.is_empty() {
+      continue
+    }
+    let wb = w.bytes()
+    b.write(text(wb[0..1]).to_upper())
+    b.write(text(wb[1..]))
+  }
+  b.freeze()
+}
+
+/// The name part of a rendered type: no type arguments, no module
+/// (expr.go lastName).
+fn last_name(s0: Str) -> Str {
+  var s = s0
+  if let Some(i) = s.find("[") {
+    s = text(s.bytes()[0..i])
+  }
+  let b = s.bytes()
+  var j = b.len() - 1
+  while j >= 0 {
+    if b[j] == '.' {
+      return text(b[j + 1..])
+    }
+    j -= 1
+  }
+  s
+}
+
+/// Replaces the edit distance guess c.unresolved added with the note of a
+/// habit (habits.go habitNote).
+fn (var c: Checker) habit_note(d: Int, msg: Str) {
+  if d < 0 {
+    return
+  }
+  c.diags[d].notes = [DNote{message: msg}]
+  c.diags[d].fixes = []
+}

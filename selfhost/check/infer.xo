@@ -381,7 +381,9 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
       }
     }
     if sp.start.line > 0 {
-      let sub = if c.objs[m].declared >= 0 { c.objs[m].declared } else { c.new_eset([EffItem{fn_obj: m}]) }
+      let mx = c.objs[m]
+      let msp = c.obj_span(m)
+      let sub = if mx.declared >= 0 { c.performed(mx.declared, mx.file, msp, c.display_name(m)) } else { c.new_eset([EffItem{fn_obj: m, file: mx.file, span: msp}]) }
       let sup = if c.objs[im].declared >= 0 { c.objs[im].declared } else { c.new_eset([]) }
       c.obligations.push(EffOb{kind: ObKind.Iface, sub: sub, sup: sup, file: c.path, span: sp, fo: m, ty: t, iface: iface, meth: text(c.objs[im].name)})
     }

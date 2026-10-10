@@ -87,21 +87,75 @@ fn text(b: Bytes) -> Str {
 // Diagnostics and records
 
 /// Reports a diagnostic in the current file, dropping exact duplicates.
-fn (var c: Checker) error(code: Str, sp: Span, msg: Str) {
+/// Like the report functions below, it returns the diagnostic's index in
+/// c.diags, for notes and fixes, or -1 for a duplicate (check.go errorf
+/// returns nil).
+fn (var c: Checker) error(code: Str, sp: Span, msg: Str) -> Int {
   c.report(c.path, code, sp, msg)
 }
 
-fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) {
+fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) -> Int {
   c.report(c.files[f].path, code, sp, msg)
 }
 
-fn (var c: Checker) report(file: Str, code: Str, sp: Span, msg: Str) {
+/// A warning in the current file (check.go warnf).
+fn (var c: Checker) warn(code: Str, sp: Span, msg: Str) -> Int {
+  let d = c.report(c.path, code, sp, msg)
+  if d >= 0 {
+    c.diags[d].warning = true
+  }
+  d
+}
+
+fn (var c: Checker) report(file: Str, code: Str, sp: Span, msg: Str) -> Int {
   let key = "${code}|${file}|${sp.start.line}:${sp.start.col}|${msg}"
   if c.seen.contains(key) {
-    return
+    return -1
   }
   c.seen[key] = true
   c.diags.push(Diag{code: code, file: file, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col, message: msg})
+  c.diags.len() - 1
+}
+
+/// Attaches a note at the start of sp in file (check.go note: the span
+/// is a point) to diagnostic d (-1: none).
+fn (var c: Checker) note_at(d: Int, file: Str, sp: Span, msg: Str) {
+  if d < 0 {
+    return
+  }
+  c.diags[d].notes.push(DNote{message: msg, span: Some(JSpan{file: file, line: sp.start.line, col: sp.start.col})})
+}
+
+/// A note at the start of sp in the current file.
+fn (var c: Checker) note_here(d: Int, sp: Span, msg: Str) {
+  c.note_at(d, c.path, sp, msg)
+}
+
+/// A note without a span.
+fn (var c: Checker) note(d: Int, msg: Str) {
+  if d < 0 {
+    return
+  }
+  c.diags[d].notes.push(DNote{message: msg})
+}
+
+/// Attaches a machine fix to diagnostic d (-1: none) (check.go fix).
+fn (var c: Checker) fix(d: Int, title: Str, edits: List[DEdit]) {
+  if d < 0 {
+    return
+  }
+  c.diags[d].fixes.push(DFix{title: title, edits: edits})
+}
+
+/// An edit replacing sp of the current file with s (check.go
+/// replaceEdit).
+fn (c: Checker) replace_edit(sp: Span, s: Str) -> DEdit {
+  DEdit{span: JSpan{file: c.path, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}, replace: s}
+}
+
+/// An edit inserting s at p in the current file (check.go insertEdit).
+fn (c: Checker) insert_edit(p: parser.Pos, s: Str) -> DEdit {
+  DEdit{span: JSpan{file: c.path, line: p.line, col: p.col, end_line: p.line, end_col: p.col}, replace: s}
 }
 
 /// Records that the identifier id of the current file names obj.
@@ -296,7 +350,8 @@ fn (var c: Checker) declare_var(o: Int) {
   let n = c.scopes.len() - 1
   if let Some(prev) = c.scopes[n].get(name) {
     c.mark_used(prev)
-    c.report(c.path, "XO0603", Span{start: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}, end: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col + name.len()}}, "`${text(name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+    let d = c.report(c.path, "XO0603", Span{start: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}, end: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col + name.len()}}, "`${text(name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+    c.note_obj(d, prev, "previous declaration")
   }
   c.scopes[n][name] = o
 }
@@ -312,7 +367,8 @@ fn (var c: Checker) declare_local(id: Ident, ty: Int, local: Str) -> Int {
   let n = c.scopes.len() - 1
   if let Some(prev) = c.scopes[n].get(id.name) {
     c.mark_used(prev)
-    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+    let d = c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this block; shadowing is allowed only in a nested block (core 3.1)")
+    c.note_obj(d, prev, "previous declaration")
   }
   c.scopes[n][id.name] = o
   o

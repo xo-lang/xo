@@ -18,13 +18,40 @@ pub struct EffItem {
   pub fn_obj: Int = -1
   pub sub: Map[Int, Int] = {}
   pub has_sub: Bool = false
+  /// Where the effect is performed (file "" for nowhere: a declaration's
+  /// item) and through which callee, for the call chain of XO0701.
+  pub file: Str = ""
+  pub span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  pub via: Str = ""
 }
 
 /// An effect set with function items expanded: its labels and effect
-/// parameters (effects.go flatEff).
+/// parameters, each with the item that witnesses it (effects.go
+/// flatEff).
 pub struct Flat {
   pub labels: List[Str] = []
   pub params: List[Int] = []
+  pub label_items: List[EffItem] = []
+  pub param_items: List[EffItem] = []
+}
+
+/// A copy of set s whose items without a place are attributed to the call
+/// at sp in file of the callee via (effects.go EffSet.performed).
+fn (var c: Checker) performed(s: Int, file: Str, sp: Span, via: Str) -> Int {
+  if s < 0 {
+    return s
+  }
+  var out: List[EffItem] = []
+  for it0 in c.esets[s] {
+    var it = it0
+    if it.file.is_empty() {
+      it.file = file
+      it.span = sp
+      it.via = via
+    }
+    out.push(it)
+  }
+  c.new_eset(out)
 }
 
 /// The kind of requirement an obligation states, for its message.
@@ -56,6 +83,31 @@ struct EffOb {
   /// Iface: the interface type and the interface method's name.
   iface: Int = -1
   meth: Str = ""
+  /// Closure: its ` uses ...` clause (file "" for none), which a fix may
+  /// remove so its effects are inferred.
+  uses_file: Str = ""
+  uses_clause: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+}
+
+/// The note on an XO0701 whose missing effect is an elided effect
+/// parameter (habits.go elidedEffectNote), with the fix removing the
+/// closure's `uses` clause.
+fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) {
+  for p in sub.params {
+    let o = c.objs[p]
+    if sup.params.contains(p) || !o.elided || o.elided_file.is_empty() {
+      continue
+    }
+    var tn = o.elided_text
+    if let Some(i) = tn.find("[") {
+      tn = text(tn.bytes()[0..i])
+    }
+    c.diags[d].notes.push(DNote{message: "`${text(o.name)}` is the effect argument left out of `${o.elided_text}` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `${tn}[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred", span: Some(JSpan{file: o.elided_file, line: o.elided_at.start.line, col: o.elided_at.start.col})})
+    if !ob.uses_file.is_empty() {
+      c.fix(d, "remove the closure's `uses` clause so its effects are inferred", [DEdit{span: JSpan{file: ob.uses_file, line: ob.uses_clause.start.line, col: ob.uses_clause.start.col, end_line: ob.uses_clause.end.line, end_col: ob.uses_clause.end.col}, replace: ""}])
+    }
+    return
+  }
 }
 
 /// A new effect set (an index into esets).
@@ -154,7 +206,13 @@ fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
     if it.param >= 0 {
       if let Some(t) = sm.get(it.param) {
         if c.tys[t].kind == TyKind.EffArg && c.tys[t].eff >= 0 {
-          for x in c.esets[c.tys[t].eff] {
+          for x0 in c.esets[c.tys[t].eff] {
+            var x = x0
+            if x.file.is_empty() {
+              x.file = it.file
+              x.span = it.span
+              x.via = it.via
+            }
             out.push(x)
           }
           continue
@@ -230,29 +288,40 @@ fn (c: Checker) flat_text(f: Flat) -> Str {
 /// (else their items are dropped).
 fn (c: Checker) flatten(s: Int, with_inferred: Bool) -> Flat {
   var out = Flat{}
-  c.flatten_into(out, s, with_inferred, 0)
+  c.flatten_into(out, s, with_inferred, 0, EffItem{})
   out
 }
 
-fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: Int) {
+/// Expands set s into out; the items of s without a place are attributed
+/// to the place of at (effects.go flattenInto of a set made by
+/// EffSet.performed).
+fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: Int, at: EffItem) {
   if s < 0 || depth > 50 {
     return
   }
-  for it in c.esets[s] {
+  for it0 in c.esets[s] {
+    var it = it0
+    if it.file.is_empty() && !at.file.is_empty() {
+      it.file = at.file
+      it.span = at.span
+      it.via = at.via
+    }
     if !it.label.is_empty() {
       if !out.labels.contains(it.label) {
         out.labels.push(it.label)
+        out.label_items.push(it)
       }
     } else if it.param >= 0 {
       if !out.params.contains(it.param) {
         out.params.push(it.param)
+        out.param_items.push(it)
       }
     } else if it.evar >= 0 {
-      c.flatten_into(out, c.evars[it.evar], with_inferred, depth + 1)
+      c.flatten_into(out, c.evars[it.evar], with_inferred, depth + 1, EffItem{})
     } else if it.fn_obj >= 0 {
       let d = c.objs[it.fn_obj].declared
       if d >= 0 {
-        c.flatten_into(out, d, with_inferred, depth + 1)
+        c.flatten_into(out, d, with_inferred, depth + 1, EffItem{file: it.file, span: it.span, via: c.display_name(it.fn_obj)})
         continue
       }
       if !with_inferred {
@@ -262,19 +331,21 @@ fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: 
       for l in fl.labels {
         if !out.labels.contains(l) {
           out.labels.push(l)
+          out.label_items.push(it)
         }
       }
       for p in fl.params {
         if it.has_sub {
           if let Some(a) = it.sub.get(p) {
             if c.tys[a].kind == TyKind.EffArg {
-              c.flatten_into(out, c.tys[a].eff, with_inferred, depth + 1)
+              c.flatten_into(out, c.tys[a].eff, with_inferred, depth + 1, EffItem{file: it.file, span: it.span, via: it.via})
               continue
             }
           }
         }
         if !out.params.contains(p) {
           out.params.push(p)
+          out.param_items.push(it)
         }
       }
     }
@@ -331,8 +402,94 @@ fn (var c: Checker) solve_effects() {
     } else {
       "${c.ob_what(ob, c.flat_text(sup))}, but performs ${list}"
     }
-    c.report(ob.file, "XO0701", ob.span, msg)
+    let d = c.report(ob.file, "XO0701", ob.span, msg)
+    if d < 0 {
+      continue
+    }
+    c.elided_effect_note(d, sub, sup, ob)
+    // the item witnessing the first missing effect: a label, else a
+    // parameter (in the order of sub)
+    var first = EffItem{}
+    var key0 = ""
+    var found = false
+    for l in sub.labels.sort() {
+      if !sup.covers_label(l) {
+        let k = sub.labels.index_of(l) ?? 0
+        first = sub.label_items[k]
+        key0 = l
+        found = true
+        break
+      }
+    }
+    if !found {
+      for (k, p) in sub.params.indexed() {
+        if !sup.params.contains(p) {
+          first = sub.param_items[k]
+          key0 = text(c.objs[p].name)
+          break
+        }
+      }
+    }
+    c.effect_chain(d, first, key0)
   }
+}
+
+/// The call chain that performs effect key, from item w, as notes on d
+/// (effects.go effectChain, chainSteps).
+fn (var c: Checker) effect_chain(d: Int, w0: EffItem, key: Str) {
+  var w = w0
+  var visited: List[Int] = []
+  for _ in 0..20 {
+    if w.fn_obj >= 0 && c.objs[w.fn_obj].declared < 0 {
+      c.chain_note(d, w, "calls `${c.display_name(w.fn_obj)}`, which performs `${key}`")
+      if visited.contains(w.fn_obj) {
+        return
+      }
+      visited.push(w.fn_obj)
+      let fl = match c.inferred.get(w.fn_obj) {
+        Some(x) => x
+        None => return
+      }
+      var next = EffItem{}
+      var ok = false
+      if let Some(k) = fl.labels.index_of(key) {
+        next = fl.label_items[k]
+        ok = true
+      } else {
+        for (k, p) in fl.params.indexed() {
+          if text(c.objs[p].name) == key {
+            next = fl.param_items[k]
+            ok = true
+          }
+        }
+      }
+      if !ok {
+        return
+      }
+      w = next
+      continue
+    }
+    var via = w.via
+    if w.fn_obj >= 0 {
+      via = c.display_name(w.fn_obj)
+    }
+    if via.is_empty() {
+      via = "this"
+    }
+    if !w.file.is_empty() {
+      c.chain_note(d, w, "`${via}` uses `${key}` here")
+    }
+    return
+  }
+}
+
+/// A note at the place of item w (its full span).
+fn (var c: Checker) chain_note(d: Int, w: EffItem, msg: Str) {
+  if w.file.is_empty() {
+    c.diags[d].notes.push(DNote{message: msg, span: Some(JSpan{file: "", line: 0, col: 0})})
+    return
+  }
+  c.diags[d].notes.push(DNote{message: msg, span: Some(JSpan{file: w.file, line: w.span.start.line, col: w.span.start.col, end_line: w.span.end.line, end_col: w.span.end.col})})
 }
 
 /// What an obligation requires, given the text of its allowed effects.

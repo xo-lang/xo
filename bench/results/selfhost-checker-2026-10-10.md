@@ -648,3 +648,37 @@ seed 7 with 3,000) match too. One Go checker bug was found on the way:
 `xo typedump` panicked on a use of an unresolved import (a typed nil
 `*Module` in a name record; gotchas/go-typed-nil-name-record.md,
 `TestDumpUnresolvedImport`).
+
+## Stage 7: notes and fixes, the full JSON section
+
+`xo typedump --section=full` prints each diagnostic as `xo check --json`
+does (severity, notes, fixes); the Xo checker prints the same section
+and `TestSelfhostChecker` and `TestSelfhostCheckerMutations` compare it
+on every compared run. `xo astdump` prints the notes and fixes of each
+parser diagnostic, so the parser differential compares them on every
+file and mutation.
+
+Ported: every note and fix of internal/parser (parser.go, habits*.go,
+leading_op.go), the checker's notes and fixes of the stage 1 to 6
+diagnostics (edit distance suggestions with `nearest` and
+`confidentGuess` for every XO0601 and named argument, previous
+declarations, comparability, numeric conversions, Result and optional
+fixes, missing match arms and struct fields as holes, `if` without
+`else`, moves and lost updates, real-time notes and `bound N` fixes, the
+XO0701 call chain, which needed the places where effects are performed:
+effect items now carry a file, span, and callee), and the checker's
+habits (habits.go). Selfhost/check/notes.xo is new.
+
+Agreement (go, arm64, LLVM builds): the 351 accepted and 232 rejected
+compared repository runs give identical full sections; 3,000 mutations
+of seed 7 (2,588 rejected with staged diagnostics, 243 of them XO0701)
+too; the parser differential (repository, spec blocks, 20,000 token
+mutations of seeds 1 and the default) gives identical notes and fixes.
+
+Found on the way, a Go bug: `diag.List.Errorf` returned a pointer into a
+slice of values, so a note or fix attached after more diagnostics were
+reported (a parsed closure body, a checked argument) was lost whenever
+the slice had grown; `Items` holds pointers now
+(gotchas/diag-pointer-after-append.md). One golden of internal/fix
+(py-map-builtin) gained the fix it had lost. And json.Marshal's HTML
+escaping inside `Diagnostic.MarshalJSON` (gotchas/json-marshaler-escapes-html.md).

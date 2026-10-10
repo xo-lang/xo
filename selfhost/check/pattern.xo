@@ -97,7 +97,10 @@ fn (var c: Checker) lit_pattern(v: Expr, t: Int, sp: Span) -> IPat {
   }
   let lt = c.infer(v, t)
   if !c.is_bad(t) && !c.is_bad(lt) && !c.try_unify(lt, t) {
-    c.error("XO0302", sp, "literal of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+    let d = c.error("XO0302", sp, "literal of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+    if c.option_elem(t) >= 0 {
+      c.note(d, "match an optional with `Some(...)` or `None`")
+    }
     return wild_pat()
   }
   IPat{kind: IP_LIT}
@@ -164,7 +167,11 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
       return (-1, -1)
     }
     if n >= 0 && c.objs[n].tkind == "enum" {
-      c.error("XO0601", path[0].span, "`${c.qual_name(n)}` has no variant `${text(name)}`")
+      var cands: List[Str] = []
+      for vi in c.objs[n].variants {
+        cands.push(text(vi.name))
+      }
+      c.unresolved(path[0].span, "variant of `${c.qual_name(n)}`", text(name), cands)
       return (-1, -1)
     }
     c.error("XO0302", span, "variant pattern `${text(name)}` does not fit a value of type `${c.show(t)}`")
@@ -172,7 +179,7 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
   } else if path.len() == 2 {
     let o = c.lookup_module_obj(c.cur_mod, path[0].name)
     if o < 0 || c.objs[o].kind != ObjKind.Type {
-      c.error("XO0601", path[0].span, "enum `${text(path[0].name)}` not found")
+      c.unresolved(path[0].span, "enum", text(path[0].name), c.visible_type_names(c.local_env()))
       return (-1, -1)
     }
     en = o
@@ -180,7 +187,7 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
     let imp = match c.file_import(path[0].name) {
       Some(x) => x
       None => {
-        c.error("XO0601", path[0].span, "module `${text(path[0].name)}` not found")
+        c.unresolved(path[0].span, "module", text(path[0].name), c.import_names(c.cur_file))
         return (-1, -1)
       }
     }
@@ -190,7 +197,7 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
     }
     let o = c.mods[imp.module].members.get(path[1].name) ?? -1
     if o < 0 || c.objs[o].kind != ObjKind.Type {
-      c.error("XO0601", path[1].span, "module `${text(path[0].name)}` has no enum `${text(path[1].name)}`")
+      c.unresolved(path[1].span, "enum of module `${text(path[0].name)}`", text(path[1].name), [])
       return (-1, -1)
     }
     en = o
@@ -210,7 +217,11 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
   }
   let v = c.variant_pos(en, name)
   if v < 0 {
-    c.error("XO0601", last.span, "`${c.qual_name(en)}` has no variant `${text(name)}`")
+    var cands: List[Str] = []
+    for vi in c.objs[en].variants {
+      cands.push(text(vi.name))
+    }
+    c.unresolved(last.span, "variant of `${c.qual_name(en)}`", text(name), cands)
     return (-1, -1)
   }
   (en, v)
@@ -269,7 +280,10 @@ fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: 
     c.error("XO0302", span, "newtype pattern `${text(c.objs[obj].name)}(..)` does not fit a value of type `${c.show(t)}`")
   }
   if !parens || fields.len() > 1 || (fields.len() == 1 && fields[0].name != None) || (fields.is_empty() && !rest) {
-    c.error("XO0302", span, "a newtype pattern has one positional pattern: `${text(c.objs[obj].name)}(p)`")
+    let d = c.error("XO0302", span, "a newtype pattern has one positional pattern: `${text(c.objs[obj].name)}(p)`")
+    if !parens {
+      c.fix(d, "match any value", [c.insert_edit(span.end, "(_)")])
+    }
     let before = c.objs.len()
     for f in fields {
       c.pattern(f.pattern, c.bad_ty, refutable)
@@ -334,7 +348,8 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
   var ip = IPat{kind: IP_CTOR, key: vi.index, args: wilds(vi.fields.len())}
   if !parens {
     if !vi.fields.is_empty() {
-      c.error("XO0302", span, "variant `${text(vi.name)}` has fields; write `${text(vi.name)}(..)` to match any of them")
+      let d = c.error("XO0302", span, "variant `${text(vi.name)}` has fields; write `${text(vi.name)}(..)` to match any of them")
+      c.fix(d, "match any fields", [c.insert_edit(span.end, "(..)")])
     }
     return ip
   }
@@ -374,7 +389,11 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
           }
         }
         if idx < 0 {
-          c.error("XO0601", fname.span, "`${text(vi.name)}` has no field `${text(fname.name)}`")
+          var cands: List[Str] = []
+          for vf in vi.fields {
+            cands.push(text(vf.name))
+          }
+          c.unresolved(fname.span, "field of `${text(vi.name)}`", text(fname.name), cands)
           c.pattern(f.pattern, c.bad_ty, refutable)
           continue
         }
@@ -396,7 +415,8 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
       }
     }
     if !missing.is_empty() {
-      c.error("XO0302", span, "pattern for `${text(vi.name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
+      let d = c.error("XO0302", span, "pattern for `${text(vi.name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
+      c.fix(d, "ignore the other fields with ..", [c.insert_edit(parser.Pos{offset: span.end.offset - 1, line: span.end.line, col: span.end.col - 1}, ", ..")])
     }
   }
   ip
@@ -467,7 +487,11 @@ fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[p
         Some(n) => n.span
         None => f.span
       }
-      c.error("XO0601", sp, "`${text(c.objs[obj].name)}` has no field `${text(name)}`")
+      var cands: List[Str] = []
+      for fo in c.objs[obj].fields {
+        cands.push(text(fo.name))
+      }
+      c.unresolved(sp, "field of `${text(c.objs[obj].name)}`", text(name), cands)
       c.pattern(f.pattern, c.bad_ty, refutable)
       continue
     }

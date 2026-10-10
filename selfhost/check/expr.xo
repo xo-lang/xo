@@ -180,7 +180,7 @@ fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
   }
   if w.kind == 3 {
     if c.is_result(t) {
-      c.unhandled(e, sp)
+      c.unhandled(e, sp, t)
     }
     return t
   }
@@ -193,19 +193,51 @@ fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
   if c.assignable(t, w.t, sp) {
     return w.t
   }
-  c.mismatch(sp, w.t, t)
+  c.mismatch(sp, w.t, t, !e.is_empty())
   c.bad_ty
 }
 
-fn (var c: Checker) mismatch(sp: Span, w: Int, g: Int) {
+/// XO0401 with its notes and fixes (expr.go mismatch); has_e: the value
+/// is an expression of the source (a fix may rewrite it).
+fn (var c: Checker) mismatch(sp: Span, w: Int, g: Int, has_e: Bool) {
   if c.contains_bad(w) || c.contains_bad(g) {
     return
   }
-  c.error("XO0401", sp, "expected `${c.show(w)}`, found `${c.show(g)}`")
+  let ws = c.show(w)
+  let gs = c.show(g)
+  let d = c.error("XO0401", sp, "expected `${ws}`, found `${gs}`")
+  if d < 0 {
+    return
+  }
+  if c.is_numeric(w) && c.is_numeric(g) {
+    c.note(d, "there are no implicit numeric conversions; convert explicitly with `${ws}(...)` (core 2.1)")
+    if has_e {
+      c.fix(d, "convert with `${ws}(...)`", [c.insert_edit(sp.start, "${ws}("), c.insert_edit(sp.end, ")")])
+    }
+  }
+  if c.is_result(g) && !c.is_result(w) && has_e {
+    c.note(d, "the value is a `Result`; propagate the error with `?` or handle it with `match`")
+    if c.can_propagate() {
+      c.fix(d, "propagate with ?", [c.insert_edit(sp.end, "?")])
+    }
+  }
+  if gs.ends_with("TestOs") && ws == "Os" {
+    c.note(d, "a `TestOs` is not an `Os`; to run code that takes `Os` in a test, wrap it in a main and run it with `testing.run_main(fn(o: Os) -> () ! Error { ... }, os)`, which gives it an `Os` backed by the test's fakes (std.md 8); or let the function take only the capabilities it uses (`stdio: Stdio`), which a test passes directly (`os.stdio`)")
+  }
+  let gi = c.option_elem(g)
+  if gi >= 0 && c.option_elem(w) < 0 && c.assignable(gi, w, Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}) {
+    c.note(d, "the value is optional; unwrap it with `??`, `?`, `if let`, or `match` (core 2.5)")
+  }
+}
+
+/// Whether a `?` can propagate here: the function or closure has an
+/// error type (expr.go canPropagate).
+fn (c: Checker) can_propagate() -> Bool {
+  c.ctx >= 0 && (c.ctxs[c.ctx].err >= 0 || c.ctxs[c.ctx].err_var >= 0)
 }
 
 /// XO0201 for a discarded Result (core 2.6).
-fn (var c: Checker) unhandled(e: List[Expr], sp: Span) {
+fn (var c: Checker) unhandled(e: List[Expr], sp: Span, t: Int) {
   var what = "this expression"
   if !e.is_empty() {
     if let CallExpr(fun: fun, ..) = e[0] {
@@ -215,7 +247,19 @@ fn (var c: Checker) unhandled(e: List[Expr], sp: Span) {
       }
     }
   }
-  c.error("XO0201", sp, "result of ${what} is not handled")
+  let d = c.error("XO0201", sp, "result of ${what} is not handled")
+  if d < 0 {
+    return
+  }
+  if c.is_result(t) {
+    c.note(d, "${what} can fail with `${c.show(c.result_e(t))}`; propagate with `?`, match on it, or discard it with `.ignore_err(\"reason\")` (core 2.6)")
+  }
+  if c.can_propagate() {
+    c.fix(d, "propagate with ?", [c.insert_edit(sp.end, "?")])
+  }
+  if !e.is_empty() {
+    c.fix(d, "discard with a reason", c.ignore_err_edits(e[0]))
+  }
 }
 
 fn callee_name(e: Expr) -> Str {
@@ -272,13 +316,21 @@ fn (var c: Checker) coerce_ret(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int 
     }
     c.undo(m)
     if c.unify(tt, w.t) && !c.is_open_var(te) {
-      c.error("XO0401", sp, "expected `${c.show(w.t)} ! ${c.show(w.e)}`, found `${c.show(t)}`; a returned Result must have the declared error type")
+      let d = c.error("XO0401", sp, "expected `${c.show(w.t)} ! ${c.show(w.e)}`, found `${c.show(t)}`; a returned Result must have the declared error type")
+      if d >= 0 && c.err_converts(te, w.e) {
+        c.note(d, "`${c.show(te)}` converts to `${c.show(w.e)}` at a `?` site")
+        c.fix(d, "propagate with ?", [c.insert_edit(sp.end, "?")])
+      }
       return res
     }
     c.undo(m)
   }
   if c.is_result(w.t) && c.is_result(t) && c.try_unify(t, w.t) {
-    c.error("XO0203", sp, "the success value of `${c.show(w.t)} ! ${c.show(w.e)}` is itself a Result; write `Ok(...)` explicitly")
+    let d = c.error("XO0203", sp, "the success value of `${c.show(w.t)} ! ${c.show(w.e)}` is itself a Result; write `Ok(...)` explicitly")
+    if d >= 0 {
+      c.note(d, "a bare Result here would be ambiguous between success and returning the value as is (core 2.6)")
+      c.fix(d, "wrap in Ok(...)", [c.insert_edit(sp.start, "Ok("), c.insert_edit(sp.end, ")")])
+    }
     return res
   }
   if c.is_unit(w.t) {
@@ -290,7 +342,7 @@ fn (var c: Checker) coerce_ret(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int 
   if c.assignable(t, w.t, sp) {
     return res
   }
-  c.mismatch(sp, w.t, t)
+  c.mismatch(sp, w.t, t, !e.is_empty())
   res
 }
 
@@ -336,7 +388,14 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
         if let Some(x) = p.expr {
           let t = c.infer(x, -1)
           if !c.implements_name(t, "Display", parser.expr_span(x)) {
-            c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Display`, so it cannot be interpolated")
+            let d = c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Display`, so it cannot be interpolated")
+            if c.is_prelude(t, "Bytes") {
+              c.note(d, "convert with `.to_str()` first (std.md 1)")
+            } else if c.option_elem(t) >= 0 {
+              c.note(d, "unwrap the optional first, for example with `??` (core 2.5)")
+            } else {
+              c.note(d, "implement `fn display(self) -> Str` or add `derive Display` (core 2.9)")
+            }
           }
         }
       }
@@ -385,7 +444,14 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       let bt = c.infer(x, -1)
       let t = c.index_type(bt, span, index)
       if c.is_prelude(bt, "Map") {
-        c.error("XO0410", span, "reading a Map by index faults when the key is missing")
+        // A missing key is the Map form of a nil dereference, so reads
+        // must say what happens when the key is absent (core 3.6).
+        let d = c.error("XO0410", span, "reading a Map by index faults when the key is missing")
+        if d >= 0 {
+          c.note(d, "use `m.get(k)` (an optional) or `m.get_or_fault(k, \"why the key must exist\")` (core 3.6)")
+          let isp = parser.expr_span(index)
+          c.fix(d, "use get_or_fault", [c.replace_edit(Span{start: parser.expr_span(x).end, end: isp.start}, ".get_or_fault("), c.replace_edit(Span{start: isp.end, end: span.end}, ", \"TODO: why the key must exist\")")])
+        }
       }
       t
     }
@@ -516,7 +582,10 @@ fn (var c: Checker) index_type(bt: Int, span: Span, index: Expr) -> Int {
     return c.tys[r].args[1]
   }
   c.infer(index, -1)
-  c.error("XO0406", span, "`${c.show(bt)}` cannot be indexed; indexing works on List, Bytes, and Map (core 3.6)")
+  let d = c.error("XO0406", span, "`${c.show(bt)}` cannot be indexed; indexing works on List, Bytes, and Map (core 3.6)")
+  if name == "Str" {
+    c.note(d, "slice with a range (`s[a..b]`) or use `.runes()` or `.bytes()`")
+  }
   c.bad_ty
 }
 
@@ -535,7 +604,11 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
   if el >= 0 {
     let ctx = c.ctxs[c.ctx]
     if (ctx.err >= 0 && !c.is_open_var(ctx.err)) || (ctx.err_var >= 0 && c.tys[ctx.err_var].ref >= 0) {
-      c.error("XO0204", span, "`?` on an optional value in a function that returns a Result")
+      let d = c.error("XO0204", span, "`?` on an optional value in a function that returns a Result")
+      if d >= 0 {
+        c.note(d, "convert the optional to a Result first: `.or_err(e)?` (core 2.5)")
+        c.fix(d, "convert with .or_err(...)", [c.insert_edit(parser.expr_span(x).end, ".or_err(???)")])
+      }
       return el
     }
     if c.option_elem(ctx.result) >= 0 {
@@ -545,10 +618,16 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
       c.unify(ctx.result, c.option_of(c.new_var()))
       return el
     }
-    c.error("XO0205", span, "`?` on an optional value needs a function that returns an optional, but `${ctx.name}` returns `${c.show(ctx.result)}`")
-    let src = c.files[c.cur_file].src
-    if span.end.offset < src.len() && src[span.end.offset] == '.' {
-      c.safe_navs[c.key_of(span, 23)] = true
+    let d = c.error("XO0205", span, "`?` on an optional value needs a function that returns an optional, but `${ctx.name}` returns `${c.show(ctx.result)}`")
+    if d >= 0 {
+      c.note(d, "use `??` to supply a default, `if let`, or `match` (core 2.5)")
+      let src = c.files[c.cur_file].src
+      if span.end.offset < src.len() && src[span.end.offset] == '.' {
+        // `x?.f` (decision 0087)
+        c.safe_navs[c.key_of(span, 23)] = true
+        c.safe_nav_diag[c.key_of(span, 23)] = d
+        c.note(d, "`x?.f` is optional chaining in TypeScript, Kotlin, and Swift; Xo's postfix `?` instead returns early from the function. To keep the value optional, write `x.map(fn(v) { v.f })`, then `?? default` (spec/std.md 2)")
+      }
     }
     return el
   }
@@ -581,10 +660,19 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
       return
     }
     if code == "XO0801" {
-      c.error(code, sp, "a task here can fail with `${c.show(et)}`, which propagates out of the scope, but `${ctx.name}` cannot fail")
+      let d = c.error(code, sp, "a task here can fail with `${c.show(et)}`, which propagates out of the scope, but `${ctx.name}` cannot fail")
+      c.note(d, "await the handle and handle its error, or declare an error type that `${c.show(et)}` converts to (core 7.1)")
       return
     }
-    c.error("XO0205", sp, "${how} propagates `${c.show(et)}`, but `${ctx.name}` cannot fail")
+    let d = c.error("XO0205", sp, "${how} propagates `${c.show(et)}`, but `${ctx.name}` cannot fail")
+    if d >= 0 && ctx.fn_obj >= 0 && !c.objs[ctx.fn_obj].fn_decl.is_empty() {
+      let fd = c.objs[ctx.fn_obj].fn_decl[0]
+      c.note(d, "declare the error type: `-> ${c.show(ctx.result)} ! ${c.show(et)}`, or handle the error with `match` (core 2.6)")
+      let at = fd_header_end(fd)
+      c.fix(d, "declare `! ${c.show(et)}`", [DEdit{span: JSpan{file: c.objs[ctx.fn_obj].file, line: at.line, col: at.col, end_line: at.line, end_col: at.col}, replace: " ! ${c.show(et)}"}])
+    } else if d >= 0 {
+      c.note(d, "this closure's type comes from where it is passed and has no error type; handle the error inside it with `match`, `??`, or `.ignore_err(\"reason\")` (core 2.6)")
+    }
     return
   }
   if c.is_open_var(ctx.err) {
@@ -594,7 +682,21 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
   if c.err_converts(et, ctx.err) {
     return
   }
-  c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ctx.err)}`, the error type of `${ctx.name}`")
+  let d = c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ctx.err)}`, the error type of `${ctx.name}`")
+  if d < 0 {
+    return
+  }
+  if code == "XO0801" {
+    c.note(d, "a task error that is not consumed by an `await` propagates out of the scope as if by `?` (core 7.1)")
+  }
+  c.note(d, "an error converts when it is the same type, when the target is `Error` and it implements `Display`, or when the target enum has a `from ${c.show(et)}` variant (core 2.6)")
+  let n = c.resolve(ctx.err)
+  if c.tys[n].kind == TyKind.Named {
+    let o = c.tys[n].obj
+    if c.objs[o].tkind == "enum" && c.objs[o].module == c.cur_mod {
+      c.note_obj(d, o, "add a variant such as `${to_upper_camel(last_name(c.show(et)).bytes())}(from ${c.show(et)})` to `${text(c.objs[o].name)}`")
+    }
+  }
 }
 
 /// Whether e is, or starts with, an optional chain `x?.f` reported as
@@ -635,7 +737,10 @@ fn (var c: Checker) join(ts: List[Int], spans: List[Span]) -> Int {
     if c.try_unify(t, base) {
       continue
     }
-    c.error("XO0401", spans[i], "branches have different types: `${c.show(base)}` and `${c.show(t)}`")
+    let d = c.error("XO0401", spans[i], "branches have different types: `${c.show(base)}` and `${c.show(t)}`")
+    if d >= 0 && (c.option_elem(base) >= 0 || c.option_elem(t) >= 0) {
+      c.note(d, "wrap the plain value in `Some(...)`, or give the expression an expected type")
+    }
     return c.bad_ty
   }
   if base < 0 {
@@ -663,13 +768,19 @@ fn (var c: Checker) if_expr(x: parser.IfExpr, w: Want) -> Int {
       if w.kind == 0 || w.kind == 3 {
         return t
       }
-      return c.coerce_to(t, w, x.span, [])
+      let n = c.diags.len()
+      let r = c.coerce_to(t, w, x.span, [Expr.IfExpr(x)])
+      c.missing_else_note(x, w, n)
+      return r
     }
   }
   if w.kind != 0 {
+    let open = w.kind != 3 && w.t >= 0 && c.is_open_var(w.t)
+    let n = c.diags.len()
     c.block(x.then, w)
     c.pop_scope()
     c.check(els, w)
+    c.missing_else_fix(x, open, n)
     if w.kind == 2 {
       return c.result_of(w.t, w.e)
     }
@@ -682,6 +793,87 @@ fn (var c: Checker) if_expr(x: parser.IfExpr, w: Want) -> Int {
   c.pop_scope()
   let t2 = c.infer(els, -1)
   c.join([t1, t2], [x.then.span, parser.expr_span(els)])
+}
+
+/// The XO0401 at sp reported since diagnostic n, or -1 (ifnoelse.go
+/// mismatchSince).
+fn (c: Checker) mismatch_since(n: Int, sp: Span) -> Int {
+  var i = c.diags.len() - 1
+  while i >= n && i >= 0 {
+    let d = c.diags[i]
+    if d.code == "XO0401" && d.line == sp.start.line && d.col == sp.start.col {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// The note on the XO0401 of an `if` without `else` where a value is
+/// expected (ifnoelse.go missingElseNote).
+fn (var c: Checker) missing_else_note(x: parser.IfExpr, w: Want, n: Int) {
+  let d = c.mismatch_since(n, x.span)
+  if d < 0 {
+    return
+  }
+  c.note(d, "this `if` has no `else`, so it is a statement of type `()` (core 3.5), but a value of type `${c.show(w.t)}` is expected here; add an `else` branch with a value of that type")
+}
+
+/// The fix of the XO0401 of an `if` chain that ends without `else` when
+/// the expected type came from a branch: discard the branch values with
+/// `let _ =` (ifnoelse.go missingElseFix).
+fn (var c: Checker) missing_else_fix(x: parser.IfExpr, open: Bool, n: Int) {
+  if !open {
+    return
+  }
+  var last = x
+  while {
+    if let Some(IfExpr(nx)) = last.els {
+      last = nx
+      continue
+    }
+    break
+  }
+  if last.els != None {
+    return // the chain ends with `else { }`
+  }
+  let d = c.mismatch_since(n, last.span)
+  if d < 0 || !c.diags[d].fixes.is_empty() {
+    return
+  }
+  var edits: List[DEdit] = []
+  var cur: parser.IfExpr? = Some(x)
+  while {
+    let e = match cur {
+      Some(v) => v
+      None => break
+    }
+    if !e.then.stmts.is_empty() {
+      if let ExprStmt(x: tail, ..) = e.then.stmts[e.then.stmts.len() - 1] {
+        var t = c.type_of(tail)
+        if t >= 0 && c.is_result(t) && c.is_open_var(c.result_e(t)) {
+          // the tail of a closure that may fail is recorded as
+          // `Result[T, _]`; its value is T
+          t = c.result_t(t)
+        }
+        if t < 0 || c.is_bad(t) || c.is_never(t) || c.is_unit(t) {
+          // nothing to discard
+        } else if c.is_result(t) {
+          return // a Result needs `.ignore_err("reason")`, not `let _ =`
+        } else {
+          edits.push(c.insert_edit(parser.expr_span(tail).start, "let _ = "))
+        }
+      }
+    }
+    cur = match e.els {
+      Some(IfExpr(nx)) => Some(nx)
+      _ => None
+    }
+  }
+  if !edits.is_empty() {
+    c.note(d, "the expected type comes from the first branch; if the `if` is a statement, discard the branch values with `let _ =` (core 2.6)")
+    c.fix(d, "discard the branch values with `let _ =`", edits)
+  }
 }
 
 fn (var c: Checker) match_expr(span: Span, subject: Expr, arms: List[parser.MatchArm], w: Want) -> Int {
@@ -707,7 +899,7 @@ fn (var c: Checker) match_expr(span: Span, subject: Expr, arms: List[parser.Matc
     }
     c.pop_scope()
   }
-  c.check_exhaustive(subject, rows, st)
+  c.check_exhaustive(span, subject, rows, st)
   c.warn_wildcard_own_enum(arms, st)
   if w.kind == 0 {
     return c.join(ts, spans)
@@ -770,7 +962,7 @@ fn (var c: Checker) select_expr(arms: List[parser.SelectArm], w: Want) -> Int {
     c.push_scope()
     if let Some(a) = arm.after {
       c.check_ty(a, c.named("Duration"))
-      c.perform(c.new_eset([EffItem{label: "clock"}]))
+      c.perform(c.new_eset([EffItem{label: "clock", file: c.path, span: parser.expr_span(a), via: "select `after`"}]))
     } else if let Some(b) = arm.bind {
       let op = arm.op ?? fault("a bound select arm has an operation")
       let t = c.infer(op, -1)
@@ -834,7 +1026,10 @@ fn (var c: Checker) rune_fits(span: Span, raw: Bytes, value: Int, t: Int) {
   if value <= max {
     return
   }
-  c.error("XO0401", span, "the rune literal ${text(raw)} (U+${hex4(value)}) does not fit `${n}`")
+  let d = c.error("XO0401", span, "the rune literal ${text(raw)} (U+${hex4(value)}) does not fit `${n}`")
+  if d >= 0 && max == 0x7f {
+    c.note(d, "a byte type takes only ASCII characters: any other character is two or more bytes in UTF-8 (compare with its bytes, `\\xHH`, or decode the runes)")
+  }
 }
 
 /// n in upper case hex, at least 4 digits (Go's %04X).
@@ -972,7 +1167,10 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     if el < 0 {
       c.infer(y, c.bad_ty)
       if !c.is_bad(xt) && !c.safe_nav(x) {
-        c.error("XO0406", span, "`??` needs an optional value on the left, found `${c.show(xt)}`")
+        let d = c.error("XO0406", span, "`??` needs an optional value on the left, found `${c.show(xt)}`")
+        if c.is_result(xt) {
+          c.note(d, "for a Result, use `.ok() ?? default` or `match`")
+        }
       }
       return c.bad_ty
     }
@@ -983,7 +1181,7 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     if c.assignable(yt, el, parser.expr_span(y)) {
       return el
     }
-    c.mismatch(parser.expr_span(y), el, yt)
+    c.mismatch(parser.expr_span(y), el, yt, true)
     return c.bad_ty
   }
   var xt = -1
@@ -1020,7 +1218,17 @@ fn (var c: Checker) is_expr(x: Expr, pattern: Pattern) -> Int {
 }
 
 fn (var c: Checker) op_fail(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int {
-  c.error("XO0406", sp, "operator `${op_text(op)}` is not defined for `${c.show(xt)}` and `${c.show(yt)}`")
+  let d = c.error("XO0406", sp, "operator `${op_text(op)}` is not defined for `${c.show(xt)}` and `${c.show(yt)}`")
+  if d >= 0 && c.is_numeric(xt) && c.is_numeric(yt) {
+    c.note(d, "there are no implicit numeric conversions; convert one side explicitly, for example `${c.show(xt)}(x)` (core 2.1)")
+  }
+  if d >= 0 && ((c.is_int(xt) && c.is_prelude(yt, "Rune")) || (c.is_prelude(xt, "Rune") && c.is_int(yt))) {
+    let it = if c.is_int(xt) { xt } else { yt }
+    c.note(d, "a Rune converts to its code point with `${c.show(it)}(r)`; a rune literal such as 'a' is already one where an integer is expected (core 2.1)")
+  }
+  if d >= 0 && (c.is_prelude(xt, "Duration") || c.is_prelude(yt, "Duration") || c.is_prelude(xt, "Time")) {
+    c.note(d, "Duration and Time support d1 + d2, d1 - d2, d * n, n * d, d / n, d1 / d2, t + d, t - d, t1 - t2, and comparisons (core 2.1)")
+  }
   c.bad_ty
 }
 
@@ -1034,7 +1242,8 @@ fn (var c: Checker) binary_type(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> 
     Eq | NotEq => {
       if c.try_unify(xt, yt) || c.assignable(yt, xt, sp) || c.assignable(xt, yt, sp) {
         if !c.is_eq_type(xt, "Eq") {
-          c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Eq`, so it cannot be compared with `${op_text(op)}`")
+          let d = c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Eq`, so it cannot be compared with `${op_text(op)}`")
+          c.note_incomparable(d, c.incomparable(xt))
         }
         return bool_t
       }
@@ -1045,7 +1254,8 @@ fn (var c: Checker) binary_type(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> 
         return c.op_fail(op, xt, yt, sp)
       }
       if !c.is_ord(xt) && !c.is_open_var(xt) {
-        c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Ord`, so it cannot be compared with `${op_text(op)}`")
+        let d = c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Ord`, so it cannot be compared with `${op_text(op)}`")
+        c.note(d, "add `derive Ord` to the type declaration (std.md 1)")
       }
       return bool_t
     }
@@ -1323,7 +1533,11 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
   for f in fields {
     let fi = c.field_index(obj, f.name.name)
     if fi < 0 {
-      c.error("XO0601", f.name.span, "`${text(c.objs[obj].name)}` has no field `${text(f.name.name)}`")
+      var cands: List[Str] = []
+      for ff in c.objs[obj].fields {
+        cands.push(text(ff.name))
+      }
+      c.unresolved(f.name.span, "field of `${text(c.objs[obj].name)}`", text(f.name.name), cands)
       c.infer(f.value, -1)
       continue
     }
@@ -1345,7 +1559,17 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
     }
   }
   if !missing.is_empty() {
-    c.error("XO0403", tsp, "missing field(s) `${missing.join("`, `")}` in `${text(c.objs[obj].name)}` literal")
+    let d = c.error("XO0403", tsp, "missing field(s) `${missing.join("`, `")}` in `${text(c.objs[obj].name)}` literal")
+    if d >= 0 {
+      c.note(d, "construction names every field without a default (core 2.2)")
+      var parts: List[Str] = []
+      for m in missing {
+        parts.push("${m}: ???")
+      }
+      let end = parser.Pos{offset: span.end.offset - 1, line: span.end.line, col: span.end.col - 1}
+      let sep = if fields.is_empty() { "" } else { ", " }
+      c.fix(d, "add the missing fields as holes", [c.insert_edit(end, sep + parts.join(", "))])
+    }
   }
   nt
 }
@@ -1367,7 +1591,11 @@ fn (var c: Checker) with_expr(span: Span, x: Expr, fields: List[parser.FieldInit
   for f in fields {
     let fi = c.field_index(obj, f.name.name)
     if fi < 0 {
-      c.error("XO0601", f.name.span, "`${text(c.objs[obj].name)}` has no field `${text(f.name.name)}`")
+      var cands: List[Str] = []
+      for ff in c.objs[obj].fields {
+        cands.push(text(ff.name))
+      }
+      c.unresolved(f.name.span, "field of `${text(c.objs[obj].name)}`", text(f.name.name), cands)
       c.infer(f.value, -1)
       continue
     }
@@ -1414,7 +1642,8 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
       c.error("XO0405", p.name.span, "cannot infer the type of parameter `${text(p.name.name)}`; annotate it: `${text(p.name.name)}: T`")
     }
     if p.is_var && ft >= 0 && !c.tys[ft].vars[i] {
-      c.error("XO0401", p.name.span, "parameter `${text(p.name.name)}` cannot be `var`: the expected function type passes it read only")
+      let d = c.error("XO0401", p.name.span, "parameter `${text(p.name.name)}` cannot be `var`: the expected function type passes it read only")
+      c.note(d, "changes to it would never be written back; to change a `Mutex` value use `with`, not `with_read` (core 5.4)")
     }
     params.push(pt)
     pvars.push((ft >= 0 && c.tys[ft].vars[i]) || (ft < 0 && p.is_var))
@@ -1498,7 +1727,12 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   }
   var eff = cx.eff
   if declared >= 0 {
-    c.obligations.push(EffOb{kind: ObKind.Closure, sub: cx.eff, sup: declared, file: c.path, span: x.span})
+    var ob = EffOb{kind: ObKind.Closure, sub: cx.eff, sup: declared, file: c.path, span: x.span}
+    if let Some(us) = c.uses_clause_span(x) {
+      ob.uses_file = c.path
+      ob.uses_clause = us
+    }
+    c.obligations.push(ob)
     eff = declared
   }
   c.mk_func(params, pvars, cx.result, err_t, eff)

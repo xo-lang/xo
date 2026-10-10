@@ -1,7 +1,7 @@
 // Habits of other languages that do not resolve (internal/check/habits.go,
-// decision 0087), as far as the names and types stages need them: the
-// diagnostic (XO0601) and the type the Go checker continues with, so
-// what follows cascades the same way. Notes and fixes are stage 7.
+// decision 0087): the diagnostic (XO0601, XO0177 for Go's `range`), the
+// habit's note and machine fix (stage 7), and the type the Go checker
+// continues with, so what follows cascades the same way.
 
 use github.com/xo-lang/xo/selfhost/parser
 
@@ -71,15 +71,14 @@ fn print_name(name: Str) -> Bool {
   name is "println" | "print" | "printf" | "puts" | "echo" | "fmt.Println" | "fmt.Print" | "fmt.Printf" | "fmt.Sprintf" | "console.log" | "console.error" | "System.out.println" | "eprintln"
 }
 
-/// A call of an unresolved function name (habits.go habitCall). Each
-/// habit is a function of its own: one function of all of them has a
-/// frame over the arm64 backend's 28 KiB limit (gotcha
-/// arm64-large-frame).
+/// A call of an unresolved function name (habits.go habitCall): XO0601
+/// with the habit's note, its fix when the rewrite is unambiguous, and
+/// the type the Go checker continues with.
 fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) {
   let (span, _, args) = call_parts(call)
   let name = text(id.name)
   if print_name(name) {
-    return (c.habit_print(args, name, id.span), true)
+    return (c.habit_print(span, args, name, id.span), true)
   }
   let n = args.len()
   match name {
@@ -87,184 +86,251 @@ fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) 
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_infer_one(args, id, c.named("Int")), true)
+      let lang = match name {
+        "len" => "Go and Python"
+        "count" => "Swift"
+        _ => "C++"
+      }
+      let d = c.habit_report(id, "`${name}(x)` is ${lang}; Xo asks the value: `x.len()` (spec/std.md 2)")
+      c.fix(d, "write `.len()`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.len()")])
+      c.infer(args[0].value, -1)
+      return (c.named("Int"), true)
     }
     "append" => {
       if n < 2 {
         return (-1, false)
       }
-      return (c.habit_append(args, id, hint), true)
+      var elems: List[Str] = []
+      for i in 1..n {
+        elems.push(c.arg_src(args, i))
+      }
+      let d = c.habit_report(id, "`append(xs, v)` is Go; an Xo list is a value: `xs + [v]` is the longer list, and `xs.push(v)` changes a `var` list in place (spec/std.md 2)")
+      c.fix(d, "write `xs + [...]`", [c.replace_edit(span, c.operand_at(span, "${c.operand_src(args[0].value)} + [${elems.join(", ")}]"))])
+      let t = c.infer(args[0].value, hint)
+      for i in 1..n {
+        c.infer(args[i].value, c.list_elem(t))
+      }
+      return (t, true)
     }
     "range" => {
       if n < 1 || n > 2 {
         return (-1, false)
       }
-      return (c.habit_range(span, args, id, hint), true)
+      var lo = "0"
+      var hi = c.arg_src(args, 0)
+      var lo_e = Expr.IntLit(span: span, raw: b"0", value: b"0")
+      var hi_e = args[0].value
+      if n == 2 {
+        lo = c.arg_src(args, 0)
+        hi = c.arg_src(args, 1)
+        lo_e = args[0].value
+        hi_e = args[1].value
+      }
+      let d = c.habit_report(id, "`range(n)` is Python; Xo writes the range itself, `${lo}..${hi}`, which excludes the upper bound as `range` does (core 3.5)")
+      c.fix(d, "write `${lo}..${hi}`", [c.replace_edit(span, c.operand_at(span, "${lo}..${hi}"))])
+      return (c.infer(Expr.RangeExpr(span: span, lo: Some(lo_e), hi: Some(hi_e), inclusive: false), hint), true)
     }
     "str" | "String" | "toString" => {
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_infer_one(args, id, c.named("Str")), true)
+      let d = c.habit_report(id, "`${name}(x)` converts to text in Python and Kotlin; Xo interpolates any `Display` value: `\"\${x}\"` (core 1.6)")
+      c.fix(d, "write `\"\${...}\"`", [c.replace_edit(span, "\"\${${c.arg_src(args, 0)}}\"")])
+      c.infer(args[0].value, -1)
+      return (c.named("Str"), true)
     }
     "int" | "float" => {
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_infer_one(args, id, c.named(if name == "int" { "Int" } else { "Float" })), true)
+      let xo = if name == "int" { "Int" } else { "Float" }
+      let t = c.infer(args[0].value, -1)
+      if c.is_prelude(t, "Str") {
+        c.habit_report(id, "`${name}(s)` parses text in Python; Xo returns an optional, `${xo}.parse(s)`, which is `None` for bad input (core 2.1)")
+        return (c.named(xo), true)
+      }
+      let d = c.habit_report(id, "`${name}(x)` is Python; Xo converts with the type name, `${xo}(x)` (core 2.1)")
+      c.fix(d, "write `${xo}(...)`", [c.replace_edit(id.span, xo)])
+      return (c.named(xo), true)
     }
     "sorted" | "reversed" | "abs" => {
       if n != 1 {
         return (-1, false)
       }
-      c.error("XO0601", id.span, "function `${name}` not found")
+      let m = match name {
+        "sorted" => "sort"
+        "reversed" => "reverse"
+        _ => "abs"
+      }
+      let d = c.habit_report(id, "`${name}(x)` is Python; Xo calls the method, `x.${m}()` (spec/std.md 2)")
+      c.fix(d, "write `.${m}()`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.${m}()")])
       return (c.infer(args[0].value, hint), true)
     }
     "min" | "max" => {
       if n != 2 {
         return (-1, false)
       }
-      return (c.habit_min_max(args, id, hint), true)
+      let d = c.habit_report(id, "`${name}(a, b)` is Python and Go; Xo calls the method on an `Ord` value, `a.${name}(b)` (spec/std.md 1)")
+      c.fix(d, "write `a.${name}(b)`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.${name}(${c.arg_src(args, 1)})")])
+      let t = c.infer(args[0].value, hint)
+      c.check_ty(args[1].value, t)
+      return (t, true)
     }
     "panic" => {
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_infer_one(args, id, c.named("Never")), true)
+      let d = c.habit_report(id, "`panic(msg)` is Go; Xo stops the program on a broken invariant with `fault(msg)`, and reports expected failures with `Err(e)` (core 8, 2.6)")
+      let t = c.infer(args[0].value, -1)
+      if c.is_prelude(t, "Str") {
+        c.fix(d, "write `fault`", [c.replace_edit(id.span, "fault")])
+      }
+      return (c.named("Never"), true)
     }
     "delete" => {
       if n != 2 {
         return (-1, false)
       }
-      return (c.habit_infer_all(args, id, c.unit_ty), true)
+      let d = c.habit_report(id, "`delete(m, k)` is Go; Xo calls `m.remove(k)` on a `var` map (spec/std.md 2)")
+      c.fix(d, "write `m.remove(k)`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.remove(${c.arg_src(args, 1)})")])
+      c.infer_args(args)
+      return (c.unit_ty, true)
     }
     "map" | "filter" => {
       if n != 2 {
         return (-1, false)
       }
-      return (c.habit_map(span, args, id, hint), true)
+      let d = c.habit_report(id, "`${name}(f, xs)` is Python; Xo calls the method on the collection, `xs.${name}(f)` (spec/std.md 2)")
+      var recv = c.operand_src(args[1].value)
+      var on = args[1].value
+      if c.is_prelude(c.infer(args[1].value, -1), "Range") {
+        // A range has no map or filter: make it a list first.
+        recv = recv + ".to_list()"
+        on = Expr.CallExpr(span: args[1].span, fun: Expr.SelectorExpr(span: id.span, x: args[1].value, sel: Ident{span: id.span, name: b"to_list"}), args: [])
+      }
+      c.fix(d, "write `xs.${name}(f)`", [c.replace_edit(span, "${recv}.${name}(${c.arg_src(args, 0)})")])
+      let m = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: on, sel: Ident{span: id.span, name: id.name}), args: [args[0]])
+      return (c.infer(m, hint), true)
     }
     "list" | "set" | "enumerate" => {
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_list(span, args, id, hint), true)
+      let t = c.infer(args[0].value, -1)
+      let r = c.resolve(t)
+      var kind = ""
+      if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
+        kind = text(c.objs[c.tys[r].obj].name)
+      }
+      let m = match name {
+        "list" => "to_list"
+        "set" => "to_set"
+        _ => "indexed"
+      }
+      let d = c.habit_report(id, "`${name}(x)` is Python; Xo calls the method on the value, `x.${m}()` (spec/std.md 2)")
+      if name == "list" && kind == "List" {
+        c.fix(d, "remove `list(...)`", [c.replace_edit(span, c.arg_src(args, 0))])
+        return (t, true)
+      }
+      if kind.is_empty() {
+        return (c.bad_ty, true)
+      }
+      c.fix(d, "write `.${m}()`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.${m}()")])
+      let msel = Ident{span: id.span, name: m.bytes()}
+      let mcall = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: args[0].value, sel: msel), args: [])
+      return (c.call_method(t, id.span, args[0].value, msel, [], false, mcall, hint), true)
     }
     "sum" => {
       if n != 1 {
         return (-1, false)
       }
-      return (c.habit_sum(args, id), true)
-    }
-    "make" | "new" => {
-      c.error("XO0601", id.span, "function `${name}` not found")
+      let t = c.infer(args[0].value, -1)
+      var zero = "0"
+      let el = c.list_elem(t)
+      if el >= 0 && c.is_prelude(el, "Float") {
+        zero = "0.0"
+      }
+      let d = c.habit_report(id, "`sum(xs)` is Python; Xo folds the list, `xs.fold(${zero}, fn(a, b) { a + b })` (spec/std.md 2)")
+      c.fix(d, "write `.fold(...)`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.fold(${zero}, fn(a, b) { a + b })")])
+      if el >= 0 {
+        return (el, true)
+      }
       return (c.bad_ty, true)
     }
-    "assert" => return (c.habit_infer_all(args, id, c.unit_ty), true)
-    "typeof" | "type" | "isinstance" => return (c.habit_infer_all(args, id, c.bad_ty), true)
+    "make" | "new" => {
+      c.habit_report(id, "`${name}(...)` is Go; Xo writes the value itself: `[]` for an empty list, `{}` for an empty map, `Chan[T].new(n)` for a channel, and `T{field: v}` for a struct (core 1.6, 7.3)")
+      return (c.bad_ty, true)
+    }
+    "assert" => {
+      c.habit_report(id, "`assert(c)` is Python, Swift, and C; an Xo test checks with `expect(c)`, and a function states conditions with `requires` and `ensures` (core 9.1, 9.2)")
+      c.infer_args(args)
+      return (c.unit_ty, true)
+    }
+    "typeof" | "type" | "isinstance" => {
+      c.habit_report(id, "`${name}` inspects types at run time in TypeScript and Python; Xo types are known when checking: use an enum and `match` for values of several shapes (core 2.3)")
+      c.infer_args(args)
+      return (c.bad_ty, true)
+    }
     _ => {}
   }
   (-1, false)
 }
 
-/// XO0601 for the call's name, its one argument inferred; t.
-fn (var c: Checker) habit_infer_one(args: List[Arg], id: Ident, t: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  c.infer(args[0].value, -1)
-  t
+/// XO0601 for the unresolved function name id, with the habit's note.
+fn (var c: Checker) habit_report(id: Ident, note: Str) -> Int {
+  let d = c.error("XO0601", id.span, "function `${text(id.name)}` not found")
+  c.habit_note(d, note)
+  d
 }
 
-/// XO0601 for the call's name, its arguments inferred; t.
-fn (var c: Checker) habit_infer_all(args: List[Arg], id: Ident, t: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  c.infer_args(args)
-  t
+/// The source of argument i.
+fn (c: Checker) arg_src(args: List[Arg], i: Int) -> Str {
+  c.src_of(parser.expr_span(args[i].value))
 }
 
-/// Go's `append(xs, v...)`: the list's type.
-fn (var c: Checker) habit_append(args: List[Arg], id: Ident, hint: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  let t = c.infer(args[0].value, hint)
-  for i in 1..args.len() {
-    c.infer(args[i].value, c.list_elem(t))
-  }
-  t
-}
-
-/// Python's `range(n)` and `range(a, b)`: the range `0..n` or `a..b`.
-fn (var c: Checker) habit_range(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  var lo = Expr.IntLit(span: span, raw: b"0", value: b"0")
-  var hi = args[0].value
-  if args.len() == 2 {
-    lo = args[0].value
-    hi = args[1].value
-  }
-  c.infer(Expr.RangeExpr(span: span, lo: Some(lo), hi: Some(hi), inclusive: false), hint)
-}
-
-/// `min(a, b)` and `max(a, b)`: a's type.
-fn (var c: Checker) habit_min_max(args: List[Arg], id: Ident, hint: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  let t = c.infer(args[0].value, hint)
-  c.check_ty(args[1].value, t)
-  t
-}
-
-/// Python's `map(f, xs)` and `filter(f, xs)`: the method call
-/// `xs.map(f)` (a range becomes a list first).
-fn (var c: Checker) habit_map(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  var on = args[1].value
-  if c.is_prelude(c.infer(args[1].value, -1), "Range") {
-    on = Expr.CallExpr(span: args[1].span, fun: Expr.SelectorExpr(span: id.span, x: args[1].value, sel: Ident{span: id.span, name: b"to_list"}), args: [])
-  }
-  let m = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: on, sel: Ident{span: id.span, name: id.name}), args: [args[0]])
-  c.infer(m, hint)
-}
-
-/// Python's `list(x)`, `set(x)`, `enumerate(x)`: the method call
-/// `x.to_list()`, `x.to_set()`, `x.indexed()`.
-fn (var c: Checker) habit_list(span: Span, args: List[Arg], id: Ident, hint: Int) -> Int {
-  let name = text(id.name)
-  let t = c.infer(args[0].value, -1)
-  let r = c.resolve(t)
-  var kind = ""
-  if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
-    kind = text(c.objs[c.tys[r].obj].name)
-  }
-  let m = match name {
-    "list" => "to_list"
-    "set" => "to_set"
-    _ => "indexed"
-  }
-  c.error("XO0601", id.span, "function `${name}` not found")
-  if name == "list" && kind == "List" {
+/// The source of e, parenthesized when a postfix would bind to part of
+/// it (habits.go operandSrc).
+fn (c: Checker) operand_src(e: Expr) -> Str {
+  let t = c.src_of(parser.expr_span(e))
+  if e is Ident(..) | SelectorExpr(..) | CallExpr(..) | IndexExpr(..) | ParenExpr(..) | StringLit(..) | ListLit(..) | MapLit(..) | SetLit(..) | TupleExpr(..) | StructLit(..) {
     return t
   }
-  if kind.is_empty() {
-    return c.bad_ty
-  }
-  let msel = Ident{span: id.span, name: m.bytes()}
-  let mcall = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: id.span, x: args[0].value, sel: msel), args: [])
-  c.call_method(t, id.span, args[0].value, msel, [], false, mcall, hint)
+  "(${t})"
 }
 
-/// Python's `sum(xs)`: the list's element type.
-fn (var c: Checker) habit_sum(args: List[Arg], id: Ident) -> Int {
-  let t = c.infer(args[0].value, -1)
-  c.error("XO0601", id.span, "function `${text(id.name)}` not found")
-  let e = c.list_elem(t)
-  if e >= 0 {
-    return e
+/// text, which replaces the source at sp, parenthesized when a postfix or
+/// a binary operator follows sp (habits.go operandAt).
+fn (c: Checker) operand_at(sp: Span, t: Str) -> Str {
+  if c.cur_file < 0 {
+    return t
   }
-  c.bad_ty
+  let src = c.files[c.cur_file].src
+  var i = sp.end.offset
+  while i < src.len() && (src[i] == ' ' || src[i] == '\t') {
+    i += 1
+  }
+  if i < src.len() && find_in(b".[?*/%+-<>=!&|", src[i..i + 1], 0) >= 0 {
+    return "(${t})"
+  }
+  t
+}
+
+/// The method a print function of another language ends the line with
+/// ("" for no machine fix) (habits.go printNames).
+fn print_method(name: Str) -> Str {
+  match name {
+    "println" | "puts" | "echo" | "fmt.Println" | "console.log" | "System.out.println" => "println"
+    "fmt.Print" => "print"
+    "console.error" | "eprintln" => "eprintln"
+    _ => ""
+  }
 }
 
 /// A print function of another language (habits.go habitPrint): XO0601
 /// on the name (on the module part of `fmt.Println`), the arguments
-/// inferred, `()`.
-fn (var c: Checker) habit_print(args: List[Arg], name: Str, at0: Span) -> Int {
+/// inferred, `()`; the fix prints through the `Os` or `Stdio` parameter
+/// of the enclosing function.
+fn (var c: Checker) habit_print(span: Span, args: List[Arg], name: Str, at0: Span) -> Int {
   var at = at0
   var what = "function `${name}` not found"
   let b = name.bytes()
@@ -275,29 +341,98 @@ fn (var c: Checker) habit_print(args: List[Arg], name: Str, at0: Span) -> Int {
       break
     }
   }
-  c.error("XO0601", at, what)
+  let d = c.error("XO0601", at, what)
+  c.habit_note(d, "`${name}` prints from anywhere in other languages; Xo prints through the `Stdio` capability, `os.stdio.println(\"\${x}\")` in `main` or a `stdio: Stdio` parameter elsewhere, so a function's output is visible in its signature; `dbg(x)` prints a value while debugging (spec/std.md 3, core 6.3, 11.4)")
+  var srcs: List[Str] = []
+  var all_str = true
   for a in args {
-    c.infer(a.value, -1)
+    let t = c.infer(a.value, -1)
+    srcs.push(c.src_of(parser.expr_span(a.value)))
+    if !c.is_prelude(t, "Str") {
+      all_str = false
+    }
   }
+  let method = print_method(name)
+  if method.is_empty() || srcs.is_empty() {
+    return c.unit_ty
+  }
+  // a capability to print with
+  var recv = ""
+  let fo = c.outer_fn()
+  if fo >= 0 {
+    for p in c.objs[fo].params {
+      if c.is_prelude(p.ty, "Os") {
+        recv = "${text(p.name)}.stdio"
+      } else if c.is_prelude(p.ty, "Stdio") {
+        recv = text(p.name)
+      }
+      if !recv.is_empty() {
+        break
+      }
+    }
+  }
+  if recv.is_empty() {
+    return c.unit_ty
+  }
+  var t = ""
+  if srcs.len() == 1 && all_str {
+    t = srcs[0]
+  } else {
+    var parts: List[Str] = []
+    for s in srcs {
+      parts.push("\${${s}}")
+    }
+    t = "\"${parts.join(" ")}\""
+  }
+  c.fix(d, "write `${recv}.${method}(...)`", [c.replace_edit(span, "${recv}.${method}(${t})")])
   c.unit_ty
+}
+
+/// The declared function being checked, through closures, or -1
+/// (habits.go outerFn).
+fn (c: Checker) outer_fn() -> Int {
+  var x = c.ctx
+  while x >= 0 {
+    if c.ctxs[x].fn_obj >= 0 {
+      return c.ctxs[x].fn_obj
+    }
+    x = c.ctxs[x].parent
+  }
+  -1
 }
 
 /// `fmt.Println(...)`, `Math.max(a, b)` and the like when the module
 /// name does not resolve (habits.go habitModuleCall).
 fn (var c: Checker) habit_module_call(call: Expr, md: Ident, sel: Ident) -> (Int, Bool) {
-  let (_, fun, args) = call_parts(call)
+  let (span, fun, args) = call_parts(call)
   let mname = text(md.name)
-  if !(mname is "fmt" | "console" | "System" | "Math" | "String" | "math" | "strings" | "strconv" | "errors" | "time") {
-    return (-1, false)
+  let lang = match mname {
+    "fmt" => "Go"
+    "console" => "TypeScript"
+    "System" => "Java and Kotlin"
+    "Math" => "TypeScript and Java"
+    "String" => "Rust"
+    "math" => "Go and Python"
+    "strings" | "strconv" | "errors" => "Go"
+    "time" => "Go and Python"
+    _ => return (-1, false)
   }
   var full = "${mname}.${text(sel.name)}"
   if full == "String.from" || full == "String.new" {
-    c.error("XO0601", md.span, "name `${mname}` not found")
+    let d = c.error("XO0601", md.span, "name `${mname}` not found")
     if full == "String.new" && args.is_empty() {
+      c.habit_note(d, "`String::new()` is Rust; an empty Xo string is `\"\"`, and a `Str` is immutable (core 1.6)")
+      c.fix(d, "write `\"\"`", [c.replace_edit(span, "\"\"")])
       return (c.named("Str"), true)
     }
+    c.habit_note(d, "`String::from(s)` is Rust; a string literal already is a `Str`, and other values interpolate, `\"\${x}\"` (core 1.6)")
     if args.len() == 1 {
-      c.infer(args[0].value, -1)
+      let t = c.infer(args[0].value, -1)
+      if c.is_prelude(t, "Str") {
+        c.fix(d, "remove `String::from`", [c.replace_edit(span, c.arg_src(args, 0))])
+      } else {
+        c.fix(d, "write `\"\${...}\"`", [c.replace_edit(span, "\"\${${c.arg_src(args, 0)}}\"")])
+      }
       return (c.named("Str"), true)
     }
     c.infer_args(args)
@@ -310,9 +445,43 @@ fn (var c: Checker) habit_module_call(call: Expr, md: Ident, sel: Ident) -> (Int
     full = c.src_of(parser.expr_span(fun))
   }
   if print_name(full) {
-    return (c.habit_print(args, full, parser.expr_span(fun)), true)
+    return (c.habit_print(span, args, full, parser.expr_span(fun)), true)
   }
-  c.error("XO0601", md.span, "name `${mname}` not found")
+  let d = c.error("XO0601", md.span, "name `${mname}` not found")
+  let method = match full {
+    "strings.ToUpper" => "to_upper"
+    "strings.ToLower" => "to_lower"
+    "strings.TrimSpace" => "trim"
+    "strings.Contains" => "contains"
+    "strings.HasPrefix" => "starts_with"
+    "strings.HasSuffix" => "ends_with"
+    "strings.Split" => "split"
+    "strings.Repeat" => "repeat"
+    "strings.TrimPrefix" => "trim_prefix"
+    "strings.TrimSuffix" => "trim_suffix"
+    "strings.Join" => "join"
+    "strings.ReplaceAll" => "replace"
+    "math.Abs" | "Math.abs" => "abs"
+    "math.Sqrt" | "Math.sqrt" | "math.sqrt" => "sqrt"
+    "math.Floor" | "Math.floor" | "math.floor" => "floor"
+    "math.Ceil" | "Math.ceil" | "math.ceil" => "ceil"
+    "Math.round" | "math.Round" => "round"
+    "math.Max" | "Math.max" => "max"
+    "math.Min" | "Math.min" => "min"
+    _ => ""
+  }
+  if !method.is_empty() && !args.is_empty() {
+    var rest: List[Str] = []
+    for i in 1..args.len() {
+      rest.push(c.arg_src(args, i))
+    }
+    let recv = c.operand_src(args[0].value)
+    c.habit_note(d, "`${full}` is ${lang}'s library; Xo calls the method on the value: `${recv}.${method}(${rest.join(", ")})` (spec/std.md 2)")
+    c.fix(d, "write `.${method}(...)`", [c.replace_edit(span, "${recv}.${method}(${rest.join(", ")})")])
+    c.infer_args(args)
+    return (c.bad_ty, true)
+  }
+  c.habit_note(d, "`${full}` is ${lang}'s library; Xo has no module `${mname}`: the std modules are listed in spec/std.md, and most text, number, and collection operations are methods on the value")
   c.infer_args(args)
   (c.bad_ty, true)
 }
@@ -342,14 +511,49 @@ fn method_habit(name: Str) -> Str {
   }
 }
 
+/// The languages of a method name of method_habit (habits.go
+/// methodHabits).
+fn method_habit_lang(name: Str) -> Str {
+  match name {
+    "length" | "toUpperCase" | "toLowerCase" => "TypeScript and Java"
+    "size" | "add" | "containsKey" => "Kotlin and Java"
+    "count" | "hasPrefix" | "hasSuffix" => "Swift"
+    "append" => "Python and Swift"
+    "push_back" => "C++"
+    "includes" | "has" | "trimStart" | "trimEnd" | "replaceAll" | "set" => "TypeScript"
+    "contains_key" | "to_uppercase" | "to_lowercase" => "Rust"
+    "has_key" => "Python 2"
+    "upper" | "lower" | "strip" | "lstrip" | "rstrip" | "startswith" | "endswith" | "items" => "Python"
+    "uppercase" | "lowercase" | "firstOrNull" | "lastOrNull" => "Kotlin"
+    "sorted" | "reversed" => "Swift and Kotlin"
+    "isEmpty" => "Kotlin and Swift"
+    _ => ""
+  }
+}
+
+/// The language of a conversion method with no Xo meaning, or ""
+/// (habits.go dropMethods).
+fn drop_method_lang(name: Str) -> Str {
+  match name {
+    "clone" | "to_owned" | "as_str" | "iter" | "into_iter" | "borrow" | "as_ref" | "collect" => "Rust"
+    "copy" => "Python"
+    "toList" => "Kotlin"
+    _ => ""
+  }
+}
+
 /// A method call that does not resolve on a value of type r (habits.go
 /// habitMethod).
 fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ident, call: Expr, hint: Int) -> (Int, Bool) {
   let (span, _, args) = call_parts(call)
   let name = text(sel.name)
   let report = "`${c.show(bt)}` has no field or method `${name}`"
-  if (name is "clone" | "to_owned" | "as_str" | "iter" | "into_iter" | "borrow" | "as_ref" | "collect" | "copy" | "toList") && args.is_empty() {
-    c.error("XO0601", sel.span, report)
+  let xend = parser.expr_span(x).end
+  let drop_lang = drop_method_lang(name)
+  if !drop_lang.is_empty() && args.is_empty() {
+    let d = c.error("XO0601", sel.span, report)
+    c.habit_note(d, "`.${name}()` is ${drop_lang}; Xo values are immutable and shared, and collections have their methods directly, so the call is not needed (core 5.1)")
+    c.fix(d, "remove `.${name}()`", [c.replace_edit(Span{start: xend, end: span.end}, "")])
     return (bt, true)
   }
   let opt = c.option_elem(r)
@@ -357,7 +561,8 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
   match name {
     "unwrap" | "get" | "orElseThrow" => {
       if !(name == "get" && opt < 0) && (opt >= 0 || res) {
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        c.habit_note(d, "`.${name}()` panics on a missing value in Rust, Java, and Kotlin; Xo says why the value cannot be missing, `x.or_fault(\"why\")`, or handles the case with `?`, `??`, `if let`, or `match` (core 2.5, spec/std.md 2)")
         if opt >= 0 {
           return (opt, true)
         }
@@ -367,39 +572,65 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
     "expect" => {
       if args.len() == 1 && (opt >= 0 || res) {
         let elem = if opt >= 0 { opt } else { c.result_t(r) }
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        c.habit_note(d, "`.expect(msg)` is Rust; Xo writes `.or_fault(msg)` (spec/std.md 2)")
+        c.fix(d, "write `.or_fault`", [c.replace_edit(sel.span, "or_fault")])
         c.check_ty(args[0].value, c.named("Str"))
         return (elem, true)
       }
     }
     "or_err" => {
+      // Option's `or_err` on what is already a Result: replace the error
       if res && args.len() == 1 && args[0].name == None {
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        c.habit_note(d, "`.or_err(e)` turns an optional value into a Result; this is already a Result, so replace its error with `.map_err(fn(_) { e })` (spec/std.md 2.5)")
+        c.fix(d, "write `.map_err(fn(_) { ... })`", [c.replace_edit(Span{start: sel.span.start, end: span.end}, "map_err(fn(_) { ${c.arg_src(args, 0)} })")])
         let t = c.result_t(r)
         return (c.result_of(t, c.infer(args[0].value, -1)), true)
       }
     }
     "to_string" | "toString" | "ToString" | "description" => {
       if args.is_empty() {
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        if c.is_prelude(r, "Str") {
+          c.habit_note(d, "`.${name}()` converts to text in Rust, Kotlin, and Java; this is already a `Str`")
+          c.fix(d, "remove `.${name}()`", [c.replace_edit(Span{start: xend, end: span.end}, "")])
+        } else {
+          c.habit_note(d, "`.${name}()` converts to text in Rust, Kotlin, and Java; Xo interpolates any `Display` value: `\"\${x}\"` (core 1.6)")
+          c.fix(d, "write `\"\${...}\"`", [c.replace_edit(span, "\"\${${c.src_of(parser.expr_span(x))}}\"")])
+        }
         return (c.named("Str"), true)
       }
     }
     "join" => {
+      // Python: ", ".join(xs) is xs.join(", ").
       if c.is_prelude(r, "Str") && args.len() == 1 {
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        c.habit_note(d, "`sep.join(xs)` is Python; Xo joins from the list, `xs.join(sep)` (spec/std.md 2)")
+        c.fix(d, "write `xs.join(sep)`", [c.replace_edit(span, "${c.operand_src(args[0].value)}.join(${c.src_of(parser.expr_span(x))})")])
         c.infer(args[0].value, -1)
         return (c.named("Str"), true)
       }
     }
-    "push_str" | "forEach" | "for_each" => {
-      c.error("XO0601", sel.span, report)
+    "push_str" => {
+      let d = c.error("XO0601", sel.span, report)
+      c.habit_note(d, "`.push_str(s)` is Rust; an Xo `Str` is immutable: `text += s` on a `var` binding, or a `StrBuilder` for many pieces (spec/std.md 2)")
+      c.infer_args(args)
+      return (c.unit_ty, true)
+    }
+    "forEach" | "for_each" => {
+      let d = c.error("XO0601", sel.span, report)
+      c.habit_note(d, "`.${name}(f)` is TypeScript, Kotlin, and Rust; Xo loops with `for x in xs { ... }` (core 3.5)")
       c.infer_args(args)
       return (c.unit_ty, true)
     }
     "substring" | "substr" | "slice" => {
       if c.is_prelude(r, "Str") || c.list_elem(r) >= 0 {
-        c.error("XO0601", sel.span, report)
+        let d = c.error("XO0601", sel.span, report)
+        c.habit_note(d, "`.${name}(a, b)` is TypeScript and Java; Xo slices with a range, `x[a..b]` (core 3.6)")
+        if args.len() == 2 {
+          c.fix(d, "write `[a..b]`", [c.replace_edit(Span{start: xend, end: span.end}, "[${c.arg_src(args, 0)}..${c.arg_src(args, 1)}]")])
+        }
         c.infer_args(args)
         return (bt, true)
       }
@@ -407,10 +638,12 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
     _ => {}
   }
   var xo = method_habit(name)
+  var lang = method_habit_lang(name)
   if xo.is_empty() {
     let snake = to_snake(sel.name)
     if snake != name {
       xo = snake
+      lang = "camelCase"
     }
   }
   if xo.is_empty() {
@@ -420,10 +653,17 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
   if m < 0 {
     return (-1, false)
   }
+  // `count(x)` and `add(x)` on other types mean other things.
   if (name is "count" | "size" | "length") && !args.is_empty() {
     return (-1, false)
   }
-  c.error("XO0601", sel.span, report)
+  let d = c.error("XO0601", sel.span, report)
+  if lang == "camelCase" {
+    c.habit_note(d, "`${name}` is a camelCase name from TypeScript, Kotlin, Java, or Swift; Xo methods are snake_case: `${xo}` (core 1.5)")
+  } else {
+    c.habit_note(d, "`.${name}` is the ${lang} name; Xo's is `.${xo}` (spec/std.md 2)")
+  }
+  c.fix(d, "write `${xo}`", [c.replace_edit(sel.span, xo)])
   let nsel = Ident{span: sel.span, name: xo.bytes()}
   let ncall = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: sspan, x: x, sel: nsel), args: args)
   (c.call_method(bt, sspan, x, nsel, [], false, ncall, hint), true)
@@ -471,34 +711,336 @@ fn (var c: Checker) habit_type(span: Span, path: List[Ident], args: List[Type], 
   if xo == "-" {
     return (-1, false)
   }
+  var d = -1
   if !env.quiet {
-    c.error("XO0601", id.span, "type `${name}` not found")
+    d = c.error("XO0601", id.span, "type `${name}` not found")
+  }
+  let lang = type_habit_lang(name)
+  var arg_srcs: List[Str] = []
+  for a in args {
+    arg_srcs.push(c.src_of(parser.type_span(a)))
   }
   if xo == "*" {
+    c.habit_note(d, "`${name}[T]` is a Rust pointer type; Xo values need no box: every value is shared or copied as is, so write `T` (core 5.1)")
     if args.len() == 1 {
+      c.fix(d, "write the inner type", [c.replace_edit(span, arg_srcs[0])])
       return (c.resolve_type(args[0], env), true)
     }
     return (c.bad_ty, true)
   }
   if xo == "!" {
+    if name == "Self" {
+      c.habit_note(d, "`Self` is ${lang} syntax; Xo has no `Self` type: name the type itself (core 3.4)")
+    } else if name == "RefCell" {
+      c.habit_note(d, "`RefCell` is Rust interior mutability; Xo shares mutable state with `Mutex[T]` or `Atomic[T]`, and a `var` binding changes a value in place (core 5.4)")
+    } else {
+      c.habit_note(d, "`${name}` is the ${lang} top type; Xo has none: make the function generic, `fn f[T](x: T)`, or name an interface with the methods you need (core 2.4, 2.7)")
+    }
     return (c.bad_ty, true)
   }
   if xo.is_empty() {
     if name == "tuple" {
+      c.habit_note(d, "`tuple[A, B]` is Python; Xo writes a tuple type `(A, B)` (core 2.1)")
       if !args.is_empty() {
+        c.fix(d, "write `(...)`", [c.replace_edit(span, "(${arg_srcs.join(", ")})")])
         var el: List[Int] = []
         for a in args {
           el.push(c.resolve_type(a, env))
         }
         return (c.new_ty(Ty{kind: TyKind.Tuple, args: el}), true)
       }
-    } else if args.len() == 1 {
-      return (c.option_of(c.resolve_type(args[0], env)), true)
+    } else {
+      c.habit_note(d, "`${name}[T]` is ${lang}; Xo writes an optional as `T?` (core 2.5)")
+      if args.len() == 1 {
+        c.fix(d, "write `T?`", [c.replace_edit(span, "${arg_srcs[0]}?")])
+        return (c.option_of(c.resolve_type(args[0], env)), true)
+      }
     }
     return (c.bad_ty, true)
   }
   if xo == "()" {
+    c.habit_note(d, "`${name}` is the ${lang} empty result; Xo writes `()`, and a function returning nothing leaves out `-> T` (core 2.1, 3.2)")
+    c.fix(d, "write `()`", [c.replace_edit(span, "()")])
     return (c.unit_ty, true)
   }
+  c.habit_note(d, "`${name}` is the ${lang} name; Xo's is `${xo}` (core 2.1)")
+  c.fix(d, "write `${xo}`", [c.replace_edit(id.span, xo)])
   (c.resolve_named_type(span, [Ident{span: id.span, name: xo.bytes()}], args, env), true)
+}
+
+/// The languages a type name of type_habit comes from (habits.go
+/// typeHabits).
+fn type_habit_lang(name: Str) -> Str {
+  match name {
+    "String" => "Rust, Kotlin, Swift, and Java"
+    "string" => "Go and TypeScript"
+    "str" => "Python and Rust"
+    "int" => "Go, Python, and C"
+    "i64" | "isize" | "usize" | "i32" | "i16" | "i8" | "u8" | "u16" | "u32" | "u64" | "f64" | "f32" | "char" | "Vec" | "BTreeMap" | "BTreeSet" | "Box" | "Rc" | "Arc" | "RefCell" | "Serialize" => "Rust"
+    "int64" | "int32" | "int16" | "int8" | "uint8" | "byte" | "uint16" | "uint32" | "uint64" | "uint" | "float64" | "float32" | "rune" | "error" => "Go"
+    "Integer" | "Object" => "Java"
+    "Long" | "Boolean" => "Kotlin and Java"
+    "number" | "Number" | "boolean" | "Record" | "unknown" => "TypeScript"
+    "Byte" | "Char" | "MutableList" | "MutableMap" | "MutableSet" | "Unit" => "Kotlin"
+    "float" => "Python and C"
+    "double" => "C and Java"
+    "Double" | "Any" => "Kotlin and Swift"
+    "bool" => "Go, Rust, and Python"
+    "Character" | "Dictionary" | "Void" | "Hashable" | "Equatable" | "Codable" => "Swift"
+    "Array" => "TypeScript and Swift"
+    "ArrayList" | "Throwable" => "Java and Kotlin"
+    "list" | "dict" | "set" | "frozenset" | "tuple" | "NoneType" => "Python"
+    "HashMap" | "HashSet" => "Rust and Java"
+    "Optional" => "Python and Java"
+    "Maybe" => "Haskell"
+    "Exception" => "Python, Java, and Kotlin"
+    "void" => "TypeScript and C"
+    "any" => "TypeScript and Go"
+    "object" => "Python and TypeScript"
+    "Self" => "Rust and Swift"
+    "Comparable" => "Swift and Kotlin"
+    _ => ""
+  }
+}
+
+/// Go's `for k, v := range x` (XO0177) with the Xo form for the type of
+/// x; the element type that binds the names the way Go would (habits.go
+/// goRange).
+fn (var c: Checker) go_range(s: Stmt, it: Int) -> Int {
+  let (span, label, pattern, iter, body) = match s {
+    ForStmt(span: span, label: label, pattern: pattern, iter: iter, body: body, ..) => (span, label, pattern, iter, body)
+    _ => return c.bad_ty
+  }
+  var names: List[Str] = []
+  if let TuplePat(elems: elems, ..) = pattern {
+    for e in elems {
+      names.push(c.src_of(parser.pattern_span(e)))
+    }
+  } else {
+    names.push(c.src_of(parser.pattern_span(pattern)))
+  }
+  var hstart = span.start
+  if label != None {
+    let src = c.files[c.cur_file].src
+    var i = span.start.offset
+    while i < src.len() && i < body.span.start.offset {
+      if i + 3 <= src.len() && src[i..i + 3] == b"for" {
+        hstart = parser.Pos{offset: i, line: span.start.line, col: span.start.col + (i - span.start.offset)}
+        break
+      }
+      i += 1
+    }
+  }
+  let header = Span{start: hstart, end: body.span.start}
+  let isrc = c.src_of(parser.expr_span(iter))
+  let d = c.error("XO0177", Span{start: hstart, end: parser.Pos{offset: hstart.offset + 3, line: hstart.line, col: hstart.col + 3}}, "`for ${names.join(", ")} := range ${isrc}` is Go syntax; Xo writes `for pattern in ${isrc}` (core 3.5)")
+  let iop = c.operand_src(iter)
+  let r = c.resolve(it)
+  if c.is_bad(r) {
+    return c.bad_ty
+  }
+  let two = names.len() == 2
+  let first = names[0]
+  let second = if two { names[1] } else { "" }
+  var form = ""
+  var elem = -1
+  var kind = ""
+  if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].module == c.prelude {
+    kind = text(c.objs[c.tys[r].obj].name)
+  }
+  let int_t = c.named("Int")
+  let targs = c.tys[r].args
+  if kind == "List" || kind == "Buf" {
+    if two && first == "_" {
+      form = "for ${second} in ${iop}"
+      elem = c.mk_tuple([int_t, targs[0]])
+    } else if two {
+      form = "for (${first}, ${second}) in ${iop}.indexed()"
+      elem = c.mk_tuple([int_t, targs[0]])
+    } else {
+      form = "for ${first} in 0..${iop}.len()"
+      elem = int_t
+    }
+  } else if kind == "Map" {
+    if two && first == "_" {
+      form = "for ${second} in ${iop}.values()"
+      elem = c.mk_tuple([targs[0], targs[1]])
+    } else if two {
+      form = "for (${first}, ${second}) in ${iop}"
+      elem = c.mk_tuple([targs[0], targs[1]])
+    } else {
+      form = "for ${first} in ${iop}.keys()"
+      elem = targs[0]
+    }
+  } else if kind == "Chan" && !two {
+    form = "for ${first} in ${iop}"
+    elem = targs[0]
+  } else if kind == "Int" && !two {
+    form = "for ${first} in 0..${iop}"
+    elem = int_t
+  } else if kind == "Bytes" && two && first == "_" {
+    form = "for ${second} in ${iop}"
+    elem = c.mk_tuple([int_t, c.named("UInt8")])
+  } else if kind == "Str" && two && first == "_" {
+    form = "for ${second} in ${iop}.runes()"
+    elem = c.mk_tuple([int_t, c.named("Rune")])
+  }
+  if form.is_empty() {
+    c.note(d, "Xo iterates with `for x in xs`, `for (i, x) in xs.indexed()`, `for (k, v) in m`, and `for i in 0..n` (core 3.5)")
+    return c.bad_ty
+  }
+  c.note(d, "for this `${c.show(it)}`, write `${form}`")
+  c.fix(d, "write `${form}`", [c.replace_edit(header, "${form} ")])
+  elem
+}
+
+/// The span of ` uses ...` in a closure literal, from the blank before
+/// `uses` to the end of the effect list (habits.go usesClauseSpan).
+fn (c: Checker) uses_clause_span(x: parser.FnLit) -> Span? {
+  if x.effects.is_empty() || c.cur_file < 0 {
+    return None
+  }
+  let src = c.files[c.cur_file].src
+  let first = x.effects[0].span
+  let last = x.effects[x.effects.len() - 1].span
+  var i = first.start.offset
+  while i > 0 && (src[i - 1] == ' ' || src[i - 1] == '(') {
+    i -= 1
+  }
+  if i < 4 || src[i - 4..i] != b"uses" {
+    return None
+  }
+  i -= 4
+  while i > 0 && src[i - 1] == ' ' {
+    i -= 1
+  }
+  var end = last.end.offset
+  var j = end
+  while j < src.len() && src[j] == ' ' {
+    j += 1
+  }
+  if j < src.len() && src[j] == ')' {
+    end = j + 1
+  }
+  if first.start.line != last.end.line {
+    return None
+  }
+  let line = first.start.line
+  Some(Span{start: parser.Pos{offset: i, line: line, col: first.start.col - (first.start.offset - i)}, end: parser.Pos{offset: end, line: line, col: last.end.col + (end - last.end.offset)}})
+}
+
+/// The source of the file at path among the checked files, or b"".
+fn (c: Checker) src_for(path: Str) -> Bytes {
+  for f in c.files {
+    if f.path == path {
+      return f.src
+    }
+  }
+  b""
+}
+
+/// The offset of line:col in src.
+fn offset_of(src: Bytes, line: Int, col: Int) -> Int {
+  var l = 1
+  var i = 0
+  while l < line && i < src.len() {
+    if src[i] == '\n' {
+      l += 1
+    }
+    i += 1
+  }
+  i + col - 1
+}
+
+fn is_ident_byte(b: UInt8) -> Bool {
+  b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+/// The position of offset off in src, counting from pos (habits.go
+/// posFrom).
+fn pos_from(src: Bytes, pos: parser.Pos, off: Int) -> parser.Pos {
+  var line = pos.line
+  var col = pos.col
+  var i = pos.offset
+  while i < off && i < src.len() {
+    if src[i] == '\n' {
+      line += 1
+      col = 1
+    } else {
+      col += 1
+    }
+    i += 1
+  }
+  parser.Pos{offset: off, line: line, col: col}
+}
+
+/// An unused binding that a Kotlin or shell `"$name"` template meant to
+/// read (habits.go dollarHabit): the note and a fix writing `${name}`;
+/// whether it applies.
+fn (var c: Checker) dollar_habit(d: Int, v: Int) -> Bool {
+  let o = c.objs[v]
+  let src = c.src_for(o.file)
+  if src.is_empty() || o.name.is_empty() || o.name[0] == '_' {
+    return false
+  }
+  let start = offset_of(src, o.line, o.col)
+  let vend = parser.Pos{offset: start + o.name.len(), line: o.line, col: o.col + o.name.len()}
+  // the rest of the enclosing declaration: up to the next line that
+  // starts a top level declaration
+  var end = src.len()
+  for kw in ["\nfn ", "\npub ", "\ntest ", "\nstruct ", "\nenum "] {
+    let i = find_in(src, kw.bytes(), vend.offset)
+    if i >= 0 && i < end {
+      end = i
+    }
+  }
+  if vend.offset > end {
+    return false
+  }
+  let body = src[vend.offset..end]
+  let pat = b"$" + o.name
+  var edits: List[DEdit] = []
+  var i = 0
+  while {
+    let j = find_in(body, pat, i)
+    if j < 0 {
+      break
+    }
+    let after = j + pat.len()
+    if (after < body.len() && is_ident_byte(body[after])) || (j > 0 && body[j - 1] == '\\') {
+      i = after
+      continue
+    }
+    let off = vend.offset + j
+    let a = pos_from(src, vend, off)
+    let b = pos_from(src, vend, off + pat.len())
+    edits.push(DEdit{span: JSpan{file: o.file, line: a.line, col: a.col, end_line: b.line, end_col: b.col}, replace: "\${${text(o.name)}}"})
+    i = after
+  }
+  if edits.is_empty() {
+    return false
+  }
+  let n = text(o.name)
+  c.note(d, "`\"$${n}\"` is Kotlin and shell interpolation; in an Xo string `$` alone is literal text, so the value is never read: write `\${${n}}` (core 1.6)")
+  c.fix(d, "write `\${${n}}`", edits)
+  true
+}
+
+/// The index of the first occurrence of pat in b at or after from, or -1.
+fn find_in(b: Bytes, pat: Bytes, from: Int) -> Int {
+  var i = from
+  while i + pat.len() <= b.len() {
+    var ok = true
+    for k in 0..pat.len() {
+      if b[i + k] != pat[k] {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return i
+    }
+    i += 1
+  }
+  -1
 }

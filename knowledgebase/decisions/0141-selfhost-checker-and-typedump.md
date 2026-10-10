@@ -3,11 +3,12 @@
 Status: Accepted (2026-10-10). Stage 1 (names), stage 2 (types and
 inference), stage 3 (generics), stage 4 (effects and real-time, but
 dependency ceilings), the parse habits (pulled ahead of stage 8, in
-selfhost/parser), stage 5 (value semantics), and stage 6 (patterns and
-exhaustiveness) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+selfhost/parser), stage 5 (value semantics), stage 6 (patterns and
+exhaustiveness), and stage 7 (notes and fixes, the full section;
+2026-10-10) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
 infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
-comparable.xo, realtime.xo, flow.xo, exhaust.xo, the sigs section in
-dump.xo),
+comparable.xo, realtime.xo, flow.xo, exhaust.xo, notes.xo, the sigs and
+full sections in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -213,6 +214,28 @@ mutations add pattern edits (patternEdits: a one line match arm
 removed, or its pattern replaced by `_`). A run the Xo checker cannot
 parse is now checked too: the Go parser must report a hard error in the
 same file (`habitOnly` false), or the run fails.
+
+**Comparison rules of stage 7** (2026-10-10, notes and fixes; they
+extend stage 6's): `xo typedump` gains a `full` section, each
+diagnostic as `xo check --json` prints it (`check.FullLines`:
+diag.Diagnostic JSON with severity, notes, and fixes, sorted as the
+diags section with equal ones in report order; json.Marshal's escaping
+of `<`, `>`, `&` included). The Xo checker prints the same section, and
+every compared run (accepted with staged warnings, or rejected only
+with staged diagnostics) must give identical full lines too; the parser
+dump (`xo astdump`) prints each diagnostic's notes and fixes after it,
+so the parser differential compares them on every file and token
+mutation. The ported notes and fixes cover the parser (habits*.go,
+parser.go), the checker's diagnostics of stages 1 to 6 (the edit
+distance suggestions of `unresolved`, previous declarations, the effect
+call chain of XO0701 with the places items are performed, comparability
+notes, conversion and Result fixes, missing arms and fields as holes,
+lost updates, moves, real-time notes and `bound N` fixes, `if` without
+`else`), and the checker's habits (habits.go: names, calls, module
+calls, print functions, types, methods, fields, `x = v`, `for ... :=
+range`). Not compared yet: the checker's habits that are diagnostics of
+their own (XO0177 of `range`, naming XO0101, time layouts XO0420; stage
+8).
 
 **Parser resynchronization** (2026-10-10): the Xo parser goes on after a
 hard error as internal/parser does (decision 0127), so a run with hard

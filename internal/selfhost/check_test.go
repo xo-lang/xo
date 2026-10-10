@@ -95,8 +95,12 @@ func TestSelfhostChecker(t *testing.T) {
 				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.otherSame, st.unsupported, st.errors)
 			t.Logf("diagnostics of the matching rejected runs: %v", codes)
 			if len(fails) > 0 {
-				if len(fails) > 10 {
-					fails = append(fails[:10], fmt.Sprintf("... and %d more", len(fails)-10))
+				show := 10
+				if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
+					fmt.Sscan(v, &show)
+				}
+				if len(fails) > show {
+					fails = append(fails[:show], fmt.Sprintf("... and %d more", len(fails)-show))
 				}
 				t.Fatalf("%d of %d runs differ:\n%s", len(fails), len(dirs), strings.Join(fails, "\n"))
 			}
@@ -134,6 +138,7 @@ type goRun struct {
 	// accepted: no errors; onlyStaged: every error is a stageDiag.
 	accepted, onlyStaged bool
 	staged               []string // the stageDiag lines
+	full                 []string // the staged diagnostics as full lines (notes, fixes)
 	other                []string // the codes of the other errors
 }
 
@@ -161,6 +166,7 @@ func goCheck(dir string) *goRun {
 		}
 	}
 	r.staged = check.DiagLines(staged)
+	r.full = check.FullLines(staged)
 	return r
 }
 
@@ -255,7 +261,7 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		st.unsupported++
 		return ""
 	}
-	gotDump, gotDiags := splitDiags(got)
+	gotDump, gotDiags, gotFull := splitDiags(got)
 	if want.accepted {
 		st.accepted++
 		wantDump := want.dump
@@ -268,6 +274,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 		// an accepted run may hold staged warnings (XO0804)
 		if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
 			return fmt.Sprintf("%s: the Go checker accepts it with:\n%s\nthe Xo checker reports:\n%s", dir, strings.Join(want.staged, "\n"), strings.Join(gotDiags, "\n"))
+		}
+		if msg := compareFullLines(dir, gotFull, want.full); msg != "" {
+			return msg
 		}
 		st.acceptedOK++
 		return ""
@@ -285,6 +294,9 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	st.staged++
 	if strings.Join(gotDiags, "\n") != strings.Join(want.staged, "\n") {
 		return fmt.Sprintf("%s: diagnostics differ:\n  Go:\n    %s\n  Xo:\n    %s", dir, strings.Join(want.staged, "\n    "), strings.Join(gotDiags, "\n    "))
+	}
+	if msg := compareFullLines(dir, gotFull, want.full); msg != "" {
+		return msg
 	}
 	st.stagedOK++
 	return ""
@@ -314,17 +326,35 @@ func stripSigEffects(dump string) string {
 	return strings.Join(lines, "\n")
 }
 
-// splitDiags cuts a dump into its names, types, and sigs part and its
-// diagnostic lines.
-func splitDiags(dump string) (string, []string) {
+// compareFull compares the full section (stage 7: severity, notes, and
+// fixes of every compared diagnostic).
+var compareFull = true
+
+// compareFullLines compares the full lines of a run and returns a
+// description of the first difference, or "".
+func compareFullLines(dir string, got, want []string) string {
+	if !compareFull || strings.Join(got, "\n") == strings.Join(want, "\n") {
+		return ""
+	}
+	return fmt.Sprintf("%s: notes or fixes differ: %s", dir, firstDiff(strings.Join(got, "\n"), strings.Join(want, "\n")))
+}
+
+// splitDiags cuts a dump into its names, types, and sigs part, its
+// diagnostic lines, and its full lines.
+func splitDiags(dump string) (string, []string, []string) {
 	names, diags, _ := strings.Cut(dump, "== diags\n")
+	diags, full, _ := strings.Cut(diags, "== full\n")
+	return names, nonEmptyLines(diags), nonEmptyLines(full)
+}
+
+func nonEmptyLines(s string) []string {
 	var lines []string
-	for _, l := range strings.Split(diags, "\n") {
+	for _, l := range strings.Split(s, "\n") {
 		if l != "" {
 			lines = append(lines, l)
 		}
 	}
-	return names, lines
+	return lines
 }
 
 // stageDiagRE matches the diagnostics the stages done reproduce

@@ -53,8 +53,9 @@ fn (var c: Checker) define(id: Ident, o: Int) {
     c.error("XO0603", id.span, "`${text(id.name)}` is predeclared and cannot be redefined at top level (core 1.4)")
     return
   }
-  if c.mods[m].members.contains(id.name) {
-    c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this module")
+  if let Some(prev) = c.mods[m].members.get(id.name) {
+    let d = c.error("XO0603", id.span, "`${text(id.name)}` is already declared in this module")
+    c.note_obj(d, prev, "previous declaration")
     return
   }
   c.mods[m].members[id.name] = o
@@ -271,7 +272,7 @@ fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
   var out: List[Str] = []
   for id in ids {
     if !is_derivable(id.name) {
-      c.error("XO0601", id.span, "derivable interface `${text(id.name)}` not found")
+      c.unresolved(id.span, "derivable interface", text(id.name), ["Debug", "Display", "Eq", "Hash", "Json", "OpenApi", "Ord", "Proto", "SqlRow"])
       continue
     }
     out.push(text(id.name))
@@ -366,12 +367,14 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
   let name = fd.name.name
   if c.objs[fo].is_static {
     c.objs[fo].static_const = fd.params.is_empty() && is_upper_snake(name)
-    if c.objs[t].statics.contains(name) {
-      c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+    if let Some(prev) = c.objs[t].statics.get(name) {
+      let d = c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+      c.note_obj(d, prev, "previous declaration")
       return false
     }
-  } else if c.objs[t].methods.contains(name) {
-    c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+  } else if let Some(prev) = c.objs[t].methods.get(name) {
+    let d = c.error("XO0603", fd.name.span, "method `${text(name)}` is already declared on `${text(c.objs[t].name)}`")
+    c.note_obj(d, prev, "previous declaration")
     return false
   }
   var is_field = false
@@ -457,7 +460,8 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
         name = "${name}.${text(s.name)}"
       }
       if is_effect_label(name) && name != "ffi" {
-        c.error("XO1405", e.span, "a real-time function may not perform `${name}`; the only effect it may declare is `ffi`")
+        let d = c.error("XO1405", e.span, "a real-time function may not perform `${name}`; the only effect it may declare is `ffi`")
+        c.note_here(d, c.objs[fo].realtime_span, "`${c.display_name(fo)}` is real-time (core 6.5)")
       }
     }
   }
@@ -510,7 +514,8 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
       continue
     }
     if name == "realtime" {
-      c.error("XO0702", e.span, "`realtime` marks a function declaration; it cannot appear here")
+      let d = c.error("XO0702", e.span, "`realtime` marks a function declaration; it cannot appear here")
+      c.note(d, "write `uses realtime` on a `fn` declaration; closures, function types, and tests cannot be real-time (core 6.5)")
       continue
     }
     if e.sub == None {
@@ -521,7 +526,22 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
         }
       }
     }
-    c.error("XO0702", e.span, "unknown effect `${name}`")
+    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "go"]
+    for (n, p) in env.params.entries() {
+      if c.objs[p].effect {
+        cands.push(text(n))
+      }
+    }
+    let d = c.error("XO0702", e.span, "unknown effect `${name}`")
+    if d >= 0 {
+      let s = nearest(name, cands.sort())
+      if !s.is_empty() {
+        c.note(d, "did you mean `${s.join("`, `")}`?")
+        c.fix(d, "replace with `${s[0]}`", [c.replace_edit(e.span, s[0])])
+      } else {
+        c.note(d, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, go, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
+      }
+    }
   }
   c.new_eset(items)
 }
@@ -605,7 +625,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
         return ht
       }
       if !env.quiet {
-        c.error("XO0601", id.span, "type `${text(name)}` not found")
+        c.unresolved(id.span, "type", text(name), c.visible_type_names(env))
       }
       return c.bad_ty
     }
@@ -627,7 +647,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     let im = match imp {
       Some(x) => x
       None => {
-        c.error("XO0601", mid.span, "module `${text(mid.name)}` not found")
+        c.unresolved(mid.span, "module", text(mid.name), c.import_names(env.file))
         return c.bad_ty
       }
     }
@@ -643,7 +663,13 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     c.record(mid, c.mods[m].obj)
     let o = c.mods[m].members.get(last.name) ?? -1
     if o < 0 {
-      c.error("XO0601", last.span, "module `${text(mid.name)}` has no type `${text(last.name)}`")
+      var tcands: List[Str] = []
+      for (n, oo) in c.mods[m].members.entries() {
+        if c.objs[oo].kind == ObjKind.Type {
+          tcands.push(text(n))
+        }
+      }
+      c.unresolved(last.span, "type of module `${text(mid.name)}`", text(last.name), tcands.sort())
       return c.bad_ty
     }
     if c.objs[o].kind != ObjKind.Type {
@@ -667,6 +693,19 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     c.resolve_type_obj(obj)
   }
   var targs = c.resolve_args_for(obj, args, env)
+  // Remember where an effect argument was left out, for the XO0701 note
+  // on it (decision 0087).
+  for a in targs {
+    if c.tys[a].kind == TyKind.EffArg && c.tys[a].eff >= 0 {
+      for it in c.esets[c.tys[a].eff] {
+        if it.param >= 0 && c.objs[it.param].elided && c.objs[it.param].elided_file.is_empty() {
+          c.objs[it.param].elided_file = if env.file >= 0 { c.files[env.file].path } else { c.path }
+          c.objs[it.param].elided_at = span
+          c.objs[it.param].elided_text = type_text(Type.NamedType(span: span, path: path, args: args))
+        }
+      }
+    }
+  }
   let ntp = c.objs[obj].tparams.len()
   if c.objs[obj].tkind == "alias" {
     if targs.len() != ntp {
@@ -702,6 +741,36 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     c.check_key_type(n, c.path, span)
   }
   n
+}
+
+/// A type expression as text (habits.go typeText).
+fn type_text(t: Type) -> Str {
+  match t {
+    NamedType(path: path, args: args, ..) => {
+      var parts: List[Str] = []
+      for p in path {
+        parts.push(text(p.name))
+      }
+      var s = parts.join(".")
+      if !args.is_empty() {
+        var ats: List[Str] = []
+        for a in args {
+          ats.push(type_text(a))
+        }
+        s = "${s}[${ats.join(", ")}]"
+      }
+      s
+    }
+    OptionalType(elem: e, ..) => "${type_text(e)}?"
+    TupleType(elems: es, ..) => {
+      var parts: List[Str] = []
+      for e in es {
+        parts.push(type_text(e))
+      }
+      "(${parts.join(", ")})"
+    }
+    _ => "..."
+  }
 }
 
 /// The type arguments written for obj; when every effect argument is
