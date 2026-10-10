@@ -11,6 +11,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `-tags xo_playground`, which leaves the runtime, native, and LLVM runtime
   sources out of the binary. `build.Generate` is the code generation step
   of `xo build` without a build directory or the Go toolchain.
+  `xoplay gen --test` generates test binaries, with `xo_nohttp` when they do
+  not reach std/http (`gen.ReachesStd`).
 - LLVM backend: struct parameters of 256 bytes or more are passed by
   reference in direct calls, `var` ones written back through the
   pointer, instead of field by field (decision 0145); the self hosted

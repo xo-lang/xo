@@ -27,6 +27,9 @@ whatever the site ships must not include it.
   `-tags xo_playground`, which leaves them empty. The rt archive carries
   compiled code and export data (which includes inlinable function bodies),
   not source.
+- **Tests**: `xoplay gen --test` builds the test binary; one that does not
+  reach std/http gets `xo_nohttp` too (`gen.ReachesStd`), so the same
+  archive serves programs and tests.
 - **One rt variant**: tag `xo_nohttp`. A program that imports std/http can be
   checked but not run (a tab cannot open a server).
 - **`use go`**: a fixed list of Go standard packages is bound at build time

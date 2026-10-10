@@ -151,6 +151,9 @@ func releaseVariant(o Options) string {
 // Result is the outcome of a build.
 type Result struct {
 	Diagnostics []diag.Diagnostic
+	// Check is the check result the program was generated from (set by
+	// Generate).
+	Check *check.Result
 	// Failed is set when checking reported errors (no Go was built).
 	Failed bool
 	// Binaries maps each target to its binary path.
@@ -394,7 +397,7 @@ func Generate(dirs []string, opts Options) (*Result, *gen.Program, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}}
+	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}, Check: res}
 	if !ok {
 		out.Failed = true
 		return out, nil, nil

@@ -296,6 +296,12 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 // the std module path, directly or through other std modules. std/testing,
 // which the checker always loads for test blocks, counts only when a
 // module imports it; callers treat test builds as importing it.
+// ReachesStd reports whether the program of res loads the std module path,
+// directly or through other modules. The playground (cmd/xoplay) builds
+// test binaries that do not reach std/http with the tag xo_nohttp, as
+// Generate does for programs.
+func ReachesStd(res *check.Result, path string) bool { return reachesStd(res.Info(), path) }
+
 func reachesStd(info *check.Info, path string) bool {
 	seen := map[*check.Module]bool{}
 	var stack []*check.Module

@@ -5,7 +5,9 @@
 //
 //	xoplay check DIR        diagnostics of the module in DIR
 //	xoplay fmt FILE         FILE reformatted in place
-//	xoplay gen DIR OUT      the Go source of the program in DIR, written
+//	xoplay gen [--test] DIR OUT
+//	                        the Go source of the program (or with --test,
+//	                        the test binary) in DIR, written
 //	                        under OUT, the packages to compile in order,
 //	                        and the files it needs in package rt
 //
@@ -48,7 +50,7 @@ func main() {
 
 func run(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("usage: xoplay check DIR | fmt FILE | gen DIR OUT")
+		return nil, fmt.Errorf("usage: xoplay check DIR | fmt FILE | gen [--test] DIR OUT")
 	}
 	switch {
 	case args[0] == "check" && len(args) == 2:
@@ -71,9 +73,11 @@ func run(args []string) (any, error) {
 		}
 		return map[string]any{"changed": string(out) != string(src)}, nil
 	case args[0] == "gen" && len(args) == 3:
-		return generate(args[1], args[2])
+		return generate(args[1], args[2], gen.Build)
+	case args[0] == "gen" && len(args) == 4 && args[1] == "--test":
+		return generate(args[2], args[3], gen.Test)
 	}
-	return nil, fmt.Errorf("usage: xoplay check DIR | fmt FILE | gen DIR OUT")
+	return nil, fmt.Errorf("usage: xoplay check DIR | fmt FILE | gen [--test] DIR OUT")
 }
 
 func diagnostics(ds []diag.Diagnostic) map[string]any {
@@ -95,13 +99,21 @@ type pkg struct {
 // The result lists the program's packages in dependency order (package
 // main last) and the Go build tags it needs; the browser has archives for
 // exactly one rt variant, so it refuses a program whose tags differ.
-func generate(dir, out string) (any, error) {
-	res, prog, err := build.Generate([]string{dir}, build.Options{Mode: gen.Build})
+func generate(dir, out string, mode gen.Mode) (any, error) {
+	opts := build.Options{Mode: mode}
+	res, prog, err := build.Generate([]string{dir}, opts)
 	if err != nil {
 		return nil, err
 	}
 	if prog == nil {
 		return diagnostics(res.Diagnostics), nil
+	}
+	if mode == gen.Test && prog.Tags == nil {
+		// xo test links net/http into every test binary; a test binary
+		// that never loads std/http cannot reach it either
+		if !gen.ReachesStd(res.Check, "std/http") {
+			prog.Tags = []string{"xo_nohttp"}
+		}
 	}
 	byDir := map[string]*pkg{}
 	runtime := []string{}

@@ -7,7 +7,7 @@ Last verified: 2026-10-10 (Go 1.26.1, Chrome headless).
 
 | Piece | Where | What |
 |---|---|---|
-| `cmd/xoplay` | this repo | `check DIR`, `fmt FILE`, `gen DIR OUT`, one JSON object each; built for wasip1 with `-tags xo_playground` |
+| `cmd/xoplay` | this repo | `check DIR`, `fmt FILE`, `gen [--test] DIR OUT`, one JSON object each; built for wasip1 with `-tags xo_playground` |
 | `build.Generate` | `internal/build/build.go` | check plus code generation of `xo build`, no build directory, no Go toolchain |
 | `std/embed_impl.go` / `embed_playground.go` | this repo | the rt, native, and llrt embeds; empty under `xo_playground` |
 | `scripts/build-playground.py` | site repo | builds xoplay.wasm, compile.wasm, link.wasm, the rt plus Go std archive bundle (tag `xo_nohttp`, with `use go` adapters), and the bindings bundle into `static/play/assets/` (gzipped, content hashed) and `static/play/manifest.json` |
@@ -24,14 +24,31 @@ scripts/build-playground.py            # after compiler, std/rt, or Go changes (
 .tools/bin/hugo                        # then test at /play/ (needs http://localhost or https)
 ```
 
-`go test ./cmd/xoplay` covers the three commands natively. The browser
-pipeline has no automated test in either repo yet; it was verified by
-driving headless Chrome over the DevTools protocol: every tour example and
-mistake, an infinite loop (stopped at 10 s), an output flood (cut at 1 MB,
+`go test ./cmd/xoplay` covers the commands natively. The browser pipeline
+is tested in the site repo by `node scripts/test-playground.mjs` (headless
+Chrome over the DevTools protocol, no npm dependencies; about 1 minute):
+every tour example and mistake, the tour's tests, a failing test, the
+download notice, `#example=` and share links, highlighting, an infinite loop (stopped at 10 s), an output flood (cut at 1 MB,
 HTML shown as text), unbounded allocation (Go "out of memory", exit 2),
 `os.fs.read_text("/etc/passwd")` (fails: no files), `use go "os/exec"`
 (XO1101 naming the supported packages), a 10 MB deflate bomb in a link
-(refused at 64 KB), sleeps.
+(refused at 64 KB), sleeps, and no console errors. Last verified:
+2026-10-10, all passed.
+
+## Tests (the test button)
+
+`xoplay gen --test` generates the test binary (`gen.Test`). `xo test`
+builds test binaries without `xo_nohttp`; the playground adds the tag when
+the program does not reach std/http (`gen.ReachesStd`), so the same rt
+archive serves both. The runner starts it with `play.test -v`.
+
+## Editor
+
+A textarea over a highlighted `<pre>` (`highlight.js`, a tokenizer for the
+lexical grammar: the 28 keywords of core 1.4, strings with `${}`
+interpolation, raw and byte strings, runes, numbers and durations, `???`).
+It builds DOM nodes with `textContent`. Update its keyword list when
+core 1.4 changes.
 
 ## Build steps in the browser
 

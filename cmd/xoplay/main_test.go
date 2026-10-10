@@ -84,3 +84,14 @@ func TestGenCheckFails(t *testing.T) {
 		t.Fatal("no diagnostics")
 	}
 }
+
+func TestGenTest(t *testing.T) {
+	dir := module(t, "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n\ntest \"add\" {\n  expect(add(2, 2)) == 4\n}\n\nfn main(os: Os) {\n}\n")
+	m := roundTrip(t, "gen", "--test", dir, t.TempDir())
+	if _, ok := m["packages"]; !ok {
+		t.Fatalf("no packages: %v", m)
+	}
+	if tags := m["tags"].([]any); len(tags) != 1 || tags[0] != "xo_nohttp" {
+		t.Errorf("tags = %v, want [xo_nohttp] for tests that do not load std/http", tags)
+	}
+}
