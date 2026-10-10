@@ -23,12 +23,14 @@ import (
 // declaration duplicated), type mutations (a literal replaced by one of
 // another type, a `?` removed, or a field or method name replaced by
 // another one of the file), generics mutations (a type argument removed,
-// a constraint dropped), and effects mutations (a `uses` clause removed
-// or added). The rules of TestSelfhostChecker apply: an accepted mutation
+// a constraint dropped), and effects mutations (a `uses` clause removed,
+// or one added: an effect, or `realtime` for the rules of core 6.5). The
+// rules of TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
 // mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
-// override.
+// override. The Xo checker is built with the go backend, or the one
+// XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerMutations(t *testing.T) {
 	n := 1000
 	if testing.Short() {
@@ -42,7 +44,11 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		fmt.Sscan(v, &seed)
 	}
 	root := repoRoot(t)
-	bin, err := selfhostBinary("check", "go")
+	backend := "go"
+	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
+		backend = v
+	}
+	bin, err := selfhostBinary("check", backend)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +490,8 @@ func mutateEffects(rng *rand.Rand, src []byte) []byte {
 			edits = append(edits, edit{toks[i-1].Span.End.Offset, toks[j].Span.Start.Offset, ""})
 		}
 	}
-	labels := []string{"net", "clock", "fs.read", "stdio", "rand", "env"}
+	// `realtime` (a third of the additions) turns on the rules of core 6.5
+	labels := []string{"net", "clock", "fs.read", "stdio", "rand", "env", "realtime", "realtime", "realtime"}
 	off := 0
 	for _, l := range bytes.SplitAfter(src, []byte("\n")) {
 		t := bytes.TrimRight(l, "\n")

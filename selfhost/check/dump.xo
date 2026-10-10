@@ -25,6 +25,8 @@ fn (var c: Checker) run() {
     }
   }
   c.check_key_types()
+  c.solve_effects()
+  c.check_realtime()
   // check.go reportAmbiguous: a closure result that nothing determined
   // and whose body never completes is Never
   for t in c.never_results {
@@ -173,6 +175,9 @@ fn (c: Checker) dump_sigs(var out: StrBuilder, m: Int) {
 fn (c: Checker) fn_effects_text(f: Int) -> Str {
   if c.objs[f].declared >= 0 {
     return c.eff_text(c.objs[f].declared)
+  }
+  if let Some(fl) = c.inferred.get(f) {
+    return c.flat_text(fl)
   }
   ""
 }

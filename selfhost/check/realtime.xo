@@ -1,0 +1,490 @@
+// Real-time functions (core 6.5, decision 0133; internal/check/realtime.go):
+// a function declared `uses realtime` may not allocate (XO1401), loop
+// without a bound (XO1402), call what is not known to be real-time
+// (XO1403), recurse (XO1404), or block (XO1405). The rules are syntactic
+// and run after every body is checked, on the recorded types and calls.
+// Loop bounds (`bound N`) are checked with the loops (XO1402).
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The prelude functions and methods a real-time function may call
+/// (realtime.go rtBounded).
+fn rt_bounded(k: Str) -> Bool {
+  k is "fault" | "Int.abs" | "Int.pow" | "Int.wrapping_add" | "Int.wrapping_sub" | "Int.wrapping_mul" | "Int.saturating_add" | "Int.saturating_sub" | "Int.saturating_mul" | "Int.checked_add" | "Int.checked_sub" | "Int.checked_mul" | "Int.checked_div" | "Int8.try" | "Int16.try" | "Int32.try" | "Int64.try" | "UInt8.try" | "UInt16.try" | "UInt32.try" | "UInt64.try" | "Rune.try" | "Float.floor" | "Float.ceil" | "Float.round" | "Float.trunc" | "Float.abs" | "Float.sqrt" | "Float.is_nan" | "Str.len" | "Str.is_empty" | "Str.contains" | "Str.starts_with" | "Str.ends_with" | "Str.find" | "Bytes.len" | "Bytes.is_empty" | "Bytes.decode_rune" | "Rune.is_digit" | "Rune.is_letter" | "Rune.is_space" | "Rune.to_lower" | "Rune.to_upper" | "Rune.is_print" | "List.len" | "List.is_empty" | "List.get" | "List.first" | "List.last" | "List.contains" | "List.index_of" | "List.set" | "Map.len" | "Map.is_empty" | "Map.get" | "Map.contains" | "Map.get_or_fault" | "Set.len" | "Set.is_empty" | "Set.contains" | "Option.is_some" | "Option.is_none" | "Option.or_fault" | "Result.is_ok" | "Result.is_err" | "Result.ok" | "Result.err" | "Result.or_fault" | "Duration.from_secs" | "Duration.from_secs_int" | "Duration.from_millis" | "Duration.from_nanos" | "Duration.seconds" | "Duration.millis" | "Duration.nanos" | "Duration.scale" | "Duration.ceil_seconds" | "Duration.abs" | "Time.from_unix" | "Time.from_unix_millis" | "Time.unix" | "Time.unix_millis" | "Atomic.get" | "Atomic.set" | "Atomic.add" | "Atomic.max" | "Atomic.swap" | "Atomic.compare_and_swap" | "Chan.len" | "Buf.len" | "StrBuilder.len" | "BytesBuilder.len" | "Secret.reveal"
+}
+
+/// The prelude functions and methods that wait for another task or the
+/// scheduler (realtime.go rtBlocking).
+fn rt_blocking(k: Str) -> Bool {
+  k is "dbg" | "Chan.send" | "Chan.recv" | "Chan.try_send" | "Chan.try_recv" | "Chan.close" | "Chan.new" | "Mutex.with" | "Mutex.with_read" | "Mutex.new" | "Task.await" | "Scope.spawn" | "Scope.spawn_background" | "Scope.cancel" | "Scope.group"
+}
+
+/// A call of a real-time function from another, for XO1404.
+struct RtCall {
+  to: Int
+  file: Str
+  span: Span
+}
+
+/// The real-time function being walked and the real-time functions it
+/// calls.
+struct RtWalk {
+  fo: Int
+  calls: List[RtCall] = []
+}
+
+/// Applies the rules of core 6.5 to every function marked `uses
+/// realtime`, then reports recursion among them (realtime.go
+/// checkRealtime).
+fn (var c: Checker) check_realtime() {
+  var walks: List[RtWalk] = []
+  for fo in c.realtime_fns {
+    if c.objs[fo].fn_decl.is_empty() || c.mods[c.objs[fo].module].is_std {
+      continue
+    }
+    let fd = c.objs[fo].fn_decl[0]
+    let body = match fd.body {
+      Some(b) => b
+      None => continue
+    }
+    c.set_file(c.objs[fo].decl_file)
+    var w = RtWalk{fo: fo}
+    for cl in fd.clauses {
+      match cl {
+        RequiresClause(cond: cond, ..) => c.rt_expr(w, cond)
+        EnsuresClause(cond: cond, ..) => c.rt_expr(w, cond)
+        UsesClause(..) => {}
+      }
+    }
+    c.rt_block(w, body)
+    walks.push(w)
+  }
+  c.realtime_cycles(walks)
+}
+
+/// Reports each cycle of calls among real-time functions once (XO1404),
+/// at the call that closes it.
+fn (var c: Checker) realtime_cycles(walks: List[RtWalk]) {
+  var index: Map[Int, Int] = {}
+  for (i, w) in walks.indexed() {
+    index[w.fo] = i
+  }
+  // 0 white, 1 grey, 2 black
+  var color: List[Int] = []
+  for _ in walks {
+    color.push(0)
+  }
+  for i in 0..walks.len() {
+    if color[i] == 0 {
+      var stack: List[Int] = []
+      c.rt_visit(walks, index, color, stack, i)
+    }
+  }
+}
+
+fn (var c: Checker) rt_visit(walks: List[RtWalk], index: Map[Int, Int], var color: List[Int], var stack: List[Int], f: Int) {
+  color[f] = 1
+  stack.push(f)
+  for call in walks[f].calls {
+    let g = index.get(call.to) ?? -1
+    if g < 0 {
+      continue
+    }
+    if color[g] == 0 {
+      c.rt_visit(walks, index, color, stack, g)
+    } else if color[g] == 1 {
+      var i = stack.len() - 1
+      while stack[i] != g {
+        i -= 1
+      }
+      if f == g {
+        c.report(call.file, "XO1404", call.span, "real-time function `${c.display_name(walks[f].fo)}` calls itself")
+      } else {
+        var names: List[Str] = []
+        for s in stack[i..] {
+          names.push("`${c.display_name(walks[s].fo)}`")
+        }
+        names.push("`${c.display_name(walks[g].fo)}`")
+        c.report(call.file, "XO1404", call.span, "recursion among real-time functions: ${names.join(" calls ")}")
+      }
+    }
+  }
+  stack.pop()
+  color[f] = 2
+}
+
+fn (var c: Checker) rt_block(var w: RtWalk, b: Block) {
+  for s in b.stmts {
+    c.rt_stmt(w, s)
+  }
+}
+
+fn (var c: Checker) rt_exprs(var w: RtWalk, es: List[Expr]) {
+  for e in es {
+    c.rt_expr(w, e)
+  }
+}
+
+fn (var c: Checker) rt_opt(var w: RtWalk, e: Expr?) {
+  if let Some(x) = e {
+    c.rt_expr(w, x)
+  }
+}
+
+/// Whether e has a type whose `+` builds a new value (Str, List, Bytes).
+fn (c: Checker) rt_growable(e: Expr) -> Bool {
+  let t = c.type_of(e)
+  t >= 0 && (c.is_prelude(t, "Str") || c.is_prelude(t, "List") || c.is_prelude(t, "Bytes"))
+}
+
+/// The span of a loop's first line (its keyword and header).
+fn loop_head(sp: Span) -> Span {
+  if sp.end.line > sp.start.line {
+    return Span{start: sp.start, end: parser.Pos{offset: sp.start.offset + 5, line: sp.start.line, col: sp.start.col + 5}}
+  }
+  sp
+}
+
+fn (var c: Checker) rt_stmt(var w: RtWalk, s: Stmt) {
+  match s {
+    LetStmt(value: v, ..) => c.rt_expr(w, v)
+    VarStmt(value: v, ..) => c.rt_expr(w, v)
+    AssignStmt(span: span, op: op, target: target, value: value) => {
+      if op == parser.Kind.PlusAssign && c.rt_growable(target) {
+        c.error("XO1401", span, "`+=` on `${c.show(c.type_of(target))}` allocates in a real-time function")
+      }
+      if let IndexExpr(x: x, ..) = target {
+        if c.is_prelude(c.type_of(x), "Map") {
+          c.error("XO1401", span, "storing into a Map may grow it in a real-time function; use a List indexed by a small Int")
+        }
+      }
+      c.rt_expr(w, target)
+      c.rt_expr(w, value)
+    }
+    DeferStmt(body: b, ..) => c.rt_stmt(w, b)
+    ReturnStmt(value: v, ..) => c.rt_opt(w, v)
+    ForStmt(span: span, iter: iter, bound: bound, body: body, ..) => {
+      c.rt_for(w, span, iter, bound)
+      c.rt_exprs(w, bound)
+      c.rt_block(w, body)
+    }
+    WhileStmt(span: span, cond: cond, value: value, bound: bound, body: body, ..) => {
+      if bound.is_empty() && cond == None && value.is_empty() {
+        c.error("XO1402", loop_head(span), "an infinite `while` loop in a real-time function; write `while cond bound N`")
+      } else if bound.is_empty() {
+        c.error("XO1402", loop_head(span), "`while` loop without a bound in a real-time function")
+      }
+      c.rt_opt(w, cond)
+      c.rt_exprs(w, value)
+      c.rt_exprs(w, bound)
+      c.rt_block(w, body)
+    }
+    ExprStmt(x: x, ..) => c.rt_expr(w, x)
+    ConstDecl(d: cd) => c.rt_expr(w, cd.value)
+    BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+  }
+}
+
+/// The bound of a `for` and its iterated value (realtime.go forStmt).
+fn (var c: Checker) rt_for(var w: RtWalk, span: Span, iter: Expr, bound: List[Expr]) {
+  let it = unparen(iter)
+  let isp = parser.expr_span(iter)
+  if c.is_prelude(c.type_of(iter), "Chan") {
+    c.error("XO1405", isp, "a `for` over a channel waits for values; real-time functions may not block")
+    c.rt_expr(w, iter)
+    return
+  }
+  if let RangeExpr(lo: lo, hi: hi, inclusive: inc, ..) = it {
+    c.rt_opt(w, lo)
+    c.rt_opt(w, hi)
+    if bound.is_empty() && c.range_count(lo, hi, inc) == None {
+      c.error("XO1402", isp, "`for` over a range whose ends are not constant needs `bound N` in a real-time function")
+    }
+    return
+  }
+  var walked = false
+  if let CallExpr(fun: fun, ..) = it {
+    let fo = c.fn_calls.get(c.expr_key(it)) ?? -1
+    if fo >= 0 && c.objs[fo].module == c.prelude && c.objs[fo].name == b"indexed" {
+      if let SelectorExpr(x: recv, ..) = unparen(fun) {
+        c.rt_expr(w, recv)
+        walked = true
+      }
+    }
+  }
+  if !walked {
+    c.rt_expr(w, iter)
+  }
+  if bound.is_empty() {
+    c.error("XO1402", isp, "`for` over a collection needs `bound N` in a real-time function")
+  }
+}
+
+fn (var c: Checker) rt_expr(var w: RtWalk, e: Expr) {
+  match e {
+    FnLit(f) => {
+      c.error("XO1401", f.span, "a closure allocates its environment in a real-time function")
+      return
+    }
+    ListLit(span: span, elems: els) => {
+      c.error("XO1401", span, "a List literal allocates in a real-time function; build the List during initialization and write it by index")
+      c.rt_exprs(w, els)
+    }
+    MapLit(span: span, entries: entries) => {
+      c.error("XO1401", span, "a Map literal allocates in a real-time function")
+      for en in entries {
+        c.rt_expr(w, en.key)
+        c.rt_expr(w, en.value)
+      }
+    }
+    SetLit(span: span, elems: els) => {
+      c.error("XO1401", span, "a Set literal allocates in a real-time function")
+      c.rt_exprs(w, els)
+    }
+    StringLit(s) => {
+      for p in s.parts {
+        if p.expr != None {
+          c.error("XO1401", s.span, "string interpolation allocates in a real-time function")
+          break
+        }
+      }
+      for p in s.parts {
+        c.rt_opt(w, p.expr)
+      }
+    }
+    BinaryExpr(span: span, op: op, x: x, y: y) => {
+      if op == parser.Kind.Plus && c.rt_growable(e) {
+        c.error("XO1401", span, "`+` on `${c.show(c.type_of(e))}` allocates in a real-time function")
+      }
+      c.rt_expr(w, x)
+      c.rt_expr(w, y)
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      if let RangeExpr(span: rs, ..) = unparen(index) {
+        c.error("XO1401", rs, "slicing allocates in a real-time function; pass the List and the bounds")
+      }
+      c.rt_expr(w, x)
+      c.rt_expr(w, index)
+    }
+    ScopeExpr(span: span, body: body, ..) => {
+      c.error("XO1405", span, "`scope` waits for its tasks; real-time functions may not block")
+      c.rt_block(w, body)
+    }
+    SelectExpr(span: span, arms: arms) => {
+      c.error("XO1405", span, "`select` waits on channels; real-time functions may not block")
+      for a in arms {
+        c.rt_opt(w, a.op)
+        c.rt_opt(w, a.after)
+        if let Some(b) = a.body {
+          c.rt_stmt(w, b)
+        }
+      }
+    }
+    WhileExpr(span: span, body: body) => {
+      c.error("XO1402", span, "an infinite loop in a real-time function; loops need `bound N`")
+      c.rt_block(w, body)
+    }
+    CallExpr(fun: fun, args: args, ..) => {
+      if c.rt_call(w, e, fun) {
+        return
+      }
+      c.rt_expr(w, fun)
+      for a in args {
+        c.rt_expr(w, a.value)
+      }
+    }
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => c.rt_expr(w, x)
+    TupleExpr(elems: els, ..) => c.rt_exprs(w, els)
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        c.rt_expr(w, f.value)
+      }
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      c.rt_opt(w, lo)
+      c.rt_opt(w, hi)
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      c.rt_expr(w, x)
+      for f in fields {
+        c.rt_expr(w, f.value)
+      }
+    }
+    IfExpr(e: x) => {
+      c.rt_opt(w, x.cond)
+      c.rt_opt(w, x.value)
+      c.rt_block(w, x.then)
+      c.rt_opt(w, x.els)
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      c.rt_expr(w, subject)
+      for a in arms {
+        c.rt_opt(w, a.guard)
+        if let Some(b) = a.body {
+          c.rt_stmt(w, b)
+        }
+      }
+    }
+    Block(b) => c.rt_block(w, b)
+    Ident(..) | IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
+  }
+}
+
+/// Checks a call; true when its arguments are not to be walked (the
+/// message of `fault`).
+fn (var c: Checker) rt_call(var w: RtWalk, call: Expr, fun: Expr) -> Bool {
+  let key = c.expr_key(call)
+  let fsp = parser.expr_span(fun)
+  if c.value_calls.contains(key) {
+    c.error("XO1403", fsp, "call of a function value in a real-time function; its callee is not known to be real-time")
+    return false
+  }
+  let fo = c.fn_calls.get(key) ?? -1
+  if fo < 0 {
+    // a variant constructor, a conversion, or a call that did not check
+    return false
+  }
+  let m = c.objs[fo].module
+  if m >= 0 && c.mods[m].is_prelude {
+    var k = text(c.objs[fo].name)
+    if c.objs[fo].recv >= 0 {
+      k = "${text(c.objs[c.objs[fo].recv].name)}.${k}"
+    }
+    if k == "fault" {
+      c.rt_expr(w, fun)
+      return true
+    }
+    if rt_bounded(k) {
+      return false
+    }
+    if rt_blocking(k) {
+      c.error("XO1405", fsp, "`${k}` blocks or synchronizes with other tasks; real-time functions may not block")
+    } else if c.objs[fo].iface {
+      c.error("XO1405", fsp, "`${k}` is a capability call; real-time functions perform no effects except `ffi`")
+    } else {
+      c.error("XO1401", fsp, "`${k}` may allocate or run for a time its operands do not bound; it is not allowed in a real-time function")
+    }
+    return false
+  }
+  if c.objs[fo].iface {
+    c.error("XO1403", fsp, "call of interface method `${c.display_name(fo)}` in a real-time function; its implementation is not known")
+    return false
+  }
+  if !c.objs[fo].realtime {
+    c.error("XO1403", fsp, "`${c.display_name(fo)}` is not real-time; a real-time function may call only real-time functions")
+    return false
+  }
+  w.calls.push(RtCall{to: fo, file: c.path, span: fsp})
+  false
+}
+
+// ---------------------------------------------------------------------------
+// Loop bounds (realtime.go checkLoopBound)
+
+/// Checks the `bound N` of a loop (core 3.5): a constant Int that is not
+/// negative, and for a `for` over a constant range, at least the range's
+/// length. iter is the iterated value of a `for` (zero or one element).
+fn (var c: Checker) check_loop_bound(bound: List[Expr], iter: List[Expr]) {
+  for b in bound {
+    c.check_ty(b, c.named("Int"))
+    let n = match c.const_int(c.cur_file, b, 0) {
+      Some(v) => v
+      None => {
+        c.error("XO1402", parser.expr_span(b), "a loop bound must be a constant Int (a literal or a `const`)")
+        return
+      }
+    }
+    if n < 0 {
+      c.error("XO1402", parser.expr_span(b), "a loop bound must not be negative (it is ${n})")
+      return
+    }
+    for it in iter {
+      if let RangeExpr(lo: lo, hi: hi, inclusive: inc, ..) = unparen(it) {
+        if let Some(cnt) = c.range_count(lo, hi, inc) {
+          if cnt > n {
+            c.error("XO1402", parser.expr_span(it), "this range runs ${cnt} times, more than its bound ${n}")
+          }
+        }
+      }
+    }
+  }
+}
+
+/// The number of values of a range with constant ends.
+fn (c: Checker) range_count(lo: Expr?, hi: Expr?, inclusive: Bool) -> Int? {
+  let l = match lo {
+    Some(x) => c.const_int(c.cur_file, x, 0)?
+    None => return None
+  }
+  let h = match hi {
+    Some(x) => c.const_int(c.cur_file, x, 0)?
+    None => return None
+  }
+  var n = h - l
+  if inclusive {
+    n += 1
+  }
+  if n < 0 {
+    n = 0
+  }
+  Some(n)
+}
+
+/// A constant Int expression: literals, `const` names, parentheses,
+/// unary minus, and + - * / % of constants.
+fn (c: Checker) const_int(f: Int, e: Expr, depth: Int) -> Int? {
+  if depth > 32 {
+    return None
+  }
+  match e {
+    IntLit(value: v, ..) => Int.parse(text(v))
+    ParenExpr(x: x, ..) => c.const_int(f, x, depth + 1)
+    UnaryExpr(op: op, x: x, ..) => {
+      if op != parser.Kind.Minus {
+        return None
+      }
+      Some(-c.const_int(f, x, depth + 1)?)
+    }
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      let a = c.const_int(f, x, depth + 1)?
+      let b = c.const_int(f, y, depth + 1)?
+      match op {
+        Plus => Some(a + b)
+        Minus => Some(a - b)
+        Star => Some(a * b)
+        Slash => if b == 0 { None } else { Some(a / b) }
+        Percent => if b == 0 { None } else { Some(a % b) }
+        _ => None
+      }
+    }
+    Ident(id) => c.const_ref(f, id, depth)
+    SelectorExpr(sel: sel, ..) => c.const_ref(f, sel, depth)
+    _ => None
+  }
+}
+
+/// The value of the constant an identifier names (a block `const` or a
+/// module constant), if it is a constant Int.
+fn (c: Checker) const_ref(f: Int, id: Ident, depth: Int) -> Int? {
+  let i = c.name_at.get(f * 268435456 + id.span.start.offset) ?? -1
+  if i < 0 {
+    return None
+  }
+  let o = c.names[i].obj
+  if o < 0 {
+    return None
+  }
+  let x = c.objs[o]
+  if x.kind == ObjKind.Local {
+    if x.is_const && !x.const_val.is_empty() {
+      return c.const_int(f, x.const_val[0], depth + 1)
+    }
+    return None
+  }
+  if x.kind == ObjKind.Const && x.decl_file >= 0 {
+    if let ConstDecl(d: cd) = c.files[x.decl_file].ast.decls[x.decl_idx] {
+      return c.const_int(x.decl_file, cd.value, depth + 1)
+    }
+  }
+  None
+}

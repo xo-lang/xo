@@ -142,6 +142,8 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   let saved_scopes = c.scopes
   let saved = c.push_ctx(Ctx{fn_obj: fo, name: c.display_name(fo), result: c.objs[fo].result, err: c.objs[fo].err})
   let cx = c.ctx
+  let body_eff = c.ctxs[cx].eff
+  c.objs[fo].body_eff = body_eff
   c.scopes = []
   c.push_scope()
   if let Some(r) = fd.recv {
@@ -165,6 +167,9 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   c.finish_groups(cx)
   c.ctx = saved
   c.scopes = saved_scopes
+  if c.objs[fo].declared >= 0 && fd.body != None {
+    c.obligations.push(EffOb{kind: ObKind.Decl, sub: body_eff, sup: c.objs[fo].declared, file: c.path, span: fd.name.span, fo: fo})
+  }
 }
 
 fn (var c: Checker) check_default(e: Expr, t: Int) {
@@ -181,13 +186,17 @@ fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
   for cl in fd.clauses {
     match cl {
       RequiresClause(cond: cond, els: els, ..) => {
+        let p = c.pure_start()
         c.check_ty(cond, c.named("Bool"))
+        c.pure_end(p, parser.expr_span(cond))
         if let Some(e) = els {
           if c.objs[fo].err < 0 {
             c.error("XO0205", parser.expr_span(e), "`requires ... else` returns an error, but `${c.display_name(fo)}` cannot fail")
             continue
           }
+          let p2 = c.pure_start()
           c.check_ty(e, c.objs[fo].err)
+          c.pure_end(p2, parser.expr_span(e))
         }
       }
       EnsuresClause(span: span, cond: cond, ..) => {
@@ -197,7 +206,9 @@ fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
         c.declare_var(rv)
         let saved = c.ctxs[c.ctx].in_ensures
         c.ctxs[c.ctx].in_ensures = true
+        let p = c.pure_start()
         c.check_ty(cond, c.named("Bool"))
+        c.pure_end(p, parser.expr_span(cond))
         c.ctxs[c.ctx].in_ensures = saved
         c.pop_scope()
       }
@@ -225,7 +236,9 @@ fn (var c: Checker) check_struct_extras(t: Int, sd: parser.StructDecl) {
     c.objs.push(Obj{kind: ObjKind.Local, name: f.name, file: c.path, line: f.line, col: f.col, local: "param", ty: f.ty, vctx: c.ctx})
     c.declare_var(fv)
   }
+  let p = c.pure_start()
   c.check_ty(inv, c.named("Bool"))
+  c.pure_end(p, parser.expr_span(inv))
   c.ctx = saved
   c.scopes = saved_scopes
 }
@@ -444,7 +457,7 @@ fn (var c: Checker) check_derives(t: Int, ids: List[Ident]) {
       if c.mentions_param(ft) {
         continue
       }
-      if !c.implements(ft, iface) {
+      if !c.implements(ft, iface, no_span()) {
         c.error("XO0404", id.span, "`derive ${n}` needs every field to implement `${n}`, but `${names[i]}` has type `${c.show(ft)}`")
       }
     }
@@ -755,26 +768,20 @@ fn (var c: Checker) stmt(s: Stmt) {
       if !go_range {
         elem = c.iter_elem(it, iter)
       }
-      for b in bound {
-        c.check_ty(b, c.named("Int"))
-      }
+      c.check_loop_bound(bound, [iter])
       c.loop_body(label_name(label), false, body, [pattern], elem, false)
     }
     WhileStmt(label: label, cond: cond, pattern: pattern, value: value, bound: bound, body: body, ..) => {
       if !pattern.is_empty() {
         let vt = c.infer(value[0], -1)
-        for b in bound {
-          c.check_ty(b, c.named("Int"))
-        }
+        c.check_loop_bound(bound, [])
         c.loop_body(label_name(label), false, body, pattern, vt, true)
         return
       }
       if let Some(x) = cond {
         c.check_ty(x, c.named("Bool"))
       }
-      for b in bound {
-        c.check_ty(b, c.named("Int"))
-      }
+      c.check_loop_bound(bound, [])
       c.loop_body(label_name(label), cond == None, body, [], -1, false)
     }
     BadStmt(..) => {}
@@ -912,6 +919,7 @@ fn (var c: Checker) local_const(cd: parser.ConstDecl) {
   }
   let v = c.declare_local(cd.name, t, "let")
   c.objs[v].is_const = true
+  c.objs[v].const_val = [cd.value]
   c.objs[v].vctx = c.ctx
 }
 
@@ -970,7 +978,7 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
   let bop = compound_op(op)
   let yt = c.infer(value, c.operand_hint(bop, tt))
   let rt = c.binary_type(bop, tt, yt, span)
-  if !c.is_bad(rt) && !c.assignable(rt, tt) {
+  if !c.is_bad(rt) && !c.assignable(rt, tt, span) {
     c.error("XO0401", span, "`${op_text(op)}` produces `${c.show(rt)}`, which cannot be stored in `${c.show(tt)}`")
   }
 }

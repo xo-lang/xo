@@ -141,14 +141,14 @@ fn (var c: Checker) bind_var(v: Int, t: Int) -> Bool {
 /// Whether a value of type src may be used where dst is expected:
 /// identical types after inference, Never, and the implicit conversions
 /// of core 2.10 (Some wrapping and interface conversion).
-fn (var c: Checker) assignable(src0: Int, dst0: Int) -> Bool {
+fn (var c: Checker) assignable(src0: Int, dst0: Int, sp: Span) -> Bool {
   let src = c.resolve(src0)
   let dst = c.resolve(dst0)
   if c.is_bad(src) || c.is_bad(dst) || c.is_never(src) {
     return true
   }
   if c.tys[src].kind == TyKind.Func && c.tys[dst].kind == TyKind.Func {
-    return c.func_assignable(src, dst)
+    return c.func_assignable(src, dst, sp)
   }
   if c.try_unify(src, dst) {
     return true
@@ -158,7 +158,7 @@ fn (var c: Checker) assignable(src0: Int, dst0: Int) -> Bool {
   }
   let elem = c.option_elem(dst)
   if elem >= 0 && c.option_elem(src) < 0 {
-    if c.tys[src].kind != TyKind.Var && c.assignable(src, elem) {
+    if c.tys[src].kind != TyKind.Var && c.assignable(src, elem, sp) {
       return true
     }
   }
@@ -166,7 +166,7 @@ fn (var c: Checker) assignable(src0: Int, dst0: Int) -> Bool {
     if c.tys[src].kind == TyKind.Var {
       return false
     }
-    if c.implements(src, dst) {
+    if c.implements(src, dst, sp) {
       return true
     }
   }
@@ -175,7 +175,7 @@ fn (var c: Checker) assignable(src0: Int, dst0: Int) -> Bool {
 
 /// Subsumption of function values (core 6.2): the same parameters, an
 /// assignable result, and an error that converts (or none).
-fn (var c: Checker) func_assignable(sf: Int, df: Int) -> Bool {
+fn (var c: Checker) func_assignable(sf: Int, df: Int, sp: Span) -> Bool {
   let s = c.tys[sf]
   let d = c.tys[df]
   if s.args.len() != d.args.len() {
@@ -214,6 +214,9 @@ fn (var c: Checker) func_assignable(sf: Int, df: Int) -> Bool {
     } else {
       c.bind_eff(v, c.new_eset([]))
     }
+  } else if s.eff >= 0 && !c.esets[s.eff].is_empty() && sp.start.line > 0 {
+    let sup = if d.eff >= 0 { d.eff } else { c.new_eset([]) }
+    c.obligations.push(EffOb{kind: ObKind.FuncType, sub: s.eff, sup: sup, file: c.path, span: sp, ty: df})
   }
   true
 }
@@ -230,7 +233,7 @@ fn (var c: Checker) err_converts(from0: Int, to0: Int) -> Bool {
     return true
   }
   if c.is_prelude(to, "Error") {
-    return c.implements_name(from, "Display")
+    return c.implements_name(from, "Display", no_span())
   }
   c.from_variant(to, from) >= 0
 }
@@ -256,8 +259,8 @@ fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
   -1
 }
 
-fn (var c: Checker) implements_name(t: Int, iface: Str) -> Bool {
-  c.implements(t, c.named(iface))
+fn (var c: Checker) implements_name(t: Int, iface: Str, sp: Span) -> Bool {
+  c.implements(t, c.named(iface), sp)
 }
 
 fn (c: Checker) is_display_like(o: Int) -> Bool {
@@ -269,7 +272,7 @@ fn (c: Checker) derives(o: Int, name: Str) -> Bool {
 }
 
 /// Whether t satisfies interface iface (a Named interface type).
-fn (var c: Checker) implements(t0: Int, iface: Int) -> Bool {
+fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
   let t = c.resolve(t0)
   if c.is_bad(t) || c.is_never(t) {
     return true
@@ -309,7 +312,7 @@ fn (var c: Checker) implements(t0: Int, iface: Int) -> Bool {
           if co == io || (c.is_display_like(io) && c.is_display_like(co)) {
             return true
           }
-          return c.structural(t, iface)
+          return c.structural(t, iface, sp)
         }
       }
       false
@@ -328,14 +331,14 @@ fn (var c: Checker) implements(t0: Int, iface: Int) -> Bool {
       if c.objs[io].module == c.prelude && (c.objs[io].name == b"Display" || c.objs[io].name == b"Error") && c.derives(o, "Display") {
         return true
       }
-      c.structural(t, iface)
+      c.structural(t, iface, sp)
     }
     Tuple | Func | Var | Bad | EffArg => false
   }
 }
 
 /// Whether t has every method of iface with a matching signature.
-fn (var c: Checker) structural(t: Int, iface: Int) -> Bool {
+fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
   let io = c.tys[iface].obj
   let is = c.args_subst(c.objs[io].tparams, c.tys[iface].args)
   for im in c.objs[io].iface_meths {
@@ -376,6 +379,11 @@ fn (var c: Checker) structural(t: Int, iface: Int) -> Bool {
       if !(c.identical(me, ie) || c.err_converts(me, ie)) {
         return false
       }
+    }
+    if sp.start.line > 0 {
+      let sub = if c.objs[m].declared >= 0 { c.objs[m].declared } else { c.new_eset([EffItem{fn_obj: m}]) }
+      let sup = if c.objs[im].declared >= 0 { c.objs[im].declared } else { c.new_eset([]) }
+      c.obligations.push(EffOb{kind: ObKind.Iface, sub: sub, sup: sup, file: c.path, span: sp, fo: m, ty: t, iface: iface, meth: text(c.objs[im].name)})
     }
   }
   true

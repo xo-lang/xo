@@ -193,7 +193,7 @@ fn (var c: Checker) sig_of(fo: Int) -> Int {
   if eff < 0 {
     // the inferred effects of a non pub function, which Type.String
     // does not print
-    eff = c.new_eset([])
+    eff = c.new_eset([EffItem{fn_obj: fo}])
   }
   c.mk_func(ps, vs, c.objs[fo].result, c.objs[fo].err, eff)
 }
@@ -809,7 +809,7 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
       }
       return r
     }
-    if name == b"display" && args.is_empty() && targs.is_empty() && c.implements_name(r, "Display") {
+    if name == b"display" && args.is_empty() && targs.is_empty() && c.implements_name(r, "Display", sel.span) {
       return c.named("Str")
     }
     if name == b"debug" && args.is_empty() && targs.is_empty() {
@@ -978,7 +978,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     if c.tys[cn].kind != TyKind.Named {
       continue
     }
-    if !c.implements(at, cn) {
+    if !c.implements(at, cn, span) {
       c.error("XO0404", span, "`${c.show(at)}` does not implement `${c.show_raw(cn)}`, required by `${text(c.objs[p].name)}` of `${c.display_name(fo)}`")
     }
   }
@@ -1014,6 +1014,8 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   }
   if c.objs[fo].declared >= 0 {
     c.perform(c.subst_eff(c.objs[fo].declared, sm, 0))
+  } else {
+    c.perform(c.new_eset([EffItem{fn_obj: fo, sub: sm, has_sub: true}]))
   }
   c.call_result(result, err_t)
 }
@@ -1139,6 +1141,7 @@ fn (var c: Checker) call_value(ft: Int, call: Expr, hint: Int, name0: Str) -> In
     }
   }
   let name = if name0.is_empty() { "function value" } else { name0 }
+  c.value_calls[c.expr_key(call)] = true
   c.check_args(params, call, name, true, -1, -1, -1)
   c.perform(f.eff)
   c.call_result(f.result, f.err)

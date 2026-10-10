@@ -1,16 +1,61 @@
-// Effect sets as far as types need them (internal/check/effects.go):
-// the `uses` of a function type and the effect arguments of a type
-// (`Cache[K, V, E, net.dial]`), with effect variables bound by
-// unification. Checking effects against declarations is stage 4
-// (decision 0141); the items that stand for the inferred effects of a
-// function are not kept, since Type.String drops them.
+// Effect sets (internal/check/effects.go): the `uses` of a function
+// type and the effect arguments of a type (`Cache[K, V, E, net.dial]`),
+// with effect variables bound by unification; the effects each body
+// performs, the inferred effects of functions that are not pub
+// (solve_effects, a fixpoint), and the obligations checked against them
+// (XO0701), stage 4 of decision 0141.
+
+use github.com/xo-lang/xo/selfhost/parser
 
 /// One member of an effect set: a label, an effect parameter (a TParam
-/// object), or an effect variable.
+/// object), an effect variable, or the (inferred) effects of a function
+/// that is not pub, with the substitution of its effect parameters at
+/// the call (has_sub: one was given).
 pub struct EffItem {
   pub label: Str = ""
   pub param: Int = -1
   pub evar: Int = -1
+  pub fn_obj: Int = -1
+  pub sub: Map[Int, Int] = {}
+  pub has_sub: Bool = false
+}
+
+/// An effect set with function items expanded: its labels and effect
+/// parameters (effects.go flatEff).
+pub struct Flat {
+  pub labels: List[Str] = []
+  pub params: List[Int] = []
+}
+
+/// The kind of requirement an obligation states, for its message.
+enum ObKind {
+  /// A function declaration's `uses` (or none, when pub).
+  Decl
+  /// A closure's `uses`.
+  Closure
+  /// A function value used where a function type is expected.
+  FuncType
+  /// A method that implements an interface method.
+  Iface
+  /// A contract clause or invariant, which must be pure.
+  Pure
+}
+
+/// The effects of sub must be within those of sup (effects.go
+/// effObligation), reported at span of file.
+struct EffOb {
+  kind: ObKind
+  sub: Int
+  sup: Int
+  file: Str
+  span: Span
+  /// Decl: the function; Iface: the method.
+  fo: Int = -1
+  /// FuncType: the expected function type; Iface: the type used.
+  ty: Int = -1
+  /// Iface: the interface type and the interface method's name.
+  iface: Int = -1
+  meth: Str = ""
 }
 
 /// A new effect set (an index into esets).
@@ -77,14 +122,15 @@ fn (var c: Checker) unify_eff(a: Int, b: Int) {
 }
 
 /// s with effect parameters replaced through sm (an effect parameter
-/// maps to an EffArg type) and bound variables by what they stand for.
+/// maps to an EffArg type) and bound variables by what they stand for;
+/// function items without a substitution get sm.
 fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
   if s < 0 || sm.is_empty() || depth > 50 {
     return s
   }
   var changes = false
   for it in c.esets[s] {
-    if (it.evar >= 0 && c.evars[it.evar] >= 0) || (it.param >= 0 && sm.contains(it.param)) {
+    if (it.evar >= 0 && c.evars[it.evar] >= 0) || (it.param >= 0 && sm.contains(it.param)) || (it.fn_obj >= 0 && !it.has_sub) {
       changes = true
     }
   }
@@ -92,13 +138,18 @@ fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
     return s
   }
   var out: List[EffItem] = []
-  for it in c.esets[s] {
+  for it0 in c.esets[s] {
+    var it = it0
     if it.evar >= 0 && c.evars[it.evar] >= 0 {
       let r = c.subst_eff(c.evars[it.evar], sm, depth + 1)
       for x in c.esets[r] {
         out.push(x)
       }
       continue
+    }
+    if it.fn_obj >= 0 && !it.has_sub {
+      it.sub = sm
+      it.has_sub = true
     }
     if it.param >= 0 {
       if let Some(t) = sm.get(it.param) {
@@ -113,6 +164,11 @@ fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
     out.push(it)
   }
   c.new_eset(out)
+}
+
+/// The span of no place: an obligation needs a place to be recorded.
+fn no_span() -> Span {
+  Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
 }
 
 /// Adds the items of set s to the effects of the current body.
@@ -130,36 +186,193 @@ fn (var c: Checker) perform(s: Int) {
 }
 
 /// The text of set s: its labels and effect parameters, sorted, joined
-/// with ", " (effects.go EffSet.String).
+/// with ", " (effects.go EffSet.String: function items are dropped
+/// unless they declare their effects).
 fn (c: Checker) eff_text(s: Int) -> Str {
   if s < 0 {
     return ""
   }
-  var labels: List[Str] = []
-  var params: List[Int] = []
-  c.flatten_eff(s, labels, params, 0)
-  var parts = labels
-  for p in params {
+  c.flat_text(c.flatten(s, false))
+}
+
+// ---------------------------------------------------------------------------
+// Flattening and solving (effects.go flatten, solveEffects)
+
+fn (f: Flat) size() -> Int {
+  f.labels.len() + f.params.len()
+}
+
+/// Whether label l is in f directly or through its parent (`fs.read`
+/// is covered by `fs`).
+fn (f: Flat) covers_label(l: Str) -> Bool {
+  if f.labels.contains(l) {
+    return true
+  }
+  let b = l.bytes()
+  for i in 0..b.len() {
+    if b[i] == '.' {
+      return i > 0 && f.labels.contains(b[..i].to_str() ?? "")
+    }
+  }
+  false
+}
+
+/// The text of f: labels and parameter names, sorted, joined by ", ".
+fn (c: Checker) flat_text(f: Flat) -> Str {
+  var parts = f.labels
+  for p in f.params {
     parts.push(text(c.objs[p].name))
   }
   parts.sort().join(", ")
 }
 
-fn (c: Checker) flatten_eff(s: Int, var labels: List[Str], var params: List[Int], depth: Int) {
+/// Set s expanded; with_inferred uses the inferred effects of functions
+/// (else their items are dropped).
+fn (c: Checker) flatten(s: Int, with_inferred: Bool) -> Flat {
+  var out = Flat{}
+  c.flatten_into(out, s, with_inferred, 0)
+  out
+}
+
+fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: Int) {
   if s < 0 || depth > 50 {
     return
   }
   for it in c.esets[s] {
     if !it.label.is_empty() {
-      if !labels.contains(it.label) {
-        labels.push(it.label)
+      if !out.labels.contains(it.label) {
+        out.labels.push(it.label)
       }
     } else if it.param >= 0 {
-      if !params.contains(it.param) {
-        params.push(it.param)
+      if !out.params.contains(it.param) {
+        out.params.push(it.param)
       }
     } else if it.evar >= 0 {
-      c.flatten_eff(c.evars[it.evar], labels, params, depth + 1)
+      c.flatten_into(out, c.evars[it.evar], with_inferred, depth + 1)
+    } else if it.fn_obj >= 0 {
+      let d = c.objs[it.fn_obj].declared
+      if d >= 0 {
+        c.flatten_into(out, d, with_inferred, depth + 1)
+        continue
+      }
+      if !with_inferred {
+        continue
+      }
+      let fl = c.inferred.get(it.fn_obj) ?? Flat{}
+      for l in fl.labels {
+        if !out.labels.contains(l) {
+          out.labels.push(l)
+        }
+      }
+      for p in fl.params {
+        if it.has_sub {
+          if let Some(a) = it.sub.get(p) {
+            if c.tys[a].kind == TyKind.EffArg {
+              c.flatten_into(out, c.tys[a].eff, with_inferred, depth + 1)
+              continue
+            }
+          }
+        }
+        if !out.params.contains(p) {
+          out.params.push(p)
+        }
+      }
     }
+  }
+}
+
+/// Computes the effects of every inferred function by fixpoint, then
+/// checks every obligation (XO0701).
+fn (var c: Checker) solve_effects() {
+  for f in c.inferred_fns {
+    c.inferred[f] = Flat{}
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for f in c.inferred_fns {
+      let nf = c.flatten(c.objs[f].body_eff, true)
+      if nf.size() != (c.inferred.get(f) ?? Flat{}).size() {
+        c.inferred[f] = nf
+        changed = true
+      }
+    }
+  }
+  var seen: Map[Str, Bool] = {}
+  for ob in c.obligations {
+    let sub = c.flatten(ob.sub, true)
+    let sup = c.flatten(ob.sup, true)
+    var missing: List[Str] = []
+    for l in sub.labels.sort() {
+      if !sup.covers_label(l) {
+        missing.push(l)
+      }
+    }
+    var params: List[Str] = []
+    for p in sub.params {
+      if !sup.params.contains(p) {
+        params.push(text(c.objs[p].name))
+      }
+    }
+    for p in params.sort() {
+      missing.push(p)
+    }
+    if missing.is_empty() {
+      continue
+    }
+    let key = "${ob.file}:${ob.span.start.offset}:${ob.span.end.offset}|${missing.join(" ")}"
+    if seen.contains(key) {
+      continue
+    }
+    seen[key] = true
+    let list = "`${missing.join("`, `")}`"
+    let msg = if ob.kind == ObKind.Pure {
+      "contract clauses must be pure, but this one performs ${list}"
+    } else {
+      "${c.ob_what(ob, c.flat_text(sup))}, but performs ${list}"
+    }
+    c.report(ob.file, "XO0701", ob.span, msg)
+  }
+}
+
+/// What an obligation requires, given the text of its allowed effects.
+fn (c: Checker) ob_what(ob: EffOb, s: Str) -> Str {
+  match ob.kind {
+    Decl => {
+      let name = c.display_name(ob.fo)
+      if !s.is_empty() {
+        return "`${name}` declares `uses ${s}`"
+      }
+      if c.objs[ob.fo].is_pub {
+        return "`${name}` is pub with no `uses` clause, so it is pure"
+      }
+      "`${name}` is pure"
+    }
+    Closure => if s.is_empty() { "the closure declares no effects" } else { "the closure declares `uses ${s}`" }
+    FuncType => if s.is_empty() { "the expected function type `${c.show(ob.ty)}` is pure" } else { "the expected function type allows only `${s}`" }
+    Iface => {
+      let head = "`${c.show_raw(ob.ty)}` is used as `${c.show_raw(ob.iface)}`, whose method `${ob.meth}`"
+      if s.is_empty() {
+        return "${head} is pure, but `${c.display_name(ob.fo)}`"
+      }
+      "${head} allows only `${s}`, but `${c.display_name(ob.fo)}`"
+    }
+    Pure => ""
+  }
+}
+
+/// The effects of the current body while f runs go to a set of their
+/// own; a contract expression must perform none (stmt.go pureClause).
+fn (var c: Checker) pure_start() -> Int {
+  let saved = c.ctxs[c.ctx].eff
+  c.ctxs[c.ctx].eff = c.new_eset([])
+  saved
+}
+
+fn (var c: Checker) pure_end(saved: Int, sp: Span) {
+  let sink = c.ctxs[c.ctx].eff
+  c.ctxs[c.ctx].eff = saved
+  if !c.esets[sink].is_empty() {
+    c.obligations.push(EffOb{kind: ObKind.Pure, sub: sink, sup: c.new_eset([]), file: c.path, span: sp})
   }
 }

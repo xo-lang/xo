@@ -436,6 +436,9 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
       has_uses = true
       for e in es {
         if e.sub == None && e.name.name == b"realtime" && !iface {
+          // a discipline, not an effect (core 6.5)
+          c.objs[fo].realtime = true
+          c.objs[fo].realtime_span = e.span
           continue
         }
         use_list.push(e)
@@ -443,6 +446,19 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
     }
   }
   var set = c.resolve_effects(use_list, env)
+  if c.objs[fo].realtime {
+    c.realtime_fns.push(fo)
+    c.objs[fo].decl_file = c.cur_file
+    for e in use_list {
+      var name = text(e.name.name)
+      if let Some(s) = e.sub {
+        name = "${name}.${text(s.name)}"
+      }
+      if is_effect_label(name) && name != "ffi" {
+        c.error("XO1405", e.span, "a real-time function may not perform `${name}`; the only effect it may declare is `ffi`")
+      }
+    }
+  }
   for p in env.elided_list {
     c.objs[fo].tparams.push(p)
   }
@@ -453,6 +469,8 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
   }
   if c.objs[fo].is_pub || iface || c.mods[c.objs[fo].module].is_std || has_uses {
     c.objs[fo].declared = set
+  } else {
+    c.inferred_fns.push(fo)
   }
   c.objs[fo].sig_done = true
 }

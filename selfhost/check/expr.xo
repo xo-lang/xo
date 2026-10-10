@@ -190,7 +190,7 @@ fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
   if c.is_bad(t) {
     return w.t
   }
-  if c.assignable(t, w.t) {
+  if c.assignable(t, w.t, sp) {
     return w.t
   }
   c.mismatch(sp, w.t, t)
@@ -287,7 +287,7 @@ fn (var c: Checker) coerce_ret(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int 
       return res
     }
   }
-  if c.assignable(t, w.t) {
+  if c.assignable(t, w.t, sp) {
     return res
   }
   c.mismatch(sp, w.t, t)
@@ -335,7 +335,7 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       for p in s.parts {
         if let Some(x) = p.expr {
           let t = c.infer(x, -1)
-          if !c.implements_name(t, "Display") {
+          if !c.implements_name(t, "Display", parser.expr_span(x)) {
             c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Display`, so it cannot be interpolated")
           }
         }
@@ -974,7 +974,7 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     if c.option_elem(yt) >= 0 && c.try_unify(yt, xt) {
       return xt
     }
-    if c.assignable(yt, el) {
+    if c.assignable(yt, el, parser.expr_span(y)) {
       return el
     }
     c.mismatch(parser.expr_span(y), el, yt)
@@ -1022,7 +1022,7 @@ fn (var c: Checker) binary_type(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> 
   let bool_t = c.named("Bool")
   match op {
     Eq | NotEq => {
-      if c.try_unify(xt, yt) || c.assignable(yt, xt) || c.assignable(xt, yt) {
+      if c.try_unify(xt, yt) || c.assignable(yt, xt, sp) || c.assignable(xt, yt, sp) {
         if !c.is_eq_type(xt, "Eq") {
           c.error("XO0404", sp, "`${c.show(xt)}` does not implement `Eq`, so it cannot be compared with `${op_text(op)}`")
         }
@@ -1487,6 +1487,7 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
   }
   var eff = cx.eff
   if declared >= 0 {
+    c.obligations.push(EffOb{kind: ObKind.Closure, sub: cx.eff, sup: declared, file: c.path, span: x.span})
     eff = declared
   }
   c.mk_func(params, pvars, cx.result, err_t, eff)

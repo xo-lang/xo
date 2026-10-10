@@ -72,11 +72,17 @@ func TestSelfhostChecker(t *testing.T) {
 			var st checkStats
 			var fails []string
 			var report strings.Builder
+			codes := map[string]int{}
 			for _, d := range dirs {
 				before := st
 				msg := compareRun(d, want[d], got[d], &st)
 				if msg != "" {
 					fails = append(fails, msg)
+				}
+				if st.stagedOK > before.stagedOK {
+					for _, l := range want[d].staged {
+						codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
+					}
 				}
 				fmt.Fprintf(&report, "%s %s %s %s\n", st.class(before), d, strings.Join(want[d].other, ","), firstLine(got[d]))
 			}
@@ -84,8 +90,9 @@ func TestSelfhostChecker(t *testing.T) {
 				os.MkdirAll(keep, 0o755)
 				os.WriteFile(filepath.Join(keep, "check-"+b+".txt"), []byte(report.String()), 0o644)
 			}
-			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise, %d unsupported by the Xo checker, %d not loadable",
-				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.unsupported, st.errors)
+			t.Logf("%d runs: %d accepted by Go (%d match), %d rejected only with diagnostics of the stages done (%d match), %d rejected otherwise (%d with the same staged diagnostics), %d unsupported by the Xo checker, %d not loadable",
+				len(dirs), st.accepted, st.acceptedOK, st.staged, st.stagedOK, st.otherRejected, st.otherSame, st.unsupported, st.errors)
+			t.Logf("diagnostics of the matching rejected runs: %v", codes)
 			if len(fails) > 0 {
 				if len(fails) > 10 {
 					fails = append(fails[:10], fmt.Sprintf("... and %d more", len(fails)-10))
@@ -97,7 +104,7 @@ func TestSelfhostChecker(t *testing.T) {
 }
 
 type checkStats struct {
-	accepted, acceptedOK, staged, stagedOK, otherRejected, unsupported, errors int
+	accepted, acceptedOK, staged, stagedOK, otherRejected, otherSame, unsupported, errors int
 }
 
 // class names what compareRun counted for a run since before.
@@ -250,6 +257,12 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 	}
 	if !want.onlyStaged {
 		st.otherRejected++
+		// not compared: the other errors may hide or cause staged ones;
+		// counted when the Xo checker still reports exactly the staged
+		// part of the Go diagnostics
+		if len(want.staged) > 0 && strings.Join(gotDiags, "\n") == strings.Join(want.staged, "\n") {
+			st.otherSame++
+		}
 		return ""
 	}
 	st.staged++
@@ -262,7 +275,7 @@ func compareRun(dir string, want *goRun, got string, st *checkStats) string {
 
 // compareSigEffects compares the effects of the sigs section (stage 4);
 // stage 3 compares the signatures without them.
-var compareSigEffects = false
+var compareSigEffects = true
 
 // stripSigEffects drops the effects (` uses ...`, the last one of a
 // line) of the lines of every sigs section of dump.
@@ -314,6 +327,8 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
 	`(XO0402|XO0404)",.*`,
+	// stage 4: effects and real-time functions
+	`(XO0701|XO1401|XO1402|XO1403|XO1404|XO1405)",.*`,
 	`XO0502","[^}]*"message":"cannot assign to this expression[^"]*"`,
 }, "|") + `)\}$`)
 

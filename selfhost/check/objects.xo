@@ -134,6 +134,11 @@ pub struct Obj {
   /// (a function that is not pub and has no `uses`).
   pub declared: Int = -1
   pub sig_done: Bool = false
+  /// The effects its body performs (an effect set), -1 until checked.
+  pub body_eff: Int = -1
+  /// Declared `uses realtime` (core 6.5), and where.
+  pub realtime: Bool = false
+  pub realtime_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
 
   // Constants and locals.
   /// Const, Local: the type, -1 until known.
@@ -144,6 +149,8 @@ pub struct Obj {
   pub mutable: Bool = false
   /// Local: a block `const`.
   pub is_const: Bool = false
+  /// Local: the value of a block `const` (zero or one element).
+  pub const_val: List[parser.Expr] = []
   /// Local: the context (Ctx) it was declared in.
   pub vctx: Int = -1
   /// Local: the frame of the scope it names (`scope s`), or of the scope
