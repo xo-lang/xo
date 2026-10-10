@@ -73,6 +73,9 @@ func goReg(r string) (name string, w, fp, ok bool) {
 		return "ZR", true, false, true
 	case "sp":
 		return "RSP", false, false, true
+	case "x28":
+		// the goroutine (Go mode's preemption polls read g.stackguard0)
+		return "g", false, false, true
 	}
 	if len(r) < 2 {
 		return "", false, false, false

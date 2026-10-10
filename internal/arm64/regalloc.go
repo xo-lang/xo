@@ -439,6 +439,7 @@ func (s *fstate) regalloc() {
 			if in.noret {
 				continue
 			}
+			// (a poll's saves are stored only on its cold path)
 			for _, v := range order {
 				if s.loc[v].reg < 0 || !overlaps(ranges[v], []rng{{c, c}}) {
 					continue

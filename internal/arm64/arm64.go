@@ -110,6 +110,7 @@ type gen struct {
 	place          Layout
 	// Go mode (goasm.go): functions as Go assembler for Go backend builds
 	goMode   bool
+	noPoll   bool               // GoOptions.NoPoll
 	goFuncs  map[string]*GoFunc // the functions emitted, by name
 	goPos    []string           // fault positions, indexed by the stubs
 	goPosIx  map[string]int

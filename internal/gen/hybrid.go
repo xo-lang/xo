@@ -142,6 +142,8 @@ func (pg *pkgGen) hybridFiles(body []byte) (map[string][]byte, error) {
 	var fault bytes.Buffer
 	fault.WriteString("// xoHybridFault raises the fault of an assembly function (rt.HybridFault).\n")
 	fault.WriteString("func xoHybridFault(kind, a, b, c, pos int64) {\n\t" + pg.rt() + "HybridFault(kind, a, b, c, xoHybridPos[pos])\n}\n\n")
+	fault.WriteString("// xoHybridYield is called by the preemption polls of assembly loops (rt.HybridYield).\n")
+	fault.WriteString("func xoHybridYield() {\n\t" + pg.rt() + "HybridYield()\n}\n\n")
 	fault.WriteString("var xoHybridPos = [...]string{")
 	for i, p := range h.Positions {
 		if i > 0 {
