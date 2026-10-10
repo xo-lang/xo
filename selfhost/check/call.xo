@@ -1,0 +1,1297 @@
+// Names, selectors, and calls (internal/check/call.go): identifiers,
+// module members, fields, methods, statics, variants, function values,
+// conversions, and the matching of arguments to parameters.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+type Arg = parser.Arg
+
+fn (c: Checker) in_test_context() -> Bool {
+  (c.ctx >= 0 && c.ctxs[c.ctx].is_test) || (c.cur_file >= 0 && c.files[c.cur_file].is_test)
+}
+
+/// Marks a local as read and records the resolution; its type.
+fn (var c: Checker) use_var(id: Ident, v: Int) -> Int {
+  c.record(id, v)
+  c.objs[v].ty
+}
+
+/// A variant named name of the enum hint expects (core 2.3: the prefix
+/// may be omitted when the expected type is known): (enum, position),
+/// or (-1, -1).
+fn (var c: Checker) variant_from_hint(name: Bytes, hint: Int) -> (Int, Int) {
+  if hint < 0 {
+    return (-1, -1)
+  }
+  let h = c.resolve(hint)
+  if c.tys[h].kind != TyKind.Named {
+    return (-1, -1)
+  }
+  let o = c.tys[h].obj
+  if c.objs[o].tkind != "enum" {
+    let el = c.option_elem(h)
+    if el >= 0 {
+      return c.variant_from_hint(name, el)
+    }
+    return (-1, -1)
+  }
+  let v = c.variant_pos(o, name)
+  if v >= 0 {
+    return (o, v)
+  }
+  (-1, -1)
+}
+
+/// Some, None, Ok, or Err: (enum, position), or (-1, -1).
+fn (c: Checker) prelude_variant(name: Bytes) -> (Int, Int) {
+  if name == b"Some" || name == b"None" {
+    let o = c.prelude_obj("Option")
+    return (o, c.variant_pos(o, name))
+  }
+  if name == b"Ok" || name == b"Err" {
+    let o = c.prelude_obj("Result")
+    return (o, c.variant_pos(o, name))
+  }
+  (-1, -1)
+}
+
+fn (var c: Checker) ident(id: Ident, hint: Int) -> Int {
+  let name = id.name
+  let v = c.lookup_local(name)
+  if v >= 0 {
+    return c.use_var(id, v)
+  }
+  if name == b"true" || name == b"false" {
+    return c.named("Bool")
+  }
+  if name == b"target" {
+    return c.named("Target")
+  }
+  if is_upper_camel(name) {
+    let (e, vp) = c.variant_from_hint(name, hint)
+    if e >= 0 {
+      return c.construct(e, vp, [], false, [], hint, id.span, id)
+    }
+    if name == b"None" {
+      let (pe, pv) = c.prelude_variant(name)
+      return c.construct(pe, pv, [], false, [], hint, id.span, id)
+    }
+    let (pe, _) = c.prelude_variant(name)
+    if pe >= 0 {
+      c.error("XO0407", id.span, "`${text(name)}` needs an argument: `${text(name)}(x)`")
+      return c.bad_ty
+    }
+  }
+  if c.in_test_context() && name == b"testing" {
+    c.error("XO0407", id.span, "`testing` is a module, not a value")
+    return c.bad_ty
+  }
+  if c.file_import(name) != None {
+    c.use_import(name)
+    c.error("XO0407", id.span, "`${text(name)}` is a module, not a value")
+    return c.bad_ty
+  }
+  let o = c.lookup_module_obj(c.cur_mod, name)
+  if o >= 0 {
+    match c.objs[o].kind {
+      Func => {
+        c.record(id, o)
+        return c.func_value(o, [], false, id.span)
+      }
+      Const => {
+        c.record(id, o)
+        return c.const_type(o)
+      }
+      Type => {
+        c.error("XO0407", id.span, "`${text(name)}` is a type, not a value")
+        return c.bad_ty
+      }
+      TParam | Local | Module => {}
+    }
+  }
+  if name == b"result" || name == b"old" {
+    c.error("XO0601", id.span, "`${text(name)}` is only defined inside an `ensures` clause (core 9.1)")
+    return c.bad_ty
+  }
+  if c.in_test_context() && name == b"expect" {
+    c.error("XO0407", id.span, "`expect` must be called: `expect(x) == y`")
+    return c.bad_ty
+  }
+  if is_upper_camel(name) && hint >= 0 {
+    let h = c.resolve(hint)
+    if c.tys[h].kind == TyKind.Named && c.objs[c.tys[h].obj].tkind == "enum" {
+      c.error("XO0601", id.span, "`${text(c.objs[c.tys[h].obj].name)}` has no variant `${text(name)}`")
+      return c.bad_ty
+    }
+  }
+  let (t, ok) = c.habit_name(id, hint)
+  if ok {
+    return t
+  }
+  c.error("XO0601", id.span, "name `${text(name)}` not found")
+  c.bad_ty
+}
+
+/// The unresolved value names of other languages (habits.go habitName):
+/// the diagnostic is the usual one, and the type keeps what follows from
+/// cascading as the Go checker does.
+fn (var c: Checker) habit_name(id: Ident, hint: Int) -> (Int, Bool) {
+  let name = text(id.name)
+  if name is "nil" | "null" | "undefined" | "NULL" | "nullptr" | "Nil" {
+    c.error("XO0601", id.span, "name `${name}` not found")
+    if hint >= 0 && c.option_elem(hint) >= 0 {
+      return (hint, true)
+    }
+    return (c.bad_ty, true)
+  }
+  if name is "this" | "self" {
+    let recv = c.receiver_name()
+    c.error("XO0601", id.span, "name `${name}` not found")
+    if !recv.is_empty() && recv != name {
+      let v = c.lookup_local(recv.bytes())
+      if v >= 0 {
+        return (c.use_var(Ident{span: id.span, name: recv.bytes()}, v), true)
+      }
+    }
+    return (c.bad_ty, true)
+  }
+  if name == "pass" {
+    c.error("XO0601", id.span, "name `${name}` not found")
+    return (c.unit_ty, true)
+  }
+  if name is "True" | "False" {
+    c.error("XO0601", id.span, "name `${name}` not found")
+    return (c.named("Bool"), true)
+  }
+  (-1, false)
+}
+
+/// The receiver name of the method being checked (through closures).
+fn (c: Checker) receiver_name() -> Str {
+  var x = c.ctx
+  while x >= 0 {
+    let fo = c.ctxs[x].fn_obj
+    if fo >= 0 && !c.objs[fo].fn_decl.is_empty() {
+      if let Some(r) = c.objs[fo].fn_decl[0].recv {
+        return text(r.name.name)
+      }
+    }
+    x = c.ctxs[x].parent
+  }
+  ""
+}
+
+/// The function type of fo (without receiver).
+fn (var c: Checker) sig_of(fo: Int) -> Int {
+  var ps: List[Int] = []
+  var vs: List[Bool] = []
+  for p in c.objs[fo].params {
+    ps.push(p.ty)
+    vs.push(p.is_var)
+  }
+  var eff = c.objs[fo].declared
+  if eff < 0 {
+    // the inferred effects of a non pub function, which Type.String
+    // does not print
+    eff = c.new_eset([])
+  }
+  c.mk_func(ps, vs, c.objs[fo].result, c.objs[fo].err, eff)
+}
+
+/// A declared function used as a value: its type parameters are
+/// instantiated with fresh variables (or targs).
+fn (var c: Checker) func_value(fo: Int, targs: List[Int], has_targs: Bool, sp: Span) -> Int {
+  if !c.objs[fo].sig_done {
+    return c.bad_ty
+  }
+  let sm = c.fresh_subst(fo, {}, targs, has_targs, sp)
+  var ft = c.subst(c.sig_of(fo), sm)
+  let e = c.tys[ft].err
+  if e >= 0 && c.is_never(e) {
+    ft = c.mk_func(c.tys[ft].args, c.tys[ft].vars, c.tys[ft].result, -1, c.tys[ft].eff)
+  }
+  ft
+}
+
+/// Maps the type parameters of fo not already in pre to explicit type
+/// arguments (its own parameters) or fresh variables.
+fn (var c: Checker) fresh_subst(fo: Int, pre: Subst, targs0: List[Int], has_targs0: Bool, sp: Span) -> Subst {
+  var sm = pre
+  var targs = targs0
+  var has_targs = has_targs0
+  let tps = c.objs[fo].tparams
+  var type_own = 0
+  for p in tps {
+    if !c.objs[p].implicit && !c.objs[p].effect {
+      type_own += 1
+    }
+  }
+  if has_targs && targs.len() != type_own {
+    c.error("XO0403", sp, "`${c.display_name(fo)}` takes ${type_own} type argument(s), found ${targs.len()}")
+    targs = []
+    has_targs = false
+  }
+  var i = 0
+  for p in tps {
+    if sm.contains(p) {
+      continue
+    }
+    if c.objs[p].effect {
+      sm[p] = c.fresh_effarg()
+      continue
+    }
+    if has_targs && !c.objs[p].implicit {
+      sm[p] = targs[i]
+      i += 1
+      continue
+    }
+    sm[p] = c.new_var()
+  }
+  sm
+}
+
+// ---------------------------------------------------------------------------
+// Selectors
+
+fn (var c: Checker) selector(span: Span, x: Expr, sel: Ident, hint: Int) -> Int {
+  if let Ident(id) = x {
+    if c.lookup_local(id.name) < 0 {
+      if let Some(imp) = c.file_import(id.name) {
+        c.use_import(id.name)
+        if imp.module >= 0 {
+          c.record(id, c.mods[imp.module].obj)
+        }
+        return c.module_member(imp.module, id.name, span, sel, [], false, hint)
+      }
+      if id.name == b"testing" && c.in_test_context() {
+        let tm = c.testing_mod()
+        if tm >= 0 {
+          c.record(id, c.mods[tm].obj)
+        }
+        return c.module_member(tm, b"testing", span, sel, [], false, hint)
+      }
+    }
+  }
+  let r = c.type_of_expr(x)
+  if r.obj >= 0 {
+    return c.type_member(r.obj, r.args, r.has_args, span, x, sel, hint, [])
+  }
+  let bt = c.infer(x, -1)
+  c.field_of(bt, span, x, sel, false)
+}
+
+fn (c: Checker) pub_in(o: Int, m: Int) -> Bool {
+  if m == c.cur_mod || c.mods[m].is_std {
+    return true
+  }
+  match c.objs[o].kind {
+    Func | Const | Type => c.objs[o].is_pub
+    TParam | Local | Module => true
+  }
+}
+
+fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Ident, targs: List[Int], has_targs: Bool, hint: Int) -> Int {
+  if m < 0 {
+    return c.bad_ty
+  }
+  let name = sel.name
+  let o = c.mods[m].members.get(name) ?? -1
+  if o < 0 {
+    c.error("XO0601", sel.span, "module `${text(imp_name)}` has no member `${text(name)}`")
+    return c.bad_ty
+  }
+  if !c.pub_in(o, m) {
+    c.error("XO0605", sel.span, "`${text(name)}` is not `pub` in module `${c.mods[m].path}`")
+  }
+  match c.objs[o].kind {
+    Func => {
+      c.record(sel, o)
+      return c.func_value(o, targs, has_targs, span)
+    }
+    Const => {
+      c.record(sel, o)
+      return c.const_type(o)
+    }
+    Type => c.error("XO0407", span, "`${text(imp_name)}.${text(name)}` is a type, not a value")
+    TParam | Local | Module => {}
+  }
+  c.bad_ty
+}
+
+/// `Type.Variant`, `Type.CONST`, or a static function used as a value
+/// or called (call is the CallExpr, zero or one element).
+fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, span: Span, x: Expr, sel: Ident, hint: Int, call: List[Expr]) -> Int {
+  var obj = obj0
+  var targs = targs0
+  var has_targs = has_targs0
+  if c.objs[obj].tkind == "alias" {
+    let r = c.alias_named(obj, targs, has_targs, parser.expr_span(x))
+    if r.obj < 0 {
+      return c.bad_ty
+    }
+    obj = r.obj
+    targs = r.args
+    has_targs = r.has_args
+  }
+  let name = sel.name
+  if c.objs[obj].tkind == "enum" {
+    let v = c.variant_pos(obj, name)
+    if v >= 0 {
+      return c.construct(obj, v, targs, has_targs, call, hint, span, sel)
+    }
+  }
+  let fo = c.objs[obj].statics.get(name) ?? -1
+  if fo >= 0 {
+    c.record(sel, fo)
+    if c.objs[fo].static_const {
+      if !call.is_empty() {
+        c.error("XO0407", parser.expr_span(call[0]), "`${text(c.objs[obj].name)}.${text(name)}` is a constant, not a function")
+        return c.bad_ty
+      }
+      return c.objs[fo].result
+    }
+    if !call.is_empty() {
+      return c.call_static(obj, targs, has_targs, fo, call[0], hint)
+    }
+    let pre = c.static_subst(obj, targs, has_targs, fo)
+    return c.subst(c.sig_of(fo), c.fresh_subst(fo, pre, [], false, span))
+  }
+  if c.objs[obj].tkind == "enum" {
+    c.error("XO0601", sel.span, "`${c.qual_name(obj)}` has no variant `${text(name)}`")
+  } else {
+    c.error("XO0601", sel.span, "`${c.qual_name(obj)}` has no associated function or constant `${text(name)}`")
+  }
+  if !call.is_empty() {
+    // numericConversionHint: `Float.from(n)` checks its argument
+    if c.objs[obj].module == c.prelude && (is_int_name(c.objs[obj].name) || is_float_name(c.objs[obj].name)) {
+      if let CallExpr(args: args, ..) = call[0] {
+        if args.len() == 1 && args[0].name == None {
+          if !(unparen(args[0].value) is FnLit(..)) {
+            c.infer(args[0].value, -1)
+          }
+        }
+      }
+    }
+  }
+  c.bad_ty
+}
+
+/// The implicit receiver parameters of a static function bound to the
+/// type arguments written on the type (or fresh variables).
+fn (var c: Checker) static_subst(obj: Int, targs: List[Int], has_targs: Bool, fo: Int) -> Subst {
+  var sm: Subst = {}
+  let rt = c.objs[fo].recv_ty
+  if rt < 0 || c.tys[rt].kind != TyKind.Named {
+    return sm
+  }
+  for (i, a) in c.tys[rt].args.indexed() {
+    if c.tys[a].kind != TyKind.Param || !c.objs[c.tys[a].obj].implicit {
+      continue
+    }
+    if has_targs && i < targs.len() {
+      sm[c.tys[a].obj] = targs[i]
+    } else {
+      sm[c.tys[a].obj] = c.new_var()
+    }
+  }
+  for (i, a) in c.tys[rt].args.indexed() {
+    let ax = c.tys[a]
+    if ax.kind != TyKind.EffArg || ax.eff < 0 || c.esets[ax.eff].len() != 1 || c.esets[ax.eff][0].param < 0 {
+      continue
+    }
+    let p = c.esets[ax.eff][0].param
+    if has_targs && i < targs.len() && c.tys[targs[i]].kind == TyKind.EffArg {
+      sm[p] = targs[i]
+      continue
+    }
+    sm[p] = c.fresh_effarg()
+  }
+  sm
+}
+
+fn (var c: Checker) call_static(obj: Int, targs0: List[Int], has_targs0: Bool, fo: Int, call: Expr, hint: Int) -> Int {
+  var targs = targs0
+  var has_targs = has_targs0
+  if has_targs && targs.len() != c.objs[obj].tparams.len() {
+    if let CallExpr(fun: fun, ..) = call {
+      c.error("XO0403", parser.expr_span(fun), "`${c.qual_name(obj)}` takes ${c.objs[obj].tparams.len()} type argument(s), found ${targs.len()}")
+    }
+    targs = []
+    has_targs = false
+  }
+  c.call_func(fo, c.static_subst(obj, targs, has_targs, fo), [], false, call, hint, [])
+}
+
+fn is_tuple_index(name: Bytes) -> Bool {
+  if name.is_empty() {
+    return false
+  }
+  for i in 0..name.len() {
+    if name[i] < '0' || name[i] > '9' {
+      return false
+    }
+  }
+  true
+}
+
+fn (var c: Checker) field_of(bt: Int, span: Span, x: Expr, sel: Ident, place: Bool) -> Int {
+  let r = c.resolve(bt)
+  let name = sel.name
+  if c.is_bad(r) {
+    return c.bad_ty
+  }
+  let k = c.tys[r].kind
+  if k == TyKind.Var {
+    c.error("XO0405", parser.expr_span(x), "the type of this value must be known before `.${text(name)}`; annotate it")
+    return c.bad_ty
+  }
+  if k == TyKind.Tuple && is_tuple_index(name) {
+    let i = Int.parse(text(name)) ?? 1000000
+    let els = c.tys[r].args
+    if i < els.len() {
+      return els[i]
+    }
+    c.error("XO0601", sel.span, "tuple `${c.show(r)}` has no field `${text(name)}`; its fields are `.0` to `.${els.len() - 1}`")
+    return c.bad_ty
+  }
+  if k == TyKind.Named {
+    let o = c.tys[r].obj
+    if c.objs[o].tkind == "newtype" && is_tuple_index(name) {
+      if name == b"0" {
+        return c.subst(c.objs[o].target, c.args_subst(c.objs[o].tparams, c.tys[r].args))
+      }
+      c.error("XO0601", sel.span, "newtype `${c.show(r)}` has one field, `.0`")
+      return c.bad_ty
+    }
+    if c.objs[o].module == c.prelude && c.objs[o].name == b"Task" && name == b"await" && !place {
+      if let Ident(id) = x {
+        let v = c.lookup_local(id.name)
+        if v >= 0 {
+          c.objs[v].awaited = true
+        }
+      }
+      return c.call_result(c.tys[r].args[0], c.tys[r].args[1])
+    }
+    if c.objs[o].tkind == "struct" && !c.objs[o].opaque {
+      let fi = c.field_index(o, name)
+      if fi >= 0 {
+        let f = c.objs[o].fields[fi]
+        c.record_text(sel, c.field_text(o, f))
+        if !f.is_pub && c.objs[o].module != c.cur_mod {
+          c.error("XO0605", sel.span, "field `${text(name)}` of `${text(c.objs[o].name)}` is not `pub`")
+        }
+        return c.subst(f.ty, c.args_subst(c.objs[o].tparams, c.tys[r].args))
+      }
+    }
+  }
+  if !place {
+    let (m, sm) = c.find_method(r, text(name))
+    if m >= 0 {
+      c.record(sel, m)
+      if c.objs[m].recv_var {
+        c.error("XO0407", span, "method `${text(name)}` mutates its receiver and cannot be used as a value")
+        return c.bad_ty
+      }
+      let fs = c.fresh_subst(m, sm, [], false, span)
+      return c.subst(c.sig_of(m), fs)
+    }
+  }
+  let (t, ok) = c.habit_field(bt, span, x, sel, place)
+  if ok {
+    return t
+  }
+  c.no_member(r, sel, place)
+  c.bad_ty
+}
+
+/// `xs.length` and friends (habits.go habitField): XO0601, then the
+/// method call it stands for.
+fn (var c: Checker) habit_field(bt: Int, span: Span, x: Expr, sel: Ident, place: Bool) -> (Int, Bool) {
+  if place {
+    return (-1, false)
+  }
+  let xo = match text(sel.name) {
+    "length" | "count" | "size" => "len"
+    "isEmpty" => "is_empty"
+    _ => return (-1, false)
+  }
+  let r = c.resolve(bt)
+  let (m, _) = c.find_method_any(r, xo)
+  if m < 0 {
+    return (-1, false)
+  }
+  c.error("XO0601", sel.span, "`${c.show(bt)}` has no field `${text(sel.name)}`")
+  let nsel = Ident{span: sel.span, name: xo.bytes()}
+  let call = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: span, x: x, sel: nsel), args: [])
+  (c.call_method(bt, span, x, nsel, [], false, call, -1), true)
+}
+
+/// XO0601 for a missing field or method.
+fn (var c: Checker) no_member(t: Int, sel: Ident, place: Bool) {
+  let what = if place { "field" } else { "field or method" }
+  c.error("XO0601", sel.span, "`${c.show(t)}` has no ${what} `${text(sel.name)}`")
+}
+
+/// `f[T]` outside a call: a generic function value.
+fn (var c: Checker) type_args_value(span: Span, x: Expr, types: List[Type], hint: Int) -> Int {
+  let targs = c.resolve_type_args(types)
+  match x {
+    Ident(id) => {
+      let o = c.lookup_module_obj(c.cur_mod, id.name)
+      if o >= 0 && c.objs[o].kind == ObjKind.Func && c.lookup_local(id.name) < 0 {
+        c.record(id, o)
+        return c.func_value(o, targs, true, span)
+      }
+    }
+    SelectorExpr(span: sspan, x: inner, sel: sel) => {
+      if let Ident(id) = inner {
+        if c.lookup_local(id.name) < 0 {
+          if let Some(imp) = c.file_import(id.name) {
+            c.use_import(id.name)
+            if imp.module >= 0 {
+              c.record(id, c.mods[imp.module].obj)
+            }
+            return c.module_member(imp.module, id.name, sspan, sel, targs, true, hint)
+          }
+        }
+      }
+    }
+    _ => {}
+  }
+  let r = c.type_of_expr(Expr.TypeArgsExpr(span: span, x: x, types: types))
+  if r.obj >= 0 {
+    c.error("XO0407", span, "a type is not a value")
+    return c.bad_ty
+  }
+  c.infer(x, -1)
+  c.error("XO0407", span, "type arguments are only allowed on generic functions and types")
+  c.bad_ty
+}
+
+fn (var c: Checker) resolve_type_args(ts: List[Type]) -> List[Int] {
+  var env = c.local_env()
+  var out: List[Int] = []
+  for t in ts {
+    out.push(c.resolve_type(t, env))
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Calls
+
+fn unparen(e: Expr) -> Expr {
+  match e {
+    ParenExpr(x: x, ..) => unparen(x)
+    _ => e
+  }
+}
+
+fn (var c: Checker) call(e: Expr, span: Span, fun: Expr, args: List[Arg], hint: Int) -> Int {
+  match fun {
+    Ident(id) => return c.call_ident(e, id, [], false, hint)
+    SelectorExpr(span: sspan, x: x, sel: sel) => return c.call_selector(e, sspan, x, sel, [], false, hint)
+    TypeArgsExpr(x: x, types: types, ..) => {
+      let targs = c.resolve_type_args(types)
+      match x {
+        Ident(id) => return c.call_ident(e, id, targs, true, hint)
+        SelectorExpr(span: sspan, x: inner, sel: sel) => return c.call_selector(e, sspan, inner, sel, targs, true, hint)
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  let ft = c.infer(fun, -1)
+  c.call_value(ft, e, hint, "")
+}
+
+fn call_parts(call: Expr) -> (Span, Expr, List[Arg]) {
+  match call {
+    CallExpr(span: span, fun: fun, args: args) => (span, fun, args)
+    _ => fault("not a call")
+  }
+}
+
+fn (var c: Checker) call_ident(call: Expr, id: Ident, targs: List[Int], has_targs: Bool, hint: Int) -> Int {
+  let (span, fun, args) = call_parts(call)
+  let name = id.name
+  let v = c.lookup_local(name)
+  if v >= 0 {
+    let t = c.use_var(id, v)
+    if has_targs {
+      c.error("XO0407", parser.expr_span(fun), "`${text(name)}` is a value and takes no type arguments")
+    }
+    return c.call_value(t, call, hint, text(name))
+  }
+  if name == b"expect" && c.in_test_context() && !c.mods[c.cur_mod].members.contains(name) {
+    if args.len() != 1 {
+      c.error("XO0403", span, "`expect` takes one argument")
+      for a in args {
+        c.infer(a.value, -1)
+      }
+      return c.unit_ty
+    }
+    c.check_ty(args[0].value, c.named("Bool"))
+    return c.unit_ty
+  }
+  if name == b"old" && c.ctx >= 0 && c.ctxs[c.ctx].in_ensures {
+    if args.len() != 1 {
+      c.error("XO0403", span, "`old` takes one argument")
+      return c.bad_ty
+    }
+    return c.infer(args[0].value, hint)
+  }
+  if is_upper_camel(name) && !c.mods[c.cur_mod].members.contains(name) {
+    let (e, vp) = c.variant_from_hint(name, hint)
+    if e >= 0 {
+      return c.construct(e, vp, targs, has_targs, [call], hint, span, id)
+    }
+    let (pe, pv) = c.prelude_variant(name)
+    if pe >= 0 {
+      return c.construct(pe, pv, targs, has_targs, [call], hint, span, id)
+    }
+  }
+  if c.file_import(name) != None {
+    c.use_import(name)
+    c.error("XO0407", id.span, "`${text(name)}` is a module and cannot be called")
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  let o = c.lookup_module_obj(c.cur_mod, name)
+  if o >= 0 {
+    match c.objs[o].kind {
+      Func => {
+        c.record(id, o)
+        return c.call_func(o, {}, targs, has_targs, call, hint, [])
+      }
+      Type => {
+        c.record(id, o)
+        return c.type_call(o, targs, has_targs, call, hint)
+      }
+      Const => {
+        c.record(id, o)
+        return c.call_value(c.const_type(o), call, hint, text(name))
+      }
+      TParam | Local | Module => {}
+    }
+  }
+  if (text(name)) is "spawn" | "spawn_background" | "go" {
+    c.error("XO0803", id.span, "`${text(name)}` without a scope handle: tasks are started with `s.spawn(f)` inside `scope s { ... }`, so no task outlives its scope (core 7.1)")
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  if hint >= 0 && is_upper_camel(name) {
+    let h = c.resolve(hint)
+    if c.tys[h].kind == TyKind.Named && c.objs[c.tys[h].obj].tkind == "enum" {
+      c.error("XO0601", id.span, "`${text(c.objs[c.tys[h].obj].name)}` has no variant `${text(name)}`")
+      c.infer_args(args)
+      return c.bad_ty
+    }
+  }
+  let (ht, hok) = c.habit_call(call, id, hint)
+  if hok {
+    return ht
+  }
+  c.error("XO0601", id.span, "function `${text(name)}` not found")
+  c.infer_args(args)
+  c.bad_ty
+}
+
+/// Checks the arguments of a call whose callee could not be typed;
+/// closures get a bad hint (their parameter types are unknowable).
+fn (var c: Checker) infer_args(args: List[Arg]) {
+  for a in args {
+    if unparen(a.value) is FnLit(..) {
+      c.infer(a.value, c.bad_ty)
+      continue
+    }
+    c.infer(a.value, -1)
+  }
+}
+
+fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, targs: List[Int], has_targs: Bool, hint: Int) -> Int {
+  let (_, fun, args) = call_parts(call)
+  if let Ident(id) = x {
+    if c.lookup_local(id.name) < 0 {
+      var m = -1
+      var found = false
+      if let Some(imp) = c.file_import(id.name) {
+        c.use_import(id.name)
+        m = imp.module
+        found = true
+      } else if id.name == b"testing" && c.in_test_context() {
+        m = c.testing_mod()
+        found = true
+      }
+      if found {
+        if m < 0 {
+          c.infer_args(args)
+          return c.bad_ty
+        }
+        c.record(id, c.mods[m].obj)
+        let o = c.mods[m].members.get(sel.name) ?? -1
+        if o < 0 {
+          c.error("XO0601", sel.span, "module `${text(id.name)}` has no member `${text(sel.name)}`")
+          c.infer_args(args)
+          return c.bad_ty
+        }
+        if !c.pub_in(o, m) {
+          c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+        }
+        c.record(sel, o)
+        match c.objs[o].kind {
+          Func => return c.call_func(o, {}, targs, has_targs, call, hint, [])
+          Type => return c.type_call(o, targs, has_targs, call, hint)
+          Const => return c.call_value(c.const_type(o), call, hint, text(sel.name))
+          TParam | Local | Module => {}
+        }
+        return c.bad_ty
+      }
+    }
+  }
+  if let Ident(id) = x {
+    if c.lookup_local(id.name) < 0 && c.file_import(id.name) == None && c.lookup_module_obj(c.cur_mod, id.name) < 0 {
+      let (ht, hok) = c.habit_module_call(call, id, sel)
+      if hok {
+        return ht
+      }
+    }
+  }
+  let r = c.type_of_expr(x)
+  if r.obj >= 0 {
+    if has_targs {
+      c.error("XO0407", parser.expr_span(fun), "type arguments go on the type: `${text(c.objs[r.obj].name)}[...].${text(sel.name)}(...)`")
+    }
+    return c.type_member(r.obj, r.args, r.has_args, sspan, x, sel, hint, [call])
+  }
+  let bt = c.infer(x, -1)
+  c.call_method(bt, sspan, x, sel, targs, has_targs, call, hint)
+}
+
+fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs: List[Int], has_targs: Bool, call: Expr, hint: Int) -> Int {
+  let (span, _, args) = call_parts(call)
+  let r = c.resolve(bt)
+  let name = sel.name
+  if c.is_bad(r) {
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  let k = c.tys[r].kind
+  if k == TyKind.Var {
+    c.error("XO0405", parser.expr_span(x), "the type of this value must be known before `.${text(name)}(...)`; annotate it")
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  let is_named = k == TyKind.Named
+  if is_named && c.is_prelude(r, "Task") && name == b"await" {
+    c.error("XO0407", span, "`await` is written without parentheses: `t.await` (core 7.1)")
+    return c.field_of(bt, sspan, x, sel, false)
+  }
+  if k == TyKind.Tuple && is_tuple_index(name) {
+    return c.call_value(c.field_of(bt, sspan, x, sel, false), call, hint, text(name))
+  }
+  if is_named && c.objs[c.tys[r].obj].tkind == "newtype" && is_tuple_index(name) {
+    return c.call_value(c.field_of(bt, sspan, x, sel, false), call, hint, text(name))
+  }
+  let (m, _) = c.find_method_any(r, text(name))
+  if m < 0 {
+    if is_named && c.objs[c.tys[r].obj].tkind == "struct" && !c.objs[c.tys[r].obj].opaque && c.field_index(c.tys[r].obj, name) >= 0 {
+      let ft = c.field_of(bt, sspan, x, sel, false)
+      return c.call_value(ft, call, hint, text(name))
+    }
+    if (name == b"min" || name == b"max" || name == b"clamp") && c.is_ord(r) {
+      let want_n = if name == b"clamp" { 2 } else { 1 }
+      if args.len() != want_n {
+        c.error("XO0403", span, "`${text(name)}` takes ${want_n} argument(s), found ${args.len()}")
+      }
+      for a in args {
+        c.check_ty(a.value, r)
+      }
+      return r
+    }
+    if name == b"display" && args.is_empty() && targs.is_empty() && c.implements_name(r, "Display") {
+      return c.named("Str")
+    }
+    if name == b"debug" && args.is_empty() && targs.is_empty() {
+      return c.named("Str")
+    }
+    if (name == b"spawn" || name == b"spawn_background") && !c.is_prelude(r, "Scope") {
+      c.error("XO0803", sel.span, "`${text(name)}` is called on `${c.show(r)}`, not on a scope handle; tasks are started with `s.spawn(f)` inside `scope s { ... }` (core 7.1)")
+      c.infer_args(args)
+      return c.bad_ty
+    }
+    let (ht, hok) = c.habit_method(bt, r, sspan, x, sel, call, hint)
+    if hok {
+      return ht
+    }
+    c.no_member(r, sel, false)
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  c.record(sel, m)
+  if c.objs[m].is_static {
+    c.error("XO0407", sel.span, "`${text(name)}` is an associated function; call it on the type: `${text(c.objs[c.objs[m].recv].name)}.${text(name)}(...)`")
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  if !c.objs[m].is_pub && c.objs[m].module != c.cur_mod && !c.objs[m].iface {
+    c.error("XO0605", sel.span, "method `${text(name)}` of `${text(c.objs[c.objs[m].recv].name)}` is not `pub` in module `${c.mods[c.objs[m].module].path}`")
+  }
+  var pre: Subst = {}
+  if c.objs[m].iface {
+    if is_named {
+      let rargs = c.tys[r].args
+      for (i, p) in c.objs[c.objs[m].recv].tparams.indexed() {
+        if i < rargs.len() {
+          pre[p] = rargs[i]
+        }
+      }
+    }
+  } else {
+    for p in c.objs[m].tparams {
+      if c.objs[p].implicit {
+        if c.objs[p].effect {
+          pre[p] = c.fresh_effarg()
+        } else {
+          pre[p] = c.new_var()
+        }
+      }
+    }
+    if !c.unify(c.subst(c.objs[m].recv_ty, pre), r) {
+      c.error("XO0601", sel.span, "method `${text(name)}` is not defined on `${c.show(r)}`")
+      c.infer_args(args)
+      return c.bad_ty
+    }
+  }
+  let t = c.call_func(m, pre, targs, has_targs, call, hint, [x])
+  if c.is_prelude(r, "Scope") && (name == b"spawn" || name == b"spawn_background") {
+    c.record_spawn(x, call, t)
+  }
+  if c.is_task_group(r) && (name == b"spawn" || name == b"spawn_background") {
+    c.record_group_spawn(x, call)
+  }
+  t
+}
+
+/// A method by name on a named type, an interface, or a constrained type
+/// parameter (applicability is checked by the caller).
+fn (var c: Checker) find_method_any(t0: Int, name: Str) -> (Int, Subst) {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      if c.objs[x.obj].tkind == "interface" {
+        return c.find_method(t, name)
+      }
+      let m = c.objs[x.obj].methods.get(name.bytes()) ?? -1
+      if m >= 0 {
+        return (m, {})
+      }
+      (-1, {})
+    }
+    Param => {
+      let ct = c.objs[x.obj].constraint
+      if ct >= 0 {
+        return c.find_method_any(ct, name)
+      }
+      (-1, {})
+    }
+    Tuple | Func | Var | Bad | EffArg => (-1, {})
+  }
+}
+
+fn (c: Checker) is_task_group(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "std/task" && c.objs[o].name == b"Group"
+}
+
+/// Notes a spawned task for the child failure rule (core 7.1).
+fn (var c: Checker) record_spawn(recv: Expr, call: Expr, task_t: Int) {
+  let r = c.resolve(task_t)
+  if c.tys[r].kind != TyKind.Named || c.tys[r].args.len() != 2 {
+    return
+  }
+  let err_t = c.tys[r].args[1]
+  let span = parser.expr_span(call)
+  var frame = -1
+  if let Ident(id) = recv {
+    let v = c.lookup_local(id.name)
+    if v >= 0 {
+      frame = c.objs[v].frame
+    }
+  }
+  if frame >= 0 {
+    c.frames[frame].spawns.push(Spawn{span: span, call: c.expr_key(call), err: err_t})
+    return
+  }
+  let e = c.resolve(err_t)
+  if !c.is_bad(e) && !c.is_never(e) && !c.is_open_var(e) {
+    c.error("XO0801", span, "a task spawned on a scope handle from outside this function can fail with `${c.show(e)}`; handle the error inside the task")
+  }
+}
+
+/// A call of a declared function or method (pre binds receiver type
+/// parameters; recv is the receiver expression, zero or one element).
+fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: Bool, call: Expr, hint: Int, recv: List[Expr]) -> Int {
+  let (span, fun, args) = call_parts(call)
+  if !c.objs[fo].sig_done {
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  let sm = c.fresh_subst(fo, pre, targs, has_targs, parser.expr_span(fun))
+  let result = c.subst(c.objs[fo].result, sm)
+  var err_t = -1
+  if c.objs[fo].err >= 0 {
+    err_t = c.subst(c.objs[fo].err, sm)
+  }
+  if hint >= 0 {
+    let h = c.resolve(hint)
+    if !c.is_open_var(h) && !c.is_interface(h) {
+      if err_t < 0 {
+        c.try_unify(result, h)
+      } else if !c.has_open_vars(err_t) && c.is_result(h) {
+        c.try_unify(c.call_result(result, err_t), h)
+      } else if !c.is_result(h) {
+        c.try_unify(result, h)
+      }
+    }
+  }
+  var params: List[ParamInfo] = []
+  for p in c.objs[fo].params {
+    var q = p
+    q.ty = c.subst(p.ty, sm)
+    params.push(q)
+  }
+  c.fn_calls[c.expr_key(call)] = fo
+  c.check_args(params, call, c.display_name(fo), false, fo, -1, -1)
+  // constraints
+  for p in c.objs[fo].tparams {
+    let ct = c.objs[p].constraint
+    if ct < 0 || c.objs[p].effect {
+      continue
+    }
+    let at = c.resolve(sm.get(p) ?? c.bad_ty)
+    if c.is_open_var(at) || c.is_bad(at) {
+      continue
+    }
+    let cn = c.resolve(c.subst(ct, sm))
+    if c.tys[cn].kind != TyKind.Named {
+      continue
+    }
+    if !c.implements(at, cn) {
+      c.error("XO0404", span, "`${c.show(at)}` does not implement `${c.show_raw(cn)}`, required by `${text(c.objs[p].name)}` of `${c.display_name(fo)}`")
+    }
+  }
+  // an error type that nothing determined: the call cannot fail
+  if err_t >= 0 {
+    let ev = c.resolve(err_t)
+    if c.tys[ev].kind == TyKind.Var {
+      c.bind(ev, c.named("Never"))
+    }
+  }
+  for p in c.objs[fo].tparams {
+    if !c.objs[p].effect {
+      continue
+    }
+    let a = sm.get(p) ?? -1
+    if a < 0 || c.tys[a].kind != TyKind.EffArg || c.tys[a].eff < 0 {
+      continue
+    }
+    for it in c.esets[c.tys[a].eff] {
+      if it.evar >= 0 && c.evars[it.evar] < 0 {
+        c.bind_eff(it.evar, c.new_eset([]))
+      }
+    }
+  }
+  if c.objs[fo].declared >= 0 {
+    c.perform(c.subst_eff(c.objs[fo].declared, sm, 0))
+  }
+  c.call_result(result, err_t)
+}
+
+/// Matches arguments to parameters (positional first, then named,
+/// defaults for the rest) and checks them; closures last, so their
+/// parameter types are known. positional_only drops argument names
+/// (a call of a function value, reported). A named argument names a
+/// parameter of function ref_fo, or a field of variant ref_v of enum
+/// ref_enum.
+fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, positional_only: Bool, ref_fo: Int, ref_enum: Int, ref_v: Int) {
+  let (span, _, args) = call_parts(call)
+  var assigned: List[Int] = []
+  for _ in params {
+    assigned.push(-1)
+  }
+  var seen_named = false
+  var pos = 0
+  var ok = true
+  for (ai, a) in args.indexed() {
+    let named = if positional_only { None } else { a.name }
+    match named {
+      None => {
+        if seen_named {
+          c.error("XO0403", a.span, "positional arguments must come before named ones (core 3.2)")
+          ok = false
+          continue
+        }
+        if pos >= params.len() {
+          c.error("XO0403", a.span, "too many arguments to `${fname}`: it takes ${params.len()}")
+          c.infer(a.value, -1)
+          ok = false
+          continue
+        }
+        assigned[pos] = ai
+        pos += 1
+      }
+      Some(n) => {
+        seen_named = true
+        var idx = -1
+        for (i, p) in params.indexed() {
+          if p.name == n.name {
+            idx = i
+          }
+        }
+        if idx < 0 {
+          c.error("XO0403", n.span, "`${fname}` has no parameter named `${text(n.name)}`")
+          c.infer(a.value, -1)
+          ok = false
+          continue
+        }
+        if assigned[idx] >= 0 {
+          c.error("XO0403", n.span, "parameter `${text(n.name)}` is given twice")
+          c.infer(a.value, -1)
+          ok = false
+          continue
+        }
+        if ref_fo >= 0 {
+          c.record_text(n, c.param_text(ref_fo, params[idx]))
+        } else if ref_enum >= 0 {
+          c.record_text(n, c.vfield_text(ref_enum, ref_v, c.objs[ref_enum].variants[ref_v].fields[idx]))
+        }
+        assigned[idx] = ai
+      }
+    }
+  }
+  var missing: List[Str] = []
+  for (i, p) in params.indexed() {
+    if assigned[i] < 0 && p.default.is_empty() {
+      missing.push(text(p.name))
+    }
+  }
+  if !missing.is_empty() && ok {
+    c.error("XO0403", span, "missing argument(s) `${missing.join("`, `")}` in call to `${fname}`")
+  }
+  for pass in 0..2 {
+    for (i, ai) in assigned.indexed() {
+      if ai < 0 {
+        continue
+      }
+      let e = args[ai].value
+      let is_lit = e is FnLit(..)
+      if is_lit != (pass == 1) {
+        continue
+      }
+      c.check_ty(e, params[i].ty)
+    }
+  }
+}
+
+/// A call of a value of function type.
+fn (var c: Checker) call_value(ft: Int, call: Expr, hint: Int, name0: Str) -> Int {
+  let (_, fun, args) = call_parts(call)
+  let r = c.resolve(ft)
+  if c.is_bad(r) {
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  if c.tys[r].kind != TyKind.Func {
+    if c.tys[r].kind == TyKind.Var {
+      c.error("XO0405", parser.expr_span(fun), "the type of this function value must be known here")
+    } else {
+      var what = name0
+      if what.is_empty() {
+        what = callee_name(fun)
+      }
+      if what.is_empty() {
+        what = "this value"
+      }
+      c.error("XO0407", parser.expr_span(fun), "`${what}` is not a function (its type is `${c.show(ft)}`)")
+    }
+    c.infer_args(args)
+    return c.bad_ty
+  }
+  var params: List[ParamInfo] = []
+  let f = c.tys[r]
+  for (i, p) in f.args.indexed() {
+    params.push(ParamInfo{name: "#${i + 1}".bytes(), ty: p, is_var: f.vars[i]})
+  }
+  for a in args {
+    if let Some(n) = a.name {
+      c.error("XO0403", n.span, "a function value takes positional arguments only")
+    }
+  }
+  let name = if name0.is_empty() { "function value" } else { name0 }
+  c.check_args(params, call, name, true, -1, -1, -1)
+  c.perform(f.eff)
+  c.call_result(f.result, f.err)
+}
+
+/// `T(x)`: numeric conversions (core 2.1) and newtype construction
+/// (core 2.8).
+fn (var c: Checker) type_call(obj0: Int, targs0: List[Int], has_targs0: Bool, call: Expr, hint: Int) -> Int {
+  let (span, fun, args) = call_parts(call)
+  var obj = obj0
+  var targs = targs0
+  var has_targs = has_targs0
+  if c.objs[obj].tkind == "alias" {
+    let r = c.alias_named(obj, targs, has_targs, parser.expr_span(fun))
+    if r.obj < 0 {
+      c.infer_args(args)
+      return c.bad_ty
+    }
+    obj = r.obj
+    targs = r.args
+    has_targs = r.has_args
+  }
+  let oname = text(c.objs[obj].name)
+  if c.objs[obj].module == c.prelude && (is_int_name(c.objs[obj].name) || is_float_name(c.objs[obj].name)) {
+    if args.len() != 1 || args[0].name != None {
+      c.error("XO0403", span, "conversion `${oname}(x)` takes one positional argument")
+      c.infer_args(args)
+      return c.mk_named(obj, [])
+    }
+    let at = c.infer(args[0].value, -1)
+    if is_int_name(c.objs[obj].name) && c.is_prelude(at, "Rune") {
+      return c.mk_named(obj, [])
+    }
+    if !c.is_bad(at) && !c.is_numeric(at) && !c.is_open_var(at) {
+      c.error("XO0409", parser.expr_span(args[0].value), "cannot convert `${c.show(at)}` to `${oname}`; numeric conversions take a number")
+    }
+    return c.mk_named(obj, [])
+  }
+  if c.objs[obj].module == c.prelude && oname == "Rune" {
+    if args.len() != 1 || args[0].name != None {
+      c.error("XO0403", span, "conversion `Rune(n)` takes one positional argument")
+      c.infer_args(args)
+      return c.named("Rune")
+    }
+    let at = c.infer(args[0].value, -1)
+    if !c.is_bad(at) && !c.is_int(at) && !c.is_prelude(at, "Rune") && !c.is_open_var(at) {
+      c.error("XO0409", parser.expr_span(args[0].value), "cannot convert `${c.show(at)}` to `Rune`; a Rune is made from an integer code point")
+    }
+    return c.named("Rune")
+  }
+  if c.objs[obj].tkind == "newtype" {
+    let nt = c.instantiate(obj, targs, has_targs, parser.expr_span(fun))
+    if nt < 0 {
+      c.infer_args(args)
+      return c.bad_ty
+    }
+    if hint >= 0 {
+      c.try_unify(nt, hint)
+    }
+    if args.len() != 1 || args[0].name != None {
+      c.error("XO0403", span, "newtype `${oname}(x)` takes one positional argument")
+      c.infer_args(args)
+      return nt
+    }
+    c.check_ty(args[0].value, c.subst(c.objs[obj].target, c.args_subst(c.objs[obj].tparams, c.tys[nt].args)))
+    c.ctor_calls[c.expr_key(call)] = true
+    return nt
+  }
+  c.error("XO0407", parser.expr_span(fun), "`${c.qual_name(obj)}` is a type and cannot be called")
+  c.infer_args(args)
+  c.bad_ty
+}
+
+/// Builds variant v (a position) of enum (core 2.3); call is the
+/// CallExpr (zero or one element), name the identifier naming the
+/// variant.
+fn (var c: Checker) construct(en: Int, v: Int, targs: List[Int], has_targs: Bool, call: List[Expr], hint: Int, sp: Span, name: Ident) -> Int {
+  c.record_text(name, c.variant_text(en, v))
+  let nt = c.instantiate(en, targs, has_targs, sp)
+  if nt < 0 {
+    if !call.is_empty() {
+      let (_, _, args) = call_parts(call[0])
+      c.infer_args(args)
+    }
+    return c.bad_ty
+  }
+  if hint >= 0 {
+    var h = c.resolve(hint)
+    let el = c.option_elem(h)
+    if el >= 0 && !(c.objs[en].module == c.prelude && c.objs[en].name == b"Option") {
+      h = c.resolve(el)
+    }
+    c.try_unify(nt, h)
+  }
+  let s = c.args_subst(c.objs[en].tparams, c.tys[nt].args)
+  let vi = c.objs[en].variants[v]
+  if call.is_empty() {
+    if !vi.fields.is_empty() {
+      c.error("XO0403", sp, "variant `${text(vi.name)}` has fields; construct it with arguments: `${text(vi.name)}(...)`")
+    }
+    return nt
+  }
+  let (cspan, _, args) = call_parts(call[0])
+  c.ctor_calls[c.expr_key(call[0])] = true
+  if vi.unit || vi.fields.is_empty() {
+    if !args.is_empty() {
+      c.error("XO0403", cspan, "variant `${text(vi.name)}` has no fields")
+      c.infer_args(args)
+    }
+    return nt
+  }
+  var params: List[ParamInfo] = []
+  for f in vi.fields {
+    let pname = if f.from { b"" } else { f.name }
+    params.push(ParamInfo{name: pname, ty: c.subst(f.ty, s), is_var: false})
+  }
+  if vi.fields.len() > 1 {
+    for a in args {
+      if a.name == None {
+        var names: List[Str] = []
+        for f in vi.fields {
+          names.push("${text(f.name)}: ...")
+        }
+        c.error("XO0403", a.span, "variant `${text(vi.name)}` has ${vi.fields.len()} fields; construct it with names: `${text(vi.name)}(${names.join(", ")})` (core 2.3)")
+        c.infer_args(args)
+        return nt
+      }
+    }
+  }
+  c.check_args(params, call[0], text(vi.name), false, -1, en, v)
+  nt
+}
+
+/// Whether fun is the predeclared `expect` of a test (core 9.2).
+fn (c: Checker) is_expect_call(fun: Expr) -> Bool {
+  match fun {
+    Ident(id) => id.name == b"expect" && c.in_test_context() && c.lookup_local(b"expect") < 0 && !c.mods[c.cur_mod].members.contains(b"expect")
+    _ => false
+  }
+}
+
+/// `expect(a) op b` as the comparison `a op b`.
+fn (var c: Checker) expect_compare(span: Span, op: parser.Kind, call: Expr, cspan: Span, args: List[Arg], y: Expr) -> Int {
+  if args.len() != 1 {
+    c.error("XO0403", cspan, "`expect` takes one argument")
+    c.infer_args(args)
+    c.infer(y, -1)
+    return c.unit_ty
+  }
+  let at = c.infer(args[0].value, -1)
+  c.set_type(call, c.named("Bool"))
+  if !(op is Eq | NotEq | Lt | LtEq | Gt | GtEq) {
+    c.error("XO0406", span, "`expect(x)` must be followed by a comparison: ==, !=, <, <=, >, >=")
+    c.infer(y, -1)
+    return c.unit_ty
+  }
+  var yt = -1
+  if c.is_open_var(at) {
+    yt = c.infer(y, -1)
+  } else {
+    yt = c.infer(y, at)
+  }
+  c.binary_type(op, at, yt, span)
+  c.unit_ty
+}

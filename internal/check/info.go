@@ -29,19 +29,49 @@ type records struct {
 	names map[*ast.Ident]nameRef
 }
 
-// nameRef is the object an identifier names: *VarObj, *FuncObj,
-// *ConstObj, *TypeObj, *TParam, or *Module (an import).
+// nameRef is the object an identifier names: *VarObj, *FuncObj (a
+// function, method, static, or interface method), *ConstObj, *TypeObj,
+// *TParam, *Module (an import), *VariantObj, fieldRef, or paramRef.
 type nameRef struct {
 	obj any
-	// call marks the callee of a call `T(...)`, where a prelude type
-	// name may instead have been a variant of the expected enum.
-	call bool
+}
+
+// fieldRef is a struct field (owner `T`) or a variant field (owner
+// `Enum.Variant`) named by an identifier: a selector, a struct literal or
+// `with` field, a named constructor argument, or a pattern field.
+type fieldRef struct {
+	mod   *Module
+	owner string
+	name  string
+	span  token.Span
+}
+
+// paramRef is the parameter of a declared function that a named argument
+// names.
+type paramRef struct {
+	fn   *FuncObj
+	name string
+	span token.Span
 }
 
 // name records that id names obj.
 func (r *records) name(id *ast.Ident, obj any) {
 	if id != nil && obj != nil {
 		r.names[id] = nameRef{obj: obj}
+	}
+}
+
+// field records that id names field f of struct t.
+func (r *records) field(id *ast.Ident, t *TypeObj, f *FieldObj) {
+	if id != nil && t != nil && f != nil {
+		r.names[id] = nameRef{obj: fieldRef{mod: t.Module, owner: t.Name, name: f.Name, span: f.Span}}
+	}
+}
+
+// vfield records that id names field f of variant v.
+func (r *records) vfield(id *ast.Ident, v *VariantObj, f *VFieldObj) {
+	if id != nil && v != nil && f != nil {
+		r.names[id] = nameRef{obj: fieldRef{mod: v.Enum.Module, owner: v.Enum.Name + "." + v.Name, name: f.Name, span: f.Span}}
 	}
 }
 

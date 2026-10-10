@@ -23,3 +23,15 @@ bytes (`recordAt`). Test programs `internal/arm64/testdata/run/big_frame`
 (about 9 KiB, also on a task's fiber) and `wide_values` (80 word values in
 lists, enum payloads, closures). Any other `[sp, #off]` pair instruction
 added to the backend needs the same reach check.
+
+Observed again (2026-10-10, selfhost/check stage 2): `frame of
+Checker.habit_call too large (29568 bytes)`, over the 28 KiB limit, on a
+function of about 150 lines (a `match` of 20 habit names, each arm
+calling the checker and building syntax nodes), after a field was added
+to the `Checker` struct. It had built a commit earlier. Workaround used:
+one small function per arm. Each spilled value still gets its own slot,
+so a long function's frame grows with its length; the next step for the
+backend is reusing spill slots whose values are not live at the same
+time (an interval coloring over the slots in `internal/arm64`, with
+`habit_call` before the split as the test case), which would also shrink
+the 9 to 20 KiB frames of the parsers.

@@ -168,6 +168,8 @@ type VFieldObj struct {
 	Name string
 	From bool
 	Type Type
+	// Span is the field's name, or empty for a `from` field.
+	Span token.Span
 }
 
 // ParamInfo is a declared function parameter.
@@ -177,6 +179,9 @@ type ParamInfo struct {
 	Var     bool
 	Default ast.Expr
 	Span    token.Span
+	// ref is what a named argument for this parameter names, for the
+	// names section of `xo typedump`: a paramRef or a fieldRef.
+	ref any
 }
 
 // FuncObj is a function, method, or interface method.

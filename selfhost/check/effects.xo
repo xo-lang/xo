@@ -1,0 +1,165 @@
+// Effect sets as far as types need them (internal/check/effects.go):
+// the `uses` of a function type and the effect arguments of a type
+// (`Cache[K, V, E, net.dial]`), with effect variables bound by
+// unification. Checking effects against declarations is stage 4
+// (decision 0141); the items that stand for the inferred effects of a
+// function are not kept, since Type.String drops them.
+
+/// One member of an effect set: a label, an effect parameter (a TParam
+/// object), or an effect variable.
+pub struct EffItem {
+  pub label: Str = ""
+  pub param: Int = -1
+  pub evar: Int = -1
+}
+
+/// A new effect set (an index into esets).
+fn (var c: Checker) new_eset(items: List[EffItem]) -> Int {
+  let i = c.esets.len()
+  c.esets.push(items)
+  i
+}
+
+/// A set holding one fresh effect variable.
+fn (var c: Checker) fresh_eset() -> Int {
+  let v = c.evars.len()
+  c.evars.push(-1)
+  c.new_eset([EffItem{evar: v}])
+}
+
+/// An effect argument holding a fresh effect variable.
+fn (var c: Checker) fresh_effarg() -> Int {
+  let s = c.fresh_eset()
+  c.new_ty(Ty{kind: TyKind.EffArg, eff: s})
+}
+
+fn (var c: Checker) effarg(s: Int) -> Int {
+  c.new_ty(Ty{kind: TyKind.EffArg, eff: s})
+}
+
+/// The first unbound effect variable of set s, or -1.
+fn (c: Checker) open_evar(s: Int) -> Int {
+  if s < 0 {
+    return -1
+  }
+  for it in c.esets[s] {
+    if it.evar >= 0 {
+      let r = c.evars[it.evar]
+      if r < 0 {
+        return it.evar
+      }
+      let v = c.open_evar(r)
+      if v >= 0 {
+        return v
+      }
+    }
+  }
+  -1
+}
+
+/// Binds effect variable v to set s, on the trail.
+fn (var c: Checker) bind_eff(v: Int, s: Int) {
+  c.evars[v] = s
+  c.trail.push(-(v + 1))
+}
+
+/// Binds an open effect variable of either set to the other.
+fn (var c: Checker) unify_eff(a: Int, b: Int) {
+  let va = c.open_evar(a)
+  if va >= 0 && b >= 0 && c.open_evar(b) != va {
+    c.bind_eff(va, b)
+    return
+  }
+  let vb = c.open_evar(b)
+  if vb >= 0 && a >= 0 && c.open_evar(a) != vb {
+    c.bind_eff(vb, a)
+  }
+}
+
+/// s with effect parameters replaced through sm (an effect parameter
+/// maps to an EffArg type) and bound variables by what they stand for.
+fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
+  if s < 0 || sm.is_empty() || depth > 50 {
+    return s
+  }
+  var changes = false
+  for it in c.esets[s] {
+    if (it.evar >= 0 && c.evars[it.evar] >= 0) || (it.param >= 0 && sm.contains(it.param)) {
+      changes = true
+    }
+  }
+  if !changes {
+    return s
+  }
+  var out: List[EffItem] = []
+  for it in c.esets[s] {
+    if it.evar >= 0 && c.evars[it.evar] >= 0 {
+      let r = c.subst_eff(c.evars[it.evar], sm, depth + 1)
+      for x in c.esets[r] {
+        out.push(x)
+      }
+      continue
+    }
+    if it.param >= 0 {
+      if let Some(t) = sm.get(it.param) {
+        if c.tys[t].kind == TyKind.EffArg && c.tys[t].eff >= 0 {
+          for x in c.esets[c.tys[t].eff] {
+            out.push(x)
+          }
+          continue
+        }
+      }
+    }
+    out.push(it)
+  }
+  c.new_eset(out)
+}
+
+/// Adds the items of set s to the effects of the current body.
+fn (var c: Checker) perform(s: Int) {
+  if c.ctx < 0 || s < 0 {
+    return
+  }
+  let e = c.ctxs[c.ctx].eff
+  if e < 0 {
+    return
+  }
+  for it in c.esets[s] {
+    c.esets[e].push(it)
+  }
+}
+
+/// The text of set s: its labels and effect parameters, sorted, joined
+/// with ", " (effects.go EffSet.String).
+fn (c: Checker) eff_text(s: Int) -> Str {
+  if s < 0 {
+    return ""
+  }
+  var labels: List[Str] = []
+  var params: List[Int] = []
+  c.flatten_eff(s, labels, params, 0)
+  var parts = labels
+  for p in params {
+    parts.push(text(c.objs[p].name))
+  }
+  parts.sort().join(", ")
+}
+
+fn (c: Checker) flatten_eff(s: Int, var labels: List[Str], var params: List[Int], depth: Int) {
+  if s < 0 || depth > 50 {
+    return
+  }
+  for it in c.esets[s] {
+    if !it.label.is_empty() {
+      if !labels.contains(it.label) {
+        labels.push(it.label)
+      }
+    } else if it.param >= 0 {
+      if !params.contains(it.param) {
+        params.push(it.param)
+      }
+    } else if it.evar >= 0 {
+      c.flatten_eff(c.evars[it.evar], labels, params, depth + 1)
+    }
+  }
+}

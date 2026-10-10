@@ -1,5 +1,5 @@
 // Tests of the self hosted checker. The comparison with the Go checker is
-// internal/selfhost's TestSelfhostCheckerNames (decision 0141).
+// internal/selfhost's TestSelfhostChecker (decision 0141).
 
 /// A small prelude for checks in the test's in memory file system.
 const PRELUDE = """
@@ -12,10 +12,24 @@ const PRELUDE = """
   }
   struct Os {}
   fn print(s: Str)
+  struct Bool {}
+  struct Float {}
+  enum Never {}
+  enum Result[T, E] {
+    Ok(v: T)
+    Err(e: E)
+  }
+  interface Display {
+    fn display(self) -> Str
+  }
+  interface Error {
+    fn display(self) -> Str
+  }
+  fn (xs: List[T]) len() -> Int
   """
 
 /// Checks the module in dir after writing files (path, source) and the
-/// small prelude, and returns the names and diags dump.
+/// small prelude, and returns the names, types, and diags dump.
 fn check_files(os: testing.TestOs, dir: Str, files: List[(Str, Str)]) -> Str ! FsErr {
   os.fs.create_dir_all("std")?
   os.fs.write("std/prelude.xo", PRELUDE.bytes())?
@@ -25,13 +39,13 @@ fn check_files(os: testing.TestOs, dir: Str, files: List[(Str, Str)]) -> Str ! F
     os.fs.write(p, src.bytes())?
   }
   var c = new_checker(os.fs, "std")
-  if let Err(e) = c.check([dir]) {
+  if let Err(e) = c.check_dirs([dir]) {
     return Ok("error ${e}")
   }
   if !c.unsupported.is_empty() {
     return Ok("unsupported ${c.unsupported}")
   }
-  Ok(c.dump(true, true))
+  Ok(c.dump(true, true, true))
 }
 
 /// The lines of a dump after its module header, without the file headers.
@@ -105,7 +119,7 @@ test "shadowing in a nested block is allowed, in the same block it is XO0603" {
   expect(ls.any(fn(l) { l.contains("\"XO0603\"") && l.contains("\"line\":7") })) == true
 }
 
-test "undefined names are XO0601; an UpperCamel name is left to the types stage" {
+test "undefined names are XO0601, UpperCamel ones too when no enum is expected" {
   let out = check_files(os, "u", [("u/main.xo", """
     fn f() -> Int {
       missing(Red, other)
@@ -114,7 +128,35 @@ test "undefined names are XO0601; an UpperCamel name is left to the types stage"
   let ls = lines(out)
   expect(ls.any(fn(l) { l.contains("function `missing` not found") })) == true
   expect(ls.any(fn(l) { l.contains("name `other` not found") })) == true
-  expect(ls.any(fn(l) { l.contains("Red") })) == false
+  expect(ls.any(fn(l) { l.contains("name `Red` not found") })) == true
+}
+
+test "expressions get their types after implicit conversion" {
+  let out = check_files(os, "t", [("t/main.xo", """
+    fn f(x: Int) -> Int? {
+      let y: Int? = x
+      let z = [x, 2]
+      if z.len() == 0 { None } else { y }
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.contains("2:17-2:18 Ident Int?")) == true
+  expect(ls.contains("3:11-3:17 ListLit List[Int]")) == true
+  expect(ls.contains("3:15-3:16 IntLit Int")) == true
+  expect(ls.contains("4:6-4:13 CallExpr Int")) == true
+  expect(ls.contains("4:21-4:25 Ident Int?")) == true
+  expect(ls.contains("4:8 len fn std/prelude List.len std/prelude.xo:23:18")) == true
+  expect(ls.contains("4:21 None variant std/prelude Option.None std/prelude.xo:5:3")) == true
+}
+
+test "a value of the wrong type is XO0401" {
+  let out = check_files(os, "w", [("w/main.xo", """
+    fn f(x: Int) -> Str {
+      x
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
 }
 
 test "a file with a parse error is not checked" {

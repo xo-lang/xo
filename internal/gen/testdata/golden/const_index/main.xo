@@ -1,0 +1,21 @@
+// A constant indexed by a lowercase name: `NAMES[i]` is an index, not
+// type arguments with the effect argument `i` (decision 0143). Both
+// parsers read it as type arguments, which the checker then rejected
+// ("type arguments are only allowed on generic functions and types");
+// found by the self hosted checker's `KIND_NAMES[k]`.
+
+const NAMES = ["zero", "one", "two"]
+
+const KIND_NAMES = ["Ident", "IntLit"]
+
+const LIMITS = {"a": 1, "b": 2}
+
+fn main(os: Os) {
+  for i in 0..NAMES.len() {
+    os.stdio.println(NAMES[i])
+  }
+  let k = 1
+  os.stdio.println("${KIND_NAMES[k]} ${KIND_NAMES[k].len()}")
+  let key = "b"
+  os.stdio.println("${LIMITS.get(key) ?? 0}")
+}

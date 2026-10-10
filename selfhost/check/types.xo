@@ -1,0 +1,626 @@
+// Types (internal/check/types.go), in the table design of decision 0141:
+// a type is an Int into the Checker's `tys`, and a type refers to its
+// parts by index. An inference variable is an entry whose `ref` is set
+// when it is bound (unify, infer.xo); binding writes the table in place
+// and is recorded on a trail so a failed tentative unification can be
+// undone. Types are never compared by index except as a shortcut: two
+// entries are the same type when they are structurally identical.
+
+/// What a type entry is.
+pub enum TyKind {
+  /// A nominal type with its type arguments: obj is the Type object.
+  Named
+  /// `(A, B)`; `()` with no elements.
+  Tuple
+  /// A function type: args are the parameters, vars marks `var` ones.
+  Func
+  /// A type parameter: obj is the TParam object.
+  Param
+  /// An inference variable, bound when ref >= 0.
+  Var
+  /// The `<error>` type, compatible with everything (core 10.2).
+  Bad
+  /// An effect set in the type arguments of a type with an effect
+  /// parameter (eff is the set).
+  EffArg
+}
+
+/// A type entry.
+pub struct Ty {
+  pub kind: TyKind
+  /// Named: the Type object; Param: the TParam object.
+  pub obj: Int = -1
+  /// Named: type arguments; Tuple: elements; Func: parameter types.
+  pub args: List[Int] = []
+  /// Func: which parameters are `var`.
+  pub vars: List[Bool] = []
+  /// Func: the result type.
+  pub result: Int = -1
+  /// Func: the error type, -1 when it cannot fail.
+  pub err: Int = -1
+  /// Var: the bound type, -1 while open.
+  pub ref: Int = -1
+  /// Func: its effect set (effects.xo), -1 for none (pure); EffArg: the
+  /// set.
+  pub eff: Int = -1
+}
+
+/// A substitution of type parameters (TParam objects) by types.
+pub type Subst = Map[Int, Int]
+
+// ---------------------------------------------------------------------------
+// Constructors
+
+fn (var c: Checker) new_ty(t: Ty) -> Int {
+  let i = c.tys.len()
+  c.tys.push(t)
+  i
+}
+
+fn (var c: Checker) mk_named(obj: Int, args: List[Int]) -> Int {
+  if args.is_empty() {
+    if let Some(t) = c.named0.get(obj) {
+      return t
+    }
+    let t = c.new_ty(Ty{kind: TyKind.Named, obj: obj})
+    c.named0[obj] = t
+    return t
+  }
+  c.new_ty(Ty{kind: TyKind.Named, obj: obj, args: args})
+}
+
+fn (var c: Checker) mk_tuple(elems: List[Int]) -> Int {
+  if elems.is_empty() {
+    return c.unit_ty
+  }
+  c.new_ty(Ty{kind: TyKind.Tuple, args: elems})
+}
+
+fn (var c: Checker) mk_func(params: List[Int], vars: List[Bool], result: Int, err: Int, eff: Int) -> Int {
+  c.new_ty(Ty{kind: TyKind.Func, args: params, vars: vars, result: result, err: err, eff: eff})
+}
+
+fn (var c: Checker) mk_param(p: Int) -> Int {
+  c.new_ty(Ty{kind: TyKind.Param, obj: p})
+}
+
+fn (var c: Checker) new_var() -> Int {
+  c.new_ty(Ty{kind: TyKind.Var})
+}
+
+/// The prelude type name with no type arguments (`Int`, `Bool`).
+fn (var c: Checker) named(name: Str) -> Int {
+  c.mk_named(c.prelude_obj(name), [])
+}
+
+fn (var c: Checker) named1(name: Str, a: Int) -> Int {
+  c.mk_named(c.prelude_obj(name), [a])
+}
+
+fn (var c: Checker) option_of(t: Int) -> Int {
+  c.mk_named(c.prelude_obj("Option"), [t])
+}
+
+fn (var c: Checker) result_of(t: Int, e: Int) -> Int {
+  c.mk_named(c.prelude_obj("Result"), [t, e])
+}
+
+/// The type a caller sees for a function returning t ! e.
+fn (var c: Checker) call_result(t: Int, e: Int) -> Int {
+  if e < 0 || c.is_never(e) {
+    return t
+  }
+  c.result_of(t, e)
+}
+
+/// The Type object of a prelude type; a checker fault when the prelude
+/// lacks it.
+fn (c: Checker) prelude_obj(name: Str) -> Int {
+  if c.prelude >= 0 {
+    if let Some(o) = c.mods[c.prelude].members.get(name.bytes()) {
+      if c.objs[o].kind == ObjKind.Type {
+        return o
+      }
+    }
+  }
+  fault("prelude type missing: ${name}")
+}
+
+// ---------------------------------------------------------------------------
+// Queries
+
+/// Follows bound inference variables.
+fn (c: Checker) resolve(t0: Int) -> Int {
+  var t = t0
+  while t >= 0 && c.tys[t].kind == TyKind.Var && c.tys[t].ref >= 0 {
+    t = c.tys[t].ref
+  }
+  t
+}
+
+fn (c: Checker) is_bad(t: Int) -> Bool {
+  c.tys[c.resolve(t)].kind == TyKind.Bad
+}
+
+fn (c: Checker) is_unit(t: Int) -> Bool {
+  let r = c.resolve(t)
+  c.tys[r].kind == TyKind.Tuple && c.tys[r].args.is_empty()
+}
+
+fn (c: Checker) is_open_var(t: Int) -> Bool {
+  let r = c.resolve(t)
+  c.tys[r].kind == TyKind.Var
+}
+
+fn (c: Checker) kind_of(t: Int) -> TyKind {
+  c.tys[c.resolve(t)].kind
+}
+
+/// The Type object of a Named type (after resolving), or -1.
+fn (c: Checker) named_obj(t: Int) -> Int {
+  let r = c.resolve(t)
+  if c.tys[r].kind == TyKind.Named {
+    return c.tys[r].obj
+  }
+  -1
+}
+
+/// Whether t is the prelude type name.
+fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == name.bytes()
+}
+
+fn (c: Checker) is_never(t: Int) -> Bool {
+  c.is_prelude(t, "Never")
+}
+
+/// T for T?, else -1.
+fn (c: Checker) option_elem(t: Int) -> Int {
+  let r = c.resolve(t)
+  if c.tys[r].kind == TyKind.Named && c.is_prelude(r, "Option") {
+    return c.tys[r].args[0]
+  }
+  -1
+}
+
+/// Whether t is Result[T, E].
+fn (c: Checker) is_result(t: Int) -> Bool {
+  let r = c.resolve(t)
+  c.tys[r].kind == TyKind.Named && c.is_prelude(r, "Result")
+}
+
+/// T of Result[T, E] (is_result must hold).
+fn (c: Checker) result_t(t: Int) -> Int {
+  c.tys[c.resolve(t)].args[0]
+}
+
+/// E of Result[T, E] (is_result must hold).
+fn (c: Checker) result_e(t: Int) -> Int {
+  c.tys[c.resolve(t)].args[1]
+}
+
+fn is_int_name(n: Bytes) -> Bool {
+  (n.to_str() ?? "") is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
+}
+
+fn is_float_name(n: Bytes) -> Bool {
+  n == b"Float" || n == b"Float32"
+}
+
+fn (c: Checker) is_int(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module == c.prelude && is_int_name(c.objs[o].name)
+}
+
+fn (c: Checker) is_float(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module == c.prelude && is_float_name(c.objs[o].name)
+}
+
+fn (c: Checker) is_numeric(t: Int) -> Bool {
+  c.is_int(t) || c.is_float(t)
+}
+
+fn (c: Checker) is_interface(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].tkind == "interface"
+}
+
+/// Whether t mentions the error type anywhere.
+fn (c: Checker) contains_bad(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Bad => true
+    Named | Tuple => {
+      for a in x.args {
+        if c.contains_bad(a) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for a in x.args {
+        if c.contains_bad(a) {
+          return true
+        }
+      }
+      if x.result >= 0 && c.contains_bad(x.result) {
+        return true
+      }
+      x.err >= 0 && c.contains_bad(x.err)
+    }
+    Param | Var | EffArg => false
+  }
+}
+
+/// Whether v (an open variable) occurs in t.
+fn (c: Checker) occurs(v: Int, t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Var => t == v
+    Named | Tuple => {
+      for a in x.args {
+        if c.occurs(v, a) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for a in x.args {
+        if c.occurs(v, a) {
+          return true
+        }
+      }
+      if c.occurs(v, x.result) {
+        return true
+      }
+      x.err >= 0 && c.occurs(v, x.err)
+    }
+    Param | Bad | EffArg => false
+  }
+}
+
+/// Whether t still holds unbound inference variables.
+fn (c: Checker) has_open_vars(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Var => true
+    Named | Tuple => {
+      for a in x.args {
+        if c.has_open_vars(a) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for a in x.args {
+        if c.has_open_vars(a) {
+          return true
+        }
+      }
+      c.has_open_vars(x.result)
+    }
+    Param | Bad | EffArg => false
+  }
+}
+
+/// Whether type t (unresolved, as written in a declaration) refers to
+/// type parameter p.
+fn (c: Checker) mentions(t: Int, p: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let x = c.tys[t]
+  match x.kind {
+    Param => x.obj == p
+    Named | Tuple => {
+      for a in x.args {
+        if c.mentions(a, p) {
+          return true
+        }
+      }
+      false
+    }
+    Func => {
+      for a in x.args {
+        if c.mentions(a, p) {
+          return true
+        }
+      }
+      c.mentions(x.result, p) || (x.err >= 0 && c.mentions(x.err, p))
+    }
+    Var | Bad | EffArg => false
+  }
+}
+
+/// Whether t (resolved) contains a type parameter.
+fn (c: Checker) mentions_param(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Param => true
+    Named | Tuple => {
+      for a in x.args {
+        if c.mentions_param(a) {
+          return true
+        }
+      }
+      false
+    }
+    Func | Var | Bad | EffArg => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Substitution
+
+/// The substitution of the type parameters params by args.
+fn (c: Checker) args_subst(params: List[Int], args: List[Int]) -> Subst {
+  var s: Subst = {}
+  for (i, p) in params.indexed() {
+    if i < args.len() {
+      s[p] = args[i]
+    }
+  }
+  s
+}
+
+/// t with type parameters replaced by s (bound variables are replaced by
+/// what they are bound to).
+fn (var c: Checker) subst(t: Int, s: Subst) -> Int {
+  if s.is_empty() || t < 0 {
+    return t
+  }
+  let x = c.tys[t]
+  match x.kind {
+    Param => s.get(x.obj) ?? t
+    Var => {
+      if x.ref >= 0 {
+        return c.subst(x.ref, s)
+      }
+      t
+    }
+    Named => {
+      if x.args.is_empty() {
+        return t
+      }
+      var args: List[Int] = []
+      var changed = false
+      for a in x.args {
+        let b = c.subst(a, s)
+        changed = changed || b != a
+        args.push(b)
+      }
+      if !changed {
+        return t
+      }
+      c.new_ty(Ty{kind: TyKind.Named, obj: x.obj, args: args})
+    }
+    Tuple => {
+      if x.args.is_empty() {
+        return t
+      }
+      var args: List[Int] = []
+      var changed = false
+      for a in x.args {
+        let b = c.subst(a, s)
+        changed = changed || b != a
+        args.push(b)
+      }
+      if !changed {
+        return t
+      }
+      c.new_ty(Ty{kind: TyKind.Tuple, args: args})
+    }
+    Func => {
+      var args: List[Int] = []
+      var changed = false
+      for a in x.args {
+        let b = c.subst(a, s)
+        changed = changed || b != a
+        args.push(b)
+      }
+      let r = c.subst(x.result, s)
+      let e = c.subst(x.err, s)
+      let ef = c.subst_eff(x.eff, s, 0)
+      if !changed && r == x.result && e == x.err && ef == x.eff {
+        return t
+      }
+      c.new_ty(Ty{kind: TyKind.Func, args: args, vars: x.vars, result: r, err: e, eff: ef})
+    }
+    EffArg => {
+      let ef = c.subst_eff(x.eff, s, 0)
+      if ef == x.eff {
+        return t
+      }
+      c.new_ty(Ty{kind: TyKind.EffArg, eff: ef})
+    }
+    Bad => t
+  }
+}
+
+/// Structural equality after resolving variables; open variables are
+/// identical only to themselves, and `<error>` to everything.
+fn (c: Checker) identical(a0: Int, b0: Int) -> Bool {
+  let a = c.resolve(a0)
+  let b = c.resolve(b0)
+  if a == b {
+    return true
+  }
+  let x = c.tys[a]
+  let y = c.tys[b]
+  if x.kind == TyKind.Bad || y.kind == TyKind.Bad {
+    return true
+  }
+  match x.kind {
+    Named => {
+      if y.kind != TyKind.Named || x.obj != y.obj || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if !c.identical(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      true
+    }
+    Tuple => {
+      if y.kind != TyKind.Tuple || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if !c.identical(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      true
+    }
+    Func => {
+      if y.kind != TyKind.Func || x.args.len() != y.args.len() {
+        return false
+      }
+      for i in 0..x.args.len() {
+        if x.vars[i] != y.vars[i] || !c.identical(x.args[i], y.args[i]) {
+          return false
+        }
+      }
+      if !c.identical(x.result, y.result) {
+        return false
+      }
+      if (x.err < 0) != (y.err < 0) {
+        return false
+      }
+      x.err < 0 || c.identical(x.err, y.err)
+    }
+    Param => y.kind == TyKind.Param && x.obj == y.obj
+    EffArg => y.kind == TyKind.EffArg
+    Var | Bad => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Text
+
+/// The name used in messages: std types outside the prelude are
+/// qualified with their module's name.
+fn (c: Checker) qual_name(o: Int) -> Str {
+  let m = c.objs[o].module
+  if m >= 0 && c.mods[m].is_std && !c.mods[m].is_prelude {
+    return "${c.mods[m].name}.${text(c.objs[o].name)}"
+  }
+  text(c.objs[o].name)
+}
+
+/// The text of t as Type.String prints it after Deep: variables are
+/// followed (an open one is `_`), and a function type whose error type
+/// is Never has none.
+fn (c: Checker) show(t: Int) -> Str {
+  var b = StrBuilder.new()
+  c.write_ty(b, t, true)
+  b.freeze()
+}
+
+/// The text of t as Type.String prints it without Deep.
+fn (c: Checker) show_raw(t: Int) -> Str {
+  var b = StrBuilder.new()
+  c.write_ty(b, t, false)
+  b.freeze()
+}
+
+fn (c: Checker) write_ty(var b: StrBuilder, t0: Int, deep: Bool) {
+  if t0 < 0 {
+    b.write("<nil>")
+    return
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => {
+      let o = x.obj
+      if x.args.len() == 1 && c.objs[o].module == c.prelude && c.objs[o].name == b"Option" {
+        let fn_elem = c.tys[c.resolve(x.args[0])].kind == TyKind.Func
+        if fn_elem {
+          b.write("(")
+        }
+        c.write_ty(b, x.args[0], deep)
+        if fn_elem {
+          b.write(")")
+        }
+        b.write("?")
+        return
+      }
+      b.write(c.qual_name(o))
+      if !x.args.is_empty() {
+        b.write("[")
+        for (i, a) in x.args.indexed() {
+          if i > 0 {
+            b.write(", ")
+          }
+          c.write_ty(b, a, deep)
+        }
+        b.write("]")
+      }
+    }
+    Tuple => {
+      b.write("(")
+      for (i, a) in x.args.indexed() {
+        if i > 0 {
+          b.write(", ")
+        }
+        c.write_ty(b, a, deep)
+      }
+      if x.args.len() == 1 {
+        b.write(",")
+      }
+      b.write(")")
+    }
+    Func => {
+      b.write("fn(")
+      for (i, a) in x.args.indexed() {
+        if i > 0 {
+          b.write(", ")
+        }
+        if x.vars[i] {
+          b.write("var ")
+        }
+        c.write_ty(b, a, deep)
+      }
+      b.write(")")
+      if x.result >= 0 && !c.is_unit(x.result) {
+        b.write(" -> ")
+        c.write_ty(b, x.result, deep)
+      }
+      if x.err >= 0 && !(deep && c.is_never(x.err)) {
+        b.write(" ! ")
+        c.write_ty(b, x.err, deep)
+      }
+      let s = c.eff_text(x.eff)
+      if !s.is_empty() {
+        b.write(" uses ")
+        if s.contains(",") {
+          b.write("(${s})")
+        } else {
+          b.write(s)
+        }
+      }
+    }
+    Param => b.write(text(c.objs[x.obj].name))
+    Var => b.write("_")
+    Bad => b.write("<error>")
+    EffArg => {
+      let s = c.eff_text(x.eff)
+      if s.contains(",") || s.is_empty() {
+        b.write("(${s})")
+      } else {
+        b.write(s)
+      }
+    }
+  }
+}

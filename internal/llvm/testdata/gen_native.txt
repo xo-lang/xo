@@ -76,6 +76,8 @@ tricky_mix
 unit_discard
 value_semantics
 var_receiver_order
+var_recv_after_args
+const_index
 task_std
 std06_path
 fs_rooting

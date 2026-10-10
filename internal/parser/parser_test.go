@@ -138,6 +138,11 @@ func TestExpressions(t *testing.T) {
 		{"Cache[Int, Item, (net, clock)]{a: 1}", "(struct (targs Cache Int Item (net, clock)) (a 1))"},
 		{"run[Int, net](f)", "(call (targs run Int net) f)"},
 		{"fns[i](x)", "(call (index fns i) x)"},
+		// a constant indexed by a lowercase name (decision 0143)
+		{"NAMES[i]", "(index NAMES i)"},
+		{"KIND_NAMES[k].len()", "(call (. (index KIND_NAMES k) len))"},
+		{"TABLE[i](x)", "(call (index TABLE i) x)"},
+		{"Runner[fx].new()", "(call (. (targs Runner fx) new))"},
 		{"{ let a = 1\n a }", "{(let a 1); a}"},
 		{"{ outer: for x in xs { break outer } }", "{(outer: for x xs {(break outer)})}"},
 		{"{ f(x) }", "{(call f x)}"},

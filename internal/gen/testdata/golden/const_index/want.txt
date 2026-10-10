@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+zero
+one
+two
+IntLit 6
+2
+--- stderr

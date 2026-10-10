@@ -1434,6 +1434,10 @@ Because values never alias mutably, data races are impossible except through
   stores into the target (decision 0140): changes the value makes to the
   target's binding are kept, so `t.objs[o].kids = t.add_kids()` keeps the
   objects `add_kids` pushed onto `t.objs`.
+- A call evaluates the place of a `var` receiver or `var` argument, then
+  every argument in order, then reads those places (decision 0142):
+  `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
+  `xs.push(f())` keeps what `f` pushed onto `xs`.
 - To change a value stored in a collection, use `update`, which reads, mutates,
   and writes back in one call:
   ```
@@ -2693,7 +2697,10 @@ Parsing rules the grammar alone does not settle:
   element looks like a type (`UpperCamel`, `mod.UpperCamel`, `(`, or `fn`) and
   either `(` follows or `x` is an `UpperCamel` type name; otherwise it is an
   index. So `json.decode[User](b)` and `Mutex[Int].new(0)` take type
-  arguments, while `xs[i]` and `m[Red]` index.
+  arguments, while `xs[i]` and `m[Red]` index. An effect argument (a
+  lowercase `name` or `name.sub`) also counts as a type element, except that
+  a base spelled like a constant (`UPPER_SNAKE`) with only lowercase names
+  in the brackets is an index: `NAMES[i]` (decision 0143).
 - **`{` in expression position** is an empty map when it is `{}`, a map literal
   when a `:` appears at depth zero before the first newline, and a block
   otherwise. A match arm `=> {}` is therefore an empty map; write `()` for unit.

@@ -2259,6 +2259,8 @@ func isUpper(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
 // `Job[Str]{...}`, `Cache[Int, Item, net.dial].new()`) or a call follows and
 // at least one element is a type (`json.decode[User](b)`). So `xs[i]`,
 // `xs[0]`, `m[Red]`, and `fns[i](x)` are indexes, and `f[T](x)` is a call.
+// A base spelled like a constant (UPPER_SNAKE) with only lowercase names
+// in the brackets is an index: `NAMES[i]` (decision 0143).
 func (p *parser) typeArgsAhead(base ast.Expr) bool {
 	depth := 0
 	end := -1
@@ -2303,9 +2305,25 @@ scan:
 		}
 	}
 	if isTypeName(base) {
-		return true
+		return anyType || !isConstName(base)
 	}
 	return anyType && p.toks[end+1].Kind == token.LParen
+}
+
+// isConstName reports whether e is an identifier spelled like a constant:
+// upper case letters, digits, and underscores (`NAMES`, `KIND_NAMES`).
+func isConstName(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok || !isUpper(id.Name) {
+		return false
+	}
+	for i := 0; i < len(id.Name); i++ {
+		ch := id.Name[i]
+		if !(ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // effectArgAt reports whether the tokens at i are a whole effect argument

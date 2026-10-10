@@ -707,9 +707,9 @@ func (s *fn) mapUpdate(x *ast.CallExpr, p place, args []ast.Expr) *Value {
 		b.unsupported(x, "`update` with a closure whose parameter is not `var`")
 		return s.undef(nt)
 	}
-	mp := p.get()
 	k := s.valueAs(args[0], mapKey(t))
 	init := s.valueAs(args[1], V)
+	mp := p.get()
 	idx := s.call(b.mapFind(t, x), intT, "", mp, k, s.call(b.hashFunc(mapKey(t), x), intT, "", k))
 	cur := local("v")
 	s.writeVar(cur, init)

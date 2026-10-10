@@ -151,3 +151,151 @@ Stage 2 (types and inference): port the type representation
 substitution table), literals, expected types, Option and Result rules,
 field, method, and variant resolution, and compare the types section
 on the same runs.
+
+# Stage 2 (types and inference), 2026-10-10
+
+Decision 0141, stage 2. The Xo checker (`selfhost/check`, 8,694 lines of
+Xo with its CLI, dump, and 165 lines of tests; 2,491 at stage 1) now
+types every expression the way internal/check does and prints the types
+section of `xo typedump`; the names section gained the resolutions stage
+1 deferred.
+
+## What stage 2 covers
+
+A port of internal/check's typed walk (expr.go, call.go, stmt.go,
+pattern.go, infer.go, types.go, the type parts of decl.go): the type
+table with inference variables bound in place and undone from a trail,
+unification, assignability with the implicit conversions of core 2.10
+(Some wrapping, interface conversion, function subsumption), error
+conversion at `?`, interface satisfaction (structural, derives, the
+builtin Eq, Hash, Ord, Json, Display rules, comparability), literals and
+their expected types, operators (Duration and Time arithmetic, `??`,
+`expect(x) == y`), calls with named arguments and defaults (closures
+last), generic instantiation at calls and constraint checks, fields,
+methods, statics, variants and payloads, newtypes, struct literals and
+`with`, closures with declared or expected types, the Option and Result
+rules (`?`, `Ok`/`Err` in return position, XO0201 to XO0206), `if`,
+`match`, `select`, `scope` and its task failure rule, loops and labels,
+constants, defaults, contracts, tests, patterns against their types,
+effect sets as far as types print them (`fn() uses net`,
+`Cache[K, V, E, net.dial]`), and the habits that recover a type after
+XO0601 (`len(x)`, `append`, `xs.length`, `string`, ...).
+
+The names section now records the field, method, static, variant, or
+parameter an identifier names (`field ...`, `fn ... Type.name`,
+`variant ...`, `param ...`), and prelude types called by name (`Int(x)`),
+which stage 1 left out.
+
+Deferred: the sigs section, XO0402, implicit receiver parameters as
+printed in signatures (stage 3); checking effects, XO0701, inference of
+non pub effects, ceilings (stage 4); value semantics (stage 5);
+exhaustiveness (stage 6); notes and fixes (stage 7); the habit notes
+(stage 8).
+
+## Agreement
+
+`TestSelfhostChecker` (go, arm64, and LLVM builds):
+
+| Go checker result | runs | Xo checker matches |
+|---|---|---|
+| accepted: identical names and types sections, no Xo diagnostic | 348 | 348 |
+| rejected only with stage 1 and 2 diagnostics: the same diagnostics | 76 | 76 |
+| rejected for other reasons (parse habits XO0177, unused bindings, XO0402, effects, real-time, xo.mod) | 158 | not compared |
+| `use go` / `use c` | 16 | not compared |
+
+The accepted runs hold 91,173 name lines (37,069 locals, 18,458
+functions and methods, 13,894 fields, 13,664 types, 5,305 variants, 1,608
+modules, 622 type parameters, 372 constants, 181 parameters) and 116,419
+type lines (276 function types with `uses`). The 76 rejected runs hold
+113 errors: 84 of names (XO0601, XO0603, XO0110 on imports) and 29 of
+types (XO0201, XO0202, XO0203, XO0204, XO0205, XO0206, XO0401, XO0403,
+XO0404, XO0407, XO0410, XO0801, XO0803).
+
+`TestSelfhostCheckerMutations` now makes type mutations (a literal of
+another type, a `?` removed, a field or method name replaced) for half
+the mutations: 1,000 gave 96 accepted and 790 rejected only for names
+and types, all identical; the matching rejections held 250 XO0401, 70
+XO0406, 21 XO0403, 18 XO0302, 11 XO0407, 7 XO0404, 7 XO0201, and 820
+name errors. Seeds 7, 11, and 13 with 3,000 each: 795 accepted and 7,137
+rejected only for names and types, all identical.
+
+The first version matched 344 of the 347 accepted runs before effect
+sets were added; the three others differed only in effect arguments
+(`Cache[..., net.dial]`).
+
+## Speed
+
+Apple M4 Pro, 20 repetitions, ms per run, best of two. The Go figure is
+the full Go checker (effects, flow, exhaustiveness included).
+
+| input | Go checker (all phases) | Xo, Go backend | Xo, arm64 | Xo, LLVM |
+|---|---|---|---|---|
+| selfhost (lexer, parser, check: 14,830 lines, 3 modules) | 69.5 | 141.4 | 116.2 | 86.2 |
+| selfhost/parser (with the lexer) | 28.4 | 56.6 | 46.7 | 34.3 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 8.5 | 25.2 | 12.6 | 9.1 |
+| 598 directories, each alone, once | 2,086 total | 3,517 | 2,503 | 1,865 |
+
+Parsing the selfhost files takes 26.2 ms in Go, 65.3 (Go backend), 30.9
+(arm64), and 21.6 (LLVM) in Xo, so checking after parsing costs the Xo
+checker about 76, 85, and 65 ms against about 41 ms for all of the Go
+checker's phases: the LLVM build is 1.6 times the Go checker on the
+work after parsing and 1.2 times overall. Two changes during the stage
+took 10% off the LLVM build: name records keyed by an Int instead of a
+`file:offset` string, and comparability decided once per type without
+type arguments (it was the largest function in the samples: `==` on an
+`Option[Type]` walked the AST types each time). The profile (macOS `sample`, LLVM
+build) is now spread over the walk (`infer`, `check`, `set_type`, `subst`)
+and reference counting of AST values (`xo.dup.Expr`, `xo.drop.Expr`,
+about 5%). arm64 is again slower than the Go backend on the checking
+part; the next experiment is the one stage 1 proposed (timing
+`Map[Int, Int]` get and put in isolation on both backends under
+bench/perf) together with timing `c.tys[t].kind` reads of a 9 field
+struct in a List, the checker's most frequent operation.
+
+## Types in tables
+
+Types are Ints into one `tys: List[Ty]` of the Checker; a `Ty` holds its
+kind, object, argument list, and for variables the bound type. Binding a
+variable is `c.tys[v].ref = t` plus a push on the trail, so undoing a
+failed tentative unification is a loop over the trail. Effect variables
+use the same trail (negative entries). This needed nothing new from the
+language. Two things cost an attempt each:
+
+- `KIND_NAMES[k]` (a constant list indexed by a local) parsed as type
+  arguments; fixed in both parsers (decision 0143).
+- On the native backends `c.implements(t, c.named("Display"))` lost the
+  type `named` pushed: the `var` receiver was read before the arguments
+  (decision 0142).
+
+Value semantics shaped the walk in one place: Go's checker passes `*Var`
+pointers around and binds them; a `Var` here is an index, so every type
+that mentions it sees the binding without any sharing of values.
+
+## Language and compiler gaps
+
+Found and fixed, each with a golden:
+
+1. Native backends: a `var` receiver or argument was read before the
+   call's arguments, dropping their changes to it (decision 0142,
+   `var_recv_after_args`).
+2. Parsers: a constant indexed by a lowercase name was read as type
+   arguments (decision 0143, `const_index`).
+
+Recorded, not fixed:
+
+- arm64: one spill slot per value made `habit_call` (a 150 line
+  `match`) exceed the 28 KiB frame limit after a field was added to the
+  Checker; split into one function per habit. Next step for the backend:
+  reuse spill slots of values not live at the same time (gotcha
+  arm64-large-frame).
+- `T??` still cannot be written as a type (stage 1); not needed by stage
+  2.
+- `use go` and `use c` runs (16) remain skipped (stage 1's next step
+  applies).
+
+## Next stage
+
+Stage 3 (generics): the sigs section (type parameters, implicit receiver
+parameters, constraints), XO0402 for type arguments nothing determined,
+and generic declarations' bodies compared through the types of their
+expressions, which already print with type parameters.

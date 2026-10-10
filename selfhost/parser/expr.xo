@@ -915,9 +915,29 @@ fn (p: Parser) type_args_ahead(base: Expr) -> Bool {
     }
   }
   if is_type_name(base) {
-    return true
+    return any_type || !is_const_name(base)
   }
   any_type && p.tok_at(end + 1).kind == Kind.LParen
+}
+
+/// Whether e is an identifier spelled like a constant: upper case
+/// letters, digits, and underscores (`NAMES`, `KIND_NAMES`), which with
+/// only lowercase names in the brackets is indexed (decision 0143).
+fn is_const_name(e: Expr) -> Bool {
+  let id = match e {
+    Ident(x) => x
+    _ => return false
+  }
+  if !is_upper(id.name) {
+    return false
+  }
+  for i in 0..id.name.len() {
+    let ch = id.name[i]
+    if !((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+      return false
+    }
+  }
+  true
 }
 
 /// Whether the tokens at i are a whole effect argument: `name` or

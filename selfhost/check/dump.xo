@@ -2,25 +2,28 @@
 // (internal/check/dump.go, decision 0141).
 
 /// Runs the checker's passes over the loaded modules (check.go run):
-/// declarations, then type declarations, signatures, and bodies of the
-/// user modules.
+/// declarations, type declarations, and signatures of every module, then
+/// the bodies of the user modules.
 fn (var c: Checker) run() {
   for m in c.order {
     c.declare(m)
   }
   for m in c.order {
-    if !c.mods[m].is_std {
-      c.resolve_types(m)
-    }
+    c.resolve_types(m)
   }
   for m in c.order {
-    if !c.mods[m].is_std {
-      c.resolve_sigs(m)
-    }
+    c.resolve_sigs(m)
   }
   for m in c.order {
     if !c.mods[m].is_std {
       c.check_module(m)
+    }
+  }
+  // check.go reportAmbiguous: a closure result that nothing determined
+  // and whose body never completes is Never
+  for t in c.never_results {
+    if c.is_open_var(t) {
+      c.unify(t, c.named("Never"))
     }
   }
   for m in c.order {
@@ -30,27 +33,55 @@ fn (var c: Checker) run() {
   }
 }
 
-/// The dump of the root modules: names (if names) and diagnostics (if
-/// diags).
-pub fn (c: Checker) dump(names: Bool, diags: Bool) -> Str {
+/// Reports XO0110 for the imports of module m never referenced.
+fn (var c: Checker) check_unused_imports(m: Int) {
+  for f in c.mods[m].files {
+    for u in c.files[f].ast.imports {
+      for (_, imp) in c.files[f].imports.entries() {
+        if imp.used || imp.span != u.span {
+          continue
+        }
+        c.error_at(f, "XO0110", u.span, "import `${text(u.path)}` is never used")
+      }
+    }
+  }
+}
+
+/// The dump of the root modules: names, types, and diagnostics as
+/// selected.
+pub fn (c: Checker) dump(names: Bool, types: Bool, diags: Bool) -> Str {
   var out = StrBuilder.new()
   for m in c.root_mods {
     out.write("== module ${c.mods[m].path} ${c.mods[m].dir}\n")
-    if !names {
-      continue
-    }
     for f in c.mods[m].files {
       let path = c.files[f].path
-      out.write("-- names ${path}\n")
-      var lines: List[Str] = []
-      for r in c.names {
-        if r.file == path {
-          lines.push("${pad(r.offset)}\t${r.line}:${r.col} ${text(r.name)} ${c.obj_text(r.obj)}")
+      if names {
+        out.write("-- names ${path}\n")
+        var lines: List[Str] = []
+        for r in c.names {
+          if r.file == path {
+            let what = if r.obj >= 0 { c.obj_text(r.obj) } else { r.what }
+            lines.push("${pad(r.offset)}\t${r.line}:${r.col} ${text(r.name)} ${what}")
+          }
+        }
+        for l in lines.sort() {
+          out.write(after_tab(l))
+          out.write("\n")
         }
       }
-      for l in lines.sort() {
-        out.write(after_tab(l))
-        out.write("\n")
+      if types {
+        out.write("-- types ${path}\n")
+        var lines: List[Str] = []
+        for r in c.types {
+          if r.file == f {
+            // by start, then end descending, then text
+            lines.push("${pad(r.start)}${pad(9999999999 - r.end)}\t${r.sline}:${r.scol}-${r.eline}:${r.ecol} ${r.kind} ${c.show(r.ty)}")
+          }
+        }
+        for l in lines.sort() {
+          out.write(after_tab(l))
+          out.write("\n")
+        }
       }
     }
   }
@@ -83,7 +114,7 @@ fn (c: Checker) obj_text(o: Int) -> Str {
   let pos = if x.file.is_empty() { "-" } else { "${x.file}:${x.line}:${x.col}" }
   match x.kind {
     Local => "local ${x.local} ${pos}"
-    Func => "fn ${c.mods[x.module].path} ${text(x.name)} ${pos}"
+    Func => "fn ${c.mods[x.module].path} ${c.display_name(o)} ${pos}"
     Const => "const ${c.mods[x.module].path} ${text(x.name)} ${pos}"
     Type => "type ${c.mods[x.module].path} ${text(x.name)} ${pos}"
     TParam => "tparam ${text(x.name)} ${pos}"

@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker types every expression (`selfhost/check`,
+  stage 2 of decision 0141): inference, literals, operators, expected
+  types and implicit conversions, calls with named arguments, fields,
+  methods, statics, variants, closures, and the Option and Result rules,
+  with the same types as internal/check on every repository module it
+  accepts (go, arm64, and LLVM backends) and the same diagnostics on
+  modules rejected only for names and types. The names section of `xo
+  typedump` now also names the fields, methods, statics, variants, and
+  parameters (of named arguments) that identifiers resolve to.
+- A call reads a `var` receiver or `var` argument after computing its
+  arguments (spec 5.2, decision 0142). On the native backends
+  `t.get(t.add(7))` ran `get` without the item `add` pushed, and
+  `xs.push(f())` dropped what `f` pushed onto `xs`.
+- `NAMES[i]`, a constant indexed by a lowercase name, is an index
+  (decision 0143); it parsed as type arguments with an effect argument
+  and was XO0407.
 - The type checker's name resolution written in Xo (`selfhost/check`,
   decision 0141), the first stage of the self hosted checker: the same
   resolution of every identifier as internal/check on every repository

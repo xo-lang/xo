@@ -4,7 +4,7 @@
 // other modules), and Xo values have no identity, so every node lives in
 // a table of the Checker and refers to others by index: an object is an
 // Int into `objs`, a module an Int into `mods`, a file an Int into
-// `files`. -1 stands for "none".
+// `files`, a type an Int into `tys` (types.xo). -1 stands for "none".
 
 use github.com/xo-lang/xo/selfhost/parser
 
@@ -13,7 +13,7 @@ pub type Ident = parser.Ident
 
 /// What an object is.
 pub enum ObjKind {
-  /// A top level function.
+  /// A function: top level, method, static, or interface method.
   Func
   /// A top level constant.
   Const
@@ -25,6 +25,48 @@ pub enum ObjKind {
   Local
   /// A module, the target of an import.
   Module
+}
+
+/// A struct field.
+pub struct FieldInfo {
+  pub name: Bytes
+  pub ty: Int
+  pub is_pub: Bool
+  /// The default value: zero or one element.
+  pub default: List[parser.Expr] = []
+  pub line: Int
+  pub col: Int
+}
+
+/// A field of an enum variant; a `from` field has no name.
+pub struct VFieldInfo {
+  pub name: Bytes
+  pub from: Bool
+  pub ty: Int
+  pub line: Int = 0
+  pub col: Int = 0
+}
+
+/// An enum variant.
+pub struct VariantInfo {
+  pub name: Bytes
+  pub index: Int
+  pub fields: List[VFieldInfo] = []
+  /// Declared without parentheses.
+  pub unit: Bool
+  pub line: Int
+  pub col: Int
+}
+
+/// A declared parameter of a function.
+pub struct ParamInfo {
+  pub name: Bytes
+  pub ty: Int
+  pub is_var: Bool
+  /// The default value: zero or one element.
+  pub default: List[parser.Expr] = []
+  pub line: Int = 0
+  pub col: Int = 0
 }
 
 /// A named entity. Positions are those of the declaring name.
@@ -42,19 +84,81 @@ pub struct Obj {
   pub local: Str = ""
   /// TParam: an effect variable (`fx: Effects`).
   pub effect: Bool = false
-  /// Type: its declared type parameters (TParam objects).
+  /// Type, Func: type parameters (TParam objects); a function's implicit
+  /// receiver parameters come first.
   pub tparams: List[Int] = []
   /// Func, Const, Type: declared `pub` (everything in std is).
   pub is_pub: Bool = false
-  /// Type: the names of its struct fields (for the field and method
-  /// conflict check).
-  pub fields: List[Bytes] = []
   /// Type: struct, enum, interface, alias, or newtype.
   pub tkind: Str = ""
-  /// Type (enum): its variant names.
-  pub variants: List[Bytes] = []
-  /// Type: methods attached so far, by name (a set).
-  pub methods: Map[Bytes, Bool] = {}
+
+  // Types (decl.xo resolve_type_obj).
+  pub fields: List[FieldInfo] = []
+  pub variants: List[VariantInfo] = []
+  /// Interface methods (Func objects).
+  pub iface_meths: List[Int] = []
+  /// Alias target or newtype underlying type.
+  pub target: Int = -1
+  pub derives: List[Str] = []
+  /// An empty std struct: an opaque handle.
+  pub opaque: Bool = false
+  /// Methods and statics (Func objects) by name.
+  pub methods: Map[Bytes, Int] = {}
+  pub statics: Map[Bytes, Int] = {}
+  pub resolving: Bool = false
+  pub resolved: Bool = false
+  /// The declaration: file and index in its declarations (Type, Func,
+  /// Const), -1 for none.
+  pub decl_file: Int = -1
+  pub decl_idx: Int = -1
+
+  // Functions (decl.xo resolve_sig).
+  /// The declaration (zero or one element).
+  pub fn_decl: List[parser.FnDecl] = []
+  pub params: List[ParamInfo] = []
+  pub result: Int = -1
+  /// The error type, -1 when it cannot fail.
+  pub err: Int = -1
+  /// Methods: the receiver's Type object and receiver type.
+  pub recv: Int = -1
+  pub recv_ty: Int = -1
+  pub recv_var: Bool = false
+  /// A std function whose receiver is named `static`.
+  pub is_static: Bool = false
+  /// A static constant: `Time.UNIX_EPOCH`.
+  pub static_const: Bool = false
+  pub iface: Bool = false
+  /// The number of type parameters the declaration writes.
+  pub own_tparams: Int = 0
+  /// The declared effects (an effect set), -1 when they are inferred
+  /// (a function that is not pub and has no `uses`).
+  pub declared: Int = -1
+  pub sig_done: Bool = false
+
+  // Constants and locals.
+  /// Const, Local: the type, -1 until known.
+  pub ty: Int = -1
+  pub done: Bool = false
+  pub checking: Bool = false
+  /// Local: a `var` binding, parameter, or receiver.
+  pub mutable: Bool = false
+  /// Local: a block `const`.
+  pub is_const: Bool = false
+  /// Local: the context (Ctx) it was declared in.
+  pub vctx: Int = -1
+  /// Local: the frame of the scope it names (`scope s`), or of the scope
+  /// whose group it holds; -1 for none.
+  pub frame: Int = -1
+  pub group_frame: Int = -1
+  /// Local: a task handle awaited somewhere.
+  pub awaited: Bool = false
+
+  // Type parameters.
+  pub constraint: Int = -1
+  pub implicit: Bool = false
+  /// An implicit effect parameter for an effect argument left out (core
+  /// 6.2): the function may perform it.
+  pub elided: Bool = false
 }
 
 /// A module: a directory of .xo files, or a std declaration file.
@@ -95,14 +199,12 @@ pub struct SrcFile {
   pub imports: Map[Bytes, Import] = {}
   /// The name ends in _test.xo.
   pub is_test: Bool = false
-  /// Per declaration: its object, -1 for none (tests, methods).
+  /// The source, for the habits that look at it.
+  pub src: Bytes = b""
+  /// Per declaration: the object it declares (a function, method,
+  /// type, or constant), -1 for none (tests, duplicates, methods that
+  /// did not attach).
   pub decl_objs: List[Int] = []
-  /// Per declaration: a function whose body is checked (a top level
-  /// function that is its name's declaration, or an attached method).
-  pub decl_ok: List[Bool] = []
-  /// Per declaration: a function's type parameters (implicit, then
-  /// declared), the type environment of its body.
-  pub decl_tparams: List[List[Int]] = []
 }
 
 /// An xo.mod: the module path it declares and its directory.
@@ -123,7 +225,8 @@ pub struct Diag {
   pub message: Str
 }
 
-/// What an identifier resolved to.
+/// What an identifier resolved to: an object, or (obj -1) the text of a
+/// field, variant, or parameter.
 pub struct NameRec {
   pub file: Str
   pub offset: Int
@@ -131,4 +234,18 @@ pub struct NameRec {
   pub col: Int
   pub name: Bytes
   pub obj: Int
+  pub what: Str = ""
+}
+
+/// The type of a checked expression (the types section).
+pub struct TypeRec {
+  pub file: Int
+  pub start: Int
+  pub end: Int
+  pub sline: Int
+  pub scol: Int
+  pub eline: Int
+  pub ecol: Int
+  pub kind: Str
+  pub ty: Int
 }
