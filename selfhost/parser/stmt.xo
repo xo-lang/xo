@@ -1,0 +1,440 @@
+// Statements and blocks (core 3, 15: Stmt).
+
+fn (var p: Parser) parse_block() -> Block {
+  let start = p.tok.span.start
+  let open = p.expect(Kind.LBrace, "`{`")
+  var b = Block{span: p.tok.span}
+  if open.kind != Kind.LBrace {
+    b.span = p.span_from(start)
+    return b
+  }
+  let saved_lit = p.no_lit
+  let saved_range = p.open_range
+  p.no_lit = false
+  p.open_range = false
+  while p.members_more() {
+    b.stmts.push(p.parse_stmt())
+    if p.failed() || p.got(Kind.Newline) || p.at(Kind.RBrace) || p.at(Kind.Eof) {
+      continue
+    }
+    p.fail(EXPECTED_NEWLINE, p.tok.span, "expected newline or `}` after statement, found ${describe(p.tok)}")
+  }
+  p.no_lit = saved_lit
+  p.open_range = saved_range
+  p.close_brace()
+  b.span = p.span_from(start)
+  b
+}
+
+/// Statements written in another language (internal/parser foreignStmt).
+fn (var p: Parser) foreign_stmt() {
+  let t = p.tok
+  let next = p.peek(1)
+  match t.kind {
+    Let => {
+      if is_word(next, b"mut") && p.peek(2).kind == Kind.Ident {
+        p.foreign(t.span, "`let mut` is Rust syntax")
+      }
+    }
+    Var => {
+      if next.kind == Kind.Ident && p.peek(2).span.start.line == next.span.start.line && (p.peek(2).kind is Ident | Star | LBrack) {
+        p.foreign(t.span, "`var x T` is Go syntax")
+      }
+    }
+    Ident => {
+      if p.short_decl_ahead() {
+        p.foreign(t.span, "`x := v` is Go syntax")
+        return
+      }
+      let same_line = next.span.start.line == t.span.start.line && next.kind != Kind.Newline
+      let w = t.text
+      if (w == b"val" && next.kind == Kind.Ident && (p.peek(2).kind is Assign | Colon)) || ((w == b"throw" || w == b"raise") && same_line && starts_expr(next.kind)) || (w == b"go" && same_line && (next.kind is Ident | Fn)) || (w == b"guard" && next.kind == Kind.Let) || (w == b"loop" && next.kind == Kind.LBrace) {
+        p.foreign(t.span, "a statement from another language")
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Go's `x := v` and `a, b := f()` at the current token.
+fn (p: Parser) short_decl_ahead() -> Bool {
+  var i = p.pos
+  while {
+    if p.tok_at(i).kind != Kind.Ident {
+      return false
+    }
+    i += 1
+    if p.tok_at(i).kind == Kind.Comma {
+      i += 1
+      continue
+    }
+    break
+  }
+  let colon = p.tok_at(i)
+  let assign = p.tok_at(i + 1)
+  colon.kind == Kind.Colon && assign.kind == Kind.Assign && adjacent(colon, assign)
+}
+
+fn (var p: Parser) parse_stmt() -> Stmt {
+  let start = p.tok.span.start
+  p.foreign_stmt()
+  match p.tok.kind {
+    Let => {
+      p.next()
+      let pattern = p.parse_pattern()
+      var typ: Type? = None
+      if p.got(Kind.Colon) {
+        typ = Some(p.parse_type())
+      }
+      p.expect(Kind.Assign, "`=` in `let`")
+      let value = p.parse_expr()
+      return Stmt.LetStmt(span: p.span_from(start), pattern: pattern, typ: typ, value: value)
+    }
+    Var => {
+      p.next()
+      let name = p.expect_ident("a variable name")
+      var typ: Type? = None
+      if p.got(Kind.Colon) {
+        typ = Some(p.parse_type())
+      }
+      p.expect(Kind.Assign, "`=` in `var`")
+      let value = p.parse_expr()
+      return Stmt.VarStmt(span: p.span_from(start), name: name, typ: typ, value: value)
+    }
+    Defer => {
+      p.next()
+      var body: Stmt = Stmt.BadStmt(p.tok.span)
+      if p.at(Kind.LBrace) {
+        let blk = p.parse_block()
+        body = Stmt.ExprStmt(span: blk.span, x: Expr.Block(blk))
+      } else {
+        body = p.parse_simple_stmt()
+      }
+      return Stmt.DeferStmt(span: p.span_from(start), body: body)
+    }
+    For => return p.parse_for(None, start)
+    While => return p.parse_while(None, start)
+    Ident => {
+      if p.peek(1).kind == Kind.Colon && (p.peek(2).kind is For | While) {
+        let label = p.expect_ident("a label")
+        p.next() // :
+        if p.at(Kind.For) {
+          return p.parse_for(Some(label), start)
+        }
+        return p.parse_while(Some(label), start)
+      }
+    }
+    Else => {
+      p.fail(ELSE_ON_NEW_LINE, p.tok.span, "`else` must be on the same line as the closing `}` of the `if`")
+      return Stmt.BadStmt(p.tok.span)
+    }
+    Fn => {
+      if p.peek(1).kind == Kind.Ident || (p.peek(1).kind == Kind.LParen && p.receiver_ahead()) {
+        p.fail(DECL_IN_BLOCK, p.tok.span, "functions cannot be declared inside a block; use a closure")
+        return Stmt.BadStmt(p.tok.span)
+      }
+    }
+    Const => return Stmt.ConstDecl(p.parse_const(None, false, start))
+    Struct | Enum | Interface | Type | Use | Test | Pub => {
+      p.fail(DECL_IN_BLOCK, p.tok.span, "`${p.tok.kind}` declarations are only allowed at top level")
+      return Stmt.BadStmt(p.tok.span)
+    }
+    _ => {}
+  }
+  p.parse_simple_stmt()
+}
+
+/// Whether `fn (` starts a method declaration: a name follows the
+/// receiver's closing parenthesis.
+fn (p: Parser) receiver_ahead() -> Bool {
+  var depth = 0
+  var i = p.pos + 1
+  while i < p.toks.len() {
+    match p.toks[i].kind {
+      LParen => depth += 1
+      RParen => {
+        depth -= 1
+        if depth == 0 {
+          return i + 1 < p.toks.len() && p.toks[i + 1].kind == Kind.Ident
+        }
+      }
+      Newline | Eof | LBrace => return false
+      _ => {}
+    }
+    i += 1
+  }
+  false
+}
+
+/// return, break, continue, an assignment, or an expression statement:
+/// statements, match and select arm bodies, and `defer stmt`.
+fn (var p: Parser) parse_simple_stmt() -> Stmt {
+  let start = p.tok.span.start
+  match p.tok.kind {
+    Return => {
+      p.next()
+      var value: Expr? = None
+      if !(p.tok.kind is Newline | RBrace | Eof | Comma) {
+        value = Some(p.parse_expr())
+        if p.at(Kind.Comma) {
+          p.foreign(p.tok.span, "`return a, b` is Go syntax")
+        }
+      }
+      return Stmt.ReturnStmt(span: p.span_from(start), value: value)
+    }
+    Break | Continue => {
+      let is_break = p.at(Kind.Break)
+      p.next()
+      var label: Ident? = None
+      if p.at(Kind.Ident) {
+        label = Some(p.expect_ident("a label"))
+      }
+      if is_break {
+        return Stmt.BreakStmt(span: p.span_from(start), label: label)
+      }
+      return Stmt.ContinueStmt(span: p.span_from(start), label: label)
+    }
+    _ => {}
+  }
+  let x = p.parse_expr()
+  let t = p.tok
+  if (t.kind == Kind.Plus || t.kind == Kind.Minus) && p.peek(1).kind == t.kind && adjacent(t, p.peek(1)) {
+    p.foreign(t.span, "`x++` is Go syntax; Xo writes `x += 1`")
+  }
+  if t.kind is Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign {
+    p.next()
+    let value = p.parse_expr()
+    return Stmt.AssignStmt(span: p.span_from(start), op: t.kind, target: x, value: value)
+  }
+  if t.kind is AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign {
+    p.fail(UNEXPECTED_TOKEN, t.span, "`${t.kind}` is not an assignment operator")
+  }
+  Stmt.ExprStmt(span: expr_span(x), x: x)
+}
+
+fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
+  // Loops of other languages (internal/parser foreignFor).
+  if p.peek(1).kind == Kind.LBrace {
+    p.foreign(p.tok.span, "`for { ... }` is Go's infinite loop")
+  } else if p.peek(1).kind == Kind.LParen {
+    p.paren_for()
+  } else {
+    let h = p.scan_for_header()
+    if h.brace_idx >= 0 {
+      if h.range_kw {
+        return p.go_range_for(label, start)
+      }
+      if (h.short_decl && h.has_semi) || (!h.has_in && !h.short_decl && !h.has_semi && !h.not_expr) {
+        p.foreign(p.tok.span, "a Go or C style `for` loop")
+      }
+    }
+  }
+  p.next() // for
+  let pattern = p.parse_pattern()
+  if p.at_ident(b"of") {
+    p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax")
+  }
+  p.expect(Kind.In, "`in` in a for loop")
+  let iter = p.parse_expr_no_lit()
+  let body = p.parse_cond_block(Some(iter))
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, body: body, go_range: false)
+}
+
+/// `for (x in xs) {`, `for (const x of xs) {`, `for (init; cond; step) {`.
+fn (var p: Parser) paren_for() {
+  let open = p.pos + 1
+  let close = p.match_close(open)
+  if close < 0 || p.tok_at(close + 1).kind != Kind.LBrace {
+    return
+  }
+  var depth = 0
+  var hit = false
+  for i in open + 1..close {
+    let t = p.tok_at(i)
+    match t.kind {
+      LParen | LBrack | LBrace | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => depth -= 1
+      Newline => {
+        if t.text == b";" && depth == 0 {
+          hit = true
+        }
+      }
+      In => {
+        if depth == 0 {
+          hit = true
+        }
+      }
+      Ident => {
+        if depth == 0 && t.text == b"of" {
+          hit = true
+        }
+      }
+      _ => {}
+    }
+  }
+  if hit {
+    p.foreign(p.tok_at(open).span, "`for (x in xs)` is TypeScript, Kotlin, and Java syntax")
+  }
+}
+
+/// The tokens between `for` and the `{` of the body on the same line
+/// (internal/parser forHeader).
+struct ForHeader {
+  /// The `{` that opens the body, or -1.
+  brace_idx: Int = -1
+  has_in: Bool = false
+  has_semi: Bool = false
+  short_decl: Bool = false
+  range_kw: Bool = false
+  /// Two operands in a row at depth zero: not one expression.
+  not_expr: Bool = false
+}
+
+fn (p: Parser) scan_for_header() -> ForHeader {
+  var h = ForHeader{}
+  var depth = 0
+  var prev_operand = false
+  var i = p.pos + 1
+  while i < p.toks.len() {
+    let t = p.tok_at(i)
+    let operand = t.kind is Ident | Int | Float | String | RawString | Duration | Rune
+    if depth == 0 && operand && prev_operand {
+      h.not_expr = true
+    }
+    if depth == 0 {
+      prev_operand = operand || t.kind == Kind.RParen || t.kind == Kind.RBrack
+    }
+    match t.kind {
+      Eof => return h
+      Newline => {
+        if t.text != b";" {
+          return h
+        }
+        if depth == 0 {
+          h.has_semi = true
+        }
+      }
+      LParen | LBrack | HashLBrace => depth += 1
+      RParen | RBrack | RBrace => depth -= 1
+      LBrace => {
+        // A brace after a type name is a struct pattern, not the body.
+        let prev = p.tok_at(i - 1)
+        if depth == 0 && !(prev.kind == Kind.Ident && is_upper(prev.text)) {
+          h.brace_idx = i
+          return h
+        }
+        depth += 1
+      }
+      In => {
+        if depth == 0 {
+          h.has_in = true
+        }
+      }
+      Colon => {
+        if depth == 0 && p.tok_at(i + 1).kind == Kind.Assign && adjacent(t, p.tok_at(i + 1)) {
+          h.short_decl = true
+          if is_word(p.tok_at(i + 2), b"range") {
+            h.range_kw = true
+          }
+        }
+      }
+      _ => {}
+    }
+    i += 1
+  }
+  h
+}
+
+/// Go's `for k, v := range x {`: parsed, marked go_range, and reported by
+/// the checker, because the Xo form depends on the type of x.
+fn (var p: Parser) go_range_for(label: Ident?, start: Pos) -> Stmt {
+  p.next() // for
+  var pats: List[Pattern] = []
+  while p.at(Kind.Ident) {
+    let t = p.tok
+    if t.text == b"_" {
+      pats.push(Pattern.WildcardPat(t.span))
+    } else {
+      pats.push(Pattern.BindPat(span: t.span, name: Ident{span: t.span, name: t.text}))
+    }
+    p.next()
+    if !p.got(Kind.Comma) {
+      break
+    }
+  }
+  if pats.is_empty() {
+    p.error_expected("a loop variable")
+    return Stmt.BadStmt(p.tok.span)
+  }
+  p.next() // :
+  p.next() // =
+  p.next() // range
+  var pattern = pats[0]
+  if pats.len() > 1 {
+    pattern = Pattern.TuplePat(span: span_to(pattern_span(pats[0]), pattern_span(pats[pats.len() - 1])), elems: pats)
+  }
+  let iter = p.parse_expr_no_lit()
+  let body = p.parse_cond_block(Some(iter))
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, body: body, go_range: true)
+}
+
+fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {
+  p.next() // while
+  var cond: Expr? = None
+  if !p.at(Kind.LBrace) {
+    cond = Some(p.parse_expr_no_lit())
+  }
+  let body = p.parse_cond_block(cond)
+  Stmt.WhileStmt(span: p.span_from(start), label: label, cond: cond, body: body)
+}
+
+/// The block after a condition, after rejecting an unparenthesized struct
+/// literal at the end of the condition (core 1.4).
+fn (var p: Parser) parse_cond_block(cond: Expr?) -> Block {
+  p.check_struct_lit_in_cond(cond)
+  p.parse_block()
+}
+
+/// `if p == Point{x: 0} {`: a struct literal or pattern in a condition
+/// must be parenthesized (XO0163).
+fn (var p: Parser) check_struct_lit_in_cond(cond: Expr?) {
+  if let Some(c) = cond {
+    if !p.at(Kind.LBrace) || !ends_in_type_name(c) {
+      return
+    }
+    let t1 = p.peek(1)
+    let t2 = p.peek(2)
+    let t3 = p.peek(3)
+    let field_start = t1.kind == Kind.Ident && t2.kind == Kind.Colon && !(t3.kind is For | While)
+    let empty_lit = t1.kind == Kind.RBrace && t2.kind == Kind.LBrace
+    if field_start || empty_lit {
+      p.fail(STRUCT_LIT_IN_CONDITION, expr_span(c), "a struct literal in a condition must be parenthesized")
+    }
+  }
+}
+
+/// Whether a condition ends in a type name that a `{` could continue as a
+/// struct literal or pattern: `p == Point` or `p is Point`.
+fn ends_in_type_name(cond: Expr) -> Bool {
+  let r = rightmost(cond)
+  if let IsExpr(_, _, pat) = r {
+    if let VariantPat(_, path, parens, ..) = pat {
+      return !parens && is_upper(path[path.len() - 1].name)
+    }
+    return false
+  }
+  is_type_name(r)
+}
+
+/// The last operand of a binary or unary chain.
+fn rightmost(e: Expr) -> Expr {
+  var x = e
+  while {
+    match x {
+      BinaryExpr(_, _, _, y) => x = y
+      UnaryExpr(_, _, inner) => x = inner
+      _ => return x
+    }
+  }
+  x
+}

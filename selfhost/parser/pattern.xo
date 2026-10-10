@@ -1,0 +1,163 @@
+// Patterns (core 3.5, 15: Pattern).
+
+fn (var p: Parser) parse_pattern() -> Pattern {
+  let start = p.tok.span.start
+  let first = p.parse_pat_alt()
+  if !p.at(Kind.Pipe) {
+    return first
+  }
+  var alts = [first]
+  while p.got(Kind.Pipe) {
+    alts.push(p.parse_pat_alt())
+  }
+  Pattern.OrPat(span: p.span_from(start), alts: alts)
+}
+
+fn is_literal_kind(k: Kind) -> Bool {
+  k is Int | Float | Duration | Rune | String | RawString | Bytes
+}
+
+fn (var p: Parser) parse_pat_alt() -> Pattern {
+  let start = p.tok.span.start
+  let t = p.tok
+  if t.kind == Kind.Ident {
+    if t.text == b"_" {
+      p.next()
+      return Pattern.WildcardPat(t.span)
+    }
+    if t.text == b"true" || t.text == b"false" {
+      p.next()
+      return Pattern.LitPat(span: t.span, value: Expr.Ident(Ident{span: t.span, name: t.text}))
+    }
+    var path = [p.expect_ident("a name")]
+    while p.at(Kind.Dot) && p.peek(1).kind == Kind.Ident {
+      p.next()
+      path.push(p.expect_ident("a name"))
+    }
+    let last = path[path.len() - 1].name
+    if p.at(Kind.LParen) {
+      let (fields, rest) = p.parse_pat_fields(Kind.LParen, Kind.RParen)
+      return Pattern.VariantPat(span: p.span_from(start), path: path, parens: true, fields: fields, rest: rest)
+    }
+    if p.at(Kind.LBrace) && is_upper(last) && !p.no_lit {
+      // In a condition head (`if x is P {`) the brace opens the block.
+      let (fields, rest) = p.parse_pat_fields(Kind.LBrace, Kind.RBrace)
+      return Pattern.StructPat(span: p.span_from(start), path: path, fields: fields, rest: rest)
+    }
+    if path.len() == 1 && !is_upper(last) {
+      return Pattern.BindPat(span: t.span, name: path[0])
+    }
+    return Pattern.VariantPat(span: p.span_from(start), path: path, parens: false, fields: [], rest: false)
+  }
+  if is_literal_kind(t.kind) || (t.kind == Kind.Minus && (p.peek(1).kind is Int | Float | Duration)) {
+    let lo = p.parse_pat_literal()
+    if p.at(Kind.DotDot) || p.at(Kind.DotDotEq) {
+      let inclusive = p.at(Kind.DotDotEq)
+      p.next()
+      let hi = p.parse_pat_literal()
+      return Pattern.RangePat(span: p.span_from(start), lo: lo, hi: hi, inclusive: inclusive)
+    }
+    return Pattern.LitPat(span: p.span_from(start), value: lo)
+  }
+  match t.kind {
+    LParen => {
+      if p.peek(1).kind == Kind.RParen {
+        p.next()
+        p.next()
+        return Pattern.TuplePat(span: p.span_from(start), elems: [])
+      }
+      var elems: List[Pattern] = []
+      var trailing = false
+      let st = p.list_open(Kind.LParen)
+      while p.list_more(Kind.RParen) {
+        let before = p.pos
+        elems.push(p.parse_pattern())
+        trailing = p.at(Kind.Comma)
+        if !p.list_sep(before, Kind.RParen, "tuple pattern") {
+          break
+        }
+      }
+      let sp = p.list_close(st, Kind.RParen)
+      if elems.len() == 1 && !trailing {
+        return elems[0]
+      }
+      return Pattern.TuplePat(span: sp, elems: elems)
+    }
+    LBrack => {
+      var elems: List[Pattern] = []
+      var rest = -1
+      let st = p.list_open(Kind.LBrack)
+      while p.list_more(Kind.RBrack) {
+        let before = p.pos
+        if p.at(Kind.DotDot) {
+          if rest >= 0 {
+            p.fail(MISPLACED_REST, p.tok.span, "a list pattern may contain `..` only once")
+          }
+          rest = elems.len()
+          p.next()
+        } else {
+          elems.push(p.parse_pattern())
+        }
+        if !p.list_sep(before, Kind.RBrack, "list pattern") {
+          break
+        }
+      }
+      let sp = p.list_close(st, Kind.RBrack)
+      return Pattern.ListPat(span: sp, elems: elems, rest: rest)
+    }
+    DotDot => {
+      p.fail(MISPLACED_REST, t.span, "`..` is only allowed inside list, variant, or struct patterns")
+      return Pattern.BadPat(t.span)
+    }
+    _ => {}
+  }
+  p.fail(INVALID_PATTERN, t.span, "expected a pattern, found ${describe(t)}")
+  Pattern.BadPat(Span{start: t.span.start, end: t.span.start})
+}
+
+fn (var p: Parser) parse_pat_literal() -> Expr {
+  let start = p.tok.span.start
+  if p.at(Kind.Minus) {
+    p.next()
+    let x = p.parse_pat_literal()
+    return Expr.UnaryExpr(span: p.span_from(start), op: Kind.Minus, x: x)
+  }
+  if !is_literal_kind(p.tok.kind) {
+    p.fail(INVALID_PATTERN, p.tok.span, "expected a literal in a range pattern, found ${describe(p.tok)}")
+    return Expr.BadExpr(p.tok.span)
+  }
+  p.parse_primary()
+}
+
+/// `(fields)` or `{fields}` of a variant or struct pattern; a trailing
+/// `..` ignores the remaining fields.
+fn (var p: Parser) parse_pat_fields(open: Kind, close: Kind) -> (List[PatField], Bool) {
+  var fields: List[PatField] = []
+  var rest = false
+  let st = p.list_open(open)
+  while p.list_more(close) {
+    let before = p.pos
+    if rest {
+      p.fail(MISPLACED_REST, p.tok.span, "`..` must be the last item in a pattern")
+      break
+    }
+    if p.at(Kind.DotDot) {
+      rest = true
+      p.next()
+    } else {
+      let start = p.tok.span.start
+      var name: Ident? = None
+      if p.at(Kind.Ident) && p.peek(1).kind == Kind.Colon {
+        name = Some(p.expect_ident("a field name"))
+        p.next()
+      }
+      let pattern = p.parse_pattern()
+      fields.push(PatField{span: p.span_from(start), name: name, pattern: pattern})
+    }
+    if !p.list_sep(before, close, "pattern field") {
+      break
+    }
+  }
+  p.list_close(st, close)
+  (fields, rest)
+}

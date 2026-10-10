@@ -1,0 +1,492 @@
+// The syntax tree of Xo, written in Xo: a port of internal/ast (core 15).
+//
+// Every node carries the span of the source it was parsed from. Node and
+// field names follow internal/ast (Go type names become variant or struct
+// names, Go field names become snake_case fields), so the dump (dump.xo)
+// prints the same text as `xo astdump`. Text is Bytes, as in the lexer.
+//
+// A Go interface type (Expr, Stmt, Decl, Type, Pattern, Clause) is an
+// enum here; a Go node that is only ever held by its own type (FnDecl,
+// Block, Param, ...) is a struct. A variant named like a struct holds that
+// struct (`Expr.Block(b)`). Optional children are `T?`; list children are
+// `List[T]`, empty when Go's is nil. The three places where Go tells a nil
+// list from an empty one (a variant's fields, a `use c` effect ceiling, the
+// fields of a variant or struct pattern) keep that difference: `List[T]?`
+// or the pattern's own flags.
+
+use github.com/xo-lang/xo/selfhost/lexer
+
+pub type Kind = lexer.Kind
+pub type Token = lexer.Token
+pub type Span = lexer.Span
+pub type Pos = lexer.Pos
+
+/// A name.
+pub struct Ident {
+  pub span: Span
+  pub name: Bytes
+}
+
+/// A `///` doc comment: its lines joined with "\n", leading "/// " removed.
+pub struct Doc {
+  pub span: Span
+  pub text: Bytes
+}
+
+// ---------------------------------------------------------------------------
+// File and declarations
+
+/// One parsed source file.
+pub struct File {
+  pub span: Span
+  pub name: Bytes
+  pub imports: List[UseDecl] = []
+  pub decls: List[Decl] = []
+}
+
+/// `use path [as name]`, `use go "<path>"`, or `use c "<header>" ...`.
+pub struct UseDecl {
+  pub span: Span
+  pub path: Bytes = b""
+  pub alias: Ident? = None
+  pub go: Bool = false
+  pub c: Bool = false
+  pub links: List[Bytes] = []
+  /// The effect ceiling of `use c`; `uses none` is Some([]).
+  pub effects: List[Effect]? = None
+}
+
+/// A function or method declaration; body is None in interfaces and in
+/// signature mode.
+pub struct FnDecl {
+  pub span: Span
+  pub doc: Doc? = None
+  pub is_pub: Bool = false
+  pub recv: Receiver? = None
+  pub name: Ident
+  pub type_params: List[TypeParam] = []
+  pub params: List[Param] = []
+  pub result: Type? = None
+  pub err: ErrSpec? = None
+  pub clauses: List[Clause] = []
+  pub body: Block? = None
+}
+
+/// `(var name: Type)` before a method name.
+pub struct Receiver {
+  pub span: Span
+  pub is_var: Bool
+  pub name: Ident
+  pub typ: Type
+}
+
+/// `name`, `name: Constraint`, or `name: Effects`.
+pub struct TypeParam {
+  pub span: Span
+  pub name: Ident
+  pub constraint: Type? = None
+  pub effects: Bool = false
+}
+
+/// A function, closure, or test parameter.
+pub struct Param {
+  pub span: Span
+  pub is_var: Bool = false
+  pub is_self: Bool = false
+  pub name: Ident
+  pub typ: Type? = None
+  pub default: Expr? = None
+}
+
+/// `! [Type]`.
+pub struct ErrSpec {
+  pub span: Span
+  pub typ: Type? = None
+}
+
+/// An effect label such as `net` or `fs.read`.
+pub struct Effect {
+  pub span: Span
+  pub name: Ident
+  pub sub: Ident? = None
+}
+
+/// A function clause.
+pub enum Clause {
+  UsesClause(span: Span, effects: List[Effect], parens: Bool)
+  RequiresClause(span: Span, debug: Bool, cond: Expr, els: Expr?)
+  EnsuresClause(span: Span, debug: Bool, cond: Expr)
+}
+
+pub struct StructDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub type_params: List[TypeParam]
+  pub fields: List[Field] = []
+  pub inv: Expr? = None
+  pub derive: List[Ident] = []
+}
+
+pub struct Field {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub typ: Type
+  pub default: Expr? = None
+}
+
+pub struct EnumDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub type_params: List[TypeParam]
+  pub variants: List[Variant] = []
+  pub derive: List[Ident] = []
+}
+
+/// An enum variant; fields is None for a unit variant.
+pub struct Variant {
+  pub span: Span
+  pub doc: Doc?
+  pub name: Ident
+  pub fields: List[VariantField]? = None
+}
+
+/// `name: Type` or `from Type` (name None).
+pub struct VariantField {
+  pub span: Span
+  pub name: Ident? = None
+  pub from: Bool = false
+  pub typ: Type
+}
+
+pub struct InterfaceDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub type_params: List[TypeParam]
+  pub methods: List[FnDecl] = []
+}
+
+/// `type Name = T` or `type Name struct(T)` (newtype).
+pub struct TypeDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub type_params: List[TypeParam]
+  pub newtype: Bool = false
+  pub typ: Type? = None
+}
+
+/// `const NAME [: T] = value`, at top level or as a statement.
+pub struct ConstDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub is_pub: Bool
+  pub name: Ident
+  pub typ: Type? = None
+  pub value: Expr
+}
+
+pub struct TestDecl {
+  pub span: Span
+  pub doc: Doc?
+  pub name: StringLit? = None
+  pub params: List[Param] = []
+  pub seed: Expr? = None
+  pub effects: List[Effect] = []
+  pub body: Block? = None
+}
+
+/// A top level declaration.
+pub enum Decl {
+  FnDecl(d: FnDecl)
+  StructDecl(d: StructDecl)
+  EnumDecl(d: EnumDecl)
+  InterfaceDecl(d: InterfaceDecl)
+  TypeDecl(d: TypeDecl)
+  ConstDecl(d: ConstDecl)
+  TestDecl(d: TestDecl)
+  BadDecl(span: Span)
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+/// A type expression.
+pub enum Type {
+  /// `Int`, `http.Response`, `Map[Str, V]`.
+  NamedType(span: Span, path: List[Ident], args: List[Type])
+  OptionalType(span: Span, elem: Type)
+  /// `(A, B)`; `()` is the unit type.
+  TupleType(span: Span, elems: List[Type])
+  FnType(t: FnType)
+  BadType(span: Span)
+}
+
+/// `fn(A, var B) -> R ! E uses fx`.
+pub struct FnType {
+  pub span: Span
+  pub params: List[FnTypeParam] = []
+  pub result: Type? = None
+  pub err: ErrSpec? = None
+  pub effects: List[Effect] = []
+  pub uses_parens: Bool = false
+}
+
+pub struct FnTypeParam {
+  pub span: Span
+  pub is_var: Bool
+  pub typ: Type
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+
+pub enum Stmt {
+  LetStmt(span: Span, pattern: Pattern, typ: Type?, value: Expr)
+  VarStmt(span: Span, name: Ident, typ: Type?, value: Expr)
+  AssignStmt(span: Span, op: Kind, target: Expr, value: Expr)
+  /// `defer stmt`, or `defer { ... }` as an ExprStmt holding the Block.
+  DeferStmt(span: Span, body: Stmt)
+  ReturnStmt(span: Span, value: Expr?)
+  BreakStmt(span: Span, label: Ident?)
+  ContinueStmt(span: Span, label: Ident?)
+  /// go_range marks Go's `for k, v := range x`, which the checker
+  /// reports (XO0177, decision 0087).
+  ForStmt(span: Span, label: Ident?, pattern: Pattern, iter: Expr, body: Block, go_range: Bool)
+  WhileStmt(span: Span, label: Ident?, cond: Expr?, body: Block)
+  ExprStmt(span: Span, x: Expr)
+  BadStmt(span: Span)
+  ConstDecl(d: ConstDecl)
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+/// A string literal: plain, triple quoted, or raw.
+pub enum StringKind {
+  Plain
+  Triple
+  Raw
+}
+
+/// Parts alternate between literal text and interpolated expressions.
+pub struct StringLit {
+  pub span: Span
+  pub kind: StringKind
+  pub parts: List[StringPart] = []
+}
+
+/// Literal text (expr None) or an interpolated expression.
+pub struct StringPart {
+  pub text: Bytes
+  pub expr: Expr?
+}
+
+pub struct MapEntry {
+  pub span: Span
+  pub key: Expr
+  pub value: Expr
+}
+
+/// `name: value` in a struct literal or `with` update.
+pub struct FieldInit {
+  pub span: Span
+  pub name: Ident
+  pub value: Expr
+}
+
+/// A call argument, optionally named.
+pub struct Arg {
+  pub span: Span
+  pub name: Ident?
+  pub value: Expr
+}
+
+/// `if cond { } else ...` or `if let pat = value { } else ...`; els is a
+/// Block or an IfExpr.
+pub struct IfExpr {
+  pub span: Span
+  pub cond: Expr? = None
+  pub pattern: Pattern? = None
+  pub value: Expr? = None
+  pub then: Block
+  pub els: Expr? = None
+}
+
+/// `pattern [if guard] => body`.
+pub struct MatchArm {
+  pub span: Span
+  pub pattern: Pattern
+  pub guard: Expr?
+  pub body: Stmt?
+}
+
+/// `name = op => body`, `op => body`, or `after d => body`.
+pub struct SelectArm {
+  pub span: Span
+  pub bind: Ident? = None
+  pub op: Expr? = None
+  pub after: Expr? = None
+  pub body: Stmt? = None
+}
+
+/// `{ stmts }`.
+pub struct Block {
+  pub span: Span
+  pub stmts: List[Stmt] = []
+}
+
+/// A closure literal.
+pub struct FnLit {
+  pub span: Span
+  pub params: List[Param]
+  pub result: Type? = None
+  pub err: ErrSpec? = None
+  pub effects: List[Effect] = []
+  pub body: Block
+}
+
+pub enum Expr {
+  Ident(id: Ident)
+  /// value is the decimal value.
+  IntLit(span: Span, raw: Bytes, value: Bytes)
+  FloatLit(span: Span, raw: Bytes)
+  /// nanos is the value in nanoseconds, decimal.
+  DurationLit(span: Span, raw: Bytes, nanos: Bytes)
+  /// value is the code point.
+  RuneLit(span: Span, raw: Bytes, value: Int)
+  StringLit(s: StringLit)
+  BytesLit(span: Span, value: Bytes)
+  HoleExpr(span: Span)
+  UnitExpr(span: Span)
+  ParenExpr(span: Span, x: Expr)
+  TupleExpr(span: Span, elems: List[Expr])
+  ListLit(span: Span, elems: List[Expr])
+  MapLit(span: Span, entries: List[MapEntry])
+  SetLit(span: Span, elems: List[Expr])
+  StructLit(span: Span, typ: Expr, fields: List[FieldInit])
+  UnaryExpr(span: Span, op: Kind, x: Expr)
+  BinaryExpr(span: Span, op: Kind, x: Expr, y: Expr)
+  IsExpr(span: Span, x: Expr, pattern: Pattern)
+  RangeExpr(span: Span, lo: Expr?, hi: Expr?, inclusive: Bool)
+  /// `x.name`, or a tuple field `t.0`.
+  SelectorExpr(span: Span, x: Expr, sel: Ident)
+  CallExpr(span: Span, fun: Expr, args: List[Arg])
+  TypeArgsExpr(span: Span, x: Expr, types: List[Type])
+  IndexExpr(span: Span, x: Expr, index: Expr)
+  TryExpr(span: Span, x: Expr)
+  WithExpr(span: Span, x: Expr, fields: List[FieldInit])
+  IfExpr(e: IfExpr)
+  MatchExpr(span: Span, subject: Expr, arms: List[MatchArm])
+  ScopeExpr(span: Span, name: Ident, body: Block)
+  SelectExpr(span: Span, arms: List[SelectArm])
+  Block(b: Block)
+  FnLit(f: FnLit)
+  WhileExpr(span: Span, body: Block)
+  BadExpr(span: Span)
+}
+
+// ---------------------------------------------------------------------------
+// Patterns
+
+pub enum Pattern {
+  WildcardPat(span: Span)
+  BindPat(span: Span, name: Ident)
+  /// A literal, `true`/`false` (an Ident), or a negated number (UnaryExpr).
+  LitPat(span: Span, value: Expr)
+  RangePat(span: Span, lo: Expr, hi: Expr, inclusive: Bool)
+  OrPat(span: Span, alts: List[Pattern])
+  TuplePat(span: Span, elems: List[Pattern])
+  /// `None`, `Some(x)`, `http.ClientErr.Canceled`, `Db(msg: m, ..)`.
+  VariantPat(span: Span, path: List[Ident], parens: Bool, fields: List[PatField], rest: Bool)
+  StructPat(span: Span, path: List[Ident], fields: List[PatField], rest: Bool)
+  /// rest is the number of elements before `..`, or -1.
+  ListPat(span: Span, elems: List[Pattern], rest: Int)
+  BadPat(span: Span)
+}
+
+/// `[name:] pattern`.
+pub struct PatField {
+  pub span: Span
+  pub name: Ident?
+  pub pattern: Pattern
+}
+
+// ---------------------------------------------------------------------------
+// Spans
+
+pub fn expr_span(e: Expr) -> Span {
+  match e {
+    Ident(id) => id.span
+    IntLit(span, ..) => span
+    FloatLit(span, ..) => span
+    DurationLit(span, ..) => span
+    RuneLit(span, ..) => span
+    StringLit(s) => s.span
+    BytesLit(span, ..) => span
+    HoleExpr(span) => span
+    UnitExpr(span) => span
+    ParenExpr(span, ..) => span
+    TupleExpr(span, ..) => span
+    ListLit(span, ..) => span
+    MapLit(span, ..) => span
+    SetLit(span, ..) => span
+    StructLit(span, ..) => span
+    UnaryExpr(span, ..) => span
+    BinaryExpr(span, ..) => span
+    IsExpr(span, ..) => span
+    RangeExpr(span, ..) => span
+    SelectorExpr(span, ..) => span
+    CallExpr(span, ..) => span
+    TypeArgsExpr(span, ..) => span
+    IndexExpr(span, ..) => span
+    TryExpr(span, ..) => span
+    WithExpr(span, ..) => span
+    IfExpr(e) => e.span
+    MatchExpr(span, ..) => span
+    ScopeExpr(span, ..) => span
+    SelectExpr(span, ..) => span
+    Block(b) => b.span
+    FnLit(f) => f.span
+    WhileExpr(span, ..) => span
+    BadExpr(span) => span
+  }
+}
+
+pub fn type_span(t: Type) -> Span {
+  match t {
+    NamedType(span, ..) => span
+    OptionalType(span, ..) => span
+    TupleType(span, ..) => span
+    FnType(f) => f.span
+    BadType(span) => span
+  }
+}
+
+pub fn pattern_span(p: Pattern) -> Span {
+  match p {
+    WildcardPat(span) => span
+    BindPat(span, ..) => span
+    LitPat(span, ..) => span
+    RangePat(span, ..) => span
+    OrPat(span, ..) => span
+    TuplePat(span, ..) => span
+    VariantPat(span, ..) => span
+    StructPat(span, ..) => span
+    ListPat(span, ..) => span
+    BadPat(span) => span
+  }
+}
+
+/// The span from the start of a to the end of b.
+pub fn span_to(a: Span, b: Span) -> Span {
+  Span{start: a.start, end: b.end}
+}

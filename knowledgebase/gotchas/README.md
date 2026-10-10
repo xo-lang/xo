@@ -240,3 +240,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [base64-keys-contain-plus.md](base64-keys-contain-plus.md): checksum log keys are '+' separated with a base64 tail, and base64 has '+' digits; split with a field limit.
 - [in-process-servers-share-env.md](in-process-servers-share-env.md): httptest proxies and checksum logs run in the test process and read the client's XO_GIT_BASE and cache settings; give them their own cache root and fill them before cutting the client off.
 - [tasks-c-job-table.md](tasks-c-job-table.md): tasks.c records a job per spawn in a 65,536 entry table; the optimized run (N=20000) overflows it where the TSan runs do not; reuse one job.
+- [arm64-large-frame.md](arm64-large-frame.md): Observed: arm64 refused frames over 4000 bytes and wrote `stp x29, x30` past its 504 byte reach in helpers of 80+ word values; frames now probed to 28 KiB (decision 0128).

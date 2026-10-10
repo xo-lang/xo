@@ -28,29 +28,33 @@ func repoRoot(t testing.TB) string {
 	return root
 }
 
-// lexerBinaries holds selfhost/lexer (the Xo lexer's CLI) built once per
-// backend.
+// binaries holds the self hosted components (selfhost/lexer,
+// selfhost/parser) built once per component and backend.
 var (
-	lexerMu       sync.Mutex
-	lexerBinaries = map[string]string{}
+	binMu    sync.Mutex
+	binaries = map[string]string{}
 )
 
-// lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
-// "llvm"; decision 0081) once.
-// TestMain turns on the binary cache: the lexer is rebuilt only when its
-// generated code or the toolchain changes.
+// TestMain turns on the binary cache: a component is rebuilt only when
+// its generated code or the toolchain changes.
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
 	os.Exit(m.Run())
 }
 
-func lexerBinary(backend string) (string, error) {
-	lexerMu.Lock()
-	defer lexerMu.Unlock()
-	if bin, ok := lexerBinaries[backend]; ok {
+// lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
+// "llvm"; decision 0081) once.
+func lexerBinary(backend string) (string, error) { return selfhostBinary("lexer", backend) }
+
+// selfhostBinary builds selfhost/<component> with backend once.
+func selfhostBinary(component, backend string) (string, error) {
+	binMu.Lock()
+	defer binMu.Unlock()
+	key := component + "/" + backend
+	if bin, ok := binaries[key]; ok {
 		return bin, nil
 	}
-	dir := filepath.Join("..", "..", "selfhost", "lexer")
+	dir := filepath.Join("..", "..", "selfhost", component)
 	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
 	if err != nil {
 		return "", err
@@ -59,7 +63,7 @@ func lexerBinary(backend string) (string, error) {
 		return "", fmt.Errorf("check failed: %+v", res.Diagnostics)
 	}
 	bin := res.Binaries[build.Host()]
-	lexerBinaries[backend] = bin
+	binaries[key] = bin
 	return bin, nil
 }
 
