@@ -349,13 +349,22 @@ func (s *fn) place(e ast.Expr) (place, bool) {
 		if !ok || base.t.Kind != KList {
 			break
 		}
-		l := base.get()
 		i := s.valueAs(x.Index, b.mod.Builtin(KInt))
 		et := base.t.Elems[0]
 		pos := b.pos(x)
+		// the list is read when first used, as a field's base is: in
+		// `xs[i] = f()` after f, which may change xs (as the Go backend
+		// does; the value stored into xs[i] must not drop f's changes)
+		var l *Value
+		cur := func() *Value {
+			if l == nil {
+				l = base.get()
+			}
+			return l
+		}
 		return place{et,
-			func() *Value { return s.call("list.index", et, pos, l, i) },
-			func(v *Value) { base.set(s.call("list.set", base.t, pos, l, i, v)) }}, true
+			func() *Value { return s.call("list.index", et, pos, cur(), i) },
+			func(v *Value) { base.set(s.call("list.set", base.t, pos, cur(), i, v)) }}, true
 	}
 	b.unsupported(e, "assigning to this expression")
 	return place{}, false

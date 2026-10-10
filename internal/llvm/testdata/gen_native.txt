@@ -4,6 +4,7 @@
 # tasks, decision 0083), the test_* programs (xo test), and programs
 # with XO1201 constructs (bench/results/spec-audit-2026-10-09.md).
 arena_frames
+assign_rhs_mutates
 arith_overflow
 bytes_builder
 calls_defaults

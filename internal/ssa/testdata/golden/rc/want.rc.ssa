@@ -319,20 +319,20 @@ b41:  ; preds b35
 b42:  ; preds b38
   v286: () = tuple
   v287: Int = const 3
-  v288: List[Int] = call list.index, v274, v287 @ main.xo:70:3 lands v289
-  v289: Bool = call rt.landing
-  br v289, b45(), b44()
+  v288: Int = const 0
+  v289: Int = const 7
+  v290: List[Int] = call list.index, v274, v287 @ main.xo:70:3 lands v291
+  v291: Bool = call rt.landing
+  br v291, b45(), b44()
 b43:  ; preds b38
   release v273
   release v271
   release v110
   jump b1()
 b44:  ; preds b42
-  retain v288
-  v296: Int = const 0
-  v297: Int = const 7
-  v298: List[Int] = reuse v288
-  v299: List[Int] = call list.set, v298, v296, v297 @ main.xo:70:3 lands v300
+  retain v290
+  v298: List[Int] = reuse v290
+  v299: List[Int] = call list.set, v298, v288, v289 @ main.xo:70:3 lands v300
   v300: Bool = call rt.landing
   br v300, b47(), b46()
 b45:  ; preds b42

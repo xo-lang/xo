@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+3 2 kid 1
+3 3 3
+3 3 9
+--- stderr

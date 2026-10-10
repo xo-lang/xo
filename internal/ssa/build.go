@@ -489,7 +489,7 @@ func (b *builder) typ(t check.Type, at ast.Node) *Type {
 // has such an edge, and the choice is a property of the cycle alone
 // (decision 0052).
 func (b *builder) boxed(ct check.Type, ft *Type, owner string) *Type {
-	if reachesByValue(ct, owner, map[string]bool{}) {
+	if b.reachesByValue(ct, owner, map[string]bool{}) {
 		return b.mod.Box(ft)
 	}
 	return ft
@@ -497,12 +497,12 @@ func (b *builder) boxed(ct check.Type, ft *Type, owner string) *Type {
 
 // reachesByValue reports whether a value of checker type t holds a
 // value of the struct or enum named owner (its SSA name: the
-// instantiated type's String) inline: through struct fields, enum
+// instantiated type's typeName) inline: through struct fields, enum
 // payloads (prelude Option and Result included), tuple elements, and
 // aliases, not through lists, function values, or builtins, and not
 // through user types named before owner (their own cycles are boxed at
 // their fields). seen holds the named types already walked.
-func reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
+func (b *builder) reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
 	if t == nil {
 		return false
 	}
@@ -510,7 +510,7 @@ func reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
 	switch r := check.Resolve(t).(type) {
 	case *check.Tuple:
 		for _, e := range r.Elems {
-			if reachesByValue(e, owner, seen) {
+			if b.reachesByValue(e, owner, seen) {
 				return true
 			}
 		}
@@ -524,12 +524,12 @@ func reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
 		}
 		switch obj.Kind {
 		case check.KAlias:
-			return reachesByValue(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), owner, seen)
+			return b.reachesByValue(check.NewSubst(obj.TParams, r.Args).Apply(obj.Target), owner, seen)
 		case check.KStruct, check.KEnum:
 			if obj.Kind == check.KStruct && obj.Module != nil && obj.Module.IsStd {
 				return false
 			}
-			name := r.String()
+			name := b.typeName(r)
 			if name == owner {
 				return true
 			}
@@ -540,13 +540,13 @@ func reachesByValue(t check.Type, owner string, seen map[string]bool) bool {
 			seen[name] = true
 			sub := check.NewSubst(obj.TParams, r.Args)
 			for _, f := range obj.Fields {
-				if reachesByValue(sub.Apply(f.Type), owner, seen) {
+				if b.reachesByValue(sub.Apply(f.Type), owner, seen) {
 					return true
 				}
 			}
 			for _, v := range obj.Variants {
 				for _, f := range v.Fields {
-					if reachesByValue(sub.Apply(f.Type), owner, seen) {
+					if b.reachesByValue(sub.Apply(f.Type), owner, seen) {
 						return true
 					}
 				}
@@ -1316,7 +1316,7 @@ func (s *fn) ifaceName(e ast.Expr) string {
 }
 
 // ambiguousTypeNames are the names of the types declared by more than
-// one user module.
+// one user module (an alias declares no type of its own).
 func ambiguousTypeNames(mods []*check.Module) map[string]bool {
 	owner := map[string]*check.Module{}
 	out := map[string]bool{}
@@ -1325,7 +1325,7 @@ func ambiguousTypeNames(mods []*check.Module) map[string]bool {
 			continue
 		}
 		for name, o := range m.Scope {
-			if _, ok := o.(*check.TypeObj); !ok {
+			if t, ok := o.(*check.TypeObj); !ok || t.Kind == check.KAlias {
 				continue
 			}
 			if prev, ok := owner[name]; ok && prev != m {
