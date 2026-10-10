@@ -1,0 +1,1 @@
+one binding passed to two `var` parameters
