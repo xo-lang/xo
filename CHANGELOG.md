@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends: deferred code that faults no longer skips the rest
+  of the cleanup. The deferred code registered before it and that of
+  the blocks around it runs, the last fault is reported, as on the Go
+  backend (core 3.5, decision 0085 amendment), and a task that caught
+  such a fault with `task.isolate` sees cancellation again (it could
+  deadlock before).
 - LLVM backend (decision 0119): generated code is compiled for the same
   CPU and features as the C runtime (clang's defaults): LSE atomics for
   shared reference counts on darwin/arm64, outline atomics (LSE when the

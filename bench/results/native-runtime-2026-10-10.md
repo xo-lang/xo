@@ -149,3 +149,14 @@ Linux containers: Debian clang 19 reports `generic` with
 `+outline-atomics` on arm64 (the helpers pick LSE at run time, exclusive
 loops on ARMv8.0) and `x86-64` on amd64; TestLLVMTargetAttrs and the
 LLVM goldens (plus TLS, signals, runtime threads on arm64) pass in both.
+
+## 4. Faults in deferred code (decision 0085 amendment)
+
+Not a performance item. Golden `fault_defer_chain` (nine cases): before,
+the LLVM and arm64 backends skipped 6 of the Go backend's output lines
+in cases 1 to 4 and 7 (the earlier and outer deferred code), reported
+the first of two deferred faults instead of the last, and case 8
+deadlocked (XO-F001: the caught fault left the task shielded); after,
+all three backends print the same, leak check 0. bench/perf/http kept
+alive (2 interleaved rounds, before / after): llvm 116261, 116262 /
+115880, 116083 req/s; arm64 113231, 113256 / 112515, 113226.

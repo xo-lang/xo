@@ -1827,6 +1827,18 @@ void xo_shield_end(int64_t tok, const char *loc, int64_t n) {
 	}
 }
 
+// xo_shield_abort ends deferred code started with token tok that faulted
+// (decision 0085): the shield ends and the flag is set again as
+// xo_shield_end does, without its time check; the rest of the cleanup
+// runs on (internal/ssa faultCont). Without it the context stayed
+// shielded, and a task that caught the fault (task.isolate) never saw
+// cancellation again.
+void xo_shield_abort(int64_t tok) {
+	xo_ctx *c = ctx();
+	c->shield--;
+	c->unwinding = (int)(tok & 1);
+}
+
 // ctx_canceled reports whether c is canceled and not shielded.
 static int ctx_canceled(xo_ctx *c) { return !c->shield && node_canceled(c->node); }
 

@@ -901,6 +901,11 @@ match code {
   deferred code returns, and not in test worlds, whose clock is virtual.
 - The native backends (`--backend=llvm`, `--backend=arm64`) run deferred
   code on every way out alike, faults included (decisions 0070, 0085).
+- Deferred code that faults ends there; the deferred code registered
+  before it and that of the blocks around it still runs, and the new
+  fault replaces the one being unwound, if any (the last fault is
+  reported). The task is no longer shielded afterwards. Every backend
+  behaves this way (decision 0085, amended 2026-10-10).
 
 **Patterns** are used in `match`, `let`, `if let`, and `for`:
 

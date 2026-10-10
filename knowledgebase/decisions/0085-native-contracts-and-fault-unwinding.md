@@ -159,7 +159,8 @@ and a fault in an HTTP handler killed the server instead of answering
   `Fault.frames` is empty (core 8, 11.2).
 - A fault inside deferred code is unwound without the rest of that
   frame's cleanup (its landing is the function's, not the deferred
-  code's); the Go backend runs the remaining deferred code.
+  code's); the Go backend runs the remaining deferred code. Fixed
+  2026-10-10, see the amendment below.
 - A fault in a server's connection task outside the handler (std code
   reading the request) fails the server's connection scope instead of
   ending only that connection.
@@ -181,3 +182,23 @@ and a fault in an HTTP handler killed the server instead of answering
   hot loops and changes what the arm64 backend's loop optimizations see;
   only the checks that have cleanup to do are kept, and they cost no
   instruction.
+
+## Amendment (2026-10-10): faults in deferred code
+
+Deferred code that faults now continues the cleanup as the Go backend
+does (core 3.5): the deferred code registered before it runs, then that
+of the blocks and scopes around it, and the last fault is the one
+reported. internal/ssa gives operations in top level deferred code a
+landing that runs the deferred code of blocks opened inside the
+statement, ends its shield (`rt.shield_abort`, new; before, a caught
+fault in deferred code left the task shielded, so it never saw
+cancellation again and the `fault_defer_chain` golden's waiter
+deadlocked with XO-F001), and jumps to a continuation block per frame
+and statement (`faultCont`) that runs the earlier statements as a chain:
+each deferred statement is lowered at most once more. Deferred code
+nested in deferred code, and a scope opened inside deferred code, keep
+the function's landing (references released, the rest of the cleanup
+skipped): no program in the repository does either. Golden:
+`fault_defer_chain` (nine cases, the three backends alike, leak check
+0, under ThreadSanitizer with 1, 2, and N workers). bench/perf/http is
+unchanged (116.3k against 116.0k req/s, llvm).

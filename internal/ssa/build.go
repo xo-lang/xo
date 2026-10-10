@@ -748,6 +748,13 @@ type fn struct {
 	pending     *Value
 	pendingAt   pendingAt
 	pendingDefs map[*check.VarObj]*Value // definitions in its block it replaced since
+	// pendingDefer is the deferred statement the pending operation is in
+	// when its fault continues there (build_defer.go faultCont)
+	pendingDefer *deferLanding
+	// deferLand is the top level deferred statement being lowered, conts
+	// the fault continuations made so far (build_defer.go)
+	deferLand *deferLanding
+	conts     []*Block
 }
 
 // apply resolves a checker type in the instance being built.
@@ -995,6 +1002,13 @@ func (s *fn) add(op Op, t *Type, aux any, args ...*Value) *Value {
 		s.pending = v
 		s.pendingAt = s.snapshot()
 		s.pendingDefs = nil
+		s.pendingDefer = nil
+	} else if s.b.faultUnwind && mayRaise(v) && s.deferLandingHere() {
+		// in deferred code: a fault goes on with the cleanup after it
+		s.pending = v
+		s.pendingAt = s.snapshot()
+		s.pendingDefs = nil
+		s.pendingDefer = s.deferLand
 	}
 	return v
 }

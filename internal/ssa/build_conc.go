@@ -201,6 +201,7 @@ func (s *fn) lastInstr() *Value {
 
 // finishFn emits the function's unwind block: zero results.
 func (s *fn) finishFn() {
+	s.sealConts()
 	if s.unwindB == nil {
 		return
 	}
