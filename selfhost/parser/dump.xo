@@ -15,9 +15,11 @@ pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
   if !r.hard {
     dump_file(out, r.file)
   }
+  // messages quoted as parser.Dump does (strconv.Quote): a habit's
+  // message holds source text, newlines included
   for d in r.diags {
     let sp = d.span
-    out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${lexer.quote(d.message)}\n")
+    out.write("diag ${d.code} ${sp.start.line}:${sp.start.col}-${sp.end.line}:${sp.end.col} ${d.message.quote()}\n")
   }
   out.freeze()
 }

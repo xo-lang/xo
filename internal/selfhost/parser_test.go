@@ -118,6 +118,49 @@ func parserDifferential(t *testing.T, bin string) {
 		acc, rej, rec := compareParsers(t, bin, root, tokenFuzzCorpus(t, root, tmp, files, fuzz), false)
 		t.Logf("%d mutated inputs: %d accepted, %d rejected by both parsers (%d recovered)", fuzz, acc, rej, rec)
 	})
+	t.Run("habits", func(t *testing.T) {
+		n := fuzz / 4
+		acc, rej, rec := compareParsers(t, bin, root, habitCorpus(t, root, tmp, files, n), false)
+		t.Logf("%d inputs with habits of other languages: %d accepted, %d rejected by both parsers (%d recovered)", n, acc, rej, rec)
+		if rec < n/4 {
+			t.Fatalf("only %d of %d habit inputs recovered", rec, n)
+		}
+	})
+}
+
+// habitCorpus writes n inputs under dir, each a repository file with one
+// to three habit edits (habitEdits of the checker mutations: Go, Rust,
+// Python, TypeScript, Kotlin, and Swift syntax the parser recovers from),
+// seeded so failures reproduce.
+func habitCorpus(t *testing.T, root, dir string, files []string, n int) []string {
+	seed := int64(20261011)
+	if v := os.Getenv("XO_SELFHOST_SEED"); v != "" {
+		fmt.Sscan(v, &seed)
+	}
+	rng := rand.New(rand.NewSource(seed))
+	var srcs [][]byte
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) < 16<<10 {
+			srcs = append(srcs, data)
+		}
+	}
+	var out []string
+	for i := range n {
+		src := srcs[rng.Intn(len(srcs))]
+		for range 1 + rng.Intn(3) {
+			src = mutateHabits(rng, src)
+		}
+		p := filepath.Join(dir, fmt.Sprintf("phabit-%05d.xo", i))
+		if err := os.WriteFile(p, src, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // compareParsers parses paths with both parsers in batches and fails on
