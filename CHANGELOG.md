@@ -6,7 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-Nothing yet.
+- Fixes from Codex r3: a `select` arm that receives without binding the
+  value no longer generates Go that fails to compile; the "propagate with
+  ?" fix is offered only where `?` can propagate; help notes for XO0205
+  in closures and for passing `TestOs` where `Os` is expected.
 
 ## v0.8.0 (2026-10-09)
 

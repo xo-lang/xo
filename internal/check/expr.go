@@ -91,8 +91,13 @@ func (c *checker) mismatch(sp token.Span, want, got Type, e ast.Expr) {
 	if _, _, ok := c.resultParts(g); ok {
 		if _, _, ok2 := c.resultParts(w); !ok2 && e != nil {
 			note(d, token.Span{}, "the value is a `Result`; propagate the error with `?` or handle it with `match`")
-			fix(d, "propagate with ?", insertEdit(sp.File, sp.End, "?"))
+			if c.canPropagate() {
+				fix(d, "propagate with ?", insertEdit(sp.File, sp.End, "?"))
+			}
 		}
+	}
+	if strings.HasSuffix(deep(g).String(), "TestOs") && deep(w).String() == "Os" {
+		note(d, token.Span{}, "a `TestOs` is not an `Os`; to run code that takes `Os` in a test, wrap it in a main and run it with `testing.run_main(fn(o: Os) -> () ! Error { ... }, os)`, which gives it an `Os` backed by the test's fakes (std.md 8); or let the function take only the capabilities it uses (`stdio: Stdio`), which a test passes directly (`os.stdio`)")
 	}
 	if gi := c.optionElem(g); gi != nil && c.optionElem(w) == nil && c.assignable(gi, w, token.Span{}) {
 		note(d, token.Span{}, "the value is optional; unwrap it with `??`, `?`, `if let`, or `match` (core 2.5)")
@@ -114,7 +119,9 @@ func (c *checker) unhandled(e ast.Expr, sp token.Span, t Type) {
 	if _, et, ok := c.resultParts(t); ok {
 		note(d, token.Span{}, "%s can fail with `%s`; propagate with `?`, match on it, or discard it with `.ignore_err(\"reason\")` (core 2.6)", what, deep(et))
 	}
-	fix(d, "propagate with ?", insertEdit(sp.File, sp.End, "?"))
+	if c.canPropagate() {
+		fix(d, "propagate with ?", insertEdit(sp.File, sp.End, "?"))
+	}
 	if e != nil {
 		fix(d, "discard with a reason", ignoreErrEdits(e)...)
 	}
@@ -539,6 +546,14 @@ func (c *checker) try(x *ast.TryExpr) Type {
 	return badType
 }
 
+// canPropagate reports whether `?` may be inserted here: the enclosing
+// function or closure can fail (a declared or still open error type). A
+// "propagate with ?" fix offered where it cannot only trades one error
+// for XO0205 (Codex r3, task 07).
+func (c *checker) canPropagate() bool {
+	return c.ctx != nil && (c.ctx.errT != nil || c.ctx.errVar != nil)
+}
+
 // propagate checks that an error of type et can leave the current function
 // (by `?` or by a failed child task), reporting code otherwise.
 func (c *checker) propagate(et Type, sp token.Span, code diag.Code, how string) {
@@ -569,6 +584,8 @@ func (c *checker) propagate(et Type, sp token.Span, code diag.Code, how string) 
 		if d != nil && ctx.fn != nil && ctx.fn.Decl != nil {
 			note(d, token.Span{}, "declare the error type: `-> %s ! %s`, or handle the error with `match` (core 2.6)", deep(ctx.result), deep(et))
 			fix(d, fmt.Sprintf("declare `! %s`", deep(et)), insertEdit(ctx.fn.Decl.Sp.File, fdHeaderEnd(ctx.fn.Decl), " ! "+deep(et).String()))
+		} else if d != nil {
+			note(d, token.Span{}, "this closure's type comes from where it is passed and has no error type; handle the error inside it with `match`, `??`, or `.ignore_err(\"reason\")` (core 2.6)")
 		}
 		return
 	}

@@ -209,3 +209,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [reproducible-build-records-source-dir.md](reproducible-build-records-source-dir.md): builds are byte identical only from the same source directory; the binary records the absolute directory for crash bundles.
 - [lazy-frame-values-change.md](lazy-frame-values-change.md): a lazily formatted error frame showed values the caller changed after the `?` (lent or `var` Lists, `Buf.freeze`, `Atomic`); frames mark Lists shared and format Buf and Atomic at capture.
 - [parallel-agents-same-adr-number.md](parallel-agents-same-adr-number.md): agents in parallel worktrees take the same next ADR number or XO code; renumber the later branch at merge, or assign numbers in the prompts.
+- [select-unbound-recv-unused-slot.md](select-unbound-recv-unused-slot.md): a `select` arm `ch.recv() => ...` without a binding generated an unused Go variable and failed to build; cover optional parts of syntax in goldens.

@@ -211,6 +211,12 @@ func (f *fnGen) selectExpr(x *ast.SelectExpr, d dest) {
 			ch := f.val(se.X)
 			switch se.Sel.Name {
 			case "recv":
+				if arm.Bind == nil {
+					// `ch.recv() => body`: the value is not bound, so
+					// no slot variable (Go rejects an unused one)
+					f.line("%sSelRecv(%s, %s)", r, sel, ch)
+					break
+				}
 				slots[i] = f.tmp("rv")
 				f.line("%s := %sSelRecv(%s, %s)", slots[i], r, sel, ch)
 			case "send":

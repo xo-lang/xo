@@ -1,0 +1,24 @@
+// A select arm that receives without binding the value (Codex r3: the
+// generated Go declared an unused slot and failed to compile).
+fn main(os: Os) {
+  let done = Chan[Int].new(cap: 1)
+  let other = Chan[Str].new()
+  done.send(1)
+  var out = ""
+  select {
+    done.recv() => out = "done"
+    other.recv() => out = "other"
+    after 5s => out = "timeout"
+  }
+  os.stdio.println(out)
+  var n = 0
+  let stop = Chan[Int].new(cap: 1)
+  stop.close()
+  while {
+    select {
+      stop.recv() => break
+      after 1ms => n += 1
+    }
+  }
+  os.stdio.println("stopped ${n}")
+}
