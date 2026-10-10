@@ -1,0 +1,89 @@
+// std/path for the native backends (decision 0074): Go's path package
+// (std/rt/path.go calls it), ported by its rules. Paths are bytes; `/` is
+// the only separator.
+
+fn clean(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var parts: List[Str] = []
+  for seg in p.split("/") {
+    if seg == "" || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if parts.len() > 0 && parts[parts.len() - 1] != ".." {
+        match parts.pop() {
+          _ => {}
+        }
+      } else if !rooted {
+        parts.push("..")
+      }
+      continue
+    }
+    parts.push(seg)
+  }
+  let body = parts.join("/")
+  if rooted {
+    return "/" + body
+  }
+  if body == "" {
+    return "."
+  }
+  body
+}
+
+fn join(a: Str, b: Str) -> Str {
+  if a == "" && b == "" {
+    return ""
+  }
+  if a == "" {
+    return clean(b)
+  }
+  if b == "" {
+    return clean(a)
+  }
+  clean(a + "/" + b)
+}
+
+// last_slash is the byte index of the last `/` of p, or -1.
+fn last_slash(p: Str) -> Int {
+  let b = p.bytes()
+  var i = b.len() - 1
+  while i >= 0 {
+    if b[i] == 47 {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn dir(p: Str) -> Str { clean(p[0..last_slash(p) + 1]) }
+
+fn base(p: Str) -> Str {
+  if p == "" {
+    return "."
+  }
+  var s = p
+  while s.len() > 0 && s.ends_with("/") {
+    s = s[0..s.len() - 1]
+  }
+  if s == "" {
+    return "/"
+  }
+  s[last_slash(s) + 1..]
+}
+
+fn ext(p: Str) -> Str {
+  let b = p.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 {
+    if b[i] == 46 {
+      return p[i..]
+    }
+    i -= 1
+  }
+  ""
+}

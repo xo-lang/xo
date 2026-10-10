@@ -785,6 +785,9 @@ func (s *fn) pattern(v *Value, p ast.Pattern, fail *Block) {
 			i := -1
 			if pf.Name != nil {
 				i = v.Type.FieldIndex(pf.Name.Name)
+			} else if bp, ok := pf.Pattern.(*ast.BindPat); ok {
+				// `Bag{items}`: the field of the binding's name
+				i = v.Type.FieldIndex(bp.Name.Name)
 			}
 			if i >= 0 && pf.Pattern == nil {
 				// `Bag{items}`: binds the field's name

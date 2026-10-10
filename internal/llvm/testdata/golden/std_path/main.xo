@@ -1,0 +1,17 @@
+// std/path natively (std/native/path.xo): every function on edge cases,
+// compared with the Go backend (Go's path package).
+
+use std/path
+
+fn main(os: Os) {
+  let cases = ["", "/", "//", ".", "..", "./", "../..", "a/..", "a/../..", "/../a", "a/b/../../..", "/a/b/../../../c",
+    "abc.", ".hidden", "a.b/c", "x/", "/a/b/", "a//b", "./a", "a/./b/.", "...", "a/.../b", "/..", "../a/../b",
+    "dir/file.tar.gz", "noext", "a.b.c/", "é/ü.txt", "a/b/c/../d/./e.f"]
+  for c in cases {
+    os.stdio.println("[${c}] clean=${path.clean(c)} dir=${path.dir(c)} base=${path.base(c)} ext=${path.ext(c)}")
+  }
+  let pairs = [("", ""), ("a", ""), ("", "b"), ("a", "b"), ("a/", "/b"), ("/", "x"), ("a/b", "../../.."), ("..", "a"), ("x", "/")]
+  for (a, b) in pairs {
+    os.stdio.println("join(${a}, ${b}) = ${path.join(a, b)}")
+  }
+}

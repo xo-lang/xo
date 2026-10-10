@@ -19,6 +19,8 @@ No meaning changes yet; native support grew (`--no-gc`, 10.1):
   text, equality, Map keys) and list patterns (3.5) build natively.
 - Float32, `Secret[T]`, `Buf[T]`, order of `derive Ord` types, and the
   std value methods listed in decision 0101 build natively.
+- `std/path`, `task.semaphore`, `task.once`, and `task.map_concurrent`
+  build natively (std.md 7, 9).
 
 ## Changes in 0.8
 

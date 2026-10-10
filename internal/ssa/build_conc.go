@@ -609,7 +609,7 @@ func (s *fn) spawn(x *ast.CallExpr, h *Value, background bool, ret bool) *Value 
 		site = int64(id)
 	}
 	intT := m.Builtin(KInt)
-	run := s.add(OpFuncAddr, intT, b.runner(ft, tt))
+	run := s.add(OpFuncAddr, intT, b.runner(ft, tt, errT != nil))
 	drop := s.add(OpFuncAddr, intT, b.dropList(rt))
 	fdrop := s.add(OpFuncAddr, intT, b.dropList(ft))
 	t := s.rt("task_spawn", tt, h, fl, run, drop, fdrop, s.cint(flags), s.cint(site), s.loc(x))
@@ -620,9 +620,9 @@ func (s *fn) spawn(x *ast.CallExpr, h *Value, background bool, ret bool) *Value 
 }
 
 // runner returns the entry function that runs a task whose closure has
-// type ft: it calls the closure and records its result (shared), or that
+// type ft (fails: its Result is a failure or success, not a value): it calls the closure and records its result (shared), or that
 // the task unwound.
-func (b *builder) runner(ft, tt *Type) string {
+func (b *builder) runner(ft, tt *Type, fails bool) string {
 	m := b.mod
 	name := "xo.run[" + tt.Name + "]"
 	if m.Func(name) != nil {
@@ -647,7 +647,7 @@ func (b *builder) runner(ft, tt *Type) string {
 	unw.Add(OpCall, unit, "rt.task_unwound", t)
 	unw.Add(OpReturn, nil, nil, unw.Add(OpTuple, unit, nil))
 	var failed *Value
-	if i := rt.VariantIndex("Err"); rt.Kind == KEnum && i >= 0 && rt.VariantIndex("Ok") >= 0 {
+	if i := rt.VariantIndex("Err"); fails && rt.Kind == KEnum && i >= 0 && rt.VariantIndex("Ok") >= 0 {
 		failed = done.Add(OpEq, boolT, nil, done.Add(OpTag, intT, nil, r), done.Add(OpConst, intT, int64(i)))
 	} else {
 		failed = done.Add(OpConst, boolT, false)

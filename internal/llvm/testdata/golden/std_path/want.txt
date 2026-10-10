@@ -1,0 +1,41 @@
+exit 0
+--- stdout
+[] clean=. dir=. base=. ext=
+[/] clean=/ dir=/ base=/ ext=
+[//] clean=/ dir=/ base=/ ext=
+[.] clean=. dir=. base=. ext=.
+[..] clean=.. dir=. base=.. ext=.
+[./] clean=. dir=. base=. ext=
+[../..] clean=../.. dir=.. base=.. ext=.
+[a/..] clean=. dir=a base=.. ext=.
+[a/../..] clean=.. dir=. base=.. ext=.
+[/../a] clean=/a dir=/ base=a ext=
+[a/b/../../..] clean=.. dir=. base=.. ext=.
+[/a/b/../../../c] clean=/c dir=/ base=c ext=
+[abc.] clean=abc. dir=. base=abc. ext=.
+[.hidden] clean=.hidden dir=. base=.hidden ext=.hidden
+[a.b/c] clean=a.b/c dir=a.b base=c ext=
+[x/] clean=x dir=x base=x ext=
+[/a/b/] clean=/a/b dir=/a/b base=b ext=
+[a//b] clean=a/b dir=a base=b ext=
+[./a] clean=a dir=. base=a ext=
+[a/./b/.] clean=a/b dir=a/b base=. ext=.
+[...] clean=... dir=. base=... ext=.
+[a/.../b] clean=a/.../b dir=a/... base=b ext=
+[/..] clean=/ dir=/ base=.. ext=.
+[../a/../b] clean=../b dir=.. base=b ext=
+[dir/file.tar.gz] clean=dir/file.tar.gz dir=dir base=file.tar.gz ext=.gz
+[noext] clean=noext dir=. base=noext ext=
+[a.b.c/] clean=a.b.c dir=a.b.c base=a.b.c ext=
+[é/ü.txt] clean=é/ü.txt dir=é base=ü.txt ext=.txt
+[a/b/c/../d/./e.f] clean=a/b/d/e.f dir=a/b/d base=e.f ext=.f
+join(, ) = 
+join(a, ) = a
+join(, b) = b
+join(a, b) = a/b
+join(a/, /b) = a/b
+join(/, x) = /x
+join(a/b, ../../..) = ..
+join(.., a) = ../a
+join(x, /) = x
+--- stderr

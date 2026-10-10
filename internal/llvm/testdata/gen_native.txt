@@ -66,3 +66,5 @@ tricky_mix
 unit_discard
 value_semantics
 var_receiver_order
+task_std
+std06_path

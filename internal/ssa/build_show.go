@@ -250,6 +250,11 @@ func (b *builder) debugFunc(ct check.Type, t *Type, at ast.Node) string {
 			s.retv(s.ifaceShowCall(acc, v, true))
 			return
 		}
+		if okT, et, ok := resultParts(ct); ok && check.IsNever(et) {
+			// Result[T, Never] is lowered as its T (decision 0074)
+			s.retv(lit(sub(lit(acc, "Ok("), v, okT), ")"))
+			return
+		}
 		switch {
 		case isPreludeNamed(ct, "Secret"):
 			s.retv(lit(acc, "<redacted>"))

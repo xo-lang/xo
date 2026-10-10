@@ -1,0 +1,83 @@
+// std/task for the native backends (decision 0074): Semaphore, Once,
+// map_concurrent, and map_concurrent_until in Xo over channels, mutexes,
+// and scopes. The rest of std/task (isolate, with_timeout, is_canceled,
+// stop_requested, stopping, Group) is lowered by internal/ssa
+// (build_conc.go). Semantics and fault texts are std/rt's (sync.go,
+// once.go), with one difference: a fault in a Once's function is not
+// stored, so the next caller runs the function again.
+use native/rt
+
+/// A channel holding the free permits: `with` takes one (a cancellation
+/// point) and gives it back when f returns, fails, or unwinds.
+struct Semaphore {
+  permits: Chan[()]
+}
+
+fn permits(n: Int) -> Chan[()] {
+  let ch = Chan[()].new(n)
+  for _ in 0..n {
+    ch.send(())
+  }
+  ch
+}
+
+fn semaphore(n: Int, at: rt.Loc) -> Semaphore {
+  if n <= 0 {
+    rt.fault_at("a semaphore needs at least one permit, got ${n}", at)
+  }
+  Semaphore{permits: permits(n)}
+}
+
+fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx {
+  match s.permits.recv() {
+    _ => {}
+  }
+  defer s.permits.send(())
+  f()?
+}
+
+/// The result once a caller's f finished; the mutex is held while f runs,
+/// so later callers wait for it and share it (a failed result too).
+struct Once[T, E] {
+  st: Mutex[Option[Result[T, E]]]
+}
+
+fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, E]]].new(None)} }
+
+fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
+  let r = o.st.with(fn(var st) -> Result[T, E] {
+    match st {
+      Some(done) => done
+      None => {
+        let fresh = f()
+        st = Some(fresh)
+        fresh
+      }
+    }
+  })
+  r?
+}
+
+fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx, at: rt.Loc) -> List[Result[R, E]] uses fx {
+  if limit <= 0 {
+    rt.fault_at("map_concurrent needs a positive limit, got ${limit}", at)
+  }
+  let free = permits(limit.min(items.len()).max(1))
+  scope s {
+    var tasks = []
+    for x in items {
+      match free.recv() {
+        _ => {}
+      }
+      tasks.push(s.spawn(fn() -> Result[R, E] {
+        defer free.send(())
+        f(x)
+      }))
+    }
+    var out: List[Result[R, E]] = []
+    for t in tasks {
+      out.push(t.await)
+    }
+    out
+  }
+}

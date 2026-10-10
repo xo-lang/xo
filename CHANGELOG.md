@@ -26,6 +26,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   natively (it failed in code generation). New test
   TestGenGoldensNative runs 66 internal/gen goldens on Go, LLVM, and
   arm64 and compares them.
+- Native backends: `std/path` (std/native/path.xo), `task.semaphore`,
+  `task.once` (a fault in its function is not stored natively: the next
+  caller runs it again), and `task.map_concurrent`
+  (std/native/task.xo); Debug text of `Result[T, Never]` values. Fixed:
+  natively, a task whose value is a Result failed its scope when that
+  value was an `Err`; shorthand struct patterns `Bag{items}`.
 
 ## v0.8.0 (2026-10-09)
 
