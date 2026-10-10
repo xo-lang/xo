@@ -61,11 +61,6 @@ fn value_want(w: Want) -> Int {
 
 const KIND_NAMES = ["Ident", "IntLit", "FloatLit", "DurationLit", "RuneLit", "StringLit", "BytesLit", "HoleExpr", "UnitExpr", "ParenExpr", "TupleExpr", "ListLit", "MapLit", "SetLit", "StructLit", "UnaryExpr", "BinaryExpr", "IsExpr", "RangeExpr", "SelectorExpr", "CallExpr", "TypeArgsExpr", "IndexExpr", "TryExpr", "WithExpr", "IfExpr", "MatchExpr", "ScopeExpr", "SelectExpr", "Block", "FnLit", "WhileExpr", "BadExpr"]
 
-fn kind_name(k: Int) -> Str {
-  let names = KIND_NAMES
-  names[k]
-}
-
 fn expr_kind(e: Expr) -> Int {
   match e {
     Ident(..) => 0
@@ -123,7 +118,7 @@ fn (var c: Checker) set_type(e: Expr, t: Int) {
     return
   }
   c.type_at[key] = c.types.len()
-  c.types.push(TypeRec{file: c.cur_file, start: sp.start.offset, end: sp.end.offset, sline: sp.start.line, scol: sp.start.col, eline: sp.end.line, ecol: sp.end.col, kind: kind_name(k), ty: t})
+  c.types.push(TypeRec{file: c.cur_file, start: sp.start.offset, end: sp.end.offset, sline: sp.start.line, scol: sp.start.col, eline: sp.end.line, ecol: sp.end.col, kind: KIND_NAMES[k], ty: t})
 }
 
 /// The recorded type of e, or -1.

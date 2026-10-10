@@ -1,6 +1,6 @@
 # `x[...]` is type arguments or an index, decided by shape
 
-Status: Anticipated
+Status: Observed (2026-10-10, `KIND_NAMES[k]` in selfhost/check)
 
 The grammar uses square brackets for both explicit type arguments
 (`json.decode[User](b)`, `Mutex[Int].new(0)`) and indexing (`xs[i]`). The
@@ -22,3 +22,11 @@ UpperCamel base everything in the brackets is type arguments
 at least one element must look like a type (`f[Int, net](x)`), so
 `fns[i](x)` stays an index. `f[net](x)` is therefore an index too; effect
 arguments of functions are inferred anyway.
+
+Observed (2026-10-10): with effect arguments counting as type elements,
+`KIND_NAMES[k]` (a constant list indexed by a local) parsed as type
+arguments and was rejected with XO0407 "type arguments are only allowed
+on generic functions and types". Fixed by decision 0143: a base spelled
+like a constant (`UPPER_SNAKE`) with only lowercase names in the
+brackets is an index. `handlers[Red](x)` above is still a call with type
+arguments.

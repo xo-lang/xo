@@ -13,7 +13,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [predeclared-names-collide.md](predeclared-names-collide.md): `err`, `result`, `test` are taken by the language.
 - [sticky-cancellation-blocks-cleanup.md](sticky-cancellation-blocks-cleanup.md): cleanup in defer fails after cancellation (spec 0.2).
 - [root-module-absorbs-bench-go.md](root-module-absorbs-bench-go.md): `go test ./...` at the root picks up Go code under bench/; use `./internal/... ./cmd/...`.
-- [type-args-vs-index.md](type-args-vs-index.md): how the parser tells `f[T](x)` from `xs[i]`, and the `m[Red](x)` trap.
+- [type-args-vs-index.md](type-args-vs-index.md): Observed: how the parser tells `f[T](x)` from `xs[i]`, the `m[Red](x)` trap, and `KIND_NAMES[k]` read as type arguments until decision 0143.
 - [fn-type-return-takes-uses.md](fn-type-return-takes-uses.md): `-> fn(A) -> B uses e {` gives the effect to the returned type, not the declaration; `xo fmt` used to drop the parentheses that avoid it.
 - [parser-error-cascades.md](parser-error-cascades.md): how the parser avoids double reports and cascades after an error.
 - [gopls-nested-module-noise.md](gopls-nested-module-noise.md): editor "undefined" errors in bench Go code are workspace noise.
