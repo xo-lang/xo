@@ -14,7 +14,8 @@ Registered names and their roles: [../decisions/0133-domains-and-github-org.md](
 | Homebrew cask `xo` | Free |
 | npm `xo` | Taken: popular JavaScript linter (sindresorhus/xo) |
 | crates.io `xo` | Taken |
-| File extension `.xo` | Not in GitHub Linguist; no notable use known |
+| File extension `.xo` | Not in GitHub Linguist. **Also used by xoscript** (Gabor de Mooij, xoscript.com, server side scripting, `xo hello.xo`; fork of Citrine, 2025 to 2026). Found 2026-10-10 |
+| Trademark `XO` (USPTO) | Several live or past marks found through aggregators 2026-10-10, not checked in TSDR: XO Communications (word mark, renewed, telecom and internet software), a stylized XO for cloud IaaS (86561894), XO GAMES (game software), XO Trademarks LLC. No mark found for `XO LANG`, `XOLANG`, or a programming language. See 0133 |
 
 Names considered and rejected: `forge`, `jo`, `qo`, `zo`, `ko`, `wz` and others.
 See [../decisions/0001-name-xo.md](../decisions/0001-name-xo.md).

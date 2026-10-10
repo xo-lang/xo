@@ -32,6 +32,16 @@ All five domains are registered at Namecheap, bought 2026-10-10.
 - Pending: renewal reminders or auto renew on all five domains; a lapsed
   language domain is a supply chain risk (install scripts, vanity import
   paths).
+- Trademark: a quick web search on 2026-10-10 (aggregators only; Justia
+  and uspto.report refused automated fetches) found no `XO LANG` or
+  `XOLANG` mark and no `XO` mark for a programming language, but several
+  `XO` word marks with class 9 software goods, the strongest XO
+  Communications (telecom and internet software, registered and
+  renewed). An unregistered language with the same short name exists:
+  xoscript (xoscript.com), which also runs `.xo` files with an `xo`
+  command. Pending: a real clearance search in USPTO Trademark Search
+  (classes 9 and 42, `XO*`) and EUIPO, ideally by a trademark attorney,
+  before any public launch.
 - If Xo ever gets vanity import paths (`xolang.dev/...`), they belong on
   this domain; that is a separate decision.
 
