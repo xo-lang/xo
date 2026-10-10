@@ -269,6 +269,14 @@ func (s *fn) selector(x *ast.SelectorExpr) *Value {
 			return s.funcValue(impl, x)
 		}
 	}
+	if fo, ok := b.info.Ref(x).(*check.FuncObj); ok && fo.Recv != nil && !fo.Static && b.info.TypeOf(x.X) != nil {
+		// a method value: a closure over the receiver's value now
+		// (decision 0109)
+		if lit, rv := b.info.MethodValueLit(x); lit != nil {
+			s.writeVar(rv, s.expr(x.X))
+			return s.closure(lit)
+		}
+	}
 	if x.Sel.Name == "await" {
 		if n, ok := check.Resolve(s.natCheck(x.X)).(*check.Named); ok && n.Obj.Module != nil && n.Obj.Module.IsPrelude && n.Obj.Name == "Task" {
 			return s.await(x)
