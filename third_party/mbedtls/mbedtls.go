@@ -7,7 +7,9 @@
 // src/ is a subset of the mbedtls-4.1.1 release tarball (the .c and .h
 // files of include/, library/, and the TF-PSA-Crypto directories the
 // library build uses), unmodified; xo/ holds the Xo runtime's
-// configuration. The package embeds mbedtls.tgz, a compressed copy of
+// configuration and the functions it puts in front of the library's
+// (decisions 0117, 0132; xo_p256.c includes fiat-crypto's files, which
+// Tree adds from third_party/fiat-crypto). The package embeds mbedtls.tgz, a compressed copy of
 // src/ made by gen.go, and xo/. The pinned release, its checksum, and the
 // update steps are in knowledgebase/infrastructure/toolchain.md ("TLS
 // library") and scripts/vendor-mbedtls.sh.
@@ -27,6 +29,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	fiatcrypto "github.com/xo-lang/xo/third_party/fiat-crypto"
 )
 
 // Files holds mbedtls.tgz and xo/.
@@ -58,6 +62,7 @@ var IncludeDirs = []string{
 	"src/tf-psa-crypto/extras",
 	"src/tf-psa-crypto/platform",
 	"src/tf-psa-crypto/utilities",
+	"fiat-crypto/src",
 }
 
 // Defines select the Xo configuration files (xo/).
@@ -93,6 +98,8 @@ var FileDefines = map[string][]string{
 	},
 	"src/tf-psa-crypto/drivers/builtin/src/psa_crypto_ecp.c": {
 		"-Dmbedtls_psa_ecp_export_public_key=xo_builtin_ecp_export_public_key",
+		"-Dmbedtls_psa_ecdsa_sign_hash=xo_builtin_psa_ecdsa_sign_hash",
+		"-Dmbedtls_psa_ecdsa_verify_hash=xo_builtin_psa_ecdsa_verify_hash",
 	},
 }
 
@@ -102,6 +109,11 @@ var Exclude = []string{
 	"src/tf-psa-crypto/drivers/everest/library/Hacl_Curve25519.c",
 }
 
+// FiatDir is where Tree puts the vendored fiat-crypto files
+// (third_party/fiat-crypto/src), which xo/xo_p256.c includes (decision
+// 0132).
+const FiatDir = "fiat-crypto/src"
+
 // File is one file of the library tree: its slash separated path
 // (src/... or xo/...) and contents.
 type File struct {
@@ -110,7 +122,8 @@ type File struct {
 }
 
 // Tree returns every file of the embedded tree, sorted by name: the
-// files of mbedtls.tgz under src/, and xo/.
+// files of mbedtls.tgz under src/, xo/, and fiat-crypto's C files under
+// FiatDir.
 func Tree() ([]File, error) {
 	tgz, err := Files.ReadFile("mbedtls.tgz")
 	if err != nil {
@@ -126,6 +139,17 @@ func Tree() ([]File, error) {
 		}
 		data, err := Files.ReadFile(p)
 		out = append(out, File{Name: p, Data: data})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = fs.WalkDir(fiatcrypto.Files, "src", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fiatcrypto.Files.ReadFile(p)
+		out = append(out, File{Name: path.Join(FiatDir, path.Base(p)), Data: data})
 		return err
 	})
 	if err != nil {

@@ -800,8 +800,12 @@ std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (e
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
-                        unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration)
+                        unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration,
+                        interposed functions: xo_tls_accel.c, xo_p256.c)
+third_party/fiat-crypto/  fiat-crypto's P-256 field and scalar C (decision 0132): src/ (vendored, unmodified,
+                        embedded), SHA256SUMS, license files, README.md (commit, how chosen)
 scripts/vendor-mbedtls.sh  downloads, checks, and vendors an Mbed TLS release
+scripts/vendor-fiat-crypto.sh  downloads fiat-crypto's files at the pinned commit and checks their SHA-256
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
@@ -1547,7 +1551,7 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).
 
-## TLS library (native std/http, decisions 0105, 0106, 0117)
+## TLS library (native std/http, decisions 0105, 0106, 0117, 0132)
 
 Last verified: 2026-10-10.
 
@@ -1567,7 +1571,23 @@ Last verified: 2026-10-10.
   (decision 0117): `mbedtls.FileDefines` gives single library files extra
   flags, `-D<fn>=xo_builtin_<fn>` renames the original, and the Xo file
   defines the name (X25519 public keys through HACL*, P-256 inverses by
-  Fermat, a spinning lock for the library's mutexes). `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
+  Fermat, a spinning lock for the library's mutexes); `xo/xo_p256.c`
+  replaces ECDSA P-256 signing and verification
+  (`mbedtls_psa_ecdsa_sign_hash`, `mbedtls_psa_ecdsa_verify_hash`,
+  decision 0132) with code on fiat-crypto, byte identical signatures.
+- fiat-crypto (decision 0132): `third_party/fiat-crypto/src/p256_64.c`
+  and `p256_scalar_64.c` from github.com/mit-plv/fiat-crypto at commit
+  `f3ecb2cf1f771de34771e967193ee7f0ee0b0acf` (2026-10-09), unmodified,
+  MIT or Apache-2.0 or BSD-1-Clause; SHA-256 of each file pinned in
+  `scripts/vendor-fiat-crypto.sh` and listed in `SHA256SUMS`
+  (TestVendored). Package `third_party/fiat-crypto` embeds them;
+  `mbedtls.Tree` puts them at `fiat-crypto/src/` of the extracted tree
+  (an include directory; `xo_p256.c` includes them) and the archive's
+  cache key hashes them. Update: set the commit in the script, run it
+  with `UPDATE=1` for the new sums, pin them, run it again, set
+  `fiatcrypto.Commit` and the README, then run
+  `go test ./third_party/fiat-crypto` and the TLS tests below.
+  `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
   binary embeds it instead of the 6.5 MB of sources), made by
   `go generate ./third_party/mbedtls`; TestArchive fails when it does
   not match `src/`.
@@ -1597,8 +1617,11 @@ Last verified: 2026-10-10.
 - Handshake load: `SCHEME=https NEWCONN=1 [RESUME=1] CONFIGS="xo xo-llvm"
   bench/perf/http/run.sh` (a full, or with RESUME=1 a resumed, handshake
   per request); profile the server with `sample <pid> 4` (2026-10-10:
-  15k full handshakes/s native against 17k on the Go backend,
-  `bench/results/native-runtime-2026-10-10.md`).
+  15k full handshakes/s native against 17k on the Go backend; after
+  decision 0132, 251 us of server CPU per full handshake native against
+  227 us on the Go backend, `bench/results/native-runtime-2026-10-10.md`
+  sections 1 and 6). `CONFIGS="xo-base-llvm ..." XO_BASE=<old xo>` builds
+  the LLVM server with another compiler for before and after runs.
 - HTTP/2 (decision 0121, `std/llrt/xo_h2.c`): ALPN offers `h2` then
   `http/1.1` on the server and the client (`tls_alpn`); the server's
   connection fiber reads TLS without waiting (`tls_nb_read`: the bio's
@@ -1617,7 +1640,15 @@ Last verified: 2026-10-10.
   archive into a temporary cache and links a C program with it);
   `go test ./internal/build -run TestTLSAccel` (testdata/tls_accel.c:
   xo_tls_accel.c against RFC 6979 and RFC 7748 answers and against the
-  renamed library functions on random inputs);
+  renamed library functions on random inputs, and xo_p256.c's P-256
+  signatures byte for byte and verification on 800 keys and messages);
+  `go test ./internal/build -run 'TestP256$|TestTLSAccelSanitizers'`
+  (xo_p256.c against Go's crypto/ecdsa RFC 6979 signatures, and
+  Wycheproof's P-256 P1363 vectors when `XO_WYCHEPROOF_DIR` names a
+  directory of them; tls_accel.c under ASan and UBSan);
+  `XO_P256_BENCH=2000 go test ./internal/build -run TestP256Bench -v`
+  (signing and verification times, 2026-10-10: 23 us and 94 us against
+  the library's 110 us and 377 us);
   `go test ./internal/llvm -run TestTLSDiff` (about 15 s: an HTTPS program
   with the Go, LLVM, and arm64 backends against Go peers, certificates made
   in `t.TempDir()`); `TestTLSLeaks` (Linux only: the `http_tls` golden
