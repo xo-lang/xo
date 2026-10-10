@@ -126,6 +126,39 @@ func (v Http_Response) XoDebug(b *strings.Builder) {
 
 func (v Http_Response) M_debug(*Task) string { return Debug(v) }
 
+type Http_TlsErr struct {
+	F_msg string
+}
+
+func (v Http_TlsErr) XoEq(x any) bool {
+	o, ok := x.(Http_TlsErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Http_TlsErr) XoHash() uint64 {
+	h := uint64(4698442849912275683)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Http_TlsErr) XoDebug(b *strings.Builder) {
+	b.WriteString("TlsErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Http_TlsErr) M_debug(*Task) string { return Debug(v) }
+
+func (v Http_TlsErr) M_display(*Task) string { return Debug(v) }
+
 type Http_HttpErr struct {
 	Tag int
 	P   any

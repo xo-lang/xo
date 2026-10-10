@@ -199,6 +199,7 @@ func clangBuild(clang string, srcs []string, bin string, flags ...string) error 
 // ccBuild compiles and links srcs into bin with the C compiler cc and
 // flags, finding a working macOS SDK on the first build of the process.
 func ccBuild(clang string, flags, srcs []string, bin string) error {
+	tls := usesTLS(srcs)
 	try := func(root string) (string, error) {
 		// the C runtime raises faults through the frames of generated
 		// code and its own (decision 0085): its functions may unwind, and
@@ -207,7 +208,18 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}
+		var tlsLink []string
+		if tls {
+			// std/http's TLS (decision 0105)
+			c, l, err := tlsArgs(clang, flags, root)
+			if err != nil {
+				return err.Error(), err
+			}
+			args = append(args, c...)
+			tlsLink = l
+		}
 		args = append(args, srcs...)
+		args = append(args, tlsLink...)
 		args = append(args, "-lm", "-lpthread")
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer

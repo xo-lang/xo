@@ -1,0 +1,26 @@
+exit 0
+--- stdout
+no pem: tls: failed to find any PEM data in certificate input
+switched: tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched
+cert as key: tls: failed to find PEM block with type ending in "PRIVATE KEY" in key input after skipping PEM blocks of the following types: [CERTIFICATE CERTIFICATE]
+no key: tls: failed to find any PEM data in key input
+other key: tls: private key does not match public key
+roots: tls: no certificates found in PEM input
+empty: Io(msg: "http: with_tls needs a certificate")
+hello: 200 hello, scheme ""
+echo: 200 echo: over tls
+big: 200 (100000 bytes)
+moved: 200 hello, scheme ""
+system roots: Protocol
+expired: Protocol(Get "https://ADDR1/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is after 2001-01-01T00:00:00Z)
+future: Protocol(Get "https://ADDR2/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is before 2100-01-01T00:00:00Z)
+unknown: Protocol(Get "https://ADDR3/hello": tls: failed to verify certificate: x509: certificate signed by unknown authority)
+no ip: Protocol(Get "https://ADDR4/hello": tls: failed to verify certificate: x509: cannot validate certificate for 127.0.0.1 because it doesn't contain any IP SANs)
+wrong ip: Protocol(Get "https://ADDR5/hello": tls: failed to verify certificate: x509: certificate is valid for 127.0.0.2, 10.0.0.1, not 127.0.0.1)
+https to http: Protocol(Get "https://ADDR6/hello": http: server gave HTTP response to HTTPS client)
+http to https: 400 Client sent an HTTP request to an HTTPS server.
+
+plain: 200 hello, scheme ""
+silent: Timeout
+done
+--- stderr

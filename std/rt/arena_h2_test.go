@@ -70,9 +70,9 @@ func TestServeNoH2C(t *testing.T) {
 // read after the handler returned would reach the client as '#' bytes.
 // Some requests are canceled mid body (RST_STREAM) to take the error
 // paths of the HTTP/2 writer. The Xo server listens on plain TCP and does
-// not speak h2c; HTTP/2 is reached here through a TLS listener, which no
-// Xo program can create yet, so this test is the guard for the day one
-// can.
+// not speak h2c; HTTP/2 is reached here through a TLS listener made
+// directly: `Server.with_tls` serves HTTP/1.1 only (decision 0106), so
+// this test is the guard for the day it speaks HTTP/2.
 func TestArenaHTTP2(t *testing.T) {
 	if testing.Short() {
 		t.Skip("HTTP/2 server round trips")

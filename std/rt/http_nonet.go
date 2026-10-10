@@ -15,3 +15,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] { panic(noHTTP) 
 func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
 	panic(noHTTP)
 }
+
+func tlsKeyPair(certPEM, keyPEM []byte) (any, error) { panic(noHTTP) }
+
+func rootsTransport(pem []byte) (any, error) { panic(noHTTP) }

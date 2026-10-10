@@ -104,6 +104,7 @@ go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   #
 go test ./internal/llvm -run 'TestRuntimeEventLoop'   # fibers, timers, sockets in C under ThreadSanitizer, 1 and 3 workers, then -O2 (decision 0069; about 10 s)
 go test ./internal/llvm -run 'TestNativeSignal'       # SIGTERM two phase shutdown of testdata/signal built with the LLVM and arm64 backends (core 7.5; about 5 s)
 go test ./internal/llvm -run 'TestJSONParseDiff|TestHTTPParseDiff'   # native JSON parser vs std/rt's jsonParse, native HTTP/1.1 reading and writing vs a net/http server (decision 0074; AddressSanitizer and UBSan; a few seconds)
+go test ./internal/llvm -run TestTLSDiff           # native HTTPS vs the Go backend: client errors, SNI, ALPN, versions, plain HTTP on the TLS port, SIGTERM (decisions 0105, 0106; about 15 s)
 go test ./internal/llvm -run TestCryptoDiff        # native std/crypto (std/llrt/xo_crypto.c) vs Go's crypto, RFC 9106 vectors, x/crypto Argon2id outputs, std/rt's verify_password on mutated hashes (decision 0083; AddressSanitizer and UBSan; about 3 s)
 XO_HTTP_DIFF_SEED=7 XO_HTTP_DIFF_N=30000 go test ./internal/llvm -run TestHTTPParseDiff   # more random and mutated connections
 go test ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s -parallel 6   # Go's fuzzer on the same comparison (more workers than about 6 starved it on 2026-10-08: "context deadline exceeded")
@@ -773,8 +774,11 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_unicode.c, xo_bytes.c, xo_json.c,
-                        xo_http.c (decisions 0074, 0081); testdata/*.c, C tests and differential
-                        drivers (not embedded)
+                        xo_http.c (decisions 0074, 0081), xo_tls.c (TLS on Mbed TLS, decision 0105);
+                        testdata/*.c, C tests and differential drivers (not embedded)
+third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
+                        unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration)
+scripts/vendor-mbedtls.sh  downloads, checks, and vendors an Mbed TLS release
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
@@ -1259,7 +1263,9 @@ first, AST based prototype, since deleted) and
   `xo.tr` trace (internal/ssa build_frames.go); TestErrorTracesNative
   compares whole standard error, frame lines included. The
   differences from the Go backend are listed in decision 0074 (a fault
-  in a handler exits; no TLS; no `http.stream`).
+  in a handler exits; no `http.stream`). HTTPS (std.md 4.6) is
+  std/llrt/xo_tls.c on Mbed TLS since 2026-10-09 (decisions 0105, 0106;
+  see "TLS library").
 - std/time natively (2026-10-09, decision 0094 "Native implementation"):
   std/native/time.xo (civil time, layouts, format, parse) over
   std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
@@ -1488,6 +1494,60 @@ Last verified: 2026-10-09. Decision 0084; results
 - Profile a hybrid binary with `XO_CPUPROFILE=p.prof ./bin` and
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).
+
+## TLS library (native std/http, decisions 0105 and 0106)
+
+Last verified: 2026-10-09.
+
+- Library: Mbed TLS 4.1.1 (LTS, maintained until March 2029), with
+  TF-PSA-Crypto, Apache-2.0. Pinned release tarball
+  `https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.1/mbedtls-4.1.1.tar.bz2`,
+  SHA-256 `3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c`
+  (the release's own `mbedtls-4.1.1-sha256sum.txt` agrees).
+  `third_party/mbedtls/src/` holds its `.c` and `.h` files the runtime
+  compiles, unmodified (the tarball ships the generated sources, so no
+  Perl or Python is needed); `xo/xo_tls_config.h` and
+  `xo/xo_crypto_config.h` are the Xo configuration (TLS 1.2 and 1.3,
+  ECDHE, no DTLS, PSK, tickets, renegotiation, debug, or file I/O;
+  threading on). `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
+  binary embeds it instead of the 6.5 MB of sources), made by
+  `go generate ./third_party/mbedtls`; TestArchive fails when it does
+  not match `src/`.
+- Update: `scripts/vendor-mbedtls.sh <version> <sha256>`, then set
+  `Version` in `third_party/mbedtls/mbedtls.go`, the pinned values in the
+  script and here, and run `go test ./third_party/mbedtls ./internal/build`
+  and `go test ./internal/llvm -run 'TestTLSDiff|TestGolden.*/http_tls'`.
+- Build (internal/build/tls.go): a native link whose generated code names
+  a std/http runtime function (`xo_cl_do`, `xo_srv_new`, `xo_tls_*`) is
+  compiled with `-DXO_TLS`, the library's include directories and
+  configuration defines, and linked with `libxotls.a` (plus `-framework
+  Security -framework CoreFoundation` on macOS, for the system's roots).
+  The archive is built on first use per C compiler, compiler version,
+  sysroot, host, and sanitizer flags (`-fsanitize=...` of the link) into
+  `<user cache>/xo/mbedtls/4.1.1-<key>/` (`$XO_TLS_CACHE` overrides the
+  root): the tree is extracted, every library `.c` compiled with
+  `-O2 -fexceptions -funwind-tables` in parallel (about 2 to 3 s), and
+  archived with `ar` (`$XO_AR`, else `ar`, else `llvm-ar`). Other
+  programs compile xo_tls.c's stubs and link nothing of it.
+- Native builds are host only (the arm64 backend writes other arm64
+  targets as assembly only), so the library is compiled by the same
+  clang as the runtime on each OS: darwin/arm64, linux/arm64, and
+  linux/amd64 (the containers of "Linux (containers)") build and pass
+  the TLS tests. Nothing in it is architecture specific beyond what
+  Mbed TLS detects itself (AES-NI on x86-64, the ARMv8 crypto extension
+  on arm64).
+- Sizes (stripped, darwin/arm64, 2026-10-09): a std/http program grows
+  by about 250 KB with the LLVM backend (336 to 582 KB) and 340 KB with
+  the arm64 backend (375 to 711 KB); an HTTPS server and client program is
+  599 KB (LLVM) and 711 KB (arm64), against 7.8 MB on the Go backend.
+- Tests: `go test ./internal/build -run TestTLSLibrary` (builds the
+  archive into a temporary cache and links a C program with it);
+  `go test ./internal/llvm -run TestTLSDiff` (about 15 s: an HTTPS program
+  with the Go, LLVM, and arm64 backends against Go peers, certificates made
+  in `t.TempDir()`); `TestTLSLeaks` (Linux only: the `http_tls` golden
+  under AddressSanitizer with LeakSanitizer on, passes on linux/arm64
+  2026-10-09); the `http_tls` golden (committed test only
+  certificates valid to 2120, plus an expired and a not yet valid one).
 
 ## Linux (containers)
 

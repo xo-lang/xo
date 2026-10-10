@@ -27,7 +27,10 @@
 # the Xo server with the native backends, decision 0074, which have no GC
 # so their GC columns are 0), XO,
 # PERF_OUT (keep binaries and logs there), GOGC passed through to the
-# servers.
+# servers. SCHEME=https serves the Xo configs over TLS (decision 0105) with
+# a fresh self signed certificate (loadgen -gencert; the go config stays
+# plain HTTP), and NEWCONN=1 opens a connection per request (with https: a
+# full TLS handshake per request).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -43,6 +46,17 @@ configs=${CONFIGS:-go xo xo-arenas}
 xo=${XO:-$root/.tools/bin/xo}
 
 (cd "$here/loadgen" && go build -o "$out/loadgen" .)
+scheme=${SCHEME:-http}
+newconn=""
+if [ "${NEWCONN:-0}" = 1 ]; then
+	newconn="-newconn"
+fi
+if [ "$scheme" = https ]; then
+	"$out/loadgen" -gencert "$out"
+	TLS_CERT=$(cat "$out/cert.pem")
+	TLS_KEY=$(cat "$out/key.pem")
+	export TLS_CERT TLS_KEY
+fi
 for c in $configs; do
 	case $c in
 	go) (cd "$here/go" && go build -o "$out/srv-go" .) ;;
@@ -73,7 +87,7 @@ runone() { # config rep -> raw line
 	log="$out/$1-$2.gctrace"
 	PORT=$port GODEBUG=gctrace=1 "$bin" >/dev/null 2>"$log" &
 	pid=$!
-	res=$("$out/loadgen" -url "http://127.0.0.1:$port" -c "$conc" -d "$dur" -warmup "$warm" -preload "$preload" -pid "$pid") || {
+	res=$("$out/loadgen" -url "$scheme://127.0.0.1:$port" $newconn -c "$conc" -d "$dur" -warmup "$warm" -preload "$preload" -pid "$pid") || {
 		kill "$pid" 2>/dev/null || true
 		wait "$pid" 2>/dev/null || true
 		echo "loadgen failed for $1" >&2

@@ -626,7 +626,41 @@ func (w Http_BodyWriter) M_flush(tk *Task) Result[Unit, IoErr] {
 type Http_Server struct {
 	l Listener
 	r Http_Router
+	// with_tls (std.md 4.6): HTTPS with these certificates
+	tls   []Http_TlsCert
+	tlsOn bool
 }
+
+// Http_TlsCert is `http.TlsCert`: a *tls.Certificate (http_net.go; nil
+// in a program built without net/http).
+type Http_TlsCert struct {
+	c any
+}
+
+// XoDebug implements Debug.
+func (Http_TlsCert) XoDebug(b *strings.Builder) { b.WriteString("<tls cert>") }
+
+// Http_tls_cert is `http.tls_cert(cert_pem, key_pem)`: tls.X509KeyPair.
+func Http_tls_cert(_ *Task, certPEM, keyPEM Bytes) Result[Http_TlsCert, Http_TlsErr] {
+	c, err := tlsKeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		return Err[Http_TlsCert](Http_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Http_TlsCert, Http_TlsErr](Http_TlsCert{c: c})
+}
+
+// M_with_tls is `srv.with_tls(certs)`: serve speaks HTTPS.
+func (s Http_Server) M_with_tls(_ *Task, certs List[Http_TlsCert]) Http_Server {
+	s.tls = nil
+	for c := range List_All(certs) {
+		s.tls = append(s.tls, c)
+	}
+	s.tlsOn = true
+	return s
+}
+
+// errNoTLSCert is serve's error for with_tls([]).
+const errNoTLSCert = "http: with_tls needs a certificate"
 
 // XoDebug implements Debug.
 func (Http_Server) XoDebug(b *strings.Builder) { b.WriteString("<server>") }
@@ -729,6 +763,20 @@ func (sc *serveCtx) startRecorded(a *Arena, req Http_Request) (*Task, int64) {
 type Http_Client struct {
 	net     Net
 	timeout Duration
+	// with_roots (std.md 4.6): the transport trusting those roots
+	// (*http.Transport, http_net.go), nil for the shared one
+	tr any
+}
+
+// M_with_roots is `c.with_roots(pem)`: https trusts the certificates of
+// pem instead of the system's roots.
+func (c Http_Client) M_with_roots(_ *Task, pem Bytes) Result[Http_Client, Http_TlsErr] {
+	tr, err := rootsTransport([]byte(pem))
+	if err != nil {
+		return Err[Http_Client](Http_TlsErr{F_msg: err.Error()})
+	}
+	c.tr = tr
+	return Ok[Http_Client, Http_TlsErr](c)
 }
 
 // XoDebug implements Debug.

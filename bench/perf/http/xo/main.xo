@@ -29,7 +29,11 @@ fn port_from(raw: Str?) -> Int ! ConfigErr {
 fn main(os: Os) ! {
   let port = port_from(os.env.get("PORT"))?
   let addr = "127.0.0.1:${port}"
-  let srv = http.server(os.net.listen(addr)?, routes(new_store()))
+  var srv = http.server(os.net.listen(addr)?, routes(new_store()))
+  // HTTPS when TLS_CERT and TLS_KEY hold PEM text (run.sh SCHEME=https)
+  if let Some(cert) = os.env.get("TLS_CERT") {
+    srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
+  }
   log.info("listening", {"addr": addr})
   srv.serve()?
 }

@@ -55,10 +55,20 @@ struct Router {
 struct Server {
   l: Listener
   r: Router
+  /// with_tls (std.md 4.6): HTTPS with these certificates
+  tls: List[TlsCert] = []
+  tls_on: Bool = false
 }
 
 struct Client {
   timeout: Duration
+  /// the roots https verifies against (std.md 4.6)
+  roots: rthttp.Roots
+}
+
+/// http.TlsCert (std.md 4.6).
+struct TlsCert {
+  c: rthttp.TCert
 }
 
 /// http.Response with the number of its streamed body's function (0:
@@ -505,13 +515,30 @@ fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r} }
 
 fn (s: Server) addr() -> Str { s.l.addr() }
 
+fn (s: Server) with_tls(certs: List[TlsCert]) -> Server { Server{l: s.l, r: s.r, tls: certs, tls_on: true} }
+
+fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
+  let c = rthttp.tls_cert(cert_pem, key_pem)
+  let e = rthttp.tls_cert_err(c)
+  if !e.is_empty() {
+    return Err(http.TlsErr{msg: e})
+  }
+  TlsCert{c: c}
+}
+
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   if rttest.test_mem_listener(s.l) {
     serve_mem(s.l, s.r)
     return Ok(())
   }
+  if s.tls_on && s.tls.is_empty() {
+    return Err(http.HttpErr.Io(msg: "http: with_tls needs a certificate"))
+  }
   let srv = rthttp.srv_new()
   defer rthttp.srv_close(srv)
+  for c in s.tls {
+    rthttp.srv_tls(srv, c.c)
+  }
   let conns = rthttp.srv_group(srv)
   let l = s.l
   let r = s.r
@@ -615,7 +642,16 @@ fn conn_request(hc: rthttp.HConn) -> Request {
 // ---------------------------------------------------------------------------
 // Client (std.md 4.5)
 
-fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout} }
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: rthttp.tls_roots_system()} }
+
+fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
+  let r = rthttp.tls_roots(pem)
+  let e = rthttp.tls_roots_err(r)
+  if !e.is_empty() {
+    return Err(http.TlsErr{msg: e})
+  }
+  Client{timeout: c.timeout, roots: r}
+}
 
 fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
 
@@ -665,7 +701,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     names.push(k)
     values.push(v)
   }
-  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos())
+  let r = rthttp.cl_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots)
   match rthttp.cr_err(r) {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: rthttp.cr_msg(r)))

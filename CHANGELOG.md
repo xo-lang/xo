@@ -61,6 +61,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   do not use std/time do not grow. TestTimeDiff compares about 70,000
   lines with the Go backend. Fixed: the arm64 backend failed to assemble
   functions over 8192 instructions (`tbz` range).
+- HTTPS in std/http on every backend (std.md 4.6, decisions 0105 and
+  0106): `http.tls_cert(cert_pem, key_pem)`, `Server.with_tls(certs)`
+  (SNI picks among the certificates), `Client.with_roots(pem)`, and
+  `TlsErr`. The native backends (`--no-gc`) speak TLS 1.2 and 1.3 through
+  Mbed TLS 4.1.1 (vendored in `third_party/mbedtls`, built once per
+  compiler into the user cache, linked only into programs that use
+  std/http), verify against the system's roots on macOS and Linux, and
+  report Go's error texts; an `https` URL is no longer `XO1201` there.
+  std/http speaks HTTP/1.1 only, also over TLS: the Go backend's client no
+  longer negotiates HTTP/2. Failed TLS handshakes are not logged.
+- `bench/perf/http/run.sh`: `SCHEME=https` serves the Xo configs over TLS
+  and `NEWCONN=1` opens a connection (and a handshake) per request.
 
 ## v0.8.0 (2026-10-09)
 
