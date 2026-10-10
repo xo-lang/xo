@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+queued readers saw 8 of 8
+canceled readers left the value at 1
+mixed: value 2001, reads 6000
+--- stderr

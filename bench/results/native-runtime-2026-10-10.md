@@ -62,4 +62,45 @@ adding downloaded third party code). Peak RSS grows with the number of
 connections served (about 1 KB per connection on both the old and new
 builds: 199 MB after 200k handshakes before, 293 MB after 315k now);
 `leaks` finds none and `heap` shows 12 runtime allocator chunks of 4 MB
-(`xo_refill`), so it is retention in the runtime's allocator, not TLS.
+(`xo_refill`), so it is retention in the runtime, not TLS: the server's
+scope kept every finished connection task (fixed in section 2) and the
+allocator keeps blocks on the thread that freed them (section 2).
+
+## 2. Contention: Mutex wake ups, handle counts, finished tasks (decision 0118)
+
+Harness: `bench/perf/conc/run.sh` (medians of 7, interleaved), with the
+new `rwmutex` workload (64 tasks x 4,000 accesses, a quarter `with`
+holding the lock for a Collatz count of about 111 steps, the rest
+`with_read`; Go: `sync.RWMutex`).
+
+| Workload, wall / CPU ms | go | xo-go | xo-llvm before | xo-llvm after | xo-arm64 before | xo-arm64 after |
+|---|---|---|---|---|---|---|
+| rwmutex | 11.2 / 16.4 | 375 / 1682 | 966.7 / 6262 | 131.0 / 253 | 970.7 / 6337 | 135.2 / 262 |
+| mutex | 24.5 / 98.5 | 125 / 440 | 9.7 / 11.8 | 8.9 / 9.2 | 9.2 / 11.0 | 8.8 / 9.8 |
+| spawn | 51.5 / 170 | 133 / 330 | 57.1 / 258 | 59.3 / 232 | 52.2 / 231 | 55.5 / 213 |
+
+`XO_RTSTATS=1` on rwmutex (llvm): before, fiber_park 912,022 and
+lock_slow 531,898; after the reader handoff, 230,468 and 20,440. Spinning
+before parking (`XO_MUTEX_SPIN`, a temporary switch; medians of 7):
+rwmutex CPU 264 ms with 0 rounds, 274 (50), 336 (200), 623 (800), 1165
+(3000); mutex 8 to 10 ms throughout. Not kept.
+
+bench/perf/http, kept alive (2 interleaved rounds, base then new):
+xo-llvm 112393 and 111705 req/s at 31.3 us, after 112973 and 113770 at
+30.2 us; p50 about 240 to 195 us, p99 about 880 to 955 us. arm64 alike.
+
+Handle reference counts (`spawn`, profile of a 15x longer run, llvm): of
+the active samples about 13 percent are the release of the captured
+`Atomic` in the closure's environment on the workers
+(`xo.envdrop.main.fn1`) and part of `xo_entry` its retain on the
+spawning thread: one cache line written from every core. arm64, which
+uses LSE atomics, spends 10 percent less CPU on this workload than llvm
+(task 3 below). Not changed here: the fix that removes the traffic is a
+borrowed capture for closures that cannot outlive their scope (no
+retain at spawn, no release at the end, the owner kept alive to the
+join), a change of internal/ssa's RC insertion and of both backends'
+environment drops.
+
+Finished tasks: peak RSS of the TLS server after 20 s of a handshake
+per request (section 1 harness, one run each): 295 MB without pruning,
+223 MB with it.

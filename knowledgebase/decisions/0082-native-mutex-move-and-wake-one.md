@@ -1,6 +1,7 @@
 # 0082: Native Mutex moves its value into `with`, wakes only who can enter; Map.remove keeps dead values until a rebuild
 
-Status: Accepted (2026-10-09). Amends decision 0072 point 3 (removal) and
+Status: Accepted (2026-10-09); point 1 amended by 0118 (2026-10-10: a
+writer's release hands the lock to the waiting readers). Amends decision 0072 point 3 (removal) and
 the Mutex of decision 0068 (waking); the semantics of core 5.4 are
 unchanged. Implemented in `std/llrt/xo_rt.c` (`mutex_wake`,
 `mutex_signal`, `wl_wait_as`), `internal/ssa/build_conc.go`

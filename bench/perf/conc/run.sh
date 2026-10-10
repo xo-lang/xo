@@ -12,7 +12,7 @@
 # plus system), and cycles (`/usr/bin/time -l`, Darwin) in milliseconds
 # and millions. Outputs must agree. Needs .tools/bin/xo (or $XO), go,
 # clang, python3. WORKLOADS selects some of: spawn fanout pingpong mutex
-# pmap; CONFIGS some of the configurations. KEEP=dir keeps the binaries.
+# rwmutex pmap; CONFIGS some of the configurations. KEEP=dir keeps the binaries.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
@@ -20,7 +20,7 @@ out=${KEEP:-$(mktemp -d)}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 xo=${XO:-$root/.tools/bin/xo}
-workloads=${WORKLOADS:-spawn fanout pingpong mutex pmap}
+workloads=${WORKLOADS:-spawn fanout pingpong mutex rwmutex pmap}
 configs=${CONFIGS:-go xo-go xo-llvm xo-arm64 xo-arm64-1}
 (cd "$here/go" && go build -o "$out/concperf-go" .)
 for w in $workloads; do

@@ -2381,7 +2381,8 @@ static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1)
 typedef struct xo_went {
 	xo_park *park;
 	struct xo_went *prev, *next;
-	int writer; // a Mutex waiter that wants the lock exclusively
+	int writer;  // a Mutex waiter that wants the lock exclusively
+	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
 } xo_went;
 
 typedef struct {
@@ -2461,6 +2462,10 @@ typedef struct xo_scope {
 	struct xo_timer *deadline;
 	int timed_out;
 	struct xo_task *fault; // the first task that faulted (a reference, decision 0085)
+	// list's length, and the length at which a spawn prunes it next
+	// (scope_prune); closing: the join started, the list stays as it is
+	int64_t nlist, prune_at;
+	int closing;
 } xo_scope;
 
 static void timer_del(struct xo_timer *t);
@@ -2484,6 +2489,7 @@ typedef struct xo_task {
 	xo_lock mu; // waiters
 	xo_wl waiters;
 	struct xo_task *snext;
+	int gone; // atomic: 2 when its run and its queue entry are over (scope_prune)
 	// the fault that ended it (decision 0085), malloc'd (last: the fields
 	// above keep their places)
 	char *fault_msg, *fault_loc, *fault_detail;
@@ -2512,6 +2518,7 @@ xo_scope *xo_scope_open(void) {
 	xo_scope *s = xo_alloc(sizeof(xo_scope));
 	memset(s, 0, sizeof *s);
 	h_init(s, scope_free);
+	s->prune_at = 64;
 	s->parent_node = c->node;
 	node_link(&s->body, c->node);
 	s->tasks = calloc(1, sizeof(xo_node));
@@ -2635,7 +2642,9 @@ static void run_claimed(xo_task *t, int64_t units) {
 	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
 	wl_wake(&t->waiters);
 	unlk(&t->mu);
-	// the last touch of t and s: the scope's join may free them after
+	// the last touch of t: a spawn may prune it after (scope_prune)
+	__atomic_fetch_add(&t->gone, (int)(units / 2), __ATOMIC_RELEASE);
+	// the last touch of s: the scope's join may free it after
 	scope_units_done(s, units);
 }
 
@@ -2649,7 +2658,50 @@ static void run_task(xo_task *t) {
 // dequeued records that a worker took t's queue entry (and ran it, or
 // found it run by a helper). The scope's join waits for this too, so no
 // queue holds a task the scope frees.
-static void dequeued(xo_task *t) { scope_units_done(t->scope, 2); }
+static void dequeued(xo_task *t) {
+	xo_scope *s = t->scope;
+	__atomic_fetch_add(&t->gone, 1, __ATOMIC_RELEASE); // the last touch of t
+	scope_units_done(s, 2);
+}
+
+// scope_prune takes the tasks that are over and that only s's list
+// holds out of the list (s->mu held) and returns them, linked by snext,
+// for scope_drop_pruned. A scope that lives long and starts many tasks
+// whose handles are dropped (a server's connections, decision 0118) kept
+// every one, with its result, until it closed: about 1 KB per connection.
+// A task is over when its run ended and its queue entry was taken
+// (gone == 2: nothing touches it after either); with a count of one
+// (shared: -1) nobody else has it, and nobody can get it again. The
+// close never prunes (its helpers walk the list without the lock), and a
+// spawn prunes only when the list doubled since the last time.
+static xo_task *scope_prune(xo_scope *s) {
+	xo_task *dead = NULL;
+	xo_task **pp = &s->list;
+	while (*pp) {
+		xo_task *u = *pp;
+		if (__atomic_load_n(&u->gone, __ATOMIC_ACQUIRE) == 2 && __atomic_load_n(&u->h.rc, __ATOMIC_ACQUIRE) == -1) {
+			*pp = u->snext;
+			u->snext = dead;
+			dead = u;
+			s->nlist--;
+		} else {
+			pp = &u->snext;
+		}
+	}
+	s->prune_at = s->nlist * 2 > 64 ? s->nlist * 2 : 64;
+	return dead;
+}
+
+// scope_drop_pruned unlinks the pruned tasks' nodes and drops the list's
+// references (without s->mu: a task's result may run drop code).
+static void scope_drop_pruned(xo_task *dead) {
+	while (dead) {
+		xo_task *next = dead->snext;
+		node_unlink(&dead->node);
+		h_release(dead);
+		dead = next;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -3117,8 +3169,14 @@ xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int
 	node_link(&t->node, s->tasks);
 	t->snext = s->list;
 	s->list = t;
+	s->nlist++;
+	xo_task *dead = NULL;
+	if (s->nlist >= s->prune_at && !s->closing) {
+		dead = scope_prune(s);
+	}
 	unlk(&s->mu);
 	pool_push(t);
+	scope_drop_pruned(dead);
 	return t;
 }
 
@@ -3243,6 +3301,7 @@ int64_t xo_scope_close(xo_scope *s, int64_t mode) {
 		s->deadline = NULL;
 	}
 	lk(&s->mu);
+	s->closing = 1; // no pruning from here: the helpers below walk the list unlocked
 	if (mode == 0) {
 		for (xo_task *t = s->list; t; t = t->snext) {
 			if (t->background) {
@@ -3823,24 +3882,31 @@ xo_rlist *xo_select_take(xo_select *s, int64_t i) {
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
 // writers preferred, holding its value in a shared list of one.
 
+
 typedef struct {
 	xo_hdr h;
 	xo_lock mu;
 	int writer;
-	int64_t readers, wwait;
+	int64_t readers, wwait, rwait; // rwait: readers in waiters
 	xo_rlist *slot;
 	xo_ldrop drop;
 	xo_wl waiters;
 } xo_mutex;
 
-// mutex_wake wakes the waiters that can take m now (m->mu held), writers
-// first: the oldest waiting writer when m is free, else (no writer
-// waits) every waiting reader. Waking every waiter at each release made
-// 32 contending request tasks park about 12 times per request and
-// convoy on m->mu (bench/results/perf-throughput-2026-10-08.md, "Native
-// backends"). A woken waiter checks again and waits again when another
-// context took m first (barging); the context that took it wakes the
-// next one when it releases, so no wake up is lost.
+// mutex_wake wakes the waiters that can take m now (m->mu held). Phase
+// fair, as Go's RWMutex: after a writer's release the readers waiting
+// then get the lock together (handed over: mutex_grant_readers), and the
+// next writer waits for them; after the last reader's release (or when
+// no reader waits) the oldest waiting writer is woken. Waking every
+// waiter at each release made 32 contending request tasks park about 12
+// times per request and convoy on m->mu
+// (bench/results/perf-throughput-2026-10-08.md, "Native backends");
+// waking readers that then checked again parked them again whenever a
+// writer had queued meanwhile, 3.6 parks per access with 64 tasks
+// (bench/results/native-runtime-2026-10-10.md, decision 0118). A woken
+// writer checks again and waits again when another writer took m first
+// (barging); whoever holds m wakes the next one when it releases, so no
+// wake up is lost.
 // mutex_signal wakes a waiter of a Mutex into the waking thread's ring,
 // not its next: the waker still holds the thread for the rest of its
 // request, and a fiber in next waits for that (thieves leave next alone
@@ -3858,25 +3924,42 @@ static void mutex_signal(xo_park *p) {
 	}
 }
 
-static void mutex_wake(xo_mutex *m) {
+// mutex_grant_readers hands m to every waiting reader (m->mu held, no
+// writer holds m): each is counted in m->readers, taken off the list, and
+// marked granted before it is woken, so it runs without taking m->mu or
+// checking again. Its list entry lives on its stack: nothing here
+// touches it after the wake up.
+static void mutex_grant_readers(xo_mutex *m) {
+	xo_went *e = m->waiters.first;
+	while (e) {
+		xo_went *next = e->next;
+		if (!e->writer) {
+			xo_park *p = e->park;
+			wl_del(&m->waiters, e);
+			m->readers++;
+			m->rwait--;
+			__atomic_store_n(&e->granted, 1, __ATOMIC_RELEASE);
+			mutex_signal(p);
+		}
+		e = next;
+	}
+}
+
+// after_writer: a writer just released m (readers go first).
+static void mutex_wake(xo_mutex *m, int after_writer) {
 	if (m->writer || !m->waiters.first) {
 		return;
 	}
-	if (m->wwait > 0) {
-		if (m->readers > 0) {
-			return;
-		}
+	if (m->rwait > 0 && (after_writer || m->wwait == 0)) {
+		mutex_grant_readers(m);
+		return;
+	}
+	if (m->wwait > 0 && m->readers == 0) {
 		for (xo_went *e = m->waiters.first; e; e = e->next) {
 			if (e->writer) {
 				mutex_signal(e->park);
 				return;
 			}
-		}
-		return;
-	}
-	for (xo_went *e = m->waiters.first; e; e = e->next) {
-		if (!e->writer) {
-			mutex_signal(e->park);
 		}
 	}
 }
@@ -3908,7 +3991,7 @@ xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
 		while (m->writer || m->readers > 0) {
 			if (!wl_wait_as(c, &m->mu, &m->waiters, 1, 1)) {
 				m->wwait--;
-				mutex_wake(m); // readers held back by this writer, or the next writer
+				mutex_wake(m, 0); // readers held back by this writer, or the next writer
 				unlk(&m->mu);
 				held_del(c, m);
 				c->unwinding = 1;
@@ -3928,7 +4011,7 @@ void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
 	lk(&m->mu);
 	m->slot = l;
 	m->writer = 0;
-	mutex_wake(m);
+	mutex_wake(m, 1);
 	unlk(&m->mu);
 	held_del(ctx(), m);
 }
@@ -3939,15 +4022,41 @@ xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
 	xo_ctx *c = ctx();
 	held_check(c, m, "with_read", loc, n);
 	lk(&m->mu);
-	while (m->writer || m->wwait > 0) {
-		if (!wl_wait(c, &m->mu, &m->waiters, 1)) {
+	if (m->writer || m->wwait > 0) {
+		// wait until a writer's release hands m over (mutex_grant_readers);
+		// a cancellation unwinds unless m was handed over first
+		xo_went e = {.park = &c->park};
+		park_reset(&c->park);
+		wl_add(&m->waiters, &e);
+		m->rwait++;
+		unlk(&m->mu);
+		for (;;) {
+			park_wait(c, 1);
+			if (__atomic_load_n(&e.granted, __ATOMIC_ACQUIRE)) {
+				// the last writer set m->slot under m->mu before the
+				// grant, and none can change it while this share is held
+				xo_rlist *l = m->slot;
+				rc_inc(&l->rc);
+				return l;
+			}
+			lk(&m->mu);
+			if (e.granted) {
+				break;
+			}
+			if (ctx_canceled(c)) {
+				wl_del(&m->waiters, &e);
+				m->rwait--;
+				unlk(&m->mu);
+				held_del(c, m);
+				c->unwinding = 1;
+				return &empty_list;
+			}
+			park_reset(&c->park);
 			unlk(&m->mu);
-			held_del(c, m);
-			c->unwinding = 1;
-			return &empty_list;
 		}
+	} else {
+		m->readers++;
 	}
-	m->readers++;
 	xo_rlist *l = m->slot;
 	rc_inc(&l->rc);
 	unlk(&m->mu);
@@ -3961,7 +4070,7 @@ void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
 	}
 	lk(&m->mu);
 	if (--m->readers == 0) {
-		mutex_wake(m);
+		mutex_wake(m, 0);
 	}
 	unlk(&m->mu);
 	held_del(ctx(), m);

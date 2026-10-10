@@ -557,10 +557,13 @@ Last verified: 2026-10-07
   python3; uses a fake endpoint on 127.0.0.1). Scoring all stored Claude
   solutions took about 12 minutes, all planted sets about 60 (measured
   2026-10-08).
-- `bench/perf/conc/run.sh` (2026-10-09, decision 0077): five concurrency
+- `bench/perf/conc/run.sh` (2026-10-09, decision 0077; `rwmutex` added
+  2026-10-10, decision 0118): six concurrency
   programs (`xo/spawn`: 200 rounds of 1000 discarded tasks; `fanout`: 100
   rounds of 1000 awaited tasks; `pingpong`: 100,000 round trips over two
-  unbuffered channels; `mutex`: 8 tasks x 25,000 `with`; `pmap`: 20 rounds
+  unbuffered channels; `mutex`: 8 tasks x 25,000 `with`; `rwmutex`: 64
+  tasks x 4,000 accesses, a quarter `with` holding the lock for a Collatz
+  count, the rest `with_read`, so waiters park; `pmap`: 20 rounds
   of 64 Collatz chunks) and idiomatic Go (`go/`, `concperf <name>`).
   Configurations `go`, `xo-go`, `xo-llvm`, `xo-arm64`, `xo-arm64-1`
   (`XO_THREADS=1`); `REPS` (7) rounds interleaved; medians of wall
