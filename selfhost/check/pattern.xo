@@ -120,7 +120,7 @@ fn (var c: Checker) or_pattern(alts: List[Pattern], t: Int, refutable: Bool) -> 
     ip.alts.push(c.pattern(alt, t, refutable))
     let got = c.scopes[c.scopes.len() - 1]
     for (_, v) in got.entries() {
-      c.objs[v].used = true
+      c.mark_used(v)
     }
     c.pop_scope()
     var diff: List[Str] = []
@@ -295,7 +295,7 @@ fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: 
 fn (var c: Checker) mark_used_since(before: Int) {
   for o in before..c.objs.len() {
     if c.objs[o].kind == ObjKind.Local {
-      c.objs[o].used = true
+      c.mark_used(o)
     }
   }
 }

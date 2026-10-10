@@ -12,7 +12,7 @@ fn (c: Checker) in_test_context() -> Bool {
 
 /// Marks a local as read and records the resolution; its type.
 fn (var c: Checker) use_var(id: Ident, v: Int) -> Int {
-  c.objs[v].used = true
+  c.mark_used(v)
   c.record(id, v)
   c.objs[v].ty
 }
@@ -1098,6 +1098,7 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
   if !missing.is_empty() && ok {
     c.error("XO0403", span, "missing argument(s) `${missing.join("`, `")}` in call to `${fname}`")
   }
+  var aps: List[ArgParam] = []
   for pass in 0..2 {
     for (i, ai) in assigned.indexed() {
       if ai < 0 {
@@ -1113,14 +1114,15 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
         c.require_mutable(e, "XO0502", "passing to `var` parameter `${text(params[i].name)}`")
       }
       if has_ci {
-        let ap = ArgParam{arg: e, is_var: params[i].is_var}
-        c.call_infos.update(ckey, CallInfo{}, fn(var ci) { ci.params.push(ap) })
+        aps.push(ArgParam{arg: e, is_var: params[i].is_var})
       }
     }
   }
   var var_args: List[Expr] = []
   if has_ci {
-    let ci = c.call_infos.get_or_fault(ckey, "has_ci")
+    var ci = c.call_infos.get_or_fault(ckey, "has_ci")
+    ci.params = aps
+    c.call_infos[ckey] = ci
     let fo = ci.fn_obj
     if fo >= 0 && c.objs[fo].recv_var && !c.objs[fo].is_static {
       if let Some(r) = ci.recv.first() {

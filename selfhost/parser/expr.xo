@@ -48,9 +48,13 @@ fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
       x = p.parse_is(x)
       continue
     }
-    if let Some(y) = p.foreign_binary(x, min_prec) {
-      x = y
-      continue
+    // the token kinds foreign_binary can act on, tested first: the
+    // habit checks are on the parser's hottest paths
+    if p.tok.kind is Ident | In | Eq | NotEq | Star | Question {
+      if let Some(y) = p.foreign_binary(x, min_prec) {
+        x = y
+        continue
+      }
     }
     let op = p.tok.kind
     let prec = precedence(op)
@@ -223,8 +227,10 @@ fn starts_expr(k: Kind) -> Bool {
 }
 
 fn (var p: Parser) parse_unary() -> Expr {
-  if let Some(fx) = p.foreign_unary() {
-    return fx
+  if p.tok.kind is Amp | Star | Ident {
+    if let Some(fx) = p.foreign_unary() {
+      return fx
+    }
   }
   let t = p.tok
   if t.kind is Minus | Bang | Tilde {
@@ -304,8 +310,10 @@ fn (p: Parser) match_close(i: Int) -> Int {
 }
 
 fn (var p: Parser) parse_primary() -> Expr {
-  if let Some(fx) = p.foreign_primary() {
-    return fx
+  if p.may_be_foreign_primary() {
+    if let Some(fx) = p.foreign_primary() {
+      return fx
+    }
   }
   let t = p.tok
   let sp = t.span
@@ -725,7 +733,8 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
   var x = x0
   while !p.failed() {
     let start = expr_span(x).start
-    match p.foreign_postfix(x) {
+    let fp = if p.tok.kind is Question | As | Bang | Colon { p.foreign_postfix(x) } else { Postfix.NoHabit }
+    match fp {
       Stop => return x
       Habit(y) => {
         x = y

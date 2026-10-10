@@ -315,39 +315,418 @@ fn children(n: Node) -> List[Node] {
   out
 }
 
-/// Every node at or below n in source order (walk.go inspect, visiting
-/// all children).
-fn preorder(n: Node, var out: List[Node]) {
-  out.push(n)
-  for ch in children(n) {
-    preorder(ch, out)
+/// The nodes the inspect passes look at (identifiers, calls, `if`s,
+/// assignments, `let` and `var` statements) at or below a node, in source
+/// order (walk.go inspect, filtered). A direct walk: building the child
+/// lists of every node made the flow checks most of the checker's time.
+fn pre_expr(e: Expr, idents: Bool, var out: List[Node]) {
+  match e {
+    Ident(..) => {
+      if idents {
+        out.push(Node.NExpr(e))
+      }
+      return
+    }
+    CallExpr(..) | IfExpr(_) => out.push(Node.NExpr(e))
+    _ => {}
+  }
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          pre_expr(x, idents, out)
+        }
+      }
+    }
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => pre_expr(x, idents, out)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+      for x in els {
+        pre_expr(x, idents, out)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        pre_expr(en.key, idents, out)
+        pre_expr(en.value, idents, out)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        pre_expr(f.value, idents, out)
+      }
+    }
+    BinaryExpr(x: x, y: y, ..) => {
+      pre_expr(x, idents, out)
+      pre_expr(y, idents, out)
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        pre_expr(x, idents, out)
+      }
+      if let Some(x) = hi {
+        pre_expr(x, idents, out)
+      }
+    }
+    CallExpr(fun: fun, args: args, ..) => {
+      pre_expr(fun, idents, out)
+      for a in args {
+        pre_expr(a.value, idents, out)
+      }
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      pre_expr(x, idents, out)
+      pre_expr(index, idents, out)
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      pre_expr(x, idents, out)
+      for f in fields {
+        pre_expr(f.value, idents, out)
+      }
+    }
+    IfExpr(e: ie) => {
+      if let Some(x) = ie.cond {
+        pre_expr(x, idents, out)
+      }
+      if let Some(x) = ie.value {
+        pre_expr(x, idents, out)
+      }
+      pre_block(ie.then, idents, out)
+      if let Some(x) = ie.els {
+        pre_expr(x, idents, out)
+      }
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      pre_expr(subject, idents, out)
+      for a in arms {
+        if let Some(g) = a.guard {
+          pre_expr(g, idents, out)
+        }
+        if let Some(b) = a.body {
+          pre_stmt(b, idents, out)
+        }
+      }
+    }
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if let Some(x) = a.op {
+          pre_expr(x, idents, out)
+        }
+        if let Some(x) = a.after {
+          pre_expr(x, idents, out)
+        }
+        if let Some(b) = a.body {
+          pre_stmt(b, idents, out)
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) | WhileExpr(body: body, ..) => pre_block(body, idents, out)
+    Block(b) => pre_block(b, idents, out)
+    FnLit(f) => pre_block(f.body, idents, out)
+    Ident(..) | IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
   }
 }
 
+fn pre_stmt(s: Stmt, idents: Bool, var out: List[Node]) {
+  match s {
+    AssignStmt(..) | LetStmt(..) | VarStmt(..) => out.push(Node.NStmt(s))
+    _ => {}
+  }
+  match s {
+    ExprStmt(x: x, ..) => pre_expr(x, idents, out)
+    LetStmt(value: value, ..) | VarStmt(value: value, ..) => pre_expr(value, idents, out)
+    AssignStmt(target: target, value: value, ..) => {
+      pre_expr(target, idents, out)
+      pre_expr(value, idents, out)
+    }
+    DeferStmt(body: body, ..) => pre_stmt(body, idents, out)
+    ReturnStmt(value: value, ..) => {
+      if let Some(x) = value {
+        pre_expr(x, idents, out)
+      }
+    }
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      pre_expr(iter, idents, out)
+      for b in bound {
+        pre_expr(b, idents, out)
+      }
+      pre_block(body, idents, out)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      if let Some(x) = cond {
+        pre_expr(x, idents, out)
+      }
+      for v in value {
+        pre_expr(v, idents, out)
+      }
+      for b in bound {
+        pre_expr(b, idents, out)
+      }
+      pre_block(body, idents, out)
+    }
+    ConstDecl(d: cd) => pre_expr(cd.value, idents, out)
+    BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+  }
+}
+
+fn pre_block(b: Block, idents: Bool, var out: List[Node]) {
+  for s in b.stmts {
+    pre_stmt(s, idents, out)
+  }
+}
+
+/// The calls, `if`s, assignments, and `let` and `var` statements of a
+/// body, in source order: the nodes the inspect passes act on.
 fn all_nodes(b: Block) -> List[Node] {
   var out: List[Node] = []
-  preorder(Node.NBlock(b), out)
+  pre_block(b, false, out)
   out
 }
 
-/// The key of a loop node (For, While, WhileExpr), or -1.
-fn loop_key(n: Node) -> Int {
-  match n {
-    NStmt(s) => {
-      match s {
-        ForStmt(span: sp, ..) => sp.start.offset * 4 + 1
-        WhileStmt(span: sp, ..) => sp.start.offset * 4 + 2
-        _ => -1
+/// The identifiers at or below e, in source order.
+fn expr_idents(e: Expr) -> List[Node] {
+  var out: List[Node] = []
+  pre_expr(e, true, out)
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The walk of the update checks (flow.go walkDecl and walk)
+
+/// An identifier or a `var` statement met by the flow walk, with its
+/// context: inside a `defer`, inside a closure (depth), and the loops
+/// around it.
+struct FlowSite {
+  /// The identifier, or the name a `var` statement declares.
+  id: Ident
+  /// A `var` statement and its value (zero or one element).
+  var_value: List[Expr] = []
+  in_defer: Bool
+  in_fn: Int
+  loops: List[Int]
+}
+
+/// The state of the flow walk.
+struct FlowWalk {
+  sites: List[FlowSite] = []
+  loops: List[Int] = []
+}
+
+/// Walks a body in the order of flow.go walk: children in source order,
+/// but an assignment's value before its target, a `defer` body marked,
+/// and the loops (For, While, WhileExpr) around each site. walkDecl is
+/// the same walk without the closures (in_fn 0) and its order of `var`
+/// statements is the same.
+fn fw_expr(e: Expr, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
+  match e {
+    Ident(id) => w.sites.push(FlowSite{id: id, in_defer: in_defer, in_fn: in_fn, loops: w.loops})
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          fw_expr(x, in_defer, in_fn, w)
+        }
       }
     }
-    NExpr(e) => {
-      if let WhileExpr(span: sp, ..) = e {
-        return sp.start.offset * 4 + 3
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => fw_expr(x, in_defer, in_fn, w)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+      for x in els {
+        fw_expr(x, in_defer, in_fn, w)
       }
-      -1
     }
-    NBlock(_) => -1
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        fw_expr(en.key, in_defer, in_fn, w)
+        fw_expr(en.value, in_defer, in_fn, w)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        fw_expr(f.value, in_defer, in_fn, w)
+      }
+    }
+    BinaryExpr(x: x, y: y, ..) => {
+      fw_expr(x, in_defer, in_fn, w)
+      fw_expr(y, in_defer, in_fn, w)
+    }
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+      if let Some(x) = hi {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+    }
+    CallExpr(fun: fun, args: args, ..) => {
+      fw_expr(fun, in_defer, in_fn, w)
+      for a in args {
+        fw_expr(a.value, in_defer, in_fn, w)
+      }
+    }
+    IndexExpr(x: x, index: index, ..) => {
+      fw_expr(x, in_defer, in_fn, w)
+      fw_expr(index, in_defer, in_fn, w)
+    }
+    WithExpr(x: x, fields: fields, ..) => {
+      fw_expr(x, in_defer, in_fn, w)
+      for f in fields {
+        fw_expr(f.value, in_defer, in_fn, w)
+      }
+    }
+    IfExpr(e: ie) => {
+      if let Some(x) = ie.cond {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+      if let Some(x) = ie.value {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+      fw_block(ie.then, in_defer, in_fn, w)
+      if let Some(x) = ie.els {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      fw_expr(subject, in_defer, in_fn, w)
+      for a in arms {
+        if let Some(g) = a.guard {
+          fw_expr(g, in_defer, in_fn, w)
+        }
+        if let Some(b) = a.body {
+          fw_stmt(b, in_defer, in_fn, w)
+        }
+      }
+    }
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if let Some(x) = a.op {
+          fw_expr(x, in_defer, in_fn, w)
+        }
+        if let Some(x) = a.after {
+          fw_expr(x, in_defer, in_fn, w)
+        }
+        if let Some(b) = a.body {
+          fw_stmt(b, in_defer, in_fn, w)
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) => fw_block(body, in_defer, in_fn, w)
+    WhileExpr(span: sp, body: body) => {
+      w.loops.push(sp.start.offset * 4 + 3)
+      fw_block(body, in_defer, in_fn, w)
+      w.loops.pop()
+    }
+    Block(b) => fw_block(b, in_defer, in_fn, w)
+    FnLit(f) => fw_block(f.body, in_defer, in_fn + 1, w)
+    IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
   }
+}
+
+fn fw_stmt(s: Stmt, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
+  match s {
+    ExprStmt(x: x, ..) => fw_expr(x, in_defer, in_fn, w)
+    LetStmt(value: value, ..) => fw_expr(value, in_defer, in_fn, w)
+    VarStmt(name: name, value: value, ..) => {
+      w.sites.push(FlowSite{id: name, var_value: [value], in_defer: in_defer, in_fn: in_fn, loops: w.loops})
+      fw_expr(value, in_defer, in_fn, w)
+    }
+    AssignStmt(target: target, value: value, ..) => {
+      // the value is evaluated before the target is written
+      fw_expr(value, in_defer, in_fn, w)
+      fw_expr(target, in_defer, in_fn, w)
+    }
+    DeferStmt(body: body, ..) => fw_stmt(body, true, in_fn, w)
+    ReturnStmt(value: value, ..) => {
+      if let Some(x) = value {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+    }
+    ForStmt(span: sp, iter: iter, bound: bound, body: body, ..) => {
+      w.loops.push(sp.start.offset * 4 + 1)
+      fw_expr(iter, in_defer, in_fn, w)
+      for b in bound {
+        fw_expr(b, in_defer, in_fn, w)
+      }
+      fw_block(body, in_defer, in_fn, w)
+      w.loops.pop()
+    }
+    WhileStmt(span: sp, cond: cond, value: value, bound: bound, body: body, ..) => {
+      w.loops.push(sp.start.offset * 4 + 2)
+      if let Some(x) = cond {
+        fw_expr(x, in_defer, in_fn, w)
+      }
+      for v in value {
+        fw_expr(v, in_defer, in_fn, w)
+      }
+      for b in bound {
+        fw_expr(b, in_defer, in_fn, w)
+      }
+      fw_block(body, in_defer, in_fn, w)
+      w.loops.pop()
+    }
+    ConstDecl(d: cd) => fw_expr(cd.value, in_defer, in_fn, w)
+    BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+  }
+}
+
+fn fw_block(b: Block, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
+  for s in b.stmts {
+    fw_stmt(s, in_defer, in_fn, w)
+  }
+}
+
+fn flow_walk(body: Block) -> List[FlowSite] {
+  var w = FlowWalk{}
+  fw_block(body, false, 0, w)
+  w.sites
+}
+
+/// The `var` statements of a body outside nested closures, with the
+/// loops around each (flow.go walkDecl). copy_out keeps only those
+/// initialized with a copy out of a collection; otherwise those not
+/// already lost.
+fn (c: Checker) flow_cands(sites: List[FlowSite], copy_out: Bool) -> List[FlowCand] {
+  var out: List[FlowCand] = []
+  for st in sites {
+    if st.in_fn > 0 {
+      continue
+    }
+    let value = match st.var_value.first() {
+      Some(x) => x
+      None => continue
+    }
+    let v = c.ident_obj(st.id)
+    if v < 0 {
+      continue
+    }
+    if (copy_out && c.copy_out_init(value)) || (!copy_out && !c.lost_vars.contains(v)) {
+      out.push(FlowCand{v: v, value: value, loops: st.loops})
+    }
+  }
+  out
+}
+
+/// The occurrences of the candidate locals (flow.go walk, made once for
+/// all candidates): kinds gives each occurrence's kind by name_key, -1
+/// to skip it.
+fn (c: Checker) cand_events(sites: List[FlowSite], cands: List[FlowCand], kinds: Map[Int, Int]) -> Map[Int, List[FlowEvent]] {
+  var set: Map[Int, Bool] = {}
+  for cd in cands {
+    set[cd.v] = true
+  }
+  var out: Map[Int, List[FlowEvent]] = {}
+  for st in sites {
+    if !st.var_value.is_empty() {
+      continue
+    }
+    let v = c.ident_obj(st.id)
+    if v < 0 || !set.contains(v) {
+      continue
+    }
+    let k = kinds.get(c.name_key(st.id.span.start.offset)) ?? -1
+    if k >= 0 {
+      let ev = FlowEvent{id: st.id, kind: k, in_defer: st.in_defer, loops: st.loops}
+      out.update(v, [], fn(var evs) { evs.push(ev) })
+    }
+  }
+  out
 }
 
 /// The local an identifier names, as check.go identObj: a use records
@@ -381,10 +760,15 @@ fn (var c: Checker) flow_bodies() {
   let saved_path = c.path
   for b in c.bodies {
     c.set_file(b.file)
-    c.check_moves(b.body)
-    c.lost_updates(b.body)
-    c.stored_updates(b.body)
-    c.split_critical_sections(b.body)
+    let nodes = all_nodes(b.body)
+    let sites = flow_walk(b.body)
+    // the move walk acts only at identifiers of move only locals
+    if c.names_move_only(sites) {
+      c.check_moves(b.body)
+    }
+    c.lost_updates(sites, nodes)
+    c.stored_updates(sites, nodes)
+    c.split_critical_sections(nodes)
   }
   if saved_file >= 0 {
     c.set_file(saved_file)
@@ -419,6 +803,19 @@ fn union_moved(a: Moved, b: Moved) -> Moved {
     }
   }
   out
+}
+
+/// Whether an identifier of the walk names a local of a move only type.
+fn (c: Checker) names_move_only(sites: List[FlowSite]) -> Bool {
+  for st in sites {
+    if st.var_value.is_empty() {
+      let v = c.ident_obj(st.id)
+      if v >= 0 && c.is_move_only(c.objs[v].ty) {
+        return true
+      }
+    }
+  }
+  false
 }
 
 fn (var c: Checker) check_moves(body: Block) {
@@ -575,7 +972,9 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
     }
     FnLit(f) => {
       // captured move only values move into the closure
-      for n in all_nodes(f.body) {
+      var ids: List[Node] = []
+      pre_block(f.body, true, ids)
+      for n in ids {
         if let NExpr(Ident(id)) = n {
           let v = c.ident_obj(id)
           if v >= 0 && c.objs[v].vctx >= 0 && c.is_move_only(c.objs[v].ty) && !c.declared_within(v, f.span) {
@@ -759,85 +1158,6 @@ struct FlowCand {
   loops: List[Int]
 }
 
-/// The `var` statements of a body outside nested closures, with the
-/// loops around each (flow.go walkDecl). copy_out keeps only those
-/// initialized with a copy out of a collection; otherwise those not
-/// already lost.
-fn (c: Checker) flow_cands(n: Node, copy_out: Bool, var stack: List[Int], var out: List[FlowCand]) {
-  match n {
-    NExpr(e) => {
-      if e is FnLit(..) {
-        return
-      }
-    }
-    NStmt(s) => {
-      if let VarStmt(name: name, value: value, ..) = s {
-        let v = c.ident_obj(name)
-        if v >= 0 {
-          if (copy_out && c.copy_out_init(value)) || (!copy_out && !c.lost_vars.contains(v)) {
-            out.push(FlowCand{v: v, value: value, loops: stack})
-          }
-        }
-      }
-    }
-    NBlock(_) => {}
-  }
-  let lk = loop_key(n)
-  if lk >= 0 {
-    stack.push(lk)
-  }
-  for ch in children(n) {
-    c.flow_cands(ch, copy_out, stack, out)
-  }
-  if lk >= 0 {
-    stack.pop()
-  }
-}
-
-/// The occurrences of local v in n (flow.go walk): identifiers with
-/// their defer and loop context, an assignment's value walked before its
-/// target. kinds gives each occurrence's kind by name_key, -1 to skip it.
-fn (c: Checker) flow_events(n: Node, v: Int, in_defer: Bool, kinds: Map[Int, Int], var loops: List[Int], var out: List[FlowEvent]) {
-  match n {
-    NExpr(e) => {
-      if let Ident(id) = e {
-        if c.ident_obj(id) == v {
-          let k = kinds.get(c.name_key(id.span.start.offset)) ?? -1
-          if k >= 0 {
-            out.push(FlowEvent{id: id, kind: k, in_defer: in_defer, loops: loops})
-          }
-        }
-        return
-      }
-    }
-    NStmt(s) => {
-      match s {
-        DeferStmt(body: body, ..) => {
-          c.flow_events(Node.NStmt(body), v, true, kinds, loops, out)
-          return
-        }
-        AssignStmt(target: target, value: value, ..) => {
-          c.flow_events(Node.NExpr(value), v, in_defer, kinds, loops, out)
-          c.flow_events(Node.NExpr(target), v, in_defer, kinds, loops, out)
-          return
-        }
-        _ => {}
-      }
-    }
-    NBlock(_) => {}
-  }
-  let lk = loop_key(n)
-  if lk >= 0 {
-    loops.push(lk)
-  }
-  for ch in children(n) {
-    c.flow_events(ch, v, in_defer, kinds, loops, out)
-  }
-  if lk >= 0 {
-    loops.pop()
-  }
-}
-
 /// The kinds of an occurrence for lost updates: a read, a mutation (an
 /// assignment target, a `var` receiver or argument), or a store (the
 /// whole binding passed to a call or assigned).
@@ -847,14 +1167,11 @@ const EV_STORE = 2
 
 /// XO0520 for a `var` copied out of a collection, changed, and never
 /// stored again (flow.go lostUpdates).
-fn (var c: Checker) lost_updates(body: Block) {
-  var cands: List[FlowCand] = []
-  var stack: List[Int] = []
-  c.flow_cands(Node.NBlock(body), true, stack, cands)
+fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
+  let cands = c.flow_cands(sites, true)
   if cands.is_empty() {
     return
   }
-  let nodes = all_nodes(body)
   // mutation sites: assignment targets, var receivers, var arguments
   var mutating: Map[Int, Bool] = {}
   for n in nodes {
@@ -910,9 +1227,9 @@ fn (var c: Checker) lost_updates(body: Block) {
     }
   }
   var kinds: Map[Int, Int] = {}
-  for n in nodes {
-    if let NExpr(Ident(id)) = n {
-      let k = c.name_key(id.span.start.offset)
+  for st in sites {
+    if st.var_value.is_empty() {
+      let k = c.name_key(st.id.span.start.offset)
       if mutating.contains(k) {
         kinds[k] = EV_MUTATE
       } else if storing.contains(k) {
@@ -922,10 +1239,9 @@ fn (var c: Checker) lost_updates(body: Block) {
       }
     }
   }
+  let all_events = c.cand_events(sites, cands, kinds)
   for cd in cands {
-    var events: List[FlowEvent] = []
-    var loops: List[Int] = []
-    c.flow_events(Node.NBlock(body), cd.v, false, kinds, loops, events)
+    let events = all_events.get(cd.v) ?? []
     var lost = -1
     for (i, ev) in events.indexed() {
       if ev.kind != EV_MUTATE {
@@ -986,16 +1302,14 @@ fn (c: Checker) is_collection(t: Int) -> Bool {
 
 /// XO0520 for a local `var` changed after being stored into a collection
 /// and not stored again (flow.go storedUpdates).
-fn (var c: Checker) stored_updates(body: Block) {
-  var cands: List[FlowCand] = []
-  var stack: List[Int] = []
-  c.flow_cands(Node.NBlock(body), false, stack, cands)
+fn (var c: Checker) stored_updates(sites: List[FlowSite], nodes: List[Node]) {
+  let cands = c.flow_cands(sites, false)
   if cands.is_empty() {
     return
   }
   // classify identifier occurrences
   var kinds: Map[Int, Int] = {}
-  for n in all_nodes(body) {
+  for n in nodes {
     match n {
       NStmt(AssignStmt(op: op, target: target, value: value, ..)) => {
         var done = false
@@ -1056,10 +1370,9 @@ fn (var c: Checker) stored_updates(body: Block) {
       _ => {}
     }
   }
+  let all_events = c.cand_events(sites, cands, kinds)
   for cd in cands {
-    var events: List[FlowEvent] = []
-    var loops: List[Int] = []
-    c.flow_events(Node.NBlock(body), cd.v, false, kinds, loops, events)
+    let events = all_events.get(cd.v) ?? []
     var lost = -1
     for (i, ev) in events.indexed() {
       if ev.kind != SU_MUTATE || ev.in_defer {
@@ -1163,10 +1476,11 @@ fn (c: Checker) mutex_with(e: Expr, read: Bool) -> (Str, Expr) {
 
 /// The first identifier in n naming a tainted local (of mutex, or of any
 /// when mutex is ""), or None.
-fn (c: Checker) tainted_ref(n: Node, tainted: Map[Int, Str], mutex: Str) -> Ident? {
-  var nodes: List[Node] = []
-  preorder(n, nodes)
-  for m in nodes {
+fn (c: Checker) tainted_ref(e: Expr, tainted: Map[Int, Str], mutex: Str) -> Ident? {
+  if tainted.is_empty() {
+    return None
+  }
+  for m in expr_idents(e) {
     if let NExpr(Ident(id)) = m {
       let v = c.ident_obj(id)
       if v >= 0 {
@@ -1183,17 +1497,17 @@ fn (c: Checker) tainted_ref(n: Node, tainted: Map[Int, Str], mutex: Str) -> Iden
 /// XO0804 (a warning) when a value read inside one `m.with(...)` is used
 /// inside a later `m.with(...)` on the same mutex (flow.go
 /// splitCriticalSections).
-fn (var c: Checker) split_critical_sections(body: Block) {
+fn (var c: Checker) split_critical_sections(nodes: List[Node]) {
   var tainted: Map[Int, Str] = {}
   // decided[m]: a stale value a branch already acted on
   var decided: Map[Str, Ident] = {}
-  for n in all_nodes(body) {
+  for n in nodes {
     match n {
       NStmt(LetStmt(pattern: pattern, value: value, ..)) => {
         let (mu, _) = c.mutex_with(value, true)
         var taint = mu
         if mu.is_empty() {
-          if let Some(id) = c.tainted_ref(Node.NExpr(value), tainted, "") {
+          if let Some(id) = c.tainted_ref(value, tainted, "") {
             taint = tainted.get(c.ident_obj(id)) ?? ""
           } else {
             continue
@@ -1213,7 +1527,7 @@ fn (var c: Checker) split_critical_sections(body: Block) {
           let (mu, _) = c.mutex_with(value, true)
           if !mu.is_empty() {
             tainted[v] = mu
-          } else if let Some(id) = c.tainted_ref(Node.NExpr(value), tainted, "") {
+          } else if let Some(id) = c.tainted_ref(value, tainted, "") {
             tainted[v] = tainted.get(c.ident_obj(id)) ?? ""
           }
         }
@@ -1223,7 +1537,7 @@ fn (var c: Checker) split_critical_sections(body: Block) {
           IfExpr(e: ie) => {
             let cond = ie.cond ?? ie.value
             if let Some(cx) = cond {
-              if let Some(id) = c.tainted_ref(Node.NExpr(cx), tainted, "") {
+              if let Some(id) = c.tainted_ref(cx, tainted, "") {
                 let mu = tainted.get(c.ident_obj(id)) ?? ""
                 if !decided.contains(mu) {
                   decided[mu] = id
@@ -1244,7 +1558,7 @@ fn (var c: Checker) split_critical_sections(body: Block) {
             }
             if let CallExpr(args: args, ..) = call {
               for a in args {
-                if let Some(id) = c.tainted_ref(Node.NExpr(a.value), tainted, mu) {
+                if let Some(id) = c.tainted_ref(a.value, tainted, mu) {
                   c.split_warned[key] = true
                   c.error("XO0804", id.span, "`${text(id.name)}` was read in an earlier `${mu}.with`; another task may have changed it since")
                   break

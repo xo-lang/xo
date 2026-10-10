@@ -180,6 +180,23 @@ fn (var p: Parser) foreign_unary() -> Expr? {
   None
 }
 
+/// A cheap test before foreign_primary: the token kinds and words it can
+/// act on.
+fn (p: Parser) may_be_foreign_primary() -> Bool {
+  match p.tok.kind {
+    Rune | Pipe | OrOr | LParen => true
+    Ident => {
+      let n = p.peek(1).kind
+      if n == Kind.FatArrow || n == Kind.Bang || n == Kind.String {
+        return true
+      }
+      let w = p.tok.text
+      w == b"switch" || w == b"when" || w == b"try" || w == b"do" || w == b"new" || w == b"lambda"
+    }
+    _ => false
+  }
+}
+
 /// Operands written in another language's syntax, or None.
 fn (var p: Parser) foreign_primary() -> Expr? {
   let t = p.tok

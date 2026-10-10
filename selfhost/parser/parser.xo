@@ -1225,8 +1225,10 @@ fn (var p: Parser) parse_type_top() -> Type {
 
 fn (var p: Parser) parse_type() -> Type {
   let start = p.tok.span.start
-  if let Some(ft) = p.foreign_type() {
-    return ft
+  if !(p.tok.kind is Ident | LParen | Fn) || p.tok.text == b"map" {
+    if let Some(ft) = p.foreign_type() {
+      return ft
+    }
   }
   var t: Type = Type.BadType(p.tok.span)
   match p.tok.kind {
