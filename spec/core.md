@@ -1201,6 +1201,24 @@ its content hash.
   failure is `XO1313` and nothing is cached; a log that cannot be
   consulted, or malformed settings, is `XO1314`. `XO_NOSUMDB=<patterns>`
   (as `XO_NOPROXY`, 4.2) names private modules that are never looked up.
+- **[P1]** Definition hashes (decision 0125, step 5 of decision 0086):
+  every top level definition (function, method, type, constant) has a
+  content hash `d1:<base64 SHA-256>` over its syntax tree with
+  positions, comments, and doc comments dropped, its own name left out
+  (functions and constants; a type's name is part of it), local names
+  erased (numbered by first binding: `let`, `var`, patterns, loops,
+  closure parameters, type parameters, receivers, labels; the
+  parameters of declared functions keep their names, which named
+  arguments use), imports by path rather than by local name, and the
+  definitions of the same module it references replaced by their hashes
+  (mutually recursive ones hashed together). `hash` covers that closure,
+  `own` the definition alone. `xo query hash <name>` prints them (10.3);
+  `xo publish` lists every definition, exported or not, whose hash
+  differs from the previous release (`changed`, or `changed_via` when
+  only a definition it uses changed), next to the API comparison. The
+  hashes are syntactic (no types): a method called on a value and other
+  modules' definitions are referenced by name. xo.lock does not record
+  them; decision 0125 proposes how it would.
 - **[P3]** Hash is per definition: the normalized AST with local names erased
   and referenced definitions replaced by their hashes. Consequences:
   - Two versions of a dependency coexist without conflict. Types from different
@@ -2022,7 +2040,13 @@ xo query holes
 xo query api github.com/acme/billing   // exported surface of a module
 xo query imports example.com/notes/domain   // its `use` lines
 xo query deps example.com/notes/server      // the same, transitively
+xo query hash users.fetch_user              // content hash of a definition (4.3)
 ```
+
+`hash` (decision 0125) answers `{list}`, one entry per definition the
+name resolves to (a name, `Type.method`, `pkg.name`, or `<package
+path>.name` of the module holding `--dir`): `{id, package, name, kind,
+pub, hash, own, refs, file, line}`. It needs no check run.
 
 `imports` and `deps` (decision 0095) answer
 `{package, transitive, imports, packages}`: each entry of `imports` is a

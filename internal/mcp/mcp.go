@@ -205,9 +205,9 @@ var dirsProp = map[string]any{
 func init() {
 	register("check", "Type check the modules under dirs. Returns {ok, errors, warnings, modules, diagnostics}; each diagnostic has code, severity, message, span, notes, and fixes (machine applicable edits). With fix=true (`xo check --fix`, decision 0096) every unambiguous machine fix is applied and the changed files reformatted first; the result then also has applied: [{file, line, rule, title}].",
 		map[string]any{"dirs": dirsProp, "no_gc": noGCProp, "fix": map[string]any{"type": "boolean", "description": "apply the unambiguous machine fixes and reformat before reporting (default false: read only)"}}, nil, toolCheck)
-	register("query", "Semantic query: type (arg file:line:col), def (arg name, Type.member, module.name), callers (arg module.fn), effects (arg module.fn, with the call chain per effect), holes (no arg), api (arg module import path or directory), imports (arg package: its use lines, with any deny rule that forbids one), deps (arg package: imports, transitively).",
+	register("query", "Semantic query: type (arg file:line:col), def (arg name, Type.member, module.name), callers (arg module.fn), effects (arg module.fn, with the call chain per effect), holes (no arg), api (arg module import path or directory), imports (arg package: its use lines, with any deny rule that forbids one), deps (arg package: imports, transitively), hash (arg name: the content hash of a definition, local names erased; core 4.3).",
 		map[string]any{
-			"kind": map[string]any{"type": "string", "enum": []string{"type", "def", "callers", "effects", "holes", "api", "imports", "deps"}},
+			"kind": map[string]any{"type": "string", "enum": []string{"type", "def", "callers", "effects", "holes", "api", "imports", "deps", "hash"}},
 			"arg":  map[string]any{"type": "string", "description": "the query argument; omitted for holes"},
 			"dir":  map[string]any{"type": "string", "description": "directory checked (default .)"},
 		}, []string{"kind"}, toolQuery)

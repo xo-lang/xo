@@ -67,6 +67,12 @@ func runPublish(args []string, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintf(stdout, "%s %s\n", mark, c.Describe())
 		}
+		if len(r.Definitions) > 0 {
+			fmt.Fprintf(stdout, "definitions changed since %s (content hashes, xo query hash):\n", r.Previous)
+			for _, d := range r.Definitions {
+				fmt.Fprintf(stdout, "  %s\n", d.Describe())
+			}
+		}
 		switch {
 		case r.Ok && *only:
 			fmt.Fprintf(stdout, "ok: %s may be released\n", r.Version)

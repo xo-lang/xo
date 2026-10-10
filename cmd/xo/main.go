@@ -101,7 +101,8 @@ commands:
       go per module (XO1103), dbg(...) left in code (XO0901). Default: .
   query <kind> [--json|--text] [--dir=<dir>] <argument>
       Semantic queries (core 10.3): type <file:line:col>, def <name>,
-      callers <module.fn>, effects <module.fn>, holes, api <module path>.
+      callers <module.fn>, effects <module.fn>, holes, api <module path>,
+      imports <package>, deps <package>, hash <name> (definition content hash).
       JSON is the default when stdout is not a terminal.
   edit [--dry-run] [--dir=<dir>] <op> <args...>
       Semantic edits (core 10.4) through the checker's resolved symbols:
@@ -171,6 +172,8 @@ commands:
       or adds an effect to one (XO1310). Without --check it also needs a
       clean working tree and a module that checks without a workspace,
       then prints the git tag command to run; it never tags or pushes.
+      It also lists every definition (exported or not) whose content hash
+      changed since the previous tag (xo query hash; decision 0125).
   mod tidy [--dir=<dir>] [--json]
       Require every imported module, drop requirements nothing imports
       (unless they raise a version the graph selects), and rewrite xo.lock

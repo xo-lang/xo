@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xo-lang/xo/internal/defhash"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/mod"
 )
@@ -28,16 +29,19 @@ type Options struct {
 
 // Result is the outcome of `xo publish`.
 type Result struct {
-	Ok        bool              `json:"ok"`
-	Module    string            `json:"module"`
-	Previous  string            `json:"previous,omitempty"` // "" for a first release
-	Version   string            `json:"version"`
-	Bump      string            `json:"bump"`      // what the changes need: major, minor, patch
-	Suggested string            `json:"suggested"` // the smallest version the changes allow
-	Changes   []Change          `json:"changes"`
-	Breaking  []Change          `json:"breaking"`
-	Tag       string            `json:"tag,omitempty"` // the command that publishes, when ok
-	Diags     []diag.Diagnostic `json:"diagnostics"`
+	Ok        bool     `json:"ok"`
+	Module    string   `json:"module"`
+	Previous  string   `json:"previous,omitempty"` // "" for a first release
+	Version   string   `json:"version"`
+	Bump      string   `json:"bump"`      // what the changes need: major, minor, patch
+	Suggested string   `json:"suggested"` // the smallest version the changes allow
+	Changes   []Change `json:"changes"`
+	Breaking  []Change `json:"breaking"`
+	// Definitions are the top level definitions (exported or not) whose
+	// content hash differs from the previous release (decision 0125).
+	Definitions []defhash.Change  `json:"definitions"`
+	Tag         string            `json:"tag,omitempty"` // the command that publishes, when ok
+	Diags       []diag.Diagnostic `json:"diagnostics"`
 }
 
 func (r *Result) fail(code diag.Code, file string, line int, msg string, notes ...string) {
@@ -195,6 +199,16 @@ func Publish(dir string, opts Options) *Result {
 		if r.Changes == nil {
 			r.Changes = []Change{}
 		}
+		// every definition, private ones too, by content hash (decision
+		// 0125): finer than the API, informational
+		oldDefs, err1 := defhash.Module(tmp, oldPath)
+		newDefs, err2 := defhash.Module(root, f.Path)
+		if err1 == nil && err2 == nil {
+			r.Definitions = defhash.Diff(oldDefs, newDefs)
+		}
+	}
+	if r.Definitions == nil {
+		r.Definitions = []defhash.Change{}
 	}
 	r.Bump = Bump(r.Changes)
 	base := "minor"
