@@ -28,7 +28,8 @@ scripts/build-playground.py            # after compiler, std/rt, or Go changes (
 is tested in the site repo by `node scripts/test-playground.mjs` (headless
 Chrome over the DevTools protocol, no npm dependencies; about 1 minute):
 every tour example and mistake, the tour's tests, a failing test, seed
-and explore (a test that fails only under seed 2), underlines, the
+and explore (a test that fails only under seed 2), underlines and their
+tooltips (hover and caret), the generated Go tab, the
 download notice, `#example=` and share links, highlighting, an infinite loop (stopped at 10 s), an output flood (cut at 1 MB,
 HTML shown as text), unbounded allocation (Go "out of memory", exit 2),
 `os.fs.read_text("/etc/passwd")` (fails: no files), `use go "os/exec"`
@@ -76,5 +77,9 @@ sandbox) before deploying; a failure stops the deploy.
 ## Editor extras
 
 Diagnostics of the last check are underlined (wavy, `xmark-error` and
-`xmark-warning` in the overlay) and cleared on the next edit. The gear next
+`xmark-warning` in the overlay) and cleared on the next edit. Their
+message shows in a tooltip when the pointer rests on one (the overlay
+ignores the pointer, so the page hit tests the marked spans' boxes; each
+records its source offset in `data-at`) or when the caret is inside one.
+The generated Go tab hides `//line` directives unless its checkbox is on. The gear next
 to test sets `--seed` and `--explore` (capped at 1000) for the test binary. Bound Go packages: see `GOBIND` in the script.

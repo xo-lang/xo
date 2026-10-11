@@ -122,14 +122,12 @@ func (f *fnGen) line(format string, args ...any) {
 	for i, l := range strings.Split(text, "\n") {
 		if strings.HasPrefix(l, "//line ") {
 			cur = l
-			f.out.WriteString(l)
-			f.out.WriteByte('\n')
+			f.directive(l)
 			f.sinceLine = 0
 			continue
 		}
 		if cur != "" && f.sinceLine > 0 {
-			f.out.WriteString(cur)
-			f.out.WriteByte('\n')
+			f.directive(cur)
 		}
 		f.sinceLine++
 		if i == 0 {
@@ -157,6 +155,16 @@ func (f *fnGen) at(n ast.Node) {
 	}
 	f.lastLine = d
 	f.sinceLine = 0
+	f.directive(d)
+}
+
+// directive writes a //line directive unless the output already ends
+// with it: a repeat changes no position and only clutters the Go.
+func (f *fnGen) directive(d string) {
+	s := f.out.String()
+	if rest, ok := strings.CutSuffix(s, d+"\n"); ok && (rest == "" || strings.HasSuffix(rest, "\n")) {
+		return
+	}
 	f.out.WriteString(d)
 	f.out.WriteByte('\n')
 }
