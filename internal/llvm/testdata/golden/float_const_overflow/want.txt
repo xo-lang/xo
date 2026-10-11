@@ -1,0 +1,4 @@
+exit 0
+--- stdout
++Inf +Inf -Inf 0.0 0.30000000000000004 0.0
+--- stderr

@@ -36,6 +36,11 @@ func FDiv[F ~float32 | ~float64](a, b F) F { return a / b }
 // not a Go constant expression (Go constants have no negative zero).
 func FNeg[F ~float32 | ~float64](x F) F { return -x }
 
+// FVal is x, as a call: `float64(2.5e300) * float64(1e10)` is +Inf at run
+// time in Xo but an overflowing constant in Go, so a float `+ - *` of two
+// constants reads one through FVal.
+func FVal[F ~float32 | ~float64](x F) F { return x }
+
 // IntMulDur is checked `n * d`.
 func IntMulDur(n int64, d Duration, at string) Duration { return MulS(Duration(n), d, at) }
 

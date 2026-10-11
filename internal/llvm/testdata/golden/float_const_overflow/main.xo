@@ -1,0 +1,7 @@
+fn main(os: Os) {
+  let a = 2.5e300 * 1e10
+  let b = (1e308 + 1e308) - 1e308
+  let c = -1e308 - 1e308
+  let d = 1e-320 * 1e-10
+  os.stdio.println("${a} ${b} ${c} ${d} ${0.1 + 0.2} ${1.0 - 1.0}")
+}

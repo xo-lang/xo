@@ -777,6 +777,22 @@ func (f *fnGen) binary(x *ast.BinaryExpr) string {
 	return f.binop(op, codes[0], codes[1], xt, yt, rt, x)
 }
 
+// goFloatConst reports whether Go code may be a constant expression of
+// float literals (float64(1e300), its sums and products). A variable whose
+// name looks like hex digits passes too, which only costs a call.
+func goFloatConst(code string) bool {
+	code = strings.NewReplacer("float64(", "(", "float32(", "(").Replace(code)
+	for _, c := range code {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		case strings.ContainsRune(".+-*() xXpP_", c):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // indent adds n tabs before every line of s.
 func indent(s string, n int) string {
 	if s == "" {
@@ -876,6 +892,11 @@ func (f *fnGen) binop(op, a, b string, xt, yt, rt check.Type, at ast.Node) strin
 			// a call, not a Go constant expression: 0.0 / 0.0 is NaN at run
 			// time but a compile error as a Go constant
 			return fmt.Sprintf("%sFDiv(%s, %s)", r, a, b)
+		}
+		if goFloatConst(a) && goFloatConst(b) {
+			// Go folds two constants and rejects a result out of range,
+			// which Xo computes as an infinity at run time
+			a = fmt.Sprintf("%sFVal(%s)", r, a)
 		}
 		return "(" + a + " " + op + " " + b + ")"
 	}
