@@ -1,0 +1,1035 @@
+// Interfaces and dynamic values (internal/ssa build_iface.go, the
+// dynamic values of build_show.go), method values (build_expr.go
+// selector, check.Info.MethodValueLit), and the generated equality and
+// order helpers (build_map.go eqColl, cmpFunc), stage 2 of decision 0150.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The hidden fields of an interface value: the Display and Debug text,
+/// equality, and the concrete type's id.
+const IFACE_SHOW = "xo.show"
+const IFACE_EQ = "xo.eq"
+const IFACE_TID = "xo.tid"
+
+// ---------------------------------------------------------------------------
+// Interface values (build_iface.go)
+
+/// Lowers the interface type t (checker Named, Type object obj) as
+/// xo.iface[I] (ifaceType).
+fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
+  let name = "xo.iface[${b.type_name(b.impl_named(t))}]"
+  let (st, created) = b.m.named(name, Kind.Struct)
+  if !created {
+    return st
+  }
+  b.ifaces[st] = t
+  let sub = b.c.args_subst(b.c.objs[obj].tparams, b.ty_args(t))
+  var fs: List[SField] = []
+  for im in b.c.objs[obj].iface_meths {
+    let iname = b.obj_name(im)
+    if b.c.objs[im].own_tparams > 0 {
+      b.unsupported("the generic interface method `${b.obj_name(obj)}.${iname}` (in a value of interface type)")
+    }
+    var ps: List[Int] = []
+    for p in b.c.objs[im].params {
+      if p.is_var {
+        b.unsupported("the interface method `${b.obj_name(obj)}.${iname}` with a `var` parameter")
+      }
+      ps.push(b.typ(b.c.subst(p.ty, sub)))
+    }
+    let res = b.c.subst(b.c.objs[im].result, sub)
+    let err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
+    let ret = b.typ(b.result_of(res, err))
+    fs.push(SField{name: iname, ty: b.m.func_type(ps, ret)})
+  }
+  let s = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let show = b.m.func_type([s, bt], s)
+  fs.push(SField{name: IFACE_EQ, ty: b.m.func_type([it, show], bt)})
+  fs.push(SField{name: IFACE_TID, ty: it})
+  fs.push(SField{name: IFACE_SHOW, ty: show})
+  b.m.types[st].fields = fs
+  st
+}
+
+/// The method name of the interface type r (checker) and the
+/// substitution of r's type arguments (ifaceMeth); -1 when there is none.
+fn (var b: Builder) iface_meth(r: Int, name: Str) -> (Int, Map[Int, Int]) {
+  let o = b.named_obj(r)
+  for im in b.c.objs[o].iface_meths {
+    if b.obj_name(im) == name {
+      return (im, b.c.args_subst(b.c.objs[o].tparams, b.ty_args(r)))
+    }
+  }
+  (-1, {})
+}
+
+/// Converts v (checker type from) to the interface value type t (toIface).
+fn (var b: Builder) to_iface(v: Int, from0: Int, t: Int, at: Expr?) -> Int {
+  let r = b.ifaces.get(t) ?? -1
+  if r < 0 || b.m.types[t].fields.is_empty() {
+    b.unsupported("converting `${b.m.types[b.vty(v)].name}` to `${b.m.types[t].name}`")
+    return b.undef(t)
+  }
+  let from = b.c.resolve(from0)
+  let meths = b.c.objs[b.named_obj(r)].iface_meths
+  let vt = b.vty(v)
+  var fields: List[Int] = []
+  if b.is_iface(vt) {
+    // an interface value converted to another interface: reuse the
+    // function values that already have the wanted type, adapt the
+    // others; the hidden fields are the concrete value's
+    for (i, im) in meths.indexed() {
+      let ft = b.m.types[t].fields[i].ty
+      let j = b.m.field_index(vt, b.obj_name(im))
+      if j < 0 {
+        b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}`")
+        return b.undef(t)
+      }
+      if b.m.types[vt].fields[j].ty == ft {
+        fields.push(b.add(Op.Field, ft, Aux.I(n: j), [v]))
+        continue
+      }
+      let name = b.iface_thunk(t, i, from, vt, at)
+      fields.push(b.add(Op.Closure, ft, Aux.S(s: name), [v]))
+    }
+    for hidden in [IFACE_EQ, IFACE_TID, IFACE_SHOW] {
+      let j = b.m.field_index(vt, hidden)
+      fields.push(b.add(Op.Field, b.m.types[vt].fields[j].ty, Aux.I(n: j), [v]))
+    }
+    return b.add(Op.Struct, t, Aux.None, fields)
+  }
+  // one environment holds the value; every function shares it
+  let n = meths.len()
+  let st = b.show_thunk(from, vt, at)
+  let show = b.add(Op.Closure, b.m.types[t].fields[n + 2].ty, Aux.S(s: st), [v])
+  for i in 0..n {
+    let name = b.iface_thunk(t, i, from, vt, at)
+    fields.push(b.add(Op.Rebind, b.m.types[t].fields[i].ty, Aux.S(s: name), [show]))
+  }
+  let eq = b.eq_thunk(from, vt)
+  fields.push(b.add(Op.Rebind, b.m.types[t].fields[n].ty, Aux.S(s: eq), [show]))
+  fields.push(b.cint(b.type_id(from)))
+  fields.push(show)
+  b.add(Op.Struct, t, Aux.None, fields)
+}
+
+/// The text of ct with std types named as their implementations
+/// (`implNamed(ct).String()`). impl_named may add a type to the checker's
+/// table, so it runs before the by value read of b.c.
+fn (var b: Builder) impl_text(ct: Int) -> Str {
+  let it = b.impl_named(ct)
+  b.c.show(it)
+}
+
+/// The number of the concrete type ct held by interface values (typeID):
+/// `==` on two interface values first compares them.
+fn (var b: Builder) type_id(ct: Int) -> Int {
+  let key = b.impl_text(ct)
+  var id = b.tids.get(key) ?? -1
+  if id < 0 {
+    id = b.tids.len() + 1
+    b.tids[key] = id
+    if b.skipped_any {
+      b.late_tids[id] = true
+    }
+  }
+  if b.late_tids.contains(id) {
+    // numbered after skipped code: the Go builder's number may differ
+    // (decision 0150, stage 2 rules)
+    b.unsupported("an interface value's type number given after skipped code")
+  }
+  id
+}
+
+/// Declares the generated function name of an interface value when it is
+/// new and starts building it now, as the Go builder's genFunc and thunks
+/// do: they declare functions the queue builds, in the queue's order.
+/// Returns the function, or -1 when it exists.
+fn (var b: Builder) thunk_func(name: Str, params: List[Int], results: List[Int], captures: List[Int]) -> Int {
+  if b.m.func_index(name) >= 0 {
+    return -1
+  }
+  let fi = b.m.new_func(name, params, results)
+  if !captures.is_empty() {
+    b.m.funcs[fi].indirect = true
+    b.m.funcs[fi].captures = captures
+  }
+  fi
+}
+
+/// The xo.eq function of an interface value holding a value of checker
+/// type ct (SSA type vt): given the other value's type id and xo.show
+/// closure, whether the other holds an equal value of the same type
+/// (eqThunk).
+fn (var b: Builder) eq_thunk(ct: Int, vt: Int) -> Str {
+  let st = b.str_t()
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let show = b.m.func_type([st, bt], st)
+  let ft = b.m.func_type([it, show], bt)
+  let name = "xo.ifeq[${b.impl_text(ct)}]"
+  let fi = b.thunk_func(name, [ft, it, show], [bt], [vt])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let id = b.cint(b.type_id(ct))
+  let same = b.add(Op.Eq, bt, Aux.None, [b.param(1), id])
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [same]))
+  b.retv(b.cbool(false))
+  b.if_then_end(no, join)
+  if holds_kind(b.m, vt, Kind.Func, []) {
+    // a value holding a function equals nothing (std/rt's EqAny)
+    b.retv(b.cbool(false))
+    b.finish_fn()
+    b.end(saved)
+    return name
+  }
+  let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
+  let other = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(2)])
+  if b.holds_coll(vt, []) {
+    let f = b.eq_coll(vt)
+    b.retv(b.call(f, bt, "", [me, other]))
+  } else {
+    b.retv(b.eq_values(me, other))
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// `l == r` on two interface values of one type (ifaceEqual).
+fn (var b: Builder) iface_equal(l: Int, r: Int) -> Int {
+  let t = b.vty(l)
+  let ei = b.m.field_index(t, IFACE_EQ)
+  let ti = b.m.field_index(t, IFACE_TID)
+  let si = b.m.field_index(t, IFACE_SHOW)
+  let fv = b.add(Op.Field, b.m.types[t].fields[ei].ty, Aux.I(n: ei), [l])
+  let tid = b.add(Op.Field, b.m.types[t].fields[ti].ty, Aux.I(n: ti), [r])
+  let show = b.add(Op.Field, b.m.types[t].fields[si].ty, Aux.I(n: si), [r])
+  let res = b.add(Op.CallValue, b.bool_t(), Aux.None, [fv, tid, show])
+  b.check("")
+  res
+}
+
+/// Whether a value of t holds a value of kind k (holdsKind).
+fn holds_kind(m: Module, t: Int, k: Kind, seen: List[Int]) -> Bool {
+  holds_kind_in(m, t, k, seen).0
+}
+
+fn holds_kind_in(m: Module, t: Int, k: Kind, seen0: List[Int]) -> (Bool, List[Int]) {
+  var seen = seen0
+  if m.types[t].kind == k {
+    return (true, seen)
+  }
+  if seen.contains(t) {
+    return (false, seen)
+  }
+  seen.push(t)
+  for f in m.types[t].fields {
+    let (r, s2) = holds_kind_in(m, f.ty, k, seen)
+    seen = s2
+    if r {
+      return (true, seen)
+    }
+  }
+  for v in m.types[t].variants {
+    for f in v.fields {
+      let (r, s2) = holds_kind_in(m, f.ty, k, seen)
+      seen = s2
+      if r {
+        return (true, seen)
+      }
+    }
+  }
+  if m.types[t].kind != Kind.Func {
+    for e in m.types[t].elems {
+      let (r, s2) = holds_kind_in(m, e, k, seen)
+      seen = s2
+      if r {
+        return (true, seen)
+      }
+    }
+  }
+  (false, seen)
+}
+
+/// The code of method i of the interface value type t for a concrete value
+/// of checker type ct (SSA type vt): an Indirect function whose
+/// environment holds the value (ifaceThunk).
+fn (var b: Builder) iface_thunk(t: Int, i: Int, ct: Int, vt: Int, at: Expr?) -> Str {
+  let r = b.ifaces.get(t) ?? -1
+  let robj = b.named_obj(r)
+  let im = b.c.objs[robj].iface_meths[i]
+  let ft = b.m.types[t].fields[i].ty
+  let name = "${b.m.types[t].name}.${b.impl_text(ct)}.${b.obj_name(im)}"
+  var ps = [ft]
+  for e in b.m.types[ft].elems {
+    ps.push(e)
+  }
+  let fi = b.thunk_func(name, ps, [b.m.types[ft].ret], [vt])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
+  let sub = b.c.args_subst(b.c.objs[robj].tparams, b.ty_args(r))
+  var args: List[Int] = []
+  for (k, p) in b.s.f.blocks[0].params.indexed() {
+    if k > 0 {
+      args.push(p)
+    }
+  }
+  let to_err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
+  let res = b.method_on(b.obj_name(im), ct, me, args, b.m.types[ft].ret, to_err, at)
+  if !b.is_dead() {
+    b.retv(res)
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The xo.show function of an interface value holding a value of checker
+/// type ct (SSA type vt) (showThunk).
+fn (var b: Builder) show_thunk(ct: Int, vt: Int, at: Expr?) -> Str {
+  let st = b.str_t()
+  let bt = b.bool_t()
+  let ft = b.m.func_type([st, bt], st)
+  let name = "xo.show[${b.impl_text(ct)}]"
+  let fi = b.thunk_func(name, [ft, st, bt], [st], [vt])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
+  let (yes, no) = b.branch(b.param(2))
+  b.s.cur = yes
+  let m = b.method_of(ct, "debug")
+  if m >= 0 && !b.displayable(ct) {
+    let r = b.call_method(m, ct, me)
+    b.retv(b.call("str.concat", st, "", [b.param(1), r]))
+  } else {
+    b.retv(b.append_debug(b.param(1), me, ct))
+  }
+  b.s.cur = no
+  b.retv(b.append_display(b.param(1), me, ct))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// Appends the Display (debug false) or Debug text of the interface value
+/// v to acc (ifaceShowCall).
+fn (var b: Builder) iface_show_call(acc: Int, v: Int, debug: Bool) -> Int {
+  let vt = b.vty(v)
+  let last = b.m.field_index(vt, IFACE_SHOW)
+  let fv = b.add(Op.Field, b.m.types[vt].fields[last].ty, Aux.I(n: last), [v])
+  let d = b.cbool(debug)
+  let r = b.add(Op.CallValue, b.str_t(), Aux.None, [fv, acc, d])
+  b.check("")
+  r
+}
+
+/// Calls the method name of recv, a value of checker type ct (a concrete
+/// type, an interface value, or a value of a prelude interface lowered as
+/// its text), with args, and adapts the result to want, whose error type
+/// is to_err (methodOn).
+fn (var b: Builder) method_on(name: Str, ct0: Int, recv: Int, args: List[Int], want: Int, to_err: Int, at: Expr?) -> Int {
+  let ct = b.c.resolve(ct0)
+  let rt = b.vty(recv)
+  if b.is_iface(rt) {
+    let j = b.m.field_index(rt, name)
+    let src = b.ifaces.get(rt) ?? -1
+    if j < 0 || src < 0 {
+      b.unsupported("the method `${name}` of `${b.c.show(ct)}`")
+      return b.undef(want)
+    }
+    let ft = b.m.types[rt].fields[j].ty
+    let fv = b.add(Op.Field, ft, Aux.I(n: j), [recv])
+    var all = [fv]
+    for a in args {
+      all.push(a)
+    }
+    let r = b.add(Op.CallValue, b.m.types[ft].ret, Aux.None, all)
+    b.check("")
+    let (im, sub) = b.iface_meth(src, name)
+    let from_err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
+    return b.adapt_result(r, from_err, want, to_err, at)
+  }
+  let m = b.method_of(ct, name)
+  if m >= 0 {
+    let targs = b.ty_args(ct)
+    let tps = b.type_params(m)
+    if tps.len() != targs.len() || b.c.objs[m].recv_var {
+      b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
+      return b.undef(want)
+    }
+    let callee = b.declare(m, targs)
+    var all = [recv]
+    for a in args {
+      all.push(a)
+    }
+    let cname = b.m.funcs[callee].name
+    let cres = b.m.funcs[callee].results
+    if b.m.funcs[callee].blocks[0].params.len() != all.len() || cres.len() != 1 {
+      b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")
+      return b.undef(want)
+    }
+    let r = b.call(cname, cres[0], "", all)
+    b.check(cname)
+    let from_err = b.fail_err(b.c.subst(b.c.objs[m].err, b.c.args_subst(tps, targs)))
+    return b.adapt_result(r, from_err, want, to_err, at)
+  }
+  let r = b.inline_method(name, recv, args)
+  if r >= 0 {
+    return b.adapt_result(r, -1, want, to_err, at)
+  }
+  if args.is_empty() {
+    if name == "display" {
+      let t = b.append_display(b.const_str(""), recv, ct)
+      return b.adapt_result(t, -1, want, to_err, at)
+    }
+    if name == "debug" {
+      let t = b.append_debug(b.const_str(""), recv, ct)
+      return b.adapt_result(t, -1, want, to_err, at)
+    }
+  }
+  b.unsupported("the method `${name}` of `${b.c.show(ct)}` through an interface")
+  b.undef(want)
+}
+
+/// Converts r, the result of a method whose error type is from_err (-1:
+/// it cannot fail), to want, the result of the interface's method, whose
+/// error type is to_err (adaptResult).
+fn (var b: Builder) adapt_result(r: Int, from_err: Int, want: Int, to_err: Int, at: Expr?) -> Int {
+  let rt = b.vty(r)
+  if rt == want || b.vop(r) == Op.Undef || b.is_dead() {
+    return b.coerce_at(r, want, at)
+  }
+  let ok_i = b.m.variant_index(want, "Ok")
+  let err_i = b.m.variant_index(want, "Err")
+  if to_err < 0 || b.tkind(want) != Kind.Enum || ok_i < 0 || err_i < 0 {
+    b.unsupported("converting `${b.m.types[rt].name}` to `${b.m.types[want].name}`")
+    return b.undef(want)
+  }
+  let ok_t = b.m.types[want].variants[ok_i].fields[0].ty
+  if from_err < 0 {
+    let c = b.coerce_at(r, ok_t, at)
+    return b.add(Op.Variant, want, Aux.I(n: ok_i), [c])
+  }
+  let r_ok = b.m.variant_index(rt, "Ok")
+  let r_err = b.m.variant_index(rt, "Err")
+  if b.tkind(rt) != Kind.Enum || r_ok < 0 || r_err < 0 {
+    b.unsupported("converting `${b.m.types[rt].name}` to `${b.m.types[want].name}`")
+    return b.undef(want)
+  }
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, want)
+  let tag = b.add(Op.Tag, b.int_t(), Aux.None, [r])
+  let ec = b.cint(r_err)
+  let is_err = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, ec])
+  let (yes, no) = b.branch(is_err)
+  b.s.cur = yes
+  let ev = b.add(Op.Payload, b.m.types[rt].variants[r_err].fields[0].ty, Aux.P(tag: r_err, field: 0), [r])
+  let ce = b.coerce_err(ev, from_err, to_err, at)
+  b.jump(join, [b.add(Op.Variant, want, Aux.I(n: err_i), [ce])])
+  b.s.cur = no
+  let ov = b.add(Op.Payload, b.m.types[rt].variants[r_ok].fields[0].ty, Aux.P(tag: r_ok, field: 0), [r])
+  let co = b.coerce_at(ov, ok_t, at)
+  b.jump(join, [b.add(Op.Variant, want, Aux.I(n: ok_i), [co])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// The prelude methods lowered inline (stdCall, mapCall) on a value recv,
+/// for calls through an interface or a type parameter: len and is_empty
+/// of List, Str, Map, and Set, and contains of Map and Set; -1 for any
+/// other method (inlineMethod).
+fn (var b: Builder) inline_method(name: Str, recv: Int, args: List[Int]) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = b.vty(recv)
+  var n = -1
+  if b.m.types[t].coll {
+    n = b.add(Op.Field, it, Aux.I(n: 4), [recv])
+  } else if b.tkind(t) == Kind.List {
+    n = b.call("list.len", it, "", [recv])
+  } else if b.tkind(t) == Kind.Str {
+    n = b.call("Str.len", it, "", [recv])
+  } else {
+    return -1
+  }
+  if name == "len" && args.is_empty() {
+    return n
+  }
+  if name == "is_empty" && args.is_empty() {
+    return b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)])
+  }
+  if name == "contains" && args.len() == 1 && b.m.types[t].coll && b.vty(args[0]) == map_key(b.m, t) {
+    let k = args[0]
+    let find = b.map_find(t)
+    let hash = b.hash_func(map_key(b.m, t))
+    let h = b.call(hash, it, "", [k])
+    let idx = b.call(find, it, "", [recv, k, h])
+    return b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)])
+  }
+  -1
+}
+
+/// A call of an interface method: on a value of a type parameter
+/// constrained by an interface, on an interface value, or on a value of
+/// Error, Display, or Debug (ifaceCall).
+fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
+  let (_, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let fname = b.obj_name(fo)
+  let nt = b.nat_of(x)
+  if ci.recv.is_empty() {
+    b.unsupported("the interface method `${b.c.display_name(fo)}`")
+    return b.undef(nt)
+  }
+  let recv = ci.recv[0]
+  let ct = b.nat_check(recv)
+  let v = b.expr(recv)
+  let st = b.str_t()
+  let vt = b.vty(v)
+  if b.is_dyn(vt) && args.is_empty() {
+    if fname == "debug" {
+      return b.dyn_debug(b.const_str(""), v)
+    }
+    if fname == "display" {
+      return b.add(Op.Field, st, Aux.I(n: 0), [v])
+    }
+    b.unsupported("the interface method `${b.c.display_name(fo)}` of an interface value")
+    return b.undef(nt)
+  }
+  // the arguments, against the interface method's parameters
+  var pts: List[Int] = []
+  if b.is_iface(vt) {
+    let j = b.m.field_index(vt, fname)
+    if j < 0 {
+      b.unsupported("the interface method `${b.c.display_name(fo)}` of `${b.c.show(ct)}`")
+      return b.undef(nt)
+    }
+    pts = b.m.types[b.m.types[vt].fields[j].ty].elems
+  } else {
+    let sub = b.iface_subst(ci, fo)
+    for p in b.c.objs[fo].params {
+      pts.push(b.typ(b.apply(b.c.subst(p.ty, sub))))
+    }
+  }
+  let fparams = b.c.objs[fo].params
+  let exprs = arg_exprs(fparams, args)
+  var vals: List[Int] = []
+  for (i, e) in exprs.indexed() {
+    if e == None || fparams[i].is_var || i >= pts.len() {
+      b.unsupported("a call of the interface method `${b.c.display_name(fo)}` with a missing or `var` argument")
+      return b.undef(nt)
+    }
+    vals.push(b.value_as(e ?? fault("arg"), pts[i]))
+  }
+  var to_err = -1
+  if b.c.objs[fo].err >= 0 {
+    let (_, et) = b.result_parts(b.nat_check(x))
+    to_err = et
+  }
+  let r = b.method_on(fname, ct, v, vals, nt, b.fail_err(to_err), Some(x))
+  b.call_result(r, x)
+}
+
+/// The type parameters of the interface declaring the method fo mapped to
+/// the type arguments of the call ci (ifaceSubst).
+fn (var b: Builder) iface_subst(ci: check.CallInfo, fo: Int) -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  for tp in b.c.objs[b.c.objs[fo].recv].tparams {
+    if let Some(a) = ci.subst.get(tp) {
+      out[tp] = a
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Values of Error, Display, and Debug (build_show.go)
+
+/// Converts v, of checker type ct, to a value of the interface iface (its
+/// Display text, or for Debug a type's Debug text when it has no Display)
+/// (toDyn).
+fn (var b: Builder) to_dyn(v: Int, ct0: Int, iface: Str) -> Int {
+  let vt = b.vty(v)
+  if b.is_dyn(vt) {
+    return v
+  }
+  let st = b.str_t()
+  var acc = b.const_str("")
+  let ct = b.c.resolve(ct0)
+  if iface == "Debug" && !b.displayable(ct) {
+    let m = b.method_of(ct, "debug")
+    if m >= 0 {
+      let r = b.call_method(m, ct, v)
+      acc = b.call("str.concat", st, "", [acc, r])
+    } else {
+      acc = b.append_debug(acc, v, ct)
+    }
+  } else {
+    acc = b.append_display(acc, v, ct)
+  }
+  var raw = false
+  if b.tkind(vt) is Kind.Int | Kind.Float | Kind.Bool {
+    raw = !b.is_prelude_named(ct, ["Duration", "Time"])
+  }
+  var dbg = b.const_str("")
+  if b.is_prelude_named(ct, ["Str", "Rune"]) || b.is_iface(vt) || b.method_of(ct, "display") >= 0 {
+    dbg = b.append_debug(dbg, v, ct)
+  }
+  let rv = b.cbool(raw)
+  b.add(Op.Struct, b.dyn_type(), Aux.None, [acc, rv, dbg])
+}
+
+/// acc and the Debug text of the interface value v (xo.dyn): its dbg text,
+/// or its text when dbg is empty (dynDebug).
+fn (var b: Builder) dyn_debug(acc: Int, v: Int) -> Int {
+  let st = b.str_t()
+  let it = b.int_t()
+  let dbg = b.add(Op.Field, st, Aux.I(n: 2), [v])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, st)
+  let n = b.call("Str.len", it, "", [dbg])
+  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [n, b.cint(0)])
+  let (yes, no) = b.branch(c)
+  b.s.cur = yes
+  let text = b.add(Op.Field, st, Aux.I(n: 0), [v])
+  b.jump(join, [b.call("str.concat", st, "", [acc, text])])
+  b.s.cur = no
+  b.jump(join, [b.call("str.concat", st, "", [acc, dbg])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// Whether values of ct have Display text of their own, not their Debug
+/// text (displayable).
+fn (var b: Builder) displayable(ct: Int) -> Bool {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return false
+  }
+  if b.is_prelude_mod(b.obj_mod(o)) && (b.obj_name(o) is "Int" | "Int64" | "Float" | "Bool" | "Str" | "Duration" | "Time") {
+    return true
+  }
+  if b.c.objs[o].tkind == "interface" {
+    return true
+  }
+  b.method_of(ct, "display") >= 0
+}
+
+// ---------------------------------------------------------------------------
+// Method values (build_expr.go selector, check.Info.MethodValueLit)
+
+/// The closure a method value `recv.method` stands for (decision 0109):
+/// `fn(p0, p1, ...) { r.method(p0, p1, ...) }` over the receiver's value
+/// r now. The checker's literal is made here as check.MethodValueLit
+/// makes it, with its records, at offsets past every source file's, so
+/// the call inside lowers as any call. -1 when e is not a method value.
+fn (var b: Builder) method_value(e: Expr) -> Int {
+  let (x, sel, sp) = match e {
+    SelectorExpr(span: span, x: x, sel: sel) => (x, sel, span)
+    _ => return -1
+  }
+  let f = b.s.file
+  let fo = b.c.ref_of(f, sel)
+  if fo < 0 || b.c.objs[fo].recv < 0 || b.c.objs[fo].is_static || b.c.objs[fo].recv_var {
+    return -1
+  }
+  var ft = b.c.type_in(f, e)
+  if ft < 0 || b.c.tys[b.c.resolve(ft)].kind != check.TyKind.Func {
+    ft = b.c.nat_in(f, e)
+  }
+  var rt = b.c.nat_in(f, x)
+  if rt < 0 {
+    rt = b.c.type_in(f, x)
+  }
+  if ft < 0 || rt < 0 || b.c.tys[b.c.resolve(ft)].kind != check.TyKind.Func {
+    return -1
+  }
+  let fx = b.c.tys[b.c.resolve(ft)]
+  let ekey = b.c.expr_key_in(f, e)
+  let sm = b.c.ref_subst.get(ekey) ?? {}
+  // the nodes, at offsets of their own (base + 0: the receiver, 1: the
+  // selector, 2: the call, 3: the literal, 4..: the parameters)
+  let base = 1000000 + 16 * b.nsyn
+  b.nsyn += 1
+  let xsp = parser.expr_span(x)
+  let rid = parser.Ident{span: syn_span(xsp, base), name: b"xo.recv"}
+  let recv = b.syn_local(b"xo.recv", rt)
+  b.c.decl_at[f * 268435456 + base] = recv
+  b.syn_type(f, Expr.Ident(id: rid), rt)
+  var lparams: List[parser.Param] = []
+  var cargs: List[parser.Arg] = []
+  var pvars: List[Int] = []
+  for (k, p) in fx.args.indexed() {
+    let name = "xo.p${k}".bytes()
+    let pv = b.syn_local(name, p)
+    pvars.push(pv)
+    let id = parser.Ident{span: syn_span(sp, base + 4 + k), name: name}
+    b.c.decl_at[f * 268435456 + base + 4 + k] = pv
+    lparams.push(parser.Param{span: sp, name: id})
+    let aid = Expr.Ident(id: id)
+    b.syn_type(f, aid, p)
+    cargs.push(parser.Arg{span: sp, name: None, value: aid})
+  }
+  let sel_e = Expr.SelectorExpr(span: syn_span(sp, base + 1), x: Expr.Ident(id: rid), sel: sel)
+  let call = Expr.CallExpr(span: syn_span(sp, base + 2), fun: sel_e, args: cargs)
+  var res = fx.result
+  if res < 0 {
+    res = b.c.unit_ty
+  }
+  var call_t = res
+  if fx.err >= 0 && !b.c.is_never(fx.err) {
+    call_t = b.c.mk_named(b.c.prelude_obj("Result"), [res, fx.err])
+  }
+  b.syn_type(f, call, call_t)
+  b.c.call_infos[b.c.expr_key_in(f, call)] = check.CallInfo{fn_obj: fo, recv: [Expr.Ident(id: rid)], subst: sm}
+  let body = parser.Block{span: sp, stmts: [Stmt.ExprStmt(span: sp, x: call)]}
+  let lit = parser.FnLit{span: syn_span(sp, base + 3), params: lparams, body: body}
+  let le = Expr.FnLit(f: lit)
+  b.syn_type(f, le, ft)
+  b.c.closure_vars[b.c.key_in(f, lit.span, 30)] = pvars
+  b.write_var(recv, b.expr(x))
+  b.closure(le, lit)
+}
+
+/// The span of a node made up at offset off, with sp's lines and columns.
+fn syn_span(sp: Span, off: Int) -> Span {
+  Span{start: parser.Pos{offset: off, line: sp.start.line, col: sp.start.col}, end: parser.Pos{offset: off + 1, line: sp.end.line, col: sp.end.col}}
+}
+
+/// A local binding of the checker made up for a method value's literal.
+fn (var b: Builder) syn_local(name: Bytes, t: Int) -> Int {
+  let o = b.c.objs.len()
+  b.c.objs.push(check.Obj{kind: check.ObjKind.Local, name: name, local: "let", ty: t, used: true})
+  o
+}
+
+/// Records t as the type of the made up expression e of file f, before
+/// and after conversion.
+fn (var b: Builder) syn_type(f: Int, e: Expr, t: Int) {
+  let key = b.c.expr_key_in(f, e)
+  let sp = parser.expr_span(e)
+  b.c.type_at[key] = b.c.types.len()
+  b.c.types.push(check.TypeRec{file: f, start: sp.start.offset, end: sp.end.offset, sline: sp.start.line, scol: sp.start.col, eline: sp.end.line, ecol: sp.end.col, kind: "", ty: t})
+  b.c.nat_at[key] = t
+}
+
+// ---------------------------------------------------------------------------
+// Equality and order helpers (build_map.go)
+
+/// `l == r` (structural; Str through str.eq) (eqValues).
+fn (var b: Builder) eq_values(l: Int, r: Int) -> Int {
+  let bt = b.bool_t()
+  if b.tkind(b.vty(l)) == Kind.Str {
+    return b.call("str.eq", bt, "", [l, r])
+  }
+  b.add(Op.Eq, bt, Aux.None, [l, r])
+}
+
+/// Returns from the generated function under construction with false when
+/// c does not hold (eqColl's no).
+fn (var b: Builder) ret_false_unless(c: Int) {
+  let bt = b.bool_t()
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [c]))
+  b.retv(b.cbool(false))
+  b.if_then_end(no, join)
+}
+
+/// `x == y` of two parts of a value that holds a Map or Set (eqColl's eq).
+fn (var b: Builder) eq_part(x: Int, y: Int) -> Int {
+  if b.holds_coll(b.vty(x), []) {
+    let f = b.eq_coll(b.vty(x))
+    return b.call(f, b.bool_t(), "", [x, y])
+  }
+  b.eq_values(x, y)
+}
+
+/// xo.eqc[T](a, b) -> Bool: `==` on a type that holds a Map or Set (or an
+/// interface value, or error frames): a Map or Set equals another with
+/// the same live entries in any order; the other types compare their
+/// parts (eqColl).
+fn (var b: Builder) eq_coll(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let name = "xo.eqc[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, t], [bt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let l = b.param(0)
+  let r = b.param(1)
+  let x = b.m.types[t]
+  if b.is_trace(t) {
+    b.retv(b.cbool(true))
+    b.finish_fn()
+    b.end(saved)
+    return name
+  }
+  if b.is_iface(t) {
+    b.retv(b.iface_equal(l, r))
+    b.finish_fn()
+    b.end(saved)
+    return name
+  }
+  if x.coll {
+    let kt = map_key(b.m, t)
+    let vt = map_val(b.m, t)
+    let ln = b.add(Op.Field, it, Aux.I(n: 4), [l])
+    let rn = b.add(Op.Field, it, Aux.I(n: 4), [r])
+    b.ret_false_unless(b.add(Op.Eq, bt, Aux.None, [ln, rn]))
+    let keys = b.add(Op.Field, x.fields[0].ty, Aux.I(n: 0), [l])
+    let vals = b.add(Op.Field, x.fields[1].ty, Aux.I(n: 1), [l])
+    let live = b.add(Op.Field, x.fields[2].ty, Aux.I(n: 2), [l])
+    let rvals = b.add(Op.Field, x.fields[1].ty, Aux.I(n: 1), [r])
+    let find = b.map_find(t)
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [keys])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+    let k = b.call("list.index", kt, "", [keys, i])
+    let hash = b.hash_func(kt)
+    let h = b.call(hash, it, "", [k])
+    let j = b.call(find, it, "", [r, k, h])
+    b.ret_false_unless(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
+    if b.tkind(vt) != Kind.Unit {
+      let a = b.call("list.index", vt, "", [vals, i])
+      let c = b.call("list.index", vt, "", [rvals, j])
+      b.ret_false_unless(b.eq_part(a, c))
+    }
+    b.if_then_end(no, join)
+    b.for_up_to_end(i, iv, head, exit)
+  } else if x.kind is Kind.Struct | Kind.Tuple {
+    for i in 0..b.num_fields(t) {
+      let ft = b.field_type(t, i)
+      let a = b.add(Op.Field, ft, Aux.I(n: i), [l])
+      let c = b.add(Op.Field, ft, Aux.I(n: i), [r])
+      b.ret_false_unless(b.eq_part(a, c))
+    }
+  } else if x.kind == Kind.Box {
+    let et = x.elems[0]
+    let a = b.add(Op.Unbox, et, Aux.None, [l])
+    let c = b.add(Op.Unbox, et, Aux.None, [r])
+    b.ret_false_unless(b.eq_part(a, c))
+  } else if x.kind == Kind.List {
+    let et = x.elems[0]
+    let n = b.call("list.len", it, "", [l])
+    b.ret_false_unless(b.add(Op.Eq, bt, Aux.None, [n, b.call("list.len", it, "", [r])]))
+    let iv = b.local()
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let a = b.call("list.index", et, "", [l, i])
+    let c = b.call("list.index", et, "", [r, i])
+    b.ret_false_unless(b.eq_part(a, c))
+    b.for_up_to_end(i, iv, head, exit)
+  } else if x.kind == Kind.Enum {
+    let tag = b.add(Op.Tag, it, Aux.None, [l])
+    b.ret_false_unless(b.add(Op.Eq, bt, Aux.None, [tag, b.add(Op.Tag, it, Aux.None, [r])]))
+    for (vi, vr) in x.variants.indexed() {
+      if vr.fields.is_empty() {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      for (fi, fl) in vr.fields.indexed() {
+        let a = b.add(Op.Payload, fl.ty, Aux.P(tag: vi, field: fi), [l])
+        let c = b.add(Op.Payload, fl.ty, Aux.P(tag: vi, field: fi), [r])
+        b.ret_false_unless(b.eq_part(a, c))
+      }
+      b.if_then_end(no, join)
+    }
+  }
+  b.retv(b.cbool(true))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// Whether cmp_func orders values of t (orderable).
+fn orderable(m: Module, t: Int, seen: List[Int]) -> Bool {
+  orderable_in(m, t, seen).0
+}
+
+fn orderable_in(m: Module, t: Int, seen0: List[Int]) -> (Bool, List[Int]) {
+  var seen = seen0
+  let x = m.types[t]
+  if seen.contains(t) || (x.kind == Kind.Struct && x.name == "xo.trace") {
+    return (true, seen)
+  }
+  seen.push(t)
+  match x.kind {
+    Unit | Int | Bool | Float | Str => return (true, seen)
+    Struct => {
+      if x.coll || x.name.starts_with("xo.iface[") {
+        return (false, seen)
+      }
+      for f in x.fields {
+        let (r, s2) = orderable_in(m, f.ty, seen)
+        seen = s2
+        if !r {
+          return (false, seen)
+        }
+      }
+      return (true, seen)
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          let (r, s2) = orderable_in(m, f.ty, seen)
+          seen = s2
+          if !r {
+            return (false, seen)
+          }
+        }
+      }
+      return (true, seen)
+    }
+    Tuple | List | Box => {
+      for e in x.elems {
+        let (r, s2) = orderable_in(m, e, seen)
+        seen = s2
+        if !r {
+          return (false, seen)
+        }
+      }
+      return (true, seen)
+    }
+    Cap | Func | Handle | Bad => {}
+  }
+  (false, seen)
+}
+
+/// Returns c from the generated function under construction when it is
+/// not 0 (cmpFunc's sub).
+fn (var b: Builder) cmp_sub(x0: Int, y0: Int) {
+  let it = b.int_t()
+  let x = b.unbox(x0)
+  let y = b.unbox(y0)
+  let name = b.cmp_func(b.vty(x))
+  let c = b.call(name, it, "", [x, y])
+  let (no, join) = b.if_then_begin(b.add(Op.Ne, b.bool_t(), Aux.None, [c, b.cint(0)]))
+  b.retv(c)
+  b.if_then_end(no, join)
+}
+
+/// Returns -1 when lt holds, then 1 when gt holds (cmpFunc's lt).
+fn (var b: Builder) cmp_lt(lt: Int, gt: Int) {
+  let (no, join) = b.if_then_begin(lt)
+  b.retv(b.cint(-1))
+  b.if_then_end(no, join)
+  let (no2, join2) = b.if_then_begin(gt)
+  b.retv(b.cint(1))
+  b.if_then_end(no2, join2)
+}
+
+/// xo.cmp[T](a, b) -> Int: -1, 0, or 1 as std/rt's Cmp orders two values
+/// of t (`<` on a derive Ord type, decision 0100), or "" for a type
+/// without an order here (cmpFunc).
+fn (var b: Builder) cmp_func(t: Int) -> Str {
+  if !orderable(b.m, t, []) {
+    return ""
+  }
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let name = "xo.cmp[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, t], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let l = b.param(0)
+  let r = b.param(1)
+  let x = b.m.types[t]
+  match x.kind {
+    Unit => {}
+    Struct | Tuple => {
+      if !b.is_trace(t) {
+        for i in 0..b.num_fields(t) {
+          let ft = b.field_type(t, i)
+          let a = b.add(Op.Field, ft, Aux.I(n: i), [l])
+          let c = b.add(Op.Field, ft, Aux.I(n: i), [r])
+          b.cmp_sub(a, c)
+        }
+      }
+    }
+    Int => {
+      let a = b.compare(Op.Lt, l, r)
+      let c = b.compare(Op.Gt, l, r)
+      b.cmp_lt(a, c)
+    }
+    Bool => {
+      let nl = b.add(Op.Not, bt, Aux.None, [l])
+      let a = b.add(Op.And, bt, Aux.None, [nl, r])
+      let nr = b.add(Op.Not, bt, Aux.None, [r])
+      let c = b.add(Op.And, bt, Aux.None, [l, nr])
+      b.cmp_lt(a, c)
+    }
+    Float => {
+      let ln = b.add(Op.Ne, bt, Aux.None, [l, l])
+      let rn = b.add(Op.Ne, bt, Aux.None, [r, r])
+      let (no, join) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [ln, rn]))
+      b.retv(b.cint(0))
+      b.if_then_end(no, join)
+      b.cmp_lt(rn, ln)
+      let a = b.add(Op.Lt, bt, Aux.None, [l, r])
+      let c = b.add(Op.Gt, bt, Aux.None, [l, r])
+      b.cmp_lt(a, c)
+    }
+    Str => {
+      let c = b.call("str.cmp", it, "", [l, r])
+      let a = b.add(Op.Lt, bt, Aux.None, [c, b.cint(0)])
+      let g = b.add(Op.Gt, bt, Aux.None, [c, b.cint(0)])
+      b.cmp_lt(a, g)
+    }
+    Box => b.cmp_sub(l, r)
+    List => {
+      let et = x.elems[0]
+      let ln = b.call("list.len", it, "", [l])
+      let rn = b.call("list.len", it, "", [r])
+      let n = b.call("Int.min", it, "", [ln, rn])
+      let iv = b.local()
+      let (i, head, exit) = b.for_up_to_begin(n, iv)
+      let a = b.call("list.index", et, "", [l, i])
+      let c = b.call("list.index", et, "", [r, i])
+      b.cmp_sub(a, c)
+      b.for_up_to_end(i, iv, head, exit)
+      let a2 = b.add(Op.Lt, bt, Aux.None, [ln, rn])
+      let c2 = b.add(Op.Gt, bt, Aux.None, [ln, rn])
+      b.cmp_lt(a2, c2)
+    }
+    Enum => {
+      let lt0 = b.add(Op.Tag, it, Aux.None, [l])
+      let rt0 = b.add(Op.Tag, it, Aux.None, [r])
+      let a = b.add(Op.Lt, bt, Aux.None, [lt0, rt0])
+      let c = b.add(Op.Gt, bt, Aux.None, [lt0, rt0])
+      b.cmp_lt(a, c)
+      for (vi, vr) in x.variants.indexed() {
+        if vr.fields.is_empty() {
+          continue
+        }
+        let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [lt0, b.cint(vi)]))
+        for (fi, fl) in vr.fields.indexed() {
+          let pa = b.add(Op.Payload, fl.ty, Aux.P(tag: vi, field: fi), [l])
+          let pc = b.add(Op.Payload, fl.ty, Aux.P(tag: vi, field: fi), [r])
+          b.cmp_sub(pa, pc)
+        }
+        b.if_then_end(no, join)
+      }
+    }
+    Cap | Func | Handle | Bad => {}
+  }
+  b.retv(b.cint(0))
+  b.finish_fn()
+  b.end(saved)
+  name
+}

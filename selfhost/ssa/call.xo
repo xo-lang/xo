@@ -76,8 +76,8 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
   }
   let fr = b.c.objs[fo].recv
   if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr)) {
-    b.unsupported("calls of interface methods")
-    return b.undef(b.nat_of(x))
+    // not a capability's method (those are lowered as std calls)
+    return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
   if b.is_std_mod(fm) {
@@ -284,7 +284,7 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
     }
   }
   let v = b.block(lit.body)
-  b.ret(v)
+  b.ret_at(v, Some(Expr.Block(b: lit.body)))
   b.finish_fn()
   b.end(saved)
 }
@@ -588,14 +588,38 @@ fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
     b.unsupported("the function `${b.c.display_name(fo)}` as a value")
     return b.undef(t)
   }
-  if !b.type_params(fo).is_empty() {
-    b.unsupported("a generic function as a value")
-    return b.undef(t)
+  // the type arguments: by matching the signature against the function
+  // type the value has here (the checker records none for a function)
+  var bound: Map[Int, Int] = {}
+  let nct = b.nat_check(e)
+  if nct >= 0 {
+    let fx = b.c.tys[b.c.resolve(nct)]
+    if fx.kind == check.TyKind.Func && fx.args.len() == b.c.objs[fo].params.len() {
+      for (i, p) in b.c.objs[fo].params.indexed() {
+        b.match_tparams(p.ty, fx.args[i], bound)
+      }
+      b.match_tparams(b.c.objs[fo].result, fx.result, bound)
+    }
   }
-  let key = "${fo}:${b.func_name(fo)}"
+  var targs: List[Int] = []
+  var names: List[Str] = []
+  for p in b.type_params(fo) {
+    let ta = bound.get(p) ?? -1
+    if ta < 0 {
+      b.unsupported("the generic function `${b.c.display_name(fo)}` as a value without type arguments")
+      return b.undef(t)
+    }
+    let at = b.apply(ta)
+    targs.push(at)
+    names.push(b.m.types[b.typ(at)].name)
+  }
+  var key = "${fo}:${b.func_name(fo)}"
+  if !names.is_empty() {
+    key = "${key}[${names.join(", ")}]"
+  }
   var w = b.thunks.get(key) ?? -1
   if w < 0 {
-    let callee = b.declare(fo, [])
+    let callee = b.declare(fo, targs)
     if !b.m.funcs[callee].var_params.is_empty() {
       b.unsupported("a function with `var` parameters as a value")
       return b.undef(t)
@@ -721,7 +745,7 @@ fn (var b: Builder) ret_ctor(x: Expr) -> Int {
   }
   if id.name == b"Err" {
     let v = b.expr(arg)
-    let ev = b.coerce_err(v, b.nat_check(arg), et)
+    let ev = b.coerce_err(v, b.nat_check(arg), et, Some(arg))
     return b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "Err")), [ev])
   }
   let ok = b.value_as(arg, b.typ(rt))
@@ -729,10 +753,10 @@ fn (var b: Builder) ret_ctor(x: Expr) -> Int {
 }
 
 /// Converts an error at a `?` or `Err` site (coerceErr).
-fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int) -> Int {
+fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int, at: Expr?) -> Int {
   let tt = b.typ(to)
   if b.vty(v) == tt || b.vop(v) == Op.Undef {
-    return b.coerce(v, tt)
+    return b.coerce_at(v, tt, at)
   }
   let fv = b.c.from_variant(to, from)
   if fv >= 0 {
@@ -740,8 +764,8 @@ fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int) -> Int {
     return b.variant(tt, check.text(b.c.objs[o].variants[fv].name), [v])
   }
   if b.is_dyn(tt) {
-    b.unsupported("an error converted to the Error interface")
-    return b.undef(tt)
+    // an error converted to the Error interface (`main ! Error`)
+    return b.to_dyn(v, from, "Error")
   }
   b.unsupported("converting the error `${b.m.types[b.vty(v)].name}` to `${b.m.types[tt].name}`")
   b.undef(tt)
@@ -790,7 +814,7 @@ fn (var b: Builder) try_expr(e: Expr) -> Int {
       b.unsupported("`?` on a Result in a function that cannot fail")
     } else {
       let ev = b.add(Op.Payload, b.m.types[vt].variants[fail_tag].fields[0].ty, Aux.P(tag: fail_tag, field: 0), [v])
-      let ce = b.coerce_err(ev, et, b.s.err_t)
+      let ce = b.coerce_err(ev, et, b.s.err_t, Some(e))
       let wi = b.m.variant_index(want, "Err")
       let fs = b.m.types[want].variants[wi].fields
       if fs.len() == 2 && fs[1].name == TRACE_FIELD {
@@ -1048,6 +1072,47 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
   }
   let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
   b.call_result(f0, x)
+}
+
+/// Binds the type parameters in pattern (a signature type) to the
+/// corresponding parts of actual (matchTParams).
+fn (var b: Builder) match_tparams(pattern: Int, actual0: Int, var bound: Map[Int, Int]) {
+  if pattern < 0 || actual0 < 0 {
+    return
+  }
+  let actual = b.c.resolve(actual0)
+  let p = b.c.tys[pattern]
+  let a = b.c.tys[actual]
+  match p.kind {
+    Param => {
+      if !bound.contains(p.obj) {
+        bound[p.obj] = actual
+      }
+    }
+    Named => {
+      if a.kind == check.TyKind.Named && a.obj == p.obj && a.args.len() == p.args.len() {
+        for i in 0..p.args.len() {
+          b.match_tparams(p.args[i], a.args[i], bound)
+        }
+      }
+    }
+    Tuple => {
+      if a.kind == check.TyKind.Tuple && a.args.len() == p.args.len() {
+        for i in 0..p.args.len() {
+          b.match_tparams(p.args[i], a.args[i], bound)
+        }
+      }
+    }
+    Func => {
+      if a.kind == check.TyKind.Func && a.args.len() == p.args.len() {
+        for i in 0..p.args.len() {
+          b.match_tparams(p.args[i], a.args[i], bound)
+        }
+        b.match_tparams(p.result, a.result, bound)
+      }
+    }
+    Var | Bad | EffArg => {}
+  }
 }
 
 /// The type of parameter value p of function fi (which may be the

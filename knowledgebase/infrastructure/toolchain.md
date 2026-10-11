@@ -109,7 +109,7 @@ XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # p
 go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc|all] [--each] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times (decision 0150; last verified: 2026-10-10)
 go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder, stage 1: the build stage of xo ssadump for the functions it completes, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK like the checker (last verified: 2026-10-10)
 go run ./cmd/xo build --backend=llvm -o .tools/xossa selfhost/ssa   # native build of the Xo SSA builder (also --backend=arm64; the LLVM build links for about 10 minutes)
-go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm; go and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), and 400 code mutations (TestSelfhostSSAMutations, not under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-10)
+go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm; go and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), and 400 code mutations (TestSelfhostSSAMutations, not under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
@@ -814,11 +814,12 @@ selfhost/check/         the checker in Xo, stages 1 to 8 and module loading (dec
                         deps.xo (dependency rules, deny rules, effect ceilings), main.xo (CLI), check_test.xo,
                         info.xo (the records the SSA builder reads: natural types, constructors, calls,
                         patterns, parameter bindings; native mode loads std/native, decision 0150)
-selfhost/ssa/           the SSA builder in Xo, stage 1 of decision 0150: ir.xo (types, values, blocks,
+selfhost/ssa/           the SSA builder in Xo, stages 1 and 2 of decision 0150: ir.xo (types, values, blocks,
                         functions as tables; the printer), build.xo (types, functions and generics, Braun
                         SSA construction, checks after calls, generated functions), expr.xo, stmt.xo,
                         call.xo (calls, closures, `?`, std calls), show.xo (Display and Debug text, error
-                        frames, sized integers), main.xo (CLI)
+                        frames, sized integers), iface.xo (interface values, Error/Display/Debug values,
+                        method values, equality and order helpers), map.xo (Map and Set), main.xo (CLI)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)

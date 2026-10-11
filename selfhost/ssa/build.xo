@@ -121,6 +121,19 @@ pub struct Builder {
   nvar: Int = 0
   /// The constants of heap types built so far (build_int.go constValue).
   consts: Map[Int, Int] = {}
+  /// The interface types lowered as xo.iface[I], by SSA type: their
+  /// checker type (build_iface.go ifaces).
+  ifaces: Map[Int, Int] = {}
+  /// The numbers of the concrete types held by interface values (tids).
+  tids: Map[Str, Int] = {}
+  /// Method values made so far (each a literal at offsets of its own).
+  nsyn: Int = 0
+  /// Some construct was skipped so far: the Go builder lowered code there
+  /// that this builder did not, which may have numbered interface types
+  /// (tids) and queued bodies, so type numbers given from then on may
+  /// differ from the Go builder's (late_tids).
+  skipped_any: Bool = false
+  late_tids: Map[Int, Bool] = {}
 }
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
@@ -220,6 +233,7 @@ fn (var b: Builder) pos_line(sp: Span) -> Str {
 /// Records a construct outside the stages ported: the function being
 /// built (or declared) is not compared.
 fn (var b: Builder) unsupported(what: Str) {
+  b.skipped_any = true
   if b.declaring {
     if b.pend_skip.is_empty() {
       b.pend_skip = what
@@ -555,10 +569,11 @@ fn (var b: Builder) named_type(t: Int) -> Int {
     return st
   } else if tk == "interface" {
     if b.dyn_iface(obj) {
+      // its text (build_show.go)
       return b.dyn_type()
     }
-    b.unsupported("the interface type `${name}`")
-    return b.poison(name)
+    // function values over the concrete value (iface.xo)
+    return b.iface_type(t, obj)
   }
   b.unsupported("the type `${b.c.show(t)}`")
   b.poison(b.c.show(t))
@@ -1127,7 +1142,7 @@ fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
   }
   if let Some(body) = fd.body {
     let v = b.block(body)
-    b.ret(v)
+    b.ret_at(v, Some(Expr.Block(b: body)))
   }
   b.finish_fn()
   b.end(saved)
@@ -1647,6 +1662,12 @@ fn (var b: Builder) is_dead() -> Bool {
 
 /// Returns v and the updated `var` parameters (ret).
 fn (var b: Builder) ret(v0: Int) {
+  b.ret_at(v0, None)
+}
+
+/// ret of the value of the expression at (an implicit conversion reads
+/// its type).
+fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
   let want = b.s.f.results[0]
   if b.is_dead() {
     b.add(Op.Unreachable, -1, Aux.None, [])
@@ -1657,11 +1678,11 @@ fn (var b: Builder) ret(v0: Int) {
   if b.s.err_t >= 0 {
     if b.vty(v) != want {
       let ok = b.m.variant_index(want, "Ok")
-      let c = b.coerce(v, b.m.types[want].variants[ok].fields[0].ty)
+      let c = b.coerce_at(v, b.m.types[want].variants[ok].fields[0].ty, at)
       v = b.add(Op.Variant, want, Aux.I(n: ok), [c])
     }
   } else {
-    v = b.coerce(v, want)
+    v = b.coerce_at(v, want, at)
   }
   var args = [v]
   for vo in b.s.var_params {

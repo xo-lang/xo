@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Self hosting: SSA stage 2 (decision 0150): selfhost/ssa lowers
+  interface values and calls, Error/Display/Debug values, method values,
+  `derive Ord` comparisons, and the generated equality and order helpers
+  exactly as internal/ssa does (0 differences, three backends).
+- arm64 backend: a function past 1 MiB of code failed to assemble
+  (`b.hs` to a fault stub out of range); its conditional branches now
+  go through an unconditional `b` as tbz already did.
 - arm64 backend: an overflow fault of `c + x` (constant left) named the
   operands swapped (`6 + 9223372036854775807`); it follows the source
   order, as on the Go and LLVM backends. Found by `progen.Arith`, now

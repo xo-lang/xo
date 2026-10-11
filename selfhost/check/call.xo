@@ -628,6 +628,9 @@ fn (var c: Checker) field_of(bt: Int, span: Span, x: Expr, sel: Ident, place: Bo
         return c.bad_ty
       }
       let fs = c.fresh_subst(m, sm, [], false, span)
+      // the substitution of a method value (check.go rec.subst, read
+      // by the SSA builder's method values)
+      c.ref_subst[c.key_of(span, 19)] = fs
       return c.subst(c.sig_of(m), fs)
     }
   }

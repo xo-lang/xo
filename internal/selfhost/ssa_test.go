@@ -31,11 +31,16 @@ import (
 //
 // Functions the Xo builder skips (a construct of a later stage) or never
 // declares (the callees of skipped code) are counted, not compared. The
-// coverage is logged. -short uses the go backend and every 25th run.
+// coverage is logged. -short uses the go backend and every 25th run;
+// XO_SELFHOST_BACKEND names one backend.
 func TestSelfhostSSA(t *testing.T) {
 	backends := []string{"go", "arm64", "llvm"}
 	if testing.Short() {
 		backends = []string{"go"}
+	}
+	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
+		// one backend (a development loop)
+		backends = []string{v}
 	}
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)

@@ -141,7 +141,7 @@ fn rejected(c: check.Checker) -> Bool {
 /// is skipped too.
 pub fn (var b: Builder) dump(all: Bool) -> Str {
   for i in 0..b.m.funcs.len() {
-    if b.m.funcs[i].skip.is_empty() && b.m.func_text(b.m.funcs[i]).contains("<unsupported: ") {
+    if b.m.funcs[i].skip.is_empty() && b.m.has_poison(b.m.funcs[i]) {
       b.m.funcs[i].skip = "a type outside the stages ported"
     }
     // the closures of a function the builder skipped: the Go builder

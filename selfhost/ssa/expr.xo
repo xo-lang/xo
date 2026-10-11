@@ -57,8 +57,15 @@ fn (var b: Builder) expr_never(e: Expr) -> Bool {
   t >= 0 && b.c.is_never(t)
 }
 
-/// Converts v to t: the implicit `T` to `Option[T]` (coerce).
+/// Converts v to t: the implicit `T` to `Option[T]` (coerce, at no
+/// expression).
 fn (var b: Builder) coerce(v: Int, t: Int) -> Int {
+  b.coerce_at(v, t, None)
+}
+
+/// Converts v, the value of the expression at (when there is one), to t:
+/// the implicit `T` to `Option[T]`, and a value to an interface (coerce).
+fn (var b: Builder) coerce_at(v: Int, t: Int, at: Expr?) -> Int {
   let vt = b.vty(v)
   if vt != t && b.is_dead() {
     return b.undef(t)
@@ -71,7 +78,7 @@ fn (var b: Builder) coerce(v: Int, t: Int) -> Int {
   }
   let tk = b.tkind(t)
   if tk == Kind.Box {
-    let inner = b.coerce(v, b.m.types[t].elems[0])
+    let inner = b.coerce_at(v, b.m.types[t].elems[0], at)
     return b.add(Op.Box, t, Aux.None, [inner])
   }
   if tk == Kind.Enum {
@@ -87,23 +94,86 @@ fn (var b: Builder) coerce(v: Int, t: Int) -> Int {
   if tk == Kind.Unit {
     return b.unit()
   }
+  if let Some(e) = at {
+    // a value converted to an interface (core 2.10), or wrapped in Some
+    // as one
+    let ct = b.value_check(e)
+    if ct < 0 {
+      b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}` here")
+      return b.undef(t)
+    }
+    if b.is_iface(t) {
+      return b.to_iface(v, ct, t, at)
+    }
+    if b.is_dyn(t) && !b.is_dyn(vt) {
+      return b.to_dyn(v, ct, b.iface_name(e))
+    }
+    if tk == Kind.Enum {
+      let i = b.m.variant_index(t, "Some")
+      if i >= 0 && b.m.types[t].variants[i].fields.len() == 1 && b.is_iface(b.m.types[t].variants[i].fields[0].ty) {
+        let iv = b.to_iface(v, ct, b.m.types[t].variants[i].fields[0].ty, at)
+        return b.add(Op.Variant, t, Aux.I(n: i), [iv])
+      }
+    }
+  }
   b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}`")
   b.undef(t)
+}
+
+/// The checker type of the value e evaluates to before implicit
+/// conversion: of a block, its last expression's (valueCheck); -1 for
+/// none.
+fn (var b: Builder) value_check(e0: Expr) -> Int {
+  var e = e0
+  while true {
+    match e {
+      ParenExpr(x: x, ..) => {
+        e = x
+        continue
+      }
+      Block(bl) => {
+        let n = bl.stmts.len()
+        if n > 0 {
+          if let ExprStmt(x: x, ..) = bl.stmts[n - 1] {
+            e = x
+            continue
+          }
+        }
+        return -1
+      }
+      _ => {}
+    }
+    if b.c.nat_in(b.s.file, e) < 0 && b.c.type_in(b.s.file, e) < 0 {
+      return -1
+    }
+    return b.nat_check(e)
+  }
+  -1
+}
+
+/// The name of the prelude interface e is converted to in its context
+/// ("Debug" for a log field), "Display" otherwise (ifaceName).
+fn (var b: Builder) iface_name(e: Expr) -> Str {
+  let o = b.named_obj(b.check_type(e))
+  if o >= 0 && b.c.objs[o].tkind == "interface" {
+    return b.obj_name(o)
+  }
+  "Display"
 }
 
 /// e in its context type (value).
 fn (var b: Builder) value(e: Expr) -> Int {
   let v = b.expr(e)
-  b.coerce(v, b.type_of(e))
+  b.coerce_at(v, b.type_of(e), Some(e))
 }
 
 fn (var b: Builder) value_as(e: Expr, t: Int) -> Int {
   let v = b.expr(e)
   if b.is_dyn(t) && !b.is_dyn(b.vty(v)) && b.vop(v) != Op.Undef {
-    b.unsupported("a value converted to Error, Display, or Debug")
-    return b.undef(t)
+    // a concrete value converted to Error, Display, or Debug
+    return b.to_dyn(v, b.nat_check(e), b.iface_name(e))
   }
-  b.coerce(v, t)
+  b.coerce_at(v, t, Some(e))
 }
 
 // ---------------------------------------------------------------------------
@@ -536,14 +606,12 @@ fn (var b: Builder) selector(e: Expr) -> Int {
     }
   }
   if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv >= 0 && !b.c.objs[r].is_static && b.c.type_in(b.s.file, x) >= 0 {
-    // a closure over the receiver's value (decision 0109), outside stage
-    // 1: its function takes the next closure name, as on the Go builder
-    b.unsupported("a method value")
-    b.nclos += 1
-    let t = b.nat_of(e)
-    let fi = b.m.new_func("${b.s.f.name}.fn${b.nclos}", [], [t])
-    b.m.funcs[fi].skip = "a method value"
-    return b.undef(t)
+    // a method value: a closure over the receiver's value now (decision
+    // 0109)
+    let v = b.method_value(e)
+    if v >= 0 {
+      return v
+    }
   }
   if sel.name == b"await" {
     let xct = b.nat_check(x)
@@ -866,7 +934,7 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     let (yes, no) = b.branch(c)
     b.s.cur = yes
     let pv = b.add(Op.Payload, b.m.types[ot].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [o])
-    b.jump(join, [b.coerce(pv, t)])
+    b.jump(join, [b.coerce_at(pv, t, Some(e))])
     b.s.cur = no
     let dv = b.value_as(y, t)
     b.jump(join, [dv])
@@ -875,9 +943,18 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     return res
   }
   if op == lexer.Kind.Eq || op == lexer.Kind.NotEq {
-    if b.to_lower_recv(x) != None && b.to_lower_recv(y) != None {
-      b.unsupported("`a.to_lower() == b.to_lower()`")
-      return b.undef(bt)
+    let lr = b.to_lower_recv(x)
+    let rr = b.to_lower_recv(y)
+    if lr != None && rr != None {
+      // compares without making the lowered strings (xo_str_eq_lower)
+      let st = b.str_t()
+      let lv = b.value_as(lr ?? fault("recv"), st)
+      let rv = b.value_as(rr ?? fault("recv"), st)
+      let eq = b.rt("str_eq_lower", bt, [lv, rv])
+      if op == lexer.Kind.NotEq {
+        return b.add(Op.Not, bt, Aux.None, [eq])
+      }
+      return eq
     }
   }
   let l = b.expr(x)
@@ -900,7 +977,7 @@ fn (var b: Builder) shift_count(e: Expr, t: Int) -> Int {
   if rt != t && b.tkind(rt) == Kind.Int && b.tkind(t) == Kind.Int {
     return b.add(Op.IntConv, t, Aux.None, [r])
   }
-  b.coerce(r, t)
+  b.coerce_at(r, t, Some(e))
 }
 
 /// `expect(x)` without a binding named expect (isExpect).
@@ -980,28 +1057,68 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
       return b.add(o, bt, Aux.None, [c, b.cint(0)])
     }
     Struct | Tuple | Enum | List | Unit => {
-      if (o == Op.Eq || o == Op.Ne) && b.m.types[lt].name == "native.http.Request" {
-        b.unsupported("`==` on `http.Request`")
-        return b.undef(bt)
+      if (o == Op.Eq || o == Op.Ne) && b.is_native_request(lt) {
+        // http.Request: its six fields; the route parameters and typed
+        // values of the implementation take no part in `==` (std/rt's
+        // XoEq)
+        var eq = -1
+        for (i, name) in REQUEST_FIELDS.indexed() {
+          let ft = b.field_type(lt, i)
+          if b.m.types[lt].fields[i].name != name {
+            b.unsupported("`==` on `http.Request`: its implementation's field ${i} is not `${name}`")
+            return b.undef(bt)
+          }
+          let fl = b.add(Op.Field, ft, Aux.I(n: i), [l])
+          let fr = b.add(Op.Field, ft, Aux.I(n: i), [r])
+          let e = b.compare_values(lexer.Kind.Eq, fl, fr)
+          if eq < 0 {
+            eq = e
+          } else {
+            eq = b.add(Op.And, bt, Aux.None, [eq, e])
+          }
+        }
+        if o == Op.Ne {
+          return b.add(Op.Not, bt, Aux.None, [eq])
+        }
+        return eq
       }
       if (o == Op.Eq || o == Op.Ne) && !b.comparable(lt, []) {
         b.unsupported("`==` on values of type `${b.m.types[lt].name}`, which hold functions or runtime handles")
         return b.undef(bt)
       }
       if b.holds_coll(lt, []) && (o == Op.Eq || o == Op.Ne) {
-        b.unsupported("`==` on values holding a Map or Set")
-        return b.undef(bt)
+        // a Map or Set is equal to another with the same entries in any
+        // order (decision 0074)
+        let f = b.eq_coll(lt)
+        let eq = b.call(f, bt, "", [l, r])
+        if o == Op.Ne {
+          return b.add(Op.Not, bt, Aux.None, [eq])
+        }
+        return eq
       }
       if o == Op.Eq || o == Op.Ne {
         return b.add(o, bt, Aux.None, [l, r])
       }
-      b.unsupported("ordering values of type `${b.m.types[lt].name}`")
-      return b.undef(bt)
+      // order (`derive Ord`): std/rt's Cmp
+      let name = b.cmp_func(lt)
+      if !name.is_empty() {
+        let c = b.call(name, b.int_t(), "", [l, r])
+        return b.add(o, bt, Aux.None, [c, b.cint(0)])
+      }
     }
     Cap | Func | Box | Handle | Bad => {}
   }
   b.unsupported("comparing values of type `${b.m.types[lt].name}`")
   b.undef(bt)
+}
+
+/// The fields of http.Request (std.md 4), the first ones of its native
+/// implementation (std/native/http.xo).
+const REQUEST_FIELDS = ["method", "path", "url", "headers", "body", "remote_ip"]
+
+/// Whether t is the native implementation of http.Request.
+fn (var b: Builder) is_native_request(t: Int) -> Bool {
+  b.tkind(t) == Kind.Struct && b.m.types[t].name == "native.http.Request" && b.m.types[t].fields.len() >= REQUEST_FIELDS.len()
 }
 
 /// Whether `==` on values of t lowers (comparable).
@@ -1120,13 +1237,13 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
     b.seal(else_b)
   }
   let tv = b.block(x.then)
-  b.arm_to(join, has_val, tv, t)
+  b.arm_to(join, has_val, tv, t, Some(Expr.Block(b: x.then)))
   b.s.cur = else_b
   if let Some(els) = x.els {
     let ev = b.expr(els)
-    b.arm_to(join, has_val, ev, t)
+    b.arm_to(join, has_val, ev, t, Some(els))
   } else {
-    b.arm_to(join, has_val, b.unit(), t)
+    b.arm_to(join, has_val, b.unit(), t, Some(e))
   }
   b.seal(join)
   b.s.cur = join
@@ -1139,9 +1256,9 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
   b.unit()
 }
 
-fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int) {
+fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int, at: Expr?) {
   if has_val {
-    let c = b.coerce(v, t)
+    let c = b.coerce_at(v, t, at)
     b.jump(join, [c])
   } else {
     b.jump(join, [])
@@ -1178,7 +1295,7 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
       }
       None => av = b.unit()
     }
-    b.arm_to(join, has_val, av, t)
+    b.arm_to(join, has_val, av, t, None)
     b.seal(next)
     b.s.cur = next
   }

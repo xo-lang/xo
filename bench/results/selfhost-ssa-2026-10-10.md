@@ -159,3 +159,52 @@ parameters in the caller's memory (decisions 0145, 0148).
    (7%) suggests whole elements are copied. Check whether `List_AtM` of a
    large struct copies it, and read fields through `List_RefM` when it
    does (internal/gen).
+
+# Stage 2: interfaces and dynamic values, 2026-10-11
+
+`selfhost/ssa/iface.xo` (about 1,000 lines): `xo.iface[I]` values (the
+conversion with its method, show, and equality functions, the type
+numbers, an interface value converted to another), calls of interface
+methods (on interface values, on values of a type parameter with an
+interface constraint, on Error, Display, and Debug values), the
+adaptation of a method's result to the interface's (`Ok` around a
+method that cannot fail, `from` conversion of its error), `xo.dyn` (a
+value converted to Error, Display, or Debug, `main ! Error`), method
+values (the checker's literal, decision 0109), `==` on values holding
+interface values and frames (`xo.eqc`), `derive Ord` order (`xo.cmp`),
+`==` on `http.Request`, generic named functions as values, and
+`a.to_lower() == b.to_lower()`. The rules added for the stage are in
+decision 0150 (type numbers given after skipped code are not compared).
+
+`TestSelfhostSSA`, go, arm64, and LLVM builds of the Xo builder, 0
+differences on all three:
+
+| functions (of the Go builder's 11,064 in the 305 runs both build) | stage 1 | stage 2 |
+|---|---|---|
+| identical | 5,866 | 6,380 |
+| skipped (a later stage) | 1,642 | 1,520 |
+| never declared (callees of skipped code) | 3,504 | 3,164 |
+
+Every stage 2 reason for skipping is gone but the Debug text of an
+Atomic (stage 5) and 13 functions whose interface type number was given
+after skipped code (all in programs with a Map, stage 3).
+`TestSelfhostSSAMutations` (400 mutations, go build): 298 built by both,
+101 rejected by both, 3,362 of 6,700 functions identical, 0
+differences.
+
+Speed, go build of the Xo builder (`--bench=10`, ms for 10 builds):
+selfhost/check 710 (Go builder) against 1,168 (1.65x); selfhost/ssa
+1,017 against 1,720 (1.69x).
+
+Found: the arm64 backend's conditional branches to fault stubs could
+not reach past 1 MiB of code (`b.hs Lf852_fault1: fixup value out of
+range`): the arm64 build of the Xo builder has a 280,000 instruction
+`Builder.std_call` (the large `var` receiver is copied in and out at
+every call). `farTests` now rewrites `b.cond`, `cbz`, and `cbnz` of such
+functions as it rewrote `tbz` (gotchas/arm64-tbz-range.md,
+`TestFarBranches`). A by value receiver read before its arguments
+(`b.c.show(b.impl_named(ct))`) faulted in the port, as in stage 1
+(gotchas/receiver-read-before-args.md). The test's poison detection
+matched a string constant holding the marker text (two functions of
+selfhost/ssa itself were skipped for it); it now looks at types and
+callee names.

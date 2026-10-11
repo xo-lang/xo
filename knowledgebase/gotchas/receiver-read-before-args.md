@@ -23,3 +23,8 @@ makes every Builder method `var`, which also avoids copying the builder
 (and the checker it holds) on every call. A regular expression over
 calls of by value methods whose arguments call `var` methods of the same
 value finds the pattern in a port. spec/core.md 5.2 states the order.
+
+Observed again 2026-10-11 (SSA stage 2): `b.c.show(b.impl_named(ct))`,
+the text of an interface value's concrete type, faulted the same way
+(`show` is a by value method of the checker, `impl_named` adds to its
+type table). selfhost/ssa iface.xo binds it first (`impl_text`).

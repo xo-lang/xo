@@ -9,7 +9,10 @@ build.go), `cmd/xo/ssadump.go` (hidden `xo ssadump`, test
 ssadump_test.go), the checker's native mode and records
 (`selfhost/check/info.xo`, load.xo `load_native`), and
 `internal/selfhost/ssa_test.go` (`TestSelfhostSSA`,
-`TestSelfhostSSAMutations`). Evidence:
+`TestSelfhostSSAMutations`). SSA stage 2 (interfaces and dynamic
+values, method values, `derive Ord` order, the generated equality and
+order helpers) implemented 2026-10-11 in `selfhost/ssa/iface.xo`, with
+the method value records of `selfhost/check` (`ref_subst`). Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -168,6 +171,35 @@ repository root):
 kind, an integer or Bool literal changed, a statement line dropped or
 doubled, a `?` removed) and applies the same rules to every mutation;
 one either checker rejects must be rejected by both.
+
+**Comparison rules of stage 2** (2026-10-11, interfaces and dynamic
+values: selfhost/ssa iface.xo), in addition to those of stage 1:
+
+- An interface value carries the number of its concrete type (the
+  `xo.tid` field, the `const` in its `xo.ifeq` function), given in build
+  order at the first conversion of that type. A construct the Xo
+  builder skips can hide conversions (and queued bodies) the Go builder
+  made, so a number the Xo builder gives after it first skipped
+  anything is not compared: the functions that use it are skipped
+  ("an interface value's type number given after skipped code").
+- Generated functions whose bodies declare functions (the method, show,
+  and equality functions of interface values, `xo.eqc`, `xo.cmp`, and
+  from stage 3 the map helpers and constants) are built when asked for,
+  as the Go builder's genFunc builds them, so the queue of bodies (and
+  with it the type numbers) is in the Go builder's order. Debug text,
+  slices, list concatenation, frame arguments, and zero functions stay
+  built after the current body (their bodies declare nothing).
+- A method value is the closure literal check.Info.MethodValueLit makes
+  (`fn(p0, ...) { xo.recv.m(p0, ...) }`); the Xo builder makes the same
+  literal with its checker records at offsets past every source file
+  (1,000,000 + 16 per method value, the lines and columns of the
+  selector), so the call in it lowers as any call. The Xo checker
+  records the substitution of a method value (`ref_subst`, the Go
+  checker's `rec.subst`).
+- A function holds a poison type when a value, result, or capture has
+  a type named `<unsupported: ...>` or a call or closure names one (the
+  function's text was searched before, which also matched a string
+  constant holding that text in selfhost/ssa's own dump code).
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

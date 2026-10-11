@@ -142,6 +142,9 @@ pub struct Checker {
   pub recv_var: Map[Int, Int] = {}
   pub param_vars: Map[Int, List[Int]] = {}
   pub closure_vars: Map[Int, List[Int]] = {}
+  /// The type arguments of a method used as a value, by the key of its
+  /// selector (check.go rec.subst, Info.RefSubst).
+  pub ref_subst: Map[Int, Subst] = {}
   seen: Map[Str, Bool] = {}
 }
 

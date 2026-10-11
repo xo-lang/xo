@@ -19,5 +19,13 @@ Fix: `internal/arm64/emit.go` (`farTests`) counts the instructions of
 each emitted function; past 7000 it rewrites every `tbz`/`tbnz` as the
 opposite test over an unconditional branch (`tbz x9, #63, Lf5_far1; b
 L; Lf5_far1:`). Functions under the limit are unchanged, so ordinary
-code keeps the one instruction test. If a function ever passes 1 MiB of
-code, `b.cond` and `cbz` need the same treatment.
+code keeps the one instruction test.
+
+Observed again 2026-10-11 for `b.cond` (19 bit offsets, 1 MiB): the
+arm64 build of the self hosted SSA builder (SSA stage 2) has a
+`Builder.std_call` of about 280,000 instructions (every call copies the
+large `var` receiver in and out, decision 0148 is not ported to arm64),
+and its overflow and index checks branch to fault stubs at the end of
+the function: `b.hs Lf852_fault1` out of range. `farTests` now also
+rewrites `b.cond`, `cbz`, and `cbnz` of a function past 240,000
+instructions (`farCondLimit`) the same way (`TestFarBranches`).

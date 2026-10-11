@@ -56,8 +56,7 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
     return b.call("str.concat", st, "", [acc, b.add(Op.Field, st, Aux.I(n: 0), [v])])
   }
   if b.is_iface(vt) {
-    b.unsupported("the text of an interface value")
-    return b.undef(st)
+    return b.iface_show_call(acc, v, false)
   }
   if b.is_prelude_named(ct, ["Secret"]) {
     return b.call("str.concat", st, "", [acc, b.const_str("<redacted>")])
@@ -130,9 +129,12 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   let bt = b.bool_t()
   let acc = b.param(0)
   let v = b.param(1)
-  if b.is_dyn(t) || b.is_iface(t) {
-    b.unsupported("the Debug text of an interface value")
-    b.retv(acc)
+  if b.is_dyn(t) {
+    b.retv(b.dyn_debug(acc, v))
+    return
+  }
+  if b.is_iface(t) {
+    b.retv(b.iface_show_call(acc, v, true))
     return
   }
   if b.is_fs(t) {

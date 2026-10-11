@@ -97,6 +97,12 @@ passes the full suite on the backends it targets.
   receivers (spec 5.2), and a Go backend cost (`==` on enums boxed both
   values). The LLVM build takes about 1.45 times the Go builder's time
   (bench/results/selfhost-ssa-2026-10-10.md).
+- 2026-10-11: SSA stage 2 of 8, interfaces and dynamic values (decision
+  0150): interface values and calls, Error/Display/Debug values, method
+  values, `derive Ord` order, the generated equality and order helpers;
+  6,380 of the Go builder's 11,064 functions identical (was 5,866), 0
+  differences on go, arm64, and LLVM builds and 400 mutations. Found an
+  arm64 assembler limit (conditional branches past 1 MiB of code).
 
 ## Alternatives
 

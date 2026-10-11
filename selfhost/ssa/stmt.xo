@@ -61,7 +61,7 @@ fn (var b: Builder) stmt(st: Stmt) {
         None => v = b.unit()
         Some(x) => v = b.expr(x)
       }
-      b.ret(v)
+      b.ret_at(v, value)
     }
     BreakStmt(label: label, ..) => b.break_to(label, true)
     ContinueStmt(label: label, ..) => b.break_to(label, false)

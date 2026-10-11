@@ -568,6 +568,36 @@ pub fn (m: Module) write_types(var b: StrBuilder) {
   }
 }
 
+/// Whether a type of f (of a value, a result, or a capture) holds a type
+/// the builder could not lower (poison): a type name, not a constant
+/// string that holds the text.
+pub fn (m: Module) has_poison(f: Func) -> Bool {
+  for v in f.values {
+    if v.ty >= 0 && m.types[v.ty].name.contains("<unsupported: ") {
+      return true
+    }
+    if v.op != Op.Const {
+      // a callee or closure named after one (`f[<unsupported: T>]`)
+      if let S(s) = v.aux {
+        if s.contains("<unsupported: ") {
+          return true
+        }
+      }
+    }
+  }
+  for t in f.results {
+    if m.types[t].name.contains("<unsupported: ") {
+      return true
+    }
+  }
+  for t in f.captures {
+    if m.types[t].name.contains("<unsupported: ") {
+      return true
+    }
+  }
+  false
+}
+
 /// The line of a named struct or enum type.
 pub fn (m: Module) type_line(t: Int) -> Str {
   let x = m.types[t]

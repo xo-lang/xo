@@ -255,13 +255,27 @@ func (s *fstate) emit() {
 // instructions), with a margin for the templates' estimate.
 const farTestLimit = 7000
 
+// farCondLimit is the number of instructions past which a function's
+// b.cond, cbz, and cbnz may not reach their targets (19 bit offsets: 1
+// MiB, 262144 instructions), with the same kind of margin.
+const farCondLimit = 240000
+
 // farTests rewrites every tbz and tbnz of a function longer than
-// farTestLimit instructions as the opposite test around an
-// unconditional branch, which reaches 128 MiB: `tbnz x9, #63, L`
-// becomes `tbz x9, #63, Lf3_far1; b L; Lf3_far1:`. Huge functions (a
-// main with thousands of list elements) otherwise fail to assemble with
-// "fixup value out of range" (gotchas/arm64-tbz-range.md).
+// farTestLimit instructions, and every b.cond, cbz, and cbnz of one
+// longer than farCondLimit, as the opposite test around an unconditional
+// branch, which reaches 128 MiB: `tbnz x9, #63, L` becomes `tbz x9, #63,
+// Lf3_far1; b L; Lf3_far1:`. Huge functions (a main with thousands of
+// list elements, the self hosted SSA builder's std_call) otherwise fail
+// to assemble with "fixup value out of range"
+// (gotchas/arm64-tbz-range.md).
 func (s *fstate) farTests(text string) string {
+	return farBranches(text, farTestLimit, farCondLimit, func(k int) string {
+		return s.g.local(fmt.Sprintf("f%d_far%d", s.g.nfunc, k))
+	})
+}
+
+// farBranches is farTests with its limits and labels given.
+func farBranches(text string, testLimit, condLimit int, label func(k int) string) string {
 	lines := strings.Split(text, "\n")
 	n := 0
 	for _, l := range lines {
@@ -269,7 +283,7 @@ func (s *fstate) farTests(text string) string {
 			n++
 		}
 	}
-	if n < farTestLimit {
+	if n < testLimit {
 		return text
 	}
 	var b strings.Builder
@@ -278,12 +292,28 @@ func (s *fstate) farTests(text string) string {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
+		if !strings.HasPrefix(l, "\t") {
+			b.WriteString(l)
+			continue
+		}
 		f := strings.Fields(l)
-		if len(f) == 4 && (f[0] == "tbz" || f[0] == "tbnz") && strings.HasPrefix(l, "\t") {
+		switch {
+		case len(f) == 4 && (f[0] == "tbz" || f[0] == "tbnz"):
 			k++
-			skip := s.g.local(fmt.Sprintf("f%d_far%d", s.g.nfunc, k))
+			skip := label(k)
 			op := map[string]string{"tbz": "tbnz", "tbnz": "tbz"}[f[0]]
 			fmt.Fprintf(&b, "\t%s %s %s %s\n\tb %s\n%s:", op, f[1], f[2], skip, f[3], skip)
+			continue
+		case n >= condLimit && len(f) == 3 && (f[0] == "cbz" || f[0] == "cbnz"):
+			k++
+			skip := label(k)
+			op := map[string]string{"cbz": "cbnz", "cbnz": "cbz"}[f[0]]
+			fmt.Fprintf(&b, "\t%s %s %s\n\tb %s\n%s:", op, f[1], skip, f[2], skip)
+			continue
+		case n >= condLimit && len(f) == 2 && strings.HasPrefix(f[0], "b.") && invCond[f[0][2:]] != "":
+			k++
+			skip := label(k)
+			fmt.Fprintf(&b, "\tb.%s %s\n\tb %s\n%s:", invCond[f[0][2:]], skip, f[1], skip)
 			continue
 		}
 		b.WriteString(l)

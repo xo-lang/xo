@@ -1,0 +1,23 @@
+// Map and Set (internal/ssa build_map.go): stage 3 of decision 0150.
+
+/// The key type of the Map or Set struct t (mapKey).
+fn map_key(m: Module, t: Int) -> Int {
+  m.types[m.types[t].fields[0].ty].elems[0]
+}
+
+/// The value type of the Map or Set struct t (mapVal).
+fn map_val(m: Module, t: Int) -> Int {
+  m.types[m.types[t].fields[1].ty].elems[0]
+}
+
+/// xo.map.find[T] (mapFind): stage 3.
+fn (var b: Builder) map_find(t: Int) -> Str {
+  b.unsupported("Map and Set")
+  "xo.map.find[${b.m.types[t].name}]"
+}
+
+/// xo.hash[T] (hashFunc): stage 3.
+fn (var b: Builder) hash_func(t: Int) -> Str {
+  b.unsupported("Map and Set")
+  "xo.hash[${b.m.types[t].name}]"
+}
