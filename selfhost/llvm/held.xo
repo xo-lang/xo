@@ -1,0 +1,15 @@
+// Values kept in the memory of a `var` parameter passed by reference
+// (held.go, decision 0148): stage 3 of decision 0166.
+
+/// A tracked memory: the pointer of a `var` parameter passed by
+/// reference that is the home of its LLVM type.
+struct HeldMem {
+  ptr: Str
+  lt: Str
+  param: Int
+}
+
+/// What the memories hold (heldInfo).
+struct Held {
+  mems: List[HeldMem] = []
+}

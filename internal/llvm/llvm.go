@@ -62,18 +62,8 @@ type Program struct {
 // builds SSA, verifies it, inserts reference counting, verifies again
 // (ownership balance included), and lowers to LLVM IR.
 func Generate(res *check.Result, opts Options) (*Program, error) {
-	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release})
+	m, err := PrepareSSA(res, opts)
 	if err != nil {
-		return nil, err
-	}
-	if err := m.Verify(); err != nil {
-		return nil, err
-	}
-	if opts.ShareProbes {
-		m.InsertShareProbes()
-	}
-	m.InsertRC()
-	if err := m.Verify(); err != nil {
 		return nil, err
 	}
 	prog, err := GenerateSSA(m)
@@ -91,6 +81,27 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 		}
 	}
 	return prog, nil
+}
+
+// PrepareSSA is the module GenerateSSA lowers for Generate: built,
+// verified, with reference counting inserted, and verified again
+// (`xo llvmdump --bench` times GenerateSSA alone on it, decision 0166).
+func PrepareSSA(res *check.Result, opts Options) (*ssa.Module, error) {
+	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.Verify(); err != nil {
+		return nil, err
+	}
+	if opts.ShareProbes {
+		m.InsertShareProbes()
+	}
+	m.InsertRC()
+	if err := m.Verify(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // definedAttrs are the attribute groups of generated function

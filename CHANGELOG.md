@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM emitter in Xo, stage 1 (decision 0166): `selfhost/llvm`
+  lowers the self hosted SSA module to the LLVM IR internal/llvm
+  prints, compared function by function and module by module through
+  the new hidden `xo llvmdump` (TestSelfhostLLVM,
+  TestSelfhostLLVMMutations); everything but parameters passed by
+  reference, 0 differences. The self hosted SSA builder now makes the
+  Debug text functions in the Go builder's order.
 - `xo get` and `xo mod accept-effects` refuse a version with an
   escape hatch (`use c`, impure `use go`) the main module does not
   vouch for (XO1316) before writing xo.mod or xo.lock; `--accept-effects`

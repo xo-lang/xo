@@ -115,11 +115,21 @@ fn (var b: Builder) lit(a: Int, text: Str) -> Int {
 }
 
 /// xo.debug[ct](acc: Str, v: T) -> Str: acc and the Debug text of v
-/// (debugFunc).
+/// (debugFunc). Built when asked for, as the Go builder's genFunc builds
+/// it: the functions its body declares (the Debug text of its parts)
+/// follow it in the module, which the LLVM emitter's output keeps
+/// (decision 0166).
 fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   let st = b.str_t()
   let name = "xo.debug[${b.c.show(ct)}]"
-  b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  let fi = b.m.new_func(name, [st, t], [st])
+  let saved = b.begin(fi, b.s.file)
+  b.debug_body(ct, t)
+  b.finish_fn()
+  b.end(saved)
   name
 }
 

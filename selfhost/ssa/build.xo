@@ -106,7 +106,6 @@ struct S {
 
 /// A generated function whose body is still to build (run_gens).
 enum Gen {
-  Debug(ct: Int, t: Int)
   Slice(lt: Int)
   Concat(t: Int)
   FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int])
@@ -2088,10 +2087,6 @@ fn (var b: Builder) run_gens() {
     i += 1
     let saved = b.begin(g.fi, g.file)
     match g.gen {
-      Debug(ct, t) => {
-        b.debug_body(ct, t)
-        b.finish_fn()
-      }
       Slice(lt) => {
         b.slice_body(lt)
         b.finish_fn()
