@@ -74,7 +74,7 @@ pub fn get_with_retry(
   url: Str,
   policy: RetryPolicy = RetryPolicy{},
 ) -> Bytes ! FetchErr
-  uses (net.dial, clock, rand)
+  uses (net.dial, clock, rand, log)
 {
   http.parse_url(url).map_err(fn(e) { FetchErr.InvalidUrl(msg: e.msg) })?
   let client = http.client(net)

@@ -174,7 +174,7 @@ pub fn purge_expired(db: sql.Db, now: Time) -> Int ! sql.SqlErr uses net.dial {
 
 /// Runs until cancelled. A failed purge is logged and retried next tick;
 /// a purge cut short by shutdown is not a failure.
-pub fn purge_loop(db: sql.Db, clock: Clock, every: Duration) uses (net.dial, clock) {
+pub fn purge_loop(db: sql.Db, clock: Clock, every: Duration) uses (net.dial, clock, log) {
   while {
     clock.sleep(every)
     match purge_expired(db, clock.now()) {
@@ -255,7 +255,7 @@ pub fn routes(db: sql.Db, clock: Clock, rand: Rand) -> http.Router uses (net.dia
 }
 
 /// Serves until the first stop signal, with the purge job in the background.
-pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock, rand) {
+pub fn run(os: Os, db: sql.Db, addr: Str) ! uses (net.listen, net.dial, clock, rand, log) {
   let l = os.net.listen(addr)?
   let srv = http.server(l, routes(db, os.clock, os.rand))
   // the bound address: the real port when addr asked for ":0"

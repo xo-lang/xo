@@ -522,7 +522,7 @@ fn (var c: Checker) resolve_err_spec(es: parser.ErrSpec?, var env: TypeEnv) -> I
 }
 
 fn is_effect_label(name: Str) -> Bool {
-  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "go"
+  name is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "log" | "go"
 }
 
 /// The effect set of effect labels and variables (decl.go
@@ -551,7 +551,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
         }
       }
     }
-    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "go"]
+    var cands = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "log", "go"]
     for (n, p) in env.params.entries() {
       if c.objs[p].effect {
         cands.push(text(n))
@@ -564,7 +564,7 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
         c.note(d, "did you mean `${s.join("`, `")}`?")
         c.fix(d, "replace with `${s[0]}`", [c.replace_edit(e.span, s[0])])
       } else {
-        c.note(d, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, go, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
+        c.note(d, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, log, go, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
       }
     }
   }

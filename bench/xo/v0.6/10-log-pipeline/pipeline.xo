@@ -202,7 +202,7 @@ fn (p: Pipeline) process(line: Str) {
 
 /// Reads lines into the queue until end of input or cancellation. `send`
 /// blocks while the queue is full, so input is never dropped.
-fn (p: Pipeline) feed[fx: Effects](read_line: fn() -> Str? ! IoErr uses fx) uses fx {
+fn (p: Pipeline) feed[fx: Effects](read_line: fn() -> Str? ! IoErr uses fx) uses fx, log {
   var in_hand: Str? = None
   defer {
     // Shielded: keep a line whose send was interrupted, and let the workers
@@ -252,7 +252,7 @@ fn (p: Pipeline) flush(out: Fs) -> Str ! FsErr uses fs {
   name
 }
 
-fn (p: Pipeline) flush_loop(out: Fs, clock: Clock) uses (fs, clock) {
+fn (p: Pipeline) flush_loop(out: Fs, clock: Clock) uses (fs, clock, log) {
   while {
     clock.sleep(p.cfg.flush_every)
     match p.flush(out) {
@@ -264,7 +264,7 @@ fn (p: Pipeline) flush_loop(out: Fs, clock: Clock) uses (fs, clock) {
 
 /// Runs after the workers have stopped: processes whatever is left, writes
 /// the final flush, and prints the summary.
-fn (p: Pipeline) finish(out: Fs, stdio: Stdio) uses (fs, stdio) {
+fn (p: Pipeline) finish(out: Fs, stdio: Stdio) uses (fs, stdio, log) {
   let spilled = p.spill.with(fn(xs) { xs })
   for line in spilled {
     p.process(line)
@@ -291,7 +291,7 @@ pub fn (p: Pipeline) run[fx: Effects](
   out: Fs,
   clock: Clock,
   stdio: Stdio,
-) uses (fx, fs, clock, stdio) {
+) uses (fx, fs, clock, stdio, log) {
   defer { p.finish(out, stdio) }
   scope s {
     for _ in 0..p.cfg.workers {

@@ -1,6 +1,6 @@
 # 0156: Supply-chain hardening
 
-Status: Proposed (2026-10-11), being implemented: items 1 to 4 done. Scope set
+Status: Proposed (2026-10-11), being implemented: items 1 to 4 and 6 done. Scope set
 by the owner on 2026-10-11:
 only the consumer's vouches count for `use c ... uses none`; an effect
 lock in xo.lock by default (`--accept-effects` to widen); capability
@@ -213,9 +213,11 @@ time, or not blocked, with the reason. Results:
 - `log.configure` keeps `uses stdio`. std's own records (a handler
   fault in `std/http`, `ignore_err`) stay attributed to std and are not
   the effect.
-- Attribution: on the Go backend a record written by code of a
-  required module carries the field `module=<path>@<version>`, so a
-  log line can always be traced to the dependency that wrote it.
+- Attribution: the `log` effect makes a dependency's logging visible in
+  its signatures, ceilings, the effect lock, and `xo audit`. Tagging
+  each emitted record with the dependency that wrote it is left for
+  later (it needs the code generator to thread the module into each log
+  call); it is not implemented.
 - Migration: XO0701 whose only missing effect is `log` on a function
   declaration carries a machine fix that adds `log` to its `uses`, so
   `xo fix` rewrites existing code.

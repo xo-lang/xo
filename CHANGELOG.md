@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Logging is the effect `log` (decision 0156): `std/log`'s `debug`,
+  `info`, `warn`, `error` perform `log`, so a `pub` function that logs
+  declares `uses log` (inferred for non-pub functions; `log.configure`
+  still `stdio`). std's own records stay ambient within std. XO0701 for
+  a missing `log` carries a fix, and `xo fix` added it across the repo's
+  programs. The effect label list in diagnostics and ceilings includes
+  `log`.
 - `xo audit [--json] [--no-gc] [<dir>]` (decision 0156): a supply chain
   report per dependency (effects, xo.lock effects state, ceiling, `use c`
   and impure `use go` with their vouches) plus this module's capability

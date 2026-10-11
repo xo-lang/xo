@@ -1,11 +1,11 @@
 // std/log (spec/std.md 6). Declaration file; encoding rules are listed at
-// the top of std/prelude.xo. Logging is ambient: no capability, no effect
-// (core 6.1), so only `configure` has a `uses` clause.
+// the top of std/prelude.xo. Logging performs the `log` effect
+// (core 6.1, decision 0156); `configure` performs `stdio`.
 
-fn debug(msg: Str, fields: Map[Str, Debug] = {})
-fn info(msg: Str, fields: Map[Str, Debug] = {})
-fn warn(msg: Str, fields: Map[Str, Debug] = {})
-fn error(msg: Str, fields: Map[Str, Debug] = {})
+fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn info(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn warn(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn error(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 
 enum Level {

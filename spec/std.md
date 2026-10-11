@@ -924,10 +924,12 @@ works without a struct.
 
 ## 6. std/log
 
-Ambient: no capability, not an effect (core 6.1).
+The log functions perform the `log` effect (core 6.1, decision 0156): no
+capability (there is nothing to pass from `main`), but a `pub` function
+that logs declares `uses log`. `configure` performs `stdio`, not `log`.
 
 ```
-pub fn debug(msg: Str, fields: Map[Str, Debug] = {})   // also info, warn, error
+pub fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log   // also info, warn, error
 pub fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 enum Level { Debug, Info, Warn, Error }
 enum Format { Text, Json }

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/token"
 )
@@ -14,6 +15,8 @@ var effectLabels = map[string]bool{
 	"net": true, "net.dial": true, "net.listen": true,
 	"fs": true, "fs.read": true, "fs.write": true,
 	"clock": true, "rand": true, "env": true, "proc": true, "stdio": true, "ffi": true,
+	// log: writing a std/log record (decision 0156); ambient before then
+	"log": true,
 	// go: a call into a Go package bound with `use go` (decision 0041)
 	"go": true,
 }
@@ -236,6 +239,10 @@ type effObligation struct {
 	// usesClause is the ` uses ...` clause of a closure, which a fix may
 	// remove so the closure's effects are inferred (decision 0087).
 	usesClause token.Span
+	// fnDecl is the function declaration of this obligation, if any:
+	// when only `log` is missing, a fix adds it to the `uses` clause
+	// (decision 0156).
+	fnDecl *ast.FnDecl
 }
 
 // solveEffects computes the effects of every inferred function by fixpoint
@@ -304,6 +311,9 @@ func (c *checker) solveEffects() {
 		d := c.errorf(diag.UndeclaredEffect, ob.span, "%s", msg)
 		if d == nil {
 			continue
+		}
+		if len(missing) == 1 && missing[0] == "log" && ob.fnDecl != nil {
+			c.addLogFix(d, ob.fnDecl)
 		}
 		c.elidedEffectNote(d, sub, sup, ob)
 		key0 := ""

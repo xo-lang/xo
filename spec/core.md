@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Logging is the effect `log`** (6.1, std.md 6, decision 0156): the
+  `std/log` functions perform `log`; a `pub` function that logs declares
+  `uses log`. `xo fix` adds it to existing code (XO0701 with a fix).
 - **`xo audit`** (10.1, decision 0156): per dependency effects, lock
   state, ceiling, escape hatches and vouches; attenuations and the
   capabilities passed into dependencies.
@@ -1645,14 +1648,25 @@ The builtin effects are:
 | `proc` | | Spawn processes, signals, exit |
 | `stdio` | | Standard input, output, error |
 | `ffi` | | Calls into C through `use c` (4.5, native builds) |
+| `log` | | Writing a `std/log` record (`debug`, `info`, `warn`, `error`) |
 
 A function with no `uses` clause is **pure**: it performs no capability
-effects. It may still allocate, fault, be cancelled, log, and use
+effects. It may still allocate, fault, be cancelled, and use
 synchronized state (`Mutex`, `Atomic`, `Chan`).
 
-Logging (`std/log`) is ambient: it needs no capability and is not an effect.
-Log output goes to the sink configured in `main` (standard error by default).
-It is recorded during record and replay like any other output.
+Logging (`std/log`) performs the `log` effect (decision 0156): a `pub`
+function that logs declares `uses log`, so a dependency's logging is
+visible in its signatures, a ceiling can forbid it, the effect lock
+catches an update that starts logging, and `xo audit` lists it. `log`
+needs no capability (there is nothing to pass from `main`); it is
+inferred for non `pub` functions like any effect, so `main` and helpers
+are unchanged. `log.configure` performs `stdio`, not `log`. std's own
+records (a handler fault, an `ignore_err`) stay attributed to std and do
+not make std functions perform `log`. Log output goes to the sink
+configured in `main` (standard error by default) and is recorded during
+record and replay like any other output. **[later]** Tagging each record
+with the dependency that wrote it is planned; the `log` effect already
+makes a dependency's logging visible in its signatures.
 
 Effect labels live in their own namespace: a parameter or module named `fs` or
 `net` does not conflict with the effect `fs` or `net`.
@@ -2679,7 +2693,7 @@ specified in `spec/std.md`. Modules:
 |---|---|
 | `std/http` | Router, server, client, requests, responses, middleware, error to status mapping |
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
-| `std/log` | Structured, ambient logging bound to spans |
+| `std/log` | Structured logging; performs the `log` effect (6.1) |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
 | `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13). Go backend only so far |
 | `std/testing` | Fake capability types, generators, captured logs |

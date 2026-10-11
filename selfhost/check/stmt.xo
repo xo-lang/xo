@@ -173,7 +173,8 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
   c.ctx = saved
   c.scopes = saved_scopes
   if c.objs[fo].declared >= 0 && fd.body != None {
-    c.obligations.push(EffOb{kind: ObKind.Decl, sub: body_eff, sup: c.objs[fo].declared, file: c.path, span: fd.name.span, fo: fo})
+    let (title, edits) = c.log_fix(fd)
+    c.obligations.push(EffOb{kind: ObKind.Decl, sub: body_eff, sup: c.objs[fo].declared, file: c.path, span: fd.name.span, fo: fo, log_title: title, log_edits: edits})
   }
 }
 
