@@ -263,7 +263,7 @@ func (p *onlyProc) admits(cmd string) bool {
 }
 
 func (p *onlyProc) M_exit(tk *Task, code int64) Never { return p.inner.M_exit(tk, code) }
-func (p *onlyProc) M_set_grace(tk *Task, d Duration) { p.inner.M_set_grace(tk, d) }
+func (p *onlyProc) M_set_grace(tk *Task, d Duration)  { p.inner.M_set_grace(tk, d) }
 
 func (p *onlyProc) M_run(tk *Task, cmd string, args List[string]) Result[ProcOutput, ProcErr] {
 	if !p.admits(cmd) {

@@ -98,7 +98,7 @@ func TestVouchesC(t *testing.T) {
 	}
 	for _, tc := range []struct{ vouch, want string }{
 		{"vouch github.com/acme/cz v1.0.0 c \"tiny.h\" uses none", ""},
-		{"vouch github.com/acme/cz v1.0.0 c \"tiny.h\"", "XO0701"},       // the consumer says ffi
+		{"vouch github.com/acme/cz v1.0.0 c \"tiny.h\"", "XO0701"},          // the consumer says ffi
 		{"vouch github.com/acme/cz v1.0.0 c \"tiny.h\" uses net", "XO0701"}, // the consumer disagrees
 	} {
 		os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\n"+tc.vouch+"\n"), 0o644)
