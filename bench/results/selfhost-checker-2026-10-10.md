@@ -959,3 +959,40 @@ Restricted to enum parameters, which are never updated in place:
 
 7% faster; kept. Output identical on the 627 repository runs (three
 backends; the RC change reaches arm64 too).
+
+## Where the three experiments leave the checker
+
+20 runs, best of two rounds, ms per run (Apple M4 Pro; same session for
+every column):
+
+| input | Go checker | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 3 modules) | 147.4 | 386.5 | 419.9 | 151.4 | 1.03 |
+| selfhost/parser (with the lexer) | 47.6 | 146.9 | 159.4 | 55.2 | 1.16 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 9.0 | 39.2 | 25.1 | 9.1 | 1.01 |
+
+The LLVM build went from 1.98x (stage 8) and 1.88x (after module
+loading) to about parity with the Go checker. The LLVM binary shrank
+from 29 MB to 16 MB; `infer0` from 297 KB of code to 50 KB, `set_type`
+from 12,474 instructions to about 7,100.
+
+Next experiments, by expected gain:
+
+1. Port decisions 0145, 0147, and 0148 to the arm64 backend, which kept
+   the field by field convention and is now 2.8x the Go checker on
+   selfhost (the borrowing of 0149 reached it already, through the
+   SSA). Start with `internal/arm64` call lowering of struct parameters
+   of 256 bytes or more.
+2. Drop the write back of zero values at the unwind exit of a function
+   with a `var` parameter passed by reference: after a fault nobody
+   reads that memory (the caller's pad holds nothing known there,
+   held.go), and the zero `Checker` it builds (40 `rt.rl_empty` calls)
+   is most of what is left of `set_type`'s 7,100 instructions. Measure
+   code size and time.
+3. Reference counting that remains: `xo_rl_free`, `xo_alloc`, and the
+   parser's `xo.drop.Token` lead the profile; try the 0149 rule for
+   structs whose leaves are all enums or boxes (no list or string leaf,
+   so nothing is updated in place).
+4. Track the home allocas too (held.go tracks only `var` parameters):
+   a function without a `var` parameter of a type still stores each
+   argument of that type into its alloca before every call.

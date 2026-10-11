@@ -79,7 +79,10 @@ passes the full suite on the backends it targets.
   (XO1309); every repository run except the 16 `use go`/`use c` ones
   (610 of 626) is compared and identical on the three backends, plus
   module mutations. The checker is complete for programs without Go or
-  C interop.
+  C interop. Decisions 0147 to 0149 (LLVM enums by reference and stable
+  addresses, `var` parameters kept in memory, borrowed enum parameters)
+  bring the LLVM build of the Xo checker to parity with the Go checker
+  (1.03x on the selfhost input, from 1.98x).
 
 ## Alternatives
 

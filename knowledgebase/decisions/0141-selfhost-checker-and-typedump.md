@@ -354,6 +354,9 @@ by its file, span, and kind (the Go checker uses node pointers).
   400 on arm64 give 0 differences. A change to internal/mod parsing,
   module selection, xo.lock verification, deny rules, or ceilings must
   be made in selfhost/check in the same change.
+- Speed (2026-10-10): with decisions 0147, 0148, and 0149 the LLVM build
+  of the Xo checker takes 1.03 times the Go checker on the selfhost
+  input (1.98 times at stage 8).
 
 ## Alternatives
 
