@@ -18,15 +18,15 @@ import (
 func TestEffectCeilings(t *testing.T) {
 	src := t.TempDir()
 	modtest.WriteFiles(t, src, map[string]string{
-		"github.com/acme/tick@v1.0.0/xo.mod":  "module github.com/acme/tick\nedition 2026\n",
+		"github.com/acme/tick@v1.0.0/xo.mod":  "module github.com/acme/tick\nedition preview\n",
 		"github.com/acme/tick@v1.0.0/tick.xo": "pub fn now() -> Int { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
-		"github.com/acme/tick@v1.1.0/xo.mod":  "module github.com/acme/tick\nedition 2026\n",
+		"github.com/acme/tick@v1.1.0/xo.mod":  "module github.com/acme/tick\nedition preview\n",
 		"github.com/acme/tick@v1.1.0/tick.xo": "pub fn now() -> Int uses env { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
 	})
 	env := modtest.Setup(t, src, mod.Compare)
 	v2 := t.TempDir()
 	modtest.WriteFiles(t, v2, map[string]string{
-		"xo.mod":  "module github.com/acme/tick/v2\nedition 2026\n",
+		"xo.mod":  "module github.com/acme/tick/v2\nedition preview\n",
 		"tick.xo": "pub fn now() -> Int { 2 }\n",
 	})
 	env.Commit(t, "github.com/acme/tick", "v2.0.0", v2, false)
@@ -34,7 +34,7 @@ func TestEffectCeilings(t *testing.T) {
 	ws := t.TempDir()
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod": "module example.com/app\nedition 2026\n\nrequire github.com/acme/tick v1.0.0 uses none\n",
+		"xo.mod": "module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.0.0 uses none\n",
 		// the closure's stdio is the caller's effect, passed through
 		// apply's effect variable: not the dependency's
 		"main/main.xo": "use github.com/acme/tick\n\nfn main(os: Os) {\n  let n = tick.apply(fn() -> Int {\n    os.stdio.println(\"x\")\n    tick.now()\n  })\n  os.stdio.println(\"${n}\")\n}\n",
@@ -59,7 +59,7 @@ func TestEffectCeilings(t *testing.T) {
 		t.Errorf("XO1309 message:\n%s", r.out)
 	}
 	// raising the ceiling accepts it
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tick v1.1.0 uses (env, fs.read)\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.1.0 uses (env, fs.read)\n"), 0o644)
 	xo(t, "check", app).want(0)
 	// xo get -u upgrades every requirement and reports no changes for
 	// one already latest (v2 is another module path)
@@ -68,18 +68,18 @@ func TestEffectCeilings(t *testing.T) {
 		t.Errorf("get -u at the latest v1: %s", r.out)
 	}
 	// a malformed ceiling is XO1301
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tick v1.1.0 uses telepathy\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.1.0 uses telepathy\n"), 0o644)
 	r = xo(t, "check", "--json", app).want(1)
 	if got := diagCodes(t, r.out); !strings.HasPrefix(got, "XO1301") {
 		t.Errorf("malformed ceiling: %s", got)
 	}
 
 	// workspace: a `use` line's ceiling applies to the other modules
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tick v1.1.0\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.1.0\n"), 0o644)
 	modtest.WriteFiles(t, ws, map[string]string{
-		"tick/xo.mod":  "module github.com/acme/tick\nedition 2026\n",
+		"tick/xo.mod":  "module github.com/acme/tick\nedition preview\n",
 		"tick/tick.xo": "pub fn now() -> Int uses net { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
-		"xo.work":      "xo 2026\nuse ./app\nuse ./tick uses none\n",
+		"xo.work":      "xo preview\nuse ./app\nuse ./tick uses none\n",
 	})
 	r = xo(t, "check", "--json", app).want(1)
 	if got := diagCodes(t, r.out); got != "XO1309" || !strings.Contains(r.out, "xo.work") || !strings.Contains(r.out, "`net`") {
@@ -88,12 +88,12 @@ func TestEffectCeilings(t *testing.T) {
 	os.Remove(filepath.Join(ws, "xo.work"))
 
 	// /vN: major version 2 is another module path in the same repository
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tick/v2 v2.0.0 uses none\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick/v2 v2.0.0 uses none\n"), 0o644)
 	os.WriteFile(filepath.Join(app, "main", "main.xo"), []byte("use github.com/acme/tick/v2\n\nfn main(os: Os) {\n  os.stdio.println(\"${tick.now()}\")\n}\n"), 0o644)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	r = xo(t, "check", "--json", app).want(0)
 	// v2 under the path without a suffix is XO1301
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tick v2.0.0\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v2.0.0\n"), 0o644)
 	r = xo(t, "check", "--json", app).want(1)
 	if got := diagCodes(t, r.out); !strings.HasPrefix(got, "XO1301") || !strings.Contains(r.out, "github.com/acme/tick/v2") {
 		t.Errorf("v2 without /v2: %s\n%s", got, r.out)
@@ -146,7 +146,7 @@ func TestPublish(t *testing.T) {
 	repo := t.TempDir()
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
 	modtest.WriteFiles(t, repo, map[string]string{
-		"xo.mod":         "module example.com/lib\nedition 2026\n",
+		"xo.mod":         "module example.com/lib\nedition preview\n",
 		"text/text.xo":   "pub fn shout(s: Str) -> Str { s.to_upper() }\n\npub fn whisper(s: Str) -> Str { s.to_lower() }\n",
 		"text/x_test.xo": "test \"shout\" { expect(shout(\"a\") == \"A\") }\n",
 	})
@@ -181,7 +181,7 @@ func TestPublish(t *testing.T) {
 	if p.codes() != "XO1311" {
 		t.Errorf("v2 without /v2: %s", p.codes())
 	}
-	os.WriteFile(filepath.Join(repo, "xo.mod"), []byte("module example.com/lib/v2\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "xo.mod"), []byte("module example.com/lib/v2\nedition preview\n"), 0o644)
 	p = publish(t, 0, "--check", "--version", "v2.0.0", "--dir", repo)
 	if len(p.Breaking) != 2 {
 		t.Errorf("v2: breaking changes are listed: %+v", p)
@@ -213,7 +213,7 @@ func TestInit(t *testing.T) {
 	dir := t.TempDir()
 	xo(t, "init", "--dir", dir, "github.com/acme/new").want(0)
 	data, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))
-	if !strings.HasPrefix(string(data), "module github.com/acme/new\nedition ") {
+	if string(data) != "module github.com/acme/new\nedition preview\n" {
 		t.Errorf("xo.mod:\n%s", data)
 	}
 	ig, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -224,7 +224,7 @@ func TestInit(t *testing.T) {
 	xo(t, "init", "--dir", dir, "nohost").want(2)
 
 	mono := t.TempDir()
-	modtest.WriteFiles(t, mono, map[string]string{"xo.work": "xo 2026\n"})
+	modtest.WriteFiles(t, mono, map[string]string{"xo.work": "xo preview\n"})
 	sub := filepath.Join(mono, "svc")
 	xo(t, "init", "--dir", sub, "github.com/acme/svc").want(0)
 	if _, err := os.Stat(filepath.Join(sub, ".gitignore")); err == nil {

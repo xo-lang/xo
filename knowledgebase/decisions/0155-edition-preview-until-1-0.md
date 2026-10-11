@@ -1,7 +1,6 @@
 # 0155: `edition preview` until 1.0
 
-Status: Accepted (2026-10-11, by the owner). Implementation queued (the
-rewrite of every xo.mod, the spec, diagnostics, and docs).
+Status: Accepted (2026-10-11, by the owner), implemented (2026-10-11).
 
 ## Context
 
@@ -38,3 +37,29 @@ would look a year old on launch day. Before 1.0 nothing is frozen
   the old year.
 - Numbered editions (`edition 1`): never dated, but read like toolchain
   versions (`edition 1` next to `xo 1.4`).
+
+## Implementation (2026-10-11)
+
+- `check.CurrentEdition` is the string `preview`; `check.Editions` lists
+  edition names in order, `check.EditionAliases` maps `2026` to
+  `preview`, `check.ResolveEdition` resolves both. `Module.Edition` is a
+  string; `AtLeast` and `editionRule.Since` compare positions in
+  `check.Editions`.
+- `XO1315` (note, checker): `edition 2026` in the xo.mod of a checked
+  module (not a dependency), once per xo.mod, with a fix that writes
+  `preview`. `xo fix` loads xo.mod files into its overlay (those under its
+  dirs and the one around each dir) so the fix applies; `xo check --fix`,
+  the LSP, and MCP get it through the same fix.
+- `xo fix --edition=` accepts `preview` and the alias `2026`.
+- 48 tracked xo.mod files, the xo.work fixtures (`xo preview`), Go test
+  fixtures, the bench prompts, spec 4.2, 10.1, 10.6, 13, and std.md were
+  rewritten. Left on `2026`: `bench/paper/` (not to be edited), the
+  vendored modules of `internal/check/testdata/golden/effect_ceiling_vendor`
+  (their xo.lock hashes cover xo.mod; they now also show that a
+  dependency on the alias builds without a note), and dated records
+  (older ADRs, bench results and notes, CHANGELOG entries).
+- The `xo <edition>` line of xo.work is still not validated (any word).
+- The self hosted checker (selfhost/check) does not read `edition`
+  lines, so nothing was ported; XO1315 is not one of the staged codes
+  TestSelfhostChecker compares.
+

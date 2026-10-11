@@ -45,9 +45,32 @@ func TestFixCommand(t *testing.T) {
 		t.Errorf("a.xo = %s", b)
 	}
 
-	for _, bad := range [][]string{{"fix", "--from=draft-9"}, {"fix", "--edition=2031"}} {
+	for _, bad := range [][]string{{"fix", "--from=draft-9"}, {"fix", "--edition=2031"}, {"fix", "--edition=2027"}} {
 		if code := run(bad, &out, &errOut); code != 2 {
 			t.Errorf("%v: exit %d, want 2", bad, code)
+		}
+	}
+}
+
+// TestFixEditionFlag checks `xo fix --edition=preview` (and the old name
+// 2026, an alias): `edition 2026` in xo.mod becomes `edition preview`
+// (XO1315, decision 0155).
+func TestFixEditionFlag(t *testing.T) {
+	for _, flag := range []string{"--edition=preview", "--edition=2026", ""} {
+		dir := writeFiles(t, map[string]string{"xo.mod": "module example.com/a\nedition 2026\n", "main.xo": "fn main() {\n}\n"})
+		args := []string{"fix", dir}
+		if flag != "" {
+			args = []string{"fix", flag, dir}
+		}
+		var out, errOut bytes.Buffer
+		if code := run(args, &out, &errOut); code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, errOut.String())
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, "xo.mod")); string(b) != "module example.com/a\nedition preview\n" {
+			t.Errorf("%v: xo.mod = %q", args, b)
+		}
+		if !strings.Contains(out.String(), "XO1315") || !strings.Contains(out.String(), "1 change(s), changed 1 file(s)") {
+			t.Errorf("%v: output:\n%s", args, out.String())
 		}
 	}
 }

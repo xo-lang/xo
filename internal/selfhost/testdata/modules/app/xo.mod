@@ -1,5 +1,5 @@
 module example.com/app
-edition 2026
+edition preview
 
 require example.com/tick v1.0.0 uses clock
 require example.com/lib v1.0.0 uses none

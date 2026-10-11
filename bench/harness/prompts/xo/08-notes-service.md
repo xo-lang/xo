@@ -9,7 +9,7 @@
 
 # Required file layout
 
-- `xo.mod` at the root: `module example.com/notes`, then `edition 2026`.
+- `xo.mod` at the root: `module example.com/notes`, then `edition preview`.
 - One subdirectory per module: `domain/`, `store/`, `api/`, and `server/`
   (which holds `fn main`). A module imports a sibling with
   `use example.com/notes/<dir>`. Add more directories if you need them.

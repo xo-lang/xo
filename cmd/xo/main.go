@@ -86,12 +86,14 @@ commands:
       and print the names of the files changed. --check changes nothing,
       lists the unformatted files, and exits 1 if there are any. Files with
       syntax errors are reported and left alone (exit 1). Default: .
-  fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]
+  fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]
       Apply the machine fixes of check diagnostics, round after round,
       until none apply, then reformat the changed files and print what
       changed. --from runs the migration rewriters for every breaking
       change after that draft first (draft-0.1: ok/err/some/none case,
       scope timeout, {x} interpolation, let _ =, Map index reads).
+      An xo.mod line edition 2026 becomes edition preview (XO1315; the
+      only edition before 1.0, --edition=preview names it).
       --dry-run writes nothing. Exit status 0 even when errors remain
       (they are listed); 2 on usage errors. Default: .
   vet [--json] [dirs...]
@@ -194,7 +196,7 @@ commands:
       network), verified against xo.lock.
   Every command accepts --offline (XO_OFFLINE=1: never fetch; a missing
   module is XO1303) and --workspace=off (XO_WORK=off: ignore xo.work).
-  An xo.work file (xo 2026 / use ./dir lines) builds the modules it uses
+  An xo.work file (xo preview / use ./dir lines) builds the modules it uses
   from their directories, overriding requirements; check, test, query, and
   edit then take every module of the workspace as one program, and
   build --ci fails (XO1308) while it overrides a required module.

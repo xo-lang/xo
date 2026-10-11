@@ -9,7 +9,7 @@
 
 # Required file layout
 
-- `xo.mod` at the root: `module example.com/ratelimiter`, then `edition 2026`.
+- `xo.mod` at the root: `module example.com/ratelimiter`, then `edition preview`.
 - All `.xo` files in the root directory (one module). Tests go in files
   whose names end in `_test.xo`.
 - `NOTES.md` at the root.

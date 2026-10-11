@@ -202,6 +202,34 @@ fn main() {
 	}
 }
 
+// TestFixEditionAlias checks that xo fix rewrites `edition 2026` in xo.mod
+// to `edition preview` (XO1315, decision 0155), also when it is run on a
+// package directory below the xo.mod, and leaves the rest of xo.mod as is.
+func TestFixEditionAlias(t *testing.T) {
+	mod := "module x.com/a\n\n// the edition\nedition 2026\n"
+	for _, sub := range []string{"", "pkg"} {
+		dir := writeModule(t, map[string]string{"xo.mod": mod, "main.xo": "fn main() {\n}\n", "pkg/p.xo": "pub fn f() {\n}\n"})
+		res, err := Run([]string{filepath.Join(dir, sub)}, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))
+		if want := "module x.com/a\n\n// the edition\nedition preview\n"; string(b) != want {
+			t.Errorf("%q: xo.mod = %q, want %q", sub, b, want)
+		}
+		if len(res.Changes) != 1 || res.Changes[0].Rule != "XO1315" || res.Changes[0].Line != 4 {
+			t.Errorf("%q: changes %+v", sub, res.Changes)
+		}
+		again, err := Run([]string{filepath.Join(dir, sub)}, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again.Changes) != 0 {
+			t.Errorf("%q: second run changes %+v", sub, again.Changes)
+		}
+	}
+}
+
 func TestOverlaps(t *testing.T) {
 	cases := []struct {
 		a1, a2, b1, b2 int

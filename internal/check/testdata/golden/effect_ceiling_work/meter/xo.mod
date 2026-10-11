@@ -1,2 +1,2 @@
 module example.com/meter
-edition 2026
+edition preview

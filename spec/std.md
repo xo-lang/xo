@@ -5,8 +5,9 @@ Companion to `spec/core.md`.
 
 Signatures are written in Xo syntax. `[var]` before a receiver means the method
 mutates and needs a `var` binding (core 3.4). Effects are listed with `uses`.
-Everything here is part of the 2026 edition compatibility promise once the
-edition is released.
+Everything here joins the compatibility promise with the first frozen
+edition, named at 1.0 (core 13); until then the only edition is `preview`
+(decision 0155), which may still change.
 
 ## 0. Conventions
 

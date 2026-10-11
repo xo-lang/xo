@@ -24,7 +24,7 @@ func setup(t *testing.T) *modtest.Env {
 func app(t *testing.T, reqs string, files map[string]string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "app")
-	all := map[string]string{"xo.mod": "module example.com/app\nedition 2026\n" + reqs}
+	all := map[string]string{"xo.mod": "module example.com/app\nedition preview\n" + reqs}
 	for k, v := range files {
 		all[k] = v
 	}
@@ -124,7 +124,7 @@ func TestParse(t *testing.T) {
 		{"bad path", "module example.com/a\nrequire acme v1.0.0\n", 0, []string{"XO1301"}},
 		{"twice", "module example.com/a\nrequire github.com/x/y v1.0.0\nrequire github.com/x/y v1.1.0\n", 1, []string{"XO1301"}},
 		{"replace", "module example.com/a\nreplace github.com/x/y => ../y\n", 0, []string{"XO1301"}},
-		{"no module", "edition 2026\n", 0, []string{"XO1301"}},
+		{"no module", "edition preview\n", 0, []string{"XO1301"}},
 	}
 	for _, c := range cases {
 		f, ps := mod.Parse("xo.mod", []byte(c.src))
@@ -135,11 +135,11 @@ func TestParse(t *testing.T) {
 }
 
 func TestSetRequire(t *testing.T) {
-	src := "module example.com/a\nedition 2026\n"
+	src := "module example.com/a\nedition preview\n"
 	s := string(mod.SetRequire([]byte(src), "github.com/x/y", "v1.0.0"))
 	s = string(mod.SetRequire([]byte(s), "github.com/x/z", "v2.0.0"))
 	s = string(mod.SetRequire([]byte(s), "github.com/x/y", "v1.1.0"))
-	want := "module example.com/a\nedition 2026\n\nrequire github.com/x/y v1.1.0\nrequire github.com/x/z v2.0.0\n"
+	want := "module example.com/a\nedition preview\n\nrequire github.com/x/y v1.1.0\nrequire github.com/x/z v2.0.0\n"
 	if s != want {
 		t.Errorf("got %q, want %q", s, want)
 	}
@@ -208,7 +208,7 @@ func TestMovedTag(t *testing.T) {
 		t.Fatal(ps)
 	}
 	other := t.TempDir()
-	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition 2026\n", "money.xo": "pub fn cents(n: Int) -> Int { 0 }\n"})
+	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition preview\n", "money.xo": "pub fn cents(n: Int) -> Int { 0 }\n"})
 	env.Commit(t, "github.com/acme/money", "v1.1.0", other, true)
 	if err := mod.CleanCache(); err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func TestTidy(t *testing.T) {
 	if _, ps := mod.Tidy(dir); len(ps) == 0 {
 		t.Fatal("tidy with a broken require succeeded")
 	}
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/money v1.3.0\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/money v1.3.0\n"), 0o644)
 	changes, ps := mod.Tidy(dir)
 	if len(ps) > 0 {
 		t.Fatal(ps)
@@ -337,7 +337,7 @@ func TestTidy(t *testing.T) {
 	}
 	// money at a version the graph already selects is dropped
 	// (and a deny line, decision 0095, is kept as written)
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/money v1.0.0\n\ndeny example.com/app/main -> github.com/acme/money/...\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/money v1.0.0\n\ndeny example.com/app/main -> github.com/acme/money/...\n"), 0o644)
 	changes, ps = mod.Tidy(dir)
 	if len(ps) > 0 || len(changes) != 1 || changes[0] != (mod.Change{Path: "github.com/acme/money", Old: "v1.0.0"}) {
 		t.Errorf("changes %+v %v", changes, ps)
@@ -382,7 +382,7 @@ func TestVendor(t *testing.T) {
 		t.Errorf("edited vendor: %v", b.Problems)
 	}
 	// a require vendor/ does not have is XO1307
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/wrongpath v1.0.0\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\nrequire github.com/acme/wrongpath v1.0.0\n"), 0o644)
 	if b := mod.Load(dir, mod.Options{}); !strings.Contains(strings.Join(codes(b.Problems), ","), "XO1307") {
 		t.Errorf("stale vendor: %v", b.Problems)
 	}
@@ -399,10 +399,10 @@ func TestWorkspace(t *testing.T) {
 	lockBefore, _ := os.ReadFile(filepath.Join(dir, "xo.lock"))
 	ws := filepath.Dir(dir)
 	modtest.WriteFiles(t, ws, map[string]string{
-		"billing/xo.mod":             "module github.com/acme/billing\nedition 2026\n\nrequire github.com/acme/money v1.3.0\n",
+		"billing/xo.mod":             "module github.com/acme/billing\nedition preview\n\nrequire github.com/acme/money v1.3.0\n",
 		"billing/invoice/invoice.xo": "use github.com/acme/money\n\npub fn total() -> Int { money.cents(7) }\n",
 		"billing/xo.lock":            "",
-		"xo.work":                    "xo 2026\nuse ./app\nuse ./billing\n",
+		"xo.work":                    "xo preview\nuse ./app\nuse ./billing\n",
 	})
 	// billing's own lock is empty: money v1.3.0 is missing from it
 	b := mod.Load(dir, mod.Options{})
@@ -437,7 +437,7 @@ func TestWorkspace(t *testing.T) {
 	}
 	// malformed xo.work
 	t.Setenv("XO_WORK", "")
-	os.WriteFile(filepath.Join(ws, "xo.work"), []byte("xo 2026\nuse ./app\nuse ./missing\nreplace x\n"), 0o644)
+	os.WriteFile(filepath.Join(ws, "xo.work"), []byte("xo preview\nuse ./app\nuse ./missing\nreplace x\n"), 0o644)
 	b = mod.Load(dir, mod.Options{})
 	if got := strings.Join(codes(b.Problems), ","); got != "XO1301,XO1301" {
 		t.Errorf("bad xo.work: %v", b.Problems)

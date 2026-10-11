@@ -14,5 +14,5 @@ parsed as code.
 
 **Fix.** Add a `specSkips` entry for the new first line (there is now one
 for `module example.com/`), or start the example with an existing prefix.
-Same for xo.work blocks (`xo 2026`) and shell blocks (`xo query`,
+Same for xo.work blocks (`xo preview`) and shell blocks (`xo query`,
 `xo edit`).

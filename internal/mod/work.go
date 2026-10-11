@@ -87,7 +87,7 @@ func FindWork(dir string) (*Work, []*Problem) {
 
 // ReadWork parses an xo.work file:
 //
-//	xo 2026
+//	xo preview
 //	use ./api
 //	use ../shared-lib
 func ReadWork(name string) (*Work, []*Problem) {

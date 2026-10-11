@@ -11,7 +11,7 @@ import (
 func module(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/play\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/play\nedition preview\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644)
 	return dir
 }

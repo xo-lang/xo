@@ -1405,6 +1405,18 @@ XO_NOSUMDB=github.com/acme/private xo mod tidy`,
 		Example: `XO_PROXY=ftp://mirror.example.com xo build .`,
 		Fix:     `XO_PROXY=https://mirror.example.com,direct xo build .`,
 	},
+	EditionAlias: {
+		Title: "`edition 2026` is the old name of `edition preview`",
+		Detail: "Before 1.0 the only edition is `preview` (decision 0155): nothing is frozen in the 0.x releases, and the compatibility promise of core 13 starts with the first frozen edition, which is named at 1.0. " +
+			"Modules written before the rename say `edition 2026`. That name stays an alias of `preview` during the 0.x releases, so they keep building, and `xo check` reports this note on the `edition` line of xo.mod. " +
+			"The note carries a fix that rewrites the line; `xo fix` (or `xo check --fix`) applies it.",
+		Example: `// xo.mod
+module example.com/api
+edition 2026`,
+		Fix: `// xo.mod
+module example.com/api
+edition preview`,
+	},
 
 	// ---------------------------------------------------------------
 	// std/time layouts (decision 0094)

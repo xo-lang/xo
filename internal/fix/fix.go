@@ -16,6 +16,7 @@ import (
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/format"
+	"github.com/xo-lang/xo/internal/mod"
 )
 
 // MaxRounds bounds the fix loop. Each round checks the sources and applies
@@ -83,6 +84,9 @@ func Run(dirs []string, opt Options) (*Result, error) {
 			continue
 		}
 		for _, abs := range sortedKeys(cur) {
+			if !strings.HasSuffix(abs, ".xo") {
+				continue
+			}
 			out, chs := rw.Text(names[abs], cur[abs])
 			if len(chs) == 0 {
 				continue
@@ -130,8 +134,11 @@ func Run(dirs []string, opt Options) (*Result, error) {
 		if !bytes.Equal(src, res.orig[abs]) {
 			// Inserted text may break the canonical layout; reformat when
 			// the file parses (a file that does not is left as rewritten).
-			if out, err := format.Source(names[abs], src); err == nil {
-				src = out
+			// xo.mod is not Xo source and keeps its layout.
+			if strings.HasSuffix(abs, ".xo") {
+				if out, err := format.Source(names[abs], src); err == nil {
+					src = out
+				}
 			}
 			res.Files = append(res.Files, names[abs])
 			res.sources[abs] = src
@@ -317,10 +324,13 @@ func offset(src []byte, line, col int) (int, bool) {
 	return off, true
 }
 
-// sourceFiles lists the .xo files under dirs, skipping testdata and hidden
-// directories below the named ones (as check does).
+// sourceFiles lists the .xo and xo.mod files under dirs, skipping testdata
+// and hidden directories below the named ones (as check does), plus the
+// xo.mod of the module around each dir. xo.mod is listed so that fixes of
+// its lines apply (XO1315 rewrites `edition 2026`).
 func sourceFiles(dirs []string) ([]string, error) {
 	var out []string
+	seen := map[string]bool{}
 	for _, d := range dirs {
 		info, err := os.Stat(d)
 		if err != nil {
@@ -328,6 +338,18 @@ func sourceFiles(dirs []string) ([]string, error) {
 		}
 		if !info.IsDir() {
 			return nil, fmt.Errorf("%s is not a directory", d)
+		}
+		if root := mod.ModRoot(d); root != "" {
+			p := filepath.Join(root, "xo.mod")
+			if wd, err := os.Getwd(); err == nil {
+				if r, err := filepath.Rel(wd, p); err == nil && !strings.HasPrefix(r, "..") {
+					p = r
+				}
+			}
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
 		}
 		err = filepath.WalkDir(d, func(path string, e fs.DirEntry, err error) error {
 			if err != nil {
@@ -339,7 +361,8 @@ func sourceFiles(dirs []string) ([]string, error) {
 				}
 				return nil
 			}
-			if strings.HasSuffix(path, ".xo") {
+			if (strings.HasSuffix(path, ".xo") || e.Name() == "xo.mod") && !seen[path] {
+				seen[path] = true
 				out = append(out, path)
 			}
 			return nil

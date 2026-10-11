@@ -159,7 +159,7 @@ func TestProxyUntrusted(t *testing.T) {
 	defer evil.Close()
 	t.Setenv("XO_PROXY", evil.URL)
 	const pre = "github.com/acme/money@v1.1.0/"
-	good := map[string]string{pre + "xo.mod": "module github.com/acme/money\nedition 2026\n", pre + "money.xo": "pub fn cents(n: Int) -> Int { n * 1000 }\n"}
+	good := map[string]string{pre + "xo.mod": "module github.com/acme/money\nedition preview\n", pre + "money.xo": "pub fn cents(n: Int) -> Int { n * 1000 }\n"}
 
 	freshCache(t)
 	zipBody = evilZip(good)

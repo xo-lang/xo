@@ -1,2 +1,2 @@
 module example.com/crudapi
-edition 2026
+edition preview

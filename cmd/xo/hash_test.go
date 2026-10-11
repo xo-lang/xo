@@ -51,7 +51,7 @@ func TestQueryHashAndPublish(t *testing.T) {
 	t.Setenv("XO_WORK", "")
 	repo := t.TempDir()
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
-	modtest.WriteFiles(t, repo, map[string]string{"xo.mod": "module example.com/lib\nedition 2026\n", "lib.xo": hashLib})
+	modtest.WriteFiles(t, repo, map[string]string{"xo.mod": "module example.com/lib\nedition preview\n", "lib.xo": hashLib})
 	modtest.Git(t, repo, "add", "-A")
 	modtest.Git(t, repo, "commit", "-q", "-m", "v1.0.0")
 	modtest.Git(t, repo, "tag", "v1.0.0")

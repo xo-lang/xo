@@ -1,7 +1,7 @@
 # Xo Language Specification (Core)
 
 Status: draft 0.10 (2026-10-10; 0.9 released as toolchain v0.9.0, decision 0089)
-Edition: 2026
+Edition: preview (the only edition before 1.0, decision 0155)
 Companion: `spec/std.md` (prelude methods and standard library surface)
 
 Xo is a small, statically typed, garbage collected language for backends and
@@ -12,6 +12,11 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`edition preview`** (4.2, 13, decision 0155): until 1.0 the only
+  edition is `preview`, which `xo init` writes. `edition 2026` stays an
+  alias of it during the 0.x releases; `xo check` gives the fixable note
+  `XO1315` on it and `xo fix` rewrites it. The compatibility promise of 13
+  starts with the first frozen edition, named at 1.0.
 - **Assignment order** (5.2, decision 0140): an assignment computes its
   value before it reads the binding it stores into, so changes the value
   makes to that binding are kept (the native backends dropped them).
@@ -314,7 +319,8 @@ Driven by the paper test in `bench/results/paper-2026-10-07.md`. Decisions
 6. **Every target is checked on every build.** No build tags.
 7. **Every failure is reproducible.** Effects are recordable and replayable.
 8. **Compatibility.** Code that builds under an edition keeps building under
-   that edition forever. New editions ship with automatic rewriters.
+   that edition forever, from the first frozen edition named at 1.0 (13).
+   New editions ship with automatic rewriters.
 
 ### Staging
 
@@ -1064,10 +1070,15 @@ use github.com/acme/billing/invoice
 
 ```
 module github.com/acme/api
-edition 2026
+edition preview
 
 require github.com/acme/billing v1.4.0
 ```
+
+`edition` names the module's edition (13); without the line a module is
+on the current one. Before 1.0 that is `preview`, the only edition;
+`edition 2026`, its old name, is an alias that builds and gets the fixable
+note `XO1315` (decision 0155). Any other name stops the check.
 
 **[P1]** Dependencies (decision 0086):
 
@@ -1128,7 +1139,7 @@ require github.com/acme/billing v1.4.0
 the modules it lists build from their directories:
 
 ```
-xo 2026
+xo preview
 use ./api
 use ./billing
 ```
@@ -2054,7 +2065,7 @@ test "retries after 503" {
 | `xo lsp` | Language Server Protocol server over stdio for editors: diagnostics with quick fixes, hover, definition, references, rename, document symbols, semantic tokens, formatting |
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
-| `xo fix [--dry-run] [--from=draft-0.N] [--edition=YYYY]` | Apply all machine fixes until none apply; `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
+| `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod lines included (`edition 2026` becomes `edition preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
 | `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2360,6 +2371,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1312` | error | checker | `use` of a package that a `deny` rule of xo.mod forbids (decision 0095) |
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
+| `XO1315` | note | checker | `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |
@@ -2564,9 +2576,18 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
 
 - `xo.mod` declares an `edition`. The compiler supports every edition ever
   released. Modules on different editions link together.
+- Before 1.0 the only edition is `preview` (decision 0155). It is not
+  frozen: during the 0.x releases a minor release may change it (decision
+  0089), and `xo fix` carries the migration. `edition 2026`, its name
+  before decision 0155, is an alias of `preview` during the 0.x releases;
+  `xo check` reports the fixable note `XO1315` on it and `xo fix`
+  rewrites it.
+- At 1.0 the first frozen edition is named and `xo fix` rewrites
+  `edition preview` to it mechanically. The compatibility promise below
+  starts with that edition, not with `preview`.
 - A new edition may change syntax and defaults, never the meaning of code in
   older editions.
-- `xo fix --edition=YYYY` migrates a module mechanically and must leave it
+- `xo fix --edition=<name>` migrates a module mechanically and must leave it
   compiling. An edition is not released until its rewriter is complete.
 - The standard library follows the same rule: `std` APIs are never removed
   within an edition; deprecated APIs ship rewrites in `xo fix`.

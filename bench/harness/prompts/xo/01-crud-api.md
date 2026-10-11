@@ -9,7 +9,7 @@
 
 # Required file layout
 
-- `xo.mod` at the root: `module example.com/crudapi`, then `edition 2026`.
+- `xo.mod` at the root: `module example.com/crudapi`, then `edition preview`.
 - All `.xo` files in the root directory (one module). Tests go in files
   whose names end in `_test.xo`.
 - `fn main` in the root module serves the API on `PORT`. The scorer

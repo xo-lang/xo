@@ -1,5 +1,5 @@
 module example.com/gcconfig
-edition 2026
+edition preview
 
 gc min_heap 48MiB
 gc memory_limit 1GiB

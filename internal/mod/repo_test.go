@@ -30,10 +30,10 @@ func TestLocate(t *testing.T) {
 	os.MkdirAll(repo, 0o755)
 	modtest.Git(t, repo, "init", "-q", "-b", "main")
 	modtest.WriteFiles(t, repo, map[string]string{
-		"xo.mod":         "module example.com/mono\nedition 2026\n",
-		"svc/xo.mod":     "module example.com/mono/svc\nedition 2026\n",
+		"xo.mod":         "module example.com/mono\nedition preview\n",
+		"svc/xo.mod":     "module example.com/mono/svc\nedition preview\n",
 		"svc/api/api.xo": "pub fn port() -> Int { 8080 }\n",
-		"svc/sub/xo.mod": "module example.com/mono/svc/sub\nedition 2026\n",
+		"svc/sub/xo.mod": "module example.com/mono/svc/sub\nedition preview\n",
 		"svc/sub/s.xo":   "pub fn s() -> Int { 1 }\n",
 	})
 	modtest.Git(t, repo, "add", "-A")

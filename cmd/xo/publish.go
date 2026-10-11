@@ -197,7 +197,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "xo init: %s already exists\n", name)
 		return 1
 	}
-	if err := os.WriteFile(name, []byte(fmt.Sprintf("module %s\nedition %d\n", path, check.CurrentEdition)), 0o644); err != nil {
+	if err := os.WriteFile(name, []byte(fmt.Sprintf("module %s\nedition %s\n", path, check.CurrentEdition)), 0o644); err != nil {
 		fmt.Fprintf(stderr, "xo init: %v\n", err)
 		return 1
 	}
