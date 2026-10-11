@@ -1,6 +1,6 @@
 // xossa: the self hosted SSA builder's command line (decision 0150).
 //
-//   ssa [--std=DIR] [--wd=DIR] [--each] <dirs...>           print the dump
+//   ssa [--std=DIR] [--wd=DIR] [--each] [--test] [--stages] <dirs...>  print the dump
 //   ssa [--std=DIR] [--wd=DIR] [--each] --bench=N <dirs...> build N times, print the time
 //
 // It checks the directories as `xo ssadump` does (selfhost/check in
@@ -19,6 +19,8 @@ fn main(os: Os) ! {
   var repeat = 0
   var each = false
   var all = false
+  var tests = false
+  var stages = false
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
@@ -33,6 +35,10 @@ fn main(os: Os) ! {
       each = true
     } else if a == "--all" {
       all = true
+    } else if a == "--test" {
+      tests = true
+    } else if a == "--stages" {
+      stages = true
     } else {
       dirs.push(a)
     }
@@ -46,6 +52,7 @@ fn main(os: Os) ! {
   let xdg = os.env.get("XDG_CACHE_HOME") ?? ""
   let offline = os.env.get("XO_OFFLINE") ?? ""
   let work = os.env.get("XO_WORK") ?? ""
+  let cbind = os.env.get("XO_CBIND_DIR") ?? ""
   var runs: List[List[Str]] = [dirs]
   if each {
     runs = []
@@ -60,6 +67,7 @@ fn main(os: Os) ! {
       var c = check.new_checker(os.fs, std_dir)
       c.native = true
       c.set_mod_env(wd, modcache, home, xdg, offline, work)
+      c.cbind_dir = cbind
       match c.check_dirs(r) {
         Ok(_) => {}
         Err(e) => fault("check: ${e}")
@@ -71,6 +79,7 @@ fn main(os: Os) ! {
       for _ in 0..repeat {
         // the builder alone, once, as `xo ssadump --bench` (ssa.BuildRaw)
         var b = new_builder(c, wd)
+        b.tests = tests
         b.build()
         funcs += b.m.funcs.len()
       }
@@ -87,6 +96,7 @@ fn main(os: Os) ! {
     var c = check.new_checker(os.fs, std_dir)
     c.native = true
     c.set_mod_env(wd, modcache, home, xdg, offline, work)
+    c.cbind_dir = cbind
     match c.check_dirs(r) {
       Ok(_) => {}
       Err(e) => {
@@ -102,12 +112,12 @@ fn main(os: Os) ! {
       out.write("== rejected\n")
       continue
     }
-    var b = build_program(c, wd)
+    var b = build_program(c, wd, tests)
     if !b.why.is_empty() {
       out.write("== unsupported ${b.why}\n")
       continue
     }
-    out.write(b.dump(all))
+    out.write(b.dump(all, stages))
   }
   os.stdio.print(out.freeze())
 }
@@ -139,7 +149,7 @@ fn rejected(c: check.Checker) -> Bool {
 /// function, for debugging), and the functions skipped with why. A
 /// function whose text holds a type the builder could not lower (poison)
 /// is skipped too.
-pub fn (var b: Builder) dump(all: Bool) -> Str {
+pub fn (var b: Builder) dump(all: Bool, stages: Bool) -> Str {
   for i in 0..b.m.funcs.len() {
     if b.m.funcs[i].skip.is_empty() && b.m.has_poison(b.m.funcs[i]) {
       b.m.funcs[i].skip = "a type outside the stages ported"
@@ -168,11 +178,20 @@ pub fn (var b: Builder) dump(all: Bool) -> Str {
     first = false
     out.write(b.m.func_text(f))
   }
-  out.write("== skipped\n")
+  var skipped: List[Str] = []
   for f in b.m.funcs {
     if !f.skip.is_empty() {
-      out.write("${f.name}: ${f.skip}\n")
+      skipped.push("${f.name}: ${f.skip}\n")
     }
+  }
+  if stages && skipped.is_empty() {
+    // the passes, when every function was built (the Go builder prints
+    // them only for a build without errors)
+    b.write_passes(out)
+  }
+  out.write("== skipped\n")
+  for l in skipped {
+    out.write(l)
   }
   out.freeze()
 }

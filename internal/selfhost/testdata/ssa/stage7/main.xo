@@ -1,0 +1,120 @@
+// SSA stage 7 constructs for TestSelfhostSSA (decision 0150, test
+// binaries): property tests over every generated shape (scalars, sized
+// integers, Float32, Rune, Duration, Time, Bytes, Secret, tuples, List,
+// Set, Map, Option, Result, newtypes, structs with an invariant, enums
+// with unit variants), `expect` and `expect(a) op b` (an Option compared
+// with a plain value), the fakes of std/testing (clock, environment,
+// standard streams, process, file system), testing.gen, testing.run_main
+// with a main that fails, os.tasks in a test, and a test with `uses`
+// (left out without --real). Built, not run.
+type UserId struct(Int)
+
+struct Span {
+  lo: Int
+  hi: Int
+} invariant lo <= hi
+
+enum Tree {
+  Leaf
+  Empty
+  Node(left: Tree, value: Int, right: Tree)
+}
+
+enum Oops {
+  Bad(why: Str)
+} derive Display
+
+fn depth(t: Tree) -> Int {
+  match t {
+    Leaf | Empty => 0
+    Node(left: l, right: r, ..) => 1 + depth(l).max(depth(r))
+  }
+}
+
+fn main(os: Os) ! {
+  let n = os.env.args().len()
+  if n > 5 {
+    return Err(Oops.Bad("too many"))
+  }
+  os.stdio.println("args ${n}")
+}
+
+fn quiet(os: Os) {
+  os.stdio.println("quiet")
+}
+
+test "scalars" for a: Int, b: Int32, c: UInt8, d: Float, e: Float32, f: Bool, g: Rune, h: Duration, i: Time, j: Bytes, k: Str {
+  expect(a == a)
+  expect(b) == b
+  expect(c) == c
+  expect(d == d || d != d)
+  expect(e == e || e != e)
+  expect(f || !f)
+  expect(g) == g
+  expect(h) == h
+  expect(i) == i
+  expect(j.len()) >= 0
+  expect(k.len()) >= 0
+}
+
+test "collections" for xs: List[(Int, Str)], s: Set[Int], m: Map[Str, List[Bool]], o: Int?, r: Result[Int, Str], sec: Secret[Str] {
+  expect(xs.len()) >= 0
+  expect(s.len()) >= 0
+  expect(m.len()) >= 0
+  expect(o) == o
+  expect(r.is_ok() || r.is_err())
+  expect(sec.reveal().len()) >= 0
+}
+
+test "user types" for id: UserId, sp: Span, t: Tree {
+  expect(sp.lo) <= sp.hi
+  expect(depth(t)) >= 0
+  expect(id.0) == id.0
+}
+
+test "option against a plain value" {
+  let x: Int? = Some(3)
+  expect(x) == Some(3)
+  let y = 4
+  expect(y) == Some(4)
+}
+
+test "fakes" {
+  os.clock.advance(5s)
+  os.clock.set(Time.from_unix(10))
+  expect(os.clock.sleeps().len()) == 0
+  os.env.set("K", "V")
+  os.env.set_args(["a", "b"])
+  expect(os.env.get("K")) == Some("V")
+  os.stdio.set_input("line\n")
+  os.stdio.println("out")
+  os.stdio.eprint("err")
+  expect(os.stdio.output()) == "out\n"
+  expect(os.stdio.errors()) == "err"
+  os.fs.write("a.txt", "hi".bytes())?
+  expect(os.fs.read_text("a.txt")?) == "hi"
+  os.proc.signal_after(1s)
+}
+
+test "generated values" {
+  let a = testing.gen[List[Span]](3)
+  let b = testing.gen[List[Span]](3)
+  expect(a) == b
+}
+
+test "run main" {
+  expect(testing.run_main(main, os, ["x"])) == 0
+  expect(testing.run_main(quiet, os)) == 0
+  expect(os.proc.exit_code()) == None
+}
+
+test "tasks" {
+  os.tasks.spawn(fn() {
+    os.clock.sleep(1s)
+  })
+  expect(1 + 1) == 2
+}
+
+test "real network" uses net.dial {
+  expect(true)
+}

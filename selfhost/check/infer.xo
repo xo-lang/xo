@@ -480,6 +480,10 @@ fn (c: Checker) is_handle(o: Int) -> Bool {
   if c.mods[m].is_prelude {
     return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn"
   }
+  if !c.mods[m].c_prefix.is_empty() {
+    // an opaque C pointer of `use c` (decision 0116)
+    return c.objs[o].opaque
+  }
   if c.mods[m].native {
     return c.objs[o].opaque && n != "Loc"
   }

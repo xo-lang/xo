@@ -28,6 +28,13 @@ pub struct Checker {
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
+  /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
+  /// `<module root>/.xo/cbind`.
+  pub cbind_dir: Str = ""
+  /// The `os` binding and the `for` parameters of each test block, by
+  /// test_key (Info.TestOs, Info.TestParams).
+  test_os: Map[Int, Int] = {}
+  test_params: Map[Int, List[Int]] = {}
   /// The environment and the dependencies of the main modules
   /// (modfile.xo, deps.xo).
   deps: DepState = DepState{}
@@ -459,10 +466,14 @@ fn (var c: Checker) load_imports(m: Int) {
       if u.path.is_empty() {
         continue
       }
-      if u.go || u.c {
+      if u.go {
         if c.unsupported.is_empty() {
-          c.unsupported = "use go or use c in ${c.files[f].path}"
+          c.unsupported = "use go in ${c.files[f].path}"
         }
+        continue
+      }
+      if u.c {
+        c.load_c_import(m, f, u)
         continue
       }
       let upath = u.path.to_str() ?? ""

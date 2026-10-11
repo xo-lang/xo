@@ -1,0 +1,1582 @@
+// Reference counting (internal/ssa rc.go, the passes of landing.go after
+// it), stage 8 of decision 0150, printed at the stage `rc` of `xo
+// ssadump`. See rc.go for the design (decision 0046): ownership is
+// tracked per heap leaf (a root value and a path of field indexes), a
+// backward liveness pass places retains and releases, parameters no path
+// consumes are borrowed, retain/release pairs cancel, list updates get
+// `reuse` where the list is not provably unique, and the counting code
+// between an operation and its landing check moves into the check's
+// successors.
+
+/// A heap leaf: a root value and a path (`.1.0`) of field indexes.
+struct Leaf {
+  root: Int
+  path: Str
+}
+
+fn leaf_key(l: Leaf) -> Str {
+  "${l.root}${l.path}"
+}
+
+/// How an operand is used.
+enum Mode {
+  No
+  Borrow
+  Consume
+}
+
+/// What a root is (rootKind).
+enum RootKind {
+  Owned
+  Borrowed
+  Proj
+}
+
+/// One leaf an instruction uses, and how.
+struct Use {
+  l: Leaf
+  m: Mode
+}
+
+/// The module wide state of the RC pass (rcInfo): the types, the leaf
+/// paths per type, the functions by name (the last of each name, as
+/// rcInfo.funcs), the borrowed parameters per function, and the function
+/// being worked on.
+struct Rc {
+  types: List[SType]
+  paths: Map[Int, List[Str]] = {}
+  heaps: Map[Int, Bool] = {}
+  fidx: Map[Str, Int] = {}
+  borrowed: List[List[Bool]] = []
+  fi: Int = -1
+}
+
+/// The runtime calls whose operand modes matter (runtimeModes), or
+/// None.
+fn runtime_modes(name: Str) -> List[Mode]? {
+  let c = Mode.Consume
+  let w = Mode.Borrow
+  let n = Mode.No
+  match name {
+    "str.concat" => Some([c, w])
+    "str.concat_int" => Some([c, n])
+    "str.concat_float" => Some([c, n])
+    "list.set" => Some([c, n, c])
+    "list.push" => Some([c, c])
+    "list.pop" => Some([c])
+    "rt.task_spawn" => Some([w, c, n, n, n, n, n, w])
+    "rt.task_done" => Some([w, c, n])
+    "rt.chan_send" => Some([w, c, w])
+    "rt.chan_try_send" => Some([w, c])
+    "rt.mutex_new" => Some([c, n])
+    "rt.mutex_unlock" => Some([w, c])
+    "rt.mutex_runlock" => Some([w, c])
+    "rt.select_send" => Some([w, w, c])
+    "rt.any_new" => Some([c, n, w])
+    _ => None
+  }
+}
+
+fn is_proj_call(name: Str) -> Bool {
+  name is "list.index" | "list.get"
+}
+
+fn is_update_call(name: Str) -> Bool {
+  name is "list.set" | "list.push" | "list.pop"
+}
+
+fn (r: Rc) decomposable(t: Int) -> Bool {
+  t >= 0 && (r.types[t].kind is Kind.Struct | Kind.Tuple)
+}
+
+fn (r: Rc) field_type(t: Int, i: Int) -> Int {
+  if r.types[t].kind == Kind.Struct {
+    return r.types[t].fields[i].ty
+  }
+  r.types[t].elems[i]
+}
+
+fn (r: Rc) num_fields(t: Int) -> Int {
+  if r.types[t].kind == Kind.Struct {
+    return r.types[t].fields.len()
+  }
+  r.types[t].elems.len()
+}
+
+/// Whether values of t hold heap memory (Type.Heap).
+fn (var r: Rc) heap(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  if let Some(h) = r.heaps.get(t) {
+    return h
+  }
+  let h = r.heap_in(t, [])
+  r.heaps[t] = h
+  h
+}
+
+fn (r: Rc) heap_in(t: Int, seen: List[Int]) -> Bool {
+  if seen.contains(t) {
+    return true
+  }
+  var s2 = seen
+  s2.push(t)
+  let x = r.types[t]
+  match x.kind {
+    Str | List | Func | Box | Handle => return true
+    Struct => {
+      for f in x.fields {
+        if r.heap_in(f.ty, s2) {
+          return true
+        }
+      }
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          if r.heap_in(f.ty, s2) {
+            return true
+          }
+        }
+      }
+    }
+    Tuple => {
+      for e in x.elems {
+        if r.heap_in(e, s2) {
+          return true
+        }
+      }
+    }
+    Unit | Int | Float | Bool | Cap | Bad => {}
+  }
+  false
+}
+
+/// The paths of the heap leaves of a value of type t (leafPaths).
+fn (var r: Rc) leaf_paths(t: Int) -> List[Str] {
+  if t < 0 {
+    return []
+  }
+  if let Some(p) = r.paths.get(t) {
+    return p
+  }
+  var out: List[Str] = []
+  if r.heap(t) {
+    if r.decomposable(t) {
+      for i in 0..r.num_fields(t) {
+        for p in r.leaf_paths(r.field_type(t, i)) {
+          out.push(".${i}${p}")
+        }
+      }
+    } else {
+      out = [""]
+    }
+  }
+  r.paths[t] = out
+  out
+}
+
+/// Whether v is a field read of a struct or tuple (isAlias).
+fn (r: Rc) is_alias(f: Func, v: Int) -> Bool {
+  let x = f.values[v]
+  x.op == Op.Field && r.decomposable(f.values[x.args[0]].ty)
+}
+
+fn aux_int(a: Aux) -> Int {
+  match a {
+    I(n) => n
+    None | S(..) | F(..) | B(..) | Bs(..) | P(..) => 0
+  }
+}
+
+/// The root and path that v denotes (base).
+fn (r: Rc) base(f: Func, v: Int) -> Leaf {
+  if r.is_alias(f, v) {
+    let x = f.values[v]
+    let b = r.base(f, x.args[0])
+    return Leaf{root: b.root, path: "${b.path}.${aux_int(x.aux)}"}
+  }
+  Leaf{root: v, path: ""}
+}
+
+/// The heap leaves v denotes (leaves).
+fn (var r: Rc) leaves(f: Func, v: Int) -> List[Leaf] {
+  let b = r.base(f, v)
+  var out: List[Leaf] = []
+  for lp in r.leaf_paths(f.values[v].ty) {
+    out.push(Leaf{root: b.root, path: "${b.path}${lp}"})
+  }
+  out
+}
+
+/// Whether v is a root with heap leaves (isRoot).
+fn (var r: Rc) is_root(f: Func, v: Int) -> Bool {
+  let x = f.values[v]
+  x.ty >= 0 && !is_terminator(x.op) && x.op != Op.Retain && x.op != Op.Release && !r.is_alias(f, v) && r.heap(x.ty)
+}
+
+fn param_index(f: Func, v: Int) -> Int {
+  let bl = f.values[v].block
+  for (i, p) in f.blocks[bl].params.indexed() {
+    if p == v {
+      return i
+    }
+  }
+  -1
+}
+
+/// What root v is (kind).
+fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
+  let x = f.values[v]
+  match x.op {
+    Param => {
+      if x.block == 0 {
+        let i = param_index(f, v)
+        let bs = r.borrowed[r.fi]
+        if i >= 0 && i < bs.len() && bs[i] {
+          return RootKind.Borrowed
+        }
+      }
+    }
+    Const => return RootKind.Borrowed
+    Payload | Capture | Unbox => return r.proj_kind(f, v)
+    Call => {
+      if is_proj_call(aux_name(x.aux)) {
+        return r.proj_kind(f, v)
+      }
+    }
+    _ => {}
+  }
+  RootKind.Owned
+}
+
+/// The kind of projection v (projKind).
+fn (var r: Rc) proj_kind(f: Func, v: Int) -> RootKind {
+  if f.values[v].args.is_empty() {
+    return RootKind.Proj
+  }
+  let p = r.parent(f, v)
+  if r.kind(f, p.root) == RootKind.Borrowed {
+    return RootKind.Borrowed
+  }
+  RootKind.Proj
+}
+
+/// The leaf a projection root was taken from (parent).
+fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
+  r.leaves(f, f.values[v].args[0])[0]
+}
+
+fn (var r: Rc) tracked(f: Func, l: Leaf) -> Bool {
+  r.kind(f, l.root) != RootKind.Borrowed
+}
+
+/// The operand modes of v (modes).
+fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
+  let x = f.values[v]
+  let n = x.args.len()
+  var ms: List[Mode] = []
+  for _ in 0..n {
+    ms.push(Mode.No)
+  }
+  match x.op {
+    Struct | Tuple | Variant | Return | Release | Reuse | Closure | Rebind | Box => ms = fill_modes(n, Mode.Consume)
+    Fault | Retain | Eq | Ne | Capture | Unbox | Share => ms = fill_modes(n, Mode.Borrow)
+    CallValue => {
+      ms = fill_modes(n, Mode.Consume)
+      ms[0] = Mode.Borrow
+    }
+    Payload => {
+      if r.heap(x.ty) {
+        ms = fill_modes(n, Mode.Borrow)
+      }
+    }
+    SetField => {
+      ms[0] = Mode.Consume
+      ms[1] = Mode.Consume
+    }
+    Call => {
+      let name = aux_name(x.aux)
+      if let Some(ci) = r.fidx.get(name) {
+        let bs = r.borrowed[ci]
+        for i in 0..n {
+          ms[i] = Mode.Consume
+          if i < bs.len() && bs[i] {
+            ms[i] = Mode.Borrow
+          }
+        }
+      } else if let Some(rm) = runtime_modes(name) {
+        for i in 0..n {
+          if i < rm.len() {
+            ms[i] = rm[i]
+          }
+        }
+      } else if name.starts_with("rt.rs_") {
+        // the native intrinsics that append to a string object consume
+        // it (decision 0074)
+        ms = fill_modes(n, Mode.Borrow)
+        if n > 0 {
+          ms[0] = Mode.Consume
+        }
+      } else {
+        ms = fill_modes(n, Mode.Borrow)
+      }
+    }
+    _ => {}
+  }
+  ms
+}
+
+fn fill_modes(n: Int, m: Mode) -> List[Mode] {
+  var out: List[Mode] = []
+  for _ in 0..n {
+    out.push(m)
+  }
+  out
+}
+
+/// The heap leaves v uses, in operand order (uses).
+fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
+  var out: List[Use] = []
+  let x = f.values[v]
+  for (i, m) in r.modes(f, v).indexed() {
+    if m == Mode.No {
+      continue
+    }
+    let a = x.args[i]
+    let ls = r.leaves(f, a)
+    if x.op == Op.SetField && i == 0 {
+      // the replaced field is not used
+      let b = r.base(f, a)
+      let pre = "${b.path}.${aux_int(x.aux)}"
+      for l in ls {
+        if l.path == pre || l.path.starts_with("${pre}.") {
+          continue
+        }
+        out.push(Use{l: l, m: m})
+      }
+      continue
+    }
+    for l in ls {
+      out.push(Use{l: l, m: m})
+    }
+  }
+  out
+}
+
+/// The leaves the arguments of edge e pass (edgeUses).
+fn (var r: Rc) edge_uses(f: Func, e: Int) -> List[Leaf] {
+  var out: List[Leaf] = []
+  for a in f.edges[e].args {
+    for l in r.leaves(f, a) {
+      out.push(l)
+    }
+  }
+  out
+}
+
+/// A new value of f placed nowhere yet (newValue / mk).
+fn new_value(var f: Func, bl: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
+  let v = f.values.len()
+  f.values.push(Value{op: op, ty: t, args: args, aux: aux, block: bl})
+  v
+}
+
+/// Makes each `var` List parameter of a function that updates lists
+/// unique once, at entry (reuseVarParams).
+fn reuse_var_params(var f: Func, types: List[SType]) {
+  var updates = false
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Call && is_update_call(aux_name(f.values[v].aux)) {
+        updates = true
+      }
+    }
+  }
+  if !updates {
+    return
+  }
+  var head: List[Int] = []
+  for i in f.var_params {
+    let p = f.blocks[0].params[i]
+    let pt = f.values[p].ty
+    if types[pt].kind != Kind.List {
+      continue
+    }
+    let u = new_value(f, 0, Op.Reuse, pt, Aux.None, [p])
+    head.push(u)
+    for bl in 0..f.blocks.len() {
+      for v in f.blocks[bl].instrs {
+        for k in 0..f.values[v].args.len() {
+          if f.values[v].args[k] == p {
+            f.values[v].args[k] = u
+          }
+        }
+        for e in f.values[v].succs {
+          for k in 0..f.edges[e].args.len() {
+            if f.edges[e].args[k] == p {
+              f.edges[e].args[k] = u
+            }
+          }
+        }
+      }
+    }
+  }
+  var ins = head
+  for v in f.blocks[0].instrs {
+    ins.push(v)
+  }
+  f.blocks[0].instrs = ins
+}
+
+// ---------------------------------------------------------------------------
+// Borrow inference
+
+/// Marks the parameters no path of their function consumes (inferBorrows).
+fn (var r: Rc) infer_borrows(funcs: List[Func]) {
+  r.borrowed = []
+  for f in funcs {
+    let ps = f.blocks[0].params
+    var bs: List[Bool] = []
+    for (i, p) in ps.indexed() {
+      var bw = r.heap(f.values[p].ty) && !f.var_params.contains(i)
+      if f.indirect {
+        // callers through a function value pass the closure borrowed and
+        // the arguments owned
+        bw = i == 0
+      }
+      if f.entry {
+        // the runtime hands over every argument
+        bw = false
+      }
+      bs.push(bw)
+    }
+    r.borrowed.push(bs)
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for (fi, f) in funcs.indexed() {
+      r.fi = fi
+      // the blocks that consume each borrowed parameter
+      var cons: Map[Int, List[Bool]] = {}
+      for bi in 0..f.blocks.len() {
+        for v in f.blocks[bi].instrs {
+          for u in r.leaf_uses(f, v) {
+            if u.m == Mode.Consume {
+              cons = r.consumed(f, u.l, bi, cons)
+            }
+          }
+          for e in f.values[v].succs {
+            for l in r.edge_uses(f, e) {
+              cons = r.consumed(f, l, bi, cons)
+            }
+          }
+        }
+      }
+      for (i, bs) in cons {
+        let pt = f.values[f.blocks[0].params[i]].ty
+        if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
+          r.borrowed[fi][i] = false
+          changed = true
+        }
+      }
+    }
+  }
+}
+
+/// Records that block bl consumes leaf l when it is of a borrowed
+/// parameter (inferBorrows' consumed).
+fn (var r: Rc) consumed(f: Func, l: Leaf, bl: Int, cons0: Map[Int, List[Bool]]) -> Map[Int, List[Bool]] {
+  var cons = cons0
+  let p = l.root
+  if f.values[p].op != Op.Param || f.values[p].block != 0 {
+    return cons
+  }
+  let i = param_index(f, p)
+  if i >= 0 && r.borrowed[r.fi][i] {
+    var bs = cons.get(i) ?? []
+    if bs.is_empty() {
+      for _ in 0..f.blocks.len() {
+        bs.push(false)
+      }
+    }
+    bs[bl] = true
+    cons[i] = bs
+  }
+  cons
+}
+
+/// Whether every path from the entry of f to a return passes through a
+/// block cons marks (consumedOnEveryPath, decision 0149).
+fn consumed_on_every_path(f: Func, cons: List[Bool]) -> Bool {
+  let n = f.blocks.len()
+  var must: List[Bool] = []
+  for _ in 0..n {
+    must.push(true)
+  }
+  var changed = true
+  while changed {
+    changed = false
+    var i = n - 1
+    while i >= 0 {
+      if cons[i] || !must[i] {
+        i -= 1
+        continue
+      }
+      let t = f.term(i)
+      var succs: List[Int] = []
+      if t >= 0 {
+        succs = f.values[t].succs
+        let (_, u) = landing_site(f, i)
+        if u >= 0 && succs.len() == 2 {
+          succs = succs[1..2]
+        }
+      }
+      var ok = !succs.is_empty()
+      if t >= 0 && (f.values[t].op is Op.Fault | Op.Unreachable) {
+        ok = true
+      }
+      for e in succs {
+        if !must[f.edges[e].to] {
+          ok = false
+        }
+      }
+      if !ok {
+        must[i] = false
+        changed = true
+      }
+      i -= 1
+    }
+  }
+  must[0]
+}
+
+/// The value whose landing check ends block bl (the branch on u), or -1
+/// (landingSite).
+fn landing_site(f: Func, bl: Int) -> (Int, Int) {
+  let t = f.term(bl)
+  if t < 0 || f.values[t].op != Op.Branch {
+    return (-1, -1)
+  }
+  let u = f.values[t].args[0]
+  if f.values[u].op != Op.Call || f.values[u].block != bl {
+    return (-1, -1)
+  }
+  let name = aux_name(f.values[u].aux)
+  if name != "rt.landing" && name != "rt.unwinding" {
+    return (-1, -1)
+  }
+  for v in f.blocks[bl].instrs {
+    if f.values[v].pad == u {
+      return (v, u)
+    }
+  }
+  (-1, u)
+}
+
+// ---------------------------------------------------------------------------
+// Per function pass
+
+/// A list of leaves with their counts, in first appearance order
+/// (counted): consumes and borrows.
+struct Counted {
+  order: List[Leaf] = []
+  cons: Map[Str, Int] = {}
+  bors: Map[Str, Int] = {}
+}
+
+fn (var k: Counted) add(l: Leaf, m: Mode) {
+  let key = leaf_key(l)
+  if !k.cons.contains(key) {
+    k.order.push(l)
+    k.cons[key] = 0
+    k.bors[key] = 0
+  }
+  if m == Mode.Consume {
+    k.cons[key] = (k.cons.get(key) ?? 0) + 1
+  } else {
+    k.bors[key] = (k.bors.get(key) ?? 0) + 1
+  }
+}
+
+fn (k: Counted) consumes(l: Leaf) -> Int {
+  k.cons.get(leaf_key(l)) ?? 0
+}
+
+fn (k: Counted) borrows(l: Leaf) -> Int {
+  k.bors.get(leaf_key(l)) ?? 0
+}
+
+/// The per function state of the pass (rcFunc).
+struct RcFunc {
+  live_in: List[Map[Str, Leaf]] = []
+  live_out: List[Map[Str, Leaf]] = []
+  /// Code for the start of a block (edges), by block.
+  pre: Map[Int, List[Int]] = {}
+}
+
+/// Inserts reference counting into every function of the module
+/// (InsertRC).
+fn (var b: Builder) insert_rc() {
+  var r = Rc{types: b.m.types}
+  for (i, f) in b.m.funcs.indexed() {
+    r.fidx[f.name] = i
+  }
+  let n = b.m.funcs.len()
+  for fi in 0..n {
+    var f = b.m.funcs[fi]
+    b.m.funcs[fi] = Func{name: ""}
+    reuse_var_params(f, b.m.types)
+    b.m.funcs[fi] = f
+  }
+  r.infer_borrows(b.m.funcs)
+  for fi in 0..n {
+    var f = b.m.funcs[fi]
+    b.m.funcs[fi] = Func{name: ""}
+    r.fi = fi
+    var c = RcFunc{}
+    r.liveness(f, c)
+    r.insert(f, c)
+    r.cancel(f)
+    r.reuse(f)
+    r.sink_landings(f)
+    prune_landings(f)
+    renumber(f)
+    f.borrowed = r.borrowed[fi]
+    b.m.funcs[fi] = f
+  }
+}
+
+fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
+  let n = f.blocks.len()
+  var used: List[Map[Str, Leaf]] = []
+  c.live_in = []
+  c.live_out = []
+  for bi in 0..n {
+    var u: Map[Str, Leaf] = {}
+    for v in f.blocks[bi].instrs {
+      for x in r.leaf_uses(f, v) {
+        if r.tracked(f, x.l) {
+          u[leaf_key(x.l)] = x.l
+        }
+      }
+      for e in f.values[v].succs {
+        for l in r.edge_uses(f, e) {
+          if r.tracked(f, l) {
+            u[leaf_key(l)] = l
+          }
+        }
+      }
+    }
+    used.push(u)
+    c.live_in.push({})
+    c.live_out.push({})
+  }
+  var changed = true
+  while changed {
+    changed = false
+    var i = n - 1
+    while i >= 0 {
+      var out: Map[Str, Leaf] = {}
+      let t = f.term(i)
+      if t >= 0 {
+        for e in f.values[t].succs {
+          for (k, l) in c.live_in[f.edges[e].to] {
+            out[k] = l
+          }
+        }
+      }
+      var inn: Map[Str, Leaf] = {}
+      for (k, l) in used[i] {
+        if f.values[l.root].block != i {
+          inn[k] = l
+        }
+      }
+      for (k, l) in out {
+        if f.values[l.root].block != i {
+          inn[k] = l
+        }
+      }
+      c.live_out[i] = out
+      if inn.len() != c.live_in[i].len() {
+        changed = true
+      }
+      c.live_in[i] = inn
+      i -= 1
+    }
+  }
+}
+
+/// The instructions that materialize leaf l in block bl (field reads from
+/// its root), and the value (leafValue).
+fn (r: Rc) leaf_value(var f: Func, l: Leaf, bl: Int) -> (List[Int], Int) {
+  var v = l.root
+  var code: List[Int] = []
+  if l.path.is_empty() {
+    return (code, v)
+  }
+  for s in l.path[1..l.path.len()].split(".") {
+    let i = Int.parse(s) ?? 0
+    v = new_value(f, bl, Op.Field, r.field_type(f.values[v].ty, i), Aux.I(n: i), [v])
+    code.push(v)
+  }
+  (code, v)
+}
+
+/// n retains or releases of leaf l in block bl (rc).
+fn (r: Rc) rc_ops(var f: Func, op: Op, l: Leaf, bl: Int, n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for _ in 0..n {
+    let (code, v) = r.leaf_value(f, l, bl)
+    for x in code {
+      out.push(x)
+    }
+    out.push(new_value(f, bl, op, -1, Aux.None, [v]))
+  }
+  out
+}
+
+fn (var r: Rc) insert(var f: Func, var c: RcFunc) {
+  let n = f.blocks.len()
+  for bi in 0..n {
+    r.walk(f, c, bi)
+  }
+  for (bl, code) in c.pre {
+    var ins = code
+    for v in f.blocks[bl].instrs {
+      ins.push(v)
+    }
+    f.blocks[bl].instrs = ins
+  }
+}
+
+/// What edge e needs held: its arguments' leaves and the leaves live into
+/// its target (edgeNeed).
+fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> Counted {
+  var k = Counted{}
+  for l in r.edge_uses(f, e) {
+    k.add(l, Mode.Consume)
+  }
+  for l in sorted_leaves(f, c.live_in[f.edges[e].to]) {
+    k.add(l, Mode.Consume)
+  }
+  k
+}
+
+/// A leaf set ordered by root ID and path (sortedLeaves).
+fn sorted_leaves(f: Func, s: Map[Str, Leaf]) -> List[Leaf] {
+  var out: List[Leaf] = []
+  for (_, l) in s {
+    out.push(l)
+  }
+  var i = 1
+  while i < out.len() {
+    var j = i
+    while j > 0 && leaf_less(out[j], out[j - 1]) {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      j -= 1
+    }
+    i += 1
+  }
+  out
+}
+
+fn leaf_less(a: Leaf, b: Leaf) -> Bool {
+  if a.root != b.root {
+    return a.root < b.root
+  }
+  a.path < b.path
+}
+
+/// Inserts RC into block bl, backward from its terminator (walk).
+fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
+  let term = f.term(bl)
+  let ni = f.blocks[bl].instrs.len()
+  let body = f.blocks[bl].instrs[0..ni - 1]
+  var live: Map[Str, Leaf] = {}
+  // the new instruction list, reversed
+  var rev: List[Int] = []
+  match f.values[term].op {
+    Jump => {
+      let need = r.edge_need(f, c, f.values[term].succs[0])
+      var code: List[Int] = []
+      for l in need.order {
+        var n = need.consumes(l)
+        if r.tracked(f, l) {
+          live[leaf_key(l)] = l
+          n -= 1
+        }
+        for x in r.rc_ops(f, Op.Retain, l, bl, n) {
+          code.push(x)
+        }
+      }
+      rev.push(term)
+      var i = code.len() - 1
+      while i >= 0 {
+        rev.push(code[i])
+        i -= 1
+      }
+    }
+    Branch => {
+      var needs: List[Counted] = []
+      for e in f.values[term].succs {
+        let k = r.edge_need(f, c, e)
+        for l in k.order {
+          if r.tracked(f, l) {
+            live[leaf_key(l)] = l
+          }
+        }
+        needs.push(k)
+      }
+      let held = sorted_leaves(f, live)
+      // on the cleanup path of a landing check, the operation checked
+      // produced nothing (decision 0085)
+      let (site, _) = landing_site(f, bl)
+      let succs = f.values[term].succs
+      for (i, e) in succs.indexed() {
+        r.edge_code(f, c, e, needs[i], held, i == 0, site)
+      }
+      rev.push(term)
+    }
+    Return => {
+      var k = Counted{}
+      for a in f.values[term].args {
+        for l in r.leaves(f, a) {
+          k.add(l, Mode.Consume)
+        }
+      }
+      var code: List[Int] = []
+      for l in k.order {
+        var n = k.consumes(l)
+        if r.tracked(f, l) {
+          live[leaf_key(l)] = l
+          n -= 1
+        }
+        for x in r.rc_ops(f, Op.Retain, l, bl, n) {
+          code.push(x)
+        }
+      }
+      rev.push(term)
+      var i = code.len() - 1
+      while i >= 0 {
+        rev.push(code[i])
+        i -= 1
+      }
+    }
+    Fault => {
+      // the program stops: nothing is released
+      for u in r.leaf_uses(f, term) {
+        if r.tracked(f, u.l) {
+          live[leaf_key(u.l)] = u.l
+        }
+      }
+      rev.push(term)
+    }
+    _ => rev.push(term)
+  }
+  var k = body.len() - 1
+  while k >= 0 {
+    let v = body[k]
+    var after: List[Int] = []
+    if r.is_root(f, v) {
+      let kd = r.kind(f, v)
+      for l in r.leaves(f, v) {
+        let key = leaf_key(l)
+        let lv = live.contains(key)
+        if kd == RootKind.Borrowed {
+        } else if lv && kd == RootKind.Proj {
+          for x in r.rc_ops(f, Op.Retain, l, bl, 1) {
+            after.push(x)
+          }
+        } else if !lv && kd == RootKind.Owned {
+          for x in r.rc_ops(f, Op.Release, l, bl, 1) {
+            after.push(x)
+          }
+        }
+        live.remove(key)
+      }
+    }
+    var k2 = Counted{}
+    for u in r.leaf_uses(f, v) {
+      k2.add(u.l, u.m)
+    }
+    var before: List[Int] = []
+    for l in k2.order {
+      let key = leaf_key(l)
+      let n0 = k2.consumes(l)
+      let n1 = k2.borrows(l)
+      let tr = r.tracked(f, l)
+      if !tr || live.contains(key) {
+        for x in r.rc_ops(f, Op.Retain, l, bl, n0) {
+          before.push(x)
+        }
+      } else if n1 > 0 {
+        for x in r.rc_ops(f, Op.Retain, l, bl, n0) {
+          before.push(x)
+        }
+        for x in r.rc_ops(f, Op.Release, l, bl, 1) {
+          after.push(x)
+        }
+      } else {
+        for x in r.rc_ops(f, Op.Retain, l, bl, n0 - 1) {
+          before.push(x)
+        }
+      }
+      if tr {
+        live[key] = l
+      }
+    }
+    var i = after.len() - 1
+    while i >= 0 {
+      rev.push(after[i])
+      i -= 1
+    }
+    rev.push(v)
+    i = before.len() - 1
+    while i >= 0 {
+      rev.push(before[i])
+      i -= 1
+    }
+    k -= 1
+  }
+  // parameters: release the ones no one uses
+  var start: List[Int] = []
+  for p in f.blocks[bl].params {
+    if !r.is_root(f, p) {
+      continue
+    }
+    let kd = r.kind(f, p)
+    for l in r.leaves(f, p) {
+      let key = leaf_key(l)
+      if !live.contains(key) && kd == RootKind.Owned {
+        for x in r.rc_ops(f, Op.Release, l, bl, 1) {
+          start.push(x)
+        }
+      }
+      live.remove(key)
+    }
+  }
+  var out = start
+  var i = rev.len() - 1
+  while i >= 0 {
+    out.push(rev[i])
+    i -= 1
+  }
+  f.blocks[bl].instrs = out
+}
+
+/// The code successor i of a branch needs on its edge (walk's code).
+fn (var r: Rc) branch_code(var f: Func, need: Counted, held: List[Leaf], first: Bool, site: Int, at: Int) -> List[Int] {
+  var out: List[Int] = []
+  for l in held {
+    if first && site >= 0 && l.root == site {
+      continue
+    }
+    let n = need.consumes(l)
+    if n == 0 {
+      for x in r.rc_ops(f, Op.Release, l, at, 1) {
+        out.push(x)
+      }
+    } else if n > 1 {
+      for x in r.rc_ops(f, Op.Retain, l, at, n - 1) {
+        out.push(x)
+      }
+    }
+  }
+  for l in need.order {
+    if !r.tracked(f, l) {
+      for x in r.rc_ops(f, Op.Retain, l, at, need.consumes(l)) {
+        out.push(x)
+      }
+    }
+  }
+  out
+}
+
+/// Places the code an edge needs: at the start of its target when the
+/// target has no other predecessor and takes no arguments, otherwise in a
+/// new block that splits the edge (edgeCode).
+fn (var r: Rc) edge_code(var f: Func, var c: RcFunc, e: Int, need: Counted, held: List[Leaf], first: Bool, site: Int) {
+  let to = f.edges[e].to
+  let t = f.term(to)
+  if t >= 0 && (f.values[t].op is Op.Unreachable | Op.Fault) {
+    // the program stops there: nothing needs releasing
+    return
+  }
+  if f.blocks[to].preds.len() == 1 && f.edges[e].args.is_empty() {
+    let x = r.branch_code(f, need, held, first, site, to)
+    if !x.is_empty() {
+      var p = c.pre.get(to) ?? []
+      for v in x {
+        p.push(v)
+      }
+      c.pre[to] = p
+    }
+    return
+  }
+  let n = f.new_block()
+  let x = r.branch_code(f, need, held, first, site, n)
+  if x.is_empty() {
+    // nothing to do: undo the block
+    f.blocks.pop()
+    return
+  }
+  split_edge(f, e, n, x)
+}
+
+/// Puts code x and a jump to e's target in the new block n, which e then
+/// enters (edgeCode, edgePrepend).
+fn split_edge(var f: Func, e: Int, n: Int, x: List[Int]) {
+  let to = f.edges[e].to
+  f.blocks[n].instrs = x
+  let j = new_value(f, n, Op.Jump, -1, Aux.None, [])
+  let ne = f.edges.len()
+  f.edges.push(Edge{from: n, to: to, args: f.edges[e].args})
+  f.values[j].succs = [ne]
+  f.blocks[n].instrs.push(j)
+  for (i, p) in f.blocks[to].preds.indexed() {
+    if p == e {
+      f.blocks[to].preds[i] = ne
+    }
+  }
+  f.edges[e].to = n
+  f.edges[e].args = []
+  f.blocks[n].preds = [e]
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation
+
+/// The roots whose consumption could free what root v refers to: v, and
+/// for a projection the container it came from (anchors).
+fn (var r: Rc) anchors(f: Func, v0: Int) -> List[Int] {
+  var out: List[Int] = []
+  var v = v0
+  while {
+    out.push(v)
+    if r.kind(f, v) != RootKind.Proj {
+      return out
+    }
+    v = r.parent(f, v).root
+  }
+  out
+}
+
+/// Removes `retain x ... release x` pairs within a block when nothing
+/// between consumes or releases x or its anchors (cancel).
+fn (var r: Rc) cancel(var f: Func) {
+  for bl in 0..f.blocks.len() {
+    var changed = true
+    while changed {
+      changed = false
+      let ins = f.blocks[bl].instrs
+      for (j, v) in ins.indexed() {
+        if f.values[v].op != Op.Release {
+          continue
+        }
+        let key = r.leaves(f, f.values[v].args[0])[0]
+        let an = r.anchors(f, key.root)
+        var k = j - 1
+        while k >= 0 {
+          let w = ins[k]
+          if f.values[w].op == Op.Retain && leaf_key(r.leaves(f, f.values[w].args[0])[0]) == leaf_key(key) {
+            var out: List[Int] = []
+            for (i, x) in ins.indexed() {
+              if i != k && i != j {
+                out.push(x)
+              }
+            }
+            f.blocks[bl].instrs = out
+            changed = true
+            break
+          }
+          if w == key.root || r.touches(f, w, an) {
+            break
+          }
+          k -= 1
+        }
+        if changed {
+          break
+        }
+      }
+    }
+  }
+  remove_dead_fields(f)
+}
+
+/// Deletes field reads whose result is unused (removeDeadFields).
+fn remove_dead_fields(var f: Func) {
+  var changed = true
+  while changed {
+    changed = false
+    var used: List[Bool] = []
+    for _ in 0..f.values.len() {
+      used.push(false)
+    }
+    for bl in f.blocks {
+      for v in bl.instrs {
+        for a in f.values[v].args {
+          if a >= 0 {
+            used[a] = true
+          }
+        }
+        for e in f.values[v].succs {
+          for a in f.edges[e].args {
+            if a >= 0 {
+              used[a] = true
+            }
+          }
+        }
+      }
+    }
+    for bl in 0..f.blocks.len() {
+      var out: List[Int] = []
+      for v in f.blocks[bl].instrs {
+        if f.values[v].op == Op.Field && !used[v] {
+          changed = true
+          continue
+        }
+        out.push(v)
+      }
+      f.blocks[bl].instrs = out
+    }
+  }
+}
+
+/// Whether w consumes, retains, releases, or reuses a leaf of one of the
+/// roots in an (touches).
+fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
+  let x = f.values[w]
+  if x.op is Op.Retain | Op.Release | Op.Reuse {
+    return an.contains(r.base(f, x.args[0]).root)
+  }
+  for u in r.leaf_uses(f, w) {
+    if u.m == Mode.Consume && an.contains(u.l.root) {
+      return true
+    }
+  }
+  for e in x.succs {
+    for l in r.edge_uses(f, e) {
+      if an.contains(l.root) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// Uniqueness and reuse
+
+/// The state of the uniqueness analysis (unique): the retained leaves,
+/// and the block parameters' leaves still believed unique.
+struct Uniq {
+  retained: Map[Str, Bool] = {}
+  param: Map[Str, Bool] = {}
+}
+
+/// Whether List leaf l is provably unique where it is used (unique's
+/// uniq).
+fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
+  if u.retained.contains(leaf_key(l)) || f.values[l.root].ty < 0 {
+    return false
+  }
+  let v = l.root
+  let x = f.values[v]
+  var head = l.path
+  var rest = ""
+  if !head.is_empty() {
+    let tail = head[1..head.len()]
+    if let Some(i) = tail.find(".") {
+      head = l.path[0..i + 1]
+      rest = l.path[i + 1..l.path.len()]
+    }
+  }
+  var idx = -1
+  if !head.is_empty() {
+    idx = Int.parse(head[1..head.len()]) ?? -1
+  }
+  match x.op {
+    Call => {
+      let name = aux_name(x.aux)
+      if name is "list.new" | "list.set" | "list.push" {
+        return l.path.is_empty()
+      }
+      if name == "list.pop" {
+        return l.path == ".0"
+      }
+    }
+    Reuse => return l.path.is_empty()
+    Struct | Tuple => {
+      if idx >= 0 {
+        let b = r.base(f, x.args[idx])
+        return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${rest}"})
+      }
+    }
+    SetField => {
+      if idx == aux_int(x.aux) {
+        let b = r.base(f, x.args[1])
+        return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${rest}"})
+      }
+      let b = r.base(f, x.args[0])
+      return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${l.path}"})
+    }
+    Param => {
+      if x.block == 0 {
+        return false
+      }
+      return u.param.get(leaf_key(l)) ?? false
+    }
+    _ => {}
+  }
+  false
+}
+
+/// The uniqueness analysis of f: retained leaves, then the block
+/// parameters, optimistic and falsified to a fixpoint (unique).
+fn (var r: Rc) unique(f: Func) -> Uniq {
+  var u = Uniq{}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Retain {
+        for l in r.leaves(f, f.values[v].args[0]) {
+          u.retained[leaf_key(l)] = true
+        }
+      }
+    }
+  }
+  var ps: List[Leaf] = []
+  for bi in 1..f.blocks.len() {
+    for p in f.blocks[bi].params {
+      for l in r.leaves(f, p) {
+        u.param[leaf_key(l)] = true
+        ps.push(l)
+      }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for l in ps {
+      if !(u.param.get(leaf_key(l)) ?? false) {
+        continue
+      }
+      let i = param_index(f, l.root)
+      for e in f.blocks[f.values[l.root].block].preds {
+        let b = r.base(f, f.edges[e].args[i])
+        if !r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${l.path}"}) {
+          u.param[leaf_key(l)] = false
+          changed = true
+          break
+        }
+      }
+    }
+  }
+  u
+}
+
+/// Puts `reuse` before each list update whose list is not provably
+/// unique (reuse).
+fn (var r: Rc) reuse(var f: Func) {
+  let u = r.unique(f)
+  for bl in 0..f.blocks.len() {
+    var out: List[Int] = []
+    for v in f.blocks[bl].instrs {
+      if f.values[v].op == Op.Call && is_update_call(aux_name(f.values[v].aux)) {
+        let a = f.values[v].args[0]
+        if !r.uniq(f, u, r.leaves(f, a)[0]) {
+          let x = new_value(f, bl, Op.Reuse, f.values[a].ty, Aux.None, [a])
+          out.push(x)
+          f.values[v].args[0] = x
+        }
+      }
+      out.push(v)
+    }
+    f.blocks[bl].instrs = out
+  }
+}
+
+// ---------------------------------------------------------------------------
+// After InsertRC (landing.go)
+
+/// An inline operation that faults before it consumes its operands
+/// (keepsOperands).
+fn keeps_operands(x: Value) -> Bool {
+  x.op == Op.Call && aux_name(x.aux) == "list.set" && !x.pos.is_empty()
+}
+
+fn is_rc_op(o: Op) -> Bool {
+  o is Op.Retain | Op.Release | Op.Share
+}
+
+/// Moves the counting code between each landing site and its check into
+/// the check's successors (sinkLandings).
+fn (var r: Rc) sink_landings(var f: Func) {
+  let nb = f.blocks.len()
+  for bl in 0..nb {
+    let (w, u) = landing_site(f, bl)
+    if w < 0 || f.values[w].block != bl {
+      continue
+    }
+    if keeps_operands(f.values[w]) {
+      // the operation faults before it takes its operands: on the
+      // cleanup path the function still owns them
+      let t = f.term(bl)
+      var code: List[Int] = []
+      for us in r.leaf_uses(f, w) {
+        if us.m == Mode.Consume && r.tracked(f, us.l) && r.kind(f, us.l.root) == RootKind.Owned {
+          let l = us.l
+          var v = l.root
+          if !l.path.is_empty() {
+            for s in l.path[1..l.path.len()].split(".") {
+              let i = Int.parse(s) ?? 0
+              v = new_value(f, -1, Op.Field, r.field_type(f.values[v].ty, i), Aux.I(n: i), [v])
+              code.push(v)
+            }
+          }
+          code.push(new_value(f, -1, Op.Release, -1, Aux.None, [v]))
+        }
+      }
+      edge_prepend(f, f.values[t].succs[0], code)
+    }
+    var wi = -1
+    var ui = -1
+    for (i, v) in f.blocks[bl].instrs.indexed() {
+      if v == w {
+        wi = i
+      }
+      if v == u {
+        ui = i
+      }
+    }
+    if wi < 0 || ui < wi {
+      f.values[w].pad = -1
+      continue
+    }
+    let between = f.blocks[bl].instrs[wi + 1..ui]
+    var ok = true
+    var fields = false
+    var in_between: Map[Int, Bool] = {}
+    for v in between {
+      in_between[v] = true
+      fields = fields || f.values[v].op == Op.Field
+      if !is_rc_op(f.values[v].op) && f.values[v].op != Op.Field {
+        ok = false
+      }
+    }
+    // the field reads must serve only the counting code moved with them
+    if fields && ok {
+      for bb in f.blocks {
+        for v in bb.instrs {
+          if in_between.contains(v) {
+            continue
+          }
+          for a in f.values[v].args {
+            if in_between.contains(a) {
+              ok = false
+            }
+          }
+          for e in f.values[v].succs {
+            for a in f.edges[e].args {
+              if in_between.contains(a) {
+                ok = false
+              }
+            }
+          }
+        }
+      }
+    }
+    if !ok {
+      f.values[w].pad = -1
+      continue
+    }
+    if between.is_empty() {
+      continue
+    }
+    let t = f.term(bl)
+    let pad = f.values[t].succs[0]
+    let normal = f.values[t].succs[1]
+    var pad_code: List[Int] = []
+    var copies: Map[Int, Int] = {}
+    for v in between {
+      var root = r.base(f, v).root
+      if is_rc_op(f.values[v].op) {
+        root = r.base(f, f.values[v].args[0]).root
+      }
+      if root == w {
+        // the site's own results: they do not exist there
+        continue
+      }
+      var args: List[Int] = []
+      for a in f.values[v].args {
+        args.push(copies.get(a) ?? a)
+      }
+      let x = f.values[v]
+      let cv = new_value(f, -1, x.op, x.ty, x.aux, args)
+      copies[v] = cv
+      pad_code.push(cv)
+    }
+    var ins = f.blocks[bl].instrs[0..wi + 1]
+    ins.push(u)
+    ins.push(t)
+    f.blocks[bl].instrs = ins
+    let nto = f.edges[normal].to
+    let nt = f.term(nto)
+    if nt < 0 || f.values[nt].op != Op.Unreachable || f.blocks[nto].instrs.len() != 1 {
+      // (after a raise the normal successor is never reached)
+      edge_prepend(f, normal, between)
+    }
+    edge_prepend(f, pad, pad_code)
+  }
+}
+
+/// Places code at the start of edge e's target (which then must have e
+/// as its only predecessor and no parameters), or in a block that splits
+/// the edge (edgePrepend).
+fn edge_prepend(var f: Func, e: Int, code: List[Int]) {
+  if code.is_empty() {
+    return
+  }
+  let to = f.edges[e].to
+  if f.blocks[to].preds.len() == 1 && f.edges[e].args.is_empty() && f.blocks[to].params.is_empty() {
+    for v in code {
+      f.values[v].block = to
+    }
+    var ins = code
+    for v in f.blocks[to].instrs {
+      ins.push(v)
+    }
+    f.blocks[to].instrs = ins
+    return
+  }
+  let n = f.new_block()
+  for v in code {
+    f.values[v].block = n
+  }
+  split_edge(f, e, n, code)
+}
+
+/// Removes the checks only a fault takes whose cleanup does nothing but
+/// reach the unwind exit (pruneLandings), then merges the blocks split
+/// off back (mergeJumps).
+fn prune_landings(var f: Func) {
+  let exit = f.unwind_exit
+  if exit >= 0 {
+    var sites: Map[Int, List[Int]] = {}
+    for bl in f.blocks {
+      for v in bl.instrs {
+        let p = f.values[v].pad
+        if p >= 0 {
+          var s = sites.get(p) ?? []
+          s.push(v)
+          sites[p] = s
+        }
+      }
+    }
+    var changed = false
+    for bl in 0..f.blocks.len() {
+      let t = f.term(bl)
+      if t < 0 || f.values[t].op != Op.Branch {
+        continue
+      }
+      let u = f.values[t].args[0]
+      if f.values[u].op != Op.Call || aux_name(f.values[u].aux) != "rt.landing" || f.values[u].block != bl {
+        continue
+      }
+      let pad = f.values[t].succs[0]
+      let normal = f.values[t].succs[1]
+      if !trivial_pad(f, f.edges[pad].to, exit) {
+        continue
+      }
+      for v in sites.get(u) ?? [] {
+        f.values[v].pad = -1
+      }
+      let pto = f.edges[pad].to
+      var preds: List[Int] = []
+      for e in f.blocks[pto].preds {
+        if e != pad {
+          preds.push(e)
+        }
+      }
+      f.blocks[pto].preds = preds
+      f.values[t].op = Op.Jump
+      f.values[t].args = []
+      f.values[t].succs = [normal]
+      var ins: List[Int] = []
+      for v in f.blocks[bl].instrs {
+        if v != u {
+          ins.push(v)
+        }
+      }
+      f.blocks[bl].instrs = ins
+      changed = true
+    }
+    if changed {
+      prune_func(f)
+    }
+  }
+  merge_jumps(f)
+}
+
+/// Whether the cleanup from block b0 does nothing but reach the unwind
+/// exit (pruneLandings' trivial).
+fn trivial_pad(f: Func, b0: Int, exit: Int) -> Bool {
+  var b = b0
+  for _ in 0..16 {
+    if b == exit {
+      return !f.catches
+    }
+    if f.blocks[b].instrs.len() != 1 || !f.blocks[b].params.is_empty() {
+      return false
+    }
+    let t = f.term(b)
+    if t < 0 || f.values[t].op != Op.Jump || !f.edges[f.values[t].succs[0]].args.is_empty() {
+      return false
+    }
+    b = f.edges[f.values[t].succs[0]].to
+  }
+  false
+}
+
+/// Merges the blocks addLandings split off back into their predecessor
+/// once its check is gone (mergeJumps).
+fn merge_jumps(var f: Func) {
+  var changed = true
+  while changed {
+    changed = false
+    for bl in 0..f.blocks.len() {
+      let t = f.term(bl)
+      if t < 0 || f.values[t].op != Op.Jump {
+        continue
+      }
+      let to = f.edges[f.values[t].succs[0]].to
+      if !f.land_rest.contains(to) || to == bl || to == 0 || f.blocks[to].preds.len() != 1 || !f.blocks[to].params.is_empty() || to == f.unwind_exit {
+        continue
+      }
+      f.land_rest.remove(to)
+      let n = f.blocks[bl].instrs.len()
+      var ins = f.blocks[bl].instrs[0..n - 1]
+      for v in f.blocks[to].instrs {
+        f.values[v].block = bl
+        for e in f.values[v].succs {
+          f.edges[e].from = bl
+        }
+        ins.push(v)
+      }
+      f.blocks[bl].instrs = ins
+      f.blocks[to].instrs = []
+      f.blocks[to].preds = []
+      var keep: List[Bool] = []
+      for i in 0..f.blocks.len() {
+        keep.push(i != to)
+      }
+      remove_blocks(f, keep)
+      changed = true
+      break
+    }
+  }
+}

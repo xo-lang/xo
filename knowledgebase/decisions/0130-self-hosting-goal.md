@@ -124,6 +124,28 @@ passes the full suite on the backends it targets.
   struct parameters by reference), the go build to 1.64x (a list copied
   per recursive call). Left: the generic intrinsics, test binaries, and
   the passes (stages 6 to 8).
+- 2026-10-11: SSA stage 6 of 8, std implementations (decision 0150):
+  the generic intrinsics (JSON encoders and decoders, SQL rows, any,
+  cast, status codes) and C interop, with `use c` bound in the Xo
+  checker from the binder's cache (decision 0152); 11,543 of 11,569
+  functions identical, the rest skipped only where the Go builder
+  reports an error too; 0 differences on go, arm64, and LLVM builds and
+  400 mutations (every mutated function identical). Found a binder bug
+  (`ffi` and `uses none` lines of one header shared a binding), fixed.
+- 2026-10-11: SSA stage 7 of 8, test binaries (decision 0150): the
+  test functions and entry, `expect`, the fakes of std/testing,
+  testing.run_main and testing.gen, property test generators; the test
+  binaries of the 71 runs with tests compared, 6,282 of 6,376 functions
+  identical, the rest skipped where the Go builder reports an error
+  too; 0 differences.
+- 2026-10-11: SSA stage 8 of 8, the passes (decision 0150):
+  pruneUnwind, addLandings, cleanup, InsertRC (with sinkLandings and
+  pruneLandings), and the verifier, identical at every stage (unwind,
+  landings, cleanup, rc) on the 306 runs both build completely and the
+  45 test binaries, and the verifier's verdicts identical on 32,411
+  mutants (one retain or release removed), on the go, arm64, and LLVM
+  builds and 400 mutations. The SSA lowering is self
+  hosted; next is the arm64 emitter (decision 0150's order).
 
 ## Alternatives
 

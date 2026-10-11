@@ -1,6 +1,8 @@
 package ssa
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/check"
@@ -41,11 +43,77 @@ func BuildStages(res *check.Result, opts Options, want map[string]bool) ([]Stage
 	if err != nil {
 		return out, err
 	}
-	if want["rc"] {
+	if want["rc"] || want["verify"] || want["mutants"] {
 		m.InsertRC()
-		out = append(out, Stage{"rc", m.String()})
+		if want["rc"] {
+			out = append(out, Stage{"rc", m.String()})
+		}
+	}
+	if want["verify"] {
+		out = append(out, Stage{"verify", verifyText(m.Verify())})
+	}
+	if want["mutants"] {
+		out = append(out, Stage{"mutants", m.VerifyMutants(MutantsPerFunc)})
 	}
 	return out, nil
+}
+
+// verifyText is the text of the stage `verify` (decision 0150 stage 8):
+// `ok`, or the verifier's errors sorted, one per line.
+func verifyText(err error) string {
+	if err == nil {
+		return "ok\n"
+	}
+	var lines []string
+	if ve, ok := err.(VerifyError); ok {
+		lines = append(lines, ve...)
+	} else {
+		lines = append(lines, err.Error())
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// MutantsPerFunc is how many mutants of each function the stage
+// `mutants` verifies.
+const MutantsPerFunc = 6
+
+// VerifyMutants removes, one at a time, the first n retains and releases
+// of every function of m (after InsertRC) and verifies the function
+// without it (TestVerifyRCMutations' mutants): one line per mutant,
+// `<function> b<block> <index>: ` and its errors sorted (`; `), or `ok`.
+// The self hosted verifier must print the same (decision 0150 stage 8).
+func (m *Module) VerifyMutants(n int) string {
+	var b strings.Builder
+	m.faults = m.mayFault()
+	defer func() { m.faults = nil }()
+	for _, f := range m.Funcs {
+		k := 0
+		for _, bl := range f.Blocks {
+			for i := 0; i < len(bl.Instrs) && k < n; i++ {
+				v := bl.Instrs[i]
+				if v.Op != OpRetain && v.Op != OpRelease {
+					continue
+				}
+				k++
+				orig := bl.Instrs
+				bl.Instrs = append(append([]*Value(nil), orig[:i]...), orig[i+1:]...)
+				errs := m.verifyFunc(f)
+				if len(errs) == 0 {
+					errs = m.verifyRC(f)
+				}
+				bl.Instrs = orig
+				sort.Strings(errs)
+				fmt.Fprintf(&b, "%s %s %d: ", f.Name, bl.Name(), i)
+				if len(errs) == 0 {
+					b.WriteString("ok\n")
+				} else {
+					b.WriteString(strings.Join(errs, "; ") + "\n")
+				}
+			}
+		}
+	}
+	return b.String()
 }
 
 // BuildRaw runs the builder alone, without the passes after it: the

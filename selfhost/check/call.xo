@@ -393,6 +393,9 @@ fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Iden
   let name = sel.name
   let o = c.mods[m].members.get(name) ?? -1
   if o < 0 {
+    if c.c_skipped(m, text(name), sel.span) {
+      return c.bad_ty
+    }
     c.unresolved(sel.span, "member of module `${text(imp_name)}`", text(name), sorted_names(c.mods[m].members))
     return c.bad_ty
   }
@@ -911,6 +914,10 @@ fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, 
         c.record(id, c.mods[m].obj)
         let o = c.mods[m].members.get(sel.name) ?? -1
         if o < 0 {
+          if c.c_skipped(m, text(sel.name), sel.span) {
+            c.infer_args(args)
+            return c.bad_ty
+          }
           c.unresolved(sel.span, "member of module `${text(id.name)}`", text(sel.name), sorted_names(c.mods[m].members))
           c.infer_args(args)
           return c.bad_ty

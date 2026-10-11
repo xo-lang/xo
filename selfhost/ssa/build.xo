@@ -124,7 +124,20 @@ enum Job {
   Body(fo: Int, fi: Int, sub: Map[Int, Int])
   /// The body of a function wrapped for its contracts (`<name>.body`).
   Inner(fo: Int, fi: Int, sub: Map[Int, Int])
+  /// The function of a test block (testBody).
+  Test(fi: Int, file: Int, td: parser.TestDecl)
   Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
+}
+
+/// A check after an operation (build_conc.go unwindCheck): the function,
+/// the check's call u, the callee whose unwinding it checks ("" for any),
+/// and the operation (-1 for none). pruneUnwind removes the ones nothing
+/// can take.
+struct UCheck {
+  fi: Int
+  u: Int
+  callee: Str
+  w: Int
 }
 
 /// The builder (build.go builder).
@@ -153,6 +166,8 @@ pub struct Builder {
   /// again with unwinding checks (conc), as build_program does; the
   /// constructs themselves are outside stage 1.
   pub need_conc: Bool = false
+  /// A test binary (Options.Tests, testmode.xo).
+  pub tests: Bool = false
   pub conc: Bool = false
   /// Why the run cannot be built here (no main, concurrency), or "".
   pub why: Str = ""
@@ -181,15 +196,19 @@ pub struct Builder {
   /// differ from the Go builder's (late_tids).
   skipped_any: Bool = false
   late_tids: Map[Int, Bool] = {}
+  /// The checks made, in order (b.checks).
+  checks: List[UCheck] = []
 }
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
 /// concurrency construct again with unwinding checks.
-pub fn build_program(c: check.Checker, line_root: Str) -> Builder {
+pub fn build_program(c: check.Checker, line_root: Str, tests: Bool) -> Builder {
   var b = new_builder(c, line_root)
+  b.tests = tests
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
+    b.tests = tests
     b.conc = true
     b.build()
   }
@@ -206,6 +225,12 @@ pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
 /// Builds the program: main and every function reachable from it, in the
 /// Go builder's order (buildModule, before the passes).
 pub fn (var b: Builder) build() {
+  if b.tests {
+    // a test binary (testmode.xo): its main runs one test
+    b.build_tests()
+    b.run_queue()
+    return
+  }
   var main_fo = -1
   for m in b.c.root_mods {
     if let Some(o) = b.c.mods[m].members.get(b"main") {
@@ -232,6 +257,11 @@ pub fn (var b: Builder) build() {
       b.main_wrapper(mf, et)
     }
   }
+  b.run_queue()
+}
+
+/// Builds the queued bodies (and the generated functions they ask for).
+fn (var b: Builder) run_queue() {
   b.run_gens()
   var i = 0
   while i < b.queue.len() {
@@ -249,6 +279,7 @@ fn (var b: Builder) run_job(j: Job) {
   match j {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
     Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
+    Test(fi, file, td) => b.test_body(fi, file, td)
     Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack)
   }
 }
@@ -531,6 +562,11 @@ fn (var b: Builder) named_type(t: Int) -> Int {
   }
   let impl_t = b.impl_named(t)
   let name = b.type_name(impl_t)
+  if om >= 0 && !b.c.mods[om].c_prefix.is_empty() && b.c.objs[obj].opaque {
+    // a C handle of `use c`: the pointer in a word, never reference
+    // counted (decision 0116)
+    return b.int_t()
+  }
   let tk = b.c.objs[obj].tkind
   if tk == "struct" {
     if b.conc_type(obj) {
@@ -1022,6 +1058,11 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
   if om >= 0 && om != b.main_mod {
     n = "${b.c.mods[om].name}.${n}"
   }
+  if b.tests && n == "main" {
+    // a test binary's main is the test entry; the program's main is an
+    // ordinary function (testing.run_main calls it)
+    n = "main.main"
+  }
   n
 }
 
@@ -1140,7 +1181,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   s.sealed[0] = true
   let saved = b.s
@@ -1793,15 +1834,20 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
     b.s.f.values[w].pad = u
   }
   let (yes, no) = b.branch(u)
+  b.s.f.land_rest[no] = true
   b.s.cur = yes
+  var c = callee
   match cleanup {
     None => {}
     Unlock(name, h, l) => {
       b.rt(name, -1, [h, l])
+      // never removed
+      c = ""
     }
   }
   b.unwind()
   b.s.cur = no
+  b.checks.push(UCheck{fi: b.s.fi, u: u, callee: c, w: w})
 }
 
 /// Ends the current block on the unwind path: the deferred code of the
@@ -1834,6 +1880,7 @@ fn (var b: Builder) finish_fn() {
   let saved = b.s.cur
   b.seal(b.s.unwind_b)
   b.s.cur = b.s.unwind_b
+  b.s.f.unwind_exit = b.s.unwind_b
   if !b.s.f.catches {
     // a fault goes on to the caller (decision 0085)
     b.s.f.add(b.s.cur, Op.Call, b.unit_t(), Aux.S(s: "rt.fault_continue"), [])

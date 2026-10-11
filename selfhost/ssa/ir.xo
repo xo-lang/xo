@@ -232,6 +232,15 @@ pub struct Func {
   /// A fault in it returns (a closure given to Map.update): its unwind
   /// block does not go on to the caller (Func.Catches).
   pub catches: Bool = false
+  /// The block that ends the function when it unwinds (Func.UnwindExit),
+  /// -1 for none.
+  pub unwind_exit: Int = -1
+  /// The blocks split off after a check (Func.landRest: merged back when
+  /// the check goes, mergeJumps).
+  pub land_rest: Map[Int, Bool] = {}
+  /// Per parameter, whether the callee only reads it (Func.Borrowed, set
+  /// by InsertRC); empty before.
+  pub borrowed: List[Bool] = []
   /// Why the builder left it incomplete (a construct outside the stages
   /// ported, decision 0150), or "": such a function is not compared.
   pub skip: Str = ""
@@ -635,8 +644,9 @@ pub fn (m: Module) func_text(f: Func) -> Str {
 
 fn (m: Module) write_func(var b: StrBuilder, f: Func) {
   var ps: List[Str] = []
-  for p in f.blocks[0].params {
-    ps.push("v${p}: ${m.type_name(f.values[p].ty)}")
+  for (i, p) in f.blocks[0].params.indexed() {
+    let bw = if i < f.borrowed.len() && f.borrowed[i] { "borrow " } else { "" }
+    ps.push("${bw}v${p}: ${m.type_name(f.values[p].ty)}")
   }
   var rs: List[Str] = []
   for r in f.results {

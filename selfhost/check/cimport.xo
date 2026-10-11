@@ -1,0 +1,236 @@
+// `use c "<header>"` (internal/check cimport.go, decision 0116): the
+// module of a C header's binding. The Go checker binds the header with
+// clang (internal/cbind) and writes the binding's declaration file to the
+// cache (`<module root>/.xo/cbind`, or $XO_CBIND_DIR); this checker
+// computes the same binding key and prefix and loads that declaration
+// file, as a std like module. Without the file in the cache (no Go build
+// or `xo bind --c` has bound the header) the run is not checked here
+// (unsupported). The clang step itself is not ported.
+
+use std/crypto
+use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Resolves `use c` u of file f of module m (loadCImport).
+fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
+  let header = u.path.to_str() ?? ""
+  let fpath = c.files[f].path
+  if !c.native {
+    let d = c.error_at(f, "XO1201", u.span, "`use c \"${header}\"` is impossible on the Go backend: C code is called from native builds only")
+    c.note(d, "check and build with `--no-gc` (a native backend: arm64 or LLVM); the Go backend reaches Go packages with `use go` (decision 0116)")
+  }
+  var eff_names: List[Str] = []
+  let has_uses = u.effects != None
+  if let Some(es) = u.effects {
+    for e in es {
+      var n = text(e.name.name)
+      if let Some(s) = e.sub {
+        n = "${n}.${text(s.name)}"
+      }
+      if !is_effect_label(n) || n == "go" {
+        let d = c.error_at(f, "XO1104", e.span, "unknown effect `${n}` in the `uses` of `use c \"${header}\"`")
+        c.note(d, "the effects are the labels of core 6.1 (`fs.read`, `net`, `clock`, ...), or `none`")
+        return
+      }
+      eff_names.push(n)
+    }
+  }
+  let mdir = c.mods[m].dir
+  var root = mdir
+  if let Some(r) = c.find_mod_root(mdir) {
+    root = r.dir
+  }
+  // the binding's key and prefix (cbind locate)
+  var local = join(mdir, header)
+  if header.starts_with("/") {
+    local = clean(header)
+  }
+  var header_path = ""
+  let st = c.fs.stat(local).ok() ?? None
+  if let Some(info) = st {
+    if !info.is_dir {
+      header_path = c.abs(local)
+    }
+  }
+  // the base name without its extension (filepath.Ext)
+  var hbase = base(header)
+  let parts = hbase.split(".")
+  if parts.len() > 1 {
+    hbase = parts[0..parts.len() - 1].join(".")
+  }
+  let name = c_module_name(hbase)
+  var links: List[Str] = []
+  var link_files: List[Str] = []
+  var link_libs: List[Str] = []
+  for lb in u.links {
+    let l = lb.to_str() ?? ""
+    links.push(l)
+    if !l.contains("/") && !l.contains("\\") && !base(l).contains(".") {
+      link_libs.push(l)
+      continue
+    }
+    var p = l
+    if !p.starts_with("/") {
+      p = join(mdir, l)
+    }
+    let abs = c.abs(p)
+    let lst = c.fs.stat(abs).ok() ?? None
+    if lst == None {
+      let d = c.error_at(f, "XO1104", u.span, "cannot bind C header `${header}`: `link ${l.quote()}`: no such file ${abs} (a name without `/` or an extension links a library: `link \"z\"` is -lz)")
+      c.note(d, "`use c` reads the header with clang (`xo bind --c ${header}` runs this step alone); a header path is relative to the module directory or on the C include path (decision 0116)")
+      return
+    }
+    link_files.push(abs)
+  }
+  var effs = "ffi"
+  if has_uses {
+    effs = eff_names.join(",")
+  }
+  var key = "c:${header}|${links.join(",")}|${effs}"
+  if !header_path.is_empty() {
+    key = "c:${header_path}|${link_files.join(",")}|${link_libs.join(",")}|${effs}"
+  }
+  let sum = crypto.sha256(key.bytes()).to_hex()
+  let prefix = "c_${name}_${sum[0..8]}_"
+  var cache = join(root, ".xo/cbind")
+  if !c.cbind_dir.is_empty() {
+    cache = c.cbind_dir
+  }
+  let decl_path = join(cache, "${prefix[0..prefix.len() - 1]}.xo")
+  var dep = c.mod_index.get(key) ?? -1
+  if dep < 0 {
+    let src = c.fs.read(decl_path).ok() ?? None
+    let data = match src {
+      Some(b) => b
+      None => {
+        if c.unsupported.is_empty() {
+          c.unsupported = "use c without the binding of ${header} in ${cache} (a Go build or `xo bind --c` writes it) in ${fpath}"
+        }
+        return
+      }
+    }
+    dep = c.new_module(key, name, parent(decl_path), true)
+    c.mods[dep].c_prefix = prefix
+    c.mods[dep].c_header = header
+    c.mods[dep].c_decl = decl_path
+    c.mods[dep].c_skipped = c_skipped_names(data)
+    c.parse_into(dep, decl_path, data, true)
+    c.mods[dep].state = 1
+    c.load_imports(dep)
+    c.mods[dep].state = 2
+    c.order.push(dep)
+  }
+  var imp_name = name
+  if let Some(a) = u.alias {
+    imp_name = text(a.name)
+  } else {
+    let (_, ok) = local_name(name)
+    if !ok {
+      let d = c.error_at(f, "XO0602", u.span, "import of C header `${header}` needs `as`: `${name}` is not a valid module name")
+      c.fix(d, "add `as c_${name}`", [DEdit{span: JSpan{file: fpath, line: u.span.end.line, col: u.span.end.col, end_line: u.span.end.line, end_col: u.span.end.col}, replace: " as c_${name}"}])
+      return
+    }
+  }
+  let k = imp_name.bytes()
+  if let Some(prev) = c.files[f].imports.get(k) {
+    c.error_at(f, "XO0603", u.span, "`${imp_name}` is already imported by `use ${prev.path.to_str() ?? ""}`")
+    return
+  }
+  c.files[f].imports[k] = Import{module: dep, path: u.path, used: false, span: u.span}
+}
+
+/// The names the binding skipped and why, from the `// skip: name: why`
+/// lines of its declaration file (cbind declFile).
+fn c_skipped_names(data: Bytes) -> Map[Str, Str] {
+  var out: Map[Str, Str] = {}
+  let src = data.to_str() ?? ""
+  for line in src.split("\n") {
+    if !line.starts_with("// skip: ") {
+      continue
+    }
+    let rest = line.trim_prefix("// skip: ")
+    if let Some(i) = rest.find(": ") {
+      out[rest[0..i]] = rest[i + 2..rest.len()]
+    }
+  }
+  out
+}
+
+/// XO1105 when name was skipped by the binding of C module m; true when
+/// it reported (cSkipped).
+fn (var c: Checker) c_skipped(m: Int, name: Str, sp: Span) -> Bool {
+  if m < 0 || c.mods[m].c_prefix.is_empty() {
+    return false
+  }
+  let reason = c.mods[m].c_skipped.get(name) ?? ""
+  if !c.mods[m].c_skipped.contains(name) {
+    return false
+  }
+  let d = c.error("XO1105", sp, "C function `${name}` of `${c.mods[m].c_header}` is not bound: ${reason.trim()}")
+  c.note(d, "the binding lists skipped names at the top of ${c.mods[m].c_decl}; write a C wrapper with a signature that maps (scalars, const char *, a const byte pointer and a length, flat structs, opaque struct pointers) and bind its header")
+  true
+}
+
+/// A header's base name as a valid Xo module name (cbind moduleName);
+/// ASCII names, as the headers bound in the repository have.
+fn c_module_name(hbase: Str) -> Str {
+  let lower = c_snake(hbase).to_lower()
+  var sb = StrBuilder.new()
+  let bs = lower.bytes()
+  for i in 0..bs.len() {
+    let ch = bs[i]
+    if ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+      sb.write(lower[i..i + 1])
+    } else {
+      sb.write("_")
+    }
+  }
+  var s = sb.freeze()
+  while s.starts_with("_") {
+    s = s.trim_prefix("_")
+  }
+  while s.ends_with("_") {
+    s = s.trim_suffix("_")
+  }
+  if s.is_empty() || (s.bytes()[0] >= '0' && s.bytes()[0] <= '9') {
+    s = "c_${s}"
+  }
+  c_xo_name(s)
+}
+
+/// cbind snake: `_` before an upper case letter that follows a lower case
+/// letter or a digit, or ends a run of capitals.
+fn c_snake(name: Str) -> Str {
+  let bs = name.bytes()
+  var sb = StrBuilder.new()
+  for i in 0..bs.len() {
+    let ch = bs[i]
+    if ch >= 'A' && ch <= 'Z' {
+      if i > 0 {
+        let prev = bs[i - 1]
+        let next_lower = i + 1 < bs.len() && bs[i + 1] >= 'a' && bs[i + 1] <= 'z'
+        let prev_lower = prev >= 'a' && prev <= 'z'
+        let prev_digit = prev >= '0' && prev <= '9'
+        let prev_upper = prev >= 'A' && prev <= 'Z'
+        if prev_lower || prev_digit || (prev_upper && next_lower) {
+          sb.write("_")
+        }
+      }
+      sb.write(name[i..i + 1].to_lower())
+      continue
+    }
+    sb.write(name[i..i + 1])
+  }
+  sb.freeze()
+}
+
+/// A name that is not a keyword (cbind xoName).
+fn c_xo_name(s: Str) -> Str {
+  if s.is_empty() || s == "_" {
+    return s
+  }
+  if lexer.lookup(s) != lexer.Kind.Ident || (s is "true" | "false" | "self" | "static" | "go") {
+    return "${s}_"
+  }
+  s
+}

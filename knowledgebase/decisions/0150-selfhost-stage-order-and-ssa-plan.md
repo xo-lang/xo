@@ -20,7 +20,16 @@ continuations, loop bounds, real-time sections) implemented 2026-10-11
 in `selfhost/ssa/contract.xo` and `defer.xo`. SSA stage 5 (scopes,
 tasks, channels, `select`, Mutex, Atomic, std/task, os.tasks, and the
 operations that wait) implemented 2026-10-11 in `selfhost/ssa/conc.xo`,
-with the scopes among the open blocks of defer.xo. Evidence:
+with the scopes among the open blocks of defer.xo. SSA stage 6 (the
+generic intrinsics and C interop) implemented 2026-10-11 in
+`selfhost/ssa/json.xo`, with `use c` bound in the Xo checker
+(`selfhost/check/cimport.xo`, decision 0152). SSA stage 7 (test
+binaries) implemented 2026-10-11 in `selfhost/ssa/testmode.xo`, with
+`xo ssadump --test`. SSA stage 8 (the passes: pruneUnwind,
+addLandings, cleanup, InsertRC with sinkLandings and pruneLandings, and
+the verifier) implemented 2026-10-11 in `selfhost/ssa/passes.xo`,
+`rc.xo`, and `verify.xo`, with the stages `verify` and `mutants` of
+`xo ssadump`. Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -238,6 +247,65 @@ and an operation that may fault inside it gets a landing (the port's
 port-shortcut-flags.md). Spawn sites are numbered by the checker key of
 their call in check.Inspect order (conc.xo walk_*), as the Go builder
 numbers them by AST node.
+
+**Comparison rules of stage 6** (2026-10-11, std implementations:
+selfhost/ssa json.xo; selfhost/check cimport.xo, decision 0152):
+
+- The generated functions of the intrinsics (`xo.json.enc[T]`,
+  `xo.json.dec[T]`, `xo.sql.dec[T]`) are built when asked for, as the
+  Go builder's genFunc builds them (they declare functions: the
+  encoders and decoders of their fields, map helpers, Row accessors),
+  and compared as any function.
+- Runs with `use c` are compared: the Xo checker binds a header from
+  the declaration file the Go binder cached (decision 0152), so the Go
+  checker must have bound it first (TestSelfhostSSA computes the Go
+  builds before it runs the Xo builder); a run whose binding is not in
+  the cache is reported as `== unsupported use c ...` and counted, not
+  compared. Runs with `use go` stay unsupported (they never build
+  natively).
+- What the Go builder itself does not support (it reports an error and
+  the build fails: a JSON decoder of a sized integer, a conversion
+  between instances that differ only in effects, `dbg`, holes) the Xo
+  builder skips, and such functions are counted as skipped.
+
+**Comparison rules of stage 7** (2026-10-11, test binaries: selfhost/ssa
+testmode.xo): the test binary of every repository run whose .xo files
+declare a test block (a line starting with `test "`) is built by both
+builders (`xo ssadump --test`, `selfhost/ssa --test`: ssa.Options.Tests,
+without --real) and compared by the rules of stage 1; so are the test
+binaries of the mutations with test blocks. The entry `main` and the
+property test generators `xo.gen[T]` are built when asked for, as the
+Go builder's genFunc builds them. The Xo checker records the `os`
+binding and the `for` parameters of each test block (Info.TestOs,
+Info.TestParams), keyed by the block's file and offset.
+
+**Comparison rules of stage 8** (2026-10-11, the passes: selfhost/ssa
+passes.xo, rc.xo, verify.xo):
+
+- `selfhost/ssa --stages` prints, after the build stage, the module after
+  each pass (`unwind`, `landings`, `cleanup`, `rc`), then `verify` (the
+  verifier's verdict after rc: `ok`, or its errors sorted) and `mutants`
+  (the verdicts on the module with one retain or release removed: the
+  first `MutantsPerFunc` = 6 of every function, one line per mutant,
+  `<function> b<block> <index>: ` and its errors sorted). `xo ssadump
+  --stage=verify,mutants` prints the Go verifier's (ssa.VerifyMutants);
+  neither is part of `--stage=all`.
+- The stages after the build are compared only on runs both builders
+  build completely: the Go builder prints them only for a build without
+  errors, the Xo builder only when it skipped no function. Every
+  function of each stage must be identical (closures by rank, as in the
+  build stage), the type lines are compared as sets, and the lines of
+  `verify` and `mutants` as sorted lists (the two builders make
+  functions in different orders).
+- The checks the builder makes are recorded in creation order
+  (b.checks: function, check call, callee, operation) for pruneUnwind;
+  the blocks split off after a check are recorded (landRest) for
+  mergeJumps. A pass works on a function moved out of the module;
+  cleanup and InsertRC renumber values in the Go builder's order (block
+  order, parameters first) by rebuilding the value table, and removed
+  blocks are dropped from the block list with every block index
+  renumbered.
+- The test binaries of stage 7 are compared at every stage too.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

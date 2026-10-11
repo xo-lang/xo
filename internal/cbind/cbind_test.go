@@ -98,6 +98,29 @@ func TestBindEffects(t *testing.T) {
 	}
 }
 
+// TestBindMemoUsesNone: a header bound with `ffi` (Uses nil) and then
+// with `uses none` (Uses empty) in one process gets two bindings; the
+// memo of Bind took them for one (both print [] with %q), so the second
+// `use c` line had the first one's effects.
+func TestBindMemoUsesNone(t *testing.T) {
+	needClang(t)
+	dir := t.TempDir()
+	ffi, err := Bind(Options{Header: "tiny.h", ModDir: "testdata/tiny", Links: []string{"tiny.c"}, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	none, err := Bind(Options{Header: "tiny.h", ModDir: "testdata/tiny", Links: []string{"tiny.c"}, Uses: []string{}, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ffi.Key == none.Key || ffi.Prefix == none.Prefix {
+		t.Fatalf("ffi and uses none share the binding %s", none.Key)
+	}
+	if !strings.HasSuffix(none.Key, "|") || !strings.Contains(string(none.Decl), "fn tiny_add(a: Int32, b: Int32) -> Int32\n") {
+		t.Errorf("uses none binding: key %s\n%s", none.Key, none.Decl)
+	}
+}
+
 // TestBindZlib binds a system header when it is installed: zlib's
 // crc32 and zlibVersion map, and z_stream functions (a pointer to a
 // struct the header defines) are skipped.

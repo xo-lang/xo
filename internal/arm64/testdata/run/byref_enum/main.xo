@@ -1,0 +1,181 @@
+// Enum parameters of 256 bytes or more are passed by reference on the
+// arm64 backend (decision 0153, the port of decision 0147's rule):
+// tags and payloads are read from the memory, and a large payload or
+// field of a read only parameter stays there (passed on by address).
+// Covered: recursion through boxes, list elements, an owned parameter
+// that is consumed, a `var` enum parameter written back, the list
+// updated after an element was passed, a Float payload (floating point
+// words in memory), and a large payload passed on in place
+// (`Group(at: at, ..)` to `wide_sum(at)`, a struct of 288 bytes).
+
+struct Pos {
+  line: Int
+  col: Int
+  file: Str
+  note: Str = ""
+}
+
+/// 288 bytes, so Node is above the 256 byte threshold.
+struct Wide {
+  a: Pos
+  b: Pos
+  c: Pos
+  d: Pos
+  e: Pos
+  f: Pos
+}
+
+enum Node {
+  Num(at: Wide, n: Int)
+  Name(at: Wide, name: Str)
+  Add(at: Wide, x: Node, y: Node)
+  Call(at: Wide, f: Str, args: List[Node])
+  Group(at: Wide, inner: Node, label: Str)
+  Lit(at: Wide, f: Float, g: Float)
+}
+
+/// A large payload passed on by address.
+fn wide_sum(w: Wide) -> Int {
+  w.a.line + w.b.col + w.f.line + w.c.file.len()
+}
+
+fn pos(n: Int) -> Pos {
+  Pos{line: n, col: n * 2, file: "f${n}.xo"}
+}
+
+fn wide(n: Int) -> Wide {
+  Wide{a: pos(n), b: pos(n + 1), c: pos(n + 2), d: pos(n + 3), e: pos(n + 4), f: pos(n + 5)}
+}
+
+fn eval(e: Node, env: Map[Str, Int]) -> Int {
+  match e {
+    Num(n: n, ..) => n
+    Name(name: name, ..) => env.get(name) ?? 0
+    Add(x: x, y: y, ..) => eval(x, env) + eval(y, env)
+    Call(f: f, args: args, ..) => {
+      var s = 0
+      for a in args {
+        s += eval(a, env)
+      }
+      if f == "neg" {
+        return -s
+      }
+      s
+    }
+    Group(inner: inner, at: at, ..) => eval(inner, env) + wide_sum(at) % 3
+    Lit(f: f, g: g, ..) => Int(f * 10.0 + g)
+  }
+}
+
+fn show(e: Node) -> Str {
+  match e {
+    Num(n: n, ..) => "${n}"
+    Name(name: name, at: at) => "${name}@${at.b.line}:${at.c.file}"
+    Add(x: x, y: y, ..) => "(${show(x)} + ${show(y)})"
+    Call(f: f, args: args, ..) => {
+      var parts: List[Str] = []
+      for a in args {
+        parts.push(show(a))
+      }
+      "${f}(${parts.join(", ")})"
+    }
+    Group(inner: inner, label: label, ..) => "[${label}: ${show(inner)}]"
+    Lit(f: f, g: g, ..) => "${f}/${g}"
+  }
+}
+
+fn line_of(e: Node) -> Int {
+  match e {
+    Num(at: at, ..) => at.a.line
+    Name(at: at, ..) => at.a.line
+    Add(at: at, ..) => at.a.line
+    Call(at: at, ..) => at.a.line
+    Group(at: at, ..) => at.a.line
+    Lit(at: at, ..) => at.a.line
+  }
+}
+
+/// Consumes its parameter: it is stored in the result.
+fn wrap(e: Node, label: Str) -> Node {
+  Node.Group(at: wide(line_of(e) + 100), inner: e, label: label)
+}
+
+/// Rewrites names in place through a `var` parameter.
+fn rename(var e: Node, from: Str, to: Str) {
+  match e {
+    Name(at: at, name: name) => {
+      if name == from {
+        e = Node.Name(at: at, name: to)
+      }
+    }
+    Add(at: at, x: x, y: y) => {
+      var a = x
+      var b = y
+      rename(a, from, to)
+      rename(b, from, to)
+      e = Node.Add(at: at, x: a, y: b)
+    }
+    Group(at: at, inner: inner, label: label) => {
+      var i = inner
+      rename(i, from, to)
+      e = Node.Group(at: at, inner: i, label: label)
+    }
+    Call(at: at, f: f, args: args) => {
+      var out: List[Node] = []
+      for x in args {
+        var y = x
+        rename(y, from, to)
+        out.push(y)
+      }
+      e = Node.Call(at: at, f: f, args: out)
+    }
+    Num(..) | Lit(..) => {}
+  }
+}
+
+fn second(es: List[Node]) -> Node {
+  es[1]
+}
+
+fn total(es: List[Node], env: Map[Str, Int]) -> Int {
+  var s = 0
+  for e in es {
+    s += eval(e, env) + line_of(e)
+  }
+  s
+}
+
+fn main(os: Os) {
+  let env = {"x": 3, "y": 4}
+  let leaf = Node.Name(at: wide(7), name: "x")
+  let sum = Node.Add(at: wide(1), x: Node.Num(at: wide(2), n: 10), y: leaf)
+  let call = Node.Call(at: wide(3), f: "neg", args: [sum, Node.Name(at: wide(4), name: "y"), Node.Num(at: wide(5), n: 1), Node.Lit(at: wide(6), f: 1.5, g: 0.25)])
+  os.stdio.println(show(call))
+  os.stdio.println("${eval(call, env)}")
+  let g = wrap(call, "outer")
+  os.stdio.println("${show(g)} line ${line_of(g)}")
+  var r = g
+  rename(r, "x", "y")
+  os.stdio.println(show(r))
+  os.stdio.println("${eval(r, env)} vs ${eval(g, env)}")
+  var es = [leaf, sum, call, g]
+  let s2 = second(es)
+  es[1] = Node.Num(at: wide(9), n: 99)
+  es.push(r)
+  os.stdio.println("${show(s2)} ${show(es[1])} ${total(es, env)}")
+  var deep = Node.Num(at: wide(0), n: 1)
+  for i in 0..50 {
+    deep = Node.Add(at: wide(i), x: deep, y: Node.Num(at: wide(i), n: i))
+  }
+  os.stdio.println("${eval(deep, env)} ${line_of(deep)}")
+  let missing = es[2]
+  match missing {
+    Call(args: args, ..) => {
+      let bad = args[1]
+      os.stdio.println("${show(bad)}")
+      let last = args[args.len() - 1]
+      os.stdio.println("${show(last)} ${line_of(last)}")
+    }
+    Num(..) | Name(..) | Add(..) | Group(..) | Lit(..) => {}
+  }
+}

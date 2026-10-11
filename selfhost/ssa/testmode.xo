@@ -1,0 +1,854 @@
+// Test binaries (internal/ssa build_testmode.go, build_gen.go), stage 7
+// of decision 0150: with Builder.tests the build makes a function per
+// test block of the root modules (`test.<i>`) and a main that runs the
+// one XO_TEST names (rt.test_index), with the fakes of std/testing
+// lowered as the capabilities they stand for, `expect`, testing.run_main,
+// testing.gen, and the inputs of property tests (xo.gen[T]).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// A test block of the root modules, in TestDecls order: its file and
+/// declaration.
+struct TestRef {
+  file: Int
+  td: parser.TestDecl
+}
+
+/// The test blocks of the root modules in the order a test binary
+/// numbers them (TestDecls: module, file, declaration).
+fn (var b: Builder) test_decls() -> List[TestRef] {
+  var out: List[TestRef] = []
+  for m in b.c.root_mods {
+    for f in b.c.mods[m].files {
+      for d in b.c.files[f].ast.decls {
+        if let TestDecl(d: td) = d {
+          out.push(TestRef{file: f, td: td})
+        }
+      }
+    }
+  }
+  out
+}
+
+/// A test the binary runs: its index, function name, and inputs.
+struct TestEntry {
+  i: Int
+  name: Str
+  params: List[Int]
+}
+
+/// Declares a function per test block and builds the test entry, main
+/// (buildTests).
+fn (var b: Builder) build_tests() {
+  if !b.c.root_mods.is_empty() {
+    b.main_mod = b.c.root_mods[0]
+  }
+  let (os_t, _) = b.m.named("Os", Kind.Cap)
+  let err_ct = b.prelude_type("Error", [])
+  let rt = b.typ(b.result_of(b.c.unit_ty, err_ct))
+  let decls = b.test_decls()
+  var tests: List[TestEntry] = []
+  for (i, tr) in decls.indexed() {
+    let params = b.c.test_params_of(tr.file, tr.td)
+    if params.len() != tr.td.params.len() {
+      b.unsupported("a property test (`test ... for`) whose inputs are not checked")
+      continue
+    }
+    if !tr.td.effects.is_empty() {
+      // skipped without --real (cmd/xo reports them as skipped)
+      continue
+    }
+    let name = "test.${i}"
+    var ps = [os_t]
+    for vo in params {
+      ps.push(b.typ(b.c.objs[vo].ty))
+    }
+    let fi = b.m.new_func(name, ps, [rt])
+    b.queue.push(Job.Test(fi: fi, file: tr.file, td: tr.td))
+    tests.push(TestEntry{i: i, name: name, params: params})
+  }
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let tasks = b.uses_os_tasks()
+  if tasks {
+    b.need_conc = true
+  }
+  let unit = b.unit_t()
+  let fi = b.m.new_func("main", [], [unit])
+  var file = -1
+  if !decls.is_empty() {
+    file = decls[0].file
+  }
+  let saved = b.begin(fi, file)
+  let idx = b.rt("test_index", it, [])
+  for t in tests {
+    let tr = decls[t.i]
+    b.s.file = tr.file
+    let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [idx, b.cint(t.i)]))
+    var args = [b.zero(os_t, [])]
+    if !t.params.is_empty() {
+      for v in b.prop_inputs(t.params) {
+        args.push(v)
+      }
+    }
+    var r = -1
+    var done = false
+    if tasks && b.conc {
+      // the test runs in the scope of its os.tasks (build_tasks.go): its
+      // tasks are canceled when it ends, as std/rt's runInWorld
+      var sites: List[SpawnSite] = []
+      if let Some(body) = tr.td.body {
+        sites = b.failing_spawns(body)
+      }
+      let (h, sc) = b.root_scope_begin(sites)
+      r = b.call(t.name, rt, "", args)
+      b.check(t.name)
+      b.root_scope_end(h, sc, sites, 1, true)
+      done = b.is_dead()
+    } else {
+      r = b.call(t.name, rt, "", args)
+    }
+    if !done {
+      let ei = b.m.variant_index(rt, "Err")
+      if ei >= 0 {
+        let tag = b.add(Op.Tag, it, Aux.None, [r])
+        let (no2, join2) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ei)]))
+        let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
+        let msg = b.append_display(b.const_str("error: "), e, err_ct)
+        b.rt("test_fail", -1, [msg])
+        b.add(Op.Unreachable, -1, Aux.None, [])
+        b.dead()
+        b.if_then_end(no2, join2)
+      }
+      b.retv(b.unit())
+    }
+    b.if_then_end(no, join)
+  }
+  b.rt("test_fail", -1, [b.const_str("no test with this index")])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// The function of test block td: `os` is its parameter, and the body has
+/// the type `() ! Error` (testBody).
+fn (var b: Builder) test_body(fi: Int, file: Int, td: parser.TestDecl) {
+  let saved = b.begin(fi, file)
+  b.s.res = b.c.unit_ty
+  b.s.err_t = b.prelude_type("Error", [])
+  let osv = b.c.test_os_of(file, td)
+  if osv >= 0 {
+    b.write_var(osv, b.param(0))
+  }
+  for (k, vo) in b.c.test_params_of(file, td).indexed() {
+    b.write_var(vo, b.param(1 + k))
+  }
+  if let Some(body) = td.body {
+    let v = b.block(body)
+    b.ret_at(v, Some(Expr.Block(b: body)))
+  }
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// Opens the root scope of os.tasks around the code that follows
+/// (rootScope); returns the scope's handle and index.
+fn (var b: Builder) root_scope_begin(sites: List[SpawnSite]) -> (Int, Int) {
+  let h = b.rt("scope_open", b.m.handle("Scope", []), [])
+  b.rt("prog_group_set", -1, [h])
+  let sc = b.new_scope(h, sites)
+  (h, sc)
+}
+
+/// Closes the root scope (rootScope after its call) with mode: a failed
+/// group task prints its error and exits with status 1, or fails the
+/// test when test is set.
+fn (var b: Builder) root_scope_end(h: Int, sc: Int, sites: List[SpawnSite], mode: Int, in_test: Bool) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  b.end_scope()
+  if !b.is_dead() {
+    let stv = b.rt("scope_close", it, [h, b.cint(mode)])
+    b.rt("prog_group_clear", -1, [])
+    b.close_status(sc, stv)
+  }
+  let cur = b.s.cur
+  let ub = b.s.scope_tab[sc].unwind_b
+  if ub >= 0 {
+    b.seal(ub)
+    b.s.cur = ub
+    let stv = b.rt("scope_close", it, [h, b.cint(2)])
+    b.rt("prog_group_clear", -1, [])
+    b.close_status(sc, stv)
+    b.unwind()
+  }
+  let fb = b.s.scope_tab[sc].fail_b
+  if fb >= 0 {
+    b.seal(fb)
+    b.s.cur = fb
+    let site = b.rt("scope_fail_site", it, [h])
+    for sp in sites {
+      let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [site, b.cint(sp.id)]))
+      b.s.cur = yes
+      let tt = b.task_type(sp.res_t, sp.err_t)
+      let trt = b.typ(b.result_of(sp.res_t, sp.err_t))
+      let th = b.rt("scope_fail_task", tt, [h])
+      let l = b.rt("task_result", b.m.list(trt), [th])
+      let tr = b.call("list.index", trt, "", [l, b.cint(0)])
+      let ei = b.m.variant_index(trt, "Err")
+      let e = b.add(Op.Payload, b.m.types[trt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [tr])
+      let msg = b.append_display(b.const_str("error: "), e, sp.err_t)
+      if in_test {
+        b.test_fail(msg)
+      } else {
+        b.rt("eprintln", -1, [msg])
+        b.print_trace(b.err_trace(tr, ei))
+        b.rt("exit", -1, [b.cint(1)])
+        b.add(Op.Unreachable, -1, Aux.None, [])
+      }
+      b.dead()
+      b.s.cur = no
+    }
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+  }
+  b.s.cur = cur
+}
+
+/// Fails the test with msg; it does not return (testFail).
+fn (var b: Builder) test_fail(msg: Int) {
+  b.rt("test_fail", -1, [msg])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+}
+
+/// `expect(cond)`: a false condition fails the test (expectCall).
+fn (var b: Builder) expect_call(x: Expr) -> Int {
+  let (span, _, args) = call_parts(x)
+  let bt = b.bool_t()
+  let a = args[0].value
+  let ok = b.value_as(a, bt)
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [ok]))
+  let text = b.source_text(b.s.file, parser.expr_span(a))
+  b.test_fail(b.const_str("expect failed: ${text} at ${b.pos(span)}"))
+  b.if_then_end(no, join)
+  b.unit()
+}
+
+/// `expect(a) op b`: the comparison, and both values (their Debug text)
+/// in the failure message (expectCompare).
+fn (var b: Builder) expect_compare(e: Expr) -> Int {
+  let (span, op, x, y) = match e {
+    BinaryExpr(span: span, op: op, x: x, y: y) => (span, op, x, y)
+    _ => fault("binary")
+  }
+  let st = b.str_t()
+  let bt = b.bool_t()
+  let (_, _, cargs) = call_parts(x)
+  let a = cargs[0].value
+  var l = b.expr(a)
+  var ct = b.nat_check(a)
+  let ot = b.nat_check(y)
+  if b.m.variant_index(b.vty(l), "Some") < 0 {
+    // `expect(x) == Some(..)` of a value that is not an Option: the
+    // comparison is of Options
+    if b.option_elem(ot) >= 0 {
+      let t = b.typ(ot)
+      let si = b.m.variant_index(t, "Some")
+      if si >= 0 && b.m.types[t].variants[si].fields[0].ty == b.vty(l) {
+        l = b.coerce(l, t)
+        ct = ot
+      }
+    }
+  }
+  let r = b.value_as(y, b.vty(l))
+  let ok = b.compare_values(op, l, r)
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [ok]))
+  let text = b.source_text(b.s.file, span)
+  var msg = b.const_str("expect failed: ${text} at ${b.pos(span)}\n      left:  ")
+  msg = b.append_debug(msg, l, ct)
+  msg = b.call("str.concat", st, "", [msg, b.const_str("\n      right: ")])
+  msg = b.append_debug(msg, r, ct)
+  b.test_fail(msg)
+  b.if_then_end(no, join)
+  b.unit()
+}
+
+/// Argument i of a fake's control method (testCapCall's arg).
+fn (var b: Builder) tc_arg(es: List[Expr?], i: Int, t: Int) -> Int {
+  if i >= es.len() {
+    b.unsupported("a call with a missing argument")
+    return b.undef(t)
+  }
+  match es[i] {
+    Some(e) => b.value_as(e, t)
+    None => {
+      b.unsupported("a call with a missing argument")
+      b.undef(t)
+    }
+  }
+}
+
+/// The control methods of the fakes (FakeClock.advance, FakeEnv.set, ...)
+/// and the printing methods of FakeStdio; key is the capability's name and
+/// the method's (`Clock.advance`). None for a method of the capability
+/// itself (testCapCall).
+fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int? {
+  let (_, _, cargs) = call_parts(x)
+  let fo = ci.fn_obj
+  let fm = b.obj_mod(fo)
+  if fm < 0 || b.c.mods[fm].path != "std/testing" {
+    return None
+  }
+  let it = b.int_t()
+  let st = b.str_t()
+  let nt = b.nat_of(x)
+  let es = arg_exprs(b.c.objs[fo].params, cargs)
+  match key {
+    "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
+      let r = b.expr(ci.recv[0])
+      let a = b.tc_arg(es, 0, st)
+      return Some(b.call(key, b.unit_t(), "", [r, a]))
+    }
+    "Stdio.set_input" => {
+      // reads take the text (std/llrt/xo_stdin.c)
+      b.expr(ci.recv[0])
+      b.rt("tw_set_input", -1, [b.tc_arg(es, 0, st)])
+      return Some(b.unit())
+    }
+    "Stdio.output" => return Some(b.rt("test_output", st, [b.cint(1)]))
+    "Stdio.errors" => return Some(b.rt("test_output", st, [b.cint(2)]))
+    "Clock.advance" => {
+      b.need_conc = true
+      if !b.conc {
+        return Some(b.undef(nt))
+      }
+      b.rt("test_advance", -1, [b.tc_arg(es, 0, it)])
+      return Some(b.unit())
+    }
+    "Clock.set" => {
+      b.rt("test_clock_set", -1, [b.tc_arg(es, 0, it)])
+      return Some(b.unit())
+    }
+    "Clock.sleeps" => return Some(b.rt("test_sleeps", b.m.list(it), []))
+    "Env.set" => {
+      let k = b.tc_arg(es, 0, st)
+      let v = b.tc_arg(es, 1, st)
+      b.rt("test_env_set", -1, [k, v])
+      return Some(b.unit())
+    }
+    "Env.set_args" => {
+      b.rt("test_set_args", -1, [b.tc_arg(es, 0, b.m.list(st))])
+      return Some(b.unit())
+    }
+    "Env.program" => return Some(b.const_str("test"))
+    "Proc.signal_after" => {
+      b.rt("test_signal_after", -1, [b.tc_arg(es, 0, it)])
+      return Some(b.unit())
+    }
+    "Proc.exit_code" => {
+      let l = b.rt("test_exit_code", b.m.list(it), [])
+      return Some(b.pop_one(l, nt))
+    }
+    "Proc.on_run" => {
+      // the outputs a later run of the command gives (std/llrt/xo_proc.c)
+      b.expr(ci.recv[0])
+      let cmd = b.tc_arg(es, 0, st)
+      let out = b.expr(es[1] ?? fault("on_run"))
+      let ot = b.vty(out)
+      if b.tkind(ot) != Kind.Struct || b.m.types[ot].fields.len() != 3 {
+        b.unsupported("this `on_run`")
+        return Some(b.undef(nt))
+      }
+      let f0 = b.add(Op.Field, b.m.types[ot].fields[0].ty, Aux.I(n: 0), [out])
+      let f1 = b.add(Op.Field, b.m.types[ot].fields[1].ty, Aux.I(n: 1), [out])
+      let f2 = b.add(Op.Field, b.m.types[ot].fields[2].ty, Aux.I(n: 2), [out])
+      b.rt("proc_on_run", -1, [cmd, f0, f1, f2])
+      return Some(b.unit())
+    }
+    _ => {}
+  }
+  None
+}
+
+/// A method of Fs or MemFs in a test binary (memFsCall): the function
+/// memfs_<name> of std/native/testing.xo. None outside test binaries and
+/// for anything else.
+fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  let fm = b.obj_mod(fo)
+  if !b.tests || r < 0 || b.c.objs[fo].is_static || fm < 0 {
+    return None
+  }
+  let rname = b.obj_name(r)
+  if !(b.c.mods[fm].is_prelude && rname == "Fs") && !(b.c.mods[fm].path == "std/testing" && rname == "MemFs") {
+    return None
+  }
+  let nm = b.native_mod("std/testing")
+  if nm >= 0 {
+    let impl = b.member(nm, "memfs_${b.obj_name(fo)}")
+    if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+      return Some(b.call_as(x, ci, impl))
+    }
+  }
+  b.unsupported("the method `${rname}.${b.obj_name(fo)}` of a test's MemFs")
+  Some(b.undef(b.nat_of(x)))
+}
+
+/// run_main and gen of std/testing (testCall); None for the others.
+fn (var b: Builder) test_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let fm = b.obj_mod(fo)
+  if fm < 0 || b.c.mods[fm].path != "std/testing" || b.c.objs[fo].recv >= 0 {
+    return None
+  }
+  let n = b.obj_name(fo)
+  if n == "run_main" {
+    return Some(b.run_main(x, ci))
+  }
+  if n == "gen" {
+    return Some(b.testing_gen(x, ci))
+  }
+  None
+}
+
+/// `testing.gen[T](seed)`: a value of T from a generator seeded with seed
+/// (testingGen).
+fn (var b: Builder) testing_gen(x: Expr, ci: check.CallInfo) -> Int {
+  let (_, _, cargs) = call_parts(x)
+  let it = b.int_t()
+  let t = b.nat_of(x)
+  let es = arg_exprs(b.c.objs[ci.fn_obj].params, cargs)
+  let e0 = match es[0] {
+    Some(e) => e
+    None => {
+      b.unsupported("a call with a missing argument")
+      return b.undef(t)
+    }
+  }
+  let g = b.rt("gen_new", it, [b.value_as(e0, it)])
+  let f = b.gen_value_func(b.nat_check(x))
+  let v = b.call(f, t, "", [g])
+  b.rt("gen_free", -1, [g])
+  v
+}
+
+/// The inputs of a property test's case: each from the case's generator
+/// in order, then their choices and `name = Debug` lines reported to the
+/// harness (propInputs).
+fn (var b: Builder) prop_inputs(params: List[Int]) -> List[Int] {
+  let st = b.str_t()
+  let it = b.int_t()
+  let g = b.rt("gen_prop", it, [])
+  var vals: List[Int] = []
+  for vo in params {
+    let ct = b.c.objs[vo].ty
+    let f = b.gen_value_func(ct)
+    let t = b.typ(ct)
+    vals.push(b.call(f, t, "", [g]))
+  }
+  var text = b.const_str("")
+  for (k, vo) in params.indexed() {
+    text = b.call("str.concat", st, "", [text, b.const_str("${check.text(b.c.objs[vo].name)} = ")])
+    text = b.append_debug(text, vals[k], b.c.objs[vo].ty)
+    text = b.call("str.concat", st, "", [text, b.const_str("\n")])
+  }
+  b.rt("prop_report", -1, [g, text])
+  vals
+}
+
+/// `testing.run_main(main, os, args)` (runMain): main runs below a node
+/// of its own; an error from main is printed on the fake standard error
+/// and is status 1.
+fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
+  let (_, _, cargs) = call_parts(x)
+  let fo = ci.fn_obj
+  let it = b.int_t()
+  let st = b.str_t()
+  let bt = b.bool_t()
+  b.need_conc = true
+  if !b.conc {
+    return b.undef(it)
+  }
+  let es = arg_exprs(b.c.objs[fo].params, cargs)
+  let (e0, e1) = match (es[0], es[1]) {
+    (Some(p), Some(q)) => (p, q)
+    _ => {
+      b.unsupported("a call with a missing argument")
+      return b.undef(it)
+    }
+  }
+  var ft = b.typ(b.apply(b.c.objs[fo].params[0].ty))
+  let (os_t, _) = b.m.named("Os", Kind.Cap)
+  var main_v = -1
+  let nt = b.nat_of(e0)
+  if b.tkind(nt) == Kind.Func && b.m.types[nt].elems.len() == 1 && b.tkind(ft) == Kind.Func && b.m.types[nt].ret != b.m.types[ft].ret {
+    // a main that cannot fail (`fn(Os)`): called as it is, status 0
+    ft = nt
+    main_v = b.expr(e0)
+  } else {
+    main_v = b.value_as(e0, ft)
+  }
+  let os_v = b.value_as(e1, os_t)
+  var args = -1
+  if es.len() > 2 && es[2] != None {
+    args = b.value_as(es[2] ?? fault("args"), b.m.list(st))
+  } else {
+    args = b.call("list.new", b.m.list(st), "", [])
+  }
+  if b.tkind(ft) != Kind.Func || b.m.types[ft].elems.len() != 1 {
+    b.unsupported("this `main` for testing.run_main")
+    return b.undef(it)
+  }
+  b.rt("test_main_begin", -1, [args])
+  let ret = b.m.types[ft].ret
+  let r = b.add(Op.CallValue, ret, Aux.None, [main_v, os_v])
+  var code = b.cint(0)
+  let ei = b.m.variant_index(ret, "Err")
+  if ei >= 0 {
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, it)
+    let tag = b.add(Op.Tag, it, Aux.None, [r])
+    let failed = b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ei)])
+    let (yes, no) = b.branch(failed)
+    b.s.cur = yes
+    let e = b.add(Op.Payload, b.m.types[ret].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
+    let msg = b.append_display(b.const_str("error: "), e, b.prelude_type("Error", []))
+    let line = b.call("str.concat", st, "", [msg, b.const_str("\n")])
+    b.rt("test_eprint", -1, [line])
+    b.jump(join, [b.cint(1)])
+    b.s.cur = no
+    b.jump(join, [b.cint(0)])
+    b.seal(join)
+    b.s.cur = join
+    code = res
+  }
+  let out = b.rt("test_main_end", it, [code])
+  b.check("")
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Generated values (build_gen.go)
+
+/// xo_gen_sized's kind of each sized integer (sizedGenKind), or 0.
+fn sized_gen_kind(name: Str) -> Int {
+  match name {
+    "Int32" => 1
+    "Int16" => 2
+    "Int8" => 3
+    "UInt64" => 4
+    "UInt32" => 5
+    "UInt16" => 6
+    "UInt8" => 7
+    _ => 0
+  }
+}
+
+/// A value of checker type xt from generator g, as a value of want
+/// (genValueFunc's sub).
+fn (var b: Builder) gen_sub(g: Int, xt: Int, want: Int) -> Int {
+  let f = b.gen_value_func(xt)
+  let t = b.typ(xt)
+  let v = b.call(f, t, "", [g])
+  b.coerce(v, want)
+}
+
+fn (var b: Builder) gen_intn(g: Int, n: Int) -> Int {
+  b.rt("gen_intn", b.int_t(), [g, b.cint(n)])
+}
+
+fn (var b: Builder) eq_int(v: Int, k: Int) -> Int {
+  b.add(Op.Eq, b.bool_t(), Aux.None, [v, b.cint(k)])
+}
+
+/// xo.gen[ct](g: Int) -> T: a value of checker type ct from generator g
+/// (genValueFunc), built now.
+fn (var b: Builder) gen_value_func(ct: Int) -> Str {
+  let t = b.typ(ct)
+  let it = b.int_t()
+  let name = "xo.gen[${b.c.show(ct)}]"
+  let fi = b.thunk_func(name, [it], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.gen_value_body(ct, t)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+fn (var b: Builder) gen_value_body(ct: Int, t: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let g = b.param(0)
+  let (_, rerr) = b.result_parts(ct)
+  if rerr >= 0 && b.c.is_never(rerr) {
+    b.unsupported("generated values of `${b.c.show(ct)}`")
+    b.retv(b.undef(t))
+    return
+  }
+  let args = b.ty_args(ct)
+  if b.is_prelude_named(ct, ["Int", "Int64"]) {
+    b.retv(b.rt("gen_int", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Int32", "Int16", "Int8", "UInt64", "UInt32", "UInt16", "UInt8"]) {
+    let k = sized_gen_kind(b.obj_name(b.named_obj(ct)))
+    b.retv(b.rt("gen_sized", t, [g, b.cint(k)]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Float"]) {
+    b.retv(b.rt("gen_float", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Float32"]) {
+    let f = b.rt("gen_float", b.float_t(), [g])
+    b.retv(b.rt("f32_round", t, [f]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Bool"]) {
+    b.retv(b.eq_int(b.gen_intn(g, 2), 1))
+    return
+  }
+  if b.is_prelude_named(ct, ["Str", "Bytes"]) {
+    b.retv(b.rt("gen_str", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Rune"]) {
+    b.retv(b.rt("gen_rune", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    b.retv(b.rt("gen_duration", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    b.retv(b.rt("gen_time", t, [g]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Secret"]) && b.tkind(t) == Kind.Struct && b.m.types[t].fields.len() == 1 {
+    let v = b.gen_sub(g, args[0], b.m.types[t].fields[0].ty)
+    b.retv(b.add(Op.Struct, t, Aux.None, [v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["List"]) && b.tkind(t) == Kind.List {
+    b.rt("gen_enter", -1, [g])
+    let cnt = b.rt("gen_size", it, [g])
+    let xs = b.local()
+    b.write_var(xs, b.call("list.new", t, "", []))
+    let iv = b.local()
+    let (i, head, exit) = b.for_up_to_begin(cnt, iv)
+    let cur = b.read(xs)
+    let e = b.gen_sub(g, args[0], b.m.types[t].elems[0])
+    b.write_var(xs, b.call("list.push", t, "", [cur, e]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.rt("gen_leave", -1, [g])
+    b.retv(b.read(xs))
+    return
+  }
+  if b.is_prelude_named(ct, ["Map", "Set"]) && b.m.types[t].coll {
+    // a Set is a generated List made a set (std/rt): the same choices as
+    // entries put one by one
+    let put = b.map_put(t)
+    b.rt("gen_enter", -1, [g])
+    let cnt = b.rt("gen_size", it, [g])
+    let mv = b.local()
+    b.write_var(mv, b.empty_map(t))
+    let iv = b.local()
+    let (i, head, exit) = b.for_up_to_begin(cnt, iv)
+    let k = b.gen_sub(g, args[0], map_key(b.m, t))
+    var v = b.unit()
+    if args.len() == 2 {
+      v = b.gen_sub(g, args[1], map_val(b.m, t))
+    }
+    let cur = b.read(mv)
+    b.write_var(mv, b.call(put, t, "", [cur, k, v]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.rt("gen_leave", -1, [g])
+    b.retv(b.read(mv))
+    return
+  }
+  if b.is_prelude_named(ct, ["Option"]) && b.tkind(t) == Kind.Enum {
+    let none = b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "None")), [])
+    let (no, join) = b.if_then_begin(b.rt("gen_deep", bt, [g]))
+    b.retv(none)
+    b.if_then_end(no, join)
+    let (no2, join2) = b.if_then_begin(b.eq_int(b.gen_intn(g, 4), 0))
+    b.retv(none)
+    b.if_then_end(no2, join2)
+    b.rt("gen_enter", -1, [g])
+    let si = b.m.variant_index(t, "Some")
+    let p = b.gen_sub(g, args[0], b.m.types[t].variants[si].fields[0].ty)
+    let v = b.add(Op.Variant, t, Aux.I(n: si), [p])
+    b.rt("gen_leave", -1, [g])
+    b.retv(v)
+    return
+  }
+  if b.is_prelude_named(ct, ["Result"]) && b.tkind(t) == Kind.Enum {
+    let oi = b.m.variant_index(t, "Ok")
+    let ei = b.m.variant_index(t, "Err")
+    b.rt("gen_enter", -1, [g])
+    let (no, join) = b.if_then_begin(b.eq_int(b.gen_intn(g, 3), 0))
+    let ev = b.gen_sub(g, args[1], b.m.types[t].variants[ei].fields[0].ty)
+    let v = b.variant(t, "Err", [ev])
+    b.rt("gen_leave", -1, [g])
+    b.retv(v)
+    b.if_then_end(no, join)
+    let ov = b.gen_sub(g, args[0], b.m.types[t].variants[oi].fields[0].ty)
+    let v2 = b.add(Op.Variant, t, Aux.I(n: oi), [ov])
+    b.rt("gen_leave", -1, [g])
+    b.retv(v2)
+    return
+  }
+  let r = b.c.resolve(ct)
+  if b.c.tys[r].kind == check.TyKind.Tuple {
+    let es0 = b.c.tys[r].args
+    if es0.is_empty() {
+      b.retv(b.unit())
+      return
+    }
+    if b.tkind(t) == Kind.Tuple && b.m.types[t].elems.len() == es0.len() {
+      var vs: List[Int] = []
+      for (i, et) in es0.indexed() {
+        vs.push(b.gen_sub(g, et, b.m.types[t].elems[i]))
+      }
+      b.retv(b.add(Op.Tuple, t, Aux.None, vs))
+      return
+    }
+  }
+  let obj = b.named_obj(ct)
+  if obj >= 0 && !b.is_prelude_mod(b.obj_mod(obj)) {
+    let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
+    let tk = b.c.objs[obj].tkind
+    if tk == "newtype" && b.tkind(t) == Kind.Struct && b.m.types[t].fields.len() == 1 {
+      let v = b.gen_sub(g, b.c.subst(b.c.objs[obj].target, sb), b.m.types[t].fields[0].ty)
+      b.retv(b.add(Op.Struct, t, Aux.None, [v]))
+      return
+    }
+    if tk == "struct" && b.tkind(t) == Kind.Struct && !b.c.objs[obj].opaque {
+      b.gen_struct(g, ct, t, obj, sb)
+      return
+    }
+    if tk == "enum" && b.tkind(t) == Kind.Enum {
+      b.gen_enum(g, ct, t, obj, sb)
+      return
+    }
+  }
+  b.unsupported("generated values of `${b.c.show(ct)}`")
+  b.retv(b.undef(t))
+}
+
+/// A generated struct: every field; a struct with an invariant tries
+/// again, up to 1000 times (std/rt's XoGenAny).
+fn (var b: Builder) gen_struct(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, Int]) {
+  let bt = b.bool_t()
+  var inv = ""
+  if !b.invariant_of(obj).is_empty() {
+    inv = b.invariant_func(ct, obj, t)
+  }
+  b.rt("gen_enter", -1, [g])
+  let iv = b.local()
+  let (try, head, exit) = b.for_up_to_begin(b.cint(1001), iv)
+  var fs: List[Int] = []
+  for _ in b.m.types[t].fields {
+    fs.push(-1)
+  }
+  var bad = false
+  for f in b.c.objs[obj].fields {
+    let fi = b.m.field_index(t, check.text(f.name))
+    if fi < 0 {
+      b.unsupported("generated values of `${b.c.show(ct)}`")
+      bad = true
+      break
+    }
+    fs[fi] = b.gen_sub(g, b.c.subst(f.ty, sb), b.m.types[t].fields[fi].ty)
+  }
+  if !bad {
+    for v in fs {
+      if v < 0 {
+        b.unsupported("generated values of `${b.c.show(ct)}`")
+        bad = true
+        break
+      }
+    }
+  }
+  if !bad {
+    let v = b.add(Op.Struct, t, Aux.None, fs)
+    var ok = b.cbool(true)
+    if !inv.is_empty() {
+      let c1 = b.call(inv, bt, "", [v])
+      let c2 = b.add(Op.Ge, bt, Aux.None, [try, b.cint(1000)])
+      ok = b.add(Op.Or, bt, Aux.None, [c1, c2])
+    }
+    let (no, join) = b.if_then_begin(ok)
+    b.rt("gen_leave", -1, [g])
+    b.retv(v)
+    b.if_then_end(no, join)
+  }
+  b.for_up_to_end(try, iv, head, exit)
+  // the last try returns
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+}
+
+/// A generated enum value: a random variant; a unit variant once the
+/// value is deep.
+fn (var b: Builder) gen_enum(g: Int, ct: Int, t: Int, obj: Int, sb: Map[Int, Int]) {
+  let variants = b.c.objs[obj].variants
+  var units: List[Int] = []
+  for (i, vo) in variants.indexed() {
+    if vo.fields.is_empty() {
+      units.push(i)
+    }
+  }
+  b.rt("gen_enter", -1, [g])
+  let iv = b.local()
+  b.write_var(iv, b.gen_intn(g, variants.len()))
+  if !units.is_empty() {
+    let (no, join) = b.if_then_begin(b.rt("gen_deep", b.bool_t(), [g]))
+    let k = b.gen_intn(g, units.len())
+    b.write_var(iv, b.cint(units[0]))
+    var j = 1
+    while j < units.len() {
+      let (no2, join2) = b.if_then_begin(b.eq_int(k, j))
+      b.write_var(iv, b.cint(units[j]))
+      b.if_then_end(no2, join2)
+      j += 1
+    }
+    b.if_then_end(no, join)
+  }
+  let i = b.read(iv)
+  for (oi, vo) in variants.indexed() {
+    let vi = b.m.variant_index(t, check.text(vo.name))
+    if vi < 0 {
+      b.unsupported("generated values of `${b.c.show(ct)}`")
+      b.retv(b.undef(t))
+      return
+    }
+    let (no, join) = b.if_then_begin(b.eq_int(i, oi))
+    var vargs: List[Int] = []
+    for (fi, f) in vo.fields.indexed() {
+      vargs.push(b.gen_sub(g, b.c.subst(f.ty, sb), b.m.types[t].variants[vi].fields[fi].ty))
+    }
+    let v = b.add(Op.Variant, t, Aux.I(n: vi), vargs)
+    b.rt("gen_leave", -1, [g])
+    b.retv(v)
+    b.if_then_end(no, join)
+  }
+  // i is one of the variants
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+}
+
+/// Whether e is `expect(a) op b` (isExpectCompare).
+fn (var b: Builder) is_expect_compare(e: Expr) -> Bool {
+  match e {
+    BinaryExpr(op: op, x: x, ..) => b.is_expect_call(x) && cmp_op(op) != None
+    _ => false
+  }
+}

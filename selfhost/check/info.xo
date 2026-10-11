@@ -96,3 +96,18 @@ pub fn (c: Checker) pat_newtype_in(f: Int, p: Pattern) -> Int {
 pub fn (c: Checker) closure_params(f: Int, lit: parser.FnLit) -> List[Int] {
   c.closure_vars.get(c.key_in(f, lit.span, 30)) ?? []
 }
+
+/// The key of test block td of file f.
+pub fn (c: Checker) test_key(f: Int, td: parser.TestDecl) -> Int {
+  f * 268435456 + td.span.start.offset
+}
+
+/// The `os` binding of a test block (Info.TestOs), or -1.
+pub fn (c: Checker) test_os_of(f: Int, td: parser.TestDecl) -> Int {
+  c.test_os.get(c.test_key(f, td)) ?? -1
+}
+
+/// The bindings of a property test's `for` parameters (Info.TestParams).
+pub fn (c: Checker) test_params_of(f: Int, td: parser.TestDecl) -> List[Int] {
+  c.test_params.get(c.test_key(f, td)) ?? []
+}

@@ -443,3 +443,234 @@ the profile.
 3. **arm64: enums of 256 bytes or more by reference** (decision 0147's
    rule ported like 0151): the arm64 build of the builder is 2.3x the
    Go builder against LLVM's 1.56x.
+
+# Stage 6: std implementations, 2026-10-11
+
+`selfhost/ssa/json.xo` (about 1,000 lines): the generic intrinsics of
+the native implementations, `json_enc` and `json_dec` (the encoders and
+decoders generated per checker type, `xo.json.enc[T]` and
+`xo.json.dec[T]`: scalars, Duration, Time, Bytes, tuples, Option, List,
+Set, Map[Str, V], json.Patch and its Absent fields, structs with their
+defaults, enums with unit, single, `from`, and named field variants),
+`sql_decode` (`xo.sql.dec[T]` through the Row accessors), `any_of`,
+`any_get`, `cast`, `status_of`, `launder1` and `launder2`, and C
+interop: calls of `use c` bindings (build_cffi.go), with the binding
+loaded by the Xo checker from the binder's cache (decision 0152,
+`selfhost/check/cimport.xo`). internal/selfhost/testdata/ssa/stage6
+(JSON of every shape, rows, request values, casts, status codes),
+stage6c (every kind of C boundary value, a second binding of one header
+under an alias with `uses none`), and stage6c_skipped (a call of a
+skipped C function, rejected by both checkers) join the comparison.
+
+| functions (Go builder) | stage 5 (11,264) | stage 6 (11,569, three more runs) |
+|---|---|---|
+| identical | 10,356 | 11,543 |
+| skipped | 405 | 19 |
+| never declared | 503 | 7 |
+
+0 differences with the go, arm64, and LLVM builds of the Xo builder;
+`TestSelfhostSSAMutations` 0 differences, 6,590 of 6,590
+functions identical (the first run with nothing skipped). Every
+function still skipped is one the Go builder does not build either (it
+reports the construct as unsupported and the build fails): conversions
+between instances that differ only in effects (bench 07-cache, 8), a
+tuple pattern of a generic closure (02-worker-pool, 5 with its
+closures), a type parameter as a Map key in a generic constructor (one
+run, 7 helpers never declared), `domain` in 08-notes-service, `dbg` and
+holes, function values with `var` parameters. `use c` runs went from
+unsupported to compared (examples/realtime-control, stage6c);
+TestSelfhostChecker compares them too (376 accepted runs match, three
+backends).
+
+Found in stage 6:
+
+- **cbind: `ffi` and `uses none` shared one binding in a process**
+  (gotchas/cbind-memo-uses-none.md): the binder's memo key formatted a
+  nil and an empty `Uses` alike, so a second `use c` line of the same
+  header got the first line's effects. Fixed in internal/cbind,
+  `TestBindMemoUsesNone`.
+- **Native builds cannot decode JSON into sized integers**: a struct
+  with an `Int32` field and `derive Json` fails a native build with
+  "converting `Int` to `Int32`" (build_json.go decodes every Int kind
+  with `json_int` and coerces); the Go backend range checks it
+  (std/rt JsonDec). Not fixed here; next experiment below.
+
+# Stage 7: test binaries, 2026-10-11
+
+`selfhost/ssa/testmode.xo` (about 850 lines): the test binary of `xo
+test --no-gc` (build_testmode.go, build_gen.go): a function per test
+block of the root modules (`test.<i>`, the `os` binding and a property
+test's inputs from the checker's new records `test_os` and
+`test_params`), the entry `main` that runs the test XO_TEST names
+(`rt.test_index`, the error of a failed test through `rt.test_fail`,
+the root scope of os.tasks around a test that uses it), `expect` and
+`expect(a) op b` (with the Option comparison of a plain value), the
+fakes of std/testing lowered as their capabilities (FakeClock,
+FakeEnv, FakeStdio, FakeProc control methods, MemFs through
+std/native/testing.xo), `testing.run_main`, `testing.gen`, and the
+generated inputs of property tests (`xo.gen[T]` for scalars, sized
+integers, Float32, Rune, Duration, Time, Bytes, Secret, tuples, List,
+Set, Map, Option, Result, newtypes, structs with invariants, enums).
+`xo ssadump --test` and `selfhost/ssa --test` print the test binary's
+build; TestSelfhostSSA compares the test binaries of the 71
+repository runs with test blocks, and TestSelfhostSSAMutations those
+of the mutations with test blocks. internal/selfhost/testdata/ssa/stage7
+(every generated shape, the fakes, run_main, os.tasks, a test with
+`uses`) joins them.
+
+| test binaries (go build) | count |
+|---|---|
+| runs with test blocks | 71 |
+| built by both | 50 |
+| rejected by both | 18 |
+| `use go` (not compared) | 3 |
+| the Go builder's functions in the runs built | 6,376 |
+| identical | 6,282 |
+| skipped (the Go builder reports an error there too) | 80 |
+| never declared (callees of those) | 14 |
+
+0 differences (go build; the arm64 and LLVM builds are compared with
+stage 8 below); the test binaries of 32 mutations: 2,022 of 2,022
+functions identical.
+
+Found in stage 7:
+
+- **`Rand.shuffle` was skipped by the port since stage 1**: the Go
+  builder lowers it through std/native's `rand_shuffle`; the port
+  reported it unsupported, and only a test used it
+  (internal/gen/testdata/golden/test_fakes). Ported.
+- **`os.proc.exit` in a test binary** is followed by a check (in
+  testing.run_main the exit unwinds main back to it); the port had
+  the program form only.
+- **A `main` that fails with its own error type given to
+  testing.run_main** (`fn main(os: Os) ! Oops`) does not build natively:
+  converting it to `fn(Os) -> () ! Error` needs "the Debug text of
+  `Error`", which the native backends do not support yet (XO1201 at
+  the call). The Go backend runs it. Next experiment below.
+
+# Stage 8: the passes, 2026-10-11
+
+`selfhost/ssa/passes.xo` (pruneUnwind, addLandings with the unwind
+exits it makes, cleanup: prune, trivial block parameters, renumbering),
+`rc.xo` (InsertRC: `reuse` of `var` List parameters, borrow inference
+to a fixpoint with decision 0149's every-path rule, liveness over heap
+leaves, the retains and releases of each block, edge code in split
+edges, cancellation of retain/release pairs, dead field reads,
+uniqueness and `reuse`, then sinkLandings, pruneLandings, and
+mergeJumps), and `verify.xo` (the structural, dominance, and type checks
+of Verify and the ownership balance of verifyRC), about 3,000 lines.
+The builder records its checks (b.checks) and the blocks split off
+after them (landRest) as the Go builder does. `selfhost/ssa --stages`
+prints the stages after the build; the stages `verify` (the verdict
+after rc) and `mutants` (the verdicts with each of the first six
+retains and releases of every function removed, ssa.VerifyMutants) are
+new in `xo ssadump` for this comparison.
+
+TestSelfhostSSA, go build of the Xo builder (every stage compared on
+the runs both build completely; the 6 runs left out are those where
+the Go builder reports an unsupported construct):
+
+| stage | runs compared | identical |
+|---|---|---|
+| unwind | 306 | 11,041 functions |
+| landings | 306 | 11,064 functions |
+| cleanup | 306 | 11,064 functions |
+| rc | 306 | 11,064 functions |
+| verify | 306 | 306 verdicts (`ok`) |
+| mutants | 306 | 32,411 verdicts |
+| test binaries, every stage | 45 | 5,427 functions, 16,716 mutant verdicts |
+
+0 differences with the go, arm64, and LLVM builds of the Xo builder
+(the arm64 and LLVM runs also compared the test binaries of stage 7:
+0 differences); every pass was identical on its first comparison
+(the port followed the Go code line by line, with the Go builder's
+iteration orders: snapshots of the block list, insertion sorted leaves,
+first-come entry states). `TestSelfhostSSAMutations`: 400 mutations,
+280 runs compared at every stage (19,447 mutant verdicts) and the test
+binaries of 32 mutations, 0 differences (go and arm64 builds; the LLVM
+build drew 400 others, 291 compared at every stage, 0 differences).
+
+Speed, wall clock of one run with every stage (the passes, the
+verifier, and its 3,900 mutants of selfhost/check, most of the
+time; Apple M4 Pro, idle):
+
+| input | `xo ssadump` (Go) | Xo, Go backend | Xo, arm64 | Xo, LLVM |
+|---|---|---|---|---|
+| selfhost/check | 16.4 s | 21.3 s (1.30x) | 21.2 s (1.29x) | 17.2 s (1.05x) |
+| selfhost/ssa | 48.6 s | 62.9 s (1.29x) | 63.2 s (1.30x) | 52.0 s (1.07x) |
+
+(`xo ssadump` spends 6.6 s of the 16.4 up to rc: the Go builder builds
+twice when watched and prints the module five times.) The verifier's
+state copies were the first item of the Xo profile (RcState.clone,
+20%); sharing the map of leaves between copies took selfhost/check from
+24.9 to 22.6 s under load. The ordered Maps of Xo (Map_put records the
+insertion order) are most of what remains: a next experiment is integer
+leaf keys.
+
+The builder alone (`--bench=10`, ms for 10 builds, idle), against the Go
+builder:
+
+| input | Go builder | Xo, Go backend | Xo, arm64 | Xo, LLVM |
+|---|---|---|---|---|
+| selfhost/check | 723 | 1,216 (1.68x) | 1,578 (2.18x) | 1,171 (1.62x) |
+| selfhost/parser | 222 | 432 (1.95x) | 516 (2.32x) | 358 (1.61x) |
+| selfhost/ssa | 1,357 | 2,280 (1.68x) | 2,999 (2.21x) | 2,320 (1.71x) |
+| bench/xo/v0.4/08-notes-service | 25 | 52 (2.1x) | 53 (2.1x) | 35 (1.4x) |
+
+(The arm64 column has decision 0153 below.) The Xo builder now builds
+every function the Go builder builds on these inputs (the stage 4 table
+counted fewer for the notes service), so the ratios are of equal work.
+
+# arm64: enums of 256 bytes or more by reference, 2026-10-11
+
+Decision 0153 (internal/arm64 byref.go, isel.go): decision 0151's
+convention for structs now takes enums of 256 bytes or more; `tag` and
+`payload` of an enum in memory (a read only parameter, or a value its
+home holds at every use) load only the tag word or the payload's words;
+a field or payload of 256 bytes or more of read only memory stays in
+place, passed on by address. Golden program
+internal/arm64/testdata/run/byref_enum (decision 0147's LLVM golden with
+a Float payload and a large payload passed on). The arm64 build of the
+Xo builder prints byte identical output on selfhost/check with every
+stage (3.4 million lines); its binary is 28 MB (29 before).
+
+| input (`--bench=10`, ms) | arm64 before | arm64 after | change |
+|---|---|---|---|
+| selfhost/check | 1,680 | 1,578 | -6% |
+| selfhost/parser | 545 | 516 | -5% |
+| selfhost/ssa | 3,200 | 2,999 | -6% |
+| bench/xo/v0.4/08-notes-service | 58 | 53 | -9% |
+
+The arm64 build stays about 1.3 times the LLVM build: the Builder's
+structs were already by reference (decision 0151); what remains is the
+rest of decision 0147 (box contents and list elements under a borrowed
+root, which need InsertRC's borrow facts in the backend) and reading a
+field of a field of a held value without loading the inner field whole.
+
+## The go build's allocation
+
+`XO_CPUPROFILE` of the go build of the builder (`--bench=10
+selfhost/ssa`): the collector and the allocator about a quarter
+(madvise 11%, memclr 6%, scanObject 5%), memmove 5.5%; `Func.add` (the
+value and block lists growing) 7% cumulative. GOGC=400 gives 1% and
+GOGC=off is slower (2,409 to 2,666 ms); `XO_GC_MIN_HEAP` changes
+nothing. Giving `Module.new_func` lists their capacity needs a
+`List.with_capacity` (the prelude has one for Buf and BytesBuilder
+only): a std change with its own decision, not done here.
+
+## Next experiments (after stage 8)
+
+1. **The arm64 emitter in Xo** (decision 0150's order): the SSA lowering
+   is self hosted; the next stage compares the arm64 emitter's
+   assembly function by function (`xo asmdump` to add, as ssadump was).
+2. **`List.with_capacity(n)`** in the prelude (std.md, the Go runtime,
+   std/llrt, the checker's prelude, the Xo port) and `Module.new_func`
+   using it with the Go builder's averages; measure with the
+   `--bench=10` table above (memmove and growth are about 10%).
+3. **Integer leaf keys in selfhost/ssa rc.xo and verify.xo**: the
+   ordered Maps keyed by strings are most of the passes' time (Map_put
+   14%, Map_each 12% of the `--stages` profile).
+4. **Native JSON decoding of sized integers** (stage 6 finding): range
+   checked as std/rt's JsonDec does, in build_json.go and json.xo.
+5. **A `main ! E` with its own error type given to testing.run_main**
+   (stage 7 finding): the native Debug text of `Error` values.

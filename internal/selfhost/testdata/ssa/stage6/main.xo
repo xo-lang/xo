@@ -1,0 +1,128 @@
+// SSA stage 6 constructs for TestSelfhostSSA (decision 0150): JSON
+// encoders and decoders of every shape (scalars, Duration, Time, Bytes,
+// tuples, Option, List, Set, Map[Str, V], json.Patch
+// fields, structs with defaults, generic structs, enums with unit, single
+// unnamed, `from`, and named field variants, a recursive enum), rows
+// decoded into structs (Option columns, Time, a field no column holds),
+// and the request values, casts, and status codes of std/http. Built,
+// not run.
+use std/json
+use std/sql
+use std/http
+
+enum Shape {
+  Dot
+  Circle(r: Float)
+  Rect(w: Int, h: Int)
+  Named(from Problem)
+  Tree(left: Shape, right: Shape)
+} derive Json
+
+struct Problem {
+  code: Int
+} derive Json
+
+struct Pair[T] {
+  first: T
+  second: T
+} derive Json
+
+struct Config {
+  name: Str
+  port: Int = 8080
+  ratio: Float = 0.5
+  debug: Bool = false
+  tags: List[Str] = []
+  labels: Map[Str, Int] = {}
+  seen: Set[Int] = #{}
+  timeout: Duration = 5s
+  started: Time
+  blob: Bytes
+  note: Str?
+  point: (Int, Str)
+  nothing: ()
+  pair: Pair[Int]
+  shapes: List[Shape]
+} derive Json
+
+struct Update {
+  name: json.Patch[Str]
+  port: json.Patch[Int]
+  shape: json.Patch[Shape]
+} derive Json
+
+struct Row1 {
+  id: Int
+  name: Str
+  score: Float
+  ok: Bool
+  at: Time
+  note: Str?
+  count: Int?
+} derive SqlRow
+
+struct Bad {
+  id: Int
+  name: Int
+} derive SqlRow
+
+enum ApiErr {
+  NotFound(what: Str)
+  Denied
+} derive Display
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    NotFound(_) => 404
+    Denied => 403
+  }
+}
+
+struct UserKey {
+  key_name: Str
+}
+
+fn handler(req: http.Request) -> http.Response ! ApiErr {
+  let id = req.param("id")
+  let k = http.key[UserKey]("user")
+  let req2 = req.with_value(k, UserKey{key_name: id})
+  let who = req2.value(k)
+  if id == "" {
+    return Err(ApiErr.NotFound("user"))
+  }
+  if id == "0" {
+    return Err(ApiErr.Denied)
+  }
+  let c = json.decode[Config](req.body)
+  match c {
+    Ok(cfg) => http.json(200, (cfg, who.is_some()))
+    Err(e) => http.text(400, "${e}")
+  }
+}
+
+fn main(os: Os) ! {
+  let cfg = Config{name: "svc", started: Time.from_unix(0), blob: "hi".bytes(), note: None, point: (1, "a"), nothing: (), pair: Pair{first: 1, second: 2}, shapes: [Shape.Dot, Shape.Circle(r: 1.5), Shape.Rect(w: 1, h: 2), Shape.Named(Problem{code: 3}), Shape.Tree(left: Shape.Dot, right: Shape.Dot)]}
+  let text = json.encode_str(cfg)
+  os.stdio.println(text)
+  match json.decode_str[Config](text) {
+    Ok(c) => os.stdio.println(c.name)
+    Err(e) => os.stdio.println("${e}")
+  }
+  let u = json.decode_str[Update]("{\"name\":\"x\",\"port\":null}")?
+  os.stdio.println(json.encode_str(u))
+  let ls = json.decode_str[List[(Int, Bool)]]("[[1,true]]")?
+  os.stdio.println("${ls.len()}")
+  let ms = json.decode_str[Map[Str, List[Duration]]]("{}")?
+  os.stdio.println(json.encode_str(ms))
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL, score REAL NOT NULL, ok BOOL NOT NULL, at TIMESTAMP NOT NULL, note TEXT, count INT)")?
+  let rows = db.query_as[Row1]("SELECT * FROM t")?
+  os.stdio.println("${rows.len()}")
+  match db.query_as[Bad]("SELECT id FROM t") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(e) => os.stdio.println("${e}")
+  }
+  var r = http.router()
+  r.handle("GET /users/{id}", handler)
+  let resp = r.call(http.new_request("GET", "/users/1"))
+  os.stdio.println("${resp.status}")
+}

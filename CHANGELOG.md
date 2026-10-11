@@ -6,6 +6,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: enum parameters of 256 bytes or more of direct calls
+  are passed by address too (decision 0153); tags and payloads of enums
+  in memory are read in place, and large fields and payloads of read
+  only memory are passed on by address (the arm64 build of the self
+  hosted SSA builder 5 to 9% faster).
+- Self hosting: SSA stage 8 (decision 0150): selfhost/ssa runs the
+  passes after the build (pruneUnwind, addLandings, cleanup, InsertRC)
+  and the verifier exactly as internal/ssa does; the SSA lowering is
+  self hosted. `xo ssadump --stage=verify,mutants` prints the
+  verifier's verdicts.
+- Self hosting: SSA stage 7 (decision 0150): selfhost/ssa builds the
+  test binaries of `xo test --no-gc` exactly as internal/ssa does;
+  `xo ssadump --test` prints them.
+- Self hosting: SSA stage 6 (decision 0150): selfhost/ssa lowers the
+  generic intrinsics (JSON codecs, SQL rows, any, cast, status codes)
+  and calls of `use c` bindings exactly as internal/ssa does; the Xo
+  checker binds `use c` from the binding cache (decision 0152).
+- `use c`: two `use c` lines of one header, one with `uses none` and
+  one without, no longer share one binding in a process (the second
+  line had the first one's effects).
 - Self hosting: SSA stage 5 (decision 0150): selfhost/ssa lowers
   scopes, tasks, `await`, channels, `select`, Mutex, Atomic, std/task,
   os.tasks, and the operations that wait exactly as internal/ssa does
