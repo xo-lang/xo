@@ -1,0 +1,917 @@
+// std/toml on the native backends (decisions 0074 and 0164). std/rt's
+// toml.go is the reference: the same documents, JSON text, and errors.
+// The document is parsed into tables and arrays kept in lists (the
+// values refer to them by index), written as JSON, and decoded by the
+// native JSON codec.
+use std/toml
+use std/json as js
+use native/rt
+
+enum TomlVal {
+  Text(s: Str)
+  Num(text: Str)
+  Flag(b: Bool)
+  Tab(id: Int)
+  Arr(id: Int)
+}
+
+struct TomlTable {
+  keys: List[Str]
+  vals: Map[Str, TomlVal]
+  header: Bool
+  dotted: Bool
+  inline: Bool
+  implicit: Bool
+}
+
+struct TomlArray {
+  elems: List[TomlVal]
+  tables: Bool
+}
+
+struct TomlParser {
+  s: Str
+  i: Int
+  line: Int
+  tables: List[TomlTable]
+  arrays: List[TomlArray]
+}
+
+fn tomlerr_display(e: toml.TomlErr) -> Str { "toml: line ${e.line}: ${e.msg}" }
+
+fn decodeerr_display(e: toml.DecodeErr) -> Str {
+  match e {
+    toml.DecodeErr.Syntax(err) => tomlerr_display(err)
+    toml.DecodeErr.Value(err) => "${err}"
+  }
+}
+
+fn (p: TomlParser) err(msg: Str) -> toml.TomlErr { toml.TomlErr{line: p.line, msg: msg} }
+
+fn (p: TomlParser) eof() -> Bool { p.i >= p.s.len() }
+
+/// The byte at i, 0 past the end.
+fn (p: TomlParser) peek() -> Int {
+  if p.i >= p.s.len() {
+    return 0
+  }
+  rt.str_byte(p.s, p.i)
+}
+
+fn (p: TomlParser) at(j: Int) -> Int {
+  if j >= p.s.len() {
+    return 0
+  }
+  rt.str_byte(p.s, j)
+}
+
+fn (p: TomlParser) rest_has(prefix: Str) -> Bool { rt.str_starts_with(rt.str_slice(p.s, p.i, p.s.len()), prefix) }
+
+/// The rune at i, quoted.
+fn (p: TomlParser) rune_text() -> Str {
+  let (r, _) = p.s.bytes().decode_rune(p.i)
+  r.quote()
+}
+
+fn rune_str(r: Rune) -> Str {
+  var b = BytesBuilder.new()
+  b.write_rune(r)
+  b.freeze().to_str() ?? ""
+}
+
+fn new_table() -> TomlTable { TomlTable{keys: [], vals: {}, header: false, dotted: false, inline: false, implicit: false} }
+
+fn (var p: TomlParser) add_table(t: TomlTable) -> Int {
+  p.tables.push(t)
+  p.tables.len() - 1
+}
+
+fn (var p: TomlParser) set(t: Int, k: Str, v: TomlVal) {
+  if !p.tables[t].vals.contains(k) {
+    p.tables[t].keys.push(k)
+  }
+  p.tables[t].vals.put(k, v)
+}
+
+fn (var p: TomlParser) ws() {
+  while !p.eof() && (p.peek() == 32 || p.peek() == 9) {
+    p.i += 1
+  }
+}
+
+fn is_control(c: Int) -> Bool { c < 32 && c != 9 || c == 127 }
+
+fn (var p: TomlParser) comment() -> () ! toml.TomlErr {
+  if p.peek() != 35 {
+    return Ok(())
+  }
+  while !p.eof() && p.peek() != 10 {
+    let c = p.peek()
+    if is_control(c) && !(c == 13 && p.at(p.i + 1) == 10) {
+      return Err(p.err("control character in a comment"))
+    }
+    p.i += 1
+  }
+  Ok(())
+}
+
+fn (var p: TomlParser) eol() -> () ! toml.TomlErr {
+  p.ws()
+  p.comment()?
+  if p.eof() {
+    return Ok(())
+  }
+  if p.peek() == 10 {
+    p.i += 1
+    p.line += 1
+    return Ok(())
+  }
+  if p.peek() == 13 && p.at(p.i + 1) == 10 {
+    p.i += 2
+    p.line += 1
+    return Ok(())
+  }
+  Err(p.err("expected the end of the line, found ${p.rune_text()}"))
+}
+
+fn (var p: TomlParser) blank() -> () ! toml.TomlErr {
+  while {
+    p.ws()
+    p.comment()?
+    if p.peek() == 10 {
+      p.i += 1
+      p.line += 1
+    } else if p.peek() == 13 && p.at(p.i + 1) == 10 {
+      p.i += 2
+      p.line += 1
+    } else {
+      return Ok(())
+    }
+  }
+}
+
+fn is_dec(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+fn bare_key_byte(c: Int) -> Bool { c >= 65 && c <= 90 || c >= 97 && c <= 122 || is_dec(c) || c == 95 || c == 45 }
+
+fn (var p: TomlParser) key() -> List[Str] ! toml.TomlErr {
+  var parts: List[Str] = []
+  while {
+    p.ws()
+    let c = p.peek()
+    if c == 34 {
+      if p.rest_has("\"\"\"") {
+        return Err(p.err("a key cannot be a multi-line string"))
+      }
+      parts.push(p.basic_string()?)
+    } else if c == 39 {
+      if p.rest_has("'''") {
+        return Err(p.err("a key cannot be a multi-line string"))
+      }
+      parts.push(p.literal_string()?)
+    } else if bare_key_byte(c) {
+      let st = p.i
+      while !p.eof() && bare_key_byte(p.peek()) {
+        p.i += 1
+      }
+      parts.push(rt.str_slice(p.s, st, p.i))
+    } else {
+      if p.eof() || c == 10 || c == 13 {
+        return Err(p.err("expected a key"))
+      }
+      return Err(p.err("expected a key, found ${p.rune_text()}"))
+    }
+    p.ws()
+    if p.peek() != 46 {
+      return Ok(parts)
+    }
+    p.i += 1
+  }
+}
+
+fn (var p: TomlParser) basic_string() -> Str ! toml.TomlErr {
+  p.i += 1
+  var b = BytesBuilder.new()
+  while {
+    if p.eof() || p.peek() == 10 {
+      return Err(p.err("string not closed"))
+    }
+    let c = p.peek()
+    if c == 34 {
+      p.i += 1
+      break
+    } else if c == 92 {
+      b.write_str(p.escape()?)
+    } else if is_control(c) {
+      return Err(p.err("control character in a string"))
+    } else {
+      b.write_byte(UInt8(c))
+      p.i += 1
+    }
+  }
+  Ok(b.freeze().to_str() ?? "")
+}
+
+fn hex_value(c: Int) -> Int {
+  if is_dec(c) {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  -1
+}
+
+/// The text of the escape at i (a backslash and what follows).
+fn (var p: TomlParser) escape() -> Str ! toml.TomlErr {
+  p.i += 1
+  if p.eof() {
+    return Err(p.err("string not closed"))
+  }
+  let c = p.peek()
+  p.i += 1
+  if c == 98 {
+    return Ok("\u{8}")
+  } else if c == 116 {
+    return Ok("\t")
+  } else if c == 110 {
+    return Ok("\n")
+  } else if c == 102 {
+    return Ok("\u{c}")
+  } else if c == 114 {
+    return Ok("\r")
+  } else if c == 34 {
+    return Ok("\"")
+  } else if c == 92 {
+    return Ok("\\")
+  } else if c == 117 || c == 85 {
+    var n = 4
+    if c == 85 {
+      n = 8
+    }
+    if p.i + n > p.s.len() {
+      return Err(p.err("bad unicode escape"))
+    }
+    var v = 0
+    var ok = true
+    for j in p.i..p.i + n {
+      let h = hex_value(rt.str_byte(p.s, j))
+      if h < 0 {
+        ok = false
+      } else {
+        v = v * 16 + h
+      }
+    }
+    let digits = rt.str_slice(p.s, p.i, p.i + n)
+    let letter = rt.str_slice(p.s, p.i - 1, p.i)
+    if !ok {
+      return Err(p.err("bad unicode escape \\${letter}${digits}"))
+    }
+    match Rune.try(v) {
+      Some(r) => {
+        p.i += n
+        return Ok(rune_str(r))
+      }
+      None => return Err(p.err("bad unicode escape \\${letter}${digits}"))
+    }
+  }
+  let (r, _) = p.s.bytes().decode_rune(p.i - 1)
+  Err(p.err("unknown escape \\${rune_str(r)}"))
+}
+
+fn (var p: TomlParser) literal_string() -> Str ! toml.TomlErr {
+  p.i += 1
+  let st = p.i
+  while {
+    if p.eof() || p.peek() == 10 {
+      return Err(p.err("string not closed"))
+    }
+    let c = p.peek()
+    if c == 39 {
+      let s = rt.str_slice(p.s, st, p.i)
+      p.i += 1
+      return Ok(s)
+    }
+    if is_control(c) {
+      return Err(p.err("control character in a string"))
+    }
+    p.i += 1
+  }
+}
+
+fn (var p: TomlParser) multiline(lit: Bool) -> Str ! toml.TomlErr {
+  var q = "\"\"\""
+  var qc = 34
+  if lit {
+    q = "'''"
+    qc = 39
+  }
+  p.i += 3
+  if p.rest_has("\r\n") {
+    p.i += 2
+    p.line += 1
+  } else if p.peek() == 10 {
+    p.i += 1
+    p.line += 1
+  }
+  var b = BytesBuilder.new()
+  while {
+    if p.eof() {
+      return Err(p.err("multi-line string not closed"))
+    }
+    if p.rest_has(q) {
+      var n = 3
+      while n < 5 && p.i + n < p.s.len() && rt.str_byte(p.s, p.i + n) == qc {
+        n += 1
+      }
+      b.write_str(rt.str_slice(p.s, p.i, p.i + n - 3))
+      p.i += n
+      break
+    }
+    let c = p.peek()
+    if c == 10 {
+      b.write_byte(10)
+      p.i += 1
+      p.line += 1
+    } else if c == 13 && p.at(p.i + 1) == 10 {
+      b.write_str("\r\n")
+      p.i += 2
+      p.line += 1
+    } else if !lit && c == 92 {
+      // a line ending backslash trims the whitespace that follows
+      var j = p.i + 1
+      while j < p.s.len() && (rt.str_byte(p.s, j) == 32 || rt.str_byte(p.s, j) == 9) {
+        j += 1
+      }
+      if j < p.s.len() && (rt.str_byte(p.s, j) == 10 || rt.str_byte(p.s, j) == 13) {
+        p.i = j
+        while !p.eof() && (p.peek() == 32 || p.peek() == 9 || p.peek() == 10 || p.peek() == 13) {
+          if p.peek() == 10 {
+            p.line += 1
+          }
+          p.i += 1
+        }
+        continue
+      }
+      b.write_str(p.escape()?)
+    } else if is_control(c) {
+      return Err(p.err("control character in a string"))
+    } else {
+      b.write_byte(UInt8(c))
+      p.i += 1
+    }
+  }
+  Ok(b.freeze().to_str() ?? "")
+}
+
+fn word_byte_at(s: Str, i: Int) -> Bool { i < s.len() && bare_key_byte(rt.str_byte(s, i)) }
+
+fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
+  p.ws()
+  if p.eof() {
+    return Err(p.err("expected a value"))
+  }
+  let rest = rt.str_slice(p.s, p.i, p.s.len())
+  let c = p.peek()
+  if rest.starts_with("\"\"\"") {
+    return Ok(TomlVal.Text(s: p.multiline(false)?))
+  }
+  if rest.starts_with("'''") {
+    return Ok(TomlVal.Text(s: p.multiline(true)?))
+  }
+  if c == 34 {
+    return Ok(TomlVal.Text(s: p.basic_string()?))
+  }
+  if c == 39 {
+    return Ok(TomlVal.Text(s: p.literal_string()?))
+  }
+  if c == 91 {
+    return p.array()
+  }
+  if c == 123 {
+    return p.inline_table()
+  }
+  if rest.starts_with("true") && !word_byte_at(rest, 4) {
+    p.i += 4
+    return Ok(TomlVal.Flag(b: true))
+  }
+  if rest.starts_with("false") && !word_byte_at(rest, 5) {
+    p.i += 5
+    return Ok(TomlVal.Flag(b: false))
+  }
+  p.scalar()
+}
+
+fn count_dashes(s: Str) -> Int {
+  var n = 0
+  for i in 0..s.len() {
+    if rt.str_byte(s, i) == 45 {
+      n += 1
+    }
+  }
+  n
+}
+
+fn (var p: TomlParser) scalar() -> TomlVal ! toml.TomlErr {
+  let st = p.i
+  while !p.eof() {
+    let c = p.peek()
+    // a date and time may hold one space between date and time
+    if c == 32 && p.i - st == 10 && p.i + 1 < p.s.len() && is_dec(p.at(p.i + 1)) && count_dashes(rt.str_slice(p.s, st, p.i)) == 2 {
+      p.i += 1
+      continue
+    }
+    if c == 32 || c == 9 || c == 44 || c == 93 || c == 125 || c == 35 || c == 10 || c == 13 {
+      break
+    }
+    p.i += 1
+  }
+  let tok = rt.str_slice(p.s, st, p.i)
+  if tok == "" {
+    return Err(p.err("expected a value, found ${p.rune_text()}"))
+  }
+  match date_time(tok) {
+    Some(t) => return Ok(TomlVal.Text(s: t))
+    None => ()
+  }
+  match int_token(tok) {
+    Some(n) => return Ok(TomlVal.Num(text: n))
+    None => ()
+  }
+  let trimmed = trim_signs(tok)
+  if trimmed == "inf" || trimmed == "nan" {
+    return Err(p.err("${tok} cannot be decoded: JSON has no form for inf and nan"))
+  }
+  match float_token(tok) {
+    Some(f) => return Ok(TomlVal.Num(text: f))
+    None => ()
+  }
+  Err(p.err("bad value ${tok.quote()}"))
+}
+
+fn trim_signs(s: Str) -> Str {
+  var i = 0
+  while i < s.len() && (rt.str_byte(s, i) == 43 || rt.str_byte(s, i) == 45) {
+    i += 1
+  }
+  rt.str_slice(s, i, s.len())
+}
+
+fn digit_of(c: Int, base: Int) -> Bool {
+  if base == 16 {
+    return hex_value(c) >= 0
+  }
+  if base == 8 {
+    return c >= 48 && c <= 55
+  }
+  if base == 2 {
+    return c == 48 || c == 49
+  }
+  is_dec(c)
+}
+
+/// s without `_` between digits of base; None when one is misplaced.
+fn underscores(s: Str, base: Int) -> Str? {
+  if !s.contains("_") {
+    return Some(s)
+  }
+  for i in 0..s.len() {
+    if rt.str_byte(s, i) == 95 {
+      if i == 0 || i == s.len() - 1 || !digit_of(rt.str_byte(s, i - 1), base) || !digit_of(rt.str_byte(s, i + 1), base) {
+        return None
+      }
+    }
+  }
+  Some(s.replace("_", ""))
+}
+
+/// The decimal text of an integer token, or None.
+fn int_token(tok: Str) -> Str? {
+  var base = 10
+  var digits = tok
+  var neg = false
+  if tok.starts_with("0x") {
+    base = 16
+    digits = rt.str_slice(tok, 2, tok.len())
+  } else if tok.starts_with("0o") {
+    base = 8
+    digits = rt.str_slice(tok, 2, tok.len())
+  } else if tok.starts_with("0b") {
+    base = 2
+    digits = rt.str_slice(tok, 2, tok.len())
+  } else {
+    if tok.starts_with("+") || tok.starts_with("-") {
+      neg = tok.starts_with("-")
+      digits = rt.str_slice(tok, 1, tok.len())
+    }
+    if digits.len() > 1 && rt.str_byte(digits, 0) == 48 {
+      return None
+    }
+  }
+  let d = underscores(digits, base)?
+  if d == "" {
+    return None
+  }
+  var v = 0
+  for i in 0..d.len() {
+    let c = rt.str_byte(d, i)
+    if !digit_of(c, base) {
+      return None
+    }
+    var h = c - 48
+    if base == 16 {
+      h = hex_value(c)
+    }
+    // accumulate toward the sign, so the most negative value fits
+    if neg {
+      v = v.checked_mul(base)?.checked_sub(h)?
+    } else {
+      v = v.checked_mul(base)?.checked_add(h)?
+    }
+  }
+  Some("${v}")
+}
+
+/// The JSON number text of a float token, or None.
+fn float_token(tok: Str) -> Str? {
+  if tok.starts_with("inf") || tok.starts_with("nan") {
+    return None
+  }
+  let d = underscores(tok, 10)?
+  var s = d
+  if s.starts_with("+") || s.starts_with("-") {
+    s = rt.str_slice(s, 1, s.len())
+  }
+  var int_end = 0
+  while int_end < s.len() && is_dec(rt.str_byte(s, int_end)) {
+    int_end += 1
+  }
+  if int_end == 0 || int_end > 1 && rt.str_byte(s, 0) == 48 || int_end == s.len() {
+    return None
+  }
+  var rest = rt.str_slice(s, int_end, s.len())
+  if rt.str_byte(rest, 0) == 46 {
+    var j = 1
+    while j < rest.len() && is_dec(rt.str_byte(rest, j)) {
+      j += 1
+    }
+    if j == 1 {
+      return None
+    }
+    rest = rt.str_slice(rest, j, rest.len())
+  }
+  if rest != "" {
+    let c = rt.str_byte(rest, 0)
+    if c != 101 && c != 69 {
+      return None
+    }
+    let after = rt.str_slice(rest, 1, rest.len())
+    let e = trim_signs(after)
+    if after.len() - e.len() > 1 || e == "" {
+      return None
+    }
+    for i in 0..e.len() {
+      if !is_dec(rt.str_byte(e, i)) {
+        return None
+      }
+    }
+  }
+  let f = Float.parse(d.trim_prefix("+"))?
+  if f.is_nan() || f > 1.7976931348623157e308 || f < -1.7976931348623157e308 {
+    return None
+  }
+  Some(d.trim_prefix("+"))
+}
+
+fn is_date(s: Str) -> Bool {
+  if s.len() != 10 {
+    return false
+  }
+  for i in 0..10 {
+    let c = rt.str_byte(s, i)
+    if i == 4 || i == 7 {
+      if c != 45 {
+        return false
+      }
+    } else if !is_dec(c) {
+      return false
+    }
+  }
+  true
+}
+
+fn is_time(s: Str) -> Bool {
+  if s.len() < 8 {
+    return false
+  }
+  for i in 0..8 {
+    let c = rt.str_byte(s, i)
+    if i == 2 || i == 5 {
+      if c != 58 {
+        return false
+      }
+    } else if !is_dec(c) {
+      return false
+    }
+  }
+  var rest = rt.str_slice(s, 8, s.len())
+  if rest.starts_with(".") {
+    var j = 1
+    while j < rest.len() && is_dec(rt.str_byte(rest, j)) {
+      j += 1
+    }
+    if j == 1 {
+      return false
+    }
+    rest = rt.str_slice(rest, j, rest.len())
+  }
+  if rest == "" || rest == "Z" || rest == "z" {
+    return true
+  }
+  rest.len() == 6 && (rest.starts_with("+") || rest.starts_with("-")) && is_dec(rt.str_byte(rest, 1)) && is_dec(rt.str_byte(rest, 2)) && rt.str_byte(rest, 3) == 58 && is_dec(rt.str_byte(rest, 4)) && is_dec(rt.str_byte(rest, 5))
+}
+
+/// The RFC 3339 text of a date or time token, or None.
+fn date_time(tok: Str) -> Str? {
+  if is_date(tok) {
+    return Some(tok)
+  }
+  if tok.len() > 11 && is_date(rt.str_slice(tok, 0, 10)) {
+    let sep = rt.str_byte(tok, 10)
+    let t0 = rt.str_slice(tok, 11, tok.len())
+    if (sep == 84 || sep == 116 || sep == 32) && is_time(t0) {
+      var t = t0
+      if t.ends_with("z") {
+        t = t.trim_suffix("z") + "Z"
+      }
+      return Some(rt.str_slice(tok, 0, 10) + "T" + t)
+    }
+  }
+  if is_time(tok) {
+    let tail = rt.str_slice(tok, 8, tok.len())
+    if !(tail.contains("Z") || tail.contains("z") || tail.contains("+") || tail.contains("-")) {
+      return Some(tok)
+    }
+  }
+  None
+}
+
+fn (var p: TomlParser) array() -> TomlVal ! toml.TomlErr {
+  p.i += 1
+  var elems: List[TomlVal] = []
+  while {
+    p.blank()?
+    if p.peek() == 93 {
+      p.i += 1
+      break
+    }
+    elems.push(p.value()?)
+    p.blank()?
+    if p.peek() == 44 {
+      p.i += 1
+    } else if p.peek() == 93 {
+      p.i += 1
+      break
+    } else if p.eof() {
+      return Err(p.err("array not closed"))
+    } else {
+      return Err(p.err("expected , or ] in an array, found ${p.rune_text()}"))
+    }
+  }
+  p.arrays.push(TomlArray{elems: elems, tables: false})
+  Ok(TomlVal.Arr(id: p.arrays.len() - 1))
+}
+
+fn (var p: TomlParser) inline_table() -> TomlVal ! toml.TomlErr {
+  p.i += 1
+  let t = p.add_table(new_table())
+  p.ws()
+  if p.peek() == 125 {
+    p.i += 1
+    p.tables[t].inline = true
+    return Ok(TomlVal.Tab(id: t))
+  }
+  while {
+    let k = p.key()?
+    p.ws()
+    if p.peek() != 61 {
+      return Err(p.err("expected = after a key"))
+    }
+    p.i += 1
+    let v = p.value()?
+    p.assign(t, k, v)?
+    p.ws()
+    if p.peek() == 44 {
+      p.i += 1
+      p.ws()
+      if p.peek() == 125 {
+        return Err(p.err("trailing comma in an inline table"))
+      }
+    } else if p.peek() == 125 {
+      p.i += 1
+      p.tables[t].inline = true
+      return Ok(TomlVal.Tab(id: t))
+    } else {
+      return Err(p.err("expected , or } in an inline table"))
+    }
+  }
+}
+
+fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.TomlErr {
+  var t = t0
+  let full = k.join(".")
+  for i in 0..k.len() - 1 {
+    let part = k[i]
+    match p.tables[t].vals.get(part) {
+      None => {
+        let n = p.add_table(new_table() with {dotted: true})
+        p.set(t, part, TomlVal.Tab(id: n))
+        t = n
+      }
+      Some(TomlVal.Tab(sub)) => {
+        let st = p.tables[sub]
+        if st.inline || st.header && !st.dotted {
+          return Err(p.err("key ${full.quote()} is already defined"))
+        }
+        t = sub
+      }
+      Some(_) => return Err(p.err("key ${full.quote()} is already defined"))
+    }
+  }
+  let last = k[k.len() - 1]
+  if p.tables[t].vals.contains(last) {
+    return Err(p.err("key ${full.quote()} is already defined"))
+  }
+  p.set(t, last, v)
+  Ok(())
+}
+
+fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
+  var t = 0
+  for i in 0..k.len() {
+    let part = k[i]
+    let last = i == k.len() - 1
+    let name = k[0..i + 1].join(".").quote()
+    match p.tables[t].vals.get(part) {
+      None => {
+        if last && array {
+          let n = p.add_table(new_table() with {header: true})
+          p.arrays.push(TomlArray{elems: [TomlVal.Tab(id: n)], tables: true})
+          p.set(t, part, TomlVal.Arr(id: p.arrays.len() - 1))
+          return Ok(n)
+        }
+        let n = p.add_table(new_table() with {implicit: !last, header: last})
+        p.set(t, part, TomlVal.Tab(id: n))
+        t = n
+      }
+      Some(TomlVal.Tab(sub)) => {
+        let st = p.tables[sub]
+        if st.inline {
+          return Err(p.err("table ${name} is an inline table"))
+        }
+        if last {
+          if array {
+            return Err(p.err("key ${name} is already a table"))
+          }
+          if st.header || st.dotted && !st.implicit {
+            return Err(p.err("table ${name} is already defined"))
+          }
+          p.tables[sub].header = true
+          p.tables[sub].implicit = false
+        }
+        t = sub
+      }
+      Some(TomlVal.Arr(a)) => {
+        if !p.arrays[a].tables {
+          return Err(p.err("key ${name} is already an array"))
+        }
+        if last {
+          if !array {
+            return Err(p.err("table ${name} is already an array of tables"))
+          }
+          let n = p.add_table(new_table() with {header: true})
+          p.arrays[a].elems.push(TomlVal.Tab(id: n))
+          return Ok(n)
+        }
+        match p.arrays[a].elems[p.arrays[a].elems.len() - 1] {
+          TomlVal.Tab(id) => t = id
+          TomlVal.Text(_) | TomlVal.Num(_) | TomlVal.Flag(_) | TomlVal.Arr(_) => return Err(p.err("key ${name} is already a value"))
+        }
+      }
+      Some(_) => return Err(p.err("key ${name} is already a value"))
+    }
+  }
+  Ok(t)
+}
+
+fn (var p: TomlParser) document() -> () ! toml.TomlErr {
+  p.add_table(new_table())
+  var cur = 0
+  while {
+    p.blank()?
+    if p.eof() {
+      return Ok(())
+    }
+    if p.peek() == 91 {
+      let array = p.rest_has("[[")
+      if array {
+        p.i += 2
+      } else {
+        p.i += 1
+      }
+      let k = p.key()?
+      p.ws()
+      if array {
+        if !p.rest_has("]]") {
+          return Err(p.err("expected ]] after an array of tables header"))
+        }
+        p.i += 2
+      } else {
+        if p.peek() != 93 {
+          return Err(p.err("expected ] after a table header"))
+        }
+        p.i += 1
+      }
+      cur = p.header(k, array)?
+      p.eol()?
+      continue
+    }
+    let k = p.key()?
+    p.ws()
+    if p.peek() != 61 {
+      return Err(p.err("expected = after a key"))
+    }
+    p.i += 1
+    p.ws()
+    if p.eof() || p.peek() == 10 || p.peek() == 13 || p.peek() == 35 {
+      return Err(p.err("expected a value after ="))
+    }
+    let v = p.value()?
+    p.assign(cur, k, v)?
+    p.eol()?
+  }
+}
+
+fn json_string(s: Str) -> Str {
+  var out = BytesBuilder.new()
+  out.write_byte(34)
+  let hex = "0123456789abcdef"
+  for i in 0..s.len() {
+    let c = rt.str_byte(s, i)
+    if c == 34 || c == 92 {
+      out.write_byte(92)
+      out.write_byte(UInt8(c))
+    } else if c == 10 {
+      out.write_str("\\n")
+    } else if c == 13 {
+      out.write_str("\\r")
+    } else if c == 9 {
+      out.write_str("\\t")
+    } else if c < 32 || c == 127 {
+      out.write_str("\\u00")
+      out.write_byte(UInt8(rt.str_byte(hex, c / 16)))
+      out.write_byte(UInt8(rt.str_byte(hex, c % 16)))
+    } else {
+      out.write_byte(UInt8(c))
+    }
+  }
+  out.write_byte(34)
+  out.freeze().to_str() ?? "\"\""
+}
+
+fn (p: TomlParser) json(v: TomlVal) -> Str {
+  match v {
+    TomlVal.Text(s) => json_string(s)
+    TomlVal.Num(text) => text
+    TomlVal.Flag(x) => "${x}"
+    TomlVal.Tab(id) => {
+      let t = p.tables[id]
+      var parts: List[Str] = []
+      for k in t.keys {
+        parts.push(json_string(k) + ":" + p.json(t.vals.get(k) ?? TomlVal.Flag(b: false)))
+      }
+      "{" + parts.join(",") + "}"
+    }
+    TomlVal.Arr(id) => "[" + p.arrays[id].elems.map(fn(e) { p.json(e) }).join(",") + "]"
+  }
+}
+
+fn to_json(text: Str) -> Str ! toml.TomlErr {
+  var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: []}
+  p.document()?
+  p.json(TomlVal.Tab(id: 0))
+}
+
+fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
+  let j = match to_json(text) {
+    Ok(s) => s
+    Err(e) => return Err(toml.DecodeErr.Syntax(err: e))
+  }
+  match js.decode_str[T](j) {
+    Ok(v) => Ok(v)
+    Err(e) => Err(toml.DecodeErr.Value(err: e))
+  }
+}

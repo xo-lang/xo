@@ -16,9 +16,9 @@ programs for any OS with fast, structured, unambiguous feedback.
   NAME: Str` of the main module for one build (versions, commits);
   `XO1501` when there is no such constant. `std/cli` writes shell
   completion scripts (std.md 14.5).
-- **Formats** (std.md 16 to 19, decision 0164): `std/csv` (every
-  backend), `std/regexp`, `std/archive` (gzip, tar, zip), and `std/toml`
-  (Go backend; native builds report XO1201, planned).
+- **Formats** (std.md 16 to 19, decision 0164): `std/csv` and
+  `std/toml` (every backend), `std/regexp` and `std/archive` (gzip, tar,
+  zip; Go backend, native builds report XO1201, planned).
 - **Files** (std.md 3.1, 3.5, decision 0163): streaming `File` handles,
   `append`, `copy`, permission bits, symbolic links, `glob`, advisory
   locks, and `Env.config_dir`/`cache_dir`. Go backend; native builds
@@ -2730,7 +2730,7 @@ specified in `spec/std.md`. Modules:
 | `std/csv` | CSV and TSV parsing and formatting (std.md 16) |
 | `std/regexp` | RE2 regular expressions (std.md 17). Go backend only so far |
 | `std/archive` | gzip, tar, and zip in memory (std.md 18). Go backend only so far |
-| `std/toml` | TOML 1.0 documents decoded with the JSON rules (std.md 19). Go backend only so far |
+| `std/toml` | TOML 1.0 documents decoded with the JSON rules (std.md 19) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 

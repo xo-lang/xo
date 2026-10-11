@@ -2249,8 +2249,9 @@ pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
 
 ## 19. std/toml
 
-Status: implemented on the Go backend (decision 0164, a TOML 1.0 parser
-in `std/rt/toml.go`); native builds report it as XO1201 (planned).
+Status: implemented on every backend (decision 0164): a TOML 1.0 parser
+in `std/rt/toml.go` and the same parser in `std/native/toml.xo`, with
+the same JSON text and errors (golden `toml_basic`).
 
 ```
 use std/json

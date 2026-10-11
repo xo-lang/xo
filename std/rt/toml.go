@@ -234,7 +234,8 @@ func (p *tomlParser) escape(b *strings.Builder) {
 		b.WriteRune(rune(v))
 		p.i += n
 	default:
-		p.fail("unknown escape \\" + string(c))
+		r, _ := utf8.DecodeRuneInString(p.s[p.i-1:])
+		p.fail("unknown escape \\" + string(r))
 	}
 }
 
@@ -466,7 +467,10 @@ func tomlFloat(tok string) (any, bool) {
 	}
 	// TOML: an integer part without leading zeros, then a fraction with
 	// digits and/or an exponent
-	s := strings.TrimLeft(d, "+-")
+	s := d
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		s = s[1:]
+	}
 	intEnd := 0
 	for intEnd < len(s) && isDec(s[intEnd]) {
 		intEnd++

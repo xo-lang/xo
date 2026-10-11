@@ -1,0 +1,92 @@
+// std/toml (std.md 19, decision 0164) on every backend: the JSON
+// form and the errors of the TOML 1.0 cases of std/rt/toml_test.go,
+// generated from that file, and a typed decode. The native parser
+// (std/native/toml.xo) must give the same text.
+use std/toml
+
+struct Server {
+  host: Str
+  port: Int = 8080
+  timeout: Duration = 30s
+} derive Json
+
+struct Config {
+  name: Str
+  servers: List[Server]
+} derive Json
+
+fn main(os: Os) {
+  let docs = [
+    "",
+    "a = 1\nb = -2\nc = +3\nd = 1_000\n",
+    "h = 0xDEAD_beef\no = 0o755\nb = 0b1010\n",
+    "f = +1.5\ng = -0.0\nh = 1e3\ni = 6.626e-34\nj = 1_000.5\n",
+    "t = true\nf = false\n",
+    "s = \"a\\tb\\u00E9\\U0001F600\\\"\\\\\"",
+    "s = 'C:\\path\\no escapes'",
+    "s = \"\"\"\nline one\nline two\"\"\"",
+    "s = \"\"\"\\\n    joined \\\n    words\"\"\"",
+    "s = '''\nraw \\n stays'''",
+    "s = \"\"\"two quotes \"\" end\"\"\"\"\"",
+    "\"quoted key\" = 1\n'lit.key' = 2\nbare-key_1 = 3",
+    "a.b.c = 1\na.b.d = 2\na . e = 3",
+    "[x.y]\nz = 1\n[x]\nw = 2",
+    "[[p]]\nn = 1\n[[p]]\nn = 2\n[p.q]\nm = 3",
+    "[[a.b]]\nx = 1\n[[a.b]]\nx = 2",
+    "i = { x = 1, y.z = 'w' }\ne = {}",
+    "a = [ [1, 2], [\"x\"], [], {k = 1} ]",
+    "a = [\n  1, # one\n  2,\n]",
+    "d1 = 1979-05-27T07:32:00Z\nd2 = 1979-05-27 07:32:00.999-07:00\nd3 = 1979-05-27t00:32:00z\nd4 = 1979-05-27T07:32:00\nd5 = 1979-05-27\nd6 = 07:32:00.5",
+    "a = 1 # comment\r\nb = 2\r\n",
+    "[a]\nb.c = 1\n[a.b.d]\ne = 2",
+    "a",
+    "= 1",
+    "a = 1 b = 2",
+    "a = 1\n\n a = 2",
+    "a = 01",
+    "a = 1__0",
+    "a = _1",
+    "a = 1.",
+    "a = .5",
+    "a = 0x",
+    "a = 99999999999999999999",
+    "a = nan",
+    "a = \"\\x41\"",
+    "a = \"\\uD800\"",
+    "a = \"x\ny\"",
+    "a = '''x",
+    "a = [1, 2",
+    "a = [1 2]",
+    "a = {x = 1",
+    "a = {x = 1}\n[a]",
+    "a = {x = 1}\na.y = 2",
+    "[a]\n[a]",
+    "[a.b]\n[a]\nb = 1",
+    "a = [1]\n[[a]]",
+    "a = 1\n[a]",
+    "[a\nb = 1",
+    "[[a]\n",
+    "\"\"\"k\"\"\" = 1",
+    "a = 1979-05-27T25",
+    "# ok\na = \"tab\tok\"\nb = \"bell\u{7}\"",
+  ]
+  for d in docs {
+    match toml.to_json(d) {
+      Ok(j) => os.stdio.println("${d.quote()} -> ${j}")
+      Err(e) => os.stdio.println("${d.quote()} -> ${e}")
+    }
+  }
+  let doc = "name = \"svc\"\n[[servers]]\nhost = \"a\"\ntimeout = \"5s\"\n[[servers]]\nhost = \"b\"\nport = 9000\n"
+  match toml.decode[Config](doc) {
+    Ok(c) => os.stdio.println("decoded ${c.name}: ${c.servers.map(fn(s) { "${s.host}:${s.port}/${s.timeout}" }).join(" ")}")
+    Err(e) => os.stdio.println("decode: ${e}")
+  }
+  match toml.decode[Config]("name = 1") {
+    Ok(_) => os.stdio.println("decoded a wrong type")
+    Err(e) => os.stdio.println("decode: ${e}")
+  }
+  match toml.decode[Config]("name = ") {
+    Ok(_) => os.stdio.println("decoded bad syntax")
+    Err(e) => os.stdio.println("decode: ${e}")
+  }
+}

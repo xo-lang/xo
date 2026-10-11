@@ -1,7 +1,7 @@
 # 0164: Formats: CSV, TOML, gzip/tar/zip, regexp
 
-Status: Accepted, implemented (2026-10-11). `std/csv` on every backend;
-`std/regexp`, `std/archive`, and `std/toml` on the Go backend, XO1201
+Status: Accepted, implemented (2026-10-11). `std/csv` and `std/toml` on
+every backend; `std/regexp` and `std/archive` on the Go backend, XO1201
 (planned) on native builds. Spec: std.md 16 to 19.
 
 ## Context
@@ -46,10 +46,12 @@ from `Fs`).
    package in Go's standard library; std/rt stays standard library
    only), tested against the TOML 1.0 cases in `std/rt/toml_test.go`.
    `DecodeErr` keeps syntax and type errors apart.
-5. **Native backends**: CSV is ported to Xo (`std/native/csv.xo`).
-   Regexp, archives, and TOML report XO1201 (planned). The plans:
-   TOML is a pure parser and ports to Xo like CSV (its JSON output is
-   then decoded by the native JSON codec); archives need deflate, which
+5. **Native backends**: CSV and TOML are ported to Xo
+   (`std/native/csv.xo`, `std/native/toml.xo`; TOML's JSON text is
+   decoded by the native JSON codec), checked against the Go backend by
+   the goldens `csv_basic` and `toml_basic` (the latter generated from
+   the cases of `std/rt/toml_test.go`). Regexp and archives report
+   XO1201 (planned). The plans: archives need deflate, which
    means vendoring a C inflate/deflate (zlib or miniz) into std/llrt like
    Mbed TLS (decision 0105); regexp needs an RE2-equivalent engine (a
    port of Go's `regexp` to Xo or C), since the platform's `regcomp`
@@ -65,8 +67,8 @@ from `Fs`).
 - `std/regexp` is a module name; programs that bound Go's `regexp` with
   `use go "regexp"` keep working but must alias one of them to import
   both.
-- Native builds of programs using regexp, archives, or TOML fail with
-  XO1201 until the plans above land; the Go backend has them all.
+- Native builds of programs using regexp or archives fail with XO1201
+  until the plans above land; the Go backend has them all.
 
 ## Alternatives
 
