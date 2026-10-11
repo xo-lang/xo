@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo audit [--json] [--no-gc] [<dir>]` (decision 0156): a supply chain
+  report per dependency (effects, xo.lock effects state, ceiling, `use c`
+  and impure `use go` with their vouches) plus this module's capability
+  attenuations, the capabilities it passes into dependencies (attenuated
+  or not), and unused vouches.
 - Capability attenuation (decision 0156): `os.net.only(hosts)` (exact
   hosts, `*.domain`, `host:port`; checked for raw dials and listens, each
   HTTP request and redirect of a client made from it, and refused for

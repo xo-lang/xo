@@ -1919,6 +1919,18 @@ Last verified: 2026-10-09.
   fallback ("the method `Net.only`"). Tests: golden
   `internal/gen/testdata/golden/cap_attenuation`,
   `cmd/xo/attenuate_test.go`. Last verified: 2026-10-11.
+- `xo audit` (decision 0156, 2026-10-11): `cmd/xo/audit.go`. Loads with
+  `query.Load` (or `build.CheckNoGCDirs` with `--no-gc`), reads
+  `Result.Deps()` (`Effects`, `Locked`), `mod.Ceilings`,
+  `Result.EscapeHatches`, `Result.ConsumerVouches`, and walks the
+  consuming modules' files (`Module.Dependency == ""`, not std, test
+  files skipped) with `check.Inspect` and `Info.CallOf`: attenuation
+  calls (`only`, `sub`, `read_only`, `write_only`, `cwd` on a capability
+  type) with constant string or list-of-string arguments, and capability
+  typed arguments of calls into dependency functions, attenuated when the
+  argument is an attenuation call or a `let` local bound to one. JSON
+  (`--json` or a non terminal stdout) or a text report; exit 1 on check
+  errors. Test: `cmd/xo/audit_test.go`. Last verified: 2026-10-11.
 - API diffs and publish (step 4): package `internal/release`
   (`ModuleAPI`: the syntax level `xo query api` surface of every package
   via `query.DeclSurface`; `Diff`, `Bump`; `Publish`). `xo get` prints the

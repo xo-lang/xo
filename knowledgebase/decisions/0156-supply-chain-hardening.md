@@ -1,6 +1,6 @@
 # 0156: Supply-chain hardening
 
-Status: Proposed (2026-10-11), being implemented: items 1 to 3 done. Scope set
+Status: Proposed (2026-10-11), being implemented: items 1 to 4 done. Scope set
 by the owner on 2026-10-11:
 only the consumer's vouches count for `use c ... uses none`; an effect
 lock in xo.lock by default (`--accept-effects` to widen); capability

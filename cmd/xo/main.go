@@ -182,6 +182,17 @@ commands:
       then prints the git tag command to run; it never tags or pushes.
       It also lists every definition (exported or not) whose content hash
       changed since the previous tag (xo query hash; decision 0125).
+  audit [--dir=<dir>] [--json] [--no-gc] [<dir>]
+      Supply chain report (decision 0156): per dependency (direct and
+      indirect) its version, the effects its API may reach, its xo.lock
+      effects line (ok, widened, narrowed, unlocked), its effect ceiling,
+      and its escape hatches (use c, use go of an impure package) with
+      the vouch that covers each; the attenuation calls of this module
+      (only, sub, read_only, write_only, cwd) with their constant
+      arguments; every capability passed into a dependency and whether
+      it is attenuated; vouch lines that match nothing; and the check's
+      diagnostics. JSON when --json or stdout is not a terminal. Exit 1
+      when the check has errors. --no-gc checks as a native build (use c).
   mod tidy [--dir=<dir>] [--json]
       Require every imported module, drop requirements nothing imports
       (unless they raise a version the graph selects), and rewrite xo.lock
@@ -238,6 +249,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runVendor(args[1:], stdout, stderr)
 	case "publish":
 		return runPublish(args[1:], stdout, stderr)
+	case "audit":
+		return runAudit(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "parse":

@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`xo audit`** (10.1, decision 0156): per dependency effects, lock
+  state, ceiling, escape hatches and vouches; attenuations and the
+  capabilities passed into dependencies.
 - **Capability attenuation** (6.3, std.md 3.2, 3.5, 3.7, decision 0156):
   `os.net.only(hosts)`, `os.env.only(names)`, and `os.proc.only(cmds)`
   return narrowed capabilities; `NetErr` and `ProcErr` gain `Denied`.
@@ -2142,13 +2145,14 @@ test "retries after 503" {
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
 | `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
+| `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |
 
 The commands that report diagnostics or results accept `--json`: `parse`,
 `check`, `build`, `test`, `fmt`, `fix`, `vet`, `query`, `edit` (always
-JSON), `doc`, `explain`, and `bind`. `run`, `replay`, `dump`, `serve`, and
+JSON), `doc`, `explain`, `bind`, and `audit`. `run`, `replay`, `dump`, `serve`, and
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
 
