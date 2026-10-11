@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: an overflow fault of `c + x` (constant left) named the
+  operands swapped (`6 + 9223372036854775807`); it follows the source
+  order, as on the Go and LLVM backends. Found by `progen.Arith`, now
+  widened to Float, Str, List[Int], structs, enums with payloads,
+  closures, and edge operands (shifts by 63, the minimum divided by -1).
 - Go backend: a float `+`, `-`, or `*` of two literals whose result is
   out of range (`2.5e300 * 1e10`) failed to build (a Go constant
   overflow); it is `+Inf` at run time, as on the native backends.

@@ -1,0 +1,22 @@
+// Found by progen.Arith (seed 346), reduced by scripts/reduce-diff.py:
+// arm64 swapped `c + x` to `x + c`, and its overflow fault named x
+// first (gotchas/arm64-fault-operand-order.md).
+fn f1(p0: Int) -> Int {
+  var acc = p0
+  match (9223372036854775807 + p0) % 0 % 3 {
+    0 => {
+      for i2 in 0..5 {
+        acc = i2
+      }
+    }
+    _ => {
+      if 1 != 0 || p0 > p0 {
+      }
+    }
+  }
+  acc + 0
+}
+
+fn main(os: Os) {
+  os.stdio.println("f1 ${f1(6)}")
+}

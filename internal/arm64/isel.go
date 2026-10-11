@@ -968,9 +968,13 @@ func (s *fstate) addSub(v *ssa.Value) {
 		return
 	}
 	a, b := v.Args[0], v.Args[1]
+	// faults name the operands in source order: c + x swapped to x + c
+	// still reports c + x
+	swapped := false
 	if _, ok := constInt(a); ok && v.Op == ssa.OpAdd {
 		if _, ok2 := constInt(b); !ok2 {
 			a, b = b, a
+			swapped = true
 		}
 	}
 	if n, ok := constInt(b); ok {
@@ -996,7 +1000,11 @@ func (s *fstate) addSub(v *ssa.Value) {
 			s.set(v, s.def1(false, text, av))
 			return
 		}
-		s.set(v, s.checked(false, text, []vreg{av}, ins, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), isrc(mustConst(b)), symsrc(g.loc(v.Pos))))
+		l, r := rsrc(av), isrc(mustConst(b))
+		if swapped {
+			l, r = r, l
+		}
+		s.set(v, s.checked(false, text, []vreg{av}, ins, "vs", "xo_fault_overflow", l, isrc(opChar[v.Op]), r, symsrc(g.loc(v.Pos))))
 		return
 	}
 	av, bv := s.word(a), s.word(b)
@@ -1005,7 +1013,11 @@ func (s *fstate) addSub(v *ssa.Value) {
 		s.set(v, s.def1(false, text, av, bv))
 		return
 	}
-	s.set(v, s.checked(false, text, []vreg{av, bv}, ins, "vs", "xo_fault_overflow", rsrc(av), isrc(opChar[v.Op]), rsrc(bv), symsrc(g.loc(v.Pos))))
+	l, r := rsrc(av), rsrc(bv)
+	if swapped {
+		l, r = r, l
+	}
+	s.set(v, s.checked(false, text, []vreg{av, bv}, ins, "vs", "xo_fault_overflow", l, isrc(opChar[v.Op]), r, symsrc(g.loc(v.Pos))))
 }
 
 func mustConst(v *ssa.Value) int64 {
