@@ -527,7 +527,7 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
   let fi = b.m.new_func(name, [ft], [st])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
-  b.gens.push(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
+  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
   name
 }
 

@@ -152,7 +152,7 @@ fn rejected(c: check.Checker) -> Bool {
 /// Generates module m (after the passes) for os, inlining first unless
 /// no_inline (the module is generated without inlining when the inlined
 /// one does not verify, as `xo build --backend=arm64` does).
-fn generate_module(m: ssa.Module, os: Str, no_inline: Bool) -> Program {
+pub fn generate_module(m: ssa.Module, os: Str, no_inline: Bool) -> Program {
   if !no_inline {
     var mi = m
     if !inline_module(mi) || mi.verify_all().is_empty() {

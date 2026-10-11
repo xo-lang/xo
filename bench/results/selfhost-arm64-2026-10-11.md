@@ -138,3 +138,49 @@ TestSelfhostArm64Mutations: 492 of 492 functions identical.
 The dataflow of decision 0148 was identical on its first comparison,
 selfhost/check and selfhost/ssa (the Builder and Checker homes)
 included.
+
+# Stage 4: inlining, and the whole file, 2026-10-11
+
+inline.xo: small leaf functions (at most 40 instructions and 12 blocks,
+no calls of Xo functions, no landing pads of their own) inlined on the
+Xo SSA after reference counting, the module verified again with
+selfhost/ssa's verifier (`Module.verify_all`, new), and generated
+without inlining when it does not verify (the Go emitter's
+InlineError). Both emitters now run with their defaults.
+
+The two SSA builders made a few generated functions in different
+orders (72 of the 306 runs differed only in that order at stage 3):
+selfhost/ssa built the bodies of Debug text, slice, concatenation,
+frame argument, and zero functions after the body that asked for them,
+on the assumption that they declare no functions, but the Debug text
+of a struct declares the Debug text of its fields. selfhost/ssa now
+builds every generated function when asked for, as the Go builder's
+genFunc does (build.xo build_gen; decision 0150 amended), and the
+function order is the Go builder's on every run. TestSelfhostSSA and
+TestSelfhostSSAMutations (merge tier) still pass: 15,906 of 15,935
+functions identical in the build stage, 0 differences.
+
+Development comparison over every repository run (.tools/acmp.py):
+
+| | count |
+|---|---|
+| runs compared | 306 |
+| functions identical (of the Go emitter's 10,975) | 10,975 |
+| functions skipped or different | 0 |
+| helpers emitted, all identical | 11,434 |
+| runs byte identical as a whole file | 306 of 306 |
+
+TestSelfhostArm64 now also requires a run with no function skipped to
+be byte identical; in the merge tier 149 of 149 runs compared are, with
+4,013 of 4,013 functions; TestSelfhostArm64Mutations: 24 of 24 mutated
+programs compared byte identical (492 functions).
+
+Speed, the emitter alone with inlining and the verifier (`--bench=5`,
+ms for 5 generations; Apple M4 Pro, another agent's tests running),
+the same output:
+
+| input | Go emitter | Xo emitter, go backend |
+|---|---|---|
+| selfhost/lexer (150,315 lines) | 196 | 361 (1.84x) |
+| selfhost/parser (2,467,305 lines) | 2,974 | 5,351 (1.80x) |
+| bench/perf/xo (40,540 lines) | 46 | 90 (1.96x) |

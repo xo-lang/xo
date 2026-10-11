@@ -28,10 +28,10 @@ fn new_gen(m: ssa.Module, os: Str) -> G {
 
 /// The generated program: its assembly, or the failure (`err`), and the
 /// functions skipped.
-struct Program {
-  asm: Str
-  err: Str
-  skipped: List[Str]
+pub struct Program {
+  pub asm: Str
+  pub err: Str
+  pub skipped: List[Str]
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly

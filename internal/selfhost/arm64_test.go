@@ -17,8 +17,8 @@ import (
 )
 
 // arm64Flags are the flags both emitters run with at the current stage
-// of decision 0158: --no-inline until stage 4 ports inlining.
-var arm64Flags = []string{"--no-inline"}
+// of decision 0158: none since stage 4 (inlining); --no-inline before.
+var arm64Flags = []string{}
 
 // arm64Heavy are the runs whose emission takes the longest (most of the
 // time of the comparison): the merge tier leaves them to the full tier.
@@ -38,8 +38,8 @@ var arm64Heavy = map[string]bool{
 // every function the Xo emitter emits must be identical to the Go
 // emitter's, with its call site table; every helper and literal it emits
 // must be one the Go emitter emits. Functions it skips (a construct of a
-// later stage) are counted, not compared; runs whose whole text is
-// identical are counted too. The merge tier takes every second run and
+// later stage) are counted, not compared; a run with no function skipped
+// must be identical byte for byte as a whole file. The merge tier takes every second run and
 // leaves arm64Heavy to the full tier; -short every 25th; the go backend
 // only except in the full tier. XO_SELFHOST_BACKEND names one backend,
 // XO_SELFHOST_KEEP=<dir> writes arm64-<backend>.txt (the counts).
@@ -290,6 +290,10 @@ func compareArm64(dir, want, got string, st *arm64Stats) []string {
 	body, skipped, _ := strings.Cut(got, "== skipped\n")
 	if body == want {
 		st.byteSame++
+	} else if strings.TrimSpace(skipped) == "" {
+		// since stage 4 every run whose functions were all emitted is the
+		// Go emitter's text byte for byte (decision 0158)
+		return []string{fmt.Sprintf("%s: the whole file differs: %s", dir, firstDiff(body, want))}
 	}
 	skip := map[string]string{}
 	for _, l := range nonEmptyLines(skipped) {

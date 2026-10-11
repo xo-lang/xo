@@ -1,6 +1,14 @@
 # 0158: The arm64 emitter in Xo, in stages compared through `xo asmdump`, and the switch-over experiment
 
-Status: Proposed (2026-10-11). Second stage of decision 0150's order
+Status: Accepted (2026-10-11), stages 1 to 4 implemented in
+`selfhost/arm64` (state.xo, gen.xo, mir.xo, isel.xo, calls.xo, opt.xo,
+ranges.xo, lsr.xo, jumptab.xo, regalloc.xo, emit.xo, rc.xo,
+closures.xo, byref.xo, inline.xo, stages.xo, main.xo), `cmd/xo/asmdump.go`
+(hidden `xo asmdump`), `build.Arm64AsmDump`, and
+`internal/selfhost/arm64_test.go` (`TestSelfhostArm64`,
+`TestSelfhostArm64Mutations`): every function of every repository run
+both SSA builders build completely is identical, and every such run is
+byte identical as a whole file. Second stage of decision 0150's order
 (after the SSA builder). Evidence:
 `bench/results/selfhost-arm64-2026-10-11.md`.
 
