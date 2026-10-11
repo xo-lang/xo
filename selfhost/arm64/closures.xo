@@ -167,7 +167,9 @@ fn (var g: G) release_func(ws: List[Int]) {
   let bi = g.add(Inst{kind: K_CONDBR, cond: "cbnz", us: [env], targets: [has, -1]})
   g.cur = has
   let cont = g.dec_or_defer(env, DropFn.EnvWord(env: env))
-  g.blocks[at].insts[bi].targets[1] = cont
+  var ins = g.take_insts(at)
+  ins[bi].targets[1] = cont
+  g.put_insts(at, ins)
   g.cur = cont
   g.inherit(before)
   g.clobber()

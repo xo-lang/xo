@@ -158,13 +158,16 @@ fn (var g: G) regalloc() {
           out[w] = out[w] | live_in[ti][w]
         }
       }
+      var li = live_in[k]
+      live_in[k] = []
       for w in 0..nw {
         let nv = gen[k][w] | (out[w] & ~kill[k][w])
-        if nv != live_in[k][w] {
-          live_in[k][w] = nv
+        if nv != li[w] {
+          li[w] = nv
           changed = true
         }
       }
+      live_in[k] = li
       live_out[k] = out
       k -= 1
     }
@@ -235,10 +238,10 @@ fn (var g: G) regalloc() {
         let dp = if inst.early { at } else { at + 2 }
         weight[d] = weight[d] + wt
         if bits_has(live, d) {
-          ranges[d].push(Rng{s: dp, e: end[d]})
+          push_rng(ranges, d, Rng{s: dp, e: end[d]})
           live[d / BW] = live[d / BW] & ~bit_mask(d)
         } else {
-          ranges[d].push(Rng{s: dp, e: dp})
+          push_rng(ranges, d, Rng{s: dp, e: dp})
         }
       }
       for u in inst.us {
@@ -254,7 +257,7 @@ fn (var g: G) regalloc() {
       j -= 1
     }
     for v in bits_members(live) {
-      ranges[v].push(Rng{s: bstart, e: end[v]})
+      push_rng(ranges, v, Rng{s: bstart, e: end[v]})
     }
   }
   for v in 0..n {
@@ -284,25 +287,25 @@ fn (var g: G) regalloc() {
         let locs = g.abi_locs(inst.srcs)
         for (k, a) in inst.srcs.indexed() {
           if a.kind == S_REG && a.v != 0 && locs[k].reg >= 0 {
-            fixed[a.v].push(locs[k].reg)
+            push_int(fixed, a.v, locs[k].reg)
           }
         }
         for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
           if l.reg >= 0 {
-            fixed[inst.defs[k]].push(l.reg)
+            push_int(fixed, inst.defs[k], l.reg)
           }
         }
       } else if inst.kind == K_ENTRY {
         for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
           if l.reg >= 0 {
-            fixed[inst.defs[k]].push(l.reg)
+            push_int(fixed, inst.defs[k], l.reg)
           }
         }
       } else if inst.kind == K_RET {
         for (k, l) in g.abi_locs(inst.srcs).indexed() {
           let a = inst.srcs[k]
           if a.kind == S_REG && a.v != 0 && l.reg >= 0 {
-            fixed[a.v].push(l.reg)
+            push_int(fixed, a.v, l.reg)
           }
         }
       }
@@ -327,8 +330,8 @@ fn (var g: G) regalloc() {
       continue
     }
     if overlaps(ranges[a], ranges[b]) {
-      partners[a].push(b)
-      partners[b].push(a)
+      push_int(partners, a, b)
+      push_int(partners, b, a)
       continue
     }
     if b < a {
@@ -345,11 +348,11 @@ fn (var g: G) regalloc() {
     weight[a] = weight[a] + weight[b]
     let fb = fixed[b]
     for r in fb {
-      fixed[a].push(r)
+      push_int(fixed, a, r)
     }
     let pb = partners[b]
     for r in pb {
-      partners[a].push(r)
+      push_int(partners, a, r)
     }
     if bits_has(no_caller, b) {
       no_caller[a / BW] = no_caller[a / BW] | bit_mask(a)
@@ -392,10 +395,10 @@ fn (var g: G) regalloc() {
     }
     for c in calls {
       for r in gp_c {
-        occ[r].push(Rng{s: c, e: c})
+        push_rng(occ, r, Rng{s: c, e: c})
       }
       for r in fp_c {
-        occ[r].push(Rng{s: c, e: c})
+        push_rng(occ, r, Rng{s: c, e: c})
       }
     }
     for r in 0..64 {
@@ -664,4 +667,21 @@ fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
     }
   }
   out
+}
+
+/// Pushes r onto lists[i] in place (moved out and back: a push onto a
+/// list inside a list element copies it on the native backends,
+/// gotchas/xo-native-nested-element-update.md).
+fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
+  var l = lists[i]
+  lists[i] = []
+  l.push(r)
+  lists[i] = l
+}
+
+fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
+  var l = lists[i]
+  lists[i] = []
+  l.push(x)
+  lists[i] = l
 }

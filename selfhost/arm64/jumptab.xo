@@ -113,7 +113,9 @@ fn (var g: G) jump_tables() {
     }
     let n = g.blocks[head].insts.len()
     let r = g.blocks[head].insts[n - 1].us[0]
-    g.blocks[head].insts[n - 1] = Inst{kind: K_SWITCH, text: "${lo}", us: [r], targets: targets}
+    var ins = g.take_insts(head)
+    ins[n - 1] = Inst{kind: K_SWITCH, text: "${lo}", us: [r], targets: targets}
+    g.put_insts(head, ins)
     changed = true
   }
   if changed {

@@ -120,8 +120,8 @@ const LIST_HDR = 24
 
 /// A register b such that element i of list l starts at b + LIST_HDR.
 fn (var g: G) elem_base(l: Int, i: Int, es: Int) -> Int {
-  let mi = g.m_()
-  if let Some(b) = g.memos[mi].bases.get((l, i, es)) {
+  let _mi = g.m_()
+  if let Some(b) = g.cm.bases.get((l, i, es)) {
     return b
   }
   let (b0, ok) = g.offset_base(l, i, es)
@@ -129,8 +129,8 @@ fn (var g: G) elem_base(l: Int, i: Int, es: Int) -> Int {
   if !ok {
     b = g.elem_base1(l, i, es)
   }
-  let mi2 = g.m_()
-  g.memos[mi2].bases[(l, i, es)] = b
+  let _mi2 = g.m_()
+  g.cm.bases[(l, i, es)] = b
   b
 }
 
@@ -160,15 +160,15 @@ fn (var g: G) elem_base1(l: Int, i: Int, es: Int) -> Int {
 fn (var g: G) load_elem(base: Int, et: Int, as_int: Bool) -> List[Int] {
   if g.kind(et) == ssa.Kind.Bool {
     let d = g.def1(false, "ldrb $wd0, [$u0, #${LIST_HDR}]", [base])
-    let mi = g.m_()
-    g.memos[mi].loaded[d] = MemAt{base: base, off: LIST_HDR, epoch: g.memos[mi].epoch}
+    let _mi = g.m_()
+    g.cm.loaded[d] = MemAt{base: base, off: LIST_HDR, epoch: g.cm.epoch}
     return [d]
   }
   var out: List[Int] = []
   for (k, fp) in g.layout(et).indexed() {
     let d = g.def1(fp && !as_int, "ldr $d0, [$u0, #${LIST_HDR + 8 * k}]", [base])
-    let mi = g.m_()
-    g.memos[mi].loaded[d] = MemAt{base: base, off: LIST_HDR + 8 * k, epoch: g.memos[mi].epoch}
+    let _mi = g.m_()
+    g.cm.loaded[d] = MemAt{base: base, off: LIST_HDR + 8 * k, epoch: g.cm.epoch}
     out.push(d)
   }
   out
@@ -218,19 +218,19 @@ fn (var g: G) store_elem(base: Int, et: Int, ws: List[Int]) {
 /// Whether register w holds the word at [base, #off] loaded since the
 /// last store or call (memo mi).
 fn (g: G) same_loaded(mi: Int, w: Int, base: Int, off: Int) -> Bool {
-  if let Some(at) = g.memos[mi].loaded.get(w) {
-    return at.base == base && at.off == off && at.epoch == g.memos[mi].epoch
+  if let Some(at) = g.cm.loaded.get(w) {
+    return at.base == base && at.off == off && at.epoch == g.cm.epoch
   }
   false
 }
 
 fn (var g: G) list_len(l: Int) -> Int {
-  let mi = g.m_()
-  if let Some(n) = g.memos[mi].lens.get(l) {
+  let _mi = g.m_()
+  if let Some(n) = g.cm.lens.get(l) {
     return n
   }
   let n = g.def1(false, "ldr $d0, [$u0, #8]", [l])
-  g.memos[mi].lens[l] = n
+  g.cm.lens[l] = n
   n
 }
 
@@ -239,11 +239,11 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   if pos.is_empty() {
     return
   }
-  let mi = g.m_()
-  if g.memos[mi].checked.contains((l, i)) {
+  let _mi = g.m_()
+  if g.cm.checked.contains((l, i)) {
     return
   }
-  g.memos[mi].checked[(l, i)] = true
+  g.cm.checked[(l, i)] = true
   let n = g.list_len(l)
   let lb = g.loc_label(pos)
   g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
@@ -413,8 +413,8 @@ fn (var g: G) call_op(v: Int) {
       }
       let n1 = g.def1(false, "add $d0, $u0, #1", [n])
       g.store("str $u0, [$u1, #8]", [n1, lm])
-      let mi = g.m_()
-      g.memos[mi].lens[lm] = n1
+      let _mi = g.m_()
+      g.cm.lens[lm] = n1
       g.set(v, [lm])
     }
     "list.pop" => {
@@ -427,8 +427,8 @@ fn (var g: G) call_op(v: Int) {
       let l2 = g.new_vreg(false)
       let nl = g.new_vreg(false)
       let o = g.option(ot, "cmp $u0, #0", [n], "gt", [l2, nl], OptSome.Pop(l: l, n: n, et: et), regs([l, n]))
-      let mi = g.m_()
-      g.memos[mi].lens[l2] = nl
+      let _mi = g.m_()
+      g.cm.lens[l2] = nl
       g.set(v, [l2] + o)
     }
     "str.concat" => {

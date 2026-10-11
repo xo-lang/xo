@@ -197,6 +197,8 @@ struct G {
   /// the memos (a block's memo is an index into them)
   memos: List[Memo] = []
   mm: Int = -1
+  /// the current memo (memos[mm] is stale while it is current)
+  cm: Memo = Memo{blk: -1}
   /// landing pads (decision 0085): the pad of the value being lowered,
   /// the SSA blocks landing pads enter, and the call site table entries
   cur_pad: Int = -1
@@ -276,6 +278,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.nstub = 0
   g.memos = []
   g.mm = -1
+  g.cm = Memo{blk: -1}
   g.cur_pad = -1
   g.sites = []
   g.stub_sites = []

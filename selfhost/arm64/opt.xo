@@ -10,19 +10,46 @@
 
 use github.com/xo-lang/xo/selfhost/ssa
 
-/// The memo of the current block (s.m()).
+/// The memo of the current block (s.m()): its index. The current memo
+/// is kept in g.cm, out of the list (an update of a map inside a list
+/// element copies the map on the native backends,
+/// gotchas/xo-native-nested-element-update.md); memo_at reads any memo.
 fn (var g: G) m_() -> Int {
-  if g.mm < 0 || g.memos[g.mm].blk != g.cur {
-    g.memos.push(Memo{blk: g.cur})
+  if g.mm < 0 || g.cm.blk != g.cur {
+    g.flush_memo()
+    g.memos.push(Memo{blk: -2})
     g.mm = g.memos.len() - 1
+    g.cm = Memo{blk: g.cur}
   }
   g.mm
 }
 
+/// Stores the current memo back into the list.
+fn (var g: G) flush_memo() {
+  if g.mm >= 0 {
+    g.memos[g.mm] = g.cm
+    g.cm = Memo{blk: -3}
+  }
+}
+
+/// Forgets the current memo (a landing pad's block starts with none).
+fn (var g: G) drop_memo() {
+  g.flush_memo()
+  g.mm = -1
+}
+
+/// Memo i (the current one from g.cm).
+fn (g: G) memo_at(i: Int) -> Memo {
+  if i == g.mm {
+    return g.cm
+  }
+  g.memos[i]
+}
+
 /// Records a store or a call: loads before it may be stale.
 fn (var g: G) clobber() {
-  let mi = g.m_()
-  g.memos[mi].epoch += 1
+  let _mi = g.m_()
+  g.cm.epoch += 1
 }
 
 /// Adds a memory write (uses[1..] are addresses; the value may be xzr).
@@ -65,10 +92,13 @@ fn (var g: G) thread() {
     if k == K_JUMP || k == K_CONDBR || k == K_SWITCH {
       let t = g.blocks[b].insts.len() - 1
       let ts = g.blocks[b].insts[t].targets
-      for (i, x) in ts.indexed() {
-        let f = g.final_of(x)
-        g.blocks[b].insts[t].targets[i] = f
+      var nts: List[Int] = []
+      for x in ts {
+        nts.push(g.final_of(x))
       }
+      var ins = g.take_insts(b)
+      ins[t].targets = nts
+      g.put_insts(b, ins)
     }
   }
   // drop blocks nothing reaches
@@ -199,7 +229,7 @@ fn (var g: G) dce() {
 /// Starts the memo of the current block from memo from, of a block that
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
-  let src = g.memos[from]
+  let src = g.memo_at(from)
   var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero,
     lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs}
   for (k, v) in src.ci {
@@ -216,8 +246,10 @@ fn (var g: G) inherit(from: Int) {
     }
     m.cf[k] = v
   }
-  g.memos.push(m)
+  g.flush_memo()
+  g.memos.push(Memo{blk: -2})
   g.mm = g.memos.len() - 1
+  g.cm = m
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +270,11 @@ fn (var g: G) bounds(v: Int) -> (Int, Int) {
     return (lo, hi)
   }
   let w = g.vals[v][0]
-  let mi = g.m_()
-  if let Some(x) = g.memos[mi].lo.get(w) {
+  let _mi = g.m_()
+  if let Some(x) = g.cm.lo.get(w) {
     lo = imax(lo, x)
   }
-  if let Some(x) = g.memos[mi].hi.get(w) {
+  if let Some(x) = g.cm.hi.get(w) {
     hi = imin(hi, x)
   }
   (lo, hi)
@@ -296,8 +328,8 @@ fn (var g: G) branch_facts(b: Int) {
         let (k, _) = g.pow2(g.arg(r, 1))
         let a = g.arg(r, 0)
         if g.has_val[a] && g.vals[a].len() == 1 {
-          let mi = g.m_()
-          g.memos[mi].low_zero[g.vals[a][0]] = k
+          let _mi = g.m_()
+          g.cm.low_zero[g.vals[a][0]] = k
         }
       }
     }
@@ -339,9 +371,9 @@ fn (var g: G) narrow(x: Int, o: ssa.Op, ylo: Int, yhi: Int) {
     }
     _ => {}
   }
-  let mi = g.m_()
-  g.memos[mi].lo[w] = lo
-  g.memos[mi].hi[w] = hi
+  let _mi = g.m_()
+  g.cm.lo[w] = lo
+  g.cm.hi[w] = hi
 }
 
 /// Whether a + n (or a - n) cannot overflow.
@@ -426,7 +458,9 @@ fn (var g: G) thread_const() {
       _ => continue
     }
     let to = if taken { br.targets[0] } else { br.targets[1] }
-    g.blocks[p].insts[np - 1].targets[0] = to
+    var ins = g.take_insts(p)
+    ins[np - 1].targets[0] = to
+    g.put_insts(p, ins)
   }
 }
 
@@ -468,8 +502,10 @@ fn (var g: G) thread_cset() {
     if inv_cond(cond).is_empty() {
       continue
     }
-    g.blocks[p].insts[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us,
+    var ins = g.take_insts(p)
+    ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us,
       cond: cond, targets: g.blocks[j].insts[0].targets}
+    g.put_insts(p, ins)
   }
 }
 
@@ -818,8 +854,10 @@ fn (var g: G) reuse_flags() {
       same = same && inst.us[i] == p.us[i]
     }
     if same {
-      g.blocks[x].insts[0].text = ""
-      g.blocks[x].insts[0].us = []
+      var ins = g.take_insts(x)
+      ins[0].text = ""
+      ins[0].us = []
+      g.put_insts(x, ins)
     }
   }
 }

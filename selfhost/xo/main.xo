@@ -1,0 +1,194 @@
+// xo1: the self hosted compiler driver of the switch-over experiment
+// (decision 0158): the lexer, parser, checker, SSA builder and its
+// passes, and the arm64 emitter, all in Xo, then the system C compiler
+// driver to assemble and link with the C runtime (std/llrt), as
+// internal/build does for `xo build --backend=arm64`.
+//
+//   xo1 build [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>
+//   xo1 asm [--std=DIR] [--wd=DIR] <dir>       print the assembly
+//
+// The runtime sources are read from DIR/llrt (DIR the std directory,
+// default std). Programs that need what internal/build adds beyond the
+// runtime (time zone data for std/time, `use c` sources, TLS) are not
+// supported yet: the driver says so and exits 1. It is not the released
+// `xo` (decision 0150: that is the owner's decision after the fixed
+// point).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/selfhost/arm64
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  if args.is_empty() || !(args[0] is "build" | "asm") {
+    os.stdio.eprintln("usage: xo1 build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>")
+    os.proc.exit(2)
+  }
+  let cmd = args[0]
+  var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
+  var cc = os.env.get("XO_CC") ?? "cc"
+  var out = ""
+  var asm_path = ""
+  var dirs: List[Str] = []
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
+    } else if a.starts_with("--cc=") {
+      cc = a.trim_prefix("--cc=")
+    } else if a.starts_with("--asm=") {
+      asm_path = a.trim_prefix("--asm=")
+    } else if a == "-o" && i + 1 < args.len() {
+      out = args[i + 1]
+      i += 1
+    } else {
+      dirs.push(a)
+    }
+    i += 1
+  }
+  if dirs.len() != 1 {
+    os.stdio.eprintln("xo1: name one directory")
+    os.proc.exit(2)
+  }
+  var c = check.new_checker(os.fs, std_dir)
+  c.native = true
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
+    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
+  match c.check_dirs(dirs) {
+    Ok(_) => {}
+    Err(e) => fail(os, "check: ${e}")
+  }
+  if !c.unsupported.is_empty() {
+    fail(os, "unsupported: ${c.unsupported}")
+  }
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      fail(os, "the program does not check (run xo check)")
+    }
+  }
+  for m in c.mods {
+    if m.path == "native/time" {
+      fail(os, "std/time needs time zone data, which this driver does not write yet")
+    }
+  }
+  var b = ssa.build_program(c, wd, false)
+  if !b.why.is_empty() {
+    fail(os, b.why)
+  }
+  for f in b.m.funcs {
+    if !f.skip.is_empty() {
+      fail(os, "the SSA builder skipped ${f.name}: ${f.skip}")
+    }
+  }
+  b.run_passes()
+  let p = arm64.generate_module(b.m, "darwin", false)
+  if !p.err.is_empty() {
+    fail(os, p.err)
+  }
+  if !p.skipped.is_empty() {
+    fail(os, "the emitter skipped ${p.skipped[0]}")
+  }
+  if cmd == "asm" {
+    os.stdio.print(p.asm)
+    return
+  }
+  if out.is_empty() {
+    let parts = dirs[0].trim_suffix("/").split("/")
+    out = parts[parts.len() - 1]
+  }
+  if asm_path.is_empty() {
+    asm_path = "${out}.s"
+  }
+  // the symbols internal/build looks for (tlsSymbols), made at run time:
+  // as literals they would be in this program's own assembly, and its
+  // link would need the TLS library
+  var tls = false
+  for sym in [["xo", "cl", "do"], ["xo", "srv", "new"], ["xo", "tls", ""]] {
+    tls = tls || p.asm.contains(sym.join("_"))
+  }
+  if tls {
+    fail(os, "std/http (TLS) is not linked by this driver yet")
+  }
+  os.fs.write(asm_path, p.asm.bytes())?
+  // the C runtime next to the assembly (writeRuntime)
+  let rtdir = "${out}.rt"
+  os.fs.create_dir_all(rtdir)?
+  for fi in os.fs.read_dir("${std_dir}/llrt")? {
+    if fi.name.ends_with(".c") {
+      os.fs.write("${rtdir}/${fi.name}", os.fs.read("${std_dir}/llrt/${fi.name}")?)?
+    }
+  }
+  var cargs = ["-O2"] + io_flags(p.asm)
+  cargs = cargs + ["-fexceptions", "-funwind-tables", "-o", out]
+  let srcs = [asm_path, "${rtdir}/xo_rt.c", "-lm", "-lpthread"]
+  // the macOS SDKs internal/build tries (sysrootCandidates), the one that
+  // linked last time first
+  var roots: List[Str] = []
+  let env_root = os.env.get("XO_SYSROOT") ?? ""
+  if !env_root.is_empty() {
+    roots.push(env_root)
+  } else {
+    let memo = "${os.env.get("HOME") ?? ""}/Library/Caches/xo/llvm-sysroot"
+    match os.fs.read_text(memo) {
+      Ok(t) => roots.push(t.trim())
+      Err(_) => {}
+    }
+    roots.push("")
+    match os.proc.run("xcrun", ["--show-sdk-path"]) {
+      Ok(r) => roots.push((r.stdout.to_str() ?? "").trim())
+      Err(_) => {}
+    }
+    roots.push("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
+  }
+  var last = ""
+  for root in roots {
+    var a2 = cargs
+    if !root.is_empty() {
+      a2 = a2 + ["-isysroot", root]
+    }
+    let r = os.proc.run(cc, a2 + srcs)?
+    if r.code == 0 {
+      return
+    }
+    last = (r.stdout + r.stderr).to_str() ?? ""
+    if !last.contains("linker command failed") {
+      break
+    }
+  }
+  os.stdio.eprint(last)
+  fail(os, "${cc} failed")
+}
+
+fn fail(os: Os, msg: Str) -> Never {
+  os.stdio.eprintln("xo1: ${msg}")
+  os.proc.exit(1)
+}
+
+/// The C compiler flags of the runtime's Fs operations, standard input,
+/// and Proc.run, when the code calls them (internal/build IOFlags).
+fn io_flags(code: Str) -> List[Str] {
+  var out: List[Str] = []
+  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all",
+    "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
+    "xo_time_of", "xo_time_ns"] {
+    if code.contains(sym) {
+      out.push("-DXO_FS")
+      break
+    }
+  }
+  for sym in ["xo_stdin_", "xo_tw_set_input"] {
+    if code.contains(sym) {
+      out.push("-DXO_STDIN")
+      break
+    }
+  }
+  if code.contains("xo_proc_") {
+    out.push("-DXO_PROC")
+  }
+  out
+}

@@ -62,8 +62,25 @@ fn (var g: G) add(inst: Inst) -> Int {
   if x.kind == K_CALL && g.cur_pad >= 0 {
     x.pad = g.cur_pad
   }
-  g.blocks[g.cur].insts.push(x)
-  g.blocks[g.cur].insts.len() - 1
+  var ins = g.take_insts(g.cur)
+  ins.push(x)
+  let n = ins.len()
+  g.blocks[g.cur].insts = ins
+  n - 1
+}
+
+/// Takes the instructions of block b out of it, for an update in place:
+/// put them back with put_insts. An update of a list inside a list
+/// element copies the inner list on the native backends
+/// (gotchas/xo-native-nested-element-update.md).
+fn (var g: G) take_insts(b: Int) -> List[Inst] {
+  let ins = g.blocks[b].insts
+  g.blocks[b].insts = []
+  ins
+}
+
+fn (var g: G) put_insts(b: Int, ins: List[Inst]) {
+  g.blocks[b].insts = ins
 }
 
 /// u, or a fresh register holding zero when u is xzr (for operand
@@ -96,16 +113,20 @@ fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
   let sym = g.sym(fname)
   let pad = g.cur_pad
   let b = g.cur
-  g.blocks[b].insts[i].has_fault = true
-  g.blocks[b].insts[i].fcond = cond
-  g.blocks[b].insts[i].ffn = sym
-  g.blocks[b].insts[i].fargs = args
-  g.blocks[b].insts[i].pad = pad
+  var ins = g.take_insts(b)
+  var x = ins[i]
+  x.has_fault = true
+  x.fcond = cond
+  x.ffn = sym
+  x.fargs = args
+  x.pad = pad
   for a in args {
     if a.kind == S_REG && a.v != 0 {
-      g.blocks[b].insts[i].us.push(a.v)
+      x.us.push(a.v)
     }
   }
+  ins[i] = x
+  g.put_insts(b, ins)
 }
 
 /// Adds a flag setting instruction with a fault side exit.
@@ -123,11 +144,13 @@ fn (var g: G) checked(fp: Bool, text: Str, us: List[Int], recover: Str, cond: St
   let d = g.new_vreg(fp)
   let i = g.plain(text, [d], us)
   let rs = g.blocks[g.cur].insts[i].us
+  var ins = g.take_insts(g.cur)
   if recover.is_empty() || (rs.len() == 2 && rs[0] == rs[1]) {
-    g.blocks[g.cur].insts[i].early = true
+    ins[i].early = true
   } else {
-    g.blocks[g.cur].insts[i].recover = recover
+    ins[i].recover = recover
   }
+  g.put_insts(g.cur, ins)
   g.set_fault(i, cond, fname, args)
   d
 }
@@ -163,18 +186,20 @@ fn (var g: G) imm(n: Int) -> Int {
 /// invariant: hoist_consts may move it out of a loop).
 fn (var g: G) konst(d: Int) -> Int {
   let n = g.blocks[g.cur].insts.len()
-  g.blocks[g.cur].insts[n - 1].konst = true
+  var ins = g.take_insts(g.cur)
+  ins[n - 1].konst = true
+  g.put_insts(g.cur, ins)
   d
 }
 
 /// imm, shared within the block.
 fn (var g: G) cimm(n: Int) -> Int {
-  let mi = g.m_()
-  if let Some(r) = g.memos[mi].ci.get(n) {
+  let _mi = g.m_()
+  if let Some(r) = g.cm.ci.get(n) {
     return r
   }
   let r = g.imm(n)
-  g.memos[mi].ci[n] = r
+  g.cm.ci[n] = r
   r
 }
 
@@ -218,40 +243,40 @@ fn (var g: G) zeros(t: Int) -> List[Int] {
 fn (var g: G) words(v: Int) -> List[Int] {
   let x = g.f.values[v]
   if x.op == ssa.Op.Const {
-    let mi = g.m_()
+    let _mi = g.m_()
     match x.aux {
       I(n) => {
-        if let Some(r) = g.memos[mi].ci.get(n) {
+        if let Some(r) = g.cm.ci.get(n) {
           return [r]
         }
         let r = g.cimm(n)
-        g.memos[mi].ci[n] = r
+        g.cm.ci[n] = r
         return [r]
       }
       F(f) => {
         let key = float_key(f)
-        if let Some(r) = g.memos[mi].cf.get(key) {
+        if let Some(r) = g.cm.cf.get(key) {
           return [r]
         }
         let r = g.fimm(float_bits(f))
-        g.memos[mi].cf[key] = r
+        g.cm.cf[key] = r
         return [r]
       }
       B(b) => {
-        if let Some(r) = g.memos[mi].cb.get(b) {
+        if let Some(r) = g.cm.cb.get(b) {
           return [r]
         }
         let r = g.cimm(if b { 1 } else { 0 })
-        g.memos[mi].cb[b] = r
+        g.cm.cb[b] = r
         return [r]
       }
       S(..) | Bs(..) => {
         let bs = const_bytes(x.aux) ?? b""
-        if let Some(r) = g.memos[mi].cs.get(bs) {
+        if let Some(r) = g.cm.cs.get(bs) {
           return [r, g.cimm(bs.len())]
         }
         let r = g.sym_addr(g.str_obj(bs))
-        g.memos[mi].cs[bs] = r
+        g.cm.cs[bs] = r
         return [r, g.cimm(bs.len())]
       }
       _ => {
@@ -435,7 +460,7 @@ fn (var g: G) isel() {
       // entered by the unwinder after a fault: nothing computed before
       // it in registers is known to hold (the operation that faulted did
       // not finish)
-      g.mm = -1
+      g.drop_memo()
     } else {
       let preds = g.f.blocks[b].preds
       if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
@@ -456,8 +481,8 @@ fn (var g: G) isel() {
         }
         let r = g.vals[p][0]
         if let Some(c) = g.len_param.get(r) {
-          let mi = g.m_()
-          g.memos[mi].lens[r] = c
+          let _mi = g.m_()
+          g.cm.lens[r] = c
         }
       }
     }
@@ -1152,8 +1177,8 @@ fn (var g: G) div_rem(v: Int) {
       }
       return
     }
-    let mi = g.m_()
-    if (g.memos[mi].low_zero.get(a) ?? 0) >= k {
+    let _mi = g.m_()
+    if (g.cm.low_zero.get(a) ?? 0) >= k {
       // a branch proved a % 2^k == 0: exact
       if is_div {
         g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [a])])

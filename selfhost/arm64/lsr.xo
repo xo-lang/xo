@@ -304,12 +304,12 @@ fn (var g: G) lsr_header(b: Int) {
     return
   }
   let lp = g.lsr.get(b) ?? LsrLoop{}
-  let mi = g.m_()
+  let _mi = g.m_()
   for pi in lp.plans {
     let p = g.plans[pi]
     let l = g.vals[p.list][0]
     let i = g.vals[p.iv][0]
-    g.memos[mi].bases[(l, i, p.es)] = p.p
+    g.cm.bases[(l, i, p.es)] = p.p
   }
   let params = g.f.blocks[b].params
   for k in lp.up {
@@ -324,7 +324,7 @@ fn (var g: G) lsr_header(b: Int) {
           lo = MIN_INT
           break
         }
-        match g.memos[em].lo.get(w) {
+        match g.memo_at(em).lo.get(w) {
           Some(y) => x = y
           None => {
             lo = MIN_INT
@@ -335,7 +335,7 @@ fn (var g: G) lsr_header(b: Int) {
       lo = imin(lo, x)
     }
     if lo > MIN_INT {
-      g.memos[mi].lo[g.vals[params[k]][0]] = lo
+      g.cm.lo[g.vals[params[k]][0]] = lo
     }
   }
   for k in lp.down {
@@ -350,7 +350,7 @@ fn (var g: G) lsr_header(b: Int) {
           hi = MAX_INT
           break
         }
-        match g.memos[em].hi.get(w) {
+        match g.memo_at(em).hi.get(w) {
           Some(y) => x = y
           None => {
             hi = MAX_INT
@@ -361,7 +361,7 @@ fn (var g: G) lsr_header(b: Int) {
       hi = imax(hi, x)
     }
     if hi < MAX_INT {
-      g.memos[mi].hi[g.vals[params[k]][0]] = hi
+      g.cm.hi[g.vals[params[k]][0]] = hi
     }
   }
 }
@@ -411,17 +411,17 @@ fn (var g: G) lsr_moves(e: Int, dsts0: List[Int], srcs0: List[Src]) -> (List[Int
 /// Records what a passed bounds check `i <u len` proves about i: 0 <= i
 /// <= MaxInt64 - 1.
 fn (var g: G) index_facts(i: Int) {
-  let mi = g.m_()
-  var lo = g.memos[mi].lo.get(i) ?? -1
-  if !g.memos[mi].lo.contains(i) || lo < 0 {
+  let _mi = g.m_()
+  var lo = g.cm.lo.get(i) ?? -1
+  if !g.cm.lo.contains(i) || lo < 0 {
     lo = 0
   }
-  var hi = g.memos[mi].hi.get(i) ?? MAX_INT
-  if !g.memos[mi].hi.contains(i) || hi > MAX_INT - 1 {
+  var hi = g.cm.hi.get(i) ?? MAX_INT
+  if !g.cm.hi.contains(i) || hi > MAX_INT - 1 {
     hi = MAX_INT - 1
   }
-  g.memos[mi].lo[i] = lo
-  g.memos[mi].hi[i] = hi
+  g.cm.lo[i] = lo
+  g.cm.hi[i] = hi
 }
 
 /// Records that v = a + n (Add) or a - n (Sub), and v's bounds from a's.
@@ -445,18 +445,18 @@ fn (var g: G) offset_facts(v: Int, a: Int, n0: Int) {
     return
   }
   g.offs[d] = Offset{a: ar, c: n}
-  let mi = g.m_()
-  if let Some(lo) = g.memos[mi].lo.get(ar) {
+  let _mi = g.m_()
+  if let Some(lo) = g.cm.lo.get(ar) {
     if n >= 0 || lo >= MIN_INT - n {
       if n <= 0 || lo <= MAX_INT - n {
-        g.memos[mi].lo[d] = lo + n
+        g.cm.lo[d] = lo + n
       }
     }
   }
-  if let Some(hi) = g.memos[mi].hi.get(ar) {
+  if let Some(hi) = g.cm.hi.get(ar) {
     if n <= 0 || hi <= MAX_INT - n {
       if n >= 0 || hi >= MIN_INT - n {
-        g.memos[mi].hi[d] = hi + n
+        g.cm.hi[d] = hi + n
       }
     }
   }
@@ -469,8 +469,8 @@ fn (var g: G) offset_base(l: Int, i: Int, es: Int) -> (Int, Bool) {
   if o.a < 0 {
     return (0, false)
   }
-  let mi = g.m_()
-  let b = g.memos[mi].bases.get((l, o.a, es)) ?? -1
+  let _mi = g.m_()
+  let b = g.cm.bases.get((l, o.a, es)) ?? -1
   if b < 0 || o.c >= 4096 || o.c <= -4096 || es >= 4096 {
     return (0, false)
   }
