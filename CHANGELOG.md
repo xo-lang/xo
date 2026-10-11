@@ -12,6 +12,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   dropping only what native builds legitimately leave out (frames, the
   deadlock's blocked task list, crash bundle paths). bench/nightly.sh
   runs TestArithProperty on 500 programs.
+- scripts/reduce-diff.py shrinks a program while two backends run it
+  differently (ddmin over lines, then smaller edits; about 40 s for a
+  74 line program); TestArithProperty prints the command for a failing
+  program.
 - Generated Go no longer repeats a `//line` directive on consecutive
   lines (positions are unchanged), declares the unused task `tk` in
   constants whose value does not need it, or ends a function whose body

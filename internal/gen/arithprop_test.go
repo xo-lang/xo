@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/build"
@@ -37,6 +38,19 @@ func arithSeeds(t *testing.T, def int) []int64 {
 		out = append(out, int64(i))
 	}
 	return out
+}
+
+// reduceCmd keeps a failing program out of the test's temporary
+// directories, in $TMPDIR/xo-arith-SEED.xo, and returns the commands that
+// shrink it with scripts/reduce-diff.py (run from the repository root).
+func reduceCmd(seed int64, be, src string) string {
+	p := filepath.Join(os.TempDir(), fmt.Sprintf("xo-arith-%d.xo", seed))
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		return fmt.Sprintf("(could not keep the program: %v)", err)
+	}
+	xo := filepath.Join(os.TempDir(), "xo-reduce-bin")
+	min := strings.TrimSuffix(p, ".xo") + ".min.xo"
+	return fmt.Sprintf("go build -o %s ./cmd/xo && python3 -I scripts/reduce-diff.py %s go %s %s %s\n", xo, xo, be, p, min)
 }
 
 func writeArith(t *testing.T, seed int64) (string, string) {
@@ -106,7 +120,7 @@ func TestArithProperty(t *testing.T) {
 					t.Fatalf("seed %d: the %s build failed: %v\n%s\n--- program\n%s", seed, be, err, diagText(nres), numbered(src))
 				}
 				if got := runProp(t, nres.Binaries[build.Host()], dir); got != want {
-					t.Errorf("seed %d: %s runs differently from the Go backend\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, be, want, be, got, numbered(src))
+					t.Errorf("seed %d: %s runs differently from the Go backend\n--- go\n%s\n--- %s\n%s\n--- program\n%s--- reduce it\n%s", seed, be, want, be, got, numbered(src), reduceCmd(seed, be, src))
 				}
 			}
 		})
