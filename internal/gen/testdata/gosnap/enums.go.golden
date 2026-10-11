@@ -177,7 +177,6 @@ func F_area(tk *rt.Task, v_s Shape) int64 {
 //line main.xo:14:5
 			var v_r int64 = v_s.P.(Shape_Circle).F_r
 //line main.xo:14:5
-			_ = v_r
 //line main.xo:14:18
 			return rt.MulI(rt.MulKI(int64(3), v_r, -3074457345618258602, 3074457345618258602, "main.xo:14:18"), v_r, "main.xo:14:18")
 //line main.xo:14:18
@@ -187,11 +186,8 @@ func F_area(tk *rt.Task, v_s Shape) int64 {
 //line main.xo:15:5
 			var v_w int64 = v_s.P.(Shape_Rect).F_w
 //line main.xo:15:5
-			_ = v_w
-//line main.xo:15:5
 			var v_h int64 = v_s.P.(Shape_Rect).F_h
 //line main.xo:15:5
-			_ = v_h
 //line main.xo:15:25
 			return rt.MulI(v_w, v_h, "main.xo:15:25")
 //line main.xo:15:25
@@ -213,7 +209,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:21:3
 	var v_shapes rt.List[Shape] = rt.ListOf[Shape](Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}}, Shape{Tag: 2, P: Shape_Rect{F_w: int64(3), F_h: int64(4)}}, Shape{Tag: 3}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(1)}})
 //line main.xo:21:3
-	_ = v_shapes
 //line main.xo:22:3
 	x_it2 := v_shapes
 //line main.xo:23:5
@@ -221,11 +216,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:22:3
 		x_el5 := x_e4
 //line main.xo:22:3
-		_ = x_el5
-//line main.xo:22:3
 		var v_s Shape = x_el5
-//line main.xo:22:3
-		_ = v_s
 //line main.xo:22:3
 		{
 //line main.xo:23:5
@@ -237,11 +228,9 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:25:3
 	var v_w Wrapper = Wrapper{Tag: 1, P: Wrapper_One{F0: Shape{Tag: 3}}}
 //line main.xo:25:3
-	_ = v_w
 //line main.xo:26:3
 	var v_m Wrapper = Wrapper{Tag: 2, P: Wrapper_Many{F_items: rt.List_Own(v_shapes)}}
 //line main.xo:26:3
-	_ = v_m
 //line main.xo:27:3
 //line main.xo:29:17
 x_M6:
@@ -254,7 +243,6 @@ x_M6:
 //line main.xo:28:5
 			var v_inner Shape = v_w.P.(Wrapper_One).F0
 //line main.xo:28:5
-			_ = v_inner
 //line main.xo:28:19
 			v_os.F_stdio.M_println(tk, ("one " + rt.Display(tk, v_inner)))
 //line main.xo:28:19
@@ -285,7 +273,6 @@ x_M7:
 //line main.xo:32:5
 			var v_xs rt.List[Shape] = v_m.P.(Wrapper_Many).F_items
 //line main.xo:32:5
-			_ = v_xs
 //line main.xo:32:24
 			v_os.F_stdio.M_println(tk, ("many " + rt.IntStr(rt.List_len[Shape](tk, v_xs))))
 //line main.xo:32:24
@@ -311,7 +298,6 @@ x_M7:
 //line main.xo:37:3
 	var v_sorted rt.List[Shape] = rt.List_sort[Shape](tk, v_shapes)
 //line main.xo:37:3
-	_ = v_sorted
 //line main.xo:38:3
 	v_os.F_stdio.M_println(tk, ("first " + rt.Display(tk, rt.List_AtM(v_sorted, int64(0), "main.xo:38:29")) + " last " + rt.Display(tk, rt.List_AtM(v_sorted, int64(3), "main.xo:38:47"))))
 //line main.xo:38:3

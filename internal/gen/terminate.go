@@ -10,15 +10,23 @@ import (
 // ends in a terminating statement (Go spec, "Terminating statements"), so
 // the function needs no trailing panic. An if/else or a switch whose
 // branches all return is one; endsInReturn only sees a final return.
-func terminates(body string) bool {
+func terminates(body string) bool { return endsIn(body, false) }
+
+// neverFallsThrough reports whether control never runs off the end of
+// body: it ends terminating or in a break, continue, or goto, so a
+// statement after it is unreachable (go vet's rule, wider than the
+// spec's terminating statements, which do not count break and continue).
+func neverFallsThrough(body string) bool { return endsIn(body, true) }
+
+func endsIn(body string, jumps bool) bool {
 	f, err := parser.ParseFile(token.NewFileSet(), "", "package p\nfunc _() {\n"+body+"\n}\n", parser.SkipObjectResolution)
 	if err != nil {
 		return false
 	}
-	return terminatingList(f.Decls[0].(*goast.FuncDecl).Body.List)
+	return terminatingList(f.Decls[0].(*goast.FuncDecl).Body.List, jumps)
 }
 
-func terminatingList(l []goast.Stmt) bool {
+func terminatingList(l []goast.Stmt, jumps bool) bool {
 	// trailing empty statements do not count
 	for len(l) > 0 {
 		if _, ok := l[len(l)-1].(*goast.EmptyStmt); !ok {
@@ -26,15 +34,15 @@ func terminatingList(l []goast.Stmt) bool {
 		}
 		l = l[:len(l)-1]
 	}
-	return len(l) > 0 && terminating(l[len(l)-1], "")
+	return len(l) > 0 && terminating(l[len(l)-1], "", jumps)
 }
 
-func terminating(s goast.Stmt, label string) bool {
+func terminating(s goast.Stmt, label string, jumps bool) bool {
 	switch s := s.(type) {
 	case *goast.ReturnStmt:
 		return true
 	case *goast.BranchStmt:
-		return s.Tok == token.GOTO
+		return s.Tok == token.GOTO || jumps && s.Tok != token.FALLTHROUGH
 	case *goast.ExprStmt:
 		c, ok := s.X.(*goast.CallExpr)
 		if !ok {
@@ -43,19 +51,19 @@ func terminating(s goast.Stmt, label string) bool {
 		id, ok := c.Fun.(*goast.Ident)
 		return ok && id.Name == "panic"
 	case *goast.BlockStmt:
-		return terminatingList(s.List)
+		return terminatingList(s.List, jumps)
 	case *goast.IfStmt:
-		return s.Else != nil && terminatingList(s.Body.List) && terminating(s.Else, "")
+		return s.Else != nil && terminatingList(s.Body.List, jumps) && terminating(s.Else, "", jumps)
 	case *goast.LabeledStmt:
-		return terminating(s.Stmt, s.Label.Name)
+		return terminating(s.Stmt, s.Label.Name, jumps)
 	case *goast.ForStmt:
 		return s.Cond == nil && !breaks(s.Body, label)
 	case *goast.SwitchStmt:
-		return clausesTerminate(s.Body, label)
+		return clausesTerminate(s.Body, label, jumps)
 	case *goast.TypeSwitchStmt:
-		return clausesTerminate(s.Body, label)
+		return clausesTerminate(s.Body, label, jumps)
 	case *goast.SelectStmt:
-		return clausesTerminate(s.Body, label)
+		return clausesTerminate(s.Body, label, jumps)
 	}
 	return false
 }
@@ -63,7 +71,7 @@ func terminating(s goast.Stmt, label string) bool {
 // clausesTerminate is the rule for switch and select: no break out of the
 // statement, a default (switch only), and every clause ends terminating
 // (or, in a switch, in fallthrough).
-func clausesTerminate(body *goast.BlockStmt, label string) bool {
+func clausesTerminate(body *goast.BlockStmt, label string, jumps bool) bool {
 	if breaks(body, label) {
 		return false
 	}
@@ -83,7 +91,7 @@ func clausesTerminate(body *goast.BlockStmt, label string) bool {
 				continue
 			}
 		}
-		if !terminatingList(list) {
+		if !terminatingList(list, jumps) {
 			return false
 		}
 	}

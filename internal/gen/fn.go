@@ -298,8 +298,8 @@ func endsTerminating(text string, ind int) bool {
 		}
 		l = l[len(pre):]
 		if l == "}" {
-			// a block or if/else: Go's full rule
-			return terminates(text)
+			// a block, if/else, loop, or switch: parse it
+			return neverFallsThrough(text)
 		}
 		for _, kw := range []string{"return", "break", "continue", "goto"} {
 			if l == kw || strings.HasPrefix(l, kw+" ") {
@@ -832,12 +832,35 @@ func (f *fnGen) stmts(b *ast.Block, d dest, directDefer bool) {
 				return
 			}
 		}
+		start := f.out.Len()
 		f.stmt(s)
+		if i < n-1 && mayTerminate(s) && endsTerminating(f.out.String()[start:], f.ind) {
+			// the Go statement never completes (a loop without a break,
+			// a match whose arms all jump): what follows is dead, and
+			// go vet reports it as unreachable
+			return
+		}
 	}
 	if n > 0 && f.stmtNever(b.Stmts[n-1]) {
 		return
 	}
 	f.deliverUnit(d)
+}
+
+// mayTerminate reports whether s can lower to a Go statement that never
+// completes, other than the jumps stmtNever already sees: an endless
+// loop, or a match or if whose branches all jump.
+func mayTerminate(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.WhileStmt:
+		return x.Cond == nil && x.Pattern == nil
+	case *ast.ExprStmt:
+		switch x.X.(type) {
+		case *ast.MatchExpr, *ast.IfExpr, *ast.WhileExpr:
+			return true
+		}
+	}
+	return false
 }
 
 // stmtNever reports whether a statement never completes.
@@ -1520,6 +1543,14 @@ func (f *fnGen) writeSteps(cur string, steps []pstep, v string) {
 }
 
 func (f *fnGen) assign(x *ast.AssignStmt) {
+	if x.Op == assignOp {
+		// `x = x` does nothing (go vet: self-assignment)
+		t, ok1 := x.Target.(*ast.Ident)
+		v, ok2 := x.Value.(*ast.Ident)
+		if ok1 && ok2 && f.info.VarOf(t) != nil && f.info.VarOf(t) == f.info.VarOf(v) {
+			return
+		}
+	}
 	tt := f.typeOf(x.Target)
 	ref := f.resolvePlace(x.Target)
 	root := f.rootVar(x.Target)

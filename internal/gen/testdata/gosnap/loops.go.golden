@@ -16,11 +16,7 @@ func F_find_pair(tk *rt.Task, v_xs rt.List[int64], v_target int64) rt.Option[rt.
 //line main.xo:2:3
 		x_el4 := x_i3
 //line main.xo:2:3
-		_ = x_el4
-//line main.xo:2:3
 		var v_i int64 = x_el4
-//line main.xo:2:3
-		_ = v_i
 //line main.xo:2:3
 		{
 //line main.xo:3:5
@@ -30,11 +26,7 @@ func F_find_pair(tk *rt.Task, v_xs rt.List[int64], v_target int64) rt.Option[rt.
 //line main.xo:3:5
 				x_el8 := x_i7
 //line main.xo:3:5
-				_ = x_el8
-//line main.xo:3:5
 				var v_j int64 = x_el8
-//line main.xo:3:5
-				_ = v_j
 //line main.xo:3:5
 				{
 //line main.xo:4:7
@@ -60,7 +52,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:13:3
 	var v_out rt.List[string] = rt.List[string]{}
 //line main.xo:13:3
-	_ = v_out
 //line main.xo:14:3
 	x_it9 := rt.Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
 x_L10:
@@ -69,11 +60,7 @@ x_L10:
 //line main.xo:14:3
 		x_el12 := x_i11
 //line main.xo:14:3
-		_ = x_el12
-//line main.xo:14:3
 		var v_i int64 = x_el12
-//line main.xo:14:3
-		_ = v_i
 //line main.xo:14:3
 		{
 //line main.xo:15:5
@@ -83,11 +70,7 @@ x_L10:
 //line main.xo:15:5
 				x_el16 := x_i15
 //line main.xo:15:5
-				_ = x_el16
-//line main.xo:15:5
 				var v_j int64 = x_el16
-//line main.xo:15:5
-				_ = v_j
 //line main.xo:15:5
 				{
 //line main.xo:16:7
@@ -129,7 +112,6 @@ x_L10:
 //line main.xo:26:3
 	var v_n int64 = int64(0)
 //line main.xo:26:3
-	_ = v_n
 //line main.xo:27:3
 x_L18:
 //line main.xo:30:7
@@ -167,17 +149,14 @@ x_L18:
 //line main.xo:34:3
 	var v_r rt.Tuple2[int64, int64] = x_c20
 //line main.xo:34:3
-	_ = v_r
 //line main.xo:35:3
 	v_os.F_stdio.M_println(tk, ("pair " + rt.IntStr(v_r.F0) + " " + rt.IntStr(v_r.F1)))
 //line main.xo:36:3
 	var v_steps int64 = int64(0)
 //line main.xo:36:3
-	_ = v_steps
 //line main.xo:37:3
 	var v_x int64 = int64(27)
 //line main.xo:37:3
-	_ = v_x
 //line main.xo:38:3
 //line main.xo:40:5
 	for {
@@ -214,7 +193,6 @@ x_L18:
 //line main.xo:43:3
 	var v_acc int64 = int64(0)
 //line main.xo:43:3
-	_ = v_acc
 //line main.xo:44:3
 	x_it23 := rt.Range[int64]{Lo: int64(1), Hi: int64(10), Incl: true}
 x_L24:
@@ -223,11 +201,7 @@ x_L24:
 //line main.xo:44:3
 		x_el27 := x_i25
 //line main.xo:44:3
-		_ = x_el27
-//line main.xo:44:3
 		var v_i_1 int64 = x_el27
-//line main.xo:44:3
-		_ = v_i_1
 //line main.xo:44:3
 		{
 //line main.xo:45:5
@@ -235,7 +209,6 @@ x_L24:
 //line main.xo:45:5
 			x_m29 := (v_i_1 % int64(3))
 //line main.xo:45:5
-			_ = x_m29
 //line main.xo:48:12
 		x_M30:
 //line main.xo:48:12
@@ -267,7 +240,6 @@ x_L24:
 //line main.xo:48:12
 			var v_v int64 = x_v28
 //line main.xo:48:12
-			_ = v_v
 //line main.xo:50:5
 			v_acc = rt.AddI(v_acc, v_v, "main.xo:50:5")
 //line main.xo:50:5
@@ -279,7 +251,6 @@ x_L24:
 //line main.xo:53:3
 	var v_found int64 = F_loop_find(tk, rt.ListOf[int64](int64(3), int64(5), int64(7)))
 //line main.xo:53:3
-	_ = v_found
 //line main.xo:54:3
 	v_os.F_stdio.M_println(tk, ("found " + rt.IntStr(v_found)))
 //line main.xo:54:3
@@ -291,7 +262,6 @@ func F_loop_find(tk *rt.Task, v_xs rt.List[int64]) int64 {
 //line main.xo:58:3
 	var v_i int64 = int64(0)
 //line main.xo:58:3
-	_ = v_i
 //line main.xo:59:3
 //line main.xo:63:5
 	for {

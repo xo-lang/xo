@@ -492,8 +492,8 @@ func (pg *pkgGen) file() ([]byte, error) {
 		}
 		b.WriteString(")\n\n")
 	}
-	b.Write(dropRepeatedLineDirectives(pg.out.Bytes()))
-	src, err := format.Source(b.Bytes())
+	b.Write(pg.out.Bytes())
+	src, err := format.Source(dropRepeatedLineDirectives(dropBlankUses(b.Bytes())))
 	if err != nil {
 		return b.Bytes(), fmt.Errorf("gen: generated Go for module %s does not parse: %v", pg.m.Path, err)
 	}

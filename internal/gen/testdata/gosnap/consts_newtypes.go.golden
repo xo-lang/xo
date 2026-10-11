@@ -45,7 +45,6 @@ func (v Point) XoEq(x any) bool {
 	if !rt.Eq(v.F_y, o.F_y) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -90,7 +89,6 @@ func (v Email) XoEq(x any) bool {
 	if !rt.Eq(v.F0, o.F0) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -143,15 +141,12 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:23:3
 	v_LOCAL := int64(10)
 //line main.xo:23:3
-	_ = v_LOCAL
 //line main.xo:24:3
 	var v_id int64 = int64(5)
 //line main.xo:24:3
-	_ = v_id
 //line main.xo:25:3
 	var v_e Email = Email{F0: "ada@example.com"}
 //line main.xo:25:3
-	_ = v_e
 //line main.xo:26:3
 	v_os.F_stdio.M_println(tk, (rt.IntStr(C_LIMIT) + " " + rt.IntStr(rt.List_len[string](tk, C_NAMES)) + " " + rt.IntStr(C_ORIGIN.F_x) + " " + C_GREETING + " " + rt.IntStr((v_LOCAL + C_LIMIT)) + " " + rt.Display(tk, F_check(tk, v_id)) + " " + rt.Display(tk, (v_e).XoEqT(Email{F0: "ada@example.com"})) + " " + v_e.M_domain(tk)))
 //line main.xo:26:3

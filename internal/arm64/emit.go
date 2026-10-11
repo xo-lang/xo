@@ -621,6 +621,12 @@ func (s *fstate) emitInst(b *strings.Builder, in *inst, fr *frameInfo, next *mbl
 	case iCondBr:
 		t, f := s.fwd(in.targets[0], fr), s.fwd(in.targets[1], fr)
 		if t == f {
+			// both ways go to one block, but the compare stays: the
+			// block may test these flags without a compare of its own
+			// (reuseFlags)
+			if in.text != "" && in.cond != "cbnz" && in.cond != "tbz" && in.cond != "tbnz" {
+				s.emitPlain(b, &inst{text: in.text, uses: in.uses}, fr)
+			}
 			if t != next {
 				fmt.Fprintf(b, "\tb %s\n", s.label(t))
 			}

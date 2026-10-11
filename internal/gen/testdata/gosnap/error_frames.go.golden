@@ -81,7 +81,6 @@ func F_profile(tk *rt.Task, v_id int64, v_name string) rt.Result[string, LoadErr
 //line main.xo:13:3
 	var v_u string = x_r1.V
 //line main.xo:13:3
-	_ = v_u
 //line main.xo:14:3
 	return rt.Ok[string, LoadErr]((v_name + ": " + v_u))
 }

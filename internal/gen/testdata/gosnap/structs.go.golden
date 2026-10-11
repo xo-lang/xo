@@ -41,7 +41,6 @@ func (v Config) XoEq(x any) bool {
 	if !rt.Eq(v.F_tags, o.F_tags) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -105,7 +104,6 @@ func (v Account) XoEq(x any) bool {
 	if !rt.Eq(v.F_cfg, o.F_cfg) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -187,21 +185,17 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:25:3
 	var v_c Config = Config{F_host: Config_D_host(tk), F_port: Config_D_port(tk), F_tags: Config_D_tags(tk)}
 //line main.xo:25:3
-	_ = v_c
 //line main.xo:26:3
 	var v_c2 Config = Config{F_host: Config_D_host(tk), F_port: int64(9090), F_tags: Config_D_tags(tk)}
 //line main.xo:26:3
-	_ = v_c2
 //line main.xo:27:3
 	v_os.F_stdio.M_println(tk, (v_c.F_host + ":" + rt.IntStr(v_c.F_port) + " " + v_c2.F_host + ":" + rt.IntStr(v_c2.F_port)))
 //line main.xo:28:3
 	var v_a Account = Account{F_id: int64(1), F_balance: int64(10), F_cfg: func(v Config) Config { v.XoMark(); return v }(v_c)}
 //line main.xo:28:3
-	_ = v_a
 //line main.xo:29:3
 	var v_before Account = func(v Account) Account { v.XoMark(); return v }(v_a)
 //line main.xo:29:3
-	_ = v_before
 //line main.xo:30:3
 	v_a.M_deposit(tk, int64(5))
 //line main.xo:31:3
@@ -229,7 +223,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:35:3
 	var v_cfg Config = x_w1
 //line main.xo:35:3
-	_ = v_cfg
 //line main.xo:36:3
 	F_bump(tk, &v_cfg)
 //line main.xo:37:3

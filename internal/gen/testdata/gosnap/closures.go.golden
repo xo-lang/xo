@@ -12,7 +12,6 @@ func F_make_adder(tk *rt.Task, v_n int64) func(*rt.Task, int64) rt.Result[int64,
 //line main.xo:2:3
 	return func(tk *rt.Task, v_x int64) rt.Result[int64, rt.Never] {
 //line main.xo:2:21
-		_ = v_x
 //line main.xo:2:23
 		return rt.Ok[int64, rt.Never](rt.AddI(v_x, v_n, "main.xo:2:23"))
 //line main.xo:2:23
@@ -30,7 +29,6 @@ func F_compose[tp_A any, tp_B any, tp_C any](tk *rt.Task, v_f func(*rt.Task, tp_
 //line main.xo:8:3
 	return func(tk *rt.Task, v_a tp_A) rt.Result[tp_C, rt.Never] {
 //line main.xo:8:17
-		_ = v_a
 //line main.xo:8:19
 		return rt.Ok[tp_C, rt.Never](rt.Own(v_g(tk, rt.Own(v_f(tk, rt.Own(v_a)).V)).V))
 //line main.xo:8:19
@@ -48,7 +46,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:14:3
 	var v_counter int64 = int64(1)
 //line main.xo:14:3
-	_ = v_counter
 //line main.xo:15:3
 	x_cap1 := v_counter
 //line main.xo:15:3
@@ -59,7 +56,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:15:28
 	}
 //line main.xo:15:3
-	_ = v_read
 //line main.xo:16:3
 	v_counter = int64(5)
 //line main.xo:17:3
@@ -67,7 +63,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:18:3
 	var v_add5 func(*rt.Task, int64) rt.Result[int64, rt.Never] = F_make_adder(tk, int64(5))
 //line main.xo:18:3
-	_ = v_add5
 //line main.xo:19:3
 	v_os.F_stdio.M_println(tk, ("adder " + rt.IntStr(v_add5(tk, int64(1)).V) + " twice " + rt.IntStr(F_apply_twice__int64(tk, v_add5, int64(0)))))
 //line main.xo:20:3
@@ -75,13 +70,11 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 		return rt.Ok[int64, rt.Never](F_double(tk, a0))
 	}, func(tk *rt.Task, v_x int64) rt.Result[string, rt.Never] {
 //line main.xo:20:45
-		_ = v_x
 //line main.xo:20:47
 		return rt.Ok[string, rt.Never](("<" + rt.IntStr(v_x) + ">"))
 //line main.xo:20:47
 	})
 //line main.xo:20:3
-	_ = v_f
 //line main.xo:21:3
 	v_os.F_stdio.M_println(tk, ("compose " + v_f(tk, int64(21)).V))
 //line main.xo:22:3
@@ -93,17 +86,14 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 		return rt.Ok[int64, rt.Never](F_double(tk, a0))
 	}, v_add5, func(tk *rt.Task, v_x_1 int64) rt.Result[int64, rt.Never] {
 //line main.xo:23:45
-		_ = v_x_1
 //line main.xo:23:47
 		return rt.Ok[int64, rt.Never](rt.SubIDown(v_x_1, int64(1), "main.xo:23:47"))
 //line main.xo:23:47
 	})
 //line main.xo:23:3
-	_ = v_fs
 //line main.xo:24:3
 	var v_out rt.List[int64] = rt.List[int64]{}
 //line main.xo:24:3
-	_ = v_out
 //line main.xo:25:3
 	x_it2 := v_fs
 //line main.xo:26:5
@@ -111,11 +101,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:25:3
 		x_el5 := x_e4
 //line main.xo:25:3
-		_ = x_el5
-//line main.xo:25:3
 		var v_g func(*rt.Task, int64) rt.Result[int64, rt.Never] = x_el5
-//line main.xo:25:3
-		_ = v_g
 //line main.xo:25:3
 		{
 //line main.xo:26:5
@@ -151,7 +137,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:29:3
 			var v_x_2 int64 = x_e8
 //line main.xo:29:3
-			_ = v_x_2
 //line main.xo:29:35
 			{
 //line main.xo:29:37
@@ -175,11 +160,8 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:29:37
 			var v_a int64 = x_acc13
 //line main.xo:29:37
-			_ = v_a
-//line main.xo:29:37
 			var v_b int64 = x_e12
 //line main.xo:29:37
-			_ = v_b
 //line main.xo:29:69
 			{
 //line main.xo:29:71
@@ -193,7 +175,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:29:71
 	var v_total int64 = x_acc13
 //line main.xo:29:71
-	_ = v_total
 //line main.xo:30:3
 	v_os.F_stdio.M_println(tk, ("total " + rt.IntStr(v_total)))
 //line main.xo:30:3
@@ -211,7 +192,6 @@ func F_compose__int64_int64_string_lit(tk *rt.Task, v_f func(*rt.Task, int64) rt
 //line main.xo:8:3
 	return func(tk *rt.Task, v_a int64) rt.Result[string, rt.Never] {
 //line main.xo:8:17
-		_ = v_a
 //line main.xo:8:19
 		x_t14 := v_f(tk, v_a).V
 //line main.xo:8:19
@@ -221,7 +201,6 @@ func F_compose__int64_int64_string_lit(tk *rt.Task, v_f func(*rt.Task, int64) rt
 //line main.xo:8:19
 			var v_x int64 = x_t14
 //line main.xo:8:19
-			_ = v_x
 //line main.xo:20:45
 			{
 //line main.xo:20:47

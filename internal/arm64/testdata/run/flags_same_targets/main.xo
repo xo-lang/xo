@@ -1,0 +1,23 @@
+// A branch whose two ways reach one block (`if p0 == p0 { p0 } else { p0 }`)
+// is emitted as a jump, but its compare must stay: the next block's
+// `p0 >= p0` reuses those flags (reuseFlags). Dropping both left the
+// second `if` testing the flags of `acc += v4`. Found by progen's
+// arithmetic programs (seed 197).
+fn f1(p0: Int) -> Int {
+  var acc = p0
+  acc + p0
+}
+
+fn f3(p0: Int) -> Int {
+  var acc = p0
+  let v4 = p0 ^ f1(-p0)
+  acc += v4
+  acc + p0 << match (if p0 == p0 { p0 } else { p0 } - if p0 >= p0 { 0 } else { p0 }) % 4 {
+    0 => 1
+    _ => p0
+  } & 7
+}
+
+fn main(os: Os) {
+  os.stdio.println("f3 ${f3(15)}")
+}

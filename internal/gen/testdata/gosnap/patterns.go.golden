@@ -91,7 +91,6 @@ func (v Point) XoEq(x any) bool {
 	if !rt.Eq(v.F_y, o.F_y) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -128,7 +127,6 @@ func F_shape(tk *rt.Task, v_xs rt.List[int64]) string {
 //line main.xo:12:3
 	x_m1 := rt.List_Own(v_xs)
 //line main.xo:12:3
-	_ = x_m1
 //line main.xo:16:26
 	switch {
 //line main.xo:16:26
@@ -144,7 +142,6 @@ func F_shape(tk *rt.Task, v_xs rt.List[int64]) string {
 //line main.xo:14:5
 			var v_x int64 = rt.List_Items(x_m1)[0]
 //line main.xo:14:5
-			_ = v_x
 //line main.xo:14:12
 			return ("one " + rt.IntStr(v_x))
 //line main.xo:14:12
@@ -154,11 +151,8 @@ func F_shape(tk *rt.Task, v_xs rt.List[int64]) string {
 //line main.xo:15:5
 			var v_a int64 = rt.List_Items(x_m1)[0]
 //line main.xo:15:5
-			_ = v_a
-//line main.xo:15:5
 			var v_b int64 = rt.List_Items(x_m1)[1]
 //line main.xo:15:5
-			_ = v_b
 //line main.xo:15:15
 			return ("two " + rt.IntStr(v_a) + "+" + rt.IntStr(v_b))
 //line main.xo:15:15
@@ -168,11 +162,8 @@ func F_shape(tk *rt.Task, v_xs rt.List[int64]) string {
 //line main.xo:16:5
 			var v_first int64 = rt.List_Items(x_m1)[0]
 //line main.xo:16:5
-			_ = v_first
-//line main.xo:16:5
 			var v_last int64 = rt.List_Items(x_m1)[len(rt.List_Items(x_m1))-1]
 //line main.xo:16:5
-			_ = v_last
 //line main.xo:16:26
 			return ("many " + rt.IntStr(v_first) + ".." + rt.IntStr(v_last))
 //line main.xo:16:26
@@ -195,8 +186,6 @@ func F_describe(tk *rt.Task, v_r rt.Result[rt.Option[int64], string]) string {
 //line main.xo:22:5
 			var v_n int64 = v_r.V.V
 //line main.xo:22:5
-			_ = v_n
-//line main.xo:22:5
 			if v_n > int64(100) {
 //line main.xo:22:31
 				return ("big " + rt.IntStr(v_n))
@@ -209,7 +198,6 @@ func F_describe(tk *rt.Task, v_r rt.Result[rt.Option[int64], string]) string {
 //line main.xo:23:5
 			var v_n_1 int64 = v_r.V.V
 //line main.xo:23:5
-			_ = v_n_1
 //line main.xo:23:20
 			return ("some " + rt.IntStr(v_n_1))
 //line main.xo:23:20
@@ -225,7 +213,6 @@ func F_describe(tk *rt.Task, v_r rt.Result[rt.Option[int64], string]) string {
 //line main.xo:25:5
 			var v_msg string = v_r.E
 //line main.xo:25:5
-			_ = v_msg
 //line main.xo:25:17
 			return ("err " + v_msg)
 //line main.xo:25:17
@@ -282,7 +269,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:42:3
 	var v_p Point = Point{F_x: int64(3), F_y: int64(4)}
 //line main.xo:42:3
-	_ = v_p
 //line main.xo:43:3
 //line main.xo:45:26
 x_M5:
@@ -303,11 +289,8 @@ x_M5:
 //line main.xo:45:5
 			var v_x int64 = v_p.F_x
 //line main.xo:45:5
-			_ = v_x
-//line main.xo:45:5
 			var v_y int64 = v_p.F_y
 //line main.xo:45:5
-			_ = v_y
 //line main.xo:45:26
 			v_os.F_stdio.M_println(tk, ("point " + rt.IntStr(v_x) + "," + rt.IntStr(v_y)))
 //line main.xo:45:26
@@ -317,7 +300,6 @@ x_M5:
 //line main.xo:47:3
 	var v_pair rt.Tuple2[Tree, Tree] = rt.Tuple2[Tree, Tree]{F0: Tree{Tag: 1, P: Tree_Leaf{F_v: int64(1)}}, F1: Tree{Tag: 2, P: Tree_Node{F_left: int64(2), F_right: int64(3)}}}
 //line main.xo:47:3
-	_ = v_pair
 //line main.xo:48:3
 //line main.xo:50:10
 x_M6:
@@ -330,11 +312,8 @@ x_M6:
 //line main.xo:49:5
 			var v_a int64 = v_pair.F0.P.(Tree_Leaf).F_v
 //line main.xo:49:5
-			_ = v_a
-//line main.xo:49:5
 			var v_l int64 = v_pair.F1.P.(Tree_Node).F_left
 //line main.xo:49:5
-			_ = v_l
 //line main.xo:49:37
 			v_os.F_stdio.M_println(tk, ("leaf " + rt.IntStr(v_a) + " node " + rt.IntStr(v_l)))
 //line main.xo:49:37
@@ -356,11 +335,7 @@ x_M6:
 //line main.xo:52:3
 		x_el10 := x_e9
 //line main.xo:52:3
-		_ = x_el10
-//line main.xo:52:3
 		var v_t Tree = x_el10
-//line main.xo:52:3
-		_ = v_t
 //line main.xo:52:3
 		{
 //line main.xo:53:5
@@ -372,8 +347,6 @@ x_M6:
 			default:
 //line main.xo:54:7
 				var v_v int64
-//line main.xo:54:7
-				_ = v_v
 //line main.xo:54:7
 				if func() bool {
 					if v_t.Tag == 1 {
@@ -405,7 +378,6 @@ x_M6:
 //line main.xo:58:3
 	var v_r rt.Result[int64, string] = rt.Err[int64, string]("boom")
 //line main.xo:58:3
-	_ = v_r
 //line main.xo:59:3
 	x_a22 := v_os.F_stdio
 //line main.xo:59:3
@@ -433,7 +405,6 @@ x_M6:
 //line main.xo:60:3
 	var v_opt rt.Option[string] = rt.Some[string]("hi")
 //line main.xo:60:3
-	_ = v_opt
 //line main.xo:61:3
 	x_l23 := v_opt
 //line main.xo:61:3
@@ -441,7 +412,6 @@ x_M6:
 //line main.xo:61:3
 		var v_s string = x_l23.V
 //line main.xo:61:3
-		_ = v_s
 //line main.xo:62:5
 		v_os.F_stdio.M_println(tk, ("if let " + v_s))
 //line main.xo:62:5
@@ -453,7 +423,6 @@ x_M6:
 //line main.xo:64:3
 		var v_s_1 string = x_l24.V
 //line main.xo:64:3
-		_ = v_s_1
 //line main.xo:65:5
 		v_os.F_stdio.M_println(tk, ("shorthand " + v_s_1))
 //line main.xo:65:5
@@ -461,25 +430,17 @@ x_M6:
 //line main.xo:67:3
 	x_let25 := rt.Tuple2[int64, rt.Tuple2[int64, int64]]{F0: int64(1), F1: rt.Tuple2[int64, int64]{F0: int64(2), F1: int64(3)}}
 //line main.xo:67:3
-	_ = x_let25
-//line main.xo:67:3
 	var v_a_1 int64 = x_let25.F0
-//line main.xo:67:3
-	_ = v_a_1
 //line main.xo:67:3
 	var v_b int64 = x_let25.F1.F0
 //line main.xo:67:3
-	_ = v_b
-//line main.xo:67:3
 	var v_c int64 = x_let25.F1.F1
 //line main.xo:67:3
-	_ = v_c
 //line main.xo:68:3
 	v_os.F_stdio.M_println(tk, ("nested " + rt.IntStr(rt.AddI(rt.AddI(v_a_1, v_b, "main.xo:68:30"), v_c, "main.xo:68:30"))))
 //line main.xo:69:3
 	var v_flag bool = true
 //line main.xo:69:3
-	_ = v_flag
 //line main.xo:70:3
 	var x_v26 string
 //line main.xo:72:14
@@ -511,13 +472,11 @@ x_M27:
 //line main.xo:72:14
 	var v_text string = x_v26
 //line main.xo:72:14
-	_ = v_text
 //line main.xo:74:3
 	v_os.F_stdio.M_println(tk, v_text)
 //line main.xo:75:3
 	var v_code int64 = int64(503)
 //line main.xo:75:3
-	_ = v_code
 //line main.xo:76:3
 	var x_v28 string
 //line main.xo:79:10
@@ -553,13 +512,11 @@ x_M29:
 //line main.xo:79:10
 	var v_msg string = x_v28
 //line main.xo:79:10
-	_ = v_msg
 //line main.xo:81:3
 	v_os.F_stdio.M_println(tk, v_msg)
 //line main.xo:82:3
 	var v_s_2 string = "GET"
 //line main.xo:82:3
-	_ = v_s_2
 //line main.xo:83:3
 //line main.xo:85:10
 	switch {

@@ -81,7 +81,6 @@ func F_quarter(tk *rt.Task, v_n int64) rt.Result[int64, E] {
 //line main.xo:13:3
 	var v_h int64 = x_r1.V
 //line main.xo:13:3
-	_ = v_h
 //line main.xo:14:3
 	return F_half(tk, v_h)
 }
@@ -99,7 +98,6 @@ func F_lookup(tk *rt.Task, v_m rt.Map[string, int64], v_k string) rt.Option[int6
 //line main.xo:18:3
 	var v_v int64 = x_r2.V
 //line main.xo:18:3
-	_ = v_v
 //line main.xo:19:3
 	return rt.Some[int64](rt.AddIUp(v_v, int64(1), "main.xo:19:3"))
 }
@@ -109,7 +107,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:23:3
 	var v_m rt.Map[string, int64] = rt.MapOf[string, int64](rt.Tuple2[string, int64]{F0: "a", F1: int64(1)}, rt.Tuple2[string, int64]{F0: "b", F1: int64(2)})
 //line main.xo:23:3
-	_ = v_m
 //line main.xo:24:3
 	x_a8 := v_os.F_stdio
 //line main.xo:24:3
@@ -181,7 +178,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:26:3
 	x_m15 := F_quarter(tk, int64(6))
 //line main.xo:26:3
-	_ = x_m15
 //line main.xo:28:15
 x_M16:
 //line main.xo:28:15
@@ -193,7 +189,6 @@ x_M16:
 //line main.xo:27:5
 			var v_v int64 = x_m15.V
 //line main.xo:27:5
-			_ = v_v
 //line main.xo:27:14
 			v_os.F_stdio.M_println(tk, ("ok " + rt.IntStr(v_v)))
 //line main.xo:27:14
@@ -205,7 +200,6 @@ x_M16:
 //line main.xo:28:5
 			var v_e E = x_m15.E
 //line main.xo:28:5
-			_ = v_e
 //line main.xo:28:15
 			v_os.F_stdio.M_println(tk, ("err " + rt.Display(tk, v_e)))
 //line main.xo:28:15
@@ -219,19 +213,16 @@ x_M16:
 //line main.xo:30:3
 	var v_r rt.Result[int64, E] = F_half(tk, int64(3))
 //line main.xo:30:3
-	_ = v_r
 //line main.xo:31:3
 	v_os.F_stdio.M_println(tk, ("is_err " + rt.Display(tk, rt.Result_is_err[int64, E](tk, v_r)) + " is_ok " + rt.Display(tk, rt.Result_is_ok[int64, E](tk, v_r))))
 //line main.xo:32:3
 	var v_mapped rt.Result[int64, E] = rt.Result_map[int64, E, int64](tk, F_half(tk, int64(10)), func(tk *rt.Task, v_x int64) rt.Result[int64, rt.Never] {
 //line main.xo:32:35
-		_ = v_x
 //line main.xo:32:37
 		return rt.Ok[int64, rt.Never](rt.MulIK(v_x, int64(100), -92233720368547758, 92233720368547758, "main.xo:32:37"))
 //line main.xo:32:37
 	})
 //line main.xo:32:3
-	_ = v_mapped
 //line main.xo:33:3
 	x_a19 := v_os.F_stdio
 //line main.xo:33:3
@@ -253,13 +244,11 @@ x_M16:
 //line main.xo:34:3
 	var v_me rt.Result[int64, string] = rt.Result_map_err[int64, E, string](tk, F_half(tk, int64(1)), func(tk *rt.Task, v_e_1 E) rt.Result[string, rt.Never] {
 //line main.xo:34:34
-		_ = v_e_1
 //line main.xo:34:36
 		return rt.Ok[string, rt.Never](("wrapped " + rt.Display(tk, v_e_1)))
 //line main.xo:34:36
 	})
 //line main.xo:34:3
-	_ = v_me
 //line main.xo:35:3
 //line main.xo:37:14
 x_M20:
@@ -272,7 +261,6 @@ x_M20:
 //line main.xo:36:5
 			var v_s string = v_me.E
 //line main.xo:36:5
-			_ = v_s
 //line main.xo:36:15
 			v_os.F_stdio.M_println(tk, v_s)
 //line main.xo:36:15
@@ -294,7 +282,6 @@ x_M20:
 //line main.xo:39:3
 	var v_o rt.Option[int64] = rt.Some[int64](int64(4))
 //line main.xo:39:3
-	_ = v_o
 //line main.xo:40:3
 	x_a28 := v_os.F_stdio
 //line main.xo:40:3
@@ -302,7 +289,6 @@ x_M20:
 //line main.xo:40:3
 	x_t21 := rt.Option_map[int64, int64](tk, v_o, func(tk *rt.Task, v_x_1 int64) rt.Result[int64, rt.Never] {
 //line main.xo:40:54
-		_ = v_x_1
 //line main.xo:40:56
 		return rt.Ok[int64, rt.Never](rt.AddIUp(v_x_1, int64(1), "main.xo:40:56"))
 //line main.xo:40:56
@@ -326,7 +312,6 @@ x_M20:
 //line main.xo:40:3
 	x_t24 := rt.Option_and_then[int64, int64](tk, v_o, func(tk *rt.Task, v_x_2 int64) rt.Result[rt.Option[int64], rt.Never] {
 //line main.xo:40:90
-		_ = v_x_2
 //line main.xo:40:92
 		if v_x_2 > int64(3) {
 //line main.xo:40:103
@@ -356,7 +341,6 @@ x_M20:
 //line main.xo:41:3
 	var v_ignored rt.Option[int64] = rt.Result_ignore_err[int64, E](tk, F_half(tk, int64(5)), "odd numbers are fine here")
 //line main.xo:41:3
-	_ = v_ignored
 //line main.xo:42:3
 	v_os.F_stdio.M_println(tk, ("ignored " + rt.Display(tk, rt.Option_is_none[int64](tk, v_ignored))))
 //line main.xo:43:3
@@ -364,13 +348,11 @@ x_M20:
 //line main.xo:44:3
 	var v_n rt.Option[int64] = rt.None[int64]()
 //line main.xo:44:3
-	_ = v_n
 //line main.xo:45:3
 	v_os.F_stdio.M_println(tk, "fault next")
 //line main.xo:46:3
 	var v_v_1 int64 = rt.Option_or_fault[int64](tk, v_n, "expected a value")
 //line main.xo:46:3
-	_ = v_v_1
 //line main.xo:47:3
 	v_os.F_stdio.M_println(tk, ("never " + rt.IntStr(v_v_1)))
 //line main.xo:47:3

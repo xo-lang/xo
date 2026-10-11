@@ -19,6 +19,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `go vet` (it had 108 unreachable code reports) and `gofmt -l`
   (TestGeneratedGoVets), and 11 programs keep a snapshot of their Go
   (TestGeneratedGoSnapshot).
+- Generated Go: an exhaustive `match` ends in
+  `panic(rt.Unreachable(loc))` (Go needs no trailing panic after it),
+  statements after one that never completes are not emitted, `x = x` is
+  dropped, and the `_ = x` lines Go does not need are removed (191 to 15
+  in the snapshot programs). go vet is clean on the examples, the LLVM
+  golden programs, the perf benchmarks, and the self hosted compiler too
+  (TestGeneratedGoVetsLarge).
+- arm64 backend: a conditional branch whose two targets are the same
+  block kept its compare out of the output, while the next block reused
+  those flags; it branched on stale flags (wrong `if` results after an
+  `if` with identical arms). Found by `progen.Arith`, random integer
+  programs compared across the Go, LLVM, and arm64 backends
+  (TestArithProperty).
 - LLVM backend: enums of 256 bytes or more are passed by reference, and
   values in memory nothing writes during the call (by reference
   parameters, their fields and payloads, box contents and list elements

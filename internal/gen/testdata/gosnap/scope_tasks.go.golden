@@ -26,8 +26,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:7:3
 		tk := x_scope2.Body()
 //line main.xo:7:3
-		_ = tk
-//line main.xo:7:3
 		x_done4 := false
 //line main.xo:7:3
 		defer func() { x_ctl3r = x_scope2.Close(recover(), x_done4, x_ctl3r) }()
@@ -39,7 +37,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:8:28
 		}, false, true)
 //line main.xo:8:5
-		_ = v_a
 //line main.xo:9:5
 		var v_b *rt.Handle[int64, rt.Never] = rt.Spawn(tk, x_scope2, func(tk *rt.Task) rt.Result[int64, rt.Never] {
 //line main.xo:9:26
@@ -48,7 +45,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:9:28
 		}, false, true)
 //line main.xo:9:5
-		_ = v_b
 //line main.xo:10:5
 		x_v1 = rt.AddI(rt.Await(tk, v_a).V, rt.Await(tk, v_b).V, "main.xo:10:5")
 //line main.xo:10:5
@@ -70,21 +66,17 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:10:5
 	var v_total int64 = x_v1
 //line main.xo:10:5
-	_ = v_total
 //line main.xo:12:3
 	v_os.F_stdio.M_println(tk, ("total " + rt.IntStr(v_total)))
 //line main.xo:13:3
 	var v_hits *rt.Atomic[int64] = rt.Atomic_new[int64](tk, int64(0))
 //line main.xo:13:3
-	_ = v_hits
 //line main.xo:14:3
 	x_scope7 := rt.NewScope(tk)
 //line main.xo:16:7
 	x_ctl8 := func() (x_ctl8r int) {
 //line main.xo:14:3
 		tk := x_scope7.Body()
-//line main.xo:14:3
-		_ = tk
 //line main.xo:14:3
 		x_done9 := false
 //line main.xo:14:3
@@ -96,11 +88,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:15:5
 			x_el13 := x_i12
 //line main.xo:15:5
-			_ = x_el13
-//line main.xo:15:5
 			var v_i int64 = x_el13
-//line main.xo:15:5
-			_ = v_i
 //line main.xo:15:5
 			{
 //line main.xo:16:7
@@ -137,19 +125,15 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:23:3
 	var v_ticks *rt.Atomic[int64] = rt.Atomic_new[int64](tk, int64(0))
 //line main.xo:23:3
-	_ = v_ticks
 //line main.xo:24:3
 	var v_start rt.Time = v_os.F_clock.M_now(tk)
 //line main.xo:24:3
-	_ = v_start
 //line main.xo:25:3
 	x_scope16 := rt.NewScope(tk)
 //line main.xo:32:5
 	x_ctl17 := func() (x_ctl17r int) {
 //line main.xo:25:3
 		tk := x_scope16.Body()
-//line main.xo:25:3
-		_ = tk
 //line main.xo:25:3
 		x_done18 := false
 //line main.xo:25:3
@@ -201,7 +185,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:34:3
 	var v_elapsed rt.Duration = v_os.F_clock.M_since(tk, v_start)
 //line main.xo:34:3
-	_ = v_elapsed
 //line main.xo:35:3
 	v_os.F_stdio.M_println(tk, ("background ran: " + rt.Display(tk, (v_ticks.M_get(tk) > int64(2))) + " stopped quickly: " + rt.Display(tk, (v_elapsed < rt.Duration(2000000000)))))
 //line main.xo:36:3
@@ -213,15 +196,12 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:36:3
 		tk := x_scope23.Body()
 //line main.xo:36:3
-		_ = tk
-//line main.xo:36:3
 		x_done25 := false
 //line main.xo:36:3
 		defer func() { x_ctl24r = x_scope23.Close(recover(), x_done25, x_ctl24r) }()
 //line main.xo:37:5
 		var v_g rt.Task_Group = x_scope23.M_group(tk)
 //line main.xo:37:5
-		_ = v_g
 //line main.xo:38:5
 		var v_h *rt.Handle[int64, rt.Never] = rt.GroupSpawn(tk, v_g, func(tk *rt.Task) rt.Result[int64, rt.Never] {
 //line main.xo:38:26
@@ -230,7 +210,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:38:28
 		}, true)
 //line main.xo:38:5
-		_ = v_h
 //line main.xo:39:5
 		rt.GroupSpawn(tk, v_g, func(tk *rt.Task) rt.Result[rt.Unit, rt.Never] {
 //line main.xo:39:18
@@ -261,7 +240,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:40:5
 	var v_g_total int64 = x_v22
 //line main.xo:40:5
-	_ = v_g_total
 //line main.xo:42:3
 	v_os.F_stdio.M_println(tk, ("group " + rt.IntStr(v_g_total)))
 //line main.xo:42:3

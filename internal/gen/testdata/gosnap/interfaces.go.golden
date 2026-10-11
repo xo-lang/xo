@@ -75,7 +75,6 @@ func (v MapStore) XoEq(x any) bool {
 	if !rt.Eq(v.F_data, o.F_data) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -134,7 +133,6 @@ func (v ConstStore) XoEq(x any) bool {
 	if !rt.Eq(v.F_value, o.F_value) {
 		return false
 	}
-	_ = o
 	return true
 }
 
@@ -177,7 +175,6 @@ func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
 //line main.xo:29:3
 	x_m2 := v_st.M_get(tk, v_key)
 //line main.xo:29:3
-	_ = x_m2
 //line main.xo:31:15
 	switch {
 //line main.xo:31:15
@@ -187,7 +184,6 @@ func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
 //line main.xo:30:5
 			var v_v string = x_m2.V
 //line main.xo:30:5
-			_ = v_v
 //line main.xo:30:14
 			return (v_st.M_name(tk) + " " + v_v)
 //line main.xo:30:14
@@ -197,7 +193,6 @@ func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
 //line main.xo:31:5
 			var v_e StoreErr = x_m2.E
 //line main.xo:31:5
-			_ = v_e
 //line main.xo:31:15
 			return (v_st.M_name(tk) + " " + rt.Display(tk, v_e))
 //line main.xo:31:15
@@ -223,7 +218,6 @@ func F_describe_all[tp_T any](tk *rt.Task, v_items rt.List[tp_T]) string {
 //line main.xo:36:3
 			var v_i tp_T = x_e5
 //line main.xo:36:3
-			_ = v_i
 //line main.xo:36:19
 			{
 //line main.xo:36:21
@@ -261,7 +255,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:40:3
 	var v_stores rt.List[Store] = rt.ListOf[Store](Store(MapStore{F_data: rt.MapOf[string, string](rt.Tuple2[string, string]{F0: "a", F1: "1"})}), xoAdapt_0{V: ConstStore{F_value: "c"}})
 //line main.xo:40:3
-	_ = v_stores
 //line main.xo:41:3
 	x_it8 := v_stores
 //line main.xo:43:5
@@ -269,11 +262,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:41:3
 		x_el11 := x_e10
 //line main.xo:41:3
-		_ = x_el11
-//line main.xo:41:3
 		var v_st Store = x_el11
-//line main.xo:41:3
-		_ = v_st
 //line main.xo:41:3
 		{
 //line main.xo:42:5
@@ -289,7 +278,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:46:3
 	var v_shown rt.List[rt.IDisplay] = rt.ListOf[rt.IDisplay](rt.Iface[rt.IDisplay](int64(1)), rt.Iface[rt.IDisplay]("two"), rt.Iface[rt.IDisplay](float64(3.5)))
 //line main.xo:46:3
-	_ = v_shown
 //line main.xo:47:3
 	x_it12 := v_shown
 //line main.xo:48:5
@@ -297,11 +285,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:47:3
 		x_el15 := x_e14
 //line main.xo:47:3
-		_ = x_el15
-//line main.xo:47:3
 		var v_d rt.IDisplay = x_el15
-//line main.xo:47:3
-		_ = v_d
 //line main.xo:47:3
 		{
 //line main.xo:48:5
@@ -331,7 +315,6 @@ func F_describe_all__StoreErr(tk *rt.Task, v_items rt.List[StoreErr]) string {
 //line main.xo:36:3
 			var v_i StoreErr = x_e17
 //line main.xo:36:3
-			_ = v_i
 //line main.xo:36:19
 			{
 //line main.xo:36:21
