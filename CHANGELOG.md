@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Editions (decision 0155): until 1.0 the only edition is `preview`;
+  `xo init` writes `edition preview`, and every xo.mod and xo.work of
+  the repository says it. `edition 2026` stays an alias of `preview`
+  during the 0.x releases: `xo check` gives the fixable note `XO1315` on
+  it, and `xo fix` (also `xo fix --edition=preview`) rewrites xo.mod.
+  The compatibility promise of core 13 starts with the first frozen
+  edition, named at 1.0.
 - arm64 backend: enum parameters of 256 bytes or more of direct calls
   are passed by address too (decision 0153); tags and payloads of enums
   in memory are read in place, and large fields and payloads of read
