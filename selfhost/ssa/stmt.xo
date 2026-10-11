@@ -113,16 +113,27 @@ fn (var b: Builder) break_to(label: Ident?, brk: Bool) {
   b.dead()
 }
 
-/// The start of a loop with `bound N` (loopBound): outside stage 1.
-fn (var b: Builder) loop_bound(bound: List[Expr]) {
+/// The start of a loop with `bound N` (loopBound): the counter's made up
+/// variable, -1 without a bound; loop_tick counts an iteration. Outside
+/// stage 3.
+fn (var b: Builder) loop_bound(bound: List[Expr]) -> Int {
   if !bound.is_empty() {
     b.unsupported("a loop bound")
+  }
+  -1
+}
+
+/// The start of an iteration of a loop with a bound (the tick of
+/// loopBound): nothing without one.
+fn (var b: Builder) loop_tick(cnt: Int) {
+  if cnt < 0 {
+    return
   }
 }
 
 /// `while cond { body }` (cond empty: forever).
 fn (var b: Builder) while_loop(label: Bytes, cond: List[Expr], bound: List[Expr], body: parser.Block) {
-  b.loop_bound(bound)
+  let tick = b.loop_bound(bound)
   let head = b.new_block()
   let exit = b.new_block()
   b.jump(head, [])
@@ -134,6 +145,7 @@ fn (var b: Builder) while_loop(label: Bytes, cond: List[Expr], bound: List[Expr]
     b.seal(inb)
     b.s.cur = inb
   }
+  b.loop_tick(tick)
   b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
   b.block(body)
   b.s.loops.pop()
@@ -145,7 +157,7 @@ fn (var b: Builder) while_loop(label: Bytes, cond: List[Expr], bound: List[Expr]
 
 /// `while let p = v { body }` (whileLet).
 fn (var b: Builder) while_let(label: Bytes, p: Pattern, value: Expr, bound: List[Expr], body: parser.Block) {
-  b.loop_bound(bound)
+  let tick = b.loop_bound(bound)
   let head = b.new_block()
   let exit = b.new_block()
   b.jump(head, [])
@@ -163,6 +175,7 @@ fn (var b: Builder) while_let(label: Bytes, p: Pattern, value: Expr, bound: List
     }
   }
   b.pattern(v, p, exit)
+  b.loop_tick(tick)
   b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
   b.block(body)
   b.s.loops.pop()
@@ -210,7 +223,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
       b.unsupported("`for` over a channel")
       return
     } else if b.m.types[lt].coll {
-      b.unsupported("`for` over a Map or Set")
+      b.for_map(name, p, bound, body, b.value(iter))
       return
     } else if b.tkind(lt) == Kind.Str && b.is_bytes_expr(iter) {
       bytes = b.value(iter)
@@ -225,7 +238,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
       return
     }
   }
-  b.loop_bound(bound)
+  let tick = b.loop_bound(bound)
   let head = b.new_block()
   let bodyb = b.new_block()
   let latch = b.new_block()
@@ -242,6 +255,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   b.s.f.branch(b.s.cur, c, bodyb, exit)
   b.seal(bodyb)
   b.s.cur = bodyb
+  b.loop_tick(tick)
   var elem = -1
   if list >= 0 {
     let i2 = b.read(idx)
@@ -315,6 +329,8 @@ enum Step {
   Var(vo: Int)
   Field(idx: Int, ft: Int)
   Index(i: Int, pos: Str)
+  /// `m[k]` of a Map: stored with put (core 3.6), never read.
+  MapKey(k: Int, t: Int)
 }
 
 /// An assignable location: its levels from the root, the type of each,
@@ -363,8 +379,14 @@ fn (var b: Builder) place(e: Expr) -> Place {
     IndexExpr(span: span, x: x, index: index) => {
       var base = b.place(x)
       if base.ok && b.m.types[base.t()].coll {
-        b.unsupported("`m[k] = v`")
-        return bad_place()
+        // `m[k] = v` is `m.put(k, v)` (core 3.6); reading m[k] is a
+        // checker error
+        let t = base.t()
+        let k = b.value_as(index, map_key(b.m, t))
+        base.steps.push(Step.MapKey(k: k, t: t))
+        base.types.push(map_val(b.m, t))
+        base.cache.push(-1)
+        return base
       }
       if base.ok && b.tkind(base.t()) == Kind.List {
         let i = b.value_as(index, b.int_t())
@@ -401,6 +423,10 @@ fn (var b: Builder) place_get_at(var p: Place, k: Int) -> Int {
       let c = b.place_cur(p, k)
       b.call("list.index", p.types[k], pos, [c, i])
     }
+    MapKey(..) => {
+      b.unsupported("reading `m[k]`")
+      b.undef(p.types[k])
+    }
   }
 }
 
@@ -416,6 +442,13 @@ fn (var b: Builder) place_set_at(var p: Place, k: Int, v: Int) {
     Index(i, pos) => {
       let c = b.place_cur(p, k)
       let w = b.call("list.set", p.types[k - 1], pos, [c, i, v])
+      b.place_set_at(p, k - 1, w)
+    }
+    MapKey(key, t) => {
+      let put = b.map_put(t)
+      let m = b.place_get_at(p, k - 1)
+      let cv = b.coerce(v, map_val(b.m, t))
+      let w = b.call(put, t, "", [m, key, cv])
       b.place_set_at(p, k - 1, w)
     }
   }

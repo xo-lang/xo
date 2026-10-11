@@ -264,8 +264,36 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     return
   }
   if b.is_prelude_mod(om) && (oname is "Map" | "Set") {
-    b.unsupported("the Debug text of a Map or Set")
-    b.retv(acc)
+    let kt = map_key(b.m, t)
+    let vt = map_val(b.m, t)
+    let keys = b.mfield(t, 0, v)
+    let vals = b.mfield(t, 1, v)
+    let live = b.mfield(t, 2, v)
+    let av = b.local()
+    let first = b.local()
+    let open = if oname == "Set" { "#{" } else { "{" }
+    b.write_var(av, b.lit(acc, open))
+    b.write_var(first, b.cbool(true))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [keys])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+    let (no2, join2) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))
+    b.write_var(av, b.lit(b.read(av), ", "))
+    b.if_then_end(no2, join2)
+    b.write_var(first, b.cbool(false))
+    let cur = b.read(av)
+    let k = b.call("list.index", kt, "", [keys, i])
+    var a = b.debug_sub(cur, k, args[0])
+    if oname == "Map" {
+      a = b.lit(a, ": ")
+      let x = b.call("list.index", vt, "", [vals, i])
+      a = b.debug_sub(a, x, args[1])
+    }
+    b.write_var(av, a)
+    b.if_then_end(no, join)
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.lit(b.read(av), "}"))
     return
   }
   let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
@@ -563,19 +591,45 @@ fn (var b: Builder) print_trace(tr: Int) {
 // Constants and sized integers (build_int.go)
 
 /// Reads the constant c as a value of type t (constValue): a constant of
-/// a heap type other than Str is outside stage 1.
+/// a heap type other than Str is built once, by a function the runtime
+/// calls (xo.const), and read from its list.
 fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let f = b.c.objs[c].decl_file
-  let i = b.c.objs[c].decl_idx
-  let value = match b.c.files[f].ast.decls[i] {
+  let di = b.c.objs[c].decl_idx
+  let value = match b.c.files[f].ast.decls[di] {
     ConstDecl(d) => d.value
     _ => fault("not a constant")
   }
   if !b.m.heap(t) || b.tkind(t) == Kind.Str {
     return b.foreign_value(value, f, t)
   }
-  b.unsupported("constants of collection types")
-  b.undef(t)
+  let it = b.int_t()
+  let lt = b.m.list(t)
+  let name = "xo.const[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]"
+  var id = b.consts.get(c) ?? -1
+  if id < 0 {
+    id = b.consts.len()
+    b.consts[c] = id
+    if id >= 4096 {
+      b.unsupported("more than 4096 constants of collection types")
+    }
+    let fi = b.m.new_func(name, [], [lt])
+    b.m.funcs[fi].entry = true
+    let saved = b.begin(fi, f)
+    let v = b.value_as(value, t)
+    let l0 = b.call("list.new", lt, "", [])
+    let l = b.call("list.push", lt, "", [l0, v])
+    // readers on any thread share it
+    b.add(Op.Share, -1, Aux.None, [l])
+    b.retv(l)
+    b.finish_fn()
+    b.end(saved)
+  }
+  let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
+  let dl = b.drop_list(t)
+  let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
+  let l = b.rt("const_once", lt, [fa, da, b.cint(id)])
+  b.call("list.index", t, "", [l, b.cint(0)])
 }
 
 /// The type operands of the runtime calls on sized integers (sizeArgs).

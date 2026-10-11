@@ -208,3 +208,33 @@ functions as it rewrote `tbz` (gotchas/arm64-tbz-range.md,
 matched a string constant holding the marker text (two functions of
 selfhost/ssa itself were skipped for it); it now looks at types and
 callee names.
+
+# Stage 3: collections, 2026-10-11
+
+`selfhost/ssa/map.xo` (about 1,100 lines): Map and Set as structs of
+lists with their generated helpers (`xo.hash[T]`, `xo.map.find`,
+`put`, `rebuild`, `remove`, `keys`, `values`, `entries`), literals,
+every method build_map.go lowers (`put`, `add`, `remove`, `get`,
+`get_or_fault`, `contains`, `len`, `is_empty`, `keys`, `values`,
+`entries`, `to_list`, `update` with its packed closure and the
+`catches` unwind of decision 0085), `m[k] = v`, `for` over a Map or Set,
+`m.values().any/all(...)` inlined (build_hof.go), their Debug text,
+`==` on values holding them (`xo.eqc`), and constants of collection
+types (`xo.const`, `xo.droplist`, `rt.const_once`). Buf was already
+lowered in stage 1.
+
+| functions (of the Go builder's 11,088 in the 305 runs both build) | stage 2 | stage 3 |
+|---|---|---|
+| identical | 6,380 | 8,002 |
+| skipped (a later stage) | 1,520 | 758 |
+| never declared (callees of skipped code) | 3,164 | 2,328 |
+
+0 differences with the go, arm64, and LLVM builds. No reason for
+skipping of stages 2 or 3 is left (one function keeps a
+type number given after skipped code). `TestSelfhostSSAMutations` (go
+build): 4,203 of 6,700 functions identical (was 3,362), 0 differences.
+
+Speed, go build of the Xo builder (`--bench=10`, ms, measured while
+another test ran): selfhost/check 757 (Go builder) against 1,259
+(1.66x); selfhost/ssa 1,119 against 1,949 (1.74x); the notes service
+27 against 45 (1.67x).

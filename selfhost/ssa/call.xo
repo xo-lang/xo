@@ -85,9 +85,8 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if path.starts_with("native/") {
       return b.intrinsic(x, ci)
     }
-    if b.is_map_values_hof(x, ci) {
-      b.unsupported("`any` or `all` over a Map's values")
-      return b.undef(b.nat_of(x))
+    if let Some(v) = b.map_values_hof(x, ci) {
+      return v
     }
     if path == "std/testing" && fr < 0 && (b.obj_name(fo) is "run_main" | "gen") {
       b.unsupported("std/testing")
@@ -147,44 +146,6 @@ fn (var b: Builder) is_conc_call(fo: Int) -> Bool {
     return b.obj_name(r) is "Scope" | "Task" | "Chan" | "Mutex" | "Atomic"
   }
   b.c.mods[m].path == "std/task" && b.obj_name(r) == "Group"
-}
-
-/// `xs.values().any(fn(v) {...})` on a Map (build_hof.go mapValuesHof):
-/// whether its conditions hold, up to the body check.
-fn (var b: Builder) is_map_values_hof(x: Expr, ci: check.CallInfo) -> Bool {
-  let fo = ci.fn_obj
-  let r = b.c.objs[fo].recv
-  if r < 0 || b.obj_name(r) != "List" || !b.is_prelude_mod(b.obj_mod(r)) {
-    return false
-  }
-  if !(b.obj_name(fo) is "any" | "all") {
-    return false
-  }
-  let (_, _, args) = call_parts(x)
-  if args.len() != 1 || args[0].name != None {
-    return false
-  }
-  if let FnLit(lit) = args[0].value {
-    if lit.params.len() != 1 {
-      return false
-    }
-    if let Some(recv) = ci.recv.first() {
-      if let CallExpr(args: vargs, ..) = recv {
-        if !vargs.is_empty() {
-          return false
-        }
-        if let Some(vci) = b.c.call_in(b.s.file, recv) {
-          let vf = vci.fn_obj
-          if vci.recv.is_empty() || vf < 0 || b.c.objs[vf].recv < 0 || b.obj_name(vf) != "values" {
-            return false
-          }
-          let vr = b.c.objs[vf].recv
-          return b.obj_name(vr) == "Map" && b.is_prelude_mod(b.obj_mod(vr))
-        }
-      }
-    }
-  }
-  false
 }
 
 /// Calls a function value (valueCall).
@@ -262,25 +223,37 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   b.m.funcs[fi].captures = cap_ts
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 
-fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int]) {
+fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool) {
   let saved = b.begin(fi, file)
   b.s.res = result
   b.s.err_t = err_t
   b.s.frame_fo = owner
   b.s.closures = closures
   b.s.sub = sub
+  b.s.pack_var = pack
   let env = b.param(0)
   for (i, vo) in caps.indexed() {
     b.write_var(vo, b.add(Op.Capture, cap_ts[i], Aux.I(n: i), [env]))
   }
-  let nps = b.s.f.blocks[0].params.len()
-  for (i, vo) in b.c.closure_params(file, lit).indexed() {
-    if vo >= 0 && i + 1 < nps {
-      b.write_var(vo, b.param(i + 1))
+  let ps = b.c.closure_params(file, lit)
+  if pack {
+    // the value given (closureWith): what a failing or unwinding call
+    // hands back
+    b.s.pack_orig = b.param(1)
+    if ps.len() == 1 && ps[0] >= 0 {
+      b.write_var(ps[0], b.param(1))
+      b.s.var_params = [ps[0]]
+    }
+  } else {
+    let nps = b.s.f.blocks[0].params.len()
+    for (i, vo) in ps.indexed() {
+      if vo >= 0 && i + 1 < nps {
+        b.write_var(vo, b.param(i + 1))
+      }
     }
   }
   let v = b.block(lit.body)
@@ -771,8 +744,12 @@ fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int, at: Expr?) -> Int {
   b.undef(tt)
 }
 
-/// The result type the function's body returns (resultT).
+/// The result type the function's body returns: its result, or for a
+/// packed closure the first element of its tuple (resultT).
 fn (var b: Builder) result_t() -> Int {
+  if b.s.pack_var {
+    return b.m.types[b.s.f.results[0]].elems[0]
+  }
   b.s.f.results[0]
 }
 
@@ -1352,8 +1329,9 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
     }
     "Map" | "Set" => {
-      b.unsupported("Map and Set methods")
-      return b.undef(nt)
+      if let Some(v) = b.map_call(x, ci) {
+        return v
+      }
     }
     "Stdio" => {
       if fname is "print" | "println" | "eprint" | "eprintln" {

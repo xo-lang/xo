@@ -1,4 +1,18 @@
-// Map and Set (internal/ssa build_map.go): stage 3 of decision 0150.
+// Map and Set (internal/ssa build_map.go, build_hof.go, the closures of
+// `update` from build_conc.go), stage 3 of decision 0150. A Map[K, V] or
+// Set[T] is the struct of lists (map_type):
+//
+//   keys  List[K]    every entry in insertion order (removed ones too)
+//   vals  List[V]    their values (Set: V is ())
+//   live  List[Bool] false for a removed entry
+//   slots List[Int]  open addressing table: 0 empty, else index + 1
+//   n     Int        live entries
+//
+// The operations are functions generated per type (xo.map.*), and keys
+// hash with generated functions per type (xo.hash[T]).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
 
 /// The key type of the Map or Set struct t (mapKey).
 fn map_key(m: Module, t: Int) -> Int {
@@ -10,14 +24,1076 @@ fn map_val(m: Module, t: Int) -> Int {
   m.types[m.types[t].fields[1].ty].elems[0]
 }
 
-/// xo.map.find[T] (mapFind): stage 3.
-fn (var b: Builder) map_find(t: Int) -> Str {
-  b.unsupported("Map and Set")
-  "xo.map.find[${b.m.types[t].name}]"
+/// The field i of the Map or Set value v (of struct t).
+fn (var b: Builder) mfield(t: Int, i: Int, v: Int) -> Int {
+  b.add(Op.Field, b.m.types[t].fields[i].ty, Aux.I(n: i), [v])
 }
 
-/// xo.hash[T] (hashFunc): stage 3.
+// ---------------------------------------------------------------------------
+// Hashing
+
+/// h * 31 + x, wrapping (hashFunc's mix).
+fn (var b: Builder) hash_mix(h: Int, x: Int) -> Int {
+  let it = b.int_t()
+  let c = b.cint(31)
+  let p = b.add(Op.Mul, it, Aux.S(s: "wrap"), [h, c])
+  b.add(Op.Add, it, Aux.S(s: "wrap"), [p, x])
+}
+
+/// The function that hashes a value of t to an Int (hashFunc).
 fn (var b: Builder) hash_func(t: Int) -> Str {
-  b.unsupported("Map and Set")
-  "xo.hash[${b.m.types[t].name}]"
+  let it = b.int_t()
+  let name = "xo.hash[${b.m.types[t].name}]"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  if b.tkind(t) is Kind.Float | Kind.Func | Kind.Handle | Kind.Cap {
+    b.unsupported("a Map key or Set element of type `${b.m.types[t].name}`")
+  }
+  if b.m.types[t].coll {
+    b.unsupported("a Map key or Set element that holds a Map or Set")
+  }
+  let fi = b.m.new_func(name, [t], [it])
+  let saved = b.begin(fi, b.s.file)
+  let v = b.param(0)
+  if b.is_trace(t) {
+    // not part of the value
+    b.retv(b.cint(0))
+    b.end(saved)
+    return name
+  }
+  var h = -1
+  match b.tkind(t) {
+    Int => {
+      var iv = v
+      if t != it {
+        iv = b.add(Op.IntConv, it, Aux.None, [v])
+      }
+      let k = b.cint(-7046029254386353131)
+      let x = b.add(Op.Mul, it, Aux.S(s: "wrap"), [iv, k])
+      let c = b.cint(29)
+      let sh = b.add(Op.Shr, it, Aux.None, [x, c])
+      h = b.add(Op.Xor, it, Aux.None, [x, sh])
+    }
+    Bool => {
+      let hv = b.local()
+      b.write_var(hv, b.cint(2))
+      let (no, join) = b.if_then_begin(v)
+      b.write_var(hv, b.cint(1))
+      b.if_then_end(no, join)
+      h = b.read(hv)
+    }
+    Str => h = b.rt("str_hash", it, [v])
+    Unit => h = b.cint(7)
+    Struct | Tuple => {
+      h = b.cint(17)
+      for i in 0..b.num_fields(t) {
+        let ft = b.field_type(t, i)
+        let fv = b.add(Op.Field, ft, Aux.I(n: i), [v])
+        let f = b.hash_func(ft)
+        let c = b.call(f, it, "", [fv])
+        h = b.hash_mix(h, c)
+      }
+    }
+    Box => {
+      let et = b.m.types[t].elems[0]
+      let f = b.hash_func(et)
+      let u = b.add(Op.Unbox, et, Aux.None, [v])
+      h = b.call(f, it, "", [u])
+    }
+    List => {
+      let et = b.m.types[t].elems[0]
+      let hv = b.local()
+      b.write_var(hv, b.cint(19))
+      let iv = b.local()
+      let n = b.call("list.len", it, "", [v])
+      let (i, head, exit) = b.for_up_to_begin(n, iv)
+      let e = b.call("list.index", et, "", [v, i])
+      let cur = b.read(hv)
+      let f = b.hash_func(et)
+      let c = b.call(f, it, "", [e])
+      b.write_var(hv, b.hash_mix(cur, c))
+      b.for_up_to_end(i, iv, head, exit)
+      h = b.read(hv)
+    }
+    Enum => {
+      let hv = b.local()
+      let tag = b.add(Op.Tag, it, Aux.None, [v])
+      let c23 = b.cint(23)
+      b.write_var(hv, b.hash_mix(c23, tag))
+      let vs = b.m.types[t].variants
+      for (vi, vr) in vs.indexed() {
+        if vr.fields.is_empty() {
+          continue
+        }
+        let (no, join) = b.if_then_begin(b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(vi)]))
+        for (fi, fl) in vr.fields.indexed() {
+          let p = b.add(Op.Payload, fl.ty, Aux.P(tag: vi, field: fi), [v])
+          let cur = b.read(hv)
+          let f = b.hash_func(fl.ty)
+          let c = b.call(f, it, "", [p])
+          b.write_var(hv, b.hash_mix(cur, c))
+        }
+        b.if_then_end(no, join)
+      }
+      h = b.read(hv)
+    }
+    Float | Cap | Func | Handle | Bad => h = b.cint(0)
+  }
+  b.retv(h)
+  b.end(saved)
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+
+/// A Map or Set with no entries (emptyMap).
+fn (var b: Builder) empty_map(t: Int) -> Int {
+  var fs: List[Int] = []
+  for i in 0..4 {
+    fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
+  }
+  fs.push(b.cint(0))
+  b.add(Op.Struct, t, Aux.None, fs)
+}
+
+/// xo.map.find[T](m, k, h) -> Int: the index of k's live entry, or -1
+/// (mapFind).
+fn (var b: Builder) map_find(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let name = "xo.map.find[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, it], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let h = b.param(2)
+  let slots = b.mfield(t, 3, mp)
+  let n = b.call("list.len", it, "", [slots])
+  let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)]))
+  b.retv(b.cint(-1))
+  b.if_then_end(no, join)
+  let keys = b.mfield(t, 0, mp)
+  let live = b.mfield(t, 2, mp)
+  let mask = b.add(Op.Sub, it, Aux.None, [n, b.cint(1)])
+  let iv = b.local()
+  b.write_var(iv, b.add(Op.And, it, Aux.None, [h, mask]))
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(iv)
+  let e = b.call("list.index", it, "", [slots, i])
+  let (no2, join2) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [e, b.cint(0)]))
+  b.retv(b.cint(-1))
+  b.if_then_end(no2, join2)
+  let idx = b.add(Op.Sub, it, Aux.None, [e, b.cint(1)])
+  let (no3, join3) = b.if_then_begin(b.call("list.index", bt, "", [live, idx]))
+  let kk = b.call("list.index", kt, "", [keys, idx])
+  let (no4, join4) = b.if_then_begin(b.eq_values(kk, k))
+  b.retv(idx)
+  b.if_then_end(no4, join4)
+  b.if_then_end(no3, join3)
+  let next = b.add(Op.Add, it, Aux.None, [i, b.cint(1)])
+  b.write_var(iv, b.add(Op.And, it, Aux.None, [next, mask]))
+  b.jump(head, [])
+  b.seal(head)
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// Stores entry index pos (+1) in the first empty slot of h's probe
+/// sequence (insertSlot).
+fn (var b: Builder) insert_slot(slots: Int, h: Int, pos: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let n = b.call("list.len", it, "", [slots])
+  let mask = b.add(Op.Sub, it, Aux.None, [n, b.cint(1)])
+  let iv = b.local()
+  let sv = b.local()
+  b.write_var(iv, b.add(Op.And, it, Aux.None, [h, mask]))
+  b.write_var(sv, slots)
+  let head = b.new_block()
+  let found = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(iv)
+  let sl = b.read(sv)
+  let e = b.call("list.index", it, "", [sl, i])
+  let full = b.add(Op.Ne, bt, Aux.None, [e, b.cint(0)])
+  let next = b.new_block()
+  b.s.f.branch(b.s.cur, full, next, found)
+  b.seal(next)
+  b.s.cur = next
+  let i1 = b.add(Op.Add, it, Aux.None, [i, b.cint(1)])
+  b.write_var(iv, b.add(Op.And, it, Aux.None, [i1, mask]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(found)
+  b.s.cur = found
+  let sl2 = b.read(sv)
+  let i2 = b.read(iv)
+  let p1 = b.add(Op.Add, it, Aux.None, [pos, b.cint(1)])
+  b.call("list.set", b.vty(slots), "", [sl2, i2, p1])
+}
+
+/// xo.map.rebuild[T](m, want) -> T: the live entries in order, in a table
+/// with room for want entries (mapRebuild).
+fn (var b: Builder) map_rebuild(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let name = "xo.map.rebuild[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, it], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let want = b.param(1)
+  let keys = b.mfield(t, 0, mp)
+  let vals = b.mfield(t, 1, mp)
+  let live = b.mfield(t, 2, mp)
+  let klt = b.vty(keys)
+  let vlt = b.vty(vals)
+  let llt = b.vty(live)
+  let nk = b.local()
+  let nv = b.local()
+  let nl = b.local()
+  b.write_var(nk, b.call("list.new", klt, "", []))
+  b.write_var(nv, b.call("list.new", vlt, "", []))
+  b.write_var(nl, b.call("list.new", llt, "", []))
+  let iv = b.local()
+  let n0 = b.call("list.len", it, "", [keys])
+  let (i, head, exit) = b.for_up_to_begin(n0, iv)
+  let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+  let ck = b.read(nk)
+  let ek = b.call("list.index", kt, "", [keys, i])
+  b.write_var(nk, b.call("list.push", klt, "", [ck, ek]))
+  let cv0 = b.read(nv)
+  let ev = b.call("list.index", vt, "", [vals, i])
+  b.write_var(nv, b.call("list.push", vlt, "", [cv0, ev]))
+  let cl = b.read(nl)
+  let tr = b.cbool(true)
+  b.write_var(nl, b.call("list.push", llt, "", [cl, tr]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
+  // the table: a power of two, at least 8, at least twice want
+  let cv = b.local()
+  b.write_var(cv, b.cint(8))
+  let h2 = b.new_block()
+  let grow = b.new_block()
+  let done = b.new_block()
+  b.jump(h2, [])
+  b.s.cur = h2
+  let c = b.read(cv)
+  let w2 = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
+  let lt = b.add(Op.Lt, bt, Aux.None, [c, w2])
+  b.s.f.branch(b.s.cur, lt, grow, done)
+  b.seal(grow)
+  b.s.cur = grow
+  b.write_var(cv, b.add(Op.Mul, it, Aux.None, [c, b.cint(2)]))
+  b.jump(h2, [])
+  b.seal(h2)
+  b.seal(done)
+  b.s.cur = done
+  let slt = b.m.types[t].fields[3].ty
+  let sv = b.local()
+  b.write_var(sv, b.call("list.new", slt, "", []))
+  let iv2 = b.local()
+  let capn = b.read(cv)
+  let (j, head2, exit2) = b.for_up_to_begin(capn, iv2)
+  let cs = b.read(sv)
+  let z = b.cint(0)
+  b.write_var(sv, b.call("list.push", slt, "", [cs, z]))
+  b.for_up_to_end(j, iv2, head2, exit2)
+  let keys2 = b.read(nk)
+  let iv3 = b.local()
+  let n2 = b.call("list.len", it, "", [keys2])
+  let (k3, head3, exit3) = b.for_up_to_begin(n2, iv3)
+  let kk = b.call("list.index", kt, "", [keys2, k3])
+  let hf = b.hash_func(kt)
+  let hh = b.call(hf, it, "", [kk])
+  let cs2 = b.read(sv)
+  b.write_var(sv, b.insert_slot(cs2, hh, k3))
+  b.for_up_to_end(k3, iv3, head3, exit3)
+  let n = b.call("list.len", it, "", [keys2])
+  let rv = b.read(nv)
+  let rl = b.read(nl)
+  let rs = b.read(sv)
+  b.retv(b.add(Op.Struct, t, Aux.None, [keys2, rv, rl, rs, n]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.map.put[T](m, k, v) -> T: k's value replaced (its place kept), or a
+/// new entry at the end (mapPut).
+fn (var b: Builder) map_put(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let find = b.map_find(t)
+  let rebuild = b.map_rebuild(t)
+  let hash = b.hash_func(kt)
+  let name = "xo.map.put[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let v = b.param(2)
+  let h = b.call(hash, it, "", [k])
+  let idx = b.call(find, it, "", [mp, k, h])
+  let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+  let vl = b.mfield(t, 1, mp)
+  let vals0 = b.call("list.set", b.m.types[t].fields[1].ty, "", [vl, idx, v])
+  b.retv(b.add(Op.SetField, t, Aux.I(n: 1), [mp, vals0]))
+  b.if_then_end(no, join)
+  let mv = b.local()
+  b.write_var(mv, mp)
+  let total = b.call("list.len", it, "", [b.mfield(t, 0, mp)])
+  let tcap = b.call("list.len", it, "", [b.mfield(t, 3, mp)])
+  let t1 = b.add(Op.Add, it, Aux.None, [total, b.cint(1)])
+  let t4 = b.add(Op.Mul, it, Aux.None, [t1, b.cint(4)])
+  let c3 = b.add(Op.Mul, it, Aux.None, [tcap, b.cint(3)])
+  let full = b.add(Op.Gt, bt, Aux.None, [t4, c3])
+  let (no2, join2) = b.if_then_begin(full)
+  let n0 = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  let want = b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])
+  b.write_var(mv, b.call(rebuild, t, "", [mp, want]))
+  b.if_then_end(no2, join2)
+  let cur = b.read(mv)
+  var keys = b.mfield(t, 0, cur)
+  var vals = b.mfield(t, 1, cur)
+  var live = b.mfield(t, 2, cur)
+  var slots = b.mfield(t, 3, cur)
+  let n = b.add(Op.Field, it, Aux.I(n: 4), [cur])
+  let pos = b.call("list.len", it, "", [keys])
+  keys = b.call("list.push", b.vty(keys), "", [keys, k])
+  vals = b.call("list.push", b.vty(vals), "", [vals, v])
+  let tr = b.cbool(true)
+  live = b.call("list.push", b.vty(live), "", [live, tr])
+  slots = b.insert_slot(slots, h, pos)
+  let n1 = b.add(Op.Add, it, Aux.None, [n, b.cint(1)])
+  b.retv(b.add(Op.Struct, t, Aux.None, [keys, vals, live, slots, n1]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.map.remove[T](m, k) -> (T, V?) (mapRemove).
+fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let find = b.map_find(t)
+  let rt = b.m.tuple([t, ot])
+  let name = "xo.map.remove[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let hf = b.hash_func(kt)
+  let h = b.call(hf, it, "", [k])
+  let idx = b.call(find, it, "", [mp, k, h])
+  let (no, join) = b.if_then_begin(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
+  let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, none]))
+  b.if_then_end(no, join)
+  let vl = b.mfield(t, 1, mp)
+  let old = b.call("list.index", vt, "", [vl, idx])
+  // only the entry's live flag changes: its key and value stay (dead)
+  // until a rebuild drops them
+  let keys = b.mfield(t, 0, mp)
+  let vals = b.mfield(t, 1, mp)
+  let ll = b.mfield(t, 2, mp)
+  let fl = b.cbool(false)
+  let live = b.call("list.set", b.m.types[t].fields[2].ty, "", [ll, idx, fl])
+  let n0 = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  let n = b.add(Op.Sub, it, Aux.None, [n0, b.cint(1)])
+  let slots = b.mfield(t, 3, mp)
+  let nm = b.add(Op.Struct, t, Aux.None, [keys, vals, live, slots, n])
+  let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [nm, some]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The function that lists the live entries' keys (what 0), values (1),
+/// or (key, value) tuples (2) in order (mapList).
+fn (var b: Builder) map_list(t: Int, what: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let pair = b.m.tuple([kt, vt])
+  let et = [kt, vt, pair][what]
+  let lt = b.m.list(et)
+  let name = "${["xo.map.keys[", "xo.map.values[", "xo.map.entries["][what]}${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [lt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let keys = b.mfield(t, 0, mp)
+  let vals = b.mfield(t, 1, mp)
+  let live = b.mfield(t, 2, mp)
+  let out = b.local()
+  // sized to the live entries: no regrowth while copying
+  let n = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  b.write_var(out, b.call("list.new", lt, "", [n]))
+  let iv = b.local()
+  let n0 = b.call("list.len", it, "", [keys])
+  let (i, head, exit) = b.for_up_to_begin(n0, iv)
+  let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+  var e = -1
+  if what == 0 {
+    e = b.call("list.index", kt, "", [keys, i])
+  } else if what == 1 {
+    e = b.call("list.index", vt, "", [vals, i])
+  } else {
+    let ek = b.call("list.index", kt, "", [keys, i])
+    let ev = b.call("list.index", vt, "", [vals, i])
+    e = b.add(Op.Tuple, et, Aux.None, [ek, ev])
+  }
+  let cur = b.read(out)
+  b.write_var(out, b.call("list.push", lt, "", [cur, e]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(out))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Lowering
+
+/// `{k: v, ...}` (vals given) and `#{x, ...}` (mapLit).
+fn (var b: Builder) map_lit(t: Int, keys: List[Expr], vals: List[Expr], set: Bool) -> Int {
+  if !b.m.types[t].coll {
+    b.unsupported("this literal")
+    return b.undef(t)
+  }
+  let put = b.map_put(t)
+  var v = b.empty_map(t)
+  for (i, k) in keys.indexed() {
+    let kv = b.value_as(k, map_key(b.m, t))
+    var vv = -1
+    if !set {
+      vv = b.value_as(vals[i], map_val(b.m, t))
+    } else {
+      vv = b.unit()
+    }
+    v = b.call(put, t, "", [v, kv, vv])
+  }
+  v
+}
+
+/// The index of k's live entry in the map mv (of struct t) (mapCall's
+/// find).
+fn (var b: Builder) map_index(t: Int, mv: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let find = b.map_find(t)
+  let hf = b.hash_func(map_key(b.m, t))
+  let h = b.call(hf, it, "", [k])
+  b.call(find, it, "", [mv, k, h])
+}
+
+/// A method of Map or Set; None for one it does not lower (mapCall).
+fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let (span, _, cargs) = call_parts(x)
+  let fo = ci.fn_obj
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let nt = b.nat_of(x)
+  let args = arg_exprs(b.c.objs[fo].params, cargs)
+  let key = "${b.obj_name(b.c.objs[fo].recv)}.${b.obj_name(fo)}"
+  if b.c.objs[fo].recv_var {
+    var p = b.place(ci.recv[0])
+    if !p.ok || !b.m.types[p.t()].coll {
+      return None
+    }
+    let t = p.t()
+    match key {
+      "Map.put" | "Set.add" => {
+        let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+        var v = -1
+        if key == "Map.put" {
+          v = b.value_as(args[1] ?? fault("arg"), map_val(b.m, t))
+        } else {
+          v = b.unit()
+        }
+        let put = b.map_put(t)
+        let cur = b.place_get(p)
+        b.place_set(p, b.call(put, t, "", [cur, k, v]))
+        return Some(b.unit())
+      }
+      "Map.remove" | "Set.remove" => {
+        var ot = nt
+        if key == "Set.remove" {
+          ot = b.typ(b.prelude_type("Option", [b.c.unit_ty]))
+        }
+        let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+        let rm = b.map_remove(t, ot)
+        let cur = b.place_get(p)
+        let r = b.call(rm, b.m.tuple([t, ot]), "", [cur, k])
+        b.place_set(p, b.add(Op.Field, t, Aux.I(n: 0), [r]))
+        let o = b.add(Op.Field, ot, Aux.I(n: 1), [r])
+        if key == "Set.remove" {
+          let tag = b.add(Op.Tag, it, Aux.None, [o])
+          return Some(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(b.m.variant_index(ot, "Some"))]))
+        }
+        return Some(o)
+      }
+      "Map.update" => return Some(b.map_update(x, p, args))
+      _ => {}
+    }
+    return None
+  }
+  let mv = b.expr(ci.recv[0])
+  let t = b.vty(mv)
+  if !b.m.types[t].coll {
+    return None
+  }
+  match key {
+    "Map.len" | "Set.len" => return Some(b.add(Op.Field, it, Aux.I(n: 4), [mv]))
+    "Map.is_empty" | "Set.is_empty" => {
+      let n = b.add(Op.Field, it, Aux.I(n: 4), [mv])
+      return Some(b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)]))
+    }
+    "Map.contains" | "Set.contains" => {
+      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      let idx = b.map_index(t, mv, k)
+      return Some(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+    }
+    "Map.get" => {
+      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      let idx = b.map_index(t, mv, k)
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, nt)
+      let (yes, no) = b.branch(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+      b.s.cur = yes
+      let vl = b.mfield(t, 1, mv)
+      let v = b.call("list.index", map_val(b.m, t), "", [vl, idx])
+      b.jump(join, [b.variant(nt, "Some", [v])])
+      b.s.cur = no
+      b.jump(join, [b.variant(nt, "None", [])])
+      b.seal(join)
+      b.s.cur = join
+      return Some(res)
+    }
+    "Map.get_or_fault" => {
+      let st = b.str_t()
+      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      let reason = b.value_as(args[1] ?? fault("arg"), st)
+      let idx = b.map_index(t, mv, k)
+      let (bad, ok) = b.branch(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
+      b.s.cur = bad
+      // the key's Debug text (std/rt map.go)
+      let rct = b.nat_check(ci.recv[0])
+      var msg = -1
+      if b.named_obj(rct) >= 0 && !b.ty_args(rct).is_empty() {
+        msg = b.append_debug(b.const_str("key "), k, b.ty_args(rct)[0])
+      } else {
+        b.unsupported("`get_or_fault` on this Map")
+        msg = b.const_str("key ?")
+      }
+      msg = b.call("str.concat", st, "", [msg, b.const_str(" not found in Map of length ")])
+      let n = b.add(Op.Field, it, Aux.I(n: 4), [mv])
+      msg = b.call("str.concat_int", st, "", [msg, n])
+      msg = b.call("str.concat", st, "", [msg, b.const_str(": ")])
+      msg = b.call("str.concat", st, "", [msg, reason])
+      b.fault(msg, b.pos_line(span))
+      b.s.cur = ok
+      let vl = b.mfield(t, 1, mv)
+      return Some(b.call("list.index", map_val(b.m, t), "", [vl, idx]))
+    }
+    "Map.keys" | "Set.to_list" => {
+      let f = b.map_list(t, 0)
+      return Some(b.call(f, b.m.list(map_key(b.m, t)), "", [mv]))
+    }
+    "Map.values" => {
+      let f = b.map_list(t, 1)
+      return Some(b.call(f, b.m.list(map_val(b.m, t)), "", [mv]))
+    }
+    "Map.entries" => {
+      let f = b.map_list(t, 2)
+      let pt = b.m.tuple([map_key(b.m, t), map_val(b.m, t)])
+      return Some(b.call(f, b.m.list(pt), "", [mv]))
+    }
+    _ => {}
+  }
+  b.unsupported("the method `${b.c.display_name(fo)}`")
+  Some(b.undef(nt))
+}
+
+/// `m.update(k, init, f)`: f gets k's value (or init) as a `var`
+/// parameter; its new value is stored when f succeeds, and f's result is
+/// the call's (mapUpdate).
+fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = p.t()
+  let nt = b.nat_of(x)
+  let vt = map_val(b.m, t)
+  let fe = args[2] ?? fault("arg")
+  let (fv, packed) = b.with_closure(fe, vt)
+  if fv < 0 {
+    return b.undef(nt)
+  }
+  if !packed {
+    b.unsupported("`update` with a closure whose parameter is not `var`")
+    return b.undef(nt)
+  }
+  let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+  let init = b.value_as(args[1] ?? fault("arg"), vt)
+  let mp = b.place_get(p)
+  let idx = b.map_index(t, mp, k)
+  let cur = b.local()
+  b.write_var(cur, init)
+  let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+  let vl = b.mfield(t, 1, mp)
+  b.write_var(cur, b.call("list.index", vt, "", [vl, idx]))
+  b.if_then_end(no, join)
+  let fty = b.vty(fv)
+  let cv = b.read(cur)
+  let r = b.add(Op.CallValue, b.m.types[fty].ret, Aux.None, [fv, cv])
+  b.check("")
+  let rt0 = b.vty(r)
+  let res = b.add(Op.Field, b.m.types[rt0].elems[0], Aux.I(n: 0), [r])
+  let nv = b.add(Op.Field, vt, Aux.I(n: 1), [r])
+  let rt = b.vty(res)
+  let ok = b.m.variant_index(rt, "Ok")
+  if b.tkind(rt) == Kind.Enum && ok >= 0 && b.m.variant_index(rt, "Err") >= 0 && b.fail_err(b.with_err(fe)) >= 0 {
+    let tag = b.add(Op.Tag, it, Aux.None, [res])
+    let (no2, join2) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ok)]))
+    let put = b.map_put(t)
+    b.place_set(p, b.call(put, t, "", [mp, k, nv]))
+    b.if_then_end(no2, join2)
+    return res
+  }
+  let put = b.map_put(t)
+  b.place_set(p, b.call(put, t, "", [mp, k, nv]))
+  res
+}
+
+/// The error type of the function value e, or -1 (withErr).
+fn (var b: Builder) with_err(e: Expr) -> Int {
+  let ct = b.nat_check(e)
+  if ct >= 0 {
+    let x = b.c.tys[b.c.resolve(ct)]
+    if x.kind == check.TyKind.Func {
+      return b.apply(x.err)
+    }
+  }
+  -1
+}
+
+/// The closure given to `update` (or `with`): a literal with a `var`
+/// parameter becomes a function value returning (result, new value),
+/// packed (true); anything else is an ordinary function value
+/// (withClosure). The value is -1 when it cannot be lowered.
+fn (var b: Builder) with_closure(e: Expr, et: Int) -> (Int, Bool) {
+  let nct = b.nat_check(e)
+  if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func || b.c.tys[b.c.resolve(nct)].args.len() != 1 {
+    b.unsupported("this closure")
+    return (-1, false)
+  }
+  let ct = b.c.tys[b.c.resolve(nct)]
+  if !ct.vars[0] {
+    let rt = b.typ(b.result_of(b.apply(ct.result), b.fail_err(b.apply(ct.err))))
+    let ft = b.m.func_type([et], rt)
+    return (b.value_as(e, ft), false)
+  }
+  match e {
+    FnLit(lit) => return (b.closure_with(lit, ct, et), true)
+    _ => {}
+  }
+  b.unsupported("a function value with a `var` parameter that is not a closure literal")
+  (-1, false)
+}
+
+/// A closure literal with a `var` parameter whose function returns its
+/// result and the parameter's new value as one tuple (closureWith).
+fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> Int {
+  let err_t = b.fail_err(b.apply(ct.err))
+  let rv = b.typ(b.result_of(b.apply(ct.result), err_t))
+  let t = b.m.func_type([et], b.m.tuple([rv, et]))
+  var caps: List[Int] = []
+  b.capture_block(lit.body, caps)
+  let owner = b.frame_owner()
+  if owner >= 0 && block_has_try(lit.body) {
+    for vo in b.frame_vars(owner) {
+      if b.s.var_type.contains(vo) && !caps.contains(vo) {
+        caps.push(vo)
+      }
+    }
+  }
+  var vals: List[Int] = []
+  var cap_ts: List[Int] = []
+  for vo in caps {
+    let v = b.read(vo)
+    vals.push(v)
+    cap_ts.push(b.vty(v))
+  }
+  b.nclos += 1
+  let name = "${b.s.f.name}.fn${b.nclos}"
+  let fi = b.m.new_func(name, [t, et], [b.m.types[t].ret])
+  b.m.funcs[fi].indirect = true
+  b.m.funcs[fi].captures = cap_ts
+  // a fault in it hands back the value it was given, like cancellation
+  // (the caller goes on unwinding, decision 0085)
+  b.m.funcs[fi].catches = true
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true))
+  b.add(Op.Closure, t, Aux.S(s: name), vals)
+}
+
+/// `for (k, v) in m` and `for x in set`: the live entries in insertion
+/// order, of the value the map had when the loop started (forMap).
+fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = b.vty(mv)
+  let keys = b.mfield(t, 0, mv)
+  let vals = b.mfield(t, 1, mv)
+  let live = b.mfield(t, 2, mv)
+  let set = b.m.types[t].name.starts_with("Set[")
+  let n = b.call("list.len", it, "", [keys])
+  let idx = b.local()
+  b.write_var(idx, b.cint(0))
+  let tick = b.loop_bound(bound)
+  let head = b.new_block()
+  let tst = b.new_block()
+  let bodyb = b.new_block()
+  let latch = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(idx)
+  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), tst, exit)
+  b.seal(tst)
+  b.s.cur = tst
+  b.s.f.branch(b.s.cur, b.call("list.index", bt, "", [live, i]), bodyb, latch)
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  b.loop_tick(tick)
+  let kt = map_key(b.m, t)
+  let k = b.call("list.index", kt, "", [keys, i])
+  var elem = k
+  if !set {
+    let vt = map_val(b.m, t)
+    let v = b.call("list.index", vt, "", [vals, i])
+    elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
+  }
+  let fail = b.new_block()
+  b.pattern(elem, p, fail)
+  let cont = b.s.cur
+  b.s.cur = fail
+  b.seal(fail)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = cont
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(latch, [])
+  b.seal(latch)
+  b.s.cur = latch
+  let ci = b.read(idx)
+  b.write_var(idx, b.add(Op.Add, it, Aux.None, [ci, b.cint(1)]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// `m.values().any(<closure>)` and `.all(<closure>)` as a loop over m's
+/// live entries with the closure's body inline (build_hof.go
+/// mapValuesHof); None when the call does not qualify.
+fn (var b: Builder) map_values_hof(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  if r < 0 || b.obj_name(r) != "List" || !b.is_prelude_mod(b.obj_mod(r)) {
+    return None
+  }
+  let fname = b.obj_name(fo)
+  if !(fname is "any" | "all") {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  if args.len() != 1 || args[0].name != None {
+    return None
+  }
+  let lit = match args[0].value {
+    FnLit(f) => f
+    _ => return None
+  }
+  if lit.params.len() != 1 || ci.recv.is_empty() {
+    return None
+  }
+  let vc = ci.recv[0]
+  let vargs = match vc {
+    CallExpr(args: a, ..) => a
+    _ => return None
+  }
+  if !vargs.is_empty() {
+    return None
+  }
+  let vci = match b.c.call_in(b.s.file, vc) {
+    Some(c) => c
+    None => return None
+  }
+  let vf = vci.fn_obj
+  if vci.recv.is_empty() || vf < 0 || b.c.objs[vf].recv < 0 || b.obj_name(vf) != "values" {
+    return None
+  }
+  let vr = b.c.objs[vf].recv
+  if b.obj_name(vr) != "Map" || !b.is_prelude_mod(b.obj_mod(vr)) {
+    return None
+  }
+  let lct = b.nat_check(args[0].value)
+  if lct < 0 {
+    return None
+  }
+  let ct = b.c.tys[b.c.resolve(lct)]
+  if ct.kind != check.TyKind.Func || b.fail_err(b.apply(ct.err)) >= 0 || !inlineable_block(lit.body) {
+    return None
+  }
+  let ps = b.c.closure_params(b.s.file, lit)
+  if ps.len() != 1 {
+    return None
+  }
+  let t = b.type_of(vci.recv[0])
+  if !b.m.types[t].coll || b.m.types[t].name.starts_with("Set[") {
+    return None
+  }
+  let mv = b.value_as(vci.recv[0], t)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let is_any = fname == "any"
+  let keys = b.mfield(t, 0, mv)
+  let vals = b.mfield(t, 1, mv)
+  let live = b.mfield(t, 2, mv)
+  let n = b.call("list.len", it, "", [keys])
+  let idx = b.local()
+  b.write_var(idx, b.cint(0))
+  let head = b.new_block()
+  let tst = b.new_block()
+  let bodyb = b.new_block()
+  let latch = b.new_block()
+  let done = b.new_block()
+  let exit = b.new_block()
+  let res = b.s.f.add_param(exit, bt)
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(idx)
+  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), tst, done)
+  b.seal(done)
+  b.s.cur = done
+  b.jump(exit, [b.cbool(!is_any)])
+  b.seal(tst)
+  b.s.cur = tst
+  b.s.f.branch(b.s.cur, b.call("list.index", bt, "", [live, i]), bodyb, latch)
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  if ps[0] >= 0 {
+    b.write_var(ps[0], b.call("list.index", map_val(b.m, t), "", [vals, i]))
+  }
+  let v = b.block(lit.body)
+  if !b.is_dead() {
+    var c = b.coerce_at(v, bt, Some(Expr.Block(b: lit.body)))
+    if !is_any {
+      c = b.add(Op.Not, bt, Aux.None, [c])
+    }
+    // any: stop at the first true; all: at the first false
+    let stop = b.new_block()
+    b.s.f.branch(b.s.cur, c, stop, latch)
+    b.seal(stop)
+    b.s.cur = stop
+    b.jump(exit, [b.cbool(is_any)])
+  }
+  b.seal(latch)
+  b.s.cur = latch
+  let ci2 = b.read(idx)
+  b.write_var(idx, b.add(Op.Add, it, Aux.None, [ci2, b.cint(1)]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+  Some(res)
+}
+
+/// Whether a closure body can run inline in its caller: no `return`,
+/// `?`, `defer`, or assignment outside the closures it contains
+/// (inlineableBody, over check.Inspect's children).
+fn inlineable_block(bl: parser.Block) -> Bool {
+  for st in bl.stmts {
+    if !inlineable_stmt(st) {
+      return false
+    }
+  }
+  true
+}
+
+fn inlineable_opt(e: Expr?) -> Bool {
+  match e {
+    Some(x) => inlineable_expr(x)
+    None => true
+  }
+}
+
+fn inlineable_list(es: List[Expr]) -> Bool {
+  for e in es {
+    if !inlineable_expr(e) {
+      return false
+    }
+  }
+  true
+}
+
+fn inlineable_stmt(st: Stmt) -> Bool {
+  match st {
+    ReturnStmt(..) | DeferStmt(..) | AssignStmt(..) => false
+    LetStmt(value: v, ..) => inlineable_expr(v)
+    VarStmt(value: v, ..) => inlineable_expr(v)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => inlineable_expr(iter) && inlineable_list(bound) && inlineable_block(body)
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => inlineable_opt(cond) && inlineable_list(value) && inlineable_list(bound) && inlineable_block(body)
+    ExprStmt(x: x, ..) => inlineable_expr(x)
+    ConstDecl(d) => inlineable_expr(d.value)
+    _ => true
+  }
+}
+
+fn inlineable_expr(e: Expr) -> Bool {
+  match e {
+    TryExpr(..) => false
+    FnLit(..) => true
+    StringLit(s) => {
+      for p in s.parts {
+        if !inlineable_opt(p.expr) {
+          return false
+        }
+      }
+      true
+    }
+    ParenExpr(x: x, ..) => inlineable_expr(x)
+    TupleExpr(elems: elems, ..) => inlineable_list(elems)
+    ListLit(elems: elems, ..) => inlineable_list(elems)
+    SetLit(elems: elems, ..) => inlineable_list(elems)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        if !inlineable_expr(en.key) || !inlineable_expr(en.value) {
+          return false
+        }
+      }
+      true
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        if !inlineable_expr(f.value) {
+          return false
+        }
+      }
+      true
+    }
+    UnaryExpr(x: x, ..) => inlineable_expr(x)
+    BinaryExpr(x: x, y: y, ..) => inlineable_expr(x) && inlineable_expr(y)
+    IsExpr(x: x, ..) => inlineable_expr(x)
+    RangeExpr(lo: lo, hi: hi, ..) => inlineable_opt(lo) && inlineable_opt(hi)
+    SelectorExpr(x: x, ..) => inlineable_expr(x)
+    CallExpr(fun: fun, args: args, ..) => {
+      if !inlineable_expr(fun) {
+        return false
+      }
+      for a in args {
+        if !inlineable_expr(a.value) {
+          return false
+        }
+      }
+      true
+    }
+    TypeArgsExpr(x: x, ..) => inlineable_expr(x)
+    IndexExpr(x: x, index: index, ..) => inlineable_expr(x) && inlineable_expr(index)
+    WithExpr(x: x, fields: fields, ..) => {
+      if !inlineable_expr(x) {
+        return false
+      }
+      for f in fields {
+        if !inlineable_expr(f.value) {
+          return false
+        }
+      }
+      true
+    }
+    IfExpr(x) => inlineable_opt(x.cond) && inlineable_opt(x.value) && inlineable_block(x.then) && inlineable_opt(x.els)
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      if !inlineable_expr(subject) {
+        return false
+      }
+      for a in arms {
+        if !inlineable_opt(a.guard) {
+          return false
+        }
+        if let Some(st) = a.body {
+          if !inlineable_stmt(st) {
+            return false
+          }
+        }
+      }
+      true
+    }
+    ScopeExpr(body: body, ..) => inlineable_block(body)
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if !inlineable_opt(a.op) || !inlineable_opt(a.after) {
+          return false
+        }
+        if let Some(st) = a.body {
+          if !inlineable_stmt(st) {
+            return false
+          }
+        }
+      }
+      true
+    }
+    Block(bl) => inlineable_block(bl)
+    WhileExpr(body: body, ..) => inlineable_block(body)
+    _ => true
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Constants of collection types (build_int.go constValue)
+
+/// The function that drops a list of t (dropList): the runtime calls it
+/// with the list of a constant.
+fn (var b: Builder) drop_list(t: Int) -> Str {
+  let name = "xo.droplist[${b.m.types[t].name}]"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  let unit = b.unit_t()
+  let fi = b.m.new_func(name, [b.m.list(t)], [unit])
+  b.m.funcs[fi].entry = true
+  let u = b.m.funcs[fi].add(0, Op.Tuple, unit, Aux.None, [])
+  b.m.funcs[fi].add(0, Op.Return, -1, Aux.None, [u])
+  name
 }

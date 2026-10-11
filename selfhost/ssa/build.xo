@@ -62,6 +62,11 @@ struct S {
   err_t: Int = -1
   /// The type arguments of the instance being built.
   sub: Map[Int, Int] = {}
+  /// The function returns its result and its `var` parameter as one tuple
+  /// (a closure given to Map.update, closureWith), and the value it was
+  /// given (-1 for none): what it hands back when it fails or unwinds.
+  pack_var: Bool = false
+  pack_orig: Int = -1
 }
 
 /// A generated function whose body is still to build (run_gens).
@@ -82,7 +87,7 @@ struct GenJob {
 /// A body waiting to be built (the Go builder's queue of closures).
 enum Job {
   Body(fo: Int, fi: Int, sub: Map[Int, Int])
-  Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int])
+  Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
 }
 
 /// The builder (build.go builder).
@@ -201,7 +206,7 @@ pub fn (var b: Builder) build() {
 fn (var b: Builder) run_job(j: Job) {
   match j {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
-    Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts)
+    Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack)
   }
 }
 
@@ -1668,7 +1673,7 @@ fn (var b: Builder) ret(v0: Int) {
 /// ret of the value of the expression at (an implicit conversion reads
 /// its type).
 fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
-  let want = b.s.f.results[0]
+  let want = b.result_t()
   if b.is_dead() {
     b.add(Op.Unreachable, -1, Aux.None, [])
     b.dead()
@@ -1688,8 +1693,45 @@ fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
   for vo in b.s.var_params {
     args.push(b.read(vo))
   }
+  if b.s.pack_var {
+    if b.s.pack_orig >= 0 && args.len() == 2 && b.s.err_t >= 0 {
+      args[1] = b.packed_value(v, args[1])
+    }
+    args = [b.add(Op.Tuple, b.s.f.results[0], Aux.None, args)]
+  }
   b.add(Op.Return, -1, Aux.None, args)
   b.dead()
+}
+
+/// The value a packed closure (Map.update) hands back with its result r:
+/// the updated value cur when r is a success, the value it was given
+/// when r is an error (packedValue).
+fn (var b: Builder) packed_value(r: Int, cur: Int) -> Int {
+  let rt = b.vty(r)
+  let err_i = b.m.variant_index(rt, "Err")
+  if cur == b.s.pack_orig || err_i < 0 {
+    return cur
+  }
+  if b.vop(r) == Op.Variant {
+    if let I(tag) = b.s.f.values[r].aux {
+      if tag == err_i {
+        return b.s.pack_orig
+      }
+    }
+    return cur
+  }
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, b.vty(cur))
+  let tag = b.add(Op.Tag, b.int_t(), Aux.None, [r])
+  let is_err = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(err_i)])
+  let (yes, no) = b.branch(is_err)
+  b.s.cur = yes
+  b.jump(join, [b.s.pack_orig])
+  b.s.cur = no
+  b.jump(join, [cur])
+  b.seal(join)
+  b.s.cur = join
+  res
 }
 
 fn (var b: Builder) retv(v: Int) {
@@ -1738,10 +1780,19 @@ fn (var b: Builder) finish_fn() {
   let saved = b.s.cur
   b.seal(b.s.unwind_b)
   b.s.cur = b.s.unwind_b
-  b.s.f.add(b.s.cur, Op.Call, b.unit_t(), Aux.S(s: "rt.fault_continue"), [])
+  if !b.s.f.catches {
+    // a fault goes on to the caller (decision 0085)
+    b.s.f.add(b.s.cur, Op.Call, b.unit_t(), Aux.S(s: "rt.fault_continue"), [])
+  }
   var rs: List[Int] = []
   for t in b.s.f.results {
     rs.push(b.zero(t, []))
+  }
+  if b.s.pack_orig >= 0 {
+    // a packed closure hands back the value it was given
+    let pt = b.s.f.results[0]
+    let z = b.zero(b.m.types[pt].elems[0], [])
+    rs = [b.add(Op.Tuple, pt, Aux.None, [z, b.s.pack_orig])]
   }
   b.add(Op.Return, -1, Aux.None, rs)
   b.s.cur = saved

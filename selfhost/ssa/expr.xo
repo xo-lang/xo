@@ -327,13 +327,15 @@ fn (var b: Builder) expr(e: Expr) -> Int {
           return b.unit()
         }
       }
-      b.unsupported("Map")
-      return b.undef(b.type_of(e))
+      var ks: List[Expr] = []
+      var vs: List[Expr] = []
+      for en in entries {
+        ks.push(en.key)
+        vs.push(en.value)
+      }
+      return b.map_lit(b.type_of(e), ks, vs, false)
     }
-    SetLit(..) => {
-      b.unsupported("Set")
-      return b.undef(b.type_of(e))
-    }
+    SetLit(elems: elems, ..) => return b.map_lit(b.type_of(e), elems, [], true)
     IsExpr(x: x, pattern: p, ..) => {
       let v = b.value(x)
       let join = b.new_block()

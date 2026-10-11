@@ -229,6 +229,9 @@ pub struct Func {
   pub captures: List[Int] = []
   /// Called by the runtime.
   pub entry: Bool = false
+  /// A fault in it returns (a closure given to Map.update): its unwind
+  /// block does not go on to the caller (Func.Catches).
+  pub catches: Bool = false
   /// Why the builder left it incomplete (a construct outside the stages
   /// ported, decision 0150), or "": such a function is not compared.
   pub skip: Str = ""

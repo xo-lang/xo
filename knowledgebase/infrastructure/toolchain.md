@@ -814,7 +814,7 @@ selfhost/check/         the checker in Xo, stages 1 to 8 and module loading (dec
                         deps.xo (dependency rules, deny rules, effect ceilings), main.xo (CLI), check_test.xo,
                         info.xo (the records the SSA builder reads: natural types, constructors, calls,
                         patterns, parameter bindings; native mode loads std/native, decision 0150)
-selfhost/ssa/           the SSA builder in Xo, stages 1 and 2 of decision 0150: ir.xo (types, values, blocks,
+selfhost/ssa/           the SSA builder in Xo, stages 1 to 3 of decision 0150: ir.xo (types, values, blocks,
                         functions as tables; the printer), build.xo (types, functions and generics, Braun
                         SSA construction, checks after calls, generated functions), expr.xo, stmt.xo,
                         call.xo (calls, closures, `?`, std calls), show.xo (Display and Debug text, error

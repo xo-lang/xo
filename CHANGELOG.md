@@ -10,6 +10,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   interface values and calls, Error/Display/Debug values, method values,
   `derive Ord` comparisons, and the generated equality and order helpers
   exactly as internal/ssa does (0 differences, three backends).
+- Self hosting: SSA stage 3 (decision 0150): selfhost/ssa lowers Map
+  and Set (helpers, methods, literals, `m[k] = v`, loops, Debug text)
+  and constants of collection types exactly as internal/ssa does.
 - arm64 backend: a function past 1 MiB of code failed to assemble
   (`b.hs` to a fault stub out of range); its conditional branches now
   go through an unconditional `b` as tbz already did.

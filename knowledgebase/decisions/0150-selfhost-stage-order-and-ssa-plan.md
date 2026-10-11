@@ -12,7 +12,9 @@ ssadump_test.go), the checker's native mode and records
 `TestSelfhostSSAMutations`). SSA stage 2 (interfaces and dynamic
 values, method values, `derive Ord` order, the generated equality and
 order helpers) implemented 2026-10-11 in `selfhost/ssa/iface.xo`, with
-the method value records of `selfhost/check` (`ref_subst`). Evidence:
+the method value records of `selfhost/check` (`ref_subst`). SSA stage 3
+(Map and Set, their higher order methods, constants of collection
+types) implemented 2026-10-11 in `selfhost/ssa/map.xo`. Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -200,6 +202,11 @@ values: selfhost/ssa iface.xo), in addition to those of stage 1:
   a type named `<unsupported: ...>` or a call or closure names one (the
   function's text was searched before, which also matched a string
   constant holding that text in selfhost/ssa's own dump code).
+
+**Comparison rules of stage 3** (2026-10-11, collections: selfhost/ssa
+map.xo): none new. The map helpers are generated when asked for (rule
+of stage 2); a packed closure (`Map.update`) is compared as any
+closure.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

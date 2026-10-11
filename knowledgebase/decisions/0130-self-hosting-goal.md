@@ -103,6 +103,10 @@ passes the full suite on the backends it targets.
   6,380 of the Go builder's 11,064 functions identical (was 5,866), 0
   differences on go, arm64, and LLVM builds and 400 mutations. Found an
   arm64 assembler limit (conditional branches past 1 MiB of code).
+- 2026-10-11: SSA stage 3 of 8, collections (decision 0150): Map and
+  Set with their generated helpers, methods, literals, `m[k] = v`,
+  loops, Debug text, and constants of collection types; 8,002 of 11,088
+  functions identical, 0 differences on three backends and mutations.
 
 ## Alternatives
 
