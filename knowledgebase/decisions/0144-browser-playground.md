@@ -47,11 +47,14 @@ whatever the site ships must not include it.
   output are shown with `textContent`. A link's source is inflated to at
   most 64 KB and only checked on load; it runs only when the visitor
   presses run.
-- **Third party code**: `@bjorn3/browser_wasi_shim` 0.4.2 (MIT/Apache-2.0),
-  vendored after review (no network, storage, or eval use).
+- **Third party code**: `@bjorn3/browser_wasi_shim` 0.4.2 (MIT/Apache-2.0)
+  and Google's JS brotli decoder (`js/decode.js` of google/brotli v1.1.0,
+  MIT), vendored after review (no network, storage, or eval use). Browsers'
+  DecompressionStream has no brotli; xz was smaller still (19 MB) but the
+  only browser decoder found ships its WebAssembly as an unreviewable blob.
 
 ## Consequences
-- About 33 MB gzipped of toolchain on the first run (the page asks first: 7 MB to check, 26 MB more to run), cached in Cache
+- About 23 MB of toolchain (brotli; 33 MB with gzip) on the first run (the page asks first: 5 MB to check, 18 MB more to run), cached in Cache
   Storage under content hashed names. Checking alone loads 7 MB.
 - A build and run of a tour program takes about 2 s in Chrome.
 - The site repo carries the binaries; rebuild them with

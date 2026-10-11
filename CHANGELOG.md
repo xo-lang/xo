@@ -12,7 +12,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   sources out of the binary. `build.Generate` is the code generation step
   of `xo build` without a build directory or the Go toolchain.
   `xoplay gen --test` generates test binaries, with `xo_nohttp` when they do
-  not reach std/http (`gen.ReachesStd`).
+  not reach std/http (`gen.ReachesStd`). The playground underlines
+  diagnostics, sets `--seed` and `--explore` for tests, downloads brotli
+  compressed assets (22.5 MB instead of 33), and is tested in CI before
+  every deploy of the site.
 - LLVM backend: struct parameters of 256 bytes or more are passed by
   reference in direct calls, `var` ones written back through the
   pointer, instead of field by field (decision 0145); the self hosted

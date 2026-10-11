@@ -10,7 +10,7 @@ Last verified: 2026-10-10 (Go 1.26.1, Chrome headless).
 | `cmd/xoplay` | this repo | `check DIR`, `fmt FILE`, `gen [--test] DIR OUT`, one JSON object each; built for wasip1 with `-tags xo_playground` |
 | `build.Generate` | `internal/build/build.go` | check plus code generation of `xo build`, no build directory, no Go toolchain |
 | `std/embed_impl.go` / `embed_playground.go` | this repo | the rt, native, and llrt embeds; empty under `xo_playground` |
-| `scripts/build-playground.py` | site repo | builds xoplay.wasm, compile.wasm, link.wasm, the rt plus Go std archive bundle (tag `xo_nohttp`, with `use go` adapters), and the bindings bundle into `static/play/assets/` (gzipped, content hashed) and `static/play/manifest.json` |
+| `scripts/build-playground.py` | site repo | builds xoplay.wasm, compile.wasm, link.wasm, the rt plus Go std archive bundle (tag `xo_nohttp`, with `use go` adapters), and the bindings bundle into `static/play/assets/` (brotli, content hashed) and `static/play/manifest.json` |
 | `assets/js/play/toolchain.js` | site repo | worker: downloads (Cache Storage), runs the tools over an in-memory WASI file system |
 | `assets/js/play/runner.js` | site repo | one worker per run: caps memory, allows only WASI imports |
 | `assets/js/play/play.js`, `layouts/play.html` | site repo | page, CSP, editor, share links |
@@ -27,7 +27,8 @@ scripts/build-playground.py            # after compiler, std/rt, or Go changes (
 `go test ./cmd/xoplay` covers the commands natively. The browser pipeline
 is tested in the site repo by `node scripts/test-playground.mjs` (headless
 Chrome over the DevTools protocol, no npm dependencies; about 1 minute):
-every tour example and mistake, the tour's tests, a failing test, the
+every tour example and mistake, the tour's tests, a failing test, seed
+and explore (a test that fails only under seed 2), underlines, the
 download notice, `#example=` and share links, highlighting, an infinite loop (stopped at 10 s), an output flood (cut at 1 MB,
 HTML shown as text), unbounded allocation (Go "out of memory", exit 2),
 `os.fs.read_text("/etc/passwd")` (fails: no files), `use go "os/exec"`
@@ -59,5 +60,21 @@ core 1.4 changes.
 3. `link -importcfg ... -buildmode=exe -checklinkname=0 -s -w`.
 4. The runner rewrites the memory section to a 1 GiB maximum and runs it.
 
-Sizes (gzipped): xoplay 7 MB, compile 9 MB, link 3 MB, archives 14 MB,
-bindings under 1 MB. Bound Go packages: see `GOBIND` in the script.
+Sizes (brotli `-q 11 -w 24`, `.brotli` files, decoded in the worker by
+`static/play/vendor/brotli-decode-1.1.0`, about 250 ms for the archives):
+xoplay 4.9 MB, compile 6.2 MB, link 2.1 MB, archives 9.3 MB, bindings
+under 0.1 MB; 22.5 MB in all (33 MB with gzip -9, 19 MB with xz -9).
+Last verified: 2026-10-10.
+
+## CI
+
+`.github/workflows/pages.yml` in the site repo runs
+`node scripts/test-playground.mjs` with `CHROME=/usr/bin/google-chrome` and
+`CHROME_FLAGS=--no-sandbox` (Ubuntu runners' AppArmor blocks Chrome's
+sandbox) before deploying; a failure stops the deploy.
+
+## Editor extras
+
+Diagnostics of the last check are underlined (wavy, `xmark-error` and
+`xmark-warning` in the overlay) and cleared on the next edit. The gear next
+to test sets `--seed` and `--explore` (capped at 1000) for the test binary. Bound Go packages: see `GOBIND` in the script.
