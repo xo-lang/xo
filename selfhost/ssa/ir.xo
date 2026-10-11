@@ -1,0 +1,706 @@
+// The SSA intermediate representation (internal/ssa ssa.go, decision
+// 0045) in the table design of decisions 0141 and 0150: a type is an Int
+// into the module's `types` (interned by name), a value an Int into its
+// function's `values` (its ID), a block an Int into `blocks` (its ID), and
+// an edge an Int into `edges`. -1 stands for none.
+
+/// What a type is (ssa.Kind).
+pub enum Kind {
+  Unit
+  Int
+  Float
+  Bool
+  Str
+  Struct
+  Enum
+  Tuple
+  List
+  Cap
+  Func
+  Box
+  Handle
+  /// A type the builder could not lower (poison): every function its name
+  /// reaches is skipped.
+  Bad
+}
+
+/// A named struct field or variant field.
+pub struct SField {
+  pub name: Str
+  pub ty: Int
+}
+
+/// An enum variant; its tag is its index.
+pub struct SVariant {
+  pub name: Str
+  pub fields: List[SField] = []
+}
+
+/// An SSA type (ssa.Type).
+pub struct SType {
+  pub kind: Kind
+  /// The printed name: `Int`, `Body`, `List[Op]`, `(Int, Bool)`.
+  pub name: Str
+  pub fields: List[SField] = []
+  pub variants: List[SVariant] = []
+  /// Tuple elements; List: the element; Func: the parameters; Box and
+  /// Handle: the type arguments.
+  pub elems: List[Int] = []
+  /// Func: the result.
+  pub ret: Int = -1
+  /// The struct of a Map or Set.
+  pub coll: Bool = false
+  /// A sized integer (0 for Int itself) or Float32 (32).
+  pub bits: Int = 0
+  pub unsigned: Bool = false
+}
+
+/// An instruction opcode (ssa.Op).
+pub enum Op {
+  Param
+  Const
+  Add
+  Sub
+  Mul
+  Div
+  Rem
+  Neg
+  And
+  Or
+  Xor
+  Not
+  Shl
+  Shr
+  Eq
+  Ne
+  Lt
+  Le
+  Gt
+  Ge
+  IntToFloat
+  FloatToInt
+  IntConv
+  Struct
+  Tuple
+  Variant
+  Field
+  SetField
+  Tag
+  Payload
+  Cap
+  Undef
+  Closure
+  Capture
+  CallValue
+  Box
+  Unbox
+  FuncAddr
+  Rebind
+  Call
+  Fault
+  Retain
+  Release
+  Drop
+  Reuse
+  Share
+  Jump
+  Branch
+  Return
+  Unreachable
+}
+
+/// The printed name of an opcode.
+pub fn op_name(o: Op) -> Str {
+  match o {
+    Param => "param"
+    Const => "const"
+    Add => "add"
+    Sub => "sub"
+    Mul => "mul"
+    Div => "div"
+    Rem => "rem"
+    Neg => "neg"
+    And => "and"
+    Or => "or"
+    Xor => "xor"
+    Not => "not"
+    Shl => "shl"
+    Shr => "shr"
+    Eq => "eq"
+    Ne => "ne"
+    Lt => "lt"
+    Le => "le"
+    Gt => "gt"
+    Ge => "ge"
+    IntToFloat => "itof"
+    FloatToInt => "ftoi"
+    IntConv => "iconv"
+    Struct => "struct"
+    Tuple => "tuple"
+    Variant => "variant"
+    Field => "field"
+    SetField => "setfield"
+    Tag => "tag"
+    Payload => "payload"
+    Cap => "cap"
+    Undef => "undef"
+    Closure => "closure"
+    Capture => "capture"
+    CallValue => "callv"
+    Box => "box"
+    Unbox => "unbox"
+    FuncAddr => "funcaddr"
+    Rebind => "rebind"
+    Call => "call"
+    Fault => "fault"
+    Retain => "retain"
+    Release => "release"
+    Drop => "drop"
+    Reuse => "reuse"
+    Share => "share"
+    Jump => "jump"
+    Branch => "br"
+    Return => "ret"
+    Unreachable => "unreachable"
+  }
+}
+
+/// Whether o ends a block.
+pub fn is_terminator(o: Op) -> Bool {
+  o is Op.Jump | Op.Branch | Op.Return | Op.Unreachable | Op.Fault
+}
+
+/// The payload of an instruction (ssa.Value.Aux): an integer (constant,
+/// tag, field index), a Float, a Bool, a name (callee, capability field,
+/// function), constant bytes, or a variant field (tag, field).
+pub enum Aux {
+  None
+  I(n: Int)
+  F(f: Float)
+  B(b: Bool)
+  S(s: Str)
+  Bs(b: Bytes)
+  P(tag: Int, field: Int)
+}
+
+/// An instruction or block parameter (ssa.Value); its ID is its index.
+pub struct Value {
+  pub op: Op
+  /// The result type, -1 for none.
+  pub ty: Int = -1
+  pub args: List[Int] = []
+  pub aux: Aux = Aux.None
+  pub block: Int = -1
+  /// Terminators: their edges.
+  pub succs: List[Int] = []
+  /// `file:line:col` for operations that can fault.
+  pub pos: Str = ""
+  /// The landing check of a call (Value.Pad), -1 for none.
+  pub pad: Int = -1
+}
+
+/// A control flow edge with the arguments for the target's parameters.
+pub struct Edge {
+  pub from: Int
+  pub to: Int
+  /// -1 for an argument not filled yet.
+  pub args: List[Int] = []
+}
+
+/// A basic block: parameters, instructions (the last a terminator), and
+/// incoming edges.
+pub struct Block {
+  pub params: List[Int] = []
+  pub instrs: List[Int] = []
+  pub preds: List[Int] = []
+}
+
+/// A function (ssa.Func); its parameters are the entry block's.
+pub struct Func {
+  pub name: Str
+  pub results: List[Int] = []
+  pub blocks: List[Block] = []
+  pub values: List[Value] = []
+  pub edges: List[Edge] = []
+  /// The indexes of the `var` parameters (returned after the result).
+  pub var_params: List[Int] = []
+  /// Called through function values: parameter 0 is the closure.
+  pub indirect: Bool = false
+  pub captures: List[Int] = []
+  /// Called by the runtime.
+  pub entry: Bool = false
+  /// Why the builder left it incomplete (a construct outside the stages
+  /// ported, decision 0150), or "": such a function is not compared.
+  pub skip: Str = ""
+}
+
+/// A lowered program (ssa.Module).
+pub struct Module {
+  pub funcs: List[Func] = []
+  /// The first function of each name.
+  pub func_at: Map[Str, Int] = {}
+  pub types: List[SType] = []
+  pub type_at: Map[Str, Int] = {}
+  /// Named struct and enum types in creation order.
+  pub order: List[Int] = []
+}
+
+// ---------------------------------------------------------------------------
+// Types
+
+fn kind_name(k: Kind) -> Str {
+  match k {
+    Unit => "()"
+    Int => "Int"
+    Float => "Float"
+    Bool => "Bool"
+    Str => "Str"
+    _ => "?"
+  }
+}
+
+/// The builtin type of kind k (unit, Int, Float, Bool, Str).
+pub fn (var m: Module) builtin(k: Kind) -> Int {
+  let name = kind_name(k)
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: k, name: name})
+}
+
+fn (var m: Module) intern(t: SType) -> Int {
+  let i = m.types.len()
+  m.type_at[t.name] = i
+  m.types.push(t)
+  i
+}
+
+pub fn (var m: Module) float32() -> Int {
+  if let Some(t) = m.type_at.get("Float32") {
+    return t
+  }
+  m.intern(SType{kind: Kind.Float, name: "Float32", bits: 32})
+}
+
+/// The sized integer type named name (Int8 to UInt64, or Rune), or -1.
+pub fn (var m: Module) int_type(name: Str) -> Int {
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  let (bits, unsigned) = match name {
+    "Int8" => (8, false)
+    "Int16" => (16, false)
+    "Int32" => (32, false)
+    "UInt8" => (8, true)
+    "UInt16" => (16, true)
+    "UInt32" => (32, true)
+    "UInt64" => (64, true)
+    "Rune" => (32, false)
+    _ => return -1
+  }
+  m.intern(SType{kind: Kind.Int, name: name, bits: bits, unsigned: unsigned})
+}
+
+/// The tuple type of elems (unit when empty).
+pub fn (var m: Module) tuple(elems: List[Int]) -> Int {
+  if elems.is_empty() {
+    return m.builtin(Kind.Unit)
+  }
+  var names: List[Str] = []
+  for e in elems {
+    names.push(m.types[e].name)
+  }
+  let name = "(${names.join(", ")})"
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: Kind.Tuple, name: name, elems: elems})
+}
+
+pub fn (var m: Module) list(elem: Int) -> Int {
+  let name = "List[${m.types[elem].name}]"
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: Kind.List, name: name, elems: [elem]})
+}
+
+pub fn (var m: Module) box_of(elem: Int) -> Int {
+  let name = "Box[${m.types[elem].name}]"
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: Kind.Box, name: name, elems: [elem]})
+}
+
+pub fn (var m: Module) handle(name: Str, elems: List[Int]) -> Int {
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: Kind.Handle, name: name, elems: elems})
+}
+
+pub fn (var m: Module) func_type(params: List[Int], ret: Int) -> Int {
+  var names: List[Str] = []
+  for p in params {
+    names.push(m.types[p].name)
+  }
+  let name = "fn(${names.join(", ")}) -> ${m.types[ret].name}"
+  if let Some(t) = m.type_at.get(name) {
+    return t
+  }
+  m.intern(SType{kind: Kind.Func, name: name, elems: params, ret: ret})
+}
+
+/// The named type, created empty with kind k (the caller fills it) when it
+/// is new; the second result reports that.
+pub fn (var m: Module) named(name: Str, k: Kind) -> (Int, Bool) {
+  if let Some(t) = m.type_at.get(name) {
+    return (t, false)
+  }
+  let t = m.intern(SType{kind: k, name: name})
+  if k is Kind.Struct | Kind.Enum {
+    m.order.push(t)
+  }
+  (t, true)
+}
+
+pub fn (m: Module) field_index(t: Int, name: Str) -> Int {
+  for (i, f) in m.types[t].fields.indexed() {
+    if f.name == name {
+      return i
+    }
+  }
+  -1
+}
+
+pub fn (m: Module) variant_index(t: Int, name: Str) -> Int {
+  for (i, v) in m.types[t].variants.indexed() {
+    if v.name == name {
+      return i
+    }
+  }
+  -1
+}
+
+pub fn (m: Module) is_sized(t: Int) -> Bool {
+  m.types[t].kind == Kind.Int && m.types[t].bits != 0
+}
+
+pub fn (m: Module) is_u64(t: Int) -> Bool {
+  m.types[t].kind == Kind.Int && m.types[t].bits == 64 && m.types[t].unsigned
+}
+
+pub fn (m: Module) is_f32(t: Int) -> Bool {
+  m.types[t].kind == Kind.Float && m.types[t].bits == 32
+}
+
+/// Whether values of t hold heap memory (Type.Heap).
+pub fn (m: Module) heap(t: Int) -> Bool {
+  m.heap_in(t, [])
+}
+
+fn (m: Module) heap_in(t: Int, seen: List[Int]) -> Bool {
+  if seen.contains(t) {
+    return true
+  }
+  var s2 = seen
+  s2.push(t)
+  let x = m.types[t]
+  match x.kind {
+    Str | List | Func | Box | Handle => return true
+    Struct => {
+      for f in x.fields {
+        if m.heap_in(f.ty, s2) {
+          return true
+        }
+      }
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          if m.heap_in(f.ty, s2) {
+            return true
+          }
+        }
+      }
+    }
+    Tuple => {
+      for e in x.elems {
+        if m.heap_in(e, s2) {
+          return true
+        }
+      }
+    }
+    Unit | Int | Float | Bool | Cap | Bad => {}
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// Functions
+
+/// Adds a function with an entry block whose parameters have the given
+/// types; returns its index.
+pub fn (var m: Module) new_func(name: Str, params: List[Int], results: List[Int]) -> Int {
+  var f = Func{name: name, results: results}
+  f.blocks.push(Block{})
+  for p in params {
+    f.add_param(0, p)
+  }
+  let i = m.funcs.len()
+  m.funcs.push(f)
+  if !m.func_at.contains(name) {
+    m.func_at[name] = i
+  }
+  i
+}
+
+/// The index of the function named name, or -1.
+pub fn (m: Module) func_index(name: Str) -> Int {
+  m.func_at.get(name) ?? -1
+}
+
+/// Renames function i (Func.Name = ...).
+pub fn (var m: Module) rename_func(i: Int, name: Str) {
+  let old = m.funcs[i].name
+  if (m.func_at.get(old) ?? -1) == i {
+    m.func_at.remove(old)
+    // a later function of the old name is found by name again
+    for (j, f) in m.funcs.indexed() {
+      if j != i && f.name == old {
+        m.func_at[old] = j
+        break
+      }
+    }
+  }
+  m.funcs[i].name = name
+  if !m.func_at.contains(name) || (m.func_at.get(name) ?? -1) > i {
+    m.func_at[name] = i
+  }
+}
+
+pub fn (var f: Func) new_block() -> Int {
+  f.blocks.push(Block{})
+  f.blocks.len() - 1
+}
+
+pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
+  let v = f.values.len()
+  f.values.push(Value{op: Op.Param, ty: t, block: b})
+  f.blocks[b].params.push(v)
+  v
+}
+
+/// Appends an instruction to block b.
+pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
+  let v = f.values.len()
+  f.values.push(Value{op: op, ty: t, args: args, aux: aux, block: b})
+  f.blocks[b].instrs.push(v)
+  v
+}
+
+fn (var f: Func) link(from: Int, to: Int, args: List[Int]) -> Int {
+  let e = f.edges.len()
+  f.edges.push(Edge{from: from, to: to, args: args})
+  f.blocks[to].preds.push(e)
+  e
+}
+
+/// Ends block b with a jump to to.
+pub fn (var f: Func) jump(b: Int, to: Int, args: List[Int]) -> Int {
+  let t = f.add(b, Op.Jump, -1, Aux.None, [])
+  let e = f.link(b, to, args)
+  f.values[t].succs = [e]
+  t
+}
+
+/// Ends block b with a conditional branch.
+pub fn (var f: Func) branch(b: Int, cond: Int, yes: Int, no: Int) -> Int {
+  let t = f.add(b, Op.Branch, -1, Aux.None, [cond])
+  let e1 = f.link(b, yes, [])
+  let e2 = f.link(b, no, [])
+  f.values[t].succs = [e1, e2]
+  t
+}
+
+/// The terminator of block b, or -1.
+pub fn (f: Func) term(b: Int) -> Int {
+  let ins = f.blocks[b].instrs
+  if ins.is_empty() {
+    return -1
+  }
+  let t = ins[ins.len() - 1]
+  if !is_terminator(f.values[t].op) {
+    return -1
+  }
+  t
+}
+
+// ---------------------------------------------------------------------------
+// Printing (print.go)
+
+/// The module in the form of Module.String.
+pub fn (m: Module) text() -> Str {
+  var b = StrBuilder.new()
+  m.write_types(b)
+  for (i, f) in m.funcs.indexed() {
+    if i > 0 {
+      b.write("\n")
+    }
+    m.write_func(b, f)
+  }
+  b.freeze()
+}
+
+pub fn (m: Module) write_types(var b: StrBuilder) {
+  for t in m.order {
+    let line = m.type_line(t)
+    if line.contains("<unsupported: ") {
+      // a type holding one the builder could not lower (poison)
+      continue
+    }
+    b.write(line)
+    b.write("\n")
+  }
+  if !m.order.is_empty() {
+    b.write("\n")
+  }
+}
+
+/// The line of a named struct or enum type.
+pub fn (m: Module) type_line(t: Int) -> Str {
+  let x = m.types[t]
+  if x.kind == Kind.Struct {
+    var fs: List[Str] = []
+    for f in x.fields {
+      fs.push("${f.name}: ${m.types[f.ty].name}")
+    }
+    return "type ${x.name} = struct { ${fs.join(", ")} }"
+  }
+  var vs: List[Str] = []
+  for v in x.variants {
+    if v.fields.is_empty() {
+      vs.push(v.name)
+      continue
+    }
+    var fs: List[Str] = []
+    for f in v.fields {
+      fs.push("${f.name}: ${m.types[f.ty].name}")
+    }
+    vs.push("${v.name}(${fs.join(", ")})")
+  }
+  "type ${x.name} = enum { ${vs.join(" | ")} }"
+}
+
+/// One function in the form of Func.String.
+pub fn (m: Module) func_text(f: Func) -> Str {
+  var b = StrBuilder.new()
+  m.write_func(b, f)
+  b.freeze()
+}
+
+fn (m: Module) write_func(var b: StrBuilder, f: Func) {
+  var ps: List[Str] = []
+  for p in f.blocks[0].params {
+    ps.push("v${p}: ${m.type_name(f.values[p].ty)}")
+  }
+  var rs: List[Str] = []
+  for r in f.results {
+    rs.push(m.type_name(r))
+  }
+  var res = rs.join(", ")
+  if rs.len() != 1 {
+    res = "(${res})"
+  }
+  if f.indirect {
+    var cs: List[Str] = []
+    for c in f.captures {
+      cs.push(m.type_name(c))
+    }
+    res = "${res} captures (${cs.join(", ")})"
+  }
+  b.write("func ${f.name}(${ps.join(", ")}) -> ${res} {\n")
+  for (bi, bl) in f.blocks.indexed() {
+    b.write("b${bi}")
+    if !bl.params.is_empty() {
+      var qs: List[Str] = []
+      for p in bl.params {
+        qs.push("v${p}: ${m.type_name(f.values[p].ty)}")
+      }
+      b.write("(${qs.join(", ")})")
+    }
+    b.write(":")
+    if !bl.preds.is_empty() {
+      var qs: List[Str] = []
+      for e in bl.preds {
+        qs.push("b${f.edges[e].from}")
+      }
+      b.write("  ; preds ${qs.join(", ")}")
+    }
+    b.write("\n")
+    for v in bl.instrs {
+      b.write("  ")
+      m.write_value(b, f, v)
+      b.write("\n")
+    }
+  }
+  b.write("}\n")
+}
+
+fn (m: Module) type_name(t: Int) -> Str {
+  if t < 0 {
+    return "<nil>"
+  }
+  m.types[t].name
+}
+
+fn vname(v: Int) -> Str {
+  if v < 0 {
+    return "<nil>"
+  }
+  "v${v}"
+}
+
+fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
+  let v = f.values[vi]
+  if v.ty >= 0 && !is_terminator(v.op) {
+    b.write("v${vi}: ${m.types[v.ty].name} = ")
+  }
+  b.write(op_name(v.op))
+  var ops: List[Str] = []
+  match v.aux {
+    None => {}
+    I(n) => ops.push("${n}")
+    F(x) => ops.push(float_text(x))
+    B(x) => ops.push(if x { "true" } else { "false" })
+    S(s) => ops.push(if v.op == Op.Const { s.quote() } else { s })
+    Bs(x) => ops.push(x.quote())
+    P(tag, field) => ops.push("${tag}.${field}")
+  }
+  for a in v.args {
+    ops.push(vname(a))
+  }
+  for e in v.succs {
+    var eas: List[Str] = []
+    for a in f.edges[e].args {
+      eas.push(vname(a))
+    }
+    ops.push("b${f.edges[e].to}(${eas.join(", ")})")
+  }
+  if !ops.is_empty() {
+    b.write(" ${ops.join(", ")}")
+  }
+  if !v.pos.is_empty() {
+    b.write(" @ ${v.pos}")
+  }
+  if v.pad >= 0 {
+    b.write(" lands v${v.pad}")
+  }
+}
+
+/// A Float as print.go writes it: strconv 'g' with -1 precision, and
+/// `.0` after a whole number (the same text as Xo's `${x}`).
+fn float_text(x: Float) -> Str {
+  "${x}"
+}

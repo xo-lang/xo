@@ -1,0 +1,98 @@
+// What the checker resolved, as the SSA builder (selfhost/ssa) reads it:
+// the queries of internal/check info.go (decision 0150). The Go checker
+// keys its records by node pointers; here a node is its file, span, and
+// kind (key_of), so every query names the file the node is in.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The key of the node of file f with span sp and kind k (key_of in f).
+pub fn (c: Checker) key_in(f: Int, sp: Span, kind: Int) -> Int {
+  ((f * 1048576 + sp.start.offset) * 1048576 + sp.end.offset) * 64 + kind
+}
+
+pub fn (c: Checker) expr_key_in(f: Int, e: Expr) -> Int {
+  c.key_in(f, parser.expr_span(e), expr_kind(e))
+}
+
+pub fn (c: Checker) pat_key_in(f: Int, p: Pattern) -> Int {
+  c.key_in(f, parser.pattern_span(p), pat_kind(p))
+}
+
+/// The type of e after implicit conversion (Info.TypeOf), or -1 when e
+/// was not checked.
+pub fn (c: Checker) type_in(f: Int, e: Expr) -> Int {
+  match c.type_at.get(c.expr_key_in(f, e)) {
+    Some(i) => c.types[i].ty
+    None => -1
+  }
+}
+
+/// The type of e before implicit conversion (Info.NaturalType), or -1.
+pub fn (c: Checker) nat_in(f: Int, e: Expr) -> Int {
+  c.nat_at.get(c.expr_key_in(f, e)) ?? -1
+}
+
+/// The local binding an identifier of file f refers to or declares
+/// (Info.VarOf), or -1.
+pub fn (c: Checker) var_of(f: Int, id: Ident) -> Int {
+  let key = f * 268435456 + id.span.start.offset
+  if let Some(o) = c.decl_at.get(key) {
+    return o
+  }
+  if let Some(i) = c.name_at.get(key) {
+    let o = c.names[i].obj
+    if o >= 0 && c.objs[o].kind == ObjKind.Local {
+      return o
+    }
+  }
+  -1
+}
+
+/// The function or constant an identifier names (Info.Ref, of the
+/// identifier or of a selector's name), or -1.
+pub fn (c: Checker) ref_of(f: Int, id: Ident) -> Int {
+  let key = f * 268435456 + id.span.start.offset
+  if let Some(i) = c.name_at.get(key) {
+    let o = c.names[i].obj
+    if o >= 0 && (c.objs[o].kind == ObjKind.Func || c.objs[o].kind == ObjKind.Const) {
+      return o
+    }
+  }
+  -1
+}
+
+/// The variant e constructs (Info.Ctor).
+pub fn (c: Checker) ctor_in(f: Int, e: Expr) -> VRef? {
+  c.ctor_at.get(c.expr_key_in(f, e))
+}
+
+/// The type of a conversion or newtype construction `T(x)` (Info.TypeCall),
+/// or -1.
+pub fn (c: Checker) type_call_in(f: Int, e: Expr) -> Int {
+  c.type_call_at.get(c.expr_key_in(f, e)) ?? -1
+}
+
+/// The resolution of a call (Info.CallOf).
+pub fn (c: Checker) call_in(f: Int, e: Expr) -> CallInfo? {
+  c.call_infos.get(c.expr_key_in(f, e))
+}
+
+/// The type of the value p matches (Info.PatType), or -1.
+pub fn (c: Checker) pat_type_in(f: Int, p: Pattern) -> Int {
+  c.pat_type_at.get(c.pat_key_in(f, p)) ?? -1
+}
+
+/// The variant a variant pattern names (Info.PatVariant).
+pub fn (c: Checker) pat_variant_in(f: Int, p: Pattern) -> VRef? {
+  c.pat_variant_at.get(c.pat_key_in(f, p))
+}
+
+/// The newtype a pattern `Email(p)` unwraps (Info.PatNewtype), or -1.
+pub fn (c: Checker) pat_newtype_in(f: Int, p: Pattern) -> Int {
+  c.pat_newtype_at.get(c.pat_key_in(f, p)) ?? -1
+}
+
+/// The parameter bindings of a closure (Info.ClosureParams).
+pub fn (c: Checker) closure_params(f: Int, lit: parser.FnLit) -> List[Int] {
+  c.closure_vars.get(c.key_in(f, lit.span, 30)) ?? []
+}

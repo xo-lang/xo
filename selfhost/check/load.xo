@@ -13,18 +13,21 @@ pub struct Checker {
   fs: Fs
   /// Where the std declaration files are read from.
   std_dir: Str
-  objs: List[Obj] = []
-  mods: List[Module] = []
-  mod_index: Map[Str, Int] = {}
-  files: List[SrcFile] = []
+  pub objs: List[Obj] = []
+  pub mods: List[Module] = []
+  pub mod_index: Map[Str, Int] = {}
+  pub files: List[SrcFile] = []
   /// Modules in dependency order: a module after the modules it imports.
-  order: List[Int] = []
-  prelude: Int = -1
+  pub order: List[Int] = []
+  pub prelude: Int = -1
   roots: List[ModRoot] = []
   /// The root modules of the run, in the order of their directories.
-  root_mods: List[Int] = []
+  pub root_mods: List[Int] = []
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
-  unsupported: Str = ""
+  pub unsupported: Str = ""
+  /// Native mode (check.Options.Native): the implementation modules of
+  /// the native backends are loaded and checked too (load_native).
+  pub native: Bool = false
   /// The environment and the dependencies of the main modules
   /// (modfile.xo, deps.xo).
   deps: DepState = DepState{}
@@ -41,10 +44,10 @@ pub struct Checker {
   ctx: Int = -1
 
   // Types (types.xo, infer.xo).
-  tys: List[Ty] = []
+  pub tys: List[Ty] = []
   /// Variables bound since the start (unify), for undo.
   trail: List[Int] = []
-  unit_ty: Int = -1
+  pub unit_ty: Int = -1
   bad_ty: Int = -1
   /// Named types without arguments, by Type object.
   named0: Map[Int, Int] = {}
@@ -88,10 +91,10 @@ pub struct Checker {
   /// The calls of declared functions and function values, by key: the
   /// callee, the receiver, and the arguments with their `var` flags
   /// (check.go callInfo).
-  call_infos: Map[Int, CallInfo] = {}
+  pub call_infos: Map[Int, CallInfo] = {}
   /// The local each binding name declares, by name_key of the name (the
   /// declaring half of check.go identObj; uses are name records).
-  decl_at: Map[Int, Int] = {}
+  pub decl_at: Map[Int, Int] = {}
   /// XO0101 renames of local names, extended to their uses at the end.
   renames: List[Rename] = []
   /// Bodies checked, for the flow checks: closures before the body
@@ -105,17 +108,40 @@ pub struct Checker {
   split_warned: Map[Int, Bool] = {}
 
   // Results.
-  names: List[NameRec] = []
+  pub names: List[NameRec] = []
   /// Name records by file and offset (name_key).
-  name_at: Map[Int, Int] = {}
+  pub name_at: Map[Int, Int] = {}
   /// Whether a Named type without type arguments is comparable, by Type
   /// object (infer.xo is_eq_type).
   comparable_at: Map[Int, Bool] = {}
-  types: List[TypeRec] = []
-  type_at: Map[Int, Int] = {}
+  pub types: List[TypeRec] = []
+  pub type_at: Map[Int, Int] = {}
   /// Expressions of type Never checked against an expected type, by key.
   never_expr: Map[Int, Bool] = {}
-  diags: List[Diag] = []
+  pub diags: List[Diag] = []
+
+  // What the SSA builder reads (internal/check info.go records, decision
+  // 0150), keyed like type_at (key_of: file, span, kind; a pattern's kind
+  // is PAT_KIND + its index).
+  /// The type of an expression before implicit conversion (info.go
+  /// NaturalType): recorded by infer.
+  pub nat_at: Map[Int, Int] = {}
+  /// The variant an identifier, selector, or call constructs (Ctor).
+  pub ctor_at: Map[Int, VRef] = {}
+  /// The type of a conversion or newtype construction `T(x)` (TypeCall).
+  pub type_call_at: Map[Int, Int] = {}
+  /// The type of the value a pattern matches (PatType), the variant a
+  /// variant pattern names (PatVariant), and the newtype a pattern
+  /// unwraps (PatNewtype).
+  pub pat_type_at: Map[Int, Int] = {}
+  pub pat_variant_at: Map[Int, VRef] = {}
+  pub pat_newtype_at: Map[Int, Int] = {}
+  /// The receiver and parameter bindings of a function body, by function
+  /// object (RecvVar, ParamVars), and the parameter bindings of a closure
+  /// by the key of its literal (ClosureParams).
+  pub recv_var: Map[Int, Int] = {}
+  pub param_vars: Map[Int, List[Int]] = {}
+  pub closure_vars: Map[Int, List[Int]] = {}
   seen: Map[Str, Bool] = {}
 }
 
@@ -130,7 +156,7 @@ pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
 /// Loads the modules under dirs and the std modules they need, then
 /// resolves every user module. Errors are I/O failures of the named
 /// directories, as in check.Check.
-fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str {
+pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   c.load_prelude()
   for d in dirs {
     let st = c.fs.stat(d).ok() ?? None
@@ -159,6 +185,9 @@ fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str {
     let m = c.load_dir(dir)
     c.mods[m].root = true
     c.root_mods.push(m)
+  }
+  if c.native {
+    c.load_native()
   }
   if c.unsupported.is_empty() {
     c.run()
@@ -217,6 +246,63 @@ fn (var c: Checker) load_std(name: Str) -> Int {
   }
   let m = c.new_module(path, name, "std", true)
   c.parse_into(m, "std/${name}.xo", data, true)
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
+}
+
+/// Loads the implementation modules of the native backends (load.go
+/// loadNative, decision 0074): std/native/<name>.xo for the prelude and
+/// every std module loaded so far, until no new std module appears (an
+/// implementation may import more). They are checked like user modules.
+fn (var c: Checker) load_native() {
+  var done: Map[Str, Bool] = {}
+  while {
+    var todo: List[Str] = []
+    for m in c.mods {
+      if m.is_std && !done.contains(m.path) && m.path.starts_with("std/") {
+        todo.push(m.path)
+      }
+    }
+    if todo.is_empty() {
+      return
+    }
+    for path in todo.sort() {
+      done[path] = true
+      let name = path.trim_prefix("std/")
+      let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
+      let data = match src {
+        Some(b) => b
+        None => continue
+      }
+      let m = c.new_module("native/${name}", name, "std/native", false)
+      c.mods[m].native = true
+      c.mods[m].implements = path
+      c.parse_into(m, "std/native/${name}.xo", data, false)
+      c.mods[m].state = 1
+      c.load_imports(m)
+      c.mods[m].state = 2
+      c.order.push(m)
+    }
+  }
+}
+
+/// Loads the intrinsics module of the native backends, std/native/rt.xo
+/// (load.go loadNativeRT): bodiless declarations lowered to calls of the
+/// C runtime. -1 when there is none.
+fn (var c: Checker) load_native_rt(path: Str) -> Int {
+  if let Some(m) = c.mod_index.get(path) {
+    return m
+  }
+  let src = c.fs.read("${c.std_dir}/${path}.xo").ok() ?? None
+  let data = match src {
+    Some(b) => b
+    None => return -1
+  }
+  let m = c.new_module(path, path.trim_prefix("native/"), "std/native", true)
+  c.parse_into(m, "std/${path}.xo", data, true)
   c.mods[m].state = 1
   c.load_imports(m)
   c.mods[m].state = 2
@@ -397,7 +483,13 @@ fn (var c: Checker) load_imports(m: Int) {
       if p.starts_with("std/") {
         dep = c.load_std(p.trim_prefix("std/"))
       } else if p.starts_with("native/") {
+        // the intrinsics of the native backends: only their
+        // implementation modules see them (decision 0074), and other
+        // intrinsics modules
         dep = -1
+        if c.mods[m].native || (c.mods[m].is_std && c.mods[m].path.starts_with("native/")) {
+          dep = c.load_native_rt(p)
+        }
       } else if let Some(x) = c.mod_index.get(p) {
         dep = x
       } else if let Some(r) = c.owner_root(p) {

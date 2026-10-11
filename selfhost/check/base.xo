@@ -79,7 +79,7 @@ fn is_snake(s0: Bytes) -> Bool {
   true
 }
 
-fn text(b: Bytes) -> Str {
+pub fn text(b: Bytes) -> Str {
   b.to_str() ?? "?"
 }
 
@@ -223,7 +223,7 @@ fn (c: Checker) param_text(fo: Int, p: ParamInfo) -> Str {
 }
 
 /// `Type.name` for methods, `name` otherwise.
-fn (c: Checker) display_name(fo: Int) -> Str {
+pub fn (c: Checker) display_name(fo: Int) -> Str {
   let r = c.objs[fo].recv
   if r >= 0 {
     return "${text(c.objs[r].name)}.${text(c.objs[fo].name)}"

@@ -7,6 +7,7 @@ use github.com/xo-lang/xo/selfhost/parser
 /// Types p against t, declares its bindings in the current scope, and
 /// returns its exhaustiveness form.
 fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
+  c.pat_type_at[c.key_of(parser.pattern_span(p), pat_kind(p))] = t
   match p {
     WildcardPat(..) | BadPat(..) => wild_pat()
     BindPat(name: name, ..) => {
@@ -271,8 +272,30 @@ fn (var c: Checker) newtype_of_pattern(path: List[Ident], t: Int) -> Int {
   o
 }
 
+/// The kind of a pattern in keys (key_of): PAT_KIND and its index, after
+/// the kinds of expressions (expr_kind).
+pub const PAT_KIND = 40
+
+/// The index of p's form: wildcard, bind, literal, range, or, tuple,
+/// variant, struct, list, bad.
+pub fn pat_kind(p: Pattern) -> Int {
+  PAT_KIND + match p {
+    WildcardPat(..) => 0
+    BindPat(..) => 1
+    LitPat(..) => 2
+    RangePat(..) => 3
+    OrPat(..) => 4
+    TuplePat(..) => 5
+    VariantPat(..) => 6
+    StructPat(..) => 7
+    ListPat(..) => 8
+    BadPat(..) => 9
+  }
+}
+
 /// `Email(p)`: p matches the newtype's underlying value (decision 0097).
 fn (var c: Checker) newtype_pattern(span: Span, obj: Int, parens: Bool, fields: List[parser.PatField], rest: Bool, t: Int, refutable: Bool) -> IPat {
+  c.pat_newtype_at[c.key_of(span, PAT_KIND + 6)] = obj
   let r = c.resolve(t)
   var inner = c.bad_ty
   if c.tys[r].kind == TyKind.Named && c.tys[r].obj == obj {
@@ -327,6 +350,7 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
     }
     return wild_pat()
   }
+  c.pat_variant_at[c.key_of(span, PAT_KIND + 6)] = VRef{en: en, variant: v}
   let last = path[path.len() - 1]
   if !(parens && last.span == span) {
     c.record_text(last, c.variant_text(en, v))

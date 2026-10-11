@@ -57,7 +57,7 @@ fn (var c: Checker) new_ty(t: Ty) -> Int {
   i
 }
 
-fn (var c: Checker) mk_named(obj: Int, args: List[Int]) -> Int {
+pub fn (var c: Checker) mk_named(obj: Int, args: List[Int]) -> Int {
   if args.is_empty() {
     if let Some(t) = c.named0.get(obj) {
       return t
@@ -69,7 +69,7 @@ fn (var c: Checker) mk_named(obj: Int, args: List[Int]) -> Int {
   c.new_ty(Ty{kind: TyKind.Named, obj: obj, args: args})
 }
 
-fn (var c: Checker) mk_tuple(elems: List[Int]) -> Int {
+pub fn (var c: Checker) mk_tuple(elems: List[Int]) -> Int {
   if elems.is_empty() {
     return c.unit_ty
   }
@@ -115,7 +115,7 @@ fn (var c: Checker) call_result(t: Int, e: Int) -> Int {
 
 /// The Type object of a prelude type; a checker fault when the prelude
 /// lacks it.
-fn (c: Checker) prelude_obj(name: Str) -> Int {
+pub fn (c: Checker) prelude_obj(name: Str) -> Int {
   if c.prelude >= 0 {
     if let Some(o) = c.mods[c.prelude].members.get(name.bytes()) {
       if c.objs[o].kind == ObjKind.Type {
@@ -130,7 +130,7 @@ fn (c: Checker) prelude_obj(name: Str) -> Int {
 // Queries
 
 /// Follows bound inference variables.
-fn (c: Checker) resolve(t0: Int) -> Int {
+pub fn (c: Checker) resolve(t0: Int) -> Int {
   var t = t0
   while t >= 0 && c.tys[t].kind == TyKind.Var && c.tys[t].ref >= 0 {
     t = c.tys[t].ref
@@ -147,7 +147,7 @@ fn (c: Checker) is_unit(t: Int) -> Bool {
   c.tys[r].kind == TyKind.Tuple && c.tys[r].args.is_empty()
 }
 
-fn (c: Checker) is_open_var(t: Int) -> Bool {
+pub fn (c: Checker) is_open_var(t: Int) -> Bool {
   let r = c.resolve(t)
   c.tys[r].kind == TyKind.Var
 }
@@ -176,7 +176,7 @@ fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
   o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == name.bytes()
 }
 
-fn (c: Checker) is_never(t: Int) -> Bool {
+pub fn (c: Checker) is_never(t: Int) -> Bool {
   c.is_prelude(t, "Never")
 }
 
@@ -367,7 +367,7 @@ fn (c: Checker) mentions_param(t0: Int) -> Bool {
 // Substitution
 
 /// The substitution of the type parameters params by args.
-fn (c: Checker) args_subst(params: List[Int], args: List[Int]) -> Subst {
+pub fn (c: Checker) args_subst(params: List[Int], args: List[Int]) -> Subst {
   var s: Subst = {}
   for (i, p) in params.indexed() {
     if i < args.len() {
@@ -379,7 +379,7 @@ fn (c: Checker) args_subst(params: List[Int], args: List[Int]) -> Subst {
 
 /// t with type parameters replaced by s (bound variables are replaced by
 /// what they are bound to).
-fn (var c: Checker) subst(t: Int, s: Subst) -> Int {
+pub fn (var c: Checker) subst(t: Int, s: Subst) -> Int {
   if s.is_empty() || t < 0 {
     return t
   }
@@ -515,8 +515,11 @@ fn (c: Checker) identical(a0: Int, b0: Int) -> Bool {
 
 /// The name used in messages: std types outside the prelude are
 /// qualified with their module's name.
-fn (c: Checker) qual_name(o: Int) -> Str {
+pub fn (c: Checker) qual_name(o: Int) -> Str {
   let m = c.objs[o].module
+  if m >= 0 && c.mods[m].native {
+    return "native.${c.mods[m].name}.${text(c.objs[o].name)}"
+  }
   if m >= 0 && c.mods[m].is_std && !c.mods[m].is_prelude {
     return "${c.mods[m].name}.${text(c.objs[o].name)}"
   }
@@ -526,7 +529,7 @@ fn (c: Checker) qual_name(o: Int) -> Str {
 /// The text of t as Type.String prints it after Deep: variables are
 /// followed (an open one is `_`), and a function type whose error type
 /// is Never has none.
-fn (c: Checker) show(t: Int) -> Str {
+pub fn (c: Checker) show(t: Int) -> Str {
   var b = StrBuilder.new()
   c.write_ty(b, t, true)
   b.freeze()

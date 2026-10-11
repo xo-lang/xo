@@ -1,0 +1,1891 @@
+// The SSA builder (internal/ssa build.go), stage 1 of decision 0150: it
+// lowers the program checked by selfhost/check (native mode) into the
+// SSA internal/ssa's builder makes before its passes, function by
+// function in the same order, so `xo ssadump --stage=build` and this
+// builder print the same text for every function it completes. A
+// construct outside the stages ported marks the function it is in as
+// skipped (Func.skip) and the build goes on, as the Go builder goes on
+// after an unsupported construct.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+type Expr = parser.Expr
+type Stmt = parser.Stmt
+type Pattern = parser.Pattern
+type Ident = parser.Ident
+type Span = parser.Span
+
+/// The name of the hidden trace field of Err (build_frames.go).
+const TRACE_FIELD = "xo.tr"
+
+/// A loop around the current code (build.go loopCtx).
+struct LoopCtx {
+  label: Bytes
+  brk: Int
+  cont: Int
+  exits: Int
+}
+
+/// The state of one function body under construction (build.go fn).
+struct S {
+  f: Func
+  /// The function's index in the module.
+  fi: Int = -1
+  /// The checker's function object (-1 for generated code), and the named
+  /// function whose frame a `?` in a closure records.
+  fo: Int = -1
+  frame_fo: Int = -1
+  /// How deep in closures this code is.
+  closures: Int = 0
+  cur: Int = 0
+  /// The checker file of the code being lowered (expressions are keyed by
+  /// file, span, and kind).
+  file: Int = -1
+  /// Braun et al.: the definition of each variable per block, keyed by
+  /// def_key; variables are checker locals or (negative) made up ones.
+  defs: Map[Int, Int] = {}
+  var_type: Map[Int, Int] = {}
+  sealed: Map[Int, Bool] = {}
+  incomplete: Map[Int, List[Int]] = {}
+  param_var: Map[Int, Int] = {}
+  loops: List[LoopCtx] = []
+  /// The bindings of `var` parameters, returned updated.
+  var_params: List[Int] = []
+  /// The blocks open around the current code (each a frame of deferred
+  /// code; `defer` is outside stage 1, so none holds any).
+  exits: Int = 0
+  /// The function's unwind block (lazy), -1 until needed.
+  unwind_b: Int = -1
+  /// The success type and the error type (-1: cannot fail), checker types.
+  res: Int = -1
+  err_t: Int = -1
+  /// The type arguments of the instance being built.
+  sub: Map[Int, Int] = {}
+}
+
+/// A body waiting to be built (the Go builder's queue of closures).
+enum Job {
+  Body(fo: Int, fi: Int, sub: Map[Int, Int])
+  Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int])
+}
+
+/// The builder (build.go builder).
+pub struct Builder {
+  pub c: check.Checker
+  pub m: Module = Module{}
+  /// The directory fault positions are relative to.
+  line_root: Str = ""
+  s: S = S{f: Func{name: ""}}
+  queue: List[Job] = []
+  /// Functions by instance key, and named functions used as values.
+  funcs: Map[Str, Int] = {}
+  thunks: Map[Str, Int] = {}
+  nclos: Int = 0
+  /// The names of types two loaded user modules both declare.
+  ambiguous: Map[Str, Bool] = {}
+  /// Implementation modules by the std path they implement.
+  natives: Map[Str, Int] = {}
+  /// The module holding main.
+  main_mod: Int = -1
+  /// The program uses a concurrency construct: the Go builder builds it
+  /// again with unwinding checks (conc), as build_program does; the
+  /// constructs themselves are outside stage 1.
+  pub need_conc: Bool = false
+  pub conc: Bool = false
+  /// Why the run cannot be built here (no main, concurrency), or "".
+  pub why: Str = ""
+  /// While declaring a function: what was unsupported in its signature.
+  declaring: Bool = false
+  pend_skip: Str = ""
+  /// Made up variables (negative ids).
+  nvar: Int = 0
+  /// The constants of heap types built so far (build_int.go constValue).
+  consts: Map[Int, Int] = {}
+}
+
+/// Builds the program c checked (BuildOpts): once, and when it uses a
+/// concurrency construct again with unwinding checks.
+pub fn build_program(c: check.Checker, line_root: Str) -> Builder {
+  var b = new_builder(c, line_root)
+  b.build()
+  if b.need_conc {
+    b = new_builder(c, line_root)
+    b.conc = true
+    b.build()
+  }
+  b
+}
+
+/// A builder for the program c checked.
+pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
+  var b = Builder{c: c, line_root: line_root}
+  b.ambiguous = b.ambiguous_type_names()
+  b
+}
+
+/// Builds the program: main and every function reachable from it, in the
+/// Go builder's order (buildModule, before the passes).
+pub fn (var b: Builder) build() {
+  var main_fo = -1
+  for m in b.c.root_mods {
+    if let Some(o) = b.c.mods[m].members.get(b"main") {
+      if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
+        main_fo = o
+        b.main_mod = m
+        break
+      }
+    }
+  }
+  if main_fo < 0 {
+    b.why = "no `main` function in the root module"
+    return
+  }
+  let mf = b.declare(main_fo, [])
+  if b.uses_os_tasks() {
+    b.need_conc = true
+    if b.conc {
+      b.tasks_main(mf)
+    }
+  } else {
+    let et = b.fail_err(b.c.objs[main_fo].err)
+    if et >= 0 {
+      b.main_wrapper(mf, et)
+    }
+  }
+  var i = 0
+  while i < b.queue.len() {
+    let j = b.queue[i]
+    i += 1
+    b.run_job(j)
+  }
+  if b.need_conc && !b.conc {
+    b.why = "concurrency: built again with unwinding checks"
+  }
+}
+
+fn (var b: Builder) run_job(j: Job) {
+  match j {
+    Body(fo, fi, sub) => b.body(fo, fi, sub)
+    Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Positions and errors
+
+fn (b: Builder) file_name(f: Int) -> Str {
+  rel_path_from(b.line_root, b.c.files[f].path)
+}
+
+/// `file:line:col` of a span in file f (build.go pos).
+fn (b: Builder) pos_in(f: Int, sp: Span) -> Str {
+  "${b.file_name(f)}:${sp.start.line}:${sp.start.col}"
+}
+
+/// `file:line` (build.go posLine).
+fn (b: Builder) line_in(f: Int, sp: Span) -> Str {
+  "${b.file_name(f)}:${sp.start.line}"
+}
+
+fn (b: Builder) pos(sp: Span) -> Str {
+  b.pos_in(b.s.file, sp)
+}
+
+fn (b: Builder) pos_line(sp: Span) -> Str {
+  b.line_in(b.s.file, sp)
+}
+
+/// Records a construct outside the stages ported: the function being
+/// built (or declared) is not compared.
+fn (var b: Builder) unsupported(what: Str) {
+  if b.declaring {
+    if b.pend_skip.is_empty() {
+      b.pend_skip = what
+    }
+    return
+  }
+  if b.s.f.skip.is_empty() {
+    b.s.f.skip = what
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Checker queries (internal/check info.go)
+
+fn (b: Builder) tyk(t: Int) -> check.TyKind {
+  b.c.tys[b.c.resolve(t)].kind
+}
+
+/// The Type object of a named type, or -1.
+fn (b: Builder) named_obj(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
+  let r = b.c.resolve(t)
+  if b.c.tys[r].kind == check.TyKind.Named {
+    return b.c.tys[r].obj
+  }
+  -1
+}
+
+fn (b: Builder) ty_args(t: Int) -> List[Int] {
+  b.c.tys[b.c.resolve(t)].args
+}
+
+fn (b: Builder) obj_name(o: Int) -> Str {
+  check.text(b.c.objs[o].name)
+}
+
+fn (b: Builder) obj_mod(o: Int) -> Int {
+  b.c.objs[o].module
+}
+
+fn (b: Builder) is_prelude_mod(m: Int) -> Bool {
+  m >= 0 && b.c.mods[m].is_prelude
+}
+
+fn (b: Builder) is_std_mod(m: Int) -> Bool {
+  m >= 0 && b.c.mods[m].is_std
+}
+
+/// Whether checker type t is one of the prelude types names
+/// (isPreludeNamed).
+fn (b: Builder) is_prelude_named(t: Int, names: List[Str]) -> Bool {
+  let o = b.named_obj(t)
+  if o < 0 || !b.is_prelude_mod(b.obj_mod(o)) {
+    return false
+  }
+  names.contains(b.obj_name(o))
+}
+
+fn (b: Builder) is_never(t: Int) -> Bool {
+  t >= 0 && b.c.is_never(t)
+}
+
+/// The error type of a function that can fail, or -1 (failErr).
+fn (b: Builder) fail_err(e: Int) -> Int {
+  if e < 0 || b.c.is_never(e) {
+    return -1
+  }
+  e
+}
+
+/// T and E of Result[T, E] (resultParts), or (-1, -1).
+fn (b: Builder) result_parts(t: Int) -> (Int, Int) {
+  let o = b.named_obj(t)
+  if o >= 0 && b.is_prelude_mod(b.obj_mod(o)) && b.obj_name(o) == "Result" {
+    let a = b.ty_args(t)
+    if a.len() == 2 {
+      return (a[0], a[1])
+    }
+  }
+  (-1, -1)
+}
+
+/// T of Option[T] (optionElem), or -1.
+fn (b: Builder) option_elem(t: Int) -> Int {
+  let o = b.named_obj(t)
+  if o >= 0 && b.is_prelude_mod(b.obj_mod(o)) && b.obj_name(o) == "Option" {
+    let a = b.ty_args(t)
+    if a.len() == 1 {
+      return a[0]
+    }
+  }
+  -1
+}
+
+fn (b: Builder) is_never_result(t: Int) -> Bool {
+  let (_, et) = b.result_parts(t)
+  et >= 0 && b.c.is_never(et)
+}
+
+/// The prelude type name applied to args (preludeType).
+fn (var b: Builder) prelude_type(name: Str, args: List[Int]) -> Int {
+  b.c.mk_named(b.c.prelude_obj(name), args)
+}
+
+/// What a function with success type res and error type err returns
+/// (resultOf).
+fn (var b: Builder) result_of(res: Int, err: Int) -> Int {
+  if err < 0 {
+    return res
+  }
+  var r = res
+  if r < 0 {
+    r = b.c.unit_ty
+  }
+  b.prelude_type("Result", [r, err])
+}
+
+/// The type parameters of fo that take types (typeParams).
+fn (b: Builder) type_params(fo: Int) -> List[Int] {
+  var out: List[Int] = []
+  for p in b.c.objs[fo].tparams {
+    if !b.c.objs[p].effect {
+      out.push(p)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Types (build.go typ)
+
+fn (var b: Builder) unit_t() -> Int {
+  b.m.builtin(Kind.Unit)
+}
+
+fn (var b: Builder) int_t() -> Int {
+  b.m.builtin(Kind.Int)
+}
+
+fn (var b: Builder) bool_t() -> Int {
+  b.m.builtin(Kind.Bool)
+}
+
+fn (var b: Builder) str_t() -> Int {
+  b.m.builtin(Kind.Str)
+}
+
+fn (var b: Builder) float_t() -> Int {
+  b.m.builtin(Kind.Float)
+}
+
+/// Lowers a checker type.
+fn (var b: Builder) typ(t0: Int) -> Int {
+  if t0 < 0 {
+    return b.unit_t()
+  }
+  let t = b.c.resolve(t0)
+  let x = b.c.tys[t]
+  match x.kind {
+    Tuple => {
+      var es: List[Int] = []
+      for e in x.args {
+        es.push(b.typ(e))
+      }
+      return b.m.tuple(es)
+    }
+    Func => {
+      var ps: List[Int] = []
+      for (i, p) in x.args.indexed() {
+        if x.vars[i] {
+          b.unsupported("function values with `var` parameters")
+        }
+        ps.push(b.typ(p))
+      }
+      let rt = b.typ(b.result_of(x.result, b.fail_err(x.err)))
+      return b.m.func_type(ps, rt)
+    }
+    Var => return b.unit_t()
+    Named => return b.named_type(t)
+    _ => {}
+  }
+  b.unsupported("the type `${b.c.show(t)}`")
+  b.poison(b.c.show(t))
+}
+
+fn (var b: Builder) named_type(t: Int) -> Int {
+  let x = b.c.tys[t]
+  let obj = x.obj
+  let om = b.obj_mod(obj)
+  let oname = b.obj_name(obj)
+  if b.is_prelude_mod(om) {
+    match oname {
+      "Int" | "Int64" => return b.int_t()
+      "Float" => return b.float_t()
+      "Float32" => return b.m.float32()
+      "Secret" => {
+        let it = b.impl_named(t)
+        let (st, created) = b.m.named(b.type_name(it), Kind.Struct)
+        if created && x.args.len() == 1 {
+          let ft = b.typ(x.args[0])
+          b.m.types[st].fields = [SField{name: "v", ty: ft}]
+        }
+        return st
+      }
+      "Bool" => return b.bool_t()
+      "Str" | "Bytes" | "StrBuilder" | "BytesBuilder" => return b.str_t()
+      "Int8" | "Int16" | "Int32" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Rune" => return b.m.int_type(oname)
+      "Duration" | "Time" => return b.int_t()
+      "Never" => return b.unit_t()
+      "Fs" => return b.fs_type()
+      "Os" | "Stdio" | "Clock" | "Net" | "Proc" | "Env" | "Rand" => {
+        let (ct, _) = b.m.named(oname, Kind.Cap)
+        return ct
+      }
+      "List" | "Buf" => {
+        let et = b.typ(x.args[0])
+        return b.m.list(et)
+      }
+      "Map" => {
+        let k = b.typ(x.args[0])
+        let v = b.typ(x.args[1])
+        return b.map_type(false, k, v)
+      }
+      "Set" => {
+        let k = b.typ(x.args[0])
+        return b.map_type(true, k, b.unit_t())
+      }
+      "Result" => {
+        if x.args.len() == 2 && b.c.is_never(x.args[1]) {
+          return b.typ(x.args[0])
+        }
+      }
+      _ => {}
+    }
+  }
+  if om >= 0 && b.c.mods[om].path == "std/testing" {
+    let cap = test_cap(oname)
+    if !cap.is_empty() {
+      if cap == "Fs" {
+        return b.fs_type()
+      }
+      let (ct, _) = b.m.named(cap, Kind.Cap)
+      return ct
+    }
+  }
+  let impl_t = b.impl_named(t)
+  let name = b.type_name(impl_t)
+  let tk = b.c.objs[obj].tkind
+  if tk == "struct" {
+    if b.conc_type(obj) {
+      // a handle of the runtime (build_conc.go concType)
+      b.need_conc = true
+      var hname = oname
+      if !b.is_prelude_mod(om) {
+        hname = "task.Group"
+      }
+      var es: List[Int] = []
+      var ns: List[Str] = []
+      for a in x.args {
+        let et = b.typ(a)
+        es.push(et)
+        ns.push(b.m.types[et].name)
+      }
+      if !ns.is_empty() {
+        hname = "${hname}[${ns.join(", ")}]"
+      }
+      return b.m.handle(hname, es)
+    }
+    let it = b.impl_type(obj)
+    if it >= 0 {
+      return b.typ(b.c.mk_named(it, x.args))
+    }
+    if om >= 0 && b.c.mods[om].path.starts_with("native/") && b.c.objs[obj].opaque {
+      if oname == "Loc" {
+        return b.str_t()
+      }
+      return b.m.handle("${b.c.mods[om].path.replace("/", ".")}.${oname}", [])
+    }
+    let std_opaque = b.is_std_mod(om) && (b.c.objs[obj].opaque || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target"))
+    if !std_opaque {
+      let (st, created) = b.m.named(name, Kind.Struct)
+      if created {
+        let sub = b.c.args_subst(b.c.objs[obj].tparams, x.args)
+        var fs: List[SField] = []
+        for f in b.c.objs[obj].fields {
+          let ft = b.c.subst(f.ty, sub)
+          let lt = b.typ(ft)
+          fs.push(SField{name: check.text(f.name), ty: b.boxed(ft, lt, name)})
+        }
+        b.m.types[st].fields = fs
+      }
+      return st
+    }
+  } else if tk == "enum" {
+    let (et, created) = b.m.named(name, Kind.Enum)
+    if created {
+      let sub = b.c.args_subst(b.c.objs[obj].tparams, x.args)
+      var vs: List[SVariant] = []
+      let prelude = b.is_prelude_mod(om)
+      for v in b.c.objs[obj].variants {
+        var nv = SVariant{name: check.text(v.name)}
+        for (i, f) in v.fields.indexed() {
+          var fname = check.text(f.name)
+          if fname.is_empty() {
+            fname = "${i}"
+          }
+          let ct = b.c.subst(f.ty, sub)
+          var ft = b.typ(ct)
+          if !prelude {
+            ft = b.boxed(ct, ft, name)
+          }
+          nv.fields.push(SField{name: fname, ty: ft})
+        }
+        if prelude && oname == "Result" && nv.name == "Err" {
+          nv.fields.push(SField{name: TRACE_FIELD, ty: b.trace_type()})
+        }
+        vs.push(nv)
+      }
+      b.m.types[et].variants = vs
+    }
+    return et
+  } else if tk == "alias" {
+    return b.typ(b.c.subst(b.c.objs[obj].target, b.c.args_subst(b.c.objs[obj].tparams, x.args)))
+  } else if tk == "newtype" {
+    let (st, created) = b.m.named(name, Kind.Struct)
+    if created {
+      let ft = b.c.subst(b.c.objs[obj].target, b.c.args_subst(b.c.objs[obj].tparams, x.args))
+      let lt = b.typ(ft)
+      b.m.types[st].fields = [SField{name: "0", ty: b.boxed(ft, lt, name)}]
+    }
+    return st
+  } else if tk == "interface" {
+    if b.dyn_iface(obj) {
+      return b.dyn_type()
+    }
+    b.unsupported("the interface type `${name}`")
+    return b.poison(name)
+  }
+  b.unsupported("the type `${b.c.show(t)}`")
+  b.poison(b.c.show(t))
+}
+
+/// The type of values whose type the builder could not lower: a unit
+/// named `<unsupported: T>`, so that every function its name reaches is
+/// skipped (dump).
+fn (var b: Builder) poison(text: Str) -> Int {
+  let name = "<unsupported: ${text}>"
+  if let Some(t) = b.m.type_at.get(name) {
+    return t
+  }
+  let i = b.m.types.len()
+  b.m.types.push(SType{kind: Kind.Bad, name: name})
+  b.m.type_at[name] = i
+  i
+}
+
+/// The capability a fake of std/testing stands for (testCaps), or "".
+fn test_cap(name: Str) -> Str {
+  match name {
+    "TestOs" => "Os"
+    "FakeNet" => "Net"
+    "MemFs" => "Fs"
+    "FakeClock" => "Clock"
+    "FakeEnv" => "Env"
+    "FakeStdio" => "Stdio"
+    "FakeProc" => "Proc"
+    _ => ""
+  }
+}
+
+/// Whether the struct obj is a runtime handle of the concurrency
+/// constructs (build_conc.go concType).
+fn (b: Builder) conc_type(obj: Int) -> Bool {
+  let om = b.obj_mod(obj)
+  if om < 0 {
+    return false
+  }
+  let n = b.obj_name(obj)
+  if b.c.mods[om].is_prelude {
+    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn"
+  }
+  b.c.mods[om].path == "std/task" && n == "Group"
+}
+
+/// The lowered Map or Set (build_map.go mapType).
+fn (var b: Builder) map_type(set: Bool, k: Int, v: Int) -> Int {
+  var name = "Map[${b.m.types[k].name}, ${b.m.types[v].name}]"
+  if set {
+    name = "Set[${b.m.types[k].name}]"
+  }
+  let (t, created) = b.m.named(name, Kind.Struct)
+  if created {
+    let kl = b.m.list(k)
+    let vl = b.m.list(v)
+    let ll = b.m.list(b.bool_t())
+    let sl = b.m.list(b.int_t())
+    let n = b.int_t()
+    b.m.types[t].coll = true
+    b.m.types[t].fields = [SField{name: "keys", ty: kl}, SField{name: "vals", ty: vl}, SField{name: "live", ty: ll}, SField{name: "slots", ty: sl}, SField{name: "n", ty: n}]
+  }
+  t
+}
+
+/// The lowered Fs (build_io.go fsType).
+fn (var b: Builder) fs_type() -> Int {
+  let (t, created) = b.m.named("xo.Fs", Kind.Struct)
+  if created {
+    let st = b.str_t()
+    let it = b.int_t()
+    b.m.types[t].fields = [SField{name: "root", ty: st}, SField{name: "mode", ty: it}]
+  }
+  t
+}
+
+fn (b: Builder) is_fs(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.Fs"
+}
+
+/// The value of an interface type Error, Display, or Debug (build_show.go
+/// dynType).
+fn (var b: Builder) dyn_type() -> Int {
+  let (t, created) = b.m.named("xo.dyn", Kind.Struct)
+  if created {
+    let st = b.str_t()
+    let bt = b.bool_t()
+    b.m.types[t].fields = [SField{name: "text", ty: st}, SField{name: "raw", ty: bt}, SField{name: "dbg", ty: st}]
+  }
+  t
+}
+
+fn (b: Builder) is_dyn(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.dyn"
+}
+
+fn (b: Builder) is_iface(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && b.m.types[t].name.starts_with("xo.iface[")
+}
+
+fn (b: Builder) dyn_iface(obj: Int) -> Bool {
+  b.is_prelude_mod(b.obj_mod(obj)) && (b.obj_name(obj) is "Error" | "Display" | "Debug")
+}
+
+/// xo.trace (build_frames.go traceType).
+fn (var b: Builder) trace_type() -> Int {
+  let (t, created) = b.m.named("xo.trace", Kind.Struct)
+  if created {
+    let st = b.str_t()
+    let ft = b.m.func_type([], st)
+    let frame = b.m.tuple([st, st, ft])
+    let lt = b.m.list(frame)
+    b.m.types[t].fields = [SField{name: "frames", ty: lt}]
+  }
+  t
+}
+
+fn (b: Builder) is_trace(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.trace"
+}
+
+/// The field type of t when it is boxed: Box[ft] when the field's checker
+/// type ct reaches owner by value (decision 0052), else ft.
+fn (var b: Builder) boxed(ct: Int, ft: Int, owner: Str) -> Int {
+  if b.reaches_by_value(ct, owner, []) {
+    return b.m.box_of(ft)
+  }
+  ft
+}
+
+fn (var b: Builder) reaches_by_value(t0: Int, owner: Str, seen: List[Str]) -> Bool {
+  b.reaches(t0, owner, seen).0
+}
+
+/// reachesByValue, threading seen (Go shares one map through the walk).
+fn (var b: Builder) reaches(t0: Int, owner: Str, seen0: List[Str]) -> (Bool, List[Str]) {
+  var seen = seen0
+  if t0 < 0 {
+    return (false, seen)
+  }
+  let t = b.c.resolve(t0)
+  let x = b.c.tys[t]
+  match x.kind {
+    Tuple => {
+      for e in x.args {
+        let (r, s2) = b.reaches(e, owner, seen)
+        seen = s2
+        if r {
+          return (true, seen)
+        }
+      }
+    }
+    Named => {
+      let obj = x.obj
+      let om = b.obj_mod(obj)
+      let oname = b.obj_name(obj)
+      if b.is_prelude_mod(om) && (oname is "Int" | "Int64" | "Float" | "Bool" | "Str" | "Never" | "Os" | "Stdio" | "List") {
+        return (false, seen)
+      }
+      let tk = b.c.objs[obj].tkind
+      if tk == "alias" {
+        return b.reaches(b.c.subst(b.c.objs[obj].target, b.c.args_subst(b.c.objs[obj].tparams, x.args)), owner, seen)
+      }
+      if tk == "struct" || tk == "enum" {
+        if tk == "struct" && b.is_std_mod(om) {
+          return (false, seen)
+        }
+        let name = b.type_name(t)
+        if name == owner {
+          return (true, seen)
+        }
+        let prelude = b.is_prelude_mod(om)
+        if seen.contains(name) || (!prelude && name < owner) {
+          return (false, seen)
+        }
+        seen.push(name)
+        let sub = b.c.args_subst(b.c.objs[obj].tparams, x.args)
+        for f in b.c.objs[obj].fields {
+          let (r, s2) = b.reaches(b.c.subst(f.ty, sub), owner, seen)
+          seen = s2
+          if r {
+            return (true, seen)
+          }
+        }
+        for v in b.c.objs[obj].variants {
+          for f in v.fields {
+            let (r, s2) = b.reaches(b.c.subst(f.ty, sub), owner, seen)
+            seen = s2
+            if r {
+              return (true, seen)
+            }
+          }
+        }
+      }
+    }
+    _ => {}
+  }
+  (false, seen)
+}
+
+/// The names of the types declared by more than one user module
+/// (ambiguousTypeNames).
+fn (b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
+  var owner: Map[Str, Int] = {}
+  var out: Map[Str, Bool] = {}
+  for m in b.c.order {
+    if b.c.mods[m].is_std || b.c.mods[m].native {
+      continue
+    }
+    for (name, o) in b.c.mods[m].members {
+      if b.c.objs[o].kind != check.ObjKind.Type || b.c.objs[o].tkind == "alias" {
+        continue
+      }
+      let n = check.text(name)
+      if let Some(prev) = owner.get(n) {
+        if prev != m {
+          out[n] = true
+        }
+      }
+      owner[n] = m
+    }
+  }
+  out
+}
+
+/// The name a lowered named type is interned under (typeName).
+fn (b: Builder) type_name(t: Int) -> Str {
+  if b.ambiguous.is_empty() {
+    return b.c.show(t)
+  }
+  b.type_text(t)
+}
+
+fn (b: Builder) type_text(t0: Int) -> Str {
+  let t = b.c.resolve(t0)
+  let x = b.c.tys[t]
+  match x.kind {
+    Named => {
+      let obj = x.obj
+      let om = b.obj_mod(obj)
+      if b.is_prelude_mod(om) && b.obj_name(obj) == "Option" && x.args.len() == 1 {
+        var s = b.type_text(x.args[0])
+        if b.tyk(x.args[0]) == check.TyKind.Func {
+          s = "(${s})"
+        }
+        return "${s}?"
+      }
+      var name = b.c.qual_name(obj)
+      if b.ambiguous.contains(b.obj_name(obj)) && om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native {
+        name = "${b.c.mods[om].path}.${b.obj_name(obj)}"
+      }
+      if x.args.is_empty() {
+        return name
+      }
+      var args: List[Str] = []
+      for a in x.args {
+        args.push(b.type_text(a))
+      }
+      return "${name}[${args.join(", ")}]"
+    }
+    Tuple => {
+      var es: List[Str] = []
+      for e in x.args {
+        es.push(b.type_text(e))
+      }
+      if es.len() == 1 {
+        return "(${es[0]},)"
+      }
+      return "(${es.join(", ")})"
+    }
+    _ => {}
+  }
+  b.c.show(t)
+}
+
+// ---------------------------------------------------------------------------
+// Native implementations (build_native.go)
+
+/// The implementation module of the std module path, or -1.
+fn (var b: Builder) native_mod(path: Str) -> Int {
+  if b.natives.is_empty() {
+    for m in b.c.order {
+      if b.c.mods[m].native {
+        b.natives[b.c.mods[m].implements] = m
+      }
+    }
+  }
+  b.natives.get(path) ?? -1
+}
+
+fn (b: Builder) member(m: Int, name: Str) -> Int {
+  b.c.mods[m].members.get(name.bytes()) ?? -1
+}
+
+/// The implementation of the std function fo, or -1 (implOf).
+fn (var b: Builder) impl_of(fo: Int) -> Int {
+  let om = b.obj_mod(fo)
+  if om < 0 || !b.c.mods[om].is_std || b.c.objs[fo].iface {
+    return -1
+  }
+  let nm = b.native_mod(b.c.mods[om].path)
+  if nm < 0 {
+    return -1
+  }
+  var name = b.obj_name(fo)
+  let r = b.c.objs[fo].recv
+  if r >= 0 {
+    if !b.c.objs[fo].is_static {
+      let t = b.member(nm, b.obj_name(r))
+      if t >= 0 && b.c.objs[t].kind == check.ObjKind.Type {
+        if let Some(mo) = b.c.objs[t].methods.get(b.c.objs[fo].name) {
+          return mo
+        }
+      }
+    }
+    name = "${b.obj_name(r).to_lower()}_${name}"
+  }
+  let f = b.member(nm, name)
+  if f >= 0 && b.c.objs[f].kind == check.ObjKind.Func && b.c.objs[f].recv < 0 {
+    return f
+  }
+  -1
+}
+
+/// The implementation module's type of the std type obj, or -1.
+fn (var b: Builder) impl_type(obj: Int) -> Int {
+  let om = b.obj_mod(obj)
+  if om < 0 || !b.c.mods[om].is_std {
+    return -1
+  }
+  let nm = b.native_mod(b.c.mods[om].path)
+  if nm < 0 {
+    return -1
+  }
+  let t = b.member(nm, b.obj_name(obj))
+  if t >= 0 && b.c.objs[t].kind == check.ObjKind.Type {
+    return t
+  }
+  -1
+}
+
+/// t with every std struct that has an implementation type replaced by
+/// it, in its arguments too (implNamed).
+fn (var b: Builder) impl_named(t0: Int) -> Int {
+  let t = b.c.resolve(t0)
+  let x = b.c.tys[t]
+  match x.kind {
+    Named => {
+      var obj = x.obj
+      if b.c.objs[obj].tkind == "struct" {
+        let it = b.impl_type(obj)
+        if it >= 0 {
+          obj = it
+        }
+      }
+      if obj == x.obj && x.args.is_empty() {
+        return t
+      }
+      var args: List[Int] = []
+      for a in x.args {
+        args.push(b.impl_named(a))
+      }
+      return b.c.mk_named(obj, args)
+    }
+    Tuple => {
+      var es: List[Int] = []
+      for e in x.args {
+        es.push(b.impl_named(e))
+      }
+      return b.c.mk_tuple(es)
+    }
+    _ => {}
+  }
+  t
+}
+
+// ---------------------------------------------------------------------------
+// Functions
+
+/// The SSA name of fo (funcName).
+fn (b: Builder) func_name(fo: Int) -> Str {
+  var n = b.c.display_name(fo)
+  let om = b.obj_mod(fo)
+  if om >= 0 && om != b.main_mod {
+    n = "${b.c.mods[om].name}.${n}"
+  }
+  n
+}
+
+/// The SSA function of fo instantiated with targs (checker types of its
+/// type parameters), declared and queued on first use (declare).
+fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
+  let tps = b.type_params(fo)
+  if targs.len() != tps.len() {
+    b.unsupported("a generic call whose type arguments are not inferred (`${b.c.display_name(fo)}`)")
+    let u = b.unit_t()
+    return b.m.new_func("${b.func_name(fo)}?", [], [u])
+  }
+  let was = b.declaring
+  let pend = b.pend_skip
+  b.declaring = true
+  b.pend_skip = ""
+  var sub: Map[Int, Int] = {}
+  var sargs: List[Int] = []
+  if !tps.is_empty() {
+    sub = b.c.args_subst(tps, targs)
+    for t in targs {
+      sargs.push(b.typ(t))
+    }
+  }
+  var name = b.func_name(fo)
+  if !sargs.is_empty() {
+    var ns: List[Str] = []
+    for t in sargs {
+      ns.push(b.m.types[t].name)
+    }
+    name = "${name}[${ns.join(", ")}]"
+  }
+  var key = "${fo}:${name}"
+  if !targs.is_empty() {
+    var cs: List[Str] = []
+    for t in targs {
+      let it = b.impl_named(t)
+      cs.push(b.c.show(it))
+    }
+    key = "${key}|${cs.join(", ")}"
+    if let Some(f) = b.funcs.get(key) {
+      b.declaring = was
+      b.pend_skip = pend
+      return f
+    }
+    var n = 2
+    while b.m.func_index(name) >= 0 {
+      let base = name.split("#")[0]
+      name = "${base}#${n}"
+      n += 1
+    }
+  }
+  if let Some(f) = b.funcs.get(key) {
+    b.declaring = was
+    b.pend_skip = pend
+    return f
+  }
+  var params: List[Int] = []
+  var var_idx: List[Int] = []
+  if b.c.objs[fo].recv >= 0 {
+    params.push(b.typ(b.c.subst(b.c.objs[fo].recv_ty, sub)))
+    if b.c.objs[fo].recv_var {
+      var_idx.push(0)
+    }
+  }
+  for p in b.c.objs[fo].params {
+    if p.is_var {
+      var_idx.push(params.len())
+    }
+    params.push(b.typ(b.c.subst(p.ty, sub)))
+  }
+  let res = b.c.subst(b.c.objs[fo].result, sub)
+  let err0 = b.c.subst(b.c.objs[fo].err, sub)
+  let err = b.fail_err(err0)
+  var results = [b.typ(b.result_of(res, err))]
+  for i in var_idx {
+    results.push(params[i])
+  }
+  let f = b.m.new_func(name, params, results)
+  b.m.funcs[f].var_params = var_idx
+  let skipped = b.pend_skip
+  b.declaring = was
+  b.pend_skip = pend
+  if !skipped.is_empty() {
+    // the signature holds a type outside the stages ported: the function
+    // and its callers' calls differ from the Go builder's
+    b.m.funcs[f].skip = skipped
+    b.unsupported(skipped)
+  }
+  b.funcs[key] = f
+  b.queue.push(Job.Body(fo: fo, fi: f, sub: sub))
+  f
+}
+
+/// The checker file of fo's declaration, or -1.
+fn (b: Builder) decl_file(o: Int) -> Int {
+  b.c.objs[o].decl_file
+}
+
+/// Starts building the body of function fi in a fresh state; returns the
+/// state it replaces (newFn).
+fn (var b: Builder) begin(fi: Int, file: Int) -> S {
+  let f = b.m.funcs[fi]
+  // the module keeps the signature (a recursive call reads it)
+  let ps = f.blocks[0].params
+  var pvals: List[Value] = []
+  for p in ps {
+    pvals.push(f.values[p])
+  }
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, blocks: [Block{params: ps}], values: pvals}
+  var s = S{f: f, fi: fi, file: file}
+  s.sealed[0] = true
+  let saved = b.s
+  b.s = s
+  saved
+}
+
+/// Stores the function built and puts back the state begin replaced.
+fn (var b: Builder) end(saved: S) {
+  let fi = b.s.fi
+  b.m.funcs[fi] = b.s.f
+  b.s = saved
+}
+
+/// Builds the body of fo into fi (body, bodyOf).
+fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
+  let file = b.decl_file(fo)
+  let saved = b.begin(fi, file)
+  b.s.fo = fo
+  b.s.sub = sub
+  b.s.res = b.apply(b.c.objs[fo].result)
+  let err0 = b.apply(b.c.objs[fo].err)
+  b.s.err_t = b.fail_err(err0)
+  let decl = b.c.objs[fo].fn_decl
+  if decl.is_empty() || decl[0].body == None {
+    b.param_bindings(fo)
+    b.unsupported("a function without a body")
+    b.end(saved)
+    return
+  }
+  let fd = decl[0]
+  for cl in fd.clauses {
+    match cl {
+      EnsuresClause(..) => b.unsupported("`ensures` clauses")
+      _ => {}
+    }
+  }
+  if b.c.objs[fo].recv_var && b.c.objs[fo].recv >= 0 && b.has_invariant(b.c.objs[fo].recv) {
+    b.unsupported("a `var` method of a type with an invariant")
+  }
+  b.param_bindings(fo)
+  for cl in fd.clauses {
+    match cl {
+      RequiresClause(..) => b.unsupported("`requires` clauses")
+      _ => {}
+    }
+  }
+  if let Some(body) = fd.body {
+    let v = b.block(body)
+    b.ret(v)
+  }
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// Whether the struct obj declares an invariant (and is not std).
+fn (b: Builder) has_invariant(obj: Int) -> Bool {
+  if b.is_std_mod(b.obj_mod(obj)) {
+    return false
+  }
+  !b.invariant_of(obj).is_empty()
+}
+
+/// The invariant of struct obj (zero or one expression).
+fn (b: Builder) invariant_of(obj: Int) -> List[Expr] {
+  let f = b.c.objs[obj].decl_file
+  let i = b.c.objs[obj].decl_idx
+  if f < 0 || i < 0 {
+    return []
+  }
+  match b.c.files[f].ast.decls[i] {
+    StructDecl(d) => {
+      if let Some(e) = d.inv {
+        return [e]
+      }
+    }
+    _ => {}
+  }
+  []
+}
+
+/// Binds fo's receiver and parameters to the entry block's parameters and
+/// records the `var` parameters (paramBindings); the bindings in order (-1
+/// for none).
+fn (var b: Builder) param_bindings(fo: Int) -> List[Int] {
+  var vars: List[Int] = []
+  if b.c.objs[fo].recv >= 0 {
+    vars.push(b.c.recv_var.get(fo) ?? -1)
+  }
+  for v in b.c.param_vars.get(fo) ?? [] {
+    vars.push(v)
+  }
+  let ps = b.s.f.blocks[0].params
+  for (i, vo) in vars.indexed() {
+    if vo >= 0 && i < ps.len() {
+      b.write_var(vo, ps[i])
+    }
+  }
+  for i in b.s.f.var_params {
+    b.s.var_params.push(vars[i])
+  }
+  vars
+}
+
+/// A checker type in the instance being built (fn.apply).
+fn (var b: Builder) apply(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
+  b.c.subst(t, b.s.sub)
+}
+
+/// main returning an error: the program's main becomes main.run, and main
+/// calls it and reports an error (mainWrapper).
+fn (var b: Builder) main_wrapper(mf: Int, et: Int) {
+  b.m.rename_func(mf, "main.run")
+  var params: List[Int] = []
+  for p in b.m.funcs[mf].blocks[0].params {
+    params.push(b.m.funcs[mf].values[p].ty)
+  }
+  let unit = b.unit_t()
+  let fi = b.m.new_func("main", params, [unit])
+  let main_fo = b.m.funcs[mf]
+  let saved = b.begin(fi, b.decl_file(b.main_fo_of()))
+  let ps = b.s.f.blocks[0].params
+  let rt = main_fo.results[0]
+  let r = b.call("main.run", rt, "", ps)
+  let ei = b.m.variant_index(rt, "Err")
+  let is_err = b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [r]), b.cint(ei)])
+  let (yes, no) = b.branch(is_err)
+  let join = b.new_block()
+  b.s.cur = yes
+  let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
+  let msg = b.append_display(b.const_str("error: "), e, et)
+  b.rt("eprintln", -1, [msg])
+  b.print_trace(b.err_trace(r, ei))
+  b.rt("exit", -1, [b.cint(1)])
+  if !b.is_dead() {
+    b.jump(join, [])
+  }
+  b.s.cur = no
+  b.jump(join, [])
+  b.seal(join)
+  b.s.cur = join
+  b.retv(b.unit())
+  b.finish_fn()
+  b.end(saved)
+}
+
+fn (b: Builder) main_fo_of() -> Int {
+  b.c.mods[b.main_mod].members.get(b"main") ?? -1
+}
+
+/// Whether a user module reads `os.tasks` (build_tasks.go usesOsTasks).
+fn (b: Builder) uses_os_tasks() -> Bool {
+  for m in b.c.order {
+    if b.c.mods[m].is_std || b.c.mods[m].native {
+      continue
+    }
+    for f in b.c.mods[m].files {
+      for d in b.c.files[f].ast.decls {
+        let found = match d {
+          FnDecl(d: fd) => {
+            var r = false
+            for cl in fd.clauses {
+              match cl {
+                RequiresClause(cond: cond, els: els, ..) => r = r || b.tasks_expr(f, cond) || b.tasks_opt(f, els)
+                EnsuresClause(cond: cond, ..) => r = r || b.tasks_expr(f, cond)
+                _ => {}
+              }
+            }
+            if let Some(body) = fd.body {
+              r = r || b.tasks_block(f, body)
+            }
+            r
+          }
+          TestDecl(d: td) => {
+            match td.body {
+              Some(body) => b.tasks_block(f, body)
+              None => false
+            }
+          }
+          ConstDecl(d: cd) => b.tasks_expr(f, cd.value)
+          _ => false
+        }
+        if found {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+fn (b: Builder) tasks_opt(f: Int, e: Expr?) -> Bool {
+  match e {
+    Some(x) => b.tasks_expr(f, x)
+    None => false
+  }
+}
+
+fn (b: Builder) tasks_list(f: Int, es: List[Expr]) -> Bool {
+  for e in es {
+    if b.tasks_expr(f, e) {
+      return true
+    }
+  }
+  false
+}
+
+fn (b: Builder) tasks_block(f: Int, bl: parser.Block) -> Bool {
+  for st in bl.stmts {
+    if b.tasks_stmt(f, st) {
+      return true
+    }
+  }
+  false
+}
+
+fn (b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
+  match st {
+    LetStmt(value: v, ..) => b.tasks_expr(f, v)
+    VarStmt(value: v, ..) => b.tasks_expr(f, v)
+    AssignStmt(target: t, value: v, ..) => b.tasks_expr(f, t) || b.tasks_expr(f, v)
+    DeferStmt(body: body, ..) => b.tasks_stmt(f, body)
+    ReturnStmt(value: v, ..) => b.tasks_opt(f, v)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => b.tasks_expr(f, iter) || b.tasks_list(f, bound) || b.tasks_block(f, body)
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => b.tasks_opt(f, cond) || b.tasks_list(f, value) || b.tasks_list(f, bound) || b.tasks_block(f, body)
+    ExprStmt(x: x, ..) => b.tasks_expr(f, x)
+    ConstDecl(d) => b.tasks_expr(f, d.value)
+    _ => false
+  }
+}
+
+/// Whether e holds `x.tasks` on an Os or a test's TestOs
+/// (build_tasks.go usesOsTasks).
+fn (b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
+  match e {
+    SelectorExpr(x: x, sel: sel, ..) => {
+      if sel.name == b"tasks" {
+        var t = b.c.nat_in(f, x)
+        if t < 0 {
+          t = b.c.type_in(f, x)
+        }
+        let o = b.named_obj(t)
+        if o >= 0 && b.obj_mod(o) >= 0 {
+          let om = b.obj_mod(o)
+          let n = b.obj_name(o)
+          if (b.c.mods[om].is_prelude && n == "Os") || (b.c.mods[om].path == "std/testing" && n == "TestOs") {
+            return true
+          }
+        }
+      }
+      b.tasks_expr(f, x)
+    }
+    StringLit(s) => {
+      for p in s.parts {
+        if b.tasks_opt(f, p.expr) {
+          return true
+        }
+      }
+      false
+    }
+    ParenExpr(x: x, ..) => b.tasks_expr(f, x)
+    TupleExpr(elems: elems, ..) => b.tasks_list(f, elems)
+    ListLit(elems: elems, ..) => b.tasks_list(f, elems)
+    SetLit(elems: elems, ..) => b.tasks_list(f, elems)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        if b.tasks_expr(f, en.key) || b.tasks_expr(f, en.value) {
+          return true
+        }
+      }
+      false
+    }
+    StructLit(fields: fields, ..) => {
+      for fi in fields {
+        if b.tasks_expr(f, fi.value) {
+          return true
+        }
+      }
+      false
+    }
+    UnaryExpr(x: x, ..) => b.tasks_expr(f, x)
+    BinaryExpr(x: x, y: y, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, y)
+    IsExpr(x: x, ..) => b.tasks_expr(f, x)
+    RangeExpr(lo: lo, hi: hi, ..) => b.tasks_opt(f, lo) || b.tasks_opt(f, hi)
+    CallExpr(fun: fun, args: args, ..) => {
+      if b.tasks_expr(f, fun) {
+        return true
+      }
+      for a in args {
+        if b.tasks_expr(f, a.value) {
+          return true
+        }
+      }
+      false
+    }
+    TypeArgsExpr(x: x, ..) => b.tasks_expr(f, x)
+    IndexExpr(x: x, index: index, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, index)
+    TryExpr(x: x, ..) => b.tasks_expr(f, x)
+    WithExpr(x: x, fields: fields, ..) => {
+      if b.tasks_expr(f, x) {
+        return true
+      }
+      for fi in fields {
+        if b.tasks_expr(f, fi.value) {
+          return true
+        }
+      }
+      false
+    }
+    IfExpr(x) => b.tasks_opt(f, x.cond) || b.tasks_opt(f, x.value) || b.tasks_block(f, x.then) || b.tasks_opt(f, x.els)
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      if b.tasks_expr(f, subject) {
+        return true
+      }
+      for a in arms {
+        if b.tasks_opt(f, a.guard) {
+          return true
+        }
+        if let Some(st) = a.body {
+          if b.tasks_stmt(f, st) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    ScopeExpr(body: body, ..) => b.tasks_block(f, body)
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if b.tasks_opt(f, a.op) || b.tasks_opt(f, a.after) {
+          return true
+        }
+        if let Some(st) = a.body {
+          if b.tasks_stmt(f, st) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    Block(bl) => b.tasks_block(f, bl)
+    FnLit(lit) => b.tasks_block(f, lit.body)
+    WhileExpr(body: body, ..) => b.tasks_block(f, body)
+    _ => false
+  }
+}
+
+/// main in the scope of os.tasks (build_tasks.go tasksMain): main becomes
+/// main.run; the main that runs it in the scope is outside stage 1.
+fn (var b: Builder) tasks_main(mf: Int) {
+  b.m.rename_func(mf, "main.run")
+  var params: List[Int] = []
+  for p in b.m.funcs[mf].blocks[0].params {
+    params.push(b.m.funcs[mf].values[p].ty)
+  }
+  let fi = b.m.new_func("main", params, [b.unit_t()])
+  b.m.funcs[fi].skip = "main in the scope of os.tasks"
+}
+
+// ---------------------------------------------------------------------------
+// SSA construction (Braun et al.)
+
+fn def_key(vo: Int, bl: Int) -> Int {
+  vo * 1048576 + bl
+}
+
+fn (var b: Builder) new_block() -> Int {
+  b.s.f.new_block()
+}
+
+/// A fresh made up variable (local("name")).
+fn (var b: Builder) local() -> Int {
+  b.nvar += 1
+  -1000000 - b.nvar
+}
+
+/// Starts an unreachable block for code after a terminator.
+fn (var b: Builder) dead() {
+  b.s.cur = b.new_block()
+  b.s.sealed[b.s.cur] = true
+}
+
+fn (var b: Builder) write_var(vo: Int, v: Int) {
+  b.s.defs[def_key(vo, b.s.cur)] = v
+  if !b.s.var_type.contains(vo) {
+    b.s.var_type[vo] = b.s.f.values[v].ty
+  }
+}
+
+fn (var b: Builder) read_var(vo: Int, bl: Int) -> Int {
+  let k = def_key(vo, bl)
+  if let Some(v) = b.s.defs.get(k) {
+    return v
+  }
+  var v = -1
+  if !(b.s.sealed.get(bl) ?? false) {
+    v = b.new_param(bl, vo)
+    var inc = b.s.incomplete.get(bl) ?? []
+    inc.push(v)
+    b.s.incomplete[bl] = inc
+  } else if b.s.f.blocks[bl].preds.len() == 1 {
+    let e = b.s.f.blocks[bl].preds[0]
+    v = b.read_var(vo, b.s.f.edges[e].from)
+  } else {
+    v = b.new_param(bl, vo)
+    b.s.defs[k] = v
+    b.add_args(vo, v)
+  }
+  b.s.defs[k] = v
+  v
+}
+
+fn (var b: Builder) new_param(bl: Int, vo: Int) -> Int {
+  var t = b.s.var_type.get(vo) ?? -1
+  if t < 0 {
+    t = b.unit_t()
+  }
+  let p = b.s.f.add_param(bl, t)
+  b.s.param_var[p] = vo
+  p
+}
+
+/// Fills the argument of parameter p of its block on every incoming edge.
+fn (var b: Builder) add_args(vo: Int, p: Int) {
+  let bl = b.s.f.values[p].block
+  var idx = -1
+  for (i, q) in b.s.f.blocks[bl].params.indexed() {
+    if q == p {
+      idx = i
+    }
+  }
+  for e in b.s.f.blocks[bl].preds {
+    let a = b.read_var(vo, b.s.f.edges[e].from)
+    while b.s.f.edges[e].args.len() <= idx {
+      b.s.f.edges[e].args.push(-1)
+    }
+    b.s.f.edges[e].args[idx] = a
+  }
+}
+
+/// Records that every predecessor of bl is known.
+fn (var b: Builder) seal(bl: Int) {
+  if b.s.sealed.get(bl) ?? false {
+    return
+  }
+  var i = 0
+  while i < (b.s.incomplete.get(bl) ?? []).len() {
+    let p = (b.s.incomplete.get(bl) ?? [])[i]
+    b.add_args(b.s.param_var.get(p) ?? 0, p)
+    i += 1
+  }
+  b.s.incomplete.remove(bl)
+  b.s.sealed[bl] = true
+}
+
+fn (var b: Builder) read(vo: Int) -> Int {
+  b.read_var(vo, b.s.cur)
+}
+
+// ---------------------------------------------------------------------------
+// Emission helpers
+
+fn (b: Builder) vty(v: Int) -> Int {
+  b.s.f.values[v].ty
+}
+
+fn (b: Builder) vop(v: Int) -> Op {
+  b.s.f.values[v].op
+}
+
+fn (b: Builder) tkind(t: Int) -> Kind {
+  b.m.types[t].kind
+}
+
+fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
+  var args = args0
+  if op == Op.Variant && t >= 0 && b.tkind(t) == Kind.Enum {
+    if let I(tag) = aux {
+      if tag < b.m.types[t].variants.len() {
+        let fs = b.m.types[t].variants[tag].fields
+        if args.len() + 1 == fs.len() && fs[args.len()].name == TRACE_FIELD {
+          // a new error has no frames yet
+          args.push(b.empty_trace())
+        }
+      }
+    }
+  }
+  b.s.f.add(b.s.cur, op, t, aux, args)
+}
+
+fn (var b: Builder) set_pos(v: Int, pos: Str) {
+  b.s.f.values[v].pos = pos
+}
+
+fn (var b: Builder) unit() -> Int {
+  b.add(Op.Tuple, b.unit_t(), Aux.None, [])
+}
+
+fn (var b: Builder) undef(t: Int) -> Int {
+  b.add(Op.Undef, t, Aux.None, [])
+}
+
+/// The value in a Box; other values as they are.
+fn (var b: Builder) unbox(v: Int) -> Int {
+  let t = b.vty(v)
+  if b.tkind(t) != Kind.Box {
+    return v
+  }
+  b.add(Op.Unbox, b.m.types[t].elems[0], Aux.None, [v])
+}
+
+fn (var b: Builder) cint(n: Int) -> Int {
+  b.add(Op.Const, b.int_t(), Aux.I(n: n), [])
+}
+
+fn (var b: Builder) cbool(x: Bool) -> Int {
+  b.add(Op.Const, b.bool_t(), Aux.B(b: x), [])
+}
+
+fn (var b: Builder) const_str(s: Str) -> Int {
+  b.add(Op.Const, b.str_t(), Aux.S(s: s), [])
+}
+
+fn (var b: Builder) call(name: Str, t: Int, pos: Str, args: List[Int]) -> Int {
+  let v = b.add(Op.Call, t, Aux.S(s: name), args)
+  b.set_pos(v, pos)
+  v
+}
+
+/// A call of the C runtime (`rt.<name>`); t -1 is unit.
+fn (var b: Builder) rt(name: Str, t0: Int, args: List[Int]) -> Int {
+  var t = t0
+  if t < 0 {
+    t = b.unit_t()
+  }
+  b.add(Op.Call, t, Aux.S(s: "rt.${name}"), args)
+}
+
+fn (var b: Builder) jump(to: Int, args: List[Int]) {
+  b.s.f.jump(b.s.cur, to, args)
+}
+
+/// Ends the current block with a branch to two new sealed blocks.
+fn (var b: Builder) branch(cond: Int) -> (Int, Int) {
+  let yes = b.new_block()
+  let no = b.new_block()
+  b.s.f.branch(b.s.cur, cond, yes, no)
+  b.seal(yes)
+  b.seal(no)
+  (yes, no)
+}
+
+/// Continues in a new block when cond holds, going to fail otherwise.
+fn (var b: Builder) test_br(cond: Int, fail: Int) {
+  let ok = b.new_block()
+  b.s.f.branch(b.s.cur, cond, ok, fail)
+  b.seal(ok)
+  b.s.cur = ok
+}
+
+fn (b: Builder) is_dead() -> Bool {
+  b.s.cur != 0 && b.s.f.blocks[b.s.cur].preds.is_empty() && (b.s.sealed.get(b.s.cur) ?? false)
+}
+
+/// Returns v and the updated `var` parameters (ret).
+fn (var b: Builder) ret(v0: Int) {
+  let want = b.s.f.results[0]
+  if b.is_dead() {
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+    return
+  }
+  var v = v0
+  if b.s.err_t >= 0 {
+    if b.vty(v) != want {
+      let ok = b.m.variant_index(want, "Ok")
+      let c = b.coerce(v, b.m.types[want].variants[ok].fields[0].ty)
+      v = b.add(Op.Variant, want, Aux.I(n: ok), [c])
+    }
+  } else {
+    v = b.coerce(v, want)
+  }
+  var args = [v]
+  for vo in b.s.var_params {
+    args.push(b.read(vo))
+  }
+  b.add(Op.Return, -1, Aux.None, args)
+  b.dead()
+}
+
+fn (var b: Builder) retv(v: Int) {
+  b.add(Op.Return, -1, Aux.None, [v])
+  b.dead()
+}
+
+/// The check after a call (build_conc.go check): a check only a fault
+/// takes (`rt.landing`), whose unwind path leaves the function.
+fn (var b: Builder) check(callee: Str) {
+  if b.is_dead() {
+    return
+  }
+  let ins = b.s.f.blocks[b.s.cur].instrs
+  let w = if ins.is_empty() { -1 } else { ins[ins.len() - 1] }
+  let name = if b.conc { "rt.unwinding" } else { "rt.landing" }
+  let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: name), [])
+  if w >= 0 && (b.vop(w) is Op.Call | Op.CallValue) {
+    b.s.f.values[w].pad = u
+  }
+  let (yes, no) = b.branch(u)
+  b.s.cur = yes
+  b.unwind()
+  b.s.cur = no
+}
+
+/// Ends the current block on the unwind path (build_defer.go unwind).
+fn (var b: Builder) unwind() {
+  if b.is_dead() {
+    return
+  }
+  if b.s.unwind_b < 0 {
+    b.s.unwind_b = b.new_block()
+  }
+  b.jump(b.s.unwind_b, [])
+}
+
+/// Emits the function's unwind block: the fault goes on to the caller,
+/// and zero results (finishFn).
+fn (var b: Builder) finish_fn() {
+  if b.s.unwind_b < 0 {
+    return
+  }
+  let saved = b.s.cur
+  b.seal(b.s.unwind_b)
+  b.s.cur = b.s.unwind_b
+  b.s.f.add(b.s.cur, Op.Call, b.unit_t(), Aux.S(s: "rt.fault_continue"), [])
+  var rs: List[Int] = []
+  for t in b.s.f.results {
+    rs.push(b.zero(t, []))
+  }
+  b.add(Op.Return, -1, Aux.None, rs)
+  b.s.cur = saved
+}
+
+fn (b: Builder) num_fields(t: Int) -> Int {
+  if b.tkind(t) == Kind.Struct {
+    return b.m.types[t].fields.len()
+  }
+  b.m.types[t].elems.len()
+}
+
+fn (b: Builder) field_type(t: Int, i: Int) -> Int {
+  if b.tkind(t) == Kind.Struct {
+    return b.m.types[t].fields[i].ty
+  }
+  b.m.types[t].elems[i]
+}
+
+/// A value of t that owns nothing a caller could not release (zero).
+fn (var b: Builder) zero(t: Int, seen: List[Int]) -> Int {
+  match b.tkind(t) {
+    Unit | Bad => return b.unit()
+    Int => return b.add(Op.Const, t, Aux.I(n: 0), [])
+    Float => return b.add(Op.Const, t, Aux.F(f: 0.0), [])
+    Bool => return b.cbool(false)
+    Str => return b.add(Op.Const, t, Aux.S(s: ""), [])
+    Cap => return b.add(Op.Cap, t, Aux.S(s: "zero"), [])
+    List => return b.rt("rl_empty", t, [])
+    Handle => return b.rt("h_zero", t, [])
+    Box => {
+      let z = b.zero(b.m.types[t].elems[0], seen)
+      return b.add(Op.Box, t, Aux.None, [z])
+    }
+    Func => {
+      let name = b.zero_func(t)
+      return b.add(Op.Closure, t, Aux.S(s: name), [])
+    }
+    Struct | Tuple => {
+      var vs: List[Int] = []
+      for i in 0..b.num_fields(t) {
+        vs.push(b.zero(b.field_type(t, i), seen))
+      }
+      if b.tkind(t) == Kind.Struct {
+        return b.add(Op.Struct, t, Aux.None, vs)
+      }
+      return b.add(Op.Tuple, t, Aux.None, vs)
+    }
+    Enum => {
+      var s2 = seen
+      s2.push(t)
+      var best = -1
+      for (i, v) in b.m.types[t].variants.indexed() {
+        var ok = true
+        for f in v.fields {
+          ok = ok && b.zeroable(f.ty, s2)
+        }
+        if ok && (best < 0 || v.fields.len() < b.m.types[t].variants[best].fields.len()) {
+          best = i
+        }
+      }
+      if best < 0 {
+        best = 0
+      }
+      var vs: List[Int] = []
+      for f in b.m.types[t].variants[best].fields {
+        vs.push(b.zero(f.ty, s2))
+      }
+      return b.add(Op.Variant, t, Aux.I(n: best), vs)
+    }
+  }
+}
+
+fn (b: Builder) zeroable(t: Int, seen: List[Int]) -> Bool {
+  match b.tkind(t) {
+    Enum => {
+      if seen.contains(t) {
+        return false
+      }
+      var s2 = seen
+      s2.push(t)
+      for v in b.m.types[t].variants {
+        var ok = true
+        for f in v.fields {
+          ok = ok && b.zeroable(f.ty, s2)
+        }
+        if ok {
+          return true
+        }
+      }
+      false
+    }
+    Struct | Tuple => {
+      for i in 0..b.num_fields(t) {
+        if !b.zeroable(b.field_type(t, i), seen) {
+          return false
+        }
+      }
+      true
+    }
+    Box => b.zeroable(b.m.types[t].elems[0], seen)
+    _ => true
+  }
+}
+
+/// The function of the zero value of function type t (zeroFunc).
+fn (var b: Builder) zero_func(t: Int) -> Str {
+  let name = "zero.${b.m.types[t].name}"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  var ps = [t]
+  for e in b.m.types[t].elems {
+    ps.push(e)
+  }
+  let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
+  b.m.funcs[fi].indirect = true
+  let saved = b.begin(fi, b.s.file)
+  let z = b.zero(b.m.types[t].ret, [])
+  b.add(Op.Return, -1, Aux.None, [z])
+  b.end(saved)
+  name
+}
+
+/// Raises a fault with message msg at pos (landing.go fault).
+fn (var b: Builder) fault(msg: Int, pos: Str) {
+  b.rt("fault_raise", -1, [msg, b.const_str(pos)])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+}
+
+/// Runs then in a block entered when c holds (ifThen).
+fn (var b: Builder) if_then_begin(c: Int) -> (Int, Int) {
+  let (yes, no) = b.branch(c)
+  let join = b.new_block()
+  b.s.cur = yes
+  (no, join)
+}
+
+fn (var b: Builder) if_then_end(no: Int, join: Int) {
+  if !b.is_dead() {
+    b.jump(join, [])
+  }
+  b.s.cur = no
+  b.jump(join, [])
+  b.seal(join)
+  b.s.cur = join
+}
+
+/// The blocks of `for i in 0..n` (forUpTo): returns i, head, and exit;
+/// the body follows in the current block.
+fn (var b: Builder) for_up_to_begin(n: Int, iv: Int) -> (Int, Int, Int) {
+  b.write_var(iv, b.cint(0))
+  let head = b.new_block()
+  let inb = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(iv)
+  let c = b.add(Op.Lt, b.bool_t(), Aux.None, [i, n])
+  b.s.f.branch(b.s.cur, c, inb, exit)
+  b.seal(inb)
+  b.s.cur = inb
+  (i, head, exit)
+}
+
+fn (var b: Builder) for_up_to_end(i: Int, iv: Int, head: Int, exit: Int) {
+  if !b.is_dead() {
+    b.write_var(iv, b.add(Op.Add, b.int_t(), Aux.None, [i, b.cint(1)]))
+    b.jump(head, [])
+  }
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// Builds the function name once (genFunc): begin_gen returns the state to
+/// pass to end_gen, or None when the function exists.
+fn (var b: Builder) gen_begin(name: Str, params: List[Int], results: List[Int]) -> S? {
+  if b.m.func_index(name) >= 0 {
+    return None
+  }
+  let fi = b.m.new_func(name, params, results)
+  Some(b.begin(fi, b.s.file))
+}
+
+fn (var b: Builder) gen_end(saved: S) {
+  b.finish_fn()
+  b.end(saved)
+}
+
+fn (b: Builder) param(i: Int) -> Int {
+  b.s.f.blocks[0].params[i]
+}
+
+// ---------------------------------------------------------------------------
+// Paths
+
+/// path relative to root as internal/ssa's file does: relative when it is
+/// below root, else as it is (cleaned).
+fn rel_path_from(root: Str, path: Str) -> Str {
+  if root.is_empty() {
+    let parts = path.split("/")
+    return parts[parts.len() - 1]
+  }
+  var p = path
+  if p.starts_with("${root}/") {
+    p = p.trim_prefix("${root}/")
+  }
+  while p.starts_with("./") {
+    p = p.trim_prefix("./")
+  }
+  p
+}

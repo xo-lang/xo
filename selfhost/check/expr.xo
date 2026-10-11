@@ -61,7 +61,7 @@ fn value_want(w: Want) -> Int {
 
 const KIND_NAMES = ["Ident", "IntLit", "FloatLit", "DurationLit", "RuneLit", "StringLit", "BytesLit", "HoleExpr", "UnitExpr", "ParenExpr", "TupleExpr", "ListLit", "MapLit", "SetLit", "StructLit", "UnaryExpr", "BinaryExpr", "IsExpr", "RangeExpr", "SelectorExpr", "CallExpr", "TypeArgsExpr", "IndexExpr", "TryExpr", "WithExpr", "IfExpr", "MatchExpr", "ScopeExpr", "SelectExpr", "Block", "FnLit", "WhileExpr", "BadExpr"]
 
-fn expr_kind(e: Expr) -> Int {
+pub fn expr_kind(e: Expr) -> Int {
   match e {
     Ident(..) => 0
     IntLit(..) => 1
@@ -356,6 +356,7 @@ fn (var c: Checker) infer(e: Expr, hint: Int) -> Int {
     t = c.bad_ty
   }
   c.set_type(e, t)
+  c.nat_at[c.expr_key(e)] = t
   t
 }
 
@@ -1652,6 +1653,7 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
     c.check_name(p.name, "parameter")
     vars.push(c.new_local(p.name, pt, if p.is_var { "var-param" } else { "param" }))
   }
+  c.closure_vars[c.key_of(x.span, 30)] = vars
   if let Some(rt) = x.result {
     cx.result = c.resolve_type(rt, env)
     if ft >= 0 {

@@ -85,6 +85,10 @@ type builder struct {
 
 	// the zone data std/time needs (build_time.go)
 	tzNames, tzDynamic map[string]bool
+
+	// see, when set, is called with the name of each stage of the build
+	// as it ends (stages.go, `xo ssadump`)
+	see func(stage string)
 }
 
 // Build lowers the functions reachable from `main` of the root module of
@@ -142,6 +146,8 @@ type Options struct {
 	// GOOS and GOARCH are the target of the build (`target`, core 12.2):
 	// empty is the host's.
 	GOOS, GOARCH string
+	// raw stops after the builder, before the passes (BuildRaw)
+	raw bool
 }
 
 // contractOn reports whether a contract clause marked debug (or not) is
@@ -150,26 +156,39 @@ func (b *builder) contractOn(debug bool) bool { return !debug || !b.opts.Release
 
 // BuildOpts is Build with options.
 func BuildOpts(res *check.Result, opts Options) (*Module, error) {
-	b, err := buildModule(res, opts, false)
+	return buildWith(res, opts, nil)
+}
+
+// buildWith is BuildOpts calling see(b, stage) at the end of each stage of
+// the build that is kept (stages.go).
+func buildWith(res *check.Result, opts Options, see func(b *builder, stage string)) (*Module, error) {
+	b, err := buildModule(res, opts, false, nil)
 	if !b.needConc {
+		if see != nil {
+			// build again, watched: the stages of the build kept
+			b, err = buildModule(res, opts, false, see)
+		}
 		if err != nil {
 			return nil, err
 		}
 		return b.mod, nil
 	}
 	// the program uses tasks: build again with unwinding checks
-	b, err = buildModule(res, opts, true)
+	b, err = buildModule(res, opts, true, see)
 	if err != nil {
 		return nil, err
 	}
 	return b.mod, nil
 }
 
-func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
+func buildModule(res *check.Result, opts Options, conc bool, see func(b *builder, stage string)) (*builder, error) {
 	info := res.Info()
 	b := &builder{opts: opts, info: info, mod: NewModule(), seen: map[string]bool{}, funcs: map[string]*Func{}, thunks: map[string]*Func{},
 		conc: conc, sites: map[*ast.CallExpr]int{}, boundTo: map[*ast.CallExpr]*check.VarObj{},
 		faultUnwind: !opts.NoFaultUnwind}
+	if see != nil {
+		b.see = func(stage string) { see(b, stage) }
+	}
 	b.mod.FaultUnwind = b.faultUnwind
 	b.ambiguous = ambiguousTypeNames(info.AllModules())
 	if opts.Tests {
@@ -202,17 +221,21 @@ func buildModule(res *check.Result, opts Options, conc bool) (*builder, error) {
 		b.queue = b.queue[1:]
 		next()
 	}
-	if len(b.errs) > 0 {
+	b.stage("build")
+	if len(b.errs) > 0 || opts.raw {
 		return b, b.errs
 	}
 	b.pruneUnwind()
+	b.stage("unwind")
 	if b.faultUnwind {
 		b.addLandings()
+		b.stage("landings")
 	}
 	for _, f := range b.mod.Funcs {
 		f.cleanup()
 	}
 	b.mod.TZ = b.tzUse()
+	b.stage("cleanup")
 	return b, nil
 }
 

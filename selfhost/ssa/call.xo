@@ -1,0 +1,1638 @@
+// Calls (internal/ssa build_call.go, build_native.go, the stage 1 part of
+// build_io.go and build_int.go): constructors, conversions, declared
+// functions and methods, std functions with native implementations, the
+// prelude operations lowered inline, closures, function values, and `?`.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+fn call_parts(e: Expr) -> (Span, Expr, List[parser.Arg]) {
+  match e {
+    CallExpr(span: span, fun: fun, args: args) => (span, fun, args)
+    _ => fault("not a call")
+  }
+}
+
+fn (var b: Builder) call_expr(x: Expr) -> Int {
+  let (_, fun, args) = call_parts(x)
+  if let Some(vr) = b.c.ctor_in(b.s.file, x) {
+    return b.ctor_call(vr, x)
+  }
+  if let Some(vr) = b.c.ctor_in(b.s.file, fun) {
+    return b.ctor_call(vr, x)
+  }
+  if b.is_ret_ctor(x) {
+    return b.ret_ctor(x)
+  }
+  let tobj = b.c.type_call_in(b.s.file, x)
+  if tobj >= 0 {
+    return b.type_call(tobj, x)
+  }
+  if b.is_expect_call(x) {
+    b.unsupported("`expect`")
+    return b.undef(b.nat_of(x))
+  }
+  let cio = b.c.call_in(b.s.file, x)
+  let ci = match cio {
+    Some(c) => c
+    None => {
+      if let SelectorExpr(x: recv, sel: sel, ..) = fun {
+        let sn = sel.name
+        if (args.len() == 1 && (sn == b"min" || sn == b"max")) || (args.len() == 2 && sn == b"clamp") {
+          let a = b.expr(recv)
+          if sn == b"clamp" {
+            let lo = b.value_as(args[0].value, b.vty(a))
+            let hi = b.value_as(args[1].value, b.vty(a))
+            let r = b.ord_min_max("max", a, lo)
+            if r >= 0 {
+              return b.ord_min_max("min", r, hi)
+            }
+          } else {
+            let o = b.value_as(args[0].value, b.vty(a))
+            let r = b.ord_min_max(check.text(sn), a, o)
+            if r >= 0 {
+              return r
+            }
+          }
+        }
+        if args.is_empty() && sn == b"display" {
+          let ct = b.nat_check(recv)
+          let v = b.expr(recv)
+          return b.append_display(b.const_str(""), v, ct)
+        }
+        if args.is_empty() && sn == b"debug" {
+          let ct = b.nat_check(recv)
+          let v = b.expr(recv)
+          return b.append_debug(b.const_str(""), v, ct)
+        }
+      }
+      b.unsupported("this call")
+      return b.undef(b.nat_of(x))
+    }
+  }
+  let fo = ci.fn_obj
+  if fo < 0 {
+    return b.value_call(x)
+  }
+  let fr = b.c.objs[fo].recv
+  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr)) {
+    b.unsupported("calls of interface methods")
+    return b.undef(b.nat_of(x))
+  }
+  let fm = b.obj_mod(fo)
+  if b.is_std_mod(fm) {
+    let path = b.c.mods[fm].path
+    if path.starts_with("native/") {
+      return b.intrinsic(x, ci)
+    }
+    if b.is_map_values_hof(x, ci) {
+      b.unsupported("`any` or `all` over a Map's values")
+      return b.undef(b.nat_of(x))
+    }
+    if path == "std/testing" && fr < 0 && (b.obj_name(fo) is "run_main" | "gen") {
+      b.unsupported("std/testing")
+      return b.undef(b.nat_of(x))
+    }
+    if b.is_proc_run(fo) {
+      b.need_conc = true
+      if !b.conc {
+        return b.undef(b.nat_of(x))
+      }
+      let pm = b.native_mod("std/prelude")
+      if pm >= 0 {
+        let impl = b.member(pm, "proc_run")
+        if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+          return b.call_as(x, ci, impl)
+        }
+      }
+    }
+    let impl = b.impl_of(fo)
+    if impl >= 0 {
+      return b.call_as(x, ci, impl)
+    }
+    if let Some(v) = b.io_call(x, ci) {
+      return v
+    }
+    if b.is_conc_call(fo) {
+      if b.c.objs[fo].recv < 0 && b.obj_name(fo) == "isolate" {
+        b.unsupported("`task.isolate`")
+        return b.undef(b.nat_of(x))
+      }
+      b.need_conc = true
+      b.unsupported("concurrency")
+      return b.undef(b.nat_of(x))
+    }
+    return b.std_call(x, ci)
+  }
+  b.call_as(x, ci, fo)
+}
+
+fn (b: Builder) is_proc_run(fo: Int) -> Bool {
+  let r = b.c.objs[fo].recv
+  if r < 0 || b.c.objs[fo].is_static || b.obj_name(fo) != "run" {
+    return false
+  }
+  let m = b.obj_mod(fo)
+  (b.is_prelude_mod(m) && b.obj_name(r) == "Proc") || (b.c.mods[m].path == "std/testing" && b.obj_name(r) == "FakeProc")
+}
+
+/// Whether build_conc.go concCall lowers fo.
+fn (b: Builder) is_conc_call(fo: Int) -> Bool {
+  let m = b.obj_mod(fo)
+  let r = b.c.objs[fo].recv
+  if r < 0 {
+    return b.c.mods[m].path == "std/task"
+  }
+  if b.c.mods[m].is_prelude {
+    return b.obj_name(r) is "Scope" | "Task" | "Chan" | "Mutex" | "Atomic"
+  }
+  b.c.mods[m].path == "std/task" && b.obj_name(r) == "Group"
+}
+
+/// `xs.values().any(fn(v) {...})` on a Map (build_hof.go mapValuesHof):
+/// whether its conditions hold, up to the body check.
+fn (b: Builder) is_map_values_hof(x: Expr, ci: check.CallInfo) -> Bool {
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  if r < 0 || b.obj_name(r) != "List" || !b.is_prelude_mod(b.obj_mod(r)) {
+    return false
+  }
+  if !(b.obj_name(fo) is "any" | "all") {
+    return false
+  }
+  let (_, _, args) = call_parts(x)
+  if args.len() != 1 || args[0].name != None {
+    return false
+  }
+  if let FnLit(lit) = args[0].value {
+    if lit.params.len() != 1 {
+      return false
+    }
+    if let Some(recv) = ci.recv.first() {
+      if let CallExpr(args: vargs, ..) = recv {
+        if !vargs.is_empty() {
+          return false
+        }
+        if let Some(vci) = b.c.call_in(b.s.file, recv) {
+          let vf = vci.fn_obj
+          if vci.recv.is_empty() || vf < 0 || b.c.objs[vf].recv < 0 || b.obj_name(vf) != "values" {
+            return false
+          }
+          let vr = b.c.objs[vf].recv
+          return b.obj_name(vr) == "Map" && b.is_prelude_mod(b.obj_mod(vr))
+        }
+      }
+    }
+  }
+  false
+}
+
+/// Calls a function value (valueCall).
+fn (var b: Builder) value_call(x: Expr) -> Int {
+  let (_, fun, args) = call_parts(x)
+  let fv = b.expr(fun)
+  let ft = b.vty(fv)
+  if b.tkind(ft) != Kind.Func || args.len() != b.m.types[ft].elems.len() {
+    b.unsupported("this call of a function value")
+    return b.undef(b.nat_of(x))
+  }
+  var vs = [fv]
+  for (i, a) in args.indexed() {
+    if a.name != None {
+      b.unsupported("a named argument to a function value")
+    }
+    vs.push(b.value_as(a.value, b.m.types[ft].elems[i]))
+  }
+  let r = b.add(Op.CallValue, b.m.types[ft].ret, Aux.None, vs)
+  b.check("")
+  b.call_result(r, x)
+}
+
+/// After a call of a function that never returns, the block ends
+/// (callResult).
+fn (var b: Builder) call_result(r: Int, x: Expr) -> Int {
+  if b.expr_never(x) {
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+    return b.undef(b.vty(r))
+  }
+  r
+}
+
+/// A function literal: its body becomes an Indirect function whose
+/// environment holds the captured bindings (closure).
+fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
+  let t = b.nat_of(e)
+  let nct = b.nat_check(e)
+  if nct < 0 {
+    b.unsupported("a closure the checker did not type (${b.pos(lit.span)})")
+    return b.undef(t)
+  }
+  let ct = b.c.resolve(nct)
+  if b.c.tys[ct].kind != check.TyKind.Func || b.tkind(t) != Kind.Func {
+    b.unsupported("this closure")
+    return b.undef(t)
+  }
+  // captured bindings: used inside, bound outside, in first use order
+  var caps: List[Int] = []
+  b.capture_block(lit.body, caps)
+  let owner = b.frame_owner()
+  if owner >= 0 && block_has_try(lit.body) {
+    for vo in b.frame_vars(owner) {
+      if b.s.var_type.contains(vo) && !caps.contains(vo) {
+        caps.push(vo)
+      }
+    }
+  }
+  var vals: List[Int] = []
+  var cap_ts: List[Int] = []
+  for vo in caps {
+    let v = b.read(vo)
+    vals.push(v)
+    cap_ts.push(b.vty(v))
+  }
+  b.nclos += 1
+  let name = "${b.s.f.name}.fn${b.nclos}"
+  var ps = [t]
+  for p in b.m.types[t].elems {
+    ps.push(p)
+  }
+  let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
+  b.m.funcs[fi].indirect = true
+  b.m.funcs[fi].captures = cap_ts
+  let x = b.c.tys[ct]
+  let err_t = b.fail_err(x.err)
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts))
+  b.add(Op.Closure, t, Aux.S(s: name), vals)
+}
+
+fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int]) {
+  let saved = b.begin(fi, file)
+  b.s.res = result
+  b.s.err_t = err_t
+  b.s.frame_fo = owner
+  b.s.closures = closures
+  b.s.sub = sub
+  let env = b.param(0)
+  for (i, vo) in caps.indexed() {
+    b.write_var(vo, b.add(Op.Capture, cap_ts[i], Aux.I(n: i), [env]))
+  }
+  let nps = b.s.f.blocks[0].params.len()
+  for (i, vo) in b.c.closure_params(file, lit).indexed() {
+    if vo >= 0 && i + 1 < nps {
+      b.write_var(vo, b.param(i + 1))
+    }
+  }
+  let v = b.block(lit.body)
+  b.ret(v)
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// The locals the identifiers of a block name that are bound outside
+/// (s.var_type), in first use order: check.Inspect over the body, whose
+/// children (internal/check walk.go) are the expressions of statements,
+/// not patterns, names, or labels.
+fn (var b: Builder) capture_block(bl: parser.Block, var caps: List[Int]) {
+  for st in bl.stmts {
+    b.capture_stmt(st, caps)
+  }
+}
+
+fn (var b: Builder) capture_ident(id: Ident, var caps: List[Int]) {
+  let vo = b.c.var_of(b.s.file, id)
+  if vo >= 0 && !caps.contains(vo) && b.s.var_type.contains(vo) {
+    caps.push(vo)
+  }
+}
+
+fn (var b: Builder) capture_opt(e: Expr?, var caps: List[Int]) {
+  if let Some(x) = e {
+    b.capture_expr(x, caps)
+  }
+}
+
+fn (var b: Builder) capture_stmt(st: Stmt, var caps: List[Int]) {
+  match st {
+    LetStmt(value: value, ..) => b.capture_expr(value, caps)
+    VarStmt(value: value, ..) => b.capture_expr(value, caps)
+    AssignStmt(target: target, value: value, ..) => {
+      b.capture_expr(target, caps)
+      b.capture_expr(value, caps)
+    }
+    DeferStmt(body: body, ..) => b.capture_stmt(body, caps)
+    ReturnStmt(value: value, ..) => b.capture_opt(value, caps)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      b.capture_expr(iter, caps)
+      for e in bound {
+        b.capture_expr(e, caps)
+      }
+      b.capture_block(body, caps)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      b.capture_opt(cond, caps)
+      for v in value {
+        b.capture_expr(v, caps)
+      }
+      for e in bound {
+        b.capture_expr(e, caps)
+      }
+      b.capture_block(body, caps)
+    }
+    ExprStmt(x: x, ..) => b.capture_expr(x, caps)
+    ConstDecl(d) => b.capture_expr(d.value, caps)
+    _ => {}
+  }
+}
+
+fn (var b: Builder) capture_expr(e: Expr, var caps: List[Int]) {
+  match e {
+    Ident(id) => b.capture_ident(id, caps)
+    StringLit(s) => {
+      for p in s.parts {
+        b.capture_opt(p.expr, caps)
+      }
+    }
+    ParenExpr(x: x, ..) => b.capture_expr(x, caps)
+    TupleExpr(elems: elems, ..) => {
+      for x in elems {
+        b.capture_expr(x, caps)
+      }
+    }
+    ListLit(elems: elems, ..) => {
+      for x in elems {
+        b.capture_expr(x, caps)
+      }
+    }
+    SetLit(elems: elems, ..) => {
+      for x in elems {
+        b.capture_expr(x, caps)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        b.capture_expr(en.key, caps)
+        b.capture_expr(en.value, caps)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        b.capture_expr(f.value, caps)
+      }
+    }
+    UnaryExpr(x: x, ..) => b.capture_expr(x, caps)
+    BinaryExpr(x: x, y: y, ..) => {
+      b.capture_expr(x, caps)
+      b.capture_expr(y, caps)
+    }
+    IsExpr(x: x, ..) => b.capture_expr(x, caps)
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      b.capture_opt(lo, caps)
+      b.capture_opt(hi, caps)
+    }
+    SelectorExpr(x: x, ..) => b.capture_expr(x, caps)
+    CallExpr(fun: fun, args: args, ..) => {
+      b.capture_expr(fun, caps)
+      for a in args {
+        b.capture_expr(a.value, caps)
+      }
+    }
+    TypeArgsExpr(x: x, ..) => b.capture_expr(x, caps)
+    IndexExpr(x: x, index: index, ..) => {
+      b.capture_expr(x, caps)
+      b.capture_expr(index, caps)
+    }
+    TryExpr(x: x, ..) => b.capture_expr(x, caps)
+    WithExpr(x: x, fields: fields, ..) => {
+      b.capture_expr(x, caps)
+      for f in fields {
+        b.capture_expr(f.value, caps)
+      }
+    }
+    IfExpr(x) => {
+      b.capture_opt(x.cond, caps)
+      b.capture_opt(x.value, caps)
+      b.capture_block(x.then, caps)
+      b.capture_opt(x.els, caps)
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      b.capture_expr(subject, caps)
+      for a in arms {
+        b.capture_opt(a.guard, caps)
+        if let Some(st) = a.body {
+          b.capture_stmt(st, caps)
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) => b.capture_block(body, caps)
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        b.capture_opt(a.op, caps)
+        b.capture_opt(a.after, caps)
+        if let Some(st) = a.body {
+          b.capture_stmt(st, caps)
+        }
+      }
+    }
+    Block(bl) => b.capture_block(bl, caps)
+    FnLit(f) => b.capture_block(f.body, caps)
+    WhileExpr(body: body, ..) => b.capture_block(body, caps)
+    _ => {}
+  }
+}
+
+/// Whether a block holds a `?` (hasTry, over the same children).
+fn block_has_try(bl: parser.Block) -> Bool {
+  for st in bl.stmts {
+    if stmt_has_try(st) {
+      return true
+    }
+  }
+  false
+}
+
+fn stmt_has_try(st: Stmt) -> Bool {
+  match st {
+    LetStmt(value: v, ..) => expr_has_try(v)
+    VarStmt(value: v, ..) => expr_has_try(v)
+    AssignStmt(target: t, value: v, ..) => expr_has_try(t) || expr_has_try(v)
+    DeferStmt(body: body, ..) => stmt_has_try(body)
+    ReturnStmt(value: v, ..) => opt_has_try(v)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => expr_has_try(iter) || list_has_try(bound) || block_has_try(body)
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => opt_has_try(cond) || list_has_try(value) || list_has_try(bound) || block_has_try(body)
+    ExprStmt(x: x, ..) => expr_has_try(x)
+    ConstDecl(d) => expr_has_try(d.value)
+    _ => false
+  }
+}
+
+fn opt_has_try(e: Expr?) -> Bool {
+  match e {
+    Some(x) => expr_has_try(x)
+    None => false
+  }
+}
+
+fn list_has_try(es: List[Expr]) -> Bool {
+  for e in es {
+    if expr_has_try(e) {
+      return true
+    }
+  }
+  false
+}
+
+fn expr_has_try(e: Expr) -> Bool {
+  match e {
+    TryExpr(..) => true
+    StringLit(s) => {
+      for p in s.parts {
+        if opt_has_try(p.expr) {
+          return true
+        }
+      }
+      false
+    }
+    ParenExpr(x: x, ..) => expr_has_try(x)
+    TupleExpr(elems: elems, ..) => list_has_try(elems)
+    ListLit(elems: elems, ..) => list_has_try(elems)
+    SetLit(elems: elems, ..) => list_has_try(elems)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        if expr_has_try(en.key) || expr_has_try(en.value) {
+          return true
+        }
+      }
+      false
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        if expr_has_try(f.value) {
+          return true
+        }
+      }
+      false
+    }
+    UnaryExpr(x: x, ..) => expr_has_try(x)
+    BinaryExpr(x: x, y: y, ..) => expr_has_try(x) || expr_has_try(y)
+    IsExpr(x: x, ..) => expr_has_try(x)
+    RangeExpr(lo: lo, hi: hi, ..) => opt_has_try(lo) || opt_has_try(hi)
+    SelectorExpr(x: x, ..) => expr_has_try(x)
+    CallExpr(fun: fun, args: args, ..) => {
+      if expr_has_try(fun) {
+        return true
+      }
+      for a in args {
+        if expr_has_try(a.value) {
+          return true
+        }
+      }
+      false
+    }
+    TypeArgsExpr(x: x, ..) => expr_has_try(x)
+    IndexExpr(x: x, index: index, ..) => expr_has_try(x) || expr_has_try(index)
+    WithExpr(x: x, fields: fields, ..) => {
+      if expr_has_try(x) {
+        return true
+      }
+      for f in fields {
+        if expr_has_try(f.value) {
+          return true
+        }
+      }
+      false
+    }
+    IfExpr(x) => opt_has_try(x.cond) || opt_has_try(x.value) || block_has_try(x.then) || opt_has_try(x.els)
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      if expr_has_try(subject) {
+        return true
+      }
+      for a in arms {
+        if opt_has_try(a.guard) {
+          return true
+        }
+        if let Some(st) = a.body {
+          if stmt_has_try(st) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    ScopeExpr(body: body, ..) => block_has_try(body)
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if opt_has_try(a.op) || opt_has_try(a.after) {
+          return true
+        }
+        if let Some(st) = a.body {
+          if stmt_has_try(st) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    Block(bl) => block_has_try(bl)
+    FnLit(f) => block_has_try(f.body)
+    WhileExpr(body: body, ..) => block_has_try(body)
+    _ => false
+  }
+}
+
+/// A named function used as a value: a closure without an environment
+/// over a wrapper that calls it (funcValue).
+fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
+  let t = b.nat_of(e)
+  if b.tkind(t) != Kind.Func || b.c.objs[fo].recv >= 0 {
+    b.unsupported("the function `${b.c.display_name(fo)}` as a value")
+    return b.undef(t)
+  }
+  if !b.type_params(fo).is_empty() {
+    b.unsupported("a generic function as a value")
+    return b.undef(t)
+  }
+  let key = "${fo}:${b.func_name(fo)}"
+  var w = b.thunks.get(key) ?? -1
+  if w < 0 {
+    let callee = b.declare(fo, [])
+    if !b.m.funcs[callee].var_params.is_empty() {
+      b.unsupported("a function with `var` parameters as a value")
+      return b.undef(t)
+    }
+    let cname = b.m.funcs[callee].name
+    let cres = b.m.funcs[callee].results[0]
+    var ps = [t]
+    for p in b.m.types[t].elems {
+      ps.push(p)
+    }
+    w = b.m.new_func("${cname}.value", ps, [b.m.types[t].ret])
+    b.m.funcs[w].indirect = true
+    var args: List[Int] = []
+    for (i, p) in b.m.funcs[w].blocks[0].params.indexed() {
+      if i > 0 {
+        args.push(p)
+      }
+    }
+    let r = b.m.funcs[w].add(0, Op.Call, cres, Aux.S(s: cname), args)
+    b.m.funcs[w].add(0, Op.Return, -1, Aux.None, [r])
+    b.thunks[key] = w
+  }
+  b.add(Op.Closure, t, Aux.S(s: b.m.funcs[w].name), [])
+}
+
+/// Constructs a variant from call arguments (ctorCall).
+fn (var b: Builder) ctor_call(vr: check.VRef, x: Expr) -> Int {
+  let (_, _, args) = call_parts(x)
+  let t = b.nat_of(x)
+  let name = b.variant_name(vr)
+  let nct = b.nat_check(x)
+  let (_, et) = b.result_parts(nct)
+  if et >= 0 && b.c.is_never(et) && args.len() == 1 {
+    if name == "Err" {
+      b.expr(args[0].value)
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.dead()
+      return b.undef(t)
+    }
+    return b.value_as(args[0].value, t)
+  }
+  let tag = b.m.variant_index(t, name)
+  if b.tkind(t) != Kind.Enum || tag < 0 {
+    b.unsupported("constructing `${name}` here")
+    return b.undef(t)
+  }
+  let fs = user_fields(b.m.types[t].variants[tag])
+  var vals: List[Int] = []
+  for _ in fs {
+    vals.push(-1)
+  }
+  let vfields = b.c.objs[vr.en].variants[vr.variant].fields
+  var pos = 0
+  for a in args {
+    var i = pos
+    if let Some(n) = a.name {
+      i = -1
+      for (j, f) in vfields.indexed() {
+        if f.name == n.name {
+          i = j
+        }
+      }
+    } else {
+      pos += 1
+    }
+    if i < 0 || i >= fs.len() {
+      b.unsupported("this variant argument")
+      continue
+    }
+    vals[i] = b.value_as(a.value, fs[i].ty)
+  }
+  for i in 0..vals.len() {
+    if vals[i] < 0 {
+      b.unsupported("a variant constructed without all its fields")
+      vals[i] = b.undef(fs[i].ty)
+    }
+  }
+  b.add(Op.Variant, t, Aux.I(n: tag), vals)
+}
+
+/// A bare `Err(x)` or `Ok(x)` the checker typed against the enclosing
+/// function's Result without recording a constructor (isRetCtor).
+fn (b: Builder) is_ret_ctor(x: Expr) -> Bool {
+  let (_, fun, args) = call_parts(x)
+  if let Ident(id) = fun {
+    if (id.name != b"Err" && id.name != b"Ok") || args.len() != 1 {
+      return false
+    }
+    return b.c.var_of(b.s.file, id) < 0 && b.c.ref_of(b.s.file, id) < 0 && b.c.ctor_in(b.s.file, x) == None && b.c.call_in(b.s.file, x) == None
+  }
+  false
+}
+
+fn (var b: Builder) ret_ctor(x: Expr) -> Int {
+  let (_, fun, args) = call_parts(x)
+  let id = match fun {
+    Ident(i) => i
+    _ => fault("ret ctor")
+  }
+  var ct = b.check_type(x)
+  let (rt0, et0) = b.result_parts(ct)
+  var rt = rt0
+  var et = et0
+  if rt < 0 {
+    if b.s.err_t < 0 {
+      b.unsupported("`${check.text(id.name)}(...)` here")
+      return b.undef(b.nat_of(x))
+    }
+    rt = b.s.res
+    et = b.s.err_t
+    ct = b.result_of(b.s.res, b.s.err_t)
+  }
+  let t = b.typ(ct)
+  let arg = args[0].value
+  if b.c.is_never(et) {
+    if id.name == b"Err" {
+      b.expr(arg)
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.dead()
+      return b.undef(t)
+    }
+    return b.value_as(arg, t)
+  }
+  if id.name == b"Err" {
+    let v = b.expr(arg)
+    let ev = b.coerce_err(v, b.nat_check(arg), et)
+    return b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "Err")), [ev])
+  }
+  let ok = b.value_as(arg, b.typ(rt))
+  b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "Ok")), [ok])
+}
+
+/// Converts an error at a `?` or `Err` site (coerceErr).
+fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int) -> Int {
+  let tt = b.typ(to)
+  if b.vty(v) == tt || b.vop(v) == Op.Undef {
+    return b.coerce(v, tt)
+  }
+  let fv = b.c.from_variant(to, from)
+  if fv >= 0 {
+    let o = b.named_obj(to)
+    return b.variant(tt, check.text(b.c.objs[o].variants[fv].name), [v])
+  }
+  if b.is_dyn(tt) {
+    b.unsupported("an error converted to the Error interface")
+    return b.undef(tt)
+  }
+  b.unsupported("converting the error `${b.m.types[b.vty(v)].name}` to `${b.m.types[tt].name}`")
+  b.undef(tt)
+}
+
+/// The result type the function's body returns (resultT).
+fn (b: Builder) result_t() -> Int {
+  b.s.f.results[0]
+}
+
+/// `x?` (try).
+fn (var b: Builder) try_expr(e: Expr) -> Int {
+  let (span, x) = match e {
+    TryExpr(span: span, x: x) => (span, x)
+    _ => fault("try")
+  }
+  let xt = b.nat_check(x)
+  let v = b.expr(x)
+  let (_, et0) = b.result_parts(xt)
+  if et0 >= 0 && b.c.is_never(et0) {
+    return v
+  }
+  let vt = b.vty(v)
+  if b.tkind(vt) != Kind.Enum {
+    b.unsupported("`?` on `${b.m.types[vt].name}`")
+    return b.undef(b.nat_of(e))
+  }
+  var fail_tag = b.m.variant_index(vt, "Err")
+  var ok_tag = b.m.variant_index(vt, "Ok")
+  let (_, et) = b.result_parts(xt)
+  let is_result = et >= 0
+  if !is_result {
+    fail_tag = b.m.variant_index(vt, "None")
+    ok_tag = b.m.variant_index(vt, "Some")
+  }
+  if fail_tag < 0 || ok_tag < 0 {
+    b.unsupported("`?` on `${b.m.types[vt].name}`")
+    return b.undef(b.nat_of(e))
+  }
+  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [v]), b.cint(fail_tag)])
+  let (yes, no) = b.branch(c)
+  b.s.cur = yes
+  let want = b.result_t()
+  if is_result {
+    if b.s.err_t < 0 {
+      b.unsupported("`?` on a Result in a function that cannot fail")
+    } else {
+      let ev = b.add(Op.Payload, b.m.types[vt].variants[fail_tag].fields[0].ty, Aux.P(tag: fail_tag, field: 0), [v])
+      let ce = b.coerce_err(ev, et, b.s.err_t)
+      let wi = b.m.variant_index(want, "Err")
+      let fs = b.m.types[want].variants[wi].fields
+      if fs.len() == 2 && fs[1].name == TRACE_FIELD {
+        let tr = b.push_frame(b.err_trace(v, fail_tag), span)
+        b.ret(b.add(Op.Variant, want, Aux.I(n: wi), [ce, tr]))
+      } else {
+        b.ret(b.add(Op.Variant, want, Aux.I(n: wi), [ce]))
+      }
+    }
+  } else {
+    let rt = b.typ(b.s.res)
+    if b.option_elem(b.s.res) < 0 {
+      b.unsupported("`?` on an Option outside a function returning an Option")
+    } else {
+      b.ret(b.add(Op.Variant, rt, Aux.I(n: b.m.variant_index(rt, "None")), []))
+    }
+  }
+  b.s.cur = no
+  b.add(Op.Payload, b.m.types[vt].variants[ok_tag].fields[0].ty, Aux.P(tag: ok_tag, field: 0), [v])
+}
+
+/// A numeric conversion `Float(i)`, `Int(f)`, or a newtype `Email(x)`
+/// (typeCall).
+fn (var b: Builder) type_call(obj: Int, x: Expr) -> Int {
+  let (span, _, args) = call_parts(x)
+  let to = b.nat_of(x)
+  if b.c.objs[obj].tkind == "newtype" && args.len() == 1 && b.tkind(to) == Kind.Struct && b.m.types[to].fields.len() == 1 {
+    let v = b.value_as(args[0].value, b.m.types[to].fields[0].ty)
+    return b.add(Op.Struct, to, Aux.None, [v])
+  }
+  if args.len() != 1 || !b.is_prelude_mod(b.obj_mod(obj)) {
+    b.unsupported("the conversion `${b.obj_name(obj)}(...)`")
+    return b.undef(to)
+  }
+  let v = b.expr(args[0].value)
+  let vt = b.vty(v)
+  let it = b.int_t()
+  let tk = b.tkind(to)
+  let vk = b.tkind(vt)
+  if vt == to {
+    return v
+  }
+  if b.m.is_f32(to) && b.m.is_u64(vt) {
+    let f = b.rt("u64_to_float", b.float_t(), [v])
+    return b.rt("f32_round", to, [f])
+  }
+  if b.m.is_f32(to) && vk == Kind.Int {
+    return b.rt("i64_to_f32", to, [v])
+  }
+  if tk == Kind.Float && vk == Kind.Float {
+    return b.rt("f32_round", to, [v])
+  }
+  if tk == Kind.Float && b.m.is_u64(vt) {
+    return b.rt("u64_to_float", to, [v])
+  }
+  if tk == Kind.Float && vk == Kind.Int {
+    return b.add(Op.IntToFloat, to, Aux.None, [v])
+  }
+  if tk == Kind.Int && vk == Kind.Float {
+    let r = b.add(Op.FloatToInt, it, Aux.None, [v])
+    b.set_pos(r, b.pos(span))
+    return b.int_conv(r, to, span)
+  }
+  if tk == Kind.Int && vk == Kind.Int {
+    return b.int_conv(v, to, span)
+  }
+  b.unsupported("the conversion `${b.obj_name(obj)}(...)`")
+  b.undef(to)
+}
+
+/// Call arguments matched to parameters, positional then named; missing
+/// ones are None (argExprs).
+fn arg_exprs(params: List[check.ParamInfo], args: List[parser.Arg]) -> List[Expr?] {
+  var out: List[Expr?] = []
+  for _ in params {
+    out.push(None)
+  }
+  var pos = 0
+  for a in args {
+    match a.name {
+      None => {
+        if pos < out.len() {
+          out[pos] = Some(a.value)
+        }
+        pos += 1
+      }
+      Some(n) => {
+        for (i, p) in params.indexed() {
+          if p.name == n.name {
+            out[i] = Some(a.value)
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+fn same_span(a: Expr, e: Expr?) -> Bool {
+  match e {
+    Some(x) => parser.expr_span(x) == parser.expr_span(a) && check.expr_kind(x) == check.expr_kind(a)
+    None => false
+  }
+}
+
+/// Calls the user function or the implementation impl of ci's function
+/// (callAs, declCall).
+fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
+  let (span, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  var targs: List[Int] = []
+  for p in b.type_params(fo) {
+    let t = ci.subst.get(p) ?? -1
+    if t < 0 {
+      b.unsupported("a generic call whose type arguments are not inferred")
+      return b.undef(b.nat_of(x))
+    }
+    targs.push(b.apply(t))
+  }
+  let callee = b.declare(impl, targs)
+  let ps0 = b.m.funcs[callee].blocks[0].params
+  var ps: List[Int] = []
+  for p in ps0 {
+    ps.push(b.func_value_type(callee, p))
+  }
+  let cres = b.m.funcs[callee].results
+  var impl_params = b.c.objs[impl].params
+  let is_method = b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static
+  if is_method && b.c.objs[impl].recv < 0 && !impl_params.is_empty() {
+    impl_params = impl_params[1..impl_params.len()]
+  }
+  var vargs: List[Int] = []
+  var places: List[Place] = []
+  var recv_place = -1
+  if is_method {
+    if ci.recv.is_empty() {
+      b.unsupported("this method call")
+      return b.undef(cres[0])
+    }
+    if b.c.objs[fo].recv_var {
+      let p = b.place(ci.recv[0])
+      if !p.ok {
+        return b.undef(cres[0])
+      }
+      places.push(p)
+      recv_place = 0
+      vargs.push(-1)
+    } else {
+      vargs.push(b.value_as(ci.recv[0], ps[0]))
+    }
+  }
+  let off = vargs.len()
+  let fparams = b.c.objs[fo].params
+  let exprs = arg_exprs(fparams, args)
+  var vals: List[Int] = []
+  var done: List[Bool] = []
+  var arg_places: List[Int] = []
+  for _ in fparams {
+    vals.push(-1)
+    done.push(false)
+    arg_places.push(-1)
+  }
+  var aplaces: List[Place] = []
+  for a in args {
+    for (i, e) in exprs.indexed() {
+      if done[i] || !same_span(a.value, e) {
+        continue
+      }
+      done[i] = true
+      let ex = e ?? fault("arg")
+      if fparams[i].is_var {
+        let p = b.place(ex)
+        if !p.ok {
+          return b.undef(cres[0])
+        }
+        arg_places[i] = aplaces.len()
+        aplaces.push(p)
+      } else {
+        vals[i] = b.value_as(ex, ps[off + i])
+      }
+    }
+  }
+  for (i, p) in fparams.indexed() {
+    if !done[i] {
+      var d: List[Expr] = p.default
+      var dfile = b.decl_file(fo)
+      if impl != fo {
+        d = []
+        if i < impl_params.len() {
+          d = impl_params[i].default
+          dfile = b.decl_file(impl)
+        }
+        if d.is_empty() {
+          d = p.default
+          dfile = b.decl_file(fo)
+        }
+      }
+      if d.is_empty() {
+        b.unsupported("a call with a missing argument")
+        vals[i] = b.undef(ps[off + i])
+        continue
+      }
+      vals[i] = b.foreign_value(d[0], dfile, ps[off + i])
+    }
+    if arg_places[i] >= 0 {
+      places.push(aplaces[arg_places[i]])
+    }
+  }
+  if recv_place >= 0 {
+    var rp = places[0]
+    vargs[0] = b.place_get(rp)
+    places[0] = rp
+  }
+  for (i, ap) in arg_places.indexed() {
+    if ap >= 0 {
+      // the place in places that is argument i's
+      var k = 0
+      if recv_place >= 0 {
+        k = 1
+      }
+      for j in 0..i {
+        if arg_places[j] >= 0 {
+          k += 1
+        }
+      }
+      var p = places[k]
+      vals[i] = b.place_get(p)
+      places[k] = p
+    }
+  }
+  for v in vals {
+    vargs.push(v)
+  }
+  if impl != fo {
+    for v in b.loc_args(span, impl_params, fparams.len()) {
+      vargs.push(v)
+    }
+  }
+  let name = b.m.funcs[callee].name
+  if b.c.objs[impl].realtime && (b.s.fo < 0 || !b.c.objs[b.s.fo].realtime) {
+    b.unsupported("a real-time section")
+  }
+  if cres.len() == 1 {
+    let r = b.call(name, cres[0], "", vargs)
+    b.check(name)
+    return b.call_result(r, x)
+  }
+  let t = b.m.tuple(cres)
+  let r = b.call(name, t, "", vargs)
+  b.check(name)
+  for (i, p0) in places.indexed() {
+    var p = p0
+    let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
+    b.place_set(p, f)
+  }
+  let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
+  b.call_result(f0, x)
+}
+
+/// The type of parameter value p of function fi (which may be the
+/// function being built, whose values live in b.s.f).
+fn (b: Builder) func_value_type(fi: Int, p: Int) -> Int {
+  if fi == b.s.fi {
+    return b.s.f.values[p].ty
+  }
+  b.m.funcs[fi].values[p].ty
+}
+
+/// The `rt.Loc` arguments of the implementation's parameters after those
+/// of the std function (locArgs).
+fn (var b: Builder) loc_args(span: Span, impl_params: List[check.ParamInfo], n: Int) -> List[Int] {
+  var out: List[Int] = []
+  var i = n
+  while i < impl_params.len() {
+    let o = b.named_obj(impl_params[i].ty)
+    if o < 0 || b.obj_name(o) != "Loc" || b.obj_mod(o) < 0 || b.c.mods[b.obj_mod(o)].path != "native/rt" {
+      b.unsupported("an implementation with more parameters than the std function")
+      i += 1
+      continue
+    }
+    out.push(b.const_str(b.pos_line(span)))
+    i += 1
+  }
+  out
+}
+
+/// A call of a function of std/native/rt.xo (intrinsic).
+fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
+  let (_, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let nt = b.nat_of(x)
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  for e in es {
+    if e == None {
+      b.unsupported("an intrinsic call with a missing argument")
+      return b.undef(nt)
+    }
+  }
+  if !b.type_params(fo).is_empty() {
+    b.unsupported("the generic intrinsic `${b.obj_name(fo)}`")
+    return b.undef(nt)
+  }
+  let name = b.obj_name(fo)
+  if name is "fs_root" | "fs_mode" {
+    let v = b.expr(es[0] ?? fault("arg"))
+    if !b.is_fs(b.vty(v)) {
+      b.unsupported("`${name}` of a value that is not an Fs")
+      return b.undef(nt)
+    }
+    let i = if name == "fs_mode" { 1 } else { 0 }
+    return b.add(Op.Field, b.m.types[b.vty(v)].fields[i].ty, Aux.I(n: i), [v])
+  }
+  if name == "fs_new" {
+    let t = b.fs_type()
+    let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
+    let c = b.value_as(es[1] ?? fault("arg"), b.m.types[t].fields[1].ty)
+    return b.add(Op.Struct, t, Aux.None, [a, c])
+  }
+  if name is "dyn_text" | "dyn_raw" {
+    let v = b.expr(es[0] ?? fault("arg"))
+    if !b.is_dyn(b.vty(v)) {
+      b.unsupported("`${name}` of a value that is not an interface value")
+      return b.undef(nt)
+    }
+    let i = if name == "dyn_text" { 0 } else { 1 }
+    return b.add(Op.Field, nt, Aux.I(n: i), [v])
+  }
+  var vs: List[Int] = []
+  for (i, p) in b.c.objs[fo].params.indexed() {
+    let pt = b.typ(p.ty)
+    vs.push(b.value_as(es[i] ?? fault("arg"), pt))
+  }
+  if b.is_never(b.c.objs[fo].result) {
+    b.rt(name, -1, vs)
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+    return b.undef(nt)
+  }
+  b.rt(name, nt, vs)
+}
+
+/// a.min(b) or a.max(b) on Int, Float, the sized integers, and Str; -1
+/// for another type (ordMinMax).
+fn (var b: Builder) ord_min_max(name: Str, a: Int, c: Int) -> Int {
+  let t = b.vty(a)
+  if b.m.is_sized(t) {
+    return b.sized_min_max(name, a, c)
+  }
+  if b.tkind(t) == Kind.Int || b.tkind(t) == Kind.Float {
+    let base = if b.tkind(t) == Kind.Float { "Float" } else { "Int" }
+    return b.call("${base}.${name}", t, "", [a, c])
+  }
+  if b.tkind(t) == Kind.Str {
+    let bt = b.bool_t()
+    let cmp = b.call("str.cmp", b.int_t(), "", [c, a])
+    var pick = -1
+    if name == "min" {
+      pick = b.add(Op.Lt, bt, Aux.None, [cmp, b.cint(0)])
+    } else {
+      pick = b.add(Op.Gt, bt, Aux.None, [cmp, b.cint(0)])
+    }
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, t)
+    let (yes, no) = b.branch(pick)
+    b.s.cur = yes
+    b.jump(join, [c])
+    b.s.cur = no
+    b.jump(join, [a])
+    b.seal(join)
+    b.s.cur = join
+    return res
+  }
+  -1
+}
+
+/// Whether e is the expression of a `var` receiver or argument that is a
+/// place; the receiver expression of ci.
+fn (var b: Builder) recv_value(ci: check.CallInfo) -> Int {
+  b.expr(ci.recv[0])
+}
+
+/// A prelude function or method: a runtime call, inline code, or a
+/// terminator (stdCall).
+fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
+  let (span, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let nt = b.nat_of(x)
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let fm = b.obj_mod(fo)
+  let fname = b.obj_name(fo)
+  if !b.c.mods[fm].is_prelude {
+    b.unsupported("the std function `${b.c.mods[fm].name}.${b.c.display_name(fo)}`")
+    return b.undef(nt)
+  }
+  let r = b.c.objs[fo].recv
+  if r < 0 {
+    if fname == "fault" && args.len() == 1 {
+      let msg = b.value_as(args[0].value, b.str_t())
+      b.fault(msg, b.pos(span))
+      b.dead()
+      return b.undef(nt)
+    }
+    b.unsupported("the prelude function `${fname}`")
+    return b.undef(nt)
+  }
+  let rname = b.obj_name(r)
+  let is_static = b.c.objs[fo].is_static
+  match rname {
+    "Range" => {
+      let recv = strip_parens(ci.recv[0])
+      if let RangeExpr(lo: Some(lo), hi: Some(hi), inclusive: inclusive, ..) = recv {
+        if fname == "to_list" {
+          let nm = b.native_mod("std/prelude")
+          if nm >= 0 {
+            let impl = b.member(nm, "int_range_list")
+            if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func {
+              let lv = b.value_as(lo, it)
+              var hv = b.value_as(hi, it)
+              if inclusive {
+                hv = b.add(Op.Add, it, Aux.None, [hv, b.cint(1)])
+              }
+              let f = b.declare(impl, [])
+              return b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", [lv, hv])
+            }
+          }
+        }
+      }
+    }
+    "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Rune" => {
+      if is_static && fname == "try" && args.len() == 1 && b.tkind(nt) == Kind.Enum {
+        let v = b.value_as(args[0].value, it)
+        let some = b.m.variant_index(nt, "Some")
+        let to = b.m.types[nt].variants[some].fields[0].ty
+        var ok = -1
+        if b.m.types[to].name == "Rune" {
+          ok = b.rt("rune_valid", bt, [v])
+        } else {
+          var rargs = [v]
+          for a in b.size_args(to) {
+            rargs.push(a)
+          }
+          ok = b.rt("int_in_range", bt, rargs)
+        }
+        let join = b.new_block()
+        let res = b.s.f.add_param(join, nt)
+        let (yes, no) = b.branch(ok)
+        b.s.cur = yes
+        var w = v
+        if to != it {
+          w = b.add(Op.IntConv, to, Aux.None, [v])
+        }
+        b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: some), [w])])
+        b.s.cur = no
+        b.jump(join, [b.variant(nt, "None", [])])
+        b.seal(join)
+        b.s.cur = join
+        return res
+      }
+    }
+    "Buf" => {
+      if is_static && (fname is "new" | "with_capacity") && b.tkind(nt) == Kind.List {
+        for a in args {
+          b.value_as(a.value, it)
+        }
+        return b.call("list.new", nt, "", [])
+      }
+      if b.c.objs[fo].recv_var && fname == "push" && args.len() == 1 {
+        var p = b.place(ci.recv[0])
+        if p.ok && b.tkind(p.t()) == Kind.List {
+          let v = b.value_as(args[0].value, b.m.types[p.t()].elems[0])
+          let l = b.place_get(p)
+          b.place_set(p, b.call("list.push", p.t(), "", [l, v]))
+          return b.unit()
+        }
+      } else if !is_static && fname == "len" {
+        let l = b.expr(ci.recv[0])
+        return b.call("list.len", it, "", [l])
+      } else if !is_static && fname == "freeze" {
+        return b.expr(ci.recv[0])
+      }
+    }
+    "Secret" => {
+      if is_static && fname == "new" && args.len() == 1 && b.tkind(nt) == Kind.Struct && b.m.types[nt].fields.len() == 1 {
+        let v = b.value_as(args[0].value, b.m.types[nt].fields[0].ty)
+        return b.add(Op.Struct, nt, Aux.None, [v])
+      }
+      if !is_static && fname == "reveal" && args.is_empty() {
+        let sv = b.expr(ci.recv[0])
+        let svt = b.vty(sv)
+        if b.tkind(svt) == Kind.Struct && b.m.types[svt].fields.len() == 1 {
+          return b.add(Op.Field, b.m.types[svt].fields[0].ty, Aux.I(n: 0), [sv])
+        }
+      }
+    }
+    "Map" | "Set" => {
+      b.unsupported("Map and Set methods")
+      return b.undef(nt)
+    }
+    "Stdio" => {
+      if fname is "print" | "println" | "eprint" | "eprintln" {
+        let rv = b.expr(ci.recv[0])
+        let mv = b.value_as(args[0].value, b.str_t())
+        return b.call("Stdio.${fname}", b.unit_t(), "", [rv, mv])
+      }
+      if fname is "write" | "read_line" | "read_all" | "lines" {
+        if fname != "write" {
+          b.need_conc = true
+          b.unsupported("reading standard input")
+          return b.undef(nt)
+        }
+        let pm = b.native_mod("std/prelude")
+        if pm >= 0 {
+          let impl = b.member(pm, "stdio_${fname}")
+          if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+            return b.call_as(x, ci, impl)
+          }
+        }
+      }
+    }
+    "List" => {
+      if b.c.objs[fo].recv_var {
+        var p = b.place(ci.recv[0])
+        if p.ok && b.tkind(p.t()) == Kind.List {
+          let lt = p.t()
+          let et = b.m.types[lt].elems[0]
+          match fname {
+            "push" => {
+              let v = b.value_as(args[0].value, et)
+              let l = b.place_get(p)
+              b.place_set(p, b.call("list.push", lt, "", [l, v]))
+              return b.unit()
+            }
+            "set" => {
+              let i = b.value_as(args[0].value, it)
+              let v = b.value_as(args[1].value, et)
+              let l = b.place_get(p)
+              b.place_set(p, b.call("list.set", lt, b.pos_line(span), [l, i, v]))
+              return b.unit()
+            }
+            "pop" => {
+              let l = b.place_get(p)
+              let rt = b.m.tuple([lt, nt])
+              let rv = b.call("list.pop", rt, "", [l])
+              b.place_set(p, b.add(Op.Field, lt, Aux.I(n: 0), [rv]))
+              return b.add(Op.Field, nt, Aux.I(n: 1), [rv])
+            }
+            _ => {}
+          }
+        }
+      } else {
+        let l = b.expr(ci.recv[0])
+        if b.tkind(b.vty(l)) == Kind.List {
+          match fname {
+            "len" => return b.call("list.len", it, "", [l])
+            "is_empty" => return b.add(Op.Eq, bt, Aux.None, [b.call("list.len", it, "", [l]), b.cint(0)])
+            "get" => {
+              let i = b.value_as(args[0].value, it)
+              return b.call("list.get", nt, "", [l, i])
+            }
+            "first" => return b.call("list.get", nt, "", [l, b.cint(0)])
+            "last" => {
+              let n = b.call("list.len", it, "", [l])
+              return b.call("list.get", nt, "", [l, b.add(Op.Sub, it, Aux.None, [n, b.cint(1)])])
+            }
+            _ => {}
+          }
+        }
+      }
+    }
+    "Option" | "Result" => {
+      let o = b.expr(ci.recv[0])
+      let ot = b.vty(o)
+      if b.tkind(ot) == Kind.Enum {
+        let key = "${rname}.${fname}"
+        match key {
+          "Option.is_some" => return b.is_tag(o, "Some")
+          "Option.is_none" => return b.is_tag(o, "None")
+          "Result.is_ok" => return b.is_tag(o, "Ok")
+          "Result.is_err" => return b.is_tag(o, "Err")
+          "Result.ok" | "Result.err" => {
+            let vname = if fname == "err" { "Err" } else { "Ok" }
+            let from = b.m.variant_index(ot, vname)
+            let join = b.new_block()
+            let res = b.s.f.add_param(join, nt)
+            let (yes, no) = b.branch(b.is_tag(o, vname))
+            b.s.cur = yes
+            let pv = b.add(Op.Payload, b.m.types[ot].variants[from].fields[0].ty, Aux.P(tag: from, field: 0), [o])
+            b.jump(join, [b.variant(nt, "Some", [pv])])
+            b.s.cur = no
+            b.jump(join, [b.variant(nt, "None", [])])
+            b.seal(join)
+            b.s.cur = join
+            return res
+          }
+          "Option.or_fault" => {
+            let msg = b.value_as(args[0].value, b.str_t())
+            let (none, some) = b.branch(b.is_tag(o, "None"))
+            b.s.cur = none
+            b.fault(msg, b.pos_line(span))
+            b.s.cur = some
+            let i = b.m.variant_index(ot, "Some")
+            return b.add(Op.Payload, b.m.types[ot].variants[i].fields[0].ty, Aux.P(tag: i, field: 0), [o])
+          }
+          "Result.or_fault" => {
+            let rct = b.nat_check(ci.recv[0])
+            if b.named_obj(rct) >= 0 && b.ty_args(rct).len() == 2 {
+              let st = b.str_t()
+              let msg = b.value_as(args[0].value, st)
+              let (bad, good) = b.branch(b.is_tag(o, "Err"))
+              b.s.cur = bad
+              let ei = b.m.variant_index(ot, "Err")
+              let ev = b.add(Op.Payload, b.m.types[ot].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [o])
+              let pre = b.call("str.concat", st, "", [msg, b.const_str(": ")])
+              let text = b.append_display(pre, ev, b.apply(b.ty_args(rct)[1]))
+              b.fault(text, b.pos_line(span))
+              b.s.cur = good
+              let i = b.m.variant_index(ot, "Ok")
+              return b.add(Op.Payload, b.m.types[ot].variants[i].fields[0].ty, Aux.P(tag: i, field: 0), [o])
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+    "Int" | "Float" | "Str" => {
+      let v = b.expr(ci.recv[0])
+      var vs = [v]
+      for a in args {
+        vs.push(b.expr(a.value))
+      }
+      var pos = ""
+      if rname == "Int" && fname == "abs" {
+        pos = b.pos_line(span)
+      }
+      let key = "${rname}.${fname}"
+      if key is "Int.abs" | "Int.min" | "Int.max" | "Float.min" | "Float.max" | "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" | "Float.is_nan" | "Str.len" | "Str.is_empty" {
+        return b.call(key, nt, pos, vs)
+      }
+    }
+    _ => {}
+  }
+  b.unsupported("the method `${b.c.display_name(fo)}`")
+  b.undef(nt)
+}
+
+fn strip_parens(e: Expr) -> Expr {
+  match e {
+    ParenExpr(x: x, ..) => strip_parens(x)
+    _ => e
+  }
+}
+
+fn (var b: Builder) is_tag(o: Int, name: Str) -> Int {
+  let t = b.add(Op.Tag, b.int_t(), Aux.None, [o])
+  b.add(Op.Eq, b.bool_t(), Aux.None, [t, b.cint(b.m.variant_index(b.vty(o), name))])
+}
+
+/// The methods of capabilities and builders lowered inline (ioCall): the
+/// value, or None for a method ioCall does not lower.
+fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let (span, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  let fm = b.obj_mod(fo)
+  if r < 0 {
+    return None
+  }
+  var rname = b.obj_name(r)
+  if b.c.mods[fm].path == "std/testing" {
+    let cap = test_cap(rname)
+    if cap.is_empty() {
+      return None
+    }
+    rname = cap
+    b.unsupported("the fakes of std/testing")
+    return Some(b.undef(b.nat_of(x)))
+  } else if !b.c.mods[fm].is_prelude {
+    return None
+  }
+  let fname = b.obj_name(fo)
+  let key = "${rname}.${fname}"
+  if rname == "Fs" {
+    // fsCall: the function fs_<name> of the native prelude
+    let pm = b.native_mod("std/prelude")
+    if pm >= 0 {
+      let impl = b.member(pm, "fs_${b.obj_name(fo)}")
+      if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+        return Some(b.call_as(x, ci, impl))
+      }
+    }
+    b.unsupported("the method `Fs.${b.obj_name(fo)}`")
+    return Some(b.undef(b.nat_of(x)))
+  }
+  if !(rname is "Clock" | "Net" | "Listener" | "Conn" | "Proc" | "Env" | "Duration" | "Time" | "Bytes" | "Fs" | "StrBuilder" | "BytesBuilder" | "Rand") {
+    if rname != "Str" || fname != "bytes" {
+      return None
+    }
+  }
+  let nt = b.nat_of(x)
+  let it = b.int_t()
+  let st = b.str_t()
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" {
+    b.need_conc = true
+    if b.conc {
+      b.unsupported("an operation that waits (`${key}`)")
+    }
+    return Some(b.undef(nt))
+  }
+  let pos = b.pos_line(span)
+  if b.c.objs[fo].is_static {
+    match key {
+      "Duration.from_nanos" => return Some(b.io_arg(fo, es, 0, it))
+      "Duration.from_millis" => return Some(b.mul_pos(b.io_arg(fo, es, 0, it), 1000000, pos))
+      "Duration.from_secs_int" => return Some(b.mul_pos(b.io_arg(fo, es, 0, it), 1000000000, pos))
+      "Time.from_unix" => return Some(b.mul_pos(b.io_arg(fo, es, 0, it), 1000000000, pos))
+      "Time.from_unix_millis" => return Some(b.mul_pos(b.io_arg(fo, es, 0, it), 1000000, pos))
+      "Time.UNIX_EPOCH" => return Some(b.cint(0))
+      "StrBuilder.new" | "BytesBuilder.new" => return Some(b.const_str(""))
+      "BytesBuilder.with_capacity" => return Some(b.rt("rs_with_cap", st, [b.io_arg(fo, es, 0, it)]))
+      _ => {}
+    }
+    b.unsupported("`${b.c.display_name(fo)}`")
+    return Some(b.undef(nt))
+  }
+  if key is "StrBuilder.write" | "BytesBuilder.write" | "BytesBuilder.write_str" | "BytesBuilder.write_byte" | "BytesBuilder.write_rune" {
+    var p = b.place(ci.recv[0])
+    if !p.ok {
+      return Some(b.undef(nt))
+    }
+    let cur = b.place_get(p)
+    match fname {
+      "write_byte" => {
+        let a = b.io_arg(fo, es, 0, b.m.int_type("UInt8"))
+        b.place_set(p, b.rt("rs_push_byte", st, [cur, a]))
+      }
+      "write_rune" => {
+        let a = b.io_arg(fo, es, 0, b.m.int_type("Rune"))
+        b.place_set(p, b.rt("rs_push_rune", st, [cur, a]))
+      }
+      _ => {
+        let a = b.io_arg(fo, es, 0, st)
+        b.place_set(p, b.call("str.concat", st, "", [cur, a]))
+      }
+    }
+    return Some(b.unit())
+  }
+  if key == "Rand.shuffle" {
+    b.unsupported("`Rand.shuffle`")
+    return Some(b.undef(nt))
+  }
+  let recv = b.expr(ci.recv[0])
+  match key {
+    "StrBuilder.len" | "BytesBuilder.len" => return Some(b.call("Str.len", it, "", [recv]))
+    "StrBuilder.freeze" | "BytesBuilder.freeze" => return Some(recv)
+    "Env.args" => return Some(b.rt("env_args", b.m.list(st), []))
+    "Proc.exit" => {
+      b.rt("exit", -1, [b.io_arg(fo, es, 0, it)])
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.dead()
+      return Some(b.undef(nt))
+    }
+    "Rand.int" => {
+      let lo = b.io_arg(fo, es, 0, it)
+      let hi = b.io_arg(fo, es, 1, it)
+      return Some(b.rt("rand_int", it, [lo, hi, b.const_str(pos)]))
+    }
+    "Rand.float" => return Some(b.rt("rand_float", b.float_t(), []))
+    "Rand.bool" => return Some(b.rt("rand_bool", b.bool_t(), []))
+    "Rand.bytes" => return Some(b.rt("rand_bytes", st, [b.io_arg(fo, es, 0, it)]))
+    "Clock.now" => return Some(b.rt("clock_now", it, []))
+    "Clock.since" => {
+      let now = b.rt("clock_now", it, [])
+      let a = b.io_arg(fo, es, 0, it)
+      let v = b.add(Op.Sub, it, Aux.None, [now, a])
+      b.set_pos(v, pos)
+      return Some(v)
+    }
+    "Proc.set_grace" => {
+      b.rt("set_grace", -1, [b.io_arg(fo, es, 0, it)])
+      return Some(b.unit())
+    }
+    "Env.get" => {
+      let l = b.rt("env_get", b.m.list(st), [b.io_arg(fo, es, 0, st)])
+      return Some(b.pop_one(l, nt))
+    }
+    "Str.bytes" => return Some(recv)
+    "Bytes.len" => return Some(b.call("Str.len", it, "", [recv]))
+    "Bytes.is_empty" => return Some(b.add(Op.Eq, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [recv]), b.cint(0)]))
+    "Bytes.to_str" => {
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, nt)
+      let (yes, no) = b.branch(b.rt("utf8_valid", b.bool_t(), [recv]))
+      b.s.cur = yes
+      b.jump(join, [b.variant(nt, "Some", [recv])])
+      b.s.cur = no
+      b.jump(join, [b.variant(nt, "None", [])])
+      b.seal(join)
+      b.s.cur = join
+      return Some(res)
+    }
+    "Duration.nanos" => return Some(recv)
+    "Duration.millis" => return Some(b.add(Op.Div, it, Aux.None, [recv, b.cint(1000000)]))
+    "Duration.seconds" => {
+      let ft = b.float_t()
+      let f = b.add(Op.IntToFloat, ft, Aux.None, [recv])
+      return Some(b.add(Op.Div, ft, Aux.None, [f, b.add(Op.Const, ft, Aux.F(f: 1000000000.0), [])]))
+    }
+    "Duration.abs" => return Some(b.call("Int.abs", it, pos, [recv]))
+    "Time.unix" => return Some(b.rt("floor_div", it, [recv, b.cint(1000000000)]))
+    "Time.unix_millis" => return Some(b.rt("floor_div", it, [recv, b.cint(1000000)]))
+    _ => {}
+  }
+  b.unsupported("the method `${b.c.display_name(fo)}`")
+  Some(b.undef(nt))
+}
+
+/// Argument i of an ioCall, or the parameter's default (arg).
+fn (var b: Builder) io_arg(fo: Int, es: List[Expr?], i: Int, t: Int) -> Int {
+  match es[i] {
+    Some(e) => b.value_as(e, t)
+    None => {
+      let d = b.c.objs[fo].params[i].default
+      if !d.is_empty() {
+        return b.foreign_value(d[0], b.decl_file(fo), t)
+      }
+      b.unsupported("a call with a missing argument")
+      b.undef(t)
+    }
+  }
+}
+
+fn (var b: Builder) mul_pos(v: Int, k: Int, pos: Str) -> Int {
+  let r = b.add(Op.Mul, b.int_t(), Aux.None, [v, b.cint(k)])
+  b.set_pos(r, pos)
+  r
+}
+
+/// The one element a runtime list holds, as an Option (popOne).
+fn (var b: Builder) pop_one(l: Int, ot: Int) -> Int {
+  let rt = b.m.tuple([b.vty(l), ot])
+  let r = b.call("list.pop", rt, "", [l])
+  b.add(Op.Field, ot, Aux.I(n: 1), [r])
+}

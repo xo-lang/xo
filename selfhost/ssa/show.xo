@@ -1,0 +1,728 @@
+// Display and Debug text (internal/ssa build_show.go), error frames
+// (build_frames.go), constants and sized integers (build_int.go).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/lexer
+
+// ---------------------------------------------------------------------------
+// Display and Debug
+
+/// The method name of the named type ct (declared on it, or a std type's
+/// native implementation), or -1 (methodOf).
+fn (var b: Builder) method_of(ct: Int, name: Str) -> Int {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return -1
+  }
+  let m = b.c.objs[o].methods.get(name.bytes()) ?? -1
+  if m < 0 {
+    let om = b.obj_mod(o)
+    if om >= 0 && b.c.mods[om].is_std {
+      let nm = b.native_mod(b.c.mods[om].path)
+      if nm >= 0 {
+        let f = b.member(nm, "${b.obj_name(o).to_lower()}_${name}")
+        if f >= 0 && b.c.objs[f].kind == check.ObjKind.Func && b.c.objs[f].recv < 0 {
+          return f
+        }
+      }
+    }
+    return -1
+  }
+  if b.is_std_mod(b.obj_mod(m)) {
+    return b.impl_of(m)
+  }
+  m
+}
+
+/// Calls method m of the named type ct on v (callMethod).
+fn (var b: Builder) call_method(m: Int, ct: Int, v: Int) -> Int {
+  let targs = b.ty_args(ct)
+  if b.type_params(m).len() != targs.len() {
+    b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}`")
+    return b.undef(b.typ(b.c.objs[m].result))
+  }
+  let callee = b.declare(m, targs)
+  let name = b.m.funcs[callee].name
+  let r = b.call(name, b.m.funcs[callee].results[0], "", [v])
+  b.check(name)
+  r
+}
+
+/// acc + the Display text of v of checker type ct (appendDisplay).
+fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
+  let st = b.str_t()
+  let vt = b.vty(v)
+  if b.is_dyn(vt) {
+    return b.call("str.concat", st, "", [acc, b.add(Op.Field, st, Aux.I(n: 0), [v])])
+  }
+  if b.is_iface(vt) {
+    b.unsupported("the text of an interface value")
+    return b.undef(st)
+  }
+  if b.is_prelude_named(ct, ["Secret"]) {
+    return b.call("str.concat", st, "", [acc, b.const_str("<redacted>")])
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    return b.rt("rs_append_duration", st, [acc, v])
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    return b.rt("rs_append_time", st, [acc, v])
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    return b.append_debug(acc, v, ct)
+  }
+  if b.is_prelude_named(ct, ["UInt64"]) {
+    return b.rt("rs_append_u64", st, [acc, v])
+  }
+  if b.is_prelude_named(ct, ["Rune"]) {
+    return b.rt("rs_append_rune", st, [acc, v])
+  }
+  match b.tkind(vt) {
+    Str => return b.call("str.concat", st, "", [acc, v])
+    Int | Float => return b.call("str.concat_${b.lower_kind(vt)}", st, "", [acc, v])
+    Bool => return b.call("str.concat", st, "", [acc, b.call("str.of_bool", st, "", [v])])
+    _ => {}
+  }
+  let md = b.method_of(ct, "display")
+  if md >= 0 {
+    let r = b.call_method(md, ct, v)
+    return b.call("str.concat", st, "", [acc, r])
+  }
+  b.append_debug(acc, v, ct)
+}
+
+/// acc + the Debug text of v of checker type ct (appendDebug).
+fn (var b: Builder) append_debug(acc: Int, v: Int, ct: Int) -> Int {
+  let name = b.debug_func(ct, b.vty(v))
+  b.call(name, b.str_t(), "", [acc, v])
+}
+
+/// `<chan>`: a type name in lower case without its arguments
+/// (lowerName).
+fn lower_name(n: Str) -> Str {
+  n.split("[")[0].to_lower()
+}
+
+/// The Debug text of a sub value x of checker type xt appended to a, in
+/// a function under construction (debugFunc's sub).
+fn (var b: Builder) debug_sub(a: Int, x0: Int, xt: Int) -> Int {
+  let x = b.unbox(x0)
+  let name = b.debug_func(xt, b.vty(x))
+  b.call(name, b.str_t(), "", [a, x])
+}
+
+fn (var b: Builder) lit(a: Int, text: Str) -> Int {
+  b.call("str.concat", b.str_t(), "", [a, b.const_str(text)])
+}
+
+/// xo.debug[ct](acc: Str, v: T) -> Str: acc and the Debug text of v
+/// (debugFunc).
+fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
+  let st = b.str_t()
+  let name = "xo.debug[${b.c.show(ct)}]"
+  let saved = match b.gen_begin(name, [st, t], [st]) {
+    Some(s) => s
+    None => return name
+  }
+  b.debug_body(ct, t)
+  b.gen_end(saved)
+  name
+}
+
+fn (var b: Builder) debug_body(ct: Int, t: Int) {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let acc = b.param(0)
+  let v = b.param(1)
+  if b.is_dyn(t) || b.is_iface(t) {
+    b.unsupported("the Debug text of an interface value")
+    b.retv(acc)
+    return
+  }
+  if b.is_fs(t) {
+    b.retv(b.lit(acc, "<fs>"))
+    return
+  }
+  let (ok_t, et) = b.result_parts(ct)
+  if et >= 0 && b.c.is_never(et) {
+    let a = b.lit(acc, "Ok(")
+    let s2 = b.debug_sub(a, v, ok_t)
+    b.retv(b.lit(s2, ")"))
+    return
+  }
+  if b.is_prelude_named(ct, ["Secret"]) {
+    b.retv(b.lit(acc, "<redacted>"))
+    return
+  }
+  if b.is_prelude_named(ct, ["Buf"]) {
+    let args = b.ty_args(ct)
+    if args.len() == 1 {
+      let a = b.lit(acc, "Buf")
+      b.retv(b.debug_sub(a, v, b.prelude_type("List", [args[0]])))
+      return
+    }
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    b.retv(b.rt("rs_append_duration", st, [acc, v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    b.retv(b.rt("rs_append_time", st, [acc, v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    let a = b.lit(acc, "b")
+    b.retv(b.rt("rs_append_quote", st, [a, v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["UInt64"]) {
+    b.retv(b.rt("rs_append_u64", st, [acc, v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Rune"]) {
+    b.retv(b.rt("rs_append_rune_quote", st, [acc, v]))
+    return
+  }
+  match b.tkind(t) {
+    Str => {
+      b.retv(b.rt("rs_append_quote", st, [acc, v]))
+      return
+    }
+    Int | Float => {
+      b.retv(b.call("str.concat_${b.lower_kind(t)}", st, "", [acc, v]))
+      return
+    }
+    Bool => {
+      let s2 = b.call("str.of_bool", st, "", [v])
+      b.retv(b.call("str.concat", st, "", [acc, s2]))
+      return
+    }
+    Unit => {
+      b.retv(b.lit(acc, "()"))
+      return
+    }
+    Func => {
+      b.retv(b.lit(acc, "<fn>"))
+      return
+    }
+    Cap => {
+      b.retv(b.lit(acc, "<${lower_name(b.m.types[t].name)}>"))
+      return
+    }
+    Handle => {
+      if b.is_prelude_named(ct, ["Atomic"]) {
+        b.unsupported("the Debug text of an Atomic")
+        b.retv(acc)
+        return
+      }
+      b.retv(b.lit(acc, "<${lower_name(b.m.types[t].name)}>"))
+      return
+    }
+    Box => {
+      b.retv(b.debug_sub(acc, v, ct))
+      return
+    }
+    Tuple => {
+      let r = b.c.resolve(ct)
+      if b.c.tys[r].kind == check.TyKind.Tuple && b.c.tys[r].args.len() == b.m.types[t].elems.len() {
+        var a = b.lit(acc, "(")
+        for (i, et2) in b.m.types[t].elems.indexed() {
+          if i > 0 {
+            a = b.lit(a, ", ")
+          }
+          let f = b.add(Op.Field, et2, Aux.I(n: i), [v])
+          a = b.debug_sub(a, f, b.c.tys[r].args[i])
+        }
+        b.retv(b.lit(a, ")"))
+        return
+      }
+    }
+    Struct | Enum | List | Bad => {}
+  }
+  let obj = b.named_obj(ct)
+  if obj < 0 {
+    b.unsupported("the Debug text of `${b.c.show(ct)}`")
+    b.retv(acc)
+    return
+  }
+  let args = b.ty_args(ct)
+  let om = b.obj_mod(obj)
+  let oname = b.obj_name(obj)
+  if b.is_prelude_mod(om) && oname == "List" {
+    let et2 = b.m.types[t].elems[0]
+    let av = b.local()
+    b.write_var(av, b.lit(acc, "["))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [v])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [i, b.cint(0)]))
+    b.write_var(av, b.lit(b.read(av), ", "))
+    b.if_then_end(no, join)
+    let cur = b.read(av)
+    let el = b.call("list.index", et2, "", [v, i])
+    b.write_var(av, b.debug_sub(cur, el, args[0]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.lit(b.read(av), "]"))
+    return
+  }
+  if b.is_prelude_mod(om) && (oname is "Map" | "Set") {
+    b.unsupported("the Debug text of a Map or Set")
+    b.retv(acc)
+    return
+  }
+  let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
+  let tk = b.c.objs[obj].tkind
+  if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
+    let a = b.lit(acc, "${oname}(")
+    let f = b.add(Op.Field, b.m.types[t].fields[0].ty, Aux.I(n: 0), [v])
+    let a2 = b.debug_sub(a, f, b.c.subst(b.c.objs[obj].target, sb))
+    b.retv(b.lit(a2, ")"))
+    return
+  }
+  if b.tkind(t) == Kind.Struct && tk == "struct" {
+    if b.c.objs[obj].opaque {
+      let dm = b.method_of(ct, "debug")
+      if dm >= 0 && b.obj_mod(dm) >= 0 && b.c.mods[b.obj_mod(dm)].native {
+        b.unsupported("a native implementation's Debug text")
+        b.retv(acc)
+        return
+      }
+      b.retv(b.lit(acc, "<${lower_name(oname)}>"))
+      return
+    }
+    var a = b.lit(acc, "${oname}{")
+    for (i, f) in b.c.objs[obj].fields.indexed() {
+      if i > 0 {
+        a = b.lit(a, ", ")
+      }
+      a = b.lit(a, "${check.text(f.name)}: ")
+      let fi = b.m.field_index(t, check.text(f.name))
+      if fi < 0 {
+        b.unsupported("the Debug text of `${b.c.show(ct)}`")
+        continue
+      }
+      let fv = b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v])
+      a = b.debug_sub(a, fv, b.c.subst(f.ty, sb))
+    }
+    b.retv(b.lit(a, "}"))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" {
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    let is_opt = b.is_prelude_named(ct, ["Option", "Result"])
+    for vo in b.c.objs[obj].variants {
+      let vname = check.text(vo.name)
+      let vi = b.m.variant_index(t, vname)
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      if vo.fields.is_empty() {
+        b.retv(b.lit(acc, vname))
+      } else {
+        var a = b.lit(acc, "${vname}(")
+        for (fi, f) in vo.fields.indexed() {
+          var sep = ""
+          if fi > 0 {
+            sep = ", "
+          }
+          if !f.from && !f.name.is_empty() && !is_opt {
+            sep = "${sep}${check.text(f.name)}: "
+          }
+          if !sep.is_empty() {
+            a = b.lit(a, sep)
+          }
+          let ft = b.m.types[t].variants[vi].fields[fi].ty
+          let pv = b.add(Op.Payload, ft, Aux.P(tag: vi, field: fi), [v])
+          a = b.debug_sub(a, pv, b.c.subst(f.ty, sb))
+        }
+        b.retv(b.lit(a, ")"))
+      }
+      b.if_then_end(no, join)
+    }
+    b.retv(acc)
+    return
+  }
+  b.unsupported("the Debug text of `${b.c.show(ct)}`")
+  b.retv(acc)
+}
+
+// ---------------------------------------------------------------------------
+// Error frames (build_frames.go)
+
+/// The trace of a new error (emptyTrace).
+fn (var b: Builder) empty_trace() -> Int {
+  let t = b.trace_type()
+  let l = b.rt("rl_empty", b.m.types[t].fields[0].ty, [])
+  b.s.f.add(b.s.cur, Op.Struct, t, Aux.None, [l])
+}
+
+/// The trace of the Err payload of r (tag ei), or a new one (errTrace).
+fn (var b: Builder) err_trace(r: Int, ei: Int) -> Int {
+  let fs = b.m.types[b.vty(r)].variants[ei].fields
+  let n = fs.len()
+  if n > 0 && fs[n - 1].name == TRACE_FIELD {
+    return b.add(Op.Payload, fs[n - 1].ty, Aux.P(tag: ei, field: n - 1), [r])
+  }
+  b.empty_trace()
+}
+
+/// The named function whose frame a `?` here records, or -1 (frameOwner).
+fn (b: Builder) frame_owner() -> Int {
+  var fo = b.s.fo
+  if fo < 0 {
+    fo = b.s.frame_fo
+  }
+  if fo < 0 {
+    return -1
+  }
+  let m = b.obj_mod(fo)
+  if m < 0 || b.c.mods[m].is_std || b.c.mods[m].native {
+    return -1
+  }
+  fo
+}
+
+/// std/rt's frame name of fo (frameName).
+fn (b: Builder) frame_name(fo: Int) -> Str {
+  let mn = b.c.mods[b.obj_mod(fo)].name
+  let r = b.c.objs[fo].recv
+  if r >= 0 {
+    return "${mn}.${b.obj_name(r)}.${b.obj_name(fo)}"
+  }
+  "${mn}.${b.obj_name(fo)}"
+}
+
+/// The bindings a frame of fo shows: the receiver and the parameters,
+/// without capabilities (frameVars).
+fn (b: Builder) frame_vars(fo: Int) -> List[Int] {
+  var vars: List[Int] = []
+  if b.c.objs[fo].recv >= 0 {
+    vars.push(b.c.recv_var.get(fo) ?? -1)
+  }
+  for v in b.c.param_vars.get(fo) ?? [] {
+    vars.push(v)
+  }
+  var out: List[Int] = []
+  for vo in vars {
+    if vo >= 0 && !b.is_capability_type(b.c.objs[vo].ty) {
+      out.push(vo)
+    }
+  }
+  out
+}
+
+fn (b: Builder) is_capability_type(t: Int) -> Bool {
+  let o = b.named_obj(t)
+  if o < 0 || b.obj_mod(o) < 0 {
+    return false
+  }
+  let n = b.obj_name(o)
+  if b.c.mods[b.obj_mod(o)].is_prelude {
+    if n is "Os" | "Stdio" | "Clock" | "Net" | "Proc" | "Env" | "Fs" | "Rand" {
+      return true
+    }
+  }
+  if b.c.mods[b.obj_mod(o)].path == "std/testing" {
+    return !test_cap(n).is_empty()
+  }
+  false
+}
+
+/// Trace tr with the frame of the `?` at sp added (pushFrame).
+fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
+  let fo = b.frame_owner()
+  if fo < 0 {
+    return tr
+  }
+  let t = b.trace_type()
+  let lt = b.m.types[t].fields[0].ty
+  let ft = b.m.types[lt].elems[0]
+  var vals: List[Int] = []
+  var names: List[Str] = []
+  var cts: List[Int] = []
+  for vo in b.frame_vars(fo) {
+    if !b.s.var_type.contains(vo) {
+      continue
+    }
+    var ct = b.apply(b.c.objs[vo].ty)
+    var v = b.read(vo)
+    if b.is_prelude_named(ct, ["Atomic"]) {
+      // its Debug text changes in place: taken now
+      v = b.append_debug(b.const_str(""), v, ct)
+      ct = -1
+    }
+    names.push(check.text(b.c.objs[vo].name))
+    cts.push(ct)
+    vals.push(v)
+  }
+  let fname = b.frame_args_func(names, cts, vals)
+  let args = b.add(Op.Closure, b.m.types[ft].elems[2], Aux.S(s: fname), vals)
+  var label = b.frame_name(fo)
+  for _ in 0..b.s.closures {
+    label = "${label}.closure"
+  }
+  let l1 = b.const_str(label)
+  let l2 = b.const_str(b.pos_line(sp))
+  let frame = b.add(Op.Tuple, ft, Aux.None, [l1, l2, args])
+  let l = b.add(Op.Field, lt, Aux.I(n: 0), [tr])
+  let pushed = b.call("list.push", lt, "", [l, frame])
+  b.add(Op.Struct, t, Aux.None, [pushed])
+}
+
+/// The code of the closure that formats a frame's parameters
+/// (frameArgsFunc).
+fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List[Int]) -> Str {
+  let st = b.str_t()
+  let it = b.int_t()
+  var key: List[Str] = []
+  var cap_ts: List[Int] = []
+  for (i, n) in names.indexed() {
+    if cts[i] < 0 {
+      key.push("${n}: text")
+    } else {
+      let impl = b.impl_named(cts[i])
+      key.push("${n}: ${b.c.show(impl)}")
+    }
+    cap_ts.push(b.vty(vals[i]))
+  }
+  let name = "xo.frameargs(${key.join(", ")})"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  let ft = b.m.func_type([], st)
+  let fi = b.m.new_func(name, [ft], [st])
+  b.m.funcs[fi].indirect = true
+  b.m.funcs[fi].captures = cap_ts
+  let saved = b.begin(fi, b.s.file)
+  let env = b.param(0)
+  var acc = b.const_str("")
+  for (i, n) in names.indexed() {
+    var sep = "${n}="
+    if i > 0 {
+      sep = ", ${sep}"
+    }
+    acc = b.call("str.concat", st, "", [acc, b.const_str(sep)])
+    let v = b.add(Op.Capture, cap_ts[i], Aux.I(n: i), [env])
+    var text = v
+    if cts[i] >= 0 {
+      text = b.append_debug(b.const_str(""), v, cts[i])
+    }
+    let cut = b.local()
+    b.write_var(cut, text)
+    let long = b.add(Op.Gt, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [text]), b.cint(64)])
+    let (no, join) = b.if_then_begin(long)
+    let short = b.rt("str_slice", st, [text, b.cint(0), b.cint(61)])
+    b.write_var(cut, b.call("str.concat", st, "", [short, b.const_str("...")]))
+    b.if_then_end(no, join)
+    acc = b.call("str.concat", st, "", [acc, b.read(cut)])
+  }
+  b.retv(acc)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// Writes the frames of trace tr to standard error (printTrace).
+fn (var b: Builder) print_trace(tr: Int) {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let lt = b.m.types[b.vty(tr)].fields[0].ty
+  let ft = b.m.types[lt].elems[0]
+  let l = b.add(Op.Field, lt, Aux.I(n: 0), [tr])
+  let iv = b.local()
+  let n = b.call("list.len", it, "", [l])
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let fr = b.call("list.index", ft, "", [l, i])
+  let fv = b.add(Op.Field, b.m.types[ft].elems[2], Aux.I(n: 2), [fr])
+  let args = b.add(Op.CallValue, st, Aux.None, [fv])
+  b.check("")
+  let l0 = b.add(Op.Field, st, Aux.I(n: 0), [fr])
+  var label = b.call("str.concat", st, "", [l0, b.const_str("(")])
+  label = b.call("str.concat", st, "", [label, args])
+  label = b.call("str.concat", st, "", [label, b.const_str(")")])
+  let line = b.local()
+  let at = b.const_str("  at ")
+  b.write_var(line, b.call("str.concat", st, "", [at, label]))
+  let c34 = b.cint(34)
+  let pad = b.add(Op.Sub, it, Aux.None, [c34, b.rt("str_rune_count", it, [label])])
+  let (no, join) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [pad, b.cint(0)]))
+  let cur = b.read(line)
+  let sp = b.const_str(" ")
+  b.write_var(line, b.call("str.concat", st, "", [cur, b.rt("str_repeat", st, [sp, pad])]))
+  b.if_then_end(no, join)
+  let out = b.call("str.concat", st, "", [b.read(line), b.const_str(" ")])
+  let loc = b.add(Op.Field, st, Aux.I(n: 1), [fr])
+  b.rt("eprintln", -1, [b.call("str.concat", st, "", [out, loc])])
+  b.for_up_to_end(i, iv, head, exit)
+}
+
+// ---------------------------------------------------------------------------
+// Constants and sized integers (build_int.go)
+
+/// Reads the constant c as a value of type t (constValue): a constant of
+/// a heap type other than Str is outside stage 1.
+fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
+  let f = b.c.objs[c].decl_file
+  let i = b.c.objs[c].decl_idx
+  let value = match b.c.files[f].ast.decls[i] {
+    ConstDecl(d) => d.value
+    _ => fault("not a constant")
+  }
+  if !b.m.heap(t) || b.tkind(t) == Kind.Str {
+    return b.foreign_value(value, f, t)
+  }
+  b.unsupported("constants of collection types")
+  b.undef(t)
+}
+
+/// The type operands of the runtime calls on sized integers (sizeArgs).
+fn (var b: Builder) size_args(t: Int) -> List[Int] {
+  var u = 0
+  if b.m.types[t].unsigned {
+    u = 1
+  }
+  var bits = b.m.types[t].bits
+  if bits == 0 {
+    bits = 64
+  }
+  let a = b.cint(bits)
+  let c = b.cint(u)
+  [a, c]
+}
+
+fn int_op_code(op: lexer.Kind) -> Int {
+  match op {
+    Plus => 0
+    Minus => 1
+    Star => 2
+    Slash => 3
+    Percent => 4
+    Shl => 5
+    Shr => 6
+    _ => -1
+  }
+}
+
+/// `l op r` on a sized integer type (sizedArith).
+fn (var b: Builder) sized_arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
+  let t = b.vty(l)
+  match op {
+    Amp => return b.add(Op.And, t, Aux.None, [l, r])
+    Pipe => return b.add(Op.Or, t, Aux.None, [l, r])
+    Caret => return b.add(Op.Xor, t, Aux.None, [l, r])
+    _ => {}
+  }
+  let code = int_op_code(op)
+  if code < 0 {
+    b.unsupported("this operator")
+    return b.undef(t)
+  }
+  var args = [b.cint(code), l, r]
+  for a in b.size_args(t) {
+    args.push(a)
+  }
+  args.push(b.const_str(b.pos(sp)))
+  b.rt("int_op", t, args)
+}
+
+/// `-v` on a sized integer type (sizedNeg).
+fn (var b: Builder) sized_neg(v: Int, sp: Span) -> Int {
+  let t = b.vty(v)
+  var args = [b.cint(7), v, b.cint(0)]
+  for a in b.size_args(t) {
+    args.push(a)
+  }
+  args.push(b.const_str(b.pos(sp)))
+  b.rt("int_op", t, args)
+}
+
+/// `~v` on a sized integer type (sizedNot).
+fn (var b: Builder) sized_not(v: Int) -> Int {
+  let t = b.vty(v)
+  if b.m.types[t].unsigned && b.m.types[t].bits < 64 {
+    let mask = (1 << b.m.types[t].bits) - 1
+    return b.add(Op.Xor, t, Aux.None, [v, b.add(Op.Const, t, Aux.I(n: mask), [])])
+  }
+  b.add(Op.Not, t, Aux.None, [v])
+}
+
+/// The range of the integer type t: (lo, hi, u64) (intRange).
+fn (b: Builder) int_range(t: Int) -> (Int, Int, Bool) {
+  let x = b.m.types[t]
+  if x.bits == 0 {
+    return (-9223372036854775807 - 1, 9223372036854775807, false)
+  }
+  if b.m.is_u64(t) {
+    return (0, -1, true)
+  }
+  if x.unsigned {
+    return (0, (1 << x.bits) - 1, false)
+  }
+  (-(1 << (x.bits - 1)), (1 << (x.bits - 1)) - 1, false)
+}
+
+fn (b: Builder) widens(from: Int, to: Int) -> Bool {
+  let (flo, fhi, fu) = b.int_range(from)
+  let (tlo, thi, tu) = b.int_range(to)
+  if tu {
+    return flo >= 0
+  }
+  if fu {
+    return false
+  }
+  flo >= tlo && fhi <= thi
+}
+
+/// Converts the integer v to the integer type to (intConv).
+fn (var b: Builder) int_conv(v: Int, to: Int, sp: Span) -> Int {
+  let from = b.vty(v)
+  if from == to {
+    return v
+  }
+  if b.m.types[to].name == "Rune" {
+    if b.m.types[from].unsigned && b.m.types[from].bits == 8 {
+      return b.add(Op.IntConv, to, Aux.None, [v])
+    }
+    var args = [v]
+    for a in b.size_args(from) {
+      args.push(a)
+    }
+    args.push(b.const_str(b.pos(sp)))
+    return b.rt("rune_of", to, args)
+  }
+  if b.widens(from, to) {
+    return b.add(Op.IntConv, to, Aux.None, [v])
+  }
+  var args = [v]
+  for a in b.size_args(from) {
+    args.push(a)
+  }
+  for a in b.size_args(to) {
+    args.push(a)
+  }
+  args.push(b.const_str(b.pos(sp)))
+  b.rt("int_conv", to, args)
+}
+
+/// a.min(b) or a.max(b) on a sized integer type (sizedMinMax).
+fn (var b: Builder) sized_min_max(name: Str, a: Int, c: Int) -> Int {
+  var cmp = -1
+  if name == "min" {
+    cmp = b.compare(Op.Lt, c, a)
+  } else {
+    cmp = b.compare(Op.Lt, a, c)
+  }
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, b.vty(a))
+  let (yes, no) = b.branch(cmp)
+  b.s.cur = yes
+  b.jump(join, [c])
+  b.s.cur = no
+  b.jump(join, [a])
+  b.seal(join)
+  b.s.cur = join
+  res
+}

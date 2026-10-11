@@ -197,6 +197,11 @@ pub struct Module {
   pub is_prelude: Bool = false
   /// Named on the command line (or found under a named directory).
   pub root: Bool = false
+  /// An implementation module of the native backends (std/native/*.xo,
+  /// decision 0074), loaded in native mode, and the std module path it
+  /// implements ("std/prelude" for the prelude's).
+  pub native: Bool = false
+  pub implements: Str = ""
   /// 0 new, 1 loading its imports, 2 loaded (cycle detection).
   pub state: Int = 0
   /// The Module object that names it in records.
@@ -325,6 +330,15 @@ pub struct CallInfo {
   pub fn_obj: Int = -1
   pub recv: List[parser.Expr] = []
   pub params: List[ArgParam] = []
+  /// The type arguments of the callee's type parameters (check.go
+  /// callInfo.sm).
+  pub subst: Map[Int, Int] = {}
+}
+
+/// A variant: the enum's Type object and the variant's index.
+pub struct VRef {
+  pub en: Int
+  pub variant: Int
 }
 
 /// An argument and whether its parameter is `var` (check.go argParam).

@@ -1,0 +1,178 @@
+// xossa: the self hosted SSA builder's command line (decision 0150).
+//
+//   ssa [--std=DIR] [--wd=DIR] [--each] <dirs...>           print the dump
+//   ssa [--std=DIR] [--wd=DIR] [--each] --bench=N <dirs...> build N times, print the time
+//
+// It checks the directories as `xo ssadump` does (selfhost/check in
+// native mode) and prints the build stage of `xo ssadump`: the type lines
+// and the functions it completed, then `== skipped` and one line per
+// function left incomplete (`<name>: <why>`), which are not compared. A
+// run the checker rejects prints `== rejected`; one this builder cannot
+// build at all (`use go`, concurrency, no main) prints `== unsupported
+// <why>`. --each builds every directory as a run of its own, each
+// preceded by `=== ssa <dir>`. Fault positions are relative to DIR of
+// --wd (default $PWD), as the Go builder's are to its working directory.
+
+use github.com/xo-lang/xo/selfhost/check
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var each = false
+  var all = false
+  var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
+  var dirs: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
+    } else if a == "--each" {
+      each = true
+    } else if a == "--all" {
+      all = true
+    } else {
+      dirs.push(a)
+    }
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: ssa [--std=DIR] [--wd=DIR] [--each] [--bench=N] <dirs...>")
+    os.proc.exit(2)
+  }
+  let modcache = os.env.get("XO_MODCACHE") ?? ""
+  let home = os.env.get("HOME") ?? ""
+  let xdg = os.env.get("XDG_CACHE_HOME") ?? ""
+  let offline = os.env.get("XO_OFFLINE") ?? ""
+  let work = os.env.get("XO_WORK") ?? ""
+  var runs: List[List[Str]] = [dirs]
+  if each {
+    runs = []
+    for d in dirs {
+      runs.push([d])
+    }
+  }
+  if repeat > 0 {
+    var total = 0
+    var funcs = 0
+    for r in runs {
+      var c = check.new_checker(os.fs, std_dir)
+      c.native = true
+      c.set_mod_env(wd, modcache, home, xdg, offline, work)
+      match c.check_dirs(r) {
+        Ok(_) => {}
+        Err(e) => fault("check: ${e}")
+      }
+      if !c.unsupported.is_empty() || rejected(c) {
+        continue
+      }
+      let t0 = os.clock.now()
+      for _ in 0..repeat {
+        // the builder alone, once, as `xo ssadump --bench` (ssa.BuildRaw)
+        var b = new_builder(c, wd)
+        b.build()
+        funcs += b.m.funcs.len()
+      }
+      total += (os.clock.now() - t0).nanos()
+    }
+    os.stdio.println("built ${runs.len()} runs x ${repeat}: ${funcs} functions in ${total / 1000000} ms")
+    return
+  }
+  var out = StrBuilder.new()
+  for r in runs {
+    if each {
+      out.write("=== ssa ${r[0]}\n")
+    }
+    var c = check.new_checker(os.fs, std_dir)
+    c.native = true
+    c.set_mod_env(wd, modcache, home, xdg, offline, work)
+    match c.check_dirs(r) {
+      Ok(_) => {}
+      Err(e) => {
+        out.write("== error ${e}\n")
+        continue
+      }
+    }
+    if !c.unsupported.is_empty() {
+      out.write("== unsupported ${c.unsupported}\n")
+      continue
+    }
+    if rejected(c) {
+      out.write("== rejected\n")
+      continue
+    }
+    var b = build_program(c, wd)
+    if !b.why.is_empty() {
+      out.write("== unsupported ${b.why}\n")
+      continue
+    }
+    out.write(b.dump(all))
+  }
+  os.stdio.print(out.freeze())
+}
+
+/// The function a closure named `<parent>.fn<N>` is in, or "".
+fn closure_parent(name: Str) -> Str {
+  let parts = name.split(".fn")
+  if parts.len() < 2 {
+    return ""
+  }
+  let last = parts[parts.len() - 1]
+  if last.is_empty() || Int.parse(last) == None {
+    return ""
+  }
+  name.trim_suffix(".fn${last}")
+}
+
+/// Whether the checker reported an error (build.go checkOpts).
+fn rejected(c: check.Checker) -> Bool {
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return true
+    }
+  }
+  false
+}
+
+/// The build stage: the type lines, the functions completed (all: every
+/// function, for debugging), and the functions skipped with why. A
+/// function whose text holds a type the builder could not lower (poison)
+/// is skipped too.
+pub fn (var b: Builder) dump(all: Bool) -> Str {
+  for i in 0..b.m.funcs.len() {
+    if b.m.funcs[i].skip.is_empty() && b.m.func_text(b.m.funcs[i]).contains("<unsupported: ") {
+      b.m.funcs[i].skip = "a type outside the stages ported"
+    }
+    // the closures of a function the builder skipped: the Go builder
+    // numbers closures in the order it lowers the constructs it supports
+    let p = closure_parent(b.m.funcs[i].name)
+    if b.m.funcs[i].skip.is_empty() && !p.is_empty() {
+      let pi = b.m.func_index(p)
+      if pi >= 0 && !b.m.funcs[pi].skip.is_empty() {
+        b.m.funcs[i].skip = "in a function skipped"
+      }
+    }
+  }
+  var out = StrBuilder.new()
+  out.write("== stage build\n")
+  b.m.write_types(out)
+  var first = true
+  for f in b.m.funcs {
+    if !f.skip.is_empty() && !all {
+      continue
+    }
+    if !first {
+      out.write("\n")
+    }
+    first = false
+    out.write(b.m.func_text(f))
+  }
+  out.write("== skipped\n")
+  for f in b.m.funcs {
+    if !f.skip.is_empty() {
+      out.write("${f.name}: ${f.skip}\n")
+    }
+  }
+  out.freeze()
+}

@@ -239,7 +239,7 @@ fn (var c: Checker) err_converts(from0: Int, to0: Int) -> Bool {
 }
 
 /// The index of the `from` variant of enum `to` that wraps `from`, or -1.
-fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
+pub fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
   let r = c.resolve(to)
   if c.tys[r].kind != TyKind.Named {
     return -1
@@ -479,6 +479,9 @@ fn (c: Checker) is_handle(o: Int) -> Bool {
   let n = text(c.objs[o].name)
   if c.mods[m].is_prelude {
     return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn"
+  }
+  if c.mods[m].native {
+    return c.objs[o].opaque && n != "Loc"
   }
   if !c.mods[m].is_std {
     return false
