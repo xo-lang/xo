@@ -866,6 +866,12 @@ func (s *fstate) instr(v *ssa.Value) {
 			return
 		}
 		if ptr, ok := s.stableOf(u); ok {
+			if g.bigByRef(v.Type) {
+				// a large field of read only memory: read in place
+				// where used, passed on by address
+				s.stable[v] = s.addrAt(ptr, 8*off)
+				return
+			}
 			s.set(v, s.loadWords(ptr, off, g.layout(v.Type))...)
 			return
 		}
@@ -903,10 +909,25 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpVariant:
 		s.set(v, s.variant(v.Type, v.Aux.(int), v.Args)...)
 	case ssa.OpTag:
+		if ptr, ok := s.memOf(v.Args[0]); ok {
+			// an enum in memory (decision 0153): only its tag is read
+			s.set(v, s.loadWords(ptr, 0, []bool{false})...)
+			return
+		}
 		s.set(v, s.words(v.Args[0])[0])
 	case ssa.OpPayload:
 		r := v.Aux.(ssa.PayloadRef)
 		off, n := g.payloadWords(v.Args[0].Type, r.Tag, r.Field)
+		if ptr, ok := s.memOf(v.Args[0]); ok {
+			// a payload of an enum in memory (decision 0153): read in
+			// place; a large one of read only memory stays there
+			if _, ro := s.stableOf(v.Args[0]); ro && g.bigByRef(v.Type) {
+				s.stable[v] = s.addrAt(ptr, 8*off)
+				return
+			}
+			s.set(v, s.loadWords(ptr, off, g.layout(v.Type))...)
+			return
+		}
 		ws := s.words(v.Args[0])[off : off+n]
 		s.set(v, s.fromPayload(ws, g.layout(v.Type))...)
 	case ssa.OpCall:

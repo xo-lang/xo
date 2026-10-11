@@ -59,8 +59,7 @@ func (g *gen) byRefOf(f *ssa.Func) []bool {
 	var br []bool
 	if !f.Indirect && !f.Entry && !g.addrTaken[f.Name] && f.Name != "main" {
 		for i, p := range f.Params() {
-			t := p.Type
-			if t.Kind == ssa.KStruct && 8*g.nwords(t) >= byRefMin {
+			if g.bigByRef(p.Type) {
 				if br == nil {
 					br = make([]bool, len(f.Params()))
 				}
@@ -70,6 +69,41 @@ func (g *gen) byRefOf(f *ssa.Func) []bool {
 	}
 	g.byRef[f] = br
 	return br
+}
+
+// bigByRef reports a type whose parameters of direct calls are passed by
+// reference: a struct (decision 0151) or an enum (decision 0153) of
+// byRefMin bytes or more.
+func (g *gen) bigByRef(t *ssa.Type) bool {
+	return (t.Kind == ssa.KStruct || t.Kind == ssa.KEnum) && 8*g.nwords(t) >= byRefMin
+}
+
+// memOf reports the memory value v is read from in place: a read only
+// parameter passed by reference (or a large part of one), or a value
+// held in a tracked memory at every use.
+func (s *fstate) memOf(v *ssa.Value) (vreg, bool) {
+	if ptr, ok := s.stableOf(v); ok {
+		return ptr, true
+	}
+	if m, ok := s.memOnlyOf(v); ok {
+		return s.held.mems[m].ptr, true
+	}
+	return 0, false
+}
+
+// addrAt puts base + off (bytes) in a register.
+func (s *fstate) addrAt(base vreg, off int) vreg {
+	if off == 0 {
+		return base
+	}
+	r := base
+	if hi := off &^ 4095; hi != 0 {
+		r = s.def1(false, fmt.Sprintf("add $d0, $u0, #%d, lsl #12", hi>>12), r)
+	}
+	if lo := off & 4095; lo != 0 {
+		r = s.def1(false, fmt.Sprintf("add $d0, $u0, #%d", lo), r)
+	}
+	return r
 }
 
 // keptResults are the indexes of the results of f that come back in

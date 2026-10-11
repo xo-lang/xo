@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: enum parameters of 256 bytes or more of direct calls
+  are passed by address too (decision 0153); tags and payloads of enums
+  in memory are read in place, and large fields and payloads of read
+  only memory are passed on by address (the arm64 build of the self
+  hosted SSA builder 5 to 9% faster).
 - Self hosting: SSA stage 8 (decision 0150): selfhost/ssa runs the
   passes after the build (pruneUnwind, addLandings, cleanup, InsertRC)
   and the verifier exactly as internal/ssa does; the SSA lowering is
