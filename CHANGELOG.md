@@ -41,7 +41,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `panic(rt.Unreachable(loc))` (Go needs no trailing panic after it),
   statements after one that never completes are not emitted, `x = x` is
   dropped, and the `_ = x` lines Go does not need are removed (191 to 15
-  in the snapshot programs). go vet is clean on the examples, the LLVM
+  in the snapshot programs; the last ones, `_ = osv` in XoMain and the
+  unused trace of a scope's failure, followed on 2026-10-11: the Os
+  parameter is `_` when main does not take it, and the trace is `_`
+  when the failure becomes a fault). go vet is clean on the examples, the LLVM
   golden programs, the perf benchmarks, and the self hosted compiler too
   (TestGeneratedGoVetsLarge).
 - arm64 backend: a conditional branch whose two targets are the same

@@ -56,9 +56,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:10:5
 	if x_ctl3 == rt.CtlScopeFail {
 //line main.xo:10:5
-		x_fe5, x_ftr6 := x_scope2.Failure()
-//line main.xo:10:5
-		_ = x_ftr6
+		x_fe5, _ := x_scope2.Failure()
 //line main.xo:10:5
 		panic(rt.AsFault(rt.Display(tk, x_fe5)))
 //line main.xo:10:5
@@ -113,9 +111,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:16:7
 	if x_ctl8 == rt.CtlScopeFail {
 //line main.xo:16:7
-		x_fe14, x_ftr15 := x_scope7.Failure()
-//line main.xo:16:7
-		_ = x_ftr15
+		x_fe14, _ := x_scope7.Failure()
 //line main.xo:16:7
 		panic(rt.AsFault(rt.Display(tk, x_fe14)))
 //line main.xo:16:7
@@ -175,9 +171,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:32:5
 	if x_ctl17 == rt.CtlScopeFail {
 //line main.xo:32:5
-		x_fe20, x_ftr21 := x_scope16.Failure()
-//line main.xo:32:5
-		_ = x_ftr21
+		x_fe20, _ := x_scope16.Failure()
 //line main.xo:32:5
 		panic(rt.AsFault(rt.Display(tk, x_fe20)))
 //line main.xo:32:5
@@ -230,9 +224,7 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:40:5
 	if x_ctl24 == rt.CtlScopeFail {
 //line main.xo:40:5
-		x_fe26, x_ftr27 := x_scope23.Failure()
-//line main.xo:40:5
-		_ = x_ftr27
+		x_fe26, _ := x_scope23.Failure()
 //line main.xo:40:5
 		panic(rt.AsFault(rt.Display(tk, x_fe26)))
 //line main.xo:40:5
@@ -258,7 +250,6 @@ import rt "xoprog/rt"
 //go:noinline
 func XoMain() int {
 	return rt.RunMain(func(tk *rt.Task, osv rt.Os) rt.Result[rt.Unit, rt.IError] {
-		_ = osv
 		F_main(tk, osv)
 		return rt.Ok[rt.Unit, rt.IError](rt.Unit{})
 	})

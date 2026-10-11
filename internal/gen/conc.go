@@ -127,11 +127,9 @@ func (f *fnGen) scopeFailure(sv string, x *ast.ScopeExpr) {
 	r := f.rt()
 	fr := f.fr
 	fe, ftr := f.tmp("fe"), f.tmp("ftr")
-	f.line("%s, %s := %s.Failure()", fe, ftr, sv)
-	// unused when no task of the scope can fail with an error (only a
-	// fault fails it)
-	f.line("_ = %s", ftr)
 	if fr.errT == nil || !fr.isResult {
+		// the trace is unused: the failure becomes a fault
+		f.line("%s, _ := %s.Failure()", fe, sv)
 		f.line("panic(%sAsFault(%sDisplay(tk, %s)))", r, r, fe)
 		return
 	}
@@ -166,6 +164,14 @@ func (f *fnGen) scopeFailure(sv string, x *ast.ScopeExpr) {
 		}
 		return keys[i] < keys[j]
 	})
+	if len(keys) == 0 && !f.g.isPrelude(fr.errT, "Error") {
+		// no task of the scope fails with an error (only a fault fails
+		// it): the trace is unused
+		f.line("%s, _ := %s.Failure()", fe, sv)
+		f.line("panic(%sAsFault(%sDisplay(tk, %s)))", r, r, fe)
+		return
+	}
+	f.line("%s, %s := %s.Failure()", fe, ftr, sv)
 	ev := f.tmp("e")
 	sp := x.Span()
 	loc := fmt.Sprintf("%s:%d", f.g.linePath(sp.File), sp.Start.Line)

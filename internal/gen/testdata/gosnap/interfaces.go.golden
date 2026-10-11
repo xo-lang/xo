@@ -343,7 +343,6 @@ import rt "xoprog/rt"
 //go:noinline
 func XoMain() int {
 	return rt.RunMain(func(tk *rt.Task, osv rt.Os) rt.Result[rt.Unit, rt.IError] {
-		_ = osv
 		F_main(tk, osv)
 		return rt.Ok[rt.Unit, rt.IError](rt.Unit{})
 	})
