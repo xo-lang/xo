@@ -1,0 +1,171 @@
+// std/csv on the native backends (decisions 0074 and 0164). std/rt's
+// csv.go is the reference: the same records, text, errors, and faults.
+use std/csv
+use native/rt
+
+fn csverr_display(e: csv.CsvErr) -> Str { "csv: line ${e.line}, column ${e.column}: ${e.msg}" }
+
+fn sep_text(sep: Rune, at: rt.Loc) -> Str {
+  if sep == '"' || sep == '\r' || sep == '\n' {
+    rt.fault_at("csv: ${sep.quote()} cannot separate fields", at)
+  }
+  var b = BytesBuilder.new()
+  b.write_rune(sep)
+  b.freeze().to_str() ?? ","
+}
+
+fn err_at(line: Int, col: Int, msg: Str) -> csv.CsvErr { csv.CsvErr{line: line, column: col, msg: msg} }
+
+/// The records of text and the line each starts on.
+fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr {
+  var recs: List[List[Str]] = []
+  var starts: List[Int] = []
+  var i = 0
+  var line = 1
+  var col0 = 0
+  let n = text.len()
+  while i < n {
+    let c0 = rt.str_byte(text, i)
+    // an empty line is skipped
+    if c0 == 10 {
+      i += 1
+      line += 1
+      col0 = i
+      continue
+    }
+    if c0 == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10 {
+      i += 2
+      line += 1
+      col0 = i
+      continue
+    }
+    var rec: List[Str] = []
+    let start = line
+    while {
+      var field = BytesBuilder.new()
+      if i < n && rt.str_byte(text, i) == 34 {
+        let ql = line
+        let qc = i - col0 + 1
+        i += 1
+        var closed = false
+        while i < n {
+          let c = rt.str_byte(text, i)
+          if c == 34 {
+            if i + 1 < n && rt.str_byte(text, i + 1) == 34 {
+              field.write_byte(34)
+              i += 2
+              continue
+            }
+            i += 1
+            closed = true
+            break
+          }
+          if c == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10 {
+            field.write_byte(10)
+            i += 2
+            line += 1
+            col0 = i
+            continue
+          }
+          if c == 10 {
+            line += 1
+            col0 = i + 1
+          }
+          field.write_byte(UInt8(c))
+          i += 1
+        }
+        if !closed {
+          return Err(err_at(ql, qc, "quoted field not closed"))
+        }
+        if i < n && !rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+          let c = rt.str_byte(text, i)
+          let crlf = c == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10
+          let final_cr = c == 13 && i + 1 == n
+          if c != 10 && !crlf && !final_cr {
+            return Err(err_at(line, i - col0 + 1, "unexpected character after a quoted field"))
+          }
+        }
+      } else {
+        while i < n {
+          let c = rt.str_byte(text, i)
+          if c == 10 || c == 13 && (i + 1 == n || rt.str_byte(text, i + 1) == 10) || rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+            break
+          }
+          if c == 34 {
+            return Err(err_at(line, i - col0 + 1, "\" in an unquoted field"))
+          }
+          field.write_byte(UInt8(c))
+          i += 1
+        }
+      }
+      rec.push(field.freeze().to_str() ?? "")
+      if i < n && rt.str_starts_with(rt.str_slice(text, i, n), ss) {
+        i += ss.len()
+        continue
+      }
+      // the end of the record: \n, \r\n, a final \r, or the end
+      if i < n && rt.str_byte(text, i) == 13 {
+        i += 1
+      }
+      if i < n && rt.str_byte(text, i) == 10 {
+        i += 1
+      }
+      line += 1
+      col0 = i
+      break
+    }
+    recs.push(rec)
+    starts.push(start)
+  }
+  Ok((recs, starts))
+}
+
+fn parse(text: Str, sep: Rune = ',', at: rt.Loc) -> List[List[Str]] ! csv.CsvErr {
+  let (recs, _) = parse_lines(text, sep_text(sep, at))?
+  recs
+}
+
+fn parse_maps(text: Str, sep: Rune = ',', at: rt.Loc) -> List[Map[Str, Str]] ! csv.CsvErr {
+  let (recs, starts) = parse_lines(text, sep_text(sep, at))?
+  var out: List[Map[Str, Str]] = []
+  if recs.is_empty() {
+    return out
+  }
+  let head = recs[0]
+  for k in 1..recs.len() {
+    let r = recs[k]
+    if r.len() != head.len() {
+      return Err(err_at(starts[k], 1, "expected ${head.len()} fields as in the header, found ${r.len()}"))
+    }
+    var m: Map[Str, Str] = {}
+    for j in 0..head.len() {
+      m.put(head[j], r[j])
+    }
+    out.push(m)
+  }
+  out
+}
+
+fn needs_quotes(f: Str, ss: Str, alone: Bool) -> Bool {
+  f == "" && alone || f.contains(ss) || f.contains("\"") || f.contains("\r") || f.contains("\n") || f.starts_with(" ") || f.starts_with("\t")
+}
+
+fn format(rows: List[List[Str]], sep: Rune = ',', at: rt.Loc) -> Str {
+  let ss = sep_text(sep, at)
+  var b = StrBuilder.new()
+  for r in rows {
+    for j in 0..r.len() {
+      if j > 0 {
+        b.write(ss)
+      }
+      let f = r[j]
+      if needs_quotes(f, ss, r.len() == 1) {
+        b.write("\"" + f.replace("\"", "\"\"") + "\"")
+      } else {
+        b.write(f)
+      }
+    }
+    b.write("\n")
+  }
+  b.freeze()
+}

@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+title: TOML "example" esc: "tab\thereé \"quoted\""
+owner: Tom Preston-Werner since 1979-05-27T15:32:00Z
+server: alpha.example.com:8001 timeout 1m30s tags front,eu
+server: beta.example.com:8001 timeout 30s tags 
+limits: cpu=1.5 memory=2000.0 debug false
+json: {"a":{"b":1},"c":[1,2.5,"x",true,"1979-05-27","07:32:00"],"d":{"e":{"f":"g"},"m":"line\none"}}
+toml: line 1: expected a value after =
+toml: line 2: key "a" is already defined
+toml: line 3: table "t" is already defined
+toml: line 1: string not closed
+toml: line 1: bad value "01"
+toml: line 1: inf cannot be decoded: JSON has no form for inf and nan
+toml: line 1: trailing comma in an inline table
+toml: line 2: key "a" is already defined
+toml: line 2: table "t" is already an array of tables
+type error: at $.host: expected string
+--- stderr

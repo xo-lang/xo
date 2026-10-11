@@ -1,0 +1,39 @@
+// std/archive (spec/std.md 18, decision 0164). Declaration file;
+// encoding rules are listed at the top of std/prelude.xo. gzip
+// compression and tar and zip archives, in memory and pure: read and
+// write the bytes with Fs.
+
+/// A file or directory of an archive. `path` uses `/`; a directory's
+/// `data` is empty.
+struct Entry {
+  path: Str
+  data: Bytes
+  mode: Int
+  is_dir: Bool
+  modified: Time
+}
+
+/// Displays as `archive: ...`.
+struct ArchiveErr {
+  msg: Str
+}
+
+fn (e: ArchiveErr) display() -> Str
+
+/// A file entry with mode 0o644 and the Unix epoch as its time.
+fn file(path: Str, data: Bytes) -> Entry
+/// A directory entry with mode 0o755.
+fn dir(path: Str) -> Entry
+
+/// data compressed in the gzip format (RFC 1952), at the default level.
+fn gzip(data: Bytes) -> Bytes
+fn gunzip(data: Bytes) -> Bytes ! ArchiveErr
+/// A tar archive (POSIX ustar or PAX) of the entries, in order.
+fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
+/// The entries of a tar archive. An entry whose path is absolute or
+/// leaves the archive's root (`..`) is an error, as are links and devices.
+fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
+/// A zip archive of the entries (deflated), in order.
+fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
+/// The entries of a zip archive, with the same path rules as untar.
+fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr

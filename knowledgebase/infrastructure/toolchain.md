@@ -856,8 +856,9 @@ internal/gobind/        `use go` bindings: go list + go/importer + go/types -> X
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 internal/cbind/         `use c` bindings: clang's JSON AST dump of a header -> Xo declaration
                         file and C adapter (decision 0116, see "C interop")
-std/                    std declaration files (prelude.xo, cli.xo, go.xo, http.xo, json.xo, log.xo,
-                        path.xo, sql.xo, task.xo, term.xo, testing.xo, time.xo) embedded by std/embed.go
+std/                    std declaration files (prelude.xo, archive.xo, cli.xo, csv.xo, go.xo, http.xo,
+                        json.xo, log.xo, path.xo, regexp.xo, sql.xo, task.xo, term.xo, testing.xo,
+                        time.xo, toml.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),

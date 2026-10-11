@@ -1,0 +1,44 @@
+// std/archive (std.md 18, decision 0164): gzip, tar, and zip round trips
+// in memory, and archives whose entries would leave the extraction root.
+use std/archive
+
+fn describe(entries: List[archive.Entry]) -> Str {
+  entries.map(fn(e) {
+    let kind = if e.is_dir { "dir" } else { "file" }
+    "${e.path} ${kind} ${e.mode} ${(e.data.to_str() ?? "<binary>").quote()} ${e.modified}"
+  }).join("; ")
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let text = "hello, archive ".repeat(100).bytes()
+  let packed = archive.gzip(text)
+  out.println("gzip: ${text.len()} -> smaller ${packed.len() < text.len()}; magic ${packed[0]} ${packed[1]}")
+  out.println("gunzip: same ${archive.gunzip(packed)? == text}")
+  match archive.gunzip(b"not gzip") {
+    Ok(_) => out.println("gunzipped garbage")
+    Err(e) => out.println("gunzip garbage: ${e}")
+  }
+  let at = Time.from_unix(1700000000)
+  let entries = [
+    archive.dir("docs"),
+    archive.file("docs/a.txt", b"A") with {modified: at},
+    archive.Entry{path: "bin/tool", data: b"#!/bin/sh\n", mode: 0o755, is_dir: false, modified: at},
+  ]
+  let t = archive.tar(entries)?
+  out.println("untar: ${describe(archive.untar(t)?)}")
+  let z = archive.zip(entries)?
+  out.println("unzip: ${describe(archive.unzip(z)?)}")
+  match archive.tar([archive.file("../escape", b"x")]) {
+    Ok(_) => out.println("tar of an escaping path")
+    Err(e) => out.println("tar escaping: ${e}")
+  }
+  match archive.zip([archive.file("/abs", b"x")]) {
+    Ok(_) => out.println("zip of an absolute path")
+    Err(e) => out.println("zip absolute: ${e}")
+  }
+  match archive.unzip(b"PK not a zip") {
+    Ok(_) => out.println("unzipped garbage")
+    Err(e) => out.println("unzip garbage: ${e}")
+  }
+}

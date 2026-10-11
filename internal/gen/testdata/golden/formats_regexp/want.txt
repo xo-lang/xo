@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+pattern: (?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})
+is_match: true false
+find: "2026-10-11"
+find_index: 5..15
+find_all: 2026-10-11 | 2027-01-05
+captures: "2026-10-11" "2026" "10" "11"
+named: year=2026 month=10 day=11
+replace_all: from 11/10/2026 to 05/01/2027, not 26-1-1
+replace_all_literal: from $1 to $1, not 26-1-1
+optional group: "ab" None
+split: a|b|c|d
+quote: 1\+1=2\? \(yes\)
+quoted matches: false
+error: invalid regexp "(unclosed": missing closing ): `(unclosed`
+error: invalid repeat count: `{2,1}`
+no backtracking: false
+--- stderr

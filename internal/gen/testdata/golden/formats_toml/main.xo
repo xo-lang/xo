@@ -1,0 +1,89 @@
+// std/toml (std.md 19, decision 0164): a TOML 1.0 configuration decoded
+// into typed structs by the JSON rules, the document as JSON, and syntax
+// and type errors with their lines.
+use std/toml
+
+struct Server {
+  host: Str
+  port: Int
+  timeout: Duration = 30s
+  tags: List[Str] = []
+} derive Json
+
+struct Owner {
+  name: Str
+  since: Time
+} derive Json
+
+struct Config {
+  title: Str
+  esc: Str
+  owner: Owner
+  servers: List[Server]
+  limits: Map[Str, Float]
+  debug: Bool = false
+} derive Json
+
+const DOC: Str = """
+# a configuration
+title = 'TOML "example"'
+esc = "tab\\there\\u00e9 \\"quoted\\""
+
+[owner]
+name = 'Tom Preston-Werner'
+since = 1979-05-27T07:32:00-08:00
+
+[[servers]]
+host = "alpha.example.com"
+port = 8_001
+timeout = "1m30s"
+tags = [
+  "front",  # trailing comments and commas are fine
+  "eu",
+]
+
+[[servers]]
+host = "beta.example.com"
+port = 0x1F41
+
+[limits]
+cpu = 1.5
+memory = 2e3
+"""
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  match toml.decode[Config](DOC) {
+    Ok(c) => {
+      out.println("title: ${c.title} esc: ${c.esc.quote()}")
+      out.println("owner: ${c.owner.name} since ${c.owner.since}")
+      for s in c.servers {
+        out.println("server: ${s.host}:${s.port} timeout ${s.timeout} tags ${s.tags.join(",")}")
+      }
+      out.println("limits: ${c.limits.entries().map(fn(e) { "${e.0}=${e.1}" }).join(" ")} debug ${c.debug}")
+    }
+    Err(e) => out.println("decode: ${e}")
+  }
+  out.println("json: ${toml.to_json("a.b = 1\nc = [1, 2.5, \"x\", true, 1979-05-27, 07:32:00]\n[d]\ne = {f = 'g'}\nm = '''\nline\none'''")?}")
+  let bad = [
+    "a = ",
+    "a = 1\na = 2",
+    "[t]\nx = 1\n[t]",
+    "s = \"unclosed",
+    "n = 01",
+    "x = inf",
+    "k = {a = 1,}",
+    "a.b = 1\na = 2",
+    "[[t]]\n[t]",
+  ]
+  for b in bad {
+    match toml.to_json(b) {
+      Ok(j) => out.println("accepted ${b.quote()}: ${j}")
+      Err(e) => out.println("${e}")
+    }
+  }
+  match toml.decode[Server]("host = 1\nport = 2") {
+    Ok(_) => out.println("decoded a wrong type")
+    Err(e) => out.println("type error: ${e}")
+  }
+}

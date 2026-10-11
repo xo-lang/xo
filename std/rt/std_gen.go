@@ -7,6 +7,96 @@ import (
 	"strings"
 )
 
+type Archive_Entry struct {
+	F_path     string
+	F_data     Bytes
+	F_mode     int64
+	F_is_dir   bool
+	F_modified Time
+}
+
+func (v Archive_Entry) XoEq(x any) bool {
+	o, ok := x.(Archive_Entry)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_path, o.F_path) {
+		return false
+	}
+	if !Eq(v.F_data, o.F_data) {
+		return false
+	}
+	if !Eq(v.F_mode, o.F_mode) {
+		return false
+	}
+	if !Eq(v.F_is_dir, o.F_is_dir) {
+		return false
+	}
+	if !Eq(v.F_modified, o.F_modified) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Archive_Entry) XoHash() uint64 {
+	h := uint64(5582093042550204334)
+	h = MixHash(h, Hash(v.F_path))
+	h = MixHash(h, Hash(v.F_data))
+	h = MixHash(h, Hash(v.F_mode))
+	h = MixHash(h, Hash(v.F_is_dir))
+	h = MixHash(h, Hash(v.F_modified))
+	return h
+}
+
+func (v Archive_Entry) XoDebug(b *strings.Builder) {
+	b.WriteString("Entry{")
+	b.WriteString("path: ")
+	DebugTo(b, v.F_path)
+	b.WriteString(", data: ")
+	DebugTo(b, v.F_data)
+	b.WriteString(", mode: ")
+	DebugTo(b, v.F_mode)
+	b.WriteString(", is_dir: ")
+	DebugTo(b, v.F_is_dir)
+	b.WriteString(", modified: ")
+	DebugTo(b, v.F_modified)
+	b.WriteString("}")
+}
+
+func (v Archive_Entry) M_debug(*Task) string { return Debug(v) }
+
+type Archive_ArchiveErr struct {
+	F_msg string
+}
+
+func (v Archive_ArchiveErr) XoEq(x any) bool {
+	o, ok := x.(Archive_ArchiveErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Archive_ArchiveErr) XoHash() uint64 {
+	h := uint64(8556599999917788671)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Archive_ArchiveErr) XoDebug(b *strings.Builder) {
+	b.WriteString("ArchiveErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Archive_ArchiveErr) M_debug(*Task) string { return Debug(v) }
+
 type Cli_CliErr struct {
 	Tag int
 	P   any
@@ -87,6 +177,51 @@ func (v Cli_CliErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Cli_CliErr) M_debug(*Task) string { return Debug(v) }
+
+type Csv_CsvErr struct {
+	F_line   int64
+	F_column int64
+	F_msg    string
+}
+
+func (v Csv_CsvErr) XoEq(x any) bool {
+	o, ok := x.(Csv_CsvErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_line, o.F_line) {
+		return false
+	}
+	if !Eq(v.F_column, o.F_column) {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Csv_CsvErr) XoHash() uint64 {
+	h := uint64(6494785547759901170)
+	h = MixHash(h, Hash(v.F_line))
+	h = MixHash(h, Hash(v.F_column))
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Csv_CsvErr) XoDebug(b *strings.Builder) {
+	b.WriteString("CsvErr{")
+	b.WriteString("line: ")
+	DebugTo(b, v.F_line)
+	b.WriteString(", column: ")
+	DebugTo(b, v.F_column)
+	b.WriteString(", msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Csv_CsvErr) M_debug(*Task) string { return Debug(v) }
 
 type Http_StatusError interface {
 	M_status(tk *Task) int64
@@ -1527,6 +1662,44 @@ type Proc interface {
 	M_cmd(tk *Task, p0 string, p1 List[string]) Cmd
 	M_pipeline(tk *Task, p0 List[Cmd]) Result[ProcOutput, ProcErr]
 }
+
+type Regexp_RegexErr struct {
+	F_pattern string
+	F_msg     string
+}
+
+func (v Regexp_RegexErr) XoEq(x any) bool {
+	o, ok := x.(Regexp_RegexErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_pattern, o.F_pattern) {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Regexp_RegexErr) XoHash() uint64 {
+	h := uint64(8279451418066682442)
+	h = MixHash(h, Hash(v.F_pattern))
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Regexp_RegexErr) XoDebug(b *strings.Builder) {
+	b.WriteString("RegexErr{")
+	b.WriteString("pattern: ")
+	DebugTo(b, v.F_pattern)
+	b.WriteString(", msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Regexp_RegexErr) M_debug(*Task) string { return Debug(v) }
 
 type Sql_SqlValue struct {
 	Tag int
@@ -3001,3 +3174,102 @@ func (v Time_LayoutErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Time_LayoutErr) M_debug(*Task) string { return Debug(v) }
+
+type Toml_TomlErr struct {
+	F_line int64
+	F_msg  string
+}
+
+func (v Toml_TomlErr) XoEq(x any) bool {
+	o, ok := x.(Toml_TomlErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_line, o.F_line) {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Toml_TomlErr) XoHash() uint64 {
+	h := uint64(6087889207847177185)
+	h = MixHash(h, Hash(v.F_line))
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Toml_TomlErr) XoDebug(b *strings.Builder) {
+	b.WriteString("TomlErr{")
+	b.WriteString("line: ")
+	DebugTo(b, v.F_line)
+	b.WriteString(", msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Toml_TomlErr) M_debug(*Task) string { return Debug(v) }
+
+type Toml_DecodeErr struct {
+	Tag int
+	P   any
+}
+
+type Toml_DecodeErr_Syntax struct {
+	F_err Toml_TomlErr
+}
+
+type Toml_DecodeErr_Value struct {
+	F_err Json_DecodeErr
+}
+
+func (v Toml_DecodeErr) XoEq(x any) bool {
+	o, ok := x.(Toml_DecodeErr)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Toml_DecodeErr_Syntax), o.P.(Toml_DecodeErr_Syntax)
+		return Eq(a.F_err, b.F_err)
+	case 2:
+		a, b := v.P.(Toml_DecodeErr_Value), o.P.(Toml_DecodeErr_Value)
+		return Eq(a.F_err, b.F_err)
+	}
+	return true
+}
+
+func (v Toml_DecodeErr) XoHash() uint64 {
+	h := MixHash(uint64(8147598119414118494), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Toml_DecodeErr_Syntax)
+		h = MixHash(h, Hash(a.F_err))
+	case 2:
+		a := v.P.(Toml_DecodeErr_Value)
+		h = MixHash(h, Hash(a.F_err))
+	}
+	return h
+}
+
+func (v Toml_DecodeErr) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Toml_DecodeErr_Syntax)
+		b.WriteString("Syntax(")
+		b.WriteString("err: ")
+		DebugTo(b, a.F_err)
+		b.WriteString(")")
+	case 2:
+		a := v.P.(Toml_DecodeErr_Value)
+		b.WriteString("Value(")
+		b.WriteString("err: ")
+		DebugTo(b, a.F_err)
+		b.WriteString(")")
+	}
+}
+
+func (v Toml_DecodeErr) M_debug(*Task) string { return Debug(v) }

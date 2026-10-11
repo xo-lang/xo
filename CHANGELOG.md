@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Formats (std.md 16 to 19, decision 0164): `std/csv` (`parse`,
+  `parse_maps`, `format`; RFC 4180, any separator) on every backend;
+  `std/regexp` (`compile`, `must`, `quote`, `is_match`, `find`,
+  `find_index`, `find_all`, `captures`, `named`, `replace_all`,
+  `replace_all_literal`, `split`; RE2), `std/archive` (`gzip`,
+  `gunzip`, `tar`, `untar`, `zip`, `unzip` in memory; entries leaving the
+  root are refused), and `std/toml` (`decode[T: Json]`, `to_json`; TOML
+  1.0) on the Go backend, XO1201 (planned) on native builds. A std
+  parameter's default may be a rune literal.
 - Files (std.md 3.1, 3.5, 8.3, decision 0163), Go backend and MemFs:
   streaming handles `os.fs.open(path)`, `create`, `open_append` (a
   `File` with `read`, `read_line`, `write`, `close`); `append`, `copy`

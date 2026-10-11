@@ -2100,3 +2100,152 @@ fn report(out: Stdio, env: Env, failed: Int) uses (stdio, env) {
   }
 }
 ```
+
+---
+
+## 16. std/csv
+
+Status: implemented on every backend (decision 0164, 2026-10-11): the
+Go backend in `std/rt/csv.go`, the native backends in
+`std/native/csv.xo`, the same records, text, and errors.
+
+```
+struct CsvErr { line: Int, column: Int, msg: Str }   // displays as `csv: line 3, column 5: msg`
+
+pub fn parse(text: Str, sep: Rune = ',') -> List[List[Str]] ! CsvErr
+pub fn parse_maps(text: Str, sep: Rune = ',') -> List[Map[Str, Str]] ! CsvErr
+pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
+```
+
+- RFC 4180: a field in double quotes may hold the separator, line
+  breaks, and `""` for a quote; `\r\n` inside quotes reads as `\n`.
+  Records end with `\n`, `\r\n`, or the end of the text; empty lines are
+  skipped. Records may have different numbers of fields. Spaces are part
+  of fields.
+- Errors (line and column are 1-based, the column counts bytes): `" in
+  an unquoted field`, `quoted field not closed` (at the opening quote),
+  `unexpected character after a quoted field`.
+- `parse_maps` reads the first record as the header and makes a map per
+  later record, in header order; a record with another number of fields
+  is `expected N fields as in the header, found M` at its first line.
+- `format` writes each record and `\n`; a field is quoted when it holds
+  the separator, a quote, `\r` or `\n`, starts with a space or a tab, or
+  is the only, empty field of a record (else the record would read as an
+  empty line). `parse(format(rows))` gives `rows` back.
+- `sep` is any rune but `"`, `\r`, and `\n` (a fault otherwise); use
+  `'\t'` for tab separated values.
+
+---
+
+## 17. std/regexp
+
+Status: implemented on the Go backend (decision 0164, Go's `regexp`);
+native builds report it as XO1201 (planned).
+
+```
+struct Regex {}                          // handle
+struct RegexErr { pattern: Str, msg: Str }   // `invalid regexp "(a": missing closing ): ...`
+
+pub fn compile(pattern: Str) -> Regex ! RegexErr
+pub fn must(pattern: Str) -> Regex       // faults on a bad pattern
+pub fn quote(text: Str) -> Str           // matches text literally
+fn (r: Regex) pattern() -> Str
+fn (r: Regex) is_match(s: Str) -> Bool
+fn (r: Regex) find(s: Str) -> Str?
+fn (r: Regex) find_index(s: Str) -> (Int, Int)?     // byte offsets
+fn (r: Regex) find_all(s: Str) -> List[Str]
+fn (r: Regex) captures(s: Str) -> List[Str?]?       // [whole match, group 1, ...]
+fn (r: Regex) named(s: Str) -> Map[Str, Str]?       // (?P<name>...) groups that took part
+fn (r: Regex) replace_all(s: Str, repl: Str) -> Str // $1, ${name}, $$ in repl
+fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str
+fn (r: Regex) split(s: Str) -> List[Str]
+```
+
+The syntax and semantics are RE2's as Go implements them: leftmost
+first matching, no backreferences or lookaround, and time linear in the
+input, so a pattern or input from a user cannot make matching run away.
+In `replace_all`, `$name` takes the longest name it can (`$1x` is group
+`1x`); write `${1}x`. Raw strings keep backslashes: `r"\d+"`.
+
+---
+
+## 18. std/archive
+
+Status: implemented on the Go backend (decision 0164, Go's
+`compress/gzip`, `archive/tar`, `archive/zip`); native builds report it
+as XO1201 (planned).
+
+```
+struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }
+struct ArchiveErr { msg: Str }           // displays as `archive: msg`
+
+pub fn file(path: Str, data: Bytes) -> Entry    // mode 0o644, modified at the Unix epoch
+pub fn dir(path: Str) -> Entry                  // mode 0o755
+pub fn gzip(data: Bytes) -> Bytes
+pub fn gunzip(data: Bytes) -> Bytes ! ArchiveErr
+pub fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
+pub fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
+pub fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
+pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+```
+
+- In memory and pure: read the archive with `Fs.read`, write the
+  entries with `Fs.write` (into a sub capability, so the archive's paths
+  stay under it).
+- `gzip` writes no name and no time in the header, so the output depends
+  on the data only; `gunzip` reads concatenated members as one stream.
+- Paths use `/`. Writing or reading an entry whose path is empty,
+  absolute (`/x`, `C:/x`), or leaves the root (`../x`, `a/../../x`) is an
+  error (zip slip); so is a tar or zip entry that is a link or a device.
+  Directories are written with a trailing `/` and read without it.
+- `tar` writes PAX headers with the entries' modes (`0o7777`) and times;
+  `zip` deflates files and stores their modes and times (with Unix
+  extended timestamps, so times before 1980 survive).
+
+---
+
+## 19. std/toml
+
+Status: implemented on the Go backend (decision 0164, a TOML 1.0 parser
+in `std/rt/toml.go`); native builds report it as XO1201 (planned).
+
+```
+use std/json
+
+struct TomlErr { line: Int, msg: Str }   // displays as `toml: line 3: expected a value after =`
+enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr) }   // displays as the inner error
+
+pub fn decode[T: Json](text: Str) -> T ! DecodeErr
+pub fn to_json(text: Str) -> Str ! TomlErr
+```
+
+```
+struct Server { host: Str, port: Int = 8080, timeout: Duration = 30s } derive Json
+struct Config { name: Str, servers: List[Server] } derive Json
+
+fn load(fs: Fs) -> Config ! Error uses fs.read {
+  toml.decode[Config](fs.read_text("app.toml")?)?
+}
+```
+
+- A TOML document maps onto JSON: a table is an object (keys in
+  document order), an array an array, a string a string, an integer
+  (decimal, `0x`, `0o`, `0b`, underscores between digits) a JSON
+  integer, a float a JSON number (its text without `+` and underscores),
+  a boolean a boolean, and a date or time its RFC 3339 text (a space
+  between date and time and lower case `t` and `z` become `T` and `Z`).
+  `decode[T]` then follows the `derive Json` rules of section 5: missing
+  keys take field defaults, unknown keys are ignored, `Duration` fields
+  take `"1m30s"` text, an offset date-time decodes into `Time`, and a
+  local date or time into `Str`.
+- `inf` and `nan` are errors (JSON has no form for them).
+- All of TOML 1.0 is read: comments, bare, quoted, and dotted keys,
+  basic and literal strings and their multi-line forms (a line ending
+  backslash trims the whitespace after it), `[table]` and `[[array of
+  tables]]` headers, inline tables, and arrays over several lines with
+  comments and a trailing comma. Defining a key or a table twice, adding
+  to an inline table, and mixing a table with an array of tables are
+  errors with their line.
+- `to_json` gives the JSON text, for code that wants to read a document
+  without a struct (`json.decode[Map[Str, ...]]`) or print it.
+

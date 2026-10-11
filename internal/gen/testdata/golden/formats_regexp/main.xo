@@ -1,0 +1,46 @@
+// std/regexp (std.md 17, decision 0164): RE2 expressions, matching,
+// groups, replacement, splitting, and errors.
+use std/regexp
+
+fn show(o: Str?) -> Str { o.map(fn(s) { s.quote() }) ?? "None" }
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let date = regexp.must(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})")
+  let text = "from 2026-10-11 to 2027-01-05, not 26-1-1"
+  out.println("pattern: ${date.pattern()}")
+  out.println("is_match: ${date.is_match(text)} ${date.is_match("none")}")
+  out.println("find: ${show(date.find(text))}")
+  match date.find_index(text) {
+    Some((a, b)) => out.println("find_index: ${a}..${b}")
+    None => out.println("find_index: None")
+  }
+  out.println("find_all: ${date.find_all(text).join(" | ")}")
+  match date.captures(text) {
+    Some(groups) => out.println("captures: ${groups.map(fn(g) { show(g) }).join(" ")}")
+    None => out.println("captures: None")
+  }
+  match date.named(text) {
+    Some(m) => out.println("named: ${m.entries().map(fn(e) { "${e.0}=${e.1}" }).join(" ")}")
+    None => out.println("named: None")
+  }
+  out.println("replace_all: ${date.replace_all(text, r"${day}/${month}/$year")}")
+  out.println("replace_all_literal: ${date.replace_all_literal(text, "$1")}")
+  let opt = regexp.must("a(x)?b")
+  match opt.captures("ab") {
+    Some(groups) => out.println("optional group: ${groups.map(fn(g) { show(g) }).join(" ")}")
+    None => out.println("optional group: None")
+  }
+  out.println("split: ${regexp.must(r"\s*,\s*").split("a , b,c ,d").join("|")}")
+  out.println("quote: ${regexp.quote("1+1=2? (yes)")}")
+  out.println("quoted matches: ${regexp.must(regexp.quote("a.b")).is_match("axb")}")
+  match regexp.compile("(unclosed") {
+    Ok(_) => out.println("compiled a bad pattern")
+    Err(e) => out.println("error: ${e}")
+  }
+  match regexp.compile(r"a{2,1}") {
+    Ok(_) => out.println("compiled a bad pattern")
+    Err(e) => out.println("error: ${e.msg}")
+  }
+  out.println("no backtracking: ${regexp.must("(a+)+$").is_match("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab")}")
+}
