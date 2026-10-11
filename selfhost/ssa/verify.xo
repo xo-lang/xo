@@ -591,15 +591,18 @@ fn (s: RcState) get(l: Leaf) -> Int {
 fn (var s: RcState) set(l: Leaf, k: Int) {
   let key = leaf_key(l)
   s.n[key] = k
-  s.ls[key] = l
+  if !s.ls.contains(key) {
+    // (written only when new: the map is shared with the clones)
+    s.ls[key] = l
+  }
 }
 
+/// A copy with the zero counts left out; the leaves by key are shared.
 fn (s: RcState) clone() -> RcState {
-  var out = RcState{}
+  var out = RcState{ls: s.ls}
   for (k, c) in s.n {
     if c != 0 {
       out.n[k] = c
-      out.ls[k] = s.ls.get(k) ?? Leaf{root: -1, path: ""}
     }
   }
   out
@@ -796,7 +799,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
           if i == 0 && landing >= 0 && x.op == Op.Branch {
             // the cleanup path of a landing check: the operation checked
             // produced nothing (decision 0085)
-            var keep = RcState{}
+            var keep = RcState{ls: est.ls}
             for (k, c) in est.n {
               let l = est.ls.get(k) ?? Leaf{root: -1, path: ""}
               let rv = f.values[l.root]
@@ -804,7 +807,6 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
                 continue
               }
               keep.n[k] = c
-              keep.ls[k] = l
             }
             est = keep
             if site >= 0 && keeps_operands(f.values[site]) {

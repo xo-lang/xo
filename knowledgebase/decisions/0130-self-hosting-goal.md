@@ -143,7 +143,8 @@ passes the full suite on the backends it targets.
   pruneLandings), and the verifier, identical at every stage (unwind,
   landings, cleanup, rc) on the 306 runs both build completely and the
   45 test binaries, and the verifier's verdicts identical on 32,411
-  mutants (one retain or release removed). The SSA lowering is self
+  mutants (one retain or release removed), on the go, arm64, and LLVM
+  builds and 400 mutations. The SSA lowering is self
   hosted; next is the arm64 emitter (decision 0150's order).
 
 ## Alternatives
