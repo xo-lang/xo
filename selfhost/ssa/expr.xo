@@ -269,7 +269,7 @@ fn (var b: Builder) expr(e: Expr) -> Int {
         let fv = b.value_as(fi.value, ft)
         v = b.add(Op.SetField, vt, Aux.I(n: i), [v, fv])
       }
-      b.check_invariant(v, b.nat_check(e))
+      b.check_invariant(v, b.nat_check(e), e)
       return v
     }
     UnaryExpr(span: span, op: op, x: x) => {
@@ -805,7 +805,7 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
   }
   let v = b.add(Op.Struct, t, Aux.None, vals)
   if named >= 0 {
-    b.check_invariant(v, nt)
+    b.check_invariant(v, nt, e)
   }
   v
 }
@@ -819,14 +819,10 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
   v
 }
 
-/// The invariant check after a struct value (build_contract.go
-/// checkInvariant): outside stage 1.
-fn (var b: Builder) check_invariant(v: Int, ct: Int) {
-  let o = b.named_obj(ct)
-  if o < 0 || b.tkind(b.vty(v)) != Kind.Struct || b.invariant_of(o).is_empty() {
-    return
-  }
-  b.unsupported("struct invariants")
+/// The invariant check after the struct value v of the expression e
+/// (build_contract.go checkInvariant): it faults at e.
+fn (var b: Builder) check_invariant(v: Int, ct: Int, e: Expr) {
+  b.check_invariant_at(v, ct, b.pos(parser.expr_span(e)))
 }
 
 fn arith_op(op: lexer.Kind) -> Op? {

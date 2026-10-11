@@ -13,6 +13,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Self hosting: SSA stage 3 (decision 0150): selfhost/ssa lowers Map
   and Set (helpers, methods, literals, `m[k] = v`, loops, Debug text)
   and constants of collection types exactly as internal/ssa does.
+- Self hosting: SSA stage 4 (decision 0150): selfhost/ssa lowers
+  contracts (`requires`, `ensures`, invariants), `defer` with its
+  landings and fault continuations, loop bounds, and real-time sections
+  exactly as internal/ssa does; stages 1 to 4 of the SSA builder are
+  done.
 - arm64 backend: a function past 1 MiB of code failed to assemble
   (`b.hs` to a fault stub out of range); its conditional branches now
   go through an unconditional `b` as tbz already did.

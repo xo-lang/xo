@@ -1,0 +1,530 @@
+// Contracts (internal/ssa build_contract.go, the requires of build.go),
+// loop bounds (build_stmt.go loopBound), and real-time sections
+// (build_call.go), stage 4 of decision 0150.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The source text of the span sp of file f (sourceText).
+fn (var b: Builder) source_text(f: Int, sp: Span) -> Str {
+  let src = b.c.files[f].src
+  if sp.start.offset >= 0 && sp.end.offset <= src.len() && sp.start.offset <= sp.end.offset {
+    return src[sp.start.offset..sp.end.offset].to_str() ?? "?"
+  }
+  "?"
+}
+
+/// The `ensures` clauses of fo's declaration (contractWrapped's ens).
+fn (var b: Builder) ensures_of(fo: Int) -> List[parser.Clause] {
+  var out: List[parser.Clause] = []
+  let decl = b.c.objs[fo].fn_decl
+  if decl.is_empty() {
+    return out
+  }
+  for cl in decl[0].clauses {
+    if let EnsuresClause(..) = cl {
+      out.push(cl)
+    }
+  }
+  out
+}
+
+/// Builds the body of fo into fi (body): as a wrapper around it when fo
+/// has `ensures` clauses or is a `var` method of a type with an
+/// invariant (contractBody), else directly (bodyOf).
+fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
+  let decl = b.c.objs[fo].fn_decl
+  if !decl.is_empty() && decl[0].body != None {
+    let ens = b.ensures_of(fo)
+    let inv = b.c.objs[fo].recv_var && b.c.objs[fo].recv >= 0 && b.has_invariant(b.c.objs[fo].recv)
+    if !ens.is_empty() || inv {
+      b.contract_body(fo, fi, sub, ens, inv)
+      return
+    }
+  }
+  b.body_of(fo, fi, sub, true)
+}
+
+/// Builds fo's body into fi, checking its `requires` clauses first when
+/// requires is set (bodyOf).
+fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires: Bool) {
+  let file = b.decl_file(fo)
+  let saved = b.begin(fi, file)
+  b.s.fo = fo
+  b.s.sub = sub
+  b.s.res = b.apply(b.c.objs[fo].result)
+  let err0 = b.apply(b.c.objs[fo].err)
+  b.s.err_t = b.fail_err(err0)
+  b.param_bindings(fo)
+  let decl = b.c.objs[fo].fn_decl
+  if decl.is_empty() || decl[0].body == None {
+    b.unsupported("a function without a body")
+    b.end(saved)
+    return
+  }
+  let fd = decl[0]
+  if with_requires {
+    for cl in fd.clauses {
+      if let RequiresClause(cond: cond, els: els, ..) = cl {
+        b.check_requires(cond, els, cl)
+      }
+    }
+  }
+  if let Some(body) = fd.body {
+    let v = b.block(body)
+    b.ret_at(v, Some(Expr.Block(b: body)))
+  }
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// A `requires` clause (core 9.1): without `else` a false condition
+/// faults, with it the function returns Err(else value) (requires).
+fn (var b: Builder) check_requires(cond: Expr, els: Expr?, cl: parser.Clause) {
+  let bt = b.bool_t()
+  let ok = b.value_as(cond, bt)
+  let (fail, good) = b.branch(b.add(Op.Not, bt, Aux.None, [ok]))
+  b.s.cur = fail
+  match els {
+    None => {
+      b.fault_detail(cond)
+      let msg = b.const_str("requires failed: ${b.source_text(b.s.file, parser.expr_span(cond))}")
+      b.fault(msg, b.pos(parser.expr_span(cond)))
+    }
+    Some(e) => {
+      if b.s.err_t < 0 {
+        b.unsupported("`requires ... else` in a function that cannot fail")
+        b.add(Op.Unreachable, -1, Aux.None, [])
+      } else {
+        let v = b.expr(e)
+        let ev = b.coerce_err(v, b.nat_check(e), b.s.err_t, Some(e))
+        let want = b.result_t()
+        let r = b.add(Op.Variant, want, Aux.I(n: b.m.variant_index(want, "Err")), [ev])
+        b.ret(r)
+      }
+    }
+  }
+  b.s.cur = good
+}
+
+/// Builds fi as the wrapper of fo's body (contractBody): it checks the
+/// `requires` clauses, takes the `old(...)` values, calls the body (the
+/// function `<name>.body`, queued), and checks the `ensures` clauses and
+/// the receiver's invariant on success.
+fn (var b: Builder) contract_body(fo: Int, fi: Int, sub: Map[Int, Int], ens: List[parser.Clause], inv: Bool) {
+  var params: List[Int] = []
+  for p in b.m.funcs[fi].blocks[0].params {
+    params.push(b.m.funcs[fi].values[p].ty)
+  }
+  let results = b.m.funcs[fi].results
+  let fname = b.m.funcs[fi].name
+  let inner = b.m.new_func("${fname}.body", params, results)
+  b.m.funcs[inner].var_params = b.m.funcs[fi].var_params
+  b.queue.push(Job.Inner(fo: fo, fi: inner, sub: sub))
+  let file = b.decl_file(fo)
+  let saved = b.begin(fi, file)
+  b.s.fo = fo
+  b.s.sub = sub
+  b.s.res = b.apply(b.c.objs[fo].result)
+  b.s.err_t = b.fail_err(b.apply(b.c.objs[fo].err))
+  let vars = b.param_bindings(fo)
+  let fd = b.c.objs[fo].fn_decl[0]
+  for cl in fd.clauses {
+    if let RequiresClause(cond: cond, els: els, ..) = cl {
+      b.check_requires(cond, els, cl)
+    }
+  }
+  // old(...) values, in clause order
+  b.s.olds = {}
+  for c in ens {
+    if let EnsuresClause(cond: cond, ..) = c {
+      b.take_olds(cond)
+    }
+  }
+  var args: List[Int] = []
+  for vo in vars {
+    args.push(b.read(vo))
+  }
+  var main = -1
+  if results.len() == 1 {
+    let r = b.call("${fname}.body", results[0], "", args)
+    b.check("${fname}.body")
+    main = r
+  } else {
+    let t = b.m.tuple(results)
+    let r = b.call("${fname}.body", t, "", args)
+    b.check("${fname}.body")
+    main = b.add(Op.Field, results[0], Aux.I(n: 0), [r])
+    let vps = b.s.var_params
+    for (i, vo) in vps.indexed() {
+      b.write_var(vo, b.add(Op.Field, results[i + 1], Aux.I(n: i + 1), [r]))
+    }
+  }
+  // the success value, and where the checks run
+  let join = b.new_block()
+  var success = main
+  if b.s.err_t >= 0 {
+    let rt = results[0]
+    let ok_i = b.m.variant_index(rt, "Ok")
+    let tag = b.add(Op.Tag, b.int_t(), Aux.None, [main])
+    let is_ok = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(ok_i)])
+    let (yes, no) = b.branch(is_ok)
+    b.s.cur = no
+    b.jump(join, [])
+    b.s.cur = yes
+    success = b.add(Op.Payload, b.m.types[rt].variants[ok_i].fields[0].ty, Aux.P(tag: ok_i, field: 0), [main])
+  }
+  for c in ens {
+    if let EnsuresClause(span: span, cond: cond, ..) = c {
+      let rv = b.c.result_vars.get(file * 268435456 + span.start.offset) ?? -1
+      if rv >= 0 {
+        b.write_var(rv, success)
+      }
+      b.contract_check(cond, "ensures failed: ")
+    }
+  }
+  if inv && !vars.is_empty() && !b.is_dead() {
+    let recv = b.read(vars[0])
+    b.check_invariant_at(recv, b.apply(b.c.objs[fo].recv_ty), b.pos(fd.name.span))
+  }
+  b.s.olds = {}
+  if !b.is_dead() {
+    b.jump(join, [])
+  }
+  b.seal(join)
+  b.s.cur = join
+  var rets = [main]
+  let vps = b.s.var_params
+  for vo in vps {
+    rets.push(b.read(vo))
+  }
+  b.add(Op.Return, -1, Aux.None, rets)
+  b.dead()
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// Evaluates the arguments of the `old(...)` calls of an ensures clause
+/// (contractBody's check.Inspect: a call `old(x)` is not entered).
+fn (var b: Builder) take_olds(e: Expr) {
+  match e {
+    CallExpr(fun: fun, args: args, ..) => {
+      if let Ident(id) = fun {
+        if id.name == b"old" && b.c.var_of(b.s.file, id) < 0 && args.len() == 1 {
+          let v = b.value(args[0].value)
+          b.s.olds[b.c.expr_key_in(b.s.file, e)] = v
+          return
+        }
+      }
+      b.take_olds(fun)
+      for a in args {
+        b.take_olds(a.value)
+      }
+    }
+    _ => b.each_child(e, Visit.Olds)
+  }
+}
+
+/// What walk_children does at the expressions it reaches.
+enum Visit {
+  Olds
+  Detail
+}
+
+/// Visits the children of e (check.Inspect's, as capture_expr walks
+/// them) with v.
+fn (var b: Builder) each_child(e: Expr, v: Visit) {
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          b.visit(x, v)
+        }
+      }
+    }
+    ParenExpr(x: x, ..) => b.visit(x, v)
+    TupleExpr(elems: elems, ..) => {
+      for x in elems {
+        b.visit(x, v)
+      }
+    }
+    ListLit(elems: elems, ..) => {
+      for x in elems {
+        b.visit(x, v)
+      }
+    }
+    SetLit(elems: elems, ..) => {
+      for x in elems {
+        b.visit(x, v)
+      }
+    }
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        b.visit(en.key, v)
+        b.visit(en.value, v)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        b.visit(f.value, v)
+      }
+    }
+    UnaryExpr(x: x, ..) => b.visit(x, v)
+    BinaryExpr(x: x, y: y, ..) => {
+      b.visit(x, v)
+      b.visit(y, v)
+    }
+    IsExpr(x: x, ..) => b.visit(x, v)
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        b.visit(x, v)
+      }
+      if let Some(x) = hi {
+        b.visit(x, v)
+      }
+    }
+    SelectorExpr(x: x, ..) => b.visit(x, v)
+    CallExpr(fun: fun, args: args, ..) => {
+      b.visit(fun, v)
+      for a in args {
+        b.visit(a.value, v)
+      }
+    }
+    TypeArgsExpr(x: x, ..) => b.visit(x, v)
+    IndexExpr(x: x, index: index, ..) => {
+      b.visit(x, v)
+      b.visit(index, v)
+    }
+    TryExpr(x: x, ..) => b.visit(x, v)
+    WithExpr(x: x, fields: fields, ..) => {
+      b.visit(x, v)
+      for f in fields {
+        b.visit(f.value, v)
+      }
+    }
+    IfExpr(x) => {
+      if let Some(c) = x.cond {
+        b.visit(c, v)
+      }
+      if let Some(c) = x.value {
+        b.visit(c, v)
+      }
+      b.visit_block(x.then, v)
+      if let Some(c) = x.els {
+        b.visit(c, v)
+      }
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      b.visit(subject, v)
+      for a in arms {
+        if let Some(g) = a.guard {
+          b.visit(g, v)
+        }
+        if let Some(st) = a.body {
+          b.visit_stmt(st, v)
+        }
+      }
+    }
+    Block(bl) => b.visit_block(bl, v)
+    FnLit(f) => b.visit_block(f.body, v)
+    WhileExpr(body: body, ..) => b.visit_block(body, v)
+    _ => {}
+  }
+}
+
+fn (var b: Builder) visit(e: Expr, v: Visit) {
+  match v {
+    Olds => b.take_olds(e)
+    Detail => b.detail(e)
+  }
+}
+
+fn (var b: Builder) visit_block(bl: parser.Block, v: Visit) {
+  for st in bl.stmts {
+    b.visit_stmt(st, v)
+  }
+}
+
+fn (var b: Builder) visit_stmt(st: Stmt, v: Visit) {
+  match st {
+    LetStmt(value: x, ..) => b.visit(x, v)
+    VarStmt(value: x, ..) => b.visit(x, v)
+    AssignStmt(target: t, value: x, ..) => {
+      b.visit(t, v)
+      b.visit(x, v)
+    }
+    DeferStmt(body: body, ..) => b.visit_stmt(body, v)
+    ReturnStmt(value: x, ..) => {
+      if let Some(e) = x {
+        b.visit(e, v)
+      }
+    }
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      b.visit(iter, v)
+      for e in bound {
+        b.visit(e, v)
+      }
+      b.visit_block(body, v)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      if let Some(c) = cond {
+        b.visit(c, v)
+      }
+      for e in value {
+        b.visit(e, v)
+      }
+      for e in bound {
+        b.visit(e, v)
+      }
+      b.visit_block(body, v)
+    }
+    ExprStmt(x: x, ..) => b.visit(x, v)
+    ConstDecl(d) => b.visit(d.value, v)
+    _ => {}
+  }
+}
+
+/// Faults with prefix and cond's source text when cond is false, after
+/// the names cond reads (contractCheck).
+fn (var b: Builder) contract_check(cond: Expr, prefix: Str) {
+  let bt = b.bool_t()
+  let ok = b.value_as(cond, bt)
+  let (fail, good) = b.branch(b.add(Op.Not, bt, Aux.None, [ok]))
+  b.s.cur = fail
+  b.fault_detail(cond)
+  let msg = b.const_str("${prefix}${b.source_text(b.s.file, parser.expr_span(cond))}")
+  b.fault(msg, b.pos(parser.expr_span(cond)))
+  b.s.cur = good
+}
+
+/// Hands the runtime the line printed under a failed contract: each name
+/// cond reads (outside calls) and its Debug text (faultDetail).
+fn (var b: Builder) fault_detail(cond: Expr) {
+  b.s.detail_acc = -1
+  b.s.detail_seen = []
+  b.detail(cond)
+  if b.s.detail_acc >= 0 {
+    b.rt("fault_detail", -1, [b.s.detail_acc])
+  }
+  b.s.detail_acc = -1
+  b.s.detail_seen = []
+}
+
+fn (var b: Builder) detail(e: Expr) {
+  match e {
+    CallExpr(..) => return
+    Ident(id) => {
+      let vo = b.c.var_of(b.s.file, id)
+      let name = check.text(id.name)
+      if vo < 0 || b.s.detail_seen.contains(name) || !b.s.var_type.contains(vo) {
+        return
+      }
+      b.s.detail_seen.push(name)
+      let st = b.str_t()
+      if b.s.detail_acc < 0 {
+        b.s.detail_acc = b.const_str(" ")
+      }
+      let acc = b.call("str.concat", st, "", [b.s.detail_acc, b.const_str("  ${name} = ")])
+      let v = b.read(vo)
+      b.s.detail_acc = b.append_debug(acc, v, b.check_type(e))
+      return
+    }
+    _ => b.each_child(e, Visit.Detail)
+  }
+}
+
+/// Faults at pos when the struct value v (checker type ct) breaks its
+/// type's invariant (checkInvariant).
+fn (var b: Builder) check_invariant_at(v: Int, ct: Int, pos: Str) {
+  let o = b.named_obj(ct)
+  if o < 0 || b.tkind(b.vty(v)) != Kind.Struct {
+    return
+  }
+  let inv = b.invariant_of(o)
+  if inv.is_empty() {
+    return
+  }
+  let bt = b.bool_t()
+  let f = b.invariant_func(ct, o, b.vty(v))
+  let holds = b.call(f, bt, "", [v])
+  b.check(f)
+  let (fail, good) = b.branch(b.add(Op.Not, bt, Aux.None, [holds]))
+  b.s.cur = fail
+  let text = b.source_text(b.decl_file(o), parser.expr_span(inv[0]))
+  b.fault(b.const_str("invariant of ${b.obj_name(o)} failed: ${text}"), pos)
+  b.s.cur = good
+}
+
+/// The function that evaluates the invariant of the struct type ct
+/// (Type object o, lowered to t) on a value (invariantFunc).
+fn (var b: Builder) invariant_func(ct: Int, o: Int, t: Int) -> Str {
+  let name = "xo.invariant[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [b.bool_t()], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.decl_file(o))
+  if !b.c.objs[o].tparams.is_empty() {
+    b.s.sub = b.c.args_subst(b.c.objs[o].tparams, b.ty_args(ct))
+  }
+  let v = b.param(0)
+  let vars = b.c.inv_vars.get(o) ?? []
+  for (i, vo) in vars.indexed() {
+    if vo < 0 || i >= b.m.types[t].fields.len() {
+      continue
+    }
+    let fv = b.add(Op.Field, b.m.types[t].fields[i].ty, Aux.I(n: i), [v])
+    b.write_var(vo, b.unbox(fv))
+  }
+  let inv = b.invariant_of(o)
+  b.retv(b.value_as(inv[0], b.bool_t()))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+// ---------------------------------------------------------------------------
+// Loop bounds (build_stmt.go loopBound)
+
+/// The iteration counter of a loop with `bound N` (core 3.5, decision
+/// 0133): its made up variable (a negative id), 0 without a bound.
+/// loop_tick, at the start of each iteration, counts and faults with
+/// XO-F006 past N.
+fn (var b: Builder) loop_bound(bound: List[Expr]) -> Int {
+  if bound.is_empty() {
+    return 0
+  }
+  let n = match b.c.const_int(b.s.file, bound[0], 0) {
+    Some(x) => x
+    None => {
+      b.unsupported("this loop bound")
+      return 0
+    }
+  }
+  let cnt = b.local()
+  b.write_var(cnt, b.cint(0))
+  b.s.bounds[cnt] = LoopBound{n: n, pos: b.pos(parser.expr_span(bound[0]))}
+  cnt
+}
+
+/// A loop's bound: N and where it is written.
+struct LoopBound {
+  n: Int
+  pos: Str
+}
+
+fn (var b: Builder) loop_tick(cnt: Int) {
+  if !b.s.bounds.contains(cnt) {
+    return
+  }
+  let lb = b.s.bounds.get(cnt) ?? fault("loop bound")
+  let it = b.int_t()
+  // at most n + 1 iterations start, so the increment cannot overflow
+  let c = b.read(cnt)
+  let v = b.add(Op.Add, it, Aux.None, [c, b.cint(1)])
+  b.write_var(cnt, v)
+  let (over, ok) = b.branch(b.add(Op.Gt, b.bool_t(), Aux.None, [v, b.cint(lb.n)]))
+  b.s.cur = over
+  b.fault(b.const_str("XO-F006: loop ran past its bound of ${lb.n} iterations"), lb.pos)
+  b.s.cur = ok
+}

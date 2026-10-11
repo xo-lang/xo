@@ -14,7 +14,10 @@ values, method values, `derive Ord` order, the generated equality and
 order helpers) implemented 2026-10-11 in `selfhost/ssa/iface.xo`, with
 the method value records of `selfhost/check` (`ref_subst`). SSA stage 3
 (Map and Set, their higher order methods, constants of collection
-types) implemented 2026-10-11 in `selfhost/ssa/map.xo`. Evidence:
+types) implemented 2026-10-11 in `selfhost/ssa/map.xo`. SSA stage 4
+(`requires`, `ensures`, invariants, `defer` with its fault
+continuations, loop bounds, real-time sections) implemented 2026-10-11
+in `selfhost/ssa/contract.xo` and `defer.xo`. Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -207,6 +210,18 @@ values: selfhost/ssa iface.xo), in addition to those of stage 1:
 map.xo): none new. The map helpers are generated when asked for (rule
 of stage 2); a packed closure (`Map.update`) is compared as any
 closure.
+
+**Comparison rules of stage 4** (2026-10-11, contracts and deferred
+code: selfhost/ssa contract.xo, defer.xo): none new. The landings the
+Go builder places while it builds (flushLanding: an operation that may
+fault in a block with deferred code, and inside deferred code with its
+fault continuations) are part of the build stage and compared with it;
+the landings of the pass addLandings are stage 8. The Xo checker
+records what the builder reads: the `result` binding of an ensures
+clause (`result_vars`), the field bindings of an invariant
+(`inv_vars`), and the constant of a loop bound (`const_int`, now
+public). The scopes of stage 5 are not among the open blocks: a
+function with one is skipped.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

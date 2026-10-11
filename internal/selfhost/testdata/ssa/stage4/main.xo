@@ -1,0 +1,98 @@
+// SSA stage 4 constructs for TestSelfhostSSA (decision 0150): deferred
+// code at every way out of nested blocks (the end, return, `?`, break,
+// continue, a fault), faults inside deferred code, contracts, invariants,
+// loop bounds, and a real-time section.
+
+struct Account {
+  owner: Str
+  balance: Int
+} invariant balance >= 0
+
+fn (var a: Account) withdraw(n: Int) ! Str
+  requires n > 0 else "amount must be positive"
+  ensures a.balance == old(a.balance) - n
+{
+  if n > a.balance {
+    return Err("insufficient funds")
+  }
+  a.balance -= n
+}
+
+fn half(xs: List[Int], i: Int) -> Int
+  requires i >= 0
+  ensures result <= xs[i]
+{
+  xs[i] / 2
+}
+
+fn parse(s: Str) -> Int ! Str {
+  if s == "" {
+    return Err("empty")
+  }
+  s.len()
+}
+
+fn log_all(os: Os, xs: List[Str]) -> Int ! Str {
+  var total = 0
+  defer os.stdio.println("done ${total}")
+  for x in xs {
+    defer os.stdio.println("item ${x}")
+    if x == "skip" {
+      continue
+    }
+    if x == "stop" {
+      break
+    }
+    let n = parse(x)?
+    total += n * 2
+  }
+  {
+    defer os.stdio.println("inner ${total + 1}")
+    total = total + xs.len()
+  }
+  total
+}
+
+fn risky(os: Os, xs: List[Int], k: Int) -> Int {
+  var acc = 0
+  defer {
+    os.stdio.println("cleanup ${acc}")
+    let y = xs[k] + acc
+    os.stdio.println("y ${y}")
+  }
+  defer os.stdio.println("second ${xs[0]}")
+  for i in 0..k bound 16 {
+    acc += xs[i] * i
+  }
+  acc
+}
+
+fn count(xs: List[Int]) -> Int uses realtime {
+  var n = 0
+  for x in xs bound 8 {
+    if x > 0 {
+      n += 1
+    }
+  }
+  n
+}
+
+fn main(os: Os) {
+  var a = Account{owner: "ann", balance: 10}
+  match a.withdraw(3) {
+    Ok(_) => os.stdio.println("left ${a.balance}")
+    Err(e) => os.stdio.println("error ${e}")
+  }
+  os.stdio.println("half ${half([4, 8], 1)}")
+  match log_all(os, ["ab", "skip", "cde", "stop", "x"]) {
+    Ok(n) => os.stdio.println("total ${n}")
+    Err(e) => os.stdio.println("error ${e}")
+  }
+  os.stdio.println("risky ${risky(os, [1, 2, 3], 2)}")
+  os.stdio.println("count ${count([1, -2, 3])}")
+  var i = 0
+  while i < 3 bound 4 {
+    defer os.stdio.println("tick ${i}")
+    i += 1
+  }
+}

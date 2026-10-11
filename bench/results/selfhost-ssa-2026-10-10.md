@@ -238,3 +238,79 @@ Speed, go build of the Xo builder (`--bench=10`, ms, measured while
 another test ran): selfhost/check 757 (Go builder) against 1,259
 (1.66x); selfhost/ssa 1,119 against 1,949 (1.74x); the notes service
 27 against 45 (1.67x).
+
+# Stage 4: contracts and deferred code, 2026-10-11
+
+`selfhost/ssa/contract.xo` and `defer.xo` (about 900 lines): `requires`
+(with and without `else`, the fault detail line), `ensures` (the
+wrapper, `<name>.body`, `old(...)`, `result`), invariants (after struct
+literals and `with`, after `var` methods, `xo.invariant[T]`), `defer`
+(lowered at the end of each block, `return`, `?`, `break`, `continue`,
+and the unwind path), the landings the builder places in blocks with
+deferred code and the fault continuations of faults inside deferred
+code (landing.go flushLanding, build_defer.go faultCont), loop bounds
+(XO-F006), and real-time sections (`rt.realtime_enter`/`exit`). The Xo
+checker now records an ensures clause's `result` binding and an
+invariant's field bindings. internal/selfhost/testdata/ssa/stage4 is a
+program of these constructs (defer at every way out, faults in deferred
+code) that the comparison and the mutations now include.
+
+| functions (Go builder) | stage 3 (11,088) | stage 4 (11,140, one more run) |
+|---|---|---|
+| identical | 8,002 | 8,230 |
+| skipped (a later stage) | 758 | 689 |
+| never declared (callees of skipped code) | 2,328 | 2,221 |
+
+0 differences with the go, arm64, and LLVM builds;
+`TestSelfhostSSAMutations` 0 differences on 400 mutations (seed
+20261010: 3,877 of 5,997 functions identical) and 1,500 (seed 7: 15,677
+of 23,056). No construct of stages 1 to 4 is skipped any more: what is
+left is concurrency and waits (stage 5: 190 functions, 36 more with
+scopes), the generic intrinsics (stage 6: JSON 136, `status_of`,
+`launder`, `any_of`, `cast`, SQL), and their callers. On the compiler's
+own sources (selfhost/lexer, parser, check, ssa: 2,922 functions) every
+function is identical (78% at stage 1, maps were most of the rest).
+
+Found in stage 4: a sentinel of the port (gotchas/selfhost-ssa-negative-
+locals.md: a loop bound's counter is a made up variable with a negative
+id, so `-1` for "no bound" hid every counter). No compiler bug.
+
+Speed after stage 4, ms for 10 builds (the builder alone, `--bench=10`;
+the Xo builder now declares every function the Go builder does on these
+inputs but the notes service):
+
+| input | Go builder | Xo, Go backend | Xo, arm64 | Xo, LLVM |
+|---|---|---|---|---|
+| selfhost/check (1,018 functions) | 716 | 1,248 (1.74x) | 9,434 (13.2x) | 1,117 (1.56x) |
+| selfhost/parser (377) | 223 | 418 (1.87x) | 2,906 (13.0x) | 341 (1.53x) |
+| selfhost/ssa (1,435) | 1,109 | 1,974 (1.78x) | 15,646 (14.1x) | 1,819 (1.64x) |
+| bench/xo/v0.4/08-notes-service (192; Xo 174) | 25 | 45 (1.8x) | 318 (12.7x) | 31 (1.24x) |
+
+The ratios grew from stage 1 (go 1.67x, LLVM 1.44x on selfhost/check)
+because the Xo builder now builds the functions it skipped (maps,
+interfaces), its slower paths (generated helpers built in the middle of
+a body, each a save and restore of the function state). The arm64 build
+stays about 13 times the Go builder: every call of a Builder method
+copies its `var` receiver (the builder, which holds the checker) in and
+out through the stack. It does not block the tests (the arm64 subtest
+takes 33 s of the 1,200 s cold run, most of which is the LLVM build's
+link), so decision 0148 was not ported to arm64 here.
+
+## Next experiments (after stage 4)
+
+1. **arm64: large `var` parameters kept in memory** (decision 0148's
+   LLVM rule ported to internal/arm64 abi.go and emit.go): pass the
+   address of a `var` struct parameter of 256 bytes or more and update
+   it in place. Expected: the arm64 build near the LLVM build (13x to
+   about 1.6x), and `Builder.std_call` far under the 280,000
+   instructions that reached the 1 MiB branch limit. Measure with the
+   cached binary (`~/Library/Caches/xo/build/*/arm64/bin/ssa
+   --bench=10 selfhost/check`).
+2. **Stage 5, concurrency and I/O** (build_conc.go, build_tasks.go,
+   build_io.go waits): 190 functions skipped for concurrency and 36 for
+   scopes; scopes also join the open blocks of defer.xo (the scope half
+   of exitEntry: closeEarly at exits, the scopes' unwind blocks).
+3. **Profile the go build of the Xo builder on selfhost/ssa** (`go tool
+   pprof` on the generated Go program): the immediate builds of
+   generated functions (begin and end copying the state S) are the
+   suspected new cost.

@@ -814,15 +814,21 @@ selfhost/check/         the checker in Xo, stages 1 to 8 and module loading (dec
                         deps.xo (dependency rules, deny rules, effect ceilings), main.xo (CLI), check_test.xo,
                         info.xo (the records the SSA builder reads: natural types, constructors, calls,
                         patterns, parameter bindings; native mode loads std/native, decision 0150)
-selfhost/ssa/           the SSA builder in Xo, stages 1 to 3 of decision 0150: ir.xo (types, values, blocks,
+selfhost/ssa/           the SSA builder in Xo, stages 1 to 4 of decision 0150: ir.xo (types, values, blocks,
                         functions as tables; the printer), build.xo (types, functions and generics, Braun
                         SSA construction, checks after calls, generated functions), expr.xo, stmt.xo,
                         call.xo (calls, closures, `?`, std calls), show.xo (Display and Debug text, error
                         frames, sized integers), iface.xo (interface values, Error/Display/Debug values,
-                        method values, equality and order helpers), map.xo (Map and Set), main.xo (CLI)
+                        method values, equality and order helpers), map.xo (Map and Set), contract.xo
+                        (contracts, invariants, loop bounds, real-time sections), defer.xo (`defer`, the
+                        builder's landings and fault continuations), main.xo (CLI)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)
+internal/selfhost/testdata/ssa/stage4/  a program of the SSA stage 4 constructs (defer at every way out,
+                        faults in deferred code, contracts, invariants, loop bounds, a real-time section);
+                        every repository directory of .xo files is a run of TestSelfhostSSA and a mutation
+                        source (last verified: 2026-10-11)
 scripts/linux-test.sh   the test suite in a Linux container (arm64 or amd64), image from bench/linux/Dockerfile
                         (see "Linux (containers)")
 internal/benchharness/  test only: runs the bench/harness Python self test under go test

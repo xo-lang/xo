@@ -9,7 +9,7 @@ use github.com/xo-lang/xo/selfhost/lexer
 /// (unit when there is none).
 fn (var b: Builder) block(bl: parser.Block) -> Int {
   var last = -1
-  b.s.exits += 1
+  let fr = b.open_frame()
   let n = bl.stmts.len()
   for (i, st) in bl.stmts.indexed() {
     if i == n - 1 {
@@ -20,7 +20,11 @@ fn (var b: Builder) block(bl: parser.Block) -> Int {
     }
     b.stmt(st)
   }
-  b.s.exits -= 1
+  b.s.exits.pop()
+  if !b.is_dead() {
+    // the block's value is computed before its deferred code runs
+    b.run_defers(fr)
+  }
   if last < 0 {
     return b.unit()
   }
@@ -81,7 +85,10 @@ fn (var b: Builder) stmt(st: Stmt) {
       b.while_loop(name, cs, bound, body)
     }
     ForStmt(..) => b.for_stmt(st)
-    DeferStmt(..) => b.unsupported("`defer`")
+    DeferStmt(span: span, body: body) => {
+      b.s.any_defer = true
+      b.defer_stmt(body, span)
+    }
     _ => b.unsupported("this statement")
   }
 }
@@ -105,30 +112,13 @@ fn (var b: Builder) break_to(label: Ident?, brk: Bool) {
     return
   }
   let l = b.s.loops[lc]
+  b.exit_to(l.exits)
   if brk {
     b.jump(l.brk, [])
   } else {
     b.jump(l.cont, [])
   }
   b.dead()
-}
-
-/// The start of a loop with `bound N` (loopBound): the counter's made up
-/// variable, -1 without a bound; loop_tick counts an iteration. Outside
-/// stage 3.
-fn (var b: Builder) loop_bound(bound: List[Expr]) -> Int {
-  if !bound.is_empty() {
-    b.unsupported("a loop bound")
-  }
-  -1
-}
-
-/// The start of an iteration of a loop with a bound (the tick of
-/// loopBound): nothing without one.
-fn (var b: Builder) loop_tick(cnt: Int) {
-  if cnt < 0 {
-    return
-  }
 }
 
 /// `while cond { body }` (cond empty: forever).
@@ -146,7 +136,7 @@ fn (var b: Builder) while_loop(label: Bytes, cond: List[Expr], bound: List[Expr]
     b.s.cur = inb
   }
   b.loop_tick(tick)
-  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()
   b.jump(head, [])
@@ -176,7 +166,7 @@ fn (var b: Builder) while_let(label: Bytes, p: Pattern, value: Expr, bound: List
   }
   b.pattern(v, p, exit)
   b.loop_tick(tick)
-  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()
   b.jump(head, [])
@@ -276,7 +266,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   b.seal(fail)
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.s.cur = cont
-  b.s.loops.push(LoopCtx{label: name, brk: exit, cont: latch, exits: b.s.exits})
+  b.s.loops.push(LoopCtx{label: name, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()
   b.jump(latch, [])

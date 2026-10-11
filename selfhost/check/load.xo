@@ -145,6 +145,11 @@ pub struct Checker {
   /// The type arguments of a method used as a value, by the key of its
   /// selector (check.go rec.subst, Info.RefSubst).
   pub ref_subst: Map[Int, Subst] = {}
+  /// The `result` binding of an ensures clause, by file and offset of the
+  /// clause (check.go rec.resultVar), and the field bindings of a struct
+  /// invariant, by Type object (rec.invVars).
+  pub result_vars: Map[Int, Int] = {}
+  pub inv_vars: Map[Int, List[Int]] = {}
   seen: Map[Str, Bool] = {}
 }
 

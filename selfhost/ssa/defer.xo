@@ -1,0 +1,327 @@
+// `defer` (internal/ssa build_defer.go) and the landings the builder
+// places inside blocks with deferred code (landing.go flushLanding),
+// stage 4 of decision 0150. The deferred statements of a block are
+// lowered again at every way out of it, last registered first; a fault
+// in an operation inside a block with deferred code lands in a check
+// whose cleanup runs that code. Scopes (stage 5) are not among the open
+// blocks: a function with one is skipped.
+
+
+/// A `defer` statement of a block.
+struct DStmt {
+  body: Stmt
+  span: Span
+}
+
+/// An open block (build_defer.go deferFrame): the `defer` statements met
+/// so far; outer (once has_outer) are the blocks around it when its
+/// deferred code first ran, cont its fault continuations by statement
+/// index (faultCont).
+struct DFrame {
+  stmts: List[DStmt] = []
+  outer: List[Int] = []
+  has_outer: Bool = false
+  cont: Map[Int, Int] = {}
+}
+
+/// The top level deferred statement being lowered (deferLanding): where a
+/// fault in it continues.
+struct DLand {
+  fr: Int
+  j: Int
+  /// Its shield token (-1 without concurrency).
+  tok: Int
+  /// The number of open blocks when it began.
+  base: Int
+}
+
+/// Registers deferred code in the innermost open block (deferStmt).
+fn (var b: Builder) defer_stmt(body: Stmt, span: Span) {
+  let n = b.s.exits.len()
+  if n == 0 {
+    b.unsupported("`defer` outside a block")
+    return
+  }
+  let fr = b.s.exits[n - 1]
+  b.s.frames[fr].stmts.push(DStmt{body: body, span: span})
+}
+
+/// Opens the frame of a block (block's deferFrame).
+fn (var b: Builder) open_frame() -> Int {
+  let fr = b.s.frames.len()
+  b.s.frames.push(DFrame{})
+  b.s.exits.push(fr)
+  fr
+}
+
+/// The open blocks as they are now, each a frame of its own holding the
+/// `defer` statements met so far (snapshot): a block may end, or
+/// register more deferred code, before the copy is used.
+fn (var b: Builder) snapshot() -> List[Int] {
+  var out: List[Int] = []
+  for e in b.s.exits {
+    let fr = b.s.frames.len()
+    let stmts = b.s.frames[e].stmts
+    b.s.frames.push(DFrame{stmts: stmts})
+    out.push(fr)
+  }
+  out
+}
+
+/// Lowers the deferred code of fr, last registered first, each statement
+/// shielded (runDefers).
+fn (var b: Builder) run_defers(fr: Int) {
+  let top = b.s.shield == 0
+  if top && !b.s.frames[fr].has_outer {
+    let o = b.snapshot()
+    b.s.frames[fr].outer = o
+    b.s.frames[fr].has_outer = true
+  }
+  var i = b.s.frames[fr].stmts.len() - 1
+  while i >= 0 && !b.is_dead() {
+    b.run_defer(fr, i, top)
+    i -= 1
+  }
+}
+
+/// Lowers deferred statement i of fr, shielded; top: a fault in it goes
+/// on with the rest of the cleanup (runDefer).
+fn (var b: Builder) run_defer(fr: Int, i: Int, top: Bool) {
+  let d = b.s.frames[fr].stmts[i]
+  var tok = -1
+  if b.conc {
+    tok = b.rt("shield_begin", b.int_t(), [])
+  }
+  // deferred code is its own frame for control flow: the loops of the
+  // code around it are not its own
+  let loops = b.s.loops
+  b.s.loops = []
+  let land = b.s.defer_land
+  b.s.defer_land = []
+  if top {
+    b.s.defer_land = [DLand{fr: fr, j: i, tok: tok, base: b.s.exits.len()}]
+  }
+  b.s.shield += 1
+  b.stmt(d.body)
+  b.s.shield -= 1
+  b.s.defer_land = land
+  b.s.loops = loops
+  if tok >= 0 && !b.is_dead() {
+    b.rt("shield_end", -1, [tok, b.const_str(b.pos(d.span))])
+  }
+}
+
+/// Whether an operation added now is in top level deferred code that
+/// fault_cont handles (deferLandingHere).
+fn (var b: Builder) defer_landing_here() -> Bool {
+  if b.s.defer_land.is_empty() || b.s.shield != 1 {
+    return false
+  }
+  b.s.exits.len() >= b.s.defer_land[0].base
+}
+
+/// The block where a fault in deferred statement j of fr continues:
+/// statement j-1 runs, then fault_cont(fr, j-1); at 0 the code around
+/// the block unwinds (faultCont). Made once per frame and index; sealed
+/// when the function ends (seal_conts).
+fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
+  if b.s.pending >= 0 {
+    // the pending operation lands in the current block, before this
+    // builds code elsewhere
+    b.flush_landing()
+  }
+  if let Some(c) = b.s.frames[fr].cont.get(j) {
+    return c
+  }
+  let blk = b.new_block()
+  b.s.frames[fr].cont[j] = blk
+  b.s.conts.push(blk)
+  let cur = b.s.cur
+  let exits = b.s.exits
+  let land = b.s.defer_land
+  let shield = b.s.shield
+  let loops = b.s.loops
+  b.s.cur = blk
+  b.s.defer_land = []
+  b.s.shield = 0
+  b.s.loops = []
+  b.s.exits = b.s.frames[fr].outer
+  if j > 0 {
+    b.run_defer(fr, j - 1, true)
+    if !b.is_dead() {
+      let next = b.fault_cont(fr, j - 1)
+      b.jump(next, [])
+    }
+  } else {
+    b.unwind()
+  }
+  b.s.cur = cur
+  b.s.exits = exits
+  b.s.defer_land = land
+  b.s.shield = shield
+  b.s.loops = loops
+  blk
+}
+
+/// Seals the fault continuations once every landing that jumps to them is
+/// built (sealConts).
+fn (var b: Builder) seal_conts() {
+  let cs = b.s.conts
+  for c in cs {
+    b.seal(c)
+  }
+  b.s.conts = []
+}
+
+/// Leaves the open blocks down to depth (an index into exits) for an
+/// early exit: their deferred code runs, innermost first (exitTo).
+fn (var b: Builder) exit_to(depth: Int) {
+  let saved = b.s.exits
+  var i = saved.len() - 1
+  while i >= depth && !b.is_dead() {
+    b.s.exits = saved[0..i]
+    b.run_defers(saved[i])
+    i -= 1
+  }
+  b.s.exits = saved
+}
+
+/// Whether leaving the current code by a fault runs deferred code of this
+/// function (lexicalCleanup).
+fn (var b: Builder) lexical_cleanup() -> Bool {
+  for e in b.s.exits {
+    if !b.s.frames[e].stmts.is_empty() {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether v may turn out to fault once built (mayRaise).
+fn may_raise(op: Op) -> Bool {
+  op is Op.Add | Op.Sub | Op.Mul | Op.Neg | Op.Div | Op.Rem | Op.Shl | Op.Shr | Op.FloatToInt | Op.CallValue | Op.Call
+}
+
+/// The runtime functions that can raise a fault (landing.go faultingRT).
+fn faulting_rt(name: Str) -> Bool {
+  name is "rt.fault_raise" | "rt.fault_rethrow" | "rt.fault_at" | "rt.int_op" | "rt.int_conv" | "rt.rune_of" | "rt.str_slice_at" | "rt.bytes_slice_at" | "rt.str_repeat" | "rt.rand_int" | "rt.shield_end" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.task_spawn" | "rt.task_await" | "rt.chan_new" | "rt.chan_send" | "rt.select_wait" | "rt.atomic_add" | "rt.realtime_exit"
+}
+
+/// Whether the value v of the function under construction can raise a
+/// fault by itself (selfFaults).
+fn (var b: Builder) self_faults(v: Int) -> Bool {
+  let x = b.s.f.values[v]
+  match x.op {
+    Fault => true
+    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => !x.pos.is_empty()
+    CallValue => true
+    Call => {
+      let name = match x.aux {
+        S(s) => s
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+      }
+      if name is "list.index" | "list.set" | "bytes.index" | "Int.abs" {
+        return !x.pos.is_empty()
+      }
+      faulting_rt(name)
+    }
+    _ => false
+  }
+}
+
+/// Whether v calls a function of the module (isUserCall).
+fn (var b: Builder) is_user_call(v: Int) -> Bool {
+  let x = b.s.f.values[v]
+  if x.op != Op.Call {
+    return false
+  }
+  match x.aux {
+    S(s) => b.m.func_index(s) >= 0
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => false
+  }
+}
+
+/// Gives the pending operation its landing: a check only a fault takes,
+/// whose cleanup leaves the blocks open where it was added
+/// (flushLanding).
+fn (var b: Builder) flush_landing() {
+  let w = b.s.pending
+  b.s.pending = -1
+  let at = b.s.pending_at
+  let defs = b.s.pending_defs
+  let dl = b.s.pending_defer
+  b.s.pending_defs = {}
+  b.s.pending_defer = []
+  let wb = b.s.f.values[w].block
+  if wb != b.s.cur || b.s.f.term(b.s.cur) >= 0 || b.is_dead() || b.s.f.values[w].pad >= 0 {
+    return
+  }
+  if !b.self_faults(w) && !b.is_user_call(w) {
+    return
+  }
+  if b.s.f.values[w].op == Op.Call {
+    if let S(name) = b.s.f.values[w].aux {
+      if name == "rt.shield_end" {
+        // deferred code ends there: a landing would lower the outer
+        // deferred code again for every level
+        return
+      }
+    }
+  }
+  let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
+  b.s.f.values[w].pad = u
+  let (yes, no) = b.branch(u)
+  b.s.cur = yes
+  let saved_exits = b.s.exits
+  if dl.is_empty() {
+    b.s.exits = at
+  }
+  // the cleanup reads the variables as they were before w: put back the
+  // definitions made in its block since
+  var now: Map[Int, Int] = {}
+  for (vo, old) in defs {
+    let k = def_key(vo, wb)
+    now[vo] = b.s.defs.get(k) ?? -1
+    if old < 0 {
+      b.s.defs.remove(k)
+    } else {
+      b.s.defs[k] = old
+    }
+  }
+  if !dl.is_empty() {
+    // a fault in deferred code: its shield ends, the rest of the cleanup
+    // runs (fault_cont)
+    let d = dl[0]
+    let land = b.s.defer_land
+    b.s.defer_land = []
+    // the blocks opened inside the statement run their deferred code
+    // first, innermost first
+    var i = at.len() - 1
+    while i >= d.base && !b.is_dead() {
+      b.s.exits = at[0..i]
+      b.run_defers(at[i])
+      i -= 1
+    }
+    b.s.exits = saved_exits
+    if !b.is_dead() {
+      if d.tok >= 0 {
+        b.rt("shield_abort", -1, [d.tok])
+      }
+      let c = b.fault_cont(d.fr, d.j)
+      b.jump(c, [])
+    }
+    b.s.defer_land = land
+  } else {
+    b.unwind()
+  }
+  for (vo, v) in now {
+    let k = def_key(vo, wb)
+    if v < 0 {
+      b.s.defs.remove(k)
+    } else {
+      b.s.defs[k] = v
+    }
+  }
+  b.s.exits = saved_exits
+  b.s.cur = no
+}

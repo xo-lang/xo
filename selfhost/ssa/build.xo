@@ -52,9 +52,36 @@ struct S {
   loops: List[LoopCtx] = []
   /// The bindings of `var` parameters, returned updated.
   var_params: List[Int] = []
-  /// The blocks open around the current code (each a frame of deferred
-  /// code; `defer` is outside stage 1, so none holds any).
-  exits: Int = 0
+  /// The frames of deferred code (defer.xo), and the open blocks around
+  /// the current code, innermost last (frame indexes).
+  frames: List[DFrame] = []
+  exits: List[Int] = []
+  /// A `defer` statement was registered in this function: only then can
+  /// an operation need a landing of its own (lexical_cleanup).
+  any_defer: Bool = false
+  /// How deep in deferred code the current code is (shielded from
+  /// cancellation: no checks).
+  shield: Int = 0
+  /// An operation that may fault inside a block with deferred code,
+  /// waiting for its landing (flushLanding): the value, the blocks open
+  /// when it was added, the definitions of its block it replaced since
+  /// (-1: none), and the deferred statement it is in (zero or one).
+  pending: Int = -1
+  pending_at: List[Int] = []
+  pending_defs: Map[Int, Int] = {}
+  pending_defer: List[DLand] = []
+  /// The top level deferred statement being lowered (zero or one), and
+  /// the fault continuations made so far.
+  defer_land: List[DLand] = []
+  conts: List[Int] = []
+  /// The values of the `old(...)` calls of the ensures clauses being
+  /// checked, by the key of the call.
+  olds: Map[Int, Int] = {}
+  /// fault_detail's text so far and the names it showed.
+  detail_acc: Int = -1
+  detail_seen: List[Str] = []
+  /// The bounds of loops, by their counter variable.
+  bounds: Map[Int, LoopBound] = {}
   /// The function's unwind block (lazy), -1 until needed.
   unwind_b: Int = -1
   /// The success type and the error type (-1: cannot fail), checker types.
@@ -87,6 +114,8 @@ struct GenJob {
 /// A body waiting to be built (the Go builder's queue of closures).
 enum Job {
   Body(fo: Int, fi: Int, sub: Map[Int, Int])
+  /// The body of a function wrapped for its contracts (`<name>.body`).
+  Inner(fo: Int, fi: Int, sub: Map[Int, Int])
   Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
 }
 
@@ -206,6 +235,7 @@ pub fn (var b: Builder) build() {
 fn (var b: Builder) run_job(j: Job) {
   match j {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
+    Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
     Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack)
   }
 }
@@ -1112,46 +1142,6 @@ fn (var b: Builder) end(saved: S) {
   b.s = saved
 }
 
-/// Builds the body of fo into fi (body, bodyOf).
-fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
-  let file = b.decl_file(fo)
-  let saved = b.begin(fi, file)
-  b.s.fo = fo
-  b.s.sub = sub
-  b.s.res = b.apply(b.c.objs[fo].result)
-  let err0 = b.apply(b.c.objs[fo].err)
-  b.s.err_t = b.fail_err(err0)
-  let decl = b.c.objs[fo].fn_decl
-  if decl.is_empty() || decl[0].body == None {
-    b.param_bindings(fo)
-    b.unsupported("a function without a body")
-    b.end(saved)
-    return
-  }
-  let fd = decl[0]
-  for cl in fd.clauses {
-    match cl {
-      EnsuresClause(..) => b.unsupported("`ensures` clauses")
-      _ => {}
-    }
-  }
-  if b.c.objs[fo].recv_var && b.c.objs[fo].recv >= 0 && b.has_invariant(b.c.objs[fo].recv) {
-    b.unsupported("a `var` method of a type with an invariant")
-  }
-  b.param_bindings(fo)
-  for cl in fd.clauses {
-    match cl {
-      RequiresClause(..) => b.unsupported("`requires` clauses")
-      _ => {}
-    }
-  }
-  if let Some(body) = fd.body {
-    let v = b.block(body)
-    b.ret_at(v, Some(Expr.Block(b: body)))
-  }
-  b.finish_fn()
-  b.end(saved)
-}
 
 /// Whether the struct obj declares an invariant (and is not std).
 fn (var b: Builder) has_invariant(obj: Int) -> Bool {
@@ -1484,6 +1474,11 @@ fn (var b: Builder) dead() {
 }
 
 fn (var b: Builder) write_var(vo: Int, v: Int) {
+  if b.s.pending >= 0 && b.s.f.values[b.s.pending].block == b.s.cur && !b.s.pending_defs.contains(vo) {
+    // the landing of the pending operation reads what the variable held
+    // before it (flush_landing)
+    b.s.pending_defs[vo] = b.s.defs.get(def_key(vo, b.s.cur)) ?? -1
+  }
   b.s.defs[def_key(vo, b.s.cur)] = v
   if !b.s.var_type.contains(vo) {
     b.s.var_type[vo] = b.s.f.values[v].ty
@@ -1576,6 +1571,9 @@ fn (var b: Builder) tkind(t: Int) -> Kind {
 }
 
 fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
   var args = args0
   if op == Op.Variant && t >= 0 && b.tkind(t) == Kind.Enum {
     if let I(tag) = aux {
@@ -1588,7 +1586,24 @@ fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
       }
     }
   }
-  b.s.f.add(b.s.cur, op, t, aux, args)
+  let v = b.s.f.add(b.s.cur, op, t, aux, args)
+  if b.s.any_defer && may_raise(op) {
+    if b.s.shield == 0 && b.lexical_cleanup() {
+      // its landing is placed when the next instruction comes (the caller
+      // sets the position after adding it)
+      b.s.pending = v
+      b.s.pending_at = b.snapshot()
+      b.s.pending_defs = {}
+      b.s.pending_defer = []
+    } else if b.defer_landing_here() {
+      // in deferred code: a fault goes on with the cleanup after it
+      b.s.pending = v
+      b.s.pending_at = b.snapshot()
+      b.s.pending_defs = {}
+      b.s.pending_defer = b.s.defer_land
+    }
+  }
+  v
 }
 
 fn (var b: Builder) set_pos(v: Int, pos: Str) {
@@ -1640,11 +1655,17 @@ fn (var b: Builder) rt(name: Str, t0: Int, args: List[Int]) -> Int {
 }
 
 fn (var b: Builder) jump(to: Int, args: List[Int]) {
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
   b.s.f.jump(b.s.cur, to, args)
 }
 
 /// Ends the current block with a branch to two new sealed blocks.
 fn (var b: Builder) branch(cond: Int) -> (Int, Int) {
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
   let yes = b.new_block()
   let no = b.new_block()
   b.s.f.branch(b.s.cur, cond, yes, no)
@@ -1655,6 +1676,9 @@ fn (var b: Builder) branch(cond: Int) -> (Int, Int) {
 
 /// Continues in a new block when cond holds, going to fail otherwise.
 fn (var b: Builder) test_br(cond: Int, fail: Int) {
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
   let ok = b.new_block()
   b.s.f.branch(b.s.cur, cond, ok, fail)
   b.seal(ok)
@@ -1699,6 +1723,7 @@ fn (var b: Builder) ret_at(v0: Int, at: Expr?) {
     }
     args = [b.add(Op.Tuple, b.s.f.results[0], Aux.None, args)]
   }
+  b.exit_to(0)
   b.add(Op.Return, -1, Aux.None, args)
   b.dead()
 }
@@ -1742,13 +1767,16 @@ fn (var b: Builder) retv(v: Int) {
 /// The check after a call (build_conc.go check): a check only a fault
 /// takes (`rt.landing`), whose unwind path leaves the function.
 fn (var b: Builder) check(callee: Str) {
-  if b.is_dead() {
+  if b.is_dead() || b.s.shield > 0 {
     return
   }
   // the last instruction, read in place: binding the list would share
   // it, and the next instruction would copy it
   let n = b.s.f.blocks[b.s.cur].instrs.len()
   let w = if n == 0 { -1 } else { b.s.f.blocks[b.s.cur].instrs[n - 1] }
+  if b.s.pending == w {
+    b.s.pending = -1
+  }
   let name = if b.conc { "rt.unwinding" } else { "rt.landing" }
   let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: name), [])
   if w >= 0 && (b.vop(w) is Op.Call | Op.CallValue) {
@@ -1760,8 +1788,18 @@ fn (var b: Builder) check(callee: Str) {
   b.s.cur = no
 }
 
-/// Ends the current block on the unwind path (build_defer.go unwind).
+/// Ends the current block on the unwind path: the deferred code of the
+/// open blocks runs, then the code jumps to the function's unwind block
+/// (build_defer.go unwind).
 fn (var b: Builder) unwind() {
+  let saved = b.s.exits
+  var i = saved.len() - 1
+  while i >= 0 && !b.is_dead() {
+    b.s.exits = saved[0..i]
+    b.run_defers(saved[i])
+    i -= 1
+  }
+  b.s.exits = saved
   if b.is_dead() {
     return
   }
@@ -1774,6 +1812,7 @@ fn (var b: Builder) unwind() {
 /// Emits the function's unwind block: the fault goes on to the caller,
 /// and zero results (finishFn).
 fn (var b: Builder) finish_fn() {
+  b.seal_conts()
   if b.s.unwind_b < 0 {
     return
   }

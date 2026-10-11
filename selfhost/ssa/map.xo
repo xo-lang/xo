@@ -811,7 +811,7 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   b.seal(fail)
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.s.cur = cont
-  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits})
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()
   b.jump(latch, [])

@@ -222,6 +222,9 @@ fn (var c: Checker) check_clauses(fd: parser.FnDecl, fo: Int) {
         let rv = c.objs.len()
         c.objs.push(Obj{kind: ObjKind.Local, name: b"result", file: c.path, line: span.start.line, col: span.start.col, local: "predeclared", ty: c.objs[fo].result, vctx: c.ctx})
         c.declare_var(rv)
+        // the binding of `result` (check.go rec.resultVar, read by the SSA
+        // builder)
+        c.result_vars[c.name_key(span.start.offset)] = rv
         let saved = c.ctxs[c.ctx].in_ensures
         c.ctxs[c.ctx].in_ensures = true
         let p = c.pure_start()
@@ -249,11 +252,15 @@ fn (var c: Checker) check_struct_extras(t: Int, sd: parser.StructDecl) {
   let saved = c.push_ctx(c.sink_ctx())
   c.scopes = []
   c.push_scope()
+  var vars: List[Int] = []
   for f in c.objs[t].fields {
     let fv = c.objs.len()
     c.objs.push(Obj{kind: ObjKind.Local, name: f.name, file: c.path, line: f.line, col: f.col, local: "param", ty: f.ty, vctx: c.ctx})
     c.declare_var(fv)
+    vars.push(fv)
   }
+  // the field bindings (check.go rec.invVars, read by the SSA builder)
+  c.inv_vars[t] = vars
   let p = c.pure_start()
   c.check_ty(inv, c.named("Bool"))
   c.pure_end(p, parser.expr_span(inv))

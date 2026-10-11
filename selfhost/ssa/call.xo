@@ -15,6 +15,11 @@ fn call_parts(e: Expr) -> (Span, Expr, List[parser.Arg]) {
 
 fn (var b: Builder) call_expr(x: Expr) -> Int {
   let (_, fun, args) = call_parts(x)
+  if !b.s.olds.is_empty() {
+    if let Some(v) = b.s.olds.get(b.c.expr_key_in(b.s.file, x)) {
+      return v
+    }
+  }
   if let Some(vr) = b.c.ctor_in(b.s.file, x) {
     return b.ctor_call(vr, x)
   }
@@ -1031,17 +1036,22 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
     }
   }
   let name = b.m.funcs[callee].name
-  if b.c.objs[impl].realtime && (b.s.fo < 0 || !b.c.objs[b.s.fo].realtime) {
-    b.unsupported("a real-time section")
+  // a call of a real-time function from code that is not real-time is a
+  // real-time section (core 6.5, decision 0133)
+  let section = b.c.objs[impl].realtime && (b.s.fo < 0 || !b.c.objs[b.s.fo].realtime)
+  if section {
+    b.rt("realtime_enter", -1, [])
   }
   if cres.len() == 1 {
     let r = b.call(name, cres[0], "", vargs)
     b.check(name)
+    b.leave_section(section, impl, span)
     return b.call_result(r, x)
   }
   let t = b.m.tuple(cres)
   let r = b.call(name, t, "", vargs)
   b.check(name)
+  b.leave_section(section, impl, span)
   for (i, p0) in places.indexed() {
     var p = p0
     let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
@@ -1049,6 +1059,17 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
   }
   let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
   b.call_result(f0, x)
+}
+
+/// The end of a real-time section around a call of impl (callAsVia's
+/// leave): the runtime faults (XO-F007) when it allocated.
+fn (var b: Builder) leave_section(section: Bool, impl: Int, span: Span) {
+  if section && !b.is_dead() {
+    let name = b.const_str(b.c.display_name(impl))
+    let loc = b.const_str(b.pos_line(span))
+    b.rt("realtime_exit", -1, [name, loc])
+    b.check("")
+  }
 }
 
 /// Binds the type parameters in pattern (a signature type) to the

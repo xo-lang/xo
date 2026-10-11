@@ -107,6 +107,14 @@ passes the full suite on the backends it targets.
   Set with their generated helpers, methods, literals, `m[k] = v`,
   loops, Debug text, and constants of collection types; 8,002 of 11,088
   functions identical, 0 differences on three backends and mutations.
+- 2026-10-11: SSA stage 4 of 8, contracts and deferred code (decision
+  0150): `requires`, `ensures` (the wrapper and `<name>.body`),
+  invariants, `defer` with the builder's landings and fault
+  continuations, loop bounds, real-time sections; 8,214 of 11,124
+  functions identical, 0 differences on three backends and 1,900
+  mutations. Every construct of stages 1 to 4 is lowered; what remains
+  skipped is concurrency, the generic intrinsics, and test binaries
+  (stages 5 to 7).
 
 ## Alternatives
 

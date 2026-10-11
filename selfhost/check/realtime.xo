@@ -461,7 +461,7 @@ fn (c: Checker) range_count(lo: Expr?, hi: Expr?, inclusive: Bool) -> Int? {
 
 /// A constant Int expression: literals, `const` names, parentheses,
 /// unary minus, and + - * / % of constants.
-fn (c: Checker) const_int(f: Int, e: Expr, depth: Int) -> Int? {
+pub fn (c: Checker) const_int(f: Int, e: Expr, depth: Int) -> Int? {
   if depth > 32 {
     return None
   }
