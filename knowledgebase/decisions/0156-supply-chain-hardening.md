@@ -94,6 +94,13 @@ default (core 4.4: `strconv`, `strings`, `bytes`, `unicode`,
   performs `ffi`. If the dependency's functions then perform more than
   they declare, that is XO0701 in the dependency, which is right: the
   consumer disagrees with the dependency's claim.
+- `xo get` and `xo mod accept-effects` also refuse, before writing, a
+  selected version with an escape hatch the main module does not vouch
+  for (XO1316 from a syntax scan, `mod.ModuleHatches`), with or without
+  `--accept-effects`, which accepts effects only (added 2026-10-11, after
+  the website session found `xo get --accept-effects` let an update add
+  an unvouched impure `use go`; `xo mod tidy` still records and leaves
+  the report to the check).
 - Unvouched, or vouched for another version: error **XO1316** on the
   dependency's `use` line, naming the vouch line to add (or the stale
   one) and the xo.mod to add it to. An unvouched `use c` binding is

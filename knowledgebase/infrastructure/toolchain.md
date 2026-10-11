@@ -1962,7 +1962,10 @@ Last verified: 2026-10-09.
   for every `use c` and from `loadGoImport` for a `use go` of a package
   `gobind.PurePackage` rejects): a required module's (cache or vendor/)
   escape hatch needs a vouch of the main or a workspace module's xo.mod
-  for the exact version, else XO1316; an unvouched `use c` binds with no
+  for the exact version, else XO1316 (`xo get` and `xo mod
+  accept-effects` refuse such a version before writing, from a syntax
+  scan, `mod.ModuleHatches`; `--accept-effects` does not override it;
+  Last verified: 2026-10-11); an unvouched `use c` binds with no
   `uses` (ffi), a vouched one with the vouch's. `Result.EscapeHatches`
   and `Result.ConsumerVouches` feed `xo audit`. A dependency's `use c`
   binding goes to the main module's `.xo/cbind` (`goBindRoot`). Tests:

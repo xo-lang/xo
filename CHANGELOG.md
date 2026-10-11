@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo get` and `xo mod accept-effects` refuse a version with an
+  escape hatch (`use c`, impure `use go`) the main module does not
+  vouch for (XO1316) before writing xo.mod or xo.lock; `--accept-effects`
+  accepts effects, not escape hatches (decision 0156).
 - Logging is the effect `log` (decision 0156): `std/log`'s `debug`,
   `info`, `warn`, `error` perform `log`, so a `pub` function that logs
   declares `uses log` (inferred for non-pub functions; `log.configure`

@@ -54,12 +54,32 @@ func TestVouches(t *testing.T) {
 	// (its xo.mod is fetched, so this is the consumer's line)
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\nvouch github.com/acme/osx v1.0.0 go \"os\"\n"), 0o644)
 	xo(t, "check", app).want(0)
-	// an upgrade makes the vouch stale
-	xo(t, "get", "--dir", app, "github.com/acme/osx@v1.1.0").want(0)
+	// an upgrade makes the vouch stale: xo get refuses it before writing,
+	// even with --accept-effects (it accepts effects, not escape hatches)
+	modBefore, _ := os.ReadFile(filepath.Join(app, "xo.mod"))
+	for _, args := range [][]string{
+		{"get", "--json", "--dir", app, "github.com/acme/osx@v1.1.0"},
+		{"get", "--json", "--accept-effects", "--dir", app, "github.com/acme/osx@v1.1.0"},
+	} {
+		r = xo(t, args...).want(1)
+		if got := diagCodes(t, r.out); got != "XO1316" || !strings.Contains(r.out, `vouch github.com/acme/osx v1.1.0 go \"os\"`) {
+			t.Errorf("%v of an unvouched version: %s\n%s", args, got, r.out)
+		}
+		if modAfter, _ := os.ReadFile(filepath.Join(app, "xo.mod")); string(modAfter) != string(modBefore) {
+			t.Errorf("%v changed xo.mod:\n%s", args, modAfter)
+		}
+	}
+	// a hand edit to the new version: the check reports the stale vouch
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(strings.Replace(string(modBefore), "osx v1.0.0\n", "osx v1.1.0\n", 1)), 0o644)
+	xo(t, "mod", "tidy", "--dir", app).want(0)
 	r = xo(t, "check", "--json", app).want(1)
 	if got := diagCodes(t, r.out); got != "XO1316" || !strings.Contains(r.out, "reviewed github.com/acme/osx v1.0.0") {
 		t.Errorf("stale vouch: %s\n%s", got, r.out)
 	}
+	// vouching for the new version lets xo get through
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(string(modBefore)+"vouch github.com/acme/osx v1.1.0 go \"os\"\n"), 0o644)
+	xo(t, "get", "--dir", app, "github.com/acme/osx@v1.1.0").want(0)
+	xo(t, "check", app).want(0)
 	// malformed vouch lines are XO1301
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\nvouch github.com/acme/osx latest go os\n"), 0o644)
 	r = xo(t, "check", "--json", app).want(1)

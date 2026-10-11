@@ -46,6 +46,10 @@ type Options struct {
 	// --accept-effects; decision 0156).
 	AcceptEffects map[string]bool
 	AcceptAll     bool
+	// CheckHatches refuses the escape hatches of selected versions that
+	// the main module does not vouch for (XO1316) before xo get and xo
+	// mod accept-effects write anything (decision 0156).
+	CheckHatches bool
 }
 
 // BuildList is the result of Load: the main module, the workspace, the

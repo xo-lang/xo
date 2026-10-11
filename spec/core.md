@@ -1231,7 +1231,12 @@ vouch github.com/acme/pg v1.0.0 go "github.com/jackc/pgx/v5"
   hatch, or one vouched for another version, is error `XO1316` on the
   dependency's `use` line, naming the line to add; an unvouched `use c`
   binding performs `ffi` whatever its own `uses` says. There is no
-  machine fix: a vouch is a human review.
+  machine fix: a vouch is a human review. `xo get` and `xo mod
+  accept-effects` refuse a selected version with an unvouched escape
+  hatch (`XO1316`, in any of its source files, from syntax) before
+  writing xo.mod or xo.lock, `--accept-effects` included: it accepts
+  effects, not escape hatches. `xo mod tidy` does not refuse; the
+  check then reports them.
 
 **[P1]** Releases (decision 0086 step 4): a version is a `vX.Y.Z` tag of
 the repository whose root holds the module, or a `<dir>/vX.Y.Z` tag for a
@@ -2460,7 +2465,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
 | `XO1315` | note | checker | `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
-| `XO1316` | error | checker | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
+| `XO1316` | error | checker, xo get | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
 | `XO1317` | error | modules | a dependency's effects are wider than its `effects` line in xo.lock (4.3, decision 0156) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |

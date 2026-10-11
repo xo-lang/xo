@@ -181,9 +181,9 @@ func GetAccept(mainDir, arg string, accept bool) ([]Change, []*Problem) {
 // acceptOpts accepts the effects of module path when accept is set.
 func acceptOpts(path string, accept bool) Options {
 	if !accept {
-		return Options{}
+		return Options{CheckHatches: true}
 	}
-	return Options{AcceptEffects: map[string]bool{path: true}}
+	return Options{AcceptEffects: map[string]bool{path: true}, CheckHatches: true}
 }
 
 func offlineOr(c diag.Code) diag.Code {
@@ -212,8 +212,11 @@ type EffectChange struct {
 }
 
 func writeLockChanges(mainDir string, accept Options) ([]EffectChange, []*Problem) {
-	opts := Options{NoWorkspace: true, NoVendor: true, Update: true, AcceptEffects: accept.AcceptEffects, AcceptAll: accept.AcceptAll}
+	opts := Options{NoWorkspace: true, NoVendor: true, Update: true, AcceptEffects: accept.AcceptEffects, AcceptAll: accept.AcceptAll, CheckHatches: accept.CheckHatches}
 	b := Load(mainDir, opts)
+	if opts.CheckHatches && len(errs(b.Problems)) == 0 && b.Main != nil {
+		b.checkHatches(b.Main)
+	}
 	if len(errs(b.Problems)) > 0 {
 		return nil, b.Problems
 	}
@@ -244,7 +247,7 @@ func writeLockChanges(mainDir string, accept Options) ([]EffectChange, []*Proble
 // named) in xo.lock, accepting effects wider than the lines there
 // (decision 0156). It returns the lines that changed.
 func AcceptEffects(mainDir string, paths []string) ([]EffectChange, []*Problem) {
-	opts := Options{AcceptAll: len(paths) == 0, AcceptEffects: map[string]bool{}}
+	opts := Options{AcceptAll: len(paths) == 0, AcceptEffects: map[string]bool{}, CheckHatches: true}
 	for _, p := range paths {
 		opts.AcceptEffects[p] = true
 	}
