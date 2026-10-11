@@ -100,6 +100,8 @@ func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.R
 	}
 	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), progEnv(dir)...)
+	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -119,7 +121,8 @@ func leakCheck(t *testing.T, bin, dir string) string {
 	t.Helper()
 	cmd := exec.Command(bin, progArgs(dir)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
+	cmd.Stdin = progStdin(dir)
 	var stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
 	if err := cmd.Run(); err != nil {
@@ -143,6 +146,26 @@ func progArgs(dir string) []string {
 		return nil
 	}
 	return strings.Fields(string(data))
+}
+
+// progEnv are the environment variables a golden program in dir runs
+// with besides the test's: the NAME=VALUE lines of its env.txt.
+func progEnv(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "env.txt"))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
+}
+
+// progStdin is the standard input of a golden program in dir: its
+// stdin.txt, or nothing.
+func progStdin(dir string) io.Reader {
+	data, err := os.ReadFile(filepath.Join(dir, "stdin.txt"))
+	if err != nil {
+		return nil
+	}
+	return bytes.NewReader(data)
 }
 
 var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)

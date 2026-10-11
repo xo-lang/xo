@@ -1,0 +1,24 @@
+exit 0
+--- stdout
+dir: code 0 out "/\n" err ""
+env: code 0 out "a b []\n" err ""
+inherited env: code 0 out "secret\n" err ""
+stdin: code 0 out "HELLO" err ""
+exit: code 3 out "partial\n" err ""
+signal: code 143 out "" err ""
+merged: code 0 out "out\nerr\nmore\n" err ""
+missing: error NotFound(cmd: "xo-no-such-command")
+stream: lines one,three err "two\n" code 5
+echo: "ping\npong\n" code 0 pid set true
+pipeline: code 0 out "APPLE\nFIG\nPEAR\n" err ""
+pipefail: code 4 out "a\n" err "first\nsecond\n"
+empty pipeline: code 0 out "" err ""
+denied: error Denied(cmd: "tr")
+denied in pipeline: error Denied(cmd: "sort")
+denied made by tools: error Denied(cmd: "sort")
+allowed: code 0 out "ok\n" err ""
+denied run: Denied(cmd: "sort")
+terminal:
+child on the terminal
+terminal code 7
+--- stderr

@@ -51,10 +51,12 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	if recvName == "Stdio" && fo.Module.Path == "std/testing" {
 		switch fo.Name {
-		case "write", "read_line", "read_all", "lines":
+		case "write", "read_line", "read_all", "lines", "read_secret", "read_bytes", "read_all_bytes",
+			"stdin_is_tty", "stdout_is_tty", "stderr_is_tty", "width":
 			// a test's FakeStdio: the same functions, whose runtime
-			// reads the input set_input gave (std/llrt/xo_stdin.c)
-			if fo.Name != "write" {
+			// reads the input set_input gave and has no terminal
+			// (std/llrt/xo_stdin.c)
+			if stdioReads(fo.Name) {
 				b.needConc = true
 				if !b.conc {
 					return s.undef(s.natOf(x)), true
@@ -146,11 +148,11 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		}
 		return s.unit(), true
 	}
-	if key == "Rand.shuffle" {
-		// the native prelude's rand_shuffle (a capability's method has
+	if name, ok := capImpls[key]; ok {
+		// the native prelude's implementation (a capability's method has
 		// no implementation lookup of its own)
 		if nm := b.nativeMod("std/prelude"); nm != nil {
-			if impl, ok := nm.Scope["rand_shuffle"].(*check.FuncObj); ok {
+			if impl, ok := nm.Scope[name].(*check.FuncObj); ok {
 				return s.callAs(x, ci, impl), true
 			}
 		}
@@ -273,6 +275,24 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	b.unsupported(x, "the method `"+fo.DisplayName()+"`")
 	return s.undef(nt), true
+}
+
+// capImpls are the capability methods implemented in the native prelude
+// (std/native/prelude.xo) by a function of their own.
+var capImpls = map[string]string{
+	"Rand.shuffle":   "rand_shuffle",
+	"Env.config_dir": "env_config_dir", // decision 0163
+	"Env.cache_dir":  "env_cache_dir",
+}
+
+// stdioReads reports whether the Stdio method name reads standard input
+// (it waits on the event loop: the program needs unwinding checks).
+func stdioReads(name string) bool {
+	switch name {
+	case "read_line", "read_all", "lines", "read_secret", "read_bytes", "read_all_bytes":
+		return true
+	}
+	return false
 }
 
 // netResult is the Result (type rt) of a network operation whose value

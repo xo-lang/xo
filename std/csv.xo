@@ -1,0 +1,26 @@
+// std/csv (spec/std.md 16, decision 0164). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Comma separated values
+// as RFC 4180 writes them: quoted fields with `""` for a quote, line
+// breaks inside quotes, `\n` or `\r\n` between records. Pure: read and
+// write the text with Fs or Stdio.
+
+/// Where and why the text is not valid CSV. Displays as
+/// `csv: line 3, column 5: extra " in a quoted field`.
+struct CsvErr {
+  line: Int
+  column: Int
+  msg: Str
+}
+
+fn (e: CsvErr) display() -> Str
+
+/// The records of text; records may have different numbers of fields.
+/// `sep` separates fields (`,` by default; `\t` for TSV).
+fn parse(text: Str, sep: Rune = ',') -> List[List[Str]] ! CsvErr
+/// The records after the first, each a map from the first record's
+/// fields (the header) to its own; a record with another number of
+/// fields than the header is an error.
+fn parse_maps(text: Str, sep: Rune = ',') -> List[Map[Str, Str]] ! CsvErr
+/// The text of rows: fields quoted when they hold `sep`, a quote, a line
+/// break, or start with a space; each record ends with `\n`.
+fn format(rows: List[List[Str]], sep: Rune = ',') -> Str

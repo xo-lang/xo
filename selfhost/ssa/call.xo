@@ -1357,8 +1357,8 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
         let mv = b.value_as(args[0].value, b.str_t())
         return b.call("Stdio.${fname}", b.unit_t(), "", [rv, mv])
       }
-      if fname is "write" | "read_line" | "read_all" | "lines" {
-        if fname != "write" {
+      if fname is "write" | "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes" | "stdin_is_tty" | "stdout_is_tty" | "stderr_is_tty" | "width" {
+        if stdio_reads(fname) {
           // reads wait on the event loop
           b.need_conc = true
           if !b.conc {
@@ -1549,10 +1549,10 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     b.unsupported("the method `Fs.${b.obj_name(fo)}`")
     return Some(b.undef(b.nat_of(x)))
   }
-  if rname == "Stdio" && b.c.mods[fm].path == "std/testing" && (fname is "write" | "read_line" | "read_all" | "lines") {
+  if rname == "Stdio" && b.c.mods[fm].path == "std/testing" && (fname is "write" | "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes" | "stdin_is_tty" | "stdout_is_tty" | "stderr_is_tty" | "width") {
     // a test's FakeStdio: the same functions, whose runtime reads the
-    // input set_input gave (std/llrt/xo_stdin.c)
-    if fname != "write" {
+    // input set_input gave and has no terminal (std/llrt/xo_stdin.c)
+    if stdio_reads(fname) {
       b.need_conc = true
       if !b.conc {
         return Some(b.undef(b.nat_of(x)))
@@ -1623,12 +1623,13 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     return Some(b.unit())
   }
-  if key == "Rand.shuffle" {
-    // the native prelude's rand_shuffle (a capability's method has no
-    // implementation lookup of its own)
+  let impl_name = cap_impl(key)
+  if impl_name != "" {
+    // the native prelude's implementation (a capability's method has no
+    // implementation lookup of its own); internal/ssa's capImpls
     let pm = b.native_mod("std/prelude")
     if pm >= 0 {
-      let impl = b.member(pm, "rand_shuffle")
+      let impl = b.member(pm, impl_name)
       if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func {
         return Some(b.call_as(x, ci, impl))
       }
@@ -1734,4 +1735,22 @@ fn (var b: Builder) pop_one(l: Int, ot: Int) -> Int {
   let rt = b.m.tuple([b.vty(l), ot])
   let r = b.call("list.pop", rt, "", [l])
   b.add(Op.Field, ot, Aux.I(n: 1), [r])
+}
+
+/// Whether the Stdio method name reads standard input (it waits on the
+/// event loop: the program needs unwinding checks); internal/ssa's
+/// stdioReads.
+fn stdio_reads(name: Str) -> Bool {
+  name is "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes"
+}
+
+/// The native prelude function implementing the capability method key,
+/// or ""; internal/ssa's capImpls.
+fn cap_impl(key: Str) -> Str {
+  match key {
+    "Rand.shuffle" => "rand_shuffle"
+    "Env.config_dir" => "env_config_dir"
+    "Env.cache_dir" => "env_cache_dir"
+    _ => ""
+  }
 }

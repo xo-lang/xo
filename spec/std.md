@@ -433,7 +433,79 @@ fn (f: Fs) create_dir_all(dir: Str) -> () ! FsErr       uses fs.write
 fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
 
-Streaming file handles are planned for a later draft.
+Handles, links, globs, and locks (decision 0163; the Go backend and
+MemFs, native builds report them as XO1201, planned):
+
+```
+fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
+fn (f: Fs) create(path: Str) -> File ! FsErr      uses fs.write  // write; created or truncated
+fn (f: Fs) open_append(path: Str) -> File ! FsErr uses fs.write  // write at the end; created if missing
+fn (f: Fs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn (f: Fs) copy(from: Str, to: Str) -> () ! FsErr uses fs        // contents and permission bits
+fn (f: Fs) mode(path: Str) -> Int ! FsErr         uses fs.read   // permission bits: 0o644
+fn (f: Fs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write
+fn (f: Fs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write
+fn (f: Fs) read_link(path: Str) -> Str? ! FsErr   uses fs.read   // None when not a link
+fn (f: Fs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read
+fn (f: Fs) lock(path: Str) -> FileLock ! FsErr    uses fs.write  // waits; a cancellation point
+fn (f: Fs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write
+
+struct File {}                                    // handle
+fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the end
+fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
+fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
+fn (f: File) close() -> () ! FsErr                               // closing again does nothing
+struct FileLock {}                                // handle
+fn (l: FileLock) unlock()                                        // unlocking again does nothing
+```
+
+```
+fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
+  let f = fs.open(path)?
+  defer { f.close().ignore_err("read only") }
+  var n = 0
+  while let Some(line) = f.read_line()? {
+    if line.contains("ERROR") {
+      n += 1
+    }
+  }
+  n
+}
+```
+
+- A `File` is opened for reading (`open`) or writing (`create`,
+  `open_append`); the other kind of operation is `Io(path, "file is open
+  for reading")` (or writing). `read` returns at most `max` bytes (at
+  most 1 MiB), `None` at the end. Operations after `close` are `Io(path,
+  "file already closed")`. Writes are not buffered by Xo: each `write`
+  reaches the OS. Handles are not recorded by record and replay yet.
+- `open` of a directory is `IsDir`. `create` and `open_append` do not
+  create missing parent directories on the real filesystem (MemFs does,
+  as its `write` does).
+- `copy` reads `from` and writes `to` (created or truncated) with
+  `from`'s permission bits; a directory is `IsDir(from)`.
+- `mode` and `set_mode` are the permission bits (`0o777` mask). Windows
+  reports and sets what it can (read only or not).
+- `symlink(target, link)` stores `target` as written; a relative target
+  is relative to the link's directory. In a sub capability a target that
+  is absolute or leaves the root (`..` past it) is `Denied(link)`: a sub
+  capability is a lexical boundary, and links created through it must
+  not escape it. Links that already exist are followed by the OS as
+  before (the boundary is lexical, decision 0024).
+- `glob(pattern)` lists the paths matching `pattern`, sorted, relative to
+  the capability root as the pattern is written: `*` (any run of
+  characters but `/`), `?`, `[abc]`, `[a-z]`, `[^a]` in a segment, and a
+  segment `**` for any number of directories (zero included). Names that
+  start with `.` match only a segment that starts with `.`. A missing
+  directory matches nothing; a malformed pattern is `Io(pattern, "bad
+  pattern: ...")`. It works through `read_dir`, so attenuation applies.
+- `lock(path)` takes an exclusive advisory lock on `path` (created if
+  missing), waiting until no other holder has it; waiting is a
+  cancellation point (`Canceled`). `try_lock` returns `None` at once when
+  the lock is held. The lock is the OS's (`flock` on Unix, `LockFileEx`
+  on Windows), so it excludes other processes that lock the same file,
+  and other `lock` calls in the same program. It is advisory: reads and
+  writes are not blocked. A program that exits releases its locks.
 
 ### 3.2 Net (`uses net.dial` / `net.listen`)
 
@@ -543,7 +615,20 @@ fn (e: Env) args() -> List[Str]              // without the program name
 fn (e: Env) program() -> Str
 fn (e: Env) home() -> Str ! EnvErr
 fn (e: Env) only(names: List[Str]) -> Env   // attenuation (below)
+fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
+fn (e: Env) cache_dir() -> Str ! EnvErr
 ```
+
+`config_dir()` and `cache_dir()` (decision 0163) are read through the
+`Env`, so attenuation and fakes apply: `XDG_CONFIG_HOME` (or
+`XDG_CACHE_HOME`) when it holds an absolute path, on every OS; else
+`<home>/.config` (`<home>/.cache`) on Linux and other Unix systems,
+`<home>/Library/Application Support` (`<home>/Library/Caches`) on macOS,
+`%AppData%` (`%LocalAppData%`) on Windows, with `/` separators. A
+missing home is `Err(Missing("HOME"))` (as `home()`), a missing Windows
+variable `Err(Missing("AppData"))`. The program adds its own directory:
+`os.fs.sub(os.env.config_dir()? + "/mytool")`. Every backend (the
+native ones read `HOME` for the home directory).
 
 `e.only(names)` (decision 0156) is an `Env` that reads only the listed
 variables: `get` of another name is `None`, `vars` holds only listed
@@ -564,6 +649,13 @@ fn (s: Stdio) write(data: Bytes) -> () ! IoErr
 fn (s: Stdio) read_line() -> Str? ! IoErr    // None at end of input
 fn (s: Stdio) read_all() -> Str ! IoErr
 fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
+
+// terminals and binary input (decision 0162)
+fn (s: Stdio) stdin_is_tty() -> Bool         // also stdout_is_tty, stderr_is_tty
+fn (s: Stdio) width() -> Int?                // columns of the terminal; None without one
+fn (s: Stdio) read_secret(prompt: Str) -> Str? ! IoErr   // a line without echo (passwords)
+fn (s: Stdio) read_bytes(max: Int) -> Bytes? ! IoErr     // any bytes; None at end of input
+fn (s: Stdio) read_all_bytes() -> Bytes ! IoErr
 ```
 
 The reads of standard input are cancellation points while they wait: a
@@ -572,6 +664,26 @@ cancelled task, and every reader once a stop is requested (core 7.5), gets
 for the next read (decision 0088). The native backends read standard
 input the same way (decision 0102); a test binary's standard input is
 empty there.
+
+Terminals (decision 0162), on every backend:
+
+- `stdin_is_tty`, `stdout_is_tty`, `stderr_is_tty` tell whether the
+  stream is a terminal (a terminal's settings can be read: termios on
+  Unix, a console mode on Windows); a pipe, a file, or `/dev/null` is not.
+- `width()` is the columns of the terminal on standard output, else
+  standard error, else standard input; `None` when none is a terminal.
+  `COLUMNS` is not read (it is a variable: read it through `Env`).
+- `read_secret(prompt)` writes `prompt` to standard error, turns the
+  terminal's echo off while it reads a line of standard input (as
+  `read_line`), restores it (also when the read is cancelled), and then
+  writes the newline the user typed, which was not echoed. When standard
+  input is not a terminal it reads a line without touching anything.
+- `read_bytes(max)` returns at most `max` bytes (at most 1 MiB) of
+  standard input as they arrive, any bytes, `None` at the end;
+  `read_all_bytes()` the rest of the input. They share the input buffer
+  of `read_line` and `read_all`, so text and binary reads can be mixed.
+- Targets without terminal support (wasip1, js, plan9, Linux on mips and
+  ppc) report no terminal and read secrets with echo on.
 
 ### 3.7 Proc (`uses proc`)
 
@@ -583,18 +695,112 @@ fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks 
 fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
 fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
 fn (p: Proc) only(cmds: List[Str]) -> Proc   // attenuation (below)
+fn (p: Proc) cmd(name: Str, args: List[Str] = []) -> Cmd       // a command, not started (3.8)
+fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
 ```
 
 `p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
 `Denied(cmd)` for a command not listed (compared as written: `git` and
 `/usr/bin/git` are different entries); `exit` and `set_grace` are
-unchanged. Native builds do not have `only` yet (XO1201, planned).
+unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
+Native builds do not have `only` yet (XO1201, planned).
 
 The native backends run commands with `posix_spawn`, reading the output
 on the event loop; cancelling the task kills the command (decision 0107).
 
 Returning `Err` from `main` prints the error with its frames to standard error
 and exits with status 1. Prefer that over `exit` for failures.
+
+### 3.8 Commands, children, and pipelines
+
+Status: implemented on the Go backend and its fakes (decision 0161,
+2026-10-11); native builds report these methods as XO1201 (planned).
+
+```
+struct Cmd {}                                 // a command that has not run; a value
+fn (c: Cmd) dir(path: Str) -> Cmd             // working directory (relative: to the program's)
+fn (c: Cmd) env(e: Env) -> Cmd uses env       // the child's environment is exactly e.vars()
+fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
+fn (c: Cmd) stdin(data: Bytes) -> Cmd         // its standard input
+fn (c: Cmd) inherit() -> Cmd                  // standard streams are the program's (the terminal)
+fn (c: Cmd) merge_stderr() -> Cmd             // standard error into the standard output stream
+fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc   // run to the end, collect the streams
+fn (c: Cmd) run() -> Int ! ProcErr uses proc            // run on the terminal; the exit status
+fn (c: Cmd) spawn() -> Child ! ProcErr uses proc        // start; returns at once
+
+struct Child {}                               // a started command; a handle
+fn (c: Child) pid() -> Int
+fn (c: Child) write(data: Bytes) -> () ! ProcErr uses proc        // to its standard input
+fn (c: Child) close_stdin()
+fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc        // its output; None at the end
+fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc    // its error stream
+fn (c: Child) read_line() -> Str? ! ProcErr uses proc             // a line of its output
+fn (c: Child) wait() -> Int ! ProcErr uses proc                   // closes its input; the status
+fn (c: Child) kill()
+```
+
+```
+fn changed_files(p: Proc, repo: Str) -> List[Str] ! ProcErr uses proc {
+  let out = p.cmd("git", ["status", "--porcelain"]).dir(repo).output()?
+  (out.stdout.to_str() ?? "").lines().filter(fn(l) { !l.is_empty() })
+}
+
+fn edit(p: Proc, env: Env, path: Str) -> Int ! ProcErr uses (proc, env) {
+  let editor = env.get("EDITOR") ?? "vi"
+  p.cmd(editor, [path]).run()?   // the editor gets the terminal
+}
+
+fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
+  let child = p.cmd("tail", ["-f", "app.log"]).spawn()?
+  while let Some(line) = child.read_line()? {
+    out.println("log: ${line}")
+  }
+}
+```
+
+- `cmd` builds; nothing runs until `output`, `run`, `spawn`, or
+  `pipeline`. The builder methods return a changed copy, so a `Cmd`
+  can be prepared once and run several times.
+- Environment: without `env`, the child inherits the program's
+  environment (as `run`). `env(e)` replaces it with exactly the
+  variables `e.vars()` shows when `env` is called, so an attenuated
+  `Env` narrows it: `p.cmd("make").env(os.env.only(["PATH", "HOME"]))`.
+  `set_env` adds or replaces one variable on top of either.
+- Standard input: the `stdin` data, else the program's own with
+  `inherit`, else empty for `output` and `run`'s terminal, and a pipe
+  written with `Child.write` for `spawn` (closed by `close_stdin` or
+  `wait`). Standard output and error: collected by `output`, the
+  program's own with `run` or `inherit`, pipes read with `Child.read`
+  and `read_err` for `spawn`. `merge_stderr` sends the error stream
+  into the output stream (`output`'s `stderr` is then empty).
+- Exit status: the child's exit code; a child ended by a signal is 128
+  plus the signal number.
+- `read` returns at most `max` bytes (at most 1 MiB) as they arrive and
+  `None` at the end of the stream; `read_line` strips `\n` and `\r\n`.
+  Reads and `wait` are cancellation points; cancelling the task that
+  spawned a child kills it. Reading a stream that is not a pipe
+  (inherited or merged) is `Io`. A child that fills one pipe while the
+  program waits on the other stops: read both from separate tasks, or
+  merge them.
+- `pipeline(cmds)` connects each command's standard output to the next
+  one's input, runs them together, and returns the last one's output,
+  the error streams of all of them in command order, and the status of
+  the rightmost command that failed (bash's `pipefail`), else 0. The
+  first command's `stdin` data feeds the pipeline; `merge_stderr` on a
+  command sends its errors down the pipe. An empty list is an empty
+  output.
+- Attenuation (decision 0156): every command is checked against the
+  lists of the `Proc` that made it before it starts (`Denied(name)`);
+  for a pipeline, every command before any starts.
+- Tests: `FakeProc.cmd` builds commands answered by `on_run(name, out)`,
+  as `run` is (the standard input is ignored): `output` returns it,
+  `run` writes its streams to the test's `FakeStdio` and returns its
+  code, `spawn` gives a `Child` reading it (`pid` is 0, `write` and
+  `kill` do nothing), and `pipeline` gives the last command's output
+  with the error streams and failing statuses of all. A command with no
+  `on_run` is `NotFound`.
+- Record and replay (core 11.3) record `output`, `run`, and `pipeline`;
+  a `Child`'s reads are not recorded yet.
 
 ---
 
@@ -1092,17 +1298,28 @@ fn (f: MemFs) set_case_sensitive(on: Bool)
 fn (f: MemFs) files() -> Map[Str, Bytes]                  // every file, by path
 ```
 
+MemFs implements the handles, links, globs, and locks of 3.1: a read
+handle reads the contents as they were at `open`; a write handle writes
+through at once; permission bits default to `0o644` for a file and
+`0o755` for a directory; `read`, `read_text`, `open`, `copy`, `stat`, and
+`exists` follow symbolic links (a chain of more than 40 is `Io`); a lock
+held by one task makes another task's `lock` wait (deadlocks are
+reported as for a `Mutex`). `fail_next` applies with `Read` (open, copy)
+and `Write` (create, open_append, append, set_mode, symlink, lock).
+
 ### 8.4 FakeEnv, FakeStdio, FakeProc
 
 ```
 fn (e: FakeEnv) set(name: Str, value: Str)
 fn (e: FakeEnv) set_args(args: List[Str])
 fn (s: FakeStdio) set_input(text: Str)
+fn (s: FakeStdio) set_input_bytes(data: Bytes)        // set_input for any bytes
+fn (s: FakeStdio) set_tty(width: Int)                 // the streams are terminals of width columns (0: not)
 fn (s: FakeStdio) output() -> Str                     // everything printed to stdout
 fn (s: FakeStdio) errors() -> Str                     // everything printed to stderr
 fn (p: FakeProc) exit_code() -> Int?                  // set when exit was called
 fn (p: FakeProc) signal_after(d: Duration)            // next run_main gets SIGTERM after d (virtual time)
-fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
+fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)    // also answers Cmd runs (3.8)
 ```
 
 In a test, `os.proc.exit(code)` records the code and unwinds the code under
@@ -1638,3 +1855,441 @@ Settled while implementing; examples are in the goldens
   HTTP requires `GMT`: write the zone literally,
   `"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT"`
   with `utc()`. Parsing with `RFC1123` accepts `GMT`.
+
+---
+
+## 14. std/cli
+
+Status: implemented on every backend (decision 0160, 2026-10-11): the Go
+backend in `std/rt/cli.go`, the native backends in `std/native/cli.xo`,
+with the same help text, usage errors, and faults (the golden programs
+`internal/llvm/testdata/golden/cli_*` compare them).
+
+Command line parsing for tools. A command is a value built by functions
+(no struct tags, no reflection, no builder state to get out of order);
+`parse` reads the arguments into a `Parsed` with typed accessors.
+
+### 14.1 Declaring a command
+
+```
+struct Command {}      // handles
+struct Flag {}
+struct Arg {}
+
+pub fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [],
+               commands: List[Command] = [], version: Str = "") -> Command
+
+pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag
+pub fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "",
+                required: Bool = false, value: Str = "str") -> Flag
+pub fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "",
+                required: Bool = false) -> Flag
+pub fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "",
+                     required: Bool = false) -> Flag
+pub fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "",
+                   env: Str = "", required: Bool = false) -> Flag
+pub fn strs_flag(name: Str, help: Str, short: Str = "", env: Str = "", value: Str = "str") -> Flag
+
+pub fn arg(name: Str, help: Str, optional: Bool = false) -> Arg
+pub fn rest(name: Str, help: Str, min: Int = 0) -> Arg
+```
+
+```
+fn app() -> cli.Command {
+  cli.command("tool", "Manages widgets.",
+    flags: [
+      cli.bool_flag("verbose", "print more", short: "v"),
+      cli.str_flag("config", "the configuration file", default: "tool.toml", env: "TOOL_CONFIG", value: "path"),
+    ],
+    commands: [
+      cli.command("add", "Adds widgets.",
+        flags: [cli.int_flag("count", "how many", short: "n", default: 1)],
+        args: [cli.arg("name", "the widget name")]),
+      cli.command("remove", "Removes widgets.", args: [cli.rest("names", "widget names", min: 1)]),
+    ],
+    version: "1.4.0")
+}
+```
+
+- `name` of the root command is the program's name in help and usage
+  text; a subcommand's `name` is the word that selects it. A command has
+  positional arguments or subcommands, not both.
+- Command names are letters, digits, `.`, `_`, and `-` (not first);
+  flag names are lowercase letters, digits, and `-` (not first);
+  `short` is one ASCII letter or digit. `--help` and `-h` are reserved,
+  and `--version` when the root command has a `version`. Flag names are
+  unique along each path of commands (a subcommand may not repeat a flag
+  of a command above it; sibling subcommands may share names).
+- Positional arguments: required ones first, then optional ones, then at
+  most one `rest`, last.
+- `env` names a variable read when the flag is not on the command line
+  (an empty value counts as unset; a `strs_flag` variable is split on
+  `,`). Variables are read through the `Env` given to `parse`, so an
+  attenuated `Env` (`only`, 3.5) hides unlisted ones.
+- A mistake in the declaration (a bad or duplicate name, a short name
+  used twice, a choice default not among the choices, an argument out of
+  order, arguments and subcommands on one command) is a fault at the
+  `parse` or `help` call: it is a bug in the program, not in its input.
+
+### 14.2 Parsing
+
+```
+pub fn parse(cmd: Command, args: List[Str], env: Env) -> Parsed ! CliErr uses env
+pub fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc) -> Parsed
+    uses (env, stdio, proc)
+pub fn help(cmd: Command, path: Str = "") -> Str     // path: "remote add"; faults if unknown
+pub fn completion(cmd: Command, shell: Str) -> Str ! CliErr   // 14.5
+
+enum CliErr {
+  Help(text: Str)               // -h or --help: the selected command's help
+  Version(text: Str)            // --version: "name version"
+  Usage(msg: Str, usage: Str)   // a mistake in the arguments
+}
+fn (e: CliErr) display() -> Str  // the text of Help and Version, the msg of Usage
+fn (e: CliErr) exit_code() -> Int // 0 for Help and Version, 2 for Usage
+```
+
+`args` are the arguments without the program's name (`Env.args`).
+`parse_or_exit(cmd, env, stdio, proc)` parses `env.args()`; on `Help` or
+`Version` it prints the text to standard output and exits with status 0,
+on `Usage` it prints `error: <msg>`, an empty line, and `usage` to
+standard error and exits with status 2 (the convention of Unix tools
+for a usage error):
+
+```
+fn main(os: Os) ! {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  match p.command() {
+    "add" => add(p.arg("name"), p.int("count"), p.bool("verbose"))?
+    "remove" => remove(p.rest("names"))?
+    _ => {}
+  }
+}
+```
+
+Rules, in order:
+
+- `--name value`, `--name=value`, `-n value`, `-nvalue`, `-n=value`. A
+  bool flag takes no separate value: `--verbose`, `-v`, or
+  `--verbose=true|false|1|0`. Short bool flags combine (`-vq`); a short
+  flag that takes a value ends the cluster (`-vn5`). A value may start
+  with `-` (`--name -x`). Given twice, the last value wins, except for a
+  `strs_flag`, which collects every value in order.
+- `--` ends the flags: every later argument is positional. `-` alone is
+  positional.
+- Flags may come before or after positional arguments. A subcommand is
+  selected by the first positional argument of a command with
+  subcommands; after it, the flags of every command on the path are
+  accepted, those of the subcommand only after its name.
+- `-h` or `--help` anywhere before `--` returns `Help` with the help of
+  the command selected so far; `--version` (when the root has a version)
+  returns `Version`.
+- After the arguments: a command with subcommands and none selected is
+  `missing command (one of a, b)`; then each flag of the path, in
+  declaration order (root first), not given takes its variable, and a
+  `required` one still missing is `missing required flag --name`; then
+  positional arguments are assigned in order (`missing argument <name>`,
+  also for a `rest` with fewer than `min`; `unexpected argument "x"` for
+  one too many).
+- Usage messages: `unknown flag --nmae (did you mean --name?)`,
+  `unknown flag -x`, `unknown command "ad" (did you mean add?)`, `flag
+  --count needs a value`, `invalid value "two" for --count: expected an
+  integer` (`true or false`, `a duration such as 30s or 1m30s`, `one of
+  text, json`), with ` (from $VAR)` before the colon for a value read
+  from a variable. A suggestion is the closest name within two edits
+  (fewer than the length of the word), the first declared on a tie.
+- `usage` is `Usage: <path> [flags] <args>` (`<command>` for a command
+  with subcommands), an empty line, and `Run '<path> --help' for more
+  information.`
+
+### 14.3 Reading the result
+
+```
+struct Parsed {}
+fn (p: Parsed) command() -> Str          // the subcommand path, "" for the root ("remote add")
+fn (p: Parsed) bool(name: Str) -> Bool
+fn (p: Parsed) str(name: Str) -> Str     // also choice flags; the value, else the default
+fn (p: Parsed) str_opt(name: Str) -> Str?
+fn (p: Parsed) int(name: Str) -> Int     // also int_opt
+fn (p: Parsed) duration(name: Str) -> Duration   // also duration_opt
+fn (p: Parsed) strs(name: Str) -> List[Str]
+fn (p: Parsed) is_set(name: Str) -> Bool // given on the command line or in its variable
+fn (p: Parsed) arg(name: Str) -> Str     // a required positional argument
+fn (p: Parsed) arg_opt(name: Str) -> Str?
+fn (p: Parsed) rest(name: Str) -> List[Str]
+```
+
+- Flags are named without dashes. `_opt` accessors are `None` when the
+  flag was not given (on the command line or in its variable); the plain
+  ones return the default.
+- A flag or argument of a command that was not selected reads as not
+  given (its default, `None`, `[]`, `false`), so a program may read every
+  flag up front; `arg` of one faults (it has no value to return).
+- Reading a name that no command declares, or with the accessor of
+  another type, is a fault naming the right accessor: `cli: --limit is
+  declared by int_flag, so read it with int or int_opt`.
+
+### 14.4 Help text
+
+`help(cmd, path)` and `Help` give the same text: the command's help line
+and an empty line (when it has one), the usage line, then sections
+`Commands:`, `Arguments:`, `Flags:` (the command's flags, then `-h,
+--help` and, when the root has a version, `--version`), and `Global
+flags:` (the flags of the commands above), each row indented two spaces
+and every description starting in one column, two spaces after the
+widest left side. A flag's left side is `-n, --name <value>` (indented four
+spaces, `--name <value>`, without a short name; no `<value>` for a bool flag), where value
+is the `value` argument, `int`, `duration`, or the choices joined with
+`|`. Its description is followed by `[default: x]` (when not empty or
+zero), `[env: VAR]`, `[required]`, and `[repeatable]` as they apply.
+No trailing newline.
+
+```text
+Manages widgets.
+
+Usage: tool [flags] <command>
+
+Commands:
+  add                  Adds widgets.
+  remove               Removes widgets.
+
+Flags:
+  -v, --verbose        print more
+      --config <path>  the configuration file [default: tool.toml] [env: TOOL_CONFIG]
+  -h, --help           show this help
+      --version        show the version
+```
+
+
+### 14.5 Shell completions and versions
+
+`completion(cmd, shell)` (decision 0165) returns a completion script for
+`"bash"`, `"zsh"`, or `"fish"`, made from the declaration alone: the
+program does not run while the user completes. Another shell is
+`Usage("unknown shell \"x\" (one of bash, zsh, fish)", usage)`. A tool
+offers it as a subcommand:
+
+```
+fn app() -> cli.Command {
+  cli.command("tool", "Manages widgets.",
+    commands: [
+      cli.command("completion", "Prints a shell completion script.", args: [cli.arg("shell", "bash, zsh, or fish")]),
+    ],
+    version: VERSION)
+}
+
+fn main(os: Os) ! {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  if p.command() == "completion" {
+    os.stdio.print(cli.completion(app(), p.arg("shell"))?)
+  }
+}
+```
+
+Users install it with `source <(tool completion bash)`, `tool completion
+zsh > "${fpath[1]}/_tool"`, or `tool completion fish >
+~/.config/fish/completions/tool.fish`. The scripts complete subcommand
+names at each level, the flags accepted there (those of the commands
+above included) with `-h`, `--help`, and `--version`, the values of
+`choice_flag`s after their flag, and files after other flags that take a
+value and where a command takes positional arguments (zsh and fish
+describe each word with its help line). The text is fixed by the
+implementation and the same on every backend; command names are letters,
+digits, `.`, `_`, and `-`, so no quoting can break it.
+
+A command's `version` usually comes from a constant stamped by the build:
+`const VERSION: Str = "dev"` in the main module and `xo build --stamp
+VERSION=1.4.0` (core 10.1, decision 0165) make `tool --version` print
+`tool 1.4.0`.
+---
+
+## 15. std/term
+
+Status: implemented on every backend (decision 0162, 2026-10-11).
+
+Colors for terminal output that follow the user's settings. Whether a
+stream is a terminal, its width, and input without echo are `Stdio`
+methods (3.6).
+
+```
+struct Painter { on: Bool }       // wraps text in ANSI styles when on
+
+pub fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env)
+pub fn painter(out: Stdio, env: Env) -> Painter uses (stdio, env)
+fn (p: Painter) bold(s: Str) -> Str   // also dim, underline, red, green, yellow, blue, magenta, cyan, gray
+pub fn strip(s: Str) -> Str           // s without ANSI escape sequences
+```
+
+- `color_enabled`: `NO_COLOR` set and not empty is off (no-color.org);
+  else `FORCE_COLOR` or `CLICOLOR_FORCE` set, not empty, and not `0` is
+  on; else `TERM=dumb` is off; else on when standard output is a
+  terminal. The variables are read through `env`, so an attenuated `Env`
+  that does not list them reads as unset.
+- A painter's methods return `s` unchanged when `on` is false or `s` is
+  empty, else `ESC [ code m`, `s`, `ESC [ 0 m` with code 1 bold, 2 dim, 4
+  underline, 31 red, 32 green, 33 yellow, 34 blue, 35 magenta, 36 cyan,
+  90 gray. `Painter{on: false}` and `Painter{on: true}` are for tests.
+- `strip` removes CSI sequences (`ESC [`, parameters, one final byte in
+  `@` to `~`) and any other `ESC x` pair; text whose stripping would cut a
+  UTF-8 sequence is returned unchanged.
+
+```
+fn report(out: Stdio, env: Env, failed: Int) uses (stdio, env) {
+  let p = term.painter(out, env)
+  if failed > 0 {
+    out.println(p.red("${failed} failed"))
+  } else {
+    out.println(p.green("ok"))
+  }
+}
+```
+
+---
+
+## 16. std/csv
+
+Status: implemented on every backend (decision 0164, 2026-10-11): the
+Go backend in `std/rt/csv.go`, the native backends in
+`std/native/csv.xo`, the same records, text, and errors.
+
+```
+struct CsvErr { line: Int, column: Int, msg: Str }   // displays as `csv: line 3, column 5: msg`
+
+pub fn parse(text: Str, sep: Rune = ',') -> List[List[Str]] ! CsvErr
+pub fn parse_maps(text: Str, sep: Rune = ',') -> List[Map[Str, Str]] ! CsvErr
+pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
+```
+
+- RFC 4180: a field in double quotes may hold the separator, line
+  breaks, and `""` for a quote; `\r\n` inside quotes reads as `\n`.
+  Records end with `\n`, `\r\n`, or the end of the text; empty lines are
+  skipped. Records may have different numbers of fields. Spaces are part
+  of fields.
+- Errors (line and column are 1-based, the column counts bytes): `" in
+  an unquoted field`, `quoted field not closed` (at the opening quote),
+  `unexpected character after a quoted field`.
+- `parse_maps` reads the first record as the header and makes a map per
+  later record, in header order; a record with another number of fields
+  is `expected N fields as in the header, found M` at its first line.
+- `format` writes each record and `\n`; a field is quoted when it holds
+  the separator, a quote, `\r` or `\n`, starts with a space or a tab, or
+  is the only, empty field of a record (else the record would read as an
+  empty line). `parse(format(rows))` gives `rows` back.
+- `sep` is any rune but `"`, `\r`, and `\n` (a fault otherwise); use
+  `'\t'` for tab separated values.
+
+---
+
+## 17. std/regexp
+
+Status: implemented on the Go backend (decision 0164, Go's `regexp`);
+native builds report it as XO1201 (planned).
+
+```
+struct Regex {}                          // handle
+struct RegexErr { pattern: Str, msg: Str }   // `invalid regexp "(a": missing closing ): ...`
+
+pub fn compile(pattern: Str) -> Regex ! RegexErr
+pub fn must(pattern: Str) -> Regex       // faults on a bad pattern
+pub fn quote(text: Str) -> Str           // matches text literally
+fn (r: Regex) pattern() -> Str
+fn (r: Regex) is_match(s: Str) -> Bool
+fn (r: Regex) find(s: Str) -> Str?
+fn (r: Regex) find_index(s: Str) -> (Int, Int)?     // byte offsets
+fn (r: Regex) find_all(s: Str) -> List[Str]
+fn (r: Regex) captures(s: Str) -> List[Str?]?       // [whole match, group 1, ...]
+fn (r: Regex) named(s: Str) -> Map[Str, Str]?       // (?P<name>...) groups that took part
+fn (r: Regex) replace_all(s: Str, repl: Str) -> Str // $1, ${name}, $$ in repl
+fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str
+fn (r: Regex) split(s: Str) -> List[Str]
+```
+
+The syntax and semantics are RE2's as Go implements them: leftmost
+first matching, no backreferences or lookaround, and time linear in the
+input, so a pattern or input from a user cannot make matching run away.
+In `replace_all`, `$name` takes the longest name it can (`$1x` is group
+`1x`); write `${1}x`. Raw strings keep backslashes: `r"\d+"`.
+
+---
+
+## 18. std/archive
+
+Status: implemented on the Go backend (decision 0164, Go's
+`compress/gzip`, `archive/tar`, `archive/zip`); native builds report it
+as XO1201 (planned).
+
+```
+struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }
+struct ArchiveErr { msg: Str }           // displays as `archive: msg`
+
+pub fn file(path: Str, data: Bytes) -> Entry    // mode 0o644, modified at the Unix epoch
+pub fn dir(path: Str) -> Entry                  // mode 0o755
+pub fn gzip(data: Bytes) -> Bytes
+pub fn gunzip(data: Bytes) -> Bytes ! ArchiveErr
+pub fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
+pub fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
+pub fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
+pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+```
+
+- In memory and pure: read the archive with `Fs.read`, write the
+  entries with `Fs.write` (into a sub capability, so the archive's paths
+  stay under it).
+- `gzip` writes no name and no time in the header, so the output depends
+  on the data only; `gunzip` reads concatenated members as one stream.
+- Paths use `/`. Writing or reading an entry whose path is empty,
+  absolute (`/x`, `C:/x`), or leaves the root (`../x`, `a/../../x`) is an
+  error (zip slip); so is a tar or zip entry that is a link or a device.
+  Directories are written with a trailing `/` and read without it.
+- `tar` writes PAX headers with the entries' modes (`0o7777`) and times;
+  `zip` deflates files and stores their modes and times (with Unix
+  extended timestamps, so times before 1980 survive).
+
+---
+
+## 19. std/toml
+
+Status: implemented on every backend (decision 0164): a TOML 1.0 parser
+in `std/rt/toml.go` and the same parser in `std/native/toml.xo`, with
+the same JSON text and errors (golden `toml_basic`).
+
+```
+use std/json
+
+struct TomlErr { line: Int, msg: Str }   // displays as `toml: line 3: expected a value after =`
+enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr) }   // displays as the inner error
+
+pub fn decode[T: Json](text: Str) -> T ! DecodeErr
+pub fn to_json(text: Str) -> Str ! TomlErr
+```
+
+```
+struct Server { host: Str, port: Int = 8080, timeout: Duration = 30s } derive Json
+struct Config { name: Str, servers: List[Server] } derive Json
+
+fn load(fs: Fs) -> Config ! Error uses fs.read {
+  toml.decode[Config](fs.read_text("app.toml")?)?
+}
+```
+
+- A TOML document maps onto JSON: a table is an object (keys in
+  document order), an array an array, a string a string, an integer
+  (decimal, `0x`, `0o`, `0b`, underscores between digits) a JSON
+  integer, a float a JSON number (its text without `+` and underscores),
+  a boolean a boolean, and a date or time its RFC 3339 text (a space
+  between date and time and lower case `t` and `z` become `T` and `Z`).
+  `decode[T]` then follows the `derive Json` rules of section 5: missing
+  keys take field defaults, unknown keys are ignored, `Duration` fields
+  take `"1m30s"` text, an offset date-time decodes into `Time`, and a
+  local date or time into `Str`.
+- `inf` and `nan` are errors (JSON has no form for them).
+- All of TOML 1.0 is read: comments, bare, quoted, and dotted keys,
+  basic and literal strings and their multi-line forms (a line ending
+  backslash trims the whitespace after it), `[table]` and `[[array of
+  tables]]` headers, inline tables, and arrays over several lines with
+  comments and a trailing comma. Defining a key or a table twice, adding
+  to an inline table, and mixing a table with an array of tables are
+  errors with their line.
+- `to_json` gives the JSON text, for code that wants to read a document
+  without a struct (`json.decode[Map[Str, ...]]`) or print it.
+

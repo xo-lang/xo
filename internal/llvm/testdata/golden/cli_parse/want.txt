@@ -1,0 +1,175 @@
+exit 0
+--- stdout
+$ tool add w1
+add name=w1 color=- count=1 count_opt=-1 wait=0s tags= dry=false verbose=false config=tool.toml format=text
+$ tool -v add --count 3 -t x -ty --tag=z w2 red --wait=250ms --format json
+add name=w2 color=red count=3 count_opt=3 wait=250ms tags=x,y,z dry=false verbose=true config=tool.toml format=json
+$ tool add -vn5 --dry-run=true w3
+add name=w3 color=- count=5 count_opt=5 wait=0s tags= dry=true verbose=true config=tool.toml format=text
+$ tool add w4
+add name=w4 color=- count=1 count_opt=-1 wait=1m30s tags=a,b dry=false verbose=false config=/etc/tool.toml format=text
+$ tool --config cli.toml add -t only w5
+add name=w5 color=- count=1 count_opt=-1 wait=1m30s tags=only dry=false verbose=false config=cli.toml format=text
+$ tool add -- -w6 --blue
+add name=-w6 color=--blue count=1 count_opt=-1 wait=0s tags= dry=false verbose=false config=tool.toml format=text
+$ tool remove a b c
+remove names=a,b,c token=s3cret config_set=true config_opt=/etc/tool.toml
+$ tool --format=text remote list
+remote list verbose=false count=1 color=- names=
+$ tool remote show origin
+remote show origin
+$ tool --help
+[help, exit 0] Manages widgets.
+
+Usage: tool [flags] <command>
+
+Commands:
+  add                       Adds widgets.
+  remove                    Removes widgets.
+  remote                    Manages remotes.
+
+Flags:
+  -v, --verbose             print more
+  -c, --config <path>       the configuration file [default: tool.toml] [env: NONE_CONFIG]
+      --format <text|json>  output format [default: text]
+  -h, --help                show this help
+      --version             show the version
+$ tool add -h
+[help, exit 0] Adds widgets.
+
+Usage: tool add [flags] <name> [<color>]
+
+Arguments:
+  <name>                    the widget name
+  [<color>]                 its color
+
+Flags:
+  -n, --count <int>         how many [default: 1]
+      --wait <duration>     pause between widgets [env: NONE_WAIT]
+  -t, --tag <str>           a tag [env: NONE_TAGS] [repeatable]
+      --dry-run             do nothing
+  -h, --help                show this help
+      --version             show the version
+
+Global flags:
+  -v, --verbose             print more
+  -c, --config <path>       the configuration file [default: tool.toml] [env: NONE_CONFIG]
+      --format <text|json>  output format [default: text]
+$ tool remote --help
+[help, exit 0] Manages remotes.
+
+Usage: tool remote [flags] <command>
+
+Commands:
+  list                      Lists remotes.
+  show                      Shows one remote.
+
+Flags:
+  -h, --help                show this help
+      --version             show the version
+
+Global flags:
+  -v, --verbose             print more
+  -c, --config <path>       the configuration file [default: tool.toml] [env: NONE_CONFIG]
+      --format <text|json>  output format [default: text]
+$ tool remote show --help
+[help, exit 0] Shows one remote.
+
+Usage: tool remote show [flags] <remote>
+
+Arguments:
+  <remote>
+
+Flags:
+  -h, --help                show this help
+      --version             show the version
+
+Global flags:
+  -v, --verbose             print more
+  -c, --config <path>       the configuration file [default: tool.toml] [env: NONE_CONFIG]
+      --format <text|json>  output format [default: text]
+$ tool --version
+[version, exit 0] tool 1.4.0
+$ tool 
+[usage, exit 2] missing command (one of add, remove, remote)
+Usage: tool [flags] <command>
+
+Run 'tool --help' for more information.
+$ tool ad
+[usage, exit 2] unknown command "ad" (did you mean add?)
+Usage: tool [flags] <command>
+
+Run 'tool --help' for more information.
+$ tool add
+[usage, exit 2] missing argument <name>
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool add w red extra
+[usage, exit 2] unexpected argument "extra"
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool add --cont 2 w
+[usage, exit 2] unknown flag --cont (did you mean --count?)
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool add --count two w
+[usage, exit 2] invalid value "two" for --count: expected an integer
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool add --count
+[usage, exit 2] flag --count needs a value
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool add -x w
+[usage, exit 2] unknown flag -x
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool --format yaml add w
+[usage, exit 2] invalid value "yaml" for --format: expected one of text, json
+Usage: tool [flags] <command>
+
+Run 'tool --help' for more information.
+$ tool --verbose=maybe add w
+[usage, exit 2] invalid value "maybe" for --verbose: expected true or false
+Usage: tool [flags] <command>
+
+Run 'tool --help' for more information.
+$ tool remove a
+[usage, exit 2] missing required flag --token
+Usage: tool remove [flags] <names>...
+
+Run 'tool remove --help' for more information.
+$ tool remove
+[usage, exit 2] missing argument <names>
+Usage: tool remove [flags] <names>...
+
+Run 'tool remove --help' for more information.
+$ tool add w
+[usage, exit 2] invalid value "soon" for --wait (from $BAD_WAIT): expected a duration such as 30s or 1m30s
+Usage: tool add [flags] <name> [<color>]
+
+Run 'tool add --help' for more information.
+$ tool remote show
+[usage, exit 2] missing argument <remote>
+Usage: tool remote show [flags] <remote>
+
+Run 'tool remote show --help' for more information.
+Lists remotes.
+
+Usage: tool remote list [flags]
+
+Flags:
+  -h, --help                show this help
+      --version             show the version
+
+Global flags:
+  -v, --verbose             print more
+  -c, --config <path>       the configuration file [default: tool.toml] [env: NONE_CONFIG]
+      --format <text|json>  output format [default: text]
+--- stderr

@@ -1,0 +1,33 @@
+// std/term (spec/std.md 15, decision 0162). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Colors for terminal
+// output that follow the user's settings: NO_COLOR, FORCE_COLOR,
+// TERM=dumb, and whether standard output is a terminal. Whether a stream
+// is a terminal, its width, and input without echo are methods of Stdio
+// (std.md 3.6).
+
+/// Wraps text in ANSI styles when `on`, else returns it unchanged. Make
+/// one with `painter`; `Painter{on: false}` in tests.
+struct Painter {
+  on: Bool
+}
+
+/// Whether to color standard output: NO_COLOR set and not empty is off;
+/// FORCE_COLOR or CLICOLOR_FORCE set, not empty, and not "0" is on;
+/// TERM=dumb is off; otherwise on when standard output is a terminal.
+fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env)
+/// A Painter that colors when `color_enabled(out, env)`.
+fn painter(out: Stdio, env: Env) -> Painter uses (stdio, env)
+
+fn (p: Painter) bold(s: Str) -> Str
+fn (p: Painter) dim(s: Str) -> Str
+fn (p: Painter) underline(s: Str) -> Str
+fn (p: Painter) red(s: Str) -> Str
+fn (p: Painter) green(s: Str) -> Str
+fn (p: Painter) yellow(s: Str) -> Str
+fn (p: Painter) blue(s: Str) -> Str
+fn (p: Painter) magenta(s: Str) -> Str
+fn (p: Painter) cyan(s: Str) -> Str
+fn (p: Painter) gray(s: Str) -> Str
+
+/// s without ANSI escape sequences (to measure or log painted text).
+fn strip(s: Str) -> Str

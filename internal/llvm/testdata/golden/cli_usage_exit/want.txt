@@ -1,0 +1,6 @@
+exit 2
+--- stdout
+--- stderr
+error: unknown flag --fast
+Usage: copy [flags] <sources>...
+Run 'copy --help' for more information.

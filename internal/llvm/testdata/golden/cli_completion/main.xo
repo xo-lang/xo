@@ -1,0 +1,28 @@
+// Shell completions (std.md 14.5, decision 0165): the bash, zsh, and fish
+// scripts std/cli writes from a command's declaration, the same text on
+// every backend, and the usage error for another shell.
+use std/cli
+
+fn app() -> cli.Command {
+  cli.command("my-tool", "Manages widgets.",
+    flags: [
+      cli.bool_flag("verbose", "print 'more'", short: "v"),
+      cli.choice_flag("format", "output format", ["text", "json"]),
+      cli.str_flag("config", "the file\nwith a second line", short: "c", value: "path"),
+    ],
+    commands: [
+      cli.command("add", "Adds widgets.", flags: [cli.int_flag("count", "how many", short: "n")], args: [cli.arg("name", "")]),
+      cli.command("remote", "Manages remotes.", commands: [cli.command("list", "Lists remotes.")]),
+      cli.command("completion", "Prints a completion script.", args: [cli.arg("shell", "bash, zsh, or fish")]),
+    ],
+    version: "2.0.1")
+}
+
+fn main(os: Os) {
+  for shell in ["bash", "zsh", "fish", "powershell"] {
+    match cli.completion(app(), shell) {
+      Ok(script) => os.stdio.print("== ${shell}\n${script}")
+      Err(e) => os.stdio.println("== ${shell}\n${e} (exit ${e.exit_code()})")
+    }
+  }
+}

@@ -1,0 +1,1 @@
+the std function `regexp.Regex.is_match`

@@ -29,7 +29,7 @@ func StdTypes() ([]byte, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
-	src := "use std/http\nuse std/json\nuse std/log\nuse std/task\nuse std/time\n\nfn main() {}\n"
+	src := "use std/archive\nuse std/cli\nuse std/csv\nuse std/http\nuse std/json\nuse std/log\nuse std/regexp\nuse std/task\nuse std/term\nuse std/time\nuse std/toml\n\nfn main() {}\n"
 	if err := os.WriteFile(filepath.Join(dir, "all.xo"), []byte(src), 0o644); err != nil {
 		return nil, err
 	}

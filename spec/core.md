@@ -12,6 +12,30 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`xo build --stamp NAME=VALUE`** (10.1, decision 0165): sets a `const
+  NAME: Str` of the main module for one build (versions, commits);
+  `XO1501` when there is no such constant. `std/cli` writes shell
+  completion scripts (std.md 14.5).
+- **Formats** (std.md 16 to 19, decision 0164): `std/csv` and
+  `std/toml` (every backend), `std/regexp` and `std/archive` (gzip, tar,
+  zip; Go backend, native builds report XO1201, planned).
+- **Files** (std.md 3.1, 3.5, decision 0163): streaming `File` handles,
+  `append`, `copy`, permission bits, symbolic links, `glob`, advisory
+  locks, and `Env.config_dir`/`cache_dir`. Go backend; native builds
+  report XO1201 (planned).
+- **Terminals** (std.md 3.6, 15, decision 0162): `Stdio` tells whether
+  each stream is a terminal and its width, reads secrets without echo,
+  and reads binary input; `std/term` colors output following NO_COLOR
+  and FORCE_COLOR. Every backend.
+- **Commands and children** (std.md 3.8, decision 0161): `Proc.cmd`
+  builds a `Cmd` (directory, environment from an `Env`, input, the
+  terminal, merged streams) run by `output`, `run`, or `spawn` (a
+  `Child` with streaming reads and writes); `Proc.pipeline` pipes
+  commands. Go backend; native builds report XO1201 (planned).
+- **`std/cli`** (14, std.md 14, decision 0160): command line parsing
+  for tools: flags of five types and repeated ones, positional and rest
+  arguments, subcommands, `--`, variables as fallbacks, generated help,
+  and usage errors with exit status 2 (`parse_or_exit`). Every backend.
 - **Logging is the effect `log`** (6.1, std.md 6, decision 0156): the
   `std/log` functions perform `log`; a `pub` function that logs declares
   `uses log`. `xo fix` adds it to existing code (XO0701 with a fix).
@@ -2472,6 +2496,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |
 | `XO1404` | error | checker | recursion among real-time functions |
 | `XO1405` | error | checker | blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function |
+| `XO1501` | error | build | `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module (decision 0165) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -2705,6 +2730,12 @@ specified in `spec/std.md`. Modules:
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
 | `std/path` | Pure helpers for `/` separated paths |
+| `std/cli` | Command line parsing: flags, arguments, subcommands, help, usage errors (std.md 14) |
+| `std/term` | Terminal colors that follow NO_COLOR and FORCE_COLOR (std.md 15) |
+| `std/csv` | CSV and TSV parsing and formatting (std.md 16) |
+| `std/regexp` | RE2 regular expressions (std.md 17). Go backend only so far |
+| `std/archive` | gzip, tar, and zip in memory (std.md 18). Go backend only so far |
+| `std/toml` | TOML 1.0 documents decoded with the JSON rules (std.md 19) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 

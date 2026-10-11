@@ -91,6 +91,7 @@ scripts/release.sh [version]             # release archives into dist/ (decision
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
+go run ./cmd/xo build --stamp VERSION=1.4.0 --stamp COMMIT=$(git rev-parse --short HEAD) .   # set `const VERSION: Str` (and COMMIT) of the main module for this build (decision 0165, XO1501 when no such plain Str constant; also xo run; recorded in the build information for xo replay; last verified 2026-10-11)
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
 go test ./internal/build -run TestNoGCCheckAgrees    # the no GC check agrees with LLVM and arm64 code generation on every golden, bench, selfhost, and example program (seconds; also -short)
 go run ./cmd/xo test --no-gc [-v] [--backend=llvm|arm64] examples/notes-service   # a native test binary, one process per test (XO_TEST=i, XO_TEST_SEED=s) in the C test world; same report as the Go backend
@@ -121,7 +122,7 @@ go test ./internal/gen -run TestGeneratedGoSnapshot [-golden-update]   # the gen
 go test ./internal/gen -run TestGeneratedGoVetsLarge  # the same on the examples, the LLVM golden programs, the perf benchmarks, and the self hosted compiler (about 3 minutes; not bench/paper, which no longer checks). Last verified: 2026-10-10, clean
 go test ./internal/gen -run 'TestArith(Checks|Property)'   # progen.Arith: random programs of Int arithmetic (edge operands, shifts to 63 and beyond, division by -1) reaching Float, Str, List[Int], a struct, an enum with payloads, and closures; TestArithChecks (also -short) checks 300; TestArithProperty builds 25 with the Go, LLVM, and arm64 backends, compares exit status, all of stdout and all of stderr (normStderr drops only frames, crash bundle paths, and the deadlock's location and blocked list, which decision 0083 lets differ), and vets the Go; XO_ARITH_PROPS=N (N seeds), XO_ARITH_PROP_FIRST=F (from F, default 1), XO_ARITH_PROP_SEED=S (only S)
 python3 -I scripts/reduce-diff.py [--jobs=4] [--timeout=30] [--no-ddmin] XO go arm64 IN.xo [OUT.xo]   # shrink a program while two backends (go, arm64, llvm; natives with --no-gc) run it differently: both must build, keep IN's exit statuses, and differ in stdout or normalized stderr (the Python twin of normStderr). ddmin over lines, then first improvement over lines, { } blocks, parentheses, integers; temporary XO_GOCACHE removed after (the first build compiles the runtime). A TestArithProperty failure prints the command for its program. About 40 s for the 74 line p197 (was 10 minutes with the old line by line reducer). Tests: TestReduceDiffFake (also -short, fake builds), TestReduceDiffReal (real builds, a `bad` backend that adds a line when the program has an xor). Last verified: 2026-10-11
-go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
+go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output); a golden directory may hold args.txt (arguments), env.txt (extra NAME=VALUE variables), and stdin.txt (standard input), passed by internal/gen, internal/llvm, and internal/arm64 alike (env.txt, and stdin.txt for the native runners, since 2026-10-11)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
 go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc,verify,mutants|all] [--each] [--test] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times; --test builds the test binary of `xo test --no-gc` (ssa.Options.Tests); verify prints the verifier's verdict after rc and mutants its verdicts with one retain or release removed (ssa.VerifyMutants), neither part of all (decision 0150; last verified: 2026-10-11)
@@ -880,8 +881,9 @@ internal/gobind/        `use go` bindings: go list + go/importer + go/types -> X
                         file and Go adapter (decision 0041 prototype, see "Go interop")
 internal/cbind/         `use c` bindings: clang's JSON AST dump of a header -> Xo declaration
                         file and C adapter (decision 0116, see "C interop")
-std/                    std declaration files (prelude.xo, go.xo, http.xo, json.xo, log.xo,
-                        path.xo, sql.xo, task.xo, testing.xo, time.xo) embedded by std/embed.go
+std/                    std declaration files (prelude.xo, archive.xo, cli.xo, csv.xo, go.xo, http.xo,
+                        json.xo, log.xo, path.xo, regexp.xo, sql.xo, task.xo, term.xo, testing.xo,
+                        time.xo, toml.xo) embedded by std/embed.go
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
@@ -2370,6 +2372,18 @@ Last verified: 2026-10-08.
   `log.go`, `testing.go` (test runner, fakes, `run_main`),
   `std_gen.go` (generated), `gointerop.go` (Go interop boundary
   helpers and `go.Error`, 2026-10-08).
+- Command line tool std (decisions 0160 to 0165, 2026-10-11):
+  `cli.go` and `cli_completion.go` (std/cli; ported to Xo in
+  std/native/cli.xo, byte for byte the same text), `proccmd.go` and
+  `proccmd_caps.go` (`Proc.cmd`, `Cmd`, `Child`, `pipeline`, the real and
+  fake backends), `term.go` with `term_unix.go`, `term_bsd.go`,
+  `term_linux.go`, `term_windows.go`, `term_other.go` (terminal ioctls by
+  build tag; std/term), `stdin.go`'s `stdinReadSome` (binary reads),
+  `fsfile.go`, `fsfile_mem.go`, `flock_*.go` (File handles, links, globs,
+  locks, user dirs), `csv.go`, `toml.go` (own parsers, ported to Xo in
+  std/native/csv.xo and toml.xo), `regexp.go`, `archive.go` (Go's
+  packages; no native port yet). internal/build's `stamp.go` is `xo build
+  --stamp`.
 
 ## Agent interfaces (2026-10-08)
 
@@ -2418,6 +2432,14 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 "cached", "error", "stats"}`.
 
 ## Known gaps (2026-10-08)
+
+- Command line std on the native backends (2026-10-11, decisions 0161,
+  0163, 0164): `Proc.cmd` with `Cmd`, `Child`, and `Proc.pipeline`; the
+  `Fs` handles, `append`, `copy`, modes, links, `glob`, and locks; and
+  `std/regexp` and `std/archive` are XO1201 (planned) on `--no-gc`
+  builds. std/cli, std/term and the Stdio terminal methods, std/csv,
+  std/toml, and `Env.config_dir`/`cache_dir` build natively. Plans and
+  next steps are in each decision. Last verified: 2026-10-11.
 
 - Self hosted lexer (2026-10-08, decisions 0076 and 0081): `selfhost/lexer`
   builds on the Go, arm64, and LLVM backends, and `TestSelfhostDifferential`

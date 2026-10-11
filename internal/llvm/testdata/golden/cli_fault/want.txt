@@ -1,0 +1,5 @@
+exit 70
+--- stdout
+limit 3
+--- stderr
+fault: cli: --limit is declared by int_flag, so read it with int or int_opt at main.xo:11

@@ -1,0 +1,42 @@
+// std/regexp (spec/std.md 17, decision 0164). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Regular expressions with
+// RE2 syntax and guarantees (Go's regexp): matching takes time linear in
+// the input, so a pattern from a user cannot hang the program. Pure.
+
+/// A compiled expression (a handle).
+struct Regex {}
+
+/// Displays as `invalid regexp "(a": missing closing ): ...`.
+struct RegexErr {
+  pattern: Str
+  msg: Str
+}
+
+fn (e: RegexErr) display() -> Str
+
+fn compile(pattern: Str) -> Regex ! RegexErr
+/// compile, faulting on a bad pattern (for patterns written in the program).
+fn must(pattern: Str) -> Regex
+/// text with every metacharacter escaped: a pattern matching text literally.
+fn quote(text: Str) -> Str
+
+fn (r: Regex) pattern() -> Str
+fn (r: Regex) is_match(s: Str) -> Bool
+/// The leftmost match.
+fn (r: Regex) find(s: Str) -> Str?
+/// The byte offsets `(start, end)` of the leftmost match.
+fn (r: Regex) find_index(s: Str) -> (Int, Int)?
+/// Every match, left to right, not overlapping.
+fn (r: Regex) find_all(s: Str) -> List[Str]
+/// The leftmost match and its groups: element 0 is the whole match, then
+/// one per group, None for a group that did not take part.
+fn (r: Regex) captures(s: Str) -> List[Str?]?
+/// The named groups (`(?P<name>...)`) of the leftmost match that took part.
+fn (r: Regex) named(s: Str) -> Map[Str, Str]?
+/// Every match replaced by `repl`, in which `$1` and `${name}` stand for
+/// groups (`$$` for a dollar sign).
+fn (r: Regex) replace_all(s: Str, repl: Str) -> Str
+/// Every match replaced by `repl` as written (no `$` expansion).
+fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str
+/// s split around the matches.
+fn (r: Regex) split(s: Str) -> List[Str]

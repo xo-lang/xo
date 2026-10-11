@@ -1,0 +1,55 @@
+// std/csv (std.md 16, decision 0164): RFC 4180 parsing and formatting
+// with the same records, text, and errors on every backend.
+use std/csv
+
+fn show(rows: List[List[Str]]) -> Str {
+  rows.map(fn(r) { "[" + r.map(fn(f) { f.quote() }).join(", ") + "]" }).join(" ")
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  let texts = [
+    "name,age\nann,31\r\nbob,42",
+    "a,\"b,c\",\"say \"\"hi\"\"\"\n\n\"multi\nline\",x\r\n",
+    "one\n\ntwo,three,four\n",
+    "trailing,\n,leading\n,\n",
+    "  spaced , fields  \n",
+    "",
+    "a,b\r",
+    "x\ty\tz",
+  ]
+  for t in texts {
+    match csv.parse(t) {
+      Ok(rows) => out.println("${t.quote()} -> ${show(rows)}")
+      Err(e) => out.println("${t.quote()} -> ${e}")
+    }
+  }
+  match csv.parse("x\ty\tz", sep: '\t') {
+    Ok(rows) => out.println("tab separated -> ${show(rows)}")
+    Err(e) => out.println("tab separated -> ${e}")
+  }
+  let bad = ["a,b\"c", "\"abc", "a,\"b\"c\nd", "ok\n\"x\"y"]
+  for t in bad {
+    match csv.parse(t) {
+      Ok(rows) => out.println("${t.quote()} -> ${show(rows)}")
+      Err(e) => out.println("${t.quote()} -> ${e} (line ${e.line}, column ${e.column})")
+    }
+  }
+  match csv.parse_maps("name,role\nann,admin\nbob,dev\n") {
+    Ok(ms) => out.println("maps: ${ms.map(fn(m) { "${m.get("name") ?? "-"}:${m.get("role") ?? "-"}" }).join(" ")}")
+    Err(e) => out.println("maps: ${e}")
+  }
+  match csv.parse_maps("a,b\n1,2\n3\n") {
+    Ok(_) => out.println("short record accepted")
+    Err(e) => out.println("maps: ${e}")
+  }
+  match csv.parse_maps("") {
+    Ok(ms) => out.println("empty maps: ${ms.len()}")
+    Err(e) => out.println("empty maps: ${e}")
+  }
+  let rows = [["id", "note"], ["1", "plain"], ["2", "has, comma"], ["3", "say \"hi\""], ["4", "two\nlines"], ["5", " lead"], [""]]
+  let text = csv.format(rows)
+  out.print(text)
+  out.println("round trip: ${csv.parse(text).ok() == Some(rows)}")
+  out.print(csv.format([["a;b", "c"]], sep: ';'))
+}

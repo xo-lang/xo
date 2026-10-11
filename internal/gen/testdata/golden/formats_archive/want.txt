@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+gzip: 1500 -> smaller true; magic 31 139
+gunzip: same true
+gunzip garbage: archive: gunzip: unexpected EOF
+untar: docs dir 493 "" 1970-01-01T00:00:00Z; docs/a.txt file 420 "A" 2023-11-14T22:13:20Z; bin/tool file 493 "#!/bin/sh\n" 2023-11-14T22:13:20Z
+unzip: docs dir 493 "" 1970-01-01T00:00:00Z; docs/a.txt file 420 "A" 2023-11-14T22:13:20Z; bin/tool file 493 "#!/bin/sh\n" 2023-11-14T22:13:20Z
+tar escaping: archive: bad entry path "../escape"
+zip absolute: archive: bad entry path "/abs"
+unzip garbage: archive: unzip: zip: not a valid zip file
+--- stderr

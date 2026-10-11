@@ -1,0 +1,29 @@
+exit 0
+--- stdout
+"name,age\nann,31\r\nbob,42" -> ["name", "age"] ["ann", "31"] ["bob", "42"]
+"a,\"b,c\",\"say \"\"hi\"\"\"\n\n\"multi\nline\",x\r\n" -> ["a", "b,c", "say \"hi\""] ["multi\nline", "x"]
+"one\n\ntwo,three,four\n" -> ["one"] ["two", "three", "four"]
+"trailing,\n,leading\n,\n" -> ["trailing", ""] ["", "leading"] ["", ""]
+"  spaced , fields  \n" -> ["  spaced ", " fields  "]
+"" -> 
+"a,b\r" -> ["a", "b"]
+"x\ty\tz" -> ["x\ty\tz"]
+tab separated -> ["x", "y", "z"]
+"a,b\"c" -> csv: line 1, column 4: " in an unquoted field (line 1, column 4)
+"\"abc" -> csv: line 1, column 1: quoted field not closed (line 1, column 1)
+"a,\"b\"c\nd" -> csv: line 1, column 6: unexpected character after a quoted field (line 1, column 6)
+"ok\n\"x\"y" -> csv: line 2, column 4: unexpected character after a quoted field (line 2, column 4)
+maps: ann:admin bob:dev
+maps: csv: line 3, column 1: expected 2 fields as in the header, found 1
+empty maps: 0
+id,note
+1,plain
+2,"has, comma"
+3,"say ""hi"""
+4,"two
+lines"
+5," lead"
+""
+round trip: true
+"a;b";c
+--- stderr

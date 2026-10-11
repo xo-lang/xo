@@ -1,0 +1,102 @@
+// std/cli (std.md 14, decision 0160): flags of every kind, positional
+// and rest arguments, subcommands with global flags, `--`, variables as
+// fallbacks, generated help, and usage errors, with the same text on
+// every backend.
+use std/cli
+
+/// The tool, its variables named with prefix p.
+fn app(p: Str) -> cli.Command {
+  cli.command("tool", "Manages widgets.",
+    flags: [
+      cli.bool_flag("verbose", "print more", short: "v"),
+      cli.str_flag("config", "the configuration file", short: "c", default: "tool.toml", env: p + "CONFIG", value: "path"),
+      cli.choice_flag("format", "output format", ["text", "json"], default: "text"),
+    ],
+    commands: [
+      cli.command("add", "Adds widgets.",
+        flags: [
+          cli.int_flag("count", "how many", short: "n", default: 1),
+          cli.duration_flag("wait", "pause between widgets", env: p + "WAIT"),
+          cli.strs_flag("tag", "a tag", short: "t", env: p + "TAGS"),
+          cli.bool_flag("dry-run", "do nothing"),
+        ],
+        args: [cli.arg("name", "the widget name"), cli.arg("color", "its color", optional: true)]),
+      cli.command("remove", "Removes widgets.",
+        flags: [cli.str_flag("token", "the API token", required: true, env: p + "TOKEN")],
+        args: [cli.rest("names", "widget names", min: 1)]),
+      cli.command("remote", "Manages remotes.",
+        commands: [
+          cli.command("list", "Lists remotes."),
+          cli.command("show", "Shows one remote.", args: [cli.arg("remote", "")]),
+        ]),
+    ],
+    version: "1.4.0")
+}
+
+fn show(p: cli.Parsed) -> Str {
+  match p.command() {
+    "add" => "add name=${p.arg("name")} color=${p.arg_opt("color") ?? "-"} count=${p.int("count")} count_opt=${p.int_opt("count") ?? -1} wait=${p.duration("wait")} tags=${p.strs("tag").join(",")} dry=${p.bool("dry-run")} verbose=${p.bool("verbose")} config=${p.str("config")} format=${p.str("format")}"
+    "remove" => "remove names=${p.rest("names").join(",")} token=${p.str("token")} config_set=${p.is_set("config")} config_opt=${p.str_opt("config") ?? "-"}"
+    "remote list" => "remote list verbose=${p.bool("verbose")} count=${p.int("count")} color=${p.arg_opt("color") ?? "-"} names=${p.rest("names").join(",")}"
+    "remote show" => "remote show ${p.arg("remote")}"
+    other => "command ${other.quote()}"
+  }
+}
+
+fn attempt(out: Stdio, env: Env, p: Str, args: List[Str]) uses (env, stdio) {
+  let line = "$ tool ${args.join(" ")}"
+  match cli.parse(app(p), args, env) {
+    Ok(p) => out.println("${line}\n${show(p)}")
+    Err(e) => {
+      let kind = match e {
+        cli.CliErr.Help(_) => "help"
+        cli.CliErr.Version(_) => "version"
+        cli.CliErr.Usage(_, _) => "usage"
+      }
+      out.println("${line}\n[${kind}, exit ${e.exit_code()}] ${e}")
+      match e {
+        cli.CliErr.Usage(_, usage) => out.println(usage)
+        _ => ()
+      }
+    }
+  }
+}
+
+fn main(os: Os) {
+  // env.txt sets TOOL_CONFIG, TOOL_WAIT, TOOL_TAGS, TOOL_TOKEN, and
+  // BAD_WAIT; no NONE_ variable is set
+  let env = os.env
+  let none = "NONE_"
+  let some = "TOOL_"
+  let bad = "BAD_"
+  let out = os.stdio
+  attempt(out, env, none, ["add", "w1"])
+  attempt(out, env, none, ["-v", "add", "--count", "3", "-t", "x", "-ty", "--tag=z", "w2", "red", "--wait=250ms", "--format", "json"])
+  attempt(out, env, none, ["add", "-vn5", "--dry-run=true", "w3"])
+  attempt(out, env, some, ["add", "w4"])
+  attempt(out, env, some, ["--config", "cli.toml", "add", "-t", "only", "w5"])
+  attempt(out, env, none, ["add", "--", "-w6", "--blue"])
+  attempt(out, env, some, ["remove", "a", "b", "c"])
+  attempt(out, env, none, ["--format=text", "remote", "list"])
+  attempt(out, env, none, ["remote", "show", "origin"])
+  attempt(out, env, none, ["--help"])
+  attempt(out, env, none, ["add", "-h"])
+  attempt(out, env, none, ["remote", "--help"])
+  attempt(out, env, none, ["remote", "show", "--help"])
+  attempt(out, env, none, ["--version"])
+  attempt(out, env, none, [])
+  attempt(out, env, none, ["ad"])
+  attempt(out, env, none, ["add"])
+  attempt(out, env, none, ["add", "w", "red", "extra"])
+  attempt(out, env, none, ["add", "--cont", "2", "w"])
+  attempt(out, env, none, ["add", "--count", "two", "w"])
+  attempt(out, env, none, ["add", "--count"])
+  attempt(out, env, none, ["add", "-x", "w"])
+  attempt(out, env, none, ["--format", "yaml", "add", "w"])
+  attempt(out, env, none, ["--verbose=maybe", "add", "w"])
+  attempt(out, env, none, ["remove", "a"])
+  attempt(out, env, some, ["remove"])
+  attempt(out, env, bad, ["add", "w"])
+  attempt(out, env, none, ["remote", "show"])
+  out.println(cli.help(app("NONE_"), path: "remote list"))
+}

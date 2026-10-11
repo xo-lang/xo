@@ -1,0 +1,32 @@
+// Terminals (std.md 3.6, 15; decision 0162) when the streams are not
+// terminals, as under a test harness: is_tty is false, width is None, a
+// secret is read without touching the terminal (the prompt goes to
+// standard error), binary standard input comes in chunks, and std/term
+// paints only when told to (env.txt sets FORCE_COLOR=1).
+use std/term
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  out.println("tty: in ${out.stdin_is_tty()} out ${out.stdout_is_tty()} err ${out.stderr_is_tty()}")
+  out.println("width: ${out.width() ?? -1}")
+  let secret = out.read_secret("password: ")? ?? "<none>"
+  out.eprintln("") // end the prompt's line (no terminal, so no echoed newline)
+  out.println("secret: ${secret.quote()}")
+  var sizes: List[Int] = []
+  var total = BytesBuilder.new()
+  while let Some(b) = out.read_bytes(4)? {
+    sizes.push(b.len())
+    total.write(b)
+  }
+  let data = total.freeze()
+  out.println("chunks: ${sizes.map(fn(n) { "${n}" }).join(",")} hex ${data.to_hex()}")
+  out.println("after the end: ${out.read_all_bytes()?.len()} bytes")
+
+  let forced = term.painter(out, os.env)
+  out.println("forced: ${forced.on} ${forced.red("red").quote()} ${forced.bold("").quote()}")
+  out.println("stripped: ${term.strip(forced.green("go") + " " + forced.underline("u")).quote()}")
+  let plain = term.Painter{on: false}
+  out.println("plain: ${plain.cyan("cyan")}")
+  let colors = [forced.bold("b"), forced.dim("d"), forced.yellow("y"), forced.blue("b"), forced.magenta("m"), forced.gray("g")]
+  out.println("codes: ${colors.map(fn(c) { c.quote() }).join(" ")}")
+}

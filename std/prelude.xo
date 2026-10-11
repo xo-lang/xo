@@ -456,7 +456,45 @@ interface Fs {
   fn remove_all(self, path: Str) -> () ! FsErr uses fs.write
   fn create_dir_all(self, dir: Str) -> () ! FsErr uses fs.write
   fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
+  /// A handle that reads the file as a stream (std.md 3.1, decision 0163).
+  fn open(self, path: Str) -> File ! FsErr uses fs.read
+  /// A handle that writes the file, created or truncated.
+  fn create(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that writes at the end of the file, created if missing.
+  fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// Adds data at the end of the file, created if missing.
+  fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+  /// Copies the contents and permission bits of a file.
+  fn copy(self, from: Str, to: Str) -> () ! FsErr uses fs
+  /// The permission bits, 0o644 style.
+  fn mode(self, path: Str) -> Int ! FsErr uses fs.read
+  fn set_mode(self, path: Str, mode: Int) -> () ! FsErr uses fs.write
+  /// Creates a symbolic link at `link` that points to `target`.
+  fn symlink(self, target: Str, link: Str) -> () ! FsErr uses fs.write
+  /// The target of a symbolic link; None when path is not one.
+  fn read_link(self, path: Str) -> Str? ! FsErr uses fs.read
+  /// The paths that match pattern (`*`, `?`, `[a-z]`, `**`), sorted.
+  fn glob(self, pattern: Str) -> List[Str] ! FsErr uses fs.read
+  /// An advisory lock on the file (created if missing); waits for it.
+  fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
+  /// The lock if no one holds it, else None at once.
+  fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
 }
+
+/// An open file (std.md 3.1, decision 0163). A handle; close it.
+struct File {}
+/// At most max bytes; None at the end.
+fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
+/// One line without `\n` or `\r\n`; None at the end.
+fn (f: File) read_line() -> Str? ! FsErr uses fs.read
+fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+/// Closes the file; closing it again does nothing.
+fn (f: File) close() -> () ! FsErr
+
+/// A held advisory file lock (std.md 3.1). A handle.
+struct FileLock {}
+/// Releases the lock; unlocking again does nothing.
+fn (l: FileLock) unlock()
 
 enum NetErr {
   InvalidAddr(msg: Str)
@@ -527,6 +565,13 @@ interface Env {
   /// An Env that reads only the listed variables (std.md 3.5, decision
   /// 0156).
   fn only(self, names: List[Str]) -> Env
+  /// Where a program keeps its configuration: XDG_CONFIG_HOME, else
+  /// ~/.config, ~/Library/Application Support, or %AppData% (std.md 3.5,
+  /// decision 0163).
+  fn config_dir(self) -> Str ! EnvErr uses env
+  /// Where a program keeps its cache: XDG_CACHE_HOME, else ~/.cache,
+  /// ~/Library/Caches, or %LocalAppData%.
+  fn cache_dir(self) -> Str ! EnvErr uses env
 }
 
 enum IoErr {
@@ -544,6 +589,22 @@ interface Stdio {
   fn read_line(self) -> Str? ! IoErr uses stdio
   fn read_all(self) -> Str ! IoErr uses stdio
   fn lines(self) -> List[Str] ! IoErr uses stdio
+  /// Whether standard input is a terminal (std.md 3.6, decision 0162).
+  fn stdin_is_tty(self) -> Bool uses stdio
+  /// Whether standard output is a terminal.
+  fn stdout_is_tty(self) -> Bool uses stdio
+  /// Whether standard error is a terminal.
+  fn stderr_is_tty(self) -> Bool uses stdio
+  /// The columns of the terminal on standard output, error, or input (the
+  /// first that is one); None when none is.
+  fn width(self) -> Int? uses stdio
+  /// Writes prompt to standard error and reads a line of standard input
+  /// without echoing it (a password); None at the end of input.
+  fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+  /// At most max bytes of standard input, any bytes; None at the end.
+  fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
+  /// The rest of standard input, any bytes.
+  fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 }
 
 struct ProcOutput {
@@ -570,4 +631,49 @@ interface Proc {
   /// A Proc that runs only the listed commands (std.md 3.7, decision
   /// 0156).
   fn only(self, cmds: List[Str]) -> Proc
+  /// A command to run, not started (std.md 3.8, decision 0161).
+  fn cmd(self, name: Str, args: List[Str] = []) -> Cmd
+  /// Runs the commands with each one's output piped into the next one's
+  /// input: the last one's output, every error stream, and the status of
+  /// the rightmost failing command (std.md 3.8).
+  fn pipeline(self, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
 }
+
+/// A command that has not run (std.md 3.8, decision 0161). A value: each
+/// builder method returns a changed copy.
+struct Cmd {}
+/// The working directory of the child.
+fn (c: Cmd) dir(path: Str) -> Cmd
+/// The child's environment is exactly the variables `e` shows now (so an
+/// attenuated Env narrows it); without it the child inherits the program's.
+fn (c: Cmd) env(e: Env) -> Cmd uses env
+/// One more variable for the child.
+fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
+/// The child's standard input.
+fn (c: Cmd) stdin(data: Bytes) -> Cmd
+/// The child's standard streams are the program's own (the terminal).
+fn (c: Cmd) inherit() -> Cmd
+/// The child's standard error goes into its standard output stream.
+fn (c: Cmd) merge_stderr() -> Cmd
+/// Runs to the end and collects both streams.
+fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc
+/// Runs on the terminal and returns the exit status.
+fn (c: Cmd) run() -> Int ! ProcErr uses proc
+/// Starts the command and returns at once.
+fn (c: Cmd) spawn() -> Child ! ProcErr uses proc
+
+/// A started command (std.md 3.8). A handle.
+struct Child {}
+fn (c: Child) pid() -> Int
+/// Writes to the child's standard input.
+fn (c: Child) write(data: Bytes) -> () ! ProcErr uses proc
+fn (c: Child) close_stdin()
+/// At most max bytes of the child's output; None at the end.
+fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
+/// At most max bytes of the child's error stream; None at the end.
+fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
+/// One line of the child's output, without `\n` or `\r\n`.
+fn (c: Child) read_line() -> Str? ! ProcErr uses proc
+/// Closes the child's input, waits for it, and returns its status.
+fn (c: Child) wait() -> Int ! ProcErr uses proc
+fn (c: Child) kill()

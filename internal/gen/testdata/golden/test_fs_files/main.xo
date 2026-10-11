@@ -1,0 +1,80 @@
+// Files on a test's MemFs (std.md 3.1, 8.3; decision 0163): handles,
+// append, copy, modes, symbolic links, globs, locks that wait between
+// tasks, and config_dir and cache_dir from a FakeEnv.
+
+test "handles stream and append" {
+  let w = os.fs.create("dir/a.txt").or_fault("created")
+  w.write(b"one\ntwo\r\n").or_fault("written")
+  w.close().or_fault("closed")
+  os.fs.append("dir/a.txt", b"three").or_fault("appended")
+  let r = os.fs.open("dir/a.txt").or_fault("opened")
+  expect(r.read_line()) == Ok(Some("one"))
+  expect(r.read(3)) == Ok(Some(b"two"))
+  expect(r.read_line()) == Ok(Some(""))
+  expect(r.read_line()) == Ok(Some("three"))
+  expect(r.read_line()) == Ok(None)
+  expect(r.write(b"x").is_err()) == true
+  expect(os.fs.read_text("dir/a.txt")) == Ok("one\ntwo\r\nthree")
+  expect(os.fs.open("nope").is_err()) == true
+}
+
+test "copy keeps the mode" {
+  os.fs.write("run.sh", b"echo").or_fault("written")
+  expect(os.fs.mode("run.sh")) == Ok(0o644)
+  os.fs.set_mode("run.sh", 0o700).or_fault("chmod")
+  os.fs.copy("run.sh", "bin/run.sh").or_fault("copied")
+  expect(os.fs.mode("bin/run.sh")) == Ok(0o700)
+  expect(os.fs.read("bin/run.sh")) == Ok(b"echo")
+  os.fs.create_dir_all("d").or_fault("dir")
+  expect(os.fs.mode("d")) == Ok(0o755)
+}
+
+test "symbolic links" {
+  os.fs.write("data/real.txt", b"R").or_fault("written")
+  os.fs.symlink("real.txt", "data/link").or_fault("linked")
+  expect(os.fs.read_text("data/link")) == Ok("R")
+  expect(os.fs.read_link("data/link")) == Ok(Some("real.txt"))
+  expect(os.fs.read_link("data/real.txt")) == Ok(None)
+  expect(os.fs.stat("data/link").or_fault("stat").map(fn(i) { i.size })) == Some(1)
+  let sub = os.fs.sub("data")
+  expect(sub.symlink("../../x", "out").is_err()) == true
+  expect(os.fs.symlink("real.txt", "data/link").is_err()) == true
+}
+
+test "globs" {
+  for p in ["a.txt", "b.md", "src/x.txt", "src/deep/y.txt", ".hidden.txt"] {
+    os.fs.write(p, b"").or_fault("written")
+  }
+  expect(os.fs.glob("*.txt")) == Ok(["a.txt"])
+  expect(os.fs.glob("**/*.txt")) == Ok(["a.txt", "src/deep/y.txt", "src/x.txt"])
+  expect(os.fs.glob("src/*")) == Ok(["src/deep", "src/x.txt"])
+  expect(os.fs.glob(".*")) == Ok([".hidden.txt"])
+}
+
+test "a lock waits for its holder" {
+  let fs = os.fs
+  let held = fs.lock("app.lock").or_fault("locked")
+  expect(fs.try_lock("app.lock").or_fault("tried").is_none()) == true
+  var order: List[Str] = []
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      let l = fs.lock("app.lock").or_fault("second lock")
+      l.unlock()
+      "second"
+    })
+    os.clock.sleep(1s)
+    order.push("first")
+    held.unlock()
+    order.push(t.await)
+  }
+  expect(order) == ["first", "second"]
+}
+
+test "config and cache directories" {
+  os.env.set("HOME", "/home/me")
+  os.env.set("XDG_CACHE_HOME", "/tmp/c")
+  expect(os.env.cache_dir()) == Ok("/tmp/c")
+  os.env.set("XDG_CONFIG_HOME", "relative/ignored")
+  expect(os.env.config_dir().map(fn(d) { d.starts_with("/home/me/") })) == Ok(true)
+  expect(os.env.only(["XDG_CACHE_HOME"]).config_dir().is_err()) == true
+}

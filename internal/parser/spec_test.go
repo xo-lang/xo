@@ -206,6 +206,10 @@ func TestSpecStdExamples(t *testing.T) {
 	parsed, pseudo := 0, 0
 	for _, f := range fences {
 		name := fmt.Sprintf("std.md:%d", f.line)
+		if f.info == "text" {
+			// program output (a help text), not Xo
+			continue
+		}
 		src := strings.ReplaceAll(f.body, "([var] ", "(var ")
 		if r := parseExample(src); r.mode != "fail" {
 			parsed++

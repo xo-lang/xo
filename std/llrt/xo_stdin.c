@@ -212,3 +212,126 @@ xo_rstr *xo_stdin_msg(int64_t *len) {
 	*len = n;
 	return s;
 }
+
+// xo_stdin_read_bytes reads at most max bytes of standard input, waiting
+// for some (std.md 3.6, decision 0162): xo_stdin_status then tells 0 the
+// bytes, 1 the end of input, 2 a read error, 3 canceled or stopped, as for
+// xo_stdin_read.
+xo_rstr *xo_stdin_read_bytes(int64_t max, int64_t *len) {
+	xo_ctx *c = ctx();
+	*len = 0;
+	n_stdin_status = 3;
+	if (sin_stopped(c)) {
+		return rs_new(0);
+	}
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		pthread_mutex_lock(&tw_in.mu);
+		size_t n = tw_in.len - tw_in.off;
+		if (n > (size_t)max) {
+			n = (size_t)max;
+		}
+		xo_rstr *s = rs_new((int64_t)n);
+		if (n > 0) {
+			memcpy(s->data, tw_in.text + tw_in.off, n);
+		}
+		tw_in.off += n;
+		pthread_mutex_unlock(&tw_in.mu);
+		*len = (int64_t)n;
+		n_stdin_status = n > 0 ? 0 : 1;
+		return s;
+	}
+	while (__atomic_exchange_n(&sin_st.busy, 1, __ATOMIC_ACQUIRE)) {
+		if (clock_wait(c, 1000000) || xo_stop_requested()) {
+			return rs_new(0);
+		}
+	}
+	xo_rstr *s = NULL;
+	for (;;) {
+		if (sin_st.len > 0) {
+			size_t n = sin_st.len < (size_t)max ? sin_st.len : (size_t)max;
+			s = sin_take(n, 0, len);
+			n_stdin_status = 0;
+			break;
+		}
+		if (sin_st.err) {
+			n_stdin_errno = sin_st.err;
+			sin_st.err = 0;
+			n_stdin_status = 2;
+			break;
+		}
+		if (sin_st.eof) {
+			n_stdin_status = 1;
+			break;
+		}
+		if (sin_fill(c)) {
+			break;
+		}
+	}
+	__atomic_store_n(&sin_st.busy, 0, __ATOMIC_RELEASE);
+	return s ? s : rs_new(0);
+}
+
+// Terminals (decision 0162). A test binary's streams are terminals only
+// after FakeStdio.set_tty, of the width it gave.
+
+#include <sys/ioctl.h>
+#include <termios.h>
+
+static int64_t tw_tty_width;
+
+// xo_tw_set_tty is `stdio.set_tty(width)`.
+void xo_tw_set_tty(int64_t w) { __atomic_store_n(&tw_tty_width, w > 0 ? w : 0, __ATOMIC_RELAXED); }
+
+// xo_isatty is whether descriptor fd is a terminal.
+int64_t xo_isatty(int64_t fd) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		return __atomic_load_n(&tw_tty_width, __ATOMIC_RELAXED) > 0;
+	}
+	return isatty((int)fd) ? 1 : 0;
+}
+
+// xo_term_width is the columns of the terminal on standard output, error,
+// or input (the first that is one), or 0.
+int64_t xo_term_width(void) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		return __atomic_load_n(&tw_tty_width, __ATOMIC_RELAXED);
+	}
+	static const int fds[3] = {1, 2, 0};
+	for (int i = 0; i < 3; i++) {
+		struct winsize ws;
+		if (ioctl(fds[i], TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+			return ws.ws_col;
+		}
+	}
+	return 0;
+}
+
+static struct termios sin_saved_tio;
+static int sin_echo_off;
+
+// xo_stdin_echo turns standard input's echo off (on false), remembering
+// the settings, or restores them (on true). Turning it off returns 1 when
+// standard input is a terminal whose echo it turned off.
+int64_t xo_stdin_echo(int64_t on) {
+	if (tw_is_fake(TW_REAL_STDIO)) {
+		return 0;
+	}
+	if (on) {
+		if (sin_echo_off) {
+			tcsetattr(0, TCSANOW, &sin_saved_tio);
+			sin_echo_off = 0;
+		}
+		return 0;
+	}
+	struct termios t;
+	if (tcgetattr(0, &t) != 0) {
+		return 0;
+	}
+	sin_saved_tio = t;
+	t.c_lflag &= ~(tcflag_t)ECHO;
+	if (tcsetattr(0, TCSANOW, &t) != 0) {
+		return 0;
+	}
+	sin_echo_off = 1;
+	return 1;
+}

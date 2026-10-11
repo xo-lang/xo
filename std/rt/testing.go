@@ -391,14 +391,15 @@ func errorText(tk *Task, e any, tr *Trace) string {
 
 func newTestOs(w *World, seed int64, tasks Task_Group) Testing_TestOs {
 	fs := &memFs{w: w, caseSensitive: true, nodes: map[string]*memNode{"": {dir: true}}}
+	stdio := &fakeStdio{}
 	return Testing_TestOs{
 		F_net:   Testing_FakeNet{n: &fakeNet{listeners: map[string]*memListener{}}},
 		F_fs:    Testing_MemFs{v: &memView{fs: fs}},
 		F_clock: Testing_FakeClock{w: w},
 		F_rand:  &seededRand{r: rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))},
 		F_env:   Testing_FakeEnv{e: &fakeEnv{}},
-		F_stdio: Testing_FakeStdio{s: &fakeStdio{}},
-		F_proc:  Testing_FakeProc{p: &fakeProc{runs: map[string]ProcOutput{}}},
+		F_stdio: Testing_FakeStdio{s: stdio},
+		F_proc:  Testing_FakeProc{p: &fakeProc{runs: map[string]ProcOutput{}, stdio: stdio}},
 		F_tasks: tasks,
 	}
 }
@@ -672,6 +673,7 @@ type fakeStdio struct {
 	errb   strings.Builder
 	input  string
 	offset int
+	width  int64 // set_tty: terminals of this width (0: not terminals)
 }
 
 // Testing_FakeStdio is the captured standard streams of a test.
@@ -778,6 +780,7 @@ type fakeProc struct {
 	runs    map[string]ProcOutput
 	signals []Duration       // signals for the next run_main, from its start
 	grace   Option[Duration] // grace period for the next run_main
+	stdio   *fakeStdio       // the test's, where Cmd.run writes (decision 0161)
 }
 
 // Testing_FakeProc is the fake process control of a test.
@@ -1127,6 +1130,10 @@ type memNode struct {
 	data Bytes
 	mod  Time
 	name string // path with original case
+	// set_mode's permission bits (decision 0163); without, 0o644 or 0o755
+	mode    int64
+	hasMode bool
+	link    string // a symbolic link's target
 }
 
 type memFail struct {
@@ -1142,6 +1149,7 @@ type memFs struct {
 	caseSensitive bool
 	fails         []memFail
 	tempSeq       int
+	locks         map[string]*lock // FileLock, by key (decision 0163)
 }
 
 type memView struct {
@@ -1371,6 +1379,17 @@ func (f Testing_MemFs) M_stat(tk *Task, p string) Result[Option[FileInfo], FsErr
 	if n == nil {
 		return Ok[Option[FileInfo], FsErr](Option[FileInfo]{})
 	}
+	if n.link != "" {
+		// a symbolic link: the target's information under the link's name
+		t, ok := f.v.fs.follow(full)
+		tn := f.v.fs.get(t)
+		if !ok || tn == nil {
+			return Ok[Option[FileInfo], FsErr](Option[FileInfo]{})
+		}
+		info := f.v.info(tn)
+		info.F_name, info.F_path = path.Base(n.name), f.v.rel(n.name)
+		return Ok[Option[FileInfo], FsErr](Some(info))
+	}
 	return Ok[Option[FileInfo], FsErr](Some(f.v.info(n)))
 }
 
@@ -1396,6 +1415,9 @@ func (f Testing_MemFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {
 	defer f.v.fs.mu.Unlock()
 	if e := f.v.fs.failed(opRead, full); e != nil {
 		return Err[Bytes](*e)
+	}
+	if t, ok := f.v.fs.follow(full); ok {
+		full = t
 	}
 	n := f.v.fs.get(full)
 	switch {

@@ -1,0 +1,28 @@
+// std/toml (spec/std.md 19, decision 0164). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. TOML 1.0 configuration
+// files decoded into the same types as JSON (`derive Json`, std.md 5):
+// a table is an object, an array an array, a date or time its RFC 3339
+// text. Pure.
+use std/json
+
+/// Displays as `toml: line 3: expected a value after =`.
+struct TomlErr {
+  line: Int
+  msg: Str
+}
+
+fn (e: TomlErr) display() -> Str
+
+/// The document decoded into T by the rules of json.decode; a document
+/// that is not valid TOML is TomlErr.
+fn decode[T: Json](text: Str) -> T ! DecodeErr
+/// The document as JSON text, its keys in document order.
+fn to_json(text: Str) -> Str ! TomlErr
+
+/// Why decode failed: the text is not TOML, or its values do not fit T.
+enum DecodeErr {
+  Syntax(err: TomlErr)
+  Value(err: json.DecodeErr)
+}
+
+fn (e: DecodeErr) display() -> Str

@@ -1,0 +1,1109 @@
+// std/cli on the native backends (decisions 0074 and 0160). std/rt's
+// cli.go is the reference: the same rules, help text, usage errors, and
+// faults, byte for byte (the golden programs cli_* run on every backend).
+use std/cli
+use native/rt
+
+// ---------------------------------------------------------------------------
+// Types: the implementations of the std handles
+
+// kinds of flags
+const BOOL: Int = 0
+const STR: Int = 1
+const INT: Int = 2
+const DUR: Int = 3
+const CHOICE: Int = 4
+const STRS: Int = 5
+
+struct Flag {
+  name: Str
+  short: Str
+  help: Str
+  env: Str
+  kind: Int
+  def_str: Str
+  def_int: Int
+  def_dur: Duration
+  required: Bool
+  value: Str
+  choices: List[Str]
+}
+
+struct Arg {
+  name: Str
+  help: Str
+  optional: Bool
+  rest: Bool
+  min: Int
+}
+
+struct Command {
+  name: Str
+  help: Str
+  version: Str
+  flags: List[Flag]
+  args: List[Arg]
+  cmds: List[Command]
+}
+
+struct Val {
+  set: Bool
+  b: Bool
+  s: Str
+  i: Int
+  d: Duration
+  l: List[Str]
+}
+
+/// The flags of the selected commands (`active`, names unique) with their
+/// values, and the positional arguments of the last command by name.
+struct Parsed {
+  root: Command
+  path: List[Command]
+  active: List[Flag]
+  vals: List[Val]
+  arg_vals: Map[Str, List[Str]]
+}
+
+fn kind_name(k: Int) -> Str {
+  ["bool", "str", "int", "duration", "choice", "strs"][k]
+}
+
+fn readers(k: Int) -> Str {
+  ["bool", "str or str_opt", "int or int_opt", "duration or duration_opt", "str or str_opt", "strs"][k]
+}
+
+fn clierr_display(e: cli.CliErr) -> Str {
+  match e {
+    cli.CliErr.Help(text) => text
+    cli.CliErr.Version(text) => text
+    cli.CliErr.Usage(msg, _) => msg
+  }
+}
+
+fn clierr_exit_code(e: cli.CliErr) -> Int {
+  match e {
+    cli.CliErr.Usage(_, _) => 2
+    _ => 0
+  }
+}
+
+fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "") -> Command {
+  Command{name: name, help: help, version: version, flags: flags, args: args, cmds: commands}
+}
+
+fn new_flag(name: Str, help: Str, short: Str, env: Str, kind: Int) -> Flag {
+  Flag{name: name, short: short, help: help, env: env, kind: kind, def_str: "", def_int: 0, def_dur: 0s, required: false, value: "", choices: []}
+}
+
+fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag {
+  new_flag(name, help, short, env, BOOL)
+}
+
+fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "", required: Bool = false, value: Str = "str") -> Flag {
+  new_flag(name, help, short, env, STR) with {def_str: default, required: required, value: value}
+}
+
+fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "", required: Bool = false) -> Flag {
+  new_flag(name, help, short, env, INT) with {def_int: default, required: required, value: "int"}
+}
+
+fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "", required: Bool = false) -> Flag {
+  new_flag(name, help, short, env, DUR) with {def_dur: default, required: required, value: "duration"}
+}
+
+fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "", env: Str = "", required: Bool = false) -> Flag {
+  new_flag(name, help, short, env, CHOICE) with {def_str: default, required: required, value: choices.join("|"), choices: choices}
+}
+
+fn strs_flag(name: Str, help: Str, short: Str = "", env: Str = "", value: Str = "str") -> Flag {
+  new_flag(name, help, short, env, STRS) with {value: value}
+}
+
+fn arg(name: Str, help: Str, optional: Bool = false) -> Arg {
+  Arg{name: name, help: help, optional: optional, rest: false, min: 0}
+}
+
+fn rest(name: Str, help: Str, min: Int = 0) -> Arg {
+  Arg{name: name, help: help, optional: false, rest: true, min: min}
+}
+
+// ---------------------------------------------------------------------------
+// Validation: mistakes in the declaration are faults.
+
+fn is_lower_or_digit(c: Int) -> Bool { c >= 97 && c <= 122 || c >= 48 && c <= 57 }
+
+fn flag_name_ok(s: Str) -> Bool {
+  if s == "" {
+    return false
+  }
+  for i in 0..s.len() {
+    let c = rt.str_byte(s, i)
+    if !(is_lower_or_digit(c) || i > 0 && c == 45) {
+      return false
+    }
+  }
+  true
+}
+
+fn short_name_ok(s: Str) -> Bool {
+  if s.len() != 1 {
+    return false
+  }
+  let c = rt.str_byte(s, 0)
+  is_lower_or_digit(c) || c >= 65 && c <= 90
+}
+
+fn cmd_name_ok(s: Str) -> Bool {
+  if s == "" || s.starts_with("-") {
+    return false
+  }
+  for i in 0..s.len() {
+    let c = rt.str_byte(s, i)
+    if !(is_lower_or_digit(c) || c >= 65 && c <= 90 || c == 46 || c == 95 || c == 45) {
+      return false
+    }
+  }
+  true
+}
+
+fn validate(c: Command, outer: List[Flag], version: Bool, at: rt.Loc) {
+  if !cmd_name_ok(c.name) {
+    rt.fault_at("cli: command name ${c.name.quote()} must be letters, digits, ., _, and - (not first)", at)
+  }
+  var seen = outer
+  for f in c.flags {
+    if !flag_name_ok(f.name) {
+      rt.fault_at("cli: flag name ${f.name.quote()} must be lowercase letters, digits, and - (command ${c.name})", at)
+    }
+    if f.name == "help" || version && f.name == "version" {
+      rt.fault_at("cli: flag --${f.name} is reserved (command ${c.name})", at)
+    }
+    if f.short != "" && !short_name_ok(f.short) {
+      rt.fault_at("cli: short name ${f.short.quote()} of --${f.name} must be one letter or digit", at)
+    }
+    if f.short == "h" {
+      rt.fault_at("cli: short name -h of --${f.name} is reserved for --help", at)
+    }
+    for o in seen {
+      if o.name == f.name {
+        rt.fault_at("cli: flag --${f.name} is declared twice (command ${c.name})", at)
+      }
+      if f.short != "" && o.short == f.short {
+        rt.fault_at("cli: short name -${f.short} is used by --${o.name} and --${f.name}", at)
+      }
+    }
+    if f.kind == CHOICE {
+      if f.choices.is_empty() {
+        rt.fault_at("cli: choice flag --${f.name} has no choices", at)
+      }
+      if f.def_str != "" && !f.choices.contains(f.def_str) {
+        rt.fault_at("cli: default ${f.def_str.quote()} of --${f.name} is not one of its choices", at)
+      }
+    }
+    seen.push(f)
+  }
+  if !c.args.is_empty() && !c.cmds.is_empty() {
+    rt.fault_at("cli: command ${c.name} has both positional arguments and subcommands", at)
+  }
+  var optional = false
+  for i in 0..c.args.len() {
+    let a = c.args[i]
+    if a.name == "" {
+      rt.fault_at("cli: an argument of command ${c.name} has no name", at)
+    }
+    for j in 0..i {
+      if c.args[j].name == a.name {
+        rt.fault_at("cli: argument <${a.name}> is declared twice (command ${c.name})", at)
+      }
+    }
+    if a.rest && i != c.args.len() - 1 {
+      rt.fault_at("cli: rest argument <${a.name}> must be the last argument (command ${c.name})", at)
+    }
+    if !a.rest && !a.optional && optional {
+      rt.fault_at("cli: required argument <${a.name}> follows an optional one (command ${c.name})", at)
+    }
+    if a.optional || a.rest {
+      optional = true
+    }
+  }
+  for i in 0..c.cmds.len() {
+    let s = c.cmds[i]
+    for j in 0..i {
+      if c.cmds[j].name == s.name {
+        rt.fault_at("cli: command ${s.name} is declared twice under ${c.name}", at)
+      }
+    }
+    validate(s, seen, version, at)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Help and usage text
+
+fn path_name(path: List[Command]) -> Str {
+  path.map(fn(c) { c.name }).join(" ")
+}
+
+fn arg_label(a: Arg) -> Str {
+  if a.rest && a.min > 0 {
+    return "<${a.name}>..."
+  }
+  if a.rest {
+    return "[<${a.name}>...]"
+  }
+  if a.optional {
+    return "[<${a.name}>]"
+  }
+  "<${a.name}>"
+}
+
+fn usage_line(path: List[Command]) -> Str {
+  let c = path[path.len() - 1]
+  var s = "Usage: ${path_name(path)} [flags]"
+  if !c.cmds.is_empty() {
+    return s + " <command>"
+  }
+  for a in c.args {
+    s = s + " " + arg_label(a)
+  }
+  s
+}
+
+fn usage_text(path: List[Command]) -> Str {
+  usage_line(path) + "\n\nRun '" + path_name(path) + " --help' for more information."
+}
+
+fn flag_left(f: Flag) -> Str {
+  var s = "    --" + f.name
+  if f.short != "" {
+    s = "-" + f.short + ", --" + f.name
+  }
+  if f.kind != BOOL {
+    s = s + " <" + f.value + ">"
+  }
+  s
+}
+
+fn add_note(s: Str, x: Str) -> Str {
+  if s == "" {
+    return x
+  }
+  s + " " + x
+}
+
+fn flag_help(f: Flag) -> Str {
+  var s = f.help
+  if (f.kind == STR || f.kind == CHOICE) && f.def_str != "" {
+    s = add_note(s, "[default: ${f.def_str}]")
+  }
+  if f.kind == INT && f.def_int != 0 {
+    s = add_note(s, "[default: ${f.def_int}]")
+  }
+  if f.kind == DUR && f.def_dur != 0s {
+    s = add_note(s, "[default: ${f.def_dur}]")
+  }
+  if f.env != "" {
+    s = add_note(s, "[env: ${f.env}]")
+  }
+  if f.required {
+    s = add_note(s, "[required]")
+  }
+  if f.kind == STRS {
+    s = add_note(s, "[repeatable]")
+  }
+  s
+}
+
+struct Row {
+  left: Str
+  right: Str
+}
+
+struct Section {
+  title: Str
+  rows: List[Row]
+}
+
+fn help_text(path: List[Command]) -> Str {
+  let root = path[0]
+  let c = path[path.len() - 1]
+  var secs: List[Section] = []
+  if !c.cmds.is_empty() {
+    secs.push(Section{title: "Commands:", rows: c.cmds.map(fn(s) { Row{left: s.name, right: s.help} })})
+  }
+  if !c.args.is_empty() {
+    secs.push(Section{title: "Arguments:", rows: c.args.map(fn(a) { Row{left: arg_label(a), right: a.help} })})
+  }
+  var rows = c.flags.map(fn(f) { Row{left: flag_left(f), right: flag_help(f)} })
+  rows.push(Row{left: "-h, --help", right: "show this help"})
+  if root.version != "" {
+    rows.push(Row{left: "    --version", right: "show the version"})
+  }
+  secs.push(Section{title: "Flags:", rows: rows})
+  var global: List[Row] = []
+  for i in 0..path.len() - 1 {
+    for f in path[i].flags {
+      global.push(Row{left: flag_left(f), right: flag_help(f)})
+    }
+  }
+  if !global.is_empty() {
+    secs.push(Section{title: "Global flags:", rows: global})
+  }
+  var w = 0
+  for s in secs {
+    for r in s.rows {
+      if r.left.len() > w {
+        w = r.left.len()
+      }
+    }
+  }
+  var b = StrBuilder.new()
+  if c.help != "" {
+    b.write(c.help + "\n\n")
+  }
+  b.write(usage_line(path))
+  for s in secs {
+    b.write("\n\n" + s.title)
+    for r in s.rows {
+      b.write("\n  " + r.left)
+      if r.right != "" {
+        b.write(" ".repeat(w - r.left.len() + 2) + r.right)
+      }
+    }
+  }
+  b.freeze()
+}
+
+fn help(cmd: Command, path: Str = "", at: rt.Loc) -> Str {
+  validate(cmd, [], cmd.version != "", at)
+  var p = [cmd]
+  if path != "" {
+    for w in path.split(" ") {
+      let cur = p[p.len() - 1]
+      match cur.cmds.find(fn(s) { s.name == w }) {
+        Some(next) => p.push(next)
+        None => rt.fault_at("cli: no command ${path.quote()} in ${cmd.name}", at)
+      }
+    }
+  }
+  help_text(p)
+}
+
+// ---------------------------------------------------------------------------
+// Parsing
+
+fn distance(a: Str, b: Str) -> Int {
+  var prev: List[Int] = []
+  for j in 0..=b.len() {
+    prev.push(j)
+  }
+  for i in 1..=a.len() {
+    var cur = [i]
+    for j in 1..=b.len() {
+      var cost = 1
+      if rt.str_byte(a, i - 1) == rt.str_byte(b, j - 1) {
+        cost = 0
+      }
+      cur.push((prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost))
+    }
+    prev = cur
+  }
+  prev[b.len()]
+}
+
+/// The candidate closest to s (at most 2 edits, fewer than the length of
+/// s), the first one on a tie, or "".
+fn suggest(s: Str, cands: List[Str]) -> Str {
+  var best = ""
+  var bd = 3
+  for c in cands {
+    let d = distance(s, c)
+    if d < bd && d < s.len() {
+      best = c
+      bd = d
+    }
+  }
+  best
+}
+
+fn value_err(f: Flag, v: Str, env: Str, want: Str) -> Str {
+  var msg = "invalid value ${v.quote()} for --${f.name}"
+  if env != "" {
+    msg = msg + " (from $" + env + ")"
+  }
+  msg + ": expected " + want
+}
+
+/// Records value v for f in x; Err(the usage message) when v is not valid
+/// (env is the variable it came from, or "").
+fn set_val(f: Flag, var x: Val, v: Str, env: Str) -> () ! Str {
+  if f.kind == BOOL {
+    if v == "true" || v == "1" {
+      x.b = true
+    } else if v == "false" || v == "0" {
+      x.b = false
+    } else {
+      return Err(value_err(f, v, env, "true or false"))
+    }
+  } else if f.kind == STR {
+    x.s = v
+  } else if f.kind == CHOICE {
+    if !f.choices.contains(v) {
+      return Err(value_err(f, v, env, "one of " + f.choices.join(", ")))
+    }
+    x.s = v
+  } else if f.kind == INT {
+    match Int.parse(v) {
+      Some(n) => x.i = n
+      None => return Err(value_err(f, v, env, "an integer"))
+    }
+  } else if f.kind == DUR {
+    match Duration.parse(v) {
+      Ok(d) => x.d = d
+      Err(_) => return Err(value_err(f, v, env, "a duration such as 30s or 1m30s"))
+    }
+  } else if env != "" {
+    x.l = x.l + v.split(",")
+  } else {
+    x.l.push(v)
+  }
+  x.set = true
+  Ok(())
+}
+
+fn index_of_name(fs: List[Flag], name: Str) -> Int? {
+  var r: Int? = None
+  for i in 0..fs.len() {
+    if fs[i].name == name {
+      r = Some(i)
+    }
+  }
+  r
+}
+
+fn index_of_short(fs: List[Flag], c: Str) -> Int? {
+  var r: Int? = None
+  for i in 0..fs.len() {
+    if fs[i].short == c {
+      r = Some(i)
+    }
+  }
+  r
+}
+
+fn empty_val() -> Val { Val{set: false, b: false, s: "", i: 0, d: 0s, l: []} }
+
+/// The parse of args; Err(the CliErr) for help, version, or a usage error.
+fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! cli.CliErr uses env {
+  let version = root.version != ""
+  validate(root, [], version, at)
+  var path = [root]
+  var active: List[Flag] = []
+  var vals: List[Val] = []
+  for f in root.flags {
+    active.push(f)
+    vals.push(empty_val())
+  }
+  var pos: List[Str] = []
+  var dashes = false
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    let cur = path[path.len() - 1]
+    if dashes {
+      pos.push(a)
+    } else if a == "--" {
+      dashes = true
+    } else if a.starts_with("--") {
+      let body = rt.str_slice(a, 2, a.len())
+      var name = body
+      var val = ""
+      var has = false
+      match body.find("=") {
+        Some(k) => {
+          name = rt.str_slice(body, 0, k)
+          val = rt.str_slice(body, k + 1, body.len())
+          has = true
+        }
+        None => ()
+      }
+      if name == "help" {
+        return Err(cli.CliErr.Help(text: help_text(path)))
+      }
+      if version && name == "version" {
+        return Err(cli.CliErr.Version(text: root.name + " " + root.version))
+      }
+      match index_of_name(active, name) {
+        None => {
+          var cands = active.map(fn(f) { f.name })
+          cands.push("help")
+          if version {
+            cands.push("version")
+          }
+          var msg = "unknown flag --" + name
+          let s = suggest(name, cands)
+          if s != "" {
+            msg = msg + " (did you mean --" + s + "?)"
+          }
+          return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+        }
+        Some(fi) => {
+          let f = active[fi]
+          if f.kind == BOOL && !has {
+            val = "true"
+          } else if !has {
+            if i + 1 >= args.len() {
+              return Err(cli.CliErr.Usage(msg: "flag --${f.name} needs a value", usage: usage_text(path)))
+            }
+            i += 1
+            val = args[i]
+          }
+          var x = vals[fi]
+          match set_val(f, x, val, "") {
+            Ok(_) => vals[fi] = x
+            Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+          }
+        }
+      }
+    } else if a.starts_with("-") && a.len() > 1 {
+      let cl = rt.str_slice(a, 1, a.len())
+      var j = 0
+      while j < cl.len() {
+        let c = rt.str_slice(cl, j, j + 1)
+        if c == "h" {
+          return Err(cli.CliErr.Help(text: help_text(path)))
+        }
+        match index_of_short(active, c) {
+          None => return Err(cli.CliErr.Usage(msg: "unknown flag -" + c, usage: usage_text(path)))
+          Some(fi) => {
+            let f = active[fi]
+            var x = vals[fi]
+            if f.kind == BOOL {
+              match set_val(f, x, "true", "") {
+                Ok(_) => vals[fi] = x
+                Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+              }
+              j += 1
+              continue
+            }
+            var val = rt.str_slice(cl, j + 1, cl.len()).trim_prefix("=")
+            if j + 1 >= cl.len() {
+              if i + 1 >= args.len() {
+                return Err(cli.CliErr.Usage(msg: "flag --${f.name} needs a value", usage: usage_text(path)))
+              }
+              i += 1
+              val = args[i]
+            }
+            match set_val(f, x, val, "") {
+              Ok(_) => vals[fi] = x
+              Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+            }
+            j = cl.len()
+          }
+        }
+      }
+    } else if !cur.cmds.is_empty() {
+      match cur.cmds.find(fn(s) { s.name == a }) {
+        Some(next) => {
+          path.push(next)
+          for f in next.flags {
+            active.push(f)
+            vals.push(empty_val())
+          }
+        }
+        None => {
+          var msg = "unknown command ${a.quote()}"
+          let s = suggest(a, cur.cmds.map(fn(c) { c.name }))
+          if s != "" {
+            msg = msg + " (did you mean " + s + "?)"
+          }
+          return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+        }
+      }
+    } else {
+      pos.push(a)
+    }
+    i += 1
+  }
+  let cur = path[path.len() - 1]
+  if !cur.cmds.is_empty() {
+    let names = cur.cmds.map(fn(c) { c.name }).join(", ")
+    return Err(cli.CliErr.Usage(msg: "missing command (one of ${names})", usage: usage_text(path)))
+  }
+  for fi in 0..active.len() {
+    let f = active[fi]
+    var x = vals[fi]
+    if !x.set && f.env != "" {
+      match env.get(f.env) {
+        Some(v) => {
+          if v != "" {
+            match set_val(f, x, v, f.env) {
+              Ok(_) => vals[fi] = x
+              Err(msg) => return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+            }
+          }
+        }
+        None => ()
+      }
+    }
+    if !x.set && f.required {
+      return Err(cli.CliErr.Usage(msg: "missing required flag --${f.name}", usage: usage_text(path)))
+    }
+  }
+  var arg_vals: Map[Str, List[Str]] = {}
+  var k = 0
+  for a in cur.args {
+    if a.rest {
+      var r: List[Str] = []
+      for q in k..pos.len() {
+        r.push(pos[q])
+      }
+      if r.len() < a.min {
+        return Err(cli.CliErr.Usage(msg: "missing argument <${a.name}>", usage: usage_text(path)))
+      }
+      arg_vals.put(a.name, r)
+      k = pos.len()
+    } else if k < pos.len() {
+      arg_vals.put(a.name, [pos[k]])
+      k += 1
+    } else if !a.optional {
+      return Err(cli.CliErr.Usage(msg: "missing argument <${a.name}>", usage: usage_text(path)))
+    }
+  }
+  if k < pos.len() {
+    return Err(cli.CliErr.Usage(msg: "unexpected argument ${pos[k].quote()}", usage: usage_text(path)))
+  }
+  Ok(Parsed{root: root, path: path, active: active, vals: vals, arg_vals: arg_vals})
+}
+
+fn parse(cmd: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! cli.CliErr uses env {
+  run_parse(cmd, args, env, at)
+}
+
+fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc, at: rt.Loc) -> Parsed uses (env, stdio, proc) {
+  match run_parse(cmd, env.args(), env, at) {
+    Ok(p) => p
+    Err(cli.CliErr.Help(text)) => {
+      stdio.println(text)
+      proc.exit(0)
+    }
+    Err(cli.CliErr.Version(text)) => {
+      stdio.println(text)
+      proc.exit(0)
+    }
+    Err(cli.CliErr.Usage(msg, usage)) => {
+      stdio.eprintln("error: " + msg)
+      stdio.eprintln("")
+      stdio.eprintln(usage)
+      proc.exit(2)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Accessors
+
+fn (p: Parsed) command() -> Str {
+  var ws: List[Str] = []
+  for i in 1..p.path.len() {
+    ws.push(p.path[i].name)
+  }
+  ws.join(" ")
+}
+
+fn find_flag(c: Command, name: Str) -> Flag? {
+  for f in c.flags {
+    if f.name == name {
+      return Some(f)
+    }
+  }
+  for s in c.cmds {
+    match find_flag(s, name) {
+      Some(f) => return Some(f)
+      None => ()
+    }
+  }
+  None
+}
+
+/// The flag name with its value: on the selected path, else anywhere in
+/// the tree (a flag of a command that was not selected is unset).
+fn (p: Parsed) flag(name: Str, kinds: List[Int], at: rt.Loc) -> (Flag, Val) {
+  var f: Flag? = None
+  var v = empty_val()
+  match index_of_name(p.active, name) {
+    Some(i) => {
+      f = Some(p.active[i])
+      v = p.vals[i]
+    }
+    None => f = find_flag(p.root, name)
+  }
+  match f {
+    None => rt.fault_at("cli: flag --${name} is not declared", at)
+    Some(x) => {
+      if !kinds.contains(x.kind) {
+        rt.fault_at("cli: --${name} is declared by ${kind_name(x.kind)}_flag, so read it with ${readers(x.kind)}", at)
+      }
+      (x, v)
+    }
+  }
+}
+
+fn find_arg(c: Command, name: Str) -> Arg? {
+  match c.args.find(fn(a) { a.name == name }) {
+    Some(a) => return Some(a)
+    None => ()
+  }
+  for s in c.cmds {
+    match find_arg(s, name) {
+      Some(a) => return Some(a)
+      None => ()
+    }
+  }
+  None
+}
+
+/// The positional argument name: of the selected command, else anywhere
+/// in the tree (with no value).
+fn (p: Parsed) arg_of(name: Str, at: rt.Loc) -> (Arg, List[Str]?) {
+  let cur = p.path[p.path.len() - 1]
+  match cur.args.find(fn(a) { a.name == name }) {
+    Some(a) => (a, p.arg_vals.get(name))
+    None => match find_arg(p.root, name) {
+      Some(a) => (a, None)
+      None => rt.fault_at("cli: argument <${name}> is not declared", at)
+    }
+  }
+}
+
+fn (p: Parsed) bool(name: Str, at: rt.Loc) -> Bool {
+  let (_, v) = p.flag(name, [BOOL], at)
+  v.b
+}
+
+fn (p: Parsed) str(name: Str, at: rt.Loc) -> Str {
+  let (f, v) = p.flag(name, [STR, CHOICE], at)
+  if v.set {
+    return v.s
+  }
+  f.def_str
+}
+
+fn (p: Parsed) str_opt(name: Str, at: rt.Loc) -> Str? {
+  let (_, v) = p.flag(name, [STR, CHOICE], at)
+  if v.set {
+    return Some(v.s)
+  }
+  None
+}
+
+fn (p: Parsed) int(name: Str, at: rt.Loc) -> Int {
+  let (f, v) = p.flag(name, [INT], at)
+  if v.set {
+    return v.i
+  }
+  f.def_int
+}
+
+fn (p: Parsed) int_opt(name: Str, at: rt.Loc) -> Int? {
+  let (_, v) = p.flag(name, [INT], at)
+  if v.set {
+    return Some(v.i)
+  }
+  None
+}
+
+fn (p: Parsed) duration(name: Str, at: rt.Loc) -> Duration {
+  let (f, v) = p.flag(name, [DUR], at)
+  if v.set {
+    return v.d
+  }
+  f.def_dur
+}
+
+fn (p: Parsed) duration_opt(name: Str, at: rt.Loc) -> Duration? {
+  let (_, v) = p.flag(name, [DUR], at)
+  if v.set {
+    return Some(v.d)
+  }
+  None
+}
+
+fn (p: Parsed) strs(name: Str, at: rt.Loc) -> List[Str] {
+  let (_, v) = p.flag(name, [STRS], at)
+  v.l
+}
+
+fn (p: Parsed) is_set(name: Str, at: rt.Loc) -> Bool {
+  let (_, v) = p.flag(name, [BOOL, STR, INT, DUR, CHOICE, STRS], at)
+  v.set
+}
+
+fn (p: Parsed) arg(name: Str, at: rt.Loc) -> Str {
+  let (a, v) = p.arg_of(name, at)
+  if a.rest {
+    rt.fault_at("cli: <${name}> is a rest argument; read it with rest", at)
+  }
+  if a.optional {
+    rt.fault_at("cli: <${name}> is optional; read it with arg_opt", at)
+  }
+  match v {
+    Some(xs) => xs[0]
+    None => rt.fault_at("cli: argument <${name}> belongs to a command that was not selected", at)
+  }
+}
+
+fn (p: Parsed) arg_opt(name: Str, at: rt.Loc) -> Str? {
+  let (a, v) = p.arg_of(name, at)
+  if a.rest {
+    rt.fault_at("cli: <${name}> is a rest argument; read it with rest", at)
+  }
+  v.map(fn(xs) { xs[0] })
+}
+
+fn (p: Parsed) rest(name: Str, at: rt.Loc) -> List[Str] {
+  let (a, v) = p.arg_of(name, at)
+  if !a.rest {
+    rt.fault_at("cli: <${name}> is not a rest argument; read it with arg or arg_opt", at)
+  }
+  v ?? []
+}
+
+// ---------------------------------------------------------------------------
+// Shell completions (std.md 14.5, decision 0165): std/rt's
+// cli_completion.go, the same text.
+
+struct Node {
+  path: Str
+  c: Command
+  flags: List[Flag]
+}
+
+fn nodes_of(root: Command) -> List[Node] {
+  var out: List[Node] = []
+  walk_nodes(root, root.name, [], out)
+  out
+}
+
+fn walk_nodes(c: Command, path: Str, outer: List[Flag], var out: List[Node]) {
+  let flags = outer + c.flags
+  out.push(Node{path: path, c: c, flags: flags})
+  for s in c.cmds {
+    walk_nodes(s, path + " " + s.name, flags, out)
+  }
+}
+
+/// Single quoted for bash and zsh.
+fn shq(s: Str) -> Str { "'" + s.replace("'", r"'\''") + "'" }
+
+/// Single quoted for fish.
+fn fishq(s: Str) -> Str { "'" + s.replace(r"\", r"\\").replace("'", r"\'") + "'" }
+
+fn ident(name: Str) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..name.len() {
+    let c = rt.str_byte(name, i)
+    if is_lower_or_digit(c) || c >= 65 && c <= 90 || c == 95 {
+      b.write_byte(UInt8(c))
+    } else {
+      b.write_byte(95)
+    }
+  }
+  b.freeze().to_str() ?? "_"
+}
+
+fn desc(s: Str) -> Str {
+  match s.find("\n") {
+    Some(i) => rt.str_slice(s, 0, i)
+    None => s
+  }
+}
+
+fn words_of(root: Command, n: Node) -> List[Str] {
+  var ws = n.c.cmds.map(fn(s) { s.name })
+  for f in n.flags {
+    ws.push("--" + f.name)
+    if f.short != "" {
+      ws.push("-" + f.short)
+    }
+  }
+  ws.push("--help")
+  ws.push("-h")
+  if root.version != "" {
+    ws.push("--version")
+  }
+  ws
+}
+
+fn flag_pats(n: Node, f: Flag) -> Str {
+  var p = shq(n.path + " --" + f.name)
+  if f.short != "" {
+    p = p + "|" + shq(n.path + " -" + f.short)
+  }
+  p
+}
+
+fn bash_script(root: Command) -> Str {
+  let nodes = nodes_of(root)
+  let fname = "_" + ident(root.name)
+  var l: List[Str] = [
+    "# bash completion for ${root.name}, generated by std/cli (decision 0165).",
+    fname + "() {",
+    r#"  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" cmd="# + shq(root.name) + " i",
+    "  for ((i = 1; i < COMP_CWORD; i++)); do",
+    r#"    case "$cmd ${COMP_WORDS[i]}" in"#,
+  ]
+  for k in 1..nodes.len() {
+    l.push("      " + shq(nodes[k].path) + ") cmd=" + shq(nodes[k].path) + " ;;")
+  }
+  l.push("    esac")
+  l.push("  done")
+  l.push(r#"  case "$cmd $prev" in"#)
+  for n in nodes {
+    for f in n.flags {
+      if f.kind == CHOICE {
+        l.push("    " + flag_pats(n, f) + ") COMPREPLY=($(compgen -W " + shq(f.choices.join(" ")) + r#" -- "$cur")); return ;;"#)
+      } else if f.kind != BOOL {
+        l.push("    " + flag_pats(n, f) + ") return ;;")
+      }
+    }
+  }
+  l.push("  esac")
+  l.push(r#"  case "$cmd" in"#)
+  for n in nodes {
+    l.push("    " + shq(n.path) + ") COMPREPLY=($(compgen -W " + shq(words_of(root, n).join(" ")) + r#" -- "$cur")) ;;"#)
+  }
+  l.push("  esac")
+  l.push("}")
+  l.push("complete -o default -F " + fname + " " + root.name)
+  l.join("\n") + "\n"
+}
+
+fn zsh_script(root: Command) -> Str {
+  let nodes = nodes_of(root)
+  let fname = "_" + ident(root.name)
+  var l: List[Str] = [
+    "#compdef " + root.name,
+    "# zsh completion for ${root.name}, generated by std/cli (decision 0165).",
+    fname + "() {",
+    "  local cmd=" + shq(root.name) + " i",
+    "  for ((i = 2; i < CURRENT; i++)); do",
+    r#"    case "$cmd ${words[i]}" in"#,
+  ]
+  for k in 1..nodes.len() {
+    l.push("      " + shq(nodes[k].path) + ") cmd=" + shq(nodes[k].path) + " ;;")
+  }
+  l.push("    esac")
+  l.push("  done")
+  l.push(r#"  case "$cmd ${words[CURRENT-1]}" in"#)
+  for n in nodes {
+    for f in n.flags {
+      if f.kind == CHOICE {
+        l.push("    " + flag_pats(n, f) + ") compadd -- " + f.choices.map(fn(c) { shq(c) }).join(" ") + "; return ;;")
+      } else if f.kind != BOOL {
+        l.push("    " + flag_pats(n, f) + ") _files; return ;;")
+      }
+    }
+  }
+  l.push("  esac")
+  l.push("  local -a items")
+  l.push(r#"  case "$cmd" in"#)
+  var with_args: List[Str] = []
+  for n in nodes {
+    var items = n.c.cmds.map(fn(s) { shq(s.name + ":" + desc(s.help)) })
+    for f in n.flags {
+      items.push(shq("--" + f.name + ":" + desc(f.help)))
+      if f.short != "" {
+        items.push(shq("-" + f.short + ":" + desc(f.help)))
+      }
+    }
+    items.push(shq("--help:show this help"))
+    items.push(shq("-h:show this help"))
+    if root.version != "" {
+      items.push(shq("--version:show the version"))
+    }
+    l.push("    " + shq(n.path) + ") items=(" + items.join(" ") + ") ;;")
+    if !n.c.args.is_empty() {
+      with_args.push(shq(n.path))
+    }
+  }
+  l.push("  esac")
+  l.push("  _describe " + shq(root.name) + " items")
+  if !with_args.is_empty() {
+    l.push(r#"  case "$cmd" in"#)
+    l.push("    " + with_args.join("|") + ") _files ;;")
+    l.push("  esac")
+  }
+  l.push("}")
+  l.push(r#"if [ "$funcstack[1]" = "# + shq(fname) + " ]; then")
+  l.push("  " + fname + r#" "$@""#)
+  l.push("else")
+  l.push("  compdef " + fname + " " + root.name)
+  l.push("fi")
+  l.join("\n") + "\n"
+}
+
+fn fish_script(root: Command) -> Str {
+  let nodes = nodes_of(root)
+  let s = ident(root.name)
+  var l: List[Str] = [
+    "# fish completion for ${root.name}, generated by std/cli (decision 0165).",
+    "function __" + s + "_cmd",
+    "    set -l cmd " + fishq(root.name),
+    "    for w in (commandline -opc)[2..-1]",
+    r#"        switch "$cmd $w""#,
+  ]
+  for k in 1..nodes.len() {
+    l.push("            case " + fishq(nodes[k].path))
+    l.push("                set cmd " + fishq(nodes[k].path))
+  }
+  l.push("        end")
+  l.push("    end")
+  l.push("    echo $cmd")
+  l.push("end")
+  l.push("function __" + s + "_is")
+  l.push("    test (__" + s + "_cmd) = $argv[1]")
+  l.push("end")
+  l.push("complete -c " + root.name + " -f")
+  for n in nodes {
+    let pre = "complete -c " + root.name + r#" -n "__"# + s + "_is '" + n.path + "'\""
+    for c in n.c.cmds {
+      l.push(pre + " -a " + fishq(c.name) + " -d " + fishq(desc(c.help)))
+    }
+    for f in n.flags {
+      var x = pre + " -l " + f.name
+      if f.short != "" {
+        x = x + " -s " + f.short
+      }
+      if f.kind == CHOICE {
+        x = x + " -x -a " + fishq(f.choices.join(" "))
+      } else if f.kind != BOOL {
+        x = x + " -r -F"
+      }
+      l.push(x + " -d " + fishq(desc(f.help)))
+    }
+    l.push(pre + " -l help -s h -d 'show this help'")
+    if root.version != "" {
+      l.push(pre + " -l version -d 'show the version'")
+    }
+    if !n.c.args.is_empty() {
+      l.push(pre + " -F")
+    }
+  }
+  l.join("\n") + "\n"
+}
+
+fn completion(cmd: Command, shell: Str, at: rt.Loc) -> Str ! cli.CliErr {
+  validate(cmd, [], cmd.version != "", at)
+  if shell == "bash" {
+    return bash_script(cmd)
+  }
+  if shell == "zsh" {
+    return zsh_script(cmd)
+  }
+  if shell == "fish" {
+    return fish_script(cmd)
+  }
+  Err(cli.CliErr.Usage(msg: "unknown shell ${shell.quote()} (one of bash, zsh, fish)", usage: usage_text([cmd])))
+}

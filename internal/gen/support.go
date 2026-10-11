@@ -169,6 +169,9 @@ func (f *fnGen) stdDefault(e ast.Expr, t check.Type) string {
 		return f.intLit(x.Value, t)
 	case *ast.DurationLit:
 		return fmt.Sprintf("%sDuration(%s)", r, x.Nanos)
+	case *ast.RuneLit:
+		// std/csv's separators (decision 0164)
+		return fmt.Sprintf("%sRune(%d)", r, x.Value)
 	case *ast.BytesLit:
 		return fmt.Sprintf("%sBytes(%s)", r, strconv.Quote(x.Value))
 	case *ast.StringLit:
