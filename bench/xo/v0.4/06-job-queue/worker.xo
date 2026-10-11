@@ -39,7 +39,7 @@ pub fn new_runner(q: Queue, cfg: WorkerConfig = WorkerConfig{}) -> Runner
 /// Runs the workers until `shutdown` is called. After the stop signal, running
 /// handlers get `cfg.grace` to finish; then they are canceled and their jobs
 /// are nacked. Returns only after every worker has exited.
-pub fn (r: Runner) run[fx: Effects](handler: fn(Job) -> () ! Error uses fx) uses (clock, fx) {
+pub fn (r: Runner) run[fx: Effects](handler: fn(Job) -> () ! Error uses fx) uses (clock, fx, log) {
   defer r.done.close()
   scope s {
     let workers = s.spawn(fn() {
@@ -73,7 +73,7 @@ pub fn (r: Runner) active_workers() -> Int {
 }
 
 fn (r: Runner) worker_loop[fx: Effects](worker_id: Str, handler: fn(Job) -> () ! Error uses fx)
-  uses (clock, fx)
+  uses (clock, fx, log)
 {
   r.active.add(1)
   defer r.active.add(-1)
@@ -87,7 +87,7 @@ fn (r: Runner) worker_loop[fx: Effects](worker_id: Str, handler: fn(Job) -> () !
 }
 
 fn (r: Runner) handle_one[fx: Effects](l: Lease, handler: fn(Job) -> () ! Error uses fx)
-  uses (clock, fx)
+  uses (clock, fx, log)
 {
   var settled = false
   defer {
@@ -111,7 +111,7 @@ fn (r: Runner) handle_one[fx: Effects](l: Lease, handler: fn(Job) -> () ! Error 
 }
 
 /// Extends the lease every lease_duration / 3 until canceled or the lease is lost.
-fn (r: Runner) heartbeat(l: Lease) uses clock {
+fn (r: Runner) heartbeat(l: Lease) uses clock, log {
   let every = r.cfg.lease_duration / 3
   while {
     r.clock.sleep(every)

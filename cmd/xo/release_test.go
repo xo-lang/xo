@@ -42,8 +42,13 @@ func TestEffectCeilings(t *testing.T) {
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	xo(t, "check", app).want(0)
 
-	// the upgrade adds `uses env` to now: xo get says so, the call fails
-	r := xo(t, "get", "--dir", app, "github.com/acme/tick@v1.1.0").want(0)
+	// the upgrade adds `uses env` to now: the effect lock refuses it
+	// (XO1317, decision 0156); accepted, xo get says so, the call fails
+	r := xo(t, "get", "--json", "--dir", app, "github.com/acme/tick@v1.1.0").want(1)
+	if got := diagCodes(t, r.out); got != "XO1317" {
+		t.Errorf("get of a version with more effects: %s", got)
+	}
+	r = xo(t, "get", "--accept-effects", "--dir", app, "github.com/acme/tick@v1.1.0").want(0)
 	if !strings.Contains(r.out, "github.com/acme/tick.now now uses env") || !strings.Contains(r.out, "above the effect ceiling") {
 		t.Errorf("xo get does not print the effect change:\n%s", r.out)
 	}

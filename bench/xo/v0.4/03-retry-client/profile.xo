@@ -31,7 +31,7 @@ pub fn fetch_profile(
   user_id: Int,
   policy: RetryPolicy = RetryPolicy{},
 ) -> Profile ! ProfileErr
-  uses (net.dial, clock, rand)
+  uses (net.dial, clock, rand, log)
   requires user_id > 0
 {
   let body = get_with_retry(net, clock, rand, "${base_url}/users/${user_id}", policy)?

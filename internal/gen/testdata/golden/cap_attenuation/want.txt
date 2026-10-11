@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+dial allowed host: connected
+dial other host: Denied(addr: "203.0.113.7:443")
+dial name: Denied(addr: "evil.example:80")
+listen on every interface: Denied(addr: ":0")
+subdomain entry, bare domain: Denied(addr: "example.com:80")
+host:port entry, other port: Denied(addr: "127.0.0.1:10")
+intersection: Denied(addr: "a.test:1")
+http: Connect(msg: "denied by Net.only: evil.example:80")
+env get unlisted: false
+env vars unlisted: false
+env home: Missing(name: "HOME")
+env args still readable: 0
+proc: Denied(cmd: "sh")
+--- stderr

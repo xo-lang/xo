@@ -949,6 +949,35 @@ func (c *checker) elidedEffectNote(d *diag.Diagnostic, sub, sup *flatEff, ob eff
 	}
 }
 
+// addLogFix attaches a machine fix to an XO0701 whose only missing
+// effect is `log`: add `log` to the function's `uses` clause, or a new
+// `uses log` when it has none (decision 0156). Logging became the effect
+// `log`, so pub functions that log declare it; `xo fix` rewrites code
+// written while logging was ambient.
+func (c *checker) addLogFix(d *diag.Diagnostic, fd *ast.FnDecl) {
+	for _, cl := range fd.Clauses {
+		u, ok := cl.(*ast.UsesClause)
+		if !ok || len(u.Effects) == 0 {
+			continue
+		}
+		last := u.Effects[len(u.Effects)-1].Sp
+		fix(d, "add `log` to the `uses` clause", insertEdit(last.File, last.End, ", log"))
+		return
+	}
+	// no `uses` clause: insert one after the signature (the result, the
+	// error spec, or nothing before the body). Only when there is a
+	// place a point edit can name; otherwise report without a fix.
+	var at token.Pos
+	if fd.Err != nil {
+		at = fd.Err.Sp.End
+	} else if fd.Result != nil {
+		at = fd.Result.Span().End
+	} else {
+		return
+	}
+	fix(d, "add a `uses log` clause", insertEdit(fd.Name.Sp.File, at, " uses log"))
+}
+
 // usesClauseSpan is the span of ` uses ...` in a closure literal, from
 // the blank before `uses` to the end of the effect list.
 func (c *checker) usesClauseSpan(x *ast.FnLit) token.Span {

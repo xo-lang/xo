@@ -69,19 +69,25 @@ func HashModFile(dir string) (string, error) {
 }
 
 // Lock is a parsed xo.lock: "<path> <version> <hash>" for the tree of
-// every selected module version and "<path> <version>/xo.mod <hash>" for
-// the xo.mod of every version the selection read.
+// every selected module version, "<path> <version>/xo.mod <hash>" for
+// the xo.mod of every version the selection read, and "<path> effects
+// <labels|none>" for the effects each module's API may reach (the effect
+// lock, decision 0156).
 type Lock struct {
 	File    string
 	Entries map[string]string // "<path> <version>" or "<path> <version>/xo.mod" -> hash
 	Lines   map[string]int
+	// Effects are the locked effect sets by module path (labels sorted;
+	// empty for none), EffectLines their lines.
+	Effects     map[string][]string
+	EffectLines map[string]int
 }
 
-const lockHeader = "# xo.lock: content hashes of the module versions this module builds with.\n# Written by the xo toolchain (xo get, xo mod tidy); do not edit (core 4.3).\n"
+const lockHeader = "# xo.lock: content hashes of the module versions this module builds with,\n# and the effects each module may reach (decision 0156).\n# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).\n"
 
 // ReadLock reads dir/xo.lock; a missing file is an empty lock.
 func ReadLock(dir string) (*Lock, []*Problem) {
-	l := &Lock{File: filepath.Join(dir, "xo.lock"), Entries: map[string]string{}, Lines: map[string]int{}}
+	l := &Lock{File: filepath.Join(dir, "xo.lock"), Entries: map[string]string{}, Lines: map[string]int{}, Effects: map[string][]string{}, EffectLines: map[string]int{}}
 	data, err := os.ReadFile(l.File)
 	if err != nil {
 		return l, nil
@@ -96,6 +102,16 @@ func ReadLock(dir string) (*Lock, []*Problem) {
 			continue
 		}
 		f := strings.Fields(text)
+		if len(f) == 3 && f[1] == "effects" {
+			ls, ok := parseEffectsText(f[2])
+			if !ok || !ValidPath(f[0]) {
+				probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: l.File, Line: line, Msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", Notes: []string{"xo.lock is written by the toolchain; `xo mod tidy` rewrites it"}})
+				continue
+			}
+			l.Effects[f[0]] = ls
+			l.EffectLines[f[0]] = line
+			continue
+		}
 		if len(f) != 3 || !strings.HasPrefix(f[2], "h1:") {
 			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: l.File, Line: line, Msg: "malformed xo.lock line: want `<module path> <version>[/xo.mod] h1:<hash>`", Notes: []string{"xo.lock is written by the toolchain; `xo mod tidy` rewrites it"}})
 			continue
@@ -107,8 +123,9 @@ func ReadLock(dir string) (*Lock, []*Problem) {
 	return l, probs
 }
 
-// WriteLock writes dir/xo.lock with the given entries, sorted.
-func WriteLock(dir string, entries map[string]string) error {
+// WriteLock writes dir/xo.lock with the given hash entries and effect
+// sets (by module path), sorted.
+func WriteLock(dir string, entries map[string]string, effects map[string][]string) error {
 	var keys []string
 	for k := range entries {
 		keys = append(keys, k)
@@ -129,6 +146,14 @@ func WriteLock(dir string, entries map[string]string) error {
 	b.WriteString(lockHeader)
 	for _, k := range keys {
 		b.WriteString(k + " " + entries[k] + "\n")
+	}
+	var paths []string
+	for p := range effects {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		b.WriteString(p + " effects " + EffectsText(effects[p]) + "\n")
 	}
 	name := filepath.Join(dir, "xo.lock")
 	if len(keys) == 0 {

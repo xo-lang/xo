@@ -6,6 +6,39 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Logging is the effect `log` (decision 0156): `std/log`'s `debug`,
+  `info`, `warn`, `error` perform `log`, so a `pub` function that logs
+  declares `uses log` (inferred for non-pub functions; `log.configure`
+  still `stdio`). std's own records stay ambient within std. XO0701 for
+  a missing `log` carries a fix, and `xo fix` added it across the repo's
+  programs. The effect label list in diagnostics and ceilings includes
+  `log`.
+- `xo audit [--json] [--no-gc] [<dir>]` (decision 0156): a supply chain
+  report per dependency (effects, xo.lock effects state, ceiling, `use c`
+  and impure `use go` with their vouches) plus this module's capability
+  attenuations, the capabilities it passes into dependencies (attenuated
+  or not), and unused vouches.
+- Capability attenuation (decision 0156): `os.net.only(hosts)` (exact
+  hosts, `*.domain`, `host:port`; checked for raw dials and listens, each
+  HTTP request and redirect of a client made from it, and refused for
+  `sql.open`), `os.env.only(names)`, and `os.proc.only(cmds)`, on the Go
+  backend and its test fakes. `NetErr.Denied(addr)` and
+  `ProcErr.Denied(cmd)` are new variants (an exhaustive `match` needs
+  the arm). Native builds report `only` as XO1201 (planned).
+- Supply chain (decision 0156): an effect lock by default. xo.lock
+  records each dependency's effects (`<path> effects <labels|none>`, the
+  union of its pub functions' `uses`). `xo get` and `xo mod tidy` record
+  them the first time and narrow them; an update that widens them fails
+  `xo get`, `xo mod tidy`, and every load with `XO1317` until `xo mod
+  accept-effects [<path>...]` or `xo get --accept-effects` records them.
+- Supply chain (decision 0156): only the consuming module vouches for a
+  dependency's escape hatches. A required module's `use c` lines and its
+  `use go` of Go packages that are not pure need a `vouch <module>
+  <version> c "<header>" [uses ...]` or `vouch <module> <version> go
+  "<package>"` line in the consumer's xo.mod, else `XO1316`; a
+  dependency's own `use c ... uses none` no longer counts. A
+  dependency's `use c` binding is now written to the main module's
+  binding cache (it failed on the read only module cache before).
 - Editions (decision 0155): until 1.0 the only edition is `preview`;
   `xo init` writes `edition preview`, and every xo.mod and xo.work of
   the repository says it. `edition 2026` stays an alias of `preview`

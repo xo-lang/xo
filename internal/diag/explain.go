@@ -1417,6 +1417,26 @@ edition 2026`,
 module example.com/api
 edition preview`,
 	},
+	UnvouchedEscape: {
+		Title: "a dependency's escape hatch is not vouched for by this module",
+		Detail: "An escape hatch is code whose authority the checker cannot see: a `use c` line (C code) or a `use go` of a Go package that is not pure (anything but strconv, strings, bytes, unicode, unicode/utf8, unicode/utf16, math, math/bits, regexp, regexp/syntax, path, html, net/url, encoding/hex, encoding/base64, encoding/base32). " +
+			"In a module the build gets as a required version, each one needs a `vouch` line in the xo.mod of the consuming module (the main module, or a module of the active workspace): a dependency cannot vouch for itself, so its `use c ... uses none` counts only when you say so. " +
+			"The vouch names the exact version reviewed; an upgrade needs a new review. Without a vouch the `use c` binding performs `ffi` whatever its `uses` says. With one, it performs the vouch's `uses` (or `ffi` without it). There is no machine fix: a vouch is a human review of foreign code. See core 4.2 and decision 0156.",
+		Example: `// github.com/acme/zip v1.2.0, a dependency:
+use c "zlib.h" link "z" uses none`,
+		Fix: `// after reviewing the C code, in this module's xo.mod:
+vouch github.com/acme/zip v1.2.0 c "zlib.h" uses none`,
+	},
+	EffectsWidened: {
+		Title: "a dependency's effects are wider than xo.lock records",
+		Detail: "xo.lock records, for every required module, the effects its exported API can reach: a line `<module path> effects <labels|none>`, the union of the `uses` of its pub functions and methods. `xo get` and `xo mod tidy` write it the first time a module is locked, and narrow it when a version needs less. " +
+			"When the selected version needs an effect the line does not admit (an update that starts using `net`, `proc`, `log`, ...), every command that loads the program fails with this error, and `xo get` and `xo mod tidy` write nothing. " +
+			"Review why the dependency now needs the effect. To accept it, run `xo mod accept-effects <module path>` (or `xo get --accept-effects <path>@<version>`); the change is an xo.lock diff a reviewer sees. Otherwise stay on the previous version. See core 4.3 and decision 0156.",
+		Example: `# xo.lock: github.com/acme/billing effects none
+xo get github.com/acme/billing@v1.5.0   # v1.5.0 declares uses net.dial`,
+		Fix: `# after review:
+xo mod accept-effects github.com/acme/billing`,
+	},
 
 	// ---------------------------------------------------------------
 	// std/time layouts (decision 0094)

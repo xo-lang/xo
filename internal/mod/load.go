@@ -40,6 +40,12 @@ type Options struct {
 	// Extra are requirements added to the main module's (xo mod tidy
 	// for imports xo.mod does not require yet).
 	Extra []Require
+	// AcceptEffects accepts the current effects of these module paths
+	// (all modules when AcceptAll) instead of reporting XO1317 when they
+	// are wider than xo.lock (xo mod accept-effects, xo get
+	// --accept-effects; decision 0156).
+	AcceptEffects map[string]bool
+	AcceptAll     bool
 }
 
 // BuildList is the result of Load: the main module, the workspace, the
@@ -54,6 +60,12 @@ type BuildList struct {
 	// Hashes are the xo.lock entries of this selection, computed from the
 	// trees (written by xo get and xo mod tidy).
 	Hashes map[string]string
+	// Effects are the effect sets of the selected module versions (not
+	// workspace modules) by module path (ModuleEffects), and Locked the
+	// sets xo.lock records for them, where it has a line (decision
+	// 0156).
+	Effects map[string][]string
+	Locked  map[string][]string
 	// Vendor is set when the build uses the main module's vendor/.
 	Vendor   bool
 	Problems []*Problem
@@ -101,7 +113,7 @@ func Load(mainDir string, opts Options) *BuildList {
 	if err == nil {
 		mainDir = abs
 	}
-	b := &BuildList{Hashes: map[string]string{}}
+	b := &BuildList{Hashes: map[string]string{}, Effects: map[string][]string{}, Locked: map[string][]string{}}
 	main, probs := ReadFile(mainDir)
 	for _, p := range probs {
 		b.problem(p)
@@ -120,7 +132,7 @@ func Load(mainDir string, opts Options) *BuildList {
 	}
 	if b.Work == nil && !opts.NoVendor {
 		if _, err := os.Stat(filepath.Join(mainDir, "vendor", "modules.txt")); err == nil {
-			b.loadVendor()
+			b.loadVendor(opts)
 			return b
 		}
 	}
@@ -261,6 +273,7 @@ func Load(mainDir string, opts Options) *BuildList {
 				Notes: []string{"run `xo mod tidy` (or `xo get`) to record it in " + lf}})
 		}
 	}
+	b.checkEffects(locks, roots, opts)
 	if len(failed) > 0 {
 		var keep []Module
 		for _, m := range b.Modules {
@@ -303,7 +316,7 @@ func VendorModules(mainDir string) ([]Module, error) {
 // loadVendor builds from the main module's vendor/: no cache and no
 // network. Every direct requirement must be vendored at its version, and
 // every vendored tree must match xo.lock.
-func (b *BuildList) loadVendor() {
+func (b *BuildList) loadVendor(opts Options) {
 	main := b.Main
 	b.Vendor = true
 	mods, err := VendorModules(main.Dir)
@@ -358,4 +371,5 @@ func (b *BuildList) loadVendor() {
 		}
 		b.Modules = append(b.Modules, m)
 	}
+	b.checkEffects(map[string]*Lock{main.Dir: lock}, []*File{main}, opts)
 }

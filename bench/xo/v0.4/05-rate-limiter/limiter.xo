@@ -119,7 +119,7 @@ pub fn (l: Limiter) len() -> Int {
 }
 
 /// Evicts idle buckets every EVICT_EVERY until cancelled.
-pub fn run_evictor(l: Limiter, clock: Clock) uses clock {
+pub fn run_evictor(l: Limiter, clock: Clock) uses clock, log {
   while {
     clock.sleep(EVICT_EVERY)
     let n = l.evict_idle(clock.now(), IDLE_TTL)

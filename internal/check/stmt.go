@@ -154,6 +154,25 @@ func (c *checker) perform(s *EffSet) {
 	if c.ctx == nil || s == nil {
 		return
 	}
+	// std's own logging stays ambient: a std function may write log
+	// records without declaring `log` (decision 0156). The effect is
+	// introduced only by the pub std/log functions, so dropping the
+	// `log` label here, where a std module performs it, keeps it off
+	// std's inferred effects; user code still gets it.
+	if c.mod != nil && (c.mod.IsStd || c.mod.Native) {
+		var kept []EffItem
+		dropped := false
+		for _, it := range s.Items {
+			if it.Label == "log" {
+				dropped = true
+				continue
+			}
+			kept = append(kept, it)
+		}
+		if dropped {
+			s = &EffSet{Items: kept}
+		}
+	}
 	c.ctx.eff.addAll(s)
 }
 
@@ -262,7 +281,7 @@ func (c *checker) checkFnDecl(fd *ast.FnDecl) {
 	if fo.Declared != nil && fd.Body != nil {
 		name := fo.DisplayName()
 		pub := fo.Pub
-		c.obligations = append(c.obligations, effObligation{sub: ctx.eff, sup: fo.Declared, span: fd.Name.Sp, what: func(s string) string {
+		c.obligations = append(c.obligations, effObligation{sub: ctx.eff, sup: fo.Declared, span: fd.Name.Sp, fnDecl: fd, what: func(s string) string {
 			if s == "" {
 				if pub {
 					return fmt.Sprintf("`%s` is pub with no `uses` clause, so it is pure", name)

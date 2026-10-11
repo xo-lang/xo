@@ -87,6 +87,34 @@ struct EffOb {
   /// remove so its effects are inferred.
   uses_file: Str = ""
   uses_clause: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  /// Decl: the fix that adds `log` to the `uses` clause when only `log`
+  /// is missing (decision 0156); empty when no fix applies.
+  log_title: Str = ""
+  log_edits: List[DEdit] = []
+}
+
+/// The fix that adds `log` to a function's `uses` clause when only `log`
+/// is missing (habits.go addLogFix, decision 0156): append `, log` to an
+/// existing clause, or a new `uses log` after the signature.
+fn (c: Checker) log_fix(fd: parser.FnDecl) -> (Str, List[DEdit]) {
+  for cl in fd.clauses {
+    match cl {
+      parser.Clause.UsesClause(_, effects, _) => {
+        if !effects.is_empty() {
+          let last = effects[effects.len() - 1].span
+          return ("add `log` to the `uses` clause", [c.insert_edit(last.end, ", log")])
+        }
+      }
+      _ => {}
+    }
+  }
+  if let Some(es) = fd.err {
+    return ("add a `uses log` clause", [c.insert_edit(es.span.end, " uses log")])
+  }
+  if let Some(t) = fd.result {
+    return ("add a `uses log` clause", [c.insert_edit(parser.type_span(t).end, " uses log")])
+  }
+  ("", [])
 }
 
 /// The note on an XO0701 whose missing effect is an elided effect
@@ -238,7 +266,15 @@ fn (var c: Checker) perform(s: Int) {
   if e < 0 {
     return
   }
+  // std's own logging stays ambient: a std or native module may write
+  // log records without declaring `log` (decision 0156). The effect is
+  // introduced only by the pub std/log functions, so dropping the `log`
+  // label here keeps it off std's inferred effects; user code gets it.
+  let strip = c.cur_mod >= 0 && (c.mods[c.cur_mod].is_std || c.mods[c.cur_mod].native)
   for it in c.esets[s] {
+    if strip && it.label == "log" {
+      continue
+    }
     c.esets[e].push(it)
   }
 }
@@ -405,6 +441,9 @@ fn (var c: Checker) solve_effects() {
     let d = c.report(ob.file, "XO0701", ob.span, msg)
     if d < 0 {
       continue
+    }
+    if missing.len() == 1 && missing[0] == "log" && !ob.log_title.is_empty() {
+      c.fix(d, ob.log_title, ob.log_edits)
     }
     c.elided_effect_note(d, sub, sup, ob)
     // the item witnessing the first missing effect: a label, else a

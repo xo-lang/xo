@@ -807,6 +807,11 @@ var purePackages = map[string]bool{
 	"encoding/base64": true, "encoding/base32": true,
 }
 
+// PurePackage reports whether the Go package at path is one of the pure
+// std packages: a dependency's `use go` of it is not an escape hatch
+// that needs the consumer's vouch (decision 0156).
+func PurePackage(path string) bool { return purePackages[path] }
+
 // replayMode decides how record and replay treat a function or method:
 // fx marks an Xo callback parameter, hpkgs the packages of the handles
 // among its parameters and results.

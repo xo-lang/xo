@@ -253,7 +253,7 @@ pub fn (inv: Inventory) sweep() -> Int uses clock {
 }
 
 /// Sweeps every SWEEP_EVERY until the enclosing scope is cancelled.
-pub fn (inv: Inventory) run_sweeper() uses clock {
+pub fn (inv: Inventory) run_sweeper() uses clock, log {
   while {
     inv.clock.sleep(SWEEP_EVERY)
     let released = inv.sweep()

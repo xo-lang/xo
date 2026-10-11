@@ -28,7 +28,7 @@ pub fn run_pool[T, R, E, fx: Effects](
   timeout: Duration,
   f: fn(Job[T]) -> R ! E uses fx,
 ) -> Report[R, E]
-  uses (clock, fx)
+  uses (clock, fx, log)
   requires workers > 0
 {
   let start = clock.now()

@@ -17,7 +17,7 @@ type Ceiling struct {
 
 // EffectLabels are the effect labels a ceiling may name (core 6.1, and
 // `go` from decision 0041). Kept equal to the checker's by a test.
-var EffectLabels = []string{"net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "go"}
+var EffectLabels = []string{"net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "log", "go"}
 
 // Admits reports whether effect label l is within the ceiling. A nil
 // ceiling admits everything.

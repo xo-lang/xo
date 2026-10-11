@@ -464,6 +464,8 @@ enum NetErr {
   Timeout
   Io(msg: Str)
   Canceled
+  /// The address is outside an attenuated Net (`Net.only`, decision 0156).
+  Denied(addr: Str)
 } derive Display
 
 struct Listener {}
@@ -485,6 +487,9 @@ fn (c: Conn) close()
 interface Net {
   fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
   fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+  /// A Net that dials and listens only on the listed hosts: `host`,
+  /// `*.domain`, or `host:port` (std.md 3.2, decision 0156).
+  fn only(self, hosts: List[Str]) -> Net
 }
 
 interface Clock {
@@ -519,6 +524,9 @@ interface Env {
   fn args(self) -> List[Str] uses env
   fn program(self) -> Str uses env
   fn home(self) -> Str ! EnvErr uses env
+  /// An Env that reads only the listed variables (std.md 3.5, decision
+  /// 0156).
+  fn only(self, names: List[Str]) -> Env
 }
 
 enum IoErr {
@@ -548,6 +556,9 @@ enum ProcErr {
   NotFound(cmd: Str)
   Io(msg: Str)
   Canceled
+  /// The command is outside an attenuated Proc (`Proc.only`, decision
+  /// 0156).
+  Denied(cmd: Str)
 } derive Display
 
 interface Proc {
@@ -556,4 +567,7 @@ interface Proc {
   /// (core 7.5, default 30s; 0s cancels at the first signal).
   fn set_grace(self, d: Duration) uses proc
   fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+  /// A Proc that runs only the listed commands (std.md 3.7, decision
+  /// 0156).
+  fn only(self, cmds: List[Str]) -> Proc
 }

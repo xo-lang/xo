@@ -40,8 +40,11 @@ type File struct {
 	Requires []Require
 	// Denies are the import direction rules (`deny` lines, decision 0095).
 	Denies []Deny
-	File   string // path of the xo.mod file
-	Dir    string // directory holding it
+	// Vouches are the consumer's reviews of dependencies' escape hatches
+	// (`vouch` lines, decision 0156).
+	Vouches []Vouch
+	File    string // path of the xo.mod file
+	Dir     string // directory holding it
 }
 
 // Problem is a module error: a diagnostic about xo.mod, xo.lock, xo.work,
@@ -252,6 +255,13 @@ func Parse(name string, data []byte) (*File, []*Problem) {
 				continue
 			}
 			f.Denies = append(f.Denies, d)
+		case "vouch":
+			v, p := parseVouch(name, line, fields)
+			if p != nil {
+				probs = append(probs, p)
+				continue
+			}
+			f.Vouches = append(f.Vouches, v)
 		case "replace", "exclude", "retract":
 			probs = append(probs, &Problem{Code: diag.ModFileInvalid, File: name, Line: line, Msg: fmt.Sprintf("xo.mod has no `%s` directive", fields[0]), Notes: []string{"point a dependency at local code with an xo.work workspace (decision 0086)"}})
 		}

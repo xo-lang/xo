@@ -120,6 +120,7 @@ func runGet(args []string, stdout, stderr io.Writer) int {
 	dir := fl.String("dir", ".", "a directory of the main module")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	update := fl.Bool("u", false, "upgrade to the latest versions (every requirement when no path is given)")
+	accept := fl.Bool("accept-effects", false, "record the new versions' effects in xo.lock even when they are wider than the locked ones (decision 0156)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
@@ -144,7 +145,7 @@ func runGet(args []string, stdout, stderr io.Writer) int {
 	var changes []mod.Change
 	var probs []*mod.Problem
 	for _, a := range targets {
-		cs, ps := mod.Get(root, a)
+		cs, ps := mod.GetAccept(root, a, *accept)
 		changes = append(changes, cs...)
 		probs = append(probs, ps...)
 		if len(ps) > 0 {
@@ -191,7 +192,7 @@ func reportChanges(cmd string, changes []mod.Change, probs []*mod.Problem, asJSO
 // cache).
 func runMod(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "xo mod: want a subcommand: tidy, clean")
+		fmt.Fprintln(stderr, "xo mod: want a subcommand: tidy, accept-effects, clean, proxy")
 		return 2
 	}
 	switch args[0] {
@@ -209,6 +210,8 @@ func runMod(args []string, stdout, stderr io.Writer) int {
 		}
 		changes, probs := mod.Tidy(root)
 		return reportChanges("mod tidy", changes, probs, *asJSON, stdout, stderr)
+	case "accept-effects":
+		return runAcceptEffects(args[1:], stdout, stderr)
 	case "clean":
 		if err := mod.CleanCache(); err != nil {
 			fmt.Fprintf(stderr, "xo mod clean: %v\n", err)
@@ -219,8 +222,50 @@ func runMod(args []string, stdout, stderr io.Writer) int {
 	case "proxy":
 		return runModProxy(args[1:], stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "xo mod: unknown subcommand %q (want tidy, clean, or proxy)\n", args[0])
+	fmt.Fprintf(stderr, "xo mod: unknown subcommand %q (want tidy, accept-effects, clean, or proxy)\n", args[0])
 	return 2
+}
+
+// runAcceptEffects is `xo mod accept-effects [--dir=<dir>] [--json]
+// [<module path>...]` (decision 0156): record the current effects of the
+// named modules (all when none is named) in xo.lock, accepting effects
+// wider than the locked ones, and print the lines that changed.
+func runAcceptEffects(args []string, stdout, stderr io.Writer) int {
+	fl := flag.NewFlagSet("mod accept-effects", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	dir := fl.String("dir", ".", "a directory of the main module")
+	asJSON := fl.Bool("json", false, "print the result as JSON")
+	if err := fl.Parse(args); err != nil {
+		return 2
+	}
+	root, ok := modRootOf(*dir, "mod accept-effects", stderr)
+	if !ok {
+		return 2
+	}
+	changes, probs := mod.AcceptEffects(root, fl.Args())
+	if changes == nil {
+		changes = []mod.EffectChange{}
+	}
+	if *asJSON {
+		encodeJSON(stdout, struct {
+			Ok          bool               `json:"ok"`
+			Effects     []mod.EffectChange `json:"effects"`
+			Diagnostics []diag.Diagnostic  `json:"diagnostics"`
+		}{len(probs) == 0, changes, problemDiags(probs)})
+	} else {
+		printProblems(probs, false, stdout, stderr)
+		for _, c := range changes {
+			old := "unlocked"
+			if c.Old != nil {
+				old = mod.EffectsText(c.Old)
+			}
+			fmt.Fprintf(stdout, "%s effects %s => %s\n", c.Path, old, mod.EffectsText(c.New))
+		}
+	}
+	if len(probs) > 0 {
+		return 1
+	}
+	return 0
 }
 
 // runModProxy is `xo mod proxy serve [--addr=host:port] [--fetch] [dir]`

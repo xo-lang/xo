@@ -20,6 +20,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/diag"
+	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/token"
 )
 
@@ -56,6 +57,10 @@ type checker struct {
 	deps depState
 	// ceil caches the effect ceilings of dependencies (ceiling.go).
 	ceil ceilingState
+	// vouches are the consuming modules' vouch lines, hatches the
+	// escape hatches of dependencies met (vouch.go, decision 0156).
+	vouches []mod.Vouch
+	hatches []EscapeHatch
 
 	nextVar int
 	trail   []func()

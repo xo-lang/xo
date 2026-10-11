@@ -176,7 +176,7 @@ pub fn (q: Queue) dead_jobs() -> List[Job] uses clock {
   let now = q.clock.now()
   q.state.with(fn(var st) {
     st.expire_leases(now, q.max_attempts)
-    st.dead.map(fn(id) { st.jobs[id] })
+    st.dead.map(fn(id) { st.jobs.get_or_fault(id, "TODO: why the key must exist") })
   })
 }
 

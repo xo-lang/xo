@@ -262,9 +262,14 @@ func Testing_fake_db(tk *Task, schema string) Result[Sql_Db, Sql_SqlErr] {
 }
 
 // Sql_open is `sql.open(net, driver, dsn, ...)`.
-func Sql_open(tk *Task, _ Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
+	}
+	if _, ok := n.(*onlyNet); ok {
+		// the driver dials by itself, so an allowlist cannot be
+		// enforced: fail closed (decision 0156)
+		return Err[Sql_Db](sqlMsgErr(sqlTagConn, "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net"))
 	}
 	if maxOpen < 1 {
 		return Err[Sql_Db](sqlMsgErr(sqlTagParam, "max_open must be at least 1"))

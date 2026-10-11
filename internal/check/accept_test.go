@@ -110,7 +110,7 @@ fn counter() -> Int {
   hits.get()
 }
 
-fn pipeline(ch: Chan[Int], out: Chan[Int]) -> Int uses clock {
+fn pipeline(ch: Chan[Int], out: Chan[Int]) -> Int uses clock, log {
   var n = 0
   select {
     v = ch.recv() => n += v ?? 0

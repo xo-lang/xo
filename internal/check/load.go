@@ -525,6 +525,11 @@ func relDir(dir string) string {
 // module whose functions carry the `go` effect.
 func (c *checker) loadGoImport(m *Module, f *File, u *ast.UseDecl, imp *Import) {
 	key := "go:" + u.Path
+	if !gobind.PurePackage(u.Path) {
+		// a dependency's Go code needs the consuming module's vouch
+		// (decision 0156)
+		c.escapeHatch(m, u, "go", u.Path, nil)
+	}
 	if c.goFailed[key] {
 		imp.Used = true
 		return

@@ -156,7 +156,7 @@ commands:
   init [--dir=<dir>] <module path>
       Write xo.mod for a new module and add xo.work to .gitignore (unless a
       workspace above already covers the directory).
-  get [--dir=<dir>] [--json] [-u] <module path>[@version|@latest|@none]...
+  get [--dir=<dir>] [--json] [-u] [--accept-effects] <module path>[@version|@latest|@none]...
       Require a module (decision 0086): the latest vX.Y.Z tag unless a
       version is given; @none removes the requirement; -u alone upgrades
       every requirement. Fetches with git into the module cache
@@ -168,6 +168,12 @@ commands:
       them elsewhere. A /vN suffix (N >= 2) names major version N of the
       same repository. "require <path> <version> uses none" (or uses net,
       fs.read) sets an effect ceiling: calls above it are XO1309.
+      --accept-effects records the new version's effects in xo.lock even
+      when they are wider than the locked ones (else XO1317, nothing
+      written). A required module's use c and use go of an impure Go
+      package need a line "vouch <path> <version> c \"<header>\" [uses
+      ...]" or "vouch <path> <version> go \"<package>\"" in xo.mod
+      (XO1316, decision 0156).
   publish [--dir=<dir>] [--check] [--version=vX.Y.Z] [--json]
       Compare the exports and effects with the previous vX.Y.Z tag and
       reject a minor or patch release that removes or changes an export
@@ -176,10 +182,28 @@ commands:
       then prints the git tag command to run; it never tags or pushes.
       It also lists every definition (exported or not) whose content hash
       changed since the previous tag (xo query hash; decision 0125).
+  audit [--dir=<dir>] [--json] [--no-gc] [<dir>]
+      Supply chain report (decision 0156): per dependency (direct and
+      indirect) its version, the effects its API may reach, its xo.lock
+      effects line (ok, widened, narrowed, unlocked), its effect ceiling,
+      and its escape hatches (use c, use go of an impure package) with
+      the vouch that covers each; the attenuation calls of this module
+      (only, sub, read_only, write_only, cwd) with their constant
+      arguments; every capability passed into a dependency and whether
+      it is attenuated; vouch lines that match nothing; and the check's
+      diagnostics. JSON when --json or stdout is not a terminal. Exit 1
+      when the check has errors. --no-gc checks as a native build (use c).
   mod tidy [--dir=<dir>] [--json]
       Require every imported module, drop requirements nothing imports
       (unless they raise a version the graph selects), and rewrite xo.lock
       with exactly the hashes the build uses. Ignores xo.work and vendor/.
+  mod accept-effects [--dir=<dir>] [--json] [<module path>...]
+      Record the current effects of the named modules (all when none is
+      named) in xo.lock, accepting effects wider than the locked ones
+      (decision 0156). xo.lock records each dependency's effects
+      ("<path> effects <labels|none>"); every command that loads the
+      program fails with XO1317 when a dependency's effects grew beyond
+      its line, and xo get and xo mod tidy write nothing then.
   mod clean
       Remove the module cache (it is read only, so rm -rf fails).
   mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
@@ -225,6 +249,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runVendor(args[1:], stdout, stderr)
 	case "publish":
 		return runPublish(args[1:], stdout, stderr)
+	case "audit":
+		return runAudit(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "parse":

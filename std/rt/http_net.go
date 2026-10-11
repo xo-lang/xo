@@ -287,6 +287,25 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		tr = c.tr.(*http.Transport)
 	}
 	hc := &http.Client{Timeout: time.Duration(c.timeout), Transport: tr}
+	if o, ok := c.net.(*onlyNet); ok {
+		// a redirect must stay within an attenuated Net (decision 0156)
+		hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			port := r.URL.Port()
+			if port == "" {
+				port = "80"
+				if r.URL.Scheme == "https" {
+					port = "443"
+				}
+			}
+			if !o.admits(r.URL.Hostname(), port) {
+				return errors.New("denied by Net.only: redirect to " + net.JoinHostPort(r.URL.Hostname(), port))
+			}
+			return nil
+		}
+	}
 	tk.leave()
 	resp, err := hc.Do(hr)
 	tk.enter()

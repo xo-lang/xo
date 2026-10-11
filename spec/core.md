@@ -12,6 +12,24 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Logging is the effect `log`** (6.1, std.md 6, decision 0156): the
+  `std/log` functions perform `log`; a `pub` function that logs declares
+  `uses log`. `xo fix` adds it to existing code (XO0701 with a fix).
+- **`xo audit`** (10.1, decision 0156): per dependency effects, lock
+  state, ceiling, escape hatches and vouches; attenuations and the
+  capabilities passed into dependencies.
+- **Capability attenuation** (6.3, std.md 3.2, 3.5, 3.7, decision 0156):
+  `os.net.only(hosts)`, `os.env.only(names)`, and `os.proc.only(cmds)`
+  return narrowed capabilities; `NetErr` and `ProcErr` gain `Denied`.
+  Native builds report `only` as XO1201 (planned).
+- **Effect lock** (4.3, decision 0156): xo.lock records each
+  dependency's effects (`<path> effects <labels|none>`); an update that
+  widens them fails every load with `XO1317` until `xo mod
+  accept-effects` (or `xo get --accept-effects`) records them.
+- **Vouches** (4.2, decision 0156): a required module's `use c` lines and
+  `use go` of impure Go packages count only with a `vouch` line in the
+  consuming module's xo.mod for that exact version, else `XO1316`; an
+  unvouched `use c` binding performs `ffi` whatever its own `uses` says.
 - **`edition preview`** (4.2, 13, decision 0155): until 1.0 the only
   edition is `preview`, which `xo init` writes. `edition 2026` stays an
   alias of it during the 0.x releases; `xo check` gives the fixable note
@@ -1186,6 +1204,35 @@ require github.com/acme/geo v2.1.0 uses net.dial, fs.read
   and the exports above the ceiling; `xo get -u` upgrades every
   requirement to its latest version.
 
+**[P1]** Vouches (decision 0156): an escape hatch is code whose
+authority the checker cannot see, a `use c` line (4.5) or a `use go` of a
+Go package that is not pure (4.4; the pure ones are the std packages
+marked `replay rerun` by default there). In a module the build gets as a
+required version (the module cache or vendor/), each escape hatch needs a
+`vouch` line in the xo.mod of a consuming module: the main module, or a
+module of the active workspace.
+
+```
+vouch github.com/acme/zip v1.2.0 c "zlib.h" uses none
+vouch github.com/acme/img v0.3.1 c "png.h"
+vouch github.com/acme/pg v1.0.0 go "github.com/jackc/pgx/v5"
+```
+
+- `vouch <module path> <version> c "<header>" [uses <effects|none>]`,
+  `vouch <module path> <version> go "<Go import path>"`. The header or
+  package is the string of the dependency's `use` line; the version is
+  the exact version the build selects (a vouch reviews one version's
+  code, so an upgrade needs a new one). Malformed lines are `XO1301`.
+- A dependency's own vouch lines are ignored: it cannot vouch for itself
+  or for its dependencies. The main module's and the workspace modules'
+  own `use c` and `use go` lines need no vouch.
+- A vouched `use c` binding performs the vouch's `uses` (the consumer's
+  word, not the dependency's), or `ffi` without one. An unvouched escape
+  hatch, or one vouched for another version, is error `XO1316` on the
+  dependency's `use` line, naming the line to add; an unvouched `use c`
+  binding performs `ffi` whatever its own `uses` says. There is no
+  machine fix: a vouch is a human review.
+
 **[P1]** Releases (decision 0086 step 4): a version is a `vX.Y.Z` tag of
 the repository whose root holds the module, or a `<dir>/vX.Y.Z` tag for a
 module in the directory `<dir>`. `xo publish [--check]
@@ -1275,6 +1322,21 @@ its content hash.
   cache or vendor/ and compares them. A mismatch (a moved tag, an edited
   cache or vendor copy) is `XO1304` and nothing builds; a version with no
   entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
+- **[P1]** Effect lock (decision 0156): xo.lock also records, for each
+  selected module (not workspace modules), the effects its exported API
+  can reach: `<module path> effects <labels|none>`
+  (`github.com/acme/billing effects net.dial,stdio`), the union of the
+  effect labels in the `uses` clauses of its `pub` functions and methods
+  (every package, test files left out). The line is keyed by module
+  path, so it survives an upgrade. Every command that loads the program
+  compares each module's effects with its line: an effect the line does
+  not admit (`fs` admits `fs.read`) is `XO1317` on that line. `xo get`
+  and `xo mod tidy` record a module without a line as it is, narrow a
+  line whose module needs less, and fail with `XO1317` (writing nothing)
+  when a module needs more. `xo mod accept-effects [<module path>...]`
+  (all modules when none is named) and `xo get --accept-effects` record
+  the wider effects; `xo check` and `xo build` never do. A module with
+  no line (a lock written before decision 0156) is not checked.
 - **[P1]** Checksum log (decision 0124): with `XO_SUMDB=<name>+<key
   id>+<public key> [<URL>]` (default `off`), the first fetch of every
   module version, from git or a proxy, is checked before it enters the
@@ -1346,6 +1408,9 @@ fn main(os: Os) ! {
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.
+  In a required module, a `use go` of a package that is not pure (the
+  pure std packages listed below) needs the consuming module's `vouch`
+  line (4.2, decision 0156), else `XO1316`.
 - Exported names whose signatures cannot be mapped are skipped and listed at
   the top of the generated binding; using one is `XO1102`. A package that
   cannot be bound is `XO1101`.
@@ -1414,7 +1479,9 @@ fn main(os: Os) {
 - Every call performs the effect `ffi` (6.1), which `pub` functions
   declare. A `use c` line may replace it with the effects a human vouches
   for, `uses none` or `uses fs.read, clock`, as an effect ceiling of
-  decision 0086 does for a dependency.
+  decision 0086 does for a dependency. That claim counts only in the
+  module's own code: in a required module the consuming module's `vouch`
+  line decides the binding's effects (4.2, decision 0156).
 - `use c` is impossible on the Go backend: `xo check`, `build`, `run`, and
   `test` without `--no-gc` report `XO1201` on the line. (`use go` is
   likewise `XO1201` on the native backends.)
@@ -1581,14 +1648,25 @@ The builtin effects are:
 | `proc` | | Spawn processes, signals, exit |
 | `stdio` | | Standard input, output, error |
 | `ffi` | | Calls into C through `use c` (4.5, native builds) |
+| `log` | | Writing a `std/log` record (`debug`, `info`, `warn`, `error`) |
 
 A function with no `uses` clause is **pure**: it performs no capability
-effects. It may still allocate, fault, be cancelled, log, and use
+effects. It may still allocate, fault, be cancelled, and use
 synchronized state (`Mutex`, `Atomic`, `Chan`).
 
-Logging (`std/log`) is ambient: it needs no capability and is not an effect.
-Log output goes to the sink configured in `main` (standard error by default).
-It is recorded during record and replay like any other output.
+Logging (`std/log`) performs the `log` effect (decision 0156): a `pub`
+function that logs declares `uses log`, so a dependency's logging is
+visible in its signatures, a ceiling can forbid it, the effect lock
+catches an update that starts logging, and `xo audit` lists it. `log`
+needs no capability (there is nothing to pass from `main`); it is
+inferred for non `pub` functions like any effect, so `main` and helpers
+are unchanged. `log.configure` performs `stdio`, not `log`. std's own
+records (a handler fault, an `ignore_err`) stay attributed to std and do
+not make std functions perform `log`. Log output goes to the sink
+configured in `main` (standard error by default) and is recorded during
+record and replay like any other output. **[later]** Tagging each record
+with the dependency that wrote it is planned; the `log` effect already
+makes a dependency's logging visible in its signatures.
 
 Effect labels live in their own namespace: a parameter or module named `fs` or
 `net` does not conflict with the effect `fs` or `net`.
@@ -1671,7 +1749,16 @@ error. Inside a sub capability, paths are relative to its root:
 
 ```
 let uploads = os.fs.sub("/var/app/uploads").read_only()
+let api = os.net.only(["api.example.com"])
+let config = os.env.only(["APP_PORT", "APP_DB_URL"])
+let tools = os.proc.only(["git"])
 ```
+
+`Net.only`, `Env.only`, and `Proc.only` (std.md 3.2, 3.5, 3.7, decision
+0156) narrow the network to hosts, the environment to variables, and
+processes to commands; a denied operation fails before any effect.
+`xo audit` (10.1) lists the attenuations whose arguments are constants
+and whether each capability passed into a dependency is attenuated.
 
 A library cannot open a file or a socket unless it is handed a capability. A
 dependency's reach is visible in its signatures.
@@ -2071,14 +2158,15 @@ test "retries after 503" {
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
-| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
+| `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
+| `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |
 
 The commands that report diagnostics or results accept `--json`: `parse`,
 `check`, `build`, `test`, `fmt`, `fix`, `vet`, `query`, `edit` (always
-JSON), `doc`, `explain`, and `bind`. `run`, `replay`, `dump`, `serve`, and
+JSON), `doc`, `explain`, `bind`, and `audit`. `run`, `replay`, `dump`, `serve`, and
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
 
@@ -2372,6 +2460,8 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
 | `XO1315` | note | checker | `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
+| `XO1316` | error | checker | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
+| `XO1317` | error | modules | a dependency's effects are wider than its `effects` line in xo.lock (4.3, decision 0156) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |
@@ -2603,7 +2693,7 @@ specified in `spec/std.md`. Modules:
 |---|---|
 | `std/http` | Router, server, client, requests, responses, middleware, error to status mapping |
 | `std/json` | Derive based encode and decode, `Patch[T]` for partial updates |
-| `std/log` | Structured, ambient logging bound to spans |
+| `std/log` | Structured logging; performs the `log` effect (6.1) |
 | `std/task` | `isolate`, `with_timeout`, `is_canceled`, `Semaphore` |
 | `std/time` | Time zones, civil dates and times, layouts with named fields (arithmetic is in the prelude; std.md 13). Go backend only so far |
 | `std/testing` | Fake capability types, generators, captured logs |
