@@ -98,6 +98,8 @@ go run ./cmd/xo serve [--socket=path] [stop|status]              # resident chec
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs
 go test ./internal/gen -run TestGoldenRelease [-golden-update]   # testdata/release/*: want.debug.txt, want.release.txt, want.release_noargs.txt (xo build --release [--error-args=false], decisions 0099, 0092); -golden-update rewrites only the files that exist
+go test ./internal/gen -run TestGeneratedGoVets       # gofmt -l and go vet on the generated Go of every golden program (not rt); skipped with -short (about 1 minute). Last verified: 2026-10-10, clean
+go test ./internal/gen -run TestGeneratedGoSnapshot [-golden-update]   # the generated Go of 11 golden programs vs testdata/gosnap/*.go.golden; review the diff of a lowering change, then update
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error

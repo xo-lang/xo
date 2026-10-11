@@ -281,6 +281,36 @@ func (f *fnGen) topBlock(b *ast.Block) {
 	}
 }
 
+// endsTerminating reports whether the statements in text, generated at
+// indentation ind, end in a jump (return, break, continue, goto) or a
+// panic call at that indentation, ignoring //line directives: a break
+// after them would be unreachable.
+func endsTerminating(text string, ind int) bool {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := lines[i]
+		if strings.HasPrefix(l, "//line ") {
+			continue
+		}
+		pre := strings.Repeat("\t", ind)
+		if !strings.HasPrefix(l, pre) || strings.HasPrefix(l, pre+"\t") {
+			return false
+		}
+		l = l[len(pre):]
+		if l == "}" {
+			// a block or if/else: Go's full rule
+			return terminates(text)
+		}
+		for _, kw := range []string{"return", "break", "continue", "goto"} {
+			if l == kw || strings.HasPrefix(l, kw+" ") {
+				return true
+			}
+		}
+		return strings.HasPrefix(l, "panic(")
+	}
+	return false
+}
+
 // endsInReturn reports whether the last statement of body is a `return`
 // at indentation ind (a Go terminating statement, so no panic is needed
 // after it; the panic would only add to the function's inlining cost).

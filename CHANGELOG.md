@@ -10,7 +10,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   lines (positions are unchanged), declares the unused task `tk` in
   constants whose value does not need it, or ends a function whose body
   already terminates (an `if`/`else` or `switch` returning in every
-  branch, by the Go spec's rule) with an unreachable panic.
+  branch, by the Go spec's rule) with an unreachable panic. `match`
+  emits no `break` after an arm that returns or jumps, declares its
+  label only when an arm breaks to it, emits a catch-all arm as a plain
+  block (no `Unreachable` after it), and matches an immutable binding in
+  place instead of copying it; a `scope` body that returns skips its
+  dead epilogue. The generated Go of every golden program now passes
+  `go vet` (it had 108 unreachable code reports) and `gofmt -l`
+  (TestGeneratedGoVets), and 11 programs keep a snapshot of their Go
+  (TestGeneratedGoSnapshot).
 - LLVM backend: enums of 256 bytes or more are passed by reference, and
   values in memory nothing writes during the call (by reference
   parameters, their fields and payloads, box contents and list elements

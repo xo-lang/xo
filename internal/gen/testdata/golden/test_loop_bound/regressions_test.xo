@@ -1,0 +1,8 @@
+// Regression tests written by `xo test` from shrunk contract fuzz
+// failures (core 9.2). Keep them; edit or delete them like any test.
+
+// Found by contract fuzzing with seed 1.
+test "regression: test_loop_bound.positives (seed 1)" {
+  let arg_xs = [0, 0, 0, 0]
+  let _ = positives(arg_xs)
+}

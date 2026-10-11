@@ -492,12 +492,35 @@ func (pg *pkgGen) file() ([]byte, error) {
 		}
 		b.WriteString(")\n\n")
 	}
-	b.Write(pg.out.Bytes())
+	b.Write(dropRepeatedLineDirectives(pg.out.Bytes()))
 	src, err := format.Source(b.Bytes())
 	if err != nil {
 		return b.Bytes(), fmt.Errorf("gen: generated Go for module %s does not parse: %v", pg.m.Path, err)
 	}
 	return src, nil
+}
+
+// dropRepeatedLineDirectives removes a //line directive that repeats the
+// line before it. Code generated into a separate buffer (capture) starts
+// with its statement's directive, which the buffer it is spliced into may
+// have just written; the repeat changes no position.
+func dropRepeatedLineDirectives(src []byte) []byte {
+	out := make([]byte, 0, len(src))
+	var prev []byte
+	for len(src) > 0 {
+		i := bytes.IndexByte(src, '\n')
+		if i < 0 {
+			i = len(src) - 1
+		}
+		l := src[:i+1]
+		src = src[i+1:]
+		if bytes.HasPrefix(l, []byte("//line ")) && bytes.Equal(l, prev) {
+			continue
+		}
+		out = append(out, l...)
+		prev = l
+	}
+	return out
 }
 
 // linePath is the path written in //line directives for a source file:

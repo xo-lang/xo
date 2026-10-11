@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -330,44 +331,83 @@ func (f *fnGen) variantFields(x *ast.VariantPat, v *check.VariantObj, n *check.N
 // ---------------------------------------------------------------------------
 // match and if
 
+// goIdent matches a plain Go identifier.
+var goIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func (f *fnGen) matchExpr(x *ast.MatchExpr, d dest) {
 	st := f.typeOf(x.Subject)
-	subj := f.tmp("m")
 	restore := f.inUnit(x.Subject)
-	f.line("%s := %s", subj, f.val(x.Subject))
+	subj := f.val(x.Subject)
 	restore()
-	f.line("_ = %s", subj)
+	// an immutable binding read as a plain Go name is matched in place;
+	// anything else is evaluated once into a temporary
+	inPlace := false
+	if id, ok := x.Subject.(*ast.Ident); ok {
+		v := f.info.VarOf(id)
+		inPlace = v != nil && !v.Mutable && goIdent.MatchString(subj)
+	}
+	if !inPlace {
+		val := subj
+		subj = f.tmp("m")
+		f.line("%s := %s", subj, val)
+		f.line("_ = %s", subj)
+	}
 	if len(x.Arms) == 0 {
 		f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
 		return
 	}
 	label := f.tmp("M")
-	f.line("%s:", label)
-	f.line("switch {")
-	f.line("default:")
-	f.ind++
-	for _, arm := range x.Arms {
-		f.at(arm)
-		m := f.pattern(arm.Pattern, subj, st)
-		f.line("if %s {", m.condition())
-		f.ind++
-		f.declareBinds(m)
-		if arm.Guard != nil {
-			g := f.val(arm.Guard)
-			f.line("if %s {", g)
+	// the arms are generated first: the label is declared only if an
+	// arm breaks to it (Go rejects an unused label), and an arm that
+	// ends in return or panic gets no break (go vet: unreachable code)
+	broke, total := false, false
+	f.ind += 1
+	body := f.capture(func() {
+		for _, arm := range x.Arms {
+			f.at(arm)
+			m := f.pattern(arm.Pattern, subj, st)
+			// an arm that always matches (`_`, a binding) is a plain
+			// block, and the arms after it are dead
+			total = m.condition() == "true" && arm.Guard == nil
+			if total {
+				f.line("{")
+			} else {
+				f.line("if %s {", m.condition())
+			}
 			f.ind++
-		}
-		f.armBody(arm.Body, d)
-		f.line("break %s", label)
-		if arm.Guard != nil {
+			f.declareBinds(m)
+			if arm.Guard != nil {
+				g := f.val(arm.Guard)
+				f.line("if %s {", g)
+				f.ind++
+			}
+			start := f.out.Len()
+			f.armBody(arm.Body, d)
+			if total {
+				f.ind--
+				f.line("}")
+				return
+			}
+			if !endsTerminating(f.out.String()[start:], f.ind) {
+				f.line("break %s", label)
+				broke = true
+			}
+			if arm.Guard != nil {
+				f.ind--
+				f.line("}")
+			}
 			f.ind--
 			f.line("}")
 		}
-		f.ind--
-		f.line("}")
-	}
-	f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
+		f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
+	})
 	f.ind--
+	if broke {
+		f.line("%s:", label)
+	}
+	f.line("switch {")
+	f.line("default:")
+	f.out.WriteString(body)
 	f.line("}")
 }
 

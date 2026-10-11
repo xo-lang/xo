@@ -102,8 +102,10 @@ func (f *fnGen) scopeExpr(x *ast.ScopeExpr, d dest) {
 		dd := d
 		dd.pre = done + " = true"
 		f.stmts(x.Body, dd, true)
-		f.line("%s = true", done)
-		f.line("return 0")
+		if !endsTerminating(f.out.String(), f.ind) {
+			f.line("%s = true", done)
+			f.line("return 0")
+		}
 		f.ind--
 	})
 	fr.ctl = fr.ctl[:len(fr.ctl)-1]
