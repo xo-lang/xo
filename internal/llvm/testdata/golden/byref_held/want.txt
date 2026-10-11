@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+s: log 6, seen 1, tags 3/3, total 24 odd 21
+t: log 7, seen 2, tags 4/4, total 25 | s: log 1, seen 1, tags 0/0, total 1
+t: log 7, seen 2, tags 4/4, total 25 -> t: log 8, seen 3, tags 5/5, total 30
+closure 18
+many: fault index 3 out of range for List of length 2
+u: log 0, seen 0, tags 0/0, total 0
+many again: 90 u: log 5, seen 5, tags 0/0, total 30
+--- stderr

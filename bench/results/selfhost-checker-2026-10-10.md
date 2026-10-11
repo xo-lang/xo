@@ -905,3 +905,26 @@ contents and list elements under a borrowed root):
 
 5% faster; kept. The checker's output is identical on all 627
 repository runs on the three backends.
+
+## 2. Lazy field loads: `var` parameters stay in memory (decision 0148)
+
+A dataflow over each function finds which SSA value the memory of a
+`var` parameter passed by reference holds before each instruction
+(calls store into it and `var` callees write back into it; `setfield`
+of the held value is done in place; block parameters every edge passes
+in place are held), so field reads load from memory, updates store one
+field, calls and returns skip the store of what the memory already
+holds, and values held at every use are never loaded whole.
+
+| build | rounds (ms) |
+|---|---|
+| decision 0147 | 5,184, 5,115, 5,117 |
+| values kept in memory | 3,114, 3,076, 3,081 |
+
+40% faster; kept. The Go checker takes 2,939 to 2,968 ms on the same
+input, so the LLVM build is now 1.05x the Go checker (from 1.88x at the
+start of these experiments). The checker's output is identical on the
+627 repository runs (three backends), 1,500 checker mutations (seed 11)
+and 400 module mutations (seed 12) on the LLVM build. One bug on the
+way (gotchas/llvm-held-memory-read-before-store.md): a return wrote one
+`var` parameter back over the memory another held value was read from.
