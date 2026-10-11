@@ -85,7 +85,7 @@ func TestTLSDiff(t *testing.T) {
 				if res.Failed {
 					t.Fatalf("build (%s) failed: %v", be, res.Diagnostics)
 				}
-				outs[i] = runTLSDiff(t, res.Binaries[build.Host()], pki, be != build.BackendGo)
+				outs[i] = abruptClose(runTLSDiff(t, res.Binaries[build.Host()], pki, be != build.BackendGo))
 			})
 		}
 	})
@@ -99,6 +99,21 @@ func TestTLSDiff(t *testing.T) {
 			t.Errorf("%s backend differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, want, be, got)
 		}
 	}
+}
+
+// abruptClose makes the two results of the `eof` peer, which closes
+// every connection at once, one result: the client reads EOF when the
+// close arrives before its ClientHello is sent, and "connection reset by
+// peer" when its ClientHello reaches the closed socket first (a race of
+// the two hosts' schedulers, on every backend, Go included).
+func abruptClose(out string) string {
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "eof: ") && (strings.HasSuffix(l, ": EOF)") || strings.HasSuffix(l, "connection reset by peer)")) {
+			lines[i] = "eof: closed by the peer (EOF or connection reset)"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // testPKI holds the certificates of TestTLSDiff in PEM.
