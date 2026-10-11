@@ -16,7 +16,8 @@ import (
 )
 
 // arithSeeds is the seeds to run: XO_ARITH_PROP_SEED=S runs only S,
-// XO_ARITH_PROPS=N runs 1..N, else 1..def.
+// XO_ARITH_PROPS=N runs N seeds, else def, from XO_ARITH_PROP_FIRST
+// (default 1; bench/nightly.sh moves it every day).
 func arithSeeds(t *testing.T, def int) []int64 {
 	if v := os.Getenv("XO_ARITH_PROP_SEED"); v != "" {
 		s, err := strconv.ParseInt(v, 10, 64)
@@ -33,9 +34,17 @@ func arithSeeds(t *testing.T, def int) []int64 {
 		}
 		n = k
 	}
+	first := int64(1)
+	if v := os.Getenv("XO_ARITH_PROP_FIRST"); v != "" {
+		k, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			t.Fatalf("XO_ARITH_PROP_FIRST=%q", v)
+		}
+		first = k
+	}
 	var out []int64
-	for i := 1; i <= n; i++ {
-		out = append(out, int64(i))
+	for i := 0; i < n; i++ {
+		out = append(out, first+int64(i))
 	}
 	return out
 }

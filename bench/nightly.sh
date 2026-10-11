@@ -28,7 +28,9 @@ start=$(date +%s)
 	s1=$?
 	# more random arithmetic programs, differential across the Go, LLVM,
 	# and arm64 backends (TestArithProperty; the full suite runs 25)
+	# (new seeds every day: the day number times 500)
 	XO_ARITH_PROPS=${XO_ARITH_PROPS:-500} XO_BIN_CACHE=${XO_BIN_CACHE:-off} \
+		XO_ARITH_PROP_FIRST=${XO_ARITH_PROP_FIRST:-$(($(date +%s) / 86400 * 500))} \
 		go test -count=1 -timeout 60m ./internal/gen -run TestArithProperty
 	s4=$?
 	go test -count=1 -race -timeout 30m ./std/rt
