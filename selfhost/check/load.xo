@@ -25,6 +25,9 @@ pub struct Checker {
   root_mods: List[Int] = []
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
   unsupported: Str = ""
+  /// The environment and the dependencies of the main modules
+  /// (modfile.xo, deps.xo).
+  deps: DepState = DepState{}
 
   // The walk: the current module and file, local scopes (innermost
   // last), the function context, and what it records.
@@ -145,8 +148,12 @@ fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str {
     c.find_module_dirs(clean(d), true, module_dirs)
   }
   module_dirs = module_dirs.sort()
+  // resolve the requirements of every main module before loading, so
+  // imports of required modules find their selected versions
   for dir in module_dirs {
-    c.find_mod_root(dir)
+    if let Some(r) = c.find_mod_root(dir) {
+      c.resolve_deps(r)
+    }
   }
   for dir in module_dirs {
     let m = c.load_dir(dir)
@@ -272,18 +279,18 @@ fn lossy_str(b: Bytes) -> Str {
   out.freeze().to_str() ?? ""
 }
 
-/// Looks for xo.mod in dir or its parents up to the working directory
-/// and registers it.
+/// Looks for xo.mod in dir or its parents and registers it (check.go
+/// findModRoot; above the working directory only when it is known).
 fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
-  var d = clean(dir)
+  var d = c.display(dir)
   while {
     let data = c.fs.read(join(d, "xo.mod")).ok() ?? None
     if let Some(b) = data {
       var path = ""
-      for line in (b.to_str() ?? "").lines() {
-        let fields = split_fields(line)
-        if fields.len() == 2 && fields[0] == "module" && path.is_empty() {
-          path = fields[1]
+      for line in scan_lines(b) {
+        let fs = fields(line)
+        if fs.len() == 2 && fs[0] == "module" && path.is_empty() {
+          path = fs[1]
         }
       }
       if path.is_empty() {
@@ -301,10 +308,10 @@ fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
       }
       return Some(r)
     }
-    if d == "." || d == ".." || d.ends_with("/..") {
-      return None
+    match c.up(d) {
+      Some(p) => d = p
+      None => return None
     }
-    d = parent(d)
   }
   None
 }
@@ -312,7 +319,7 @@ fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
 /// The import path of the module in dir.
 fn (var c: Checker) module_path_for(dir: Str) -> Str {
   if let Some(r) = c.find_mod_root(dir) {
-    let rel = rel_path(r.dir, dir)
+    let rel = rel_path(r.dir, c.display(dir))
     if rel == "." {
       return r.path
     }
@@ -322,13 +329,16 @@ fn (var c: Checker) module_path_for(dir: Str) -> Str {
 }
 
 fn (var c: Checker) load_dir(dir0: Str) -> Int {
-  let dir = clean(dir0)
+  let dir = c.rel_dir(dir0)
   let path = c.module_path_for(dir)
   if let Some(m) = c.mod_index.get(path) {
     return m
   }
   let (name, _) = local_name(path)
   let m = c.new_module(path, name, dir, false)
+  if let Some(r) = c.find_mod_root(dir) {
+    c.mods[m].dependency = c.dependency_of(r.dir)
+  }
   let entries = c.fs.read_dir(dir).ok() ?? []
   var names: List[Str] = []
   for e in entries {
@@ -400,11 +410,14 @@ fn (var c: Checker) load_imports(m: Int) {
           }
         }
       }
+      if dep >= 0 && !c.mods[m].is_std {
+        c.check_deny(m, f, u, p)
+      }
       if p != upath {
         // XO0158 already explains the path.
         dep = -1
-      } else if dep < 0 && is_remote(p) && c.owner_root(p) == None {
-        c.error_at(f, "XO1306", u.span, "module of `${p}` is not required by xo.mod")
+      } else if dep < 0 && c.unrequired(f, u, p) {
+        // reported (or explained on the xo.mod line)
       } else if dep < 0 {
         let d = c.error_at(f, "XO0601", u.span, "module `${p}` not found")
         if p.starts_with("std/") {
@@ -423,6 +436,8 @@ fn (var c: Checker) load_imports(m: Int) {
       } else if c.mods[dep].state == 1 {
         c.error_at(f, "XO0604", u.span, "import cycle: `${c.mods[m].path}` imports `${c.mods[dep].path}`, which imports it back")
         dep = -1
+      } else if !c.mods[m].is_std {
+        c.check_required(m, f, u, p)
       }
       if imp_name.is_empty() {
         continue

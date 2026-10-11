@@ -1,0 +1,4 @@
+/// The API version.
+pub fn version() -> Int {
+  1
+}

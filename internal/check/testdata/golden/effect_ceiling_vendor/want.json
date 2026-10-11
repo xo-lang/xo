@@ -1,0 +1,72 @@
+[
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`now` of example.com/tick v1.0.0 performs `clock`, above the effect ceiling `uses none` of that dependency in xo.mod",
+    "span": {
+      "file": "cart/cart.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 13
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.mod",
+          "line": 5,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/tick needs `clock`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`sample` of example.com/meter v1.2.0 performs `rand`, above the effect ceiling `uses clock` of that dependency in xo.mod",
+    "span": {
+      "file": "cart/cart.xo",
+      "line": 6,
+      "col": 45,
+      "end_line": 6,
+      "end_col": 59
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.mod",
+          "line": 4,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/meter needs `rand`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1306",
+    "severity": "error",
+    "message": "module example.com/extra of `example.com/extra` is not required by testdata/golden/effect_ceiling_vendor/xo.mod (it is in the build only because another module requires it)",
+    "span": {
+      "file": "report/report.xo",
+      "line": 2,
+      "col": 1,
+      "end_line": 2,
+      "end_col": 22
+    },
+    "notes": [
+      {
+        "message": "`xo get example.com/extra` (or `xo mod tidy`) requires the version the build selects (core 4.2)"
+      }
+    ],
+    "fixes": []
+  }
+]

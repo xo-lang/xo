@@ -143,7 +143,9 @@ type sgen struct {
 // as an argument and every field again in the result.
 const byRefMin = 256
 
-// byRefOf returns which parameters of f are passed by reference, or nil.
+// byRefOf returns which parameters of f are passed by reference, or nil:
+// structs and enums of byRefMin bytes or more (enums since decision 0147:
+// their tag and payload reads load from the reference).
 func (g *sgen) byRefOf(f *ssa.Func) []bool {
 	if br, ok := g.byRef[f]; ok {
 		return br
@@ -151,7 +153,7 @@ func (g *sgen) byRefOf(f *ssa.Func) []bool {
 	var br []bool
 	if !f.Indirect && !f.Entry && !g.addrTaken[f.Name] && f.Name != "main" {
 		for i, p := range f.Params() {
-			if p.Type.Kind == ssa.KStruct && g.size(p.Type) >= byRefMin {
+			if (p.Type.Kind == ssa.KStruct || p.Type.Kind == ssa.KEnum) && g.size(p.Type) >= byRefMin {
 				if br == nil {
 					br = make([]bool, len(f.Params()))
 				}
@@ -971,6 +973,60 @@ type sfn struct {
 	// call that passes several
 	home  map[string]string
 	spare map[string][]string
+	// addr maps values that sit in memory nothing writes while the
+	// function runs to that memory (decision 0147): parameters passed by
+	// reference that are not `var` (the caller's slot), fields and
+	// payloads of such values, and the contents of boxes and list
+	// elements reached from a borrowed parameter (alive and never updated
+	// in place while borrowed). Tag, payload, and field reads load from
+	// it, and a call passes it to a parameter by reference that is not
+	// `var` instead of copying the value into a slot.
+	addr map[*ssa.Value]string
+	// held is what the memory of each `var` parameter passed by
+	// reference holds at each instruction (held.go, decision 0148);
+	// lazy marks the values never materialized, read from that memory
+	// where they are used
+	held       *heldInfo
+	stableMemo map[*ssa.Value]bool
+	lazy       map[*ssa.Value]int
+	uses       map[*ssa.Value][]*ssa.Value
+}
+
+// isAgg reports a struct, enum, or tuple type.
+func isAgg(t *ssa.Type) bool {
+	return t.Kind == ssa.KStruct || t.Kind == ssa.KEnum || t.Kind == ssa.KTuple
+}
+
+// rootBorrowed reports whether v is reached from a borrowed parameter or
+// a constant through fields, payloads, box contents, and list elements:
+// its containers stay alive, and are not updated in place, for the whole
+// call (ssa rc.go projKind).
+func (s *sfn) rootBorrowed(v *ssa.Value) bool {
+	for {
+		switch v.Op {
+		case ssa.OpConst:
+			return true
+		case ssa.OpParam:
+			if v.Block != s.f.Blocks[0] {
+				return false
+			}
+			for i, p := range s.f.Params() {
+				if p == v {
+					return i < len(s.f.Borrowed) && s.f.Borrowed[i]
+				}
+			}
+			return false
+		case ssa.OpPayload, ssa.OpUnbox, ssa.OpField:
+			v = v.Args[0]
+		case ssa.OpCall:
+			if n, _ := v.Aux.(string); n != "list.index" && n != "list.get" {
+				return false
+			}
+			v = v.Args[0]
+		default:
+			return false
+		}
+	}
 }
 
 // loadRef reads a value of type t from memory p (decision 0145). One
@@ -1069,6 +1125,11 @@ func (s *sfn) op(v *ssa.Value) string {
 	case ssa.KUnit, ssa.KCap:
 		return "zeroinitializer"
 	}
+	if m, ok := s.lazy[v]; ok {
+		// held in memory at every use (decision 0148)
+		mem := s.held.mems[m]
+		return s.def("load %s, ptr %s", mem.lt, mem.ptr)
+	}
 	if n, ok := s.names[v]; ok {
 		return n
 	}
@@ -1091,11 +1152,13 @@ func (s *sfn) typed(v *ssa.Value) string { return s.g.ll(v.Type) + " " + s.op(v)
 
 func (g *sgen) fn(f *ssa.Func) {
 	s := &sfn{g: g, f: f, end: map[*ssa.Block]string{}, text: map[*ssa.Block]*strings.Builder{}, names: map[*ssa.Value]string{},
-		home: map[string]string{}, spare: map[string][]string{}}
+		home: map[string]string{}, spare: map[string][]string{}, addr: map[*ssa.Value]string{},
+		stableMemo: map[*ssa.Value]bool{}, lazy: map[*ssa.Value]int{}}
 	var ps []string
 	var loads strings.Builder
 	s.body = &loads
 	br := g.byRefOf(f)
+	var mems []heldMem
 	for i, p := range f.Params() {
 		if br != nil && br[i] {
 			lt := g.ll(p.Type)
@@ -1104,14 +1167,25 @@ func (g *sgen) fn(f *ssa.Func) {
 				ps = append(ps, "ptr noalias "+ptr)
 				if _, ok := s.home[lt]; !ok {
 					s.home[lt] = ptr
+					mems = append(mems, heldMem{ptr: ptr, lt: lt, param: p})
 				}
 			} else {
 				ps = append(ps, "ptr noalias readonly "+ptr)
+				s.addr[p] = ptr
 			}
-			s.alias(p, s.loadRef(p.Type, ptr))
 			continue
 		}
 		ps = append(ps, g.ll(p.Type)+" "+vname(p))
+	}
+	s.computeHeld(mems)
+	for i, p := range f.Params() {
+		if br != nil && br[i] {
+			if m, ok := s.memOnly(p); ok {
+				s.lazy[p] = m
+				continue
+			}
+			s.alias(p, s.loadRef(p.Type, fmt.Sprintf("%%p%d", p.ID)))
+		}
 	}
 	// lowered in reverse postorder, so a value is lowered (and its alias
 	// known) before every use: a block may come before the blocks that
@@ -1121,6 +1195,17 @@ func (g *sgen) fn(f *ssa.Func) {
 		s.text[b] = s.body
 		s.label0 = b.Name()
 		s.label = b.Name()
+		for _, p := range b.Params {
+			if m := s.heldParam(b, p); m >= 0 {
+				// passed in place by every edge: no phi (decision 0148)
+				if _, ok := s.memOnly(p); ok {
+					s.lazy[p] = m
+				} else {
+					mem := s.held.mems[m]
+					s.alias(p, s.def("load %s, ptr %s", mem.lt, mem.ptr))
+				}
+			}
+		}
 		for _, v := range b.Instrs {
 			s.instr(v)
 		}
@@ -1135,7 +1220,7 @@ func (g *sgen) fn(f *ssa.Func) {
 		fmt.Fprintf(&out, "%s:\n", b.Name())
 		if b != f.Blocks[0] {
 			for i, p := range b.Params {
-				if p.Type.Kind == ssa.KUnit || p.Type.Kind == ssa.KCap {
+				if p.Type.Kind == ssa.KUnit || p.Type.Kind == ssa.KCap || s.heldParam(b, p) >= 0 {
 					continue
 				}
 				var in []string
@@ -1437,8 +1522,42 @@ func (s *sfn) instr(v *ssa.Value) {
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
 			return
 		}
+		if m, ok := s.memOnly(v); ok && v.Args[0].Op == ssa.OpCall {
+			// a `var` result the call wrote back, held at every use
+			s.lazy[v] = m
+			return
+		}
+		if p, ok := s.addr[v.Args[0]]; ok {
+			fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.ll(v.Args[0].Type), p, v.Aux.(int))
+			if isAgg(v.Type) {
+				s.addr[v] = fp
+			}
+			s.set(v, "load %s, ptr %s", g.ll(v.Type), fp)
+			return
+		}
+		if m := s.heldAt(v, v.Args[0]); m >= 0 {
+			mem := s.held.mems[m]
+			fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", mem.lt, mem.ptr, v.Aux.(int))
+			s.set(v, "load %s, ptr %s", g.ll(v.Type), fp)
+			return
+		}
 		s.set(v, "extractvalue %s %s, %d", g.ll(v.Args[0].Type), a(0), v.Aux.(int))
 	case ssa.OpSetField:
+		if s.held != nil {
+			if m, ok := s.held.inPlace[v]; ok {
+				// the memory holds the operand: write the field there
+				mem := s.held.mems[m]
+				x := s.typed(v.Args[1])
+				fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", mem.lt, mem.ptr, v.Aux.(int))
+				s.emit("store %s, ptr %s", x, fp)
+				if _, ok := s.memOnly(v); ok {
+					s.lazy[v] = m
+				} else {
+					s.set(v, "load %s, ptr %s", mem.lt, mem.ptr)
+				}
+				return
+			}
+		}
 		s.set(v, "insertvalue %s %s, %s, %d", g.ll(v.Type), a(0), s.typed(v.Args[1]), v.Aux.(int))
 	case ssa.OpVariant:
 		var fs []string
@@ -1447,10 +1566,24 @@ func (s *sfn) instr(v *ssa.Value) {
 		}
 		s.alias(v, s.variant(v.Type, v.Aux.(int), fs))
 	case ssa.OpTag:
+		if p, ok := s.addr[v.Args[0]]; ok {
+			s.set(v, "load i64, ptr %s", p)
+			return
+		}
 		s.set(v, "extractvalue %s %s, 0", g.ll(v.Args[0].Type), a(0))
 	case ssa.OpPayload:
 		r := v.Aux.(ssa.PayloadRef)
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
+			return
+		}
+		if p, ok := s.addr[v.Args[0]]; ok {
+			t := v.Args[0].Type
+			pay := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.ll(t), p)
+			fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.variantLL(t, r.Tag), pay, r.Field)
+			if isAgg(v.Type) {
+				s.addr[v] = fp
+			}
+			s.set(v, "load %s, ptr %s", g.ll(v.Type), fp)
 			return
 		}
 		s.alias(v, s.payload(v.Args[0].Type, a(0), r.Tag, r.Field))
@@ -1498,6 +1631,9 @@ func (s *sfn) instr(v *ssa.Value) {
 			return
 		}
 		vp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.boxLL(v.Args[0].Type), a(0))
+		if isAgg(v.Type) && s.rootBorrowed(v.Args[0]) {
+			s.addr[v] = vp
+		}
 		s.set(v, "load %s, ptr %s", g.ll(v.Type), vp)
 	case ssa.OpCapture:
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
@@ -1580,11 +1716,22 @@ func (s *sfn) instr(v *ssa.Value) {
 		rt := g.resLL(s.f)
 		// the `var` parameters passed by reference are written back
 		if br := g.byRefOf(s.f); br != nil {
+			// every value is read before any is stored: one held in a
+			// memory is loaded before another write back overwrites it
 			params := s.f.Params()
+			var xs, ptrs []string
+			var ts []*ssa.Type
 			for j, vi := range s.f.VarParams {
 				if br[vi] {
-					s.storeRef(params[vi].Type, s.op(v.Args[1+j]), fmt.Sprintf("%%p%d", params[vi].ID))
+					ptr := fmt.Sprintf("%%p%d", params[vi].ID)
+					if m := s.heldAt(v, v.Args[1+j]); m >= 0 && s.held.mems[m].ptr == ptr {
+						continue // already there (decision 0148)
+					}
+					xs, ptrs, ts = append(xs, s.op(v.Args[1+j])), append(ptrs, ptr), append(ts, params[vi].Type)
 				}
+			}
+			for i := range xs {
+				s.storeRef(ts[i], xs[i], ptrs[i])
 			}
 		}
 		kept := g.keptResults(s.f)
@@ -1626,15 +1773,33 @@ func (s *sfn) call(v *ssa.Value) {
 		var args []string
 		slots := make([]string, len(v.Args))
 		used := map[string]int{}
+		// every operand is read before anything is stored: a value held
+		// in a memory is loaded before another argument overwrites it
+		type store struct {
+			t    *ssa.Type
+			x, p string
+		}
+		var stores []store
 		for i, x := range v.Args {
+			if p, ok := s.addr[x]; ok && br != nil && br[i] && !isVarParam(callee, i) {
+				// in memory nothing writes during the call: passed as it is
+				args = append(args, "ptr "+p)
+				continue
+			}
 			if br != nil && br[i] {
 				lt := g.ll(x.Type)
 				slots[i] = s.slot(lt, used)
-				s.storeRef(x.Type, s.op(x), slots[i])
 				args = append(args, "ptr "+slots[i])
+				if m := s.heldAt(v, x); m >= 0 && s.held.mems[m].ptr == slots[i] {
+					continue // already in its slot (decision 0148)
+				}
+				stores = append(stores, store{x.Type, s.op(x), slots[i]})
 				continue
 			}
 			args = append(args, s.typed(x))
+		}
+		for _, st := range stores {
+			s.storeRef(st.t, st.x, st.p)
 		}
 		c := fmt.Sprintf("%s %s(%s)", g.resLL(callee), g.fname(name), strings.Join(args, ", "))
 		kept := g.keptResults(callee)
@@ -1656,7 +1821,11 @@ func (s *sfn) call(v *ssa.Value) {
 		for k, rt := range callee.Results {
 			var x string
 			if k > 0 && br[callee.VarParams[k-1]] {
-				x = s.loadRef(rt, slots[callee.VarParams[k-1]])
+				if s.lazyResult(v, k) {
+					x = "undef" // read from memory where it is used (decision 0148)
+				} else {
+					x = s.loadRef(rt, slots[callee.VarParams[k-1]])
+				}
 			} else {
 				switch {
 				case rt.Kind == ssa.KUnit || rt.Kind == ssa.KCap:
@@ -1704,6 +1873,9 @@ func (s *sfn) call(v *ssa.Value) {
 		p := s.elemPtr(et, a(0), a(1))
 		if et.Kind == ssa.KUnit {
 			return
+		}
+		if isAgg(et) && s.rootBorrowed(v.Args[0]) {
+			s.addr[v] = p
 		}
 		s.set(v, "load %s, ptr %s%s", g.ll(et), p, tbaaElem)
 	case "list.get":

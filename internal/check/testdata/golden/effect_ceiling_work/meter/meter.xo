@@ -1,0 +1,14 @@
+/// A reading: within `uses clock`.
+pub fn read() -> Int uses clock {
+  3
+}
+
+/// A sample: `rand` is above `uses clock`.
+pub fn sample() -> Int uses clock, rand {
+  4
+}
+
+/// A file: `fs.read` and `fs.write` are above `uses clock`.
+pub fn save() -> Int uses fs.write, fs.read, clock {
+  5
+}

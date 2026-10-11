@@ -1,0 +1,7 @@
+use example.com/meter
+use example.com/tick
+
+/// Calls into two vendored dependencies whose requires set ceilings.
+pub fn total() -> Int uses clock, rand {
+  tick.now() + tick.pure() + meter.read() + meter.sample()
+}

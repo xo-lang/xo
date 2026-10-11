@@ -1,0 +1,9 @@
+/// The time in ticks.
+pub fn now() -> Int uses clock {
+  1
+}
+
+/// No effects: within any ceiling.
+pub fn pure() -> Int {
+  2
+}

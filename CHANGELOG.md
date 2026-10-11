@@ -6,6 +6,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend: enums of 256 bytes or more are passed by reference, and
+  values in memory nothing writes during the call (by reference
+  parameters, their fields and payloads, box contents and list elements
+  under a borrowed parameter) are read in place and passed by address
+  (decision 0147); `var` parameters passed by reference stay in the
+  caller's memory, with fields read and updated there (decision 0148).
+  The self hosted checker's LLVM build went from 1.88 times the Go
+  checker's time to parity (5.4 s to 2.9 s for 20 checks of selfhost).
+- Native backends: an enum parameter is borrowed unless every path
+  consumes it, so tree walks pass nodes down without reference count
+  traffic (decision 0149).
+- The self hosted checker loads modules as internal/check does (decision
+  0141): xo.mod, xo.work, xo.lock, the module cache (read, never
+  fetched), vendor/, deny rules (XO1312), dependency rules (XO1301 to
+  XO1307), and effect ceilings of dependencies (XO1309). Every
+  repository run without `use go` or `use c` (610 of 626) is compared
+  and identical on the go, arm64, and LLVM builds, and module mutations
+  (ceilings, deny rules, versions, lock lines) give no difference. New
+  Go goldens for XO1309: `effect_ceiling_work` (xo.work ceilings) and
+  `effect_ceiling_vendor` (require ceilings, vendored).
 - `cmd/xoplay`, the compiler half of the xolang.dev playground (decision
   0144): `check`, `fmt`, and `gen` as JSON, built for wasip1 with
   `-tags xo_playground`, which leaves the runtime, native, and LLVM runtime

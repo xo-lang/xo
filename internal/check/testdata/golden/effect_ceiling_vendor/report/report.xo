@@ -1,0 +1,7 @@
+// extra is vendored only because meter requires it: XO1306
+use example.com/extra
+
+/// The bonus line of a report.
+pub fn bonus() -> Int {
+  extra.bonus()
+}

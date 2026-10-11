@@ -1,0 +1,11 @@
+use example.com/tick
+
+/// A time stamp.
+pub fn stamp() -> Int uses clock, rand {
+  tick.now()
+}
+
+/// A constant.
+pub fn answer() -> Int {
+  tick.pure() * 21
+}

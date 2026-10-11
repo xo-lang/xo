@@ -1,0 +1,9 @@
+# xo.lock: content hashes of the module versions this module builds with.
+# Written by the xo toolchain (xo get, xo mod tidy); do not edit (core 4.3).
+example.com/Acme/util v1.0.0 h1:3SZT369A1OaJrocdLl0n5SgRXRFu5PUG32BQrTHRgJM=
+example.com/Acme/util v1.0.0/xo.mod h1:ybaG3mWz26wm+WcxeTBZ+LE0UjA3ZCNR+HdyoftiwhM=
+example.com/lib v1.0.0 h1:hzlPUT/vFCZ3w7OXzMzFk0C8cnLnU8TSOUnFGf5dmVU=
+example.com/lib v1.0.0/xo.mod h1:AfkhkXY9XJ7aN2k8ulsPO4u3ABsqxHFdCeQx1lWgp+k=
+example.com/tick v1.0.0/xo.mod h1:5A1iV6+jUjzHaPkhOhkYFzM2rOqhdduLV+xY9Hu3Tdw=
+example.com/tick v1.1.0 h1:k5+jtcZBxslk6WCSpA/W7i6p5ucbUoWC1ABmJ1sdUH0=
+example.com/tick v1.1.0/xo.mod h1:5A1iV6+jUjzHaPkhOhkYFzM2rOqhdduLV+xY9Hu3Tdw=

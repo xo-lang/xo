@@ -408,32 +408,97 @@ func (r *rcInfo) inferBorrows() {
 	for changed := true; changed; {
 		changed = false
 		for _, f := range r.m.Funcs {
-			consumed := func(l leaf) {
+			ps := f.Params()
+			// the blocks that consume each borrowed parameter
+			cons := map[int]map[*Block]bool{}
+			consumed := func(l leaf, b *Block) {
 				p := l.root
 				if p.Op != OpParam || p.Block != f.Blocks[0] {
 					return
 				}
 				if i := paramIndex(p); i >= 0 && f.Borrowed[i] {
-					f.Borrowed[i] = false
-					changed = true
+					if cons[i] == nil {
+						cons[i] = map[*Block]bool{}
+					}
+					cons[i][b] = true
 				}
 			}
 			for _, b := range f.Blocks {
 				for _, v := range b.Instrs {
 					for _, u := range r.uses(v) {
 						if u.m == mConsume {
-							consumed(u.l)
+							consumed(u.l, b)
 						}
 					}
 					for _, e := range v.Succs {
 						for _, l := range r.edgeUses(e) {
-							consumed(l)
+							consumed(l, b)
 						}
 					}
 				}
 			}
+			for i, bs := range cons {
+				// an enum is never updated in place (only lists and
+				// strings are, and only when unique), so borrowing one
+				// that some path consumes costs a retain there and
+				// copies nothing; any other type is owned once some
+				// path consumes it, or a retained list would be copied
+				// at every update (`fn put(m: Map) -> Map`)
+				if ps[i].Type.Kind != KEnum || consumedOnEveryPath(f, bs) {
+					f.Borrowed[i] = false
+					changed = true
+				}
+			}
 		}
 	}
+}
+
+// consumedOnEveryPath reports whether every path from the entry of f to
+// a return passes through one of the blocks in cons (decision 0149).
+// Landing pads are not paths: a fault is rare, and the pad of a borrowed
+// parameter releases nothing. A parameter some path only reads stays
+// borrowed: its callers keep it, the paths that consume it retain it
+// there, and what is projected out of it (payloads, fields, elements) is
+// borrowed too, so a recursive walk over a tree passes every node down
+// without counting.
+func consumedOnEveryPath(f *Func, cons map[*Block]bool) bool {
+	// must[b]: every path from the start of b consumes; the greatest
+	// fixpoint (a loop that never leaves is no path to a return)
+	must := map[*Block]bool{}
+	for _, b := range f.Blocks {
+		must[b] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := len(f.Blocks) - 1; i >= 0; i-- {
+			b := f.Blocks[i]
+			if cons[b] || !must[b] {
+				continue
+			}
+			t := b.Term()
+			var succs []*Edge
+			if t != nil {
+				succs = t.Succs
+				if _, u := landingSite(b); u != nil && len(succs) == 2 {
+					succs = succs[1:]
+				}
+			}
+			ok := len(succs) > 0
+			if t != nil && (t.Op == OpFault || t.Op == OpUnreachable) {
+				ok = true
+			}
+			for _, e := range succs {
+				if !must[e.To] {
+					ok = false
+				}
+			}
+			if !ok {
+				must[b] = false
+				changed = true
+			}
+		}
+	}
+	return must[f.Blocks[0]]
 }
 
 // ---------------------------------------------------------------------------

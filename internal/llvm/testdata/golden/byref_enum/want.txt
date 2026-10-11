@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+neg((10 + x@8:f9.xo), y@5:f6.xo, 1)
+-18
+[outer: neg((10 + x@8:f9.xo), y@5:f6.xo, 1)] line 103
+[outer: neg((10 + y@8:f9.xo), y@5:f6.xo, 1)]
+-19 vs -18
+(10 + x@8:f9.xo) 99 272
+1226 49
+y@5:f6.xo
+1 5
+--- stderr

@@ -1,0 +1,11 @@
+use example.com/extra
+
+/// A reading: within `uses clock`.
+pub fn read() -> Int uses clock {
+  3 + extra.bonus()
+}
+
+/// A sample: `rand` is above `uses clock`.
+pub fn sample() -> Int uses clock, rand {
+  4
+}

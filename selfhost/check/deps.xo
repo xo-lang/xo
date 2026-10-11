@@ -1,0 +1,342 @@
+// Dependencies of the main modules, import direction rules, and effect
+// ceilings: internal/check deps.go, deny.go, and ceiling.go (decisions
+// 0086, 0095), over the build lists of modfile.xo.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The environment module loading reads: the absolute working directory,
+/// XO_MODCACHE (else the user cache directory under HOME), XO_OFFLINE,
+/// and XO_WORK.
+fn (var c: Checker) set_mod_env(wd: Str, modcache: Str, home: Str, xdg_cache: Str, offline: Str, work: Str) {
+  c.deps.wd = clean(wd)
+  if wd.is_empty() {
+    c.deps.wd = ""
+  }
+  if !modcache.is_empty() {
+    c.deps.cache = c.abs(modcache)
+  } else if !xdg_cache.is_empty() {
+    c.deps.cache = "${clean(xdg_cache)}/xo/mod"
+  } else if !home.is_empty() && c.is_dir("${home}/Library/Caches") {
+    c.deps.cache = "${clean(home)}/Library/Caches/xo/mod"
+  } else if !home.is_empty() {
+    c.deps.cache = "${clean(home)}/.cache/xo/mod"
+  } else {
+    c.deps.cache = "/tmp/xo-mod"
+  }
+  c.deps.offline = !offline.is_empty() && offline != "0" && offline != "false"
+  c.deps.work_env = work
+  if !work.is_empty() && work != "off" {
+    c.deps.work_env = c.abs(work)
+  }
+}
+
+/// check deps.go resolveDeps: resolves the requirements of the main module
+/// at root and registers the selected module directories as roots for
+/// imports; module problems become diagnostics on their lines.
+fn (var c: Checker) resolve_deps(root: ModRoot) {
+  if c.deps.resolved.contains(root.dir) || c.deps.dep_dirs.contains(root.dir) {
+    return
+  }
+  c.deps.resolved[root.dir] = true
+  if c.deps.main_dir.is_empty() {
+    c.deps.main_dir = root.dir
+  }
+  let bl = c.load_build_list(root.dir)
+  for p in bl.problems {
+    c.mod_problem(p)
+  }
+  for m in bl.modules {
+    c.deps.dep_dirs[m.dir] = m
+    c.find_mod_root(m.dir)
+    if m.workspace && m.dir != root.dir {
+      // a workspace module is checked as part of the program: its own
+      // deny rules apply to its packages
+      c.load_denies(m.dir)
+    }
+  }
+  c.load_denies(root.dir)
+}
+
+/// check deps.go modProblem.
+fn (var c: Checker) mod_problem(p: Problem) {
+  if !p.module.is_empty() {
+    c.deps.failed[p.module] = true
+  }
+  var file = p.file
+  if !file.is_empty() {
+    file = c.rel_dir(file)
+  }
+  let d = c.report(file, p.code, line_span(p.line), p.msg)
+  for n in p.notes {
+    c.note(d, n)
+  }
+}
+
+/// Whether path is a module with a problem or a package of one.
+fn (c: Checker) under_failed(path: Str) -> Bool {
+  for (p, _) in c.deps.failed.entries() {
+    if path == p || path.starts_with("${p}/") {
+      return true
+    }
+  }
+  false
+}
+
+/// check deps.go unrequired: XO1306 for an import of another module's
+/// package that no requirement covers; false when the path is not such an
+/// import (the caller reports XO0601).
+fn (var c: Checker) unrequired(f: Int, u: parser.UseDecl, p: Str) -> Bool {
+  if !is_remote(p) || c.owner_root(p) != None {
+    return false
+  }
+  if c.under_failed(p) {
+    return true
+  }
+  var mod_path = p
+  let elems = p.split("/")
+  if elems.len() > 3 && (elems[0] == "github.com" || elems[0] == "gitlab.com" || elems[0] == "bitbucket.org") {
+    mod_path = "${elems[0]}/${elems[1]}/${elems[2]}"
+  }
+  let d = c.error_at(f, "XO1306", u.span, "module of `${p}` is not required by xo.mod")
+  c.note(d, "`xo get ${mod_path}` requires its latest version, `xo mod tidy` requires every imported module (core 4.2)")
+  true
+}
+
+/// check deps.go checkRequired: XO1306 when module m imports a package of
+/// a required module version that m's own xo.mod does not require.
+fn (var c: Checker) check_required(m: Int, f: Int, u: parser.UseDecl, p: Str) {
+  if !is_remote(p) || c.deps.resolved.is_empty() {
+    return
+  }
+  let owner = match c.owner_root(p) {
+    Some(r) => r
+    None => return
+  }
+  let dm = match c.deps.dep_dirs.get(owner.dir) {
+    Some(x) => x
+    None => return
+  }
+  if dm.workspace {
+    return
+  }
+  let from = match c.find_mod_root(c.mods[m].dir) {
+    Some(r) => r
+    None => return
+  }
+  if from.dir == owner.dir {
+    return
+  }
+  if !c.deps.req_cache.contains(from.dir) {
+    var reqs: Map[Str, Bool] = {}
+    let (mf, _) = c.read_mod_file(from.dir)
+    if let Some(x) = mf {
+      for r in x.reqs {
+        reqs[r.path] = true
+      }
+    }
+    c.deps.req_cache[from.dir] = reqs
+  }
+  let reqs = c.deps.req_cache.get(from.dir) ?? {}
+  if reqs.contains(owner.path) {
+    return
+  }
+  let d = c.error_at(f, "XO1306", u.span, "module ${owner.path} of `${p}` is not required by ${join(from.dir, "xo.mod")} (it is in the build only because another module requires it)")
+  c.note(d, "`xo get ${owner.path}` (or `xo mod tidy`) requires the version the build selects (core 4.2)")
+}
+
+/// check deps.go dependencyOf: "<path>@<version>" for a required module
+/// version's root (not a workspace module), else "".
+fn (c: Checker) dependency_of(dir: Str) -> Str {
+  if let Some(m) = c.deps.dep_dirs.get(dir) {
+    if !m.workspace {
+      return "${m.path}@${m.version}"
+    }
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Import direction rules (decision 0095)
+
+/// check deny.go loadDenies: the deny rules of the main module at dir;
+/// a rule naming a package that does not exist is XO1301 on its line.
+fn (var c: Checker) load_denies(dir: Str) {
+  let (f0, _) = c.read_mod_file(dir)
+  let f = match f0 {
+    Some(x) => x
+    None => return
+  }
+  if f.denies.is_empty() {
+    return
+  }
+  let file = c.rel_dir(f.file)
+  c.deps.denies[dir] = DenyRules{file: file, rules: f.denies}
+  for r in f.denies {
+    var pats = [r.from]
+    for t in r.to {
+      pats.push(t)
+    }
+    for pat in pats {
+      if c.pattern_exists(pat) {
+        continue
+      }
+      let d = c.report(file, "XO1301", line_span(r.line), "deny rule names `${pat}`, which is not a package of this module, of a required module, or of std")
+      c.note(d, "a pattern is a package path, or a path ending in `/...` for every package under it (decision 0095)")
+    }
+  }
+}
+
+/// check deny.go patternExists: a deny pattern names at least one package
+/// directory of std, of the main module, or of a required module.
+fn (c: Checker) pattern_exists(pat: Str) -> Bool {
+  let base = pattern_base(pat)
+  let wild = base != pat
+  if base == "std" {
+    return wild
+  }
+  if base.starts_with("std/") {
+    // the std declaration files are std/<name>.xo, one level
+    let rest = base.trim_prefix("std/")
+    return !rest.contains("/") && c.exists("${c.std_dir}/${rest}.xo")
+  }
+  if c.under_failed(base) {
+    return true
+  }
+  let owner = match c.owner_root(base) {
+    Some(r) => r
+    None => {
+      if !wild {
+        return false
+      }
+      // a pattern above a module path: `example.com/...`
+      for r in c.roots {
+        if r.path.starts_with("${base}/") {
+          return true
+        }
+      }
+      return false
+    }
+  }
+  let rel = base.trim_prefix(owner.path).trim_prefix("/")
+  let dir = join(owner.dir, rel)
+  if !c.is_dir(dir) {
+    return false
+  }
+  if wild {
+    return true
+  }
+  for e in c.fs.read_dir(dir).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      return true
+    }
+  }
+  false
+}
+
+/// check deny.go checkDeny: XO1312 when a deny rule of m's main module
+/// forbids the import u (path p as loaded); the first rule is named.
+fn (var c: Checker) check_deny(m: Int, f: Int, u: parser.UseDecl, p: Str) {
+  if c.deps.denies.is_empty() || c.mods[m].is_std || !c.mods[m].dependency.is_empty() {
+    return
+  }
+  let root = match c.find_mod_root(c.mods[m].dir) {
+    Some(r) => r
+    None => return
+  }
+  let dr = match c.deps.denies.get(root.dir) {
+    Some(x) => x
+    None => return
+  }
+  let from = c.mods[m].path
+  for r in dr.rules {
+    let t = deny_matches(r, from, p)
+    if t.is_empty() {
+      continue
+    }
+    let d = c.error_at(f, "XO1312", u.span, "`${from}` may not import `${p}`: denied by `${deny_text(r)}` (xo.mod line ${r.line})")
+    if t != p {
+      c.note_at(d, dr.file, line_span(r.line), "the rule; `${t}` matches `${p}` (decision 0095)")
+    } else {
+      c.note_at(d, dr.file, line_span(r.line), "the rule (decision 0095)")
+    }
+    c.note(d, "move what ${from} needs into a package it may import, or change the rule; `xo query imports ${from}` lists its imports")
+    return
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Effect ceilings (decision 0086 step 3)
+
+/// check ceiling.go moduleRootOf: the xo.mod root holding module m.
+fn (var c: Checker) module_root_of(m: Int) -> ModRoot? {
+  if c.mods[m].dir.is_empty() {
+    return None
+  }
+  c.find_mod_root(c.mods[m].dir)
+}
+
+/// check ceiling.go checkCeiling: XO1309 when the current module calls (or
+/// takes as a value) fo, a function of another module that a ceiling
+/// covers, and fo declares an effect above the ceiling. Only the labels
+/// fo declares count: effect parameters are the caller's own effects.
+fn (var c: Checker) check_ceiling(fo: Int, sp: Span) {
+  if fo < 0 {
+    return
+  }
+  let fm = c.objs[fo].module
+  let decl = c.objs[fo].declared
+  if fm < 0 || c.mods[fm].is_std || decl < 0 || c.cur_mod < 0 || c.mods[c.cur_mod].is_std || fm == c.cur_mod {
+    return
+  }
+  var labels: List[Str] = []
+  for it in c.esets[decl] {
+    if !it.label.is_empty() && !labels.contains(it.label) {
+      labels.push(it.label)
+    }
+  }
+  if labels.is_empty() {
+    return
+  }
+  let from = match c.module_root_of(c.cur_mod) {
+    Some(r) => r
+    None => return
+  }
+  let to = match c.module_root_of(fm) {
+    Some(r) => r
+    None => return
+  }
+  if to.dir == from.dir {
+    return
+  }
+  if !c.deps.ceilings.contains(from.dir) {
+    c.deps.ceilings[from.dir] = c.ceilings_from(from.dir)
+  }
+  let srcs = (c.deps.ceilings.get(from.dir) ?? {}).get(to.path) ?? []
+  if srcs.is_empty() {
+    return
+  }
+  let sorted = labels.sort()
+  var version = ""
+  if let Some(dm) = c.deps.dep_dirs.get(to.dir) {
+    if !dm.workspace {
+      version = " ${dm.version}"
+    }
+  }
+  for src in srcs {
+    var over: List[Str] = []
+    for l in sorted {
+      if !ceiling_admits(src.ceiling, l) {
+        over.push("`${l}`")
+      }
+    }
+    if over.is_empty() {
+      continue
+    }
+    let list = over.join(", ")
+    let where_ = if src.version.is_empty() { "xo.work" } else { "xo.mod" }
+    let d = c.error("XO1309", sp, "`${c.display_name(fo)}` of ${to.path}${version} performs ${list}, above the effect ceiling `${ceiling_text(src.ceiling)}` of that dependency in ${where_}")
+    c.note_at(d, c.rel_dir(src.file), line_span(src.line), "the ceiling is declared here")
+    c.note(d, "review why ${to.path} needs ${list}; then raise the ceiling, or require a version within it (decision 0086)")
+    return
+  }
+}

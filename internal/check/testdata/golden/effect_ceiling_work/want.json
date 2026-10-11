@@ -1,0 +1,106 @@
+[
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`now` of example.com/tick performs `clock`, above the effect ceiling `uses none` of that dependency in xo.work",
+    "span": {
+      "file": "app/main/main.xo",
+      "line": 6,
+      "col": 11,
+      "end_line": 6,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.work",
+          "line": 3,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/tick needs `clock`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`now` of example.com/tick performs `clock`, above the effect ceiling `uses none` of that dependency in xo.work",
+    "span": {
+      "file": "app/main/main.xo",
+      "line": 9,
+      "col": 11,
+      "end_line": 9,
+      "end_col": 19
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.work",
+          "line": 3,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/tick needs `clock`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`sample` of example.com/meter performs `rand`, above the effect ceiling `uses clock` of that dependency in xo.work",
+    "span": {
+      "file": "app/main/main.xo",
+      "line": 11,
+      "col": 11,
+      "end_line": 11,
+      "end_col": 25
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.work",
+          "line": 4,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/meter needs `rand`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO1309",
+    "severity": "error",
+    "message": "`save` of example.com/meter performs `fs.read`, `fs.write`, above the effect ceiling `uses clock` of that dependency in xo.work",
+    "span": {
+      "file": "app/main/main.xo",
+      "line": 12,
+      "col": 11,
+      "end_line": 12,
+      "end_col": 23
+    },
+    "notes": [
+      {
+        "message": "the ceiling is declared here",
+        "span": {
+          "file": "xo.work",
+          "line": 4,
+          "col": 1
+        }
+      },
+      {
+        "message": "review why example.com/meter needs `fs.read`, `fs.write`; then raise the ceiling, or require a version within it (decision 0086)"
+      }
+    ],
+    "fixes": []
+  }
+]

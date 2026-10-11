@@ -188,3 +188,27 @@ test "a name against its convention is XO0101" {
   expect(ls.any(fn(l) { l.contains("parameter name `userId` must be snake_case") })) == true
   expect(ls.any(fn(l) { l.contains("variable name `maxCount` must be snake_case") })) == true
 }
+
+test "versions, module paths, ceilings, and deny rules read as internal/mod reads them" {
+  expect(compare_versions("v1.2.0", "v1.10.0")) == -1
+  expect(compare_versions("v1.0.0-rc.1", "v1.0.0")) == -1
+  expect(compare_versions("v1.0.0-rc.2", "v1.0.0-rc.10")) == -1
+  expect(compare_versions("v1.0.0-alpha", "v1.0.0-1")) == 1
+  expect(valid_version("v01.0.0")) == false
+  expect(valid_version("v1.0")) == false
+  expect(major_mismatch("example.com/a", "v2.0.0")) == "example.com/a v2.0.0: major version 2 needs the module path example.com/a/v2"
+  expect(major_mismatch("example.com/a/v3", "v2.0.0")) == "example.com/a/v3 v2.0.0: a module path ending in /v3 takes only v3.x.y versions"
+  expect(valid_path("example.com/a/b")) == true
+  expect(valid_path("example/a")) == false
+  expect(escape_path("example.com/Acme/X")) == "example.com/!acme/!x"
+  let cl = parse_ceiling(["uses", "(clock,", "fs.read)"]).ok() ?? Ceiling{}
+  expect(ceiling_text(cl)) == "uses clock, fs.read"
+  expect(ceiling_admits(cl, "fs.read")) == true
+  expect(ceiling_admits(Ceiling{effects: ["fs"]}, "fs.write")) == true
+  expect(ceiling_admits(cl, "fs.write")) == false
+  let d = parse_deny("xo.mod", 3, " a.com/x -> a.com/y/..., std/time").ok() ?? Deny{from: "", line: 0}
+  expect(deny_matches(d, "a.com/x", "a.com/y/z")) == "a.com/y/..."
+  expect(deny_matches(d, "a.com/x", "std/json")) == ""
+  expect(fields(" a\tb  c ")) == ["a", "b", "c"]
+  expect(scan_lines(b"a\r\nb\n")) == ["a", "b"]
+}

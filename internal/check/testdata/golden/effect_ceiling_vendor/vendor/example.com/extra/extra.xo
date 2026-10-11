@@ -1,0 +1,4 @@
+/// A bonus, in cents.
+pub fn bonus() -> Int {
+  7
+}

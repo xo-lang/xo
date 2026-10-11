@@ -1,0 +1,9 @@
+/// Twice n.
+pub fn double(n: Int) -> Int {
+  n * 2
+}
+
+/// Reads the environment.
+pub fn home(e: Env) -> Str uses env {
+  e.get("HOME") ?? ""
+}

@@ -266,6 +266,7 @@ fn (var c: Checker) func_value(fo: Int, targs: List[Int], has_targs: Bool, sp: S
   if !c.objs[fo].sig_done {
     return c.bad_ty
   }
+  c.check_ceiling(fo, sp)
   let sm = c.fresh_subst(fo, {}, targs, has_targs, sp)
   var ft = c.subst(c.sig_of(fo), sm)
   let e = c.tys[ft].err
@@ -1205,6 +1206,8 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
       }
     }
   }
+  // effects
+  c.check_ceiling(fo, span)
   if c.objs[fo].declared >= 0 {
     c.perform(c.performed(c.subst_eff(c.objs[fo].declared, sm, 0), c.path, span, c.display_name(fo)))
   } else {

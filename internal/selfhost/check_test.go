@@ -59,6 +59,7 @@ func TestSelfhostChecker(t *testing.T) {
 	// The Go checker prints paths relative to the working directory, as
 	// the Xo checker run from root does.
 	t.Chdir(root)
+	setModEnv(t, root)
 	want := map[string]*goRun{}
 	for _, d := range dirs {
 		want[d] = goCheck(d)
@@ -228,7 +229,7 @@ func runChecker(t *testing.T, bin, root string, dirs []string) map[string]string
 	const batch = 100
 	for i := 0; i < len(dirs); i += batch {
 		chunk := dirs[i:min(i+batch, len(dirs))]
-		args := append([]string{"--each", "--std=std"}, chunk...)
+		args := append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, chunk...)
 		text := runXo(t, bin, root, args)
 		parts := strings.Split(text, "=== check ")
 		if len(parts) != len(chunk)+1 {
@@ -243,6 +244,31 @@ func runChecker(t *testing.T, bin, root string, dirs []string) map[string]string
 		}
 	}
 	return out
+}
+
+// setModEnv makes module loading deterministic for both checkers
+// (decision 0141, dependency rules): the module cache is the fixture cache
+// internal/selfhost/testdata/modules/cache, nothing is fetched
+// (XO_OFFLINE), and no XO_WORK file is forced.
+func setModEnv(t *testing.T, root string) {
+	cache, err := filepath.Abs(filepath.Join(root, "internal", "selfhost", "testdata", "modules", "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XO_MODCACHE", cache)
+	t.Setenv("XO_OFFLINE", "1")
+	t.Setenv("XO_WORK", "")
+}
+
+// workDir is the working directory as the Go checker sees it (os.Getwd,
+// which prefers $PWD), passed to the Xo checker as --wd so the absolute
+// paths both print agree.
+func workDir(t testing.TB) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wd
 }
 
 func firstLine(s string) string {
@@ -369,7 +395,9 @@ func nonEmptyLines(s string) []string {
 // XO0520, the XO0804 warning, unused bindings XO0110 and XO0201), and
 // exhaustiveness of stage 6 (XO0301, XO0303, the XO0305 warning), and
 // the habits of stage 8 (naming XO0101, the habits of other languages
-// XO0177 of the checker and the parser, time layouts XO0420).
+// XO0177 of the checker and the parser, time layouts XO0420), and module
+// loading (xo.mod, xo.work, xo.lock, the module cache and vendor/: XO1301
+// to XO1307, effect ceilings XO1309, deny rules XO1312).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0803)",.*`,
 	// stage 3: generics
@@ -382,6 +410,9 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	`(XO0301|XO0303|XO0305)",.*`,
 	// stage 8: naming, habits, time layouts
 	`(XO0101|XO0177|XO0420)",.*`,
+	// modules: xo.mod, xo.work, xo.lock, the module cache, vendor/,
+	// dependency rules, deny rules, effect ceilings
+	`(XO1301|XO1302|XO1303|XO1304|XO1305|XO1306|XO1307|XO1309|XO1312)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }

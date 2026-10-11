@@ -1,0 +1,151 @@
+type Node = enum { Leaf(n: Int) | Pair(l: Box[Node], r: Box[Node]) | Named(name: Str, inner: Box[Node]) }
+
+func main(v0: Os) -> () {
+b0(v0: Os):
+  v1: List[Node] = call list.new
+  v2: Str = const "a"
+  v3: Int = const 1
+  v4: Node = variant 0, v3
+  v5: Box[Node] = box v4
+  v6: Node = variant 2, v2, v5
+  v7: Box[Node] = box v6
+  v8: Int = const 2
+  v9: Node = variant 0, v8
+  v10: Box[Node] = box v9
+  v11: Node = variant 1, v7, v10
+  v12: (Int, List[Node]) = call walk, v11, v1 lands v13
+  v13: Bool = call rt.landing
+  br v13, b1(), b2()
+b1:  ; preds b0
+  jump b3()
+b2:  ; preds b0
+  v16: List[Node] = field 1, v12
+  v17: Int = field 0, v12
+  v18: List[Node] = call keep, v11
+  jump b4()
+b3:  ; preds b1
+  v20: () = call rt.fault_continue
+  v21: () = tuple
+  ret v21
+b4:  ; preds b2
+  v23: List[Int] = call list.new
+  v24: Int = const 1
+  v25: List[Int] = call list.push, v23, v24
+  v26: Int = const 2
+  v27: List[Int] = call add, v25, v26
+  jump b5()
+b5:  ; preds b4
+  v29: Stdio = cap stdio, v0
+  v30: Str = call str.of_int, v17
+  v31: Str = const " "
+  v32: Str = call str.concat, v30, v31
+  v33: Int = call list.len, v16
+  v34: Str = call str.concat_int, v32, v33
+  v35: Str = const " "
+  v36: Str = call str.concat, v34, v35
+  v37: Int = call list.len, v18
+  v38: Str = call str.concat_int, v36, v37
+  v39: Str = const " "
+  v40: Str = call str.concat, v38, v39
+  v41: Int = call list.len, v27
+  v42: Str = call str.concat_int, v40, v41
+  v43: () = call Stdio.println, v29, v42
+  ret v43
+}
+
+func walk(v0: Node, v1: List[Node]) -> (Int, List[Node]) {
+b0(v0: Node, v1: List[Node]):
+  v2: Int = tag v0
+  v3: Int = const 0
+  v4: Bool = eq v2, v3
+  br v4, b3(), b2()
+b1(v6: Int, v7: List[Node]):  ; preds b3, b15, b14
+  ret v6, v7
+b2:  ; preds b0
+  v9: Int = tag v0
+  v10: Int = const 1
+  v11: Bool = eq v9, v10
+  br v11, b5(), b4()
+b3:  ; preds b0
+  v13: Int = payload 0.0, v0
+  jump b1(v13, v1)
+b4:  ; preds b2
+  v15: Int = tag v0
+  v16: Int = const 2
+  v17: Bool = eq v15, v16
+  br v17, b12(), b11()
+b5:  ; preds b2
+  v19: Box[Node] = payload 1.0, v0
+  v20: Node = unbox v19
+  v21: Box[Node] = payload 1.1, v0
+  v22: Node = unbox v21
+  v23: (Int, List[Node]) = call walk, v20, v1 lands v24
+  v24: Bool = call rt.landing
+  br v24, b6(), b7()
+b6:  ; preds b5
+  jump b8()
+b7:  ; preds b5
+  v27: List[Node] = field 1, v23
+  v28: Int = field 0, v23
+  v29: (Int, List[Node]) = call walk, v22, v27 lands v30
+  v30: Bool = call rt.landing
+  br v30, b9(), b10()
+b8:  ; preds b6, b9, b13, b16
+  v32: () = call rt.fault_continue
+  v33: Int = const 0
+  v34: List[Node] = call rt.rl_empty
+  ret v33, v34
+b9:  ; preds b7
+  jump b8()
+b10:  ; preds b7
+  v37: List[Node] = field 1, v29
+  v38: Int = field 0, v29
+  v39: Int = add v28, v38 @ main.xo:16:25 lands v40
+  v40: Bool = call rt.landing
+  br v40, b16(), b15()
+b11:  ; preds b4
+  unreachable
+b12:  ; preds b4
+  v43: Box[Node] = payload 2.1, v0
+  v44: Node = unbox v43
+  v45: List[Node] = call list.push, v1, v0
+  v46: () = tuple
+  v47: (Int, List[Node]) = call walk, v44, v45 lands v48
+  v48: Bool = call rt.landing
+  br v48, b13(), b14()
+b13:  ; preds b12
+  jump b8()
+b14:  ; preds b12
+  v51: List[Node] = field 1, v47
+  v52: Int = field 0, v47
+  jump b1(v52, v51)
+b15:  ; preds b10
+  jump b1(v39, v37)
+b16:  ; preds b10
+  jump b8()
+}
+
+func keep(v0: Node) -> List[Node] {
+b0(v0: Node):
+  v1: List[Node] = call list.new
+  v2: List[Node] = call list.push, v1, v0
+  ret v2
+}
+
+func add(v0: List[Int], v1: Int) -> List[Int] {
+b0(v0: List[Int], v1: Int):
+  v2: Int = const 0
+  v3: Bool = lt v1, v2
+  br v3, b2(), b3()
+b1:  ; preds b3
+  v5: () = tuple
+  v6: List[Int] = call list.push, v0, v1
+  v7: () = tuple
+  ret v6
+b2:  ; preds b0
+  v9: List[Int] = call list.new
+  ret v9
+b3:  ; preds b0
+  v11: () = tuple
+  jump b1()
+}

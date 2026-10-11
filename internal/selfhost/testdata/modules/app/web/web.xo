@@ -1,0 +1,7 @@
+use example.com/lib
+
+/// A stamp: lib may perform nothing (`uses none`).
+pub fn stamp() -> Int uses clock, rand {
+  let f = lib.stamp
+  lib.stamp() + lib.answer() + f()
+}

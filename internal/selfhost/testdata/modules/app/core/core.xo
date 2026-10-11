@@ -1,0 +1,9 @@
+// tick is selected at v1.1.0 (lib requires it), whose now adds `rand`
+// above the ceiling `uses clock`; web/api is denied to core.
+use example.com/app/web/api
+use example.com/tick
+
+/// The time, from the dependency.
+pub fn now(c: Clock) -> Int uses clock, rand {
+  tick.now() + tick.pure() + tick.apply(fn() -> Int { c.now().unix() }) + api.version()
+}

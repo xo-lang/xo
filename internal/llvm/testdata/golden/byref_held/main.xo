@@ -1,0 +1,135 @@
+// A `var` parameter passed by reference stays in the caller's memory on
+// the LLVM backend (decision 0148): fields are read from it, `setfield`
+// writes it in place, calls and returns skip stores of the value it
+// already holds, and a value held at every use is never loaded whole.
+// Covered: loops that carry it (block parameters passed in place),
+// branches that update it on one side only, nested struct fields, a
+// copy kept while the original changes, two `var` parameters of one
+// type, a by value use (a closure), and faults in callees whose landing
+// pads release the fields (task.isolate; the leak check counts every
+// allocation).
+use std/task
+
+struct Inner {
+  tags: List[Str]
+  hits: Int = 0
+}
+
+struct State {
+  name: Str
+  log: List[Str] = []
+  seen: Map[Str, Int] = {}
+  inner: Inner = Inner{tags: []}
+  total: Int = 0
+  a: Str = "a"
+  b: Str = "b"
+  c: Str = "c"
+  d: Str = "d"
+  e: Str = "e"
+  f: Str = "f"
+  g: Str = "g"
+  h: Str = "h"
+  i: Str = "i"
+  j: Str = "j"
+  k: Str = "k"
+}
+
+fn (var s: State) note(msg: Str) {
+  s.log.push(msg)
+  s.seen[msg] = (s.seen.get(msg) ?? 0) + 1
+  s.total += msg.len()
+}
+
+fn (s: State) count(msg: Str) -> Int {
+  s.seen.get(msg) ?? 0
+}
+
+fn (var s: State) tag(t: Str) {
+  s.inner.tags.push(t)
+  s.inner.hits += 1
+}
+
+/// Loops carry the state; one branch updates it, the other only reads.
+fn (var s: State) run(n: Int) -> Int {
+  var odd = 0
+  for i in 0..n {
+    if i % 2 == 0 {
+      s.note("even")
+    } else {
+      odd += s.count("even")
+    }
+    if i % 5 == 0 {
+      s.tag("five${i}")
+    }
+  }
+  odd
+}
+
+/// Faults after updating the state when asked.
+fn (var s: State) risky(i: Int, limit: Int) -> Int {
+  s.note("risky${i}")
+  if i > limit {
+    let xs = [1, 2]
+    return xs[i]
+  }
+  s.total
+}
+
+fn (var s: State) many(limit: Int) -> Int {
+  var sum = 0
+  for i in 0..5 {
+    sum += s.risky(i, limit)
+  }
+  sum
+}
+
+fn swap(var x: State, var y: State) {
+  let t = x.name
+  x.name = y.name
+  y.name = t
+  x.note("x")
+  y.note("y")
+  x.tag("xt")
+}
+
+fn (s: State) show() -> Str {
+  "${s.name}: log ${s.log.len()}, seen ${s.seen.len()}, tags ${s.inner.tags.len()}/${s.inner.hits}, total ${s.total}"
+}
+
+fn (var s: State) keep() -> State {
+  let before = s
+  s.note("after")
+  s.tag("after")
+  before
+}
+
+fn (var s: State) with_closure() -> Int {
+  s.note("closure")
+  let f = fn(t: State) -> Int { t.log.len() }
+  f(s) + s.log.len()
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var s = State{name: "s"}
+  let odd = s.run(12)
+  io.println("${s.show()} odd ${odd}")
+  var t = State{name: "t"}
+  swap(s, t)
+  io.println("${s.show()} | ${t.show()}")
+  let old = s.keep()
+  io.println("${old.show()} -> ${s.show()}")
+  io.println("closure ${s.with_closure()}")
+  let u = State{name: "u"}
+  match task.isolate(fn() -> Int ! () {
+    var w = u
+    w.many(2)
+  }) {
+    Ok(v) => io.println("many: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("many: fault ${info.msg}")
+    Err(_) => io.println("many: failed")
+  }
+  var v = u
+  io.println("${v.show()}")
+  io.println("many again: ${v.many(10)} ${v.show()}")
+}

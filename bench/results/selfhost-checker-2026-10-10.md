@@ -773,3 +773,226 @@ Next experiments, by expected gain:
 3. Reference counting: `xo_rl_free` and the `dup`/`drop` of `Expr` are
    the largest runtime entries; a borrow of match payloads would skip
    most of them.
+
+# Module loading, 2026-10-10
+
+Decisions 0141, 0086, 0095.
+
+## What it covers
+
+selfhost/check/modfile.xo (about 1,000 lines) ports what internal/mod
+does when the checker loads a main module: xo.mod parsing with every
+XO1301 problem (require lines, effect ceilings, `deny` rules, `replace`,
+a missing `module` line), versions (semver order with prereleases, /vN
+major paths), module paths, xo.work (found above the directory or named
+by XO_WORK, ceilings on `use` lines), xo.lock (malformed lines, XO1304
+mismatches, XO1305 missing hashes, the `/xo.mod` entries), minimal
+version selection over the module cache (XO_MODCACHE, `!` escaped
+paths), vendor/ (XO1307), and the content hashes of core 4.3 (SHA-256
+of every file, nested modules skipped, base64 of the SHA-256 of the
+listing: std/crypto). selfhost/check/deps.xo ports internal/check
+deps.go, deny.go, and ceiling.go: XO1306 for imports no requirement
+covers and for modules only in the build because another module
+requires them, XO1312 with the rule's note, XO1301 for a rule naming no
+package, XO1309 at calls and function values with the xo.mod or xo.work
+line, and the dependency flag (no `uses realtime` note on a
+dependency's function).
+
+The Xo checker does not fetch. A version missing from the cache is
+XO1303 under XO_OFFLINE; online it makes the run unsupported. The
+differential tests pin both checkers to the fixture cache
+internal/selfhost/testdata/modules/cache with XO_OFFLINE=1 and pass the
+Go side's working directory as `--wd`, because the Go checker used to
+`git clone` github.com/acme/money on every run of the billing fixture
+(gotchas/checker-module-loading-depends-on-env.md).
+
+## Fixtures
+
+- internal/selfhost/testdata/modules/app: requires tick v1.0.0 `uses
+  clock`, lib v1.0.0 `uses none` (which requires tick v1.1.0, so MVS
+  selects v1.1.0, whose `now` adds `rand`), and example.com/Acme/util
+  (cached as `example.com/!acme/util@v1.0.0`); two deny rules; a
+  correct xo.lock. Runs: core (XO1312 and XO1309), web (XO1309 at a
+  call and at a function value), ok (accepted), web/api (accepted). The
+  cache modules are runs of their own (lib: XO1305 without a lock).
+- internal/check/testdata/golden/effect_ceiling_work (new Go golden):
+  ceilings on xo.work `use` lines, callbacks within `uses none`, a
+  function value, two labels over.
+- internal/check/testdata/golden/effect_ceiling_vendor (new Go golden):
+  vendored dependencies with ceilings on their requires, and XO1306 for
+  a module vendored only because another dependency requires it.
+
+## Agreement
+
+| backend | runs | accepted (match) | rejected only with staged diagnostics (match) | unsupported |
+|---|---|---|---|---|
+| go | 626 | 361 (361) | 249 (249) | 16 |
+| arm64 | 626 | 361 (361) | 249 (249) | 16 |
+| LLVM | 626 | 361 (361) | 249 (249) | 16 |
+
+The six runs stage 8 left (imports_deny/* and acme/billing invoice)
+matched on the first full run, as did the new fixtures. The 16 runs not
+compared are the `use go` and `use c` ones (examples/realtime-control
+and 15 internal/gen goldens and replays); no run is rejected for a
+diagnostic the port lacks.
+
+Module mutations (`TestSelfhostCheckerModuleMutations`, each a copy of
+one fixture tree with one edit, every package directory a run):
+
+| seed | backend | mutations | runs | accepted | rejected, staged | differences |
+|---|---|---|---|---|---|---|
+| 1 | go | 600 | 2,528 | 592 | 1,936 | 0 |
+| 2 | go | 600 | 2,539 | 565 | 1,974 | 0 |
+| 3 | go | 600 | 2,520 | 559 | 1,961 | 0 |
+| 4 | LLVM | 400 | 1,693 | 330 | 1,363 | 0 |
+| 5 | arm64 | 400 | 1,666 | 358 | 1,308 | 0 |
+
+Seed 1's rejected runs hold 1,263 XO1309, 1,192 XO1312, 2,908 XO1301,
+258 XO1306, 191 XO1303, 142 XO1305, 28 XO1304, 14 XO1307. No checker
+or compiler bug was found; the one surprise was `requires` as a field
+name (a contract keyword, gotchas/requires-is-a-keyword.md).
+
+## Next
+
+The checker is complete for programs without Go or C interop. The
+remaining unsupported runs need `use go` (binding Go packages: the
+gobind cache files are plain .xo declaration files, so loading an
+existing binding is a small port; binding a new package runs `go list`)
+and `use c` (headers). Next experiment for interop: load the cached
+binding of `use go` imports when it exists (internal/check
+loadGoImport with gobind.LoadOrBind's cache path) and report the run
+unsupported only when a binding would have to be made.
+
+# LLVM build experiments after module loading, 2026-10-10
+
+Decisions 0145, 0147. The "Next experiments" of the LLVM profile above,
+in order. Every measurement is `--bench=20` on the selfhost input (the
+lexer, parser, and checker: 3 modules), interleaved round by round with
+the build it is compared to (`ab.sh`: base, candidate, base, ...), ms
+for 20 runs. Each LLVM build of the checker takes about 6.5 minutes of
+clang -O2 on 84 MB of IR.
+
+Baseline after module loading: LLVM 5,412 to 5,565 ms, the Go checker
+(`xo typedump --bench=20 selfhost`) 2,939 to 2,968 ms: 1.88x. (The
+stage 8 table's 4,549 ms after decision 0145 was measured on a quieter
+machine; the checker has also grown by module loading.)
+
+A profile of the baseline (`sample`, 8 s, 6,000 samples on the main
+thread) has no function above 4.4% of self time: `infer0` 263, `set_type`
+194, `pre_expr` 162, `xo_rl_free` 158, `parse_postfix` 148, `check0`
+141, `xo.drop.Expr` 127, `xo.dup.Expr` 114, `memmove` 93. `set_type`, a
+10 line function, compiles to 12,474 instructions; `infer0` to 74,000.
+
+## 1. Enums by reference, payload reads from the reference (decision 0147)
+
+| build | rounds (ms) |
+|---|---|
+| base | 5,565, 5,473, 5,451, 5,482 |
+| enums by reference, tag and payload reads from the parameter's memory | 5,545, 5,486, 5,486, 5,496 |
+
+Neutral: the 2 to 3% loss decision 0145 measured is gone, but nothing
+is gained. The IR showed why: a sub expression passed to a call was
+still loaded out of its box (44 words) and stored into the call's slot.
+
+Then values in stable memory passed by address (decision 0147: a non
+`var` by reference parameter's memory, its fields and payloads, and box
+contents and list elements under a borrowed root):
+
+| build | rounds (ms) |
+|---|---|
+| base | 5,473, 5,412, 5,419 |
+| enums by reference and stable addresses | 5,181, 5,164, 5,156 |
+
+5% faster; kept. The checker's output is identical on all 627
+repository runs on the three backends.
+
+## 2. Lazy field loads: `var` parameters stay in memory (decision 0148)
+
+A dataflow over each function finds which SSA value the memory of a
+`var` parameter passed by reference holds before each instruction
+(calls store into it and `var` callees write back into it; `setfield`
+of the held value is done in place; block parameters every edge passes
+in place are held), so field reads load from memory, updates store one
+field, calls and returns skip the store of what the memory already
+holds, and values held at every use are never loaded whole.
+
+| build | rounds (ms) |
+|---|---|
+| decision 0147 | 5,184, 5,115, 5,117 |
+| values kept in memory | 3,114, 3,076, 3,081 |
+
+40% faster; kept. The Go checker takes 2,939 to 2,968 ms on the same
+input, so the LLVM build is now 1.05x the Go checker (from 1.88x at the
+start of these experiments). The checker's output is identical on the
+627 repository runs (three backends), 1,500 checker mutations (seed 11)
+and 400 module mutations (seed 12) on the LLVM build. One bug on the
+way (gotchas/llvm-held-memory-read-before-store.md): a return wrote one
+`var` parameter back over the memory another held value was read from.
+
+## 3. Borrowing match payloads (decision 0149)
+
+After decisions 0147 and 0148, a profile (8 s, 5,900 samples) put
+reference counting first: `xo_rl_free` 275, `xo.drop.Expr` 261,
+`xo_alloc` 224, `xo.dup.Expr` 179, `memmove` 154, the `Stmt` drops and
+dups about 160, `xo.drop.Token` 55. The node parameters of the checker's
+recursive walk (`check`, `check0`, `infer` over `Expr`) were owned, as
+some path consumes them, so each level duplicated the sub node it
+projected and dropped its own.
+
+The change: a parameter stays borrowed unless every normal path (not
+landing pads) consumes it; the consuming paths retain it.
+
+| build | rounds (ms) |
+|---|---|
+| decision 0148 | 3,148, 3,262, 3,542 |
+| borrowed unless consumed on every path, all types | 76,516, 77,026, 76,601 |
+
+25 times slower: `xo.map.put` became borrowed (one path does not
+consume the map), so every insert retained the map and the in place
+updates copied its lists (gotchas/borrowed-list-copied-on-update.md).
+Restricted to enum parameters, which are never updated in place:
+
+| build | rounds (ms) |
+|---|---|
+| decision 0148 | 3,203, 3,142, 3,144 |
+| enum parameters borrowed unless consumed on every path | 2,962, 2,900, 2,939 |
+
+7% faster; kept. Output identical on the 627 repository runs (three
+backends; the RC change reaches arm64 too).
+
+## Where the three experiments leave the checker
+
+20 runs, best of two rounds, ms per run (Apple M4 Pro; same session for
+every column):
+
+| input | Go checker | Xo, Go backend | Xo, arm64 | Xo, LLVM | LLVM / Go |
+|---|---|---|---|---|---|
+| selfhost (lexer, parser, check: 3 modules) | 147.4 | 386.5 | 419.9 | 151.4 | 1.03 |
+| selfhost/parser (with the lexer) | 47.6 | 146.9 | 159.4 | 55.2 | 1.16 |
+| bench/xo/v0.4/08-notes-service (5 modules) | 9.0 | 39.2 | 25.1 | 9.1 | 1.01 |
+
+The LLVM build went from 1.98x (stage 8) and 1.88x (after module
+loading) to about parity with the Go checker. The LLVM binary shrank
+from 29 MB to 16 MB; `infer0` from 297 KB of code to 50 KB, `set_type`
+from 12,474 instructions to about 7,100.
+
+Next experiments, by expected gain:
+
+1. Port decisions 0145, 0147, and 0148 to the arm64 backend, which kept
+   the field by field convention and is now 2.8x the Go checker on
+   selfhost (the borrowing of 0149 reached it already, through the
+   SSA). Start with `internal/arm64` call lowering of struct parameters
+   of 256 bytes or more.
+2. Drop the write back of zero values at the unwind exit of a function
+   with a `var` parameter passed by reference: after a fault nobody
+   reads that memory (the caller's pad holds nothing known there,
+   held.go), and the zero `Checker` it builds (40 `rt.rl_empty` calls)
+   is most of what is left of `set_type`'s 7,100 instructions. Measure
+   code size and time.
+3. Reference counting that remains: `xo_rl_free`, `xo_alloc`, and the
+   parser's `xo.drop.Token` lead the profile; try the 0149 rule for
+   structs whose leaves are all enums or boxes (no list or string leaf,
+   so nothing is updated in place).
+4. Track the home allocas too (held.go tracks only `var` parameters):
+   a function without a `var` parameter of a type still stores each
+   argument of that type into its alloca before every call.
