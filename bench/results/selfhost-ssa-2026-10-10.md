@@ -314,3 +314,45 @@ link), so decision 0148 was not ported to arm64 here.
    pprof` on the generated Go program): the immediate builds of
    generated functions (begin and end copying the state S) are the
    suspected new cost.
+
+# arm64: large struct parameters by reference, 2026-10-11
+
+Decision 0151 (internal/arm64 byref.go): a struct parameter of 256
+bytes or more of a direct call is passed as its address; a `var` one is
+updated in that memory with decision 0148's dataflow (fields read and
+written in place, no whole loads of a value held at every use), a non
+`var` one is read in place and passed on by address. Before, the
+`Builder` (about 300 words) went through the stack in both directions
+at every call.
+
+Builder alone, `--bench=10`, ms for 10 builds (Apple M4 Pro; the
+internal/selfhost tests ran at the same time for the last three rows):
+
+| input | Go builder | Xo, arm64 before | Xo, arm64 after | Xo, LLVM (stage 4) |
+|---|---|---|---|---|
+| selfhost/check | 710 | 9,434 (13.2x) | 1,630 (2.3x) | 1,117 (1.56x) |
+| selfhost/parser | 223 | 2,906 (13.0x) | 543 (2.4x) | 341 (1.53x) |
+| selfhost/ssa | 1,126 | 15,646 (14.1x) | 2,629 (2.3x) | 1,819 (1.64x) |
+| bench/xo/v0.4/08-notes-service | 25 | 318 (12.7x) | 52 (2.1x) | 31 (1.24x) |
+
+The output of the arm64 build is byte identical before and after on
+selfhost/check and selfhost/ssa (256,436 lines), the binary is 23 MB
+(was 54 MB). Making only `var` parameters references left 1,000 whole
+loads of held values in selfhost/ssa, almost all to call by value
+receivers (`Checker.show`, `Parser.span_from`); read only references
+removed them (1,787 to 1,630 ms on selfhost/check). A `sample` profile
+of the arm64 build is now flat (the map lookup `xo.map.find[Map[Int,
+Int]]` first at 7%, then allocation).
+
+Found: register allocation sorted a register's whole occupancy list at
+every assignment (`mergeRanges`); the by reference convention gives the
+builder's functions more, shorter live ranges and code generation of
+selfhost/ssa went from 55 to 100 s. A linear merge into the list's
+storage (`mergeSorted`) brings it to about 60 s. A first golden struct
+of 248 bytes never reached the convention
+(gotchas/byref-threshold-in-tests.md). No miscompilation was found.
+
+Next experiments for arm64: enums of 256 bytes or more by reference
+(decision 0147's rule: `Expr`, `Stmt`, `Pattern` of selfhost/parser
+are that large), and a field of a field of a held value read without
+loading the inner field whole (`h.a.a.a += n` loads all of `h.a`).

@@ -36,6 +36,7 @@ const (
 	sImm                  // an integer constant
 	sSym                  // the address of a symbol
 	sFrame                // the address of the $OUT slot
+	sMem                  // the address of byte imm of the frame's memory (byref.go)
 )
 
 // src is an operand of a call, a fault stub, or a parallel move.

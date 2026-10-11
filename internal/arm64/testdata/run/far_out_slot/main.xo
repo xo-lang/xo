@@ -3,7 +3,8 @@
 // calls returning a Str (str_replace) is past the 4095 byte immediate of
 // `add`; the arm64 backend materializes its address with a shifted add
 // (gotchas/arm64-add-immediate-range.md). Found by the self hosted SSA
-// builder (decision 0150), whose Builder is that large.
+// builder (decision 0150), whose Builder is that large. Since decision
+// 0151 only calls through function values pass such a struct as words.
 
 struct Big {
   f0: Int = 0
@@ -617,7 +618,10 @@ fn total(b: Big, d: Int) -> Int {
 }
 
 fn show(b: Big, s: Str) -> Str {
-  let n = total(b, 1)
+  // through a function value: direct calls pass a struct this large by
+  // reference (decision 0151), calls of function values pass its words
+  let f = total
+  let n = f(b, 1)
   "${n}".replace("0", "zero") + s
 }
 

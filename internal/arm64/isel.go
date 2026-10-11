@@ -58,6 +58,16 @@ type fstate struct {
 	pads      map[*ssa.Block]bool
 	sites     []callSite
 	stubSites []callSite
+	// large `var` parameters passed by reference (byref.go): what the
+	// homes hold, the address register of each such parameter, the
+	// frame's memory for other by reference arguments (areas by type,
+	// memBytes in all), and the call results left in memory
+	held     *heldInfo
+	refPtr   map[int]vreg
+	areas    map[*ssa.Type][]int
+	memBytes int
+	lazyRes  map[hkey]bool
+	stable   map[*ssa.Value]vreg // read only parameters passed by reference: their address
 }
 
 // callSite is a call that unwinds to a landing pad: the labels around
@@ -354,6 +364,13 @@ func (s *fstate) words(v *ssa.Value) []vreg {
 		m.consts[v.Aux] = r
 		return []vreg{r}
 	}
+	if ptr, ok := s.stableOf(v); ok {
+		return s.loadWords(ptr, 0, s.g.layout(v.Type))
+	}
+	if m, ok := s.memOnlyOf(v); ok {
+		// held in memory at every use: loaded where it is needed whole
+		return s.loadWords(s.held.mems[m].ptr, 0, s.g.layout(v.Type))
+	}
 	if ws, ok := s.vals[v]; ok {
 		return ws
 	}
@@ -451,6 +468,10 @@ func (s *fstate) isel() {
 			}
 		}
 	}
+	var ptrs map[int]vreg
+	if !s.g.goMode {
+		ptrs = s.planHeld()
+	}
 	idom := dominators(blocks)
 	s.planLSR(blocks, idom)
 	s.computeRanges(blocks)
@@ -465,6 +486,11 @@ func (s *fstate) isel() {
 				}
 			}
 			s.lsrParams(b)
+			for _, p := range b.Params {
+				if _, ok := s.memOnlyOf(p); ok {
+					delete(s.vals, p)
+				}
+			}
 		}
 	}
 	for i, b := range blocks {
@@ -508,12 +534,19 @@ func (s *fstate) isel() {
 			s.goEntry(b)
 		} else if i == 0 {
 			var defs []vreg
-			for _, p := range b.Params {
+			for i, p := range b.Params {
+				if ptr, ok := ptrs[i]; ok {
+					defs = append(defs, ptr)
+					continue
+				}
 				ws := s.newVregs(s.g.layout(p.Type))
 				s.vals[p] = ws
 				defs = append(defs, ws...)
 			}
 			s.add(&inst{kind: iEntry, defs: defs})
+			if ptrs != nil {
+				s.byRefEntry(ptrs)
+			}
 			for _, p := range b.Params {
 				if p.Type.Kind == ssa.KList {
 					// known for the whole function (dead code removes
@@ -549,6 +582,9 @@ func (s *fstate) edgeMoves(e *ssa.Edge) ([]vreg, []src) {
 	var dsts []vreg
 	var srcs []src
 	for i, p := range e.To.Params {
+		if _, ok := s.memOnlyOf(p); ok {
+			continue // passed in place
+		}
 		pw := s.vals[p]
 		aw := s.words(e.Args[i])
 		for k := range pw {
@@ -819,11 +855,48 @@ func (s *fstate) instr(v *ssa.Value) {
 		}
 		s.set(v, ws...)
 	case ssa.OpField:
-		off, n := g.fieldWords(v.Args[0].Type, v.Aux.(int))
-		ws := s.words(v.Args[0])
+		if _, ok := s.memOnlyOf(v); ok {
+			return // a `var` result left in memory: read where used
+		}
+		u := v.Args[0]
+		off, n := g.fieldWords(u.Type, v.Aux.(int))
+		if m, ok := s.memOnlyOf(u); ok {
+			// a field of a value held in memory
+			s.set(v, s.loadWords(s.held.mems[m].ptr, off, g.layout(v.Type))...)
+			return
+		}
+		if ptr, ok := s.stableOf(u); ok {
+			s.set(v, s.loadWords(ptr, off, g.layout(v.Type))...)
+			return
+		}
+		if s.lazyRes[hkey{u, v.Aux.(int)}] {
+			fail("%s in %s: a result left in memory read out of place", v.Name(), s.f.Name)
+		}
+		ws := s.words(u)
 		s.set(v, ws[off:off+n]...)
 	case ssa.OpSetField:
 		off, n := g.fieldWords(v.Type, v.Aux.(int))
+		if m, ok := s.held.inPlaceOf(v); ok {
+			// the field is written in place
+			ptr := s.held.mems[m].ptr
+			_, uOnly := s.memOnlyOf(v.Args[0])
+			var old []vreg
+			if !uOnly {
+				old = s.words(v.Args[0])
+			}
+			s.storeWordsAt(ptr, off, s.words(v.Args[1]))
+			if _, ok := s.memOnlyOf(v); ok {
+				return
+			}
+			if uOnly {
+				s.set(v, s.loadWords(ptr, 0, g.layout(v.Type))...)
+				return
+			}
+			ws := append([]vreg(nil), old...)
+			copy(ws[off:off+n], s.words(v.Args[1]))
+			s.set(v, ws...)
+			return
+		}
 		ws := append([]vreg(nil), s.words(v.Args[0])...)
 		copy(ws[off:off+n], s.words(v.Args[1]))
 		s.set(v, ws...)
@@ -935,6 +1008,10 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpReturn:
 		if g.goMode {
 			s.goReturn(v)
+			return
+		}
+		if s.refPtr != nil {
+			s.byRefReturn(v)
 			return
 		}
 		var uses []vreg
@@ -1514,6 +1591,10 @@ func (s *fstate) callOp(v *ssa.Value) {
 	}
 	if callee := g.byName[name]; callee != nil && g.goMode {
 		s.goCall(v, callee)
+		return
+	}
+	if callee := g.byName[name]; callee != nil && g.byRefOf(callee) != nil {
+		s.byRefCall(v, callee)
 		return
 	}
 	if callee := g.byName[name]; callee != nil {

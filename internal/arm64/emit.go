@@ -26,6 +26,7 @@ const (
 	mSym
 	mFrame
 	mZero
+	mMem // the address of byte imm of the frame's memory
 )
 
 type msrc struct {
@@ -73,16 +74,18 @@ var fpScratch = []int{fpBase + 30, fpBase + 29, fpBase + 31}
 //	[outOff, outOff+8)       the $OUT slot (length out parameter)
 //	[spillBase, ...)         spill slots, 8 bytes each
 //	[saveBase, ...)          callee saved registers
+//	[memOff, ...)            memory of by reference arguments (byref.go)
 //	[rec, rec+16)            the frame record (x29, x30); x29 = sp + rec
 //
+// (a far frame puts the memory after its spill slots).
 // The frame record is at the bottom (rec 0) when no call passes stack
 // arguments, so one `stp x29, x30, [sp, #-size]!` makes the frame. A
 // leaf function (no calls, nothing saved or spilled) has no frame:
 // x29 keeps pointing at its caller's record. Incoming stack arguments
 // are at [sp, #size + 8k].
 type frameInfo struct {
-	outArgs, outOff, spillBase, saveBase, rec, size int
-	leaf                                            bool
+	outArgs, outOff, spillBase, saveBase, memOff, rec, size int
+	leaf                                                    bool
 }
 
 // outArgBytes is the size of the stack argument area of the calls: the
@@ -109,7 +112,7 @@ func (s *fstate) outArgBytes() int {
 // frameBound is an upper bound of the frame emit lays out with saved
 // callee saved registers.
 func (s *fstate) frameBound(saved int) int {
-	return s.outArgBytes() + 16 + 8 + 8*s.slots + 8*saved + 16
+	return s.outArgBytes() + 16 + 8 + 8*s.slots + 8*saved + s.memBytes + 16
 }
 
 func align16(n int) int { return (n + 15) &^ 15 }
@@ -143,7 +146,7 @@ func (s *fstate) emit() {
 			calls = calls || in.kind == iCall
 		}
 	}
-	fr.leaf = !calls && len(s.saved) == 0 && s.slots == 0 && !s.out
+	fr.leaf = !calls && len(s.saved) == 0 && s.slots == 0 && !s.out && s.memBytes == 0
 	base := 0
 	if fr.outArgs == 0 {
 		base = 16 // the frame record comes first
@@ -154,10 +157,11 @@ func (s *fstate) emit() {
 		fr.spillBase += 8
 	}
 	fr.saveBase = fr.spillBase + 8*s.slots
+	fr.memOff = fr.saveBase + 8*len(s.saved)
 	if fr.outArgs == 0 {
-		fr.size = align16(fr.saveBase + 8*len(s.saved))
+		fr.size = align16(fr.memOff + s.memBytes)
 	} else {
-		fr.rec = align16(fr.saveBase + 8*len(s.saved))
+		fr.rec = align16(fr.memOff + s.memBytes)
 		fr.size = fr.rec + 16
 	}
 	if s.base != 0 {
@@ -171,7 +175,8 @@ func (s *fstate) emit() {
 		}
 		fr.rec = align16(fr.saveBase + 8*len(s.saved))
 		fr.spillBase = fr.rec + 16
-		fr.size = align16(fr.spillBase + 8*s.slots)
+		fr.memOff = fr.spillBase + 8*s.slots
+		fr.size = align16(fr.memOff + s.memBytes)
 	}
 	if fr.leaf {
 		fr.size = 0
@@ -518,6 +523,8 @@ func (s *fstate) msrcOf(a src, fr *frameInfo) msrc {
 		return msrc{kind: mImm, imm: a.imm}
 	case sSym:
 		return msrc{kind: mSym, sym: a.sym}
+	case sMem:
+		return msrc{kind: mMem, imm: a.imm}
 	}
 	return msrc{kind: mFrame}
 }
@@ -951,9 +958,11 @@ func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 			b.WriteString(g.addr(regName(r, false), src.sym))
 		case mFrame:
 			addSP(b, regName(r, false), fr.outOff)
+		case mMem:
+			addSP(b, regName(r, false), fr.memOff+int(src.imm))
 		}
 	}
-	if g.goMode && (src.kind == mSym || src.kind == mFrame) {
+	if g.goMode && (src.kind == mSym || src.kind == mFrame || src.kind == mMem) {
 		fail("a move of a symbol or frame address")
 	}
 	if src.kind != mLoc {

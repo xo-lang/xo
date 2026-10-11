@@ -1,0 +1,312 @@
+// `var` struct parameters of 256 bytes or more pass their address on the
+// arm64 backend and stay in the caller's memory (internal/arm64
+// byref.go, decision 0151): field reads load from it, `setfield` writes
+// in place, chains of `var` calls update one memory. Covered: var
+// receivers and parameters, Float fields (floating point words in
+// memory), nested struct fields, loops and branches that update the
+// value on one side, a copy kept while the original changes, two `var`
+// parameters of one type (swapped, and passed in one call from a
+// function that has a home of the type), a function with no home
+// (main, closures: memory of the frame), by value uses and read only
+// parameters (passed in place, or copied when a `var` argument of the
+// same call shares the memory: `s.merge(s)`), a struct past
+// the reach of a 12 bit load offset (more than 4095 words), faults in
+// callees (task.isolate: their cleanup releases what the memory holds),
+// and a task canceled while it holds the value (the canceled call
+// writes zero values back).
+use std/task
+
+struct Inner {
+  tags: List[Str]
+  hits: Int = 0
+  w: Float = 0.5
+}
+
+struct State {
+  name: Str
+  log: List[Str] = []
+  inner: Inner = Inner{tags: []}
+  total: Int = 0
+  x: Float = 1.0
+  y: Float = 2.0
+  a: Str = "a"
+  b: Str = "b"
+  c: Str = "c"
+  d: Str = "d"
+  e: Str = "e"
+  f: Str = "f"
+  g: Str = "g"
+  h: Str = "h"
+  i: Str = "i"
+  j: Str = "j"
+  k: Str = "k"
+  l: Str = "l"
+  m: Str = "m"
+}
+
+fn (var s: State) note(msg: Str) {
+  s.log.push(msg)
+  s.total += msg.len()
+  s.x = s.x * 1.5 + s.inner.w
+}
+
+fn (s: State) count() -> Int {
+  s.log.len() + s.inner.tags.len()
+}
+
+fn (var s: State) tag(t: Str) {
+  s.inner.tags.push(t)
+  s.inner.hits += 1
+  s.inner.w += 0.25
+}
+
+fn (var s: State) run(n: Int) -> Int {
+  var odd = 0
+  for i in 0..n {
+    if i % 2 == 0 {
+      s.note("even${i}")
+    } else {
+      odd += s.count()
+      s.y = s.y + s.x
+    }
+    if i % 3 == 0 {
+      s.tag("t${i}")
+    }
+  }
+  odd
+}
+
+fn (var s: State) deep(n: Int) -> Int {
+  if n == 0 {
+    s.note("bottom")
+    return s.total
+  }
+  s.tag("d${n}")
+  let r = s.deep(n - 1)
+  s.e = "e${n}"
+  r + n
+}
+
+fn (var s: State) risky(i: Int, limit: Int) -> Int {
+  s.note("risky${i}")
+  if i > limit {
+    let xs = [1, 2]
+    return xs[i]
+  }
+  s.total
+}
+
+fn (var s: State) many(limit: Int) -> Int {
+  var sum = 0
+  for i in 0..5 {
+    sum += s.risky(i, limit)
+  }
+  sum
+}
+
+fn swap(var p: State, var q: State) {
+  let t = p.name
+  p.name = q.name
+  q.name = t
+  p.note("p")
+  q.note("q")
+  p.tag("pt")
+}
+
+/// Has a home of State (s) and passes two States in one call.
+fn (var s: State) pair(var other: State) -> Int {
+  s.note("pair")
+  swap(s, other)
+  swap(other, s)
+  s.count() * 100 + other.count()
+}
+
+fn (s: State) show() -> Str {
+  "${s.name}: log ${s.log.len()} tags ${s.inner.tags.len()}/${s.inner.hits} total ${s.total} x ${s.x} y ${s.y} w ${s.inner.w} e ${s.e}"
+}
+
+fn (var s: State) keep() -> State {
+  let before = s
+  s.note("after")
+  s.tag("after")
+  before
+}
+
+fn by_value(s: State) -> Int {
+  s.log.len() * 10 + s.total
+}
+
+fn (var s: State) mixed() -> Int {
+  s.note("mixed")
+  let n = by_value(s)
+  s.note("mixed2")
+  let f = fn(t: State) -> Int { t.log.len() }
+  n + f(s) + by_value(s)
+}
+
+/// A read only parameter passed by reference while a `var` one of the
+/// same type changes (`s.merge(s)` must see the value before the call).
+fn (var into: State) merge(from: State) {
+  into.note(from.name)
+  into.total += from.total
+  into.tag("${from.log.len()}/${into.log.len()}")
+  into.x = into.x + from.x
+}
+
+fn (var s: State) self_merge() -> Int {
+  s.merge(s)
+  let copy = s
+  s.merge(copy)
+  s.total
+}
+
+/// Read only parameters passed on (the callee's memory is the caller's).
+fn (s: State) sum3() -> Int {
+  s.count() + by_value(s) + s.inner.hits
+}
+
+fn (s: State) chain(n: Int) -> Int {
+  if n == 0 {
+    return s.sum3()
+  }
+  s.chain(n - 1) + s.total
+}
+
+fn (var s: State) reset_if(cond: Bool) {
+  if cond {
+    s = State{name: "${s.name}!"}
+  } else {
+    s.total += 1000
+  }
+}
+
+struct L1 {
+  a: Int = 0
+  b: Int = 0
+  c: Int = 0
+  d: Int = 0
+  e: Int = 0
+  f: Int = 0
+  g: Int = 0
+  h: Int = 0
+  i: Int = 0
+  j: Int = 0
+  k: Int = 0
+  l: Int = 0
+  m: Int = 0
+  n: Int = 0
+  o: Int = 0
+  p: Int = 0
+}
+
+struct L2 {
+  a: L1 = L1{}
+  b: L1 = L1{}
+  c: L1 = L1{}
+  d: L1 = L1{}
+  e: L1 = L1{}
+  f: L1 = L1{}
+  g: L1 = L1{}
+  h: L1 = L1{}
+  i: L1 = L1{}
+  j: L1 = L1{}
+  k: L1 = L1{}
+  l: L1 = L1{}
+  m: L1 = L1{}
+  n: L1 = L1{}
+  o: L1 = L1{}
+  p: L1 = L1{}
+}
+
+struct Huge {
+  a: L2 = L2{}
+  b: L2 = L2{}
+  c: L2 = L2{}
+  d: L2 = L2{}
+  e: L2 = L2{}
+  f: L2 = L2{}
+  g: L2 = L2{}
+  h: L2 = L2{}
+  i: L2 = L2{}
+  j: L2 = L2{}
+  k: L2 = L2{}
+  l: L2 = L2{}
+  m: L2 = L2{}
+  n: L2 = L2{}
+  o: L2 = L2{}
+  p: L2 = L2{}
+  q: L2 = L2{}
+  name: Str = "huge"
+}
+
+fn (var h: Huge) bump(n: Int) {
+  h.a.a.a += n
+  h.q.p.p += n * 2
+  h.name = "${h.name}+"
+}
+
+fn (var h: Huge) twice(n: Int) -> Int {
+  h.bump(n)
+  h.bump(n + 1)
+  h.a.a.a + h.q.p.p
+}
+
+fn (var s: State) wait(ch: Chan[Int], ready: Chan[()]) -> Int {
+  s.note("waiting")
+  ready.send(())
+  let v = ch.recv() ?? 0
+  s.note("woke")
+  v
+}
+
+fn (var s: State) waiter(ch: Chan[Int], ready: Chan[()]) -> Int {
+  let v = s.wait(ch, ready)
+  s.tag("never")
+  v + s.total
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var s = State{name: "s"}
+  let odd = s.run(10)
+  io.println("run ${odd}: ${s.show()}")
+  io.println("deep ${s.deep(4)}: ${s.show()}")
+  var t = State{name: "t"}
+  swap(s, t)
+  io.println("swap ${s.show()} | ${t.show()}")
+  io.println("pair ${s.pair(t)}: ${s.show()} | ${t.show()}")
+  let old = s.keep()
+  io.println("keep ${old.show()} -> ${s.show()}")
+  io.println("mixed ${s.mixed()}")
+  io.println("self_merge ${s.self_merge()}: ${s.show()}")
+  io.println("chain ${s.chain(3)}")
+  s.reset_if(false)
+  io.println("reset false ${s.show()}")
+  s.reset_if(true)
+  io.println("reset true ${s.show()}")
+  var h = Huge{}
+  io.println("huge ${h.twice(3)} ${h.name} ${h.a.a.a} ${h.q.p.p}")
+  let u = State{name: "u"}
+  match task.isolate(fn() -> Int ! () {
+    var w = u
+    w.many(2)
+  }) {
+    Ok(v) => io.println("many: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("many: fault ${info.msg}")
+    Err(_) => io.println("many: failed")
+  }
+  var v = u
+  io.println("many again ${v.many(10)}: ${v.show()}")
+  let never = Chan[Int].new()
+  scope sc {
+    let ready = Chan[()].new(cap: 1)
+    sc.spawn_background(fn() {
+      var w = State{name: "w"}
+      let r = w.waiter(never, ready)
+      io.println("not reached ${r}")
+    })
+    let _ = ready.recv()
+    sc.cancel()
+  }
+  io.println("canceled")
+}

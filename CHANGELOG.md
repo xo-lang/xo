@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: struct parameters of 256 bytes or more of direct calls
+  are passed by address (decision 0151); `var` ones stay in the
+  caller's memory, read and updated in place (decision 0148's
+  dataflow), non `var` ones are read in place. The arm64 build of the
+  self hosted SSA builder is 5.8 times faster (13.2x to 2.3x the Go
+  builder) and half the size.
+- arm64 backend: register allocation merges live ranges in one pass
+  instead of sorting at every assignment (code generation of
+  selfhost/ssa 100 s to 60 s).
 - Self hosting: SSA stage 2 (decision 0150): selfhost/ssa lowers
   interface values and calls, Error/Display/Debug values, method values,
   `derive Ord` comparisons, and the generated equality and order helpers

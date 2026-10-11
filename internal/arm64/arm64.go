@@ -118,6 +118,10 @@ type gen struct {
 	goPosIx  map[string]int
 	goSigs   map[string]*goSig
 	goWrites map[string][]int // the `var` List parameters each function writes
+	// large `var` parameters passed by reference (byref.go): the
+	// parameters of each function, and the functions used as values
+	byRef     map[*ssa.Func][]bool
+	addrTaken map[string]bool
 }
 
 // Generate lowers a module (after InsertRC) to AArch64 assembly.
@@ -147,6 +151,7 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	for _, f := range m.Funcs {
 		g.byName[f.Name] = f
 	}
+	g.findAddrTaken()
 	main := g.byName["main"]
 	if main == nil {
 		return nil, &Error{"no main"}

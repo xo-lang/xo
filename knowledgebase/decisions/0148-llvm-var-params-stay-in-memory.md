@@ -66,7 +66,8 @@ With it:
   module mutations.
 - Only the home memory of each type is tracked: a second `var`
   parameter of the same type keeps the 0145 behavior.
-- The arm64 backend is unchanged.
+- The arm64 backend was unchanged here; decision 0151 (2026-10-11) ports
+  this rule and 0145's to it.
 
 ## Alternatives
 

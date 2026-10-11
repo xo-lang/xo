@@ -325,7 +325,7 @@ func (s *fstate) regalloc() {
 			a, b = b, a
 		}
 		leader[b] = a
-		ranges[a] = mergeRanges(append(ranges[a], ranges[b]...))
+		ranges[a] = mergeSorted(ranges[a], ranges[b])
 		ranges[b] = nil
 		weight[a] += weight[b]
 		fixed[a] = append(fixed[a], fixed[b]...)
@@ -437,7 +437,7 @@ func (s *fstate) regalloc() {
 					slotOcc = append(slotOcc, nil)
 					s.slots++
 				}
-				slotOcc[k] = mergeRanges(append(slotOcc[k], ranges[v]...))
+				slotOcc[k] = mergeSorted(slotOcc[k], ranges[v])
 				s.loc[v] = loc{reg: -1, slot: k}
 				continue
 			}
@@ -445,7 +445,7 @@ func (s *fstate) regalloc() {
 			if !s.g.goMode && isCallee(chosen) {
 				usedCallee[chosen] = true
 			}
-			occ[chosen] = mergeRanges(append(occ[chosen], ranges[v]...))
+			occ[chosen] = mergeSorted(occ[chosen], ranges[v])
 		}
 		// a frame past the reach of an sp relative ldr or str: allocate
 		// again with x28 kept free, for the addresses of the far slots
@@ -502,6 +502,55 @@ func mergeRanges(rs []rng) []rng {
 	sort.Slice(rs, func(i, j int) bool { return rs[i].s < rs[j].s })
 	out := rs[:1]
 	for _, r := range rs[1:] {
+		last := &out[len(out)-1]
+		if r.s <= last.e+1 {
+			if r.e > last.e {
+				last.e = r.e
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// mergeSorted merges two sorted, merged range lists in one pass into
+// a's storage (b is not changed). A sort of the concatenation at every
+// assignment made register allocation of functions with tens of
+// thousands of values quadratic with a large constant (half the time of
+// the arm64 build of the self hosted SSA builder), and a new list per
+// merge put the time in the garbage collector.
+func mergeSorted(a, b []rng) []rng {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return append([]rng(nil), b...)
+	}
+	// merge from the back into a grown a: a's unread elements are never
+	// overwritten (the write index stays at or past the read index)
+	n := len(a) + len(b)
+	if cap(a) < n {
+		a = append(make([]rng, 0, n+n/2), a...)
+	}
+	a = a[:n]
+	i, j, k := len(a)-len(b)-1, len(b)-1, n
+	for j >= 0 {
+		var r rng
+		if i >= 0 && a[i].s > b[j].s {
+			r = a[i]
+			i--
+		} else {
+			r = b[j]
+			j--
+		}
+		k--
+		a[k] = r
+	}
+	// a[0:k] is a's own prefix, already in place (k == i+1); join
+	// touching or overlapping ranges in one forward pass
+	out := a[:1]
+	for _, r := range a[1:] {
 		last := &out[len(out)-1]
 		if r.s <= last.e+1 {
 			if r.e > last.e {
