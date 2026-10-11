@@ -26,6 +26,7 @@ type stdinKind int
 const (
 	stdinLine stdinKind = iota
 	stdinAll
+	stdinSome // what is available, up to 64 KiB (read_bytes, decision 0162)
 )
 
 type stdinResult struct {
@@ -56,6 +57,10 @@ func stdinInit() {
 				var r stdinResult
 				if k == stdinLine {
 					r.data, r.err = stdin().ReadString('\n')
+				} else if k == stdinSome {
+					buf := make([]byte, 65536)
+					n, err := stdin().Read(buf)
+					r.data, r.err = string(buf[:n]), err
 				} else {
 					var data []byte
 					data, r.err = io.ReadAll(stdin())
@@ -138,6 +143,56 @@ func stdinRead(tk *Task, all bool) (s string, ok bool, r Result[Unit, IoErr]) {
 			}
 			st.pending = true
 			st.req <- k
+		}
+		res, got := stdinWait(tk, st.res)
+		if !got {
+			return "", false, canceled
+		}
+		st.pending = false
+		st.left += res.data
+		switch {
+		case res.err == io.EOF:
+			st.eof = true
+		case res.err != nil:
+			st.err = res.err
+		}
+	}
+}
+
+// stdinReadSome reads at most max bytes of what is available (waiting for
+// some); ok is false at the end of input.
+func stdinReadSome(tk *Task, max int) (s string, ok bool, r Result[Unit, IoErr]) {
+	canceled := Err[Unit](IoErr{Tag: 3})
+	tk.leave()
+	defer tk.enter()
+	stdinInit()
+	st := &stdinState
+	if _, got := stdinWait(tk, st.turn); !got {
+		return "", false, canceled
+	}
+	defer func() { st.turn <- struct{}{} }()
+	for {
+		if st.left != "" {
+			n := min(max, len(st.left))
+			s, st.left = st.left[:n], st.left[n:]
+			return s, true, Ok[Unit, IoErr](Unit{})
+		}
+		if st.err != nil {
+			err := st.err
+			st.err = nil
+			return "", false, Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
+		}
+		if st.eof {
+			return "", false, Ok[Unit, IoErr](Unit{})
+		}
+		if !st.pending {
+			if r := stdin(); r.Buffered() > 0 {
+				buf := make([]byte, min(max, r.Buffered()))
+				n, _ := r.Read(buf)
+				return string(buf[:n]), true, Ok[Unit, IoErr](Unit{})
+			}
+			st.pending = true
+			st.req <- stdinSome
 		}
 		res, got := stdinWait(tk, st.res)
 		if !got {

@@ -1370,6 +1370,13 @@ type Stdio interface {
 	M_read_line(tk *Task) Result[Option[string], IoErr]
 	M_read_all(tk *Task) Result[string, IoErr]
 	M_lines(tk *Task) Result[List[string], IoErr]
+	M_stdin_is_tty(tk *Task) bool
+	M_stdout_is_tty(tk *Task) bool
+	M_stderr_is_tty(tk *Task) bool
+	M_width(tk *Task) Option[int64]
+	M_read_secret(tk *Task, p0 string) Result[Option[string], IoErr]
+	M_read_bytes(tk *Task, p0 int64) Result[Option[Bytes], IoErr]
+	M_read_all_bytes(tk *Task) Result[Bytes, IoErr]
 }
 
 type ProcOutput struct {
@@ -1988,6 +1995,37 @@ func (v Task_Fault) M_display(*Task) string { return Debug(v) }
 func (v *Task_Fault) XoMark() {
 	v.F_frames.XoMark()
 }
+
+type Term_Painter struct {
+	F_on bool
+}
+
+func (v Term_Painter) XoEq(x any) bool {
+	o, ok := x.(Term_Painter)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_on, o.F_on) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Term_Painter) XoHash() uint64 {
+	h := uint64(459712170913875049)
+	h = MixHash(h, Hash(v.F_on))
+	return h
+}
+
+func (v Term_Painter) XoDebug(b *strings.Builder) {
+	b.WriteString("Painter{")
+	b.WriteString("on: ")
+	DebugTo(b, v.F_on)
+	b.WriteString("}")
+}
+
+func (v Term_Painter) M_debug(*Task) string { return Debug(v) }
 
 type Testing_TestOs struct {
 	F_net   Testing_FakeNet

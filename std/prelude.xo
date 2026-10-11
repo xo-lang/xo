@@ -544,6 +544,22 @@ interface Stdio {
   fn read_line(self) -> Str? ! IoErr uses stdio
   fn read_all(self) -> Str ! IoErr uses stdio
   fn lines(self) -> List[Str] ! IoErr uses stdio
+  /// Whether standard input is a terminal (std.md 3.6, decision 0162).
+  fn stdin_is_tty(self) -> Bool uses stdio
+  /// Whether standard output is a terminal.
+  fn stdout_is_tty(self) -> Bool uses stdio
+  /// Whether standard error is a terminal.
+  fn stderr_is_tty(self) -> Bool uses stdio
+  /// The columns of the terminal on standard output, error, or input (the
+  /// first that is one); None when none is.
+  fn width(self) -> Int? uses stdio
+  /// Writes prompt to standard error and reads a line of standard input
+  /// without echoing it (a password); None at the end of input.
+  fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+  /// At most max bytes of standard input, any bytes; None at the end.
+  fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
+  /// The rest of standard input, any bytes.
+  fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 }
 
 struct ProcOutput {

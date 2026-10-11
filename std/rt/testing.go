@@ -673,6 +673,7 @@ type fakeStdio struct {
 	errb   strings.Builder
 	input  string
 	offset int
+	width  int64 // set_tty: terminals of this width (0: not terminals)
 }
 
 // Testing_FakeStdio is the captured standard streams of a test.

@@ -564,6 +564,13 @@ fn (s: Stdio) write(data: Bytes) -> () ! IoErr
 fn (s: Stdio) read_line() -> Str? ! IoErr    // None at end of input
 fn (s: Stdio) read_all() -> Str ! IoErr
 fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
+
+// terminals and binary input (decision 0162)
+fn (s: Stdio) stdin_is_tty() -> Bool         // also stdout_is_tty, stderr_is_tty
+fn (s: Stdio) width() -> Int?                // columns of the terminal; None without one
+fn (s: Stdio) read_secret(prompt: Str) -> Str? ! IoErr   // a line without echo (passwords)
+fn (s: Stdio) read_bytes(max: Int) -> Bytes? ! IoErr     // any bytes; None at end of input
+fn (s: Stdio) read_all_bytes() -> Bytes ! IoErr
 ```
 
 The reads of standard input are cancellation points while they wait: a
@@ -572,6 +579,26 @@ cancelled task, and every reader once a stop is requested (core 7.5), gets
 for the next read (decision 0088). The native backends read standard
 input the same way (decision 0102); a test binary's standard input is
 empty there.
+
+Terminals (decision 0162), on every backend:
+
+- `stdin_is_tty`, `stdout_is_tty`, `stderr_is_tty` tell whether the
+  stream is a terminal (a terminal's settings can be read: termios on
+  Unix, a console mode on Windows); a pipe, a file, or `/dev/null` is not.
+- `width()` is the columns of the terminal on standard output, else
+  standard error, else standard input; `None` when none is a terminal.
+  `COLUMNS` is not read (it is a variable: read it through `Env`).
+- `read_secret(prompt)` writes `prompt` to standard error, turns the
+  terminal's echo off while it reads a line of standard input (as
+  `read_line`), restores it (also when the read is cancelled), and then
+  writes the newline the user typed, which was not echoed. When standard
+  input is not a terminal it reads a line without touching anything.
+- `read_bytes(max)` returns at most `max` bytes (at most 1 MiB) of
+  standard input as they arrive, any bytes, `None` at the end;
+  `read_all_bytes()` the rest of the input. They share the input buffer
+  of `read_line` and `read_all`, so text and binary reads can be mixed.
+- Targets without terminal support (wasip1, js, plan9, Linux on mips and
+  ppc) report no terminal and read secrets with echo on.
 
 ### 3.7 Proc (`uses proc`)
 
@@ -1192,6 +1219,8 @@ fn (f: MemFs) files() -> Map[Str, Bytes]                  // every file, by path
 fn (e: FakeEnv) set(name: Str, value: Str)
 fn (e: FakeEnv) set_args(args: List[Str])
 fn (s: FakeStdio) set_input(text: Str)
+fn (s: FakeStdio) set_input_bytes(data: Bytes)        // set_input for any bytes
+fn (s: FakeStdio) set_tty(width: Int)                 // the streams are terminals of width columns (0: not)
 fn (s: FakeStdio) output() -> Str                     // everything printed to stdout
 fn (s: FakeStdio) errors() -> Str                     // everything printed to stderr
 fn (p: FakeProc) exit_code() -> Int?                  // set when exit was called
@@ -1933,4 +1962,47 @@ Flags:
       --config <path>  the configuration file [default: tool.toml] [env: TOOL_CONFIG]
   -h, --help           show this help
       --version        show the version
+```
+
+---
+
+## 15. std/term
+
+Status: implemented on every backend (decision 0162, 2026-10-11).
+
+Colors for terminal output that follow the user's settings. Whether a
+stream is a terminal, its width, and input without echo are `Stdio`
+methods (3.6).
+
+```
+struct Painter { on: Bool }       // wraps text in ANSI styles when on
+
+pub fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env)
+pub fn painter(out: Stdio, env: Env) -> Painter uses (stdio, env)
+fn (p: Painter) bold(s: Str) -> Str   // also dim, underline, red, green, yellow, blue, magenta, cyan, gray
+pub fn strip(s: Str) -> Str           // s without ANSI escape sequences
+```
+
+- `color_enabled`: `NO_COLOR` set and not empty is off (no-color.org);
+  else `FORCE_COLOR` or `CLICOLOR_FORCE` set, not empty, and not `0` is
+  on; else `TERM=dumb` is off; else on when standard output is a
+  terminal. The variables are read through `env`, so an attenuated `Env`
+  that does not list them reads as unset.
+- A painter's methods return `s` unchanged when `on` is false or `s` is
+  empty, else `ESC [ code m`, `s`, `ESC [ 0 m` with code 1 bold, 2 dim, 4
+  underline, 31 red, 32 green, 33 yellow, 34 blue, 35 magenta, 36 cyan,
+  90 gray. `Painter{on: false}` and `Painter{on: true}` are for tests.
+- `strip` removes CSI sequences (`ESC [`, parameters, one final byte in
+  `@` to `~`) and any other `ESC x` pair; text whose stripping would cut a
+  UTF-8 sequence is returned unchanged.
+
+```
+fn report(out: Stdio, env: Env, failed: Int) uses (stdio, env) {
+  let p = term.painter(out, env)
+  if failed > 0 {
+    out.println(p.red("${failed} failed"))
+  } else {
+    out.println(p.green("ok"))
+  }
+}
 ```

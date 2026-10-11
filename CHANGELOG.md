@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Terminals (std.md 3.6, 15, decision 0162), on every backend:
+  `Stdio.stdin_is_tty()`, `stdout_is_tty()`, `stderr_is_tty()`,
+  `width()`, `read_secret(prompt)` (a line with the echo off, for
+  passwords), `read_bytes(max)` and `read_all_bytes()` (binary input);
+  `FakeStdio.set_tty(width)` and `set_input_bytes(data)` for tests; the
+  new `std/term` module: `color_enabled(stdio, env)` (NO_COLOR,
+  FORCE_COLOR, CLICOLOR_FORCE, TERM=dumb, a terminal), `painter(...)`
+  with `bold`, `red`, ... (plain text when color is off), and `strip`.
+- Golden programs of internal/llvm and internal/arm64 read `stdin.txt`
+  as standard input, as internal/gen's do.
 - Richer processes (std.md 3.8, decision 0161), Go backend and test
   fakes: `os.proc.cmd(name, args)` builds a `Cmd` (`dir`, `env(e)` with
   exactly the variables an `Env` shows, so `Env.only` narrows the child,

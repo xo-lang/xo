@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+tty: in false out false err false
+width: -1
+secret: "hunter2"
+chunks: 4,4,3 hex 0001fffe61626364656667
+after the end: 0 bytes
+forced: true "\x1b[31mred\x1b[0m" ""
+stripped: "go u"
+plain: cyan
+codes: "\x1b[1mb\x1b[0m" "\x1b[2md\x1b[0m" "\x1b[33my\x1b[0m" "\x1b[34mb\x1b[0m" "\x1b[35mm\x1b[0m" "\x1b[90mg\x1b[0m"
+--- stderr
+password: 

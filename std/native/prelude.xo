@@ -905,6 +905,56 @@ fn stdio_lines(s: Stdio) -> List[Str] ! IoErr {
   text.lines()
 }
 
+// Terminals (std.md 3.6, decision 0162): std/rt's term.go.
+
+fn stdio_stdin_is_tty(_s: Stdio) -> Bool { rt.isatty(0) }
+
+fn stdio_stdout_is_tty(_s: Stdio) -> Bool { rt.isatty(1) }
+
+fn stdio_stderr_is_tty(_s: Stdio) -> Bool { rt.isatty(2) }
+
+fn stdio_width(_s: Stdio) -> Int? {
+  let w = rt.term_width()
+  if w > 0 {
+    return Some(w)
+  }
+  None
+}
+
+/// The prompt on standard error, then a line read with the terminal's
+/// echo off; the newline the user typed was not echoed, so one is written.
+fn stdio_read_secret(s: Stdio, prompt: Str) -> Str? ! IoErr {
+  s.eprint(prompt)
+  let off = rt.stdin_echo(false)
+  defer {
+    if off {
+      rt.stdin_echo(true)
+      s.eprint("\n")
+    }
+  }
+  stdio_read_line(s)
+}
+
+fn stdio_read_bytes(_s: Stdio, max: Int) -> Bytes? ! IoErr {
+  if max <= 0 {
+    return Some(b"")
+  }
+  let data = rt.stdin_read_bytes(max.min(1048576))
+  let st = rt.stdin_status()
+  if st == 0 {
+    return Some(data)
+  }
+  if st == 1 {
+    return None
+  }
+  Err(stdin_err(st))
+}
+
+fn stdio_read_all_bytes(s: Stdio) -> Bytes ! IoErr {
+  let text = stdio_read_all(s)?
+  text.bytes()
+}
+
 /// math.Round(s * 1e9) nanoseconds (std/rt's Duration_from_secs).
 fn duration_from_secs(s: Float) -> Duration { Duration.from_nanos(Int((s * 1000000000.0).round())) }
 

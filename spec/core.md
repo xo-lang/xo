@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Terminals** (std.md 3.6, 15, decision 0162): `Stdio` tells whether
+  each stream is a terminal and its width, reads secrets without echo,
+  and reads binary input; `std/term` colors output following NO_COLOR
+  and FORCE_COLOR. Every backend.
 - **Commands and children** (std.md 3.8, decision 0161): `Proc.cmd`
   builds a `Cmd` (directory, environment from an `Env`, input, the
   terminal, merged streams) run by `output`, `run`, or `spawn` (a
@@ -2710,6 +2714,7 @@ specified in `spec/std.md`. Modules:
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
 | `std/path` | Pure helpers for `/` separated paths |
 | `std/cli` | Command line parsing: flags, arguments, subcommands, help, usage errors (std.md 14) |
+| `std/term` | Terminal colors that follow NO_COLOR and FORCE_COLOR (std.md 15) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 

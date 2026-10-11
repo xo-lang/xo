@@ -1,0 +1,79 @@
+// std/term on the native backends (decisions 0074 and 0162). std/rt's
+// term.go is the reference: the same rules and escape sequences.
+use std/term
+
+fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env) {
+  match env.get("NO_COLOR") {
+    Some(v) => {
+      if v != "" {
+        return false
+      }
+    }
+    None => ()
+  }
+  for n in ["FORCE_COLOR", "CLICOLOR_FORCE"] {
+    match env.get(n) {
+      Some(v) => {
+        if v != "" && v != "0" {
+          return true
+        }
+      }
+      None => ()
+    }
+  }
+  if env.get("TERM") == Some("dumb") {
+    return false
+  }
+  out.stdout_is_tty()
+}
+
+fn painter(out: Stdio, env: Env) -> term.Painter uses (stdio, env) {
+  term.Painter{on: color_enabled(out, env)}
+}
+
+fn sgr(p: term.Painter, code: Str, s: Str) -> Str {
+  if !p.on || s == "" {
+    return s
+  }
+  "\u{1b}[" + code + "m" + s + "\u{1b}[0m"
+}
+
+fn painter_bold(p: term.Painter, s: Str) -> Str { sgr(p, "1", s) }
+fn painter_dim(p: term.Painter, s: Str) -> Str { sgr(p, "2", s) }
+fn painter_underline(p: term.Painter, s: Str) -> Str { sgr(p, "4", s) }
+fn painter_red(p: term.Painter, s: Str) -> Str { sgr(p, "31", s) }
+fn painter_green(p: term.Painter, s: Str) -> Str { sgr(p, "32", s) }
+fn painter_yellow(p: term.Painter, s: Str) -> Str { sgr(p, "33", s) }
+fn painter_blue(p: term.Painter, s: Str) -> Str { sgr(p, "34", s) }
+fn painter_magenta(p: term.Painter, s: Str) -> Str { sgr(p, "35", s) }
+fn painter_cyan(p: term.Painter, s: Str) -> Str { sgr(p, "36", s) }
+fn painter_gray(p: term.Painter, s: Str) -> Str { sgr(p, "90", s) }
+
+/// s without ANSI escape sequences: CSI sequences `ESC [ ... final byte`
+/// and any other `ESC x` pair.
+fn strip(s: Str) -> Str {
+  if !s.contains("\u{1b}") {
+    return s
+  }
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c != 27 {
+      out.write_byte(c)
+      i += 1
+      continue
+    }
+    if i + 1 < b.len() && b[i + 1] == 91 {
+      var j = i + 2
+      while j < b.len() && !(b[j] >= 64 && b[j] <= 126) {
+        j += 1
+      }
+      i = j + 1
+      continue
+    }
+    i += 2
+  }
+  out.freeze().to_str() ?? s
+}

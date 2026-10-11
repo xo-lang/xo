@@ -634,4 +634,3 @@ func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
 	}
 	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(eb.String())})
 }
-

@@ -839,10 +839,11 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 		case "print", "println", "eprint", "eprintln":
 			r := s.expr(ci.Recv)
 			return s.call("Stdio."+fo.Name, m.Builtin(KUnit), "", r, s.valueAs(x.Args[0].Value, m.Builtin(KStr)))
-		case "write", "read_line", "read_all", "lines":
-			// std/native/prelude.xo (decision 0102); reads wait on the
-			// event loop
-			if fo.Name != "write" {
+		case "write", "read_line", "read_all", "lines", "read_secret", "read_bytes", "read_all_bytes",
+			"stdin_is_tty", "stdout_is_tty", "stderr_is_tty", "width":
+			// std/native/prelude.xo (decisions 0102, 0162); reads wait on
+			// the event loop
+			if stdioReads(fo.Name) {
 				b.needConc = true
 				if !b.conc {
 					return s.undef(nt)

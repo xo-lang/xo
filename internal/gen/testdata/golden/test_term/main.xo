@@ -1,0 +1,60 @@
+// Terminals under test (std.md 3.6, 8.4, 15; decision 0162): FakeStdio
+// is not a terminal until set_tty, read_secret reads the fake input after
+// writing the prompt to the fake standard error, read_bytes reads
+// set_input_bytes, and std/term follows NO_COLOR, FORCE_COLOR, and TERM.
+use std/term
+
+fn banner(out: Stdio, env: Env) -> Str uses (stdio, env) {
+  let p = term.painter(out, env)
+  let w = out.width() ?? 40
+  p.bold("=".repeat(w.min(10)))
+}
+
+test "not a terminal by default" {
+  expect(os.stdio.stdout_is_tty()) == false
+  expect(os.stdio.width()) == None
+  expect(banner(os.stdio, os.env)) == "=========="
+}
+
+test "set_tty makes the streams terminals" {
+  os.stdio.set_tty(4)
+  expect(os.stdio.stdin_is_tty()) == true
+  expect(os.stdio.stderr_is_tty()) == true
+  expect(os.stdio.width()) == Some(4)
+  expect(banner(os.stdio, os.env)) == "\u{1b}[1m====\u{1b}[0m"
+}
+
+test "NO_COLOR wins over a terminal, FORCE_COLOR over none" {
+  os.stdio.set_tty(80)
+  os.env.set("NO_COLOR", "1")
+  expect(term.color_enabled(os.stdio, os.env)) == false
+  os.env.set("NO_COLOR", "")
+  os.env.set("TERM", "dumb")
+  expect(term.color_enabled(os.stdio, os.env)) == false
+  os.stdio.set_tty(0)
+  os.env.set("FORCE_COLOR", "0")
+  expect(term.color_enabled(os.stdio, os.env)) == false
+  os.env.set("CLICOLOR_FORCE", "1")
+  expect(term.color_enabled(os.stdio, os.env)) == true
+}
+
+test "read_secret writes the prompt and reads a line" {
+  os.stdio.set_input("s3cret\nnext\n")
+  expect(os.stdio.read_secret("token: ")) == Ok(Some("s3cret"))
+  expect(os.stdio.errors()) == "token: "
+  expect(os.stdio.read_line()) == Ok(Some("next"))
+  expect(os.stdio.read_secret("again: ")) == Ok(None)
+}
+
+test "binary input" {
+  os.stdio.set_input_bytes(b"\x00\xff\x10abc")
+  expect(os.stdio.read_bytes(2)) == Ok(Some(b"\x00\xff"))
+  expect(os.stdio.read_all_bytes()) == Ok(b"\x10abc")
+  expect(os.stdio.read_bytes(2)) == Ok(None)
+}
+
+test "strip removes the escapes" {
+  let p = term.Painter{on: true}
+  expect(term.strip(p.red("a") + p.underline("b") + "c")) == "abc"
+  expect(term.strip("\u{1b}]0;title\u{1b}x")) == "0;title"
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,6 +145,16 @@ func stableStderr(s string) string {
 func progArgs(dir string) []string { return fileFields(filepath.Join(dir, "args.txt")) }
 func progEnv(dir string) []string  { return fileFields(filepath.Join(dir, "env.txt")) }
 
+// progStdin is the standard input of the golden program in dir: its
+// stdin.txt, or nothing.
+func progStdin(dir string) io.Reader {
+	data, err := os.ReadFile(filepath.Join(dir, "stdin.txt"))
+	if err != nil {
+		return nil
+	}
+	return bytes.NewReader(data)
+}
+
 func fileFields(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -181,6 +192,7 @@ func buildRunWith(t *testing.T, dir string, opts build.Options) (runResult, erro
 	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
+	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -321,6 +333,7 @@ func goRun(t *testing.T, dir string) runResult {
 	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), progEnv(dir)...)
+	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()

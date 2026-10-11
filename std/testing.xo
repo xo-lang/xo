@@ -112,7 +112,19 @@ fn (s: FakeStdio) write(data: Bytes) -> () ! IoErr uses stdio
 fn (s: FakeStdio) read_line() -> Str? ! IoErr uses stdio
 fn (s: FakeStdio) read_all() -> Str ! IoErr uses stdio
 fn (s: FakeStdio) lines() -> List[Str] ! IoErr uses stdio
+fn (s: FakeStdio) stdin_is_tty() -> Bool uses stdio
+fn (s: FakeStdio) stdout_is_tty() -> Bool uses stdio
+fn (s: FakeStdio) stderr_is_tty() -> Bool uses stdio
+fn (s: FakeStdio) width() -> Int? uses stdio
+fn (s: FakeStdio) read_secret(prompt: Str) -> Str? ! IoErr uses stdio
+fn (s: FakeStdio) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio
+fn (s: FakeStdio) read_all_bytes() -> Bytes ! IoErr uses stdio
 fn (s: FakeStdio) set_input(text: Str)
+/// The streams are terminals of `width` columns (0: not terminals, the
+/// default), for code that checks `stdout_is_tty` or `width`.
+fn (s: FakeStdio) set_tty(width: Int)
+/// Standard input holds these bytes (any bytes, for `read_bytes`).
+fn (s: FakeStdio) set_input_bytes(data: Bytes)
 fn (s: FakeStdio) output() -> Str
 fn (s: FakeStdio) errors() -> Str
 
