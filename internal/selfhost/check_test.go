@@ -33,13 +33,11 @@ import (
 //
 // Runs the Xo checker cannot load (`use go`, `use c`) and
 // runs rejected for other reasons are counted, not compared. The coverage
-// (runs matching / runs) is logged. -short uses the go backend only.
+// (runs matching / runs) is logged. The go backend only, except in the
+// full tier (tier_test.go).
 // XO_SELFHOST_KEEP=dir writes each run's class to dir/check-<backend>.txt.
 func TestSelfhostChecker(t *testing.T) {
-	backends := []string{"go", "arm64", "llvm"}
-	if testing.Short() {
-		backends = []string{"go"}
-	}
+	backends := tierBackends(t)
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
 	bins := selfhostBinaries(t, "check", backends)
@@ -411,7 +409,7 @@ func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }
 // test`): path helpers, JSON escaping, and checks of small modules in the
 // test's in memory file system.
 func TestSelfhostCheckerXoTests(t *testing.T) {
-	if testing.Short() {
+	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
 	dir := filepath.Join("..", "..", "selfhost", "check")

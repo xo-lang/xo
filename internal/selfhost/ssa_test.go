@@ -31,20 +31,18 @@ import (
 //
 // Functions the Xo builder skips (a construct of a later stage) or never
 // declares (the callees of skipped code) are counted, not compared. The
-// coverage is logged. -short uses the go backend and every 25th run;
-// XO_SELFHOST_BACKEND names one backend.
+// coverage is logged. The go backend only, except in the full tier
+// (tier_test.go); -short also takes every 25th run. XO_SELFHOST_BACKEND
+// names one backend.
 func TestSelfhostSSA(t *testing.T) {
-	backends := []string{"go", "arm64", "llvm"}
-	if testing.Short() {
-		backends = []string{"go"}
-	}
+	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
 		// one backend (a development loop)
 		backends = []string{v}
 	}
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	if testing.Short() {
+	if selfhostTier(t) == tierShort {
 		var some []string
 		for i, d := range dirs {
 			if i%25 == 0 {
@@ -53,11 +51,19 @@ func TestSelfhostSSA(t *testing.T) {
 		}
 		dirs = some
 	}
+	// the merge tier compares only the build stage of the runs whose
+	// passes take minutes (buildOnlyMerge)
+	buildOnly := map[string]bool{}
+	if selfhostTier(t) == tierMerge {
+		for _, d := range buildOnlyMerge {
+			buildOnly[d] = true
+		}
+	}
 	bins := selfhostBinaries(t, "ssa", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
 	wants := make([]goSSA, len(dirs))
-	parallel(len(dirs), func(i int) { wants[i] = goSSABuild(root, dirs[i]) })
+	parallel(len(dirs), func(i int) { wants[i] = goSSABuildOpts(root, dirs[i], false, !buildOnly[dirs[i]]) })
 	want := map[string]goSSA{}
 	for i, d := range dirs {
 		want[d] = wants[i]
@@ -65,7 +71,7 @@ func TestSelfhostSSA(t *testing.T) {
 	// the test binaries (stage 7) of the runs with test blocks
 	tdirs := testDirs(t, root, dirs)
 	twants := make([]goSSA, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true) })
+	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true, !buildOnly[tdirs[i]]) })
 	twant := map[string]goSSA{}
 	for i, d := range tdirs {
 		twant[d] = twants[i]
@@ -77,14 +83,14 @@ func TestSelfhostSSA(t *testing.T) {
 		}
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
-			got := runSSA(t, bin, root, dirs, "--std=std")
+			got := runSSAStages(t, bin, root, dirs, buildOnly, "--std=std")
 			var st ssaStats
 			var fails []string
 			for _, d := range dirs {
 				fails = append(fails, compareSSA(d, want[d], got[d], &st)...)
 			}
 			t.Logf("%s", st)
-			tgot := runSSA(t, bin, root, tdirs, "--std=std", "--test")
+			tgot := runSSAStages(t, bin, root, tdirs, buildOnly, "--std=std", "--test")
 			var tst ssaStats
 			for _, d := range tdirs {
 				fails = append(fails, compareSSA("test "+d, twant[d], tgot[d], &tst)...)
@@ -110,6 +116,38 @@ func TestSelfhostSSA(t *testing.T) {
 	}
 }
 
+// buildOnlyMerge are the runs whose passes the merge tier does not
+// compare: about 110 of the 160 s the go backend's Xo builder spends in
+// the passes of all runs (selfhost/ssa 69 s, selfhost/check 22 s,
+// huge_frame 19 s; 2026-10-11), and as much again for the Go builder.
+// Their build stage is still compared, and the full tier compares every
+// stage of them.
+var buildOnlyMerge = []string{
+	"internal/arm64/testdata/run/huge_frame",
+	"selfhost/check",
+	"selfhost/ssa",
+}
+
+// runSSAStages is runSSA with --stages, except for the dirs in
+// buildOnly (the build stage only).
+func runSSAStages(t *testing.T, bin, root string, dirs []string, buildOnly map[string]bool, flags ...string) map[string]string {
+	var staged, plain []string
+	for _, d := range dirs {
+		if buildOnly[d] {
+			plain = append(plain, d)
+		} else {
+			staged = append(staged, d)
+		}
+	}
+	out := runSSA(t, bin, root, staged, append([]string{"--stages"}, flags...)...)
+	if len(plain) > 0 {
+		for d, text := range runSSA(t, bin, root, plain, flags...) {
+			out[d] = text
+		}
+	}
+	return out
+}
+
 // goSSA is the Go builder's result for one run: the build stage, or why
 // there is none ("rejected", "no main", or an error), and the stages of
 // the passes (passStages) when the build had no errors.
@@ -125,7 +163,7 @@ var passStages = []string{"unwind", "landings", "cleanup", "rc", "verify", "muta
 
 // goSSABuild checks dir as a native build does and prints the build stage
 // of its SSA, as `xo ssadump` does from root.
-func goSSABuild(root, dir string) goSSA { return goSSABuildOpts(root, dir, false) }
+func goSSABuild(root, dir string) goSSA { return goSSABuildOpts(root, dir, false, true) }
 
 // testDirs are the dirs whose .xo files declare test blocks (a line
 // starting with `test "`).
@@ -151,8 +189,9 @@ func testDirs(t testing.TB, root string, dirs []string) []string {
 }
 
 // goSSABuildOpts is goSSABuild, of the test binary (`xo ssadump --test`,
-// stage 7) when tests is set.
-func goSSABuildOpts(root, dir string, tests bool) goSSA {
+// stage 7) when tests is set, and without the passStages unless passes
+// is set.
+func goSSABuildOpts(root, dir string, tests, passes bool) goSSA {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goSSA{none: "error " + err.Error()}
@@ -172,8 +211,10 @@ func goSSABuildOpts(root, dir string, tests bool) goSSA {
 		return goSSA{none: "rejected"}
 	}
 	want := map[string]bool{"build": true}
-	for _, s := range passStages {
-		want[s] = true
+	if passes {
+		for _, s := range passStages {
+			want[s] = true
+		}
 	}
 	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root, Tests: tests}, want)
 	if len(stages) == 0 {
@@ -190,11 +231,11 @@ func goSSABuildOpts(root, dir string, tests bool) goSSA {
 }
 
 // runSSA runs the Xo builder on every dir (--each) from root, with flags
-// (--std=DIR, --test), and splits its output by run.
+// (--stages, --std=DIR, --test), and splits its output by run.
 func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--stages", "--wd=" + workDir(t)}, flags...), dirs, batch)
+	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
 	for k, text := range texts {
 		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]

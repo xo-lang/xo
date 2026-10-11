@@ -36,14 +36,12 @@ import (
 // rules of TestSelfhostChecker apply: an accepted mutation
 // has the same names, types, and sigs sections, one rejected only with
 // diagnostics of the stages done the same diagnostics. -short makes 150
-// mutations, else 1000; XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
+// mutations, else 1000 (tier_test.go);
+// XO_SELFHOST_SEED and XO_SELFHOST_CHECK_FUZZ=N
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerMutations(t *testing.T) {
-	n := 1000
-	if testing.Short() {
-		n = 150
-	}
+	n := byTier(t, 150, 1000, 1000)
 	if v := os.Getenv("XO_SELFHOST_CHECK_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
 	}

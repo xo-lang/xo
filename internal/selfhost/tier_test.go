@@ -1,0 +1,71 @@
+package selfhost
+
+import (
+	"os"
+	"testing"
+)
+
+// The test tiers of the package (knowledgebase/infrastructure/toolchain.md,
+// the TestSelfhost lines):
+//
+//   - short (`go test -short`): the go backend (the lexer and parser
+//     also arm64 and LLVM), small corpora, every 25th run for the SSA
+//     builder, no SSA mutations and no Xo test binaries;
+//   - merge (the default without -short): the go backend at full size
+//     (every run, every corpus and mutation count), except that the SSA
+//     builder's passes skip the three runs of buildOnlyMerge and its
+//     mutation test makes the first 300 of its 400 mutations; the arm64
+//     and LLVM lexers and parsers at -short's sizes are the native smoke
+//     test, so no native build of the checker or the SSA builder (the
+//     slow builds: the LLVM link of selfhost/ssa takes minutes);
+//   - full (XO_SELFHOST_TIER=full): every backend, every corpus at full
+//     size (nightly, release tagging, and changes the merge tier does
+//     not cover).
+//
+// The counts of the XO_SELFHOST_*_FUZZ variables still override a tier,
+// and XO_SELFHOST_BACKEND still names one backend.
+const (
+	tierShort = "short"
+	tierMerge = "merge"
+	tierFull  = "full"
+)
+
+// selfhostTier is the tier of this run: short under -short, else
+// $XO_SELFHOST_TIER (merge when unset).
+func selfhostTier(t testing.TB) string {
+	t.Helper()
+	if testing.Short() {
+		return tierShort
+	}
+	switch v := os.Getenv("XO_SELFHOST_TIER"); v {
+	case "":
+		return tierMerge
+	case tierShort, tierMerge, tierFull:
+		return v
+	default:
+		t.Fatalf("XO_SELFHOST_TIER=%q: want short, merge, or full", v)
+		return ""
+	}
+}
+
+// byTier picks the value of the current tier.
+func byTier[T any](t testing.TB, short, merge, full T) T {
+	t.Helper()
+	switch selfhostTier(t) {
+	case tierShort:
+		return short
+	case tierMerge:
+		return merge
+	}
+	return full
+}
+
+// tierBackends are the backends a differential of the parser, checker,
+// or SSA builder compares: go, except in the full tier.
+func tierBackends(t testing.TB) []string {
+	t.Helper()
+	if selfhostTier(t) == tierFull {
+		return []string{"go", "arm64", "llvm"}
+	}
+	return []string{"go"}
+}
