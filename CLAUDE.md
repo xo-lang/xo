@@ -75,6 +75,13 @@ Update the knowledgebase in the same change as the work, not later:
     release, after a large merge (a new backend feature across packages),
     or from `bench/nightly.sh`; a failure it finds is fixed forward with a
     regression test, not by reverting.
+  - merging an agent's branch (owner, 2026-10-11): if the merge is clean
+    and main did not change the packages the agent tested since its run,
+    `-short` plus `go vet` is enough; rerun full tests only for packages
+    changed on both sides. Push first, then run any full suite in the
+    background and fix forward. Start the next agent without waiting.
+  - at most two agents at once, in disjoint code areas, and never two
+    full test runs at the same time (RAM).
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.
