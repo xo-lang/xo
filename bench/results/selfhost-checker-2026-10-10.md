@@ -773,3 +773,92 @@ Next experiments, by expected gain:
 3. Reference counting: `xo_rl_free` and the `dup`/`drop` of `Expr` are
    the largest runtime entries; a borrow of match payloads would skip
    most of them.
+
+# Module loading, 2026-10-10
+
+Decisions 0141, 0086, 0095.
+
+## What it covers
+
+selfhost/check/modfile.xo (about 1,000 lines) ports what internal/mod
+does when the checker loads a main module: xo.mod parsing with every
+XO1301 problem (require lines, effect ceilings, `deny` rules, `replace`,
+a missing `module` line), versions (semver order with prereleases, /vN
+major paths), module paths, xo.work (found above the directory or named
+by XO_WORK, ceilings on `use` lines), xo.lock (malformed lines, XO1304
+mismatches, XO1305 missing hashes, the `/xo.mod` entries), minimal
+version selection over the module cache (XO_MODCACHE, `!` escaped
+paths), vendor/ (XO1307), and the content hashes of core 4.3 (SHA-256
+of every file, nested modules skipped, base64 of the SHA-256 of the
+listing: std/crypto). selfhost/check/deps.xo ports internal/check
+deps.go, deny.go, and ceiling.go: XO1306 for imports no requirement
+covers and for modules only in the build because another module
+requires them, XO1312 with the rule's note, XO1301 for a rule naming no
+package, XO1309 at calls and function values with the xo.mod or xo.work
+line, and the dependency flag (no `uses realtime` note on a
+dependency's function).
+
+The Xo checker does not fetch. A version missing from the cache is
+XO1303 under XO_OFFLINE; online it makes the run unsupported. The
+differential tests pin both checkers to the fixture cache
+internal/selfhost/testdata/modules/cache with XO_OFFLINE=1 and pass the
+Go side's working directory as `--wd`, because the Go checker used to
+`git clone` github.com/acme/money on every run of the billing fixture
+(gotchas/checker-module-loading-depends-on-env.md).
+
+## Fixtures
+
+- internal/selfhost/testdata/modules/app: requires tick v1.0.0 `uses
+  clock`, lib v1.0.0 `uses none` (which requires tick v1.1.0, so MVS
+  selects v1.1.0, whose `now` adds `rand`), and example.com/Acme/util
+  (cached as `example.com/!acme/util@v1.0.0`); two deny rules; a
+  correct xo.lock. Runs: core (XO1312 and XO1309), web (XO1309 at a
+  call and at a function value), ok (accepted), web/api (accepted). The
+  cache modules are runs of their own (lib: XO1305 without a lock).
+- internal/check/testdata/golden/effect_ceiling_work (new Go golden):
+  ceilings on xo.work `use` lines, callbacks within `uses none`, a
+  function value, two labels over.
+- internal/check/testdata/golden/effect_ceiling_vendor (new Go golden):
+  vendored dependencies with ceilings on their requires, and XO1306 for
+  a module vendored only because another dependency requires it.
+
+## Agreement
+
+| backend | runs | accepted (match) | rejected only with staged diagnostics (match) | unsupported |
+|---|---|---|---|---|
+| go | 626 | 361 (361) | 249 (249) | 16 |
+| arm64 | 626 | 361 (361) | 249 (249) | 16 |
+| LLVM | 626 | 361 (361) | 249 (249) | 16 |
+
+The six runs stage 8 left (imports_deny/* and acme/billing invoice)
+matched on the first full run, as did the new fixtures. The 16 runs not
+compared are the `use go` and `use c` ones (examples/realtime-control
+and 15 internal/gen goldens and replays); no run is rejected for a
+diagnostic the port lacks.
+
+Module mutations (`TestSelfhostCheckerModuleMutations`, each a copy of
+one fixture tree with one edit, every package directory a run):
+
+| seed | backend | mutations | runs | accepted | rejected, staged | differences |
+|---|---|---|---|---|---|---|
+| 1 | go | 600 | 2,528 | 592 | 1,936 | 0 |
+| 2 | go | 600 | 2,539 | 565 | 1,974 | 0 |
+| 3 | go | 600 | 2,520 | 559 | 1,961 | 0 |
+| 4 | LLVM | 400 | 1,693 | 330 | 1,363 | 0 |
+| 5 | arm64 | 400 | 1,666 | 358 | 1,308 | 0 |
+
+Seed 1's rejected runs hold 1,263 XO1309, 1,192 XO1312, 2,908 XO1301,
+258 XO1306, 191 XO1303, 142 XO1305, 28 XO1304, 14 XO1307. No checker
+or compiler bug was found; the one surprise was `requires` as a field
+name (a contract keyword, gotchas/requires-is-a-keyword.md).
+
+## Next
+
+The checker is complete for programs without Go or C interop. The
+remaining unsupported runs need `use go` (binding Go packages: the
+gobind cache files are plain .xo declaration files, so loading an
+existing binding is a small port; binding a new package runs `go list`)
+and `use c` (headers). Next experiment for interop: load the cached
+binding of `use go` imports when it exists (internal/check
+loadGoImport with gobind.LoadOrBind's cache path) and report the run
+unsupported only when a binding would have to be made.

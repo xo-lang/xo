@@ -1,0 +1,1199 @@
+// Module files: xo.mod (`module`, `require` with effect ceilings, `deny`
+// rules), xo.work, xo.lock, versions, module paths, and content hashes,
+// as internal/mod reads them for checking (decisions 0086, 0095). Paths
+// are display paths (relative to the working directory when below it,
+// else absolute, as check.go relDir prints them); a path that Go prints
+// absolute inside a message is made absolute with Checker.abs.
+
+use std/crypto
+use github.com/xo-lang/xo/selfhost/parser
+
+/// One `require <module path> <version> [uses <effects|none>]` line.
+pub struct Require {
+  pub path: Str
+  pub version: Str
+  pub line: Int
+  /// The effect ceiling; None without a `uses` clause.
+  pub ceiling: Ceiling? = None
+}
+
+/// An effect ceiling (mod.Ceiling): the labels a dependency may perform;
+/// none admits nothing.
+pub struct Ceiling {
+  pub effects: List[Str] = []
+}
+
+/// One `deny <from> -> <to>, ...` rule (mod.Deny).
+pub struct Deny {
+  pub from: Str
+  pub to: List[Str] = []
+  pub line: Int
+}
+
+/// A parsed xo.mod (mod.File).
+pub struct ModFile {
+  pub path: Str = ""
+  pub reqs: List[Require] = []
+  pub denies: List[Deny] = []
+  /// The xo.mod file and its directory.
+  pub file: Str
+  pub dir: Str
+}
+
+/// A module problem (mod.Problem): a diagnostic about xo.mod, xo.lock,
+/// xo.work, or the module cache. Line 0 is the start of the file.
+pub struct Problem {
+  pub code: Str
+  pub file: Str = ""
+  pub line: Int = 0
+  pub msg: Str
+  pub notes: List[Str] = []
+  /// The module path the problem is about, if any.
+  pub module: Str = ""
+}
+
+/// A parsed xo.work (mod.Work).
+pub struct WorkFile {
+  pub file: Str
+  pub dir: Str
+  pub modules: List[ModFile] = []
+  /// Parallel to modules: the ceiling of each `use` line and its line.
+  pub ceilings: List[Ceiling?] = []
+  pub lines: List[Int] = []
+}
+
+/// A parsed xo.lock (mod.Lock).
+pub struct Lock {
+  pub file: Str
+  pub entries: Map[Str, Str] = {}
+  pub lines: Map[Str, Int] = {}
+}
+
+/// A module of a build list besides the main one (mod.Module).
+pub struct DepModule {
+  pub path: Str
+  pub version: Str = ""
+  pub dir: Str
+  pub workspace: Bool = false
+  pub vendored: Bool = false
+  pub direct: Bool = false
+}
+
+/// The result of loading a main module's dependencies (mod.BuildList).
+pub struct BuildList {
+  pub modules: List[DepModule] = []
+  pub hashes: Map[Str, Str] = {}
+  pub problems: List[Problem] = []
+}
+
+/// A ceiling with the xo.mod or xo.work line declaring it
+/// (mod.CeilingSource); version "" for an xo.work line.
+pub struct CeilingSource {
+  pub ceiling: Ceiling
+  pub file: Str
+  pub line: Int
+  pub version: Str = ""
+}
+
+/// The deny rules of one main module (check deny.go denyRules).
+pub struct DenyRules {
+  pub file: Str
+  pub rules: List[Deny]
+}
+
+/// What the checker knows about the environment and the dependencies of
+/// the main modules (check deps.go depState, ceiling.go ceilingState).
+pub struct DepState {
+  /// The working directory, absolute ("" when not known: paths stay as
+  /// they are and no directory above it is looked at).
+  pub wd: Str = ""
+  /// The module cache (XO_MODCACHE, or the user cache directory).
+  pub cache: Str = ""
+  /// XO_OFFLINE.
+  pub offline: Bool = false
+  /// XO_WORK: "off", a file, or "".
+  pub work_env: Str = ""
+  pub resolved: Map[Str, Bool] = {}
+  pub dep_dirs: Map[Str, DepModule] = {}
+  pub failed: Map[Str, Bool] = {}
+  pub main_dir: Str = ""
+  pub req_cache: Map[Str, Map[Str, Bool]] = {}
+  pub denies: Map[Str, DenyRules] = {}
+  pub ceilings: Map[Str, Map[Str, List[CeilingSource]]] = {}
+}
+
+/// The effect labels a ceiling may name (mod.EffectLabels).
+const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "go"]
+
+// ---------------------------------------------------------------------------
+// Paths of the file system
+
+/// p made absolute against the working directory (filepath.Abs); p
+/// itself when the working directory is not known.
+fn (c: Checker) abs(p: Str) -> Str {
+  if p.starts_with("/") || c.deps.wd.is_empty() {
+    return clean(p)
+  }
+  clean("${c.deps.wd}/${p}")
+}
+
+/// An absolute path relative to the working directory when it lies below
+/// it (check.go relDir).
+fn (c: Checker) rel_dir(p: Str) -> Str {
+  let d = clean(p)
+  if !d.starts_with("/") || c.deps.wd.is_empty() {
+    return d
+  }
+  let wd = clean(c.deps.wd)
+  if d == wd {
+    return "."
+  }
+  if wd == "/" {
+    return d.trim_prefix("/")
+  }
+  if d.starts_with("${wd}/") {
+    return d.trim_prefix("${wd}/")
+  }
+  d
+}
+
+/// The display form of a path: relative below the working directory,
+/// else absolute.
+fn (c: Checker) display(p: Str) -> Str {
+  c.rel_dir(c.abs(p))
+}
+
+/// The directory above d in display form, None at the root (or at the
+/// working directory when it is not known).
+fn (c: Checker) up(d: Str) -> Str? {
+  if d.starts_with("/") {
+    if d == "/" {
+      return None
+    }
+    let segs = d.split("/")
+    var out: List[Str] = []
+    for i in 0..segs.len() - 1 {
+      out.push(segs[i])
+    }
+    let p = out.join("/")
+    if p.is_empty() {
+      return Some("/")
+    }
+    return Some(p)
+  }
+  if d == "." {
+    if c.deps.wd.is_empty() {
+      return None
+    }
+    return c.up(clean(c.deps.wd))
+  }
+  if d == ".." || d.ends_with("/..") {
+    return None
+  }
+  Some(parent(d))
+}
+
+fn (c: Checker) exists(p: Str) -> Bool {
+  c.fs.exists(p).ok() ?? false
+}
+
+fn (c: Checker) is_dir(p: Str) -> Bool {
+  let st = c.fs.stat(p).ok() ?? None
+  match st {
+    Some(info) => info.is_dir
+    None => false
+  }
+}
+
+/// The lines of a file as bufio.Scanner splits them.
+fn scan_lines(data: Bytes) -> List[Str] {
+  var out: List[Str] = []
+  let text = data.to_str() ?? ""
+  if text.is_empty() {
+    return out
+  }
+  let parts = text.split("\n")
+  for (i, l) in parts.indexed() {
+    if i == parts.len() - 1 && l.is_empty() {
+      break
+    }
+    out.push(l.trim_suffix("\r"))
+  }
+  out
+}
+
+/// strings.Fields: the words of s between runs of white space.
+fn fields(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  var cur = BytesBuilder.new()
+  var n = 0
+  for b in s.bytes() {
+    if b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == 0x0b || b == 0x0c {
+      if n > 0 {
+        out.push(cur.freeze().to_str() ?? "")
+        cur = BytesBuilder.new()
+        n = 0
+      }
+      continue
+    }
+    cur.write_byte(b)
+    n += 1
+  }
+  if n > 0 {
+    out.push(cur.freeze().to_str() ?? "")
+  }
+  out
+}
+
+/// text up to its first `//`.
+fn strip_comment(text: Str) -> Str {
+  if let Some(i) = text.find("//") {
+    return text[..i]
+  }
+  text
+}
+
+// ---------------------------------------------------------------------------
+// Versions and module paths
+
+/// The parts of a valid version vX.Y.Z[-pre] (mod versionRE): major,
+/// minor, patch, and the prerelease without its `-`.
+fn version_parts(v: Str) -> List[Str]? {
+  if !v.starts_with("v") {
+    return None
+  }
+  let rest = v[1..]
+  var core = rest
+  var pre = ""
+  if let Some(i) = rest.find("-") {
+    core = rest[..i]
+    pre = rest[i + 1..]
+    if pre.is_empty() {
+      return None
+    }
+    for b in pre.bytes() {
+      if !((b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '.' || b == '-') {
+        return None
+      }
+    }
+  }
+  let nums = core.split(".")
+  if nums.len() != 3 {
+    return None
+  }
+  for n in nums {
+    if n.is_empty() || (n.len() > 1 && n.starts_with("0")) {
+      return None
+    }
+    for b in n.bytes() {
+      if b < '0' || b > '9' {
+        return None
+      }
+    }
+  }
+  Some([nums[0], nums[1], nums[2], pre])
+}
+
+/// mod.ValidVersion.
+fn valid_version(v: Str) -> Bool {
+  version_parts(v) != None
+}
+
+fn str_cmp(a: Str, b: Str) -> Int {
+  if a < b {
+    return -1
+  }
+  if a > b {
+    return 1
+  }
+  0
+}
+
+fn cmp_num(a: Str, b: Str) -> Int {
+  if a.len() != b.len() {
+    if a.len() < b.len() {
+      return -1
+    }
+    return 1
+  }
+  str_cmp(a, b)
+}
+
+/// mod.Compare: -1, 0, or 1; a prerelease sorts before its release.
+fn compare_versions(a: Str, b: Str) -> Int {
+  let pa0 = version_parts(a)
+  let pb0 = version_parts(b)
+  let (ma, mb) = match (pa0, pb0) {
+    (Some(x), Some(y)) => (x, y)
+    _ => return str_cmp(a, b)
+  }
+  for i in 0..3 {
+    let c = cmp_num(ma[i], mb[i])
+    if c != 0 {
+      return c
+    }
+  }
+  let pa = ma[3]
+  let pb = mb[3]
+  if pa == pb {
+    return 0
+  }
+  if pa.is_empty() {
+    return 1
+  }
+  if pb.is_empty() {
+    return -1
+  }
+  let xa = pa.split(".")
+  let xb = pb.split(".")
+  var i = 0
+  while i < xa.len() && i < xb.len() {
+    let na = Int.parse(xa[i])
+    let nb = Int.parse(xb[i])
+    match (na, nb) {
+      (Some(x), Some(y)) => {
+        if x != y {
+          if x < y {
+            return -1
+          }
+          return 1
+        }
+      }
+      (Some(_), None) => return -1
+      (None, Some(_)) => return 1
+      (None, None) => {
+        let c = str_cmp(xa[i], xb[i])
+        if c != 0 {
+          return c
+        }
+      }
+    }
+    i += 1
+  }
+  if xa.len() < xb.len() {
+    return -1
+  }
+  if xa.len() > xb.len() {
+    return 1
+  }
+  0
+}
+
+/// mod.ValidPath: slash separated elements of letters, digits, `.`, `-`,
+/// `_`, and `~`, the first holding a dot, none `.`, `..`, or starting with
+/// a dot.
+fn valid_path(p: Str) -> Bool {
+  if p.is_empty() || p.starts_with("/") || p.ends_with("/") {
+    return false
+  }
+  let elems = p.split("/")
+  if !elems[0].contains(".") {
+    return false
+  }
+  for e in elems {
+    if e.is_empty() || e.starts_with(".") {
+      return false
+    }
+    for b in e.bytes() {
+      if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '.' || b == '-' || b == '_' || b == '~') {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The major version of a /vN suffix (N >= 2), 0 for none (mod
+/// MajorSuffix).
+fn major_suffix_n(path: Str) -> Int {
+  let stripped = major_suffix(path)
+  if stripped == path {
+    return 0
+  }
+  Int.parse(path[stripped.len() + 2..]) ?? 0
+}
+
+/// mod.MajorMismatch: why v cannot be a version of the module path, or "".
+fn major_mismatch(path: Str, v: Str) -> Str {
+  let parts = match version_parts(v) {
+    Some(p) => p
+    None => return ""
+  }
+  let m = Int.parse(parts[0]) ?? -1
+  let n = major_suffix_n(path)
+  if n >= 2 && m != n {
+    return "${path} ${v}: a module path ending in /v${n} takes only v${n}.x.y versions"
+  }
+  if n == 0 && m >= 2 {
+    return "${path} ${v}: major version ${m} needs the module path ${major_suffix(path)}/v${m}"
+  }
+  ""
+}
+
+/// mod.EscapePath: `!` and the lower case letter for each upper case one.
+fn escape_path(p: Str) -> Str {
+  var out = BytesBuilder.new()
+  for b in p.bytes() {
+    if b >= 'A' && b <= 'Z' {
+      out.write_byte('!')
+      out.write_byte(b + 32)
+    } else {
+      out.write_byte(b)
+    }
+  }
+  out.freeze().to_str() ?? p
+}
+
+// ---------------------------------------------------------------------------
+// Effect ceilings and deny rules
+
+/// Ceiling.Admits: l or its parent label is listed.
+fn ceiling_admits(c: Ceiling, l: Str) -> Bool {
+  for e in c.effects {
+    if e == l || l.starts_with("${e}.") {
+      return true
+    }
+  }
+  false
+}
+
+/// Ceiling.String.
+fn ceiling_text(c: Ceiling) -> Str {
+  if c.effects.is_empty() {
+    return "uses none"
+  }
+  "uses ${c.effects.join(", ")}"
+}
+
+/// mod.ParseCeiling: the words after a version or a `use` directory, or
+/// the error.
+fn parse_ceiling(words: List[Str]) -> Ceiling ! Str {
+  if words.is_empty() || words[0] != "uses" {
+    return Err("want `uses <effects>` or `uses none`")
+  }
+  var rest_words: List[Str] = []
+  for i in 1..words.len() {
+    rest_words.push(words[i])
+  }
+  var rest = rest_words.join(" ").trim()
+  if rest.starts_with("(") && rest.ends_with(")") {
+    rest = rest[1..rest.len() - 1].trim()
+  }
+  if rest.is_empty() {
+    return Err("`uses` names no effects; write `uses none` for a dependency that may perform none")
+  }
+  var c = Ceiling{}
+  if rest == "none" {
+    return Ok(c)
+  }
+  for e0 in rest.split(",") {
+    let e = e0.trim()
+    if !EFFECT_LABELS.contains(e) {
+      return Err("unknown effect ${e.quote()} (want none, or labels among ${EFFECT_LABELS.join(", ")})")
+    }
+    if !c.effects.contains(e) {
+      c.effects.push(e)
+    }
+  }
+  Ok(c)
+}
+
+/// Deny.String.
+fn deny_text(d: Deny) -> Str {
+  "deny ${d.from} -> ${d.to.join(", ")}"
+}
+
+/// mod.Match: p matches the package path or `/...` pattern pat.
+fn pattern_match(pat: Str, p: Str) -> Bool {
+  if pat.ends_with("/...") {
+    let base = pat.trim_suffix("/...")
+    return p == base || p.starts_with("${base}/")
+  }
+  p == pat
+}
+
+/// Deny.Denies: the first target pattern forbidding an import of to by
+/// from, or "".
+fn deny_matches(d: Deny, from: Str, to: Str) -> Str {
+  if !pattern_match(d.from, from) {
+    return ""
+  }
+  for t in d.to {
+    if pattern_match(t, to) {
+      return t
+    }
+  }
+  ""
+}
+
+/// mod.PatternBase.
+fn pattern_base(pat: Str) -> Str {
+  if pat.ends_with("/...") {
+    return pat.trim_suffix("/...")
+  }
+  pat
+}
+
+/// mod validPattern.
+fn valid_pattern(pat: Str) -> Bool {
+  let base = pattern_base(pat)
+  if base.is_empty() || base.starts_with("/") || base.ends_with("/") {
+    return false
+  }
+  for e in base.split("/") {
+    if e.is_empty() || e == "." || e == ".." || e.contains("...") || e.contains(",") || e.contains(">") || e.contains(" ") || e.contains("\t") {
+      return false
+    }
+  }
+  true
+}
+
+const DENY_NOTE = "an import rule is `deny <package> -> <package>, ...`; a path ending in `/...` matches every package under it (decision 0095)"
+
+/// mod parseDeny: the text of a `deny` line after the keyword.
+fn parse_deny(name: Str, line: Int, rest: Str) -> Deny ! Problem {
+  let (from, to) = match rest.find("->") {
+    Some(i) => (rest[..i], rest[i + 2..])
+    None => return Err(Problem{code: "XO1301", file: name, line: line, msg: "malformed deny: want `deny <package> -> <package>, ...`", notes: [DENY_NOTE]})
+  }
+  var d = Deny{from: from.trim(), line: line}
+  if !valid_pattern(d.from) {
+    return Err(Problem{code: "XO1301", file: name, line: line, msg: "malformed deny: invalid package pattern ${d.from.quote()} before `->`", notes: [DENY_NOTE]})
+  }
+  for t0 in to.split(",") {
+    let t = t0.trim()
+    if !valid_pattern(t) {
+      return Err(Problem{code: "XO1301", file: name, line: line, msg: "malformed deny: invalid package pattern ${t.quote()} after `->`", notes: [DENY_NOTE]})
+    }
+    d.to.push(t)
+  }
+  Ok(d)
+}
+
+// ---------------------------------------------------------------------------
+// xo.mod, xo.work, xo.lock
+
+/// mod.ReadFile: the xo.mod in dir, None when it cannot be read.
+fn (c: Checker) read_mod_file(dir: Str) -> (ModFile?, List[Problem]) {
+  let name = join(dir, "xo.mod")
+  let data = match c.fs.read(name).ok() {
+    Some(b) => b
+    None => return (None, [Problem{code: "XO1301", file: name, msg: "cannot read xo.mod: open ${c.abs(name)}: no such file or directory"}])
+  }
+  parse_mod_file(name, dir, data)
+}
+
+/// mod.Parse: the module path, requires, and deny rules of an xo.mod.
+fn parse_mod_file(name: Str, dir: Str, data: Bytes) -> (ModFile?, List[Problem]) {
+  var f = ModFile{file: name, dir: dir}
+  var probs: List[Problem] = []
+  var seen: Map[Str, Int] = {}
+  var line = 0
+  for raw in scan_lines(data) {
+    line += 1
+    let text = strip_comment(raw)
+    let fs = fields(text)
+    if fs.is_empty() {
+      continue
+    }
+    match fs[0] {
+      "module" => {
+        if fs.len() == 2 && f.path.is_empty() {
+          f.path = fs[1]
+        }
+      }
+      "require" => {
+        if fs.len() >= 2 && fs[1] == "go" {
+          continue
+        }
+        if fs.len() < 3 {
+          probs.push(Problem{code: "XO1301", file: name, line: line, msg: "malformed require: want `require <module path> <version> [uses <effects|none>]`"})
+          continue
+        }
+        let p = fs[1]
+        let v = fs[2]
+        var ceiling: Ceiling? = None
+        if fs.len() > 3 {
+          var words: List[Str] = []
+          for i in 3..fs.len() {
+            words.push(fs[i])
+          }
+          match parse_ceiling(words) {
+            Ok(cl) => ceiling = Some(cl)
+            Err(e) => {
+              probs.push(Problem{code: "XO1301", module: p, file: name, line: line, msg: "malformed effect ceiling for ${p}: ${e}", notes: ["an effect ceiling is `uses none` or `uses net, fs.read` after the version (decision 0086)"]})
+              continue
+            }
+          }
+        }
+        if !valid_path(p) {
+          probs.push(Problem{code: "XO1301", file: name, line: line, msg: "invalid module path ${p.quote()} in require", notes: ["a module path is its location, such as github.com/acme/billing (core 4.2)"]})
+          continue
+        }
+        if !valid_version(v) {
+          probs.push(Problem{code: "XO1301", file: name, line: line, msg: "invalid version ${v.quote()} for ${p}: want a tag vX.Y.Z"})
+          continue
+        }
+        let mm = major_mismatch(p, v)
+        if !mm.is_empty() {
+          probs.push(Problem{code: "XO1301", module: p, file: name, line: line, msg: mm, notes: ["major versions 2 and above live at a module path ending in /vN, such as github.com/acme/billing/v2 (core 4.2)"]})
+          continue
+        }
+        if let Some(prev) = seen.get(p) {
+          probs.push(Problem{code: "XO1301", file: name, line: line, msg: "${p} is required twice (first on line ${prev})"})
+          continue
+        }
+        seen[p] = line
+        f.reqs.push(Require{path: p, version: v, line: line, ceiling: ceiling})
+      }
+      "deny" => {
+        let rest = match text.find("deny") {
+          Some(i) => text[i + 4..]
+          None => ""
+        }
+        match parse_deny(name, line, rest) {
+          Ok(d) => f.denies.push(d)
+          Err(p) => probs.push(p)
+        }
+      }
+      "replace" | "exclude" | "retract" => {
+        probs.push(Problem{code: "XO1301", file: name, line: line, msg: "xo.mod has no `${fs[0]}` directive", notes: ["point a dependency at local code with an xo.work workspace (decision 0086)"]})
+      }
+      _ => {}
+    }
+  }
+  if f.path.is_empty() {
+    probs.push(Problem{code: "XO1301", file: name, msg: "xo.mod has no `module` line"})
+  }
+  (Some(f), probs)
+}
+
+/// mod.NearestWork: the xo.work XO_WORK names, or the nearest at or above
+/// dir; "" for none or when workspaces are off.
+fn (c: Checker) nearest_work(dir: Str) -> Str {
+  if c.deps.work_env == "off" {
+    return ""
+  }
+  if !c.deps.work_env.is_empty() {
+    return c.display(c.deps.work_env)
+  }
+  var d = c.display(dir)
+  while {
+    let name = join(d, "xo.work")
+    if c.exists(name) {
+      return name
+    }
+    match c.up(d) {
+      Some(p) => d = p
+      None => return ""
+    }
+  }
+  ""
+}
+
+/// mod.FindWork: the workspace that uses the module in dir, if any.
+fn (c: Checker) find_work(dir0: Str) -> (WorkFile?, List[Problem]) {
+  if c.deps.work_env == "off" {
+    return (None, [])
+  }
+  let dir = c.display(dir0)
+  let name = c.nearest_work(dir)
+  if name.is_empty() {
+    return (None, [])
+  }
+  let (w0, probs) = c.read_work(name)
+  let w = match w0 {
+    Some(x) => x
+    None => return (None, probs)
+  }
+  for m in w.modules {
+    if m.dir == dir {
+      return (Some(w), probs)
+    }
+  }
+  (None, [])
+}
+
+/// mod.ReadWork.
+fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) {
+  let data = match c.fs.read(name).ok() {
+    Some(b) => b
+    None => return (None, [Problem{code: "XO1301", file: name, msg: "cannot read xo.work: open ${c.abs(name)}: no such file or directory"}])
+  }
+  var w = WorkFile{file: name, dir: parent_dir(name)}
+  var probs: List[Problem] = []
+  var seen: Map[Str, Int] = {}
+  var line = 0
+  for raw in scan_lines(data) {
+    line += 1
+    let f = fields(strip_comment(raw))
+    if f.is_empty() {
+      continue
+    }
+    if f[0] == "xo" && f.len() == 2 {
+      continue
+    }
+    if f[0] == "use" && f.len() >= 2 {
+      var ceiling: Ceiling? = None
+      if f.len() > 2 {
+        var words: List[Str] = []
+        for i in 2..f.len() {
+          words.push(f[i])
+        }
+        match parse_ceiling(words) {
+          Ok(cl) => ceiling = Some(cl)
+          Err(e) => {
+            probs.push(Problem{code: "XO1301", file: name, line: line, msg: "malformed effect ceiling on `use ${f[1]}`: ${e}", notes: ["`use <dir> uses none` or `use <dir> uses net, fs.read` (decision 0086)"]})
+            continue
+          }
+        }
+      }
+      var dir = c.display(join(w.dir, f[1]))
+      if f[1].starts_with("/") {
+        dir = c.display(f[1])
+      }
+      let (mf0, ps) = c.read_mod_file(dir)
+      let mf = match mf0 {
+        Some(x) => x
+        None => ModFile{file: "", dir: dir}
+      }
+      if mf.path.is_empty() {
+        probs.push(Problem{code: "XO1301", file: name, line: line, msg: "`use ${f[1]}`: no xo.mod with a module line in ${c.abs(dir)}"})
+        continue
+      }
+      for p in ps {
+        probs.push(p)
+      }
+      if let Some(prev) = seen.get(mf.path) {
+        probs.push(Problem{code: "XO1301", file: name, line: line, msg: "module ${mf.path} is used twice (first on line ${prev})"})
+        continue
+      }
+      seen[mf.path] = line
+      w.modules.push(mf)
+      w.ceilings.push(ceiling)
+      w.lines.push(line)
+      continue
+    }
+    probs.push(Problem{code: "XO1301", file: name, line: line, msg: "malformed xo.work line: want `xo <edition>` or `use <dir> [uses <effects|none>]`"})
+  }
+  (Some(w), probs)
+}
+
+/// The directory of a file path.
+fn parent_dir(p: Str) -> Str {
+  let d = clean(p)
+  if d.starts_with("/") {
+    let i = last_slash(d)
+    if i <= 0 {
+      return "/"
+    }
+    return d[..i]
+  }
+  match last_slash(d) {
+    -1 => "."
+    i => d[..i]
+  }
+}
+
+fn last_slash(s: Str) -> Int {
+  var i = s.len() - 1
+  let b = s.bytes()
+  while i >= 0 {
+    if b[i] == '/' {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+/// mod.ReadLock: dir/xo.lock; a missing file is an empty lock.
+fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) {
+  var l = Lock{file: join(dir, "xo.lock")}
+  var probs: List[Problem] = []
+  let data = match c.fs.read(l.file).ok() {
+    Some(b) => b
+    None => return (l, probs)
+  }
+  var line = 0
+  for raw in scan_lines(data) {
+    line += 1
+    let text = raw.trim()
+    if text.is_empty() || text.starts_with("#") {
+      continue
+    }
+    let f = fields(text)
+    if f.len() != 3 || !f[2].starts_with("h1:") {
+      probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock line: want `<module path> <version>[/xo.mod] h1:<hash>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
+      continue
+    }
+    let key = "${f[0]} ${f[1]}"
+    l.entries[key] = f[2]
+    l.lines[key] = line
+  }
+  (l, probs)
+}
+
+// ---------------------------------------------------------------------------
+// Content hashes (core 4.3, mod.HashDir)
+
+/// The regular files under dir, as slash paths relative to it, skipping
+/// directories below dir that hold their own xo.mod (nested modules).
+fn (c: Checker) tree_files(dir: Str, rel: Str, var out: List[Str]) {
+  let here = if rel.is_empty() { dir } else { join(dir, rel) }
+  let entries = c.fs.read_dir(here).ok() ?? []
+  for e in entries {
+    let r = if rel.is_empty() { e.name } else { "${rel}/${e.name}" }
+    if e.is_dir {
+      if c.exists(join(join(dir, r), "xo.mod")) {
+        continue
+      }
+      c.tree_files(dir, r, out)
+    } else {
+      out.push(r)
+    }
+  }
+}
+
+/// mod.HashDir: "h1:" and the base64 SHA-256 of the lines "<sha256 hex>
+/// <slash path>" of every file of the tree, sorted by path.
+fn (c: Checker) hash_dir(dir: Str) -> Str {
+  var files: List[Str] = []
+  c.tree_files(dir, "", files)
+  var sum = BytesBuilder.new()
+  for f in files.sort() {
+    let data = c.fs.read(join(dir, f)).ok() ?? b""
+    sum.write("${crypto.sha256(data).to_hex()}  ${f}\n".bytes())
+  }
+  "h1:${crypto.sha256(sum.freeze()).to_base64()}"
+}
+
+/// mod.HashModFile: the hash of a version's xo.mod alone.
+fn (c: Checker) hash_mod_file(dir: Str) -> Str? {
+  let data = c.fs.read(join(dir, "xo.mod")).ok()?
+  let line = "${crypto.sha256(data).to_hex()}  xo.mod\n"
+  Some("h1:${crypto.sha256(line.bytes()).to_base64()}")
+}
+
+// ---------------------------------------------------------------------------
+// The build list (mod.Load)
+
+fn add_problem(var b: BuildList, p: Problem) {
+  for q in b.problems {
+    if q.code == p.code && q.msg == p.msg && q.file == p.file && q.line == p.line {
+      return
+    }
+  }
+  b.problems.push(p)
+}
+
+/// The cache directory of a module version (mod.VersionDir).
+fn (c: Checker) version_dir(path: Str, version: Str) -> Str {
+  c.display("${c.deps.cache}/${escape_path(path)}@${version}")
+}
+
+/// mod.Download without fetching: the version's directory in the module
+/// cache, or the problem. A version missing from the cache is XO1303
+/// offline; otherwise the Go toolchain would fetch it, which the Xo
+/// checker does not do (the run is unsupported).
+fn (var c: Checker) download(path: Str, version: Str) -> Str ! Problem {
+  let dir = c.version_dir(path, version)
+  if c.exists(join(dir, "xo.mod")) {
+    return Ok(dir)
+  }
+  if c.deps.offline {
+    return Err(Problem{code: "XO1303", module: path, msg: "${path} ${version} is not in the module cache and the build is offline", notes: ["fetch it once without XO_OFFLINE / --offline (`xo mod tidy` or `xo get ${path}@${version}`), or vendor it with `xo vendor`", "module cache: ${c.deps.cache}"]})
+  }
+  if c.unsupported.is_empty() {
+    c.unsupported = "fetching ${path} ${version} (the Xo checker reads the module cache, it does not fetch)"
+  }
+  Err(Problem{code: "XO1302", module: path, msg: "cannot fetch ${path} ${version}"})
+}
+
+fn require_line(f: ModFile, path: Str) -> Int {
+  for r in f.reqs {
+    if r.path == path {
+      return r.line
+    }
+  }
+  0
+}
+
+/// A requirement waiting in the walk of mod.Load, with the xo.mod
+/// requiring it.
+struct ReqItem {
+  req: Require
+  file: Str
+}
+
+/// mod.Load: the dependencies of the main module in main_dir, by minimal
+/// version selection over the module cache, from vendor/, or with the
+/// workspace's modules; every tree verified against xo.lock.
+fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
+  var b = BuildList{}
+  let (main0, probs) = c.read_mod_file(main_dir)
+  for p in probs {
+    add_problem(b, p)
+  }
+  let main = match main0 {
+    Some(m) => m
+    None => return b
+  }
+  let (work, wprobs) = c.find_work(main_dir)
+  for p in wprobs {
+    add_problem(b, p)
+  }
+  if work == None && c.exists(join(join(main_dir, "vendor"), "modules.txt")) {
+    c.load_vendor(b, main)
+    return b
+  }
+  var roots: List[ModFile] = [main]
+  var local: Map[Str, Bool] = {}
+  local[main.path] = true
+  if let Some(w) = work {
+    roots = []
+    for m in w.modules {
+      if m.dir == main.dir {
+        roots.push(main)
+      } else {
+        roots.push(m)
+      }
+      local[m.path] = true
+    }
+  }
+  var locks: Map[Str, Lock] = {}
+  for r in roots {
+    let (l, lprobs) = c.read_lock(r.dir)
+    for p in lprobs {
+      add_problem(b, p)
+    }
+    locks[r.dir] = l
+  }
+  var queue: List[ReqItem] = []
+  var direct: Map[Str, Bool] = {}
+  for r in roots {
+    for q in r.reqs {
+      queue.push(ReqItem{req: q, file: r.file})
+      if r.dir == main.dir {
+        direct[q.path] = true
+      }
+    }
+  }
+  var selected: Map[Str, Str] = {}
+  var dirs: Map[Str, Str] = {}
+  var visited: Map[Str, Bool] = {}
+  var failed: Map[Str, Bool] = {}
+  var qi = 0
+  while qi < queue.len() {
+    let it = queue[qi]
+    qi += 1
+    let p = it.req.path
+    let v = it.req.version
+    if local.contains(p) {
+      continue
+    }
+    let key = "${p} ${v}"
+    if visited.contains(key) {
+      continue
+    }
+    visited[key] = true
+    match selected.get(p) {
+      Some(cur) => {
+        if compare_versions(v, cur) > 0 {
+          selected[p] = v
+        }
+      }
+      None => selected[p] = v
+    }
+    let dir = match c.download(p, v) {
+      Ok(d) => d
+      Err(e) => {
+        var prob = e
+        prob.file = it.file
+        prob.line = it.req.line
+        add_problem(b, prob)
+        failed[p] = true
+        continue
+      }
+    }
+    dirs[key] = dir
+    let (mf0, mprobs) = c.read_mod_file(dir)
+    for q in mprobs {
+      add_problem(b, q)
+    }
+    let mf = match mf0 {
+      Some(x) => x
+      None => continue
+    }
+    if let Some(h) = c.hash_mod_file(dir) {
+      b.hashes["${key}/xo.mod"] = h
+    }
+    for q in mf.reqs {
+      queue.push(ReqItem{req: q, file: mf.file})
+    }
+  }
+  for (p, v) in selected.entries() {
+    if failed.contains(p) {
+      continue
+    }
+    let key = "${p} ${v}"
+    let dir = dirs.get(key) ?? ""
+    b.hashes[key] = c.hash_dir(dir)
+    b.modules.push(DepModule{path: p, version: v, dir: dir, direct: direct.contains(p)})
+  }
+  if let Some(w) = work {
+    for m in w.modules {
+      if m.dir != main.dir {
+        b.modules.push(DepModule{path: m.path, dir: m.dir, workspace: true, direct: direct.contains(m.path)})
+      }
+    }
+  }
+  b.modules = b.modules.sort_by(fn(m) { m.path })
+  for k in b.hashes.keys().sort() {
+    let got = b.hashes.get(k) ?? ""
+    let path = match k.find(" ") {
+      Some(i) => k[..i]
+      None => k
+    }
+    var found = false
+    for r in roots {
+      let l = locks.get(r.dir) ?? Lock{file: ""}
+      let want = match l.entries.get(k) {
+        Some(x) => x
+        None => continue
+      }
+      found = true
+      if want != got {
+        add_problem(b, Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]})
+        failed[path] = true
+      }
+    }
+    if !found {
+      let lf = (locks.get(main.dir) ?? Lock{file: join(main.dir, "xo.lock")}).file
+      add_problem(b, Problem{code: "XO1305", module: path, file: main.file, line: require_line(main, path), msg: "xo.lock has no hash for ${k}", notes: ["run `xo mod tidy` (or `xo get`) to record it in ${c.abs(lf)}"]})
+    }
+  }
+  if !failed.is_empty() {
+    var keep: List[DepModule] = []
+    for m in b.modules {
+      if !failed.contains(m.path) {
+        keep.push(m)
+      }
+    }
+    b.modules = keep
+  }
+  b
+}
+
+/// mod.VendorModules: the "# <path> <version>" lines of
+/// vendor/modules.txt.
+fn (c: Checker) vendor_modules(main_dir: Str) -> List[DepModule]? {
+  let data = c.fs.read(join(join(main_dir, "vendor"), "modules.txt")).ok()?
+  var out: List[DepModule] = []
+  for l in scan_lines(data) {
+    let f = fields(l)
+    if f.len() == 3 && f[0] == "#" && valid_path(f[1]) && valid_version(f[2]) {
+      out.push(DepModule{path: f[1], version: f[2], dir: join(join(main_dir, "vendor"), f[1]), vendored: true})
+    }
+  }
+  Some(out)
+}
+
+/// mod loadVendor: every direct requirement vendored at its version and
+/// every vendored tree matching xo.lock.
+fn (var c: Checker) load_vendor(var b: BuildList, main: ModFile) {
+  let mods = match c.vendor_modules(main.dir) {
+    Some(ms) => ms
+    None => {
+      add_problem(b, Problem{code: "XO1307", file: main.file, msg: "cannot read vendor/modules.txt"})
+      return
+    }
+  }
+  let (lock, lprobs) = c.read_lock(main.dir)
+  for p in lprobs {
+    add_problem(b, p)
+  }
+  var by_path: Map[Str, DepModule] = {}
+  for m in mods {
+    by_path[m.path] = m
+  }
+  var bad: Map[Str, Bool] = {}
+  for r in main.reqs {
+    let have = match by_path.get(r.path) {
+      Some(m) => {
+        if compare_versions(m.version, r.version) >= 0 {
+          continue
+        }
+        "is vendored at ${m.version}"
+      }
+      None => "is not vendored"
+    }
+    add_problem(b, Problem{code: "XO1307", module: r.path, file: main.file, line: r.line, msg: "${r.path} ${r.version} is required but ${have}", notes: ["run `xo vendor` to bring vendor/ in line with xo.mod"]})
+    bad[r.path] = true
+  }
+  for m0 in mods {
+    if bad.contains(m0.path) {
+      continue
+    }
+    var m = m0
+    m.direct = require_line(main, m.path) > 0
+    let key = "${m.path} ${m.version}"
+    if !c.is_dir(m.dir) {
+      add_problem(b, Problem{code: "XO1307", module: m.path, file: main.file, msg: "vendored ${key}: lstat ${c.abs(m.dir)}: no such file or directory", notes: ["run `xo vendor`"]})
+      continue
+    }
+    let h = c.hash_dir(m.dir)
+    b.hashes[key] = h
+    match lock.entries.get(key) {
+      None => {
+        add_problem(b, Problem{code: "XO1305", module: m.path, file: main.file, line: require_line(main, m.path), msg: "xo.lock has no hash for vendored ${key}", notes: ["run `xo mod tidy`, then `xo vendor`"]})
+        continue
+      }
+      Some(want) => {
+        if want != h {
+          add_problem(b, Problem{code: "XO1304", module: m.path, file: lock.file, line: lock.lines.get(key) ?? 0, msg: "vendored ${key}: content hash ${h} does not match xo.lock (${want})", notes: ["vendor/ was edited; run `xo vendor` to restore it"]})
+          continue
+        }
+      }
+    }
+    b.modules.push(m)
+  }
+}
+
+/// mod.Ceilings: the effect ceilings that apply to calls from the module
+/// in dir, by dependency module path.
+fn (c: Checker) ceilings_from(dir: Str) -> Map[Str, List[CeilingSource]] {
+  var out: Map[Str, List[CeilingSource]] = {}
+  let (f0, _) = c.read_mod_file(dir)
+  let f = match f0 {
+    Some(x) => x
+    None => return out
+  }
+  for r in f.reqs {
+    if let Some(cl) = r.ceiling {
+      var l = out.get(r.path) ?? []
+      l.push(CeilingSource{ceiling: cl, file: f.file, line: r.line, version: r.version})
+      out[r.path] = l
+    }
+  }
+  let (w0, _) = c.find_work(dir)
+  if let Some(w) = w0 {
+    for (i, m) in w.modules.indexed() {
+      if m.path == f.path {
+        continue
+      }
+      if let Some(cl) = w.ceilings[i] {
+        var l = out.get(m.path) ?? []
+        l.push(CeilingSource{ceiling: cl, file: w.file, line: w.lines[i]})
+        out[m.path] = l
+      }
+    }
+  }
+  out
+}
+
+/// A point span at the start of a line, for module diagnostics.
+fn line_span(line: Int) -> Span {
+  let l = if line < 1 { 1 } else { line }
+  Span{start: parser.Pos{offset: 0, line: l, col: 1}, end: parser.Pos{offset: 0, line: l, col: 1}}
+}

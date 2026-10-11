@@ -6,10 +6,12 @@ dependency ceilings), the parse habits (pulled ahead of stage 8, in
 selfhost/parser), stage 5 (value semantics), stage 6 (patterns and
 exhaustiveness), stage 7 (notes and fixes, the full section;
 2026-10-10), and stage 8 (naming, time layouts, the checker's habits;
-2026-10-10) implemented in `selfhost/check/` (Xo: decl.xo, types.xo,
+2026-10-10), and module loading (xo.mod, xo.work, xo.lock, the module
+cache, vendor/, deny rules, effect ceilings; 2026-10-10) implemented in
+`selfhost/check/` (Xo: decl.xo, types.xo,
 infer.xo, effects.xo, expr.xo, call.xo, stmt.xo, pattern.xo, habits.xo,
 comparable.xo, realtime.xo, flow.xo, exhaust.xo, notes.xo, naming.xo,
-timelayout.xo, the sigs and full sections in dump.xo),
+timelayout.xo, modfile.xo, deps.xo, the sigs and full sections in dump.xo),
 `internal/check/dump.go` (`Result.Dump`, `DiagLines`), name records in
 `internal/check/info.go` (`records.names`, `records.field`,
 `records.vfield`, written next to each resolution in decl.go, call.go,
@@ -17,7 +19,9 @@ expr.go, stmt.go, pattern.go), `TParam.Span` (types.go),
 `VFieldObj.Span` (objects.go), `cmd/xo/typedump.go` (hidden `xo
 typedump`), `internal/selfhost/check_test.go` (`TestSelfhostChecker`,
 `TestSelfhostCheckerXoTests`), `internal/selfhost/check_fuzz_test.go`
-(`TestSelfhostCheckerMutations`). Evidence:
+(`TestSelfhostCheckerMutations`),
+`internal/selfhost/check_modules_test.go`
+(`TestSelfhostCheckerModuleMutations`). Evidence:
 `bench/results/selfhost-checker-2026-10-10.md`. Third step of decision
 0130, after the lexer (0076) and the parser (0127).
 
@@ -247,6 +251,32 @@ repository runs and the mutations produce is now ported except the
 dependency rules (XO1301, XO1302, XO1309, XO1312) and those of `use go`
 and `use c` runs.
 
+**Comparison rules of module loading** (2026-10-10, the dependency rules
+left after stage 8): selfhost/check/modfile.xo ports what internal/mod
+does for a check (mod.Parse with its XO1301 problems, ceilings, deny
+rules, versions and module paths, xo.work, xo.lock, minimal version
+selection over the module cache, vendor/, the content hashes of core 4.3
+with std/crypto's SHA-256), and deps.xo ports internal/check deps.go,
+deny.go, and ceiling.go (XO1306 for unrequired imports, XO1312, XO1309
+at calls and function values, the dependency flag that silences the
+real-time `uses realtime` note). The Xo checker never fetches: a version
+missing from the cache is XO1303 when XO_OFFLINE is set, and makes the
+run unsupported otherwise. Both checkers run with a pinned environment
+(XO_MODCACHE the fixture cache internal/selfhost/testdata/modules/cache,
+XO_OFFLINE=1, XO_WORK empty; the Xo checker gets the Go side's working
+directory as `--wd`, gotchas/checker-module-loading-depends-on-env.md),
+and XO1301 to XO1307, XO1309, and XO1312 are staged diagnostics. Module
+fixtures: internal/selfhost/testdata/modules (a main module whose
+dependencies select tick v1.1.0 over its own v1.0.0 requirement, an
+upper case module path, deny rules), and two Go goldens,
+internal/check/testdata/golden/effect_ceiling_work (ceilings of xo.work
+`use` lines) and effect_ceiling_vendor (ceilings of requires, vendored,
+and XO1306 for a module vendored only for another one).
+`TestSelfhostCheckerModuleMutations` mutates copies of them and of
+imports_deny: a ceiling lowered, raised, added, or malformed, a deny rule
+added (valid, naming nothing, malformed), a require version changed, an
+xo.lock or vendor/modules.txt line corrupted or removed, a `use` added.
+
 **Parser resynchronization** (2026-10-10): the Xo parser goes on after a
 hard error as internal/parser does (decision 0127), so a run with hard
 parse errors is checked like any other: the parser's diagnostics, hard
@@ -315,6 +345,15 @@ by its file, span, and kind (the Go checker uses node pointers).
   XO1302, XO1312; 2 of them give the same staged diagnostics). A
   change to a note, a fix, naming, or the time layout rules in
   internal/check must be made in selfhost/check in the same change.
+
+- Module loading (2026-10-10): every repository run but the 16 `use go`
+  and `use c` ones is compared (610 of 626: 361 accepted, 249 rejected,
+  full sections included) and identical on the go, arm64, and LLVM
+  builds; the 6 dependency rule runs left by stage 8 match, and 1,800
+  module mutations (seeds 1 to 3, go build), 400 on the LLVM build, and
+  400 on arm64 give 0 differences. A change to internal/mod parsing,
+  module selection, xo.lock verification, deny rules, or ceilings must
+  be made in selfhost/check in the same change.
 
 ## Alternatives
 

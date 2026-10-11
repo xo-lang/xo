@@ -201,6 +201,9 @@ pub struct Module {
   pub state: Int = 0
   /// The Module object that names it in records.
   pub obj: Int = -1
+  /// "<path>@<version>" for a package of a required module version
+  /// (check deps.go dependencyOf), else "".
+  pub dependency: Str = ""
 }
 
 /// An import of a file: the module it names, -1 when the path did not

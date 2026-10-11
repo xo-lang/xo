@@ -397,7 +397,7 @@ fn (var c: Checker) rt_call(var w: RtWalk, call: Expr, fun: Expr) -> Bool {
   if !c.objs[fo].realtime {
     let d = c.rt_report(w, "XO1403", fsp, "`${c.display_name(fo)}` is not real-time; a real-time function may call only real-time functions")
     let m = c.objs[fo].module
-    if d >= 0 && m >= 0 && !c.mods[m].is_std && !c.objs[fo].fn_decl.is_empty() {
+    if d >= 0 && m >= 0 && !c.mods[m].is_std && !c.objs[fo].fn_decl.is_empty() && c.mods[m].dependency.is_empty() {
       c.note_obj(d, fo, "mark `${c.display_name(fo)}` with `uses realtime` if it follows the rules")
     }
     return false

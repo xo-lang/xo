@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted checker loads modules as internal/check does (decision
+  0141): xo.mod, xo.work, xo.lock, the module cache (read, never
+  fetched), vendor/, deny rules (XO1312), dependency rules (XO1301 to
+  XO1307), and effect ceilings of dependencies (XO1309). Every
+  repository run without `use go` or `use c` (610 of 626) is compared
+  and identical on the go, arm64, and LLVM builds, and module mutations
+  (ceilings, deny rules, versions, lock lines) give no difference. New
+  Go goldens for XO1309: `effect_ceiling_work` (xo.work ceilings) and
+  `effect_ceiling_vendor` (require ceilings, vendored).
 - `cmd/xoplay`, the compiler half of the xolang.dev playground (decision
   0144): `check`, `fmt`, and `gen` as JSON, built for wasip1 with
   `-tags xo_playground`, which leaves the runtime, native, and LLVM runtime

@@ -8,7 +8,11 @@
 // comma separated list of them (default all five). --each checks every directory as a run of
 // its own, each preceded by `=== check <dir>`. Std declarations are read
 // from DIR (default std). A run that cannot be checked here (`use go`,
-// `use c`) prints `== unsupported <why>`.
+// `use c`, a dependency missing from the module cache while online)
+// prints `== unsupported <why>`. --wd=DIR names the absolute working
+// directory (default $PWD), which module loading needs for the paths Go
+// prints absolute and for xo.mod and xo.work files above it; XO_MODCACHE,
+// XO_OFFLINE, and XO_WORK are read as internal/mod reads them.
 
 fn main(os: Os) ! {
   var repeat = 0
@@ -19,6 +23,7 @@ fn main(os: Os) ! {
   var diags = true
   var full = true
   var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
   for a in os.env.args() {
     if a.starts_with("--bench=") {
@@ -32,6 +37,8 @@ fn main(os: Os) ! {
       full = s.contains("full") || s == "all"
     } else if a.starts_with("--std=") {
       std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
     } else if a == "--each" {
       each = true
     } else {
@@ -42,6 +49,11 @@ fn main(os: Os) ! {
     os.stdio.eprintln("usage: check [--section=names,types,sigs,diags,full] [--std=DIR] [--each] [--bench=N] <dirs...>")
     os.proc.exit(2)
   }
+  let modcache = os.env.get("XO_MODCACHE") ?? ""
+  let home = os.env.get("HOME") ?? ""
+  let xdg = os.env.get("XDG_CACHE_HOME") ?? ""
+  let offline = os.env.get("XO_OFFLINE") ?? ""
+  let work = os.env.get("XO_WORK") ?? ""
   var runs: List[List[Str]] = [dirs]
   if each {
     runs = []
@@ -55,6 +67,7 @@ fn main(os: Os) ! {
     for _ in 0..repeat {
       for r in runs {
         var c = new_checker(os.fs, std_dir)
+        c.set_mod_env(wd, modcache, home, xdg, offline, work)
         match c.check_dirs(r) {
           Ok(_) => mods += c.root_mods.len()
           Err(e) => fault("check: ${e}")
@@ -71,6 +84,7 @@ fn main(os: Os) ! {
       out.write("=== check ${r[0]}\n")
     }
     var c = new_checker(os.fs, std_dir)
+    c.set_mod_env(wd, modcache, home, xdg, offline, work)
     match c.check_dirs(r) {
       Ok(_) => {
         if c.unsupported.is_empty() {

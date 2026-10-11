@@ -1,0 +1,14 @@
+/// The time in ticks, with jitter: v1.1.0 adds `rand`.
+pub fn now() -> Int uses clock, rand {
+  1
+}
+
+/// No effects: within any ceiling.
+pub fn pure() -> Int {
+  2
+}
+
+/// The callback's effects are the caller's, not this module's.
+pub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx {
+  f()
+}

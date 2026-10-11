@@ -67,6 +67,19 @@ passes the full suite on the backends it targets.
   self hosted parser bug fixed (diagnostic quoting). The LLVM build
   takes 1.9 times the Go checker on the selfhost input and 1.34 times
   over all repository runs. Next: stage 7, notes and fixes.
+- 2026-10-10: checker stages 7 (notes and fixes, the full JSON section)
+  and 8 (naming, time layouts, the checker's habits) of 8, and the Xo
+  parser's resynchronization after hard errors (decisions 0141, 0127):
+  587 of 609 repository runs compared whole and identical on the three
+  backends. arm64 spill slot reuse (decision 0146) and LLVM struct
+  parameters by reference (decision 0145) came out of it.
+- 2026-10-10: module loading in the self hosted checker (decision 0141):
+  xo.mod, xo.work, xo.lock, the module cache, vendor/, deny rules
+  (XO1312), dependency rules (XO1301 to XO1307), and effect ceilings
+  (XO1309); every repository run except the 16 `use go`/`use c` ones
+  (610 of 626) is compared and identical on the three backends, plus
+  module mutations. The checker is complete for programs without Go or
+  C interop.
 
 ## Alternatives
 

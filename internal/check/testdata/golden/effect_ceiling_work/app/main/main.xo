@@ -1,0 +1,14 @@
+use example.com/meter
+use example.com/tick
+
+/// Calls into two workspace modules whose `use` lines set ceilings.
+pub fn total(c: Clock) -> Int uses clock, rand, fs {
+  let a = tick.now()
+  let b = tick.pure()
+  let d = tick.apply(fn() -> Int { c.now().unix() })
+  let f = tick.now
+  let g = meter.read()
+  let h = meter.sample()
+  let i = meter.save()
+  a + b + d + f() + g + h + i
+}

@@ -1,0 +1,9 @@
+// Accepted: calls within the ceilings, and a module without one.
+use example.com/Acme/util
+use example.com/app/web/api
+use example.com/tick
+
+/// Twice the version, plus the home directory's length.
+pub fn twice(e: Env) -> Int uses env {
+  util.double(api.version()) + tick.pure() + util.home(e).len()
+}

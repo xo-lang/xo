@@ -1,0 +1,5 @@
+# xo.lock: content hashes of the module versions this module builds with.
+# Written by the xo toolchain (xo get, xo mod tidy); do not edit (core 4.3).
+example.com/extra v0.3.0 h1:3nGfMwZh4a0UJKstpR9hhXFXxIB7A9zFo2MZWbGymJU=
+example.com/meter v1.2.0 h1:DJXP8j8wt4XHXE6lZV3uJwf2VIy7Tbma6G/PoZAYo38=
+example.com/tick v1.0.0 h1:LT1Ndp3UhDL+/jIHo11BXFJHMFqblgrvug5colh6AUs=

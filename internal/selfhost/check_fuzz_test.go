@@ -113,11 +113,12 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 		dirs = append(dirs, dir)
 	}
 	t.Chdir(tmp)
+	setModEnv(t, root)
 	got := map[string]string{}
 	const batch = 100
 	for i := 0; i < len(dirs); i += batch {
 		chunk := dirs[i:min(i+batch, len(dirs))]
-		text := runXo(t, bin, tmp, append([]string{"--each", "--std=" + stdDir}, chunk...))
+		text := runXo(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, chunk...))
 		parts := strings.Split(text, "=== check ")
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo checker printed %d runs for %d directories", len(parts)-1, len(chunk))
