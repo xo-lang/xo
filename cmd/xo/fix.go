@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
@@ -13,21 +13,20 @@ import (
 )
 
 // runFix implements `xo fix [--dry-run] [--json] [--from=draft-0.N]
-// [--edition=YYYY] [dirs...]`.
+// [--edition=preview] [dirs...]`.
 func runFix(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("fix", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	dry := fl.Bool("dry-run", false, "report the changes without writing them")
 	asJSON := fl.Bool("json", false, "print the result as JSON")
 	from := fl.String("from", "", "the draft the code was written for (draft-0.1 ... draft-0.6); runs the migration rewriters for later drafts")
-	edition := fl.String("edition", "", "the edition to migrate to (default and only one so far: "+strconv.Itoa(check.CurrentEdition)+")")
+	edition := fl.String("edition", "", "the edition to migrate to (default and only one before 1.0: "+check.CurrentEdition+"; it rewrites the old name 2026)")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
 	if *edition != "" {
-		y, err := strconv.Atoi(*edition)
-		if err != nil || !check.SupportedEdition(y) {
-			fmt.Fprintf(stderr, "xo fix: unknown edition %q (known: %v)\n", *edition, check.Editions)
+		if !check.SupportedEdition(*edition) {
+			fmt.Fprintf(stderr, "xo fix: unknown edition %q (known: %s)\n", *edition, strings.Join(check.Editions, ", "))
 			return 2
 		}
 	}

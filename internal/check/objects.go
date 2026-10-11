@@ -36,7 +36,7 @@ type Module struct {
 	Root bool
 	// Edition is the `edition` of the module's xo.mod (core 13), or
 	// CurrentEdition when there is none.
-	Edition int
+	Edition string
 	// GC is the `gc` lines of the module's xo.mod (decision 0065), used
 	// when the module is a program's main module.
 	GC GCConfig

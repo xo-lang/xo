@@ -213,7 +213,7 @@ func TestInit(t *testing.T) {
 	dir := t.TempDir()
 	xo(t, "init", "--dir", dir, "github.com/acme/new").want(0)
 	data, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))
-	if !strings.HasPrefix(string(data), "module github.com/acme/new\nedition ") {
+	if string(data) != "module github.com/acme/new\nedition preview\n" {
 		t.Errorf("xo.mod:\n%s", data)
 	}
 	ig, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))

@@ -44,11 +44,14 @@ type checker struct {
 	// native is Options.Native: `use c` is XO1201 without it (decision
 	// 0116).
 	native bool
-	// overlay maps absolute .xo paths to contents that replace the files
-	// on disk (CheckOverlay).
+	// overlay maps absolute .xo and xo.mod paths to contents that replace
+	// the files on disk (CheckOverlay).
 	overlay map[string][]byte
 	// modErr is the first malformed xo.mod line found (an unknown edition).
 	modErr error
+	// editionAliases are the xo.mod files of checked modules whose
+	// `edition` line uses an old name, by file (XO1315, decision 0155).
+	editionAliases map[string]editionAlias
 	// deps are the resolved requirements of the main modules (deps.go).
 	deps depState
 	// ceil caches the effect ceilings of dependencies (ceiling.go).
@@ -223,6 +226,7 @@ func (c *checker) run() {
 			c.runEditionRules(m)
 		}
 	}
+	c.reportEditionAliases()
 	c.checkKeyTypes()
 	c.solveEffects()
 	c.checkRealtime()

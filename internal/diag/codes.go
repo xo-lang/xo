@@ -137,6 +137,7 @@ const (
 	ImportDenied       Code = "XO1312" // `use` of a package that a `deny` rule of xo.mod forbids (decision 0095)
 	ChecksumLog        Code = "XO1313" // a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)
 	FetchSettings      Code = "XO1314" // the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)
+	EditionAlias       Code = "XO1315" // note: `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)
 )
 
 // Vet codes (core 10.1 `xo vet`, 2026-10-08). Emitted only by
@@ -230,6 +231,7 @@ var Descriptions = map[Code]string{
 	ImportDenied:       "`use` of a package that a `deny` rule of xo.mod forbids (decision 0095)",
 	ChecksumLog:        "a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (decision 0124)",
 	FetchSettings:      "the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (decisions 0124, 0126)",
+	EditionAlias:       "note: `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (core 13, decision 0155)",
 
 	NoGCUnavailable: "construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible",
 

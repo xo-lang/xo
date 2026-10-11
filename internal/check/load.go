@@ -25,8 +25,11 @@ import (
 type modRoot struct {
 	path    string
 	dir     string
-	edition int
-	gc      GCConfig
+	edition string
+	// alias is the `edition` line when it names an old edition
+	// (`edition 2026`); the zero value otherwise.
+	alias editionAlias
+	gc    GCConfig
 }
 
 // localName derives a module's local name from an import path (core 4.1):
@@ -245,11 +248,13 @@ func (c *checker) findModRoot(dir string) (modRoot, bool) {
 		return modRoot{}, false
 	}
 	for d := abs; ; {
-		data, err := os.ReadFile(filepath.Join(d, "xo.mod"))
+		data, err := c.readSource(filepath.Join(d, "xo.mod"))
 		if err == nil {
 			r := modRoot{dir: d, edition: CurrentEdition, gc: NoGCConfig}
 			sc := bufio.NewScanner(bytes.NewReader(data))
+			line := 0
 			for sc.Scan() {
+				line++
 				fields := strings.Fields(sc.Text())
 				if len(fields) == 2 && fields[0] == "module" && r.path == "" {
 					r.path = fields[1]
@@ -264,12 +269,16 @@ func (c *checker) findModRoot(dir string) (modRoot, bool) {
 					if len(fields) == 2 {
 						arg = fields[1]
 					}
-					e, err := parseEdition(arg)
+					e, alias, err := parseEdition(arg)
 					if err != nil && c.modErr == nil {
 						c.modErr = fmt.Errorf("%s: %v", filepath.Join(d, "xo.mod"), err)
 					}
 					if err == nil {
 						r.edition = e
+					}
+					if alias {
+						col := strings.Index(sc.Text(), arg) + 1
+						r.alias = editionAlias{file: relDir(filepath.Join(d, "xo.mod")), line: line, col: col, alias: arg, edition: e}
 					}
 				}
 			}
@@ -322,6 +331,12 @@ func (c *checker) loadDir(dir string) (*Module, error) {
 		m.Edition = r.edition
 		m.GC = r.gc
 		m.Dependency = c.dependencyOf(r.dir)
+		if r.alias.alias != "" && m.Dependency == "" {
+			if c.editionAliases == nil {
+				c.editionAliases = map[string]editionAlias{}
+			}
+			c.editionAliases[r.alias.file] = r.alias
+		}
 	}
 	c.modules[path] = m
 	entries, err := os.ReadDir(dir)
