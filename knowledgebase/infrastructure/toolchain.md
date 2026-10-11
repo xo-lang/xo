@@ -23,7 +23,11 @@ Last verified: 2026-10-09
   native arm64 backend (`xo build --backend=arm64`, see "arm64 backend
   (native)") uses it to assemble the generated `.s` and compile and link
   `xo_rt.c` (`$XO_CC`, then `cc`, then `clang` on PATH), with the same SDK
-  fallback as the LLVM backend. Last verified: 2026-10-08.
+  fallback as the LLVM backend. Last verified: 2026-10-08. Since
+  2026-10-11 (decision 0157) the runtime comes prebuilt from a release's
+  pack when one matches ("Prebuilt runtime"); `cc` still assembles and
+  links. On Linux gcc works as `cc` (gcc 10 and 14 compile the runtime,
+  checked 2026-10-11).
 
 ## Go module
 
@@ -59,6 +63,15 @@ releases are git tags `v0.N.0` with a `CHANGELOG.md` entry, and only the
 owner declares 1.0 (decision 0089). First tag: v0.7.0. Last verified:
 2026-10-09.
 
+Release archives (decision 0157, 2026-10-11): `scripts/release.sh
+[version]` on darwin/arm64 writes `dist/xo-<version>-<os>-<arch>.tar.gz`
+for darwin/arm64, linux/arm64, and linux/amd64 (`bin/xo`, README.md,
+CHANGELOG.md, and for the arm64 targets the prebuilt runtime in
+`lib/xo/rtpack/<os>-<arch>/`) and `dist/SHA256SUMS`; it needs zig 0.15.1
+(`$ZIG`) and a clean tree (`XO_RELEASE_ALLOW_DIRTY=1` to try it). Two
+runs print the same SHA256SUMS. Nothing publishes them yet; users still
+build from a checkout. Last verified: 2026-10-11.
+
 ## Commands
 
 Run from the repo root.
@@ -71,6 +84,9 @@ gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] <dirs...>   # --fix: apply machine fixes first (decision 0096)
+go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
+scripts/release.sh [version]             # release archives into dist/ (decision 0157; needs zig 0.15.1 as $ZIG; never publishes)
+bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
 go run ./cmd/xo run [--seed=N] [--record=trace.xotrace] [--holes] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [dir] [-- args...]
 go run ./cmd/xo build --no-gc .          # no garbage collector: arm64 on arm64 hosts, llvm otherwise (--backend picks); XO1201 for what the native backends cannot build, before code generation (decision 0083; also check, run, test)
@@ -800,6 +816,8 @@ internal/gen/           Go code generation with //line directives (see "Code gen
 internal/build/         check, generate, write the build directory, `go build` per target;
                         llvm.go: the LLVM backend build (IR + std/llrt runtime -> clang)
                         arm64.go: the native backend build (assembly + std/llrt runtime -> cc)
+                        rtobj.go: the local runtime object cache; rtpack.go: prebuilt runtime packs
+                        (decision 0157, see "Prebuilt runtime")
 internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backend (P3 prototype)")
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
@@ -872,6 +890,8 @@ third_party/fiat-crypto/  fiat-crypto's P-256 field and scalar C (decision 0134)
                         embedded), SHA256SUMS, license files, README.md (commit, how chosen)
 scripts/vendor-mbedtls.sh  downloads, checks, and vendors an Mbed TLS release
 scripts/vendor-fiat-crypto.sh  downloads fiat-crypto's files at the pinned commit and checks their SHA-256
+scripts/release.sh      builds the release archives into dist/ (decision 0157, see "Prebuilt runtime")
+scripts/disttar/        writes a reproducible .tar.gz of a directory (release.sh)
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
@@ -1376,12 +1396,16 @@ first, AST based prototype, since deleted) and
   std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
   rttime.xo). xo_std.c includes xo_time.c only with `-DXO_TIME`, which
   `timeFlags` (internal/build/tzdata.go) passes only for programs that
-  load std/time, together with the generated `xo_tzdata.h` in the build
-  directory (per use zone data: mode 0 TZif per constant name, 1 the
-  whole zoneinfo.zip, 2 `--tzdata=system`). Tests: TestTimeDiff
-  (`XO_TIMEDIFF_OUT=<prefix>` keeps the program and its output),
-  TestZoneDataPerUseNative, and the time goldens in gen_native.txt.
-  Last verified: 2026-10-09.
+  load std/time, together with the generated `xo_tzdata.c` in the build
+  directory, compiled as a source of the link beside the runtime
+  (`tzSource`; xo_time.c declares `xo_tz_mode`, `xo_tz_blobs`,
+  `xo_tz_zip`, `xo_tz_zip_len` extern, so the runtime object does not
+  depend on the program, decision 0157; per use zone data: mode 0 TZif
+  per constant name, 1 the whole zoneinfo.zip, 2 `--tzdata=system`).
+  Until 2026-10-11 it was `xo_tzdata.h`, included by xo_time.c. Tests:
+  TestTimeDiff (`XO_TIMEDIFF_OUT=<prefix>` keeps the program and its
+  output), TestZoneDataPerUseNative, and the time goldens in
+  gen_native.txt. Last verified: 2026-10-11.
 - Counts (decision 0058): positive is thread local (plain updates),
   negative is shared (atomic: `atomicrmw`, counts read with `load atomic
   unordered`), INT64_MIN immortal. `OpShare` calls generated
@@ -1626,6 +1650,56 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
 - Profile a hybrid binary with `XO_CPUPROFILE=p.prof ./bin` and
   `go tool pprof -top p.prof` (assembly functions appear as
   `xoasm_<name>`).
+
+## Prebuilt runtime (decision 0157)
+
+Last verified: 2026-10-11. Results:
+`bench/results/prebuilt-runtime-2026-10-11.md`.
+
+- A pack is `<root>/<os>-<arch>/`: `rt*.o`, one object of std/llrt per
+  variant (32: the subsets of `-DXO_TIME`, `-DXO_FS`, `-DXO_STDIN`,
+  `-DXO_PROC`, and TLS; `RTVariant.File`), `libxotls.a` (Mbed TLS), and
+  `rtpack.json` (format, target, key, compiler, flags, SHA-256 per
+  file). Packs exist for darwin/arm64 and linux/arm64 (the arm64
+  backend's targets). About 16 MB per target.
+- Root: `$XO_RTPACK` (a directory, or `off`), else `lib/xo/rtpack`
+  beside the directory of the xo binary (symlinks resolved), the layout
+  of a release archive. `xo rtpack --status` prints the pack used for
+  the host or why none is.
+- Used by `ccBuild` (internal/build/llvm.go) when the link's flags are
+  exactly `-O2` plus a variant's defines (the arm64 backend's), the
+  manifest's key equals `build.RTPackKey(Host())` (pack format, target,
+  `rtPackFlags`, the variant table, the runtime sources embedded in
+  `std.LLRuntime`, the TLS library's sources and configuration; not the
+  compiler), and the file's SHA-256 matches. Otherwise the runtime is
+  compiled locally into `<user cache>/xo/rtobj` (`XO_RTOBJ_CACHE`, or
+  `off`), as before. `XO_RTPACK=off` forces the local compile. The
+  binary cache key includes the pack (`rtPackID`).
+- Pack flags (`rtPackFlags`): `-O2 -g0 -fexceptions -funwind-tables`;
+  darwin `-mmacosx-version-min=11.0`; Linux `-fPIC -moutline-atomics`;
+  TLS library files add `-w`. Every compile maps its work directory to
+  `/xo` (`-ffile-prefix-map`); `normalizeAr` zeroes the archive's member
+  times, owners, and groups (mode 644).
+- Compilers: darwin/arm64 the host's Apple clang (21.0.0 on
+  2026-10-11); linux/arm64 zig cc 0.15.1 `-target
+  aarch64-linux-gnu.2.31` with `zig ar`, cross compiled on the Mac (zig
+  from ziglang.org, SHA-256 checked against its index.json; set
+  `ZIG_GLOBAL_CACHE_DIR` to keep its cache out of the home directory).
+  Apple clang `--target=aarch64-linux-gnu --sysroot=<Linux headers>`
+  also works (`xo rtpack --cc=...`), see the decision's alternatives.
+- Validated 2026-10-11: `internal/arm64` TestGoldenRun and TestRun with
+  the pack on darwin and in the linux/arm64 container (no runtime
+  compiled); the zig built pack linked by gcc 10 on glibc 2.31 (Debian
+  bullseye, no clang) for a plain, a std/time, and an HTTPS program.
+- Not in a pack: the LLVM backend's runtime (bitcode for LTO, compiled
+  by the local clang), sanitizer builds, links with `use c` include
+  flags, and Go's zoneinfo.zip (native programs that name zones read it
+  from `go env GOROOT` or `XO_ZONEINFO`).
+- Tests: `internal/build/rtpack_test.go` (TestRTPackVariant,
+  TestRTPackKey, TestNormalizeAr, TestClangErrorRuntimeHint; without
+  -short TestRTPackDeterministic: two packs from two work directories
+  byte identical, and TestRTPackUse: used, off, another key, a bad
+  checksum), `cmd/xo/rtpack_test.go`, `scripts/disttar/main_test.go`.
 
 ## TLS library (native std/http, decisions 0105, 0106, 0117, 0134)
 

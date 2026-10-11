@@ -60,6 +60,18 @@ not object):
 2. **arm64 emitter**: with it, the compiler can be one native binary
    with no Go toolchain and no clang (the arm64 backend assembles and
    links itself on darwin/arm64 and linux/arm64, decision 0049).
+   Note (2026-10-11, decision 0157): this claim was wrong when written.
+   The arm64 backend does not assemble or link itself: decision 0049
+   has the system C compiler driver (`cc`, or `$XO_CC`) assemble the
+   generated `.s` and run the linker, and the first native build
+   compiled the C runtime (std/llrt) with that compiler (clang, or gcc
+   on Linux). Decision 0157 ships the runtime prebuilt in release
+   archives, which removes the runtime compile; the assembler and
+   linker remain, so the self hosted arm64 compiler needs `cc` (on
+   macOS the Command Line Tools) until the arm64 backend writes object
+   files and links them itself. It needs no Go toolchain for programs
+   that do not use time zones by name (those read Go's zoneinfo.zip,
+   `XO_ZONEINFO`).
 3. **WebAssembly backend** (added by the owner 2026-10-11): a new
    emitter from the SSA to `.wasm`, written in Xo after the arm64
    switch-over, so the playground can run the Xo compiler itself as wasm
@@ -346,7 +358,11 @@ which keys every node by its file, span, and kind.
   modules the Go builder makes, and a self hosted compiler would still
   need the Go builder.
 - **LLVM before arm64**: the LLVM path needs clang to assemble and link,
-  so it cannot give a compiler with no external tools.
+  so it cannot give a compiler with no external tools. (Note
+  2026-10-11, decision 0157: neither can the arm64 path today, which
+  needs `cc` to assemble and link; it needs a C compiler driver, not
+  clang specifically, and no compile of the runtime with a release's
+  prebuilt runtime.)
 - **Compare after cleanup only**: renumbering hides the order values are
   made in, which is where most porting mistakes show; the build stage
   is stricter, and the passes get their own stage.

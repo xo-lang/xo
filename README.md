@@ -81,6 +81,14 @@ go build -o .tools/bin/xo ./cmd/xo
 The module path is `github.com/xo-lang/xo` (local name; see
 `knowledgebase/infrastructure/toolchain.md`).
 
+The Go backend (the default) needs the Go toolchain. The native backends
+need a C toolchain: `--backend=llvm` needs clang, and `--backend=arm64`
+needs a C compiler driver (`cc`: clang or gcc) to assemble the generated
+code and run the system linker. The arm64 backend's C runtime (std/llrt)
+comes prebuilt in a release archive (`lib/xo/rtpack`, built by
+`scripts/release.sh`); an xo built from a checkout compiles it on the
+first native build and caches it (decision 0157).
+
 ## Commands
 
 | Command | Purpose |
@@ -139,7 +147,8 @@ GOBIN=$PWD/.tools/bin go install honnef.co/go/tools/cmd/staticcheck@latest
 ```
 
 The Go benchmark arms also use errcheck, nilaway, and exhaustive in
-`.tools/bin` (see `bench/go/strict-check.sh`). LLVM builds need `clang`.
+`.tools/bin` (see `bench/go/strict-check.sh`). LLVM builds need `clang`;
+arm64 builds need `cc` (see Install).
 
 Read `CLAUDE.md` before contributing (safety rules and the knowledgebase
 workflow). Design decisions live in `knowledgebase/decisions/`.

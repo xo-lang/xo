@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Prebuilt runtime (decision 0157): `scripts/release.sh` builds release
+  archives (darwin/arm64, linux/arm64, linux/amd64) with the arm64
+  backend's C runtime prebuilt in `lib/xo/rtpack/<os>-<arch>/` (every
+  variant of std/llrt and the TLS library, byte for byte reproducible;
+  linux/arm64 cross compiled with zig cc for glibc 2.31). A native build
+  links the pack's object when its key (the runtime sources and flags)
+  and checksum match, else compiles the runtime locally as before;
+  `XO_RTPACK=<dir>|off` chooses, and the hidden `xo rtpack` builds or
+  inspects packs. The first arm64 build of a small program drops from
+  1.94 s to 0.13 s (an HTTPS server 4.27 s to 0.28 s). `cc` still
+  assembles and links (decision 0150's "no clang" corrected). The zone
+  data of std/time is now `xo_tzdata.c`, compiled beside the runtime.
+  A failed local runtime compile, and a missing `cc`, name what to
+  install.
 - Editions (decision 0155): until 1.0 the only edition is `preview`;
   `xo init` writes `edition preview`, and every xo.mod and xo.work of
   the repository says it. `edition 2026` stays an alias of `preview`
