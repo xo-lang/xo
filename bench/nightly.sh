@@ -26,16 +26,21 @@ start=$(date +%s)
 		GORACE=${GORACE:-atexit_sleep_ms=1000} XO_TSAN_ATEXIT_SLEEP=${XO_TSAN_ATEXIT_SLEEP:-1000} \
 		go test -count=1 -timeout 60m ./...
 	s1=$?
+	# more random arithmetic programs, differential across the Go, LLVM,
+	# and arm64 backends (TestArithProperty; the full suite runs 25)
+	XO_ARITH_PROPS=${XO_ARITH_PROPS:-500} XO_BIN_CACHE=${XO_BIN_CACHE:-off} \
+		go test -count=1 -timeout 60m ./internal/gen -run TestArithProperty
+	s4=$?
 	go test -count=1 -race -timeout 30m ./std/rt
 	s2=$?
 	go vet ./...
 	s3=$?
-	echo "status: test=$s1 race=$s2 vet=$s3"
+	echo "status: test=$s1 race=$s2 vet=$s3 arith=$s4"
 } >"$log" 2>&1
 status=$(tail -1 "$log")
 secs=$(($(date +%s) - start))
 echo "$day $(git rev-parse --short HEAD) ${secs}s $status" >>"$out/summary.txt"
 case "$status" in
-*"test=0 race=0 vet=0"*) exit 0 ;;
+*"test=0 race=0 vet=0 arith=0"*) exit 0 ;;
 *) exit 1 ;;
 esac
