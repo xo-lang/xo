@@ -2289,6 +2289,18 @@ Last verified: 2026-10-08.
   `log.go`, `testing.go` (test runner, fakes, `run_main`),
   `std_gen.go` (generated), `gointerop.go` (Go interop boundary
   helpers and `go.Error`, 2026-10-08).
+- Command line tool std (decisions 0160 to 0165, 2026-10-11):
+  `cli.go` and `cli_completion.go` (std/cli; ported to Xo in
+  std/native/cli.xo, byte for byte the same text), `proccmd.go` and
+  `proccmd_caps.go` (`Proc.cmd`, `Cmd`, `Child`, `pipeline`, the real and
+  fake backends), `term.go` with `term_unix.go`, `term_bsd.go`,
+  `term_linux.go`, `term_windows.go`, `term_other.go` (terminal ioctls by
+  build tag; std/term), `stdin.go`'s `stdinReadSome` (binary reads),
+  `fsfile.go`, `fsfile_mem.go`, `flock_*.go` (File handles, links, globs,
+  locks, user dirs), `csv.go`, `toml.go` (own parsers, ported to Xo in
+  std/native/csv.xo and toml.xo), `regexp.go`, `archive.go` (Go's
+  packages; no native port yet). internal/build's `stamp.go` is `xo build
+  --stamp`.
 
 ## Agent interfaces (2026-10-08)
 
@@ -2337,6 +2349,14 @@ Protocol: one JSON line each way, `{"op": "run"|"ping"|"stats"|"shutdown",
 "cached", "error", "stats"}`.
 
 ## Known gaps (2026-10-08)
+
+- Command line std on the native backends (2026-10-11, decisions 0161,
+  0163, 0164): `Proc.cmd` with `Cmd`, `Child`, and `Proc.pipeline`; the
+  `Fs` handles, `append`, `copy`, modes, links, `glob`, and locks; and
+  `std/regexp` and `std/archive` are XO1201 (planned) on `--no-gc`
+  builds. std/cli, std/term and the Stdio terminal methods, std/csv,
+  std/toml, and `Env.config_dir`/`cache_dir` build natively. Plans and
+  next steps are in each decision. Last verified: 2026-10-11.
 
 - Self hosted lexer (2026-10-08, decisions 0076 and 0081): `selfhost/lexer`
   builds on the Go, arm64, and LLVM backends, and `TestSelfhostDifferential`
