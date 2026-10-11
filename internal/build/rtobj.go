@@ -39,12 +39,20 @@ func rtObjDir() string {
 }
 
 // runtimeSource is the index in srcs of the C runtime (a file named
-// xo_rt.c), or -1: none, a compile only call (-c), or flags that could
-// read files the cache key does not cover (-I, -include, ...).
+// xo_rt.c) when the object cache is on, or -1: none, the cache off, a
+// compile only call (-c), or flags that could read files the cache key
+// does not cover (-I, -include, ...).
 func runtimeSource(srcs, flags []string) int {
 	if rtObjDir() == "" {
 		return -1
 	}
+	return runtimeIndex(srcs, flags)
+}
+
+// runtimeIndex is runtimeSource without the cache: the index of the
+// runtime a link compiles, which a prebuilt object may replace
+// (rtpack.go).
+func runtimeIndex(srcs, flags []string) int {
 	for _, f := range flags {
 		if f == "-c" || f == "-S" || f == "-E" || strings.HasPrefix(f, "-I") || strings.HasPrefix(f, "-include") ||
 			strings.HasPrefix(f, "-iquote") || strings.HasPrefix(f, "-isystem") || strings.HasPrefix(f, "-o") {
@@ -62,8 +70,8 @@ func runtimeSource(srcs, flags []string) int {
 // runtimeObject returns the object of src (the runtime) compiled with cc,
 // flags, the SDK root, and the extra compile arguments (TLS), compiling it
 // when the cache has none. Its key covers every .c and .h file of src's
-// directory, where the runtime's includes are (with the generated
-// xo_tzdata.h of a build directory). A failed compile returns clang's
+// directory, where the runtime's includes are, except the program's zone
+// data (xo_tzdata.c, compiled as a source of its own). A failed compile returns clang's
 // output and error; "" without an error means compile the source in the
 // link instead.
 func runtimeObject(cc string, flags []string, root string, extra []string, src string) (string, string, error) {
@@ -89,7 +97,10 @@ func runtimeObject(cc string, flags []string, root string, extra []string, src s
 	}
 	for _, e := range ents {
 		n := e.Name()
-		if e.IsDir() || !(strings.HasSuffix(n, ".c") || strings.HasSuffix(n, ".h")) {
+		// the zone data is a source of its own, not part of the runtime
+		// (decision 0157), and an older build directory may hold a stale
+		// xo_tzdata.h
+		if e.IsDir() || !(strings.HasSuffix(n, ".c") || strings.HasSuffix(n, ".h")) || strings.HasPrefix(n, "xo_tzdata.") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, n))

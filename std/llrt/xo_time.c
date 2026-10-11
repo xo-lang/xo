@@ -1,7 +1,7 @@
 // xo_time.c: the zone rules of std/time on the native backends (decision
 // 0094), included by xo_std.c only when the program uses std/time (the
-// build defines XO_TIME and writes xo_tzdata.h, the program's zone data),
-// so other programs do not grow. std/native/rttime.xo declares the
+// build defines XO_TIME and writes xo_tzdata.c, the program's zone data,
+// compiled beside the runtime), so other programs do not grow. std/native/rttime.xo declares the
 // intrinsics; std/native/time.xo does the rest (civil time, layouts) in
 // Xo.
 //
@@ -12,7 +12,21 @@
 // of the zone in effect at load time, which Go fills too), so offsets and
 // abbreviations match the Go backend's for every instant.
 
-#include "xo_tzdata.h"
+// The program's zone data (decision 0094), defined in xo_tzdata.c, which
+// the build writes and compiles beside the runtime, so the runtime's
+// object does not depend on the program (prebuilt runtime objects,
+// decision 0157): xo_tz_mode 0 and the TZif data of each constant zone
+// name (xo_tz_blobs, ended by a null name), 1 and the whole zoneinfo.zip
+// (xo_tz_zip), or 2 for the host's database.
+typedef struct {
+	const char *name;
+	const char *data;
+	int64_t len;
+} xo_tz_blob;
+extern const int64_t xo_tz_mode;
+extern const char xo_tz_zip[];
+extern const int64_t xo_tz_zip_len;
+extern const xo_tz_blob xo_tz_blobs[];
 
 #include <sys/stat.h>
 
@@ -859,26 +873,25 @@ static tz_loc *tz_host(const char *name) {
 	return NULL;
 }
 
-// tz_build loads a zone from the program's zone data (xo_tzdata.h).
+// tz_build loads a zone from the program's zone data (xo_tzdata.c).
 static tz_loc *tz_build(const char *name, int64_t nn) {
-#if XO_TZ_MODE == 2
-	(void)nn;
-	return tz_host(name);
-#elif XO_TZ_MODE == 1
-	const unsigned char *e;
-	int64_t en;
-	if (!tz_zip_entry((const unsigned char *)xo_tz_zip, xo_tz_zip_len, name, nn, &e, &en)) {
-		return NULL;
+	if (xo_tz_mode == 2) {
+		return tz_host(name);
 	}
-	return tz_parse(name, e, en);
-#else
+	if (xo_tz_mode == 1) {
+		const unsigned char *e;
+		int64_t en;
+		if (!tz_zip_entry((const unsigned char *)xo_tz_zip, xo_tz_zip_len, name, nn, &e, &en)) {
+			return NULL;
+		}
+		return tz_parse(name, e, en);
+	}
 	for (int64_t i = 0; xo_tz_blobs[i].name; i++) {
 		if ((int64_t)strlen(xo_tz_blobs[i].name) == nn && memcmp(xo_tz_blobs[i].name, name, (size_t)nn) == 0) {
 			return tz_parse(name, (const unsigned char *)xo_tz_blobs[i].data, xo_tz_blobs[i].len);
 		}
 	}
 	return NULL;
-#endif
 }
 
 // tz_get returns the id of the zone named p (from the program's zone data,

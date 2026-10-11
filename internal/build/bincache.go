@@ -386,6 +386,8 @@ func nativeBinKey(dir, cc string, flags, srcs []string) string {
 		}
 	}
 	k.str("sysroot " + root + " " + os.Getenv("XO_SYSROOT"))
+	// a prebuilt runtime the link may use (decision 0157)
+	k.str("rtpack " + rtPackID())
 	if usesTLS(srcs) {
 		tlsMu.Lock()
 		h, err := tlsSourceHash()

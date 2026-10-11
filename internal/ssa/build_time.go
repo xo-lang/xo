@@ -13,7 +13,7 @@ import (
 // `time.zone` with a constant name embeds that zone, a name known only at
 // run time (or `time.zone` as a function value) the whole database.
 // internal/build writes the data the module asks for (Module.TZ) into
-// the C runtime's xo_tzdata.h.
+// the C runtime's xo_tzdata.c.
 
 // TZUse is what a program needs of the zone database.
 type TZUse struct {

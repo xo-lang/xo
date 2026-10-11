@@ -157,13 +157,13 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return nil, err
 	}
-	flags, notes, err := timeFlags(dir, res, prog.TZ, opts)
+	flags, tzsrcs, notes, err := timeFlags(dir, res, prog.TZ, opts)
 	if err != nil {
 		return nil, err
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
-	srcs := []string{ll, rt}
+	srcs := append([]string{ll, rt}, tzsrcs...)
 	csrcs, cflags, err := cInputs(res, dir)
 	if err != nil {
 		return nil, err
@@ -182,10 +182,16 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 // broken C toolchain.
 type ClangError struct {
 	Output string
+	// Runtime is set when the failure was the local compile of the C
+	// runtime (std/llrt) no prebuilt object replaced (decision 0157)
+	Runtime bool
 }
 
 func (e *ClangError) Error() string {
 	msg := "clang failed on the generated LLVM IR:\n" + e.Output
+	if e.Runtime {
+		msg = "the C compiler failed on the C runtime (std/llrt):\n" + e.Output + "\n" + rtPackHint()
+	}
 	if missingSanitizerRuntime(e.Output) {
 		msg += "\nhint: clang is installed without its compiler-rt sanitizer runtimes " +
 			"(Ubuntu: apt-get install libclang-rt-<clang major>-dev; Debian: libclang-rt-dev), " +
@@ -271,7 +277,18 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 	tls := usesTLS(srcs)
 	// libraries of `use c` (decision 0116) go after the objects
 	flags, libs := splitLibs(flags)
-	try := func(root string) (string, error) {
+	// the C runtime from a release's prebuilt objects (rtpack.go,
+	// decision 0157) when one matches the flags and this xo's sources
+	var shipped, shippedTLS string
+	rti := runtimeIndex(srcs, flags)
+	if rti >= 0 {
+		if obj, lib, ok := shippedRuntime(flags, tls); ok {
+			shipped, shippedTLS = obj, lib
+		}
+	}
+	// try links with the SDK root; rtFail reports a failed local compile
+	// of the runtime
+	try := func(root string) (out string, rtFail bool, err error) {
 		// the C runtime raises faults through the frames of generated
 		// code and its own (decision 0085): its functions may unwind, and
 		// every frame needs unwind tables
@@ -279,25 +296,34 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}
-		var tlsCompile, tlsLink []string
-		if tls {
-			// std/http's TLS (decision 0105)
-			c, l, err := tlsArgs(clang, flags, root)
-			if err != nil {
-				return err.Error(), err
-			}
-			tlsCompile, tlsLink = c, l
-			args = append(args, c...)
-		}
-		// the C runtime compiled once per flags and sources (rtobj.go)
 		srcs := srcs
-		if i := runtimeSource(srcs, flags); i >= 0 {
-			obj, out, err := runtimeObject(clang, flags, root, tlsCompile, srcs[i])
-			if err != nil {
-				return out, err
+		var tlsLink []string
+		if shipped != "" {
+			srcs = append(append(append([]string(nil), srcs[:rti]...), shipped), srcs[rti+1:]...)
+			if tls {
+				tlsLink = append(tlsLink, shippedTLS)
+				tlsLink = append(tlsLink, tlsSystemLibs()...)
 			}
-			if obj != "" {
-				srcs = append(append(append([]string(nil), srcs[:i]...), obj), srcs[i+1:]...)
+		} else {
+			var tlsCompile []string
+			if tls {
+				// std/http's TLS (decision 0105)
+				c, l, err := tlsArgs(clang, flags, root)
+				if err != nil {
+					return err.Error(), false, err
+				}
+				tlsCompile, tlsLink = c, l
+				args = append(args, c...)
+			}
+			// the C runtime compiled once per flags and sources (rtobj.go)
+			if i := runtimeSource(srcs, flags); i >= 0 {
+				obj, out, err := runtimeObject(clang, flags, root, tlsCompile, srcs[i])
+				if err != nil {
+					return out, true, err
+				}
+				if obj != "" {
+					srcs = append(append(append([]string(nil), srcs[:i]...), obj), srcs[i+1:]...)
+				}
 			}
 		}
 		args = append(args, srcs...)
@@ -307,16 +333,17 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
-		err := cmd.Run()
-		return b.String(), err
+		err = cmd.Run()
+		// with the object cache off the runtime is compiled in the link
+		return b.String(), err != nil && shipped == "" && rti >= 0 && mentionsRuntime(b.String()), err
 	}
 	sysrootMu.Lock()
 	chosen, known := sysrootChosen, sysroot
 	sysrootMu.Unlock()
 	if chosen {
-		out, err := try(known)
+		out, rtFail, err := try(known)
 		if err != nil {
-			return &ClangError{Output: out}
+			return &ClangError{Output: out, Runtime: rtFail}
 		}
 		return nil
 	}
@@ -329,7 +356,7 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		}
 	}
 	for _, root := range cands {
-		out, err := try(root)
+		out, rtFail, err := try(root)
 		if err == nil {
 			sysrootMu.Lock()
 			sysrootChosen, sysroot = true, root
@@ -339,6 +366,9 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 				os.WriteFile(memo, []byte(root+"\n"), 0o644)
 			}
 			return nil
+		}
+		if rtFail {
+			return &ClangError{Output: out, Runtime: true}
 		}
 		// report an SDK independent failure over an SDK mismatch
 		if first == "" || (strings.Contains(first, "tapi error") && !strings.Contains(out, "tapi error")) {
@@ -350,4 +380,10 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		}
 	}
 	return &ClangError{Output: first}
+}
+
+// mentionsRuntime reports whether compiler output names a file of the C
+// runtime (an error in its compile).
+func mentionsRuntime(out string) bool {
+	return strings.Contains(out, "xo_rt.c") || strings.Contains(out, "xo_std.c")
 }
