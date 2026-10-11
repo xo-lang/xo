@@ -65,7 +65,7 @@ Run from the repo root.
 
 ```
 go build ./...                           # build the compiler packages and std
-go test ./...                            # all tests (lexer, parser, checker, spec examples, corpus, CLI, golden programs, race, cross compile)
+go test -timeout 60m ./...                # (cold caches: internal/selfhost alone takes about 16 min, past the 10 min default; 161 s warm, 2026-10-11) all tests (lexer, parser, checker, spec examples, corpus, CLI, golden programs, race, cross compile)
 go vet ./...
 gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
