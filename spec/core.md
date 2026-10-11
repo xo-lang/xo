@@ -1437,7 +1437,10 @@ Because values never alias mutably, data races are impossible except through
 - A call evaluates the place of a `var` receiver or `var` argument, then
   every argument in order, then reads those places (decision 0142):
   `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
-  `xs.push(f())` keeps what `f` pushed onto `xs`.
+  `xs.push(f())` keeps what `f` pushed onto `xs`. A receiver that is not
+  `var` is an operand like any other, evaluated before the arguments:
+  `t.size(t.add(v))` with a by value `size` sees `t` as it was before
+  `add`.
 - To change a value stored in a collection, use `update`, which reads, mutates,
   and writes back in one call:
   ```

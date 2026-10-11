@@ -1,0 +1,473 @@
+// Blocks, statements, loops, and assignments (internal/ssa
+// build_stmt.go, build_whilelet.go).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/lexer
+
+/// Lowers a block and returns the value of its last expression statement
+/// (unit when there is none).
+fn (var b: Builder) block(bl: parser.Block) -> Int {
+  var last = -1
+  b.s.exits += 1
+  let n = bl.stmts.len()
+  for (i, st) in bl.stmts.indexed() {
+    if i == n - 1 {
+      if let ExprStmt(x: x, ..) = st {
+        last = b.expr(x)
+        break
+      }
+    }
+    b.stmt(st)
+  }
+  b.s.exits -= 1
+  if last < 0 {
+    return b.unit()
+  }
+  last
+}
+
+fn (var b: Builder) stmt(st: Stmt) {
+  match st {
+    ExprStmt(x: x, ..) => {
+      b.expr(x)
+    }
+    LetStmt(pattern: p, value: value, ..) => {
+      let v = b.value(value)
+      let fail = b.new_block()
+      b.pattern(v, p, fail)
+      let cont = b.s.cur
+      b.s.cur = fail
+      b.seal(fail)
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.s.cur = cont
+    }
+    VarStmt(name: name, value: value, ..) => {
+      let vo = b.c.var_of(b.s.file, name)
+      let v = b.value(value)
+      b.write_var(vo, v)
+    }
+    ConstDecl(d) => {
+      let vo = b.c.var_of(b.s.file, d.name)
+      if vo >= 0 {
+        let v = b.value(d.value)
+        b.write_var(vo, v)
+      }
+    }
+    AssignStmt(span: span, op: op, target: target, value: value) => b.assign(span, op, target, value)
+    ReturnStmt(value: value, ..) => {
+      var v = -1
+      match value {
+        None => v = b.unit()
+        Some(x) => v = b.expr(x)
+      }
+      b.ret(v)
+    }
+    BreakStmt(label: label, ..) => b.break_to(label, true)
+    ContinueStmt(label: label, ..) => b.break_to(label, false)
+    WhileStmt(label: label, cond: cond, pattern: pattern, value: value, bound: bound, body: body, ..) => {
+      var name = b""
+      if let Some(l) = label {
+        name = l.name
+      }
+      if !pattern.is_empty() {
+        b.while_let(name, pattern[0], value[0], bound, body)
+        return
+      }
+      var cs: List[Expr] = []
+      if let Some(c) = cond {
+        cs.push(c)
+      }
+      b.while_loop(name, cs, bound, body)
+    }
+    ForStmt(..) => b.for_stmt(st)
+    DeferStmt(..) => b.unsupported("`defer`")
+    _ => b.unsupported("this statement")
+  }
+}
+
+fn (var b: Builder) break_to(label: Ident?, brk: Bool) {
+  var lc = -1
+  var i = b.s.loops.len() - 1
+  while i >= 0 {
+    let matches = match label {
+      None => true
+      Some(l) => b.s.loops[i].label == l.name
+    }
+    if matches {
+      lc = i
+      break
+    }
+    i -= 1
+  }
+  if lc < 0 {
+    b.unsupported("this `break` or `continue`")
+    return
+  }
+  let l = b.s.loops[lc]
+  if brk {
+    b.jump(l.brk, [])
+  } else {
+    b.jump(l.cont, [])
+  }
+  b.dead()
+}
+
+/// The start of a loop with `bound N` (loopBound): outside stage 1.
+fn (var b: Builder) loop_bound(bound: List[Expr]) {
+  if !bound.is_empty() {
+    b.unsupported("a loop bound")
+  }
+}
+
+/// `while cond { body }` (cond empty: forever).
+fn (var b: Builder) while_loop(label: Bytes, cond: List[Expr], bound: List[Expr], body: parser.Block) {
+  b.loop_bound(bound)
+  let head = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  if !cond.is_empty() {
+    let c = b.value(cond[0])
+    let inb = b.new_block()
+    b.s.f.branch(b.s.cur, c, inb, exit)
+    b.seal(inb)
+    b.s.cur = inb
+  }
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// `while let p = v { body }` (whileLet).
+fn (var b: Builder) while_let(label: Bytes, p: Pattern, value: Expr, bound: List[Expr], body: parser.Block) {
+  b.loop_bound(bound)
+  let head = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  var v = b.value(value)
+  if let BindPat(name: name, ..) = p {
+    let vt = b.vty(v)
+    if b.tkind(vt) == Kind.Enum {
+      let some = b.m.variant_index(vt, "Some")
+      let vo = b.c.var_of(b.s.file, name)
+      if vo >= 0 && some >= 0 && b.typ(b.apply(b.c.objs[vo].ty)) != vt {
+        b.test_br(b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [v]), b.cint(some)]), exit)
+        v = b.add(Op.Payload, b.m.types[vt].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [v])
+      }
+    }
+  }
+  b.pattern(v, p, exit)
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// `for p in a..b`, `a..=b`, a List, `xs.indexed()`, and Bytes (forStmt).
+fn (var b: Builder) for_stmt(st: Stmt) {
+  let (label, p, iter, bound, body) = match st {
+    ForStmt(label: label, pattern: p, iter: iter, bound: bound, body: body, ..) => (label, p, iter, bound, body)
+    _ => fault("for")
+  }
+  let it = b.int_t()
+  var name = b""
+  if let Some(l) = label {
+    name = l.name
+  }
+  let idx = b.local()
+  var hi = -1
+  var list = -1
+  var bytes = -1
+  var pair_t = -1
+  var inclusive = false
+  let recv = b.indexed_recv(iter)
+  if let Some(r) = recv {
+    list = b.value(r)
+    if b.tkind(b.vty(list)) != Kind.List {
+      b.unsupported("this `for` iteration")
+      return
+    }
+    pair_t = b.m.tuple([it, b.m.types[b.vty(list)].elems[0]])
+    hi = b.call("list.len", it, "", [list])
+    b.write_var(idx, b.cint(0))
+  } else if let RangeExpr(lo: Some(lo), hi: Some(h), inclusive: inc, ..) = iter {
+    b.write_var(idx, b.value_as(lo, it))
+    hi = b.value_as(h, it)
+    inclusive = inc
+  } else {
+    let lt = b.nat_of(iter)
+    if b.tkind(lt) == Kind.Handle && b.m.types[lt].name.starts_with("Chan[") {
+      b.need_conc = true
+      b.unsupported("`for` over a channel")
+      return
+    } else if b.m.types[lt].coll {
+      b.unsupported("`for` over a Map or Set")
+      return
+    } else if b.tkind(lt) == Kind.Str && b.is_bytes_expr(iter) {
+      bytes = b.value(iter)
+      hi = b.call("Str.len", it, "", [bytes])
+      b.write_var(idx, b.cint(0))
+    } else if b.tkind(lt) == Kind.List {
+      list = b.value(iter)
+      hi = b.call("list.len", it, "", [list])
+      b.write_var(idx, b.cint(0))
+    } else {
+      b.unsupported("this `for` iteration")
+      return
+    }
+  }
+  b.loop_bound(bound)
+  let head = b.new_block()
+  let bodyb = b.new_block()
+  let latch = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  var i = b.read(idx)
+  var c = -1
+  if inclusive {
+    c = b.add(Op.Le, b.bool_t(), Aux.None, [i, hi])
+  } else {
+    c = b.add(Op.Lt, b.bool_t(), Aux.None, [i, hi])
+  }
+  b.s.f.branch(b.s.cur, c, bodyb, exit)
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  var elem = -1
+  if list >= 0 {
+    let i2 = b.read(idx)
+    elem = b.call("list.index", b.m.types[b.vty(list)].elems[0], "", [list, i2])
+    if pair_t >= 0 {
+      elem = b.add(Op.Tuple, pair_t, Aux.None, [i2, elem])
+    }
+  } else if bytes >= 0 {
+    let i2 = b.read(idx)
+    elem = b.call("bytes.index", b.m.int_type("UInt8"), "", [bytes, i2])
+  } else {
+    elem = b.read(idx)
+  }
+  let fail = b.new_block()
+  b.pattern(elem, p, fail)
+  let cont = b.s.cur
+  b.s.cur = fail
+  b.seal(fail)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = cont
+  b.s.loops.push(LoopCtx{label: name, brk: exit, cont: latch, exits: b.s.exits})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(latch, [])
+  b.seal(latch)
+  b.s.cur = latch
+  i = b.read(idx)
+  if inclusive {
+    let done = b.add(Op.Eq, b.bool_t(), Aux.None, [i, hi])
+    let next = b.new_block()
+    b.s.f.branch(b.s.cur, done, exit, next)
+    b.seal(next)
+    b.s.cur = next
+  }
+  b.write_var(idx, b.add(Op.Add, it, Aux.None, [i, b.cint(1)]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+fn (var b: Builder) is_bytes_expr(e: Expr) -> Bool {
+  let t = b.nat_check(e)
+  b.is_prelude_named(t, ["Bytes"])
+}
+
+/// xs of a `for` iterator `xs.indexed()` on a List (indexedRecv).
+fn (var b: Builder) indexed_recv(e: Expr) -> Expr? {
+  if let CallExpr(..) = e {
+    if let Some(ci) = b.c.call_in(b.s.file, e) {
+      let fo = ci.fn_obj
+      if fo < 0 || ci.recv.is_empty() || !b.is_prelude_mod(b.obj_mod(fo)) || b.obj_name(fo) != "indexed" {
+        return None
+      }
+      let r = b.c.objs[fo].recv
+      if r < 0 || b.obj_name(r) != "List" {
+        return None
+      }
+      return Some(ci.recv[0])
+    }
+  }
+  None
+}
+
+// ---------------------------------------------------------------------------
+// Places (build_stmt.go place)
+
+/// One level of a place: the local at its root, a field of the level
+/// below, or an element of it.
+enum Step {
+  Var(vo: Int)
+  Field(idx: Int, ft: Int)
+  Index(i: Int, pos: Str)
+}
+
+/// An assignable location: its levels from the root, the type of each,
+/// and per level the value of the level below once read (the Go place's
+/// cur() cache), -1 until then.
+struct Place {
+  ok: Bool
+  steps: List[Step] = []
+  types: List[Int] = []
+  cache: List[Int] = []
+}
+
+fn (p: Place) t() -> Int {
+  p.types[p.types.len() - 1]
+}
+
+fn bad_place() -> Place {
+  Place{ok: false}
+}
+
+fn (var b: Builder) place(e: Expr) -> Place {
+  match e {
+    ParenExpr(x: x, ..) => return b.place(x)
+    Ident(id) => {
+      let vo = b.c.var_of(b.s.file, id)
+      if vo >= 0 {
+        return Place{ok: true, steps: [Step.Var(vo: vo)], types: [b.type_of(e)], cache: [-1]}
+      }
+    }
+    SelectorExpr(x: x, sel: sel, ..) => {
+      var base = b.place(x)
+      if base.ok {
+        let (idx, ft) = b.field_index(base.t(), check.text(sel.name))
+        if idx >= 0 {
+          var pt = ft
+          if b.tkind(ft) == Kind.Box {
+            pt = b.m.types[ft].elems[0]
+          }
+          base.steps.push(Step.Field(idx: idx, ft: ft))
+          base.types.push(pt)
+          base.cache.push(-1)
+          return base
+        }
+      }
+    }
+    IndexExpr(span: span, x: x, index: index) => {
+      var base = b.place(x)
+      if base.ok && b.m.types[base.t()].coll {
+        b.unsupported("`m[k] = v`")
+        return bad_place()
+      }
+      if base.ok && b.tkind(base.t()) == Kind.List {
+        let i = b.value_as(index, b.int_t())
+        let et = b.m.types[base.t()].elems[0]
+        base.steps.push(Step.Index(i: i, pos: b.pos(span)))
+        base.types.push(et)
+        base.cache.push(-1)
+        return base
+      }
+    }
+    _ => {}
+  }
+  b.unsupported("assigning to this expression")
+  bad_place()
+}
+
+/// The value of the level below level k, read once (cur).
+fn (var b: Builder) place_cur(var p: Place, k: Int) -> Int {
+  if p.cache[k] < 0 {
+    let v = b.place_get_at(p, k - 1)
+    p.cache[k] = v
+  }
+  p.cache[k]
+}
+
+fn (var b: Builder) place_get_at(var p: Place, k: Int) -> Int {
+  match p.steps[k] {
+    Var(vo) => b.read(vo)
+    Field(idx, ft) => {
+      let c = b.place_cur(p, k)
+      b.unbox(b.add(Op.Field, ft, Aux.I(n: idx), [c]))
+    }
+    Index(i, pos) => {
+      let c = b.place_cur(p, k)
+      b.call("list.index", p.types[k], pos, [c, i])
+    }
+  }
+}
+
+fn (var b: Builder) place_set_at(var p: Place, k: Int, v: Int) {
+  match p.steps[k] {
+    Var(vo) => b.write_var(vo, v)
+    Field(idx, ft) => {
+      let c = b.place_cur(p, k)
+      let cv = b.coerce(v, ft)
+      let w = b.add(Op.SetField, p.types[k - 1], Aux.I(n: idx), [c, cv])
+      b.place_set_at(p, k - 1, w)
+    }
+    Index(i, pos) => {
+      let c = b.place_cur(p, k)
+      let w = b.call("list.set", p.types[k - 1], pos, [c, i, v])
+      b.place_set_at(p, k - 1, w)
+    }
+  }
+}
+
+fn (var b: Builder) place_get(var p: Place) -> Int {
+  b.place_get_at(p, p.steps.len() - 1)
+}
+
+fn (var b: Builder) place_set(var p: Place, v: Int) {
+  b.place_set_at(p, p.steps.len() - 1, v)
+}
+
+fn compound_op(op: lexer.Kind) -> lexer.Kind? {
+  match op {
+    PlusAssign => Some(lexer.Kind.Plus)
+    MinusAssign => Some(lexer.Kind.Minus)
+    StarAssign => Some(lexer.Kind.Star)
+    SlashAssign => Some(lexer.Kind.Slash)
+    PercentAssign => Some(lexer.Kind.Percent)
+    AmpAssign => Some(lexer.Kind.Amp)
+    PipeAssign => Some(lexer.Kind.Pipe)
+    CaretAssign => Some(lexer.Kind.Caret)
+    ShlAssign => Some(lexer.Kind.Shl)
+    ShrAssign => Some(lexer.Kind.Shr)
+    _ => None
+  }
+}
+
+fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr) {
+  var p = b.place(target)
+  if !p.ok {
+    return
+  }
+  if op == lexer.Kind.Assign {
+    let v = b.value_as(value, p.t())
+    b.place_set(p, v)
+    return
+  }
+  let cop = compound_op(op)
+  if cop == None {
+    b.unsupported("this assignment operator")
+    return
+  }
+  let o = cop ?? lexer.Kind.Plus
+  let old = b.place_get(p)
+  var r = -1
+  if o == lexer.Kind.Shl || o == lexer.Kind.Shr {
+    r = b.shift_count(value, p.t())
+  } else {
+    r = b.value_as(value, p.t())
+  }
+  let nv = b.arith(o, old, r, span)
+  b.place_set(p, nv)
+}

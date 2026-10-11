@@ -45,6 +45,24 @@ func TestWideHelperRecords(t *testing.T) {
 	}
 }
 
+// TestFarOutSlot requires the address of the $OUT slot of the function
+// `show` of testdata/run/far_out_slot, past 4 KiB of stack arguments, to
+// be made with a shifted add: `add x6, sp, #4808` is not encodable, and
+// the assembler rejected the self hosted SSA builder (decision 0150).
+// TestRun runs the program.
+func TestFarOutSlot(t *testing.T) {
+	asm := linuxAsm(t, "far_out_slot")
+	for _, m := range regexp.MustCompile(`\tadd x\d+, sp, #(\d+)\n`).FindAllStringSubmatch(asm, -1) {
+		if len(m[1]) > 4 || m[1] > "4095" && len(m[1]) == 4 {
+			t.Fatalf("an add immediate out of range: %q", m[0])
+		}
+	}
+	if !regexp.MustCompile(`\tadd x\d+, sp, #1, lsl #12\n\tadd x\d+, x\d+, #\d+\n\tbl _?xo_str_replace`).MatchString(asm) {
+		i := strings.Index(asm, "xo_str_replace")
+		t.Fatalf("no shifted add for the $OUT slot of the str_replace call:\n%s", asm[max(0, i-400):i+50])
+	}
+}
+
 // linuxAsm builds testdata/run/<name> for linux/arm64 and returns the
 // assembly.
 func linuxAsm(t *testing.T, name string) string {

@@ -71,11 +71,11 @@ fn (var c: Checker) ident(id: Ident, hint: Int) -> Int {
   if is_upper_camel(name) {
     let (e, vp) = c.variant_from_hint(name, hint)
     if e >= 0 {
-      return c.construct(e, vp, [], false, [], hint, id.span, id)
+      return c.construct(e, vp, [], false, [], hint, id.span, id, c.key_of(id.span, 0))
     }
     if name == b"None" {
       let (pe, pv) = c.prelude_variant(name)
-      return c.construct(pe, pv, [], false, [], hint, id.span, id)
+      return c.construct(pe, pv, [], false, [], hint, id.span, id, c.key_of(id.span, 0))
     }
     let (pe, _) = c.prelude_variant(name)
     if pe >= 0 {
@@ -433,7 +433,7 @@ fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, 
   if c.objs[obj].tkind == "enum" {
     let v = c.variant_pos(obj, name)
     if v >= 0 {
-      return c.construct(obj, v, targs, has_targs, call, hint, span, sel)
+      return c.construct(obj, v, targs, has_targs, call, hint, span, sel, c.key_of(span, 19))
     }
   }
   let fo = c.objs[obj].statics.get(name) ?? -1
@@ -815,11 +815,11 @@ fn (var c: Checker) call_ident(call: Expr, id: Ident, targs: List[Int], has_targ
   if is_upper_camel(name) && !c.mods[c.cur_mod].members.contains(name) {
     let (e, vp) = c.variant_from_hint(name, hint)
     if e >= 0 {
-      return c.construct(e, vp, targs, has_targs, [call], hint, span, id)
+      return c.construct(e, vp, targs, has_targs, [call], hint, span, id, c.expr_key(call))
     }
     let (pe, pv) = c.prelude_variant(name)
     if pe >= 0 {
-      return c.construct(pe, pv, targs, has_targs, [call], hint, span, id)
+      return c.construct(pe, pv, targs, has_targs, [call], hint, span, id, c.expr_key(call))
     }
   }
   if c.file_import(name) != None {
@@ -1146,7 +1146,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     params.push(q)
   }
   c.fn_calls[c.expr_key(call)] = fo
-  c.call_infos[c.expr_key(call)] = CallInfo{fn_obj: fo, recv: recv}
+  c.call_infos[c.expr_key(call)] = CallInfo{fn_obj: fo, recv: recv, subst: sm}
   c.check_args(params, call, c.display_name(fo), false, fo, -1, -1)
   // constraints
   for p in c.objs[fo].tparams {
@@ -1408,6 +1408,7 @@ fn (var c: Checker) type_call(obj0: Int, targs0: List[Int], has_targs0: Bool, ca
     targs = r.args
     has_targs = r.has_args
   }
+  c.type_call_at[c.expr_key(call)] = obj
   let oname = text(c.objs[obj].name)
   if c.objs[obj].module == c.prelude && (is_int_name(c.objs[obj].name) || is_float_name(c.objs[obj].name)) {
     if args.len() != 1 || args[0].name != None {
@@ -1481,7 +1482,8 @@ fn (var c: Checker) type_call(obj0: Int, targs0: List[Int], has_targs0: Bool, ca
 /// Builds variant v (a position) of enum (core 2.3); call is the
 /// CallExpr (zero or one element), name the identifier naming the
 /// variant.
-fn (var c: Checker) construct(en: Int, v: Int, targs: List[Int], has_targs: Bool, call: List[Expr], hint: Int, sp: Span, name: Ident) -> Int {
+fn (var c: Checker) construct(en: Int, v: Int, targs: List[Int], has_targs: Bool, call: List[Expr], hint: Int, sp: Span, name: Ident, ekey: Int) -> Int {
+  c.ctor_at[ekey] = VRef{en: en, variant: v}
   c.record_text(name, c.variant_text(en, v))
   let nt = c.instantiate(en, targs, has_targs, sp)
   if nt < 0 {

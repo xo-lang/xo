@@ -409,6 +409,8 @@ func (pg *pkgGen) fieldEq(a, b string, t check.Type) string {
 		return "(" + a + " == " + b + ")"
 	case pg.hasTypedEq(t, false):
 		return a + ".XoEqT(" + b + ")"
+	case pg.g.isUnitEnum(t):
+		return "(" + a + ".Tag == " + b + ".Tag)"
 	}
 	return fmt.Sprintf("%sEq(%s, %s)", pg.rt(), a, b)
 }

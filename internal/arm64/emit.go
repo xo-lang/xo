@@ -876,6 +876,22 @@ func (s *fstate) parallel(b *strings.Builder, moves []move, fr *frameInfo) {
 	}
 }
 
+// addSP materializes sp + off in reg. add's immediate has 12 bits
+// (optionally shifted by 12), so an offset past 4095 takes two adds: the
+// $OUT slot of a frame whose calls pass more than 4 KiB of stack
+// arguments (a large struct by value) is that far (gotchas/arm64-add-
+// immediate-range.md).
+func addSP(b *strings.Builder, reg string, off int) {
+	if off <= 4095 {
+		fmt.Fprintf(b, "\tadd %s, sp, #%d\n", reg, off)
+		return
+	}
+	fmt.Fprintf(b, "\tadd %s, sp, #%d, lsl #12\n", reg, off>>12)
+	if lo := off & 4095; lo != 0 {
+		fmt.Fprintf(b, "\tadd %s, %s, #%d\n", reg, reg, lo)
+	}
+}
+
 func memRef(l mloc) string {
 	if l.base == "FP" {
 		return fmt.Sprintf("@%s+%d(FP)", l.name, l.off)
@@ -904,7 +920,7 @@ func (s *fstate) move(b *strings.Builder, dst mloc, src msrc, fr *frameInfo) {
 		case mSym:
 			b.WriteString(g.addr(regName(r, false), src.sym))
 		case mFrame:
-			fmt.Fprintf(b, "\tadd %s, sp, #%d\n", regName(r, false), fr.outOff)
+			addSP(b, regName(r, false), fr.outOff)
 		}
 	}
 	if g.goMode && (src.kind == mSym || src.kind == mFrame) {

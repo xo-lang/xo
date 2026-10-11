@@ -1,0 +1,1458 @@
+// Expressions (internal/ssa build_expr.go, the types of expressions of
+// build.go): literals, names, selectors, operators, `if`, `match`, and
+// patterns.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/selfhost/lexer
+
+// ---------------------------------------------------------------------------
+// Types of expressions (build.go)
+
+/// The checker type of e in context (TypeOf, else NaturalType), applied.
+fn (var b: Builder) check_type(e: Expr) -> Int {
+  var t = b.c.type_in(b.s.file, e)
+  if t < 0 {
+    t = b.c.nat_in(b.s.file, e)
+  }
+  b.apply(t)
+}
+
+/// The checker type of e before implicit conversion (natCheck).
+fn (var b: Builder) nat_check(e: Expr) -> Int {
+  var t = b.c.nat_in(b.s.file, e)
+  if t < 0 {
+    t = b.c.type_in(b.s.file, e)
+  }
+  b.apply(t)
+}
+
+/// The SSA type of e in context (typeOf).
+fn (var b: Builder) type_of(e: Expr) -> Int {
+  var t = b.c.type_in(b.s.file, e)
+  if t < 0 {
+    t = b.c.nat_in(b.s.file, e)
+  }
+  if t >= 0 && b.c.is_never(t) {
+    return b.unit_t()
+  }
+  t = b.apply(t)
+  let (rt, et) = b.result_parts(t)
+  if et >= 0 && b.c.is_never(et) {
+    t = rt
+  }
+  b.typ(t)
+}
+
+/// The SSA type of e before implicit conversion (natOf).
+fn (var b: Builder) nat_of(e: Expr) -> Int {
+  b.typ(b.nat_check(e))
+}
+
+fn (var b: Builder) expr_never(e: Expr) -> Bool {
+  var t = b.c.nat_in(b.s.file, e)
+  if t < 0 {
+    t = b.c.type_in(b.s.file, e)
+  }
+  t >= 0 && b.c.is_never(t)
+}
+
+/// Converts v to t: the implicit `T` to `Option[T]` (coerce).
+fn (var b: Builder) coerce(v: Int, t: Int) -> Int {
+  let vt = b.vty(v)
+  if vt != t && b.is_dead() {
+    return b.undef(t)
+  }
+  if vt == t || b.vop(v) == Op.Undef {
+    if b.vop(v) == Op.Undef && vt != t {
+      return b.undef(t)
+    }
+    return v
+  }
+  let tk = b.tkind(t)
+  if tk == Kind.Box {
+    let inner = b.coerce(v, b.m.types[t].elems[0])
+    return b.add(Op.Box, t, Aux.None, [inner])
+  }
+  if tk == Kind.Enum {
+    let i = b.m.variant_index(t, "Some")
+    if i >= 0 && b.m.types[t].variants[i].fields.len() == 1 && b.m.types[t].variants[i].fields[0].ty == vt {
+      return b.add(Op.Variant, t, Aux.I(n: i), [v])
+    }
+    let ok = b.m.variant_index(t, "Ok")
+    if ok >= 0 && b.m.variant_index(t, "Err") >= 0 && b.m.types[t].variants[ok].fields.len() == 1 && b.m.types[t].variants[ok].fields[0].ty == vt {
+      return b.add(Op.Variant, t, Aux.I(n: ok), [v])
+    }
+  }
+  if tk == Kind.Unit {
+    return b.unit()
+  }
+  b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}`")
+  b.undef(t)
+}
+
+/// e in its context type (value).
+fn (var b: Builder) value(e: Expr) -> Int {
+  let v = b.expr(e)
+  b.coerce(v, b.type_of(e))
+}
+
+fn (var b: Builder) value_as(e: Expr, t: Int) -> Int {
+  let v = b.expr(e)
+  if b.is_dyn(t) && !b.is_dyn(b.vty(v)) && b.vop(v) != Op.Undef {
+    b.unsupported("a value converted to Error, Display, or Debug")
+    return b.undef(t)
+  }
+  b.coerce(v, t)
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+
+/// Lowers an expression to a value of its natural type (expr).
+fn (var b: Builder) expr(e: Expr) -> Int {
+  match e {
+    ParenExpr(x: x, ..) => return b.expr(x)
+    IntLit(value: value, ..) => {
+      let t0 = b.nat_of(e)
+      if b.tkind(t0) == Kind.Float {
+        var f = parse_float(value.to_str() ?? "")
+        if b.m.is_f32(t0) {
+          f = Float(Float32(f))
+        }
+        return b.add(Op.Const, t0, Aux.F(f: f), [])
+      }
+      var t = t0
+      if b.tkind(t) != Kind.Int {
+        t = b.int_t()
+      }
+      return b.int_lit(value, t)
+    }
+    RuneLit(value: value, ..) => {
+      let t = b.nat_of(e)
+      if b.tkind(t) == Kind.Int {
+        return b.add(Op.Const, t, Aux.I(n: value), [])
+      }
+    }
+    BytesLit(value: value, ..) => return b.add(Op.Const, b.str_t(), Aux.Bs(b: value), [])
+    FloatLit(raw: raw, ..) => {
+      let text = (raw.to_str() ?? "").replace("_", "")
+      let parsed = Float.parse(text)
+      if parsed == None {
+        b.unsupported("this Float literal")
+      }
+      let f = parsed ?? 0.0
+      let t = b.nat_of(e)
+      if b.m.is_f32(t) {
+        return b.add(Op.Const, t, Aux.F(f: Float(Float32(f))), [])
+      }
+      return b.add(Op.Const, b.float_t(), Aux.F(f: f), [])
+    }
+    StringLit(s) => return b.string_lit(s)
+    DurationLit(nanos: nanos, ..) => {
+      var n = 0
+      for ch in nanos {
+        if ch < 48 || ch > 57 {
+          b.unsupported("this Duration literal")
+          return b.cint(0)
+        }
+        n = n * 10 + (Int(ch) - 48)
+      }
+      return b.cint(n)
+    }
+    UnitExpr(..) => return b.unit()
+    Ident(id) => return b.ident(e, id)
+    TupleExpr(elems: elems, ..) => {
+      let t = b.nat_of(e)
+      var vs: List[Int] = []
+      for (i, el) in elems.indexed() {
+        vs.push(b.value_as(el, b.m.types[t].elems[i]))
+      }
+      return b.add(Op.Tuple, t, Aux.None, vs)
+    }
+    ListLit(elems: elems, ..) => {
+      var t = b.type_of(e)
+      if b.tkind(t) != Kind.List {
+        t = b.nat_of(e)
+      }
+      if b.tkind(t) != Kind.List {
+        b.unsupported("this list literal")
+        return b.undef(t)
+      }
+      var l = b.call("list.new", t, "", [])
+      for el in elems {
+        let v = b.value_as(el, b.m.types[t].elems[0])
+        l = b.call("list.push", t, "", [l, v])
+      }
+      return l
+    }
+    StructLit(..) => return b.struct_lit(e)
+    WithExpr(x: x, fields: fields, ..) => {
+      var v = b.expr(x)
+      for fi in fields {
+        let vt = b.vty(v)
+        let (i, ft) = b.field_index(vt, check.text(fi.name.name))
+        if i < 0 {
+          b.unsupported("this field")
+          continue
+        }
+        let fv = b.value_as(fi.value, ft)
+        v = b.add(Op.SetField, vt, Aux.I(n: i), [v, fv])
+      }
+      b.check_invariant(v, b.nat_check(e))
+      return v
+    }
+    UnaryExpr(span: span, op: op, x: x) => {
+      let v = b.expr(x)
+      let vt = b.vty(v)
+      match op {
+        Minus => {
+          if b.m.is_sized(vt) {
+            return b.sized_neg(v, span)
+          }
+          let r = b.add(Op.Neg, vt, Aux.None, [v])
+          if b.tkind(vt) == Kind.Int {
+            b.set_pos(r, b.pos(span))
+          }
+          return r
+        }
+        Bang | Tilde => {
+          if b.m.is_sized(vt) {
+            return b.sized_not(v)
+          }
+          return b.add(Op.Not, vt, Aux.None, [v])
+        }
+        _ => {}
+      }
+    }
+    BinaryExpr(..) => return b.binary(e)
+    SelectorExpr(..) => return b.selector(e)
+    IndexExpr(span: span, x: x, index: index) => {
+      if let RangeExpr(lo: lo, hi: hi, inclusive: inclusive, ..) = index {
+        return b.slice(span, x, lo, hi, inclusive)
+      }
+      let l = b.expr(x)
+      let lt = b.vty(l)
+      let xct = b.nat_check(x)
+      if b.tkind(lt) == Kind.Str && b.is_prelude_named(xct, ["Bytes"]) {
+        let i = b.value_as(index, b.int_t())
+        return b.call("bytes.index", b.m.int_type("UInt8"), b.pos(span), [l, i])
+      }
+      if b.tkind(lt) == Kind.List {
+        let i = b.value_as(index, b.int_t())
+        return b.call("list.index", b.m.types[lt].elems[0], b.pos(span), [l, i])
+      }
+    }
+    CallExpr(..) => return b.call_expr(e)
+    TryExpr(..) => return b.try_expr(e)
+    FnLit(f) => return b.closure(e, f)
+    MapLit(entries: entries, ..) => {
+      // `{}` whose value is discarded parses as an empty Map literal of
+      // unresolved type: it is an empty block
+      let nt = b.nat_check(e)
+      let o = b.named_obj(nt)
+      if o >= 0 && entries.is_empty() {
+        let args = b.ty_args(nt)
+        if args.len() == 2 && b.c.is_open_var(args[0]) && b.c.is_open_var(args[1]) {
+          return b.unit()
+        }
+      }
+      b.unsupported("Map")
+      return b.undef(b.type_of(e))
+    }
+    SetLit(..) => {
+      b.unsupported("Set")
+      return b.undef(b.type_of(e))
+    }
+    IsExpr(x: x, pattern: p, ..) => {
+      let v = b.value(x)
+      let join = b.new_block()
+      let no = b.new_block()
+      let res = b.s.f.add_param(join, b.bool_t())
+      b.pattern(v, p, no)
+      b.jump(join, [b.cbool(true)])
+      b.seal(no)
+      b.s.cur = no
+      b.jump(join, [b.cbool(false)])
+      b.seal(join)
+      b.s.cur = join
+      return res
+    }
+    Block(bl) => return b.block(bl)
+    IfExpr(x) => return b.if_expr(e, x)
+    MatchExpr(..) => return b.match_expr(e)
+    WhileExpr(body: body, ..) => {
+      b.while_loop(b"", [], [], body)
+      return b.unit()
+    }
+    ScopeExpr(..) | SelectExpr(..) => b.need_conc = true
+    _ => {}
+  }
+  b.unsupported(unsupported_expr(e))
+  b.undef(b.nat_of(e))
+}
+
+fn unsupported_expr(e: Expr) -> Str {
+  match e {
+    MapLit(..) => "Map"
+    SetLit(..) => "Set"
+    ScopeExpr(..) => "`scope` and tasks"
+    SelectExpr(..) => "`select`"
+    DurationLit(..) => "Duration"
+    RuneLit(..) => "Rune"
+    BytesLit(..) => "Bytes"
+    HoleExpr(..) => "holes (`???`)"
+    RangeExpr(..) => "a range outside `for`"
+    _ => "this expression"
+  }
+}
+
+/// The value of the predeclared `target` (build_target.go): the target
+/// the builder runs on, which is the host for `xo ssadump`.
+fn (var b: Builder) target_value(e: Expr) -> Int {
+  let t = b.nat_of(e)
+  if b.tkind(t) != Kind.Struct || b.m.types[t].fields.len() != 2 {
+    return -1
+  }
+  let ot = b.m.types[t].fields[0].ty
+  let at = b.m.types[t].fields[1].ty
+  if b.tkind(ot) != Kind.Enum || b.tkind(at) != Kind.Enum {
+    return -1
+  }
+  let os_name = match target.os {
+    Darwin => "Darwin"
+    Windows => "Windows"
+    Wasi => "Wasi"
+    Linux => "Linux"
+  }
+  let arch_name = match target.arch {
+    Arm64 => "Arm64"
+    Wasm32 => "Wasm32"
+    Amd64 => "Amd64"
+  }
+  let oi = b.m.variant_index(ot, os_name)
+  let ai = b.m.variant_index(at, arch_name)
+  if oi < 0 || ai < 0 {
+    return -1
+  }
+  let ov = b.add(Op.Variant, ot, Aux.I(n: oi), [])
+  let av = b.add(Op.Variant, at, Aux.I(n: ai), [])
+  b.add(Op.Struct, t, Aux.None, [ov, av])
+}
+
+/// `x[lo..hi]` (and `..=`, and the open forms) on Str, Bytes, and List
+/// (build_int.go slice).
+fn (var b: Builder) slice(span: Span, x: Expr, lo0: Expr?, hi0: Expr?, inclusive: Bool) -> Int {
+  let it = b.int_t()
+  let base = b.expr(x)
+  let bt = b.vty(base)
+  var lo = -1
+  match lo0 {
+    Some(l) => lo = b.value_as(l, it)
+    None => lo = b.cint(0)
+  }
+  var hi = -1
+  if let Some(h) = hi0 {
+    hi = b.value_as(h, it)
+    if inclusive {
+      hi = b.add(Op.Add, it, Aux.None, [hi, b.cint(1)])
+      b.set_pos(hi, b.pos(span))
+    }
+  }
+  if hi < 0 {
+    if b.tkind(bt) == Kind.List {
+      hi = b.call("list.len", it, "", [base])
+    } else {
+      hi = b.call("Str.len", it, "", [base])
+    }
+  }
+  match b.tkind(bt) {
+    Str => {
+      var name = "str_slice_at"
+      let xt = b.nat_check(x)
+      if b.is_prelude_named(xt, ["Bytes"]) {
+        name = "bytes_slice_at"
+      }
+      return b.rt(name, bt, [base, lo, hi, b.const_str(b.pos(span))])
+    }
+    List => {
+      let f = b.list_slice(bt)
+      return b.call(f, bt, "", [base, lo, hi, b.const_str(b.pos(span))])
+    }
+    _ => {}
+  }
+  b.unsupported("slicing a value of type `${b.m.types[bt].name}`")
+  b.undef(bt)
+}
+
+/// xo.listcat[T](a, b) -> T: `a + b` on lists (build_map.go listConcat).
+fn (var b: Builder) list_concat(t: Int) -> Str {
+  let name = "xo.listcat[${b.m.types[t].name}]"
+  b.gen_func(name, [t, t], [t], Gen.Concat(t: t))
+  name
+}
+
+fn (var b: Builder) concat_body(t: Int) {
+  let it = b.int_t()
+  let p0 = b.param(0)
+  let p1 = b.param(1)
+  let acc = b.local()
+  b.write_var(acc, p0)
+  let iv = b.local()
+  let n = b.call("list.len", it, "", [p1])
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let cur = b.read(acc)
+  let el = b.call("list.index", b.m.types[t].elems[0], "", [p1, i])
+  b.write_var(acc, b.call("list.push", t, "", [cur, el]))
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(acc))
+}
+
+/// xo.slice[List[T]](l, lo, hi, at) (listSlice).
+fn (var b: Builder) list_slice(lt: Int) -> Str {
+  let it = b.int_t()
+  let st = b.str_t()
+  let name = "xo.slice[${b.m.types[lt].name}]"
+  b.gen_func(name, [lt, it, it, st], [lt], Gen.Slice(lt: lt))
+  name
+}
+
+fn (var b: Builder) slice_body(lt: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let st = b.str_t()
+  let l = b.param(0)
+  let lo = b.param(1)
+  let hi = b.param(2)
+  let at = b.param(3)
+  let n = b.call("list.len", it, "", [l])
+  let c1 = b.add(Op.Lt, bt, Aux.None, [lo, b.cint(0)])
+  let c2 = b.add(Op.Gt, bt, Aux.None, [hi, n])
+  let c3 = b.add(Op.Gt, bt, Aux.None, [lo, hi])
+  let c23 = b.add(Op.Or, bt, Aux.None, [c2, c3])
+  let bad = b.add(Op.Or, bt, Aux.None, [c1, c23])
+  let (no, join) = b.if_then_begin(bad)
+  var msg = b.call("str.concat_int", st, "", [b.const_str("slice "), lo])
+  msg = b.call("str.concat", st, "", [msg, b.const_str("..")])
+  msg = b.call("str.concat_int", st, "", [msg, hi])
+  msg = b.call("str.concat", st, "", [msg, b.const_str(" out of range for List of length ")])
+  msg = b.call("str.concat_int", st, "", [msg, n])
+  b.rt("fault_at", -1, [msg, at])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.if_then_end(no, join)
+  let out = b.local()
+  b.write_var(out, b.call("list.new", lt, "", []))
+  let iv = b.local()
+  let cnt = b.add(Op.Sub, it, Aux.None, [hi, lo])
+  let (i, head, exit) = b.for_up_to_begin(cnt, iv)
+  let idx = b.add(Op.Add, it, Aux.None, [lo, i])
+  let el = b.call("list.index", b.m.types[lt].elems[0], "", [l, idx])
+  let cur = b.read(out)
+  b.write_var(out, b.call("list.push", lt, "", [cur, el]))
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(out))
+}
+
+/// A Float from its text (strconv.ParseFloat on a literal).
+fn parse_float(s: Str) -> Float {
+  Float.parse(s.replace("_", "")) ?? 0.0
+}
+
+/// The constant of an integer literal (decimal digits) of type t
+/// (build_int.go intLit).
+fn (var b: Builder) int_lit(value: Bytes, t: Int) -> Int {
+  if b.m.is_u64(t) {
+    var n = 0
+    for ch in value {
+      n = n.wrapping_mul(10).wrapping_add(Int(ch) - 48)
+    }
+    return b.add(Op.Const, t, Aux.I(n: n), [])
+  }
+  let n = Int.parse(value.to_str() ?? "")
+  if n == None {
+    b.unsupported("this Int literal")
+  }
+  b.add(Op.Const, t, Aux.I(n: n ?? 0), [])
+}
+
+fn (var b: Builder) ident(e: Expr, x: Ident) -> Int {
+  let vo = b.c.var_of(b.s.file, x)
+  if vo >= 0 {
+    return b.read(vo)
+  }
+  if let Some(vr) = b.c.ctor_in(b.s.file, e) {
+    return b.variant(b.nat_of(e), b.variant_name(vr), [])
+  }
+  if x.name == b"true" || x.name == b"false" {
+    return b.cbool(x.name == b"true")
+  }
+  let r = b.c.ref_of(b.s.file, x)
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Const && b.c.objs[r].decl_file >= 0 {
+    return b.const_value(r, b.nat_of(e))
+  }
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func {
+    return b.func_value(r, e)
+  }
+  if x.name == b"target" {
+    let v = b.target_value(e)
+    if v >= 0 {
+      return v
+    }
+  }
+  b.unsupported("the name `${check.text(x.name)}` here")
+  b.undef(b.nat_of(e))
+}
+
+fn (var b: Builder) variant_name(vr: check.VRef) -> Str {
+  check.text(b.c.objs[vr.en].variants[vr.variant].name)
+}
+
+fn (var b: Builder) selector(e: Expr) -> Int {
+  let (x, sel) = match e {
+    SelectorExpr(x: x, sel: sel, ..) => (x, sel)
+    _ => fault("selector")
+  }
+  if let Some(vr) = b.c.ctor_in(b.s.file, e) {
+    return b.variant(b.nat_of(e), b.variant_name(vr), [])
+  }
+  let r = b.c.ref_of(b.s.file, sel)
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Const && b.c.objs[r].decl_file >= 0 {
+    return b.const_value(r, b.nat_of(e))
+  }
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].static_const {
+    let rm = b.obj_mod(r)
+    let rr = b.c.objs[r].recv
+    if b.is_prelude_mod(rm) && rr >= 0 && b.obj_name(rr) == "Time" && b.obj_name(r) == "UNIX_EPOCH" {
+      return b.cint(0)
+    }
+    b.unsupported("`${b.c.display_name(r)}`")
+    return b.undef(b.nat_of(e))
+  }
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv < 0 && b.is_std_mod(b.obj_mod(r)) {
+    let impl = b.impl_of(r)
+    if impl >= 0 && b.c.objs[impl].params.len() == b.c.objs[r].params.len() {
+      return b.func_value(impl, e)
+    }
+  }
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv >= 0 && !b.c.objs[r].is_static && b.c.type_in(b.s.file, x) >= 0 {
+    // a closure over the receiver's value (decision 0109), outside stage
+    // 1: its function takes the next closure name, as on the Go builder
+    b.unsupported("a method value")
+    b.nclos += 1
+    let t = b.nat_of(e)
+    let fi = b.m.new_func("${b.s.f.name}.fn${b.nclos}", [], [t])
+    b.m.funcs[fi].skip = "a method value"
+    return b.undef(t)
+  }
+  if sel.name == b"await" {
+    let xct = b.nat_check(x)
+    if b.is_prelude_named(xct, ["Task"]) {
+      b.need_conc = true
+      b.unsupported("`await`")
+      return b.undef(b.nat_of(e))
+    }
+  }
+  let v = b.expr(x)
+  let vt = b.vty(v)
+  if b.tkind(vt) == Kind.Cap {
+    let t = b.nat_of(e)
+    if b.tkind(t) == Kind.Handle {
+      b.need_conc = true
+      b.unsupported("`os.tasks`")
+      return b.undef(t)
+    }
+    if b.is_fs(t) {
+      let root = b.const_str("")
+      return b.add(Op.Struct, t, Aux.None, [root, b.cint(0)])
+    }
+    return b.add(Op.Cap, t, Aux.S(s: check.text(sel.name)), [v])
+  }
+  let (i, ft) = b.field_index(vt, check.text(sel.name))
+  if i >= 0 {
+    return b.unbox(b.add(Op.Field, ft, Aux.I(n: i), [v]))
+  }
+  b.unsupported("the selector `.${check.text(sel.name)}`")
+  b.undef(b.nat_of(e))
+}
+
+/// Builds variant name of enum t from field values (variant).
+fn (var b: Builder) variant(t: Int, name: Str, args: List[Int]) -> Int {
+  let i = b.m.variant_index(t, name)
+  if b.tkind(t) != Kind.Enum || i < 0 || args.len() != user_fields(b.m.types[t].variants[i]).len() {
+    b.unsupported("constructing `${name}` here (type `${b.m.types[t].name}`, file ${b.s.file})")
+    return b.undef(t)
+  }
+  b.add(Op.Variant, t, Aux.I(n: i), args)
+}
+
+/// The fields of v without the hidden trace of Err (userFields).
+fn user_fields(v: SVariant) -> List[SField] {
+  let n = v.fields.len()
+  if n > 0 && v.fields[n - 1].name == TRACE_FIELD {
+    return v.fields[0..n - 1]
+  }
+  v.fields
+}
+
+/// The index and type of a struct field or tuple element (fieldIndex), or
+/// (-1, -1).
+fn (var b: Builder) field_index(t: Int, name: Str) -> (Int, Int) {
+  match b.tkind(t) {
+    Struct => {
+      let i = b.m.field_index(t, name)
+      if i >= 0 {
+        return (i, b.m.types[t].fields[i].ty)
+      }
+    }
+    Tuple => {
+      for (i, e) in b.m.types[t].elems.indexed() {
+        if name == "${i}" {
+          return (i, e)
+        }
+      }
+    }
+    _ => {}
+  }
+  (-1, -1)
+}
+
+fn (var b: Builder) is_builtin_kind(t: Int) -> Bool {
+  b.tkind(t) is Kind.Str | Kind.Int | Kind.Float | Kind.Bool
+}
+
+fn (var b: Builder) lower_kind(t: Int) -> Str {
+  if b.tkind(t) == Kind.Float {
+    return "float"
+  }
+  "int"
+}
+
+fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
+  let st = b.str_t()
+  var acc = -1
+  for p in x.parts {
+    match p.expr {
+      None => {
+        if !p.text.is_empty() || x.parts.len() == 1 {
+          let v = b.add(Op.Const, st, Aux.Bs(b: p.text), [])
+          acc = b.cat(acc, v)
+        }
+        continue
+      }
+      Some(pe) => {
+        let ct = b.nat_check(pe)
+        var v = b.expr(pe)
+        if b.is_prelude_named(ct, ["Duration", "Time", "Bytes", "UInt64", "Rune"]) || !b.is_builtin_kind(b.vty(v)) {
+          if acc < 0 {
+            acc = b.const_str("")
+          }
+          acc = b.append_display(acc, v, ct)
+          continue
+        }
+        match b.tkind(b.vty(v)) {
+          Str => {}
+          Int | Float => {
+            if acc >= 0 {
+              acc = b.call("str.concat_${b.lower_kind(b.vty(v))}", st, "", [acc, v])
+              continue
+            }
+            if b.tkind(b.vty(v)) == Kind.Int {
+              v = b.call("str.of_int", st, "", [v])
+            } else {
+              v = b.call("str.of_float", st, "", [v])
+            }
+          }
+          Bool => v = b.call("str.of_bool", st, "", [v])
+          _ => b.unsupported("interpolating a value of type `${b.m.types[b.vty(v)].name}`")
+        }
+        acc = b.cat(acc, v)
+      }
+    }
+  }
+  if acc < 0 {
+    return b.const_str("")
+  }
+  acc
+}
+
+fn (var b: Builder) cat(acc: Int, v: Int) -> Int {
+  if acc < 0 {
+    return v
+  }
+  b.call("str.concat", b.str_t(), "", [acc, v])
+}
+
+fn (var b: Builder) struct_lit(e: Expr) -> Int {
+  let fields = match e {
+    StructLit(fields: fields, ..) => fields
+    _ => fault("struct literal")
+  }
+  let t = b.nat_of(e)
+  if b.tkind(t) != Kind.Struct {
+    b.unsupported("this struct literal")
+    return b.undef(t)
+  }
+  let nt = b.nat_check(e)
+  let named = b.named_obj(nt)
+  let n = b.m.types[t].fields.len()
+  var vals: List[Int] = []
+  for _ in 0..n {
+    vals.push(-1)
+  }
+  for fi in fields {
+    let i = b.m.field_index(t, check.text(fi.name.name))
+    if i < 0 {
+      b.unsupported("this field")
+      continue
+    }
+    vals[i] = b.value_as(fi.value, b.m.types[t].fields[i].ty)
+  }
+  for i in 0..n {
+    if vals[i] >= 0 {
+      continue
+    }
+    if named >= 0 && i < b.c.objs[named].fields.len() && !b.c.objs[named].fields[i].default.is_empty() {
+      vals[i] = b.foreign_value(b.c.objs[named].fields[i].default[0], b.decl_file(named), b.m.types[t].fields[i].ty)
+      continue
+    }
+    if named >= 0 {
+      let it = b.impl_type(named)
+      if it >= 0 {
+        for f in b.c.objs[it].fields {
+          if check.text(f.name) == b.m.types[t].fields[i].name && !f.default.is_empty() {
+            vals[i] = b.foreign_value(f.default[0], b.decl_file(it), b.m.types[t].fields[i].ty)
+            break
+          }
+        }
+        if vals[i] >= 0 {
+          continue
+        }
+      }
+    }
+    b.unsupported("a struct literal without the field `${b.m.types[t].fields[i].name}`")
+    vals[i] = b.undef(b.m.types[t].fields[i].ty)
+  }
+  let v = b.add(Op.Struct, t, Aux.None, vals)
+  if named >= 0 {
+    b.check_invariant(v, nt)
+  }
+  v
+}
+
+/// e of file f (a default value, a constant) as a value of type t.
+fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
+  let saved = b.s.file
+  b.s.file = f
+  let v = b.value_as(e, t)
+  b.s.file = saved
+  v
+}
+
+/// The invariant check after a struct value (build_contract.go
+/// checkInvariant): outside stage 1.
+fn (var b: Builder) check_invariant(v: Int, ct: Int) {
+  let o = b.named_obj(ct)
+  if o < 0 || b.tkind(b.vty(v)) != Kind.Struct || b.invariant_of(o).is_empty() {
+    return
+  }
+  b.unsupported("struct invariants")
+}
+
+fn arith_op(op: lexer.Kind) -> Op? {
+  match op {
+    Plus => Some(Op.Add)
+    Minus => Some(Op.Sub)
+    Star => Some(Op.Mul)
+    Slash => Some(Op.Div)
+    Percent => Some(Op.Rem)
+    Amp => Some(Op.And)
+    Pipe => Some(Op.Or)
+    Caret => Some(Op.Xor)
+    Shl => Some(Op.Shl)
+    Shr => Some(Op.Shr)
+    _ => None
+  }
+}
+
+fn cmp_op(op: lexer.Kind) -> Op? {
+  match op {
+    Eq => Some(Op.Eq)
+    NotEq => Some(Op.Ne)
+    Lt => Some(Op.Lt)
+    LtEq => Some(Op.Le)
+    Gt => Some(Op.Gt)
+    GtEq => Some(Op.Ge)
+    _ => None
+  }
+}
+
+/// `l op r`; Int operations that can fault carry the position (arith).
+fn (var b: Builder) arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
+  let lt = b.vty(l)
+  if b.tkind(lt) == Kind.Str && op == lexer.Kind.Plus {
+    return b.call("str.concat", lt, "", [l, r])
+  }
+  if b.tkind(lt) == Kind.List && op == lexer.Kind.Plus && b.vty(r) == lt {
+    // xs, then each element of ys pushed (in place when xs is not shared)
+    let f = b.list_concat(lt)
+    return b.call(f, lt, "", [l, r])
+  }
+  if b.m.is_sized(lt) {
+    return b.sized_arith(op, l, r, sp)
+  }
+  let o = arith_op(op)
+  if o == None || !(b.tkind(lt) is Kind.Int | Kind.Float | Kind.Bool) {
+    b.unsupported("this operator")
+    return b.undef(lt)
+  }
+  let oo = o ?? Op.Add
+  let v = b.add(oo, lt, Aux.None, [l, r])
+  if b.m.is_f32(lt) {
+    if oo is Op.Add | Op.Sub | Op.Mul | Op.Div {
+      return b.rt("f32_round", lt, [v])
+    }
+  }
+  if b.tkind(lt) == Kind.Int {
+    if oo is Op.Add | Op.Sub | Op.Mul | Op.Div | Op.Rem | Op.Shl | Op.Shr {
+      b.set_pos(v, b.pos(sp))
+    }
+  }
+  v
+}
+
+fn (var b: Builder) binary(e: Expr) -> Int {
+  let (span, op, x, y) = match e {
+    BinaryExpr(span: span, op: op, x: x, y: y) => (span, op, x, y)
+    _ => fault("binary")
+  }
+  if b.is_expect_call(x) && cmp_op(op) != None {
+    b.unsupported("`expect`")
+    return b.undef(b.bool_t())
+  }
+  let bt = b.bool_t()
+  if op == lexer.Kind.AndAnd || op == lexer.Kind.OrOr {
+    let l = b.value_as(x, bt)
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, bt)
+    let (yes, no) = b.branch(l)
+    if op == lexer.Kind.AndAnd {
+      b.s.cur = no
+      b.jump(join, [b.cbool(false)])
+      b.s.cur = yes
+    } else {
+      b.s.cur = yes
+      b.jump(join, [b.cbool(true)])
+      b.s.cur = no
+    }
+    let r = b.value_as(y, bt)
+    b.jump(join, [r])
+    b.seal(join)
+    b.s.cur = join
+    return res
+  }
+  if op == lexer.Kind.Coalesce {
+    let o = b.expr(x)
+    let t = b.type_of(e)
+    let ot = b.vty(o)
+    let some = b.m.variant_index(ot, "Some")
+    if b.tkind(ot) != Kind.Enum || some < 0 {
+      b.unsupported("`??` on this value")
+      return b.undef(t)
+    }
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, t)
+    let c = b.add(Op.Eq, bt, Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [o]), b.cint(some)])
+    let (yes, no) = b.branch(c)
+    b.s.cur = yes
+    let pv = b.add(Op.Payload, b.m.types[ot].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [o])
+    b.jump(join, [b.coerce(pv, t)])
+    b.s.cur = no
+    let dv = b.value_as(y, t)
+    b.jump(join, [dv])
+    b.seal(join)
+    b.s.cur = join
+    return res
+  }
+  if op == lexer.Kind.Eq || op == lexer.Kind.NotEq {
+    if b.to_lower_recv(x) != None && b.to_lower_recv(y) != None {
+      b.unsupported("`a.to_lower() == b.to_lower()`")
+      return b.undef(bt)
+    }
+  }
+  let l = b.expr(x)
+  var r = -1
+  if op == lexer.Kind.Shl || op == lexer.Kind.Shr {
+    r = b.shift_count(y, b.vty(l))
+  } else {
+    r = b.value_as(y, b.vty(l))
+  }
+  if cmp_op(op) != None {
+    return b.compare_values(op, l, r)
+  }
+  b.arith(op, l, r, span)
+}
+
+/// The shift amount of a shift of a value of type t (shiftCount).
+fn (var b: Builder) shift_count(e: Expr, t: Int) -> Int {
+  let r = b.expr(e)
+  let rt = b.vty(r)
+  if rt != t && b.tkind(rt) == Kind.Int && b.tkind(t) == Kind.Int {
+    return b.add(Op.IntConv, t, Aux.None, [r])
+  }
+  b.coerce(r, t)
+}
+
+/// `expect(x)` without a binding named expect (isExpect).
+fn (var b: Builder) is_expect_call(e: Expr) -> Bool {
+  match e {
+    CallExpr(fun: fun, args: args, ..) => {
+      if let Ident(id) = fun {
+        return id.name == b"expect" && b.c.var_of(b.s.file, id) < 0 && b.c.ref_of(b.s.file, id) < 0 && b.c.call_in(b.s.file, e) == None && args.len() == 1
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// The receiver of a call `s.to_lower()` of the prelude's Str (toLowerRecv).
+fn (var b: Builder) to_lower_recv(e0: Expr) -> Expr? {
+  var e = e0
+  while {
+    if let ParenExpr(x: x, ..) = e {
+      e = x
+    } else {
+      break
+    }
+  }
+  match e {
+    CallExpr(args: args, ..) => {
+      if !args.is_empty() {
+        return None
+      }
+      if let Some(ci) = b.c.call_in(b.s.file, e) {
+        let fo = ci.fn_obj
+        if ci.recv.is_empty() || fo < 0 || b.c.objs[fo].recv < 0 || b.obj_name(fo) != "to_lower" {
+          return None
+        }
+        let r = b.c.objs[fo].recv
+        if b.obj_name(r) != "Str" || !b.is_prelude_mod(b.obj_mod(r)) {
+          return None
+        }
+        return Some(ci.recv[0])
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+/// `l op r` of two values of one scalar type (build_int.go compare).
+fn (var b: Builder) compare(o: Op, l0: Int, r0: Int) -> Int {
+  var l = l0
+  var r = r0
+  let lt = b.vty(l)
+  if b.m.is_u64(lt) && o != Op.Eq && o != Op.Ne {
+    let flip = b.add(Op.Const, lt, Aux.I(n: -9223372036854775807 - 1), [])
+    l = b.add(Op.Xor, lt, Aux.None, [l, flip])
+    r = b.add(Op.Xor, lt, Aux.None, [r, flip])
+  }
+  b.add(o, b.bool_t(), Aux.None, [l, r])
+}
+
+/// The comparison `l op r` of two values of one type (compareValues).
+fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
+  let bt = b.bool_t()
+  let o = cmp_op(op) ?? Op.Eq
+  let lt = b.vty(l)
+  match b.tkind(lt) {
+    Int | Float | Bool => return b.compare(o, l, r)
+    Str => {
+      if o == Op.Eq || o == Op.Ne {
+        let eq = b.call("str.eq", bt, "", [l, r])
+        if o == Op.Ne {
+          return b.add(Op.Not, bt, Aux.None, [eq])
+        }
+        return eq
+      }
+      let c = b.call("str.cmp", b.int_t(), "", [l, r])
+      return b.add(o, bt, Aux.None, [c, b.cint(0)])
+    }
+    Struct | Tuple | Enum | List | Unit => {
+      if (o == Op.Eq || o == Op.Ne) && b.m.types[lt].name == "native.http.Request" {
+        b.unsupported("`==` on `http.Request`")
+        return b.undef(bt)
+      }
+      if (o == Op.Eq || o == Op.Ne) && !b.comparable(lt, []) {
+        b.unsupported("`==` on values of type `${b.m.types[lt].name}`, which hold functions or runtime handles")
+        return b.undef(bt)
+      }
+      if b.holds_coll(lt, []) && (o == Op.Eq || o == Op.Ne) {
+        b.unsupported("`==` on values holding a Map or Set")
+        return b.undef(bt)
+      }
+      if o == Op.Eq || o == Op.Ne {
+        return b.add(o, bt, Aux.None, [l, r])
+      }
+      b.unsupported("ordering values of type `${b.m.types[lt].name}`")
+      return b.undef(bt)
+    }
+    Cap | Func | Box | Handle | Bad => {}
+  }
+  b.unsupported("comparing values of type `${b.m.types[lt].name}`")
+  b.undef(bt)
+}
+
+/// Whether `==` on values of t lowers (comparable).
+fn (var b: Builder) comparable(t: Int, seen: List[Int]) -> Bool {
+  if seen.contains(t) || b.is_iface(t) || b.is_trace(t) {
+    return true
+  }
+  var s2 = seen
+  s2.push(t)
+  let x = b.m.types[t]
+  if x.kind is Kind.Func | Kind.Handle {
+    return false
+  }
+  for f in x.fields {
+    if !b.comparable(f.ty, s2) {
+      return false
+    }
+  }
+  for v in x.variants {
+    for f in v.fields {
+      if !b.comparable(f.ty, s2) {
+        return false
+      }
+    }
+  }
+  for e in x.elems {
+    if !b.comparable(e, s2) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether a value of t holds a Map or Set (holdsColl).
+fn (var b: Builder) holds_coll(t: Int, seen: List[Int]) -> Bool {
+  b.holds_coll_in(t, seen).0
+}
+
+fn (var b: Builder) holds_coll_in(t: Int, seen0: List[Int]) -> (Bool, List[Int]) {
+  var seen = seen0
+  if seen.contains(t) {
+    return (false, seen)
+  }
+  seen.push(t)
+  let x = b.m.types[t]
+  if x.coll || b.is_iface(t) || b.is_trace(t) {
+    return (true, seen)
+  }
+  match x.kind {
+    Struct => {
+      for f in x.fields {
+        let (r, s2) = b.holds_coll_in(f.ty, seen)
+        seen = s2
+        if r {
+          return (true, seen)
+        }
+      }
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          let (r, s2) = b.holds_coll_in(f.ty, seen)
+          seen = s2
+          if r {
+            return (true, seen)
+          }
+        }
+      }
+    }
+    Tuple | List | Box => {
+      for e in x.elems {
+        let (r, s2) = b.holds_coll_in(e, seen)
+        seen = s2
+        if r {
+          return (true, seen)
+        }
+      }
+    }
+    _ => {}
+  }
+  (false, seen)
+}
+
+/// `if` and `if let`, joining the branch values in a block parameter
+/// (ifExpr).
+fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
+  let t = b.type_of(e)
+  let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
+  let join = b.new_block()
+  var res = -1
+  if has_val {
+    res = b.s.f.add_param(join, t)
+  }
+  var else_b = -1
+  if let Some(cond) = x.cond {
+    let c = b.value_as(cond, b.bool_t())
+    let (yes, no) = b.branch(c)
+    else_b = no
+    b.s.cur = yes
+  } else {
+    var v = b.value(x.value ?? fault("if let value"))
+    else_b = b.new_block()
+    let p = x.pattern ?? fault("if let pattern")
+    if let BindPat(name: name, ..) = p {
+      let vt = b.vty(v)
+      if b.tkind(vt) == Kind.Enum {
+        let some = b.m.variant_index(vt, "Some")
+        let vo = b.c.var_of(b.s.file, name)
+        if vo >= 0 && some >= 0 && b.typ(b.apply(b.c.objs[vo].ty)) != vt {
+          b.test_br(b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [v]), b.cint(some)]), else_b)
+          v = b.add(Op.Payload, b.m.types[vt].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [v])
+        }
+      }
+    }
+    b.pattern(v, p, else_b)
+    b.seal(else_b)
+  }
+  let tv = b.block(x.then)
+  b.arm_to(join, has_val, tv, t)
+  b.s.cur = else_b
+  if let Some(els) = x.els {
+    let ev = b.expr(els)
+    b.arm_to(join, has_val, ev, t)
+  } else {
+    b.arm_to(join, has_val, b.unit(), t)
+  }
+  b.seal(join)
+  b.s.cur = join
+  if res >= 0 {
+    return res
+  }
+  if b.expr_never(e) {
+    return b.undef(t)
+  }
+  b.unit()
+}
+
+fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int) {
+  if has_val {
+    let c = b.coerce(v, t)
+    b.jump(join, [c])
+  } else {
+    b.jump(join, [])
+  }
+}
+
+/// A match as a chain of pattern tests (match).
+fn (var b: Builder) match_expr(e: Expr) -> Int {
+  let (subject, arms) = match e {
+    MatchExpr(subject: subject, arms: arms, ..) => (subject, arms)
+    _ => fault("match")
+  }
+  let t = b.type_of(e)
+  let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
+  let v = b.value(subject)
+  let join = b.new_block()
+  var res = -1
+  if has_val {
+    res = b.s.f.add_param(join, t)
+  }
+  for a in arms {
+    let next = b.new_block()
+    b.pattern(v, a.pattern, next)
+    if let Some(g) = a.guard {
+      let gv = b.value_as(g, b.bool_t())
+      b.test_br(gv, next)
+    }
+    var av = -1
+    match a.body {
+      Some(ExprStmt(x: x, ..)) => av = b.expr(x)
+      Some(st) => {
+        b.stmt(st)
+        av = b.unit()
+      }
+      None => av = b.unit()
+    }
+    b.arm_to(join, has_val, av, t)
+    b.seal(next)
+    b.s.cur = next
+  }
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.seal(join)
+  b.s.cur = join
+  if res >= 0 {
+    return res
+  }
+  if b.expr_never(e) {
+    return b.undef(t)
+  }
+  b.unit()
+}
+
+/// Tests v against p, branching to fail when it does not match; continues
+/// where it matched, with the bindings written (pattern).
+fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let vt = b.vty(v)
+  match p {
+    WildcardPat(..) => {}
+    BindPat(name: name, ..) => {
+      let vo = b.c.var_of(b.s.file, name)
+      if vo >= 0 {
+        b.write_var(vo, v)
+      }
+    }
+    LitPat(value: value, ..) => {
+      let lit = b.value_as(value, vt)
+      var c = -1
+      if b.tkind(vt) == Kind.Str {
+        c = b.call("str.eq", bt, "", [v, lit])
+      } else {
+        c = b.add(Op.Eq, bt, Aux.None, [v, lit])
+      }
+      b.test_br(c, fail)
+    }
+    RangePat(lo: lo, hi: hi, inclusive: inclusive, ..) => {
+      let lv = b.value_as(lo, vt)
+      b.test_br(b.compare(Op.Ge, v, lv), fail)
+      let hv = b.value_as(hi, vt)
+      if inclusive {
+        b.test_br(b.compare(Op.Le, v, hv), fail)
+      } else {
+        b.test_br(b.compare(Op.Lt, v, hv), fail)
+      }
+    }
+    TuplePat(elems: elems, ..) => {
+      if b.tkind(vt) != Kind.Tuple || elems.len() != b.m.types[vt].elems.len() {
+        b.unsupported("this tuple pattern")
+        return
+      }
+      for (i, el) in elems.indexed() {
+        let f = b.add(Op.Field, b.m.types[vt].elems[i], Aux.I(n: i), [v])
+        b.pattern(f, el, fail)
+      }
+    }
+    VariantPat(fields: fields, ..) => b.variant_pattern(v, p, fields, fail)
+    StructPat(fields: fields, ..) => {
+      if b.tkind(vt) != Kind.Struct {
+        b.unsupported("this struct pattern")
+        return
+      }
+      for pf in fields {
+        var i = -1
+        if let Some(n) = pf.name {
+          i = b.m.field_index(vt, check.text(n.name))
+        } else if let BindPat(name: bn, ..) = pf.pattern {
+          i = b.m.field_index(vt, check.text(bn.name))
+        }
+        if i >= 0 && pattern_missing(pf) {
+          if let Some(n) = pf.name {
+            let vo = b.c.var_of(b.s.file, n)
+            if vo >= 0 {
+              b.write_var(vo, b.unbox(b.add(Op.Field, b.m.types[vt].fields[i].ty, Aux.I(n: i), [v])))
+            }
+          }
+          continue
+        }
+        if i < 0 {
+          b.unsupported("this struct pattern field")
+          continue
+        }
+        let f = b.unbox(b.add(Op.Field, b.m.types[vt].fields[i].ty, Aux.I(n: i), [v]))
+        b.pattern(f, pf.pattern, fail)
+      }
+    }
+    OrPat(alts: alts, ..) => {
+      let ok = b.new_block()
+      let first = b.pat_bindings(alts[0])
+      for (i, alt) in alts.indexed() {
+        let next = b.new_block()
+        b.pattern(v, alt, next)
+        if i > 0 {
+          for (name, vo) in b.pat_bindings(alt) {
+            let fv = first.get(name) ?? -1
+            if fv >= 0 && fv != vo {
+              b.write_var(fv, b.read(vo))
+            }
+          }
+        }
+        b.jump(ok, [])
+        b.seal(next)
+        b.s.cur = next
+      }
+      b.jump(fail, [])
+      b.seal(ok)
+      b.s.cur = ok
+    }
+    ListPat(elems: elems, rest: rest, ..) => {
+      if b.tkind(vt) != Kind.List {
+        b.unsupported("this list pattern")
+        return
+      }
+      let et = b.m.types[vt].elems[0]
+      let k = elems.len()
+      let n = b.call("list.len", it, "", [v])
+      if rest < 0 {
+        b.test_br(b.add(Op.Eq, bt, Aux.None, [n, b.cint(k)]), fail)
+      } else {
+        b.test_br(b.add(Op.Ge, bt, Aux.None, [n, b.cint(k)]), fail)
+      }
+      for (i, el) in elems.indexed() {
+        var idx = -1
+        if rest < 0 || i < rest {
+          idx = b.cint(i)
+        } else {
+          idx = b.add(Op.Sub, it, Aux.None, [n, b.cint(k - i)])
+        }
+        let ev = b.call("list.index", et, "", [v, idx])
+        b.pattern(ev, el, fail)
+      }
+    }
+    BadPat(..) => b.unsupported("this pattern")
+  }
+}
+
+/// A pattern field without a pattern: the Go builder handles `Pattern ==
+/// nil`, which the parsers never produce (`Bag{items}` is the pattern
+/// `items` without a name), so this is always false.
+fn pattern_missing(pf: parser.PatField) -> Bool {
+  false
+}
+
+fn (var b: Builder) variant_pattern(v: Int, p: Pattern, fields: List[parser.PatField], fail: Int) {
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let vt = b.vty(v)
+  let nt = b.c.pat_newtype_in(b.s.file, p)
+  let pv = b.c.pat_variant_in(b.s.file, p)
+  if nt >= 0 && pv == None {
+    if b.tkind(vt) != Kind.Struct || b.m.types[vt].fields.len() != 1 {
+      b.unsupported("this newtype pattern")
+      return
+    }
+    if fields.len() == 1 && !pattern_missing(fields[0]) {
+      let f = b.unbox(b.add(Op.Field, b.m.types[vt].fields[0].ty, Aux.I(n: 0), [v]))
+      b.pattern(f, fields[0].pattern, fail)
+    }
+    return
+  }
+  if let Some(vr) = pv {
+    let vname = b.variant_name(vr)
+    let pt = b.apply(b.c.pat_type_in(b.s.file, p))
+    if b.tkind(vt) != Kind.Enum && b.is_never_result(pt) {
+      if vname == "Err" {
+        b.jump(fail, [])
+        b.dead()
+        return
+      }
+      if vname == "Ok" && fields.len() == 1 {
+        if !pattern_missing(fields[0]) {
+          b.pattern(v, fields[0].pattern, fail)
+        }
+        return
+      }
+    }
+  }
+  var tag = -1
+  if let Some(vr) = pv {
+    if b.tkind(vt) == Kind.Enum {
+      let vname = b.variant_name(vr)
+      tag = b.m.variant_index(vt, vname)
+    }
+  }
+  if tag < 0 {
+    b.unsupported("this variant pattern")
+    return
+  }
+  let vr = pv ?? fault("variant")
+  b.test_br(b.add(Op.Eq, bt, Aux.None, [b.add(Op.Tag, it, Aux.None, [v]), b.cint(tag)]), fail)
+  let fs = b.m.types[vt].variants[tag].fields
+  let vfields = b.c.objs[vr.en].variants[vr.variant].fields
+  for (i, pf) in fields.indexed() {
+    var fi = i
+    if let Some(n) = pf.name {
+      fi = -1
+      for (j, vf) in vfields.indexed() {
+        if vf.name == n.name {
+          fi = j
+        }
+      }
+    }
+    if fi < 0 || fi >= fs.len() {
+      b.unsupported("this variant field")
+      continue
+    }
+    if pattern_missing(pf) {
+      if let Some(n) = pf.name {
+        let vo = b.c.var_of(b.s.file, n)
+        if vo >= 0 {
+          b.write_var(vo, b.unbox(b.add(Op.Payload, fs[fi].ty, Aux.P(tag: tag, field: fi), [v])))
+        }
+      }
+      continue
+    }
+    let f = b.unbox(b.add(Op.Payload, fs[fi].ty, Aux.P(tag: tag, field: fi), [v]))
+    b.pattern(f, pf.pattern, fail)
+  }
+}
+
+/// The bindings of a pattern by name (patBindings).
+fn (var b: Builder) pat_bindings(p: Pattern) -> Map[Bytes, Int] {
+  var out: Map[Bytes, Int] = {}
+  b.walk_bindings(p, out)
+  out
+}
+
+fn (var b: Builder) walk_bindings(p: Pattern, var out: Map[Bytes, Int]) {
+  match p {
+    BindPat(name: name, ..) => {
+      let vo = b.c.var_of(b.s.file, name)
+      if vo >= 0 {
+        out[b.c.objs[vo].name] = vo
+      }
+    }
+    TuplePat(elems: elems, ..) => {
+      for e in elems {
+        b.walk_bindings(e, out)
+      }
+    }
+    ListPat(elems: elems, ..) => {
+      for e in elems {
+        b.walk_bindings(e, out)
+      }
+    }
+    OrPat(alts: alts, ..) => {
+      if !alts.is_empty() {
+        b.walk_bindings(alts[0], out)
+      }
+    }
+    VariantPat(fields: fields, ..) => {
+      for f in fields {
+        b.walk_field(f, out)
+      }
+    }
+    StructPat(fields: fields, ..) => {
+      for f in fields {
+        b.walk_field(f, out)
+      }
+    }
+    _ => {}
+  }
+}
+
+fn (var b: Builder) walk_field(f: parser.PatField, var out: Map[Bytes, Int]) {
+  if !pattern_missing(f) {
+    b.walk_bindings(f.pattern, out)
+  } else if let Some(n) = f.name {
+    let vo = b.c.var_of(b.s.file, n)
+    if vo >= 0 {
+      out[b.c.objs[vo].name] = vo
+    }
+  }
+}

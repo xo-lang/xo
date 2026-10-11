@@ -19,10 +19,13 @@ import (
 // comma separated list of names, types, sigs, diags, and full (default
 // all).
 // --each checks every dir as a run of its own, each preceded by
-// `=== check <dir>`. --bench=N checks N times and prints the time instead.
+// `=== check <dir>`. --native checks as a native build does, with the
+// implementation modules of std/native (decision 0074). --bench=N checks
+// N times and prints the time instead.
 func runTypeDump(args []string, stdout, stderr io.Writer) int {
 	repeat := 0
 	each := false
+	native := false
 	sec := check.AllSections
 	var dirs []string
 	for _, a := range args {
@@ -43,12 +46,14 @@ func runTypeDump(args []string, stdout, stderr io.Writer) int {
 			sec = s
 		case a == "--each":
 			each = true
+		case a == "--native":
+			native = true
 		default:
 			dirs = append(dirs, a)
 		}
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintln(stderr, "usage: xo typedump [--section=names,types,sigs,diags,full] [--each] [--bench=N] <dirs...>")
+		fmt.Fprintln(stderr, "usage: xo typedump [--section=names,types,sigs,diags,full] [--each] [--native] [--bench=N] <dirs...>")
 		return 2
 	}
 	runs := [][]string{dirs}
@@ -63,7 +68,7 @@ func runTypeDump(args []string, stdout, stderr io.Writer) int {
 		mods := 0
 		for range repeat {
 			for _, r := range runs {
-				res, err := check.Check(r)
+				res, err := check.CheckOpts(r, check.Options{Native: native})
 				if err != nil {
 					fmt.Fprintf(stderr, "xo typedump: %v\n", err)
 					return 1
@@ -80,7 +85,7 @@ func runTypeDump(args []string, stdout, stderr io.Writer) int {
 		if each {
 			fmt.Fprintf(w, "=== check %s\n", r[0])
 		}
-		res, err := check.Check(r)
+		res, err := check.CheckOpts(r, check.Options{Native: native})
 		if err != nil {
 			fmt.Fprintf(w, "== error %v\n", err)
 			continue

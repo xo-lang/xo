@@ -3,7 +3,10 @@
 // changes (decision 0142). The native backends read the receiver before
 // the arguments and dropped the pushes the arguments made (found by the
 // self hosted checker: `c.implements(t, c.named("Display"))`, where
-// `named` pushes onto the type table `implements` then reads).
+// `named` pushes onto the type table `implements` then reads). A receiver
+// that is not `var` is read before the arguments, like any operand
+// (spec 5.2, gotchas/receiver-read-before-args.md): `size` sees the table
+// without the item `add` pushes.
 
 struct Table {
   items: List[Int] = []
@@ -16,6 +19,10 @@ fn (var t: Table) add(v: Int) -> Int {
 
 fn (var t: Table) get(i: Int) -> Int {
   t.items[i]
+}
+
+fn (t: Table) size(i: Int) -> Int {
+  t.items.len() * 10 + i
 }
 
 fn (var t: Table) put(i: Int, v: Int) {
@@ -46,6 +53,9 @@ fn main(os: Os) {
     v
   })
   os.stdio.println("${n} ${r.m.len()} ${r.m.get("z") ?? 0}")
+  var u = Table{}
+  let s = u.size(u.add(4))
+  os.stdio.println("${s} ${u.items.len()}")
 }
 
 struct Reg {

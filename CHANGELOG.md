@@ -32,6 +32,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `if` with identical arms). Found by `progen.Arith`, random integer
   programs compared across the Go, LLVM, and arm64 backends
   (TestArithProperty).
+- Self hosting (decision 0150): the order of the remaining stages is
+  SSA lowering, arm64 emitter, LLVM emitter, Go code generator, and the
+  self hosted compiler takes over native builds on arm64 hosts once it
+  builds itself to a fixed point there. `selfhost/ssa`, the SSA builder
+  in Xo, lowers the core subset (functions, generics, numbers, Str,
+  structs, enums, patterns, loops, calls, closures, Option and Result
+  with `?` and error frames, Display and Debug text) exactly as
+  internal/ssa does: 0 differences on every function it completes over
+  the repository and 400 mutations, on the go, arm64, and LLVM builds
+  (53% of the Go builder's functions; maps, interfaces, defer, and
+  concurrency are later stages). New hidden `xo ssadump [--stage=build,
+  unwind,landings,cleanup,rc]`; `xo typedump --native`; the self hosted
+  checker gains native mode.
+- arm64 backend: the address of a frame slot past 4095 bytes is made
+  with a shifted add (the assembler rejected `add x6, sp, #4808`).
+- Go backend: `==` on an enum whose variants have no fields compares
+  tags instead of boxing both values.
+- Spec 5.2: a receiver that is not `var` is evaluated before the
+  arguments, like any operand (the behavior of every backend).
+
 - LLVM backend: enums of 256 bytes or more are passed by reference, and
   values in memory nothing writes during the call (by reference
   parameters, their fields and payloads, box contents and list elements

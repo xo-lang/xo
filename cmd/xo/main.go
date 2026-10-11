@@ -269,6 +269,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runASTDump(args[1:], stdout, stderr)
 	case "typedump": // hidden: canonical checker dump, compared with selfhost/check
 		return runTypeDump(args[1:], stdout, stderr)
+	case "ssadump": // hidden: SSA dump per stage, compared with selfhost/ssa
+		return runSSADump(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

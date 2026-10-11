@@ -333,6 +333,11 @@ fn (var c: Checker) resolve_sigs(m: Int) {
         c.objs[fo].fn_decl = [fd]
         c.objs[fo].moves = doc_moves(fd.doc)
       }
+      if fo >= 0 {
+        // the SSA builder lowers the body in its file (decision 0150)
+        c.objs[fo].decl_file = f
+        c.objs[fo].decl_idx = i
+      }
       var env = TypeEnv{file: f, mod: m}
       if fd.recv != None {
         if !c.attach_method(fo, fd, env) {

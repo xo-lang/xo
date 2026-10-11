@@ -357,6 +357,14 @@ by its file, span, and kind (the Go checker uses node pointers).
 - Speed (2026-10-10): with decisions 0147, 0148, and 0149 the LLVM build
   of the Xo checker takes 1.03 times the Go checker on the selfhost
   input (1.98 times at stage 8).
+- Native mode and records for the SSA builder (2026-10-10, decision
+  0150): `--native` loads and checks std/native as check.Options.Native
+  does (the typedump of `xo typedump --native` is identical on 608 of
+  614 runs; the 6 others differ without it too), and the checker
+  records what selfhost/ssa reads (selfhost/check info.xo). A
+  constructor is recorded on the expression Go records it on (the
+  selector `Kind.Newline`, not its receiver), and every function, method
+  included, knows its declaration file.
 
 ## Alternatives
 

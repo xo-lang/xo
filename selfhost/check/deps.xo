@@ -7,7 +7,7 @@ use github.com/xo-lang/xo/selfhost/parser
 /// The environment module loading reads: the absolute working directory,
 /// XO_MODCACHE (else the user cache directory under HOME), XO_OFFLINE,
 /// and XO_WORK.
-fn (var c: Checker) set_mod_env(wd: Str, modcache: Str, home: Str, xdg_cache: Str, offline: Str, work: Str) {
+pub fn (var c: Checker) set_mod_env(wd: Str, modcache: Str, home: Str, xdg_cache: Str, offline: Str, work: Str) uses fs.read {
   c.deps.wd = clean(wd)
   if wd.is_empty() {
     c.deps.wd = ""

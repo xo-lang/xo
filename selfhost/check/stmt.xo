@@ -150,16 +150,20 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
     if !c.objs[fo].is_static {
       let rv = c.declare_local(r.name, c.objs[fo].recv_ty, if r.is_var { "var-recv" } else { "recv" })
       c.objs[rv].vctx = cx
+      c.recv_var[fo] = rv
     }
   }
+  var pvs: List[Int] = []
   for p in c.objs[fo].params {
     let pv = c.objs.len()
     c.objs.push(Obj{kind: ObjKind.Local, name: p.name, file: c.path, line: p.line, col: p.col, local: if p.is_var { "var-param" } else { "param" }, ty: p.ty, mutable: p.is_var, vctx: cx})
     c.declare_var(pv)
+    pvs.push(pv)
     if !p.default.is_empty() {
       c.check_default(p.default[0], p.ty)
     }
   }
+  c.param_vars[fo] = pvs
   c.check_clauses(fd, fo)
   if let Some(b) = fd.body {
     c.block(b, c.body_want(cx))
