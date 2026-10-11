@@ -12,6 +12,7 @@ fn describe(e: NetErr) -> Str {
     NetErr.Timeout => "Timeout"
     NetErr.Io(_) => "Io"
     NetErr.Canceled => "Canceled"
+    NetErr.Denied(_) => "Denied"
   }
 }
 

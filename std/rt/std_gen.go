@@ -1048,6 +1048,10 @@ type NetErr_Io struct {
 	F_msg string
 }
 
+type NetErr_Denied struct {
+	F_addr string
+}
+
 func (v NetErr) XoEq(x any) bool {
 	o, ok := x.(NetErr)
 	if !ok || o.Tag != v.Tag {
@@ -1060,6 +1064,9 @@ func (v NetErr) XoEq(x any) bool {
 	case 4:
 		a, b := v.P.(NetErr_Io), o.P.(NetErr_Io)
 		return Eq(a.F_msg, b.F_msg)
+	case 6:
+		a, b := v.P.(NetErr_Denied), o.P.(NetErr_Denied)
+		return Eq(a.F_addr, b.F_addr)
 	}
 	return true
 }
@@ -1073,6 +1080,9 @@ func (v NetErr) XoHash() uint64 {
 	case 4:
 		a := v.P.(NetErr_Io)
 		h = MixHash(h, Hash(a.F_msg))
+	case 6:
+		a := v.P.(NetErr_Denied)
+		h = MixHash(h, Hash(a.F_addr))
 	}
 	return h
 }
@@ -1097,6 +1107,12 @@ func (v NetErr) XoDebug(b *strings.Builder) {
 		b.WriteString(")")
 	case 5:
 		b.WriteString("Canceled")
+	case 6:
+		a := v.P.(NetErr_Denied)
+		b.WriteString("Denied(")
+		b.WriteString("addr: ")
+		DebugTo(b, a.F_addr)
+		b.WriteString(")")
 	}
 }
 
@@ -1107,6 +1123,7 @@ func (v NetErr) M_display(*Task) string { return Debug(v) }
 type Net interface {
 	M_listen(tk *Task, p0 string) Result[Listener, NetErr]
 	M_dial(tk *Task, p0 string) Result[Conn, NetErr]
+	M_only(tk *Task, p0 List[string]) Net
 }
 
 type Clock interface {
@@ -1209,6 +1226,7 @@ type Env interface {
 	M_args(tk *Task) List[string]
 	M_program(tk *Task) string
 	M_home(tk *Task) Result[string, EnvErr]
+	M_only(tk *Task, p0 List[string]) Env
 }
 
 type IoErr struct {
@@ -1331,6 +1349,10 @@ type ProcErr_Io struct {
 	F_msg string
 }
 
+type ProcErr_Denied struct {
+	F_cmd string
+}
+
 func (v ProcErr) XoEq(x any) bool {
 	o, ok := x.(ProcErr)
 	if !ok || o.Tag != v.Tag {
@@ -1343,6 +1365,9 @@ func (v ProcErr) XoEq(x any) bool {
 	case 2:
 		a, b := v.P.(ProcErr_Io), o.P.(ProcErr_Io)
 		return Eq(a.F_msg, b.F_msg)
+	case 4:
+		a, b := v.P.(ProcErr_Denied), o.P.(ProcErr_Denied)
+		return Eq(a.F_cmd, b.F_cmd)
 	}
 	return true
 }
@@ -1356,6 +1381,9 @@ func (v ProcErr) XoHash() uint64 {
 	case 2:
 		a := v.P.(ProcErr_Io)
 		h = MixHash(h, Hash(a.F_msg))
+	case 4:
+		a := v.P.(ProcErr_Denied)
+		h = MixHash(h, Hash(a.F_cmd))
 	}
 	return h
 }
@@ -1376,6 +1404,12 @@ func (v ProcErr) XoDebug(b *strings.Builder) {
 		b.WriteString(")")
 	case 3:
 		b.WriteString("Canceled")
+	case 4:
+		a := v.P.(ProcErr_Denied)
+		b.WriteString("Denied(")
+		b.WriteString("cmd: ")
+		DebugTo(b, a.F_cmd)
+		b.WriteString(")")
 	}
 }
 
@@ -1387,6 +1421,7 @@ type Proc interface {
 	M_exit(tk *Task, p0 int64) Never
 	M_set_grace(tk *Task, p0 Duration)
 	M_run(tk *Task, p0 string, p1 List[string]) Result[ProcOutput, ProcErr]
+	M_only(tk *Task, p0 List[string]) Proc
 }
 
 type Sql_SqlValue struct {

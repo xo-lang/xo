@@ -1909,6 +1909,16 @@ Last verified: 2026-10-09.
   (XO1301 when malformed) but does not compare them: XO1317 is not one
   of its staged diagnostics. Test: `cmd/xo/effectlock_test.go`. Last
   verified: 2026-10-11.
+- Capability attenuation (decision 0156, 2026-10-11): `std/rt/attenuate.go`
+  (`onlyNet`, `onlyEnv`, `onlyProc` wrapping any Net, Env, Proc, the
+  fakes included; `httpDenied` called from `Http_Client.M_send`, a
+  `CheckRedirect` in `http_net.go`, `Sql_open` refuses an `onlyNet`).
+  The interfaces' `only` methods are in std/prelude.xo and std/testing.xo;
+  `std/rt/std_gen.go` is regenerated with `go test ./internal/gen -run
+  TestStdTypes -update`. Native builds get XO1201 from the SSA builder's
+  fallback ("the method `Net.only`"). Tests: golden
+  `internal/gen/testdata/golden/cap_attenuation`,
+  `cmd/xo/attenuate_test.go`. Last verified: 2026-10-11.
 - API diffs and publish (step 4): package `internal/release`
   (`ModuleAPI`: the syntax level `xo query api` surface of every package
   via `query.DeclSurface`; `Diff`, `Bump`; `Publish`). `xo get` prints the

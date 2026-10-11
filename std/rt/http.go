@@ -827,6 +827,10 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 	if req.F_url.F_scheme == "" || req.F_url.F_host == "" {
 		return Err[Http_Response](clientErr(1, "absolute URL required: "+rawURL))
 	}
+	if e, denied := httpDenied(c.net, req.F_url); denied {
+		// an attenuated Net (Net.only, decision 0156)
+		return Err[Http_Response](e)
+	}
 	if fd, ok := c.net.(fakeDispatcher); ok && fd.isFake() {
 		r := fd.dispatch(tk, req, rawURL)
 		if r.Ok {

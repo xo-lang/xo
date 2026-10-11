@@ -438,10 +438,11 @@ Streaming file handles are planned for a later draft.
 ### 3.2 Net (`uses net.dial` / `net.listen`)
 
 ```
-enum NetErr { InvalidAddr(msg: Str), Refused, Timeout, Io(msg: Str), Canceled }
+enum NetErr { InvalidAddr(msg: Str), Refused, Timeout, Io(msg: Str), Canceled, Denied(addr: Str) }
 
 fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
+fn (n: Net) only(hosts: List[Str]) -> Net          // attenuation (below)
 fn (l: Listener) addr() -> Str                     // "host:port" actually bound
 fn (l: Listener) accept() -> Conn ! NetErr         uses net.listen
 fn (l: Listener) close()
@@ -466,6 +467,28 @@ host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address
 replay (core 11.3) the recorded address is returned (decision 0055).
 
 Most code uses `std/http` instead of raw connections.
+
+**Attenuation** (decision 0156): `n.only(hosts)` is a `Net` whose `dial`
+and `listen` succeed only for an address whose host matches an entry:
+an exact host or IP (`api.example.com`, `127.0.0.1`, compared without
+case), `*.example.com` (any subdomain, not `example.com` itself), or
+`host:port` (that host and port only). A listen address without a host
+(`:8080`) has the host `0.0.0.0`. Any other address fails with
+`Denied(addr)` before a name is looked up. An HTTP client made from it
+(`http.client(n)`, 4.5) checks each request's host and port (80 or 443
+by scheme when the URL has none), and each redirect, failing with
+`ClientErr.Connect("denied by Net.only: <host:port>")`; `sql.open` with
+an attenuated `Net` fails with `SqlErr.Conn` (the driver dials by
+itself, so the list cannot be enforced). `only` on an attenuated `Net`
+keeps both lists: an address must pass each. Names are checked as
+written, not as resolved: an allowed name that resolves to another
+address is allowed. Native builds (`--no-gc`) do not have `only` yet
+(XO1201, planned).
+
+```
+let api = os.net.only(["api.example.com"])
+let weather = weather.client(api)   // the library can reach api.example.com only
+```
 
 ### 3.3 Clock (`uses clock`)
 
@@ -519,7 +542,14 @@ fn (e: Env) vars() -> Map[Str, Str]
 fn (e: Env) args() -> List[Str]              // without the program name
 fn (e: Env) program() -> Str
 fn (e: Env) home() -> Str ! EnvErr
+fn (e: Env) only(names: List[Str]) -> Env   // attenuation (below)
 ```
+
+`e.only(names)` (decision 0156) is an `Env` that reads only the listed
+variables: `get` of another name is `None`, `vars` holds only listed
+names, and `home` is `Err(Missing("HOME"))` unless `HOME` is listed;
+`args` and `program` are unchanged. Attenuating again keeps both lists.
+Native builds do not have `only` yet (XO1201, planned).
 
 ### 3.6 Stdio (`uses stdio`)
 
@@ -547,12 +577,18 @@ empty there.
 
 ```
 struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes }
-enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled }
+enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled, Denied(cmd: Str) }
 
 fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks do not run
 fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
 fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
+fn (p: Proc) only(cmds: List[Str]) -> Proc   // attenuation (below)
 ```
+
+`p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
+`Denied(cmd)` for a command not listed (compared as written: `git` and
+`/usr/bin/git` are different entries); `exit` and `set_grace` are
+unchanged. Native builds do not have `only` yet (XO1201, planned).
 
 The native backends run commands with `posix_spawn`, reading the output
 on the event loop; cancelling the task kills the command (decision 0107).
@@ -998,6 +1034,9 @@ struct TestOs {
 ```
 
 Each fake satisfies its capability interface and adds control methods.
+`only` on `FakeNet`, `FakeEnv`, and `FakeProc` attenuates the fake as
+on the real capability (3.2, 3.5, 3.7): a test can check that a
+library given `os.net.only([...])` fails with `Denied` elsewhere.
 
 ### 8.1 FakeNet
 

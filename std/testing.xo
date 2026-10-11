@@ -40,6 +40,7 @@ fn fake_db(schema: Str) -> sql.Db ! sql.SqlErr
 struct FakeNet {}
 fn (n: FakeNet) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: FakeNet) dial(addr: Str) -> Conn ! NetErr uses net.dial
+fn (n: FakeNet) only(hosts: List[Str]) -> Net
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
 /// Every matching request fails, until clear_failures.
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)
@@ -98,6 +99,7 @@ fn (e: FakeEnv) vars() -> Map[Str, Str] uses env
 fn (e: FakeEnv) args() -> List[Str] uses env
 fn (e: FakeEnv) program() -> Str uses env
 fn (e: FakeEnv) home() -> Str ! EnvErr uses env
+fn (e: FakeEnv) only(names: List[Str]) -> Env
 fn (e: FakeEnv) set(name: Str, value: Str)
 fn (e: FakeEnv) set_args(args: List[Str])
 
@@ -118,6 +120,7 @@ struct FakeProc {}
 fn (p: FakeProc) exit(code: Int) -> Never uses proc
 fn (p: FakeProc) set_grace(d: Duration) uses proc
 fn (p: FakeProc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+fn (p: FakeProc) only(cmds: List[Str]) -> Proc
 fn (p: FakeProc) exit_code() -> Int?
 fn (p: FakeProc) signal_after(d: Duration)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)

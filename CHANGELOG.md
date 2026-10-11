@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Capability attenuation (decision 0156): `os.net.only(hosts)` (exact
+  hosts, `*.domain`, `host:port`; checked for raw dials and listens, each
+  HTTP request and redirect of a client made from it, and refused for
+  `sql.open`), `os.env.only(names)`, and `os.proc.only(cmds)`, on the Go
+  backend and its test fakes. `NetErr.Denied(addr)` and
+  `ProcErr.Denied(cmd)` are new variants (an exhaustive `match` needs
+  the arm). Native builds report `only` as XO1201 (planned).
 - Supply chain (decision 0156): an effect lock by default. xo.lock
   records each dependency's effects (`<path> effects <labels|none>`, the
   union of its pub functions' `uses`). `xo get` and `xo mod tidy` record

@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Capability attenuation** (6.3, std.md 3.2, 3.5, 3.7, decision 0156):
+  `os.net.only(hosts)`, `os.env.only(names)`, and `os.proc.only(cmds)`
+  return narrowed capabilities; `NetErr` and `ProcErr` gain `Denied`.
+  Native builds report `only` as XO1201 (planned).
 - **Effect lock** (4.3, decision 0156): xo.lock records each
   dependency's effects (`<path> effects <labels|none>`); an update that
   widens them fails every load with `XO1317` until `xo mod
@@ -1728,7 +1732,16 @@ error. Inside a sub capability, paths are relative to its root:
 
 ```
 let uploads = os.fs.sub("/var/app/uploads").read_only()
+let api = os.net.only(["api.example.com"])
+let config = os.env.only(["APP_PORT", "APP_DB_URL"])
+let tools = os.proc.only(["git"])
 ```
+
+`Net.only`, `Env.only`, and `Proc.only` (std.md 3.2, 3.5, 3.7, decision
+0156) narrow the network to hosts, the environment to variables, and
+processes to commands; a denied operation fails before any effect.
+`xo audit` (10.1) lists the attenuations whose arguments are constants
+and whether each capability passed into a dependency is attenuated.
 
 A library cannot open a file or a socket unless it is handed a capability. A
 dependency's reach is visible in its signatures.
