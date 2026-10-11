@@ -1,6 +1,7 @@
 # 0156: Supply-chain hardening
 
-Status: Proposed (2026-10-11). Scope set by the owner on 2026-10-11:
+Status: Proposed (2026-10-11), being implemented: item 1 done. Scope set
+by the owner on 2026-10-11:
 only the consumer's vouches count for `use c ... uses none`; an effect
 lock in xo.lock by default (`--accept-effects` to widen); capability
 attenuation (for example `os.net.only(hosts)`); `xo audit`; a

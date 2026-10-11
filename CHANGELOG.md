@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Supply chain (decision 0156): only the consuming module vouches for a
+  dependency's escape hatches. A required module's `use c` lines and its
+  `use go` of Go packages that are not pure need a `vouch <module>
+  <version> c "<header>" [uses ...]` or `vouch <module> <version> go
+  "<package>"` line in the consumer's xo.mod, else `XO1316`; a
+  dependency's own `use c ... uses none` no longer counts. A
+  dependency's `use c` binding is now written to the main module's
+  binding cache (it failed on the read only module cache before).
 - Editions (decision 0155): until 1.0 the only edition is `preview`;
   `xo init` writes `edition preview`, and every xo.mod and xo.work of
   the repository says it. `edition 2026` stays an alias of `preview`

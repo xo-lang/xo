@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Vouches** (4.2, decision 0156): a required module's `use c` lines and
+  `use go` of impure Go packages count only with a `vouch` line in the
+  consuming module's xo.mod for that exact version, else `XO1316`; an
+  unvouched `use c` binding performs `ffi` whatever its own `uses` says.
 - **`edition preview`** (4.2, 13, decision 0155): until 1.0 the only
   edition is `preview`, which `xo init` writes. `edition 2026` stays an
   alias of it during the 0.x releases; `xo check` gives the fixable note
@@ -1186,6 +1190,35 @@ require github.com/acme/geo v2.1.0 uses net.dial, fs.read
   and the exports above the ceiling; `xo get -u` upgrades every
   requirement to its latest version.
 
+**[P1]** Vouches (decision 0156): an escape hatch is code whose
+authority the checker cannot see, a `use c` line (4.5) or a `use go` of a
+Go package that is not pure (4.4; the pure ones are the std packages
+marked `replay rerun` by default there). In a module the build gets as a
+required version (the module cache or vendor/), each escape hatch needs a
+`vouch` line in the xo.mod of a consuming module: the main module, or a
+module of the active workspace.
+
+```
+vouch github.com/acme/zip v1.2.0 c "zlib.h" uses none
+vouch github.com/acme/img v0.3.1 c "png.h"
+vouch github.com/acme/pg v1.0.0 go "github.com/jackc/pgx/v5"
+```
+
+- `vouch <module path> <version> c "<header>" [uses <effects|none>]`,
+  `vouch <module path> <version> go "<Go import path>"`. The header or
+  package is the string of the dependency's `use` line; the version is
+  the exact version the build selects (a vouch reviews one version's
+  code, so an upgrade needs a new one). Malformed lines are `XO1301`.
+- A dependency's own vouch lines are ignored: it cannot vouch for itself
+  or for its dependencies. The main module's and the workspace modules'
+  own `use c` and `use go` lines need no vouch.
+- A vouched `use c` binding performs the vouch's `uses` (the consumer's
+  word, not the dependency's), or `ffi` without one. An unvouched escape
+  hatch, or one vouched for another version, is error `XO1316` on the
+  dependency's `use` line, naming the line to add; an unvouched `use c`
+  binding performs `ffi` whatever its own `uses` says. There is no
+  machine fix: a vouch is a human review.
+
 **[P1]** Releases (decision 0086 step 4): a version is a `vX.Y.Z` tag of
 the repository whose root holds the module, or a `<dir>/vX.Y.Z` tag for a
 module in the directory `<dir>`. `xo publish [--check]
@@ -1346,6 +1379,9 @@ fn main(os: Os) ! {
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.
+  In a required module, a `use go` of a package that is not pure (the
+  pure std packages listed below) needs the consuming module's `vouch`
+  line (4.2, decision 0156), else `XO1316`.
 - Exported names whose signatures cannot be mapped are skipped and listed at
   the top of the generated binding; using one is `XO1102`. A package that
   cannot be bound is `XO1101`.
@@ -1414,7 +1450,9 @@ fn main(os: Os) {
 - Every call performs the effect `ffi` (6.1), which `pub` functions
   declare. A `use c` line may replace it with the effects a human vouches
   for, `uses none` or `uses fs.read, clock`, as an effect ceiling of
-  decision 0086 does for a dependency.
+  decision 0086 does for a dependency. That claim counts only in the
+  module's own code: in a required module the consuming module's `vouch`
+  line decides the binding's effects (4.2, decision 0156).
 - `use c` is impossible on the Go backend: `xo check`, `build`, `run`, and
   `test` without `--no-gc` report `XO1201` on the line. (`use go` is
   likewise `XO1201` on the native backends.)
@@ -2372,6 +2410,8 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1313` | error | modules | a fetched module version disagrees with the checksum log (XO_SUMDB), or the log's signature or proofs do not verify (4.3, decision 0124) |
 | `XO1314` | error | modules | the checksum log cannot be consulted, or XO_PROXY, XO_SUMDB, XO_NOPROXY, or XO_NOSUMDB is malformed (4.2, decisions 0124, 0126) |
 | `XO1315` | note | checker | `edition 2026` in xo.mod is the old name of `edition preview`; the fix rewrites it (13, decision 0155) |
+| `XO1316` | error | checker | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
+| `XO1317` | error | modules | a dependency's effects are wider than its `effects` line in xo.lock (4.3, decision 0156) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |

@@ -39,9 +39,19 @@ func (c *checker) loadCImport(m *Module, f *File, u *ast.UseDecl, imp *Import) {
 			uses = append(uses, n)
 		}
 	}
+	// a dependency's C code counts with the effects the consuming
+	// module vouches for, never with its own claim (decision 0156)
+	if v, isDep := c.escapeHatch(m, u, "c", u.Path, uses); isDep {
+		uses = nil // unvouched: the worst case, ffi
+		if v != nil && v.Effects != nil {
+			uses = append([]string{}, v.Effects.Effects...)
+		}
+	}
 	root := m.Dir
 	if r, found := c.findModRoot(m.Dir); found {
-		root = r.dir
+		// a dependency's binding goes to the main module's cache (the
+		// module cache is read only), as for `use go`
+		root = c.goBindRoot(r.dir)
 	}
 	opts := cbind.Options{Header: u.Path, ModDir: m.Dir, Links: u.Links, Uses: uses, Dir: cbind.CacheDir(root)}
 	b, err := cbind.Bind(opts)
