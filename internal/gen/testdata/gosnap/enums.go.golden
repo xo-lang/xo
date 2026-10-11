@@ -104,7 +104,91 @@ func (v Shape) M_debug(*rt.Task) string { return rt.Debug(v) }
 
 func (v Shape) M_display(*rt.Task) string { return rt.Debug(v) }
 
-//line main.xo:7:1
+//line main.xo:8:1
+type Light struct {
+	Tag int
+	P   any
+}
+
+func (v Light) XoEq(x any) bool {
+	o, ok := x.(Light)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Light) XoHash() uint64 {
+	h := rt.MixHash(uint64(5940865907726654758), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Light) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Red")
+	case 2:
+		b.WriteString("Amber")
+	case 3:
+		b.WriteString("Green")
+	}
+}
+
+func (v Light) M_debug(*rt.Task) string { return rt.Debug(v) }
+
+//line main.xo:14:1
+type Lamp struct {
+	F_name  string
+	F_light Light
+}
+
+func (v Lamp) XoEq(x any) bool {
+	o, ok := x.(Lamp)
+	if !ok {
+		return false
+	}
+	if !rt.Eq(v.F_name, o.F_name) {
+		return false
+	}
+	if !rt.Eq(v.F_light, o.F_light) {
+		return false
+	}
+	return true
+}
+
+func (v Lamp) XoHash() uint64 {
+	h := uint64(6770218716139347464)
+	h = rt.MixHash(h, rt.Hash(v.F_name))
+	h = rt.MixHash(h, rt.Hash(v.F_light))
+	return h
+}
+
+func (v Lamp) XoDebug(b *strings.Builder) {
+	b.WriteString("Lamp{")
+	b.WriteString("name: ")
+	rt.DebugTo(b, v.F_name)
+	b.WriteString(", light: ")
+	rt.DebugTo(b, v.F_light)
+	b.WriteString("}")
+}
+
+func (v Lamp) M_debug(*rt.Task) string { return rt.Debug(v) }
+
+func (v Lamp) XoEqT(o Lamp) bool {
+	if !(v.F_name == o.F_name) {
+		return false
+	}
+	if !(v.F_light.Tag == o.F_light.Tag) {
+		return false
+	}
+	return true
+}
+
+//line main.xo:19:1
 type Wrapper struct {
 	Tag int
 	P   any
@@ -165,142 +249,162 @@ func (v Wrapper) XoDebug(b *strings.Builder) {
 
 func (v Wrapper) M_debug(*rt.Task) string { return rt.Debug(v) }
 
-//line main.xo:12:1
+//line main.xo:24:1
 func F_area(tk *rt.Task, v_s Shape) int64 {
-//line main.xo:13:3
-//line main.xo:16:14
+//line main.xo:25:3
+//line main.xo:28:14
 	switch {
-//line main.xo:16:14
+//line main.xo:28:14
 	default:
-//line main.xo:14:5
+//line main.xo:26:5
 		if v_s.Tag == 1 {
-//line main.xo:14:5
+//line main.xo:26:5
 			var v_r int64 = v_s.P.(Shape_Circle).F_r
-//line main.xo:14:5
-//line main.xo:14:18
-			return rt.MulI(rt.MulKI(int64(3), v_r, -3074457345618258602, 3074457345618258602, "main.xo:14:18"), v_r, "main.xo:14:18")
-//line main.xo:14:18
+//line main.xo:26:5
+//line main.xo:26:18
+			return rt.MulI(rt.MulKI(int64(3), v_r, -3074457345618258602, 3074457345618258602, "main.xo:26:18"), v_r, "main.xo:26:18")
+//line main.xo:26:18
 		}
-//line main.xo:15:5
+//line main.xo:27:5
 		if v_s.Tag == 2 {
-//line main.xo:15:5
+//line main.xo:27:5
 			var v_w int64 = v_s.P.(Shape_Rect).F_w
-//line main.xo:15:5
+//line main.xo:27:5
 			var v_h int64 = v_s.P.(Shape_Rect).F_h
-//line main.xo:15:5
-//line main.xo:15:25
-			return rt.MulI(v_w, v_h, "main.xo:15:25")
-//line main.xo:15:25
+//line main.xo:27:5
+//line main.xo:27:25
+			return rt.MulI(v_w, v_h, "main.xo:27:25")
+//line main.xo:27:25
 		}
-//line main.xo:16:5
+//line main.xo:28:5
 		if v_s.Tag == 3 {
-//line main.xo:16:14
+//line main.xo:28:14
 			return int64(0)
-//line main.xo:16:14
+//line main.xo:28:14
 		}
-//line main.xo:16:14
-		panic(rt.Unreachable("main.xo:13:3"))
-//line main.xo:16:14
+//line main.xo:28:14
+		panic(rt.Unreachable("main.xo:25:3"))
+//line main.xo:28:14
 	}
 }
 
-//line main.xo:20:1
+//line main.xo:32:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-//line main.xo:21:3
+//line main.xo:33:3
 	var v_shapes rt.List[Shape] = rt.ListOf[Shape](Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}}, Shape{Tag: 2, P: Shape_Rect{F_w: int64(3), F_h: int64(4)}}, Shape{Tag: 3}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(1)}})
-//line main.xo:21:3
-//line main.xo:22:3
+//line main.xo:33:3
+//line main.xo:34:3
 	x_it2 := v_shapes
-//line main.xo:23:5
+//line main.xo:35:5
 	for _, x_e4 := range rt.List_Items(x_it2) {
-//line main.xo:22:3
+//line main.xo:34:3
 		x_el5 := x_e4
-//line main.xo:22:3
+//line main.xo:34:3
 		var v_s Shape = x_el5
-//line main.xo:22:3
+//line main.xo:34:3
 		{
-//line main.xo:23:5
+//line main.xo:35:5
 			v_os.F_stdio.M_println(tk, (rt.Display(tk, v_s) + " -> " + rt.IntStr(F_area(tk, v_s))))
-//line main.xo:23:5
+//line main.xo:35:5
 		}
-//line main.xo:23:5
+//line main.xo:35:5
 	}
-//line main.xo:25:3
+//line main.xo:37:3
 	var v_w Wrapper = Wrapper{Tag: 1, P: Wrapper_One{F0: Shape{Tag: 3}}}
-//line main.xo:25:3
-//line main.xo:26:3
+//line main.xo:37:3
+//line main.xo:38:3
 	var v_m Wrapper = Wrapper{Tag: 2, P: Wrapper_Many{F_items: rt.List_Own(v_shapes)}}
-//line main.xo:26:3
-//line main.xo:27:3
-//line main.xo:29:17
+//line main.xo:38:3
+//line main.xo:39:3
+//line main.xo:41:17
 x_M6:
-//line main.xo:29:17
+//line main.xo:41:17
 	switch {
-//line main.xo:29:17
+//line main.xo:41:17
 	default:
-//line main.xo:28:5
+//line main.xo:40:5
 		if v_w.Tag == 1 {
-//line main.xo:28:5
+//line main.xo:40:5
 			var v_inner Shape = v_w.P.(Wrapper_One).F0
-//line main.xo:28:5
-//line main.xo:28:19
+//line main.xo:40:5
+//line main.xo:40:19
 			v_os.F_stdio.M_println(tk, ("one " + rt.Display(tk, v_inner)))
-//line main.xo:28:19
+//line main.xo:40:19
 			break x_M6
-//line main.xo:28:19
+//line main.xo:40:19
 		}
-//line main.xo:29:5
+//line main.xo:41:5
 		if v_w.Tag == 2 {
-//line main.xo:29:17
+//line main.xo:41:17
 			v_os.F_stdio.M_println(tk, "many")
-//line main.xo:29:17
+//line main.xo:41:17
 			break x_M6
-//line main.xo:29:17
+//line main.xo:41:17
 		}
-//line main.xo:29:17
-		panic(rt.Unreachable("main.xo:27:3"))
-//line main.xo:29:17
+//line main.xo:41:17
+		panic(rt.Unreachable("main.xo:39:3"))
+//line main.xo:41:17
 	}
-//line main.xo:31:3
-//line main.xo:33:15
+//line main.xo:43:3
+//line main.xo:45:15
 x_M7:
-//line main.xo:33:15
+//line main.xo:45:15
 	switch {
-//line main.xo:33:15
+//line main.xo:45:15
 	default:
-//line main.xo:32:5
+//line main.xo:44:5
 		if v_m.Tag == 2 {
-//line main.xo:32:5
+//line main.xo:44:5
 			var v_xs rt.List[Shape] = v_m.P.(Wrapper_Many).F_items
-//line main.xo:32:5
-//line main.xo:32:24
+//line main.xo:44:5
+//line main.xo:44:24
 			v_os.F_stdio.M_println(tk, ("many " + rt.IntStr(rt.List_len[Shape](tk, v_xs))))
-//line main.xo:32:24
+//line main.xo:44:24
 			break x_M7
-//line main.xo:32:24
+//line main.xo:44:24
 		}
-//line main.xo:33:5
+//line main.xo:45:5
 		if v_m.Tag == 1 {
-//line main.xo:33:15
+//line main.xo:45:15
 			v_os.F_stdio.M_println(tk, "one")
-//line main.xo:33:15
+//line main.xo:45:15
 			break x_M7
-//line main.xo:33:15
+//line main.xo:45:15
 		}
-//line main.xo:33:15
-		panic(rt.Unreachable("main.xo:31:3"))
-//line main.xo:33:15
+//line main.xo:45:15
+		panic(rt.Unreachable("main.xo:43:3"))
+//line main.xo:45:15
 	}
-//line main.xo:35:3
+//line main.xo:47:3
 	v_os.F_stdio.M_println(tk, ("eq " + rt.Display(tk, rt.Eq(Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}})) + " " + rt.Display(tk, rt.Eq(Shape{Tag: 3}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(0)}}))))
-//line main.xo:36:3
+//line main.xo:48:3
 	v_os.F_stdio.M_println(tk, ("ord " + rt.Display(tk, (rt.Cmp(Shape{Tag: 1, P: Shape_Circle{F_r: int64(5)}}, Shape{Tag: 2, P: Shape_Rect{F_w: int64(1), F_h: int64(1)}}) < 0)) + " " + rt.Display(tk, (rt.Cmp(Shape{Tag: 1, P: Shape_Circle{F_r: int64(1)}}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}}) < 0))))
-//line main.xo:37:3
+//line main.xo:49:3
 	var v_sorted rt.List[Shape] = rt.List_sort[Shape](tk, v_shapes)
-//line main.xo:37:3
-//line main.xo:38:3
-	v_os.F_stdio.M_println(tk, ("first " + rt.Display(tk, rt.List_AtM(v_sorted, int64(0), "main.xo:38:29")) + " last " + rt.Display(tk, rt.List_AtM(v_sorted, int64(3), "main.xo:38:47"))))
-//line main.xo:38:3
+//line main.xo:49:3
+//line main.xo:50:3
+	v_os.F_stdio.M_println(tk, ("first " + rt.Display(tk, rt.List_AtM(v_sorted, int64(0), "main.xo:50:29")) + " last " + rt.Display(tk, rt.List_AtM(v_sorted, int64(3), "main.xo:50:47"))))
+//line main.xo:51:3
+	var x_v8 Light
+//line main.xo:51:3
+	if rt.List_len[Shape](tk, v_sorted) > int64(3) {
+//line main.xo:51:33
+		x_v8 = Light{Tag: 2}
+//line main.xo:51:33
+	} else {
+//line main.xo:51:54
+		x_v8 = Light{Tag: 1}
+//line main.xo:51:54
+	}
+//line main.xo:51:54
+	var v_l Light = x_v8
+//line main.xo:51:54
+//line main.xo:52:3
+	var v_lamp Lamp = Lamp{F_name: "a", F_light: v_l}
+//line main.xo:52:3
+//line main.xo:53:3
+	v_os.F_stdio.M_println(tk, ("unit " + rt.Display(tk, ((v_l).Tag == (Light{Tag: 2}).Tag)) + " " + rt.Display(tk, ((v_l).Tag != (Light{Tag: 2}).Tag)) + " " + rt.Display(tk, ((v_l).Tag == (Light{Tag: 3}).Tag)) + " " + rt.Display(tk, (v_lamp).XoEqT(Lamp{F_name: "a", F_light: Light{Tag: 2}})) + " " + rt.Display(tk, (v_lamp).XoEqT(Lamp{F_name: "a", F_light: Light{Tag: 1}})) + " " + rt.Display(tk, rt.List_contains[Light](tk, rt.ListOf[Light](Light{Tag: 1}, Light{Tag: 3}), v_l))))
+//line main.xo:53:3
 	return
 }
 // ==== m/x_testdata_golden_enums/xo_main.go
