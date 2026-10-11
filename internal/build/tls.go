@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -123,11 +124,18 @@ func tlsArgs(cc string, flags []string, sysroot string) (compile, link []string,
 		compile = append(compile, "-I", filepath.Join(dir, filepath.FromSlash(inc)))
 	}
 	link = append(link, filepath.Join(dir, "libxotls.a"))
+	link = append(link, tlsSystemLibs()...)
+	return compile, link, nil
+}
+
+// tlsSystemLibs are the link arguments of the system libraries TLS needs
+// after the library.
+func tlsSystemLibs() []string {
 	if runtime.GOOS == "darwin" {
 		// the system's trust anchors (xo_tls.c: tls_system_roots)
-		link = append(link, "-framework", "Security", "-framework", "CoreFoundation")
+		return []string{"-framework", "Security", "-framework", "CoreFoundation"}
 	}
-	return compile, link, nil
+	return nil
 }
 
 // tlsLibrary returns the directory holding the extracted library tree
@@ -189,6 +197,26 @@ func tlsLibrary(cc string, flavor []string, sysroot string) (string, error) {
 // buildTLSLibrary extracts the library into dir and compiles it into
 // dir/libxotls.a.
 func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
+	srcs, err := writeTLSTree(dir)
+	if err != nil {
+		return err
+	}
+	args := []string{"-c", "-O2", "-w", "-fexceptions", "-funwind-tables"}
+	args = append(args, flavor...)
+	if sysroot != "" {
+		args = append(args, "-isysroot", sysroot)
+	}
+	ar, err := findAr()
+	if err != nil {
+		return err
+	}
+	return compileTLSArchive(dir, []string{cc}, args, srcs, []string{ar}, filepath.Join(dir, "libxotls.a"), runtime.NumCPU())
+}
+
+// writeTLSTree extracts the library's tree into dir and returns the
+// sources of the library (relative to dir, slash separated, in the
+// tree's order).
+func writeTLSTree(dir string) ([]string, error) {
 	var srcs []string
 	excluded := map[string]bool{}
 	for _, e := range mbedtls.Exclude {
@@ -200,26 +228,29 @@ func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
 	}
 	tree, err := mbedtls.Tree()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, f := range tree {
 		out := filepath.Join(dir, filepath.FromSlash(f.Name))
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-			return err
+			return nil, err
 		}
 		if err := os.WriteFile(out, f.Data, 0o644); err != nil {
-			return err
+			return nil, err
 		}
 		if strings.HasSuffix(f.Name, ".c") && inSourceDir[path.Dir(f.Name)] && !excluded[f.Name] {
 			srcs = append(srcs, f.Name)
 		}
 	}
-	args := []string{"-c", "-O2", "-w", "-fexceptions", "-funwind-tables"}
-	args = append(args, flavor...)
-	if sysroot != "" {
-		args = append(args, "-isysroot", sysroot)
-	}
-	args = append(args, mbedtls.Defines...)
+	return srcs, nil
+}
+
+// compileTLSArchive compiles srcs (of the tree in dir) with the compiler
+// command cc and args (to which it adds the library's defines and
+// include directories) on jobs workers, and archives the objects, in
+// the order of their names, into lib with the archiver command ar.
+func compileTLSArchive(dir string, cc, args, srcs, ar []string, lib string, jobs int) error {
+	args = append(append([]string(nil), args...), mbedtls.Defines...)
 	for _, inc := range mbedtls.IncludeDirs {
 		args = append(args, "-I", filepath.Join(dir, filepath.FromSlash(inc)))
 	}
@@ -231,15 +262,15 @@ func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
 	errs := make([]error, len(srcs))
 	work := make(chan int)
 	var wg sync.WaitGroup
-	for w := 0; w < runtime.NumCPU(); w++ {
+	for w := 0; w < max(jobs, 1); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range work {
 				obj := filepath.Join(objDir, strings.ReplaceAll(strings.TrimSuffix(srcs[i], ".c"), "/", "_")+".o")
-				a := append(append([]string(nil), args...), mbedtls.FileDefines[srcs[i]]...)
+				a := append(append(append([]string(nil), cc[1:]...), args...), mbedtls.FileDefines[srcs[i]]...)
 				a = append(a, "-o", obj, filepath.Join(dir, filepath.FromSlash(srcs[i])))
-				out, err := exec.Command(cc, a...).CombinedOutput()
+				out, err := exec.Command(cc[0], a...).CombinedOutput()
 				if err != nil {
 					errs[i] = fmt.Errorf("compiling the TLS library (%s): %v\n%s", srcs[i], err, out)
 				}
@@ -257,12 +288,11 @@ func buildTLSLibrary(dir, cc string, flavor []string, sysroot string) error {
 			return e
 		}
 	}
-	ar, err := findAr()
-	if err != nil {
-		return err
-	}
-	lib := filepath.Join(dir, "libxotls.a")
-	out, err := exec.Command(ar, append([]string{"rcs", lib}, objs...)...).CombinedOutput()
+	sort.Strings(objs)
+	cmd := exec.Command(ar[0], append(append(append([]string(nil), ar[1:]...), "rcs", lib), objs...)...)
+	// Apple's ar writes no member times with ZERO_AR_DATE (others ignore it)
+	cmd.Env = append(os.Environ(), "ZERO_AR_DATE=1")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("archiving the TLS library: %v\n%s", err, out)
 	}

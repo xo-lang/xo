@@ -13,8 +13,11 @@ import (
 // TestMain turns the binary cache off for this package's tests: they test
 // the builds themselves (reproducible binaries, the Go timers fallback),
 // which a cached binary would skip. TestBinCache turns it on for itself.
+// Prebuilt runtimes are off too (the runtime is compiled locally), except
+// in the tests of rtpack_test.go.
 func TestMain(m *testing.M) {
 	os.Setenv("XO_BIN_CACHE", "off")
+	os.Setenv("XO_RTPACK", "off")
 	os.Exit(m.Run())
 }
 

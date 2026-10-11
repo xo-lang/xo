@@ -18,8 +18,11 @@ import (
 // BackendArm64 is the native AArch64 backend (decision 0049).
 const BackendArm64 = "arm64"
 
-// ErrNoCC reports that the arm64 backend found no C compiler.
-var ErrNoCC = errors.New("the arm64 backend needs a C compiler to assemble and link: install one or set XO_CC")
+// ErrNoCC reports that the arm64 backend found no C compiler. It needs
+// one even with a prebuilt runtime (decision 0157): the compiler driver
+// assembles the generated code and runs the system linker.
+var ErrNoCC = errors.New("the arm64 backend needs a C compiler to assemble and link: install one " +
+	"(macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
 
 // CC finds the C compiler that assembles and links arm64 builds: $XO_CC,
 // then cc, then clang.

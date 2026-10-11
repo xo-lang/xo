@@ -39,12 +39,20 @@ func rtObjDir() string {
 }
 
 // runtimeSource is the index in srcs of the C runtime (a file named
-// xo_rt.c), or -1: none, a compile only call (-c), or flags that could
-// read files the cache key does not cover (-I, -include, ...).
+// xo_rt.c) when the object cache is on, or -1: none, the cache off, a
+// compile only call (-c), or flags that could read files the cache key
+// does not cover (-I, -include, ...).
 func runtimeSource(srcs, flags []string) int {
 	if rtObjDir() == "" {
 		return -1
 	}
+	return runtimeIndex(srcs, flags)
+}
+
+// runtimeIndex is runtimeSource without the cache: the index of the
+// runtime a link compiles, which a prebuilt object may replace
+// (rtpack.go).
+func runtimeIndex(srcs, flags []string) int {
 	for _, f := range flags {
 		if f == "-c" || f == "-S" || f == "-E" || strings.HasPrefix(f, "-I") || strings.HasPrefix(f, "-include") ||
 			strings.HasPrefix(f, "-iquote") || strings.HasPrefix(f, "-isystem") || strings.HasPrefix(f, "-o") {
