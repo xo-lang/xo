@@ -128,6 +128,20 @@ func vetProgram(t *testing.T, dir string, mode gen.Mode) {
 func run(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	if name == "go" {
+		cmd.Env = goVetEnv()
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// goVetEnv is the environment of a go command run in a build directory.
+// Each program's build directory has its own copy of rt, and without
+// -trimpath that directory is part of the cache key, so every go vet
+// compiled rt again (24 MB per program); the nightly TestArithProperty
+// wrote 100 GB into the default Go cache in one night. -trimpath leaves
+// the directory out of the key, and the Xo Go cache is capped
+// (gotchas/go-vet-recompiles-rt-per-build-dir.md).
+func goVetEnv() []string {
+	return append(os.Environ(), "GOWORK=off", "GOFLAGS=-trimpath", "GOCACHE="+build.GoCacheDir())
 }
