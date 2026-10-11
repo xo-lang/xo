@@ -113,3 +113,28 @@ identical. TestSelfhostArm64Mutations (30 mutations): 481 of 492
 functions identical, 11 skipped, 0 differences.
 
 Every stage 2 construct was identical on its first full comparison.
+
+# Stage 3: parameters by reference, 2026-10-11
+
+Decisions 0151 and 0153 (byref.xo): parameters of 256 bytes or more of
+direct calls passed by address, the homes of `var` ones and the forward
+dataflow of what they hold (with the landing pads' states), fields read
+and written in place, read only parameters read in place and passed on,
+results left in memory, frame memory for other arguments, and returns
+that store back only what the home does not hold. Every construct the
+Go emitter lowers is now ported (Go mode and the layout instrument
+aside); both emitters still run with `--no-inline`.
+
+Development comparison over every repository run (.tools/acmp.py; 306
+runs compared): all 10,974 of the Go emitter's functions identical,
+none skipped, 0 differences; 11,436 helpers identical; 234 of the 306
+runs byte identical as a whole file (in the others the two SSA builders
+make a few generated functions, such as `xo.debug[Str]`, in another
+order, which moves the functions, the helper numbers, and the literal
+numbers; every piece is identical). TestSelfhostArm64 in the merge tier:
+4,013 of 4,013 functions identical, 118 of 149 runs byte identical;
+TestSelfhostArm64Mutations: 492 of 492 functions identical.
+
+The dataflow of decision 0148 was identical on its first comparison,
+selfhost/check and selfhost/ssa (the Builder and Checker homes)
+included.

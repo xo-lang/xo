@@ -1,27 +1,13 @@
 // The stages of the port (decision 0158): a function with a construct of
 // a stage not enabled yet is not emitted (it is counted as skipped by
-// the comparison, never compared).
-
+// the comparison, never compared). Since stage 3 every construct the Go
+// emitter lowers is ported; inlining (stage 4) is a pass over the module
+// before generation (inline.xo).
 
 /// Why function fi cannot be emitted at the current stage, or "".
 fn (var g: G) unsupported(fi: Int) -> Str {
-  if !g.by_ref_of(fi).is_empty() {
-    return "stage 3, parameters by reference"
-  }
-  let f = g.m.funcs[fi]
-  for bl in f.blocks {
-    for v in bl.instrs {
-      let x = f.values[v]
-      match x.op {
-        Call => {
-          let ci = g.by_name.get(aux_str(x.aux)) ?? -1
-          if ci >= 0 && !g.by_ref_of(ci).is_empty() {
-            return "stage 3, calls by reference"
-          }
-        }
-        _ => {}
-      }
-    }
+  if fi < 0 {
+    return "no function"
   }
   ""
 }
