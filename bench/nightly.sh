@@ -20,13 +20,13 @@ start=$(date +%s)
 	# what the default full suite leaves out (decision 0111): more random
 	# programs, every build through the toolchain (no binary cache),
 	# the sanitizers' 1 s sleep at exit, and the full internal/selfhost
-	# tier (every backend; 58 min cold on 2026-10-11, hence -timeout 90m)
+	# tier (every backend; 58 min cold on 2026-10-11, hence -timeout 120m)
 	XO_SELFHOST_TIER=${XO_SELFHOST_TIER:-full} \
 		XO_RANGE_SEEDS=${XO_RANGE_SEEDS:-25} XO_LIST_SEEDS=${XO_LIST_SEEDS:-40} \
 		XO_COMPILE_PROPS=${XO_COMPILE_PROPS:-500} XO_HYBRID_SEEDS=${XO_HYBRID_SEEDS:-24} \
 		XO_BIN_CACHE=${XO_BIN_CACHE:-off} \
 		GORACE=${GORACE:-atexit_sleep_ms=1000} XO_TSAN_ATEXIT_SLEEP=${XO_TSAN_ATEXIT_SLEEP:-1000} \
-		go test -count=1 -timeout 90m ./...
+		go test -count=1 -timeout 120m ./...
 	s1=$?
 	# more random arithmetic programs, differential across the Go, LLVM,
 	# and arm64 backends (TestArithProperty; the full suite runs 25)

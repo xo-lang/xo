@@ -84,7 +84,7 @@ Update the knowledgebase in the same change as the work, not later:
     full test runs at the same time (RAM).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 2.5 min), `full` (every backend, about
-    1 h cold, `-timeout 90m`); full runs nightly, before tagging, and
+    1 h cold, `-timeout 120m`); full runs nightly, before tagging, and
     for a change under selfhost/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
