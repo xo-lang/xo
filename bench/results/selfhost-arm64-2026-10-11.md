@@ -85,3 +85,31 @@ run faulted on it. No difference in the emitted code needed a second
 attempt: the first full comparison found only differences of the
 comparison itself (call site numbers, function names holding `: `,
 the alignment line after a literal).
+
+# Stage 2: closures, boxes, equality, sharing, 2026-10-11
+
+Closures and their environments (with their drop and share functions),
+captures, calls through function values, function addresses, rebinds,
+boxes, function values and boxes retained and released inline, the
+equality helpers of structs, tuples, enums, lists, and boxes, `share`,
+and `reuse`. Both emitters still run with `--no-inline`.
+
+Development comparison over every repository run (.tools/acmp.py; 306
+runs compared, 278 rejected by both, 62 not built completely by both SSA
+builders):
+
+| functions (of the Go emitter's 10,974) | stage 1 | stage 2 |
+|---|---|---|
+| identical | 6,139 | 8,699 |
+| skipped (stage 3: parameters by reference, calls by reference) | 4,835 | 2,275 (2,121 and 154) |
+| different | 0 | 0 |
+| runs byte identical as a whole file | 76 | 219 |
+| helpers emitted by the Xo emitter, all identical | 3,305 | 9,950 |
+
+TestSelfhostArm64 in the merge tier (every second run, the five heaviest
+left out): 321 runs, 149 compared, 111 byte identical; 3,836 of 4,013
+functions identical, 177 skipped, 0 differences; 4,340 helpers
+identical. TestSelfhostArm64Mutations (30 mutations): 481 of 492
+functions identical, 11 skipped, 0 differences.
+
+Every stage 2 construct was identical on its first full comparison.
