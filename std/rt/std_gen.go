@@ -1503,6 +1503,8 @@ type Proc interface {
 	M_set_grace(tk *Task, p0 Duration)
 	M_run(tk *Task, p0 string, p1 List[string]) Result[ProcOutput, ProcErr]
 	M_only(tk *Task, p0 List[string]) Proc
+	M_cmd(tk *Task, p0 string, p1 List[string]) Cmd
+	M_pipeline(tk *Task, p0 List[Cmd]) Result[ProcOutput, ProcErr]
 }
 
 type Sql_SqlValue struct {

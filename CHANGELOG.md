@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Richer processes (std.md 3.8, decision 0161), Go backend and test
+  fakes: `os.proc.cmd(name, args)` builds a `Cmd` (`dir`, `env(e)` with
+  exactly the variables an `Env` shows, so `Env.only` narrows the child,
+  `set_env`, `stdin`, `inherit`, `merge_stderr`) and runs it with
+  `output()`, `run()` (on the terminal, returns the exit status), or
+  `spawn()` (a `Child` with `write`, `close_stdin`, `read`, `read_err`,
+  `read_line`, `wait`, `kill`, `pid`); `os.proc.pipeline(cmds)` pipes
+  commands together (pipefail status). A child ended by a signal has
+  status 128 + n. `Proc.only` applies to every way of running, and a
+  `Cmd` keeps the lists of the `Proc` that made it. `FakeProc` answers
+  them from `on_run`. Native builds report them as XO1201 (planned).
 - `std/cli` (std.md 14, decision 0160), on every backend: command line
   parsing for tools. `cli.command(...)` with `bool_flag`, `str_flag`,
   `int_flag`, `duration_flag`, `choice_flag`, `strs_flag` (repeated),

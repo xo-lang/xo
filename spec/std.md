@@ -583,18 +583,112 @@ fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks 
 fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
 fn (p: Proc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr
 fn (p: Proc) only(cmds: List[Str]) -> Proc   // attenuation (below)
+fn (p: Proc) cmd(name: Str, args: List[Str] = []) -> Cmd       // a command, not started (3.8)
+fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
 ```
 
 `p.only(cmds)` (decision 0156) is a `Proc` whose `run` fails with
 `Denied(cmd)` for a command not listed (compared as written: `git` and
 `/usr/bin/git` are different entries); `exit` and `set_grace` are
-unchanged. Native builds do not have `only` yet (XO1201, planned).
+unchanged. A `Cmd` made by an attenuated `Proc` keeps its lists (3.8).
+Native builds do not have `only` yet (XO1201, planned).
 
 The native backends run commands with `posix_spawn`, reading the output
 on the event loop; cancelling the task kills the command (decision 0107).
 
 Returning `Err` from `main` prints the error with its frames to standard error
 and exits with status 1. Prefer that over `exit` for failures.
+
+### 3.8 Commands, children, and pipelines
+
+Status: implemented on the Go backend and its fakes (decision 0161,
+2026-10-11); native builds report these methods as XO1201 (planned).
+
+```
+struct Cmd {}                                 // a command that has not run; a value
+fn (c: Cmd) dir(path: Str) -> Cmd             // working directory (relative: to the program's)
+fn (c: Cmd) env(e: Env) -> Cmd uses env       // the child's environment is exactly e.vars()
+fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
+fn (c: Cmd) stdin(data: Bytes) -> Cmd         // its standard input
+fn (c: Cmd) inherit() -> Cmd                  // standard streams are the program's (the terminal)
+fn (c: Cmd) merge_stderr() -> Cmd             // standard error into the standard output stream
+fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc   // run to the end, collect the streams
+fn (c: Cmd) run() -> Int ! ProcErr uses proc            // run on the terminal; the exit status
+fn (c: Cmd) spawn() -> Child ! ProcErr uses proc        // start; returns at once
+
+struct Child {}                               // a started command; a handle
+fn (c: Child) pid() -> Int
+fn (c: Child) write(data: Bytes) -> () ! ProcErr uses proc        // to its standard input
+fn (c: Child) close_stdin()
+fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc        // its output; None at the end
+fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc    // its error stream
+fn (c: Child) read_line() -> Str? ! ProcErr uses proc             // a line of its output
+fn (c: Child) wait() -> Int ! ProcErr uses proc                   // closes its input; the status
+fn (c: Child) kill()
+```
+
+```
+fn changed_files(p: Proc, repo: Str) -> List[Str] ! ProcErr uses proc {
+  let out = p.cmd("git", ["status", "--porcelain"]).dir(repo).output()?
+  (out.stdout.to_str() ?? "").lines().filter(fn(l) { !l.is_empty() })
+}
+
+fn edit(p: Proc, env: Env, path: Str) -> Int ! ProcErr uses (proc, env) {
+  let editor = env.get("EDITOR") ?? "vi"
+  p.cmd(editor, [path]).run()?   // the editor gets the terminal
+}
+
+fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
+  let child = p.cmd("tail", ["-f", "app.log"]).spawn()?
+  while let Some(line) = child.read_line()? {
+    out.println("log: ${line}")
+  }
+}
+```
+
+- `cmd` builds; nothing runs until `output`, `run`, `spawn`, or
+  `pipeline`. The builder methods return a changed copy, so a `Cmd`
+  can be prepared once and run several times.
+- Environment: without `env`, the child inherits the program's
+  environment (as `run`). `env(e)` replaces it with exactly the
+  variables `e.vars()` shows when `env` is called, so an attenuated
+  `Env` narrows it: `p.cmd("make").env(os.env.only(["PATH", "HOME"]))`.
+  `set_env` adds or replaces one variable on top of either.
+- Standard input: the `stdin` data, else the program's own with
+  `inherit`, else empty for `output` and `run`'s terminal, and a pipe
+  written with `Child.write` for `spawn` (closed by `close_stdin` or
+  `wait`). Standard output and error: collected by `output`, the
+  program's own with `run` or `inherit`, pipes read with `Child.read`
+  and `read_err` for `spawn`. `merge_stderr` sends the error stream
+  into the output stream (`output`'s `stderr` is then empty).
+- Exit status: the child's exit code; a child ended by a signal is 128
+  plus the signal number.
+- `read` returns at most `max` bytes (at most 1 MiB) as they arrive and
+  `None` at the end of the stream; `read_line` strips `\n` and `\r\n`.
+  Reads and `wait` are cancellation points; cancelling the task that
+  spawned a child kills it. Reading a stream that is not a pipe
+  (inherited or merged) is `Io`. A child that fills one pipe while the
+  program waits on the other stops: read both from separate tasks, or
+  merge them.
+- `pipeline(cmds)` connects each command's standard output to the next
+  one's input, runs them together, and returns the last one's output,
+  the error streams of all of them in command order, and the status of
+  the rightmost command that failed (bash's `pipefail`), else 0. The
+  first command's `stdin` data feeds the pipeline; `merge_stderr` on a
+  command sends its errors down the pipe. An empty list is an empty
+  output.
+- Attenuation (decision 0156): every command is checked against the
+  lists of the `Proc` that made it before it starts (`Denied(name)`);
+  for a pipeline, every command before any starts.
+- Tests: `FakeProc.cmd` builds commands answered by `on_run(name, out)`,
+  as `run` is (the standard input is ignored): `output` returns it,
+  `run` writes its streams to the test's `FakeStdio` and returns its
+  code, `spawn` gives a `Child` reading it (`pid` is 0, `write` and
+  `kill` do nothing), and `pipeline` gives the last command's output
+  with the error streams and failing statuses of all. A command with no
+  `on_run` is `NotFound`.
+- Record and replay (core 11.3) record `output`, `run`, and `pipeline`;
+  a `Child`'s reads are not recorded yet.
 
 ---
 
@@ -1102,7 +1196,7 @@ fn (s: FakeStdio) output() -> Str                     // everything printed to s
 fn (s: FakeStdio) errors() -> Str                     // everything printed to stderr
 fn (p: FakeProc) exit_code() -> Int?                  // set when exit was called
 fn (p: FakeProc) signal_after(d: Duration)            // next run_main gets SIGTERM after d (virtual time)
-fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
+fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)    // also answers Cmd runs (3.8)
 ```
 
 In a test, `os.proc.exit(code)` records the code and unwinds the code under

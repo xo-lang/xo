@@ -12,6 +12,11 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Commands and children** (std.md 3.8, decision 0161): `Proc.cmd`
+  builds a `Cmd` (directory, environment from an `Env`, input, the
+  terminal, merged streams) run by `output`, `run`, or `spawn` (a
+  `Child` with streaming reads and writes); `Proc.pipeline` pipes
+  commands. Go backend; native builds report XO1201 (planned).
 - **`std/cli`** (14, std.md 14, decision 0160): command line parsing
   for tools: flags of five types and repeated ones, positional and rest
   arguments, subcommands, `--`, variables as fallbacks, generated help,

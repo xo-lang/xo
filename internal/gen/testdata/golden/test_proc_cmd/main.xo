@@ -1,0 +1,70 @@
+// FakeProc's commands (std.md 3.8, 8.4, decision 0161): output, run on
+// the fake terminal, spawned children, pipelines, and attenuation answer
+// from on_run.
+
+fn version(p: Proc) -> Str ! ProcErr uses proc {
+  let out = p.cmd("git", ["--version"]).dir("/repo").output()?
+  (out.stdout.to_str() ?? "").trim()
+}
+
+fn count_lines(p: Proc) -> Int ! ProcErr uses proc {
+  let child = p.cmd("git", ["log"]).spawn()?
+  var n = 0
+  while let Some(_) = child.read_line()? {
+    n += 1
+  }
+  child.wait()?
+  n
+}
+
+test "output answers from on_run" {
+  os.proc.on_run("git", ProcOutput{code: 0, stdout: b"git version 2.47.0\n", stderr: b""})
+  expect(version(os.proc)) == Ok("git version 2.47.0")
+  expect(count_lines(os.proc)) == Ok(1)
+}
+
+test "a command with no on_run is NotFound" {
+  match os.proc.cmd("make").output() {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "NotFound(cmd: \"make\")"
+  }
+}
+
+test "run writes to the fake terminal" {
+  os.proc.on_run("make", ProcOutput{code: 2, stdout: b"building\n", stderr: b"failed\n"})
+  expect(os.proc.cmd("make", ["all"]).run()) == Ok(2)
+  expect(os.stdio.output()) == "building\n"
+  expect(os.stdio.errors()) == "failed\n"
+}
+
+test "children stream the registered output" {
+  os.proc.on_run("tool", ProcOutput{code: 3, stdout: b"abcdef", stderr: b"warn\n"})
+  let child = os.proc.cmd("tool").spawn().or_fault("spawned")
+  expect(child.read(4)) == Ok(Some(b"abcd"))
+  expect(child.read(4)) == Ok(Some(b"ef"))
+  expect(child.read(4)) == Ok(None)
+  expect(child.read_err(100)) == Ok(Some(b"warn\n"))
+  expect(child.wait()) == Ok(3)
+  let merged = os.proc.cmd("tool").merge_stderr().output().or_fault("ran")
+  expect(merged.stdout) == b"abcdefwarn\n"
+}
+
+test "pipelines report the rightmost failure" {
+  os.proc.on_run("a", ProcOutput{code: 1, stdout: b"x", stderr: b"a failed\n"})
+  os.proc.on_run("b", ProcOutput{code: 0, stdout: b"y", stderr: b""})
+  let out = os.proc.pipeline([os.proc.cmd("a"), os.proc.cmd("b")]).or_fault("ran")
+  expect(out.code) == 1
+  expect(out.stdout) == b"y"
+  expect(out.stderr) == b"a failed\n"
+}
+
+test "an attenuated FakeProc denies other commands" {
+  os.proc.on_run("git", ProcOutput{code: 0, stdout: b"", stderr: b""})
+  let git_only = os.proc.only(["git"])
+  expect(git_only.cmd("git").output().is_ok()) == true
+  match git_only.cmd("curl", ["https://example.com"]).output() {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "Denied(cmd: \"curl\")"
+  }
+  expect(git_only.pipeline([os.proc.cmd("git"), os.proc.cmd("sh")]).is_err()) == true
+}

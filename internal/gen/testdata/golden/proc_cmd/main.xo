@@ -1,0 +1,82 @@
+// Commands, children, and pipelines (std.md 3.8, decision 0161): a
+// working directory, the child's environment from an attenuated Env,
+// standard input, exit statuses (a signal is 128 + n), merged streams,
+// streaming reads and writes, pipelines with pipefail, the terminal, and
+// Proc.only on every path. env.txt sets XO_A and XO_HIDDEN.
+
+fn text(b: Bytes) -> Str { b.to_str() ?? "<binary>" }
+
+fn show(label: Str, r: Result[ProcOutput, ProcErr]) -> Str {
+  match r {
+    Ok(o) => "${label}: code ${o.code} out ${text(o.stdout).quote()} err ${text(o.stderr).quote()}"
+    Err(e) => "${label}: error ${e}"
+  }
+}
+
+fn stream(p: Proc) -> Str ! ProcErr uses proc {
+  var lines: List[Str] = []
+  let child = p.cmd("sh", ["-c", "echo one; echo two >&2; echo three; exit 5"]).spawn()?
+  while let Some(line) = child.read_line()? {
+    lines.push(line)
+  }
+  let err = child.read_err(100)? ?? b""
+  let code = child.wait()?
+  "lines ${lines.join(",")} err ${text(err).quote()} code ${code}"
+}
+
+fn echo_back(p: Proc) -> Str ! ProcErr uses proc {
+  let child = p.cmd("cat").spawn()?
+  child.write(b"ping\n")?
+  child.write(b"pong\n")?
+  child.close_stdin()
+  var got = BytesBuilder.new()
+  while let Some(b) = child.read(3)? {
+    got.write(b)
+  }
+  let code = child.wait()?
+  "${text(got.freeze()).quote()} code ${code} pid set ${child.pid() > 0}"
+}
+
+fn main(os: Os) ! {
+  let p = os.proc
+  let out = os.stdio
+  out.println(show("dir", p.cmd("pwd").dir("/").output()))
+  let env = os.env.only(["XO_A"])
+  out.println(show("env", p.cmd("sh", ["-c", "echo \"$XO_A $XO_B [$XO_HIDDEN]\""]).env(env).set_env("XO_B", "b").output()))
+  out.println(show("inherited env", p.cmd("sh", ["-c", "echo \"$XO_HIDDEN\""]).output()))
+  out.println(show("stdin", p.cmd("tr", ["a-z", "A-Z"]).stdin(b"hello").output()))
+  out.println(show("exit", p.cmd("sh", ["-c", "echo partial; exit 3"]).output()))
+  out.println(show("signal", p.cmd("sh", ["-c", "kill -TERM $$"]).output()))
+  out.println(show("merged", p.cmd("sh", ["-c", "echo out; echo err >&2; echo more"]).merge_stderr().output()))
+  out.println(show("missing", p.cmd("xo-no-such-command").output()))
+  out.println("stream: ${stream(p)?}")
+  out.println("echo: ${echo_back(p)?}")
+  let sorted = p.pipeline([
+    p.cmd("cat").stdin(b"pear\napple\nfig\n"),
+    p.cmd("sort"),
+    p.cmd("tr", ["a-z", "A-Z"]),
+  ])
+  out.println(show("pipeline", sorted))
+  let failing = p.pipeline([
+    p.cmd("sh", ["-c", "echo a; echo first >&2; exit 2"]),
+    p.cmd("sh", ["-c", "cat; echo second >&2; exit 4"]),
+    p.cmd("cat"),
+  ])
+  out.println(show("pipefail", failing))
+  out.println(show("empty pipeline", p.pipeline([])))
+  let tools = p.only(["sh", "cat"])
+  out.println(show("denied", tools.cmd("tr", ["a", "b"]).output()))
+  // an attenuated Proc's pipeline checks every command, wherever made
+  out.println(show("denied in pipeline", tools.pipeline([tools.cmd("cat"), p.cmd("sort")])))
+  // a command keeps the lists of the Proc that made it
+  out.println(show("denied made by tools", p.pipeline([p.cmd("cat"), tools.cmd("sort")])))
+  out.println(show("allowed", tools.cmd("sh", ["-c", "echo ok"]).output()))
+  let denied_run = match tools.cmd("sort").run() {
+    Ok(c) => "ran ${c}"
+    Err(e) => "${e}"
+  }
+  out.println("denied run: ${denied_run}")
+  out.println("terminal:")
+  let code = p.cmd("sh", ["-c", "echo child on the terminal; exit 7"]).run()?
+  out.println("terminal code ${code}")
+}

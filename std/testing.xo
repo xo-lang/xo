@@ -121,6 +121,8 @@ fn (p: FakeProc) exit(code: Int) -> Never uses proc
 fn (p: FakeProc) set_grace(d: Duration) uses proc
 fn (p: FakeProc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
 fn (p: FakeProc) only(cmds: List[Str]) -> Proc
+fn (p: FakeProc) cmd(name: Str, args: List[Str] = []) -> Cmd
+fn (p: FakeProc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
 fn (p: FakeProc) exit_code() -> Int?
 fn (p: FakeProc) signal_after(d: Duration)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
