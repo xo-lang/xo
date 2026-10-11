@@ -1,0 +1,1443 @@
+// Instruction selection (internal/arm64 isel.go): SSA values to MIR over
+// virtual registers, block by block in reverse postorder.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// Generates function fi: instruction selection, the MIR passes,
+/// register allocation, and emission (function).
+fn (var g: G) function(fi: Int) {
+  let why = g.unsupported(fi)
+  if !why.is_empty() {
+    // the label numbers of later functions are kept
+    g.nfunc += 1
+    g.skipped.push("${g.m.funcs[fi].name}: ${why}")
+    return
+  }
+  g.begin_func(fi)
+  g.isel()
+  g.dce()
+  g.thread_const()
+  g.thread_cset()
+  g.thread()
+  // a jump table's addresses are data in the text section
+  g.jump_tables()
+  g.dce()
+  g.select_compares()
+  g.hoist_consts()
+  g.reuse_flags()
+  g.place_latches()
+  g.regalloc()
+  g.emit()
+}
+
+fn (var g: G) new_vreg(fp: Bool) -> Int {
+  g.fp.push(fp)
+  g.fp.len() - 1
+}
+
+fn (var g: G) new_vregs(lay: List[Bool]) -> List[Int] {
+  var out: List[Int] = []
+  for fp in lay {
+    out.push(g.new_vreg(fp))
+  }
+  out
+}
+
+fn (var g: G) new_block(cold: Bool) -> Int {
+  let i = g.blocks.len()
+  g.blocks.push(MBlock{id: g.nblock, cold: cold})
+  g.nblock += 1
+  if cold {
+    g.cold.push(i)
+  } else {
+    g.hot.push(i)
+  }
+  i
+}
+
+/// Appends an instruction to the current block and returns its index
+/// there.
+fn (var g: G) add(inst: Inst) -> Int {
+  var x = inst
+  if x.kind == K_CALL && g.cur_pad >= 0 {
+    x.pad = g.cur_pad
+  }
+  g.blocks[g.cur].insts.push(x)
+  g.blocks[g.cur].insts.len() - 1
+}
+
+/// u, or a fresh register holding zero when u is xzr (for operand
+/// positions where register 31 is not the zero register).
+fn (var g: G) real(u: Int) -> Int {
+  if u != 0 {
+    return u
+  }
+  g.def1(false, "mov $d0, #0", [])
+}
+
+/// Adds an instruction with a template; returns its index in the block.
+fn (var g: G) plain(text: Str, defs: List[Int], us: List[Int]) -> Int {
+  var rs: List[Int] = []
+  for u in us {
+    rs.push(g.real(u))
+  }
+  g.add(Inst{kind: K_PLAIN, text: text, defs: defs, us: rs})
+}
+
+/// Adds an instruction defining one new register of class fp.
+fn (var g: G) def1(fp: Bool, text: Str, us: List[Int]) -> Int {
+  let d = g.new_vreg(fp)
+  let _i = g.plain(text, [d], us)
+  d
+}
+
+/// Gives instruction i of the current block the fault side exit.
+fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
+  let sym = g.sym(fname)
+  let pad = g.cur_pad
+  let b = g.cur
+  g.blocks[b].insts[i].has_fault = true
+  g.blocks[b].insts[i].fcond = cond
+  g.blocks[b].insts[i].ffn = sym
+  g.blocks[b].insts[i].fargs = args
+  g.blocks[b].insts[i].pad = pad
+  for a in args {
+    if a.kind == S_REG && a.v != 0 {
+      g.blocks[b].insts[i].us.push(a.v)
+    }
+  }
+}
+
+/// Adds a flag setting instruction with a fault side exit.
+fn (var g: G) check(text: Str, us: List[Int], cond: Str, fname: Str, args: List[Src]) {
+  let i = g.plain(text, [], us)
+  g.set_fault(i, cond, fname, args)
+}
+
+/// Adds an instruction defining one register, with a fault side exit;
+/// the result never shares a register with the operands, which the
+/// fault stub reads. recover names how the stub gets back an operand
+/// whose register the result took ("add", "sub", "neg"); with none, the
+/// result is early.
+fn (var g: G) checked(fp: Bool, text: Str, us: List[Int], recover: Str, cond: Str, fname: Str, args: List[Src]) -> Int {
+  let d = g.new_vreg(fp)
+  let i = g.plain(text, [d], us)
+  let rs = g.blocks[g.cur].insts[i].us
+  if recover.is_empty() || (rs.len() == 2 && rs[0] == rs[1]) {
+    g.blocks[g.cur].insts[i].early = true
+  } else {
+    g.blocks[g.cur].insts[i].recover = recover
+  }
+  g.set_fault(i, cond, fname, args)
+  d
+}
+
+/// Adds a call of symbol sym (already prefixed) and returns the result
+/// registers.
+fn (var g: G) call(sym: Str, args: List[Src], res: List[Bool]) -> List[Int] {
+  let defs = g.new_vregs(res)
+  var us: List[Int] = []
+  for a in args {
+    if a.kind == S_REG && a.v != 0 {
+      us.push(a.v)
+    }
+    if a.kind == S_FRAME {
+      g.out = true
+    }
+  }
+  let _i = g.add(Inst{kind: K_CALL, sym: sym, srcs: args, defs: defs, us: us})
+  g.clobber()
+  defs
+}
+
+/// A call of the runtime function name.
+fn (var g: G) rt(name: Str, args: List[Src], res: List[Bool]) -> List[Int] {
+  g.call(g.sym(name), args, res)
+}
+
+fn (var g: G) imm(n: Int) -> Int {
+  g.konst(g.def1(false, mov_imm(n), []))
+}
+
+/// Marks the instruction that just defined d as a constant (loop
+/// invariant: hoist_consts may move it out of a loop).
+fn (var g: G) konst(d: Int) -> Int {
+  let n = g.blocks[g.cur].insts.len()
+  g.blocks[g.cur].insts[n - 1].konst = true
+  d
+}
+
+/// imm, shared within the block.
+fn (var g: G) cimm(n: Int) -> Int {
+  let mi = g.m_()
+  if let Some(r) = g.memos[mi].ci.get(n) {
+    return r
+  }
+  let r = g.imm(n)
+  g.memos[mi].ci[n] = r
+  r
+}
+
+/// Puts the double with bits b in a floating point register.
+fn (var g: G) fimm(bits: Int) -> Int {
+  if bits == 0 {
+    return g.konst(g.def1(true, "fmov $d0, xzr", []))
+  }
+  let t = g.imm(bits)
+  g.konst(g.def1(true, "fmov $d0, $u0", [t]))
+}
+
+/// Puts the address of a symbol in a register.
+fn (var g: G) sym_addr(sym: Str) -> Int {
+  if g.os == "darwin" {
+    return g.konst(g.def1(false, "adrp $d0, ${sym}@PAGE\nadd $d0, $d0, ${sym}@PAGEOFF", []))
+  }
+  g.konst(g.def1(false, "adrp $d0, ${sym}\nadd $d0, $d0, :lo12:${sym}", []))
+}
+
+/// The bytes of a string or Bytes constant.
+fn const_bytes(a: ssa.Aux) -> Bytes? {
+  match a {
+    S(s) => Some(s.bytes())
+    Bs(b) => Some(b)
+    _ => None
+  }
+}
+
+/// Zero registers of t's layout (a placeholder after a failure).
+fn (var g: G) zeros(t: Int) -> List[Int] {
+  var out: List[Int] = []
+  for _ in g.layout(t) {
+    out.push(0)
+  }
+  out
+}
+
+/// The registers of SSA value v (constants are put in registers where
+/// they are used).
+fn (var g: G) words(v: Int) -> List[Int] {
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Const {
+    let mi = g.m_()
+    match x.aux {
+      I(n) => {
+        if let Some(r) = g.memos[mi].ci.get(n) {
+          return [r]
+        }
+        let r = g.cimm(n)
+        g.memos[mi].ci[n] = r
+        return [r]
+      }
+      F(f) => {
+        let key = float_key(f)
+        if let Some(r) = g.memos[mi].cf.get(key) {
+          return [r]
+        }
+        let r = g.fimm(float_bits(f))
+        g.memos[mi].cf[key] = r
+        return [r]
+      }
+      B(b) => {
+        if let Some(r) = g.memos[mi].cb.get(b) {
+          return [r]
+        }
+        let r = g.cimm(if b { 1 } else { 0 })
+        g.memos[mi].cb[b] = r
+        return [r]
+      }
+      S(..) | Bs(..) => {
+        let bs = const_bytes(x.aux) ?? b""
+        if let Some(r) = g.memos[mi].cs.get(bs) {
+          return [r, g.cimm(bs.len())]
+        }
+        let r = g.sym_addr(g.str_obj(bs))
+        g.memos[mi].cs[bs] = r
+        return [r, g.cimm(bs.len())]
+      }
+      _ => {
+        g.fail("constant in ${g.f.name}")
+        return g.zeros(x.ty)
+      }
+    }
+  }
+  if let Some(ptr) = g.stable.get(v) {
+    return g.load_words(ptr, 0, g.layout(x.ty))
+  }
+  if g.has_held {
+    if let Some(m) = g.held.mem_only.get(v) {
+      // held in memory at every use: loaded where it is needed whole
+      return g.load_words(g.held.mems[m].ptr, 0, g.layout(x.ty))
+    }
+  }
+  if g.has_val[v] {
+    return g.vals[v]
+  }
+  if x.ty < 0 || g.nwords(x.ty) == 0 {
+    return []
+  }
+  g.fail("v${v} in ${g.f.name} used before it is defined")
+  g.zeros(x.ty)
+}
+
+fn (var g: G) word(v: Int) -> Int {
+  let ws = g.words(v)
+  if ws.is_empty() {
+    g.fail("v${v} in ${g.f.name} has no words")
+    return g.real(0)
+  }
+  g.real(ws[0])
+}
+
+fn (var g: G) set(v: Int, ws: List[Int]) {
+  g.vals[v] = ws
+  g.has_val[v] = true
+}
+
+// ---------------------------------------------------------------------------
+// Functions and blocks
+
+/// The SSA blocks of the function in reverse postorder from the entry
+/// (rpo: a depth first walk over the successors last to first).
+fn rpo_of(f: ssa.Func) -> List[Int] {
+  let n = f.blocks.len()
+  var seen: List[Bool] = []
+  for _ in 0..n {
+    seen.push(false)
+  }
+  var post: List[Int] = []
+  // the walk's frames: a block and the successor index to try next
+  var stack: List[(Int, Int)] = []
+  seen[0] = true
+  stack.push((0, rpo_succs(f, 0).len() - 1))
+  while !stack.is_empty() {
+    let top = stack.len() - 1
+    let (b, i) = stack[top]
+    if i < 0 {
+      post.push(b)
+      let _p = stack.pop()
+      continue
+    }
+    stack[top] = (b, i - 1)
+    let to = rpo_succs(f, b)[i]
+    if !seen[to] {
+      seen[to] = true
+      stack.push((to, rpo_succs(f, to).len() - 1))
+    }
+  }
+  var out: List[Int] = []
+  var k = post.len() - 1
+  while k >= 0 {
+    out.push(post[k])
+    k -= 1
+  }
+  out
+}
+
+/// The successor blocks of SSA block b.
+fn rpo_succs(f: ssa.Func, b: Int) -> List[Int] {
+  let t = f.term(b)
+  if t < 0 {
+    return []
+  }
+  var out: List[Int] = []
+  for e in f.values[t].succs {
+    out.push(f.edges[e].to)
+  }
+  out
+}
+
+fn (var g: G) isel() {
+  let nb = g.f.blocks.len()
+  for b in 0..nb {
+    for v in g.f.blocks[b].instrs {
+      for a in g.f.values[v].args {
+        g.nuses[a] += 1
+        g.users[a] = v
+      }
+      for e in g.f.values[v].succs {
+        for a in g.f.edges[e].args {
+          g.nuses[a] += 1
+        }
+      }
+    }
+  }
+  // the blocks landing pads enter (decision 0085)
+  for b in 0..nb {
+    for v in g.f.blocks[b].instrs {
+      let w = g.f.values[v].pad
+      if w >= 0 {
+        g.pads[g.pad_target(w)] = true
+      }
+    }
+  }
+  let blocks = rpo_of(g.f)
+  // what only landing pads reach (the cleanup, the unwind exit) is laid
+  // out with the cold code too
+  var cold: List[Bool] = []
+  var any_cold = false
+  for b in 0..nb {
+    cold.push(g.pads[b])
+    any_cold = any_cold || g.pads[b]
+  }
+  var changed = any_cold
+  while changed {
+    changed = false
+    for b in blocks {
+      if cold[b] || g.f.blocks[b].preds.is_empty() {
+        continue
+      }
+      var all = true
+      for e in g.f.blocks[b].preds {
+        all = all && cold[g.f.edges[e].from]
+      }
+      if all {
+        cold[b] = true
+        changed = true
+      }
+    }
+  }
+  let ptrs = g.plan_held()
+  let idom = dominators_of(g.f, blocks)
+  g.plan_lsr(blocks, idom)
+  g.compute_ranges(blocks)
+  for b in blocks {
+    g.bmap[b] = g.blocks.len()
+    g.blocks.push(MBlock{id: 0})
+    if b != 0 {
+      for p in g.f.blocks[b].params {
+        g.set(p, g.new_vregs(g.layout(g.vty(p))))
+        if g.vkind(p) == ssa.Kind.List {
+          // the list's length travels with it (see opt.xo)
+          let c = g.new_vreg(false)
+          g.len_param[g.vals[p][0]] = c
+        }
+      }
+      g.lsr_params(b)
+      for p in g.f.blocks[b].params {
+        if g.mem_only(p) >= 0 {
+          g.has_val[p] = false
+        }
+      }
+    }
+  }
+  for (i, b) in blocks.indexed() {
+    let mb = g.bmap[b]
+    g.blocks[mb].id = g.nblock
+    g.nblock += 1
+    g.cur = mb
+    if cold[b] {
+      g.blocks[mb].cold = true
+      g.cold.push(mb)
+    } else {
+      g.hot.push(mb)
+    }
+    if g.pads[b] {
+      // entered by the unwinder after a fault: nothing computed before
+      // it in registers is known to hold (the operation that faulted did
+      // not finish)
+      g.mm = -1
+    } else {
+      let preds = g.f.blocks[b].preds
+      if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
+        // the only predecessor dominates b: what it computed holds
+        g.inherit(g.end_memo[g.f.edges[preds[0]].from])
+        g.branch_facts(b)
+      } else if idom[b] >= 0 && g.end_memo[idom[b]] >= 0 {
+        // so do the facts of the immediate dominator, except what memory
+        // held (a path from it may have stored)
+        g.inherit(g.end_memo[idom[b]])
+        g.clobber()
+      }
+    }
+    if i > 0 {
+      for p in g.f.blocks[b].params {
+        if g.vkind(p) != ssa.Kind.List || !g.has_val[p] {
+          continue
+        }
+        let r = g.vals[p][0]
+        if let Some(c) = g.len_param.get(r) {
+          let mi = g.m_()
+          g.memos[mi].lens[r] = c
+        }
+      }
+    }
+    g.lsr_header(b)
+    if i == 0 {
+      var defs: List[Int] = []
+      for (k, p) in g.f.blocks[b].params.indexed() {
+        if let Some(ptr) = ptrs.get(k) {
+          defs.push(ptr)
+          continue
+        }
+        let ws = g.new_vregs(g.layout(g.vty(p)))
+        g.set(p, ws)
+        for w in ws {
+          defs.push(w)
+        }
+      }
+      let _e = g.add(Inst{kind: K_ENTRY, defs: defs})
+      if g.has_ref_ptr {
+        g.by_ref_entry(ptrs)
+      }
+      for p in g.f.blocks[b].params {
+        if g.vkind(p) == ssa.Kind.List {
+          // known for the whole function (dead code removes the load
+          // when nothing uses it)
+          let _n = g.list_len(g.vals[p][0])
+        }
+      }
+    }
+    for v in g.f.blocks[b].instrs {
+      g.instr(v)
+    }
+  }
+}
+
+/// The block a branch along edge e goes to: the target itself, or a new
+/// block with the parallel move of e's arguments.
+fn (var g: G) edge(e: Int) -> Int {
+  let to = g.bmap[g.f.edges[e].to]
+  let (dsts, srcs) = g.edge_moves(e)
+  if dsts.is_empty() {
+    return to
+  }
+  let save = g.cur
+  let b = g.new_block(false)
+  g.cur = b
+  g.pmove(dsts, srcs)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [to]})
+  g.cur = save
+  b
+}
+
+fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  let to = g.f.edges[e].to
+  let ps = g.f.blocks[to].params
+  for (i, p) in ps.indexed() {
+    if g.mem_only(p) >= 0 {
+      continue // passed in place
+    }
+    let pw = g.vals[p]
+    let aw = g.words(g.f.edges[e].args[i])
+    for k in 0..pw.len() {
+      if pw[k] == aw[k] {
+        continue
+      }
+      dsts.push(pw[k])
+      srcs.push(rsrc(aw[k]))
+    }
+    if g.vkind(p) != ssa.Kind.List {
+      continue
+    }
+    if let Some(c) = g.len_param.get(pw[0]) {
+      let n = g.list_len(aw[0])
+      if n != c {
+        dsts.push(c)
+        srcs.push(rsrc(n))
+      }
+    }
+  }
+  g.lsr_moves(e, dsts, srcs)
+}
+
+fn (var g: G) pmove(dsts: List[Int], srcs: List[Src]) {
+  if dsts.is_empty() {
+    return
+  }
+  g.pmove_srcs(dsts, srcs)
+}
+
+/// A parallel move whose sources may be immediates.
+fn (var g: G) pmove_srcs(dsts: List[Int], srcs: List[Src]) {
+  var us: List[Int] = []
+  for a in srcs {
+    if a.kind == S_REG && a.v != 0 {
+      us.push(a.v)
+    }
+  }
+  let _i = g.add(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: us})
+}
+
+// ---------------------------------------------------------------------------
+// Instructions
+
+fn is_compare(o: ssa.Op) -> Bool {
+  o is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge
+}
+
+fn int_cond(o: ssa.Op) -> Str {
+  match o {
+    Eq => "eq"
+    Ne => "ne"
+    Lt => "lt"
+    Le => "le"
+    Gt => "gt"
+    Ge => "ge"
+    _ => ""
+  }
+}
+
+fn uint_cond(o: ssa.Op) -> Str {
+  match o {
+    Eq => "eq"
+    Ne => "ne"
+    Lt => "lo"
+    Le => "ls"
+    Gt => "hi"
+    Ge => "hs"
+    _ => ""
+  }
+}
+
+/// Whether v is the constant +0.0 (fcmp's #0.0).
+fn (g: G) is_pos_zero(v: Int) -> Bool {
+  if g.f.values[v].op != ssa.Op.Const {
+    return false
+  }
+  match g.f.values[v].aux {
+    F(x) => x == 0.0 && 1.0 / x > 0.0
+    _ => false
+  }
+}
+
+/// Whether v is a Float constant other than NaN.
+fn (g: G) not_nan_const(v: Int) -> Bool {
+  if g.f.values[v].op != ssa.Op.Const {
+    return false
+  }
+  match g.f.values[v].aux {
+    F(x) => !x.is_nan()
+    _ => false
+  }
+}
+
+/// A flag setting compare: its text, its uses, and the condition under
+/// which it holds.
+struct Cmp {
+  text: Str
+  us: List[Int]
+  cond: Str
+}
+
+/// `<`, `<=`, `>`, `>=` on Floats in the total order of std.md 1
+/// (floatOrder; decision 0053).
+fn (var g: G) float_order(o: ssa.Op, a: Int, b: Int) -> Cmp {
+  if g.not_nan_const(b) {
+    let cond = match o {
+      Lt => "mi"
+      Le => "ls"
+      Gt => "hi"
+      _ => "hs"
+    }
+    if g.is_pos_zero(b) {
+      return Cmp{text: "fcmp $u0, #0.0", us: [g.word(a)], cond: cond}
+    }
+    let wa = g.word(a)
+    let wb = g.word(b)
+    return Cmp{text: "fcmp $u0, $u1", us: [wa, wb], cond: cond}
+  }
+  if g.not_nan_const(a) {
+    let cond = match o {
+      Lt => "lt"
+      Le => "le"
+      Gt => "gt"
+      _ => "ge"
+    }
+    let wa = g.word(a)
+    let wb = g.word(b)
+    return Cmp{text: "fcmp $u0, $u1", us: [wa, wb], cond: cond}
+  }
+  var x = a
+  var y = b
+  var cond = "lt"
+  match o {
+    Gt => {
+      x = b
+      y = a
+    }
+    Le => {
+      x = b
+      y = a
+      cond = "ge"
+    }
+    Ge => cond = "ge"
+    _ => {}
+  }
+  let wx = g.word(x)
+  let wy = g.word(y)
+  Cmp{text: "fcmp $u0, $u0\nfccmp $u0, $u1, #0, vc", us: [wx, wy], cond: cond}
+}
+
+fn op_char(o: ssa.Op) -> Int {
+  match o {
+    Add => 43
+    Sub => 45
+    Mul => 42
+    Div => 47
+    _ => 37
+  }
+}
+
+/// The flag setting part of a comparison and the condition under which
+/// it holds (compare).
+fn (var g: G) compare(v: Int) -> Cmp {
+  let o = g.op(v)
+  var a = g.arg(v, 0)
+  var b = g.arg(v, 1)
+  for x in [a, b] {
+    if g.rem_test(x) {
+      let (k, _) = g.pow2(g.arg(x, 1))
+      return Cmp{text: "tst $u0, #${pow2i(k) - 1}", us: [g.word(g.arg(x, 0))], cond: int_cond(o)}
+    }
+  }
+  match g.vkind(a) {
+    Int | Bool => {
+      var cond = if g.vkind(a) == ssa.Kind.Bool { uint_cond(o) } else { int_cond(o) }
+      let (_, ac) = g.const_int(a)
+      if ac {
+        let (_, bc) = g.const_int(b)
+        if !bc {
+          let t = a
+          a = b
+          b = t
+          cond = swap_cond(cond)
+        }
+      }
+      let (n, ok) = g.const_int(b)
+      if ok && imm12(n) {
+        return Cmp{text: "cmp $u0, #${n}", us: [g.word(a)], cond: cond}
+      } else if ok && n != MIN_INT && imm12(-n) {
+        return Cmp{text: "cmn $u0, #${-n}", us: [g.word(a)], cond: cond}
+      }
+      let wa = g.word(a)
+      let wb = g.word(b)
+      Cmp{text: "cmp $u0, $u1", us: [wa, wb], cond: cond}
+    }
+    Float => {
+      if o == ssa.Op.Eq || o == ssa.Op.Ne {
+        let cond = int_cond(o)
+        if g.is_pos_zero(b) {
+          return Cmp{text: "fcmp $u0, #0.0", us: [g.word(a)], cond: cond}
+        }
+        let wa = g.word(a)
+        let wb = g.word(b)
+        return Cmp{text: "fcmp $u0, $u1", us: [wa, wb], cond: cond}
+      }
+      g.float_order(o, a, b)
+    }
+    _ => {
+      g.fail("compare of `${g.tname(g.vty(a))}`")
+      Cmp{text: "cmp $u0, $u1", us: [0, 0], cond: "eq"}
+    }
+  }
+}
+
+/// Lowers SSA value v.
+fn (var g: G) instr(v: Int) {
+  let pad = g.f.values[v].pad
+  if pad >= 0 {
+    // its calls and fault stubs unwind to the cleanup of its check
+    g.cur_pad = g.bmap[g.pad_target(pad)]
+  }
+  g.instr1(v)
+  g.cur_pad = -1
+}
+
+fn (var g: G) instr1(v: Int) {
+  let x = g.f.values[v]
+  match x.op {
+    Const | Cap => {}
+    Add | Sub => g.add_sub(v)
+    Mul => g.mul(v)
+    Div | Rem => g.div_rem(v)
+    And | Or | Xor => {
+      let ins = match x.op {
+        And => "and"
+        Or => "orr"
+        _ => "eor"
+      }
+      let a = g.word(x.args[0])
+      let b = g.word(x.args[1])
+      g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
+    }
+    Shl | Shr => g.shift(v)
+    Neg => {
+      let a = g.word(x.args[0])
+      if g.kind(x.ty) == ssa.Kind.Float {
+        g.set(v, [g.def1(true, "fneg $d0, $u0", [a])])
+        return
+      }
+      if x.pos.is_empty() {
+        g.set(v, [g.def1(false, "neg $d0, $u0", [a])])
+        return
+      }
+      let l = g.loc_label(x.pos)
+      g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a), symsrc(l)])])
+    }
+    Not => {
+      let a = g.word(x.args[0])
+      if g.kind(x.ty) == ssa.Kind.Bool {
+        g.set(v, [g.def1(false, "eor $d0, $u0, #1", [a])])
+      } else {
+        g.set(v, [g.def1(false, "mvn $d0, $u0", [a])])
+      }
+    }
+    Eq | Ne | Lt | Le | Gt | Ge => {
+      if g.eq_aggregate(v) {
+        return
+      }
+      if g.vkind(x.args[0]) == ssa.Kind.Unit {
+        let r = match x.op {
+          Eq | Le | Ge => 1
+          _ => 0
+        }
+        g.set(v, [g.imm(r)])
+        return
+      }
+      if g.nuses[v] == 1 && g.used_by_branch(v) {
+        g.lazy[v] = true
+        return
+      }
+      let c = g.compare(v)
+      g.set(v, [g.def1(false, "${c.text}\ncset $d0, ${c.cond}", c.us)])
+    }
+    IntToFloat => {
+      let a = g.word(x.args[0])
+      g.set(v, [g.def1(true, "scvtf $d0, $u0", [a])])
+    }
+    IntConv => {
+      // the same word as another integer type (decision 0081)
+      g.set(v, [g.word(x.args[0])])
+    }
+    FloatToInt => {
+      let a = g.word(x.args[0])
+      let t = g.def1(true, "frintz $d0, $u0", [a])
+      if !x.pos.is_empty() {
+        let lo = g.fimm(float_bits(-9223372036854775808.0))
+        let l = g.loc_label(x.pos)
+        g.check("fcmp $u0, $u1", [t, lo], "lt", "xo_fault_float_int", [rsrc(a), symsrc(l)])
+        let hi = g.fimm(float_bits(9223372036854775808.0))
+        let l2 = g.loc_label(x.pos)
+        g.check("fcmp $u0, $u1", [t, hi], "ge", "xo_fault_float_int", [rsrc(a), symsrc(l2)])
+      }
+      g.set(v, [g.def1(false, "fcvtzs $d0, $u0", [t])])
+    }
+    Struct | Tuple => {
+      var ws: List[Int] = []
+      for a in x.args {
+        for w in g.words(a) {
+          ws.push(w)
+        }
+      }
+      g.set(v, ws)
+    }
+    Field => g.field_op(v)
+    SetField => g.set_field_op(v)
+    Variant => g.set(v, g.variant(x.ty, aux_int(x.aux), x.args))
+    Tag => {
+      let (ptr, ok) = g.mem_of(x.args[0])
+      if ok {
+        // an enum in memory (decision 0153): only its tag is read
+        g.set(v, g.load_words(ptr, 0, [false]))
+        return
+      }
+      g.set(v, [g.words(x.args[0])[0]])
+    }
+    Payload => g.payload_op(v)
+    Call => g.call_op(v)
+    Closure => g.closure_op(v)
+    Capture => g.capture_op(v)
+    CallValue => g.call_value_op(v)
+    Box => g.box_op(v)
+    FuncAddr => g.set(v, [g.sym_addr(g.fname(aux_str(x.aux)))])
+    Rebind => {
+      // the new code word and the environment word of Args[0]
+      let code = g.sym_addr(g.fname(aux_str(x.aux)))
+      g.set(v, [code, g.words(x.args[0])[1]])
+    }
+    Unbox => g.unbox_op(v)
+    Fault => {
+      let ws = g.words(x.args[0])
+      let d = g.def1(false, "add $d0, $u0, #16", [ws[0]])
+      let w1 = g.real(ws[1])
+      let l = g.loc_label(x.pos)
+      let _c = g.add(Inst{kind: K_CALL, sym: g.sym("xo_fault"), srcs: [rsrc(d), rsrc(ws[1]), symsrc(l)], us: [d, w1], noret: true})
+      let _t = g.add(Inst{kind: K_TRAP})
+    }
+    Retain => {
+      let a = x.args[0]
+      if g.op(a) == ssa.Op.Const || g.cancel_rc(v) {
+        return // literals are immortal; see cancel_rc
+      }
+      g.retain(g.vty(a), g.words(a))
+    }
+    Release => {
+      if g.cancel[v] {
+        return
+      }
+      let a = x.args[0]
+      g.release(g.vty(a), g.words(a))
+    }
+    Reuse => g.reuse(v)
+    Share => {
+      let a = x.args[0]
+      if g.op(a) == ssa.Op.Const {
+        return // literals are immortal
+      }
+      let h = g.rc_helper("share", g.vty(a))
+      let ws = g.to_int(g.words(a), g.layout(g.vty(a)))
+      let _r = g.call(h, regs(ws), [])
+    }
+    Jump => {
+      g.end_memo[x.block] = g.m_()
+      let (dsts, srcs) = g.edge_moves(x.succs[0])
+      g.pmove(dsts, srcs)
+      let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[g.f.edges[x.succs[0]].to]]})
+    }
+    Branch => g.branch_op(v)
+    Return => {
+      if g.has_ref_ptr {
+        g.by_ref_return(v)
+        return
+      }
+      var us: List[Int] = []
+      for a in x.args {
+        for w in g.words(a) {
+          us.push(w)
+        }
+      }
+      var nz: List[Int] = []
+      for u in us {
+        if u != 0 {
+          nz.push(u)
+        }
+      }
+      let _r = g.add(Inst{kind: K_RET, srcs: regs(us), us: nz})
+    }
+    Unreachable => {
+      let _t = g.add(Inst{kind: K_TRAP})
+    }
+    _ => g.fail("op `${ssa.op_name(x.op)}`")
+  }
+}
+
+fn (var g: G) branch_op(v: Int) {
+  let x = g.f.values[v]
+  g.end_memo[x.block] = g.m_()
+  let c = x.args[0]
+  let cv = g.f.values[c]
+  if cv.op == ssa.Op.Const {
+    if let B(k) = cv.aux {
+      let e = if k { x.succs[0] } else { x.succs[1] }
+      let (dsts, srcs) = g.edge_moves(e)
+      g.pmove(dsts, srcs)
+      let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[g.f.edges[e].to]]})
+      return
+    }
+  }
+  if cv.op == ssa.Op.Call && aux_str(cv.aux) == "rt.landing" {
+    // only a fault takes it, through a landing pad (decision 0085): a
+    // jump to the normal successor, the pad a second target only for
+    // liveness and reachability
+    let t1 = g.edge(x.succs[1])
+    let t0 = g.edge(x.succs[0])
+    let _j = g.add(Inst{kind: K_JUMP, targets: [t1, t0]})
+    return
+  }
+  var inst = Inst{kind: K_CONDBR}
+  if g.lazy[c] {
+    let cmp = g.compare(c)
+    inst = Inst{kind: K_CONDBR, text: cmp.text, us: cmp.us, cond: cmp.cond}
+    if cmp.text == "tst $u0, #1" && (cmp.cond == "eq" || cmp.cond == "ne") {
+      // test bit 0 and branch
+      inst = Inst{kind: K_CONDBR, us: cmp.us, cond: if cmp.cond == "eq" { "tbz" } else { "tbnz" }}
+    }
+  } else {
+    inst = Inst{kind: K_CONDBR, cond: "cbnz", us: [g.word(c)]}
+  }
+  let t0 = g.edge(x.succs[0])
+  let t1 = g.edge(x.succs[1])
+  inst.targets = [t0, t1]
+  let _i = g.add(inst)
+}
+
+fn (g: G) used_by_branch(v: Int) -> Bool {
+  let t = g.f.term(g.f.values[v].block)
+  t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].args[0] == v
+}
+
+fn (var g: G) mul(v: Int) {
+  let x = g.f.values[v]
+  if g.kind(x.ty) == ssa.Kind.Float {
+    let a = g.word(x.args[0])
+    let b = g.word(x.args[1])
+    g.set(v, [g.def1(true, "fmul $d0, $u0, $u1", [a, b])])
+    return
+  }
+  var p = x.args[0]
+  var q = x.args[1]
+  let (_, pc) = g.const_int(p)
+  if pc {
+    let t = p
+    p = q
+    q = t
+  }
+  let a = g.word(x.args[0])
+  let b = g.word(x.args[1])
+  // the low word by shifts: x*2^k, x*(2^k + 1)
+  var low = ""
+  let (c, qc) = g.const_int(q)
+  if qc {
+    let (k, ok) = g.pow2(q)
+    if ok {
+      low = "lsl $d0, $u0, #${k}"
+    } else if c != MIN_INT {
+      let (k2, ok2) = pow2c(c - 1)
+      if ok2 {
+        low = "add $d0, $u0, $u0, lsl #${k2}"
+      }
+    }
+  }
+  if x.pos.is_empty() || g.safe_mul(v) {
+    if !low.is_empty() {
+      g.set(v, [g.def1(false, low, [g.word(p)])])
+    } else {
+      g.set(v, [g.def1(false, "mul $d0, $u0, $u1", [a, b])])
+    }
+    return
+  }
+  var r = 0
+  if !low.is_empty() {
+    r = g.def1(false, low, [g.word(p)])
+  } else {
+    r = g.def1(false, "mul $d0, $u0, $u1", [a, b])
+  }
+  let hi = g.def1(false, "smulh $d0, $u0, $u1", [a, b])
+  let l = g.loc_label(x.pos)
+  g.check("cmp $u0, $u1, asr #63", [hi, r], "ne", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+  g.set(v, [r])
+}
+
+fn (var g: G) add_sub(v: Int) {
+  let x = g.f.values[v]
+  let ins = if x.op == ssa.Op.Add { "add" } else { "sub" }
+  if g.kind(x.ty) == ssa.Kind.Float {
+    let a = g.word(x.args[0])
+    let b = g.word(x.args[1])
+    g.set(v, [g.def1(true, "f${ins} $d0, $u0, $u1", [a, b])])
+    return
+  }
+  var a = x.args[0]
+  var b = x.args[1]
+  // faults name the operands in source order: c + x swapped to x + c
+  // still reports c + x
+  var swapped = false
+  let (_, ac) = g.const_int(a)
+  if ac && x.op == ssa.Op.Add {
+    let (_, bc) = g.const_int(b)
+    if !bc {
+      let t = a
+      a = b
+      b = t
+      swapped = true
+    }
+  }
+  var checked = !x.pos.is_empty()
+  let (n0, bconst) = g.const_int(b)
+  if bconst && checked && g.safe_add(a, n0, x.op) {
+    checked = false // the bounds of a prove it
+  }
+  let flag = if checked { "s" } else { "" }
+  if bconst && (imm12(n0) || (n0 != MIN_INT && imm12(-n0))) {
+    var o = ins
+    var n = n0
+    if n < 0 {
+      o = if ins == "add" { "sub" } else { "add" }
+      n = -n
+    }
+    let text = "${o}${flag} $d0, $u0, #${n}"
+    let av = g.word(a)
+    if !checked {
+      g.set(v, [g.def1(false, text, [av])])
+      g.offset_facts(v, a, n0)
+      return
+    }
+    var l = rsrc(av)
+    var r = isrc(n0)
+    if swapped {
+      let t = l
+      l = r
+      r = t
+    }
+    let pl = g.loc_label(x.pos)
+    g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
+    g.offset_facts(v, a, n0)
+    return
+  }
+  let av = g.word(a)
+  let bv = g.word(b)
+  let text = "${ins}${flag} $d0, $u0, $u1"
+  if !checked {
+    g.set(v, [g.def1(false, text, [av, bv])])
+    if bconst {
+      g.offset_facts(v, a, n0)
+    }
+    return
+  }
+  var l = rsrc(av)
+  var r = rsrc(bv)
+  if swapped {
+    let t = l
+    l = r
+    r = t
+  }
+  let pl = g.loc_label(x.pos)
+  g.set(v, [g.checked(false, text, [av, bv], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
+  if bconst {
+    g.offset_facts(v, a, n0)
+  }
+}
+
+/// k when v is the Int constant 2^k, k >= 1.
+fn (g: G) pow2(v: Int) -> (Int, Bool) {
+  let (n, ok) = g.const_int(v)
+  if !ok {
+    return (0, false)
+  }
+  pow2c(n)
+}
+
+/// Whether v is `x % 2^k` used only by `== 0` or `!= 0` (lowered as a
+/// bit test of x).
+fn (g: G) rem_test(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Rem || g.kind(x.ty) != ssa.Kind.Int || g.nuses[v] != 1 {
+    return false
+  }
+  let (_, ok) = g.pow2(x.args[1])
+  if !ok {
+    return false
+  }
+  let u = g.users[v]
+  if u < 0 || !(g.op(u) is ssa.Op.Eq | ssa.Op.Ne) {
+    return false
+  }
+  var o = g.arg(u, 0)
+  if o == v {
+    o = g.arg(u, 1)
+  }
+  let (n, isc) = g.const_int(o)
+  isc && n == 0
+}
+
+fn (var g: G) div_rem(v: Int) {
+  let x = g.f.values[v]
+  let is_div = x.op == ssa.Op.Div
+  let (k, p2) = g.pow2(x.args[1])
+  if p2 && g.kind(x.ty) == ssa.Kind.Int {
+    if g.rem_test(v) {
+      return // lowered by the comparison
+    }
+    // round toward zero: add 2^k - 1 to negative dividends
+    let a = g.word(x.args[0])
+    let (lo, _) = g.bounds(x.args[0])
+    if lo >= 0 {
+      // not negative: a mask or a shift
+      if is_div {
+        g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [a])])
+      } else {
+        g.set(v, [g.def1(false, "and $d0, $u0, #${pow2i(k) - 1}", [a])])
+      }
+      return
+    }
+    let mi = g.m_()
+    if (g.memos[mi].low_zero.get(a) ?? 0) >= k {
+      // a branch proved a % 2^k == 0: exact
+      if is_div {
+        g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [a])])
+      } else {
+        g.set(v, [g.cimm(0)])
+      }
+      return
+    }
+    var t = 0
+    if k == 1 {
+      t = g.def1(false, "add $d0, $u0, $u0, lsr #63", [a])
+    } else {
+      let sg = g.def1(false, "asr $d0, $u0, #63", [a])
+      t = g.def1(false, "add $d0, $u0, $u1, lsr #${64 - k}", [a, sg])
+    }
+    if is_div {
+      g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [t])])
+      return
+    }
+    let msk = g.def1(false, "and $d0, $u0, #${-pow2i(k)}", [t])
+    g.set(v, [g.def1(false, "sub $d0, $u0, $u1", [a, msk])])
+    return
+  }
+  if g.kind(x.ty) == ssa.Kind.Float {
+    let a = g.word(x.args[0])
+    let b = g.word(x.args[1])
+    if is_div {
+      g.set(v, [g.def1(true, "fdiv $d0, $u0, $u1", [a, b])])
+    } else {
+      g.set(v, g.rt("fmod", regs([a, b]), [true]))
+    }
+    return
+  }
+  let (kc, is_const) = g.const_int(x.args[1])
+  let a = g.word(x.args[0])
+  let b = g.word(x.args[1])
+  if !x.pos.is_empty() && !(is_const && kc != 0) {
+    let l = g.loc_label(x.pos)
+    g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op)), symsrc(l)])
+  }
+  if is_div {
+    if !x.pos.is_empty() && !(is_const && kc != -1) {
+      let mn = g.imm(MIN_INT)
+      let l = g.loc_label(x.pos)
+      g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b), symsrc(l)])
+    }
+    g.set(v, [g.def1(false, "sdiv $d0, $u0, $u1", [a, b])])
+    return
+  }
+  // a - (a / b) * b; arm64's sdiv of the minimum by -1 is the minimum, so
+  // `x % -1` is 0 as Xo requires
+  let q = g.def1(false, "sdiv $d0, $u0, $u1", [a, b])
+  g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, b, a])])
+}
+
+fn (var g: G) shift(v: Int) {
+  let x = g.f.values[v]
+  let a = g.word(x.args[0])
+  let (k, kc) = g.const_int(x.args[1])
+  if kc && k >= 0 && k < 64 {
+    if x.op == ssa.Op.Shr {
+      g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [a])])
+      return
+    }
+    let r = g.def1(false, "lsl $d0, $u0, #${k}", [a])
+    if !x.pos.is_empty() {
+      let back = g.def1(false, "asr $d0, $u0, #${k}", [r])
+      let l = g.loc_label(x.pos)
+      g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k), symsrc(l)])
+    }
+    g.set(v, [r])
+    return
+  }
+  let b = g.word(x.args[1])
+  if !x.pos.is_empty() {
+    let l = g.loc_label(x.pos)
+    g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b), symsrc(l)])
+  }
+  if x.op == ssa.Op.Shr {
+    g.set(v, [g.def1(false, "asr $d0, $u0, $u1", [a, b])])
+    return
+  }
+  let r = g.def1(false, "lsl $d0, $u0, $u1", [a, b])
+  if !x.pos.is_empty() {
+    let back = g.def1(false, "asr $d0, $u0, $u1", [r, b])
+    let l = g.loc_label(x.pos)
+    g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b), symsrc(l)])
+  }
+  g.set(v, [r])
+}
+
+/// The words of variant tag of enum t.
+fn (var g: G) variant(t: Int, tag: Int, args: List[Int]) -> List[Int] {
+  var ws: List[Int] = []
+  for _ in 0..g.nwords(t) {
+    ws.push(0)
+  }
+  ws[0] = g.imm(tag)
+  var k = 1
+  for a in args {
+    let aw = g.words(a)
+    for (i, fp) in g.layout(g.vty(a)).indexed() {
+      if fp {
+        ws[k] = g.def1(false, "fmov $d0, $u0", [aw[i]])
+      } else {
+        ws[k] = aw[i]
+      }
+      k += 1
+    }
+  }
+  ws
+}
+
+/// Converts payload words (integer registers) to a value of the given
+/// layout.
+fn (var g: G) from_payload(ws: List[Int], lay: List[Bool]) -> List[Int] {
+  var out: List[Int] = []
+  for (i, fp) in lay.indexed() {
+    if fp {
+      out.push(g.def1(true, "fmov $d0, $u0", [g.real(ws[i])]))
+    } else {
+      out.push(ws[i])
+    }
+  }
+  out
+}
+
+/// Converts value words to integer registers (floats as bits), the
+/// convention of the reference counting helpers.
+fn (var g: G) to_int(ws: List[Int], lay: List[Bool]) -> List[Int] {
+  var out: List[Int] = []
+  for (i, fp) in lay.indexed() {
+    if fp {
+      out.push(g.def1(false, "fmov $d0, $u0", [ws[i]]))
+    } else {
+      out.push(ws[i])
+    }
+  }
+  out
+}
+
+fn (var g: G) field_op(v: Int) {
+  let x = g.f.values[v]
+  if g.mem_only(v) >= 0 {
+    return // a `var` result left in memory: read where used
+  }
+  let u = x.args[0]
+  let fi = aux_int(x.aux)
+  let (off, n) = g.field_words(g.vty(u), fi)
+  let mu = g.mem_only(u)
+  if mu >= 0 {
+    // a field of a value held in memory
+    g.set(v, g.load_words(g.held.mems[mu].ptr, off, g.layout(x.ty)))
+    return
+  }
+  if let Some(ptr) = g.stable.get(u) {
+    if g.big_by_ref(x.ty) {
+      // a large field of read only memory: read in place where used,
+      // passed on by address
+      g.stable[v] = g.addr_at(ptr, 8 * off)
+      return
+    }
+    g.set(v, g.load_words(ptr, off, g.layout(x.ty)))
+    return
+  }
+  if g.lazy_res.contains((u, fi)) {
+    g.fail("v${v} in ${g.f.name}: a result left in memory read out of place")
+  }
+  let ws = g.words(u)
+  g.set(v, ws[off..off + n])
+}
+
+fn (var g: G) set_field_op(v: Int) {
+  let x = g.f.values[v]
+  let (off, n) = g.field_words(x.ty, aux_int(x.aux))
+  if g.has_held {
+    if let Some(m) = g.held.in_place.get(v) {
+      // the field is written in place
+      let ptr = g.held.mems[m].ptr
+      let u_only = g.mem_only(x.args[0]) >= 0
+      var old: List[Int] = []
+      if !u_only {
+        old = g.words(x.args[0])
+      }
+      g.store_words_at(ptr, off, g.words(x.args[1]))
+      if g.mem_only(v) >= 0 {
+        return
+      }
+      if u_only {
+        g.set(v, g.load_words(ptr, 0, g.layout(x.ty)))
+        return
+      }
+      var ws = old
+      let nw = g.words(x.args[1])
+      for k in 0..n {
+        ws[off + k] = nw[k]
+      }
+      g.set(v, ws)
+      return
+    }
+  }
+  var ws = g.words(x.args[0])
+  let nw = g.words(x.args[1])
+  for k in 0..n {
+    ws[off + k] = nw[k]
+  }
+  g.set(v, ws)
+}
+
+fn (var g: G) payload_op(v: Int) {
+  let x = g.f.values[v]
+  let (tag, field) = match x.aux {
+    P(tag, field) => (tag, field)
+    _ => (0, 0)
+  }
+  let e = x.args[0]
+  let (off, n) = g.payload_words(g.vty(e), tag, field)
+  let (ptr, ok) = g.mem_of(e)
+  if ok {
+    // a payload of an enum in memory (decision 0153): read in place; a
+    // large one of read only memory stays there
+    if g.stable.contains(e) && g.big_by_ref(x.ty) {
+      g.stable[v] = g.addr_at(ptr, 8 * off)
+      return
+    }
+    g.set(v, g.load_words(ptr, off, g.layout(x.ty)))
+    return
+  }
+  let ws = g.words(e)[off..off + n]
+  g.set(v, g.from_payload(ws, g.layout(x.ty)))
+}
+
+// ---------------------------------------------------------------------------
+// Dominators
+
+/// The immediate dominator of each SSA block (blocks in reverse
+/// postorder; Cooper, Harvey, Kennedy 2001): -1 for the entry and the
+/// blocks not reached.
+fn dominators_of(f: ssa.Func, blocks: List[Int]) -> List[Int] {
+  let nb = f.blocks.len()
+  var num: List[Int] = []
+  var idom: List[Int] = []
+  for _ in 0..nb {
+    num.push(-1)
+    idom.push(-1)
+  }
+  for (i, b) in blocks.indexed() {
+    num[b] = i
+  }
+  idom[blocks[0]] = blocks[0]
+  var changed = true
+  while changed {
+    changed = false
+    for bi in 1..blocks.len() {
+      let b = blocks[bi]
+      var nd = -1
+      for e in f.blocks[b].preds {
+        let p = f.edges[e].from
+        if idom[p] < 0 {
+          continue
+        }
+        if nd < 0 {
+          nd = p
+        } else {
+          // intersect
+          var a = p
+          var c = nd
+          while a != c {
+            while num[a] > num[c] {
+              a = idom[a]
+            }
+            while num[c] > num[a] {
+              c = idom[c]
+            }
+          }
+          nd = a
+        }
+      }
+      if nd >= 0 && idom[b] != nd {
+        idom[b] = nd
+        changed = true
+      }
+    }
+  }
+  idom[blocks[0]] = -1
+  idom
+}

@@ -1,0 +1,160 @@
+// MIR: machine instructions over virtual registers (internal/arm64
+// mir.go).
+//
+// A virtual register (vreg) is an Int; 0 is the zero register (xzr),
+// which instruction selection uses for payload words no variant fills.
+// Virtual registers need not be SSA: a few are defined on two paths
+// (the result of a list push that may grow, the arms of `list.get`), and
+// block parameters are defined by the parallel move of each predecessor.
+//
+// Plain instructions carry an assembly template: `$d0` is the first
+// definition, `$u1` the second use; `$wd0` and `$wu1` the 32 bit names
+// of integer registers; `$OUT` is the frame offset of the scratch slot
+// runtime calls write a length into.
+//
+// Blocks are indexes into G.blocks (their creation order); a block's
+// `id` is the number of its label. -1 stands for none.
+
+// Instruction kinds (ikind).
+const K_PLAIN = 0
+/// defs[k] = srcs[k], all at once
+const K_PMOVE = 1
+/// call sym with srcs, defs are the result words
+const K_CALL = 2
+/// defs are the function parameters, from the ABI locations
+const K_ENTRY = 3
+/// uses are the result words
+const K_RET = 4
+/// to targets[0]; a targets[1] is a landing pad's block, entered only by
+/// the unwinder (decision 0085)
+const K_JUMP = 5
+/// text sets flags (or cond is cbnz/cbz on uses[0]); targets[0] if cond,
+/// else targets[1]
+const K_CONDBR = 6
+/// after a call that does not return
+const K_TRAP = 7
+/// through a table on uses[0] minus text (a decimal): targets[k] for k,
+/// the last target otherwise (jumptab.xo)
+const K_SWITCH = 8
+
+// Operand kinds (srcKind).
+const S_REG = 0
+const S_IMM = 1
+const S_SYM = 2
+const S_FRAME = 3
+/// the address of byte imm of the frame's memory (byref.xo)
+const S_MEM = 4
+
+/// An operand of a call, a fault stub, or a parallel move.
+struct Src {
+  kind: Int
+  v: Int = 0
+  imm: Int = 0
+  sym: Str = ""
+}
+
+fn rsrc(v: Int) -> Src {
+  Src{kind: S_REG, v: v}
+}
+
+fn isrc(n: Int) -> Src {
+  Src{kind: S_IMM, imm: n}
+}
+
+fn symsrc(s: Str) -> Src {
+  Src{kind: S_SYM, sym: s}
+}
+
+fn framesrc() -> Src {
+  Src{kind: S_FRAME}
+}
+
+fn regs(vs: List[Int]) -> List[Src] {
+  var out: List[Src] = []
+  for v in vs {
+    out.push(rsrc(v))
+  }
+  out
+}
+
+/// A machine instruction.
+struct Inst {
+  kind: Int
+  text: Str = ""
+  defs: List[Int] = []
+  /// template uses first, then the vregs of srcs and fault args
+  us: List[Int] = []
+  /// the defs are written before the uses are dead (they must not share
+  /// registers)
+  early: Bool = false
+  /// how a fault stub recomputes an operand whose register the result
+  /// took ("add", "sub", "neg")
+  recover: Str = ""
+  /// the side exit of a checked instruction: when fcond holds after it,
+  /// the runtime function ffn is called with fargs (it does not return)
+  has_fault: Bool = false
+  fcond: Str = ""
+  ffn: Str = ""
+  fargs: List[Src] = []
+  /// K_CALL: the callee symbol and the arguments; K_PMOVE: the sources
+  sym: Str = ""
+  srcs: List[Src] = []
+  cond: Str = ""
+  targets: List[Int] = []
+  /// K_CONDBR with cond tbz or tbnz: the bit tested
+  bit: Int = 0
+  /// K_CALL: the call never returns (a fault)
+  noret: Bool = false
+  /// K_CALL: through the code word of a closure, in x0 (`blr x0`)
+  indirect: Bool = false
+  /// a plain instruction that makes a constant (hoistConsts may move it)
+  konst: Bool = false
+  /// the landing pad block of a call or of a fault stub's call (decision
+  /// 0085), -1 for none
+  pad: Int = -1
+}
+
+/// A machine block.
+struct MBlock {
+  id: Int
+  insts: List[Inst] = []
+  cold: Bool = false
+  succs: List[Int] = []
+  preds: List[Int] = []
+  // filled by register allocation
+  start: Int = 0
+  end: Int = 0
+  depth: Int = 0
+}
+
+/// The terminator of block b, or -1 (its index in insts).
+fn (g: G) term_at(b: Int) -> Int {
+  let n = g.blocks[b].insts.len()
+  if n == 0 {
+    return -1
+  }
+  n - 1
+}
+
+/// The kind of block b's last instruction, or -1.
+fn (g: G) term_kind(b: Int) -> Int {
+  let n = g.blocks[b].insts.len()
+  if n == 0 {
+    return -1
+  }
+  g.blocks[b].insts[n - 1].kind
+}
+
+/// The targets of block b's terminator when it branches (jump, condbr,
+/// switch).
+fn (g: G) msuccs(b: Int) -> List[Int] {
+  let n = g.blocks[b].insts.len()
+  if n == 0 {
+    return []
+  }
+  let k = g.blocks[b].insts[n - 1].kind
+  if k == K_JUMP || k == K_CONDBR || k == K_SWITCH {
+    return g.blocks[b].insts[n - 1].targets
+  }
+  []
+}

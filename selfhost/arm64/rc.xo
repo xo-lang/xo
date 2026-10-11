@@ -1,0 +1,510 @@
+// Reference counting helpers, generated in assembly per program
+// (internal/arm64 rc.go, with the helper bodies of closures.go and
+// boxes.go).
+//
+//   - drop of a Str or List: x0 is the object; decrement its count, or
+//     free it at one.
+//   - dup and drop of an enum, struct, or tuple: the value's words in x0
+//     to x7 (floating point words as bits); they walk the heap leaves.
+//   - element callbacks (dupp, dropp) for xo_rl_copy and xo_rl_free: x0
+//     points to a list element; they load it and go to dup or drop.
+//
+// Counts shared between threads (decision 0058): a positive count is
+// thread local; a negative count is shared and updated atomically; the
+// immortal count of literals is negative with bit 62 clear.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The code that adds a reference to the shared count at [obj] (a
+/// relaxed atomic decrement of the negative count), with scratch
+/// registers t (64 bit) and st (32 bit, Linux only).
+fn (g: G) atomic_inc(obj: Str, t: Str, st: Str) -> Str {
+  if g.os == "darwin" {
+    return "mov ${t}, #-1\n\tstadd ${t}, [${obj}]"
+  }
+  "1:\n\tldxr ${t}, [${obj}]\n\tsub ${t}, ${t}, #1\n\tstxr ${st}, ${t}, [${obj}]\n\tcbnz ${st}, 1b"
+}
+
+/// The code that drops a reference from the shared count at [obj] with
+/// acquire and release order, and leaves the flags eq when it was the
+/// last reference.
+fn (g: G) atomic_dec(obj: Str, t: Str, st: Str) -> Str {
+  if g.os == "darwin" {
+    return "mov ${t}, #1\n\tldaddal ${t}, ${t}, [${obj}]\n\tcmn ${t}, #1"
+  }
+  "1:\n\tldaxr ${t}, [${obj}]\n\tadd ${t}, ${t}, #1\n\tstlxr ${st}, ${t}, [${obj}]\n\tcbnz ${st}, 1b\n\tcmp ${t}, #0"
+}
+
+/// The code that retains the object at register obj (incText): the
+/// labels start with lbl; it falls through when done, or returns when
+/// ret is set.
+fn (g: G) inc_text(obj: Str, t: Str, st: Str, lbl: Str, ret: Bool) -> Str {
+  if ret {
+    return "\tldr ${t}, [${obj}]\n\ttbnz ${t}, #63, ${lbl}_sh\n\tadd ${t}, ${t}, #1\n\tstr ${t}, [${obj}]\n\tret\n" +
+      "${lbl}_sh:\n\ttbz ${t}, #62, ${lbl}_ret\n\t${g.atomic_inc(obj, t, st)}\n${lbl}_ret:\n\tret\n"
+  }
+  "\tldr ${t}, [${obj}]\n\ttbz ${t}, #63, ${lbl}_loc\n\ttbz ${t}, #62, ${lbl}_inc\n\t${g.atomic_inc(obj, t, st)}\n\tb ${lbl}_inc\n" +
+    "${lbl}_loc:\n\tadd ${t}, ${t}, #1\n\tstr ${t}, [${obj}]\n${lbl}_inc:\n"
+}
+
+/// The code that releases the object at register obj (decText): it
+/// branches to free when that was the last reference, else to done (or
+/// returns, when done is empty).
+fn (g: G) dec_text(obj: Str, t: Str, st: Str, lbl: Str, free: Str, done: Str) -> Str {
+  let end = if done.is_empty() { "ret" } else { "b ${done}" }
+  "\tldr ${t}, [${obj}]\n\tcmp ${t}, #1\n\tb.le ${lbl}_slow\n\tsub ${t}, ${t}, #1\n\tstr ${t}, [${obj}]\n\t${end}\n" +
+    "${lbl}_slow:\n\tb.eq ${free}\n\ttbz ${t}, #62, ${lbl}_kept\n\t${g.atomic_dec(obj, t, st)}\n\tb.eq ${free}\n${lbl}_kept:\n\t${end}\n"
+}
+
+/// The code that marks the object at register obj shared (markText).
+fn mark_text(obj: Str, t: Str, done: Str) -> Str {
+  "\tldr ${t}, [${obj}]\n\tcmp ${t}, #0\n\tb.le ${done}\n\tneg ${t}, ${t}\n\tstr ${t}, [${obj}]\n"
+}
+
+/// A fresh assembler label for generated helpers.
+fn (var g: G) helper_label(hint: Str) -> Str {
+  g.nhelp += 1
+  g.local("xo_${hint}${g.nhelp}")
+}
+
+/// The symbol of the dup, drop, or share helper of t.
+fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
+  let key = "${kind} ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  g.nhelp += 1
+  // id names this helper's labels: helpers of the leaves are generated
+  // while this one is, and advance nhelp
+  let id = g.nhelp
+  let sym = g.local("xo_${kind}${id}")
+  g.helped[key] = sym
+  var b: List[Str] = []
+  b.push("// ${kind} ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  match g.kind(t) {
+    Func => g.func_rc(b, kind, sym)
+    Box => g.box_rc(b, kind, sym, t)
+    Handle => {
+      // a runtime object (decision 0068): shared from its creation, so
+      // marking it does nothing; at zero the runtime frees it
+      if kind == "dup" {
+        b.push(g.inc_text("x0", "x1", "w2", sym, true))
+      } else if kind == "drop" {
+        let free = g.local("xo_${kind}${id}_free")
+        b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
+        b.push("${free}:\n\tb ${g.sym("xo_h_free")}\n")
+      } else {
+        b.push("\tret\n")
+      }
+    }
+    Str | List => {
+      if kind == "dup" {
+        b.push(g.inc_text("x0", "x1", "w2", sym, true))
+      } else if kind == "share" {
+        let ret = g.local("xo_${kind}${id}_ret")
+        b.push(mark_text("x0", "x1", ret))
+        if g.kind(t) == ssa.Kind.List {
+          let et = g.m.types[t].elems[0]
+          if g.heap(et) {
+            b.push(imm_text(g.esize(et), "x1"))
+            b.push(g.addr("x2", g.elem_helper("share", et)))
+            b.push("\tb ${g.sym("xo_rl_share")}\n")
+          }
+        }
+        b.push("${ret}:\n\tret\n")
+      } else {
+        let free = g.local("xo_${kind}${id}_free")
+        b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
+        b.push("${free}:\n")
+        if g.kind(t) == ssa.Kind.Str {
+          b.push("\tb ${g.sym("xo_rc_free")}\n")
+        } else {
+          let et = g.m.types[t].elems[0]
+          b.push(imm_text(g.esize(et), "x1"))
+          if g.heap(et) {
+            b.push(g.addr("x2", g.elem_helper("drop", et)))
+          } else {
+            b.push("\tmov x2, #0\n")
+          }
+          b.push("\tb ${g.sym("xo_rl_free")}\n")
+        }
+      }
+    }
+    _ => g.agg_rc(b, kind, sym, id, t)
+  }
+  b.push("\n")
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// The body of the dup, drop, or share helper of an enum, struct, or
+/// tuple: the value's words are saved at [sp, #base + 8k]; words past x7
+/// come on the stack, and the leaves' helpers get theirs at [sp, #8k].
+fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
+  let n = g.nwords(t)
+  let x = g.m.types[t]
+  var all: List[Leaf] = []
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, all)
+      }
+    }
+  } else {
+    g.heap_leaves(t, 0, all)
+  }
+  var out = 0
+  for l in all {
+    out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
+  }
+  let base = out + 16
+  let frame = align16(base + 8 * n)
+  if frame >= 4096 {
+    g.fail("reference counting of `${x.name}` (too many words)")
+  }
+  if out == 0 && frame <= 504 {
+    b.push("\tstp x29, x30, [sp, #-${frame}]!\n\tmov x29, sp\n")
+  } else {
+    b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n")
+  }
+  for k in 0..n {
+    if k < 8 {
+      b.push("\tstr x${k}, [sp, #${base + 8 * k}]\n")
+    } else {
+      b.push("\tldr x9, [sp, #${frame + 8 * (k - 8)}]\n\tstr x9, [sp, #${base + 8 * k}]\n")
+    }
+  }
+  let done = g.local("xo_${kind}${id}_done")
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      var ls: List[Leaf] = []
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, ls)
+      }
+      if ls.is_empty() {
+        continue
+      }
+      let next = g.local("xo_${kind}${id}_v${vi}")
+      b.push("\tldr x9, [sp, #${base}]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
+      for (li, l) in ls.indexed() {
+        g.leaf_call(b, kind, l, base, "${sym}_v${vi}l${li}")
+      }
+      b.push("\tb ${done}\n${next}:\n")
+    }
+  } else {
+    for (li, l) in all.indexed() {
+      g.leaf_call(b, kind, l, base, "${sym}_l${li}")
+    }
+  }
+  b.push("${done}:\n")
+  if out == 0 && frame <= 504 {
+    b.push("\tldp x29, x30, [sp], #${frame}\n\tret\n")
+  } else {
+    b.push("${record_at("ldp", out)}\tadd sp, sp, #${frame}\n\tret\n")
+  }
+}
+
+/// The number of words an rc helper of leaf type t takes (a Str helper
+/// takes only the object).
+fn (var g: G) leaf_words(t: Int) -> Int {
+  if g.kind(t) == ssa.Kind.Str {
+    return 1
+  }
+  g.nwords(t)
+}
+
+/// Loads leaf l of the value saved at [sp, #base] and retains or releases
+/// it (leafCall). Box and function value leaves are counted inline; lbl
+/// prefixes the labels of the inline code.
+fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, base: Int, lbl: Str) {
+  let lk = g.kind(l.t)
+  if kind == "dup" && (lk is ssa.Kind.Str | ssa.Kind.List | ssa.Kind.Box | ssa.Kind.Handle) {
+    b.push("\tldr x9, [sp, #${base + 8 * l.off}]\n")
+    b.push(g.inc_text("x9", "x10", "w11", lbl, false))
+    return
+  }
+  if kind == "share" {
+    // out of line (helpers of the leaf types)
+  } else if lk == ssa.Kind.Func {
+    // the environment word; null: no captures
+    b.push("\tldr x0, [sp, #${base + 8 * (l.off + 1)}]\n\tcbz x0, ${lbl}_done\n")
+    if kind == "dup" {
+      b.push(g.inc_text("x0", "x9", "w10", lbl, false))
+      b.push("${lbl}_done:\n")
+      return
+    }
+    b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
+    b.push("${lbl}_free:\n\tldr x1, [x0, #8]\n\tbl ${g.sym("xo_rc_defer")}\n${lbl}_done:\n")
+    return
+  } else if lk == ssa.Kind.Box {
+    b.push("\tldr x0, [sp, #${base + 8 * l.off}]\n")
+    b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
+    b.push("${lbl}_free:\n")
+    b.push(g.addr("x1", g.box_drop(l.t)))
+    b.push("\tbl ${g.sym("xo_rc_defer")}\n${lbl}_done:\n")
+    return
+  }
+  let n = g.leaf_words(l.t)
+  for k in 8..imax(n, 8) {
+    b.push("\tldr x9, [sp, #${base + 8 * (l.off + k)}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+  }
+  for k in 0..imin(n, 8) {
+    b.push("\tldr x${k}, [sp, #${base + 8 * (l.off + k)}]\n")
+  }
+  b.push("\tbl ${g.rc_helper(kind, l.t)}\n")
+}
+
+/// The element callback (dupp, dropp, sharep) of t.
+fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
+  let key = "${kind}p ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  g.nhelp += 1
+  let sym = g.local("xo_${kind}p${g.nhelp}")
+  g.helped[key] = sym
+  let inner = g.rc_helper(kind, t)
+  var b: List[Str] = []
+  b.push("// ${kind}p ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  let n = g.leaf_words(t)
+  if n > 8 {
+    // the words past x7 go on the stack: no tail call
+    let out = align16(8 * (n - 8))
+    b.push("\tsub sp, sp, #${out + 16}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n")
+    for k in 8..n {
+      b.push("\tldr x9, [x0, #${8 * k}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+    }
+    var k = 7
+    while k >= 0 {
+      b.push("\tldr x${k}, [x0, #${8 * k}]\n")
+      k -= 1
+    }
+    b.push("\tbl ${inner}\n${record_at("ldp", out)}\tadd sp, sp, #${out + 16}\n\tret\n\n")
+    g.helpers.push(b.join(""))
+    return sym
+  }
+  var k = n - 1
+  while k >= 0 {
+    b.push("\tldr x${k}, [x0, #${8 * k}]\n")
+    k -= 1
+  }
+  b.push("\tb ${inner}\n\n")
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// Whether retain v can be dropped together with a release later in its
+/// block (cancelRC, ssa.CancelledRelease); the release is marked in
+/// cancel.
+fn (var g: G) cancel_rc(v: Int) -> Bool {
+  let r = g.cancelled_release(v)
+  if r < 0 {
+    return false
+  }
+  g.cancel[r] = true
+  true
+}
+
+/// The release that retain v cancels, or -1 (internal/ssa cancel.go
+/// CancelledRelease): v retains the one heap field of the variant its
+/// block is known to hold, and a release later in the block drops that
+/// enum value with nothing in between but pure projections and
+/// constructors.
+fn (g: G) cancelled_release(v: Int) -> Int {
+  if g.op(v) != ssa.Op.Retain {
+    return -1
+  }
+  let x = g.arg(v, 0)
+  if g.op(x) != ssa.Op.Payload || !(g.vkind(x) is ssa.Kind.Str | ssa.Kind.List) {
+    return -1
+  }
+  let (tag, _) = match g.f.values[x].aux {
+    P(tag, field) => (tag, field)
+    _ => (-1, -1)
+  }
+  let e = g.arg(x, 0)
+  if g.vkind(e) != ssa.Kind.Enum || g.m.types[g.vty(e)].variants[tag].fields.len() != 1 {
+    return -1
+  }
+  // the block runs only when e has the variant: its one predecessor
+  // branches on tag(e) == Tag
+  let b = g.f.values[v].block
+  let preds = g.f.blocks[b].preds
+  if preds.len() != 1 {
+    return -1
+  }
+  let br = g.f.term(g.f.edges[preds[0]].from)
+  if br < 0 || g.op(br) != ssa.Op.Branch {
+    return -1
+  }
+  let bs = g.f.values[br].succs
+  let to0 = g.f.edges[bs[0]].to
+  if to0 == g.f.edges[bs[1]].to || to0 != b {
+    return -1
+  }
+  let c = g.arg(br, 0)
+  if g.op(c) != ssa.Op.Eq || g.op(g.arg(c, 0)) != ssa.Op.Tag || !g.same_projection(g.arg(g.arg(c, 0), 0), e) {
+    return -1
+  }
+  let k = g.arg(c, 1)
+  let (kn, isk) = g.const_int(k)
+  if !isk || kn != tag {
+    return -1
+  }
+  let ins = g.f.blocks[b].instrs
+  var i = 0
+  while i < ins.len() && ins[i] != v {
+    i += 1
+  }
+  for j in i + 1..ins.len() {
+    let w = ins[j]
+    let o = g.op(w)
+    if o is ssa.Op.Field | ssa.Op.Tag | ssa.Op.Payload | ssa.Op.Const | ssa.Op.Tuple | ssa.Op.Struct {
+      continue
+    }
+    if o == ssa.Op.Release && g.same_projection(g.arg(w, 0), e) {
+      return w
+    }
+    return -1
+  }
+  -1
+}
+
+/// Whether a and b are the same value read through the same chain of
+/// field projections.
+fn (g: G) same_projection(a0: Int, b0: Int) -> Bool {
+  var a = a0
+  var b = b0
+  while g.op(a) == ssa.Op.Field && g.op(b) == ssa.Op.Field {
+    if g.vint(a) != g.vint(b) {
+      return false
+    }
+    a = g.arg(a, 0)
+    b = g.arg(b, 0)
+  }
+  a == b
+}
+
+/// Stores (op "stp") or loads (op "ldp") the frame record (x29, x30) at
+/// [sp, #off] of a helper's frame: one pair instruction while off is in
+/// its reach (504), two single ones past it.
+fn record_at(op: Str, off: Int) -> Str {
+  if off <= 504 {
+    return "\t${op} x29, x30, [sp, #${off}]\n"
+  }
+  let one = if op == "ldp" { "ldr" } else { "str" }
+  "\t${one} x29, [sp, #${off}]\n\t${one} x30, [sp, #${off + 8}]\n"
+}
+
+// ---------------------------------------------------------------------------
+// Helper bodies of function values (closures.go) and boxes (boxes.go)
+
+/// The body of the dup, drop, or share helper of a function value (x0
+/// the code, x1 the environment).
+fn (g: G) func_rc(var b: List[Str], kind: Str, sym: Str) {
+  b.push("\tcbz x1, ${sym}_none\n")
+  if kind == "dup" {
+    b.push(g.inc_text("x1", "x9", "w10", sym, true))
+  } else if kind == "drop" {
+    b.push(g.dec_text("x1", "x9", "w10", sym, "${sym}_free", ""))
+    b.push("${sym}_free:\n\tmov x0, x1\n\tldr x1, [x0, #8]\n\tb ${g.sym("xo_rc_defer")}\n")
+  } else if kind == "share" {
+    b.push(mark_text("x1", "x9", "${sym}_none"))
+    b.push("\tmov x0, x1\n\tldr x1, [x0, #16]\n\tb ${g.sym("xo_rc_defer")}\n")
+  }
+  b.push("${sym}_none:\n\tret\n")
+}
+
+/// {rc}
+const BOX_HDR = 8
+
+/// The body of the dup, drop, or share helper of a box (x0).
+fn (var g: G) box_rc(var b: List[Str], kind: Str, sym: Str, t: Int) {
+  if kind == "dup" {
+    b.push(g.inc_text("x0", "x9", "w10", sym, true))
+  } else if kind == "drop" {
+    b.push(g.dec_text("x0", "x9", "w10", sym, "${sym}_free", ""))
+    b.push("${sym}_free:\n")
+    b.push(g.addr("x1", g.box_drop(t)))
+    b.push("\tb ${g.sym("xo_rc_defer")}\n")
+  } else if kind == "share" {
+    b.push(mark_text("x0", "x9", "${sym}_ret"))
+    if g.heap(g.m.types[t].elems[0]) {
+      // the contents through the worklist
+      b.push(g.addr("x1", g.box_share(t)))
+      b.push("\tb ${g.sym("xo_rc_defer")}\n")
+    }
+    b.push("${sym}_ret:\n\tret\n")
+  }
+}
+
+/// The function that marks the contents of a box of type t (x0) shared.
+fn (var g: G) box_share(t: Int) -> Str {
+  let key = "boxshare ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  let sym = g.helper_label("boxshare")
+  g.helped[key] = sym
+  var b: List[Str] = []
+  b.push("// boxshare ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  var ls: List[Leaf] = []
+  g.heap_leaves(g.m.types[t].elems[0], 0, ls)
+  g.leaves_and_then(b, "share", ls, BOX_HDR, "")
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// The function that releases the contents of a box of type t and frees
+/// the cell (x0).
+fn (var g: G) box_drop(t: Int) -> Str {
+  let key = "boxdrop ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  let sym = g.helper_label("boxdrop")
+  g.helped[key] = sym
+  var b: List[Str] = []
+  b.push("// boxdrop ${g.tname(t)}\n\t.p2align 2\n${sym}:\n")
+  var ls: List[Leaf] = []
+  g.heap_leaves(g.m.types[t].elems[0], 0, ls)
+  g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_rc_free"))
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// The body of a function that runs the kind helper (drop or share) of
+/// the leaves ls of the words at [x0, #hdr], then goes to then with the
+/// cell x0 (or returns, when then is empty).
+fn (var g: G) leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], hdr: Int, then: Str) {
+  let tail = if then.is_empty() { "\tret\n\n" } else { "\tb ${then}\n\n" }
+  if ls.is_empty() {
+    b.push(tail)
+    return
+  }
+  var out = 0
+  for l in ls {
+    out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
+  }
+  let frame = out + 32
+  b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n\tstr x19, [sp, #${out + 16}]\n\tmov x19, x0\n")
+  for l in ls {
+    let h = g.rc_helper(kind, l.t)
+    load_call(b, h, "x19", hdr + 8 * l.off, g.leaf_words(l.t))
+  }
+  b.push("\tmov x0, x19\n\tldr x19, [sp, #${out + 16}]\n${record_at("ldp", out)}\tadd sp, sp, #${frame}\n${tail}")
+}
+
+/// Calls sym with the n words at [base, #off] as integer arguments:
+/// words past x7 go to the stack arguments at [sp, #8k].
+fn load_call(var b: List[Str], sym: Str, base: Str, off: Int, n: Int) {
+  for k in 8..imax(n, 8) {
+    b.push("\tldr x9, [${base}, #${off + 8 * k}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+  }
+  for k in 0..imin(n, 8) {
+    b.push("\tldr x${k}, [${base}, #${off + 8 * k}]\n")
+  }
+  b.push("\tbl ${sym}\n")
+}

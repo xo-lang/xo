@@ -299,6 +299,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runTypeDump(args[1:], stdout, stderr)
 	case "ssadump": // hidden: SSA dump per stage, compared with selfhost/ssa
 		return runSSADump(args[1:], stdout, stderr)
+	case "asmdump": // hidden: arm64 assembly, compared with selfhost/arm64 (decision 0158)
+		return runAsmDump(args[1:], stdout, stderr)
 	case "rtpack": // hidden: build a prebuilt runtime for a release (decision 0157)
 		return runRTPack(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

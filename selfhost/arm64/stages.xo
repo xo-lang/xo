@@ -1,0 +1,43 @@
+// The stages of the port (decision 0158): a function with a construct of
+// a stage not enabled yet is not emitted (it is counted as skipped by
+// the comparison, never compared).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// Why function fi cannot be emitted at the current stage, or "".
+fn (var g: G) unsupported(fi: Int) -> Str {
+  if !g.by_ref_of(fi).is_empty() {
+    return "stage 3, parameters by reference"
+  }
+  let f = g.m.funcs[fi]
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      match x.op {
+        Closure | Capture | CallValue | FuncAddr | Rebind => return "stage 2, function values"
+        Box | Unbox => return "stage 2, boxes"
+        Share | Reuse => return "stage 2, share and reuse"
+        Retain | Release => {
+          let k = g.kind(f.values[x.args[0]].ty)
+          if k is ssa.Kind.Func | ssa.Kind.Box {
+            return "stage 2, function values and boxes counted inline"
+          }
+        }
+        Eq | Ne => {
+          let k = g.kind(f.values[x.args[0]].ty)
+          if k is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum | ssa.Kind.List | ssa.Kind.Box {
+            return "stage 2, equality helpers"
+          }
+        }
+        Call => {
+          let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+          if ci >= 0 && !g.by_ref_of(ci).is_empty() {
+            return "stage 3, calls by reference"
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  ""
+}

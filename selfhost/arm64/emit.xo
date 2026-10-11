@@ -1,0 +1,1216 @@
+// Emission (internal/arm64 emit.go): the frame, the prologue and
+// epilogue, the instructions with their parallel moves resolved, the
+// out of line fault stubs, the call site tables, and the text peepholes
+// of the function (load pairs, far slots, far branches).
+
+/// A machine location: a register, or memory at [base, #off] (reg -1).
+struct MLoc {
+  reg: Int
+  base: Str = ""
+  off: Int = 0
+}
+
+const M_LOC = 0
+const M_IMM = 1
+const M_SYM = 2
+const M_FRAME = 3
+const M_ZERO = 4
+/// the address of byte imm of the frame's memory
+const M_MEM = 5
+
+struct MSrc {
+  kind: Int
+  l: MLoc = MLoc{reg: -1}
+  imm: Int = 0
+  sym: Str = ""
+}
+
+struct Move {
+  dst: MLoc
+  src: MSrc
+}
+
+fn reg_name(r: Int, w: Bool) -> Str {
+  if r >= FP_BASE {
+    return "d${r - FP_BASE}"
+  }
+  if r == 31 {
+    return if w { "wzr" } else { "xzr" }
+  }
+  if w {
+    return "w${r}"
+  }
+  "x${r}"
+}
+
+const SCRATCH0 = 16
+const SCRATCH1 = 17
+const SCRATCH2 = 15
+/// parallel move cycles
+const FSCRATCH = 63
+
+fn gp_scratch(k: Int) -> Int {
+  match k {
+    0 => 16
+    1 => 17
+    _ => 15
+  }
+}
+
+fn fp_scratch(k: Int) -> Int {
+  match k {
+    0 => 62
+    1 => 61
+    _ => 63
+  }
+}
+
+/// The layout of the frame (sp relative, after the prologue), size bytes,
+/// 16 byte aligned (frameInfo):
+///
+///	[0, out_args)             stack arguments of calls (when any)
+///	[out_off, out_off+8)      the $OUT slot (length out parameter)
+///	[spill_base, ...)         spill slots, 8 bytes each
+///	[save_base, ...)          callee saved registers
+///	[mem_off, ...)            memory of by reference arguments (byref.xo)
+///	[rec, rec+16)             the frame record (x29, x30); x29 = sp + rec
+struct Frame {
+  out_args: Int = 0
+  out_off: Int = 0
+  spill_base: Int = 0
+  save_base: Int = 0
+  mem_off: Int = 0
+  rec: Int = 0
+  size: Int = 0
+  leaf: Bool = false
+}
+
+/// The size of the stack argument area of the calls: the stack
+/// arguments, and the result words past the registers.
+fn (g: G) out_arg_bytes() -> Int {
+  var out = 0
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      if inst.kind == K_CALL {
+        var n = 0
+        for l in g.abi_locs(inst.srcs) + g.abi_locs(regs(inst.defs)) {
+          if l.reg < 0 {
+            n = imax(n, l.slot + 1)
+          }
+        }
+        out = imax(out, 8 * n)
+      }
+    }
+  }
+  out
+}
+
+/// An upper bound of the frame emit lays out with saved callee saved
+/// registers.
+fn (g: G) frame_bound(saved: Int) -> Int {
+  g.out_arg_bytes() + 16 + 8 + 8 * g.slots + 8 * saved + g.mem_bytes + 16
+}
+
+fn (g: G) label(b: Int) -> Str {
+  g.local("f${g.nfunc}_b${g.blocks[b].id}")
+}
+
+/// The location of v, or none (a register never allocated).
+fn (g: G) vloc(v: Int) -> (MLoc, Bool) {
+  let l = g.loc[v]
+  if l.reg >= 0 {
+    return (MLoc{reg: l.reg}, true)
+  }
+  if l.slot < 0 {
+    // Go's zero mloc: register 0
+    return (MLoc{reg: 0}, false)
+  }
+  (MLoc{reg: -1, base: "sp", off: g.fr.spill_base + 8 * l.slot}, true)
+}
+
+fn (var g: G) emit() {
+  g.nfunc += 1
+  var fr = Frame{out_args: g.out_arg_bytes()}
+  var calls = false
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      calls = calls || inst.kind == K_CALL
+    }
+  }
+  fr.leaf = !calls && g.saved.is_empty() && g.slots == 0 && !g.out && g.mem_bytes == 0
+  var base = 0
+  if fr.out_args == 0 {
+    base = 16 // the frame record comes first
+  }
+  fr.out_off = base + fr.out_args
+  fr.spill_base = fr.out_off
+  if g.out {
+    fr.spill_base += 8
+  }
+  fr.save_base = fr.spill_base + 8 * g.slots
+  fr.mem_off = fr.save_base + 8 * g.saved.len()
+  if fr.out_args == 0 {
+    fr.size = align16(fr.mem_off + g.mem_bytes)
+  } else {
+    fr.rec = align16(fr.mem_off + g.mem_bytes)
+    fr.size = fr.rec + 16
+  }
+  if g.base != 0 {
+    // a far frame: the saved registers and the frame record below the
+    // spill slots, within reach of sp; the slots past it are addressed
+    // through x28 (far_slots)
+    fr.out_off = fr.out_args
+    fr.save_base = fr.out_off
+    if g.out {
+      fr.save_base += 8
+    }
+    fr.rec = align16(fr.save_base + 8 * g.saved.len())
+    fr.spill_base = fr.rec + 16
+    fr.mem_off = fr.spill_base + 8 * g.slots
+    fr.size = align16(fr.mem_off + g.mem_bytes)
+  }
+  if fr.leaf {
+    fr.size = 0
+  }
+  if (fr.size > MAX_FRAME && g.base == 0) || fr.size >= MAX_FAR_FRAME || fr.rec + 16 > MAX_FRAME {
+    g.fail("frame of ${g.f.name} too large (${fr.size} bytes)")
+  }
+  g.fr = fr
+  var b: List[Str] = []
+  b.push("// func ${g.f.name}\n")
+  g.func_header(b, g.fname(g.f.name), false)
+  var pads = false
+  for mb in g.order {
+    for inst in g.blocks[mb].insts {
+      pads = pads || inst.pad >= 0
+    }
+  }
+  g.cfi_start(b, pads)
+  g.prologue(b)
+  g.cfi_frame(b)
+  // blocks reached once branches skip the blocks that only jump
+  var live: List[Bool] = []
+  for _ in 0..g.blocks.len() {
+    live.push(false)
+  }
+  var work = [g.order[0]]
+  while !work.is_empty() {
+    let mb = work.pop() ?? 0
+    if live[mb] {
+      continue
+    }
+    live[mb] = true
+    // the walk of the Go emitter is depth first; the set reached is the
+    // same in any order
+    for t in g.blocks[mb].succs {
+      let ft = g.fwd(t)
+      work.push(ft)
+      let ti = g.blocks[ft].insts
+      if ti.len() == 1 && ti[0].kind == K_CONDBR {
+        for t2 in ti[0].targets {
+          work.push(g.fwd(t2))
+        }
+      }
+    }
+  }
+  var emitted: List[Int] = []
+  for mb in g.order {
+    if live[mb] {
+      emitted.push(mb)
+    }
+  }
+  for (bi, mb) in emitted.indexed() {
+    var next = -1
+    if bi + 1 < emitted.len() {
+      next = emitted[bi + 1]
+    }
+    b.push("${g.label(mb)}:\n")
+    g.cur = mb
+    let head = g.check_head(mb)
+    let ins = g.blocks[mb].insts
+    for (k, inst) in ins.indexed() {
+      g.emit_inst(b, inst, next)
+      if k == 0 && head {
+        b.push("${g.label(mb)}_c:\n") // past the check (rotate_jump)
+      }
+    }
+  }
+  if g.fr.leaf && !g.stubs.is_empty() {
+    // a leaf function's fault stubs make a frame record before their call
+    // (emit_plain), so the unwinder can go past them
+    b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+  }
+  b.push(g.stubs.join(""))
+  b.push("\t.cfi_endproc\n")
+  let sites = g.sites + g.stub_sites
+  if !sites.is_empty() {
+    g.lsda(sites)
+  }
+  b.push("\n")
+  g.text.push(g.far_tests(g.far_slots(pair_loads(b.join("")))))
+}
+
+/// The number of instructions past which a function's tbz and tbnz may
+/// not reach their targets.
+const FAR_TEST_LIMIT = 7000
+
+/// The number of instructions past which a function's b.cond, cbz, and
+/// cbnz may not reach their targets.
+const FAR_COND_LIMIT = 240000
+
+/// Rewrites every tbz and tbnz of a function longer than FAR_TEST_LIMIT
+/// instructions, and every b.cond, cbz, and cbnz of one longer than
+/// FAR_COND_LIMIT, as the opposite test around an unconditional branch
+/// (farTests; gotchas/arm64-tbz-range.md).
+fn (g: G) far_tests(text: Str) -> Str {
+  let lines = text.split("\n")
+  var n = 0
+  for l in lines {
+    if l.starts_with("\t") && !l.starts_with("\t.") {
+      n += 1
+    }
+  }
+  if n < FAR_TEST_LIMIT {
+    return text
+  }
+  var b: List[Str] = []
+  var k = 0
+  for (i, l) in lines.indexed() {
+    if i > 0 {
+      b.push("\n")
+    }
+    if !l.starts_with("\t") {
+      b.push(l)
+      continue
+    }
+    let f = fields_of(l)
+    if f.len() == 4 && (f[0] == "tbz" || f[0] == "tbnz") {
+      k += 1
+      let skip = g.local("f${g.nfunc}_far${k}")
+      let o = if f[0] == "tbz" { "tbnz" } else { "tbz" }
+      b.push("\t${o} ${f[1]} ${f[2]} ${skip}\n\tb ${f[3]}\n${skip}:")
+      continue
+    }
+    if n >= FAR_COND_LIMIT && f.len() == 3 && (f[0] == "cbz" || f[0] == "cbnz") {
+      k += 1
+      let skip = g.local("f${g.nfunc}_far${k}")
+      let o = if f[0] == "cbz" { "cbnz" } else { "cbz" }
+      b.push("\t${o} ${f[1]} ${skip}\n\tb ${f[2]}\n${skip}:")
+      continue
+    }
+    if n >= FAR_COND_LIMIT && f.len() == 2 && f[0].starts_with("b.") && !inv_cond(f[0][2..f[0].len()]).is_empty() {
+      k += 1
+      let skip = g.local("f${g.nfunc}_far${k}")
+      b.push("\tb.${inv_cond(f[0][2..f[0].len()])} ${skip}\n\tb ${f[1]}\n${skip}:")
+      continue
+    }
+    b.push(l)
+  }
+  b.join("")
+}
+
+/// The fields of a line split on white space (strings.Fields).
+fn fields_of(l: Str) -> List[Str] {
+  var out: List[Str] = []
+  let bs = l.bytes()
+  var i = 0
+  let n = bs.len()
+  while i < n {
+    while i < n && (bs[i] == ' ' || bs[i] == '\t' || bs[i] == '\n') {
+      i += 1
+    }
+    if i >= n {
+      break
+    }
+    var j = i
+    while j < n && !(bs[j] == ' ' || bs[j] == '\t' || bs[j] == '\n') {
+      j += 1
+    }
+    out.push(l[i..j])
+    i = j
+  }
+  out
+}
+
+/// The largest frame whose every spill slot and saved register, and 4 KiB
+/// of incoming stack arguments past them, is within reach of a scaled 12
+/// bit `ldr`/`str` offset from sp.
+const MAX_FRAME = 28672
+
+/// What `add x28, sp, #hi, lsl #12` and `add x28, x28, #lo` reach.
+const MAX_FAR_FRAME = 16777216
+
+/// Rewrites the sp relative loads and stores of a far frame whose offset
+/// is past the instruction's reach to go through x28 (farSlots).
+fn (g: G) far_slots(text: Str) -> Str {
+  if g.base == 0 {
+    return text
+  }
+  let lines = text.split("\n")
+  var b: List[Str] = []
+  for (i, l) in lines.indexed() {
+    if i > 0 {
+      b.push("\n")
+    }
+    let (ok, op, rs, off) = parse_sp_ref(l)
+    if !ok {
+      b.push(l)
+      continue
+    }
+    let (scale, pair) = mem_scale(op, rs)
+    var reach = 4095 * scale
+    if pair {
+      reach = 63 * scale
+    }
+    if off <= reach && off % scale == 0 {
+      b.push(l)
+      continue
+    }
+    let hi = off & ~4095
+    var lo = off & 4095
+    b.push("\tadd x28, sp, #${hi >> 12}, lsl #12\n")
+    if lo > reach || lo % scale != 0 {
+      b.push("\tadd x28, x28, #${lo}\n")
+      lo = 0
+    }
+    b.push("\t${op} ${rs}, [x28, #${lo}]")
+  }
+  b.join("")
+}
+
+/// Whether l is `\t<op> <regs>, [sp, #<off>]` with op a load or store
+/// (spRefRE): the op, the registers, and the offset.
+fn parse_sp_ref(l: Str) -> (Bool, Str, Str, Int) {
+  let bad = (false, "", "", 0)
+  if !l.starts_with("\t") || !l.ends_with("]") {
+    return bad
+  }
+  let sp = l.find(" ") ?? -1
+  if sp < 0 {
+    return bad
+  }
+  let op = l[1..sp]
+  if !(op is "ldr" | "str" | "ldp" | "stp" | "ldrb" | "strb" | "ldrh" | "strh" | "ldrsw" | "ldrsb" | "ldrsh") {
+    return bad
+  }
+  let rest = l[sp + 1..l.len()]
+  // ([^\[]+), \[sp, #([0-9]+)\]$
+  let br = rest.find("[") ?? -1
+  if br < 2 || rest[br - 2..br] != ", " {
+    return bad
+  }
+  let rs = rest[0..br - 2]
+  if rs.is_empty() {
+    return bad
+  }
+  let tail = rest[br..rest.len()]
+  if !tail.starts_with("[sp, #") {
+    return bad
+  }
+  let num = tail[6..tail.len() - 1]
+  if !is_digits(num) {
+    return bad
+  }
+  match Int.parse(num) {
+    Some(off) => (true, op, rs, off)
+    None => bad
+  }
+}
+
+/// The access size of a load or store of regs (the scale of its offset),
+/// and whether it is a pair.
+fn mem_scale(op: Str, rs: Str) -> (Int, Bool) {
+  match op {
+    "ldrb" | "strb" | "ldrsb" => return (1, false)
+    "ldrh" | "strh" | "ldrsh" => return (2, false)
+    "ldrsw" => return (4, false)
+    _ => {}
+  }
+  var size = 8
+  if rs.starts_with("w") || rs.starts_with("s") {
+    size = 4
+  } else if rs.starts_with("q") {
+    size = 16
+  } else if rs.starts_with("h") {
+    size = 2
+  } else if rs.starts_with("b") {
+    size = 1
+  }
+  (size, op == "ldp" || op == "stp")
+}
+
+/// The stride of the stack probes: the smallest guard page.
+const PROBE_PAGE = 4096
+
+/// The most pages probe_sp probes without a loop.
+const PROBE_UNROLL = 8
+
+/// Lowers sp by n, touching every page on the way when n is more than
+/// one page (probeSP; gotchas/arm64-large-frame.md).
+fn probe_sp(var b: List[Str], n0: Int, loop: Str) {
+  var n = n0
+  let pages = (n - 1) / PROBE_PAGE
+  if pages > PROBE_UNROLL {
+    b.push("\tmov x16, #${pages}\n${loop}:\n\tsub sp, sp, #${PROBE_PAGE >> 12}, lsl #12\n\tstr xzr, [sp]\n\tsubs x16, x16, #1\n\tb.ne ${loop}\n")
+    n -= pages * PROBE_PAGE
+  }
+  while n > PROBE_PAGE {
+    b.push("\tsub sp, sp, #${PROBE_PAGE >> 12}, lsl #12\n\tstr xzr, [sp]\n")
+    n -= PROBE_PAGE
+  }
+  sub_sp(b, "sub", n)
+}
+
+fn sub_sp(var b: List[Str], op: Str, n0: Int) {
+  var n = n0
+  if n >= 4096 {
+    b.push("\t${op} sp, sp, #${n >> 12}, lsl #12\n")
+    n = n & 4095
+  }
+  if n > 0 {
+    b.push("\t${op} sp, sp, #${n}\n")
+  }
+}
+
+fn (g: G) prologue(var b: List[Str]) {
+  let fr = g.fr
+  if fr.leaf {
+    return
+  }
+  if fr.rec == 0 && fr.size <= 504 {
+    b.push("\tstp x29, x30, [sp, #-${fr.size}]!\n\tmov x29, sp\n")
+  } else {
+    probe_sp(b, fr.size, g.local("f${g.nfunc}_probe"))
+    if fr.rec <= 504 {
+      b.push("\tstp x29, x30, [sp, #${fr.rec}]\n")
+    } else {
+      b.push("\tstr x29, [sp, #${fr.rec}]\n\tstr x30, [sp, #${fr.rec + 8}]\n")
+    }
+    if fr.rec >= 4096 {
+      // add takes a 12 bit immediate, optionally shifted by 12
+      b.push("\tadd x29, sp, #${fr.rec >> 12}, lsl #12\n")
+      let lo = fr.rec & 4095
+      if lo > 0 {
+        b.push("\tadd x29, x29, #${lo}\n")
+      }
+    } else {
+      b.push("\tadd x29, sp, #${fr.rec}\n")
+    }
+  }
+  g.saves(b, "str", "stp")
+}
+
+/// Stores or loads the callee saved registers, in pairs when it can (the
+/// higher register first, gotchas/arm64-stp-pair-order.md).
+fn (g: G) saves(var b: List[Str], one: Str, two: Str) {
+  var k = 0
+  let n = g.saved.len()
+  while k < n {
+    let r = g.saved[k]
+    let off = g.fr.save_base + 8 * k
+    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 {
+      b.push("\t${two} ${reg_name(g.saved[k + 1], false)}, ${reg_name(r, false)}, [sp, #${off}]\n")
+      k += 2
+      continue
+    }
+    b.push("\t${one} ${reg_name(r, false)}, [sp, #${off}]\n")
+    k += 1
+  }
+}
+
+fn (g: G) epilogue(var b: List[Str]) {
+  let fr = g.fr
+  if fr.leaf {
+    b.push("\tret\n")
+    return
+  }
+  g.saves(b, "ldr", "ldp")
+  if fr.rec == 0 && fr.size <= 504 {
+    b.push("\tldp x29, x30, [sp], #${fr.size}\n\tret\n")
+    return
+  }
+  if fr.rec <= 504 {
+    b.push("\tldp x29, x30, [sp, #${fr.rec}]\n")
+  } else {
+    b.push("\tldr x29, [sp, #${fr.rec}]\n\tldr x30, [sp, #${fr.rec + 8}]\n")
+  }
+  sub_sp(b, "add", fr.size)
+  b.push("\tret\n")
+}
+
+fn (g: G) msrc_of(a: Src) -> MSrc {
+  if a.kind == S_REG {
+    if a.v == 0 {
+      return MSrc{kind: M_ZERO}
+    }
+    let (l, ok) = g.vloc(a.v)
+    if !ok {
+      return MSrc{kind: M_ZERO}
+    }
+    return MSrc{kind: M_LOC, l: l}
+  }
+  if a.kind == S_IMM {
+    return MSrc{kind: M_IMM, imm: a.imm}
+  }
+  if a.kind == S_SYM {
+    return MSrc{kind: M_SYM, sym: a.sym}
+  }
+  if a.kind == S_MEM {
+    return MSrc{kind: M_MEM, imm: a.imm}
+  }
+  MSrc{kind: M_FRAME}
+}
+
+/// The moves that put srcs in their ABI locations (stack slots at [base,
+/// #off0 + 8k]).
+fn (g: G) call_moves(srcs: List[Src], base: Str, off0: Int) -> List[Move] {
+  var ms: List[Move] = []
+  for (k, l) in g.abi_locs(srcs).indexed() {
+    var dst = MLoc{reg: l.reg}
+    if l.reg < 0 {
+      dst = MLoc{reg: -1, base: base, off: off0 + 8 * l.slot}
+    }
+    ms.push(Move{dst: dst, src: g.msrc_of(srcs[k])})
+  }
+  ms
+}
+
+fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
+  if inst.kind == K_PLAIN {
+    g.emit_plain(b, inst)
+  } else if inst.kind == K_PMOVE {
+    var ms: List[Move] = []
+    for (k, d) in inst.defs.indexed() {
+      let (l, ok) = g.vloc(d)
+      if !ok {
+        continue
+      }
+      ms.push(Move{dst: l, src: g.msrc_of(inst.srcs[k])})
+    }
+    g.parallel(b, ms)
+  } else if inst.kind == K_CALL {
+    g.parallel(b, g.call_moves(inst.srcs, "sp", 0))
+    var cs_to = ""
+    if inst.pad >= 0 {
+      let (from, to) = g.call_site_labels()
+      b.push("${from}:\n")
+      g.sites.push(CallSite{from: from, to: to, pad: g.pad_of(inst.pad)})
+      cs_to = to
+    }
+    if inst.indirect {
+      b.push("\tblr x0\n")
+    } else {
+      b.push("\tbl ${inst.sym}\n")
+    }
+    if !cs_to.is_empty() {
+      b.push("${cs_to}:\n")
+    }
+    if inst.noret {
+      return
+    }
+    var ms: List[Move] = []
+    for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+      var src = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        // a result word past the registers: the callee stored it in the
+        // stack argument area
+        src = MLoc{reg: -1, base: "sp", off: 8 * l.slot}
+      }
+      let (d, ok) = g.vloc(inst.defs[k])
+      if ok {
+        ms.push(Move{dst: d, src: MSrc{kind: M_LOC, l: src}})
+      }
+    }
+    g.parallel(b, ms)
+  } else if inst.kind == K_ENTRY {
+    var ms: List[Move] = []
+    for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+      var src = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        src = MLoc{reg: -1, base: "sp", off: g.fr.size + 8 * l.slot}
+      }
+      let (d, ok) = g.vloc(inst.defs[k])
+      if ok {
+        ms.push(Move{dst: d, src: MSrc{kind: M_LOC, l: src}})
+      }
+    }
+    g.parallel(b, ms)
+  } else if inst.kind == K_RET {
+    var ms: List[Move] = []
+    for (k, l) in g.abi_locs(inst.srcs).indexed() {
+      var dst = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        // past the registers: into the caller's stack argument area (its
+        // arguments were all read at entry)
+        dst = MLoc{reg: -1, base: "sp", off: g.fr.size + 8 * l.slot}
+      }
+      ms.push(Move{dst: dst, src: g.msrc_of(inst.srcs[k])})
+    }
+    g.parallel(b, ms)
+    g.epilogue(b)
+  } else if inst.kind == K_JUMP {
+    let t = g.fwd(inst.targets[0])
+    if t == next {
+      return
+    }
+    if g.rotate_jump(b, t) {
+      return
+    }
+    let ti = g.blocks[t].insts
+    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur {
+      // a loop header that only tests: test here (one taken branch per
+      // iteration instead of two)
+      g.emit_inst(b, ti[0], next)
+      return
+    }
+    b.push("\tb ${g.label(t)}\n")
+  } else if inst.kind == K_CONDBR {
+    g.emit_condbr(b, inst, next)
+  } else if inst.kind == K_SWITCH {
+    g.emit_switch(b, inst)
+  } else if inst.kind == K_TRAP {
+    b.push("\tbrk #1\n")
+  }
+}
+
+fn (var g: G) emit_condbr(var b: List[Str], inst: Inst, next: Int) {
+  let t = g.fwd(inst.targets[0])
+  let f = g.fwd(inst.targets[1])
+  if t == f {
+    // both ways go to one block, but the compare stays: the block may
+    // test these flags without a compare of its own (reuse_flags)
+    if !inst.text.is_empty() && inst.cond != "cbnz" && inst.cond != "tbz" && inst.cond != "tbnz" {
+      g.emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us})
+    }
+    if t != next {
+      b.push("\tb ${g.label(t)}\n")
+    }
+    return
+  }
+  // fall: the target the branch falls through to; a moved latch is
+  // copied after the branch instead (lsr.xo dup_latch)
+  var fall = next
+  let dl = g.dup_latch(t, f, next)
+  if dl >= 0 {
+    fall = dl
+  }
+  if inst.cond == "cbnz" {
+    let r = g.use_reg(b, inst.us[0], 0)
+    if t == fall {
+      b.push("\tcbz ${r}, ${g.label(f)}\n")
+    } else {
+      b.push("\tcbnz ${r}, ${g.label(t)}\n")
+      if f != fall {
+        b.push("\tb ${g.label(f)}\n")
+      }
+    }
+  } else if inst.cond == "tbz" || inst.cond == "tbnz" {
+    let r = g.use_reg(b, inst.us[0], 0)
+    if t == fall {
+      let c = if inst.cond == "tbz" { "tbnz" } else { "tbz" }
+      b.push("\t${c} ${r}, #${inst.bit}, ${g.label(f)}\n")
+    } else {
+      b.push("\t${inst.cond} ${r}, #${inst.bit}, ${g.label(t)}\n")
+      if f != fall {
+        b.push("\tb ${g.label(f)}\n")
+      }
+    }
+  } else {
+    if !inst.text.is_empty() {
+      // empty: the flags of the predecessor's compare (reuse_flags)
+      g.emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us})
+    }
+    if t == fall {
+      b.push("\tb.${inv_cond(inst.cond)} ${g.label(f)}\n")
+    } else {
+      b.push("\tb.${inst.cond} ${g.label(t)}\n")
+      if f != fall {
+        b.push("\tb ${g.label(f)}\n")
+      }
+    }
+  }
+  if dl >= 0 {
+    g.emit_latch(b, dl, next)
+  }
+}
+
+/// The register name of use v, reloading a spilled one into scratch
+/// register k of its class.
+fn (g: G) use_reg(var b: List[Str], v: Int, k: Int) -> Str {
+  if v == 0 {
+    return "xzr"
+  }
+  let (l, _) = g.vloc(v)
+  if l.reg >= 0 {
+    return reg_name(l.reg, false)
+  }
+  let r = if g.fp[v] { fp_scratch(k) } else { gp_scratch(k) }
+  b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+  reg_name(r, false)
+}
+
+/// Expands a template.
+fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
+  let t = inst.text
+  let tb = t.bytes()
+  let tn = tb.len()
+  // reload the spilled uses the template names
+  var use_reg: List[Int] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+  var ngp = 0
+  var nfp = 0
+  var i = 0
+  while i < tn {
+    if tb[i] != '$' {
+      i += 1
+      continue
+    }
+    var j = i + 1
+    if j < tn && tb[j] == 'w' {
+      j += 1
+    }
+    if j + 1 < tn && tb[j] == 'u' {
+      let k = Int(tb[j + 1]) - 48
+      if use_reg[k] == -1 {
+        let v = inst.us[k]
+        if v == 0 {
+          use_reg[k] = 31
+        } else {
+          let (l, _) = g.vloc(v)
+          if l.reg >= 0 {
+            use_reg[k] = l.reg
+          } else {
+            var r = 0
+            if g.fp[v] {
+              r = fp_scratch(nfp)
+              nfp += 1
+            } else {
+              r = gp_scratch(ngp)
+              ngp += 1
+            }
+            b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+            use_reg[k] = r
+          }
+        }
+      }
+    }
+    i += 1
+  }
+  var def_reg: List[Int] = []
+  var stores: List[Str] = []
+  for d in inst.defs {
+    let (l, ok) = g.vloc(d)
+    if ok && l.reg >= 0 {
+      def_reg.push(l.reg)
+      continue
+    }
+    let r = if g.fp[d] { fp_scratch(0) } else { gp_scratch(0) }
+    def_reg.push(r)
+    if ok {
+      stores.push("\tstr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+    }
+  }
+  if t == "mov $d0, $u0" && def_reg[0] == use_reg[0] && stores.is_empty() {
+    return // a copy into the same register
+  }
+  var out = StrBuilder.new()
+  out.write("\t")
+  var from = 0
+  i = 0
+  while i < tn {
+    let c = tb[i]
+    if c == '\n' {
+      out.write(t[from..i])
+      out.write("\n\t")
+      i += 1
+      from = i
+      continue
+    }
+    if c != '$' {
+      i += 1
+      continue
+    }
+    out.write(t[from..i])
+    if t[i..tn].starts_with("$OUT") {
+      out.write("${g.fr.out_off}")
+      i += 4
+      from = i
+      continue
+    }
+    var j = i + 1
+    var w = false
+    if tb[j] == 'w' {
+      w = true
+      j += 1
+    }
+    let k = Int(tb[j + 1]) - 48
+    if tb[j] == 'u' {
+      out.write(reg_name(use_reg[k], w))
+    } else {
+      out.write(reg_name(def_reg[k], w))
+    }
+    i = j + 2
+    from = i
+  }
+  out.write(t[from..tn])
+  out.write("\n")
+  b.push(out.freeze())
+  if inst.has_fault {
+    g.nstub += 1
+    let l = g.local("f${g.nfunc}_fault${g.nstub}")
+    b.push("\tb.${inst.fcond} ${l}\n")
+    var sb: List[Str] = []
+    sb.push("${l}:\n")
+    if g.fr.leaf {
+      // a frame record for the unwinder (the call overwrites x30)
+      sb.push("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+    }
+    var ms = g.call_moves(inst.fargs, "sp", 0)
+    g.recover_operand(sb, inst, ms)
+    g.parallel(sb, ms)
+    if inst.pad >= 0 {
+      let (from2, to2) = g.call_site_labels()
+      g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
+      sb.push("${from2}:\n\tbl ${inst.ffn}\n${to2}:\n\tbrk #1\n")
+    } else {
+      sb.push("\tbl ${inst.ffn}\n\tbrk #1\n")
+    }
+    g.stubs.push(sb.join(""))
+  }
+  for st in stores {
+    b.push(st)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parallel moves
+
+fn same_loc(a: MLoc, b: MLoc) -> Bool {
+  if a.reg >= 0 || b.reg >= 0 {
+    return a.reg == b.reg
+  }
+  a.base == b.base && a.off == b.off
+}
+
+/// Emits moves that all read their sources before any writes its
+/// destination: moves whose destination no other pending move reads go
+/// first; a cycle is broken by saving one destination in a scratch
+/// register. Moves from constants come last.
+fn (g: G) parallel(var b: List[Str], moves: List[Move]) {
+  var pending: List[Move] = []
+  var consts: List[Move] = []
+  for m in moves {
+    if m.src.kind != M_LOC {
+      consts.push(m)
+      continue
+    }
+    if same_loc(m.dst, m.src.l) {
+      continue
+    }
+    pending.push(m)
+  }
+  while !pending.is_empty() {
+    var progress = false
+    for (i, m) in pending.indexed() {
+      var read = false
+      for (j, o) in pending.indexed() {
+        if j != i && same_loc(o.src.l, m.dst) {
+          read = true
+          break
+        }
+      }
+      if !read {
+        g.move(b, m.dst, m.src)
+        pending = pending[0..i] + pending[i + 1..pending.len()]
+        progress = true
+        break
+      }
+    }
+    if progress {
+      continue
+    }
+    let m = pending[0]
+    var tmp = MLoc{reg: SCRATCH0}
+    if m.dst.reg >= FP_BASE {
+      tmp = MLoc{reg: FSCRATCH}
+    }
+    g.move(b, tmp, MSrc{kind: M_LOC, l: m.dst})
+    for j in 0..pending.len() {
+      if same_loc(pending[j].src.l, m.dst) {
+        pending[j].src.l = tmp
+      }
+    }
+  }
+  for m in consts {
+    g.move(b, m.dst, m.src)
+  }
+}
+
+/// Materializes sp + off in reg (two adds past 4095,
+/// gotchas/arm64-add-immediate-range.md).
+fn add_sp(var b: List[Str], reg: Str, off: Int) {
+  if off <= 4095 {
+    b.push("\tadd ${reg}, sp, #${off}\n")
+    return
+  }
+  b.push("\tadd ${reg}, sp, #${off >> 12}, lsl #12\n")
+  let lo = off & 4095
+  if lo != 0 {
+    b.push("\tadd ${reg}, ${reg}, #${lo}\n")
+  }
+}
+
+fn mem_ref(l: MLoc) -> Str {
+  "[${l.base}, #${l.off}]"
+}
+
+/// Puts a source that is not a location in register r (move's put).
+fn (g: G) put(var b: List[Str], r: Int, src: MSrc) {
+  if src.kind == M_ZERO {
+    if r >= FP_BASE {
+      b.push("\tfmov ${reg_name(r, false)}, xzr\n")
+    } else {
+      b.push("\tmov ${reg_name(r, false)}, xzr\n")
+    }
+  } else if src.kind == M_IMM {
+    if r >= FP_BASE {
+      b.push(imm_text(src.imm, "x17"))
+      b.push("\tfmov ${reg_name(r, false)}, x17\n")
+      return
+    }
+    b.push(imm_text(src.imm, reg_name(r, false)))
+  } else if src.kind == M_SYM {
+    b.push(g.addr(reg_name(r, false), src.sym))
+  } else if src.kind == M_FRAME {
+    add_sp(b, reg_name(r, false), g.fr.out_off)
+  } else if src.kind == M_MEM {
+    add_sp(b, reg_name(r, false), g.fr.mem_off + src.imm)
+  }
+}
+
+fn (g: G) move(var b: List[Str], dst: MLoc, src: MSrc) {
+  if src.kind != M_LOC {
+    if dst.reg >= 0 {
+      g.put(b, dst.reg, src)
+      return
+    }
+    if src.kind == M_ZERO {
+      b.push("\tstr xzr, ${mem_ref(dst)}\n")
+      return
+    }
+    g.put(b, SCRATCH1, src)
+    b.push("\tstr x17, ${mem_ref(dst)}\n")
+    return
+  }
+  let sl = src.l
+  if dst.reg >= 0 && sl.reg >= 0 {
+    let dfp = dst.reg >= FP_BASE
+    let sfp = sl.reg >= FP_BASE
+    if !dfp && !sfp {
+      b.push("\tmov ${reg_name(dst.reg, false)}, ${reg_name(sl.reg, false)}\n")
+    } else {
+      b.push("\tfmov ${reg_name(dst.reg, false)}, ${reg_name(sl.reg, false)}\n")
+    }
+  } else if dst.reg >= 0 {
+    b.push("\tldr ${reg_name(dst.reg, false)}, ${mem_ref(sl)}\n")
+  } else if sl.reg >= 0 {
+    b.push("\tstr ${reg_name(sl.reg, false)}, ${mem_ref(dst)}\n")
+  } else {
+    b.push("\tldr x17, ${mem_ref(sl)}\n\tstr x17, ${mem_ref(dst)}\n")
+  }
+}
+
+/// Recomputes, in a fault stub, an operand of a checked add, sub, or neg
+/// whose register the result took, and points its move at the
+/// recomputed value (x15).
+fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
+  if inst.recover.is_empty() {
+    return
+  }
+  let (dl, ok) = g.vloc(inst.defs[0])
+  if !ok || dl.reg < 0 {
+    return
+  }
+  let d = reg_name(dl.reg, false)
+  let args = inst.fargs
+  for k in [0, 2] {
+    if !g.clobbered(args, k, dl.reg) {
+      continue
+    }
+    if inst.recover == "neg" {
+      b.push("\tneg x15, ${d}\n")
+    } else if inst.recover == "add" {
+      let o = g.other_reg(b, args, 2 - k)
+      b.push("\tsub x15, ${d}, ${o}\n")
+    } else if inst.recover == "sub" && k == 0 {
+      let o = g.other_reg(b, args, 2)
+      b.push("\tadd x15, ${d}, ${o}\n")
+    } else if inst.recover == "sub" {
+      let o = g.other_reg(b, args, 0)
+      b.push("\tsub x15, ${o}, ${d}\n")
+    }
+    ms[k].src = MSrc{kind: M_LOC, l: MLoc{reg: SCRATCH2}}
+  }
+}
+
+/// Whether fault argument k is in register r.
+fn (g: G) clobbered(args: List[Src], k: Int, r: Int) -> Bool {
+  if k >= args.len() || args[k].kind != S_REG || args[k].v == 0 {
+    return false
+  }
+  let (l, _) = g.vloc(args[k].v)
+  l.reg == r
+}
+
+/// Puts fault argument k in a register.
+fn (g: G) other_reg(var b: List[Str], args: List[Src], k: Int) -> Str {
+  let a = args[k]
+  if a.kind == S_IMM {
+    b.push(imm_text(a.imm, "x17"))
+    return "x17"
+  }
+  let (l, _) = g.vloc(a.v)
+  if l.reg >= 0 {
+    return reg_name(l.reg, false)
+  }
+  b.push("\tldr x17, ${mem_ref(l)}\n")
+  "x17"
+}
+
+/// The landing pad block of an instruction, past the blocks that only
+/// jump (thread may have dropped them).
+fn (g: G) pad_of(pad: Int) -> Int {
+  var b = pad
+  for _ in 0..16 {
+    let ins = g.blocks[b].insts
+    if ins.len() != 1 || ins[0].kind != K_JUMP || ins[0].targets[0] == b || ins[0].targets.len() > 1 {
+      return b
+    }
+    b = ins[0].targets[0]
+  }
+  b
+}
+
+/// The labels around the `bl` of a call that unwinds to a landing pad
+/// (decision 0085).
+fn (var g: G) call_site_labels() -> (Str, Str) {
+  g.ncs += 1
+  let n = g.ncs
+  (g.local("f${g.nfunc}_cs${n}a"), g.local("f${g.nfunc}_cs${n}b"))
+}
+
+/// Opens the unwind information of the function (decision 0085): its
+/// call frame information, and with landing pads the personality routine
+/// and the call site table.
+fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
+  b.push("${g.func_begin()}:\n")
+  b.push("\t.cfi_startproc\n")
+  if !pads {
+    return
+  }
+  if g.os == "darwin" {
+    b.push("\t.cfi_personality 155, ${g.sym("xo_personality")}\n\t.cfi_lsda 16, ${g.lsda_label()}\n")
+  } else {
+    g.personality_ref = true
+    b.push("\t.cfi_personality 155, DW.ref.xo_personality\n\t.cfi_lsda 27, ${g.lsda_label()}\n")
+  }
+}
+
+fn (g: G) func_begin() -> Str {
+  g.local("f${g.nfunc}_begin")
+}
+
+/// The function's call site table: a symbol on Mach-O (decision 0085).
+fn (g: G) lsda_label() -> Str {
+  if g.os == "darwin" {
+    return "GCC_except_table_xo${g.nfunc}"
+  }
+  g.local("f${g.nfunc}_lsda")
+}
+
+/// Describes the frame the prologue made.
+fn (g: G) cfi_frame(var b: List[Str]) {
+  let fr = g.fr
+  if fr.leaf {
+    return
+  }
+  b.push("\t.cfi_def_cfa w29, ${fr.size - fr.rec}\n")
+  if fr.size - fr.rec == 16 {
+    b.push("\t.cfi_offset w30, ${fr.rec + 8 - fr.size}\n\t.cfi_offset w29, ${fr.rec - fr.size}\n")
+  } else {
+    // the frame record is not at the top of the frame
+    // (gotchas/arm64-compact-unwind-cfa.md)
+    b.push("\t.cfi_offset w29, ${fr.rec - fr.size}\n\t.cfi_offset w30, ${fr.rec + 8 - fr.size}\n")
+  }
+  // as saves() stores them: a pair puts the higher register first
+  var k = 0
+  let n = g.saved.len()
+  while k < n {
+    let r = g.saved[k]
+    let off = fr.save_base + 8 * k
+    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 {
+      b.push(cfi_at(g.saved[k + 1], off - fr.size))
+      b.push(cfi_at(r, off + 8 - fr.size))
+      k += 2
+      continue
+    }
+    b.push(cfi_at(r, off - fr.size))
+    k += 1
+  }
+}
+
+fn cfi_at(r: Int, off: Int) -> Str {
+  var name = reg_name(r, false)
+  if r < FP_BASE {
+    name = "w${name[1..name.len()]}"
+  }
+  "\t.cfi_offset ${name}, ${off}\n"
+}
+
+/// Emits the call site table of the function (GCC's format for cleanups,
+/// decision 0085).
+fn (var g: G) lsda(sites: List[CallSite]) {
+  var b: List[Str] = []
+  if g.os == "darwin" {
+    b.push("\t.section __TEXT,__gcc_except_tab\n")
+  } else {
+    b.push("\t.section .gcc_except_table,\"a\",@progbits\n")
+  }
+  let fb = g.func_begin()
+  let beg = g.local("f${g.nfunc}_cst")
+  let end = g.local("f${g.nfunc}_cste")
+  b.push("\t.p2align 2\n${g.lsda_label()}:\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")
+  for c in sites {
+    let pad = g.label(g.fwd(c.pad))
+    b.push("\t.uleb128 ${c.from}-${fb}\n\t.uleb128 ${c.to}-${c.from}\n\t.uleb128 ${pad}-${fb}\n\t.byte 0\n")
+  }
+  b.push("${end}:\n")
+  g.lsdas.push(b.join(""))
+}
+
+/// Follows blocks that do nothing but jump (their parallel moves are all
+/// between the same locations after allocation).
+fn (g: G) fwd(b0: Int) -> Int {
+  var b = b0
+  for _ in 0..8 {
+    let ins = g.blocks[b].insts
+    let n = ins.len()
+    if n == 0 || ins[n - 1].kind != K_JUMP || ins[n - 1].targets[0] == b || ins[n - 1].targets.len() > 1 {
+      return b
+    }
+    for k in 0..n - 1 {
+      let inst = ins[k]
+      if inst.kind != K_PMOVE {
+        return b
+      }
+      for (j, d) in inst.defs.indexed() {
+        let (dl, ok) = g.vloc(d)
+        let src = g.msrc_of(inst.srcs[j])
+        if ok && !(src.kind == M_LOC && same_loc(dl, src.l)) {
+          return b
+        }
+      }
+    }
+    b = ins[n - 1].targets[0]
+  }
+  b
+}

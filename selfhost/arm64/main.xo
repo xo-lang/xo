@@ -1,0 +1,166 @@
+// xoasm: the self hosted arm64 emitter's command line (decision 0158).
+//
+//   arm64 [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] <dirs...>
+//   arm64 [--std=DIR] [--wd=DIR] ... --bench=N <dirs...>
+//
+// It checks the directories as `xo asmdump` does (selfhost/check in
+// native mode), builds them with selfhost/ssa and its passes, and prints
+// the assembly internal/arm64 prints, then `== skipped` and one line per
+// function it did not emit (`<name>: <why>`, a construct of a later
+// stage). A run the checker rejects prints `== rejected`; one the Xo SSA
+// builder does not build completely `== unsupported <why>`; a failure of
+// the emitter `== error <why>`. --each builds every directory as a run
+// of its own, each preceded by `=== asm <dir>`. --bench=N times the
+// emitter alone (from a copy of the module after the passes) N times.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/ssa
+
+fn main(os: Os) ! {
+  var repeat = 0
+  var each = false
+  var tests = false
+  var no_inline = false
+  var target = "darwin"
+  var std_dir = "std"
+  var wd = os.env.get("PWD") ?? ""
+  var dirs: List[Str] = []
+  for a in os.env.args() {
+    if a.starts_with("--bench=") {
+      repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
+    } else if a.starts_with("--std=") {
+      std_dir = a.trim_prefix("--std=")
+    } else if a.starts_with("--wd=") {
+      wd = a.trim_prefix("--wd=")
+    } else if a.starts_with("--os=") {
+      target = a.trim_prefix("--os=")
+    } else if a == "--each" {
+      each = true
+    } else if a == "--test" {
+      tests = true
+    } else if a == "--no-inline" {
+      no_inline = true
+    } else {
+      dirs.push(a)
+    }
+  }
+  if dirs.is_empty() {
+    os.stdio.eprintln("usage: arm64 [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>")
+    os.proc.exit(2)
+  }
+  let modcache = os.env.get("XO_MODCACHE") ?? ""
+  let home = os.env.get("HOME") ?? ""
+  let xdg = os.env.get("XDG_CACHE_HOME") ?? ""
+  let offline = os.env.get("XO_OFFLINE") ?? ""
+  let work = os.env.get("XO_WORK") ?? ""
+  let cbind = os.env.get("XO_CBIND_DIR") ?? ""
+  var runs: List[List[Str]] = [dirs]
+  if each {
+    runs = []
+    for d in dirs {
+      runs.push([d])
+    }
+  }
+  var total = 0
+  var lines = 0
+  for r in runs {
+    if each && repeat == 0 {
+      os.stdio.print("=== asm ${r[0]}\n")
+    }
+    var c = check.new_checker(os.fs, std_dir)
+    c.native = true
+    c.set_mod_env(wd, modcache, home, xdg, offline, work)
+    c.cbind_dir = cbind
+    match c.check_dirs(r) {
+      Ok(_) => {}
+      Err(e) => {
+        if repeat == 0 {
+          os.stdio.print("== error ${e}\n")
+        }
+        continue
+      }
+    }
+    if !c.unsupported.is_empty() {
+      if repeat == 0 {
+        os.stdio.print("== unsupported ${c.unsupported}\n")
+      }
+      continue
+    }
+    if rejected(c) {
+      if repeat == 0 {
+        os.stdio.print("== rejected\n")
+      }
+      continue
+    }
+    var b = ssa.build_program(c, wd, tests)
+    if !b.why.is_empty() {
+      if repeat == 0 {
+        os.stdio.print("== unsupported ${b.why}\n")
+      }
+      continue
+    }
+    var skip = ""
+    for f in b.m.funcs {
+      if !f.skip.is_empty() && skip.is_empty() {
+        skip = "${f.name}: ${f.skip}"
+      }
+    }
+    if !skip.is_empty() {
+      if repeat == 0 {
+        os.stdio.print("== unsupported the SSA builder skipped ${skip}\n")
+      }
+      continue
+    }
+    b.run_passes()
+    if repeat > 0 {
+      let t0 = os.clock.now()
+      for _ in 0..repeat {
+        let p = generate_module(b.m, target, no_inline)
+        lines += p.asm.split("\n").len() - 1
+      }
+      total += (os.clock.now() - t0).nanos()
+      continue
+    }
+    let p = generate_module(b.m, target, no_inline)
+    if !p.err.is_empty() {
+      os.stdio.print("== error ${p.err}\n")
+      continue
+    }
+    var out = StrBuilder.new()
+    out.write(p.asm)
+    out.write("== skipped\n")
+    for s in p.skipped {
+      out.write("${s}\n")
+    }
+    os.stdio.print(out.freeze())
+  }
+  if repeat > 0 {
+    os.stdio.println("emitted ${runs.len()} runs x ${repeat}: ${lines} lines in ${total / 1000000} ms")
+  }
+}
+
+/// Whether the checker reported an error (build.go checkOpts).
+fn rejected(c: check.Checker) -> Bool {
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return true
+    }
+  }
+  false
+}
+
+/// Generates module m (after the passes) for os, inlining first unless
+/// no_inline (the module is generated without inlining when the inlined
+/// one does not verify, as `xo build --backend=arm64` does).
+fn generate_module(m: ssa.Module, os: Str, no_inline: Bool) -> Program {
+  if !no_inline {
+    var mi = m
+    if !inline_module(mi) || mi.verify_all().is_empty() {
+      var g = new_gen(mi, os)
+      return g.generate()
+    }
+    // the inlined module does not verify (InlineError): without inlining
+  }
+  var g = new_gen(m, os)
+  g.generate()
+}

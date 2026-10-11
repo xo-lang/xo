@@ -1,0 +1,245 @@
+// Numbers and text the emitter prints (Go's strconv and fmt as the Go
+// emitter uses them), and the bits of Float constants.
+
+const MAX_INT = 9223372036854775807
+const MIN_INT = -9223372036854775807 - 1
+
+const HEX = "0123456789abcdef"
+
+/// n in two lowercase hex digits (0 <= n < 256), as `%02x`.
+fn hex2(n: Int) -> Str {
+  "${HEX[n / 16..n / 16 + 1]}${HEX[n % 16..n % 16 + 1]}"
+}
+
+/// n (0 <= n < 512) in three octal digits.
+fn oct3(n: Int) -> Str {
+  "${n / 64}${n / 8 % 8}${n % 8}"
+}
+
+fn imin(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+fn imax(a: Int, b: Int) -> Int {
+  if a > b { a } else { b }
+}
+
+/// 2^k (0 <= k <= 62).
+fn pow2i(k: Int) -> Int {
+  var n = 1
+  for _ in 0..k {
+    n = n * 2
+  }
+  n
+}
+
+/// The bits of x, as Go's math.Float64bits reinterpreted as an Int: exact
+/// for every finite value and the infinities (a NaN gives Go's
+/// math.NaN() bits).
+fn float_bits(x: Float) -> Int {
+  if x.is_nan() {
+    return 0x7ff8000000000001
+  }
+  var neg = x < 0.0
+  var a = x
+  if neg {
+    a = -x
+  }
+  if a == 0.0 {
+    // the sign of a zero: 1/x is -Inf for -0.0
+    if 1.0 / x < 0.0 {
+      return MIN_INT
+    }
+    return 0
+  }
+  var bits = 0
+  if a > 1.7976931348623157e308 {
+    bits = 0x7ff0000000000000
+  } else {
+    // a = m * 2^e with 1 <= m < 2
+    var e = 0
+    var m = a
+    while m >= 2.0 {
+      m = m / 2.0
+      e += 1
+    }
+    while m < 1.0 && e > -1022 {
+      m = m * 2.0
+      e -= 1
+    }
+    if m < 1.0 {
+      // subnormal: m * 2^-1022 with m < 1, the fraction is m * 2^52
+      bits = Int(m * 4503599627370496.0)
+    } else {
+      let frac = Int((m - 1.0) * 4503599627370496.0)
+      bits = (e + 1023) * 4503599627370496 + frac
+    }
+  }
+  if neg {
+    // set bit 63: the bits as a negative Int
+    return bits + MIN_INT
+  }
+  bits
+}
+
+/// The bits of -0.0 normalized to those of 0.0 (the memo's key: Go's
+/// map compares Float keys with ==).
+fn float_key(x: Float) -> Int {
+  if x == 0.0 {
+    return 0
+  }
+  float_bits(x)
+}
+
+/// The 16 bit chunk k of n (0..3).
+fn chunk(n: Int, k: Int) -> Int {
+  (n >> (16 * k)) & 0xffff
+}
+
+/// The template that puts n in $d0 (movImm).
+fn mov_imm(n: Int) -> Str {
+  if n >= -65536 && n < 65536 {
+    return "mov $d0, #${n}"
+  }
+  var lines: List[Str] = []
+  let inv = ~n
+  // prefer movn when most chunks are all ones
+  var ones = 0
+  for k in 0..4 {
+    if chunk(n, k) == 0xffff {
+      ones += 1
+    }
+  }
+  if ones >= 2 {
+    var first = true
+    for k in 0..4 {
+      let c = chunk(inv, k)
+      if first && c != 0 {
+        lines.push("movn $d0, #${c}, lsl #${16 * k}")
+        first = false
+      }
+    }
+    if first {
+      return "mov $d0, #-1"
+    }
+    for k in 0..4 {
+      let c = chunk(n, k)
+      let ci = chunk(inv, k)
+      if c != 0xffff && !lines[0].contains("#${ci}, lsl #${16 * k}") {
+        lines.push("movk $d0, #${c}, lsl #${16 * k}")
+      }
+    }
+    return lines.join("\n")
+  }
+  var first = true
+  for k in 0..4 {
+    let c = chunk(n, k)
+    if c == 0 {
+      continue
+    }
+    if first {
+      lines.push("movz $d0, #${c}, lsl #${16 * k}")
+      first = false
+    } else {
+      lines.push("movk $d0, #${c}, lsl #${16 * k}")
+    }
+  }
+  if first {
+    return "mov $d0, #0"
+  }
+  lines.join("\n")
+}
+
+/// The assembly that puts n in register r (immText).
+fn imm_text(n: Int, r: Str) -> Str {
+  "\t${mov_imm(n).replace("\n", "\n\t").replace("$d0", r)}\n"
+}
+
+/// Whether n fits an unsigned 12 bit immediate.
+fn imm12(n: Int) -> Bool {
+  n >= 0 && n < 4096
+}
+
+fn align16(n: Int) -> Int {
+  (n + 15) & ~15
+}
+
+/// k when n is 2^k, k >= 1 (pow2c).
+fn pow2c(n: Int) -> (Int, Bool) {
+  if n < 2 || n & (n - 1) != 0 {
+    return (0, false)
+  }
+  var k = 0
+  var p = 1
+  while p != n {
+    p = p * 2
+    k += 1
+  }
+  (k, true)
+}
+
+/// The decimal integer s (an optional `-` and digits), or None.
+fn parse_int(s: Str) -> Int? {
+  Int.parse(s)
+}
+
+/// The condition with the opposite outcome (invCond), or "".
+fn inv_cond(c: Str) -> Str {
+  match c {
+    "eq" => "ne"
+    "ne" => "eq"
+    "lt" => "ge"
+    "ge" => "lt"
+    "gt" => "le"
+    "le" => "gt"
+    "lo" => "hs"
+    "hs" => "lo"
+    "hi" => "ls"
+    "ls" => "hi"
+    "mi" => "pl"
+    "pl" => "mi"
+    "vs" => "vc"
+    "vc" => "vs"
+    _ => ""
+  }
+}
+
+/// The condition after swapping a compare's operands (swapCond).
+fn swap_cond(c: Str) -> Str {
+  match c {
+    "lt" => "gt"
+    "gt" => "lt"
+    "le" => "ge"
+    "ge" => "le"
+    "lo" => "hi"
+    "hi" => "lo"
+    "ls" => "hs"
+    "hs" => "ls"
+    _ => c
+  }
+}
+
+/// s escaped for an .ascii directive (asmBytes).
+fn asm_bytes(s: Bytes) -> Str {
+  var b = StrBuilder.new()
+  var i = 0
+  let n = s.len()
+  while i < n {
+    let c = Int(s[i])
+    if c == 34 || c == 92 {
+      b.write(if c == 34 { "\\\"" } else { "\\\\" })
+    } else if c >= 32 && c < 127 {
+      var j = i
+      while j < n && Int(s[j]) >= 32 && Int(s[j]) < 127 && Int(s[j]) != 34 && Int(s[j]) != 92 {
+        j += 1
+      }
+      b.write(s[i..j].to_str() ?? "")
+      i = j
+      continue
+    } else {
+      b.write("\\${oct3(c)}")
+    }
+    i += 1
+  }
+  b.freeze()
+}

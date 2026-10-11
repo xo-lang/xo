@@ -73,6 +73,9 @@ pieces:
 
 Mutations (`TestSelfhostArm64Mutations`) apply decision 0150's code
 mutations to the single directory programs and compare the same way.
+The merge tier compares every second run, leaving the five heaviest to
+the full tier, and 30 mutations; the full tier every run and 300
+mutations, with the go, arm64, and LLVM builds of the Xo emitter.
 
 **The stages** of the port, each committed with its counts in the
 results file:
@@ -80,20 +83,22 @@ results file:
 1. **Core**: the module driver, value layout, MIR, instruction
    selection of integer and Float arithmetic, comparisons, conversions,
    structs, tuples, enums, Option, constants, direct calls with the plain
-   convention, runtime calls, lists and strings, retains and releases
-   through the generated helpers, the memos and value ranges, loop
-   strength reduction and rotation, every MIR pass, register allocation
-   with spills and far frames, frames, fault stubs, emission, and the
-   literals. Both sides run without inlining (`--no-inline`). A function
-   with a construct of a later stage is skipped.
+   convention, runtime calls, lists and strings, string equality,
+   retains and releases through the generated helpers (every helper
+   body, those of function values and boxes included), cancelled retain
+   and release pairs, the memos and value ranges, loop strength
+   reduction and rotation, every MIR pass, register allocation with
+   spills and far frames, frames, fault stubs, landing pads with their
+   call site tables (decision 0085: a third of the functions have one),
+   emission, and the literals. Both sides run without inlining
+   (`--no-inline`). A function with a construct of a later stage is
+   skipped.
 2. **Closures, boxes, equality, sharing**: closures and captures,
    calls through function values, function addresses, rebinds, boxes,
-   the equality helpers, `share`, `reuse`, cancelled retain and release
-   pairs.
-3. **By reference parameters and landing pads**: decisions 0151 and
-   0153 (byref.go: the homes, the dataflow, calls and returns by
-   reference) and decision 0085's landing pads (call site tables, the
-   personality routine).
+   function values and boxes retained and released inline, the equality
+   helpers of aggregates, `share`, `reuse`.
+3. **By reference parameters**: decisions 0151 and 0153 (byref.go: the
+   homes, the dataflow, calls and returns by reference).
 4. **Inlining**: inline.go on the Xo SSA, the module verified again
    with selfhost/ssa's verifier and generated without inlining when it
    does not verify; both sides with their default options.
@@ -109,7 +114,10 @@ deterministic); B also runs the arm64 golden programs
 (internal/arm64/testdata/run) with the Go backend's output. The result
 is recorded whatever it is. The released `xo` and what it runs do not
 change: that is the owner's decision after the fixed point (decision
-0150).
+0150). After the switch-over come, in the owner's order (decision 0150
+as amended 2026-10-11), the LLVM emitter in Xo, the Go code generator in
+Xo, and the retirement of the Go implementation; the WebAssembly
+backend and the runtime pilot after that.
 
 ## Consequences
 

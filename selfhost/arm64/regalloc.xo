@@ -1,0 +1,667 @@
+// Register allocation (internal/arm64 regalloc.go): liveness by data
+// flow, live ranges with holes per virtual register, move coalescing,
+// and a greedy first fit in priority order against the ranges already
+// given to each physical register.
+//
+// Physical registers: 0 to 30 are x0 to x30, 32 to 63 are d0 to d31.
+
+const FP_BASE = 32
+
+/// The register of a far frame's slot addresses.
+const FAR_BASE = 28
+
+// Allocatable registers, in order of preference. x15, x16, x17 and d29
+// to d31 are scratch registers of the emitter; x18 is reserved by Apple;
+// x29 and x30 are the frame pointer and the link register.
+fn gp_caller() -> List[Int] {
+  [9, 10, 11, 12, 13, 14, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+}
+
+fn gp_callee() -> List[Int] {
+  [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+}
+
+fn fp_caller() -> List[Int] {
+  [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 39, 38, 37, 36, 35, 34, 33, 32]
+}
+
+fn fp_callee() -> List[Int] {
+  [40, 41, 42, 43, 44, 45, 46, 47]
+}
+
+fn is_callee(r: Int) -> Bool {
+  (r >= 19 && r <= 28) || (r >= FP_BASE + 8 && r <= FP_BASE + 15)
+}
+
+/// A closed range of positions. Instruction i reads its uses at 4i, the
+/// registers a call clobbers die at 4i+1, and it writes its definitions
+/// at 4i+2 (at 4i when early).
+struct Rng {
+  s: Int
+  e: Int
+}
+
+// Bit sets of 62 bits per word (the sign bit is never used).
+const BW = 62
+
+fn new_bits(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for _ in 0..(n + BW - 1) / BW {
+    out.push(0)
+  }
+  out
+}
+
+fn bits_has(b: List[Int], i: Int) -> Bool {
+  (b[i / BW] >> (i % BW)) & 1 != 0
+}
+
+fn bit_mask(i: Int) -> Int {
+  1 << (i % BW)
+}
+
+/// The members of a bit set in increasing order.
+fn bits_members(b: List[Int]) -> List[Int] {
+  var out: List[Int] = []
+  for (w, x0) in b.indexed() {
+    var x = x0
+    var bit = 0
+    while x != 0 {
+      if x & 1 != 0 {
+        out.push(w * BW + bit)
+      }
+      x = x >> 1
+      bit += 1
+    }
+  }
+  out
+}
+
+/// A pair of registers joined by a move.
+struct Pair {
+  a: Int
+  b: Int
+  wt: Float
+}
+
+/// 8^k as a Float (math.Pow(8, k), exact).
+fn pow8(k: Int) -> Float {
+  var x = 1.0
+  for _ in 0..k {
+    x = x * 8.0
+  }
+  x
+}
+
+fn (var g: G) regalloc() {
+  g.order = g.hot + g.cold
+  for b in g.order {
+    let ss = g.msuccs(b)
+    g.blocks[b].succs = ss
+    for t in ss {
+      g.blocks[t].preds.push(b)
+    }
+  }
+  // positions
+  var i = 0
+  for b in g.order {
+    g.blocks[b].start = 4 * i
+    i += g.blocks[b].insts.len()
+    g.blocks[b].end = 4 * (i - 1) + 3
+  }
+  g.ninst = i
+  let n = g.fp.len()
+  let nb = g.order.len()
+
+  // liveness
+  var idx: List[Int] = []
+  for _ in 0..g.blocks.len() {
+    idx.push(-1)
+  }
+  var gen: List[List[Int]] = []
+  var kill: List[List[Int]] = []
+  var live_in: List[List[Int]] = []
+  var live_out: List[List[Int]] = []
+  for (k, b) in g.order.indexed() {
+    idx[b] = k
+    var gk = new_bits(n)
+    var kk = new_bits(n)
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        if u != 0 && !bits_has(kk, u) {
+          gk[u / BW] = gk[u / BW] | bit_mask(u)
+        }
+      }
+      for d in inst.defs {
+        if d != 0 {
+          kk[d / BW] = kk[d / BW] | bit_mask(d)
+        }
+      }
+    }
+    gen.push(gk)
+    kill.push(kk)
+    live_in.push(new_bits(n))
+    live_out.push(new_bits(n))
+  }
+  let nw = (n + BW - 1) / BW
+  var changed = true
+  while changed {
+    changed = false
+    var k = nb - 1
+    while k >= 0 {
+      let b = g.order[k]
+      var out = live_out[k]
+      live_out[k] = []
+      for t in g.blocks[b].succs {
+        let ti = idx[t]
+        for w in 0..nw {
+          out[w] = out[w] | live_in[ti][w]
+        }
+      }
+      for w in 0..nw {
+        let nv = gen[k][w] | (out[w] & ~kill[k][w])
+        if nv != live_in[k][w] {
+          live_in[k][w] = nv
+          changed = true
+        }
+      }
+      live_out[k] = out
+      k -= 1
+    }
+  }
+
+  // a register live into the entry is read before anything writes it
+  // (gotchas/arm64-mir-param-without-moves.md)
+  let early = bits_members(live_in[0])
+  if !early.is_empty() {
+    g.fail("internal: ${g.f.name} reads virtual register ${early[0]} before it is written")
+  }
+
+  // a landing pad is entered by the unwinder with the callee saved
+  // registers of the faulting point and the others lost (decision 0085):
+  // what it reads lives in callee saved registers or slots
+  var no_caller = new_bits(n)
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      if inst.pad < 0 || inst.kind == K_CALL {
+        continue
+      }
+      let pk = idx[g.pad_of(inst.pad)]
+      if pk >= 0 {
+        for w in 0..nw {
+          no_caller[w] = no_caller[w] | live_in[pk][w]
+        }
+      }
+    }
+  }
+
+  // loop depth, for spill weights
+  g.loop_depth()
+
+  // live ranges
+  var ranges: List[List[Rng]] = []
+  var weight: List[Float] = []
+  var end: List[Int] = []
+  for _ in 0..n {
+    ranges.push([])
+    weight.push(0.0)
+    end.push(0)
+  }
+  var calls: List[Int] = []
+  for (k, b) in g.order.indexed() {
+    var live = live_out[k]
+    let bend = g.blocks[b].end
+    let bstart = g.blocks[b].start
+    for v in bits_members(live) {
+      end[v] = bend
+    }
+    let first = bstart / 4
+    var wt = pow8(imin(g.blocks[b].depth, 6))
+    if g.blocks[b].cold {
+      wt = 0.1
+    }
+    let ins = g.blocks[b].insts
+    var j = ins.len() - 1
+    while j >= 0 {
+      let inst = ins[j]
+      let at = 4 * (first + j)
+      if inst.kind == K_CALL {
+        calls.push(at + 1)
+      }
+      for d in inst.defs {
+        if d == 0 {
+          continue
+        }
+        let dp = if inst.early { at } else { at + 2 }
+        weight[d] = weight[d] + wt
+        if bits_has(live, d) {
+          ranges[d].push(Rng{s: dp, e: end[d]})
+          live[d / BW] = live[d / BW] & ~bit_mask(d)
+        } else {
+          ranges[d].push(Rng{s: dp, e: dp})
+        }
+      }
+      for u in inst.us {
+        if u == 0 {
+          continue
+        }
+        weight[u] = weight[u] + wt
+        if !bits_has(live, u) {
+          live[u / BW] = live[u / BW] | bit_mask(u)
+          end[u] = at
+        }
+      }
+      j -= 1
+    }
+    for v in bits_members(live) {
+      ranges[v].push(Rng{s: bstart, e: end[v]})
+    }
+  }
+  for v in 0..n {
+    if ranges[v].len() > 1 {
+      ranges[v] = merge_ranges(ranges[v])
+    }
+  }
+
+  // hints: registers a vreg would like (ABI registers), and pairs of
+  // registers joined by a move
+  var fixed: List[List[Int]] = []
+  for _ in 0..n {
+    fixed.push([])
+  }
+  var pairs: List[Pair] = []
+  for b in g.order {
+    let wt = pow8(imin(g.blocks[b].depth, 6))
+    for inst in g.blocks[b].insts {
+      if inst.kind == K_PMOVE {
+        for (k, d) in inst.defs.indexed() {
+          let a = inst.srcs[k]
+          if a.kind == S_REG && a.v != 0 {
+            pairs.push(Pair{a: d, b: a.v, wt: wt})
+          }
+        }
+      } else if inst.kind == K_CALL {
+        let locs = g.abi_locs(inst.srcs)
+        for (k, a) in inst.srcs.indexed() {
+          if a.kind == S_REG && a.v != 0 && locs[k].reg >= 0 {
+            fixed[a.v].push(locs[k].reg)
+          }
+        }
+        for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+          if l.reg >= 0 {
+            fixed[inst.defs[k]].push(l.reg)
+          }
+        }
+      } else if inst.kind == K_ENTRY {
+        for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+          if l.reg >= 0 {
+            fixed[inst.defs[k]].push(l.reg)
+          }
+        }
+      } else if inst.kind == K_RET {
+        for (k, l) in g.abi_locs(inst.srcs).indexed() {
+          let a = inst.srcs[k]
+          if a.kind == S_REG && a.v != 0 && l.reg >= 0 {
+            fixed[a.v].push(l.reg)
+          }
+        }
+      }
+    }
+  }
+
+  // coalescing: registers joined by a move whose ranges do not overlap
+  // share a location (most frequent moves first)
+  var leader: List[Int] = []
+  for v in 0..n {
+    leader.push(v)
+  }
+  let sorted = pairs.sort_by(fn(p) { -p.wt })
+  var partners: List[List[Int]] = []
+  for _ in 0..n {
+    partners.push([])
+  }
+  for p in sorted {
+    var a = find_leader(leader, p.a)
+    var b = find_leader(leader, p.b)
+    if a == b || g.fp[a] != g.fp[b] {
+      continue
+    }
+    if overlaps(ranges[a], ranges[b]) {
+      partners[a].push(b)
+      partners[b].push(a)
+      continue
+    }
+    if b < a {
+      let t = a
+      a = b
+      b = t
+    }
+    leader[b] = a
+    let rb = ranges[b]
+    ranges[b] = []
+    var ra = ranges[a]
+    ranges[a] = []
+    ranges[a] = merge_sorted(ra, rb)
+    weight[a] = weight[a] + weight[b]
+    let fb = fixed[b]
+    for r in fb {
+      fixed[a].push(r)
+    }
+    let pb = partners[b]
+    for r in pb {
+      partners[a].push(r)
+    }
+    if bits_has(no_caller, b) {
+      no_caller[a / BW] = no_caller[a / BW] | bit_mask(a)
+    }
+  }
+
+  // allocation: greedy first fit in order of weight per length
+  var order: List[Int] = []
+  for v in 1..n {
+    if find_leader(leader, v) == v && !ranges[v].is_empty() {
+      order.push(v)
+    }
+  }
+  var prio: List[Float] = []
+  for _ in 0..n {
+    prio.push(0.0)
+  }
+  for v in order {
+    var l = 0
+    for r in ranges[v] {
+      l += r.e - r.s + 1
+    }
+    prio[v] = weight[v] / Float(l + 4)
+  }
+  // by priority, highest first; the order is by register before (stable)
+  let by_prio = order.sort_by(fn(v) { -prio[v] })
+  let gp_c = gp_caller()
+  let gp_e = gp_callee()
+  let fp_c = fp_caller()
+  let fp_e = fp_callee()
+  var used_callee: List[Bool] = []
+  while true {
+    var occ: List[List[Rng]] = []
+    for _ in 0..64 {
+      occ.push([])
+    }
+    if g.base != 0 {
+      // the base register of the frame's far slots (emit.xo far_slots)
+      occ[g.base] = [Rng{s: 0, e: 4 * g.ninst + 3}]
+    }
+    for c in calls {
+      for r in gp_c {
+        occ[r].push(Rng{s: c, e: c})
+      }
+      for r in fp_c {
+        occ[r].push(Rng{s: c, e: c})
+      }
+    }
+    for r in 0..64 {
+      if occ[r].len() > 1 {
+        occ[r] = merge_ranges(occ[r])
+      }
+    }
+    g.loc = []
+    for _ in 0..n {
+      g.loc.push(Loc{reg: -1, slot: -1})
+    }
+    used_callee = []
+    for _ in 0..64 {
+      used_callee.push(false)
+    }
+    var ncallee = 0
+    g.slots = 0
+    // the ranges each spill slot holds
+    var slot_occ: List[List[Rng]] = []
+    for v in by_prio {
+      let fp = g.fp[v]
+      var cands: List[Int] = []
+      for r in fixed[v] {
+        if (r >= FP_BASE) == fp {
+          cands.push(r)
+        }
+      }
+      for p in partners[v] {
+        let r = g.loc[find_leader(leader, p)].reg
+        if r >= 0 {
+          cands.push(r)
+        }
+      }
+      if fp {
+        cands = cands + fp_c + fp_e
+      } else {
+        cands = cands + gp_c + gp_e
+      }
+      let nc = bits_has(no_caller, v)
+      var chosen = -1
+      for r0 in cands {
+        var r = r0
+        if overlaps(occ[r], ranges[v]) || (nc && !is_callee(r)) {
+          continue
+        }
+        if is_callee(r) && !used_callee[r] {
+          // a callee saved register already saved before a fresh one
+          for r2 in cands {
+            if is_callee(r2) && used_callee[r2] && !overlaps(occ[r2], ranges[v]) {
+              r = r2
+              break
+            }
+          }
+        }
+        chosen = r
+        break
+      }
+      if chosen < 0 {
+        // a spill slot no value live at the same time holds (first fit,
+        // like the registers; gotchas/arm64-large-frame.md)
+        var k = 0
+        while k < slot_occ.len() && overlaps(slot_occ[k], ranges[v]) {
+          k += 1
+        }
+        if k == slot_occ.len() {
+          slot_occ.push([])
+          g.slots += 1
+        }
+        let so = slot_occ[k]
+        slot_occ[k] = []
+        slot_occ[k] = merge_sorted(so, ranges[v])
+        g.loc[v] = Loc{reg: -1, slot: k}
+        continue
+      }
+      g.loc[v] = Loc{reg: chosen, slot: 0}
+      if is_callee(chosen) && !used_callee[chosen] {
+        used_callee[chosen] = true
+        ncallee += 1
+      }
+      let oc = occ[chosen]
+      occ[chosen] = []
+      occ[chosen] = merge_sorted(oc, ranges[v])
+    }
+    // a frame past the reach of an sp relative ldr or str: allocate again
+    // with x28 kept free, for the addresses of the far slots
+    if g.base != 0 || g.frame_bound(ncallee) <= MAX_FRAME {
+      break
+    }
+    g.base = FAR_BASE
+  }
+  if g.base != 0 {
+    used_callee[g.base] = true
+  }
+  for v in 1..n {
+    g.loc[v] = g.loc[find_leader(leader, v)]
+  }
+  g.saved = []
+  for r in 0..64 {
+    if used_callee[r] {
+      g.saved.push(r)
+    }
+  }
+}
+
+/// The leader of v's coalesced group (with path halving, as the Go
+/// emitter's find).
+fn find_leader(var leader: List[Int], v0: Int) -> Int {
+  var v = v0
+  while leader[v] != v {
+    leader[v] = leader[leader[v]]
+    v = leader[v]
+  }
+  v
+}
+
+/// Sorts and joins touching or overlapping ranges (mergeRanges).
+fn merge_ranges(rs: List[Rng]) -> List[Rng] {
+  if rs.len() < 2 {
+    return rs
+  }
+  let sorted = rs.sort_by(fn(r) { r.s })
+  var out: List[Rng] = [sorted[0]]
+  for i in 1..sorted.len() {
+    let r = sorted[i]
+    let last = out.len() - 1
+    if r.s <= out[last].e + 1 {
+      if r.e > out[last].e {
+        out[last].e = r.e
+      }
+      continue
+    }
+    out.push(r)
+  }
+  out
+}
+
+/// Merges two sorted, merged range lists (mergeSorted).
+fn merge_sorted(a: List[Rng], b: List[Rng]) -> List[Rng] {
+  if b.is_empty() {
+    return a
+  }
+  if a.is_empty() {
+    return b
+  }
+  // the merge of the two lists by start, a's element first on a tie
+  // (the Go emitter merges from the back, taking b's on a tie)
+  var out: List[Rng] = []
+  var i = 0
+  var j = 0
+  let na = a.len()
+  let nb = b.len()
+  while i < na || j < nb {
+    var r = Rng{s: 0, e: 0}
+    if j >= nb || (i < na && a[i].s <= b[j].s) {
+      r = a[i]
+      i += 1
+    } else {
+      r = b[j]
+      j += 1
+    }
+    let last = out.len() - 1
+    if last >= 0 && r.s <= out[last].e + 1 {
+      if r.e > out[last].e {
+        out[last].e = r.e
+      }
+      continue
+    }
+    out.push(r)
+  }
+  out
+}
+
+/// Whether two sorted, merged range lists share a position.
+fn overlaps(a: List[Rng], b: List[Rng]) -> Bool {
+  var i = 0
+  var j = 0
+  while i < a.len() && j < b.len() {
+    if a[i].e < b[j].s {
+      i += 1
+    } else if b[j].e < a[i].s {
+      j += 1
+    } else {
+      return true
+    }
+  }
+  false
+}
+
+/// Sets the loop nesting depth of every block: a natural loop per back
+/// edge found by depth first search.
+fn (var g: G) loop_depth() {
+  if g.order.is_empty() {
+    return
+  }
+  let nb = g.blocks.len()
+  var state: List[Int] = []
+  for _ in 0..nb {
+    state.push(0)
+  }
+  var backs: List[(Int, Int)] = []
+  let b0 = g.order[0]
+  var stack: List[(Int, Int)] = [(b0, 0)]
+  state[b0] = 1
+  while !stack.is_empty() {
+    let top = stack.len() - 1
+    let (b, i) = stack[top]
+    let ss = g.blocks[b].succs
+    if i >= ss.len() {
+      state[b] = 2
+      let _p = stack.pop()
+      continue
+    }
+    stack[top] = (b, i + 1)
+    let t = ss[i]
+    if state[t] == 0 {
+      state[t] = 1
+      stack.push((t, 0))
+    } else if state[t] == 1 {
+      backs.push((b, t))
+    }
+  }
+  for (from, to) in backs {
+    var body: List[Bool] = []
+    for _ in 0..nb {
+      body.push(false)
+    }
+    body[to] = true
+    var work = [from]
+    while !work.is_empty() {
+      let b = work.pop() ?? 0
+      if body[b] {
+        continue
+      }
+      body[b] = true
+      for p in g.blocks[b].preds {
+        work.push(p)
+      }
+    }
+    for b in 0..nb {
+      if body[b] {
+        g.blocks[b].depth += 1
+      }
+    }
+  }
+}
+
+/// AAPCS64 locations of call operands: integer words to x0 to x7,
+/// floating point words to d0 to d7, the rest to 8 byte stack slots (reg
+/// -1, slot k is [sp + 8k] at the call, [x29 + 16 + 8k] in the callee).
+fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
+  var out: List[Loc] = []
+  var ngp = 0
+  var nfp = 0
+  var nst = 0
+  for a in srcs {
+    let fp = a.kind == S_REG && g.fp[a.v]
+    if fp && nfp < 8 {
+      out.push(Loc{reg: FP_BASE + nfp, slot: 0})
+      nfp += 1
+    } else if !fp && ngp < 8 {
+      out.push(Loc{reg: ngp, slot: 0})
+      ngp += 1
+    } else {
+      out.push(Loc{reg: -1, slot: nst})
+      nst += 1
+    }
+  }
+  out
+}

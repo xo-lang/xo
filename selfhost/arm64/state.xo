@@ -1,0 +1,434 @@
+// The state of the emitter: one struct for the program (internal/arm64
+// arm64.go gen) and the function being generated (isel.go fstate), so
+// that every pass is a method of one `var` receiver. The function state
+// is reset for each function (begin_func).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// A spill location: a physical register, or a spill slot (reg -1).
+struct Loc {
+  reg: Int
+  slot: Int
+}
+
+/// A call that unwinds to a landing pad: the labels around its `bl` and
+/// the pad's block.
+struct CallSite {
+  from: Str
+  to: Str
+  pad: Int
+}
+
+/// What a memory holds (byref.xo hkey): an SSA value (k -1), or result k
+/// of a call (the `var` parameter it wrote back). v -1 with k -2 is top
+/// (not reached yet), with k -3 bottom (unknown).
+struct HKey {
+  v: Int
+  k: Int
+}
+
+/// A tracked memory: a `var` parameter passed by reference that is the
+/// home of its type.
+struct HMem {
+  t: Int
+  param: Int
+  ptr: Int
+}
+
+/// The dataflow of the homes (byref.xo heldInfo).
+struct Held {
+  mems: List[HMem] = []
+  /// the state before each instruction, by value
+  before: Map[Int, List[HKey]] = {}
+  /// the state at the start of each block
+  inb: Map[Int, List[HKey]] = {}
+  /// the state along each edge
+  edge: Map[Int, List[HKey]] = {}
+  in_place: Map[Int, Int] = {}
+  mem_only: Map[Int, Int] = {}
+  us: Map[Int, List[Int]] = {}
+  has_uses: Bool = false
+}
+
+/// What the memo knows of a memory word (opt.xo memAt).
+struct MemAt {
+  base: Int
+  off: Int
+  epoch: Int
+}
+
+/// The per block memo (opt.xo memo).
+struct Memo {
+  blk: Int
+  /// constants by value: Int, Float bits (-0.0 as +0.0, as Go's map
+  /// keys compare), Bool, string bytes
+  ci: Map[Int, Int] = {}
+  cf: Map[Int, Int] = {}
+  cb: Map[Bool, Int] = {}
+  cs: Map[Bytes, Int] = {}
+  lens: Map[Int, Int] = {}
+  checked: Map[(Int, Int), Bool] = {}
+  bases: Map[(Int, Int, Int), Int] = {}
+  loaded: Map[Int, MemAt] = {}
+  epoch: Int = 0
+  lo: Map[Int, Int] = {}
+  hi: Map[Int, Int] = {}
+  low_zero: Map[Int, Int] = {}
+}
+
+/// A pointer induction variable of a loop (lsr.xo lsrPlan).
+struct LsrPlan {
+  iv: Int
+  iv_idx: Int
+  list: Int
+  list_idx: Int
+  es: Int
+  /// the loop header: body is its loop's
+  head: Int
+  p: Int = 0
+}
+
+/// What is known of a loop header (lsr.xo lsrLoop).
+struct LsrLoop {
+  body: List[Bool] = []
+  latches: List[Int] = []
+  entries: List[Int] = []
+  up: List[Int] = []
+  down: List[Int] = []
+  plans: List[Int] = []
+}
+
+/// An interval of Int values (ranges.xo).
+struct Interval {
+  lo: Int
+  hi: Int
+}
+
+/// A register that holds a + c (lsr.xo offset).
+struct Offset {
+  a: Int
+  c: Int
+}
+
+/// The emitter's state.
+struct G {
+  m: ssa.Module
+  os: Str
+  /// the last function of each name (Go's byName)
+  by_name: Map[Str, Int] = {}
+  /// value layouts by type: 0 not computed, 1 on the current path, 2 done
+  lay_st: List[Int] = []
+  lay: List[List[Bool]] = []
+  /// Type.Heap by type: -1 not computed, 0, 1
+  heap_c: List[Int] = []
+  strs: Map[Bytes, Str] = {}
+  str_ord: List[Bytes] = []
+  locs: Map[Str, Str] = {}
+  loc_ord: List[Str] = []
+  helpers: List[Str] = []
+  helped: Map[Str, Str] = {}
+  nhelp: Int = 0
+  nfunc: Int = 0
+  text: List[Str] = []
+  lsdas: List[Str] = []
+  ncs: Int = 0
+  personality_ref: Bool = false
+  /// parameters passed by reference per function (byref.xo), computed
+  /// when asked; an empty list is none
+  by_ref: Map[Int, List[Bool]] = {}
+  addr_taken: Map[Str, Bool] = {}
+  /// the first failure (a construct the backend does not support), or ""
+  err: Str = ""
+  /// the functions not emitted (a construct of a later stage of decision
+  /// 0158): `<name>: <why>`
+  skipped: List[Str] = []
+
+  // ---- the function being generated (fstate)
+  fi: Int = -1
+  f: ssa.Func = ssa.Func{name: ""}
+  /// class of each vreg (index 0 is xzr)
+  fp: List[Bool] = []
+  blocks: List[MBlock] = []
+  hot: List[Int] = []
+  cold: List[Int] = []
+  nblock: Int = 0
+  cur: Int = -1
+  /// the registers of each SSA value
+  vals: List[List[Int]] = []
+  has_val: List[Bool] = []
+  /// the machine block of each SSA block
+  bmap: List[Int] = []
+  nuses: List[Int] = []
+  /// the last user of each value, -1 for none
+  users: List[Int] = []
+  /// the register of a List block parameter to the register of its
+  /// length, a parameter too
+  len_param: Map[Int, Int] = {}
+  /// the memo at the end of each lowered SSA block, -1 for none
+  end_memo: List[Int] = []
+  /// compares lowered into the branch that uses them
+  lazy: List[Bool] = []
+  /// the function uses the $OUT slot
+  out: Bool = false
+  /// releases cancelled by a retain (rc.xo cancel_rc)
+  cancel: List[Bool] = []
+  /// loop headers: induction variables (lsr.xo), by SSA block
+  lsr: Map[Int, LsrLoop] = {}
+  plans: List[LsrPlan] = []
+  /// intervals of Int values (ranges.xo)
+  ranges: List[Interval] = []
+  has_range: List[Bool] = []
+  /// registers that are another plus a constant (lsr.xo)
+  offs: Map[Int, Offset] = {}
+  /// moved latches copied at a branch into them (lsr.xo dup_latch)
+  dup_ok: Map[Int, Bool] = {}
+  // register allocation results
+  loc: List[Loc] = []
+  order: List[Int] = []
+  ninst: Int = 0
+  slots: Int = 0
+  /// FAR_BASE when the frame is past MAX_FRAME, or 0
+  base: Int = 0
+  saved: List[Int] = []
+  /// the frame of the function being emitted
+  fr: Frame = Frame{}
+  stubs: List[Str] = []
+  nstub: Int = 0
+  /// the memos (a block's memo is an index into them)
+  memos: List[Memo] = []
+  mm: Int = -1
+  /// landing pads (decision 0085): the pad of the value being lowered,
+  /// the SSA blocks landing pads enter, and the call site table entries
+  cur_pad: Int = -1
+  pads: List[Bool] = []
+  sites: List[CallSite] = []
+  stub_sites: List[CallSite] = []
+  /// large `var` parameters passed by reference (byref.xo)
+  held: Held = Held{}
+  has_held: Bool = false
+  ref_ptr: Map[Int, Int] = {}
+  has_ref_ptr: Bool = false
+  areas: Map[Int, List[Int]] = {}
+  mem_bytes: Int = 0
+  lazy_res: Map[(Int, Int), Bool] = {}
+  /// read only parameters passed by reference: their address
+  stable: Map[Int, Int] = {}
+}
+
+/// Records a failure: the program cannot be generated (the Go emitter's
+/// fail). Generation goes on with placeholder registers.
+fn (var g: G) fail(msg: Str) {
+  if g.err.is_empty() {
+    g.err = "arm64 backend: ${msg}"
+  }
+}
+
+/// Starts the state of function fi.
+fn (var g: G) begin_func(fi: Int) {
+  g.fi = fi
+  g.f = g.m.funcs[fi]
+  let nv = g.f.values.len()
+  let nb = g.f.blocks.len()
+  g.fp = [false]
+  g.blocks = []
+  g.hot = []
+  g.cold = []
+  g.nblock = 0
+  g.cur = -1
+  g.vals = []
+  g.has_val = []
+  g.nuses = []
+  g.users = []
+  g.lazy = []
+  g.cancel = []
+  for _ in 0..nv {
+    g.vals.push([])
+    g.has_val.push(false)
+    g.nuses.push(0)
+    g.users.push(-1)
+    g.lazy.push(false)
+    g.cancel.push(false)
+  }
+  g.bmap = []
+  g.end_memo = []
+  g.pads = []
+  for _ in 0..nb {
+    g.bmap.push(-1)
+    g.end_memo.push(-1)
+    g.pads.push(false)
+  }
+  g.len_param = {}
+  g.out = false
+  g.lsr = {}
+  g.plans = []
+  g.ranges = []
+  g.has_range = []
+  g.offs = {}
+  g.dup_ok = {}
+  g.loc = []
+  g.order = []
+  g.ninst = 0
+  g.slots = 0
+  g.base = 0
+  g.saved = []
+  g.fr = Frame{}
+  g.stubs = []
+  g.nstub = 0
+  g.memos = []
+  g.mm = -1
+  g.cur_pad = -1
+  g.sites = []
+  g.stub_sites = []
+  g.held = Held{}
+  g.has_held = false
+  g.ref_ptr = {}
+  g.has_ref_ptr = false
+  g.areas = {}
+  g.mem_bytes = 0
+  g.lazy_res = {}
+  g.stable = {}
+}
+
+// ---------------------------------------------------------------------------
+// SSA access
+
+fn (g: G) op(v: Int) -> ssa.Op {
+  g.f.values[v].op
+}
+
+fn (g: G) vty(v: Int) -> Int {
+  g.f.values[v].ty
+}
+
+fn (g: G) arg(v: Int, i: Int) -> Int {
+  g.f.values[v].args[i]
+}
+
+fn (g: G) nargs(v: Int) -> Int {
+  g.f.values[v].args.len()
+}
+
+fn (g: G) kind(t: Int) -> ssa.Kind {
+  g.m.types[t].kind
+}
+
+/// The kind of value v's type.
+fn (g: G) vkind(v: Int) -> ssa.Kind {
+  g.m.types[g.f.values[v].ty].kind
+}
+
+fn (g: G) tname(t: Int) -> Str {
+  g.m.types[t].name
+}
+
+/// The name in an aux ("" for another aux).
+fn aux_str(a: ssa.Aux) -> Str {
+  match a {
+    S(s) => s
+    _ => ""
+  }
+}
+
+/// The integer in an aux (0 for another aux).
+fn aux_int(a: ssa.Aux) -> Int {
+  match a {
+    I(n) => n
+    _ => 0
+  }
+}
+
+/// The callee, closure, or function name of value v ("" for another aux).
+fn (g: G) vname(v: Int) -> Str {
+  aux_str(g.f.values[v].aux)
+}
+
+/// The integer aux of value v (a field index, a tag, a capture).
+fn (g: G) vint(v: Int) -> Int {
+  aux_int(g.f.values[v].aux)
+}
+
+/// The Int constant v holds (constInt).
+fn (g: G) const_int(v: Int) -> (Int, Bool) {
+  if g.f.values[v].op != ssa.Op.Const {
+    return (0, false)
+  }
+  match g.f.values[v].aux {
+    I(n) => (n, true)
+    _ => (0, false)
+  }
+}
+
+/// The parameters of the function (its entry block's).
+fn (g: G) params() -> List[Int] {
+  g.f.blocks[0].params
+}
+
+/// The terminator value of SSA block b, or -1.
+fn (g: G) sterm(b: Int) -> Int {
+  g.f.term(b)
+}
+
+/// Whether value v is a parameter of its block (isParam).
+fn (g: G) is_param(v: Int) -> Bool {
+  g.f.values[v].op == ssa.Op.Param
+}
+
+/// The SSA block a landing pad value w enters: the first successor of
+/// the branch on it (`v.Pad.Block.Term().Succs[0].To`).
+fn (g: G) pad_target(w: Int) -> Int {
+  let t = g.f.term(g.f.values[w].block)
+  g.f.edges[g.f.values[t].succs[0]].to
+}
+
+/// Whether t holds heap memory (Type.Heap), cached.
+fn (var g: G) heap(t: Int) -> Bool {
+  if g.heap_c[t] < 0 {
+    g.heap_c[t] = if g.m.heap(t) { 1 } else { 0 }
+  }
+  g.heap_c[t] == 1
+}
+
+/// Whether t holds a Float (Type.HasFloat).
+fn (g: G) has_float(t: Int) -> Bool {
+  var seen: List[Bool] = []
+  for _ in 0..g.m.types.len() {
+    seen.push(false)
+  }
+  g.has_float_in(t, seen)
+}
+
+fn (g: G) has_float_in(t: Int, var seen: List[Bool]) -> Bool {
+  if seen[t] {
+    return false
+  }
+  seen[t] = true
+  let x = g.m.types[t]
+  match x.kind {
+    Float => return true
+    Struct => {
+      for f in x.fields {
+        if g.has_float_in(f.ty, seen) {
+          return true
+        }
+      }
+    }
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          if g.has_float_in(f.ty, seen) {
+            return true
+          }
+        }
+      }
+    }
+    Tuple | List | Box => {
+      for e in x.elems {
+        if g.has_float_in(e, seen) {
+          return true
+        }
+      }
+    }
+    _ => {}
+  }
+  false
+}

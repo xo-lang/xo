@@ -1,0 +1,845 @@
+// Loop optimizations (internal/arm64 lsr.go, decision 0054): strength
+// reduction and the facts of loop indexes (on the SSA, during
+// selection), rotation at a bounds check (emission), load pairs (a text
+// peephole), and latch layout (on the MIR, before allocation).
+//
+// A pointer induction variable: in a loop whose header H has an Int
+// parameter i that every back edge passes as i + c, an element access
+// xs[i] of a list whose buffer cannot move in the loop gets a second
+// parameter of H, p = xs + i * size, which the back edges advance by c *
+// size and the entry edges compute once.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// Whether SSA block a dominates b (idom: immediate dominators, -1 for
+/// the entry and the blocks not reached).
+fn dominates_b(idom: List[Int], entry: Int, a: Int, b0: Int) -> Bool {
+  var b = b0
+  while b >= 0 {
+    if a == b {
+      return true
+    }
+    if b == entry {
+      return false
+    }
+    let d = idom[b]
+    if d < 0 {
+      return false
+    }
+    b = d
+  }
+  false
+}
+
+/// Finds the loops of the function and their pointer induction
+/// variables (planLSR).
+fn (var g: G) plan_lsr(blocks: List[Int], idom: List[Int]) {
+  g.lsr = {}
+  g.plans = []
+  let nb = g.f.blocks.len()
+  let entry = blocks[0]
+  var reach: List[Bool] = []
+  for _ in 0..nb {
+    reach.push(false)
+  }
+  for b in blocks {
+    reach[b] = true
+  }
+  var bodies: Map[Int, List[Bool]] = {}
+  for b in blocks {
+    let t = g.f.term(b)
+    if t < 0 {
+      continue
+    }
+    for e in g.f.values[t].succs {
+      let h = g.f.edges[e].to
+      if !dominates_b(idom, entry, h, b) || h == entry {
+        continue
+      }
+      var body: List[Bool] = []
+      if let Some(bd) = bodies.get(h) {
+        body = bd
+      } else {
+        for _ in 0..nb {
+          body.push(false)
+        }
+        body[h] = true
+      }
+      var work = [b]
+      while !work.is_empty() {
+        let x = work.pop() ?? 0
+        if body[x] || !reach[x] {
+          continue
+        }
+        body[x] = true
+        for pe in g.f.blocks[x].preds {
+          work.push(g.f.edges[pe].from)
+        }
+      }
+      bodies[h] = body
+    }
+  }
+  for h in blocks {
+    let body = bodies.get(h) ?? []
+    if body.is_empty() {
+      continue
+    }
+    var lp = LsrLoop{body: body}
+    for e in g.f.blocks[h].preds {
+      let from = g.f.edges[e].from
+      if !reach[from] {
+        continue
+      }
+      if body[from] {
+        lp.latches.push(e)
+      } else {
+        lp.entries.push(e)
+      }
+    }
+    if lp.entries.is_empty() {
+      continue
+    }
+    for (k, p) in g.f.blocks[h].params.indexed() {
+      if g.vkind(p) == ssa.Kind.Int {
+        var up = true
+        var down = true
+        for e in lp.latches {
+          let (c, ok) = g.step_of(p, g.f.edges[e].args[k])
+          up = up && ok && c >= 0
+          down = down && ok && c <= 0
+        }
+        if up {
+          lp.up.push(k)
+        }
+        if down {
+          lp.down.push(k)
+        }
+      }
+    }
+    var iv_idx: Map[Int, Int] = {}
+    for (k, iv) in g.f.blocks[h].params.indexed() {
+      if g.vkind(iv) == ssa.Kind.Int && g.iv_step(iv, k, lp.latches) {
+        iv_idx[iv] = k
+      }
+    }
+    for b in blocks {
+      if !body[b] {
+        continue
+      }
+      // blocks that run on every iteration
+      var every = true
+      for e in lp.latches {
+        if !dominates_b(idom, entry, b, g.f.edges[e].from) {
+          every = false
+          break
+        }
+      }
+      if !every {
+        continue
+      }
+      for v in g.f.blocks[b].instrs {
+        let x = g.f.values[v]
+        if x.op != ssa.Op.Call || x.args.len() < 2 {
+          continue
+        }
+        let name = aux_str(x.aux)
+        if name != "list.index" && name != "list.set" {
+          continue
+        }
+        let iv = x.args[1]
+        let k = iv_idx.get(iv) ?? -1
+        if k < 0 {
+          continue
+        }
+        let (l, li) = g.stable_list(x.args[0], h, body, lp.latches)
+        if l < 0 {
+          continue
+        }
+        let es = g.esize(g.m.types[g.vty(l)].elems[0])
+        if es == 0 || es & (es - 1) == 0 {
+          continue // xs + i << k is one instruction already
+        }
+        var dup = false
+        for pi in lp.plans {
+          dup = dup || (g.plans[pi].iv == iv && g.plans[pi].list == l)
+        }
+        if !dup {
+          lp.plans.push(g.plans.len())
+          g.plans.push(LsrPlan{iv: iv, iv_idx: k, list: l, list_idx: li, es: es, head: h})
+        }
+      }
+    }
+    g.lsr[h] = lp
+  }
+}
+
+/// Whether every back edge passes parameter iv (index k) as iv, iv + c,
+/// or iv - c.
+fn (g: G) iv_step(iv: Int, k: Int, latches: List[Int]) -> Bool {
+  for e in latches {
+    let (_, ok) = g.step_of(iv, g.f.edges[e].args[k])
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// c when a is iv + c.
+fn (g: G) step_of(iv: Int, a: Int) -> (Int, Bool) {
+  if a == iv {
+    return (0, true)
+  }
+  let x = g.f.values[a]
+  if (x.op != ssa.Op.Add && x.op != ssa.Op.Sub) || g.kind(x.ty) != ssa.Kind.Int {
+    return (0, false)
+  }
+  let swap = x.op == ssa.Op.Add && x.args[1] == iv
+  let p = if swap { x.args[1] } else { x.args[0] }
+  let q = if swap { x.args[0] } else { x.args[1] }
+  let (c, ok) = g.const_int(q)
+  if p != iv || !ok || c == MIN_INT {
+    return (0, false)
+  }
+  if x.op == ssa.Op.Sub {
+    return (-c, true)
+  }
+  (c, true)
+}
+
+/// The list whose buffer xs is in the loop of h (body), when that buffer
+/// cannot move in the loop: a list defined outside the loop, or a
+/// parameter of h that every back edge passes back updated in place. The
+/// index is the parameter's, or -1; the list is -1 when none.
+fn (g: G) stable_list(xs: Int, h: Int, body: List[Bool], latches: List[Int]) -> (Int, Int) {
+  let l = g.strip_set(xs)
+  if !body[g.f.values[l].block] {
+    return (l, -1)
+  }
+  var k = -1
+  for (i, p) in g.f.blocks[h].params.indexed() {
+    if p == l {
+      k = i
+    }
+  }
+  if k < 0 {
+    return (-1, 0)
+  }
+  for e in latches {
+    var seen: Map[Int, Bool] = {}
+    if g.in_place_buf(g.f.edges[e].args[k], l, h, body, seen) != l {
+      return (-1, 0)
+    }
+  }
+  (l, k)
+}
+
+/// Follows list.set results to the list they update.
+fn (g: G) strip_set(v0: Int) -> Int {
+  var v = v0
+  while g.f.values[v].op == ssa.Op.Call && aux_str(g.f.values[v].aux) == "list.set" {
+    v = g.f.values[v].args[0]
+  }
+  v
+}
+
+/// The value whose buffer v shares within the loop: through list.set and
+/// through parameters of blocks of the loop (not h) that receive one
+/// buffer only; -1 when unknown (inPlace).
+fn (g: G) in_place_buf(v0: Int, root: Int, h: Int, body: List[Bool], var seen: Map[Int, Bool]) -> Int {
+  let v = g.strip_set(v0)
+  let vb = g.f.values[v].block
+  if v == root || !body[vb] || vb == h || !g.is_param(v) {
+    if v == root {
+      return root
+    }
+    return -1
+  }
+  if seen.contains(v) {
+    return root // a cycle through v adds no other buffer
+  }
+  seen[v] = true
+  var k = -1
+  for (i, p) in g.f.blocks[vb].params.indexed() {
+    if p == v {
+      k = i
+    }
+  }
+  for e in g.f.blocks[vb].preds {
+    if g.in_place_buf(g.f.edges[e].args[k], root, h, body, seen) != root {
+      return -1
+    }
+  }
+  root
+}
+
+/// Adds the pointer parameters of header b.
+fn (var g: G) lsr_params(b: Int) {
+  for pi in g.plans_of(b) {
+    g.plans[pi].p = g.new_vreg(false)
+  }
+}
+
+fn (g: G) plans_of(b: Int) -> List[Int] {
+  if let Some(lp) = g.lsr.get(b) {
+    return lp.plans
+  }
+  []
+}
+
+/// What holds of argument a at the end of the block edge e leaves: the
+/// memo and a's register, or -1.
+fn (g: G) edge_at(e: Int, a: Int) -> (Int, Int) {
+  let em = g.end_memo[g.f.edges[e].from]
+  if em < 0 || !g.has_val[a] || g.vals[a].len() != 1 || g.vals[a][0] == 0 {
+    return (-1, 0)
+  }
+  (em, g.vals[a][0])
+}
+
+/// Starts the memo of loop header b: the address memo with its pointers,
+/// and the bounds of its induction variables from their initial values.
+fn (var g: G) lsr_header(b: Int) {
+  if !g.lsr.contains(b) {
+    return
+  }
+  let lp = g.lsr.get(b) ?? LsrLoop{}
+  let mi = g.m_()
+  for pi in lp.plans {
+    let p = g.plans[pi]
+    let l = g.vals[p.list][0]
+    let i = g.vals[p.iv][0]
+    g.memos[mi].bases[(l, i, p.es)] = p.p
+  }
+  let params = g.f.blocks[b].params
+  for k in lp.up {
+    var lo = MAX_INT
+    for e in lp.entries {
+      let a = g.f.edges[e].args[k]
+      let (c, ok) = g.const_int(a)
+      var x = c
+      if !ok {
+        let (em, w) = g.edge_at(e, a)
+        if em < 0 {
+          lo = MIN_INT
+          break
+        }
+        match g.memos[em].lo.get(w) {
+          Some(y) => x = y
+          None => {
+            lo = MIN_INT
+            break
+          }
+        }
+      }
+      lo = imin(lo, x)
+    }
+    if lo > MIN_INT {
+      g.memos[mi].lo[g.vals[params[k]][0]] = lo
+    }
+  }
+  for k in lp.down {
+    var hi = MIN_INT
+    for e in lp.entries {
+      let a = g.f.edges[e].args[k]
+      let (c, ok) = g.const_int(a)
+      var x = c
+      if !ok {
+        let (em, w) = g.edge_at(e, a)
+        if em < 0 {
+          hi = MAX_INT
+          break
+        }
+        match g.memos[em].hi.get(w) {
+          Some(y) => x = y
+          None => {
+            hi = MAX_INT
+            break
+          }
+        }
+      }
+      hi = imax(hi, x)
+    }
+    if hi < MAX_INT {
+      g.memos[mi].hi[g.vals[params[k]][0]] = hi
+    }
+  }
+}
+
+/// Adds the moves of the pointer parameters along edge e.
+fn (var g: G) lsr_moves(e: Int, dsts0: List[Int], srcs0: List[Src]) -> (List[Int], List[Src]) {
+  var dsts = dsts0
+  var srcs = srcs0
+  let to = g.f.edges[e].to
+  let from = g.f.edges[e].from
+  for pi in g.plans_of(to) {
+    let p = g.plans[pi]
+    let a = g.f.edges[e].args[p.iv_idx]
+    let body = (g.lsr.get(p.head) ?? LsrLoop{}).body
+    if body[from] {
+      let (c, _) = g.step_of(p.iv, a)
+      if c == 0 {
+        continue
+      }
+      let n = c * p.es
+      var d = 0
+      if imm12(n) {
+        d = g.def1(false, "add $d0, $u0, #${n}", [p.p])
+      } else if imm12(-n) {
+        d = g.def1(false, "sub $d0, $u0, #${-n}", [p.p])
+      } else {
+        d = g.def1(false, "add $d0, $u0, $u1", [p.p, g.cimm(n)])
+      }
+      dsts.push(p.p)
+      srcs.push(rsrc(d))
+      continue
+    }
+    var l = 0
+    if p.list_idx >= 0 {
+      l = g.words(g.f.edges[e].args[p.list_idx])[0]
+    } else {
+      l = g.vals[p.list][0]
+    }
+    dsts.push(p.p)
+    let rl = g.real(l)
+    let wa = g.word(a)
+    srcs.push(rsrc(g.elem_base(rl, wa, p.es)))
+  }
+  (dsts, srcs)
+}
+
+/// Records what a passed bounds check `i <u len` proves about i: 0 <= i
+/// <= MaxInt64 - 1.
+fn (var g: G) index_facts(i: Int) {
+  let mi = g.m_()
+  var lo = g.memos[mi].lo.get(i) ?? -1
+  if !g.memos[mi].lo.contains(i) || lo < 0 {
+    lo = 0
+  }
+  var hi = g.memos[mi].hi.get(i) ?? MAX_INT
+  if !g.memos[mi].hi.contains(i) || hi > MAX_INT - 1 {
+    hi = MAX_INT - 1
+  }
+  g.memos[mi].lo[i] = lo
+  g.memos[mi].hi[i] = hi
+}
+
+/// Records that v = a + n (Add) or a - n (Sub), and v's bounds from a's.
+fn (var g: G) offset_facts(v: Int, a: Int, n0: Int) {
+  if g.vkind(v) != ssa.Kind.Int {
+    return
+  }
+  var n = n0
+  if g.op(v) == ssa.Op.Sub {
+    if n == MIN_INT {
+      return
+    }
+    n = -n
+  }
+  if !g.has_val[a] || !g.has_val[v] || g.vals[a].len() != 1 || g.vals[v].len() != 1 {
+    return
+  }
+  let ar = g.vals[a][0]
+  let d = g.vals[v][0]
+  if ar == 0 || d == 0 || ar == d {
+    return
+  }
+  g.offs[d] = Offset{a: ar, c: n}
+  let mi = g.m_()
+  if let Some(lo) = g.memos[mi].lo.get(ar) {
+    if n >= 0 || lo >= MIN_INT - n {
+      if n <= 0 || lo <= MAX_INT - n {
+        g.memos[mi].lo[d] = lo + n
+      }
+    }
+  }
+  if let Some(hi) = g.memos[mi].hi.get(ar) {
+    if n <= 0 || hi <= MAX_INT - n {
+      if n >= 0 || hi >= MIN_INT - n {
+        g.memos[mi].hi[d] = hi + n
+      }
+    }
+  }
+}
+
+/// The address of element i of list l from the address of element a when
+/// i = a + c and the memo has a's: one add.
+fn (var g: G) offset_base(l: Int, i: Int, es: Int) -> (Int, Bool) {
+  let o = g.offs.get(i) ?? Offset{a: -1, c: 0}
+  if o.a < 0 {
+    return (0, false)
+  }
+  let mi = g.m_()
+  let b = g.memos[mi].bases.get((l, o.a, es)) ?? -1
+  if b < 0 || o.c >= 4096 || o.c <= -4096 || es >= 4096 {
+    return (0, false)
+  }
+  let n = o.c * es
+  if n == 0 {
+    return (b, true)
+  }
+  if imm12(n) {
+    return (g.def1(false, "add $d0, $u0, #${n}", [b]), true)
+  }
+  if imm12(-n) {
+    return (g.def1(false, "sub $d0, $u0, #${-n}", [b]), true)
+  }
+  (0, false)
+}
+
+// ---------------------------------------------------------------------------
+// Loop rotation of bounds checks: a jump back to a block that starts with
+// a check does the check itself and branches into the block past it.
+
+/// Whether block b starts with a check (checkHead).
+fn (g: G) check_head(b: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  if ins.len() < 2 {
+    return false
+  }
+  let inst = ins[0]
+  inst.kind == K_PLAIN && inst.has_fault && inst.defs.is_empty() && inst.recover.is_empty() &&
+    inst.text.starts_with("cmp ") && !inst.text.contains("\n") && !inv_cond(inst.fcond).is_empty()
+}
+
+/// Emits a jump to t, a block emitted before the current one that starts
+/// with a check, as the check and a branch past it; false when it does
+/// not apply.
+fn (var g: G) rotate_jump(var b: List[Str], t: Int) -> Bool {
+  if !g.check_head(t) {
+    return false
+  }
+  var back = false
+  for x in g.order {
+    if x == g.cur {
+      break
+    }
+    back = back || x == t
+  }
+  if !back {
+    return false
+  }
+  let inst = g.blocks[t].insts[0]
+  g.emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us})
+  let lt = g.label(t)
+  b.push("\tb.${inv_cond(inst.fcond)} ${lt}_c\n\tb ${lt}\n")
+  true
+}
+
+/// Joins two loads of adjacent words through one base register into a
+/// load pair (pairLoads). Integer registers only.
+fn pair_loads(text: Str) -> Str {
+  let lines = text.split("\n")
+  var out: List[Str] = []
+  var i = 0
+  let n = lines.len()
+  while i < n {
+    if i + 1 < n {
+      let (aok, a1, a2, a3) = parse_ldr(lines[i])
+      if aok {
+        let (cok, c1, c2, c3) = parse_ldr(lines[i + 1])
+        if cok && a2 == c2 && a1 != c1 && a1 != a2 {
+          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
+            out.push("\tldp ${a1}, ${c1}, [${a2}, #${a3}]")
+            i += 2
+            continue
+          }
+        }
+      }
+    }
+    out.push(lines[i])
+    i += 1
+  }
+  out.join("\n")
+}
+
+/// Whether l is `\tldr x<n>, [x<m>|sp, #<off>]` (ldrRE): the register,
+/// the base, and the offset.
+fn parse_ldr(l: Str) -> (Bool, Str, Str, Int) {
+  let bad = (false, "", "", 0)
+  if !l.starts_with("\tldr x") {
+    return bad
+  }
+  let rest = l[5..l.len()]
+  let comma = rest.find(", [") ?? -1
+  if comma < 0 {
+    return bad
+  }
+  let r = rest[0..comma]
+  if !is_xreg(r) {
+    return bad
+  }
+  let rest2 = rest[comma + 3..rest.len()]
+  let c2 = rest2.find(", #") ?? -1
+  if c2 < 0 {
+    return bad
+  }
+  let base = rest2[0..c2]
+  if base != "sp" && !is_xreg(base) {
+    return bad
+  }
+  let tail = rest2[c2 + 3..rest2.len()]
+  if !tail.ends_with("]") {
+    return bad
+  }
+  let num = tail[0..tail.len() - 1]
+  if !is_signed_digits(num) {
+    return bad
+  }
+  match Int.parse(num) {
+    Some(off) => (true, r, base, off)
+    None => bad
+  }
+}
+
+/// Whether s is `x` and one or more digits.
+fn is_xreg(s: Str) -> Bool {
+  if s.len() < 2 || !s.starts_with("x") {
+    return false
+  }
+  is_digits(s[1..s.len()])
+}
+
+fn is_digits(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for c in s.bytes() {
+    if c < '0' || c > '9' {
+      return false
+    }
+  }
+  true
+}
+
+/// An optional `-` and one or more digits.
+fn is_signed_digits(s: Str) -> Bool {
+  if s.starts_with("-") {
+    return is_digits(s[1..s.len()])
+  }
+  is_digits(s)
+}
+
+/// Lays out the latch of a loop right after a block that branches either
+/// to it or into an inner loop (placeLatches).
+fn (var g: G) place_latches() {
+  let all = g.all_blocks()
+  let nb = g.blocks.len()
+  let preds = g.mpreds_all(all)
+  // natural loops of back edges found by depth first search, the bodies
+  // by header
+  var bodies: List[List[Bool]] = []
+  var has_body: List[Bool] = []
+  for _ in 0..nb {
+    bodies.push([])
+    has_body.push(false)
+  }
+  var state: List[Int] = []
+  for _ in 0..nb {
+    state.push(0)
+  }
+  var stack: List[(Int, Int)] = [(g.hot[0], 0)]
+  state[g.hot[0]] = 1
+  while !stack.is_empty() {
+    let top = stack.len() - 1
+    let (b, i) = stack[top]
+    let ss = g.msuccs(b)
+    if i >= ss.len() {
+      state[b] = 2
+      let _p = stack.pop()
+      continue
+    }
+    stack[top] = (b, i + 1)
+    let t = ss[i]
+    if state[t] == 0 {
+      state[t] = 1
+      stack.push((t, 0))
+    } else if state[t] == 1 {
+      if !has_body[t] {
+        var body: List[Bool] = []
+        for _ in 0..nb {
+          body.push(false)
+        }
+        bodies[t] = body
+        has_body[t] = true
+      }
+      var body = bodies[t]
+      bodies[t] = []
+      var work = [b]
+      body[t] = true
+      while !work.is_empty() {
+        let x = work.pop() ?? 0
+        if !body[x] {
+          body[x] = true
+          for p in preds[x] {
+            work.push(p)
+          }
+        }
+      }
+      bodies[t] = body
+    }
+  }
+  var hot: List[Bool] = []
+  for _ in 0..nb {
+    hot.push(false)
+  }
+  for b in g.hot {
+    hot[b] = true
+  }
+  var moved: List[Bool] = []
+  for _ in 0..nb {
+    moved.push(false)
+  }
+  var i = 0
+  while i < g.hot.len() {
+    let b = g.hot[i]
+    let nbi = g.blocks[b].insts.len()
+    if nbi == 0 {
+      i += 1
+      continue
+    }
+    let t = g.blocks[b].insts[nbi - 1]
+    if t.kind != K_CONDBR || t.targets[0] == t.targets[1] {
+      i += 1
+      continue
+    }
+    var restart = false
+    for k in 0..2 {
+      let l = t.targets[k]
+      let x = t.targets[1 - k]
+      // l and the small blocks it jumps through reach the loop's header,
+      // or a block that only tests and branches to it
+      var chain: List[Int] = []
+      var h = -1
+      var y = l
+      while h < 0 && chain.len() < 4 {
+        if !hot[y] || moved[y] || y == b || g.blocks[y].insts.len() > 8 || g.term_kind(y) != K_JUMP {
+          break
+        }
+        chain.push(y)
+        let ny = g.blocks[y].insts.len()
+        let j = g.blocks[y].insts[ny - 1].targets[0]
+        if has_body[j] {
+          h = j
+        } else if g.blocks[j].insts.len() == 1 && g.blocks[j].insts[0].kind == K_CONDBR {
+          for z in g.blocks[j].insts[0].targets {
+            if has_body[z] && bodies[z][j] {
+              h = z
+            }
+          }
+          if h < 0 {
+            y = j
+          }
+        } else {
+          y = j
+        }
+      }
+      // b the test of a loop x is in, or before a loop x heads (while):
+      // falling into the loop is best
+      if h < 0 || !bodies[h][b] || !bodies[h][l] || has_body[x] || (has_body[b] && bodies[b][x]) || !g.heavy(x, h, l, bodies, has_body) {
+        continue
+      }
+      if i + 1 < g.hot.len() && g.hot[i + 1] == l {
+        break
+      }
+      // move the chain to right after b
+      var inc: List[Bool] = []
+      for _ in 0..nb {
+        inc.push(false)
+      }
+      for c in chain {
+        inc[c] = true
+        moved[c] = true
+      }
+      var out: List[Int] = []
+      for z in g.hot {
+        if inc[z] {
+          continue
+        }
+        out.push(z)
+        if z == b {
+          for c in chain {
+            out.push(c)
+          }
+        }
+      }
+      g.hot = out
+      // the blocks a branch reaches the latch through (emission skips
+      // the ones whose moves are empty)
+      for c in chain {
+        if g.copyable(c) {
+          g.dup_ok[c] = true
+        }
+      }
+      restart = true // positions changed: scan again (each latch moves once)
+      break
+    }
+    if restart {
+      i = 0
+    } else {
+      i += 1
+    }
+  }
+}
+
+/// Whether x reaches the header of a loop nested in the loop of h
+/// without going through h or the latch l.
+fn (g: G) heavy(x: Int, h: Int, l: Int, bodies: List[List[Bool]], has_body: List[Bool]) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  seen[h] = true
+  seen[l] = true
+  var work = [x]
+  while !work.is_empty() {
+    let y = work.pop() ?? 0
+    if seen.contains(y) || !bodies[h][y] {
+      continue
+    }
+    seen[y] = true
+    if has_body[y] && y != h {
+      return true
+    }
+    for s in g.msuccs(y) {
+      work.push(s)
+    }
+  }
+  false
+}
+
+/// Whether latch b is small and straight: moves and plain instructions
+/// without fault exits, then a jump.
+fn (g: G) copyable(b: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  if ins.len() > 4 || ins.is_empty() || ins[ins.len() - 1].kind != K_JUMP {
+    return false
+  }
+  for k in 0..ins.len() - 1 {
+    let inst = ins[k]
+    if inst.kind == K_PMOVE {
+      continue
+    }
+    if inst.kind == K_PLAIN && !inst.has_fault && inst.recover.is_empty() {
+      continue
+    }
+    return false
+  }
+  true
+}
+
+/// The target of a conditional branch (to t or f) that is a moved latch
+/// to copy after the branch, when the other target is next; or -1.
+fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
+  for l in [t, f] {
+    let o = if l == t { f } else { t }
+    if g.dup_ok.contains(l) && o == next && l != next && l != g.cur {
+      return l
+    }
+  }
+  -1
+}
+
+/// Emits a copy of latch t (after the branch to its other target).
+fn (var g: G) emit_latch(var b: List[Str], t: Int, next: Int) {
+  for inst in g.blocks[t].insts {
+    g.emit_inst(b, inst, next)
+  }
+}

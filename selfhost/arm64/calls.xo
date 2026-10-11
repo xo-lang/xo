@@ -1,0 +1,593 @@
+// Reference counting inline, lists, and calls (internal/arm64 isel.go,
+// second half).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+// ---------------------------------------------------------------------------
+// Reference counting
+
+/// Retains the counted cell p inline: a thread local count (bit 63
+/// clear) goes up by one; a shared count (bits 63 and 62 set) is updated
+/// atomically in a cold block; the immortal count is left alone
+/// (decision 0058).
+fn (var g: G) inc(p0: Int) {
+  let p = g.real(p0)
+  let c = g.def1(false, "ldr $d0, [$u0]", [p])
+  let before = g.m_()
+  let shared = g.new_block(true)
+  let fast = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 63, us: [c], targets: [shared, fast]})
+  g.cur = fast
+  let c1 = g.def1(false, "add $d0, $u0, #1", [c])
+  g.store("str $u0, [$u1]", [c1, p])
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = shared
+  let atomic = g.new_block(true)
+  let _t = g.add(Inst{kind: K_CONDBR, cond: "tbz", bit: 62, us: [c], targets: [cont, atomic]})
+  g.cur = atomic
+  // x16 may hold a reloaded p: x17 and w15 are free scratch
+  let _a = g.add(Inst{kind: K_PLAIN, text: g.atomic_inc("$u0", "x17", "w15"), us: [p]})
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
+fn (var g: G) retain(t: Int, ws: List[Int]) {
+  match g.kind(t) {
+    Str | List | Box | Handle => g.inc(g.real(ws[0]))
+    Func => g.retain_func(ws)
+    _ => {
+      if !g.heap(t) {
+        return
+      }
+      let h = g.rc_helper("dup", t)
+      let args = regs(g.to_int(ws, g.layout(t)))
+      let _r = g.call(h, args, [])
+    }
+  }
+}
+
+fn (var g: G) release(t: Int, ws: List[Int]) {
+  if !g.heap(t) {
+    return
+  }
+  match g.kind(t) {
+    Str | List | Handle => {
+      let h = g.rc_helper("drop", t)
+      let _r = g.call(h, regs([ws[0]]), [])
+    }
+    Box => g.release_box(t, g.real(ws[0]))
+    Func => g.release_func(ws)
+    _ => {
+      let h = g.rc_helper("drop", t)
+      let args = regs(g.to_int(ws, g.layout(t)))
+      let _r = g.call(h, args, [])
+    }
+  }
+}
+
+/// Makes a list unique: the same list when its count is 1, otherwise a
+/// copy (and the original loses a reference).
+fn (var g: G) reuse(v: Int) {
+  let x = g.arg(v, 0)
+  if g.vkind(x) != ssa.Kind.List {
+    g.fail("reuse of `${g.tname(g.vty(x))}`")
+    g.set(v, g.words(x))
+    return
+  }
+  let et = g.m.types[g.vty(x)].elems[0]
+  let l = g.word(x)
+  let r = g.new_vreg(false)
+  let c = g.def1(false, "ldr $d0, [$u0]", [l])
+  let before = g.m_()
+  let slow = g.new_block(true)
+  let fast = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #1", us: [c], cond: "ne", targets: [slow, fast]})
+  g.cur = fast
+  g.pmove([r], regs([l]))
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = slow
+  // a copy, or the same list when it is shared but only held here
+  let es = g.esize(et)
+  let dup = g.elem_fn("dup", et)
+  let drop = g.elem_fn("drop", et)
+  let cp = g.rt("xo_rl_copy", [rsrc(l), isrc(es), dup, drop], [false])
+  g.pmove([r], regs([cp[0]]))
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+  g.set(v, [r])
+}
+
+/// The runtime callback that retains or releases a list element through
+/// a pointer (zero when elements are not on the heap).
+fn (var g: G) elem_fn(kind: Str, t: Int) -> Src {
+  if !g.heap(t) {
+    return isrc(0)
+  }
+  symsrc(g.elem_helper(kind, t))
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+
+/// {rc, len, cap}
+const LIST_HDR = 24
+
+/// A register b such that element i of list l starts at b + LIST_HDR.
+fn (var g: G) elem_base(l: Int, i: Int, es: Int) -> Int {
+  let mi = g.m_()
+  if let Some(b) = g.memos[mi].bases.get((l, i, es)) {
+    return b
+  }
+  let (b0, ok) = g.offset_base(l, i, es)
+  var b = b0
+  if !ok {
+    b = g.elem_base1(l, i, es)
+  }
+  let mi2 = g.m_()
+  g.memos[mi2].bases[(l, i, es)] = b
+  b
+}
+
+fn (var g: G) elem_base1(l: Int, i: Int, es: Int) -> Int {
+  if es == 0 {
+    return l
+  }
+  if es == 1 {
+    return g.def1(false, "add $d0, $u0, $u1", [l, i])
+  }
+  if es & (es - 1) == 0 {
+    let (k, _) = pow2c(es)
+    return g.def1(false, "add $d0, $u0, $u1, lsl #${k}", [l, i])
+  }
+  for (sh, k) in [(1, 3), (2, 5), (3, 9)] {
+    if es == 8 * k {
+      // i*(2^sh + 1), then *8 in the address add
+      let t = g.def1(false, "add $d0, $u0, $u0, lsl #${sh}", [i])
+      return g.def1(false, "add $d0, $u0, $u1, lsl #3", [l, t])
+    }
+  }
+  let n = g.cimm(es)
+  g.def1(false, "madd $d0, $u0, $u1, $u2", [i, n, l])
+}
+
+/// Loads the element words at base (as integer registers when as_int).
+fn (var g: G) load_elem(base: Int, et: Int, as_int: Bool) -> List[Int] {
+  if g.kind(et) == ssa.Kind.Bool {
+    let d = g.def1(false, "ldrb $wd0, [$u0, #${LIST_HDR}]", [base])
+    let mi = g.m_()
+    g.memos[mi].loaded[d] = MemAt{base: base, off: LIST_HDR, epoch: g.memos[mi].epoch}
+    return [d]
+  }
+  var out: List[Int] = []
+  for (k, fp) in g.layout(et).indexed() {
+    let d = g.def1(fp && !as_int, "ldr $d0, [$u0, #${LIST_HDR + 8 * k}]", [base])
+    let mi = g.m_()
+    g.memos[mi].loaded[d] = MemAt{base: base, off: LIST_HDR + 8 * k, epoch: g.memos[mi].epoch}
+    out.push(d)
+  }
+  out
+}
+
+/// The words of a value to store: a zero constant is xzr.
+fn (var g: G) store_words(v: Int) -> List[Int] {
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Const {
+    match x.aux {
+      I(n) => {
+        if n == 0 {
+          return [0]
+        }
+      }
+      B(b) => {
+        if !b {
+          return [0]
+        }
+      }
+      _ => {}
+    }
+  }
+  g.words(v)
+}
+
+fn (var g: G) store_elem(base: Int, et: Int, ws: List[Int]) {
+  let mi = g.m_()
+  if g.kind(et) == ssa.Kind.Bool {
+    if !g.same_loaded(mi, ws[0], base, LIST_HDR) {
+      g.store("strb $wu0, [$u1, #${LIST_HDR}]", [ws[0], base])
+    }
+    return
+  }
+  let lay = g.layout(et)
+  var skip: List[Bool] = []
+  for k in 0..lay.len() {
+    skip.push(g.same_loaded(mi, ws[k], base, LIST_HDR + 8 * k))
+  }
+  for k in 0..lay.len() {
+    if !skip[k] {
+      g.store("str $u0, [$u1, #${LIST_HDR + 8 * k}]", [ws[k], base])
+    }
+  }
+}
+
+/// Whether register w holds the word at [base, #off] loaded since the
+/// last store or call (memo mi).
+fn (g: G) same_loaded(mi: Int, w: Int, base: Int, off: Int) -> Bool {
+  if let Some(at) = g.memos[mi].loaded.get(w) {
+    return at.base == base && at.off == off && at.epoch == g.memos[mi].epoch
+  }
+  false
+}
+
+fn (var g: G) list_len(l: Int) -> Int {
+  let mi = g.m_()
+  if let Some(n) = g.memos[mi].lens.get(l) {
+    return n
+  }
+  let n = g.def1(false, "ldr $d0, [$u0, #8]", [l])
+  g.memos[mi].lens[l] = n
+  n
+}
+
+fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
+  let pos = g.f.values[v].pos
+  if pos.is_empty() {
+    return
+  }
+  let mi = g.m_()
+  if g.memos[mi].checked.contains((l, i)) {
+    return
+  }
+  g.memos[mi].checked[(l, i)] = true
+  let n = g.list_len(l)
+  let lb = g.loc_label(pos)
+  g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
+  g.index_facts(i)
+}
+
+/// Option words on two paths: in the current block when cond holds (the
+/// payload some_pay, or the element of list l at i when some_elem), else
+/// None. extra registers are set on both paths too: from some_extra and
+/// from none_extra.
+fn (var g: G) option(ot: Int, text: Str, us: List[Int], cond: Str, extra: List[Int], some: OptSome, none_extra: List[Src]) -> List[Int] {
+  let si = g.m.variant_index(ot, "Some")
+  let ni = g.m.variant_index(ot, "None")
+  var ws: List[Int] = []
+  for _ in 0..g.nwords(ot) {
+    ws.push(g.new_vreg(false))
+  }
+  let before = g.m_()
+  let yes = g.new_block(false)
+  let no = g.new_block(false)
+  let join = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, text: text, us: us, cond: cond, targets: [yes, no]})
+  g.cur = yes
+  var pay: List[Int] = []
+  var yes_extra: List[Src] = []
+  match some {
+    Get(l, i, et) => pay = g.load_elem(g.elem_base(l, i, g.esize(et)), et, true)
+    Pop(l, n, et) => {
+      let n1 = g.def1(false, "sub $d0, $u0, #1", [n])
+      g.store("str $u0, [$u1, #8]", [n1, l])
+      pay = g.load_elem(g.elem_base(l, n1, g.esize(et)), et, true)
+      yes_extra = regs([l, n1])
+    }
+  }
+  var srcs: List[Src] = [isrc(si)]
+  for k in 1..ws.len() {
+    if k - 1 < pay.len() {
+      srcs.push(rsrc(pay[k - 1]))
+    } else {
+      srcs.push(rsrc(0))
+    }
+  }
+  g.pmove_srcs(ws + extra, srcs + yes_extra)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [join]})
+  g.cur = no
+  var nsrcs: List[Src] = [isrc(ni)]
+  for _ in 1..ws.len() {
+    nsrcs.push(rsrc(0))
+  }
+  g.pmove_srcs(ws + extra, nsrcs + none_extra)
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [join]})
+  g.cur = join
+  g.inherit(before)
+  g.clobber()
+  ws
+}
+
+/// What the Some path of option loads: element i of list l (list.get),
+/// or the last element of l of length n after shortening it (list.pop).
+enum OptSome {
+  Get(l: Int, i: Int, et: Int)
+  Pop(l: Int, n: Int, et: Int)
+}
+
+// ---------------------------------------------------------------------------
+// Calls
+
+fn (var g: G) call_op(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  if name == "rt.landing" {
+    // a check only a fault takes: no code (the branch on it, decision
+    // 0085)
+    g.set(v, [0])
+    return
+  }
+  let ci = g.by_name.get(name) ?? -1
+  if ci >= 0 && !g.by_ref_of(ci).is_empty() {
+    g.by_ref_call(v, ci)
+    return
+  }
+  if ci >= 0 {
+    var args: List[Src] = []
+    for a in x.args {
+      for w in g.words(a) {
+        args.push(rsrc(w))
+      }
+    }
+    var res: List[Bool] = []
+    for r in g.m.funcs[ci].results {
+      for fp in g.layout(r) {
+        res.push(fp)
+      }
+    }
+    g.set(v, g.call(g.fname(name), args, res))
+    return
+  }
+  if name.starts_with("rt.") {
+    g.rt_call(v)
+    return
+  }
+  match name {
+    "list.new" => {
+      let es = g.esize(g.m.types[x.ty].elems[0])
+      if x.args.len() == 1 {
+        // with room for a number of elements
+        let n = g.word(x.args[0])
+        g.set(v, g.rt("xo_rl_new_n", [rsrc(n), isrc(es)], [false]))
+        return
+      }
+      g.set(v, g.rt("xo_rl_new", [isrc(4), isrc(es)], [false]))
+    }
+    "list.len" => g.set(v, [g.list_len(g.word(x.args[0]))])
+    "list.index" => {
+      let l = g.word(x.args[0])
+      let i = g.word(x.args[1])
+      g.bounds_check(v, l, i)
+      let et = x.ty
+      let base = g.elem_base(l, i, g.esize(et))
+      g.set(v, g.load_elem(base, et, false))
+    }
+    "list.get" => {
+      let l = g.word(x.args[0])
+      let i = g.word(x.args[1])
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let n = g.list_len(l)
+      g.set(v, g.option(x.ty, "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, et: et), []))
+    }
+    "list.set" => {
+      let l = g.word(x.args[0])
+      let i = g.word(x.args[1])
+      let et = g.vty(x.args[2])
+      let w = g.store_words(x.args[2])
+      g.bounds_check(v, l, i)
+      let base = g.elem_base(l, i, g.esize(et))
+      if g.heap(et) {
+        let old = g.load_elem(base, et, false)
+        g.release(et, old)
+      }
+      g.store_elem(base, et, w)
+      g.set(v, [l])
+    }
+    "list.push" => {
+      let l = g.word(x.args[0])
+      let et = g.vty(x.args[1])
+      let w = g.store_words(x.args[1])
+      let n = g.list_len(l)
+      let c = g.def1(false, "ldr $d0, [$u0, #16]", [l])
+      let lm = g.new_vreg(false)
+      let before = g.m_()
+      let grow = g.new_block(true)
+      let fast = g.new_block(false)
+      let room = g.new_block(false)
+      let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [n, c], cond: "eq", targets: [grow, fast]})
+      g.cur = fast
+      g.pmove([lm], regs([l]))
+      let _j = g.add(Inst{kind: K_JUMP, targets: [room]})
+      g.cur = grow
+      let l2 = g.rt("xo_rl_grow", [rsrc(l), isrc(g.esize(et))], [false])
+      g.pmove([lm], regs([l2[0]]))
+      let _j2 = g.add(Inst{kind: K_JUMP, targets: [room]})
+      g.cur = room
+      g.inherit(before)
+      g.clobber()
+      if g.esize(et) > 0 {
+        g.store_elem(g.elem_base(lm, n, g.esize(et)), et, w)
+      }
+      let n1 = g.def1(false, "add $d0, $u0, #1", [n])
+      g.store("str $u0, [$u1, #8]", [n1, lm])
+      let mi = g.m_()
+      g.memos[mi].lens[lm] = n1
+      g.set(v, [lm])
+    }
+    "list.pop" => {
+      let l = g.word(x.args[0])
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let ot = g.m.types[x.ty].elems[1]
+      let n = g.list_len(l)
+      // a new register for the shorter list (what is known about l, its
+      // length, must not reach blocks it dominates), and its length
+      let l2 = g.new_vreg(false)
+      let nl = g.new_vreg(false)
+      let o = g.option(ot, "cmp $u0, #0", [n], "gt", [l2, nl], OptSome.Pop(l: l, n: n, et: et), regs([l, n]))
+      let mi = g.m_()
+      g.memos[mi].lens[l2] = nl
+      g.set(v, [l2] + o)
+    }
+    "str.concat" => {
+      let a = g.words(x.args[0])
+      let b = g.words(x.args[1])
+      let n = g.def1(false, "add $d0, $u0, $u1", [a[1], b[1]])
+      let obj = g.rt("xo_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
+      g.set(v, [obj[0], n])
+    }
+    "str.concat_int" | "str.concat_float" => {
+      let a = g.words(x.args[0])
+      let b = g.words(x.args[1])
+      let fname = if name == "str.concat_float" { "xo_rs_concat_float" } else { "xo_rs_concat_int" }
+      let obj = g.rt(fname, [rsrc(a[0]), rsrc(a[1]), rsrc(b[0]), framesrc()], [false])
+      let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+      g.set(v, [obj[0], n])
+    }
+    "str.of_int" | "str.of_float" => {
+      let fname = if name == "str.of_float" { "xo_rs_of_float" } else { "xo_rs_of_int" }
+      let a = g.words(x.args[0])
+      let obj = g.rt(fname, [rsrc(a[0]), framesrc()], [false])
+      let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+      g.set(v, [obj[0], n])
+    }
+    "str.of_bool" => {
+      let b = g.word(x.args[0])
+      let t = g.sym_addr(g.str_obj("true".bytes()))
+      let f = g.sym_addr(g.str_obj("false".bytes()))
+      let obj = g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [b, t, f])
+      let four = g.imm(4)
+      let five = g.imm(5)
+      let n = g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [b, four, five])
+      g.set(v, [obj, n])
+    }
+    "str.eq" | "str.cmp" => {
+      let a = g.words(x.args[0])
+      let b = g.words(x.args[1])
+      let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
+      let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
+      if name == "str.cmp" {
+        g.set(v, g.rt("xo_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
+        return
+      }
+      let r = g.rt("xo_str_eq", regs([xd, a[1], yd, b[1]]), [false])
+      g.set(v, [g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [r[0]])])
+    }
+    "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
+      let a = g.words(x.args[1])
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
+      let _r = g.rt("xo_${name.trim_prefix("Stdio.")}", regs([d, a[1]]), [])
+      g.set(v, [])
+    }
+    "Int.min" | "Int.max" => {
+      let c = if name == "Int.min" { "lt" } else { "gt" }
+      let a = g.word(x.args[0])
+      let b = g.word(x.args[1])
+      g.set(v, [g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, ${c}", [a, b])])
+    }
+    "Float.min" | "Float.max" => {
+      // the total order, the receiver on a tie (std.md 1, decisions/0053):
+      // min is `b < a ? b : a`, max `a < b ? b : a`
+      var p = x.args[0]
+      var q = x.args[1]
+      if name == "Float.min" {
+        p = x.args[1]
+        q = x.args[0]
+      }
+      let c = g.float_order(ssa.Op.Lt, p, q)
+      let ra = g.word(x.args[0])
+      let rb = g.word(x.args[1])
+      let n = c.us.len()
+      g.set(v, [g.def1(true, "${c.text}\nfcsel $d0, $u${n + 1}, $u${n}, ${c.cond}", c.us + [ra, rb])])
+    }
+    "Int.abs" => {
+      let a = g.word(x.args[0])
+      if !x.pos.is_empty() {
+        let mn = g.imm(MIN_INT)
+        let lb = g.loc_label(x.pos)
+        g.check("cmp $u0, $u1", [a, mn], "eq", "xo_fault_abs", [rsrc(a), symsrc(lb)])
+      }
+      g.set(v, [g.def1(false, "cmp $u0, #0\ncneg $d0, $u0, lt", [a])])
+    }
+    "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" => {
+      let ins = match name {
+        "Float.sqrt" => "fsqrt"
+        "Float.floor" => "frintm"
+        "Float.ceil" => "frintp"
+        "Float.trunc" => "frintz"
+        "Float.round" => "frinta"
+        _ => "fabs"
+      }
+      g.set(v, [g.def1(true, "${ins} $d0, $u0", [g.word(x.args[0])])])
+    }
+    "Float.is_nan" => g.set(v, [g.def1(false, "fcmp $u0, $u0\ncset $d0, vs", [g.word(x.args[0])])])
+    "bytes.index" => {
+      // b[i] on Bytes (decision 0081): the data is 16 bytes into the
+      // string object
+      let a = g.words(x.args[0])
+      let i = g.word(x.args[1])
+      if !x.pos.is_empty() {
+        let lb = g.loc_label(x.pos)
+        g.check("cmp $u0, $u1", [i, a[1]], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(a[1]), symsrc(lb)])
+      }
+      let d = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
+      g.set(v, [g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])])
+    }
+    "Str.len" => g.set(v, [g.words(x.args[0])[1]])
+    "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.words(x.args[0])[1])])])
+    _ => {
+      g.fail("runtime call `${name}`")
+      g.set(v, g.zeros(x.ty))
+    }
+  }
+}
+
+/// Lowers a call of the task runtime (`rt.name` is the C function
+/// xo_name, decision 0068): an Int, Bool, List, or handle is one word, a
+/// Str its bytes and length; the result is nothing or one word.
+fn (var g: G) rt_call(v: Int) {
+  let x = g.f.values[v]
+  let name0 = aux_str(x.aux)
+  var args: List[Src] = []
+  // `rt.rs_*` functions take their Str operands as the string object
+  // (the first is consumed, decision 0074); the others its bytes
+  let obj = name0.starts_with("rt.rs_")
+  for a in x.args {
+    let ws = g.words(a)
+    match g.vkind(a) {
+      Int | Bool | List | Handle | Float => args.push(rsrc(ws[0]))
+      Str => {
+        if obj {
+          args.push(rsrc(ws[0]))
+          args.push(rsrc(ws[1]))
+        } else {
+          let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+          args.push(rsrc(d))
+          args.push(rsrc(ws[1]))
+        }
+      }
+      _ => g.fail("the runtime call `${name0}` takes a `${g.tname(g.vty(a))}`")
+    }
+  }
+  let name = "xo_${name0.trim_prefix("rt.")}"
+  match g.kind(x.ty) {
+    Unit => {
+      let _r = g.rt(name, args, [])
+      g.set(v, [])
+    }
+    Int | Bool | List | Handle => g.set(v, g.rt(name, args, [false]))
+    Float => g.set(v, g.rt(name, args, [true]))
+    Str => {
+      // the string object; its length in the frame's out slot
+      let o = g.rt(name, args + [framesrc()], [false])
+      let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+      g.set(v, [o[0], n])
+    }
+    _ => {
+      g.fail("the runtime call `${name0}` returns a `${g.tname(x.ty)}`")
+      g.set(v, g.zeros(x.ty))
+    }
+  }
+}

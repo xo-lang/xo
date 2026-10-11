@@ -1,0 +1,176 @@
+// Compare chains and jump tables for `match` (internal/arm64
+// jumptab.go, decision 0051): a chain that tests at least JUMP_TABLE_MIN
+// distinct values, whose table would be at most JUMP_TABLE_SLACK times
+// that many entries, becomes a K_SWITCH on its first block; every other
+// chain is laid out as a run of tests that fall through to each other.
+// (The Go emitter's XO_ARM64_JT_MIN measuring knob is not ported.)
+
+const JUMP_TABLE_MIN = 8
+const JUMP_TABLE_SLACK = 3
+
+/// A chain test: the register and constant of a block's terminator when
+/// it is `cmp r, #k` with b.eq or b.ne, the target taken when r == k, and
+/// the one that continues the chain.
+struct ChainTest {
+  ok: Bool
+  r: Int = 0
+  k: Int = 0
+  hit: Int = -1
+  next: Int = -1
+}
+
+fn (g: G) chain_test(b: Int) -> ChainTest {
+  let bad = ChainTest{ok: false}
+  let n = g.blocks[b].insts.len()
+  if n == 0 {
+    return bad
+  }
+  let inst = g.blocks[b].insts[n - 1]
+  if inst.kind != K_CONDBR || inst.us.len() != 1 || (inst.cond != "eq" && inst.cond != "ne") {
+    return bad
+  }
+  if !inst.text.starts_with("cmp $u0, #") {
+    return bad
+  }
+  let num = inst.text.trim_prefix("cmp $u0, #")
+  if !is_signed_digits(num) {
+    return bad
+  }
+  let k = match Int.parse(num) {
+    Some(v) => v
+    None => return bad
+  }
+  if inst.cond == "eq" {
+    return ChainTest{ok: true, r: inst.us[0], k: k, hit: inst.targets[0], next: inst.targets[1]}
+  }
+  ChainTest{ok: true, r: inst.us[0], k: k, hit: inst.targets[1], next: inst.targets[0]}
+}
+
+/// A compare chain: the blocks after its head that hold nothing but a
+/// compare of the same register, the first target of each value (keys
+/// in order), and the block reached when no value matches.
+struct Chain {
+  blocks: List[Int] = []
+  keys: List[Int] = []
+  hits: List[Int] = []
+  def: Int = -1
+  ok: Bool = false
+}
+
+fn (g: G) chain(head: Int) -> Chain {
+  let c0 = g.chain_test(head)
+  if !c0.ok {
+    return Chain{}
+  }
+  var ch = Chain{ok: true}
+  var seen: Map[Int, Bool] = {}
+  seen[head] = true
+  var b = head
+  while true {
+    let c = g.chain_test(b)
+    if !ch.keys.contains(c.k) {
+      ch.keys.push(c.k)
+      ch.hits.push(c.hit)
+    }
+    let nx = c.next
+    let c2 = g.chain_test(nx)
+    if !c2.ok || c2.r != c0.r || g.blocks[nx].insts.len() != 1 || seen.contains(nx) || g.blocks[nx].cold {
+      ch.def = nx
+      return ch
+    }
+    seen[nx] = true
+    ch.blocks.push(nx)
+    b = nx
+  }
+  ch
+}
+
+/// Replaces dense compare chains with K_SWITCH terminators and lays out
+/// the other chains as a run of tests.
+fn (var g: G) jump_tables() {
+  var changed = false
+  for head in g.hot {
+    let ch = g.chain(head)
+    if !ch.ok || ch.keys.len() < JUMP_TABLE_MIN {
+      continue
+    }
+    var lo = ch.keys[0]
+    var hi = ch.keys[0]
+    for k in ch.keys {
+      lo = imin(lo, k)
+      hi = imax(hi, k)
+    }
+    let size = hi - lo + 1
+    if lo < 0 || lo >= 4096 || size > 4096 || size > JUMP_TABLE_SLACK * ch.keys.len() {
+      continue
+    }
+    var targets: List[Int] = []
+    for _ in 0..size + 1 {
+      targets.push(ch.def)
+    }
+    for (i, k) in ch.keys.indexed() {
+      targets[k - lo] = ch.hits[i]
+    }
+    let n = g.blocks[head].insts.len()
+    let r = g.blocks[head].insts[n - 1].us[0]
+    g.blocks[head].insts[n - 1] = Inst{kind: K_SWITCH, text: "${lo}", us: [r], targets: targets}
+    changed = true
+  }
+  if changed {
+    g.thread() // drops the chain blocks nothing reaches now
+  }
+  var placed: Map[Int, Bool] = {}
+  var i = 0
+  while i < g.hot.len() {
+    let head = g.hot[i]
+    i += 1
+    if placed.contains(head) {
+      continue
+    }
+    let ch = g.chain(head)
+    if ch.blocks.is_empty() {
+      continue
+    }
+    var mv: Map[Int, Bool] = {}
+    for b in ch.blocks {
+      mv[b] = true
+      placed[b] = true
+    }
+    var out: List[Int] = []
+    for b in g.hot {
+      if mv.contains(b) {
+        continue
+      }
+      out.push(b)
+      if b == head {
+        for c in ch.blocks {
+          out.push(c)
+        }
+      }
+    }
+    g.hot = out
+  }
+}
+
+/// Emits a K_SWITCH: values outside the table go to the last target; the
+/// table holds offsets from its own label.
+fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
+  let lo = Int.parse(inst.text) ?? 0
+  let n = inst.targets.len() - 1
+  var idx = g.use_reg(b, inst.us[0], 2)
+  if lo != 0 {
+    b.push("\tsub x17, ${idx}, #${lo}\n")
+    idx = "x17"
+  }
+  let tab = g.local("f${g.nfunc}_jt${g.blocks[g.cur].id}")
+  b.push("\tcmp ${idx}, #${n - 1}\n")
+  b.push("\tb.hi ${g.label(g.fwd(inst.targets[n]))}\n")
+  b.push("\tadr x16, ${tab}\n")
+  b.push("\tldrsw x17, [x16, ${idx}, lsl #2]\n")
+  b.push("\tadd x16, x16, x17\n\tbr x16\n")
+  var s: List[Str] = ["\t.p2align 2\n${tab}:\n"]
+  for t in inst.targets[0..n] {
+    s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
+  }
+  g.stubs.push(s.join(""))
+}
