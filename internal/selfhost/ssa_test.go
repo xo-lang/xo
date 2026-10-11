@@ -111,11 +111,17 @@ func TestSelfhostSSA(t *testing.T) {
 }
 
 // goSSA is the Go builder's result for one run: the build stage, or why
-// there is none ("rejected", "no main", or an error).
+// there is none ("rejected", "no main", or an error), and the stages of
+// the passes (passStages) when the build had no errors.
 type goSSA struct {
-	text string
-	none string
+	text   string
+	none   string
+	stages map[string]string
 }
+
+// passStages are the stages after the build that the Xo builder ports
+// (decision 0150 stage 8), compared on the runs both build completely.
+var passStages = []string{"unwind", "landings", "cleanup", "rc", "verify", "mutants"}
 
 // goSSABuild checks dir as a native build does and prints the build stage
 // of its SSA, as `xo ssadump` does from root.
@@ -165,14 +171,22 @@ func goSSABuildOpts(root, dir string, tests bool) goSSA {
 		}
 		return goSSA{none: "rejected"}
 	}
-	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root, Tests: tests}, map[string]bool{"build": true})
+	want := map[string]bool{"build": true}
+	for _, s := range passStages {
+		want[s] = true
+	}
+	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root, Tests: tests}, want)
 	if len(stages) == 0 {
 		if err != nil && strings.Contains(err.Error(), "no `main`") {
 			return goSSA{none: "no main"}
 		}
 		return goSSA{none: fmt.Sprintf("no build stage: %v", err)}
 	}
-	return goSSA{text: stages[0].Text}
+	g := goSSA{text: stages[0].Text, stages: map[string]string{}}
+	for _, st := range stages[1:] {
+		g.stages[st.Name] = st.Text
+	}
+	return g
 }
 
 // runSSA runs the Xo builder on every dir (--each) from root, with flags
@@ -180,7 +194,7 @@ func goSSABuildOpts(root, dir string, tests bool) goSSA {
 func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
+	texts := runXoBatches(t, bin, root, append([]string{"--each", "--stages", "--wd=" + workDir(t)}, flags...), dirs, batch)
 	for k, text := range texts {
 		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]
@@ -207,12 +221,24 @@ type ssaStats struct {
 	funcs, same, skipped, missing              int
 	skips                                      map[string]int
 	unsupportedWhy                             map[string]int
+	// per stage after the build: runs compared, runs not compared (the
+	// Xo builder skipped a function, or the Go builder reported errors),
+	// and functions identical
+	stageRuns, stageOff, stageSame map[string]int
 }
 
 func (s ssaStats) String() string {
-	return fmt.Sprintf("%d runs: %d built by both, %d rejected by both, %d without main, %d the Xo builder cannot build; "+
+	out := fmt.Sprintf("%d runs: %d built by both, %d rejected by both, %d without main, %d the Xo builder cannot build; "+
 		"the Go builder's %d functions in the runs built: %d identical, %d skipped by the Xo builder, %d not declared by it (callees of skipped code)",
 		s.runs, s.built, s.rejected, s.noMain, s.unsupported, s.funcs, s.same, s.skipped, s.missing)
+	for _, st := range passStages {
+		what := "functions"
+		if st == "verify" || st == "mutants" {
+			what = "lines"
+		}
+		out += fmt.Sprintf("; stage %s: %d runs compared (%d %s identical), %d not", st, s.stageRuns[st], s.stageSame[st], what, s.stageOff[st])
+	}
+	return out
 }
 
 // skipReport lists why functions and runs were not compared, most first.
@@ -270,6 +296,14 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 	st.built++
 	gTypes, gFuncs, _ := splitSSA(want.text)
 	body, skipped, _ := strings.Cut(strings.TrimPrefix(got, "== stage build\n"), "== skipped\n")
+	// the stages of the passes follow the build stage
+	xStages := map[string]string{}
+	parts := stageHead.Split(body, -1)
+	names := stageHead.FindAllStringSubmatch(body, -1)
+	body = parts[0]
+	for i, m := range names {
+		xStages[m[1]] = parts[i+1]
+	}
 	xTypes, xFuncs, _ := splitSSA(body)
 	skip := map[string]string{}
 	for _, l := range nonEmptyLines(skipped) {
@@ -308,7 +342,72 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 			fails = append(fails, fmt.Sprintf("%s: the Xo builder makes %s, the Go builder does not", dir, name))
 		}
 	}
+	if st.stageRuns == nil {
+		st.stageRuns, st.stageOff, st.stageSame = map[string]int{}, map[string]int{}, map[string]int{}
+	}
+	for _, stage := range passStages {
+		g, gok := want.stages[stage]
+		x, xok := xStages[stage]
+		switch {
+		case gok && xok:
+			st.stageRuns[stage]++
+			fails = append(fails, compareStage(dir, stage, g, x, st)...)
+		case xok:
+			fails = append(fails, fmt.Sprintf("%s: the Xo builder prints the stage %s, the Go builder does not", dir, stage))
+		default:
+			st.stageOff[stage]++
+		}
+	}
 	sort.Strings(fails)
+	return fails
+}
+
+// stageHead starts a stage after the build in the Xo builder's output.
+var stageHead = regexp.MustCompile(`(?m)^== stage (\w+)\n`)
+
+// compareStage compares the module after one pass, every function and
+// type line (the Xo builder prints the stages of a run only when it
+// built every function).
+func compareStage(dir, stage, want, got string, st *ssaStats) []string {
+	if stage == "verify" || stage == "mutants" {
+		// the verifier's lines (one per error, or per mutant: in the
+		// order of the functions, which the builders make in different
+		// orders), compared as sorted lists
+		g, x := nonEmptyLines(want), nonEmptyLines(got)
+		sort.Strings(g)
+		sort.Strings(x)
+		if strings.Join(g, "\n") != strings.Join(x, "\n") {
+			return []string{fmt.Sprintf("%s: stage %s differs: %s", dir, stage, firstDiff(strings.Join(x, "\n"), strings.Join(g, "\n")))}
+		}
+		st.stageSame[stage] += len(g)
+		return nil
+	}
+	gTypes, gFuncs, _ := splitSSA(want)
+	xTypes, xFuncs, _ := splitSSA(got)
+	gFuncs = canonClosures(gFuncs, nil)
+	xFuncs = canonClosures(xFuncs, nil)
+	var fails []string
+	sort.Strings(gTypes)
+	sort.Strings(xTypes)
+	if strings.Join(gTypes, "\n") != strings.Join(xTypes, "\n") {
+		fails = append(fails, fmt.Sprintf("%s: stage %s: the type lines differ", dir, stage))
+	}
+	for name, text := range gFuncs {
+		x, ok := xFuncs[name]
+		switch {
+		case !ok:
+			fails = append(fails, fmt.Sprintf("%s: stage %s: the Xo builder has no %s", dir, stage, name))
+		case x != text:
+			fails = append(fails, fmt.Sprintf("%s: stage %s: %s differs: %s", dir, stage, name, firstDiff(x, text)))
+		default:
+			st.stageSame[stage]++
+		}
+	}
+	for name := range xFuncs {
+		if _, ok := gFuncs[name]; !ok {
+			fails = append(fails, fmt.Sprintf("%s: stage %s: the Xo builder makes %s, the Go builder does not", dir, stage, name))
+		}
+	}
 	return fails
 }
 

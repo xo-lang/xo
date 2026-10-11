@@ -1084,6 +1084,7 @@ fn (var b: Builder) with_timeout(x: Expr, fo: Int) -> Int {
   let ei = b.m.variant_index(nt, "Err")
   let timed_t = b.m.types[nt].variants[ei].fields[0].ty
   let (unw, done) = b.branch(u)
+  b.checks.push(UCheck{fi: b.s.fi, u: u, callee: "", w: r})
   // unwinding: the deadline, or a cancellation from outside
   b.s.cur = unw
   b.rt("scope_close", it, [h, b.cint(2)])

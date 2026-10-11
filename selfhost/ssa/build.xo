@@ -129,6 +129,17 @@ enum Job {
   Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
 }
 
+/// A check after an operation (build_conc.go unwindCheck): the function,
+/// the check's call u, the callee whose unwinding it checks ("" for any),
+/// and the operation (-1 for none). pruneUnwind removes the ones nothing
+/// can take.
+struct UCheck {
+  fi: Int
+  u: Int
+  callee: Str
+  w: Int
+}
+
 /// The builder (build.go builder).
 pub struct Builder {
   pub c: check.Checker
@@ -185,6 +196,8 @@ pub struct Builder {
   /// differ from the Go builder's (late_tids).
   skipped_any: Bool = false
   late_tids: Map[Int, Bool] = {}
+  /// The checks made, in order (b.checks).
+  checks: List[UCheck] = []
 }
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
@@ -1168,7 +1181,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   s.sealed[0] = true
   let saved = b.s
@@ -1821,15 +1834,20 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
     b.s.f.values[w].pad = u
   }
   let (yes, no) = b.branch(u)
+  b.s.f.land_rest[no] = true
   b.s.cur = yes
+  var c = callee
   match cleanup {
     None => {}
     Unlock(name, h, l) => {
       b.rt(name, -1, [h, l])
+      // never removed
+      c = ""
     }
   }
   b.unwind()
   b.s.cur = no
+  b.checks.push(UCheck{fi: b.s.fi, u: u, callee: c, w: w})
 }
 
 /// Ends the current block on the unwind path: the deferred code of the
@@ -1862,6 +1880,7 @@ fn (var b: Builder) finish_fn() {
   let saved = b.s.cur
   b.seal(b.s.unwind_b)
   b.s.cur = b.s.unwind_b
+  b.s.f.unwind_exit = b.s.unwind_b
   if !b.s.f.catches {
     // a fault goes on to the caller (decision 0085)
     b.s.f.add(b.s.cur, Op.Call, b.unit_t(), Aux.S(s: "rt.fault_continue"), [])

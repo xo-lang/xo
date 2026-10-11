@@ -138,6 +138,13 @@ passes the full suite on the backends it targets.
   binaries of the 71 runs with tests compared, 6,282 of 6,376 functions
   identical, the rest skipped where the Go builder reports an error
   too; 0 differences.
+- 2026-10-11: SSA stage 8 of 8, the passes (decision 0150):
+  pruneUnwind, addLandings, cleanup, InsertRC (with sinkLandings and
+  pruneLandings), and the verifier, identical at every stage (unwind,
+  landings, cleanup, rc) on the 306 runs both build completely and the
+  45 test binaries, and the verifier's verdicts identical on 32,411
+  mutants (one retain or release removed). The SSA lowering is self
+  hosted; next is the arm64 emitter (decision 0150's order).
 
 ## Alternatives
 

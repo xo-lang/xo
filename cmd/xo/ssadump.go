@@ -18,7 +18,9 @@ import (
 // build does (with the implementation modules of std/native) and prints
 // the SSA module after each stage named (ssa.StageNames: build, unwind,
 // landings, cleanup, rc; default build, the builder's output before any
-// pass), in the form of ssa.Module.String, the form the self hosted SSA
+// pass; verify, the verifier's verdict after rc, and mutants, its
+// verdicts with one retain or release removed), in the form of
+// ssa.Module.String, the form the self hosted SSA
 // builder (selfhost/ssa) prints:
 //
 //	== stage <name>
@@ -52,6 +54,13 @@ func runSSADump(args []string, stdout, stderr io.Writer) int {
 			want = map[string]bool{}
 			for _, s := range strings.Split(strings.TrimPrefix(a, "--stage="), ",") {
 				ok := s == "all"
+				if s == "verify" || s == "mutants" {
+					// the verifier after rc, and its verdicts on the
+					// module with one retain or release removed
+					// (VerifyMutants); not part of all
+					want[s] = true
+					ok = true
+				}
 				for _, n := range ssa.StageNames {
 					if s == n || s == "all" {
 						want[n] = true
@@ -59,7 +68,7 @@ func runSSADump(args []string, stdout, stderr io.Writer) int {
 					}
 				}
 				if !ok {
-					fmt.Fprintf(stderr, "xo ssadump: unknown stage %q (want %s, or all)\n", s, strings.Join(ssa.StageNames, ", "))
+					fmt.Fprintf(stderr, "xo ssadump: unknown stage %q (want %s, all, verify, or mutants)\n", s, strings.Join(ssa.StageNames, ", "))
 					return 2
 				}
 			}

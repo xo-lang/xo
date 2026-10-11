@@ -15,6 +15,7 @@ func TestSSADump(t *testing.T) {
 		"prog/main.xo": "fn div(a: Int, b: Int) -> Int { a / b }\n\nfn main(os: Os) {\n  os.stdio.println(\"${div(7, 2)}\")\n}\n",
 		"lib/lib.xo":   "pub fn twice(n: Int) -> Int { n * 2 }\n",
 		"bad/main.xo":  "fn main(os: Os) {\n  let x: Int = \"no\"\n}\n",
+		"tst/main.xo":  "fn twice(n: Int) -> Int { n * 2 }\n\ntest \"twice\" {\n  expect(twice(2)) == 4\n}\n",
 	})
 	t.Chdir(dir)
 	run1 := func(args ...string) (string, int) {
@@ -67,6 +68,17 @@ func TestSSADump(t *testing.T) {
 		}
 	}
 
+	// the verifier after rc, and its verdicts on mutants (decision 0150
+	// stage 8); not part of all
+	out, code = run1("--stage=verify,mutants", "prog")
+	if code != 0 || !strings.Contains(out, "== stage verify\nok\n== stage mutants\n") || strings.Contains(out, "== stage build") {
+		t.Errorf("--stage=verify,mutants: exit %d: %s", code, out)
+	}
+	// a test binary (stage 7): a function per test and the entry
+	out, code = run1("--test", "tst")
+	if code != 0 || !strings.Contains(out, "func test.0(v0: Os) -> Result[(), Error] {") || !strings.Contains(out, "call rt.test_index") {
+		t.Errorf("--test: exit %d: %s", code, out)
+	}
 	if out, code = run1("--stage=nope", "prog"); code != 2 || !strings.Contains(out, "unknown stage") {
 		t.Errorf("--stage=nope: exit %d: %s", code, out)
 	}

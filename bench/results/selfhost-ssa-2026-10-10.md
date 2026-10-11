@@ -547,3 +547,47 @@ Found in stage 7:
   converting it to `fn(Os) -> () ! Error` needs "the Debug text of
   `Error`", which the native backends do not support yet (XO1201 at
   the call). The Go backend runs it. Next experiment below.
+
+# Stage 8: the passes, 2026-10-11
+
+`selfhost/ssa/passes.xo` (pruneUnwind, addLandings with the unwind
+exits it makes, cleanup: prune, trivial block parameters, renumbering),
+`rc.xo` (InsertRC: `reuse` of `var` List parameters, borrow inference
+to a fixpoint with decision 0149's every-path rule, liveness over heap
+leaves, the retains and releases of each block, edge code in split
+edges, cancellation of retain/release pairs, dead field reads,
+uniqueness and `reuse`, then sinkLandings, pruneLandings, and
+mergeJumps), and `verify.xo` (the structural, dominance, and type checks
+of Verify and the ownership balance of verifyRC), about 3,000 lines.
+The builder records its checks (b.checks) and the blocks split off
+after them (landRest) as the Go builder does. `selfhost/ssa --stages`
+prints the stages after the build; the stages `verify` (the verdict
+after rc) and `mutants` (the verdicts with each of the first six
+retains and releases of every function removed, ssa.VerifyMutants) are
+new in `xo ssadump` for this comparison.
+
+TestSelfhostSSA, go build of the Xo builder (every stage compared on
+the runs both build completely; the 6 runs left out are those where
+the Go builder reports an unsupported construct):
+
+| stage | runs compared | identical |
+|---|---|---|
+| unwind | 306 | 11,041 functions |
+| landings | 306 | 11,064 functions |
+| cleanup | 306 | 11,064 functions |
+| rc | 306 | 11,064 functions |
+| verify | 306 | 306 verdicts (`ok`) |
+| mutants | 306 | 32,411 verdicts |
+| test binaries, every stage | 45 | 5,427 functions, 16,716 mutant verdicts |
+
+0 differences; every pass was identical on its first comparison
+(the port followed the Go code line by line, with the Go builder's
+iteration orders: snapshots of the block list, insertion sorted leaves,
+first-come entry states). `TestSelfhostSSAMutations`: 400 mutations,
+280 runs compared at every stage, 0 differences.
+
+Speed (go build, selfhost/check, wall clock of one run): the Xo builder
+0.6 s for the build stage alone, 24.9 s with every stage including 7,500
+verifier mutants; `xo ssadump` with the same stages 16.3 s (6.6 s up to
+rc: the Go builder builds twice when watched and prints the module five
+times).

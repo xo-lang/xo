@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Self hosting: SSA stage 8 (decision 0150): selfhost/ssa runs the
+  passes after the build (pruneUnwind, addLandings, cleanup, InsertRC)
+  and the verifier exactly as internal/ssa does; the SSA lowering is
+  self hosted. `xo ssadump --stage=verify,mutants` prints the
+  verifier's verdicts.
 - Self hosting: SSA stage 7 (decision 0150): selfhost/ssa builds the
   test binaries of `xo test --no-gc` exactly as internal/ssa does;
   `xo ssadump --test` prints them.

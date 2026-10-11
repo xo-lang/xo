@@ -87,7 +87,7 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	setModEnv(t, root)
 	got := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, tmp, []string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch)
+	texts := runXoBatches(t, bin, tmp, []string{"--each", "--stages", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch)
 	for k, text := range texts {
 		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]

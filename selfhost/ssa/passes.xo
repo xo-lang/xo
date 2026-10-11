@@ -1,0 +1,503 @@
+// The passes after the build (internal/ssa build_conc.go pruneUnwind,
+// landing.go addLandings, cleanup.go), stage 8 of decision 0150, printed
+// at the stages `unwind`, `landings`, and `cleanup` of `xo ssadump`; the
+// reference counting pass (rc) is in rc.xo.
+//
+// A pass works on one function at a time, moved out of the module into
+// the builder's state (begin and end) so that its lists are updated in
+// place. Blocks and values are indexes: removing blocks (prune) renumbers
+// the blocks that stay, and renumber gives the values the IDs the Go
+// builder's renumber gives (block order, parameters first).
+
+/// Whether the value x can raise a fault by itself (selfFaults).
+fn value_self_faults(x: Value) -> Bool {
+  match x.op {
+    Fault => true
+    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => !x.pos.is_empty()
+    CallValue => true
+    Call => {
+      let name = aux_name(x.aux)
+      if name is "list.index" | "list.set" | "bytes.index" | "Int.abs" {
+        return !x.pos.is_empty()
+      }
+      faulting_rt(name)
+    }
+    _ => false
+  }
+}
+
+/// The name in an instruction's aux ("" for another aux).
+fn aux_name(a: Aux) -> Str {
+  match a {
+    S(s) => s
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+  }
+}
+
+/// The index of the module's function x calls, or -1 (isUserCall).
+fn user_callee(m: Module, x: Value) -> Int {
+  if x.op != Op.Call {
+    return -1
+  }
+  m.func_index(aux_name(x.aux))
+}
+
+/// The functions that can fault: those with an operation that faults,
+/// and their callers (mayFault), by function index.
+fn (m: Module) may_fault() -> List[Bool] {
+  let n = m.funcs.len()
+  var may: List[Bool] = []
+  var calls: List[List[Int]] = []
+  for f in m.funcs {
+    var mf = false
+    var cs: List[Int] = []
+    for bl in f.blocks {
+      for v in bl.instrs {
+        let x = f.values[v]
+        if value_self_faults(x) {
+          mf = true
+        }
+        let g = user_callee(m, x)
+        if g >= 0 {
+          cs.push(g)
+        }
+      }
+    }
+    may.push(mf)
+    calls.push(cs)
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for i in 0..n {
+      if may[i] {
+        continue
+      }
+      for g in calls[i] {
+        if may[g] {
+          may[i] = true
+          changed = true
+          break
+        }
+      }
+    }
+  }
+  may
+}
+
+/// Whether value x of function f, once built, can fault (raises).
+fn raises(m: Module, f: Func, x: Value, faults: List[Bool]) -> Bool {
+  if x.op == Op.CallValue && f.values[x.args[0]].op == Op.Closure {
+    let g = m.func_index(aux_name(f.values[x.args[0]].aux))
+    if g >= 0 && m.funcs[g].catches {
+      // it returns on a fault
+      return false
+    }
+  }
+  if value_self_faults(x) {
+    return true
+  }
+  let g = user_callee(m, x)
+  if g >= 0 {
+    return faults[g]
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// pruneUnwind
+
+/// Removes the checks nothing can take: after calls of functions that can
+/// neither be canceled nor fault (pruneUnwind); a check only a fault takes
+/// becomes `rt.landing`.
+fn (var b: Builder) prune_unwind() {
+  let n = b.m.funcs.len()
+  var may: List[Bool] = []
+  for _ in 0..n {
+    may.push(false)
+  }
+  if b.conc {
+    for c in b.checks {
+      if c.callee.is_empty() {
+        may[c.fi] = true
+      }
+    }
+    var changed = true
+    while changed {
+      changed = false
+      for c in b.checks {
+        if !c.callee.is_empty() && !may[c.fi] {
+          let g = b.m.func_index(c.callee)
+          if g >= 0 && may[g] {
+            may[c.fi] = true
+            changed = true
+          }
+        }
+      }
+    }
+  }
+  let faults = b.m.may_fault()
+  for c in b.checks {
+    let g = if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) }
+    if b.conc && (c.callee.is_empty() || (g >= 0 && may[g])) {
+      continue
+    }
+    if c.callee.is_empty() || (g >= 0 && faults[g]) {
+      b.m.funcs[c.fi].values[c.u].aux = Aux.S(s: "rt.landing")
+      continue
+    }
+    b.drop_check(c.fi, c.u, c.w)
+  }
+}
+
+/// Removes check u of function fi (and w's landing on it): its branch
+/// becomes a jump to the normal successor.
+fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
+  if w >= 0 && b.m.funcs[fi].values[w].pad == u {
+    b.m.funcs[fi].values[w].pad = -1
+  }
+  let bl = b.m.funcs[fi].values[u].block
+  let br = b.m.funcs[fi].term(bl)
+  let yes = b.m.funcs[fi].values[br].succs[0]
+  let no = b.m.funcs[fi].values[br].succs[1]
+  let to = b.m.funcs[fi].edges[yes].to
+  var preds: List[Int] = []
+  for e in b.m.funcs[fi].blocks[to].preds {
+    if e != yes {
+      preds.push(e)
+    }
+  }
+  b.m.funcs[fi].blocks[to].preds = preds
+  b.m.funcs[fi].values[br].op = Op.Jump
+  b.m.funcs[fi].values[br].args = []
+  b.m.funcs[fi].values[br].succs = [no]
+  var ins: List[Int] = []
+  for v in b.m.funcs[fi].blocks[bl].instrs {
+    if v != u {
+      ins.push(v)
+    }
+  }
+  b.m.funcs[fi].blocks[bl].instrs = ins
+}
+
+// ---------------------------------------------------------------------------
+// addLandings
+
+/// Gives every operation that can fault and has no landing yet a check
+/// whose cleanup goes to the function's unwind exit (addLandings).
+fn (var b: Builder) add_landings() {
+  let faults = b.m.may_fault()
+  let n = b.m.funcs.len()
+  for fi in 0..n {
+    let saved = b.begin(fi, -1)
+    var bi = 0
+    while bi < b.s.f.blocks.len() {
+      var i = 0
+      while i < b.s.f.blocks[bi].instrs.len() {
+        let v = b.s.f.blocks[bi].instrs[i]
+        let x = b.s.f.values[v]
+        if x.pad >= 0 || is_terminator(x.op) || !raises(b.m, b.s.f, x, faults) {
+          i += 1
+          continue
+        }
+        b.land_at(bi, i)
+        // the rest of the block moved to a new block
+        break
+      }
+      bi += 1
+    }
+    b.end(saved)
+  }
+  b.run_gens()
+}
+
+/// Splits block bl after its instruction i and gives it a check only a
+/// fault takes, whose cleanup goes to the unwind exit (landAt).
+fn (var b: Builder) land_at(bl: Int, i: Int) {
+  let w = b.s.f.blocks[bl].instrs[i]
+  let rest = b.s.f.new_block()
+  let n = b.s.f.blocks[bl].instrs.len()
+  b.s.f.blocks[rest].instrs = b.s.f.blocks[bl].instrs[i + 1..n]
+  for k in i + 1..n {
+    let v = b.s.f.blocks[bl].instrs[k]
+    b.s.f.values[v].block = rest
+    for e in b.s.f.values[v].succs {
+      b.s.f.edges[e].from = rest
+    }
+  }
+  b.s.f.blocks[bl].instrs = b.s.f.blocks[bl].instrs[0..i + 1]
+  b.s.f.land_rest[rest] = true
+  let u = b.s.f.add(bl, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
+  b.s.f.values[w].pad = u
+  let pad = b.s.f.new_block()
+  b.s.f.branch(bl, u, pad, rest)
+  let exit = b.unwind_exit()
+  b.s.f.jump(pad, exit, [])
+}
+
+/// The function's unwind exit, made when it has none: it hands a fault on
+/// and returns zero values (unwindExit).
+fn (var b: Builder) unwind_exit() -> Int {
+  if b.s.f.unwind_exit >= 0 {
+    return b.s.f.unwind_exit
+  }
+  if b.s.f.catches {
+    b.s.pack_orig = b.param(1)
+  }
+  b.s.unwind_b = b.s.f.new_block()
+  let cur = b.s.cur
+  b.finish_fn()
+  b.s.cur = cur
+  b.s.f.unwind_exit
+}
+
+// ---------------------------------------------------------------------------
+// cleanup
+
+/// Prunes the blocks unreachable from the entry, removes trivial block
+/// parameters, and renumbers (Func.cleanup).
+fn cleanup_func(var f: Func) {
+  prune_func(f)
+  remove_trivial_params(f)
+  renumber(f)
+}
+
+/// Removes the blocks unreachable from the entry and the edges from them
+/// (prune).
+fn prune_func(var f: Func) {
+  let n = f.blocks.len()
+  var reach: List[Bool] = []
+  for _ in 0..n {
+    reach.push(false)
+  }
+  var stack = [0]
+  reach[0] = true
+  while !stack.is_empty() {
+    let bl = stack.pop() ?? 0
+    let t = f.term(bl)
+    if t >= 0 {
+      for e in f.values[t].succs {
+        let to = f.edges[e].to
+        if !reach[to] {
+          reach[to] = true
+          stack.push(to)
+        }
+      }
+    }
+  }
+  for i in 0..n {
+    if !reach[i] {
+      continue
+    }
+    var preds: List[Int] = []
+    for e in f.blocks[i].preds {
+      if reach[f.edges[e].from] {
+        preds.push(e)
+      }
+    }
+    f.blocks[i].preds = preds
+  }
+  remove_blocks(f, reach)
+}
+
+/// Keeps the blocks keep marks, in order, and renumbers them in the
+/// values, edges, and the function's block references.
+fn remove_blocks(var f: Func, keep: List[Bool]) {
+  var map: List[Int] = []
+  var blocks: List[Block] = []
+  var all = true
+  for (i, k) in keep.indexed() {
+    if k {
+      map.push(blocks.len())
+      blocks.push(f.blocks[i])
+    } else {
+      map.push(-1)
+      all = false
+    }
+  }
+  if all {
+    return
+  }
+  f.blocks = blocks
+  for i in 0..f.values.len() {
+    let bl = f.values[i].block
+    if bl >= 0 {
+      f.values[i].block = map[bl]
+    }
+  }
+  for i in 0..f.edges.len() {
+    let fr = f.edges[i].from
+    let to = f.edges[i].to
+    f.edges[i].from = if fr >= 0 { map[fr] } else { -1 }
+    f.edges[i].to = if to >= 0 { map[to] } else { -1 }
+  }
+  if f.unwind_exit >= 0 {
+    f.unwind_exit = map[f.unwind_exit]
+  }
+  var lr: Map[Int, Bool] = {}
+  for (bl, _) in f.land_rest {
+    if map[bl] >= 0 {
+      lr[map[bl]] = true
+    }
+  }
+  f.land_rest = lr
+}
+
+/// The value a removed trivial parameter stands for (removeTrivialParams'
+/// find).
+fn find_repl(repl: Map[Int, Int], v0: Int) -> Int {
+  var v = v0
+  while let Some(r) = repl.get(v) {
+    v = r
+  }
+  v
+}
+
+/// Removes the block parameters whose incoming arguments are all the
+/// parameter itself or one other value (removeTrivialParams).
+fn remove_trivial_params(var f: Func) {
+  var repl: Map[Int, Int] = {}
+  var changed = true
+  while changed {
+    changed = false
+    for bl in 1..f.blocks.len() {
+      var i = 0
+      while i < f.blocks[bl].params.len() {
+        let p = f.blocks[bl].params[i]
+        var same = -1
+        var trivial = true
+        for e in f.blocks[bl].preds {
+          let a = find_repl(repl, f.edges[e].args[i])
+          if a == p || a == same {
+            continue
+          }
+          if same >= 0 {
+            trivial = false
+            break
+          }
+          same = a
+        }
+        if !trivial || same < 0 {
+          i += 1
+          continue
+        }
+        repl[p] = same
+        f.blocks[bl].params = remove_at(f.blocks[bl].params, i)
+        for e in f.blocks[bl].preds {
+          f.edges[e].args = remove_at(f.edges[e].args, i)
+        }
+        changed = true
+      }
+    }
+  }
+  if repl.is_empty() {
+    return
+  }
+  for bl in 0..f.blocks.len() {
+    for v in f.blocks[bl].instrs {
+      for k in 0..f.values[v].args.len() {
+        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+      }
+      for e in f.values[v].succs {
+        for k in 0..f.edges[e].args.len() {
+          f.edges[e].args[k] = find_repl(repl, f.edges[e].args[k])
+        }
+      }
+    }
+  }
+}
+
+fn remove_at(xs: List[Int], i: Int) -> List[Int] {
+  var out: List[Int] = []
+  for (k, x) in xs.indexed() {
+    if k != i {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// Gives the values placed in blocks the IDs of the Go builder's renumber
+/// (block order, parameters first): the value table is rebuilt in that
+/// order, and values no block holds are dropped.
+fn renumber(var f: Func) {
+  var map: List[Int] = []
+  for _ in 0..f.values.len() {
+    map.push(-1)
+  }
+  var order: List[Int] = []
+  for bl in f.blocks {
+    for p in bl.params {
+      map[p] = order.len()
+      order.push(p)
+    }
+    for v in bl.instrs {
+      map[v] = order.len()
+      order.push(v)
+    }
+  }
+  var vals: List[Value] = []
+  for v in order {
+    var x = f.values[v]
+    var args: List[Int] = []
+    for a in x.args {
+      args.push(if a >= 0 { map[a] } else { -1 })
+    }
+    x.args = args
+    if x.pad >= 0 {
+      x.pad = map[x.pad]
+    }
+    vals.push(x)
+  }
+  f.values = vals
+  for bl in 0..f.blocks.len() {
+    var ps: List[Int] = []
+    for p in f.blocks[bl].params {
+      ps.push(map[p])
+    }
+    f.blocks[bl].params = ps
+    var ins: List[Int] = []
+    for v in f.blocks[bl].instrs {
+      ins.push(map[v])
+    }
+    f.blocks[bl].instrs = ins
+  }
+  for e in 0..f.edges.len() {
+    var args: List[Int] = []
+    for a in f.edges[e].args {
+      args.push(if a >= 0 { map[a] } else { -1 })
+    }
+    f.edges[e].args = args
+  }
+}
+
+/// Runs cleanup on every function (the cleanup stage).
+fn (var b: Builder) cleanup_all() {
+  for fi in 0..b.m.funcs.len() {
+    var f = b.m.funcs[fi]
+    b.m.funcs[fi] = Func{name: ""}
+    cleanup_func(f)
+    b.m.funcs[fi] = f
+  }
+}
+
+/// Runs the passes after the build and writes the module after each:
+/// unwind, landings, cleanup, rc (buildModule, BuildStages).
+pub fn (var b: Builder) write_passes(var out: StrBuilder) {
+  b.prune_unwind()
+  out.write("== stage unwind\n")
+  out.write(b.m.text())
+  b.add_landings()
+  out.write("== stage landings\n")
+  out.write(b.m.text())
+  b.cleanup_all()
+  out.write("== stage cleanup\n")
+  out.write(b.m.text())
+  b.insert_rc()
+  out.write("== stage rc\n")
+  out.write(b.m.text())
+  out.write("== stage verify\n")
+  out.write(b.verify_text())
+  out.write("== stage mutants\n")
+  out.write(b.verify_mutants(6))
+}

@@ -315,7 +315,14 @@ fn (var b: Builder) flush_landing() {
   }
   let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
   b.s.f.values[w].pad = u
+  var callee = ""
+  if b.s.f.values[w].op == Op.Call && !b.self_faults(w) {
+    if let S(name) = b.s.f.values[w].aux {
+      callee = name
+    }
+  }
   let (yes, no) = b.branch(u)
+  b.s.f.land_rest[no] = true
   b.s.cur = yes
   let saved_exits = b.s.exits
   let saved_scopes = b.s.scopes
@@ -372,4 +379,5 @@ fn (var b: Builder) flush_landing() {
   b.s.exits = saved_exits
   b.s.scopes = saved_scopes
   b.s.cur = no
+  b.checks.push(UCheck{fi: b.s.fi, u: u, callee: callee, w: w})
 }

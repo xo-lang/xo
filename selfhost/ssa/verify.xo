@@ -1,0 +1,932 @@
+// The verifier (internal/ssa verify.go, verify_rc.go), stage 8 of
+// decision 0150: block structure, edges, dominance, operand and result
+// types, and after reference counting the balance of ownership on every
+// path. `xo ssadump --stage=verify` prints its verdict after rc, and
+// `--stage=mutants` its verdicts with one retain or release removed;
+// this verifier prints the same.
+
+/// A definition site: its block and position (-1 for a parameter).
+struct Site {
+  b: Int
+  idx: Int
+}
+
+fn bname(b: Int) -> Str {
+  "b${b}"
+}
+
+fn (m: Module) tname(t: Int) -> Str {
+  if t < 0 {
+    return "<none>"
+  }
+  m.types[t].name
+}
+
+/// The printed instruction (Value.LongString).
+fn (m: Module) long_string(f: Func, v: Int) -> Str {
+  var b = StrBuilder.new()
+  m.write_value(b, f, v)
+  b.freeze()
+}
+
+/// The structural checks of f (verifyFunc).
+fn (var m: Module) verify_func(f: Func) -> List[Str] {
+  var errs: List[Str] = []
+  let pre = "${f.name}: "
+  let nb = f.blocks.len()
+  if nb == 0 {
+    errs.push("${pre}no blocks")
+    return errs
+  }
+  if !f.blocks[0].preds.is_empty() {
+    errs.push("${pre}entry block b0 has predecessors")
+  }
+  var def: Map[Int, Site] = {}
+  for bi in 0..nb {
+    let bl = f.blocks[bi]
+    for p in bl.params {
+      if f.values[p].op != Op.Param || f.values[p].block != bi {
+        errs.push("${pre}${bname(bi)}: parameter v${p} is malformed")
+      }
+      def[p] = Site{b: bi, idx: -1}
+    }
+    for (i, v) in bl.instrs.indexed() {
+      if def.contains(v) {
+        errs.push("${pre}${bname(bi)}: value v${v} defined twice")
+      }
+      def[v] = Site{b: bi, idx: i}
+      let p = f.values[v].pad
+      if p >= 0 {
+        // a landing: the check's call, which a branch on it ends its
+        // block with (decision 0085)
+        let x = f.values[p]
+        let name = aux_name(x.aux)
+        let pb = x.block
+        var ok = x.op == Op.Call && (name == "rt.landing" || name == "rt.unwinding") && pb >= 0 && pb < nb
+        if ok {
+          let t = f.term(pb)
+          ok = t >= 0 && f.values[t].op == Op.Branch && f.values[t].args[0] == p
+        }
+        if !ok {
+          errs.push("${pre}${bname(bi)}: v${v} lands on v${p}, which is not a check")
+        }
+      }
+      if f.values[v].block != bi {
+        errs.push("${pre}${bname(bi)}: v${v} does not belong to its block")
+      }
+    }
+  }
+  for bi in 0..nb {
+    let bl = f.blocks[bi]
+    if f.term(bi) < 0 {
+      errs.push("${pre}${bname(bi)}: does not end with a terminator")
+    }
+    for (i, v) in bl.instrs.indexed() {
+      let x = f.values[v]
+      if is_terminator(x.op) && i != bl.instrs.len() - 1 {
+        errs.push("${pre}${bname(bi)}: terminator v${v} is not last")
+      }
+      if x.op == Op.Param {
+        errs.push("${pre}${bname(bi)}: parameter v${v} in the instruction list")
+      }
+      for e in x.succs {
+        let ed = f.edges[e]
+        if ed.from != bi || ed.to < 0 || ed.to >= nb {
+          errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} is malformed")
+          continue
+        }
+        if !f.blocks[ed.to].preds.contains(e) {
+          errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} is missing from its predecessors")
+        }
+        let tps = f.blocks[ed.to].params
+        if ed.args.len() != tps.len() {
+          errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} has ${ed.args.len()} arguments for ${tps.len()} parameters")
+          continue
+        }
+        for (k, a) in ed.args.indexed() {
+          let at = if a >= 0 { f.values[a].ty } else { -1 }
+          if at != f.values[tps[k]].ty {
+            errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} passes v${a}: ${m.tname(at)} for v${tps[k]}: ${m.tname(f.values[tps[k]].ty)}")
+          }
+        }
+      }
+    }
+    for e in bl.preds {
+      let fr = f.edges[e].from
+      let t = if fr >= 0 { f.term(fr) } else { -1 }
+      var found = false
+      if t >= 0 {
+        found = f.values[t].succs.contains(e)
+      }
+      if !found {
+        errs.push("${pre}${bname(bi)}: predecessor edge from ${bname(fr)} is not a successor edge")
+      }
+    }
+  }
+  if !errs.is_empty() {
+    return errs
+  }
+  // dominance
+  let idom = dominators(f)
+  for bi in 0..nb {
+    for (i, v) in f.blocks[bi].instrs.indexed() {
+      let x = f.values[v]
+      for a in x.args {
+        if a < 0 {
+          errs.push("${pre}${bname(bi)}: v${v} has a nil operand")
+        } else if !usable(idom, def, a, bi, i) {
+          errs.push("${pre}${bname(bi)}: v${v} uses v${a}, which does not dominate it")
+        }
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          if a < 0 {
+            errs.push("${pre}${bname(bi)}: edge to ${bname(f.edges[e].to)} has a nil argument")
+          } else if !usable(idom, def, a, bi, f.blocks[bi].instrs.len()) {
+            errs.push("${pre}${bname(bi)}: edge to ${bname(f.edges[e].to)} passes v${a}, which does not dominate it")
+          }
+        }
+      }
+      let msg = m.check_types(f, v)
+      if !msg.is_empty() {
+        errs.push("${pre}${bname(bi)}: ${m.long_string(f, v)}: ${msg}")
+      }
+    }
+  }
+  errs
+}
+
+/// Whether a dominates b (a reachable block).
+fn dominates(idom: List[Int], a: Int, b0: Int) -> Bool {
+  var b = b0
+  while b >= 0 {
+    if a == b {
+      return true
+    }
+    if idom[b] == b {
+      return false
+    }
+    b = idom[b]
+  }
+  false
+}
+
+/// Whether value x can be used at position idx of block at (usable).
+fn usable(idom: List[Int], def: Map[Int, Site], x: Int, at: Int, idx: Int) -> Bool {
+  let d = match def.get(x) {
+    Some(s) => s
+    None => return false
+  }
+  if idom[at] < 0 {
+    // unreachable code: nothing to check
+    return true
+  }
+  if d.b == at {
+    return d.idx < idx
+  }
+  dominates(idom, d.b, at)
+}
+
+/// The immediate dominator of every block reachable from the entry (the
+/// entry its own, -1 for the others), by Cooper, Harvey, and Kennedy
+/// (dominators).
+fn dominators(f: Func) -> List[Int] {
+  let n = f.blocks.len()
+  var seen: List[Bool] = []
+  var idom: List[Int] = []
+  var num: List[Int] = []
+  for _ in 0..n {
+    seen.push(false)
+    idom.push(-1)
+    num.push(-1)
+  }
+  var post: List[Int] = []
+  dom_walk(f, 0, seen, post)
+  var order: List[Int] = []
+  var i = post.len() - 1
+  while i >= 0 {
+    order.push(post[i])
+    i -= 1
+  }
+  for (k, b) in order.indexed() {
+    num[b] = k
+  }
+  idom[0] = 0
+  var changed = true
+  while changed {
+    changed = false
+    for k in 1..order.len() {
+      let b = order[k]
+      var nd = -1
+      for e in f.blocks[b].preds {
+        let fr = f.edges[e].from
+        if fr < 0 || idom[fr] < 0 || !seen[fr] {
+          continue
+        }
+        if nd < 0 {
+          nd = fr
+        } else {
+          nd = intersect(idom, num, fr, nd)
+        }
+      }
+      if nd >= 0 && idom[b] != nd {
+        idom[b] = nd
+        changed = true
+      }
+    }
+  }
+  idom
+}
+
+fn dom_walk(f: Func, b: Int, var seen: List[Bool], var post: List[Int]) {
+  seen[b] = true
+  let t = f.term(b)
+  if t >= 0 {
+    for e in f.values[t].succs {
+      let to = f.edges[e].to
+      if !seen[to] {
+        dom_walk(f, to, seen, post)
+      }
+    }
+  }
+  post.push(b)
+}
+
+fn intersect(idom: List[Int], num: List[Int], a0: Int, b0: Int) -> Int {
+  var a = a0
+  var b = b0
+  while a != b {
+    while num[a] > num[b] {
+      a = idom[a]
+    }
+    while num[b] > num[a] {
+      b = idom[b]
+    }
+  }
+  a
+}
+
+/// One instruction's operand and result types (checkTypes); "" when
+/// they are right.
+fn (var m: Module) check_types(f: Func, v: Int) -> Str {
+  let x = f.values[v]
+  let n = x.args.len()
+  let bt = m.builtin(Kind.Bool)
+  var ats: List[Int] = []
+  for a in x.args {
+    ats.push(if a >= 0 { f.values[a].ty } else { -1 })
+  }
+  let a0 = if n > 0 { ats[0] } else { -1 }
+  let a1 = if n > 1 { ats[1] } else { -1 }
+  let nargs = fn(k: Int) -> Str {
+    if n != k {
+      return "want ${k} operands, have ${n}"
+    }
+    ""
+  }
+  let tk = if x.ty >= 0 { m.types[x.ty].kind } else { Kind.Bad }
+  let k0 = if a0 >= 0 { m.types[a0].kind } else { Kind.Bad }
+  match x.op {
+    Const => {
+      let want = match x.aux {
+        I(..) => Kind.Int
+        F(..) => Kind.Float
+        B(..) => Kind.Bool
+        S(..) | Bs(..) => Kind.Str
+        None | P(..) => Kind.Unit
+      }
+      if x.ty < 0 || tk != want {
+        return "constant of the wrong type"
+      }
+    }
+    Add | Sub | Mul | Div | Rem => {
+      let s = nargs(2)
+      if !s.is_empty() {
+        return s
+      }
+      if a0 != a1 || a0 != x.ty || !(tk is Kind.Int | Kind.Float) {
+        return "operands and result must be one numeric type"
+      }
+    }
+    And | Or | Xor | Shl | Shr => {
+      let s = nargs(2)
+      if !s.is_empty() {
+        return s
+      }
+      if a0 != a1 || a0 != x.ty || !(tk is Kind.Int | Kind.Bool) {
+        return "operands and result must be one Int or Bool type"
+      }
+    }
+    Neg | Not => {
+      let s = nargs(1)
+      if !s.is_empty() {
+        return s
+      }
+      if a0 != x.ty {
+        return "operand and result types differ"
+      }
+    }
+    Eq | Ne | Lt | Le | Gt | Ge => {
+      let s = nargs(2)
+      if !s.is_empty() {
+        return s
+      }
+      if a0 != a1 || x.ty != bt {
+        return "comparison of different types, or a result that is not Bool"
+      }
+    }
+    IntToFloat => {
+      if n != 1 || k0 != Kind.Int || tk != Kind.Float {
+        return "itof takes Int to Float"
+      }
+    }
+    FloatToInt => {
+      if n != 1 || k0 != Kind.Float || tk != Kind.Int {
+        return "ftoi takes Float to Int"
+      }
+    }
+    IntConv => {
+      if n != 1 || k0 != Kind.Int || tk != Kind.Int {
+        return "iconv takes an integer to an integer type"
+      }
+    }
+    Struct => {
+      if tk != Kind.Struct || n != m.types[x.ty].fields.len() {
+        return "struct operands do not match the fields"
+      }
+      for (i, a) in ats.indexed() {
+        if a != m.types[x.ty].fields[i].ty {
+          return "field ${m.types[x.ty].fields[i].name} has the wrong type"
+        }
+      }
+    }
+    Undef => return "undef in a reachable block"
+    Tuple => {
+      if tk == Kind.Unit && n == 0 {
+        return ""
+      }
+      if tk != Kind.Tuple || n != m.types[x.ty].elems.len() {
+        return "tuple operands do not match the elements"
+      }
+      for (i, a) in ats.indexed() {
+        if a != m.types[x.ty].elems[i] {
+          return "element ${i} has the wrong type"
+        }
+      }
+    }
+    Variant => {
+      let tag = match x.aux {
+        I(n: t) => t
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
+      }
+      if tag < 0 || tk != Kind.Enum || tag >= m.types[x.ty].variants.len() {
+        return "variant of a non enum or a bad tag"
+      }
+      let fs = m.types[x.ty].variants[tag].fields
+      if fs.len() != n {
+        return "variant operands do not match its fields"
+      }
+      for (i, a) in ats.indexed() {
+        if a != fs[i].ty {
+          return "variant field ${fs[i].name} has the wrong type"
+        }
+      }
+    }
+    Field | SetField => {
+      let i = match x.aux {
+        I(n: t) => t
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1000000
+      }
+      if i == -1000000 || n == 0 {
+        return "field needs an index and an operand"
+      }
+      var ft = -1
+      if k0 == Kind.Struct {
+        if i >= 0 && i < m.types[a0].fields.len() {
+          ft = m.types[a0].fields[i].ty
+        }
+      } else if k0 == Kind.Tuple {
+        if i >= 0 && i < m.types[a0].elems.len() {
+          ft = m.types[a0].elems[i]
+        }
+      }
+      if ft < 0 {
+        return "field index out of range or not a struct or tuple"
+      }
+      if x.op == Op.Field && x.ty != ft {
+        return "result type is not the field type"
+      }
+      if x.op == Op.SetField && (n != 2 || a1 != ft || x.ty != a0) {
+        return "setfield operands or result have the wrong type"
+      }
+    }
+    Tag => {
+      if n != 1 || k0 != Kind.Enum || tk != Kind.Int {
+        return "tag takes an enum to Int"
+      }
+    }
+    Payload => {
+      let (tag, fld) = match x.aux {
+        P(tag: t, field: fi) => (t, fi)
+        None | I(..) | F(..) | B(..) | S(..) | Bs(..) => (-1, -1)
+      }
+      if tag < 0 || n != 1 || k0 != Kind.Enum || tag >= m.types[a0].variants.len() || fld >= m.types[a0].variants[tag].fields.len() {
+        return "payload of a non enum or a bad reference"
+      }
+      if x.ty != m.types[a0].variants[tag].fields[fld].ty {
+        return "result type is not the payload field type"
+      }
+    }
+    Call => {
+      let name = aux_name(x.aux)
+      let ci = m.func_index(name)
+      if ci >= 0 {
+        let ps = m.funcs[ci].blocks[0].params
+        if ps.len() != n {
+          return "call of ${name} with ${n} arguments for ${ps.len()} parameters"
+        }
+        for (i, a) in ats.indexed() {
+          let pt = m.funcs[ci].values[ps[i]].ty
+          if a != pt {
+            return "argument ${i} has type ${m.tname(a)}, want ${m.tname(pt)}"
+          }
+        }
+        let rs = m.funcs[ci].results
+        let want = if rs.len() > 1 { m.tuple(rs) } else { rs[0] }
+        if x.ty != want {
+          return "result type does not match the callee"
+        }
+      } else if !name.contains(".") {
+        return "call of an unknown function"
+      }
+    }
+    Closure => {
+      let ci = m.func_index(aux_name(x.aux))
+      if ci < 0 || !m.funcs[ci].indirect || x.ty < 0 || tk != Kind.Func {
+        return "closure of a function that is not Indirect, or not of a function type"
+      }
+      let g = m.funcs[ci]
+      let ps = g.blocks[0].params
+      let ft = m.types[x.ty]
+      if ps.len() != ft.elems.len() + 1 || g.values[ps[0]].ty != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+        return "closure type does not match its function"
+      }
+      for i in 1..ps.len() {
+        if g.values[ps[i]].ty != ft.elems[i - 1] {
+          return "closure type does not match its function"
+        }
+      }
+      if n != g.captures.len() {
+        return "closure captures do not match its function"
+      }
+      for (i, a) in ats.indexed() {
+        if a != g.captures[i] {
+          return "capture ${i} has the wrong type"
+        }
+      }
+    }
+    Box => {
+      if n != 1 || x.ty < 0 || tk != Kind.Box || m.types[x.ty].elems[0] != a0 {
+        return "box takes T to Box[T]"
+      }
+    }
+    Unbox => {
+      if n != 1 || k0 != Kind.Box || x.ty != m.types[a0].elems[0] {
+        return "unbox takes Box[T] to T"
+      }
+    }
+    Rebind => {
+      let ci = m.func_index(aux_name(x.aux))
+      if ci < 0 || !m.funcs[ci].indirect || x.ty < 0 || tk != Kind.Func || n != 1 || k0 != Kind.Func {
+        return "rebind of a function that is not Indirect, or not of function types"
+      }
+      let g = m.funcs[ci]
+      let ps = g.blocks[0].params
+      let ft = m.types[x.ty]
+      if ps.len() != ft.elems.len() + 1 || g.values[ps[0]].ty != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+        return "rebind type does not match its function"
+      }
+    }
+    FuncAddr => {
+      let ci = m.func_index(aux_name(x.aux))
+      if ci < 0 || !m.funcs[ci].entry || n != 0 || x.ty < 0 || tk != Kind.Int {
+        return "funcaddr of a function that is not an entry, or not an Int"
+      }
+    }
+    Capture => {
+      let i = match x.aux {
+        I(n: t) => t
+        None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1000000
+      }
+      // operand 0 is the function's own closure, or (the xo.eq function
+      // of an interface value) another closure whose environment has the
+      // same layout
+      if i == -1000000 || n != 1 || !f.indirect || (x.args[0] != f.blocks[0].params[0] && k0 != Kind.Func) || i < 0 || i >= f.captures.len() || x.ty != f.captures[i] {
+        return "capture must read the environment of its own function"
+      }
+    }
+    CallValue => {
+      if n == 0 || k0 != Kind.Func {
+        return "callv needs a function value"
+      }
+      let ft = m.types[a0]
+      if n - 1 != ft.elems.len() || x.ty != ft.ret {
+        return "callv arguments or result do not match the function type"
+      }
+      for i in 1..n {
+        if ats[i] != ft.elems[i - 1] {
+          return "callv argument ${i - 1} has the wrong type"
+        }
+      }
+    }
+    Branch => {
+      if n != 1 || a0 != bt || x.succs.len() != 2 {
+        return "br takes a Bool and two successors"
+      }
+    }
+    Jump => {
+      if x.succs.len() != 1 {
+        return "jump takes one successor"
+      }
+    }
+    Return => {
+      if n != f.results.len() {
+        return "ret does not return every result"
+      }
+      for (i, a) in ats.indexed() {
+        if a != f.results[i] {
+          return "result ${i} has type ${m.tname(a)}, want ${m.tname(f.results[i])}"
+        }
+      }
+    }
+    Fault => {
+      if n != 1 || k0 != Kind.Str {
+        return "fault takes a Str"
+      }
+    }
+    Retain | Release | Drop | Reuse | Share => {
+      if n != 1 || a0 < 0 || !m.heap(a0) {
+        return "reference counting of a value that is not on the heap"
+      }
+    }
+    Param | Cap | Unreachable => {}
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Reference counts (verify_rc.go)
+
+/// The references a function holds per leaf at one point (rcState): the
+/// counts by leaf key, and the leaves by key.
+struct RcState {
+  n: Map[Str, Int] = {}
+  ls: Map[Str, Leaf] = {}
+}
+
+fn (s: RcState) get(l: Leaf) -> Int {
+  s.n.get(leaf_key(l)) ?? 0
+}
+
+fn (var s: RcState) set(l: Leaf, k: Int) {
+  let key = leaf_key(l)
+  s.n[key] = k
+  s.ls[key] = l
+}
+
+fn (s: RcState) clone() -> RcState {
+  var out = RcState{}
+  for (k, c) in s.n {
+    if c != 0 {
+      out.n[k] = c
+      out.ls[k] = s.ls.get(k) ?? Leaf{root: -1, path: ""}
+    }
+  }
+  out
+}
+
+/// The nonzero leaves of s, ordered (sortedLeaves).
+fn (s: RcState) held() -> List[Leaf] {
+  var set: Map[Str, Leaf] = {}
+  for (k, c) in s.n {
+    if c != 0 {
+      set[k] = s.ls.get(k) ?? Leaf{root: -1, path: ""}
+    }
+  }
+  var out: List[Leaf] = []
+  for (_, l) in set {
+    out.push(l)
+  }
+  var i = 1
+  while i < out.len() {
+    var j = i
+    while j > 0 && leaf_less(out[j], out[j - 1]) {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      j -= 1
+    }
+    i += 1
+  }
+  out
+}
+
+fn leaf_text(l: Leaf) -> Str {
+  "v${l.root}${l.path}"
+}
+
+fn (s: RcState) text() -> Str {
+  var parts: List[Str] = []
+  for l in s.held() {
+    parts.push("${leaf_text(l)}:${s.get(l)}")
+  }
+  "{${parts.join(" ")}}"
+}
+
+fn (s: RcState) equal(t: RcState) -> Bool {
+  for (k, c) in s.n {
+    if c != 0 && (t.n.get(k) ?? 0) != c {
+      return false
+    }
+  }
+  for (k, c) in t.n {
+    if c != 0 && (s.n.get(k) ?? 0) != c {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether block b ends the program (unreachable or a fault).
+fn stops(f: Func, b: Int) -> Bool {
+  let t = f.term(b)
+  t >= 0 && (f.values[t].op is Op.Unreachable | Op.Fault)
+}
+
+/// Whether leaf l is alive in state st (verifyRC's alive).
+fn (var r: Rc) alive(f: Func, st: RcState, l: Leaf) -> Bool {
+  match r.kind(f, l.root) {
+    Borrowed => true
+    Proj => {
+      if st.get(l) > 0 {
+        return true
+      }
+      let p = r.parent(f, l.root)
+      r.alive(f, st, p)
+    }
+    Owned => st.get(l) > 0
+  }
+}
+
+/// The balance of ownership of f after reference counting (verifyRC).
+fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
+  var errs: List[Str] = []
+  let pre = "${f.name}: "
+  let u = r.unique(f)
+  let n = f.blocks.len()
+  var entry: List[RcState] = []
+  var has: List[Bool] = []
+  for _ in 0..n {
+    entry.push(RcState{})
+    has.push(false)
+  }
+  var st0 = RcState{}
+  for p in f.blocks[0].params {
+    if r.is_root(f, p) && r.kind(f, p) == RootKind.Owned {
+      for l in r.leaves(f, p) {
+        st0.set(l, 1)
+      }
+    }
+  }
+  entry[0] = st0
+  has[0] = true
+  var seen: List[Bool] = []
+  for _ in 0..n {
+    seen.push(false)
+  }
+  var post: List[Int] = []
+  dom_walk(f, 0, seen, post)
+  var oi = post.len() - 1
+  while oi >= 0 {
+    let b = post[oi]
+    oi -= 1
+    let bp = "${pre}${bname(b)}: "
+    var st = entry[b].clone()
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op == Op.Retain {
+        for l in r.leaves(f, x.args[0]) {
+          if !r.alive(f, st, l) {
+            errs.push("${bp}retain of ${leaf_text(l)}, which is not alive")
+          }
+          st.set(l, st.get(l) + 1)
+        }
+        continue
+      }
+      if x.op == Op.Release {
+        for l in r.leaves(f, x.args[0]) {
+          if st.get(l) < 1 {
+            errs.push("${bp}release of ${leaf_text(l)}, which is not held")
+          }
+          st.set(l, st.get(l) - 1)
+        }
+        continue
+      }
+      if x.op == Op.Call && is_update_call(aux_name(x.aux)) {
+        let a = x.args[0]
+        for l in r.leaves(f, a) {
+          if st.get(l) != 1 {
+            errs.push("${bp}v${v} updates ${leaf_text(l)} held ${st.get(l)} times, want once")
+          }
+          if f.values[a].op != Op.Reuse && !r.uniq(f, u, l) {
+            errs.push("${bp}v${v} updates ${leaf_text(l)}, which is neither a reuse result nor provably unique")
+          }
+        }
+      }
+      let us = r.leaf_uses(f, v)
+      for us1 in us {
+        if us1.m == Mode.Borrow && !r.alive(f, st, us1.l) {
+          errs.push("${bp}v${v} uses ${leaf_text(us1.l)}, which is not alive")
+        }
+      }
+      for us1 in us {
+        if us1.m != Mode.Consume {
+          continue
+        }
+        if st.get(us1.l) < 1 {
+          errs.push("${bp}v${v} consumes ${leaf_text(us1.l)}, which is not held")
+        }
+        st.set(us1.l, st.get(us1.l) - 1)
+      }
+      if x.pad < 0 && !is_terminator(x.op) && raises(m, f, x, faults) {
+        // a fault here leaves the function without cleanup (decision
+        // 0085): nothing may be held
+        for l in st.held() {
+          let c = st.get(l)
+          if c > 0 {
+            errs.push("${bp}v${v} can fault while ${leaf_text(l)} is held ${c} times (no landing releases it)")
+          }
+        }
+        if keeps_operands(x) {
+          for us1 in us {
+            if us1.m == Mode.Consume && r.tracked(f, us1.l) && r.kind(f, us1.l.root) == RootKind.Owned {
+              errs.push("${bp}v${v} can fault before it takes ${leaf_text(us1.l)} (no landing releases it)")
+            }
+          }
+        }
+      }
+      if r.is_root(f, v) {
+        let kd = r.kind(f, v)
+        for l in r.leaves(f, v) {
+          if st.get(l) != 0 {
+            errs.push("${bp}${leaf_text(l)} is still held ${st.get(l)} times when it is defined again (a leak around a loop)")
+          }
+          st.set(l, if kd == RootKind.Owned { 1 } else { 0 })
+        }
+      }
+      if x.op == Op.Return {
+        for l in st.held() {
+          errs.push("${bp}${leaf_text(l)} is held ${st.get(l)} times at ret (leak or imbalance)")
+        }
+      }
+      if x.op is Op.Jump | Op.Branch {
+        let (site, landing) = landing_site(f, b)
+        for (i, e) in x.succs.indexed() {
+          var est = st.clone()
+          if i == 0 && landing >= 0 && x.op == Op.Branch {
+            // the cleanup path of a landing check: the operation checked
+            // produced nothing (decision 0085)
+            var keep = RcState{}
+            for (k, c) in est.n {
+              let l = est.ls.get(k) ?? Leaf{root: -1, path: ""}
+              let rv = f.values[l.root]
+              if l.root == site || (site < 0 && rv.op == Op.Param && rv.block == b && b != 0) {
+                continue
+              }
+              keep.n[k] = c
+              keep.ls[k] = l
+            }
+            est = keep
+            if site >= 0 && keeps_operands(f.values[site]) {
+              // it faulted before taking its operands
+              for us1 in r.leaf_uses(f, site) {
+                if us1.m == Mode.Consume && r.tracked(f, us1.l) && r.kind(f, us1.l.root) == RootKind.Owned {
+                  est.set(us1.l, est.get(us1.l) + 1)
+                }
+              }
+            }
+          }
+          let to = f.edges[e].to
+          for l in r.edge_uses(f, e) {
+            if est.get(l) < 1 {
+              errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(l)}, which is not held")
+            }
+            est.set(l, est.get(l) - 1)
+          }
+          for p in f.blocks[to].params {
+            if r.is_root(f, p) {
+              for l in r.leaves(f, p) {
+                if est.get(l) != 0 {
+                  errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(l)} is still held ${est.get(l)} times (a leak around a loop)")
+                }
+                est.set(l, 1)
+              }
+            }
+          }
+          if has[to] && stops(f, to) {
+            // the program stops there: paths need not agree
+            var old = entry[to]
+            for (k, c) in est.n {
+              let l = est.ls.get(k) ?? Leaf{root: -1, path: ""}
+              if c > old.get(l) {
+                old.set(l, c)
+              }
+            }
+            entry[to] = old
+          } else if has[to] {
+            if !entry[to].equal(est) {
+              errs.push("${bp}edge to ${bname(to)} holds ${est.text()}, another predecessor ${entry[to].text()}")
+            }
+          } else {
+            entry[to] = est.clone()
+            has[to] = true
+          }
+        }
+      }
+    }
+  }
+  errs
+}
+
+/// The verifier's checker over the module after reference counting.
+fn rc_checker(m: Module) -> Rc {
+  var r = Rc{types: m.types}
+  for (i, f) in m.funcs.indexed() {
+    r.fidx[f.name] = i
+    r.borrowed.push(f.borrowed)
+  }
+  r
+}
+
+/// The verdict of stage `verify`: `ok`, or the errors sorted (Verify).
+fn (var b: Builder) verify_text() -> Str {
+  var errs: List[Str] = []
+  for f in b.m.funcs {
+    for e in b.m.verify_func(f) {
+      errs.push(e)
+    }
+  }
+  if errs.is_empty() {
+    let faults = b.m.may_fault()
+    var r = rc_checker(b.m)
+    for (fi, f) in b.m.funcs.indexed() {
+      r.fi = fi
+      for e in r.verify_rc(b.m, f, faults) {
+        errs.push(e)
+      }
+    }
+  }
+  if errs.is_empty() {
+    return "ok\n"
+  }
+  "${errs.sort().join("\n")}\n"
+}
+
+/// The verdicts with one retain or release removed: the first n of each
+/// function (VerifyMutants).
+fn (var b: Builder) verify_mutants(n: Int) -> Str {
+  var out = StrBuilder.new()
+  let faults = b.m.may_fault()
+  var r = rc_checker(b.m)
+  for fi in 0..b.m.funcs.len() {
+    r.fi = fi
+    var k = 0
+    var f = b.m.funcs[fi]
+    for bi in 0..f.blocks.len() {
+      var i = 0
+      while i < f.blocks[bi].instrs.len() && k < n {
+        let v = f.blocks[bi].instrs[i]
+        if !(f.values[v].op is Op.Retain | Op.Release) {
+          i += 1
+          continue
+        }
+        k += 1
+        let orig = f.blocks[bi].instrs
+        f.blocks[bi].instrs = remove_at(orig, i)
+        var errs = b.m.verify_func(f)
+        if errs.is_empty() {
+          errs = r.verify_rc(b.m, f, faults)
+        }
+        f.blocks[bi].instrs = orig
+        out.write("${f.name} ${bname(bi)} ${i}: ")
+        if errs.is_empty() {
+          out.write("ok\n")
+        } else {
+          out.write("${errs.sort().join("; ")}\n")
+        }
+        i += 1
+      }
+    }
+  }
+  out.freeze()
+}
