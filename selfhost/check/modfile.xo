@@ -807,6 +807,19 @@ fn last_slash(s: Str) -> Int {
   -1
 }
 
+/// mod.parseEffectsText: `none`, or effect labels joined by commas.
+fn lock_effects_ok(s: Str) -> Bool {
+  if s == "none" {
+    return true
+  }
+  for l in s.split(",") {
+    if !EFFECT_LABELS.contains(l) {
+      return false
+    }
+  }
+  true
+}
+
 /// mod.ReadLock: dir/xo.lock; a missing file is an empty lock.
 fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) {
   var l = Lock{file: join(dir, "xo.lock")}
@@ -823,6 +836,15 @@ fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) {
       continue
     }
     let f = fields(text)
+    if f.len() == 3 && f[1] == "effects" {
+      // the effect lock (decision 0156): checked by the Go checker only
+      // (XO1317 is not a compared diagnostic); a malformed line is
+      // XO1301 here too
+      if !valid_path(f[0]) || !lock_effects_ok(f[2]) {
+        probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
+      }
+      continue
+    }
     if f.len() != 3 || !f[2].starts_with("h1:") {
       probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock line: want `<module path> <version>[/xo.mod] h1:<hash>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
       continue

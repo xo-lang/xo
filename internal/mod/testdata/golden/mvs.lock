@@ -1,7 +1,10 @@
-# xo.lock: content hashes of the module versions this module builds with.
-# Written by the xo toolchain (xo get, xo mod tidy); do not edit (core 4.3).
+# xo.lock: content hashes of the module versions this module builds with,
+# and the effects each module may reach (decision 0156).
+# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).
 github.com/acme/billing v1.2.0 h1:xDjQC3DO+bbGKJir+3J6p0JYN230nFIkkLgbbjT4eIA=
 github.com/acme/billing v1.2.0/xo.mod h1:GLoDLTVJQXniz+zg6H4qFHHMTu79cqrdoFD3VL93+fQ=
 github.com/acme/money v1.0.0/xo.mod h1:cjOQaH7WINZ4pbnwDeCnPbc4UXdm6X27SXswRjsFbuk=
 github.com/acme/money v1.1.0 h1:8fxSBC2uHHFi/2btaYAdG/HYNU4BwEyWM8lEX7L0moY=
 github.com/acme/money v1.1.0/xo.mod h1:cjOQaH7WINZ4pbnwDeCnPbc4UXdm6X27SXswRjsFbuk=
+github.com/acme/billing effects none
+github.com/acme/money effects none

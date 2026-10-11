@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Effect lock** (4.3, decision 0156): xo.lock records each
+  dependency's effects (`<path> effects <labels|none>`); an update that
+  widens them fails every load with `XO1317` until `xo mod
+  accept-effects` (or `xo get --accept-effects`) records them.
 - **Vouches** (4.2, decision 0156): a required module's `use c` lines and
   `use go` of impure Go packages count only with a `vouch` line in the
   consuming module's xo.mod for that exact version, else `XO1316`; an
@@ -1308,6 +1312,21 @@ its content hash.
   cache or vendor/ and compares them. A mismatch (a moved tag, an edited
   cache or vendor copy) is `XO1304` and nothing builds; a version with no
   entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
+- **[P1]** Effect lock (decision 0156): xo.lock also records, for each
+  selected module (not workspace modules), the effects its exported API
+  can reach: `<module path> effects <labels|none>`
+  (`github.com/acme/billing effects net.dial,stdio`), the union of the
+  effect labels in the `uses` clauses of its `pub` functions and methods
+  (every package, test files left out). The line is keyed by module
+  path, so it survives an upgrade. Every command that loads the program
+  compares each module's effects with its line: an effect the line does
+  not admit (`fs` admits `fs.read`) is `XO1317` on that line. `xo get`
+  and `xo mod tidy` record a module without a line as it is, narrow a
+  line whose module needs less, and fail with `XO1317` (writing nothing)
+  when a module needs more. `xo mod accept-effects [<module path>...]`
+  (all modules when none is named) and `xo get --accept-effects` record
+  the wider effects; `xo check` and `xo build` never do. A module with
+  no line (a lock written before decision 0156) is not checked.
 - **[P1]** Checksum log (decision 0124): with `XO_SUMDB=<name>+<key
   id>+<public key> [<URL>]` (default `off`), the first fetch of every
   module version, from git or a proxy, is checked before it enters the
@@ -2109,7 +2128,7 @@ test "retries after 503" {
 | `xo edit <op> ...` | Semantic edits (10.4) |
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments |
-| `xo get <path>[@version]`, `xo mod tidy`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
+| `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |

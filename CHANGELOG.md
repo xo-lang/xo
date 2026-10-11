@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Supply chain (decision 0156): an effect lock by default. xo.lock
+  records each dependency's effects (`<path> effects <labels|none>`, the
+  union of its pub functions' `uses`). `xo get` and `xo mod tidy` record
+  them the first time and narrow them; an update that widens them fails
+  `xo get`, `xo mod tidy`, and every load with `XO1317` until `xo mod
+  accept-effects [<path>...]` or `xo get --accept-effects` records them.
 - Supply chain (decision 0156): only the consuming module vouches for a
   dependency's escape hatches. A required module's `use c` lines and its
   `use go` of Go packages that are not pure need a `vouch <module>

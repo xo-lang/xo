@@ -119,6 +119,13 @@ func errs(ps []*Problem) []*Problem {
 // `@none` removes the requirement), resolves the graph, and rewrites
 // xo.mod and xo.lock. On problems nothing is written.
 func Get(mainDir, arg string) ([]Change, []*Problem) {
+	return GetAccept(mainDir, arg, false)
+}
+
+// GetAccept is Get; with accept (`xo get --accept-effects`) the module's
+// effects are recorded in xo.lock even when they are wider than the
+// line there (decision 0156).
+func GetAccept(mainDir, arg string, accept bool) ([]Change, []*Problem) {
 	path, version, _ := strings.Cut(arg, "@")
 	main, probs := ReadFile(mainDir)
 	if len(probs) > 0 {
@@ -158,17 +165,25 @@ func Get(mainDir, arg string) ([]Change, []*Problem) {
 	}
 	if old == nv {
 		// still refresh the lock
-		return nil, writeLockFor(mainDir)
+		return nil, writeLockFor(mainDir, acceptOpts(path, accept))
 	}
 	updated := SetRequire(data, path, nv)
 	if err := os.WriteFile(main.File, updated, 0o644); err != nil {
 		return nil, []*Problem{{Code: diag.ModFileInvalid, File: main.File, Msg: err.Error()}}
 	}
-	if ps := writeLockFor(mainDir); len(errs(ps)) > 0 {
+	if ps := writeLockFor(mainDir, acceptOpts(path, accept)); len(errs(ps)) > 0 {
 		os.WriteFile(main.File, data, 0o644)
 		return nil, ps
 	}
 	return []Change{{Path: path, Old: old, New: nv}}, nil
+}
+
+// acceptOpts accepts the effects of module path when accept is set.
+func acceptOpts(path string, accept bool) Options {
+	if !accept {
+		return Options{}
+	}
+	return Options{AcceptEffects: map[string]bool{path: true}}
 }
 
 func offlineOr(c diag.Code) diag.Code {
@@ -179,16 +194,61 @@ func offlineOr(c diag.Code) diag.Code {
 }
 
 // writeLockFor resolves the main module without workspace or vendor and
-// writes its xo.lock.
-func writeLockFor(mainDir string) []*Problem {
-	b := Load(mainDir, Options{NoWorkspace: true, NoVendor: true, Update: true})
+// writes its xo.lock: the hashes, and the effects of every selected
+// module (decision 0156): recorded as they are the first time, narrowed
+// when they shrank, and XO1317 (nothing written) when they grew, unless
+// accept accepts them.
+func writeLockFor(mainDir string, accept Options) []*Problem {
+	_, ps := writeLockChanges(mainDir, accept)
+	return ps
+}
+
+// EffectChange is an effect line of xo.lock written by xo get, xo mod
+// tidy, or xo mod accept-effects.
+type EffectChange struct {
+	Path string   `json:"path"`
+	Old  []string `json:"old"` // nil when the module had no line
+	New  []string `json:"new"`
+}
+
+func writeLockChanges(mainDir string, accept Options) ([]EffectChange, []*Problem) {
+	opts := Options{NoWorkspace: true, NoVendor: true, Update: true, AcceptEffects: accept.AcceptEffects, AcceptAll: accept.AcceptAll}
+	b := Load(mainDir, opts)
 	if len(errs(b.Problems)) > 0 {
-		return b.Problems
+		return nil, b.Problems
 	}
-	if err := WriteLock(mainDir, b.Hashes); err != nil {
-		return []*Problem{{Code: diag.ModFileInvalid, File: filepath.Join(mainDir, "xo.lock"), Msg: err.Error()}}
+	var changes []EffectChange
+	for _, m := range b.Modules {
+		cur, ok := b.Effects[m.Path]
+		if !ok {
+			continue
+		}
+		old, had := b.Locked[m.Path]
+		if had && EffectsText(old) == EffectsText(cur) {
+			continue
+		}
+		c := EffectChange{Path: m.Path, New: cur}
+		if had {
+			c.Old = old
+		}
+		changes = append(changes, c)
 	}
-	return nil
+	if err := WriteLock(mainDir, b.Hashes, b.Effects); err != nil {
+		return nil, []*Problem{{Code: diag.ModFileInvalid, File: filepath.Join(mainDir, "xo.lock"), Msg: err.Error()}}
+	}
+	return changes, nil
+}
+
+// AcceptEffects is `xo mod accept-effects [<module path>...]`: it records
+// the current effects of the named modules (every module when none is
+// named) in xo.lock, accepting effects wider than the lines there
+// (decision 0156). It returns the lines that changed.
+func AcceptEffects(mainDir string, paths []string) ([]EffectChange, []*Problem) {
+	opts := Options{AcceptAll: len(paths) == 0, AcceptEffects: map[string]bool{}}
+	for _, p := range paths {
+		opts.AcceptEffects[p] = true
+	}
+	return writeLockChanges(mainDir, opts)
 }
 
 // Tidy is `xo mod tidy`: it adds a requirement (the latest version) for
@@ -285,7 +345,7 @@ func Tidy(mainDir string) ([]Change, []*Problem) {
 			return nil, []*Problem{{Code: diag.ModFileInvalid, File: main.File, Msg: err.Error()}}
 		}
 	}
-	if ps := writeLockFor(mainDir); len(errs(ps)) > 0 {
+	if ps := writeLockFor(mainDir, Options{}); len(errs(ps)) > 0 {
 		os.WriteFile(main.File, orig, 0o644)
 		return nil, ps
 	}

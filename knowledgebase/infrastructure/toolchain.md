@@ -1839,8 +1839,9 @@ Last verified: 2026-10-09.
   `<path> <version>/xo.mod h1:<hash>` for every version read. Hash: base64
   SHA-256 of sorted `"<sha256 hex>  <slash path>\n"` lines (Go's h1
   shape over the raw tree). Every check and build rehashes the trees and
-  compares (XO1304 mismatch, XO1305 missing). Only `xo get` and `xo mod
-  tidy` write it, always without workspace and vendor.
+  compares (XO1304 mismatch, XO1305 missing). Only `xo get`, `xo mod
+  tidy`, and `xo mod accept-effects` write it, always without workspace
+  and vendor. Effect lines: see "Effect lock" below.
 - Vendor: `xo vendor` copies selected trees to `vendor/<path>/` (writable
   copies) and writes `vendor/modules.txt` (`# <path> <version>` lines).
   When `vendor/modules.txt` exists (and no workspace is active), builds
@@ -1881,6 +1882,33 @@ Last verified: 2026-10-09.
   declaring line). `SetRequire` keeps a ceiling when `xo get` or `xo mod
   tidy` rewrites the version. `mod.EffectLabels` is kept equal to the
   checker's labels by `TestCeilingLabels`.
+- Vouches (decision 0156, 2026-10-11): `internal/mod/vouch.go`
+  (`Vouch`, `parseVouch`, `VouchesOf`, `FindVouch`, `SuggestVouch`);
+  `internal/check/vouch.go` (`escapeHatch`, called from `loadCImport`
+  for every `use c` and from `loadGoImport` for a `use go` of a package
+  `gobind.PurePackage` rejects): a required module's (cache or vendor/)
+  escape hatch needs a vouch of the main or a workspace module's xo.mod
+  for the exact version, else XO1316; an unvouched `use c` binds with no
+  `uses` (ffi), a vouched one with the vouch's. `Result.EscapeHatches`
+  and `Result.ConsumerVouches` feed `xo audit`. A dependency's `use c`
+  binding goes to the main module's `.xo/cbind` (`goBindRoot`). Tests:
+  `cmd/xo/vouch_test.go` (`TestVouches`, `TestVouchesC` with clang),
+  `internal/check/vouch_test.go` (vendored). Last verified: 2026-10-11.
+- Effect lock (decision 0156, 2026-10-11): xo.lock lines `<path> effects
+  <labels|none>` (`Lock.Effects`), keyed by module path so they survive
+  upgrades. `mod.ModuleEffects(dir)` is the union of the `uses` labels of
+  the pub functions and methods of a module tree (syntax only, _test.xo
+  files, nested modules, vendor/, testdata/ skipped). `Load` fills
+  `BuildList.Effects` and `Locked` and reports XO1317 on the lock line
+  for an effect the line does not admit (`checkEffects`, also for
+  vendored builds), unless `Options.AcceptEffects`/`AcceptAll`.
+  `writeLockFor` (get, tidy) records missing lines, narrows shrunk ones,
+  and fails on widened ones (xo.mod restored). `xo mod accept-effects
+  [--dir] [--json] [<module path>...]` (`mod.AcceptEffects`) and `xo get
+  --accept-effects` accept. The self hosted checker parses effects lines
+  (XO1301 when malformed) but does not compare them: XO1317 is not one
+  of its staged diagnostics. Test: `cmd/xo/effectlock_test.go`. Last
+  verified: 2026-10-11.
 - API diffs and publish (step 4): package `internal/release`
   (`ModuleAPI`: the syntax level `xo query api` surface of every package
   via `query.DeclSurface`; `Diff`, `Bump`; `Publish`). `xo get` prints the
