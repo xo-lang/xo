@@ -200,11 +200,9 @@ func F_count[tp_T any](tk *rt.Task, v_t Tree[tp_T]) int64 {
 //line main.xo:24:61
 		}
 //line main.xo:24:61
-		rt.Unreachable("main.xo:22:3")
+		panic(rt.Unreachable("main.xo:22:3"))
 //line main.xo:24:61
 	}
-//line main.xo:24:61
-	panic("unreachable: missing return")
 }
 
 //line main.xo:28:1
@@ -591,11 +589,9 @@ func F_count__string(tk *rt.Task, v_t Tree[string]) int64 {
 //line main.xo:24:61
 		}
 //line main.xo:24:61
-		rt.Unreachable("main.xo:22:3")
+		panic(rt.Unreachable("main.xo:22:3"))
 //line main.xo:24:61
 	}
-//line main.xo:24:61
-	panic("unreachable: missing return")
 }
 
 //line main.xo:28:1

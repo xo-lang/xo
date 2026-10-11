@@ -213,7 +213,7 @@ x_M16:
 //line main.xo:28:15
 		}
 //line main.xo:28:15
-		rt.Unreachable("main.xo:26:3")
+		panic(rt.Unreachable("main.xo:26:3"))
 //line main.xo:28:15
 	}
 //line main.xo:30:3
@@ -288,7 +288,7 @@ x_M20:
 //line main.xo:37:14
 		}
 //line main.xo:37:14
-		rt.Unreachable("main.xo:35:3")
+		panic(rt.Unreachable("main.xo:35:3"))
 //line main.xo:37:14
 	}
 //line main.xo:39:3

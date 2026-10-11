@@ -203,11 +203,9 @@ func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
 //line main.xo:31:15
 		}
 //line main.xo:31:15
-		rt.Unreachable("main.xo:29:3")
+		panic(rt.Unreachable("main.xo:29:3"))
 //line main.xo:31:15
 	}
-//line main.xo:31:15
-	panic("unreachable: missing return")
 }
 
 //line main.xo:35:1

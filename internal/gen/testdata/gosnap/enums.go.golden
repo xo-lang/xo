@@ -203,11 +203,9 @@ func F_area(tk *rt.Task, v_s Shape) int64 {
 //line main.xo:16:14
 		}
 //line main.xo:16:14
-		rt.Unreachable("main.xo:13:3")
+		panic(rt.Unreachable("main.xo:13:3"))
 //line main.xo:16:14
 	}
-//line main.xo:16:14
-	panic("unreachable: missing return")
 }
 
 //line main.xo:20:1
@@ -272,7 +270,7 @@ x_M6:
 //line main.xo:29:17
 		}
 //line main.xo:29:17
-		rt.Unreachable("main.xo:27:3")
+		panic(rt.Unreachable("main.xo:27:3"))
 //line main.xo:29:17
 	}
 //line main.xo:31:3
@@ -303,7 +301,7 @@ x_M7:
 //line main.xo:33:15
 		}
 //line main.xo:33:15
-		rt.Unreachable("main.xo:31:3")
+		panic(rt.Unreachable("main.xo:31:3"))
 //line main.xo:33:15
 	}
 //line main.xo:35:3

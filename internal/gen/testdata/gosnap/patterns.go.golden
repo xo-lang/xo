@@ -178,11 +178,9 @@ func F_shape(tk *rt.Task, v_xs rt.List[int64]) string {
 //line main.xo:16:26
 		}
 //line main.xo:16:26
-		rt.Unreachable("main.xo:12:3")
+		panic(rt.Unreachable("main.xo:12:3"))
 //line main.xo:16:26
 	}
-//line main.xo:16:26
-	panic("unreachable: missing return")
 }
 
 //line main.xo:20:1
@@ -233,11 +231,9 @@ func F_describe(tk *rt.Task, v_r rt.Result[rt.Option[int64], string]) string {
 //line main.xo:25:17
 		}
 //line main.xo:25:17
-		rt.Unreachable("main.xo:21:3")
+		panic(rt.Unreachable("main.xo:21:3"))
 //line main.xo:25:17
 	}
-//line main.xo:25:17
-	panic("unreachable: missing return")
 }
 
 //line main.xo:29:1
@@ -397,7 +393,7 @@ x_M6:
 //line main.xo:54:38
 				}
 //line main.xo:54:38
-				rt.Unreachable("main.xo:53:5")
+				panic(rt.Unreachable("main.xo:53:5"))
 //line main.xo:54:38
 			}
 //line main.xo:54:38
@@ -509,7 +505,7 @@ x_M27:
 //line main.xo:72:14
 		}
 //line main.xo:72:14
-		rt.Unreachable("main.xo:70:14")
+		panic(rt.Unreachable("main.xo:70:14"))
 //line main.xo:72:14
 	}
 //line main.xo:72:14

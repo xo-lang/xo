@@ -140,9 +140,12 @@ func Fault(_ *Task, msg, loc string) Never {
 	panic(newFault("", loc, msg))
 }
 
-// Unreachable marks code the checker proved unreachable (exhaustive match).
-func Unreachable(loc string) {
-	panic(newFault("", loc, "unreachable code reached (internal compiler error)"))
+// Unreachable is the fault for code the checker proved unreachable (the
+// end of an exhaustive match). The generated code panics with it, as
+// `panic(rt.Unreachable(loc))`, so Go sees a terminating statement and
+// the function needs no trailing panic.
+func Unreachable(loc string) any {
+	return newFault("", loc, "unreachable code reached (internal compiler error)")
 }
 
 // Hole is an evaluated `???` under `--holes` (core 3.7).

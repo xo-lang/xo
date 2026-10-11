@@ -353,7 +353,7 @@ func (f *fnGen) matchExpr(x *ast.MatchExpr, d dest) {
 		f.line("_ = %s", subj)
 	}
 	if len(x.Arms) == 0 {
-		f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
+		f.line("panic(%sUnreachable(%q))", f.rt(), f.g.loc(x))
 		return
 	}
 	label := f.tmp("M")
@@ -399,7 +399,7 @@ func (f *fnGen) matchExpr(x *ast.MatchExpr, d dest) {
 			f.ind--
 			f.line("}")
 		}
-		f.line("%sUnreachable(%q)", f.rt(), f.g.loc(x))
+		f.line("panic(%sUnreachable(%q))", f.rt(), f.g.loc(x))
 	})
 	f.ind--
 	if broke {
