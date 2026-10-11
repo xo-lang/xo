@@ -208,10 +208,18 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
       return
     }
     Handle => {
-      if b.is_prelude_named(ct, ["Atomic"]) {
-        b.unsupported("the Debug text of an Atomic")
-        b.retv(acc)
-        return
+      let r = b.c.resolve(ct)
+      if b.is_prelude_named(ct, ["Atomic"]) && b.c.tys[r].kind == check.TyKind.Named && b.c.tys[r].args.len() == 1 {
+        // `Atomic(1)`: its value now (std/rt's Atomic.XoDebug)
+        let ea = b.c.tys[r].args[0]
+        let et = b.typ(ea)
+        if b.tkind(et) is Kind.Int | Kind.Bool | Kind.Float {
+          let a = b.lit(acc, "Atomic(")
+          let g = b.rt("atomic_get", et, [v])
+          let s2 = b.debug_sub(a, g, ea)
+          b.retv(b.lit(s2, ")"))
+          return
+        }
       }
       b.retv(b.lit(acc, "<${lower_name(b.m.types[t].name)}>"))
       return

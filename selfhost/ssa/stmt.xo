@@ -37,6 +37,9 @@ fn (var b: Builder) stmt(st: Stmt) {
       b.expr(x)
     }
     LetStmt(pattern: p, value: value, ..) => {
+      if let BindPat(name: name, ..) = p {
+        b.note_binding(value, b.c.var_of(b.s.file, name))
+      }
       let v = b.value(value)
       let fail = b.new_block()
       b.pattern(v, p, fail)
@@ -48,6 +51,7 @@ fn (var b: Builder) stmt(st: Stmt) {
     }
     VarStmt(name: name, value: value, ..) => {
       let vo = b.c.var_of(b.s.file, name)
+      b.note_binding(value, vo)
       let v = b.value(value)
       b.write_var(vo, v)
     }
@@ -209,8 +213,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   } else {
     let lt = b.nat_of(iter)
     if b.tkind(lt) == Kind.Handle && b.m.types[lt].name.starts_with("Chan[") {
-      b.need_conc = true
-      b.unsupported("`for` over a channel")
+      b.for_chan(name, p, iter, bound, body)
       return
     } else if b.m.types[lt].coll {
       b.for_map(name, p, bound, body, b.value(iter))

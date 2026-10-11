@@ -357,7 +357,8 @@ fn (var b: Builder) expr(e: Expr) -> Int {
       b.while_loop(b"", [], [], body)
       return b.unit()
     }
-    ScopeExpr(..) | SelectExpr(..) => b.need_conc = true
+    ScopeExpr(..) => return b.scope_expr(e)
+    SelectExpr(..) => return b.select_expr(e)
     _ => {}
   }
   b.unsupported(unsupported_expr(e))
@@ -618,9 +619,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
   if sel.name == b"await" {
     let xct = b.nat_check(x)
     if b.is_prelude_named(xct, ["Task"]) {
-      b.need_conc = true
-      b.unsupported("`await`")
-      return b.undef(b.nat_of(e))
+      return b.await_expr(e, x)
     }
   }
   let v = b.expr(x)
@@ -628,9 +627,13 @@ fn (var b: Builder) selector(e: Expr) -> Int {
   if b.tkind(vt) == Kind.Cap {
     let t = b.nat_of(e)
     if b.tkind(t) == Kind.Handle {
+      // os.tasks (core 7.1, decision 0109): the group of the scope around
+      // main (tasks_main)
       b.need_conc = true
-      b.unsupported("`os.tasks`")
-      return b.undef(t)
+      if !b.conc {
+        return b.undef(t)
+      }
+      return b.rt("prog_group", t, [])
     }
     if b.is_fs(t) {
       let root = b.const_str("")

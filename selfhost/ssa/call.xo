@@ -118,13 +118,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
       return v
     }
     if b.is_conc_call(fo) {
-      if b.c.objs[fo].recv < 0 && b.obj_name(fo) == "isolate" {
-        b.unsupported("`task.isolate`")
-        return b.undef(b.nat_of(x))
-      }
-      b.need_conc = true
-      b.unsupported("concurrency")
-      return b.undef(b.nat_of(x))
+      return b.conc_call(x, ci)
     }
     return b.std_call(x, ci)
   }
@@ -1362,9 +1356,11 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
       if fname is "write" | "read_line" | "read_all" | "lines" {
         if fname != "write" {
+          // reads wait on the event loop
           b.need_conc = true
-          b.unsupported("reading standard input")
-          return b.undef(nt)
+          if !b.conc {
+            return b.undef(nt)
+          }
         }
         let pm = b.native_mod("std/prelude")
         if pm >= 0 {
@@ -1562,11 +1558,11 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let st = b.str_t()
   let es = arg_exprs(b.c.objs[fo].params, args)
   if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" {
+    // operations that wait: the program needs unwinding checks
     b.need_conc = true
-    if b.conc {
-      b.unsupported("an operation that waits (`${key}`)")
+    if !b.conc {
+      return Some(b.undef(nt))
     }
-    return Some(b.undef(nt))
   }
   let pos = b.pos_line(span)
   if b.c.objs[fo].is_static {
@@ -1611,6 +1607,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     return Some(b.undef(nt))
   }
   let recv = b.expr(ci.recv[0])
+  if let Some(v) = b.wait_call(key, fo, es, recv, nt) {
+    return Some(v)
+  }
   match key {
     "StrBuilder.len" | "BytesBuilder.len" => return Some(b.call("Str.len", it, "", [recv]))
     "StrBuilder.freeze" | "BytesBuilder.freeze" => return Some(recv)

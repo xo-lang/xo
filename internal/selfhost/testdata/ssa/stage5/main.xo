@@ -1,0 +1,222 @@
+// SSA stage 5 constructs for TestSelfhostSSA (decision 0150): scopes
+// left by every way out (the end, return, `?`, break, continue, a fault,
+// cancellation), deferred code inside and around scopes, nested scopes,
+// spawns that can fail the scope (bound and awaited, or not), channels
+// and `for` over them, `select` with receive, send, and `after` arms,
+// Mutex (with and with_read, with and without a `var` parameter, with an
+// error), Atomic and its Debug text, task.isolate, task.with_timeout,
+// os.tasks, and the operations that wait (sleep, the network, standard
+// input). Built, not run.
+use std/task
+
+enum Boom {
+  Bad(why: Str)
+} derive Display
+
+struct Counter {
+  n: Int
+  log: List[Str]
+}
+
+fn risky(n: Int) -> Int ! Boom {
+  if n < 0 {
+    return Err(Boom.Bad("negative"))
+  }
+  let xs = [1, 2, 3]
+  xs[n]
+}
+
+fn fan_out(os: Os, n: Int) -> Int ! Boom {
+  let results = Chan[Int].new(cap: n)
+  scope s {
+    defer os.stdio.println("fan out done")
+    for i in 0..n {
+      if i == 7 {
+        break
+      }
+      if i % 3 == 2 {
+        continue
+      }
+      s.spawn(fn() ! Boom {
+        results.send(risky(i)?)
+      })
+    }
+    let t = s.spawn(fn() -> Int ! Boom { risky(1) })
+    let first = t.await?
+    if first > 100 {
+      return first
+    }
+  }
+  results.close()
+  var sum = 0
+  for v in results {
+    sum += v
+    if sum > 1000 {
+      break
+    }
+  }
+  sum
+}
+
+fn nested(os: Os) -> Str {
+  let out = Chan[Str].new(cap: 8)
+  scope a {
+    defer out.send("a deferred")
+    scope b {
+      defer out.send("b deferred")
+      b.spawn(fn() {
+        out.send("inner")
+      })
+      a.spawn_background(fn() {
+        os.clock.sleep(1h)
+      })
+    }
+    a.cancel()
+  }
+  out.close()
+  var all = ""
+  for m in out {
+    all = all + m + ";"
+  }
+  all
+}
+
+fn pick(a: Chan[Int], b: Chan[Int], out: Chan[Str]) -> Str {
+  select {
+    v = a.recv() => "a ${v ?? -1}"
+    w = b.recv() => match w {
+      Some(x) => "b ${x}"
+      None => "b closed"
+    }
+    out.send("ping") => "sent"
+    after 10ms => "timeout"
+  }
+}
+
+fn pick_unit(a: Chan[Int]) {
+  var label = ""
+  select {
+    v = a.recv() => label = "got ${v ?? 0}"
+    after 1s => label = "late"
+  }
+  let _ = label
+}
+
+fn mutexes(os: Os) -> Int ! Str {
+  let m = Mutex[Counter].new(Counter{n: 0, log: []})
+  let total = Atomic[Int].new(0)
+  let flag = Atomic[Bool].new(false)
+  scope s {
+    for i in 0..4 {
+      s.spawn(fn() {
+        m.with(fn(var c: Counter) {
+          c.n += i
+          c.log.push("t${i}")
+        })
+        total.add(i)
+        let _ = flag.compare_and_swap(false, true)
+      })
+    }
+  }
+  let seen = m.with_read(fn(c: Counter) -> Int { c.n })
+  let checked = m.with(fn(var c: Counter) -> Int ! Str {
+    if c.n > 100 {
+      return Err("too many")
+    }
+    c.n += 1
+    c.n
+  })?
+  os.stdio.println("${total.debug()} ${flag.debug()} ${total.get()} ${total.swap(3)} ${total.max(9)}")
+  total.set(1)
+  seen + checked
+}
+
+fn timed(os: Os) -> Str {
+  let r = task.with_timeout(os.clock, 20ms, fn() -> Str ! Boom {
+    os.clock.sleep(5ms)
+    let n = risky(0)?
+    "ok ${n}"
+  })
+  match r {
+    Ok(v) => v
+    Err(TimedOut) => "timed out"
+    Err(Failed(e)) => "failed ${e}"
+  }
+}
+
+fn isolated() -> Str {
+  let a = task.isolate(fn() -> Int ! Boom { risky(5) })
+  let b = task.isolate(fn() -> Int { risky(1).ok() ?? 0 })
+  let sa = match a {
+    Ok(v) => "ok ${v}"
+    Err(task.Isolated.Faulted(info)) => "fault ${info.msg}"
+    Err(task.Isolated.Failed(_)) => "failed"
+  }
+  let sb = match b {
+    Ok(v) => "ok ${v}"
+    Err(_) => "err"
+  }
+  "${sa} ${sb}"
+}
+
+fn net(os: Os) -> Str ! NetErr {
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() {
+      match l.accept() {
+        Ok(c) => {
+          if c.write(b"hi").is_ok() {
+            c.close()
+          }
+        }
+        Err(_) => {}
+      }
+    })
+    let c = os.net.dial(addr)?
+    let got = c.read(16)?
+    c.close()
+    l.close()
+    os.stdio.println("read ${got.map(fn(x: Bytes) -> Int { x.len() }) ?? 0}")
+  }
+  addr
+}
+
+fn waits(os: Os) -> Str {
+  match os.clock.sleep_or_cancel(1ms) {
+    Ok(_) => {}
+    Err(_) => return "canceled"
+  }
+  if task.is_canceled() {
+    return "is canceled"
+  }
+  match os.stdio.read_line() {
+    Ok(Some(line)) => line
+    Ok(None) => "eof"
+    Err(_) => "error"
+  }
+}
+
+fn main(os: Os) ! {
+  os.tasks.spawn_background(fn() {
+    os.clock.sleep(1h)
+  })
+  os.tasks.spawn(fn() ! Str {
+    if risky(0).is_err() {
+      return Err("risky failed")
+    }
+  })
+  let a = Chan[Int].new(cap: 1)
+  let b = Chan[Int].new()
+  let out = Chan[Str].new(cap: 1)
+  a.send(4)
+  os.stdio.println(pick(a, b, out))
+  pick_unit(a)
+  os.stdio.println("${fan_out(os, 9).ok() ?? -1}")
+  os.stdio.println(nested(os))
+  os.stdio.println("${mutexes(os).ok() ?? -1}")
+  os.stdio.println(timed(os))
+  os.stdio.println(isolated())
+  os.stdio.println(net(os).ok() ?? "net failed")
+  os.stdio.println(waits(os))
+}

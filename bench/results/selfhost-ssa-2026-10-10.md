@@ -356,3 +356,54 @@ Next experiments for arm64: enums of 256 bytes or more by reference
 (decision 0147's rule: `Expr`, `Stmt`, `Pattern` of selfhost/parser
 are that large), and a field of a field of a held value read without
 loading the inner field whole (`h.a.a.a += n` loads all of `h.a`).
+
+# Stage 5: concurrency and I/O, 2026-10-11
+
+`selfhost/ssa/conc.xo` (about 1,100 lines): scopes (open, the close at
+every way out: the end, `return`, `?`, `break`, `continue` in mode 1,
+unwinding in mode 2, the failure block that returns a failed task's
+error with its frame), spawn sites in check.Inspect order and the
+bindings that make a spawn awaited, `spawn` with its entry function
+(`xo.run[...]`) and drop lists, `await`, every method of Chan, Mutex
+(`with`/`with_read`, packed closures with a `var` parameter, the unlock
+on the unwind path), Atomic (and its Debug text), Scope, task.Group,
+std/task (`isolate`, `with_timeout`, `is_canceled`, `stop_requested`,
+`stopping`), `for` over a channel, `select` (receive, send, `after`),
+`os.tasks` and main in the root scope (`main.run`, the group's failure
+printed before main's own error), and the operations that wait:
+`Clock.sleep`, `sleep_or_cancel`, Net, Listener, Conn (with
+`xo.neterr`), and standard input reads. Scopes join the open blocks of
+defer.xo (the scope half of exitEntry). The Xo builder now builds every
+run the Go builder builds except `use go`/`use c` and holes.
+internal/selfhost/testdata/ssa/stage5 is a program of these constructs.
+
+| functions (Go builder) | stage 4 (11,171) | stage 5 (11,264, one more run) |
+|---|---|---|
+| identical | 8,252 | 10,356 |
+| skipped (a later stage) | 690 | 405 |
+| never declared (callees of skipped code) | 2,229 | 503 |
+
+0 differences with the go, arm64 (built with decision 0151), and LLVM
+builds of the Xo builder; `TestSelfhostSSAMutations` 0 differences on
+400 mutations (seed 20261010: 5,691 of 6,266 functions identical, was
+3,877 of 5,997) and 1,500 (seed 7: 21,224 of 23,454, was 15,677 of
+23,056). No reason for skipping of stages 1 to 5 is left: what remains
+is the generic intrinsics of stage 6 (`json_enc` 105, `any_of` 44,
+`cast` 39, `json_dec` 37, `status_of` 35, `launder` 42, SQL 9) and
+the closures of the functions they are in (75).
+
+Found in stage 5: the port armed the landings of operations that may
+fault only after a `defer` (`any_defer`, a shortcut of stage 4); the Go
+builder arms them under any lexical cleanup, scopes included (78
+differences, all `lands` on `rt.task_spawn` and the blocks after it;
+gotchas/selfhost-ssa-port-shortcut-flags.md). No compiler bug.
+
+Speed, ms for 10 builds (`--bench=10`, the builder alone; Apple M4
+Pro, idle): the go build of the Xo builder against the Go builder,
+before the fix of the next section.
+
+| input | Go builder | Xo, Go backend |
+|---|---|---|
+| selfhost/check | 710 | 1,244 (1.75x) |
+| selfhost/ssa | 1,160 | 2,080 (1.80x) |
+| internal/gen/testdata/golden/http_scoped (1,140 functions; Xo 1,080) | 16 | 32 (2.0x) |

@@ -115,6 +115,15 @@ passes the full suite on the backends it targets.
   mutations. Every construct of stages 1 to 4 is lowered; what remains
   skipped is concurrency, the generic intrinsics, and test binaries
   (stages 5 to 7).
+- 2026-10-11: SSA stage 5 of 8, concurrency and I/O (decision 0150):
+  scopes and their exits, tasks, `await`, channels, `select`, Mutex,
+  Atomic, std/task, os.tasks, and the operations that wait; 10,356 of
+  11,264 functions identical (was 8,252), 0 differences on go, arm64,
+  and LLVM builds and 1,900 mutations. The arm64 build of the Xo
+  builder went from 13.2x to 2.3x the Go builder (decision 0151: large
+  struct parameters by reference), the go build to 1.64x (a list copied
+  per recursive call). Left: the generic intrinsics, test binaries, and
+  the passes (stages 6 to 8).
 
 ## Alternatives
 

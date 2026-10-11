@@ -3,8 +3,8 @@
 // stage 4 of decision 0150. The deferred statements of a block are
 // lowered again at every way out of it, last registered first; a fault
 // in an operation inside a block with deferred code lands in a check
-// whose cleanup runs that code. Scopes (stage 5) are not among the open
-// blocks: a function with one is skipped.
+// whose cleanup runs that code. The scopes open around the code (stage
+// 5, conc.xo) are among the open blocks: a frame whose scope is set.
 
 
 /// A `defer` statement of a block.
@@ -16,8 +16,10 @@ struct DStmt {
 /// An open block (build_defer.go deferFrame): the `defer` statements met
 /// so far; outer (once has_outer) are the blocks around it when its
 /// deferred code first ran, cont its fault continuations by statement
-/// index (faultCont).
+/// index (faultCont). A frame with scope >= 0 is an open scope instead
+/// (build_defer.go exitEntry.scope: an index into S.scope_tab), with no statements.
 struct DFrame {
+  sc: Int = -1
   stmts: List[DStmt] = []
   outer: List[Int] = []
   has_outer: Bool = false
@@ -37,13 +39,24 @@ struct DLand {
 
 /// Registers deferred code in the innermost open block (deferStmt).
 fn (var b: Builder) defer_stmt(body: Stmt, span: Span) {
-  let n = b.s.exits.len()
-  if n == 0 {
-    b.unsupported("`defer` outside a block")
-    return
+  var i = b.s.exits.len() - 1
+  while i >= 0 {
+    let fr = b.s.exits[i]
+    if b.s.frames[fr].sc < 0 {
+      b.s.frames[fr].stmts.push(DStmt{body: body, span: span})
+      return
+    }
+    i -= 1
   }
-  let fr = b.s.exits[n - 1]
-  b.s.frames[fr].stmts.push(DStmt{body: body, span: span})
+  b.unsupported("`defer` outside a block")
+}
+
+/// Opens the frame of a scope (scopeExpr's exitEntry).
+fn (var b: Builder) open_scope_frame(sc: Int) -> Int {
+  let fr = b.s.frames.len()
+  b.s.frames.push(DFrame{sc: sc})
+  b.s.exits.push(fr)
+  fr
 }
 
 /// Opens the frame of a block (block's deferFrame).
@@ -62,7 +75,8 @@ fn (var b: Builder) snapshot() -> List[Int] {
   for e in b.s.exits {
     let fr = b.s.frames.len()
     let stmts = b.s.frames[e].stmts
-    b.s.frames.push(DFrame{stmts: stmts})
+    let sc = b.s.frames[e].sc
+    b.s.frames.push(DFrame{sc: sc, stmts: stmts})
     out.push(fr)
   }
   out
@@ -112,12 +126,24 @@ fn (var b: Builder) run_defer(fr: Int, i: Int, top: Bool) {
 }
 
 /// Whether an operation added now is in top level deferred code that
-/// fault_cont handles (deferLandingHere).
+/// fault_cont handles: not nested in other deferred code, and no scope
+/// opened inside it (deferLandingHere).
 fn (var b: Builder) defer_landing_here() -> Bool {
   if b.s.defer_land.is_empty() || b.s.shield != 1 {
     return false
   }
-  b.s.exits.len() >= b.s.defer_land[0].base
+  let base = b.s.defer_land[0].base
+  if b.s.exits.len() < base {
+    return false
+  }
+  var i = base
+  while i < b.s.exits.len() {
+    if b.s.frames[b.s.exits[i]].sc >= 0 {
+      return false
+    }
+    i += 1
+  }
+  true
 }
 
 /// The block where a fault in deferred statement j of fr continues:
@@ -138,6 +164,7 @@ fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
   b.s.conts.push(blk)
   let cur = b.s.cur
   let exits = b.s.exits
+  let scopes = b.s.scopes
   let land = b.s.defer_land
   let shield = b.s.shield
   let loops = b.s.loops
@@ -146,6 +173,16 @@ fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
   b.s.shield = 0
   b.s.loops = []
   b.s.exits = b.s.frames[fr].outer
+  // the scopes open around the block: those of its exits (a scope closed
+  // early by a return is not among them any more)
+  var open: List[Int] = []
+  for e in b.s.exits {
+    let sc = b.s.frames[e].sc
+    if sc >= 0 {
+      open.push(sc)
+    }
+  }
+  b.s.scopes = open
   if j > 0 {
     b.run_defer(fr, j - 1, true)
     if !b.is_dead() {
@@ -157,6 +194,7 @@ fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
   }
   b.s.cur = cur
   b.s.exits = exits
+  b.s.scopes = scopes
   b.s.defer_land = land
   b.s.shield = shield
   b.s.loops = loops
@@ -173,24 +211,30 @@ fn (var b: Builder) seal_conts() {
   b.s.conts = []
 }
 
-/// Leaves the open blocks down to depth (an index into exits) for an
-/// early exit: their deferred code runs, innermost first (exitTo).
+/// Leaves the open blocks and scopes down to depth (an index into exits)
+/// for an early exit: deferred code runs and scopes close (mode 1),
+/// innermost first (exitTo).
 fn (var b: Builder) exit_to(depth: Int) {
   let saved = b.s.exits
   var i = saved.len() - 1
   while i >= depth && !b.is_dead() {
     b.s.exits = saved[0..i]
-    b.run_defers(saved[i])
+    let sc = b.s.frames[saved[i]].sc
+    if sc >= 0 {
+      b.close_early(sc)
+    } else {
+      b.run_defers(saved[i])
+    }
     i -= 1
   }
   b.s.exits = saved
 }
 
-/// Whether leaving the current code by a fault runs deferred code of this
-/// function (lexicalCleanup).
+/// Whether leaving the current code by a fault runs deferred code or
+/// closes a scope of this function (lexicalCleanup).
 fn (var b: Builder) lexical_cleanup() -> Bool {
   for e in b.s.exits {
-    if !b.s.frames[e].stmts.is_empty() {
+    if b.s.frames[e].sc >= 0 || !b.s.frames[e].stmts.is_empty() {
       return true
     }
   }
@@ -248,6 +292,7 @@ fn (var b: Builder) flush_landing() {
   let w = b.s.pending
   b.s.pending = -1
   let at = b.s.pending_at
+  let at_scopes = b.s.pending_scopes
   let defs = b.s.pending_defs
   let dl = b.s.pending_defer
   b.s.pending_defs = {}
@@ -273,8 +318,10 @@ fn (var b: Builder) flush_landing() {
   let (yes, no) = b.branch(u)
   b.s.cur = yes
   let saved_exits = b.s.exits
+  let saved_scopes = b.s.scopes
   if dl.is_empty() {
     b.s.exits = at
+    b.s.scopes = at_scopes
   }
   // the cleanup reads the variables as they were before w: put back the
   // definitions made in its block since
@@ -323,5 +370,6 @@ fn (var b: Builder) flush_landing() {
     }
   }
   b.s.exits = saved_exits
+  b.s.scopes = saved_scopes
   b.s.cur = no
 }

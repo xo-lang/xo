@@ -1,0 +1,1360 @@
+// Structured concurrency and the operations that wait (internal/ssa
+// build_conc.go, build_tasks.go, the waits of build_io.go, and
+// landing.go isolate), stage 5 of decision 0150: scopes and their exits,
+// tasks and `await`, channels and `for` over them, `select`, Mutex,
+// Atomic, std/task (`isolate`, `with_timeout`, the cancellation
+// queries), the scope of os.tasks around main, and the operations that
+// wait (sleep, the network, standard input). A program that uses any of
+// them is built again with unwinding checks (`rt.unwinding` after the
+// calls that can be canceled), as the Go builder does.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Code run on the unwind path of a check before it unwinds (checkThen's
+/// cleanup).
+enum Cleanup {
+  None
+  /// `rt.<name>(h, l)`: unlocking a mutex.
+  Unlock(name: Str, h: Int, l: Int)
+}
+
+/// A spawn whose task can fail with an error that is not awaited
+/// (spawnSite): its scope may have to return that error. err_t and res_t
+/// are checker types.
+struct SpawnSite {
+  id: Int
+  err_t: Int
+  res_t: Int
+}
+
+/// A `scope` whose body is being built (scopeCtx): its handle, the
+/// spawns that can fail it, and its unwind and failure blocks (-1 until
+/// needed).
+struct ScopeCtx {
+  h: Int
+  sites: List[SpawnSite] = []
+  unwind_b: Int = -1
+  fail_b: Int = -1
+}
+
+/// A node check.Inspect meets that the scope's bookkeeping reads: a call,
+/// or a `let`/`var` binding of a value (noteBindings).
+enum Walk {
+  Call(e: Expr)
+  Bind(value: Expr, vo: Int)
+}
+
+/// The `file:line` of sp as a Str constant (loc): where the runtime's
+/// faults are located.
+fn (var b: Builder) loc(sp: Span) -> Int {
+  b.const_str(b.pos_line(sp))
+}
+
+/// A list of one element v, marked shared: how a value crosses into the
+/// runtime (one).
+fn (var b: Builder) one(v: Int) -> Int {
+  let lt = b.m.list(b.vty(v))
+  let l0 = b.call("list.new", lt, "", [])
+  let l = b.call("list.push", lt, "", [l0, v])
+  b.add(Op.Share, -1, Aux.None, [l])
+  l
+}
+
+/// The handle type Task[T, E] of a task whose closure returns res and
+/// fails with err_t (-1: cannot fail) (taskType).
+fn (var b: Builder) task_type(res: Int, err_t: Int) -> Int {
+  var r = res
+  if r < 0 {
+    r = b.c.unit_ty
+  }
+  var e = err_t
+  if e < 0 {
+    e = b.prelude_type("Never", [])
+  }
+  b.typ(b.prelude_type("Task", [r, e]))
+}
+
+// ---------------------------------------------------------------------------
+// Unwinding
+
+/// Where a check jumps when the current code unwinds: the innermost
+/// scope's unwind block, or the function's (unwindTarget).
+fn (var b: Builder) unwind_target() -> Int {
+  let n = b.s.scopes.len()
+  if n > 0 {
+    let sc = b.s.scopes[n - 1]
+    if b.s.scope_tab[sc].unwind_b < 0 {
+      b.s.scope_tab[sc].unwind_b = b.new_block()
+    }
+    return b.s.scope_tab[sc].unwind_b
+  }
+  if b.s.unwind_b < 0 {
+    b.s.unwind_b = b.new_block()
+  }
+  b.s.unwind_b
+}
+
+// ---------------------------------------------------------------------------
+// Scopes
+
+/// Closes scope sc for an early exit (mode 1: `return`, `?`, `break`,
+/// `continue`): a failed child sends the exit to the scope's failure
+/// block (closeEarly).
+fn (var b: Builder) close_early(sc: Int) {
+  // the scope is closed from here on: a fault raised by its close
+  // unwinds the scopes around it
+  let saved = b.s.scopes
+  for (i, x) in saved.indexed() {
+    if x == sc {
+      b.s.scopes = saved[0..i]
+      break
+    }
+  }
+  let h = b.s.scope_tab[sc].h
+  let st = b.rt("scope_close", b.int_t(), [h, b.cint(1)])
+  b.close_status(sc, st)
+  b.s.scopes = saved
+}
+
+/// Acts on the status st of closing sc: 1 (a child failed with an error)
+/// goes to the scope's failure block; 3 (a child faulted, decision 0085)
+/// raises the child's fault here (closeStatus).
+fn (var b: Builder) close_status(sc: Int, st: Int) {
+  if !b.s.scope_tab[sc].sites.is_empty() {
+    b.fail_if(sc, st)
+  }
+  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [st, b.cint(3)])
+  let (yes, no) = b.branch(c)
+  b.s.cur = yes
+  b.rt("fault_rethrow", -1, [b.s.scope_tab[sc].h])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = no
+}
+
+/// Goes to sc's failure block when the close status st is 1 (failIf).
+fn (var b: Builder) fail_if(sc: Int, st: Int) {
+  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [st, b.cint(1)])
+  let (yes, no) = b.branch(c)
+  b.s.cur = yes
+  if b.s.scope_tab[sc].fail_b < 0 {
+    b.s.scope_tab[sc].fail_b = b.new_block()
+  }
+  b.jump(b.s.scope_tab[sc].fail_b, [])
+  b.s.cur = no
+}
+
+/// Opens scope sc around the code that follows (the scopes and exits of
+/// scopeExpr and rootScope).
+fn (var b: Builder) new_scope(h: Int, sites: List[SpawnSite]) -> Int {
+  // closing it is cleanup: operations that may fault from here on get
+  // landings (lexical_cleanup)
+  b.s.any_defer = true
+  let sc = b.s.scope_tab.len()
+  b.s.scope_tab.push(ScopeCtx{h: h, sites: sites})
+  b.s.scopes.push(sc)
+  b.open_scope_frame(sc)
+  sc
+}
+
+fn (var b: Builder) end_scope() {
+  b.s.exits.pop()
+  b.s.scopes.pop()
+}
+
+/// `scope s { body }` (scopeExpr, core 7.1).
+fn (var b: Builder) scope_expr(e: Expr) -> Int {
+  let (name, body) = match e {
+    ScopeExpr(name: name, body: body, ..) => (name, body)
+    _ => fault("not a scope")
+  }
+  b.need_conc = true
+  let t = b.nat_of(e)
+  if !b.conc {
+    return b.undef(t)
+  }
+  let sh = b.m.handle("Scope", [])
+  let h = b.rt("scope_open", sh, [])
+  let vo = b.c.var_of(b.s.file, name)
+  if vo >= 0 {
+    b.write_var(vo, h)
+  }
+  let sites = b.failing_spawns(body)
+  let sc = b.new_scope(h, sites)
+  let v = b.block(body)
+  b.end_scope()
+  if !b.is_dead() {
+    let st = b.rt("scope_close", b.int_t(), [h, b.cint(0)])
+    b.close_status(sc, st)
+  }
+  b.finish_scope(sc, e)
+  v
+}
+
+/// Emits sc's unwind and failure blocks, after its body: every edge into
+/// them is known, and the scope is no longer open (finishScope).
+fn (var b: Builder) finish_scope(sc: Int, e: Expr) {
+  let saved = b.s.cur
+  let ub = b.s.scope_tab[sc].unwind_b
+  if ub >= 0 {
+    b.seal(ub)
+    b.s.cur = ub
+    let h = b.s.scope_tab[sc].h
+    let st = b.rt("scope_close", b.int_t(), [h, b.cint(2)])
+    b.close_status(sc, st)
+    b.unwind()
+  }
+  let fb = b.s.scope_tab[sc].fail_b
+  if fb >= 0 {
+    b.seal(fb)
+    b.s.cur = fb
+    b.scope_failure(sc, e)
+  }
+  b.s.cur = saved
+}
+
+/// Returns the error of the scope's failed task, converted to the
+/// function's error type as by `?` (scopeFailure, core 7.1).
+fn (var b: Builder) scope_failure(sc: Int, e: Expr) {
+  if b.s.err_t < 0 {
+    b.unsupported("a failing task in a scope of a function that cannot fail")
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+    return
+  }
+  let h = b.s.scope_tab[sc].h
+  let site = b.rt("scope_fail_site", b.int_t(), [h])
+  let sites = b.s.scope_tab[sc].sites
+  for sp in sites {
+    let c = b.add(Op.Eq, b.bool_t(), Aux.None, [site, b.cint(sp.id)])
+    let (yes, no) = b.branch(c)
+    b.s.cur = yes
+    let tt = b.task_type(sp.res_t, sp.err_t)
+    let rt = b.typ(b.result_of(sp.res_t, sp.err_t))
+    let th = b.rt("scope_fail_task", tt, [h])
+    let l = b.rt("task_result", b.m.list(rt), [th])
+    let r = b.call("list.index", rt, "", [l, b.cint(0)])
+    let rei = b.m.variant_index(rt, "Err")
+    let et = b.m.types[rt].variants[rei].fields[0].ty
+    let ev = b.add(Op.Payload, et, Aux.P(tag: rei, field: 0), [r])
+    let want = b.result_t()
+    let wi = b.m.variant_index(want, "Err")
+    let ce = b.coerce_err(ev, sp.err_t, b.s.err_t, Some(e))
+    let fs = b.m.types[want].variants[wi].fields
+    if fs.len() == 2 && fs[1].name == TRACE_FIELD {
+      // the scope's frame, as at a `?` (decision 0104)
+      let tr = b.push_frame(b.err_trace(r, rei), parser.expr_span(e))
+      let v = b.add(Op.Variant, want, Aux.I(n: wi), [ce, tr])
+      b.ret_at(v, Some(e))
+    } else {
+      let v = b.add(Op.Variant, want, Aux.I(n: wi), [ce])
+      b.ret_at(v, Some(e))
+    }
+    b.s.cur = no
+  }
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+}
+
+// ---------------------------------------------------------------------------
+// Spawn sites and bindings
+
+/// The spawns in body whose task can fail with an error that is not
+/// awaited (failingSpawns, core 7.1: a failing child fails the scope).
+fn (var b: Builder) failing_spawns(body: parser.Block) -> List[SpawnSite] {
+  var items: List[Walk] = []
+  b.walk_block(body, items)
+  // noteBindings: every spawn bound with `let` or `var` in the body
+  for it in items {
+    if let Bind(value, vo) = it {
+      b.note_binding(value, vo)
+    }
+  }
+  var out: List[SpawnSite] = []
+  for it in items {
+    if let Call(e) = it {
+      if let Some(sp) = b.failing_spawn(e) {
+        out.push(sp)
+      }
+    }
+  }
+  out
+}
+
+fn (var b: Builder) failing_spawn(e: Expr) -> SpawnSite? {
+  let (_, _, args) = call_parts(e)
+  if args.len() != 1 {
+    return None
+  }
+  let ci = match b.c.call_in(b.s.file, e) {
+    Some(c) => c
+    None => return None
+  }
+  if !b.is_spawn(ci.fn_obj) || b.consumed(e) {
+    return None
+  }
+  let nct = b.nat_check(args[0].value)
+  if nct < 0 {
+    return None
+  }
+  let ft = b.c.tys[b.c.resolve(nct)]
+  if ft.kind != check.TyKind.Func || b.fail_err(ft.err) < 0 {
+    return None
+  }
+  Some(SpawnSite{id: b.site_id(e), err_t: b.apply(ft.err), res_t: b.apply(ft.result)})
+}
+
+/// Whether fo is `spawn` or `spawn_background` of a Scope or a
+/// task.Group (isSpawn).
+fn (var b: Builder) is_spawn(fo: Int) -> Bool {
+  if fo < 0 {
+    return false
+  }
+  let r = b.c.objs[fo].recv
+  let m = b.obj_mod(fo)
+  if r < 0 || m < 0 {
+    return false
+  }
+  let n = b.obj_name(fo)
+  if b.c.mods[m].is_prelude && b.obj_name(r) == "Scope" {
+    return n is "spawn" | "spawn_background"
+  }
+  if b.c.mods[m].path == "std/task" && b.obj_name(r) == "Group" {
+    return n is "spawn" | "spawn_background"
+  }
+  false
+}
+
+fn (var b: Builder) site_id(e: Expr) -> Int {
+  let k = b.c.expr_key_in(b.s.file, e)
+  if let Some(id) = b.sites.get(k) {
+    return id
+  }
+  let id = b.sites.len()
+  b.sites[k] = id
+  id
+}
+
+/// Whether the task a spawn starts has its handle bound with `let` and
+/// awaited, so its error does not fail the scope (consumed).
+fn (var b: Builder) consumed(e: Expr) -> Bool {
+  let vo = b.bound_to.get(b.c.expr_key_in(b.s.file, e)) ?? -1
+  vo >= 0 && b.c.objs[vo].awaited
+}
+
+/// Records the binding a spawn call's handle is stored in (noteBinding).
+fn (var b: Builder) note_binding(value: Expr, vo: Int) {
+  if vo < 0 {
+    return
+  }
+  if let CallExpr(..) = value {
+    b.bound_to[b.c.expr_key_in(b.s.file, value)] = vo
+  }
+}
+
+// The nodes check.Inspect visits (internal/check walk.go children), in
+// its order: a node before its children.
+
+fn (var b: Builder) walk_block(bl: parser.Block, var out: List[Walk]) {
+  for st in bl.stmts {
+    b.walk_stmt(st, out)
+  }
+}
+
+fn (var b: Builder) walk_opt(e: Expr?, var out: List[Walk]) {
+  if let Some(x) = e {
+    b.walk_expr(x, out)
+  }
+}
+
+fn (var b: Builder) walk_list(es: List[Expr], var out: List[Walk]) {
+  for e in es {
+    b.walk_expr(e, out)
+  }
+}
+
+fn (var b: Builder) walk_stmt(st: Stmt, var out: List[Walk]) {
+  match st {
+    ExprStmt(x: x, ..) => b.walk_expr(x, out)
+    LetStmt(pattern: p, value: v, ..) => {
+      if let BindPat(name: name, ..) = p {
+        out.push(Walk.Bind(value: v, vo: b.c.var_of(b.s.file, name)))
+      }
+      b.walk_expr(v, out)
+    }
+    VarStmt(name: name, value: v, ..) => {
+      out.push(Walk.Bind(value: v, vo: b.c.var_of(b.s.file, name)))
+      b.walk_expr(v, out)
+    }
+    AssignStmt(target: t, value: v, ..) => {
+      b.walk_expr(t, out)
+      b.walk_expr(v, out)
+    }
+    DeferStmt(body: body, ..) => b.walk_stmt(body, out)
+    ReturnStmt(value: v, ..) => b.walk_opt(v, out)
+    ForStmt(iter: iter, bound: bound, body: body, ..) => {
+      b.walk_expr(iter, out)
+      b.walk_list(bound, out)
+      b.walk_block(body, out)
+    }
+    WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
+      b.walk_opt(cond, out)
+      b.walk_list(value, out)
+      b.walk_list(bound, out)
+      b.walk_block(body, out)
+    }
+    ConstDecl(d) => b.walk_expr(d.value, out)
+    _ => {}
+  }
+}
+
+fn (var b: Builder) walk_expr(e: Expr, var out: List[Walk]) {
+  match e {
+    StringLit(s) => {
+      for p in s.parts {
+        b.walk_opt(p.expr, out)
+      }
+    }
+    ParenExpr(x: x, ..) => b.walk_expr(x, out)
+    TupleExpr(elems: elems, ..) => b.walk_list(elems, out)
+    ListLit(elems: elems, ..) => b.walk_list(elems, out)
+    SetLit(elems: elems, ..) => b.walk_list(elems, out)
+    MapLit(entries: entries, ..) => {
+      for en in entries {
+        b.walk_expr(en.key, out)
+        b.walk_expr(en.value, out)
+      }
+    }
+    StructLit(fields: fields, ..) => {
+      for f in fields {
+        b.walk_expr(f.value, out)
+      }
+    }
+    UnaryExpr(x: x, ..) => b.walk_expr(x, out)
+    BinaryExpr(x: x, y: y, ..) => {
+      b.walk_expr(x, out)
+      b.walk_expr(y, out)
+    }
+    IsExpr(x: x, ..) => b.walk_expr(x, out)
+    RangeExpr(lo: lo, hi: hi, ..) => {
+      b.walk_opt(lo, out)
+      b.walk_opt(hi, out)
+    }
+    SelectorExpr(x: x, ..) => b.walk_expr(x, out)
+    CallExpr(fun: fun, args: args, ..) => {
+      out.push(Walk.Call(e: e))
+      b.walk_expr(fun, out)
+      for a in args {
+        b.walk_expr(a.value, out)
+      }
+    }
+    TypeArgsExpr(x: x, ..) => b.walk_expr(x, out)
+    IndexExpr(x: x, index: index, ..) => {
+      b.walk_expr(x, out)
+      b.walk_expr(index, out)
+    }
+    TryExpr(x: x, ..) => b.walk_expr(x, out)
+    WithExpr(x: x, fields: fields, ..) => {
+      b.walk_expr(x, out)
+      for f in fields {
+        b.walk_expr(f.value, out)
+      }
+    }
+    IfExpr(x) => {
+      b.walk_opt(x.cond, out)
+      b.walk_opt(x.value, out)
+      b.walk_block(x.then, out)
+      b.walk_opt(x.els, out)
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      b.walk_expr(subject, out)
+      for a in arms {
+        b.walk_opt(a.guard, out)
+        if let Some(st) = a.body {
+          b.walk_stmt(st, out)
+        }
+      }
+    }
+    ScopeExpr(body: body, ..) => b.walk_block(body, out)
+    SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        b.walk_opt(a.op, out)
+        b.walk_opt(a.after, out)
+        if let Some(st) = a.body {
+          b.walk_stmt(st, out)
+        }
+      }
+    }
+    Block(bl) => b.walk_block(bl, out)
+    FnLit(lit) => b.walk_block(lit.body, out)
+    WhileExpr(body: body, ..) => b.walk_block(body, out)
+    _ => {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+
+/// `s.spawn(f)`, `s.spawn_background(f)`, `g.spawn(f)`,
+/// `g.spawn_background(f)` (spawn): the closure crosses to the task
+/// (marked shared) in a list of one, run by the entry function of its
+/// type.
+fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
+  let (span, _, args) = call_parts(x)
+  let arg = args[0].value
+  let nct = b.nat_check(arg)
+  if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func {
+    b.unsupported("this spawn")
+    return b.undef(b.nat_of(x))
+  }
+  let ct = b.c.tys[b.c.resolve(nct)]
+  let err_t = b.fail_err(b.apply(ct.err))
+  let res = b.apply(ct.result)
+  let rt = b.typ(b.result_of(res, err_t))
+  let ft = b.m.func_type([], rt)
+  let tt = b.task_type(res, err_t)
+  let f = b.value_as(arg, ft)
+  let fl = b.one(f)
+  var flags = 0
+  if background {
+    flags += 1
+  }
+  if b.consumed(x) {
+    flags += 2
+  }
+  let site = b.sites.get(b.c.expr_key_in(b.s.file, x)) ?? -1
+  let it = b.int_t()
+  let run = b.add(Op.FuncAddr, it, Aux.S(s: b.runner(ft, tt, err_t >= 0)), [])
+  let drop = b.add(Op.FuncAddr, it, Aux.S(s: b.drop_list(rt)), [])
+  let fdrop = b.add(Op.FuncAddr, it, Aux.S(s: b.drop_list(ft)), [])
+  let t = b.rt("task_spawn", tt, [h, fl, run, drop, fdrop, b.cint(flags), b.cint(site), b.loc(span)])
+  if !ret {
+    return b.unit()
+  }
+  b.coerce_at(t, b.nat_of(x), Some(x))
+}
+
+/// The entry function that runs a task whose closure has type ft (fails:
+/// its result is a success or a failure, not a value): it calls the
+/// closure and records its result (shared), or that the task unwound
+/// (runner).
+fn (var b: Builder) runner(ft: Int, tt: Int, fails: Bool) -> Str {
+  let name = "xo.run[${b.m.types[tt].name}]"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  let unit = b.unit_t()
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let rt = b.m.types[ft].ret
+  let lft = b.m.list(ft)
+  let fi = b.m.new_func(name, [lft, tt], [unit])
+  b.m.funcs[fi].entry = true
+  let fl = b.m.funcs[fi].blocks[0].params[0]
+  let t = b.m.funcs[fi].blocks[0].params[1]
+  let c0 = b.m.funcs[fi].add(0, Op.Const, it, Aux.I(n: 0), [])
+  let fv = b.m.funcs[fi].add(0, Op.Call, ft, Aux.S(s: "list.index"), [fl, c0])
+  let r = b.m.funcs[fi].add(0, Op.CallValue, rt, Aux.None, [fv])
+  let u = b.m.funcs[fi].add(0, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
+  // a fault in the task lands here too: rt.task_unwound records it for
+  // the scope (decision 0085)
+  b.m.funcs[fi].values[r].pad = u
+  let unw = b.m.funcs[fi].new_block()
+  let done = b.m.funcs[fi].new_block()
+  b.m.funcs[fi].branch(0, u, unw, done)
+  b.m.funcs[fi].add(unw, Op.Call, unit, Aux.S(s: "rt.task_unwound"), [t])
+  let u1 = b.m.funcs[fi].add(unw, Op.Tuple, unit, Aux.None, [])
+  b.m.funcs[fi].add(unw, Op.Return, -1, Aux.None, [u1])
+  var failed = -1
+  let ei = b.m.variant_index(rt, "Err")
+  if fails && b.tkind(rt) == Kind.Enum && ei >= 0 && b.m.variant_index(rt, "Ok") >= 0 {
+    let tag = b.m.funcs[fi].add(done, Op.Tag, it, Aux.None, [r])
+    let ci = b.m.funcs[fi].add(done, Op.Const, it, Aux.I(n: ei), [])
+    failed = b.m.funcs[fi].add(done, Op.Eq, bt, Aux.None, [tag, ci])
+  } else {
+    failed = b.m.funcs[fi].add(done, Op.Const, bt, Aux.B(b: false), [])
+  }
+  let lt = b.m.list(rt)
+  let l0 = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.new"), [])
+  let l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.push"), [l0, r])
+  b.m.funcs[fi].add(done, Op.Share, -1, Aux.None, [l])
+  b.m.funcs[fi].add(done, Op.Call, unit, Aux.S(s: "rt.task_done"), [t, l, failed])
+  let u2 = b.m.funcs[fi].add(done, Op.Tuple, unit, Aux.None, [])
+  b.m.funcs[fi].add(done, Op.Return, -1, Aux.None, [u2])
+  name
+}
+
+/// `t.await`: the task's result (await, a cancellation point).
+fn (var b: Builder) await_expr(e: Expr, x: Expr) -> Int {
+  b.need_conc = true
+  let t = b.nat_of(e)
+  if !b.conc {
+    return b.undef(t)
+  }
+  let h = b.expr(x)
+  let l = b.rt("task_await", b.m.list(t), [h, b.loc(parser.expr_span(e))])
+  b.check("")
+  b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+// ---------------------------------------------------------------------------
+// Calls of the concurrency types
+
+/// A method of Scope, Task, Chan, Mutex, Atomic, or task.Group, or a
+/// std/task function (concCall).
+fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
+  let (span, _, args) = call_parts(x)
+  let fo = ci.fn_obj
+  let m = b.obj_mod(fo)
+  let r = b.c.objs[fo].recv
+  var recv = "Group"
+  if r < 0 {
+    recv = "task"
+  } else if b.c.mods[m].is_prelude {
+    recv = b.obj_name(r)
+  }
+  let fname = b.obj_name(fo)
+  let nt = b.nat_of(x)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  if recv == "task" && fname == "isolate" {
+    return b.isolate(x)
+  }
+  b.need_conc = true
+  if !b.conc {
+    return b.undef(nt)
+  }
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  let key = "${recv}.${fname}"
+  match key {
+    "task.is_canceled" => return b.rt("is_canceled", bt, [])
+    "task.with_timeout" => return b.with_timeout(x, fo)
+    "task.stop_requested" => return b.rt("stop_requested", bt, [])
+    "task.stopping" => {
+      let dl = b.drop_list(b.m.types[nt].elems[0])
+      let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
+      return b.rt("task_stopping", nt, [da])
+    }
+    "Scope.spawn" | "Scope.spawn_background" | "Group.spawn" | "Group.spawn_background" => {
+      let h = b.expr(ci.recv[0])
+      let bg = key.ends_with("background")
+      return b.spawn(x, h, bg, key != "Group.spawn_background")
+    }
+    "Scope.cancel" => {
+      let h = b.expr(ci.recv[0])
+      return b.rt("scope_cancel", -1, [h])
+    }
+    "Scope.group" => {
+      let h = b.expr(ci.recv[0])
+      return b.rt("scope_group", nt, [h])
+    }
+    "Chan.new" => {
+      let et = b.m.types[nt].elems[0]
+      let dl = b.drop_list(et)
+      let drop = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
+      return b.rt("chan_new", nt, [b.io_arg(fo, es, 0, it), drop, b.loc(span)])
+    }
+    "Mutex.new" | "Atomic.new" => {
+      let et = b.m.types[nt].elems[0]
+      let v = b.io_arg(fo, es, 0, et)
+      if recv == "Atomic" {
+        return b.rt("atomic_new", nt, [v])
+      }
+      let dl = b.drop_list(et)
+      let drop = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
+      let o = b.one(v)
+      return b.rt("mutex_new", nt, [o, drop])
+    }
+    _ => {}
+  }
+  if ci.recv.is_empty() {
+    b.unsupported("the std function `${b.c.mods[m].name}.${b.c.display_name(fo)}`")
+    return b.undef(nt)
+  }
+  let h = b.expr(ci.recv[0])
+  let ht = b.vty(h)
+  if b.tkind(ht) != Kind.Handle {
+    b.unsupported("the method `${b.c.display_name(fo)}` here")
+    return b.undef(nt)
+  }
+  var et = -1
+  if !b.m.types[ht].elems.is_empty() {
+    et = b.m.types[ht].elems[0]
+  }
+  match key {
+    "Chan.send" => {
+      let l = b.one(b.io_arg(fo, es, 0, et))
+      b.rt("chan_send", -1, [h, l, b.loc(span)])
+      b.check("")
+      return b.unit()
+    }
+    "Chan.try_send" => return b.rt("chan_try_send", bt, [h, b.one(b.io_arg(fo, es, 0, et))])
+    "Chan.recv" | "Chan.try_recv" => {
+      let l = b.rt("chan_${fname}", b.m.list(et), [h])
+      if fname == "recv" {
+        b.check("")
+      }
+      return b.pop_one(l, nt)
+    }
+    "Chan.close" => return b.rt("chan_close", -1, [h])
+    "Chan.len" => return b.rt("chan_len", it, [h])
+    "Atomic.get" => return b.rt("atomic_get", et, [h])
+    "Atomic.set" => return b.rt("atomic_set", -1, [h, b.io_arg(fo, es, 0, et)])
+    "Atomic.swap" => return b.rt("atomic_swap", et, [h, b.io_arg(fo, es, 0, et)])
+    "Atomic.compare_and_swap" => {
+      let a0 = b.io_arg(fo, es, 0, et)
+      let a1 = b.io_arg(fo, es, 1, et)
+      return b.rt("atomic_cas", bt, [h, a0, a1])
+    }
+    "Atomic.add" => return b.rt("atomic_add", it, [h, b.io_arg(fo, es, 0, it), b.loc(span)])
+    "Atomic.max" => return b.rt("atomic_max", it, [h, b.io_arg(fo, es, 0, it)])
+    "Mutex.with" | "Mutex.with_read" => return b.mutex_with(x, h, et, fname == "with_read")
+    _ => {}
+  }
+  b.unsupported("the method `${b.c.display_name(fo)}`")
+  b.undef(nt)
+}
+
+/// `m.with(f)` and `m.with_read(f)` (mutexWith, core 5.4): the value is
+/// taken from the mutex (in a list of one) under the lock and given to f;
+/// with a `var` parameter the closure returns the new value too, which
+/// goes back when f succeeds; otherwise (an error, unwinding, a read) the
+/// old value stays.
+fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
+  let (span, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let arg = args[0].value
+  let (fv, packed) = b.with_closure(arg, et)
+  if fv < 0 {
+    return b.undef(nt)
+  }
+  var lock_fn = "mutex_lock"
+  var unlock_fn = "mutex_unlock"
+  if read {
+    lock_fn = "mutex_rlock"
+    unlock_fn = "mutex_runlock"
+  }
+  let lt = b.m.list(et)
+  let l = b.rt(lock_fn, lt, [h, b.loc(span)])
+  b.check("")
+  if packed {
+    // the value moves out of the mutex's list into the closure, which
+    // hands back what the mutex keeps (packed_value)
+    var ect = -1
+    if let Some(ci) = b.c.call_in(b.s.file, x) {
+      if !ci.recv.is_empty() {
+        let rc = b.nat_check(ci.recv[0])
+        if rc >= 0 {
+          let rr = b.c.resolve(rc)
+          if b.c.tys[rr].kind == check.TyKind.Named && b.c.tys[rr].args.len() == 1 {
+            ect = b.apply(b.c.tys[rr].args[0])
+          }
+        }
+      }
+    }
+    if ect < 0 {
+      b.unsupported("this `with`")
+      return b.undef(nt)
+    }
+    let ot = b.typ(b.prelude_type("Option", [ect]))
+    let some = b.m.variant_index(ot, "Some")
+    if b.tkind(ot) != Kind.Enum || some < 0 || b.m.types[ot].variants[some].fields[0].ty != et {
+      b.unsupported("this `with`")
+      return b.undef(nt)
+    }
+    let pr = b.call("list.pop", b.m.tuple([lt, ot]), "", [l])
+    let l1 = b.add(Op.Field, lt, Aux.I(n: 0), [pr])
+    let o = b.add(Op.Field, ot, Aux.I(n: 1), [pr])
+    let v = b.add(Op.Payload, et, Aux.P(tag: some, field: 0), [o])
+    let fvt = b.vty(fv)
+    let rty = b.m.types[fvt].ret
+    let r = b.add(Op.CallValue, rty, Aux.None, [fv, v])
+    let res = b.add(Op.Field, b.m.types[rty].elems[0], Aux.I(n: 0), [r])
+    let nv = b.add(Op.Field, et, Aux.I(n: 1), [r])
+    let l2 = b.call("list.push", lt, "", [l1, nv])
+    b.add(Op.Share, -1, Aux.None, [l2])
+    b.rt(unlock_fn, -1, [h, l2])
+    b.check("")
+    return res
+  }
+  let v = b.call("list.index", et, "", [l, b.cint(0)])
+  let fvt = b.vty(fv)
+  let r = b.add(Op.CallValue, b.m.types[fvt].ret, Aux.None, [fv, v])
+  b.check_then("", Cleanup.Unlock(name: unlock_fn, h: h, l: l))
+  b.rt(unlock_fn, -1, [h, l])
+  r
+}
+
+// ---------------------------------------------------------------------------
+// Channel loops and select
+
+/// The checker type T of a Chan[T] expression, or -1 (elemCheck).
+fn (var b: Builder) elem_check(e: Expr) -> Int {
+  let t = b.nat_check(e)
+  if t < 0 {
+    return -1
+  }
+  let r = b.c.resolve(t)
+  if b.c.tys[r].kind == check.TyKind.Named && b.c.tys[r].args.len() == 1 {
+    return b.c.tys[r].args[0]
+  }
+  -1
+}
+
+/// `for p in ch` (forChan, core 3.5, 7.3): receives until the channel is
+/// closed and drained; each receive is a cancellation point.
+fn (var b: Builder) for_chan(label: Bytes, p: Pattern, iter: Expr, bound: List[Expr], body: parser.Block) {
+  b.need_conc = true
+  let h = b.value(iter)
+  if !b.conc {
+    return
+  }
+  let it = b.int_t()
+  let et = b.m.types[b.vty(h)].elems[0]
+  let ot = b.typ(b.prelude_type("Option", [b.elem_check(iter)]))
+  let tick = b.loop_bound(bound)
+  let head = b.new_block()
+  let bodyb = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let l = b.rt("chan_recv", b.m.list(et), [h])
+  b.check("")
+  let o = b.pop_one(l, ot)
+  let some = b.m.variant_index(ot, "Some")
+  let tag = b.add(Op.Tag, it, Aux.None, [o])
+  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(some)])
+  b.s.f.branch(b.s.cur, c, bodyb, exit)
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  b.loop_tick(tick)
+  let elem = b.add(Op.Payload, et, Aux.P(tag: some, field: 0), [o])
+  let fail = b.new_block()
+  b.pattern(elem, p, fail)
+  let cont = b.s.cur
+  b.s.cur = fail
+  b.seal(fail)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = cont
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: head, exits: b.s.exits.len()})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// `select { arms }` (selectExpr, core 7.3): the arms are handed to the
+/// runtime in source order, which performs the first that can proceed
+/// (or waits for one: a cancellation point); the arm's body runs with a
+/// receive's value bound.
+fn (var b: Builder) select_expr(e: Expr) -> Int {
+  let arms = match e {
+    SelectExpr(arms: arms, ..) => arms
+    _ => fault("not a select")
+  }
+  b.need_conc = true
+  let t = b.type_of(e)
+  if !b.conc {
+    return b.undef(t)
+  }
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let sel = b.rt("select_new", b.m.handle("Select", []), [])
+  // the Option a receive arm binds (-1 for none), and the index
+  // select_wait returns for each arm: channel arms are numbered in order,
+  // an `after` arm is -2
+  var recvs: List[Int] = []
+  var rt_idx: List[Int] = []
+  var n = 0
+  for a in arms {
+    recvs.push(-1)
+    if let Some(d) = a.after {
+      b.rt("select_after", -1, [sel, b.value_as(d, it)])
+      rt_idx.push(-2)
+      continue
+    }
+    rt_idx.push(n)
+    n += 1
+    var ok = false
+    if let Some(op) = a.op {
+      if let CallExpr(fun: fun, args: cargs, ..) = op {
+        if let SelectorExpr(x: hx, sel: name, ..) = fun {
+          ok = true
+          let h = b.expr(hx)
+          let ht = b.vty(h)
+          if b.tkind(ht) != Kind.Handle || b.m.types[ht].elems.len() != 1 {
+            b.unsupported("this `select` arm")
+            continue
+          }
+          if name.name == b"recv" {
+            b.rt("select_recv", -1, [sel, h])
+            recvs[recvs.len() - 1] = b.typ(b.prelude_type("Option", [b.elem_check(hx)]))
+          } else if name.name == b"send" {
+            let sv = b.value_as(cargs[0].value, b.m.types[ht].elems[0])
+            let one = b.one(sv)
+            b.rt("select_send", -1, [sel, h, one])
+          } else {
+            b.unsupported("this `select` arm")
+          }
+        }
+      }
+    }
+    if !ok {
+      b.unsupported("this `select` arm")
+    }
+  }
+  let idx = b.rt("select_wait", it, [sel, b.loc(parser.expr_span(e))])
+  b.check("")
+  let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
+  let join = b.new_block()
+  var res = -1
+  if has_val {
+    res = b.s.f.add_param(join, t)
+  }
+  for (i, a) in arms.indexed() {
+    let c = b.add(Op.Eq, bt, Aux.None, [idx, b.cint(rt_idx[i])])
+    let (yes, no) = b.branch(c)
+    b.s.cur = yes
+    let ot = recvs[i]
+    if ot >= 0 {
+      let sm = b.m.variant_index(ot, "Some")
+      let et = b.m.types[ot].variants[sm].fields[0].ty
+      let tl = b.rt("select_take", b.m.list(et), [sel, b.cint(rt_idx[i])])
+      let o = b.pop_one(tl, ot)
+      if let Some(bind) = a.bind {
+        let vo = b.c.var_of(b.s.file, bind)
+        if vo >= 0 {
+          b.write_var(vo, o)
+        }
+      }
+    }
+    var av = -1
+    match a.body {
+      Some(st) => {
+        if let ExprStmt(x: bx, ..) = st {
+          av = b.expr(bx)
+        } else {
+          b.stmt(st)
+          av = b.unit()
+        }
+      }
+      None => av = b.unit()
+    }
+    if has_val {
+      b.jump(join, [b.coerce(av, t)])
+    } else {
+      b.jump(join, [])
+    }
+    b.s.cur = no
+  }
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.seal(join)
+  b.s.cur = join
+  if res >= 0 {
+    return res
+  }
+  b.unit()
+}
+
+// ---------------------------------------------------------------------------
+// std/task: isolate and with_timeout
+
+/// `task.isolate(f)` (isolate, core 8, std.md 7): f runs; a fault in it
+/// becomes Err(Isolated.Faulted(info)) (the fault is caught at the
+/// landing of the call), its error Err(Isolated.Failed(e)); cancellation
+/// goes on unwinding.
+fn (var b: Builder) isolate(x: Expr) -> Int {
+  let (_, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let arg = args[0].value
+  let nct = b.nat_check(arg)
+  let err_i = b.m.variant_index(nt, "Err")
+  if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func || b.tkind(nt) != Kind.Enum || err_i < 0 {
+    b.unsupported("this `task.isolate`")
+    return b.undef(nt)
+  }
+  let ct = b.c.tys[b.c.resolve(nct)]
+  let err_t = b.fail_err(b.apply(ct.err))
+  let rt = b.typ(b.result_of(b.apply(ct.result), err_t))
+  let f = b.value_as(arg, b.m.func_type([], rt))
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
+  let bt = b.bool_t()
+  let st = b.str_t()
+  let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [f])
+  let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
+  b.s.f.values[r].pad = u
+  let (pad, normal) = b.branch(u)
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let iso = b.m.types[nt].variants[err_i].fields[0].ty
+  let ok_i = b.m.variant_index(nt, "Ok")
+  // the landing: a fault is caught here, cancellation unwinds on
+  b.s.cur = pad
+  let caught = b.rt("fault_take", bt, [])
+  let (yes, no) = b.branch(caught)
+  b.s.cur = no
+  b.unwind()
+  b.s.cur = yes
+  let fi = b.m.variant_index(iso, "Faulted")
+  let ft = b.m.types[iso].variants[fi].fields[0].ty
+  let msg = b.rt("fault_msg", st, [])
+  let floc = b.rt("fault_loc", st, [])
+  let frames = b.call("list.new", b.m.types[ft].fields[2].ty, "", [])
+  let info = b.add(Op.Struct, ft, Aux.None, [msg, floc, frames])
+  let fv = b.add(Op.Variant, iso, Aux.I(n: fi), [info])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: err_i), [fv])])
+  // it returned
+  b.s.cur = normal
+  let ok_t = b.m.types[nt].variants[ok_i].fields[0].ty
+  if err_t < 0 {
+    let c = b.coerce_at(r, ok_t, Some(x))
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [c])])
+  } else {
+    let r_ok = b.m.variant_index(rt, "Ok")
+    let r_err = b.m.variant_index(rt, "Err")
+    let tag = b.add(Op.Tag, b.int_t(), Aux.None, [r])
+    let is_ok = b.add(Op.Eq, bt, Aux.None, [tag, b.cint(r_ok)])
+    let (y, n) = b.branch(is_ok)
+    b.s.cur = y
+    let pv = b.add(Op.Payload, b.m.types[rt].variants[r_ok].fields[0].ty, Aux.P(tag: r_ok, field: 0), [r])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [pv])])
+    b.s.cur = n
+    let failed_i = b.m.variant_index(iso, "Failed")
+    let ev = b.add(Op.Payload, b.m.types[rt].variants[r_err].fields[0].ty, Aux.P(tag: r_err, field: 0), [r])
+    let iv = b.add(Op.Variant, iso, Aux.I(n: failed_i), [ev])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: err_i), [iv])])
+  }
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// `task.with_timeout(clock, d, f)` (withTimeout, std.md 7): f runs as
+/// the body of a scope whose deadline cancels it; when f unwinds because
+/// of the deadline (and not a cancellation of the code around it), the
+/// result is Err(TimedOut); f's own error e is Err(Failed(e)).
+fn (var b: Builder) with_timeout(x: Expr, fo: Int) -> Int {
+  let (_, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  if es.len() < 3 || es[0] == None || es[1] == None || es[2] == None {
+    b.unsupported("a call with a missing argument")
+    return b.undef(nt)
+  }
+  let e0 = match es[0] {
+    Some(e) => e
+    None => fault("missing")
+  }
+  let e1 = match es[1] {
+    Some(e) => e
+    None => fault("missing")
+  }
+  let e2 = match es[2] {
+    Some(e) => e
+    None => fault("missing")
+  }
+  b.expr(e0)
+  let d = b.value_as(e1, it)
+  let nct = b.nat_check(e2)
+  if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func {
+    b.unsupported("this closure")
+    return b.undef(nt)
+  }
+  let ct = b.c.tys[b.c.resolve(nct)]
+  let err_t = b.fail_err(b.apply(ct.err))
+  let rt = b.typ(b.result_of(b.apply(ct.result), err_t))
+  let fv = b.value_as(e2, b.m.func_type([], rt))
+  let h = b.rt("scope_open", b.m.handle("Scope", []), [])
+  b.rt("scope_deadline", -1, [h, d])
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
+  let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [fv])
+  let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
+  // a fault in f closes the scope and goes on (decision 0085)
+  b.s.f.values[r].pad = u
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let ei = b.m.variant_index(nt, "Err")
+  let timed_t = b.m.types[nt].variants[ei].fields[0].ty
+  let (unw, done) = b.branch(u)
+  // unwinding: the deadline, or a cancellation from outside
+  b.s.cur = unw
+  b.rt("scope_close", it, [h, b.cint(2)])
+  let (to, out) = b.branch(b.rt("scope_timed_out", bt, [h]))
+  b.s.cur = to
+  let tv = b.variant(timed_t, "TimedOut", [])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [tv])])
+  b.s.cur = out
+  b.unwind()
+  // f returned
+  b.s.cur = done
+  b.rt("scope_close", it, [h, b.cint(0)])
+  // f finished after the deadline fired: timed out all the same
+  let (late, intime) = b.branch(b.rt("scope_timed_out", bt, [h]))
+  b.s.cur = late
+  let tv2 = b.variant(timed_t, "TimedOut", [])
+  b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [tv2])])
+  b.s.cur = intime
+  let ok_i = b.m.variant_index(nt, "Ok")
+  if err_t < 0 {
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [r])])
+  } else {
+    let r_ok = b.m.variant_index(rt, "Ok")
+    let tag = b.add(Op.Tag, it, Aux.None, [r])
+    let (fok, ferr) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(r_ok)]))
+    b.s.cur = fok
+    let v = b.add(Op.Payload, b.m.types[rt].variants[r_ok].fields[0].ty, Aux.P(tag: r_ok, field: 0), [r])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ok_i), [v])])
+    b.s.cur = ferr
+    let rei = b.m.variant_index(rt, "Err")
+    let ev = b.add(Op.Payload, b.m.types[rt].variants[rei].fields[0].ty, Aux.P(tag: rei, field: 0), [r])
+    let fv2 = b.variant(timed_t, "Failed", [ev])
+    b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [fv2])])
+  }
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+// ---------------------------------------------------------------------------
+// The network (build_io.go)
+
+/// The runtime's status codes of NetErr's variants (statusTags).
+fn status_tag(name: Str) -> Int {
+  match name {
+    "InvalidAddr" => 1
+    "Refused" => 2
+    "Timeout" => 3
+    "Io" => 4
+    "Canceled" => 5
+    _ => 0
+  }
+}
+
+/// The Result (type rt) of a network operation whose value on success is
+/// ok: Ok(ok) when the runtime reports no error, else Err(the NetErr it
+/// reports) (netResult).
+fn (var b: Builder) net_result(ok: Int, rt: Int) -> Int {
+  let it = b.int_t()
+  let st = b.rt("net_status", it, [])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, rt)
+  let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [st, b.cint(0)]))
+  b.s.cur = yes
+  b.jump(join, [b.add(Op.Variant, rt, Aux.I(n: b.m.variant_index(rt, "Ok")), [ok])])
+  b.s.cur = no
+  let ei = b.m.variant_index(rt, "Err")
+  let et = b.m.types[rt].variants[ei].fields[0].ty
+  let e = b.call(b.net_err_func(et), et, "", [st])
+  b.jump(join, [b.add(Op.Variant, rt, Aux.I(n: ei), [e])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// The function that makes the NetErr (type et) of a runtime status
+/// code; the message of InvalidAddr and Io comes from rt.net_msg
+/// (netErrFunc).
+fn (var b: Builder) net_err_func(et: Int) -> Str {
+  let name = "xo.neterr"
+  if b.m.func_index(name) >= 0 {
+    return name
+  }
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let st = b.str_t()
+  let fi = b.m.new_func(name, [it], [et])
+  var cur = 0
+  let sv = b.m.funcs[fi].blocks[0].params[0]
+  let vs = b.m.types[et].variants
+  for (vi, v) in vs.indexed() {
+    let yes = b.m.funcs[fi].new_block()
+    let no = b.m.funcs[fi].new_block()
+    let k = b.m.funcs[fi].add(cur, Op.Const, it, Aux.I(n: status_tag(v.name)), [])
+    let c = b.m.funcs[fi].add(cur, Op.Eq, bt, Aux.None, [sv, k])
+    b.m.funcs[fi].branch(cur, c, yes, no)
+    var fs: List[Int] = []
+    if v.fields.len() == 1 {
+      let l = b.m.funcs[fi].add(yes, Op.Call, b.m.list(st), Aux.S(s: "rt.net_msg"), [])
+      let z = b.m.funcs[fi].add(yes, Op.Const, it, Aux.I(n: 0), [])
+      fs.push(b.m.funcs[fi].add(yes, Op.Call, st, Aux.S(s: "list.index"), [l, z]))
+    }
+    let ev = b.m.funcs[fi].add(yes, Op.Variant, et, Aux.I(n: vi), fs)
+    b.m.funcs[fi].add(yes, Op.Return, -1, Aux.None, [ev])
+    cur = no
+  }
+  b.m.funcs[fi].add(cur, Op.Unreachable, -1, Aux.None, [])
+  name
+}
+
+/// The operations of Clock, Net, Listener, and Conn that wait or hold
+/// network handles (ioCall): the value, or None for any other key.
+fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt: Int) -> Int? {
+  let it = b.int_t()
+  let st = b.str_t()
+  match key {
+    "Clock.sleep" => {
+      b.rt("clock_sleep", -1, [b.io_arg(fo, es, 0, it)])
+      b.check("")
+      return Some(b.unit())
+    }
+    "Clock.sleep_or_cancel" => {
+      // Ok(()) or Err(ClockErr.Canceled), never an unwind (decision 0088)
+      let c = b.rt("clock_sleep_or_cancel", it, [b.io_arg(fo, es, 0, it)])
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, nt)
+      let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [c, b.cint(0)]))
+      b.s.cur = yes
+      let u = b.unit()
+      b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: b.m.variant_index(nt, "Ok")), [u])])
+      b.s.cur = no
+      let ei = b.m.variant_index(nt, "Err")
+      let et = b.m.types[nt].variants[ei].fields[0].ty
+      let cv = b.add(Op.Variant, et, Aux.I(n: b.m.variant_index(et, "Canceled")), [])
+      b.jump(join, [b.add(Op.Variant, nt, Aux.I(n: ei), [cv])])
+      b.seal(join)
+      b.s.cur = join
+      return Some(res)
+    }
+    "Net.listen" => {
+      let h = b.rt("net_listen", b.m.handle("Listener", []), [b.io_arg(fo, es, 0, st)])
+      return Some(b.net_result(h, nt))
+    }
+    "Net.dial" => {
+      let h = b.rt("net_dial", b.m.handle("Conn", []), [b.io_arg(fo, es, 0, st)])
+      return Some(b.net_result(h, nt))
+    }
+    "Listener.addr" => {
+      let l = b.rt("listener_addr", b.m.list(st), [recv])
+      return Some(b.call("list.index", st, "", [l, b.cint(0)]))
+    }
+    "Listener.accept" => {
+      let h = b.rt("listener_accept", b.m.handle("Conn", []), [recv])
+      return Some(b.net_result(h, nt))
+    }
+    "Listener.close" => {
+      b.rt("listener_close", -1, [recv])
+      return Some(b.unit())
+    }
+    "Conn.read" => {
+      let l = b.rt("conn_read", b.m.list(st), [recv, b.io_arg(fo, es, 0, it)])
+      let ok = b.m.types[nt].variants[b.m.variant_index(nt, "Ok")].fields[0].ty
+      return Some(b.net_result(b.pop_one(l, ok), nt))
+    }
+    "Conn.write" => {
+      b.rt("conn_write", -1, [recv, b.io_arg(fo, es, 0, st)])
+      return Some(b.net_result(b.unit(), nt))
+    }
+    "Conn.close" => {
+      b.rt("conn_close", -1, [recv])
+      return Some(b.unit())
+    }
+    _ => {}
+  }
+  None
+}
+
+// ---------------------------------------------------------------------------
+// os.tasks (build_tasks.go)
+
+/// main of a program that uses os.tasks (tasksMain): the program's main
+/// (mf, whose error type is et, -1 for none) becomes main.run, called as
+/// the body of a root scope whose group is os.tasks (rootScope, mode 0:
+/// the tasks that are not background tasks are awaited); a group task
+/// that failed is the program's error before main's own.
+fn (var b: Builder) tasks_main(mf: Int, et: Int) {
+  b.m.rename_func(mf, "main.run")
+  var params: List[Int] = []
+  for p in b.m.funcs[mf].blocks[0].params {
+    params.push(b.m.funcs[mf].values[p].ty)
+  }
+  let unit = b.unit_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let fi = b.m.new_func("main", params, [unit])
+  let main_fo = b.main_fo_of()
+  let rt = b.m.funcs[mf].results[0]
+  let saved = b.begin(fi, b.decl_file(main_fo))
+  var sites: List[SpawnSite] = []
+  // only main's body sees os.tasks's origin, so only its spawns can fail
+  // on it (XO0801)
+  let decl = b.c.objs[main_fo].fn_decl
+  if !decl.is_empty() {
+    if let Some(body) = decl[0].body {
+      sites = b.failing_spawns(body)
+    }
+  }
+  let ps = b.s.f.blocks[0].params
+  // rootScope
+  let h = b.rt("scope_open", b.m.handle("Scope", []), [])
+  b.rt("prog_group_set", -1, [h])
+  let sc = b.new_scope(h, sites)
+  let r = b.call("main.run", rt, "", ps)
+  b.check("main.run")
+  b.end_scope()
+  if !b.is_dead() {
+    let stv = b.rt("scope_close", it, [h, b.cint(0)])
+    b.rt("prog_group_clear", -1, [])
+    b.close_status(sc, stv)
+  }
+  let cur = b.s.cur
+  let ub = b.s.scope_tab[sc].unwind_b
+  if ub >= 0 {
+    b.seal(ub)
+    b.s.cur = ub
+    let stv = b.rt("scope_close", it, [h, b.cint(2)])
+    b.rt("prog_group_clear", -1, [])
+    b.close_status(sc, stv)
+    b.unwind()
+  }
+  let fb = b.s.scope_tab[sc].fail_b
+  if fb >= 0 {
+    b.seal(fb)
+    b.s.cur = fb
+    let site = b.rt("scope_fail_site", it, [h])
+    for sp in sites {
+      let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [site, b.cint(sp.id)]))
+      b.s.cur = yes
+      let tt = b.task_type(sp.res_t, sp.err_t)
+      let trt = b.typ(b.result_of(sp.res_t, sp.err_t))
+      let th = b.rt("scope_fail_task", tt, [h])
+      let l = b.rt("task_result", b.m.list(trt), [th])
+      let tr = b.call("list.index", trt, "", [l, b.cint(0)])
+      let ei = b.m.variant_index(trt, "Err")
+      let e = b.add(Op.Payload, b.m.types[trt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [tr])
+      let msg = b.append_display(b.const_str("error: "), e, sp.err_t)
+      b.rt("eprintln", -1, [msg])
+      b.print_trace(b.err_trace(tr, ei))
+      b.rt("exit", -1, [b.cint(1)])
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.dead()
+      b.s.cur = no
+    }
+    b.add(Op.Unreachable, -1, Aux.None, [])
+    b.dead()
+  }
+  b.s.cur = cur
+  if et >= 0 && !b.is_dead() {
+    let ei = b.m.variant_index(rt, "Err")
+    let tag = b.add(Op.Tag, it, Aux.None, [r])
+    let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ei)]))
+    let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
+    let msg = b.append_display(b.const_str("error: "), e, et)
+    b.rt("eprintln", -1, [msg])
+    b.print_trace(b.err_trace(r, ei))
+    b.rt("exit", -1, [b.cint(1)])
+    b.if_then_end(no, join)
+  }
+  if !b.is_dead() {
+    b.retv(b.unit())
+  }
+  b.finish_fn()
+  b.end(saved)
+}

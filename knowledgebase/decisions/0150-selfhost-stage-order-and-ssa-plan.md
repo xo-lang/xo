@@ -17,7 +17,10 @@ the method value records of `selfhost/check` (`ref_subst`). SSA stage 3
 types) implemented 2026-10-11 in `selfhost/ssa/map.xo`. SSA stage 4
 (`requires`, `ensures`, invariants, `defer` with its fault
 continuations, loop bounds, real-time sections) implemented 2026-10-11
-in `selfhost/ssa/contract.xo` and `defer.xo`. Evidence:
+in `selfhost/ssa/contract.xo` and `defer.xo`. SSA stage 5 (scopes,
+tasks, channels, `select`, Mutex, Atomic, std/task, os.tasks, and the
+operations that wait) implemented 2026-10-11 in `selfhost/ssa/conc.xo`,
+with the scopes among the open blocks of defer.xo. Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -222,6 +225,19 @@ clause (`result_vars`), the field bindings of an invariant
 (`inv_vars`), and the constant of a loop bound (`const_int`, now
 public). The scopes of stage 5 are not among the open blocks: a
 function with one is skipped.
+
+**Comparison rules of stage 5** (2026-10-11, concurrency and I/O:
+selfhost/ssa conc.xo): none new. Only the second build of a program
+that uses concurrency (the one with unwinding checks) is printed and
+compared, as before. A scope is an open block of defer.xo (a frame
+whose `sc` names it, build_defer.go exitEntry.scope), so `return`,
+`?`, `break`, and `continue` close it (mode 1), unwinding runs the
+deferred code inside the innermost scope and jumps to its unwind block,
+and an operation that may fault inside it gets a landing (the port's
+`any_defer` now means "a `defer` or a scope", gotchas/selfhost-ssa-
+port-shortcut-flags.md). Spawn sites are numbered by the checker key of
+their call in check.Inspect order (conc.xo walk_*), as the Go builder
+numbers them by AST node.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,
