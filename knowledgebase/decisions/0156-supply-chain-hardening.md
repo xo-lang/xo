@@ -1,7 +1,9 @@
 # 0156: Supply-chain hardening
 
-Status: Proposed (2026-10-11), being implemented: items 1 to 4 and 6 done. Scope set
-by the owner on 2026-10-11:
+Status: Accepted, implemented (2026-10-11). All six items built and
+tested; the attack replication measured 10 of 15 classes blocked
+(`bench/results/supply-chain-2026-10-11.md`). Scope set by the owner on
+2026-10-11:
 only the consumer's vouches count for `use c ... uses none`; an effect
 lock in xo.lock by default (`--accept-effects` to widen); capability
 attenuation (for example `os.net.only(hosts)`); `xo audit`; a
@@ -197,7 +199,10 @@ each in two consumer configurations: default (no ceilings, no
 attenuation) and hardened (a ceiling equal to the dependency's
 documented effects, attenuated capabilities). It records the first
 stage that blocks each attack: fetch (nothing runs), check, lock, run
-time, or not blocked, with the reason. Results:
+time, or not blocked, with the reason. Measured 10 of 15 classes blocked
+(fetch 1, check 7, lock 1, runtime 1); the 5 not blocked are
+out-of-scope logic/DoS (2), default-posture choices a ceiling or
+attenuation closes (2), and a wrong human vouch (1). Results:
 `bench/results/supply-chain-2026-10-11.md`.
 
 ### 6. Logging is an effect: `log`

@@ -1931,6 +1931,14 @@ Last verified: 2026-10-09.
   argument is an attenuation call or a `let` local bound to one. JSON
   (`--json` or a non terminal stdout) or a text report; exit 1 on check
   errors. Test: `cmd/xo/audit_test.go`. Last verified: 2026-10-11.
+- Attack replication (decision 0156, 2026-10-11): `cmd/xo`
+  `TestSupplyChainAttacks` models the Backstabber's Knife Collection
+  classes as small malicious Xo dependencies and consumers (benign,
+  test-only payloads) and asserts the stage Xo blocks each (fetch,
+  check, lock, runtime, or not blocked). `XO_SC_REPORT=1` writes the
+  table to `bench/results/supply-chain-2026-10-11.generated.md`; the
+  curated report is `bench/results/supply-chain-2026-10-11.md`. Last
+  verified: 2026-10-11.
 - API diffs and publish (step 4): package `internal/release`
   (`ModuleAPI`: the syntax level `xo query api` surface of every package
   via `query.DeclSurface`; `Diff`, `Bump`; `Publish`). `xo get` prints the
