@@ -18,3 +18,9 @@ Fix: emit keeps the compare of a branch whose targets coincide
 (internal/arm64/testdata/run/flags_same_targets). When a pass relies on
 an instruction of another block, check every later pass that may remove
 or rewrite that instruction, emit included.
+
+Follow up (2026-10-11): the other passes that rely on other blocks
+(threadConst, threadCset, selectCompares, placeLatches, and the memos
+inherited from a dominator) were reviewed against every later pass and
+emission; internal/arm64/crossblock_test.go breaks each assumption one
+at a time and requires the pass to decline.

@@ -1510,7 +1510,15 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   it builds and runs every golden of internal/llvm against its want.txt
   (62 on 2026-10-08, with the native_* and http_* goldens of decision 0074), the bench programs, and `testdata/run/*` against the Go
   backend, all with the leak check; TestGoldenRunShared runs the goldens
-  with share probes and assembles their Linux output as ELF). To try a code change by hand, edit
+  with share probes and assembles their Linux output as ELF).
+  crossblock_test.go (also -short) holds the MIR passes that rely on
+  instructions of other blocks (threadConst, threadCset,
+  selectCompares, reuseFlags, placeLatches) to their assumptions: each
+  shape fires, and each broken assumption (a second predecessor, a
+  redefined register, other targets, a fault exit in a latch) leaves the
+  code alone; testdata/run/cross_block runs those shapes against the Go
+  backend (reviewed 2026-10-11, no bug found besides the flags one of
+  gotchas/arm64-reused-flags-of-dropped-compare.md). To try a code change by hand, edit
   `<build dir>/arm64/prog-darwin.s` and link it with
   `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the
   default SDK does not link; on 2026-10-08 the default MacOSX27.0 SDK
