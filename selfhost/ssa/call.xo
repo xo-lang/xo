@@ -1446,7 +1446,10 @@ fn strip_parens(e: Expr) -> Expr {
 
 fn (var b: Builder) is_tag(o: Int, name: Str) -> Int {
   let t = b.add(Op.Tag, b.int_t(), Aux.None, [o])
-  b.add(Op.Eq, b.bool_t(), Aux.None, [t, b.cint(b.m.variant_index(b.vty(o), name))])
+  // the index first: a by value read of b.m in the arguments of a `var`
+  // call of b would copy the module (an own site)
+  let vi = b.m.variant_index(b.vty(o), name)
+  b.add(Op.Eq, b.bool_t(), Aux.None, [t, b.cint(vi)])
 }
 
 /// The methods of capabilities and builders lowered inline (ioCall): the

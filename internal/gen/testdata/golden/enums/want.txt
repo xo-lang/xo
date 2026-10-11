@@ -9,4 +9,5 @@ many 4
 eq true false
 ord true true
 first Circle(r: 1) last Empty
+unit true false false true false false
 --- stderr

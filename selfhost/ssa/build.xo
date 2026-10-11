@@ -64,6 +64,21 @@ struct S {
   sub: Map[Int, Int] = {}
 }
 
+/// A generated function whose body is still to build (run_gens).
+enum Gen {
+  Debug(ct: Int, t: Int)
+  Slice(lt: Int)
+  Concat(t: Int)
+  FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int])
+  Zero(t: Int)
+}
+
+struct GenJob {
+  fi: Int
+  file: Int
+  gen: Gen
+}
+
 /// A body waiting to be built (the Go builder's queue of closures).
 enum Job {
   Body(fo: Int, fi: Int, sub: Map[Int, Int])
@@ -78,8 +93,12 @@ pub struct Builder {
   line_root: Str = ""
   s: S = S{f: Func{name: ""}}
   queue: List[Job] = []
+  gens: List[GenJob] = []
   /// Functions by instance key, and named functions used as values.
   funcs: Map[Str, Int] = {}
+  /// The instances of functions that are not generic, by function object
+  /// (the fast path of declare).
+  plain: Map[Int, Int] = {}
   thunks: Map[Str, Int] = {}
   nclos: Int = 0
   /// The names of types two loaded user modules both declare.
@@ -153,11 +172,13 @@ pub fn (var b: Builder) build() {
       b.main_wrapper(mf, et)
     }
   }
+  b.run_gens()
   var i = 0
   while i < b.queue.len() {
     let j = b.queue[i]
     i += 1
     b.run_job(j)
+    b.run_gens()
   }
   if b.need_conc && !b.conc {
     b.why = "concurrency: built again with unwinding checks"
@@ -898,15 +919,28 @@ fn (var b: Builder) impl_named(t0: Int) -> Int {
         return t
       }
       var args: List[Int] = []
+      var changed = obj != x.obj
       for a in x.args {
-        args.push(b.impl_named(a))
+        let ia = b.impl_named(a)
+        changed = changed || ia != a
+        args.push(ia)
+      }
+      if !changed {
+        // the same type: no new table entry (its text is the same)
+        return t
       }
       return b.c.mk_named(obj, args)
     }
     Tuple => {
       var es: List[Int] = []
+      var changed = false
       for e in x.args {
-        es.push(b.impl_named(e))
+        let ie = b.impl_named(e)
+        changed = changed || ie != e
+        es.push(ie)
+      }
+      if !changed {
+        return t
       }
       return b.c.mk_tuple(es)
     }
@@ -931,6 +965,12 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
 /// The SSA function of fo instantiated with targs (checker types of its
 /// type parameters), declared and queued on first use (declare).
 fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
+  if targs.is_empty() {
+    // a function that is not generic has one instance, keyed by fo
+    if let Some(f) = b.plain.get(fo) {
+      return f
+    }
+  }
   let tps = b.type_params(fo)
   if targs.len() != tps.len() {
     b.unsupported("a generic call whose type arguments are not inferred (`${b.c.display_name(fo)}`)")
@@ -1015,6 +1055,9 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
     b.unsupported(skipped)
   }
   b.funcs[key] = f
+  if targs.is_empty() {
+    b.plain[fo] = f
+  }
   b.queue.push(Job.Body(fo: fo, fi: f, sub: sub))
   f
 }
@@ -1639,8 +1682,10 @@ fn (var b: Builder) check(callee: Str) {
   if b.is_dead() {
     return
   }
-  let ins = b.s.f.blocks[b.s.cur].instrs
-  let w = if ins.is_empty() { -1 } else { ins[ins.len() - 1] }
+  // the last instruction, read in place: binding the list would share
+  // it, and the next instruction would copy it
+  let n = b.s.f.blocks[b.s.cur].instrs.len()
+  let w = if n == 0 { -1 } else { b.s.f.blocks[b.s.cur].instrs[n - 1] }
   let name = if b.conc { "rt.unwinding" } else { "rt.landing" }
   let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: name), [])
   if w >= 0 && (b.vop(w) is Op.Call | Op.CallValue) {
@@ -1793,10 +1838,7 @@ fn (var b: Builder) zero_func(t: Int) -> Str {
   }
   let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
   b.m.funcs[fi].indirect = true
-  let saved = b.begin(fi, b.s.file)
-  let z = b.zero(b.m.types[t].ret, [])
-  b.add(Op.Return, -1, Aux.None, [z])
-  b.end(saved)
+  b.gens.push(GenJob{fi: fi, file: b.s.file, gen: Gen.Zero(t: t)})
   name
 }
 
@@ -1851,19 +1893,49 @@ fn (var b: Builder) for_up_to_end(i: Int, iv: Int, head: Int, exit: Int) {
   b.s.cur = exit
 }
 
-/// Builds the function name once (genFunc): begin_gen returns the state to
-/// pass to end_gen, or None when the function exists.
-fn (var b: Builder) gen_begin(name: Str, params: List[Int], results: List[Int]) -> S? {
+/// Declares the generated function name once (genFunc) and queues the
+/// building of its body (run_gens).
+fn (var b: Builder) gen_func(name: Str, params: List[Int], results: List[Int], g: Gen) {
   if b.m.func_index(name) >= 0 {
-    return None
+    return
   }
   let fi = b.m.new_func(name, params, results)
-  Some(b.begin(fi, b.s.file))
+  b.gens.push(GenJob{fi: fi, file: b.s.file, gen: g})
 }
 
-fn (var b: Builder) gen_end(saved: S) {
-  b.finish_fn()
-  b.end(saved)
+/// Builds the bodies of the generated functions declared so far (and of
+/// those they declare). The Go builder builds a generated function in
+/// the middle of the code that asks for it; its body does not depend on
+/// that code, and building it after keeps the function under
+/// construction from being copied (an own site of the state).
+fn (var b: Builder) run_gens() {
+  var i = 0
+  while i < b.gens.len() {
+    let g = b.gens[i]
+    i += 1
+    let saved = b.begin(g.fi, g.file)
+    match g.gen {
+      Debug(ct, t) => {
+        b.debug_body(ct, t)
+        b.finish_fn()
+      }
+      Slice(lt) => {
+        b.slice_body(lt)
+        b.finish_fn()
+      }
+      Concat(t) => {
+        b.concat_body(t)
+        b.finish_fn()
+      }
+      FrameArgs(names, cts, cap_ts) => b.frame_args_body(names, cts, cap_ts)
+      Zero(t) => {
+        let z = b.zero(b.m.types[t].ret, [])
+        b.add(Op.Return, -1, Aux.None, [z])
+      }
+    }
+    b.end(saved)
+  }
+  b.gens = []
 }
 
 fn (var b: Builder) param(i: Int) -> Int {

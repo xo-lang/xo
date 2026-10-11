@@ -385,16 +385,42 @@ fn (var b: Builder) slice(span: Span, x: Expr, lo0: Expr?, hi0: Expr?, inclusive
   b.undef(bt)
 }
 
+/// xo.listcat[T](a, b) -> T: `a + b` on lists (build_map.go listConcat).
+fn (var b: Builder) list_concat(t: Int) -> Str {
+  let name = "xo.listcat[${b.m.types[t].name}]"
+  b.gen_func(name, [t, t], [t], Gen.Concat(t: t))
+  name
+}
+
+fn (var b: Builder) concat_body(t: Int) {
+  let it = b.int_t()
+  let p0 = b.param(0)
+  let p1 = b.param(1)
+  let acc = b.local()
+  b.write_var(acc, p0)
+  let iv = b.local()
+  let n = b.call("list.len", it, "", [p1])
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let cur = b.read(acc)
+  let el = b.call("list.index", b.m.types[t].elems[0], "", [p1, i])
+  b.write_var(acc, b.call("list.push", t, "", [cur, el]))
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(acc))
+}
+
 /// xo.slice[List[T]](l, lo, hi, at) (listSlice).
 fn (var b: Builder) list_slice(lt: Int) -> Str {
   let it = b.int_t()
-  let bt = b.bool_t()
   let st = b.str_t()
   let name = "xo.slice[${b.m.types[lt].name}]"
-  let saved = match b.gen_begin(name, [lt, it, it, st], [lt]) {
-    Some(s) => s
-    None => return name
-  }
+  b.gen_func(name, [lt, it, it, st], [lt], Gen.Slice(lt: lt))
+  name
+}
+
+fn (var b: Builder) slice_body(lt: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let st = b.str_t()
   let l = b.param(0)
   let lo = b.param(1)
   let hi = b.param(2)
@@ -426,8 +452,6 @@ fn (var b: Builder) list_slice(lt: Int) -> Str {
   b.write_var(out, b.call("list.push", lt, "", [cur, el]))
   b.for_up_to_end(i, iv, head, exit)
   b.retv(b.read(out))
-  b.gen_end(saved)
-  name
 }
 
 /// A Float from its text (strconv.ParseFloat on a literal).
@@ -770,8 +794,9 @@ fn (var b: Builder) arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
     return b.call("str.concat", lt, "", [l, r])
   }
   if b.tkind(lt) == Kind.List && op == lexer.Kind.Plus && b.vty(r) == lt {
-    b.unsupported("`+` on lists")
-    return b.undef(lt)
+    // xs, then each element of ys pushed (in place when xs is not shared)
+    let f = b.list_concat(lt)
+    return b.call(f, lt, "", [l, r])
   }
   if b.m.is_sized(lt) {
     return b.sized_arith(op, l, r, sp)
@@ -1337,7 +1362,8 @@ fn (var b: Builder) variant_pattern(v: Int, p: Pattern, fields: List[parser.PatF
   var tag = -1
   if let Some(vr) = pv {
     if b.tkind(vt) == Kind.Enum {
-      tag = b.m.variant_index(vt, b.variant_name(vr))
+      let vname = b.variant_name(vr)
+      tag = b.m.variant_index(vt, vname)
     }
   }
   if tag < 0 {

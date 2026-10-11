@@ -21,15 +21,15 @@ import (
 // an operator swapped for another of its kind, an integer or Bool
 // literal changed, a statement line dropped or doubled, or a `?`
 // removed. Mutations either checker rejects are counted; the others are
-// compared by the rules of TestSelfhostSSA. -short makes 15 mutations,
-// else 400; XO_SELFHOST_SEED and XO_SELFHOST_SSA_FUZZ=N override. The Xo
+// compared by the rules of TestSelfhostSSA. It makes 400 mutations (none
+// with -short); XO_SELFHOST_SEED and XO_SELFHOST_SSA_FUZZ=N override. The Xo
 // builder is built with the go backend, or the one XO_SELFHOST_BACKEND
 // names.
 func TestSelfhostSSAMutations(t *testing.T) {
-	n := 400
 	if testing.Short() {
-		n = 15
+		t.Skip("checks every repository program to find the sources (about 6 s)")
 	}
+	n := 400
 	if v := os.Getenv("XO_SELFHOST_SSA_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
 	}

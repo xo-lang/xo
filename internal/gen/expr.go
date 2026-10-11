@@ -822,6 +822,12 @@ func (f *fnGen) compare(op, a, b string, t check.Type) string {
 	if f.g.isFloat(t) && (op == "==" || op == "!=") {
 		return "(" + a + " " + op + " " + b + ")"
 	}
+	if (op == "==" || op == "!=") && f.g.isUnitEnum(t) {
+		// no payload: equal when the tags are (rt.Eq would box both
+		// values and switch on their type; the self hosted compiler
+		// compares kinds this way all the time)
+		return "((" + a + ").Tag " + op + " (" + b + ").Tag)"
+	}
 	switch op {
 	case "==":
 		return fmt.Sprintf("%sEq(%s, %s)", f.rt(), a, b)

@@ -120,12 +120,7 @@ fn (var b: Builder) lit(a: Int, text: Str) -> Int {
 fn (var b: Builder) debug_func(ct: Int, t: Int) -> Str {
   let st = b.str_t()
   let name = "xo.debug[${b.c.show(ct)}]"
-  let saved = match b.gen_begin(name, [st, t], [st]) {
-    Some(s) => s
-    None => return name
-  }
-  b.debug_body(ct, t)
-  b.gen_end(saved)
+  b.gen_func(name, [st, t], [st], Gen.Debug(ct: ct, t: t))
   name
 }
 
@@ -472,10 +467,9 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
 }
 
 /// The code of the closure that formats a frame's parameters
-/// (frameArgsFunc).
+/// (frameArgsFunc); its body is built by run_gens.
 fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List[Int]) -> Str {
   let st = b.str_t()
-  let it = b.int_t()
   var key: List[Str] = []
   var cap_ts: List[Int] = []
   for (i, n) in names.indexed() {
@@ -495,7 +489,13 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
   let fi = b.m.new_func(name, [ft], [st])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
-  let saved = b.begin(fi, b.s.file)
+  b.gens.push(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
+  name
+}
+
+fn (var b: Builder) frame_args_body(names: List[Str], cts: List[Int], cap_ts: List[Int]) {
+  let st = b.str_t()
+  let it = b.int_t()
   let env = b.param(0)
   var acc = b.const_str("")
   for (i, n) in names.indexed() {
@@ -520,8 +520,6 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
   }
   b.retv(acc)
   b.finish_fn()
-  b.end(saved)
-  name
 }
 
 /// Writes the frames of trace tr to standard error (printTrace).

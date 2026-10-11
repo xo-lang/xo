@@ -719,6 +719,22 @@ func (pg *pkgGen) namedType(n *check.Named) string {
 }
 
 // isScalar reports whether values of t are compared with Go's == and <.
+// isUnitEnum reports whether t is an enum of a user module, not generic,
+// whose variants all have no fields: its Go value (genEnum) is a Tag and
+// a nil P, so two values are equal when their tags are.
+func (g *gen) isUnitEnum(t check.Type) bool {
+	n := g.named(t)
+	if n == nil || n.Obj.Kind != check.KEnum || n.Obj.Module == nil || n.Obj.Module.IsStd || n.Obj.Module.Go != nil || len(n.Obj.TParams) > 0 {
+		return false
+	}
+	for _, v := range n.Obj.Variants {
+		if len(v.Fields) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (g *gen) isScalar(t check.Type) bool {
 	n := g.named(t)
 	if n == nil || !n.Obj.Module.IsPrelude {
