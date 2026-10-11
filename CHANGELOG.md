@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Files (std.md 3.1, 3.5, 8.3, decision 0163), Go backend and MemFs:
+  streaming handles `os.fs.open(path)`, `create`, `open_append` (a
+  `File` with `read`, `read_line`, `write`, `close`); `append`, `copy`
+  (keeps permission bits), `mode` and `set_mode`, `symlink` (a sub
+  capability refuses a target that escapes it) and `read_link`, `glob`
+  (`*`, `?`, `[...]`, `**`), advisory locks `lock` and `try_lock` (a
+  `FileLock`, `flock`/`LockFileEx`); `Env.config_dir()` and
+  `cache_dir()` (XDG variables, else ~/.config, ~/Library/..., or
+  %AppData%). Native builds report them as XO1201 (planned).
 - Terminals (std.md 3.6, 15, decision 0162), on every backend:
   `Stdio.stdin_is_tty()`, `stdout_is_tty()`, `stderr_is_tty()`,
   `width()`, `read_secret(prompt)` (a line with the echo off, for

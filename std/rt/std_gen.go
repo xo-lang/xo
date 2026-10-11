@@ -1114,6 +1114,18 @@ type Fs interface {
 	M_remove_all(tk *Task, p0 string) Result[Unit, FsErr]
 	M_create_dir_all(tk *Task, p0 string) Result[Unit, FsErr]
 	M_set_modified(tk *Task, p0 string, p1 Time) Result[Unit, FsErr]
+	M_open(tk *Task, p0 string) Result[File, FsErr]
+	M_create(tk *Task, p0 string) Result[File, FsErr]
+	M_open_append(tk *Task, p0 string) Result[File, FsErr]
+	M_append(tk *Task, p0 string, p1 Bytes) Result[Unit, FsErr]
+	M_copy(tk *Task, p0 string, p1 string) Result[Unit, FsErr]
+	M_mode(tk *Task, p0 string) Result[int64, FsErr]
+	M_set_mode(tk *Task, p0 string, p1 int64) Result[Unit, FsErr]
+	M_symlink(tk *Task, p0 string, p1 string) Result[Unit, FsErr]
+	M_read_link(tk *Task, p0 string) Result[Option[string], FsErr]
+	M_glob(tk *Task, p0 string) Result[List[string], FsErr]
+	M_lock(tk *Task, p0 string) Result[FileLock, FsErr]
+	M_try_lock(tk *Task, p0 string) Result[Option[FileLock], FsErr]
 }
 
 type NetErr struct {
@@ -1308,6 +1320,8 @@ type Env interface {
 	M_program(tk *Task) string
 	M_home(tk *Task) Result[string, EnvErr]
 	M_only(tk *Task, p0 List[string]) Env
+	M_config_dir(tk *Task) Result[string, EnvErr]
+	M_cache_dir(tk *Task) Result[string, EnvErr]
 }
 
 type IoErr struct {

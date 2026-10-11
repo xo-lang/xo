@@ -1,0 +1,135 @@
+// Files on the real filesystem (std.md 3.1, 3.5; decision 0163), in a
+// fresh temporary directory under the working directory: streaming
+// handles, append, copy with permission bits, symbolic links (and a sub
+// capability refusing one that escapes it), globs, advisory locks, and
+// the configuration and cache directories from variables (env.txt).
+
+fn octal(n: Int) -> Str {
+  if n < 8 {
+    return "${n}"
+  }
+  octal(n / 8) + "${n % 8}"
+}
+
+fn files(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  let w = fs.create("notes.txt")?
+  w.write(b"first\r\n")?
+  w.write(b"second\nthird")?
+  w.close()?
+  w.close()?
+  fs.append("notes.txt", b"\nfourth\n")?
+  let f = fs.open("notes.txt")?
+  var lines: List[Str] = []
+  while let Some(l) = f.read_line()? {
+    lines.push(l)
+  }
+  f.close()?
+  out.println("lines: ${lines.join("|")}")
+  let g = fs.open("notes.txt")?
+  let head = g.read(5)? ?? b""
+  match g.write(b"x") {
+    Ok(_) => out.println("wrote to a read handle")
+    Err(e) => out.println("write to a read handle: ${e}")
+  }
+  g.close()?
+  match g.read(1) {
+    Ok(_) => out.println("read after close")
+    Err(e) => out.println("read after close: ${e}")
+  }
+  out.println("head: ${head.to_str() ?? ""}")
+  let a = fs.open_append("log.txt")?
+  a.write(b"one\n")?
+  a.close()?
+  let b = fs.open_append("log.txt")?
+  b.write(b"two\n")?
+  b.close()?
+  out.println("log: ${fs.read_text("log.txt")?.quote()}")
+  match fs.open("missing.txt") {
+    Ok(_) => out.println("opened a missing file")
+    Err(e) => out.println("open missing: ${e}")
+  }
+  match fs.open(".") {
+    Ok(_) => out.println("opened a directory")
+    Err(e) => out.println("open a directory: ${e}")
+  }
+}
+
+fn modes(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  fs.write("tool.sh", b"#!/bin/sh\necho hi\n")?
+  fs.set_mode("tool.sh", 0o750)?
+  fs.copy("tool.sh", "copy.sh")?
+  out.println("mode: ${octal(fs.mode("tool.sh")?)} copy: ${octal(fs.mode("copy.sh")?)} same: ${fs.read("copy.sh")? == fs.read("tool.sh")?}")
+  match fs.copy("nothing.sh", "x.sh") {
+    Ok(_) => out.println("copied nothing")
+    Err(e) => out.println("copy missing: ${e}")
+  }
+}
+
+fn links(fs: Fs, out: Stdio) -> () ! FsErr uses (fs, stdio) {
+  fs.create_dir_all("data/deep")?
+  fs.write("data/deep/a.txt", b"A")?
+  fs.symlink("deep/a.txt", "data/link.txt")?
+  out.println("read through link: ${fs.read_text("data/link.txt")?}")
+  out.println("read_link: ${fs.read_link("data/link.txt")? ?? "-"} not a link: ${fs.read_link("data/deep/a.txt")? ?? "-"}")
+  let data = fs.sub("data")
+  match data.symlink("../../outside", "escape") {
+    Ok(_) => out.println("escaping link created")
+    Err(e) => out.println("escaping link: ${e}")
+  }
+  match data.symlink("/etc/passwd", "abs") {
+    Ok(_) => out.println("absolute link created")
+    Err(e) => out.println("absolute link: ${e}")
+  }
+  data.symlink("deep/a.txt", "inside")?
+  out.println("inside link: ${data.read_text("inside")?}")
+}
+
+fn globs(fs: Fs, out: Stdio) -> () ! FsErr uses (fs.read, stdio) {
+  out.println("glob *.txt: ${fs.glob("*.txt")?.join(" ")}")
+  out.println("glob **/*.txt: ${fs.glob("**/*.txt")?.join(" ")}")
+  out.println("glob data/*/?.txt: ${fs.glob("data/*/?.txt")?.join(" ")}")
+  out.println("glob [lt]*: ${fs.glob("[lt]*")?.join(" ")}")
+  out.println("glob none: ${fs.glob("nope/*.x")?.len()}")
+}
+
+fn locks(fs: Fs, out: Stdio) -> () ! FsErr uses (fs.write, stdio) {
+  let l = fs.lock("app.lock")?
+  match fs.try_lock("app.lock")? {
+    Some(_) => out.println("locked twice")
+    None => out.println("second try_lock: held")
+  }
+  l.unlock()
+  l.unlock()
+  match fs.try_lock("app.lock")? {
+    Some(again) => {
+      out.println("after unlock: acquired")
+      again.unlock()
+    }
+    None => out.println("after unlock: still held")
+  }
+}
+
+fn dirs(env: Env, out: Stdio) -> () ! EnvErr uses (env, stdio) {
+  out.println("config: ${env.config_dir()?} cache: ${env.cache_dir()?}")
+  match env.only([]).config_dir() {
+    Ok(d) => out.println("attenuated: ${d}")
+    Err(e) => out.println("attenuated: ${e}")
+  }
+}
+
+fn main(os: Os) ! {
+  let cwd = os.fs.cwd()
+  let dir = cwd.create_temp(".", "fs-files-")?
+  cwd.remove(dir)?
+  cwd.create_dir_all(dir)?
+  let fs = cwd.sub(dir)
+  defer {
+    cwd.remove_all(dir).ignore_err("the test's directory")
+  }
+  files(fs, os.stdio)?
+  modes(fs, os.stdio)?
+  links(fs, os.stdio)?
+  globs(fs, os.stdio)?
+  locks(fs, os.stdio)?
+  dirs(os.env, os.stdio)?
+}

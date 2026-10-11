@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Files** (std.md 3.1, 3.5, decision 0163): streaming `File` handles,
+  `append`, `copy`, permission bits, symbolic links, `glob`, advisory
+  locks, and `Env.config_dir`/`cache_dir`. Go backend; native builds
+  report XO1201 (planned).
 - **Terminals** (std.md 3.6, 15, decision 0162): `Stdio` tells whether
   each stream is a terminal and its width, reads secrets without echo,
   and reads binary input; `std/term` colors output following NO_COLOR

@@ -456,7 +456,45 @@ interface Fs {
   fn remove_all(self, path: Str) -> () ! FsErr uses fs.write
   fn create_dir_all(self, dir: Str) -> () ! FsErr uses fs.write
   fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
+  /// A handle that reads the file as a stream (std.md 3.1, decision 0163).
+  fn open(self, path: Str) -> File ! FsErr uses fs.read
+  /// A handle that writes the file, created or truncated.
+  fn create(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that writes at the end of the file, created if missing.
+  fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// Adds data at the end of the file, created if missing.
+  fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+  /// Copies the contents and permission bits of a file.
+  fn copy(self, from: Str, to: Str) -> () ! FsErr uses fs
+  /// The permission bits, 0o644 style.
+  fn mode(self, path: Str) -> Int ! FsErr uses fs.read
+  fn set_mode(self, path: Str, mode: Int) -> () ! FsErr uses fs.write
+  /// Creates a symbolic link at `link` that points to `target`.
+  fn symlink(self, target: Str, link: Str) -> () ! FsErr uses fs.write
+  /// The target of a symbolic link; None when path is not one.
+  fn read_link(self, path: Str) -> Str? ! FsErr uses fs.read
+  /// The paths that match pattern (`*`, `?`, `[a-z]`, `**`), sorted.
+  fn glob(self, pattern: Str) -> List[Str] ! FsErr uses fs.read
+  /// An advisory lock on the file (created if missing); waits for it.
+  fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
+  /// The lock if no one holds it, else None at once.
+  fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
 }
+
+/// An open file (std.md 3.1, decision 0163). A handle; close it.
+struct File {}
+/// At most max bytes; None at the end.
+fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
+/// One line without `\n` or `\r\n`; None at the end.
+fn (f: File) read_line() -> Str? ! FsErr uses fs.read
+fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+/// Closes the file; closing it again does nothing.
+fn (f: File) close() -> () ! FsErr
+
+/// A held advisory file lock (std.md 3.1). A handle.
+struct FileLock {}
+/// Releases the lock; unlocking again does nothing.
+fn (l: FileLock) unlock()
 
 enum NetErr {
   InvalidAddr(msg: Str)
@@ -527,6 +565,13 @@ interface Env {
   /// An Env that reads only the listed variables (std.md 3.5, decision
   /// 0156).
   fn only(self, names: List[Str]) -> Env
+  /// Where a program keeps its configuration: XDG_CONFIG_HOME, else
+  /// ~/.config, ~/Library/Application Support, or %AppData% (std.md 3.5,
+  /// decision 0163).
+  fn config_dir(self) -> Str ! EnvErr uses env
+  /// Where a program keeps its cache: XDG_CACHE_HOME, else ~/.cache,
+  /// ~/Library/Caches, or %LocalAppData%.
+  fn cache_dir(self) -> Str ! EnvErr uses env
 }
 
 enum IoErr {

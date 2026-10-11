@@ -88,6 +88,18 @@ fn (f: MemFs) remove(path: Str) -> () ! FsErr uses fs.write
 fn (f: MemFs) remove_all(path: Str) -> () ! FsErr uses fs.write
 fn (f: MemFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write
 fn (f: MemFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
+fn (f: MemFs) open(path: Str) -> File ! FsErr uses fs.read
+fn (f: MemFs) create(path: Str) -> File ! FsErr uses fs.write
+fn (f: MemFs) open_append(path: Str) -> File ! FsErr uses fs.write
+fn (f: MemFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn (f: MemFs) copy(from: Str, to: Str) -> () ! FsErr uses fs
+fn (f: MemFs) mode(path: Str) -> Int ! FsErr uses fs.read
+fn (f: MemFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write
+fn (f: MemFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write
+fn (f: MemFs) read_link(path: Str) -> Str? ! FsErr uses fs.read
+fn (f: MemFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read
+fn (f: MemFs) lock(path: Str) -> FileLock ! FsErr uses fs.write
+fn (f: MemFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write
 fn (f: MemFs) fail_next(op: FsOp, path: Str, err: FsErr)
 fn (f: MemFs) set_case_sensitive(on: Bool)
 fn (f: MemFs) files() -> Map[Str, Bytes]
@@ -100,6 +112,8 @@ fn (e: FakeEnv) args() -> List[Str] uses env
 fn (e: FakeEnv) program() -> Str uses env
 fn (e: FakeEnv) home() -> Str ! EnvErr uses env
 fn (e: FakeEnv) only(names: List[Str]) -> Env
+fn (e: FakeEnv) config_dir() -> Str ! EnvErr uses env
+fn (e: FakeEnv) cache_dir() -> Str ! EnvErr uses env
 fn (e: FakeEnv) set(name: Str, value: Str)
 fn (e: FakeEnv) set_args(args: List[Str])
 

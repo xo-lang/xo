@@ -433,7 +433,79 @@ fn (f: Fs) create_dir_all(dir: Str) -> () ! FsErr       uses fs.write
 fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
 
-Streaming file handles are planned for a later draft.
+Handles, links, globs, and locks (decision 0163; the Go backend and
+MemFs, native builds report them as XO1201, planned):
+
+```
+fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
+fn (f: Fs) create(path: Str) -> File ! FsErr      uses fs.write  // write; created or truncated
+fn (f: Fs) open_append(path: Str) -> File ! FsErr uses fs.write  // write at the end; created if missing
+fn (f: Fs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn (f: Fs) copy(from: Str, to: Str) -> () ! FsErr uses fs        // contents and permission bits
+fn (f: Fs) mode(path: Str) -> Int ! FsErr         uses fs.read   // permission bits: 0o644
+fn (f: Fs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write
+fn (f: Fs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write
+fn (f: Fs) read_link(path: Str) -> Str? ! FsErr   uses fs.read   // None when not a link
+fn (f: Fs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read
+fn (f: Fs) lock(path: Str) -> FileLock ! FsErr    uses fs.write  // waits; a cancellation point
+fn (f: Fs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write
+
+struct File {}                                    // handle
+fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the end
+fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
+fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
+fn (f: File) close() -> () ! FsErr                               // closing again does nothing
+struct FileLock {}                                // handle
+fn (l: FileLock) unlock()                                        // unlocking again does nothing
+```
+
+```
+fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
+  let f = fs.open(path)?
+  defer { f.close().ignore_err("read only") }
+  var n = 0
+  while let Some(line) = f.read_line()? {
+    if line.contains("ERROR") {
+      n += 1
+    }
+  }
+  n
+}
+```
+
+- A `File` is opened for reading (`open`) or writing (`create`,
+  `open_append`); the other kind of operation is `Io(path, "file is open
+  for reading")` (or writing). `read` returns at most `max` bytes (at
+  most 1 MiB), `None` at the end. Operations after `close` are `Io(path,
+  "file already closed")`. Writes are not buffered by Xo: each `write`
+  reaches the OS. Handles are not recorded by record and replay yet.
+- `open` of a directory is `IsDir`. `create` and `open_append` do not
+  create missing parent directories on the real filesystem (MemFs does,
+  as its `write` does).
+- `copy` reads `from` and writes `to` (created or truncated) with
+  `from`'s permission bits; a directory is `IsDir(from)`.
+- `mode` and `set_mode` are the permission bits (`0o777` mask). Windows
+  reports and sets what it can (read only or not).
+- `symlink(target, link)` stores `target` as written; a relative target
+  is relative to the link's directory. In a sub capability a target that
+  is absolute or leaves the root (`..` past it) is `Denied(link)`: a sub
+  capability is a lexical boundary, and links created through it must
+  not escape it. Links that already exist are followed by the OS as
+  before (the boundary is lexical, decision 0024).
+- `glob(pattern)` lists the paths matching `pattern`, sorted, relative to
+  the capability root as the pattern is written: `*` (any run of
+  characters but `/`), `?`, `[abc]`, `[a-z]`, `[^a]` in a segment, and a
+  segment `**` for any number of directories (zero included). Names that
+  start with `.` match only a segment that starts with `.`. A missing
+  directory matches nothing; a malformed pattern is `Io(pattern, "bad
+  pattern: ...")`. It works through `read_dir`, so attenuation applies.
+- `lock(path)` takes an exclusive advisory lock on `path` (created if
+  missing), waiting until no other holder has it; waiting is a
+  cancellation point (`Canceled`). `try_lock` returns `None` at once when
+  the lock is held. The lock is the OS's (`flock` on Unix, `LockFileEx`
+  on Windows), so it excludes other processes that lock the same file,
+  and other `lock` calls in the same program. It is advisory: reads and
+  writes are not blocked. A program that exits releases its locks.
 
 ### 3.2 Net (`uses net.dial` / `net.listen`)
 
@@ -543,7 +615,20 @@ fn (e: Env) args() -> List[Str]              // without the program name
 fn (e: Env) program() -> Str
 fn (e: Env) home() -> Str ! EnvErr
 fn (e: Env) only(names: List[Str]) -> Env   // attenuation (below)
+fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
+fn (e: Env) cache_dir() -> Str ! EnvErr
 ```
+
+`config_dir()` and `cache_dir()` (decision 0163) are read through the
+`Env`, so attenuation and fakes apply: `XDG_CONFIG_HOME` (or
+`XDG_CACHE_HOME`) when it holds an absolute path, on every OS; else
+`<home>/.config` (`<home>/.cache`) on Linux and other Unix systems,
+`<home>/Library/Application Support` (`<home>/Library/Caches`) on macOS,
+`%AppData%` (`%LocalAppData%`) on Windows, with `/` separators. A
+missing home is `Err(Missing("HOME"))` (as `home()`), a missing Windows
+variable `Err(Missing("AppData"))`. The program adds its own directory:
+`os.fs.sub(os.env.config_dir()? + "/mytool")`. Native builds report
+them as XO1201 (planned).
 
 `e.only(names)` (decision 0156) is an `Env` that reads only the listed
 variables: `get` of another name is `None`, `vars` holds only listed
@@ -1212,6 +1297,15 @@ fn (f: MemFs) fail_next(op: FsOp, path: Str, err: FsErr)   // next matching op f
 fn (f: MemFs) set_case_sensitive(on: Bool)
 fn (f: MemFs) files() -> Map[Str, Bytes]                  // every file, by path
 ```
+
+MemFs implements the handles, links, globs, and locks of 3.1: a read
+handle reads the contents as they were at `open`; a write handle writes
+through at once; permission bits default to `0o644` for a file and
+`0o755` for a directory; `read`, `read_text`, `open`, `copy`, `stat`, and
+`exists` follow symbolic links (a chain of more than 40 is `Io`); a lock
+held by one task makes another task's `lock` wait (deadlocks are
+reported as for a `Mutex`). `fail_next` applies with `Read` (open, copy)
+and `Write` (create, open_append, append, set_mode, symlink, lock).
 
 ### 8.4 FakeEnv, FakeStdio, FakeProc
 
