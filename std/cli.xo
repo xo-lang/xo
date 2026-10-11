@@ -72,6 +72,10 @@ fn parse(cmd: Command, args: List[Str], env: Env) -> Parsed ! CliErr uses env
 fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc) -> Parsed uses (env, stdio, proc)
 /// The help text of `cmd`, or of the subcommand at `path` ("remote add").
 fn help(cmd: Command, path: Str = "") -> Str
+/// A completion script for "bash", "zsh", or "fish" (std.md 14.5,
+/// decision 0165): subcommands, flags, and choice values; another shell
+/// is a Usage error.
+fn completion(cmd: Command, shell: Str) -> Str ! CliErr
 
 /// The selected subcommand path, words joined by one space ("" for the
 /// root command).

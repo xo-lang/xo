@@ -199,12 +199,15 @@ func cliShortName(s string) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
+// cliCmdName: letters, digits, `.`, `_`, and `-` (not first), so a name
+// needs no quoting in shells and completion scripts (decision 0165).
 func cliCmdName(s string) bool {
 	if s == "" || s[0] == '-' {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		if s[i] <= ' ' {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
 			return false
 		}
 	}
@@ -215,7 +218,7 @@ func cliCmdName(s string) bool {
 // holds the flags of the commands above c.
 func cliValidate(c *cliCmd, outer []*cliFlag, version bool) {
 	if !cliCmdName(c.name) {
-		FaultHere("cli: command name %s must be a word without spaces that does not start with -", strconv.Quote(c.name))
+		FaultHere("cli: command name %s must be letters, digits, ., _, and - (not first)", strconv.Quote(c.name))
 	}
 	seen := append([]*cliFlag(nil), outer...)
 	for _, f := range c.flags {

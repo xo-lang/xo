@@ -1282,6 +1282,19 @@ fn tick(x: Float) -> Float uses realtime {
 	},
 
 	// ---------------------------------------------------------------
+	// 15xx: build options (decision 0165)
+
+	StampTarget: {
+		Title: "--stamp names no stampable constant",
+		Detail: "`xo build --stamp NAME=VALUE` (also `xo run`) replaces the value of the constant `NAME` of the main module for that build, so a program reports a version, commit, or build date set by the build script. " +
+			"The constant must exist in a module named on the command line and be declared `const NAME: Str = \"...\"` with a plain string literal (no interpolation, no expression): the literal is what the build replaces. Other constants may be built from it.",
+		Example: `// xo build --stamp VERSION=1.4.0
+const VERSION = 14`,
+		Fix: `// xo build --stamp VERSION=1.4.0
+const VERSION: Str = "dev"`,
+	},
+
+	// ---------------------------------------------------------------
 	// 13xx: modules and dependencies (decision 0086)
 
 	ModFileInvalid: {

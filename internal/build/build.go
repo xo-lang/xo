@@ -131,6 +131,9 @@ type Options struct {
 	// NoErrorArgs (`--error-args=false`, release builds only, decision
 	// 0092) records error frames without parameter values.
 	NoErrorArgs bool
+	// Stamps (`--stamp NAME=VALUE`, decision 0165) set the values of
+	// `const NAME: Str` declarations of the main module (stamp.go).
+	Stamps map[string]string
 	// ARM64Layout is the arm64 backend's code placement in the form of
 	// $XO_ARM64_LAYOUT (decision 0075), which it overrides when set; the
 	// build gets its own directory, so tests build several placements at
@@ -203,6 +206,9 @@ type Info struct {
 	// module an xo.work overrides (local paths are recorded here only,
 	// never in xo.lock).
 	Deps map[string]string `json:"deps,omitempty"`
+	// Stamps are the `--stamp` values (decision 0165), so `xo replay`
+	// rebuilds the same program.
+	Stamps map[string]string `json:"stamps,omitempty"`
 }
 
 // buildInfo computes the build information of a checked program.
@@ -210,6 +216,9 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 	info := &Info{Sources: map[string]string{}, Holes: opts.Holes, NoMono: opts.NoMono, NoArenas: opts.NoArenas, Race: opts.Race, TZData: opts.TZData, Release: opts.release(), NoErrorArgs: opts.release() && opts.NoErrorArgs}
 	if len(dirs) > 0 {
 		info.Dir, _ = filepath.Abs(dirs[0])
+	}
+	if len(opts.Stamps) > 0 {
+		info.Stamps = opts.Stamps
 	}
 	if bl := res.Deps(); bl != nil && len(bl.Modules) > 0 {
 		info.Deps = map[string]string{}
@@ -251,6 +260,14 @@ func buildInfo(dirs []string, res *check.Result, root string, opts Options) *Inf
 	}
 	if opts.release() {
 		fmt.Fprintf(h, "release error_args=%v\n", !opts.NoErrorArgs)
+	}
+	var stamped []string
+	for n := range opts.Stamps {
+		stamped = append(stamped, n)
+	}
+	sort.Strings(stamped)
+	for _, n := range stamped {
+		fmt.Fprintf(h, "stamp %s=%q\n", n, opts.Stamps[n])
 	}
 	fs.WalkDir(std.Runtime, "rt", func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
@@ -316,6 +333,12 @@ func Build(dirs []string, opts Options) (*Result, error) {
 	}
 	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}}
 	if !ok {
+		out.Failed = true
+		return out, nil
+	}
+	if ds := applyStamps(res, opts.Stamps); len(ds) > 0 {
+		out.Diagnostics = append(out.Diagnostics, ds...)
+		diag.Sort(out.Diagnostics)
 		out.Failed = true
 		return out, nil
 	}
@@ -400,6 +423,11 @@ func Generate(dirs []string, opts Options) (*Result, *gen.Program, error) {
 	}
 	out := &Result{Diagnostics: res.Diagnostics, Binaries: map[Target]string{}, Check: res}
 	if !ok {
+		out.Failed = true
+		return out, nil, nil
+	}
+	if ds := applyStamps(res, opts.Stamps); len(ds) > 0 {
+		out.Diagnostics = append(out.Diagnostics, ds...)
 		out.Failed = true
 		return out, nil, nil
 	}

@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Shell completions (std.md 14.5, decision 0165): `cli.completion(cmd,
+  shell)` returns a bash, zsh, or fish script that completes
+  subcommands, flags, and choice values from the declaration, on every
+  backend. Command names are now limited to letters, digits, `.`, `_`,
+  and `-`.
+- Version stamping (core 10.1, decision 0165): `xo build --stamp
+  NAME=VALUE` (repeatable; also `xo run`) sets `const NAME: Str = "..."`
+  of the main module for that build, on every backend, so `--version`
+  can print a version set by the build script. A name that is not such
+  a constant is the new error XO1501. Stamps are part of the build
+  information, so `xo replay` rebuilds the same program.
 - Formats (std.md 16 to 19, decision 0164): `std/csv` (`parse`,
   `parse_maps`, `format`; RFC 4180, any separator) on every backend;
   `std/regexp` (`compile`, `must`, `quote`, `is_match`, `find`,

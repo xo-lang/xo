@@ -34,7 +34,7 @@ func TestCliValidate(t *testing.T) {
 		want    string
 	}{
 		{cliCmdOf("tool", []*cliFlag{b("verbose", "v")}, nil), false, ""},
-		{cliCmdOf("my tool", nil, nil), false, `cli: command name "my tool" must be a word without spaces that does not start with -`},
+		{cliCmdOf("my tool", nil, nil), false, `cli: command name "my tool" must be letters, digits, ., _, and - (not first)`},
 		{cliCmdOf("tool", []*cliFlag{b("Verbose", "")}, nil), false, `cli: flag name "Verbose" must be lowercase letters, digits, and - (command tool)`},
 		{cliCmdOf("tool", []*cliFlag{b("-x", "")}, nil), false, `cli: flag name "-x" must be lowercase letters, digits, and - (command tool)`},
 		{cliCmdOf("tool", []*cliFlag{b("help", "")}, nil), false, "cli: flag --help is reserved (command tool)"},

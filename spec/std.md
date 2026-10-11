@@ -1914,7 +1914,8 @@ fn app() -> cli.Command {
 - `name` of the root command is the program's name in help and usage
   text; a subcommand's `name` is the word that selects it. A command has
   positional arguments or subcommands, not both.
-- Flag names are lowercase letters, digits, and `-` (not first);
+- Command names are letters, digits, `.`, `_`, and `-` (not first);
+  flag names are lowercase letters, digits, and `-` (not first);
   `short` is one ASCII letter or digit. `--help` and `-h` are reserved,
   and `--version` when the root command has a `version`. Flag names are
   unique along each path of commands (a subcommand may not repeat a flag
@@ -1937,6 +1938,7 @@ pub fn parse(cmd: Command, args: List[Str], env: Env) -> Parsed ! CliErr uses en
 pub fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc) -> Parsed
     uses (env, stdio, proc)
 pub fn help(cmd: Command, path: Str = "") -> Str     // path: "remote add"; faults if unknown
+pub fn completion(cmd: Command, shell: Str) -> Str ! CliErr   // 14.5
 
 enum CliErr {
   Help(text: Str)               // -h or --help: the selected command's help
@@ -2058,6 +2060,47 @@ Flags:
       --version        show the version
 ```
 
+
+### 14.5 Shell completions and versions
+
+`completion(cmd, shell)` (decision 0165) returns a completion script for
+`"bash"`, `"zsh"`, or `"fish"`, made from the declaration alone: the
+program does not run while the user completes. Another shell is
+`Usage("unknown shell \"x\" (one of bash, zsh, fish)", usage)`. A tool
+offers it as a subcommand:
+
+```
+fn app() -> cli.Command {
+  cli.command("tool", "Manages widgets.",
+    commands: [
+      cli.command("completion", "Prints a shell completion script.", args: [cli.arg("shell", "bash, zsh, or fish")]),
+    ],
+    version: VERSION)
+}
+
+fn main(os: Os) ! {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  if p.command() == "completion" {
+    os.stdio.print(cli.completion(app(), p.arg("shell"))?)
+  }
+}
+```
+
+Users install it with `source <(tool completion bash)`, `tool completion
+zsh > "${fpath[1]}/_tool"`, or `tool completion fish >
+~/.config/fish/completions/tool.fish`. The scripts complete subcommand
+names at each level, the flags accepted there (those of the commands
+above included) with `-h`, `--help`, and `--version`, the values of
+`choice_flag`s after their flag, and files after other flags that take a
+value and where a command takes positional arguments (zsh and fish
+describe each word with its help line). The text is fixed by the
+implementation and the same on every backend; command names are letters,
+digits, `.`, `_`, and `-`, so no quoting can break it.
+
+A command's `version` usually comes from a constant stamped by the build:
+`const VERSION: Str = "dev"` in the main module and `xo build --stamp
+VERSION=1.4.0` (core 10.1, decision 0165) make `tool --version` print
+`tool 1.4.0`.
 ---
 
 ## 15. std/term

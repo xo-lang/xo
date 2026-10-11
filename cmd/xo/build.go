@@ -89,6 +89,20 @@ func backendFlag(fl *flag.FlagSet) func() (string, bool) {
 	}
 }
 
+// stampFlag registers `--stamp NAME=VALUE` (repeatable, decision 0165).
+func stampFlag(fl *flag.FlagSet) map[string]string {
+	stamps := map[string]string{}
+	fl.Func("stamp", "set `const NAME: Str` of the main module to VALUE for this build (repeatable; decision 0165), for example --stamp VERSION=1.4.0", func(arg string) error {
+		name, value, err := build.ParseStamp(arg)
+		if err != nil {
+			return err
+		}
+		stamps[name] = value
+		return nil
+	})
+	return stamps
+}
+
 func runBuild(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("build", flag.ContinueOnError)
 	fl.SetOutput(stderr)
@@ -98,6 +112,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	ci := fl.Bool("ci", false, "CI mode: fail before building when a .xo file is not formatted (core 10.5) or `dbg(...)` is left in code (core 11.4)")
 	release := fl.Bool("release", false, "release build (core 8): contracts marked requires(debug) or ensures(debug) are compiled out; fails while an xo.work workspace overrides a required module (XO1308). --ci does not imply it")
 	errorArgs := fl.Bool("error-args", true, "record parameter values in error frames (core 11.1, decision 0092); --error-args=false needs --release")
+	stamps := stampFlag(fl)
 	hybrid := fl.Bool("hybrid", false, "compile the hot leaf functions of the main module (loops over scalars and Lists of flat structs, no allocation) to Go assembler with the arm64 backend, keeping the Go runtime (Go backend, decision 0084); the tag xo_pure builds the Go versions")
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
@@ -164,7 +179,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 			return code
 		}
 	}
-	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid, TZData: *tzdata, Release: *release, NoErrorArgs: !*errorArgs})
+	res, err := build.Build(dirs, build.Options{Mode: gen.Build, Targets: ts, Out: *out, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, Hybrid: *hybrid, TZData: *tzdata, Release: *release, NoErrorArgs: !*errorArgs, Stamps: stamps})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo build: %v\n", err)
 		return 1
@@ -281,6 +296,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	holes := fl.Bool("holes", false, "allow holes (`???`), which fault when evaluated")
 	seed := fl.Int64("seed", 0, "run every task on the deterministic scheduler with this seed (core 7.4; sets XO_SEED)")
 	record := fl.String("record", "", "record every effect and scheduling decision into this .xotrace file for xo replay (core 11.3; sets XO_RECORD)")
+	stamps := stampFlag(fl)
 	noMono := monoFlags(fl)
 	noArenas := arenaFlags(fl)
 	backendOf := backendFlag(fl)
@@ -307,7 +323,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		}
 		progArgs = rest
 	}
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata})
+	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Holes: *holes, NoMono: noMono(), NoArenas: noArenas(), Backend: backend, NoGC: noGC, TZData: *tzdata, Stamps: stamps})
 	if err != nil {
 		fmt.Fprintf(stderr, "xo run: %v\n", err)
 		return 1

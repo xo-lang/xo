@@ -109,6 +109,11 @@ const (
 	NoGCUnavailable Code = "XO1201" // construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible
 )
 
+// Build options (15xx group, decision 0165). Emitted by internal/build.
+const (
+	StampTarget Code = "XO1501" // `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module
+)
+
 // Real-time functions (14xx group, decision 0133). Emitted by the checker
 // for functions declared `uses realtime` (core 6.5) and for loop bounds.
 const (
@@ -244,6 +249,7 @@ var Descriptions = map[Code]string{
 	RealtimeCall:      "call in a real-time function of a function that is not real-time, a function value, or an interface method",
 	RealtimeRecursion: "recursion among real-time functions",
 	RealtimeBlocking:  "blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function",
+	StampTarget:       "`--stamp NAME=VALUE` names no `const NAME: Str = \"...\"` (a plain string literal) of the main module",
 
 	InvalidChar:          "character that cannot start any token",
 	UnterminatedString:   "string, raw string, bytes, or triple quoted string not closed",

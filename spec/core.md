@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`xo build --stamp NAME=VALUE`** (10.1, decision 0165): sets a `const
+  NAME: Str` of the main module for one build (versions, commits);
+  `XO1501` when there is no such constant. `std/cli` writes shell
+  completion scripts (std.md 14.5).
 - **Formats** (std.md 16 to 19, decision 0164): `std/csv` (every
   backend), `std/regexp`, `std/archive` (gzip, tar, zip), and `std/toml`
   (Go backend; native builds report XO1201, planned).
@@ -2487,6 +2491,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |
 | `XO1404` | error | checker | recursion among real-time functions |
 | `XO1405` | error | checker | blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function |
+| `XO1501` | error | build | `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module (decision 0165) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
