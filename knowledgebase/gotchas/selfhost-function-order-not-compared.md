@@ -16,9 +16,14 @@ the parts) came later in the module. The LLVM emitter writes functions
 in the module's order and numbers string literals, defines types, and
 writes helpers in the order of first use, so the order shows there.
 
-Fix: selfhost/ssa show.xo builds `xo.debug[T]` when asked for, as
-decision 0150 already does for the generated functions whose bodies
-declare functions. TestSelfhostLLVM counts the modules whose
+Fix: selfhost/ssa builds `xo.debug[T]` when asked for, as decision
+0150 already did for the generated functions whose bodies declare
+functions; then (stage 2 of decision 0166) 17 modules still had
+`zero.fn(...)` and the Debug text a frame's arguments ask for out of
+order, from the frame argument formatters and zero functions still
+queued, so every generated function is now built when asked for
+(build.xo `gen_now`). A comment saying a queued body "declares
+nothing" was the trap: check what the body calls, not what it is. TestSelfhostLLVM counts the modules whose
 definitions come in the same order and those byte identical; a drop in
 either with every function identical points at the module's order.
 When a later stage's output is written in module order (the arm64

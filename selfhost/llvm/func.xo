@@ -342,18 +342,64 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.skip = ""
   var ps: List[Str] = []
   let br = g.by_ref_of(fi)
-  if !br.is_empty() {
+  if !br.is_empty() && g.stage < 2 {
     g.unsupported("a parameter passed by reference (decision 0145)")
   }
-  for p in g.f.blocks[0].params {
+  var mems: List[HeldMem] = []
+  let params0 = g.f.blocks[0].params
+  for (i, p) in params0.indexed() {
+    if !br.is_empty() && br[i] {
+      let lt = g.ll(g.vty(p))
+      let ptr = "%p${p}"
+      if g.is_var_param(fi, i) {
+        ps.push("ptr noalias ${ptr}")
+        if !g.home.contains(lt) {
+          g.home[lt] = ptr
+          mems.push(HeldMem{ptr: ptr, lt: lt, param: p})
+        }
+      } else {
+        ps.push("ptr noalias readonly ${ptr}")
+        g.addr[p] = ptr
+      }
+      continue
+    }
     let l = g.ll(g.vty(p))
     ps.push("${l} ${vname(p)}")
+  }
+  if !mems.is_empty() && g.stage < 3 {
+    g.unsupported("a `var` parameter passed by reference (decision 0148)")
+  }
+  g.compute_held(mems)
+  for (i, p) in params0.indexed() {
+    if !br.is_empty() && br[i] {
+      let m = g.mem_only(p)
+      if m >= 0 {
+        g.lazy[p] = m
+        continue
+      }
+      let r = g.load_ref(g.vty(p), "%p${p}")
+      g.alias(p, r)
+    }
   }
   let loads = g.body.join("")
   for b in g.reverse_postorder() {
     g.body = []
     g.label0 = bname(b)
     g.label = bname(b)
+    for p in g.f.blocks[b].params {
+      let m = g.held_param(b, p)
+      if m >= 0 {
+        // passed in place by every edge: no phi (decision 0148)
+        if g.mem_only(p) >= 0 {
+          g.lazy[p] = m
+        } else {
+          let lt = g.held.mems[m].lt
+          let ptr = g.held.mems[m].ptr
+          let r = g.def("load ${lt}, ptr ${ptr}")
+          g.alias(p, r)
+        }
+      }
+    }
     for v in g.f.blocks[b].instrs {
       g.instr(v)
     }
@@ -371,7 +417,7 @@ fn (var g: Gen) lower_func(fi: Int) {
     if b != 0 {
       let params = g.f.blocks[b].params
       for (i, p) in params.indexed() {
-        if g.is_void(g.vty(p)) {
+        if g.is_void(g.vty(p)) || g.held_param(b, p) >= 0 {
           continue
         }
         var ins: List[Str] = []
@@ -1084,6 +1130,12 @@ fn (var g: Gen) field(v: Int) {
   }
   let a = x.args[0]
   let fi = aux_int(x.aux)
+  let mo = g.mem_only(v)
+  if mo >= 0 && g.f.values[a].op == ssa.Op.Call {
+    // a `var` result the call wrote back, held at every use
+    g.lazy[v] = mo
+    return
+  }
   let p = g.addr[a]
   if !p.is_empty() {
     let l = g.ll(g.vty(a))
@@ -1091,6 +1143,15 @@ fn (var g: Gen) field(v: Int) {
     if g.is_agg(vt) {
       g.addr[v] = fp
     }
+    let lv = g.ll(vt)
+    g.set(v, "load ${lv}, ptr ${fp}")
+    return
+  }
+  let m = g.held_at(v, a)
+  if m >= 0 {
+    let lt = g.held.mems[m].lt
+    let ptr = g.held.mems[m].ptr
+    let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${fi}")
     let lv = g.ll(vt)
     g.set(v, "load ${lv}, ptr ${fp}")
     return
@@ -1103,16 +1164,92 @@ fn (var g: Gen) field(v: Int) {
 /// A field update (OpSetField).
 fn (var g: Gen) set_field(v: Int) {
   let x = g.f.values[v]
+  if g.has_held {
+    let m = g.held.in_place[v]
+    if m >= 0 {
+      // the memory holds the operand: write the field there
+      let lt = g.held.mems[m].lt
+      let ptr = g.held.mems[m].ptr
+      let t1 = g.typed(x.args[1])
+      let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${aux_int(x.aux)}")
+      g.emit("store ${t1}, ptr ${fp}")
+      if g.mem_only(v) >= 0 {
+        g.lazy[v] = m
+      } else {
+        g.set(v, "load ${lt}, ptr ${ptr}")
+      }
+      return
+    }
+  }
   let l = g.ll(x.ty)
   let a0 = g.op(x.args[0])
   let t1 = g.typed(x.args[1])
   g.set(v, "insertvalue ${l} ${a0}, ${t1}, ${aux_int(x.aux)}")
 }
 
+/// Reads a value of type t from memory p (loadRef, decision 0145).
+fn (var g: Gen) load_ref(t: Int, p: Str) -> Str {
+  let l = g.ll(t)
+  g.def("load ${l}, ptr ${p}")
+}
+
+/// Writes value x of type t to memory p (storeRef).
+fn (var g: Gen) store_ref(t: Int, x: Str, p: Str) {
+  let l = g.ll(t)
+  g.emit("store ${l} ${x}, ptr ${p}")
+}
+
+/// Memory for an argument of LLVM type lt passed by reference (slot):
+/// the first of the type in a call takes its home, the others spare
+/// slots.
+fn (var g: Gen) slot(lt: Str, var used: Map[Str, Int]) -> Str {
+  let n = used.get(lt) ?? 0
+  used[lt] = n + 1
+  if n == 0 {
+    if let Some(h) = g.home.get(lt) {
+      return h
+    }
+    let h = g.alloca(lt)
+    g.home[lt] = h
+    return h
+  }
+  var sp = g.spare.get(lt) ?? []
+  while sp.len() < n {
+    sp.push(g.alloca(lt))
+  }
+  g.spare[lt] = sp
+  sp[n - 1]
+}
+
 /// A return (OpReturn).
 fn (var g: Gen) ret(v: Int) {
   let args = g.f.values[v].args
   let rt = g.res_ll(g.fi)
+  // the `var` parameters passed by reference are written back
+  let br = g.by_ref_of(g.fi)
+  if !br.is_empty() {
+    // every value is read before any is stored: one held in a memory is
+    // loaded before another write back overwrites it
+    let params = g.f.blocks[0].params
+    var xs: List[Str] = []
+    var ptrs: List[Str] = []
+    var ts: List[Int] = []
+    for (j, vi) in g.f.var_params.indexed() {
+      if br[vi] {
+        let ptr = "%p${params[vi]}"
+        let m = g.held_at(v, args[1 + j])
+        if m >= 0 && g.held.mems[m].ptr == ptr {
+          continue // already there (decision 0148)
+        }
+        xs.push(g.op(args[1 + j]))
+        ptrs.push(ptr)
+        ts.push(g.vty(params[vi]))
+      }
+    }
+    for i in 0..xs.len() {
+      g.store_ref(ts[i], xs[i], ptrs[i])
+    }
+  }
   let kept = g.kept_results(g.fi)
   if kept.len() == 1 {
     let t = g.typed(args[kept[0]])

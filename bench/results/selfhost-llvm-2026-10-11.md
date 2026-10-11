@@ -92,3 +92,80 @@ the Xo emitter, after one check, build, and InsertRC), idle machine:
 Stage 1 skips the decision 0148 dataflow, which the Go emitter runs for
 every function with a `var` parameter passed by reference, so these
 ratios are not of equal work; the stage 3 table is.
+
+## Stages 2 and 3: parameters by reference, the memory of `var` parameters
+
+Stage 2 (decisions 0145, 0147): struct and enum parameters of 256 bytes
+or more of functions called directly arrive as pointers (`ptr noalias`,
+`readonly` when not `var`), are loaded at entry, and are written back
+at return; a call stores such arguments into the function's home slot
+of their LLVM type or spare slots, passes read only memory on in place,
+and reads the `var` results back. Stage 3 (decision 0148, held.xo): the
+forward dataflow of what each `var` parameter's memory holds, field
+reads and `setfield` in place, stores left out when the memory already
+holds the value, and values never materialized. selfhost/llvm is about
+3,700 lines with both (held.xo about 400).
+
+All three stages measured on the same code (the final one, with
+`--stage=N`; the emitter's own sources are a run of the corpus, so the
+Go emitter's function count grew from 13,658 in the first stage 1 run
+to 13,683 as selfhost/llvm grew):
+
+| repository runs (318 compared), go build | identical | skipped | differing | modules byte identical |
+|---|---|---|---|---|
+| stage 1 | 10,232 of 13,683 | 3,451 | 0 | 285 of 318 |
+| stage 2 | 11,362 of 13,683 | 2,321 | 0 | 309 of 318 |
+| stage 3 | 13,683 of 13,683 | 0 | 0 | 318 of 318 |
+
+| test binaries (46 compared), go build | identical | skipped | differing | modules byte identical |
+|---|---|---|---|---|
+| stage 1 | 4,491 of 5,497 | 1,006 | 0 | 32 of 46 |
+| stage 2 | 4,948 of 5,497 | 549 | 0 | 44 of 46 |
+| stage 3 | 5,497 of 5,497 | 0 | 0 | 46 of 46 |
+
+16,016 helpers identical in the repository runs and 6,338 in the test
+binaries at every stage. `TestSelfhostLLVMMutations` with stage 3 and
+400 mutations (seed 20261011, go build): 282 lowered by both and
+compared, 112 rejected by both, 6 not built completely by the Xo SSA
+builder; 6,975 of 6,975 functions identical, 11,273 helpers identical,
+282 of 282 modules byte identical. Every function stage 2 and stage 3 lowered was
+identical on its first full run. With stage 3 every module of the 318
+repository runs and the 46 test binaries both lower is byte identical
+to internal/llvm's (the runs not compared are those the Go checker
+rejects, those without `main`, `use go`, and the 15 runs the SSA
+builders do not build completely, where the Go builder reports an
+unsupported construct too).
+
+Found in stages 2 and 3:
+
+- **The other generated functions of the Xo SSA builder were in
+  another order too** (stage 1's finding, continued): after
+  `xo.debug[T]` was built when asked for, 17 modules were still not
+  byte identical, every function identical and the definitions out of
+  order (`zero.fn(...)`, the Debug text a frame's arguments ask for,
+  and with them the numbering of string literals and the order of
+  runtime declarations). The frame argument formatters
+  (`xo.frameargs(...)`), the zero functions of function types
+  (`zero.fn(...)`), slices, and list concatenation were queued for
+  run_gens; the Go builder builds every one of them when asked for.
+  selfhost/ssa build.xo `gen_now` now builds each at once (run_gens
+  takes the queue before building, so a nested request builds only its
+  own); TestSelfhostSSA unchanged (0 differences), and the 17 modules
+  byte identical.
+
+Speed, ms for 10 lowerings (as the stage 1 table; stage 3, every
+function lowered with every convention, so equal work), idle machine:
+
+| input (functions) | Go emitter | Xo emitter, go build |
+|---|---|---|
+| selfhost/lexer (92) | 84 | 47 (0.56x) |
+| selfhost/parser (377) | 925 | 833 (0.90x) |
+| selfhost/check (1,027) | 16,725 | 28,062 (1.68x) |
+| selfhost/ssa (1,655) | 45,924 | 131,512 (2.86x) |
+
+The Go emitter itself takes 4.6 s to lower selfhost/ssa (not profiled
+here; the decision 0148 dataflow keeps a copy of the state for every
+instruction and iterates to a fixpoint, the first suspect). The Xo
+port does the same copies and compares the states whole at each block;
+the ratio grows with function size, which points at that dataflow too.
+Profiling both is the first next experiment below.

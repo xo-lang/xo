@@ -1,5 +1,16 @@
 // Values kept in the memory of a `var` parameter passed by reference
 // (held.go, decision 0148): stage 3 of decision 0166.
+//
+// A `var` parameter passed by reference (decision 0145) arrives in the
+// caller's memory, which the function also uses as the slot of every call
+// that takes a value of that type by reference (its home) and writes back
+// at return. A forward dataflow over the function computes which SSA
+// value that memory holds before each instruction; then a field read of a
+// held value loads the field, a `setfield` of it stores in place, a store
+// of the held value into its own memory is left out, and a value held at
+// every use is never materialized (a use loads it).
+
+use github.com/xo-lang/xo/selfhost/ssa
 
 /// A tracked memory: the pointer of a `var` parameter passed by
 /// reference that is the home of its LLVM type.
@@ -9,7 +20,441 @@ struct HeldMem {
   param: Int
 }
 
-/// What the memories hold (heldInfo).
+/// The value a memory holds (hkey): value v, or result k of call v (the
+/// `var` parameter it wrote back; -1: v itself). v is -1 with k -2 for
+/// "not reached yet" (TOP) and -3 for "unknown" (BOT).
+struct HKey {
+  v: Int
+  k: Int
+}
+
+const TOP_K = -2
+const BOT_K = -3
+
+/// What the memories hold (heldInfo): the state before each instruction,
+/// at each block's start, and on each edge (empty: not reached), the
+/// setfields done in memory, and the values never materialized, by
+/// memory index (-1: none).
 struct Held {
   mems: List[HeldMem] = []
+  before: List[List[HKey]] = []
+  ins: List[List[HKey]] = []
+  edge: List[List[HKey]] = []
+  in_place: List[Int] = []
+  mem_only: List[Int] = []
+  changed: Bool = false
+}
+
+fn top_key() -> HKey {
+  HKey{v: -1, k: TOP_K}
+}
+
+fn bot_key() -> HKey {
+  HKey{v: -1, k: BOT_K}
+}
+
+/// The key of value v (keyOf).
+fn (g: Gen) key_of(v: Int) -> HKey {
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
+    return HKey{v: x.args[0], k: aux_int(x.aux)}
+  }
+  HKey{v: v, k: -1}
+}
+
+/// The tracked memory of LLVM type lt, or -1 (memOf).
+fn (g: Gen) mem_of(lt: Str) -> Int {
+  for (i, m) in g.held.mems.indexed() {
+    if m.lt == lt {
+      return i
+    }
+  }
+  -1
+}
+
+/// The memory that holds u before instruction v, or -1 (heldAt).
+fn (var g: Gen) held_at(v: Int, u: Int) -> Int {
+  if !g.has_held {
+    return -1
+  }
+  if g.held.before[v].is_empty() {
+    return -1
+  }
+  let m = g.mem_of(g.ll(g.vty(u)))
+  if m >= 0 && g.held.before[v][m] == g.key_of(u) {
+    return m
+  }
+  -1
+}
+
+/// For each argument of call v to callee, the tracked memory it is
+/// stored into (-1 for none), as user_call lowers it (slotMems).
+fn (var g: Gen) slot_mems(v: Int, callee: Int) -> List[Int] {
+  let br = g.by_ref_of(callee)
+  let args = g.f.values[v].args
+  var out: List[Int] = []
+  var used: List[Str] = []
+  for (i, x) in args.indexed() {
+    out.push(-1)
+    if br.is_empty() || !br[i] {
+      continue
+    }
+    if g.stable(x) && !g.is_var_param(callee, i) {
+      continue
+    }
+    let lt = g.ll(g.vty(x))
+    if used.contains(lt) {
+      continue
+    }
+    used.push(lt)
+    out[i] = g.mem_of(lt)
+  }
+  out
+}
+
+/// Whether v sits in memory nothing writes during the call (sfn.addr,
+/// decision 0147), computed before lowering (stable).
+fn (var g: Gen) stable(v: Int) -> Bool {
+  let memo = g.stable_memo[v]
+  if memo >= 0 {
+    return memo == 1
+  }
+  var r = false
+  let x = g.f.values[v]
+  match x.op {
+    Param => {
+      if g.blk[v] == 0 {
+        let br = g.by_ref_of(g.fi)
+        for (i, p) in g.f.blocks[0].params.indexed() {
+          if p == v && !br.is_empty() && br[i] && !g.is_var_param(g.fi, i) {
+            r = true
+          }
+        }
+      }
+    }
+    Payload | Field => r = g.is_agg(x.ty) && g.stable(x.args[0])
+    Unbox => r = g.is_agg(x.ty) && g.root_borrowed(x.args[0])
+    Call => {
+      if aux_str(x.aux) == "list.index" {
+        r = g.is_agg(x.ty) && g.kind(x.ty) != ssa.Kind.Unit && g.root_borrowed(x.args[0])
+      }
+    }
+    _ => {}
+  }
+  g.stable_memo[v] = if r { 1 } else { 0 }
+  r
+}
+
+/// Runs the dataflow for the current function (computeHeld); nothing
+/// when it has no tracked memory.
+fn (var g: Gen) compute_held(mems: List[HeldMem]) {
+  if mems.is_empty() {
+    return
+  }
+  let nv = g.f.values.len()
+  var h = Held{mems: mems}
+  for _ in 0..nv {
+    h.before.push([])
+    h.in_place.push(-1)
+    h.mem_only.push(-1)
+  }
+  for _ in 0..g.f.blocks.len() {
+    h.ins.push([])
+  }
+  for _ in 0..g.f.edges.len() {
+    h.edge.push([])
+  }
+  g.held = h
+  g.has_held = true
+  // the pad state of each landing, by the landing's value
+  var landed: Map[Int, List[HKey]] = {}
+  let order = g.reverse_postorder()
+  var changed = true
+  while changed {
+    changed = false
+    for b in order {
+      var st = g.held_in(b)
+      let old = g.held.ins[b]
+      if old.is_empty() || old != st {
+        g.held.ins[b] = st
+        changed = true
+      }
+      for v in g.f.blocks[b].instrs {
+        g.held.before[v] = st
+        var pad = st
+        var pad_own = false
+        let x = g.f.values[v]
+        match x.op {
+          Call => {
+            let callee = g.by_name.get(aux_str(x.aux)) ?? -1
+            if callee >= 0 {
+              let sm = g.slot_mems(v, callee)
+              for (i, m) in sm.indexed() {
+                if m >= 0 {
+                  st[m] = g.key_of(x.args[i])
+                }
+              }
+              pad = st
+              pad_own = true
+              for (i, m) in sm.indexed() {
+                if m >= 0 && g.is_var_param(callee, i) {
+                  pad[m] = bot_key()
+                  for (j, vi) in g.m.funcs[callee].var_params.indexed() {
+                    if vi == i {
+                      st[m] = HKey{v: v, k: 1 + j}
+                    }
+                  }
+                }
+              }
+            }
+          }
+          SetField => {
+            let u = x.args[0]
+            let m = g.mem_of(g.ll(g.vty(u)))
+            if m >= 0 && st[m] == g.key_of(u) {
+              g.held.in_place[v] = m
+              st[m] = HKey{v: v, k: -1}
+            }
+          }
+          Jump => g.set_edge(x.succs[0], st)
+          Branch => {
+            let l = x.args[0]
+            let lx = g.f.values[l]
+            if lx.op == ssa.Op.Call && aux_str(lx.aux) == "rt.landing" {
+              if let Some(ps) = landed.get(l) {
+                g.set_edge(x.succs[0], ps)
+              } else {
+                g.set_edge(x.succs[0], st)
+              }
+              g.set_edge(x.succs[1], st)
+            } else {
+              g.set_edge(x.succs[0], st)
+              g.set_edge(x.succs[1], st)
+            }
+          }
+          _ => {}
+        }
+        if x.pad >= 0 {
+          // the Go code's pad shares st's memory unless a call copied it
+          landed[x.pad] = if pad_own { pad } else { st }
+        }
+      }
+      if g.held.changed {
+        changed = true
+        g.held.changed = false
+      }
+    }
+  }
+  g.find_mem_only()
+}
+
+fn (var g: Gen) set_edge(e: Int, st: List[HKey]) {
+  let old = g.held.edge[e]
+  if !old.is_empty() && old == st {
+    return
+  }
+  g.held.edge[e] = st
+  g.held.changed = true
+}
+
+/// The state at the start of block b (heldIn): the parameter's own key
+/// in the entry block; else, per memory, the block parameter every
+/// incoming edge passes in place, or the key every edge agrees on.
+fn (var g: Gen) held_in(b: Int) -> List[HKey] {
+  let n = g.held.mems.len()
+  var st: List[HKey] = []
+  for _ in 0..n {
+    st.push(top_key())
+  }
+  if b == 0 {
+    for i in 0..n {
+      st[i] = g.key_of(g.held.mems[i].param)
+    }
+    return st
+  }
+  for i in 0..n {
+    let lt = g.held.mems[i].lt
+    var states: List[Int] = []
+    for e in g.f.blocks[b].preds {
+      let es = g.held.edge[e]
+      if !es.is_empty() && es[i] != top_key() {
+        states.push(e)
+      }
+    }
+    if states.is_empty() {
+      continue
+    }
+    var found = false
+    for (pi, p) in g.f.blocks[b].params.indexed() {
+      if g.ll(g.vty(p)) != lt {
+        continue
+      }
+      var all = true
+      for e in states {
+        if g.held.edge[e][i] != g.key_of(g.f.edges[e].args[pi]) {
+          all = false
+        }
+      }
+      if all {
+        st[i] = HKey{v: p, k: -1}
+        found = true
+        break
+      }
+    }
+    if found {
+      continue
+    }
+    var k = g.held.edge[states[0]][i]
+    for e in states {
+      if g.held.edge[e][i] != k {
+        k = bot_key()
+      }
+    }
+    st[i] = k
+  }
+  st
+}
+
+/// Marks the values held in a memory at every use (findMemOnly): the
+/// parameter, values updated in place, `var` results of calls, and block
+/// parameters passed in place.
+fn (var g: Gen) find_mem_only() {
+  let nv = g.f.values.len()
+  var cands: List[Int] = []
+  for _ in 0..nv {
+    cands.push(-1)
+  }
+  for (i, m) in g.held.mems.indexed() {
+    cands[m.param] = i
+  }
+  for v in 0..nv {
+    if g.held.in_place[v] >= 0 {
+      cands[v] = g.held.in_place[v]
+    }
+  }
+  for b in 0..g.f.blocks.len() {
+    let st = g.held.ins[b]
+    if !st.is_empty() && b != 0 {
+      for (i, k) in st.indexed() {
+        if k.k == -1 && k.v >= 0 && g.f.values[k.v].op == ssa.Op.Param && g.blk[k.v] == b {
+          cands[k.v] = i
+        }
+      }
+    }
+    for v in g.f.blocks[b].instrs {
+      let x = g.f.values[v]
+      if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
+        let m = g.mem_of(g.ll(x.ty))
+        if m >= 0 {
+          cands[v] = m
+        }
+      }
+    }
+  }
+  var bad: List[Bool] = []
+  for _ in 0..nv {
+    bad.push(false)
+  }
+  for b in 0..g.f.blocks.len() {
+    for v in g.f.blocks[b].instrs {
+      let x = g.f.values[v]
+      for a in x.args {
+        let m = cands[a]
+        if m < 0 {
+          continue
+        }
+        let st = g.held.before[v]
+        if st.is_empty() || st[m] != g.key_of(a) {
+          bad[a] = true
+        }
+      }
+      for e in x.succs {
+        let to = g.f.edges[e].to
+        for (pi, a) in g.f.edges[e].args.indexed() {
+          let m = cands[a]
+          if m < 0 {
+            continue
+          }
+          let es = g.held.edge[e]
+          let inb = g.held.ins[to]
+          if es.is_empty() || inb.is_empty() || es[m] != g.key_of(a) || inb[m] != (HKey{v: g.f.blocks[to].params[pi], k: -1}) {
+            bad[a] = true
+          }
+        }
+      }
+    }
+  }
+  for v in 0..nv {
+    if cands[v] >= 0 && !bad[v] {
+      g.held.mem_only[v] = cands[v]
+    }
+  }
+}
+
+/// The memory value v is held in at every use, or -1 (memOnly).
+fn (g: Gen) mem_only(v: Int) -> Int {
+  if !g.has_held {
+    return -1
+  }
+  g.held.mem_only[v]
+}
+
+/// The memory that holds block parameter p of b at the block's start
+/// because every edge passes it in place, or -1 (heldParam).
+fn (g: Gen) held_param(b: Int, p: Int) -> Int {
+  if !g.has_held || b == 0 {
+    return -1
+  }
+  let st = g.held.ins[b]
+  for (i, k) in st.indexed() {
+    if k.v == p && k.k == -1 {
+      return i
+    }
+  }
+  -1
+}
+
+/// Whether result k of call v (a `var` parameter the callee wrote back
+/// into a tracked memory) needs no load after the call (lazyResult): the
+/// call is only read by field reads, and those of result k are held at
+/// every use.
+fn (var g: Gen) lazy_result(v: Int, k: Int) -> Bool {
+  if !g.has_held {
+    return false
+  }
+  for u in g.users(v) {
+    let x = g.f.values[u]
+    if x.op != ssa.Op.Field {
+      return false
+    }
+    if aux_int(x.aux) == k && g.mem_only(u) < 0 {
+      return false
+    }
+  }
+  true
+}
+
+/// The instructions and terminators (for their edges) that use v
+/// (users).
+fn (var g: Gen) users(v: Int) -> List[Int] {
+  if !g.users_done {
+    g.users_done = true
+    g.users_of = []
+    for _ in 0..g.f.values.len() {
+      g.users_of.push([])
+    }
+    for b in 0..g.f.blocks.len() {
+      for x in g.f.blocks[b].instrs {
+        for a in g.f.values[x].args {
+          g.users_of[a].push(x)
+        }
+        for e in g.f.values[x].succs {
+          for a in g.f.edges[e].args {
+            g.users_of[a].push(x)
+          }
+        }
+      }
+    }
+  }
+  g.users_of[v]
 }

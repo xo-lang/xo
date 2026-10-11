@@ -515,7 +515,7 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
 }
 
 /// The code of the closure that formats a frame's parameters
-/// (frameArgsFunc); its body is built by run_gens.
+/// (frameArgsFunc), built when asked for (gen_now).
 fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List[Int]) -> Str {
   let st = b.str_t()
   var key: List[Str] = []
@@ -537,7 +537,7 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
   let fi = b.m.new_func(name, [ft], [st])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
-  b.gens.push(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
+  b.gen_now(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
   name
 }
 

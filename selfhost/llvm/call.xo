@@ -349,24 +349,95 @@ fn (var g: Gen) call(v: Int) {
   }
 }
 
-/// A call of function callee of the module (call's first part).
+/// A call of function callee of the module (call's first part): struct
+/// and enum arguments of 256 bytes or more by reference (decision 0145),
+/// passed in place when they sit in memory nothing writes during the
+/// call (0147), and the results of `var` parameters by reference read
+/// back.
 fn (var g: Gen) user_call(v: Int, callee: Int) {
   let x = g.f.values[v]
   let br = g.by_ref_of(callee)
-  if !br.is_empty() {
+  if !br.is_empty() && g.stage < 2 {
     g.unsupported("a call passing a parameter by reference (decision 0145)")
   }
   var args: List[Str] = []
-  for a in x.args {
+  var slots: List[Str] = []
+  var used: Map[Str, Int] = {}
+  // every operand is read before anything is stored: a value held in a
+  // memory is loaded before another argument overwrites it
+  var st_ts: List[Int] = []
+  var st_xs: List[Str] = []
+  var st_ps: List[Str] = []
+  for (i, a) in x.args.indexed() {
+    slots.push("")
+    let p = g.addr[a]
+    if !p.is_empty() && !br.is_empty() && br[i] && !g.is_var_param(callee, i) {
+      // in memory nothing writes during the call: passed as it is
+      args.push("ptr ${p}")
+      continue
+    }
+    if !br.is_empty() && br[i] {
+      let lt = g.ll(g.vty(a))
+      let sl = g.slot(lt, used)
+      slots[i] = sl
+      args.push("ptr ${sl}")
+      let m = g.held_at(v, a)
+      if m >= 0 && g.held.mems[m].ptr == sl {
+        continue // already in its slot (decision 0148)
+      }
+      st_ts.push(g.vty(a))
+      st_xs.push(g.op(a))
+      st_ps.push(sl)
+      continue
+    }
     args.push(g.typed(a))
+  }
+  for k in 0..st_ts.len() {
+    g.store_ref(st_ts[k], st_xs[k], st_ps[k])
   }
   let rl = g.res_ll(callee)
   let c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
-  if g.kind(x.ty) == ssa.Kind.Unit {
-    g.raise("", c)
+  let kept = g.kept_results(callee)
+  let results = g.m.funcs[callee].results
+  if kept.len() == results.len() {
+    if g.kind(x.ty) == ssa.Kind.Unit {
+      g.raise("", c)
+      return
+    }
+    g.raise(vname(v), c)
     return
   }
-  g.raise(vname(v), c)
+  // rebuild the results the SSA call has: the `var` parameters passed by
+  // reference are read back from their memory
+  let r = g.tmp()
+  g.raise(r, c)
+  let full = g.full_res_ll(callee)
+  var cur = "undef"
+  var ki = 0
+  let vps = g.m.funcs[callee].var_params
+  for (k, rt) in results.indexed() {
+    var y = ""
+    if k > 0 && br[vps[k - 1]] {
+      if g.lazy_result(v, k) {
+        y = "undef" // read from memory where it is used (decision 0148)
+      } else {
+        y = g.load_ref(rt, slots[vps[k - 1]])
+      }
+    } else {
+      if g.is_void(rt) {
+        y = "zeroinitializer"
+      } else if kept.len() == 1 {
+        y = r
+      } else {
+        let rl2 = g.res_ll(callee)
+        y = g.def("extractvalue ${rl2} ${r}, ${ki}")
+      }
+      ki += 1
+    }
+    let tl = g.ll(rt)
+    cur = g.def("insertvalue ${full} ${cur}, ${tl} ${y}, ${k}")
+  }
+  g.alias(v, cur)
 }
 
 /// Whether the runtime call name (`rt.*`) can raise a fault

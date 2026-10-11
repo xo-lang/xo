@@ -1,8 +1,9 @@
 # 0166: The LLVM emitter in Xo, in stages through `xo llvmdump`
 
-Status: Proposed (2026-10-11), until every stage lands. Stage 1
+Status: Proposed (2026-10-11), until every stage lands. Stages 1 to 3
 implemented in `selfhost/llvm/` (gen.xo, func.xo, call.xo, text.xo,
-held.xo, main.xo), `cmd/xo/llvmdump.go` (hidden `xo llvmdump`),
+held.xo, main.xo): every function of every module both emitters lower
+is identical, and every such module byte identical; `cmd/xo/llvmdump.go` (hidden `xo llvmdump`),
 `internal/llvm/split.go` (llvm.SplitIR) and llvm.PrepareSSA, and
 `internal/selfhost/llvm_test.go` (`TestSelfhostLLVM`,
 `TestSelfhostLLVMMutations`). Evidence:
@@ -103,9 +104,11 @@ backend, 400 mutations.
   the same change, or TestSelfhostLLVM fails (-short compares every
   25th run).
 - The module's function order is part of what is compared: the Xo SSA
-  builder now builds `xo.debug[T]` when asked for, as the Go builder
-  does (the functions its body declares follow it), which the SSA
-  comparison by name had not required.
+  builder now builds every generated function when asked for, as the Go
+  builder does (`xo.debug[T]`, `xo.frameargs(...)`, `zero.fn(...)`,
+  slices, list concatenation: selfhost/ssa `gen_now`), so the functions
+  a body declares follow it; the SSA comparison by name had not
+  required it.
 - `ssa.faulting_rt` and `Builder.run_passes` are public in selfhost/ssa
   for the emitter.
 

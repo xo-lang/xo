@@ -235,7 +235,9 @@ values: selfhost/ssa iface.xo), in addition to those of stage 1:
   functions (the Debug text of their parts), so the Xo builder's module
   held them in another order than the Go builder's; the comparison by
   name did not show it, the LLVM module (written in the module's order)
-  did. `xo.debug[T]` is now built when asked for too.
+  did. `xo.debug[T]`, and then every generated function (frame
+  arguments, zero functions, slices, concatenation: `gen_now`), is now
+  built when asked for too.
 - A method value is the closure literal check.Info.MethodValueLit makes
   (`fn(p0, ...) { xo.recv.m(p0, ...) }`); the Xo builder makes the same
   literal with its checker records at offsets past every source file

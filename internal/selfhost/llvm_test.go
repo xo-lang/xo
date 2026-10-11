@@ -282,6 +282,8 @@ type llvmStats struct {
 	helpers, modules, ordered int
 	skips                     map[string]int
 	why                       map[string]int
+	// the runs compared whose modules are not byte identical
+	moduleDiffs []string
 }
 
 func (s llvmStats) String() string {
@@ -307,6 +309,9 @@ func (s llvmStats) report() string {
 		for _, k := range keys {
 			fmt.Fprintf(&b, "%6d %s\n", m[k], k)
 		}
+	}
+	for _, d := range s.moduleDiffs {
+		b.WriteString("module not byte identical: " + d + "\n")
 	}
 	return b.String()
 }
@@ -407,6 +412,8 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 	}
 	if body == want.ir {
 		st.modules++
+	} else {
+		st.moduleDiffs = append(st.moduleDiffs, dir+": "+firstDiff(body, want.ir))
 	}
 	if strings.Join(g.Order, "\n") == strings.Join(x.Order, "\n") {
 		st.ordered++
