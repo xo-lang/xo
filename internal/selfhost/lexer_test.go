@@ -420,7 +420,8 @@ func compare(t *testing.T, bin, root string, paths []string) {
 // has them, decision 0081), and the Go lexer on every .xo file of the
 // repository, the spec's code blocks, runes, and a seeded corpus of
 // mutated inputs, and requires byte identical dumps, diagnostics included.
-// -short uses a smaller fuzz corpus.
+// -short uses a smaller fuzz corpus, and so do the arm64 and LLVM
+// lexers in the merge tier (their native smoke test; tier_test.go).
 func TestSelfhostDifferential(t *testing.T) {
 	for _, backend := range []string{"go", "arm64", "llvm"} {
 		t.Run(backend, func(t *testing.T) {
@@ -434,13 +435,13 @@ func TestSelfhostDifferential(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			differential(t, bin)
+			differential(t, bin, backend)
 		})
 	}
 }
 
 // differential is TestSelfhostDifferential for the lexer binary bin.
-func differential(t *testing.T, bin string) {
+func differential(t *testing.T, bin, backend string) {
 	root := repoRoot(t)
 	files := repoXoFiles(t, root)
 	if len(files) < 100 {
@@ -463,8 +464,8 @@ func differential(t *testing.T, bin string) {
 		}
 		compare(t, bin, root, spec)
 	})
-	n := 3000
-	if testing.Short() {
+	n := byTier(t, 300, 3000, 3000)
+	if backend != "go" && selfhostTier(t) == tierMerge {
 		n = 300
 	}
 	if v := os.Getenv("XO_SELFHOST_FUZZ"); v != "" {
@@ -481,7 +482,7 @@ func differential(t *testing.T, bin string) {
 
 // TestSelfhostXoTests runs the Xo tests of selfhost/lexer (`xo test`).
 func TestSelfhostXoTests(t *testing.T) {
-	if testing.Short() {
+	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
 	dir := filepath.Join("..", "..", "selfhost", "lexer")

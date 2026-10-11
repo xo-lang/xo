@@ -31,7 +31,8 @@ import (
 //     diagnostics; after a hard error both parsers resynchronize at the
 //     end of the statement, member, arm, or declaration.
 //
-// -short uses fewer generated and mutated inputs. XO_SELFHOST_SEED,
+// -short uses fewer generated and mutated inputs, and so do the arm64
+// and LLVM parsers in the merge tier (tier_test.go). XO_SELFHOST_SEED,
 // XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_PROGS=N, and XO_SELFHOST_KEEP=dir
 // as for the lexer.
 func TestSelfhostParserDifferential(t *testing.T) {
@@ -47,12 +48,12 @@ func TestSelfhostParserDifferential(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			parserDifferential(t, bin)
+			parserDifferential(t, bin, backend)
 		})
 	}
 }
 
-func parserDifferential(t *testing.T, bin string) {
+func parserDifferential(t *testing.T, bin, backend string) {
 	root := repoRoot(t)
 	var files, std []string
 	for _, f := range repoXoFiles(t, root) {
@@ -89,9 +90,10 @@ func parserDifferential(t *testing.T, bin string) {
 		acc, rej, rec := compareParsers(t, bin, root, spec, false)
 		t.Logf("%d spec blocks: %d accepted, %d rejected by both parsers (%d with hard errors)", len(spec), acc, rej, rec)
 	})
-	progs := 150
-	fuzz := 2000
-	if testing.Short() {
+	progs := byTier(t, 24, 150, 150)
+	fuzz := byTier(t, 300, 2000, 2000)
+	if backend != "go" && selfhostTier(t) == tierMerge {
+		// the native smoke test of the merge tier: -short's sizes
 		progs, fuzz = 24, 300
 	}
 	if v := os.Getenv("XO_SELFHOST_PROGS"); v != "" {
@@ -373,7 +375,7 @@ func mutateTokens(rng *rand.Rand, src []byte) []byte {
 // TestSelfhostParserXoTests runs the Xo tests of selfhost/parser
 // (`xo test`).
 func TestSelfhostParserXoTests(t *testing.T) {
-	if testing.Short() {
+	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
 	}
 	dir := filepath.Join("..", "..", "selfhost", "parser")

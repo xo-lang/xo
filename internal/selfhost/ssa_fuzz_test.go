@@ -21,15 +21,16 @@ import (
 // an operator swapped for another of its kind, an integer or Bool
 // literal changed, a statement line dropped or doubled, or a `?`
 // removed. Mutations either checker rejects are counted; the others are
-// compared by the rules of TestSelfhostSSA. It makes 400 mutations (none
-// with -short); XO_SELFHOST_SEED and XO_SELFHOST_SSA_FUZZ=N override. The Xo
+// compared by the rules of TestSelfhostSSA. It makes 400 mutations in
+// the full tier, the first 300 of them in the merge tier, and none with
+// -short (tier_test.go); XO_SELFHOST_SEED and XO_SELFHOST_SSA_FUZZ=N override. The Xo
 // builder is built with the go backend, or the one XO_SELFHOST_BACKEND
 // names.
 func TestSelfhostSSAMutations(t *testing.T) {
-	if testing.Short() {
+	if selfhostTier(t) == tierShort {
 		t.Skip("checks every repository program to find the sources (about 6 s)")
 	}
-	n := 400
+	n := byTier(t, 0, 300, 400)
 	if v := os.Getenv("XO_SELFHOST_SSA_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
 	}
@@ -114,9 +115,9 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	t.Logf("%d mutations: %s", n, st)
 	// the test binaries of the mutations with test blocks (stage 7)
 	tdirs := testDirs(t, tmp, dirs)
-	tgot := runSSA(t, bin, tmp, tdirs, "--std="+stdDir, "--test")
+	tgot := runSSA(t, bin, tmp, tdirs, "--stages", "--std="+stdDir, "--test")
 	twants := make([]goSSA, len(tdirs))
-	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(wd, tdirs[i], true) })
+	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(wd, tdirs[i], true, true) })
 	var tst ssaStats
 	for i, d := range tdirs {
 		for _, msg := range compareSSA("test "+d, twants[i], tgot[d], &tst) {

@@ -31,14 +31,12 @@ var modFixtures = []string{
 // or removed, and a `use` of another package added to a source file. Each
 // mutation copies one fixture tree; every package directory of the copy
 // is a run, compared as TestSelfhostChecker compares runs. -short makes
-// 40 mutations, else 400; XO_SELFHOST_SEED and XO_SELFHOST_MOD_FUZZ=N
+// 40 mutations, else 400 (tier_test.go);
+// XO_SELFHOST_SEED and XO_SELFHOST_MOD_FUZZ=N
 // override. The Xo checker is built with the go backend, or the one
 // XO_SELFHOST_BACKEND names.
 func TestSelfhostCheckerModuleMutations(t *testing.T) {
-	n := 400
-	if testing.Short() {
-		n = 40
-	}
+	n := byTier(t, 40, 400, 400)
 	if v := os.Getenv("XO_SELFHOST_MOD_FUZZ"); v != "" {
 		fmt.Sscan(v, &n)
 	}
