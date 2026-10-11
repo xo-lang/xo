@@ -87,9 +87,10 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	setModEnv(t, root)
 	got := map[string]string{}
 	const batch = 60
-	for i := 0; i < len(dirs); i += batch {
+	texts := runXoBatches(t, bin, tmp, []string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs, batch)
+	for k, text := range texts {
+		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]
-		text := runXo(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, chunk...))
 		parts := runHead.Split(text, -1)
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo builder printed %d runs for %d directories", len(parts)-1, len(chunk))
@@ -100,8 +101,11 @@ func TestSelfhostSSAMutations(t *testing.T) {
 	}
 	var st ssaStats
 	var fails []string
-	for _, d := range dirs {
-		want := goSSABuild(workDir(t), d)
+	wd := workDir(t)
+	wants := make([]goSSA, len(dirs))
+	parallel(len(dirs), func(i int) { wants[i] = goSSABuild(wd, dirs[i]) })
+	for i, d := range dirs {
+		want := wants[i]
 		for _, msg := range compareSSA(d, want, got[d], &st) {
 			src, _ := os.ReadFile(filepath.Join(tmp, d, firstXo(t, filepath.Join(tmp, d))))
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))

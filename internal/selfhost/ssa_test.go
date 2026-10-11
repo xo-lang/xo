@@ -48,25 +48,14 @@ func TestSelfhostSSA(t *testing.T) {
 		}
 		dirs = some
 	}
-	bins := map[string]string{}
-	for _, b := range backends {
-		if b != "go" {
-			if why := nativeSkip(b); why != "" {
-				t.Logf("%s: %s", b, why)
-				continue
-			}
-		}
-		bin, err := selfhostBinary("ssa", b)
-		if err != nil {
-			t.Fatalf("%s: %v", b, err)
-		}
-		bins[b] = bin
-	}
+	bins := selfhostBinaries(t, "ssa", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
+	wants := make([]goSSA, len(dirs))
+	parallel(len(dirs), func(i int) { wants[i] = goSSABuild(root, dirs[i]) })
 	want := map[string]goSSA{}
-	for _, d := range dirs {
-		want[d] = goSSABuild(root, d)
+	for i, d := range dirs {
+		want[d] = wants[i]
 	}
 	for _, b := range backends {
 		bin, ok := bins[b]
@@ -74,6 +63,7 @@ func TestSelfhostSSA(t *testing.T) {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runSSA(t, bin, root, dirs)
 			var st ssaStats
 			var fails []string
@@ -143,10 +133,10 @@ func goSSABuild(root, dir string) goSSA {
 func runSSA(t *testing.T, bin, root string, dirs []string) map[string]string {
 	out := map[string]string{}
 	const batch = 60
-	for i := 0; i < len(dirs); i += batch {
+	texts := runXoBatches(t, bin, root, []string{"--each", "--std=std", "--wd=" + workDir(t)}, dirs, batch)
+	for k, text := range texts {
+		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]
-		args := append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, chunk...)
-		text := runXo(t, bin, root, args)
 		// at the start of a line: the dump of selfhost/ssa itself holds
 		// the text in a constant
 		parts := runHead.Split(text, -1)

@@ -32,7 +32,7 @@ func repoRoot(t testing.TB) string {
 // selfhost/parser) built once per component and backend.
 var (
 	binMu    sync.Mutex
-	binaries = map[string]string{}
+	binaries = map[string]*binEntry{}
 )
 
 // TestMain turns on the binary cache: a component is rebuilt only when
@@ -46,25 +46,116 @@ func TestMain(m *testing.M) {
 // "llvm"; decision 0081) once.
 func lexerBinary(backend string) (string, error) { return selfhostBinary("lexer", backend) }
 
-// selfhostBinary builds selfhost/<component> with backend once.
+// selfhostBinary builds selfhost/<component> with backend once. Builds
+// of different components or backends run at the same time (each has
+// its own build directory); one of the same key waits for the first.
 func selfhostBinary(component, backend string) (string, error) {
-	binMu.Lock()
-	defer binMu.Unlock()
 	key := component + "/" + backend
-	if bin, ok := binaries[key]; ok {
-		return bin, nil
+	binMu.Lock()
+	e, ok := binaries[key]
+	if !ok {
+		e = &binEntry{}
+		binaries[key] = e
 	}
-	dir := filepath.Join("..", "..", "selfhost", component)
-	res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
-	if err != nil {
-		return "", err
+	binMu.Unlock()
+	e.once.Do(func() {
+		dir := filepath.Join("..", "..", "selfhost", component)
+		res, err := build.Build([]string{dir}, build.Options{Mode: gen.Build, Backend: backend})
+		switch {
+		case err != nil:
+			e.err = err
+		case res.Failed:
+			e.err = fmt.Errorf("check failed: %+v", res.Diagnostics)
+		default:
+			e.bin = res.Binaries[build.Host()]
+		}
+	})
+	return e.bin, e.err
+}
+
+type binEntry struct {
+	once sync.Once
+	bin  string
+	err  error
+}
+
+// selfhostBinaries builds component with every backend that builds on
+// this host, all at once, and returns backend -> binary.
+func selfhostBinaries(t *testing.T, component string, backends []string) map[string]string {
+	t.Helper()
+	bins := map[string]string{}
+	errs := map[string]error{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, b := range backends {
+		if b != "go" {
+			if why := nativeSkip(b); why != "" {
+				t.Logf("%s: %s", b, why)
+				continue
+			}
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bin, err := selfhostBinary(component, b)
+			mu.Lock()
+			defer mu.Unlock()
+			bins[b], errs[b] = bin, err
+		}()
 	}
-	if res.Failed {
-		return "", fmt.Errorf("check failed: %+v", res.Diagnostics)
+	wg.Wait()
+	for _, b := range backends {
+		if err := errs[b]; err != nil {
+			t.Fatalf("%s: %v", b, err)
+		}
 	}
-	bin := res.Binaries[build.Host()]
-	binaries[key] = bin
-	return bin, nil
+	return bins
+}
+
+// parallel runs f(0..n-1) on up to min(GOMAXPROCS, 4) goroutines: the
+// runs of the Go checker and SSA builder, and the batches of a self
+// hosted binary, are independent.
+func parallel(n int, f func(i int)) {
+	sem := make(chan struct{}, max(1, min(runtime.GOMAXPROCS(0), 4)))
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			f(i)
+		}()
+	}
+	wg.Wait()
+}
+
+// runXoBatches runs bin with prefix and each batch of paths at the same
+// time and returns the outputs in order (the first failure fails t).
+func runXoBatches(t testing.TB, bin, root string, prefix, paths []string, size int) []string {
+	t.Helper()
+	var chunks [][]string
+	for i := 0; i < len(paths); i += size {
+		chunks = append(chunks, paths[i:min(i+size, len(paths))])
+	}
+	outs := make([]string, len(chunks))
+	errs := make([]error, len(chunks))
+	parallel(len(chunks), func(i int) {
+		cmd := exec.Command(bin, append(append([]string(nil), prefix...), chunks[i]...)...)
+		cmd.Dir = root
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			errs[i] = fmt.Errorf("%s on %d paths: %v\n%s", filepath.Base(bin), len(chunks[i]), err, stderr.String())
+		}
+		outs[i] = stdout.String()
+	})
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return outs
 }
 
 // nativeSkip is why a native backend cannot build on this host, or "".

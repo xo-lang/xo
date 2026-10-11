@@ -42,27 +42,16 @@ func TestSelfhostChecker(t *testing.T) {
 	}
 	root := repoRoot(t)
 	dirs := moduleDirs(t, root)
-	bins := map[string]string{}
-	for _, b := range backends {
-		if b != "go" {
-			if why := nativeSkip(b); why != "" {
-				t.Logf("%s: %s", b, why)
-				continue
-			}
-		}
-		bin, err := selfhostBinary("check", b)
-		if err != nil {
-			t.Fatalf("%s: %v", b, err)
-		}
-		bins[b] = bin
-	}
+	bins := selfhostBinaries(t, "check", backends)
 	// The Go checker prints paths relative to the working directory, as
 	// the Xo checker run from root does.
 	t.Chdir(root)
 	setModEnv(t, root)
+	wants := make([]*goRun, len(dirs))
+	parallel(len(dirs), func(i int) { wants[i] = goCheck(dirs[i]) })
 	want := map[string]*goRun{}
-	for _, d := range dirs {
-		want[d] = goCheck(d)
+	for i, d := range dirs {
+		want[d] = wants[i]
 	}
 	for _, b := range backends {
 		bin, ok := bins[b]
@@ -70,6 +59,7 @@ func TestSelfhostChecker(t *testing.T) {
 			continue
 		}
 		t.Run(b, func(t *testing.T) {
+			t.Parallel()
 			got := runChecker(t, bin, root, dirs)
 			var st checkStats
 			var fails []string
@@ -227,10 +217,10 @@ func moduleDirs(t testing.TB, root string) []string {
 func runChecker(t *testing.T, bin, root string, dirs []string) map[string]string {
 	out := map[string]string{}
 	const batch = 100
-	for i := 0; i < len(dirs); i += batch {
+	texts := runXoBatches(t, bin, root, []string{"--each", "--std=std", "--wd=" + workDir(t)}, dirs, batch)
+	for k, text := range texts {
+		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]
-		args := append([]string{"--each", "--std=std", "--wd=" + workDir(t)}, chunk...)
-		text := runXo(t, bin, root, args)
 		parts := strings.Split(text, "=== check ")
 		if len(parts) != len(chunk)+1 {
 			t.Fatalf("Xo checker printed %d runs for %d directories", len(parts)-1, len(chunk))
