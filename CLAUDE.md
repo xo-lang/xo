@@ -82,6 +82,11 @@ Update the knowledgebase in the same change as the work, not later:
     background and fix forward. Start the next agent without waiting.
   - at most two agents at once, in disjoint code areas, and never two
     full test runs at the same time (RAM).
+  - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
+    `merge` (the default, about 2.5 min), `full` (every backend, about
+    1 h cold, `-timeout 90m`); full runs nightly, before tagging, and
+    for a change under selfhost/ or the compiler's SSA or native backends
+    that the merge tier does not exercise.
 - Diagnostics are JSON with stable `XOnnnn` codes (spec section 10). Never
   change the meaning of an existing code; add a new one.
 - Generated Go must carry `//line` directives back to `.xo` sources.

@@ -1,0 +1,23 @@
+# Three runs take most of TestSelfhostSSA's pass stages
+
+Status: Observed (2026-10-11)
+
+Symptom: after SSA stage 8, TestSelfhostSSA with only the go backend took
+about 230 s (the toolchain notes said 25 s before the pass stages), so a
+go only "merge" tier still missed its 5 minute target.
+
+Cause: timing the go backend's Xo builder on each of the 646 repository
+runs (`--stages` vs build only) showed 157 s of passes, 112 s of it in
+five runs and 110 s in three: selfhost/ssa (69 s), selfhost/check (22 s),
+and internal/arm64/testdata/run/huge_frame (19 s; its build stage alone
+is 4 s). huge_frame is one 5,000 line function, so the cost is not
+proportional to source size: selfhost/parser (7,900 lines) takes 1.4 s.
+The Go builder's passes (the parent test's 86 s) are skewed the same way.
+
+Fix: the merge tier compares only the build stage of `buildOnlyMerge`
+(ssa_test.go) and every stage of the other 643 runs; TestSelfhostSSA
+fell from 231 s to 54 s. The full tier still compares every stage of
+every run. When a new large program (a self hosted component, a huge
+function fixture) slows the merge tier, time it the same way (build
+selfhost/ssa with `xo build -o`, run it per directory with and without
+`--stages`) and add it to the list.
