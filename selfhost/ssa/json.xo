@@ -1,0 +1,969 @@
+// The generic intrinsics of the native implementations (internal/ssa
+// build_native.go genericIntrinsic, build_json.go, build_sql.go), stage 6
+// of decision 0150: json_enc and json_dec lowered to functions generated
+// per checker type (xo.json.enc[T], xo.json.dec[T]), sql_decode to
+// xo.sql.dec[T], and any_of, any_get, cast, status_of, launder1 and
+// launder2 inline. The generated functions are built when asked for, as
+// the Go builder's genFunc builds them (they declare functions).
+
+use github.com/xo-lang/xo/selfhost/check
+
+// Tape node kinds (std/llrt/xo_json.c).
+const JK_NULL = 0
+const JK_FALSE = 1
+const JK_TRUE = 2
+const JK_NUM = 3
+const JK_STR = 4
+const JK_ARR = 5
+const JK_OBJ = 6
+
+/// The type argument of type parameter i of the intrinsic ci calls, in the
+/// instance being built, or -1 (genericIntrinsic's targ).
+fn (var b: Builder) intrinsic_targ(ci: check.CallInfo, i: Int) -> Int {
+  let tps = b.type_params(ci.fn_obj)
+  if ci.subst.is_empty() || i >= tps.len() {
+    return -1
+  }
+  let t = ci.subst.get(tps[i]) ?? -1
+  if t < 0 {
+    return -1
+  }
+  b.apply(t)
+}
+
+/// A call of a generic intrinsic (genericIntrinsic).
+fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr?]) -> Int {
+  let fo = ci.fn_obj
+  let nt = b.nat_of(x)
+  let name = b.obj_name(fo)
+  let tps = b.type_params(fo)
+  let om = b.obj_mod(fo)
+  if name == "sql_decode" && om >= 0 && b.c.mods[om].path == "native/rtsql" && tps.len() == 2 && !ci.subst.is_empty() && es.len() == 1 {
+    let ct = b.intrinsic_targ(ci, 0)
+    let row_ct = b.intrinsic_targ(ci, 1)
+    let row = b.value_as(es[0] ?? fault("arg"), b.typ(row_ct))
+    let f = b.sql_decode(ct, row_ct, nt)
+    return b.call(f, nt, "", [row])
+  }
+  if tps.len() == 1 && !ci.subst.is_empty() && (name is "json_enc" | "json_dec") {
+    let st = b.str_t()
+    let it = b.int_t()
+    let ct = b.intrinsic_targ(ci, 0)
+    if name == "json_enc" {
+      let acc = b.value_as(es[0] ?? fault("arg"), st)
+      let v = b.value_as(es[1] ?? fault("arg"), b.typ(ct))
+      let f = b.json_enc(ct)
+      return b.call(f, st, "", [acc, v])
+    }
+    let src = b.value_as(es[0] ?? fault("arg"), st)
+    let tape = b.value_as(es[1] ?? fault("arg"), b.m.list(it))
+    let i = b.value_as(es[2] ?? fault("arg"), it)
+    let f = b.json_dec(ct)
+    let fi = b.m.func_index(f)
+    return b.call(f, b.m.funcs[fi].results[0], "", [src, tape, i])
+  }
+  if name is "launder1" | "launder2" {
+    // the function itself (only its effects are accounted for here)
+    return b.value_as(es[0] ?? fault("arg"), nt)
+  }
+  if name == "cast" {
+    // a std type and its implementation lower to one type
+    let v = b.value_as(es[0] ?? fault("arg"), b.typ(b.intrinsic_targ(ci, 0)))
+    if b.vty(v) != nt {
+      b.unsupported("the cast of `${b.m.types[b.vty(v)].name}` to `${b.m.types[nt].name}`")
+      return b.undef(nt)
+    }
+    return v
+  }
+  if name == "status_of" {
+    let ct = b.intrinsic_targ(ci, 0)
+    let v = b.value_as(es[0] ?? fault("arg"), b.typ(ct))
+    let md = b.method_of(ct, "status")
+    if md >= 0 {
+      let sv = b.call_method(md, ct, v)
+      return b.variant(nt, "Some", [sv])
+    }
+    return b.variant(nt, "None", [])
+  }
+  if name == "any_of" {
+    let ct = b.intrinsic_targ(ci, 0)
+    let t = b.typ(ct)
+    let v = b.value_as(es[0] ?? fault("arg"), t)
+    let dl = b.drop_list(t)
+    let drop = b.add(Op.FuncAddr, b.int_t(), Aux.S(s: dl), [])
+    let l = b.one(v)
+    let tn = b.const_str(b.m.types[t].name)
+    return b.rt("any_new", nt, [l, drop, tn])
+  }
+  if name == "any_get" {
+    let ct = b.intrinsic_targ(ci, 0)
+    let t = b.typ(ct)
+    let a = b.value_as(es[0] ?? fault("arg"), b.typ(b.c.objs[fo].params[0].ty))
+    let tn = b.const_str(b.m.types[t].name)
+    let l = b.rt("any_get", b.m.list(t), [a, tn])
+    return b.pop_one(l, nt)
+  }
+  b.unsupported("the intrinsic `${name}`")
+  b.undef(nt)
+}
+
+// ---------------------------------------------------------------------------
+// JSON
+
+/// The checker type json.DecodeErr, or -1 (decodeErrType).
+fn (var b: Builder) decode_err_type() -> Int {
+  for m in b.c.order {
+    if b.c.mods[m].path == "std/json" {
+      let o = b.member(m, "DecodeErr")
+      if o >= 0 && b.c.objs[o].kind == check.ObjKind.Type {
+        return b.c.mk_named(o, [])
+      }
+    }
+  }
+  -1
+}
+
+/// Whether ct is json.Patch[T] (isJSONPatch).
+fn (var b: Builder) is_json_patch(ct: Int) -> Bool {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return false
+  }
+  let om = b.obj_mod(o)
+  om >= 0 && b.c.mods[om].path == "std/json" && b.obj_name(o) == "Patch"
+}
+
+/// a + the JSON text of x (of checker type xt) in an encoder (jsonEnc's
+/// sub).
+fn (var b: Builder) json_sub(a: Int, x0: Int, xt: Int) -> Int {
+  let x = b.unbox(x0)
+  let f = b.json_enc(xt)
+  b.call(f, b.str_t(), "", [a, x])
+}
+
+/// xo.json.enc[ct](acc: Str, v: T) -> Str (jsonEnc), built now.
+fn (var b: Builder) json_enc(ct: Int) -> Str {
+  let st = b.str_t()
+  let t = b.typ(ct)
+  let name = "xo.json.enc[${b.c.show(ct)}]"
+  let fi = b.thunk_func(name, [st, t], [st], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.json_enc_body(ct, t)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let acc = b.param(0)
+  let v = b.param(1)
+  if b.is_prelude_named(ct, ["Duration"]) {
+    let a = b.lit(acc, "\"")
+    let r = b.rt("rs_append_duration", st, [a, v])
+    b.retv(b.lit(r, "\""))
+    return
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    let a = b.lit(acc, "\"")
+    let r = b.rt("rs_append_time", st, [a, v])
+    b.retv(b.lit(r, "\""))
+    return
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    b.retv(b.rt("rs_append_b64_quoted", st, [acc, v]))
+    return
+  }
+  match b.tkind(t) {
+    Str => {
+      b.retv(b.rt("rs_append_json_str", st, [acc, v]))
+      return
+    }
+    Int => {
+      b.retv(b.call("str.concat_int", st, "", [acc, v]))
+      return
+    }
+    Float => {
+      b.retv(b.rt("rs_append_json_float", st, [acc, v]))
+      return
+    }
+    Bool => {
+      let s2 = b.call("str.of_bool", st, "", [v])
+      b.retv(b.call("str.concat", st, "", [acc, s2]))
+      return
+    }
+    Unit => {
+      b.retv(b.lit(acc, "null"))
+      return
+    }
+    Box => {
+      b.retv(b.json_sub(acc, v, ct))
+      return
+    }
+    _ => {}
+  }
+  let r = b.c.resolve(ct)
+  if b.c.tys[r].kind == check.TyKind.Tuple && b.tkind(t) == Kind.Tuple && b.c.tys[r].args.len() == b.m.types[t].elems.len() {
+    // an array, one element per position (decision 0088)
+    var a = b.lit(acc, "[")
+    for (k, et) in b.c.tys[r].args.indexed() {
+      if k > 0 {
+        a = b.lit(a, ",")
+      }
+      let f = b.add(Op.Field, b.m.types[t].elems[k], Aux.I(n: k), [v])
+      a = b.json_sub(a, f, et)
+    }
+    b.retv(b.lit(a, "]"))
+    return
+  }
+  let obj = b.named_obj(ct)
+  if obj < 0 {
+    b.unsupported("JSON for `${b.c.show(ct)}`")
+    b.retv(acc)
+    return
+  }
+  let args = b.ty_args(ct)
+  let om = b.obj_mod(obj)
+  let oname = b.obj_name(obj)
+  if b.is_prelude_mod(om) && oname == "Option" {
+    let some = b.m.variant_index(t, "Some")
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    let is_some = b.add(Op.Eq, bt, Aux.None, [tag, b.cint(some)])
+    let (yes, no) = b.branch(is_some)
+    b.s.cur = yes
+    let p = b.add(Op.Payload, b.m.types[t].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [v])
+    b.retv(b.json_sub(acc, p, args[0]))
+    b.s.cur = no
+    b.retv(b.lit(acc, "null"))
+    return
+  }
+  if b.is_prelude_mod(om) && oname == "List" {
+    let et = b.m.types[t].elems[0]
+    let av = b.local()
+    b.write_var(av, b.lit(acc, "["))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [v])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [i, b.cint(0)]))
+    b.write_var(av, b.lit(b.read(av), ","))
+    b.if_then_end(no, join)
+    let cur = b.read(av)
+    let el = b.call("list.index", et, "", [v, i])
+    b.write_var(av, b.json_sub(cur, el, args[0]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.lit(b.read(av), "]"))
+    return
+  }
+  if b.is_prelude_mod(om) && (oname is "Map" | "Set") {
+    let kt = map_key(b.m, t)
+    let vt = map_val(b.m, t)
+    if oname == "Map" && b.tkind(kt) != Kind.Str {
+      b.unsupported("JSON for a Map whose keys are not Str")
+    }
+    let keys = b.mfield(t, 0, v)
+    let vals = b.mfield(t, 1, v)
+    let live = b.mfield(t, 2, v)
+    let av = b.local()
+    let first = b.local()
+    let open = if oname == "Set" { "[" } else { "{" }
+    let close = if oname == "Set" { "]" } else { "}" }
+    b.write_var(av, b.lit(acc, open))
+    b.write_var(first, b.cbool(true))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [keys])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+    let (no2, join2) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))
+    b.write_var(av, b.lit(b.read(av), ","))
+    b.if_then_end(no2, join2)
+    b.write_var(first, b.cbool(false))
+    let k = b.call("list.index", kt, "", [keys, i])
+    var a = -1
+    if oname == "Map" {
+      let cur = b.read(av)
+      let q = b.rt("rs_append_json_str", st, [cur, k])
+      a = b.lit(q, ":")
+      let x = b.call("list.index", vt, "", [vals, i])
+      a = b.json_sub(a, x, args[1])
+    } else {
+      let cur = b.read(av)
+      a = b.json_sub(cur, k, args[0])
+    }
+    b.write_var(av, a)
+    b.if_then_end(no, join)
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.lit(b.read(av), close))
+    return
+  }
+  let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
+  if b.is_json_patch(ct) {
+    let vi = b.m.variant_index(t, "Value")
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+    b.s.cur = yes
+    let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+    b.retv(b.json_sub(acc, p, args[0]))
+    b.s.cur = no
+    b.retv(b.lit(acc, "null"))
+    return
+  }
+  let tk = b.c.objs[obj].tkind
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+    // {"f":v,...}; an Absent Patch field is left out
+    let av = b.local()
+    let first = b.local()
+    b.write_var(av, b.lit(acc, "{"))
+    b.write_var(first, b.cbool(true))
+    for f in b.c.objs[obj].fields {
+      let fname = check.text(f.name)
+      let fi = b.m.field_index(t, fname)
+      if fi < 0 {
+        continue
+      }
+      let ft = b.c.subst(f.ty, sb)
+      let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
+      if b.is_json_patch(ft) {
+        let absent = b.m.variant_index(b.vty(fv), "Absent")
+        let tag = b.add(Op.Tag, it, Aux.None, [fv])
+        let (no0, join0) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)]))
+        b.json_field(av, first, fname, fv, ft)
+        b.if_then_end(no0, join0)
+        continue
+      }
+      b.json_field(av, first, fname, fv, ft)
+    }
+    b.retv(b.lit(b.read(av), "}"))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" {
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    for vo in b.c.objs[obj].variants {
+      let vname = check.text(vo.name)
+      let vi = b.m.variant_index(t, vname)
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      if vo.fields.is_empty() {
+        b.retv(b.lit(acc, "\"${vname}\""))
+      } else {
+        var a = b.lit(acc, "{\"${vname}\":")
+        if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
+          let ft = b.m.types[t].variants[vi].fields[0].ty
+          let p = b.add(Op.Payload, ft, Aux.P(tag: vi, field: 0), [v])
+          a = b.json_sub(a, p, b.c.subst(vo.fields[0].ty, sb))
+          b.retv(b.lit(a, "}"))
+        } else {
+          a = b.lit(a, "{")
+          for (fi, f) in vo.fields.indexed() {
+            if fi > 0 {
+              a = b.lit(a, ",")
+            }
+            let ft = b.m.types[t].variants[vi].fields[fi].ty
+            let l = b.lit(a, "\"${check.text(f.name)}\":")
+            let p = b.add(Op.Payload, ft, Aux.P(tag: vi, field: fi), [v])
+            a = b.json_sub(l, p, b.c.subst(f.ty, sb))
+          }
+          b.retv(b.lit(a, "}}"))
+        }
+      }
+      b.if_then_end(no, join)
+    }
+    b.retv(acc)
+    return
+  }
+  b.unsupported("JSON for `${b.c.show(ct)}`")
+  b.retv(acc)
+}
+
+/// One field of an object being encoded (jsonEnc's write).
+fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int) {
+  let bt = b.bool_t()
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))
+  b.write_var(av, b.lit(b.read(av), ","))
+  b.if_then_end(no, join)
+  b.write_var(first, b.cbool(false))
+  let l = b.lit(b.read(av), "\"${fname}\":")
+  b.write_var(av, b.json_sub(l, fv, ft))
+}
+
+/// A field of an object a decoder reads (jsonDec's fieldSpec).
+struct JField {
+  name: Str
+  ct: Int
+  st: Int
+  /// The default value (zero or one) and its file.
+  dflt: List[Expr] = []
+  dfile: Int = -1
+}
+
+/// The state of a decoder under construction: its parameters and result
+/// type.
+struct Dec {
+  src: Int
+  tape: Int
+  i: Int
+  rt: Int
+  t: Int
+  kind: Int
+}
+
+/// The error result of a decoder (mkErr).
+fn (var b: Builder) dec_err(d: Dec, path: Int, msg: Int) -> Int {
+  let err_i = b.m.variant_index(d.rt, "Err")
+  let dt = b.m.types[d.rt].variants[err_i].fields[0].ty
+  let e = b.add(Op.Struct, dt, Aux.None, [path, msg])
+  b.add(Op.Variant, d.rt, Aux.I(n: err_i), [e])
+}
+
+/// Returns the error msg with an empty path (fail).
+fn (var b: Builder) dec_fail(d: Dec, msg: Str) {
+  let p = b.const_str("")
+  let m = b.const_str(msg)
+  b.retv(b.dec_err(d, p, m))
+}
+
+/// Returns v as the decoded value (ok).
+fn (var b: Builder) dec_ok(d: Dec, v: Int) {
+  let ok_i = b.m.variant_index(d.rt, "Ok")
+  let c = b.coerce(v, d.t)
+  b.retv(b.add(Op.Variant, d.rt, Aux.I(n: ok_i), [c]))
+}
+
+/// tape[j + k] (at3).
+fn (var b: Builder) dec_at(d: Dec, j: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let ix = b.add(Op.Add, it, Aux.None, [j, b.cint(k)])
+  b.call("list.index", it, "", [d.tape, ix])
+}
+
+/// Whether the node's kind is k (isKind).
+fn (var b: Builder) dec_is(d: Dec, k: Int) -> Int {
+  b.add(Op.Eq, b.bool_t(), Aux.None, [d.kind, b.cint(k)])
+}
+
+/// Fails with msg unless the node's kind is k (need).
+fn (var b: Builder) dec_need(d: Dec, k: Int, msg: Str) {
+  let bt = b.bool_t()
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.dec_is(d, k)]))
+  b.dec_fail(d, msg)
+  b.if_then_end(no, join)
+}
+
+/// Decodes the value at node j as xt; on an error returns from this
+/// decoder with seg in front of the error's path (child).
+fn (var b: Builder) dec_child(d: Dec, xt: Int, j: Int, seg: Int) -> Int {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let cn = b.json_dec(xt)
+  let cf = b.m.func_index(cn)
+  if cf < 0 {
+    return b.undef(b.typ(xt))
+  }
+  let crt = b.m.funcs[cf].results[0]
+  let r = b.call(cn, crt, "", [d.src, d.tape, j])
+  let ce = b.m.variant_index(crt, "Err")
+  let cdt = b.m.types[crt].variants[ce].fields[0].ty
+  let tag = b.add(Op.Tag, it, Aux.None, [r])
+  let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ce)]))
+  let e = b.add(Op.Payload, cdt, Aux.P(tag: ce, field: 0), [r])
+  let p = b.call("str.concat", st, "", [seg, b.add(Op.Field, st, Aux.I(n: 0), [e])])
+  let msg = b.add(Op.Field, st, Aux.I(n: 1), [e])
+  b.retv(b.dec_err(d, p, msg))
+  b.if_then_end(no, join)
+  let co = b.m.variant_index(crt, "Ok")
+  b.add(Op.Payload, b.m.types[crt].variants[co].fields[0].ty, Aux.P(tag: co, field: 0), [r])
+}
+
+fn (var b: Builder) dec_next(d: Dec, j: Int) -> Int {
+  b.rt("json_next", b.int_t(), [d.tape, j])
+}
+
+fn (var b: Builder) dec_str(d: Dec, j: Int) -> Int {
+  b.rt("json_str", b.str_t(), [d.src, d.tape, j])
+}
+
+/// xo.json.dec[ct](src: Str, tape: List[Int], i: Int) -> Result[T,
+/// json.DecodeErr] (jsonDec), built now; "?" without std/json.
+fn (var b: Builder) json_dec(ct: Int) -> Str {
+  let st = b.str_t()
+  let it = b.int_t()
+  let t = b.typ(ct)
+  let det = b.decode_err_type()
+  if det < 0 {
+    b.unsupported("JSON decoding without std/json")
+    return "?"
+  }
+  let rt = b.typ(b.result_of(ct, det))
+  let list_int = b.m.list(it)
+  let name = "xo.json.dec[${b.c.show(ct)}]"
+  let fi = b.thunk_func(name, [st, list_int, it], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let src = b.param(0)
+  let tape = b.param(1)
+  let i = b.param(2)
+  let kind = b.call("list.index", it, "", [tape, i])
+  let d = Dec{src: src, tape: tape, i: i, rt: rt, t: t, kind: kind}
+  b.json_dec_body(d, ct)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = d.t
+  let i = d.i
+  if b.is_prelude_named(ct, ["Duration"]) {
+    b.dec_need(d, JK_STR, "expected duration string")
+    let txt = b.dec_str(d, i)
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("duration_parse_ok", bt, [txt])]))
+    b.dec_fail(d, "expected duration string such as \"1.5s\"")
+    b.if_then_end(no, join)
+    b.dec_ok(d, b.rt("duration_parse", it, [txt]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    b.dec_need(d, JK_STR, "expected RFC 3339 time string")
+    let txt = b.dec_str(d, i)
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("time_parse_ok", bt, [txt])]))
+    b.dec_fail(d, "expected RFC 3339 time string")
+    b.if_then_end(no, join)
+    b.dec_ok(d, b.rt("time_parse", it, [txt]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    b.dec_need(d, JK_STR, "expected base64 string")
+    let txt = b.dec_str(d, i)
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("b64_ok", bt, [txt])]))
+    b.dec_fail(d, "expected base64 string")
+    b.if_then_end(no, join)
+    b.dec_ok(d, b.rt("b64_decode", st, [txt]))
+    return
+  }
+  match b.tkind(t) {
+    Str => {
+      b.dec_need(d, JK_STR, "expected string")
+      b.dec_ok(d, b.dec_str(d, i))
+      return
+    }
+    Int => {
+      b.dec_need(d, JK_NUM, "expected integer")
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("json_int_ok", bt, [d.src, d.tape, i])]))
+      b.dec_fail(d, "expected integer")
+      b.if_then_end(no, join)
+      b.dec_ok(d, b.rt("json_int", it, [d.src, d.tape, i]))
+      return
+    }
+    Float => {
+      b.dec_need(d, JK_NUM, "expected number")
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.rt("json_float_ok", bt, [d.src, d.tape, i])]))
+      b.dec_fail(d, "expected number")
+      b.if_then_end(no, join)
+      b.dec_ok(d, b.rt("json_float", b.float_t(), [d.src, d.tape, i]))
+      return
+    }
+    Bool => {
+      let (no, join) = b.if_then_begin(b.dec_is(d, JK_TRUE))
+      b.dec_ok(d, b.cbool(true))
+      b.if_then_end(no, join)
+      let (no2, join2) = b.if_then_begin(b.dec_is(d, JK_FALSE))
+      b.dec_ok(d, b.cbool(false))
+      b.if_then_end(no2, join2)
+      b.dec_fail(d, "expected boolean")
+      return
+    }
+    Unit => {
+      b.dec_need(d, JK_NULL, "expected null")
+      b.dec_ok(d, b.unit())
+      return
+    }
+    _ => {}
+  }
+  let r = b.c.resolve(ct)
+  if b.c.tys[r].kind == check.TyKind.Tuple && b.tkind(t) == Kind.Tuple && b.c.tys[r].args.len() == b.m.types[t].elems.len() {
+    // an array of exactly as many elements as positions (decision 0088)
+    let n = b.c.tys[r].args.len()
+    b.dec_need(d, JK_ARR, "expected array")
+    let cnt = b.dec_at(d, i, 1)
+    let (no, join) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [cnt, b.cint(n)]))
+    let msg = b.call("str.concat_int", st, "", [b.const_str("expected array of ${n} elements, got "), cnt])
+    let p = b.const_str("")
+    b.retv(b.dec_err(d, p, msg))
+    b.if_then_end(no, join)
+    var j = b.add(Op.Add, it, Aux.None, [i, b.cint(3)])
+    var vals: List[Int] = []
+    for (k, et) in b.c.tys[r].args.indexed() {
+      if k > 0 {
+        j = b.dec_next(d, j)
+      }
+      let seg = b.const_str("[${k}]")
+      let e = b.dec_child(d, et, j, seg)
+      vals.push(b.coerce(e, b.m.types[t].elems[k]))
+    }
+    b.dec_ok(d, b.add(Op.Tuple, t, Aux.None, vals))
+    return
+  }
+  let obj = b.named_obj(ct)
+  if obj < 0 {
+    b.unsupported("JSON for `${b.c.show(ct)}`")
+    b.dec_fail(d, "unsupported")
+    return
+  }
+  let args = b.ty_args(ct)
+  let om = b.obj_mod(obj)
+  let oname = b.obj_name(obj)
+  if b.is_prelude_mod(om) && oname == "Option" {
+    let (no, join) = b.if_then_begin(b.dec_is(d, JK_NULL))
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "None")), []))
+    b.if_then_end(no, join)
+    let v = b.dec_child(d, args[0], i, b.const_str(""))
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "Some")), [v]))
+    return
+  }
+  if b.is_prelude_mod(om) && (oname is "List" | "Set") {
+    b.dec_need(d, JK_ARR, "expected array")
+    var lt = t
+    let et = b.typ(args[0])
+    if oname == "Set" {
+      lt = b.m.list(et)
+    }
+    let lv = b.local()
+    let jv = b.local()
+    b.write_var(lv, b.call("list.new", lt, "", []))
+    b.write_var(jv, b.add(Op.Add, it, Aux.None, [i, b.cint(3)]))
+    let iv = b.local()
+    let cnt = b.dec_at(d, i, 1)
+    let (k, head, exit) = b.for_up_to_begin(cnt, iv)
+    let j = b.read(jv)
+    let s1 = b.call("str.concat_int", st, "", [b.const_str("["), k])
+    let seg = b.call("str.concat", st, "", [s1, b.const_str("]")])
+    let e = b.dec_child(d, args[0], j, seg)
+    let cur = b.read(lv)
+    let ce = b.coerce(e, et)
+    b.write_var(lv, b.call("list.push", lt, "", [cur, ce]))
+    b.write_var(jv, b.dec_next(d, j))
+    b.for_up_to_end(k, iv, head, exit)
+    if oname == "List" {
+      b.dec_ok(d, b.read(lv))
+      return
+    }
+    // a Set: its elements in order
+    let sv = b.local()
+    b.write_var(sv, b.empty_map(t))
+    let l = b.read(lv)
+    let iv2 = b.local()
+    let n2 = b.call("list.len", it, "", [l])
+    let (k2, head2, exit2) = b.for_up_to_begin(n2, iv2)
+    let e2 = b.call("list.index", et, "", [l, k2])
+    let put = b.map_put(t)
+    let cs = b.read(sv)
+    let u = b.unit()
+    b.write_var(sv, b.call(put, t, "", [cs, e2, u]))
+    b.for_up_to_end(k2, iv2, head2, exit2)
+    b.dec_ok(d, b.read(sv))
+    return
+  }
+  if b.is_prelude_mod(om) && oname == "Map" {
+    b.dec_need(d, JK_OBJ, "expected object")
+    if b.tkind(map_key(b.m, t)) != Kind.Str {
+      b.dec_fail(d, "only Map[Str, V] decodes from JSON")
+      return
+    }
+    let mv = b.local()
+    b.write_var(mv, b.empty_map(t))
+    let mem = b.rt("json_members", b.m.list(it), [d.src, d.tape, i])
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [mem])
+    let (k, head, exit) = b.for_up_to_begin(n, iv)
+    let rem = b.add(Op.Rem, it, Aux.None, [k, b.cint(2)])
+    let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [rem, b.cint(0)]))
+    let key = b.dec_str(d, b.call("list.index", it, "", [mem, k]))
+    let k1 = b.add(Op.Add, it, Aux.None, [k, b.cint(1)])
+    let vn = b.call("list.index", it, "", [mem, k1])
+    let seg = b.call("str.concat", st, "", [b.const_str("."), key])
+    let val = b.dec_child(d, args[1], vn, seg)
+    let put = b.map_put(t)
+    let cur = b.read(mv)
+    let cv = b.coerce(val, map_val(b.m, t))
+    b.write_var(mv, b.call(put, t, "", [cur, key, cv]))
+    b.if_then_end(no, join)
+    b.for_up_to_end(k, iv, head, exit)
+    b.dec_ok(d, b.read(mv))
+    return
+  }
+  let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
+  if b.is_json_patch(ct) {
+    let (no, join) = b.if_then_begin(b.dec_is(d, JK_NULL))
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: b.m.variant_index(t, "Null")), []))
+    b.if_then_end(no, join)
+    let vi = b.m.variant_index(t, "Value")
+    let v = b.dec_child(d, args[0], i, b.const_str(""))
+    let cv = b.coerce(v, b.m.types[t].variants[vi].fields[0].ty)
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), [cv]))
+    return
+  }
+  let tk = b.c.objs[obj].tkind
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+    b.dec_need(d, JK_OBJ, "expected object")
+    var fs: List[JField] = []
+    let df = b.decl_file(obj)
+    for f in b.c.objs[obj].fields {
+      let fname = check.text(f.name)
+      let fi = b.m.field_index(t, fname)
+      if fi < 0 {
+        continue
+      }
+      fs.push(JField{name: fname, ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df})
+    }
+    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om))
+    // the struct in SSA field order
+    var sargs: List[Int] = []
+    for _ in b.m.types[t].fields {
+      sargs.push(-1)
+    }
+    for (k, f) in fs.indexed() {
+      sargs[b.m.field_index(t, f.name)] = vals[k]
+    }
+    for k in 0..sargs.len() {
+      if sargs[k] < 0 {
+        sargs[k] = b.zero(b.m.types[t].fields[k].ty, [])
+      }
+    }
+    b.dec_ok(d, b.add(Op.Struct, t, Aux.None, sargs))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" {
+    // the variant name and its payload (std/rt JsonVariant)
+    let name_v = b.local()
+    let pay_v = b.local()
+    let has_v = b.local()
+    b.write_var(name_v, b.const_str(""))
+    b.write_var(pay_v, b.cint(-1))
+    b.write_var(has_v, b.cbool(false))
+    let (str_b, not_str) = b.branch(b.dec_is(d, JK_STR))
+    let join = b.new_block()
+    b.s.cur = str_b
+    b.write_var(name_v, b.dec_str(d, i))
+    b.jump(join, [])
+    b.s.cur = not_str
+    let (no1, join1) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.dec_is(d, JK_OBJ)]))
+    b.dec_fail(d, "expected a variant name or an object with one variant key")
+    b.if_then_end(no1, join1)
+    let c1 = b.dec_at(d, i, 1)
+    let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [c1, b.cint(1)]))
+    b.dec_fail(d, "expected an object with exactly one variant key")
+    b.if_then_end(no2, join2)
+    let kn = b.add(Op.Add, it, Aux.None, [i, b.cint(3)])
+    b.write_var(name_v, b.dec_str(d, kn))
+    b.write_var(pay_v, b.add(Op.Add, it, Aux.None, [kn, b.cint(3)]))
+    b.write_var(has_v, b.cbool(true))
+    b.jump(join, [])
+    b.seal(join)
+    b.s.cur = join
+    let nm = b.read(name_v)
+    let pay = b.read(pay_v)
+    let has = b.read(has_v)
+    for vo in b.c.objs[obj].variants {
+      let vname = check.text(vo.name)
+      let vi = b.m.variant_index(t, vname)
+      if vi < 0 {
+        continue
+      }
+      let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(vname)]))
+      b.dec_variant(d, t, vi, vname, vo, sb, pay, has)
+      b.if_then_end(no, join3)
+    }
+    let p = b.const_str("")
+    let s1 = b.call("str.concat", st, "", [b.const_str("unknown variant `"), nm])
+    let s2 = b.call("str.concat", st, "", [s1, b.const_str("`")])
+    b.retv(b.dec_err(d, p, s2))
+    return
+  }
+  b.unsupported("JSON for `${b.c.show(ct)}`")
+  b.dec_fail(d, "unsupported")
+}
+
+/// The body of one variant's branch of an enum decoder.
+fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.VariantInfo, sb: Map[Int, Int], pay: Int, has: Int) {
+  let bt = b.bool_t()
+  let it = b.int_t()
+  if vo.fields.is_empty() {
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
+    return
+  }
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [has]))
+  b.dec_fail(d, "variant `${vname}` needs fields")
+  b.if_then_end(no, join)
+  let vfs = b.m.types[t].variants[vi].fields
+  if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
+    let seg = b.const_str(".${vname}")
+    let v = b.dec_child(d, b.c.subst(vo.fields[0].ty, sb), pay, seg)
+    let cv = b.coerce(v, vfs[0].ty)
+    b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), [cv]))
+    return
+  }
+  let k = b.call("list.index", it, "", [d.tape, pay])
+  let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_OBJ)]))
+  let p = b.const_str(".${vname}")
+  let m = b.const_str("expected object")
+  b.retv(b.dec_err(d, p, m))
+  b.if_then_end(no2, join2)
+  var fs: List[JField] = []
+  for (fi, f) in vo.fields.indexed() {
+    fs.push(JField{name: check.text(f.name), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
+  }
+  let vals = b.dec_fields(d, pay, ".${vname}", fs, false)
+  b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
+}
+
+/// Reads the fields fs of the object at node o, with seg in front of
+/// their paths; defaults apply when with_defaults (jsonDec's fields).
+fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_defaults: Bool) -> List[Int] {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  var out: List[Int] = []
+  for f in fs {
+    let j = b.rt("json_find", it, [d.src, d.tape, o, b.const_str(f.name)])
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, f.st)
+    let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
+    b.s.cur = found
+    let fseg = b.const_str("${seg}.${f.name}")
+    let v = b.dec_child(d, f.ct, j, fseg)
+    let cv = b.coerce(v, f.st)
+    b.jump(join, [cv])
+    b.s.cur = missing
+    if with_defaults && !f.dflt.is_empty() {
+      let dv = b.foreign_value(f.dflt[0], f.dfile, f.st)
+      b.jump(join, [dv])
+    } else if b.is_json_patch(f.ct) {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "Absent")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else if b.option_elem(f.ct) >= 0 {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else {
+      let p = b.const_str(seg)
+      let m = b.const_str("missing field `${f.name}`")
+      b.retv(b.dec_err(d, p, m))
+    }
+    b.seal(join)
+    b.s.cur = join
+    out.push(res)
+  }
+  out
+}
+
+/// t, or the type in a Box (unboxType).
+fn (var b: Builder) unbox_type(t: Int) -> Int {
+  if b.tkind(t) == Kind.Box {
+    return b.m.types[t].elems[0]
+  }
+  t
+}
+
+// ---------------------------------------------------------------------------
+// SQL rows
+
+/// The Row accessor that reads a field of checker type ct, or ""
+/// (sqlAccessor).
+fn (var b: Builder) sql_accessor(ct: Int) -> Str {
+  for n in ["Int", "Float", "Str", "Bool", "Time"] {
+    if b.is_prelude_named(ct, [n]) {
+      return n.to_lower()
+    }
+  }
+  if b.is_prelude_named(ct, ["Option"]) {
+    let a = b.ty_args(ct)
+    if a.len() == 1 {
+      let acc = b.sql_accessor(a[0])
+      if !acc.is_empty() && !b.is_prelude_named(a[0], ["Option"]) {
+        return "${acc}_opt"
+      }
+    }
+  }
+  ""
+}
+
+/// xo.sql.dec[ct](r: R) -> Result[T, sql.SqlErr] (sqlDecode), built now;
+/// rt is its lowered result type.
+fn (var b: Builder) sql_decode(ct: Int, row_ct: Int, rt: Int) -> Str {
+  let row_t = b.typ(row_ct)
+  let name = "xo.sql.dec[${b.c.show(ct)}]"
+  let fi = b.thunk_func(name, [row_t], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.sql_body(ct, row_ct, rt)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let row = b.param(0)
+  let err_i = b.m.variant_index(rt, "Err")
+  let ok_i = b.m.variant_index(rt, "Ok")
+  if b.tkind(rt) != Kind.Enum || err_i < 0 || ok_i < 0 {
+    b.unsupported("decoding a row into `${b.c.show(ct)}`")
+    b.retv(b.undef(rt))
+    return
+  }
+  let et = b.m.types[rt].variants[err_i].fields[0].ty
+  let t = b.m.types[rt].variants[ok_i].fields[0].ty
+  let obj = b.named_obj(ct)
+  if obj < 0 || b.c.objs[obj].tkind != "struct" || b.tkind(t) != Kind.Struct {
+    b.unsupported("decoding a row into `${b.c.show(ct)}`")
+    b.retv(b.undef(rt))
+    return
+  }
+  var vals: List[Int] = []
+  for f in b.c.objs[obj].fields {
+    let col = b.const_str(check.text(f.name))
+    let acc = b.sql_accessor(f.ty)
+    let md = b.method_of(row_ct, acc)
+    if acc.is_empty() || md < 0 {
+      let msg = b.const_str("the field type cannot be read from a column")
+      let e = b.variant(et, "Mismatch", [col, msg])
+      b.retv(b.add(Op.Variant, rt, Aux.I(n: err_i), [e]))
+      return
+    }
+    let callee = b.declare(md, [])
+    let cname = b.m.funcs[callee].name
+    let crt = b.m.funcs[callee].results[0]
+    let r = b.call(cname, crt, "", [row, col])
+    b.check(cname)
+    let ce = b.m.variant_index(crt, "Err")
+    let co = b.m.variant_index(crt, "Ok")
+    if b.tkind(crt) != Kind.Enum || ce < 0 || co < 0 {
+      b.unsupported("the accessor `${acc}` of `${b.c.show(row_ct)}`")
+      b.retv(b.undef(rt))
+      return
+    }
+    let tag = b.add(Op.Tag, it, Aux.None, [r])
+    let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ce)]))
+    let e = b.add(Op.Payload, b.m.types[crt].variants[ce].fields[0].ty, Aux.P(tag: ce, field: 0), [r])
+    b.retv(b.add(Op.Variant, rt, Aux.I(n: err_i), [e]))
+    b.if_then_end(no, join)
+    vals.push(b.add(Op.Payload, b.m.types[crt].variants[co].fields[0].ty, Aux.P(tag: co, field: 0), [r]))
+  }
+  let sv = b.add(Op.Struct, t, Aux.None, vals)
+  b.retv(b.add(Op.Variant, rt, Aux.I(n: ok_i), [sv]))
+}

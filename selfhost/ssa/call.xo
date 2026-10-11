@@ -1147,8 +1147,7 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     }
   }
   if !b.type_params(fo).is_empty() {
-    b.unsupported("the generic intrinsic `${b.obj_name(fo)}`")
-    return b.undef(nt)
+    return b.generic_intrinsic(x, ci, es)
   }
   let name = b.obj_name(fo)
   if name is "fs_root" | "fs_mode" {
