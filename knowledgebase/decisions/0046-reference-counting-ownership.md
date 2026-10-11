@@ -52,7 +52,9 @@ Perceus (Reinking, Xie, de Moura, Leijen, PLDI 2021) and Lean 4:
    because passing it to an owned parameter consumes it). Callers keep
    ownership of borrowed arguments; a call that both consumes and borrows
    one value retains it first, so `append_all(xs, xs)` with one `var`
-   parameter cannot see its own writes (golden `var_alias`).
+   parameter cannot see its own writes (golden `var_alias`). Refined
+   2026-10-10 by decision 0149: an enum parameter is borrowed unless
+   every path consumes it.
 6. **Cancellation.** `retain x ... release x` in one block is removed
    when nothing between consumes, retains, releases, or reuses x or the
    container x was projected from.

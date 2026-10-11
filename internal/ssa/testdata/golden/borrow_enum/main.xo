@@ -1,0 +1,44 @@
+// An enum parameter that some path only reads is borrowed even when
+// another path consumes it (decision 0149): `walk` keeps a node on one
+// arm (a retain there) and recurses through payloads on the others with
+// no retain or release; `keep` consumes on every path and stays owned.
+// A List parameter consumed on one path stays owned (in place updates).
+
+enum Node {
+  Leaf(n: Int)
+  Pair(l: Node, r: Node)
+  Named(name: Str, inner: Node)
+}
+
+fn walk(e: Node, var kept: List[Node]) -> Int {
+  match e {
+    Leaf(n: n) => n
+    Pair(l: l, r: r) => walk(l, kept) + walk(r, kept)
+    Named(inner: inner, ..) => {
+      kept.push(e)
+      walk(inner, kept)
+    }
+  }
+}
+
+fn keep(e: Node) -> List[Node] {
+  [e]
+}
+
+fn add(xs: List[Int], x: Int) -> List[Int] {
+  if x < 0 {
+    return []
+  }
+  var ys = xs
+  ys.push(x)
+  ys
+}
+
+fn main(os: Os) {
+  var kept: List[Node] = []
+  let t = Node.Pair(l: Node.Named(name: "a", inner: Node.Leaf(n: 1)), r: Node.Leaf(n: 2))
+  let n = walk(t, kept)
+  let k = keep(t)
+  let xs = add([1], 2)
+  os.stdio.println("${n} ${kept.len()} ${k.len()} ${xs.len()}")
+}

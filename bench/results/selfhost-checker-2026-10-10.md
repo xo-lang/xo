@@ -928,3 +928,34 @@ start of these experiments). The checker's output is identical on the
 and 400 module mutations (seed 12) on the LLVM build. One bug on the
 way (gotchas/llvm-held-memory-read-before-store.md): a return wrote one
 `var` parameter back over the memory another held value was read from.
+
+## 3. Borrowing match payloads (decision 0149)
+
+After decisions 0147 and 0148, a profile (8 s, 5,900 samples) put
+reference counting first: `xo_rl_free` 275, `xo.drop.Expr` 261,
+`xo_alloc` 224, `xo.dup.Expr` 179, `memmove` 154, the `Stmt` drops and
+dups about 160, `xo.drop.Token` 55. The node parameters of the checker's
+recursive walk (`check`, `check0`, `infer` over `Expr`) were owned, as
+some path consumes them, so each level duplicated the sub node it
+projected and dropped its own.
+
+The change: a parameter stays borrowed unless every normal path (not
+landing pads) consumes it; the consuming paths retain it.
+
+| build | rounds (ms) |
+|---|---|
+| decision 0148 | 3,148, 3,262, 3,542 |
+| borrowed unless consumed on every path, all types | 76,516, 77,026, 76,601 |
+
+25 times slower: `xo.map.put` became borrowed (one path does not
+consume the map), so every insert retained the map and the in place
+updates copied its lists (gotchas/borrowed-list-copied-on-update.md).
+Restricted to enum parameters, which are never updated in place:
+
+| build | rounds (ms) |
+|---|---|
+| decision 0148 | 3,203, 3,142, 3,144 |
+| enum parameters borrowed unless consumed on every path | 2,962, 2,900, 2,939 |
+
+7% faster; kept. Output identical on the 627 repository runs (three
+backends; the RC change reaches arm64 too).
