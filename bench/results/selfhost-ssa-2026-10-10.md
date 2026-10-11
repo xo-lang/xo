@@ -443,3 +443,54 @@ the profile.
 3. **arm64: enums of 256 bytes or more by reference** (decision 0147's
    rule ported like 0151): the arm64 build of the builder is 2.3x the
    Go builder against LLVM's 1.56x.
+
+# Stage 6: std implementations, 2026-10-11
+
+`selfhost/ssa/json.xo` (about 1,000 lines): the generic intrinsics of
+the native implementations, `json_enc` and `json_dec` (the encoders and
+decoders generated per checker type, `xo.json.enc[T]` and
+`xo.json.dec[T]`: scalars, Duration, Time, Bytes, tuples, Option, List,
+Set, Map[Str, V], json.Patch and its Absent fields, structs with their
+defaults, enums with unit, single, `from`, and named field variants),
+`sql_decode` (`xo.sql.dec[T]` through the Row accessors), `any_of`,
+`any_get`, `cast`, `status_of`, `launder1` and `launder2`, and C
+interop: calls of `use c` bindings (build_cffi.go), with the binding
+loaded by the Xo checker from the binder's cache (decision 0152,
+`selfhost/check/cimport.xo`). internal/selfhost/testdata/ssa/stage6
+(JSON of every shape, rows, request values, casts, status codes),
+stage6c (every kind of C boundary value, a second binding of one header
+under an alias with `uses none`), and stage6c_skipped (a call of a
+skipped C function, rejected by both checkers) join the comparison.
+
+| functions (Go builder) | stage 5 (11,264) | stage 6 (11,569, three more runs) |
+|---|---|---|
+| identical | 10,356 | 11,543 |
+| skipped | 405 | 19 |
+| never declared | 503 | 7 |
+
+0 differences with the go, arm64, and LLVM builds of the Xo builder;
+`TestSelfhostSSAMutations` 0 differences, 6,590 of 6,590
+functions identical (the first run with nothing skipped). Every
+function still skipped is one the Go builder does not build either (it
+reports the construct as unsupported and the build fails): conversions
+between instances that differ only in effects (bench 07-cache, 8), a
+tuple pattern of a generic closure (02-worker-pool, 5 with its
+closures), a type parameter as a Map key in a generic constructor (one
+run, 7 helpers never declared), `domain` in 08-notes-service, `dbg` and
+holes, function values with `var` parameters. `use c` runs went from
+unsupported to compared (examples/realtime-control, stage6c);
+TestSelfhostChecker compares them too (376 accepted runs match, three
+backends).
+
+Found in stage 6:
+
+- **cbind: `ffi` and `uses none` shared one binding in a process**
+  (gotchas/cbind-memo-uses-none.md): the binder's memo key formatted a
+  nil and an empty `Uses` alike, so a second `use c` line of the same
+  header got the first line's effects. Fixed in internal/cbind,
+  `TestBindMemoUsesNone`.
+- **Native builds cannot decode JSON into sized integers**: a struct
+  with an `Int32` field and `derive Json` fails a native build with
+  "converting `Int` to `Int32`" (build_json.go decodes every Int kind
+  with `json_int` and coerces); the Go backend range checks it
+  (std/rt JsonDec). Not fixed here; next experiment below.

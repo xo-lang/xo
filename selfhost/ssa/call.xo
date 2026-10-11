@@ -85,6 +85,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
+  if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() {
+    return b.c_call(x, ci)
+  }
   if b.is_std_mod(fm) {
     let path = b.c.mods[fm].path
     if path.starts_with("native/") {

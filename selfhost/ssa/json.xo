@@ -967,3 +967,80 @@ fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
   let sv = b.add(Op.Struct, t, Aux.None, vals)
   b.retv(b.add(Op.Variant, rt, Aux.I(n: ok_i), [sv]))
 }
+
+// ---------------------------------------------------------------------------
+// C interop (build_cffi.go)
+
+/// A call of a `use c` binding (decision 0116): a call of its C adapter,
+/// `rt.<prefix><name>`; a struct argument is one word per field, a struct
+/// result is read back field by field, and a handle result is None for
+/// a NULL pointer (cCall).
+fn (var b: Builder) c_call(x: Expr, ci: check.CallInfo) -> Int {
+  let (_, _, cargs) = call_parts(x)
+  let fo = ci.fn_obj
+  let fm = b.obj_mod(fo)
+  let mname = b.c.mods[fm].name
+  if b.c.objs[fo].recv >= 0 {
+    b.unsupported("`${mname}.${b.c.display_name(fo)}`")
+    return b.undef(b.nat_of(x))
+  }
+  let fname = b.obj_name(fo)
+  let sym = "${b.c.mods[fm].c_prefix}${fname}"
+  let exprs = arg_exprs(b.c.objs[fo].params, cargs)
+  var args: List[Int] = []
+  for (i, p) in b.c.objs[fo].params.indexed() {
+    let e = match exprs[i] {
+      Some(e) => e
+      None => {
+        b.unsupported("a call with a missing argument")
+        return b.undef(b.nat_of(x))
+      }
+    }
+    let t = b.typ(p.ty)
+    let v = b.value_as(e, t)
+    if b.tkind(t) == Kind.Struct {
+      for (k, f) in b.m.types[t].fields.indexed() {
+        args.push(b.add(Op.Field, f.ty, Aux.I(n: k), [v]))
+      }
+      continue
+    }
+    args.push(v)
+  }
+  let rt = b.typ(b.c.objs[fo].result)
+  match b.tkind(rt) {
+    Unit => {
+      b.rt(sym, -1, args)
+      return b.unit()
+    }
+    Struct => {
+      b.rt(sym, -1, args)
+      var fs: List[Int] = []
+      for (k, f) in b.m.types[rt].fields.indexed() {
+        fs.push(b.rt("${sym}_r${k}", f.ty, []))
+      }
+      return b.add(Op.Struct, rt, Aux.None, fs)
+    }
+    Enum => {
+      // `H?` of a handle: None for a NULL pointer
+      let some = b.m.variant_index(rt, "Some")
+      let none = b.m.variant_index(rt, "None")
+      if some < 0 || none < 0 {
+        b.unsupported("the result of `${mname}.${fname}`")
+        return b.undef(rt)
+      }
+      let p = b.rt(sym, b.int_t(), args)
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, rt)
+      let (null, ok) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [p, b.cint(0)]))
+      b.s.cur = null
+      b.jump(join, [b.add(Op.Variant, rt, Aux.I(n: none), [])])
+      b.s.cur = ok
+      b.jump(join, [b.add(Op.Variant, rt, Aux.I(n: some), [p])])
+      b.seal(join)
+      b.s.cur = join
+      return res
+    }
+    _ => {}
+  }
+  b.rt(sym, rt, args)
+}

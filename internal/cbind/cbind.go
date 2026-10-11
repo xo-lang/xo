@@ -122,7 +122,9 @@ func Bind(opts Options) (*Binding, error) {
 		return nil, &Error{Header: opts.Header, Msg: err.Error()}
 	}
 	data, _ := os.ReadFile(b.bnd.HeaderPath)
-	h := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%q\x00%q\x00%s", Version, b.bnd.HeaderPath, data, opts.Links, opts.Uses, opts.Dir)))
+	// Uses nil (`ffi`) and empty (`uses none`) print alike with %q: the
+	// key says which (gotchas/cbind-memo-uses-none.md)
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%q\x00%v %q\x00%s", Version, b.bnd.HeaderPath, data, opts.Links, opts.Uses == nil, opts.Uses, opts.Dir)))
 	mk := hex.EncodeToString(h[:])
 	memoMu.Lock()
 	if old := memo[mk]; old != nil {

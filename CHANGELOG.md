@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Self hosting: SSA stage 6 (decision 0150): selfhost/ssa lowers the
+  generic intrinsics (JSON codecs, SQL rows, any, cast, status codes)
+  and calls of `use c` bindings exactly as internal/ssa does; the Xo
+  checker binds `use c` from the binding cache (decision 0152).
+- `use c`: two `use c` lines of one header, one with `uses none` and
+  one without, no longer share one binding in a process (the second
+  line had the first one's effects).
 - Self hosting: SSA stage 5 (decision 0150): selfhost/ssa lowers
   scopes, tasks, `await`, channels, `select`, Mutex, Atomic, std/task,
   os.tasks, and the operations that wait exactly as internal/ssa does

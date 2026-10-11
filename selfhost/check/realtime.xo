@@ -390,6 +390,9 @@ fn (var c: Checker) rt_call(var w: RtWalk, call: Expr, fun: Expr) -> Bool {
     }
     return false
   }
+  if m >= 0 && !c.mods[m].c_prefix.is_empty() {
+    return false
+  }
   if c.objs[fo].iface {
     c.rt_report(w, "XO1403", fsp, "call of interface method `${c.display_name(fo)}` in a real-time function; its implementation is not known")
     return false

@@ -1,0 +1,7 @@
+// A call of a C function the binding skipped (XO1105, decision 0116):
+// rejected by both checkers.
+use c "tiny.h" link "tiny.c"
+
+fn main(os: Os) {
+  os.stdio.println(tiny.tiny_dup("x"))
+}

@@ -198,7 +198,7 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 	}
 	head := firstLine(got)
 	switch {
-	case want.none == "holes" || strings.HasPrefix(head, "== unsupported use go or use c"):
+	case want.none == "holes" || strings.HasPrefix(head, "== unsupported use go") || strings.HasPrefix(head, "== unsupported use c"):
 		st.unsupported++
 		st.unsupportedWhy["run: "+strings.TrimPrefix(head, "== ")]++
 		return nil

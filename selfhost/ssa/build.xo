@@ -531,6 +531,11 @@ fn (var b: Builder) named_type(t: Int) -> Int {
   }
   let impl_t = b.impl_named(t)
   let name = b.type_name(impl_t)
+  if om >= 0 && !b.c.mods[om].c_prefix.is_empty() && b.c.objs[obj].opaque {
+    // a C handle of `use c`: the pointer in a word, never reference
+    // counted (decision 0116)
+    return b.int_t()
+  }
   let tk = b.c.objs[obj].tkind
   if tk == "struct" {
     if b.conc_type(obj) {

@@ -1,0 +1,30 @@
+// SSA stage 6 C interop for TestSelfhostSSA (decision 0150, `use c`,
+// decision 0116): scalars, Bools, sized integers, Str and Bytes
+// arguments, a Str result, opaque handles (and the Option of one), flat
+// structs as arguments and results, and a second binding of the same
+// header with other effects under an alias. Run natively.
+use c "tiny.h" link "tiny.c"
+use c "tiny.h" link "tiny.c" as quiet uses none
+
+fn main(os: Os) {
+  let s = tiny.tiny_add(2, 3)
+  let f = tiny.tiny_scale(1.5, 2.0)
+  os.stdio.println("${s} ${f} ${tiny.tiny_greeting()}")
+  os.stdio.println("${tiny.tiny_count("hello")} ${tiny.tiny_sum(b"abc")} ${tiny.tiny_text_len("hey")}")
+  os.stdio.println(tiny.tiny_echo("echo"))
+  let c = tiny.tiny_counter_new(5) ?? fault("no counter")
+  tiny.tiny_counter_inc(c)
+  os.stdio.println("${tiny.tiny_counter_get(c)}")
+  tiny.tiny_counter_free(c)
+  match tiny.tiny_counter_none() {
+    Some(_) => os.stdio.println("some")
+    None => os.stdio.println("none")
+  }
+  os.stdio.println("${tiny.tiny_is_even(4)} ${tiny.tiny_big()} ${tiny.tiny_neg8()} ${tiny.tiny_byte(7)}")
+  os.stdio.println("${tiny.tiny_step(1, 10)}")
+  let p = tiny.tiny_point_add(tiny.TinyPoint{x: 1, y: 2}, tiny.TinyPoint{x: 3, y: 4})
+  os.stdio.println("${p.x} ${p.y}")
+  let q = tiny.tiny_pair_make(1.0, 2.0)
+  os.stdio.println("${q.a} ${q.b} ${q.ok}")
+  os.stdio.println("${quiet.tiny_add(1, 1)}")
+}

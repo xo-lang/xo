@@ -20,7 +20,10 @@ continuations, loop bounds, real-time sections) implemented 2026-10-11
 in `selfhost/ssa/contract.xo` and `defer.xo`. SSA stage 5 (scopes,
 tasks, channels, `select`, Mutex, Atomic, std/task, os.tasks, and the
 operations that wait) implemented 2026-10-11 in `selfhost/ssa/conc.xo`,
-with the scopes among the open blocks of defer.xo. Evidence:
+with the scopes among the open blocks of defer.xo. SSA stage 6 (the
+generic intrinsics and C interop) implemented 2026-10-11 in
+`selfhost/ssa/json.xo`, with `use c` bound in the Xo checker
+(`selfhost/check/cimport.xo`, decision 0152). Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -238,6 +241,26 @@ and an operation that may fault inside it gets a landing (the port's
 port-shortcut-flags.md). Spawn sites are numbered by the checker key of
 their call in check.Inspect order (conc.xo walk_*), as the Go builder
 numbers them by AST node.
+
+**Comparison rules of stage 6** (2026-10-11, std implementations:
+selfhost/ssa json.xo; selfhost/check cimport.xo, decision 0152):
+
+- The generated functions of the intrinsics (`xo.json.enc[T]`,
+  `xo.json.dec[T]`, `xo.sql.dec[T]`) are built when asked for, as the
+  Go builder's genFunc builds them (they declare functions: the
+  encoders and decoders of their fields, map helpers, Row accessors),
+  and compared as any function.
+- Runs with `use c` are compared: the Xo checker binds a header from
+  the declaration file the Go binder cached (decision 0152), so the Go
+  checker must have bound it first (TestSelfhostSSA computes the Go
+  builds before it runs the Xo builder); a run whose binding is not in
+  the cache is reported as `== unsupported use c ...` and counted, not
+  compared. Runs with `use go` stay unsupported (they never build
+  natively).
+- What the Go builder itself does not support (it reports an error and
+  the build fails: a JSON decoder of a sized integer, a conversion
+  between instances that differ only in effects, `dbg`, holes) the Xo
+  builder skips, and such functions are counted as skipped.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,
