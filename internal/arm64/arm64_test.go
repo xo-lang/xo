@@ -19,6 +19,7 @@ import (
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/ssa"
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden assembly files")
@@ -27,7 +28,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
 	build.EnableTestBinCache()
-	dir, err := os.MkdirTemp("", "xo-arm64-test-")
+	dir, err := testtmp.Dir("xo-arm64-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

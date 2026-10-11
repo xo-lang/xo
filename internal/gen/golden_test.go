@@ -16,6 +16,7 @@ import (
 	"github.com/xo-lang/xo/internal/build"
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the golden programs")
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 	if _, ok := os.LookupEnv("GORACE"); !ok {
 		os.Setenv("GORACE", "atexit_sleep_ms=0")
 	}
-	dir, err := os.MkdirTemp("", "xo-gen-test-")
+	dir, err := testtmp.Dir("xo-gen-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

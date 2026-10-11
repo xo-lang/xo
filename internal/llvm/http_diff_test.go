@@ -483,8 +483,9 @@ func startDiffDriver(t *testing.T) {
 			return
 		}
 		src := filepath.Join(rtDir, "testdata", "http_diff.c")
-		dir, err := os.MkdirTemp("", "xo-http-diff-")
-		if err != nil {
+		// inside testDir, so TestMain removes it
+		dir := filepath.Join(testDir, "http-diff")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			diffDriver.err = err
 			return
 		}

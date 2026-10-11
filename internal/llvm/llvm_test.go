@@ -17,19 +17,26 @@ import (
 	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/llvm"
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the golden programs")
+
+// testDir is the temporary directory TestMain makes and removes.
+var testDir string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
 	build.EnableTestBinCache()
-	dir, err := os.MkdirTemp("", "xo-llvm-test-")
+	dir, err := testtmp.Dir("xo-llvm-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	testDir = dir
+	// the http-diff driver used its own directory before it moved into testDir
+	testtmp.Sweep("xo-http-diff-")
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
