@@ -1083,7 +1083,8 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
         }
         return eq
       }
-      if (o == Op.Eq || o == Op.Ne) && !b.comparable(lt, []) {
+      var seen0: List[Int] = []
+      if (o == Op.Eq || o == Op.Ne) && !b.comparable(lt, seen0) {
         b.unsupported("`==` on values of type `${b.m.types[lt].name}`, which hold functions or runtime handles")
         return b.undef(bt)
       }
@@ -1122,31 +1123,37 @@ fn (var b: Builder) is_native_request(t: Int) -> Bool {
   b.tkind(t) == Kind.Struct && b.m.types[t].name == "native.http.Request" && b.m.types[t].fields.len() >= REQUEST_FIELDS.len()
 }
 
-/// Whether `==` on values of t lowers (comparable).
-fn (var b: Builder) comparable(t: Int, seen: List[Int]) -> Bool {
+/// Whether `==` on values of t lowers (comparable). seen is shared by
+/// the whole walk, as the Go builder's map is: a type is looked at once
+/// (a copy of the path per call revisited every shared field type and
+/// copied the list at each push, gotchas/selfhost-shared-list-push.md).
+fn (var b: Builder) comparable(t: Int, var seen: List[Int]) -> Bool {
   if seen.contains(t) || b.is_iface(t) || b.is_trace(t) {
     return true
   }
-  var s2 = seen
-  s2.push(t)
-  let x = b.m.types[t]
-  if x.kind is Kind.Func | Kind.Handle {
+  seen.push(t)
+  let k = b.m.types[t].kind
+  if k is Kind.Func | Kind.Handle {
     return false
   }
-  for f in x.fields {
-    if !b.comparable(f.ty, s2) {
+  let n = b.m.types[t].fields.len()
+  for i in 0..n {
+    if !b.comparable(b.m.types[t].fields[i].ty, seen) {
       return false
     }
   }
-  for v in x.variants {
-    for f in v.fields {
-      if !b.comparable(f.ty, s2) {
+  let nv = b.m.types[t].variants.len()
+  for vi in 0..nv {
+    let nf = b.m.types[t].variants[vi].fields.len()
+    for i in 0..nf {
+      if !b.comparable(b.m.types[t].variants[vi].fields[i].ty, seen) {
         return false
       }
     }
   }
-  for e in x.elems {
-    if !b.comparable(e, s2) {
+  let ne = b.m.types[t].elems.len()
+  for i in 0..ne {
+    if !b.comparable(b.m.types[t].elems[i], seen) {
       return false
     }
   }

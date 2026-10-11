@@ -10,6 +10,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   scopes, tasks, `await`, channels, `select`, Mutex, Atomic, std/task,
   os.tasks, and the operations that wait exactly as internal/ssa does
   (0 differences, three backends, 1,900 mutations).
+- Self hosting: the go build of the Xo SSA builder is 7 to 9% faster
+  (`comparable` copied its list of types per recursive call).
 - arm64 backend: struct parameters of 256 bytes or more of direct calls
   are passed by address (decision 0151); `var` ones stay in the
   caller's memory, read and updated in place (decision 0148's

@@ -407,3 +407,39 @@ before the fix of the next section.
 | selfhost/check | 710 | 1,244 (1.75x) |
 | selfhost/ssa | 1,160 | 2,080 (1.80x) |
 | internal/gen/testdata/golden/http_scoped (1,140 functions; Xo 1,080) | 16 | 32 (2.0x) |
+
+# The go build of the Xo builder: profile and top hotspot, 2026-10-11
+
+`XO_CPUPROFILE` on `.tools/ssa-go --bench=20 selfhost/ssa` (the go
+build; 6 s of samples): no function of the builder above 4% flat; the
+garbage collector and allocation about 25%. The largest item of user
+code was `rt.List_copyOut` under `List_push`, 9% of the run. A
+temporary counter in std/rt (not committed) split the copies: 795,046
+pushes that grew a full list (amortized doubling) and 177,674 that
+copied a list with room left because another copy of it had already
+pushed past its end, 1.7 million elements in all, nearly every one in
+`Builder.comparable`: it copied the path of types it walked (`var s2 =
+seen; s2.push(t)`) for every call, so sibling calls each copied the
+whole list, and it revisited every shared field type, where the Go
+builder's `seen` map visits each type once. One list threaded as a
+`var` parameter (expr.xo) fixes both
+(gotchas/selfhost-shared-list-push.md): the output is identical, and
+the build 7 to 9% faster (selfhost/check 1,244 to 1,160 ms, 1.75x to
+1.63x the Go builder; selfhost/ssa 2,080 to 1,900 ms, 1.80x to 1.64x).
+The stage 4 suspect (begin and end copying the state S) is under 1% of
+the profile.
+
+## Next experiments (after stage 5)
+
+1. **Stage 6, the generic intrinsics** (build_json.go, build_sql.go,
+   build_native.go intrinsics: `json_enc`, `json_dec`, `any_of`,
+   `cast`, `status_of`, `launder1/2`, `sql_decode`): 330 functions
+   skipped and most of the 503 never declared.
+2. **The go build's allocation**: `mallocgc` is 18% of the profile, a
+   quarter of it large allocations (`makeslice`, among them
+   `Func.values` as it doubles). Next: give `Module.new_func` lists
+   with capacity from the Go builder's average (with_capacity), and
+   count again with the std/rt counter of this section.
+3. **arm64: enums of 256 bytes or more by reference** (decision 0147's
+   rule ported like 0151): the arm64 build of the builder is 2.3x the
+   Go builder against LLVM's 1.56x.

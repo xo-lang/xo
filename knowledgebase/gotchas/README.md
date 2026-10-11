@@ -285,3 +285,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [peer-close-eof-or-reset.md](peer-close-eof-or-reset.md): Observed: a peer that closes at once gives the client EOF or "connection reset by peer" by timing; TestTLSDiff treats both as one result.
 - [byref-threshold-in-tests.md](byref-threshold-in-tests.md): Observed: a golden struct of 248 bytes passed on arm64 without ever using the by reference convention (256 bytes); count the words and keep a margin.
 - [selfhost-ssa-port-shortcut-flags.md](selfhost-ssa-port-shortcut-flags.md): Observed: the port armed landings only after a `defer` (`any_defer`); scopes need them too. A stage's new construct must be checked against the earlier stages' fast paths.
+- [selfhost-shared-list-push.md](selfhost-shared-list-push.md): Observed: a recursive walk that copied a list and pushed per call made every sibling push copy the whole list (selfhost/ssa comparable: 1.7 M elements); thread one list.
