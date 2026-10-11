@@ -40,9 +40,15 @@ not object):
 2. **arm64 emitter**: with it, the compiler can be one native binary
    with no Go toolchain and no clang (the arm64 backend assembles and
    links itself on darwin/arm64 and linux/arm64, decision 0049).
-3. **LLVM emitter**: the other native backend, for the targets arm64
+3. **WebAssembly backend** (added by the owner 2026-10-11): a new
+   emitter from the SSA to `.wasm`, written in Xo after the arm64
+   switch-over, so the playground can run the Xo compiler itself as wasm
+   with no Go compiler or linker in the browser (decision 0144). First
+   experiment: the core subset lowered to WAT, assembled with `wat2wasm`,
+   run under wazero, output diffed against the Go backend's goldens.
+4. **LLVM emitter**: the other native backend, for the targets arm64
    does not cover.
-4. **Go code generator** last: it is needed only for the Go backend,
+5. **Go code generator** last: it is needed only for the Go backend,
    which already needs the Go toolchain.
 
 **Switch-over point**: the Go implementation stays the reference until
