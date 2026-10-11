@@ -76,7 +76,7 @@ fn main(os: Os) ! {
       fail(os, "std/time needs time zone data, which this driver does not write yet")
     }
   }
-  var b = ssa.build_program(c, wd, false)
+  var b = ssa.build_program(c, line_root(os, wd, dirs[0]), false)
   if !b.why.is_empty() {
     fail(os, b.why)
   }
@@ -162,6 +162,40 @@ fn main(os: Os) ! {
   }
   os.stdio.eprint(last)
   fail(os, "${cc} failed")
+}
+
+/// The directory fault positions are relative to (internal/build
+/// lineRoot): the nearest directory holding xo.mod at or above dir, else
+/// dir itself, absolute.
+fn line_root(os: Os, wd: Str, dir: Str) -> Str {
+  var abs = dir.trim_suffix("/")
+  if abs.starts_with("./") {
+    abs = abs.trim_prefix("./")
+  }
+  if !abs.starts_with("/") {
+    abs = if abs == "." { wd } else { "${wd}/${abs}" }
+  }
+  var d = abs
+  while !d.is_empty() {
+    if os.fs.exists("${d}/xo.mod").ok() ?? false {
+      return rel_to(wd, d)
+    }
+    let parts = d.split("/")
+    if parts.len() <= 1 {
+      break
+    }
+    d = parts[0..parts.len() - 1].join("/")
+  }
+  rel_to(wd, abs)
+}
+
+/// p relative to wd when it is below it (the checker's file paths are
+/// relative to the working directory for relative arguments).
+fn rel_to(wd: Str, p: Str) -> Str {
+  if p.starts_with("${wd}/") {
+    return p.trim_prefix("${wd}/")
+  }
+  p
 }
 
 fn fail(os: Os, msg: Str) -> Never {
