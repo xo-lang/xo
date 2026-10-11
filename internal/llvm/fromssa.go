@@ -143,7 +143,9 @@ type sgen struct {
 // as an argument and every field again in the result.
 const byRefMin = 256
 
-// byRefOf returns which parameters of f are passed by reference, or nil.
+// byRefOf returns which parameters of f are passed by reference, or nil:
+// structs and enums of byRefMin bytes or more (enums since decision 0147:
+// their tag and payload reads load from the reference).
 func (g *sgen) byRefOf(f *ssa.Func) []bool {
 	if br, ok := g.byRef[f]; ok {
 		return br
@@ -151,7 +153,7 @@ func (g *sgen) byRefOf(f *ssa.Func) []bool {
 	var br []bool
 	if !f.Indirect && !f.Entry && !g.addrTaken[f.Name] && f.Name != "main" {
 		for i, p := range f.Params() {
-			if p.Type.Kind == ssa.KStruct && g.size(p.Type) >= byRefMin {
+			if (p.Type.Kind == ssa.KStruct || p.Type.Kind == ssa.KEnum) && g.size(p.Type) >= byRefMin {
 				if br == nil {
 					br = make([]bool, len(f.Params()))
 				}
@@ -971,6 +973,52 @@ type sfn struct {
 	// call that passes several
 	home  map[string]string
 	spare map[string][]string
+	// addr maps values that sit in memory nothing writes while the
+	// function runs to that memory (decision 0147): parameters passed by
+	// reference that are not `var` (the caller's slot), fields and
+	// payloads of such values, and the contents of boxes and list
+	// elements reached from a borrowed parameter (alive and never updated
+	// in place while borrowed). Tag, payload, and field reads load from
+	// it, and a call passes it to a parameter by reference that is not
+	// `var` instead of copying the value into a slot.
+	addr map[*ssa.Value]string
+}
+
+// isAgg reports a struct, enum, or tuple type.
+func isAgg(t *ssa.Type) bool {
+	return t.Kind == ssa.KStruct || t.Kind == ssa.KEnum || t.Kind == ssa.KTuple
+}
+
+// rootBorrowed reports whether v is reached from a borrowed parameter or
+// a constant through fields, payloads, box contents, and list elements:
+// its containers stay alive, and are not updated in place, for the whole
+// call (ssa rc.go projKind).
+func (s *sfn) rootBorrowed(v *ssa.Value) bool {
+	for {
+		switch v.Op {
+		case ssa.OpConst:
+			return true
+		case ssa.OpParam:
+			if v.Block != s.f.Blocks[0] {
+				return false
+			}
+			for i, p := range s.f.Params() {
+				if p == v {
+					return i < len(s.f.Borrowed) && s.f.Borrowed[i]
+				}
+			}
+			return false
+		case ssa.OpPayload, ssa.OpUnbox, ssa.OpField:
+			v = v.Args[0]
+		case ssa.OpCall:
+			if n, _ := v.Aux.(string); n != "list.index" && n != "list.get" {
+				return false
+			}
+			v = v.Args[0]
+		default:
+			return false
+		}
+	}
 }
 
 // loadRef reads a value of type t from memory p (decision 0145). One
@@ -1091,7 +1139,7 @@ func (s *sfn) typed(v *ssa.Value) string { return s.g.ll(v.Type) + " " + s.op(v)
 
 func (g *sgen) fn(f *ssa.Func) {
 	s := &sfn{g: g, f: f, end: map[*ssa.Block]string{}, text: map[*ssa.Block]*strings.Builder{}, names: map[*ssa.Value]string{},
-		home: map[string]string{}, spare: map[string][]string{}}
+		home: map[string]string{}, spare: map[string][]string{}, addr: map[*ssa.Value]string{}}
 	var ps []string
 	var loads strings.Builder
 	s.body = &loads
@@ -1107,6 +1155,7 @@ func (g *sgen) fn(f *ssa.Func) {
 				}
 			} else {
 				ps = append(ps, "ptr noalias readonly "+ptr)
+				s.addr[p] = ptr
 			}
 			s.alias(p, s.loadRef(p.Type, ptr))
 			continue
@@ -1437,6 +1486,14 @@ func (s *sfn) instr(v *ssa.Value) {
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
 			return
 		}
+		if p, ok := s.addr[v.Args[0]]; ok {
+			fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.ll(v.Args[0].Type), p, v.Aux.(int))
+			if isAgg(v.Type) {
+				s.addr[v] = fp
+			}
+			s.set(v, "load %s, ptr %s", g.ll(v.Type), fp)
+			return
+		}
 		s.set(v, "extractvalue %s %s, %d", g.ll(v.Args[0].Type), a(0), v.Aux.(int))
 	case ssa.OpSetField:
 		s.set(v, "insertvalue %s %s, %s, %d", g.ll(v.Type), a(0), s.typed(v.Args[1]), v.Aux.(int))
@@ -1447,10 +1504,24 @@ func (s *sfn) instr(v *ssa.Value) {
 		}
 		s.alias(v, s.variant(v.Type, v.Aux.(int), fs))
 	case ssa.OpTag:
+		if p, ok := s.addr[v.Args[0]]; ok {
+			s.set(v, "load i64, ptr %s", p)
+			return
+		}
 		s.set(v, "extractvalue %s %s, 0", g.ll(v.Args[0].Type), a(0))
 	case ssa.OpPayload:
 		r := v.Aux.(ssa.PayloadRef)
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
+			return
+		}
+		if p, ok := s.addr[v.Args[0]]; ok {
+			t := v.Args[0].Type
+			pay := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.ll(t), p)
+			fp := s.def("getelementptr %s, ptr %s, i32 0, i32 %d", g.variantLL(t, r.Tag), pay, r.Field)
+			if isAgg(v.Type) {
+				s.addr[v] = fp
+			}
+			s.set(v, "load %s, ptr %s", g.ll(v.Type), fp)
 			return
 		}
 		s.alias(v, s.payload(v.Args[0].Type, a(0), r.Tag, r.Field))
@@ -1498,6 +1569,9 @@ func (s *sfn) instr(v *ssa.Value) {
 			return
 		}
 		vp := s.def("getelementptr %s, ptr %s, i32 0, i32 1", g.boxLL(v.Args[0].Type), a(0))
+		if isAgg(v.Type) && s.rootBorrowed(v.Args[0]) {
+			s.addr[v] = vp
+		}
 		s.set(v, "load %s, ptr %s", g.ll(v.Type), vp)
 	case ssa.OpCapture:
 		if v.Type.Kind == ssa.KUnit || v.Type.Kind == ssa.KCap {
@@ -1627,6 +1701,11 @@ func (s *sfn) call(v *ssa.Value) {
 		slots := make([]string, len(v.Args))
 		used := map[string]int{}
 		for i, x := range v.Args {
+			if p, ok := s.addr[x]; ok && br != nil && br[i] && !isVarParam(callee, i) {
+				// in memory nothing writes during the call: passed as it is
+				args = append(args, "ptr "+p)
+				continue
+			}
 			if br != nil && br[i] {
 				lt := g.ll(x.Type)
 				slots[i] = s.slot(lt, used)
@@ -1704,6 +1783,9 @@ func (s *sfn) call(v *ssa.Value) {
 		p := s.elemPtr(et, a(0), a(1))
 		if et.Kind == ssa.KUnit {
 			return
+		}
+		if isAgg(et) && s.rootBorrowed(v.Args[0]) {
+			s.addr[v] = p
 		}
 		s.set(v, "load %s, ptr %s%s", g.ll(et), p, tbaaElem)
 	case "list.get":

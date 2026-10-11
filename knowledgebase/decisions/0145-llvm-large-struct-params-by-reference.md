@@ -56,7 +56,9 @@ time spread over the prologues and epilogues that move those fields.
 
 ## Alternatives
 
-- **Enums by reference too.** `Expr` (352 bytes), `Pattern` (768) and
+- **Enums by reference too** (done in decision 0147, 2026-10-10, with
+  payload reads from the reference and values in stable memory passed
+  by address: 5% faster). `Expr` (352 bytes), `Pattern` (768) and
   `Stmt` (1,336) are as large; passing them by reference measured 2 to
   3% slower, since a payload read stores the enum into an alloca
   anyway. Next experiment: read payloads straight from the reference

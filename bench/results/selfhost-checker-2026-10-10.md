@@ -862,3 +862,46 @@ and `use c` (headers). Next experiment for interop: load the cached
 binding of `use go` imports when it exists (internal/check
 loadGoImport with gobind.LoadOrBind's cache path) and report the run
 unsupported only when a binding would have to be made.
+
+# LLVM build experiments after module loading, 2026-10-10
+
+Decisions 0145, 0147. The "Next experiments" of the LLVM profile above,
+in order. Every measurement is `--bench=20` on the selfhost input (the
+lexer, parser, and checker: 3 modules), interleaved round by round with
+the build it is compared to (`ab.sh`: base, candidate, base, ...), ms
+for 20 runs. Each LLVM build of the checker takes about 6.5 minutes of
+clang -O2 on 84 MB of IR.
+
+Baseline after module loading: LLVM 5,412 to 5,565 ms, the Go checker
+(`xo typedump --bench=20 selfhost`) 2,939 to 2,968 ms: 1.88x. (The
+stage 8 table's 4,549 ms after decision 0145 was measured on a quieter
+machine; the checker has also grown by module loading.)
+
+A profile of the baseline (`sample`, 8 s, 6,000 samples on the main
+thread) has no function above 4.4% of self time: `infer0` 263, `set_type`
+194, `pre_expr` 162, `xo_rl_free` 158, `parse_postfix` 148, `check0`
+141, `xo.drop.Expr` 127, `xo.dup.Expr` 114, `memmove` 93. `set_type`, a
+10 line function, compiles to 12,474 instructions; `infer0` to 74,000.
+
+## 1. Enums by reference, payload reads from the reference (decision 0147)
+
+| build | rounds (ms) |
+|---|---|
+| base | 5,565, 5,473, 5,451, 5,482 |
+| enums by reference, tag and payload reads from the parameter's memory | 5,545, 5,486, 5,486, 5,496 |
+
+Neutral: the 2 to 3% loss decision 0145 measured is gone, but nothing
+is gained. The IR showed why: a sub expression passed to a call was
+still loaded out of its box (44 words) and stored into the call's slot.
+
+Then values in stable memory passed by address (decision 0147: a non
+`var` by reference parameter's memory, its fields and payloads, and box
+contents and list elements under a borrowed root):
+
+| build | rounds (ms) |
+|---|---|
+| base | 5,473, 5,412, 5,419 |
+| enums by reference and stable addresses | 5,181, 5,164, 5,156 |
+
+5% faster; kept. The checker's output is identical on all 627
+repository runs on the three backends.
