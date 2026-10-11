@@ -160,7 +160,14 @@ func (c *checker) checkRequired(m *Module, u *ast.UseDecl) {
 	if reqs[owner.path] {
 		return
 	}
-	d := c.errorf(diag.ModuleNotRequired, u.Sp, "module %s of `%s` is not required by %s (it is in the build only because another module requires it)", owner.path, u.Path, filepath.Join(relDir(from.dir), "xo.mod"))
+	// Name the requiring module by its path, not its directory: the
+	// directory is absolute outside the working directory, so the message
+	// would change with where the module sits (format's TestCorpus).
+	by := "the xo.mod of " + from.path
+	if from.path == "" {
+		by = filepath.Join(relDir(from.dir), "xo.mod")
+	}
+	d := c.errorf(diag.ModuleNotRequired, u.Sp, "module %s of `%s` is not required by %s (it is in the build only because another module requires it)", owner.path, u.Path, by)
 	note(d, token.Span{}, "`xo get %s` (or `xo mod tidy`) requires the version the build selects (core 4.2)", owner.path)
 }
 

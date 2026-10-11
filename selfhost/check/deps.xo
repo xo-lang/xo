@@ -140,7 +140,8 @@ fn (var c: Checker) check_required(m: Int, f: Int, u: parser.UseDecl, p: Str) {
   if reqs.contains(owner.path) {
     return
   }
-  let d = c.error_at(f, "XO1306", u.span, "module ${owner.path} of `${p}` is not required by ${join(from.dir, "xo.mod")} (it is in the build only because another module requires it)")
+  let by = if from.path == "" { join(from.dir, "xo.mod") } else { "the xo.mod of ${from.path}" }
+  let d = c.error_at(f, "XO1306", u.span, "module ${owner.path} of `${p}` is not required by ${by} (it is in the build only because another module requires it)")
   c.note(d, "`xo get ${owner.path}` (or `xo mod tidy`) requires the version the build selects (core 4.2)")
 }
 

@@ -54,7 +54,7 @@
   {
     "code": "XO1306",
     "severity": "error",
-    "message": "module example.com/extra of `example.com/extra` is not required by testdata/golden/effect_ceiling_vendor/xo.mod (it is in the build only because another module requires it)",
+    "message": "module example.com/extra of `example.com/extra` is not required by the xo.mod of example.com/shop (it is in the build only because another module requires it)",
     "span": {
       "file": "report/report.xo",
       "line": 2,
