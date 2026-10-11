@@ -155,3 +155,9 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0153-arm64-enums-by-reference.md](0153-arm64-enums-by-reference.md): Accepted, implemented: the arm64 backend passes enum parameters of 256 bytes or more by reference too (decision 0151's convention), reads tags and payloads of enums in memory in place, and keeps large fields and payloads of read only memory there (the arm64 build of the self hosted SSA builder 6% faster).
 - [0155-edition-preview-until-1-0.md](0155-edition-preview-until-1-0.md): Accepted (owner), implemented: the only edition before 1.0 is `preview` (`edition 2026` an alias with the fixable note XO1315, rewritten by `xo fix`); the owner names the first frozen edition at 1.0 (years or another scheme, since a year can read as a version).
 - [0156-supply-chain-hardening.md](0156-supply-chain-hardening.md): Accepted, implemented: only the consumer vouches for a dependency's `use c` and impure `use go` (`vouch` lines, XO1316); an effect lock in xo.lock by default (XO1317, `xo mod accept-effects`); `Net.only`/`Env.only`/`Proc.only` attenuation; `xo audit`; logging is the effect `log`; a Backstabber's Knife Collection replication (10 of 15 classes blocked).
+- [0160-std-cli.md](0160-std-cli.md): Proposed: std/cli: argument parsing.
+- [0161-richer-proc.md](0161-richer-proc.md): Proposed: Richer Proc: child processes.
+- [0162-terminal.md](0162-terminal.md): Proposed: Terminal: TTYs, width, colors, hidden input.
+- [0163-files-streaming-and-dirs.md](0163-files-streaming-and-dirs.md): Proposed: Files: streaming handles, links, globs, user dirs, locks.
+- [0164-std-formats.md](0164-std-formats.md): Proposed: Formats: CSV, TOML, archives, regexp.
+- [0165-completions-and-version-stamp.md](0165-completions-and-version-stamp.md): Proposed: Shell completions and version stamping.
