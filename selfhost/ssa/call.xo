@@ -127,7 +127,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
   b.call_as(x, ci, fo)
 }
 
-fn (b: Builder) is_proc_run(fo: Int) -> Bool {
+fn (var b: Builder) is_proc_run(fo: Int) -> Bool {
   let r = b.c.objs[fo].recv
   if r < 0 || b.c.objs[fo].is_static || b.obj_name(fo) != "run" {
     return false
@@ -137,7 +137,7 @@ fn (b: Builder) is_proc_run(fo: Int) -> Bool {
 }
 
 /// Whether build_conc.go concCall lowers fo.
-fn (b: Builder) is_conc_call(fo: Int) -> Bool {
+fn (var b: Builder) is_conc_call(fo: Int) -> Bool {
   let m = b.obj_mod(fo)
   let r = b.c.objs[fo].recv
   if r < 0 {
@@ -151,7 +151,7 @@ fn (b: Builder) is_conc_call(fo: Int) -> Bool {
 
 /// `xs.values().any(fn(v) {...})` on a Map (build_hof.go mapValuesHof):
 /// whether its conditions hold, up to the body check.
-fn (b: Builder) is_map_values_hof(x: Expr, ci: check.CallInfo) -> Bool {
+fn (var b: Builder) is_map_values_hof(x: Expr, ci: check.CallInfo) -> Bool {
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
   if r < 0 || b.obj_name(r) != "List" || !b.is_prelude_mod(b.obj_mod(r)) {
@@ -678,7 +678,7 @@ fn (var b: Builder) ctor_call(vr: check.VRef, x: Expr) -> Int {
 
 /// A bare `Err(x)` or `Ok(x)` the checker typed against the enclosing
 /// function's Result without recording a constructor (isRetCtor).
-fn (b: Builder) is_ret_ctor(x: Expr) -> Bool {
+fn (var b: Builder) is_ret_ctor(x: Expr) -> Bool {
   let (_, fun, args) = call_parts(x)
   if let Ident(id) = fun {
     if (id.name != b"Err" && id.name != b"Ok") || args.len() != 1 {
@@ -748,7 +748,7 @@ fn (var b: Builder) coerce_err(v: Int, from: Int, to: Int) -> Int {
 }
 
 /// The result type the function's body returns (resultT).
-fn (b: Builder) result_t() -> Int {
+fn (var b: Builder) result_t() -> Int {
   b.s.f.results[0]
 }
 
@@ -1052,7 +1052,7 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
 
 /// The type of parameter value p of function fi (which may be the
 /// function being built, whose values live in b.s.f).
-fn (b: Builder) func_value_type(fi: Int, p: Int) -> Int {
+fn (var b: Builder) func_value_type(fi: Int, p: Int) -> Int {
   if fi == b.s.fi {
     return b.s.f.values[p].ty
   }

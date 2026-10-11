@@ -1,0 +1,209 @@
+# 0150: Order of the remaining self hosting stages, the switch-over, and the SSA builder in stages through `xo ssadump`
+
+Status: Accepted (2026-10-10, by the owner's go-ahead on the lead's
+proposal; the owner may revise the order). SSA stage 1 (the core
+subset) implemented in `selfhost/ssa/` (Xo: ir.xo, build.xo, expr.xo,
+stmt.xo, call.xo, show.xo, main.xo), `internal/ssa/stages.go`
+(`BuildStages`, `BuildRaw`, `SplitModule`, the `see` hook of
+build.go), `cmd/xo/ssadump.go` (hidden `xo ssadump`, test
+ssadump_test.go), the checker's native mode and records
+(`selfhost/check/info.xo`, load.xo `load_native`), and
+`internal/selfhost/ssa_test.go` (`TestSelfhostSSA`,
+`TestSelfhostSSAMutations`). Evidence:
+`bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
+0130, after the lexer (0076), the parser (0127), and the checker (0141).
+
+## Context
+
+Decision 0130 left the order of the stages after the checker and the
+point where the Xo compiler replaces the Go one to their own decision.
+The lexer, parser, and checker are self hosted and identical to Go on
+every repository run. What remains is the code generation half: the SSA
+lowering (internal/ssa, about 14,800 lines, shared by the two native
+backends), the arm64 emitter (internal/arm64), the LLVM emitter
+(internal/llvm's SSA path), and the Go code generator (internal/gen).
+
+The SSA builder is the largest piece left and the one every native
+emitter depends on. Like the checker it does many things at once
+(types, functions and generics, SSA construction, expressions,
+patterns, calls, closures, interfaces, maps, contracts, deferred code,
+concurrency, the std implementations, test binaries, and the passes
+after building), so it needs a dump both implementations print and a
+plan to compare it a part at a time.
+
+## Decision
+
+**Order of the remaining stages** (proposed by the lead, the owner did
+not object):
+
+1. **SSA lowering** (this decision), shared by both native backends.
+2. **arm64 emitter**: with it, the compiler can be one native binary
+   with no Go toolchain and no clang (the arm64 backend assembles and
+   links itself on darwin/arm64 and linux/arm64, decision 0049).
+3. **LLVM emitter**: the other native backend, for the targets arm64
+   does not cover.
+4. **Go code generator** last: it is needed only for the Go backend,
+   which already needs the Go toolchain.
+
+**Switch-over point**: the Go implementation stays the reference until
+the Xo compiler (lexer, parser, checker, SSA builder and passes, arm64
+emitter) compiles itself to a fixed point on arm64 hosts (the binary it
+builds of itself builds a byte identical binary) and passes the arm64
+goldens. From then the released `xo` for arm64 hosts is the self hosted
+binary for native builds (`--backend=arm64`, `--no-gc`); the Go
+implementation is kept, mirrored by the differential tests, for the Go
+and LLVM backends until their stages are ported, and is removed from
+the build when the Go code generator is ported and the full suite passes
+on the self hosted compiler. The owner may move the point (for example
+to after the LLVM emitter).
+
+**The dump.** `xo ssadump [--stage=S] [--each] [--bench=N] <dirs...>`
+(hidden) checks dirs as a native build does (check.Options.Native: the
+implementation modules of std/native are loaded and checked) and prints
+the SSA module after each stage named, in the form of
+`ssa.Module.String`:
+
+```
+== stage <build|unwind|landings|cleanup|rc>
+type <Name> = struct { ... } | enum { ... }
+func <name>(<params>) -> <results> {
+b0(...):
+  v3: Int = add v1, v2 @ <file>:<line>:<col>
+  ...
+}
+== errors
+<pos>: the SSA builder does not support ...
+```
+
+- `build` is the builder's output before any pass (blocks and values
+  in creation order, unreachable blocks and trivial block parameters
+  still there, value numbers as the builder gave them); it is printed
+  even when the builder reports errors. `unwind` is after pruneUnwind,
+  `landings` after addLandings, `cleanup` after cleanup (what
+  `ssa.Build` returns), `rc` after InsertRC. A program that uses
+  concurrency is built twice by the Go builder; the stages are those of
+  the second build.
+- Fault positions are relative to the working directory (LineRoot), as
+  `xo build` prints them.
+- `--each` builds every dir as a run of its own (`=== ssa <dir>` before
+  each); a run the checker rejects prints `== rejected`. `--bench=N`
+  checks once and times the builder alone (`ssa.BuildRaw`, no passes, one
+  build) N times.
+
+The self hosted builder (`selfhost/ssa`, `xo run selfhost/ssa --
+[--std=DIR] [--wd=DIR] [--each] [--bench=N] <dirs...>`) prints the build
+stage: the type lines and the functions it completed, then `==
+skipped` and `<function>: <why>` for every function it left incomplete.
+
+**The stages of the SSA builder**, each compared on every repository
+run before the next starts:
+
+1. **Core** (this decision): functions and methods, generic functions
+   (one instance per list of type arguments), Int, Float, Float32,
+   Bool, Str, Bytes, the sized integers and Rune, structs (defaults,
+   `with`, nested field and element assignment), tuples, enums and
+   recursive types (boxes, decision 0052), Option and Result with `?`
+   and the error frames of decision 0104, `match`, `if let`, `while
+   let`, patterns, `while`, `for` over ranges, Lists, `indexed()`, and
+   Bytes, `break`, `continue`, `return`, calls with `var` parameters and
+   receivers (places read after the arguments, decision 0142), named
+   and default arguments, std calls through the native implementations
+   (decision 0074) and the prelude operations lowered inline, closures
+   and named functions as values, string interpolation and the Display
+   and Debug text of these types (`xo.debug[T]`), slicing, `Fs` methods,
+   `target`, the main wrapper of `main ! E`, the checks after calls that
+   faults land on (`rt.landing`, decision 0085), and the rebuild with
+   unwinding checks of a program that uses concurrency (`rt.unwinding`;
+   the concurrency constructs themselves are stage 5).
+2. **Interfaces and dynamic values**: `xo.iface[I]` values and calls,
+   `xo.dyn` (Error, Display, Debug), method values, `derive Ord`
+   comparisons, generated equality and order helpers.
+3. **Collections**: Map and Set (build_map.go), their higher order
+   methods, Buf, constants of collection types.
+4. **Contracts and deferred code**: `requires`, `ensures`, invariants,
+   `defer` with its fault continuations, loop bounds and real-time
+   sections.
+5. **Concurrency and I/O**: scopes, tasks, channels, `select`, Mutex,
+   Atomic, `os.tasks`, waits (sleep, network, standard input).
+6. **std implementations**: the generic intrinsics (JSON, SQL, any,
+   cast, status), C interop (`use c`).
+7. **Test binaries** (build_testmode.go).
+8. **The passes**: pruneUnwind, addLandings, cleanup, InsertRC, and the
+   verifier, compared at the stages `unwind`, `landings`, `cleanup`,
+   and `rc` of the dump.
+
+**Comparison rules of stage 1** (`TestSelfhostSSA`: the Xo builder built
+with the go, arm64, and LLVM backends; every directory of the
+repository holding .xo files, each a run of its own, from the
+repository root):
+
+- A function the Xo builder completes must be identical, text for text,
+  to the Go builder's function of the same name in the build stage.
+- Closures are named `<function>.fn<N>` by a counter of the whole
+  build; both sides' closures are compared under the name
+  `<function>.fn#<rank>`, their rank among the closures of their
+  function, because constructs of later stages that create closures
+  shift the counter of the Xo builder. A closure of a function the Xo
+  builder skips is skipped too.
+- A type the Xo builder cannot lower is a poison type (kind Bad, named
+  `<unsupported: T>`): every function whose text holds it is skipped,
+  and type lines holding it are not printed. Every other type line of
+  the Xo builder must be one of the Go builder's.
+- A run the Go checker rejects must be rejected by the Xo checker; a
+  run without `main` is built by neither. Runs with `use go` or `use c`
+  are not compared (the Xo checker does not bind them).
+- Functions skipped, and functions the Xo builder never declares
+  (callees of skipped code: map helpers, JSON encoders), are counted and
+  reported, not compared.
+
+`TestSelfhostSSAMutations` mutates the single directory modules the Go
+checker accepts (operators, literals, conditions, statements dropped or
+swapped, `?` added or removed where it still checks) and applies the
+same rules to every mutation both checkers accept.
+
+**The Xo builder** keeps the IR in tables: a module's types are a List
+interned by name, a function's values (indexed by their ID), blocks,
+and edges are Lists, and every reference is an index (-1 for none). The
+function under construction is a value moved out of the module and back
+(`begin`, `end`); the module keeps its signature meanwhile, for
+recursive calls. SSA construction is Braun et al.'s algorithm as in the
+Go builder, with variables keyed by checker local and block. Places
+(`x.f[i] = v`) are a list of steps with the Go builder's per level
+caches. The checker's records are read through selfhost/check info.xo,
+which keys every node by its file, span, and kind.
+
+## Consequences
+
+- A change to internal/ssa's builder in the core subset must be made in
+  selfhost/ssa in the same change, or `go test -short ./...` fails
+  (the short run compares every 25th repository run on the go
+  backend).
+- The Xo checker has a native mode (`--native`, `check.Options.Native`
+  ported: std/native modules for the prelude and every std module
+  loaded, native/rt in signature mode), identical to the Go checker's
+  typedump in native mode on 608 of 614 runs (the 6 others differ
+  outside native mode too: holes, XO0900, and one habit run).
+- The Xo checker records what the builder reads: natural types,
+  constructors (keyed by the expression Go keys: the selector for
+  `Kind.Newline`, not its receiver), type calls, the substitution of a
+  call, pattern types, variants, and newtypes, the parameter bindings of
+  bodies and closures, and the declaration file of every function
+  (methods had none).
+- A by value receiver is read before a call's arguments: `b.f(b.g())`
+  where g changes b sees the old b (gotchas/receiver-read-before-args.md);
+  the port binds such arguments first.
+
+## Alternatives
+
+- **Port the arm64 emitter first** (it is smaller than the SSA builder):
+  it consumes the SSA after the passes, so it could only be compared on
+  modules the Go builder makes, and a self hosted compiler would still
+  need the Go builder.
+- **LLVM before arm64**: the LLVM path needs clang to assemble and link,
+  so it cannot give a compiler with no external tools.
+- **Compare after cleanup only**: renumbering hides the order values are
+  made in, which is where most porting mistakes show; the build stage
+  is stricter, and the passes get their own stage.
+- **Compare closures by the global counter**: every construct of a later
+  stage that makes a closure would make every later closure of the
+  program differ.

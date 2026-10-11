@@ -49,7 +49,7 @@ fn (var b: Builder) nat_of(e: Expr) -> Int {
   b.typ(b.nat_check(e))
 }
 
-fn (b: Builder) expr_never(e: Expr) -> Bool {
+fn (var b: Builder) expr_never(e: Expr) -> Bool {
   var t = b.c.nat_in(b.s.file, e)
   if t < 0 {
     t = b.c.type_in(b.s.file, e)
@@ -480,7 +480,7 @@ fn (var b: Builder) ident(e: Expr, x: Ident) -> Int {
   b.undef(b.nat_of(e))
 }
 
-fn (b: Builder) variant_name(vr: check.VRef) -> Str {
+fn (var b: Builder) variant_name(vr: check.VRef) -> Str {
   check.text(b.c.objs[vr.en].variants[vr.variant].name)
 }
 
@@ -573,7 +573,7 @@ fn user_fields(v: SVariant) -> List[SField] {
 
 /// The index and type of a struct field or tuple element (fieldIndex), or
 /// (-1, -1).
-fn (b: Builder) field_index(t: Int, name: Str) -> (Int, Int) {
+fn (var b: Builder) field_index(t: Int, name: Str) -> (Int, Int) {
   match b.tkind(t) {
     Struct => {
       let i = b.m.field_index(t, name)
@@ -593,11 +593,11 @@ fn (b: Builder) field_index(t: Int, name: Str) -> (Int, Int) {
   (-1, -1)
 }
 
-fn (b: Builder) is_builtin_kind(t: Int) -> Bool {
+fn (var b: Builder) is_builtin_kind(t: Int) -> Bool {
   b.tkind(t) is Kind.Str | Kind.Int | Kind.Float | Kind.Bool
 }
 
-fn (b: Builder) lower_kind(t: Int) -> Str {
+fn (var b: Builder) lower_kind(t: Int) -> Str {
   if b.tkind(t) == Kind.Float {
     return "float"
   }
@@ -879,7 +879,7 @@ fn (var b: Builder) shift_count(e: Expr, t: Int) -> Int {
 }
 
 /// `expect(x)` without a binding named expect (isExpect).
-fn (b: Builder) is_expect_call(e: Expr) -> Bool {
+fn (var b: Builder) is_expect_call(e: Expr) -> Bool {
   match e {
     CallExpr(fun: fun, args: args, ..) => {
       if let Ident(id) = fun {
@@ -892,7 +892,7 @@ fn (b: Builder) is_expect_call(e: Expr) -> Bool {
 }
 
 /// The receiver of a call `s.to_lower()` of the prelude's Str (toLowerRecv).
-fn (b: Builder) to_lower_recv(e0: Expr) -> Expr? {
+fn (var b: Builder) to_lower_recv(e0: Expr) -> Expr? {
   var e = e0
   while {
     if let ParenExpr(x: x, ..) = e {
@@ -980,7 +980,7 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
 }
 
 /// Whether `==` on values of t lowers (comparable).
-fn (b: Builder) comparable(t: Int, seen: List[Int]) -> Bool {
+fn (var b: Builder) comparable(t: Int, seen: List[Int]) -> Bool {
   if seen.contains(t) || b.is_iface(t) || b.is_trace(t) {
     return true
   }
@@ -1011,11 +1011,11 @@ fn (b: Builder) comparable(t: Int, seen: List[Int]) -> Bool {
 }
 
 /// Whether a value of t holds a Map or Set (holdsColl).
-fn (b: Builder) holds_coll(t: Int, seen: List[Int]) -> Bool {
+fn (var b: Builder) holds_coll(t: Int, seen: List[Int]) -> Bool {
   b.holds_coll_in(t, seen).0
 }
 
-fn (b: Builder) holds_coll_in(t: Int, seen0: List[Int]) -> (Bool, List[Int]) {
+fn (var b: Builder) holds_coll_in(t: Int, seen0: List[Int]) -> (Bool, List[Int]) {
   var seen = seen0
   if seen.contains(t) {
     return (false, seen)
@@ -1377,13 +1377,13 @@ fn (var b: Builder) variant_pattern(v: Int, p: Pattern, fields: List[parser.PatF
 }
 
 /// The bindings of a pattern by name (patBindings).
-fn (b: Builder) pat_bindings(p: Pattern) -> Map[Bytes, Int] {
+fn (var b: Builder) pat_bindings(p: Pattern) -> Map[Bytes, Int] {
   var out: Map[Bytes, Int] = {}
   b.walk_bindings(p, out)
   out
 }
 
-fn (b: Builder) walk_bindings(p: Pattern, var out: Map[Bytes, Int]) {
+fn (var b: Builder) walk_bindings(p: Pattern, var out: Map[Bytes, Int]) {
   match p {
     BindPat(name: name, ..) => {
       let vo = b.c.var_of(b.s.file, name)
@@ -1420,7 +1420,7 @@ fn (b: Builder) walk_bindings(p: Pattern, var out: Map[Bytes, Int]) {
   }
 }
 
-fn (b: Builder) walk_field(f: parser.PatField, var out: Map[Bytes, Int]) {
+fn (var b: Builder) walk_field(f: parser.PatField, var out: Map[Bytes, Int]) {
   if !pattern_missing(f) {
     b.walk_bindings(f.pattern, out)
   } else if let Some(n) = f.name {

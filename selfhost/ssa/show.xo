@@ -369,7 +369,7 @@ fn (var b: Builder) err_trace(r: Int, ei: Int) -> Int {
 }
 
 /// The named function whose frame a `?` here records, or -1 (frameOwner).
-fn (b: Builder) frame_owner() -> Int {
+fn (var b: Builder) frame_owner() -> Int {
   var fo = b.s.fo
   if fo < 0 {
     fo = b.s.frame_fo
@@ -385,7 +385,7 @@ fn (b: Builder) frame_owner() -> Int {
 }
 
 /// std/rt's frame name of fo (frameName).
-fn (b: Builder) frame_name(fo: Int) -> Str {
+fn (var b: Builder) frame_name(fo: Int) -> Str {
   let mn = b.c.mods[b.obj_mod(fo)].name
   let r = b.c.objs[fo].recv
   if r >= 0 {
@@ -396,7 +396,7 @@ fn (b: Builder) frame_name(fo: Int) -> Str {
 
 /// The bindings a frame of fo shows: the receiver and the parameters,
 /// without capabilities (frameVars).
-fn (b: Builder) frame_vars(fo: Int) -> List[Int] {
+fn (var b: Builder) frame_vars(fo: Int) -> List[Int] {
   var vars: List[Int] = []
   if b.c.objs[fo].recv >= 0 {
     vars.push(b.c.recv_var.get(fo) ?? -1)
@@ -413,7 +413,7 @@ fn (b: Builder) frame_vars(fo: Int) -> List[Int] {
   out
 }
 
-fn (b: Builder) is_capability_type(t: Int) -> Bool {
+fn (var b: Builder) is_capability_type(t: Int) -> Bool {
   let o = b.named_obj(t)
   if o < 0 || b.obj_mod(o) < 0 {
     return false
@@ -650,7 +650,7 @@ fn (var b: Builder) sized_not(v: Int) -> Int {
 }
 
 /// The range of the integer type t: (lo, hi, u64) (intRange).
-fn (b: Builder) int_range(t: Int) -> (Int, Int, Bool) {
+fn (var b: Builder) int_range(t: Int) -> (Int, Int, Bool) {
   let x = b.m.types[t]
   if x.bits == 0 {
     return (-9223372036854775807 - 1, 9223372036854775807, false)
@@ -664,7 +664,7 @@ fn (b: Builder) int_range(t: Int) -> (Int, Int, Bool) {
   (-(1 << (x.bits - 1)), (1 << (x.bits - 1)) - 1, false)
 }
 
-fn (b: Builder) widens(from: Int, to: Int) -> Bool {
+fn (var b: Builder) widens(from: Int, to: Int) -> Bool {
   let (flo, fhi, fu) = b.int_range(from)
   let (tlo, thi, tu) = b.int_range(to)
   if tu {

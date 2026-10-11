@@ -289,7 +289,7 @@ fn (var b: Builder) is_bytes_expr(e: Expr) -> Bool {
 }
 
 /// xs of a `for` iterator `xs.indexed()` on a List (indexedRecv).
-fn (b: Builder) indexed_recv(e: Expr) -> Expr? {
+fn (var b: Builder) indexed_recv(e: Expr) -> Expr? {
   if let CallExpr(..) = e {
     if let Some(ci) = b.c.call_in(b.s.file, e) {
       let fo = ci.fn_obj

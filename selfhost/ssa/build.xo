@@ -174,25 +174,25 @@ fn (var b: Builder) run_job(j: Job) {
 // ---------------------------------------------------------------------------
 // Positions and errors
 
-fn (b: Builder) file_name(f: Int) -> Str {
+fn (var b: Builder) file_name(f: Int) -> Str {
   rel_path_from(b.line_root, b.c.files[f].path)
 }
 
 /// `file:line:col` of a span in file f (build.go pos).
-fn (b: Builder) pos_in(f: Int, sp: Span) -> Str {
+fn (var b: Builder) pos_in(f: Int, sp: Span) -> Str {
   "${b.file_name(f)}:${sp.start.line}:${sp.start.col}"
 }
 
 /// `file:line` (build.go posLine).
-fn (b: Builder) line_in(f: Int, sp: Span) -> Str {
+fn (var b: Builder) line_in(f: Int, sp: Span) -> Str {
   "${b.file_name(f)}:${sp.start.line}"
 }
 
-fn (b: Builder) pos(sp: Span) -> Str {
+fn (var b: Builder) pos(sp: Span) -> Str {
   b.pos_in(b.s.file, sp)
 }
 
-fn (b: Builder) pos_line(sp: Span) -> Str {
+fn (var b: Builder) pos_line(sp: Span) -> Str {
   b.line_in(b.s.file, sp)
 }
 
@@ -213,12 +213,12 @@ fn (var b: Builder) unsupported(what: Str) {
 // ---------------------------------------------------------------------------
 // Checker queries (internal/check info.go)
 
-fn (b: Builder) tyk(t: Int) -> check.TyKind {
+fn (var b: Builder) tyk(t: Int) -> check.TyKind {
   b.c.tys[b.c.resolve(t)].kind
 }
 
 /// The Type object of a named type, or -1.
-fn (b: Builder) named_obj(t: Int) -> Int {
+fn (var b: Builder) named_obj(t: Int) -> Int {
   if t < 0 {
     return -1
   }
@@ -229,29 +229,29 @@ fn (b: Builder) named_obj(t: Int) -> Int {
   -1
 }
 
-fn (b: Builder) ty_args(t: Int) -> List[Int] {
+fn (var b: Builder) ty_args(t: Int) -> List[Int] {
   b.c.tys[b.c.resolve(t)].args
 }
 
-fn (b: Builder) obj_name(o: Int) -> Str {
+fn (var b: Builder) obj_name(o: Int) -> Str {
   check.text(b.c.objs[o].name)
 }
 
-fn (b: Builder) obj_mod(o: Int) -> Int {
+fn (var b: Builder) obj_mod(o: Int) -> Int {
   b.c.objs[o].module
 }
 
-fn (b: Builder) is_prelude_mod(m: Int) -> Bool {
+fn (var b: Builder) is_prelude_mod(m: Int) -> Bool {
   m >= 0 && b.c.mods[m].is_prelude
 }
 
-fn (b: Builder) is_std_mod(m: Int) -> Bool {
+fn (var b: Builder) is_std_mod(m: Int) -> Bool {
   m >= 0 && b.c.mods[m].is_std
 }
 
 /// Whether checker type t is one of the prelude types names
 /// (isPreludeNamed).
-fn (b: Builder) is_prelude_named(t: Int, names: List[Str]) -> Bool {
+fn (var b: Builder) is_prelude_named(t: Int, names: List[Str]) -> Bool {
   let o = b.named_obj(t)
   if o < 0 || !b.is_prelude_mod(b.obj_mod(o)) {
     return false
@@ -259,12 +259,12 @@ fn (b: Builder) is_prelude_named(t: Int, names: List[Str]) -> Bool {
   names.contains(b.obj_name(o))
 }
 
-fn (b: Builder) is_never(t: Int) -> Bool {
+fn (var b: Builder) is_never(t: Int) -> Bool {
   t >= 0 && b.c.is_never(t)
 }
 
 /// The error type of a function that can fail, or -1 (failErr).
-fn (b: Builder) fail_err(e: Int) -> Int {
+fn (var b: Builder) fail_err(e: Int) -> Int {
   if e < 0 || b.c.is_never(e) {
     return -1
   }
@@ -272,7 +272,7 @@ fn (b: Builder) fail_err(e: Int) -> Int {
 }
 
 /// T and E of Result[T, E] (resultParts), or (-1, -1).
-fn (b: Builder) result_parts(t: Int) -> (Int, Int) {
+fn (var b: Builder) result_parts(t: Int) -> (Int, Int) {
   let o = b.named_obj(t)
   if o >= 0 && b.is_prelude_mod(b.obj_mod(o)) && b.obj_name(o) == "Result" {
     let a = b.ty_args(t)
@@ -284,7 +284,7 @@ fn (b: Builder) result_parts(t: Int) -> (Int, Int) {
 }
 
 /// T of Option[T] (optionElem), or -1.
-fn (b: Builder) option_elem(t: Int) -> Int {
+fn (var b: Builder) option_elem(t: Int) -> Int {
   let o = b.named_obj(t)
   if o >= 0 && b.is_prelude_mod(b.obj_mod(o)) && b.obj_name(o) == "Option" {
     let a = b.ty_args(t)
@@ -295,7 +295,7 @@ fn (b: Builder) option_elem(t: Int) -> Int {
   -1
 }
 
-fn (b: Builder) is_never_result(t: Int) -> Bool {
+fn (var b: Builder) is_never_result(t: Int) -> Bool {
   let (_, et) = b.result_parts(t)
   et >= 0 && b.c.is_never(et)
 }
@@ -319,7 +319,7 @@ fn (var b: Builder) result_of(res: Int, err: Int) -> Int {
 }
 
 /// The type parameters of fo that take types (typeParams).
-fn (b: Builder) type_params(fo: Int) -> List[Int] {
+fn (var b: Builder) type_params(fo: Int) -> List[Int] {
   var out: List[Int] = []
   for p in b.c.objs[fo].tparams {
     if !b.c.objs[p].effect {
@@ -573,7 +573,7 @@ fn test_cap(name: Str) -> Str {
 
 /// Whether the struct obj is a runtime handle of the concurrency
 /// constructs (build_conc.go concType).
-fn (b: Builder) conc_type(obj: Int) -> Bool {
+fn (var b: Builder) conc_type(obj: Int) -> Bool {
   let om = b.obj_mod(obj)
   if om < 0 {
     return false
@@ -615,7 +615,7 @@ fn (var b: Builder) fs_type() -> Int {
   t
 }
 
-fn (b: Builder) is_fs(t: Int) -> Bool {
+fn (var b: Builder) is_fs(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.Fs"
 }
 
@@ -631,15 +631,15 @@ fn (var b: Builder) dyn_type() -> Int {
   t
 }
 
-fn (b: Builder) is_dyn(t: Int) -> Bool {
+fn (var b: Builder) is_dyn(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.dyn"
 }
 
-fn (b: Builder) is_iface(t: Int) -> Bool {
+fn (var b: Builder) is_iface(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name.starts_with("xo.iface[")
 }
 
-fn (b: Builder) dyn_iface(obj: Int) -> Bool {
+fn (var b: Builder) dyn_iface(obj: Int) -> Bool {
   b.is_prelude_mod(b.obj_mod(obj)) && (b.obj_name(obj) is "Error" | "Display" | "Debug")
 }
 
@@ -656,7 +656,7 @@ fn (var b: Builder) trace_type() -> Int {
   t
 }
 
-fn (b: Builder) is_trace(t: Int) -> Bool {
+fn (var b: Builder) is_trace(t: Int) -> Bool {
   b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.trace"
 }
 
@@ -741,7 +741,7 @@ fn (var b: Builder) reaches(t0: Int, owner: Str, seen0: List[Str]) -> (Bool, Lis
 
 /// The names of the types declared by more than one user module
 /// (ambiguousTypeNames).
-fn (b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
+fn (var b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
   var owner: Map[Str, Int] = {}
   var out: Map[Str, Bool] = {}
   for m in b.c.order {
@@ -765,14 +765,14 @@ fn (b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
 }
 
 /// The name a lowered named type is interned under (typeName).
-fn (b: Builder) type_name(t: Int) -> Str {
+fn (var b: Builder) type_name(t: Int) -> Str {
   if b.ambiguous.is_empty() {
     return b.c.show(t)
   }
   b.type_text(t)
 }
 
-fn (b: Builder) type_text(t0: Int) -> Str {
+fn (var b: Builder) type_text(t0: Int) -> Str {
   let t = b.c.resolve(t0)
   let x = b.c.tys[t]
   match x.kind {
@@ -829,7 +829,7 @@ fn (var b: Builder) native_mod(path: Str) -> Int {
   b.natives.get(path) ?? -1
 }
 
-fn (b: Builder) member(m: Int, name: Str) -> Int {
+fn (var b: Builder) member(m: Int, name: Str) -> Int {
   b.c.mods[m].members.get(name.bytes()) ?? -1
 }
 
@@ -919,7 +919,7 @@ fn (var b: Builder) impl_named(t0: Int) -> Int {
 // Functions
 
 /// The SSA name of fo (funcName).
-fn (b: Builder) func_name(fo: Int) -> Str {
+fn (var b: Builder) func_name(fo: Int) -> Str {
   var n = b.c.display_name(fo)
   let om = b.obj_mod(fo)
   if om >= 0 && om != b.main_mod {
@@ -1020,7 +1020,7 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
 }
 
 /// The checker file of fo's declaration, or -1.
-fn (b: Builder) decl_file(o: Int) -> Int {
+fn (var b: Builder) decl_file(o: Int) -> Int {
   b.c.objs[o].decl_file
 }
 
@@ -1091,7 +1091,7 @@ fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
 }
 
 /// Whether the struct obj declares an invariant (and is not std).
-fn (b: Builder) has_invariant(obj: Int) -> Bool {
+fn (var b: Builder) has_invariant(obj: Int) -> Bool {
   if b.is_std_mod(b.obj_mod(obj)) {
     return false
   }
@@ -1099,7 +1099,7 @@ fn (b: Builder) has_invariant(obj: Int) -> Bool {
 }
 
 /// The invariant of struct obj (zero or one expression).
-fn (b: Builder) invariant_of(obj: Int) -> List[Expr] {
+fn (var b: Builder) invariant_of(obj: Int) -> List[Expr] {
   let f = b.c.objs[obj].decl_file
   let i = b.c.objs[obj].decl_idx
   if f < 0 || i < 0 {
@@ -1184,12 +1184,12 @@ fn (var b: Builder) main_wrapper(mf: Int, et: Int) {
   b.end(saved)
 }
 
-fn (b: Builder) main_fo_of() -> Int {
+fn (var b: Builder) main_fo_of() -> Int {
   b.c.mods[b.main_mod].members.get(b"main") ?? -1
 }
 
 /// Whether a user module reads `os.tasks` (build_tasks.go usesOsTasks).
-fn (b: Builder) uses_os_tasks() -> Bool {
+fn (var b: Builder) uses_os_tasks() -> Bool {
   for m in b.c.order {
     if b.c.mods[m].is_std || b.c.mods[m].native {
       continue
@@ -1229,14 +1229,14 @@ fn (b: Builder) uses_os_tasks() -> Bool {
   false
 }
 
-fn (b: Builder) tasks_opt(f: Int, e: Expr?) -> Bool {
+fn (var b: Builder) tasks_opt(f: Int, e: Expr?) -> Bool {
   match e {
     Some(x) => b.tasks_expr(f, x)
     None => false
   }
 }
 
-fn (b: Builder) tasks_list(f: Int, es: List[Expr]) -> Bool {
+fn (var b: Builder) tasks_list(f: Int, es: List[Expr]) -> Bool {
   for e in es {
     if b.tasks_expr(f, e) {
       return true
@@ -1245,7 +1245,7 @@ fn (b: Builder) tasks_list(f: Int, es: List[Expr]) -> Bool {
   false
 }
 
-fn (b: Builder) tasks_block(f: Int, bl: parser.Block) -> Bool {
+fn (var b: Builder) tasks_block(f: Int, bl: parser.Block) -> Bool {
   for st in bl.stmts {
     if b.tasks_stmt(f, st) {
       return true
@@ -1254,7 +1254,7 @@ fn (b: Builder) tasks_block(f: Int, bl: parser.Block) -> Bool {
   false
 }
 
-fn (b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
+fn (var b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
   match st {
     LetStmt(value: v, ..) => b.tasks_expr(f, v)
     VarStmt(value: v, ..) => b.tasks_expr(f, v)
@@ -1271,7 +1271,7 @@ fn (b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
 
 /// Whether e holds `x.tasks` on an Os or a test's TestOs
 /// (build_tasks.go usesOsTasks).
-fn (b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
+fn (var b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
   match e {
     SelectorExpr(x: x, sel: sel, ..) => {
       if sel.name == b"tasks" {
@@ -1500,15 +1500,15 @@ fn (var b: Builder) read(vo: Int) -> Int {
 // ---------------------------------------------------------------------------
 // Emission helpers
 
-fn (b: Builder) vty(v: Int) -> Int {
+fn (var b: Builder) vty(v: Int) -> Int {
   b.s.f.values[v].ty
 }
 
-fn (b: Builder) vop(v: Int) -> Op {
+fn (var b: Builder) vop(v: Int) -> Op {
   b.s.f.values[v].op
 }
 
-fn (b: Builder) tkind(t: Int) -> Kind {
+fn (var b: Builder) tkind(t: Int) -> Kind {
   b.m.types[t].kind
 }
 
@@ -1598,7 +1598,7 @@ fn (var b: Builder) test_br(cond: Int, fail: Int) {
   b.s.cur = ok
 }
 
-fn (b: Builder) is_dead() -> Bool {
+fn (var b: Builder) is_dead() -> Bool {
   b.s.cur != 0 && b.s.f.blocks[b.s.cur].preds.is_empty() && (b.s.sealed.get(b.s.cur) ?? false)
 }
 
@@ -1681,14 +1681,14 @@ fn (var b: Builder) finish_fn() {
   b.s.cur = saved
 }
 
-fn (b: Builder) num_fields(t: Int) -> Int {
+fn (var b: Builder) num_fields(t: Int) -> Int {
   if b.tkind(t) == Kind.Struct {
     return b.m.types[t].fields.len()
   }
   b.m.types[t].elems.len()
 }
 
-fn (b: Builder) field_type(t: Int, i: Int) -> Int {
+fn (var b: Builder) field_type(t: Int, i: Int) -> Int {
   if b.tkind(t) == Kind.Struct {
     return b.m.types[t].fields[i].ty
   }
@@ -1749,7 +1749,7 @@ fn (var b: Builder) zero(t: Int, seen: List[Int]) -> Int {
   }
 }
 
-fn (b: Builder) zeroable(t: Int, seen: List[Int]) -> Bool {
+fn (var b: Builder) zeroable(t: Int, seen: List[Int]) -> Bool {
   match b.tkind(t) {
     Enum => {
       if seen.contains(t) {
@@ -1866,7 +1866,7 @@ fn (var b: Builder) gen_end(saved: S) {
   b.end(saved)
 }
 
-fn (b: Builder) param(i: Int) -> Int {
+fn (var b: Builder) param(i: Int) -> Int {
   b.s.f.blocks[0].params[i]
 }
 
