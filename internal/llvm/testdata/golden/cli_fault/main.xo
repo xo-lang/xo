@@ -1,0 +1,15 @@
+// std/cli (decision 0160): reading a flag with the accessor of another
+// type is a bug in the program, a fault located at the call, with the
+// same message on every backend.
+use std/cli
+
+fn main(os: Os) {
+  let app = cli.command("count", "Counts.", flags: [cli.int_flag("limit", "the most to count", default: 10)])
+  match cli.parse(app, ["--limit", "3"], os.env) {
+    Ok(p) => {
+      os.stdio.println("limit ${p.int("limit")}")
+      os.stdio.println("as text ${p.str("limit")}")
+    }
+    Err(e) => os.stdio.println("error ${e}")
+  }
+}

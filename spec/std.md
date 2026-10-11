@@ -1638,3 +1638,205 @@ Settled while implementing; examples are in the goldens
   HTTP requires `GMT`: write the zone literally,
   `"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT"`
   with `utc()`. Parsing with `RFC1123` accepts `GMT`.
+
+---
+
+## 14. std/cli
+
+Status: implemented on every backend (decision 0160, 2026-10-11): the Go
+backend in `std/rt/cli.go`, the native backends in `std/native/cli.xo`,
+with the same help text, usage errors, and faults (the golden programs
+`internal/llvm/testdata/golden/cli_*` compare them).
+
+Command line parsing for tools. A command is a value built by functions
+(no struct tags, no reflection, no builder state to get out of order);
+`parse` reads the arguments into a `Parsed` with typed accessors.
+
+### 14.1 Declaring a command
+
+```
+struct Command {}      // handles
+struct Flag {}
+struct Arg {}
+
+pub fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [],
+               commands: List[Command] = [], version: Str = "") -> Command
+
+pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag
+pub fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "",
+                required: Bool = false, value: Str = "str") -> Flag
+pub fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "",
+                required: Bool = false) -> Flag
+pub fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "",
+                     required: Bool = false) -> Flag
+pub fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "",
+                   env: Str = "", required: Bool = false) -> Flag
+pub fn strs_flag(name: Str, help: Str, short: Str = "", env: Str = "", value: Str = "str") -> Flag
+
+pub fn arg(name: Str, help: Str, optional: Bool = false) -> Arg
+pub fn rest(name: Str, help: Str, min: Int = 0) -> Arg
+```
+
+```
+fn app() -> cli.Command {
+  cli.command("tool", "Manages widgets.",
+    flags: [
+      cli.bool_flag("verbose", "print more", short: "v"),
+      cli.str_flag("config", "the configuration file", default: "tool.toml", env: "TOOL_CONFIG", value: "path"),
+    ],
+    commands: [
+      cli.command("add", "Adds widgets.",
+        flags: [cli.int_flag("count", "how many", short: "n", default: 1)],
+        args: [cli.arg("name", "the widget name")]),
+      cli.command("remove", "Removes widgets.", args: [cli.rest("names", "widget names", min: 1)]),
+    ],
+    version: "1.4.0")
+}
+```
+
+- `name` of the root command is the program's name in help and usage
+  text; a subcommand's `name` is the word that selects it. A command has
+  positional arguments or subcommands, not both.
+- Flag names are lowercase letters, digits, and `-` (not first);
+  `short` is one ASCII letter or digit. `--help` and `-h` are reserved,
+  and `--version` when the root command has a `version`. Flag names are
+  unique along each path of commands (a subcommand may not repeat a flag
+  of a command above it; sibling subcommands may share names).
+- Positional arguments: required ones first, then optional ones, then at
+  most one `rest`, last.
+- `env` names a variable read when the flag is not on the command line
+  (an empty value counts as unset; a `strs_flag` variable is split on
+  `,`). Variables are read through the `Env` given to `parse`, so an
+  attenuated `Env` (`only`, 3.5) hides unlisted ones.
+- A mistake in the declaration (a bad or duplicate name, a short name
+  used twice, a choice default not among the choices, an argument out of
+  order, arguments and subcommands on one command) is a fault at the
+  `parse` or `help` call: it is a bug in the program, not in its input.
+
+### 14.2 Parsing
+
+```
+pub fn parse(cmd: Command, args: List[Str], env: Env) -> Parsed ! CliErr uses env
+pub fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc) -> Parsed
+    uses (env, stdio, proc)
+pub fn help(cmd: Command, path: Str = "") -> Str     // path: "remote add"; faults if unknown
+
+enum CliErr {
+  Help(text: Str)               // -h or --help: the selected command's help
+  Version(text: Str)            // --version: "name version"
+  Usage(msg: Str, usage: Str)   // a mistake in the arguments
+}
+fn (e: CliErr) display() -> Str  // the text of Help and Version, the msg of Usage
+fn (e: CliErr) exit_code() -> Int // 0 for Help and Version, 2 for Usage
+```
+
+`args` are the arguments without the program's name (`Env.args`).
+`parse_or_exit(cmd, env, stdio, proc)` parses `env.args()`; on `Help` or
+`Version` it prints the text to standard output and exits with status 0,
+on `Usage` it prints `error: <msg>`, an empty line, and `usage` to
+standard error and exits with status 2 (the convention of Unix tools
+for a usage error):
+
+```
+fn main(os: Os) ! {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  match p.command() {
+    "add" => add(p.arg("name"), p.int("count"), p.bool("verbose"))?
+    "remove" => remove(p.rest("names"))?
+    _ => {}
+  }
+}
+```
+
+Rules, in order:
+
+- `--name value`, `--name=value`, `-n value`, `-nvalue`, `-n=value`. A
+  bool flag takes no separate value: `--verbose`, `-v`, or
+  `--verbose=true|false|1|0`. Short bool flags combine (`-vq`); a short
+  flag that takes a value ends the cluster (`-vn5`). A value may start
+  with `-` (`--name -x`). Given twice, the last value wins, except for a
+  `strs_flag`, which collects every value in order.
+- `--` ends the flags: every later argument is positional. `-` alone is
+  positional.
+- Flags may come before or after positional arguments. A subcommand is
+  selected by the first positional argument of a command with
+  subcommands; after it, the flags of every command on the path are
+  accepted, those of the subcommand only after its name.
+- `-h` or `--help` anywhere before `--` returns `Help` with the help of
+  the command selected so far; `--version` (when the root has a version)
+  returns `Version`.
+- After the arguments: a command with subcommands and none selected is
+  `missing command (one of a, b)`; then each flag of the path, in
+  declaration order (root first), not given takes its variable, and a
+  `required` one still missing is `missing required flag --name`; then
+  positional arguments are assigned in order (`missing argument <name>`,
+  also for a `rest` with fewer than `min`; `unexpected argument "x"` for
+  one too many).
+- Usage messages: `unknown flag --nmae (did you mean --name?)`,
+  `unknown flag -x`, `unknown command "ad" (did you mean add?)`, `flag
+  --count needs a value`, `invalid value "two" for --count: expected an
+  integer` (`true or false`, `a duration such as 30s or 1m30s`, `one of
+  text, json`), with ` (from $VAR)` before the colon for a value read
+  from a variable. A suggestion is the closest name within two edits
+  (fewer than the length of the word), the first declared on a tie.
+- `usage` is `Usage: <path> [flags] <args>` (`<command>` for a command
+  with subcommands), an empty line, and `Run '<path> --help' for more
+  information.`
+
+### 14.3 Reading the result
+
+```
+struct Parsed {}
+fn (p: Parsed) command() -> Str          // the subcommand path, "" for the root ("remote add")
+fn (p: Parsed) bool(name: Str) -> Bool
+fn (p: Parsed) str(name: Str) -> Str     // also choice flags; the value, else the default
+fn (p: Parsed) str_opt(name: Str) -> Str?
+fn (p: Parsed) int(name: Str) -> Int     // also int_opt
+fn (p: Parsed) duration(name: Str) -> Duration   // also duration_opt
+fn (p: Parsed) strs(name: Str) -> List[Str]
+fn (p: Parsed) is_set(name: Str) -> Bool // given on the command line or in its variable
+fn (p: Parsed) arg(name: Str) -> Str     // a required positional argument
+fn (p: Parsed) arg_opt(name: Str) -> Str?
+fn (p: Parsed) rest(name: Str) -> List[Str]
+```
+
+- Flags are named without dashes. `_opt` accessors are `None` when the
+  flag was not given (on the command line or in its variable); the plain
+  ones return the default.
+- A flag or argument of a command that was not selected reads as not
+  given (its default, `None`, `[]`, `false`), so a program may read every
+  flag up front; `arg` of one faults (it has no value to return).
+- Reading a name that no command declares, or with the accessor of
+  another type, is a fault naming the right accessor: `cli: --limit is
+  declared by int_flag, so read it with int or int_opt`.
+
+### 14.4 Help text
+
+`help(cmd, path)` and `Help` give the same text: the command's help line
+and an empty line (when it has one), the usage line, then sections
+`Commands:`, `Arguments:`, `Flags:` (the command's flags, then `-h,
+--help` and, when the root has a version, `--version`), and `Global
+flags:` (the flags of the commands above), each row indented two spaces
+and every description starting in one column, two spaces after the
+widest left side. A flag's left side is `-n, --name <value>` (indented four
+spaces, `--name <value>`, without a short name; no `<value>` for a bool flag), where value
+is the `value` argument, `int`, `duration`, or the choices joined with
+`|`. Its description is followed by `[default: x]` (when not empty or
+zero), `[env: VAR]`, `[required]`, and `[repeatable]` as they apply.
+No trailing newline.
+
+```text
+Manages widgets.
+
+Usage: tool [flags] <command>
+
+Commands:
+  add                  Adds widgets.
+  remove               Removes widgets.
+
+Flags:
+  -v, --verbose        print more
+      --config <path>  the configuration file [default: tool.toml] [env: TOOL_CONFIG]
+  -h, --help           show this help
+      --version        show the version
+```

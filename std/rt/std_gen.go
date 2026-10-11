@@ -7,6 +7,87 @@ import (
 	"strings"
 )
 
+type Cli_CliErr struct {
+	Tag int
+	P   any
+}
+
+type Cli_CliErr_Help struct {
+	F_text string
+}
+
+type Cli_CliErr_Version struct {
+	F_text string
+}
+
+type Cli_CliErr_Usage struct {
+	F_msg   string
+	F_usage string
+}
+
+func (v Cli_CliErr) XoEq(x any) bool {
+	o, ok := x.(Cli_CliErr)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	case 1:
+		a, b := v.P.(Cli_CliErr_Help), o.P.(Cli_CliErr_Help)
+		return Eq(a.F_text, b.F_text)
+	case 2:
+		a, b := v.P.(Cli_CliErr_Version), o.P.(Cli_CliErr_Version)
+		return Eq(a.F_text, b.F_text)
+	case 3:
+		a, b := v.P.(Cli_CliErr_Usage), o.P.(Cli_CliErr_Usage)
+		return Eq(a.F_msg, b.F_msg) && Eq(a.F_usage, b.F_usage)
+	}
+	return true
+}
+
+func (v Cli_CliErr) XoHash() uint64 {
+	h := MixHash(uint64(2199032832471439469), uint64(v.Tag))
+	switch v.Tag {
+	case 1:
+		a := v.P.(Cli_CliErr_Help)
+		h = MixHash(h, Hash(a.F_text))
+	case 2:
+		a := v.P.(Cli_CliErr_Version)
+		h = MixHash(h, Hash(a.F_text))
+	case 3:
+		a := v.P.(Cli_CliErr_Usage)
+		h = MixHash(h, Hash(a.F_msg))
+		h = MixHash(h, Hash(a.F_usage))
+	}
+	return h
+}
+
+func (v Cli_CliErr) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		a := v.P.(Cli_CliErr_Help)
+		b.WriteString("Help(")
+		b.WriteString("text: ")
+		DebugTo(b, a.F_text)
+		b.WriteString(")")
+	case 2:
+		a := v.P.(Cli_CliErr_Version)
+		b.WriteString("Version(")
+		b.WriteString("text: ")
+		DebugTo(b, a.F_text)
+		b.WriteString(")")
+	case 3:
+		a := v.P.(Cli_CliErr_Usage)
+		b.WriteString("Usage(")
+		b.WriteString("msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(", usage: ")
+		DebugTo(b, a.F_usage)
+		b.WriteString(")")
+	}
+}
+
+func (v Cli_CliErr) M_debug(*Task) string { return Debug(v) }
+
 type Http_StatusError interface {
 	M_status(tk *Task) int64
 	M_display(tk *Task) string

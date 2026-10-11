@@ -1,0 +1,78 @@
+// std/cli under test (std.md 14, decision 0160): `parse_or_exit` in a
+// main run by `testing.run_main`, with the fake Env's arguments and
+// variables: the help and version exit with status 0 on standard output,
+// a usage error with status 2 on standard error.
+use std/cli
+
+fn app() -> cli.Command {
+  cli.command("hello", "Says hello.",
+    flags: [
+      cli.str_flag("name", "who to greet", short: "n", default: "world", env: "HELLO_NAME"),
+      cli.int_flag("times", "how often", default: 1, env: "HELLO_TIMES"),
+      cli.bool_flag("shout", "upper case", env: "HELLO_SHOUT"),
+    ],
+    version: "0.3.0")
+}
+
+fn main(os: Os) ! {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  var text = "hello ${p.str("name")}"
+  if p.bool("shout") {
+    text = text.to_upper()
+  }
+  for _ in 0..p.int("times") {
+    os.stdio.println(text)
+  }
+}
+
+test "flags from the command line" {
+  expect(testing.run_main(main, os, args: ["-n", "xo", "--times=2"])) == 0
+  expect(os.stdio.output()) == "hello xo\nhello xo\n"
+}
+
+test "variables are the fallbacks; the command line wins" {
+  os.env.set("HELLO_NAME", "env")
+  os.env.set("HELLO_SHOUT", "1")
+  expect(testing.run_main(main, os)) == 0
+  expect(os.stdio.output()) == "HELLO ENV\n"
+  expect(testing.run_main(main, os, args: ["--name", "arg", "--shout=false"])) == 0
+  expect(os.stdio.output()) == "HELLO ENV\nhello arg\n"
+}
+
+test "help exits with status 0" {
+  expect(testing.run_main(main, os, args: ["--help"])) == 0
+  expect(os.stdio.output()) == cli.help(app()) + "\n"
+  expect(os.stdio.output().starts_with("Says hello.\n\nUsage: hello [flags]\n")) == true
+}
+
+test "version exits with status 0" {
+  expect(testing.run_main(main, os, args: ["--version"])) == 0
+  expect(os.stdio.output()) == "hello 0.3.0\n"
+}
+
+test "a usage error exits with status 2" {
+  expect(testing.run_main(main, os, args: ["--times", "lots"])) == 2
+  expect(os.stdio.output()) == ""
+  expect(os.stdio.errors()) == "error: invalid value \"lots\" for --times: expected an integer\n\nUsage: hello [flags]\n\nRun 'hello --help' for more information.\n"
+}
+
+test "a bad variable is a usage error naming it" {
+  os.env.set("HELLO_TIMES", "x")
+  expect(testing.run_main(main, os)) == 2
+  expect(os.stdio.errors().starts_with("error: invalid value \"x\" for --times (from $HELLO_TIMES): expected an integer\n")) == true
+}
+
+test "parse returns the errors as values" {
+  match cli.parse(app(), ["--bogus"], os.env) {
+    Ok(_) => expect(false) == true
+    Err(e) => {
+      expect(e.exit_code()) == 2
+      expect("${e}") == "unknown flag --bogus"
+    }
+  }
+  let p = cli.parse(app(), [], os.env).or_fault("no arguments parse")
+  expect(p.command()) == ""
+  expect(p.is_set("name")) == false
+  expect(p.str_opt("name")) == None
+  expect(p.str("name")) == "world"
+}

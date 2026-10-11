@@ -1,0 +1,12 @@
+// std/cli (decision 0160): `parse_or_exit` with a mistake in the
+// arguments (args.txt) prints the error and the usage to standard error
+// and exits with status 2 on every backend.
+use std/cli
+
+fn main(os: Os) {
+  let app = cli.command("copy", "Copies files.",
+    flags: [cli.bool_flag("force", "overwrite", short: "f")],
+    args: [cli.rest("sources", "files to copy", min: 1), ])
+  let p = cli.parse_or_exit(app, os.env, os.stdio, os.proc)
+  os.stdio.println("not reached: ${p.rest("sources").len()}")
+}

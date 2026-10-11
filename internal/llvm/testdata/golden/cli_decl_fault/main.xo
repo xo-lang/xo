@@ -1,0 +1,15 @@
+// std/cli (decision 0160): a mistake in a command's declaration (here a
+// subcommand repeating a flag of its parent) is a fault at the `parse`
+// call, with the same message on every backend.
+use std/cli
+
+fn main(os: Os) {
+  let app = cli.command("db", "Database tool.",
+    flags: [cli.str_flag("url", "the database", short: "u")],
+    commands: [cli.command("migrate", "Migrates.", flags: [cli.bool_flag("dry-run", "show only", short: "u")])])
+  os.stdio.println(cli.help(app, path: "migrate").lines()[0])
+  match cli.parse(app, ["migrate"], os.env) {
+    Ok(p) => os.stdio.println("parsed ${p.command()}")
+    Err(e) => os.stdio.println("error ${e}")
+  }
+}

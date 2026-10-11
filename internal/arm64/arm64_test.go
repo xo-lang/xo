@@ -137,6 +137,21 @@ func stableStderr(s string) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
+// progArgs are the command line arguments of the golden program in dir
+// (the fields of its args.txt) and progEnv its extra environment (the
+// NAME=VALUE lines of its env.txt), as internal/llvm's golden test passes
+// them.
+func progArgs(dir string) []string { return fileFields(filepath.Join(dir, "args.txt")) }
+func progEnv(dir string) []string  { return fileFields(filepath.Join(dir, "env.txt")) }
+
+func fileFields(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
+}
+
 var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
 // buildRun builds dir with the arm64 backend and runs it with the leak
@@ -163,9 +178,9 @@ func buildRunWith(t *testing.T, dir string, opts build.Options) (runResult, erro
 	if res.Failed {
 		t.Fatalf("check failed")
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -303,8 +318,9 @@ func goRun(t *testing.T, dir string) runResult {
 	if err != nil || res.Failed {
 		t.Fatalf("go build: %v", err)
 	}
-	cmd := exec.Command(res.Binaries[build.Host()])
+	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), progEnv(dir)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()

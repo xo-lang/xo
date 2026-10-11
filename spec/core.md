@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **`std/cli`** (14, std.md 14, decision 0160): command line parsing
+  for tools: flags of five types and repeated ones, positional and rest
+  arguments, subcommands, `--`, variables as fallbacks, generated help,
+  and usage errors with exit status 2 (`parse_or_exit`). Every backend.
 - **Logging is the effect `log`** (6.1, std.md 6, decision 0156): the
   `std/log` functions perform `log`; a `pub` function that logs declares
   `uses log`. `xo fix` adds it to existing code (XO0701 with a fix).
@@ -2700,6 +2704,7 @@ specified in `spec/std.md`. Modules:
 | `std/sql` | Database handles over drivers, in memory driver (draft) |
 | `std/crypto` | SHA-256, HMAC, constant time compare, random tokens, password hashing |
 | `std/path` | Pure helpers for `/` separated paths |
+| `std/cli` | Command line parsing: flags, arguments, subcommands, help, usage errors (std.md 14) |
 | `std/go` | `go.Error`, the error of a Go call (4.4) |
 | `std/trace`, `std/config`, `std/text`, `std/sys/<os>` | Later drafts |
 

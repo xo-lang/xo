@@ -1,0 +1,98 @@
+// std/cli (spec/std.md 14, decision 0160). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Command line parsing for
+// tools: a command is a value built by functions (flags, positional
+// arguments, subcommands), `parse` reads the arguments into a `Parsed`
+// with typed accessors, and `parse_or_exit` prints the generated help or a
+// usage error (exit status 2) for `main`.
+//
+// - Command, Flag, Arg, and Parsed are opaque handles.
+// - A mistake in the declaration (a duplicate flag, a bad name, an
+//   argument after `rest`), and an accessor naming a flag or argument
+//   that is not declared or has another type, are faults: they are bugs
+//   in the program, not input errors.
+
+/// A command: a name, a help line, flags, positional arguments, and
+/// subcommands (std.md 14.1).
+struct Command {}
+/// A flag (`--name value`, `-n value`, `--verbose`).
+struct Flag {}
+/// A positional argument.
+struct Arg {}
+/// The result of `parse`: the selected command and every value.
+struct Parsed {}
+
+/// Why `parse` did not return a `Parsed`. `Help` and `Version` are not
+/// failures: the user asked for the text (exit status 0). `Usage` is a
+/// mistake in the arguments (exit status 2). Displays as the text of
+/// `Help` and `Version` and as the message of `Usage`.
+enum CliErr {
+  /// `-h` or `--help`: the help of the selected command.
+  Help(text: Str)
+  /// `--version` on a command with a version: `name version`.
+  Version(text: Str)
+  /// What was wrong, and the usage lines with a pointer to `--help`.
+  Usage(msg: Str, usage: Str)
+}
+
+fn (e: CliErr) display() -> Str
+/// 0 for `Help` and `Version`, 2 for `Usage`.
+fn (e: CliErr) exit_code() -> Int
+
+/// A command. `name` is the program's name for the root command and the
+/// word that selects a subcommand. A command with subcommands takes no
+/// positional arguments of its own.
+fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "") -> Command
+
+/// A flag that is true when given (`--verbose`, `-v`, `--verbose=false`).
+fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag
+/// A text flag. `value` names the value in the help (`--out <path>`).
+fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "", required: Bool = false, value: Str = "str") -> Flag
+/// An integer flag.
+fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "", required: Bool = false) -> Flag
+/// A duration flag, in `Duration.parse` syntax (`30s`, `1m30s`).
+fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "", required: Bool = false) -> Flag
+/// A text flag whose value must be one of `choices`.
+fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "", env: Str = "", required: Bool = false) -> Flag
+/// A text flag that may be repeated (`-t a -t b`); its variable, if any, is
+/// split on commas.
+fn strs_flag(name: Str, help: Str, short: Str = "", env: Str = "", value: Str = "str") -> Flag
+
+/// One positional argument, required unless `optional`.
+fn arg(name: Str, help: Str, optional: Bool = false) -> Arg
+/// Every remaining positional argument (at least `min`); must be last.
+fn rest(name: Str, help: Str, min: Int = 0) -> Arg
+
+/// Parses `args` (without the program name, as `Env.args` gives them)
+/// against `cmd`. Flags not given on the command line are read from their
+/// `env` variable through `env`.
+fn parse(cmd: Command, args: List[Str], env: Env) -> Parsed ! CliErr uses env
+/// `parse(cmd, env.args(), env)` for `main`: prints the help or version to
+/// standard output and exits with status 0, or prints a usage error to
+/// standard error and exits with status 2.
+fn parse_or_exit(cmd: Command, env: Env, stdio: Stdio, proc: Proc) -> Parsed uses (env, stdio, proc)
+/// The help text of `cmd`, or of the subcommand at `path` ("remote add").
+fn help(cmd: Command, path: Str = "") -> Str
+
+/// The selected subcommand path, words joined by one space ("" for the
+/// root command).
+fn (p: Parsed) command() -> Str
+fn (p: Parsed) bool(name: Str) -> Bool
+/// The value given, else the default ("" without one).
+fn (p: Parsed) str(name: Str) -> Str
+/// The value given; None when the flag was not given (on the command line
+/// or in its variable).
+fn (p: Parsed) str_opt(name: Str) -> Str?
+fn (p: Parsed) int(name: Str) -> Int
+fn (p: Parsed) int_opt(name: Str) -> Int?
+fn (p: Parsed) duration(name: Str) -> Duration
+fn (p: Parsed) duration_opt(name: Str) -> Duration?
+/// Every value of a `strs_flag`, in order.
+fn (p: Parsed) strs(name: Str) -> List[Str]
+/// Whether the flag was given on the command line or in its variable.
+fn (p: Parsed) is_set(name: Str) -> Bool
+/// A required positional argument.
+fn (p: Parsed) arg(name: Str) -> Str
+/// An optional positional argument; None when absent.
+fn (p: Parsed) arg_opt(name: Str) -> Str?
+/// The arguments collected by `rest`.
+fn (p: Parsed) rest(name: Str) -> List[Str]

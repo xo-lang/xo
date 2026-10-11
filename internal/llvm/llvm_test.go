@@ -100,6 +100,7 @@ func buildRun(t *testing.T, dir string, opts build.Options) (runResult, *build.R
 	}
 	cmd := exec.Command(res.Binaries[build.Host()], progArgs(dir)...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), progEnv(dir)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -119,7 +120,7 @@ func leakCheck(t *testing.T, bin, dir string) string {
 	t.Helper()
 	cmd := exec.Command(bin, progArgs(dir)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
+	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	var stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
 	if err := cmd.Run(); err != nil {
@@ -139,6 +140,16 @@ func leakCheck(t *testing.T, bin, dir string) string {
 // fields of its args.txt, as internal/gen's golden test passes them.
 func progArgs(dir string) []string {
 	data, err := os.ReadFile(filepath.Join(dir, "args.txt"))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(data))
+}
+
+// progEnv are the environment variables a golden program in dir runs
+// with besides the test's: the NAME=VALUE lines of its env.txt.
+func progEnv(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "env.txt"))
 	if err != nil {
 		return nil
 	}

@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `std/cli` (std.md 14, decision 0160), on every backend: command line
+  parsing for tools. `cli.command(...)` with `bool_flag`, `str_flag`,
+  `int_flag`, `duration_flag`, `choice_flag`, `strs_flag` (repeated),
+  `arg`, `rest`, and subcommands; `cli.parse(cmd, args, env)` returns a
+  `Parsed` (typed accessors `bool`, `str`, `int`, `duration`, `strs`,
+  `_opt` forms, `arg`, `rest`, `command()`) or a `CliErr` (`Help`,
+  `Version`, `Usage`); `cli.parse_or_exit(cmd, os.env, os.stdio,
+  os.proc)` prints help or version (exit 0) or a usage error (exit 2).
+  Flags fall back to variables (`env:`), read through the `Env`.
+- Golden programs may set extra environment variables in `env.txt`
+  (internal/gen, internal/llvm, internal/arm64); the arm64 golden runner
+  passes `args.txt` too.
 - Logging is the effect `log` (decision 0156): `std/log`'s `debug`,
   `info`, `warn`, `error` perform `log`, so a `pub` function that logs
   declares `uses log` (inferred for non-pub functions; `log.configure`
