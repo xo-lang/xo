@@ -177,7 +177,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 			return nil, err
 		}
-		flags, notes, err := timeFlags(dir, res, tz, opts)
+		flags, tzsrcs, notes, err := timeFlags(dir, res, tz, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +187,7 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		if err != nil {
 			return nil, err
 		}
-		ccFlags, srcs := append(append([]string{"-O2"}, flags...), cflags...), append([]string{s, rt}, csrcs...)
+		ccFlags, srcs := append(append([]string{"-O2"}, flags...), cflags...), append(append([]string{s, rt}, tzsrcs...), csrcs...)
 		key := nativeBinKey(dir, cc, append([]string{"arm64"}, ccFlags...), srcs)
 		if err := withBinCache(key, bin, func() error { return ccBuild(cc, ccFlags, srcs, bin) }); err != nil {
 			return nil, err

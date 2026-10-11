@@ -157,13 +157,13 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		return nil, err
 	}
-	flags, notes, err := timeFlags(dir, res, prog.TZ, opts)
+	flags, tzsrcs, notes, err := timeFlags(dir, res, prog.TZ, opts)
 	if err != nil {
 		return nil, err
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
 	out.Notes = notes
-	srcs := []string{ll, rt}
+	srcs := append([]string{ll, rt}, tzsrcs...)
 	csrcs, cflags, err := cInputs(res, dir)
 	if err != nil {
 		return nil, err

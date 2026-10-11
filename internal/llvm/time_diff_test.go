@@ -434,7 +434,7 @@ const timeDiffRun = `  for (i, z) in zones.indexed() {
 `
 
 // TestZoneDataPerUseNative is internal/gen's TestZoneDataPerUse for the
-// native backends: the build writes xo_tzdata.h for xo_time.c with no
+// native backends: the build writes xo_tzdata.c for xo_time.c with no
 // zone for a UTC only program, the TZif data of each constant name, the
 // whole database (and the same note as the Go backend) for a name known
 // only at run time, and the host database with --tzdata=system.
@@ -445,7 +445,7 @@ func TestZoneDataPerUseNative(t *testing.T) {
 	golden := filepath.Join("..", "gen", "testdata", "golden")
 	header := func(t *testing.T, res *build.Result) string {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(res.Dir, "xo_tzdata.h"))
+		data, err := os.ReadFile(filepath.Join(res.Dir, build.TZDataSource))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -458,7 +458,7 @@ func TestZoneDataPerUseNative(t *testing.T) {
 		if got.stdout != "1970-01-01T02:00:00+02:00\n" {
 			t.Errorf("stdout %q", got.stdout)
 		}
-		if h := header(t, res); !strings.Contains(h, "#define XO_TZ_MODE 0") || strings.Contains(h, "TZif") || len(res.Notes) > 0 {
+		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 0;") || strings.Contains(h, "TZif") || len(res.Notes) > 0 {
 			t.Errorf("a UTC only program embeds zone data:\n%s\nnotes %q", h, res.Notes)
 		}
 	})
@@ -466,7 +466,7 @@ func TestZoneDataPerUseNative(t *testing.T) {
 		_, res := buildRun(t, filepath.Join(golden, "time_zones"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
 		h := header(t, res)
 		if strings.Count(h, "TZif") < 2 || !strings.Contains(h, `{"America/New_York",`) || !strings.Contains(h, `{"Europe/Berlin",`) || strings.Count(h, "\t{\"") != 2 {
-			t.Errorf("xo_tzdata.h does not hold exactly the two zones:\n%.400s", h)
+			t.Errorf("xo_tzdata.c does not hold exactly the two zones:\n%.400s", h)
 		}
 		if len(res.Notes) != 2 || !strings.Contains(strings.Join(res.Notes, "\n"), `zone "Mars/Olympus_Mons" is not in the zone database`) {
 			t.Errorf("notes %q", res.Notes)
@@ -474,8 +474,8 @@ func TestZoneDataPerUseNative(t *testing.T) {
 	})
 	t.Run("dynamic", func(t *testing.T) {
 		_, res := buildRun(t, filepath.Join(golden, "time_dynamic_zone"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM})
-		if h := header(t, res); !strings.Contains(h, "#define XO_TZ_MODE 1") {
-			t.Errorf("xo_tzdata.h does not embed the database:\n%.300s", h)
+		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 1;") {
+			t.Errorf("xo_tzdata.c does not embed the database:\n%.300s", h)
 		}
 		if len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "main.xo:9:11: note: time.zone with a name known only at run time embeds the whole zone database") {
 			t.Errorf("notes %q", res.Notes)
@@ -483,8 +483,8 @@ func TestZoneDataPerUseNative(t *testing.T) {
 	})
 	t.Run("system", func(t *testing.T) {
 		got, res := buildRun(t, filepath.Join(golden, "time_dynamic_zone"), build.Options{Mode: gen.Build, Backend: build.BackendLLVM, TZData: build.TZDataSystem})
-		if h := header(t, res); !strings.Contains(h, "#define XO_TZ_MODE 2") || strings.Contains(h, "TZif") {
-			t.Errorf("xo_tzdata.h with --tzdata=system:\n%.300s", h)
+		if h := header(t, res); !strings.Contains(h, "xo_tz_mode = 2;") || strings.Contains(h, "TZif") {
+			t.Errorf("xo_tzdata.c with --tzdata=system:\n%.300s", h)
 		}
 		if len(res.Notes) != 0 {
 			t.Errorf("notes %q", res.Notes)

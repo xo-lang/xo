@@ -62,8 +62,8 @@ func runtimeSource(srcs, flags []string) int {
 // runtimeObject returns the object of src (the runtime) compiled with cc,
 // flags, the SDK root, and the extra compile arguments (TLS), compiling it
 // when the cache has none. Its key covers every .c and .h file of src's
-// directory, where the runtime's includes are (with the generated
-// xo_tzdata.h of a build directory). A failed compile returns clang's
+// directory, where the runtime's includes are, except the program's zone
+// data (xo_tzdata.c, compiled as a source of its own). A failed compile returns clang's
 // output and error; "" without an error means compile the source in the
 // link instead.
 func runtimeObject(cc string, flags []string, root string, extra []string, src string) (string, string, error) {
@@ -89,7 +89,10 @@ func runtimeObject(cc string, flags []string, root string, extra []string, src s
 	}
 	for _, e := range ents {
 		n := e.Name()
-		if e.IsDir() || !(strings.HasSuffix(n, ".c") || strings.HasSuffix(n, ".h")) {
+		// the zone data is a source of its own, not part of the runtime
+		// (decision 0157), and an older build directory may hold a stale
+		// xo_tzdata.h
+		if e.IsDir() || !(strings.HasSuffix(n, ".c") || strings.HasSuffix(n, ".h")) || strings.HasPrefix(n, "xo_tzdata.") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, n))
