@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xo-lang/xo/internal/check"
 	"github.com/xo-lang/xo/internal/diag"
@@ -498,6 +499,7 @@ func binPath(dir, out, name string, t Target, many bool) string {
 // cache, so Go's build cache is reused across builds.
 func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, variants ...string) (string, error) {
 	base := os.Getenv("XO_BUILD_DIR")
+	trim := base == "" // never trim a directory the user chose
 	if base == "" {
 		cache, err := os.UserCacheDir()
 		if err != nil {
@@ -529,7 +531,15 @@ func buildDir(dirs []string, mode gen.Mode, mono, noRanges, arenas bool, variant
 	// binaries do not remove it, so they must not share the directory
 	fmt.Fprintf(h, " layout=2")
 	dir := filepath.Join(base, hex.EncodeToString(h.Sum(nil))[:16])
-	return dir, os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return dir, err
+	}
+	now := time.Now()
+	_ = os.Chtimes(dir, now, now) // most recent use, for trimBuildDirs
+	if trim {
+		trimBuildDirs(base)
+	}
+	return dir, nil
 }
 
 // writeTree writes the generated program and the runtime into dir,
