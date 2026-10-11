@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/build"
+	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/ssa"
 )
 
@@ -114,6 +115,17 @@ func goSSABuild(root, dir string) goSSA {
 		return goSSA{none: "error " + err.Error()}
 	}
 	if !ok {
+		// holes (XO0900) stop a build; the Xo checker does not report
+		// them (decision 0141), so such a run is not compared
+		holesOnly := true
+		for _, d := range res.Diagnostics {
+			if d.Severity == diag.Error && d.Code != "XO0900" {
+				holesOnly = false
+			}
+		}
+		if holesOnly {
+			return goSSA{none: "holes"}
+		}
 		return goSSA{none: "rejected"}
 	}
 	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root}, map[string]bool{"build": true})
@@ -191,6 +203,10 @@ func compareSSA(dir string, want goSSA, got string, st *ssaStats) []string {
 	}
 	head := firstLine(got)
 	switch {
+	case want.none == "holes" || strings.HasPrefix(head, "== unsupported use go or use c"):
+		st.unsupported++
+		st.unsupportedWhy["run: "+strings.TrimPrefix(head, "== ")]++
+		return nil
 	case want.none == "rejected":
 		if head != "== rejected" && !strings.HasPrefix(head, "== unsupported ") {
 			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + head}

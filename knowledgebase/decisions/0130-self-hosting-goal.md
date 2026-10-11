@@ -84,6 +84,20 @@ passes the full suite on the backends it targets.
   bring the LLVM build of the Xo checker to parity with the Go checker
   (1.03x on the selfhost input, from 1.98x).
 
+- 2026-10-10: order of the remaining stages and the switch-over point
+  (decision 0150: SSA lowering, arm64 emitter, LLVM emitter, Go code
+  generator; the self hosted compiler takes over native builds on arm64
+  hosts at a fixed point there), and SSA stage 1 of 8: `selfhost/ssa`
+  lowers the core subset exactly as internal/ssa's builder does, compared
+  function by function through `xo ssadump`: 0 differences on the 300
+  repository runs both build and 400 mutations, go, arm64, and LLVM
+  builds; 5,844 of the Go builder's 10,990 functions identical, the rest
+  skipped (later stages) or never declared. Found an arm64 assembler
+  limit (frame offsets past 4095 in `add`), the order of by value
+  receivers (spec 5.2), and a Go backend cost (`==` on enums boxed both
+  values). The LLVM build takes about 1.45 times the Go builder's time
+  (bench/results/selfhost-ssa-2026-10-10.md).
+
 ## Alternatives
 
 - Stop at the parser (differential testing and gap finding only).

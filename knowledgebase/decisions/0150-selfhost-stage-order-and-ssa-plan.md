@@ -151,15 +151,17 @@ repository root):
   the Xo builder must be one of the Go builder's.
 - A run the Go checker rejects must be rejected by the Xo checker; a
   run without `main` is built by neither. Runs with `use go` or `use c`
-  are not compared (the Xo checker does not bind them).
+  are not compared (the Xo checker does not bind them), nor runs whose
+  only errors are holes (XO0900, which the Xo checker does not report).
 - Functions skipped, and functions the Xo builder never declares
   (callees of skipped code: map helpers, JSON encoders), are counted and
   reported, not compared.
 
-`TestSelfhostSSAMutations` mutates the single directory modules the Go
-checker accepts (operators, literals, conditions, statements dropped or
-swapped, `?` added or removed where it still checks) and applies the
-same rules to every mutation both checkers accept.
+`TestSelfhostSSAMutations` mutates the single directory programs with
+`main` the Go checker accepts (an operator swapped for another of its
+kind, an integer or Bool literal changed, a statement line dropped or
+doubled, a `?` removed) and applies the same rules to every mutation;
+one either checker rejects must be rejected by both.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

@@ -101,6 +101,10 @@ go test ./internal/gen -run TestGoldenRelease [-golden-update]   # testdata/rele
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
+go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc|all] [--each] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times (decision 0150; last verified: 2026-10-10)
+go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder, stage 1: the build stage of xo ssadump for the functions it completes, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK like the checker (last verified: 2026-10-10)
+go run ./cmd/xo build --backend=llvm -o .tools/xossa selfhost/ssa   # native build of the Xo SSA builder (also --backend=arm64; the LLVM build links for about 10 minutes)
+go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm; go and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), and 400 code mutations (TestSelfhostSSAMutations, not under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-10)
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
 go test ./internal/llvm -run 'TestRuntimeThreads|TestGoldenThreads'   # shared counts and the runtime under ThreadSanitizer (decision 0058; about 10 s)
 go test ./internal/llvm -run 'TestRuntimeTasks|TestGoldenTasks|TestDeadlock'   # the task runtime and the task goldens under ThreadSanitizer (decision 0068; about 15 s)
@@ -135,8 +139,8 @@ go run ./cmd/xo run selfhost/parser -- [--sig] [--bench=N] <files...>   # the se
 go run ./cmd/xo build --backend=llvm --no-gc -o .tools/xoparse selfhost/parser   # native build of the Xo parser (also --backend=arm64)
 go run ./cmd/xo test selfhost/parser                    # the Xo parser's own tests (9)
 go test ./internal/selfhost -run TestSelfhostParser     # Xo parser (go, arm64, llvm backends) vs Go parser: identical dumps (tree and diagnostics) for every file the Xo parser parses to the end, the files whose Go diagnostics are all habits among them, same rejections: repo .xo, std/*.xo (--sig), spec blocks, progen programs (24/150), token mutations (300/2000), habit edits of repository files (a quarter as many); XO_SELFHOST_PROGS=N, XO_SELFHOST_PARSE_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP (last verified: 2026-10-10)
-go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0141): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
-go run ./cmd/xo run selfhost/check -- [--section=names,types,sigs,diags,full] [--std=DIR] [--wd=DIR] [--each] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stages 1 to 8 and module loading: the sections of xo typedump (default all), or timing; std read from DIR (default std); --wd is the absolute working directory (default $PWD); reads XO_MODCACHE, XO_OFFLINE, XO_WORK like internal/mod but never fetches (a version missing from the cache while online makes the run unsupported; last verified: 2026-10-10)
+go run ./cmd/xo typedump [--section=names,types,sigs,diags] [--each] [--native] [--bench=N] <dirs...>   # hidden: canonical dump of what the Go checker resolved (decision 0141): names, expression types, signatures and effects, diagnostics as JSON; --each checks every dir alone; --native checks as a native build (std/native loaded); run from the repository root with relative dirs (gotchas/typedump-paths-depend-on-working-directory.md)
+go run ./cmd/xo run selfhost/check -- [--section=names,types,sigs,diags,full] [--std=DIR] [--wd=DIR] [--each] [--native] [--bench=N] <dirs...>   # the self hosted (Xo) checker, stages 1 to 8 and module loading: the sections of xo typedump (default all), or timing; --native loads and checks std/native as a native build does (decision 0150); std read from DIR (default std); --wd is the absolute working directory (default $PWD); reads XO_MODCACHE, XO_OFFLINE, XO_WORK like internal/mod but never fetches (a version missing from the cache while online makes the run unsupported; last verified: 2026-10-10)
 go run ./cmd/xo build --backend=llvm -o .tools/xocheck selfhost/check   # native build of the Xo checker (also --backend=arm64)
 go run ./cmd/xo test selfhost/check                     # the Xo checker's own tests (12: paths, JSON, names and types of small modules in the test file system, versions, ceilings, deny rules)
 go test ./internal/selfhost -run TestSelfhostChecker    # Xo checker (go, arm64, llvm; go only with -short) vs Go checker: identical names, types, and sigs sections on every accepted repository run, the same diagnostics on runs rejected only with diagnostics of stages 1 to 6 and the parser's (stageDiag, parseDiag), 1000 name, type, generics, effects, habit, value semantics, and pattern mutations (150 with -short, go backend, or XO_SELFHOST_BACKEND=arm64|llvm), 400 module mutations (TestSelfhostCheckerModuleMutations: ceilings, deny rules, versions, xo.lock and vendor/modules.txt lines, added `use` lines over the fixtures internal/selfhost/testdata/modules/app and the golden effect_ceiling_work, effect_ceiling_vendor, imports_deny; 40 with -short; XO_SELFHOST_MOD_FUZZ=N); both checkers run with XO_MODCACHE=internal/selfhost/testdata/modules/cache, XO_OFFLINE=1, XO_WORK=""; XO_SELFHOST_CHECK_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes check-<backend>.txt, the class of every run; do not point it inside the repository: the run directories it writes are .xo modules the next walk finds; last verified: 2026-10-10)
@@ -754,7 +758,7 @@ Last verified: 2026-10-07
 cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo run`, `xo test`, `xo bind`,
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go),
                         `xo mcp`, `xo lsp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go),
-                        `xo astdump` (astdump.go), `xo typedump` (typedump.go)
+                        `xo astdump` (astdump.go), `xo typedump` (typedump.go), `xo ssadump` (ssadump.go)
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
 editors/vscode/          VS Code extension (TextMate grammar, Markdown injection, xo lsp client); see editors.md
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
@@ -781,10 +785,12 @@ internal/build/         check, generate, write the build directory, `go build` p
 internal/llvm/          P3 prototype: LLVM IR from internal/ssa (see "LLVM backend (P3 prototype)")
 internal/arm64/         native AArch64 backend from internal/ssa (decision 0049, see "arm64 backend (native)")
 internal/ssa/           shared typed SSA IR for native backends (decision 0045): builder from the
-                        checked AST, verifier, printer; goldens in testdata/ (see "SSA IR")
+                        checked AST, verifier, printer; goldens in testdata/ (see "SSA IR");
+                        stages.go: BuildStages and BuildRaw for `xo ssadump` (decision 0150)
 internal/selfhost/      Go side of the self hosted components (tests only): build selfhost/lexer,
-                        selfhost/parser, and selfhost/check and compare their dumps with lexer.Dump,
-                        parser.Dump, and check.Result.Dump (decisions 0076, 0127, 0141)
+                        selfhost/parser, selfhost/check, and selfhost/ssa and compare their dumps with
+                        lexer.Dump, parser.Dump, check.Result.Dump, and the build stage of
+                        ssa.BuildStages (decisions 0076, 0127, 0141, 0150)
 internal/progen/        the random program generator of decision 0110 (TestCompileProperty, the parser differential)
 selfhost/xo.mod         selfhost/ is one Xo module, github.com/xo-lang/xo/selfhost (the parser imports the lexer)
 selfhost/lexer/         the lexer in Xo (decision 0076): token.xo, lexer.xo, dump.xo, main.xo (CLI),
@@ -799,7 +805,14 @@ selfhost/check/         the checker in Xo, stages 1 to 8 and module loading (dec
                         expr.xo, call.xo, stmt.xo, pattern.xo (the typed walk), habits.xo (habits that recover a
                         type), dump.xo (passes, names, types, and diags sections), modfile.xo (xo.mod, xo.work,
                         xo.lock, versions, the module cache, vendor/, content hashes: internal/mod for a check),
-                        deps.xo (dependency rules, deny rules, effect ceilings), main.xo (CLI), check_test.xo
+                        deps.xo (dependency rules, deny rules, effect ceilings), main.xo (CLI), check_test.xo,
+                        info.xo (the records the SSA builder reads: natural types, constructors, calls,
+                        patterns, parameter bindings; native mode loads std/native, decision 0150)
+selfhost/ssa/           the SSA builder in Xo, stage 1 of decision 0150: ir.xo (types, values, blocks,
+                        functions as tables; the printer), build.xo (types, functions and generics, Braun
+                        SSA construction, checks after calls, generated functions), expr.xo, stmt.xo,
+                        call.xo (calls, closures, `?`, std calls), show.xo (Display and Debug text, error
+                        frames, sized integers), main.xo (CLI)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)
@@ -1197,7 +1210,9 @@ testdata/bench/<name>.ssa and .rc.ssa for bench/perf/llvm/xo; verifier
 rejections; `TestVerifyRCMutations` deletes each inserted retain and
 release and requires a rejection). Rewrite goldens with
 `go test ./internal/ssa -update`. internal/llvm lowers from it
-(below).
+(below). `xo ssadump` prints the module after each stage of a build
+(build, unwind, landings, cleanup, rc; `ssa.BuildStages`), the form
+selfhost/ssa is compared in (decision 0150; last verified: 2026-10-10).
 
 ## LLVM backend (P3 prototype)
 
