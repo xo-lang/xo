@@ -83,6 +83,19 @@ not object):
 5. **Go code generator** last: it is needed only for the Go backend,
    which already needs the Go toolchain.
 
+**Order amended (owner, 2026-10-11).** Self hosting moves ahead of other
+work, and the stages that end the double maintenance (every language
+change made in the Go implementation and in its Xo mirror) come first:
+(1) arm64 emitter and the switch-over, (2) LLVM emitter (2,737 lines of
+Go, consumes the same SSA), (3) Go code generator (11,354 lines, from the
+checked tree; compared as a text diff of the generated Go), (4) retire the
+Go implementation once the full suite passes on the self hosted compiler,
+(5) WebAssembly backend, written only in Xo (no Go twin, so no double
+maintenance whenever it lands; it moves the compiler in the browser
+later), (6) the runtime pilot (std/llrt's xo_unicode.c in Xo) and the
+runtime port. Items 3 to 5 of the list above keep their content; only
+their order changes.
+
 **Switch-over point**: the Go implementation stays the reference until
 the Xo compiler (lexer, parser, checker, SSA builder and passes, arm64
 emitter) compiles itself to a fixed point on arm64 hosts (the binary it
