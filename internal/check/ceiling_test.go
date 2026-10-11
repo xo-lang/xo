@@ -13,10 +13,10 @@ func TestEffectCeiling(t *testing.T) {
 	tick := "pub fn now() -> Int uses clock { 1 }\npub fn pure() -> Int { 2 }\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n"
 	world := func(ceiling, main string) map[string]string {
 		return map[string]string{
-			"xo.work":      "xo 2026\nuse ./app\nuse ./tick" + ceiling + "\n",
-			"app/xo.mod":   "module example.com/app\nedition 2026\n",
+			"xo.work":      "xo preview\nuse ./app\nuse ./tick" + ceiling + "\n",
+			"app/xo.mod":   "module example.com/app\nedition preview\n",
 			"app/a/a.xo":   main,
-			"tick/xo.mod":  "module example.com/tick\nedition 2026\n",
+			"tick/xo.mod":  "module example.com/tick\nedition preview\n",
 			"tick/tick.xo": tick,
 		}
 	}

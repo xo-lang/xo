@@ -50,7 +50,7 @@ func TestLLVMTargetAttrs(t *testing.T) {
 		t.Fatalf("ClangTargetAttrs(%s) = %q: no target CPU", clang, attrs)
 	}
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/t\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/t\nedition preview\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  let n = Atomic[Int].new(1)\n  os.stdio.println(\"${n.get()}\")\n}\n"), 0o644)
 	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
 	res, err := Build([]string{dir}, Options{Mode: gen.Build, Backend: BackendLLVM, Out: filepath.Join(dir, "prog")})

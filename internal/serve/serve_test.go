@@ -23,7 +23,7 @@ func TestCacheNoticesNewWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("app/xo.mod", "module example.com/app\nedition 2026\n")
+	write("app/xo.mod", "module example.com/app\nedition preview\n")
 	write("app/a.xo", "pub fn one() -> Int { 1 }\n")
 	c := NewCache()
 	load := func() bool {
@@ -41,8 +41,8 @@ func TestCacheNoticesNewWorkspace(t *testing.T) {
 		t.Fatal("second load missed")
 	}
 	// a new workspace above that does not use the module yet
-	write("other/xo.mod", "module example.com/other\nedition 2026\n")
-	write("xo.work", "xo 2026\nuse ./other\n")
+	write("other/xo.mod", "module example.com/other\nedition preview\n")
+	write("xo.work", "xo preview\nuse ./other\n")
 	if load() {
 		t.Error("a new xo.work above the module was not noticed")
 	}
@@ -51,7 +51,7 @@ func TestCacheNoticesNewWorkspace(t *testing.T) {
 	}
 	// the workspace now uses the module (same size would still change
 	// the modification time; make it differ in size too)
-	write("xo.work", "xo 2026\nuse ./other\nuse ./app\n")
+	write("xo.work", "xo preview\nuse ./other\nuse ./app\n")
 	if load() {
 		t.Error("a changed xo.work was not noticed")
 	}

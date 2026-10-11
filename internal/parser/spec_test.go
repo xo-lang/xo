@@ -78,7 +78,7 @@ var specSkips = map[string]string{
 	"module example.com/":    "xo.mod file with deny lines, not xo code",
 	"gc min_heap 64MiB":      "xo.mod gc lines, not xo code",
 	"replay rerun go":        "xo.mod replay rerun lines, not xo code",
-	"xo 2026":                "xo.work file, not xo code",
+	"xo preview":             "xo.work file, not xo code",
 	"ensures failed:":        "contract failure output sample",
 	"xo query":               "shell commands",
 	"xo edit":                "shell commands",

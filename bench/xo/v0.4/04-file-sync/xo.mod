@@ -1,2 +1,2 @@
 module filesync
-edition 2026
+edition preview

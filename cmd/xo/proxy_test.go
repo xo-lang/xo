@@ -27,7 +27,7 @@ func TestModProxy(t *testing.T) {
 	ws := t.TempDir()
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod":       "module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\n",
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
 		"main/main.xo": appMain,
 	})
 	root := t.TempDir()
@@ -78,7 +78,7 @@ func TestChecksumLogCommand(t *testing.T) {
 	ws := t.TempDir()
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod":       "module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\n",
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
 		"main/main.xo": appMain,
 	})
 	emptyCache(t)
@@ -86,7 +86,7 @@ func TestChecksumLogCommand(t *testing.T) {
 	xo(t, "check", app).want(0)
 
 	other := t.TempDir()
-	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition 2026\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 7 }\n"})
+	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition preview\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 7 }\n"})
 	env.Commit(t, "github.com/acme/money", "v1.1.0", other, true)
 	os.Remove(filepath.Join(app, "xo.lock"))
 	emptyCache(t)

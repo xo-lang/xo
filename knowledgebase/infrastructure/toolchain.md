@@ -86,7 +86,7 @@ go run ./cmd/xo dump [--timeout=5s] <pid>                        # task tree of 
 go run ./cmd/xo bind [--dir=<project dir>] [--json] <go import paths...>   # bind Go packages for `use go` (Go interop)
 go run ./cmd/xo fmt [--check] [--json] [files or dirs...]        # canonical layout (core 10.5)
 go run ./cmd/xo vet [--json] [dirs...]                           # advisory checks, never errors
-go run ./cmd/xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=YYYY] [dirs...]  # apply check fixes, migrate
+go run ./cmd/xo fix [--dry-run] [--json] [--from=draft-0.N] [--edition=preview] [dirs...]  # apply check fixes, migrate
 go run ./cmd/xo query <kind> [--json|--text] [--dir=<dir>] <arg> # type, def, callers, effects, holes, api, imports, deps (core 10.3)
 go run ./cmd/xo edit [--dry-run] [--dir=<dir>] <op> <args...>   # rename, add-field, change-sig (core 10.4); JSON summary, exit 1 when rejected
 go test ./internal/edit -run TestGolden -update          # rewrite internal/edit/testdata/*.golden
@@ -268,16 +268,27 @@ v0.1 0/5 to 0/5 (135 errors to 36; the rest are API drift such as
 `std/test`, `http.Server.handle`, `?` on `Fs`), v0.2 0/5 to 4/5
 (04-file-sync keeps 9 XO0401 `?` on `Fs`), v0.3 5/8 to 8/8.
 
-Editions (2026-10-08): `edition YYYY` in xo.mod is recorded on
-`check.Module.Edition` (`check.CurrentEdition`, 2026, without the line or
-without an xo.mod). An edition outside `check.Editions` or a malformed
-line makes `xo check` fail with a usage error (exit 2) naming the xo.mod.
+Editions (2026-10-08, renamed 2026-10-11 by decision 0155): `edition
+<name>` in xo.mod is recorded on `check.Module.Edition` (a string;
+`check.CurrentEdition` is `preview`, used without the line or without an
+xo.mod). `check.EditionAliases` maps old names to editions (`2026` to
+`preview`); `check.ResolveEdition` resolves both. An edition outside
+`check.Editions` and the aliases, or a malformed line, makes `xo check`
+fail with a usage error (exit 2) naming the xo.mod. An alias builds and
+gets the note XO1315 once per xo.mod of a checked (non dependency)
+module, with a fix that writes the edition name. `findModRoot` reads
+xo.mod through the check overlay, and `fix.Run` loads the xo.mod files
+under its dirs plus the one of the module around each dir into the
+overlay, so the fix loop applies xo.mod fixes (not reformatted, and the
+text rewriters skip them). `xo init` writes `edition preview`.
 Rules that change at an edition boundary are entries of `editionRules`
 (`internal/check/edition.go`, `Since` edition plus a per file check), run
-after `checkModule` for modules with `Module.AtLeast(Since)`; the list is
-empty for 2026 and `TestEditionRuleHook` exercises it with a fake 2027.
-`xo fix --edition=YYYY` only validates the edition until a second edition
-exists.
+after `checkModule` for modules with `Module.AtLeast(Since)` (order is
+the position in `check.Editions`); the list is empty for `preview` and
+`TestEditionRuleHook` exercises it with a fake `next` edition.
+`xo fix --edition=<name>` only validates the name (`preview` or the
+alias `2026`) until a second edition exists.
+Last verified: 2026-10-11.
 
 `xo query` (2026-10-08, `internal/query`) checks `--dir` (default `.`; for
 `type`, also the file's directory when it lies outside) and answers:
@@ -1840,7 +1851,7 @@ Last verified: 2026-10-09.
   arguments before dispatch in `cmd/xo/mod.go` `moduleFlags`, env
   restored after the command) never runs git; a missing version is
   XO1303; `xo get` resolves `latest` from the cached versions.
-- Workspaces: `xo.work` (`xo 2026`, `use <dir>` lines) found at or above
+- Workspaces: `xo.work` (`xo preview`, `use <dir>` lines) found at or above
   the main module, or `XO_WORK=<file>`; `XO_WORK=off` or `--workspace=off`
   ignores it. It applies only when it uses the main module. Used modules
   override requirements (their requirements join MVS; xo.lock is the

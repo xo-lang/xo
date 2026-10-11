@@ -32,20 +32,20 @@ func TestSubdirModules(t *testing.T) {
 		}
 	}
 	commit(map[string]string{
-		"xo.mod":            "module github.com/acme/tools\nedition 2026\n",
+		"xo.mod":            "module github.com/acme/tools\nedition preview\n",
 		"util/util.xo":      "pub fn name() -> Str { \"tools\" }\n",
-		"cli/xo.mod":        "module github.com/acme/tools/cli\nedition 2026\n",
+		"cli/xo.mod":        "module github.com/acme/tools/cli\nedition preview\n",
 		"cli/flags/flag.xo": "pub fn count() -> Int { 12 }\n",
 	}, "v1.0.0", "cli/v1.2.0")
 	commit(map[string]string{"cli/flags/flag.xo": "pub fn count() -> Int { 13 }\n\npub fn extra() -> Int { 1 }\n"}, "cli/v1.3.0")
 	commit(map[string]string{
-		"cli/xo.mod":        "module github.com/acme/tools/cli/v2\nedition 2026\n",
+		"cli/xo.mod":        "module github.com/acme/tools/cli/v2\nedition preview\n",
 		"cli/flags/flag.xo": "pub fn count() -> Int { 20 }\n",
 	}, "cli/v2.0.0")
 
 	app := filepath.Join(t.TempDir(), "app")
 	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod":       "module example.com/app\nedition 2026\n\nrequire github.com/acme/tools v1.0.0\nrequire github.com/acme/tools/cli v1.2.0\n",
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/tools v1.0.0\nrequire github.com/acme/tools/cli v1.2.0\n",
 		"main/main.xo": "use github.com/acme/tools/util\nuse github.com/acme/tools/cli/flags\n\nfn main(os: Os) {\n  os.stdio.println(\"${util.name()} ${flags.count()}\")\n}\n",
 	})
 	xo(t, "mod", "tidy", "--dir", app).want(0)
@@ -87,7 +87,7 @@ func TestSubdirModules(t *testing.T) {
 	os.RemoveAll(filepath.Join(app, "vendor"))
 
 	// major version 2 of the subdirectory module: tags cli/v2.x.y
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tools v1.0.0\nrequire github.com/acme/tools/cli/v2 v2.0.0\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tools v1.0.0\nrequire github.com/acme/tools/cli/v2 v2.0.0\n"), 0o644)
 	os.WriteFile(filepath.Join(app, "main", "main.xo"), []byte("use github.com/acme/tools/util\nuse github.com/acme/tools/cli/v2/flags\n\nfn main(os: Os) {\n  os.stdio.println(\"${util.name()} ${flags.count()}\")\n}\n"), 0o644)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	r = xo(t, "run", filepath.Join(app, "main")).want(0)
@@ -96,7 +96,7 @@ func TestSubdirModules(t *testing.T) {
 	}
 
 	// a missing subdirectory tag names the prefix
-	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition 2026\n\nrequire github.com/acme/tools/cli v1.9.0\n"), 0o644)
+	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tools/cli v1.9.0\n"), 0o644)
 	r = xo(t, "check", "--json", filepath.Join(app, "main")).want(1)
 	if !strings.Contains(r.out, "XO1302") || !strings.Contains(r.out, "no tag cli/v1.9.0") || !strings.Contains(r.out, "versions are tags cli/vX.Y.Z") {
 		t.Errorf("missing tag:\n%s", r.out)
@@ -107,7 +107,7 @@ func TestSubdirModules(t *testing.T) {
 	work := t.TempDir()
 	modtest.Git(t, work, "clone", "-q", repo, "tools")
 	clone := filepath.Join(work, "tools")
-	os.WriteFile(filepath.Join(clone, "cli", "xo.mod"), []byte("module github.com/acme/tools/cli\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(clone, "cli", "xo.mod"), []byte("module github.com/acme/tools/cli\nedition preview\n"), 0o644)
 	os.WriteFile(filepath.Join(clone, "cli", "flags", "flag.xo"), []byte("pub fn count() -> Int { 14 }\n\npub fn extra() -> Int { 1 }\n"), 0o644)
 	modtest.Git(t, clone, "commit", "-q", "-am", "cli 1.3.1")
 	p := publish(t, 0, "--dir", filepath.Join(clone, "cli"))
@@ -120,7 +120,7 @@ func TestSubdirModules(t *testing.T) {
 		t.Errorf("publish at the root: %+v", p)
 	}
 	// a module path that does not end with its directory is XO1311
-	os.WriteFile(filepath.Join(clone, "cli", "xo.mod"), []byte("module github.com/acme/command\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(clone, "cli", "xo.mod"), []byte("module github.com/acme/command\nedition preview\n"), 0o644)
 	p = publish(t, 1, "--check", "--dir", filepath.Join(clone, "cli"))
 	if p.codes() != "XO1311" {
 		t.Errorf("path without the directory: %s", p.codes())

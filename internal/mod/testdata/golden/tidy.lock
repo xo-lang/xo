@@ -1,6 +1,6 @@
 # xo.lock: content hashes of the module versions this module builds with.
 # Written by the xo toolchain (xo get, xo mod tidy); do not edit (core 4.3).
-github.com/acme/billing v1.2.0 h1:8dVunw26VNGOqtLfbF86+AC7SYWytQ25V7XDlwefenI=
-github.com/acme/billing v1.2.0/xo.mod h1:3lNwzwq13GvLAqbl9yyQ/YeO7tHU7X/M5Z6WwhKgadE=
-github.com/acme/money v1.1.0 h1:SoN1kmHxh90tjLzNAGbS/9UhdPI8LJ0hOZHi9fW9g1M=
-github.com/acme/money v1.1.0/xo.mod h1:hOAiLRMhxdZ2uxjbd7G4aGPY9jB2pvpehVpbz0BAdfQ=
+github.com/acme/billing v1.2.0 h1:xDjQC3DO+bbGKJir+3J6p0JYN230nFIkkLgbbjT4eIA=
+github.com/acme/billing v1.2.0/xo.mod h1:GLoDLTVJQXniz+zg6H4qFHHMTu79cqrdoFD3VL93+fQ=
+github.com/acme/money v1.1.0 h1:8fxSBC2uHHFi/2btaYAdG/HYNU4BwEyWM8lEX7L0moY=
+github.com/acme/money v1.1.0/xo.mod h1:cjOQaH7WINZ4pbnwDeCnPbc4UXdm6X27SXswRjsFbuk=

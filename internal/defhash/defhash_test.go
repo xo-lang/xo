@@ -21,7 +21,7 @@ fn g(a: Int) -> Int { a + 1 }
 func module(t *testing.T, files map[string]string) []Def {
 	t.Helper()
 	dir := t.TempDir()
-	all := map[string]string{"xo.mod": "module example.com/m\nedition 2026\n"}
+	all := map[string]string{"xo.mod": "module example.com/m\nedition preview\n"}
 	for k, v := range files {
 		all[k] = v
 	}
@@ -89,7 +89,7 @@ func TestStable(t *testing.T) {
 	// the module path is not either (a /v2 path compares with v1)
 	d1 := module(t, map[string]string{"m.xo": common + "fn f(a: Int) -> Int { g(a) }\n"})
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/m/v2\nedition 2026\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/m/v2\nedition preview\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "m.xo"), []byte(common+"fn f(a: Int) -> Int { g(a) }\n"), 0o644)
 	d2, _ := Module(dir, "example.com/m/v2")
 	if hashOf(t, d1, "f").Hash != hashOf(t, d2, "f").Hash {

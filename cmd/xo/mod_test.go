@@ -62,7 +62,7 @@ func TestModules(t *testing.T) {
 	t.Setenv("XO_BUILD_DIR", filepath.Join(ws, ".build"))
 	app := filepath.Join(ws, "app")
 	modtest.WriteFiles(t, app, map[string]string{
-		"xo.mod":       "module example.com/app\nedition 2026\n\nrequire github.com/acme/billing v1.2.0\n",
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
 		"main/main.xo": appMain,
 	})
 
@@ -135,9 +135,9 @@ func TestModules(t *testing.T) {
 
 	// workspace: a local billing overrides the requirement
 	modtest.WriteFiles(t, ws, map[string]string{
-		"billing/xo.mod":             "module github.com/acme/billing\nedition 2026\n",
+		"billing/xo.mod":             "module github.com/acme/billing\nedition preview\n",
 		"billing/invoice/invoice.xo": "pub fn total() -> Int { 7 }\n",
-		"xo.work":                    "xo 2026\nuse ./app\nuse ./billing\n",
+		"xo.work":                    "xo preview\nuse ./app\nuse ./billing\n",
 	})
 	lock, _ := os.ReadFile(filepath.Join(app, "xo.lock"))
 	xo(t, "check", app).want(0)

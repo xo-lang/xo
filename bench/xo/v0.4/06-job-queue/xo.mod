@@ -1,2 +1,2 @@
 module bench/jobqueue
-edition 2026
+edition preview

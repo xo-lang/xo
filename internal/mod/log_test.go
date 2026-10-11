@@ -61,7 +61,7 @@ func TestChecksumLog(t *testing.T) {
 	// money v1.3.0 is moved to other content after the log recorded it;
 	// a new client without an xo.lock entry is stopped by the log
 	other := t.TempDir()
-	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition 2026\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 7 }\n"})
+	modtest.WriteFiles(t, other, map[string]string{"xo.mod": "module github.com/acme/money\nedition preview\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 7 }\n"})
 	env.Commit(t, "github.com/acme/money", "v1.3.0", other, true)
 	fresh := app(t, "\nrequire github.com/acme/money v1.3.0\n", uses("money"))
 	freshCache(t)
