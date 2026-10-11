@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Tests: TestArithProperty and TestCompileProperty compare a program's
+  exit status, all of its standard output, and all of its standard
+  error across backends (was the first line of standard error),
+  dropping only what native builds legitimately leave out (frames, the
+  deadlock's blocked task list, crash bundle paths). bench/nightly.sh
+  runs TestArithProperty on 500 programs.
 - Generated Go no longer repeats a `//line` directive on consecutive
   lines (positions are unchanged), declares the unused task `tk` in
   constants whose value does not need it, or ends a function whose body

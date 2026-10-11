@@ -91,8 +91,8 @@ func TestCompileProperty(t *testing.T) {
 			if err != nil || nres.Failed {
 				t.Fatalf("seed %d: the native build (%s) failed: %v\n%s\n--- program\n%s", seed, native, err, diagText(nres), numbered(src))
 			}
-			// both run alike: the same exit status, output, and first
-			// line of standard error
+			// both run alike: the same exit status, output, and
+			// standard error (runProp)
 			gr, nr := runProp(t, res.Binaries[build.Host()], dir), runProp(t, nres.Binaries[build.Host()], dir)
 			if gr != nr {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
@@ -106,15 +106,17 @@ const (
 	compilePropFull  = 50
 )
 
-// runProp runs a generated program: its exit status, standard output,
-// and the first line of standard error (frames and crash bundle lines
-// differ by backend).
+// runProp runs a generated program and returns what every backend must
+// agree on: its exit status, all of its standard output, and all of its
+// standard error after normStderr.
 func runProp(t *testing.T, bin, dir string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin)
 	cmd.Dir = dir
+	// crash bundles go to a directory the test removes, not $TMPDIR
+	cmd.Env = append(os.Environ(), "XO_CRASH_DIR="+t.TempDir())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	code := 0
@@ -125,12 +127,48 @@ func runProp(t *testing.T, bin, dir string) string {
 		}
 		code = ee.ExitCode()
 	}
-	first, _, _ := strings.Cut(stderr.String(), "\n")
-	if strings.HasPrefix(first, "fault: XO-F001") {
-		// natively the deadlock fault has no location (decision 0083)
-		first, _, _ = strings.Cut(first, " at ")
+	return fmt.Sprintf("exit %d\n%s--- stderr\n%s", code, stdout.String(), normStderr(stderr.String()))
+}
+
+// normStderr removes from a program's standard error only what
+// legitimately differs between backends, and keeps every other line:
+//
+//   - the frames under a `fault:` or `error:` line (indented lines): the
+//     Go backend prints Go's call stack (mangled function names, then
+//     file:line), native backends print none;
+//   - `crash bundle: PATH` lines: the path holds a time stamp, and only
+//     the Go backend writes a bundle;
+//   - the location of the deadlock fault XO-F001 and its list of blocked
+//     tasks (`blocked:` and every line after it but a crash bundle line):
+//     natively there are none (decision 0083).
+func normStderr(s string) string {
+	var b strings.Builder
+	frames, deadlock, blocked := false, false, false
+	for _, l := range strings.SplitAfter(s, "\n") {
+		if l == "" {
+			continue
+		}
+		if deadlock && l == "blocked:\n" {
+			blocked = true
+		}
+		switch {
+		case blocked && !strings.HasPrefix(l, "crash bundle: "):
+			continue
+		case frames && (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")):
+			continue
+		case strings.HasPrefix(l, "crash bundle: "):
+			continue
+		}
+		frames = strings.HasPrefix(l, "fault: ") || strings.HasPrefix(l, "error: ")
+		deadlock = strings.HasPrefix(l, "fault: XO-F001")
+		if deadlock {
+			if i := strings.Index(l, " at "); i >= 0 {
+				l = l[:i] + "\n"
+			}
+		}
+		b.WriteString(l)
 	}
-	return fmt.Sprintf("exit %d\n%s--- stderr\n%s", code, stdout.String(), first)
+	return b.String()
 }
 
 func onlyNoGC(ds []diag.Diagnostic) bool {
@@ -173,6 +211,21 @@ func numbered(src string) string {
 		fmt.Fprintf(&b, "%4d  %s\n", i+1, l)
 	}
 	return b.String()
+}
+
+func TestNormStderr(t *testing.T) {
+	goOut := "fault: integer overflow: 3 * 4 does not fit Int at main.xo:2:3\n  x_example_com_r.F_f\n      main.xo:2\ncrash bundle: /var/x/r-20261011T044433.xocrash\n"
+	native := "fault: integer overflow: 3 * 4 does not fit Int at main.xo:2:3\n"
+	if a, b := normStderr(goOut), normStderr(native); a != b {
+		t.Errorf("the Go and native faults differ after normStderr:\n%q\n%q", a, b)
+	}
+	if got := normStderr("fault: XO-F001: deadlock at main.xo:3:1\nblocked:\nmain blocked in select at main.xo:52\n\ncrash bundle: x\n"); got != "fault: XO-F001: deadlock\n" {
+		t.Errorf("deadlock: %q", got)
+	}
+	// indented lines that are not frames, and later lines, are kept
+	if got, want := normStderr("  note\nother\n"), "  note\nother\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }
 
 // ---------------------------------------------------------------------------

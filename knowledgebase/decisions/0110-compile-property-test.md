@@ -28,7 +28,11 @@ anyone writes goldens.
    generator), build on the Go backend, and, when the native check
    accepts it, build with `--no-gc`; then both run and must exit alike
    with the same standard output and first line of standard error (the
-   deadlock fault without its location, decision 0083).
+   deadlock fault without its location, decision 0083). Since
+   2026-10-11 all of standard error is compared, normalized only for
+   what decision 0083 lets differ (fault and error frames, the
+   deadlock's location and blocked task list, crash bundle paths;
+   `normStderr` in internal/gen/compileprop_test.go).
 3. `-short` runs 24 programs (seeds 1 to 24, in parallel, a few
    seconds); the full suite 150. `XO_COMPILE_PROPS=N` runs N,
    `XO_COMPILE_PROP_SEED=S` one, `XO_COMPILE_PROP_KEEP=dir` keeps them.
