@@ -33,7 +33,7 @@ func vetHybrid(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("go", "vet", "-asmdecl", "./m/...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0", "GOCACHE="+build.GoCacheDir())
+	cmd.Env = append(goVetEnv(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go vet: %v\n%s", err, out)
 	}
