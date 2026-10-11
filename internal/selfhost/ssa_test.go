@@ -62,6 +62,14 @@ func TestSelfhostSSA(t *testing.T) {
 	for i, d := range dirs {
 		want[d] = wants[i]
 	}
+	// the test binaries (stage 7) of the runs with test blocks
+	tdirs := testDirs(t, root, dirs)
+	twants := make([]goSSA, len(tdirs))
+	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(root, tdirs[i], true) })
+	twant := map[string]goSSA{}
+	for i, d := range tdirs {
+		twant[d] = twants[i]
+	}
 	for _, b := range backends {
 		bin, ok := bins[b]
 		if !ok {
@@ -69,16 +77,23 @@ func TestSelfhostSSA(t *testing.T) {
 		}
 		t.Run(b, func(t *testing.T) {
 			t.Parallel()
-			got := runSSA(t, bin, root, dirs)
+			got := runSSA(t, bin, root, dirs, "--std=std")
 			var st ssaStats
 			var fails []string
 			for _, d := range dirs {
 				fails = append(fails, compareSSA(d, want[d], got[d], &st)...)
 			}
 			t.Logf("%s", st)
+			tgot := runSSA(t, bin, root, tdirs, "--std=std", "--test")
+			var tst ssaStats
+			for _, d := range tdirs {
+				fails = append(fails, compareSSA("test "+d, twant[d], tgot[d], &tst)...)
+			}
+			t.Logf("test binaries: %s", tst)
 			if keep := os.Getenv("XO_SELFHOST_KEEP"); keep != "" {
 				os.MkdirAll(keep, 0o755)
 				os.WriteFile(filepath.Join(keep, "ssa-"+b+".txt"), []byte(st.skipReport()), 0o644)
+				os.WriteFile(filepath.Join(keep, "ssa-test-"+b+".txt"), []byte(tst.skipReport()), 0o644)
 			}
 			if len(fails) > 0 {
 				show := 10
@@ -104,7 +119,34 @@ type goSSA struct {
 
 // goSSABuild checks dir as a native build does and prints the build stage
 // of its SSA, as `xo ssadump` does from root.
-func goSSABuild(root, dir string) goSSA {
+func goSSABuild(root, dir string) goSSA { return goSSABuildOpts(root, dir, false) }
+
+// testDirs are the dirs whose .xo files declare test blocks (a line
+// starting with `test "`).
+func testDirs(t testing.TB, root string, dirs []string) []string {
+	var out []string
+	for _, d := range dirs {
+		ents, err := os.ReadDir(filepath.Join(root, d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".xo") {
+				continue
+			}
+			src, _ := os.ReadFile(filepath.Join(root, d, e.Name()))
+			if regexp.MustCompile(`(?m)^test "`).Match(src) {
+				out = append(out, d)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// goSSABuildOpts is goSSABuild, of the test binary (`xo ssadump --test`,
+// stage 7) when tests is set.
+func goSSABuildOpts(root, dir string, tests bool) goSSA {
 	res, ok, err := build.CheckNative([]string{dir}, false)
 	if err != nil {
 		return goSSA{none: "error " + err.Error()}
@@ -123,7 +165,7 @@ func goSSABuild(root, dir string) goSSA {
 		}
 		return goSSA{none: "rejected"}
 	}
-	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root}, map[string]bool{"build": true})
+	stages, err := ssa.BuildStages(res, ssa.Options{LineRoot: root, Tests: tests}, map[string]bool{"build": true})
 	if len(stages) == 0 {
 		if err != nil && strings.Contains(err.Error(), "no `main`") {
 			return goSSA{none: "no main"}
@@ -133,12 +175,12 @@ func goSSABuild(root, dir string) goSSA {
 	return goSSA{text: stages[0].Text}
 }
 
-// runSSA runs the Xo builder on every dir (--each) from root and splits
-// its output by run.
-func runSSA(t *testing.T, bin, root string, dirs []string) map[string]string {
+// runSSA runs the Xo builder on every dir (--each) from root, with flags
+// (--std=DIR, --test), and splits its output by run.
+func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[string]string {
 	out := map[string]string{}
 	const batch = 60
-	texts := runXoBatches(t, bin, root, []string{"--each", "--std=std", "--wd=" + workDir(t)}, dirs, batch)
+	texts := runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch)
 	for k, text := range texts {
 		i := k * batch
 		chunk := dirs[i:min(i+batch, len(dirs))]

@@ -19,6 +19,7 @@ fn main(os: Os) ! {
   var repeat = 0
   var each = false
   var all = false
+  var tests = false
   var std_dir = "std"
   var wd = os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
@@ -33,6 +34,8 @@ fn main(os: Os) ! {
       each = true
     } else if a == "--all" {
       all = true
+    } else if a == "--test" {
+      tests = true
     } else {
       dirs.push(a)
     }
@@ -73,6 +76,7 @@ fn main(os: Os) ! {
       for _ in 0..repeat {
         // the builder alone, once, as `xo ssadump --bench` (ssa.BuildRaw)
         var b = new_builder(c, wd)
+        b.tests = tests
         b.build()
         funcs += b.m.funcs.len()
       }
@@ -105,7 +109,7 @@ fn main(os: Os) ! {
       out.write("== rejected\n")
       continue
     }
-    var b = build_program(c, wd)
+    var b = build_program(c, wd, tests)
     if !b.why.is_empty() {
       out.write("== unsupported ${b.why}\n")
       continue

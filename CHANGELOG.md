@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Self hosting: SSA stage 7 (decision 0150): selfhost/ssa builds the
+  test binaries of `xo test --no-gc` exactly as internal/ssa does;
+  `xo ssadump --test` prints them.
 - Self hosting: SSA stage 6 (decision 0150): selfhost/ssa lowers the
   generic intrinsics (JSON codecs, SQL rows, any, cast, status codes)
   and calls of `use c` bindings exactly as internal/ssa does; the Xo

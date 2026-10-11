@@ -106,8 +106,8 @@ python3 -I scripts/reduce-diff.py [--jobs=4] [--timeout=30] [--no-ddmin] XO go a
 go test ./internal/llvm -run TestGolden -golden-update   # rewrite want.txt of the LLVM backend golden programs (from the Go backend's output)
 go test ./internal/ssa -update                       # rewrite the SSA goldens (testdata/golden/*/want.ssa and want.rc.ssa, testdata/bench/*.ssa and *.rc.ssa)
 XO_SSA_DUMP=/abs/dir [XO_SSA_RC=1] go test ./internal/ssa -run TestDump -v   # print a program's SSA (after InsertRC), or every builder and verifier error
-go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc|all] [--each] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times (decision 0150; last verified: 2026-10-10)
-go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder, stage 1: the build stage of xo ssadump for the functions it completes, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
+go run ./cmd/xo ssadump [--stage=build,unwind,landings,cleanup,rc|all] [--each] [--test] [--bench=N] <dirs...>   # hidden: the SSA module after each stage named (default build: the builder's output before any pass), checked as a native build checks (std/native included), fault positions relative to the working directory; --each builds every dir alone (=== ssa <dir>), a rejected run prints == rejected, builder errors follow == errors; --bench=N times ssa.BuildRaw (the builder alone, one build) N times; --test builds the test binary of `xo test --no-gc` (ssa.Options.Tests, decision 0150; last verified: 2026-10-11)
+go run ./cmd/xo run selfhost/ssa -- [--std=DIR] [--wd=DIR] [--each] [--all] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) SSA builder: the build stage of xo ssadump for the functions it completes, then == skipped and <function>: <why>; --all prints the skipped functions too (debugging); checks with selfhost/check in native mode; reads XO_MODCACHE, XO_OFFLINE, XO_WORK, XO_CBIND_DIR like the checker; a `use c` header whose binding is not in the cache (a Go build or `xo bind --c` writes it) makes the run unsupported (decision 0152; last verified: 2026-10-11)
 go run ./cmd/xo build --backend=llvm -o .tools/xossa selfhost/ssa   # native build of the Xo SSA builder (also --backend=arm64; the LLVM build links for about 10 minutes)
 go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm; go and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), and 400 code mutations (TestSelfhostSSAMutations, not under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
 XO_LEAKCHECK=1 ./prog                                  # an LLVM backend binary prints `xo leakcheck: N live of M allocations` at exit
@@ -816,7 +816,7 @@ selfhost/check/         the checker in Xo, stages 1 to 8 and module loading (dec
                         patterns, parameter bindings; native mode loads std/native, decision 0150),
                         cimport.xo (`use c`: the binding's key and prefix, its declaration file read from
                         the cache cbind wrote, `.xo/cbind` or $XO_CBIND_DIR; decision 0152)
-selfhost/ssa/           the SSA builder in Xo, stages 1 to 6 of decision 0150: ir.xo (types, values, blocks,
+selfhost/ssa/           the SSA builder in Xo, stages 1 to 7 of decision 0150: ir.xo (types, values, blocks,
                         functions as tables; the printer), build.xo (types, functions and generics, Braun
                         SSA construction, checks after calls, generated functions), expr.xo, stmt.xo,
                         call.xo (calls, closures, `?`, std calls), show.xo (Display and Debug text, error
@@ -825,7 +825,8 @@ selfhost/ssa/           the SSA builder in Xo, stages 1 to 6 of decision 0150: i
                         (contracts, invariants, loop bounds, real-time sections), defer.xo (`defer`, the
                         builder's landings and fault continuations), conc.xo (scopes, tasks, channels,
                         waits), json.xo (the generic intrinsics: JSON codecs, SQL rows, any, cast, status;
-                        calls of `use c` bindings), main.xo (CLI)
+                        calls of `use c` bindings), testmode.xo (test binaries: test functions, the entry,
+                        `expect`, the fakes of std/testing, generated values), main.xo (CLI)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)

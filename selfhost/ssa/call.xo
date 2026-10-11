@@ -34,8 +34,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.type_call(tobj, x)
   }
   if b.is_expect_call(x) {
-    b.unsupported("`expect`")
-    return b.undef(b.nat_of(x))
+    return b.expect_call(x)
   }
   let cio = b.c.call_in(b.s.file, x)
   let ci = match cio {
@@ -96,9 +95,8 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.map_values_hof(x, ci) {
       return v
     }
-    if path == "std/testing" && fr < 0 && (b.obj_name(fo) is "run_main" | "gen") {
-      b.unsupported("std/testing")
-      return b.undef(b.nat_of(x))
+    if let Some(v) = b.test_call(x, ci) {
+      return v
     }
     if b.is_proc_run(fo) {
       b.need_conc = true
@@ -112,6 +110,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
           return b.call_as(x, ci, impl)
         }
       }
+    }
+    if let Some(v) = b.mem_fs_call(x, ci) {
+      return v
     }
     let impl = b.impl_of(fo)
     if impl >= 0 {
@@ -1531,8 +1532,6 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       return None
     }
     rname = cap
-    b.unsupported("the fakes of std/testing")
-    return Some(b.undef(b.nat_of(x)))
   } else if !b.c.mods[fm].is_prelude {
     return None
   }
@@ -1549,6 +1548,26 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     b.unsupported("the method `Fs.${b.obj_name(fo)}`")
     return Some(b.undef(b.nat_of(x)))
+  }
+  if rname == "Stdio" && b.c.mods[fm].path == "std/testing" && (fname is "write" | "read_line" | "read_all" | "lines") {
+    // a test's FakeStdio: the same functions, whose runtime reads the
+    // input set_input gave (std/llrt/xo_stdin.c)
+    if fname != "write" {
+      b.need_conc = true
+      if !b.conc {
+        return Some(b.undef(b.nat_of(x)))
+      }
+    }
+    let pm = b.native_mod("std/prelude")
+    if pm >= 0 {
+      let impl = b.member(pm, "stdio_${fname}")
+      if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
+        return Some(b.call_as(x, ci, impl))
+      }
+    }
+  }
+  if let Some(v) = b.test_cap_call(x, ci, key) {
+    return Some(v)
   }
   if !(rname is "Clock" | "Net" | "Listener" | "Conn" | "Proc" | "Env" | "Duration" | "Time" | "Bytes" | "Fs" | "StrBuilder" | "BytesBuilder" | "Rand") {
     if rname != "Str" || fname != "bytes" {
@@ -1605,8 +1624,15 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     return Some(b.unit())
   }
   if key == "Rand.shuffle" {
-    b.unsupported("`Rand.shuffle`")
-    return Some(b.undef(nt))
+    // the native prelude's rand_shuffle (a capability's method has no
+    // implementation lookup of its own)
+    let pm = b.native_mod("std/prelude")
+    if pm >= 0 {
+      let impl = b.member(pm, "rand_shuffle")
+      if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func {
+        return Some(b.call_as(x, ci, impl))
+      }
+    }
   }
   let recv = b.expr(ci.recv[0])
   if let Some(v) = b.wait_call(key, fo, es, recv, nt) {
@@ -1618,6 +1644,11 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "Env.args" => return Some(b.rt("env_args", b.m.list(st), []))
     "Proc.exit" => {
       b.rt("exit", -1, [b.io_arg(fo, es, 0, it)])
+      if b.tests {
+        // in testing.run_main the exit unwinds main back to it (decision
+        // 0108): the runtime returns unwinding
+        b.check("")
+      }
       b.add(Op.Unreachable, -1, Aux.None, [])
       b.dead()
       return Some(b.undef(nt))

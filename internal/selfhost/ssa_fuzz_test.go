@@ -112,6 +112,19 @@ func TestSelfhostSSAMutations(t *testing.T) {
 		}
 	}
 	t.Logf("%d mutations: %s", n, st)
+	// the test binaries of the mutations with test blocks (stage 7)
+	tdirs := testDirs(t, tmp, dirs)
+	tgot := runSSA(t, bin, tmp, tdirs, "--std="+stdDir, "--test")
+	twants := make([]goSSA, len(tdirs))
+	parallel(len(tdirs), func(i int) { twants[i] = goSSABuildOpts(wd, tdirs[i], true) })
+	var tst ssaStats
+	for i, d := range tdirs {
+		for _, msg := range compareSSA("test "+d, twants[i], tgot[d], &tst) {
+			src, _ := os.ReadFile(filepath.Join(tmp, d, firstXo(t, filepath.Join(tmp, d))))
+			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
+		}
+	}
+	t.Logf("test binaries of %d mutations: %s", len(tdirs), tst)
 	if len(fails) > 0 {
 		if len(fails) > 10 {
 			fails = append(fails[:10], fmt.Sprintf("... and %d more", len(fails)-10))

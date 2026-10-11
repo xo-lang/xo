@@ -23,7 +23,9 @@ operations that wait) implemented 2026-10-11 in `selfhost/ssa/conc.xo`,
 with the scopes among the open blocks of defer.xo. SSA stage 6 (the
 generic intrinsics and C interop) implemented 2026-10-11 in
 `selfhost/ssa/json.xo`, with `use c` bound in the Xo checker
-(`selfhost/check/cimport.xo`, decision 0152). Evidence:
+(`selfhost/check/cimport.xo`, decision 0152). SSA stage 7 (test
+binaries) implemented 2026-10-11 in `selfhost/ssa/testmode.xo`, with
+`xo ssadump --test`. Evidence:
 `bench/results/selfhost-ssa-2026-10-10.md`. Fourth step of decision
 0130, after the lexer (0076), the parser (0127), and the checker (0141).
 
@@ -261,6 +263,17 @@ selfhost/ssa json.xo; selfhost/check cimport.xo, decision 0152):
   the build fails: a JSON decoder of a sized integer, a conversion
   between instances that differ only in effects, `dbg`, holes) the Xo
   builder skips, and such functions are counted as skipped.
+
+**Comparison rules of stage 7** (2026-10-11, test binaries: selfhost/ssa
+testmode.xo): the test binary of every repository run whose .xo files
+declare a test block (a line starting with `test "`) is built by both
+builders (`xo ssadump --test`, `selfhost/ssa --test`: ssa.Options.Tests,
+without --real) and compared by the rules of stage 1; so are the test
+binaries of the mutations with test blocks. The entry `main` and the
+property test generators `xo.gen[T]` are built when asked for, as the
+Go builder's genFunc builds them. The Xo checker records the `os`
+binding and the `for` parameters of each test block (Info.TestOs,
+Info.TestParams), keyed by the block's file and offset.
 
 **The Xo builder** keeps the IR in tables: a module's types are a List
 interned by name, a function's values (indexed by their ID), blocks,

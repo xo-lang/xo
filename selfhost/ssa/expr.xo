@@ -896,8 +896,7 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     _ => fault("binary")
   }
   if b.is_expect_call(x) && cmp_op(op) != None {
-    b.unsupported("`expect`")
-    return b.undef(b.bool_t())
+    return b.expect_compare(e)
   }
   let bt = b.bool_t()
   if op == lexer.Kind.AndAnd || op == lexer.Kind.OrOr {

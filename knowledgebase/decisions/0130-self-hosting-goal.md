@@ -132,6 +132,12 @@ passes the full suite on the backends it targets.
   reports an error too; 0 differences on go, arm64, and LLVM builds and
   400 mutations (every mutated function identical). Found a binder bug
   (`ffi` and `uses none` lines of one header shared a binding), fixed.
+- 2026-10-11: SSA stage 7 of 8, test binaries (decision 0150): the
+  test functions and entry, `expect`, the fakes of std/testing,
+  testing.run_main and testing.gen, property test generators; the test
+  binaries of the 71 runs with tests compared, 6,282 of 6,376 functions
+  identical, the rest skipped where the Go builder reports an error
+  too; 0 differences.
 
 ## Alternatives
 

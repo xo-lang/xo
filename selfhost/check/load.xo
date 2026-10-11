@@ -31,6 +31,10 @@ pub struct Checker {
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
+  /// The `os` binding and the `for` parameters of each test block, by
+  /// test_key (Info.TestOs, Info.TestParams).
+  test_os: Map[Int, Int] = {}
+  test_params: Map[Int, List[Int]] = {}
   /// The environment and the dependencies of the main modules
   /// (modfile.xo, deps.xo).
   deps: DepState = DepState{}

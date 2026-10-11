@@ -494,3 +494,56 @@ Found in stage 6:
   "converting `Int` to `Int32`" (build_json.go decodes every Int kind
   with `json_int` and coerces); the Go backend range checks it
   (std/rt JsonDec). Not fixed here; next experiment below.
+
+# Stage 7: test binaries, 2026-10-11
+
+`selfhost/ssa/testmode.xo` (about 850 lines): the test binary of `xo
+test --no-gc` (build_testmode.go, build_gen.go): a function per test
+block of the root modules (`test.<i>`, the `os` binding and a property
+test's inputs from the checker's new records `test_os` and
+`test_params`), the entry `main` that runs the test XO_TEST names
+(`rt.test_index`, the error of a failed test through `rt.test_fail`,
+the root scope of os.tasks around a test that uses it), `expect` and
+`expect(a) op b` (with the Option comparison of a plain value), the
+fakes of std/testing lowered as their capabilities (FakeClock,
+FakeEnv, FakeStdio, FakeProc control methods, MemFs through
+std/native/testing.xo), `testing.run_main`, `testing.gen`, and the
+generated inputs of property tests (`xo.gen[T]` for scalars, sized
+integers, Float32, Rune, Duration, Time, Bytes, Secret, tuples, List,
+Set, Map, Option, Result, newtypes, structs with invariants, enums).
+`xo ssadump --test` and `selfhost/ssa --test` print the test binary's
+build; TestSelfhostSSA compares the test binaries of the 71
+repository runs with test blocks, and TestSelfhostSSAMutations those
+of the mutations with test blocks. internal/selfhost/testdata/ssa/stage7
+(every generated shape, the fakes, run_main, os.tasks, a test with
+`uses`) joins them.
+
+| test binaries (go build) | count |
+|---|---|
+| runs with test blocks | 71 |
+| built by both | 50 |
+| rejected by both | 18 |
+| `use go` (not compared) | 3 |
+| the Go builder's functions in the runs built | 6,376 |
+| identical | 6,282 |
+| skipped (the Go builder reports an error there too) | 80 |
+| never declared (callees of those) | 14 |
+
+0 differences (go build; the arm64 and LLVM builds are compared with
+stage 8 below); the test binaries of 32 mutations: 2,022 of 2,022
+functions identical.
+
+Found in stage 7:
+
+- **`Rand.shuffle` was skipped by the port since stage 1**: the Go
+  builder lowers it through std/native's `rand_shuffle`; the port
+  reported it unsupported, and only a test used it
+  (internal/gen/testdata/golden/test_fakes). Ported.
+- **`os.proc.exit` in a test binary** is followed by a check (in
+  testing.run_main the exit unwinds main back to it); the port had
+  the program form only.
+- **A `main` that fails with its own error type given to
+  testing.run_main** (`fn main(os: Os) ! Oops`) does not build natively:
+  converting it to `fn(Os) -> () ! Error` needs "the Debug text of
+  `Error`", which the native backends do not support yet (XO1201 at
+  the call). The Go backend runs it. Next experiment below.

@@ -124,6 +124,8 @@ enum Job {
   Body(fo: Int, fi: Int, sub: Map[Int, Int])
   /// The body of a function wrapped for its contracts (`<name>.body`).
   Inner(fo: Int, fi: Int, sub: Map[Int, Int])
+  /// The function of a test block (testBody).
+  Test(fi: Int, file: Int, td: parser.TestDecl)
   Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool)
 }
 
@@ -153,6 +155,8 @@ pub struct Builder {
   /// again with unwinding checks (conc), as build_program does; the
   /// constructs themselves are outside stage 1.
   pub need_conc: Bool = false
+  /// A test binary (Options.Tests, testmode.xo).
+  pub tests: Bool = false
   pub conc: Bool = false
   /// Why the run cannot be built here (no main, concurrency), or "".
   pub why: Str = ""
@@ -185,11 +189,13 @@ pub struct Builder {
 
 /// Builds the program c checked (BuildOpts): once, and when it uses a
 /// concurrency construct again with unwinding checks.
-pub fn build_program(c: check.Checker, line_root: Str) -> Builder {
+pub fn build_program(c: check.Checker, line_root: Str, tests: Bool) -> Builder {
   var b = new_builder(c, line_root)
+  b.tests = tests
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
+    b.tests = tests
     b.conc = true
     b.build()
   }
@@ -206,6 +212,12 @@ pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
 /// Builds the program: main and every function reachable from it, in the
 /// Go builder's order (buildModule, before the passes).
 pub fn (var b: Builder) build() {
+  if b.tests {
+    // a test binary (testmode.xo): its main runs one test
+    b.build_tests()
+    b.run_queue()
+    return
+  }
   var main_fo = -1
   for m in b.c.root_mods {
     if let Some(o) = b.c.mods[m].members.get(b"main") {
@@ -232,6 +244,11 @@ pub fn (var b: Builder) build() {
       b.main_wrapper(mf, et)
     }
   }
+  b.run_queue()
+}
+
+/// Builds the queued bodies (and the generated functions they ask for).
+fn (var b: Builder) run_queue() {
   b.run_gens()
   var i = 0
   while i < b.queue.len() {
@@ -249,6 +266,7 @@ fn (var b: Builder) run_job(j: Job) {
   match j {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
     Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
+    Test(fi, file, td) => b.test_body(fi, file, td)
     Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack)
   }
 }
@@ -1026,6 +1044,11 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
   let om = b.obj_mod(fo)
   if om >= 0 && om != b.main_mod {
     n = "${b.c.mods[om].name}.${n}"
+  }
+  if b.tests && n == "main" {
+    // a test binary's main is the test entry; the program's main is an
+    // ordinary function (testing.run_main calls it)
+    n = "main.main"
   }
   n
 }

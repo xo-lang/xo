@@ -13,8 +13,8 @@ import (
 	"github.com/xo-lang/xo/internal/ssa"
 )
 
-// runSSADump is the hidden `xo ssadump [--stage=S] [--each] [--bench=N]
-// <dirs...>` (decision 0150): it checks the modules under dirs as a native
+// runSSADump is the hidden `xo ssadump [--stage=S] [--each] [--test]
+// [--bench=N] <dirs...>` (decision 0150): it checks the modules under dirs as a native
 // build does (with the implementation modules of std/native) and prints
 // the SSA module after each stage named (ssa.StageNames: build, unwind,
 // landings, cleanup, rc; default build, the builder's output before any
@@ -29,11 +29,14 @@ import (
 // A run the checker rejects prints `== rejected`; the errors section is
 // left out when the builder reports none. Fault positions are relative to
 // the working directory. --each builds every dir as a run of its own,
-// each preceded by `=== ssa <dir>`. --bench=N checks once and runs the
+// each preceded by `=== ssa <dir>`. --test builds the test binary of
+// `xo test --no-gc` (ssa.Options.Tests: a function per test block and a
+// main that runs the one XO_TEST names). --bench=N checks once and runs the
 // builder alone (ssa.BuildRaw) N times, printing the time.
 func runSSADump(args []string, stdout, stderr io.Writer) int {
 	repeat := 0
 	each := false
+	tests := false
 	want := map[string]bool{"build": true}
 	var dirs []string
 	for _, a := range args {
@@ -62,12 +65,14 @@ func runSSADump(args []string, stdout, stderr io.Writer) int {
 			}
 		case a == "--each":
 			each = true
+		case a == "--test":
+			tests = true
 		default:
 			dirs = append(dirs, a)
 		}
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintf(stderr, "usage: xo ssadump [--stage=%s] [--each] [--bench=N] <dirs...>\n", strings.Join(ssa.StageNames, ","))
+		fmt.Fprintf(stderr, "usage: xo ssadump [--stage=%s] [--each] [--test] [--bench=N] <dirs...>\n", strings.Join(ssa.StageNames, ","))
 		return 2
 	}
 	wd, err := os.Getwd()
@@ -75,7 +80,7 @@ func runSSADump(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "xo ssadump: %v\n", err)
 		return 1
 	}
-	opts := ssa.Options{LineRoot: wd}
+	opts := ssa.Options{LineRoot: wd, Tests: tests}
 	runs := [][]string{dirs}
 	if each {
 		runs = nil

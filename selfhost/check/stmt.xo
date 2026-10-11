@@ -285,7 +285,10 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
   let os = c.objs.len()
   c.objs.push(Obj{kind: ObjKind.Local, name: b"os", local: "predeclared", ty: os_ty, vctx: cx})
   c.scopes[0][b"os"] = os
+  let tkey = c.test_key(c.cur_file, td)
+  c.test_os[tkey] = os
   var env = TypeEnv{file: c.cur_file, mod: c.cur_mod}
+  var pvs: List[Int] = []
   for p in td.params {
     c.check_name(p.name, "parameter")
     var pt = c.bad_ty
@@ -294,7 +297,9 @@ fn (var c: Checker) check_test(td: parser.TestDecl) {
     }
     let pv = c.declare_local(p.name, pt, "param")
     c.objs[pv].vctx = cx
+    pvs.push(pv)
   }
+  c.test_params[tkey] = pvs
   if !td.effects.is_empty() {
     c.resolve_effects(td.effects, env)
   }
