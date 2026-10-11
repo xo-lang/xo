@@ -148,11 +148,11 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 		}
 		return s.unit(), true
 	}
-	if key == "Rand.shuffle" {
-		// the native prelude's rand_shuffle (a capability's method has
+	if name, ok := capImpls[key]; ok {
+		// the native prelude's implementation (a capability's method has
 		// no implementation lookup of its own)
 		if nm := b.nativeMod("std/prelude"); nm != nil {
-			if impl, ok := nm.Scope["rand_shuffle"].(*check.FuncObj); ok {
+			if impl, ok := nm.Scope[name].(*check.FuncObj); ok {
 				return s.callAs(x, ci, impl), true
 			}
 		}
@@ -275,6 +275,14 @@ func (s *fn) ioCall(x *ast.CallExpr, ci *check.Call) (*Value, bool) {
 	}
 	b.unsupported(x, "the method `"+fo.DisplayName()+"`")
 	return s.undef(nt), true
+}
+
+// capImpls are the capability methods implemented in the native prelude
+// (std/native/prelude.xo) by a function of their own.
+var capImpls = map[string]string{
+	"Rand.shuffle":   "rand_shuffle",
+	"Env.config_dir": "env_config_dir", // decision 0163
+	"Env.cache_dir":  "env_cache_dir",
 }
 
 // stdioReads reports whether the Stdio method name reads standard input

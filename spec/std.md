@@ -627,8 +627,8 @@ fn (e: Env) cache_dir() -> Str ! EnvErr
 `%AppData%` (`%LocalAppData%`) on Windows, with `/` separators. A
 missing home is `Err(Missing("HOME"))` (as `home()`), a missing Windows
 variable `Err(Missing("AppData"))`. The program adds its own directory:
-`os.fs.sub(os.env.config_dir()? + "/mytool")`. Native builds report
-them as XO1201 (planned).
+`os.fs.sub(os.env.config_dir()? + "/mytool")`. Every backend (the
+native ones read `HOME` for the home directory).
 
 `e.only(names)` (decision 0156) is an `Env` that reads only the listed
 variables: `get` of another name is `None`, `vars` holds only listed

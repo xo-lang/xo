@@ -905,6 +905,44 @@ fn stdio_lines(s: Stdio) -> List[Str] ! IoErr {
   text.lines()
 }
 
+// User directories (std.md 3.5, decision 0163): std/rt's userDir, read
+// through the Env.
+
+fn env_user_dir(e: Env, cache: Bool) -> Str ! EnvErr uses env {
+  var xdg = "XDG_CONFIG_HOME"
+  var mac = "/Library/Application Support"
+  var unix = "/.config"
+  if cache {
+    xdg = "XDG_CACHE_HOME"
+    mac = "/Library/Caches"
+    unix = "/.cache"
+  }
+  match e.get(xdg) {
+    Some(v) => {
+      if v.starts_with("/") {
+        return v
+      }
+    }
+    None => ()
+  }
+  let home = match e.get("HOME") {
+    Some(h) => h
+    None => ""
+  }
+  if home == "" {
+    return Err(EnvErr.Missing(name: "HOME"))
+  }
+  let base = home.trim_suffix("/")
+  match target.os {
+    TargetOs.Darwin => base + mac
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => base + unix
+  }
+}
+
+fn env_config_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, false) }
+
+fn env_cache_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, true) }
+
 // Terminals (std.md 3.6, decision 0162): std/rt's term.go.
 
 fn stdio_stdin_is_tty(_s: Stdio) -> Bool { rt.isatty(0) }

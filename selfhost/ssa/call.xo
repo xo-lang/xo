@@ -1623,12 +1623,13 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     return Some(b.unit())
   }
-  if key == "Rand.shuffle" {
-    // the native prelude's rand_shuffle (a capability's method has no
-    // implementation lookup of its own)
+  let impl_name = cap_impl(key)
+  if impl_name != "" {
+    // the native prelude's implementation (a capability's method has no
+    // implementation lookup of its own); internal/ssa's capImpls
     let pm = b.native_mod("std/prelude")
     if pm >= 0 {
-      let impl = b.member(pm, "rand_shuffle")
+      let impl = b.member(pm, impl_name)
       if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func {
         return Some(b.call_as(x, ci, impl))
       }
@@ -1741,4 +1742,15 @@ fn (var b: Builder) pop_one(l: Int, ot: Int) -> Int {
 /// stdioReads.
 fn stdio_reads(name: Str) -> Bool {
   name is "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes"
+}
+
+/// The native prelude function implementing the capability method key,
+/// or ""; internal/ssa's capImpls.
+fn cap_impl(key: Str) -> Str {
+  match key {
+    "Rand.shuffle" => "rand_shuffle"
+    "Env.config_dir" => "env_config_dir"
+    "Env.cache_dir" => "env_cache_dir"
+    _ => ""
+  }
 }

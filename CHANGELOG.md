@@ -26,6 +26,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   root are refused), and `std/toml` (`decode[T: Json]`, `to_json`; TOML
   1.0) on the Go backend, XO1201 (planned) on native builds. A std
   parameter's default may be a rune literal.
+- `Env.config_dir()` and `cache_dir()` build natively too (native
+  prelude; both SSA builders route them there).
 - `std/toml` builds natively too (`std/native/toml.xo`, the same JSON
   text and errors as the Go backend).
 - Files (std.md 3.1, 3.5, 8.3, decision 0163), Go backend and MemFs:

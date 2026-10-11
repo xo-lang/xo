@@ -1,0 +1,18 @@
+// Env.config_dir and Env.cache_dir (std.md 3.5, decision 0163) on every
+// backend: an absolute XDG variable wins; otherwise the OS's place under
+// HOME (env.txt sets XDG_CONFIG_HOME, a relative XDG_CACHE_HOME, and HOME).
+
+fn main(os: Os) ! {
+  out(os.stdio, "config", os.env.config_dir())
+  match os.env.cache_dir() {
+    Ok(d) => os.stdio.println("cache under HOME: ${d.starts_with("/home/test/")} ${d.ends_with("/.cache") || d.ends_with("/Library/Caches")}")
+    Err(e) => os.stdio.println("cache: ${e}")
+  }
+}
+
+fn out(s: Stdio, what: Str, r: Result[Str, EnvErr]) uses stdio {
+  match r {
+    Ok(d) => s.println("${what}: ${d}")
+    Err(e) => s.println("${what}: ${e}")
+  }
+}

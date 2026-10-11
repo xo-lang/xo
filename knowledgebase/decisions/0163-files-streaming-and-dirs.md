@@ -1,8 +1,9 @@
 # 0163: Files: handles, append, copy, modes, links, globs, locks, user dirs
 
 Status: Accepted, implemented on the Go backend and MemFs (2026-10-11).
-Native builds report the new methods as XO1201 (planned). Spec: std.md
-3.1, 3.5, 8.3.
+`Env.config_dir` and `cache_dir` build natively too (native prelude,
+golden `env_dirs`); native builds report the `Fs` methods as XO1201
+(planned). Spec: std.md 3.1, 3.5, 8.3.
 
 ## Context
 
@@ -70,8 +71,7 @@ fakes (MemFs) must implement everything deterministically.
   plan is descriptors as handles in the C runtime (`open`, `read`,
   `write` on the event loop like sockets), `flock`, `symlink`,
   `readlink`, `chmod`, and the glob in Xo over `read_dir` (it is
-  backend neutral already); `Env.config_dir` can move to the native
-  prelude unchanged.
+  backend neutral already).
 
 ## Alternatives
 
