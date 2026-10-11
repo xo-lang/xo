@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -759,14 +760,20 @@ func (pg *pkgGen) frameName(fo *check.FuncObj) string {
 	return mod + "." + fo.Name
 }
 
+// usesTask matches Go code that refers to the task variable tk; a
+// constant whose value does not (most literals) gets no task.
+var usesTask = regexp.MustCompile(`\btk\b`)
+
 func (pg *pkgGen) genConst(co *check.ConstObj) {
 	fg := pg.newFn(nil)
 	fg.fr = &frame{name: co.Name, resT: co.Type}
 	code := fg.val(co.Decl.Value)
 	pg.p("%s", pg.g.lineDirective(co.Decl))
 	pg.p("var C_%s = func() %s {", co.Name, pg.goType(co.Type))
-	pg.p("\ttk := %sInitTask", pg.rt())
-	pg.p("\t_ = tk")
+	if body := fg.out.String(); usesTask.MatchString(body + code) {
+		pg.p("\ttk := %sInitTask", pg.rt())
+		pg.p("\t_ = tk")
+	}
 	pg.out.WriteString(fg.out.String())
 	pg.p("\treturn %s\n}()\n", code)
 }

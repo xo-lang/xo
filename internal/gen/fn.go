@@ -276,7 +276,7 @@ func (f *fnGen) topBlock(b *ast.Block) {
 		f.line("var %s %s", f.fr.retVar, res)
 	}
 	f.out.WriteString(body)
-	if f.fr.goRes != "" && !endsInReturn(body, f.ind) {
+	if f.fr.goRes != "" && !endsInReturn(body, f.ind) && !terminates(body) {
 		f.line("panic(%q)", "unreachable: missing return")
 	}
 }

@@ -7,7 +7,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - Generated Go no longer repeats a `//line` directive on consecutive
-  lines (positions are unchanged).
+  lines (positions are unchanged), declares the unused task `tk` in
+  constants whose value does not need it, or ends a function whose body
+  already terminates (an `if`/`else` or `switch` returning in every
+  branch, by the Go spec's rule) with an unreachable panic.
 - LLVM backend: enums of 256 bytes or more are passed by reference, and
   values in memory nothing writes during the call (by reference
   parameters, their fields and payloads, box contents and list elements
