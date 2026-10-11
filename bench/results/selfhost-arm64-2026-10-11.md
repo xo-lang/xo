@@ -184,3 +184,59 @@ the same output:
 | selfhost/lexer (150,315 lines) | 196 | 361 (1.84x) |
 | selfhost/parser (2,467,305 lines) | 2,974 | 5,351 (1.80x) |
 | bench/perf/xo (40,540 lines) | 46 | 90 (1.96x) |
+
+# Performance fix: updates inside list elements, 2026-10-11
+
+The first arm64 build of the switch-over driver (selfhost/xo) ran over
+20 minutes on its own source before it was stopped: on the native
+backends `g.blocks[g.cur].insts.push(x)` copies the whole instruction
+list at every push (gotchas/xo-native-nested-element-update.md; micro
+benchmark, 20,000 pushes onto a list inside a list element: 1,018 ms on
+arm64, 757 ms on LLVM, 0 ms moved out and back). selfhost/arm64 now
+moves instruction lists out of their block for an update (take_insts,
+put_insts), keeps the current block's memo out of the memo list, and
+pushes onto lists of lists in place (regalloc.xo push_rng, push_int).
+The output is unchanged (TestSelfhostArm64 merge tier, the switch-over
+below). With it, the arm64 build of the Xo emitter emits selfhost/lexer
+in 195 ms for 5 generations, the Go emitter in 196 ms (`--bench=5`).
+
+# The switch-over experiment, 2026-10-11
+
+`scripts/selfhost-switchover.sh` (decision 0158): `selfhost/xo` (xo1,
+the lexer, parser, checker, SSA builder with its passes, and arm64
+emitter, all in Xo, then `cc` to assemble and link with std/llrt) built
+by the Go compiler with `--backend=arm64` (A); A compiles selfhost/xo
+(B); B compiles it again (C). Apple M4 Pro, macOS, another agent's work
+on the machine:
+
+| step | wall clock |
+|---|---|
+| A: the Go compiler, `xo build --backend=arm64 selfhost/xo` (with the link) | 161.6 s |
+| the Go emitter's assembly of selfhost/xo (`xo asmdump`, no link) | 114.1 s |
+| B: A compiles selfhost/xo (with the link) | 326.1 s |
+| C: B compiles selfhost/xo (with the link) | 324.1 s |
+
+Result: **the fixed point is reached on the assembly**. The assembly B
+wrote (8,938,072 lines), the assembly C wrote, and the Go emitter's
+assembly of the same program are byte identical (sha256
+b64ee66c...203e for all three). The binaries B and C differ in 49
+bytes: the 16 bytes of the Mach-O LC_UUID and the ad hoc code signature,
+whose identifier is the output file's name (`B`, `C`); their code and
+data come from identical assembly and the same runtime sources.
+
+B (the self compiled compiler) on the arm64 goldens
+(`scripts/selfhost-goldens.py`: the 114 programs of
+internal/llvm/testdata/golden against want.txt with no allocation live
+at exit, and the 24 of internal/arm64/testdata/run against the Go
+backend's output): **132 of 138 pass**; the 6 others are the std/http
+programs (http_client, http_fault, http_server, http_stream, http_tls,
+http_wire), which xo1 refuses to build because it does not build and
+link the TLS library yet.
+
+The released `xo` and what it runs are unchanged (decision 0150: the
+owner's decision after the fixed point).
+
+Not done in xo1 (what internal/build adds beyond the runtime): the TLS
+library of std/http, time zone data for std/time (a program loading
+native/time is refused), `use c` sources, the runtime object cache and
+prebuilt runtime packs, cross targets (darwin only), test binaries.

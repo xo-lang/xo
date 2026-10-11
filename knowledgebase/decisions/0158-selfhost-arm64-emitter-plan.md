@@ -8,7 +8,15 @@ closures.xo, byref.xo, inline.xo, stages.xo, main.xo), `cmd/xo/asmdump.go`
 `internal/selfhost/arm64_test.go` (`TestSelfhostArm64`,
 `TestSelfhostArm64Mutations`): every function of every repository run
 both SSA builders build completely is identical, and every such run is
-byte identical as a whole file. Second stage of decision 0150's order
+byte identical as a whole file. The switch-over experiment ran
+2026-10-11 (`selfhost/xo`, `scripts/selfhost-switchover.sh`): the
+fixed point is reached on the assembly (the compiler built by the Go
+compiler and the one it built write byte identical assembly of
+selfhost/xo, identical to the Go emitter's; the binaries differ only in
+LC_UUID and the ad hoc signature's file name), and the self compiled
+compiler passes 132 of the 138 arm64 goldens (the 6 std/http programs
+need the TLS library, which its driver does not link yet). The released
+`xo` is unchanged. Second stage of decision 0150's order
 (after the SSA builder). Evidence:
 `bench/results/selfhost-arm64-2026-10-11.md`.
 
@@ -17,8 +25,10 @@ byte identical as a whole file. Second stage of decision 0150's order
 Decision 0150 orders the self hosting stages after the checker: the SSA
 lowering (done, `selfhost/ssa`, identical to internal/ssa on every
 function of every run both build, after every pass), then the arm64
-emitter (internal/arm64, about 11,000 lines of Go), then WebAssembly,
-LLVM, and the Go code generator. Its switch-over point is a self hosted
+emitter (internal/arm64, about 11,000 lines of Go), then (as amended
+by the owner on 2026-10-11) the LLVM emitter, the Go code generator,
+and the retirement of the Go implementation, with WebAssembly after.
+Its switch-over point is a self hosted
 compiler (lexer through arm64 emitter) that compiles itself to a fixed
 point on arm64 hosts and passes the arm64 goldens.
 

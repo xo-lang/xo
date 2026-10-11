@@ -8,7 +8,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
-  asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations).
+  asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every
+  function and every whole file identical on the repository runs both
+  SSA builders build completely. `selfhost/xo`, a compiler driver all
+  in Xo for the switch-over experiment (`scripts/selfhost-switchover.sh`,
+  `scripts/selfhost-goldens.py`); the released `xo` is unchanged.
 - `xo get` and `xo mod accept-effects` refuse a version with an
   escape hatch (`use c`, impure `use go`) the main module does not
   vouch for (XO1316) before writing xo.mod or xo.lock; `--accept-effects`
