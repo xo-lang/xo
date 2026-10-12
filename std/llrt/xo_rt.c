@@ -34,6 +34,10 @@
 // The interface to generated code uses only scalars and pointers (no
 // structs by value), so it does not depend on the C ABI of aggregates.
 
+#ifdef _WIN32
+// Windows (decision 0197): the POSIX subset on Win32 and Winsock
+#include "xo_win.c"
+#else
 #include <math.h>
 #include <pthread.h>
 #include <sched.h>
@@ -54,6 +58,7 @@
 #include <netinet/tcp.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#endif
 #include <unwind.h>
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
@@ -1173,7 +1178,9 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
 //     signal them, and cancellation signals the park registered at a
 //     canceled node.
 
+#ifndef _WIN32
 #include <sys/types.h>
+#endif
 
 typedef void (*xo_free_fn)(void *);
 // xo_ldrop releases a list of one element of a known type (an entry
@@ -1390,6 +1397,9 @@ __attribute__((noinline)) static void futex_wait(uint32_t *a, uint32_t v) {
 __attribute__((noinline)) static void futex_wake(uint32_t *a) {
 	__ulock_wake(XO_UL_COMPARE_AND_WAIT | XO_ULF_NO_ERRNO, a, 0);
 }
+#elif defined(_WIN32)
+__attribute__((noinline)) static void futex_wait(uint32_t *a, uint32_t v) { WaitOnAddress(a, &v, sizeof v, INFINITE); }
+__attribute__((noinline)) static void futex_wake(uint32_t *a) { WakeByAddressSingle(a); }
 #else
 #include <linux/futex.h>
 #include <sys/syscall.h>
@@ -1729,6 +1739,70 @@ XO_NORETURN static void fault_exit(xo_ctx *c) {
 	exit(70);
 }
 
+#ifdef _WIN32
+static int lsda_landing(const uint8_t *p, uintptr_t func, uintptr_t ip, uintptr_t *lp);
+EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
+
+// fault_raise on Windows (decision 0197): there is no _Unwind_ForcedUnwind
+// in the MSVC environment, so the runtime walks the frames itself with the
+// Windows unwinder (the .pdata and .xdata every function has) from here
+// to the nearest frame of generated code whose call site has a landing
+// pad (its handler is xo_personality, its handler data the GCC call site
+// table LLVM emits for a non MSVC personality), and resumes there with
+// that frame's registers. The landing pad runs the cleanups and calls
+// xo_fault_continue, which raises again from there: one frame of
+// landing pads at a time, as the forced unwind does. Past the boundary
+// (or with no unwind data: the end of the stack) the fault is reported.
+XO_NORETURN static void fault_raise(xo_ctx *c) {
+	rt_fault_leave();
+	c->faulting = 1;
+	c->unwinding = 1;
+	struct _Unwind_Exception *exc = &c->fault_exc;
+	memset(exc, 0, sizeof *exc);
+	exc->exception_class = XO_EXC_CLASS;
+	CONTEXT cx, here;
+	RtlCaptureContext(&cx);
+	for (;;) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+		DWORD64 pc = cx.Pc;
+#else
+		DWORD64 pc = cx.Rip;
+#endif
+		DWORD64 base = 0;
+		PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(pc, &base, NULL);
+		if (!fn || pc == 0) {
+			break;
+		}
+		here = cx;
+		void *data = NULL;
+		DWORD64 establisher = 0;
+		PEXCEPTION_ROUTINE h = RtlVirtualUnwind(UNW_FLAG_UHANDLER, base, pc, fn, &cx, &data, &establisher, NULL);
+#if defined(_M_ARM64) || defined(__aarch64__)
+		uintptr_t cfa = (uintptr_t)cx.Sp;
+#else
+		uintptr_t cfa = (uintptr_t)cx.Rsp;
+#endif
+		if (c->boundary && cfa > c->boundary) {
+			break;
+		}
+		uintptr_t lp;
+		if (h == (PEXCEPTION_ROUTINE)xo_personality && data &&
+			lsda_landing(data, (uintptr_t)(base + fn->BeginAddress), (uintptr_t)pc - 1, &lp)) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+			here.Pc = lp;
+			here.X0 = (DWORD64)(uintptr_t)exc;
+			here.X1 = 0;
+#else
+			here.Rip = lp;
+			here.Rax = (DWORD64)(uintptr_t)exc;
+			here.Rdx = 0;
+#endif
+			RtlRestoreContext(&here, NULL);
+		}
+	}
+	fault_exit(c);
+}
+#else
 static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
 	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
 	(void)version;
@@ -1767,6 +1841,7 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	// the unwinder found no way up
 	fault_exit(c);
 }
+#endif
 
 static char *dup_bytes(const char *p, size_t n) {
 	char *s = malloc(n + 1);
@@ -1918,6 +1993,52 @@ static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
 
 static uintptr_t uleb(const uint8_t **p) { return lsda_read(p, 0x01); }
 
+#ifdef _WIN32
+// lsda_landing finds the landing pad of the call site at ip in the call
+// site table p of the function at func: 1 and *lp when it has one.
+static int lsda_landing(const uint8_t *p, uintptr_t func, uintptr_t ip, uintptr_t *lp) {
+	uint8_t lpenc = *p++;
+	if (lpenc != 0xff) {
+		lsda_read(&p, lpenc);
+	}
+	uint8_t ttenc = *p++;
+	if (ttenc != 0xff) {
+		uleb(&p);
+	}
+	uint8_t csenc = *p++;
+	uintptr_t cslen = uleb(&p);
+	const uint8_t *end = p + cslen;
+	while (p < end) {
+		uintptr_t start = lsda_read(&p, csenc);
+		uintptr_t len = lsda_read(&p, csenc);
+		uintptr_t pad = lsda_read(&p, csenc);
+		uleb(&p); // action
+		if (ip < func + start) {
+			break;
+		}
+		if (ip < func + start + len) {
+			if (pad == 0) {
+				return 0;
+			}
+			*lp = func + pad;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// xo_personality is, on Windows, the language handler the system's
+// exception dispatcher calls for frames of generated code: faults never
+// go through the dispatcher (fault_raise walks the frames itself), so it
+// passes every system exception on.
+EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp) {
+	(void)rec;
+	(void)frame;
+	(void)cx;
+	(void)disp;
+	return ExceptionContinueSearch;
+}
+#else
 _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t cls,
 	struct _Unwind_Exception *e, struct _Unwind_Context *uc) {
 	(void)cls;
@@ -1964,6 +2085,7 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 	}
 	return _URC_CONTINUE_UNWIND;
 }
+#endif
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
@@ -3244,6 +3366,8 @@ void xo_fiber_start(void);
 
 #if defined(__APPLE__)
 #define XO_ASM_FN(n) ".globl _" n "\n.private_extern _" n "\n.p2align 4\n_" n ":\n"
+#elif defined(_WIN32)
+#define XO_ASM_FN(n) ".globl " n "\n.def " n "\n.scl 2\n.type 32\n.endef\n.p2align 4\n" n ":\n"
 #else
 #define XO_ASM_FN(n) ".globl " n "\n.hidden " n "\n.type " n ", @function\n.p2align 4\n" n ":\n"
 #endif
@@ -3283,6 +3407,79 @@ __asm__(".text\n" XO_ASM_FN("xo_fiber_switch")
 	"blr x20\n"
 	"brk #1\n");
 #define XO_FRAME 160
+#elif defined(__x86_64__) && defined(_WIN32)
+// Windows x64: rbx, rbp, rdi, rsi, r12 to r15, xmm6 to xmm15, and the
+// control words of MXCSR and the x87 unit are callee saved. The stack
+// bounds in the thread's TEB (StackBase gs:0x08, StackLimit gs:0x10,
+// DeallocationStack gs:0x1478) switch too: the system's unwinder and the
+// stack growth on a guard page check addresses against them. The frame
+// (from the saved stack pointer): the control words (8), xmm6 to xmm15
+// (160), the three TEB words (24), r15, r14, r13, r12, rsi, rdi, rbx, rbp
+// (64), and the return address.
+__asm__(".text\n" XO_ASM_FN("xo_fiber_switch")
+	"pushq %rbp\n"
+	"pushq %rbx\n"
+	"pushq %rdi\n"
+	"pushq %rsi\n"
+	"pushq %r12\n"
+	"pushq %r13\n"
+	"pushq %r14\n"
+	"pushq %r15\n"
+	"subq $192, %rsp\n"
+	"movq %gs:0x1478, %rax\n"
+	"movq %rax, 184(%rsp)\n"
+	"movq %gs:0x10, %rax\n"
+	"movq %rax, 176(%rsp)\n"
+	"movq %gs:0x08, %rax\n"
+	"movq %rax, 168(%rsp)\n"
+	"movdqu %xmm6, 8(%rsp)\n"
+	"movdqu %xmm7, 24(%rsp)\n"
+	"movdqu %xmm8, 40(%rsp)\n"
+	"movdqu %xmm9, 56(%rsp)\n"
+	"movdqu %xmm10, 72(%rsp)\n"
+	"movdqu %xmm11, 88(%rsp)\n"
+	"movdqu %xmm12, 104(%rsp)\n"
+	"movdqu %xmm13, 120(%rsp)\n"
+	"movdqu %xmm14, 136(%rsp)\n"
+	"movdqu %xmm15, 152(%rsp)\n"
+	"stmxcsr (%rsp)\n"
+	"fnstcw 4(%rsp)\n"
+	"movq %rsp, (%rcx)\n"
+	"movq %rdx, %rsp\n"
+	"ldmxcsr (%rsp)\n"
+	"fldcw 4(%rsp)\n"
+	"movdqu 8(%rsp), %xmm6\n"
+	"movdqu 24(%rsp), %xmm7\n"
+	"movdqu 40(%rsp), %xmm8\n"
+	"movdqu 56(%rsp), %xmm9\n"
+	"movdqu 72(%rsp), %xmm10\n"
+	"movdqu 88(%rsp), %xmm11\n"
+	"movdqu 104(%rsp), %xmm12\n"
+	"movdqu 120(%rsp), %xmm13\n"
+	"movdqu 136(%rsp), %xmm14\n"
+	"movdqu 152(%rsp), %xmm15\n"
+	"movq 168(%rsp), %rax\n"
+	"movq %rax, %gs:0x08\n"
+	"movq 176(%rsp), %rax\n"
+	"movq %rax, %gs:0x10\n"
+	"movq 184(%rsp), %rax\n"
+	"movq %rax, %gs:0x1478\n"
+	"addq $192, %rsp\n"
+	"popq %r15\n"
+	"popq %r14\n"
+	"popq %r13\n"
+	"popq %r12\n"
+	"popq %rsi\n"
+	"popq %rdi\n"
+	"popq %rbx\n"
+	"popq %rbp\n"
+	"ret\n"
+	XO_ASM_FN("xo_fiber_start")
+	"subq $32, %rsp\n"
+	"movq %rbx, %rcx\n"
+	"callq *%r12\n"
+	"ud2\n");
+#define XO_FRAME 264
 #elif defined(__x86_64__)
 // System V: rbx, rbp, r12 to r15, and the control words of MXCSR and the
 // x87 unit are callee saved.
@@ -3369,6 +3566,9 @@ void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_
 
 #define XO_FIBER_CACHE 64
 
+// the part of a fiber's stack committed up front on Windows
+#define XO_WIN_FIBER_COMMIT ((size_t)64 << 10)
+
 static struct {
 	xo_lock mu;
 	xo_fiber *list;
@@ -3423,11 +3623,22 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 		}
 		size_t page = (size_t)sysconf(_SC_PAGESIZE);
 		f->size = fibers.stack + page;
+#ifdef _WIN32
+		// reserved, the top committed, and a guard page below it: the
+		// system grows the stack as a thread's (the TEB's bounds are the
+		// fiber's while it runs, xo_fiber_switch)
+		f->mem = VirtualAlloc(NULL, f->size, MEM_RESERVE, PAGE_READWRITE);
+		if (!f->mem || !VirtualAlloc(f->mem + f->size - XO_WIN_FIBER_COMMIT, XO_WIN_FIBER_COMMIT, MEM_COMMIT, PAGE_READWRITE) ||
+			!VirtualAlloc(f->mem + f->size - XO_WIN_FIBER_COMMIT - page, page, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD)) {
+			xo_oom();
+		}
+#else
 		f->mem = mmap(NULL, f->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
 		if (f->mem == MAP_FAILED) {
 			xo_oom();
 		}
 		mprotect(f->mem, page, PROT_NONE);
+#endif
 #ifdef XO_TSAN
 		f->tsan = __tsan_create_fiber(0);
 #endif
@@ -3443,6 +3654,15 @@ static xo_fiber *fiber_new(xo_worker *w, xo_task *t) {
 	fr[0] = f;                     // x19
 	fr[1] = (void *)fiber_main;    // x20
 	fr[11] = (void *)xo_fiber_start; // x30
+#elif defined(_WIN32)
+	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
+	((uint16_t *)fr)[2] = 0x027F; // x87 control word (Windows: 53 bit precision)
+	fr[21] = (void *)top;                                  // StackBase
+	fr[22] = (void *)(f->mem + f->size - XO_WIN_FIBER_COMMIT); // StackLimit
+	fr[23] = (void *)f->mem;                               // DeallocationStack
+	fr[27] = (void *)fiber_main;    // r12
+	fr[30] = f;                     // rbx
+	fr[32] = (void *)xo_fiber_start; // return address
 #else
 	((uint32_t *)fr)[0] = 0x1F80; // MXCSR: exceptions masked, round to nearest
 	((uint16_t *)fr)[2] = 0x037F; // x87 control word
@@ -3473,7 +3693,11 @@ static void fiber_free(xo_worker *w, xo_fiber *f) {
 #ifdef XO_TSAN
 	__tsan_destroy_fiber(f->tsan);
 #endif
+#ifdef _WIN32
+	VirtualFree(f->mem, 0, MEM_RELEASE);
+#else
 	munmap(f->mem, f->size);
+#endif
 	free(f);
 }
 
@@ -4678,7 +4902,12 @@ int64_t xo_atomic_max(xo_atomic *a, int64_t n) {
 // System calls that set errno go through the x_* wrappers, which are never
 // inlined and return -errno: errno is a thread local (see cur_get).
 
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(_WIN32)
+// Windows (decision 0197, stage 1): the poller waits on an event for
+// timers and wake ups; sockets have no readiness source yet (IOCP or
+// AFD polling is stage 2), so pd_new refuses them
+#define XO_WINPOLL 1
+#elif defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/event.h>
 #define XO_KQUEUE 1
 #else
@@ -4716,7 +4945,15 @@ static struct {
 	int poll;   // the kqueue or epoll descriptor
 	xo_pd *dead;
 	int sigs; // signals not handled yet (atomic)
-} ev = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER};
+#ifdef XO_WINPOLL
+	int wr, ww;     // the self pipe: a connected loopback socket pair
+	xo_pd **regs;   // the registered descriptors (ev.mu)
+	int nreg, creg; //
+	WSAPOLLFD *pfds; // the poller thread's WSAPoll array and its owners
+	xo_pd **pwho;
+	int cpoll;
+#endif
+} ev ={.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER};
 
 __attribute__((noinline)) static int64_t x_ret(int64_t r) {
 	if (r < 0) {
@@ -4729,6 +4966,20 @@ __attribute__((noinline)) static int64_t x_ret(int64_t r) {
 	return r;
 }
 
+#ifdef _WIN32
+// Winsock reports errors in WSAGetLastError, not errno
+__attribute__((noinline)) static int64_t x_wsa(int64_t r) { return r < 0 ? -(int64_t)xo_wsa_errno() : r; }
+
+__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
+	STAT(net_read);
+	return x_wsa(recv((SOCKET)fd, b, (int)n, 0));
+}
+
+__attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
+	STAT(net_write);
+	return x_wsa(send((SOCKET)fd, b, (int)n, 0));
+}
+#else
 __attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
 	STAT(net_read);
 	return x_ret(read(fd, b, n));
@@ -4742,6 +4993,7 @@ __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n
 	return x_ret(write(fd, b, n));
 #endif
 }
+#endif
 
 // Descriptors are close-on-exec from birth on Linux (SOCK_CLOEXEC,
 // accept4, pipe2): with FD_CLOEXEC set just after, a process spawned by
@@ -4775,11 +5027,24 @@ static int xo_pipe(int p[2]) {
 
 #if defined(__linux__)
 __attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept4(fd, NULL, NULL, SOCK_CLOEXEC)); }
+#elif defined(_WIN32)
+__attribute__((noinline)) static int64_t x_accept(int fd) {
+	SOCKET s = accept((SOCKET)fd, NULL, NULL);
+	return s == INVALID_SOCKET ? -(int64_t)xo_wsa_errno() : (int64_t)(int)s;
+}
 #else
 __attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept(fd, NULL, NULL)); }
 #endif
 
+#ifdef _WIN32
+// a nonblocking connect in progress is WSAEWOULDBLOCK
+__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
+	int64_t r = x_wsa(connect((SOCKET)fd, a, n));
+	return r == -EWOULDBLOCK ? -EINPROGRESS : r;
+}
+#else
 __attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) { return x_ret(connect(fd, a, n)); }
+#endif
 
 __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 	int e = 0;
@@ -4787,7 +5052,11 @@ __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &n) < 0) {
 		return -(int64_t)errno;
 	}
+#ifdef _WIN32
+	return e ? -(int64_t)xo_wsa_map(e) : 0; // a Winsock error code
+#else
 	return -(int64_t)e;
+#endif
 }
 
 // x_errno is errno now (for calls that report errors in it).
@@ -4800,6 +5069,10 @@ static void set_nonblock(int fd) {
 
 // ev_poke wakes the poller (a new first timer).
 static void ev_poke(void) {
+#ifdef XO_WINPOLL
+	send((SOCKET)ev.ww, "w", 1, 0);
+	return;
+#endif
 	char b = 'w';
 	ssize_t r = write(ev.pfd[1], &b, 1);
 	(void)r; // a full pipe wakes it anyway
@@ -4808,12 +5081,22 @@ static void ev_poke(void) {
 static void *poller_main(void *arg);
 
 static void ev_init(void) {
+#ifdef XO_WINPOLL
+	int sv[2];
+	if (xo_w_socketpair(sv) < 0) {
+		xo_oom();
+	}
+	ev.wr = sv[0];
+	ev.ww = sv[1];
+#else
 	if (xo_pipe(ev.pfd) < 0) {
 		xo_oom();
 	}
 	set_nonblock(ev.pfd[0]);
 	set_nonblock(ev.pfd[1]);
-#ifdef XO_KQUEUE
+#endif
+#ifdef XO_WINPOLL
+#elif defined(XO_KQUEUE)
 	ev.poll = kqueue();
 	if (ev.poll < 0) {
 		xo_oom();
@@ -4977,7 +5260,22 @@ static xo_pd *pd_new(int fd, int write) {
 	}
 	mu_init(&pd->mu);
 	pd->fd = fd;
-#ifdef XO_KQUEUE
+#if defined(XO_WINPOLL)
+	// WSAPoll is level triggered: the poller polls a descriptor only in
+	// the directions someone waits in (pd_wait_until pokes it)
+	(void)write;
+	pthread_mutex_lock(&ev.mu);
+	if (ev.nreg == ev.creg) {
+		ev.creg = ev.creg ? ev.creg * 2 : 64;
+		ev.regs = realloc(ev.regs, (size_t)ev.creg * sizeof(xo_pd *));
+		if (!ev.regs) {
+			xo_oom();
+		}
+	}
+	ev.regs[ev.nreg++] = pd;
+	pthread_mutex_unlock(&ev.mu);
+	int r = 0;
+#elif defined(XO_KQUEUE)
 	struct kevent k[2];
 	EV_SET(&k[0], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, pd);
 	EV_SET(&k[1], fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, pd);
@@ -5027,13 +5325,22 @@ static void pd_close(xo_pd *pd) {
 	if (!pd->closed) {
 		pd->closed = 1;
 		if (pd->fd >= 0) {
-#ifndef XO_KQUEUE
+#if !defined(XO_KQUEUE) && !defined(XO_WINPOLL)
 			// unregister now: epoll keys a registration by the open file,
 			// not the descriptor, so close alone leaves it while a child
 			// process still holds the file, and its next event would name
 			// this xo_pd after the poller freed it (2026-10-12, gotcha
 			// linux-epoll-inherited-socket)
 			epoll_ctl(ev.poll, EPOLL_CTL_DEL, pd->fd, NULL);
+#endif
+#ifdef XO_WINPOLL
+			// Windows resets a connection shut down for receiving while
+			// input is unread, and the reset discards what the peer has
+			// not read of ours yet (a 400 just written): drop the input
+			// first (the socket is nonblocking)
+			char drop[4096];
+			while (recv((SOCKET)pd->fd, drop, sizeof drop, 0) > 0) {
+			}
 #endif
 			shutdown(pd->fd, SHUT_RDWR);
 		}
@@ -5099,6 +5406,9 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 		park_reset(&c->park);
 		*slot = &c->park;
 		pthread_mutex_unlock(&pd->mu);
+#ifdef XO_WINPOLL
+		ev_poke(); // the poller polls the directions waited in
+#endif
 		if (when && !timed) {
 			timed = 1;
 			timer_add(&t);
@@ -5139,7 +5449,12 @@ static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, w
 
 static void stop_signal(void);
 
-#ifdef XO_KQUEUE
+#if defined(XO_WINPOLL)
+typedef struct {
+	xo_pd *pd;
+	int mode;
+} xo_event;
+#elif defined(XO_KQUEUE)
 typedef struct kevent xo_event;
 #else
 typedef struct epoll_event xo_event;
@@ -5148,7 +5463,10 @@ typedef struct epoll_event xo_event;
 // ev_dispatch hands the readiness of socket event e to its descriptor's
 // waiters: 0 when e is the self pipe's.
 static int ev_dispatch(xo_event *e) {
-#ifdef XO_KQUEUE
+#if defined(XO_WINPOLL)
+	xo_pd *pd = e->pd;
+	int mode = e->mode;
+#elif defined(XO_KQUEUE)
 	xo_pd *pd = e->udata;
 	int mode = e->filter == EVFILT_READ ? 1 : e->filter == EVFILT_WRITE ? 2 : 0;
 	if (e->flags & EV_ERROR) {
@@ -5168,16 +5486,20 @@ static int ev_dispatch(xo_event *e) {
 
 static void *poller_main(void *arg) {
 	(void)arg;
-#ifdef XO_KQUEUE
-	struct kevent evs[64];
-#else
-	struct epoll_event evs[64];
-#endif
+	xo_event evs[64];
 	for (;;) {
 		pthread_mutex_lock(&ev.mu);
 		while (ev.dead) {
 			xo_pd *pd = ev.dead;
 			ev.dead = pd->next;
+#ifdef XO_WINPOLL
+			for (int i = 0; i < ev.nreg; i++) {
+				if (ev.regs[i] == pd) {
+					ev.regs[i] = ev.regs[--ev.nreg];
+					break;
+				}
+			}
+#endif
 			pthread_mutex_destroy(&pd->mu);
 			free(pd);
 		}
@@ -5194,7 +5516,63 @@ static void *poller_main(void *arg) {
 		}
 		int64_t wait = ev.n > 0 ? ev.heap[0]->when - now : -1;
 		pthread_mutex_unlock(&ev.mu);
-#ifdef XO_KQUEUE
+#if defined(XO_WINPOLL)
+		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
+		if (wait > (int64_t)1 << 40) {
+			ms = 1 << 30;
+		}
+		// the descriptors someone waits on, in the directions waited for
+		pthread_mutex_lock(&ev.mu);
+		if (ev.cpoll < ev.nreg + 1) {
+			ev.cpoll = (ev.nreg + 1) * 2;
+			ev.pfds = realloc(ev.pfds, (size_t)ev.cpoll * sizeof(WSAPOLLFD));
+			ev.pwho = realloc(ev.pwho, (size_t)ev.cpoll * sizeof(xo_pd *));
+			if (!ev.pfds || !ev.pwho) {
+				xo_oom();
+			}
+		}
+		int nf = 0;
+		ev.pfds[nf].fd = (SOCKET)ev.wr;
+		ev.pfds[nf].events = POLLRDNORM;
+		ev.pfds[nf].revents = 0;
+		ev.pwho[nf++] = NULL;
+		for (int i = 0; i < ev.nreg; i++) {
+			xo_pd *pd = ev.regs[i];
+			pthread_mutex_lock(&pd->mu);
+			short want = 0;
+			if (!pd->closed && pd->fd >= 0) {
+				want = (short)((pd->rwait ? POLLRDNORM : 0) | (pd->wwait ? POLLWRNORM : 0));
+			}
+			if (want) {
+				ev.pfds[nf].fd = (SOCKET)pd->fd;
+				ev.pfds[nf].events = want;
+				ev.pfds[nf].revents = 0;
+				ev.pwho[nf++] = pd;
+			}
+			pthread_mutex_unlock(&pd->mu);
+		}
+		pthread_mutex_unlock(&ev.mu);
+		int got = WSAPoll(ev.pfds, (ULONG)nf, (INT)(ms == INFINITE ? -1 : (int)ms));
+		STAT(poll_return);
+		(void)evs;
+		for (int i = 1; got > 0 && i < nf; i++) {
+			short r = ev.pfds[i].revents;
+			if (!r) {
+				continue;
+			}
+			int mode = ((r & (POLLRDNORM | POLLHUP | POLLERR | POLLNVAL)) ? 1 : 0) | ((r & (POLLWRNORM | POLLHUP | POLLERR | POLLNVAL)) ? 2 : 0);
+			pd_ready(ev.pwho[i], mode);
+		}
+		if (got > 0 && ev.pfds[0].revents) {
+			char b[64];
+			while (recv((SOCKET)ev.wr, b, sizeof b, 0) > 0) {
+			}
+		}
+		for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
+			stop_signal();
+		}
+		int n = 0;
+#elif defined(XO_KQUEUE)
 		struct timespec ts = {.tv_sec = wait / 1000000000, .tv_nsec = wait % 1000000000};
 		int n = kevent(ev.poll, NULL, 0, evs, 64, wait < 0 ? NULL : &ts);
 		STAT(poll_return);
@@ -6381,7 +6759,11 @@ xo_rlist *xo_env_get(const char *p, int64_t n) {
 // xo_env_vars is the NAME=VALUE entries of the environment, sorted as
 // std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
 // FakeEnv in the order of its variables.
+#ifdef _WIN32
+#define environ _environ
+#else
 extern char **environ;
+#endif
 static xo_rlist *tw_env_vars(void);
 static xo_rlist *n_str_list_new(int64_t cap);
 static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n);
@@ -6493,6 +6875,7 @@ static void stop_signal(void) {
 	pthread_mutex_unlock(&stop.mu);
 }
 
+#ifndef _WIN32
 static void on_signal(int sig) {
 	(void)sig;
 	int e = errno;
@@ -6502,7 +6885,29 @@ static void on_signal(int sig) {
 	(void)r;
 	errno = e;
 }
+#endif
 
+#ifdef _WIN32
+// Ctrl-C, Ctrl-Break, and closing the console are Windows' SIGINT and
+// SIGTERM: the handler runs on a thread of its own and wakes the poller.
+static BOOL WINAPI on_console(DWORD kind) {
+	switch (kind) {
+	case CTRL_C_EVENT:
+	case CTRL_BREAK_EVENT:
+	case CTRL_CLOSE_EVENT:
+	case CTRL_SHUTDOWN_EVENT:
+		__atomic_fetch_add(&ev.sigs, 1, __ATOMIC_ACQ_REL);
+		ev_poke();
+		return TRUE;
+	}
+	return FALSE;
+}
+
+__attribute__((unused)) static void xo_signals_init(void) {
+	ev_start();
+	SetConsoleCtrlHandler(on_console, TRUE);
+}
+#else
 // xo_signals_init installs the handlers (main, before the program runs).
 __attribute__((unused)) static void xo_signals_init(void) {
 	ev_start();
@@ -6515,6 +6920,7 @@ __attribute__((unused)) static void xo_signals_init(void) {
 	sigaction(SIGTERM, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 }
+#endif
 
 int64_t xo_stop_requested(void) { return __atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE); }
 
@@ -6603,7 +7009,45 @@ static void tw_init(void);
 static void tw_cleanup(void);
 static void xo_streams_free(void);
 
+#ifdef _WIN32
+// win_init sets up the process on Windows: standard streams in binary
+// mode (no \n to \r\n), UTF-8 console output, and the arguments as UTF-8
+// (from the UTF-16 command line; main's argv is in the ANSI code page).
+static void win_init(int *argc, char ***argv) {
+	_setmode(0, _O_BINARY);
+	_setmode(1, _O_BINARY);
+	_setmode(2, _O_BINARY);
+	SetConsoleOutputCP(CP_UTF8);
+	int n = 0;
+	LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
+	if (!w) {
+		return;
+	}
+	char **v = calloc((size_t)n + 1, sizeof(char *));
+	if (!v) {
+		xo_oom();
+	}
+	for (int i = 0; i < n; i++) {
+		int k = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
+		v[i] = malloc((size_t)(k > 0 ? k : 1));
+		if (!v[i]) {
+			xo_oom();
+		}
+		v[i][0] = 0;
+		if (k > 0) {
+			WideCharToMultiByte(CP_UTF8, 0, w[i], -1, v[i], k, NULL, NULL);
+		}
+	}
+	LocalFree(w);
+	*argc = n;
+	*argv = v;
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef _WIN32
+	win_init(&argc, &argv);
+#endif
 	xo_argc = argc;
 	xo_argv = argv;
 	if (getenv("XO_TEST")) {

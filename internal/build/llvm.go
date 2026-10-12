@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/diag"
 	"github.com/xo-lang/xo/internal/gen"
 	"github.com/xo-lang/xo/internal/llvm"
 )
@@ -180,6 +181,11 @@ func buildLLVM(dirs []string, res *check.Result, out *Result, opts Options) (*Re
 		return nil, err
 	}
 	flags = append(flags, IOFlags(prog.IR)...)
+	if ds := TargetUnsupported(Host().OS, flags); len(ds) > 0 {
+		out.Diagnostics = append(out.Diagnostics, ds...)
+		out.Failed = true
+		return out, nil
+	}
 	out.Notes = notes
 	srcs := append(append(lls, rt), tzsrcs...)
 	csrcs, cflags, err := cInputs(res, dir)
@@ -355,7 +361,7 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		args = append(args, srcs...)
 		args = append(args, tlsLink...)
 		args = append(args, libs...)
-		args = append(args, "-lm", "-lpthread")
+		args = append(args, sysLinkArgs(runtime.GOOS)...)
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
@@ -406,6 +412,44 @@ func ccBuild(clang string, flags, srcs []string, bin string) error {
 		}
 	}
 	return &ClangError{Output: first}
+}
+
+// TargetUnsupported is the XO1504 diagnostic of a program, given the
+// runtime defines its build selected (IOFlags), that uses runtime parts
+// not ported to goos yet: on Windows, stage 1 of decision 0197 leaves out
+// processes (XO_PROC: Proc.run and the test world's FakeProc, both in
+// xo_proc.c). Nil when the program builds.
+func TargetUnsupported(goos string, flags []string) []diag.Diagnostic {
+	if goos != "windows" {
+		return nil
+	}
+	var parts []string
+	for _, f := range flags {
+		if f == "-DXO_PROC" {
+			parts = append(parts, "processes (Proc)")
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []diag.Diagnostic{{
+		Code:     string(diag.TargetUnsupported),
+		Severity: diag.Error,
+		Message: fmt.Sprintf("the LLVM backend does not support %s on %s yet (decision 0197); build with the Go backend (the default) instead",
+			strings.Join(parts, ", "), goos),
+	}}
+}
+
+// sysLinkArgs are the system libraries and linker of a native link on
+// goos. Windows (decision 0197): lld-link, which reads the LTO bitcode
+// MSVC's link.exe cannot; the runtime names its import libraries itself
+// (#pragma comment(lib), std/llrt/xo_win.c), and the C library is the
+// MSVC one clang picks.
+func sysLinkArgs(goos string) []string {
+	if goos == "windows" {
+		return []string{"-fuse-ld=lld"}
+	}
+	return []string{"-lm", "-lpthread"}
 }
 
 // mentionsRuntime reports whether compiler output names a file of the C

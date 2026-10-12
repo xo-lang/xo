@@ -33,6 +33,10 @@ static void cr_entropy(uint8_t *p, int64_t n) {
 			fault_text("the system random number generator failed", "");
 		}
 		k = (size_t)got;
+#elif defined(_WIN32)
+		if (xo_w_entropy(p, k) != 0) {
+			fault_text("the system random number generator failed", "");
+		}
 #else
 		if (getentropy(p, k) != 0) {
 			fault_text("the system random number generator failed", "");
