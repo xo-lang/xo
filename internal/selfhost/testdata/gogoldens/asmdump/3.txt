@@ -1,0 +1,260 @@
+asmdump 30aeafadb1b798e3 #f 9 a2b8424dee91c2a5
+asmdump 30aeafadb1b798e3 #h 11 77abaff0c4ad9019
+asmdump 30aeafadb1b798e3 #l 1 1f82bb791f5d2e87
+asmdump 30aeafadb1b798e3 #literals 21 a57b2fd8504af154
+asmdump 30aeafadb1b798e3 all 86bfb9200edf6140
+asmdump 30aeafadb1b798e3 entry 72b4444d9e3c4531
+asmdump 30d2f1f5d0d74f11 #f 19 ab5af85ee5189a85
+asmdump 30d2f1f5d0d74f11 #h 45 9661f8679f4ead29
+asmdump 30d2f1f5d0d74f11 #l 7 77b88a1918fffd17
+asmdump 30d2f1f5d0d74f11 #literals 30 b919ce12aab18d25
+asmdump 30d2f1f5d0d74f11 all 3c0d5137e532d2fb
+asmdump 30d2f1f5d0d74f11 entry 72b4444d9e3c4531
+asmdump 3170b9b71922e81c #f 3 a10351ef8b799f00
+asmdump 3170b9b71922e81c #h 7 8809a7cb7be4e87a
+asmdump 3170b9b71922e81c #l 2 962cf213d376c107
+asmdump 3170b9b71922e81c #literals 7 da0798c3d91f9e07
+asmdump 3170b9b71922e81c all 5c1fcd9149834d32
+asmdump 3170b9b71922e81c entry 72b4444d9e3c4531
+asmdump 31822e63afb3ac2b #f 6 219ef14af8cfa87c
+asmdump 31822e63afb3ac2b #h 6 c2e36d408c4b1ee2
+asmdump 31822e63afb3ac2b #l 3 976326f7b95d10e2
+asmdump 31822e63afb3ac2b #literals 4 b08a94ace90770ce
+asmdump 31822e63afb3ac2b all becf8161f3dc4ebb
+asmdump 31822e63afb3ac2b entry 72b4444d9e3c4531
+asmdump 3184e5c454043da2 =head == rejected
+asmdump 31af26456c746e58 #f 6 596e739c27a5a9f1
+asmdump 31af26456c746e58 #h 15 ba46e4773db47cb4
+asmdump 31af26456c746e58 #l 2 d4666320680fcdb3
+asmdump 31af26456c746e58 #literals 26 7241cd703fa01669
+asmdump 31af26456c746e58 all cd773d35c23a3aaf
+asmdump 31af26456c746e58 entry 72b4444d9e3c4531
+asmdump 31c1a753c6aa8582 =head == rejected
+asmdump 32347e111bdf15b5 =head == rejected
+asmdump 32393af3060b70f4 #f 6 9828a2f97a4eac00
+asmdump 32393af3060b70f4 #h 5 6ed5fab34503eaa7
+asmdump 32393af3060b70f4 #l 0 e3b0c44298fc1c14
+asmdump 32393af3060b70f4 #literals 19 301a6140b2777494
+asmdump 32393af3060b70f4 all 2070e5f5ece87ae1
+asmdump 32393af3060b70f4 entry 72b4444d9e3c4531
+asmdump 3255e303ca9f522a #f 5 1160e29f6deaf499
+asmdump 3255e303ca9f522a #h 7 b5058dc0d409c2e9
+asmdump 3255e303ca9f522a #l 1 8888784805c77bc2
+asmdump 3255e303ca9f522a #literals 29 80059f26dbc8d076
+asmdump 3255e303ca9f522a all 8190a4dc2d6e0be2
+asmdump 3255e303ca9f522a entry 72b4444d9e3c4531
+asmdump 32602f7a432527c1 =head == error internal/gen/testdata/golden/go_strconv/main.xo:6:11: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:6:11: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_strconv/main.xo:7:11: the SSA builder does not support `strconv.parse_float` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:7:11: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_strconv/main.xo:9:23: the SSA builder does not support `strconv.itoa` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:9:44: the SSA builder does not support `strconv.format_int` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:9:75: the SSA builder does not support `strconv.format_float` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:10:20: the SSA builder does not support `strconv.quote` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:11:9: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:13:48: the SSA builder does not support the std function `go.Error.go_type` internal/gen/testdata/golden/go_strconv/main.xo:15:9: the SSA builder does not support `strconv.parse_int` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:19:23: the SSA builder does not support `strconv.parse_bool` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:19:23: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_strconv/main.xo:20:20: the SSA builder does not support `strconv.unquote` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:20:20: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_strconv/main.xo:21:20: the SSA builder does not support `strconv.append_int` of the Go package `strconv` (`use go`) internal/gen/testdata/golden/go_strconv/main.xo:22:11: the SSA builder does not support `strconv.atoi` of the Go package `strconv` (`use go`)
+asmdump 32c48b5e60d69895 #f 19 809c9783e4bf1c84
+asmdump 32c48b5e60d69895 #h 38 e08d68a97b335497
+asmdump 32c48b5e60d69895 #l 9 e82d90147ad1a39c
+asmdump 32c48b5e60d69895 #literals 31 9c0c226e44f6005f
+asmdump 32c48b5e60d69895 all aafe5c8af25e021c
+asmdump 32c48b5e60d69895 entry 72b4444d9e3c4531
+asmdump 33b61f33332e8b3f #f 2 7d519e0e17f7d52e
+asmdump 33b61f33332e8b3f #h 1 ec917a1bedcaaae1
+asmdump 33b61f33332e8b3f #l 0 e3b0c44298fc1c14
+asmdump 33b61f33332e8b3f #literals 4 dec7d4638fba97f4
+asmdump 33b61f33332e8b3f all ffc40d50c9995670
+asmdump 33b61f33332e8b3f entry 72b4444d9e3c4531
+asmdump 345e1becd9625e5b =head == rejected
+asmdump 34a6227d3c7f225e #f 5 c9a303cbbd03fbbd
+asmdump 34a6227d3c7f225e #h 21 76b6355702304f8c
+asmdump 34a6227d3c7f225e #l 2 1bbd03cc9453f0d1
+asmdump 34a6227d3c7f225e #literals 38 b4f876d3c4fdf677
+asmdump 34a6227d3c7f225e all f4b6135815705e34
+asmdump 34a6227d3c7f225e entry 72b4444d9e3c4531
+asmdump 34b1c50008fca629 #f 67 d63de29ef42f2512
+asmdump 34b1c50008fca629 #h 19 b965344e5ec2f72f
+asmdump 34b1c50008fca629 #l 12 de26175e1eaea1cb
+asmdump 34b1c50008fca629 #literals 257 69f1704fd30d0189
+asmdump 34b1c50008fca629 all f4b4b2f820f5bb80
+asmdump 34b1c50008fca629 entry 72b4444d9e3c4531
+asmdump 34f598de28971467 =head == rejected
+asmdump 352793cdd92abe2b #f 2204 02e77ffebf1e119e
+asmdump 352793cdd92abe2b #h 841 73963838a83454bf
+asmdump 352793cdd92abe2b #l 1281 5a47a31bfcf5060b
+asmdump 352793cdd92abe2b #literals 10499 22d4899f7c8b5a94
+asmdump 352793cdd92abe2b all 98abe24ba6ddc10f
+asmdump 352793cdd92abe2b entry 72b4444d9e3c4531
+asmdump 35b6fef2ac70d287 =head == rejected
+asmdump 36624dd47795229c #f 11 c727c3d16b6c08cf
+asmdump 36624dd47795229c #h 4 5842d335f5245d6f
+asmdump 36624dd47795229c #l 6 1bcbb49691446fbd
+asmdump 36624dd47795229c #literals 33 207b548df6069530
+asmdump 36624dd47795229c all ab794a430872cd15
+asmdump 36624dd47795229c entry 72b4444d9e3c4531
+asmdump 36828da5fcc28021 =head == error internal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:7:11: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_url/main.xo:8:23: the SSA builder does not support `url.URL.scheme` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:37: the SSA builder does not support `url.URL.host` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:49: the SSA builder does not support `url.URL.hostname` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:65: the SSA builder does not support `url.URL.port` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:77: the SSA builder does not support `url.URL.path` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:89: the SSA builder does not support `url.URL.fragment` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:8:105: the SSA builder does not support `url.URL.raw_query` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support `url.URL.query` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:9:11: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:10:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:10:37: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:10:51: the SSA builder does not support `url.Values.has` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:11:3: the SSA builder does not support `url.Values.set` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:12:3: the SSA builder does not support `url.Values.add` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:13:20: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support `url.URL.user` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:14:9: the SSA builder does not support the type `url.Userinfo` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:16:23: the SSA builder does not support `url.Userinfo.password` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:17:32: the SSA builder does not support `url.Userinfo.username` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:21:23: the SSA builder does not support `url.query_escape` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:21:52: the SSA builder does not support `url.path_escape` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:22:9: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:24:48: the SSA builder does not support the std function `go.Error.go_type` internal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:26:14: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support `url.URL.resolve_reference` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:27:9: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:28:33: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support `url.URL.new` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:31:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:32:3: the SSA builder does not support `url.URL.set_scheme` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:33:3: the SSA builder does not support `url.URL.set_host` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:34:3: the SSA builder does not support `url.URL.set_path` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:35:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support `url.parse_query` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `url.Values` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:36:14: the SSA builder does not support the type `go.Error` internal/gen/testdata/golden/go_url/main.xo:37:23: the SSA builder does not support `url.Values.get` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:37:40: the SSA builder does not support `url.Values.encode` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support `url.parse` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:38:11: the SSA builder does not support the type `url.URL` of the Go package `net/url` (`use go`) internal/gen/testdata/golden/go_url/main.xo:39:20: the SSA builder does not support `url.URL.string` of the Go package `net/url` (`use go`)
+asmdump 36861a28ce7aef1a =head == rejected
+asmdump 36ab9ba7d6aa3aa5 #f 1 7771670013d28364
+asmdump 36ab9ba7d6aa3aa5 #h 1 ec917a1bedcaaae1
+asmdump 36ab9ba7d6aa3aa5 #l 1 f02b1125ae04992d
+asmdump 36ab9ba7d6aa3aa5 #literals 5 2928e6603faf30bb
+asmdump 36ab9ba7d6aa3aa5 all 11d6ba41ec38c1fd
+asmdump 36ab9ba7d6aa3aa5 entry 72b4444d9e3c4531
+asmdump 36be31697f8b1802 #f 13 38b7728d4563f035
+asmdump 36be31697f8b1802 #h 43 5b797ec96cd92843
+asmdump 36be31697f8b1802 #l 8 b53d5b73e611954d
+asmdump 36be31697f8b1802 #literals 47 e1742f53d9716a93
+asmdump 36be31697f8b1802 all d2e18ba76e0fe28b
+asmdump 36be31697f8b1802 entry 72b4444d9e3c4531
+asmdump 36e5028becd787dc #f 18 6aedb47fb3b34d03
+asmdump 36e5028becd787dc #h 59 4955d9a0fbf4ecb0
+asmdump 36e5028becd787dc #l 9 dac8ac35ffa11b9e
+asmdump 36e5028becd787dc #literals 26 67df68ae4091ea64
+asmdump 36e5028becd787dc all d1f44a44135e9fd7
+asmdump 36e5028becd787dc entry 72b4444d9e3c4531
+asmdump 3707109ef203223a #f 12 80fc62d166b6c594
+asmdump 3707109ef203223a #h 8 dd0c8a487e338f1b
+asmdump 3707109ef203223a #l 6 a3ce1de3f6786233
+asmdump 3707109ef203223a #literals 20 6f522fe0e9672c39
+asmdump 3707109ef203223a all dd75b3001ea320f1
+asmdump 3707109ef203223a entry 72b4444d9e3c4531
+asmdump 373df00d94069a4d #f 2080 545a037dfe211d57
+asmdump 373df00d94069a4d #h 1284 611529416fa43d3d
+asmdump 373df00d94069a4d #l 970 1d4151e98d38e1a3
+asmdump 373df00d94069a4d #literals 7717 0cdede57c7e29c24
+asmdump 373df00d94069a4d all 46768fac4a00a1d2
+asmdump 373df00d94069a4d entry 72b4444d9e3c4531
+asmdump 374dfe4fca6bd480 #f 73 7b28c58e8e1f3301
+asmdump 374dfe4fca6bd480 #h 33 f4fef8c0f6f63a31
+asmdump 374dfe4fca6bd480 #l 0 e3b0c44298fc1c14
+asmdump 374dfe4fca6bd480 #literals 107 4572cced94c07169
+asmdump 374dfe4fca6bd480 all b6048c709f24c7e1
+asmdump 374dfe4fca6bd480 entry 72b4444d9e3c4531
+asmdump 37996faaf2289c7f #f 11 8039f6d6bf31ee4a
+asmdump 37996faaf2289c7f #h 5 87b4508d5b7b2b76
+asmdump 37996faaf2289c7f #l 1 b3059f6b3d1572d7
+asmdump 37996faaf2289c7f #literals 32 b0fe5033205544ac
+asmdump 37996faaf2289c7f all dd66976fbb2825fa
+asmdump 37996faaf2289c7f entry 72b4444d9e3c4531
+asmdump 37db9d39e507e3f0 #f 2 cd96c59a6c13fddc
+asmdump 37db9d39e507e3f0 #h 1 ec917a1bedcaaae1
+asmdump 37db9d39e507e3f0 #l 1 e58c8875990473f5
+asmdump 37db9d39e507e3f0 #literals 5 a7f166bf748cec4e
+asmdump 37db9d39e507e3f0 all dede0197da6853d5
+asmdump 37db9d39e507e3f0 entry 72b4444d9e3c4531
+asmdump 38432e07a7d4bf31 #f 3 97d9d1c9adcfee21
+asmdump 38432e07a7d4bf31 #h 6 915e5d2266cf9f03
+asmdump 38432e07a7d4bf31 #l 1 0f35e4df6d669e12
+asmdump 38432e07a7d4bf31 #literals 16 4bb5f4c20f456e2c
+asmdump 38432e07a7d4bf31 all 1930d48dfb3be275
+asmdump 38432e07a7d4bf31 entry 72b4444d9e3c4531
+asmdump 3851e8461ed4498b #f 17 168611ffdaf0b582
+asmdump 3851e8461ed4498b #h 17 6d4f7cafc22c5ffa
+asmdump 3851e8461ed4498b #l 1 223ba9d2968fc72d
+asmdump 3851e8461ed4498b #literals 36 0861d50c9483e7b6
+asmdump 3851e8461ed4498b all f6b8db7c85ceaed8
+asmdump 3851e8461ed4498b entry 72b4444d9e3c4531
+asmdump 3854442225fb2466 #f 4 f7685ced7d261d02
+asmdump 3854442225fb2466 #h 9 9e8b5a726be69a37
+asmdump 3854442225fb2466 #l 1 f47026b3a06337f3
+asmdump 3854442225fb2466 #literals 10 72f29806d93a9133
+asmdump 3854442225fb2466 all 789ac2ab64f24a73
+asmdump 3854442225fb2466 entry 72b4444d9e3c4531
+asmdump 3877e5b118a5e505 =head == rejected
+asmdump 38d1dead590dc74b =head == error no `main` function in the root module
+asmdump 391d8e2a0300e4cf #f 2 1e369b3f298fc00c
+asmdump 391d8e2a0300e4cf #h 13 5e4c2fc13365b47e
+asmdump 391d8e2a0300e4cf #l 0 e3b0c44298fc1c14
+asmdump 391d8e2a0300e4cf #literals 19 1ed78a0a91a6fb52
+asmdump 391d8e2a0300e4cf all 7965fd7a8dc5b01b
+asmdump 391d8e2a0300e4cf entry 72b4444d9e3c4531
+asmdump 39804d17e0685d7b #f 23 35209d17d9297ee9
+asmdump 39804d17e0685d7b #h 18 0fea7f2ac1dc7b57
+asmdump 39804d17e0685d7b #l 4 a2811b617d231c15
+asmdump 39804d17e0685d7b #literals 51 690a462e669c46ea
+asmdump 39804d17e0685d7b all cf873f6e08ae22c5
+asmdump 39804d17e0685d7b entry 72b4444d9e3c4531
+asmdump 398b4077e8b93c98 #f 127 eb83a09f8fd7ab9d
+asmdump 398b4077e8b93c98 #h 200 1c53e707cea2bc9d
+asmdump 398b4077e8b93c98 #l 42 872f80dd4512ca65
+asmdump 398b4077e8b93c98 #literals 190 ed026ae3c9aad343
+asmdump 398b4077e8b93c98 all 6863cb23bd942212
+asmdump 398b4077e8b93c98 entry 72b4444d9e3c4531
+asmdump 39cef0c4199cb7d2 #f 289 264a3db9eb462e46
+asmdump 39cef0c4199cb7d2 #h 299 dd6c55ca1f42c383
+asmdump 39cef0c4199cb7d2 #l 116 cb17842981a116d8
+asmdump 39cef0c4199cb7d2 #literals 484 1a65e4e52ed6a121
+asmdump 39cef0c4199cb7d2 all ca775a74a4337d51
+asmdump 39cef0c4199cb7d2 entry 72b4444d9e3c4531
+asmdump 39f599bd3239c8c0 =head == error no `main` function in the root module
+asmdump 3a2e188483e2cb2b #f 8 44712c74add1fc23
+asmdump 3a2e188483e2cb2b #h 34 7b243d237dcb511b
+asmdump 3a2e188483e2cb2b #l 4 27c4ed436f03b98e
+asmdump 3a2e188483e2cb2b #literals 7 d8a41afb00fe31c3
+asmdump 3a2e188483e2cb2b all 8ceefa0f83a7f31e
+asmdump 3a2e188483e2cb2b entry 72b4444d9e3c4531
+asmdump 3acab1a0137cd6f4 #f 14 988287979a17872b
+asmdump 3acab1a0137cd6f4 #h 10 ad3fffd148c6fce3
+asmdump 3acab1a0137cd6f4 #l 6 e09e1f7125067726
+asmdump 3acab1a0137cd6f4 #literals 40 3acffd17ea4d38da
+asmdump 3acab1a0137cd6f4 all 0050e4efe6619aa0
+asmdump 3acab1a0137cd6f4 entry 72b4444d9e3c4531
+asmdump 3b633c4f085df855 =head == rejected
+asmdump 3d57e23b78779f89 =head == rejected
+asmdump 3dbdb629f5b1cbac =head == rejected
+asmdump 3dd012ef9a6002e3 #f 6 787aa9b27fba1e5d
+asmdump 3dd012ef9a6002e3 #h 8 8fdf1c3687d16671
+asmdump 3dd012ef9a6002e3 #l 2 42423bc28f91538a
+asmdump 3dd012ef9a6002e3 #literals 14 18a1aa20ecda7735
+asmdump 3dd012ef9a6002e3 all 1f6f6840bbce6d2f
+asmdump 3dd012ef9a6002e3 entry 72b4444d9e3c4531
+asmdump 3e028cdb6a8587b3 #f 2 59e62d6d4f6cfe75
+asmdump 3e028cdb6a8587b3 #h 1 ec917a1bedcaaae1
+asmdump 3e028cdb6a8587b3 #l 0 e3b0c44298fc1c14
+asmdump 3e028cdb6a8587b3 #literals 27 4a2bd936b19addc2
+asmdump 3e028cdb6a8587b3 all 2fe2fa84642bb6f1
+asmdump 3e028cdb6a8587b3 entry 72b4444d9e3c4531
+asmdump 3e147b23a3ac07f0 #f 72 78169a0a186eb8d8
+asmdump 3e147b23a3ac07f0 #h 48 c4b697e23bf894ac
+asmdump 3e147b23a3ac07f0 #l 17 3a2fcd9185b9509c
+asmdump 3e147b23a3ac07f0 #literals 154 0bd47187e76f783f
+asmdump 3e147b23a3ac07f0 all e5a26fb6ba286bd0
+asmdump 3e147b23a3ac07f0 entry 72b4444d9e3c4531
+asmdump 3e3fe0da12746cfa #f 6 dd4538795406c972
+asmdump 3e3fe0da12746cfa #h 15 ba46e4773db47cb4
+asmdump 3e3fe0da12746cfa #l 2 d4666320680fcdb3
+asmdump 3e3fe0da12746cfa #literals 26 b9257b96c9b4f557
+asmdump 3e3fe0da12746cfa all 1c0d665abaa28152
+asmdump 3e3fe0da12746cfa entry 72b4444d9e3c4531
+asmdump 3e9774b0bd348b08 #f 8 dcfbb7ec07c6ed40
+asmdump 3e9774b0bd348b08 #h 9 d8b70e07b1798b47
+asmdump 3e9774b0bd348b08 #l 2 378690ac97e7f7cb
+asmdump 3e9774b0bd348b08 #literals 35 5abf16653ebe6e6a
+asmdump 3e9774b0bd348b08 all d0c1546480206426
+asmdump 3e9774b0bd348b08 entry 72b4444d9e3c4531
+asmdump 3ea61f0bc1ce2488 #f 9 9fc94e713b25bb4e
+asmdump 3ea61f0bc1ce2488 #h 11 77abaff0c4ad9019
+asmdump 3ea61f0bc1ce2488 #l 1 1f82bb791f5d2e87
+asmdump 3ea61f0bc1ce2488 #literals 20 0440663888b2a1d8
+asmdump 3ea61f0bc1ce2488 all 4ca85c02c16ddb88
+asmdump 3ea61f0bc1ce2488 entry 72b4444d9e3c4531
+asmdump 3eac17bd5157debf #f 29 95295a768ac6e475
+asmdump 3eac17bd5157debf #h 50 573838757832ca64
+asmdump 3eac17bd5157debf #l 18 aac7ccdc5bda83a8
+asmdump 3eac17bd5157debf #literals 90 d57ab04dd29c74e4
+asmdump 3eac17bd5157debf all 474e5aa37c00cc46
+asmdump 3eac17bd5157debf entry 72b4444d9e3c4531
+asmdump 3efce6928f9923c7 #f 6 9ac70a50c245cb8e
+asmdump 3efce6928f9923c7 #h 2 9b10a0fafa631e04
+asmdump 3efce6928f9923c7 #l 3 93d502a847633bc0
+asmdump 3efce6928f9923c7 #literals 10 cfca6575be56dcb8
+asmdump 3efce6928f9923c7 all 70bdaba4e492c444
+asmdump 3efce6928f9923c7 entry 72b4444d9e3c4531
+asmdump 3f552a3bdd7fbd1d #f 6 fa73ebeab8d4fcdb
+asmdump 3f552a3bdd7fbd1d #h 18 6b79ccfe8751fc43
+asmdump 3f552a3bdd7fbd1d #l 2 6af778d8957758d2
+asmdump 3f552a3bdd7fbd1d #literals 107 30aa1353b2caebaf
+asmdump 3f552a3bdd7fbd1d all f90a9de64e9e743b
+asmdump 3f552a3bdd7fbd1d entry 72b4444d9e3c4531
+asmdump 3f70c24c21a4d6a0 =head == rejected
+asmdump 3f7b7e3208e147fa =head == rejected
+asmdump 3f8cc337e3d1e051 =head == error internal/gen/testdata/golden/test_go_callback_task/main.xo:20:12: the SSA builder does not support `sync.WaitGroup.new` of the Go package `sync` (`use go`) internal/gen/testdata/golden/test_go_callback_task/main.xo:20:12: the SSA builder does not support the type `sync.WaitGroup` of the Go package `sync` (`use go`) internal/gen/testdata/golden/test_go_callback_task/main.xo:29:3: the SSA builder does not support `sync.WaitGroup.wait` of the Go package `sync` (`use go`) internal/gen/testdata/golden/test_go_callback_task/main.xo:22:5: the SSA builder does not support `sync.WaitGroup.go_` of the Go package `sync` (`use go`)
+asmdump 3f9ded0cf4918885 =head == rejected
+asmdump 3fddd51d922bbbdc #f 9 3bd4b82a7284956d
+asmdump 3fddd51d922bbbdc #h 7 433ff8ed998d423f
+asmdump 3fddd51d922bbbdc #l 1 7633b75ff253c7e6
+asmdump 3fddd51d922bbbdc #literals 13 8ec3e16dc7dcd59b
+asmdump 3fddd51d922bbbdc all da1d7a8f1aab0d3b
+asmdump 3fddd51d922bbbdc entry 72b4444d9e3c4531
+asmdump 3fea2903658abc48 =head == error no `main` function in the root module

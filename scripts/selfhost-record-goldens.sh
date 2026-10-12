@@ -36,8 +36,9 @@ XO_SELFHOST_GOLDENS=record XO_SELFHOST_GOLDENS_DIR="$out" XO_SELF_DRIVER=0 \
   go test -count=1 -timeout 3h -run "$run" ./internal/selfhost
 echo "recorded in $(( $(date +%s) - start )) s into $out:"
 for k in "$out"/*/; do
-  units=$(cat "$k"*.txt | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
-  lines=$(cat "$k"*.txt | wc -l | tr -d ' ')
-  echo "$(basename "$k") $units units, $lines lines, $(cat "$k"*.txt | wc -c | tr -d ' ') bytes"
+  units=$(cat "$k"[0-9a-f].txt | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
+  lines=$(cat "$k"[0-9a-f].txt | wc -l | tr -d ' ')
+  pool=$(cat "$k"pool-*.txt 2>/dev/null | wc -l | tr -d ' ')
+  echo "$(basename "$k") $units units, $lines lines, $pool pool lines, $(cat "$k"*.txt | wc -c | tr -d ' ') bytes"
 done
 echo "total $(cat "$out"/*/*.txt | wc -c | tr -d ' ') bytes ($(cat "$out"/*/*.txt | gzip -9 | wc -c | tr -d ' ') gzip -9)"
