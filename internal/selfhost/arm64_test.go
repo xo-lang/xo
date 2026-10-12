@@ -22,13 +22,7 @@ var arm64Flags = []string{}
 
 // arm64Heavy are the runs whose emission takes the longest (most of the
 // time of the comparison): the merge tier leaves them to the full tier.
-var arm64Heavy = map[string]bool{
-	"internal/arm64/testdata/run/huge_frame": true,
-	"selfhost/check":                         true,
-	"selfhost/ssa":                           true,
-	"selfhost/parser":                        true,
-	"selfhost/arm64":                         true,
-}
+func arm64Heavy(d string) bool { return mergeHeavy(d) || d == "selfhost/parser" }
 
 // TestSelfhostArm64 runs the Xo arm64 emitter (selfhost/arm64, decision
 // 0158), built with each backend, and internal/arm64 (through
@@ -53,7 +47,7 @@ func TestSelfhostArm64(t *testing.T) {
 	var dirs []string
 	step := byTier(t, 25, 2, 1)
 	for i, d := range all {
-		if i%step != 0 || (selfhostTier(t) != tierFull && arm64Heavy[d]) {
+		if i%step != 0 || (selfhostTier(t) != tierFull && arm64Heavy(d)) {
 			continue
 		}
 		dirs = append(dirs, d)

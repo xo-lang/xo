@@ -79,7 +79,9 @@ func writeScript(t *testing.T, name, body string) string {
 // -short (about 2 s).
 func TestReduceDiffFake(t *testing.T) {
 	xo := filepath.Join(t.TempDir(), "fakexo")
-	if out, err := exec.Command("go", "build", "-o", xo, "./testdata/reduce/fakexo").CombinedOutput(); err != nil {
+	gob := exec.Command("go", "build", "-o", xo, "./testdata/reduce/fakexo")
+	gob.Env = goVetEnv()
+	if out, err := gob.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	min := reduceDiff(t, xo, "testdata/reduce/p197.xo")
@@ -97,7 +99,9 @@ func TestReduceDiffReal(t *testing.T) {
 		t.Skip("about a minute of builds; run without -short")
 	}
 	xo := filepath.Join(t.TempDir(), "xo")
-	if out, err := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo").CombinedOutput(); err != nil {
+	gob := exec.Command("go", "build", "-o", xo, "github.com/xo-lang/xo/cmd/xo")
+	gob.Env = goVetEnv()
+	if out, err := gob.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	min := reduceDiff(t, writeScript(t, "xo-wrap", realXo), "testdata/reduce/p197.xo", "XO_REAL="+xo)

@@ -142,6 +142,4 @@ func run(dir, name string, args ...string) (string, error) {
 // wrote 100 GB into the default Go cache in one night. -trimpath leaves
 // the directory out of the key, and the Xo Go cache is capped
 // (gotchas/go-vet-recompiles-rt-per-build-dir.md).
-func goVetEnv() []string {
-	return append(os.Environ(), "GOWORK=off", "GOFLAGS=-trimpath", "GOCACHE="+build.GoCacheDir())
-}
+func goVetEnv() []string { return build.GoEnv() }

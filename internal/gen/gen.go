@@ -28,6 +28,7 @@ import (
 
 	"github.com/xo-lang/xo/internal/ast"
 	"github.com/xo-lang/xo/internal/check"
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // Mode selects what is generated.
@@ -75,6 +76,9 @@ type Options struct {
 	// decision 0092) records error frames without parameter values.
 	// Release builds only.
 	NoErrorArgs bool
+	// GoLine is the `go` line of the generated go.mod (internal/build sets
+	// gotool.GoLine(), decision 0176); empty means gotool.TestedGo.
+	GoLine string
 }
 
 // noErrorArgs reports whether error frames leave out parameter values.
@@ -357,8 +361,12 @@ func (g *gen) goBindings(prog *Program) ([]byte, []byte) {
 			}
 		}
 	}
+	line := g.opts.GoLine
+	if line == "" {
+		line = gotool.TestedGo
+	}
 	var b strings.Builder
-	b.WriteString("module " + ModulePath + "\n\ngo 1.26\n")
+	b.WriteString("module " + ModulePath + "\n\ngo " + line + "\n")
 	if len(reqs) > 0 {
 		b.WriteString("\nrequire (\n")
 		for _, r := range sortedSet(reqs) {

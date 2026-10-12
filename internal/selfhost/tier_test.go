@@ -2,6 +2,7 @@ package selfhost
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -12,12 +13,17 @@ import (
 //     also arm64 and LLVM), small corpora, every 25th run for the SSA
 //     builder, no SSA mutations and no Xo test binaries;
 //   - merge (the default without -short): the go backend at full size
-//     (every run, every corpus and mutation count), except that the SSA
-//     builder's passes skip the three runs of buildOnlyMerge and its
-//     mutation test makes the first 300 of its 400 mutations; the arm64
-//     and LLVM lexers and parsers at -short's sizes are the native smoke
-//     test, so no native build of the checker or the SSA builder (the
-//     slow builds: the LLVM link of selfhost/ssa takes minutes);
+//     (every run, every corpus and mutation count), except that the
+//     comparisons of the SSA builder and the arm64 and LLVM emitters
+//     leave the mergeHeavy runs (the self hosted compiler's components
+//     and huge_frame) to the full tier: the SSA builder compares only
+//     their build stage, the emitters skip them; the SSA mutation test
+//     makes the first 300 of its 400 mutations, the emitters' 30; the
+//     arm64 emitter takes every second run, the LLVM emitter every
+//     third; the arm64 and LLVM lexers and parsers at -short's sizes are
+//     the native smoke test, so no native build of the checker, the SSA
+//     builder, or the emitters (the slow builds: the LLVM link of
+//     selfhost/ssa takes minutes), and no end to end LLVM test;
 //   - full (XO_SELFHOST_TIER=full): every backend, every corpus at full
 //     size (nightly, release tagging, and changes the merge tier does
 //     not cover).
@@ -58,6 +64,26 @@ func byTier[T any](t testing.TB, short, merge, full T) T {
 		return merge
 	}
 	return full
+}
+
+// mergeHeavy reports whether the merge tier leaves run d (a directory
+// of moduleDirs) to the full tier in the comparisons of the SSA builder
+// (build stage only) and the arm64 and LLVM emitters (skipped):
+// huge_frame (one 5,000 line function) and every self hosted component
+// but the lexer and the parser. Each takes from tens of seconds to
+// minutes in each comparison where the other runs take under a second
+// (knowledgebase/gotchas/selfhost-ssa-passes-three-runs.md): with
+// selfhost/arm64, selfhost/llvm, and selfhost/xo missing from the old
+// fixed lists the merge tier took 1,329 s (2026-10-12). A new component
+// under selfhost/ is heavy by this rule without an edit here.
+func mergeHeavy(d string) bool {
+	switch d {
+	case "internal/arm64/testdata/run/huge_frame":
+		return true
+	case "selfhost/lexer", "selfhost/parser":
+		return false
+	}
+	return strings.HasPrefix(d, "selfhost/")
 }
 
 // tierBackends are the backends a differential of the parser, checker,

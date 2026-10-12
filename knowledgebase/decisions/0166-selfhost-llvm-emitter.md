@@ -99,7 +99,8 @@ does not build completely prints `== unsupported`.
   checker; a Go emitter error must be an error of the Xo emitter.
 
 Tiers (tier_test.go): -short every 25th run, merge every third run but
-those of buildOnlyMerge and 30 mutations, full every run, every
+the mergeHeavy ones (huge_frame and every self hosted component
+but the lexer and the parser) and 30 mutations, full every run, every
 backend, 400 mutations.
 
 ## Consequences
