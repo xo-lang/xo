@@ -202,6 +202,17 @@ call, decision 0150), keeping std/rt, gobind, and the test helpers;
 on a new host is built by the previous release's binary, never by Go
 again (a bootstrap chain, recorded in toolchain.md).
 
+## Owner approvals (2026-10-12)
+
+- Switch point A: approved by the owner on 2026-10-12 (implementation in
+  progress: the Go `xo` execs xo1 for native `build|run|test`, with a
+  rollback environment variable).
+- Switch point B: approved by the owner on 2026-10-12, to take effect
+  when its gate passes (stages 2 to 6 done, the full suite with every
+  process-driving test run against the Xo binary). The approval does not
+  skip the gate. Stage 7's deletion of the Go compiler packages remains a
+  separate owner call (decision 0150).
+
 ## Consequences
 
 - Until switch point B every language change is still made twice
