@@ -103,6 +103,10 @@ pub struct Gen {
   /// and how many resume points it has.
   segs: List[Str] = []
   nres: Int = 0
+  /// Per value: a field update made in place (plan_locals).
+  inplace: List[Bool] = []
+  /// Per value: a field read that uses its struct's locals (plan_locals).
+  alias: List[Bool] = []
 }
 
 /// Lowers module m (after the passes and InsertRC).

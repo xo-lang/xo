@@ -47,6 +47,7 @@ fn (var g: Gen) func(fi: Int) {
   }
   g.cur = FnText{nparams: ps.len()}
   g.pc_local = g.tmp("i32")
+  g.plan_locals()
   g.su = g.susp.len() > fi && g.susp[fi]
   g.segs = []
   g.nres = 0
@@ -179,6 +180,251 @@ fn (var g: Gen) suspend_check(id: Int) {
 /// A name in a WAT line comment (no line breaks).
 fn comment_text(s: Str) -> Str {
   s.replace("\n", " ")
+}
+
+/// Assigns the locals of the function's values before it is lowered:
+/// values whose live ranges do not overlap share locals (a linear scan
+/// over the blocks in order, each value's range widened to one interval
+/// from its first to its last live position, which is safe for any
+/// control flow). One set of locals per value made a function of the
+/// self hosted checker hold 3.5 million locals (Checker, 253 leaves,
+/// copied by every field update and `var` call); V8 takes 50,000.
+fn (var g: Gen) plan_locals() {
+  let f = g.f
+  let nv = f.values.len()
+  var bstart: List[Int] = []
+  var bend: List[Int] = []
+  var pos: List[Int] = []
+  for _ in 0..nv {
+    pos.push(-1)
+  }
+  var p = 0
+  for b in f.blocks {
+    bstart.push(p)
+    for prm in b.params {
+      pos[prm] = p
+    }
+    p += 1
+    for v in b.instrs {
+      pos[v] = p
+      p += 1
+    }
+    bend.push(p - 1)
+  }
+  var lo: List[Int] = []
+  var hi: List[Int] = []
+  for v in 0..nv {
+    lo.push(pos[v])
+    hi.push(pos[v])
+  }
+  // a block parameter is written at the end of each predecessor (the
+  // edge's copy)
+  for (bi, b) in f.blocks.indexed() {
+    if bi == 0 {
+      continue
+    }
+    for e in b.preds {
+      let at = bend[f.edges[e].from]
+      for prm in b.params {
+        lo[prm] = lo[prm].min(at)
+        hi[prm] = hi[prm].max(at)
+      }
+    }
+  }
+  var stamp: List[Int] = []
+  for _ in f.blocks {
+    stamp.push(-1)
+  }
+  var work: List[Int] = []
+  for (bi, b) in f.blocks.indexed() {
+    for x in b.instrs {
+      let xp = pos[x]
+      var us: List[Int] = []
+      for a in f.values[x].args {
+        us.push(a)
+      }
+      for e in f.values[x].succs {
+        for a in f.edges[e].args {
+          us.push(a)
+        }
+      }
+      for a in us {
+        if a < 0 || pos[a] < 0 {
+          continue
+        }
+        lo[a] = lo[a].min(xp)
+        hi[a] = hi[a].max(xp)
+        let d = g.blk[a]
+        if d == bi {
+          continue
+        }
+        // live from the start of this block, and back through the
+        // predecessors to the defining block
+        lo[a] = lo[a].min(bstart[bi])
+        stamp[bi] = a
+        work.push(bi)
+        while let Some(w) = work.pop() {
+          for e in f.blocks[w].preds {
+            let pb = f.edges[e].from
+            if pb == d || stamp[pb] == a {
+              // live out of it (the use block itself, around a loop)
+              hi[a] = hi[a].max(bend[pb])
+              continue
+            }
+            if stamp[pb] != a {
+              stamp[pb] = a
+              lo[a] = lo[a].min(bstart[pb])
+              hi[a] = hi[a].max(bend[pb])
+              work.push(pb)
+            }
+          }
+        }
+      }
+    }
+  }
+  // a field of a struct or tuple (a `var` call's result, a field read) is
+  // that value's locals, which then stay as long as the field does: no
+  // copy (not for a block parameter, which its edges rewrite)
+  var src: List[Int] = []
+  for _ in 0..nv {
+    src.push(-1)
+  }
+  g.alias = []
+  for _ in 0..nv {
+    g.alias.push(false)
+  }
+  var isparam: List[Bool] = []
+  for _ in 0..nv {
+    isparam.push(false)
+  }
+  for (bi, b) in f.blocks.indexed() {
+    if bi > 0 {
+      for prm in b.params {
+        isparam[prm] = true
+      }
+    }
+  }
+  var atpos: List[Int] = []
+  for _ in 0..p {
+    atpos.push(-1)
+  }
+  for b in f.blocks {
+    for v in b.instrs {
+      atpos[pos[v]] = v
+    }
+  }
+  for q in 0..p {
+    let vi = atpos[q]
+    if vi < 0 {
+      continue
+    }
+    let x = f.values[vi]
+    if x.op == ssa.Op.Field && x.args.len() == 1 && g.nleaves(x.ty) > 0 {
+      let a = x.args[0]
+      if pos[a] >= 0 && !isparam[a] && f.values[a].op != ssa.Op.Undef {
+        src[vi] = a
+        g.alias[vi] = true
+      }
+    }
+  }
+  // the struct (and the struct it is a field of, and so on) lives as
+  // long as the field (blocks are not in dominance order: walk chains)
+  for q in 0..p {
+    let vi = atpos[q]
+    if vi < 0 || !g.alias[vi] {
+      continue
+    }
+    var w = vi
+    while src[w] >= 0 {
+      w = src[w]
+      hi[w] = hi[w].max(hi[vi])
+      lo[w] = lo[w].min(lo[vi])
+    }
+  }
+  // the scan: values by the start of their range; locals come back to
+  // a pool per leaf signature after the end of a range
+  var starts: List[List[Int]] = []
+  var ends: List[List[Int]] = []
+  for _ in 0..p + 1 {
+    starts.push([])
+    ends.push([])
+  }
+  for v in 0..nv {
+    // an undefined value keeps zeroed locals of its own
+    if pos[v] < 0 || g.vbase[v] >= 0 || g.alias[v] || g.nleaves(f.values[v].ty) == 0 || f.values[v].op == ssa.Op.Undef {
+      continue
+    }
+    starts[lo[v]].push(v)
+    ends[hi[v]].push(v)
+  }
+  var pool: Map[Str, List[Int]] = {}
+  var moved: List[Bool] = []
+  for _ in 0..nv {
+    moved.push(false)
+  }
+  g.inplace = []
+  for _ in 0..nv {
+    g.inplace.push(false)
+  }
+  for q in 0..p {
+    if q > 0 {
+      for v in ends[q - 1] {
+        if moved[v] {
+          continue
+        }
+        let key = g.leaves(f.values[v].ty).join(" ")
+        var l = pool.get(key) ?? []
+        l.push(g.vbase[v])
+        pool[key] = l
+      }
+    }
+    for v in starts[q] {
+      let x = f.values[v]
+      if x.op == ssa.Op.SetField && x.args.len() == 2 {
+        // a field update of a struct that dies here is made in place:
+        // only the field's leaves are written
+        let a = x.args[0]
+        if hi[a] == q && pos[v] == q && g.vbase[a] >= 0 && !moved[a] && f.values[a].ty == x.ty {
+          g.vbase[v] = g.vbase[a]
+          moved[a] = true
+          g.inplace[v] = true
+          continue
+        }
+      }
+      let ls = g.leaves(f.values[v].ty)
+      let key = ls.join(" ")
+      var l = pool.get(key) ?? []
+      if let Some(b) = l.pop() {
+        g.vbase[v] = b
+        pool[key] = l
+      } else {
+        g.vbase[v] = g.tmps(ls)
+      }
+    }
+  }
+  // the fields: their struct's locals at the field's offset
+  for q in 0..p {
+    let v = atpos[q]
+    if v >= 0 && g.alias[v] {
+      g.alias_base(v, src)
+    }
+  }
+}
+
+/// The first local of the aliased field v: its struct's (resolved
+/// first when it is a field too) plus the field's offset.
+fn (var g: Gen) alias_base(v: Int, src: List[Int]) -> Int {
+  if g.vbase[v] >= 0 {
+    return g.vbase[v]
+  }
+  let a = src[v]
+  let ab = if g.alias[a] { g.alias_base(a, src) } else { g.loc(a) }
+  let i = match g.f.values[v].aux {
+    I(n) => n
+    _ => 0
+  }
+  g.vbase[v] = ab + g.field_off(g.f.values[a].ty, i)
+  g.vbase[v]
 }
 
 /// The first local of value v (allocated at its first use).
@@ -397,6 +643,10 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         I(n) => n
         _ => 0
       }
+      if g.alias.len() > v && g.alias[v] {
+        // v is the field's leaves in a's locals (plan_locals)
+        return
+      }
       let off = g.field_off(g.vty(a), i)
       g.push_part(a, off, off + g.nleaves(t))
       g.def(v)
@@ -410,6 +660,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       let off = g.field_off(at, i)
       let n = g.nleaves(g.field_ty(at, i))
+      if g.inplace.len() > v && g.inplace[v] {
+        // the struct dies here and v has its locals (plan_locals)
+        if n > 0 {
+          g.push(x.args[1])
+          g.set_range(g.loc(v) + off, n)
+        }
+        return
+      }
       g.push_part(a, 0, off)
       g.push(x.args[1])
       g.push_part(a, off + n, g.nleaves(at))

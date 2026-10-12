@@ -247,6 +247,19 @@ selfhost/check). `selfhost/wasm --why` lists every unsupported
 construct; `--lax` makes an unsupported runtime call fault where it
 runs, for experiments only (a shipped module never has one).
 
+**Values share locals.** The value model stays (leaves in locals), but a
+value no longer gets locals of its own: values whose live ranges do not
+overlap share them (SSA liveness widened to one interval per value, a
+linear scan per leaf signature), a field update of a struct that dies
+there writes only the field, and a field read is its struct's locals at
+an offset. Without it the self hosted checker (its `Checker` struct is
+253 leaves) was a 1.67 GB module with functions of millions of locals
+(V8 takes 50,000; gotchas/wasm-locals-per-value.md). What is left of
+that cost is code: a `var` call still passes and returns every leaf of
+a large struct. The next step for it is to pass large aggregates (or
+`var` parameters) by reference in linear memory, as the LLVM emitter
+passes `var` parameters by reference.
+
 ## Consequences
 
 - The playground's path no longer needs the Go compiler and linker in
