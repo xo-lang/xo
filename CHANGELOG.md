@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
+  runtime are written in Xo (decision 0180, the runtime pilot):
+  `std/native/llrt/unicode.xo` with generated tables
+  (`unicode_tables.xo`) does Str and Rune case mapping, `is_letter`,
+  `is_digit`, `is_print`, strconv quoting, and std/regexp's `\pL` and
+  `\p{Nd}` ranges; the C runtime keeps two bulk byte primitives. Output
+  is unchanged on every backend. ASCII case mapping and quoting are
+  faster than before; per rune work on arm64 is 1.45 to 1.8 times the
+  C's instructions, so `XO_UNICODE=c` at build time still selects the C
+  implementation (compiled only then, never in the prebuilt packs).
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).

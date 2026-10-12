@@ -313,6 +313,29 @@ fn (var c: Checker) load_native() {
   }
 }
 
+/// Loads the runtime module std/native/llrt/<name>.xo (load.go
+/// loadRuntimeModule, decision 0180): part of the native runtime written
+/// in Xo, checked and compiled with the program like an implementation
+/// module (it implements no std module). -1 when there is none.
+fn (var c: Checker) load_runtime_module(path: Str) -> Int {
+  if let Some(m) = c.mod_index.get(path) {
+    return m
+  }
+  let src = c.fs.read("${c.std_dir}/${path}.xo").ok() ?? None
+  let data = match src {
+    Some(b) => b
+    None => return -1
+  }
+  let m = c.new_module(path, path.trim_prefix("native/llrt/"), "std/native/llrt", false)
+  c.mods[m].native = true
+  c.parse_into(m, "std/${path}.xo", data, false)
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
+}
+
 /// Loads the intrinsics module of the native backends, std/native/rt.xo
 /// (load.go loadNativeRT): bodiless declarations lowered to calls of the
 /// C runtime. -1 when there is none.
@@ -524,7 +547,13 @@ fn (var c: Checker) load_imports(m: Int) {
         // implementation modules see them (decision 0074), and other
         // intrinsics modules
         dep = -1
-        if c.mods[m].native || (c.mods[m].is_std && c.mods[m].path.starts_with("native/")) {
+        if p.starts_with("native/llrt/") {
+          // a runtime module written in Xo (decision 0180):
+          // implementation and runtime modules see it
+          if c.mods[m].native {
+            dep = c.load_runtime_module(p)
+          }
+        } else if c.mods[m].native || (c.mods[m].is_std && c.mods[m].path.starts_with("native/")) {
           dep = c.load_native_rt(p)
         }
       } else if let Some(x) = c.mod_index.get(p) {

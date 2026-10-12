@@ -22,8 +22,6 @@ fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 fn str_byte(s: Str, i: Int) -> Int
 /// Unicode white space removed: mode 0 both ends, 1 the start, 2 the end.
 fn str_trim(s: Str, mode: Int) -> Str
-fn str_lower(s: Str) -> Str
-fn str_upper(s: Str) -> Str
 fn str_rune_count(s: Str) -> Int
 fn str_split(s: Str, sep: Str) -> List[Str]
 fn str_lines(s: Str) -> List[Str]
@@ -41,31 +39,46 @@ fn float_parse(s: Str) -> Float
 fn rs_append(s: Str, t: Str) -> Str
 /// s + the text of a Duration of d nanoseconds (Go's time.Duration.String).
 fn rs_append_duration(s: Str, d: Int) -> Str
+/// s + the bytes lo..hi of b (a range of b), their ASCII letters lowered
+/// (mode 1) or raised (mode 2); mode 0 copies (std/native/llrt/unicode.xo,
+/// decision 0180).
+fn rs_append_bytes(s: Str, b: Bytes, lo: Int, hi: Int, mode: Int) -> Str
+/// The end of the run of bytes of b from i in the class cls: 0 ASCII, 1
+/// printable ASCII other than `"` and `\` (std/native/llrt/unicode.xo).
+fn bytes_span(b: Bytes, i: Int, cls: Int) -> Int
+/// s + the byte x (0 to 255; BytesBuilder.write_byte).
+fn rs_push_byte(s: Str, x: Int) -> Str
+/// s + the UTF-8 of r, U+FFFD when r is not a scalar value
+/// (BytesBuilder.write_rune).
+fn rs_push_rune(s: Str, r: Int) -> Str
+/// An empty string with room for n bytes (BytesBuilder.with_capacity).
+fn rs_with_cap(n: Int) -> Str
+
+// The C path of the Unicode operations (decision 0180): compiled only
+// with -DXO_UNICODE_C, called only by std/native/llrt/unicode_c.xo
+// (XO_UNICODE=c).
+
+fn str_lower(s: Str) -> Str
+fn str_upper(s: Str) -> Str
+fn str_eq_lower(a: Str, b: Str) -> Bool
+fn rune_is_letter(r: Int) -> Bool
+fn rune_is_digit(r: Int) -> Bool
+fn rune_is_print(r: Int) -> Bool
+fn rune_to_case(r: Int, lower: Bool) -> Int
+fn rune_quote(r: Int) -> Str
+fn bytes_quote(b: Bytes) -> Str
+fn unicode_ranges(which: Int) -> List[Int]
 /// Writes s and a newline to standard error.
 fn eprintln(s: Str)
 
 // ---------------------------------------------------------------------------
 // Runes and Bytes (decisions 0079, 0081; std/llrt/xo_bytes.c)
 
-fn rune_is_letter(r: Rune) -> Bool
-fn rune_is_digit(r: Rune) -> Bool
 fn rune_is_space(r: Rune) -> Bool
-/// strconv.IsPrint.
-fn rune_is_print(r: Rune) -> Bool
-/// unicode.ToLower (lower) or unicode.ToUpper.
-fn rune_to_case(r: Rune, lower: Bool) -> Rune
-/// strconv.QuoteRune.
-fn rune_quote(r: Rune) -> Str
-/// strconv.Quote.
-fn strconv_quote(s: Str) -> Str
 /// Whether the text is a duration (std/rt's parseDuration).
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
-fn bytes_quote(b: Bytes) -> Str
-/// The ranges of a Unicode class (lo, hi pairs, sorted): 0 the letters
-/// (unicode.L), 1 the decimal digits (unicode.Nd); std/regexp's \pL.
-fn unicode_ranges(which: Int) -> List[Int]
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
 /// utf8.RuneCount.

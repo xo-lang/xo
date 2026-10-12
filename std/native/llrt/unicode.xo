@@ -1,0 +1,405 @@
+// The Unicode operations of the native runtime, written in Xo (decision
+// 0180, the runtime pilot): the case mapping of Str and Rune, the Rune
+// classes is_letter, is_digit, and is_print, strconv's quoting, and the
+// class ranges of std/regexp's \pL and \p{Nd}. They were C (std/llrt's
+// xo_unicode.c tables and their users in xo_std.c and xo_bytes.c); the
+// semantics are still Go's (unicode, strings, strconv), so the native
+// backends print what the Go backend prints.
+//
+// A runtime module (std/native/llrt/<name>.xo, imported as
+// `use native/llrt/<name>`) is compiled with the program like the
+// implementation modules; only those and other runtime modules may
+// import it. The tables are generated (unicode_tables.xo).
+use native/llrt/unicode_tables
+use native/rt
+
+/// The 24 bit big endian value at byte i of t.
+fn u24(t: Bytes, i: Int) -> Int {
+  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+}
+
+/// The 24 bit two's complement value at byte i of t.
+fn s24(t: Bytes, i: Int) -> Int {
+  let v = u24(t, i)
+  if v >= 0x800000 {
+    return v - 0x1000000
+  }
+  v
+}
+
+/// Whether r is in one of the n sorted inclusive ranges of t (6 bytes
+/// each, lo and hi).
+fn in_ranges(t: Bytes, n: Int, r: Int) -> Bool {
+  var lo = 0
+  var hi = n
+  while lo < hi {
+    let m = lo + (hi - lo) / 2
+    let k = m * 6
+    if r < u24(t, k) {
+      hi = m
+    } else if r > u24(t, k + 3) {
+      lo = m + 1
+    } else {
+      return true
+    }
+  }
+  false
+}
+
+/// Bit r of a class bitmap of the runes U+0080 to U+07FF.
+fn has_bit(t: Bytes, r: Int) -> Bool {
+  ((Int(t[(r - 0x80) >> 3]) >> (r & 7)) & 1) != 0
+}
+
+/// unicode.IsLetter.
+pub fn is_letter(r: Int) -> Bool {
+  if r < 0x80 {
+    return (r >= 97 && r <= 122) || (r >= 65 && r <= 90)
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.LETTER2, r)
+  }
+  in_ranges(unicode_tables.LETTER, unicode_tables.LETTER_N, r)
+}
+
+/// unicode.IsDigit.
+pub fn is_digit(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 48 && r <= 57
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.DIGIT2, r)
+  }
+  in_ranges(unicode_tables.DIGIT, unicode_tables.DIGIT_N, r)
+}
+
+/// strconv.IsPrint.
+pub fn is_print(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 0x20 && r < 0x7F
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.PRINT2, r)
+  }
+  in_ranges(unicode_tables.PRINT, unicode_tables.PRINT_N, r)
+}
+
+/// unicode.ToLower (lower) or unicode.ToUpper of the scalar value r.
+pub fn to_case(r: Int, lower: Bool) -> Int {
+  if r < 0x80 {
+    if lower {
+      if r >= 65 && r <= 90 {
+        return r + 32
+      }
+    } else if r >= 97 && r <= 122 {
+      return r - 32
+    }
+    return r
+  }
+  if r < 0x800 {
+    // two byte UTF-8 (Latin, Greek, Cyrillic, ...): a direct table
+    if lower {
+      return u24(unicode_tables.LOWER2, (r - 0x80) * 3)
+    }
+    return u24(unicode_tables.UPPER2, (r - 0x80) * 3)
+  }
+  let t = unicode_tables.CASE
+  var lo = 0
+  var hi = unicode_tables.CASE_N
+  while lo < hi {
+    let m = lo + (hi - lo) / 2
+    let k = m * 12
+    let first = u24(t, k)
+    if r < first {
+      hi = m
+    } else if r > u24(t, k + 3) {
+      lo = m + 1
+    } else {
+      let d = if lower { s24(t, k + 9) } else { s24(t, k + 6) }
+      if d == unicode_tables.UPPER_LOWER {
+        // alternating pairs: the upper case at an even offset from first
+        let even = first + (r - first) / 2 * 2
+        return if lower { even + 1 } else { even }
+      }
+      return r + d
+    }
+  }
+  r
+}
+
+/// The bytes 0 to 255, so `BYTE[x]` is x as a UInt8 for x in that range
+/// (no checked conversion).
+const BYTE: Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\x22#\x24%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\x5c]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+
+/// x (0 to 255) as a UInt8.
+pub fn byte(x: Int) -> UInt8 { BYTE[x] }
+
+/// utf8.DecodeRune of b from i (i < b.len()): the rune times 8 plus its
+/// size; an invalid byte is U+FFFD of size 1.
+pub fn decode(b: Bytes, i: Int) -> Int {
+  let n = b.len()
+  let c = Int(b[i])
+  if c < 0x80 {
+    return (c << 3) | 1
+  }
+  var k = 0
+  var lo = 0x80
+  var hi = 0xBF
+  var r = 0
+  if c >= 0xC2 && c <= 0xDF {
+    k = 1
+    r = c & 0x1F
+  } else if c >= 0xE0 && c <= 0xEF {
+    k = 2
+    r = c & 0x0F
+    if c == 0xE0 {
+      lo = 0xA0
+    } else if c == 0xED {
+      hi = 0x9F
+    }
+  } else if c >= 0xF0 && c <= 0xF4 {
+    k = 3
+    r = c & 0x07
+    if c == 0xF0 {
+      lo = 0x90
+    } else if c == 0xF4 {
+      hi = 0x8F
+    }
+  } else {
+    return (0xFFFD << 3) | 1
+  }
+  if i + k >= n {
+    return (0xFFFD << 3) | 1
+  }
+  let c1 = Int(b[i + 1])
+  if c1 < lo || c1 > hi {
+    return (0xFFFD << 3) | 1
+  }
+  r = (r << 6) | (c1 & 0x3F)
+  var j = 2
+  while j <= k {
+    let cj = Int(b[i + j])
+    if cj < 0x80 || cj > 0xBF {
+      return (0xFFFD << 3) | 1
+    }
+    r = (r << 6) | (cj & 0x3F)
+    j += 1
+  }
+  (r << 3) | (k + 1)
+}
+
+// The text operations build their result in a Str, appended in place
+// through the runtime's rs_* intrinsics (the result is unique): the bytes
+// that stay as they are go over in runs (rt.rs_append_bytes, which also
+// maps ASCII letters), so the C runtime keeps only the bulk byte moves.
+
+/// The mode of rt.rs_append_bytes that maps ASCII letters like to_case.
+fn ascii_mode(lower: Bool) -> Int {
+  if lower {
+    return 1
+  }
+  2
+}
+
+/// strings.ToLower (lower) or strings.ToUpper of the bytes from i of b
+/// appended to out (strings.Map: an invalid byte becomes U+FFFD). Runs of
+/// ASCII bytes (found by rt.bytes_span) and of runes that do not change
+/// are appended at once.
+fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
+  let n = b.len()
+  let mode = ascii_mode(lower)
+  var o = out
+  var run = from
+  var i = rt.bytes_span(b, from, 0)
+  while i < n {
+    let p = decode(b, i)
+    let r = p >> 3
+    let size = p & 7
+    let x = to_case(r, lower)
+    if x != r || (r == 0xFFFD && size == 1) {
+      if run < i {
+        o = rt.rs_append_bytes(o, b, run, i, mode)
+      }
+      o = rt.rs_push_rune(o, x)
+      run = i + size
+    }
+    i += size
+    if i < n && b[i] < 0x80 {
+      i = rt.bytes_span(b, i, 0)
+    }
+  }
+  if run < n {
+    o = rt.rs_append_bytes(o, b, run, n, mode)
+  }
+  o
+}
+
+/// strings.ToLower (lower) or strings.ToUpper.
+pub fn map_case(s: Str, lower: Bool) -> Str {
+  let b = s.bytes()
+  case_append(rt.rs_with_cap(b.len()), b, 0, lower)
+}
+
+/// `a.to_lower() == b.to_lower()` without making the lowered strings:
+/// ASCII bytes compare lowered in place; from the first non-ASCII byte of
+/// either (a rune boundary of both, since everything before is ASCII) the
+/// rests are lowered and compared (std/rt's Str_eq_lower on the Go
+/// backend).
+pub fn eq_lower(a: Str, b: Str) -> Bool {
+  let x = a.bytes()
+  let y = b.bytes()
+  let n = x.len()
+  let m = y.len()
+  var i = 0
+  while i < n && i < m {
+    var p = Int(x[i])
+    var q = Int(y[i])
+    if p >= 0x80 || q >= 0x80 {
+      break
+    }
+    if p >= 65 && p <= 90 {
+      p += 32
+    }
+    if q >= 65 && q <= 90 {
+      q += 32
+    }
+    if p != q {
+      return false
+    }
+    i += 1
+  }
+  if i == n && i == m {
+    return true
+  }
+  if i == n || i == m {
+    // a nonempty rest never lowers to nothing
+    return false
+  }
+  case_append(rt.rs_with_cap(n - i), x, i, true) == case_append(rt.rs_with_cap(m - i), y, i, true)
+}
+
+const HEX: Bytes = b"0123456789abcdef"
+
+/// The letter of the escape \<letter> of strconv for the control rune r,
+/// or 0.
+fn escape_letter(r: Int) -> Int {
+  match r {
+    7 => 97
+    8 => 98
+    12 => 102
+    10 => 110
+    13 => 114
+    9 => 116
+    11 => 118
+    _ => 0
+  }
+}
+
+/// out + r (a scalar value) as Go's strconv quotes it inside the quote
+/// character quote.
+fn quote_rune_append(out: Str, r: Int, quote: Int) -> Str {
+  var o = out
+  if r == quote || r == 92 {
+    o = rt.rs_push_byte(o, 92)
+    return rt.rs_push_byte(o, r)
+  }
+  if is_print(r) {
+    return rt.rs_push_rune(o, r)
+  }
+  o = rt.rs_push_byte(o, 92)
+  let e = escape_letter(r)
+  if e != 0 {
+    return rt.rs_push_byte(o, e)
+  }
+  var digits = 8
+  if r < 32 || r == 0x7F {
+    digits = 2
+    o = rt.rs_push_byte(o, 120)
+  } else if r < 0x10000 {
+    digits = 4
+    o = rt.rs_push_byte(o, 117)
+  } else {
+    o = rt.rs_push_byte(o, 85)
+  }
+  var i = 0
+  while i < digits {
+    o = rt.rs_push_byte(o, Int(HEX[(r >> (4 * (digits - 1 - i))) & 15]))
+    i += 1
+  }
+  o
+}
+
+/// strconv.QuoteRune of the scalar value r.
+pub fn quote_rune(r: Int) -> Str {
+  var o = rt.rs_push_byte(rt.rs_with_cap(8), 39)
+  o = quote_rune_append(o, r, 39)
+  rt.rs_push_byte(o, 39)
+}
+
+/// strconv.Quote of the bytes of a Str or Bytes: a byte of an invalid
+/// sequence is \x of the byte. Runs of printable runes other than `"`
+/// and `\` are appended at once.
+pub fn quote(b: Bytes) -> Str {
+  let n = b.len()
+  var o = rt.rs_push_byte(rt.rs_with_cap(n + 2), 34)
+  var run = 0
+  var i = 0
+  while i < n {
+    i = rt.bytes_span(b, i, 1)
+    if i >= n {
+      break
+    }
+    let c = b[i]
+    let p = decode(b, i)
+    let r = p >> 3
+    let size = p & 7
+    if r != 0xFFFD && is_print(r) && c >= 0x80 {
+      i += size
+      continue
+    }
+    if run < i {
+      o = rt.rs_append_bytes(o, b, run, i, 0)
+    }
+    if r == 0xFFFD && size == 1 {
+      o = rt.rs_push_byte(o, 92)
+      o = rt.rs_push_byte(o, 120)
+      o = rt.rs_push_byte(o, Int(HEX[Int(c) >> 4]))
+      o = rt.rs_push_byte(o, Int(HEX[Int(c) & 15]))
+    } else {
+      o = quote_rune_append(o, r, 34)
+    }
+    i += size
+    run = i
+  }
+  if run < n {
+    o = rt.rs_append_bytes(o, b, run, n, 0)
+  }
+  rt.rs_push_byte(o, 34)
+}
+
+/// The ranges of a Unicode class as lo, hi pairs, sorted (std/regexp's
+/// \pL and \p{Nd}, decision 0172): 0 the letters (unicode.L), 1 the
+/// decimal digits (unicode.Nd).
+pub fn ranges(which: Int) -> List[Int] {
+  var out: List[Int] = []
+  var t = unicode_tables.DIGIT
+  var n = unicode_tables.DIGIT_N
+  if which == 0 {
+    t = unicode_tables.LETTER
+    n = unicode_tables.LETTER_N
+    out.push(65)
+    out.push(90)
+    out.push(97)
+    out.push(122)
+  } else {
+    out.push(48)
+    out.push(57)
+  }
+  var i = 0
+  while i < n {
+    out.push(u24(t, 6 * i))
+    out.push(u24(t, 6 * i + 3))
+    i += 1
+  }
+  out
+}

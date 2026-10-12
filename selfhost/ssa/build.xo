@@ -978,6 +978,20 @@ fn (var b: Builder) native_mod(path: Str) -> Int {
   b.natives.get(path) ?? -1
 }
 
+/// The native prelude's function name (one the builder calls itself, not
+/// as a method's implementation), or -1 (preludeImpl).
+fn (var b: Builder) prelude_impl(name: Str) -> Int {
+  let nm = b.native_mod("std/prelude")
+  if nm < 0 {
+    return -1
+  }
+  let impl = b.member(nm, name)
+  if impl < 0 || b.c.objs[impl].kind != check.ObjKind.Func || b.c.objs[impl].recv >= 0 {
+    return -1
+  }
+  impl
+}
+
 fn (var b: Builder) member(m: Int, name: Str) -> Int {
   b.c.mods[m].members.get(name.bytes()) ?? -1
 }

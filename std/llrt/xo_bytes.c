@@ -252,6 +252,46 @@ xo_rstr *xo_rs_push_byte(xo_rstr *a, int64_t an, int64_t x, int64_t *len) {
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
 xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
 
+// xo_rs_append_bytes is s + the bytes lo..hi of b (0 <= lo <= hi <= the
+// length of b), their ASCII letters lowered (mode 1) or raised (mode 2):
+// the bulk byte moves of the Unicode operations written in Xo
+// (std/native/llrt/unicode.xo, decision 0180).
+xo_rstr *xo_rs_append_bytes(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t lo, int64_t hi, int64_t mode, int64_t *len) {
+	(void)bn;
+	int64_t n = hi - lo;
+	*len = an + n;
+	a = rs_append(a, an, b->data + lo, n);
+	unsigned char *d = (unsigned char *)a->data + an;
+	if (mode == 1) {
+		for (int64_t i = 0; i < n; i++) {
+			d[i] += (unsigned char)(d[i] - 'A' < 26u ? 32 : 0);
+		}
+	} else if (mode == 2) {
+		for (int64_t i = 0; i < n; i++) {
+			d[i] -= (unsigned char)(d[i] - 'a' < 26u ? 32 : 0);
+		}
+	}
+	return a;
+}
+
+// xo_bytes_span is the end of the run of bytes of b from i in the class
+// cls: 0 ASCII (below 0x80), 1 printable ASCII other than `"` and `\`
+// (what strconv.Quote keeps): the bulk scans of
+// std/native/llrt/unicode.xo (decision 0180).
+int64_t xo_bytes_span(const char *p, int64_t n, int64_t i, int64_t cls) {
+	const unsigned char *s = (const unsigned char *)p;
+	if (cls == 0) {
+		while (i < n && s[i] < 0x80) {
+			i++;
+		}
+		return i;
+	}
+	while (i < n && s[i] >= 0x20 && s[i] < 0x7F && s[i] != '"' && s[i] != '\\') {
+		i++;
+	}
+	return i;
+}
+
 // xo_rs_with_cap is an empty string with room for n bytes
 // (BytesBuilder.with_capacity).
 xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) {
@@ -288,6 +328,13 @@ xo_rstr *xo_str_slice_at(const char *p, int64_t n, int64_t lo, int64_t hi, const
 	return nstr(p + lo, hi - lo, len);
 }
 
+// xo_rune_is_space is unicode.IsSpace (the rest of the Rune classes are
+// Xo since decision 0180: std/native/llrt/unicode.xo).
+int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
+
+// The C path of the Unicode operations (decision 0180, XO_UNICODE_C; see
+// xo_std.c).
+#ifdef XO_UNICODE_C
 // n_in_ranges reports whether r is in the sorted inclusive ranges t.
 static int n_in_ranges(const int32_t (*t)[2], int n, int64_t r) {
 	int lo = 0, hi = n;
@@ -320,8 +367,6 @@ int64_t xo_rune_is_digit(int64_t r) {
 	}
 	return n_in_ranges(xo_digit_ranges, N_RANGES(xo_digit_ranges), r);
 }
-
-int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
 
 // xo_unicode_ranges is the ranges of a Unicode class as a List[Int] of
 // lo, hi pairs, sorted (std/regexp natively, decision 0172): 0 the
@@ -437,6 +482,11 @@ xo_rstr *xo_strconv_quote(const char *p, int64_t n, int64_t *len) {
 	nbuf_byte(&o, '"');
 	return nbuf_take(&o, len);
 }
+
+// xo_bytes_quote is strconv.Quote of the bytes.
+xo_rstr *xo_bytes_quote(const char *p, int64_t n, int64_t *len) { return xo_strconv_quote(p, n, len); }
+
+#endif
 
 // xo_bytes_decode is utf8.DecodeRune of the bytes from i: the rune times 8
 // plus its size (U+FFFD and 0 at the end).
@@ -627,9 +677,6 @@ xo_rlist *xo_env_args(void) {
 	}
 	return l;
 }
-
-// xo_bytes_quote is strconv.Quote of the bytes.
-xo_rstr *xo_bytes_quote(const char *p, int64_t n, int64_t *len) { return xo_strconv_quote(p, n, len); }
 
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
 XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {

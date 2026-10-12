@@ -970,7 +970,7 @@ std/                    std declaration files (prelude.xo, archive.xo, cli.xo, c
 std/rt/                 package rt, the runtime linked into every program (Go, embedded
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
-                        and the files it includes: xo_std.c, xo_unicode.c, xo_bytes.c, xo_json.c,
+                        and the files it includes: xo_std.c, xo_unicode.c (XO_UNICODE_C only), xo_bytes.c, xo_json.c,
                         xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
@@ -986,6 +986,14 @@ scripts/disttar/        writes a reproducible .tar.gz of a directory (release.sh
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
+std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
+                        Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
+                        and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
+                        -golden-update`, which also writes std/llrt/xo_unicode.c); imported as
+                        `use native/llrt/<name>` by std/native only. unicode_c.xo is the C path
+                        (XO_UNICODE=c at build time: the Go checker loads it instead, the build
+                        adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it)
+                        (Last verified: 2026-10-12)
 ```
 
 `std/*.xo` are bodiless signature listings of `spec/std.md` (draft 0.4),
@@ -1557,10 +1565,7 @@ first, AST based prototype, since deleted) and
   pointer argument), and `rt.rs_*` calls take their Str operands as
   string objects and consume the first (appending in place). xo_rt.c
   ends by including `xo_std.c` (the native std intrinsics: strings,
-  numbers, durations, times, base64), which includes `xo_unicode.c`
-  (Go's case ranges and the letter, digit, and `strconv.IsPrint` rune
-  ranges, generated: `go test ./internal/llvm -run TestUnicodeTables
-  -golden-update`), `xo_bytes.c` (decision 0081: checked arithmetic and
+  numbers, durations, times, base64), `xo_bytes.c` (decision 0081: checked arithmetic and
   conversions of sized integers, Rune text and quoting, Bytes slicing and
   decoding, the builders' appends, `fs.read`, `env.args`, and the slots
   of constants of collection types), `xo_json.c`, and `xo_http.c`;
