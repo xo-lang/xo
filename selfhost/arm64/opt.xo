@@ -1362,3 +1362,149 @@ fn (var g: G) reuse_flags() {
     }
   }
 }
+
+/// Deletes the instructions without side effects, and the moves of
+/// parallel moves, whose definitions are dead where they are written
+/// (opt.go liveDCE, decision 0184): flow sensitive, one backward pass
+/// over each block from the registers live out of it; a register live
+/// into a landing pad counts as live everywhere.
+fn (var g: G) live_dce() {
+  let order = g.all_blocks()
+  let n = g.fp.len()
+  let nb = order.len()
+  let nw = (n + BW - 1) / BW
+  var idx: List[Int] = []
+  for _ in 0..g.blocks.len() {
+    idx.push(-1)
+  }
+  for (k, b) in order.indexed() {
+    idx[b] = k
+  }
+  var succs: List[List[Int]] = []
+  var gen: List[List[Int]] = []
+  var kill: List[List[Int]] = []
+  var live_in: List[List[Int]] = []
+  var pads: List[Int] = []
+  for b in order {
+    var ss: List[Int] = []
+    for t in g.msuccs(b) {
+      if idx[t] >= 0 {
+        ss.push(idx[t])
+      }
+    }
+    succs.push(ss)
+    var gk = new_bits(n)
+    var kk = new_bits(n)
+    for inst in g.blocks[b].insts {
+      if inst.pad >= 0 {
+        let pk = idx[g.pad_of(inst.pad)]
+        if pk < 0 {
+          return
+        }
+        pads.push(pk)
+      }
+      for u in inst.us {
+        if u != 0 && !bits_has(kk, u) {
+          gk[u / BW] = gk[u / BW] | bit_mask(u)
+        }
+      }
+      for d in inst.defs {
+        if d != 0 {
+          kk[d / BW] = kk[d / BW] | bit_mask(d)
+        }
+      }
+    }
+    gen.push(gk)
+    kill.push(kk)
+    live_in.push(new_bits(n))
+  }
+  var changed = true
+  while changed {
+    changed = false
+    var k = nb - 1
+    while k >= 0 {
+      var out = new_bits(n)
+      for j in succs[k] {
+        or_into(out, live_in[j], nw)
+      }
+      var li = live_in[k]
+      live_in[k] = []
+      if transfer(li, gen[k], out, kill[k], nw) {
+        changed = true
+      }
+      live_in[k] = li
+      k -= 1
+    }
+  }
+  var pad_live = new_bits(n)
+  for j in pads {
+    or_into(pad_live, live_in[j], nw)
+  }
+  for (k, b) in order.indexed() {
+    var live = new_bits(n)
+    for j in succs[k] {
+      or_into(live, live_in[j], nw)
+    }
+    var ins = g.take_insts(b)
+    var keep: List[Bool] = []
+    for _ in 0..ins.len() {
+      keep.push(true)
+    }
+    var i = ins.len() - 1
+    while i >= 0 {
+      let kind = ins[i].kind
+      if kind == K_PMOVE {
+        var defs: List[Int] = []
+        var srcs: List[Src] = []
+        var us: List[Int] = []
+        for (k2, d) in ins[i].defs.indexed() {
+          if !ld_dead(d, live, pad_live) {
+            defs.push(d)
+            srcs.push(ins[i].srcs[k2])
+          }
+        }
+        for a in srcs {
+          if a.kind == S_REG && a.v != 0 {
+            us.push(a.v)
+          }
+        }
+        keep[i] = !defs.is_empty()
+        ins[i].defs = defs
+        ins[i].srcs = srcs
+        ins[i].us = us
+      } else if kind == K_PLAIN && !ins[i].has_fault && !ins[i].defs.is_empty() {
+        var all = true
+        for d in ins[i].defs {
+          all = all && ld_dead(d, live, pad_live)
+        }
+        keep[i] = !all
+      }
+      if keep[i] {
+        for d in ins[i].defs {
+          if d != 0 {
+            live[d / BW] = live[d / BW] & ~bit_mask(d)
+          }
+        }
+        for u in ins[i].us {
+          if u != 0 {
+            live[u / BW] = live[u / BW] | bit_mask(u)
+          }
+        }
+      }
+      i -= 1
+    }
+    var kept: List[Inst] = []
+    for (ii, x) in ins.indexed() {
+      if keep[ii] {
+        kept.push(x)
+      }
+    }
+    g.put_insts(b, kept)
+  }
+}
+
+/// Whether register d is dead (live_dce): not live and not live into a
+/// landing pad.
+fn ld_dead(d: Int, live: List[Int], pad_live: List[Int]) -> Bool {
+  d != 0 && !bits_has(live, d) && !bits_has(pad_live, d)
+}

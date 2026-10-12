@@ -22,6 +22,7 @@ fn (var g: G) function(fi: Int) {
   // a jump table's addresses are data in the text section
   g.jump_tables()
   g.dce()
+  g.live_dce()
   g.select_compares()
   g.hoist_consts()
   g.reuse_flags()

@@ -1130,3 +1130,141 @@ func (s *fstate) safeAddRange(op ssa.Op, alo, ahi, blo, bhi int64) bool {
 	}
 	return true
 }
+
+// liveDCE deletes the instructions without side effects, and the moves
+// of parallel moves, whose definitions are dead where they are written
+// (decision 0184). Unlike dce, which keeps a register every use of
+// anywhere, it is flow sensitive: a Bool that a threaded join no longer
+// reads on this path (the `mov x0, #1` and `cset` left by threadConst
+// and threadCset) goes. One backward pass over each block from the
+// registers live out of it; a register live into a landing pad counts
+// as live everywhere. It runs before selectCompares and reuseFlags,
+// which rely on compares in other blocks.
+func (s *fstate) liveDCE() {
+	order := append(append([]*mblock(nil), s.hot...), s.cold...)
+	n := len(s.fp)
+	idx := map[*mblock]int{}
+	for k, b := range order {
+		idx[b] = k
+	}
+	succs := make([][]int, len(order))
+	gen := make([]bitset, len(order))
+	kill := make([]bitset, len(order))
+	liveIn := make([]bitset, len(order))
+	var pads []int
+	for k, b := range order {
+		for _, t := range s.succs(b) {
+			if j, ok := idx[t]; ok {
+				succs[k] = append(succs[k], j)
+			}
+		}
+		gen[k], kill[k], liveIn[k] = newBitset(n), newBitset(n), newBitset(n)
+		for _, in := range b.insts {
+			if in.pad != nil {
+				j, ok := idx[s.padOf(in)]
+				if !ok {
+					return
+				}
+				pads = append(pads, j)
+			}
+			for _, u := range in.uses {
+				if u != 0 && !kill[k].has(u) {
+					gen[k].set(u)
+				}
+			}
+			for _, d := range in.defs {
+				if d != 0 {
+					kill[k].set(d)
+				}
+			}
+		}
+	}
+	out := newBitset(n)
+	for changed := true; changed; {
+		changed = false
+		for k := len(order) - 1; k >= 0; k-- {
+			for w := range out {
+				out[w] = 0
+			}
+			for _, j := range succs[k] {
+				for w, x := range liveIn[j] {
+					out[w] |= x
+				}
+			}
+			for w := range out {
+				nv := gen[k][w] | (out[w] &^ kill[k][w])
+				if nv != liveIn[k][w] {
+					liveIn[k][w] = nv
+					changed = true
+				}
+			}
+		}
+	}
+	padLive := newBitset(n)
+	for _, j := range pads {
+		for w, x := range liveIn[j] {
+			padLive[w] |= x
+		}
+	}
+	live := newBitset(n)
+	dead := func(d vreg) bool { return d != 0 && !live.has(d) && !padLive.has(d) }
+	for k, b := range order {
+		for w := range live {
+			live[w] = 0
+		}
+		for _, j := range succs[k] {
+			for w, x := range liveIn[j] {
+				live[w] |= x
+			}
+		}
+		keep := make([]bool, len(b.insts))
+		for i := len(b.insts) - 1; i >= 0; i-- {
+			in := b.insts[i]
+			keep[i] = true
+			switch {
+			case in.kind == iPmove:
+				m := 0
+				for k2, d := range in.defs {
+					if !dead(d) {
+						in.defs[m], in.srcs[m] = d, in.srcs[k2]
+						m++
+					}
+				}
+				in.defs, in.srcs = in.defs[:m], in.srcs[:m]
+				in.uses = in.uses[:0]
+				for _, a := range in.srcs {
+					if a.kind == sReg && a.v != 0 {
+						in.uses = append(in.uses, a.v)
+					}
+				}
+				keep[i] = m > 0
+			case in.kind == iPlain && in.fault == nil && len(in.defs) > 0:
+				all := true
+				for _, d := range in.defs {
+					all = all && dead(d)
+				}
+				keep[i] = !all
+			}
+			if !keep[i] {
+				continue
+			}
+			for _, d := range in.defs {
+				if d != 0 {
+					live.clear(d)
+				}
+			}
+			for _, u := range in.uses {
+				if u != 0 {
+					live.set(u)
+				}
+			}
+		}
+		kept := b.insts[:0]
+		for i, in := range b.insts {
+			if keep[i] {
+				kept = append(kept, in)
+			}
+		}
+		b.insts = kept
+	}
+}

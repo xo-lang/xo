@@ -91,6 +91,7 @@ func (g *gen) function(f *ssa.Func) {
 		s.jumpTables()
 	}
 	s.dce()
+	s.liveDCE()
 	s.selectCompares()
 	s.hoistConsts()
 	s.reuseFlags()
