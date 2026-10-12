@@ -552,6 +552,60 @@ anything; evidence in the results file, section "Stage 7 preparation".
   relative `--std` (gotchas/xo1-relative-std-tls-tree.md). The seed was
   built by Go on the same machine before the deletion, standing in for
   the previous release's binary until a release ships the Xo `xo`.
+
+## Stage 7 step 2: the recorded Go side as hashes in git (2026-10-12)
+
+The lead decided the layout (2026-10-12, under the deletion decision the
+owner delegated): everything in git as hashes, per unit for the kinds
+compared whole, per function for the kinds compared function by
+function, no full dumps; after the freeze the Xo implementation
+regenerates full dumps on demand. As built (results file, section
+"Stage 7 step 2: the goldens as hashes"):
+
+- **Layout** (internal/selfhost/testdata/gogoldens, format in
+  gogoldens_test.go): one directory per kind, units split into 16 files
+  by the first hex digit of their id, one sorted line per piece,
+  `<kind> <unit id> <piece> <hash or meta text>`. lexdump, astdump,
+  format, and defhash are one hash per unit; typedump four lines (the
+  dump, the staged diagnostics, the full lines, and the verdict as text).
+  The function level kinds (ssadump, llvmdump, asmdump, gendump) were
+  first written one line per function, helper, type line, and literal,
+  and a sample of 23 units took 1,147,112 bytes (about 85 MB for ssadump
+  alone: every unit repeats the std and runtime functions it reaches;
+  gotchas/selfhost-goldens-per-function-lines.md). So a unit holds one
+  line per family (the functions of an SSA stage, the definitions, the
+  helpers, the files, the declarations of a file, a set of type lines or
+  literals): its member count and the hash of its sorted member hashes;
+  each kind's member hashes (48 bits each) are stored once, in
+  pool-<x>.txt. Replay resolves a family against the Xo side's members:
+  equal roots make them the Go side's (exact verdicts and counts);
+  otherwise each Xo member whose hash is not in the pool is named as
+  differing, and the members the Xo side skips stand for the Go side's
+  missing ones. Recording of main d9a9c2c: 19,647 units, 5,960,213 bytes
+  in 208 files (2,359,539 gzip -9), 1,999 s, max RSS 12.3 GB.
+- **Mismatch report**: a differing piece fails its test with the unit,
+  the piece (the function), and how to see both dumps: the hidden `go run
+  ./cmd/xo <kind>dump` command or the test in live mode while the Go
+  implementation exists, and the selfhost/<component> binary with the
+  test's arguments for the Xo side; TestMain lists them again at the end.
+- **Verdicts**: replay gives the live verdicts and logged counts on the
+  `-short` tier (65 test and subtest verdicts, 40 count lines, identical)
+  and on the merge tier (the 16 differentials the recorder runs: 59
+  verdicts, TestSelfhostCheckerHatches included, and 31 count lines,
+  identical; 255 s against 373 s live).
+- **TestSelfhostCheckerHatches** replays: when a run reports a `use go`
+  package without a binding, the test binds it with xo-gobind (the Go
+  helper that stays, stage 6) and checks again, as xo1's checker does
+  (check_dirs_bound); live, the Go checker has written them already.
+- **Go packages the surviving tests no longer need**: the mutation
+  generators tokenize with internal/selfhost/mutlex, a frozen copy of
+  internal/lexer and internal/token (TestSameAsLexer compares them while
+  internal/lexer exists); llvm.SplitIR, ssa.SplitModule, and
+  gen.FormatFile are copied into frozen_test.go (TestFrozenCopies checks
+  them against the originals). The live Go side (internal/check, ssa,
+  llvm, arm64's dump, gen, format, defhash, parser, lexer) is still
+  called by live and record mode, which go with the Go implementation.
+
 ## Switch point B gate (2026-10-12)
 
 The gate run on main 9935b0d plus this section's commits (results file,

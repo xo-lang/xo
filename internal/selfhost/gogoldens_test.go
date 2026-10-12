@@ -42,11 +42,17 @@ import (
 // for the kinds compared byte for byte (lexdump, astdump, format,
 // defhash), the dump, diagnostics, and notes of typedump, and for the
 // kinds compared function by function (ssadump, llvmdump, asmdump,
-// gendump) one piece per function, helper, file, or declaration, so a
-// mismatch names the function. Lists compared in any order are hashed
-// sorted; sets (the Xo side's lines must be among the Go side's) keep
-// one hash per element; the few values a comparison reads (why there is
-// no output, the verdict of a run) are kept as text (meta).
+// gendump) one member per function, helper, file, or declaration in a
+// family, so a mismatch names the function. A unit records one line per
+// family (its member count and the hash of its sorted member hashes),
+// and each kind records the member hashes once, in its pool
+// (pool-<x>.txt, 48 bits each): a unit repeats the std functions every
+// other unit has (gotchas/selfhost-goldens-per-function-lines.md).
+// Replay resolves a family against the Xo side's members
+// (goldPieces.resolved). Sets (the Xo side's lines must be among the Go
+// side's) are families too; lists compared in any order are hashed
+// sorted; the few values a comparison reads (why there is no output,
+// the verdict of a run) are kept as text (meta).
 //
 // The recording is testdata/gogoldens (or $XO_SELFHOST_GOLDENS_DIR),
 // committed: one directory per kind, its units split into
@@ -115,7 +121,7 @@ var goldens struct {
 	// pool: kind -> the member hashes of every family of every unit
 	// (record: what this run recorded; replay: read)
 	pool map[string]map[string]bool
-	errs     []error
+	errs []error
 }
 
 // pkgDir is this package's directory: the working directory when the
@@ -417,9 +423,10 @@ type goldPieces struct {
 	parts   map[string]string   // name -> text, or hash; a member of family f is "<f>:<member>"
 	lists   map[string][]string // live: name -> lines (compared sorted)
 	listSum map[string]string   // replay: name -> hash of the sorted list
-	// fams: live, family -> member -> text; replay, family -> "<n>
-	// <root>" until resolved (goldPieces.resolved)
-	fams map[string]map[string]string
+	// fams: live, family -> member -> text (also in parts); roots:
+	// replayed, family -> "<members> <root>" until resolved
+	// (goldPieces.resolved)
+	fams  map[string]map[string]string
 	roots map[string]string
 }
 
