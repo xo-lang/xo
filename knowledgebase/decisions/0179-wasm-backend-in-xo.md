@@ -258,7 +258,11 @@ an offset. Without it the self hosted checker (its `Checker` struct is
 that cost is code: a `var` call still passes and returns every leaf of
 a large struct. The next step for it is to pass large aggregates (or
 `var` parameters) by reference in linear memory, as the LLVM emitter
-passes `var` parameters by reference.
+passes `var` parameters by reference. With the sharing, the self hosted
+checker builds into a 40 MB module that runs under Node and prints
+what its go backend build prints (run.mjs compiles eagerly and turns
+off incremental marking: two V8 crashes, see the gotchas); 40 MB and
+about 5 GB to compile are what keep it out of the playground for now.
 
 ## Consequences
 

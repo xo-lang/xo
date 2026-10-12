@@ -31,9 +31,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`path_open`, `fd_read`, `fd_readdir`): 116 of the 134 LLVM goldens
   pass, and the network fails the build with a clear error. A module
   carries only the runtime functions it reaches (recursion: 7.5 KB, 16.7
-  KB before). The self hosted lexer and parser run as wasm under Node
-  with the output of their native builds; `selfhost/wasm --why` lists
-  every construct a program needs that the backend lacks.
+  KB before). Values share wasm locals by liveness, so large programs
+  build: the self hosted lexer, parser, and checker run as wasm under
+  Node with the output of their go backend builds (the checker: a
+  40 MB module); `selfhost/wasm --why` lists every construct a program
+  needs that the backend lacks.
 - The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
   builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
   (`xo1 test --backend=go`), and builds `use go` programs on the Go
