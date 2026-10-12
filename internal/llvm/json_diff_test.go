@@ -227,7 +227,7 @@ func TestJSONParseDiff(t *testing.T) {
 	}
 	src := filepath.Join(rtDir, "testdata", "json_diff.c")
 	bin := filepath.Join(t.TempDir(), "json_diff")
-	if err := build.CompileC([]string{"-O1", "-g", "-fsanitize=address,undefined"}, []string{src}, bin); err != nil {
+	if err := build.CompileC(asanFlags("-O1", "-g", "-fsanitize=address,undefined"), []string{src}, bin); err != nil {
 		if err2 := build.CompileC([]string{"-O1", "-g"}, []string{src}, bin); err2 != nil {
 			t.Fatal(err2)
 		}
