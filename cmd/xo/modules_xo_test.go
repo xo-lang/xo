@@ -135,6 +135,38 @@ func TestModulesXoSame(t *testing.T) {
 		}
 		sameRuns(t, bin, files, steps)
 	})
+	t.Run("audit", func(t *testing.T) {
+		repoWorld(t, map[string]string{
+			"github.com/acme/osx@v1.0.0/xo.mod":     "module github.com/acme/osx\nedition preview\n",
+			"github.com/acme/osx@v1.0.0/osx.xo":     "use go \"os\"\n\npub fn pid() -> Int uses go { os.getpid() }\n",
+			"github.com/acme/weather@v1.0.0/xo.mod": "module github.com/acme/weather\nedition preview\n",
+			"github.com/acme/weather@v1.0.0/w.xo":   "use std/log\n\npub fn ping(n: Net) -> Bool uses (net.dial, log) {\n  log.info(\"ping\")\n  n.dial(\"api.test:443\").is_ok()\n}\n\npub fn conf(e: Env) -> Str? uses env { e.get(\"W_KEY\") }\n",
+		})
+		xomod := "module example.com/app\nedition preview\n\nrequire github.com/acme/osx v1.0.0\nrequire github.com/acme/weather v1.0.0 uses net.dial, env, log\n\nvouch github.com/acme/osx v1.0.0 go \"os\"\nvouch github.com/acme/gone v1.0.0 go \"os/exec\"\n"
+		files := map[string]string{
+			"xo.mod":       xomod,
+			"main/main.xo": "use github.com/acme/osx\nuse github.com/acme/weather\n\nfn main(os: Os) {\n  let api = os.net.only([\"api.test\"])\n  let up = weather.ping(api)\n  let key = weather.conf(os.env)\n  let f = os.fs.sub(\"data\")\n  os.stdio.println(\"${osx.pid() > 0} ${up} ${key ?? \"\"} ${f.exists(\"x\").ok() ?? false}\")\n}\n",
+		}
+		steps := []sameStep{
+			{args: []string{"mod", "tidy", "--json"}},
+			// the Go checker writes the `use go` binding the Xo checker
+			// reads (xo-gobind stays Go, decision 0178)
+			{args: []string{"audit", "--json"}, edit: func(app string) {
+				var out, errOut bytes.Buffer
+				if code := runXo([]string{"check", app}, &out, &errOut); code != 0 {
+					t.Fatalf("binding check: %s%s", out.String(), errOut.String())
+				}
+			}},
+			{args: []string{"audit"}},
+			{args: []string{"audit", "--json"}, edit: func(app string) {
+				os.WriteFile(filepath.Join(app, "xo.mod"), []byte(strings.Replace(xomod, "vouch github.com/acme/osx v1.0.0 go \"os\"\n", "", 1)), 0o644)
+				lock := filepath.Join(app, "xo.lock")
+				data, _ := os.ReadFile(lock)
+				os.WriteFile(lock, []byte(strings.Replace(string(data), "weather effects env,log,net.dial", "weather effects env", 1)), 0o644)
+			}},
+		}
+		sameRuns(t, bin, files, steps)
+	})
 }
 
 // sameRuns runs steps in two copies of the app, with internal/mod and
@@ -185,6 +217,9 @@ func sameRuns(t *testing.T, bin string, files map[string]string, steps []sameSte
 			lockData, _ := os.ReadFile(filepath.Join(s.app, "xo.lock"))
 			got[k] = "exit " + string(rune('0'+code)) + "\n--- stdout\n" + norm(out.String()) + "--- stderr\n" + norm(errOut.String()) + "--- xo.mod\n" + string(modData) + "--- xo.lock\n" + string(lockData)
 			trees[k] = treeText(filepath.Join(s.app, "vendor")) + "--- cache\n" + cacheText(s.cache)
+		}
+		if os.Getenv("XO_SAME_LOG") != "" {
+			t.Logf("step %d %v:\n%s", i, st.args, got[1])
 		}
 		if got[0] != got[1] {
 			t.Errorf("step %d %v differs\n=== internal/mod\n%s\n=== xomod\n%s", i, st.args, got[0], got[1])

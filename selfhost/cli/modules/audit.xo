@@ -1,0 +1,924 @@
+// `xo audit [--json] [--dir=<dir>] [--no-gc]` (decision 0156, cmd/xo
+// audit.go): what each dependency may do and what the consuming module
+// grants it: effects against the effect lock, ceilings, escape hatches
+// with their vouches, the consuming module's attenuations and the
+// capabilities it passes into dependencies, unused vouches, and the log
+// calls of dependencies (decision 0173). The check is selfhost/check's,
+// with the escape hatches it records (vouch.xo).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+struct AuditLoc {
+  file: Str
+  line: Int
+  call: Str
+}
+
+struct AuditEscape {
+  kind: Str
+  target: Str
+  file: Str
+  line: Int
+  claim: List[Str]? = None
+  vouched: Bool
+  vouch: Str = ""
+  effects: List[Str] = []
+}
+
+struct AuditDep {
+  path: Str
+  version: Str = ""
+  direct: Bool = false
+  workspace: Bool = false
+  effects: List[Str] = []
+  locked: List[Str]? = None
+  lock: Str = ""
+  added: List[Str] = []
+  ceiling: Str = ""
+  escapes: List[AuditEscape] = []
+  log_tag: Str = ""
+  log_sites: List[AuditLoc] = []
+}
+
+struct AuditAttenuation {
+  file: Str = ""
+  line: Int = 0
+  capability: Str
+  method: Str
+  args: List[Str] = []
+  constant: Bool
+}
+
+struct AuditCapability {
+  file: Str
+  line: Int
+  callee: Str
+  dependency: Str
+  capability: Str
+  attenuated: Bool = false
+  via: Str = ""
+}
+
+struct AuditVouch {
+  file: Str
+  line: Int
+  text: Str
+}
+
+struct AuditSummary {
+  dependencies: Int = 0
+  unvouched: Int = 0
+  widened: Int = 0
+  unlocked: Int = 0
+  unattenuated: Int = 0
+  errors: Int = 0
+}
+
+struct AuditReport {
+  module: Str = ""
+  dir: Str
+  deps: List[AuditDep] = []
+  attenuations: List[AuditAttenuation] = []
+  caps: List[AuditCapability] = []
+  unused: List[AuditVouch] = []
+  summary: AuditSummary = AuditSummary{}
+  diags: List[check.Diag] = []
+}
+
+/// The capability types a call may hand a dependency.
+fn is_capability(name: Str) -> Bool {
+  name is "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" | "TestOs" | "FakeNet" | "MemFs" | "FakeClock" | "FakeEnv" | "FakeStdio" | "FakeProc"
+}
+
+/// The methods that narrow a capability.
+fn is_attenuator(name: Str) -> Bool {
+  name is "only" | "sub" | "read_only" | "write_only" | "cwd"
+}
+
+fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env) {
+  var fl = FlagSet{name: "audit", defs: [flag_str("dir", ".", "a directory of the main module"), flag_bool("json", "print the report as JSON"), flag_bool("no-gc", "check as a native build (needed for `use c` dependencies)")]}
+  if !c.parse_flags(fl, args) {
+    return 2
+  }
+  var dir = fl.str("dir")
+  if !fl.args.is_empty() {
+    dir = fl.args[0]
+  }
+  let root = match c.mod_root_of(dir, "audit") {
+    Some(r) => r
+    None => return 2
+  }
+  var chk = check.new_checker(c.os.fs, c.std_dir())
+  chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), c.getenv("XO_WORK"))
+  chk.cbind_dir = c.getenv("XO_CBIND_DIR")
+  chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  var dirs = [root]
+  if fl.on("no-gc") {
+    chk.native = true
+  } else {
+    dirs = c.workspace_dirs(dirs)
+  }
+  match chk.check_dirs(dirs) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo audit: ${e}")
+      return 2
+    }
+  }
+  if !chk.unsupported.is_empty() {
+    c.os.stdio.eprintln("xo audit: not supported by the self hosted checker: ${chk.unsupported}")
+    return 2
+  }
+  let ds = sort_diags(chk.diags)
+  let rep = c.audit(root, chk, ds)
+  if fl.on("json") || !c.os.stdio.stdout_is_tty() {
+    c.out(encode_json(audit_json(rep)))
+  } else {
+    c.print_audit(rep)
+  }
+  if rep.summary.errors > 0 { 1 } else { 0 }
+}
+
+/// The std declaration files: $XO_STD, else lib/xo/std of a release
+/// layout beside the binary's directory, std beside the binary, std in
+/// its parent directory, else ./std.
+fn (c: ModCtx) std_dir() -> Str uses (env, fs.read) {
+  let s = c.getenv("XO_STD")
+  if !s.is_empty() {
+    return s
+  }
+  // the binary: $_ as the shell sets it (Env.program is not native yet)
+  let prog = c.getenv("_")
+  if !prog.is_empty() {
+    let d = dir_of(c.abs(prog))
+    for cand in [join(d, "../lib/xo/std"), join(d, "std"), join(d, "../std")] {
+      if c.exists("${cand}/prelude.xo") {
+        return cand
+      }
+    }
+  }
+  "std"
+}
+
+/// mod.WorkspaceDirs: dirs and every module directory of the workspace
+/// that applies to them (relative to the working directory below it).
+fn (c: ModCtx) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
+  if c.work_off() || dirs.is_empty() {
+    return dirs
+  }
+  let (w0, _) = c.chk.find_work(c.abs(dirs[0]))
+  let w = match w0 {
+    Some(x) => x
+    None => return dirs
+  }
+  var out = dirs
+  var have: List[Str] = dirs.map(fn(d) { c.abs(d) })
+  for m in w.modules {
+    var covered = false
+    for d in have {
+      if d == m.dir || m.dir.starts_with("${d}/") {
+        covered = true
+      }
+    }
+    if !covered {
+      let rel = if m.dir == c.wd { "." } else if m.dir.starts_with("${c.wd}/") { m.dir.trim_prefix("${c.wd}/") } else { m.dir }
+      out.push(rel)
+      have.push(m.dir)
+    }
+  }
+  out
+}
+
+/// diag.Sort: by file, line, and column, stable.
+fn sort_diags(ds: List[check.Diag]) -> List[check.Diag] {
+  var out: List[check.Diag] = []
+  for d in ds {
+    var i = out.len()
+    while i > 0 && diag_less(d, out[i - 1]) {
+      i -= 1
+    }
+    out.insert(i, d)
+  }
+  out
+}
+
+fn diag_less(a: check.Diag, b: check.Diag) -> Bool {
+  if a.file != b.file {
+    return a.file < b.file
+  }
+  if a.line != b.line {
+    return a.line < b.line
+  }
+  a.col < b.col
+}
+
+/// The audit report of the module at root from its check (cmd/xo audit).
+fn (var c: ModCtx) audit(root: Str, var chk: check.Checker, ds: List[check.Diag]) -> AuditReport uses (fs, net, proc, rand) {
+  var rep = AuditReport{dir: root, diags: ds}
+  let (f0, _) = c.chk.read_mod_file(root)
+  if let Some(f) = f0 {
+    rep.module = f.path
+  }
+  for d in ds {
+    if !d.warning {
+      rep.summary.errors += 1
+    }
+  }
+  let b = c.load(root, Options{})
+  let ceilings = c.chk.ceilings_from(root)
+  var used: Map[Str, Bool] = {}
+  for m in b.modules {
+    var d = AuditDep{path: m.path, version: m.version, direct: m.direct, workspace: m.workspace}
+    if let Some(cur) = b.effects.get(m.path) {
+      d.effects = cur
+    }
+    if m.workspace {
+      d.lock = "workspace"
+    } else {
+      match b.locked.get(m.path) {
+        None => {
+          d.lock = "unlocked"
+          rep.summary.unlocked += 1
+        }
+        Some(locked) => {
+          d.locked = Some(locked)
+          d.added = added_effects(locked, d.effects)
+          if !d.added.is_empty() {
+            d.lock = "widened"
+            rep.summary.widened += 1
+          } else if check.effects_text(locked) != check.effects_text(d.effects) {
+            d.lock = "narrowed"
+          } else {
+            d.lock = "ok"
+          }
+        }
+      }
+    }
+    if let Some(srcs) = ceilings.get(m.path) {
+      if !srcs.is_empty() {
+        d.ceiling = check.ceiling_text(srcs[0].ceiling)
+      }
+    }
+    for h in chk.hatches {
+      if h.module != m.path {
+        continue
+      }
+      var e = AuditEscape{kind: h.kind, target: h.target, file: h.file, line: h.line, claim: h.claim, vouched: h.vouch != None, effects: h.effects}
+      match h.vouch {
+        Some(v) => {
+          e.vouch = "${v.file}:${v.line}"
+          used[e.vouch] = true
+        }
+        None => rep.summary.unvouched += 1
+      }
+      d.escapes.push(e)
+    }
+    rep.deps.push(d)
+  }
+  rep.summary.dependencies = rep.deps.len()
+  for v in chk.consumer_vouches() {
+    if !used.contains("${v.file}:${v.line}") {
+      rep.unused.push(AuditVouch{file: v.file, line: v.line, text: vouch_text(v)})
+    }
+  }
+  audit_calls(chk, rep)
+  audit_logs(chk, rep)
+  for cp in rep.caps {
+    if !cp.attenuated {
+      rep.summary.unattenuated += 1
+    }
+  }
+  rep
+}
+
+/// mod.Vouch.String: the line as written.
+fn vouch_text(v: check.Vouch) -> Str {
+  var s = "vouch ${v.path} ${v.version} ${v.kind} ${v.target.quote()}"
+  if let Some(cl) = v.effects {
+    s = "${s} ${check.ceiling_text(cl)}"
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Walking the syntax (check.Inspect order: a node, then its children in
+// source order)
+
+/// A node audit looks at: a call, or a `let <name> = <value>`.
+enum Seen {
+  Call(e: parser.Expr, fun: parser.Expr, args: List[parser.Arg], span: parser.Span)
+  Let(name: parser.Ident, value: parser.Expr)
+}
+
+fn walk_file(f: parser.File, var out: List[Seen]) {
+  for d in f.decls {
+    match d {
+      parser.Decl.FnDecl(d: fd) => {
+        for cl in fd.clauses {
+          match cl {
+            parser.Clause.RequiresClause(cond: cond, els: els, ..) => {
+              walk_expr(cond, out)
+              if let Some(x) = els {
+                walk_expr(x, out)
+              }
+            }
+            parser.Clause.EnsuresClause(cond: cond, ..) => walk_expr(cond, out)
+            _ => {}
+          }
+        }
+        if let Some(b) = fd.body {
+          walk_block(b, out)
+        }
+      }
+      parser.Decl.TestDecl(d: td) => {
+        if let Some(b) = td.body {
+          walk_block(b, out)
+        }
+      }
+      parser.Decl.ConstDecl(d: cd) => walk_expr(cd.value, out)
+      _ => {}
+    }
+  }
+}
+
+fn walk_block(b: parser.Block, var out: List[Seen]) {
+  for s in b.stmts {
+    walk_stmt(s, out)
+  }
+}
+
+fn walk_stmt(s: parser.Stmt, var out: List[Seen]) {
+  match s {
+    parser.Stmt.LetStmt(pattern: p, value: v, ..) => {
+      if let parser.Pattern.BindPat(name: n, ..) = p {
+        out.push(Seen.Let(name: n, value: v))
+      }
+      walk_expr(v, out)
+    }
+    parser.Stmt.VarStmt(value: v, ..) => walk_expr(v, out)
+    parser.Stmt.AssignStmt(target: t, value: v, ..) => {
+      walk_expr(t, out)
+      walk_expr(v, out)
+    }
+    parser.Stmt.DeferStmt(body: b, ..) => walk_stmt(b, out)
+    parser.Stmt.ReturnStmt(value: v, ..) => {
+      if let Some(x) = v {
+        walk_expr(x, out)
+      }
+    }
+    parser.Stmt.ForStmt(iter: it, bound: bd, body: b, ..) => {
+      walk_expr(it, out)
+      for x in bd {
+        walk_expr(x, out)
+      }
+      walk_block(b, out)
+    }
+    parser.Stmt.WhileStmt(cond: cond, value: vs, bound: bd, body: b, ..) => {
+      if let Some(x) = cond {
+        walk_expr(x, out)
+      }
+      for x in vs {
+        walk_expr(x, out)
+      }
+      for x in bd {
+        walk_expr(x, out)
+      }
+      walk_block(b, out)
+    }
+    parser.Stmt.ExprStmt(x: x, ..) => walk_expr(x, out)
+    parser.Stmt.ConstDecl(d: cd) => walk_expr(cd.value, out)
+    _ => {}
+  }
+}
+
+fn walk_exprs(xs: List[parser.Expr], var out: List[Seen]) {
+  for x in xs {
+    walk_expr(x, out)
+  }
+}
+
+fn walk_expr(e: parser.Expr, var out: List[Seen]) {
+  match e {
+    parser.Expr.StringLit(s: s) => {
+      for p in s.parts {
+        if let Some(x) = p.expr {
+          walk_expr(x, out)
+        }
+      }
+    }
+    parser.Expr.ParenExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.TupleExpr(elems: xs, ..) => walk_exprs(xs, out)
+    parser.Expr.ListLit(elems: xs, ..) => walk_exprs(xs, out)
+    parser.Expr.SetLit(elems: xs, ..) => walk_exprs(xs, out)
+    parser.Expr.MapLit(entries: es, ..) => {
+      for en in es {
+        walk_expr(en.key, out)
+        walk_expr(en.value, out)
+      }
+    }
+    parser.Expr.StructLit(fields: fs, ..) => {
+      for f in fs {
+        walk_expr(f.value, out)
+      }
+    }
+    parser.Expr.UnaryExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.BinaryExpr(x: x, y: y, ..) => {
+      walk_expr(x, out)
+      walk_expr(y, out)
+    }
+    parser.Expr.IsExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.RangeExpr(lo: lo, hi: hi, ..) => {
+      if let Some(x) = lo {
+        walk_expr(x, out)
+      }
+      if let Some(x) = hi {
+        walk_expr(x, out)
+      }
+    }
+    parser.Expr.SelectorExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.CallExpr(span: sp, fun: fun, args: args) => {
+      out.push(Seen.Call(e: e, fun: fun, args: args, span: sp))
+      walk_expr(fun, out)
+      for a in args {
+        walk_expr(a.value, out)
+      }
+    }
+    parser.Expr.TypeArgsExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.IndexExpr(x: x, index: i, ..) => {
+      walk_expr(x, out)
+      walk_expr(i, out)
+    }
+    parser.Expr.TryExpr(x: x, ..) => walk_expr(x, out)
+    parser.Expr.WithExpr(x: x, fields: fs, ..) => {
+      walk_expr(x, out)
+      for f in fs {
+        walk_expr(f.value, out)
+      }
+    }
+    parser.Expr.IfExpr(e: ie) => {
+      if let Some(x) = ie.cond {
+        walk_expr(x, out)
+      }
+      if let Some(x) = ie.value {
+        walk_expr(x, out)
+      }
+      walk_block(ie.then, out)
+      if let Some(x) = ie.els {
+        walk_expr(x, out)
+      }
+    }
+    parser.Expr.MatchExpr(subject: s, arms: arms, ..) => {
+      walk_expr(s, out)
+      for a in arms {
+        if let Some(g) = a.guard {
+          walk_expr(g, out)
+        }
+        if let Some(b) = a.body {
+          walk_stmt(b, out)
+        }
+      }
+    }
+    parser.Expr.ScopeExpr(body: b, ..) => walk_block(b, out)
+    parser.Expr.SelectExpr(arms: arms, ..) => {
+      for a in arms {
+        if let Some(x) = a.op {
+          walk_expr(x, out)
+        }
+        if let Some(x) = a.after {
+          walk_expr(x, out)
+        }
+        if let Some(b) = a.body {
+          walk_stmt(b, out)
+        }
+      }
+    }
+    parser.Expr.Block(b: b) => walk_block(b, out)
+    parser.Expr.FnLit(f: fl) => walk_block(fl.body, out)
+    parser.Expr.WhileExpr(body: b, ..) => walk_block(b, out)
+    _ => {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calls
+
+/// The callee's function object of a call in file f, or -1.
+fn callee(chk: check.Checker, f: Int, e: parser.Expr) -> Int {
+  match chk.call_in(f, e) {
+    Some(ci) => ci.fn_obj
+    None => -1
+  }
+}
+
+/// cmd/xo capName: the capability type name of t, or "".
+fn cap_name(chk: check.Checker, t: Int) -> Str {
+  let o = chk.named_obj(t)
+  if o < 0 {
+    return ""
+  }
+  let m = chk.objs[o].module
+  if m < 0 || !chk.mods[m].is_std {
+    return ""
+  }
+  let n = check.text(chk.objs[o].name)
+  if is_capability(n) { n } else { "" }
+}
+
+/// cmd/xo attenuation: the attenuation a call of fo is, if it is one.
+fn attenuation(chk: check.Checker, fo: Int, args: List[parser.Arg]) -> AuditAttenuation? {
+  let ob = chk.objs[fo]
+  if ob.recv < 0 || ob.module < 0 || !chk.mods[ob.module].is_std || !is_attenuator(check.text(ob.name)) {
+    return None
+  }
+  let rname = check.text(chk.objs[ob.recv].name)
+  if !is_capability(rname) {
+    return None
+  }
+  var a = AuditAttenuation{capability: rname, method: check.text(ob.name), constant: true}
+  for arg in args {
+    match const_strings(arg.value) {
+      Some(vals) => a.args = a.args + vals
+      None => {
+        a.constant = false
+        a.args = []
+        break
+      }
+    }
+  }
+  Some(a)
+}
+
+/// cmd/xo constStrings: a string literal without interpolation, or a list
+/// literal of them.
+fn const_strings(e: parser.Expr) -> List[Str]? {
+  match e {
+    parser.Expr.StringLit(s: s) => {
+      var b = StrBuilder.new()
+      for p in s.parts {
+        if p.expr != None {
+          return None
+        }
+        b.write(check.text(p.text))
+      }
+      Some([b.freeze()])
+    }
+    parser.Expr.ListLit(elems: xs, ..) => {
+      var out: List[Str] = []
+      for x in xs {
+        match const_strings(x) {
+          Some(v) => out = out + v
+          None => return None
+        }
+      }
+      Some(out)
+    }
+    _ => None
+  }
+}
+
+/// cmd/xo attenuatedVia: whether e is an attenuation call, or a local
+/// bound once to one, and its text.
+fn attenuated_via(chk: check.Checker, f: Int, e0: parser.Expr, bound: Map[Int, parser.Expr]) -> Str? {
+  var e = e0
+  for _ in 0..5 {
+    match e {
+      parser.Expr.CallExpr(args: args, ..) => {
+        let fo = callee(chk, f, e)
+        if fo < 0 {
+          return None
+        }
+        let a = attenuation(chk, fo, args)?
+        let shown = if a.constant { a.args.join(", ") } else { "..." }
+        return Some("${a.capability}.${a.method}(${shown})")
+      }
+      parser.Expr.Ident(id: id) => {
+        let v = chk.var_of(f, id)
+        if v < 0 {
+          return None
+        }
+        e = bound.get(v)?
+      }
+      _ => return None
+    }
+  }
+  None
+}
+
+/// cmd/xo auditCalls: the attenuation calls of the consuming modules and
+/// the capability arguments of their calls into dependencies.
+fn audit_calls(chk: check.Checker, var rep: AuditReport) {
+  for m in chk.mods {
+    if m.is_std || m.native || !m.dependency.is_empty() {
+      continue
+    }
+    for f in m.files {
+      let sf = chk.files[f]
+      if sf.is_test {
+        continue
+      }
+      var seen: List[Seen] = []
+      walk_file(sf.ast, seen)
+      var bound: Map[Int, parser.Expr] = {}
+      for s in seen {
+        if let Seen.Let(name: n, value: v) = s {
+          let o = chk.var_of(f, n)
+          if o >= 0 {
+            bound[o] = v
+          }
+        }
+      }
+      for s in seen {
+        if let Seen.Call(e: e, args: args, span: sp, ..) = s {
+          let fo = callee(chk, f, e)
+          if fo < 0 || chk.objs[fo].module < 0 {
+            continue
+          }
+          if let Some(a0) = attenuation(chk, fo, args) {
+            var a = a0
+            a.file = sf.path
+            a.line = sp.start.line
+            rep.attenuations.push(a)
+          }
+          let dep = chk.mods[chk.objs[fo].module].dependency
+          if dep.is_empty() {
+            continue
+          }
+          for arg in args {
+            let name = cap_name(chk, chk.type_in(f, arg.value))
+            if name.is_empty() {
+              continue
+            }
+            var cp = AuditCapability{file: sf.path, line: sp.start.line, callee: chk.display_name(fo), dependency: dep, capability: name}
+            if let Some(via) = attenuated_via(chk, f, arg.value, bound) {
+              cp.attenuated = true
+              cp.via = via
+            }
+            rep.caps.push(cp)
+          }
+        }
+      }
+    }
+  }
+  var sorted: List[AuditAttenuation] = []
+  for a in rep.attenuations {
+    var i = sorted.len()
+    while i > 0 && (a.file < sorted[i - 1].file || a.file == sorted[i - 1].file && a.line < sorted[i - 1].line) {
+      i -= 1
+    }
+    sorted.insert(i, a)
+  }
+  rep.attenuations = sorted
+}
+
+/// cmd/xo auditLogs: the std/log calls in each dependency's code and the
+/// attribution their records carry (decision 0173).
+fn audit_logs(chk: check.Checker, var rep: AuditReport) {
+  var sites: Map[Str, List[AuditLoc]] = {}
+  for m in chk.mods {
+    if m.is_std || m.dependency.is_empty() {
+      continue
+    }
+    for f in m.files {
+      let sf = chk.files[f]
+      if sf.is_test {
+        continue
+      }
+      var seen: List[Seen] = []
+      walk_file(sf.ast, seen)
+      for s in seen {
+        if let Seen.Call(e: e, span: sp, ..) = s {
+          let fo = callee(chk, f, e)
+          if fo < 0 {
+            continue
+          }
+          let ob = chk.objs[fo]
+          if ob.module < 0 || ob.recv >= 0 || chk.mods[ob.module].path != "std/log" {
+            continue
+          }
+          let name = check.text(ob.name)
+          if name is "debug" | "info" | "warn" | "error" {
+            var l = sites.get(m.dependency) ?? []
+            l.push(AuditLoc{file: sf.path, line: sp.start.line, call: "log.${name}"})
+            sites[m.dependency] = l
+          }
+        }
+      }
+    }
+  }
+  var deps: List[AuditDep] = []
+  for d0 in rep.deps {
+    var d = d0
+    let tag = "${d.path}@${d.version}"
+    if let Some(s) = sites.get(tag) {
+      if !s.is_empty() {
+        var sorted: List[AuditLoc] = []
+        for l in s {
+          var i = sorted.len()
+          while i > 0 && (l.file < sorted[i - 1].file || l.file == sorted[i - 1].file && l.line < sorted[i - 1].line) {
+            i -= 1
+          }
+          sorted.insert(i, l)
+        }
+        d.log_tag = tag
+        d.log_sites = sorted
+      }
+    }
+    deps.push(d)
+  }
+  rep.deps = deps
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+fn opt_strs(x: List[Str]?) -> J {
+  match x {
+    Some(l) => jstrs(l)
+    None => J.Null
+  }
+}
+
+fn audit_json(rep: AuditReport) -> J {
+  var deps: List[J] = []
+  for d in rep.deps {
+    var fs: List[(Str, J)] = [("path", J.S(s: d.path))]
+    if !d.version.is_empty() {
+      fs.push(("version", J.S(s: d.version)))
+    }
+    fs.push(("direct", J.B(b: d.direct)))
+    if d.workspace {
+      fs.push(("workspace", J.B(b: true)))
+    }
+    fs.push(("effects", jstrs(d.effects)))
+    if let Some(l) = d.locked {
+      fs.push(("locked_effects", jstrs(l)))
+    }
+    fs.push(("lock", J.S(s: d.lock)))
+    if !d.added.is_empty() {
+      fs.push(("added_effects", jstrs(d.added)))
+    }
+    if !d.ceiling.is_empty() {
+      fs.push(("ceiling", J.S(s: d.ceiling)))
+    }
+    var es: List[J] = []
+    for e in d.escapes {
+      var ef: List[(Str, J)] = [("kind", J.S(s: e.kind)), ("target", J.S(s: e.target)), ("file", J.S(s: e.file)), ("line", J.I(n: e.line))]
+      if let Some(cl) = e.claim {
+        ef.push(("claimed_effects", jstrs(cl)))
+      }
+      ef.push(("vouched", J.B(b: e.vouched)))
+      if !e.vouch.is_empty() {
+        ef.push(("vouch", J.S(s: e.vouch)))
+      }
+      ef.push(("effects", jstrs(e.effects)))
+      es.push(J.O(fields: ef))
+    }
+    fs.push(("escape_hatches", J.A(xs: es)))
+    if !d.log_tag.is_empty() {
+      fs.push(("log_attribution", J.S(s: d.log_tag)))
+    }
+    if !d.log_sites.is_empty() {
+      fs.push(("log_sites", J.A(xs: d.log_sites.map(fn(l) { J.O(fields: [("file", J.S(s: l.file)), ("line", J.I(n: l.line)), ("call", J.S(s: l.call))]) }))))
+    }
+    deps.push(J.O(fields: fs))
+  }
+  var atts: List[J] = []
+  for a in rep.attenuations {
+    var fs: List[(Str, J)] = [("file", J.S(s: a.file)), ("line", J.I(n: a.line)), ("capability", J.S(s: a.capability)), ("method", J.S(s: a.method))]
+    if !a.args.is_empty() {
+      fs.push(("args", jstrs(a.args)))
+    }
+    fs.push(("constant", J.B(b: a.constant)))
+    atts.push(J.O(fields: fs))
+  }
+  var caps: List[J] = []
+  for cp in rep.caps {
+    var fs: List[(Str, J)] = [("file", J.S(s: cp.file)), ("line", J.I(n: cp.line)), ("callee", J.S(s: cp.callee)), ("dependency", J.S(s: cp.dependency)), ("capability", J.S(s: cp.capability)), ("attenuated", J.B(b: cp.attenuated))]
+    if !cp.via.is_empty() {
+      fs.push(("via", J.S(s: cp.via)))
+    }
+    caps.push(J.O(fields: fs))
+  }
+  let unused = rep.unused.map(fn(v) { J.O(fields: [("file", J.S(s: v.file)), ("line", J.I(n: v.line)), ("text", J.S(s: v.text))]) })
+  let s = rep.summary
+  let summary = J.O(fields: [("dependencies", J.I(n: s.dependencies)), ("unvouched_escape_hatches", J.I(n: s.unvouched)), ("widened", J.I(n: s.widened)), ("unlocked", J.I(n: s.unlocked)), ("unattenuated_capabilities_passed", J.I(n: s.unattenuated)), ("errors", J.I(n: s.errors))])
+  J.O(fields: [("module", J.S(s: rep.module)), ("dir", J.S(s: rep.dir)), ("dependencies", J.A(xs: deps)), ("attenuations", J.A(xs: atts)), ("capabilities_passed", J.A(xs: caps)), ("unused_vouches", J.A(xs: unused)), ("summary", summary), ("diagnostics", J.A(xs: rep.diags.map(diag_json)))])
+}
+
+fn jspan(file: Str, line: Int, col: Int, end_line: Int, end_col: Int) -> J {
+  var fs: List[(Str, J)] = [("file", J.H(s: file)), ("line", J.I(n: line)), ("col", J.I(n: col))]
+  if end_line != 0 {
+    fs.push(("end_line", J.I(n: end_line)))
+  }
+  if end_col != 0 {
+    fs.push(("end_col", J.I(n: end_col)))
+  }
+  J.O(fields: fs)
+}
+
+fn diag_severity(d: check.Diag) -> Str {
+  if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+}
+
+/// diag.Diagnostic's JSON (json.Marshal escaping; notes and fixes always
+/// arrays).
+fn diag_json(d: check.Diag) -> J {
+  var notes: List[J] = []
+  for n in d.notes {
+    var fs: List[(Str, J)] = [("message", J.H(s: n.message))]
+    if let Some(s) = n.span {
+      fs.push(("span", jspan(s.file, s.line, s.col, s.end_line, s.end_col)))
+    }
+    notes.push(J.O(fields: fs))
+  }
+  var fixes: List[J] = []
+  for f in d.fixes {
+    let edits = f.edits.map(fn(e) { J.O(fields: [("span", jspan(e.span.file, e.span.line, e.span.col, e.span.end_line, e.span.end_col)), ("replace", J.H(s: e.replace))]) })
+    fixes.push(J.O(fields: [("title", J.H(s: f.title)), ("edits", J.A(xs: edits))]))
+  }
+  J.O(fields: [("code", J.H(s: d.code)), ("severity", J.H(s: diag_severity(d))), ("message", J.H(s: d.message)), ("span", jspan(d.file, d.line, d.col, d.end_line, d.end_col)), ("notes", J.A(xs: notes)), ("fixes", J.A(xs: fixes))])
+}
+
+/// diag.Human.
+fn diag_human(d: check.Diag) -> Str {
+  var b = StrBuilder.new()
+  if d.file.is_empty() {
+  } else if d.line == 0 {
+    b.write("${d.file}: ")
+  } else {
+    b.write("${d.file}:${d.line}:${d.col}: ")
+  }
+  b.write("${diag_severity(d)} ${d.code}: ${d.message}")
+  for n in d.notes {
+    match n.span {
+      Some(s) => b.write("\n  note: ${s.file}:${s.line}:${s.col}: ${n.message}")
+      None => b.write("\n  note: ${n.message}")
+    }
+  }
+  for f in d.fixes {
+    b.write("\n  fix: ${f.title}")
+  }
+  b.freeze()
+}
+
+/// cmd/xo printAudit: the report for a terminal.
+fn (c: ModCtx) print_audit(rep: AuditReport) uses stdio {
+  var w = StrBuilder.new()
+  w.write("xo audit ${rep.module} (${rep.dir})\n")
+  if rep.deps.is_empty() {
+    w.write("no dependencies\n")
+  }
+  for d in rep.deps {
+    let v = if d.workspace { "(workspace)" } else { d.version }
+    let kind = if d.direct { "direct" } else { "indirect" }
+    w.write("\n${d.path} ${v} [${kind}]\n")
+    w.write("  effects: ${check.effects_text(d.effects)}\n")
+    var lock = d.lock
+    if let Some(l) = d.locked {
+      lock = "${lock} (locked: ${check.effects_text(l)})"
+    }
+    if !d.added.is_empty() {
+      lock = "${lock}, added: ${d.added.join(", ")}"
+    }
+    w.write("  lock: ${lock}\n")
+    if !d.ceiling.is_empty() {
+      w.write("  ceiling: ${d.ceiling}\n")
+    }
+    if !d.log_tag.is_empty() {
+      w.write("  logs: ${d.log_sites.len()} call sites, records attributed [${d.log_tag}]\n")
+      for l in d.log_sites {
+        w.write("    ${base_of(l.file)}:${l.line} ${l.call}\n")
+      }
+    }
+    for e in d.escapes {
+      let st = if e.vouched { "vouched at ${e.vouch}" } else { "UNVOUCHED" }
+      w.write("  use ${e.kind} ${e.target.quote()} (${base_of(e.file)}:${e.line}): ${st}, charged ${check.effects_text(e.effects)}\n")
+    }
+  }
+  if !rep.attenuations.is_empty() {
+    w.write("\nattenuations:\n")
+    for a in rep.attenuations {
+      let args = if a.constant { "[${a.args.join(", ")}]" } else { "(not constant)" }
+      w.write("  ${a.file}:${a.line} ${a.capability}.${a.method} ${args}\n")
+    }
+  }
+  if !rep.caps.is_empty() {
+    w.write("\ncapabilities passed to dependencies:\n")
+    for cp in rep.caps {
+      let st = if cp.attenuated { cp.via } else { "UNATTENUATED" }
+      w.write("  ${cp.file}:${cp.line} ${cp.capability} -> ${cp.callee} (${cp.dependency}): ${st}\n")
+    }
+  }
+  for v in rep.unused {
+    w.write("\nunused vouch ${v.file}:${v.line}: ${v.text}\n")
+  }
+  let s = rep.summary
+  w.write("\n${s.dependencies} dependencies, ${s.unvouched} unvouched escape hatches, ${s.widened} widened, ${s.unlocked} unlocked, ${s.unattenuated} unattenuated capabilities passed, ${s.errors} errors\n")
+  if s.errors > 0 {
+    for d in rep.diags {
+      w.write(diag_human(d) + "\n")
+    }
+  }
+  c.out(w.freeze())
+}

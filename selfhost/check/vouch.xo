@@ -21,6 +21,25 @@ pub struct Vouch {
   pub line: Int
 }
 
+/// A `use c` or impure `use go` line of a required module version, with
+/// the vouch that covers it (check.EscapeHatch, decision 0156); xo audit
+/// lists them.
+pub struct EscapeHatch {
+  pub module: Str
+  pub version: Str
+  pub kind: Str
+  pub target: Str
+  /// The file (display path) and line of the `use` line.
+  pub file: Str
+  pub line: Int
+  /// The `uses` of a `use c` line; None when none is written.
+  pub claim: List[Str]? = None
+  /// The vouch covering it; None when unvouched.
+  pub vouch: Vouch? = None
+  /// The effects the build charges it.
+  pub effects: List[Str] = []
+}
+
 const VOUCH_SYNTAX: Str = "want `vouch <module path> <version> c \"<header>\" [uses <effects|none>]` or `vouch <module path> <version> go \"<Go import path>\"` (decision 0156)"
 
 /// mod parseVouch: the vouch of the line's fields, or its XO1301 problem.
@@ -134,7 +153,7 @@ fn (c: Checker) consumer_dirs() -> List[Str] {
 
 /// check vouch.go consumerVouches (mod.VouchesOf): the vouch lines of the
 /// consuming modules, read once per check.
-fn (var c: Checker) consumer_vouches() -> List[Vouch] {
+pub fn (var c: Checker) consumer_vouches() -> List[Vouch] uses fs.read {
   if !c.vouches_read {
     c.vouches_read = true
     var seen: Map[Str, Bool] = {}
@@ -192,14 +211,29 @@ fn (var c: Checker) escape_hatch(m: Int, f: Int, u: parser.UseDecl, kind: Str, t
     return (None, false)
   }
   var stale: List[Vouch] = []
+  var found: Vouch? = None
   for v in c.consumer_vouches() {
     if v.path != dm.path || v.kind != kind || v.target != target {
       continue
     }
     if v.version == dm.version {
-      return (Some(v), true)
+      found = Some(v)
+      break
     }
     stale.push(v)
+  }
+  // the hatch, with the effects the build charges it (xo audit)
+  var charged = ["ffi"]
+  if kind == "go" {
+    charged = ["go"]
+  } else if let Some(v) = found {
+    if let Some(cl) = v.effects {
+      charged = cl.effects
+    }
+  }
+  c.hatches.push(EscapeHatch{module: dm.path, version: dm.version, kind: kind, target: target, file: c.files[f].path, line: u.span.start.line, claim: claim, vouch: found, effects: charged})
+  if let Some(v) = found {
+    return (Some(v), true)
   }
   let consumer = join(c.rel_dir(c.deps.main_dir), "xo.mod")
   var d = -1

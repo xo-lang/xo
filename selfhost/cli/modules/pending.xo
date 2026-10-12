@@ -1,7 +1,6 @@
-// The parts of the module commands that need the semantic tools of
-// decision 0178 stage 3 (internal/release's export API and its diff,
-// and the checker's resolved calls for xo audit). Until they are ported
-// these say so and exit 2; xo get prints no API changes.
+// The parts of the module commands that need internal/release in Xo
+// (decision 0178 stage 3: its export API and diff). Until it is ported,
+// xo publish says so and exits 2, and xo get prints no API changes.
 
 /// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
 /// downgraded requirement. Needs release.ModuleAPI and release.Diff
@@ -12,10 +11,5 @@ fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[Change]) -> List[ApiCh
 
 fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses stdio {
   c.os.stdio.eprintln("xo publish: not ported to Xo yet (needs internal/release, decision 0178 stage 3)")
-  2
-}
-
-fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses stdio {
-  c.os.stdio.eprintln("xo audit: not ported to Xo yet")
   2
 }
