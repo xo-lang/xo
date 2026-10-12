@@ -393,6 +393,20 @@ func constInt(v *ssa.Value) (int64, bool) {
 	return n, ok
 }
 
+// negConst reports the value of an Int negation of an Int constant
+// other than the minimum (a negative literal: `-7` is a negation in the
+// SSA).
+func negConst(v *ssa.Value) (int64, bool) {
+	if v.Op != ssa.OpNeg || v.Type.Kind != ssa.KInt {
+		return 0, false
+	}
+	n, ok := constInt(v.Args[0])
+	if !ok || n == math.MinInt64 {
+		return 0, false
+	}
+	return -n, true
+}
+
 func imm12(n int64) bool { return n >= 0 && n < 4096 }
 
 // ---------------------------------------------------------------------------
@@ -816,6 +830,12 @@ func (s *fstate) instr(v *ssa.Value) {
 	case ssa.OpShl, ssa.OpShr:
 		s.shift(v)
 	case ssa.OpNeg:
+		if n, ok := negConst(v); ok {
+			// a negative literal (the SSA negates the constant): a
+			// constant, which cannot overflow (decision 0194)
+			s.set(v, s.cimm(n))
+			return
+		}
 		a := s.word(v.Args[0])
 		if v.Type.Kind == ssa.KFloat {
 			s.set(v, s.def1(true, "fneg $d0, $u0", a))
@@ -1239,6 +1259,9 @@ func (s *fstate) divRem(v *ssa.Value) {
 		return
 	}
 	k, isConst := constInt(v.Args[1])
+	if !isConst {
+		k, isConst = negConst(v.Args[1])
+	}
 	if isConst && v.Type.Kind == ssa.KInt && k != 0 && k != 1 && k != -1 && k != math.MinInt64 {
 		s.divConst(v, k)
 		return

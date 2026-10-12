@@ -367,6 +367,21 @@ fn (g: G) const_int(v: Int) -> (Int, Bool) {
   }
 }
 
+/// The value of an Int negation of an Int constant other than the
+/// minimum (a negative literal: `-7` is a negation in the SSA), as
+/// internal/arm64 negConst.
+fn (g: G) neg_const(v: Int) -> (Int, Bool) {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Neg || g.kind(x.ty) != ssa.Kind.Int {
+    return (0, false)
+  }
+  let (n, ok) = g.const_int(x.args[0])
+  if !ok || n == MIN_INT {
+    return (0, false)
+  }
+  (-n, true)
+}
+
 /// The parameters of the function (its entry block's).
 fn (g: G) params() -> List[Int] {
   g.f.blocks[0].params
