@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Spec audit, fifth pass (bench/results/spec-audit-2026-10-11.md): core
+  10.1's `xo build` row lists `--stamp`; core 14 no longer calls
+  `std/time` Go backend only. New tests: `xo replay` keeps `--stamp`
+  values (cmd/xo `TestRecordReplayStamp`); test_cli and test_term in
+  `TestNoGCTests`; formats_toml in `TestGenGoldensNative`.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every
