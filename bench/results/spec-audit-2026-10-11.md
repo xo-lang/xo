@@ -174,4 +174,31 @@ wait cycle (core.md:2608, inside 11.4), and the [P2] headings of 7.4 and
 
 ## Test status
 
-TBD
+All on 2026-10-11, darwin/arm64, every cited test run with a targeted
+`-run` (the heavy packages through heavy.sh, one at a time):
+
+- `go test -short` over the repository (runs/ excluded): 34 packages ok.
+- internal/check, internal/parser, internal/fix, std/rt, internal/cbind,
+  scripts/disttar, internal/build (`TestStamp`, `TestStampErrors`,
+  `TestRTPack*`, `TestClangErrorRuntimeHint`): pass.
+- cmd/xo: `TestAttenuationFakes`, `TestAudit`, `TestEffectLock`,
+  `TestFixEditionFlag`, `TestModules`, `TestEffectCeilings`,
+  `TestRTPackCommand`, `TestSupplyChainAttacks`, `TestVouches`,
+  `TestVouchesC`, `TestInit`, `TestRecordReplayStamp`,
+  `TestNoGCTests/test_cli`, `TestNoGCTests/test_term`: pass.
+  `TestRecordReplayStamp` fails as it should with `Stamps` dropped from
+  the replay build in cmd/xo/replay.go (`replay: exit 0` with other
+  output), then passes with the file restored.
+- internal/gen `TestGolden` on the 16 new goldens, `TestHybridPreemption`,
+  `TestTerminates`: pass.
+- internal/llvm `TestGolden` on the 13 new native goldens,
+  `TestRealtimeNative`, `TestRuntimeRealtime`, `TestGenGoldensNative` on
+  assign_rhs_mutates, var_recv_after_args, const_index, same_type_names,
+  nested_option_coalesce, formats_toml: pass.
+- internal/arm64 `TestGoldenRun` on the same 13 goldens: pass.
+- internal/selfhost `TestSelfhostArm64`, merge tier (go backend only):
+  pass, 332 runs, 153 compared, 153 byte identical, 5783 of 5783
+  functions and 5258 of 5258 helpers identical. The full tier
+  (`/llvm`) was not run in this pass (owner's policy of 2026-10-11:
+  the lead runs the full tier on the combined main).
+- `go vet ./cmd/xo ./internal/llvm`: clean.
