@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
+  runtime are written in Xo (decision 0180, the runtime pilot):
+  `std/native/llrt/unicode.xo` with generated tables
+  (`unicode_tables.xo`) does Str and Rune case mapping, `is_letter`,
+  `is_digit`, `is_print`, strconv quoting, and std/regexp's `\pL` and
+  `\p{Nd}` ranges; `std/llrt/xo_unicode.c` and its C users are gone.
+  Output is unchanged on every backend.
 - The self hosted checker (`selfhost/check`) checks `use go` programs
   from the binding the Go toolchain cached, and reports what the Go
   checker reports for escaping scope handles and task groups (XO0802),
