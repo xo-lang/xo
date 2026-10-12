@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,13 +43,25 @@ var (
 // and in a whole full tier run starts the native builds (prebuildFull).
 func TestMain(m *testing.M) {
 	build.EnableTestBinCache()
-	build.EnableTestLLVMSplit()
 	flag.Parse()
 	selfhostJobs()
 	if jobsErr != nil {
 		fmt.Fprintln(os.Stderr, jobsErr)
 		os.Exit(2)
 	}
+	// the clang compiles of every LLVM build of the process share
+	// XO_LLVM_JOBS slots (internal/build/llvmsplit.go): EnableTestLLVMSplit's
+	// 4 held a 32 core run to a load of 4 for its first 18 minutes
+	// (2026-10-12), so scale them with the pool, at most one per 2 GiB
+	// (a clang on a part of selfhost/ssa holds about 1.1 GB)
+	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
+		n := max(4, selfhostJobs())
+		if mem := totalMemory(); mem > 0 {
+			n = min(n, max(4, int(mem>>31)))
+		}
+		os.Setenv("XO_LLVM_JOBS", strconv.Itoa(n))
+	}
+	build.EnableTestLLVMSplit()
 	prebuildFull()
 	os.Exit(m.Run())
 }
