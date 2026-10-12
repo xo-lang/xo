@@ -246,8 +246,9 @@ fn may_raise(op: Op) -> Bool {
   op is Op.Add | Op.Sub | Op.Mul | Op.Neg | Op.Div | Op.Rem | Op.Shl | Op.Shr | Op.FloatToInt | Op.CallValue | Op.Call
 }
 
-/// The runtime functions that can raise a fault (landing.go faultingRT).
-fn faulting_rt(name: Str) -> Bool {
+/// The runtime functions that can raise a fault (landing.go faultingRT;
+/// public for the LLVM emitter, selfhost/llvm).
+pub fn faulting_rt(name: Str) -> Bool {
   name is "rt.fault_raise" | "rt.fault_rethrow" | "rt.fault_at" | "rt.int_op" | "rt.int_conv" | "rt.rune_of" | "rt.str_slice_at" | "rt.bytes_slice_at" | "rt.str_repeat" | "rt.rand_int" | "rt.shield_end" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.task_spawn" | "rt.task_await" | "rt.chan_new" | "rt.chan_send" | "rt.select_wait" | "rt.atomic_add" | "rt.realtime_exit"
 }
 

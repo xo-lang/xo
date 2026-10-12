@@ -108,6 +108,10 @@ type Options struct {
 	// update takes the atomic path (ssa.InsertShareProbes, decision
 	// 0058).
 	ShareProbes bool
+	// LLVMIR (LLVM backend; tests) is the IR to compile in place of the
+	// one internal/llvm generates (llvm.Options.IR): the self hosted
+	// emitter's output, decision 0166.
+	LLVMIR []byte
 	// Hybrid (`--hybrid`, decision 0084, Go backend programs) compiles
 	// the hot leaf functions of the main module to Go assembler with the
 	// arm64 backend (hybrid.go); HybridAll takes every eligible function

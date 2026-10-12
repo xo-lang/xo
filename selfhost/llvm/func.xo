@@ -1,0 +1,1265 @@
+// Functions (fromssa.go sfn): every SSA value is an LLVM value (block
+// parameters are phis), blocks are lowered in reverse postorder and
+// printed in the function's order.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The name in an instruction's aux ("" for another aux).
+fn aux_str(a: ssa.Aux) -> Str {
+  match a {
+    S(s) => s
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+  }
+}
+
+fn aux_int(a: ssa.Aux) -> Int {
+  match a {
+    I(n) => n
+    None | S(..) | F(..) | B(..) | Bs(..) | P(..) => 0
+  }
+}
+
+/// The LLVM value name of value v.
+fn vname(v: Int) -> Str {
+  "%v${v}"
+}
+
+fn bname(b: Int) -> Str {
+  "b${b}"
+}
+
+/// The block an edge enters.
+fn (var g: Gen) edge_to(e: Int) -> Int {
+  g.f.edges[e].to
+}
+
+/// The successor edges of block b's terminator (none without one).
+fn (var g: Gen) succs(b: Int) -> List[Int] {
+  let ins = g.f.blocks[b].instrs
+  if ins.is_empty() {
+    return []
+  }
+  let t = ins[ins.len() - 1]
+  if !ssa.is_terminator(g.f.values[t].op) {
+    return []
+  }
+  g.f.values[t].succs
+}
+
+/// The type of value v.
+fn (var g: Gen) vty(v: Int) -> Int {
+  g.f.values[v].ty
+}
+
+fn (var g: Gen) tmp() -> Str {
+  g.n += 1
+  "%t${g.n}"
+}
+
+fn (var g: Gen) emit(s: Str) {
+  g.body.push("  ${s}\n")
+}
+
+fn (var g: Gen) def(s: Str) -> Str {
+  let t = g.tmp()
+  g.emit("${t} = ${s}")
+  t
+}
+
+fn (var g: Gen) new_label(hint: Str) -> Str {
+  g.nlabel += 1
+  "${g.label0}.${hint}${g.nlabel}"
+}
+
+fn (var g: Gen) start(l: Str) {
+  g.body.push("${l}:\n")
+  g.label = l
+}
+
+fn (var g: Gen) alloca(t: Str) -> Str {
+  let a = g.tmp()
+  g.allocas.push("  ${a} = alloca ${t}, align 8\n")
+  a
+}
+
+/// Defines v as the result of an expression (by naming the result).
+fn (var g: Gen) set(v: Int, s: Str) {
+  g.emit("${vname(v)} = ${s}")
+}
+
+/// Makes operand x the value of v (no instruction).
+fn (var g: Gen) alias(v: Int, x: Str) {
+  g.names[v] = x
+}
+
+/// The operand text of v (op).
+fn (var g: Gen) op(v: Int) -> Str {
+  let t = g.f.values[v].ty
+  if g.is_void(t) {
+    return "zeroinitializer"
+  }
+  let m = g.lazy[v]
+  if m >= 0 {
+    // held in memory at every use (decision 0148)
+    let lt = g.held.mems[m].lt
+    let ptr = g.held.mems[m].ptr
+    return g.def("load ${lt}, ptr ${ptr}")
+  }
+  let n = g.names[v]
+  if !n.is_empty() {
+    return n
+  }
+  if g.f.values[v].op == ssa.Op.Const {
+    match g.f.values[v].aux {
+      I(k) => return "${k}"
+      F(x) => return float_text(x)
+      B(x) => return if x { "true" } else { "false" }
+      S(s) => return g.str_const(s)
+      Bs(b) => return g.str_const_bytes(b)
+      None | P(..) => {}
+    }
+  }
+  vname(v)
+}
+
+fn (var g: Gen) typed(v: Int) -> Str {
+  let l = g.ll(g.f.values[v].ty)
+  let o = g.op(v)
+  "${l} ${o}"
+}
+
+/// Emits call text c (`T @f(args)`) of a function that can raise a
+/// fault: an invoke when the value being lowered has a landing pad
+/// (raise). res names the result ("" for none).
+fn (var g: Gen) raise(res: Str, c: Str) {
+  if g.pad_to < 0 {
+    if res.is_empty() {
+      g.emit("call ${c}")
+    } else {
+      g.emit("${res} = call ${c}")
+    }
+    return
+  }
+  if g.pad.is_empty() {
+    g.npad += 1
+    g.pad = "${g.label0}.lp${g.npad}"
+    g.pads.push("${g.pad}:\n  %${g.pad}.x = landingpad { ptr, i32 } cleanup\n  br label %${bname(g.pad_to)}\n")
+  }
+  let cont = g.new_label("cont")
+  if res.is_empty() {
+    g.emit("invoke ${c} to label %${cont} unwind label %${g.pad}")
+  } else {
+    g.emit("${res} = invoke ${c} to label %${cont} unwind label %${g.pad}")
+  }
+  g.start(cont)
+}
+
+/// Branches to a fault call (call: `@xo_fault_...(args)`) when cond
+/// holds (faultIf).
+fn (var g: Gen) fault_if(cond: Str, call: Str) {
+  let bad = g.new_label("fault")
+  let ok = g.new_label("ok")
+  g.emit("br i1 ${cond}, label %${bad}, label %${ok}, !prof !0")
+  g.start(bad)
+  g.raise("", "void ${call}")
+  g.emit("unreachable")
+  g.start(ok)
+}
+
+fn (var g: Gen) loc(v: Int) -> Str {
+  let p = g.f.values[v].pos
+  g.cstr(p)
+}
+
+/// The address of element i of list l (elemPtr).
+fn (var g: Gen) elem_ptr(et: Int, l: Str, i: Str) -> Str {
+  let data = g.def("getelementptr %xo.rlist, ptr ${l}, i64 1")
+  let lt = g.ll(et)
+  g.def("getelementptr ${lt}, ptr ${data}, i64 ${i}")
+}
+
+fn (var g: Gen) list_len(l: Str) -> Str {
+  let p = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
+  g.def("load i64, ptr ${p}${TBAA_HDR}")
+}
+
+/// Builds variant tag of enum t from field operands (variant).
+fn (var g: Gen) variant(t: Int, tag: Int, fields: List[Str]) -> Str {
+  let lt = g.ll(t)
+  if g.words(t) == 0 {
+    return g.def("insertvalue ${lt} zeroinitializer, i64 ${tag}, 0")
+  }
+  let a = g.alloca(lt)
+  g.emit("store ${lt} zeroinitializer, ptr ${a}")
+  g.emit("store i64 ${tag}, ptr ${a}")
+  if !fields.is_empty() {
+    let vl = g.variant_ll(t, tag)
+    let pay = g.def("getelementptr ${lt}, ptr ${a}, i32 0, i32 1")
+    for (i, fv) in fields.indexed() {
+      let fp = g.def("getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${i}")
+      let fl = g.ll(g.m.types[t].variants[tag].fields[i].ty)
+      g.emit("store ${fl} ${fv}, ptr ${fp}")
+    }
+  }
+  g.def("load ${lt}, ptr ${a}")
+}
+
+/// Loads field fi of variant tag of enum value x (payload).
+fn (var g: Gen) payload(t: Int, x: Str, tag: Int, fi: Int) -> Str {
+  let lt = g.ll(t)
+  let a = g.alloca(lt)
+  g.emit("store ${lt} ${x}, ptr ${a}")
+  let pay = g.def("getelementptr ${lt}, ptr ${a}, i32 0, i32 1")
+  let vl = g.variant_ll(t, tag)
+  let fp = g.def("getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${fi}")
+  let fl = g.ll(g.m.types[t].variants[tag].fields[fi].ty)
+  g.def("load ${fl}, ptr ${fp}")
+}
+
+/// Whether v is reached from a borrowed parameter or a constant through
+/// fields, payloads, box contents, and list elements (rootBorrowed).
+fn (var g: Gen) root_borrowed(v0: Int) -> Bool {
+  var v = v0
+  while true {
+    let x = g.f.values[v]
+    match x.op {
+      Const => return true
+      Param => {
+        if g.blk[v] != 0 {
+          return false
+        }
+        for (i, p) in g.f.blocks[0].params.indexed() {
+          if p == v {
+            return i < g.f.borrowed.len() && g.f.borrowed[i]
+          }
+        }
+        return false
+      }
+      Payload | Unbox | Field => v = x.args[0]
+      Call => {
+        let n = aux_str(x.aux)
+        if n != "list.index" && n != "list.get" {
+          return false
+        }
+        v = x.args[0]
+      }
+      _ => return false
+    }
+  }
+  false
+}
+
+/// The blocks of the current function reachable from its entry in
+/// reverse postorder, then those the walk did not reach in their order
+/// (reversePostorder).
+fn (var g: Gen) reverse_postorder() -> List[Int] {
+  let nb = g.f.blocks.len()
+  var seen: List[Bool] = []
+  for _ in 0..nb {
+    seen.push(false)
+  }
+  var post: List[Int] = []
+  // an explicit stack of (block, next successor index)
+  var stack: List[(Int, Int)] = [(0, 0)]
+  seen[0] = true
+  while !stack.is_empty() {
+    let (b, i) = stack[stack.len() - 1]
+    let ss = g.succs(b)
+    if i < ss.len() {
+      stack[stack.len() - 1] = (b, i + 1)
+      let to = g.edge_to(ss[i])
+      if !seen[to] {
+        seen[to] = true
+        stack.push((to, 0))
+      }
+      continue
+    }
+    post.push(b)
+    stack.pop()
+  }
+  var out: List[Int] = []
+  var j = post.len() - 1
+  while j >= 0 {
+    out.push(post[j])
+    j -= 1
+  }
+  for b in 0..nb {
+    if !seen[b] {
+      out.push(b)
+    }
+  }
+  out
+}
+
+/// Lowers function fi (fn).
+fn (var g: Gen) lower_func(fi: Int) {
+  g.f = g.m.funcs[fi]
+  g.fi = fi
+  g.allocas = []
+  g.body = []
+  g.label = ""
+  g.label0 = ""
+  g.n = 0
+  g.nlabel = 0
+  g.cancel = []
+  g.names = []
+  g.addr = []
+  g.lazy = []
+  g.stable_memo = []
+  for _ in 0..g.f.values.len() {
+    g.names.push("")
+    g.cancel.push(false)
+    g.addr.push("")
+    g.lazy.push(-1)
+    g.stable_memo.push(-1)
+  }
+  g.blk = []
+  for _ in 0..g.f.values.len() {
+    g.blk.push(-1)
+  }
+  g.ends = []
+  g.texts = []
+  for b in 0..g.f.blocks.len() {
+    g.ends.push("")
+    g.texts.push("")
+    for p in g.f.blocks[b].params {
+      g.blk[p] = b
+    }
+    for v in g.f.blocks[b].instrs {
+      g.blk[v] = b
+    }
+  }
+  g.pad_to = -1
+  g.pad = ""
+  g.pads = []
+  g.npad = 0
+  g.home = {}
+  g.spare = {}
+  g.held = Held{}
+  g.has_held = false
+  g.users_of = []
+  g.users_done = false
+  g.skip = ""
+  var ps: List[Str] = []
+  let br = g.by_ref_of(fi)
+  if !br.is_empty() && g.stage < 2 {
+    g.unsupported("a parameter passed by reference (decision 0145)")
+  }
+  var mems: List[HeldMem] = []
+  let params0 = g.f.blocks[0].params
+  for (i, p) in params0.indexed() {
+    if !br.is_empty() && br[i] {
+      let lt = g.ll(g.vty(p))
+      let ptr = "%p${p}"
+      if g.is_var_param(fi, i) {
+        ps.push("ptr noalias ${ptr}")
+        if !g.home.contains(lt) {
+          g.home[lt] = ptr
+          mems.push(HeldMem{ptr: ptr, lt: lt, param: p})
+        }
+      } else {
+        ps.push("ptr noalias readonly ${ptr}")
+        g.addr[p] = ptr
+      }
+      continue
+    }
+    let l = g.ll(g.vty(p))
+    ps.push("${l} ${vname(p)}")
+  }
+  if !mems.is_empty() && g.stage < 3 {
+    g.unsupported("a `var` parameter passed by reference (decision 0148)")
+  }
+  g.compute_held(mems)
+  for (i, p) in params0.indexed() {
+    if !br.is_empty() && br[i] {
+      let m = g.mem_only(p)
+      if m >= 0 {
+        g.lazy[p] = m
+        continue
+      }
+      let r = g.load_ref(g.vty(p), "%p${p}")
+      g.alias(p, r)
+    }
+  }
+  let loads = g.body.join("")
+  for b in g.reverse_postorder() {
+    g.body = []
+    g.label0 = bname(b)
+    g.label = bname(b)
+    for p in g.f.blocks[b].params {
+      let m = g.held_param(b, p)
+      if m >= 0 {
+        // passed in place by every edge: no phi (decision 0148)
+        if g.mem_only(p) >= 0 {
+          g.lazy[p] = m
+        } else {
+          let lt = g.held.mems[m].lt
+          let ptr = g.held.mems[m].ptr
+          let r = g.def("load ${lt}, ptr ${ptr}")
+          g.alias(p, r)
+        }
+      }
+    }
+    for v in g.f.blocks[b].instrs {
+      g.instr(v)
+    }
+    g.texts[b] = g.body.join("")
+  }
+  var out: List[Str] = []
+  var pers = ""
+  if g.npad > 0 {
+    pers = " personality ptr @xo_personality"
+  }
+  let rl = g.res_ll(fi)
+  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) #1${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")
+  for b in 0..g.f.blocks.len() {
+    out.push("${bname(b)}:\n")
+    if b != 0 {
+      let params = g.f.blocks[b].params
+      for (i, p) in params.indexed() {
+        if g.is_void(g.vty(p)) || g.held_param(b, p) >= 0 {
+          continue
+        }
+        var ins: List[Str] = []
+        for e in g.f.blocks[b].preds {
+          let a = g.f.edges[e].args[i]
+          let o = g.op(a)
+          ins.push("[ ${o}, %${g.ends[g.f.edges[e].from]} ]")
+        }
+        let pl = g.ll(g.vty(p))
+        out.push("  ${vname(p)} = phi ${pl} ${ins.join(", ")}\n")
+      }
+    }
+    out.push(g.texts[b])
+  }
+  out.push(g.pads.join(""))
+  out.push("}\n\n")
+  if !g.skip.is_empty() {
+    g.skipped.push("${g.f.name}: ${g.skip}")
+    return
+  }
+  g.funcs.push(out.join(""))
+}
+
+/// The comparisons of Int, Bool, and Float operands (cmpInt, cmpBool,
+/// cmpFloat).
+fn cmp_int(o: ssa.Op) -> Str {
+  match o {
+    Eq => "eq"
+    Ne => "ne"
+    Lt => "slt"
+    Le => "sle"
+    Gt => "sgt"
+    _ => "sge"
+  }
+}
+
+fn cmp_bool(o: ssa.Op) -> Str {
+  match o {
+    Eq => "eq"
+    Ne => "ne"
+    Lt => "ult"
+    Le => "ule"
+    Gt => "ugt"
+    _ => "uge"
+  }
+}
+
+fn cmp_float(o: ssa.Op) -> Str {
+  match o {
+    Eq => "oeq"
+    Ne => "une"
+    Lt => "olt"
+    Le => "ole"
+    Gt => "ogt"
+    _ => "oge"
+  }
+}
+
+/// The character of an arithmetic operator, for the fault message
+/// (opChar).
+fn op_char(o: ssa.Op) -> Int {
+  match o {
+    Add => 43
+    Sub => 45
+    Mul => 42
+    Div => 47
+    _ => 37
+  }
+}
+
+/// The parts of an ordering compare of two Floats; returns the
+/// instruction (without its result name) that combines them
+/// (floatOrder): the total order of decision 0053.
+fn (var g: Gen) float_order(o: ssa.Op, a: Str, b: Str) -> Str {
+  match o {
+    Lt => {
+      // a < b, or b is NaN and a is not
+      let x = g.def("fcmp ult double ${a}, ${b}")
+      let y = g.def("fcmp ord double ${a}, ${a}")
+      return "and i1 ${x}, ${y}"
+    }
+    Gt => {
+      // a > b, or a is NaN and b is not
+      let x = g.def("fcmp ugt double ${a}, ${b}")
+      let y = g.def("fcmp ord double ${b}, ${b}")
+      return "and i1 ${x}, ${y}"
+    }
+    Le => {
+      // a <= b, or b is NaN
+      let x = g.def("fcmp ole double ${a}, ${b}")
+      let y = g.def("fcmp uno double ${b}, ${b}")
+      return "or i1 ${x}, ${y}"
+    }
+    Ge => {
+      // a >= b, or a is NaN
+      let x = g.def("fcmp oge double ${a}, ${b}")
+      let y = g.def("fcmp uno double ${a}, ${a}")
+      return "or i1 ${x}, ${y}"
+    }
+    _ => {}
+  }
+  g.fail("float order of op ${ssa.op_name(o)}")
+  ""
+}
+
+/// An integer constant operand (constInt).
+fn const_int(s: Str) -> Int? {
+  Int.parse(s)
+}
+
+/// The release a retain cancels, or -1 (ssa.CancelledRelease): a retain
+/// of a Str or List payload of a single field variant, in the block its
+/// tag test enters, followed by a release of the enum before anything
+/// but projections.
+fn (var g: Gen) cancelled_release(v: Int) -> Int {
+  let f = g.f
+  if f.values[v].op != ssa.Op.Retain {
+    return -1
+  }
+  let x = f.values[v].args[0]
+  let xv = f.values[x]
+  if xv.op != ssa.Op.Payload || !(g.kind(xv.ty) is ssa.Kind.Str | ssa.Kind.List) {
+    return -1
+  }
+  let (tag, _) = match xv.aux {
+    P(tag, field) => (tag, field)
+    _ => (-1, -1)
+  }
+  let e = xv.args[0]
+  let et = f.values[e].ty
+  if tag < 0 {
+    return -1
+  }
+  if g.kind(et) != ssa.Kind.Enum || g.m.types[et].variants[tag].fields.len() != 1 {
+    return -1
+  }
+  // the block runs only when e has the variant: its one predecessor
+  // branches on tag(e) == Tag
+  let b = g.blk[v]
+  if f.blocks[b].preds.len() != 1 {
+    return -1
+  }
+  let from = f.edges[f.blocks[b].preds[0]].from
+  let ins = f.blocks[from].instrs
+  if ins.is_empty() {
+    return -1
+  }
+  let br = ins[ins.len() - 1]
+  if f.values[br].op != ssa.Op.Branch {
+    return -1
+  }
+  let s0 = f.edges[f.values[br].succs[0]].to
+  let s1 = f.edges[f.values[br].succs[1]].to
+  if s0 == s1 || s0 != b {
+    return -1
+  }
+  let c = f.values[br].args[0]
+  let cv = f.values[c]
+  if cv.op != ssa.Op.Eq || f.values[cv.args[0]].op != ssa.Op.Tag || !g.same_projection(f.values[cv.args[0]].args[0], e) {
+    return -1
+  }
+  let k = f.values[cv.args[1]]
+  if k.op != ssa.Op.Const {
+    return -1
+  }
+  match k.aux {
+    I(n) => {
+      if n != tag {
+        return -1
+      }
+    }
+    _ => return -1
+  }
+  let bins = f.blocks[b].instrs
+  var i = 0
+  while i < bins.len() && bins[i] != v {
+    i += 1
+  }
+  var j = i + 1
+  while j < bins.len() {
+    let w = f.values[bins[j]]
+    match w.op {
+      Field | Tag | Payload | Const | Tuple | Struct => {}
+      Release => {
+        if g.same_projection(w.args[0], e) {
+          return bins[j]
+        }
+        return -1
+      }
+      _ => return -1
+    }
+    j += 1
+  }
+  -1
+}
+
+/// Whether a and b are the same value read through the same chain of
+/// field projections (sameProjection).
+fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
+  var a = a0
+  var b = b0
+  while g.f.values[a].op == ssa.Op.Field && g.f.values[b].op == ssa.Op.Field {
+    if aux_int(g.f.values[a].aux) != aux_int(g.f.values[b].aux) {
+      return false
+    }
+    a = g.f.values[a].args[0]
+    b = g.f.values[b].args[0]
+  }
+  a == b
+}
+
+/// Lowers instruction v (instr).
+fn (var g: Gen) instr(v: Int) {
+  let pad = g.f.values[v].pad
+  if pad >= 0 {
+    // a fault lands on the cleanup of its check (decision 0085)
+    let pb = g.blk[pad]
+    g.pad_to = g.edge_to(g.succs(pb)[0])
+    g.pad = ""
+  }
+  g.instr_body(v)
+  if pad >= 0 {
+    g.pad_to = -1
+    g.pad = ""
+  }
+}
+
+fn (var g: Gen) instr_body(v: Int) {
+  let x = g.f.values[v]
+  let args = x.args
+  let vt = x.ty
+  match x.op {
+    Const | Cap => return
+    Add | Sub | Mul => {
+      let ins = match x.op {
+        Add => "add"
+        Sub => "sub"
+        _ => "mul"
+      }
+      if g.kind(vt) == ssa.Kind.Float {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        g.set(v, "f${ins} double ${a0}, ${a1}")
+        return
+      }
+      if x.pos.is_empty() {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        if aux_str(x.aux) == "wrap" {
+          g.set(v, "${ins} i64 ${a0}, ${a1}")
+          return
+        }
+        g.set(v, "${ins} nsw i64 ${a0}, ${a1}")
+        return
+      }
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      let r = g.def("call { i64, i1 } @llvm.s${ins}.with.overflow.i64(i64 ${a0}, i64 ${a1})")
+      let ov = g.def("extractvalue { i64, i1 } ${r}, 1")
+      let b0 = g.op(args[0])
+      let b1 = g.op(args[1])
+      let l = g.loc(v)
+      g.fault_if(ov, "@xo_fault_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ptr ${l})")
+      g.set(v, "extractvalue { i64, i1 } ${r}, 0")
+    }
+    Div | Rem => {
+      if g.kind(vt) == ssa.Kind.Float {
+        let ins = if x.op == ssa.Op.Div { "fdiv" } else { "frem" }
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        g.set(v, "${ins} double ${a0}, ${a1}")
+        return
+      }
+      let kc = const_int(g.op(args[1]))
+      let is_const = kc != None
+      let k = kc ?? 0
+      if !x.pos.is_empty() && !(is_const && k != 0) {
+        let a1 = g.op(args[1])
+        let z = g.def("icmp eq i64 ${a1}, 0")
+        let b0 = g.op(args[0])
+        let l = g.loc(v)
+        g.fault_if(z, "@xo_fault_divzero(i64 ${b0}, i64 ${op_char(x.op)}, ptr ${l})")
+      }
+      if x.op == ssa.Op.Div {
+        if !x.pos.is_empty() && !(is_const && k != -1) {
+          let a1 = g.op(args[1])
+          let m1 = g.def("icmp eq i64 ${a1}, -1")
+          let a0 = g.op(args[0])
+          let mn = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
+          let both = g.def("and i1 ${m1}, ${mn}")
+          let b0 = g.op(args[0])
+          let b1 = g.op(args[1])
+          let l = g.loc(v)
+          g.fault_if(both, "@xo_fault_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ptr ${l})")
+        }
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        g.set(v, "sdiv i64 ${a0}, ${a1}")
+        return
+      }
+      if is_const && k != -1 {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        g.set(v, "srem i64 ${a0}, ${a1}")
+        return
+      }
+      // Xo's `x % -1` is 0; LLVM's srem of the minimum by -1 is undefined
+      let a1 = g.op(args[1])
+      let m1 = g.def("icmp eq i64 ${a1}, -1")
+      let b1 = g.op(args[1])
+      let d = g.def("select i1 ${m1}, i64 1, i64 ${b1}")
+      let a0 = g.op(args[0])
+      g.set(v, "srem i64 ${a0}, ${d}")
+    }
+    And | Or | Xor => {
+      let ins = match x.op {
+        And => "and"
+        Or => "or"
+        _ => "xor"
+      }
+      let l = g.ll(vt)
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      g.set(v, "${ins} ${l} ${a0}, ${a1}")
+    }
+    Shl | Shr => {
+      if !x.pos.is_empty() {
+        let a1 = g.op(args[1])
+        let bad = g.def("icmp uge i64 ${a1}, 64")
+        let b1 = g.op(args[1])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_shift(i64 ${b1}, ptr ${l})")
+      }
+      if x.op == ssa.Op.Shr {
+        let a0 = g.op(args[0])
+        let a1 = g.op(args[1])
+        g.set(v, "ashr i64 ${a0}, ${a1}")
+        return
+      }
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      let r = g.def("shl i64 ${a0}, ${a1}")
+      if !x.pos.is_empty() {
+        let b1 = g.op(args[1])
+        let back = g.def("ashr i64 ${r}, ${b1}")
+        let b0 = g.op(args[0])
+        let lost = g.def("icmp ne i64 ${back}, ${b0}")
+        let c0 = g.op(args[0])
+        let c1 = g.op(args[1])
+        let l = g.loc(v)
+        g.fault_if(lost, "@xo_fault_shl(i64 ${c0}, i64 ${c1}, ptr ${l})")
+      }
+      g.alias(v, r)
+    }
+    Neg => {
+      if g.kind(vt) == ssa.Kind.Float {
+        let a0 = g.op(args[0])
+        g.set(v, "fneg double ${a0}")
+        return
+      }
+      if !x.pos.is_empty() {
+        let a0 = g.op(args[0])
+        let bad = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
+        let b0 = g.op(args[0])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_neg(i64 ${b0}, ptr ${l})")
+      }
+      let a0 = g.op(args[0])
+      g.set(v, "sub nsw i64 0, ${a0}")
+    }
+    Not => {
+      let a0 = g.op(args[0])
+      if g.kind(vt) == ssa.Kind.Bool {
+        g.set(v, "xor i1 ${a0}, true")
+      } else {
+        g.set(v, "xor i64 ${a0}, -1")
+      }
+    }
+    Eq | Ne | Lt | Le | Gt | Ge => {
+      let at = g.vty(args[0])
+      match g.kind(at) {
+        Int => {
+          let a0 = g.op(args[0])
+          let a1 = g.op(args[1])
+          g.set(v, "icmp ${cmp_int(x.op)} i64 ${a0}, ${a1}")
+        }
+        Bool => {
+          let a0 = g.op(args[0])
+          let a1 = g.op(args[1])
+          g.set(v, "icmp ${cmp_bool(x.op)} i1 ${a0}, ${a1}")
+        }
+        Float => {
+          if x.op is ssa.Op.Eq | ssa.Op.Ne {
+            let a0 = g.op(args[0])
+            let a1 = g.op(args[1])
+            g.set(v, "fcmp ${cmp_float(x.op)} double ${a0}, ${a1}")
+          } else {
+            let a0 = g.op(args[0])
+            let a1 = g.op(args[1])
+            let s = g.float_order(x.op, a0, a1)
+            g.set(v, s)
+          }
+        }
+        Unit => {
+          let r = match x.op {
+            Eq | Le | Ge => "true"
+            _ => "false"
+          }
+          g.set(v, "and i1 ${r}, true")
+        }
+        Str | Struct | Tuple | Enum | List => {
+          if !(x.op is ssa.Op.Eq | ssa.Op.Ne) {
+            g.fail("the SSA lowering does not order `${g.m.types[at].name}`")
+            return
+          }
+          let ef = g.eq_fn(at)
+          let t0 = g.typed(args[0])
+          let t1 = g.typed(args[1])
+          let eq = g.def("call i1 ${ef}(${t0}, ${t1})")
+          if x.op == ssa.Op.Ne {
+            g.set(v, "xor i1 ${eq}, true")
+          } else {
+            g.alias(v, eq)
+          }
+        }
+        _ => g.fail("the SSA lowering does not compare `${g.m.types[at].name}`")
+      }
+    }
+    IntToFloat => {
+      let a0 = g.op(args[0])
+      g.set(v, "sitofp i64 ${a0} to double")
+    }
+    IntConv => {
+      let a0 = g.op(args[0])
+      g.alias(v, a0)
+    }
+    FloatToInt => {
+      let a0 = g.op(args[0])
+      let t = g.def("call double @llvm.trunc.f64(double ${a0})")
+      if !x.pos.is_empty() {
+        let lo = g.def("fcmp oge double ${t}, 0xC3E0000000000000")
+        let hi = g.def("fcmp olt double ${t}, 0x43E0000000000000")
+        let inr = g.def("and i1 ${lo}, ${hi}")
+        let bad = g.def("xor i1 ${inr}, true")
+        let b0 = g.op(args[0])
+        let l = g.loc(v)
+        g.fault_if(bad, "@xo_fault_float_int(double ${b0}, ptr ${l})")
+      }
+      g.set(v, "fptosi double ${t} to i64")
+    }
+    Struct | Tuple => {
+      if g.kind(vt) == ssa.Kind.Unit {
+        return
+      }
+      let lt = g.ll(vt)
+      var cur = "undef"
+      if args.is_empty() {
+        cur = "zeroinitializer"
+      }
+      for (i, a) in args.indexed() {
+        let ta = g.typed(a)
+        if i == args.len() - 1 {
+          g.set(v, "insertvalue ${lt} ${cur}, ${ta}, ${i}")
+          return
+        }
+        cur = g.def("insertvalue ${lt} ${cur}, ${ta}, ${i}")
+      }
+      g.alias(v, cur)
+    }
+    Field => g.field(v)
+    SetField => g.set_field(v)
+    Variant => {
+      var fs: List[Str] = []
+      for a in args {
+        fs.push(g.op(a))
+      }
+      let r = g.variant(vt, aux_int(x.aux), fs)
+      g.alias(v, r)
+    }
+    Tag => {
+      let p = g.addr[args[0]]
+      if !p.is_empty() {
+        g.set(v, "load i64, ptr ${p}")
+        return
+      }
+      let l = g.ll(g.vty(args[0]))
+      let a0 = g.op(args[0])
+      g.set(v, "extractvalue ${l} ${a0}, 0")
+    }
+    Payload => {
+      let (tag, fld) = match x.aux {
+        P(tag, field) => (tag, field)
+        _ => (0, 0)
+      }
+      if g.is_void(vt) {
+        return
+      }
+      let p = g.addr[args[0]]
+      if !p.is_empty() {
+        let t = g.vty(args[0])
+        let lt = g.ll(t)
+        let pay = g.def("getelementptr ${lt}, ptr ${p}, i32 0, i32 1")
+        let vl = g.variant_ll(t, tag)
+        let fp = g.def("getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${fld}")
+        if g.is_agg(vt) {
+          g.addr[v] = fp
+        }
+        let l = g.ll(vt)
+        g.set(v, "load ${l}, ptr ${fp}")
+        return
+      }
+      let a0 = g.op(args[0])
+      let r = g.payload(g.vty(args[0]), a0, tag, fld)
+      g.alias(v, r)
+    }
+    Call => g.call(v)
+    Closure => {
+      let callee = g.by_name.get(aux_str(x.aux)) ?? -1
+      if callee < 0 {
+        g.fail("a closure of `${aux_str(x.aux)}`, which the module does not have")
+        return
+      }
+      var env = "null"
+      if !args.is_empty() {
+        let el = g.env_ll(callee)
+        var parts: List[(Int, Int)] = [(8, 8), (8, 8), (8, 8)]
+        var size = 0
+        var align = 1
+        for c in g.m.funcs[callee].captures {
+          let (s, a) = g.layout(c)
+          parts.push((s, a))
+        }
+        for (s, a) in parts {
+          size = align_up(size, a) + s
+          if a > align {
+            align = a
+          }
+        }
+        size = align_up(size, align)
+        env = g.def("call ptr @xo_rc_alloc(i64 ${size})")
+        g.emit("store i64 1, ptr ${env}${TBAA_RC}")
+        let dp = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 1")
+        let df = g.env_drop_fn(callee)
+        g.emit("store ptr ${df}, ptr ${dp}")
+        let sp = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 2")
+        let sf = g.env_share_fn(callee)
+        g.emit("store ptr ${sf}, ptr ${sp}")
+        for (i, a) in args.indexed() {
+          if g.is_void(g.vty(a)) {
+            continue
+          }
+          let p = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 ${i + ENV_FIELDS}")
+          let ta = g.typed(a)
+          g.emit("store ${ta}, ptr ${p}")
+        }
+      }
+      let t0 = g.def("insertvalue { ptr, ptr } undef, ptr ${fname(g.m.funcs[callee].name)}, 0")
+      g.set(v, "insertvalue { ptr, ptr } ${t0}, ptr ${env}, 1")
+    }
+    FuncAddr => g.set(v, "ptrtoint ptr ${fname(aux_str(x.aux))} to i64")
+    Rebind => {
+      let a0 = g.op(args[0])
+      g.set(v, "insertvalue { ptr, ptr } ${a0}, ptr ${fname(aux_str(x.aux))}, 0")
+    }
+    Box => {
+      let et = g.vty(args[0])
+      let (es, ea) = g.layout(et)
+      var size = align_up(0, 8) + 8
+      size = align_up(size, ea) + es
+      size = align_up(size, if ea > 8 { ea } else { 8 })
+      let p = g.def("call ptr @xo_rc_alloc(i64 ${size})")
+      g.emit("store i64 1, ptr ${p}${TBAA_RC}")
+      if !g.is_void(et) {
+        let bl = g.box_ll(vt)
+        let vp = g.def("getelementptr ${bl}, ptr ${p}, i32 0, i32 1")
+        let ta = g.typed(args[0])
+        g.emit("store ${ta}, ptr ${vp}")
+      }
+      g.alias(v, p)
+    }
+    Unbox => {
+      if g.is_void(vt) {
+        return
+      }
+      let bl = g.box_ll(g.vty(args[0]))
+      let a0 = g.op(args[0])
+      let vp = g.def("getelementptr ${bl}, ptr ${a0}, i32 0, i32 1")
+      if g.is_agg(vt) && g.root_borrowed(args[0]) {
+        g.addr[v] = vp
+      }
+      let l = g.ll(vt)
+      g.set(v, "load ${l}, ptr ${vp}")
+    }
+    Capture => {
+      if g.is_void(vt) {
+        return
+      }
+      let a0 = g.op(args[0])
+      let env = g.def("extractvalue { ptr, ptr } ${a0}, 1")
+      let el = g.env_ll(g.fi)
+      let p = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 ${aux_int(x.aux) + ENV_FIELDS}")
+      let l = g.ll(vt)
+      g.set(v, "load ${l}, ptr ${p}")
+    }
+    CallValue => {
+      let a0 = g.op(args[0])
+      let code = g.def("extractvalue { ptr, ptr } ${a0}, 0")
+      var cargs: List[Str] = []
+      for a in args {
+        cargs.push(g.typed(a))
+      }
+      let l = g.ll(vt)
+      let c = "${l} ${code}(${cargs.join(", ")})"
+      if g.kind(vt) == ssa.Kind.Unit {
+        g.raise("", c)
+        return
+      }
+      g.raise(vname(v), c)
+    }
+    Fault => {
+      let m = g.op(args[0])
+      let obj = g.def("extractvalue %xo.str ${m}, 0")
+      let n = g.def("extractvalue %xo.str ${m}, 1")
+      let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
+      let l = g.loc(v)
+      g.emit("call void @xo_fault(ptr ${data}, i64 ${n}, ptr ${l})")
+      g.emit("unreachable")
+    }
+    Retain => {
+      let a = args[0]
+      if g.f.values[a].op == ssa.Op.Const {
+        return // literals are immortal
+      }
+      let r = g.cancelled_release(v)
+      if r >= 0 {
+        // a retain and a release of the same reference: neither
+        g.cancel[r] = true
+        return
+      }
+      let h = g.rc_fn("dup", g.vty(a))
+      let ta = g.typed(a)
+      g.emit("call void ${h}(${ta})")
+    }
+    Release => {
+      let a = args[0]
+      if g.cancel[v] {
+        return
+      }
+      let h = g.rc_fn("drop", g.vty(a))
+      let ta = g.typed(a)
+      g.emit("call void ${h}(${ta})")
+    }
+    Share => {
+      let a = args[0]
+      if g.f.values[a].op == ssa.Op.Const {
+        return // literals are immortal
+      }
+      let h = g.rc_fn("share", g.vty(a))
+      let ta = g.typed(a)
+      g.emit("call void ${h}(${ta})")
+    }
+    Reuse => {
+      let a = args[0]
+      let at = g.vty(a)
+      if g.kind(at) != ssa.Kind.List {
+        g.fail("reuse of `${g.m.types[at].name}`")
+        return
+      }
+      let et = g.m.types[at].elems[0]
+      let a0 = g.op(a)
+      let c = g.def("load atomic i64, ptr ${a0} unordered, align 8${TBAA_RC}")
+      let shared = g.def("icmp ne i64 ${c}, 1")
+      let from = g.label
+      let slow = g.new_label("copy")
+      let done = g.new_label("unique")
+      g.emit("br i1 ${shared}, label %${slow}, label %${done}, !prof !0")
+      g.start(slow)
+      // a copy, or the same list when it is shared but only held here
+      let b0 = g.op(a)
+      let sz = g.size(et)
+      let dup = g.elem_fn("dup", et)
+      let drop = g.elem_fn("drop", et)
+      let cp = g.def("call ptr @xo_rl_copy(ptr ${b0}, i64 ${sz}, ptr ${dup}, ptr ${drop})")
+      g.emit("br label %${done}")
+      g.start(done)
+      let c0 = g.op(a)
+      g.set(v, "phi ptr [ ${c0}, %${from} ], [ ${cp}, %${slow} ]")
+    }
+    Jump => {
+      g.emit("br label %${bname(g.edge_to(x.succs[0]))}")
+      g.ends[g.blk[v]] = g.label
+    }
+    Branch => {
+      let a0 = g.op(args[0])
+      g.emit("br i1 ${a0}, label %${bname(g.edge_to(x.succs[0]))}, label %${bname(g.edge_to(x.succs[1]))}")
+      g.ends[g.blk[v]] = g.label
+    }
+    Return => g.ret(v)
+    Unreachable => g.emit("unreachable")
+    _ => g.fail("the SSA lowering does not support `${ssa.op_name(x.op)}`")
+  }
+}
+
+/// A field read (OpField).
+fn (var g: Gen) field(v: Int) {
+  let x = g.f.values[v]
+  let vt = x.ty
+  if g.is_void(vt) {
+    return
+  }
+  let a = x.args[0]
+  let fi = aux_int(x.aux)
+  let mo = g.mem_only(v)
+  if mo >= 0 && g.f.values[a].op == ssa.Op.Call {
+    // a `var` result the call wrote back, held at every use
+    g.lazy[v] = mo
+    return
+  }
+  let p = g.addr[a]
+  if !p.is_empty() {
+    let l = g.ll(g.vty(a))
+    let fp = g.def("getelementptr ${l}, ptr ${p}, i32 0, i32 ${fi}")
+    if g.is_agg(vt) {
+      g.addr[v] = fp
+    }
+    let lv = g.ll(vt)
+    g.set(v, "load ${lv}, ptr ${fp}")
+    return
+  }
+  let m = g.held_at(v, a)
+  if m >= 0 {
+    let lt = g.held.mems[m].lt
+    let ptr = g.held.mems[m].ptr
+    let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${fi}")
+    let lv = g.ll(vt)
+    g.set(v, "load ${lv}, ptr ${fp}")
+    return
+  }
+  let l = g.ll(g.vty(a))
+  let a0 = g.op(a)
+  g.set(v, "extractvalue ${l} ${a0}, ${fi}")
+}
+
+/// A field update (OpSetField).
+fn (var g: Gen) set_field(v: Int) {
+  let x = g.f.values[v]
+  if g.has_held {
+    let m = g.held.in_place[v]
+    if m >= 0 {
+      // the memory holds the operand: write the field there
+      let lt = g.held.mems[m].lt
+      let ptr = g.held.mems[m].ptr
+      let t1 = g.typed(x.args[1])
+      let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${aux_int(x.aux)}")
+      g.emit("store ${t1}, ptr ${fp}")
+      if g.mem_only(v) >= 0 {
+        g.lazy[v] = m
+      } else {
+        g.set(v, "load ${lt}, ptr ${ptr}")
+      }
+      return
+    }
+  }
+  let l = g.ll(x.ty)
+  let a0 = g.op(x.args[0])
+  let t1 = g.typed(x.args[1])
+  g.set(v, "insertvalue ${l} ${a0}, ${t1}, ${aux_int(x.aux)}")
+}
+
+/// Reads a value of type t from memory p (loadRef, decision 0145).
+fn (var g: Gen) load_ref(t: Int, p: Str) -> Str {
+  let l = g.ll(t)
+  g.def("load ${l}, ptr ${p}")
+}
+
+/// Writes value x of type t to memory p (storeRef).
+fn (var g: Gen) store_ref(t: Int, x: Str, p: Str) {
+  let l = g.ll(t)
+  g.emit("store ${l} ${x}, ptr ${p}")
+}
+
+/// Memory for an argument of LLVM type lt passed by reference (slot):
+/// the first of the type in a call takes its home, the others spare
+/// slots.
+fn (var g: Gen) slot(lt: Str, var used: Map[Str, Int]) -> Str {
+  let n = used.get(lt) ?? 0
+  used[lt] = n + 1
+  if n == 0 {
+    if let Some(h) = g.home.get(lt) {
+      return h
+    }
+    let h = g.alloca(lt)
+    g.home[lt] = h
+    return h
+  }
+  var sp = g.spare.get(lt) ?? []
+  while sp.len() < n {
+    sp.push(g.alloca(lt))
+  }
+  g.spare[lt] = sp
+  sp[n - 1]
+}
+
+/// A return (OpReturn).
+fn (var g: Gen) ret(v: Int) {
+  let args = g.f.values[v].args
+  let rt = g.res_ll(g.fi)
+  // the `var` parameters passed by reference are written back
+  let br = g.by_ref_of(g.fi)
+  if !br.is_empty() {
+    // every value is read before any is stored: one held in a memory is
+    // loaded before another write back overwrites it
+    let params = g.f.blocks[0].params
+    var xs: List[Str] = []
+    var ptrs: List[Str] = []
+    var ts: List[Int] = []
+    for (j, vi) in g.f.var_params.indexed() {
+      if br[vi] {
+        let ptr = "%p${params[vi]}"
+        let m = g.held_at(v, args[1 + j])
+        if m >= 0 && g.held.mems[m].ptr == ptr {
+          continue // already there (decision 0148)
+        }
+        xs.push(g.op(args[1 + j]))
+        ptrs.push(ptr)
+        ts.push(g.vty(params[vi]))
+      }
+    }
+    for i in 0..xs.len() {
+      g.store_ref(ts[i], xs[i], ptrs[i])
+    }
+  }
+  let kept = g.kept_results(g.fi)
+  if kept.len() == 1 {
+    let t = g.typed(args[kept[0]])
+    g.emit("ret ${t}")
+    return
+  }
+  var cur = "undef"
+  for (i, k) in kept.indexed() {
+    let t = g.typed(args[k])
+    cur = g.def("insertvalue ${rt} ${cur}, ${t}, ${i}")
+  }
+  g.emit("ret ${rt} ${cur}")
+}

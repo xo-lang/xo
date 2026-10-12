@@ -45,6 +45,11 @@ type Options struct {
 	// outline atomics where the baseline lacks them; decision 0119) and
 	// LTO may inline runtime functions into it. Empty: LLVM's generic CPU.
 	TargetAttrs string
+	// IR, when set, replaces the IR GenerateSSA makes with this text (the
+	// self hosted emitter's, selfhost/llvm: decision 0166's end to end
+	// test builds a binary from it); the SSA is still built for what the
+	// build needs from it (zone data), and TargetAttrs still apply.
+	IR []byte
 }
 
 // Program is the generated IR of one Xo program.
@@ -62,6 +67,34 @@ type Program struct {
 // builds SSA, verifies it, inserts reference counting, verifies again
 // (ownership balance included), and lowers to LLVM IR.
 func Generate(res *check.Result, opts Options) (*Program, error) {
+	m, err := PrepareSSA(res, opts)
+	if err != nil {
+		return nil, err
+	}
+	prog, err := GenerateSSA(m)
+	if err != nil {
+		return nil, err
+	}
+	if opts.IR != nil {
+		prog.IR = append([]byte(nil), opts.IR...)
+	}
+	if opts.TargetAttrs != "" {
+		prog.IR = withTargetAttrs(prog.IR, opts.TargetAttrs)
+	}
+	prog.TZ = m.TZ
+	for _, mod := range res.Modules {
+		if fo, ok := mod.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
+			prog.MainModule = mod.Path
+			break
+		}
+	}
+	return prog, nil
+}
+
+// PrepareSSA is the module GenerateSSA lowers for Generate: built,
+// verified, with reference counting inserted, and verified again
+// (`xo llvmdump --bench` times GenerateSSA alone on it, decision 0166).
+func PrepareSSA(res *check.Result, opts Options) (*ssa.Module, error) {
 	m, err := ssa.BuildOpts(res, ssa.Options{LineRoot: opts.LineRoot, Tests: opts.Tests, RealTests: opts.RealTests, Release: opts.Release})
 	if err != nil {
 		return nil, err
@@ -76,21 +109,7 @@ func Generate(res *check.Result, opts Options) (*Program, error) {
 	if err := m.Verify(); err != nil {
 		return nil, err
 	}
-	prog, err := GenerateSSA(m)
-	if err != nil {
-		return nil, err
-	}
-	if opts.TargetAttrs != "" {
-		prog.IR = withTargetAttrs(prog.IR, opts.TargetAttrs)
-	}
-	prog.TZ = m.TZ
-	for _, mod := range res.Modules {
-		if fo, ok := mod.Scope["main"].(*check.FuncObj); ok && fo.Recv == nil {
-			prog.MainModule = mod.Path
-			break
-		}
-	}
-	return prog, nil
+	return m, nil
 }
 
 // definedAttrs are the attribute groups of generated function
