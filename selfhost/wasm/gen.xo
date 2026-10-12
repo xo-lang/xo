@@ -54,7 +54,7 @@ pub struct Gen {
   leaf_done: List[Bool] = []
   /// The data segments and the next free address.
   data: List[Str] = []
-  data_end: Int = 1024
+  data_end: Int = 2048
   /// String objects and raw literals by their text.
   strs: Map[Str, Int] = {}
   raws: Map[Str, Int] = {}
@@ -510,16 +510,17 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         if x.kind == ssa.Kind.List && g.heap(x.elems[0]) {
           g.drop_elems(0, x.elems[0])
         }
-        if x.kind == ssa.Kind.Box && g.heap(x.elems[0]) {
-          let et = x.elems[0]
-          let el = g.leaves(et)
-          let b = g.tmps(el)
-          g.load_leaves(0, 8, b, el)
-          g.push_range(b, el.len())
-          g.e("call ${g.rc_fn("drop", et)}")
+        if x.kind == ssa.Kind.Box {
+          // deferred: a long chain of boxes is freed with a worklist
+          // (xo_rc_defer), not by recursion
+          let bd = g.boxdrop_fn(t)
+          g.get(0)
+          g.e("i32.const ${g.table_index(bd)}")
+          g.e("call $rc_defer")
+        } else {
+          g.get(0)
+          g.e("call $free")
         }
-        g.get(0)
-        g.e("call $free")
         g.e("end")
       }
     }
@@ -537,7 +538,7 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         g.get(1)
         g.get(1)
         g.e("i32.load offset=4")
-        g.e("call_indirect (type ${g.sig(["i32"], [])})")
+        g.e("call $rc_defer")
         g.e("end")
       }
       g.e("end")
@@ -698,6 +699,32 @@ fn (var g: Gen) lcopy_fn(t: Int) -> Str {
   g.e("drop")
   g.get(r)
   g.end_helper(name, ["i32"], ["i32"], "copy ${g.m.types[t].name}")
+  g.cur = saved
+  name
+}
+
+/// The function (in the table) that releases the contents of a box of
+/// type t whose count reached zero and frees it.
+fn (var g: Gen) boxdrop_fn(t: Int) -> Str {
+  let name = "$boxdrop${t}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  let et = g.m.types[t].elems[0]
+  if g.heap(et) {
+    let el = g.leaves(et)
+    let b = g.tmps(el)
+    g.load_leaves(0, 8, b, el)
+    g.push_range(b, el.len())
+    let d = g.rc_fn("drop", et)
+    g.e("call ${d}")
+  }
+  g.get(0)
+  g.e("call $free")
+  g.end_helper(name, ["i32"], [], "box drop ${g.m.types[t].name}")
   g.cur = saved
   name
 }

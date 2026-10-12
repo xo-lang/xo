@@ -232,11 +232,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     Div | Rem => {
       let opn = if x.op == ssa.Op.Div { "div" } else { "rem" }
       if g.kind(t) == ssa.Kind.Float {
-        if x.op == ssa.Op.Rem {
-          g.fail("the wasm backend does not support `%` on Float (stage 1)")
-          return
-        }
-        g.binop(v, "f64.div")
+        g.binop(v, if x.op == ssa.Op.Rem { "call $fmod" } else { "f64.div" })
       } else if !x.pos.is_empty() {
         g.checked(v, "$${opn}_chk", 2)
       } else {
@@ -288,7 +284,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     }
     FloatToInt => {
       if !x.pos.is_empty() {
-        g.fail("the wasm backend does not support a checked Float to Int conversion (stage 1: its fault message formats a Float)")
+        g.checked(v, "$ftoi_chk", 1)
         return
       }
       g.push(g.arg(v, 0))
@@ -466,7 +462,22 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.e("return")
     }
     Unreachable => g.e("unreachable")
-    FuncAddr | Rebind | Drop => g.fail("the wasm backend does not support `${ssa.op_name(x.op)}` (stage 1)")
+    Rebind => {
+      // the function value of another code with the same environment
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      let ci = g.by_name.get(name) ?? -1
+      if ci < 0 {
+        g.fail("the wasm backend does not rebind to `${name}`")
+        return
+      }
+      g.e("i32.const ${g.table_index("$f${ci}")}")
+      g.push_part(x.args[0], 1, 2)
+      g.def(v)
+    }
+    FuncAddr | Drop => g.fail("the wasm backend does not support `${ssa.op_name(x.op)}` (stage 1)")
   }
 }
 

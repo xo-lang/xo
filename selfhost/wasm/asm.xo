@@ -901,6 +901,8 @@ fn simple_op(op: Str) -> Int {
     "i64.extend_i32_s" => 0xAC
     "i64.extend_i32_u" => 0xAD
     "i64.trunc_f64_s" => 0xB0
+    "i32.trunc_f64_s" => 0xAA
+    "f64.convert_i32_s" => 0xB7
     "f64.convert_i64_s" => 0xB9
     "f64.convert_i64_u" => 0xBA
     "i64.reinterpret_f64" => 0xBD

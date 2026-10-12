@@ -7,7 +7,8 @@
 //
 // Memory: 0..15 the iovec and the count fd_write writes, 16..47 scratch
 // for formatting integers, 256..383 the free lists (one per size class),
-// literals from 1024, then the heap, which grows with memory.grow. A
+// 1024..1983 the integers and text of Float formatting, literals from
+// 2048, then the heap, which grows with memory.grow. A
 // block is a power of two of at least 16 bytes with an 8 byte header (its
 // size class; the next free block when it is free). A count of the i32
 // minimum is immortal (literals, decision 0058); there are no threads, so
@@ -23,6 +24,13 @@ fn rt_imports() -> Str {
     (global $fmsgn (mut i32) (i32.const 0))
     (global $floc (mut i32) (i32.const 0))
     (global $flocn (mut i32) (i32.const 0))
+    (global $fdet (mut i32) (i32.const 0))
+    (global $flocobj (mut i32) (i32.const 0))
+    (global $dq (mut i32) (i32.const 0))
+    (global $dqn (mut i32) (i32.const 0))
+    (global $dqcap (mut i32) (i32.const 0))
+    (global $ddepth (mut i32) (i32.const 0))
+    (global $fdetn (mut i32) (i32.const 0))
     (global $live (mut i64) (i64.const 0))
     (global $total (mut i64) (i64.const 0))
 
@@ -46,6 +54,17 @@ fn rt_text(var g: Gen) -> Str {
   let absp = g.litp("integer overflow: abs(")
   let close = g.litp(") does not fit Int")
   let index = g.litp("index ")
+  let slicep = g.litp("slice ")
+  let ofrange = g.litp(" out of range for ")
+  let oflen = g.litp(" of length ")
+  let splits = g.litp(" of Str splits a UTF-8 sequence")
+  let bytes_a = g.raw("Bytes".bytes())
+  let str_a = g.raw("Str".bytes())
+  let bytes_n = 5
+  let str_n = 3
+  let dropsig = g.sig(["i32"], [])
+  let nanmsg = g.litp("cannot convert NaN to Int")
+  let oorint = g.litp(" is out of range for Int")
   let fffd = g.litp("\\u{FFFD}")
   let lofl_s =" out of range for List of length "
   let lofb_s = " out of range for Bytes of length "
@@ -202,6 +221,99 @@ fn rt_text(var g: Gen) -> Str {
         i32.store
       end
       i32.const 0)
+
+    ;; calls drop function f (a table index) on p; inside another such
+    ;; call the pair waits in a worklist, so long chains of boxes and
+    ;; environments do not recurse (xo_rc_defer)
+    (func $rc_defer (param $p i32) (param $f i32) (local $q i32)
+      global.get $ddepth
+      if
+        global.get $dqn
+        global.get $dqcap
+        i32.eq
+        if
+          global.get $dqcap
+          i32.const 1
+          i32.shl
+          i32.const 64
+          global.get $dqcap
+          i32.const 32
+          i32.gt_u
+          select
+          global.set $dqcap
+          global.get $dqcap
+          i32.const 3
+          i32.shl
+          call $alloc
+          local.tee $q
+          global.get $dq
+          global.get $dqn
+          i32.const 3
+          i32.shl
+          memory.copy
+          global.get $dq
+          if
+            global.get $dq
+            call $free
+          end
+          local.get $q
+          global.set $dq
+        end
+        global.get $dq
+        global.get $dqn
+        i32.const 3
+        i32.shl
+        i32.add
+        local.tee $q
+        local.get $p
+        i32.store
+        local.get $q
+        local.get $f
+        i32.store offset=4
+        global.get $dqn
+        i32.const 1
+        i32.add
+        global.set $dqn
+        return
+      end
+      i32.const 1
+      global.set $ddepth
+      local.get $p
+      local.get $f
+      call_indirect (type ${dropsig})
+      block $x
+        loop $l
+          global.get $dqn
+          i32.eqz
+          br_if $x
+          global.get $dqn
+          i32.const 1
+          i32.sub
+          global.set $dqn
+          global.get $dq
+          global.get $dqn
+          i32.const 3
+          i32.shl
+          i32.add
+          local.tee $q
+          i32.load
+          local.get $q
+          i32.load offset=4
+          call_indirect (type ${dropsig})
+          br $l
+        end
+      end
+      global.get $dq
+      if
+        global.get $dq
+        call $free
+        i32.const 0
+        global.set $dq
+        i32.const 0
+        global.set $dqcap
+      end
+      i32.const 0
+      global.set $ddepth)
 
     ;; strings: an object {rc, cap, bytes}; a Str is the object and a length
     (func $rs_new (param $n i32) (result i32) (local $s i32)
@@ -574,6 +686,19 @@ fn rt_text(var g: Gen) -> Str {
     ;; faults: the message (a string object the runtime keeps) and the
     ;; position, reported when the fault leaves main
     (func $fault_set (param $m i32) (param $mn i32) (param $lp i32) (param $ln i32)
+      ;; a fault raised while one unwinds replaces it
+      global.get $fmsg
+      if
+        global.get $fmsg
+        call $free
+      end
+      global.get $flocobj
+      if
+        global.get $flocobj
+        call $free
+        i32.const 0
+        global.set $flocobj
+      end
       local.get $m
       global.set $fmsg
       local.get $mn
@@ -606,18 +731,283 @@ fn rt_text(var g: Gen) -> Str {
       call $fault_set)
 
     ;; rt.fault_raise: the message and the position are Strs
-    (func $fault_raise (param $s i32) (param $n i32) (param $l i32) (param $ln i32)
-      local.get $s
-      local.get $n
-      call $str_copy
+    (func $fault_raise (param $s i32) (param $n i32) (param $l i32) (param $ln i32) (local $lo i32)
       local.get $l
       local.get $ln
       call $str_copy
       drop
+      local.set $lo
+      local.get $s
+      local.get $n
+      call $str_copy
+      local.get $lo
       i32.const 8
       i32.add
       local.get $ln
-      call $fault_set)
+      call $fault_set
+      local.get $lo
+      global.set $flocobj)
+
+    ;; the line printed under the next fault (rt.fault_detail)
+    (func $fault_detail (param $s i32) (param $n i32)
+      global.get $fdet
+      if
+        global.get $fdet
+        call $free
+      end
+      local.get $s
+      local.get $n
+      call $str_copy
+      global.set $fdetn
+      global.set $fdet)
+
+    ;; FNV-1a and a final mix (xo_str_hash, decision 0072)
+    (func $str_hash (param $o i32) (param $n i32) (result i64) (local $h i64) (local $i i32)
+      i64.const 1469598103934665603
+      local.set $h
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $h
+          local.get $o
+          local.get $i
+          i32.add
+          i64.load8_u offset=8
+          i64.xor
+          i64.const 1099511628211
+          i64.mul
+          local.set $h
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $h
+      local.get $h
+      i64.const 31
+      i64.shr_u
+      i64.xor
+      i64.const 0x9E3779B97F4A7C15
+      i64.mul
+      local.tee $h
+      local.get $h
+      i64.const 29
+      i64.shr_u
+      i64.xor)
+
+    ;; faults unless lo..hi is a range of a value of length n
+    (func $slice_check (param $lo i64) (param $hi i64) (param $n i32) (param $bytes i32) (param $l i32) (param $ln i32) (result i32)
+      local.get $lo
+      i64.const 0
+      i64.lt_s
+      local.get $hi
+      local.get $n
+      i64.extend_i32_u
+      i64.gt_s
+      i32.or
+      local.get $lo
+      local.get $hi
+      i64.gt_s
+      i32.or
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${slicep}
+        call $sapp
+        local.get $lo
+        call $sapp_int
+        i32.const 46
+        call $sapp_byte
+        i32.const 46
+        call $sapp_byte
+        local.get $hi
+        call $sapp_int
+        ${ofrange}
+        call $sapp
+        i32.const ${bytes_a}
+        i32.const ${str_a}
+        local.get $bytes
+        select
+        i32.const ${bytes_n}
+        i32.const ${str_n}
+        local.get $bytes
+        select
+        call $sapp
+        ${oflen}
+        call $sapp
+        local.get $n
+        i64.extend_i32_u
+        call $sapp_int
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i32.const 0
+        return
+      end
+      i32.const 1)
+
+    (func $bytes_slice_at (param $o i32) (param $n i32) (param $lo i64) (param $hi i64) (param $l i32) (param $ln i32) (result i32 i32)
+      local.get $lo
+      local.get $hi
+      local.get $n
+      i32.const 1
+      local.get $l
+      local.get $ln
+      call $slice_check
+      i32.eqz
+      if
+        i32.const 0
+        i32.const 0
+        return
+      end
+      local.get $o
+      local.get $n
+      local.get $lo
+      local.get $hi
+      call $str_slice)
+
+    (func $str_slice_at (param $o i32) (param $n i32) (param $lo i64) (param $hi i64) (param $l i32) (param $ln i32) (result i32 i32)
+      local.get $lo
+      local.get $hi
+      local.get $n
+      i32.const 0
+      local.get $l
+      local.get $ln
+      call $slice_check
+      i32.eqz
+      if
+        i32.const 0
+        i32.const 0
+        return
+      end
+      local.get $lo
+      local.get $n
+      i64.extend_i32_u
+      i64.lt_s
+      if (result i32)
+        local.get $o
+        local.get $lo
+        i32.wrap_i64
+        i32.add
+        i32.const 8
+        i32.add
+        call $cont
+      else
+        i32.const 0
+      end
+      local.get $hi
+      local.get $n
+      i64.extend_i32_u
+      i64.lt_s
+      if (result i32)
+        local.get $o
+        local.get $hi
+        i32.wrap_i64
+        i32.add
+        i32.const 8
+        i32.add
+        call $cont
+      else
+        i32.const 0
+      end
+      i32.or
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${slicep}
+        call $sapp
+        local.get $lo
+        call $sapp_int
+        i32.const 46
+        call $sapp_byte
+        i32.const 46
+        call $sapp_byte
+        local.get $hi
+        call $sapp_int
+        ${splits}
+        call $sapp
+        local.get $l
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i32.const 0
+        i32.const 0
+        return
+      end
+      local.get $o
+      local.get $n
+      local.get $lo
+      local.get $hi
+      call $str_slice)
+
+    ;; catches the fault being raised (task.isolate, Map.update):
+    ;; 1 and the program goes on, its message and position available to
+    ;; rt.fault_msg and rt.fault_loc (xo_fault_take)
+    (func $fault_take (result i32)
+      global.get $faulting
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      i32.const 0
+      global.set $faulting
+      i32.const 1)
+
+    (func $fault_msg (result i32 i32)
+      global.get $fmsg
+      global.get $fmsgn
+      call $str_copy)
+
+    ;; the position; the record is cleared after it
+    (func $fault_loc (result i32 i32) (local $s i32) (local $n i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      global.get $floc
+      global.get $flocn
+      call $sapp
+      local.set $n
+      local.set $s
+      global.get $fmsg
+      if
+        global.get $fmsg
+        call $free
+      end
+      global.get $flocobj
+      if
+        global.get $flocobj
+        call $free
+      end
+      global.get $fdet
+      if
+        global.get $fdet
+        call $free
+      end
+      i32.const 0
+      global.set $fmsg
+      i32.const 0
+      global.set $fmsgn
+      i32.const 0
+      global.set $flocobj
+      i32.const 0
+      global.set $flocn
+      i32.const 0
+      global.set $fdet
+      i32.const 0
+      global.set $fdetn
+      local.get $s
+      local.get $n)
 
     (func $fault_report
       i32.const 2
@@ -639,6 +1029,18 @@ fn rt_text(var g: Gen) -> Str {
       i32.const 2
       ${nl}
       call $write
+      global.get $fdetn
+      if
+        i32.const 2
+        global.get $fdet
+        i32.const 8
+        i32.add
+        global.get $fdetn
+        call $write
+        i32.const 2
+        ${nl}
+        call $write
+      end
       i32.const 70
       call $proc_exit)
 
@@ -1077,6 +1479,72 @@ fn rt_text(var g: Gen) -> Str {
       call $flt
       select)
 
+    ;; x % y on Floats (C's fmod, exact): the largest y * 2^k not above
+    ;; the remainder is subtracted until it is below y (each subtraction
+    ;; is exact, Sterbenz)
+    (func $fmod (param $x f64) (param $y f64) (result f64) (local $r f64) (local $ay f64) (local $t f64)
+      local.get $x
+      f64.abs
+      local.set $r
+      local.get $y
+      f64.abs
+      local.set $ay
+      local.get $ay
+      i64.const 0
+      f64.reinterpret_i64
+      f64.eq
+      local.get $r
+      local.get $r
+      f64.ne
+      i32.or
+      local.get $ay
+      local.get $ay
+      f64.ne
+      i32.or
+      local.get $r
+      i64.const 9218868437227405312
+      f64.reinterpret_i64
+      f64.eq
+      i32.or
+      if
+        i64.const 9221120237041090561
+        f64.reinterpret_i64
+        return
+      end
+      block $x
+        loop $l
+          local.get $r
+          local.get $ay
+          f64.lt
+          br_if $x
+          local.get $ay
+          local.set $t
+          block $y
+            loop $m
+              local.get $t
+              local.get $t
+              f64.add
+              local.get $r
+              f64.gt
+              br_if $y
+              local.get $t
+              local.get $t
+              f64.add
+              local.set $t
+              br $m
+            end
+          end
+          local.get $r
+          local.get $t
+          f64.sub
+          local.set $r
+          br $l
+        end
+      end
+      local.get $r
+      local.get $x
+      f64.copysign)
+
     ;; half away from zero
     (func $fround (param $x f64) (result f64) (local $t f64)
       local.get $x
@@ -1191,6 +1659,938 @@ fn rt_text(var g: Gen) -> Str {
       local.get $es
       i32.mul
       i32.add)
+
+    ;; Float text: Go's strconv 'g' with the shortest digits that round
+    ;; trip (std/llrt fmt_go_g), by the free-format algorithm of Burger
+    ;; and Dybvig on 40 limb (1,280 bit) integers at 1024 (R), 1184 (S),
+    ;; 1344 (M+), 1504 (M-), 1664 (a temporary); digits at 1824, the text
+    ;; at 1856
+    (func $bset (param $a i32) (param $v i64)
+      local.get $a
+      i32.const 0
+      i32.const 160
+      memory.fill
+      local.get $a
+      local.get $v
+      i64.store)
+
+    ;; a = a << k
+    (func $bshl (param $a i32) (param $k i32) (local $i i32) (local $src i32) (local $ws i32) (local $bs i64) (local $hi i64) (local $lo i64)
+      local.get $k
+      i32.const 5
+      i32.shr_u
+      local.set $ws
+      local.get $k
+      i32.const 31
+      i32.and
+      i64.extend_i32_u
+      local.set $bs
+      i32.const 39
+      local.set $i
+      loop $l
+        local.get $i
+        local.get $ws
+        i32.sub
+        local.tee $src
+        i32.const 0
+        i32.lt_s
+        if (result i64)
+          i64.const 0
+        else
+          local.get $a
+          local.get $src
+          i32.const 2
+          i32.shl
+          i32.add
+          i64.load32_u
+        end
+        local.set $hi
+        local.get $src
+        i32.const 1
+        i32.lt_s
+        if (result i64)
+          i64.const 0
+        else
+          local.get $a
+          local.get $src
+          i32.const 1
+          i32.sub
+          i32.const 2
+          i32.shl
+          i32.add
+          i64.load32_u
+        end
+        local.set $lo
+        local.get $a
+        local.get $i
+        i32.const 2
+        i32.shl
+        i32.add
+        local.get $hi
+        i64.const 32
+        i64.shl
+        local.get $lo
+        i64.or
+        i64.const 32
+        local.get $bs
+        i64.sub
+        i64.shr_u
+        i64.store32
+        local.get $i
+        i32.const 1
+        i32.sub
+        local.tee $i
+        i32.const 0
+        i32.ge_s
+        br_if $l
+      end)
+
+    ;; a = a * m
+    (func $bmul (param $a i32) (param $m i64) (local $i i32) (local $c i64) (local $p i32)
+      loop $l
+        local.get $a
+        local.get $i
+        i32.const 2
+        i32.shl
+        i32.add
+        local.tee $p
+        local.get $p
+        i64.load32_u
+        local.get $m
+        i64.mul
+        local.get $c
+        i64.add
+        local.tee $c
+        i64.store32
+        local.get $c
+        i64.const 32
+        i64.shr_u
+        local.set $c
+        local.get $i
+        i32.const 1
+        i32.add
+        local.tee $i
+        i32.const 40
+        i32.lt_u
+        br_if $l
+      end)
+
+    ;; d = a + b
+    (func $badd (param $d i32) (param $a i32) (param $b i32) (local $i i32) (local $c i64) (local $o i32)
+      loop $l
+        local.get $i
+        i32.const 2
+        i32.shl
+        local.set $o
+        local.get $d
+        local.get $o
+        i32.add
+        local.get $a
+        local.get $o
+        i32.add
+        i64.load32_u
+        local.get $b
+        local.get $o
+        i32.add
+        i64.load32_u
+        i64.add
+        local.get $c
+        i64.add
+        local.tee $c
+        i64.store32
+        local.get $c
+        i64.const 32
+        i64.shr_u
+        local.set $c
+        local.get $i
+        i32.const 1
+        i32.add
+        local.tee $i
+        i32.const 40
+        i32.lt_u
+        br_if $l
+      end)
+
+    ;; a = a - b (a >= b)
+    (func $bsub (param $a i32) (param $b i32) (local $i i32) (local $c i64) (local $o i32)
+      loop $l
+        local.get $i
+        i32.const 2
+        i32.shl
+        local.set $o
+        local.get $a
+        local.get $o
+        i32.add
+        local.get $a
+        local.get $o
+        i32.add
+        i64.load32_u
+        local.get $b
+        local.get $o
+        i32.add
+        i64.load32_u
+        i64.sub
+        local.get $c
+        i64.sub
+        local.tee $c
+        i64.store32
+        local.get $c
+        i64.const 63
+        i64.shr_u
+        local.set $c
+        local.get $i
+        i32.const 1
+        i32.add
+        local.tee $i
+        i32.const 40
+        i32.lt_u
+        br_if $l
+      end)
+
+    (func $bcmp (param $a i32) (param $b i32) (result i32) (local $i i32) (local $x i32) (local $y i32)
+      i32.const 39
+      local.set $i
+      loop $l
+        local.get $a
+        local.get $i
+        i32.const 2
+        i32.shl
+        i32.add
+        i32.load
+        local.set $x
+        local.get $b
+        local.get $i
+        i32.const 2
+        i32.shl
+        i32.add
+        i32.load
+        local.set $y
+        local.get $x
+        local.get $y
+        i32.ne
+        if
+          i32.const -1
+          i32.const 1
+          local.get $x
+          local.get $y
+          i32.lt_u
+          select
+          return
+        end
+        local.get $i
+        i32.const 1
+        i32.sub
+        local.tee $i
+        i32.const 0
+        i32.ge_s
+        br_if $l
+      end
+      i32.const 0)
+
+    ;; whether a bound is reached: c > 0, or c >= 0 when even
+    (func $reach (param $c i32) (param $even i32) (result i32)
+      local.get $c
+      i32.const 0
+      i32.gt_s
+      local.get $c
+      i32.eqz
+      local.get $even
+      i32.and
+      i32.or)
+
+    (func $putc (param $o i32) (param $c i32) (result i32)
+      local.get $o
+      local.get $c
+      i32.store8
+      local.get $o
+      i32.const 1
+      i32.add)
+
+    (func $fmt_g (param $x f64) (result i32 i32)
+      (local $bits i64) (local $f i64) (local $e i32) (local $be i32) (local $k i32) (local $nd i32)
+      (local $o i32) (local $d i32) (local $tc1 i32) (local $tc2 i32) (local $even i32) (local $exp i32) (local $i i32) (local $c i32)
+      i32.const 1856
+      local.set $o
+      local.get $x
+      local.get $x
+      f64.ne
+      if
+        local.get $o
+        i32.const 78
+        call $putc
+        i32.const 97
+        call $putc
+        i32.const 78
+        call $putc
+        drop
+        i32.const 1856
+        i32.const 3
+        return
+      end
+      local.get $x
+      i64.reinterpret_f64
+      local.tee $bits
+      i64.const 0
+      i64.lt_s
+      if
+        local.get $o
+        i32.const 45
+        call $putc
+        local.set $o
+      end
+      local.get $bits
+      i64.const 52
+      i64.shr_u
+      i32.wrap_i64
+      i32.const 2047
+      i32.and
+      local.set $be
+      local.get $bits
+      i64.const 4503599627370495
+      i64.and
+      local.set $f
+      local.get $be
+      i32.const 2047
+      i32.eq
+      if
+        local.get $bits
+        i64.const 0
+        i64.ge_s
+        if
+          local.get $o
+          i32.const 43
+          call $putc
+          local.set $o
+        end
+        local.get $o
+        i32.const 73
+        call $putc
+        i32.const 110
+        call $putc
+        i32.const 102
+        call $putc
+        local.set $o
+        i32.const 1856
+        local.get $o
+        i32.const 1856
+        i32.sub
+        return
+      end
+      local.get $be
+      i32.eqz
+      local.get $f
+      i64.eqz
+      i32.and
+      if
+        local.get $o
+        i32.const 48
+        call $putc
+        local.set $o
+        i32.const 1856
+        local.get $o
+        i32.const 1856
+        i32.sub
+        return
+      end
+      local.get $be
+      if
+        local.get $f
+        i64.const 4503599627370496
+        i64.or
+        local.set $f
+        local.get $be
+        i32.const 1075
+        i32.sub
+        local.set $e
+      else
+        i32.const -1074
+        local.set $e
+      end
+      local.get $f
+      i64.const 1
+      i64.and
+      i64.eqz
+      local.set $even
+      ;; R, S, M+, M-
+      i32.const 1024
+      local.get $f
+      call $bset
+      i32.const 1184
+      i64.const 1
+      call $bset
+      i32.const 1344
+      i64.const 1
+      call $bset
+      i32.const 1504
+      i64.const 1
+      call $bset
+      local.get $e
+      i32.const 0
+      i32.ge_s
+      if
+        i32.const 1504
+        local.get $e
+        call $bshl
+        local.get $f
+        i64.const 4503599627370496
+        i64.ne
+        if
+          i32.const 1024
+          local.get $e
+          i32.const 1
+          i32.add
+          call $bshl
+          i32.const 1184
+          i32.const 1
+          call $bshl
+          i32.const 1344
+          local.get $e
+          call $bshl
+        else
+          i32.const 1024
+          local.get $e
+          i32.const 2
+          i32.add
+          call $bshl
+          i32.const 1184
+          i32.const 2
+          call $bshl
+          i32.const 1344
+          local.get $e
+          i32.const 1
+          i32.add
+          call $bshl
+        end
+      else
+        local.get $be
+        i32.const 1
+        i32.le_u
+        local.get $f
+        i64.const 4503599627370496
+        i64.ne
+        i32.or
+        if
+          i32.const 1024
+          i32.const 1
+          call $bshl
+          i32.const 1184
+          i32.const 1
+          local.get $e
+          i32.sub
+          call $bshl
+        else
+          i32.const 1024
+          i32.const 2
+          call $bshl
+          i32.const 1184
+          i32.const 2
+          local.get $e
+          i32.sub
+          call $bshl
+          i32.const 1344
+          i32.const 1
+          call $bshl
+        end
+      end
+      ;; k = ceil(log10 v), estimated low by at most one
+      local.get $e
+      i32.const 63
+      i32.add
+      local.get $f
+      i64.clz
+      i32.wrap_i64
+      i32.sub
+      f64.convert_i32_s
+      i64.const 4599094494223104510
+      f64.reinterpret_i64
+      f64.mul
+      i64.const 4457293557087583675
+      f64.reinterpret_i64
+      f64.sub
+      f64.ceil
+      i32.trunc_f64_s
+      local.tee $k
+      i32.const 0
+      i32.ge_s
+      if
+        local.get $k
+        local.set $i
+        block $x
+          loop $l
+            local.get $i
+            i32.eqz
+            br_if $x
+            i32.const 1184
+            i64.const 10
+            call $bmul
+            local.get $i
+            i32.const 1
+            i32.sub
+            local.set $i
+            br $l
+          end
+        end
+      else
+        i32.const 0
+        local.get $k
+        i32.sub
+        local.set $i
+        block $x
+          loop $l
+            local.get $i
+            i32.eqz
+            br_if $x
+            i32.const 1024
+            i64.const 10
+            call $bmul
+            i32.const 1344
+            i64.const 10
+            call $bmul
+            i32.const 1504
+            i64.const 10
+            call $bmul
+            local.get $i
+            i32.const 1
+            i32.sub
+            local.set $i
+            br $l
+          end
+        end
+      end
+      i32.const 1664
+      i32.const 1024
+      i32.const 1344
+      call $badd
+      i32.const 1664
+      i32.const 1184
+      call $bcmp
+      local.get $even
+      call $reach
+      if
+        i32.const 1184
+        i64.const 10
+        call $bmul
+        local.get $k
+        i32.const 1
+        i32.add
+        local.set $k
+      end
+      ;; the digits
+      block $done
+        loop $gen
+          i32.const 1024
+          i64.const 10
+          call $bmul
+          i32.const 1344
+          i64.const 10
+          call $bmul
+          i32.const 1504
+          i64.const 10
+          call $bmul
+          i32.const 0
+          local.set $d
+          block $q
+            loop $sub
+              i32.const 1024
+              i32.const 1184
+              call $bcmp
+              i32.const 0
+              i32.lt_s
+              br_if $q
+              i32.const 1024
+              i32.const 1184
+              call $bsub
+              local.get $d
+              i32.const 1
+              i32.add
+              local.set $d
+              br $sub
+            end
+          end
+          ;; tc1: R < M- (<= when even); tc2: R + M+ > S (>= when even)
+          i32.const 1504
+          i32.const 1024
+          call $bcmp
+          local.get $even
+          call $reach
+          local.set $tc1
+          i32.const 1664
+          i32.const 1024
+          i32.const 1344
+          call $badd
+          i32.const 1664
+          i32.const 1184
+          call $bcmp
+          local.get $even
+          call $reach
+          local.set $tc2
+          local.get $tc1
+          local.get $tc2
+          i32.or
+          i32.eqz
+          if
+            local.get $nd
+            local.get $d
+            i32.const 48
+            i32.add
+            i32.store8 offset=1824
+            local.get $nd
+            i32.const 1
+            i32.add
+            local.set $nd
+            br $gen
+          end
+          local.get $tc1
+          local.get $tc2
+          i32.and
+          if
+            ;; both: the closer, an even digit on a tie
+            i32.const 1664
+            i32.const 1024
+            i32.const 1024
+            call $badd
+            i32.const 1664
+            i32.const 1184
+            call $bcmp
+            local.tee $c
+            i32.const 0
+            i32.gt_s
+            local.get $c
+            i32.eqz
+            local.get $d
+            i32.const 1
+            i32.and
+            i32.and
+            i32.or
+            local.get $d
+            i32.add
+            local.set $d
+          else
+            local.get $d
+            local.get $tc2
+            i32.add
+            local.set $d
+          end
+          local.get $nd
+          local.get $d
+          i32.const 48
+          i32.add
+          i32.store8 offset=1824
+          local.get $nd
+          i32.const 1
+          i32.add
+          local.set $nd
+          br $done
+        end
+      end
+      ;; %e when the exponent is below -4 or at least 6
+      local.get $k
+      i32.const 1
+      i32.sub
+      local.tee $exp
+      i32.const -4
+      i32.lt_s
+      local.get $exp
+      i32.const 6
+      i32.ge_s
+      i32.or
+      if
+        local.get $o
+        i32.const 0
+        i32.load8_u offset=1824
+        call $putc
+        local.set $o
+        local.get $nd
+        i32.const 1
+        i32.gt_u
+        if
+          local.get $o
+          i32.const 46
+          call $putc
+          local.set $o
+          i32.const 1
+          local.set $i
+          loop $l
+            local.get $o
+            local.get $i
+            i32.load8_u offset=1824
+            call $putc
+            local.set $o
+            local.get $i
+            i32.const 1
+            i32.add
+            local.tee $i
+            local.get $nd
+            i32.lt_u
+            br_if $l
+          end
+        end
+        local.get $o
+        i32.const 101
+        call $putc
+        i32.const 43
+        i32.const 45
+        local.get $exp
+        i32.const 0
+        i32.ge_s
+        select
+        call $putc
+        local.set $o
+        local.get $exp
+        i32.const 0
+        i32.lt_s
+        if
+          i32.const 0
+          local.get $exp
+          i32.sub
+          local.set $exp
+        end
+        local.get $exp
+        i32.const 100
+        i32.ge_u
+        if
+          local.get $o
+          local.get $exp
+          i32.const 100
+          i32.div_u
+          i32.const 48
+          i32.add
+          call $putc
+          local.set $o
+          local.get $exp
+          i32.const 100
+          i32.rem_u
+          local.set $exp
+        end
+        local.get $o
+        local.get $exp
+        i32.const 10
+        i32.div_u
+        i32.const 48
+        i32.add
+        call $putc
+        local.get $exp
+        i32.const 10
+        i32.rem_u
+        i32.const 48
+        i32.add
+        call $putc
+        local.set $o
+        i32.const 1856
+        local.get $o
+        i32.const 1856
+        i32.sub
+        return
+      end
+      ;; %f: the point after k digits
+      local.get $k
+      i32.const 0
+      i32.le_s
+      if
+        local.get $o
+        i32.const 48
+        call $putc
+        i32.const 46
+        call $putc
+        local.set $o
+        local.get $k
+        local.set $i
+        block $x
+          loop $l
+            local.get $i
+            i32.const 0
+            i32.ge_s
+            br_if $x
+            local.get $o
+            i32.const 48
+            call $putc
+            local.set $o
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+            br $l
+          end
+        end
+        i32.const 0
+        local.set $i
+        loop $l
+          local.get $o
+          local.get $i
+          i32.load8_u offset=1824
+          call $putc
+          local.set $o
+          local.get $i
+          i32.const 1
+          i32.add
+          local.tee $i
+          local.get $nd
+          i32.lt_u
+          br_if $l
+        end
+      else
+        i32.const 0
+        local.set $i
+        loop $l
+          local.get $o
+          local.get $i
+          i32.load8_u offset=1824
+          i32.const 48
+          local.get $i
+          local.get $nd
+          i32.lt_s
+          select
+          call $putc
+          local.set $o
+          local.get $i
+          i32.const 1
+          i32.add
+          local.tee $i
+          local.get $k
+          i32.lt_s
+          br_if $l
+        end
+        local.get $nd
+        local.get $k
+        i32.gt_s
+        if
+          local.get $o
+          i32.const 46
+          call $putc
+          local.set $o
+          loop $l
+            local.get $o
+            local.get $i
+            i32.load8_u offset=1824
+            call $putc
+            local.set $o
+            local.get $i
+            i32.const 1
+            i32.add
+            local.tee $i
+            local.get $nd
+            i32.lt_s
+            br_if $l
+          end
+        end
+      end
+      i32.const 1856
+      local.get $o
+      i32.const 1856
+      i32.sub)
+
+    ;; the Display text of a Float: fmt_g, and `.0` when it has none of
+    ;; `.eIN` (fmt_float)
+    (func $fmt_float (param $x f64) (result i32 i32) (local $n i32) (local $i i32) (local $c i32)
+      local.get $x
+      call $fmt_g
+      local.set $n
+      drop
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $i
+          i32.load8_u offset=1856
+          local.tee $c
+          i32.const 46
+          i32.eq
+          local.get $c
+          i32.const 101
+          i32.eq
+          i32.or
+          local.get $c
+          i32.const 73
+          i32.eq
+          i32.or
+          local.get $c
+          i32.const 78
+          i32.eq
+          i32.or
+          if
+            i32.const 1856
+            local.get $n
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $n
+      i32.const 46
+      i32.store8 offset=1856
+      local.get $n
+      i32.const 48
+      i32.store8 offset=1857
+      i32.const 1856
+      local.get $n
+      i32.const 2
+      i32.add)
+
+    (func $sapp_float (param $a i32) (param $an i32) (param $x f64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $x
+      call $fmt_float
+      call $sapp)
+
+    (func $of_float (param $x f64) (result i32 i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $x
+      call $sapp_float)
+
+    ;; Int(x) of a Float with a fault position (xo_fault_float_int)
+    (func $ftoi_chk (param $x f64) (param $lp i32) (param $ln i32) (result i64) (local $t f64)
+      local.get $x
+      f64.trunc
+      local.tee $t
+      i64.const -4332462841530417152
+      f64.reinterpret_i64
+      f64.ge
+      local.get $t
+      i64.const 4890909195324358656
+      f64.reinterpret_i64
+      f64.lt
+      i32.and
+      if
+        local.get $t
+        i64.trunc_f64_s
+        return
+      end
+      local.get $x
+      local.get $x
+      f64.ne
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${nanmsg}
+        call $sapp
+        local.get $lp
+        local.get $ln
+        call $fault_set
+        i64.const 0
+        return
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $x
+      call $fmt_g
+      call $sapp
+      ${oorint}
+      call $sapp
+      local.get $lp
+      local.get $ln
+      call $fault_set
+      i64.const 0)
 
     ;; the prelude's Str operations (std/llrt xo_std.c): operands are
     ;; borrowed, a Str result is new

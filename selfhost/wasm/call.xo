@@ -28,7 +28,22 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "rt.fault_continue" => {}
-    "rt.fault_raise" => {
+    "rt.unwinding" => {
+      // a fault sets it (xo_fault_raise); with no tasks nothing cancels
+      g.e("global.get $faulting")
+      g.def(v)
+    }
+    "rt.fault_detail" => {
+      g.push(x.args[0])
+      g.e("call $fault_detail")
+    }
+    "rt.str_hash" => g.rt_call(v, "$str_hash")
+    "rt.fault_take" | "rt.fault_msg" | "rt.fault_loc" => g.rt_call(v, "$${name.trim_prefix("rt.")}")
+    "rt.str_slice_at" | "rt.bytes_slice_at" => {
+      g.rt_call(v, "$${name.trim_prefix("rt.")}")
+      g.check_fault(v)
+    }
+    "rt.fault_raise" | "rt.fault_at" => {
       g.push(x.args[0])
       g.push(x.args[1])
       g.e("call $fault_raise")
@@ -191,6 +206,8 @@ fn (var g: Gen) call(v: Int) {
     }
     "rt.str_slice" | "rt.str_starts_with" | "rt.str_ends_with" | "rt.str_contains" | "rt.str_repeat" | "rt.str_join" | "rt.rs_append_quote" | "rt.str_rune_count" => g.rt_call(v, "$${name.trim_prefix("rt.")}")
     "str.concat_int" => g.rt_call(v, "$sapp_int")
+    "str.concat_float" => g.rt_call(v, "$sapp_float")
+    "str.of_float" => g.rt_call(v, "$of_float")
     "str.eq" => g.rt_call(v, "$str_eq")
     "str.cmp" => g.rt_call(v, "$str_cmp")
     "str.of_int" => g.rt_call(v, "$of_int")
