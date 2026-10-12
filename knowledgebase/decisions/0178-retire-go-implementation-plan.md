@@ -212,6 +212,15 @@ again (a bootstrap chain, recorded in toolchain.md).
   process-driving test run against the Xo binary). The approval does not
   skip the gate. Stage 7's deletion of the Go compiler packages remains a
   separate owner call (decision 0150).
+- Order after B (owner, 2026-10-12): freeze the Go implementation right
+  after switch point B (stage 7 step 1: no language change lands in Go),
+  then the runtime port (decision 0180's bar first), then deleting the Go
+  compiler packages, which the owner delegated to the lead once these
+  hold: B live with the full suite passing against the Xo binary, stage 7
+  steps 1 to 3 done (frozen, Go outputs recorded as goldens, bootstrap
+  chain tested), two combined full-suite batches after B with no
+  regression the live cross-check would have caught, and every output
+  users or tests depend on produced by Xo.
 
 ## Consequences
 
