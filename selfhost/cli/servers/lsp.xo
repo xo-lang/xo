@@ -6,16 +6,14 @@
 // change (debounced, 150 ms) and before each request that reads the
 // check, and publishes the diagnostics as the Go server does.
 //
-// Ported: the protocol and framing, initialize, shutdown, exit, the
+// Every request of the Go server: initialize, shutdown, exit, the
 // document notifications, publishDiagnostics (with window/logMessage when
 // the check fails), codeAction (the diagnostics' machine fixes as quick
-// fixes), and documentSymbol. Not yet: hover, definition, references,
-// prepareRename, rename, formatting, and semanticTokens, which need the
-// identifier resolution of internal/lsp resolve.go over the checker's
-// records, query's declaration surfaces, and `xo fmt` in Xo (stages 2 and
-// 3); for a document the server has not checked they answer what the Go
-// server answers (null, or no tokens), else the error
-// RequestFailed "<method> is not available in the self hosted xo yet".
+// fixes), documentSymbol, and (lsp_features.xo, over the identifier
+// resolution of resolve.xo) hover, definition, references, prepareRename,
+// rename, formatting, and semanticTokens. A definition in std is opened
+// from a read only copy under <user cache dir>/xo/lsp-std, as the Go
+// server writes it.
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/cli/modules
@@ -369,6 +367,14 @@ struct Session {
   /// the generation of the last change; a debounce wake of an older one
   /// does nothing
   gen: Int = 0
+  /// where std sources are copied for a definition in std (StdDir)
+  lsp_std: Str = ""
+  /// the last check that ran (zero or one): its resolution tables, the
+  /// identifiers of its files (by file index), and the file index of each
+  /// snapshot key (a std file's std path, else its absolute path)
+  res: List[Res] = []
+  sites: Map[Int, List[Site]] = {}
+  keys: Map[Str, Int] = {}
 }
 
 fn abs_of(wd: Str, p: Str) -> Str {
@@ -398,9 +404,17 @@ fn (var s: Session) recheck(os: Os) uses (stdio, fs, env, net, proc, rand) {
   s.files = {}
   s.diags = {}
   s.err = ""
+  s.res = []
+  s.sites = {}
+  s.keys = {}
   var dirs: List[Str] = []
   var overlay: Map[Str, Bytes] = {}
   for (p, src) in s.docs {
+    if s.is_std_copy(p) {
+      // a std source opened through a definition: it is served from the
+      // std module, never checked as user code
+      continue
+    }
     overlay[p] = src
     let d = dir_of(p)
     if !dirs.contains(d) {
@@ -425,10 +439,15 @@ fn (var s: Session) recheck(os: Os) uses (stdio, fs, env, net, proc, rand) {
       return
     }
   }
-  for f in c.files {
-    let p = abs_of(s.wd, f.path)
+  for (i, f) in c.files.indexed() {
+    let std = f.module >= 0 && c.mods[f.module].is_std
+    let p = if std { f.path } else { abs_of(s.wd, f.path) }
+    if !s.keys.contains(p) {
+      s.keys[p] = i
+    }
     s.files[p] = overlay.get(p) ?? f.src
   }
+  s.res = [new_res(c)]
   for d in c.diags {
     let p = abs_of(s.wd, d.file)
     var l = s.diags.get(p) ?? []
@@ -441,7 +460,17 @@ fn (var s: Session) recheck(os: Os) uses (stdio, fs, env, net, proc, rand) {
 fn (s: Session) text_of(p: Str) -> Text? {
   match s.files.get(p) {
     Some(src) => Some(new_text(src))
-    None => None
+    None => {
+      // a std copy: the std file's text (snapshot.file)
+      let k = std_key(s.lsp_std, p)
+      if k.is_empty() {
+        return None
+      }
+      match s.files.get(k) {
+        Some(src) => Some(new_text(src))
+        None => None
+      }
+    }
   }
 }
 
@@ -796,24 +825,17 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
   if method == "textDocument/documentSymbol" {
     return Ok(s.symbols(params))
   }
-  let path = uri_to_path(uri_of(params))
-  if method == "textDocument/formatting" {
-    if s.docs.get(path).is_none() {
-      return Ok(J.Null)
-    }
-  } else {
-    s.fresh(os)
-    if s.files.get(path).is_none() {
-      if method == "textDocument/semanticTokens/full" {
-        return Ok(jobj(["data"], [jarr([])]))
-      }
-      if !s.err.is_empty() {
-        return Err((-32803, s.err))
-      }
-      return Ok(J.Null)
-    }
+  let failed = fn(e: Str) -> (Int, Str) { (-32803, e) }
+  match method {
+    "textDocument/formatting" => Ok(s.formatting(params))
+    "textDocument/semanticTokens/full" => Ok(s.semantic_tokens(os, params))
+    "textDocument/hover" => s.hover(os, params).map_err(failed)
+    "textDocument/definition" => s.definition(os, params).map_err(failed)
+    "textDocument/references" => s.references(os, params).map_err(failed)
+    "textDocument/prepareRename" => s.prepare_rename(os, params)
+    "textDocument/rename" => s.rename(os, params)
+    _ => Err((-32601, "method not supported: ${method}"))
   }
-  Err((-32803, "${method} is not available in the self hosted xo yet (decision 0178 stage 5)"))
 }
 
 /// The events of the server loop: a message, a debounce wake, or the end
@@ -833,7 +855,7 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
     }
   }
   let _ = ex
-  var s = Session{version: version, std_dir: std_dir(os), wd: os.env.get("PWD") ?? ""}
+  var s = Session{version: version, std_dir: std_dir(os), wd: os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
   let events: Chan[Ev] = Chan.new(16)
   var code = 0
   scope sc {
