@@ -46,10 +46,18 @@ fn in_ranges(t: Bytes, n: Int, r: Int) -> Bool {
   false
 }
 
+/// Bit r of a class bitmap of the runes U+0080 to U+07FF.
+fn has_bit(t: Bytes, r: Int) -> Bool {
+  ((Int(t[(r - 0x80) >> 3]) >> (r & 7)) & 1) != 0
+}
+
 /// unicode.IsLetter.
 pub fn is_letter(r: Int) -> Bool {
   if r < 0x80 {
     return (r >= 97 && r <= 122) || (r >= 65 && r <= 90)
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.LETTER2, r)
   }
   in_ranges(unicode_tables.LETTER, unicode_tables.LETTER_N, r)
 }
@@ -59,6 +67,9 @@ pub fn is_digit(r: Int) -> Bool {
   if r < 0x80 {
     return r >= 48 && r <= 57
   }
+  if r < 0x800 {
+    return has_bit(unicode_tables.DIGIT2, r)
+  }
   in_ranges(unicode_tables.DIGIT, unicode_tables.DIGIT_N, r)
 }
 
@@ -66,6 +77,9 @@ pub fn is_digit(r: Int) -> Bool {
 pub fn is_print(r: Int) -> Bool {
   if r < 0x80 {
     return r >= 0x20 && r < 0x7F
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.PRINT2, r)
   }
   in_ranges(unicode_tables.PRINT, unicode_tables.PRINT_N, r)
 }
@@ -81,6 +95,13 @@ pub fn to_case(r: Int, lower: Bool) -> Int {
       return r - 32
     }
     return r
+  }
+  if r < 0x800 {
+    // two byte UTF-8 (Latin, Greek, Cyrillic, ...): a direct table
+    if lower {
+      return u24(unicode_tables.LOWER2, (r - 0x80) * 3)
+    }
+    return u24(unicode_tables.UPPER2, (r - 0x80) * 3)
   }
   let t = unicode_tables.CASE
   var lo = 0
@@ -182,18 +203,15 @@ fn ascii_mode(lower: Bool) -> Int {
 
 /// strings.ToLower (lower) or strings.ToUpper of the bytes from i of b
 /// appended to out (strings.Map: an invalid byte becomes U+FFFD). Runs of
-/// ASCII bytes and of runes that do not change are appended at once.
+/// ASCII bytes (found by rt.bytes_span) and of runes that do not change
+/// are appended at once.
 fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   let n = b.len()
   let mode = ascii_mode(lower)
   var o = out
   var run = from
-  var i = from
+  var i = rt.bytes_span(b, from, 0)
   while i < n {
-    if b[i] < 0x80 {
-      i += 1
-      continue
-    }
     let p = decode(b, i)
     let r = p >> 3
     let size = p & 7
@@ -206,6 +224,9 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
       run = i + size
     }
     i += size
+    if i < n && b[i] < 0x80 {
+      i = rt.bytes_span(b, i, 0)
+    }
   }
   if run < n {
     o = rt.rs_append_bytes(o, b, run, n, mode)
@@ -213,35 +234,10 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   o
 }
 
-/// Whether lowering (lower) or raising the ASCII byte c changes it.
-fn ascii_changes(c: UInt8, lower: Bool) -> Bool {
-  if lower {
-    return c >= 65 && c <= 90
-  }
-  c >= 97 && c <= 122
-}
-
 /// strings.ToLower (lower) or strings.ToUpper.
 pub fn map_case(s: Str, lower: Bool) -> Str {
   let b = s.bytes()
-  let n = b.len()
-  // as Go's strings.ToLower: an ASCII string that does not change is s
-  var i = 0
-  var changes = false
-  while i < n {
-    let c = b[i]
-    if c >= 0x80 {
-      break
-    }
-    if ascii_changes(c, lower) {
-      changes = true
-    }
-    i += 1
-  }
-  if i == n && !changes {
-    return s
-  }
-  case_append(rt.rs_with_cap(n), b, 0, lower)
+  case_append(rt.rs_with_cap(b.len()), b, 0, lower)
 }
 
 /// `a.to_lower() == b.to_lower()` without making the lowered strings:
@@ -349,11 +345,11 @@ pub fn quote(b: Bytes) -> Str {
   var run = 0
   var i = 0
   while i < n {
-    let c = b[i]
-    if c >= 0x20 && c < 0x7F && c != 34 && c != 92 {
-      i += 1
-      continue
+    i = rt.bytes_span(b, i, 1)
+    if i >= n {
+      break
     }
+    let c = b[i]
     let p = decode(b, i)
     let r = p >> 3
     let size = p & 7

@@ -43,6 +43,9 @@ fn rs_append_duration(s: Str, d: Int) -> Str
 /// (mode 1) or raised (mode 2); mode 0 copies (std/native/llrt/unicode.xo,
 /// decision 0180).
 fn rs_append_bytes(s: Str, b: Bytes, lo: Int, hi: Int, mode: Int) -> Str
+/// The end of the run of bytes of b from i in the class cls: 0 ASCII, 1
+/// printable ASCII other than `"` and `\` (std/native/llrt/unicode.xo).
+fn bytes_span(b: Bytes, i: Int, cls: Int) -> Int
 /// s + the byte x (0 to 255; BytesBuilder.write_byte).
 fn rs_push_byte(s: Str, x: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value

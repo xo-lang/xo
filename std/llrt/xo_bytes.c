@@ -274,6 +274,24 @@ xo_rstr *xo_rs_append_bytes(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int6
 	return a;
 }
 
+// xo_bytes_span is the end of the run of bytes of b from i in the class
+// cls: 0 ASCII (below 0x80), 1 printable ASCII other than `"` and `\`
+// (what strconv.Quote keeps): the bulk scans of
+// std/native/llrt/unicode.xo (decision 0180).
+int64_t xo_bytes_span(const char *p, int64_t n, int64_t i, int64_t cls) {
+	const unsigned char *s = (const unsigned char *)p;
+	if (cls == 0) {
+		while (i < n && s[i] < 0x80) {
+			i++;
+		}
+		return i;
+	}
+	while (i < n && s[i] >= 0x20 && s[i] < 0x7F && s[i] != '"' && s[i] != '\\') {
+		i++;
+	}
+	return i;
+}
+
 // xo_rs_with_cap is an empty string with room for n bytes
 // (BytesBuilder.with_capacity).
 xo_rstr *xo_rs_with_cap(int64_t n, int64_t *len) {

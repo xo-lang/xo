@@ -79,6 +79,28 @@ func unicodeTables() []byte {
 		{"DIGIT", "unicode.IsDigit", unicode.IsDigit},
 		{"PRINT", "strconv.IsPrint", strconv.IsPrint},
 	}
+	// direct tables of the runes U+0080 to U+07FF (two byte UTF-8: Latin,
+	// Greek, Cyrillic, Armenian, Hebrew, Arabic): their case mappings and
+	// class bits, so the common scripts need no search
+	var lower2, upper2 []byte
+	for r := rune(0x80); r < 0x800; r++ {
+		lower2 = put24(lower2, int(unicode.ToLower(r)))
+		upper2 = put24(upper2, int(unicode.ToUpper(r)))
+	}
+	b.WriteString("\n/// unicode.ToLower of the runes U+0080 to U+07FF, 3 bytes each from\n/// U+0080.\n")
+	fmt.Fprintf(&b, "pub const LOWER2: Bytes = %s\n", xoBytesLit(lower2))
+	b.WriteString("\n/// unicode.ToUpper of the runes U+0080 to U+07FF, 3 bytes each from\n/// U+0080.\n")
+	fmt.Fprintf(&b, "pub const UPPER2: Bytes = %s\n", xoBytesLit(upper2))
+	for _, c := range classes {
+		bits := make([]byte, (0x800-0x80)/8)
+		for r := rune(0x80); r < 0x800; r++ {
+			if c.in(r) {
+				bits[(r-0x80)>>3] |= 1 << (r & 7)
+			}
+		}
+		fmt.Fprintf(&b, "\n/// %s of the runes U+0080 to U+07FF: bit r & 7 of byte (r - 0x80) >> 3.\n", c.doc)
+		fmt.Fprintf(&b, "pub const %s2: Bytes = %s\n", c.name, xoBytesLit(bits))
+	}
 	for _, c := range classes {
 		var rs [][2]rune
 		for r := rune(0x80); r <= unicode.MaxRune; r++ {
