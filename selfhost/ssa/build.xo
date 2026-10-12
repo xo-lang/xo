@@ -222,6 +222,10 @@ pub struct Builder {
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false
+  /// The build's target for the predeclared `target` (Options.GOOS and
+  /// GOARCH): "" for the builder's own (the host, as `xo ssadump`).
+  pub goos: Str = ""
+  pub goarch: Str = ""
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""
 }
@@ -260,16 +264,28 @@ pub fn build_program_release(c: check.Checker, line_root: Str, tests: Bool, rele
 /// build_program_release with the tests that declare `uses` built when
 /// real_tests is set (Options.RealTests, `xo test --real`).
 pub fn build_program_opts(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool) -> Builder {
+  build_program_target(c, line_root, tests, release, real_tests, "", "")
+}
+
+/// build_program_opts for the target goos/goarch, the value of the
+/// predeclared `target` ("" for the builder's own; internal/build passes
+/// each target's, so a cross build's `match target.os` keeps the
+/// target's arm, not the compiler's).
+pub fn build_program_target(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str) -> Builder {
   var b = new_builder(c, line_root)
   b.tests = tests
   b.release = release
   b.real_tests = real_tests
+  b.goos = goos
+  b.goarch = goarch
   b.build()
   if b.need_conc {
     b = new_builder(c, line_root)
     b.tests = tests
     b.release = release
     b.real_tests = real_tests
+    b.goos = goos
+    b.goarch = goarch
     b.conc = true
     b.build()
   }

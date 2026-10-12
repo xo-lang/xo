@@ -124,7 +124,9 @@ trap cleanup EXIT
 # local watchdog: terminates the instance after MAXMIN minutes even if this
 # script hangs waiting on ssh (2026-10-12: neither the instance's shutdown nor
 # the EXIT trap fired, and the instance ran 5.5 hours). Its PID is captured.
-( sleep $((MAXMIN * 60)); aws ec2 terminate-instances --instance-ids "$id" >/dev/null 2>&1 ) &
+# Its output goes nowhere: the sleep outlives this script, and holding
+# this script's stdout would keep a pipeline reading it open (2026-10-12).
+( sleep $((MAXMIN * 60)); aws ec2 terminate-instances --instance-ids "$id" >/dev/null 2>&1 ) >/dev/null 2>&1 </dev/null &
 wd=$!
 aws ec2 wait instance-running --instance-ids "$id"
 ip=$(aws ec2 describe-instances --instance-ids "$id" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
