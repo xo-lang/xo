@@ -49,6 +49,18 @@ struct Rc {
   fidx: Map[Str, Int] = {}
   borrowed: List[List[Bool]] = []
   fi: Int = -1
+  // the verifier's leaf numbers (verify.xo): of function vfi, by leaf
+  // key; the leaves; the counts of the block being checked by leaf
+  // number, whether each was touched in it, and those touched; the leaf
+  // numbers and uses by value
+  vfi: Int = -2
+  vleafs: Map[Int, List[Int]] = {}
+  vuses: Map[Int, List[UseId]] = {}
+  vids: Map[Str, Int] = {}
+  vleaves: List[Leaf] = []
+  cur: List[Int] = []
+  mark: List[Bool] = []
+  touched: List[Int] = []
 }
 
 /// The runtime calls whose operand modes matter (runtimeModes), or

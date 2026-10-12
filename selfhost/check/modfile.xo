@@ -731,6 +731,11 @@ fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) {
       continue
     }
     if f[0] == "xo" && f.len() == 2 {
+      // the edition, resolved as mod.ResolveEdition does: `preview`, or
+      // its old name `2026` (decision 0155)
+      if f[1] != "preview" && f[1] != "2026" {
+        probs.push(Problem{code: "XO1301", file: name, line: line, msg: "xo.work: edition ${f[1].quote()} is not supported by this toolchain (known editions: preview)", notes: ["write `xo preview` (decision 0155)"]})
+      }
       continue
     }
     if f[0] == "use" && f.len() >= 2 {

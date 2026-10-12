@@ -74,3 +74,43 @@ func TestFixEditionFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkEdition checks the `xo <edition>` line of xo.work through the
+// CLI: `xo 2026` builds with the fixable note XO1315 and `xo fix` rewrites
+// it to `xo preview`; an unknown edition is XO1301 (decision 0155).
+func TestWorkEdition(t *testing.T) {
+	t.Setenv("XO_WORK", "")
+	files := func(edition string) string {
+		return writeFiles(t, map[string]string{
+			"xo.work":   "xo " + edition + "\nuse ./a\n",
+			"a/xo.mod":  "module example.com/a\nedition preview\n",
+			"a/main.xo": "fn main() {\n}\n",
+		})
+	}
+	ws := files("2026")
+	app := filepath.Join(ws, "a")
+	r := xo(t, "check", "--json", app).want(0)
+	if got := diagCodes(t, r.out); got != "XO1315" {
+		t.Errorf("xo 2026: check codes %q, want XO1315", got)
+	}
+	if !strings.Contains(r.out, "`xo 2026` is the old name of `xo preview`") {
+		t.Errorf("xo 2026: message:\n%s", r.out)
+	}
+	r = xo(t, "fix", app).want(0)
+	if !strings.Contains(r.out, "XO1315") || !strings.Contains(r.out, "1 change(s), changed 1 file(s)") {
+		t.Errorf("xo fix output:\n%s", r.out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "xo.work")); string(b) != "xo preview\nuse ./a\n" {
+		t.Errorf("xo.work after fix = %q", b)
+	}
+	r = xo(t, "check", "--json", app).want(0)
+	if got := diagCodes(t, r.out); got != "" {
+		t.Errorf("after fix: check codes %q", got)
+	}
+
+	ws = files("2027")
+	r = xo(t, "check", "--json", filepath.Join(ws, "a")).want(1)
+	if got := diagCodes(t, r.out); got != "XO1301" || !strings.Contains(r.out, `edition \"2027\" is not supported`) {
+		t.Errorf("xo 2027: check codes %q:\n%s", got, r.out)
+	}
+}

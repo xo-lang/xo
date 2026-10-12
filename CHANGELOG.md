@@ -84,6 +84,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   arm64 goldens; `scripts/selfhost-samebin.py` finds its binaries byte
   identical to `xo build --backend=arm64`'s (147 of 147).
   `scripts/selfhost-goldens.py` passes args.txt, env.txt, and stdin.txt.
+- `List[T].with_capacity(n)` (decision 0170, every backend): an empty
+  list with room for n elements before it grows.
+- The `xo <edition>` line of xo.work is validated as xo.mod's `edition`
+  line is (decision 0155): `xo 2026` gets the fixable note `XO1315` and
+  `xo fix` rewrites it to `xo preview`; any other unknown name is
+  `XO1301`.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

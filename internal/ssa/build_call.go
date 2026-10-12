@@ -871,6 +871,10 @@ func (s *fn) stdCall(x *ast.CallExpr, ci *check.Call) *Value {
 			}
 		}
 	case "List":
+		if fo.Static && fo.Name == "with_capacity" && len(x.Args) == 1 && nt.Kind == KList {
+			// list.new with a size: room for n elements (decision 0170)
+			return s.call("list.new", nt, "", s.valueAs(x.Args[0].Value, intT))
+		}
 		if fo.RecvVar {
 			p, ok := s.place(ci.Recv)
 			if !ok || p.t.Kind != KList {

@@ -326,8 +326,9 @@ func offset(src []byte, line, col int) (int, bool) {
 
 // sourceFiles lists the .xo and xo.mod files under dirs, skipping testdata
 // and hidden directories below the named ones (as check does), plus the
-// xo.mod of the module around each dir. xo.mod is listed so that fixes of
-// its lines apply (XO1315 rewrites `edition 2026`).
+// xo.mod of the module around each dir and the xo.work that applies to it.
+// xo.mod and xo.work are listed so that fixes of their lines apply (XO1315
+// rewrites `edition 2026` and `xo 2026`).
 func sourceFiles(dirs []string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
@@ -339,8 +340,16 @@ func sourceFiles(dirs []string) ([]string, error) {
 		if !info.IsDir() {
 			return nil, fmt.Errorf("%s is not a directory", d)
 		}
+		var around []string
 		if root := mod.ModRoot(d); root != "" {
-			p := filepath.Join(root, "xo.mod")
+			around = append(around, filepath.Join(root, "xo.mod"))
+		}
+		if w := mod.NearestWork(d); w != "" {
+			if _, err := os.Stat(w); err == nil {
+				around = append(around, w)
+			}
+		}
+		for _, p := range around {
 			if wd, err := os.Getwd(); err == nil {
 				if r, err := filepath.Rel(wd, p); err == nil && !strings.HasPrefix(r, "..") {
 					p = r

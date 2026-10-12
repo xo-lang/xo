@@ -1395,6 +1395,10 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
     }
     "List" => {
+      if is_static && fname == "with_capacity" && args.len() == 1 && b.tkind(nt) == Kind.List {
+        // list.new with a size: room for n elements (decision 0170)
+        return b.call("list.new", nt, "", [b.value_as(args[0].value, it)])
+      }
       if b.c.objs[fo].recv_var {
         var p = b.place(ci.recv[0])
         if p.ok && b.tkind(p.t()) == Kind.List {

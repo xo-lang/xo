@@ -164,6 +164,7 @@ Slicing (`s[a..b]`) is in core 3.6.
 ### 2.3 List[T]
 
 ```
+List[T].with_capacity(n: Int) -> List[T]     // empty, room for n elements
 fn (xs: List[T]) len() -> Int
 fn (xs: List[T]) is_empty() -> Bool
 fn (xs: List[T]) get(i: Int) -> T?
@@ -194,6 +195,11 @@ fn ([var] xs: List[T]) set(i: Int, x: T)     // also xs[i] = x on a var list
 Higher order methods (`map`, `filter`, ...) pass through the callback's effects
 and errors through effect variables (core 6.2); `map` with a failing callback
 returns `List[U] ! E`.
+
+`List[T].with_capacity(n)` (also `List.with_capacity(n)` where the type is
+known) is an empty list, equal to `[]`, whose first `n` pushes append
+without growing it; `n` below 0 counts as 0. Capacity is not observable
+(decision 0170).
 
 ### 2.4 Map[K, V] and Set[T]
 
