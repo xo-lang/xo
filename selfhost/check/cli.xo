@@ -71,7 +71,7 @@ pub fn (c: Checker) funcs_of(m: Int) -> List[Int] {
         parser.Decl.FnDecl(_) => {
           if i < c.files[f].decl_objs.len() {
             let o = c.files[f].decl_objs[i]
-            if o >= 0 && c.objs[o].kind == ObjKind.Func {
+            if o >= 0 && c.objs[o].kind == ObjKind.Func && c.declared_func(m, o) {
               out.push(o)
             }
           }
@@ -81,6 +81,18 @@ pub fn (c: Checker) funcs_of(m: Int) -> List[Int] {
     }
   }
   out
+}
+
+/// Whether function o is the one module m declares under its name (a
+/// duplicate declaration has an object of its own, which Info.FuncOf
+/// does not return).
+fn (c: Checker) declared_func(m: Int, o: Int) -> Bool {
+  let name = c.objs[o].name
+  let r = c.objs[o].recv
+  if r >= 0 {
+    return (c.objs[r].methods.get(name) ?? -1) == o
+  }
+  (c.mods[m].members.get(name) ?? -1) == o
 }
 
 /// The effects the body of function fo performs, sorted by name, each
