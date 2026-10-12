@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The arm64 backend (and its Xo twin, byte identical) inlines small
+  functions that call others and larger ones with at most two call
+  sites, and drops the bounds, overflow, and shift checks that value
+  bounds, loop conditions (also through `&&` and `||`), and binary
+  search midpoints prove (decision 0184). The Unicode runtime in Xo is
+  now within 5 percent of the C path on every bench/perf/unicode
+  workload on arm64 (39 percent fewer instructions on mixed script case
+  mapping, 42 on Rune case mapping).
 - A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of
