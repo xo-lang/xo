@@ -199,6 +199,9 @@ type gen struct {
 	tz      tzState    // zones time.zone is asked for (timezone.go)
 	// fileMods maps a source file to its module (logfrom.go)
 	fileMods map[string]*check.Module
+	// budgets: 0 unknown, 1 the program calls task.with_budget, -1 not
+	// (budget.go)
+	budgets int
 }
 
 // Generate lowers the modules of a check result. roots are the modules

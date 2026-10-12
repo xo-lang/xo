@@ -1187,8 +1187,9 @@ a deterministic unit. The budget covers every task started inside the
 call, wherever it is started, and nested budgets all apply. Code polls
 the budget at the start of every loop iteration and at the entry of
 every function that calls user code, so under a budget a pure loop or a
-recursion is a cancellation point; the poll costs a nil check without a
-budget. Ceilings are checked every 1024 steps of a thread (the last
+recursion is a cancellation point. The polls are compiled only into a
+program that calls `with_budget` somewhere (one without a budget is
+unchanged); there they cost a nil check outside a budget. Ceilings are checked every 1024 steps of a thread (the last
 quantum before a `steps` ceiling is shortened to hit it exactly).
 Deferred code runs shielded and is not unwound; budgeted shielded code
 that goes past twice a ceiling faults (`XO-F008`). Limits: on the Go

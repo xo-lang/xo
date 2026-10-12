@@ -13,8 +13,6 @@ func F_find_pair(tk *rt.Task, v_xs rt.List[int64], v_target int64) rt.Option[rt.
 	x_it1 := rt.Range[int64]{Lo: int64(0), Hi: rt.List_len[int64](tk, v_xs), Incl: false}
 //line main.xo:5:9
 	for x_i3 := x_it1.Lo; x_i3 < x_it1.Hi; x_i3++ {
-//line main.xo:5:9
-		tk.Tick()
 //line main.xo:2:3
 		x_el4 := x_i3
 //line main.xo:2:3
@@ -25,8 +23,6 @@ func F_find_pair(tk *rt.Task, v_xs rt.List[int64], v_target int64) rt.Option[rt.
 			x_it5 := rt.Range[int64]{Lo: (v_i + int64(1)), Hi: rt.List_len[int64](tk, v_xs), Incl: false}
 //line main.xo:5:9
 			for x_i7 := x_it5.Lo; x_i7 < x_it5.Hi; x_i7++ {
-//line main.xo:5:9
-				tk.Tick()
 //line main.xo:3:5
 				x_el8 := x_i7
 //line main.xo:3:5
@@ -53,7 +49,6 @@ func F_find_pair(tk *rt.Task, v_xs rt.List[int64], v_target int64) rt.Option[rt.
 
 //line main.xo:12:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:13:3
 	var v_out rt.List[string] = rt.List[string]{}
 //line main.xo:13:3
@@ -62,8 +57,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 x_L10:
 //line main.xo:22:7
 	for x_i11 := x_it9.Lo; x_i11 < x_it9.Hi; x_i11++ {
-//line main.xo:22:7
-		tk.Tick()
 //line main.xo:14:3
 		x_el12 := x_i11
 //line main.xo:14:3
@@ -74,8 +67,6 @@ x_L10:
 			x_it13 := rt.Range[int64]{Lo: int64(0), Hi: int64(4), Incl: false}
 //line main.xo:22:7
 			for x_i15 := x_it13.Lo; x_i15 < x_it13.Hi; x_i15++ {
-//line main.xo:22:7
-				tk.Tick()
 //line main.xo:15:5
 				x_el16 := x_i15
 //line main.xo:15:5
@@ -125,8 +116,6 @@ x_L10:
 x_L18:
 //line main.xo:30:7
 	for {
-//line main.xo:30:7
-		tk.Tick()
 //line main.xo:27:3
 		{
 //line main.xo:28:5
@@ -171,8 +160,6 @@ x_L18:
 //line main.xo:38:3
 //line main.xo:40:5
 	for {
-//line main.xo:40:5
-		tk.Tick()
 //line main.xo:38:3
 		if !(v_x != int64(1)) {
 //line main.xo:38:3
@@ -211,8 +198,6 @@ x_L18:
 x_L24:
 //line main.xo:50:5
 	for x_i25, x_more26 := x_it23.Lo, x_it23.Lo <= x_it23.Hi; x_more26; x_i25, x_more26 = x_i25+1, x_i25 < x_it23.Hi {
-//line main.xo:50:5
-		tk.Tick()
 //line main.xo:44:3
 		x_el27 := x_i25
 //line main.xo:44:3
@@ -280,8 +265,6 @@ func F_loop_find(tk *rt.Task, v_xs rt.List[int64]) int64 {
 //line main.xo:59:3
 //line main.xo:63:5
 	for {
-//line main.xo:63:5
-		tk.Tick()
 //line main.xo:59:3
 		{
 //line main.xo:60:5

@@ -70,7 +70,6 @@ func F_load(tk *rt.Task, v_id int64) rt.Result[string, LoadErr] {
 
 //line main.xo:12:1
 func F_profile(tk *rt.Task, v_id int64, v_name string) rt.Result[string, LoadErr] {
-	tk.Tick()
 //line main.xo:13:3
 	x_r1 := F_load(tk, v_id)
 //line main.xo:13:3
@@ -88,7 +87,6 @@ func F_profile(tk *rt.Task, v_id int64, v_name string) rt.Result[string, LoadErr
 
 //line main.xo:17:1
 func F_main(tk *rt.Task, v_os rt.Os) rt.Result[rt.Unit, rt.IError] {
-	tk.Tick()
 //line main.xo:18:3
 	x_a3 := v_os.F_stdio
 //line main.xo:18:3

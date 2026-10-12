@@ -172,7 +172,6 @@ func (v_s ConstStore) M_name(tk *rt.Task) string {
 
 //line main.xo:28:1
 func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
-	tk.Tick()
 //line main.xo:29:3
 	x_m2 := v_st.M_get(tk, v_key)
 //line main.xo:29:3
@@ -206,7 +205,6 @@ func F_lookup(tk *rt.Task, v_st Store, v_key string) string {
 
 //line main.xo:35:1
 func F_describe_all[tp_T any](tk *rt.Task, v_items rt.List[tp_T]) string {
-	tk.Tick()
 //line main.xo:36:3
 	x_src4 := v_items
 //line main.xo:36:3
@@ -254,7 +252,6 @@ func (a xoAdapt_0) M_name(tk *rt.Task) string { return a.V.M_name(tk) }
 
 //line main.xo:39:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:40:3
 	var v_stores rt.List[Store] = rt.ListOf[Store](Store(MapStore{F_data: rt.MapOf[string, string](rt.Tuple2[string, string]{F0: "a", F1: "1"})}), xoAdapt_0{V: ConstStore{F_value: "c"}})
 //line main.xo:40:3
@@ -262,8 +259,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 	x_it8 := v_stores
 //line main.xo:43:5
 	for _, x_e10 := range rt.List_Items(x_it8) {
-//line main.xo:43:5
-		tk.Tick()
 //line main.xo:41:3
 		x_el11 := x_e10
 //line main.xo:41:3
@@ -287,8 +282,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 	x_it12 := v_shown
 //line main.xo:48:5
 	for _, x_e14 := range rt.List_Items(x_it12) {
-//line main.xo:48:5
-		tk.Tick()
 //line main.xo:47:3
 		x_el15 := x_e14
 //line main.xo:47:3
@@ -309,7 +302,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 
 //line main.xo:35:1
 func F_describe_all__StoreErr(tk *rt.Task, v_items rt.List[StoreErr]) string {
-	tk.Tick()
 //line main.xo:36:3
 	x_src16 := v_items
 //line main.xo:36:3

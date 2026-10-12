@@ -182,7 +182,6 @@ func F_bump(tk *rt.Task, v_c *Config) {
 
 //line main.xo:24:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:25:3
 	var v_c Config = Config{F_host: Config_D_host(tk), F_port: Config_D_port(tk), F_tags: Config_D_tags(tk)}
 //line main.xo:25:3

@@ -97,13 +97,19 @@ fn with_budget[T, E, fx](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T
 - internal/gen golden `budget`: a pure loop (steps and cpu), exponential
   recursion with no loop, allocation, tasks spawned inside, a result
   within budget, a failure, and nested budgets.
-- Poll overhead without a budget: see
+- Poll overhead without a budget, with polls everywhere: fib(35) +45%,
+  a sieve +18%, a tight `while` loop unchanged; so polls are emitted only
+  when the program calls `task.with_budget` (a program without one
+  generates the same Go as before). See
   `bench/results/budget-poll-2026-10-11.md`.
 
 ## Consequences
 
-- Every non-leaf generated Go function and every loop carries one
-  `tk.Tick()` line (the gosnap goldens changed).
+- In a program that calls `task.with_budget`, every loop and every
+  non-leaf generated Go function carries one `tk.Tick()` line, budgeted
+  or not (+45% on a call-bound recursion, +18% on a list sieve);
+  programs without a budget are unchanged. Narrowing the polls to code
+  reachable from budgeted closures is the next experiment.
 - `log.Record` has a fourth field; code constructing it needs `module`.
 - `NetErr`, `ProcErr` unchanged; the new fault code is `XO-F008`.
 - The default posture is unchanged: a dependency called without a

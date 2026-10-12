@@ -20,18 +20,14 @@ func F_make_adder(tk *rt.Task, v_n int64) func(*rt.Task, int64) rt.Result[int64,
 
 //line main.xo:5:1
 func F_apply_twice[tp_T any](tk *rt.Task, v_f func(*rt.Task, tp_T) rt.Result[tp_T, rt.Never], v_x tp_T) tp_T {
-	tk.Tick()
 //line main.xo:5:47
 	return rt.Own(v_f(tk, rt.Own(v_f(tk, rt.Own(v_x)).V)).V)
 }
 
 //line main.xo:7:1
 func F_compose[tp_A any, tp_B any, tp_C any](tk *rt.Task, v_f func(*rt.Task, tp_A) rt.Result[tp_B, rt.Never], v_g func(*rt.Task, tp_B) rt.Result[tp_C, rt.Never]) func(*rt.Task, tp_A) rt.Result[tp_C, rt.Never] {
-	tk.Tick()
 //line main.xo:8:3
 	return func(tk *rt.Task, v_a tp_A) rt.Result[tp_C, rt.Never] {
-//line main.xo:8:17
-		tk.Tick()
 //line main.xo:8:17
 //line main.xo:8:19
 		return rt.Ok[tp_C, rt.Never](rt.Own(v_g(tk, rt.Own(v_f(tk, rt.Own(v_a)).V)).V))
@@ -47,7 +43,6 @@ func F_double(tk *rt.Task, v_x int64) int64 {
 
 //line main.xo:13:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:14:3
 	var v_counter int64 = int64(1)
 //line main.xo:14:3
@@ -103,8 +98,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 	x_it2 := v_fs
 //line main.xo:26:5
 	for _, x_e4 := range rt.List_Items(x_it2) {
-//line main.xo:26:5
-		tk.Tick()
 //line main.xo:25:3
 		x_el5 := x_e4
 //line main.xo:25:3
@@ -190,18 +183,14 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 
 //line main.xo:5:1
 func F_apply_twice__int64(tk *rt.Task, v_f func(*rt.Task, int64) rt.Result[int64, rt.Never], v_x int64) int64 {
-	tk.Tick()
 //line main.xo:5:47
 	return v_f(tk, v_f(tk, v_x).V).V
 }
 
 //line main.xo:7:1
 func F_compose__int64_int64_string_lit(tk *rt.Task, v_f func(*rt.Task, int64) rt.Result[int64, rt.Never], v_g func(*rt.Task, int64) rt.Result[string, rt.Never]) func(*rt.Task, int64) rt.Result[string, rt.Never] {
-	tk.Tick()
 //line main.xo:8:3
 	return func(tk *rt.Task, v_a int64) rt.Result[string, rt.Never] {
-//line main.xo:8:17
-		tk.Tick()
 //line main.xo:8:17
 //line main.xo:8:19
 		x_t14 := v_f(tk, v_a).V

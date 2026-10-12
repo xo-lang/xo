@@ -1096,7 +1096,9 @@ func (f *fnGen) emitLoop(l *loopInfo, header, body string) {
 		f.line("for %s {", header)
 	}
 	// a step of a resource budget (decision 0173)
-	f.line("\ttk.Tick()")
+	if f.tickLoop() {
+		f.line("\ttk.Tick()")
+	}
 	f.out.WriteString(body)
 	f.line("}")
 }

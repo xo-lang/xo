@@ -70,7 +70,6 @@ func F_half(tk *rt.Task, v_n int64) rt.Result[int64, E] {
 
 //line main.xo:12:1
 func F_quarter(tk *rt.Task, v_n int64) rt.Result[int64, E] {
-	tk.Tick()
 //line main.xo:13:3
 	x_r1 := F_half(tk, v_n)
 //line main.xo:13:3
@@ -105,7 +104,6 @@ func F_lookup(tk *rt.Task, v_m rt.Map[string, int64], v_k string) rt.Option[int6
 
 //line main.xo:22:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:23:3
 	var v_m rt.Map[string, int64] = rt.MapOf[string, int64](rt.Tuple2[string, int64]{F0: "a", F1: int64(1)}, rt.Tuple2[string, int64]{F0: "b", F1: int64(2)})
 //line main.xo:23:3

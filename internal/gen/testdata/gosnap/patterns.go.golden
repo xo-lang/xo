@@ -260,7 +260,6 @@ func F_kind(tk *rt.Task, v_c rt.Rune) string {
 
 //line main.xo:38:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:39:3
 	v_os.F_stdio.M_println(tk, (F_shape(tk, rt.List[int64]{}) + " | " + F_shape(tk, rt.ListOf[int64](int64(7))) + " | " + F_shape(tk, rt.ListOf[int64](int64(1), int64(2))) + " | " + F_shape(tk, rt.ListOf[int64](int64(1), int64(2), int64(3), int64(4)))))
 //line main.xo:40:3
@@ -333,8 +332,6 @@ x_M6:
 	x_it7 := rt.ListOf[Tree](Tree{Tag: 1, P: Tree_Leaf{F_v: int64(5)}}, Tree{Tag: 2, P: Tree_Node{F_left: int64(1), F_right: int64(9)}})
 //line main.xo:54:38
 	for _, x_e9 := range rt.List_Items(x_it7) {
-//line main.xo:54:38
-		tk.Tick()
 //line main.xo:52:3
 		x_el10 := x_e9
 //line main.xo:52:3

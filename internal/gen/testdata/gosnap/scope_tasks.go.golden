@@ -9,7 +9,6 @@ import (
 
 //line main.xo:1:1
 func F_slow_square(tk *rt.Task, v_clock rt.Clock, v_n int64) int64 {
-	tk.Tick()
 //line main.xo:2:3
 	v_clock.M_sleep(tk, rt.DurMulInt(rt.Duration(20000000), v_n, "main.xo:2:15"))
 //line main.xo:3:3
@@ -18,7 +17,6 @@ func F_slow_square(tk *rt.Task, v_clock rt.Clock, v_n int64) int64 {
 
 //line main.xo:6:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:7:3
 	var x_v1 int64
 //line main.xo:7:3
@@ -34,7 +32,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:8:5
 		var v_a *rt.Handle[int64, rt.Never] = rt.Spawn(tk, x_scope2, func(tk *rt.Task) rt.Result[int64, rt.Never] {
 //line main.xo:8:26
-			tk.Tick()
 //line main.xo:8:28
 			return rt.Ok[int64, rt.Never](F_slow_square(tk, v_os.F_clock, int64(3)))
 //line main.xo:8:28
@@ -43,7 +40,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:9:5
 		var v_b *rt.Handle[int64, rt.Never] = rt.Spawn(tk, x_scope2, func(tk *rt.Task) rt.Result[int64, rt.Never] {
 //line main.xo:9:26
-			tk.Tick()
 //line main.xo:9:28
 			return rt.Ok[int64, rt.Never](F_slow_square(tk, v_os.F_clock, int64(1)))
 //line main.xo:9:28
@@ -87,8 +83,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 		x_it10 := rt.Range[int64]{Lo: int64(0), Hi: int64(10), Incl: false}
 //line main.xo:16:7
 		for x_i12 := x_it10.Lo; x_i12 < x_it10.Hi; x_i12++ {
-//line main.xo:16:7
-			tk.Tick()
 //line main.xo:15:5
 			x_el13 := x_i12
 //line main.xo:15:5
@@ -98,7 +92,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:16:7
 				rt.Spawn(tk, x_scope7, func(tk *rt.Task) rt.Result[int64, rt.Never] {
 //line main.xo:16:20
-					tk.Tick()
 //line main.xo:17:9
 					v_os.F_clock.M_sleep(tk, rt.DurMulInt(rt.Duration(1000000), v_i, "main.xo:17:24"))
 //line main.xo:18:9
@@ -144,12 +137,9 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:26:5
 		rt.Spawn(tk, x_scope16, func(tk *rt.Task) rt.Result[rt.Unit, rt.Never] {
 //line main.xo:26:29
-			tk.Tick()
 //line main.xo:27:7
 //line main.xo:29:9
 			for {
-//line main.xo:29:9
-				tk.Tick()
 //line main.xo:27:7
 				if !(v_ticks.M_get(tk) < int64(1000000)) {
 //line main.xo:27:7
@@ -217,7 +207,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 //line main.xo:39:5
 		rt.GroupSpawn(tk, v_g, func(tk *rt.Task) rt.Result[rt.Unit, rt.Never] {
 //line main.xo:39:18
-			tk.Tick()
 //line main.xo:39:20
 			v_os.F_clock.M_sleep(tk, rt.Duration(1000000))
 //line main.xo:39:20

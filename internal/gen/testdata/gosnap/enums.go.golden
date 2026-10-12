@@ -290,7 +290,6 @@ func F_area(tk *rt.Task, v_s Shape) int64 {
 
 //line main.xo:32:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:33:3
 	var v_shapes rt.List[Shape] = rt.ListOf[Shape](Shape{Tag: 1, P: Shape_Circle{F_r: int64(2)}}, Shape{Tag: 2, P: Shape_Rect{F_w: int64(3), F_h: int64(4)}}, Shape{Tag: 3}, Shape{Tag: 1, P: Shape_Circle{F_r: int64(1)}})
 //line main.xo:33:3
@@ -298,8 +297,6 @@ func F_main(tk *rt.Task, v_os rt.Os) {
 	x_it2 := v_shapes
 //line main.xo:35:5
 	for _, x_e4 := range rt.List_Items(x_it2) {
-//line main.xo:35:5
-		tk.Tick()
 //line main.xo:34:3
 		x_el5 := x_e4
 //line main.xo:34:3

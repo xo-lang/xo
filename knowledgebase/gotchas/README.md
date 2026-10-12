@@ -303,3 +303,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-local-shadows-parameter.md](xo-local-shadows-parameter.md): Observed: a `var` in a function body may shadow a parameter of the same name without an error (parameters are in the outer scope); a rename made `plain` loop over its new empty list.
 - [xo-native-nested-element-update.md](xo-native-nested-element-update.md): Observed: on the arm64 and LLVM backends `xs[i].f.push(x)` (and other updates of a collection inside a list element) copies the whole inner collection; move it out, update, put it back.
 - [go-alloc-budget-is-process-wide.md](go-alloc-budget-is-process-wide.md): Anticipated: a Go-backend `with_budget(alloc:)` counts every allocation in the process during the call (decision 0173).
+- [gen-inspectnode-skips-tests.md](gen-inspectnode-skips-tests.md): Observed: internal/gen's inspectNode does not walk test declarations; scan whole files with check.Inspect.

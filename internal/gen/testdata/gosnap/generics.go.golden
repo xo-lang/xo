@@ -78,7 +78,6 @@ func (v_s Stack[tp_T]) M_size(tk *rt.Task) int64 {
 
 //line main.xo:11:1
 func Stack_M_peek_map[tp_T any, tp_U any](tk *rt.Task, v_s Stack[tp_T], v_f func(*rt.Task, tp_T) rt.Result[tp_U, rt.Never]) rt.Option[tp_U] {
-	tk.Tick()
 //line main.xo:12:3
 	x_r2 := rt.Own(rt.List_last[tp_T](tk, v_s.F_items))
 //line main.xo:12:3
@@ -148,7 +147,6 @@ func (v Tree[tp_T]) M_debug(*rt.Task) string { return rt.Debug(v) }
 
 //line main.xo:21:1
 func F_count[tp_T any](tk *rt.Task, v_t Tree[tp_T]) int64 {
-	tk.Tick()
 //line main.xo:22:3
 //line main.xo:24:61
 	switch {
@@ -221,8 +219,6 @@ func F_largest[tp_T any](tk *rt.Task, v_xs rt.List[tp_T]) rt.Option[tp_T] {
 	x_it9 := v_xs
 //line main.xo:33:7
 	for _, x_e11 := range rt.List_Items(x_it9) {
-//line main.xo:33:7
-		tk.Tick()
 //line main.xo:31:3
 		x_el12 := x_e11
 //line main.xo:31:3
@@ -326,7 +322,6 @@ func F_swap[tp_A any, tp_B any](tk *rt.Task, v_p Pair[tp_A, tp_B]) Pair[tp_B, tp
 
 //line main.xo:50:1
 func F_main(tk *rt.Task, v_os rt.Os) {
-	tk.Tick()
 //line main.xo:51:3
 	var v_s Stack[int64] = Stack[int64]{F_items: rt.List[int64]{}}
 //line main.xo:51:3
@@ -488,7 +483,6 @@ func Stack_M_pop__int64(tk *rt.Task, v_s *Stack[int64]) rt.Option[int64] {
 
 //line main.xo:11:1
 func Stack_M_peek_map__int64_int64_lit(tk *rt.Task, v_s Stack[int64], v_f func(*rt.Task, int64) rt.Result[int64, rt.Never]) rt.Option[int64] {
-	tk.Tick()
 //line main.xo:12:3
 	x_r37 := rt.List_last[int64](tk, v_s.F_items)
 //line main.xo:12:3
@@ -523,7 +517,6 @@ func Stack_M_peek_map__int64_int64_lit(tk *rt.Task, v_s Stack[int64], v_f func(*
 
 //line main.xo:21:1
 func F_count__string(tk *rt.Task, v_t Tree[string]) int64 {
-	tk.Tick()
 //line main.xo:22:3
 //line main.xo:24:61
 	switch {
@@ -596,8 +589,6 @@ func F_largest__int64(tk *rt.Task, v_xs rt.List[int64]) rt.Option[int64] {
 	x_it46 := v_xs
 //line main.xo:33:7
 	for _, x_e48 := range rt.List_Items(x_it46) {
-//line main.xo:33:7
-		tk.Tick()
 //line main.xo:31:3
 		x_el49 := x_e48
 //line main.xo:31:3
@@ -638,8 +629,6 @@ func F_largest__string(tk *rt.Task, v_xs rt.List[string]) rt.Option[string] {
 	x_it51 := v_xs
 //line main.xo:33:7
 	for _, x_e53 := range rt.List_Items(x_it51) {
-//line main.xo:33:7
-		tk.Tick()
 //line main.xo:31:3
 		x_el54 := x_e53
 //line main.xo:31:3
@@ -680,8 +669,6 @@ func F_largest__float64(tk *rt.Task, v_xs rt.List[float64]) rt.Option[float64] {
 	x_it56 := v_xs
 //line main.xo:33:7
 	for _, x_e58 := range rt.List_Items(x_it56) {
-//line main.xo:33:7
-		tk.Tick()
 //line main.xo:31:3
 		x_el59 := x_e58
 //line main.xo:31:3
