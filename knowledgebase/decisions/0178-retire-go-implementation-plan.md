@@ -1,7 +1,8 @@
 # 0178: Retiring the Go implementation: inventory and plan
 
 Status: Accepted (owner, 2026-10-12): switch points A and B approved;
-B takes effect when its gate passes; deleting the Go compiler packages is
+B takes effect when its gate passes (it passed on 2026-10-12: section
+"Switch point B gate", with the flip proposal); deleting the Go compiler packages is
 delegated to the lead under the criteria in "Owner approvals". Stage 1
 done (2026-10-12, runs 5 and 6 of the results file); switch point A
 implemented (internal/selfdriver; section "Switch point A, as
@@ -481,6 +482,92 @@ miss, `xo bind`, `xo publish`, get's API changes, fetching), and three
 commands not in xo1: `ssadump` and `llvmdump` (comparison dumps, not
 needed) and `rtpack` (builds the release's runtime packs: port it, or
 keep it in a Go helper that release.sh runs).
+
+## Switch point B gate (2026-10-12)
+
+The gate run on main 9935b0d plus this section's commits (results file,
+"Switch point B gate (switchb-gate)"): xo1 built by the Go `xo build
+--backend=arm64 selfhost/xo` and laid out as a release (bin/xo,
+bin/xo-gobind, lib/xo/std, lib/xo/third_party), no `XO_STD`; cmd/xo's
+whole suite without `-short`, `XO_CLI` = that bin/xo.
+
+- Run 1 (9935b0d, layout without bin/xo-gobind): 63 of 70 pass.
+- Run 3 (c8c82c1, xo1 of run 2's build at 8d635ae; the selfhost/ tree
+  is the same): **the gate passes: 69 of 71 tests pass, 0 fail, 2
+  skipped as exempt** (TestSSADump, TestLLVMDump).
+- The other package that drives `xo` as a process, internal/gen's
+  TestReduceDiffReal (scripts/reduce-diff.py over real builds), now
+  takes `$XO_CLI`; it passes against xo1.
+
+Closed in this section:
+
+- **`xo rtpack` is in Xo** (selfhost/xo rtpack.xo, dispatched by xo1's
+  main): the same flags, exit codes, and messages as cmd/xo rtpack.go,
+  and BuildRTPack's pack: the 32 runtime variants and libxotls.a
+  compiled in parallel, the archive's member headers normalized, the
+  manifest. TestRTPackXoSame (cmd/xo rtpack_xo_test.go) builds the
+  host's pack with both: **34 of 34 files byte identical**, and both
+  `--status` lines agree on the Xo pack. `--status` now names the
+  compiler and key as the Go command does. So release.sh can run the
+  self hosted `xo rtpack`.
+- **Exempt: `ssadump` and `llvmdump`** (and every hidden dump: lexdump,
+  astdump, typedump, asmdump, gendump). This decision's switch point B
+  text says "the hidden dumps used by tests are not needed (they compare
+  the two implementations)": each prints the Go implementation's
+  intermediate form so the differential tests can compare selfhost/
+  against it; there is no second implementation to compare after the
+  switch, and stage 7 replaces them with recorded goldens and deletes
+  them. TestSSADump and TestLLVMDump skip under `XO_CLI`
+  (skipComparisonDump, cmd/xo cli_test.go), and run as before against
+  the Go `xo`. `rtpack` is not a comparison dump (release.sh runs it),
+  so it was ported, not exempted.
+- **Release layout**: the Xo commands find std and xo-gobind beside the
+  running binary; without bin/xo-gobind, TestBind, TestAudit,
+  TestVouches, and TestModulesXoSame's audit failed (run 1), and xomod
+  in a temporary directory found no std
+  (gotchas/xo1-outside-release-layout.md). The gate layout and
+  TestModulesXoSame's xomod now include them. Not a gap of xo1: a
+  release must ship xo-gobind, which is part of the flip below.
+
+### Flipping switch B: what the lead changes (proposal)
+
+`xo` is xo1: the release ships the self hosted binary as bin/xo. The Go
+`xo` does not exec xo1 for every command (that is the "keep the CLI in
+Go" alternative); it stays in the repository only as the bootstrap
+compiler that builds the first xo1 (stage 7 step 4 then replaces it with
+the previous release). Concretely:
+
+1. **scripts/release.sh**: keep `go build ./cmd/xo` as `$host_xo` (the
+   bootstrap). For each target, bin/xo becomes xo1 instead of `go build
+   ./cmd/xo`: darwin/arm64 `"$host_xo" build --backend=arm64 -o
+   "$stage/bin/xo" selfhost/xo` (what the gate ran); linux/arm64
+   `--target=linux/arm64 --ld=macho` (the ELF writer of decision 0182,
+   with the linux pack built just before) or zig cc as the linker;
+   linux/amd64 has no native backend, so `--backend=go
+   --targets=linux/amd64` (xo1 through selfhost/gen and the Go
+   toolchain). Add `GOOS=$os GOARCH=$arch go build -o
+   "$stage/bin/xo-gobind" ./cmd/xo-gobind`, and copy std (with llrt and
+   rt) and third_party into lib/xo/ (xo1 reads them there; the Go `xo`
+   embedded them). The packs may then be built by the staged xo1
+   (`"$stage/bin/xo" rtpack ...` for the host) to exercise it. Version:
+   read selfhost/cli/core's `VERSION` (TestSelfhostVersion keeps it
+   equal to cmd/xo's until cmd/xo goes).
+2. **Install paths** (Homebrew, install docs, toolchain.md): bin/xo is
+   now a binary that needs lib/xo beside it (or `XO_STD`); a bare copy
+   of bin/xo no longer works, unlike the Go `xo` with embedded std.
+3. **XO1_FALLBACK**: with no Go driver behind it, xo1 prints XO1201 for
+   a program its native emitters skip (it already does when
+   `XO1_FALLBACK` is unset); internal/selfdriver is unused by a release.
+4. **Tests**: CI runs cmd/xo's suite with `XO_CLI` set to the staged
+   bin/xo, as this gate did, from then on the reference run.
+
+Not verified by this gate (next experiments): the linux/arm64 and
+linux/amd64 xo1 of item 1 (build them with the commands above and run
+the gate on the EC2 arm64 host and a linux/amd64 host with
+`scripts/remote-full.sh`); xo1 assumes an arm64 host in its native
+paths (`ctx.goos`/arm64), which on amd64 only matters for
+`--backend=arm64|llvm` builds, which the Go `xo` cannot run there
+either.
 
 ## Consequences
 

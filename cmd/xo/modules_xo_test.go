@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/gotool"
 	"github.com/xo-lang/xo/internal/mod"
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
@@ -37,6 +38,7 @@ func xoModulesBinary(t *testing.T) string {
 	}
 	// and the Go binder helper in bin/, as a release ships it (`use go`)
 	gb := exec.Command("go", "build", "-o", filepath.Join(root, "bin", "xo-gobind"), "github.com/xo-lang/xo/cmd/xo-gobind")
+	gb.Env = append(os.Environ(), gotool.CacheEnv())
 	if out, err := gb.CombinedOutput(); err != nil {
 		t.Fatalf("building xo-gobind: %v\n%s", err, out)
 	}
