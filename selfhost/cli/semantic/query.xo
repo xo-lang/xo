@@ -30,38 +30,10 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
   Ok(Session{c: c, wd: wd})
 }
 
-/// The std declaration files: $XO_STD, else lib/xo/std beside the
-/// program (named by $_, as xo1 finds its runtime pack: Env.program is
-/// not native yet), else the std directory of the repository holding the
-/// working directory, else ./std.
+/// The std declaration files: $XO_STD, else lib/xo/std of a release
+/// layout beside the binary Env.program names (check.std_dir).
 fn std_dir_of(os: Os) -> Str uses env, fs.read {
-  if let Some(s) = os.env.get("XO_STD") {
-    if !s.is_empty() {
-      return s
-    }
-  }
-  let prog = os.env.get("_") ?? ""
-  if !prog.is_empty() {
-
-    let d = "${dir_of(dir_of(abs_path(wd_of(os), prog)))}/lib/xo/std"
-    if os.fs.exists("${d}/prelude.xo").ok() ?? false {
-      return d
-    }
-  }
-  // the repository's std: the nearest directory above the working
-  // directory with std/prelude.xo
-  var d = abs_path(wd_of(os), ".")
-  while true {
-    if os.fs.exists("${d}/std/prelude.xo").ok() ?? false {
-      return "${d}/std"
-    }
-    let p = dir_of(d)
-    if p == d {
-      break
-    }
-    d = p
-  }
-  "std"
+  check.std_dir(os.env, os.fs)
 }
 
 /// A source position in query results.

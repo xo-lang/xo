@@ -383,23 +383,10 @@ fn dir_of(p: Str) -> Str {
   if d.is_empty() { "/" } else { d }
 }
 
-/// The std directory the checker reads: $XO_STD, else lib/xo/std or std
-/// beside the program's directory, else std in the working directory.
+/// The std directory the checker reads: $XO_STD, else lib/xo/std of a
+/// release layout beside the binary Env.program names (check.std_dir).
 pub fn std_dir(os: Os) -> Str uses (env, fs) {
-  let e = os.env.get("XO_STD") ?? ""
-  if !e.is_empty() {
-    return e
-  }
-  let prog = self_program(os)
-  if prog.contains("/") {
-    let bin = dir_of(prog)
-    for cand in [bin + "/../lib/xo/std", bin + "/std", bin + "/../std"] {
-      if os.fs.exists(cand + "/prelude.xo").ok() ?? false {
-        return cand
-      }
-    }
-  }
-  "std"
+  check.std_dir(os.env, os.fs)
 }
 
 /// recheck: checks the modules of the open documents and publishes their

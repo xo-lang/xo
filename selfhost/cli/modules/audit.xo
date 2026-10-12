@@ -140,25 +140,15 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   if rep.summary.errors > 0 { 1 } else { 0 }
 }
 
-/// The std declaration files: $XO_STD, else lib/xo/std of a release
-/// layout beside the binary's directory, std beside the binary, std in
-/// its parent directory, else ./std.
+/// The std declaration files: $XO_STD (with the module flags'
+/// environment), else lib/xo/std of a release layout beside the binary
+/// Env.program names (check.std_dir).
 fn (c: ModCtx) std_dir() -> Str uses (env, fs.read) {
   let s = c.getenv("XO_STD")
   if !s.is_empty() {
     return s
   }
-  // the binary: $_ as the shell sets it (Env.program is not native yet)
-  let prog = c.getenv("_")
-  if !prog.is_empty() {
-    let d = dir_of(c.abs(prog))
-    for cand in [join(d, "../lib/xo/std"), join(d, "std"), join(d, "../std")] {
-      if c.exists("${cand}/prelude.xo") {
-        return cand
-      }
-    }
-  }
-  "std"
+  check.std_dir(c.os.env, c.os.fs)
 }
 
 /// mod.WorkspaceDirs: dirs and every module directory of the workspace

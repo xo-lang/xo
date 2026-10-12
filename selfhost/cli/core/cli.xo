@@ -107,24 +107,10 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock {
   }
 }
 
-/// The std directory when neither --std nor XO_STD names one: lib/xo/std
-/// of a release layout (bin/xo beside lib/), std beside the binary, std
-/// in the binary's parent directory, else ./std.
-fn find_std(os: Os) -> Str {
-  // the running binary: Env.program is not native yet (XO1201), so the
-  // path the shell exported in $_ when it started this program (as
-  // selfhost/xo rt.xo finds lib/xo/rtpack)
-  var prog = os.env.get("_") ?? ""
-  if !prog.starts_with("/") {
-    prog = join_path(os.env.get("PWD") ?? ".", prog)
-  }
-  let dir = dir_of(prog)
-  for cand in [join_path(dir, "../lib/xo/std"), join_path(dir, "std"), join_path(dir, "../std")] {
-    if os.fs.exists(join_path(cand, "prelude.xo")).ok() ?? false {
-      return cand
-    }
-  }
-  "std"
+/// The std directory when --std names none: $XO_STD, else lib/xo/std of
+/// a release layout beside the binary Env.program names (check.std_dir).
+fn find_std(os: Os) -> Str uses (env, fs.read) {
+  check.std_dir(os.env, os.fs)
 }
 
 /// A checker for dirs with the module environment of ctx (as xo1 and
