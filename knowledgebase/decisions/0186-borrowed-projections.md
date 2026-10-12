@@ -99,6 +99,12 @@ guarantees, and every list update still gets a list held once.
 - The decision is per function and linear in the uses of each
   projection; the rc stage of selfhost/ssa matches the Go pass byte for
   byte, so the fixed point of xo1 holds.
+- xo1 compiling selfhost/xo executes 32.2% fewer retains and 40.3%
+  fewer releases (6.31 to 4.28 billion, 5.05 to 3.02 billion), 2.2%
+  fewer instructions and 4.1% fewer cycles, with the fixed point intact
+  (the Go compiler's and both xo1s' assembly byte identical); peak
+  footprint 18.4 to 19.3 GB (rc-borrow-2026-10-12.md). bench/perf/nested
+  walk: 600,041 retains to 1.
 - No allocation count goes up on the golden borrow_proj case by case
   (rule 3), and retain and release counts go down or stay.
 - Loops whose body changes the container (pushes, nested updates, `var`
