@@ -7,8 +7,12 @@
 // (build.Info) from the result. Here the build is `xo build --backend=go`
 // run as a child, and the information is read back from the binary: the
 // generated program passes it to rt.SetBuildInfo as one string constant,
-// `{"id":"<64 hex>","dir":"<the directory>",...}`, which is found by its
+// `{"id":"<24 hex>","dir":"<the directory>",...}` (build.Info ID, the
+// first 24 hex digits of a SHA-256), which is found by its
 // prefix and parsed.
+
+/// The length of a build ID (internal/build: hex of SHA-256, [:24]).
+const ID_LEN = 24
 
 fn replay_flags() -> List[Flag] {
   [Flag{name: "dir", kind: "string", def: "", usage: "the program's main module directory (default: the one recorded in the trace)"}]
@@ -155,7 +159,7 @@ fn embedded_info(os: Os, bin: Str, dir: Str) -> J uses fs {
   let tail = "\",\"dir\":".bytes()
   var i = 0
   let n = data.len()
-  while i + prefix.len() + 64 + tail.len() < n {
+  while i + prefix.len() + ID_LEN + tail.len() < n {
     if data[i] != '{' || data[i + 1] != '"' {
       i += 1
       continue
@@ -164,7 +168,7 @@ fn embedded_info(os: Os, bin: Str, dir: Str) -> J uses fs {
     for k in 0..prefix.len() {
       ok = ok && data[i + k] == prefix[k]
     }
-    let t = i + prefix.len() + 64
+    let t = i + prefix.len() + ID_LEN
     for k in 0..tail.len() {
       ok = ok && data[t + k] == tail[k]
     }

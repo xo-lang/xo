@@ -1,0 +1,140 @@
+// The checks `xo build --ci` and `--release` make before building (cmd/xo
+// build.go ciCheck, mod.go workspaceRelease), for xo1's build command
+// (decision 0178 switch point B).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/core/format
+
+/// workspaceRelease: the XO1308 error of a release (or --ci) build while
+/// the xo.work workspace of dirs[0]'s module overrides a module that one
+/// of its modules requires; empty otherwise.
+pub fn workspace_release(os: Os, ctx: Ctx, dirs: List[Str]) -> List[Diag] uses (fs.read, env) {
+  if dirs.is_empty() {
+    return []
+  }
+  let c = new_checker(os, ctx)
+  let root = c.mod_root_dir(dirs[0])
+  if root.is_empty() {
+    return []
+  }
+  let (w0, _) = c.find_work(root)
+  let w = match w0 {
+    Some(x) => x
+    None => return []
+  }
+  var required: Map[Str, Bool] = {}
+  for m in w.modules {
+    for r in m.reqs {
+      required[r.path] = true
+    }
+  }
+  var over: List[Str] = []
+  for m in w.modules {
+    if c.abs_path(m.dir) != root && required.contains(m.path) {
+      over.push(m.path)
+    }
+  }
+  if over.is_empty() {
+    return []
+  }
+  let file = c.abs_path(w.file)
+  [Diag{code: "XO1308", file: file, line: 1, col: 1, end_line: 0, end_col: 0, message: "release build while the workspace ${file} overrides ${over.join(", ")}", notes: [check.DNote{message: "build with --workspace=off (or XO_WORK=off) to use the versions xo.mod requires and xo.lock pins"}]}]
+}
+
+/// Prints the XO1308 error of workspace_release as `xo build` does (the
+/// JSON result with as_json) and returns 1, or returns 0 when there is
+/// none.
+pub fn release_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool, flag: Str) -> Int uses (fs.read, env, stdio) {
+  let ds = workspace_release(os, ctx, dirs)
+  if ds.is_empty() {
+    return 0
+  }
+  if as_json {
+    os.stdio.print(indent_json(jobj([("ok", "false"), ("binaries", "{}"), ("diagnostics", diags_json(ds))])))
+  } else {
+    var b = StrBuilder.new()
+    for d in sort_diags(ds) {
+      b.write(human(d))
+      b.write("\n")
+    }
+    b.write("xo build: ${flag}: nothing built\n")
+    os.stdio.eprint(b.freeze())
+  }
+  1
+}
+
+/// ciCheck: fails (1, the report printed) when a .xo file under dirs is
+/// not formatted or `dbg(...)` is left in code (XO0901 as an error); 2
+/// when the files cannot be read or checked; 0 to build.
+pub fn ci_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool) -> Int uses (fs, env, stdio, net, proc, rand) {
+  let files = match collect(os, dirs, true) {
+    Ok(fs) => fs
+    Err(e) => {
+      os.stdio.eprintln("xo build: ${e}")
+      return 2
+    }
+  }
+  var unformatted: List[Str] = []
+  for path in files {
+    let src = match os.fs.read(path) {
+      Ok(b) => b
+      Err(e) => {
+        os.stdio.eprintln("xo build: ${fs_err(e)}")
+        return 2
+      }
+    }
+    match format.format_source(path, src) {
+      Ok(out) => {
+        if out != src {
+          unformatted.push(path)
+        }
+      }
+      // syntax errors are reported by the build itself
+      SyntaxErrors(_) => {}
+    }
+  }
+  // vet.Vet: the advisory checks of a check of exactly dirs
+  let s = match load(os, ctx, dirs, true, {}) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo build: ${e}")
+      return 2
+    }
+  }
+  var vds: List[Diag] = []
+  for d in s.diags {
+    if !is_error(d) {
+      vds.push(d)
+    }
+  }
+  for m in s.c.root_mods {
+    vds = vds + vet_module(s.c, m)
+  }
+  var ds: List[Diag] = []
+  for d0 in sort_diags(vds) {
+    if d0.code == "XO0901" {
+      var d = d0
+      d.warning = false
+      d.note_sev = false
+      ds.push(d)
+    }
+  }
+  if unformatted.is_empty() && ds.is_empty() {
+    return 0
+  }
+  if as_json {
+    os.stdio.print(indent_json(jobj([("ok", "false"), ("binaries", "{}"), ("diagnostics", diags_json(ds)), ("unformatted", jstrs(unformatted))])))
+    return 1
+  }
+  var b = StrBuilder.new()
+  for d in ds {
+    b.write(human(d))
+    b.write("\n")
+  }
+  for p in unformatted {
+    b.write("${p}: not formatted; run `xo fmt` (core 10.5)\n")
+  }
+  b.write("xo build: --ci: nothing built\n")
+  os.stdio.eprint(b.freeze())
+  1
+}
