@@ -6,11 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-- xo1 (`selfhost/xo`, decision 0174) links the TLS library of std/http
-  as internal/build does (same cache key, so both drivers share
-  `<user cache>/xo/mbedtls`): the self compiled compiler passes all 147
-  arm64 goldens. `scripts/selfhost-goldens.py` passes args.txt, env.txt,
-  and stdin.txt.
+- xo1 (`selfhost/xo`, decision 0174) does what internal/build adds for
+  native builds, with the same cache keys (shared caches): the TLS
+  library of std/http, the zone data of std/time, prebuilt runtime packs
+  and the runtime object cache, `use c` inputs, `--target=linux/arm64`
+  (assembly), and `xo1 test`. The self compiled compiler passes all 147
+  arm64 goldens; `scripts/selfhost-samebin.py` finds its binaries byte
+  identical to `xo build --backend=arm64`'s (147 of 147).
+  `scripts/selfhost-goldens.py` passes args.txt, env.txt, and stdin.txt.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every
