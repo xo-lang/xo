@@ -11,6 +11,9 @@
 //   xo1 keys [--std=DIR] [--cc=CC]   the cache keys, to compare
 //
 // flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system
+// --phase-times (build, test, asm): the wall clock of each phase on
+// standard error (check, SSA build, each pass, inline, emit, write,
+// assemble and link), as `phase NAME MS ms` lines.
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -47,6 +50,7 @@ fn main(os: Os) ! {
   var topts = TestOpts{}
   var backend = "arm64"
   var go_tree = ""
+  var phases = false
   var dirs: List[Str] = []
   var i = 1
   while i < args.len() {
@@ -73,6 +77,8 @@ fn main(os: Os) ! {
       topts.seed = Int.parse(a.trim_prefix("--seed=")) ?? 0
     } else if a.starts_with("--cases=") {
       topts.cases = Int.parse(a.trim_prefix("--cases=")) ?? 0
+    } else if a == "--phase-times" {
+      phases = true
     } else if a == "--json" {
       topts.json = true
     } else if a == "-v" {
@@ -113,6 +119,7 @@ fn main(os: Os) ! {
   if backend != "arm64" {
     fail(os, "--backend=${backend}: want arm64, or go for build")
   }
+  var t = os.clock.now()
   var c = check.new_checker(os.fs, std_dir)
   c.native = true
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
@@ -130,6 +137,7 @@ fn main(os: Os) ! {
       fail(os, "the program does not check (run xo check)")
     }
   }
+  t = lap(os, phases, "check", t)
   var uses_time = false
   for m in c.mods {
     uses_time = uses_time || m.path == "native/time"
@@ -137,6 +145,7 @@ fn main(os: Os) ! {
   let root = line_root(os, wd, dirs[0])
   let tests = cmd == "test"
   var b = ssa.build_program(c, root, tests)
+  t = lap(os, phases, "ssa", t)
   if !b.why.is_empty() {
     fail(os, b.why)
   }
@@ -147,8 +156,21 @@ fn main(os: Os) ! {
   }
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
-  b.run_passes()
-  let p = arm64.generate_module(b.m, tgoos, false)
+  t = lap(os, phases, "tz", t)
+  // b.run_passes(), arm64.generate_module(b.m, tgoos, false), timed
+  b.prune_unwind()
+  t = lap(os, phases, "prune_unwind", t)
+  b.add_landings()
+  t = lap(os, phases, "add_landings", t)
+  b.cleanup_all()
+  t = lap(os, phases, "cleanup", t)
+  b.insert_rc()
+  t = lap(os, phases, "insert_rc", t)
+  var mi = b.m
+  let inl = arm64.inline_step(mi)
+  t = lap(os, phases, "inline", t)
+  let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(b.m, tgoos) }
+  t = lap(os, phases, "emit", t)
   if !p.err.is_empty() {
     fail(os, p.err)
   }
@@ -157,6 +179,7 @@ fn main(os: Os) ! {
   }
   if cmd == "asm" {
     os.stdio.print(p.asm)
+    lap(os, phases, "print", t)
     return
   }
   let parts = dirs[0].trim_suffix("/").split("/")
@@ -180,6 +203,7 @@ fn main(os: Os) ! {
     asm_path = "${out}.s"
   }
   os.fs.write(asm_path, p.asm.bytes())?
+  t = lap(os, phases, "write", t)
   if tgoos != goos {
     // another target: its assembly only (internal/build buildArm64)
     os.stdio.println("${target}: ${asm_path}")
@@ -226,6 +250,7 @@ fn main(os: Os) ! {
   flags = flags + ci.flags
   srcs = srcs + ci.srcs
   let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
+  t = lap(os, phases, "cc", t)
   if !msg.is_empty() {
     os.stdio.eprint(msg)
     fail(os, "${cc} failed")
@@ -296,4 +321,13 @@ fn rel_to(wd: Str, p: Str) -> Str {
 fn fail(os: Os, msg: Str) -> Never {
   os.stdio.eprintln("xo1: ${msg}")
   os.proc.exit(1)
+}
+
+/// lap prints the time since t as phase name when on (--phase-times)
+/// and returns the time now.
+fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
+  if on {
+    os.stdio.eprintln("phase ${name} ${os.clock.since(t).millis()} ms")
+  }
+  os.clock.now()
 }
