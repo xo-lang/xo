@@ -77,6 +77,17 @@ func (b *builder) logFrom(fo *check.FuncObj, at ast.Node) string {
 	return ""
 }
 
+// preludeImpl is the native prelude's function name (one the builder
+// calls itself, not as a method's implementation), or nil.
+func (b *builder) preludeImpl(name string) *check.FuncObj {
+	if nm := b.nativeMod("std/prelude"); nm != nil {
+		if impl, ok := nm.Scope[name].(*check.FuncObj); ok && impl.Recv == nil {
+			return impl
+		}
+	}
+	return nil
+}
+
 // implOf returns the implementation of the std function fo, or nil.
 func (b *builder) implOf(fo *check.FuncObj) *check.FuncObj {
 	if fo.Module == nil || !fo.Module.IsStd || fo.Iface {

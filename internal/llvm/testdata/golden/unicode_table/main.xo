@@ -1,0 +1,66 @@
+// The Unicode operations of the native runtime, written in Xo since
+// decision 0180 (std/native/llrt/unicode.xo): case mapping, the Rune
+// classes, and quoting, compared with the Go backend (Go's unicode,
+// strings, and strconv). Every scalar value is classified and mapped;
+// the sums per block of 0x10000 runes cover every table entry.
+
+use std/regexp
+
+fn bit(b: Bool, v: Int) -> Int {
+  if b {
+    return v
+  }
+  0
+}
+
+fn main(os: Os) {
+  // every scalar value, summed per plane
+  var plane = 0
+  while plane <= 16 {
+    var letters = 0
+    var digits = 0
+    var spaces = 0
+    var prints = 0
+    var h = 0
+    var i = plane * 0x10000
+    while i < (plane + 1) * 0x10000 {
+      if let Some(r) = Rune.try(i) {
+        letters += bit(r.is_letter(), 1)
+        digits += bit(r.is_digit(), 1)
+        spaces += bit(r.is_space(), 1)
+        prints += bit(r.is_print(), 1)
+        let lo = Int(r.to_lower())
+        let up = Int(r.to_upper())
+        if lo != i || up != i {
+          h = (h * 31 + i * 7 + lo * 3 + up) % 1000000007
+        }
+      }
+      i += 1
+    }
+    os.stdio.println("plane ${plane}: letters=${letters} digits=${digits} spaces=${spaces} prints=${prints} case=${h}")
+    plane += 1
+  }
+  // case mapping of strings, with the special cases of Go's tables
+  let words = ["", "abc", "ABC", "Hello, World! 123", "straße", "İstanbul", "ıi", "ǅǄǆ", "ΣΑΣ σας", "ﬁne", "K Ω Å", "Ünïcödé ÀÉÎÕÜ", "Кириллица ТЕКСТ", "𐐀𐐨 𞤀𞤢", "ⓐⓑⒶⒷ", "ꙁꙀ ꞔ Ɐ", "日本語 ﾃｷｽﾄ", "ǰ ẞ ſ ͅ", "ascii only"]
+  for w in words {
+    os.stdio.println("${w.quote()} lower=${w.to_lower().quote()} upper=${w.to_upper().quote()} eq=${w.to_lower() == w.to_upper().to_lower()} ne=${w.to_lower() != "abc"}")
+  }
+  let pairs = [("ABC", "abc"), ("ÀB", "àb"), ("Straße", "STRASSE"), ("Ⅻ", "ⅻ"), ("a", "ab"), ("ab", "a"), ("", ""), ("KELVIN", "kelvin")]
+  for (a, b) in pairs {
+    os.stdio.println("${a} ~ ${b}: ${a.to_lower() == b.to_lower()}")
+  }
+  // quoting: strconv.Quote, QuoteRune, and Bytes.quote
+  let qs = ["plain", "tab\tnl\ncr\r", "quote\" back\\", "bell\u{7} nul\u{0} del\u{7f}", "é\u{a0}\u{ad}\u{200b}\u{feff}", "\u{e000}\u{10ffff}\u{1f600}", "\u{85}\u{2028}"]
+  for q in qs {
+    os.stdio.println(q.quote())
+  }
+  for r in ['a', '\'', '\\', '\n', '\u{7}', '\u{0}', 'é', '\u{ad}', '\u{1f600}', '\u{e0001}', '\u{fffd}'] {
+    os.stdio.println("${r.quote()} ${r.is_letter()} ${r.is_print()}")
+  }
+  os.stdio.println(b"ok\xff\xc3(\xe2\x82\xa1\xf0\x9f".quote())
+  // std/regexp's \pL and \p{Nd} use the class ranges
+  match regexp.compile(r"\pL+|\p{Nd}+") {
+    Ok(re) => os.stdio.println(re.find_all("abc ÀÉ 123 ٣٤ 日本 ½ x1").join("|"))
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+}

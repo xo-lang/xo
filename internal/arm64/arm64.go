@@ -124,6 +124,11 @@ type gen struct {
 	addrTaken map[string]bool
 }
 
+// InlineDone, when set, is called by Generate after inlining (and the
+// verification after it), before emission: a timing hook for `xo asmdump`
+// with XO_PHASE_TIMES=1.
+var InlineDone func()
+
 // Generate lowers a module (after InsertRC) to AArch64 assembly.
 func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 	defer func() {
@@ -147,6 +152,9 @@ func Generate(m *ssa.Module, opts Options) (prog *Program, err error) {
 		if err := m.Verify(); err != nil {
 			return nil, &InlineError{err}
 		}
+	}
+	if InlineDone != nil {
+		InlineDone()
 	}
 	for _, f := range m.Funcs {
 		g.byName[f.Name] = f
