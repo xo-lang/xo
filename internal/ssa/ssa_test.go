@@ -248,3 +248,32 @@ func TestVerifyRCMutations(t *testing.T) {
 	}
 	t.Logf("%d mutants rejected", n)
 }
+
+// TestAmbiguousGeneratedNames: two packages each declaring `Ctx`, both
+// interpolating a List[Ctx] with Debug, get one xo.debug function each
+// (generated functions are named by builder.typeName, which qualifies an
+// ambiguous type by its module, as the interned types are); with the
+// plain name the second package's call took the first one's function
+// (found by the module commands in Xo, decision 0178 stage 4).
+func TestAmbiguousGeneratedNames(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"xo.mod":       "module example.com/clash\nedition preview\n",
+		"a/a.xo":       "pub struct Ctx {\n  pub n: Int\n}\n\npub fn show() -> Str {\n  let xs = [Ctx{n: 1}]\n  \"${xs.debug()}\"\n}\n",
+		"b/b.xo":       "pub struct Ctx {\n  pub s: Str\n}\n\npub fn show() -> Str {\n  let xs = [Ctx{s: \"x\"}]\n  \"${xs.debug()}\"\n}\n",
+		"main/main.xo": "use example.com/clash/a\nuse example.com/clash/b\n\nfn main(os: Os) {\n  os.stdio.println(a.show() + b.show())\n}\n",
+	}
+	for name, text := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := lower(t, filepath.Join(dir, "main"))
+	if n := strings.Count(m.String(), "xo.debug[example.com/clash/"); n < 2 {
+		t.Errorf("want qualified xo.debug functions for a.Ctx and b.Ctx, found %d", n)
+	}
+}

@@ -119,6 +119,10 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 		switch h.Typeflag {
 		case tar.TypeDir:
 			e.F_is_dir = true
+		case tar.TypeXGlobalHeader:
+			// describes the archive (`git archive` writes one holding
+			// the commit), not an entry: skipped (std.md 18)
+			continue
 		case tar.TypeReg:
 			b, err := io.ReadAll(r)
 			if err != nil {

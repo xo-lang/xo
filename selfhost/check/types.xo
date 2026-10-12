@@ -159,7 +159,7 @@ fn (c: Checker) kind_of(t: Int) -> TyKind {
 /// The Type object of a Named type (after resolving), or -1 (also for no
 /// type: an expression of a body never checked, such as a duplicate
 /// function's, which the real-time pass still walks).
-fn (c: Checker) named_obj(t: Int) -> Int {
+pub fn (c: Checker) named_obj(t: Int) -> Int {
   if t < 0 {
     return -1
   }

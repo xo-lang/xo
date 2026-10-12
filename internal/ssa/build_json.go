@@ -79,7 +79,7 @@ func (b *builder) jsonEnc(ct check.Type, at ast.Node) string {
 	m := b.mod
 	st, intT, boolT := m.Builtin(KStr), m.Builtin(KInt), m.Builtin(KBool)
 	t := b.typ(ct, at)
-	return b.genFunc("xo.json.enc["+ct.String()+"]", []*Type{st, t}, []*Type{st}, func(s *fn, ps []*Value) {
+	return b.genFunc("xo.json.enc["+b.typeName(ct)+"]", []*Type{st, t}, []*Type{st}, func(s *fn, ps []*Value) {
 		acc, v := ps[0], ps[1]
 		lit := func(a *Value, text string) *Value {
 			return s.call("str.concat", st, "", a, s.add(OpConst, st, text))
@@ -285,7 +285,7 @@ func (b *builder) jsonDec(ct check.Type, at ast.Node) string {
 	}
 	rt := b.typ(b.resultOf(ct, det), at)
 	listInt := m.List(intT)
-	name := "xo.json.dec[" + ct.String() + "]"
+	name := "xo.json.dec[" + b.typeName(ct) + "]"
 	return b.genFunc(name, []*Type{st, listInt, intT}, []*Type{rt}, func(s *fn, ps []*Value) {
 		src, tape, i := ps[0], ps[1], ps[2]
 		errI := rt.VariantIndex("Err")

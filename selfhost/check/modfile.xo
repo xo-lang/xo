@@ -129,7 +129,7 @@ pub struct DepState {
 }
 
 /// The effect labels a ceiling may name (mod.EffectLabels).
-const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "log", "go"]
+pub const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "log", "go"]
 
 // ---------------------------------------------------------------------------
 // Paths of the file system
@@ -212,7 +212,7 @@ fn (c: Checker) is_dir(p: Str) -> Bool {
 }
 
 /// The lines of a file as bufio.Scanner splits them.
-fn scan_lines(data: Bytes) -> List[Str] {
+pub fn scan_lines(data: Bytes) -> List[Str] {
   var out: List[Str] = []
   let text = data.to_str() ?? ""
   if text.is_empty() {
@@ -229,7 +229,7 @@ fn scan_lines(data: Bytes) -> List[Str] {
 }
 
 /// strings.Fields: the words of s between runs of white space.
-fn fields(s: Str) -> List[Str] {
+pub fn fields(s: Str) -> List[Str] {
   var out: List[Str] = []
   var cur = BytesBuilder.new()
   var n = 0
@@ -301,7 +301,7 @@ fn version_parts(v: Str) -> List[Str]? {
 }
 
 /// mod.ValidVersion.
-fn valid_version(v: Str) -> Bool {
+pub fn valid_version(v: Str) -> Bool {
   version_parts(v) != None
 }
 
@@ -326,7 +326,7 @@ fn cmp_num(a: Str, b: Str) -> Int {
 }
 
 /// mod.Compare: -1, 0, or 1; a prerelease sorts before its release.
-fn compare_versions(a: Str, b: Str) -> Int {
+pub fn compare_versions(a: Str, b: Str) -> Int {
   let pa0 = version_parts(a)
   let pb0 = version_parts(b)
   let (ma, mb) = match (pa0, pb0) {
@@ -388,7 +388,7 @@ fn compare_versions(a: Str, b: Str) -> Int {
 /// mod.ValidPath: slash separated elements of letters, digits, `.`, `-`,
 /// `_`, and `~`, the first holding a dot, none `.`, `..`, or starting with
 /// a dot.
-fn valid_path(p: Str) -> Bool {
+pub fn valid_path(p: Str) -> Bool {
   if p.is_empty() || p.starts_with("/") || p.ends_with("/") {
     return false
   }
@@ -420,7 +420,7 @@ fn major_suffix_n(path: Str) -> Int {
 }
 
 /// mod.MajorMismatch: why v cannot be a version of the module path, or "".
-fn major_mismatch(path: Str, v: Str) -> Str {
+pub fn major_mismatch(path: Str, v: Str) -> Str {
   let parts = match version_parts(v) {
     Some(p) => p
     None => return ""
@@ -437,7 +437,7 @@ fn major_mismatch(path: Str, v: Str) -> Str {
 }
 
 /// mod.EscapePath: `!` and the lower case letter for each upper case one.
-fn escape_path(p: Str) -> Str {
+pub fn escape_path(p: Str) -> Str {
   var out = BytesBuilder.new()
   for b in p.bytes() {
     if b >= 'A' && b <= 'Z' {
@@ -454,7 +454,7 @@ fn escape_path(p: Str) -> Str {
 // Effect ceilings and deny rules
 
 /// Ceiling.Admits: l or its parent label is listed.
-fn ceiling_admits(c: Ceiling, l: Str) -> Bool {
+pub fn ceiling_admits(c: Ceiling, l: Str) -> Bool {
   for e in c.effects {
     if e == l || l.starts_with("${e}.") {
       return true
@@ -464,7 +464,7 @@ fn ceiling_admits(c: Ceiling, l: Str) -> Bool {
 }
 
 /// Ceiling.String.
-fn ceiling_text(c: Ceiling) -> Str {
+pub fn ceiling_text(c: Ceiling) -> Str {
   if c.effects.is_empty() {
     return "uses none"
   }
@@ -473,7 +473,7 @@ fn ceiling_text(c: Ceiling) -> Str {
 
 /// mod.ParseCeiling: the words after a version or a `use` directory, or
 /// the error.
-fn parse_ceiling(words: List[Str]) -> Ceiling ! Str {
+pub fn parse_ceiling(words: List[Str]) -> Ceiling ! Str {
   if words.is_empty() || words[0] != "uses" {
     return Err("want `uses <effects>` or `uses none`")
   }
@@ -580,7 +580,7 @@ fn parse_deny(name: Str, line: Int, rest: Str) -> Deny ! Problem {
 // xo.mod, xo.work, xo.lock
 
 /// mod.ReadFile: the xo.mod in dir, None when it cannot be read.
-fn (c: Checker) read_mod_file(dir: Str) -> (ModFile?, List[Problem]) {
+pub fn (c: Checker) read_mod_file(dir: Str) -> (ModFile?, List[Problem]) uses fs.read {
   let name = join(dir, "xo.mod")
   let data = match c.fs.read(name).ok() {
     Some(b) => b
@@ -590,7 +590,7 @@ fn (c: Checker) read_mod_file(dir: Str) -> (ModFile?, List[Problem]) {
 }
 
 /// mod.Parse: the module path, requires, and deny rules of an xo.mod.
-fn parse_mod_file(name: Str, dir: Str, data: Bytes) -> (ModFile?, List[Problem]) {
+pub fn parse_mod_file(name: Str, dir: Str, data: Bytes) -> (ModFile?, List[Problem]) {
   var f = ModFile{file: name, dir: dir}
   var probs: List[Problem] = []
   var seen: Map[Str, Int] = {}
@@ -682,7 +682,7 @@ fn parse_mod_file(name: Str, dir: Str, data: Bytes) -> (ModFile?, List[Problem])
 
 /// mod.NearestWork: the xo.work XO_WORK names, or the nearest at or above
 /// dir; "" for none or when workspaces are off.
-fn (c: Checker) nearest_work(dir: Str) -> Str {
+pub fn (c: Checker) nearest_work(dir: Str) -> Str uses fs.read {
   if c.deps.work_env == "off" {
     return ""
   }
@@ -704,7 +704,7 @@ fn (c: Checker) nearest_work(dir: Str) -> Str {
 }
 
 /// mod.FindWork: the workspace that uses the module in dir, if any.
-fn (c: Checker) find_work(dir0: Str) -> (WorkFile?, List[Problem]) {
+pub fn (c: Checker) find_work(dir0: Str) -> (WorkFile?, List[Problem]) uses fs.read {
   if c.deps.work_env == "off" {
     return (None, [])
   }
@@ -727,7 +727,7 @@ fn (c: Checker) find_work(dir0: Str) -> (WorkFile?, List[Problem]) {
 }
 
 /// mod.ReadWork.
-fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) {
+pub fn (c: Checker) read_work(name: Str) -> (WorkFile?, List[Problem]) uses fs.read {
   let data = match c.fs.read(name).ok() {
     Some(b) => b
     None => return (None, [Problem{code: "XO1301", file: name, msg: "cannot read xo.work: open ${c.abs(name)}: no such file or directory"}])
@@ -826,7 +826,7 @@ fn last_slash(s: Str) -> Int {
 
 /// mod.parseEffectsText: `none`, or effect labels joined by commas,
 /// sorted; None for an unknown label.
-fn parse_effects_text(s: Str) -> List[Str]? {
+pub fn parse_effects_text(s: Str) -> List[Str]? {
   if s == "none" {
     return Some([])
   }
@@ -841,7 +841,7 @@ fn parse_effects_text(s: Str) -> List[Str]? {
 }
 
 /// mod.ReadLock: dir/xo.lock; a missing file is an empty lock.
-fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) {
+pub fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) uses fs.read {
   var l = Lock{file: join(dir, "xo.lock")}
   var probs: List[Problem] = []
   let data = match c.fs.read(l.file).ok() {
@@ -906,7 +906,7 @@ fn (c: Checker) tree_files(dir: Str, rel: Str, var out: List[Str]) {
 
 /// mod.HashDir: "h1:" and the base64 SHA-256 of the lines "<sha256 hex>
 /// <slash path>" of every file of the tree, sorted by path.
-fn (c: Checker) hash_dir(dir: Str) -> Str {
+pub fn (c: Checker) hash_dir(dir: Str) -> Str uses fs.read {
   var files: List[Str] = []
   c.tree_files(dir, "", files)
   var sum = BytesBuilder.new()
@@ -918,7 +918,7 @@ fn (c: Checker) hash_dir(dir: Str) -> Str {
 }
 
 /// mod.HashModFile: the hash of a version's xo.mod alone.
-fn (c: Checker) hash_mod_file(dir: Str) -> Str? {
+pub fn (c: Checker) hash_mod_file(dir: Str) -> Str? uses fs.read {
   let data = c.fs.read(join(dir, "xo.mod")).ok()?
   let line = "${crypto.sha256(data).to_hex()}  xo.mod\n"
   Some("h1:${crypto.sha256(line.bytes()).to_base64()}")
@@ -1137,7 +1137,7 @@ fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
 
 /// mod.VendorModules: the "# <path> <version>" lines of
 /// vendor/modules.txt.
-fn (c: Checker) vendor_modules(main_dir: Str) -> List[DepModule]? {
+pub fn (c: Checker) vendor_modules(main_dir: Str) -> List[DepModule]? uses fs.read {
   let data = c.fs.read(join(join(main_dir, "vendor"), "modules.txt")).ok()?
   var out: List[DepModule] = []
   for l in scan_lines(data) {
@@ -1245,7 +1245,7 @@ fn (c: Checker) check_effects(var b: BuildList, locks: Map[Str, Lock], roots: Li
 }
 
 /// mod.EffectsText: labels joined with commas, or `none`.
-fn effects_text(ls: List[Str]) -> Str {
+pub fn effects_text(ls: List[Str]) -> Str {
   if ls.is_empty() { "none" } else { ls.join(",") }
 }
 
@@ -1254,7 +1254,7 @@ fn effects_text(ls: List[Str]) -> Str {
 /// (nested modules, vendor/, testdata/, dot directories, and _test.xo
 /// files left out), sorted, a sub effect dropped when its parent is in
 /// the set. Computed from syntax.
-fn (c: Checker) module_effects(dir: Str) -> List[Str] {
+pub fn (c: Checker) module_effects(dir: Str) -> List[Str] uses fs.read {
   var set: List[Str] = []
   var todo: List[Str] = [dir]
   while !todo.is_empty() {
@@ -1310,7 +1310,7 @@ fn (c: Checker) module_effects(dir: Str) -> List[Str] {
 
 /// mod.Ceilings: the effect ceilings that apply to calls from the module
 /// in dir, by dependency module path.
-fn (c: Checker) ceilings_from(dir: Str) -> Map[Str, List[CeilingSource]] {
+pub fn (c: Checker) ceilings_from(dir: Str) -> Map[Str, List[CeilingSource]] uses fs.read {
   var out: Map[Str, List[CeilingSource]] = {}
   let (f0, _) = c.read_mod_file(dir)
   let f = match f0 {

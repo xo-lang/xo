@@ -205,6 +205,29 @@ call, decision 0150), keeping std/rt, gobind, and the test helpers;
 on a new host is built by the previous release's binary, never by Go
 again (a bootstrap chain, recorded in toolchain.md).
 
+## Stage 4 status (2026-10-12)
+
+`selfhost/cli/modules` ports `get`, `mod tidy`, `mod accept-effects`,
+`mod clean`, `mod proxy serve`, `vendor`, and the fetching underneath
+(git, the module proxy client, the checksum log client) from cmd/xo
+mod.go, internal/mod, and internal/sumdb. xo.mod, xo.work, and xo.lock
+are read by selfhost/check's modfile.xo (its functions made `pub`); the
+Ed25519 it needed is decision 0189. xo1 dispatches the module commands
+to the package. Evidence (`bench/results/retire-go-2026-10-12.md`,
+"Stage 4"): 8 of 11 module tests of cmd/xo pass with `XO_CLI=xomod`, and
+TestModulesXoSame finds xo.mod, xo.lock, vendor/, the cache trees, and
+the output (audit reports included) byte identical to internal/mod's and
+cmd/xo's over 41 steps. `audit` is ported too (selfhost/check records
+the escape hatches it meets). Found on the
+way: the native SSA builder named per type generated functions by the
+unqualified type (gotchas/ambiguous-type-generated-function-names.md),
+and `archive.untar` refused `git archive`'s PAX global header (now
+skipped, std.md 18); a native program that only asks whether a stream
+is a terminal did not link (IOFlags lacked xo_isatty, fixed in
+internal/build and xo1). Pending: `publish` and the API changes `get`
+prints need internal/release in Xo (stage 3); TestAudit needs `use go`
+bound on a cache miss (stage 6); counting the tests
+against xo1 itself once stage 2's commands are merged.
 ## Stage 1, as done (2026-10-12)
 
 xo1's command line is `xo build|run|test`'s (selfhost/xo opts.xo: Go's

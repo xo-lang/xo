@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
+  `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
+  `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
+  crypto/ed25519 on every backend (native builds compute them in C).
+- `archive.untar` skips a PAX global header (the one `git archive`
+  writes) instead of failing on it, on every backend.
+- Native builds of a program whose packages declare types of the same
+  name no longer fail in the SSA verifier when both are printed with
+  Debug, encoded as JSON, decoded from SQL, or generated in property
+  tests (gotchas/ambiguous-type-generated-function-names.md).
+- The module commands (`get`, `mod tidy|accept-effects|clean|proxy`,
+  `vendor`, `audit`) are written in Xo too (selfhost/cli/modules,
+  decision 0178 stage 4); xo1 runs them.
+- A native program that asks whether a stream is a terminal
+  (`stdout_is_tty`, `width`) without reading standard input links again
+  (the runtime's terminal functions were left out).
 - Native builds run the self hosted driver (decision 0178 switch point
   A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
   `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds

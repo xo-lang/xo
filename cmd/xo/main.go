@@ -28,7 +28,7 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runXo(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 const usage = `usage: xo <command> [arguments]
@@ -236,7 +236,10 @@ commands:
 // selfdriver_test.go). It is nil in the released xo.
 var selfDriver func(args []string, stdout, stderr io.Writer) int
 
-func run(args []string, stdout, stderr io.Writer) int {
+// runXo is the xo command line: it dispatches args[0] to its command and
+// returns the exit status. Tests call it through run (cli_test.go), which
+// execs $XO_CLI instead when that is set (decision 0178 stage 2).
+func runXo(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2

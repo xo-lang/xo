@@ -2037,9 +2037,10 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
           None => return Err(ERR_HEADER)
         }
         if flag == 103 {
-          // a global header is an entry of its own, neither a file nor
-          // a directory
-          return Err("untar: entry ${name.quote()} is not a file or a directory")
+          // a global header (written by `git archive`, holding the
+          // commit) describes the archive, not an entry: skipped (std.md
+          // 18)
+          pax = {}
         }
       } else if flag == 76 {
         long_name = parse_cstr(body, 0, body.len())

@@ -1,0 +1,418 @@
+// Resolving the dependencies of a main module (mod load.go, effects.go,
+// hatches.go): minimal version selection over the requirement graph,
+// fetching missing versions, vendor/, workspaces, the xo.lock content
+// hashes, the effect lock (XO1317), and the escape hatches a consumer
+// must vouch for (XO1316), decision 0156.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/parser
+
+/// mod.Options.
+struct Options {
+  /// Ignore xo.work (xo get, xo mod tidy, xo vendor).
+  no_workspace: Bool = false
+  /// Ignore vendor/ (xo mod tidy, xo vendor).
+  no_vendor: Bool = false
+  /// Record missing hashes instead of XO1305 (xo get, xo mod tidy).
+  update: Bool = false
+  /// Requirements added to the main module's (xo mod tidy).
+  extra: List[check.Require] = []
+  /// Accept the current effects of these modules (all with accept_all)
+  /// instead of XO1317.
+  accept_effects: Map[Str, Bool] = {}
+  accept_all: Bool = false
+  /// Refuse unvouched escape hatches (XO1316) before writing.
+  check_hatches: Bool = false
+}
+
+/// mod.BuildList.
+struct BuildList {
+  main: check.ModFile? = None
+  work: check.WorkFile? = None
+  modules: List[check.DepModule] = []
+  hashes: Map[Str, Str] = {}
+  /// The effect sets of the selected versions, and what xo.lock records.
+  effects: Map[Str, List[Str]] = {}
+  locked: Map[Str, List[Str]] = {}
+  vendor: Bool = false
+  problems: List[check.Problem] = []
+}
+
+fn add_problem(var b: BuildList, p: check.Problem) {
+  for q in b.problems {
+    if q.code == p.code && q.msg == p.msg && q.file == p.file && q.line == p.line {
+      return
+    }
+  }
+  b.problems.push(p)
+}
+
+fn require_line(f: check.ModFile, path: Str) -> Int {
+  for r in f.reqs {
+    if r.path == path {
+      return r.line
+    }
+  }
+  0
+}
+
+/// A requirement in the walk, with the xo.mod requiring it.
+struct Item {
+  req: check.Require
+  file: Str
+}
+
+/// mod.Load: the dependencies of the main module in main_dir.
+fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, proc, rand, net) {
+  let main_dir = c.abs(main_dir0)
+  var b = BuildList{}
+  let (main0, probs) = c.chk.read_mod_file(main_dir)
+  for p in probs {
+    add_problem(b, p)
+  }
+  var main = match main0 {
+    Some(m) => m
+    None => return b
+  }
+  main.reqs = main.reqs + opts.extra
+  b.main = Some(main)
+  if !opts.no_workspace {
+    let (w, wprobs) = c.chk.find_work(main_dir)
+    for p in wprobs {
+      add_problem(b, p)
+    }
+    b.work = w
+  }
+  if b.work == None && !opts.no_vendor && c.exists("${main_dir}/vendor/modules.txt") {
+    c.load_vendor(b, main, opts)
+    return b
+  }
+  var roots: List[check.ModFile] = [main]
+  var local: Map[Str, Bool] = {}
+  local[main.path] = true
+  if let Some(w) = b.work {
+    roots = []
+    for m in w.modules {
+      if m.dir == main.dir {
+        roots.push(main)
+      } else {
+        roots.push(m)
+      }
+      local[m.path] = true
+    }
+  }
+  var locks: Map[Str, check.Lock] = {}
+  for r in roots {
+    let (l, lprobs) = c.chk.read_lock(r.dir)
+    for p in lprobs {
+      add_problem(b, p)
+    }
+    locks[r.dir] = l
+  }
+  var queue: List[Item] = []
+  var direct: Map[Str, Bool] = {}
+  for r in roots {
+    for q in r.reqs {
+      queue.push(Item{req: q, file: r.file})
+      if r.dir == main.dir {
+        direct[q.path] = true
+      }
+    }
+  }
+  var selected: Map[Str, Str] = {}
+  var dirs: Map[Str, Str] = {}
+  var visited: Map[Str, Bool] = {}
+  var failed: Map[Str, Bool] = {}
+  var qi = 0
+  while qi < queue.len() {
+    let it = queue[qi]
+    qi += 1
+    let p = it.req.path
+    let v = it.req.version
+    if local.contains(p) {
+      continue
+    }
+    let key = "${p} ${v}"
+    if visited.contains(key) {
+      continue
+    }
+    visited[key] = true
+    match selected.get(p) {
+      Some(cur) => {
+        if check.compare_versions(v, cur) > 0 {
+          selected[p] = v
+        }
+      }
+      None => selected[p] = v
+    }
+    let dir = match c.download(p, v) {
+      Ok(d) => d
+      Err(e) => {
+        var prob = e
+        prob.file = it.file
+        prob.line = it.req.line
+        add_problem(b, prob)
+        failed[p] = true
+        continue
+      }
+    }
+    dirs[key] = dir
+    let (mf0, mprobs) = c.chk.read_mod_file(dir)
+    for q in mprobs {
+      add_problem(b, q)
+    }
+    let mf = match mf0 {
+      Some(x) => x
+      None => continue
+    }
+    if let Some(h) = c.chk.hash_mod_file(dir) {
+      b.hashes["${key}/xo.mod"] = h
+    }
+    for q in mf.reqs {
+      queue.push(Item{req: q, file: mf.file})
+    }
+  }
+  for p in selected.keys() {
+    if failed.contains(p) {
+      continue
+    }
+    let v = selected.get(p) ?? ""
+    let key = "${p} ${v}"
+    let dir = dirs.get(key) ?? ""
+    b.hashes[key] = c.chk.hash_dir(dir)
+    b.modules.push(check.DepModule{path: p, version: v, dir: dir, direct: direct.contains(p)})
+  }
+  if let Some(w) = b.work {
+    for m in w.modules {
+      if m.dir != main.dir {
+        b.modules.push(check.DepModule{path: m.path, dir: m.dir, workspace: true, direct: direct.contains(m.path)})
+      }
+    }
+  }
+  b.modules = b.modules.sort_by(fn(m) { m.path })
+  for k in b.hashes.keys().sort() {
+    let got = b.hashes.get(k) ?? ""
+    let (path, _, _) = cut(k, " ")
+    var found = false
+    for r in roots {
+      let l = locks.get(r.dir) ?? check.Lock{file: ""}
+      let want = match l.entries.get(k) {
+        Some(x) => x
+        None => continue
+      }
+      found = true
+      if want != got {
+        add_problem(b, check.Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]})
+        failed[path] = true
+      }
+    }
+    if !found && !opts.update {
+      let lf = (locks.get(main.dir) ?? check.Lock{file: "${main.dir}/xo.lock"}).file
+      add_problem(b, check.Problem{code: "XO1305", module: path, file: main.file, line: require_line(main, path), msg: "xo.lock has no hash for ${k}", notes: ["run `xo mod tidy` (or `xo get`) to record it in ${lf}"]})
+    }
+  }
+  c.check_effects(b, locks, roots, opts)
+  if !failed.is_empty() {
+    var keep: List[check.DepModule] = []
+    for m in b.modules {
+      if !failed.contains(m.path) {
+        keep.push(m)
+      }
+    }
+    b.modules = keep
+  }
+  b
+}
+
+/// mod loadVendor: from the main module's vendor/, no cache and no
+/// network.
+fn (var c: ModCtx) load_vendor(var b: BuildList, main: check.ModFile, opts: Options) uses fs.read {
+  b.vendor = true
+  let mods = match c.chk.vendor_modules(main.dir) {
+    Some(ms) => ms
+    None => {
+      add_problem(b, check.Problem{code: "XO1307", file: main.file, msg: "cannot read vendor/modules.txt: open ${main.dir}/vendor/modules.txt: no such file or directory"})
+      return
+    }
+  }
+  let (lock, lprobs) = c.chk.read_lock(main.dir)
+  for p in lprobs {
+    add_problem(b, p)
+  }
+  var by_path: Map[Str, check.DepModule] = {}
+  for m in mods {
+    by_path[m.path] = m
+  }
+  var bad: Map[Str, Bool] = {}
+  for r in main.reqs {
+    let have = match by_path.get(r.path) {
+      Some(m) => {
+        if check.compare_versions(m.version, r.version) >= 0 {
+          continue
+        }
+        "is vendored at ${m.version}"
+      }
+      None => "is not vendored"
+    }
+    add_problem(b, check.Problem{code: "XO1307", module: r.path, file: main.file, line: r.line, msg: "${r.path} ${r.version} is required but ${have}", notes: ["run `xo vendor` to bring vendor/ in line with xo.mod"]})
+    bad[r.path] = true
+  }
+  for m0 in mods {
+    if bad.contains(m0.path) {
+      continue
+    }
+    var m = m0
+    m.direct = require_line(main, m.path) > 0
+    let key = "${m.path} ${m.version}"
+    if !c.is_dir(m.dir) {
+      add_problem(b, check.Problem{code: "XO1307", module: m.path, file: main.file, msg: "vendored ${key}: lstat ${m.dir}: no such file or directory", notes: ["run `xo vendor`"]})
+      continue
+    }
+    let h = c.chk.hash_dir(m.dir)
+    b.hashes[key] = h
+    match lock.entries.get(key) {
+      None => {
+        add_problem(b, check.Problem{code: "XO1305", module: m.path, file: main.file, line: require_line(main, m.path), msg: "xo.lock has no hash for vendored ${key}", notes: ["run `xo mod tidy`, then `xo vendor`"]})
+        continue
+      }
+      Some(want) => {
+        if want != h {
+          add_problem(b, check.Problem{code: "XO1304", module: m.path, file: lock.file, line: lock.lines.get(key) ?? 0, msg: "vendored ${key}: content hash ${h} does not match xo.lock (${want})", notes: ["vendor/ was edited; run `xo vendor` to restore it"]})
+          continue
+        }
+      }
+    }
+    b.modules.push(m)
+  }
+  var locks: Map[Str, check.Lock] = {}
+  locks[main.dir] = lock
+  c.check_effects(b, locks, [main], opts)
+}
+
+/// mod.AddedEffects: the labels of cur that locked does not admit.
+fn added_effects(locked: List[Str], cur: List[Str]) -> List[Str] {
+  let cl = check.Ceiling{effects: locked}
+  var out: List[Str] = []
+  for l in cur {
+    if !check.ceiling_admits(cl, l) {
+      out.push(l)
+    }
+  }
+  out
+}
+
+/// mod checkEffects: the effect set of every selected version against the
+/// roots' `effects` lines; a wider set is XO1317 unless accepted.
+fn (c: ModCtx) check_effects(var b: BuildList, locks: Map[Str, check.Lock], roots: List[check.ModFile], opts: Options) uses fs.read {
+  for m in b.modules {
+    if m.workspace {
+      continue
+    }
+    let cur = c.chk.module_effects(m.dir)
+    b.effects[m.path] = cur
+    for r in roots {
+      let l = match locks.get(r.dir) {
+        Some(x) => x
+        None => continue
+      }
+      let locked = match l.effects.get(m.path) {
+        Some(x) => x
+        None => continue
+      }
+      if !b.locked.contains(m.path) {
+        b.locked[m.path] = locked
+      }
+      let added = added_effects(locked, cur)
+      if added.is_empty() || opts.accept_all || opts.accept_effects.contains(m.path) {
+        continue
+      }
+      add_problem(b, check.Problem{code: "XO1317", file: l.file, line: l.effect_lines.get(m.path) ?? 0, msg: "${m.path} ${m.version} reaches effects that xo.lock does not record for it: `${added.join("`, `")}` (locked: ${check.effects_text(locked)}, now: ${check.effects_text(cur)})", notes: ["the API of the selected version declares effects the version locked before did not; review why it needs them (decision 0156)", "to accept them: `xo mod accept-effects ${m.path}` (or `xo get --accept-effects ${m.path}@${m.version}`); otherwise stay on the previous version"]})
+    }
+  }
+}
+
+/// An escape hatch in a module's source (mod.Hatch).
+struct Hatch {
+  kind: Str
+  target: Str
+  /// A `use c` line's own `uses`; None when it has none.
+  claim: List[Str]? = None
+  file: Str
+  line: Int
+}
+
+/// mod.ModuleHatches: the `use c` lines and the `use go` lines of impure
+/// Go packages in the module's sources.
+fn (c: ModCtx) module_hatches(dir: Str) -> List[Hatch] uses fs.read {
+  var out: List[Hatch] = []
+  for p in c.module_sources(dir) {
+    let src = c.os.fs.read(p).ok() ?? b""
+    let r = parser.parse_file(p.bytes(), src, false)
+    for u in r.file.imports {
+      let target = check.text(u.path)
+      var h = Hatch{kind: "", target: target, file: p, line: u.span.start.line}
+      if u.c {
+        h.kind = "c"
+        if let Some(effs) = u.effects {
+          var claim: List[Str] = []
+          for e in effs {
+            var n = check.text(e.name.name)
+            if let Some(sub) = e.sub {
+              n = "${n}.${check.text(sub.name)}"
+            }
+            claim.push(n)
+          }
+          h.claim = Some(claim)
+        }
+      } else if u.go && !check.go_pure_package(target) {
+        h.kind = "go"
+      } else {
+        continue
+      }
+      out.push(h)
+    }
+  }
+  out
+}
+
+/// mod checkHatches: XO1316 for every escape hatch of a selected version
+/// that the main module does not vouch for at that version.
+fn (c: ModCtx) check_hatches(var b: BuildList, main: check.ModFile) uses fs.read {
+  for m in b.modules {
+    if m.workspace {
+      continue
+    }
+    for h in c.module_hatches(m.dir) {
+      var found = false
+      var stale: List[check.Vouch] = []
+      for v in main.vouches {
+        if v.path != m.path || v.kind != h.kind || v.target != h.target {
+          continue
+        }
+        if v.version == m.version {
+          found = true
+          break
+        }
+        stale.push(v)
+      }
+      if found {
+        continue
+      }
+      var what = "Go code reaches files, the network, and processes without a capability"
+      if h.kind == "c" {
+        what = "its C code counts only with a vouch, so the binding performs `ffi`"
+      }
+      var notes: List[Str] = []
+      for s in stale {
+        notes.push("${s.file}:${s.line} vouches for ${s.path} ${s.version}; the update selects ${m.version}, whose code is not reviewed")
+      }
+      notes.push("after reviewing the code, add to ${main.file}: ${check.suggest_vouch(m.path, m.version, h.kind, h.target, h.claim)}")
+      add_problem(b, check.Problem{code: "XO1316", file: h.file, line: h.line, module: m.path, msg: "`use ${h.kind} \"${h.target}\"` of ${m.path} ${m.version} is not vouched for by the consuming module: ${what}", notes: notes})
+    }
+  }
+}
+
+/// mod errs: the error problems (every module code but the XO1315 note).
+fn errs(ps: List[check.Problem]) -> List[check.Problem] {
+  ps.filter(fn(p) { p.code != "XO1315" })
+}
