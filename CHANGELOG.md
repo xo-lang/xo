@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Linux fixes from the first full suite run on EC2 (Amazon Linux 2023,
+  arm64; bench/results/linux-2026-10-12.md): the native runtime
+  unregisters a socket or pipe from epoll when it closes it (a child
+  process holding the file kept the registration, and the poller then
+  touched freed memory) and makes descriptors close-on-exec at creation
+  (SOCK_CLOEXEC, accept4, pipe2); HTTP/2 responses with no header fields
+  no longer pass NULL to memcpy; Ed25519's constants initialize once
+  (pthread_once) instead of racing; ThreadSanitizer builds on Linux use
+  8 MiB task stacks; the arm64 backend's binaries are reproducible with
+  gcc as `cc` (a fixed `.file`); the bin cache's copy fallback no longer
+  makes a parallel exec fail with "text file busy". scripts/remote-full.sh
+  gains `--cmd`, `--hold`, and per-package durations at the end of its log.
+
 - The server commands in Xo (decision 0178 stage 5, selfhost/cli/servers):
   xo1 runs `mcp`, `serve`, `dump`, `replay`, and `lsp` (diagnostics,
   quick fixes, symbols) with the Go servers' responses byte for byte,

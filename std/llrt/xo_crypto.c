@@ -1254,7 +1254,7 @@ typedef struct {
 
 static cr_fe cr_ed_d, cr_ed_d2, cr_ed_sqrtm1;
 static cr_ge cr_ed_base;
-static int cr_ed_ready;
+static pthread_once_t cr_ed_once = PTHREAD_ONCE_INIT;
 
 static void cr_ge_identity(cr_ge *p) {
 	cr_fe_set(&p->x, 0);
@@ -1358,11 +1358,10 @@ static int cr_ge_from_bytes(cr_ge *p, const uint8_t s[32]) {
 }
 
 // The curve constants: d = -121665/121666, 2d, sqrt(-1) = 2^((p-1)/4),
-// and the base point (y = 4/5, x even).
-static void cr_ed_init(void) {
-	if (cr_ed_ready) {
-		return;
-	}
+// and the base point (y = 4/5, x even). Computed once (pthread_once:
+// tasks on two workers raced on a plain flag, ThreadSanitizer on Linux,
+// 2026-10-12).
+static void cr_ed_init_once(void) {
 	cr_fe a, b, z250, z11, t;
 	cr_fe_set(&a, 121665);
 	cr_fe_neg(&a, &a);
@@ -1380,7 +1379,10 @@ static void cr_ed_init(void) {
 	memset(s, 0x66, 32);
 	s[0] = 0x58;
 	cr_ge_from_bytes(&cr_ed_base, s);
-	cr_ed_ready = 1;
+}
+
+static void cr_ed_init(void) {
+	pthread_once(&cr_ed_once, cr_ed_init_once);
 }
 
 // The group order L = 2^252 + 27742317777372353535851937790883648493 as
