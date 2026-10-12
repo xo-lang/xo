@@ -1,0 +1,192 @@
+// The linker's inputs: Mach-O relocatable objects (MH_OBJECT, arm64)
+// and BSD archives of them (`ar`, as libxotls.a).
+
+/// Section types (the low byte of the flags).
+const S_ZEROFILL = 0x1
+const S_4BYTE_LITERALS = 0x3
+const S_8BYTE_LITERALS = 0x4
+const S_NON_LAZY_SYMBOL_POINTERS = 0x6
+const S_SYMBOL_STUBS = 0x8
+const S_MOD_INIT_FUNC_POINTERS = 0x9
+const S_16BYTE_LITERALS = 0xe
+const S_THREAD_LOCAL_REGULAR = 0x11
+const S_THREAD_LOCAL_ZEROFILL = 0x12
+const S_THREAD_LOCAL_VARIABLES = 0x13
+
+/// nlist n_type bits.
+const N_STAB = 0xe0
+const N_PEXT = 0x10
+const N_TYPE = 0x0e
+const N_UNDF = 0x0
+const N_ABS = 0x2
+
+/// An input section.
+struct ISect {
+  seg: Str
+  name: Str
+  /// its address in the object
+  addr: Int
+  size: Int
+  align: Int
+  flags: Int
+  /// the contents (empty for zerofill)
+  data: Bytes
+  relocs: List[IReloc] = []
+  /// the output section, -1 for none (compact unwind, dropped)
+  out: Int = -1
+  /// the offset in the output section
+  off: Int = 0
+}
+
+struct IReloc {
+  addr: Int
+  /// symbol index (extern) or section ordinal, or the addend (ADDEND)
+  sym: Int
+  pcrel: Bool
+  len: Int
+  ext: Bool
+  typ: Int
+}
+
+struct ISym {
+  name: Bytes
+  typ: Int
+  /// section ordinal, 0 for none
+  sect: Int
+  desc: Int
+  value: Int
+}
+
+struct IObj {
+  path: Str
+  sects: List[ISect] = []
+  syms: List[ISym] = []
+  /// taken into the link (archive members only when they define a symbol
+  /// the link needs)
+  live: Bool = true
+}
+
+fn rd8(b: Bytes, o: Int) -> Int {
+  Int(b[o])
+}
+
+fn rd16(b: Bytes, o: Int) -> Int {
+  Int(b[o]) | (Int(b[o + 1]) * 256)
+}
+
+fn rd32(b: Bytes, o: Int) -> Int {
+  Int(b[o]) | (Int(b[o + 1]) * 256) | (Int(b[o + 2]) * 65536) | (Int(b[o + 3]) * 16777216)
+}
+
+fn rd64(b: Bytes, o: Int) -> Int {
+  rd32(b, o) | shl(rd32(b, o + 4), 32)
+}
+
+/// A 32 bit word as a signed Int.
+fn sext32(v: Int) -> Int {
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+/// The NUL terminated name at o.
+fn cstr(b: Bytes, o: Int) -> Bytes {
+  var e = o
+  while e < b.len() && b[e] != 0 {
+    e += 1
+  }
+  b[o..e]
+}
+
+/// A segment or section name field of 16 bytes.
+fn name16(b: Bytes, o: Int) -> Str {
+  bstr(cstr(b[o..o + 16], 0))
+}
+
+/// parse_object: an arm64 MH_OBJECT.
+fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
+  if b.len() < 32 || rd32(b, 0) != MH_MAGIC_64 {
+    return Err("${path}: not a 64 bit Mach-O file")
+  }
+  if rd32(b, 4) != CPU_TYPE_ARM64 || rd32(b, 12) != MH_OBJECT {
+    return Err("${path}: not an arm64 object")
+  }
+  var obj = IObj{path: path}
+  let ncmds = rd32(b, 16)
+  var off = 32
+  for _ in 0..ncmds {
+    let cmd = rd32(b, off)
+    let size = rd32(b, off + 4)
+    if cmd == LC_SEGMENT_64 {
+      let ns = rd32(b, off + 64)
+      for k in 0..ns {
+        let s = off + 72 + 80 * k
+        let flags = rd32(b, s + 64)
+        let size2 = rd64(b, s + 40)
+        let fo = rd32(b, s + 48)
+        let typ = flags & 0xff
+        let zero = typ == S_ZEROFILL || typ == S_THREAD_LOCAL_ZEROFILL
+        var sect = ISect{seg: name16(b, s + 16), name: name16(b, s), addr: rd64(b, s + 32), size: size2, align: rd32(b, s + 52), flags: flags, data: if zero { "".bytes() } else { b[fo..fo + size2] }}
+        let reloff = rd32(b, s + 56)
+        let nreloc = rd32(b, s + 60)
+        for j in 0..nreloc {
+          let r = reloff + 8 * j
+          let a = rd32(b, r)
+          let w = rd32(b, r + 4)
+          if (a & 0x80000000) != 0 {
+            return Err("${path}: scattered relocations are not supported")
+          }
+          sect.relocs.push(IReloc{addr: a, sym: w & 0xffffff, pcrel: (w >> 24) & 1 == 1, len: (w >> 25) & 3, ext: (w >> 27) & 1 == 1, typ: (w >> 28) & 15})
+        }
+        obj.sects.push(sect)
+      }
+    } else if cmd == LC_SYMTAB {
+      let symoff = rd32(b, off + 8)
+      let nsyms = rd32(b, off + 12)
+      let stroff = rd32(b, off + 16)
+      for k in 0..nsyms {
+        let s = symoff + 16 * k
+        obj.syms.push(ISym{name: cstr(b, stroff + rd32(b, s)), typ: rd8(b, s + 4), sect: rd8(b, s + 5), desc: rd16(b, s + 6), value: rd64(b, s + 8)})
+      }
+    }
+    off += size
+  }
+  Ok(obj)
+}
+
+/// parse_archive: the objects of a BSD archive (long names `#1/N`),
+/// none of them live yet.
+fn parse_archive(path: Str, b: Bytes) -> Result[List[IObj], Str] {
+  if b.len() < 8 || bstr(b[0..8]) != "!<arch>\n" {
+    return Err("${path}: not an archive")
+  }
+  var out: List[IObj] = []
+  var off = 8
+  while off + 60 <= b.len() {
+    let name0 = bstr(b[off..off + 16]).trim()
+    let size = Int.parse(bstr(b[off + 48..off + 58]).trim()) ?? -1
+    if size < 0 {
+      return Err("${path}: bad member header at ${off}")
+    }
+    var data = b[off + 60..off + 60 + size]
+    var name = name0
+    if name0.starts_with("#1/") {
+      let n = Int.parse(name0.trim_prefix("#1/")) ?? 0
+      name = bstr(cstr(data[0..n], 0))
+      data = data[n..]
+    }
+    if !name.starts_with("__.SYMDEF") && data.len() >= 4 && rd32(data, 0) == MH_MAGIC_64 {
+      match parse_object("${path}(${name})", data) {
+        Ok(o) => {
+          var m = o
+          m.live = false
+          out.push(m)
+        }
+        Err(e) => return Err(e)
+      }
+    }
+    off += 60 + size
+    if off % 2 == 1 {
+      off += 1
+    }
+  }
+  Ok(out)
+}

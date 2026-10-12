@@ -1,0 +1,132 @@
+// --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
+// links the program's object (assembled by selfhost/macho) with the
+// prebuilt runtime of a pack (decision 0157), and for std/http the pack's
+// TLS library and the frameworks it uses, into a signed executable.
+
+use github.com/xo-lang/xo/selfhost/macho
+
+/// Links prog (an object) into out; "" on success, else why not.
+fn macho_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+  if ctx.goos != "darwin" {
+    return "--ld=macho links darwin/arm64 executables only"
+  }
+  // srcs: the program, the runtime's source, then objects (the zone
+  // data) and C sources to compile
+  var objs = [srcs[0]]
+  for src in srcs[2..] {
+    if !src.ends_with(".o") {
+      return "--ld=macho links no C sources (${src}): link with cc"
+    }
+    objs.push(src)
+  }
+  let (obj, lib) = shipped_runtime(os, ctx, ctx.std, flags, tls)
+  if obj.is_empty() {
+    return "--ld=macho needs a prebuilt runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status(os, ctx, ctx.std)}"
+  }
+  var ins: List[macho.LinkInput] = []
+  for p in objs + [obj] {
+    match os.fs.read(p) {
+      Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
+      Err(e) => return "${p}: ${e}"
+    }
+  }
+  var dylibs = ["/usr/lib/libSystem.B.dylib"]
+  if tls {
+    match os.fs.read(lib) {
+      Ok(b) => ins.push(macho.LinkInput{path: lib, data: b})
+      Err(e) => return "${lib}: ${e}"
+    }
+    dylibs.push("/System/Library/Frameworks/Security.framework/Versions/A/Security")
+    dylibs.push("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation")
+  }
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs}
+  match macho.link(ins, opts) {
+    Ok(b) => {
+      // a new file, renamed over the old: the kernel caches the
+      // signature of a file it ran
+      let tmp = "${out}.tmp"
+      match os.fs.write(tmp, b) {
+        Ok(_) => {}
+        Err(e) => return "${tmp}: ${e}"
+      }
+      match os.fs.set_mode(tmp, 0o755) {
+        Ok(_) => {}
+        Err(e) => return "${tmp}: ${e}"
+      }
+      match os.fs.rename(tmp, out) {
+        Ok(_) => {}
+        Err(e) => return "${out}: ${e}"
+      }
+      ""
+    }
+    Err(e) => "link: ${e}"
+  }
+}
+
+/// tzSource as an object: the zone data std/time reads (xo_tz_mode,
+/// xo_tz_zip_len, xo_tz_zip, xo_tz_blobs of std/llrt/xo_time.c), as
+/// assembly for selfhost/macho; the path of the object.
+fn tz_object(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
+  var b = BytesBuilder.new()
+  b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
+  b.write_str("\t.section __TEXT,__const\n\t.globl _xo_tz_mode\n\t.p2align 3\n_xo_tz_mode:\n\t.quad ${sel.mode}\n")
+  let zip = if sel.mode == 1 { sel.zip } else { "".bytes() }
+  b.write_str("\t.globl _xo_tz_zip_len\n\t.p2align 3\n_xo_tz_zip_len:\n\t.quad ${zip.len()}\n")
+  b.write_str("\t.globl _xo_tz_zip\n_xo_tz_zip:\n")
+  if zip.is_empty() {
+    b.write_str("\t.byte 0\n")
+  } else {
+    asm_bytes(b, zip)
+  }
+  let n = if sel.mode == 0 { sel.names.len() } else { 0 }
+  for i in 0..n {
+    b.write_str("Lxo_tzd${i}:\n")
+    if sel.data[i].is_empty() {
+      b.write_str("\t.byte 0\n")
+    } else {
+      asm_bytes(b, sel.data[i])
+    }
+  }
+  b.write_str("\t.section __TEXT,__cstring,cstring_literals\n")
+  for i in 0..n {
+    b.write_str("Lxo_tzn${i}:\n")
+    asm_bytes(b, sel.names[i].bytes())
+    b.write_str("\t.byte 0\n")
+  }
+  b.write_str("\t.section __DATA,__const\n\t.globl _xo_tz_blobs\n\t.p2align 3\n_xo_tz_blobs:\n")
+  for i in 0..n {
+    b.write_str("\t.quad Lxo_tzn${i}\n\t.quad Lxo_tzd${i}\n\t.quad ${sel.data[i].len()}\n")
+  }
+  b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
+  let obj = match macho.assemble(b.freeze()) {
+    Ok(o) => o
+    Err(e) => fault("the zone data does not assemble: ${e}")
+  }
+  let path = "${dir}/xo_tzdata.o"
+  os.fs.write(path, obj)?
+  Ok(path)
+}
+
+/// data as .ascii lines of 64 bytes, printable ASCII as is (but \\ and
+/// \"), other bytes as three digit octal escapes.
+fn asm_bytes(var b: BytesBuilder, data: Bytes) {
+  var i = 0
+  while i < data.len() {
+    let end = if i + 64 < data.len() { i + 64 } else { data.len() }
+    b.write_str("\t.ascii \"")
+    for k in i..end {
+      let c = data[k]
+      if c == '"' || c == '\\' {
+        b.write_byte('\\')
+        b.write_byte(c)
+      } else if c >= 32 && c < 127 {
+        b.write_byte(c)
+      } else {
+        let v = Int(c)
+        b.write_str("\\${v / 64}${v / 8 % 8}${v % 8}")
+      }
+    }
+    b.write_str("\"\n")
+    i = end
+  }
+}

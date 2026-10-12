@@ -40,22 +40,33 @@ var (
 // zoneinfoZip returns Go's lib/time/zoneinfo.zip: $XO_ZONEINFO, then the
 // GOROOT of the go command the build uses.
 func zoneinfoZip() ([]byte, error) {
-	tzOnce.Do(func() {
-		path := os.Getenv("XO_ZONEINFO")
-		if path == "" {
-			out, err := exec.Command(goTool(), "env", "GOROOT").Output()
-			if err != nil {
-				tzErr = fmt.Errorf("zone data: cannot find GOROOT: %v", err)
-				return
-			}
-			path = filepath.Join(strings.TrimSpace(string(out)), "lib", "time", "zoneinfo.zip")
-		}
-		tzZip, tzErr = os.ReadFile(path)
-		if tzErr != nil {
-			tzErr = fmt.Errorf("zone data: %v (set XO_ZONEINFO to a zoneinfo.zip)", tzErr)
-		}
-	})
+	tzOnce.Do(func() { tzZip, tzErr = loadZoneinfo(goTool()) })
 	return tzZip, tzErr
+}
+
+// tzFix is how to give a build zone data without a Go installation.
+const tzFix = "set XO_ZONEINFO to a zoneinfo.zip, or build with --tzdata=system to read the host's zone database at run time"
+
+// loadZoneinfo reads $XO_ZONEINFO, else the zoneinfo.zip under the GOROOT
+// the go command goCmd reports. With no go command the error says how to
+// build without Go (a native build needs no Go otherwise).
+func loadZoneinfo(goCmd string) ([]byte, error) {
+	path := os.Getenv("XO_ZONEINFO")
+	if path == "" {
+		out, err := exec.Command(goCmd, "env", "GOROOT").Output()
+		if err != nil {
+			if _, lerr := exec.LookPath(goCmd); lerr != nil {
+				return nil, fmt.Errorf("zone data: the program names time zones and the build embeds them from Go's lib/time/zoneinfo.zip, but there is no go command; %s", tzFix)
+			}
+			return nil, fmt.Errorf("zone data: cannot find GOROOT (%s env GOROOT: %v); %s", goCmd, err, tzFix)
+		}
+		path = filepath.Join(strings.TrimSpace(string(out)), "lib", "time", "zoneinfo.zip")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("zone data: %v; %s", err, tzFix)
+	}
+	return data, nil
 }
 
 // zoneData returns the TZif data of the named zones; missing lists the

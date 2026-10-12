@@ -222,6 +222,13 @@ pub struct Module {
   pub go_path: Str = ""
   pub go_decl: Str = ""
   pub go_skipped: Map[Str, Str] = {}
+  /// The Go adapter the binder wrote beside the declaration file, and
+  /// for a third party package the `path version` requirements and the
+  /// go.sum of the binding workspace (gobind.Binding Adapter, Require,
+  /// Sum: the code generator's goBindings reads them).
+  pub go_adapter: Str = ""
+  pub go_require: List[Str] = []
+  pub go_sum: Str = ""
 }
 
 /// An import of a file: the module it names, -1 when the path did not
@@ -272,8 +279,11 @@ pub struct Diag {
   pub end_line: Int
   pub end_col: Int
   pub message: Str
+  /// Not an error: a warning, or a note (note_sev); every `rejected`
+  /// test of the tools reads this field.
   pub warning: Bool = false
-  /// Severity note (diag.Note: XO1315).
+  /// Severity note (diag.Note: XO1315); warning is set too, since a note
+  /// does not fail a check (diag.HasErrors).
   pub note_sev: Bool = false
   pub notes: List[DNote] = []
   pub fixes: List[DFix] = []

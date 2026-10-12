@@ -1,0 +1,105 @@
+// The LLVM backend's clang (internal/build llvm.go, decision 0178): which
+// clang, the target attributes of the generated functions, and where
+// they go in the IR.
+
+/// Clang: $XO_CLANG, then clang on PATH, as a path; "" when there is
+/// none.
+fn find_clang(os: Os) -> Str {
+  let c = os.env.get("XO_CLANG") ?? ""
+  if !c.is_empty() {
+    return look_path(os, c)
+  }
+  look_path(os, "clang")
+}
+
+/// ClangTargetAttrs: the LLVM function attributes of the target clang
+/// compiles C for by default (its -target-cpu and -target-feature
+/// arguments, from `clang -###`, decision 0119); "" when clang reports
+/// neither.
+fn clang_target_attrs(os: Os, clang: Str) -> Str {
+  let (out, err) = combined(os, clang, ["-###", "-c", "-x", "c", "/dev/null", "-o", "/dev/null"])
+  if !err.is_empty() {
+    return ""
+  }
+  parse_target_attrs(out)
+}
+
+/// parseTargetAttrs: the target CPU and features of the cc1 line.
+fn parse_target_attrs(out: Str) -> Str {
+  var cpu = ""
+  var feats: List[Str] = []
+  for line in out.split("\n") {
+    if !line.contains("\"-cc1\"") {
+      continue
+    }
+    let args = quoted_args(line)
+    var i = 0
+    while i + 1 < args.len() {
+      if args[i] == "-target-cpu" {
+        cpu = args[i + 1]
+      } else if args[i] == "-target-feature" {
+        feats.push(args[i + 1])
+      }
+      i += 1
+    }
+  }
+  var parts: List[Str] = []
+  if !cpu.is_empty() {
+    parts.push("\"target-cpu\"=\"${cpu}\"")
+  }
+  if !feats.is_empty() {
+    parts.push("\"target-features\"=\"${feats.join(",")}\"")
+  }
+  parts.join(" ")
+}
+
+/// The texts between double quotes on line, escapes kept as written
+/// (the regular expression "((?:[^"\\]|\\.)*)" of llvm.go): a quote
+/// after an odd number of backslashes does not end the text.
+fn quoted_args(line: Str) -> List[Str] {
+  let pieces = line.split("\"")
+  var out: List[Str] = []
+  var inside = false
+  var cur = ""
+  var i = 1
+  while i < pieces.len() {
+    if !inside {
+      inside = true
+      cur = pieces[i]
+    } else if odd_backslashes(cur) {
+      cur = "${cur}\"${pieces[i]}"
+    } else {
+      out.push(cur)
+      inside = false
+    }
+    i += 1
+  }
+  out
+}
+
+/// Whether s ends in an odd number of backslashes.
+fn odd_backslashes(s: Str) -> Bool {
+  var n = 0
+  var t = s
+  while t.ends_with("\\") {
+    n += 1
+    t = t.trim_suffix("\\")
+  }
+  n % 2 == 1
+}
+
+/// withTargetAttrs: attrs added to the attribute groups of the
+/// generated function definitions (the first of each).
+fn with_target_attrs(ir: Str, attrs: Str) -> Str {
+  if attrs.is_empty() {
+    return ir
+  }
+  var s = ir
+  for g in ["attributes #1 = { uwtable", "attributes #4 = { nounwind alwaysinline"] {
+    let parts = s.split("${g} }")
+    if parts.len() > 1 {
+      s = parts[0] + "${g} ${attrs} }" + parts[1..parts.len()].join("${g} }")
+    }
+  }
+  s
+}
