@@ -69,7 +69,7 @@ fn (var s: Session) sites_of(f: Int) -> List[Site] {
 }
 
 /// resolve with the resolution tables of the last check.
-fn (var s: Session) resolve(f: Int, site: Site) -> Target {
+fn (var s: Session) resolve(f: Int, site: Site) -> LspTarget {
   var r = s.res[0]
   let t = r.resolve(f, site)
   s.res[0] = r
@@ -148,7 +148,7 @@ fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, en
 
 /// refs: every identifier of the user files that names what tg names, by
 /// file key, in walk order.
-fn (var s: Session) refs(tg: Target) -> List[(Int, Site)] {
+fn (var s: Session) refs(tg: LspTarget) -> List[(Int, Site)] {
   let c = s.res[0].c
   var paths: List[(Str, Int)] = []
   for (p, f) in s.keys {
@@ -199,7 +199,7 @@ fn (var s: Session) references(os: Os, params: J) -> J ! Str uses (stdio, fs, en
 }
 
 /// renamable: declared in a user file.
-fn (s: Session) renamable(tg: Target) -> Bool {
+fn (s: Session) renamable(tg: LspTarget) -> Bool {
   if tg.def_file.is_empty() || tg.kind == "namespace" {
     return false
   }
@@ -331,7 +331,7 @@ fn (s: Session) file_named(p: Str) -> Int {
 }
 
 /// describe: a declaration line and doc text for a hover.
-fn (s: Session) describe(tg: Target) -> (Str, Str) {
+fn (s: Session) describe(tg: LspTarget) -> (Str, Str) {
   let c = s.res[0].c
   match tg.what {
     "func" => {

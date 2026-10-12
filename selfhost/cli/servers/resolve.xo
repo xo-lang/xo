@@ -72,7 +72,7 @@ struct Site {
 /// entity, "" for none; what and oi, sub say which), its declaration
 /// (file as the checker names it, "" for none, and byte offsets), and the
 /// hover text of an entity without a declaration to print.
-struct Target {
+struct LspTarget {
   kind: Str = ""
   mods: Int = 0
   obj: Str = ""
@@ -86,7 +86,7 @@ struct Target {
 }
 
 /// sameObj.
-fn same_obj(a: Target, b: Target) -> Bool {
+fn same_obj(a: LspTarget, b: LspTarget) -> Bool {
   if !a.obj.is_empty() || !b.obj.is_empty() {
     return a.obj == b.obj
   }
@@ -361,7 +361,7 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
       w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
     AssignStmt(_, _, target, value) => {
-      w.expr(target, "Target", -1, SiteCtx.Other, [])
+      w.expr(target, "LspTarget", -1, SiteCtx.Other, [])
       w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
     DeferStmt(_, body) => w.stmt(body)
@@ -666,7 +666,7 @@ fn (var r: Res) offset_in(path: Str, line: Int, col: Int) -> Int {
 }
 
 /// The declaration of a name at line:col of path, len bytes long.
-fn (var r: Res) def_at(t0: Target, path: Str, line: Int, col: Int, len: Int) -> Target {
+fn (var r: Res) def_at(t0: LspTarget, path: Str, line: Int, col: Int, len: Int) -> LspTarget {
   var t = t0
   let off = r.offset_in(path, line, col)
   if off >= 0 {
@@ -677,7 +677,7 @@ fn (var r: Res) def_at(t0: Target, path: Str, line: Int, col: Int, len: Int) -> 
   t
 }
 
-fn with_def(t0: Target, path: Str, sp: Span) -> Target {
+fn with_def(t0: LspTarget, path: Str, sp: Span) -> LspTarget {
   var t = t0
   t.def_file = path
   t.def_start = sp.start.offset
@@ -709,9 +709,9 @@ fn (r: Res) decl_name(o: Int) -> parser.Ident? {
 }
 
 /// varTarget.
-fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> Target {
+fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> LspTarget {
   let o = r.c.objs[v]
-  var t = Target{kind: "variable", obj: "o${v}", what: "local", oi: v}
+  var t = LspTarget{kind: "variable", obj: "o${v}", what: "local", oi: v}
   if o.local.contains("param") || o.local.contains("recv") {
     t.kind = "parameter"
   }
@@ -723,11 +723,11 @@ fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> Target {
 }
 
 /// objTarget.
-fn (var r: Res) obj_target(o: Int) -> Target {
+fn (var r: Res) obj_target(o: Int) -> LspTarget {
   let ob = r.c.objs[o]
   match ob.kind {
     Func => {
-      var t = Target{kind: "function", obj: "o${o}", what: "func", oi: o}
+      var t = LspTarget{kind: "function", obj: "o${o}", what: "func", oi: o}
       if ob.recv >= 0 || ob.iface {
         t.kind = "method"
       }
@@ -742,7 +742,7 @@ fn (var r: Res) obj_target(o: Int) -> Target {
       t
     }
     Const => {
-      var t = Target{kind: "variable", mods: MOD_READONLY, obj: "o${o}", what: "const", oi: o}
+      var t = LspTarget{kind: "variable", mods: MOD_READONLY, obj: "o${o}", what: "const", oi: o}
       if let Some(n) = r.decl_name(o) {
         t = with_def(t, r.c.files[ob.decl_file].path, n.span)
       }
@@ -753,14 +753,14 @@ fn (var r: Res) obj_target(o: Int) -> Target {
     }
     Type => r.type_target(o)
     Local => r.var_target(o, parser.Ident{span: Span{start: parser.Pos{offset: -1, line: 0, col: 0}, end: parser.Pos{offset: -1, line: 0, col: 0}}, name: b""}, "")
-    _ => Target{}
+    _ => LspTarget{}
   }
 }
 
 /// typeTarget.
-fn (var r: Res) type_target(to: Int) -> Target {
+fn (var r: Res) type_target(to: Int) -> LspTarget {
   let ob = r.c.objs[to]
-  var t = Target{kind: "type", obj: "o${to}", what: "type", oi: to}
+  var t = LspTarget{kind: "type", obj: "o${to}", what: "type", oi: to}
   if ob.tkind == "struct" {
     t.kind = "struct"
   } else if ob.tkind == "enum" {
@@ -786,17 +786,17 @@ fn (r: Res) type_file(to: Int) -> Str {
 }
 
 /// variantTarget.
-fn (var r: Res) variant_target(en: Int, vi: Int) -> Target {
+fn (var r: Res) variant_target(en: Int, vi: Int) -> LspTarget {
   let v = r.c.objs[en].variants[vi]
-  let t = Target{kind: "enumMember", obj: "v${en}.${vi}", what: "variant", oi: en, sub: vi}
+  let t = LspTarget{kind: "enumMember", obj: "v${en}.${vi}", what: "variant", oi: en, sub: vi}
   r.def_at(t, r.type_file(en), v.line, v.col, v.name.len())
 }
 
 /// A field of struct to (fieldOf) as a target, or None.
-fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> Target? {
+fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> LspTarget? {
   for (i, fl) in r.c.objs[to].fields.indexed() {
     if fl.name == name {
-      let t = Target{kind: "property", mods: mods, obj: "f${to}.${i}", what: "field", oi: to, sub: i}
+      let t = LspTarget{kind: "property", mods: mods, obj: "f${to}.${i}", what: "field", oi: to, sub: i}
       return Some(r.def_at(t, r.type_file(to), fl.line, fl.col, fl.name.len()))
     }
   }
@@ -820,7 +820,7 @@ fn (r: Res) scope_get(m: Int, name: Bytes) -> Int {
 }
 
 /// typeName.
-fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> Target {
+fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> LspTarget {
   var o = -1
   let name = path[path.len() - 1].name
   if path.len() == 1 {
@@ -840,10 +840,10 @@ fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> Targe
   if kind.is_empty() && is_upper(name) {
     kind = "type"
   }
-  Target{kind: kind}
+  LspTarget{kind: kind}
 }
 
-fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> Target {
+fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> LspTarget {
   if i == 0 {
     let t = r.import_name(f, path[0])
     if !t.kind.is_empty() {
@@ -854,12 +854,12 @@ fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> Targ
 }
 
 /// importName.
-fn (r: Res) import_name(f: Int, id: parser.Ident) -> Target {
+fn (r: Res) import_name(f: Int, id: parser.Ident) -> LspTarget {
   let im = match r.c.files[f].imports.get(id.name) {
     Some(x) => x
-    None => return Target{}
+    None => return LspTarget{}
   }
-  var t = Target{kind: "namespace", label: "use ${check.text(im.path)}"}
+  var t = LspTarget{kind: "namespace", label: "use ${check.text(im.path)}"}
   if im.module >= 0 {
     t.obj = "m${im.module}"
     t.what = "module"
@@ -875,10 +875,10 @@ fn (r: Res) import_name(f: Int, id: parser.Ident) -> Target {
 }
 
 /// resolve: what the identifier at site of file f names.
-fn (var r: Res) resolve(f: Int, site: Site) -> Target {
+fn (var r: Res) resolve(f: Int, site: Site) -> LspTarget {
   let id = site.id
   let path = r.c.files[f].path
-  let decl = fn(t: Target) -> Target { with_def(t, path, id.span) }
+  let decl = fn(t: LspTarget) -> LspTarget { with_def(t, path, id.span) }
   let v = r.c.var_of(f, id)
   if v >= 0 {
     return r.var_target(v, id, path)
@@ -887,7 +887,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
   match site.ctx {
     FnDecl(fo, method) => {
       if site.field == "Name" {
-        var t = decl(Target{kind: if method { "method" } else { "function" }, mods: MOD_DECLARATION})
+        var t = decl(LspTarget{kind: if method { "method" } else { "function" }, mods: MOD_DECLARATION})
         if fo >= 0 {
           t.obj = "o${fo}"
           t.what = "func"
@@ -903,7 +903,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
           return r.var_target(rv, id, path)
         }
       }
-      return decl(Target{kind: "parameter", mods: MOD_DECLARATION})
+      return decl(LspTarget{kind: "parameter", mods: MOD_DECLARATION})
     }
     Param(vars) => {
       if site.field == "Name" {
@@ -912,7 +912,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
             return r.var_target(pv, id, path)
           }
         }
-        return decl(Target{kind: "parameter", mods: MOD_DECLARATION})
+        return decl(LspTarget{kind: "parameter", mods: MOD_DECLARATION})
       }
     }
     TypeDecl => {
@@ -923,7 +923,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
           t.mods = t.mods | MOD_DECLARATION
           return decl(t)
         }
-        return decl(Target{kind: "type", mods: MOD_DECLARATION})
+        return decl(LspTarget{kind: "type", mods: MOD_DECLARATION})
       }
       if site.field == "Derive" {
         return r.type_name(f, [id], "interface")
@@ -931,7 +931,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
     }
     TypeParam => {
       if site.field == "Name" {
-        return decl(Target{kind: "typeParameter", mods: MOD_DECLARATION, label: check.text(id.name)})
+        return decl(LspTarget{kind: "typeParameter", mods: MOD_DECLARATION, label: check.text(id.name)})
       }
     }
     Field(name) => {
@@ -941,23 +941,23 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
           return decl(t)
         }
       }
-      return decl(Target{kind: "property", mods: MOD_DECLARATION})
+      return decl(LspTarget{kind: "property", mods: MOD_DECLARATION})
     }
     Variant(name) => {
       let to = r.scope_get(module, name)
       if to >= 0 && r.c.objs[to].kind == check.ObjKind.Type {
         for (i, vi) in r.c.objs[to].variants.indexed() {
           if vi.name == id.name {
-            return decl(Target{kind: "enumMember", mods: MOD_DECLARATION, obj: "v${to}.${i}", what: "variant", oi: to, sub: i})
+            return decl(LspTarget{kind: "enumMember", mods: MOD_DECLARATION, obj: "v${to}.${i}", what: "variant", oi: to, sub: i})
           }
         }
       }
-      return decl(Target{kind: "enumMember", mods: MOD_DECLARATION})
+      return decl(LspTarget{kind: "enumMember", mods: MOD_DECLARATION})
     }
-    VariantField => return decl(Target{kind: "property", mods: MOD_DECLARATION})
+    VariantField => return decl(LspTarget{kind: "property", mods: MOD_DECLARATION})
     ConstDecl(co) => {
       if site.field == "Name" {
-        var t = decl(Target{kind: "variable", mods: MOD_DECLARATION | MOD_READONLY})
+        var t = decl(LspTarget{kind: "variable", mods: MOD_DECLARATION | MOD_READONLY})
         if co >= 0 {
           t.obj = "o${co}"
           t.what = "const"
@@ -972,7 +972,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
       }
       return r.import_name(f, id)
     }
-    UseDecl => return decl(Target{kind: "namespace", mods: MOD_DECLARATION})
+    UseDecl => return decl(LspTarget{kind: "namespace", mods: MOD_DECLARATION})
     Selector(x, call) => {
       if site.field == "Sel" {
         return r.selector(f, x, call)
@@ -988,17 +988,17 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
             }
           }
         }
-        return Target{kind: "property"}
+        return LspTarget{kind: "property"}
       }
     }
     Arg => {
       if site.field == "Name" {
-        return Target{kind: "parameter"}
+        return LspTarget{kind: "parameter"}
       }
     }
     PatField => {
       if site.field == "Name" {
-        return Target{kind: "property"}
+        return LspTarget{kind: "property"}
       }
     }
     VariantPat(p, vpath) => {
@@ -1021,7 +1021,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
     }
     Label => {
       if site.field is "Label" | "Name" | "Sub" {
-        return Target{}
+        return LspTarget{}
       }
     }
     Other | CallFun(_) | SelX => {}
@@ -1064,14 +1064,14 @@ fn (var r: Res) resolve(f: Int, site: Site) -> Target {
   if co >= 0 && r.c.objs[co].kind == check.ObjKind.Const {
     return r.obj_target(co)
   }
-  Target{}
+  LspTarget{}
 }
 
 /// selector: the Sel of x, the callee of call when call holds one.
-fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> Target {
+fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> LspTarget {
   let (xx, sel) = match x {
     SelectorExpr(_, a, b) => (a, b)
-    _ => return Target{kind: "property"}
+    _ => return LspTarget{kind: "property"}
   }
   let o = r.c.ref_of(f, sel)
   if o >= 0 {
@@ -1090,7 +1090,7 @@ fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> Target {
     if tc >= 0 {
       return r.type_target(tc)
     }
-    return Target{kind: "method"}
+    return LspTarget{kind: "method"}
   }
   if let Ident(xid) = xx {
     if r.c.var_of(f, xid) < 0 {
@@ -1113,5 +1113,5 @@ fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> Target {
       return r.obj_target(m)
     }
   }
-  Target{kind: "property"}
+  LspTarget{kind: "property"}
 }
