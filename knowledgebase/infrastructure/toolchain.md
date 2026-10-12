@@ -1045,7 +1045,7 @@ std/native/llrt/        the native runtime written in Xo (decision 0180): unicod
                         (XO_UNICODE=c at build time: the Go checker loads it instead, the build
                         adds -DXO_UNICODE_C and compiles the runtime locally, no pack has it).
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
-                        strings.xo (split, lines, replace, trims, rune_count), decision 0193,
+                        strings.xo (replace, trims), decision 0193,
                         with C paths text_c.xo and strings_c.xo. `XO_LLRT_C=<name>[,<name>]`
                         (or `all`) at build time selects a module's C path (-DXO_TEXT_C,
                         -DXO_STRINGS_C, likewise never in a pack); XO_UNICODE=c still works

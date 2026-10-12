@@ -104,19 +104,25 @@ its callers move too.
    C path stays selectable until the bar holds on both backends, and a
    later change deletes the C path (`<name>_c.xo`, the `#ifdef` C, the
    IOFlags entry) once it does.
-6. **Results of steps 1 and 2** (bench/perf/text, 2026-10-12, see the
-   results file): Int.parse 0.70x and 0.71x (arm64, LLVM),
-   Duration.parse 0.80x and 0.67x, Time text 0.25x and 0.24x (the C
-   used snprintf), std/json Time 1.03x and 0.76x, Debug quoting 0.52x
-   and 0.49x, replace 0.77x and 0.73x, trims 1.01x and 1.02x; the bar
-   holds for all of those. **Duration text misses it**: see the results
-   file for the final figure; the cause is the Xo digit loop (an sdiv,
-   a checked shift, and a call frame per digit on arm64) against C's
-   unchecked loop into a stack buffer. Next experiment: digits from a
-   two digit table read without a bounds check (the first attempt, a
-   `Bytes` table with `(x - q * 100) * 2` indexes, was slower: 1.39x),
-   or an arm64 division by a constant as a multiply high (the backend
-   emits `sdiv`).
+6. **Results of steps 1 and 2** (bench/perf/text, whole process
+   instructions, Xo over C, arm64 and LLVM; results file, "Final"):
+   Int.parse 0.70x and 0.71x, Duration.parse 0.80x and 0.67x, Time text
+   0.21x and 0.18x (the C used snprintf), std/json Time 1.03x and
+   0.76x, Debug quoting 0.51x and 0.49x, replace 0.76x and 0.68x, trims
+   1.01x and 1.01x: the bar holds. **Duration text misses it: 1.16x on
+   arm64 and 1.12x on LLVM** (from 1.30x and 1.43x in the first
+   version). The rest of the cost is the Xo digit loop (an `sdiv` and
+   `msub`, a checked shift, and the loop compare per digit on arm64)
+   against C's unchecked loop into a stack buffer. So `XO_LLRT_C=text`
+   stays. Next experiments, ranked: (a) the arm64 backend lowering a
+   division by a constant to a multiply high (internal/arm64 isel and
+   selfhost/arm64; it helps every Xo integer formatting loop), then
+   remeasure with `bench/perf/text/measure.sh`; (b) shift checks the
+   range analysis proves (`w` stays below 2^56 while it has at most 7
+   bytes: a fact from the loop count); (c) the 9 digit fraction as two
+   halves of 4 and 5 digits, halving the loop trips. A 200 byte digit
+   pair table read from a `Bytes` constant was tried and was slower
+   (1.39x and 1.40x).
 
 ## Consequences
 
