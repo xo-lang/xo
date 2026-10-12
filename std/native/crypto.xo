@@ -39,3 +39,19 @@ fn hash_password(r: Rand, password: Str, iterations: Int = 600000, at: rt.Loc) -
 }
 
 fn verify_password(password: Str, hash: Str) -> Bool { rtcrypto.crypto_verify_password(password, hash) }
+
+fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
+  if seed.len() != 32 {
+    rt.fault_at("crypto.ed25519_public_key: the seed is ${seed.len()} bytes, want 32", at)
+  }
+  rtcrypto.crypto_ed25519_public_key(seed)
+}
+
+fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
+  if seed.len() != 32 {
+    rt.fault_at("crypto.ed25519_sign: the seed is ${seed.len()} bytes, want 32", at)
+  }
+  rtcrypto.crypto_ed25519_sign(seed, msg)
+}
+
+fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool { rtcrypto.crypto_ed25519_verify(public_key, msg, sig) }

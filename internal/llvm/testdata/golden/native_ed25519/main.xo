@@ -1,0 +1,35 @@
+// Ed25519 in std/crypto on every backend (decision 0189): the RFC 8032
+// section 7.1 vectors 1 to 3, signing deterministically, verification of
+// changed messages, keys, and signatures, and wrong lengths.
+use std/crypto
+
+fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+fn main(os: Os) uses stdio {
+  let seeds = ["9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60", "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb", "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7"]
+  let msgs = ["", "72", "af82"]
+  for (i, s) in seeds.indexed() {
+    let seed = hex(s)
+    let msg = hex(msgs[i])
+    let key = crypto.ed25519_public_key(seed)
+    let sig = crypto.ed25519_sign(seed, msg)
+    os.stdio.println("test ${i + 1} public ${key.to_hex()}")
+    os.stdio.println("test ${i + 1} signature ${sig.to_hex()}")
+    os.stdio.println("test ${i + 1} verify ${crypto.ed25519_verify(key, msg, sig)} again ${crypto.ed25519_sign(seed, msg) == sig}")
+  }
+  let seed = crypto.sha256(b"xo checksum log")
+  let key = crypto.ed25519_public_key(seed)
+  let msg = b"xo checksum log\nexample\n3\nAAAA\n"
+  let sig = crypto.ed25519_sign(seed, msg)
+  os.stdio.println("log ${sig.to_hex()}")
+  os.stdio.println("good ${crypto.ed25519_verify(key, msg, sig)}")
+  os.stdio.println("other message ${crypto.ed25519_verify(key, b"xo checksum log\nexample\n4\nAAAA\n", sig)}")
+  let other = crypto.ed25519_public_key(crypto.sha256(b"other"))
+  os.stdio.println("other key ${crypto.ed25519_verify(other, msg, sig)}")
+  var flipped = BytesBuilder.new()
+  for i in 0..sig.len() {
+    flipped.write_byte(if i == 40 { sig[i] ^ 1 } else { sig[i] })
+  }
+  os.stdio.println("changed signature ${crypto.ed25519_verify(key, msg, flipped.freeze())}")
+  os.stdio.println("short key ${crypto.ed25519_verify(key[0..31], msg, sig)} short signature ${crypto.ed25519_verify(key, msg, sig[0..63])} empty ${crypto.ed25519_verify(b"", b"", b"")}")
+}

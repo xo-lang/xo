@@ -1639,7 +1639,7 @@ Status: draft (2026-10-08, decisions 0056 and 0059). Go standard library
 underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
 into the runtime (no module dependency). Native builds (`--no-gc`,
 decision 0083) compute the same results in C (SHA-256, HMAC, PBKDF2,
-BLAKE2b, Argon2), with random bytes from the operating system
+BLAKE2b, Argon2, SHA-512 and Ed25519), with random bytes from the operating system
 (`getentropy` on macOS, `getrandom` on Linux).
 
 ```
@@ -1652,9 +1652,12 @@ pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
                               iterations: Int = 2, parallelism: Int = 1) -> Str uses rand
 pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
 pub fn verify_password(password: Str, hash: Str) -> Bool
+pub fn ed25519_public_key(seed: Bytes) -> Bytes                   // 32 bytes; faults unless seed is 32 bytes
+pub fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes             // 64 bytes; faults unless seed is 32 bytes
+pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
 ```
 
-- Hashing and comparison are pure: no capability, no effect.
+- Hashing, signing, and comparison are pure: no capability, no effect.
 - Randomness comes only from the `Rand` capability (section 3.4), as
   everywhere else: cryptographically secure in programs, seeded from the
   test seed in tests, so a test that creates tokens or salts is
@@ -1689,6 +1692,19 @@ pub fn verify_password(password: Str, hash: Str) -> Bool
   Argon2 variant or version, or parameters outside the bounds above is
   `false`, never an error. To move users to Argon2id, rehash on the next
   successful login when the stored hash starts with `pbkdf2-sha256$`.
+- Ed25519 (RFC 8032, decision 0189; added 2026-10-12): the private key is
+  a 32 byte seed; make one with `random_bytes(r, 32)`, keep it secret, and
+  publish `ed25519_public_key(seed)`. `ed25519_sign` is deterministic (the
+  same seed and message give the same 64 byte signature, so signing needs
+  no `Rand`). `ed25519_verify` is `false`, never a fault, for a key that is
+  not 32 bytes, a signature that is not 64, an encoding that is no point
+  of the curve, or a signature scalar S that is not below the group order;
+  it accepts exactly what Go's `crypto/ed25519.Verify` accepts (the
+  cofactorless equation compared byte for byte, the non canonical point
+  encodings Go accepts). Native builds compute it in C (SHA-512 and the
+  curve arithmetic in xo_crypto.c), checked against Go on random inputs
+  and the RFC 8032 vectors. The checksum log of the module commands
+  (decision 0124) signs and verifies tree heads with it.
 
 Storing API tokens: tokens from `token` have 256 bits of entropy, so a
 plain `sha256` digest is enough (no salt or stretching needed) and can be

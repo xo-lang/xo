@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
+  `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
+  `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's
+  crypto/ed25519 on every backend (native builds compute them in C).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on
