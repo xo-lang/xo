@@ -66,6 +66,24 @@ both blocked at run time. The unbudgeted loop row stays not blocked.
 | denial of service: unbounded loop, `with_budget(steps)` | sabotage / DoS (hardened) | runtime | `task.with_budget(clock, task.budget(steps: 100000), ...)` cancels the budgeted scope and the loop unwinds at its next iteration: `Err(Exceeded("steps"))` (decision 0173) |
 | denial of service: unbounded loop, `with_budget(cpu)` | sabotage / DoS (hardened) | runtime | the same with `cpu: 50ms` of running time: `Err(Exceeded("cpu"))` |
 
+### Native backends (2026-10-12, decision 0175)
+
+Measured 2026-10-12: the three run time rows (`Net.only`, `with_budget`
+steps, `with_budget` cpu) also block with `xo test --no-gc` on both
+native backends, arm64 and LLVM: 6 of 6 native runs blocked at run time.
+They are the same scenarios, so the count above stays 12 of 17. Before
+decision 0175 a native build reported `Net.only` and `with_budget` as
+XO1201 (planned), so none of the three ran natively. The other rows are
+blocked before any code runs (fetch, check, lock) and do not depend on
+the backend; the five not blocked stay not blocked natively for the same
+reasons.
+
+| attack | backend | stage |
+|---|---|---|
+| exfiltrate over net, attenuated capability | arm64, LLVM | runtime |
+| denial of service: unbounded loop, `with_budget(steps)` | arm64, LLVM | runtime |
+| denial of service: unbounded loop, `with_budget(cpu)` | arm64, LLVM | runtime |
+
 ## Reading the five "not blocked"
 
 Two are **out of scope for an effect system** and would be for Flix's too:
@@ -128,9 +146,11 @@ DoS row into scope for a consumer that budgets the call.
    mechanism is tested in internal/gen's `budget` golden; the Go backend
    counts allocation process wide (see decision 0173), so a row would
    measure an upper bound.
-2. (open) Native `with_budget`: polls in the SSA builder at loop headers
-   and call entries, per task allocation counting in std/llrt's
-   allocator (exact there, unlike Go).
+2. Done 2026-10-12 (decision 0175): native `with_budget` (polls in the
+   SSA builders at loop iterations and function entries, per task
+   allocation counting in std/llrt's heaps) and native `Net.only`; the
+   run time rows block natively (above). A memory-exhaustion row would
+   measure the native count exactly.
 3. Expand the corpus toward the 51 by porting each Flix case's *behaviour*
    (what the payload does) rather than its code, to tighten the
    comparison, and record which Flix cases have no Xo analogue (for
