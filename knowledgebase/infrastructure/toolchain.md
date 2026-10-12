@@ -2687,3 +2687,21 @@ The default cache held 20,461,608 KiB on 2026-10-12: 235 identical
 and since then mostly the repo's `std/rt` compiled once per worktree
 path by `go test` (31 of the 46 files over 20 MB written after
 2026-10-11 16:00). Last verified: 2026-10-12.
+
+## Remote full runs (EC2)
+
+`scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
+full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
+Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
+the account's EC2 quota is 32 vCPUs for spot and for on demand, so
+c8g.16xlarge (64 vCPU, about $0.70 to $0.80 an hour spot) is refused
+with MaxSpotInstanceCountExceeded until a quota increase), copies
+the log to bench/results/remote/<commit>.log (git ignored) and terminates
+the instance. The instance also shuts itself down (terminating it) after
+XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
+xo-ci: an EC2 key pair (~/.ssh/xo-ci.pem) and a security group allowing
+SSH from the owner host's IP only. Linux host: the Mac-only tests
+(Mach-O, code signing, the darwin fixed point) do not run there and stay
+on the development Mac. Approved by the owner on 2026-10-12 to move the
+long combined run off the Mac. Last verified: 2026-10-12 (dry run).
+
