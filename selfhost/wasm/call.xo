@@ -206,6 +206,7 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "rt.str_slice" | "rt.str_starts_with" | "rt.str_ends_with" | "rt.str_contains" | "rt.str_repeat" | "rt.str_join" | "rt.rs_append_quote" | "rt.str_rune_count" => g.rt_call(v, "$${name.trim_prefix("rt.")}")
+    "rt.rs_append" => g.rt_call(v, "$rs_append_str")
     "str.concat_int" => g.rt_call(v, "$sapp_int")
     "str.concat_float" => g.rt_call(v, "$sapp_float")
     "str.of_float" => g.rt_call(v, "$of_float")
@@ -299,7 +300,7 @@ fn (var g: Gen) call(v: Int) {
     _ => {
       // a runtime function of rt.xo taking the operands' leaves and
       // returning the result's (xo_<name> of std/llrt)
-      if name.starts_with("rt.") && rt_direct(name.trim_prefix("rt.")) {
+      if name.starts_with("rt.") && (rt_direct(name.trim_prefix("rt.")) || rt2_direct(name.trim_prefix("rt."))) {
         g.rt_call(v, "$${name.trim_prefix("rt.")}")
         if ssa.faulting_rt(name) {
           g.check_fault(v)

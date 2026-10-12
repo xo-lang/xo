@@ -13,6 +13,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   71 of the 133 LLVM goldens run under Node with the output of the
   native backends; the rest (tasks, network, files, time, strconv
   quoting, more of the std runtime) fail the build with a clear reason.
+- The WebAssembly backend, stage 2 (decision 0179): the Unicode code
+  in Xo (decision 0180) compiles to wasm with the program, and the
+  backend's runtime adds the text primitives it calls, number and
+  duration parsing, and base64: 85 of the 134 LLVM goldens pass.
 - Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
   runtime are written in Xo (decision 0180, the runtime pilot):
   `std/native/llrt/unicode.xo` with generated tables

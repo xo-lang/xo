@@ -943,6 +943,7 @@ fn mem_op(op: Str) -> (Int, Int) {
 fn fc_op(op: Str) -> Int {
   match op {
     "i64.trunc_sat_f64_s" => 6
+    "i64.trunc_sat_f64_u" => 7
     "memory.copy" => 10
     "memory.fill" => 11
     _ => -1

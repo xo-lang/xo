@@ -1,7 +1,7 @@
 # 0179: A WebAssembly backend written only in Xo, from the self hosted SSA to WAT assembled in Xo, with a runtime of its own over WASI
 
-Status: Accepted (2026-10-12), stage 1 implemented in `selfhost/wasm/`
-(gen.xo, func.xo, call.xo, rt.xo, asm.xo, main.xo, run.mjs), the driver
+Status: Accepted (2026-10-12), stages 1 and 2 implemented in `selfhost/wasm/`
+(gen.xo, func.xo, call.xo, rt.xo, rt2.xo, asm.xo, main.xo, run.mjs), the driver
 path `xo1 build --backend=wasm` (`selfhost/xo/wasm.xo`), and
 `internal/selfhost/wasm_test.go` (`TestSelfhostWasm`). Figures:
 `bench/results/wasm-2026-10-12.md`. Item (5) of decision 0150's amended
@@ -166,6 +166,21 @@ wasm emitting wasm, no Go toolchain in the page; (5) tasks, channels,
 and scopes on one thread (fibers do not exist in wasm: a cooperative
 scheduler over a CPS lowering, or the stack switching proposal);
 network and std/http stay unsupported in the browser.
+
+## Stage 2 (2026-10-12)
+
+**Unicode and strings: Xo, not WAT.** Since decision 0180 the Unicode
+operations (case mapping, quoting, the Rune classes, the lower compare)
+and their tables are std/native/llrt/unicode.xo, compiled with the
+program by the ordinary SSA builder; this backend compiles them like
+any Xo code, so no Unicode table is written in WAT. The backend adds
+only the byte level primitives that code and the native prelude call,
+with std/llrt's semantics (`selfhost/wasm/rt2.xo`): `str_byte`,
+`bytes_span`, `rs_append_bytes`, `rs_append`, `rune_is_space`,
+`utf8_valid`, `bytes_decode`, `bytes_rune_count`, `int_parse_ok` and
+`int_parse`, `str_of_byte`, `str_replace`, base64 (`b64_encode`,
+`b64_ok`, `b64_decode`), and `duration_parse_ok`/`duration_parse`.
+Figures: `bench/results/wasm-2026-10-12.md`, "Stage 2".
 
 ## Consequences
 

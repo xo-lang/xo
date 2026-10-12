@@ -956,7 +956,7 @@ fn (var g: Gen) module_text() -> Str {
   }
   g.empty_list = g.place(le32(0x80000000) + le32(0) + le32(0) + le32(0))
   // the runtime first: its literals are placed before the program's
-  let rt = rt_text(g)
+  let rt = rt_text(g) + rt2_text(g)
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
     if !g.err.is_empty() {

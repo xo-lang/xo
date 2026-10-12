@@ -1,0 +1,1318 @@
+// The runtime of the WebAssembly backend, stage 2 (decision 0179): the
+// text primitives the Unicode operations written in Xo call
+// (std/native/llrt/unicode.xo, decision 0180: the tables and the policy
+// are Xo compiled by this backend, these are the bulk byte moves and
+// scans), number parsing, base64 and hex, random numbers through WASI
+// random_get, and Atomic as plain memory (one thread). WAT text
+// assembled with every program, as rt.xo.
+
+/// The stage 2 runtime functions.
+fn rt2_text(var g: Gen) -> Str {
+  let b64 = g.raw("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".bytes())
+  let empty = g.str_obj(b"")
+  """
+    ;; the byte at i (0 to 255), or -1 out of range (xo_str_byte)
+    (func $str_byte (param $o i32) (param $n i32) (param $i i64) (result i64)
+      local.get $i
+      i64.const 0
+      i64.lt_s
+      local.get $i
+      local.get $n
+      i64.extend_i32_u
+      i64.ge_s
+      i32.or
+      if
+        i64.const -1
+        return
+      end
+      local.get $o
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      i64.load8_u offset=8)
+
+    ;; the end of the run from i of bytes in class cls: 0 ASCII, 1
+    ;; printable ASCII other than `"` and `\\` (xo_bytes_span)
+    (func $bytes_span (param $o i32) (param $n i32) (param $i i64) (param $cls i64) (result i64) (local $c i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i64.extend_i32_u
+          i64.ge_s
+          br_if $x
+          local.get $o
+          local.get $i
+          i32.wrap_i64
+          i32.add
+          i32.load8_u offset=8
+          local.set $c
+          local.get $cls
+          i64.eqz
+          if
+            local.get $c
+            i32.const 128
+            i32.ge_u
+            br_if $x
+          else
+            local.get $c
+            i32.const 32
+            i32.lt_u
+            local.get $c
+            i32.const 127
+            i32.ge_u
+            i32.or
+            local.get $c
+            i32.const 34
+            i32.eq
+            i32.or
+            local.get $c
+            i32.const 92
+            i32.eq
+            i32.or
+            br_if $x
+          end
+          local.get $i
+          i64.const 1
+          i64.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $i)
+
+    ;; s + the bytes lo..hi of b, ASCII letters lowered (mode 1) or raised
+    ;; (mode 2), consuming s (xo_rs_append_bytes)
+    (func $rs_append_bytes (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (param $lo i64) (param $hi i64) (param $mode i64) (result i32 i32)
+      (local $n i32) (local $p i32) (local $e i32) (local $c i32)
+      local.get $hi
+      local.get $lo
+      i64.sub
+      i32.wrap_i64
+      local.set $n
+      local.get $a
+      local.get $an
+      local.get $b
+      i32.const 8
+      i32.add
+      local.get $lo
+      i32.wrap_i64
+      i32.add
+      local.get $n
+      call $rs_append
+      local.set $a
+      local.get $mode
+      i64.eqz
+      i32.eqz
+      if
+        local.get $a
+        i32.const 8
+        i32.add
+        local.get $an
+        i32.add
+        local.tee $p
+        local.get $n
+        i32.add
+        local.set $e
+        block $x
+          loop $l
+            local.get $p
+            local.get $e
+            i32.ge_u
+            br_if $x
+            local.get $p
+            i32.load8_u
+            local.set $c
+            local.get $mode
+            i64.const 1
+            i64.eq
+            if
+              local.get $c
+              i32.const 65
+              i32.sub
+              i32.const 26
+              i32.lt_u
+              if
+                local.get $p
+                local.get $c
+                i32.const 32
+                i32.add
+                i32.store8
+              end
+            else
+              local.get $c
+              i32.const 97
+              i32.sub
+              i32.const 26
+              i32.lt_u
+              if
+                local.get $p
+                local.get $c
+                i32.const 32
+                i32.sub
+                i32.store8
+              end
+            end
+            local.get $p
+            i32.const 1
+            i32.add
+            local.set $p
+            br $l
+          end
+        end
+      end
+      local.get $a
+      local.get $an
+      local.get $n
+      i32.add)
+
+    ;; s + t, consuming s (xo_rs_append)
+    (func $rs_append_str (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $b
+      i32.const 8
+      i32.add
+      local.get $bn
+      call $sapp)
+
+    (func $rune_is_space (param $r i64) (result i32)
+      local.get $r
+      i64.const 0x7fffffff
+      i64.gt_u
+      if
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.wrap_i64
+      call $is_space)
+
+    ;; utf8.Valid
+    (func $utf8_valid (param $o i32) (param $n i32) (result i32) (local $i i32) (local $p i32) (local $sz i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          i32.const 1
+          local.set $sz
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.tee $p
+          i32.load8_u
+          i32.const 128
+          i32.ge_u
+          if
+            local.get $p
+            local.get $n
+            local.get $i
+            i32.sub
+            call $utf8_size
+            local.tee $sz
+            i32.eqz
+            if
+              i32.const 0
+              return
+            end
+          end
+          local.get $i
+          local.get $sz
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const 1)
+
+    ;; utf8.DecodeRune of the bytes from i: the rune times 8 plus its size
+    ;; (U+FFFD and 0 at the end; U+FFFD and 1 for an invalid byte)
+    (func $bytes_decode (param $o i32) (param $n i32) (param $i i64) (result i64) (local $p i32) (local $sz i32)
+      local.get $i
+      local.get $n
+      i64.extend_i32_u
+      i64.ge_s
+      if
+        i64.const 524264
+        return
+      end
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $i
+      i32.wrap_i64
+      i32.add
+      local.tee $p
+      i32.load8_u
+      i32.const 128
+      i32.lt_u
+      if
+        local.get $p
+        i64.load8_u
+        i64.const 3
+        i64.shl
+        i64.const 1
+        i64.or
+        return
+      end
+      local.get $p
+      local.get $n
+      local.get $i
+      i32.wrap_i64
+      i32.sub
+      call $utf8_size
+      local.tee $sz
+      i32.eqz
+      if
+        i64.const 524265
+        return
+      end
+      local.get $p
+      local.get $sz
+      call $utf8_rune
+      i64.extend_i32_u
+      i64.const 3
+      i64.shl
+      local.get $sz
+      i64.extend_i32_u
+      i64.or)
+
+    (func $bytes_rune_count (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $str_rune_count)
+
+    ;; strconv.ParseInt(s, 10, 64): the value and whether it parsed
+    (func $parse_int (param $o i32) (param $n i32) (result i64 i32) (local $i i32) (local $neg i32) (local $v i64) (local $d i64) (local $lim i64) (local $c i32)
+      local.get $n
+      i32.eqz
+      if
+        i64.const 0
+        i32.const 0
+        return
+      end
+      local.get $o
+      i32.load8_u offset=8
+      local.tee $c
+      i32.const 43
+      i32.eq
+      local.get $c
+      i32.const 45
+      i32.eq
+      i32.or
+      if
+        local.get $c
+        i32.const 45
+        i32.eq
+        local.set $neg
+        i32.const 1
+        local.set $i
+      end
+      local.get $i
+      local.get $n
+      i32.eq
+      if
+        i64.const 0
+        i32.const 0
+        return
+      end
+      i64.const 0x7fffffffffffffff
+      local.get $neg
+      i64.extend_i32_u
+      i64.add
+      local.set $lim
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $o
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          i32.const 48
+          i32.sub
+          local.tee $c
+          i32.const 9
+          i32.gt_u
+          if
+            i64.const 0
+            i32.const 0
+            return
+          end
+          local.get $c
+          i64.extend_i32_u
+          local.set $d
+          local.get $v
+          local.get $lim
+          local.get $d
+          i64.sub
+          i64.const 10
+          i64.div_u
+          i64.gt_u
+          if
+            i64.const 0
+            i32.const 0
+            return
+          end
+          local.get $v
+          i64.const 10
+          i64.mul
+          local.get $d
+          i64.add
+          local.set $v
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i64.const 0
+      local.get $v
+      i64.sub
+      local.get $v
+      local.get $neg
+      select
+      i32.const 1)
+
+    (func $int_parse_ok (param $o i32) (param $n i32) (result i32)
+      local.get $o
+      local.get $n
+      call $parse_int
+      local.set $n
+      drop
+      local.get $n)
+
+    (func $int_parse (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $parse_int
+      drop)
+
+    ;; the string of one byte
+    (func $str_of_byte (param $b i64) (result i32 i32) (local $s i32)
+      i32.const 1
+      call $rs_new
+      local.tee $s
+      local.get $b
+      i64.store8 offset=8
+      local.get $s
+      i32.const 1)
+
+    ;; strings.ReplaceAll
+    (func $str_replace (param $o i32) (param $n i32) (param $q i32) (param $m i32) (param $w i32) (param $wn i32) (result i32 i32)
+      (local $a i32) (local $an i32) (local $i i32) (local $j i32) (local $sz i32) (local $p i32)
+      local.get $n
+      i32.const 16
+      local.get $n
+      i32.const 16
+      i32.gt_u
+      select
+      call $rs_new
+      local.set $a
+      local.get $m
+      i32.eqz
+      if
+        local.get $a
+        local.get $an
+        local.get $w
+        i32.const 8
+        i32.add
+        local.get $wn
+        call $sapp
+        local.set $an
+        local.set $a
+        block $x
+          loop $l
+            local.get $i
+            local.get $n
+            i32.ge_u
+            br_if $x
+            i32.const 1
+            local.set $sz
+            local.get $o
+            i32.const 8
+            i32.add
+            local.get $i
+            i32.add
+            local.tee $p
+            i32.load8_u
+            i32.const 128
+            i32.ge_u
+            if
+              local.get $p
+              local.get $n
+              local.get $i
+              i32.sub
+              call $utf8_size
+              local.tee $sz
+              i32.eqz
+              if
+                i32.const 1
+                local.set $sz
+              end
+            end
+            local.get $a
+            local.get $an
+            local.get $p
+            local.get $sz
+            call $sapp
+            local.set $an
+            local.set $a
+            local.get $a
+            local.get $an
+            local.get $w
+            i32.const 8
+            i32.add
+            local.get $wn
+            call $sapp
+            local.set $an
+            local.set $a
+            local.get $i
+            local.get $sz
+            i32.add
+            local.set $i
+            br $l
+          end
+        end
+        local.get $a
+        local.get $an
+        return
+      end
+      block $x
+        loop $l
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.get $n
+          local.get $i
+          i32.sub
+          local.get $q
+          i32.const 8
+          i32.add
+          local.get $m
+          call $mem_index
+          local.tee $j
+          i32.const 0
+          i32.lt_s
+          br_if $x
+          local.get $a
+          local.get $an
+          local.get $o
+          i32.const 8
+          i32.add
+          local.get $i
+          i32.add
+          local.get $j
+          call $sapp
+          local.set $an
+          local.set $a
+          local.get $a
+          local.get $an
+          local.get $w
+          i32.const 8
+          i32.add
+          local.get $wn
+          call $sapp
+          local.set $an
+          local.set $a
+          local.get $i
+          local.get $j
+          i32.add
+          local.get $m
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $a
+      local.get $an
+      local.get $o
+      i32.const 8
+      i32.add
+      local.get $i
+      i32.add
+      local.get $n
+      local.get $i
+      i32.sub
+      call $sapp)
+
+    ;; the standard base64 of b, padded
+    (func $b64_encode (param $o i32) (param $n i32) (result i32 i32) (local $s i32) (local $i i32) (local $d i32) (local $v i32) (local $k i32)
+      local.get $n
+      i32.const 2
+      i32.add
+      i32.const 3
+      i32.div_u
+      i32.const 4
+      i32.mul
+      local.tee $k
+      call $rs_new
+      local.set $s
+      local.get $s
+      i32.const 8
+      i32.add
+      local.set $d
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $o
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          i32.const 16
+          i32.shl
+          local.set $v
+          local.get $i
+          i32.const 1
+          i32.add
+          local.get $n
+          i32.lt_u
+          if
+            local.get $v
+            local.get $o
+            local.get $i
+            i32.add
+            i32.load8_u offset=9
+            i32.const 8
+            i32.shl
+            i32.or
+            local.set $v
+          end
+          local.get $i
+          i32.const 2
+          i32.add
+          local.get $n
+          i32.lt_u
+          if
+            local.get $v
+            local.get $o
+            local.get $i
+            i32.add
+            i32.load8_u offset=10
+            i32.or
+            local.set $v
+          end
+          local.get $d
+          local.get $v
+          i32.const 18
+          i32.shr_u
+          i32.const 63
+          i32.and
+          i32.load8_u offset=${b64}
+          i32.store8
+          local.get $d
+          local.get $v
+          i32.const 12
+          i32.shr_u
+          i32.const 63
+          i32.and
+          i32.load8_u offset=${b64}
+          i32.store8 offset=1
+          local.get $d
+          local.get $v
+          i32.const 6
+          i32.shr_u
+          i32.const 63
+          i32.and
+          i32.load8_u offset=${b64}
+          i32.const 61
+          local.get $i
+          i32.const 1
+          i32.add
+          local.get $n
+          i32.lt_u
+          select
+          i32.store8 offset=2
+          local.get $d
+          local.get $v
+          i32.const 63
+          i32.and
+          i32.load8_u offset=${b64}
+          i32.const 61
+          local.get $i
+          i32.const 2
+          i32.add
+          local.get $n
+          i32.lt_u
+          select
+          i32.store8 offset=3
+          local.get $d
+          i32.const 4
+          i32.add
+          local.set $d
+          local.get $i
+          i32.const 3
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $s
+      local.get $k)
+
+    ;; the value of base64 digit c, or -1
+    (func $b64_digit (param $c i32) (result i32)
+      local.get $c
+      i32.const 65
+      i32.sub
+      i32.const 26
+      i32.lt_u
+      if
+        local.get $c
+        i32.const 65
+        i32.sub
+        return
+      end
+      local.get $c
+      i32.const 97
+      i32.sub
+      i32.const 26
+      i32.lt_u
+      if
+        local.get $c
+        i32.const 71
+        i32.sub
+        return
+      end
+      local.get $c
+      i32.const 48
+      i32.sub
+      i32.const 10
+      i32.lt_u
+      if
+        local.get $c
+        i32.const 4
+        i32.add
+        return
+      end
+      local.get $c
+      i32.const 43
+      i32.eq
+      if
+        i32.const 62
+        return
+      end
+      local.get $c
+      i32.const 47
+      i32.eq
+      if
+        i32.const 63
+        return
+      end
+      i32.const -1)
+
+    ;; base64.StdEncoding.DecodeString: the bytes written to out (when not
+    ;; 0) and their count, or -1 when s is not base64 (newlines are
+    ;; skipped, as Go's decoder does)
+    (func $b64_dec (param $o i32) (param $n i32) (param $out i32) (result i32)
+      (local $i i32) (local $c i32) (local $v i32) (local $k i32) (local $w i32) (local $pad i32) (local $d i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $o
+          local.get $i
+          i32.add
+          i32.load8_u offset=8
+          local.set $c
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          local.get $c
+          i32.const 10
+          i32.eq
+          local.get $c
+          i32.const 13
+          i32.eq
+          i32.or
+          br_if $l
+          local.get $c
+          i32.const 61
+          i32.eq
+          if
+            ;; padding: only in the last group, after two or three digits
+            local.get $k
+            i32.const 2
+            i32.lt_u
+            if
+              i32.const -1
+              return
+            end
+            local.get $pad
+            i32.const 1
+            i32.add
+            local.set $pad
+            local.get $k
+            i32.const 1
+            i32.add
+            local.set $k
+            local.get $k
+            i32.const 4
+            i32.eq
+            if
+              i32.const 0
+              local.set $k
+            end
+            br $l
+          end
+          local.get $pad
+          if
+            i32.const -1
+            return
+          end
+          local.get $c
+          call $b64_digit
+          local.tee $d
+          i32.const 0
+          i32.lt_s
+          if
+            i32.const -1
+            return
+          end
+          local.get $v
+          i32.const 6
+          i32.shl
+          local.get $d
+          i32.or
+          local.set $v
+          local.get $k
+          i32.const 1
+          i32.add
+          local.set $k
+          local.get $k
+          i32.const 1
+          i32.gt_u
+          if
+            local.get $out
+            if
+              local.get $out
+              local.get $w
+              i32.add
+              local.get $v
+              i32.const 8
+              local.get $k
+              i32.const 1
+              i32.shl
+              i32.sub
+              i32.shr_u
+              i32.store8
+            end
+            local.get $w
+            i32.const 1
+            i32.add
+            local.set $w
+          end
+          local.get $k
+          i32.const 4
+          i32.eq
+          if
+            i32.const 0
+            local.set $k
+            i32.const 0
+            local.set $v
+          end
+          br $l
+        end
+      end
+      ;; the last group: complete, or padded to four
+      local.get $k
+      if
+        i32.const -1
+        return
+      end
+      local.get $w)
+
+    (func $b64_ok (param $o i32) (param $n i32) (result i32)
+      local.get $o
+      local.get $n
+      i32.const 0
+      call $b64_dec
+      i32.const 0
+      i32.ge_s)
+
+    (func $b64_decode (param $o i32) (param $n i32) (result i32 i32) (local $k i32) (local $s i32)
+      local.get $o
+      local.get $n
+      i32.const 0
+      call $b64_dec
+      local.tee $k
+      i32.const 0
+      i32.lt_s
+      if
+        i32.const ${empty}
+        i32.const 0
+        return
+      end
+      local.get $k
+      call $rs_new
+      local.set $s
+      local.get $o
+      local.get $n
+      local.get $s
+      i32.const 8
+      i32.add
+      call $b64_dec
+      drop
+      local.get $s
+      local.get $k)
+
+    (func $isdig (param $c i32) (result i32)
+      local.get $c
+      i32.const 48
+      i32.sub
+      i32.const 10
+      i32.lt_u)
+
+    ;; time.ParseDuration of s with its white space trimmed (std/rt
+    ;; parseDuration, xo_std.c n_parse_duration): the nanoseconds and
+    ;; whether it parsed
+    (func $dur_parse (param $o i32) (param $n i32) (result i64 i32)
+      (local $t i32) (local $p i32) (local $e i32) (local $i i32) (local $neg i32) (local $d i64) (local $v i64)
+      (local $f i64) (local $scale f64) (local $pl i32) (local $pre i32) (local $post i32) (local $pf i32) (local $ovf i32)
+      (local $us i32) (local $ul i32) (local $unit i64) (local $c i32) (local $ok i32) (local $y i64) (local $out i64) (local $c1 i32)
+      local.get $o
+      local.get $n
+      i64.const 0
+      call $str_trim
+      local.set $e
+      local.tee $t
+      i32.const 8
+      i32.add
+      local.set $p
+      block $ret
+        local.get $e
+        if
+          local.get $p
+          i32.load8_u
+          local.tee $c
+          i32.const 45
+          i32.eq
+          local.get $c
+          i32.const 43
+          i32.eq
+          i32.or
+          if
+            local.get $c
+            i32.const 45
+            i32.eq
+            local.set $neg
+            i32.const 1
+            local.set $i
+          end
+        end
+        local.get $e
+        local.get $i
+        i32.sub
+        i32.const 1
+        i32.eq
+        if
+          local.get $p
+          local.get $i
+          i32.add
+          i32.load8_u
+          i32.const 48
+          i32.eq
+          if
+            i32.const 1
+            local.set $ok
+            br $ret
+          end
+        end
+        local.get $i
+        local.get $e
+        i32.eq
+        br_if $ret
+        loop $units
+          i64.const 0
+          local.set $v
+          i64.const 0
+          local.set $f
+          i64.const 0x3ff0000000000000
+          f64.reinterpret_i64
+          local.set $scale
+          local.get $p
+          local.get $i
+          i32.add
+          i32.load8_u
+          local.tee $c
+          i32.const 46
+          i32.ne
+          local.get $c
+          call $isdig
+          i32.eqz
+          i32.and
+          br_if $ret
+          local.get $i
+          local.set $pl
+          block $x
+            loop $l
+              local.get $i
+              local.get $e
+              i32.ge_u
+              br_if $x
+              local.get $p
+              local.get $i
+              i32.add
+              i32.load8_u
+              local.tee $c
+              call $isdig
+              i32.eqz
+              br_if $x
+              local.get $v
+              i64.const 922337203685477580
+              i64.gt_u
+              br_if $ret
+              local.get $v
+              i64.const 10
+              i64.mul
+              local.get $c
+              i32.const 48
+              i32.sub
+              i64.extend_i32_u
+              i64.add
+              local.tee $v
+              i64.const 0x8000000000000000
+              i64.gt_u
+              br_if $ret
+              local.get $i
+              i32.const 1
+              i32.add
+              local.set $i
+              br $l
+            end
+          end
+          local.get $i
+          local.get $pl
+          i32.ne
+          local.set $pre
+          i32.const 0
+          local.set $post
+          local.get $i
+          local.get $e
+          i32.lt_u
+          if
+            local.get $p
+            local.get $i
+            i32.add
+            i32.load8_u
+            i32.const 46
+            i32.eq
+            if
+              local.get $i
+              i32.const 1
+              i32.add
+              local.tee $i
+              local.set $pf
+              i32.const 0
+              local.set $ovf
+              block $x
+                loop $l
+                  local.get $i
+                  local.get $e
+                  i32.ge_u
+                  br_if $x
+                  local.get $p
+                  local.get $i
+                  i32.add
+                  i32.load8_u
+                  local.tee $c
+                  call $isdig
+                  i32.eqz
+                  br_if $x
+                  local.get $ovf
+                  i32.eqz
+                  if
+                    local.get $f
+                    i64.const 922337203685477580
+                    i64.gt_u
+                    if
+                      i32.const 1
+                      local.set $ovf
+                    else
+                      local.get $f
+                      i64.const 10
+                      i64.mul
+                      local.get $c
+                      i32.const 48
+                      i32.sub
+                      i64.extend_i32_u
+                      i64.add
+                      local.tee $y
+                      i64.const 0x8000000000000000
+                      i64.gt_u
+                      if
+                        i32.const 1
+                        local.set $ovf
+                      else
+                        local.get $y
+                        local.set $f
+                        local.get $scale
+                        i64.const 0x4024000000000000
+                        f64.reinterpret_i64
+                        f64.mul
+                        local.set $scale
+                      end
+                    end
+                  end
+                  local.get $i
+                  i32.const 1
+                  i32.add
+                  local.set $i
+                  br $l
+                end
+              end
+              local.get $i
+              local.get $pf
+              i32.ne
+              local.set $post
+            end
+          end
+          local.get $pre
+          local.get $post
+          i32.or
+          i32.eqz
+          br_if $ret
+          local.get $i
+          local.set $us
+          block $x
+            loop $l
+              local.get $i
+              local.get $e
+              i32.ge_u
+              br_if $x
+              local.get $p
+              local.get $i
+              i32.add
+              i32.load8_u
+              local.tee $c
+              i32.const 46
+              i32.eq
+              local.get $c
+              call $isdig
+              i32.or
+              br_if $x
+              local.get $i
+              i32.const 1
+              i32.add
+              local.set $i
+              br $l
+            end
+          end
+          local.get $i
+          local.get $us
+          i32.sub
+          local.tee $ul
+          i32.eqz
+          br_if $ret
+          local.get $p
+          local.get $us
+          i32.add
+          i32.load8_u
+          local.set $c
+          i64.const 0
+          local.set $unit
+          local.get $ul
+          i32.const 1
+          i32.eq
+          if
+            local.get $c
+            i32.const 115
+            i32.eq
+            if
+              i64.const 1000000000
+              local.set $unit
+            end
+            local.get $c
+            i32.const 109
+            i32.eq
+            if
+              i64.const 60000000000
+              local.set $unit
+            end
+            local.get $c
+            i32.const 104
+            i32.eq
+            if
+              i64.const 3600000000000
+              local.set $unit
+            end
+          end
+          local.get $ul
+          i32.const 2
+          i32.eq
+          if
+            local.get $p
+            local.get $us
+            i32.add
+            i32.load8_u offset=1
+            i32.const 115
+            i32.eq
+            if
+              local.get $c
+              i32.const 110
+              i32.eq
+              if
+                i64.const 1
+                local.set $unit
+              end
+              local.get $c
+              i32.const 117
+              i32.eq
+              if
+                i64.const 1000
+                local.set $unit
+              end
+              local.get $c
+              i32.const 109
+              i32.eq
+              if
+                i64.const 1000000
+                local.set $unit
+              end
+            end
+          end
+          local.get $ul
+          i32.const 3
+          i32.eq
+          if
+            local.get $p
+            local.get $us
+            i32.add
+            i32.load8_u offset=1
+            local.set $c1
+            local.get $p
+            local.get $us
+            i32.add
+            i32.load8_u offset=2
+            i32.const 115
+            i32.eq
+            if
+              local.get $c
+              i32.const 194
+              i32.eq
+              local.get $c1
+              i32.const 181
+              i32.eq
+              i32.and
+              local.get $c
+              i32.const 206
+              i32.eq
+              local.get $c1
+              i32.const 188
+              i32.eq
+              i32.and
+              i32.or
+              if
+                i64.const 1000
+                local.set $unit
+              end
+            end
+          end
+          local.get $unit
+          i64.eqz
+          br_if $ret
+          local.get $v
+          i64.const 0x8000000000000000
+          local.get $unit
+          i64.div_u
+          i64.gt_u
+          br_if $ret
+          local.get $v
+          local.get $unit
+          i64.mul
+          local.set $v
+          local.get $f
+          i64.const 0
+          i64.ne
+          if
+            local.get $v
+            local.get $f
+            f64.convert_i64_u
+            local.get $unit
+            f64.convert_i64_u
+            local.get $scale
+            f64.div
+            f64.mul
+            i64.trunc_sat_f64_u
+            i64.add
+            local.tee $v
+            i64.const 0x8000000000000000
+            i64.gt_u
+            br_if $ret
+          end
+          local.get $d
+          local.get $v
+          i64.add
+          local.tee $d
+          i64.const 0x8000000000000000
+          i64.gt_u
+          br_if $ret
+          local.get $i
+          local.get $e
+          i32.lt_u
+          br_if $units
+        end
+        local.get $neg
+        if
+          i64.const 0
+          local.get $d
+          i64.sub
+          local.set $out
+          i32.const 1
+          local.set $ok
+          br $ret
+        end
+        local.get $d
+        i64.const 0x7fffffffffffffff
+        i64.gt_u
+        br_if $ret
+        local.get $d
+        local.set $out
+        i32.const 1
+        local.set $ok
+      end
+      local.get $t
+      call $rc_dec
+      if
+        local.get $t
+        call $free
+      end
+      local.get $out
+      local.get $ok)
+
+    (func $duration_parse_ok (param $o i32) (param $n i32) (result i32)
+      local.get $o
+      local.get $n
+      call $dur_parse
+      local.set $n
+      drop
+      local.get $n)
+
+    (func $duration_parse (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $dur_parse
+      drop)
+  """
+}
+
+/// The runtime functions of rt2.xo called with the operands' leaves under
+/// their std/llrt names (rt.<name> is $<name>).
+fn rt2_direct(name: Str) -> Bool {
+  name is "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode"
+}
