@@ -54,7 +54,7 @@ check() {
 echo "host $host; archive $(basename "$archive"); $(uname -sr)"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$out/hello/main.xo"
 printf 'module ex\n' > "$out/usego/xo.mod"
-printf 'use go "strings"\n\nfn main(os: Os) uses (stdio) {\n  os.stdio.println(strings.to_upper("hello from use go"))\n}\n' > "$out/usego/app/main.xo"
+printf 'use go "strings"\n\nfn main(os: Os) uses (stdio, go) {\n  os.stdio.println(strings.to_upper("hello from use go"))\n}\n' > "$out/usego/app/main.xo"
 
 # 2. without Go
 gopath_env=$PATH
