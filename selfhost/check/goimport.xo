@@ -54,18 +54,18 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
     let data = match src {
       Some(b) => b
       None => {
-        c.go_unsupported(gopath, cache, fpath)
+        c.go_miss(f, u.span, gopath, root, cache, fpath)
         return
       }
     }
     if c.fs.stat("${base_path}.go").ok() == None {
-      c.go_unsupported(gopath, cache, fpath)
+      c.go_miss(f, u.span, gopath, root, cache, fpath)
       return
     }
     let hdr = go_binding_header(data)
     if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin != hdr.mod_version) {
       // stale: the Go checker binds it again
-      c.go_unsupported(gopath, cache, fpath)
+      c.go_miss(f, u.span, gopath, root, cache, fpath)
       return
     }
     dep = c.new_module(key, hdr.name, parent(decl_path), true)
@@ -105,9 +105,163 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
   c.files[f].imports[k] = Import{module: dep, path: u.path, used: false, span: u.span}
 }
 
-fn (var c: Checker) go_unsupported(gopath: Str, cache: Str, fpath: Str) {
+/// A `use go` package without a current binding: XO1101 when binding it
+/// failed earlier (go_failed, set by check_dirs_bound), else the run is
+/// not checked here and the package is recorded for check_dirs_bound to
+/// bind.
+fn (var c: Checker) go_miss(f: Int, sp: Span, gopath: Str, root: Str, cache: Str, fpath: Str) {
+  if let Some(msg) = c.go_failed.get(gopath) {
+    if c.go_reported.contains(gopath) {
+      return
+    }
+    c.go_reported.add(gopath)
+    let d = c.error_at(f, "XO1101", sp, "cannot bind Go package `${gopath}`: ${msg}")
+    c.note(d, "`use go` binds the package with `xo bind ${gopath}` into ${cache} (decision 0041)")
+    return
+  }
+  var seen = false
+  for m in c.go_misses {
+    if m.gopath == gopath && m.root == root {
+      seen = true
+    }
+  }
+  if !seen {
+    c.go_misses.push(GoMiss{gopath: gopath, root: root})
+  }
   if c.unsupported.is_empty() {
     c.unsupported = "use go without a current binding of ${gopath} in ${cache} (a Go check or build, or `xo bind`, writes it) in ${fpath}"
+  }
+}
+
+/// A `use go` package the run found without a current binding, and the
+/// directory whose binding cache it belongs in (go_bind_root).
+pub struct GoMiss {
+  pub gopath: Str
+  pub root: Str
+}
+
+/// check_dirs, binding the `use go` packages missing from the binding
+/// cache first, as the Go checker binds on a miss (gobind.LoadOrBind):
+/// the helper xo-gobind (decision 0178 stage 6) binds each package the
+/// run missed and the directories are checked again from the state
+/// before the run. A package that fails to bind is XO1101 with the
+/// binder's message.
+pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str uses (fs, proc, env) {
+  let fresh = c
+  c.check_dirs(dirs)?
+  var failed: Map[Str, Str] = {}
+  var tried: Set[Str] = #{}
+  // a few rounds: a binding can import packages that are bound next
+  for _ in 0..4 {
+    var todo: List[GoMiss] = []
+    for m in c.go_misses {
+      let k = "${m.root}\n${m.gopath}"
+      if !tried.contains(k) && !failed.contains(m.gopath) {
+        tried.add(k)
+        todo.push(m)
+      }
+    }
+    if todo.is_empty() {
+      return Ok(())
+    }
+    let wd = os.env.get("PWD") ?? ""
+    for m in todo {
+      match bind_go_package(os, c.std_dir, wd, m.root, m.gopath) {
+        Ok(_) => {}
+        Err(e) => failed[m.gopath] = e
+      }
+    }
+    c = fresh
+    c.go_failed = failed
+    c.check_dirs(dirs)?
+  }
+  Ok(())
+}
+
+/// Binds Go package gopath into the binding cache of the project at root
+/// with xo-gobind (`xo bind --dir root gopath`); the error is the
+/// binder's reason (gobind.Error's Msg) or why the helper did not run.
+pub fn bind_go_package(os: Os, std_dir: Str, wd: Str, root: Str, gopath: Str) -> () ! Str uses (fs, proc, env) {
+  let (helper, temp) = gobind_helper(os, std_dir, wd)?
+  let r = os.proc.cmd(helper, ["--dir", root, gopath]).output()
+  if temp {
+    os.fs.remove(helper).ok()
+  }
+  let out = match r {
+    Ok(o) => o
+    Err(e) => return Err("xo-gobind: ${e}")
+  }
+  if out.code == 0 {
+    return Ok(())
+  }
+  var msg = (out.stderr.to_str() ?? "").trim()
+  let pre = "xo bind: cannot bind Go package \"${gopath}\": "
+  if msg.starts_with(pre) {
+    msg = msg.trim_prefix(pre)
+  } else if msg.is_empty() {
+    msg = "xo-gobind exited with status ${out.code}"
+  }
+  Err(msg)
+}
+
+/// The helper that binds Go packages, xo-gobind (cmd/xo-gobind, decision
+/// 0178 stage 6), and whether it is a temporary build to remove after
+/// use: $XO_GOBIND; else xo-gobind in the bin directory of a release
+/// layout (<prefix>/bin beside <prefix>/lib/xo/std), beside the std
+/// directory, or on $PATH; else built with `go build` ($XO_GO, else go)
+/// from the repository holding the std directory into a temporary file.
+pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (fs, proc, env) {
+  let named = os.env.get("XO_GOBIND") ?? ""
+  if !named.is_empty() {
+    return Ok((named, false))
+  }
+  var std = std_dir
+  if !std.starts_with("/") && !wd.is_empty() {
+    std = clean("${wd}/${std}")
+  }
+  let up = parent(std)
+  for cand in [join(up, "../../bin/xo-gobind"), join(up, "xo-gobind"), join(up, "bin/xo-gobind")] {
+    if is_file(os.fs, cand) {
+      return Ok((cand, false))
+    }
+  }
+  for d in (os.env.get("PATH") ?? "").split(":") {
+    if !d.is_empty() && is_file(os.fs, join(d, "xo-gobind")) {
+      return Ok((join(d, "xo-gobind"), false))
+    }
+  }
+  if !is_file(os.fs, join(up, "cmd/xo-gobind/main.go")) {
+    return Err("xo-gobind not found: set XO_GOBIND, put xo-gobind on PATH or beside xo, or build it with `go build github.com/xo-lang/xo/cmd/xo-gobind`")
+  }
+  let tmp_dir = os.env.get("TMPDIR") ?? ""
+  let tmp = match os.fs.create_temp(if tmp_dir.is_empty() { "/tmp" } else { tmp_dir.trim_suffix("/") }, "xo-gobind-") {
+    Ok(t) => t
+    Err(e) => return Err("building xo-gobind: ${e}")
+  }
+  var go = os.env.get("XO_GO") ?? ""
+  if go.is_empty() {
+    go = "go"
+  }
+  let r = os.proc.cmd(go, ["build", "-o", tmp, "./cmd/xo-gobind"]).dir(up).output()
+  match r {
+    Ok(o) => {
+      if o.code != 0 {
+        os.fs.remove(tmp).ok()
+        return Err("building xo-gobind: ${(o.stderr.to_str() ?? "").trim()}")
+      }
+    }
+    Err(e) => {
+      os.fs.remove(tmp).ok()
+      return Err("building xo-gobind: ${e}")
+    }
+  }
+  Ok((tmp, true))
+}
+
+fn is_file(fs: Fs, p: Str) -> Bool uses fs.read {
+  match fs.stat(p).ok() ?? None {
+    Some(info) => !info.is_dir
+    None => false
   }
 }
 

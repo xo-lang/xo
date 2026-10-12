@@ -1,0 +1,193 @@
+// `xo publish` (cmd/xo publish.go runPublish) and the API changes `xo
+// get` prints for upgraded requirements (upgradeDiffs). The comparison is
+// selfhost/cli/semantic's port of internal/release (decision 0178 stages
+// 3 and 4); the steps of a real release (a clean tree, the module's own
+// requirements, a clean check, all without a workspace) are here, since
+// they load the module's dependencies as internal/mod does.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/semantic
+
+/// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
+/// downgraded requirement of the main module in root, with the exports
+/// whose effects exceed the requirement's ceiling.
+fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[Change]) -> List[ApiChanges] uses (fs, proc, rand, net) {
+  var out: List[ApiChanges] = []
+  let (f, _) = c.chk.read_mod_file(root)
+  for ch in changes {
+    if ch.old.is_empty() || ch.new.is_empty() {
+      continue
+    }
+    let old_dir = match c.download(ch.path, ch.old) {
+      Ok(d) => d
+      Err(_) => continue
+    }
+    let new_dir = match c.download(ch.path, ch.new) {
+      Ok(d) => d
+      Err(_) => continue
+    }
+    let old_api = match semantic.module_api(c.os.fs, old_dir, ch.path) {
+      Ok(a) => a
+      Err(_) => continue
+    }
+    let new_api = match semantic.module_api(c.os.fs, new_dir, ch.path) {
+      Ok(a) => a
+      Err(_) => continue
+    }
+    var a = ApiChanges{path: ch.path, old: ch.old, new: ch.new}
+    for d in semantic.api_diff(old_api, new_api) {
+      a.changes.push(ApiChange{text: semantic.describe_api_change(d), breaking: d.breaking, json: jval(semantic.api_change_json(d))})
+    }
+    if let Some(mf) = f {
+      for r in mf.reqs {
+        if r.path != ch.path {
+          continue
+        }
+        if let Some(cl) = r.ceiling {
+          for it in new_api {
+            for e in it.effects {
+              if !check.ceiling_admits(cl, e) && is_label(e) {
+                a.above_ceiling.push("${it.package}.${it.name} uses ${e} (ceiling: ${check.ceiling_text(cl)})")
+              }
+            }
+          }
+        }
+      }
+    }
+    out.push(a)
+  }
+  out
+}
+
+/// mod.EffectLabels.
+fn is_label(e: Str) -> Bool {
+  e is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "log" | "go"
+}
+
+/// A JSON value of selfhost/cli/semantic as this package's J.
+fn jval(v: semantic.JVal) -> J {
+  match v {
+    Null => J.Null
+    Bool(b) => J.B(b: b)
+    Num(n) => J.I(n: n)
+    Text(s) => J.S(s: s)
+    Html(s) => J.H(s: s)
+    Arr(items) => {
+      var xs: List[J] = []
+      for it in items {
+        xs.push(jval(it))
+      }
+      J.A(xs: xs)
+    }
+    Obj(members) => {
+      var fs: List[(Str, J)] = []
+      for m in members {
+        fs.push((m.0, jval(m.1)))
+      }
+      J.O(fields: fs)
+    }
+  }
+}
+
+/// `xo publish [--dir=<dir>] [--version vX.Y.Z] [--check] [--json] [dir]`
+/// (decision 0086 step 4): compares the exports and effects with the
+/// previous tag and rejects a minor or patch release that breaks them.
+/// It prints the tag command and never runs git tag or git push.
+fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env) {
+  var fl = FlagSet{name: "publish", defs: [flag_str("dir", ".", "a directory of the module"), flag_str("version", "", "the version to release (default: the next minor, or the next patch before v1.0.0)"), flag_bool("check", "compare only: allow uncommitted changes and compare the working tree"), flag_bool("json", "print the result as JSON")]}
+  if !c.parse_flags(fl, args) {
+    return 2
+  }
+  var dir = fl.str("dir")
+  if !fl.args.is_empty() {
+    dir = fl.args[0]
+  }
+  let only = fl.on("check")
+  // the comparison (release.Publish without opts.Verify); a result that
+  // got through it has its bump set
+  var r = semantic.publish(c.os, dir, fl.str("version"), true)
+  if !only && !r.bump.is_empty() {
+    c.publish_verify(r, dir)
+  }
+  if fl.on("json") {
+    c.out(semantic.encode(semantic.publish_json(r)))
+  } else {
+    for d in r.diags {
+      c.os.stdio.eprintln(semantic.diag_human(d))
+    }
+    let prev = if r.previous.is_empty() { "no earlier tag" } else { r.previous }
+    c.out("module ${r.module}: ${r.version} (after ${prev}; the changes need a ${r.bump} release, ${r.suggested})\n")
+    for ch in r.changes {
+      let mark = if ch.breaking { "!" } else { " " }
+      c.out("${mark} ${semantic.describe_api_change(ch)}\n")
+    }
+    if !r.definitions.is_empty() {
+      c.out("definitions changed since ${r.previous} (content hashes, xo query hash):\n")
+      for d in r.definitions {
+        c.out("  ${semantic.describe_change(d)}\n")
+      }
+    }
+    if r.ok && only {
+      c.out("ok: ${r.version} may be released\n")
+    } else if r.ok {
+      c.out("ok: publish with\n  ${r.tag}\n")
+    }
+  }
+  if r.ok { 0 } else { 1 }
+}
+
+/// The last steps of release.Publish without --check: the working tree
+/// is clean, the module's own requirements load (mod.Load with
+/// NoWorkspace), and it checks clean with workspaces off (cmd/xo's
+/// Verify), each error a diagnostic of r.
+fn (var c: ModCtx) publish_verify(var r: semantic.PublishResult, dir: Str) uses (fs, net, proc, rand, env) {
+  let root = semantic.mod_root(c.os.fs, c.wd, dir)
+  if root.is_empty() {
+    return
+  }
+  let mod_file = "${root}/xo.mod"
+  match c.git(root, ["status", "--porcelain", "--", "."]) {
+    Err(e) => r.diags.push(release_diag("XO1311", mod_file, 0, "git status: ${e}", []))
+    Ok(out) => {
+      if !(out.to_str() ?? "").trim().is_empty() {
+        r.diags.push(release_diag("XO1311", mod_file, 0, "the working tree has uncommitted changes; a tag publishes the last commit", ["commit or stash them first (`git status`), or use --check to compare the working tree"]))
+      }
+    }
+  }
+  let b = c.load(root, Options{no_workspace: true})
+  for p in b.problems {
+    if severity(p.code) == "error" {
+      r.diags.push(release_diag(p.code, p.file, p.line, p.msg, p.notes))
+    }
+  }
+  var chk = check.new_checker(c.os.fs, c.std_dir())
+  chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), "off")
+  chk.cbind_dir = c.getenv("XO_CBIND_DIR")
+  chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  match chk.check_dirs_bound(c.os, [root]) {
+    Err(e) => r.diags.push(check.Diag{code: "XO1311", file: mod_file, line: 1, col: 1, end_line: 0, end_col: 0, message: "xo check: ${e}"})
+    Ok(_) => {
+      if !chk.unsupported.is_empty() {
+        r.diags.push(check.Diag{code: "XO1311", file: mod_file, line: 1, col: 1, end_line: 0, end_col: 0, message: "xo check: not supported by the self hosted checker: ${chk.unsupported}"})
+      }
+      for d in sort_diags(chk.diags) {
+        if !d.warning {
+          r.diags.push(d)
+        }
+      }
+    }
+  }
+  r.ok = r.diags.is_empty()
+  if !r.ok {
+    r.tag = ""
+  }
+}
+
+/// A diagnostic of release.Result.fail: at line 1 when no line is known.
+fn release_diag(code: Str, file: Str, line0: Int, msg: Str, notes: List[Str]) -> check.Diag {
+  var ns: List[check.DNote] = []
+  for n in notes {
+    ns.push(check.DNote{message: n})
+  }
+  check.Diag{code: code, file: file, line: if line0 < 1 { 1 } else { line0 }, col: 1, end_line: 0, end_col: 0, message: msg, notes: ns}
+}

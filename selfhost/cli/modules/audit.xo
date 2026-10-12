@@ -119,7 +119,7 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   } else {
     dirs = c.workspace_dirs(dirs)
   }
-  match chk.check_dirs(dirs) {
+  match chk.check_dirs_bound(c.os, dirs) {
     Ok(_) => {}
     Err(e) => {
       c.os.stdio.eprintln("xo audit: ${e}")
