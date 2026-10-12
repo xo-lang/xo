@@ -795,5 +795,9 @@ func goTool() string { return gotool.Path() }
 
 // goVersionDiag is XO1502 for a go command older than gotool.MinGo.
 func goVersionDiag(err error) diag.Diagnostic {
-	return diag.Diagnostic{Code: string(diag.GoTooOld), Severity: diag.Error, Message: err.Error()}
+	code := diag.GoTooOld
+	if _, ok := err.(*gotool.NotFoundError); ok {
+		code = diag.GoNotFound
+	}
+	return diag.Diagnostic{Code: string(code), Severity: diag.Error, Message: err.Error()}
 }
