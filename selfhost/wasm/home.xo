@@ -1,0 +1,971 @@
+// Large `var` parameters by reference (decision 0179, stage 3; the LLVM
+// emitter's decisions 0145 and 0148, ported to the wasm value model).
+//
+// A `var` parameter of a struct or tuple of HOME_MIN leaves or more, of a
+// function only called directly, is passed as the address of memory that
+// holds the value (its home) instead of its leaves, and its updated value
+// is not returned: the callee leaves it in the home. Without it the self
+// hosted checker passed and returned the 253 leaves of `Checker` at every
+// `var` call.
+//
+// In the callee the values of the home's chain stay in memory: the
+// parameter, a field update of a chain value that dies there (made in
+// the home), the `var` result of a call given a chain value that dies at
+// the call (the callee updated the home), and a block parameter every
+// edge passes a chain value that dies there. A forward dataflow over the
+// blocks tracks which chain value the home holds; every use of a chain
+// value must be where the home holds it, else the home falls back: the
+// parameter is loaded at entry and the result stored at each return. A
+// field read of a chain value loads from the home where it is used when
+// the home still holds the value there, else at the read. A use of a
+// whole chain value (a by value argument, an aggregate) loads its leaves.
+//
+// The caller passes the home of a chain value it gives up, or else a
+// temporary block holding a copy, read back after the call. A fault exit
+// zeroes the homes, as it returned zero leaves before.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The fewest leaves of a `var` parameter passed by reference.
+const HOME_MIN = 16
+
+/// Per function: the indexes of its parameters passed by reference.
+fn (var g: Gen) compute_homes(main: Int) {
+  var named: Map[Str, Bool] = {}
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op is ssa.Op.Closure | ssa.Op.Rebind | ssa.Op.FuncAddr {
+        if let S(n) = x.aux {
+          named[n] = true
+        }
+      }
+    }
+  }
+  g.homes = []
+  for (fi, f) in g.m.funcs.indexed() {
+    var hs: List[Int] = []
+    let ok = fi != main && !f.indirect && !f.entry && !f.catches && !named.contains(f.name) && !f.var_params.is_empty() && f.results.len() == f.var_params.len() + 1 && f.skip.is_empty()
+    if ok {
+      var shaped = true
+      for (j, pi) in f.var_params.indexed() {
+        if pi >= f.blocks[0].params.len() || f.values[f.blocks[0].params[pi]].ty != f.results[j + 1] {
+          shaped = false
+        }
+      }
+      if shaped {
+        for pi in f.var_params {
+          let t = f.values[f.blocks[0].params[pi]].ty
+          if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple && g.nleaves(t) >= HOME_MIN {
+            hs.push(pi)
+          }
+        }
+      }
+    }
+    g.homes.push(hs)
+  }
+  // read only: a parameter (not `var`) of a type some function takes as
+  // a `var` home (the checker's `fn (c: Checker)` methods): its callers
+  // mostly hold the value in a home and pass that address; the callee
+  // reads it in place and never writes it
+  var htypes: Map[Int, Bool] = {}
+  for (fi, hs) in g.homes.indexed() {
+    for pi in hs {
+      htypes[g.m.funcs[fi].values[g.m.funcs[fi].blocks[0].params[pi]].ty] = true
+    }
+  }
+  g.rhomes = []
+  for (fi, f) in g.m.funcs.indexed() {
+    var rs: List[Int] = []
+    let ok = fi != main && !f.indirect && !f.entry && !f.catches && !named.contains(f.name) && f.skip.is_empty()
+    if ok {
+      for (pi, p) in f.blocks[0].params.indexed() {
+        if !f.var_params.contains(pi) && htypes.contains(f.values[p].ty) {
+          rs.push(pi)
+          g.homes[fi].push(pi)
+        }
+      }
+    }
+    g.rhomes.push(rs)
+  }
+}
+
+/// Whether result k of function fi is the `var` result of a parameter
+/// passed by reference (not among the wasm results).
+fn (g: Gen) home_result(fi: Int, k: Int) -> Bool {
+  if k == 0 || g.homes[fi].is_empty() || k - 1 >= g.m.funcs[fi].var_params.len() {
+    return false
+  }
+  g.homes[fi].contains(g.m.funcs[fi].var_params[k - 1])
+}
+
+/// The home of the current function that holds `var` result k, -1 for
+/// none.
+fn (g: Gen) result_home(k: Int) -> Int {
+  if k == 0 || g.hparam.is_empty() || k - 1 >= g.f.var_params.len() {
+    return -1
+  }
+  let pi = g.f.var_params[k - 1]
+  for (h, p) in g.hparam.indexed() {
+    if p == pi {
+      return h
+    }
+  }
+  -1
+}
+
+/// The callee of call v when it is a function with homes, else -1.
+fn (g: Gen) home_callee(v: Int) -> Int {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Call {
+    return -1
+  }
+  let name = match x.aux {
+    S(s) => s
+    _ => ""
+  }
+  let ci = g.by_name.get(name) ?? -1
+  if ci < 0 || g.homes[ci].is_empty() {
+    return -1
+  }
+  ci
+}
+
+/// Whether value a is dead after instruction v (its last use on every
+/// path): no use follows in v's block, and a is not live into any
+/// successor. Exact, unlike the intervals of plan_locals, which widen a
+/// range over blocks in their order (not dominance order), so a value
+/// used in a loop would never die at the call that gives it up.
+fn (var g: Gen) dies_at(a: Int, v: Int) -> Bool {
+  g.dies_except(a, v, [])
+}
+
+/// dies_at, not counting the uses by the instructions in skip (field
+/// reads the call snapshots: snap_reads).
+fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int]) -> Bool {
+  let f = g.f
+  let bi = g.blk[v]
+  let b = f.blocks[bi]
+  var after = false
+  for w in b.instrs {
+    if after {
+      if f.values[w].args.contains(a) && !skip.contains(w) {
+        return false
+      }
+      for e in f.values[w].succs {
+        if f.edges[e].args.contains(a) {
+          return false
+        }
+      }
+    }
+    if w == v {
+      after = true
+      // the terminator's own edges are after its arguments
+      for e in f.values[w].succs {
+        if f.edges[e].args.contains(a) && f.values[w].op != ssa.Op.Jump && f.values[w].op != ssa.Op.Branch {
+          return false
+        }
+      }
+    }
+  }
+  let li = if skip.is_empty() { g.live_in(a) } else { g.live_in_except(a, skip) }
+  for w in b.instrs {
+    for e in f.values[w].succs {
+      if li[f.edges[e].to] {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The field reads of a that a call at v giving a up can snapshot: those
+/// after v in its block and in the blocks only v's block leads to (a
+/// landing pad releasing a field the caller retained before the call
+/// reads it from the value given up). The call loads them before it
+/// passes the home, and they keep locals of their own.
+fn (var g: Gen) snap_reads(a: Int, v: Int) -> List[Int] {
+  let f = g.f
+  let bi = g.blk[v]
+  var out: List[Int] = []
+  for w in g.users[a] {
+    let x = f.values[w]
+    if x.op != ssa.Op.Field || w == v || g.nleaves(x.ty) == 0 {
+      continue
+    }
+    let wb = g.blk[w]
+    var ok = false
+    if wb == bi {
+      let ins = f.blocks[bi].instrs
+      var seen = false
+      for u in ins {
+        if u == v {
+          seen = true
+        }
+        if u == w {
+          ok = seen
+        }
+      }
+    } else if f.blocks[wb].preds.len() == 1 && f.edges[f.blocks[wb].preds[0]].from == bi {
+      ok = true
+    }
+    if ok {
+      out.push(w)
+    }
+  }
+  out
+}
+
+/// live_in, not counting the uses in skip.
+fn (g: Gen) live_in_except(a: Int, skip: List[Int]) -> List[Bool] {
+  let f = g.f
+  var li: List[Bool] = []
+  for _ in f.blocks {
+    li.push(false)
+  }
+  let d = g.blk[a]
+  var work: List[Int] = []
+  for w in g.users[a] {
+    if skip.contains(w) {
+      continue
+    }
+    let ub = g.blk[w]
+    if ub != d && !li[ub] {
+      li[ub] = true
+      work.push(ub)
+    }
+  }
+  for ed in f.edges {
+    if ed.args.contains(a) && ed.from != d && !li[ed.from] {
+      li[ed.from] = true
+      work.push(ed.from)
+    }
+  }
+  while let Some(w) = work.pop() {
+    for e in f.blocks[w].preds {
+      let pb = f.edges[e].from
+      if pb != d && !li[pb] {
+        li[pb] = true
+        work.push(pb)
+      }
+    }
+  }
+  li
+}
+
+/// The blocks value a is live into (memoized per function): those with
+/// a use of it before any definition, and back through the predecessors
+/// to its defining block. An edge argument is a use in the edge's
+/// source block.
+fn (var g: Gen) live_in(a: Int) -> List[Bool] {
+  if let Some(l) = g.livein.get(a) {
+    return l
+  }
+  let f = g.f
+  var li: List[Bool] = []
+  for _ in f.blocks {
+    li.push(false)
+  }
+  let d = g.blk[a]
+  var work: List[Int] = []
+  for w in g.users[a] {
+    let ub = g.blk[w]
+    if ub != d && !li[ub] {
+      li[ub] = true
+      work.push(ub)
+    }
+  }
+  for (ei, ed) in f.edges.indexed() {
+    if ed.args.contains(a) && ed.from != d && !li[ed.from] {
+      li[ed.from] = true
+      work.push(ed.from)
+    }
+    let _ = ei
+  }
+  while let Some(w) = work.pop() {
+    for e in f.blocks[w].preds {
+      let pb = f.edges[e].from
+      if pb != d && !li[pb] {
+        li[pb] = true
+        work.push(pb)
+      }
+    }
+  }
+  g.livein[a] = li
+  li
+}
+
+const TOP = -3
+const CONFLICT = -2
+
+/// Plans the homes of the current function (from plan_locals, with the
+/// values' positions and live ranges): which values each home holds,
+/// and which field reads load from a home where they are used.
+fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
+  let f = g.f
+  let nv = f.values.len()
+  g.held = []
+  g.canon = []
+  g.mfield = []
+  g.moff = []
+  g.mroot = []
+  for v in 0..nv {
+    g.mroot.push(-1)
+    g.held.push(-1)
+    g.canon.push(v)
+    g.mfield.push(-1)
+    g.moff.push(0)
+  }
+  g.hok = []
+  g.livein = {}
+  g.hbefore = []
+  g.pass = {}
+  g.users = []
+  g.inedge = []
+  for _ in 0..nv {
+    g.users.push([])
+    g.inedge.push(false)
+  }
+  for (w, y) in f.values.indexed() {
+    for a in y.args {
+      if a >= 0 {
+        g.users[a].push(w)
+      }
+    }
+    for e in y.succs {
+      for a in f.edges[e].args {
+        if a >= 0 {
+          g.inedge[a] = true
+        }
+      }
+    }
+  }
+  g.snaprep = []
+  for _ in 0..nv {
+    g.snaprep.push(-1)
+  }
+  g.snapat = {}
+  g.snapdef = {}
+  for h in 0..g.hval.len() {
+    g.hok.push(g.plan_home(h, pos, hi, bend))
+  }
+  g.plan_fields(pos)
+}
+
+/// The chain of home h; false when it falls back.
+fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]) -> Bool {
+  let f = g.f
+  let nv = f.values.len()
+  var chain: List[Bool] = []
+  for _ in 0..nv {
+    chain.push(false)
+  }
+  let p0 = g.hval[h]
+  let ht = f.values[p0].ty
+  chain[p0] = true
+  if g.hro[h] {
+    // read only: the home holds the parameter throughout
+    g.held[p0] = h
+    var before: List[Int] = []
+    for _ in 0..nv {
+      before.push(p0)
+    }
+    g.hbefore.push(before)
+    return true
+  }
+  // The chain is the greatest set closed under its rules (a loop's
+  // block parameter and the value its back edge passes depend on each
+  // other): every candidate starts in it, and one breaking a rule is
+  // removed until none does. The dataflow below checks the result.
+  //
+  // per call giving up a chain value: the parameter and the parts (the
+  // reads of its `var` result) that the home then holds
+  var cpar: List[Int] = []
+  var cparts: List[List[Int]] = []
+  // per value: the call whose `var` result it reads (a part), or -1
+  var partof: List[Int] = []
+  for _ in 0..nv {
+    cpar.push(-1)
+    cparts.push([])
+    partof.push(-1)
+  }
+  for (bi, b) in f.blocks.indexed() {
+    if bi > 0 {
+      for x in b.params {
+        if f.values[x].ty == ht && !b.preds.is_empty() {
+          chain[x] = true
+        }
+      }
+    }
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op == ssa.Op.SetField && x.ty == ht {
+        chain[v] = true
+      }
+      let ci = g.home_callee(v)
+      if ci < 0 || g.inedge[v] {
+        continue
+      }
+      for (j, pi) in g.m.funcs[ci].var_params.indexed() {
+        if !g.homes[ci].contains(pi) || pi >= x.args.len() || x.args[pi] < 0 || f.values[x.args[pi]].ty != ht {
+          continue
+        }
+        // every use of the call's tuple must be a field read
+        var parts: List[Int] = []
+        var only = true
+        for w in g.users[v] {
+          let y = f.values[w]
+          if y.op != ssa.Op.Field {
+            only = false
+          } else if let I(n) = y.aux {
+            if n == j + 1 {
+              parts.push(w)
+            }
+          }
+        }
+        if only && cpar[v] < 0 {
+          cpar[v] = pi
+          cparts[v] = parts
+          for w in parts {
+            chain[w] = true
+            partof[w] = v
+          }
+        }
+      }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for (bi, b) in f.blocks.indexed() {
+      if bi > 0 {
+        for (k, x) in b.params.indexed() {
+          if !chain[x] {
+            continue
+          }
+          for e in b.preds {
+            let a = f.edges[e].args[k]
+            if a < 0 || !chain[a] || !g.gives_up(a, f.term(f.edges[e].from), g.members(a, partof, cparts)) {
+              chain[x] = false
+              changed = true
+              break
+            }
+          }
+        }
+      }
+      for v in b.instrs {
+        let x = f.values[v]
+        if x.op == ssa.Op.SetField && chain[v] {
+          let a = x.args[0]
+          if !chain[a] || !g.gives_up(a, v, g.members(a, partof, cparts)) {
+            chain[v] = false
+            changed = true
+          }
+        }
+        if cpar[v] >= 0 {
+          let a = x.args[cpar[v]]
+          let ok = chain[a] && g.gives_up(a, v, g.members(a, partof, cparts))
+          for w in cparts[v] {
+            if chain[w] && !ok {
+              chain[w] = false
+              changed = true
+            }
+          }
+          if !ok {
+            cpar[v] = -2
+          }
+        }
+      }
+    }
+  }
+  // the calls that pass the home, and the part each leaves in it
+  var after: List[Int] = []
+  for _ in 0..nv {
+    after.push(-1)
+  }
+  for v in 0..nv {
+    if cpar[v] < 0 {
+      continue
+    }
+    g.pass[v * 4096 + cpar[v]] = h
+    var c = nv
+    for w in cparts[v] {
+      c = c.min(w)
+    }
+    for w in cparts[v] {
+      g.canon[w] = c
+    }
+    after[v] = if cparts[v].is_empty() { CONFLICT } else { c }
+  }
+  // the field reads of a chain value that may run after it is given up
+  // read a snapshot taken where the value is defined (its call for a
+  // part, its update, its block's start for a parameter)
+  var snapped: List[Bool] = []
+  for _ in 0..nv {
+    snapped.push(false)
+  }
+  var group: Map[Str, Int] = {}
+  var snaps: List[(Int, Int, Int)] = []
+  for (bi, b) in f.blocks.indexed() {
+    var gone: List[(Int, Int)] = []
+    if bi > 0 {
+      for e in b.preds {
+        for (k, a) in f.edges[e].args.indexed() {
+          if a >= 0 && chain[a] && chain[b.params[k]] {
+            gone.push((a, f.term(f.edges[e].from)))
+          }
+        }
+      }
+    }
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op == ssa.Op.SetField && chain[v] {
+        gone.push((x.args[0], v))
+      }
+      if cpar[v] >= 0 {
+        gone.push((x.args[cpar[v]], v))
+      }
+    }
+    for (a, at) in gone {
+      let ms = g.members(a, partof, cparts)
+      let d = if partof[a] >= 0 { partof[a] } else { a }
+      let reach = g.reach_from(g.blk[at])
+      for m in ms {
+        for w in g.users[m] {
+          if f.values[w].op != ssa.Op.Field || g.nleaves(f.values[w].ty) == 0 || snapped[w] {
+            continue
+          }
+          // only the reads that can run after the value is given up
+          if g.blk[w] == g.blk[at] {
+            if g.before_in_block(w, at) && !reach[g.blk[w]] {
+              continue
+            }
+          } else if !reach[g.blk[w]] {
+            continue
+          }
+          let i = match f.values[w].aux {
+            I(n) => n
+            _ => 0
+          }
+          let key = "${d}:${i}"
+          let rep = group.get(key) ?? w
+          group[key] = rep
+          snapped[w] = true
+          snaps.push((w, rep, d))
+        }
+      }
+    }
+  }
+  // the dataflow: which chain value the home holds at each block's start
+  let nb = f.blocks.len()
+  var sin: List[Int] = []
+  var sout: List[Int] = []
+  for _ in 0..nb {
+    sin.push(TOP)
+    sout.push(TOP)
+  }
+  var again = true
+  while again {
+    again = false
+    for (bi, b) in f.blocks.indexed() {
+      var st = TOP
+      if bi == 0 {
+        st = p0
+      } else {
+        var pst = -1
+        for x in b.params {
+          if chain[x] {
+            pst = x
+          }
+        }
+        if pst >= 0 {
+          st = pst
+        } else {
+          for e in b.preds {
+            let o = sout[f.edges[e].from]
+            if o == TOP {
+              continue
+            }
+            if st == TOP {
+              st = o
+            } else if st != o {
+              st = CONFLICT
+            }
+          }
+        }
+      }
+      if st != sin[bi] {
+        sin[bi] = st
+      }
+      for v in b.instrs {
+        if chain[v] && f.values[v].op == ssa.Op.SetField {
+          st = v
+        }
+        if after[v] != -1 {
+          st = after[v]
+        }
+      }
+      if st != sout[bi] {
+        sout[bi] = st
+        again = true
+      }
+    }
+  }
+  // every use of a chain value is where the home holds it
+  var before: List[Int] = []
+  for _ in 0..nv {
+    before.push(CONFLICT)
+  }
+  for (bi, b) in f.blocks.indexed() {
+    var st = sin[bi]
+    for v in b.instrs {
+      before[v] = st
+      let x = f.values[v]
+      for (k, a) in x.args.indexed() {
+        if snapped[v] {
+          continue
+        }
+        if a >= 0 && chain[a] && st != TOP && g.canon[a] != st {
+          return g.drop_home(h)
+        }
+        if a >= 0 && chain[a] && x.op == ssa.Op.Return && k > 0 && g.result_home(k) != h && g.result_home(k) >= 0 {
+          return g.drop_home(h)
+        }
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          if a >= 0 && chain[a] && st != TOP && g.canon[a] != st {
+            return g.drop_home(h)
+          }
+        }
+      }
+      if chain[v] && x.op == ssa.Op.SetField {
+        st = v
+      }
+      if after[v] != -1 {
+        st = after[v]
+      }
+    }
+  }
+  for v in 0..nv {
+    if chain[v] && g.held[v] >= 0 {
+      // another home of the type claims it (never expected: each chain
+      // starts at its own parameter)
+      return g.drop_home(h)
+    }
+  }
+  for v in 0..nv {
+    if chain[v] {
+      g.held[v] = h
+    }
+  }
+  for (w, rep, d) in snaps {
+    g.snaprep[w] = rep
+    if w == rep {
+      var l = g.snapat.get(d) ?? []
+      l.push(rep)
+      g.snapat[d] = l
+      g.snapdef[rep] = d
+    }
+  }
+  g.hbefore.push(before)
+  true
+}
+
+/// The values that are one chain value: the reads of a call's `var`
+/// result (the SSA reads it once per use), or a alone.
+fn (g: Gen) members(a: Int, partof: List[Int], cparts: List[List[Int]]) -> List[Int] {
+  if partof[a] >= 0 {
+    return cparts[partof[a]]
+  }
+  [a]
+}
+
+/// Whether the chain value whose values are ms can be given up at v: none
+/// is used after v except by field reads, which then read a snapshot.
+fn (var g: Gen) gives_up(a: Int, v: Int, ms: List[Int]) -> Bool {
+  for m in ms {
+    var skip: List[Int] = []
+    for w in g.users[m] {
+      if g.f.values[w].op == ssa.Op.Field && w != v {
+        skip.push(w)
+      }
+    }
+    if !g.dies_except(m, v, skip) {
+      return false
+    }
+  }
+  let _ = a
+  true
+}
+
+/// The blocks reachable from the successors of block b.
+fn (g: Gen) reach_from(b: Int) -> List[Bool] {
+  let f = g.f
+  var r: List[Bool] = []
+  for _ in f.blocks {
+    r.push(false)
+  }
+  var work = [b]
+  while let Some(w) = work.pop() {
+    for e in f.values[f.term(w)].succs {
+      let t = f.edges[e].to
+      if !r[t] {
+        r[t] = true
+        work.push(t)
+      }
+    }
+  }
+  r
+}
+
+/// Whether w comes before v in their block.
+fn (g: Gen) before_in_block(w: Int, v: Int) -> Bool {
+  for u in g.f.blocks[g.blk[v]].instrs {
+    if u == w {
+      return true
+    }
+    if u == v {
+      return false
+    }
+  }
+  false
+}
+
+/// Home h falls back: its parameter is loaded at entry.
+fn (var g: Gen) drop_home(h: Int) -> Bool {
+  for v in 0..g.f.values.len() {
+    if g.held[v] == h {
+      g.held[v] = -1
+    }
+    if g.canon[v] != v && g.held[v] < 0 {
+      g.canon[v] = v
+    }
+  }
+  // the calls pass a copy
+  var drop: List[Int] = []
+  for (k, hh) in g.pass.entries() {
+    if hh == h {
+      drop.push(k)
+    }
+  }
+  for k in drop {
+    g.pass.remove(k)
+  }
+  g.hbefore.push([])
+  false
+}
+
+/// The value whose memory holds value v (a held value or a field read of
+/// one), or -1.
+fn (g: Gen) mem_root(v: Int) -> Int {
+  if g.held[v] >= 0 {
+    return v
+  }
+  if g.mfield[v] >= 0 {
+    return g.mroot[v]
+  }
+  -1
+}
+
+/// The field reads of held values that load where they are used: each
+/// use must be where the home holds the value read from, else the read
+/// loads at its definition (it then has locals of its own).
+fn (var g: Gen) plan_fields(pos: List[Int]) {
+  let f = g.f
+  let nv = f.values.len()
+  // in position order a field of a field follows its struct when both
+  // are in one block; repeat for chains across blocks
+  var changed = true
+  while changed {
+    changed = false
+    for v in 0..nv {
+      let x = f.values[v]
+      if x.op != ssa.Op.Field || g.held[v] >= 0 || g.mfield[v] >= 0 || pos[v] < 0 || g.nleaves(x.ty) == 0 || g.snapped(v) {
+        continue
+      }
+      let a = x.args[0]
+      let r = g.mem_root(a)
+      if r < 0 || !(g.kind(g.vty(a)) is ssa.Kind.Struct | ssa.Kind.Tuple) {
+        continue
+      }
+      let i = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      let h = g.held[r]
+      g.mfield[v] = h
+      g.mroot[v] = r
+      g.moff[v] = g.moff[a] + 8 * g.field_off(g.vty(a), i)
+      if g.held[a] >= 0 {
+        g.moff[v] = 8 * g.field_off(g.vty(a), i)
+      }
+      changed = true
+    }
+  }
+  // the home's state before each instruction
+  var ok: List[Bool] = []
+  for _ in 0..nv {
+    ok.push(true)
+  }
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(a)
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          us.push(a)
+        }
+      }
+      for a in us {
+        if a < 0 || g.mfield[a] < 0 {
+          continue
+        }
+        let h = g.mfield[a]
+        let hs = g.home_state(h, v)
+        if hs != TOP && hs != g.canon[g.mroot[a]] {
+          ok[a] = false
+        }
+      }
+    }
+  }
+  // a read that cannot load where it is used loads at its definition;
+  // reads of it are then ordinary field reads
+  var demoted = true
+  while demoted {
+    demoted = false
+    for v in 0..nv {
+      if g.mfield[v] >= 0 && (!ok[v] || (g.mfield[f.values[v].args[0]] < 0 && g.held[f.values[v].args[0]] < 0)) {
+        g.mfield[v] = -1
+        g.mroot[v] = -1
+        demoted = true
+      }
+    }
+  }
+}
+
+/// The chain value home h holds before instruction v.
+fn (g: Gen) home_state(h: Int, v: Int) -> Int {
+  if h >= g.hbefore.len() || g.hbefore[h].is_empty() {
+    return CONFLICT
+  }
+  g.hbefore[h][v]
+}
+
+/// The leaves of value v that get locals: all of them, but for a call
+/// that leaves its last `var` results in homes (the tuple of a `Checker`
+/// method's result and the `Checker`), only those before them.
+fn (var g: Gen) alloc_leaves(v: Int) -> List[Str] {
+  let x = g.f.values[v]
+  let ls = g.leaves(x.ty)
+  let ci = g.home_callee(v)
+  if ci < 0 || g.homes[ci].len() == g.rhomes[ci].len() {
+    return ls
+  }
+  let vps = g.m.funcs[ci].var_params
+  let tys = g.field_tys(x.ty)
+  var k = tys.len() - 1
+  while k >= 1 && g.home_result(ci, k) && g.pass.contains(v * 4096 + vps[k - 1]) {
+    k -= 1
+  }
+  let n = g.field_off(x.ty, k) + g.nleaves(tys[k])
+  if n >= ls.len() {
+    return ls
+  }
+  ls[0..n]
+}
+
+/// Whether field read v is loaded by the call it follows (snap_reads).
+fn (g: Gen) snapped(v: Int) -> Bool {
+  g.snaprep.len() > v && g.snaprep[v] >= 0
+}
+
+/// Loads the snapshots taken at value d (home.xo plan_home): each field
+/// read's leaves from the home into its locals.
+fn (var g: Gen) take_snaps(d: Int) {
+  if let Some(reps) = g.snapat.get(d) {
+    for rep in reps {
+      let x = g.f.values[rep]
+      let a = x.args[0]
+      let i = match x.aux {
+        I(n) => n
+        _ => 0
+      }
+      let (mp, mo) = g.mem_of(a)
+      let ls = g.leaves(x.ty)
+      g.mem_push(mp, mo + 8 * g.field_off(g.vty(a), i), ls)
+      g.set_range(g.loc(rep), ls.len())
+    }
+  }
+}
+
+/// Pushes leaves ls stored from offset off of the memory at local p.
+fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
+  for (k, l) in ls.indexed() {
+    g.get(p)
+    g.e("${l}.load offset=${off + 8 * k}")
+  }
+}
+
+/// Stores the leaves in locals from b at offset off of the memory at
+/// local p.
+fn (var g: Gen) mem_store(p: Int, off: Int, b: Int, ls: List[Str]) {
+  for (k, l) in ls.indexed() {
+    g.get(p)
+    g.get(b + k)
+    g.e("${l}.store offset=${off + 8 * k}")
+  }
+}
+
+/// The local holding the address of v's memory and v's offset in it,
+/// or (-1, 0) when v is in locals.
+fn (g: Gen) mem_of(v: Int) -> (Int, Int) {
+  if g.held.len() > v && g.held[v] >= 0 {
+    return (g.hptr[g.held[v]], 0)
+  }
+  if g.mfield.len() > v && g.mfield[v] >= 0 {
+    return (g.hptr[g.mfield[v]], g.moff[v])
+  }
+  (-1, 0)
+}
+
+/// Zeroes every home (a fault exit).
+fn (var g: Gen) zero_homes() {
+  for (h, p) in g.hptr.indexed() {
+    if g.hro[h] {
+      continue
+    }
+    g.get(p)
+    g.e("i32.const 0")
+    g.e("i32.const ${g.size(g.f.values[g.hval[h]].ty)}")
+    g.e("memory.fill")
+  }
+}
+
+/// The helper that releases fields fs of struct or tuple t held in
+/// memory (its address the parameter), emitted on first use.
+fn (var g: Gen) drop_mem_fields_fn(t: Int, fs: List[Int]) -> Str {
+  let sorted = fs.sort()
+  var ks: List[Str] = []
+  for i in sorted {
+    ks.push("${i}")
+  }
+  let key = "m${t}:${ks.join(",")}"
+  if let Some(n) = g.dropf.get(key) {
+    return n
+  }
+  let name = "$dropm${g.dropf.len()}"
+  g.dropf[key] = name
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  let tys = g.field_tys(t)
+  for i in sorted {
+    g.mem_push(0, 8 * g.field_off(t, i), g.leaves(tys[i]))
+    g.e("call ${g.rc_fn("drop", tys[i])}")
+  }
+  g.end_helper(name, ["i32"], [], "drop fields ${ks.join(" ")} of ${g.m.types[t].name} in memory")
+  g.cur = saved
+  name
+}

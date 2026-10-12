@@ -33,37 +33,123 @@ fn (var g: Gen) func(fi: Int) {
     }
   }
   var ps: List[Str] = []
-  for p in f.blocks[0].params {
+  g.tslots = []
+  g.scr = {}
+  g.scr_n = {}
+  g.hptr = []
+  g.hparam = []
+  g.hval = []
+  g.hro = []
+  for (i, p) in f.blocks[0].params.indexed() {
+    if g.homes[fi].contains(i) {
+      // the address of its home (home.xo)
+      g.hptr.push(ps.len())
+      g.hparam.push(i)
+      g.hval.push(p)
+      g.hro.push(g.rhomes[fi].contains(i))
+      ps.push("i32")
+      continue
+    }
     g.vbase[p] = ps.len()
     for l in g.leaves(f.values[p].ty) {
       ps.push(l)
     }
   }
   var rs: List[Str] = []
-  for r in f.results {
+  for (k, r) in f.results.indexed() {
+    if g.home_result(fi, k) {
+      continue
+    }
     for l in g.leaves(r) {
       rs.push(l)
     }
   }
   g.cur = FnText{nparams: ps.len()}
+  g.nres_leaves = rs.len()
+  g.zexit = false
   g.pc_local = g.tmp("i32")
   g.plan_locals()
   g.su = g.susp.len() > fi && g.susp[fi]
   g.segs = []
   g.nres = 0
   let nb = f.blocks.len()
+  g.nuse = []
+  for _ in 0..f.values.len() {
+    g.nuse.push(0)
+  }
+  for x in f.values {
+    for a in x.args {
+      if a >= 0 {
+        g.nuse[a] += 1
+      }
+    }
+    for e in x.succs {
+      for a in f.edges[e].args {
+        if a >= 0 {
+          g.nuse[a] += 1
+        }
+      }
+    }
+  }
   for (bi, b) in f.blocks.indexed() {
     g.e("end")
     g.segs.push("$B${bi}")
-    for v in b.instrs {
-      g.instr(v, bi)
+    // snapshots of a home's value taken where the block starts (home.xo)
+    for prm in b.params {
+      g.take_snaps(prm)
+    }
+    if g.annotate {
+      g.e(";; @block")
+    }
+    if g.unwind_block(bi) {
+      if g.annotate {
+        g.e(";; @unwind_exit")
+      }
+      // the function's unwind exit: the fault goes on to the caller,
+      // which reads no result (zeros, as any fault exit)
+      g.e("global.get $faulting")
+      g.e("global.set $prop")
+      g.zero_exit()
+      continue
+    }
+    var j = 0
+    while j < b.instrs.len() {
+      g.scr_n = {}
+      if g.annotate {
+        let x = g.f.values[b.instrs[j]]
+        var what = ssa.op_name(x.op)
+        if x.op == ssa.Op.Call {
+          if let S(n) = x.aux {
+            what = if g.by_name.contains(n) { "call ${if g.homes[g.by_name.get(n) ?? 0].is_empty() { "fn" } else { "fn_home" }}" } else { "call ${n}" }
+          }
+        }
+        g.e(";; @${what}")
+      }
+      let n = g.release_run(b.instrs, j)
+      if n > 0 {
+        if g.annotate {
+          g.e(";; @release_run")
+        }
+        j += n
+        continue
+      }
+      g.instr(b.instrs[j], bi)
       if !g.err.is_empty() && !g.all {
         return
       }
+      j += 1
     }
   }
   let body = g.cur.lines
   g.cur.lines = []
+  // a home whose chain does not stay in memory: its parameter is loaded
+  // at entry (before a resumed task restores its locals)
+  for (h, p) in g.hval.indexed() {
+    if !g.hok[h] {
+      g.mem_push(g.hptr[h], 0, g.leaves(f.values[p].ty))
+      g.set_range(g.loc(p), g.nleaves(f.values[p].ty))
+    }
+  }
   // a function that can suspend (rt3.xo) saves its locals and its resume
   // point when the code it calls suspends, and restores them when the
   // scheduler resumes the task (the stack rewinds)
@@ -92,6 +178,11 @@ fn (var g: Gen) func(fi: Int) {
       g.set(k)
     }
     g.e("end")
+  }
+  if g.zexit {
+    g.e("block $Z")
+  }
+  if g.su {
     g.e("block $S")
   }
   g.e("loop $L")
@@ -125,7 +216,16 @@ fn (var g: Gen) func(fi: Int) {
       g.e("${t}.store offset=${8 * k}")
     }
     g.push_zeros(rs)
+    if g.zexit {
+      g.e("return")
+    }
   }
+  if g.zexit {
+    g.e("end")
+    g.zero_homes()
+    g.push_zeros(rs)
+  }
+  g.renumber_locals()
   var head = "(func $f${fi}"
   if !ps.is_empty() {
     head = "${head} (param ${ps.join(" ")})"
@@ -137,7 +237,16 @@ fn (var g: Gen) func(fi: Int) {
     head = "${head} (local ${g.cur.locals.join(" ")})"
   }
   var b = StrBuilder.new()
-  b.write("  ;; ${comment_text(f.name)}\n  ${head}\n")
+  var note = ""
+  if g.annotate && !g.hok.is_empty() {
+    // which homes keep their chain in memory (home.xo)
+    var hs: List[Str] = []
+    for (h, ok) in g.hok.indexed() {
+      hs.push(if g.hro[h] { "ro" } else if ok { "held" } else { "fallback" })
+    }
+    note = " (homes: ${hs.join(" ")})"
+  }
+  b.write("  ;; ${comment_text(f.name)}${note}\n  ${head}\n")
   for l in g.cur.lines {
     b.write("    ")
     b.write(l)
@@ -145,6 +254,96 @@ fn (var g: Gen) func(fi: Int) {
   }
   b.write("  )\n")
   g.funcs.push(b.freeze())
+}
+
+/// Renumbers the locals of the function in the current buffer so the
+/// most used ones have the indexes below 128, which take one byte (the
+/// index of every `local.get` and `local.set` is a LEB128 number; the
+/// self hosted checker's functions have thousands of locals). Those come
+/// first and the rest after, each group by type, so the run length coded
+/// declarations stay short.
+fn (var g: Gen) renumber_locals() {
+  let np = g.cur.nparams
+  let nl = g.cur.locals.len()
+  if np + nl <= 128 {
+    return
+  }
+  var count: List[Int] = []
+  for _ in 0..nl {
+    count.push(0)
+  }
+  for l in g.cur.lines {
+    if l.starts_with("local.") && l.len() > 10 {
+      let i = (Int.parse(l[10..l.len()]) ?? 0) - np
+      if i >= 0 && i < nl {
+        count[i] += 1
+      }
+    }
+  }
+  // the hot locals: the most used, up to the one byte indexes left
+  let room = 128 - np
+  var order: List[Int] = []
+  for i in 0..nl {
+    order.push(i)
+  }
+  var hot: List[Bool] = []
+  for _ in 0..nl {
+    hot.push(false)
+  }
+  if room > 0 {
+    // a bucket per use count (counts above 4096 share the top one)
+    var buckets: List[List[Int]] = []
+    for _ in 0..4097 {
+      buckets.push([])
+    }
+    for i in 0..nl {
+      buckets[count[i].min(4096)].push(i)
+    }
+    var taken = 0
+    var c = 4096
+    while c > 1 && taken < room {
+      for i in buckets[c] {
+        if taken < room {
+          hot[i] = true
+          taken += 1
+        }
+      }
+      c -= 1
+    }
+  }
+  var newidx: List[Int] = []
+  for _ in 0..nl {
+    newidx.push(0)
+  }
+  var types: List[Str] = []
+  var next = np
+  for group in [true, false] {
+    for t in ["i32", "i64", "f64"] {
+      for i in 0..nl {
+        if hot[i] == group && g.cur.locals[i] == t {
+          newidx[i] = next
+          types.push(t)
+          next += 1
+        }
+      }
+    }
+  }
+  if types.len() != nl {
+    return
+  }
+  var lines: List[Str] = []
+  for l in g.cur.lines {
+    if l.starts_with("local.") && l.len() > 10 {
+      let i = (Int.parse(l[10..l.len()]) ?? 0) - np
+      if i >= 0 && i < nl {
+        lines.push("${l[0..10]}${newidx[i]}")
+        continue
+      }
+    }
+    lines.push(l)
+  }
+  g.cur.lines = lines
+  g.cur.locals = types
 }
 
 /// Starts a resume point before a call that can suspend (a dispatch
@@ -211,11 +410,17 @@ fn (var g: Gen) plan_locals() {
     }
     bend.push(p - 1)
   }
+  g.plan_homes(pos, [], bend)
   var lo: List[Int] = []
   var hi: List[Int] = []
   for v in 0..nv {
     lo.push(pos[v])
     hi.push(pos[v])
+  }
+  // a snapshot (home.xo) lives from where it is taken
+  for (rep, d) in g.snapdef.entries() {
+    lo[rep] = lo[rep].min(pos[d])
+    hi[rep] = hi[rep].max(pos[d])
   }
   // a block parameter is written at the end of each predecessor (the
   // edge's copy)
@@ -248,13 +453,16 @@ fn (var g: Gen) plan_locals() {
           us.push(a)
         }
       }
-      for a in us {
-        if a < 0 || pos[a] < 0 {
+      for a0 in us {
+        if a0 < 0 || pos[a0] < 0 {
           continue
         }
+        // a use of a field read that reads a snapshot is a use of the
+        // snapshot, which lives from where it is taken
+        let a = if g.snaprep[a0] >= 0 { g.snaprep[a0] } else { a0 }
+        let d = if g.snaprep[a0] >= 0 { g.blk[g.snapdef.get(a) ?? a] } else { g.blk[a0] }
         lo[a] = lo[a].min(xp)
         hi[a] = hi[a].max(xp)
-        let d = g.blk[a]
         if d == bi {
           continue
         }
@@ -282,6 +490,7 @@ fn (var g: Gen) plan_locals() {
       }
     }
   }
+
   // a field of a struct or tuple (a `var` call's result, a field read) is
   // that value's locals, which then stay as long as the field does: no
   // copy (not for a block parameter, which its edges rewrite)
@@ -319,9 +528,9 @@ fn (var g: Gen) plan_locals() {
       continue
     }
     let x = f.values[vi]
-    if x.op == ssa.Op.Field && x.args.len() == 1 && g.nleaves(x.ty) > 0 {
+    if x.op == ssa.Op.Field && x.args.len() == 1 && g.nleaves(x.ty) > 0 && g.held[vi] < 0 && g.mfield[vi] < 0 {
       let a = x.args[0]
-      if pos[a] >= 0 && !isparam[a] && f.values[a].op != ssa.Op.Undef {
+      if pos[a] >= 0 && f.values[a].op != ssa.Op.Undef && g.held[a] < 0 && g.mfield[a] < 0 {
         src[vi] = a
         g.alias[vi] = true
       }
@@ -337,8 +546,10 @@ fn (var g: Gen) plan_locals() {
     var w = vi
     while src[w] >= 0 {
       w = src[w]
-      hi[w] = hi[w].max(hi[vi])
-      lo[w] = lo[w].min(lo[vi])
+      // a snapshot's read stands for the snapshot
+      let t = if g.snaprep[w] >= 0 { g.snaprep[w] } else { w }
+      hi[t] = hi[t].max(hi[vi])
+      lo[t] = lo[t].min(lo[vi])
     }
   }
   // the scan: values by the start of their range; locals come back to
@@ -351,7 +562,7 @@ fn (var g: Gen) plan_locals() {
   }
   for v in 0..nv {
     // an undefined value keeps zeroed locals of its own
-    if pos[v] < 0 || g.vbase[v] >= 0 || g.alias[v] || g.nleaves(f.values[v].ty) == 0 || f.values[v].op == ssa.Op.Undef {
+    if pos[v] < 0 || g.vbase[v] >= 0 || g.alias[v] || g.held[v] >= 0 || g.mfield[v] >= 0 || (g.snaprep[v] >= 0 && g.snaprep[v] != v) || g.nleaves(f.values[v].ty) == 0 || f.values[v].op == ssa.Op.Undef {
       continue
     }
     starts[lo[v]].push(v)
@@ -372,7 +583,7 @@ fn (var g: Gen) plan_locals() {
         if moved[v] {
           continue
         }
-        let key = g.leaves(f.values[v].ty).join(" ")
+        let key = g.alloc_leaves(v).join(" ")
         var l = pool.get(key) ?? []
         l.push(g.vbase[v])
         pool[key] = l
@@ -391,7 +602,7 @@ fn (var g: Gen) plan_locals() {
           continue
         }
       }
-      let ls = g.leaves(f.values[v].ty)
+      let ls = g.alloc_leaves(v)
       let key = ls.join(" ")
       var l = pool.get(key) ?? []
       if let Some(b) = l.pop() {
@@ -400,6 +611,13 @@ fn (var g: Gen) plan_locals() {
       } else {
         g.vbase[v] = g.tmps(ls)
       }
+    }
+  }
+  // the field reads of one snapshot share its locals
+  for v in 0..nv {
+    let r = g.snaprep[v]
+    if r >= 0 && r != v {
+      g.vbase[v] = g.vbase[r]
     }
   }
   // the fields: their struct's locals at the field's offset
@@ -427,8 +645,17 @@ fn (var g: Gen) alias_base(v: Int, src: List[Int]) -> Int {
   g.vbase[v]
 }
 
-/// The first local of value v (allocated at its first use).
+/// The first local of value v (allocated at its first use). A value in
+/// memory (home.xo) is loaded into new locals here, where it is used.
 fn (var g: Gen) loc(v: Int) -> Int {
+  let (mp, _) = g.mem_of(v)
+  if mp >= 0 {
+    let ls = g.leaves(g.vty(v))
+    let b = g.scratch(ls)
+    g.push(v)
+    g.set_range(b, ls.len())
+    return b
+  }
   if g.vbase[v] < 0 {
     g.vbase[v] = g.tmps(g.leaves(g.f.values[v].ty))
   }
@@ -441,6 +668,11 @@ fn (var g: Gen) vty(v: Int) -> Int {
 
 /// Pushes the leaves of value v.
 fn (var g: Gen) push(v: Int) {
+  let (mp, mo) = g.mem_of(v)
+  if mp >= 0 {
+    g.mem_push(mp, mo, g.leaves(g.vty(v)))
+    return
+  }
   let n = g.nleaves(g.vty(v))
   if n > 0 {
     g.push_range(g.loc(v), n)
@@ -449,6 +681,15 @@ fn (var g: Gen) push(v: Int) {
 
 /// Pushes leaves k0 to k1 of value v.
 fn (var g: Gen) push_part(v: Int, k0: Int, k1: Int) {
+  let (mp, mo) = g.mem_of(v)
+  if mp >= 0 {
+    let ls = g.leaves(g.vty(v))
+    for k in k0..k1 {
+      g.get(mp)
+      g.e("${ls[k]}.load offset=${mo + 8 * k}")
+    }
+    return
+  }
   let b = g.loc(v)
   for k in k0..k1 {
     g.get(b + k)
@@ -495,10 +736,170 @@ fn (var g: Gen) fault_exit(v: Int) {
     g.goto(g.f.edges[e].to)
     return
   }
-  for r in g.f.results {
-    g.push_zeros(g.leaves(r))
+  g.zero_exit()
+}
+
+/// Returns zero results: the leaves are pushed once, after the dispatch
+/// loop (`$Z`), which every fault exit of the function branches to.
+fn (var g: Gen) zero_exit() {
+  if g.nres_leaves > 0 || !g.hptr.is_empty() {
+    g.zexit = true
+    g.e("br $Z")
+    return
   }
   g.e("return")
+}
+
+/// Whether block bi is an unwind exit the backend lowers as a fault exit:
+/// it hands the fault on (rt.fault_continue) and returns placeholder
+/// values (constants, empty lists, and aggregates of them, which only
+/// this block uses), in a program where no task waits, so unwinding is
+/// always a fault and the caller reads no result. A `Checker` method's
+/// unwind exit built and returned its 253 leaves.
+fn (var g: Gen) unwind_block(bi: Int) -> Bool {
+  if g.blocks_wait {
+    return false
+  }
+  let b = g.f.blocks[bi]
+  if !b.params.is_empty() || b.instrs.is_empty() {
+    return false
+  }
+  var cont = false
+  for (k, v) in b.instrs.indexed() {
+    let x = g.f.values[v]
+    let last = k == b.instrs.len() - 1
+    if last != (x.op == ssa.Op.Return) {
+      return false
+    }
+    match x.op {
+      Return | Const | Struct | Tuple | Variant => {}
+      Retain | Release => {
+        if g.blk[x.args[0]] != bi {
+          return false
+        }
+      }
+      Call => {
+        let name = match x.aux {
+          S(s) => s
+          _ => ""
+        }
+        if name == "rt.fault_continue" {
+          cont = true
+        } else if name != "rt.rl_empty" {
+          return false
+        }
+      }
+      _ => return false
+    }
+  }
+  cont
+}
+
+/// Lowers the run of releases of fields of one struct at instrs[j] (a
+/// `field` and its only use, a `release`; or a `release` of a field read
+/// that is its struct's locals or memory) as one call of a helper given
+/// the whole struct, or its address when it is in memory (home.xo), when
+/// that is shorter: the landing pads of a `Checker` method released its
+/// 220 heap fields one by one. Returns the instructions it took, 0 for
+/// none.
+fn (var g: Gen) release_run(instrs: List[Int], j: Int) -> Int {
+  var k = j
+  var c = -1
+  var fields: List[Int] = []
+  var cost = 0
+  var last = j
+  while k < instrs.len() {
+    let x = g.f.values[instrs[k]]
+    var fv = -1
+    var step = 0
+    if x.op == ssa.Op.Field && k + 1 < instrs.len() {
+      let rx = g.f.values[instrs[k + 1]]
+      if rx.op == ssa.Op.Release && rx.args[0] == instrs[k] && g.nuse[instrs[k]] == 1 && !g.snapped(instrs[k]) {
+        fv = instrs[k]
+        step = 2
+      } else if g.no_code(instrs[k]) {
+        // a field read that is its struct's locals or memory (the SSA
+        // reads a call's `var` result once per release): no code
+        k += 1
+        continue
+      }
+    } else if x.op == ssa.Op.Release {
+      let a = x.args[0]
+      if a >= 0 && g.f.values[a].op == ssa.Op.Field && ((g.alias.len() > a && g.alias[a]) || g.mfield[a] >= 0) {
+        fv = a
+        step = 1
+      }
+    }
+    if fv < 0 {
+      break
+    }
+    let fx = g.f.values[fv]
+    let a = fx.args[0]
+    if c >= 0 && !g.same_place(a, c) {
+      break
+    }
+    let at = g.vty(a)
+    if !(g.kind(at) is ssa.Kind.Struct | ssa.Kind.Tuple) || g.f.values[a].op == ssa.Op.Const {
+      break
+    }
+    let i = match fx.aux {
+      I(n) => n
+      _ => -1
+    }
+    if i < 0 || fields.contains(i) || !g.heap(fx.ty) {
+      break
+    }
+    c = a
+    fields.push(i)
+    cost += g.nleaves(fx.ty) + 2
+    k += step
+    last = k
+  }
+  k = last
+  if c < 0 || fields.len() < 2 {
+    return 0
+  }
+  let (mp, mo) = g.mem_of(c)
+  if mp >= 0 {
+    g.get(mp)
+    if mo > 0 {
+      g.e("i32.const ${mo}")
+      g.e("i32.add")
+    }
+    g.e("call ${g.drop_mem_fields_fn(g.vty(c), fields)}")
+    return k - j
+  }
+  if cost <= g.nleaves(g.vty(c)) + 2 {
+    return 0
+  }
+  g.push(c)
+  g.e("call ${g.drop_fields_fn(g.vty(c), fields)}")
+  k - j
+}
+
+/// Whether lowering value v emits no code: a field read that is its
+/// struct's locals or memory (plan_locals, home.xo).
+fn (g: Gen) no_code(v: Int) -> Bool {
+  g.f.values[v].op == ssa.Op.Field && ((g.alias.len() > v && g.alias[v]) || g.held[v] >= 0 || g.mfield[v] >= 0)
+}
+
+/// Whether values a and c of one type are in the same place now: one
+/// value, or the same memory (a home's value, or a field of it), or the
+/// same locals (field reads aliasing one struct's locals; the SSA reads
+/// the `var` result of a call once per use).
+fn (g: Gen) same_place(a: Int, c: Int) -> Bool {
+  if a == c {
+    return true
+  }
+  if g.f.values[a].ty != g.f.values[c].ty {
+    return false
+  }
+  let (ma, oa) = g.mem_of(a)
+  let (mc, oc) = g.mem_of(c)
+  if ma >= 0 || mc >= 0 {
+    return ma == mc && oa == oc
+  }
+  g.alias.len() > a && g.alias[a] && g.alias[c] && g.vbase[a] >= 0 && g.vbase[a] == g.vbase[c]
 }
 
 /// Tests the fault flag after v.
@@ -513,14 +914,14 @@ fn (var g: Gen) check_fault(v: Int) {
 fn (var g: Gen) edge(e: Int, bi: Int) {
   let ed = g.f.edges[e]
   let ps = g.f.blocks[ed.to].params
-  for a in ed.args {
-    if a >= 0 {
+  for (k, a) in ed.args.indexed() {
+    if a >= 0 && g.held[ps[k]] < 0 {
       g.push(a)
     }
   }
   var k = ps.len() - 1
   while k >= 0 {
-    if ed.args[k] >= 0 {
+    if ed.args[k] >= 0 && g.held[ps[k]] < 0 {
       g.def(ps[k])
     }
     k -= 1
@@ -643,8 +1044,10 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         I(n) => n
         _ => 0
       }
-      if g.alias.len() > v && g.alias[v] {
-        // v is the field's leaves in a's locals (plan_locals)
+      if (g.alias.len() > v && g.alias[v]) || g.held[v] >= 0 || g.mfield[v] >= 0 || g.snapped(v) {
+        // v is the field's leaves in a's locals (plan_locals), or in
+        // memory (home.xo: the `var` result of a call that updated the
+        // home, or a read loaded where it is used)
         return
       }
       let off = g.field_off(g.vty(a), i)
@@ -660,6 +1063,15 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       let off = g.field_off(at, i)
       let n = g.nleaves(g.field_ty(at, i))
+      if g.held[v] >= 0 {
+        // the struct dies here and its home holds v (home.xo)
+        if n > 0 {
+          let b = g.loc(x.args[1])
+          g.mem_store(g.hptr[g.held[v]], 8 * off, b, g.leaves(g.field_ty(at, i)))
+        }
+        g.take_snaps(v)
+        return
+      }
       if g.inplace.len() > v && g.inplace[v] {
         // the struct dies here and v has its locals (plan_locals)
         if n > 0 {
@@ -705,6 +1117,16 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       let a = x.args[0]
       let off = 1 + g.payload_off(g.vty(a), tag, fi)
+      let (mp, mo) = g.mem_of(a)
+      if mp >= 0 {
+        for (k, l) in g.leaves(t).indexed() {
+          g.get(mp)
+          g.e("i64.load offset=${mo + 8 * (off + k)}")
+          g.from_word(l)
+        }
+        g.def(v)
+        return
+      }
       let b = g.loc(a)
       for (k, l) in g.leaves(t).indexed() {
         g.get(b + off + k)
@@ -806,8 +1228,22 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.e("end")
     }
     Return => {
-      for a in x.args {
-        g.push(a)
+      // a `var` result passed by reference is stored in its home unless
+      // the home holds it; values are read before any home is written
+      var stores: List[(Int, Int)] = []
+      for (k, a) in x.args.indexed() {
+        let h = g.result_home(k)
+        if h >= 0 && g.held[a] != h {
+          stores.push((h, g.loc(a)))
+        }
+      }
+      for (k, a) in x.args.indexed() {
+        if g.result_home(k) < 0 {
+          g.push(a)
+        }
+      }
+      for (h, b) in stores {
+        g.mem_store(g.hptr[h], 0, b, g.leaves(g.f.values[g.hval[h]].ty))
       }
       g.e("return")
     }
