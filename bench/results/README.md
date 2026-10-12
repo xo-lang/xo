@@ -1,1 +1,2 @@
 - [budget-poll-2026-10-11.md](budget-poll-2026-10-11.md): cost of resource-budget polls outside a budget (fib +45%, sieve +18%); polls now only in programs that call `task.with_budget` (decision 0173).
+- [wasm-2026-10-12.md](wasm-2026-10-12.md): the WebAssembly backend in Xo, stage 1 (decision 0179): 71 of 133 LLVM goldens pass under Node, 62 unsupported, 0 wrong; modules 12 to 129 KB (median 16 KB) vs about 380 KB native; CPU programs 2.8x to 10.6x slower than native arm64 after Node's 70 ms start.
