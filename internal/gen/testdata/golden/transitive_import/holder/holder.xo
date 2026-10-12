@@ -1,0 +1,17 @@
+use example.com/transitive/tok
+
+/// Names of tok's types through aliases, as selfhost/parser names
+/// selfhost/lexer's Span and Pos.
+pub type Span = tok.Span
+
+pub struct Holder {
+  pub t: tok.Tok
+  pub ts: List[tok.Tok] = []
+  pub k: tok.Kind = tok.Kind.Word
+  pub span: Span = Span{}
+}
+
+pub fn make(n: Int) -> Holder {
+  Holder{t: tok.Tok{n: n, text: "w${n}"}, ts: [tok.Tok{n: n + 1, text: "x"}], k: tok.Kind.Num(v: n),
+    span: Span{start: tok.Pos{line: n + 4}}}
+}

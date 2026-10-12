@@ -5,7 +5,8 @@
 // internal/build does for `xo build --backend=arm64` (decision 0174).
 //
 //   xo1 build [flags] [-o OUT] [--asm=PATH] [--target=OS/arm64] <dir>
-//   xo1 build --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
+//   xo1 build|test --backend=go [flags] [-o OUT] [--go-tree=DIR] <dir>
+//   xo1 build|test|asm --backend=llvm [flags] [-o OUT] [--asm=PATH] <dir>
 //   xo1 build --backend=wasm [flags] [-o OUT.wasm] <dir>   (wasm.xo)
 //   xo1 test [flags] [--run=SUB] [--seed=N] [--cases=N] [--json] [-v] <dir>
 //   xo1 asm [--std=DIR] [--wd=DIR] [--target=OS/arm64] <dir>
@@ -15,6 +16,12 @@
 // --phase-times (build, test, asm): the wall clock of each phase on
 // standard error (check, SSA build, each pass, inline, emit, write,
 // assemble and link), as `phase NAME MS ms` lines.
+//
+// --backend=llvm (decision 0178) lowers the same SSA module with the
+// LLVM emitter in Xo (selfhost/llvm) and compiles the IR with clang
+// ($XO_CLANG, else clang; --cc names another) and the C runtime, as
+// internal/build buildLLVM does with one module (no XO_LLVM_SPLIT); asm
+// prints the IR, --asm names the .ll file (default OUT.ll).
 //
 // --backend=go (decision 0167) checks and generates Go with selfhost/gen
 // and builds it with the Go toolchain (gobackend.xo); the build tree
@@ -33,11 +40,12 @@
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
+use github.com/xo-lang/xo/selfhost/llvm
 
 fn main(os: Os) ! {
   let args = os.env.args()
   if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
-    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|go|wasm] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
+    os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }
   let cmd = args[0]
@@ -110,15 +118,18 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo1: name one directory")
     os.proc.exit(2)
   }
-  if backend == "go" && cmd == "build" {
+  if backend == "go" && (cmd == "build" || cmd == "test") {
     if !target.is_empty() {
       fail(os, "--backend=go builds for the host only here")
     }
-    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0])?
+    build_go(os, std_dir, wd, out, go_tree, tzdata, dirs[0], cmd == "test", topts)?
     return
   }
-  if backend != "arm64" && !(backend == "wasm" && cmd == "build") {
-    fail(os, "--backend=${backend}: want arm64, or go or wasm for build")
+  if !(backend is "arm64" | "llvm") && !(backend == "wasm" && cmd == "build") {
+    fail(os, "--backend=${backend}: want arm64, llvm, or go for build and test, or wasm for build")
+  }
+  if backend == "llvm" && tgoos != goos {
+    fail(os, "the LLVM backend builds for the host (${goos}/arm64) only, not ${target}")
   }
   var t = os.clock.now()
   var c = check.new_checker(os.fs, std_dir)
@@ -158,7 +169,7 @@ fn main(os: Os) ! {
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
   t = lap(os, phases, "tz", t)
-  // b.run_passes(), arm64.generate_module(b.m, tgoos, false), timed
+  // b.run_passes(), timed
   b.prune_unwind()
   t = lap(os, phases, "prune_unwind", t)
   b.add_landings()
@@ -171,19 +182,42 @@ fn main(os: Os) ! {
     build_wasm(os, b.m, out, wd, dirs[0])
     return
   }
-  var mi = b.m
-  let inl = arm64.inline_step(mi)
-  t = lap(os, phases, "inline", t)
-  let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(b.m, tgoos) }
-  t = lap(os, phases, "emit", t)
-  if !p.err.is_empty() {
-    fail(os, p.err)
-  }
-  if !p.skipped.is_empty() {
-    fail(os, "the emitter skipped ${p.skipped[0]}")
+  // the program's code: arm64 assembly, or LLVM IR (buildLLVM)
+  var code = ""
+  if backend == "llvm" {
+    if cc.is_empty() {
+      cc = find_clang(os)
+      if cc.is_empty() {
+        fail(os, "the LLVM backend needs clang: install it or set XO_CLANG")
+      }
+    }
+    var g = llvm.new_gen(b.m)
+    let ir = g.generate()
+    t = lap(os, phases, "emit", t)
+    if !g.err.is_empty() {
+      fail(os, g.err)
+    }
+    if !g.skipped.is_empty() {
+      fail(os, "the LLVM emitter skipped ${g.skipped[0]}")
+    }
+    code = with_target_attrs(ir, clang_target_attrs(os, cc))
+  } else {
+    // arm64.generate_module(b.m, tgoos, false), timed
+    var mi = b.m
+    let inl = arm64.inline_step(mi)
+    t = lap(os, phases, "inline", t)
+    let p = if inl { arm64.generate_plain(mi, tgoos) } else { arm64.generate_plain(b.m, tgoos) }
+    t = lap(os, phases, "emit", t)
+    if !p.err.is_empty() {
+      fail(os, p.err)
+    }
+    if !p.skipped.is_empty() {
+      fail(os, "the emitter skipped ${p.skipped[0]}")
+    }
+    code = p.asm
   }
   if cmd == "asm" {
-    os.stdio.print(p.asm)
+    os.stdio.print(code)
     lap(os, phases, "print", t)
     return
   }
@@ -205,9 +239,9 @@ fn main(os: Os) ! {
     }
   }
   if asm_path.is_empty() {
-    asm_path = "${out}.s"
+    asm_path = if backend == "llvm" { "${out}.ll" } else { "${out}.s" }
   }
-  os.fs.write(asm_path, p.asm.bytes())?
+  os.fs.write(asm_path, code.bytes())?
   t = lap(os, phases, "write", t)
   if tgoos != goos {
     // another target: its assembly only (internal/build buildArm64)
@@ -228,7 +262,8 @@ fn main(os: Os) ! {
       fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
     }
   }
-  var flags = ["-O2"]
+  // clangBuild's flags come before the program's for LLVM IR
+  var flags = if backend == "llvm" { ["-O2", "-flto", "-Wno-override-module"] } else { ["-O2"] }
   var srcs = [asm_path, "${rtdir}/xo_rt.c"]
   // std/time: XO_TIME and the program's zone data beside the runtime
   // (timeFlags)
@@ -246,7 +281,7 @@ fn main(os: Os) ! {
       os.stdio.eprintln(n)
     }
   }
-  flags = flags + io_flags(p.asm)
+  flags = flags + io_flags(code)
   // the adapters, link files, and libraries of `use c` (cInputs)
   let ci = c_inputs(os, c, rtdir)
   if !ci.err.is_empty() {
@@ -254,7 +289,7 @@ fn main(os: Os) ! {
   }
   flags = flags + ci.flags
   srcs = srcs + ci.srcs
-  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(p.asm))
+  let msg = cc_build(os, ctx, cc, flags, srcs, out, needs_tls(code))
   t = lap(os, phases, "cc", t)
   if !msg.is_empty() {
     os.stdio.eprint(msg)
