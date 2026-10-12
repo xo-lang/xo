@@ -82,18 +82,27 @@ var goldens struct {
 	errs    []error
 }
 
+// pkgDir is this package's directory: the working directory when the
+// test binary starts, before any test changes it (t.Chdir).
+var pkgDir = func() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	return wd
+}()
+
 // goldensDir is $XO_SELFHOST_GOLDENS_DIR, else testdata/gogoldens of
-// this package.
+// this package (a relative directory is taken from the package's).
 func goldensDir() string {
 	dir := os.Getenv("XO_SELFHOST_GOLDENS_DIR")
 	if dir == "" {
 		dir = filepath.FromSlash(goldensRelPath)
 	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		panic(err)
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(pkgDir, dir)
 	}
-	return abs
+	return dir
 }
 
 // goldenPath is the file of unit id of kind.
@@ -175,6 +184,11 @@ func recorded(kind, label string, key []string, cx goldenCtx, compute func() str
 		fmt.Fprintf(h, "%d:%s\x00", len(k), k)
 	}
 	id := hex.EncodeToString(h.Sum(nil)[:16])
+	if v := os.Getenv("XO_SELFHOST_GOLDENS_DEBUG"); v != "" && strings.Contains(label, v) {
+		// the key of the units whose label holds the text (why a unit
+		// is missing)
+		fmt.Fprintf(os.Stderr, "gogoldens %s %s %s: %q\n", mode, kind, id, key)
+	}
 	if mode == goldensReplay {
 		_, out, err := readGolden(kind, id)
 		if err != nil {
@@ -191,8 +205,18 @@ func recorded(kind, label string, key []string, cx goldenCtx, compute func() str
 		goldens.errs = append(goldens.errs, err)
 		goldens.mu.Unlock()
 	}
+	if recordDrops[kind] {
+		return ""
+	}
 	return out
 }
+
+// recordDrops are the kinds whose output a recording run does not keep
+// once written: no test reads them when it records (the Xo side is
+// skipped), and the full tier's SSA stages, IR, and assembly of every run
+// held at once took the run to 15 GB (2026-10-12). The typedump kind is
+// kept: mutationSources picks its sources by the Go checker's verdicts.
+var recordDrops = map[string]bool{"ssadump": true, "llvmdump": true, "asmdump": true, "gendump": true}
 
 
 // recordedJSON is recorded for a Go side whose result is a struct: enc
@@ -212,7 +236,7 @@ func recordedJSON[T any](kind, label string, key []string, cx goldenCtx, compute
 		}
 		return string(b)
 	})
-	if have {
+	if have && !recordDrops[kind] {
 		return live
 	}
 	return dec(text)
@@ -237,11 +261,9 @@ var tempRE = func() *regexp.Regexp {
 // directory, the inputs) are hints: the first temporary directory one of
 // them lies in is the test's.
 func newGoldenCtx(hints ...string) goldenCtx {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		panic(err)
-	}
-	cx := goldenCtx{root: root}
+	// the repository root from the package's directory, not from the
+	// working directory (tests change it)
+	cx := goldenCtx{root: filepath.Dir(filepath.Dir(pkgDir))}
 	for _, h := range hints {
 		for _, f := range pathForms(h) {
 			if m := tempRE.FindString(f); m != "" {

@@ -115,9 +115,9 @@ mkdir -p "$out/hello"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the bootstrapped xo")\n}\n' > "$out/hello/main.xo"
 if XO_BUILD_DIR="$out/cache-s3/build" XO_RTOBJ_CACHE="$out/cache-s3/rtobj" \
   "$out/s3/xo" run --backend=arm64 "$out/hello" > "$out/hello.txt" 2>> "$log"; then
-  say "s3 runs examples/hello: $(head -1 "$out/hello.txt")"
+  say "s3 builds and runs a hello program: $(head -1 "$out/hello.txt")"
 else
-  say "FAIL: s3 cannot build and run examples/hello"
+  say "FAIL: s3 cannot build and run a hello program"
   rc=1
 fi
 cat "$times" | tee -a "$log" >&2
