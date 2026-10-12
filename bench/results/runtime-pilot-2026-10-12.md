@@ -221,3 +221,48 @@ cycles are within the noise of these runs
 (best 695.7 million before, 700.2 after, 0.6 percent; decision 0075's
 placement sweep would be needed to tell a 1 percent shape effect from
 placement).
+
+### xo1's self compile and the fixed point (decision 0184)
+
+`xo1` (selfhost/xo built by the Go compiler with the arm64 backend)
+compiling selfhost/xo with `build --phase-times` under `/usr/bin/time
+-l`, one run each, under the heavy lock (sources: main at 2982065 for
+B0, the 50e8cee tree for B; each xo1 compiles its own sources, so B
+compiles 8.5 percent more assembly):
+
+| | B0 (before), run 1 | B0 (before), run 2 | B (after) | C (B compiles it again) |
+|---|---|---|---|---|
+| load average during the run | 8 to 11 | 10 to 50 | 4 to 10 | 6 to 10 |
+| emit | 532.4 s | 2,205.8 s | 357.7 s | |
+| inline phase | 8.5 s | 74.9 s | 7.3 s | |
+| wall clock | 608.1 s | 2,353.7 s | 428.4 s | 467.7 s |
+| user + sys CPU | 399.6 + 148.9 s | 436.2 + 473.3 s | 403.9 + 23.1 s | 414.7 + 40.6 s |
+| instructions retired | 3,998.7 billion | 5,024.5 billion | 3,857.4 billion | 3,931.2 billion |
+| cycles | 2,015.5 billion | 3,316.0 billion | 1,575.5 billion | 1,660.7 billion |
+| assembly lines written | 14,127,137 | 14,127,137 | 15,324,015 | 15,324,015 |
+| xo1 binary | 55,643,840 bytes | | 60,335,728 bytes | |
+
+**The fixed point holds**: the Go emitter's assembly of the new
+selfhost/xo (G), xo1's (B), and the rebuilt xo1's (C) are byte
+identical (sha256 0ace77c2...99b0, 15,324,015 lines).
+
+xo1's self compile now takes 1,575.5 billion cycles and 3,857.4 billion
+instructions (B), against 2,015.5 billion and 3,998.7 billion for the
+old xo1 compiling the old sources in the quieter of the two before
+runs: 22 percent fewer cycles and 4 percent fewer instructions while
+writing 8.5 percent more assembly. The kernel share moves with memory
+pressure from other agents (run 2 of B0 ran at load averages up to 50:
+473 s of sys time), so user CPU (399.6 s before, 403.9 s after, for
+more output) and instructions are the safer figures; cycles are one run
+each. The code growth is the cost of the few call sites rule: xo1's
+assembly is 8.5 percent and its binary 8.4 percent larger.
+
+Tests of this work: `go test -short` over the repository; the arm64
+run tests (TestGoldenRun, TestRun, TestBench, TestInlineVerifies) on
+50e8cee; TestSelfhostArm64 (go backend) on the runs under
+`testdata/golden/`, `arm64/testdata/run`, `bench/perf`, `examples/`
+(XO_SELFHOST_DIRS): 303 runs compared, 303 byte identical, 8,425
+functions identical, 0 skipped; its 2 reported differences are two
+vendor directories of internal/check's golden effect_ceiling_vendor
+that the Xo checker rejects and the Go checker does not (not emitter
+output).

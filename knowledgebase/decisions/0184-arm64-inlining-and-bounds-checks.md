@@ -80,7 +80,38 @@ stay correct: a check is removed only when it is proved.
 
 ## Consequences
 
-Filled in from the measurements below (bench/results/runtime-pilot-2026-10-12.md).
+- `bench/perf/unicode` on arm64 is within 5 percent of the C path
+  (`XO_UNICODE=c`, same compiler, same run) on every workload, in
+  instructions retired: lower 0.67x, upper 0.63x, lower_u and upper_u
+  0.88x, eqlower 1.016x, classify 1.027x, runecase 0.89x, quote 0.64x.
+  Against the arm64 code before this work: 39 percent fewer
+  instructions on mixed script case mapping, 37 on the lower compare,
+  29 on the classes, 42 on Rune case mapping, 17 on quoting. arm64 now
+  retires fewer instructions than LLVM on lower_u, upper_u, eqlower,
+  and runecase. Decision 0180 item 7(b) is met on arm64; on LLVM it is
+  not (that backend is unchanged: mixed script case mapping 1.02x, the
+  lower compare 1.13x, Rune case mapping 1.17x of the C path in
+  decision 0180's run), so porting more of llrt still waits on LLVM.
+- Bench programs: no change beyond run to run noise (instructions
+  within 0.3 percent, cycles within 3 percent) except sort, 1.4 percent
+  fewer instructions; nbody loses 2 of its 11 bounds checks and its
+  best cycles were 0.6 percent above the before binary's (inside the
+  noise of the run; decision 0075's placement sweep would separate a
+  shape effect from placement).
+- xo1 (the self hosted compiler) compiling itself: 1,575.5 billion
+  cycles and 3,857.4 billion instructions, against 2,015.5 billion and
+  3,998.7 billion before (one run each, different load), while writing
+  8.5 percent more assembly; its binary is 8.4 percent larger (the
+  copies of the few call sites rule). The fixed point of decision 0158
+  holds (Go emitter, xo1, and the rebuilt xo1 write byte identical
+  assembly of selfhost/xo).
+- More functions are inlined, so frames of callers grow (nbody's main
+  saves 6 more registers once); golden assembly of sieve changed (an
+  `n + 1` the loop exit proves is unchecked).
+- Facts are per register in the memo (as the existing bounds), so they
+  hold where the register's definition dominates; `liveDCE` must stay
+  before `selectCompares` and `reuseFlags` (gotchas
+  arm64-reused-flags-of-dropped-compare.md).
 
 ## Alternatives
 
