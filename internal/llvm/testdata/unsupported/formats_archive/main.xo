@@ -1,8 +1,0 @@
-// std/archive (decision 0164) is planned for the native backends
-// (decision 0172 did regexp): a build reports it (XO1201) instead of
-// compiling.
-use std/archive
-
-fn main(os: Os) {
-  os.stdio.println("${archive.gzip(b"aa").len()}")
-}

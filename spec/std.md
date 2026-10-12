@@ -2228,8 +2228,9 @@ In `replace_all`, `$name` takes the longest name it can (`$1x` is group
 ## 18. std/archive
 
 Status: implemented on the Go backend (decision 0164, Go's
-`compress/gzip`, `archive/tar`, `archive/zip`); native builds report it
-as XO1201 (planned).
+`compress/gzip`, `archive/tar`, `archive/zip`) and natively (decision
+0172: those packages ported to Xo, the same bytes and errors; zip64
+archives are an error natively).
 
 ```
 struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }

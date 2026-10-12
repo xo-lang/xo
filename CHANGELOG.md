@@ -16,7 +16,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `lock`/`try_lock` build natively as well, and so does `std/regexp`
   (Go's RE2 parser and Pike VM ported to Xo: the same matches, groups,
   replacements, and errors; Unicode classes other than `\pL`, `\p{Nd}`,
-  `\p{Any}`, `\p{ASCII}` are an error natively for now).
+  `\p{Any}`, `\p{ASCII}` are an error natively for now), and
+  `std/archive` (Go's compress/flate, gzip, tar, and zip ported to Xo:
+  the same bytes and errors; zip64 is an error natively).
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

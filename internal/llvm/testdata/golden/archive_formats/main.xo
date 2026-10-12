@@ -1,0 +1,192 @@
+// std/archive natively (decision 0172) against the Go backend's
+// compress/gzip, archive/tar, and archive/zip: the bytes gzip, tar, and
+// zip write (as SHA-256 and hex), what gunzip, untar, and unzip read
+// back, archives written by Go's packages in other ways (vectors.txt:
+// GNU and PAX tar, stored and best compression gzip with a name, zip
+// with stored files, MS-DOS times, an NTFS creator), and the errors:
+// zip slip, links, corrupt and truncated input, bad checksums.
+use std/archive
+use std/crypto
+
+fn sum(b: Bytes) -> Str { crypto.sha256(b).to_hex()[0..16] }
+
+fn text(b: Bytes) -> Str { (b.to_str() ?? "<binary>").quote() }
+
+fn show_entries(l: List[archive.Entry]) -> Str {
+  var parts: List[Str] = []
+  for e in l {
+    let kind = if e.is_dir { "dir" } else { "file" }
+    parts.push("${kind} ${e.path.quote()} ${e.mode} ${e.modified.unix_millis()} ${e.data.len()} ${sum(e.data)}")
+  }
+  parts.join("; ")
+}
+
+fn show_read(r: Result[List[archive.Entry], archive.ArchiveErr]) -> Str {
+  match r {
+    Ok(l) => show_entries(l)
+    Err(e) => "${e}"
+  }
+}
+
+fn show_bytes(r: Result[Bytes, archive.ArchiveErr]) -> Str {
+  match r {
+    Ok(b) => "${b.len()} ${sum(b)}"
+    Err(e) => "${e}"
+  }
+}
+
+/// Deterministic text with repeats at many distances.
+fn corpus(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 12345
+  let words = ["alpha ", "beta ", "gamma ", "delta\n", "epsilon ", "zeta ", "eta ", "theta\n", "iota ", "kappa "]
+  while b.len() < n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    if x % 7 == 0 {
+      b.write_str("${x % 1000} ")
+    } else {
+      b.write_str(words[x % 10])
+    }
+  }
+  b.freeze()[0..n]
+}
+
+/// Bytes that do not compress.
+fn noise(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 99991
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) % 256))
+    i += 1
+  }
+  b.freeze()
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  // gzip: the exact bytes, then round trips
+  for data in [b"", b"a", b"hello, hello, hello world", corpus(100), corpus(5000), corpus(70000), corpus(300000), noise(1000), noise(80000)] {
+    let z = archive.gzip(data)
+    let back = show_bytes(archive.gunzip(z))
+    if data.len() <= 100 {
+      out.println("gzip ${data.len()} ${z.to_hex()} ${back}")
+    } else {
+      out.println("gzip ${data.len()} ${z.len()} ${sum(z)} ${back}")
+    }
+  }
+  let two = archive.gzip(b"first ")
+  var cat = BytesBuilder.new()
+  cat.write(two)
+  cat.write(archive.gzip(b"second"))
+  let both = cat.freeze()
+  out.println("concatenated ${show_bytes(archive.gunzip(both))} ${text(archive.gunzip(both).ok() ?? b"")}")
+  let z = archive.gzip(corpus(2000))
+  out.println("gunzip errors:")
+  out.println("  empty ${show_bytes(archive.gunzip(b""))}")
+  out.println("  short ${show_bytes(archive.gunzip(z[0..5]))}")
+  out.println("  header ${show_bytes(archive.gunzip(b"not a gzip stream at all"))}")
+  out.println("  truncated ${show_bytes(archive.gunzip(z[0..z.len() / 2]))}")
+  out.println("  no trailer ${show_bytes(archive.gunzip(z[0..z.len() - 3]))}")
+  var bad = BytesBuilder.new()
+  bad.write(z[0..z.len() - 8])
+  bad.write(b"\x00\x00\x00\x00")
+  bad.write(z[z.len() - 4..])
+  out.println("  checksum ${show_bytes(archive.gunzip(bad.freeze()))}")
+  var corrupt = BytesBuilder.new()
+  corrupt.write(z[0..10])
+  corrupt.write(b"\xff\xff\xff\xff\xff\xff")
+  corrupt.write(z[16..])
+  out.println("  corrupt ${show_bytes(archive.gunzip(corrupt.freeze()))}")
+  var trailing = BytesBuilder.new()
+  trailing.write(two)
+  trailing.write(b"garbage after the member")
+  out.println("  trailing ${show_bytes(archive.gunzip(trailing.freeze()))}")
+  var partial = BytesBuilder.new()
+  partial.write(two)
+  partial.write(b"\x1f\x8b")
+  out.println("  partial header ${show_bytes(archive.gunzip(partial.freeze()))}")
+  // tar and zip of the same entries
+  let t1 = Time.from_unix(1700000000)
+  let t2 = Time.from_unix_millis(1700000000123)
+  let long = "deep/" + "x".repeat(120) + "/file.txt"
+  let entries = [
+    archive.dir("docs"),
+    archive.file("docs/readme.txt", b"read me\n"),
+    archive.Entry{path: "bin/tool", data: corpus(3000), mode: 0o755, is_dir: false, modified: t1},
+    archive.Entry{path: "ro.txt", data: b"read only", mode: 0o444, is_dir: false, modified: t2},
+    archive.Entry{path: "unicodé/naïve.txt", data: b"utf-8 name", mode: 0o600, is_dir: false, modified: t1},
+    archive.Entry{path: long, data: b"long", mode: 0o644, is_dir: false, modified: t1},
+    archive.Entry{path: "very/" + "y".repeat(200), data: b"unsplittable", mode: 0o644, is_dir: false, modified: t1},
+    archive.Entry{path: "old.txt", data: b"before 1970", mode: 0o644, is_dir: false, modified: Time.from_unix(-86400)},
+    archive.Entry{path: "./a/../b.txt", data: noise(70000), mode: 0o644, is_dir: false, modified: t1},
+    archive.Entry{path: "sticky", data: b"s", mode: 0o4755, is_dir: false, modified: t1},
+  ]
+  match archive.tar(entries) {
+    Ok(t) => {
+      out.println("tar ${t.len()} ${sum(t)}")
+      out.println("  untar ${show_read(archive.untar(t))}")
+      out.println("  truncated ${show_read(archive.untar(t[0..700]))}")
+      out.println("  block ${show_read(archive.untar(t[0..512 * 3]))}")
+      var flipped = BytesBuilder.new()
+      flipped.write(t[0..100])
+      flipped.write(b"9")
+      flipped.write(t[101..])
+      out.println("  checksum ${show_read(archive.untar(flipped.freeze()))}")
+    }
+    Err(e) => out.println("tar ${e}")
+  }
+  match archive.zip(entries) {
+    Ok(zz) => {
+      out.println("zip ${zz.len()} ${sum(zz)}")
+      out.println("  unzip ${show_read(archive.unzip(zz))}")
+      out.println("  truncated ${show_read(archive.unzip(zz[0..zz.len() - 10]))}")
+      out.println("  head ${show_read(archive.unzip(zz[0..100]))}")
+      var crc = BytesBuilder.new()
+      crc.write(zz[0..40])
+      crc.write(b"Z")
+      crc.write(zz[41..])
+      out.println("  corrupt ${show_read(archive.unzip(crc.freeze()))}")
+    }
+    Err(e) => out.println("zip ${e}")
+  }
+  let small = [archive.file("a.txt", b"aaaa"), archive.dir("d")]
+  out.println("tar small ${(archive.tar(small).ok() ?? b"").to_hex()}")
+  out.println("zip small ${(archive.zip(small).ok() ?? b"").to_hex()}")
+  out.println("empty ${show_bytes(archive.tar([]))} ${show_bytes(archive.zip([]))} ${show_read(archive.untar(b""))} ${show_read(archive.unzip(b""))}")
+  for bad_path in ["", "/abs", "../up", "a/../../up", "C:/x", ".", "a\\..\\..\\b"] {
+    let r1 = match archive.tar([archive.file(bad_path, b"x")]) {
+      Ok(_) => "ok"
+      Err(e) => "${e}"
+    }
+    let r2 = match archive.zip([archive.file(bad_path, b"x")]) {
+      Ok(_) => "ok"
+      Err(e) => "${e}"
+    }
+    out.println("path ${bad_path.quote()} ${r1} | ${r2}")
+  }
+  // archives written by Go's packages in other ways
+  for line in os.fs.read_text("vectors.txt")?.lines() {
+    let parts = line.split("=")
+    if parts.len() != 2 {
+      continue
+    }
+    let name = parts[0]
+    let data = Bytes.from_hex(parts[1]) ?? b""
+    if name.starts_with("tar") {
+      out.println("${name} ${show_read(archive.untar(data))}")
+    } else if name.starts_with("zip") {
+      out.println("${name} ${show_read(archive.unzip(data))}")
+    } else if name.starts_with("gzip") {
+      out.println("${name} ${show_bytes(archive.gunzip(data))}")
+    } else {
+      // a raw deflate stream in a gzip member of our own
+      var g = BytesBuilder.new()
+      g.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff")
+      g.write(data)
+      g.write(b"\x00\x00\x00\x00\x00\x00\x00\x00")
+      out.println("${name} ${show_bytes(archive.gunzip(g.freeze()))}")
+    }
+  }
+}

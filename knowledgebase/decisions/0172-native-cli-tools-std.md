@@ -1,9 +1,9 @@
 # 0172: The command line tool std on the native backends
 
-Status: Accepted (2026-10-11), in progress: (1) commands, children,
+Status: Accepted, implemented (2026-10-11): (1) commands, children,
 pipelines, and attenuation, (2) file handles, links, globs, and locks,
-and (3) `std/regexp` are implemented natively; the rest is listed under
-"What is left".
+(3) `std/regexp`, and (4) `std/archive` build natively with the Go
+backend's output; the limits are listed under "What is left".
 
 ## Context
 
@@ -86,7 +86,7 @@ Constraints:
    Canceled); a lock handle dropped without `unlock` closes its
    descriptor, which releases the lock (the Go backend keeps it until the
    garbage collector closes the file).
-4. **Regexp in Xo** (`std/native/regexp.xo`, about 1200 lines): Go's
+4. **Regexp in Xo** (`std/native/regexp.xo`, about 2150 lines): Go's
    regexp/syntax parser (the parse loop, `parsePerlFlags`, `parseClass`,
    `parseEscape`, `parseUnicodeClass`, `parseRepeat`, `repeatIsValid`,
    nesting depth) with its error texts and expressions, `Simplify`, the
@@ -112,10 +112,46 @@ Constraints:
    patterns (60 valid, 26 invalid with 11 of the error codes) on 18 inputs
    with every operation, then replacements with every template form,
    splits, quote, and invalid UTF-8: identical on Go, LLVM, and arm64.
-5. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
+5. **Archives in Xo** (`std/native/archive.xo`, about 2580 lines): the
+   parts of Go's compress/flate, compress/gzip, hash/crc32, archive/tar,
+   and archive/zip that std/rt archive.go uses, ported so the bytes are
+   the same: the lazy matching compressor of levels 5 (zip) and 6
+   (gzip) with its hash chains, block splitting at 16384 tokens, and
+   the choice among stored, fixed, and dynamic blocks (huffmanBitWriter,
+   the length limited code construction of huffman_code.go), the
+   decompressor with its 9 bit chunk tables (so a corrupt input is
+   reported at the same offset), gzip headers (name, comment, extra,
+   header CRC) and concatenated members, tar's USTAR and PAX writer
+   (prefix splitting, `PaxHeaders.0` records for long or non ASCII paths
+   and sub second or pre 1970 times) and its reader (USTAR, PAX, GNU
+   long names, STAR prefixes, base 256 numbers, checksums), and zip's
+   writer (local headers, data descriptors, extended timestamps, Unix
+   modes, the UTF-8 flag) and reader (the end record search, MS-DOS,
+   NTFS, and Unix times, stored and deflated files, data descriptors,
+   CRCs). The window of the compressor is the input itself (an offset
+   instead of copies). **Xo, not C** (vendoring zlib or miniz, as decision
+   0164 planned): zlib's deflate makes other bytes than Go's at the
+   same level, so outputs would differ from the Go backend; porting Go's
+   code keeps them equal, works for a self hosted compiler, and leaves
+   the runtime packs (decision 0157) alone. The cost in speed is small
+   here: the whole golden below (nine gzips up to 300 kB, a tar of 87 kB and a
+   zip of 73 kB, the reads) runs in 0.071 s on arm64 and 0.064 s on
+   LLVM against 0.041 s on the Go backend (medians of three wall clock
+   runs on 2026-10-11, with ten agents loading the machine), and the
+   regexp golden in 0.031 s (arm64) against 0.030 s (Go). Not ported: other levels, sparse tar files, zip64 (an error
+   that says so). The golden `archive_formats` checks the exact gzip
+   bytes of nine inputs (empty to 300 kB, text and noise, across the
+   32 KiB window and the 64 KiB stored block limit), tar and zip of ten
+   entries (long, unsplittable, and non ASCII paths, sub second and pre
+   1970 times, modes, a 70 kB file), every error of gunzip it can
+   provoke, untar and unzip of archives Go wrote other ways (GNU, PAX
+   with records, a V7 regular type, best compression with a name,
+   stored, MS-DOS times, an NTFS creator), zip slip and links refused:
+   identical on Go, LLVM, and arm64, no allocation live at exit.
+6. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
    `read`, `read_err`, `read_line`, `wait`, `Proc.pipeline`, `Fs.lock`) make the
    program build with unwinding checks (nativeWaits, as `Proc.run`).
-6. **Cancellation** natively kills a command when the cancelled task
+7. **Cancellation** natively kills a command when the cancelled task
    waits on it, and that call is `Canceled`; the Go backend kills it at
    once (a goroutine per child) and its `wait` gives 137. A Child that is
    dropped without `wait` is reaped if it has exited, else left to the
@@ -140,7 +176,8 @@ test binaries (cmd/xo TestNoGCTests) with the Go backend's report.
   extend internal/llvm's TestUnicodeTables generator with Go's category
   and script tables (and FoldCategory, FoldScript) and return them
   through `unicode_ranges`.
-- (4) `std/archive` natively (deflate, gzip, tar, zip).
+- Archives: zip64 (archives or files over 4 GiB) and sparse tar files;
+  then the other compression levels if a std function ever takes one.
 
 ## Consequences
 
