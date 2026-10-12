@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+keep 1 1
+keep 102 2
+keep 203 3
+keep 304 4
+keep 405 5
+compound 6 6 c0
+compound 13 7 c1
+compound 21 8 c2
+compound 30 9 c3
+compound 40 10 c4
+--- stderr
