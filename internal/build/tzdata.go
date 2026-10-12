@@ -303,18 +303,18 @@ func IOFlags(code []byte) []string {
 	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
 		// handles, copies, modes, links, locks (decision 0172)
 		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_FS")
 			break
 		}
 	}
 	for _, sym := range []string{"xo_stdin_", "xo_tw_set_input", "xo_tw_set_tty", "xo_isatty", "xo_term_width"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_STDIN")
 			break
 		}
 	}
-	if bytes.Contains(code, []byte("xo_proc_")) {
+	if callsSym(code, "xo_proc_") {
 		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
 		out = append(out, "-DXO_PROC")
 	}
@@ -322,10 +322,29 @@ func IOFlags(code []byte) []string {
 	// XO_UNICODE=c builds call: no pack has it, so the runtime is compiled
 	// locally
 	for _, sym := range []string{"xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit", "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"} {
-		if bytes.Contains(code, []byte(sym)) {
+		if callsSym(code, sym) {
 			out = append(out, "-DXO_UNICODE_C")
 			break
 		}
 	}
 	return out
 }
+
+// callsSym reports whether code (arm64 assembly or LLVM IR) refers to the
+// runtime symbol sym: preceded by what a reference has before it (`bl
+// xo_f`, `bl _xo_f`, `@xo_f`, `:lo12:xo_f`, an operand after a comma or
+// tab), not by the quote of a string literal (`.ascii "xo_f"`, `c"xo_f"`),
+// which is the program's data. The self hosted compiler's own tables of
+// these names (selfhost/xo link.xo io_flags, which does the same) turned
+// on -DXO_UNICODE_C for xo1, which no pack variant has
+// (gotchas/runtime-flags-from-string-literals.md).
+func callsSym(code []byte, sym string) bool {
+	for _, p := range symRefPrefixes {
+		if bytes.Contains(code, []byte(p+sym)) {
+			return true
+		}
+	}
+	return false
+}
+
+var symRefPrefixes = []string{" ", "\t", "_", "@", ":", ","}

@@ -211,28 +211,40 @@ fn io_flags(code: Str) -> List[Str] {
     // handles, copies, modes, links, locks (decision 0172)
     "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link",
     "xo_fs_lock", "xo_fs_unlock"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_FS")
       break
     }
   }
   for sym in ["xo_stdin_", "xo_tw_set_input", "xo_tw_set_tty", "xo_isatty", "xo_term_width"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_STDIN")
       break
     }
   }
-  if code.contains("xo_proc_") {
+  if calls_sym(code, "xo_proc_") {
     out.push("-DXO_PROC")
   }
   // the C path of the Unicode operations (decision 0180), which only
   // XO_UNICODE=c builds call
   for sym in ["xo_str_lower", "xo_str_upper", "xo_str_eq_lower", "xo_rune_is_letter", "xo_rune_is_digit",
     "xo_rune_is_print", "xo_rune_to_case", "xo_rune_quote", "xo_bytes_quote", "xo_unicode_ranges"] {
-    if code.contains(sym) {
+    if calls_sym(code, sym) {
       out.push("-DXO_UNICODE_C")
       break
     }
   }
   out
+}
+
+/// Whether code refers to the runtime symbol sym, not only names it in a
+/// string literal (internal/build callsSym): xo1's own tables above are
+/// string data in its assembly.
+fn calls_sym(code: Str, sym: Str) -> Bool {
+  for p in [" ", "\t", "_", "@", ":", ","] {
+    if code.contains(p + sym) {
+      return true
+    }
+  }
+  false
 }
