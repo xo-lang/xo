@@ -1,6 +1,8 @@
 # xo1's copies of internal/build tables drift without a failing test
 
-Status: Anticipated (found by reading, 2026-10-12, decision 0178).
+Status: Observed (found by reading, 2026-10-12, decision 0178; the guard
+below caught the next drift the same day: decision 0180 added the
+XO_UNICODE_C symbols to IOFlags only).
 
 ## Symptom
 

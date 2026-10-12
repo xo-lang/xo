@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
+  builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
+  (`xo1 test --backend=go`), and builds `use go` programs on the Go
+  backend; every golden suite passes through it (decision 0178, which
+  proposes the plan for retiring the Go implementation). The Go code
+  generator no longer imports a module's package that the generated
+  text does not name (go build failed with "imported and not used" on
+  selfhost/xo).
 - Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
   runtime are written in Xo (decision 0180, the runtime pilot):
   `std/native/llrt/unicode.xo` with generated tables
