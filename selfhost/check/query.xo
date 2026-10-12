@@ -1,0 +1,213 @@
+// What the semantic tools read beyond the SSA builder's records (info.xo):
+// the holes of a body (XO0900, expr.go hole) and the effects a function
+// performs with their call chains (internal/check query.go Performed),
+// for `xo query`, `xo edit`, and `xo doc` in Xo (decision 0178 stage 3).
+
+/// A hole `???` (core 3.7): its type, the values in scope that fit it,
+/// and the effects in scope (expr.go hole). The hole has the expected
+/// type, or a fresh variable without one.
+fn (var c: Checker) hole(sp: Span, hint: Int) -> Int {
+  let t = if hint >= 0 { hint } else { c.new_var() }
+  let known = hint >= 0 && !c.is_open_var(hint)
+  let desc = if known { "`${c.show(hint)}`" } else { "unknown" }
+  let d = c.warn("XO0900", sp, "hole of type ${desc}")
+  if d >= 0 && known {
+    var fits: List[Str] = []
+    var i = c.scopes.len() - 1
+    while i >= 0 {
+      // a scope's bindings in the order they were declared
+      for o in c.scopes[i].values().sort() {
+        if c.objs[o].kind == ObjKind.Local && c.objs[o].ty >= 0 && c.identical(c.objs[o].ty, hint) && !c.has_open_vars(c.objs[o].ty) {
+          fits.push(text(c.objs[o].name))
+        }
+      }
+      i -= 1
+    }
+    if !fits.is_empty() {
+      c.note(d, "in scope values that fit: `${fits.join("`, `")}`")
+    }
+  }
+  if d >= 0 && c.ctx >= 0 {
+    let f = c.ctxs[c.ctx].fn_obj
+    if f >= 0 && c.objs[f].declared >= 0 {
+      let s = c.flat_text(c.flatten(c.objs[f].declared, false))
+      if !s.is_empty() {
+        c.note(d, "effects in scope: `${s}`")
+      } else {
+        c.note(d, "no effects in scope (pure)")
+      }
+    }
+  }
+  t
+}
+
+/// One link of an effect's call chain (check.EffectStep): file "" and
+/// line 0 when the step has no place.
+pub struct EffectStep {
+  pub message: Str
+  pub file: Str
+  pub line: Int
+  pub col: Int
+}
+
+/// One effect a function body performs (check.EffectUse): a label, or an
+/// effect parameter (param), with the call chain to where it happens.
+pub struct EffectUse {
+  pub effect: Str
+  pub param: Bool
+  pub chain: List[EffectStep]
+}
+
+/// The effects the body of function f performs, sorted by name, each
+/// with its call chain (Info.Performed); empty for a function without a
+/// checked body.
+pub fn (c: Checker) performed_by(f: Int) -> List[EffectUse] {
+  var fl = Flat{}
+  if c.objs[f].declared < 0 {
+    fl = match c.inferred.get(f) {
+      Some(x) => x
+      None => return []
+    }
+  } else if c.objs[f].body_eff >= 0 {
+    fl = c.flatten(c.objs[f].body_eff, true)
+  } else {
+    return []
+  }
+  var out: List[EffectUse] = []
+  for (i, l) in fl.labels.indexed() {
+    out.push(EffectUse{effect: l, param: false, chain: c.chain_steps(fl.label_items[i], l)})
+  }
+  for (i, p) in fl.params.indexed() {
+    let name = text(c.objs[p].name)
+    out.push(EffectUse{effect: name, param: true, chain: c.chain_steps(fl.param_items[i], name)})
+  }
+  out.sort_by(fn(u) { u.effect })
+}
+
+/// The call chain that performs effect key from item w (effects.go
+/// chainSteps), as effect_chain notes it.
+fn (c: Checker) chain_steps(w0: EffItem, key: Str) -> List[EffectStep] {
+  var out: List[EffectStep] = []
+  var w = w0
+  var visited: List[Int] = []
+  for _ in 0..20 {
+    if w.fn_obj >= 0 && c.objs[w.fn_obj].declared < 0 {
+      out.push(c.step(w, "calls `${c.display_name(w.fn_obj)}`, which performs `${key}`"))
+      if visited.contains(w.fn_obj) {
+        return out
+      }
+      visited.push(w.fn_obj)
+      let fl = match c.inferred.get(w.fn_obj) {
+        Some(x) => x
+        None => return out
+      }
+      var next = EffItem{}
+      var ok = false
+      if let Some(k) = fl.labels.index_of(key) {
+        next = fl.label_items[k]
+        ok = true
+      } else {
+        for (k, p) in fl.params.indexed() {
+          if text(c.objs[p].name) == key {
+            next = fl.param_items[k]
+            ok = true
+          }
+        }
+      }
+      if !ok {
+        return out
+      }
+      w = next
+      continue
+    }
+    var via = w.via
+    if w.fn_obj >= 0 {
+      via = c.display_name(w.fn_obj)
+    }
+    if via.is_empty() {
+      via = "this"
+    }
+    if !w.file.is_empty() {
+      out.push(c.step(w, "`${via}` uses `${key}` here"))
+    }
+    return out
+  }
+  out
+}
+
+fn (c: Checker) step(w: EffItem, msg: Str) -> EffectStep {
+  if w.file.is_empty() {
+    return EffectStep{message: msg, file: "", line: 0, col: 0}
+  }
+  EffectStep{message: msg, file: w.file, line: w.span.start.line, col: w.span.start.col}
+}
+
+/// The `uses` text of a function with declared effects (EffSet.String),
+/// None when its effects are inferred.
+pub fn (c: Checker) declared_text(f: Int) -> Str? {
+  if c.objs[f].declared < 0 {
+    return None
+  }
+  Some(c.flat_text(c.flatten(c.objs[f].declared, false)))
+}
+
+/// mod.WorkspaceDirs: dirs, and the modules of the workspace (xo.work)
+/// that uses the module of dirs[0] that no directory of dirs covers, in
+/// display form. It reads the environment set_mod_env recorded.
+pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
+  if c.deps.work_env == "off" || dirs.is_empty() {
+    return dirs
+  }
+  var d = c.abs(dirs[0])
+  var root = ""
+  while true {
+    if c.exists(join(d, "xo.mod")) {
+      root = d
+      break
+    }
+    let p = parent_dir(d)
+    if p == d || p.is_empty() {
+      break
+    }
+    d = p
+  }
+  if root.is_empty() {
+    return dirs
+  }
+  let (w0, _) = c.find_work(root)
+  let w = match w0 {
+    Some(x) => x
+    None => return dirs
+  }
+  var out = dirs
+  var have: List[Str] = []
+  for x in dirs {
+    have.push(c.abs(x))
+  }
+  for m in w.modules {
+    let md = c.abs(m.dir)
+    var covered = false
+    for h in have {
+      if h == md || md.starts_with("${h}/") {
+        covered = true
+      }
+    }
+    if !covered {
+      out.push(c.rel_dir(md))
+      have.push(md)
+    }
+  }
+  out
+}
+
+/// The text of an object as the names section prints it.
+pub fn (c: Checker) object_text(o: Int) -> Str {
+  c.obj_text(o)
+}
+
+/// Overlay sources: absolute .xo paths whose contents replace the files
+/// on disk (check.Options.Overlay), for `xo edit`'s check of the edited
+/// program. Set before check_dirs.
+pub fn (var c: Checker) set_overlay(files: Map[Str, Bytes]) {
+  c.overlay = files
+}

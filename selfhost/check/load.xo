@@ -167,6 +167,9 @@ pub struct Checker {
   pub result_vars: Map[Int, Int] = {}
   pub inv_vars: Map[Int, List[Int]] = {}
   seen: Map[Str, Bool] = {}
+  /// Sources that replace files on disk, by absolute path (check.Options
+  /// Overlay; set_overlay).
+  overlay: Map[Str, Bytes] = {}
 }
 
 /// A fresh checker reading std declarations from std_dir.
@@ -492,7 +495,10 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   }
   for n in names.sort() {
     let p = join(dir, n)
-    let src = c.fs.read(p).ok() ?? b""
+    let src = match c.overlay.get(c.abs(p)) {
+      Some(b) => b
+      None => c.fs.read(p).ok() ?? b""
+    }
     c.parse_into(m, p, src, false)
   }
   c.mods[m].state = 1

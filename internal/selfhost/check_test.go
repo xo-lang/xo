@@ -455,7 +455,8 @@ func nonEmptyLines(s string) []string {
 // the habits of stage 8 (naming XO0101, the habits of other languages
 // XO0177 of the checker and the parser, time layouts XO0420), and module
 // loading (xo.mod, xo.work, xo.lock, the module cache and vendor/: XO1301
-// to XO1307, effect ceilings XO1309, deny rules XO1312).
+// to XO1307, effect ceilings XO1309, deny rules XO1312), and holes
+// (XO0900, for `xo query holes` in Xo).
 var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string{
 	`(XO0202|XO0203|XO0204|XO0205|XO0206|XO0302|XO0304|XO0401|XO0403|XO0405|XO0406|XO0407|XO0408|XO0409|XO0410|XO0601|XO0602|XO0603|XO0604|XO0605|XO0606|XO0607|XO0702|XO0801|XO0802|XO0803)",.*`,
 	// stage 3: generics
@@ -478,6 +479,8 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	// escape hatch, effects wider than the effect lock (decisions 0155,
 	// 0156)
 	`(XO1315|XO1316|XO1317)",.*`,
+	// holes, for the semantic tools (decision 0178 stage 3)
+	`(XO0900)",.*`,
 }, "|") + `)\}$`)
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }
