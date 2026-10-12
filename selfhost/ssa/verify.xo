@@ -577,48 +577,172 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
 // ---------------------------------------------------------------------------
 // Reference counts (verify_rc.go)
 
-/// The references a function holds per leaf at one point (rcState): the
-/// counts by leaf key, and the leaves by key.
+/// The references a function holds per leaf at the start of a block or on
+/// an edge (rcState): the leaves held a nonzero number of times, by leaf
+/// number (Rc.lid) in increasing order, and their counts. Within a block,
+/// and for the changes an edge makes, the verifier counts in Rc.cur
+/// instead, a list by leaf number that it reuses, so an instruction
+/// changes a count in place; the state is copied out once per edge
+/// (Rc.snapshot). (The Go verifier's map per state, ported as an ordered
+/// Map keyed by text, recorded a new entry at every count change; a dense
+/// list per state, or a sparse one changed instruction by instruction,
+/// copied more than it saved: bench/results/selfhost-ssa-2026-10-10.md.)
 struct RcState {
-  n: Map[Str, Int] = {}
-  ls: Map[Str, Leaf] = {}
+  ids: List[Int] = []
+  cs: List[Int] = []
 }
 
-fn (s: RcState) get(l: Leaf) -> Int {
-  s.n.get(leaf_key(l)) ?? 0
+/// The position of leaf number id in s.ids, or where it would go.
+fn (s: RcState) pos(id: Int) -> Int {
+  var i = 0
+  while i < s.ids.len() && s.ids[i] < id {
+    i += 1
+  }
+  i
 }
 
-fn (var s: RcState) set(l: Leaf, k: Int) {
-  let key = leaf_key(l)
-  s.n[key] = k
-  if !s.ls.contains(key) {
-    // (written only when new: the map is shared with the clones)
-    s.ls[key] = l
+fn (s: RcState) at(id: Int) -> Int {
+  let i = s.pos(id)
+  if i < s.ids.len() && s.ids[i] == id { s.cs[i] } else { 0 }
+}
+
+fn (var s: RcState) put(id: Int, k: Int) {
+  let i = s.pos(id)
+  if i < s.ids.len() && s.ids[i] == id {
+    if k == 0 {
+      s.ids.remove_at(i)
+      s.cs.remove_at(i)
+    } else {
+      s.cs[i] = k
+    }
+  } else if k != 0 {
+    s.ids.insert(i, id)
+    s.cs.insert(i, k)
   }
 }
 
-/// A copy with the zero counts left out; the leaves by key are shared.
-fn (s: RcState) clone() -> RcState {
-  var out = RcState{ls: s.ls}
-  for (k, c) in s.n {
-    if c != 0 {
-      out.n[k] = c
+fn (s: RcState) equal(t: RcState) -> Bool {
+  s.ids == t.ids && s.cs == t.cs
+}
+
+/// One leaf an instruction uses, by number, and how (Use).
+struct UseId {
+  id: Int
+  m: Mode
+}
+
+/// Starts the leaf numbers of function r.fi, unless they are its already:
+/// the numbers, and the leaves and uses by value, stay while the verifier
+/// works on the same function, so the mutants of a function share them.
+fn (var r: Rc) vstart() {
+  if r.vfi != r.fi {
+    r.vfi = r.fi
+    r.vids = {}
+    r.vleaves = []
+    r.cur = []
+    r.mark = []
+    r.touched = []
+    r.vleafs = {}
+    r.vuses = {}
+  }
+}
+
+/// The number of leaf l in the function being verified.
+fn (var r: Rc) lid(l: Leaf) -> Int {
+  r.vstart()
+  let key = leaf_key(l)
+  if let Some(i) = r.vids.get(key) {
+    return i
+  }
+  let i = r.vleaves.len()
+  r.vids[key] = i
+  r.vleaves.push(l)
+  r.cur.push(0)
+  r.mark.push(false)
+  i
+}
+
+/// The numbers of the leaves value v denotes (leaves).
+fn (var r: Rc) lids(f: Func, v: Int) -> List[Int] {
+  r.vstart()
+  if let Some(ids) = r.vleafs.get(v) {
+    return ids
+  }
+  var ids: List[Int] = []
+  for l in r.leaves(f, v) {
+    ids.push(r.lid(l))
+  }
+  r.vleafs[v] = ids
+  ids
+}
+
+/// The leaves instruction v uses, by number (leaf_uses).
+fn (var r: Rc) luses(f: Func, v: Int) -> List[UseId] {
+  r.vstart()
+  if let Some(us) = r.vuses.get(v) {
+    return us
+  }
+  var us: List[UseId] = []
+  for u in r.leaf_uses(f, v) {
+    us.push(UseId{id: r.lid(u.l), m: u.m})
+  }
+  r.vuses[v] = us
+  us
+}
+
+fn (var r: Rc) get(s: RcState, l: Leaf) -> Int {
+  s.at(r.lid(l))
+}
+
+fn (var r: Rc) set(var s: RcState, l: Leaf, k: Int) {
+  s.put(r.lid(l), k)
+}
+
+fn (var r: Rc) cset(i: Int, k: Int) {
+  if !r.mark[i] {
+    r.mark[i] = true
+    r.touched.push(i)
+  }
+  r.cur[i] = k
+}
+
+/// Starts a block in state s.
+fn (var r: Rc) load(s: RcState) {
+  for (j, i) in s.ids.indexed() {
+    r.cset(i, s.cs[j])
+  }
+}
+
+/// The current state.
+fn (var r: Rc) snapshot() -> RcState {
+  var ids: List[Int] = []
+  for i in r.touched {
+    if r.cur[i] != 0 {
+      ids.push(i)
     }
+  }
+  let sorted = ids.sort()
+  var out = RcState{ids: sorted}
+  for i in sorted {
+    out.cs.push(r.cur[i])
   }
   out
 }
 
-/// The nonzero leaves of s, ordered (sortedLeaves).
-fn (s: RcState) held() -> List[Leaf] {
-  var set: Map[Str, Leaf] = {}
-  for (k, c) in s.n {
-    if c != 0 {
-      set[k] = s.ls.get(k) ?? Leaf{root: -1, path: ""}
-    }
+/// Ends the block being checked: every count back to 0.
+fn (var r: Rc) clear() {
+  for i in r.touched {
+    r.cur[i] = 0
+    r.mark[i] = false
   }
+  r.touched = []
+}
+
+/// The nonzero leaves of s, ordered (sortedLeaves).
+fn (r: Rc) held(s: RcState) -> List[Leaf] {
   var out: List[Leaf] = []
-  for (_, l) in set {
-    out.push(l)
+  for id in s.ids {
+    out.push(r.vleaves[id])
   }
   var i = 1
   while i < out.len() {
@@ -638,26 +762,12 @@ fn leaf_text(l: Leaf) -> Str {
   "v${l.root}${l.path}"
 }
 
-fn (s: RcState) text() -> Str {
+fn (var r: Rc) text(s: RcState) -> Str {
   var parts: List[Str] = []
-  for l in s.held() {
-    parts.push("${leaf_text(l)}:${s.get(l)}")
+  for l in r.held(s) {
+    parts.push("${leaf_text(l)}:${r.get(s, l)}")
   }
   "{${parts.join(" ")}}"
-}
-
-fn (s: RcState) equal(t: RcState) -> Bool {
-  for (k, c) in s.n {
-    if c != 0 && (t.n.get(k) ?? 0) != c {
-      return false
-    }
-  }
-  for (k, c) in t.n {
-    if c != 0 && (s.n.get(k) ?? 0) != c {
-      return false
-    }
-  }
-  true
 }
 
 /// Whether block b ends the program (unreachable or a fault).
@@ -666,24 +776,27 @@ fn stops(f: Func, b: Int) -> Bool {
   t >= 0 && (f.values[t].op is Op.Unreachable | Op.Fault)
 }
 
-/// Whether leaf l is alive in state st (verifyRC's alive).
-fn (var r: Rc) alive(f: Func, st: RcState, l: Leaf) -> Bool {
-  match r.kind(f, l.root) {
+/// Whether leaf number i is alive in the block being checked (verifyRC's
+/// alive).
+fn (var r: Rc) alive(f: Func, i: Int) -> Bool {
+  let root = r.vleaves[i].root
+  match r.kind(f, root) {
     Borrowed => true
     Proj => {
-      if st.get(l) > 0 {
+      if r.cur[i] > 0 {
         return true
       }
-      let p = r.parent(f, l.root)
-      r.alive(f, st, p)
+      let p = r.parent(f, root)
+      r.alive(f, r.lid(p))
     }
-    Owned => st.get(l) > 0
+    Owned => r.cur[i] > 0
   }
 }
 
 /// The balance of ownership of f after reference counting (verifyRC).
 fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
   var errs: List[Str] = []
+  r.vstart()
   let pre = "${f.name}: "
   let u = r.unique(f)
   let n = f.blocks.len()
@@ -697,7 +810,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
   for p in f.blocks[0].params {
     if r.is_root(f, p) && r.kind(f, p) == RootKind.Owned {
       for l in r.leaves(f, p) {
-        st0.set(l, 1)
+        r.set(st0, l, 1)
       }
     }
   }
@@ -714,148 +827,187 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
     let b = post[oi]
     oi -= 1
     let bp = "${pre}${bname(b)}: "
-    var st = entry[b].clone()
+    r.load(entry[b])
     for v in f.blocks[b].instrs {
       let x = f.values[v]
       if x.op == Op.Retain {
-        for l in r.leaves(f, x.args[0]) {
-          if !r.alive(f, st, l) {
-            errs.push("${bp}retain of ${leaf_text(l)}, which is not alive")
+        for i in r.lids(f, x.args[0]) {
+          if !r.alive(f, i) {
+            errs.push("${bp}retain of ${leaf_text(r.vleaves[i])}, which is not alive")
           }
-          st.set(l, st.get(l) + 1)
+          r.cset(i, r.cur[i] + 1)
         }
         continue
       }
       if x.op == Op.Release {
-        for l in r.leaves(f, x.args[0]) {
-          if st.get(l) < 1 {
-            errs.push("${bp}release of ${leaf_text(l)}, which is not held")
+        for i in r.lids(f, x.args[0]) {
+          if r.cur[i] < 1 {
+            errs.push("${bp}release of ${leaf_text(r.vleaves[i])}, which is not held")
           }
-          st.set(l, st.get(l) - 1)
+          r.cset(i, r.cur[i] - 1)
         }
         continue
       }
       if x.op == Op.Call && is_update_call(aux_name(x.aux)) {
         let a = x.args[0]
-        for l in r.leaves(f, a) {
-          if st.get(l) != 1 {
-            errs.push("${bp}v${v} updates ${leaf_text(l)} held ${st.get(l)} times, want once")
+        for i in r.lids(f, a) {
+          let l = r.vleaves[i]
+          if r.cur[i] != 1 {
+            errs.push("${bp}v${v} updates ${leaf_text(l)} held ${r.cur[i]} times, want once")
           }
           if f.values[a].op != Op.Reuse && !r.uniq(f, u, l) {
             errs.push("${bp}v${v} updates ${leaf_text(l)}, which is neither a reuse result nor provably unique")
           }
         }
       }
-      let us = r.leaf_uses(f, v)
+      let us = r.luses(f, v)
       for us1 in us {
-        if us1.m == Mode.Borrow && !r.alive(f, st, us1.l) {
-          errs.push("${bp}v${v} uses ${leaf_text(us1.l)}, which is not alive")
+        if us1.m == Mode.Borrow && !r.alive(f, us1.id) {
+          errs.push("${bp}v${v} uses ${leaf_text(r.vleaves[us1.id])}, which is not alive")
         }
       }
       for us1 in us {
         if us1.m != Mode.Consume {
           continue
         }
-        if st.get(us1.l) < 1 {
-          errs.push("${bp}v${v} consumes ${leaf_text(us1.l)}, which is not held")
+        if r.cur[us1.id] < 1 {
+          errs.push("${bp}v${v} consumes ${leaf_text(r.vleaves[us1.id])}, which is not held")
         }
-        st.set(us1.l, st.get(us1.l) - 1)
+        r.cset(us1.id, r.cur[us1.id] - 1)
       }
       if x.pad < 0 && !is_terminator(x.op) && raises(m, f, x, faults) {
         // a fault here leaves the function without cleanup (decision
         // 0085): nothing may be held
-        for l in st.held() {
-          let c = st.get(l)
+        let snap = r.snapshot()
+        for l in r.held(snap) {
+          let c = r.get(snap, l)
           if c > 0 {
             errs.push("${bp}v${v} can fault while ${leaf_text(l)} is held ${c} times (no landing releases it)")
           }
         }
         if keeps_operands(x) {
           for us1 in us {
-            if us1.m == Mode.Consume && r.tracked(f, us1.l) && r.kind(f, us1.l.root) == RootKind.Owned {
-              errs.push("${bp}v${v} can fault before it takes ${leaf_text(us1.l)} (no landing releases it)")
+            let l = r.vleaves[us1.id]
+            if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned {
+              errs.push("${bp}v${v} can fault before it takes ${leaf_text(l)} (no landing releases it)")
             }
           }
         }
       }
       if r.is_root(f, v) {
-        let kd = r.kind(f, v)
-        for l in r.leaves(f, v) {
-          if st.get(l) != 0 {
-            errs.push("${bp}${leaf_text(l)} is still held ${st.get(l)} times when it is defined again (a leak around a loop)")
+        let k = if r.kind(f, v) == RootKind.Owned { 1 } else { 0 }
+        for i in r.lids(f, v) {
+          if r.cur[i] != 0 {
+            errs.push("${bp}${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times when it is defined again (a leak around a loop)")
           }
-          st.set(l, if kd == RootKind.Owned { 1 } else { 0 })
+          r.cset(i, k)
         }
       }
       if x.op == Op.Return {
-        for l in st.held() {
-          errs.push("${bp}${leaf_text(l)} is held ${st.get(l)} times at ret (leak or imbalance)")
+        let snap = r.snapshot()
+        for l in r.held(snap) {
+          errs.push("${bp}${leaf_text(l)} is held ${r.get(snap, l)} times at ret (leak or imbalance)")
         }
       }
       if x.op is Op.Jump | Op.Branch {
         let (site, landing) = landing_site(f, b)
-        for (i, e) in x.succs.indexed() {
-          var est = st.clone()
-          if i == 0 && landing >= 0 && x.op == Op.Branch {
+        for (si, e) in x.succs.indexed() {
+          let to = f.edges[e].to
+          var est = RcState{}
+          if si == 0 && landing >= 0 && x.op == Op.Branch {
             // the cleanup path of a landing check: the operation checked
             // produced nothing (decision 0085)
-            var keep = RcState{ls: est.ls}
-            for (k, c) in est.n {
-              let l = est.ls.get(k) ?? Leaf{root: -1, path: ""}
+            let st = r.snapshot()
+            for (j, k) in st.ids.indexed() {
+              let l = r.vleaves[k]
               let rv = f.values[l.root]
               if l.root == site || (site < 0 && rv.op == Op.Param && rv.block == b && b != 0) {
                 continue
               }
-              keep.n[k] = c
+              est.ids.push(k)
+              est.cs.push(st.cs[j])
             }
-            est = keep
             if site >= 0 && keeps_operands(f.values[site]) {
               // it faulted before taking its operands
-              for us1 in r.leaf_uses(f, site) {
-                if us1.m == Mode.Consume && r.tracked(f, us1.l) && r.kind(f, us1.l.root) == RootKind.Owned {
-                  est.set(us1.l, est.get(us1.l) + 1)
+              for us1 in r.luses(f, site) {
+                let l = r.vleaves[us1.id]
+                if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned {
+                  est.put(us1.id, est.at(us1.id) + 1)
                 }
               }
             }
-          }
-          let to = f.edges[e].to
-          for l in r.edge_uses(f, e) {
-            if est.get(l) < 1 {
-              errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(l)}, which is not held")
-            }
-            est.set(l, est.get(l) - 1)
-          }
-          for p in f.blocks[to].params {
-            if r.is_root(f, p) {
-              for l in r.leaves(f, p) {
-                if est.get(l) != 0 {
-                  errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(l)} is still held ${est.get(l)} times (a leak around a loop)")
+            for a in f.edges[e].args {
+              for i in r.lids(f, a) {
+                if est.at(i) < 1 {
+                  errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
                 }
-                est.set(l, 1)
+                est.put(i, est.at(i) - 1)
               }
+            }
+            for p in f.blocks[to].params {
+              if r.is_root(f, p) {
+                for i in r.lids(f, p) {
+                  if est.at(i) != 0 {
+                    errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${est.at(i)} times (a leak around a loop)")
+                  }
+                  est.put(i, 1)
+                }
+              }
+            }
+          } else {
+            // the edge's changes go to the block's counts and back
+            var undo: List[Int] = []
+            for a in f.edges[e].args {
+              for i in r.lids(f, a) {
+                if r.cur[i] < 1 {
+                  errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
+                }
+                undo.push(i)
+                undo.push(r.cur[i])
+                r.cset(i, r.cur[i] - 1)
+              }
+            }
+            for p in f.blocks[to].params {
+              if r.is_root(f, p) {
+                for i in r.lids(f, p) {
+                  if r.cur[i] != 0 {
+                    errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times (a leak around a loop)")
+                  }
+                  undo.push(i)
+                  undo.push(r.cur[i])
+                  r.cset(i, 1)
+                }
+              }
+            }
+            est = r.snapshot()
+            var j = undo.len() - 2
+            while j >= 0 {
+              r.cur[undo[j]] = undo[j + 1]
+              j -= 2
             }
           }
           if has[to] && stops(f, to) {
             // the program stops there: paths need not agree
             var old = entry[to]
-            for (k, c) in est.n {
-              let l = est.ls.get(k) ?? Leaf{root: -1, path: ""}
-              if c > old.get(l) {
-                old.set(l, c)
+            for (j, k) in est.ids.indexed() {
+              let c = est.cs[j]
+              if c > old.at(k) {
+                old.put(k, c)
               }
             }
             entry[to] = old
           } else if has[to] {
             if !entry[to].equal(est) {
-              errs.push("${bp}edge to ${bname(to)} holds ${est.text()}, another predecessor ${entry[to].text()}")
+              errs.push("${bp}edge to ${bname(to)} holds ${r.text(est)}, another predecessor ${r.text(entry[to])}")
             }
           } else {
-            entry[to] = est.clone()
+            entry[to] = est
             has[to] = true
           }
         }
       }
     }
+    r.clear()
   }
   errs
 }
