@@ -7,8 +7,8 @@
 //
 // Memory: 0..15 the iovec and the count fd_write writes, 16..47 scratch
 // for formatting integers, 256..383 the free lists (one per size class),
-// 1024..1983 the integers and text of Float formatting, literals from
-// 2048, then the heap, which grows with memory.grow. A
+// 1024..1983 the integers and text of Float formatting, 1984..2047 the
+// text of a Duration, literals from 2048, then the heap, which grows with memory.grow. A
 // block is a power of two of at least 16 bytes with an 8 byte header (its
 // size class; the next free block when it is free). A count of the i32
 // minimum is immortal (literals, decision 0058); there are no threads, so
@@ -68,6 +68,7 @@ fn rt_text(var g: Gen) -> Str {
   let str_n = 3
   let dropsig = g.sig(["i32"], [])
   let empty = g.empty_list
+  let zeros = g.litp("0s")
   let int8 = g.litp("Int8")
   let uint8 = g.litp("UInt8")
   let int16 = g.litp("Int16")
@@ -3543,6 +3544,232 @@ fn rt_text(var g: Gen) -> Str {
       local.get $an
       i32.const 39
       call $sapp_byte)
+
+    ;; Duration text (time.Duration's String, std/llrt n_fmt_duration),
+    ;; written backwards from 2040
+    (func $dfrac (param $w i32) (param $u i64) (param $prec i32) (result i32 i64) (local $i i32) (local $print i32) (local $d i32)
+      block $x
+        loop $l
+          local.get $i
+          local.get $prec
+          i32.ge_u
+          br_if $x
+          local.get $u
+          i64.const 10
+          i64.rem_u
+          i32.wrap_i64
+          local.tee $d
+          local.get $print
+          i32.or
+          local.set $print
+          local.get $print
+          if
+            local.get $w
+            i32.const 1
+            i32.sub
+            local.tee $w
+            local.get $d
+            i32.const 48
+            i32.add
+            i32.store8
+          end
+          local.get $u
+          i64.const 10
+          i64.div_u
+          local.set $u
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $print
+      if
+        local.get $w
+        i32.const 1
+        i32.sub
+        local.tee $w
+        i32.const 46
+        i32.store8
+      end
+      local.get $w
+      local.get $u)
+
+    (func $dint (param $w i32) (param $u i64) (result i32)
+      loop $l
+        local.get $w
+        i32.const 1
+        i32.sub
+        local.tee $w
+        local.get $u
+        i64.const 10
+        i64.rem_u
+        i32.wrap_i64
+        i32.const 48
+        i32.add
+        i32.store8
+        local.get $u
+        i64.const 10
+        i64.div_u
+        local.tee $u
+        i64.eqz
+        i32.eqz
+        br_if $l
+      end
+      local.get $w)
+
+    (func $fmt_dur (param $d i64) (result i32 i32) (local $w i32) (local $u i64) (local $prec i32)
+      i32.const 2040
+      local.set $w
+      local.get $d
+      local.set $u
+      local.get $d
+      i64.const 0
+      i64.lt_s
+      if
+        i64.const 0
+        local.get $d
+        i64.sub
+        local.set $u
+      end
+      local.get $u
+      i64.const 1000000000
+      i64.lt_u
+      if
+        local.get $u
+        i64.eqz
+        if
+          ${zeros}
+          return
+        end
+        local.get $w
+        i32.const 1
+        i32.sub
+        local.tee $w
+        i32.const 115
+        i32.store8
+        local.get $u
+        i64.const 1000
+        i64.lt_u
+        if
+          local.get $w
+          i32.const 1
+          i32.sub
+          local.tee $w
+          i32.const 110
+          i32.store8
+        else
+          local.get $u
+          i64.const 1000000
+          i64.lt_u
+          if
+            i32.const 3
+            local.set $prec
+            local.get $w
+            i32.const 2
+            i32.sub
+            local.tee $w
+            i32.const 194
+            i32.store8
+            local.get $w
+            i32.const 181
+            i32.store8 offset=1
+          else
+            i32.const 6
+            local.set $prec
+            local.get $w
+            i32.const 1
+            i32.sub
+            local.tee $w
+            i32.const 109
+            i32.store8
+          end
+        end
+        local.get $w
+        local.get $u
+        local.get $prec
+        call $dfrac
+        call $dint
+        local.set $w
+      else
+        local.get $w
+        i32.const 1
+        i32.sub
+        local.tee $w
+        i32.const 115
+        i32.store8
+        local.get $w
+        local.get $u
+        i32.const 9
+        call $dfrac
+        local.set $u
+        local.get $u
+        i64.const 60
+        i64.rem_u
+        call $dint
+        local.set $w
+        local.get $u
+        i64.const 60
+        i64.div_u
+        local.tee $u
+        i64.eqz
+        i32.eqz
+        if
+          local.get $w
+          i32.const 1
+          i32.sub
+          local.tee $w
+          i32.const 109
+          i32.store8
+          local.get $w
+          local.get $u
+          i64.const 60
+          i64.rem_u
+          call $dint
+          local.set $w
+          local.get $u
+          i64.const 60
+          i64.div_u
+          local.tee $u
+          i64.eqz
+          i32.eqz
+          if
+            local.get $w
+            i32.const 1
+            i32.sub
+            local.tee $w
+            i32.const 104
+            i32.store8
+            local.get $w
+            local.get $u
+            call $dint
+            local.set $w
+          end
+        end
+      end
+      local.get $d
+      i64.const 0
+      i64.lt_s
+      if
+        local.get $w
+        i32.const 1
+        i32.sub
+        local.tee $w
+        i32.const 45
+        i32.store8
+      end
+      local.get $w
+      i32.const 2040
+      local.get $w
+      i32.sub)
+
+    (func $rs_append_duration (param $a i32) (param $an i32) (param $d i64) (result i32 i32)
+      local.get $a
+      local.get $an
+      local.get $d
+      call $fmt_dur
+      call $sapp)
 
     ;; the prelude's Str operations (std/llrt xo_std.c): operands are
     ;; borrowed, a Str result is new
