@@ -72,11 +72,32 @@ fn main(os: Os) ! {
 
 ## Install
 
-Requires Go 1.26 or later. Build from a checkout:
+`xo` is written in Xo (the self hosted toolchain, `selfhost/xo`; decision
+0178 switch point B). A release archive (`scripts/release.sh`, for
+darwin/arm64, linux/arm64, and linux/amd64) unpacks to
 
 ```
-go build -o .tools/bin/xo ./cmd/xo
+xo-<version>-<os>-<arch>/bin/xo          the toolchain
+xo-<version>-<os>-<arch>/bin/xo-gobind   the Go binder helper (`use go`)
+xo-<version>-<os>-<arch>/lib/xo/         std, third_party, the prebuilt C runtime
 ```
+
+Keep the layout: `bin/xo` finds std and the runtime in `../lib/xo`
+(or set `XO_STD`), so a copy of `bin/xo` alone does not work. Put the
+`bin` directory on PATH, or link `bin/xo` from a PATH directory
+(symbolic links are followed).
+
+From a checkout, the Go `cmd/xo` is the bootstrap seed (Go 1.26 or
+later) that builds the first Xo `xo`:
+
+```
+go build -o .tools/bin/xo-seed ./cmd/xo
+XO_SELF_DRIVER=0 .tools/bin/xo-seed build --backend=arm64 -o .tools/bin/xo selfhost/xo
+```
+
+which needs `XO_STD=$PWD/std` (or the release layout) to run; after
+that, any Xo `xo` rebuilds itself without Go
+(`scripts/bootstrap-xo.sh`).
 
 The module path is `github.com/xo-lang/xo` (local name; see
 `knowledgebase/infrastructure/toolchain.md`).

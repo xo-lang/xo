@@ -12,6 +12,14 @@
 #   --cmd CMD  runs CMD (a shell command, in the checkout, with go on
 #              PATH) instead of the full suite, e.g.
 #              --cmd 'go test -count=1 -run TestGoldenThreads ./internal/llvm'
+#   --arch A   arm64 (default: Graviton, $XO_REMOTE_TYPE or c8g.8xlarge)
+#              or amd64 ($XO_REMOTE_TYPE or c7i.8xlarge); the AMI and the
+#              Go download follow.
+#   --put F    copies the local file F to the instance's home directory
+#              before CMD runs (repeatable), e.g. a release archive and
+#              a script for --cmd 'bash ~/verify.sh'. CMD runs in ~/xo
+#              with /usr/local/go/bin first on PATH; a step that must not
+#              see Go sets its own PATH.
 #   --hold     after setup, clones COMMIT to ~/xo, writes the instance
 #              address to $XO_REMOTE_HOLD (default
 #              bench/results/remote/hold.addr) and waits until the
@@ -31,13 +39,14 @@
 # current public IP only.
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}  # spot quota raised to 128 vCPUs on 2026-10-12
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-300}
 GOVER=${XO_REMOTE_GO:-1.26.1}
 DRY=""
 CMD=""
 HOLD=""
+ARCH=arm64
+PUTS=()
 MARKET='--instance-market-options MarketType=spot,SpotOptions={SpotInstanceType=one-time}'
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,9 +54,16 @@ while [ $# -gt 0 ]; do
     --on-demand) MARKET=""; shift;;
     --cmd) CMD="$2"; shift 2;;
     --hold) HOLD=1; shift;;
+    --arch) ARCH="$2"; shift 2;;
+    --put) [ -f "$2" ] || { echo "remote-full: --put $2: no such file" >&2; exit 2; }; PUTS+=("$2"); shift 2;;
     *) break;;
   esac
 done
+case "$ARCH" in
+  arm64) TYPE=${XO_REMOTE_TYPE:-c8g.8xlarge}; AMIARCH=arm64;;  # spot quota raised to 128 vCPUs on 2026-10-12
+  amd64) TYPE=${XO_REMOTE_TYPE:-c7i.8xlarge}; AMIARCH=x86_64;;
+  *) echo "remote-full: --arch $ARCH: want arm64 or amd64" >&2; exit 2;;
+esac
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 commit=$(git rev-parse --short "${1:-HEAD}")
@@ -78,9 +94,9 @@ if [ -n "$sg" ] && [ -z "$DRY" ]; then
 fi
 
 # the SSM alias, else (the agent sandbox cannot resolve ssm.*, 2026-10-12)
-# the newest AL2023 kernel 6.18 arm64 image by name
-ami=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 --query Parameter.Value --output text 2>/dev/null) ||
-  ami=$(aws ec2 describe-images --owners amazon --filters 'Name=name,Values=al2023-ami-2023.*-kernel-6.18-arm64' Name=state,Values=available \
+# the newest AL2023 kernel 6.18 image of the architecture by name
+ami=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-$AMIARCH --query Parameter.Value --output text 2>/dev/null) ||
+  ami=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-kernel-6.18-$AMIARCH" Name=state,Values=available \
     --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)
 userdata=$(cat <<EOF
 #!/bin/bash
@@ -89,7 +105,7 @@ userdata=$(cat <<EOF
 systemd-run --on-active=${MAXMIN}m /usr/sbin/poweroff
 shutdown -h +$MAXMIN
 dnf install -y git clang llvm gcc tar gzip make >/var/log/xo-setup.log 2>&1
-curl -fsSL https://go.dev/dl/go$GOVER.linux-arm64.tar.gz | tar -C /usr/local -xz
+curl -fsSL https://go.dev/dl/go$GOVER.linux-$ARCH.tar.gz | tar -C /usr/local -xz
 touch /var/run/xo-ready
 EOF
 )
@@ -121,6 +137,10 @@ bundle=$(mktemp -t xo-bundle).bundle
 git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
 scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$bundle" "ec2-user@$ip:xo.bundle"
 rm -f "$bundle"
+for f in "${PUTS[@]+"${PUTS[@]}"}"; do
+  log "copying $f"
+  scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$f" "ec2-user@$ip:"
+done
 if [ -n "$HOLD" ]; then
   hold=${XO_REMOTE_HOLD:-$root/bench/results/remote/hold.addr}
   ssh_ "git clone -q xo.bundle xo && cd xo && git checkout -q $commit" || true
