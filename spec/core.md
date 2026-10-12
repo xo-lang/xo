@@ -2501,6 +2501,7 @@ tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 | `XO1404` | error | checker | recursion among real-time functions |
 | `XO1405` | error | checker | blocking operation (channel, Mutex, scope, select, task) or capability effect in a real-time function |
 | `XO1501` | error | build | `--stamp NAME=VALUE` names no `const NAME: Str = "..."` (a plain string literal) of the main module (decision 0165) |
+| `XO1502` | error | build | the go command the Go backend runs (`$XO_GO`, else `go` on PATH) is older than Go 1.24, the oldest Go that builds generated programs and the runtime (decision 0176) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // Xo builds use their own Go build cache with a size cap. Every generated
@@ -25,15 +27,15 @@ const keepRecent = 2 * time.Hour
 
 // GoCacheDir is the Go build cache used for Xo builds: $XO_GOCACHE, else
 // <user cache>/xo/gocache.
-func GoCacheDir() string {
-	if d := os.Getenv("XO_GOCACHE"); d != "" {
-		return d
-	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		base = os.TempDir()
-	}
-	return filepath.Join(base, "xo", "gocache")
+func GoCacheDir() string { return gotool.CacheDir() }
+
+// GoEnv is the environment of a go command run outside a build (tests,
+// tools): the process environment with GOWORK=off, -trimpath (so a
+// directory's path is not part of the cache key), and GOCACHE set to
+// GoCacheDir. Every go command the repo runs uses it or sets GOCACHE
+// itself; TestGoCommandsUseXoCache enforces this (decision 0176).
+func GoEnv() []string {
+	return append(os.Environ(), "GOWORK=off", "GOFLAGS=-trimpath", gotool.CacheEnv())
 }
 
 // cacheMax is the cap in bytes: XO_GOCACHE_MAX (bytes), else 8 GiB.
