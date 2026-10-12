@@ -56,7 +56,10 @@ the same program.
 
 - With steps 1 to 3 the self compiled compiler passes 147 of 147 arm64
   goldens and links the Go driver's binaries exactly. The fixed point
-  is rerun with these steps in the results file.
+  holds with every step (2026-10-12): xo1 built by the Go compiler (A)
+  builds B, B builds C, and the Go emitter's, B's, and C's assembly of
+  selfhost/xo are byte identical (9,011,385 lines); B passes 147 of 147
+  arm64 goldens.
 - Not done, in the order they matter: tests with `uses` (`--real`): the
   Xo SSA builder leaves them out; the contract fuzz tests the Go driver
   lists as skipped; a time limit on a test process; the binary cache

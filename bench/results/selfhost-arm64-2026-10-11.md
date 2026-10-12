@@ -360,3 +360,33 @@ Go driver lists as skipped, which xo1 does not list (so 0 skipped
 against 1). Not done: `--real` (the Xo SSA builder leaves tests with
 `uses` out, so they are skipped), contract fuzz listing, and a time
 limit (the native Proc has none).
+
+## The fixed point with steps 1 to 6, 2026-10-12
+
+`scripts/selfhost-switchover.sh` on the tree with every step (commit
+58d294f), through the shared heavy lock, other agents' work on the
+machine:
+
+| step | wall clock |
+|---|---|
+| A: the Go compiler, `xo build --backend=arm64 selfhost/xo` | 142.4 s |
+| the Go emitter's assembly of selfhost/xo (`xo asmdump`) | 119.6 s |
+| B: A compiles selfhost/xo | 313.0 s |
+| C: B compiles selfhost/xo | 303.7 s |
+
+**The fixed point holds**: the assembly B wrote, the assembly C wrote,
+and the Go emitter's are byte identical (9,011,385 lines, sha256
+f5f8d55b...bb03). B and C differ in 49 bytes, as before (LC_UUID and the
+ad hoc signature, which names the output file). B passes **147 of 147**
+arm64 goldens.
+
+| step | goldens | other checks |
+|---|---|---|
+| before (2026-10-11) | 132 of 138 | |
+| 1: TLS | 147 of 147 (A) | TLS key and archive identical to the Go driver's |
+| 2: zone data | 147 of 147 (A, all steps) | 5 std/time programs: identical binaries |
+| 3: packs, object cache | 147 of 147 (A, all steps) | 147 of 147 binaries identical (selfhost-samebin.py) |
+| 4: `use c` | 147 of 147 (A, all steps) | stage6c, realtime-control: identical binaries |
+| 5: linux/arm64 | 147 of 147 (A, all steps) | 3 programs: identical linux assembly |
+| 6: tests | 147 of 147 (A, all steps) | 4 nogc test dirs: 3 same output, 1 differs by the unlisted contract fuzz test |
+| fixed point (B) | 147 of 147 | G.s = B.s = C.s |
