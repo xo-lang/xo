@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM backend drops the overflow checks that value ranges prove
+  (loop counters, binary search midpoints, operations under a branch or
+  after an index), tells LLVM the ranges of loop variables, and inlines
+  the functions the arm64 backend inlines (decision 0192): the Unicode
+  operations written in Xo are now within 5 percent of their C versions
+  on LLVM too.
 - std/crypto signs and verifies Ed25519 (RFC 8032, decision 0189):
   `crypto.ed25519_public_key(seed)`, `crypto.ed25519_sign(seed, msg)`,
   `crypto.ed25519_verify(public_key, msg, sig)`, with the results of Go's

@@ -421,7 +421,10 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
     g.store_ref(st_ts[k], st_xs[k], st_ps[k])
   }
   let rl = g.res_ll(callee)
-  let c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
+  var c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
+  if g.inl.contains(aux_str(x.aux)) {
+    c = "${c} #6"
+  }
   let kept = g.kept_results(callee)
   let results = g.m.funcs[callee].results
   if kept.len() == results.len() {

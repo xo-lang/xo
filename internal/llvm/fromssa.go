@@ -83,6 +83,7 @@ declare double @llvm.ceil.f64(double)
 declare double @llvm.trunc.f64(double)
 declare double @llvm.round.f64(double)
 declare double @llvm.fabs.f64(double)
+declare void @llvm.assume(i1)
 
 declare i32 @xo_personality(...)
 
@@ -94,6 +95,7 @@ attributes #2 = { nounwind }
 attributes #3 = { nounwind cold noinline }
 attributes #4 = { nounwind alwaysinline }
 attributes #5 = { "xo-raises" }
+attributes #6 = { alwaysinline }
 
 !0 = !{!"branch_weights", i32 1, i32 4000}
 ; TBAA: list headers, list elements, and reference counts never overlap
@@ -130,6 +132,8 @@ type sgen struct {
 	locs    map[string]string
 	emitted map[string]bool
 	byName  map[string]*ssa.Func
+	// inl holds the functions whose calls are inlined (inline.go)
+	inl map[string]bool
 	// byRef marks, per function, the parameters passed by reference
 	// (decision 0145); addrTaken the functions used as values, which keep
 	// the plain convention
@@ -224,6 +228,7 @@ func GenerateSSA(m *ssa.Module) (prog *Program, err error) {
 			g.checkType(p.Type, nil)
 		}
 	}
+	g.inl = inlinableSet(m, g.byName)
 	for _, f := range m.Funcs {
 		g.fn(f)
 	}
@@ -1023,6 +1028,8 @@ type sfn struct {
 	stableMemo map[*ssa.Value]bool
 	lazy       map[*ssa.Value]int
 	uses       map[*ssa.Value][]*ssa.Value
+	// rng holds the value ranges of the function (ranges.go)
+	rng *rangeInfo
 }
 
 // isAgg reports a struct, enum, or tuple type.
@@ -1223,7 +1230,9 @@ func (g *sgen) fn(f *ssa.Func) {
 	// lowered in reverse postorder, so a value is lowered (and its alias
 	// known) before every use: a block may come before the blocks that
 	// dominate it in f.Blocks (generated code builds a join first)
-	for _, b := range reversePostorder(f) {
+	rpo := reversePostorder(f)
+	s.rng = computeRanges(f, rpo)
+	for _, b := range rpo {
 		s.body = &strings.Builder{}
 		s.text[b] = s.body
 		s.label0 = b.Name()
@@ -1241,6 +1250,10 @@ func (g *sgen) fn(f *ssa.Func) {
 		}
 		for _, v := range b.Instrs {
 			s.instr(v)
+			if s.rng.mids[v] {
+				// a binary search's midpoint (ranges.go)
+				s.assume(s.op(v), s.rng.of(v))
+			}
 		}
 	}
 	var out strings.Builder
@@ -1416,7 +1429,7 @@ func (s *sfn) instr(v *ssa.Value) {
 			s.set(v, "f%s double %s, %s", ins, a(0), a(1))
 			return
 		}
-		if v.Pos == "" {
+		if v.Pos == "" || s.rng.safe[v] {
 			if v.Aux == ssa.Wrap {
 				s.set(v, "%s i64 %s, %s", ins, a(0), a(1))
 				return
@@ -1835,6 +1848,9 @@ func (s *sfn) call(v *ssa.Value) {
 			s.storeRef(st.t, st.x, st.p)
 		}
 		c := fmt.Sprintf("%s %s(%s)", g.resLL(callee), g.fname(name), strings.Join(args, ", "))
+		if g.inl[name] {
+			c += " #6"
+		}
 		kept := g.keptResults(callee)
 		if len(kept) == len(callee.Results) {
 			if v.Type.Kind == ssa.KUnit {

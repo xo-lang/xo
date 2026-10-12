@@ -38,7 +38,9 @@ import (
 // takes every run; the merge tier every third run but the mergeHeavy
 // ones (each takes about a minute), and -short every 25th.
 // XO_SELFHOST_BACKEND names one backend,
-// XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover.
+// XO_SELFHOST_LLVM_STAGE=N lowers what the stages up to N cover,
+// XO_SELFHOST_DIRS=<texts> takes the runs whose directory contains one
+// of the comma separated texts instead.
 func TestSelfhostLLVM(t *testing.T) {
 	backends := tierBackends(t)
 	if v := os.Getenv("XO_SELFHOST_BACKEND"); v != "" {
@@ -61,6 +63,20 @@ func TestSelfhostLLVM(t *testing.T) {
 		for i, d := range dirs {
 			if !mergeHeavy(d) && i%3 == 0 {
 				some = append(some, d)
+			}
+		}
+		dirs = some
+	}
+	if v := os.Getenv("XO_SELFHOST_DIRS"); v != "" {
+		// the runs whose directory contains one of the comma separated
+		// texts (a development loop, as TestSelfhostArm64)
+		var some []string
+		for _, d := range moduleDirs(t, root) {
+			for _, w := range strings.Split(v, ",") {
+				if strings.Contains(d, w) {
+					some = append(some, d)
+					break
+				}
 			}
 		}
 		dirs = some

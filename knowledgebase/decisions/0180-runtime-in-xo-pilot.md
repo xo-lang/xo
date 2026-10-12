@@ -111,6 +111,11 @@ is shared, compiler changes are made twice); the runtime pack (decision
    loop invariant addresses out of loops, and drops bounds checks a loop
    condition proves, and (b) `bench/perf/unicode` is within 5 percent of
    `XO_UNICODE=c` in instructions on every workload on both backends.
+   **Status (2026-10-12): (a) and (b) met on arm64 (decision 0184), (b)
+   met on LLVM (decision 0192: every workload below the C path, the
+   lower compare 0.948x, Rune case mapping 0.967x); 7(b) holds on both
+   backends** (bench/results/runtime-pilot-2026-10-12.md, section "LLVM
+   value ranges and inlining").
    When (b) holds, unicode_c.xo, the `XO_UNICODE_C` C, and xo_unicode.c
    are deleted (a new ADR). xo_rt.c itself (6,451 lines: reference
    counts, lists, maps, strings, fibers, the scheduler, faults and
