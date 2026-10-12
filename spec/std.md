@@ -2191,8 +2191,12 @@ pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
 
 ## 17. std/regexp
 
-Status: implemented on the Go backend (decision 0164, Go's `regexp`);
-native builds report it as XO1201 (planned).
+Status: implemented on the Go backend (decision 0164, Go's `regexp`)
+and natively (decision 0172: Go's regexp/syntax parser, compiler, and
+Pike VM ported to Xo, the same matches and errors). Native builds have
+the Unicode classes `\pL` (`\p{Letter}`), `\p{Nd}`, `\p{Any}`, and
+`\p{ASCII}` so far; another class Go knows is a `RegexErr` saying it is
+not supported by native builds yet.
 
 ```
 struct Regex {}                          // handle

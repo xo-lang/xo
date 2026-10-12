@@ -63,6 +63,9 @@ fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
 fn bytes_quote(b: Bytes) -> Str
+/// The ranges of a Unicode class (lo, hi pairs, sorted): 0 the letters
+/// (unicode.L), 1 the decimal digits (unicode.Nd); std/regexp's \pL.
+fn unicode_ranges(which: Int) -> List[Int]
 /// utf8.DecodeRune of b from i: the rune times 8 plus its size.
 fn bytes_decode(b: Bytes, i: Int) -> Int
 /// utf8.RuneCount.

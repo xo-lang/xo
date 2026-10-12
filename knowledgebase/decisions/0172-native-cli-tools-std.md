@@ -1,9 +1,9 @@
 # 0172: The command line tool std on the native backends
 
 Status: Accepted (2026-10-11), in progress: (1) commands, children,
-pipelines, and attenuation, and (2) file handles, links, globs, and
-locks are implemented natively; the rest is listed under "What is
-left".
+pipelines, and attenuation, (2) file handles, links, globs, and locks,
+and (3) `std/regexp` are implemented natively; the rest is listed under
+"What is left".
 
 ## Context
 
@@ -86,10 +86,36 @@ Constraints:
    Canceled); a lock handle dropped without `unlock` closes its
    descriptor, which releases the lock (the Go backend keeps it until the
    garbage collector closes the file).
-4. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
+4. **Regexp in Xo** (`std/native/regexp.xo`, about 1200 lines): Go's
+   regexp/syntax parser (the parse loop, `parsePerlFlags`, `parseClass`,
+   `parseEscape`, `parseUnicodeClass`, `parseRepeat`, `repeatIsValid`,
+   nesting depth) with its error texts and expressions, `Simplify`, the
+   compiler (patch lists, `(f1+)?` for a nullable star), and the Pike VM
+   of exec.go (threads in priority order, the first match cutting off
+   the rest), plus `FindAll`'s empty match rule, `Split`,
+   `ReplaceAll` with `expand`/`extract`, and `QuoteMeta`. Case folding
+   is `unicode.SimpleFold`: ToLower or ToUpper from the runtime's tables
+   except 38 runes of longer orbits, listed in the module (generated from
+   Go's unicode package, Unicode 15). Written in Xo, not C, so a self
+   hosted compiler gets it for free and the runtime packs stay as they
+   were; the cost is speed (a Pike VM over lists of group positions).
+   Not ported because they change speed, not results: the parser's
+   factoring and literal merging, the onepass and backtracking engines,
+   prefix scans. Also not ported: `ErrLarge` (the size estimate), and
+   Unicode tables beyond letters and decimal digits: `\pL` (and
+   `Letter`), `\p{Nd}` (`Decimal_Number`, `Digit`), `\p{Any}`, and
+   `\p{ASCII}` work, from the C runtime's tables through the new
+   intrinsic `unicode_ranges`; any other name Go knows (`\p{Greek}`,
+   `\p{Lu}`) is a `RegexErr` "Unicode class not supported by native
+   builds yet (decision 0172)", and a name Go does not know is Go's
+   "invalid character class range". The golden `regexp_table` runs 86
+   patterns (60 valid, 26 invalid with 11 of the error codes) on 18 inputs
+   with every operation, then replacements with every template form,
+   splits, quote, and invalid UTF-8: identical on Go, LLVM, and arm64.
+5. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
    `read`, `read_err`, `read_line`, `wait`, `Proc.pipeline`, `Fs.lock`) make the
    program build with unwinding checks (nativeWaits, as `Proc.run`).
-5. **Cancellation** natively kills a command when the cancelled task
+6. **Cancellation** natively kills a command when the cancelled task
    waits on it, and that call is `Canceled`; the Go backend kills it at
    once (a goroutine per child) and its `wait` gives 137. A Child that is
    dropped without `wait` is reaped if it has exited, else left to the
@@ -110,8 +136,10 @@ test binaries (cmd/xo TestNoGCTests) with the Go backend's report.
 - The decision 0163 methods on a native test binary's MemFs
   (`memfs_open` and the rest in std/native/testing.xo, std/rt
   fsfile_mem.go's semantics; the glob can call the same Xo code).
-- (3) `std/regexp` natively, in Xo (an RE2 style matcher without
-  backtracking), checked against the Go backend on a shared table.
+- The Unicode classes of regexp beyond `L`, `Nd`, `Any`, and `ASCII`:
+  extend internal/llvm's TestUnicodeTables generator with Go's category
+  and script tables (and FoldCategory, FoldScript) and return them
+  through `unicode_ranges`.
 - (4) `std/archive` natively (deflate, gzip, tar, zip).
 
 ## Consequences
