@@ -223,6 +223,36 @@ again (a bootstrap chain, recorded in toolchain.md).
   regression the live cross-check would have caught, and every output
   users or tests depend on produced by Xo.
 
+## Stage 3 results (2026-10-12)
+
+The semantic tools are in Xo in selfhost/cli/semantic (4,852 lines):
+`xo query` (type, def, callers, effects, holes, api, imports, deps,
+hash), `xo edit` (rename, add-field, change-sig, atomic through temporary
+files and renames, rejected unless the edited program checks clean), the
+definition hashes of decision 0125 (defhash.xo), and internal/release
+(release.xo: the API diff and `xo publish`'s comparison, for stage 4's
+`publish` command to call). xo1 hands `query` and `edit` to it; `doc`
+(with `--json`) is stage 2's (selfhost/cli/core/doc.xo), and signatures
+come from stage 2's formatter. selfhost/check gained the effect call
+chains of Info.Performed, the xo.mod and version helpers, and an
+overlay; holes (XO0900) and the workspace directories came from stage 2.
+
+- Definition hashes: TestSelfhostDefhash compares the JSON of every
+  definition (IDs, own and deep hashes, references, files, lines) with
+  internal/defhash on every module of bench/, the check, gen, and arm64
+  testdata, selfhost/, std/, and examples/: **270 of 270 modules (13,662
+  definitions) byte identical**.
+- cmd/xo's tests against xo1 (`XO_CLI=xo1`, `XO_STD=<repo>/std`,
+  `-short`): TestQueryCLI, TestEditCLI (6 of 6 cases), and TestDocCLI
+  pass; **3 of the 5 tests that drive these commands pass**.
+  TestQueryHashAndPublish passes its `query hash` steps and stops at
+  `xo publish` (stage 4's command), TestModules at `check` of a module
+  with requirements before it reaches `query`, `doc`, and `edit` (stage
+  4).
+- The same commands run by both binaries on the cmd/xo test programs
+  (stdout, stderr, exit status, and the files after an edit):
+  **37 of 37 byte identical** (bench/results/retire-go-2026-10-12.md).
+
 ## Consequences
 
 - Until switch point B every language change is still made twice

@@ -12,10 +12,13 @@ pub fn (c: Checker) mod_root_dir(dir: Str) -> Str uses fs.read {
     if c.exists(join(d, "xo.mod")) {
       return d
     }
-    if d == "/" {
+    // parent_dir, not parent: parent("/a") is "", and parent climbs
+    // from "" through "." to "../.." forever
+    let p = parent_dir(d)
+    if d == "/" || p == d {
       return ""
     }
-    d = parent(d)
+    d = p
   }
   ""
 }
