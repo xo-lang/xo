@@ -106,3 +106,23 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// Split builds of tests (decision 0168): the module count and job bound
+// EnableTestLLVMSplit sets when the environment names none.
+const (
+	testSplitModules = "12"
+	testSplitJobs    = "4"
+)
+
+// EnableTestLLVMSplit makes the LLVM builds of a test process split
+// (XO_LLVM_SPLIT, XO_LLVM_JOBS) unless the environment already sets
+// them: the self hosted compiler's tests build programs of hundreds of
+// MB of IR whose single module compile takes over half an hour.
+func EnableTestLLVMSplit() {
+	if _, ok := os.LookupEnv("XO_LLVM_SPLIT"); !ok {
+		os.Setenv("XO_LLVM_SPLIT", testSplitModules)
+	}
+	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
+		os.Setenv("XO_LLVM_JOBS", testSplitJobs)
+	}
+}
