@@ -605,6 +605,20 @@ test "a linked executable loads glibc and binds versioned imports" {
   expect(has(exe, "libc.so.6")) == true
 }
 
+test "stat, fstat, and lstat call glibc's __xstat family, as libc_nonshared.a does" {
+  let main = "\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tstp x29, x30, [sp, #-16]!\n\tbl stat\n\tbl fstat\n\tbl lstat\n\tmov x0, #0\n\tldp x29, x30, [sp], #16\n\tret\n"
+  let obj = assemble_elf(main.bytes()).or_fault("assemble")
+  let exe = match link_elf([LinkInput{path: "main.o", data: obj}], ElfLinkOpts{}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(has(exe, "__xstat")) == true
+  expect(has(exe, "__fxstat")) == true
+  expect(has(exe, "__lxstat")) == true
+  expect(nonshared("stat")) == Some("\t.globl stat\n\t.p2align 2\n\t.type stat, %function\nstat:\n\tmov x2, x1\n\tmov x1, x0\n\tmov w0, #0\n\tb __xstat\n")
+  expect(nonshared("puts")) == None
+}
+
 /// b holds the bytes of s.
 fn has(b: Bytes, s: Str) -> Bool {
   let n = s.bytes()
