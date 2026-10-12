@@ -1,0 +1,424 @@
+// Tests of the assembler. The comparison with the system assembler on
+// every arm64 golden and on xo1's own assembly is scripts/macho-compare.py
+// (decision 0182).
+
+/// The first word of __text of src assembled.
+fn first_word(src: Str) -> Int {
+  match assemble(src.bytes()) {
+    Ok(obj) => {
+      // __text is the first section of the one segment
+      let off = rd32(obj, 32 + 72 + 48)
+      rd32(obj, off)
+    }
+    Err(e) => fault("does not assemble: ${e}")
+  }
+}
+
+/// Every instruction shape of the arm64 goldens and of xo1's assembly,
+/// and edge cases (aliases, immediates, offsets), with the word `cc -c`
+/// (clang -cc1as, Apple clang 21) encodes. A label operand L is the next
+/// instruction.
+const ENCODINGS: List[(Str, Int)] = [
+  ("add sp, sp, #64", 0x910103ff),
+  ("add sp, sp, #8, lsl #12", 0x914023ff),
+  ("add x3, sp, #16", 0x910043e3),
+  ("add x28, sp, #8, lsl #12", 0x914023fc),
+  ("add x11, x11, #1", 0x9100056b),
+  ("add x9, x0, #8, lsl #12", 0x91402009),
+  ("add x9, x9, x7", 0x8b070129),
+  ("add x10, x2, x2, lsl #1", 0x8b02044a),
+  ("add x9, x10, x9, lsr #52", 0x8b49d149),
+  ("adds x2, x10, #1", 0xb1000542),
+  ("adds x10, x2, x9", 0xab09004a),
+  ("adr x16, L", 0x10000030),
+  ("and x12, x9, #2147483647", 0x9240792c),
+  ("and x11, x9, x13", 0x8a0d012b),
+  ("asr x10, x11, #4", 0x9344fd6a),
+  ("asr x9, x12, x10", 0x9aca2989),
+  ("b L", 0x14000001),
+  ("b.eq L", 0x54000020),
+  ("b.ge L", 0x5400002a),
+  ("b.gt L", 0x5400002c),
+  ("b.hi L", 0x54000028),
+  ("b.hs L", 0x54000022),
+  ("b.le L", 0x5400002d),
+  ("b.lo L", 0x54000023),
+  ("b.lt L", 0x5400002b),
+  ("b.ne L", 0x54000021),
+  ("b.pl L", 0x54000025),
+  ("b.vs L", 0x54000026),
+  ("bl L", 0x94000001),
+  ("blr x0", 0xd63f0000),
+  ("br x16", 0xd61f0200),
+  ("brk #1", 0xd4200020),
+  ("cbnz x10, L", 0xb500002a),
+  ("cbz w0, L", 0x34000020),
+  ("cbz x9, L", 0xb4000029),
+  ("ccmn x1, #1, #0, eq", 0xba410820),
+  ("cmn x1, #1", 0xb100043f),
+  ("cmp w0, #0", 0x7100001f),
+  ("cmp x12, #1000", 0xf10fa19f),
+  ("cmp x11, x19", 0xeb13017f),
+  ("cmp x9, x10, asr #63", 0xeb8afd3f),
+  ("cneg x0, x10, lt", 0xda8aa540),
+  ("csel x9, x10, x9, eq", 0x9a890149),
+  ("csel x20, x20, x9, gt", 0x9a89c294),
+  ("csel x19, x19, x9, lt", 0x9a89b273),
+  ("csel x21, x10, x9, ne", 0x9a891155),
+  ("cset x24, eq", 0x9a9f17f8),
+  ("cset x9, ge", 0x9a9fb7e9),
+  ("cset x9, gt", 0x9a9fd7e9),
+  ("cset x9, hi", 0x9a9f97e9),
+  ("cset x9, hs", 0x9a9f37e9),
+  ("cset x10, le", 0x9a9fc7ea),
+  ("cset x9, ls", 0x9a9f87e9),
+  ("cset x9, lt", 0x9a9fa7e9),
+  ("cset x9, mi", 0x9a9f57e9),
+  ("cset x9, ne", 0x9a9f07e9),
+  ("cset x9, vs", 0x9a9f77e9),
+  ("eor x9, x9, #1", 0xd2400129),
+  ("eor x9, x10, x9", 0xca090149),
+  ("fabs d0, d16", 0x1e60c200),
+  ("fadd d16, d16, d17", 0x1e712a10),
+  ("fccmp d16, d17, #0, vc", 0x1e717600),
+  ("fcmp d16, #0.0", 0x1e602208),
+  ("fcmp d16, d16", 0x1e702200),
+  ("fcsel d0, d16, d17, lt", 0x1e71be00),
+  ("fcsel d17, d16, d17, mi", 0x1e714e11),
+  ("fcvtzs x2, d17", 0x9e780222),
+  ("fdiv d11, d9, d9", 0x1e69192b),
+  ("fmov d0, d8", 0x1e604100),
+  ("fmov d9, x9", 0x9e670129),
+  ("fmov d8, xzr", 0x9e6703e8),
+  ("fmov x0, d11", 0x9e660160),
+  ("fmul d8, d16, d9", 0x1e690a08),
+  ("fneg d14, d13", 0x1e6141ae),
+  ("frinta d0, d11", 0x1e664160),
+  ("frintm d0, d12", 0x1e654180),
+  ("frintp d0, d12", 0x1e64c180),
+  ("frintz d17, d8", 0x1e65c111),
+  ("fsqrt d0, d16", 0x1e61c200),
+  ("fsub d0, d10, d8", 0x1e683940),
+  ("ldaddal x1, x1, [x0]", 0xf8e10001),
+  ("ldp d9, d8, [sp, #72]", 0x6d44a3e9),
+  ("ldp x20, x19, [sp, #24]", 0xa941cff4),
+  ("ldp x29, x30, [sp]", 0xa9407bfd),
+  ("ldp x29, x30, [sp], #64", 0xa8c47bfd),
+  ("ldp x14, x12, [x10, #24]", 0xa941b14e),
+  ("ldr d8, [sp, #80]", 0xfd402be8),
+  ("ldr d8, [x9, #40]", 0xfd401528),
+  ("ldr x1, [sp, #16]", 0xf9400be1),
+  ("ldr x20, [x24, #8]", 0xf9400714),
+  ("ldr x1, [x0]", 0xf9400001),
+  ("ldrb w9, [x9, #24]", 0x39406129),
+  ("ldrb w9, [x9, x11]", 0x386b6929),
+  ("ldrsw x17, [x16, x2, lsl #2]", 0xb8a27a11),
+  ("lsl x11, x10, #1", 0xd37ff94b),
+  ("lsl x12, x11, x10", 0x9aca216c),
+  ("madd x9, x20, x9, x19", 0x9b094e89),
+  ("mov x11, #0", 0xd280000b),
+  ("mov x29, sp", 0x910003fd),
+  ("mov x2, x11", 0xaa0b03e2),
+  ("mov x9, xzr", 0xaa1f03e9),
+  ("movk x19, #1, lsl #16", 0xf2a00033),
+  ("movn x12, #32768, lsl #48", 0x92f0000c),
+  ("movz x19, #34464, lsl #0", 0xd290d413),
+  ("msub x9, x9, x8, x12", 0x9b08b129),
+  ("mul x9, x12, x6", 0x9b067d89),
+  ("mvn x2, x25", 0xaa3903e2),
+  ("neg x1, x1", 0xcb0103e1),
+  ("negs x11, x9", 0xeb0903eb),
+  ("orr x16, x16, x9", 0xaa090210),
+  ("ret", 0xd65f03c0),
+  ("scvtf d16, x19", 0x9e620270),
+  ("sdiv x9, x12, x8", 0x9ac80d89),
+  ("smulh x9, x2, x12", 0x9b4c7c49),
+  ("stadd x17, [x24]", 0xf831031f),
+  ("stp d9, d8, [sp, #72]", 0x6d04a3e9),
+  ("stp x20, x19, [sp, #24]", 0xa901cff4),
+  ("stp x29, x30, [sp, #-64]!", 0xa9bc7bfd),
+  ("stp x29, x30, [sp]", 0xa9007bfd),
+  ("str d8, [sp, #80]", 0xfd002be8),
+  ("str d8, [x9, #40]", 0xfd001528),
+  ("str x25, [sp, #72]", 0xf90027f9),
+  ("str x22, [x9, #24]", 0xf9000d36),
+  ("str x1, [x0]", 0xf9000001),
+  ("str xzr, [sp, #224]", 0xf90073ff),
+  ("str xzr, [sp]", 0xf90003ff),
+  ("str xzr, [x9, #24]", 0xf9000d3f),
+  ("strb w28, [x9, #24]", 0x3900613c),
+  ("strb wzr, [x9, #24]", 0x3900613f),
+  ("sub sp, sp, #64", 0xd10103ff),
+  ("sub sp, sp, #1, lsl #12", 0xd14007ff),
+  ("sub x10, x9, #17", 0xd100452a),
+  ("sub x11, x10, x9", 0xcb09014b),
+  ("subs x13, x16, #1", 0xf100060d),
+  ("subs x9, x11, x9", 0xeb090169),
+  ("tbnz x9, #63, L", 0xb7f80029),
+  ("tbz x1, #62, L", 0xb6f00021),
+  ("tst x9, #3", 0xf240053f),
+  ("add sp, sp, #2432", 0x912603ff),
+  ("add sp, sp, #3, lsl #12", 0x91400fff),
+  ("add x4, sp, #3392", 0x913503e4),
+  ("add x29, sp, #3, lsl #12", 0x91400ffd),
+  ("add x29, x29, #2416", 0x9125c3bd),
+  ("add x9, x19, #1, lsl #12", 0x91400669),
+  ("add x19, x1, x16", 0x8b100033),
+  ("add x9, x16, x9, lsl #4", 0x8b091209),
+  ("add x9, x10, x10, lsr #63", 0x8b4afd49),
+  ("adds x23, x23, #1", 0xb10006f7),
+  ("adds x16, x11, x9", 0xab090170),
+  ("adr x16, L", 0x10000030),
+  ("and x9, x9, #7", 0x92400929),
+  ("and x19, x7, x21", 0x8a1500f3),
+  ("asr x2, x9, #10", 0x934afd22),
+  ("asr x9, x10, x9", 0x9ac92949),
+  ("b L", 0x14000001),
+  ("b.eq L", 0x54000020),
+  ("b.ge L", 0x5400002a),
+  ("b.gt L", 0x5400002c),
+  ("b.hi L", 0x54000028),
+  ("b.hs L", 0x54000022),
+  ("b.le L", 0x5400002d),
+  ("b.lo L", 0x54000023),
+  ("b.ls L", 0x54000029),
+  ("b.lt L", 0x5400002b),
+  ("b.mi L", 0x54000024),
+  ("b.ne L", 0x54000021),
+  ("b.pl L", 0x54000025),
+  ("b.vs L", 0x54000026),
+  ("bl L", 0x94000001),
+  ("cbnz x9, L", 0xb5000029),
+  ("cbz w0, L", 0x34000020),
+  ("cbz x9, L", 0xb4000029),
+  ("ccmn x22, #1, #0, eq", 0xba410ac0),
+  ("cmn x17, #1", 0xb100063f),
+  ("cmp x28, #0", 0xf100039f),
+  ("cmp x9, x28", 0xeb1c013f),
+  ("cmp x9, x11, asr #63", 0xeb8bfd3f),
+  ("csel x16, x9, x10, gt", 0x9a8ac130),
+  ("csel x10, x9, x10, lt", 0x9a8ab12a),
+  ("csel x19, x10, x9, ne", 0x9a891153),
+  ("cset x9, eq", 0x9a9f17e9),
+  ("cset x9, le", 0x9a9fc7e9),
+  ("cset x14, mi", 0x9a9f57ee),
+  ("fadd d16, d16, d8", 0x1e682a10),
+  ("fccmp d17, d16, #0, vc", 0x1e707620),
+  ("fcmp d17, #0.0", 0x1e602228),
+  ("fcmp d17, d17", 0x1e712220),
+  ("fcvtzs x0, d18", 0x9e780240),
+  ("fdiv d16, d17, d16", 0x1e701a30),
+  ("fmov d8, d0", 0x1e604008),
+  ("fmov d8, x10", 0x9e670148),
+  ("fmov d16, xzr", 0x9e6703f0),
+  ("fmov x19, d16", 0x9e660213),
+  ("fmul d8, d8, d16", 0x1e700908),
+  ("fneg d0, d0", 0x1e614000),
+  ("frintz d18, d17", 0x1e65c232),
+  ("fsub d17, d16, d18", 0x1e723a11),
+  ("ldaddal x17, x17, [x19]", 0xf8f10271),
+  ("ldp x9, x17, [sp, #88]", 0xa945c7e9),
+  ("ldp x29, x30, [sp], #128", 0xa8c87bfd),
+  ("ldp x20, x19, [x9, #24]", 0xa941cd34),
+  ("ldr d8, [sp, #2328]", 0xfd448fe8),
+  ("ldr d16, [x9, #24]", 0xfd400d30),
+  ("ldr x0, [sp, #5168]", 0xf94a1be0),
+  ("ldr x28, [x16, #8]", 0xf940061c),
+  ("ldr x9, [x20]", 0xf9400289),
+  ("ldrb w9, [x9, x3]", 0x38636929),
+  ("lsl x9, x16, #1", 0xd37ffa09),
+  ("lsl x11, x24, x9", 0x9ac9230b),
+  ("mov x9, #1", 0xd2800029),
+  ("mov x1, x19", 0xaa1303e1),
+  ("mov x1, xzr", 0xaa1f03e1),
+  ("movk x14, #32586, lsl #16", 0xf2afe94e),
+  ("movn x9, #32768, lsl #48", 0x92f00009),
+  ("movz x14, #31765, lsl #0", 0xd28f82ae),
+  ("msub x9, x9, x25, x11", 0x9b19ad29),
+  ("mul x10, x9, x14", 0x9b0e7d2a),
+  ("mvn x9, x19", 0xaa3303e9),
+  ("neg x15, x9", 0xcb0903ef),
+  ("negs x16, x9", 0xeb0903f0),
+  ("orr x9, x10, x9", 0xaa090149),
+  ("scvtf d16, x9", 0x9e620130),
+  ("sdiv x10, x27, x22", 0x9ad60f6a),
+  ("smulh x9, x22, x10", 0x9b4a7ec9),
+  ("stadd x17, [x20]", 0xf831029f),
+  ("stp x20, x19, [sp, #40]", 0xa902cff4),
+  ("stp x29, x30, [sp, #-128]!", 0xa9b87bfd),
+  ("str d8, [sp, #2328]", 0xfd048fe8),
+  ("str d8, [x9, #24]", 0xfd000d28),
+  ("str x29, [sp, #14704]", 0xf91cbbfd),
+  ("str x9, [x20]", 0xf9000289),
+  ("str xzr, [sp, #3424]", 0xf906b3ff),
+  ("str xzr, [x9, #64]", 0xf900213f),
+  ("sub sp, sp, #2432", 0xd12603ff),
+  ("sub x9, x19, #1", 0xd1000669),
+  ("sub x15, x23, x17", 0xcb1102ef),
+  ("subs x19, x22, #1", 0xf10006d3),
+  ("subs x3, x20, x19", 0xeb130283),
+  ("tbnz x9, #62, L", 0xb7f00029),
+  ("tbz x9, #63, L", 0xb6f80029),
+  ("tst x23, #7", 0xf2400aff),
+  ("mov x0, #-1", 0x92800000),
+  ("mov x0, #65535", 0xd29fffe0),
+  ("mov x0, #-65536", 0x929fffe0),
+  ("mov x0, #0x10000", 0xd2a00020),
+  ("mov x0, #-2", 0x92800020),
+  ("mov x9, #4096", 0xd2820009),
+  ("mov w0, #5", 0x528000a0),
+  ("and x0, x1, #0xff00", 0x92781c20),
+  ("eor x0, x0, #0x5555555555555555", 0xd200f000),
+  ("tst x1, #0xf0", 0xf27c0c3f),
+  ("orr x2, x3, #0x8000000000000000", 0xb2410062),
+  ("add x0, x1, #4096", 0x91400420),
+  ("add x0, x1, #-8", 0xd1002020),
+  ("sub x0, x1, #-8", 0x91002020),
+  ("cmp x0, #-1", 0xb100041f),
+  ("cmn x0, #4095", 0xb13ffc1f),
+  ("add x0, sp, x1", 0x8b2163e0),
+  ("ldr x0, [x1, #-8]", 0xf85f8020),
+  ("ldr x0, [x1, #4]", 0xf8404020),
+  ("str x0, [sp, #32760]", 0xf93fffe0),
+  ("ldur x0, [x1, #8]", 0xf8408020),
+  ("ldr d0, [x1, #-16]", 0xfc5f0020),
+  ("ldrb w0, [x1, #4095]", 0x397ffc20),
+  ("strb w0, [x1, #-1]", 0x381ff020),
+  ("ldp x0, x1, [sp, #-512]", 0xa96007e0),
+  ("stp x0, x1, [sp, #504]", 0xa91f87e0),
+  ("stp d8, d9, [sp, #-16]!", 0x6dbf27e8),
+  ("ldp d8, d9, [sp], #16", 0x6cc127e8),
+  ("ldr x0, [x1, #8]!", 0xf8408c20),
+  ("str x0, [x1], #-8", 0xf81f8420),
+  ("b.ls L", 0x54000029),
+  ("b.mi L", 0x54000024),
+  ("b.vc L", 0x54000027),
+  ("b.al L", 0x5400002e),
+  ("nop", 0xd503201f),
+  ("ret x1", 0xd65f0020),
+  ("brk #0xf000", 0xd43e0000),
+  ("lsr x0, x1, #3", 0xd343fc20),
+  ("lsr x0, x1, x2", 0x9ac22420),
+  ("ror x0, x1, #7", 0x93c11c20),
+  ("asr x0, x1, #63", 0x937ffc20),
+  ("lsl x0, x1, #63", 0xd3410020),
+  ("udiv x0, x1, x2", 0x9ac20820),
+  ("umulh x0, x1, x2", 0x9bc27c20),
+  ("csinc x0, x1, x2, ge", 0x9a82a420),
+  ("cinc x0, x1, eq", 0x9a811420),
+  ("csetm x0, lt", 0xda9fa3e0),
+  ("ccmp x0, x1, #4, ne", 0xfa411004),
+  ("ccmp x0, #3, #0, hi", 0xfa438800),
+  ("fcmpe d0, d1", 0x1e612010),
+  ("fsub d1, d2, d3", 0x1e633841),
+  ("frintn d0, d1", 0x1e644020),
+  ("ucvtf d0, x1", 0x9e630020),
+  ("fcvtzu x0, d1", 0x9e790020),
+  ("scvtf d0, w1", 0x1e620020),
+  ("ldadd x0, x1, [x2]", 0xf8200041),
+  ("staddl x0, [x1]", 0xf860003f),
+  ("ldadda x0, x1, [sp]", 0xf8a003e1),
+  ("mvn x0, x1", 0xaa2103e0),
+  ("bic x0, x1, x2", 0x8a220020),
+  ("orn x0, x1, x2, lsl #3", 0xaa220c20),
+  ("eor x0, x1, x2, asr #2", 0xca820820),
+  ("neg x0, x1, lsl #2", 0xcb010be0),
+  ("cmp w0, w1", 0x6b01001f),
+  ("cbnz w3, L", 0x35000023),
+  ("tbz w3, #3, L", 0x36180023),
+  ("tbnz x3, #40, L", 0xb7400023),
+  ("movk x0, #0xffff, lsl #48", 0xf2ffffe0),
+  ("movz w0, #1, lsl #16", 0x52a00020),
+  ("movn x0, #0", 0x92800000),
+  ("add w0, w1, w2", 0x0b020020),
+  ("sub w0, w1, #1", 0x51000420),
+  ("mul w0, w1, w2", 0x1b027c20),
+  ("ldr w0, [x1, #4]", 0xb9400420),
+  ("str w0, [x1]", 0xb9000020),
+  ("ldrh w0, [x1, #2]", 0x79400420),
+  ("strh w0, [x1]", 0x79000020),
+  ("ldrb w0, [x1, x2, lsl #0]", 0x38627820),
+  ("ldr x0, [x1, x2, lsl #3]", 0xf8627820),
+  ("ldr x0, [x1, x2]", 0xf8626820),
+  ("fmov d0, d1", 0x1e604020),
+  ("fabs d0, d1", 0x1e60c020),
+]
+
+test "every instruction encodes as the system assembler encodes it" {
+  var bad: List[Str] = []
+  for (ins, want) in ENCODINGS {
+    let got = first_word("\t${ins}\nL:\n")
+    if got != want {
+      bad.push("${ins}: got ${hex32(got)}, want ${hex32(want)}")
+    }
+  }
+  expect(bad) == []
+}
+
+fn hex32(v: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var s = ""
+  for i in 0..8 {
+    let d = (v >> (4 * (7 - i))) & 15
+    s = s + digits[d..d + 1]
+  }
+  s
+}
+
+test "logical immediates" {
+  expect(logical_imm(0xff, 64)) == Some(0x1007)
+  expect(logical_imm(1, 64)) == Some(0x1000)
+  expect(logical_imm(0x5555555555555555, 64)) == Some(0x3c)
+  expect(logical_imm(0, 64)) == None
+  expect(logical_imm(-1, 64)) == None
+  expect(logical_imm(5, 64)) == None
+  expect(logical_imm(0xffff, 32)) == Some(0xf)
+}
+
+test "integers parse in decimal and hex, to the 64 bit extremes" {
+  expect(parse_int("-9223372036854775808".bytes())) == Some(MIN_INT)
+  expect(parse_int("9223372036854775807".bytes())) == Some(9223372036854775807)
+  expect(parse_int("9223372036854775808".bytes())) == None
+  expect(parse_int("0xff".bytes())) == Some(255)
+  expect(parse_int("-0x10".bytes())) == Some(-16)
+  expect(parse_int("12a".bytes())) == None
+}
+
+test "a frame with lr and fp at its base is compact, the emitter's frames are DWARF" {
+  let leaf = "_f:\n\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n"
+  var a = Asm{}
+  a.parse(leaf.bytes())
+  expect(a.err) == ""
+  expect(a.compact_encoding(a.frames[0])) == UNWIND_ARM64_MODE_FRAME
+  let xo = "_g:\n\t.cfi_startproc\n\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n\t.cfi_def_cfa w29, 32\n\t.cfi_offset w29, -32\n\t.cfi_offset w30, -24\n\t.cfi_offset w20, -16\n\t.cfi_offset w19, -8\n\tret\n\t.cfi_endproc\n"
+  var b = Asm{}
+  b.parse(xo.bytes())
+  expect(b.compact_encoding(b.frames[0])) == UNWIND_ARM64_MODE_DWARF
+  // callee saved pairs below fp and lr, as LLVM writes them
+  let pairs = "_h:\n\t.cfi_startproc\n\t.cfi_def_cfa w29, 32\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n\t.cfi_offset w19, -24\n\t.cfi_offset w20, -32\n\tret\n\t.cfi_endproc\n"
+  var c = Asm{}
+  c.parse(pairs.bytes())
+  expect(c.compact_encoding(c.frames[0])) == UNWIND_ARM64_MODE_FRAME + 1
+}
+
+test "ULEB128 differences settle and branches resolve" {
+  let src = "_f:\n\tb L2\nL1:\n\tnop\nL2:\n\tret\n\t.section __TEXT,__gcc_except_tab\n\t.uleb128 L2-L1\n\t.uleb128 Le-Ls\nLs:\n\t.ascii \"${"a".repeat(136)}\"\nLe:\n"
+  var a = Asm{}
+  a.parse(src.bytes())
+  a.finish()
+  expect(a.err) == ""
+  // b L2: two words ahead
+  expect(a.sects[0].words[0]) == 0x14000002
+  // 4, then 136 as two bytes, then the string
+  let t = a.sects[1].bytes
+  expect(Int(t[0])) == 4
+  expect(Int(t[1])) == 0x88
+  expect(Int(t[2])) == 1
+  expect(t.len()) == 3 + 136
+}
+
+test "errors name the line" {
+  expect(assemble("\tnop\n\tfrobnicate x0\n".bytes())) == Err("line 2: unsupported instruction: frobnicate x0")
+  expect(assemble("\tb Lnowhere\n".bytes())) == Err("Lnowhere is used but not defined")
+  expect(assemble("\tadd x0, x1, #5000\n".bytes())) == Err("line 1: unsupported instruction: add x0, x1, #5000")
+}

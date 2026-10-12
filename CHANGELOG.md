@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
+  emitter's assembly into the same object `cc -c` writes (every section,
+  function, and relocation identical on the 158 arm64 goldens and on
+  xo1's own assembly; all 158 golden objects byte identical), 6.8 times
+  faster; `xo1 build --as=macho` uses it. Its linker links the objects
+  with a prebuilt runtime pack into a signed executable, so `xo1 build
+  --ld=macho` needs no C compiler at all for programs without `use c`
+  sources (decision 0182).
 - A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
   0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
   assembles it with an assembler written in Xo, and links a runtime of
@@ -21,6 +29,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cooperative scheduler (a waiting task's wasm stack is unwound and
   rewound); `rand` uses WASI `random_get`: 113 of the 134 LLVM goldens
   pass, and the network fails the build with a clear error.
+- The self hosted driver xo1 (`selfhost/xo`, not the released `xo`)
+  builds with the LLVM backend (`--backend=llvm`), runs Go backend tests
+  (`xo1 test --backend=go`), and builds `use go` programs on the Go
+  backend; every golden suite passes through it (decision 0178, which
+  proposes the plan for retiring the Go implementation). The Go code
+  generator no longer imports a module's package that the generated
+  text does not name (go build failed with "imported and not used" on
+  selfhost/xo).
 - Native builds (arm64, LLVM, `--no-gc`): the Unicode operations of the
   runtime are written in Xo (decision 0180, the runtime pilot):
   `std/native/llrt/unicode.xo` with generated tables

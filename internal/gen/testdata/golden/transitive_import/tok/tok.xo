@@ -1,0 +1,19 @@
+pub struct Tok {
+  pub n: Int
+  pub text: Str
+}
+
+pub enum Kind {
+  Word
+  Num(v: Int)
+}
+
+pub struct Pos {
+  pub line: Int = 0
+  pub col: Int = 0
+}
+
+pub struct Span {
+  pub start: Pos = Pos{}
+  pub end: Pos = Pos{}
+}
