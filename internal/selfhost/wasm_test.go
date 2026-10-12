@@ -13,9 +13,9 @@ import (
 )
 
 // wasmMinPass is the number of LLVM goldens the WebAssembly backend must
-// run correctly (stage 2 of decision 0179: 113 of 134; raise it as
+// run correctly (stage 2 of decision 0179: 116 of 134; raise it as
 // stages land).
-const wasmMinPass = 113
+const wasmMinPass = 116
 
 // TestSelfhostWasm is stages 1 and 2 of decision 0179: selfhost/wasm (built
 // with the go backend) lowers every golden program of

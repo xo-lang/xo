@@ -179,7 +179,9 @@ with std/llrt's semantics (`selfhost/wasm/rt2.xo`): `str_byte`,
 `bytes_span`, `rs_append_bytes`, `rs_append`, `rune_is_space`,
 `utf8_valid`, `bytes_decode`, `bytes_rune_count`, `int_parse_ok` and
 `int_parse`, `str_of_byte`, `str_replace`, base64 (`b64_encode`,
-`b64_ok`, `b64_decode`), and `duration_parse_ok`/`duration_parse`.
+`b64_ok`, `b64_decode`), `duration_parse_ok`/`duration_parse`, hex decoding
+(`bytes_hex_ok`, `bytes_from_hex`), and the text of a Time
+(`rs_append_time`).
 Figures: `bench/results/wasm-2026-10-12.md`, "Stage 2".
 
 **Tasks without threads (the old stage 5, moved here).** Scopes,
