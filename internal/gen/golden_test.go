@@ -255,7 +255,7 @@ func skipOffline(t *testing.T, dir string) {
 	goModOnce.Do(func() {
 		cmd := exec.Command("go", "mod", "download", "github.com/google/uuid@v1.6.0")
 		cmd.Dir = os.TempDir()
-		cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GO111MODULE=on")
+		cmd.Env = append(goVetEnv(), "GOFLAGS=-mod=mod", "GO111MODULE=on")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			goModErr = fmt.Errorf("%v: %s", err, out)
 		}

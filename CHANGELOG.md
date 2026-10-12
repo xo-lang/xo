@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Go versions (decision 0176): the Go backend needs Go 1.24 or newer
+  (std/rt uses crypto/pbkdf2, maphash.Comparable, http.Protocols);
+  `xo build`, `xo run`, and `xo test` read `go env GOVERSION` once per
+  process and report the new XO1502 for an older go command. The
+  generated go.mod and the `use go` binding workspace get
+  `go <min(installed, 1.26)>` instead of a fixed `go 1.26`, so an older
+  Go is never made to download a newer one. New
+  `scripts/go-version-check.sh` runs the version sensitive tests with
+  `GOTOOLCHAIN=goX.Y` (no download without `--download`). Every go
+  command the tests run uses Xo's capped Go cache (`build.GoEnv`), held
+  by the new TestGoCommandsUseXoCache; `go build` in reducediff_test and
+  `go tool objdump` in internal/arm64 used the default cache.
 - The LLVM emitter in Xo (decision 0166, stages 1 to 3):
   `selfhost/llvm` lowers the self hosted SSA module to the LLVM IR
   internal/llvm prints, compared function by function and module by

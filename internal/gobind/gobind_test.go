@@ -3,9 +3,12 @@ package gobind
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 func TestSnake(t *testing.T) {
@@ -143,4 +146,32 @@ func grep(s, sub string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestWorkspaceGoLine: the binding workspace's go.mod takes its `go`
+// line from the installed go command (a fake one here), never above
+// gotool.TestedGo, so the go command is not asked for a newer Go than
+// itself (decision 0176).
+func TestWorkspaceGoLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go command is a shell script")
+	}
+	t.Setenv("XO_GO_LINE", "")
+	for version, want := range map[string]string{"go1.25.3": "1.25", "go1.99.1": gotool.TestedGo, "go" + gotool.TestedGo + ".0": gotool.TestedGo} {
+		bin := t.TempDir()
+		fake := filepath.Join(bin, "go")
+		os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = env ] && [ \"$2\" = GOVERSION ]; then echo "+version+"; exit 0; fi\nexit 2\n"), 0o755)
+		t.Setenv("XO_GO", fake)
+		dir := t.TempDir()
+		if err := ensureWorkspace(dir); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(workDir(dir), "go.mod"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "\ngo "+want+"\n") {
+			t.Errorf("%s: go.mod\n%s\nwant go %s", version, data, want)
+		}
+	}
 }
