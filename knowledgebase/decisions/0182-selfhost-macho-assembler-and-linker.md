@@ -192,7 +192,13 @@ Stage 3 results (bench/results/macho-2026-10-12.md, "Stage 3"):
 - Executables: all 159 goldens, linked by `macho elflink` with the pack,
   pass in debian:bullseye (glibc 2.31) and debian:trixie-slim (glibc
   2.41) containers with no C compiler, assembler, or linker.
-  XO1_RESULTS_PLACEHOLDER
+  xo1 (built at commit cf9ab7e) with `--target=linux/arm64 --ld=macho`
+  built all 159 goldens on the Mac with no cc; 133 binaries are byte
+  identical to the ones that passed in both containers. The other 26 were
+  not run: Docker stopped during that run (it was not restarted), and
+  they differ from the harness's because its `xo asmdump .` names the
+  package `.` (strings, symbols, and for two programs the frames), not
+  because of the linker.
 - The binaries are 11 and 6 percent smaller than gcc 14's for the same
   objects (not PIE); a `.symtab` names the functions and objects.
 
