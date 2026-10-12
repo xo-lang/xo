@@ -1,8 +1,9 @@
 # 0172: The command line tool std on the native backends
 
 Status: Accepted (2026-10-11), in progress: (1) commands, children,
-pipelines, and attenuation are implemented natively; (2) to (4) are
-listed under "What is left".
+pipelines, and attenuation, and (2) file handles, links, globs, and
+locks are implemented natively; the rest is listed under "What is
+left".
 
 ## Context
 
@@ -67,10 +68,28 @@ Constraints:
    backend's. In test binaries FakeProc answers from `on_run` (output,
    the fake terminal for `run`, children reading the registered output,
    pipelines with pipefail).
-3. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
-   `read`, `read_err`, `read_line`, `wait`, `Proc.pipeline`) make the
+3. **Files.** The native prelude declares `struct File { h:
+   rt.FsFile, path, write }` and `struct FileLock { h: rt.FsLock }`
+   and implements every new `Fs` method as `fs_<name>` (fsCall), with
+   the state errors of std/rt fsfile.go (closed, the wrong direction) in
+   Xo and the system calls in `std/llrt/xo_fs.c` under `XO_FS`
+   (`xo_fs_open`, `xo_fs_file_*`, `xo_fs_copy`, `xo_fs_perm`,
+   `xo_fs_chmod`, `xo_fs_symlink`, `xo_fs_read_link`, `xo_fs_lock`,
+   `xo_fs_unlock`; internal/build IOFlags lists them). A read handle
+   buffers like Go's 64 KiB `bufio.Reader`: a read larger than the buffer
+   with nothing buffered goes to the file, else one fill and a copy, so
+   reads return the same sizes. `glob` is std/rt's fsGlob in Xo with Go's
+   `path.Match` ported (scanChunk, matchChunk, getEsc, and its "syntax
+   error in pattern"), over `read_dir` and `exists`, so sub capabilities
+   and attenuation apply. `lock` polls `flock(LOCK_EX|LOCK_NB)` every 10
+   ms on the event loop's timers (a cancellation point, status 8 is
+   Canceled); a lock handle dropped without `unlock` closes its
+   descriptor, which releases the lock (the Go backend keeps it until the
+   garbage collector closes the file).
+4. **Waiting operations** (`Cmd.output`, `run`, `spawn`, `Child.write`,
+   `read`, `read_err`, `read_line`, `wait`, `Proc.pipeline`, `Fs.lock`) make the
    program build with unwinding checks (nativeWaits, as `Proc.run`).
-4. **Cancellation** natively kills a command when the cancelled task
+5. **Cancellation** natively kills a command when the cancelled task
    waits on it, and that call is `Canceled`; the Go backend kills it at
    once (a goroutine per child) and its `wait` gives 137. A Child that is
    dropped without `wait` is reaped if it has exited, else left to the
@@ -80,13 +99,17 @@ Shared tests: the golden `proc_cmd` (internal/llvm/testdata/golden,
 also run by internal/arm64's TestGoldenRun) covers outputs, statuses,
 signals, directories, environments, `Env.only`, NotFound and Denied,
 `run` after the program's output, every `Child` operation, and
-pipelines; `internal/gen/testdata/golden/test_proc_cmd` runs in native
+pipelines; the golden `fs_files` covers line and size reads across the
+buffer, handle state errors, create and append, copy with modes,
+links (and escapes refused), globs with classes, `**`, hidden names, and
+bad patterns, and locks; `internal/gen/testdata/golden/test_proc_cmd` runs in native
 test binaries (cmd/xo TestNoGCTests) with the Go backend's report.
 
 ## What is left
 
-- (2) File handles, append, copy, modes, symlinks, glob with `**`, and
-  flock locks (decision 0163) natively.
+- The decision 0163 methods on a native test binary's MemFs
+  (`memfs_open` and the rest in std/native/testing.xo, std/rt
+  fsfile_mem.go's semantics; the glob can call the same Xo code).
 - (3) `std/regexp` natively, in Xo (an RE2 style matcher without
   backtracking), checked against the Go backend on a shared table.
 - (4) `std/archive` natively (deflate, gzip, tar, zip).

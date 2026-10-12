@@ -1559,6 +1559,13 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let key = "${rname}.${fname}"
   if rname == "Fs" {
     // fsCall: the function fs_<name> of the native prelude
+    if fname == "lock" {
+      // waits, polling on the event loop's timers (decision 0172)
+      b.need_conc = true
+      if !b.conc {
+        return Some(b.undef(b.nat_of(x)))
+      }
+    }
     let pm = b.native_mod("std/prelude")
     if pm >= 0 {
       let impl = b.member(pm, "fs_${b.obj_name(fo)}")

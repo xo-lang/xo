@@ -383,3 +383,473 @@ int64_t xo_time_ns(int64_t t) { return t; }
 // task is canceled and not in deferred code (std/rt Task.Canceled is
 // shield aware too).
 int64_t xo_fs_canceled(void) { return ctx_canceled(ctx()); }
+
+// ---------------------------------------------------------------------------
+// File handles, copies, modes, links, and locks (std.md 3.1, decisions
+// 0163 and 0172), as std/rt fsfile.go: std/native/prelude.xo resolves and
+// checks the paths and keeps the handle's state messages; the functions
+// here make the system calls. A read handle is buffered like Go's
+// bufio.Reader of 64 KiB (a read larger than the buffer goes to the file
+// when nothing is buffered).
+
+#include <sys/file.h>
+
+#define FS_BUF (64 << 10)
+
+typedef struct {
+	xo_hdr h;
+	int fd; // -1 once closed
+	char *buf;
+	int64_t r, w; // the buffered bytes are buf[r:w]
+	int eof;
+} xo_fsfile;
+
+static void fsfile_free(void *p) {
+	xo_fsfile *f = p;
+	if (f->fd >= 0) {
+		close(f->fd);
+	}
+	free(f->buf);
+	xo_free(f);
+}
+
+static xo_fsfile *fsfile_new(int fd) {
+	xo_fsfile *f = xo_alloc(sizeof(xo_fsfile));
+	memset(f, 0, sizeof *f);
+	h_init(f, fsfile_free);
+	f->fd = fd;
+	return f;
+}
+
+// xo_fs_open opens the OS path p: mode 0 for reading, 1 created or
+// truncated, 2 appended to (created if missing); the error names x.
+xo_fsfile *xo_fs_open(const char *p, int64_t n, int64_t mode, const char *x, int64_t xn) {
+	char *path = cstr_of(p, n);
+	int flags = O_RDONLY;
+	if (mode == 1) {
+		flags = O_WRONLY | O_CREAT | O_TRUNC;
+	} else if (mode == 2) {
+		flags = O_WRONLY | O_CREAT | O_APPEND;
+	}
+	int err = 0;
+	if (mode == 0) {
+		struct stat sb;
+		if (stat(n == 0 ? "." : path, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+			err = EISDIR;
+		}
+	}
+	int fd = -1;
+	if (!err) {
+		fd = open(n == 0 ? "." : path, flags | O_CLOEXEC, 0666);
+		if (fd < 0) {
+			err = errno;
+		}
+	}
+	free(path);
+	if (fd < 0) {
+		char *xp = cstr_of(x, xn);
+		fs_fail(err, xp);
+		free(xp);
+		return fsfile_new(-1);
+	}
+	fs_ok();
+	return fsfile_new(fd);
+}
+
+int64_t xo_fs_file_closed(xo_fsfile *f) { return f->fd < 0; }
+
+// fsfile_fill reads once into the empty buffer: the count, 0 at the end,
+// -errno.
+static int64_t fsfile_fill(xo_fsfile *f) {
+	if (!f->buf) {
+		f->buf = malloc(FS_BUF);
+		if (!f->buf) {
+			xo_oom();
+		}
+	}
+	f->r = f->w = 0;
+	for (;;) {
+		ssize_t k = read(f->fd, f->buf, FS_BUF);
+		if (k < 0 && errno == EINTR) {
+			continue;
+		}
+		if (k < 0) {
+			return -errno;
+		}
+		f->w = k;
+		return k;
+	}
+}
+
+// xo_fs_file_read is `f.read(max)` (max > 0): the bytes in a list of one,
+// or the empty list at the end with the status 0, or an error's status.
+xo_rlist *xo_fs_file_read(xo_fsfile *f, int64_t max, const char *x, int64_t xn) {
+	if (max > (1 << 20)) {
+		max = 1 << 20;
+	}
+	if (f->r == f->w) {
+		if (max >= FS_BUF) {
+			char *b = malloc((size_t)max);
+			if (!b) {
+				xo_oom();
+			}
+			ssize_t k;
+			do {
+				k = read(f->fd, b, (size_t)max);
+			} while (k < 0 && errno == EINTR);
+			if (k < 0) {
+				int e = errno;
+				free(b);
+				char *xp = cstr_of(x, xn);
+				fs_fail(e, xp);
+				free(xp);
+				return n_str_list_new(0);
+			}
+			fs_ok();
+			xo_rlist *l = n_str_list_new(1);
+			if (k > 0) {
+				l = n_str_list_add(l, b, k);
+			}
+			free(b);
+			return l;
+		}
+		int64_t k = fsfile_fill(f);
+		if (k < 0) {
+			char *xp = cstr_of(x, xn);
+			fs_fail((int)-k, xp);
+			free(xp);
+			return n_str_list_new(0);
+		}
+		if (k == 0) {
+			fs_ok();
+			return n_str_list_new(0);
+		}
+	}
+	int64_t k = f->w - f->r < max ? f->w - f->r : max;
+	xo_rlist *l = n_str_list_add(n_str_list_new(1), f->buf + f->r, k);
+	f->r += k;
+	fs_ok();
+	return l;
+}
+
+// xo_fs_file_read_line is `f.read_line()`: the line without \n or \r\n
+// in a list of one, or the empty list at the end (status 0) or on an
+// error.
+xo_rlist *xo_fs_file_read_line(xo_fsfile *f, const char *x, int64_t xn) {
+	nbuf line = {0};
+	for (;;) {
+		if (f->r == f->w) {
+			int64_t k = fsfile_fill(f);
+			if (k < 0) {
+				if (line.n > 0) {
+					break; // bufio: the partial line, the error on the next call
+				}
+				free(line.p);
+				char *xp = cstr_of(x, xn);
+				fs_fail((int)-k, xp);
+				free(xp);
+				return n_str_list_new(0);
+			}
+			if (k == 0) {
+				if (line.n == 0) {
+					fs_ok();
+					return n_str_list_new(0);
+				}
+				break;
+			}
+		}
+		char *s = f->buf + f->r;
+		char *nl = memchr(s, '\n', (size_t)(f->w - f->r));
+		if (nl) {
+			nbuf_put(&line, s, nl - s);
+			f->r += nl - s + 1;
+			break;
+		}
+		nbuf_put(&line, s, f->w - f->r);
+		f->r = f->w;
+	}
+	int64_t n = line.n;
+	if (n > 0 && line.p[n - 1] == '\r') {
+		n--;
+	}
+	xo_rlist *l = n_str_list_add(n_str_list_new(1), line.p ? line.p : "", n);
+	free(line.p);
+	fs_ok();
+	return l;
+}
+
+// xo_fs_file_write is `f.write(data)`: every byte, or an error's status.
+int64_t xo_fs_file_write(xo_fsfile *f, const char *p, int64_t n, const char *x, int64_t xn) {
+	int64_t off = 0;
+	while (off < n) {
+		ssize_t w = write(f->fd, p + off, (size_t)(n - off));
+		if (w < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			int e = errno;
+			char *xp = cstr_of(x, xn);
+			int64_t st = fs_fail(e, xp);
+			free(xp);
+			return st;
+		}
+		off += w;
+	}
+	return fs_ok();
+}
+
+// xo_fs_file_close closes f (a second close does nothing).
+int64_t xo_fs_file_close(xo_fsfile *f, const char *x, int64_t xn) {
+	if (f->fd < 0) {
+		return fs_ok();
+	}
+	int r = close(f->fd);
+	int e = errno;
+	f->fd = -1;
+	if (r != 0 && e != EINTR) {
+		char *xp = cstr_of(x, xn);
+		int64_t st = fs_fail(e, xp);
+		free(xp);
+		return st;
+	}
+	return fs_ok();
+}
+
+// xo_fs_copy is std/rt's realFs.copy: the contents of a into b (created
+// or truncated) with a's permission bits; errors name xa or xb.
+int64_t xo_fs_copy(const char *a, int64_t an, const char *b, int64_t bn, const char *xa, int64_t xan, const char *xb, int64_t xbn) {
+	char *pa = cstr_of(a, an), *pb = cstr_of(b, bn);
+	int err = 0, to = 0;
+	int in = open(pa, O_RDONLY | O_CLOEXEC);
+	struct stat sb;
+	int out = -1;
+	if (in < 0) {
+		err = errno;
+	} else if (fstat(in, &sb) != 0) {
+		err = errno;
+	} else if (S_ISDIR(sb.st_mode)) {
+		err = EISDIR;
+	} else {
+		mode_t perm = sb.st_mode & 0777;
+		out = open(pb, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, perm);
+		if (out < 0) {
+			err = errno;
+			to = 1;
+		} else {
+			char *buf = malloc(FS_BUF);
+			if (!buf) {
+				xo_oom();
+			}
+			for (;;) {
+				ssize_t k = read(in, buf, FS_BUF);
+				if (k < 0 && errno == EINTR) {
+					continue;
+				}
+				if (k < 0) {
+					err = errno;
+					to = 1;
+					break;
+				}
+				if (k == 0) {
+					break;
+				}
+				const char *q = buf;
+				while (k > 0) {
+					ssize_t w = write(out, q, (size_t)k);
+					if (w < 0 && errno == EINTR) {
+						continue;
+					}
+					if (w < 0) {
+						err = errno;
+						to = 1;
+						break;
+					}
+					q += w;
+					k -= w;
+				}
+				if (err) {
+					break;
+				}
+			}
+			free(buf);
+			if (close(out) != 0 && !err) {
+				err = errno;
+				to = 1;
+			}
+			out = -1;
+			if (!err) {
+				chmod(pb, perm); // also over an existing file
+			}
+		}
+	}
+	if (in >= 0) {
+		close(in);
+	}
+	free(pa);
+	free(pb);
+	if (!err) {
+		return fs_ok();
+	}
+	char *xp = to ? cstr_of(xb, xbn) : cstr_of(xa, xan);
+	int64_t st = fs_fail(err, xp);
+	free(xp);
+	return st;
+}
+
+// xo_fs_perm is the permission bits of p (following links), or -1 with
+// the status set.
+int64_t xo_fs_perm(const char *p, int64_t n, const char *x, int64_t xn) {
+	char *path = cstr_of(p, n);
+	struct stat sb;
+	int r = stat(n == 0 ? "." : path, &sb);
+	int e = errno;
+	free(path);
+	if (r != 0) {
+		char *xp = cstr_of(x, xn);
+		fs_fail(e, xp);
+		free(xp);
+		return -1;
+	}
+	fs_ok();
+	return sb.st_mode & 0777;
+}
+
+int64_t xo_fs_chmod(const char *p, int64_t n, int64_t mode, const char *x, int64_t xn) {
+	char *path = cstr_of(p, n);
+	int r = chmod(n == 0 ? "." : path, (mode_t)(mode & 0777));
+	int e = errno;
+	free(path);
+	if (r == 0) {
+		return fs_ok();
+	}
+	char *xp = cstr_of(x, xn);
+	int64_t st = fs_fail(e, xp);
+	free(xp);
+	return st;
+}
+
+int64_t xo_fs_symlink(const char *t, int64_t tn, const char *p, int64_t n, const char *x, int64_t xn) {
+	char *target = cstr_of(t, tn), *path = cstr_of(p, n);
+	int r = symlink(target, path);
+	int e = errno;
+	free(target);
+	free(path);
+	if (r == 0) {
+		return fs_ok();
+	}
+	char *xp = cstr_of(x, xn);
+	int64_t st = fs_fail(e, xp);
+	free(xp);
+	return st;
+}
+
+// xo_fs_read_link is the target of the link p in a list of one, the empty
+// list when p is not a link (status 0) or on an error.
+xo_rlist *xo_fs_read_link(const char *p, int64_t n, const char *x, int64_t xn) {
+	char *path = cstr_of(p, n);
+	struct stat sb;
+	int err = 0;
+	xo_rlist *l = n_str_list_new(1);
+	if (lstat(n == 0 ? "." : path, &sb) != 0) {
+		err = errno;
+	} else if (S_ISLNK(sb.st_mode)) {
+		char buf[4096];
+		ssize_t k = readlink(path, buf, sizeof buf);
+		if (k < 0) {
+			err = errno;
+		} else {
+			l = n_str_list_add(l, buf, k);
+		}
+	}
+	free(path);
+	if (err) {
+		char *xp = cstr_of(x, xn);
+		fs_fail(err, xp);
+		free(xp);
+		return l;
+	}
+	fs_ok();
+	return l;
+}
+
+// Advisory locks: a lock handle holds the descriptor flock(2) locked.
+
+typedef struct {
+	xo_hdr h;
+	int fd;
+	int held;
+} xo_fslock;
+
+static void fslock_free(void *p) {
+	xo_fslock *l = p;
+	if (l->fd >= 0) {
+		close(l->fd); // releases the lock
+	}
+	xo_free(l);
+}
+
+// xo_fs_lock takes the lock of p (created if missing): wait tells to
+// wait (polling every 10 ms, a cancellation point). The handle holds the
+// lock when xo_fs_lock_held says so; else the status tells an error
+// (8: canceled) or 0 (try_lock found it held).
+xo_fslock *xo_fs_lock(const char *p, int64_t n, int64_t wait, const char *x, int64_t xn) {
+	xo_fslock *l = xo_alloc(sizeof(xo_fslock));
+	memset(l, 0, sizeof *l);
+	h_init(l, fslock_free);
+	char *path = cstr_of(p, n);
+	l->fd = open(n == 0 ? "." : path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+	int e = errno;
+	free(path);
+	if (l->fd < 0) {
+		char *xp = cstr_of(x, xn);
+		fs_fail(e, xp);
+		free(xp);
+		return l;
+	}
+	xo_ctx *c = ctx();
+	for (;;) {
+		if (flock(l->fd, LOCK_EX | LOCK_NB) == 0) {
+			l->held = 1;
+			fs_ok();
+			return l;
+		}
+		e = errno;
+		if (e == EINTR) {
+			continue;
+		}
+		if (e != EWOULDBLOCK && e != EAGAIN) {
+			close(l->fd);
+			l->fd = -1;
+			char *xp = cstr_of(x, xn);
+			fs_fail(e, xp);
+			free(xp);
+			return l;
+		}
+		if (!wait) {
+			close(l->fd);
+			l->fd = -1;
+			fs_ok();
+			return l;
+		}
+		flush_pending();
+		if (clock_wait(c, 10000000) || ctx_canceled(c)) {
+			close(l->fd);
+			l->fd = -1;
+			n_fs_status = 8;
+			return l;
+		}
+	}
+}
+
+int64_t xo_fs_lock_held(xo_fslock *l) { return l->held; }
+
+// xo_fs_unlock is `l.unlock()`; a second unlock does nothing.
+void xo_fs_unlock(xo_fslock *l) {
+	if (!l->held) {
+		return;
+	}
+	l->held = 0;
+	flock(l->fd, LOCK_UN);
+	close(l->fd);
+	l->fd = -1;
+}

@@ -157,6 +157,32 @@ fn fs_cwd() -> Str
 fn fs_case_sensitive() -> Bool
 /// Whether an Fs operation reports Canceled (not in deferred code).
 fn fs_canceled() -> Bool
+/// File handles, copies, modes, links, and locks (decisions 0163, 0172):
+/// a handle of the C runtime; the status as for the other operations.
+struct FsFile {}
+/// Opens p: mode 0 for reading, 1 created or truncated, 2 appended to.
+fn fs_open(p: Str, mode: Int, x: Str) -> FsFile
+fn fs_file_closed(f: FsFile) -> Bool
+/// At most max bytes in a list of one, or the empty list at the end.
+fn fs_file_read(f: FsFile, max: Int, x: Str) -> List[Bytes]
+/// A line without \n or \r\n in a list of one, or the empty list.
+fn fs_file_read_line(f: FsFile, x: Str) -> List[Str]
+fn fs_file_write(f: FsFile, data: Bytes, x: Str) -> Int
+fn fs_file_close(f: FsFile, x: Str) -> Int
+/// a into b with a's permission bits; errors name xa or xb (fs_msg).
+fn fs_copy(a: Str, b: Str, xa: Str, xb: Str) -> Int
+/// The permission bits of p, or -1.
+fn fs_perm(p: Str, x: Str) -> Int
+fn fs_chmod(p: Str, mode: Int, x: Str) -> Int
+fn fs_symlink(target: Str, p: Str, x: Str) -> Int
+/// The target of the link p in a list of one; empty when p is not a link.
+fn fs_read_link(p: Str, x: Str) -> List[Str]
+/// A held flock(2) lock of p (created if missing), waiting when wait (a
+/// cancellation point: status 8); fs_lock_held tells whether it holds.
+struct FsLock {}
+fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
+fn fs_lock_held(l: FsLock) -> Bool
+fn fs_unlock(l: FsLock)
 /// A Time of Unix nanoseconds, and back (both lowered as Int).
 fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int

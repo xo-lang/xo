@@ -289,7 +289,9 @@ func timeFlags(dir string, res *check.Result, tz ssa.TZUse, opts Options) ([]str
 // (decision 0102), so programs without them do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
-	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns"} {
+	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_mkdir_all", "xo_fs_chtimes", "xo_fs_create_temp", "xo_fs_cwd", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
+		// handles, copies, modes, links, locks (decision 0172)
+		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock"} {
 		if bytes.Contains(code, []byte(sym)) {
 			out = append(out, "-DXO_FS")
 			break

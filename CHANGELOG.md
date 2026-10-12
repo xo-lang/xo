@@ -11,6 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `stdin`, `inherit`, `merge_stderr`; `output`, `run`, `spawn` and every
   `Child` method; `Proc.pipeline` with pipefail; and `Proc.only` and
   `Env.only` are enforced natively (`Env.vars` and `Env.home` too).
+  File handles (`open`, `create`, `open_append`), `append`, `copy`,
+  `mode`/`set_mode`, `symlink`/`read_link`, `glob` with `**`, and
+  `lock`/`try_lock` build natively as well.
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

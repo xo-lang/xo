@@ -547,6 +547,13 @@ func (s *fn) fsCall(x *ast.CallExpr, ci *check.Call) *Value {
 	if v, ok := s.memFsCall(x, ci); ok {
 		return v
 	}
+	if fo.Name == "lock" {
+		// waits, polling on the event loop's timers (decision 0172)
+		b.needConc = true
+		if !b.conc {
+			return s.undef(s.natOf(x))
+		}
+	}
 	if nm := b.nativeMod("std/prelude"); nm != nil {
 		if impl, ok := nm.Scope["fs_"+fo.Name].(*check.FuncObj); ok && impl.Recv == nil {
 			return s.callAs(x, ci, impl)
