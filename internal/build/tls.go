@@ -48,6 +48,11 @@ func needsTLS(code []byte) bool {
 // function.
 func usesTLS(srcs []string) bool {
 	for _, s := range srcs {
+		// the object of a split LLVM build's module (decision 0168) is
+		// read through its IR
+		if ll := strings.TrimSuffix(s, ".o") + ".ll"; strings.HasSuffix(s, ".o") && fileExists(ll) {
+			s = ll
+		}
 		if !strings.HasSuffix(s, ".ll") && !strings.HasSuffix(s, ".s") {
 			continue
 		}

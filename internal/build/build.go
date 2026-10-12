@@ -108,6 +108,10 @@ type Options struct {
 	// update takes the atomic path (ssa.InsertShareProbes, decision
 	// 0058).
 	ShareProbes bool
+	// LLVMSplit (LLVM backend) divides the IR into modules compiled in
+	// parallel (decision 0168); nil reads XO_LLVM_SPLIT and its
+	// companions (LLVMSplitConfig).
+	LLVMSplit *SplitConfig
 	// Hybrid (`--hybrid`, decision 0084, Go backend programs) compiles
 	// the hot leaf functions of the main module to Go assembler with the
 	// arm64 backend (hybrid.go); HybridAll takes every eligible function
