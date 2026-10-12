@@ -187,7 +187,14 @@ python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; XO1_FLAGS="--as=macho" python3 scripts/selfhost-goldens.py <xo1> runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; with no go on PATH set XO_ZONEINFO); `use c` sources still need cc; XO1_FLAGS=--ld=macho XO1_PATH=/nonexistent XO_RTPACK=DIR python3 scripts/selfhost-goldens.py <xo1> builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
-go test ./internal/selfhost -run 'TestSelfhostArm64'    # Xo arm64 emitter vs internal/arm64, piece by piece (functions with their call site tables, helpers, literals, xo_entry; program wide label counters renamed), on every repository run both SSA builders build completely: every second run without arm64Heavy (the mergeHeavy runs and selfhost/parser) in the merge tier (421 s, 295 s of it the go subtest, in the 1,329 s merge tier of 2026-10-12, which still emitted selfhost/llvm; not remeasured since), every run in the full tier (go, arm64, llvm builds), every 25th with -short; TestSelfhostArm64Mutations: 30 code mutations (merge), 300 (full), none with -short; XO_SELFHOST_BACKEND, XO_SELFHOST_ARM64_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes arm64-<backend>.txt); decision 0158 (last verified: 2026-10-12)
+./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
+python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
+./macho elflink -o OUT [--interp=PATH] IN.o|IN.a...   # the self hosted ELF linker (decision 0182 stage 3): objects and archives (GNU or BSD ar) into a dynamically linked ET_EXEC for glibc at 0x400000: _start and the outline atomics (__aarch64_*) synthesized, imports versioned from selfhost/macho/glibc.xo (libm, libpthread, libgcc_s, libc NEEDED), calls through 16 byte stubs and GOT slots bound at load (GLOB_DAT, BIND_NOW), TLS descriptors relaxed to local exec, .eh_frame_hdr, a .symtab of functions and objects (last verified: 2026-10-12)
+xo1 build --target=linux/arm64 --ld=macho ...          # from any host, no cc: the linux/arm64 executable, selfhost/macho assembling and linking with the runtime of the linux/arm64 pack in $XO_RTPACK (std/time's zone data as an ELF object, ld.xo tz_object_elf); `--as=macho` alone writes the ELF object for cc on a linux host (decision 0182 stage 3; last verified: 2026-10-12)
+python3 scripts/elf-goldens.py <xo1>                   # every arm64 golden built by xo1 --target=linux/arm64 --ld=macho, then run in one `docker run` of $ELF_IMAGE (default debian:bullseye, glibc 2.31; never starts Docker) with no C toolchain, compared with want.txt or the Go backend's output; ELF_BINS=DIR runs prebuilt binaries named by path (internal_llvm_testdata_golden_arith); XO_GO_XO the Go xo for references (decision 0182; last verified: 2026-10-12)
+python3 scripts/elf-glibc-versions.py DIR > selfhost/macho/glibc.xo   # regenerate the ELF linker's import versions from a linux/arm64 libc.so.6, libm.so.6, libpthread.so.0, libgcc_s.so.1 (copied out of debian:bullseye, glibc 2.31; command in the script) (decision 0182; last verified: 2026-10-12)
+xo rtpack --target=linux/arm64 --cc="clang --target=aarch64-linux-gnu --sysroot=DIR" --ar=ARCHIVER   # a linux pack on macOS without zig: DIR from `apt-get download libc6-dev linux-libc-dev` in debian:bullseye extracted with dpkg-deb (bullseye's security mirror 404s for apt-get install); ARCHIVER must write GNU archives (llvm-ar, zig ar): Apple's ar empties libxotls.a (gotchas/apple-ar-drops-elf-members.md) (last verified: 2026-10-12)
+go test ./internal/selfhost -run 'TestSelfhostArm64'    # Xo arm64 emitter vs internal/arm64, piece by piece (functions with their call site tables, helpers, literals, xo_entry; program wide label counters renamed), on every repository run both SSA builders build completely: every second run without arm64Heavy (the mergeHeavy runs and selfhost/parser) in the merge tier (421 s, 295 s of it the go subtest, in the 1,329 s merge tier of 2026-10-12, which still emitted selfhost/llvm; not remeasured since), every run in the full tier (go, arm64, llvm builds), every 25th with -short; TestSelfhostArm64Mutations: 30 code mutations (merge), 300 (full), none with -short; XO_SELFHOST_BACKEND, XO_SELFHOST_ARM64_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes arm64-<backend>.txt); XO_SELFHOST_DIRS=text,text takes the runs whose directory contains one of the texts instead of the tier's (a targeted run, as TestSelfhostSSA; added 2026-10-12, decision 0184); decision 0158 (last verified: 2026-10-12)
 go run ./cmd/xo build --backend=llvm -o .tools/xossa selfhost/ssa   # native build of the Xo SSA builder (also --backend=arm64; the LLVM build links for about 10 minutes)
 go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm in the full tier; go otherwise, and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), then every pass stage (the merge tier compares only the build stage of the mergeHeavy runs, tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser; 115 s plus 492 s for its go subtest in the 1,329 s merge tier of 2026-10-12, before selfhost/arm64, selfhost/llvm, and selfhost/xo were build only), and 400 code mutations (TestSelfhostSSAMutations: the first 300 in the merge tier, none under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
 go run ./cmd/xo llvmdump [--each] [--test] [--func=NAME] [--bench=N] <dirs...>   # hidden: the LLVM IR llvm.Generate makes (no target attributes), checked as a native build checks, fault positions relative to the working directory: == ir and the module, == rejected, or == error <message>; --each lowers every dir alone (=== llvm <dir>); --func=NAME prints one definition (llvm.SplitIR's names: x.main, xo.dup.Str); --bench=N times llvm.GenerateSSA alone on one module (llvm.PrepareSSA) N times (decision 0166; last verified: 2026-10-11)
@@ -671,6 +678,13 @@ Last verified: 2026-10-07
   a fresh cache with the runtime warmed (`MODE=test` for `xo test`,
   `XO=<binary>` to compare builds); results in
   `bench/results/binary-size-2026-10-09.md`. Last verified: 2026-10-09.
+- `bench/perf/unicode/measure.sh <xo> <out dir> <backend...>`
+  (2026-10-12, decisions 0180 and 0184): builds bench/perf/unicode with
+  each backend and prints `<workload> <backend> <min instructions> <best
+  us> <checksum>` over 5 runs of each workload (`/usr/bin/time -l`,
+  darwin); `XO_UNICODE=c` in the environment builds the C path. Run it
+  through the heavy lock. Results in
+  `bench/results/runtime-pilot-2026-10-12.md`. Last verified: 2026-10-12.
 - `bench/go/strict-check.sh <dir>`: vet, staticcheck, errcheck, nilaway,
   exhaustive, `go test -race`. Analyzers come from `$XO_TOOLS_BIN` when set,
   else the checkout's `.tools/bin` (a worktree has none; point
@@ -2689,3 +2703,21 @@ The default cache held 20,461,608 KiB on 2026-10-12: 235 identical
 and since then mostly the repo's `std/rt` compiled once per worktree
 path by `go test` (31 of the 46 files over 20 MB written after
 2026-10-11 16:00). Last verified: 2026-10-12.
+
+## Remote full runs (EC2)
+
+`scripts/remote-full.sh [--dry-run] [--on-demand] [COMMIT]` runs the
+full suite (`XO_SELFHOST_TIER=full`) of a commit on a temporary EC2
+Graviton instance (default c8g.8xlarge, 32 vCPU, 64 GiB, spot, us-east-1;
+the account's EC2 quota is 32 vCPUs for spot and for on demand, so
+c8g.16xlarge (64 vCPU, about $0.70 to $0.80 an hour spot) is refused
+with MaxSpotInstanceCountExceeded until a quota increase), copies
+the log to bench/results/remote/<commit>.log (git ignored) and terminates
+the instance. The instance also shuts itself down (terminating it) after
+XO_REMOTE_MAX_MIN minutes (default 300). Setup made once, all named
+xo-ci: an EC2 key pair (~/.ssh/xo-ci.pem) and a security group allowing
+SSH from the owner host's IP only. Linux host: the Mac-only tests
+(Mach-O, code signing, the darwin fixed point) do not run there and stay
+on the development Mac. Approved by the owner on 2026-10-12 to move the
+long combined run off the Mac. Last verified: 2026-10-12 (dry run).
+

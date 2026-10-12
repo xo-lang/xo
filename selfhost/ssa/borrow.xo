@@ -1,0 +1,178 @@
+// Borrowed projections (internal/ssa rcborrow.go, decision 0186): a
+// projection out of a tracked container whose owner nothing consumes
+// while the projection is alive is never retained or released; its uses
+// borrow its owner instead. See rcborrow.go for the rules.
+
+/// An instruction: its block and index.
+struct BSite {
+  b: Int
+  i: Int
+}
+
+/// The per function state of borrowProjections: the index of each value
+/// in its block, the instructions using each root, those consuming an
+/// operand based on each root (edges at the terminator), every use of
+/// each root (terminators and edges included), the roots a
+/// terminator uses, the candidates, and those decided.
+struct Borrows {
+  pos: List[Int] = []
+  users: Map[Int, List[BSite]] = {}
+  all: Map[Int, List[BSite]] = {}
+  cons: Map[Int, List[BSite]] = {}
+  in_term: Map[Int, Bool] = {}
+  cand: List[Bool] = []
+  done: List[Bool] = []
+}
+
+fn add_site(var m: Map[Int, List[BSite]], root: Int, s: BSite) {
+  var xs = m.get(root) ?? []
+  m.remove(root)
+  xs.push(s)
+  m[root] = xs
+}
+
+/// Decides the borrowed projections of f into r.bproj
+/// (borrowProjections).
+fn (var r: Rc) borrow_projections(f: Func) {
+  r.bproj = {}
+  var st = Borrows{}
+  for _ in 0..f.values.len() {
+    st.pos.push(0)
+    st.cand.push(false)
+    st.done.push(false)
+  }
+  var cands: List[Int] = []
+  for bl in 0..f.blocks.len() {
+    for (i, v) in f.blocks[bl].instrs.indexed() {
+      st.pos[v] = i
+      let x = f.values[v]
+      if r.is_root(f, v) && !x.args.is_empty() && r.kind(f, v) == RootKind.Proj {
+        st.cand[v] = true
+        cands.push(v)
+      }
+      for (k, m) in r.modes(f, v).indexed() {
+        if m == Mode.Consume {
+          add_site(st.cons, r.base(f, x.args[k]).root, BSite{b: bl, i: i})
+        }
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          let root = r.base(f, a).root
+          add_site(st.cons, root, BSite{b: bl, i: i})
+          add_site(st.all, root, BSite{b: bl, i: i})
+          st.in_term[root] = true
+        }
+      }
+      if is_terminator(x.op) {
+        for u in r.leaf_uses(f, v) {
+          add_site(st.all, u.l.root, BSite{b: bl, i: i})
+          st.in_term[u.l.root] = true
+        }
+        continue
+      }
+      for u in r.leaf_uses(f, v) {
+        add_site(st.users, u.l.root, BSite{b: bl, i: i})
+        add_site(st.all, u.l.root, BSite{b: bl, i: i})
+      }
+    }
+  }
+  for v in cands {
+    r.decide_borrow(f, st, v)
+  }
+}
+
+/// Whether projection v is borrowed, and its owner (borrowProjections'
+/// decide).
+fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
+  if st.done[v] {
+    return
+  }
+  st.done[v] = true
+  let p = r.parent(f, v)
+  if st.cand[p.root] {
+    r.decide_borrow(f, st, p.root)
+  }
+  var owner = p
+  if let Some(o) = r.bproj.get(p.root) {
+    owner = o
+  }
+  if st.in_term.contains(v) || !r.tracked(f, owner) {
+    return
+  }
+  // the blocks v is live into and out of, and its last use in each
+  let db = f.values[v].block
+  let di = st.pos[v]
+  var live_in: Map[Int, Bool] = {}
+  var live_out: Map[Int, Bool] = {}
+  var last: Map[Int, Int] = {}
+  var work: List[Int] = []
+  for s in st.users.get(v) ?? [] {
+    if s.i > (last.get(s.b) ?? -1) {
+      last[s.b] = s.i
+    }
+    if s.b != db && !live_in.contains(s.b) {
+      live_in[s.b] = true
+      work.push(s.b)
+    }
+  }
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for e in f.blocks[b].preds {
+      let pb = f.edges[e].from
+      live_out[pb] = true
+      if pb != db && !live_in.contains(pb) {
+        live_in[pb] = true
+        work.push(pb)
+      }
+    }
+  }
+  for s in st.cons.get(owner.root) ?? [] {
+    var inside = false
+    if s.b == db {
+      inside = s.i > di && (live_out.contains(db) || s.i <= (last.get(db) ?? -1))
+    } else if live_in.contains(s.b) {
+      inside = live_out.contains(s.b) || s.i <= (last.get(s.b) ?? -1)
+    }
+    if inside {
+      return
+    }
+  }
+  // a projection consumed where its owner would be dead stays counted:
+  // the owner dying first left it unique, while borrowing would keep the
+  // owner alive and the value shared at the consume
+  for s in st.cons.get(v) ?? [] {
+    if !used_after(f, st, owner.root, s) {
+      return
+    }
+  }
+  r.bproj[v] = owner
+}
+
+/// Whether root is used after instruction s on some path, by its own uses
+/// (borrowProjections' usedAfter).
+fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
+  var used: Map[Int, Bool] = {}
+  for u in st.all.get(root) ?? [] {
+    if u.b == s.b && u.i > s.i {
+      return true
+    }
+    used[u.b] = true
+  }
+  var seen: Map[Int, Bool] = {}
+  var work: List[Int] = [s.b]
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for e in f.values[f.term(b)].succs {
+      let to = f.edges[e].to
+      if seen.contains(to) {
+        continue
+      }
+      if used.contains(to) {
+        return true
+      }
+      seen[to] = true
+      work.push(to)
+    }
+  }
+  false
+}

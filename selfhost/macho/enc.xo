@@ -106,8 +106,11 @@ fn shift_op(b: Bytes) -> (Int, Int)? {
 }
 
 /// A label operand with an optional relocation operator: (name, op) with
-/// op "" or "PAGE", "PAGEOFF".
+/// op "" or "PAGE", "PAGEOFF" (ELF's `:lo12:` prefix is PAGEOFF).
 fn label_op(b: Bytes) -> (Bytes, Str) {
+  if b.len() > 6 && bstr(b[0..6]) == ":lo12:" {
+    return (b[6..], "PAGEOFF")
+  }
   for i in 0..b.len() {
     if b[i] == '@' {
       return (b[0..i], bstr(b[i + 1..]))
@@ -122,7 +125,7 @@ fn (var a: Asm) word(w: Int) {
 
 /// A word with a label fixup.
 fn (var a: Asm) word_fix(w: Int, kind: Int, name: Bytes) {
-  let s = a.sym(name)
+  let s = a.label_sym(name)
   a.register(s)
   a.fixes.push(Fix{sect: a.cur, at: a.sects[a.cur].words.len(), kind: kind, sym: s, line: a.line})
   a.sects[a.cur].words.push(w)
@@ -272,7 +275,8 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
         }
         a.word_fix(0x10000000 | r, FX_ADR21, name)
       } else {
-        if op != "PAGE" {
+        // ELF: a bare label is its page
+        if op != "PAGE" && !(a.elf && op == "") {
           return a.bad(m, ops)
         }
         a.word_fix(0x90000000 | r, FX_PAGE21, name)
@@ -302,6 +306,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word(base | (sf * 0x80000000) | ((sh / 16) * 0x200000) | (v * 32) | r)
     }
     "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" => a.atomic(m, ops)
+    "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => a.exclusive(m, ops)
     "fmov" => a.fmov(ops)
     "fadd" | "fsub" | "fmul" | "fdiv" => {
       let base = match m {
@@ -921,6 +926,43 @@ fn (var a: Asm) atomic(m: Str, ops: List[Bytes]) {
   let rel = m == "ldaddl" || m == "ldaddal" || m == "staddl"
   let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
   a.word(0x38200000 | size | (if acq { 0x800000 } else { 0 }) | (if rel { 0x400000 } else { 0 }) | (s * 0x10000) | (b * 32) | t)
+}
+
+/// The exclusive and ordered loads and stores: ldxr, ldaxr Rt, [Xn];
+/// stxr, stlxr Ws, Rt, [Xn]; ldar, stlr Rt, [Xn].
+fn (var a: Asm) exclusive(m: Str, ops: List[Bytes]) {
+  let st = m == "stxr" || m == "stlxr"
+  let n = ops.len()
+  if (st && n != 3) || (!st && n != 2) {
+    return a.bad(m, ops)
+  }
+  var s = 31
+  if st {
+    let (r, k) = reg(ops[0])
+    if k != RW {
+      return a.bad(m, ops)
+    }
+    s = r
+  }
+  let (t, sf) = gpr(ops[n - 2], false)
+  let mem = ops[n - 1]
+  if mem.len() < 3 || mem[0] != '[' || mem[mem.len() - 1] != ']' {
+    return a.bad(m, ops)
+  }
+  let (b, kb) = reg(trim(mem[1..mem.len() - 1]))
+  if t < 0 || (kb != RX && kb != RSP) {
+    return a.bad(m, ops)
+  }
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  let base = match m {
+    "ldxr" => 0x085f7c00
+    "ldaxr" => 0x085ffc00
+    "stxr" => 0x08007c00
+    "stlxr" => 0x0800fc00
+    "ldar" => 0x08dffc00
+    _ => 0x089ffc00
+  }
+  a.word(base | size | (s * 0x10000) | (b * 32) | t)
 }
 
 fn (var a: Asm) fmov(ops: List[Bytes]) {

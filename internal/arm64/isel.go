@@ -91,6 +91,7 @@ func (g *gen) function(f *ssa.Func) {
 		s.jumpTables()
 	}
 	s.dce()
+	s.liveDCE()
 	s.selectCompares()
 	s.hoistConsts()
 	s.reuseFlags()
@@ -474,7 +475,7 @@ func (s *fstate) isel() {
 	}
 	idom := dominators(blocks)
 	s.planLSR(blocks, idom)
-	s.computeRanges(blocks)
+	s.computeRanges(blocks, idom)
 	for _, b := range blocks {
 		s.bmap[b] = &mblock{}
 		if b != f.Blocks[0] {
@@ -511,6 +512,11 @@ func (s *fstate) isel() {
 			s.mm = nil
 		}
 		if s.pads[b] {
+		} else if p, c, truth, ok := s.joinSource(b); ok {
+			// b is reached from p through a join that only branches on
+			// the Bool p passes (`a && b`, decision 0184)
+			s.inherit(s.endMemo[p])
+			s.condFacts(c, truth)
 		} else if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds
 			s.inherit(s.endMemo[b.Preds[0].From])
@@ -797,6 +803,15 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.divRem(v)
 	case ssa.OpAnd, ssa.OpOr, ssa.OpXor:
 		ins := map[ssa.Op]string{ssa.OpAnd: "and", ssa.OpOr: "orr", ssa.OpXor: "eor"}[v.Op]
+		x, y := v.Args[0], v.Args[1]
+		if _, ok := constInt(x); ok {
+			x, y = y, x
+		}
+		if n, ok := constInt(y); ok && onesRun(n) {
+			// a logical immediate (decision 0184)
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, n), s.word(x)))
+			return
+		}
 		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
 	case ssa.OpShl, ssa.OpShr:
 		s.shift(v)
@@ -1105,6 +1120,14 @@ func (s *fstate) addSub(v *ssa.Value) {
 		s.set(v, s.checked(false, text, []vreg{av}, ins, "vs", "xo_fault_overflow", l, isrc(opChar[v.Op]), r, symsrc(g.loc(v.Pos))))
 		return
 	}
+	if checked {
+		alo, ahi := s.bounds(a)
+		blo, bhi := s.bounds(b)
+		if s.safeAddRange(v.Op, alo, ahi, blo, bhi) {
+			checked = false
+			flag = ""
+		}
+	}
 	av, bv := s.word(a), s.word(b)
 	text := ins + flag + " $d0, $u0, $u1"
 	if !checked {
@@ -1243,7 +1266,7 @@ func (s *fstate) shift(v *ssa.Value) {
 			return
 		}
 		r := s.def1(false, fmt.Sprintf("lsl $d0, $u0, #%d", k), a)
-		if v.Pos != "" {
+		if v.Pos != "" && !s.safeShl(v.Args[0], k) {
 			back := s.def1(false, fmt.Sprintf("asr $d0, $u0, #%d", k), r)
 			s.check("cmp $u0, $u1", []vreg{back, a}, "ne", "xo_fault_shl", rsrc(a), isrc(k), symsrc(g.loc(v.Pos)))
 		}
@@ -1251,7 +1274,8 @@ func (s *fstate) shift(v *ssa.Value) {
 		return
 	}
 	b := s.word(v.Args[1])
-	if v.Pos != "" {
+	klo, khi := s.bounds(v.Args[1])
+	if v.Pos != "" && (klo < 0 || khi > 63) {
 		s.check("cmp $u0, #64", []vreg{b}, "hs", "xo_fault_shift", rsrc(b), symsrc(g.loc(v.Pos)))
 	}
 	if v.Op == ssa.OpShr {
@@ -1259,11 +1283,64 @@ func (s *fstate) shift(v *ssa.Value) {
 		return
 	}
 	r := s.def1(false, "lsl $d0, $u0, $u1", a, b)
-	if v.Pos != "" {
+	if v.Pos != "" && !(klo >= 0 && khi <= 63 && s.safeShl(v.Args[0], khi)) {
 		back := s.def1(false, "asr $d0, $u0, $u1", r, b)
 		s.check("cmp $u0, $u1", []vreg{back, a}, "ne", "xo_fault_shl", rsrc(a), rsrc(b), symsrc(g.loc(v.Pos)))
 	}
 	s.set(v, r)
+}
+
+// bytesLoad loads byte i (SSA value iv, register i) of the Bytes
+// object in register obj. The data address (16 bytes in) is computed
+// once per block, and so is data + j for i = j + c (0 < c < 4096), so
+// t[k], t[k + 1], t[k + 2] are one add and three loads (decision 0184).
+func (s *fstate) bytesLoad(obj vreg, iv *ssa.Value, i vreg) vreg {
+	m := s.m()
+	obj = s.real(obj)
+	key := [3]int64{int64(obj), 0, -16}
+	d, ok := m.bases[key]
+	if !ok {
+		d = s.def1(false, "add $d0, $u0, #16", obj)
+		m.bases[key] = d
+	}
+	if iv.Op == ssa.OpAdd {
+		if c, isK := constInt(iv.Args[1]); isK && c > 0 && c < 4096 {
+			if ws, ok := s.vals[iv.Args[0]]; ok && len(ws) == 1 && ws[0] != 0 {
+				jkey := [3]int64{int64(d), int64(ws[0]), -17}
+				t, ok := m.bases[jkey]
+				if !ok {
+					t = s.def1(false, "add $d0, $u0, $u1", d, ws[0])
+					m.bases[jkey] = t
+				}
+				return s.def1(false, fmt.Sprintf("ldrb $wd0, [$u0, #%d]", c), t)
+			}
+		}
+	}
+	return s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i)
+}
+
+// onesRun reports whether n > 0 is one run of ones (0b0..01..10..0), a
+// value every logical instruction takes as an immediate.
+func onesRun(n int64) bool {
+	if n <= 0 {
+		return false
+	}
+	for n&1 == 0 {
+		n >>= 1
+	}
+	return n == math.MaxInt64 || n&(n+1) == 0
+}
+
+// safeShl reports whether a << k cannot overflow for every k in [0,
+// khi] (khi <= 63): a's bounds fit in 63 - khi bits and a sign
+// (decision 0184).
+func (s *fstate) safeShl(a *ssa.Value, khi int64) bool {
+	if khi == 0 {
+		return true
+	}
+	lo, hi := s.bounds(a)
+	lim := int64(1) << (63 - khi)
+	return lo >= -lim && hi <= lim-1
 }
 
 // variant builds the words of variant tag of enum t.
@@ -1575,8 +1652,11 @@ func (s *fstate) boundsCheck(v *ssa.Value, l, i vreg) {
 	}
 	m.checked[[2]vreg{l, i}] = true
 	n := s.listLen(l)
-	s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	if !s.provedIndex(v.Args[1], n, -1) {
+		s.check("cmp $u0, $u1", []vreg{i, n}, "hs", "xo_fault_index", rsrc(i), rsrc(n), symsrc(s.g.loc(v.Pos)))
+	}
 	s.indexFacts(i)
+	s.lessFact(v.Args[1], n)
 }
 
 // option builds Option words on two paths: in the current block when
@@ -1827,11 +1907,19 @@ func (s *fstate) callOp(v *ssa.Value) {
 		// b[i] on Bytes (decision 0081): the data is 16 bytes into the
 		// string object
 		x, i := a(0), s.word(v.Args[1])
-		if v.Pos != "" {
+		k := int64(-1)
+		if c, ok := v.Args[0].Aux.(string); ok && v.Args[0].Op == ssa.OpConst {
+			k = int64(len(c))
+		}
+		if v.Pos != "" && !s.provedIndex(v.Args[1], x[1], k) {
 			s.check("cmp $u0, $u1", []vreg{i, x[1]}, "hs", "xo_fault_bytes_index", rsrc(i), rsrc(x[1]), symsrc(g.loc(v.Pos)))
 		}
-		d := s.def1(false, "add $d0, $u0, #16", s.real(x[0]))
-		s.set(v, s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i))
+		if v.Pos != "" {
+			// what the check (or the proof) says holds after it
+			s.indexFacts(i)
+			s.lessFact(v.Args[1], x[1])
+		}
+		s.set(v, s.bytesLoad(x[0], v.Args[1], i))
 	case "Str.len":
 		s.set(v, a(0)[1])
 	case "Str.is_empty":
