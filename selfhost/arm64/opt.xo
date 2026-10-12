@@ -565,12 +565,69 @@ fn (var g: G) branch_facts(b: Int) {
   let tv = g.f.values[t]
   let yes = g.f.edges[tv.succs[0]].to == b
   let no = g.f.edges[tv.succs[1]].to == b
-  let c = tv.args[0]
-  if yes == no || !is_compare(g.op(c)) || g.vkind(g.arg(c, 0)) != ssa.Kind.Int {
+  if yes == no {
+    return
+  }
+  g.cond_facts(tv.args[0], yes)
+}
+
+/// Matches b entered only from a block J with one parameter r and
+/// nothing but a branch on r, reached with an r that can take b's edge
+/// from one predecessor p only (the join of `x && y` or `x || y`):
+/// (p, what p passes, the truth b's edge needs, true) (opt.go
+/// joinSource, decision 0184).
+fn (g: G) join_source(b: Int) -> (Int, Int, Bool, Bool) {
+  let none = (-1, -1, false, false)
+  let preds = g.f.blocks[b].preds
+  if preds.len() != 1 {
+    return none
+  }
+  let j = g.f.edges[preds[0]].from
+  let t = g.f.term(j)
+  let jb = g.f.blocks[j]
+  if t < 0 || g.op(t) != ssa.Op.Branch || jb.instrs.len() != 1 || jb.params.len() != 1 || g.arg(t, 0) != jb.params[0] || j == b {
+    return none
+  }
+  let tv = g.f.values[t]
+  let yes = g.f.edges[tv.succs[0]].to == b
+  let no = g.f.edges[tv.succs[1]].to == b
+  if yes == no {
+    return none
+  }
+  var p = -1
+  var c = -1
+  for e in jb.preds {
+    let a = g.f.edges[e].args[0]
+    let av = g.f.values[a]
+    if av.op == ssa.Op.Const {
+      match av.aux {
+        B(k) => {
+          if k != yes {
+            continue
+          }
+        }
+        _ => {}
+      }
+    }
+    if p >= 0 {
+      return none
+    }
+    p = g.f.edges[e].from
+    c = a
+  }
+  if p < 0 || g.end_memo[p] < 0 {
+    return none
+  }
+  (p, c, yes, true)
+}
+
+/// Records what Bool c being truth says (a compare of Ints).
+fn (var g: G) cond_facts(c: Int, truth: Bool) {
+  if !is_compare(g.op(c)) || g.vkind(g.arg(c, 0)) != ssa.Kind.Int {
     return
   }
   var o = g.op(c)
-  if no {
+  if !truth {
     o = negate_cmp(o)
   }
   let x = g.arg(c, 0)

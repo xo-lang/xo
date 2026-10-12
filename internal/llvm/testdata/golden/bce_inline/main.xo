@@ -102,6 +102,30 @@ fn shifts(b: Bytes, x: Int) -> Int {
   s
 }
 
+/// The length of the common prefix: both indexes proved by `&&`.
+fn common(a: Bytes, b: Bytes) -> Int {
+  var i = 0
+  while i < a.len() && i < b.len() {
+    if a[i] != b[i] {
+      break
+    }
+    i += 1
+  }
+  i
+}
+
+/// `||`: the index is proved on the path where both tests failed.
+fn skip_spaces(a: Bytes) -> Int {
+  var i = 0
+  while true {
+    if i >= a.len() || a[i] != 32 {
+      break
+    }
+    i += 1
+  }
+  i
+}
+
 fn main(os: Os) {
   os.stdio.println("${forward(20)} ${twice_plus(3)}")
   os.stdio.println("${even(10)} ${odd(7)} ${even(3)} ${fact(10)}")
@@ -114,6 +138,7 @@ fn main(os: Os) {
   let text = b"The quick brown fox jumps over the lazy dog"
   os.stdio.println("${pairs(text)} ${pairs(b"")} ${pairs(b"a")}")
   os.stdio.println("${shifts(text, 3)} ${shifts(text, 255)}")
+  os.stdio.println("${common(text, b"The quack")} ${common(b"", text)} ${common(text, text)} ${skip_spaces(b"   x")} ${skip_spaces(b"  ")}")
   // past the end: u24 reads bytes 24 to 26 of a 24 byte table
   os.stdio.println("${entry_unchecked(8)}")
 }

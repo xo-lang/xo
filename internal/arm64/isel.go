@@ -511,6 +511,11 @@ func (s *fstate) isel() {
 			s.mm = nil
 		}
 		if s.pads[b] {
+		} else if p, c, truth, ok := s.joinSource(b); ok {
+			// b is reached from p through a join that only branches on
+			// the Bool p passes (`a && b`, decision 0184)
+			s.inherit(s.endMemo[p])
+			s.condFacts(c, truth)
 		} else if len(b.Preds) == 1 && s.endMemo[b.Preds[0].From] != nil {
 			// the only predecessor dominates b: what it computed holds
 			s.inherit(s.endMemo[b.Preds[0].From])

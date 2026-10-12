@@ -451,12 +451,54 @@ func (s *fstate) branchFacts(b *ssa.Block) {
 		return
 	}
 	yes, no := t.Succs[0].To == b, t.Succs[1].To == b
-	c := t.Args[0]
-	if yes == no || !isCompare(c.Op) || c.Args[0].Type.Kind != ssa.KInt {
+	if yes == no {
+		return
+	}
+	s.condFacts(t.Args[0], yes)
+}
+
+// joinSource matches b entered only from a block J that has one
+// parameter r, holds nothing but a branch on r, and is reached with an
+// r that can take b's edge from one predecessor p only (the others pass
+// the constant that takes the other edge): the join of `x && y` or
+// `x || y`. Then b runs only after p, and c (what p passes) is truth
+// (decision 0184).
+func (s *fstate) joinSource(b *ssa.Block) (p *ssa.Block, c *ssa.Value, truth bool, ok bool) {
+	if len(b.Preds) != 1 {
+		return nil, nil, false, false
+	}
+	j := b.Preds[0].From
+	t := j.Term()
+	if t == nil || t.Op != ssa.OpBranch || len(j.Instrs) != 1 || len(j.Params) != 1 || t.Args[0] != j.Params[0] || j == b {
+		return nil, nil, false, false
+	}
+	yes, no := t.Succs[0].To == b, t.Succs[1].To == b
+	if yes == no {
+		return nil, nil, false, false
+	}
+	for _, e := range j.Preds {
+		a := e.Args[0]
+		if k, isK := a.Aux.(bool); isK && a.Op == ssa.OpConst && k != yes {
+			continue
+		}
+		if p != nil {
+			return nil, nil, false, false
+		}
+		p, c = e.From, a
+	}
+	if p == nil || s.endMemo[p] == nil {
+		return nil, nil, false, false
+	}
+	return p, c, yes, true
+}
+
+// condFacts records what Bool c being truth says (a compare of Ints).
+func (s *fstate) condFacts(c *ssa.Value, truth bool) {
+	if !isCompare(c.Op) || c.Args[0].Type.Kind != ssa.KInt {
 		return
 	}
 	op := c.Op
-	if no {
+	if !truth {
 		op = negateCmp[op]
 	}
 	x, y := c.Args[0], c.Args[1]

@@ -6,5 +6,6 @@ true true false 3628800
 60 0
 181511 0 0
 4163120 40002560
+6 0 43 3 2
 --- stderr
 fault: index 24 out of range for Bytes of length 24 at main.xo:39:8

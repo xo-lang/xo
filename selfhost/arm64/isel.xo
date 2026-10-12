@@ -463,7 +463,13 @@ fn (var g: G) isel() {
       g.drop_memo()
     } else {
       let preds = g.f.blocks[b].preds
-      if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
+      let (jp, jc, jtruth, jok) = g.join_source(b)
+      if jok {
+        // b is reached from jp through a join that only branches on the
+        // Bool jp passes (`a && b`, decision 0184)
+        g.inherit(g.end_memo[jp])
+        g.cond_facts(jc, jtruth)
+      } else if preds.len() == 1 && g.end_memo[g.f.edges[preds[0]].from] >= 0 {
         // the only predecessor dominates b: what it computed holds
         g.inherit(g.end_memo[g.f.edges[preds[0]].from])
         g.branch_facts(b)
