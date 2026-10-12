@@ -802,6 +802,15 @@ func (s *fstate) instr(v *ssa.Value) {
 		s.divRem(v)
 	case ssa.OpAnd, ssa.OpOr, ssa.OpXor:
 		ins := map[ssa.Op]string{ssa.OpAnd: "and", ssa.OpOr: "orr", ssa.OpXor: "eor"}[v.Op]
+		x, y := v.Args[0], v.Args[1]
+		if _, ok := constInt(x); ok {
+			x, y = y, x
+		}
+		if n, ok := constInt(y); ok && onesRun(n) {
+			// a logical immediate (decision 0184)
+			s.set(v, s.def1(false, fmt.Sprintf("%s $d0, $u0, #%d", ins, n), s.word(x)))
+			return
+		}
 		s.set(v, s.def1(false, ins+" $d0, $u0, $u1", s.word(v.Args[0]), s.word(v.Args[1])))
 	case ssa.OpShl, ssa.OpShr:
 		s.shift(v)
@@ -1307,6 +1316,18 @@ func (s *fstate) bytesLoad(obj vreg, iv *ssa.Value, i vreg) vreg {
 		}
 	}
 	return s.def1(false, "ldrb $wd0, [$u0, $u1]", d, i)
+}
+
+// onesRun reports whether n > 0 is one run of ones (0b0..01..10..0), a
+// value every logical instruction takes as an immediate.
+func onesRun(n int64) bool {
+	if n <= 0 {
+		return false
+	}
+	for n&1 == 0 {
+		n >>= 1
+	}
+	return n == math.MaxInt64 || n&(n+1) == 0
 }
 
 // safeShl reports whether a << k cannot overflow for every k in [0,

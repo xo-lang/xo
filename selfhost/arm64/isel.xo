@@ -789,6 +789,20 @@ fn (var g: G) instr1(v: Int) {
         Or => "orr"
         _ => "eor"
       }
+      var p = x.args[0]
+      var q = x.args[1]
+      let (_, pc) = g.const_int(p)
+      if pc {
+        p = x.args[1]
+        q = x.args[0]
+      }
+      let (n, qc) = g.const_int(q)
+      if qc && ones_run(n) {
+        // a logical immediate (decision 0184)
+        let w = g.word(p)
+        g.set(v, [g.def1(false, "${ins} $d0, $u0, #${n}", [w])])
+        return
+      }
       let a = g.word(x.args[0])
       let b = g.word(x.args[1])
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
@@ -1283,6 +1297,19 @@ fn (var g: G) shift(v: Int) {
     g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b), symsrc(l)])
   }
   g.set(v, [r])
+}
+
+/// Whether n > 0 is one run of ones, a value every logical instruction
+/// takes as an immediate (isel.go onesRun).
+fn ones_run(n0: Int) -> Bool {
+  if n0 <= 0 {
+    return false
+  }
+  var n = n0
+  while (n & 1) == 0 {
+    n = n >> 1
+  }
+  n == MAX_INT || (n & (n + 1)) == 0
 }
 
 /// Whether a << k cannot overflow for every k in [0, khi] (khi <= 63):
