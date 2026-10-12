@@ -102,8 +102,9 @@ func lspPosition(src string, off int) string {
 // TestXoLSPFeatures sends the requests that read the check (hover,
 // definition, references, prepareRename, rename, formatting, semantic
 // tokens) to the Go server in process and to the Xo one, at every
-// identifier of a feature program, of the notes service example, and of
-// selfhost/lexer, and compares the responses byte for byte.
+// identifier of a feature program, of the notes service example, of
+// selfhost/lexer, and of selfhost/cli/core/format, and compares the
+// responses byte for byte.
 func TestXoLSPFeatures(t *testing.T) {
 	bin := xoCLI(t)
 	dir := writeFiles(t, map[string]string{

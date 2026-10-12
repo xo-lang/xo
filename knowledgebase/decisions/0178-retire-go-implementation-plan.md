@@ -401,10 +401,9 @@ binary again). How each command maps to Go's:
   sessions), with the same hit and miss counts.
 - **lsp**: framing, initialize, document sync with the 150 ms debounce,
   publishDiagnostics from the self hosted checker with the open texts as
-  its overlay, codeAction, documentSymbol. Not yet: hover, definition,
-  references, rename, formatting, semantic tokens (they need
-  internal/lsp resolve.go over the checker's records, query's
-  declaration surfaces, and the formatter in process).
+  its overlay, codeAction, documentSymbol. Hover, definition,
+  references, rename, formatting, and semantic tokens followed with the
+  switch point B gaps (resolve.xo, below).
 - **dump**: SIGQUIT through `Proc.kill`, then the same polling of the
   dump file.
 - **replay**: rebuilds with `xo build --backend=go` as a child and reads
@@ -417,6 +416,38 @@ servers on the MCP protocol transcript (36 of 36) and tool calls (10 of
 transcript (14 of 14 steps), and replay; cmd/xo's own tests of these
 commands against xo1: 4 of 7 (the three others build or `run --record`
 through xo1, whose default backend is arm64, not Go).
+
+## Switch point B gaps (2026-10-12)
+
+The gaps of xo1 outside stage 6, closed on one branch (results file,
+"Switch point B gaps and gate"):
+
+- xo1's `build|run|test` default to the Go backend as `xo` does (arm64
+  with `--no-gc`); scripts that want arm64 name it.
+- std is found through Env.program, as a release finds lib/xo/std beside
+  bin/xo (selfhost/check locate.xo: executable, std_dir), for xo1 and
+  every selfhost/cli command; no `$_` anywhere. The gate runs xo1 from a
+  release layout with no XO_STD.
+- `xo check --no-gc` reports selfhost/ssa's XO1201 diagnostics (each
+  unsupported construct at the expression being lowered, cascades
+  dropped as ssa.NoGCDiagnostics drops them); native builds print them
+  when no Go driver takes the program back.
+- `build --ci`, the XO1308 check of `--ci` and `--release`, and native
+  `test --real` are in xo1. `--hybrid` builds the plain Go program with
+  the Go driver's fallback report: the Go assembler mode of the arm64
+  backend is not ported.
+- `xo lsp` answers every request of the Go server: 38,944 of 38,944
+  responses byte identical over four corpora (TestXoLSPFeatures).
+- Fetching a module version the cache lacks during a check is the
+  cli-bind branch's (Checker.check_dirs_fetching); this branch's version
+  was reverted to avoid two implementations.
+
+Gate (cmd/xo, full, `XO_CLI` = xo1 at commit 1548ddc): 53 of 69 tests
+pass. The 16 failures are stage 6 and publish (13: bindings on a cache
+miss, `xo bind`, `xo publish`, get's API changes, fetching), and three
+commands not in xo1: `ssadump` and `llvmdump` (comparison dumps, not
+needed) and `rtpack` (builds the release's runtime packs: port it, or
+keep it in a Go helper that release.sh runs).
 
 ## Consequences
 
