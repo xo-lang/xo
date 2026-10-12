@@ -195,7 +195,7 @@ func TestRuntimeEventLoop(t *testing.T) {
 	bin := tsanBuild(t, nil, []string{src})
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"timers", "echo", "wakeups"} {
+		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
 			if !strings.Contains(out, name+": ok") {
 				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
 			}

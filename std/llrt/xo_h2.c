@@ -1943,8 +1943,13 @@ static void h2_head(hlist *h, int64_t status, int head_req, const char *p, int64
 	if (!s) {
 		xo_oom();
 	}
-	memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
-	qsort(s, (size_t)h->n, sizeof(hpair), hp_cmp_key);
+	// h->a is NULL for a handler that set no field: memcpy's and qsort's
+	// pointers are declared nonnull even for a zero count (glibc;
+	// UndefinedBehaviorSanitizer reported it on Linux, 2026-10-12)
+	if (h->n > 0) {
+		memcpy(s, h->a, (size_t)h->n * sizeof(hpair));
+		qsort(s, (size_t)h->n, sizeof(hpair), hp_cmp_key);
+	}
 	for (int64_t i = 0; i < h->n; i++) {
 		hstr k = s[i].k, v = s[i].v;
 		if (hs_eq(k, "Content-Length") || hs_eq(k, "Connection")) {

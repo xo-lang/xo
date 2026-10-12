@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 addr is the address: true
 socket file exists: true
 second listen: Io false true
@@ -21,3 +23,4 @@ not listed: Denied(cmd: "kill")
 listed: ok
 status after QUIT: 131
 intersection: Denied(cmd: "kill")
+--- stderr

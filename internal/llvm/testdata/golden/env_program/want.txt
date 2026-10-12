@@ -1,3 +1,6 @@
+exit 0
+--- stdout
 non empty: true
 names a file: true
 args: 0
+--- stderr

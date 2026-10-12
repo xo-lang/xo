@@ -16,3 +16,8 @@ the script starts a local watchdog (captured PID) that terminates the
 instance after the limit whatever the script is doing; ssh gives up after
 five missed keepalives. After any run, check that nothing tagged
 purpose=xo-remote-full is still running.
+
+Also (2026-10-12): stopping `remote-full.sh --hold` while it slept in the
+foreground did not reach the EXIT trap (bash defers a signal until the
+foreground child exits); the instance was terminated by hand by its id.
+The hold now waits on a background sleep with a TERM/INT/HUP trap.

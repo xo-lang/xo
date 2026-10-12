@@ -148,7 +148,7 @@ static int pr_drain(int fd, nbuf *b) {
 }
 
 static int pr_pipe(int p[2]) {
-	if (pipe(p) < 0) {
+	if (xo_pipe(p) < 0) {
 		return -1;
 	}
 	for (int i = 0; i < 2; i++) {
@@ -560,7 +560,7 @@ static void pr_cmd_free(pr_cmd *c) {
 // pr_pipe2 makes a pipe whose ends close on exec; the end nb (0 or 1, -1
 // neither) is nonblocking.
 static int pr_pipe2(int p[2], int nb) {
-	if (pipe(p) < 0) {
+	if (xo_pipe(p) < 0) {
 		p[0] = p[1] = -1;
 		return -1;
 	}

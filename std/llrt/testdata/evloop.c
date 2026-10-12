@@ -4,13 +4,16 @@
 // code, as tasks.c does: timers with many sleepers on few workers, a
 // socket echo with more data than the socket buffers hold (writes park
 // until the reader drains), close and cancellation waking parked socket
-// operations, a refused dial, and select's `after`.
+// operations, a refused dial, select's `after`, and a pipe a child
+// process inherited.
 //
 // Every allocation must be freed after each test. Exit status 0 means
 // every test passed.
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include <spawn.h>
+#include <sys/wait.h>
 
 static int failures;
 
@@ -295,6 +298,40 @@ static void test_wakeups(void) {
 	fputs("wakeups: ok\n", stderr);
 }
 
+// test_inherited frees the descriptor of a pipe whose read end a child
+// process also holds, then makes it readable: no event may reach the
+// freed xo_pd. epoll keys a registration by the open file, so a close
+// alone left it registered while the child held the file, and the
+// poller's next event named freed memory (ThreadSanitizer: "use of an
+// invalid mutex" in pd_ready, linux/arm64, 2026-10-12, gotcha
+// linux-epoll-inherited-socket). Sockets and process pipes share the path.
+static void test_inherited(void) {
+	int p[2];
+	CHECK(pipe(p) == 0);
+	// the child inherits both ends: neither is close-on-exec yet
+	extern char **environ;
+	char *argv[] = {"sleep", "0.3", NULL};
+	pid_t pid = -1;
+	CHECK(posix_spawnp(&pid, "sleep", NULL, NULL, argv, environ) == 0);
+	set_nonblock(p[0]);
+	xo_pd *pd = pd_new(p[0], 0);
+	CHECK(pd != NULL);
+	pd_free(pd);
+	// the poller frees it at the top of its next turn
+	ev_poke();
+	usleep(50000);
+	// readable now, through the file the child still holds open
+	CHECK(write(p[1], "x", 1) == 1);
+	usleep(50000);
+	ev_poke();
+	usleep(20000);
+	if (pid > 0) {
+		waitpid(pid, NULL, 0);
+	}
+	close(p[1]);
+	fputs("inherited: ok\n", stderr);
+}
+
 static void leaks(const char *name) {
 	int64_t live, total;
 	xo_rt_live(&live, &total);
@@ -311,5 +348,7 @@ int main(void) {
 	leaks("echo");
 	test_wakeups();
 	leaks("wakeups");
+	test_inherited();
+	leaks("inherited");
 	return failures != 0;
 }
