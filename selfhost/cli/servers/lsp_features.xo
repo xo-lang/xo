@@ -77,7 +77,7 @@ fn (var s: Session) resolve(f: Int, site: Site) -> Target {
 }
 
 /// at: the identifier at the request's position.
-fn (var s: Session) at(os: Os, params: J) -> At ! Str uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) at(os: Os, params: J) -> At ! Str uses (stdio, fs, env) {
   s.fresh(os)
   let path = uri_to_path(uri_of(params))
   let f = if s.res.is_empty() { -1 } else { s.file_at(path) }
@@ -134,7 +134,7 @@ fn (var s: Session) span_location(os: Os, file: Str, a: Int, b: Int) -> J? uses 
   Some(jobj(["uri", "range"], [jstr(path_to_uri(path)), range_json(t.offset_position(a), t.offset_position(b))]))
 }
 
-fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
   let at = s.at(os, params)?
   for site in at.site {
     let tg = s.resolve(at.f, site)
@@ -171,7 +171,7 @@ fn (var s: Session) refs(tg: Target) -> List[(Int, Site)] {
   out
 }
 
-fn (var s: Session) references(os: Os, params: J) -> J ! Str uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) references(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
   let at = s.at(os, params)?
   let with_decl = match get(get(params, "context") ?? J.Null, "includeDeclaration") {
     Some(J.Bool(b)) => b
@@ -211,7 +211,7 @@ fn (s: Session) renamable(tg: Target) -> Bool {
   m >= 0 && !s.res[0].c.mods[m].is_std
 }
 
-fn (var s: Session) prepare_rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) prepare_rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env) {
   let at = match s.at(os, params) {
     Ok(a) => a
     Err(e) => return Err((-32803, e))
@@ -240,7 +240,7 @@ fn is_ident_text(s: Str) -> Bool {
   true
 }
 
-fn (var s: Session) rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) rename(os: Os, params: J) -> J ! (Int, Str) uses (stdio, fs, env) {
   let at = match s.at(os, params) {
     Ok(a) => a
     Err(e) => return Err((-32803, e))
@@ -400,7 +400,7 @@ fn (s: Session) describe(tg: Target) -> (Str, Str) {
   ("", "")
 }
 
-fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
   let at = s.at(os, params)?
   if at.f < 0 {
     return Ok(J.Null)
@@ -468,7 +468,7 @@ fn (s: Session) formatting(params: J) -> J {
 
 /// semanticTokens/full: the identifiers the resolution names, sorted, as
 /// LSP's relative five integer encoding.
-fn (var s: Session) semantic_tokens(os: Os, params: J) -> J uses (stdio, fs, env, net, proc, rand) {
+fn (var s: Session) semantic_tokens(os: Os, params: J) -> J uses (stdio, fs, env) {
   s.fresh(os)
   let path = uri_to_path(uri_of(params))
   let f = if s.res.is_empty() { -1 } else { s.file_at(path) }

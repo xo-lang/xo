@@ -4,7 +4,7 @@
 // an identifier's parent and grandparent nodes; this walk visits the
 // identifiers in the same order (the fields of selfhost/parser's nodes
 // are internal/ast's, in its order) and records for each the part of its
-// parent and grandparent that resolve reads (Ctx).
+// parent and grandparent that resolve reads (SiteCtx).
 
 use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/parser
@@ -19,7 +19,7 @@ const MOD_DEFAULT_LIBRARY = 4
 
 /// What resolve reads of an identifier's parent (and grandparent):
 /// resolve.go's switch on the parent's node type.
-enum Ctx {
+enum SiteCtx {
   /// A parent the switch does not name.
   Other
   /// The function declared (FuncOf, or the interface's method), -1 for
@@ -64,7 +64,7 @@ struct Site {
   id: parser.Ident
   field: Str
   index: Int
-  ctx: Ctx
+  ctx: SiteCtx
 }
 
 /// What an identifier names (resolve.go target): its semantic token type
@@ -106,7 +106,7 @@ struct Walk {
   out: List[Site] = []
 }
 
-fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: Ctx) {
+fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: SiteCtx) {
   w.out.push(Site{id: id, field: field, index: index, ctx: ctx})
 }
 
@@ -116,7 +116,7 @@ fn idents_of(c: check.Checker, f: Int) -> List[Site] {
   let file = c.files[f].ast
   for u in file.imports {
     if let Some(a) = u.alias {
-      w.add(a, "Alias", -1, Ctx.UseDecl)
+      w.add(a, "Alias", -1, SiteCtx.UseDecl)
     }
     if let Some(es) = u.effects {
       w.effects(es)
@@ -130,9 +130,9 @@ fn idents_of(c: check.Checker, f: Int) -> List[Site] {
 
 fn (var w: Walk) effects(es: List[parser.Effect]) {
   for e in es {
-    w.add(e.name, "Name", -1, Ctx.Label)
+    w.add(e.name, "Name", -1, SiteCtx.Label)
     if let Some(s) = e.sub {
-      w.add(s, "Sub", -1, Ctx.Label)
+      w.add(s, "Sub", -1, SiteCtx.Label)
     }
   }
 }
@@ -144,10 +144,10 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
       w.fn_decl(x, fo, x.recv.is_some(), fo)
     }
     StructDecl(x) => {
-      w.add(x.name, "Name", -1, Ctx.TypeDecl)
+      w.add(x.name, "Name", -1, SiteCtx.TypeDecl)
       w.type_params(x.type_params)
       for fl in x.fields {
-        let ctx = Ctx.Field(name: x.name.name)
+        let ctx = SiteCtx.Field(name: x.name.name)
         w.add(fl.name, "Name", -1, ctx)
         w.typ(fl.typ)
         if let Some(e) = fl.default {
@@ -155,32 +155,32 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
         }
       }
       if let Some(e) = x.inv {
-        w.expr(e, "Inv", -1, Ctx.TypeDecl, [])
+        w.expr(e, "Inv", -1, SiteCtx.TypeDecl, [])
       }
       for (i, id) in x.derive.indexed() {
-        w.add(id, "Derive", i, Ctx.TypeDecl)
+        w.add(id, "Derive", i, SiteCtx.TypeDecl)
       }
     }
     EnumDecl(x) => {
-      w.add(x.name, "Name", -1, Ctx.TypeDecl)
+      w.add(x.name, "Name", -1, SiteCtx.TypeDecl)
       w.type_params(x.type_params)
       for v in x.variants {
-        w.add(v.name, "Name", -1, Ctx.Variant(name: x.name.name))
+        w.add(v.name, "Name", -1, SiteCtx.Variant(name: x.name.name))
         if let Some(fs) = v.fields {
           for vf in fs {
             if let Some(n) = vf.name {
-              w.add(n, "Name", -1, Ctx.VariantField)
+              w.add(n, "Name", -1, SiteCtx.VariantField)
             }
             w.typ(vf.typ)
           }
         }
       }
       for (i, id) in x.derive.indexed() {
-        w.add(id, "Derive", i, Ctx.TypeDecl)
+        w.add(id, "Derive", i, SiteCtx.TypeDecl)
       }
     }
     InterfaceDecl(x) => {
-      w.add(x.name, "Name", -1, Ctx.TypeDecl)
+      w.add(x.name, "Name", -1, SiteCtx.TypeDecl)
       w.type_params(x.type_params)
       // the methods: FuncOf has none, so the interface's (ifaceMethod)
       let m = w.c.files[w.f].module
@@ -203,7 +203,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
       }
     }
     TypeDecl(x) => {
-      w.add(x.name, "Name", -1, Ctx.TypeDecl)
+      w.add(x.name, "Name", -1, SiteCtx.TypeDecl)
       w.type_params(x.type_params)
       if let Some(t) = x.typ {
         w.typ(t)
@@ -216,7 +216,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
       }
       w.params(x.params, [])
       if let Some(e) = x.seed {
-        w.expr(e, "Seed", -1, Ctx.Other, [])
+        w.expr(e, "Seed", -1, SiteCtx.Other, [])
       }
       w.effects(x.effects)
       if let Some(b) = x.body {
@@ -231,10 +231,10 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
 /// pv the function whose parameter bindings its parameters are (FuncOf).
 fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
   if let Some(r) = x.recv {
-    w.add(r.name, "Name", -1, Ctx.Receiver(fo: pv))
+    w.add(r.name, "Name", -1, SiteCtx.Receiver(fo: pv))
     w.typ(r.typ)
   }
-  w.add(x.name, "Name", -1, Ctx.FnDecl(fo: fo, method: method))
+  w.add(x.name, "Name", -1, SiteCtx.FnDecl(fo: fo, method: method))
   w.type_params(x.type_params)
   let vars = if pv >= 0 { w.c.param_vars.get(pv) ?? [] } else { [] }
   w.params(x.params, vars)
@@ -250,7 +250,7 @@ fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
 
 fn (var w: Walk) type_params(tps: List[parser.TypeParam]) {
   for tp in tps {
-    w.add(tp.name, "Name", -1, Ctx.TypeParam)
+    w.add(tp.name, "Name", -1, SiteCtx.TypeParam)
     if let Some(t) = tp.constraint {
       w.typ(t)
     }
@@ -259,7 +259,7 @@ fn (var w: Walk) type_params(tps: List[parser.TypeParam]) {
 
 fn (var w: Walk) params(ps: List[parser.Param], vars: List[Int]) {
   for p in ps {
-    let ctx = Ctx.Param(vars: vars)
+    let ctx = SiteCtx.Param(vars: vars)
     w.add(p.name, "Name", -1, ctx)
     if let Some(t) = p.typ {
       w.typ(t)
@@ -283,18 +283,18 @@ fn (var w: Walk) clauses(cls: List[parser.Clause]) {
     match cl {
       UsesClause(_, effects, _) => w.effects(effects)
       RequiresClause(_, _, cond, els) => {
-        w.expr(cond, "Cond", -1, Ctx.Other, [])
+        w.expr(cond, "Cond", -1, SiteCtx.Other, [])
         if let Some(e) = els {
-          w.expr(e, "Else", -1, Ctx.Other, [])
+          w.expr(e, "Else", -1, SiteCtx.Other, [])
         }
       }
-      EnsuresClause(_, _, cond) => w.expr(cond, "Cond", -1, Ctx.Other, [])
+      EnsuresClause(_, _, cond) => w.expr(cond, "Cond", -1, SiteCtx.Other, [])
     }
   }
 }
 
 fn (var w: Walk) const_decl(x: parser.ConstDecl, co: Int) {
-  let ctx = Ctx.ConstDecl(co: co)
+  let ctx = SiteCtx.ConstDecl(co: co)
   w.add(x.name, "Name", -1, ctx)
   if let Some(t) = x.typ {
     w.typ(t)
@@ -306,7 +306,7 @@ fn (var w: Walk) typ(t: parser.Type) {
   match t {
     NamedType(_, path, args) => {
       for (i, id) in path.indexed() {
-        w.add(id, "Path", i, Ctx.NamedType(path: path))
+        w.add(id, "Path", i, SiteCtx.NamedType(path: path))
       }
       for a in args {
         w.typ(a)
@@ -340,7 +340,7 @@ fn (var w: Walk) block(b: parser.Block) {
 
 fn (var w: Walk) opt_label(l: parser.Ident?) {
   if let Some(id) = l {
-    w.add(id, "Label", -1, Ctx.Label)
+    w.add(id, "Label", -1, SiteCtx.Label)
   }
 }
 
@@ -351,61 +351,61 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
       if let Some(t) = typ {
         w.typ(t)
       }
-      w.expr(value, "Value", -1, Ctx.Other, [])
+      w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
     VarStmt(_, name, typ, value) => {
-      w.add(name, "Name", -1, Ctx.Other)
+      w.add(name, "Name", -1, SiteCtx.Other)
       if let Some(t) = typ {
         w.typ(t)
       }
-      w.expr(value, "Value", -1, Ctx.Other, [])
+      w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
     AssignStmt(_, _, target, value) => {
-      w.expr(target, "Target", -1, Ctx.Other, [])
-      w.expr(value, "Value", -1, Ctx.Other, [])
+      w.expr(target, "Target", -1, SiteCtx.Other, [])
+      w.expr(value, "Value", -1, SiteCtx.Other, [])
     }
     DeferStmt(_, body) => w.stmt(body)
     ReturnStmt(_, value) => {
       if let Some(e) = value {
-        w.expr(e, "Value", -1, Ctx.Other, [])
+        w.expr(e, "Value", -1, SiteCtx.Other, [])
       }
     }
     BreakStmt(_, label) => {
       if let Some(id) = label {
-        w.add(id, "Label", -1, Ctx.Other)
+        w.add(id, "Label", -1, SiteCtx.Other)
       }
     }
     ContinueStmt(_, label) => {
       if let Some(id) = label {
-        w.add(id, "Label", -1, Ctx.Other)
+        w.add(id, "Label", -1, SiteCtx.Other)
       }
     }
     ForStmt(_, label, pattern, iter, bound, body, _) => {
       w.opt_label(label)
       w.pat(pattern)
-      w.expr(iter, "Iter", -1, Ctx.Other, [])
+      w.expr(iter, "Iter", -1, SiteCtx.Other, [])
       for b in bound {
-        w.expr(b, "Bound", -1, Ctx.Other, [])
+        w.expr(b, "Bound", -1, SiteCtx.Other, [])
       }
       w.block(body)
     }
     WhileStmt(_, label, cond, pattern, value, bound, body) => {
       w.opt_label(label)
       if let Some(e) = cond {
-        w.expr(e, "Cond", -1, Ctx.Other, [])
+        w.expr(e, "Cond", -1, SiteCtx.Other, [])
       }
       for p in pattern {
         w.pat(p)
       }
       for v in value {
-        w.expr(v, "Value", -1, Ctx.Other, [])
+        w.expr(v, "Value", -1, SiteCtx.Other, [])
       }
       for b in bound {
-        w.expr(b, "Bound", -1, Ctx.Other, [])
+        w.expr(b, "Bound", -1, SiteCtx.Other, [])
       }
       w.block(body)
     }
-    ExprStmt(_, x) => w.expr(x, "X", -1, Ctx.Other, [])
+    ExprStmt(_, x) => w.expr(x, "X", -1, SiteCtx.Other, [])
     BadStmt(_) => {}
     ConstDecl(d) => w.const_decl(d, -1)
   }
@@ -414,104 +414,104 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
 fn (var w: Walk) string_lit(s: parser.StringLit) {
   for p in s.parts {
     if let Some(e) = p.expr {
-      w.expr(e, "Expr", -1, Ctx.Other, [])
+      w.expr(e, "Expr", -1, SiteCtx.Other, [])
     }
   }
 }
 
 fn (var w: Walk) field_inits(fs: List[parser.FieldInit], g: Expr) {
   for fi in fs {
-    w.add(fi.name, "Name", -1, Ctx.FieldInit(g: [g]))
-    w.expr(fi.value, "Value", -1, Ctx.Other, [])
+    w.add(fi.name, "Name", -1, SiteCtx.FieldInit(g: [g]))
+    w.expr(fi.value, "Value", -1, SiteCtx.Other, [])
   }
 }
 
 /// An expression held by the field (and index) of a parent whose context
 /// for a direct identifier child is ctx; call is the call whose callee e
 /// is (empty otherwise).
-fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: Ctx, call: List[Expr]) {
+fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[Expr]) {
   match e {
     Ident(id) => w.add(id, field, index, ctx)
     StringLit(s) => w.string_lit(s)
-    ParenExpr(_, x) => w.expr(x, "X", -1, Ctx.Other, [])
+    ParenExpr(_, x) => w.expr(x, "X", -1, SiteCtx.Other, [])
     TupleExpr(_, elems) => {
       for (i, x) in elems.indexed() {
-        w.expr(x, "Elems", i, Ctx.Other, [])
+        w.expr(x, "Elems", i, SiteCtx.Other, [])
       }
     }
     ListLit(_, elems) => {
       for (i, x) in elems.indexed() {
-        w.expr(x, "Elems", i, Ctx.Other, [])
+        w.expr(x, "Elems", i, SiteCtx.Other, [])
       }
     }
     SetLit(_, elems) => {
       for (i, x) in elems.indexed() {
-        w.expr(x, "Elems", i, Ctx.Other, [])
+        w.expr(x, "Elems", i, SiteCtx.Other, [])
       }
     }
     MapLit(_, entries) => {
       for me in entries {
-        w.expr(me.key, "Key", -1, Ctx.Other, [])
-        w.expr(me.value, "Value", -1, Ctx.Other, [])
+        w.expr(me.key, "Key", -1, SiteCtx.Other, [])
+        w.expr(me.value, "Value", -1, SiteCtx.Other, [])
       }
     }
     StructLit(_, typ, fields) => {
-      w.expr(typ, "Type", -1, Ctx.Other, [])
+      w.expr(typ, "Type", -1, SiteCtx.Other, [])
       w.field_inits(fields, e)
     }
-    UnaryExpr(_, _, x) => w.expr(x, "X", -1, Ctx.Other, [])
+    UnaryExpr(_, _, x) => w.expr(x, "X", -1, SiteCtx.Other, [])
     BinaryExpr(_, _, x, y) => {
-      w.expr(x, "X", -1, Ctx.Other, [])
-      w.expr(y, "Y", -1, Ctx.Other, [])
+      w.expr(x, "X", -1, SiteCtx.Other, [])
+      w.expr(y, "Y", -1, SiteCtx.Other, [])
     }
     IsExpr(_, x, pattern) => {
-      w.expr(x, "X", -1, Ctx.Other, [])
+      w.expr(x, "X", -1, SiteCtx.Other, [])
       w.pat(pattern)
     }
     RangeExpr(_, lo, hi, _) => {
       if let Some(x) = lo {
-        w.expr(x, "Lo", -1, Ctx.Other, [])
+        w.expr(x, "Lo", -1, SiteCtx.Other, [])
       }
       if let Some(x) = hi {
-        w.expr(x, "Hi", -1, Ctx.Other, [])
+        w.expr(x, "Hi", -1, SiteCtx.Other, [])
       }
     }
     SelectorExpr(_, x, sel) => {
-      w.expr(x, "X", -1, Ctx.SelX, [])
-      w.add(sel, "Sel", -1, Ctx.Selector(x: e, call: call))
+      w.expr(x, "X", -1, SiteCtx.SelX, [])
+      w.add(sel, "Sel", -1, SiteCtx.Selector(x: e, call: call))
     }
     CallExpr(_, fun, args) => {
-      w.expr(fun, "Fun", -1, Ctx.CallFun(call: e), [e])
+      w.expr(fun, "Fun", -1, SiteCtx.CallFun(call: e), [e])
       for (i, a) in args.indexed() {
         if let Some(n) = a.name {
-          w.add(n, "Name", -1, Ctx.Arg)
+          w.add(n, "Name", -1, SiteCtx.Arg)
         }
-        w.expr(a.value, "Value", -1, Ctx.Other, [])
+        w.expr(a.value, "Value", -1, SiteCtx.Other, [])
         let _ = i
       }
     }
     TypeArgsExpr(_, x, types) => {
-      w.expr(x, "X", -1, Ctx.Other, [])
+      w.expr(x, "X", -1, SiteCtx.Other, [])
       for t in types {
         w.typ(t)
       }
     }
     IndexExpr(_, x, index0) => {
-      w.expr(x, "X", -1, Ctx.Other, [])
-      w.expr(index0, "Index", -1, Ctx.Other, [])
+      w.expr(x, "X", -1, SiteCtx.Other, [])
+      w.expr(index0, "Index", -1, SiteCtx.Other, [])
     }
-    TryExpr(_, x) => w.expr(x, "X", -1, Ctx.Other, [])
+    TryExpr(_, x) => w.expr(x, "X", -1, SiteCtx.Other, [])
     WithExpr(_, x, fields) => {
-      w.expr(x, "X", -1, Ctx.Other, [])
+      w.expr(x, "X", -1, SiteCtx.Other, [])
       w.field_inits(fields, e)
     }
     IfExpr(ie) => w.if_expr(ie)
     MatchExpr(_, subject, arms) => {
-      w.expr(subject, "Subject", -1, Ctx.Other, [])
+      w.expr(subject, "Subject", -1, SiteCtx.Other, [])
       for arm in arms {
         w.pat(arm.pattern)
         if let Some(g) = arm.guard {
-          w.expr(g, "Guard", -1, Ctx.Other, [])
+          w.expr(g, "Guard", -1, SiteCtx.Other, [])
         }
         if let Some(b) = arm.body {
           w.stmt(b)
@@ -519,19 +519,19 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: Ctx, call: List[Expr
       }
     }
     ScopeExpr(_, name, body) => {
-      w.add(name, "Name", -1, Ctx.Other)
+      w.add(name, "Name", -1, SiteCtx.Other)
       w.block(body)
     }
     SelectExpr(_, arms) => {
       for arm in arms {
         if let Some(b) = arm.bind {
-          w.add(b, "Bind", -1, Ctx.Other)
+          w.add(b, "Bind", -1, SiteCtx.Other)
         }
         if let Some(x) = arm.op {
-          w.expr(x, "Op", -1, Ctx.Other, [])
+          w.expr(x, "Op", -1, SiteCtx.Other, [])
         }
         if let Some(x) = arm.after {
-          w.expr(x, "After", -1, Ctx.Other, [])
+          w.expr(x, "After", -1, SiteCtx.Other, [])
         }
         if let Some(b) = arm.body {
           w.stmt(b)
@@ -555,24 +555,24 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: Ctx, call: List[Expr
 
 fn (var w: Walk) if_expr(ie: parser.IfExpr) {
   if let Some(x) = ie.cond {
-    w.expr(x, "Cond", -1, Ctx.Other, [])
+    w.expr(x, "Cond", -1, SiteCtx.Other, [])
   }
   if let Some(p) = ie.pattern {
     w.pat(p)
   }
   if let Some(x) = ie.value {
-    w.expr(x, "Value", -1, Ctx.Other, [])
+    w.expr(x, "Value", -1, SiteCtx.Other, [])
   }
   w.block(ie.then)
   if let Some(x) = ie.els {
-    w.expr(x, "Else", -1, Ctx.Other, [])
+    w.expr(x, "Else", -1, SiteCtx.Other, [])
   }
 }
 
 fn (var w: Walk) pat_fields(fs: List[parser.PatField]) {
   for pf in fs {
     if let Some(n) = pf.name {
-      w.add(n, "Name", -1, Ctx.PatField)
+      w.add(n, "Name", -1, SiteCtx.PatField)
     }
     w.pat(pf.pattern)
   }
@@ -580,11 +580,11 @@ fn (var w: Walk) pat_fields(fs: List[parser.PatField]) {
 
 fn (var w: Walk) pat(p: Pattern) {
   match p {
-    BindPat(_, name) => w.add(name, "Name", -1, Ctx.Other)
-    LitPat(_, value) => w.expr(value, "Value", -1, Ctx.Other, [])
+    BindPat(_, name) => w.add(name, "Name", -1, SiteCtx.Other)
+    LitPat(_, value) => w.expr(value, "Value", -1, SiteCtx.Other, [])
     RangePat(_, lo, hi, _) => {
-      w.expr(lo, "Lo", -1, Ctx.Other, [])
-      w.expr(hi, "Hi", -1, Ctx.Other, [])
+      w.expr(lo, "Lo", -1, SiteCtx.Other, [])
+      w.expr(hi, "Hi", -1, SiteCtx.Other, [])
     }
     OrPat(_, alts) => {
       for a in alts {
@@ -598,13 +598,13 @@ fn (var w: Walk) pat(p: Pattern) {
     }
     VariantPat(_, path, _, fields, _) => {
       for (i, id) in path.indexed() {
-        w.add(id, "Path", i, Ctx.VariantPat(p: p, path: path))
+        w.add(id, "Path", i, SiteCtx.VariantPat(p: p, path: path))
       }
       w.pat_fields(fields)
     }
     StructPat(_, path, fields, _) => {
       for (i, id) in path.indexed() {
-        w.add(id, "Path", i, Ctx.StructPat(path: path))
+        w.add(id, "Path", i, SiteCtx.StructPat(path: path))
       }
       w.pat_fields(fields)
     }
