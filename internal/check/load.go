@@ -156,14 +156,20 @@ func (c *checker) loadRuntimeModule(path string) (*Module, error) {
 	if m, ok := c.modules[path]; ok {
 		return m, nil
 	}
-	src, err := fs.ReadFile(std.NativeFiles, path+".xo")
+	file := path + ".xo"
+	if path == "native/llrt/unicode" && os.Getenv("XO_UNICODE") == "c" {
+		// the C path of the Unicode operations, kept selectable while the
+		// Xo one is slower on arm64 (decision 0180)
+		file = "native/llrt/unicode_c.xo"
+	}
+	src, err := fs.ReadFile(std.NativeFiles, file)
 	if err != nil {
 		return nil, nil
 	}
 	name := strings.TrimPrefix(path, "native/llrt/")
 	m := &Module{Path: path, Name: name, Dir: "std/native/llrt", Native: true, Scope: map[string]Object{}, Edition: CurrentEdition}
 	c.modules[path] = m
-	m.Files = append(m.Files, c.parseFile(m, "std/"+path+".xo", src, 0))
+	m.Files = append(m.Files, c.parseFile(m, "std/"+file, src, 0))
 	m.state = 1
 	if err := c.loadImports(m); err != nil {
 		return nil, err

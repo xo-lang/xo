@@ -332,6 +332,162 @@ xo_rstr *xo_str_slice_at(const char *p, int64_t n, int64_t lo, int64_t hi, const
 // Xo since decision 0180: std/native/llrt/unicode.xo).
 int64_t xo_rune_is_space(int64_t r) { return n_is_space((int32_t)r); }
 
+// The C path of the Unicode operations (decision 0180, XO_UNICODE_C; see
+// xo_std.c).
+#ifdef XO_UNICODE_C
+// n_in_ranges reports whether r is in the sorted inclusive ranges t.
+static int n_in_ranges(const int32_t (*t)[2], int n, int64_t r) {
+	int lo = 0, hi = n;
+	while (lo < hi) {
+		int m = lo + (hi - lo) / 2;
+		if (r < t[m][0]) {
+			hi = m;
+		} else if (r > t[m][1]) {
+			lo = m + 1;
+		} else {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+#define N_RANGES(t) (int)(sizeof t / sizeof t[0])
+
+// Rune classes: unicode.IsLetter, IsDigit, IsSpace, strconv.IsPrint.
+int64_t xo_rune_is_letter(int64_t r) {
+	if (r < 0x80) {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z');
+	}
+	return n_in_ranges(xo_letter_ranges, N_RANGES(xo_letter_ranges), r);
+}
+
+int64_t xo_rune_is_digit(int64_t r) {
+	if (r < 0x80) {
+		return r >= '0' && r <= '9';
+	}
+	return n_in_ranges(xo_digit_ranges, N_RANGES(xo_digit_ranges), r);
+}
+
+// xo_unicode_ranges is the ranges of a Unicode class as a List[Int] of
+// lo, hi pairs, sorted (std/regexp natively, decision 0172): 0 the
+// letters (unicode.L), 1 the decimal digits (unicode.Nd).
+xo_rlist *xo_unicode_ranges(int64_t which) {
+	const int32_t(*t)[2] = which == 0 ? xo_letter_ranges : xo_digit_ranges;
+	int n = which == 0 ? N_RANGES(xo_letter_ranges) : N_RANGES(xo_digit_ranges);
+	xo_rlist *l = xo_rl_new(2 * (int64_t)n + 4, 8);
+	int64_t *d = (int64_t *)rl_data(l);
+	int64_t k = 0;
+	if (which == 0) {
+		d[k++] = 'A';
+		d[k++] = 'Z';
+		d[k++] = 'a';
+		d[k++] = 'z';
+	} else {
+		d[k++] = '0';
+		d[k++] = '9';
+	}
+	for (int i = 0; i < n; i++) {
+		d[k++] = t[i][0];
+		d[k++] = t[i][1];
+	}
+	l->len = k;
+	return l;
+}
+
+static int n_is_print(int64_t r) {
+	if (r < 0x80) {
+		return r >= 0x20 && r < 0x7F;
+	}
+	return n_in_ranges(xo_print_ranges, N_RANGES(xo_print_ranges), r);
+}
+
+int64_t xo_rune_is_print(int64_t r) { return n_is_print(r); }
+
+// xo_rune_to_case is unicode.ToLower (lower) or unicode.ToUpper.
+int64_t xo_rune_to_case(int64_t r, int64_t lower) { return n_to_case((int32_t)r, (int)lower); }
+
+// n_quote_rune appends r (a scalar value) to o as Go's strconv quotes it
+// inside the quote character quote.
+static void n_quote_rune(nbuf *o, int32_t r, char quote) {
+	static const char hex[] = "0123456789abcdef";
+	char t[16];
+	if (r == quote || r == '\\') {
+		nbuf_byte(o, '\\');
+		nbuf_byte(o, (char)r);
+		return;
+	}
+	if (n_is_print(r)) {
+		nbuf_put(o, t, n_utf8_encode(t, r));
+		return;
+	}
+	switch (r) {
+	case '\a':
+		nbuf_str(o, "\\a");
+		return;
+	case '\b':
+		nbuf_str(o, "\\b");
+		return;
+	case '\f':
+		nbuf_str(o, "\\f");
+		return;
+	case '\n':
+		nbuf_str(o, "\\n");
+		return;
+	case '\r':
+		nbuf_str(o, "\\r");
+		return;
+	case '\t':
+		nbuf_str(o, "\\t");
+		return;
+	case '\v':
+		nbuf_str(o, "\\v");
+		return;
+	}
+	int digits = r < ' ' || r == 0x7F ? 2 : (r < 0x10000 ? 4 : 8);
+	t[0] = '\\';
+	t[1] = digits == 2 ? 'x' : (digits == 4 ? 'u' : 'U');
+	for (int i = 0; i < digits; i++) {
+		t[2 + i] = hex[(r >> (4 * (digits - 1 - i))) & 15];
+	}
+	nbuf_put(o, t, 2 + digits);
+}
+
+// xo_rune_quote is strconv.QuoteRune.
+xo_rstr *xo_rune_quote(int64_t r, int64_t *len) {
+	nbuf o = {0};
+	nbuf_byte(&o, '\'');
+	n_quote_rune(&o, n_rune_valid(r) ? (int32_t)r : 0xFFFD, '\'');
+	nbuf_byte(&o, '\'');
+	return nbuf_take(&o, len);
+}
+
+// xo_strconv_quote is strconv.Quote of the n bytes at p (a Str or Bytes): a
+// byte of an invalid sequence is \x of the byte.
+xo_rstr *xo_strconv_quote(const char *p, int64_t n, int64_t *len) {
+	static const char hex[] = "0123456789abcdef";
+	nbuf o = {0};
+	nbuf_byte(&o, '"');
+	const unsigned char *s = (const unsigned char *)p;
+	for (int64_t i = 0; i < n;) {
+		int size;
+		int32_t r = n_utf8_decode(s + i, n - i, &size);
+		if (r == 0xFFFD && size == 1) {
+			char t[4] = {'\\', 'x', hex[s[i] >> 4], hex[s[i] & 15]};
+			nbuf_put(&o, t, 4);
+		} else {
+			n_quote_rune(&o, r, '"');
+		}
+		i += size;
+	}
+	nbuf_byte(&o, '"');
+	return nbuf_take(&o, len);
+}
+
+// xo_bytes_quote is strconv.Quote of the bytes.
+xo_rstr *xo_bytes_quote(const char *p, int64_t n, int64_t *len) { return xo_strconv_quote(p, n, len); }
+
+#endif
+
 // xo_bytes_decode is utf8.DecodeRune of the bytes from i: the rune times 8
 // plus its size (U+FFFD and 0 at the end).
 int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {

@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 plane 0: letters=48965 digits=370 spaces=25 prints=55508 case=517314775
 plane 1: letters=17135 digits=310 spaces=0 prints=23246 case=603224227
 plane 2: letters=60873 digits=0 spaces=0 prints=60873 case=0
@@ -62,3 +64,4 @@ KELVIN ~ kelvin: true
 '�' false true
 "ok\xff\xc3(₡\xf0\x9f"
 abc|ÀÉ|123|٣٤|日本|x|1
+--- stderr
