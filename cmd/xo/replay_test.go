@@ -86,3 +86,36 @@ func TestRecordReplayCLI(t *testing.T) {
 		t.Fatalf("replay of a non trace: exit %d %s", code, errOut.String())
 	}
 }
+
+// TestRecordReplayStamp: `--stamp` values are part of the build
+// information (core 10.1, decision 0165), so `xo replay` of a run built
+// with a stamp rebuilds the stamped program, not the declared default.
+func TestRecordReplayStamp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds Go")
+	}
+	dir := t.TempDir()
+	t.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	src := filepath.Join(dir, "app")
+	os.MkdirAll(src, 0o755)
+	prog := `const VERSION: Str = "dev"
+
+fn main(os: Os) {
+  os.stdio.println("version ${VERSION} rand ${os.rand.int(0, 1000000)}")
+}
+`
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trace := filepath.Join(dir, "run.xotrace")
+	var out, errOut bytes.Buffer
+	if code := run([]string{"run", "--stamp", "VERSION=1.4.0", "--record=" + trace, src}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "version 1.4.0 rand ") {
+		t.Fatalf("run --stamp --record: exit %d\n%s\n%s", code, out.String(), errOut.String())
+	}
+	recOut := out.String()
+	out.Reset()
+	errOut.Reset()
+	if code := run([]string{"replay", trace}, &out, &errOut); code != 0 || out.String() != recOut {
+		t.Fatalf("replay: exit %d\n%s\nrecorded:\n%s\nstderr:\n%s", code, out.String(), recOut, errOut.String())
+	}
+}
