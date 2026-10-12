@@ -609,3 +609,13 @@ test "glibc versions: libm and libgcc_s names, libc's default" {
   expect(v.get("getrandom".bytes())) == Some(("libc.so.6", "GLIBC_2.25"))
   expect(v.get("malloc".bytes())) == None
 }
+
+test "a COMDAT group is kept once, a symbol defined twice is an error" {
+  let pers = "\t.hidden DW.ref.xo_personality\n\t.weak DW.ref.xo_personality\n\t.section .data.DW.ref.xo_personality,\"awG\",@progbits,DW.ref.xo_personality,comdat\n\t.p2align 3\nDW.ref.xo_personality:\n\t.xword xo_personality\n"
+  let a = "\t.text\n\t.globl main\nmain:\n\tbl g\n\tret\n\t.globl xo_personality\nxo_personality:\n\tret\n" + pers
+  let b = "\t.text\n\t.globl g\ng:\n\tret\n" + pers
+  let oa = assemble_elf(a.bytes()).or_fault("a")
+  let ob = assemble_elf(b.bytes()).or_fault("b")
+  expect(link_elf([LinkInput{path: "a.o", data: oa}, LinkInput{path: "b.o", data: ob}], ElfLinkOpts{}).is_ok()) == true
+  expect(link_elf([LinkInput{path: "a.o", data: oa}, LinkInput{path: "a2.o", data: oa}], ElfLinkOpts{})) == Err("main is defined in a.o and in a2.o")
+}

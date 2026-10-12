@@ -191,6 +191,8 @@ struct ELinker {
   tls_size: Int = 0
   tls_align: Int = 1
   phnum: Int = 0
+  /// common symbols allocated in .bss: (object, symbol) to offset
+  commons: Map[(Int, Int), Int] = {}
   err: Str = ""
 }
 
@@ -406,8 +408,15 @@ fn (var l: ELinker) add_globals(o: Int) {
     }
     match l.globals.get(s.name) {
       Some((d, j)) => {
-        if bind == STB_GLOBAL && sym_bind(l.objs[d].syms[j]) == STB_WEAK {
+        // a global definition replaces a weak one or a common symbol; a
+        // larger common symbol replaces a smaller one
+        let old = l.objs[d].syms[j]
+        let common = s.shndx == SHN_COMMON
+        let old_common = old.shndx == SHN_COMMON
+        if (!common && bind == STB_GLOBAL && (sym_bind(old) == STB_WEAK || old_common)) || (common && old_common && s.size > old.size) {
           l.globals.put(s.name, (o, i))
+        } else if !common && !old_common && bind == STB_GLOBAL && sym_bind(old) == STB_GLOBAL {
+          l.fail("${bstr(s.name)} is defined in ${l.objs[d].path} and in ${l.objs[o].path}")
         }
       }
       None => l.globals.put(s.name, (o, i))
@@ -629,6 +638,9 @@ fn (l: ELinker) sym_addr(o: Int, i: Int) -> Int {
   if s.shndx == SHN_ABS {
     return s.value
   }
+  if s.shndx == SHN_COMMON {
+    return l.osects[O_BSS].addr + (l.commons.get((o, i)) ?? 0)
+  }
   if s.shndx >= SHN_LORESERVE {
     return 0
   }
@@ -730,6 +742,20 @@ fn (var l: ELinker) place() {
       l.osects[out].align = l.osects[out].align.max(al)
       l.osects[out].chunks.push((o, k))
     }
+  }
+  // the common symbols each name's definition chose, after the .bss
+  // sections: aligned to their value (ELF's alignment of a common
+  // symbol)
+  for (_, (d, i)) in l.globals.entries() {
+    let s = l.objs[d].syms[i]
+    if s.shndx != SHN_COMMON {
+      continue
+    }
+    let al = s.value.max(1)
+    let off = align_up(l.osects[O_BSS].size, al)
+    l.commons.put((d, i), off)
+    l.osects[O_BSS].size = off + s.size
+    l.osects[O_BSS].align = l.osects[O_BSS].align.max(al)
   }
 }
 
