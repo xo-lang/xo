@@ -5,7 +5,8 @@
 # internal/arm64/testdata/run program (TestRun: the Go backend's output)
 # with `<compiler> build`, runs it with XO_LEAKCHECK=1, and compares
 # (XO_GO_XO: the Go `xo` building the reference, default .tools/xo;
-# XO_GOLD_DIR: where the binaries go, default .tools/gold).
+# XO_GOLD_DIR: where the binaries go, default .tools/gold; XO1_BACKEND:
+# a --backend= to pass the compiler, such as llvm, decision 0178).
 import os, re, subprocess, sys, glob
 from concurrent.futures import ThreadPoolExecutor
 
@@ -58,7 +59,9 @@ def run(bin, d):
 def one(d, want_fn):
     name = d.replace('/', '_')
     bin = os.path.join(out, name)
-    b = subprocess.run([comp, 'build', '--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True)
+    be = os.environ.get('XO1_BACKEND', '')
+    flags = ['--backend=' + be] if be else []
+    b = subprocess.run([comp, 'build'] + flags + ['--std=' + os.path.join(root, 'std'), '-o', bin, d], capture_output=True, text=True)
     if b.returncode != 0:
         return d, 'build: ' + (b.stderr.strip().split('\n') or [''])[-1][:200]
     got, leak = run(bin, d)
@@ -105,5 +108,7 @@ for d, why in fails:
     reasons[k] = reasons.get(k, 0) + 1
 for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]):
     print('%4d %s' % (v, k))
+for d, why in fails:
+    print('FAIL', d, why.split('\n')[0][:150])
 for d, why in fails[:int(os.environ.get('SHOW', '8'))]:
     print('==', d, why[:1200])
