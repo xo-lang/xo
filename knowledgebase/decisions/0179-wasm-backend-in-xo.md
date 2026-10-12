@@ -1,7 +1,7 @@
 # 0179: A WebAssembly backend written only in Xo, from the self hosted SSA to WAT assembled in Xo, with a runtime of its own over WASI
 
-Status: Accepted (2026-10-12), stages 1 and 2 implemented in `selfhost/wasm/`
-(gen.xo, func.xo, call.xo, rt.xo, rt2.xo, rt3.xo, rt4.xo, asm.xo, main.xo, run.mjs), the driver
+Status: Accepted (2026-10-12), stages 1 and 2 and stage 3's size work implemented in `selfhost/wasm/`
+(gen.xo, func.xo, call.xo, home.xo, rt.xo, rt2.xo, rt3.xo, rt4.xo, asm.xo, main.xo, run.mjs), the driver
 path `xo1 build --backend=wasm` (`selfhost/xo/wasm.xo`), and
 `internal/selfhost/wasm_test.go` (`TestSelfhostWasm`). Figures:
 `bench/results/wasm-2026-10-12.md`. Item (5) of decision 0150's amended
@@ -264,6 +264,81 @@ what its go backend build prints (run.mjs compiles eagerly and turns
 off incremental marking: two V8 crashes, see the gotchas); 40 MB and
 about 5 GB to compile are what keep it out of the playground for now.
 
+## Stage 3: the size of a large module (2026-10-12)
+
+The self hosted checker's module was 43.2 MB (main on 2026-10-12) and
+took 10.7 s and 5.9 GB under Node for seven small goldens. Measured by
+construct (`selfhost/wasm --annotate` comments every SSA instruction's
+code in the WAT with its opcode, so a script attributes the bytes), the
+first quarter was suspension frames, then whole `Checker` copies: as
+`var` arguments and results (253 to 274 leaves each way), field by field
+releases in landing pads, edge copies into block parameters, and
+unwind exits building a placeholder `Checker`. The changes, in the
+order they were made (figures: `bench/results/wasm-2026-10-12.md`,
+"Stage 3"):
+
+- **No frames without waiting.** A program whose functions never call
+  a blocking runtime function (`rt3_blocking`) never suspends, so calls
+  through function values get no resume points and no frame saves
+  (the checker uses the clock, which pulled in the task runtime).
+- **One zero exit.** Every fault exit of a function branches to one
+  block that zeroes the homes and pushes the zero results (`$Z`), and an
+  unwind exit that only hands the fault on (`rt.fault_continue`) and
+  returns placeholders is that exit (in a program where nothing waits,
+  unwinding is always a fault and the caller reads no result).
+- **Large `var` parameters by reference** (`home.xo`, the LLVM
+  emitter's decisions 0145 and 0148 in this value model). A `var`
+  parameter of a struct or tuple of 16 leaves or more (`HOME_MIN`), of a
+  function only called directly, is the address of its home: the
+  callee's chain of values stays there (the parameter, field updates of
+  a value that dies there, the `var` result of a call that was given
+  the home, block parameters every edge passes such a value), fields are
+  loaded where they are read, and the updated value is not returned. The
+  chain is the greatest set closed under those rules (loops), with exact
+  liveness (not plan_locals' intervals), the SSA's repeated reads of
+  one call result counted as one value, and the field reads that follow
+  a give up served by snapshots taken where the value is defined
+  (gotchas/wasm-home-chain-ssa-shapes.md). A forward dataflow checks
+  that every use sees its value in the home; if one does not, that home
+  falls back (loaded at entry, stored at each return). A caller passes
+  its own home when it gives the value up, else a temporary block
+  (`memory.copy` from memory, stores from locals). A fault exit zeroes
+  the homes, as it returned zero leaves before.
+- **Read only homes.** A parameter that is not `var`, of a type some
+  function takes as a `var` home (`fn (c: Checker)` methods), is passed
+  by reference too: callers mostly hold the value in their home and pass
+  its address, and the callee never writes it (a copy when the same
+  call also passes that home for a `var` parameter).
+- **Releases as one call.** A run of field releases of one struct (the
+  landing pads of `Checker` methods released 220 fields one by one) is
+  one call of a helper per type and field set, given the struct's
+  leaves, or its address when it is in memory.
+- **Locals.** Field reads of block parameters alias them as other field
+  reads do; temporaries of one instruction (element reads, copies,
+  values loaded from memory) share per function scratch locals; a call
+  tuple has no locals for the parts its homes hold; and locals are
+  renumbered so the most used ones have the one byte indexes.
+
+Results: the module is **8,903,113 bytes** (from 43,193,163), the
+goldens still give 120 pass, 21 unsupported, 0 fail, and the checker
+prints its 3,398 lines identically; under Node it compiles in 0.17 s
+(0.92 s) and runs the seven goldens in 1.9 s and 2.5 GB (10.7 s,
+5.9 GB), with a 1 MB worker stack where 4 MB was needed. Most of the
+earlier run cost was V8's optimizing tier on huge functions, not the
+module's compile (gotchas/wasm-turbofan-tier-up-memory.md). In headless
+Chrome 154 the module compiles lazily in about 5 ms, and the checker
+runs in a worker on the structs golden with the go backend build's
+output; on deeper programs (the recursion golden) it overflows the
+worker's stack (`RangeError`), where Node needs between 0.75 and 1 MB.
+That, not the size, is now the first blocker for the playground: the
+next steps are smaller frames on the checker's recursion (fewer locals
+per function), then stage 3's structured control flow.
+
+The build of the checker is slower (14 s and 4.0 GB before, about
+37 s and 3.1 GB with `--annotate`), the price of the liveness walks per
+value. TestSelfhostWasm still gives 120 pass, 21 unsupported, 0 fail of
+141 (121 of 143 after merging main); `wasmMinPass` stays 116.
+
 ## Consequences
 
 - The playground's path no longer needs the Go compiler and linker in
@@ -288,6 +363,11 @@ about 5 GB to compile are what keep it out of the playground for now.
 - **Binary wasm directly**: smaller and faster to write out, but the
   text is the debugging surface; the assembler can be bypassed later by
   emitting its instruction lists without the text.
+- **Large `var` parameters loaded at entry and stored at return**
+  (decision 0145's first form): measured as stage 3's fallback, a
+  `Checker` copied into and out of memory around each call made the
+  module larger (29.9 MB to 40.0 MB at the first attempt); only keeping
+  the chain in memory pays.
 - **Aggregates in memory** (every struct a pointer to an immutable
   record): simpler calls, but a record per value would need its own
   counting and would not be the LLVM emitter's model of retains on heap
