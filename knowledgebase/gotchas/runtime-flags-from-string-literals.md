@@ -26,7 +26,7 @@ with `--ld=macho` there is no compiler, so the link fails.
 
 ## Fix
 
-`callsSym` / `calls_sym` (commit after e236ffc, both drivers, same
+`callsSym` / `calls_sym` (commit 440c630, both drivers, same
 rule): a symbol counts only when preceded by what a reference has before
 it (space, tab, `_`, `@`, `:`, `,`), not by a string literal's quote.
 TestIOFlagsUnicodeC covers `.ascii "xo_str_lower"` and `c"xo_str_lower"`.
