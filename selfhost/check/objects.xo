@@ -222,6 +222,13 @@ pub struct Module {
   pub go_path: Str = ""
   pub go_decl: Str = ""
   pub go_skipped: Map[Str, Str] = {}
+  /// The Go adapter the binder wrote beside the declaration file, and
+  /// for a third party package the `path version` requirements and the
+  /// go.sum of the binding workspace (gobind.Binding Adapter, Require,
+  /// Sum: the code generator's goBindings reads them).
+  pub go_adapter: Str = ""
+  pub go_require: List[Str] = []
+  pub go_sum: Str = ""
 }
 
 /// An import of a file: the module it names, -1 when the path did not

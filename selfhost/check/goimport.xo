@@ -72,6 +72,13 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
     c.mods[dep].go_path = gopath
     c.mods[dep].go_decl = decl_path
     c.mods[dep].go_skipped = hdr.skipped
+    c.mods[dep].go_adapter = c.fs.read_text("${base_path}.go").ok() ?? ""
+    if !hdr.standard {
+      // gobind workspaceDeps: the binding workspace's go.mod and go.sum
+      let ws = join(cache, "_mod")
+      c.mods[dep].go_require = go_mod_requires(c.fs.read_text(join(ws, "go.mod")).ok() ?? "")
+      c.mods[dep].go_sum = c.fs.read_text(join(ws, "go.sum")).ok() ?? ""
+    }
     c.parse_into(dep, decl_path, data, true)
     c.mods[dep].state = 1
     c.load_imports(dep)
@@ -124,6 +131,30 @@ struct GoBindHeader {
   mod_version: Str = ""
   rerun: Str = ""
   skipped: Map[Str, Str] = {}
+}
+
+/// gobind workspaceDeps: the requirements of a go.mod, the lines of a
+/// `require (` block and of single `require` lines, comments removed.
+fn go_mod_requires(text: Str) -> List[Str] {
+  var out: List[Str] = []
+  var inside = false
+  for l0 in text.split("\n") {
+    var l = l0.trim()
+    let cut = l.split("//")
+    if cut.len() > 1 {
+      l = cut[0].trim()
+    }
+    if l == "require (" {
+      inside = true
+    } else if inside && l == ")" {
+      inside = false
+    } else if inside && !l.is_empty() {
+      out.push(l)
+    } else if l.starts_with("require ") {
+      out.push(l.trim_prefix("require ").trim())
+    }
+  }
+  out
 }
 
 fn go_binding_header(data: Bytes) -> GoBindHeader {
