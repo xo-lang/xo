@@ -46,14 +46,18 @@ use github.com/xo-lang/xo/selfhost/ssa
 use github.com/xo-lang/xo/selfhost/arm64
 use github.com/xo-lang/xo/selfhost/macho
 use github.com/xo-lang/xo/selfhost/llvm
+use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/cli/semantic
 
 fn main(os: Os) ! {
   let args = os.env.args()
-  if !args.is_empty() && args[0] is "query" | "edit" | "doc" {
+  if !args.is_empty() && args[0] is "query" | "edit" {
     os.proc.exit(semantic.run(os, args))
   }
-  if args.is_empty()|| !(args[0] is "build" | "asm" | "keys" | "test") {
+  if core.is_command(args) {
+    os.proc.exit(core.run(os, args))
+  }
+  if args.is_empty() || !(args[0] is "build" | "asm" | "keys" | "test") {
     os.stdio.eprintln("usage: xo1 build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=OS/arm64] [--backend=arm64|llvm|go|wasm] [--go-tree=DIR] [--as=cc|macho] [--ld=cc|macho] [-o OUT] [--asm=PATH] <dir>")
     os.proc.exit(2)
   }

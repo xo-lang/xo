@@ -1,0 +1,152 @@
+// What the self hosted command line (selfhost/cli/core) asks of the
+// checker beyond a check run: the modules of a workspace, the functions
+// of a module and the effects they perform.
+
+use github.com/xo-lang/xo/selfhost/parser
+
+/// The directory of the nearest xo.mod at or above dir, absolute, or ""
+/// (mod.ModRoot).
+pub fn (c: Checker) mod_root_dir(dir: Str) -> Str uses fs.read {
+  var d = c.abs(dir)
+  while true {
+    if c.exists(join(d, "xo.mod")) {
+      return d
+    }
+    if d == "/" {
+      return ""
+    }
+    d = parent(d)
+  }
+  ""
+}
+
+/// dirs and the modules of the workspace that applies to the first one,
+/// those no directory of dirs covers added in display form
+/// (mod.WorkspaceDirs: check, test, query, and edit take every module of
+/// a workspace as one program, decision 0086).
+pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
+  if c.deps.work_env == "off" || dirs.is_empty() {
+    return dirs
+  }
+  let root = c.mod_root_dir(dirs[0])
+  if root.is_empty() {
+    return dirs
+  }
+  let (w0, _) = c.find_work(root)
+  let w = match w0 {
+    Some(x) => x
+    None => return dirs
+  }
+  var out = dirs
+  var have: List[Str] = []
+  for d in dirs {
+    have.push(c.abs(d))
+  }
+  for m in w.modules {
+    let md = c.abs(m.dir)
+    var covered = false
+    for d in have {
+      if d == md || md.starts_with("${d}/") {
+        covered = true
+      }
+    }
+    if !covered {
+      out.push(c.rel_dir(md))
+      have.push(md)
+    }
+  }
+  out
+}
+
+/// The functions and methods declared in module m's files, in source
+/// order, interface methods excluded (Info.Funcs).
+pub fn (c: Checker) funcs_of(m: Int) -> List[Int] {
+  var out: List[Int] = []
+  for f in c.mods[m].files {
+    for (i, d) in c.files[f].ast.decls.indexed() {
+      match d {
+        parser.Decl.FnDecl(_) => {
+          if i < c.files[f].decl_objs.len() {
+            let o = c.files[f].decl_objs[i]
+            if o >= 0 && c.objs[o].kind == ObjKind.Func {
+              out.push(o)
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  out
+}
+
+/// The effects the body of function fo performs, sorted by name, each
+/// with whether it is an effect parameter (Info.Performed, without the
+/// call chains); empty for a function without a checked body.
+pub fn (c: Checker) performed_of(fo: Int) -> List[(Str, Bool)] {
+  var fl: Flat? = None
+  if c.objs[fo].declared < 0 {
+    fl = c.inferred.get(fo)
+  } else if c.objs[fo].body_eff >= 0 {
+    fl = Some(c.flatten(c.objs[fo].body_eff, true))
+  }
+  let f = match fl {
+    Some(x) => x
+    None => return []
+  }
+  var keyed: List[Str] = []
+  for l in f.labels {
+    keyed.push("${l}\x00l")
+  }
+  for p in f.params {
+    keyed.push("${text(c.objs[p].name)}\x00p")
+  }
+  var out: List[(Str, Bool)] = []
+  for k in keyed.sort() {
+    let parts = k.split("\x00")
+    out.push((parts[0], parts[1] == "p"))
+  }
+  out
+}
+
+/// The type of e in file f as the checker prints types, or "" when e was
+/// not checked.
+pub fn (c: Checker) type_text_in(f: Int, e: parser.Expr) -> Str {
+  let t = c.type_in(f, e)
+  if t < 0 { "" } else { c.show(t) }
+}
+
+/// The contents of the file at p, from the overlay when it holds it
+/// (check load.go readSource), or None when it cannot be read.
+fn (c: Checker) read_source(p: Str) -> Bytes? uses fs.read {
+  if let Some(src) = c.overlay.get(c.abs(p)) {
+    return Some(src)
+  }
+  c.fs.read(p).ok()
+}
+
+/// The `xo <alias>` line of the xo.work at name, read through the
+/// overlay, registered for report_edition_aliases (check edition.go
+/// workEditionAlias, decision 0155).
+fn (var c: Checker) work_edition_alias(name: Str) uses fs.read {
+  let data = match c.read_source(name) {
+    Some(b) => b
+    None => return
+  }
+  let text_all = data.to_str() ?? ""
+  for (i, line) in text_all.split("\n").indexed() {
+    let text = strip_comment(line)
+    let f = fields(text)
+    if f.len() != 2 || f[0] != "xo" {
+      continue
+    }
+    let ed = edition_alias_of(f[1])
+    if ed.is_empty() {
+      continue
+    }
+    let file = c.rel_dir(c.abs(name))
+    let k = (text.find("xo") ?? 0) + 2
+    let col = k + (text[k..].find(f[1]) ?? 0) + 1
+    c.edition_aliases[file] = ModRoot{path: "", dir: "", alias: f[1], alias_line: i + 1, alias_col: col, keyword: "xo"}
+  }
+}

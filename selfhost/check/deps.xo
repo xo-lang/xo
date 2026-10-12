@@ -45,6 +45,9 @@ fn (var c: Checker) resolve_deps(root: ModRoot) {
   for p in bl.problems {
     c.mod_problem(p)
   }
+  if !bl.work_file.is_empty() {
+    c.work_edition_alias(bl.work_file)
+  }
   for m in bl.modules {
     c.deps.dep_dirs[m.dir] = m
     c.find_mod_root(m.dir)

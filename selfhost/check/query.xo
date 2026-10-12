@@ -1,45 +1,7 @@
-// What the semantic tools read beyond the SSA builder's records (info.xo):
-// the holes of a body (XO0900, expr.go hole) and the effects a function
-// performs with their call chains (internal/check query.go Performed),
-// for `xo query`, `xo edit`, and `xo doc` in Xo (decision 0178 stage 3).
-
-/// A hole `???` (core 3.7): its type, the values in scope that fit it,
-/// and the effects in scope (expr.go hole). The hole has the expected
-/// type, or a fresh variable without one.
-fn (var c: Checker) hole(sp: Span, hint: Int) -> Int {
-  let t = if hint >= 0 { hint } else { c.new_var() }
-  let known = hint >= 0 && !c.is_open_var(hint)
-  let desc = if known { "`${c.show(hint)}`" } else { "unknown" }
-  let d = c.warn("XO0900", sp, "hole of type ${desc}")
-  if d >= 0 && known {
-    var fits: List[Str] = []
-    var i = c.scopes.len() - 1
-    while i >= 0 {
-      // a scope's bindings in the order they were declared
-      for o in c.scopes[i].values().sort() {
-        if c.objs[o].kind == ObjKind.Local && c.objs[o].ty >= 0 && c.identical(c.objs[o].ty, hint) && !c.has_open_vars(c.objs[o].ty) {
-          fits.push(text(c.objs[o].name))
-        }
-      }
-      i -= 1
-    }
-    if !fits.is_empty() {
-      c.note(d, "in scope values that fit: `${fits.join("`, `")}`")
-    }
-  }
-  if d >= 0 && c.ctx >= 0 {
-    let f = c.ctxs[c.ctx].fn_obj
-    if f >= 0 && c.objs[f].declared >= 0 {
-      let s = c.flat_text(c.flatten(c.objs[f].declared, false))
-      if !s.is_empty() {
-        c.note(d, "effects in scope: `${s}`")
-      } else {
-        c.note(d, "no effects in scope (pure)")
-      }
-    }
-  }
-  t
-}
+// What the semantic tools read beyond the SSA builder's records (info.xo)
+// and cli.xo: the effects a function performs with their call chains
+// (internal/check query.go Performed), xo.mod and version helpers, for
+// `xo query`, `xo edit`, and `xo publish` in Xo (decision 0178 stage 3).
 
 /// One link of an effect's call chain (check.EffectStep): file "" and
 /// line 0 when the step has no place.
@@ -149,55 +111,6 @@ pub fn (c: Checker) declared_text(f: Int) -> Str? {
     return None
   }
   Some(c.flat_text(c.flatten(c.objs[f].declared, false)))
-}
-
-/// mod.WorkspaceDirs: dirs, and the modules of the workspace (xo.work)
-/// that uses the module of dirs[0] that no directory of dirs covers, in
-/// display form. It reads the environment set_mod_env recorded.
-pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
-  if c.deps.work_env == "off" || dirs.is_empty() {
-    return dirs
-  }
-  var d = c.abs(dirs[0])
-  var root = ""
-  while true {
-    if c.exists(join(d, "xo.mod")) {
-      root = d
-      break
-    }
-    let p = parent_dir(d)
-    if p == d || p.is_empty() {
-      break
-    }
-    d = p
-  }
-  if root.is_empty() {
-    return dirs
-  }
-  let (w0, _) = c.find_work(root)
-  let w = match w0 {
-    Some(x) => x
-    None => return dirs
-  }
-  var out = dirs
-  var have: List[Str] = []
-  for x in dirs {
-    have.push(c.abs(x))
-  }
-  for m in w.modules {
-    let md = c.abs(m.dir)
-    var covered = false
-    for h in have {
-      if h == md || md.starts_with("${h}/") {
-        covered = true
-      }
-    }
-    if !covered {
-      out.push(c.rel_dir(md))
-      have.push(md)
-    }
-  }
-  out
 }
 
 /// mod.ReadFile of the xo.mod in dir: the parsed file (None when it
