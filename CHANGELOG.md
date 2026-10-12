@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A WebAssembly backend written only in Xo (`selfhost/wasm`, decision
+  0179): `xo1 build --backend=wasm` lowers the self hosted SSA to WAT,
+  assembles it with an assembler written in Xo, and links a runtime of
+  its own over WASI preview1; no C compiler, linker, or Go toolchain.
+  70 of the 132 LLVM goldens run under Node with the output of the
+  native backends; the rest (tasks, network, files, maps of handles,
+  more of the std runtime) fail the build with a clear reason.
 - The self hosted checker (`selfhost/check`) checks `use go` programs
   from the binding the Go toolchain cached, and reports what the Go
   checker reports for escaping scope handles and task groups (XO0802),

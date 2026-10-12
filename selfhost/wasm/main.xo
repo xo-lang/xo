@@ -111,7 +111,8 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str) -> St
     return "== unsupported ${p.err}"
   }
   if !out_dir.is_empty() {
-    let name = base_name(dirs[0].trim_suffix("/"))
+    let last = base_name(dirs[0].trim_suffix("/"))
+    let name = if last == "." || last.is_empty() { base_name(wd) } else { last }
     match os.fs.write("${out_dir}/${name}.wasm", p.wasm) {
       Ok(_) => {}
       Err(e) => return "== error ${e}"
