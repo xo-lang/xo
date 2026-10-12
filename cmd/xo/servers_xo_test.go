@@ -426,9 +426,9 @@ func TestXoServeCache(t *testing.T) {
 		if gerr != nil || xerr != nil {
 			t.Fatalf("%s: %v %v", what, gerr, xerr)
 		}
-		if fmt.Sprint(*g) != fmt.Sprint(*x) {
-			gj, _ := json.Marshal(g)
-			xj, _ := json.Marshal(x)
+		gj, _ := json.Marshal(g)
+		xj, _ := json.Marshal(x)
+		if string(gj) != string(xj) {
 			t.Errorf("%s:\n go: %s\n xo: %s", what, gj, xj)
 		}
 	}
