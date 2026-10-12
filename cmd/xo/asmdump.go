@@ -96,7 +96,9 @@ func runAsmDump(args []string, stdout, stderr io.Writer) int {
 		if each {
 			fmt.Fprintf(w, "=== asm %s\n", r[0])
 		}
+		t := time.Now()
 		res, ok, err := build.CheckNative(r, false)
+		t = build.PhaseLap("check", t)
 		if err != nil {
 			fmt.Fprintf(w, "== error %v\n", err)
 			continue
@@ -110,7 +112,10 @@ func runAsmDump(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(w, "== error %s\n", strings.ReplaceAll(err.Error(), "\n", " "))
 			continue
 		}
+		t = time.Now()
 		w.Write(asm)
+		w.Flush()
+		build.PhaseLap("print", t)
 	}
 	return 0
 }

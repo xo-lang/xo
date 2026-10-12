@@ -164,3 +164,16 @@ pub fn generate_module(m: ssa.Module, os: Str, no_inline: Bool) -> Program {
   var g = new_gen(m, os)
   g.generate()
 }
+
+/// The two steps of generate_module, for a driver that times them (xo1
+/// --phase-times): inline_step inlines into m and reports whether m may
+/// be generated (nothing inlined, or the inlined module verifies);
+/// generate_plain generates m as it is.
+pub fn inline_step(var m: ssa.Module) -> Bool {
+  !inline_module(m) || m.verify_all().is_empty()
+}
+
+pub fn generate_plain(m: ssa.Module, os: Str) -> Program {
+  var g = new_gen(m, os)
+  g.generate()
+}

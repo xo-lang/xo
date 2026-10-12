@@ -9,6 +9,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A Go backend build with no go command (`$XO_GO` not executable, or no
   `go` on PATH) now fails with XO1503 naming the fix, instead of a
   "code generator bug" message with no detail (decision 0176).
+- `xo1 --phase-times` and `XO_PHASE_TIMES=1 xo asmdump` print the wall
+  clock of each compiler phase. The self-hosted arm64 emitter's dead code
+  elimination and register allocation liveness no longer copy every MIR
+  instruction and bit set per pass: xo1 compiles selfhost/xo with 32
+  percent fewer instructions and 45 percent fewer cycles, output byte
+  identical (bench/results/xo1-perf-2026-10-12.md).
 - The self hosted checker (`selfhost/check`) checks `use go` programs
   from the binding the Go toolchain cached, and reports what the Go
   checker reports for escaping scope handles and task groups (XO0802),

@@ -1,1 +1,2 @@
 - [budget-poll-2026-10-11.md](budget-poll-2026-10-11.md): cost of resource-budget polls outside a budget (fib +45%, sieve +18%); polls now only in programs that call `task.with_budget` (decision 0173).
+- [xo1-perf-2026-10-12.md](xo1-perf-2026-10-12.md): why xo1 is slower than the Go compiler on selfhost/xo: the arm64 emitter alone (3.8x), fewer instructions at half the IPC; rc copies of 200 byte Inst elements and inner list dups; two source fixes cut xo1's cycles 45% with byte identical output; LLVM-built xo1 miscompiles frames.
