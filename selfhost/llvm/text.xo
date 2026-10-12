@@ -1,0 +1,95 @@
+// Text helpers of the emitter: the bytes of an LLVM c"..." string
+// (llvm.go irBytes), hexadecimal digits, and the bits of a Float
+// (math.Float64bits, which Xo's prelude does not have).
+
+const HEX = "0123456789ABCDEF"
+
+/// The hexadecimal digit of d (0 to 15), uppercase.
+fn hex_digit(d: Int) -> Str {
+  HEX[d..d + 1]
+}
+
+/// n as 16 hexadecimal digits, as Go's %016X of uint64(n).
+fn hex16(n: Int) -> Str {
+  var out: List[Str] = []
+  var i = 15
+  while i >= 0 {
+    out.push(hex_digit((n >> (i * 4)) & 15))
+    i -= 1
+  }
+  out.join("")
+}
+
+/// b as the body of an LLVM c"..." string (irBytes): printable ASCII as
+/// it is, except `"` and `\`, every other byte as `\XX`.
+fn ir_bytes(b: Bytes) -> Str {
+  var out: List[Str] = []
+  var start = 0
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    if c >= 32 && c < 127 && c != 34 && c != 92 {
+      continue
+    }
+    if start < i {
+      out.push(b[start..i].to_str() ?? "")
+    }
+    out.push("\\${hex_digit(c / 16)}${hex_digit(c % 16)}")
+    start = i + 1
+  }
+  if start == 0 {
+    return b.to_str() ?? ""
+  }
+  if start < b.len() {
+    out.push(b[start..b.len()].to_str() ?? "")
+  }
+  out.join("")
+}
+
+/// The smallest Int (math.MinInt64).
+const MIN_INT = -9223372036854775807 - 1
+
+/// The IEEE 754 bits of x (math.Float64bits): halving and doubling are
+/// exact, so the exponent and the mantissa are found by scaling. A NaN
+/// has the bits of Go's math.NaN().
+fn float_bits(x: Float) -> Int {
+  if x != x {
+    return 0x7FF8000000000001
+  }
+  var a = x
+  var neg = false
+  if x < 0.0 || (x == 0.0 && "${x}".starts_with("-")) {
+    neg = true
+    a = -x
+  }
+  var bits = 0
+  if a == 0.0 {
+    bits = 0
+  } else if a > 1.7976931348623157e308 {
+    bits = 2047 << 52
+  } else {
+    var e = 0
+    while a >= 2.0 {
+      a = a / 2.0
+      e += 1
+    }
+    while a < 1.0 && e > -1022 {
+      a = a * 2.0
+      e -= 1
+    }
+    if a < 1.0 {
+      // subnormal: x = a * 2^-1022
+      bits = Int(a * 4503599627370496.0)
+    } else {
+      bits = ((e + 1023) << 52) | Int((a - 1.0) * 4503599627370496.0)
+    }
+  }
+  if neg {
+    return bits | MIN_INT
+  }
+  bits
+}
+
+/// The operand text of Float x (`0x%016X` of its bits).
+fn float_text(x: Float) -> Str {
+  "0x${hex16(float_bits(x))}"
+}

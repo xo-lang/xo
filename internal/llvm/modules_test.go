@@ -93,7 +93,7 @@ func TestSplitShape(t *testing.T) {
 		}
 		for _, line := range strings.Split(s, "\n") {
 			if strings.HasPrefix(line, "define ") && !strings.Contains(line, `@"xo.`) {
-				defs[defName([]byte(line))]++
+				defs[defSymbol([]byte(line))]++
 			}
 		}
 		if strings.Contains(s, `"x.sum((A, B))"(`) && strings.Contains(s, `define internal i64 @"x.sum`) {
