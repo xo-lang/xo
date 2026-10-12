@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/xo-lang/xo/internal/arm64"
 	"github.com/xo-lang/xo/internal/check"
@@ -198,4 +199,47 @@ func buildArm64(dirs []string, res *check.Result, out *Result, opts Options) (*R
 		out.Binaries[t] = bin
 	}
 	return out, nil
+}
+
+// Arm64AsmDump is the assembly of `xo asmdump` (decision 0158): the SSA
+// built with opts (as `xo ssadump` builds it), verified, with reference
+// counting, then generated for goos with inlining unless noInline; a
+// module that no longer verifies after inlining is built again and
+// generated without, as arm64AsmOpts does. The time spent in
+// arm64.Generate (the emitter alone) is returned too.
+func Arm64AsmDump(res *check.Result, opts ssa.Options, goos string, noInline bool) ([]byte, time.Duration, error) {
+	build := func() (*ssa.Module, error) {
+		m, err := ssa.BuildOpts(res, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.Verify(); err != nil {
+			return nil, err
+		}
+		m.InsertRC()
+		if err := m.Verify(); err != nil {
+			return nil, err
+		}
+		return m, nil
+	}
+	m, err := build()
+	if err != nil {
+		return nil, 0, err
+	}
+	t0 := time.Now()
+	prog, err := arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: noInline})
+	took := time.Since(t0)
+	var ie *arm64.InlineError
+	if errors.As(err, &ie) {
+		if m, err = build(); err != nil {
+			return nil, 0, err
+		}
+		t0 = time.Now()
+		prog, err = arm64.Generate(m, arm64.Options{OS: arm64.OS(goos), NoInline: true})
+		took += time.Since(t0)
+	}
+	if err != nil {
+		return nil, took, err
+	}
+	return prog.Asm, took, nil
 }

@@ -1,0 +1,454 @@
+// Closures, boxes, and structural equality (internal/arm64 closures.go,
+// boxes.go, eq.go; decisions 0048 and 0050).
+//
+// A function value is two integer words, the code pointer and the
+// environment: null when the closure captures nothing, else a counted
+// cell [0] rc, [8] drop, [16] share, [24] the captured values' words. A
+// Box[T] is one integer word, a pointer to an immutable counted cell [0]
+// rc, [8] the words of the T value.
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// {rc, drop, share}
+const ENV_HDR = 24
+
+/// The first word (from the start of the captures) and the word count of
+/// capture i of function fi.
+fn (var g: G) capture_words(fi: Int, i: Int) -> (Int, Int) {
+  let caps = g.m.funcs[fi].captures
+  var off = 0
+  for k in 0..i {
+    off += g.nwords(caps[k])
+  }
+  (off, g.nwords(caps[i]))
+}
+
+/// Lowers a closure: the code address, and a new environment holding the
+/// captured values (consumed) when there are any.
+fn (var g: G) closure_op(v: Int) {
+  let x = g.f.values[v]
+  let name = aux_str(x.aux)
+  let ci = g.by_name.get(name) ?? -1
+  if ci < 0 {
+    g.fail("closure of unknown function `${name}`")
+    g.set(v, [0, 0])
+    return
+  }
+  let code = g.sym_addr(g.fname(name))
+  if x.args.is_empty() {
+    g.set(v, [code, 0])
+    return
+  }
+  var n = 0
+  for c in g.m.funcs[ci].captures {
+    n += g.nwords(c)
+  }
+  if ENV_HDR + 8 * n > 32760 {
+    g.fail("closure of `${name}` captures too many words")
+  }
+  let env = g.rt("xo_rc_alloc", [isrc(ENV_HDR + 8 * n)], [false])[0]
+  g.store("str $u0, [$u1]", [g.cimm(1), env])
+  let d = g.sym_addr(g.env_drop(ci))
+  g.store("str $u0, [$u1, #8]", [d, env])
+  let s = g.sym_addr(g.env_share(ci))
+  g.store("str $u0, [$u1, #16]", [s, env])
+  var k = 0
+  for a in x.args {
+    for w in g.store_words(a) {
+      g.store("str $u0, [$u1, #${ENV_HDR + 8 * k}]", [w, env])
+      k += 1
+    }
+  }
+  g.set(v, [code, env])
+}
+
+/// Lowers a capture: the words of a captured value, loaded from the
+/// environment of the closure parameter (a projection: no counting).
+fn (var g: G) capture_op(v: Int) {
+  let x = g.f.values[v]
+  let env = g.real(g.words(x.args[0])[1])
+  let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
+  var ws: List[Int] = []
+  for (k, fp) in g.layout(x.ty).indexed() {
+    ws.push(g.def1(fp, "ldr $d0, [$u0, #${ENV_HDR + 8 * (off + k)}]", [env]))
+  }
+  g.set(v, ws)
+}
+
+/// Lowers a call through a function value: the closure's words (code in
+/// x0, environment in x1) and the arguments, then `blr x0`.
+fn (var g: G) call_value_op(v: Int) {
+  let x = g.f.values[v]
+  var args: List[Src] = []
+  for a in x.args {
+    args = args + regs(g.words(a))
+  }
+  let defs = g.new_vregs(g.layout(x.ty))
+  var us: List[Int] = []
+  for a in args {
+    if a.v != 0 {
+      us.push(a.v)
+    }
+  }
+  let _i = g.add(Inst{kind: K_CALL, srcs: args, defs: defs, us: us, indirect: true})
+  g.clobber()
+  g.set(v, defs)
+}
+
+/// The drop function of the environments of function fi: it releases
+/// the captures and frees the cell (x0).
+fn (var g: G) env_drop(fi: Int) -> Str {
+  let key = "envdrop ${g.m.funcs[fi].name}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  let sym = g.helper_label("envdrop")
+  g.helped[key] = sym
+  var b: List[Str] = ["// envdrop ${g.m.funcs[fi].name}\n\t.p2align 2\n${sym}:\n"]
+  var ls: List[Leaf] = []
+  for (i, c) in g.m.funcs[fi].captures.indexed() {
+    let (off, _) = g.capture_words(fi, i)
+    g.heap_leaves(c, off, ls)
+  }
+  g.leaves_and_then(b, "drop", ls, ENV_HDR, g.sym("xo_rc_free"))
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// The share function of the environments of function fi (decision
+/// 0058).
+fn (var g: G) env_share(fi: Int) -> Str {
+  let key = "envshare ${g.m.funcs[fi].name}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  let sym = g.helper_label("envshare")
+  g.helped[key] = sym
+  var b: List[Str] = ["// envshare ${g.m.funcs[fi].name}\n\t.p2align 2\n${sym}:\n"]
+  var ls: List[Leaf] = []
+  for (i, c) in g.m.funcs[fi].captures.indexed() {
+    let (off, _) = g.capture_words(fi, i)
+    g.heap_leaves(c, off, ls)
+  }
+  g.leaves_and_then(b, "share", ls, ENV_HDR, "")
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// Retains a function value inline (ws: code, environment).
+fn (var g: G) retain_func(ws: List[Int]) {
+  if ws[1] == 0 {
+    return // no captures: nothing counted
+  }
+  let env = ws[1]
+  let before = g.m_()
+  let has = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, cond: "cbnz", us: [env], targets: [has, cont]})
+  g.cur = has
+  g.inc(env)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
+/// Releases a function value inline: when there is an environment, its
+/// count goes down by one, and at one the environment goes to
+/// xo_rc_defer with its drop function.
+fn (var g: G) release_func(ws: List[Int]) {
+  if ws[1] == 0 {
+    return
+  }
+  let env = ws[1]
+  let before = g.m_()
+  let has = g.new_block(false)
+  let at = g.cur
+  let bi = g.add(Inst{kind: K_CONDBR, cond: "cbnz", us: [env], targets: [has, -1]})
+  g.cur = has
+  let cont = g.dec_or_defer(env, DropFn.EnvWord(env: env))
+  var ins = g.take_insts(at)
+  ins[bi].targets[1] = cont
+  g.put_insts(at, ins)
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
+/// Where the drop function of a cell comes from.
+enum DropFn {
+  /// the drop word of the environment (`ldr [env, #8]`)
+  EnvWord(env: Int)
+  /// the boxdrop helper of a box type
+  BoxDrop(t: Int)
+}
+
+/// Ends the current block with the inline release of the counted cell p:
+/// when its count is one the cell goes to xo_rc_defer with its drop
+/// function (a cold block), else the count goes down by one. Returns the
+/// block both paths continue at.
+fn (var g: G) dec_or_defer(p0: Int, drop: DropFn) -> Int {
+  let p = g.real(p0)
+  let c = g.def1(false, "ldr $d0, [$u0]", [p])
+  let slow = g.new_block(true)
+  let dec = g.new_block(false)
+  let cont = g.new_block(false)
+  // a count of at most one: the last reference, shared, or immortal
+  let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #1", us: [c], cond: "le", targets: [slow, dec]})
+  g.cur = dec
+  let c1 = g.def1(false, "sub $d0, $u0, #1", [c])
+  g.store("str $u0, [$u1]", [c1, p])
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = slow
+  let free = g.new_block(true)
+  let shared = g.new_block(true)
+  let atomic = g.new_block(true)
+  let _b2 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #1", us: [c], cond: "eq", targets: [free, shared]})
+  g.cur = shared
+  let _b3 = g.add(Inst{kind: K_CONDBR, cond: "tbz", bit: 62, us: [c], targets: [cont, atomic]})
+  g.cur = atomic
+  // x16 may hold a reloaded p: x17 and w15 are free scratch
+  let _b4 = g.add(Inst{kind: K_CONDBR, text: g.atomic_dec("$u0", "x17", "w15"), us: [p], cond: "eq", targets: [free, cont]})
+  g.cur = free
+  let d = match drop {
+    EnvWord(env) => rsrc(g.def1(false, "ldr $d0, [$u0, #8]", [env]))
+    BoxDrop(t) => symsrc(g.box_drop(t))
+  }
+  let _r = g.rt("xo_rc_defer", [rsrc(p), d], [])
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  cont
+}
+
+// ---------------------------------------------------------------------------
+// Boxes
+
+/// Lowers a box: copies a value (consumed) into a new cell.
+fn (var g: G) box_op(v: Int) {
+  let x = g.f.values[v]
+  let a = x.args[0]
+  let n = g.nwords(g.vty(a))
+  if BOX_HDR + 8 * n > 32760 {
+    g.fail("box of `${g.tname(g.vty(a))}` (too many words)")
+  }
+  let p = g.rt("xo_rc_alloc", [isrc(BOX_HDR + 8 * n)], [false])[0]
+  g.store("str $u0, [$u1]", [g.cimm(1), p])
+  for (k, w) in g.store_words(a).indexed() {
+    g.store("str $u0, [$u1, #${BOX_HDR + 8 * k}]", [w, p])
+  }
+  g.set(v, [p])
+}
+
+/// Lowers an unbox: loads the box's words (a projection: no counting).
+fn (var g: G) unbox_op(v: Int) {
+  let x = g.f.values[v]
+  let p = g.word(x.args[0])
+  var ws: List[Int] = []
+  for (k, fp) in g.layout(x.ty).indexed() {
+    ws.push(g.def1(fp, "ldr $d0, [$u0, #${BOX_HDR + 8 * k}]", [p]))
+  }
+  g.set(v, ws)
+}
+
+/// Releases the box p of type t inline.
+fn (var g: G) release_box(t: Int, p: Int) {
+  let before = g.m_()
+  let cont = g.dec_or_defer(p, DropFn.BoxDrop(t: t))
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
+// ---------------------------------------------------------------------------
+// Structural equality: `==` and `!=` on Str, structs, tuples, enums,
+// lists, and boxes. A Str compares inline through xo_str_eq; other types
+// call a generated helper that returns 1 or 0 in x0.
+
+/// Lowers v (a comparison) when its operands are aggregates; reports
+/// whether it did.
+fn (var g: G) eq_aggregate(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let t = g.vty(x.args[0])
+  let k = g.kind(t)
+  if !(k is ssa.Kind.Str | ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum | ssa.Kind.List | ssa.Kind.Box) {
+    return false
+  }
+  if x.op != ssa.Op.Eq && x.op != ssa.Op.Ne {
+    g.fail("ordering of `${g.tname(t)}`")
+    g.set(v, [0])
+    return true
+  }
+  var r = 0
+  if k == ssa.Kind.Str {
+    let a = g.words(x.args[0])
+    let b = g.words(x.args[1])
+    let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
+    let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
+    let res = g.rt("xo_str_eq", regs([xd, a[1], yd, b[1]]), [false])
+    r = g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [res[0]])
+  } else if k is ssa.Kind.List | ssa.Kind.Box {
+    let h = g.eq_helper(t)
+    let a = g.word(x.args[0])
+    let b = g.word(x.args[1])
+    r = g.call(h, regs([a, b]), [false])[0]
+  } else {
+    let lay = g.layout(t)
+    if lay.is_empty() {
+      r = g.imm(1)
+    } else {
+      let a = g.to_int(g.words(x.args[0]), lay)
+      let b = g.to_int(g.words(x.args[1]), lay)
+      r = g.call(g.eq_helper(t), regs(a + b), [false])[0]
+    }
+  }
+  if x.op == ssa.Op.Ne {
+    r = g.def1(false, "eor $d0, $u0, #1", [r])
+  }
+  g.set(v, [r])
+  true
+}
+
+/// The symbol of the equality helper of t.
+fn (var g: G) eq_helper(t: Int) -> Str {
+  let key = "eq ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  let sym = g.helper_label("eq")
+  g.helped[key] = sym
+  let yes = g.helper_label("eq_yes")
+  let no = g.helper_label("eq_no")
+  let done = g.helper_label("eq_done")
+  var b: List[Str] = ["// eq ${g.tname(t)}\n\t.p2align 2\n${sym}:\n"]
+  var frame = 32
+  let k = g.kind(t)
+  match k {
+    Box => {
+      let et = g.m.types[t].elems[0]
+      if !g.has_float(et) {
+        // the same cell is equal, unless it holds a Float
+        b.push("\tcmp x0, x1\n\tb.ne ${sym}_cmp\n\tmov x0, #1\n\tret\n${sym}_cmp:\n")
+      }
+      b.push("\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
+      b.push("\tadd x19, x0, #8\n\tadd x20, x1, #8\n")
+      g.eq_at(b, et, "x19", "x20", 0, no, false)
+    }
+    List => {
+      frame = 64
+      b.push("\tstp x29, x30, [sp, #-64]!\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n\tstp x22, x21, [sp, #32]\n\tstp x24, x23, [sp, #48]\n")
+      b.push("\tldr x9, [x0, #8]\n\tldr x10, [x1, #8]\n\tcmp x9, x10\n\tb.ne ${no}\n")
+      let et = g.m.types[t].elems[0]
+      let es = g.esize(et)
+      if es == 0 {
+        b.push("\tb ${yes}\n")
+      } else {
+        let lp = g.helper_label("eq_loop")
+        b.push("\tmov x21, x9\n\tmov x22, #0\n\tadd x23, x0, #${LIST_HDR}\n\tadd x24, x1, #${LIST_HDR}\n")
+        b.push("${lp}:\n\tcmp x22, x21\n\tb.eq ${yes}\n")
+        g.eq_at(b, et, "x23", "x24", 0, no, g.kind(et) == ssa.Kind.Bool)
+        if imm12(es) {
+          b.push("\tadd x23, x23, #${es}\n\tadd x24, x24, #${es}\n")
+        } else {
+          b.push(imm_text(es, "x9"))
+          b.push("\tadd x23, x23, x9\n\tadd x24, x24, x9\n")
+        }
+        b.push("\tadd x22, x22, #1\n\tb ${lp}\n")
+      }
+    }
+    Struct | Tuple | Enum => {
+      let n = g.nwords(t)
+      frame = align16(32 + 16 * n)
+      if frame >= 4096 {
+        g.fail("equality of `${g.tname(t)}` (too many words)")
+      }
+      b.push("\tsub sp, sp, #${frame}\n\tstp x29, x30, [sp]\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
+      for w in 0..2 * n {
+        if w < 8 {
+          b.push("\tstr x${w}, [sp, #${32 + 8 * w}]\n")
+          continue
+        }
+        // stack arguments: at the caller's sp, which is sp + frame
+        b.push("\tldr x9, [sp, #${frame + 8 * (w - 8)}]\n\tstr x9, [sp, #${32 + 8 * w}]\n")
+      }
+      b.push("\tadd x19, sp, #32\n\tadd x20, sp, #${32 + 8 * n}\n")
+      g.eq_at(b, t, "x19", "x20", 0, no, false)
+    }
+    _ => g.fail("equality of `${g.tname(t)}`")
+  }
+  b.push("${yes}:\n\tmov x0, #1\n\tb ${done}\n${no}:\n\tmov x0, #0\n${done}:\n")
+  if k == ssa.Kind.List {
+    b.push("\tldp x24, x23, [sp, #48]\n\tldp x22, x21, [sp, #32]\n")
+  }
+  b.push("\tldp x20, x19, [sp, #16]\n")
+  if k is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum {
+    b.push("\tldp x29, x30, [sp]\n\tadd sp, sp, #${frame}\n\tret\n\n")
+  } else {
+    b.push("\tldp x29, x30, [sp], #${frame}\n\tret\n\n")
+  }
+  g.helpers.push(b.join(""))
+  sym
+}
+
+/// Compares the values of type t at [ra, #off] and [rb, #off] and
+/// branches to no when they differ (eqAt). byte: a Bool list element.
+fn (var g: G) eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: Str, byte: Bool) {
+  let x = g.m.types[t]
+  match x.kind {
+    Unit | Cap => {}
+    Int | Bool => {
+      if byte {
+        b.push("\tldrb w9, [${ra}, #${off}]\n\tldrb w10, [${rb}, #${off}]\n")
+      } else {
+        b.push("\tldr x9, [${ra}, #${off}]\n\tldr x10, [${rb}, #${off}]\n")
+      }
+      b.push("\tcmp x9, x10\n\tb.ne ${no}\n")
+    }
+    Float => {
+      // unordered (NaN) sets ne: NaN is unequal to everything
+      b.push("\tldr d0, [${ra}, #${off}]\n\tldr d1, [${rb}, #${off}]\n\tfcmp d0, d1\n\tb.ne ${no}\n")
+    }
+    Str => {
+      b.push("\tldr x0, [${ra}, #${off}]\n\tadd x0, x0, #16\n\tldr x1, [${ra}, #${off + 8}]\n")
+      b.push("\tldr x2, [${rb}, #${off}]\n\tadd x2, x2, #16\n\tldr x3, [${rb}, #${off + 8}]\n")
+      b.push("\tbl ${g.sym("xo_str_eq")}\n\tcbz w0, ${no}\n")
+    }
+    List | Box => {
+      let h = g.eq_helper(t)
+      b.push("\tldr x0, [${ra}, #${off}]\n\tldr x1, [${rb}, #${off}]\n\tbl ${h}\n\tcbz x0, ${no}\n")
+    }
+    Struct => {
+      for i in 0..x.fields.len() {
+        let (fo, _) = g.field_words(t, i)
+        g.eq_at(b, x.fields[i].ty, ra, rb, off + 8 * fo, no, false)
+      }
+    }
+    Tuple => {
+      for i in 0..x.elems.len() {
+        let (fo, _) = g.field_words(t, i)
+        g.eq_at(b, x.elems[i], ra, rb, off + 8 * fo, no, false)
+      }
+    }
+    Enum => {
+      b.push("\tldr x9, [${ra}, #${off}]\n\tldr x10, [${rb}, #${off}]\n\tcmp x9, x10\n\tb.ne ${no}\n")
+      let end = g.helper_label("eq_tag")
+      for (vi, vr) in x.variants.indexed() {
+        var words = 0
+        for f in vr.fields {
+          words += g.nwords(f.ty)
+        }
+        if words == 0 {
+          continue
+        }
+        let next = g.helper_label("eq_var")
+        // the tag again: comparing a field may have called a function
+        b.push("\tldr x9, [${ra}, #${off}]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
+        for (fi, f) in vr.fields.indexed() {
+          let (po, _) = g.payload_words(t, vi, fi)
+          g.eq_at(b, f.ty, ra, rb, off + 8 * po, no, false)
+        }
+        b.push("\tb ${end}\n${next}:\n")
+      }
+      b.push("${end}:\n")
+    }
+    _ => g.fail("equality of `${x.name}`")
+  }
+}
