@@ -2,9 +2,13 @@ package selfhost
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/gotool"
 )
 
 // hatchesFixture is a module tree with its own module cache: a dependency
@@ -25,14 +29,6 @@ const hatchesFixture = "internal/selfhost/testdata/hatches"
 func TestSelfhostCheckerHatches(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("binds Go packages with go list")
-	}
-	if goldensMode() == goldensReplay {
-		// The Xo checker loads the binding the Go checker writes to the
-		// gobind cache as a side effect; a replayed Go side writes none,
-		// so both runs come out unsupported (2026-10-12). Without the Go
-		// checker the binding has to come from xo-gobind (decision 0178
-		// stage 6), which this test does not run yet.
-		t.Skip("XO_SELFHOST_GOLDENS=replay: needs the Go checker's gobind side effect")
 	}
 	root := repoRoot(t)
 	bin, err := selfhostBinary("check", "go")
@@ -55,7 +51,7 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 		wants[d] = goCheck(d)
 	}
 	skipRecording(t)
-	text := runXo(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs...))
+	text := runXoBinding(t, bin, tmp, append([]string{"--each", "--std=" + stdDir, "--wd=" + workDir(t)}, dirs...), dirs)
 	parts := strings.Split(text, "=== check ")
 	if len(parts) != len(dirs)+1 {
 		t.Fatalf("Xo checker printed %d runs for %d directories", len(parts)-1, len(dirs))
@@ -69,7 +65,7 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 			t.Error(msg)
 		}
 		if st.stagedOK > before {
-			for _, l := range wants[d].staged {
+			for _, l := range wants[d].stagedLines(got) {
 				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
 			}
 		}
@@ -81,5 +77,57 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "hatch", ".xo", "gobind")); err != nil {
 		t.Errorf("the dependency's binding is not in the main module's cache: %v", err)
+	}
+}
+
+// unboundRE matches the Xo checker's output for a run that lacks the
+// binding of a `use go` package (selfhost/check goimport.xo, go_miss).
+var unboundRE = regexp.MustCompile(`^== unsupported use go without a current binding of (\S+) in `)
+
+// runXoBinding runs the Xo checker bin with args from dir, binding first
+// what it lacks, as xo1's checker does (check_dirs_bound,
+// selfhost/check/bindmiss.xo): every `use go` package a run reports
+// unbound is bound into that run's module with the helper xo-gobind
+// (decision 0178 stage 6, Go since it reads Go's export data), and the
+// runs are checked again. The Go checker writes the same bindings as a
+// side effect of its check; a replayed Go side (gogoldens_test.go)
+// writes none, so replay needs this (live, the first run finds them).
+func runXoBinding(t *testing.T, bin, dir string, args, runs []string) string {
+	t.Helper()
+	gobind := ""
+	bound := map[string]bool{}
+	for round := 0; ; round++ {
+		text := runXo(t, bin, dir, args)
+		parts := strings.Split(text, "=== check ")
+		var todo [][2]string
+		for j, d := range runs {
+			if j+1 >= len(parts) {
+				break
+			}
+			got := strings.TrimPrefix(parts[j+1], d+"\n")
+			if m := unboundRE.FindStringSubmatch(firstLine(got)); m != nil && !bound[d+" "+m[1]] {
+				bound[d+" "+m[1]] = true
+				todo = append(todo, [2]string{d, m[1]})
+			}
+		}
+		if len(todo) == 0 || round == 8 {
+			return text
+		}
+		if gobind == "" {
+			gobind = filepath.Join(t.TempDir(), "xo-gobind")
+			cmd := exec.Command("go", "build", "-o", gobind, "github.com/xo-lang/xo/cmd/xo-gobind")
+			cmd.Dir = pkgDir
+			cmd.Env = append(os.Environ(), gotool.CacheEnv())
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("building xo-gobind: %v\n%s", err, out)
+			}
+		}
+		for _, b := range todo {
+			cmd := exec.Command(gobind, "--dir", b[0], b[1])
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Logf("xo-gobind --dir %s %s: %v\n%s", b[0], b[1], err, out)
+			}
+		}
 	}
 }

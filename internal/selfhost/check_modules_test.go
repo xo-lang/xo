@@ -111,7 +111,7 @@ func TestSelfhostCheckerModuleMutations(t *testing.T) {
 			fails = append(fails, msg)
 		}
 		if st.stagedOK > before {
-			for _, l := range want.staged {
+			for _, l := range want.stagedLines(got[d]) {
 				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
 			}
 		}

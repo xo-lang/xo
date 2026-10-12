@@ -10,9 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xo-lang/xo/internal/diag"
-	"github.com/xo-lang/xo/internal/lexer"
-	"github.com/xo-lang/xo/internal/token"
+	"github.com/xo-lang/xo/internal/selfhost/mutlex"
 )
 
 // TestSelfhostCheckerMutations compares the Xo and Go checkers (decision
@@ -144,7 +142,7 @@ func TestSelfhostCheckerMutations(t *testing.T) {
 			fails = append(fails, msg+"\n"+firstLines(string(src), 0))
 		}
 		if st.stagedOK > before {
-			for _, l := range want.staged {
+			for _, l := range want.stagedLines(got[d]) {
 				codes[l[len(`{"code":"`):len(`{"code":"XO0000`)]]++
 			}
 		}
@@ -282,11 +280,11 @@ func hasModAbove(root, dir string) bool {
 // (append a letter, or take another identifier's name), remove a `use`
 // line, or duplicate a top level declaration line.
 func mutateNames(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
-	var ids []token.Token
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
+	var ids []mutlex.Token
 	for _, tk := range toks {
-		if tk.Kind == token.Ident {
+		if tk.Kind == mutlex.Ident {
 			ids = append(ids, tk)
 		}
 	}
@@ -341,12 +339,12 @@ func mutateNames(rng *rand.Rand, src []byte) []byte {
 // camelCase. The Go checker reports XO0101 with a rename fix that, for a
 // local, covers the uses too.
 func mutateNaming(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
 	decl := map[string]bool{"let": true, "var": true, "fn": true, "const": true, "struct": true, "enum": true, "type": true, "interface": true, "for": true}
 	var names []string
 	for i := 1; i < len(toks); i++ {
-		if toks[i].Kind == token.Ident && decl[toks[i-1].Text] && toks[i].Text != "_" {
+		if toks[i].Kind == mutlex.Ident && decl[toks[i-1].Text] && toks[i].Text != "_" {
 			names = append(names, toks[i].Text)
 		}
 	}
@@ -361,7 +359,7 @@ func mutateNaming(rng *rand.Rand, src []byte) []byte {
 	var b bytes.Buffer
 	last := 0
 	for _, tk := range toks {
-		if tk.Kind == token.Ident && tk.Text == name {
+		if tk.Kind == mutlex.Ident && tk.Text == name {
 			b.Write(src[last:tk.Span.Start.Offset])
 			b.WriteString(bad)
 			last = tk.Span.End.Offset
@@ -405,26 +403,26 @@ func misspell(name string) string {
 // a postfix `?` is removed, or the name after a `.` becomes another
 // such name of the file (another field or method).
 func mutateTypes(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
-	var lits, strs, quests, sels []token.Token
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
+	var lits, strs, quests, sels []mutlex.Token
 	for i, tk := range toks {
 		switch tk.Kind {
-		case token.Int:
+		case mutlex.Int:
 			lits = append(lits, tk)
-		case token.String:
+		case mutlex.String:
 			strs = append(strs, tk)
-		case token.Question:
+		case mutlex.Question:
 			if i > 0 && toks[i-1].Span.End.Offset == tk.Span.Start.Offset {
 				quests = append(quests, tk)
 			}
-		case token.Ident:
-			if i > 0 && toks[i-1].Kind == token.Dot {
+		case mutlex.Ident:
+			if i > 0 && toks[i-1].Kind == mutlex.Dot {
 				sels = append(sels, tk)
 			}
 		}
 	}
-	replace := func(tk token.Token, with string) []byte {
+	replace := func(tk mutlex.Token, with string) []byte {
 		var b bytes.Buffer
 		b.Write(src[:tk.Span.Start.Offset])
 		b.WriteString(with)
@@ -459,10 +457,10 @@ func mutateTypes(rng *rand.Rand, src []byte) []byte {
 // `parse[Int](s)` becomes `parse(s)`), or a constraint dropped from a
 // type parameter (`[T: Ord]` becomes `[T]`).
 func mutateGenerics(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
-	upper := func(tk token.Token) bool {
-		return tk.Kind == token.Ident && tk.Text != "" && tk.Text[0] >= 'A' && tk.Text[0] <= 'Z'
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
+	upper := func(tk mutlex.Token) bool {
+		return tk.Kind == mutlex.Ident && tk.Text != "" && tk.Text[0] >= 'A' && tk.Text[0] <= 'Z'
 	}
 	// closing finds the token ending the element that starts at i of a
 	// bracketed list: a Comma or the RBrack at depth 0.
@@ -470,20 +468,20 @@ func mutateGenerics(rng *rand.Rand, src []byte) []byte {
 		depth := 0
 		for ; i < len(toks); i++ {
 			switch toks[i].Kind {
-			case token.LBrack, token.LParen, token.LBrace:
+			case mutlex.LBrack, mutlex.LParen, mutlex.LBrace:
 				depth++
-			case token.RParen, token.RBrace:
+			case mutlex.RParen, mutlex.RBrace:
 				depth--
-			case token.RBrack:
+			case mutlex.RBrack:
 				if depth == 0 {
 					return i
 				}
 				depth--
-			case token.Comma:
+			case mutlex.Comma:
 				if depth == 0 {
 					return i
 				}
-			case token.Newline, token.EOF:
+			case mutlex.Newline, mutlex.EOF:
 				return -1
 			}
 		}
@@ -494,7 +492,7 @@ func mutateGenerics(rng *rand.Rand, src []byte) []byte {
 	for i := 1; i+1 < len(toks); i++ {
 		tk := toks[i]
 		switch {
-		case tk.Kind == token.LBrack && toks[i-1].Kind == token.Ident && toks[i-1].Span.End.Offset == tk.Span.Start.Offset && upper(toks[i+1]):
+		case tk.Kind == mutlex.LBrack && toks[i-1].Kind == mutlex.Ident && toks[i-1].Span.End.Offset == tk.Span.Start.Offset && upper(toks[i+1]):
 			// the arguments of a type or call: remove one, or the list
 			var elems []int // start token of each element
 			j := i + 1
@@ -505,7 +503,7 @@ func mutateGenerics(rng *rand.Rand, src []byte) []byte {
 					elems = nil
 					break
 				}
-				if toks[k].Kind == token.RBrack {
+				if toks[k].Kind == mutlex.RBrack {
 					if len(elems) == 1 {
 						args = append(args, edit{tk.Span.Start.Offset, toks[k].Span.End.Offset})
 						elems = nil
@@ -527,7 +525,7 @@ func mutateGenerics(rng *rand.Rand, src []byte) []byte {
 				}
 				args = append(args, edit{from, to})
 			}
-		case tk.Kind == token.Colon && upper(toks[i-1]) && i >= 2 && (toks[i-2].Kind == token.LBrack || toks[i-2].Kind == token.Comma):
+		case tk.Kind == mutlex.Colon && upper(toks[i-1]) && i >= 2 && (toks[i-2].Kind == mutlex.LBrack || toks[i-2].Kind == mutlex.Comma):
 			if k := closing(i + 1); k >= 0 {
 				constraints = append(constraints, edit{tk.Span.Start.Offset, toks[k].Span.Start.Offset})
 			}
@@ -552,15 +550,15 @@ func mutateGenerics(rng *rand.Rand, src []byte) []byte {
 // mutateEffects applies one effects edit to src: a `uses` clause
 // removed, or one added to a function declaration that has none.
 func mutateEffects(rng *rand.Rand, src []byte) []byte {
-	var ds diag.List
-	toks := lexer.Lex("f.xo", src, &ds).Tokens
+	var ds mutlex.List
+	toks := mutlex.Lex("f.xo", src, &ds).Tokens
 	type edit struct {
 		from, to int
 		with     string
 	}
 	var edits []edit
 	for i := 1; i < len(toks); i++ {
-		if toks[i].Kind != token.Uses {
+		if toks[i].Kind != mutlex.Uses {
 			continue
 		}
 		j := i + 1
@@ -568,13 +566,13 @@ func mutateEffects(rng *rand.Rand, src []byte) []byte {
 	clause:
 		for ; j < len(toks); j++ {
 			switch toks[j].Kind {
-			case token.Ident, token.Dot, token.Comma:
-			case token.LParen:
+			case mutlex.Ident, mutlex.Dot, mutlex.Comma:
+			case mutlex.LParen:
 				if j != i+1 {
 					break clause
 				}
 				depth++
-			case token.RParen:
+			case mutlex.RParen:
 				if depth == 0 {
 					break clause
 				}

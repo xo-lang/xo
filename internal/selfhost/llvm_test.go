@@ -84,10 +84,10 @@ func TestSelfhostLLVM(t *testing.T) {
 	bins := selfhostBinaries(t, "llvm", backends)
 	t.Chdir(root)
 	setModEnv(t, root)
-	wants := make([]goIR, len(dirs))
+	wants := make([]*goldPieces, len(dirs))
 	parallel(len(dirs), func(i int) { wants[i] = goLLVM(root, dirs[i], false) })
 	tdirs := testDirs(t, root, dirs)
-	twants := make([]goIR, len(tdirs))
+	twants := make([]*goldPieces, len(tdirs))
 	parallel(len(tdirs), func(i int) { twants[i] = goLLVM(root, tdirs[i], true) })
 	flags := []string{"--std=std"}
 	if v := os.Getenv("XO_SELFHOST_LLVM_STAGE"); v != "" {
@@ -189,7 +189,7 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	t.Chdir(tmp)
 	setModEnv(t, root)
 	wd := workDir(t)
-	wants := make([]goIR, len(dirs))
+	wants := make([]*goldPieces, len(dirs))
 	parallel(len(dirs), func(i int) { wants[i] = goLLVM(wd, dirs[i], false) })
 	skipRecording(t)
 	got := runLLVM(t, bin, tmp, dirs, "--std="+stdDir)
@@ -213,17 +213,56 @@ type goIR struct {
 }
 
 // goLLVM checks dir as a native build does and lowers it as `xo
-// llvmdump` does from root (the test binary when tests is set).
-// Recorded as the llvmdump kind (gogoldens_test.go).
-func goLLVM(root, dir string, tests bool) goIR {
-	if goldensMode() == goldensLive {
-		return goLLVMLive(root, dir, tests)
-	}
+// llvmdump` does from root (the test binary when tests is set), cut into
+// the pieces compareLLVM compares: meta "none" (why there is no IR), or
+// meta "split" (why the IR does not split), else "module" (the whole
+// IR), "order" (the names of the definitions in order), "d:<name>" (each
+// definition), "c:<name>" (a definition with its string literals and
+// fault locations replaced by their contents, canonGlobals, when that
+// changes it), and the sorted lists "types" and "rtdecls". Recorded as
+// the llvmdump kind (gogoldens_test.go).
+func goLLVM(root, dir string, tests bool) *goldPieces {
 	wd := goldensWD()
 	cx := newGoldenCtx(wd, root, dir)
 	o := fmt.Sprintf("tests=%v lineroot=%s", tests, cx.norm(root))
-	return recordedJSON("llvmdump", dir+" "+o, []string{o, cx.dirKey(wd, dir, true)}, cx,
-		func() goIR { return goLLVMLive(root, dir, tests) }, encGoIR, decGoIR)
+	var key []string
+	if goldensMode() != goldensLive {
+		key = []string{o, cx.dirKey(wd, dir, true)}
+	}
+	flags := ""
+	if tests {
+		flags = "--test "
+	}
+	hint := goldHint("TestSelfhostLLVM(Mutations)?", "llvmdump "+flags+dir, "llvm", "--each --std=std --wd="+wd+" "+flags+dir, wd)
+	return recordedPieces("llvmdump", dir+" "+o, hint, key, cx, func() *goldPieces { return llvmGoldPieces(goLLVMLive(root, dir, tests)) })
+}
+
+// llvmGoldPieces cuts the Go emitter's result into goLLVM's pieces.
+func llvmGoldPieces(r goIR) *goldPieces {
+	p := newPieces()
+	if r.none != "" {
+		p.setMeta("none", r.none)
+		return p
+	}
+	g, err := splitIR(r.ir)
+	if err != nil {
+		p.setMeta("split", err.Error())
+		return p
+	}
+	p.add("module", r.ir)
+	p.add("order", strings.Join(g.Order, "\n"))
+	gc := canonGlobals(g.Globals)
+	p.addFamily("d")
+	p.addFamily("c")
+	for name, t := range g.Defs {
+		p.addMember("d", name, t)
+		if c := gc(t); c != t {
+			p.addMember("c", name, c)
+		}
+	}
+	p.addList("types", g.Types)
+	p.addList("rtdecls", g.RTDecls)
+	return p
 }
 
 // goLLVMLive is goLLVM with the Go emitter run.
@@ -353,18 +392,22 @@ func canonGlobals(globals []string) func(string) string {
 }
 
 // compareLLVM compares one run and returns its differences.
-func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
+func compareLLVM(dir string, want *goldPieces, got string, st *llvmStats) []string {
 	st.runs++
+	none := want.m("none")
+	if want.missing {
+		none = want.missingText()
+	}
 	if st.skips == nil {
 		st.skips, st.why = map[string]int{}, map[string]int{}
 	}
 	head := firstLine(got)
 	switch {
-	case want.none == "holes" || strings.HasPrefix(head, "== unsupported use go") || strings.HasPrefix(head, "== unsupported use c"):
+	case none == "holes" || strings.HasPrefix(head, "== unsupported use go") || strings.HasPrefix(head, "== unsupported use c"):
 		st.unsupported++
 		st.why["run: "+strings.TrimPrefix(head, "== ")]++
 		return nil
-	case want.none == "rejected":
+	case none == "rejected":
 		if head != "== rejected" && !strings.HasPrefix(head, "== unsupported ") {
 			return []string{dir + ": the Go checker rejects it, the Xo checker does not: " + head}
 		}
@@ -372,7 +415,7 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 		return nil
 	case head == "== rejected":
 		return []string{dir + ": the Xo checker rejects it, the Go checker does not"}
-	case want.none == "no main":
+	case none == "no main":
 		if !strings.Contains(head, "no `main`") {
 			return []string{dir + ": no main for the Go builder, the Xo emitter prints " + head}
 		}
@@ -388,14 +431,14 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 		}
 		st.why["run: "+w]++
 		return nil
-	case strings.HasPrefix(want.none, "error "):
+	case strings.HasPrefix(none, "error "):
 		if strings.HasPrefix(head, "== error ") {
 			st.goErrors++
 			return nil
 		}
-		return []string{dir + ": the Go emitter reports " + firstLine(want.none) + "; the Xo emitter prints " + head}
-	case want.none != "":
-		return []string{dir + ": the Go emitter: " + want.none}
+		return []string{dir + ": the Go emitter reports " + firstLine(none) + "; the Xo emitter prints " + head}
+	case none != "":
+		return []string{dir + ": the Go emitter: " + none}
 	case head != "== ir":
 		return []string{dir + ": the Xo emitter prints " + head}
 	}
@@ -411,36 +454,56 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 		}
 		skip[l[:i]] = l[i+2:]
 	}
-	g, err := llvm.SplitIR(want.ir)
-	if err != nil {
-		return []string{dir + ": the Go emitter's IR: " + err.Error()}
+	if e := want.m("split"); e != "" {
+		return []string{dir + ": the Go emitter's IR: " + e}
 	}
-	x, err := llvm.SplitIR(body)
+	x, err := splitIR(body)
 	if err != nil {
 		return []string{dir + ": the Xo emitter's IR: " + err.Error()}
 	}
-	if body == want.ir {
-		st.modules++
-	} else {
-		st.moduleDiffs = append(st.moduleDiffs, dir+": "+firstDiff(body, want.ir))
+	xc := canonGlobals(x.Globals)
+	xcanon := map[string]string{}
+	for name, t := range x.Defs {
+		if c := xc(t); c != t {
+			xcanon[name] = c
+		}
 	}
-	if strings.Join(g.Order, "\n") == strings.Join(x.Order, "\n") {
+	var xskipped []string
+	for fn := range skip {
+		xskipped = append(xskipped, "x."+fn)
+	}
+	sort.Strings(xskipped)
+	// the Go side's splitIR (llvmGoldPieces)
+	g := want.resolved("d", x.Defs, xskipped).resolved("c", xcanon, nil)
+	if g.eq("module", body) {
+		st.modules++
+	} else if t, ok := g.text("module"); ok {
+		st.moduleDiffs = append(st.moduleDiffs, dir+": "+firstDiff(body, t))
+	} else {
+		st.moduleDiffs = append(st.moduleDiffs, dir+": the hash differs from the recorded Go module's")
+	}
+	if g.eq("order", strings.Join(x.Order, "\n")) {
 		st.ordered++
 	}
-	gc, xc := canonGlobals(g.Globals), canonGlobals(x.Globals)
-	same := func(gt, xt string) bool {
-		return gt == xt || gc(gt) == xc(xt)
+	// canon is the piece of a definition compared by contents
+	canon := func(name string) string {
+		if g.has("c:" + name) {
+			return "c:" + name
+		}
+		return "d:" + name
+	}
+	same := func(name, xt string) bool {
+		return g.eq("d:"+name, xt) || g.eq(canon(name), xc(xt))
 	}
 	var fails []string
-	for _, name := range g.Order {
-		gt := g.Defs[name]
+	for _, name := range g.names("d:") {
 		xt, ok := x.Defs[name]
 		if !isFunc(name) {
 			switch {
-			case ok && same(gt, xt):
+			case ok && same(name, xt):
 				st.helpers++
 			case ok:
-				fails = append(fails, fmt.Sprintf("%s: helper %s differs: %s", dir, name, firstDiff(xc(xt), gc(gt))))
+				fails = append(fails, fmt.Sprintf("%s: helper %s differs: %s", dir, name, g.diff(canon(name), xc(xt))))
 			case len(skip) == 0:
 				fails = append(fails, fmt.Sprintf("%s: the Xo emitter has no helper %s", dir, name))
 			}
@@ -449,11 +512,11 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 		st.funcs++
 		fn := strings.TrimPrefix(name, "x.")
 		switch {
-		case ok && same(gt, xt):
+		case ok && same(name, xt):
 			st.same++
 		case ok:
 			st.differ++
-			fails = append(fails, fmt.Sprintf("%s: %s differs: %s", dir, name, firstDiff(xc(xt), gc(gt))))
+			fails = append(fails, fmt.Sprintf("%s: %s differs: %s", dir, name, g.diff(canon(name), xc(xt))))
 		case skip[fn] != "":
 			st.skipped++
 			st.skips[skip[fn]]++
@@ -463,20 +526,17 @@ func compareLLVM(dir string, want goIR, got string, st *llvmStats) []string {
 		}
 	}
 	for _, name := range x.Order {
-		if _, ok := g.Defs[name]; !ok {
+		if !g.has("d:" + name) {
 			fails = append(fails, fmt.Sprintf("%s: the Xo emitter defines %s, the Go emitter does not", dir, name))
 		}
 	}
 	if len(skip) == 0 {
 		for _, part := range []struct {
-			what string
-			g, x []string
-		}{{"named types", g.Types, x.Types}, {"runtime declarations", g.RTDecls, x.RTDecls}} {
-			a, b := append([]string(nil), part.g...), append([]string(nil), part.x...)
-			sort.Strings(a)
-			sort.Strings(b)
-			if strings.Join(a, "") != strings.Join(b, "") {
-				fails = append(fails, fmt.Sprintf("%s: the %s differ: %s", dir, part.what, firstDiff(strings.Join(b, ""), strings.Join(a, ""))))
+			what, name string
+			x          []string
+		}{{"named types", "types", x.Types}, {"runtime declarations", "rtdecls", x.RTDecls}} {
+			if !g.eqList(part.name, part.x) {
+				fails = append(fails, fmt.Sprintf("%s: the %s differ: %s", dir, part.what, g.diffList(part.name, part.x)))
 			}
 		}
 	}
