@@ -106,7 +106,8 @@ backend, 400 mutations.
 - The module's function order is part of what is compared: the Xo SSA
   builder now builds every generated function when asked for, as the Go
   builder does (`xo.debug[T]`, `xo.frameargs(...)`, `zero.fn(...)`,
-  slices, list concatenation: selfhost/ssa `gen_now`), so the functions
+  slices, list concatenation: selfhost/ssa `build_gen`, which decision
+  0158 made at the same time), so the functions
   a body declares follow it; the SSA comparison by name had not
   required it.
 - `ssa.faulting_rt` and `Builder.run_passes` are public in selfhost/ssa

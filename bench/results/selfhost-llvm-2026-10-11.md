@@ -148,10 +148,11 @@ Found in stages 2 and 3:
   (`xo.frameargs(...)`), the zero functions of function types
   (`zero.fn(...)`), slices, and list concatenation were queued for
   run_gens; the Go builder builds every one of them when asked for.
-  selfhost/ssa build.xo `gen_now` now builds each at once (run_gens
-  takes the queue before building, so a nested request builds only its
-  own); TestSelfhostSSA unchanged (0 differences), and the 17 modules
-  byte identical.
+  selfhost/ssa build.xo `gen_now` built each at once (TestSelfhostSSA
+  unchanged, 0 differences; the 17 modules byte identical). The arm64
+  emitter's port (decision 0158) found and fixed the same on main at
+  the same time (`build_gen`); the merge keeps main's version, and the
+  figures after the merge are below.
 
 Speed, ms for 10 lowerings (as the stage 1 table; stage 3, every
 function lowered with every convention, so equal work), idle machine:

@@ -932,3 +932,27 @@ fn (var b: Builder) verify_mutants(n: Int) -> Str {
   }
   out.freeze()
 }
+
+/// The verifier's errors on the module after reference counting, in
+/// function order (Module.Verify): the structural checks of every
+/// function, then, when they pass, the ownership balance (selfhost/arm64
+/// verifies the module again after inlining, decision 0158).
+pub fn (var m: Module) verify_all() -> List[Str] {
+  var errs: List[Str] = []
+  for f in m.funcs {
+    for e in m.verify_func(f) {
+      errs.push(e)
+    }
+  }
+  if errs.is_empty() {
+    let faults = m.may_fault()
+    var r = rc_checker(m)
+    for (fi, f) in m.funcs.indexed() {
+      r.fi = fi
+      for e in r.verify_rc(m, f, faults) {
+        errs.push(e)
+      }
+    }
+  }
+  errs
+}

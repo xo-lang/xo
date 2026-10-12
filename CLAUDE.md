@@ -80,8 +80,12 @@ Update the knowledgebase in the same change as the work, not later:
     `-short` plus `go vet` is enough; rerun full tests only for packages
     changed on both sides. Push first, then run any full suite in the
     background and fix forward. Start the next agent without waiting.
-  - at most two agents at once, in disjoint code areas, and never two
-    full test runs at the same time (RAM).
+  - agents run in parallel in separate worktrees (owner, 2026-10-11, on
+    a larger plan); RAM is the limit, so every heavy test run (non
+    -short tests of internal/selfhost, internal/gen, internal/llvm,
+    internal/arm64, cmd/xo, self-hosted builds, benchmarks) goes through
+    the lead's machine-wide lock script, one at a time, and each agent
+    logs its steps to a file the lead monitors.
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 2.5 min), `full` (every backend, about
     1 h cold, `-timeout 120m`); full runs nightly, before tagging, and

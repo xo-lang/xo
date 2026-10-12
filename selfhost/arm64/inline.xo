@@ -1,0 +1,223 @@
+// Inlining of small leaf functions, SSA to SSA, after reference counting
+// (internal/arm64 inline.go). The callee body already carries its own
+// retains and releases for its ownership convention, so a faithful copy
+// with the parameters replaced by the call's arguments keeps every count
+// balanced; the module is verified again after inlining.
+//
+// A call `v = call f, args` in block B becomes:
+//
+//	B:  ...instructions before v; jump f.entry'
+//	f's blocks, copied; `ret xs` becomes `jump C(xs)`
+//	C(results):  the rest of B (v is C's parameter, or a tuple of them)
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+const INLINE_MAX_INSTRS = 40
+const INLINE_MAX_BLOCKS = 12
+
+/// The last function of each name (Go's byName).
+fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
+  var out: Map[Str, Int] = {}
+  for (i, f) in m.funcs.indexed() {
+    out[f.name] = i
+  }
+  out
+}
+
+/// Whether f is small and calls no Xo function.
+fn inlinable(f: ssa.Func, by_name: Map[Str, Int]) -> Bool {
+  if f.name == "main" || f.blocks.len() > INLINE_MAX_BLOCKS {
+    return false
+  }
+  var n = 0
+  for bl in f.blocks {
+    for v in bl.instrs {
+      n += 1
+      let x = f.values[v]
+      if x.op == ssa.Op.Call && by_name.contains(aux_str(x.aux)) {
+        return false
+      }
+      if x.pad >= 0 {
+        // it has landing pads of its own (decision 0085)
+        return false
+      }
+    }
+  }
+  n <= INLINE_MAX_INSTRS
+}
+
+/// Inlines the calls of small leaf functions in m and reports whether it
+/// changed anything.
+fn inline_module(var m: ssa.Module) -> Bool {
+  let by_name = funcs_by_name(m)
+  var small: Map[Str, Bool] = {}
+  for f in m.funcs {
+    if inlinable(f, by_name) {
+      small[f.name] = true
+    }
+  }
+  var changed = false
+  for fi in 0..m.funcs.len() {
+    var f = m.funcs[fi]
+    m.funcs[fi] = ssa.Func{name: ""}
+    for _ in 0..200 {
+      let v = find_call(f, m, small, by_name)
+      if v < 0 {
+        break
+      }
+      let ci = by_name.get(aux_str(f.values[v].aux)) ?? -1
+      inline_call(f, v, m.funcs[ci])
+      changed = true
+    }
+    m.funcs[fi] = f
+  }
+  changed
+}
+
+fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let name = aux_str(x.aux)
+      if !small.contains(name) {
+        continue
+      }
+      if x.pad < 0 {
+        return v
+      }
+      let ci = by_name.get(name) ?? -1
+      if m.funcs[ci].results.len() == 1 {
+        return v
+      }
+    }
+  }
+  -1
+}
+
+/// An edge of the copy whose arguments are mapped after all bodies.
+struct Pending {
+  e: Int
+  args: List[Int]
+}
+
+fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
+  let b = f.values[call].block
+  let ins = f.blocks[b].instrs
+  var at = -1
+  for (i, v) in ins.indexed() {
+    if v == call {
+      at = i
+    }
+  }
+  // the continuation takes the rest of b
+  let cont = f.new_block()
+  let rest = ins[at + 1..ins.len()]
+  f.blocks[b].instrs = ins[0..at]
+  for v in rest {
+    f.values[v].block = cont
+    for e in f.values[v].succs {
+      f.edges[e].from = cont
+    }
+  }
+  var res: List[Int] = []
+  for r in callee.results {
+    res.push(f.add_param(cont, r))
+  }
+  var repl = -1
+  if res.len() == 1 {
+    repl = res[0]
+  } else {
+    repl = f.add(cont, ssa.Op.Tuple, f.values[call].ty, ssa.Aux.None, res)
+  }
+  for v in rest {
+    f.blocks[cont].instrs.push(v)
+  }
+  replace_uses(f, call, repl)
+
+  // copy the callee
+  var vm: Map[Int, Int] = {}
+  let cparams = callee.blocks[0].params
+  for (i, p) in cparams.indexed() {
+    vm[p] = f.values[call].args[i]
+  }
+  let order = rpo_of(callee)
+  var bm: Map[Int, Int] = {}
+  for cb in order {
+    let nb = f.new_block()
+    bm[cb] = nb
+    if cb != 0 {
+      for p in callee.blocks[cb].params {
+        vm[p] = f.add_param(nb, callee.values[p].ty)
+      }
+    }
+  }
+  let pad = f.values[call].pad
+  var edges: List[Pending] = []
+  for cb in order {
+    let nb = bm.get(cb) ?? -1
+    for v in callee.blocks[cb].instrs {
+      let x = callee.values[v]
+      match x.op {
+        Jump => {
+          let to = callee.edges[x.succs[0]].to
+          let t = f.jump(nb, bm.get(to) ?? -1, [])
+          edges.push(Pending{e: f.values[t].succs[0], args: callee.edges[x.succs[0]].args})
+        }
+        Branch => {
+          let s0 = callee.edges[x.succs[0]]
+          let s1 = callee.edges[x.succs[1]]
+          let t = f.branch(nb, vm.get(x.args[0]) ?? x.args[0], bm.get(s0.to) ?? -1, bm.get(s1.to) ?? -1)
+          edges.push(Pending{e: f.values[t].succs[0], args: s0.args})
+          edges.push(Pending{e: f.values[t].succs[1], args: s1.args})
+        }
+        Return => {
+          let t = f.jump(nb, cont, [])
+          edges.push(Pending{e: f.values[t].succs[0], args: x.args})
+        }
+        _ => {
+          var args: List[Int] = []
+          for a in x.args {
+            args.push(vm.get(a) ?? a)
+          }
+          let nv = f.add(nb, x.op, x.ty, x.aux, args)
+          f.values[nv].pos = x.pos
+          // a fault in the copy lands where one in the call would
+          // (decision 0085): the callee holds nothing then
+          f.values[nv].pad = pad
+          vm[v] = nv
+        }
+      }
+    }
+  }
+  for p in edges {
+    var args: List[Int] = []
+    for a in p.args {
+      args.push(vm.get(a) ?? a)
+    }
+    f.edges[p.e].args = args
+  }
+  let _j = f.jump(b, bm.get(0) ?? -1, [])
+}
+
+/// Replaces every use of old in f by x.
+fn replace_uses(var f: ssa.Func, old: Int, x: Int) {
+  for bl in 0..f.blocks.len() {
+    for v in f.blocks[bl].instrs {
+      for i in 0..f.values[v].args.len() {
+        if f.values[v].args[i] == old {
+          f.values[v].args[i] = x
+        }
+      }
+      for e in f.values[v].succs {
+        for i in 0..f.edges[e].args.len() {
+          if f.edges[e].args[i] == old {
+            f.edges[e].args[i] = x
+          }
+        }
+      }
+    }
+  }
+}

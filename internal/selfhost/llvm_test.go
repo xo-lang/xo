@@ -192,23 +192,6 @@ func TestSelfhostLLVMMutations(t *testing.T) {
 	reportFails(t, fails)
 }
 
-// reportFails fails t with the first differences (XO_SELFHOST_FAILS
-// sets how many are shown, default 10).
-func reportFails(t *testing.T, fails []string) {
-	if len(fails) == 0 {
-		return
-	}
-	show := 10
-	if v := os.Getenv("XO_SELFHOST_FAILS"); v != "" {
-		fmt.Sscan(v, &show)
-	}
-	n := len(fails)
-	if n > show {
-		fails = append(fails[:show], fmt.Sprintf("... and %d more", n-show))
-	}
-	t.Fatalf("%d differences:\n%s", n, strings.Join(fails, "\n"))
-}
-
 // goIR is the Go emitter's result for one run: the IR, or why there is
 // none ("rejected", "holes", "no main", or "error <message>").
 type goIR struct {

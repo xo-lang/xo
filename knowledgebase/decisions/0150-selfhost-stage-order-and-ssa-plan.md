@@ -231,13 +231,13 @@ values: selfhost/ssa iface.xo), in addition to those of stage 1:
   with it the type numbers) is in the Go builder's order. Debug text,
   slices, list concatenation, frame arguments, and zero functions stay
   built after the current body (their bodies declare nothing).
-  Note (2026-10-11, decision 0166): Debug text bodies do declare
-  functions (the Debug text of their parts), so the Xo builder's module
-  held them in another order than the Go builder's; the comparison by
-  name did not show it, the LLVM module (written in the module's order)
-  did. `xo.debug[T]`, and then every generated function (frame
-  arguments, zero functions, slices, concatenation: `gen_now`), is now
-  built when asked for too.
+  Amended 2026-10-11 (decision 0158): a Debug text body does declare
+  functions (the Debug text of its fields), so the module's function
+  order differed from the Go builder's in 72 of 306 runs; every
+  generated function is now built when asked for, and the order is the
+  Go builder's, which the arm64 emitter's whole file comparison needs.
+  Decision 0166 found the same independently (the LLVM module, written
+  in the module's order, differed while every function matched).
 - A method value is the closure literal check.Info.MethodValueLit makes
   (`fn(p0, ...) { xo.recv.m(p0, ...) }`); the Xo builder makes the same
   literal with its checker records at offsets past every source file

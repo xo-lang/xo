@@ -1,0 +1,13 @@
+// The stages of the port (decision 0158): a function with a construct of
+// a stage not enabled yet is not emitted (it is counted as skipped by
+// the comparison, never compared). Since stage 3 every construct the Go
+// emitter lowers is ported; inlining (stage 4) is a pass over the module
+// before generation (inline.xo).
+
+/// Why function fi cannot be emitted at the current stage, or "".
+fn (var g: G) unsupported(fi: Int) -> Str {
+  if fi < 0 {
+    return "no function"
+  }
+  ""
+}

@@ -106,6 +106,7 @@ struct S {
 
 /// A generated function whose body is still to build (run_gens).
 enum Gen {
+  Debug(ct: Int, t: Int)
   Slice(lt: Int)
   Concat(t: Int)
   FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int])
@@ -2010,7 +2011,7 @@ fn (var b: Builder) zero_func(t: Int) -> Str {
   }
   let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
   b.m.funcs[fi].indirect = true
-  b.gen_now(GenJob{fi: fi, file: b.s.file, gen: Gen.Zero(t: t)})
+  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.Zero(t: t)})
   name
 }
 
@@ -2065,56 +2066,56 @@ fn (var b: Builder) for_up_to_end(i: Int, iv: Int, head: Int, exit: Int) {
   b.s.cur = exit
 }
 
-/// Declares the generated function name once and builds its body at
-/// once (genFunc).
+/// Declares the generated function name once and builds its body at once
+/// (genFunc).
 fn (var b: Builder) gen_func(name: Str, params: List[Int], results: List[Int], g: Gen) {
   if b.m.func_index(name) >= 0 {
     return
   }
   let fi = b.m.new_func(name, params, results)
-  b.gen_now(GenJob{fi: fi, file: b.s.file, gen: g})
+  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: g})
 }
 
-/// Builds the body of a generated function when it is asked for, as the
-/// Go builder's genFunc, zeroFunc, and frameArgsFunc do: the functions
-/// its body declares (the Debug text of a frame's arguments, the zero of
-/// a function result) then follow it in the module in the Go builder's
-/// order, which the LLVM emitter's module keeps (decision 0166; they were
-/// queued for run_gens before).
-fn (var b: Builder) gen_now(job: GenJob) {
-  b.gens.push(job)
-  b.run_gens()
-}
-
-/// Builds the bodies of the generated functions queued (gen_now queues
-/// one and builds it at once).
+/// Builds the bodies of the generated functions queued so far (and of
+/// those they queue). Generated functions are built when asked for
+/// (build_gen), as the Go builder's genFunc builds them, so the queue is
+/// empty unless a construct queued one.
 fn (var b: Builder) run_gens() {
-  // a body that asks for another builds it at once (gen_now): the
-  // queue is taken first, so the nested call sees only its own job
-  let jobs = b.gens
-  b.gens = []
   var i = 0
-  while i < jobs.len() {
-    let g = jobs[i]
+  while i < b.gens.len() {
+    let g = b.gens[i]
     i += 1
-    let saved = b.begin(g.fi, g.file)
-    match g.gen {
-      Slice(lt) => {
-        b.slice_body(lt)
-        b.finish_fn()
-      }
-      Concat(t) => {
-        b.concat_body(t)
-        b.finish_fn()
-      }
-      FrameArgs(names, cts, cap_ts) => b.frame_args_body(names, cts, cap_ts)
-      Zero(t) => {
-        let z = b.zero(b.m.types[t].ret, [])
-        b.add(Op.Return, -1, Aux.None, [z])
-      }
-    }
-    b.end(saved)
+    b.build_gen(g)
   }
+  b.gens = []
+}
+
+/// Builds the body of the generated function g: at once, in the middle
+/// of the code that asks for it, as the Go builder's genFunc does (the
+/// functions its body declares follow it in the module, in the Go
+/// builder's order; decision 0158 compares whole files).
+fn (var b: Builder) build_gen(g: GenJob) {
+  let saved = b.begin(g.fi, g.file)
+  match g.gen {
+    Debug(ct, t) => {
+      b.debug_body(ct, t)
+      b.finish_fn()
+    }
+    Slice(lt) => {
+      b.slice_body(lt)
+      b.finish_fn()
+    }
+    Concat(t) => {
+      b.concat_body(t)
+      b.finish_fn()
+    }
+    FrameArgs(names, cts, cap_ts) => b.frame_args_body(names, cts, cap_ts)
+    Zero(t) => {
+      let z = b.zero(b.m.types[t].ret, [])
+      b.add(Op.Return, -1, Aux.None, [z])
+    }
+  }
+  b.end(saved)
 }
 
 fn (var b: Builder) param(i: Int) -> Int {

@@ -22,7 +22,8 @@ functions; then (stage 2 of decision 0166) 17 modules still had
 `zero.fn(...)` and the Debug text a frame's arguments ask for out of
 order, from the frame argument formatters and zero functions still
 queued, so every generated function is now built when asked for
-(build.xo `gen_now`). A comment saying a queued body "declares
+(the arm64 emitter's port, decision 0158, found and fixed the same at
+the same time: build.xo `build_gen`, the version kept at the merge). A comment saying a queued body "declares
 nothing" was the trap: check what the body calls, not what it is. TestSelfhostLLVM counts the modules whose
 definitions come in the same order and those byte identical; a drop in
 either with every function identical points at the module's order.

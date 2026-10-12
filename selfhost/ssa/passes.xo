@@ -502,9 +502,9 @@ pub fn (var b: Builder) write_passes(var out: StrBuilder) {
   out.write(b.verify_mutants(6))
 }
 
-/// Runs the passes after the build and InsertRC (buildModule, then
-/// Module.InsertRC as llvm.Generate does): the module the LLVM emitter
-/// lowers (selfhost/llvm, decision 0166).
+/// Runs the passes after the build without printing them: unwind,
+/// landings, cleanup, rc (what a native build generates code from;
+/// selfhost/arm64, decision 0158).
 pub fn (var b: Builder) run_passes() {
   b.prune_unwind()
   b.add_landings()
