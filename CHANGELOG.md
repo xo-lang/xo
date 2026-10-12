@@ -11,7 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   internal/llvm prints, compared function by function and module by
   module through the new hidden `xo llvmdump` (TestSelfhostLLVM,
   TestSelfhostLLVMMutations); every module both lower is byte
-  identical.
+  identical, and the self hosted pipeline lowers selfhost/ssa to IR
+  byte identical to internal/llvm's, from which clang builds a working
+  binary (TestSelfhostLLVMEndToEnd).
 - The arm64 emitter in Xo (`selfhost/arm64`, decision 0158), compared
   with internal/arm64 piece by piece through the new hidden `xo
   asmdump` (TestSelfhostArm64, TestSelfhostArm64Mutations): every

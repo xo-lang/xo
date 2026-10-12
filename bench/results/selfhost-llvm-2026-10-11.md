@@ -170,3 +170,76 @@ instruction and iterates to a fixpoint, the first suspect). The Xo
 port does the same copies and compares the states whole at each block;
 the ratio grows with function size, which points at that dataflow too.
 Profiling both is the first next experiment below.
+
+## Stage 4: the self hosted pipeline end to end
+
+`TestSelfhostLLVMEndToEnd` (internal/selfhost/llvm_e2e_test.go,
+`XO_SELFHOST_E2E=ssa`, after merging main with the arm64 emitter): the
+go build of selfhost/llvm (the Xo checker, the Xo SSA builder and its
+passes, the Xo emitter in one binary) lowered selfhost/ssa in 26.7 s
+to 398,565,495 bytes of IR (7,928,966 lines), **byte identical** to
+internal/llvm's. clang built a binary from that IR (the LLVM backend's
+build with `build.Options.LLVMIR`, binary cache off, -O2 -flto) in 33
+minutes 58 seconds, and that binary's output on `--std=std --each
+--stages selfhost/lexer` (1,528,585 bytes: the SSA module of the lexer
+at every stage, the verifier's verdicts, and its mutants) is identical
+to the go build of selfhost/ssa's. On selfhost/lexer (the full tier's
+default) the same test takes 3 seconds: 708,883 bytes of IR, byte
+identical, and the binary's token dump of two lexer sources identical
+to the go build's (374,805 bytes).
+
+## Speed after the receiver fix
+
+The stage 3 table above was taken with by value receivers on the
+emitter's read only helpers, which on the go backend made the next
+element write of every per value list copy the whole list
+(gotchas/selfhost-by-value-receiver-marks-lists.md). With `var`
+receivers, after merging main, under heavy.sh's machine lock (no other
+heavy run), ms for 10 lowerings:
+
+| input (functions) | Go emitter | Xo emitter, go build |
+|---|---|---|
+| selfhost/lexer (92) | 95 | 49 (0.52x) |
+| selfhost/parser (377) | 1,096 | 607 (0.55x) |
+| selfhost/check (1,027) | 17,705 | 9,321 (0.53x) |
+| selfhost/ssa (1,655) | 56,212 | 29,514 (0.53x) |
+
+The go build of the Xo emitter takes about half the Go emitter's time
+on every input, with the same output. Both are slow on large programs
+(5.6 s for one lowering of selfhost/ssa by the Go emitter); not
+profiled on the Go side here.
+
+## Tests
+
+- Merge tier of internal/selfhost after the merge with main
+  (`go test ./internal/selfhost`, GOMAXPROCS=4, -p 1 -parallel 2):
+  pass, 1,583 s for the package. TestSelfhostLLVM there (every third
+  run): 110 runs compared, 8,570 of 8,570 functions identical, 110 of
+  110 modules byte identical; test binaries 14 compared, 1,194 of
+  1,194 functions, 14 of 14 modules; TestSelfhostLLVMMutations 30
+  mutations, 19 compared, 483 of 483 functions, 19 of 19 modules.
+  TestSelfhostLLVM took 74 s of it (including the go build of
+  selfhost/llvm), more than the 15 s estimated from a warm run.
+- No full tier run (owner's policy, 2026-10-11: the lead runs one per
+  batch); the arm64 and LLVM builds of the Xo emitter have not been
+  compared yet.
+
+## Next experiments
+
+1. **The arm64 and LLVM builds of the Xo emitter** in the full tier
+   (`XO_SELFHOST_TIER=full go test ./internal/selfhost -run
+   'TestSelfhostLLVM'`): the go build is the only one compared so far.
+   Watch for the LLVM backend miscompile the arm64 port found
+   (decision 0159).
+2. **Profile the Go emitter on selfhost/ssa** (`go test -cpuprofile`
+   around llvm.GenerateSSA, or `xo llvmdump --bench=3` under pprof):
+   5.6 s per lowering; the decision 0148 dataflow keeps a copy of the
+   state per instruction, the first suspect, and the same change would
+   then be ported to held.xo.
+3. **The self hosted pipeline as `xo build --backend=llvm`**: the
+   selfhost/xo driver of decision 0158 with selfhost/llvm in place of
+   selfhost/arm64, so the switch-over experiment covers both native
+   backends.
+4. **A merge tier near 15 s for TestSelfhostLLVM**: cache the go build
+   of selfhost/llvm with selfhost/ssa's (they share every module but
+   one), or lower more runs per process (batches of 40 now).

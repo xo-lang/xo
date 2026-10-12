@@ -21,7 +21,7 @@ import (
 // IR (build.Options.LLVMIR, no binary cache) a binary whose output on a
 // fixed input is the go backend build's output. The component is
 // selfhost/lexer, or the one XO_SELFHOST_E2E names (lexer, parser,
-// check, ssa, llvm; the LLVM link of ssa or llvm takes about 10
+// check, ssa, llvm; clang on the IR of ssa took 34
 // minutes). Full tier only, unless XO_SELFHOST_E2E is set.
 func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	comp := os.Getenv("XO_SELFHOST_E2E")

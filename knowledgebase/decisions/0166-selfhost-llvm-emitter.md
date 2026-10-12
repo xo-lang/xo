@@ -1,12 +1,16 @@
 # 0166: The LLVM emitter in Xo, in stages through `xo llvmdump`
 
-Status: Proposed (2026-10-11), until every stage lands. Stages 1 to 3
+Status: Accepted (2026-10-11): every stage landed. Stages 1 to 3
 implemented in `selfhost/llvm/` (gen.xo, func.xo, call.xo, text.xo,
 held.xo, main.xo): every function of every module both emitters lower
 is identical, and every such module byte identical; `cmd/xo/llvmdump.go` (hidden `xo llvmdump`),
 `internal/llvm/split.go` (llvm.SplitIR) and llvm.PrepareSSA, and
 `internal/selfhost/llvm_test.go` (`TestSelfhostLLVM`,
-`TestSelfhostLLVMMutations`). Evidence:
+`TestSelfhostLLVMMutations`). Stage 4: `llvm_e2e_test.go`
+(`TestSelfhostLLVMEndToEnd`), llvm.Options.IR and
+build.Options.LLVMIR; the self hosted pipeline lowered selfhost/ssa to
+398,565,495 bytes of IR byte identical to internal/llvm's, and the
+binary clang built from it prints what the go build prints. Evidence:
 `bench/results/selfhost-llvm-2026-10-11.md`. The second stage after the
 SSA builder in decision 0150's amended order (2026-10-11: arm64 emitter,
 then this, then the Go code generator, then the Go implementation is
