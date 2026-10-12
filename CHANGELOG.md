@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds run the self hosted driver (decision 0178 switch point
+  A, approved 2026-10-12): `xo build|run|test --backend=arm64|llvm` (and
+  `--no-gc`) execute xo1, the driver written in Xo, which `xo` builds
+  once from its embedded sources into the user cache (a few minutes the
+  first time). Output, diagnostics, JSON, exit codes, and paths are the
+  Go driver's; `XO_SELF_DRIVER=0` restores the Go driver. xo1 gained
+  `run`, `xo build`'s flags, several directories, the build directory
+  and binary cache, split LLVM builds, `--release`, `--stamp`, and the
+  check's diagnostics (stage 1).
 - `selfhost/macho`, a Mach-O assembler written in Xo, turns the arm64
   emitter's assembly into the same object `cc -c` writes (every section,
   function, and relocation identical on the 158 arm64 goldens and on
